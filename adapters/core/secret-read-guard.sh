@@ -420,26 +420,39 @@ awk_chars='
 awk_mask='
 BEGIN { SQ = sprintf("%c", 39); DQ = "\""; BS = "\\" }
 function mask(c) {
-  if (esc) {
-    esc = 0
-    return (q == "" ? c : " ")
+  if (mesc) {
+    mesc = 0
+    return (mq == "" ? c : " ")
   }
-  if (q == "") {
-    if (c == BS) esc = 1
+  if (mq == "") {
+    if (c == BS) mesc = 1
     else if (c == SQ || c == DQ) {
-      q = c
+      mq = c
       return " "
     }
     return c
   }
-  if (c == q) q = ""
-  else if (q == DQ && c == BS) esc = 1
+  if (c == mq) mq = ""
+  else if (mq == DQ && c == BS) mesc = 1
   return " "
 }'
 
+# Text holding `<<` runs mask() inside awk_mask_cmd's heredoc model (Q=1, see
+# there), so a text heredoc body is blanked and its apostrophes never reach
+# mask(); `$2` is the text's T verdict (hd_text_ok).
 mask_quotes() {
-  awk "$awk_mask$awk_chars"'
+  if [[ $1 != *'<<'* ]]; then
+    awk "$awk_mask$awk_chars"'
 function feed(c) { printf "%s", mask(c) }' <<<"$1"
+    return
+  fi
+  awk -v W=0 -v Q=1 -v T="$2" "$awk_mask${awk_mask_cmd/function feed(c,/function step(c,}$awk_chars"'
+function feed(c,    tb) {
+  tb = body && T && !hraw
+  step(c)
+  if (tb) printf "%s", (c == "\n" ? c : " ")
+  else printf "%s", mask(c)
+}' <<<"$1"
 }
 
 # Bash's removal of unquoted backslashes over an already-masked space (quoted
@@ -557,7 +570,22 @@ decode_word() {
 #     and a body fed to a shell runs whole. Only an unquoted delimiter rewrites
 #     backticks. The terminator line is not blanked: an arithmetic `1<<X` that
 #     merely looks like a heredoc must not be able to hide a real `X` line.
+#   - except with T=1 (hd_text_ok: every heredoc of the text feeds a text
+#     sink), where a body line is spaces once it stops being a prefix of the
+#     delimiter. An unquoted body turns raw for good at its first backtick or
+#     `$(`, since those still run there. Accepted limit: a body written to a
+#     file that a later command runs (`cat > s.sh` then `bash s.sh`, a git hook
+#     path) is not followed.
 # Length-preserving, one pass, like mask_quotes.
+#
+# B=1 is hd_text_ok's first pass, never combined with T: every heredoc body
+# and its terminator line and comment text are spaces; a quoted character
+# (opening quote included) is `_` and a `$` in "…" stays, so a quoted
+# substitution in command position still reads as a word holding `$`. It ends
+# with a `!` line when it cannot vouch for a heredoc: a body still open, a
+# delimiter word holding a backtick, or one queued inside an open `$((`, `((`,
+# `${`, `$[` or `[` (ax counts these, erring toward open), where `<<` is
+# arithmetic or text and the "delimiter" may never match.
 #
 # W=1 (mask_cmd_wide) adds three readings on top, each of which could hide text
 # the W=0 reading shows — so rule 2 searches both, never the wide one alone:
@@ -581,10 +609,13 @@ decode_word() {
 #     space, so a dumper word right after a body code span (e.g. `then set
 #     `X`) reads as a command — an accepted over-scan.
 #
-# J=1 (mask_cmd_joined) is W=0 with no `#` comments and with backslash-newline
-# continuations joined (in awk_chars), searched beside the others. The comment
-# rule is a heuristic: the base reading is right for a real comment, J for a
-# misdetected one; a command mixing both is an accepted limit.
+# J=1 (mask_cmd_joined) is W=0 with backslash-newline continuations joined (in
+# awk_chars) and a comment only where `#` is the first non-blank of a line
+# outside every frame, paren and open expansion — unambiguous there, while a
+# line-start `#` inside `$((`/`${` is still data. Searched beside the others.
+# The word-start comment rule is a heuristic: the base reading is right for a
+# real comment, J for a misdetected one; a command mixing both is an accepted
+# limit.
 #
 # D=1 (dequote) is not a mask but bash's quote removal over the W=0 reading,
 # so the `-c` finder sees the words bash runs and shares this machine's span
@@ -600,17 +631,23 @@ decode_word() {
 # length-preserving, so K="k1 k2 …" (ascending) prints instead, one per line,
 # the raw index (feed count) of the character that produced each output index
 # — decode_word needs the raw offset — and stops reading after the last.
+#
+# Q=1 (mask_quotes on text holding `<<`) prints nothing itself: mask_quotes
+# wraps this machine (feed renamed step) and prints mask(c) once per
+# character, or a space for a T=1 body character, so a body apostrophe never
+# opens a quote in mask().
 # shellcheck disable=SC2016
 awk_mask_cmd='
 BEGIN {
   SQ = sprintf("%c", 39); DQ = "\""; BS = "\\"; BT = "`"
   HDSTOP = " \t\n;&|()<>"
   META = " \t\n\r" sprintf("%c%c", 11, 12) ";&|()<>"
-  sp = 0; pd = 0; hd_i = 0; hd_n = 0
+  sp = 0; pd = 0; hd_i = 0; hd_n = 0; ax = 0; bol = 1
   if (K != "") kc = split(K, ks, " ")
   kn = 1
 }
 function out(s, i) {
+  if (Q) return
   if (K == "") { printf "%s", s; return }
   on += length(s)
   while (kn <= kc && on > ks[kn] + 0) { printf "%d\n", i; kn++ }
@@ -660,7 +697,7 @@ function code(c,    d, o, n, u) {
   u = ud
   ud = 0
   if (u && c != SQ && c != DQ) out("$", ri - 1)
-  o = " "
+  o = B ? "_" : " "
   if (W == 1) {
     wo = opn
     opn = 0
@@ -684,19 +721,20 @@ function code(c,    d, o, n, u) {
       else o = dqc(c)
     }
   } else if (cm) {
-    o = c
+    o = (B && c != "\n") ? " " : c
     if (c == "\n") cm = 0
   } else if (q == SQ) {
-    if (c == SQ) { q = ""; if (D) o = "" }
+    if (c == SQ) { q = ""; if (D) o = ""; else if (B) o = " " }
     else if (D) o = dqc(c)
   } else if (q == "A") {
     if (c == BS) esc = 1
     else if (c == SQ) q = ""
     if (D) o = (q == "" ? "" : dqc(c))
+    else if (B && q == "") o = " "
   } else if (q == DQ) {
     if (D) o = dqc(c)
     if (c == BS) { esc = 1; if (D) o = "" }
-    else if (c == DQ) { q = ""; if (D) o = "" }
+    else if (c == DQ) { q = ""; if (D) o = ""; else if (B) o = " " }
     else if (d && c == "(") { push("(", DQ); o = "(" }
     else if (c == BT) {
       push(BT, DQ)
@@ -704,25 +742,32 @@ function code(c,    d, o, n, u) {
       if (W == 1) { slv[sp - 1] = 1; opn = 1 }
       else if (W == 2) { fr = 1; fb = 0 }
     }
-    else if (c == "$") dl = 1
+    else if (c == "$") { dl = 1; if (B) o = "$" }
+    else if (d && (c == "{" || c == "[")) axk[++ax] = c
+    else if (ax > 0 && (c == "}" || c == "]") && axk[ax] == (c == "}" ? "{" : "[")) ax--
   } else {
     o = c
     if (c == BS) {
       esc = 1
       if (D) o = ""
       else if (sp > 0 && (sk[sp - 1] == BT || sk[sp - 1] == "E")) o = " "
-    } else if (c == SQ) { q = (d ? "A" : SQ); o = (D ? "" : " ") }
-    else if (c == DQ) { q = DQ; o = (D ? "" : " ") }
+    } else if (c == SQ) { q = (d ? "A" : SQ); o = (D ? "" : B ? "_" : " ") }
+    else if (c == DQ) { q = DQ; o = (D ? "" : B ? "_" : " ") }
     else if (c == BT) {
       if (W == 1) o = tick(n)
       else if (W == 2) { push(BT, ""); fr = 1; fb = 0; o = "(" }
       else if (sp > 0 && sk[sp - 1] == BT) { pop(); o = ")" }
       else { push(BT, ""); o = "(" }
-    } else if (c == "(") pd++
-    else if (c == ")") {
+    } else if (c == "(") {
+      if (prev == "(") axk[++ax] = c
+      pd++
+    } else if (c == ")") {
+      if (ax > 0 && axk[ax] == "(" && prev == ")") ax--
       if (pd > 0) pd--
       else if (sp > 0 && sk[sp - 1] == "(") pop()
-    } else if (c == "#" && !J && (wordstart(prev) || (W == 1 && wo))) cm = 1
+    } else if (c == "[" || (d && c == "{")) axk[++ax] = c
+    else if (ax > 0 && (c == "]" || c == "}") && axk[ax] == (c == "}" ? "{" : "[")) ax--
+    else if (c == "#" && (J ? bol && sp == 0 && pd == 0 && ax == 0 : wordstart(prev) || (W == 1 && wo))) cm = 1
     else if (c == "$") {
       dl = 1
       if (D) { ud = 1; o = "" }
@@ -736,9 +781,13 @@ function enterbody() {
   bok = 1
   bpos = 0
   bbt = 0
+  hraw = 0
+  bpc = ""
 }
-function bodyfeed(c,    w, term) {
+function bodyfeed(c,    w, term, pc) {
   w = hd_w[hd_i]
+  pc = bpc
+  bpc = c
   if (c == "\n") {
     out("\n", ri)
     term = (bok && bpos == length(w))
@@ -748,6 +797,7 @@ function bodyfeed(c,    w, term) {
     if (term) {
       body = 0
       prev = "\n"
+      bol = 1
       if (hd_i < hd_n) enterbody()
     }
     return
@@ -756,6 +806,11 @@ function bodyfeed(c,    w, term) {
     if (hd_d[hd_i] && bpos == 0 && c == "\t") { }
     else if (bpos < length(w) && c == substr(w, bpos + 1, 1)) bpos++
     else bok = 0
+  }
+  if (B) { out(" ", ri); return }
+  if (T && !hraw) {
+    if (!hd_q[hd_i] && (c == BT || (c == "(" && pc == "$"))) hraw = 1
+    else { out(bok ? c : " ", ri); return }
   }
   if (W == 2 && (c == BT || c == BS)) { printf "%s", (c == BT ? ";" : " "); return }
   if (c == BT && (W || !hd_q[hd_i])) {
@@ -769,6 +824,13 @@ function feed(c,    arm, wasesc) {
   ri = nf++
   if (fr) { framefeed(c); return }
   if (body) { bodyfeed(c); return }
+  if (hs == 2) {
+    if (c == " " || c == "\t") { out(c, ri); return }
+    if (c == "-" && !hdash) { hdash = 1; out(" ", ri); return }
+    if (c == "<") { hs = 0; out("<", ri); prev = c; return }
+    if (index(HDSTOP, c)) hs = 0
+    else { hs = 3; hw = ""; hq = ""; hbs = 0; hquo = 0; hbt = 0; hspan = 0 }
+  }
   if (hs == 3) {
     if (hbt) { if (frameout(c)) hbt = 0; return }
     if (hbs) { hbs = 0; hw = hw c; out(" ", ri); return }
@@ -788,14 +850,9 @@ function feed(c,    arm, wasesc) {
       hd_w[hd_n] = hspan ? "\n" : hw
       hd_d[hd_n] = hdash
       hd_q[hd_n] = hquo
+      if (ax > 0 || index(hw, BT)) hbang = 1
     }
     hs = 0
-  } else if (hs == 2) {
-    if (c == " " || c == "\t") { out(c, ri); return }
-    if (c == "-" && !hdash) { hdash = 1; out(" ", ri); return }
-    if (c == "<") { hs = 0; out("<", ri); prev = c; return }
-    if (index(HDSTOP, c)) hs = 0
-    else { hs = 3; hw = ""; hq = ""; hbs = 0; hquo = 0; hbt = 0; hspan = 0; nf--; feed(c); return }
   }
   arm = (q == "" && !esc && !cm)
   wasesc = esc
@@ -806,35 +863,100 @@ function feed(c,    arm, wasesc) {
   } else if (hs == 1) hs = 0
   if (c == "\n" && q == "" && !wasesc && hd_i < hd_n) enterbody()
   prev = c
+  bol = (c == "\n" || (bol && (c == " " || c == "\t")))
 }
 END {
+  if (B) {
+    if ((body && !(bok && bpos == length(hd_w[hd_i]))) || hd_i < hd_n || hbang) printf "\n!"
+    exit
+  }
   if (!D || hit) exit
   if (ud) out("$", ri)
   else if (esc && (q == "" || q == DQ)) out(BS, ri)
 }'
 
+# The text-sink test over the B=1 view: prints 1 when every stage (split on
+# `; & | ( )`, `>&`/`<&` kept whole) runs a command from the sink set below,
+# after leading NAME=… assignments and the lead words, the command word cut at
+# its first redirect and reduced to its basename. 0 on a `!` line (pass 1 could
+# not model a heredoc), a command word holding `$` (a substitution's output
+# runs), an empty command word with text left, `git -c`, `gh alias`, an
+# assignment before a command word (`GIT_EDITOR=sh git commit`), or a stage with no
+# command that opens a subshell or backtick at a word start (its output runs).
+# Shells, eval, source, xargs and every compound keyword are missing from the
+# set on purpose: a heredoc reaching them may run.
+# shellcheck disable=SC2016
+awk_sinks='
+BEGIN {
+  ok = 1
+  n = split("cat tee printf echo gh git patch sponge sort tr wc head tail grep rg jq base64 diff cmp read mapfile readarray cd ls mkdir rm mv cp touch chmod true : test [", a, " ")
+  for (i = 1; i <= n; i++) SINK[a[i]] = 1
+  n = split("sudo time nice nohup exec command then do else ! {", a, " ")
+  for (i = 1; i <= n; i++) LEAD[a[i]] = 1
+}
+$0 == "!" { ok = 0 }
+ok {
+  t = $0
+  gsub(/>&/, ">\001", t); gsub(/<&/, "<\001", t); gsub(/\(/, "\002(", t)
+  ns = split(t, S, /[;&|()]/)
+  for (s = 1; s <= ns && ok; s++) stage(S[s])
+}
+function stage(g,    fo, nw, j, k, cw, as) {
+  fo = (substr(g, length(g)) == "\002")
+  if (fo) g = substr(g, 1, length(g) - 1)
+  nw = split(g, Wd)
+  as = 0
+  for (j = 1; j <= nw && ((Wd[j] in LEAD) || Wd[j] ~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/); j++) if (!(Wd[j] in LEAD)) as = 1
+  if (j > nw) {
+    if (fo && (g == "" || g ~ /[ \t]$/)) ok = 0
+    return
+  }
+  if (as) { ok = 0; return }
+  cw = Wd[j]
+  sub(/[<>].*/, "", cw)
+  if (cw == "" || cw ~ /\$/) { ok = 0; return }
+  sub(/.*\//, "", cw)
+  if (!(cw in SINK)) { ok = 0; return }
+  if (cw == "git") for (k = j + 1; k <= nw; k++) if (Wd[k] == "-c") ok = 0
+  if (cw == "gh" && Wd[j + 1] == "alias") ok = 0
+}
+END { print ok }'
+
+# T for one text: 1 when its heredoc bodies are text (see the masker), so
+# every view of that text shares one verdict. Text without `<<` skips both
+# passes.
+hd_text_ok() {
+  local view
+  if [[ $1 != *'<<'* ]]; then
+    echo 0
+    return
+  fi
+  view=$(awk -v W=0 -v B=1 "$awk_mask_cmd$awk_chars" <<<"$1")
+  awk "$awk_sinks" <<<"$view"
+}
+
 mask_cmd() {
-  awk -v W=0 "$awk_mask_cmd$awk_chars" <<<"$1"
+  awk -v W=0 -v T="$2" "$awk_mask_cmd$awk_chars" <<<"$1"
 }
 
 mask_cmd_wide() {
-  awk -v W=1 "$awk_mask_cmd$awk_chars" <<<"$1"
+  awk -v W=1 -v T="$2" "$awk_mask_cmd$awk_chars" <<<"$1"
 }
 
 mask_cmd_frames() {
-  awk -v W=2 "$awk_mask_cmd$awk_chars" <<<"$1"
+  awk -v W=2 -v T="$2" "$awk_mask_cmd$awk_chars" <<<"$1"
 }
 
 mask_cmd_joined() {
-  awk -v W=0 -v J=1 "$awk_mask_cmd$awk_chars" <<<"$1"
+  awk -v W=0 -v J=1 -v T="$2" "$awk_mask_cmd$awk_chars" <<<"$1"
 }
 
 dequote() {
-  awk -v W=0 -v D=1 "$awk_mask_cmd$awk_chars" <<<"$1"
+  awk -v W=0 -v D=1 -v T="$2" "$awk_mask_cmd$awk_chars" <<<"$1"
 }
 
 dequote_index() {
-  awk -v W=0 -v D=1 -v K="$2" "$awk_mask_cmd$awk_chars" <<<"$1"
+  awk -v W=0 -v D=1 -v K="$2" -v T="$3" "$awk_mask_cmd$awk_chars" <<<"$1"
 }
 
 # Credential-file reads (rule 3): a credential file named anywhere in the
@@ -1127,22 +1249,28 @@ shell)
   #    ends it early); every match end maps back to raw text in one more pass.
   #    The two sets of raw body starts merge in order, a body both found
   #    counted once, under the shared match cap.
+  #    Each text's heredoc verdict (hd_text_ok) rides beside it (worklist_t,
+  #    sub_t) into every view of that text.
   raw_spaces=("$command")
-  search_spaces=("$(mask_cmd "$command")" "$(mask_quotes "$command")")
+  command_t=$(hd_text_ok "$command")
+  search_spaces=("$(mask_cmd "$command" "$command_t")" "$(mask_quotes "$command" "$command_t")")
   fish_spaces=()
   subs=()
+  sub_t=()
   sub_fish=()
   dequoted_views=()
   dequoted_fish_views=()
   word_re='^[^[:space:];&|()<>]*'
   worklist=("$command")
   worklist_fish=(0)
+  worklist_t=("$command_t")
   wi=0
   matches=0
   option_cap=0
   while ((wi < ${#worklist[@]})) && ((matches < 20)); do
     cur=${worklist[wi]}
-    dq=$(dequote "$cur")
+    cur_t=${worklist_t[wi]}
+    dq=$(dequote "$cur" "$cur_t")
     dequoted_views+=("$dq")
     if ((worklist_fish[wi])); then dequoted_fish_views+=("$dq"); fi
     if [[ $cur =~ $shell_c_cap_pre_raw_re || $cur =~ $shell_c_cap_post_raw_re || $dq =~ $shell_c_cap_pre_re || $dq =~ $shell_c_cap_post_re ]]; then option_cap=1; fi
@@ -1184,7 +1312,7 @@ shell)
       # Captured before mapfile: inside `<<<"$(…)"` a failed pass escapes
       # errexit and reads as one empty start — an allow. Bare errexit on the
       # assignment would exit silently, so a failure empties idx instead.
-      idx=$(dequote_index "$cur" "${ends[*]}") || idx=
+      idx=$(dequote_index "$cur" "${ends[*]}" "$cur_t") || idx=
       mapfile -t dq_starts <<<"$idx"
       if [[ -z $idx ]] || ((${#dq_starts[@]} != ${#ends[@]})); then
         echo "secret-read-guard: index map failed; guard NOT enforcing" >&2
@@ -1212,11 +1340,13 @@ shell)
       # fails closed.
       if [[ -n $frame && $frame != "${readings[0]}" ]]; then readings+=("$frame"); fi
       for sub in "${readings[@]}"; do
-        masked_sub=$(mask_cmd "$sub")
-        quoted_sub=$(mask_quotes "$sub")
+        sub_text=$(hd_text_ok "$sub")
+        masked_sub=$(mask_cmd "$sub" "$sub_text")
+        quoted_sub=$(mask_quotes "$sub" "$sub_text")
         raw_spaces+=("$sub")
         search_spaces+=("$masked_sub" "$quoted_sub")
         subs+=("$sub")
+        sub_t+=("$sub_text")
         if [[ $interp == fish ]]; then
           fish_spaces+=("$masked_sub" "$quoted_sub")
           sub_fish+=(1)
@@ -1225,6 +1355,7 @@ shell)
         fi
         worklist+=("$sub")
         worklist_fish+=("${sub_fish[-1]}")
+        worklist_t+=("$sub_text")
       done
       matches=$((matches + 1))
     done
@@ -1241,10 +1372,10 @@ shell)
 
   # The wide masker adds to the base one and never replaces it; it runs last
   # because it costs one more awk pass per space.
-  wide_spaces=("$(mask_cmd_wide "$command")")
+  wide_spaces=("$(mask_cmd_wide "$command" "$command_t")")
   wide_fish_spaces=()
   for ((i = 0; i < ${#subs[@]}; i++)); do
-    wide_sub=$(mask_cmd_wide "${subs[i]}")
+    wide_sub=$(mask_cmd_wide "${subs[i]}" "${sub_t[i]}")
     wide_spaces+=("$wide_sub")
     if ((sub_fish[i])); then wide_fish_spaces+=("$wide_sub"); fi
   done
@@ -1290,10 +1421,10 @@ shell)
   # own, so the order only decides which deny fires.
   frame_spaces=()
   frame_fish_spaces=()
-  if [[ $command == *'`'* && $command == *[\\\'\"#\<]* ]]; then frame_spaces+=("$(mask_cmd_frames "$command")"); fi
+  if [[ $command == *'`'* && $command == *[\\\'\"#\<]* ]]; then frame_spaces+=("$(mask_cmd_frames "$command" "$command_t")"); fi
   for ((i = 0; i < ${#subs[@]}; i++)); do
     [[ ${subs[i]} == *'`'* && ${subs[i]} == *[\\\'\"#\<]* ]] || continue
-    frame_sub=$(mask_cmd_frames "${subs[i]}")
+    frame_sub=$(mask_cmd_frames "${subs[i]}" "${sub_t[i]}")
     frame_spaces+=("$frame_sub")
     if ((sub_fish[i])); then frame_fish_spaces+=("$frame_sub"); fi
   done
@@ -1303,10 +1434,10 @@ shell)
   # The joined reading differs from W=0 only at a `#` or a backslash-newline.
   joined_spaces=()
   joined_fish_spaces=()
-  if [[ $command == *'#'* || $command == *\\"$nl"* ]]; then joined_spaces+=("$(mask_cmd_joined "$command")"); fi
+  if [[ $command == *'#'* || $command == *\\"$nl"* ]]; then joined_spaces+=("$(mask_cmd_joined "$command" "$command_t")"); fi
   for ((i = 0; i < ${#subs[@]}; i++)); do
     [[ ${subs[i]} == *'#'* || ${subs[i]} == *\\"$nl"* ]] || continue
-    joined_sub=$(mask_cmd_joined "${subs[i]}")
+    joined_sub=$(mask_cmd_joined "${subs[i]}" "${sub_t[i]}")
     joined_spaces+=("$joined_sub")
     if ((sub_fish[i])); then joined_fish_spaces+=("$joined_sub"); fi
   done

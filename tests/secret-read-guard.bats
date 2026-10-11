@@ -671,6 +671,19 @@ assert_allow_relative() {
 }
 
 # bats test_tags=timing
+@test "secret-read-guard: #992 a 16 KB line of heredoc markers into cat allows, and a dump after it denies, in under 3.5 s" {
+  local line='cat' bodies='' cmd i
+  for i in $(seq 1 2700); do
+    line+=" <<'E$i'"
+    bodies+=$'\n'"env"$'\n'"E$i"
+  done
+  cmd="$line$bodies"
+  [ "${#line}" -ge 16384 ]
+  assert_allow_within 3500 "$(claude_bash "$cmd")"
+  assert_deny_within 3500 "$(claude_bash "$cmd"$'\n'"env")"
+}
+
+# bats test_tags=timing
 @test "secret-read-guard: 2000 nested command substitutions ahead of a credential read deny in under 3.5 s" {
   local opens closes
   opens=$(printf '$(%.0s' $(seq 1 2000))
@@ -2173,6 +2186,8 @@ assert_allow_within_each_awk() {
   allow_both $'cat <<\'EOF\'\ndon\'t\nenv\nEOF'
   allow_both $'gh pr create --body-file - <<\'EOF\'\nfix: don\'t\nenv\nEOF'
   allow_both $'cat <<\'EOF\'\n`env`\nEOF'
+  allow_both $'msg=$(cat <<\'EOF\'\nfix: env\nenv\nEOF\n)'
+  allow_both $'git commit -F - <<\'EOF\' 2>&1\nenv\nEOF'
 }
 
 @test "secret-read-guard: #992 still denies heredoc bodies that reach a shell or are not heredocs" {
@@ -2197,6 +2212,8 @@ assert_allow_within_each_awk() {
   deny_both $'"$(cat <<\'EOF\'\nenv\nEOF\n)"'
   deny_both $'sudo "$(cat <<\'EOF\'\nenv\nEOF\n)"'
   deny_both $'x= "$(cat <<\'EOF\'\nenv\nEOF\n)"'
+  deny_both $'GIT_EDITOR=sh git commit -e -F - <<\'EOF\'\nenv\nEOF'
+  deny_both $'gh alias import - <<\'EOF\'\nenv\nEOF'
   deny_both $'`cat <<\'EOF\'\nenv\nEOF\n`'
   deny_both $'echo ${x:-<<b}\nenv'
   deny_both $'echo ${a[1<<2]}\nenv'
