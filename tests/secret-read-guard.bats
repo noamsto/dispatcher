@@ -2249,6 +2249,21 @@ assert_allow_within_each_awk() {
   deny_both $'jq -n -f /dev/stdin <<\'EOF\'\nenv\nEOF'
 }
 
+@test "secret-read-guard: #992 denies heredocs to a path-qualified sink name or a mapfile callback" {
+  deny_both $'cp /bin/bash /tmp/cat; /tmp/cat <<EOF\nenv\nEOF'
+  deny_both $'/tmp/cat <<\'EOF\'\nenv\nEOF'
+  deny_both $'/usr/bin/cat <<\'EOF\'\nenv\nEOF'
+  deny_both $'mapfile -t -C eval -c 1 <<EOF\n; env\nEOF'
+  deny_both $'readarray -t -C eval -c 1 <<EOF\n; env\nEOF'
+  deny_both $'mapfile -C eval <<\'EOF\'\n; env\nEOF'
+  local p
+  for p in command builtin time exec nice env nohup sudo 'stdbuf -o0' 'timeout 5' '{'; do
+    deny_both "$p"$' mapfile -t -C eval -c 1 <<EOF\n; env\nEOF'
+    deny_both "$p"$' readarray -t -C eval -c 1 <<EOF\n; env\nEOF'
+    deny_both "$p"$' /tmp/cat <<EOF\nenv\nEOF'
+  done
+}
+
 @test "secret-read-guard: rule 2 — denies a dumper after a separator inside an inline comment (accepted over-deny)" {
   deny_cmd 'ls # then; env'
 }

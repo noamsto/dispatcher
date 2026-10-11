@@ -886,23 +886,27 @@ END {
 # The text-sink test over the B=1 view: prints 1 when every stage (split on
 # `; & | ( )`, `>&`/`<&` kept whole) runs a command from the sink set below,
 # after leading NAME=… assignments and the lead words, the command word cut at
-# its first redirect and reduced to its basename. 0 on no input, a `!` line
-# (pass 1 could not model a heredoc), a command word holding `$` (a
-# substitution's output runs) or a relative `/` (`./cat`), an empty command
+# its first redirect. 0 on no input, a `!` line (pass 1 could not model a
+# heredoc), a command word holding `$` (a substitution's output runs) or any
+# `/` (`./cat`, `/tmp/cat`: a path can name a planted shell), an empty command
 # word with text left, git without a GITSUB subcommand right after it (options,
 # aliases, `config`, `submodule foreach` …), `git -c`, `gh alias`, an
-# assignment before a command word (`GIT_EDITOR=sh git commit`), or a stage with no
-# command that opens a subshell or backtick at a word start (its output runs).
-# Shells, eval, source, xargs, jq (`-f /dev/stdin` runs a program), rg (`--pre`),
-# sort (`--compress-program`), patch (ed-style diffs reach ed, whose `!` runs
-# shell) and every compound keyword are missing from the set on purpose: a
-# heredoc reaching them may run. A word holding `hooks/` ends the check too: a
-# body written into a git hook runs on the next commit.
+# assignment before a command word (`GIT_EDITOR=sh git commit`), or a stage
+# with no command that opens a subshell or backtick at a word start (its output
+# runs). Shells, eval, source, xargs, jq (`-f /dev/stdin` runs a program), rg
+# (`--pre`), sort (`--compress-program`), patch (ed-style diffs reach ed, whose
+# `!` runs shell), mapfile and readarray (`-C` runs a callback per line) and
+# every compound keyword are missing from the set on purpose: a heredoc
+# reaching them may run. A lead word only passes the next word on to this same
+# test, so a wrapped command is held to the set too; a wrapper outside LEAD
+# (builtin, env, stdbuf, timeout) or a lead option word fails closed. A word
+# holding `hooks/` ends the check too: a body written into a git hook runs on
+# the next commit.
 # shellcheck disable=SC2016
 awk_sinks='
 BEGIN {
   ok = 1
-  n = split("cat tee printf echo gh git sponge tr wc head tail grep base64 diff cmp read mapfile readarray cd ls mkdir rm mv cp touch chmod true : test [", a, " ")
+  n = split("cat tee printf echo gh git sponge tr wc head tail grep base64 diff cmp read cd ls mkdir rm mv cp touch chmod true : test [", a, " ")
   for (i = 1; i <= n; i++) SINK[a[i]] = 1
   n = split("commit tag notes apply am hash-object check-ignore check-attr mktag mktree", a, " ")
   for (i = 1; i <= n; i++) GITSUB[a[i]] = 1
@@ -930,8 +934,7 @@ function stage(g,    fo, nw, j, k, cw, as, sc) {
   if (as) { ok = 0; return }
   cw = Wd[j]
   sub(/[<>].*/, "", cw)
-  if (cw == "" || cw ~ /\$/ || cw ~ /^[^\/]+\//) { ok = 0; return }
-  sub(/.*\//, "", cw)
+  if (cw == "" || cw ~ /\$/ || cw ~ /\//) { ok = 0; return }
   if (!(cw in SINK)) { ok = 0; return }
   if (cw == "git") {
     sc = Wd[j + 1]
