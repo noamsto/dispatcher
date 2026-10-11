@@ -104,26 +104,6 @@ func TestD6UnreadHelperFailureWorking(t *testing.T) {
 	}
 }
 
-// A nudge helper that failed to run is a plain refusal, whatever it printed:
-// its output is not the op's, so it never latches the anchor stop.
-func TestNudgeHelperFailure(t *testing.T) {
-	for _, rc := range helperFailures {
-		t.Run(strconv.Itoa(rc), func(t *testing.T) {
-			s := &d6Script{nudgeOut: "anchor: pane %1 runs bash, not claude", failNudge: rc}
-			h, f, w := d6Watch(t, s)
-			s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
-			pdOK(t, w, 0, 0, w.d6)
-			if w.pd.nudgeOff || w.pd.nudgedTS != 0 {
-				t.Errorf("nudgeOff %v nudgedTS %d, want unchanged", w.pd.nudgeOff, w.pd.nudgedTS)
-			}
-			if countCalls(f, "unread ") != 2 {
-				t.Errorf("verdict skipped: %q", f.shCalls)
-			}
-			wantRows(t, h)
-		})
-	}
-}
-
 // A release helper that failed to run is retried like a refused release.
 func TestReleaseHelperFailureKeepsWatching(t *testing.T) {
 	for _, rc := range helperFailures {

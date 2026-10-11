@@ -93,6 +93,21 @@ func runSeam(ctx context.Context, cmd string) (string, int) {
 	return run(ctx, nil, "bash", "-c", cmd)
 }
 
+// ShOffset is what crew.sh's `--sh` branch adds to every op's verdict, so the child's
+// own failures — the preamble's or a usage refusal (1), a missing file (127), a signal —
+// can never read as one.
+const ShOffset = 10
+
+// ShVerdict decodes an `--sh` exit status: ok=false means the helper failed to run, so
+// neither its status nor its output is the op's. 126 and up are the shell's own
+// not-executable, not-found and 128+signo statuses.
+func ShVerdict(rc int) (int, bool) {
+	if rc < ShOffset || rc >= 126 {
+		return 0, false
+	}
+	return rc - ShOffset, true
+}
+
 // Default is the production probe set for one pane.
 func Default(e Env) Probes {
 	var (

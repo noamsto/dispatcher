@@ -5,7 +5,8 @@ Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 `await`, `retro`, `rate` (both modes: the per-repo sweep of #895 and the
 `--report` rollup of #890), `reply`, `watch`, `resolve-target`, `where`,
 `stall-watch` (#832), `stream`, `adopt` (#920), `pr-watch` (#934), `roster-render`
-(#935), `fleet` (#926), and `status`, `msg`, `register` and `deregister` (#945). Each slice must leave every bats file green;
+(#935), `fleet` (#926), `status`, `msg`, `register` and `deregister` (#945), and `nudge`
+(#939). Each slice must leave every bats file green;
 tests may be adapted only where the Go design changes what they can observe (the
 output contract below), with each edit justified.
 
@@ -48,13 +49,14 @@ output contract below), with each edit justified.
   `Options.CrewClock`.
 - `crew/internal/marks`: the delivered-marks file of #290 — `_await_state`'s
   path, `_await_marks`' read and `_await_record`'s atomic merge, the two jq
-  programs embedded verbatim. `nudge` and, through `--sh unread`, `stall-watch`
-  still read the same file from bash, so the name and the content are the
-  contract.
+  programs embedded verbatim. `stall-watch` and `nudge` still read the same file
+  from bash, both through `stall-watch --sh unread`, so the name and the content
+  are the contract.
 - `crew/internal/clock`: the `$CREW_CLOCK` pair — `_clock_now`, `_clock_now_f`,
   `_clock_now_ms` and `_clock_sleep` — shared by `hold` (which had the first two
-  privately until #884) and `await`. With no `CREW_CLOCK` these are `date +%s`,
-  jq's `now`, jq's `now*1000|floor` and the real `sleep` (same argv, so a
+  privately until #884), `await`, `stall-watch` and `nudge`. With no `CREW_CLOCK`
+  these are `date +%s`, jq's `now`, jq's `now*1000|floor` and the real `sleep`
+  (same argv, so a
   rejected interval costs coreutils' own message and status, which is what
   killed the arm under `set -e`).
 - `crew/internal/lock`: crew.sh's `_lock_acquire`/`_lock_release` protocol —
@@ -97,7 +99,10 @@ output contract below), with each edit justified.
   `internal/lock` (#901): mkdir, `pid` file, bare `kill -0` liveness, kept
   byte-compatible so an older installed `crew` and the autosweep spawner
   interoperate; it is held for the two store windows and never across a gh
-  call, and released on every exit path while held. The batch append is one
+  call, and released on every exit path while held. `nudge --wait` holds
+  `<dir>/nudge-wait/<sid>.<cksum>.d` for its whole park (one waiter per lead
+  session), keeping the bash helper's name, `pid` file and reclaim so a call on
+  an older installed `crew` joins the same wait. The batch append is one
   `O_APPEND` write, the same single-write guarantee the arm's `dd bs=1048576`
   gave.
 - `crew/internal/reply`: the arm of #893, a writer like `hold` but with no fold
@@ -106,8 +111,8 @@ output contract below), with each edit justified.
   dropping the ones whose registered pid is known-dead by the same three-state
   read `crews` prints (`crews.PidAlive`). Its row is the arm's six keys in order,
   and it needs no byte-exact body: `body` is the caller's text, so `jq -S` does
-  excuse the key order. `bus.IsSessionID` is `_is_session_id`'s Go twin, the one
-  `inbox` and `await` now share.
+  excuse the key order. `bus.IsSessionID` is what `_is_session_id` was, the one
+  `inbox`, `await` and `nudge` share.
 - `crew/internal/watch`: the arm of #901, the second poller. Its fold is the
   arm's jq through jqrun (`watch.jq`), and it is the port with the most
   cross-language surface: `crew stream` re-enters this command as its child, so
@@ -164,8 +169,12 @@ output contract below), with each edit justified.
   permission, quota, background-wait, meter and sub-row shapes, the claude and
   pi input boxes) and `_pane_idle_reason`. Every function takes the sampler's
   stdout with trailing newlines stripped and the engine as an argument, where
-  bash read the global `$engine`. The bash originals stay (see below); the
-  translation rules are what keep the two equal:
+  bash read the global `$engine`. `BoxText`, `Tail` and `HasSpinnerRow` joined
+  them with `nudge`, on the same box scan (`scanBox`) `BoxRows` already used, so
+  the box's bounds live in one place; `BoxText` differs from `BoxRows` in that an
+  empty box is a result rather than a failure, which is what the caller's "is the
+  box empty?" needs. The bash originals stay (see below); the translation rules
+  are what keep the two equal:
   - POSIX classes follow glibc's `C.UTF-8`, the arm's runtime, not RE2's ASCII
     ones. `[:space:]` is `\t\n\v\f\r`, space, U+1680, U+2000–2006, U+2008–200A,
     U+2028, U+2029, U+205F and U+3000 — NBSP, U+2007 and U+202F are _not_ space,
@@ -229,9 +238,13 @@ output contract below), with each edit justified.
   ignore it inherits. A probe that returns into a cancelled context was cut
   short, and its failure value (empty text, a dead pane) is no evidence: the
   watch exits 128+signo without posting, as the arm died on the signal. The
-  `--sh nudge`, `--sh continue` and `--sh release` ops alone run on through a signal (for at
-  most 2 minutes), as the arm's `$(…)` child outlived it, so a typed nudge or
-  continue line or killed window still gets its bus row. Every append is one `O_APPEND` write,
+  `--sh release` op and the watchdog's own nudge and continue runs run on through a
+  signal (for at most 2 minutes), as the arm's `$(…)` child outlived it, so a typed
+  nudge or continue line or killed window still gets its bus row. D6 and D9 call
+  `nudge.Pane` through `Options.Nudge` on a `context.WithoutCancel` copy with that
+  same bound: the watchdog and `crew nudge` are one implementation of the decision,
+  and a line a nudge is mid-way through typing is not cancelled by the tick ending.
+  Every append is one `O_APPEND` write,
   so a kill cannot leave a torn row; the `refresh-at` stamp and the clock file
   keep tmp+rename. A failed bus write exits 1 where the arm's `set -e` did (a
   `failed` or clearance post); `_post_blocked` ran only in `if` context, so
@@ -248,7 +261,39 @@ output contract below), with each edit justified.
   `set-option -p`, `ps -eo …`, `nproc` once (`1` on failure) and
   `env -u CREW_WORKER_ID -u CREW_ID timeout 120 refresh-budget`. Every child runs
   in its own process group, killed whole on cancel, so a `sleep` under a seam
-  dies with its parent. `Sh` is the `--sh` runner (see Delegation).
+  dies with its parent. `Sh` is the `--sh` runner (see Delegation), and
+  `ShOffset`/`ShVerdict` are its rc−10 contract, shared with `nudge`'s one call.
+- `crew/internal/nudge`: the `crew nudge` arm of #939 — resolve a dispatcher's
+  target to one live lead pane and type the package's own fixed line into it,
+  once, or wait for the lead to come idle. `Pane` is the whole decision — the
+  frame, anchor and session gates, the keystroke, the confirm, and the one row —
+  and it is the only implementation of it: `stall-watch`'s D6 auto-nudge and D9
+  auto-continue both call it through `Options.Nudge`, and two copies could
+  disagree about whether a pane may be typed into, where the second opinion is
+  the expensive one. D9 types the package's other constant, `ContinueLine`, with
+  a `msg_ts` of 0 so an auto-continue never reads as covering a directive; both
+  bash entry points it used to have (`_nudge_pane`, `stall-watch --sh continue`)
+  are gone with the port. Nothing about the target is ever typed: the text is a
+  constant, and the pane comes only from the window's `@crew_*` stamps.
+  The outcome is four answers, not a boolean — accepted (0), refused before
+  typing (2), typed-but-not-accepted (3, in three flavours: `held`,
+  `unconfirmed`, `unknown`) and a failure (1) — and the three typed flavours all
+  say _never re-typed, a human must clear it (crew where)_, because a second
+  Enter would submit whatever the lead is holding. Only `send-keys -l` and one
+  `send-keys Enter` touch the pane, and `Enter` is never sent when the box never
+  showed the line.
+  The clock split is the row contract: the `nudge` row's `ts` is jq's
+  `now*1000|floor` (`Clock.RealMS`), the `nudge_wait` rows' is `_clock_now_ms`
+  (`Clock.NowMS`, so `$CREW_CLOCK` moves them and the loop's waits), and `rc`
+  exists only once it is a number.
+  `already.jq` and `joined.jq` are the wait loop's two folds, verbatim but for the
+  documented jqrun patches; the engine/window/pane/codename filtering is Go, the
+  two numeric compares being the only reason a fold is a fold. The pane's captures
+  go through `stall/probe`'s seams (`CREW_STALL_SAMPLE_CMD`, `_COLOR_CMD`), which
+  are `_pane_capture`'s here: a bats row scripts one capture per call, for the
+  watchdog and the command alike, and tmux stays a subprocess with the arm's argv
+  because that stub counts them. The one helper it does not copy is
+  `_unread_scan`, reached through `stall-watch --sh unread` (see Delegation).
 - `crew/internal/stream`: the arm of #914, the port that owns a process group.
   It is the only one that never exits on its own, so it writes its protocol lines
   straight to stdout — a buffered line would wait for a batch that may never come.
@@ -389,7 +434,7 @@ stall-watch)
   ;;
 ```
 
-The helpers the loop needs (`_release_windows`, `_nudge_pane`, `_unread_scan`,
+The helpers the loop needs (`_release_windows`, `_unread_scan`,
 budget-gate.sh, local-models.sh) have other bash callers, so Go calls back
 instead of copying them: `CREW_SH stall-watch --sh <op> …` run directly when
 `$CREW_SH` is executable (the Nix-built `crew`, which carries its pinned bash
@@ -406,23 +451,23 @@ as a helper that failed to run. The environment is inherited; Go strips
 trailing newlines from stdout. An unknown op or budget predicate is one `crew:
 stall-watch: unknown --sh …` line, exit 1.
 
-| op            | argv after `--sh <op>`                                        | stdout                                            | verdict (exit − 10)                                                  | helper failed                      |
-| ------------- | ------------------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------- |
-| `release`     | `<branch> <session\|-> <state> <ts_ms> <grace>`               | none                                              | 3 keep watching; else exit 0                                         | keep watching, as 3                |
-| `nudge`       | `<pane> <engine> <sid> <crew> <msg_ts>`                       | one line                                          | 0 ok; 2 refused (`anchor:` turns nudging off); 3 typed, not accepted | a refusal; never latches `anchor:` |
-| `continue`    | `<pane> <engine> <sid> <crew>`                                | one line                                          | as `nudge`: 0 ok; 2 refused; 3 typed, not accepted                   | a refusal; never latches `anchor:` |
-| `unread`      | `<crew> <branch> <me> <from_id> <t0_ms> <oldest\|dispatcher>` | `<ts> <dispatcher\|role>`, `<min> <max>` or empty | 0                                                                    | D6 skips the tick's verdict        |
-| `budget`      | `<windows\|limit> <cache> <engine> <now>`                     | `_budget_*`'s TSV                                 | 0 hit, 1 clear, 2 can't tell                                         | can't tell (2)                     |
-| `local-model` | `<model>`                                                     | non-empty iff the model is local                  | 0                                                                    | D8 stays on                        |
+| op            | argv after `--sh <op>`                                        | stdout                                            | verdict (exit − 10)          | helper failed                                                                  |
+| ------------- | ------------------------------------------------------------- | ------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------ |
+| `release`     | `<branch> <session\|-> <state> <ts_ms> <grace>`               | none                                              | 3 keep watching; else exit 0 | keep watching, as 3                                                            |
+| `unread`      | `<crew> <branch> <me> <from_id> <t0_ms> <oldest\|dispatcher>` | `<ts> <dispatcher\|role>`, `<min> <max>` or empty | 0                            | D6 skips the tick's verdict; `nudge` fails (1), never refuses as an empty scan |
+| `budget`      | `<windows\|limit> <cache> <engine> <now>`                     | `_budget_*`'s TSV                                 | 0 hit, 1 clear, 2 can't tell | can't tell (2)                                                                 |
+| `local-model` | `<model>`                                                     | non-empty iff the model is local                  | 0                            | D8 stays on                                                                    |
 
 The op supplies what the arm supplied itself: `release` appends the empty
-dry-run argument to `_release_windows` (after no-op `say`/`note`), and `nudge`
-inserts the literal `watchdog` actor before the message timestamp. `continue`
-inserts the same actor and a msg_ts of 0 and types a constant line; it shares
-`_nudge_pane`, so it moves with `nudge`'s port. `budget` and
+dry-run argument to `_release_windows` (after no-op `say`/`note`). `budget` and
 `local-model` source `${BUDGET_GATE_LIB:-@budgetGateLib@}` and
 `${LOCAL_MODELS_LIB:-@localModelsLib@}`; `local-model` also runs
 `${DISPATCH_CONFIG_BIN:-dispatch-config}`.
+
+`nudge` is the `stall-watch` shape without the `--sh` branch: every invocation
+execs Go, and the arm still exports `CREW_SH`, because the Go side calls back for
+the one helper it did not copy — `_unread_scan`, through `stall-watch --sh
+unread`, which is what tells the nudge which directive it is waking the lead for.
 
 ## Output contract
 
@@ -506,32 +551,42 @@ acceptance ledger items`: no jq is left to fail, so the lines are unreachable;
   jq-compatible `_jqfromjson` patch closes them and the differential test in
   `internal/status` pins that, rather than documenting them.
 
+- Specific to `nudge`, and not mirrored: two places bash's own mechanics set the
+  behaviour. The arm called `_unread_scan` in its own shell, so a scan that could
+  not run died under `set -e` with no message; Go says `crew: nudge: cannot scan
+the bus for unread msgs (unread helper failed)` at exit 1, because the empty-scan
+  refusal (exit 2, "post the directive first") is a different answer and a
+  dispatcher acts on it differently. And bash suppresses errexit inside a `$(…)` on
+  the left of `||`, so `out=$(_nudge_pane …) || rc=$?` swallowed a `nudge` row the
+  bus would not take and printed the outcome anyway; Go keeps that — the pane really
+  was typed, and the `held`/`unconfirmed` line telling a human to clear it is the
+  point of exit 3 — and adds a stderr line naming the row it could not write,
+  which stdout cannot carry without breaking the outcome line. A `nudge_wait` row is a
+  plain statement in the arm, so its write failure does reach `set -e`: exit 1,
+  nothing printed.
 - Before deleting a bash arm, diff it against Go over a generated corpus and
   keep the evidence: compare exit status, human/agent text and JSON values
   (`jq -S`) — nothing else.
 
 ## Bash helpers that stay
 
-`_sessions`, `_identity*`, `_crew_id`, `_is_engine_cmd` and `_pane_is_engine_at`
-keep other callers (`nudge`, `reap`). Delete each only with its last caller.
+`_identity*`, `_crew_id`, `_is_engine_cmd` and `_pane_is_engine_at`
+keep other callers (`reap`). Delete each only with its last caller.
 While two copies exist, guard drift:
 
-- a crew.bats test compares the bash `_sessions` helper with `crew sessions` on
-  a shared fixture bus (value compare, `jq -S`: key order is engine-internal);
 - Go tests parse crew.sh's pools and engine table and assert the Go copies
   match (skipped when crew.sh is absent, as in the Nix sandbox).
 
-`_resolve_target` stays for `nudge`, which reads its rows to phrase its own
-"ambiguous target … pass a branch" refusal — `crew resolve-target` exits 2 and
-prints nothing on stdout there, so `nudge` cannot be routed through the arm, and
-the recovery watcher would spawn the Go binary per nudge. Its Go copy is
-`internal/resolve`, and the guard is `_sessions'` shape: a crew.bats row replays
-the extracted helper against `crew resolve-target` over the target shapes on one
-fixture bus, deriving the arm's status and text from the helper's own rows —
-`@tsv` both sides, so a byte compare with no `jq -S` excuse.
+`_sessions` and `_resolve_target` lost their last caller with the `nudge` arm and
+are gone, and their drift guards went with them: `crew sessions` and
+`crew resolve-target` are now the only implementations, and `nudge` reaches both
+through them (`sessions.Fold` for the newest-session gate, `resolve.Rows` for its
+"ambiguous target … pass a branch" refusal, which `crew resolve-target` cannot
+print because it exits 2 with an empty stdout there).
 
 `_await_state`, `_await_marks` and `_await_record` stay for `_unread_scan` (and
-through it `nudge` and `stall-watch --sh unread`), which read the marks file even
+through it `stall-watch --sh unread`, which `crew nudge` also calls), which read
+the marks file even
 though neither `crew await` nor `crew inbox` calls them any more: both write it
 from `internal/marks`. Two of the three drift guards above apply — crew.bats
 compares the Go marks file with `_await_state`'s path and `_await_record`'s
@@ -539,28 +594,30 @@ content on the same msgs, and `internal/marks` runs the helpers' own two program
 through jqrun — and two more read the other way: crew.bats hands the marks a Go
 `await` raised to the extracted `_unread_scan`, and to `crew nudge` itself.
 
-`_clock_now`, `_clock_now_f`, `_clock_now_ms` and `_clock_sleep` stay for `nudge`
-(the arm and `_nudge_pane`, which `stall-watch --sh nudge` also runs), and
-`internal/clock` is their Go copy for `hold`, `await`, `stall-watch` and
-`roster-render`. The guard is that both sides read and write one file: the suite
+`_clock_now` and `_clock_now_f` stay for `roster-render` and the `--sh` ops, and
+`internal/clock` is their Go copy for `hold`, `await`, `stall-watch` and `nudge`;
+`_clock_now_ms` and `_clock_sleep` lost their last caller with the `nudge` arm.
+The guard is that both sides read and write one file: the suite
 exports `CREW_CLOCK`, so the clock a Go `await` or `stall-watch` seeds is the
-file a bash `nudge` advances, and `crew clock: unset, await and hold still use
+file a Go `nudge --wait` advances, and `crew clock: unset, await and hold still use
 real time` pins the no-`CREW_CLOCK` branch. `watch` is deliberately outside this
 pair: its park runs on `internal/clock`'s real half only, because the arm's
 `jq -nc 'now*1000|floor'` and its `sleep` never consulted the clock file.
 
-`_lock_acquire` and `_lock_release` stay for `nudge`, and `internal/lock` is their
-Go copy for `rate`, `watch`, `stream`, `roster-render` and `stall-watch`'s
-budget refresh (`engine-budget.json.refresh.d`). Same guard as the clock — one
-protocol, two languages, one lock dir: the Go `stream` holds `stream.lock.d`
-while a bash `nudge` may be reading it, and an older installed `crew` holds
+`_lock_acquire` and `_lock_release` stay for `roster-render`, and `internal/lock` is
+their Go copy for `rate`, `watch`, `stream`, `nudge` and `stall-watch`'s budget
+refresh (`engine-budget.json.refresh.d`). Same guard as the clock — one protocol,
+two languages, one lock dir: `nudge --wait`'s lock dir keeps the bash helper's
+`tr -c 'A-Za-z0-9._-' '_'` name and cksum suffix, so a `crew nudge` on an older
+installed `crew` joins the same wait, and the Go `stream` holds `stream.lock.d`
+while an older installed `crew` holds
 `ratings.lock.d`. The drift test is `internal/lock`'s own table (live, dead,
 empty and non-numeric owners, a `0` holder, trailing newlines) and the `stream`
 rows that TERM a parked Go watch and reclaim a `--force`'d holder.
 
 The frame classifiers (`_frame_classifier`, `_pane_idle_reason`, `_claude_idle_box`,
-`_box_rows`, the `_pi_*` helpers) stay in crew.sh for `reap`, `nudge` and
-`_release_windows`; dispatch.sh's byte-identical copies are pinned by adapters.bats
+`_box_rows`, the `_pi_*` helpers) stay in crew.sh for `reap`
+and `_release_windows`; dispatch.sh's byte-identical copies are pinned by adapters.bats
 and untouched. `internal/frame` is the Go copy `stall-watch` runs every tick, and
 the `LC_ALL=C.UTF-8` drift test described under Layout is the guard.
 `_is_quota_cursor_limit` has no bash caller left but stays, as the canonical copy
@@ -568,14 +625,14 @@ adapters.bats compares dispatch.sh's against. `_is_bg_wait` had no bash caller
 left and no pinned copy, so it moved to Go and is gone from crew.sh.
 
 The rest of what `stall-watch` reaches stays bash and is delegated, not copied
-(one copy needs no guard): `_unread_scan` (it keeps `nudge` as a caller, reads the
-marks through the `_await_*` trio, and runs every 4th tick), `_release_windows`
-(with `reap`), `_nudge_pane` (with `nudge`), and budget-gate.sh and local-models.sh,
-reached through `--sh budget` and `--sh local-model`. One helper still has a
-Go copy and a guard: `release_grace` stays for `reap`, and a Go test parses
-`^release_grace=` from crew.sh and asserts it equals `--release`'s default (skipped
-when crew.sh is absent). `_publish_pane_state` is gone with its guard: `panestate`
-is the one copy, shared by `stall` and `status`.
+(one copy needs no guard): `_unread_scan` (two Go callers now — `stall-watch` every
+4th tick and `crew nudge` per call — reading the marks through the `_await_*` trio),
+`_release_windows` (with `reap`), and budget-gate.sh and local-models.sh, reached
+through `--sh budget` and `--sh local-model`. One helper still has a Go copy and a
+guard: `release_grace` stays for `reap`, and a Go test parses `^release_grace=` from
+crew.sh and asserts it equals `--release`'s default (skipped when crew.sh is absent).
+`_publish_pane_state` is gone with its guard: `panestate` is the one copy, shared by
+`stall` and `status`.
 
 `_hold_outstanding` lost its last bash caller when `roster-render` moved (#935)
 and is gone: `hold.Outstanding` is the one implementation, reached in process by
@@ -583,7 +640,7 @@ the renderer's model and by `hold list` alike, so the guard that compared the tw
 copies went with the copy. `_hold_crew` and `_hold_render` were already gone.
 `_fit_line`, `_shrink`, `_LINE_MAX`/`_ELIDED` and
 their drift guards are gone with the `status`/`msg` port (#945): `bus` is the one
-copy. `_bus_append` stays for `nudge`, and `internal/bus.Append` is its Go copy.
+copy. `_bus_append` stays for `reap` and `_release_windows`, and `internal/bus.Append` is its Go copy.
 `_owner_pid`, `_pidfile_log` and `_has_c0` are gone (`crews.Probes.OwnerPID`,
 `crews.PidfileLog`, and `msg`'s own control-byte test). `_pid_alive`,
 `_file_mtime_s`, `_ps_elapsed_s`, `_pid_recycled` and `_recorded_pid_live` have no

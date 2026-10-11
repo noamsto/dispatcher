@@ -21,17 +21,21 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/frame"
+	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 )
 
 // Options is everything Run reads beyond its argv and the bus.
 type Options struct {
-	CrewID     func() string
-	Clock      clock.Clock
-	NewProbes  func(pane string) probe.Probes // called once, after --pane parses
-	BudgetFile string                         // ${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json
-	PID        int                            // lock owner ($$)
-	CrewSH     string                         // $CREW_SH: the crew.sh holding the --sh helpers
+	CrewID    func() string
+	Clock     clock.Clock
+	NewProbes func(pane string) probe.Probes // called once, after --pane parses
+	// Nudge is D6's keystroke: `nudge.Pane` over the arm's own probes by default, so
+	// the watchdog and `crew nudge` share one type/no-type decision. Tests fake it.
+	Nudge      func(ctx context.Context, req nudge.PaneRequest) (string, int)
+	BudgetFile string // ${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json
+	PID        int    // lock owner ($$)
+	CrewSH     string // $CREW_SH: the crew.sh holding the --sh helpers
 }
 
 // exitCode ends the watch with that status: every `exit` in the arm is one.
@@ -67,6 +71,12 @@ type watch struct {
 
 // Run is the arm: it returns the status the arm exited with.
 func Run(ctx context.Context, argv []string, paths bus.Paths, stderr io.Writer, o Options) int {
+	if o.Nudge == nil {
+		deps := nudge.PaneDeps(paths, stderr, o.Clock)
+		o.Nudge = func(ctx context.Context, req nudge.PaneRequest) (string, int) {
+			return nudge.Pane(ctx, req, deps)
+		}
+	}
 	cfg, err := parseArgs(argv, o.CrewID)
 	if err != nil {
 		if msg := err.Error(); msg != "" {

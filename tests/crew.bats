@@ -1522,44 +1522,6 @@ STUB
   [ ! -e "$BATS_TEST_TMPDIR/stub.called" ]
 }
 
-# Drift guard: the bash _sessions helper stays until its last caller is ported,
-# so it must keep agreeing with the Go fold on the same bus. -S: the gojq fold
-# returns objects as Go maps, so key order is engine-internal; the guard pins
-# values, not key order (#861).
-@test "sessions: the bash _sessions helper and crew sessions agree on a shared bus" {
-  t=$(($(date +%s) * 1000))
-  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
-  bus_tick
-  seed_start dispatch s2-2 "$t"
-  seed_raw "worker:feat/x#s2-2" working "" "" "$((t + 1000))"
-  # session-less row after a live session: joins it
-  seed_raw worker:feat/x blocked "" "" "$((t + 2000))"
-  seed_start resume s3-3 "$((t + 3000))"
-  seed_raw "worker:feat/x#s3-3" done "" "" "$((t + 4000))"
-  # session-less row after a terminal session: stays a null session
-  seed_raw worker:feat/x working "" "" "$((t + 5000))"
-  # dispatch-only session
-  seed_start dispatch s4-4 "$((t + 6000))"
-  CREW_ID=c1 run_crew status "worker:feat/a#b#s9-9" working
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  helper="$(sed -n '/^_sessions() {/,/^}/p' "$CREW")"
-  want="$(
-    eval "$helper"
-    _sessions feat/x ""
-  )"
-  run run_crew sessions feat/x
-  [ "$status" -eq 0 ]
-  [ "$(jq length <<<"$want")" -ge 4 ]
-  [ "$(jq -S -c 'map(del(.age_s))' <<<"$want")" = "$(jq -S -c 'map(del(.age_s))' <<<"$output")" ]
-  want="$(
-    eval "$helper"
-    _sessions 'feat/a#b' ""
-  )"
-  run run_crew sessions 'feat/a#b'
-  [ "$(jq length <<<"$want")" -ge 1 ]
-  [ "$(jq -S -c 'map(del(.age_s))' <<<"$want")" = "$(jq -S -c 'map(del(.age_s))' <<<"$output")" ]
-}
-
 @test "reply: a branch-only worker target resolves to the newest live session" {
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
   CREW_ID=c1 run_crew status "worker:feat/x#s2-2" working
@@ -1689,7 +1651,7 @@ STUB
   [[ "$output" == *"STOP - do not push"* ]]
 }
 
-@test "reply: branch-only address where branch contains '#' resolves via _sessions (not treated as sid)" {
+@test "reply: branch-only address where branch contains '#' resolves via the session fold (not treated as sid)" {
   local branch="feat/12-a#b"
   local sid="s1234567890-12345"
   local worker_id="worker:${branch}#${sid}"
@@ -7609,38 +7571,64 @@ d6_rows() { bus | jq -r 'select(.kind=="status" and .body.source=="watchdog") | 
   [[ "${lines[1]}" == "blocked|unread: "*"auto-nudge typed but not accepted (nudge unconfirmed: %9 "* ]]
 }
 
-@test "stall-watch: --sh continue types the continue line into an idle pi lead" {
+# d9_nudge_sampler <stopped> <typed> <after> — d6_nudge_sampler for D9: the loop's
+# samples and the nudge's own captures read one source, and %9's frame follows the
+# stub's send-keys log (stopped until the line is typed, typed until the Enter, then
+# after).
+d9_nudge_sampler() {
+  local d="$BATS_TEST_TMPDIR/d9nudge"
+  mkdir -p "$d"
+  cp "$1" "$d/stopped"
+  cp "$2" "$d/typed"
+  cp "$3" "$d/after"
+  cat >"$d/sample" <<EOS
+#!/usr/bin/env bash
+d="$d"
+if grep -q '^send-keys -t %9 Enter' "\$STUB_LOG" 2>/dev/null; then
+  cat "\$d/after"
+elif grep -q '^send-keys -t %9 -l' "\$STUB_LOG" 2>/dev/null; then
+  cat "\$d/typed"
+else
+  cat "\$d/stopped"
+fi
+EOS
+  chmod +x "$d/sample"
+  export CREW_STALL_SAMPLE_CMD="$d/sample"
+}
+
+d9_watch() { # [extra stall-watch flags] — a pi lead, ticks 1s apart
+  CREW_ID=c1 run run_crew stall-watch 'worker:feat/x#s1-1' --pane %9 --engine "${D9_ENGINE:-pi}" \
+    --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 9 "$@"
+}
+
+@test "stall-watch: D9 types the continue line into a stopped pi lead once" {
   _nudge_setup pi pi
   line="continue from where you stopped; if a command's result is missing, re-run it"
-  nudge_frames "$(fx_nudge_pi idle '')" "$(fx_nudge_pi typed2 "$line")" "$(fx_nudge_pi_live)"
-  CREW_ID=c1 run run_crew stall-watch --sh continue %9 pi 'worker:feat/x#s1-1' c1
-  [ "$status" -eq 10 ]
+  d9_nudge_sampler "$(fx_nudge_pi_stopped idle '')" "$(fx_nudge_pi_stopped typed "$line")" "$(fx_nudge_pi_live)"
+  d9_watch
   [ "$(nudge_keys)" = "$(printf '%s\n' "send-keys -t %9 -l $line" 'send-keys -t %9 Enter')" ]
   [ "$(nudge_rows | jq -r '"\(.from) \(.result) \(.msg_ts)"')" = "watchdog accepted 0" ]
+  run d6_rows
+  [[ "${lines[0]}" == "working|truncated: auto-continued — pane %9" ]]
+  [ "$(d6_rows | grep -c 'auto-continued')" -eq 1 ]
 }
 
-@test "stall-watch: --sh continue refuses a pi lead mid-turn or holding a draft" {
+@test "stall-watch: D9 types one continue line per episode, then reports a lead that never resumed" {
   _nudge_setup pi pi
-  nudge_frames "$(fx_nudge_pi_live)"
-  CREW_ID=c1 run run_crew stall-watch --sh continue %9 pi 'worker:feat/x#s1-1' c1
-  [ "$status" -eq 12 ]
-  [[ "$output" == *"live turn or no idle input box"* ]]
-  [ -z "$(nudge_keys)" ]
-  [ -z "$(nudge_rows)" ]
-  nudge_frames "$(fx_nudge_pi draft 'hello draft')"
-  CREW_ID=c1 run run_crew stall-watch --sh continue %9 pi 'worker:feat/x#s1-1' c1
-  [ "$status" -eq 12 ]
-  [[ "$output" == *"unsent input in the input box"* ]]
-  [ -z "$(nudge_keys)" ]
-  [ -z "$(nudge_rows)" ]
+  line="continue from where you stopped; if a command's result is missing, re-run it"
+  d9_nudge_sampler "$(fx_nudge_pi_stopped idle '')" "$(fx_nudge_pi_stopped typed "$line")" "$(fx_nudge_pi_stopped idle '')"
+  d9_watch
+  [ "$(nudge_keys | wc -l)" -eq 2 ]
+  [ "$(nudge_rows | wc -l)" -eq 1 ]
+  run d6_rows
+  [[ "${lines[0]}" == "working|truncated: auto-continued — pane %9" ]]
+  [[ "${lines[-1]}" == "blocked|truncated: response truncated at the output cap in pane %9 — auto-continued but not resumed; check the pane (crew where)" ]]
 }
 
-@test "stall-watch: --sh continue refuses a codex lead" {
+@test "stall-watch: D9 never types the continue line into a non-pi lead" {
   _nudge_setup codex codex
-  nudge_frames "$(fx_nudge_pi idle '')"
-  CREW_ID=c1 run run_crew stall-watch --sh continue %9 codex 'worker:feat/x#s1-1' c1
-  [ "$status" -eq 12 ]
-  [[ "$output" == *"no verified idle lead frame for codex"* ]]
+  D9_ENGINE=codex d9_nudge_sampler "$(fx_nudge_pi_stopped idle '')" "$(fx_nudge_pi_stopped typed 'x')" "$(fx_nudge_pi_live)"
+  D9_ENGINE=codex d9_watch
   [ -z "$(nudge_keys)" ]
   [ -z "$(nudge_rows)" ]
 }
@@ -12062,6 +12050,13 @@ fx_nudge_pi() { # <name> <editor-row>
   printf ' pi v0.87.1\n──────────────────────────────\n%s\n──────────────────────────────\n~/git/dispatcher\n0.0%%/0 (auto)      unknown\n' "$2" |
     frame_file "nudge_pi_$1"
 }
+
+# A pi turn that ended at the output cap, the pane idle at an empty box: the
+# shape D9 resumes (frame/testdata's pi_truncated_idle.txt).
+fx_nudge_pi_stopped() { # <name> <editor-row>
+  printf ' pi v0.87.1\n\nResponse was truncated before completion.\n\n──────────────────────────────\n%s\n──────────────────────────────\n~/git/dispatcher\n0.0%%/0 (auto)      unknown\n' "$2" |
+    frame_file "nudge_pi_$1"
+}
 fx_nudge_pi_live() {
   frame_file nudge_pi_live <<'EOF'
  pi v0.87.1
@@ -12579,54 +12574,6 @@ EOF
   run run_crew resolve-target
   [ "$status" -eq 1 ]
   [ "$output" = "usage: crew resolve-target <target> [--crew ID]" ]
-}
-
-# Drift guard: `nudge` keeps the bash `_resolve_target` helper while both arms
-# read the Go fold, so the two must keep answering the same question the same
-# way. The helper prints every match and the arm one row or a refusal, so the
-# guard derives the arm's outcome from the helper's own rows — status, then the
-# row or the branch list byte for byte (`@tsv` text both sides wrote). A torn
-# row is in the fixture because both readers skip it.
-@test "resolve-target: the bash _resolve_target helper and crew resolve-target agree on a shared bus" {
-  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  mkdir -p "$dir"
-  {
-    printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/9-gone","name":"sage","host":"h1"}'
-    printf '%s\n' '{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"eng-12-thing","name":"nova","also_closes":["ENG-13"]}'
-    printf '%s\n' '{"ts":3,"crew_id":"c2","kind":"dispatch","branch":"fix/10-b","name":"nova","host":"h2"}'
-    printf '%s\n' '{"ts":4,"crew_id":"c1","kind":"dispatch","branch":"feat/119-x","name":"ivy"}'
-    printf '%s\n' '{"ts":5,"crew_id":"c1","kind":"dispatch","broken'
-  } >"$dir/events.jsonl"
-  log="$dir/events.jsonl"
-  helper="$(sed -n '/^_resolve_target() {/,/^}/p' "$CREW")"
-  eval "$helper"
-  for target in '#9' 9 sage nova ENG-12 eng-13 119 'feat/119-x' 'worker:feat/9-gone#s1-2' nobody; do
-    for crew in '' c1 c2; do
-      want="$(_resolve_target "$target" "$crew")"
-      n=$(printf '%s\n' "$want" | grep -c . || true)
-      if [ -n "$crew" ]; then
-        run run_crew resolve-target "$target" --crew "$crew"
-      else
-        run run_crew resolve-target "$target"
-      fi
-      case "$n" in
-      0)
-        [ "$status" -eq 1 ]
-        [ "$output" = "crew: resolve-target: no worker matches '$target'" ]
-        ;;
-      1)
-        [ "$status" -eq 0 ]
-        [ "$output" = "$want" ]
-        ;;
-      *)
-        [ "$status" -eq 2 ]
-        [ "$output" = "crew: resolve-target: ambiguous target '$target' — matches: $(
-          printf '%s\n' "$want" | cut -f1 | paste -sd, - | sed 's/,/, /g'
-        ); pass a branch" ]
-        ;;
-      esac
-    done
-  done
 }
 
 # roster-render: bus + live tmux role panes -> D2 text (#806). Fixture times are

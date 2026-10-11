@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/frame"
+	"github.com/noamsto/dispatcher/crew/internal/nudge"
 )
 
 // frameDet is the frame-driven detectors' state across ticks: the *_at stamps
@@ -425,7 +426,7 @@ func (w *watch) d0() error {
 // d9 is the stopped-pi-turn detector: a pi lead whose turn ended truncated at
 // the output cap or on a provider error, then sits idle. One constant continue
 // line per episode on the second stopped sample, typed through the same gated
-// _nudge_pane as D6's auto-nudge; it never escalates. An idle box still holding
+// nudge.Pane as D6's auto-nudge; it never escalates. An idle box still holding
 // text is the typed line or a human draft: it holds the episode open without
 // resuming or clearing it.
 func (w *watch) d9() error {
@@ -535,17 +536,18 @@ func (w *watch) d9Continue() error {
 		return w.d9Blocked(notResumed + " (auto-continue limit reached: " + strconv.FormatInt(d9Limit, 10) + " attempts this watch)")
 	}
 	fd.d9Count++
-	out, rc, ran, err := w.shWrite("continue", cfg.pane, cfg.engine, cfg.fromID, cfg.crew)
+	out, rc, err := w.nudgeCall(nudge.PaneRequest{
+		Pane: cfg.pane, Engine: cfg.engine, Session: cfg.fromID,
+		Crew: cfg.crew, Actor: "watchdog", MsgTS: "0", Line: nudge.ContinueLine,
+	})
 	if err != nil {
 		return err
 	}
-	switch {
-	case !ran:
-		return w.d9Blocked(notResumed + " (auto-continue helper failed)")
-	case rc == 0:
+	switch rc {
+	case 0:
 		fd.d9Outcome = "typed"
 		return w.post("working", w.d9Prefix()+" auto-continued — pane "+cfg.pane)
-	case rc == 3:
+	case 3:
 		reason, _, _ := strings.Cut(out, " — ")
 		return w.d9Blocked("auto-continue typed but not accepted (" + reason + ") in pane " + cfg.pane + " — not resumed; verify the pane with crew where")
 	}

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 )
 
@@ -537,12 +538,12 @@ func TestRoleEndOfLife(t *testing.T) {
 
 // ---- D6 ----
 
-// d6Script answers `--sh unread` and `--sh nudge`.
-// nudgeRC is the verdict; a non-zero failUnread or failNudge is instead the
-// raw status of a helper that failed to run.
+// d6Script answers `--sh unread` and, through the fake's nudge hook, the D6 type.
+// nudgeRC is that type's verdict; a non-zero failUnread is instead the raw status of a
+// scan whose call-out never ran.
 type d6Script struct {
-	dispatcher, oldest, nudgeOut   string
-	nudgeRC, failUnread, failNudge int
+	dispatcher, oldest, nudgeOut string
+	nudgeRC, failUnread          int
 }
 
 func (s *d6Script) sh(op string, args ...string) (string, int) {
@@ -555,21 +556,22 @@ func (s *d6Script) sh(op string, args ...string) (string, int) {
 			return s.dispatcher, shOffset
 		}
 		return s.oldest, shOffset
-	case "nudge":
-		if s.failNudge != 0 {
-			return s.nudgeOut, s.failNudge
-		}
-		return s.nudgeOut, s.nudgeRC + shOffset
 	}
 	return "", shOffset
 }
 
 const d6ID = "worker:feat/x#s100-1"
 
+// pane is the D6 type the script answers with, in place of the bash op.
+func (s *d6Script) pane(context.Context, nudge.PaneRequest) (string, int) {
+	return s.nudgeOut, s.nudgeRC
+}
+
 func d6Watch(t *testing.T, s *d6Script, argv ...string) (*harness, *fake, *watch) {
 	t.Helper()
 	f := newFake()
 	f.sh = s.sh
+	f.nudge = s.pane
 	h, w := pdWatch(t, f, append([]string{d6ID, "--pane", "%1", "--engine", "claude"}, argv...)...)
 	return h, f, w
 }

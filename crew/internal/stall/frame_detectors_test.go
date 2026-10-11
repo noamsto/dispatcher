@@ -1,6 +1,7 @@
 package stall
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/noamsto/dispatcher/crew/internal/frame"
+	"github.com/noamsto/dispatcher/crew/internal/nudge"
 )
 
 // fdRig drives the frame detectors tick by tick the way the loop does, on a
@@ -1057,12 +1059,11 @@ func TestOutTokensMatchesBash(t *testing.T) {
 
 const d9ID = "worker:feat/x#s1-1"
 
-// d9Rig is a pi lead on %9 whose `continue` call-outs are counted and answer
-// out and rc; rcRaw, when set, is a raw helper status instead.
+// d9Rig is a pi lead on %9 whose continue types are counted and answer out and rc.
 type d9Rig struct {
 	*fdRig
 	out        string
-	rc, rcRaw  int
+	rc         int
 	continues  int
 	continueAt []string
 }
@@ -1070,16 +1071,14 @@ type d9Rig struct {
 func newD9Rig(t *testing.T, id, engine string, argv ...string) *d9Rig {
 	t.Helper()
 	r := &d9Rig{fdRig: newFDRig(t, id, engine, append([]string{"--pane", "%9"}, argv...)...)}
-	r.h.f.sh = func(op string, args ...string) (string, int) {
-		if op != "continue" {
-			return "", shOffset
-		}
+	r.h.f.nudge = func(_ context.Context, req nudge.PaneRequest) (string, int) {
 		r.continues++
-		r.continueAt = append(r.continueAt, strings.Join(args, " "))
-		if r.rcRaw != 0 {
-			return "", r.rcRaw
+		r.continueAt = append(r.continueAt, strings.Join([]string{
+			req.Pane, req.Engine, req.Session, req.Crew, req.MsgTS, req.Line}, " "))
+		if r.out == "" {
+			return "", r.rc
 		}
-		return r.out, r.rc + shOffset
+		return r.out, r.rc
 	}
 	return r
 }
@@ -1112,7 +1111,7 @@ func TestD9TypesOncePerEpisode(t *testing.T) {
 			if len(rows) != 1 || rows[0] != want || r.continues != 1 {
 				t.Fatalf("tick 2: rows %q, %d calls, want [%q] and 1", rows, r.continues, want)
 			}
-			if wantArgs := "%9 pi " + d9ID + " " + r.w.cfg.crew; r.continueAt[0] != wantArgs {
+			if wantArgs := "%9 pi " + d9ID + " " + r.w.cfg.crew + " 0 " + nudge.ContinueLine; r.continueAt[0] != wantArgs {
 				t.Errorf("args %q, want %q", r.continueAt[0], wantArgs)
 			}
 			if rows := r.tick(&at, k.stopped); rows != nil {
@@ -1237,20 +1236,18 @@ func TestD9CallFailures(t *testing.T) {
 			t.Errorf("rows %q", rows)
 		}
 	})
-	t.Run("helper-failed", func(t *testing.T) {
+	t.Run("signal-mid-type-ends-the-watch", func(t *testing.T) {
 		r := newD9Rig(t, d9ID, "pi")
-		r.rcRaw = 1
+		ctx, cancel := sigterm(t)
+		r.w.ctx = ctx
+		r.h.f.nudge = func(context.Context, nudge.PaneRequest) (string, int) {
+			cancel()
+			return "", 0
+		}
 		var at int64
 		r.tick(&at, "pi_truncated_idle.txt")
-		rows := r.tick(&at, "pi_truncated_idle.txt")
-		if len(rows) != 1 || !strings.Contains(rows[0], "(auto-continue helper failed)") {
-			t.Fatalf("rows %q", rows)
-		}
-		for range 3 {
-			r.tick(&at, "pi_truncated_idle.txt")
-		}
-		if r.continues != 1 {
-			t.Errorf("%d calls, want no retry", r.continues)
+		if _, err := r.step(at+15, frameText(r.t, "pi_truncated_idle.txt")); err == nil {
+			t.Fatal("want the signal to end the watch, not a typed-and-forgotten row")
 		}
 	})
 }

@@ -69,8 +69,9 @@ var (
 	FirstRowAny    = regexp.MustCompile(`.*`)
 )
 
-// tail is `printf '%s\n' "$text" | grep -v '^[[:space:]]*$' | tail -n`.
-func tail(text string, n int) []string {
+// Tail is `printf '%s\n' "$text" | grep -v '^[[:space:]]*$' | tail -n`: the sampler's
+// window over a capture, blank rows dropped on the raw line as grep sees it.
+func Tail(text string, n int) []string {
 	var keep []string
 	for _, l := range strings.Split(text, "\n") {
 		if !reBlank.MatchString(l) {
@@ -109,7 +110,7 @@ func lastMatch(lines []string, re *regexp.Regexp) string {
 
 // IsCodexHookReviewPrompt is _is_codex_hook_review_prompt.
 func IsCodexHookReviewPrompt(text string) bool {
-	return strings.Join(tail(text, 4), "\n") == hookReviewFrame
+	return strings.Join(Tail(text, 4), "\n") == hookReviewFrame
 }
 
 // IsPermissionPrompt is _is_permission_prompt.
@@ -117,7 +118,7 @@ func IsPermissionPrompt(engine, text string) bool {
 	if engine != "claude" {
 		return false
 	}
-	t := tail(text, 10)
+	t := Tail(text, 10)
 	if len(t) == 0 || !strings.Contains(t[len(t)-1], "Esc to cancel · Tab to amend") {
 		return false
 	}
@@ -130,7 +131,7 @@ func IsPrompt(engine, text string) bool {
 	if engine == "codex" {
 		return IsCodexHookReviewPrompt(text)
 	}
-	t := tail(text, 7)
+	t := Tail(text, 7)
 	if len(t) == 0 {
 		return false
 	}
@@ -143,12 +144,12 @@ func IsPrompt(engine, text string) bool {
 
 // IsQuotaPrompt is _is_quota_prompt.
 func IsQuotaPrompt(text string) bool {
-	return anyContains(tail(text, 12), "Stop and wait for limit to reset")
+	return anyContains(Tail(text, 12), "Stop and wait for limit to reset")
 }
 
 // IsQuotaSessionLimit is _is_quota_session_limit.
 func IsQuotaSessionLimit(text string) bool {
-	t := tail(text, 15)
+	t := Tail(text, 15)
 	return anyContains(t, "You've hit your session limit") &&
 		anyContains(t, "/upgrade to increase your usage limit") &&
 		anyContains(t[max(len(t)-6, 0):], "uses your weekly limit")
@@ -156,14 +157,14 @@ func IsQuotaSessionLimit(text string) bool {
 
 // IsQuotaCursorLimit is _is_quota_cursor_limit.
 func IsQuotaCursorLimit(text string) bool {
-	t := tail(text, 12)
+	t := Tail(text, 12)
 	return anyContains(t, "You've reached your monthly usage limit") && anyContains(t, "spendLimitHit: true")
 }
 
 // IsBgWait is _is_bg_wait: a finished turn's `· done HH:MM` marker with a
 // background shell still running and no live spinner or meter.
 func IsBgWait(text string) bool {
-	t := tail(text, 8)
+	t := Tail(text, 8)
 	return anyMatch(t, reDone) && anyMatch(t, reShells) && !anyMatch(t, reSpinner) && MeterLine(text) == ""
 }
 
@@ -181,30 +182,8 @@ func HasSubrow(text string) bool {
 // an empty box), above the up to 7 CSI-stripped rows above the upper rule,
 // nearest first.
 func BoxRows(text string, first *regexp.Regexp) (row string, above []string, ok bool) {
-	var raw, plain []string
-	for _, l := range strings.Split(text, "\n") {
-		s := reCSI.ReplaceAllLiteralString(l, "")
-		if reBlank.MatchString(s) {
-			continue
-		}
-		raw = append(raw, l)
-		plain = append(plain, s)
-	}
-	n := len(plain)
-	off := max(n-30, 0)
-	a, b := -1, -1
-	for i := n - 1; i >= off; i-- {
-		if !strings.HasPrefix(plain[i], "─") {
-			continue
-		}
-		if b < 0 {
-			b = i
-			continue
-		}
-		a = i
-		break
-	}
-	if a < 0 || b-a-1 > 12 || n-1-b < 1 || n-1-b > 5 {
+	raw, plain, a, b, off, ok := scanBox(text)
+	if !ok {
 		return "", nil, false
 	}
 	if b-a == 1 {
@@ -223,9 +202,95 @@ func BoxRows(text string, first *regexp.Regexp) (row string, above []string, ok 
 	return row, above, true
 }
 
+// BoxText is every row inside the input box (the same bounds as BoxRows) concatenated
+// with claude's `❯` and all whitespace dropped, so a box the engine wrapped — at a
+// space or mid-word — still compares equal to the whitespace-free line a caller typed.
+// Empty when the box is empty or absent: unlike BoxRows, an empty box is a result and
+// not a failure, so the first-row check runs only when rows sit between the rules.
+func BoxText(text string, first *regexp.Regexp) string {
+	_, plain, a, b, _, ok := scanBox(text)
+	if !ok {
+		return ""
+	}
+	if b-a > 1 && !first.MatchString(plain[a+1]) {
+		return ""
+	}
+	s := strings.Join(plain[a+1:b], "")
+	if loc := first0(FirstRowClaude, s); loc >= 0 {
+		s = s[loc:]
+	}
+	return strings.Map(func(r rune) rune {
+		// The awk's `[[:space:]]|\302\240`: glibc's class, plus the NBSP the
+		// class leaves out (claude's ghost-text separator).
+		if isPosixSpace(r) || r == '\u00a0' {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// first0 is `sub(/^[[:space:]]*❯/, "", s)`: the byte offset just past a leading
+// match, or -1 when the pattern does not anchor at the start.
+func first0(re *regexp.Regexp, s string) int {
+	if loc := re.FindStringIndex(s); loc != nil && loc[0] == 0 {
+		return loc[1]
+	}
+	return -1
+}
+
+// HasSpinnerRow is the post-Enter live-turn test over a box's above rows: any row
+// matching the `…` spinner (`^[^[:alnum:]]*[A-Za-z]+…`).
+func HasSpinnerRow(rows []string) bool { return anyMatch(rows, reSpinner) }
+
+// isPosixSpace is the character class behind posixClasses' `[:space:]` mapping —
+// what glibc's UTF-8 locale matches, which is not RE2's ASCII-only class.
+func isPosixSpace(r rune) bool {
+	switch r {
+	case '\t', '\n', '\v', '\f', '\r', ' ',
+		'\u1680', '\u2000', '\u2001', '\u2002', '\u2003', '\u2004', '\u2005', '\u2006',
+		'\u2008', '\u2009', '\u200a', '\u2028', '\u2029', '\u205f', '\u3000':
+		return true
+	}
+	return false
+}
+
+// scanBox is the box scan BoxRows and BoxText share: the capture's rows with CSI
+// stripped and blanks dropped, plus the indices of the LAST two `─` rules within the
+// sampler's 30-row window (a is the upper rule, b the lower) and the window's offset.
+// ok is false when there is no such pair or the bounds say it is not a box: at most 12
+// rows inside, 1-5 rows after the lower rule.
+func scanBox(text string) (raw, plain []string, a, b, off int, ok bool) {
+	for _, l := range strings.Split(text, "\n") {
+		s := reCSI.ReplaceAllLiteralString(l, "")
+		if reBlank.MatchString(s) {
+			continue
+		}
+		raw = append(raw, l)
+		plain = append(plain, s)
+	}
+	n := len(plain)
+	off = max(n-30, 0)
+	a, b = -1, -1
+	for i := n - 1; i >= off; i-- {
+		if !strings.HasPrefix(plain[i], "─") {
+			continue
+		}
+		if b < 0 {
+			b = i
+			continue
+		}
+		a = i
+		break
+	}
+	if a < 0 || b-a-1 > 12 || n-1-b < 1 || n-1-b > 5 {
+		return nil, nil, 0, 0, 0, false
+	}
+	return raw, plain, a, b, off, true
+}
+
 // ClaudeIdleBox is _claude_idle_box; colored "" means no colored capture.
 func ClaudeIdleBox(plain, colored string, own bool) bool {
-	t := tail(plain, 30)
+	t := Tail(plain, 30)
 	if lastMatch(t, reMeter) != "" || anyMatch(t, reSubrow) || anyContains(t, "esc to interrupt") {
 		return false
 	}
@@ -249,7 +314,7 @@ func ClaudeIdleBox(plain, colored string, own bool) bool {
 // PiLiveTurn is _pi_live_turn: rule text other than pi's scroll indicators
 // and pi-vim's lower-rule mode label.
 func PiLiveTurn(text string) bool {
-	for _, l := range tail(text, 30) {
+	for _, l := range Tail(text, 30) {
 		if !strings.HasPrefix(l, "─") {
 			continue
 		}
@@ -273,7 +338,7 @@ func PiWorkingRow(text string) bool {
 
 // PiWorkingLabel is _pi_working_label.
 func PiWorkingLabel(text string) bool {
-	if anyMatch(tail(text, 30), rePiWorkingRule) {
+	if anyMatch(Tail(text, 30), rePiWorkingRule) {
 		return true
 	}
 	_, above, ok := BoxRows(text, FirstRowAny)
@@ -395,7 +460,7 @@ func PaneIdleReason(plain, colored string, skipBg bool) (reason string, idle boo
 	if IsPermissionPrompt("claude", plain) || IsPrompt("claude", plain) || IsQuotaSessionLimit(plain) {
 		return "prompt on screen", false
 	}
-	if !skipBg && anyMatch(tail(plain, 30), reBgWork) {
+	if !skipBg && anyMatch(Tail(plain, 30), reBgWork) {
 		return "background shell or monitor still running", false
 	}
 	if !ClaudeIdleBox(plain, colored, false) {
