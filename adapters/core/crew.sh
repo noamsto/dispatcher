@@ -2708,7 +2708,7 @@ reap)
     local row
     row=$(jq -nc --arg c "$scrow" --arg s "$session" --arg d "$detail" \
       '{ts:(now*1000|floor), crew_id:$c, from:$s, to:("dispatcher:"+$c), kind:"status", body:{state:"reaped", detail:$d, source:"reap"}}') || return 0
-    _bus_append "$log" "$row"
+    _bus_append "$log" "$row" || true
   }
 
   # _reap_forget <branch> — drop the reaped branch's grants/protocol-dirs/leads
@@ -2716,7 +2716,7 @@ reap)
   # records, by exact derived path. artifacts/<branch> stays: it can hold a
   # --discard patch. Best-effort; always returns 0.
   _reap_forget() {
-    local b="$1" cat leaf rel parent pairs c id key d
+    local b="$1" cat leaf parent pairs c id key d
     for cat in grants protocol-dirs leads; do
       leaf="$dir/$cat/$b"
       parent="${b%/*}"
@@ -2724,11 +2724,6 @@ reap)
       ! _chain_bad "$dir/$cat" "$parent" >/dev/null || continue
       { [ -f "$leaf" ] && [ ! -L "$leaf" ]; } || continue
       rm -f -- "$leaf" || true
-      rel="$parent"
-      while [ -n "$rel" ]; do
-        rmdir -- "$dir/$cat/$rel" 2>/dev/null || break
-        case "$rel" in */*) rel="${rel%/*}" ;; *) rel="" ;; esac
-      done
     done
 
     pairs=$(jq -rs --arg b "$b" '

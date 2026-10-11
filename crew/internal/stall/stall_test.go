@@ -432,6 +432,7 @@ func TestTerminalStates(t *testing.T) {
 		{"done release off", "feat/x", []string{"--release", "0"}, "done", false},
 		{"failed role", "role:feat/x:rev", []string{"--engine", "claude"}, "failed", false},
 		{"exited", "feat/x", nil, "exited", false},
+		{"reaped", "feat/x", nil, "reaped", false},
 		{"pr_open keeps watching", "feat/x", nil, "pr_open", true},
 		{"working keeps watching", "feat/x", nil, "working", true},
 	}

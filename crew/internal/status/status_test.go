@@ -257,6 +257,19 @@ func TestLongDetailElided(t *testing.T) {
 	}
 }
 
+func TestReapedRefusedFromWorkerAndRole(t *testing.T) {
+	for _, from := range []string{worker, "role:feat/x:rev"} {
+		f := newFixture(t)
+		code, stderr := f.status(from, "reaped")
+		if code == 0 || !strings.Contains(stderr, "posted only by crew reap") {
+			t.Errorf("%s: code %d %q, want refusal", from, code, stderr)
+		}
+		if b, _ := os.ReadFile(f.paths.Log); len(b) != 0 {
+			t.Errorf("%s: log not empty: %q", from, b)
+		}
+	}
+}
+
 func TestTerminalDedupe(t *testing.T) {
 	prior := func(extra ...string) []string {
 		return append([]string{statusRow(worker, `{"state":"pr_open","pr_url":"u1"}`)}, extra...)
@@ -271,8 +284,8 @@ func TestTerminalDedupe(t *testing.T) {
 		{"different pr", prior(), []string{worker, "pr_open", "", "u2"}, true},
 		{"different from", prior(), []string{"worker:feat/y#s1-1", "pr_open", "", "u1"}, true},
 		{"different state", prior(), []string{worker, "done", "", "u1"}, true},
-		{"reaped deduped", []string{statusRow(worker, `{"state":"reaped"}`)}, []string{worker, "reaped"}, false},
-		{"reaped after done is new", []string{statusRow(worker, `{"state":"done"}`)}, []string{worker, "reaped"}, true},
+		{"reaped deduped", []string{statusRow("dispatcher:c1", `{"state":"reaped"}`)}, []string{"dispatcher:c1", "reaped"}, false},
+		{"reaped after done is new", []string{statusRow("dispatcher:c1", `{"state":"done"}`)}, []string{"dispatcher:c1", "reaped"}, true},
 		{"working never deduped", []string{statusRow(worker, `{"state":"working"}`)}, []string{worker, "working"}, true},
 		{"later row for the same from wins", prior(statusRow(worker, `{"state":"working"}`)), []string{worker, "pr_open", "", "u1"}, true},
 		{"other kind ignored", prior(msgRow(worker, "x", "y")), []string{worker, "pr_open", "", "u1"}, false},

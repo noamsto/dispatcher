@@ -158,6 +158,10 @@ parse:
 		say(stderr, "crew: status state must be one of working|blocked|pr_open|done|failed|exited|reaped (got '%s')\n", state)
 		return exitFailure
 	}
+	if state == "reaped" && (strings.HasPrefix(from, "worker:") || strings.HasPrefix(from, "role:")) {
+		say(stderr, "crew: status: reaped is posted only by crew reap\n")
+		return exitFailure
+	}
 	if restamp && state != "blocked" {
 		say(stderr, "crew: --restamp is only valid with blocked\n")
 		return exitFailure

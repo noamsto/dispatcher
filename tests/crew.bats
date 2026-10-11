@@ -1540,7 +1540,9 @@ STUB
 }
 
 @test "reply: refuses when the newest session is reaped" {
-  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" reaped
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:(now*1000|floor), crew_id:"c1", from:"worker:feat/x#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"reaped", detail:"PR #8 MERGED", source:"reap"}}' >>"$log"
   CREW_ID=c1 run run_crew reply "worker:feat/x" "go"
   [ "$status" -eq 1 ]
   [[ "$output" == *"re-dispatch"* ]]
@@ -9258,11 +9260,21 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
 }
 
 @test "watch: a reaped status does not wake it" {
-  CREW_ID=c1 run_crew status worker:feat/x#s1-1 reaped
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$log")"
+  jq -nc '{ts:(now*1000|floor), crew_id:"c1", from:"worker:feat/x#s1-1", to:"dispatcher:c1", kind:"status", body:{state:"reaped", detail:"PR #8 MERGED", source:"reap"}}' >>"$log"
 
   run --separate-stderr run_crew watch --crew c1 --timeout 1 --interval 1
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+}
+
+@test "status: reaped from a worker is refused and writes nothing" {
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  CREW_ID=c1 run --separate-stderr run_crew status "worker:feat/x#s1-1" reaped
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"posted only by crew reap"* ]]
+  [ ! -s "$log" ]
 }
 
 @test "watch: a done status wakes it (control for the reaped row)" {
