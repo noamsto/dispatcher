@@ -14,9 +14,9 @@ import (
 )
 
 // AnchorPath is `_worktree_anchor_path`: the dispatcher-owned record of wt's
-// genuine crew dir, branch and gitdir, keyed by wt's own realpath. One
-// definition for dispatch (writer), dispatch-resume (reader) and reap
-// (pruner), so the key format cannot drift between them.
+// genuine crew dir, branch and gitdir, keyed by wt's own realpath. The key
+// must match the bash helper's byte for byte: dispatch writes the records and
+// dispatch-resume reads them.
 func AnchorPath(wt string) (string, error) {
 	real, err := filepath.EvalSymlinks(wt)
 	if err != nil {

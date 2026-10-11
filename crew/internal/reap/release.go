@@ -39,8 +39,7 @@ type Deps struct {
 
 // ReleaseWindows is `_release_windows`: kill the WINDOWs of a finished worker
 // session, never its worktree — a worker legitimately sits in `done` for as
-// long as its PR takes to merge (#17). Shared by reap's idle-release pass and
-// stall-watch's finished-worker release. It returns 3 (nothing killed) when a
+// long as its PR takes to merge (#17). It returns 3 (nothing killed) when a
 // person is present or an engine pane is not provably idle, so the caller
 // re-checks on its next cycle, else 0. The error is only a failed release-row
 // write or its marshal.

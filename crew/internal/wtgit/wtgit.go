@@ -15,8 +15,7 @@
 //
 // Command and CommonCommand return the unstarted *exec.Cmd so a caller can
 // background it and keep its pid. Their env is scrubbed of the variables that
-// would redirect git or inject config; the bash helpers inherit the environment
-// instead, but no caller sets these, so the scrub only closes a hole.
+// would redirect git or inject config, which the bash helpers inherit.
 package wtgit
 
 import (

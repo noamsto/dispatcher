@@ -1700,12 +1700,11 @@ crews | log | report | sessions | roster | identity | inbox | hold | await | wat
   # raw-source override; builds bake @crewGoBin@. CREW_SELF is this script's own
   # path — the `$0` the bash `stream` arm re-entered for its inner `watch`, its
   # `hold due` pre-check and its `crew reap`, which the Go `stream` still re-enters
-  # through this script. It is also
-  # `roster-render`'s idea of which build it is running: the daemon compares it
-  # against the installed `crew` and re-execs that when they differ, so a
-  # home-manager switch reaches a running daemon instead of waiting for the next
-  # dispatch. The script's path, not the binary's, because a switch replaces the
-  # script and reads the binary fresh.
+  # through this script. It is also `roster-render`'s idea of which build it is
+  # running: the daemon compares it against the installed `crew` and re-execs
+  # that when they differ, so a home-manager switch reaches a running daemon
+  # instead of waiting for the next dispatch. The script's path, not the
+  # binary's, because a switch replaces the script and reads the binary fresh.
   export CREW_SELF="$0"
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;

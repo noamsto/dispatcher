@@ -97,7 +97,8 @@ store_rows() { jq -s -c 'group_by(.run_id) | map(max_by(.swept_at))' "$XDG_DATA_
 # grandchild of the test shell, so `wait` cannot reach it; poll its lock
 # instead. reap's autosweep takes `ratings.sweep.lock.d` through internal/lock,
 # runs the rate sweep (writes the store), then releases it, so the lock record
-# dir existing means started and its removal means exited. Returns 1 rather than hanging if the child never appears.
+# dir existing means started and its removal means exited. Returns 1 rather
+# than hanging if the child never appears.
 await_sweep() {
   local i started="" had_store=""
   # A store left by an earlier sweep in the same test is not evidence that

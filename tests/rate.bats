@@ -382,9 +382,9 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Dual-lock / trap regression (FIX 3): the lock release is an unconditional
-# `rm -rf` with no owner check, so a trap left armed across the unlocked
-# network phase would delete a CONCURRENT sweep's lock dir. These pin that a
+# Dual-lock / trap regression (FIX 3): the old bash `_lock_release` was an
+# unconditional `rm -rf` with no owner check, so a trap left armed across the
+# unlocked network phase deleted a CONCURRENT sweep's lock dir. These pin that a
 # live foreign lock is refused, not stomped — in both windows.
 # ---------------------------------------------------------------------------
 

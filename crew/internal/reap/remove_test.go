@@ -71,8 +71,8 @@ func (f *fx) rows(kind string) []string {
 	return out
 }
 
-// AC4: a reap row that cannot be written does not stop the removal tail or
-// the sweep.
+// A reap row that cannot be written does not stop the removal tail or the
+// sweep.
 func TestReapRowWriteFailureContinues(t *testing.T) {
 	f := newFx(t)
 	const sb, prS = "feat/s", "https://github.com/o/r/pull/8"
