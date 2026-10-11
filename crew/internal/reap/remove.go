@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
@@ -125,8 +126,13 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 // rows, branch delete and label release after it.
 func removeAnchor(anchor string) {
 	if anchor != "" {
-		_ = os.Remove(anchor)
+		rmF(anchor)
 	}
+}
+
+// rmF is `rm -f`, which never removes a directory (os.Remove would an empty one).
+func rmF(path string) {
+	_ = syscall.Unlink(path)
 }
 
 // killLeftovers signals every process whose cwd is in wt, this process and its

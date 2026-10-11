@@ -392,8 +392,9 @@ func TestDaemonExitsWhenItLosesTheLock(t *testing.T) {
 	}
 }
 
-// TestDaemonReleasesOnlyItsOwnLock: `_lock_release` is an unconditional rm -rf, so
-// a renderer whose lock was reclaimed must not delete the new owner's.
+// TestDaemonReleasesOnlyItsOwnLock: the old bash `_lock_release` was an
+// unconditional rm -rf, so a renderer whose lock was reclaimed must not delete
+// the new owner's.
 func TestDaemonReleasesOnlyItsOwnLock(t *testing.T) {
 	l := newLoop(t)
 	l.seed(t)

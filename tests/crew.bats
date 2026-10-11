@@ -2655,7 +2655,7 @@ EOF
 }
 
 # Same exact-path requirement as the roster sibling-path test above, exercised
-# through reap's own _pane_is_engine_at call site.
+# through reap's own exact-path engine check.
 @test "reap: a sibling-path engine pane does not keep the worktree" {
   git commit --allow-empty -q -m init
   git branch feat/reap-sib

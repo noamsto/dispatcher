@@ -31,7 +31,7 @@ func (r *run) forget(branch string) {
 		}
 		leaf := dir + "/" + cat + "/" + branch
 		if fi, err := os.Lstat(leaf); err == nil && fi.Mode().IsRegular() {
-			_ = os.Remove(leaf)
+			rmF(leaf)
 		}
 	}
 
@@ -48,16 +48,16 @@ func (r *run) forget(branch string) {
 		if c == "" || id == "" {
 			continue
 		}
-		_ = os.Remove(marks.Path(dir, c, id))
-		_ = os.Remove(marks.LockPath(dir, c, id))
+		rmF(marks.Path(dir, c, id))
+		rmF(marks.LockPath(dir, c, id))
 		key := sanitize(id)
-		_ = os.Remove(dir + "/phase-status/" + key + "." + strconv.FormatUint(uint64(identity.CKsum([]byte(id))), 10))
+		rmF(dir + "/phase-status/" + key + "." + strconv.FormatUint(uint64(identity.CKsum([]byte(id))), 10))
 		d := dir + "/directive-delivery/" + key
 		if fi, err := os.Lstat(d); err != nil || !fi.Mode().IsRegular() {
 			continue
 		}
 		if data, err := os.ReadFile(d); err == nil && line2(string(data)) == id {
-			_ = os.Remove(d)
+			rmF(d)
 		}
 	}
 }

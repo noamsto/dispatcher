@@ -173,6 +173,32 @@ func TestReapRowAndAnchor(t *testing.T) {
 	gitOut(t, f.main, "show-ref", "--verify", "refs/heads/"+rb)
 }
 
+// rm -f never removes a directory: an anchor planted as one survives a reap
+// that still completes.
+func TestReapKeepsDirectoryAnchor(t *testing.T) {
+	f := newFx(t)
+	anchor, err := wtgit.AnchorPath(f.wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(anchor, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.bus(status("done", prURL, 0))
+	f.gh["pr view "+prURL+" --json state --jq .state"] = "CLOSED"
+	f.gh["pr view "+prURL+" --json closingIssuesReferences --jq .closingIssuesReferences[].number"] = ""
+
+	if rc := f.reap(f.main); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	if fi, err := os.Lstat(anchor); err != nil || !fi.IsDir() {
+		t.Fatalf("anchor directory gone: %v", err)
+	}
+	if len(f.rows("reap")) != 1 {
+		t.Fatalf("appended %q", f.appended)
+	}
+}
+
 func TestIssueModeReap(t *testing.T) {
 	f := newFx(t)
 	git(t, f.main, "update-ref", "refs/remotes/origin/main", "HEAD")

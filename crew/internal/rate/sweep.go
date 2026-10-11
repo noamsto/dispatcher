@@ -42,7 +42,7 @@ var threadsProgram string
 var mergeProgram string
 
 const (
-	// busy is `_lock_acquire`'s only refusal line: the autosweep spawner
+	// busy is the lock's only refusal line: the autosweep spawner
 	// absorbs it, an interactive `crew rate` takes it as its exit status.
 	busy = "crew: ratings store busy"
 	// burnWarn is the one warning printed before the store is touched. Without
