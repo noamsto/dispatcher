@@ -90,6 +90,18 @@ func countCalls(f *fake, prefix string) int {
 	return n
 }
 
+// countScans counts D6's in-process scans by mode, the way countCalls counted
+// the `--sh unread` argv before #968.
+func countScans(f *fake, mode string) int {
+	n := 0
+	for _, m := range f.unreadCalls {
+		if m == mode {
+			n++
+		}
+	}
+	return n
+}
+
 // ---- D4 ----
 
 func TestD4LoadEpisode(t *testing.T) {
@@ -538,26 +550,18 @@ func TestRoleEndOfLife(t *testing.T) {
 
 // ---- D6 ----
 
-// d6Script answers `--sh unread` and, through the fake's nudge hook, the D6 type.
-// nudgeRC is that type's verdict; a non-zero failUnread is instead the raw status of a
-// scan whose call-out never ran.
+// d6Script answers D6's in-process scan and, through the fake's nudge hook,
+// the D6 type. nudgeRC is that type's verdict.
 type d6Script struct {
 	dispatcher, oldest, nudgeOut string
-	nudgeRC, failUnread          int
+	nudgeRC                      int
 }
 
-func (s *d6Script) sh(op string, args ...string) (string, int) {
-	switch op {
-	case "unread":
-		if s.failUnread != 0 {
-			return "", s.failUnread
-		}
-		if args[len(args)-1] == "dispatcher" {
-			return s.dispatcher, shOffset
-		}
-		return s.oldest, shOffset
+func (s *d6Script) answer(mode string) string {
+	if mode == "dispatcher" {
+		return s.dispatcher
 	}
-	return "", shOffset
+	return s.oldest
 }
 
 const d6ID = "worker:feat/x#s100-1"
@@ -570,7 +574,7 @@ func (s *d6Script) pane(context.Context, nudge.PaneRequest) (string, int) {
 func d6Watch(t *testing.T, s *d6Script, argv ...string) (*harness, *fake, *watch) {
 	t.Helper()
 	f := newFake()
-	f.sh = s.sh
+	f.unread = s.answer
 	f.nudge = s.pane
 	h, w := pdWatch(t, f, append([]string{d6ID, "--pane", "%1", "--engine", "claude"}, argv...)...)
 	return h, f, w
@@ -607,13 +611,12 @@ func TestD6OldestDetails(t *testing.T) {
 			want = []string{tc.want}
 		}
 		wantRows(t, h, want...)
-		t0 := strconv.FormatInt((h.seed-1)*1000, 10)
-		wantCalls := []string{
-			"unread c1 feat/x worker:feat/x " + d6ID + " " + t0 + " dispatcher",
-			"unread c1 feat/x worker:feat/x " + d6ID + " " + t0 + " oldest",
+		wantScans := []string{"dispatcher", "oldest"}
+		if !slices.Equal(f.unreadCalls, wantScans) {
+			t.Errorf("scans %q, want %q", f.unreadCalls, wantScans)
 		}
-		if !slices.Equal(f.shCalls, wantCalls) {
-			t.Errorf("sh calls %q, want %q", f.shCalls, wantCalls)
+		if len(f.shCalls) != 0 {
+			t.Errorf("sh calls %q: the scan leaves no call-out behind", f.shCalls)
 		}
 	}
 }
@@ -674,14 +677,14 @@ func TestD6Gating(t *testing.T) {
 	for _, tc := range cases {
 		s := &d6Script{}
 		f := newFake()
-		f.sh = s.sh
+		f.unread = s.answer
 		h, w := pdWatch(t, f, append([]string{tc.id, "--pane", "%1", "--engine", "claude"}, tc.args...)...)
 		if tc.row != "" {
 			h.writeRows(h.status(d6ID, 1, tc.row))
 		}
 		pdOK(t, w, 0, tc.tick, w.d6)
-		if len(f.shCalls) != 0 {
-			t.Errorf("%s: sh calls %q", tc.name, f.shCalls)
+		if len(f.unreadCalls) != 0 {
+			t.Errorf("%s: scans %q", tc.name, f.unreadCalls)
 		}
 	}
 }
@@ -702,7 +705,7 @@ func TestNudgeGating(t *testing.T) {
 	for _, tc := range cases {
 		s := &d6Script{}
 		f := newFake()
-		f.sh = s.sh
+		f.unread = s.answer
 		_, w := pdWatch(t, f, append([]string{tc.id, "--pane", "%1", "--engine", "claude"}, tc.args...)...)
 		s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
 		s.oldest = fmt.Sprintf("%d dispatcher", agedMS(w, 0, 700))
@@ -710,8 +713,8 @@ func TestNudgeGating(t *testing.T) {
 		if got := countCalls(f, "nudge ") == 1; got != tc.nudge {
 			t.Errorf("%s: nudged %v, want %v (calls %q)", tc.name, got, tc.nudge, f.shCalls)
 		}
-		if got := slices.ContainsFunc(f.shCalls, func(c string) bool { return strings.HasSuffix(c, " dispatcher") }); got != tc.nudge {
-			t.Errorf("%s: dispatcher scan %v, want %v", tc.name, got, tc.nudge)
+		if got := countScans(f, "dispatcher") == 1; got != tc.nudge {
+			t.Errorf("%s: dispatcher scan %d, want one (scans %q)", tc.name, countScans(f, "dispatcher"), f.unreadCalls)
 		}
 	}
 }
@@ -769,9 +772,9 @@ func TestNudgeAccepted(t *testing.T) {
 	s.oldest = fmt.Sprintf("%d dispatcher", agedMS(w, 0, 700))
 	pdOK(t, w, 0, 0, w.d6)
 	wantRows(t, h)
-	if want := []string{"nudge %1 claude " + d6ID + " c1 " + strconv.FormatInt(newest, 10)}; countCalls(f, "unread ") != 1 ||
-		!slices.Equal(f.shCalls[1:], want) {
-		t.Errorf("sh calls %q, want the scan then %q", f.shCalls, want)
+	if want := []string{"nudge %1 claude " + d6ID + " c1 " + strconv.FormatInt(newest, 10)}; countScans(f, "dispatcher") != 1 ||
+		!slices.Equal(f.shCalls, want) {
+		t.Errorf("scans %q sh calls %q, want one scan then %q", f.unreadCalls, f.shCalls, want)
 	}
 	pdOK(t, w, 60, 4, w.d6)
 	if n := countCalls(f, "nudge "); n != 1 {
@@ -821,8 +824,8 @@ func TestNudgeRefusals(t *testing.T) {
 		}
 		// A refusal does not skip the verdict, and a newer directive retries
 		// unless the anchor latch is set.
-		if countCalls(f, "unread ") != 2 {
-			t.Errorf("%q: verdict skipped: %q", tc.out, f.shCalls)
+		if len(f.unreadCalls) != 2 {
+			t.Errorf("%q: verdict skipped: %q", tc.out, f.unreadCalls)
 		}
 		s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 60, 760), agedMS(w, 60, 5))
 		pdOK(t, w, 60, 4, w.d6)
@@ -883,8 +886,8 @@ func TestNudgeAlreadyNudged(t *testing.T) {
 				t.Errorf("nudgedTS %d, want %d", w.pd.nudgedTS, newest)
 			}
 			// An already-nudged directive does not skip the verdict.
-			if tc.skip && countCalls(f, "unread ") != 2 {
-				t.Errorf("verdict skipped: %q", f.shCalls)
+			if tc.skip && len(f.unreadCalls) != 2 {
+				t.Errorf("verdict skipped: %q", f.unreadCalls)
 			}
 		})
 	}

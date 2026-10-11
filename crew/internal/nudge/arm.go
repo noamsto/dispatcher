@@ -51,10 +51,11 @@ type Options struct {
 	// which is as much of a worker as an id in the environment is.
 	Toplevel func(ctx context.Context) string
 	Exists   func(path string) bool
-	// Unread is `_unread_scan <crew> <branch> worker:<branch> <sid> 0 dispatcher`: the
-	// "<oldest> <newest>" pair of the lead's unread directive. ok=false is a call-out
-	// that never ran — a different thing from an empty scan, which is a refusal.
-	Unread func(ctx context.Context, crew, branch, sid string) (string, bool)
+	// Unread is the lead's unread-directive pair, `"<oldest> <newest>"`: the
+	// in-process `internal/unread` scan in dispatcher mode, the way the arm ran
+	// `_unread_scan <crew> <branch> worker:<branch> <sid> 0 dispatcher`. An
+	// empty scan is the "post it first" refusal, never a failure.
+	Unread func(ctx context.Context, crew, branch, sid string) string
 	// Rows reads the log's last maxLines lines with each line decoded on its own — the
 	// arm's `tail -n N | jq -R 'fromjson?'`. The engine lookup reads the whole log
 	// (maxLines 0, where the arm's `jq -Rr inputs` reads all of it) and the two --wait
@@ -286,13 +287,10 @@ func (a *arm) checkEngine(stderr io.Writer) int {
 	return 0
 }
 
-// checkUnread is the arm's `_unread_scan`: the newest unread directive is what the nudge
+// checkUnread is the arm's unread scan: the newest unread directive is what the nudge
 // row will point at, and an empty scan is the "post it first" refusal.
 func (a *arm) checkUnread(stderr io.Writer) int {
-	out, ok := a.o.Unread(a.ctx, a.crew, a.branch, a.sid)
-	if !ok {
-		return fail(stderr, "cannot scan the bus for unread msgs (unread helper failed)")
-	}
+	out := a.o.Unread(a.ctx, a.crew, a.branch, a.sid)
 	_, newest, _ := strings.Cut(out, " ")
 	a.ts = strings.TrimSpace(newest)
 	if a.ts == "" {
@@ -304,13 +302,10 @@ func (a *arm) checkUnread(stderr io.Writer) int {
 
 // unread is the same scan's oldest unread ts — the arm reads the first field, which is
 // empty when the lead has read the directive meanwhile.
-func (a *arm) unread() (string, bool) {
-	out, ok := a.o.Unread(a.ctx, a.crew, a.branch, a.sid)
-	if !ok {
-		return "", false
-	}
+func (a *arm) unread() string {
+	out := a.o.Unread(a.ctx, a.crew, a.branch, a.sid)
 	oldest, _, _ := strings.Cut(out, " ")
-	return strings.TrimSpace(oldest), true
+	return strings.TrimSpace(oldest)
 }
 
 // wait is the `--wait` loop: one waiter per lead session, and a joiner reports the
@@ -366,10 +361,7 @@ func (a *arm) wait(ctx context.Context, wait string) int {
 			detail := res + ": " + textOf(prev, "detail")
 			return a.end("already", rc, detail, "nudge already typed: "+a.pane+" "+a.sid+" — "+detail)
 		}
-		oldest, ok := a.unread()
-		if !ok {
-			return fail(a.stderr, "cannot scan the bus for unread msgs (unread helper failed)")
-		}
+		oldest := a.unread()
 		if oldest == "" || num(oldest) > num(a.ts) {
 			return a.end("read", 0, "the lead read the msg during the wait; nothing typed",
 				"nudge not needed: "+a.pane+" "+a.sid+" — the lead read the msg during the wait; nothing typed")

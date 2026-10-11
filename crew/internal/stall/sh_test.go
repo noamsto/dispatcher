@@ -1,7 +1,6 @@
 package stall
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -66,41 +65,6 @@ func TestD8HelperFailureNoEpisode(t *testing.T) {
 				t.Error("budget helper never called")
 			}
 		})
-	}
-}
-
-// A failed unread scan skips the tick's verdict: the open episode neither
-// clears nor changes.
-func TestD6UnreadHelperFailureHolds(t *testing.T) {
-	for _, rc := range helperFailures {
-		t.Run(strconv.Itoa(rc), func(t *testing.T) {
-			s := &d6Script{}
-			h, _, w := d6Watch(t, s, "--no-nudge")
-			s.oldest = fmt.Sprintf("%d role", agedMS(w, 0, 700))
-			pdOK(t, w, 0, 0, w.d6)
-			posted := "blocked|" + fmt.Sprintf(roleDetail, 700)
-			at := w.pd.d6At
-			s.failUnread = rc
-			pdOK(t, w, 60, 4, w.d6)
-			wantRows(t, h, posted)
-			if w.pd.d6At != at || w.pd.d6Src != "role" {
-				t.Errorf("d6At %d d6Src %q changed", w.pd.d6At-w.start, w.pd.d6Src)
-			}
-			s.failUnread, s.oldest = 0, ""
-			pdOK(t, w, 120, 8, w.d6)
-			wantRows(t, h, posted, "working|unread: cleared")
-		})
-	}
-}
-
-// The same holds for a working lead with nothing open: no post either way.
-func TestD6UnreadHelperFailureWorking(t *testing.T) {
-	s := &d6Script{failUnread: 1}
-	h, f, w := d6Watch(t, s)
-	pdOK(t, w, 0, 0, w.d6)
-	wantRows(t, h)
-	if n := countCalls(f, "nudge "); n != 0 {
-		t.Errorf("nudged %d times on a failed scan", n)
 	}
 }
 

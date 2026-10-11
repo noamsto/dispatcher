@@ -2182,23 +2182,6 @@ after_await_parks() {
   [ -z "$output" ]
 }
 
-# The same reader against this port's writer: the marks a Go `crew await` raised
-# are the ones `_unread_scan` must stop seeing — undelivered before the await
-# hands the msg out, gone after.
-@test "await: the marks a Go await raised clear bash _unread_scan" {
-  id="worker:feat/x#s1-1"
-  CREW_ID=c1 run_crew msg role:feat/x:reviewer "$id" "verdict"
-  helpers="$(sed -n '/^_await_state() {/,/^}/p; /^_await_marks() {/,/^}/p; /^_unread_scan() {/,/^}/p' "$CREW")"
-  eval "$helpers"
-  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  log="$dir/events.jsonl"
-  [ "$(_unread_scan c1 feat/x worker:feat/x "$id" 0 oldest)" != "" ]
-
-  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 5 --interval 1
-  [[ "$output" == *'"body":"verdict"'* ]]
-  [ -z "$(_unread_scan c1 feat/x worker:feat/x "$id" 0 oldest)" ]
-}
-
 # And the other direction, mid-wait: the writer that stayed in bash appends the
 # row while the Go await is parked, and the pass after it delivers — which is
 # why the log is re-read every pass rather than once.
@@ -2385,24 +2368,6 @@ after_await_parks() {
   # ... and the reviewer it had not seen is now delivered too.
   [ "$(jq -r 'keys | length' <<<"$after")" -eq 2 ]
   [ "$(jq -r '."role:feat/x:reviewer" | type' <<<"$after")" = "number" ]
-}
-
-# The reader half, straight: stall-watch's D6 flag is `_unread_scan` over these
-# marks, and it is bash — keyed the way stall-watch keys it, `me` the branch and
-# `from_id` the session whose marks it reads. Undelivered before the Go inbox
-# reads the msg, gone after.
-@test "inbox: _unread_scan sees what the Go inbox handed out" {
-  id="worker:feat/x#s1-1"
-  CREW_ID=c1 run_crew msg role:feat/x:reviewer "$id" "verdict"
-  helpers="$(sed -n '/^_await_state() {/,/^}/p; /^_await_marks() {/,/^}/p; /^_unread_scan() {/,/^}/p' "$CREW")"
-  eval "$helpers"
-  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  log="$dir/events.jsonl"
-  [ "$(_unread_scan c1 feat/x worker:feat/x "$id" 0 oldest)" != "" ]
-
-  CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1
-  [[ "$output" == *'"body":"verdict"'* ]]
-  [ -z "$(_unread_scan c1 feat/x worker:feat/x "$id" 0 oldest)" ]
 }
 
 @test "roster: collapses sessions of one branch into a single row" {

@@ -17,6 +17,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
+	"github.com/noamsto/dispatcher/crew/internal/unread"
 )
 
 // fake is a scripted probe.Probes that counts what the loop asked for.
@@ -27,9 +28,14 @@ type fake struct {
 	paneModel, paneCmd           string
 	sh                           func(op string, args ...string) (string, int)
 	shc                          func(ctx context.Context, op string, args ...string) (string, int) // wins over sh
+	// unread answers D6's in-process scan and unreadCalls logs its modes: since
+	// #968 the scan is not a side effect that leaves the process, so the D6 rows
+	// read this list where they used to find the `--sh unread` argv.
+	unread      func(mode string) string
+	unreadCalls []string
 	// nudge is D6's type, and nudgeHook logs it into shCalls: the D6 rows check
-	// "the scan, then the type" as one ordered list of the side effects that
-	// leave the process, which is how the bash `--sh nudge` op used to appear.
+	// "the type" as the side effect that leaves the process, which is how the
+	// bash `--sh nudge` op used to appear.
 	nudge   func(context.Context, nudge.PaneRequest) (string, int)
 	shCalls []string
 	opts    [][]string // tmux set-option argv, as the bash stub logs it
@@ -37,6 +43,18 @@ type fake struct {
 }
 
 func newFake() *fake { return &fake{} }
+
+// unreadSeam is the fake's D6 scan: it logs the mode, then answers whatever
+// the test scripted; unscripted answers are the empty scan.
+func (f *fake) unreadSeam() func(context.Context, unread.Mode) string {
+	return func(_ context.Context, mode unread.Mode) string {
+		f.unreadCalls = append(f.unreadCalls, string(mode))
+		if f.unread == nil {
+			return ""
+		}
+		return f.unread(string(mode))
+	}
+}
 
 // nudgeHook is the fake's D6 type: it logs the argv the bash op used to receive, then
 // answers whatever the test scripted. A test that never scripts one is not checking
@@ -129,6 +147,7 @@ func (h *harness) options() Options {
 		CrewID: func() string { return h.crew },
 		Clock:  h.clock,
 		CrewSH: h.crewSH,
+		Unread: h.f.unreadSeam(),
 		NewProbes: func(pane string) probe.Probes {
 			h.f.newProbes++
 			h.f.pane = pane
