@@ -298,3 +298,16 @@ func TestPanePIDMatchesIsTheArmsShapeCheck(t *testing.T) {
 		}
 	}
 }
+
+func TestReapedRowIsDoneInTheLegendAndDrawsItsPR(t *testing.T) {
+	text, err := renderText(decodeOne(t, `{"rows":[{"state":"reaped","pr_url":"https://github.com/o/r/pull/7","name":"n","title":"t","detail":"","sessions":[1]}],"holds":[],"roles":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "1 done") {
+		t.Errorf("legend does not count reaped as done:\n%s", text)
+	}
+	if !strings.Contains(text, `w1_pr: "PR #7"`) {
+		t.Errorf("reaped row drew no PR node:\n%s", text)
+	}
+}

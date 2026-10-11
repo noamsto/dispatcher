@@ -43,7 +43,7 @@ func (w *watch) postRow(state, detail string) error {
 		return err
 	}
 	switch w.bus.state {
-	case "done", "failed", "exited":
+	case "done", "failed", "exited", "reaped":
 		return exitCode(0)
 	}
 	if err := os.MkdirAll(w.paths.Dir, 0o755); err != nil {
