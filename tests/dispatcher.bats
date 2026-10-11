@@ -10,6 +10,7 @@ setup() {
 }
 
 teardown() {
+  [ -z "${live_pid:-}" ] || kill "$live_pid" 2>/dev/null || true
   teardown_repo
 }
 
@@ -766,4 +767,69 @@ EOF
   [ "$status" -eq 0 ]
   run grep -cx crews "$STUB_LOG"
   [ "$output" = "0" ]
+}
+
+@test "929: the newest crew is adopted when the pane-less live one is not newest" {
+  stub_crew_table "$(crews_tsv "$(printf 'c-fresh\t3\t3\t0\t998\tno')" "$(printf 'c-live\t500\t500\t1\t4321\tyes')")"
+  run run_launcher
+  [ "$status" -eq 0 ]
+  out="$output"
+  [[ "$out" == *"4321 has no tmux pane"* ]]
+  [[ "$out" == *"re-attached to crew c-fresh"* && "$out" == *"crew id: c-fresh"* ]]
+}
+
+@test "929: a failed switch-client fails the launcher instead of claiming a switch" {
+  stub_crew_table "$(crews_tsv "$(printf 'c-live\t5\t5\t1\t4321\tyes')")"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1 $2" in
+"list-panes -a") printf '%%7 4321\n' ;;
+"switch-client -t") exit 1 ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not switch the client to pane %7"* ]]
+}
+
+@test "929: a failing crew crews warns instead of minting in silence" {
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+crews) exit 5 ;;
+new) echo c-minted ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  run run_launcher
+  [ "$status" -eq 0 ]
+  out="$output"
+  [[ "$out" == *"'crew crews' failed"* && "$out" == *"crew id: c-minted"* ]]
+}
+
+# The AC3 case the stubs cannot show: `crew register` refuses a crew whose
+# recorded pid is alive, so this row drives the real crew — the same binary the
+# launcher runs in production — with a live pid and no pane.
+@test "929: a live pid with no pane still launches when crew register refuses it" {
+  local crew_bin="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
+  sleep 30 &
+  live_pid=$!
+  cat >"$STUB_DIR/crew" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+exec bash '$crew_bin' "\$@"
+EOF
+  chmod +x "$STUB_DIR/crew"
+  CREW_ID=c-live bash -euo pipefail "$crew_bin" register "$live_pid"
+  run run_launcher
+  [ "$status" -eq 0 ]
+  out="$output"
+  [[ "$out" == *"re-attached to crew c-live"* ]]
+  [[ "$out" == *"crew adopt --force c-live"* ]]
+  [[ "$out" == *"crew id: c-live"* ]]
 }

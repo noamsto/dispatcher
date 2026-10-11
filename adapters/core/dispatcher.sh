@@ -213,14 +213,14 @@ ac="${autocompact:-$(orch_default autoCompact)}"
 # launcher never re-implements the live-pid test.
 
 # _pane_for_pid <pid> — the tmux pane whose pane_pid is <pid> or one of its
-# ancestors, empty for none. The walk is bounded (64 hops, and it stops at the
-# first `ps` that fails or answers non-numeric), so a recycled or corrupt ppid
-# chain cannot spin.
+# ancestors, empty for none. The walk is bounded (64 hops, it stops at the first
+# `ps` that fails or answers non-numeric, and it never climbs to init), so a
+# recycled or corrupt ppid chain cannot spin and cannot match a shared ancestor.
 _pane_for_pid() {
   local pid=$1 entry pane ppid hop=0
   local -a panes=()
   mapfile -t panes < <(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null)
-  while [ -n "$pid" ] && [ "$pid" != 0 ] && [ "$hop" -lt 64 ]; do
+  while [ -n "$pid" ] && [ "$pid" != 0 ] && [ "$pid" != 1 ] && [ "$hop" -lt 64 ]; do
     for entry in "${panes[@]}"; do
       pane=${entry%% *}
       ppid=${entry##* }
@@ -244,7 +244,12 @@ _reattach_or_switch() {
   local table row_id row_last _row_first _row_workers row_pid row_alive
   local first_id='' newest='' live_id='' live_pid='' pane='' adopt
   local header=1
-  table=$(crew crews 2>/dev/null) || return 0
+  # A failed read is not an empty table: minting here would recreate the split
+  # brain this pass exists to close, silently.
+  if ! table=$(crew crews 2>/dev/null); then
+    echo "dispatcher: 'crew crews' failed — cannot tell which crews exist, so starting a fresh one; check this repo's crew bus" >&2
+    return 0
+  fi
   while IFS=$'\t' read -r row_id row_last _row_first _row_workers row_pid row_alive; do
     if [ "$header" = 1 ]; then
       header=0
@@ -285,6 +290,11 @@ _reattach_or_switch() {
     # Alive but no pane (detached client, killed window): nothing to switch to,
     # so it counts as not live for the switch and the crew is adopted below.
     echo "dispatcher: crew $live_id's dispatcher pid $live_pid has no tmux pane — re-attaching to the crew instead" >&2
+    # That crew still records a live dispatcher pid, and `crew register` refuses
+    # to overwrite one (crew/internal/register). The launch goes ahead anyway —
+    # a pane-less dispatcher must not block a re-attach — so the mint block
+    # tolerates that one refusal and names the takeover instead of bypassing it.
+    adopted_live=1
   fi
 
   adopt=$newest
@@ -299,6 +309,7 @@ _reattach_or_switch() {
 
 # An exported CREW_ID already means "this crew", and a mint outside a git repo
 # has no per-repo crew table to consult (same guard `crew register` uses).
+adopted_live=0
 if [ -z "${CREW_ID:-}" ] && [ "$new_crew" = 0 ] &&
   git rev-parse --git-common-dir >/dev/null 2>&1; then
   _reattach_or_switch
@@ -355,7 +366,12 @@ export CREW_ID
 echo "crew id: $CREW_ID"
 
 if git rev-parse --git-common-dir >/dev/null 2>&1; then
-  crew register $$
+  if [ "$adopted_live" = 1 ]; then
+    crew register $$ ||
+      echo "dispatcher: crew $CREW_ID keeps its live dispatcher pid — 'crew adopt --force $CREW_ID' takes it over" >&2
+  else
+    crew register $$
+  fi
 
   # Discovery notice (#29), now a --new confirmation: the default path no longer
   # orphans a crew, but minting next to crews the caller chose not to adopt is
