@@ -16,10 +16,12 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // Acquire is the helper: mkdir is the ONLY gate (atomic on POSIX), the pid file
-// inside is for reclaim. Re-acquiring as the same owner is a success.
+// inside is for reclaim. Re-acquiring as the same owner is a success. An empty
+// holder in a dir younger than emptyGrace reads as held: see below.
 func Acquire(dir, owner string) bool {
 	if tryDir(dir, owner) {
 		return true
@@ -28,12 +30,31 @@ func Acquire(dir, owner string) bool {
 	if held == owner {
 		return true
 	}
+	if held == "" && fresh(dir) {
+		return false
+	}
 	if held != "" && pidAlive(held) {
 		return false
 	}
-	// Stale (owner PID dead or empty) — reclaim through the same mkdir gate.
+	// Stale (owner PID dead, or empty in a dir past the grace) — reclaim through
+	// the same mkdir gate.
 	_ = os.RemoveAll(dir)
 	return tryDir(dir, owner)
+}
+
+// emptyGrace is how long, in whole epoch seconds, a dir with no pid text may
+// be a live acquirer: the owner writes its pid after mkdir, so a fresh empty
+// holder is mid-write and reclaiming it would give two owners.
+const emptyGrace = 2
+
+// fresh reports whether dir is younger than emptyGrace. Wall clock, because the
+// mtime is; a vanished dir is not fresh and falls through to the reclaim.
+func fresh(dir string) bool {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	return time.Now().Unix()-fi.ModTime().Unix() < emptyGrace
 }
 
 // Release is `_lock_release`: an unconditional `rm -rf` with no owner check,

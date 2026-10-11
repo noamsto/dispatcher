@@ -5,7 +5,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestLockAcquireRelease(t *testing.T) {
@@ -60,12 +62,64 @@ func TestLockReclaimsDeadAndEmpty(t *testing.T) {
 				t.Fatal(err)
 			}
 			writePID(t, dir, tc.held)
+			backdate(t, dir)
 			if !Acquire(dir, "12345") {
 				t.Fatal("a stale lock was not reclaimed")
 			}
 			got, _ := os.ReadFile(filepath.Join(dir, "pid"))
 			if string(got) != "12345\n" {
 				t.Errorf("pid file after reclaim = %q, want \"12345\\n\"", got)
+			}
+		})
+	}
+}
+
+// TestLockEmptyHolderInGraceIsHeld: the owner writes its pid after mkdir, so an
+// empty holder in a just-made dir is an acquirer mid-write, not a dead one.
+func TestLockEmptyHolderInGraceIsHeld(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		emptyPID bool
+	}{
+		{"no pid file yet", false},
+		{"empty pid file", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "ratings.lock.d")
+			if err := os.Mkdir(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.emptyPID {
+				writePID(t, dir, "")
+			}
+			const n = 8
+			var ready, done sync.WaitGroup
+			start := make(chan struct{})
+			got := make([]bool, n)
+			ready.Add(n)
+			done.Add(n)
+			for i := range n {
+				go func() {
+					defer done.Done()
+					ready.Done()
+					<-start
+					got[i] = Acquire(dir, strconv.Itoa(20000+i))
+				}()
+			}
+			ready.Wait()
+			close(start)
+			done.Wait()
+			for i, ok := range got {
+				if ok {
+					t.Errorf("acquirer %d reclaimed a lock whose owner is mid-write", i)
+				}
+			}
+			if _, err := os.Stat(dir); err != nil {
+				t.Errorf("lock dir gone: %v", err)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "pid"))
+			if tc.emptyPID && len(data) != 0 || !tc.emptyPID && !os.IsNotExist(err) {
+				t.Errorf("pid file = %q, %v; a refused acquirer rewrote the holder", data, err)
 			}
 		})
 	}
@@ -136,6 +190,16 @@ func TestLockOutOfRangeHolderIsFree(t *testing.T) {
 func writePID(t *testing.T, dir, text string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, "pid"), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// backdate ages dir past the empty-holder grace; call it after the last write
+// into dir, which bumps the mtime.
+func backdate(t *testing.T, dir string) {
+	t.Helper()
+	old := time.Now().Add(-10 * time.Second)
+	if err := os.Chtimes(dir, old, old); err != nil {
 		t.Fatal(err)
 	}
 }

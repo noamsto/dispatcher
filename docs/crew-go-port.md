@@ -61,7 +61,8 @@ output contract below), with each edit justified.
   killed the arm under `set -e`).
 - `crew/internal/lock`: crew.sh's `_lock_acquire`/`_lock_release` protocol —
   the `mkdir` gate, the `pid` owner file, the bare `kill -0` liveness probe and
-  the dead-owner reclaim — as one package instead of a copy per caller, because
+  the dead-owner reclaim (an empty `pid` younger than 2s is an acquirer
+  mid-write and counts as held) — as one package instead of a copy per caller, because
   two of its lock dirs have holders across a process boundary: `ratings.lock.d`
   (the autosweep spawner in `reap`, older installed `crew` binaries) and
   `watch.lock.d` (which `stream` takes, and which the child `crew watch` it

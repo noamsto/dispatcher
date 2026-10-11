@@ -517,6 +517,10 @@ func TestLockHeldAndReclaimed(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			old := time.Now().Add(-10 * time.Second)
+			if err := os.Chtimes(lockd, old, old); err != nil {
+				t.Fatal(err)
+			}
 			writeLog(t, p, status(1000, "worker:feat/x#s1-1", "done", "", ""))
 			_, stderr, code, _ := run(t, p, "--since", "0", "--timeout", "1", "--interval", "1")
 			if tc.refuses {
