@@ -5276,6 +5276,19 @@ ROWS
   [ "$output" = "stacked-base null" ]
 }
 
+@test "--pr records a null base_oid even when gh's baseRefName names an ancestor of the child" {
+  stub_pr_bins eng-7691-foo stacked-base
+  # The PR's base is worker-retargetable, so an ancestor tip proves nothing.
+  git init -q --bare "$TEST_REPO/origin.git"
+  git -C "$TEST_REPO" remote add origin "$TEST_REPO/origin.git"
+  git -C "$TEST_REPO" push -q origin "$PR_HEAD_OID:refs/heads/stacked-base"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | [.base, (.base_oid|tostring)] | join(" ")' "$log"
+  [ "$output" = "stacked-base null" ]
+}
+
 @test "a non-pr dispatch never stamps base:" {
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
@@ -5840,7 +5853,7 @@ EOS
   chmod +x "$STUB_DIR/wt"
 }
 
-@test "base: a --base re-dispatch onto an existing branch records the parent tip when the child contains it" {
+@test "base: a --base re-dispatch records null base_oid even when the child contains the parent tip" {
   setup_stacked_base feat/parent
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
   [ "$status" -eq 0 ]
@@ -5850,28 +5863,21 @@ EOS
   [[ "$output" == *"resuming branch"* ]]
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   [ "$(jq -s '[.[] | select(.kind=="dispatch")] | length' "$log")" -eq 2 ]
-  run jq -sr '[.[] | select(.kind=="dispatch")] | last | .base_oid' "$log"
-  [ "$output" = "$STACKED_OID" ]
+  run jq -sr '[.[] | select(.kind=="dispatch")] | last | [.base, (.base_oid|tostring)] | join(" ")' "$log"
+  [ "$output" = "feat/parent null" ]
 }
 
-@test "base: a --base re-dispatch records null base_oid when the parent moved past the child" {
+@test "base: a carried re-dispatch records null base_oid even when the child contains the parent tip" {
   setup_stacked_base feat/parent
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
   [ "$status" -eq 0 ]
-  scratch="$(mktemp -d)"
-  git clone -q "$TEST_REPO/origin.git" "$scratch"
-  git -C "$scratch" -c user.email=test@example.com -c user.name=test checkout -q feat/parent
-  git -C "$scratch" -c user.email=test@example.com -c user.name=test commit --allow-empty -qm "parent moves on"
-  moved_oid="$(git -C "$scratch" rev-parse HEAD)"
-  git -C "$scratch" push -q origin feat/parent
-  rm -rf "$scratch"
   stub_resume_switch
-  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
   [ "$status" -eq 0 ]
   [[ "$output" == *"resuming branch"* ]]
-  # The fetch succeeded, so the null comes from the ancestor check.
-  [ "$(git -C "$TEST_REPO" rev-parse refs/remotes/origin/feat/parent)" = "$moved_oid" ]
+  grep -qx 'base: feat/parent' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  [ "$(jq -s '[.[] | select(.kind=="dispatch")] | length' "$log")" -eq 2 ]
   run jq -sr '[.[] | select(.kind=="dispatch")] | last | .base_oid' "$log"
   [ "$output" = "null" ]
 }

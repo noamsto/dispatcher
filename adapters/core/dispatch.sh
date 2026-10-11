@@ -5226,26 +5226,14 @@ lead_sid=""
 case "$agent" in
 claude | pi) lead_sid="$(_uuid)" ;;
 esac
-# row_base_oid: the parent tip this branch was cut from, so a stacked rebase can
-# use it as the cut point. Only dispatcher-anchored git feeds it, never the base
-# carried in WORKER_TASK.md (worker-writable). Empty when unverifiable.
+# row_base_oid: the parent tip a --base create branched from, so a stacked rebase
+# can use it as the cut point. Only a parent this dispatch chose counts: gh's
+# baseRefName and a carried base: are worker-controlled, and so is the child's
+# head an ancestor check would test against. Later cuts come from
+# `crew stack cut --record`.
 row_base_oid=""
-if [ -n "$base_ref" ]; then
-  if [ "$switch_mode" = create ] && [ -n "$base_flag" ]; then
-    row_base_oid="$create_base_oid"
-  else
-    row_tip=""
-    if [ -n "$base_flag" ]; then
-      row_tip="$base_oid"
-    elif _fetch_origin_branch "$base_ref"; then
-      row_tip="$fetched_oid"
-    fi
-    row_head="$(_wt_git_common "${crew_dir%/crew}" rev-parse --verify -q "refs/heads/$branch^{commit}" 2>/dev/null || true)"
-    if [ -n "$row_tip" ] && [ -n "$row_head" ] &&
-      _wt_git_common "${crew_dir%/crew}" merge-base --is-ancestor "$row_tip" "$row_head" 2>/dev/null; then
-      row_base_oid="$row_tip"
-    fi
-  fi
+if [ "$switch_mode" = create ] && [ -n "$base_flag" ]; then
+  row_base_oid="$create_base_oid"
 fi
 line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$session" \
   --arg worker "$worker_id" --arg engine_session "$lead_sid" \
