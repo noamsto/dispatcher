@@ -72,6 +72,8 @@ model=""
 effort=""
 autocompact=""
 task=""
+# --new: mint a crew of this launcher's own even when this repo already has one.
+new_crew=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -112,12 +114,23 @@ while [ $# -gt 0 ]; do
     }
     shift 2
     ;;
+  --new)
+    new_crew=1
+    shift
+    ;;
   *)
     task="${task:+$task }$1"
     shift
     ;;
   esac
 done
+
+# Checked before the settings read: an exported CREW_ID already answers what
+# --new asks for, and answering both is how a second crew appears by accident.
+if [ "$new_crew" = 1 ] && [ -n "${CREW_ID:-}" ]; then
+  echo "dispatcher: --new cannot be combined with an exported CREW_ID" >&2
+  exit 2
+fi
 
 case "$agent" in
 claude | codex | cursor | pi) ;;
@@ -187,6 +200,115 @@ fi
 # --autocompact flag. `auto` keeps the engine default (no knob passed).
 ac="${autocompact:-$(orch_default autoCompact)}"
 
+# ---- Re-attach before minting (#929) -------------------------------------
+# Two dispatchers in one repo split attention: a worker's question reaches only
+# the dispatcher that started it, and each counts only its own workers against
+# the fan-out budget. So read `crew crews` first and mint only when there is
+# nothing to re-attach to; `--new` is the explicit choice to mint anyway.
+#
+# `alive` and `last_event_s` come off the table itself — the launcher never
+# re-implements the live-pid test.
+
+# _pane_for_pid <pid> — the tmux pane whose pane_pid is <pid> or one of its
+# ancestors, empty for none. Bounded: 64 hops, stops at the first `ps` that
+# fails or answers non-numeric, and never climbs to init, so a recycled ppid
+# chain can neither spin nor match a shared ancestor.
+_pane_for_pid() {
+  local pid=$1 entry pane ppid hop=0
+  local -a panes=()
+  mapfile -t panes < <(tmux list-panes -a -F '#{pane_id} #{pane_pid}' 2>/dev/null)
+  while [ -n "$pid" ] && [ "$pid" != 0 ] && [ "$pid" != 1 ] && [ "$hop" -lt 64 ]; do
+    for entry in "${panes[@]}"; do
+      pane=${entry%% *}
+      ppid=${entry##* }
+      if [ "$ppid" = "$pid" ]; then
+        printf '%s' "$pane"
+        return 0
+      fi
+    done
+    ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -cd '0-9') || return 0
+    [ -n "$ppid" ] || return 0
+    pid=$ppid
+    hop=$((hop + 1))
+  done
+  return 0
+}
+
+# _reattach_or_switch — one read of the table, three outcomes: hand the client
+# to a live dispatcher's pane and exit, adopt the most recently active crew by
+# exporting CREW_ID, or fall through (no crews) so the caller mints.
+_reattach_or_switch() {
+  local table row_id row_last _row_first _row_workers row_pid row_alive
+  local first_id='' newest='' live_id='' live_pid='' pane='' adopt
+  local header=1
+  # A failed read must not read as an empty table: that would mint beside crews
+  # that are still there.
+  if ! table=$(crew crews 2>/dev/null); then
+    echo "dispatcher: 'crew crews' failed — cannot tell which crews exist, so starting a fresh one; check this repo's crew bus" >&2
+    return 0
+  fi
+  while IFS=$'\t' read -r row_id row_last _row_first _row_workers row_pid row_alive; do
+    if [ "$header" = 1 ]; then
+      header=0
+      continue
+    fi
+    [ -n "$row_id" ] || continue
+    [ -n "$first_id" ] || first_id=$row_id
+    # Rows come back sorted by recency, so the first numeric last_event_s is the
+    # smallest. `—` means the crew has no events at all: last, never first.
+    if [ -z "$newest" ] && [[ $row_last =~ ^[0-9]+$ ]]; then
+      newest=$row_id
+    fi
+    if [ -z "$live_id" ] && [ "$row_alive" = yes ] && [[ $row_pid =~ ^[1-9][0-9]*$ ]]; then
+      live_id=$row_id
+      live_pid=$row_pid
+    fi
+  done <<<"$table"
+
+  if [ -n "$live_id" ]; then
+    pane=$(_pane_for_pid "$live_pid") || pane=''
+    if [ -n "$pane" ]; then
+      if [ -n "$task" ]; then
+        echo "dispatcher: crew $live_id has a live dispatcher in pane $pane — send the task there, or pass --new to start a second crew" >&2
+        exit 1
+      fi
+      if [ -n "${TMUX:-}" ]; then
+        tmux switch-client -t "$pane" || {
+          echo "dispatcher: could not switch the client to pane $pane" >&2
+          exit 1
+        }
+      fi
+      echo "dispatcher: crew $live_id already has a live dispatcher in pane $pane — nothing started"
+      exit 0
+    fi
+    # Alive but no pane (detached client, killed window): not live for the
+    # switch, so the crew is adopted below.
+    echo "dispatcher: crew $live_id's dispatcher pid $live_pid has no tmux pane — re-attaching to the crew instead" >&2
+  fi
+
+  adopt=$newest
+  [ -n "$adopt" ] || adopt=$first_id
+  if [ -n "$adopt" ]; then
+    # Only the crew that still records a live pid gets `crew register`'s refusal
+    # tolerated below, and only that one is worth naming the takeover for.
+    if [ "$adopt" = "$live_id" ]; then
+      adopted_live=1
+    fi
+    CREW_ID=$adopt
+    export CREW_ID
+    echo "dispatcher: re-attached to crew $adopt" >&2
+  fi
+  return 0
+}
+
+# An exported CREW_ID already means "this crew", and a mint outside a git repo
+# has no per-repo crew table to consult (same guard `crew register` uses).
+adopted_live=0
+if [ -z "${CREW_ID:-}" ] && [ "$new_crew" = 0 ] &&
+  git rev-parse --git-common-dir >/dev/null 2>&1; then
+  _reattach_or_switch
+fi
+
 # Fixed identity for the orchestrator window so it stands out from the
 # per-branch worker windows it spawns. Guarded on $TMUX — the dispatcher can be
 # launched outside a tmux pane.
@@ -231,21 +353,25 @@ fi
 # Mint + export the crew id once at launch (mirrors `dispatch`), so the launched
 # agent and every child `dispatch` inherit the SAME crew. `crew new` needs no
 # git repo. Printed because a script cannot export back to the calling shell.
-crew_id_was_unset=1
-[ -z "${CREW_ID:-}" ] || crew_id_was_unset=0
+# Above this, the #929 pass already adopted a crew when this repo had one, so a
+# mint here means there was nothing to re-attach to — or --new asked for one.
 : "${CREW_ID:=$(crew new)}"
 export CREW_ID
 echo "crew id: $CREW_ID"
 
 if git rev-parse --git-common-dir >/dev/null 2>&1; then
-  crew register $$
+  if [ "$adopted_live" = 1 ]; then
+    crew register $$ ||
+      echo "dispatcher: crew $CREW_ID keeps its live dispatcher pid — 'crew adopt --force $CREW_ID' takes it over" >&2
+  else
+    crew register $$
+  fi
 
-  # Discovery notice (#29): a mint that silently orphans other on-disk crews is
-  # the exact split-brain this issue exists to close. `crew adopt` is the wrong
-  # remedy on this entrance — CREW_ID is already exported into the launched
-  # agent's env, so adopt's export line would land in the wrong shell; only
-  # relaunching with it set re-attaches.
-  if [ "$crew_id_was_unset" = 1 ]; then
+  # --new confirmation: minting next to crews the caller chose not to adopt is
+  # worth one line. `crew adopt` is the wrong remedy on this entrance — CREW_ID
+  # is already exported into the launched agent's env, so adopt's export line
+  # would land in the wrong shell; only relaunching with it set re-attaches.
+  if [ "$new_crew" = 1 ]; then
     {
       other=0
       header=1
@@ -259,7 +385,7 @@ if git rev-parse --git-common-dir >/dev/null 2>&1; then
         other=$((other + 1))
       done < <(crew crews)
       if [ "$other" -gt 0 ]; then
-        echo "dispatcher: minted a NEW crew; this repo has $other other(s) — 'crew crews' lists them; to re-attach to a crew whose dispatcher is dead, relaunch as: CREW_ID=<id> dispatcher (a live crew makes the launcher abort at 'crew register $$')" >&2
+        echo "dispatcher: minted a NEW crew (--new); this repo has $other other(s) — 'crew crews' lists them; to launch against one of those instead, relaunch as: CREW_ID=<id> dispatcher (drop --new)" >&2
       fi
     } || true
   fi

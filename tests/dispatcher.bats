@@ -10,6 +10,7 @@ setup() {
 }
 
 teardown() {
+  [ -z "${live_pid:-}" ] || kill "$live_pid" 2>/dev/null || true
   teardown_repo
 }
 
@@ -579,4 +580,278 @@ EOF
     [ -n "$b" ]
     [ "$a" = "$b" ]
   done
+}
+
+# ---- #929: re-attach to this repo's live dispatcher ----------------------
+
+# stub_crew_table <tsv> — a `crew` stub richer than setup()'s, which prints
+# nothing (so `crew new` would return an empty id and `crew crews` no rows):
+# `new` mints the fixed id c-minted, `crews` answers <tsv>, and every call is
+# logged.
+stub_crew_table() {
+  printf '%s\n' "$1" >"$STUB_DIR/crews.tsv"
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+new) echo c-minted ;;
+crews) cat "$STUB_DIR/crews.tsv" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+}
+
+# crews_tsv <row>… — the header, then one tab-joined row per argument, ending in
+# the newline the launcher's `while read` needs to see the last row.
+crews_tsv() {
+  printf 'crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\n'
+  printf '%s\n' "$@"
+}
+
+# stub_tmux_panes <pane_id> <pane_pid> — a tmux whose `list-panes -a` answers
+# exactly one pane, and that logs every call so switch-client is assertable.
+stub_tmux_panes() {
+  cat >"$STUB_DIR/tmux" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$1 \$2" in
+"list-panes -a") printf '%s %s\n' '$1' '$2' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+# stub_ps_parent <child> <parent> — the one ancestor edge the pane walk takes.
+stub_ps_parent() {
+  cat >"$STUB_DIR/ps" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+"-o ppid= -p $1") printf '  %s\n' '$2' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/ps"
+}
+
+# stub_engine_env — an engine stub that logs the CREW_ID it was launched with.
+stub_engine_env() {
+  cat >"$STUB_DIR/claude" <<'EOF'
+#!/usr/bin/env bash
+printf 'claude env CREW_ID=%s\n' "${CREW_ID-UNSET}" >>"$STUB_LOG"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/claude"
+}
+
+@test "929: a live dispatcher in a pane gets the client and nothing is minted" {
+  stub_crew_table "$(crews_tsv "$(printf 'c-live\t5\t5\t1\t4321\tyes')")"
+  stub_tmux_panes '%7' 4321
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher
+  [ "$status" -eq 0 ]
+  out="$output"
+  [[ "$out" == *"c-live"* && "$out" == *"%7"* ]]
+  run grep -cx 'switch-client -t %7' "$STUB_LOG"
+  [ "$output" = "1" ]
+  # AC1: neither half of a mint may happen on the exit-0 switch path.
+  run grep -cx new "$STUB_LOG"
+  [ "$output" = "0" ]
+  run grep -cx 'register [0-9][0-9]*' "$STUB_LOG"
+  [ "$output" = "0" ]
+}
+
+@test "929: outside tmux a live dispatcher prints the crew and pane, starting nothing" {
+  stub_crew_table "$(crews_tsv "$(printf 'c-live\t5\t5\t1\t4321\tyes')")"
+  stub_tmux_panes '%7' 4321
+  run run_launcher
+  [ "$status" -eq 0 ]
+  out="$output"
+  [[ "$out" == *"c-live"* && "$out" == *"%7"* ]]
+  run grep -c switch-client "$STUB_LOG"
+  [ "$output" = "0" ]
+  run grep -cx new "$STUB_LOG"
+  [ "$output" = "0" ]
+}
+
+@test "929: task words with a live dispatcher refuse and name its pane" {
+  stub_crew_table "$(crews_tsv "$(printf 'c-live\t5\t5\t1\t4321\tyes')")"
+  stub_tmux_panes '%7' 4321
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher fix the flaky test
+  [ "$status" -eq 1 ]
+  out="$output"
+  [[ "$out" == *"c-live"* && "$out" == *"%7"* ]]
+  run grep -c switch-client "$STUB_LOG"
+  [ "$output" = "0" ]
+  run grep -cx new "$STUB_LOG"
+  [ "$output" = "0" ]
+}
+
+@test "929: the pane is found through an ancestor pid" {
+  stub_crew_table "$(crews_tsv "$(printf 'c-live\t5\t5\t1\t5000\tyes')")"
+  stub_tmux_panes '%3' 4000
+  stub_ps_parent 5000 4000
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher
+  [ "$status" -eq 0 ]
+  run grep -cx 'switch-client -t %3' "$STUB_LOG"
+  [ "$output" = "1" ]
+}
+
+@test "929: dead crews are adopted by smallest last_event_s and registered" {
+  stub_crew_table "$(crews_tsv "$(printf 'c-new\t5\t5\t0\t999\tno')" "$(printf 'c-old\t5000\t5000\t0\t998\tno')")"
+  stub_engine_env
+  run run_launcher
+  [ "$status" -eq 0 ]
+  out="$output"
+  [[ "$out" == *"re-attached to crew c-new"* && "$out" == *"crew id: c-new"* ]]
+  grep -qx 'claude env CREW_ID=c-new' "$STUB_LOG"
+  run grep -cx new "$STUB_LOG"
+  [ "$output" = "0" ]
+  run grep -cx 'register [0-9][0-9]*' "$STUB_LOG"
+  [ "$output" = "1" ]
+}
+
+@test "929: a live pid with no pane re-attaches, with the stderr note" {
+  stub_crew_table "$(crews_tsv "$(printf 'c-live\t5\t5\t1\t4321\tyes')" "$(printf 'c-old\t5000\t5000\t0\t998\tno')")"
+  stub_tmux_panes '%7' 111
+  run run_launcher
+  [ "$status" -eq 0 ]
+  out="$output"
+  [[ "$out" == *"4321 has no tmux pane"* ]]
+  [[ "$out" == *"re-attached to crew c-live"* && "$out" == *"crew id: c-live"* ]]
+  run grep -cx 'register [0-9][0-9]*' "$STUB_LOG"
+  [ "$output" = "1" ]
+  run grep -cx new "$STUB_LOG"
+  [ "$output" = "0" ]
+}
+
+@test "929: --new mints even beside a live dispatcher's pane" {
+  stub_crew_table "$(crews_tsv "$(printf 'c-live\t5\t5\t1\t4321\tyes')")"
+  stub_tmux_panes '%7' 4321
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher --new
+  [ "$status" -eq 0 ]
+  out="$output"
+  [[ "$out" == *"crew id: c-minted"* && "$out" == *"minted a NEW crew"* ]]
+  run grep -cx new "$STUB_LOG"
+  [ "$output" = "1" ]
+  run grep -c switch-client "$STUB_LOG"
+  [ "$output" = "0" ]
+}
+
+@test "929: --new with an exported CREW_ID is a usage error" {
+  : >"$STUB_LOG"
+  CREW_ID=c1 run run_launcher --new
+  [ "$status" -eq 2 ]
+  out="$output"
+  [[ "$out" == *"--new cannot be combined with an exported CREW_ID"* ]]
+  run grep -cx new "$STUB_LOG"
+  [ "$output" = "0" ]
+}
+
+@test "929: no crews mints as today" {
+  stub_crew_table "$(crews_tsv)"
+  run run_launcher
+  [ "$status" -eq 0 ]
+  out="$output"
+  [[ "$out" == *"crew id: c-minted"* ]]
+  [[ "$out" != *"re-attached"* && "$out" != *"minted a NEW crew"* ]]
+  run grep -cx new "$STUB_LOG"
+  [ "$output" = "1" ]
+}
+
+@test "929: an exported CREW_ID never reads the crew table" {
+  stub_crew_table "$(crews_tsv "$(printf 'c-live\t5\t5\t1\t4321\tyes')")"
+  CREW_ID=c-existing run run_launcher
+  [ "$status" -eq 0 ]
+  run grep -cx crews "$STUB_LOG"
+  [ "$output" = "0" ]
+}
+
+@test "929: the newest crew is adopted when the pane-less live one is not newest" {
+  stub_crew_table "$(crews_tsv "$(printf 'c-fresh\t3\t3\t0\t998\tno')" "$(printf 'c-live\t500\t500\t1\t4321\tyes')")"
+  run run_launcher
+  [ "$status" -eq 0 ]
+  out="$output"
+  [[ "$out" == *"4321 has no tmux pane"* ]]
+  [[ "$out" == *"re-attached to crew c-fresh"* && "$out" == *"crew id: c-fresh"* ]]
+}
+
+@test "929: a failed switch-client fails the launcher instead of claiming a switch" {
+  stub_crew_table "$(crews_tsv "$(printf 'c-live\t5\t5\t1\t4321\tyes')")"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1 $2" in
+"list-panes -a") printf '%%7 4321\n' ;;
+"switch-client -t") exit 1 ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not switch the client to pane %7"* ]]
+}
+
+@test "929: a failing crew crews warns instead of minting in silence" {
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+crews) exit 5 ;;
+new) echo c-minted ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  run run_launcher
+  [ "$status" -eq 0 ]
+  out="$output"
+  [[ "$out" == *"'crew crews' failed"* && "$out" == *"crew id: c-minted"* ]]
+}
+
+# The AC3 case a stub cannot show: `crew register` refuses a crew whose recorded
+# pid is alive, so this row drives the real crew, the binary production runs.
+@test "929: a live pid with no pane still launches when crew register refuses it" {
+  local crew_bin="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
+  sleep 30 &
+  live_pid=$!
+  cat >"$STUB_DIR/crew" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+exec bash '$crew_bin' "\$@"
+EOF
+  chmod +x "$STUB_DIR/crew"
+  CREW_ID=c-live bash -euo pipefail "$crew_bin" register "$live_pid"
+  run run_launcher
+  [ "$status" -eq 0 ]
+  out="$output"
+  [[ "$out" == *"re-attached to crew c-live"* ]]
+  [[ "$out" == *"crew adopt --force c-live"* ]]
+  [[ "$out" == *"crew id: c-live"* ]]
+}
+
+@test "929: a register failure is not tolerated for a crew with no live pid" {
+  stub_crew_table "$(crews_tsv "$(printf 'c-fresh\t3\t3\t0\t998\tno')" "$(printf 'c-live\t500\t500\t1\t4321\tyes')")"
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+new) echo c-minted ;;
+crews) cat "$STUB_DIR/crews.tsv" ;;
+register)
+  echo "crew: crew 'c-fresh' still has a live dispatcher (pid 998)" >&2
+  exit 1
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  run run_launcher
+  # The dead crew is adopted, so `crew register`'s refusal is a real failure and
+  # the launcher dies on it rather than naming a takeover for the wrong crew.
+  [ "$status" -ne 0 ]
+  out="$output"
+  [[ "$out" == *"re-attached to crew c-fresh"* ]]
+  [[ "$out" != *"keeps its live dispatcher pid"* ]]
 }

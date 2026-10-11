@@ -550,7 +550,14 @@ For Claude Code, pass the plugin directory to `claude`:
 dispatcher                       # promote this shell into an orchestrator
 dispatcher --agent codex         # …running on a different engine
 dispatcher "fix the flaky test"  # …with a first task
+dispatcher --new                 # …minting a second crew on purpose
 ```
+
+A bare `dispatcher` in a repo that already has a live one switches your client to
+its pane instead of starting a second; task words there are refused with the pane
+named, so re-send them. With only dead crews it launches against the most
+recently active one. `--new` mints regardless, and refuses to run alongside an
+exported `CREW_ID`.
 
 From inside a dispatcher session:
 
