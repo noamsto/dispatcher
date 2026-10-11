@@ -15,6 +15,7 @@
 #   env    — DISPATCH_ENGINES (whitespace-split), DISPATCH_GRANT_ROOTS
 #            (colon-split), DISPATCH_OPENROUTER_MONTHLY_USD,
 #            DISPATCH_OPENROUTER_KEY_FILE, DISPATCH_PROFILE,
+#            DISPATCH_FLEET_BUDGET (integer),
 #            DISPATCH_REPO_TRACKERS/DISPATCH_ORG_TRACKERS (whitespace-separated
 #            key=value pairs, split at the first "="; a repeated key is
 #            last-wins), DISPATCH_ROSTER_AUTO_OPEN (0/false/no/off, any case,
@@ -258,6 +259,7 @@ env_layer=$(jq -cn '
   | from_env("DISPATCH_OPENROUTER_MONTHLY_USD"; ["openrouter", "monthlyUsd"]; .)
   | from_env("DISPATCH_OPENROUTER_KEY_FILE"; ["openrouter", "keyFile"]; .)
   | from_env("DISPATCH_PROFILE"; ["profile"]; .)
+  | from_env("DISPATCH_FLEET_BUDGET"; ["fleetBudget"]; tonumber? // .)
   | from_env_nonempty("DISPATCH_REPO_TRACKERS"; ["repoTrackers"]; trackers)
   | from_env_nonempty("DISPATCH_ORG_TRACKERS"; ["orgTrackers"]; trackers)
   | from_env("DISPATCH_ROSTER_AUTO_OPEN"; ["rosterDiagram", "autoOpen"]; test("^(0|false|no|off)$"; "i") | not)')
@@ -330,6 +332,7 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["openrouter", "keyFile"]; "a string"; type == "string")
   | need(["openrouter", "monthlyUsd"]; "a number or string"; type == "number" or type == "string")
   | need(["profile"]; "a string"; type == "string")
+  | need(["fleetBudget"]; "a non-negative integer"; type == "number" and . == floor and . >= 0)
   | need(["repoTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | need(["orgTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | if has("localModels") then (first(local_model_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end

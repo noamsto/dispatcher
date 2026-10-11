@@ -377,5 +377,6 @@
     "cursor": {"model": "kimi-k3-high"},
     "pi": {"model": "openrouter/deepseek/deepseek-v4.1-flash", "effort": "high"}
   },
-  "rosterDiagram": {"autoOpen": true}
+  "rosterDiagram": {"autoOpen": true},
+  "fleetBudget": 8
 }

@@ -2911,6 +2911,218 @@ EOF
   chmod +x "$STUB_DIR/tmux"
 }
 
+# Fleet gate (#927). fleet_tmux stubs list-panes -a with the lines in
+# $STUB_DIR/fleet (cmd, name, branch, role, path; \x1f-separated).
+fleet_tmux() {
+  mv "$STUB_DIR/tmux" "$STUB_DIR/tmux-inner"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = list-panes ] && [ "$2" = -a ]; then
+  cat "$STUB_DIR/fleet" 2>/dev/null
+  exit 0
+fi
+exec "$STUB_DIR/tmux-inner" "$@"
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  : >"$STUB_DIR/fleet"
+}
+
+# fleet_lead <cmd> <name> <branch> <role> <tier|none> — one pane.
+fleet_lead() {
+  local dir="$BATS_TEST_TMPDIR/wt-$2"
+  mkdir -p "$dir"
+  [ "$5" = none ] || printf 'tier: %s\nkind: implement\n' "$5" >"$dir/WORKER_TASK.md"
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\n' "$1" "$2" "$3" "$4" "$dir" >>"$STUB_DIR/fleet"
+}
+
+fleet_nproc() {
+  printf '#!/usr/bin/env bash\necho 4\n' >"$STUB_DIR/nproc"
+  chmod +x "$STUB_DIR/nproc"
+}
+
+@test "927 fleet: weight 7 refuses standard naming the heaviest workers and the escape; trivial passes" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_lead claude amber feat/1-a "" deep
+  fleet_lead claude birch feat/2-b "" deep
+  fleet_lead claude cedar feat/3-c "" trivial
+  run run_dispatch standard sonnet --effort medium --crew-id c1 101 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: refused, machine at capacity — live lead weight 7 + this standard dispatch (2) exceeds fleetBudget 8 — heaviest: amber ("*", deep), birch ("*", deep), cedar ("*", trivial); "* ]]
+  [[ "$output" == *"or pass --ignore-budget"* ]]
+
+  run run_dispatch trivial haiku --effort medium --crew-id c1 102 "t"
+  [ "$status" -eq 0 ]
+
+  # At most three workers are named.
+  fleet_lead claude dune feat/4-d "" trivial
+  run run_dispatch standard sonnet --effort medium --crew-id c1 103 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"dune"* ]]
+}
+
+@test "927 fleet: fleetBudget 0 and DISPATCH_FLEET_BUDGET=0 disable both checks; --ignore-budget bypasses with a notice" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_nproc
+  fleet_lead claude amber feat/1-a "" deep
+  fleet_lead claude birch feat/2-b "" deep
+  fleet_lead claude cedar feat/3-c "" trivial
+  printf '9.00 9.00 9.00 1/1 1\n' >"$DISPATCH_LOADAVG_FILE"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 104 "t"
+  [ "$status" -eq 1 ]
+
+  DISPATCH_FLEET_BUDGET=0 run run_dispatch standard sonnet --effort medium --crew-id c1 105 "t"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"machine at capacity"* ]]
+
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"fleetBudget":0}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 106 "t"
+  [ "$status" -eq 0 ]
+  rm "$XDG_CONFIG_HOME/dispatcher/settings.json"
+
+  run run_dispatch standard sonnet --effort medium --ignore-budget --crew-id c1 107 "t"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch: fleet check skipped (--ignore-budget) — live lead weight 7 + this standard dispatch (2) exceeds fleetBudget 8"* ]]
+
+  # A float literal still caps (jq would print 1E+1, which bash cannot compare).
+  printf '0.00 0.00 0.00 1/1 1\n' >"$DISPATCH_LOADAVG_FILE"
+  fleet_lead claude fern feat/6-f "" trivial
+  fleet_lead claude gale feat/7-g "" trivial
+  fleet_lead claude hazel feat/8-h "" trivial
+  printf '{"fleetBudget":1e1}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 116 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"exceeds fleetBudget 10"* ]]
+  rm "$XDG_CONFIG_HOME/dispatcher/settings.json"
+}
+
+@test "927 fleet: role panes, dead-engine panes and unstamped panes add no weight; an unreadable tier counts as standard" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_lead claude amber feat/1-a "" deep
+  fleet_lead claude amber feat/1-a critic deep
+  fleet_lead claude amber feat/1-a reviewer deep
+  fleet_lead fish birch feat/2-b "" deep
+  fleet_lead claude "" "" "" deep
+  run run_dispatch standard sonnet --effort medium --crew-id c1 108 "t"
+  [ "$status" -eq 0 ]
+
+  fleet_lead claude cedar feat/3-c "" none
+  fleet_lead claude dune feat/4-d "" none
+  run run_dispatch standard sonnet --effort medium --crew-id c1 109 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"live lead weight 7 + this standard dispatch (2) exceeds fleetBudget 8"* ]]
+}
+
+@test "927 fleet: a grid lead stamped role=lead counts; its other role panes do not" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_lead claude amber feat/1-a lead deep
+  fleet_lead claude amber feat/1-a reviewer deep
+  fleet_lead claude birch feat/2-b lead deep
+  fleet_lead claude cedar feat/3-c "" trivial
+  run run_dispatch standard sonnet --effort medium --crew-id c1 130 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"live lead weight 7 + this standard dispatch (2) exceeds fleetBudget 8"* ]]
+}
+
+@test "927 fleet: a pane whose worktree was deleted adds no weight" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_lead claude amber feat/1-a "" deep
+  fleet_lead claude birch feat/2-b "" deep
+  fleet_lead claude cedar feat/3-c "" deep
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\n' claude dune feat/4-d "" "$BATS_TEST_TMPDIR/gone (deleted)" >>"$STUB_DIR/fleet"
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\n' claude elm feat/5-e "" "$BATS_TEST_TMPDIR/gone" >>"$STUB_DIR/fleet"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 131 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"live lead weight 9 + this standard dispatch (2)"* ]]
+}
+
+@test "927 fleet: a lead whose newest bus status is done, failed or exited weighs 0" {
+  stub_launch_bins
+  fleet_tmux
+  for n in amber birch cedar dune; do
+    wt="$BATS_TEST_TMPDIR/wt-$n"
+    mkdir -p "$wt"
+    git init -q "$wt"
+    printf 'tier: deep\n' >"$wt/WORKER_TASK.md"
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\n' claude "$n" "feat/$n-x" "" "$wt" >>"$STUB_DIR/fleet"
+  done
+  # All four worktrees are separate repos; give amber and birch's repos one shared bus.
+  bus="$BATS_TEST_TMPDIR/wt-amber/.git/crew"
+  mkdir -p "$bus"
+  for n in birch cedar dune; do
+    rm -rf "$BATS_TEST_TMPDIR/wt-$n/.git"
+    printf 'gitdir: %s\n' "$BATS_TEST_TMPDIR/wt-amber/.git" >"$BATS_TEST_TMPDIR/wt-$n/.git"
+  done
+  {
+    printf '{"ts":1,"kind":"status","from":"worker:feat/amber-x#s1","body":{"state":"working"}}\n'
+    printf '{"ts":2,"kind":"status","from":"worker:feat/amber-x#s1","body":{"state":"done"}}\n'
+    printf '{"ts":3,"kind":"status","from":"worker:feat/birch-x#s2","body":{"state":"pr_open"}}\n'
+    printf '{"ts":4,"kind":"msg","from":"worker:feat/birch-x#s2","body":{"state":"done"}}\n'
+    printf '{"ts":5,"kind":"status","from":"worker:feat/cedar-x#s3","body":"junk"}\n'
+    printf '{"ts":6,"kind":"status","from":"worker:feat/cedar-x#s3","body":{"state":"failed"}}\n'
+    printf '{"ts":7,"kind":"status","from":"worker:feat/dune-x#s4","body":{"state":"exited"}}\n'
+  } >"$bus/events.jsonl"
+  DISPATCH_FLEET_BUDGET=4 run run_dispatch standard sonnet --effort medium --crew-id c1 132 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"live lead weight 3 + this standard dispatch (2) exceeds fleetBudget 4"* ]]
+}
+
+@test "927 fleet: a lead whose pane sits in a worktree subdirectory still weighs its tier" {
+  stub_launch_bins
+  fleet_tmux
+  for n in amber birch cedar; do
+    wt="$BATS_TEST_TMPDIR/wt-$n"
+    mkdir -p "$wt/sub"
+    git init -q "$wt"
+    printf 'tier: deep\n' >"$wt/WORKER_TASK.md"
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\n' claude "$n" "feat/$n-x" "" "$wt/sub" >>"$STUB_DIR/fleet"
+  done
+  run run_dispatch standard sonnet --effort medium --crew-id c1 120 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"live lead weight 9 + this standard dispatch (2)"* ]]
+}
+
+@test "927 fleet: a re-dispatch onto a branch that has a lead pane is not a new lead" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_lead claude amber feat/42-t "" deep
+  fleet_lead claude birch feat/2-b "" deep
+  fleet_lead claude cedar feat/3-c "" deep
+  run run_dispatch standard sonnet --effort medium --crew-id c1 43 "t"
+  [ "$status" -eq 1 ]
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "t"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"machine at capacity"* ]]
+}
+
+@test "927 fleet: load above the core count refuses naming load, cores and the escape; unreadable load passes" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_nproc
+  printf '4.50 3.00 2.00 1/1 1\n' >"$DISPATCH_LOADAVG_FILE"
+  run run_dispatch trivial haiku --effort medium --crew-id c1 112 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: refused, machine at capacity — 1-minute load average 4.50 is above the 4 cores; "*"or pass --ignore-budget"* ]]
+
+  printf '4.00 3.00 2.00 1/1 1\n' >"$DISPATCH_LOADAVG_FILE"
+  run run_dispatch trivial haiku --effort medium --crew-id c1 113 "t"
+  [ "$status" -eq 0 ]
+
+  printf '9.00 3.00 2.00 1/1 1\n' >"$DISPATCH_LOADAVG_FILE"
+  run run_dispatch trivial haiku --effort medium --ignore-budget --crew-id c1 114 "t"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"fleet check skipped (--ignore-budget) — 1-minute load average 9.00 is above the 4 cores"* ]]
+
+  printf 'garbage\n' >"$DISPATCH_LOADAVG_FILE"
+  run run_dispatch trivial haiku --effort medium --crew-id c1 115 "t"
+  [ "$status" -eq 0 ]
+}
+
 @test "local lane: a local id passes at an allowed tier and probes its endpoint" {
   local_lane_fixture
   DISPATCH_PRECHECK=1 run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"

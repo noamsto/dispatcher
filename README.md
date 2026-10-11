@@ -268,7 +268,7 @@ four `DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`,
 `DISPATCHER_CRITICS_DIR` and `DISPATCHER_SKILLS_DIR` session variables,
 installs the Codex plugin and writes the Cursor rule, commands, skills and
 rosters when those engines are included in `engines`. The settings above
-(`profile`, `engines`, `grantRoots`, `repoTrackers`, `orgTrackers`,
+(`profile`, `engines`, `grantRoots`, `fleetBudget`, `repoTrackers`, `orgTrackers`,
 `openrouter`, `localModels`, `laneProfiles`) are not exported as `DISPATCH_*`: they go into a locked settings
 file baked into `dispatch-config` and every CLI that resolves through it
 (`dispatch`, `dispatch-resume`, `dispatcher`, `refresh-budget`), so no
@@ -299,14 +299,18 @@ a plain checkout or `nix run .#dispatch-config` instead honours the file
 named by `$DISPATCH_LOCKED_SETTINGS`, optional), and **env** (`DISPATCH_PROFILE`,
 `DISPATCH_ENGINES`, `DISPATCH_GRANT_ROOTS`, `DISPATCH_REPO_TRACKERS`,
 `DISPATCH_ORG_TRACKERS`, `DISPATCH_OPENROUTER_MONTHLY_USD`,
-`DISPATCH_OPENROUTER_KEY_FILE`) — all per-launch overrides, never exported by
+`DISPATCH_OPENROUTER_KEY_FILE`, `DISPATCH_FLEET_BUDGET`) — all per-launch overrides, never exported by
 the module. `dispatch-config --show-origin` shows which layer set each value.
 A baked build ignores `$DISPATCH_LOCKED_SETTINGS` (a stderr notice if it names
 another file); a raw-source run or the flake's plain `packages` output honours
 it as the dev/test override it always was.
 `grantRoots` and `openrouter.keyFile` widen what a worker can read, so they
 are honoured only from the locked layer or the environment — a copy in the
-base or user layer is dropped with a warning. The model map itself lives in
+base or user layer is dropped with a warning. `fleetBudget` (default 8, 0
+disables) is the machine-wide fan-out cap: `dispatch` refuses a new lead when
+the live leads on the host (trivial=1, standard=2, deep=3, from every
+dispatcher) plus its own would exceed it, or when the 1-minute load average is
+above the core count; `--ignore-budget` bypasses both. The model map itself lives in
 `adapters/core/defaults.json`: edit it, then run `scripts/gen-adapters.sh` to
 regenerate the Tier map's doc tables and the adapter mirrors.
 

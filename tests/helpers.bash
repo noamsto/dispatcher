@@ -59,6 +59,10 @@ setup_repo() {
   git config user.email test@example.com
   git config user.name test
   export TEST_REPO
+  # dispatch's fleet gate refuses on a loaded host; pin an idle one so no test
+  # depends on the machine it runs on.
+  printf '0.00 0.00 0.00 1/1 1\n' >"$BATS_TEST_TMPDIR/loadavg"
+  export DISPATCH_LOADAVG_FILE="$BATS_TEST_TMPDIR/loadavg"
   # Raw-source runs (crew.sh/dispatch.sh/dispatch-resume.sh here, not the
   # `sub`-substituted nix build) never see @worktreeGitLib@ substituted, so
   # point every test at the repo copy of the anchored-git lib (#539).
