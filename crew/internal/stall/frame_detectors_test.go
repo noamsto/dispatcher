@@ -1172,6 +1172,69 @@ func TestD9EpisodeClearsOnChange(t *testing.T) {
 	}
 }
 
+// TestD9PaneChangeOpensFreshEpisode: a lead that resumed after the type and
+// stopped again the same kind before any sample caught it working never sees
+// "not resumed": the changed pane closes the episode and a fresh one opens on
+// that sample, typing again within d9Limit.
+func TestD9PaneChangeOpensFreshEpisode(t *testing.T) {
+	r := newD9Rig(t, d9ID, "pi")
+	var at int64
+	r.tick(&at, "pi_truncated_idle.txt")
+	if rows := r.tick(&at, "pi_truncated_idle.txt"); len(rows) != 1 ||
+		rows[0] != "working|truncated: auto-continued — pane %9" || r.continues != 1 {
+		t.Fatalf("tick 2: rows %q, %d calls", rows, r.continues)
+	}
+	// The first sample after the type already shows new output with the same
+	// stop kind: resumed and stopped again. No blocked, no cleared (none
+	// stands); the fresh episode starts on this sample.
+	if rows := r.tick(&at, "pi_truncated_padded_idle.txt"); rows != nil {
+		t.Fatalf("change tick: rows %q, want none", rows)
+	}
+	// Second sample of the fresh episode: types again, d9Count permitting.
+	rows := r.tick(&at, "pi_truncated_padded_idle.txt")
+	if len(rows) != 1 || rows[0] != "working|truncated: auto-continued — pane %9" || r.continues != 2 {
+		t.Fatalf("fresh episode: rows %q, %d calls, want the auto-continued row and 2", rows, r.continues)
+	}
+}
+
+// TestD9PaneChangeClearsPostedNotResumed: the persistence fix — once a "not
+// resumed" blocked stands, a later changed pane closes the episode with
+// cleared and restarts it, and a byte-identical pane inside the fresh episode
+// still surfaces on its own not-resumed schedule.
+func TestD9PaneChangeClearsPostedNotResumed(t *testing.T) {
+	r := newD9Rig(t, d9ID, "pi")
+	var at int64
+	r.tick(&at, "pi_truncated_idle.txt")
+	r.tick(&at, "pi_truncated_idle.txt")
+	r.tick(&at, "pi_truncated_idle.txt")
+	if rows := r.tick(&at, "pi_truncated_idle.txt"); len(rows) != 1 ||
+		!strings.HasPrefix(rows[0], "blocked|truncated: ") || !strings.Contains(rows[0], "not resumed") {
+		t.Fatalf("tick 4: rows %q, want one blocked not resumed", rows)
+	}
+	if rows := r.tick(&at, "pi_truncated_padded_idle.txt"); len(rows) != 1 || rows[0] != "working|truncated: cleared" {
+		t.Fatalf("change tick: rows %q, want the cleared row", rows)
+	}
+	r.tick(&at, "pi_truncated_padded_idle.txt")
+	if r.continues != 2 {
+		t.Errorf("%d calls, want the fresh episode to type again", r.continues)
+	}
+}
+
+// TestD9IdenticalPaneStillPostsNotResumed: the pane staying byte-identical
+// after the type keeps today's post, exactly as before the baseline existed.
+func TestD9IdenticalPaneStillPostsNotResumed(t *testing.T) {
+	r := newD9Rig(t, d9ID, "pi")
+	var at int64
+	r.tick(&at, "pi_truncated_idle.txt")
+	r.tick(&at, "pi_truncated_idle.txt")
+	r.tick(&at, "pi_truncated_idle.txt")
+	rows := r.tick(&at, "pi_truncated_idle.txt")
+	want := "blocked|truncated: response truncated at the output cap in pane %9 — auto-continued but not resumed; check the pane (crew where)"
+	if len(rows) != 1 || rows[0] != want {
+		t.Fatalf("rows %q, want [%q]", rows, want)
+	}
+}
+
 func TestD9Refusals(t *testing.T) {
 	cases := []struct {
 		name, id, engine, frame string
