@@ -258,7 +258,13 @@ func occupied(rows []bus.Event, branch, crew string) map[string]bool {
 	dispatch := map[string]bus.Event{}
 	selfts, haveSelf := 0.0, false
 	for _, ev := range rows {
-		if ev.Raw.Kind() != jsonv.KindObject || ev.CrewID != crew {
+		// The arm's `.crew_id == $crew` on a `--arg` string: jq's `==` is false
+		// against null, false or a number, so a row that recorded no crew_id is no
+		// crew's row — not even the empty one `crew identity <branch>` resolves to
+		// outside a task doc. The typed ev.CrewID cannot tell those apart.
+		stored, _ := ev.Raw.Get("crew_id")
+		cid, isStr := stored.AsString()
+		if !isStr || cid != crew {
 			continue
 		}
 		if ev.Kind == bus.KindStatus {

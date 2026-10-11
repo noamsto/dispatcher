@@ -349,6 +349,7 @@ func TestAssign(t *testing.T) {
 		log       string
 		windows   string
 		tmuxFails bool
+		emptyCrew bool   // ask with the empty crew `crew identity <b>` can resolve to
 		wantName  string // a pool codename, the usual answer…
 		wantID    string // …or the full identity, for a recorded one
 	}{
@@ -410,6 +411,20 @@ func TestAssign(t *testing.T) {
 			name:     "a rival of another crew holds nothing",
 			log:      fmt.Sprintf(`{"kind":"dispatch","crew_id":"c2","branch":"feat/z","name":"%s","tmux":"colour1","ts":100}`, own),
 			wantName: own,
+		},
+		{
+			// jq's `==` against a `--arg` string is false for null and for a number,
+			// so neither row is this crew's, and our own slot stays ours.
+			name:      "a row that recorded no crew_id belongs to no crew, not the empty one",
+			log:       fmt.Sprintf(`{"kind":"dispatch","branch":"feat/z","name":"%s","tmux":"colour1","ts":100}`, own),
+			emptyCrew: true,
+			wantName:  own,
+		},
+		{
+			name:      "a numeric crew_id is no crew either",
+			log:       fmt.Sprintf(`{"kind":"dispatch","crew_id":7,"branch":"feat/z","name":"%s","tmux":"colour1","ts":100}`, own),
+			emptyCrew: true,
+			wantName:  own,
 		},
 		{
 			name: "a rival dispatched after us yields its codename",
@@ -479,7 +494,11 @@ func TestAssign(t *testing.T) {
 				wins := tc.windows
 				p.Windows = func() (string, error) { return wins, nil }
 			}
-			got := compact(Assign(rows(t, tc.log), branch, crew, p))
+			ask := crew
+			if tc.emptyCrew {
+				ask = ""
+			}
+			got := compact(Assign(rows(t, tc.log), branch, ask, p))
 			want := tc.wantID
 			if want == "" {
 				want = pool(t, tc.wantName)
