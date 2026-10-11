@@ -2985,6 +2985,17 @@ fleet_nproc() {
   run run_dispatch standard sonnet --effort medium --ignore-budget --crew-id c1 107 "t"
   [ "$status" -eq 0 ]
   [[ "$output" == *"dispatch: fleet check skipped (--ignore-budget) — live lead weight 7 + this standard dispatch (2) exceeds fleetBudget 8"* ]]
+
+  # A float literal still caps (jq would print 1E+1, which bash cannot compare).
+  printf '0.00 0.00 0.00 1/1 1\n' >"$DISPATCH_LOADAVG_FILE"
+  fleet_lead claude fern feat/6-f "" trivial
+  fleet_lead claude gale feat/7-g "" trivial
+  fleet_lead claude hazel feat/8-h "" trivial
+  printf '{"fleetBudget":1e1}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 116 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"exceeds fleetBudget 10"* ]]
+  rm "$XDG_CONFIG_HOME/dispatcher/settings.json"
 }
 
 @test "927 fleet: role panes, dead-engine panes and unstamped panes add no weight; an unreadable tier counts as standard" {

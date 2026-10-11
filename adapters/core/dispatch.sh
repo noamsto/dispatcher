@@ -1039,7 +1039,7 @@ _host_load() {
 fleet_gate() {
   local tier="$1" budget add=2 leads=() weight=0 w name repo ltier top who="" load cores why=""
   shift
-  budget="$(jq -r '.fleetBudget // 8' <<<"$settings")"
+  budget="$(jq -r '(.fleetBudget // 8) + 0 | floor | [., 1000000] | min | tostring' <<<"$settings")"
   [ "$budget" != 0 ] || return 0
   [ "$tier" != trivial ] || add=1
   [ "$tier" != deep ] || add=3
