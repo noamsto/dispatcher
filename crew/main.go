@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/adopt"
@@ -19,6 +20,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/fleet"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/inbox"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
@@ -28,6 +30,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/register"
 	"github.com/noamsto/dispatcher/crew/internal/reply"
 	"github.com/noamsto/dispatcher/crew/internal/report"
+	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 	"github.com/noamsto/dispatcher/crew/internal/retro"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -42,7 +45,7 @@ import (
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | stall-watch <worker-id|branch|role:branch:role> --pane <id> […]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | fleet [--all] [--crew ID] [--json] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -75,12 +78,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "stream", "roster-render", "adopt", "stall-watch", "status", "msg", "register", "deregister":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "stream", "roster-render", "adopt", "stall-watch", "status", "msg", "register", "deregister", "fleet", "discover-repos":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
 	}
 	args = args[1:]
+
+	// fleet and discover-repos read every repo on the machine, so they run
+	// before Locate and outside any repo.
+	switch sub {
+	case "discover-repos":
+		return discoverRepos(args, stdout, stderr)
+	case "fleet":
+		return runFleet(ctx, args, stdout, stderr, e)
+	}
+
 	cwd, err := e.getwd()
 	if err != nil {
 		say(stderr, "crew: %v\n", err)
@@ -385,6 +398,49 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	return flush(out, stderr, code)
 }
 
+// discoverRepos prints `<status>\t<common>` per candidate repo for the bash
+// `rate --sweep-all` loop, which keeps its own per-repo work.
+func discoverRepos(args []string, stdout, stderr io.Writer) int {
+	var roots []string
+	for len(args) > 0 {
+		if args[0] != "--root" {
+			say(stderr, "crew-go: usage: crew-go discover-repos [--root DIR]...\n")
+			return exitFailure
+		}
+		if len(args) < 2 || args[1] == "" {
+			say(stderr, "crew: rate --root needs a directory\n")
+			return exitFailure
+		}
+		roots, args = append(roots, args[1]), args[2:]
+	}
+	out := bufio.NewWriter(stdout)
+	for _, r := range repos.Discover(repos.Options{Roots: roots, Stderr: stderr, Prefix: "crew: rate --sweep-all"}) {
+		say(out, "%s\t%s\n", r.Status, r.Common)
+	}
+	return flush(out, stderr, 0)
+}
+
+func runFleet(ctx context.Context, args []string, stdout, stderr io.Writer, e env) int {
+	o := fleet.Options{
+		Panes: func() string { return probes(ctx, "").Panes() },
+		Worktrees: func(common string) (string, error) {
+			return worktreeList(exec.CommandContext(ctx, "git", "--git-dir="+common, "worktree", "list", "--porcelain"))
+		},
+		Origin: func(common string) string {
+			out, err := exec.CommandContext(ctx, "git", "--git-dir="+common, "config", "--get", "remote.origin.url").Output()
+			if err != nil {
+				return ""
+			}
+			return strings.TrimSuffix(string(out), "\n")
+		},
+		Now: time.Now,
+	}
+	if palette, _ := jsonv.ParseJQColors(e.jqColors); e.color {
+		o.Colors = &palette
+	}
+	return fleet.Run(args, stdout, stderr, o)
+}
+
 // budgetFile is `${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json`.
 func budgetFile() string {
 	data := os.Getenv("XDG_DATA_HOME")
@@ -505,17 +561,23 @@ func probes(ctx context.Context, cwd string) roster.Probes {
 		Worktrees: func() (string, error) {
 			cmd := exec.CommandContext(ctx, "git", "worktree", "list", "--porcelain")
 			cmd.Dir = cwd
-			var stderr bytes.Buffer
-			cmd.Stderr = &stderr
-			out, err := cmd.Output()
-			if err == nil {
-				return string(out), nil
-			}
-			var ee *exec.ExitError
-			if !errors.As(err, &ee) {
-				return "", &roster.ExitError{Code: 127, Stderr: "git: command not found\n"}
-			}
-			return "", &roster.ExitError{Code: ee.ExitCode(), Stderr: stderr.String()}
+			return worktreeList(cmd)
 		},
 	}
+}
+
+// worktreeList runs a `git worktree list --porcelain` command, mapping a
+// failure to the roster arm's death with git's status and stderr.
+func worktreeList(cmd *exec.Cmd) (string, error) {
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err == nil {
+		return string(out), nil
+	}
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return "", &roster.ExitError{Code: 127, Stderr: "git: command not found\n"}
+	}
+	return "", &roster.ExitError{Code: ee.ExitCode(), Stderr: stderr.String()}
 }

@@ -13740,3 +13740,47 @@ _crew_help_rows() { # <help text>
   [ -z "$output" ]
   [[ "${stderr_lines[0]}" == "crew — file-based coordination bus"* ]]
 }
+
+@test "fleet: the arm execs CREW_GO_BIN with argv" {
+  stub="$BATS_TEST_TMPDIR/go-stub"
+  cat >"$stub" <<'STUB'
+#!/usr/bin/env bash
+printf '%s' "$*" >"$BATS_TEST_TMPDIR/stub.argv"
+STUB
+  chmod +x "$stub"
+  CREW_GO_BIN="$stub" run run_crew fleet --all --json
+  [ "$status" -eq 0 ]
+  [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "fleet --all --json" ]
+}
+
+@test "fleet: lists live workers of two repos from outside any git repo" {
+  root="$BATS_TEST_TMPDIR/fleetroot"
+  for d in alpha beta; do
+    mkdir -p "$root/$d"
+    git init -q -b main "$root/$d"
+    mkdir -p "$root/$d/.git/crew"
+    jq -nc '{ts:1000, crew_id:"c1", kind:"dispatch", branch:"feat/x", engine:"claude", model:"sonnet", tier:"standard", effort:"medium", title:"t"}' \
+      >>"$root/$d/.git/crew/events.jsonl"
+    jq -nc '{ts:1500, crew_id:"c1", from:"worker:feat/x", to:"dispatcher:c1", kind:"status", body:{state:"working"}}' \
+      >>"$root/$d/.git/crew/events.jsonl"
+  done
+  git -C "$root/alpha" remote add origin https://github.com/acme/alpha.git
+  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
+  export CREW_SWEEP_ROOTS="$root"
+  outside="$BATS_TEST_TMPDIR/outside"
+  mkdir -p "$outside"
+  cd "$outside"
+  run --separate-stderr run_crew fleet
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"acme/alpha"* ]]
+  [[ "$output" == *"beta"* ]]
+  run --separate-stderr run_crew fleet --json
+  [ "$status" -eq 0 ]
+  [ "$(jq 'length' <<<"$output")" -eq 2 ]
+  [ "$(jq '[.[] | select(.repo != null and .repo != "")] | length' <<<"$output")" -eq 2 ]
+  mkdir -p "$XDG_DATA_HOME/crew"
+  echo "$BATS_TEST_TMPDIR/vanished/.git" >"$XDG_DATA_HOME/crew/repos"
+  run --separate-stderr run_crew fleet
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"skipped (gone)"* ]]
+}

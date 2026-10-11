@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# File-based coordination bus: id | identity | status | msg | watch | roster | roster-render | inbox | stall-watch | pr-watch | log
+# File-based coordination bus: id | identity | status | msg | watch | roster | fleet | roster-render | inbox | stall-watch | pr-watch | log
 # A real CLI on PATH (not a fish fn) so BOTH the dispatcher (fish) and workers
 # (their bash tool) can call it. Pure jq + append; the log is the state. The
 # shebang + `set -euo pipefail` are prepended by writeShellApplication, so this
@@ -1509,6 +1509,7 @@ Watching:
 
 Roster and reporting:
   roster          One row per branch: state, age, engine, model, PR
+  fleet           One roster across every crew bus on the machine
   roster-render   Draw and publish the crew's roster diagram
   sessions        Every session id recorded on a branch
   where           A human-usable address for a worker's pane
@@ -1895,6 +1896,24 @@ with state, detail, age_s, engine, model, tier, pr_url, codename and colour.
   [crew]  Crew id; defaults to this repo's crew
 
   crew roster | jq -r '.[] | [.branch, .state, .name] | @tsv'
+HELP
+    ;;
+  fleet)
+    cat <<'HELP'
+usage: crew fleet [--all] [--crew ID] [--json]
+
+One row per live branch across every crew bus on the machine, from any
+directory (no git repo needed). Buses come from the repo registry plus a walk of
+$CREW_SWEEP_ROOTS (colon-separated; default $HOME). Rows are the roster's, with
+a repo column; by default only working, blocked and pr_open branches show.
+
+  --all       Every branch, whatever its state
+  --crew ID   Only this crew id
+  --json      A JSON array of roster rows plus repo and crew_id
+
+Repos that are unreadable or gone are noted on stderr and skipped.
+
+  crew fleet --json | jq -r '.[] | [.repo, .branch, .state] | @tsv'
 HELP
     ;;
   roster-render)
@@ -2290,6 +2309,7 @@ if [ -z "$common" ]; then
   # use for the caller's own (a cron job or a shell in $HOME has none).
   case "$sub $*" in
   "rate "*--sweep-all*) ;;
+  "fleet "*) ;;
   *)
     echo "crew: not in a git repo" >&2
     exit 1
@@ -2506,7 +2526,7 @@ nudge)
     _clock_sleep "$nudge_interval"
   done
   ;;
-crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister)
+crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet)
   # Ported to Go (crew/, docs/crew-go-port.md). CREW_GO_BIN is the
   # raw-source override; builds bake @crewGoBin@. CREW_SELF is this script's own
   # path — the `$0` the bash `stream` arm re-entered for its inner `watch`, its
@@ -2582,37 +2602,21 @@ rate)
     # is swept by a child `crew rate`, so the per-repo lock, reconcile and
     # gh-credential gate stay exactly what a hand-run sweep uses.
     store_dir="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
-    registry="$store_dir/repos"
     self=$(readlink -f "$0")
-    roots="${sweep_roots:-${CREW_SWEEP_ROOTS:-}}"
-    roots="${roots:-$HOME}"
-    roots=$(printf '%s' "$roots" | tr ':' '\n')
-    repos=$(
-      {
-        cat "$registry" 2>/dev/null || true
-        printf '%s\n' "$roots" | while IFS= read -r root; do
-          [ -d "$root" ] || {
-            echo "crew: rate --sweep-all: $root is not a directory" >&2
-            continue
-          }
-          # find exits 1 on any unreadable directory; that must not abort the walk.
-          { find "$root" -mindepth 1 -maxdepth 6 \
-            \( -name '.*' ! -name .git ! -name .worktrees -prune \) -o \
-            -path '*/.git/crew/events.jsonl' -print 2>/dev/null || true; } |
-            sed 's#/crew/events\.jsonl$##'
-        done
-      } | sort -u
-    )
-    [ -n "$repos" ] || echo "crew: rate --sweep-all: no repo with a crew bus found (roots: $(printf '%s' "$roots" | tr '\n' ' '))" >&2
+    # Discovery (registry plus a walk of the roots) is shared with `crew fleet`
+    # in crew/internal/repos; it applies the CREW_SWEEP_ROOTS/$HOME defaulting.
+    root_args=()
+    while IFS= read -r root; do
+      [ -z "$root" ] || root_args+=(--root "$root")
+    done <<EOF_ROOTS
+$sweep_roots
+EOF_ROOTS
+    repos=$("${CREW_GO_BIN:-@crewGoBin@}" discover-repos ${root_args[@]+"${root_args[@]}"})
     failed=0
-    while IFS= read -r repo_common; do
+    while IFS=$'\t' read -r repo_status repo_common; do
       [ -n "$repo_common" ] || continue
-      if [ ! -d "$repo_common" ]; then
-        echo "$repo_common: skipped (gone)"
-        continue
-      fi
-      if [ ! -f "$repo_common/crew/events.jsonl" ]; then
-        echo "$repo_common: skipped (no bus)"
+      if [ "$repo_status" != ok ]; then
+        echo "$repo_common: skipped ($repo_status)"
         continue
       fi
       workdir=$(dirname "$repo_common")

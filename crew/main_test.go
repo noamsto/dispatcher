@@ -442,3 +442,64 @@ func TestRunInbox(t *testing.T) {
 		}
 	})
 }
+
+// busRepo makes a git repo with a one-row bus and returns its git dir.
+func busRepo(t *testing.T, root, name string) string {
+	t.Helper()
+	dir := filepath.Join(root, name)
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Skipf("git init: %v\n%s", err, out)
+	}
+	common := filepath.Join(dir, ".git")
+	if err := os.MkdirAll(filepath.Join(common, "crew"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	row := `{"ts":1700000000000,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(common, "crew", "events.jsonl"), []byte(row), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return common
+}
+
+func TestRunDiscoverRepos(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("CREW_SWEEP_ROOTS", "")
+	root := t.TempDir()
+	common := busRepo(t, root, "alpha")
+	e := env{getwd: func() (string, error) { return "", os.ErrNotExist }}
+
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"discover-repos", "--root", root}, &stdout, &stderr, e)
+	if want := "ok\t" + common + "\n"; code != 0 || stdout.String() != want || stderr.Len() != 0 {
+		t.Fatalf("code %d stdout %q (want %q) stderr %q", code, stdout.String(), want, stderr.String())
+	}
+
+	for args, want := range map[string]string{
+		"--root":  "crew: rate --root needs a directory\n",
+		"--bogus": "crew-go: usage: crew-go discover-repos [--root DIR]...\n",
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		code := run(context.Background(), []string{"discover-repos", args}, &stdout, &stderr, e)
+		if code != exitFailure || stdout.Len() != 0 || stderr.String() != want {
+			t.Errorf("%s: code %d stdout %q stderr %q", args, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
+func TestRunFleetOutsideRepo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("CREW_SWEEP_ROOTS", "")
+	common := busRepo(t, filepath.Join(home, "git"), "alpha")
+	e := env{getwd: func() (string, error) { return "", os.ErrNotExist }}
+
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"fleet", "--all"}, &stdout, &stderr, e)
+	if code != 0 || !strings.Contains(stdout.String(), "feat/x") || !strings.HasPrefix(stdout.String(), "REPO") {
+		t.Fatalf("code %d stdout %q stderr %q (bus %s)", code, stdout.String(), stderr.String(), common)
+	}
+}
