@@ -262,7 +262,7 @@ wrap_host='[^-[:space:];&|][^[:space:];&|]*'
 ssh_opts='(([[:space:]]+-[A-Za-z]*[bcDEeFIiJLlmOoPpRSWw][[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
 ctr_opts='(([[:space:]]+-[A-Za-z]*[ewuvplfcH][[:space:]]+'"$wrap_word"')|([[:space:]]+--(env|env-file|volume|workdir|user|name|network|entrypoint|publish|mount|platform|label|file|project-name|profile|context|host)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
 kube_opts='(([[:space:]]+-[A-Za-z]*[cn][[:space:]]+'"$wrap_word"')|([[:space:]]+--(container|namespace|context|kubeconfig)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
-cmd_prefix='((then|do|else|if|elif|while|until|!|command|exec|time|nohup|builtin|eval)[[:space:]]+|(sudo|doas)'"$sudo_opts"'[[:space:]]+|env'"$env_opts"'[[:space:]]+|direnv[[:space:]]+exec[[:space:]]+('"$wrap_word"'[[:space:]]+)?|command([[:space:]]+(-p|--))+[[:space:]]+|time([[:space:]]+-p)+[[:space:]]+|exec([[:space:]]+-[cl]+|[[:space:]]+-a[[:space:]]+'"$wrap_word"')+[[:space:]]+|timeout'"$opt_arg"'*[[:space:]]+[0-9][^[:space:];&|]*[[:space:]]+|(nice|ionice|stdbuf|setsid|xargs|watch)'"$opt_arg"'*[[:space:]]+|ssh'"${ssh_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|(docker|podman)'"$ctr_opts"'([[:space:]]+compose'"$ctr_opts"')?[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|docker-compose'"${ctr_opts}"'[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|kubectl'"${kube_opts}"'[[:space:]]+exec'"${kube_opts}"'[[:space:]]+'"${wrap_host}""$kube_opts"'([[:space:]]+--)?[[:space:]]+|mise'"$opt_arg"'*[[:space:]]+(exec|x)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+--[[:space:]]+|nix'"$opt_arg"'*[[:space:]]+(develop|shell)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(-c|--command)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
+cmd_prefix='((then|do|else|if|elif|while|until|!|command|exec|time|nohup|builtin|eval)[[:space:]]+|(sudo|doas)'"$sudo_opts"'[[:space:]]+|env'"$env_opts"'[[:space:]]+|direnv[[:space:]]+exec[[:space:]]+('"$wrap_word"'[[:space:]]+)?|command([[:space:]]+(-p|--))+[[:space:]]+|eval([[:space:]]+--)+[[:space:]]+|time([[:space:]]+-p)+[[:space:]]+|exec([[:space:]]+-[cl]+|[[:space:]]+-a[[:space:]]+'"$wrap_word"')+[[:space:]]+|timeout'"$opt_arg"'*[[:space:]]+[0-9][^[:space:];&|]*[[:space:]]+|(nice|ionice|stdbuf|setsid|xargs|watch)'"$opt_arg"'*[[:space:]]+|ssh'"${ssh_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|(docker|podman)'"$ctr_opts"'([[:space:]]+compose'"$ctr_opts"')?[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|docker-compose'"${ctr_opts}"'[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|kubectl'"${kube_opts}"'[[:space:]]+exec'"${kube_opts}"'[[:space:]]+'"${wrap_host}""$kube_opts"'([[:space:]]+--)?[[:space:]]+|mise'"$opt_arg"'*[[:space:]]+(exec|x)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+--[[:space:]]+|nix'"$opt_arg"'*[[:space:]]+(develop|shell)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(-c|--command)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
 # A case arm (`x) env`) is a command start only at line start or after ; & or
 # `in`. A bare `)` is not: heredoc prose such as `(re)set` is scanned raw.
 cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*|(^|[;&]|[[:space:]]in[[:space:]])[[:space:]]*\(?[^[:space:]();&]+\)[[:space:]]*)'"$cmd_prefix"
@@ -584,8 +584,12 @@ decode_word() {
 # substitution in command position still reads as a word holding `$`. It ends
 # with a `!` line when it cannot vouch for a heredoc: a body still open, a
 # delimiter word holding a backtick, or one queued inside an open `$((`, `((`,
-# `${`, `$[` or `[` (ax counts these, erring toward open), where `<<` is
-# arithmetic or text and the "delimiter" may never match.
+# `${`, `$[` or `[` (ax counts these, erring toward open; a level closes only in
+# the quote context that opened it), where `<<` is arithmetic or text and the
+# "delimiter" may never match. Also a body line that is the delimiter plus more
+# text (inside `$(` bash ends the body at `EOF)`), and a body whose starting
+# newline sits deeper (sp + pd + ax) than its `<<`: bash reads it only after
+# that substitution closes, so the lines between are code.
 #
 # W=1 (mask_cmd_wide) adds three readings on top, each of which could hide text
 # the W=0 reading shows — so rule 2 searches both, never the wide one alone:
@@ -743,8 +747,8 @@ function code(c,    d, o, n, u) {
       else if (W == 2) { fr = 1; fb = 0 }
     }
     else if (c == "$") { dl = 1; if (B) o = "$" }
-    else if (d && (c == "{" || c == "[")) axk[++ax] = c
-    else if (ax > 0 && (c == "}" || c == "]") && axk[ax] == (c == "}" ? "{" : "[")) ax--
+    else if (d && (c == "{" || c == "[")) { axk[++ax] = c; axq[ax] = DQ }
+    else if (ax > 0 && (c == "}" || c == "]") && axk[ax] == (c == "}" ? "{" : "[") && axq[ax] == DQ) ax--
   } else {
     o = c
     if (c == BS) {
@@ -759,14 +763,14 @@ function code(c,    d, o, n, u) {
       else if (sp > 0 && sk[sp - 1] == BT) { pop(); o = ")" }
       else { push(BT, ""); o = "(" }
     } else if (c == "(") {
-      if (prev == "(") axk[++ax] = c
+      if (prev == "(") { axk[++ax] = c; axq[ax] = "" }
       pd++
     } else if (c == ")") {
-      if (ax > 0 && axk[ax] == "(" && prev == ")") ax--
+      if (ax > 0 && axk[ax] == "(" && axq[ax] == "" && prev == ")") ax--
       if (pd > 0) pd--
       else if (sp > 0 && sk[sp - 1] == "(") pop()
-    } else if (c == "[" || (d && c == "{")) axk[++ax] = c
-    else if (ax > 0 && (c == "]" || c == "}") && axk[ax] == (c == "}" ? "{" : "[")) ax--
+    } else if (c == "[" || (d && c == "{")) { axk[++ax] = c; axq[ax] = "" }
+    else if (ax > 0 && (c == "]" || c == "}") && axk[ax] == (c == "}" ? "{" : "[") && axq[ax] == "") ax--
     else if (c == "#" && (J ? bol && sp == 0 && pd == 0 && ax == 0 : wordstart(prev) || (W == 1 && wo))) cm = 1
     else if (c == "$") {
       dl = 1
@@ -777,6 +781,7 @@ function code(c,    d, o, n, u) {
 }
 function enterbody() {
   hd_i++
+  if (sp + pd + ax > hd_dp[hd_i]) hbang = 1
   body = 1
   bok = 1
   bpos = 0
@@ -803,6 +808,7 @@ function bodyfeed(c,    w, term, pc) {
     return
   }
   if (bok) {
+    if (B && bpos == length(w)) hbang = 1
     if (hd_d[hd_i] && bpos == 0 && c == "\t") { }
     else if (bpos < length(w) && c == substr(w, bpos + 1, 1)) bpos++
     else bok = 0
@@ -850,6 +856,7 @@ function feed(c,    arm, wasesc) {
       hd_w[hd_n] = hspan ? "\n" : hw
       hd_d[hd_n] = hdash
       hd_q[hd_n] = hquo
+      hd_dp[hd_n] = sp + pd + ax
       if (ax > 0 || index(hw, BT)) hbang = 1
     }
     hs = 0
@@ -878,19 +885,24 @@ END {
 # The text-sink test over the B=1 view: prints 1 when every stage (split on
 # `; & | ( )`, `>&`/`<&` kept whole) runs a command from the sink set below,
 # after leading NAME=… assignments and the lead words, the command word cut at
-# its first redirect and reduced to its basename. 0 on a `!` line (pass 1 could
-# not model a heredoc), a command word holding `$` (a substitution's output
-# runs), an empty command word with text left, `git -c`, `gh alias`, an
+# its first redirect and reduced to its basename. 0 on no input, a `!` line
+# (pass 1 could not model a heredoc), a command word holding `$` (a
+# substitution's output runs) or a relative `/` (`./cat`), an empty command
+# word with text left, git without a GITSUB subcommand right after it (options,
+# aliases, `config`, `submodule foreach` …), `git -c`, `gh alias`, an
 # assignment before a command word (`GIT_EDITOR=sh git commit`), or a stage with no
 # command that opens a subshell or backtick at a word start (its output runs).
-# Shells, eval, source, xargs and every compound keyword are missing from the
-# set on purpose: a heredoc reaching them may run.
+# Shells, eval, source, xargs, jq (`-f /dev/stdin` runs a program) and every
+# compound keyword are missing from the set on purpose: a heredoc reaching them
+# may run.
 # shellcheck disable=SC2016
 awk_sinks='
 BEGIN {
   ok = 1
-  n = split("cat tee printf echo gh git patch sponge sort tr wc head tail grep rg jq base64 diff cmp read mapfile readarray cd ls mkdir rm mv cp touch chmod true : test [", a, " ")
+  n = split("cat tee printf echo gh git patch sponge sort tr wc head tail grep rg base64 diff cmp read mapfile readarray cd ls mkdir rm mv cp touch chmod true : test [", a, " ")
   for (i = 1; i <= n; i++) SINK[a[i]] = 1
+  n = split("commit tag notes apply am hash-object check-ignore check-attr mktag mktree", a, " ")
+  for (i = 1; i <= n; i++) GITSUB[a[i]] = 1
   n = split("sudo time nice nohup exec command then do else ! {", a, " ")
   for (i = 1; i <= n; i++) LEAD[a[i]] = 1
 }
@@ -901,7 +913,7 @@ ok {
   ns = split(t, S, /[;&|()]/)
   for (s = 1; s <= ns && ok; s++) stage(S[s])
 }
-function stage(g,    fo, nw, j, k, cw, as) {
+function stage(g,    fo, nw, j, k, cw, as, sc) {
   fo = (substr(g, length(g)) == "\002")
   if (fo) g = substr(g, 1, length(g) - 1)
   nw = split(g, Wd)
@@ -914,25 +926,31 @@ function stage(g,    fo, nw, j, k, cw, as) {
   if (as) { ok = 0; return }
   cw = Wd[j]
   sub(/[<>].*/, "", cw)
-  if (cw == "" || cw ~ /\$/) { ok = 0; return }
+  if (cw == "" || cw ~ /\$/ || cw ~ /^[^\/]+\//) { ok = 0; return }
   sub(/.*\//, "", cw)
   if (!(cw in SINK)) { ok = 0; return }
-  if (cw == "git") for (k = j + 1; k <= nw; k++) if (Wd[k] == "-c") ok = 0
+  if (cw == "git") {
+    sc = Wd[j + 1]
+    sub(/[<>].*/, "", sc)
+    if (!(sc in GITSUB)) ok = 0
+    for (k = j + 1; k <= nw; k++) if (Wd[k] == "-c") ok = 0
+  }
   if (cw == "gh" && Wd[j + 1] == "alias") ok = 0
 }
-END { print ok }'
+END { print (NR ? ok : 0) }'
 
 # T for one text: 1 when its heredoc bodies are text (see the masker), so
 # every view of that text shares one verdict. Text without `<<` skips both
 # passes.
 hd_text_ok() {
-  local view
+  local view ok
   if [[ $1 != *'<<'* ]]; then
     echo 0
     return
   fi
-  view=$(awk -v W=0 -v B=1 "$awk_mask_cmd$awk_chars" <<<"$1")
-  awk "$awk_sinks" <<<"$view"
+  view=$(awk -v W=0 -v B=1 "$awk_mask_cmd$awk_chars" <<<"$1") || { echo 0; return; }
+  ok=$(awk "$awk_sinks" <<<"$view") || ok=0
+  echo "$ok"
 }
 
 mask_cmd() {

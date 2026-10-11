@@ -2164,6 +2164,7 @@ assert_allow_within_each_awk() {
 
 @test "secret-read-guard: #992 denies eval and sudo option-value dumps" {
   deny_both 'eval env'
+  deny_both 'eval -- env'
   deny_both 'sudo -a 1 env'
   deny_both 'sudo -c x env'
   deny_both 'env FOO=1'
@@ -2223,6 +2224,24 @@ assert_allow_within_each_awk() {
   deny_both $'echo $((\n# `env`))'
   deny_both $'echo ${x:-\n# `env`}'
   deny_both $'echo $[\n# `env`]'
+  deny_both $'a=$(cat <<\'EOF\'\nx\nEOF)\nenv\nb=$(cat <<\'EOF\'\ny\nEOF\n)'
+  deny_both $'git commit -m "$(cat <<\'EOF\'\nmsg\nEOF)"\nenv\ngit commit --amend -m "$(cat <<\'EOF\'\nmsg2\nEOF\n)"'
+  deny_both $'a=$(cat <<EOF\nx\nEOF )\nenv\nb=$(cat <<EOF\ny\nEOF\n)'
+  deny_both $'cat - <<\'EOF\'; echo $(\nenv\n)\nEOF'
+  deny_both $'cat <<EOF $(\nenv\n)\nEOF'
+  deny_both $'cat <<\'EOF\' - "$(\nenv >&2\n)"\nEOF'
+  deny_both $'cat <<\'EOF\' - <(\nenv\n)\nEOF'
+  deny_both $'cat <<\'EOF\' - ${x:-$(\nenv\n)}\nEOF'
+  deny_both $'tee f <<\'EOF\' >/dev/null; ls $(\nenv\n)\nEOF'
+  deny_both $'cat > notes.md <<\'EOF\'; out=$(\n  env | grep FOO\n)\nhello\nEOF'
+  deny_both $'bash -c \'cat - <<EOF; echo $(\nenv\n)\nEOF\''
+  deny_both $': ${x:-"}"<<EOF}\nenv\nEOF}'
+  deny_both $'echo ${x:-"}"<<EOF}\nenv\nEOF}'
+  deny_both $'echo $[ "]"<<2 ]\nenv\n2'
+  deny_both $'git submodule foreach bash <<\'EOF\'\nenv\nEOF'
+  deny_both $'git config alias.zz \'!sh\'; git zz <<\'EOF\'\nenv\nEOF'
+  deny_both $'cp /bin/sh ./cat; ./cat <<\'EOF\'\nenv\nEOF'
+  deny_both $'jq -n -f /dev/stdin <<\'EOF\'\nenv\nEOF'
 }
 
 @test "secret-read-guard: rule 2 — denies a dumper after a separator inside an inline comment (accepted over-deny)" {
@@ -2859,6 +2878,26 @@ EOF
   [ "$status" -eq 1 ]
   [ -z "$output" ]
   [[ $stderr == *"credential-read check failed; guard NOT enforcing"* ]]
+}
+
+@test "secret-read-guard: #992 a failing heredoc text pass keeps heredoc bodies as code" {
+  local real_awk
+  real_awk=$(command -v awk)
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat >"$BATS_TEST_TMPDIR/bin/awk" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  [ "\$a" = B=1 ] && exit 3
+done
+exec "$real_awk" "\$@"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/awk"
+
+  local old_path=$PATH
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  deny_both $'bash <<\'EOF\'\nenv\nEOF'
+  deny_both $'cat <<\'EOF\'\nenv\nEOF'
+  PATH=$old_path
 }
 
 # ---------------------------------------------------------------------------
