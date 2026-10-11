@@ -3016,6 +3016,21 @@ fleet_nproc() {
   [[ "$output" == *"live lead weight 7 + this standard dispatch (2) exceeds fleetBudget 8"* ]]
 }
 
+@test "927 fleet: a lead whose pane sits in a worktree subdirectory still weighs its tier" {
+  stub_launch_bins
+  fleet_tmux
+  for n in amber birch cedar; do
+    wt="$BATS_TEST_TMPDIR/wt-$n"
+    mkdir -p "$wt/sub"
+    git init -q "$wt"
+    printf 'tier: deep\n' >"$wt/WORKER_TASK.md"
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\n' claude "$n" "feat/$n-x" "" "$wt/sub" >>"$STUB_DIR/fleet"
+  done
+  run run_dispatch standard sonnet --effort medium --crew-id c1 120 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"live lead weight 9 + this standard dispatch (2)"* ]]
+}
+
 @test "927 fleet: a re-dispatch onto a branch that has a lead pane is not a new lead" {
   stub_launch_bins
   fleet_tmux

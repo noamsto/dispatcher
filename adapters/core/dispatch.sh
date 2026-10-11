@@ -57,7 +57,7 @@ Grants and authorization
   --owner-auth TEXT       The owner's own words authorizing a gated action
 
 Overrides
-  --ignore-budget         Spend past the quota stop (a human's spend decision)
+  --ignore-budget         Spend past the quota stop and the machine fan-out cap (a human's decision)
   --ignore-map            Skip the tier-map model refusals (a human's model call)
   DISPATCH_SPEC=FILE      Task body to inline into WORKER_TASK.md
   DISPATCH_IGNORE_RUNG=M  Lift the premium-rung refusal for model or effort M
@@ -975,21 +975,21 @@ local_slot_cap() {
   done
 }
 
-# _fleet_leads [<branch>...] — one `<weight>\x1f<name>\x1f<repo>\x1f<tier>`
+# _fleet_leads — one `<weight>\x1f<name>\x1f<repo>\x1f<tier>`
 # line per live lead pane on the machine: stamped @crew_branch, no @crew_role,
 # and a pane still running an engine (_is_engine_cmd). The tier is the `tier:`
 # header of the pane's worktree WORKER_TASK.md (trivial=1, standard=2, deep=3);
 # an unreadable one counts as standard. Role panes add nothing: the tier weight
-# already includes them. Panes on a named <branch> are skipped. No tmux server
+# already includes them. No tmux server
 # yields no lines, status 0.
 _fleet_leads() {
-  local cmd name lbranch role path tier w repo common
+  local cmd name lbranch role path root tier w repo common
   { tmux list-panes -a -F '#{pane_current_command}'$'\x1f''#{@crew_name}'$'\x1f''#{@crew_branch}'$'\x1f''#{@crew_role}'$'\x1f''#{pane_current_path}' 2>/dev/null || true; } |
     while IFS=$'\x1f' read -r cmd name lbranch role path; do
       [ -n "$lbranch" ] && [ -z "$role" ] || continue
       _is_engine_cmd "$cmd" || continue
-      [[ " $* " != *" $lbranch "* ]] || continue
-      tier="$(sed -n 's/^tier: //p' "$path/WORKER_TASK.md" 2>/dev/null | head -1)" || tier=""
+      root="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)" || root="$path"
+      tier="$(sed -n 's/^tier: //p' "$root/WORKER_TASK.md" 2>/dev/null | head -1)" || tier=""
       case "$tier" in
       trivial) w=1 ;;
       deep) w=3 ;;
@@ -1008,9 +1008,9 @@ _fleet_leads() {
 # _fleet_owned <lbranch>... — non-empty when a lead pane (engine alive or not)
 # is stamped with one of the branches.
 _fleet_owned() {
-  local name lbranch role
-  { tmux list-panes -a -F '#{@crew_name}'$'\x1f''#{@crew_branch}'$'\x1f''#{@crew_role}' 2>/dev/null || true; } |
-    while IFS=$'\x1f' read -r name lbranch role; do
+  local cmd name lbranch role path
+  { tmux list-panes -a -F '#{pane_current_command}'$'\x1f''#{@crew_name}'$'\x1f''#{@crew_branch}'$'\x1f''#{@crew_role}'$'\x1f''#{pane_current_path}' 2>/dev/null || true; } |
+    while IFS=$'\x1f' read -r cmd name lbranch role path; do
       if [ -n "$lbranch" ] && [ -z "$role" ] && [[ " $* " == *" $lbranch "* ]]; then echo "$name"; fi
     done
   return 0
@@ -1044,7 +1044,7 @@ fleet_gate() {
   [ "$tier" != trivial ] || add=1
   [ "$tier" != deep ] || add=3
   if [ $# -gt 0 ] && [ -n "$(_fleet_owned "$@")" ]; then return 0; fi
-  mapfile -t leads < <(_fleet_leads "$@")
+  mapfile -t leads < <(_fleet_leads)
   for w in "${leads[@]}"; do
     weight=$((weight + ${w%%$'\x1f'*}))
   done
@@ -4489,11 +4489,11 @@ fi
 
 # Machine-wide fan-out (#927), before the claim gate's first side effect. The
 # branch is known here only for an issue or Linear id; a title or --pr dispatch
-# is a new lead either way.
+# is always treated as a new lead.
 fleet_own=()
 [ -z "$gh_issue" ] || fleet_own+=("$branch")
 [ -z "$linear_id" ] || fleet_own+=("$(printf '%s' "$linear_id" | tr '[:upper:]' '[:lower:]')-$slug")
-fleet_gate "$tier" "${fleet_own[@]}"
+fleet_gate "$tier" ${fleet_own[@]+"${fleet_own[@]}"}
 
 # A re-dispatch onto an existing branch keeps the bundle its first run claimed:
 # the extras are labelled already, and dropping them silently would leave the
