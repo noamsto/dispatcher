@@ -15,8 +15,10 @@ package adopt
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strconv"
 	"strings"
@@ -165,6 +167,19 @@ func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 		outcome = "forced"
 	}
 	o.pidfileLog(paths, "adopt", outcome, id, epid, pidText)
+
+	// The pane travels with the pid: a stale pane file would keep naming the
+	// previous dispatcher's pane, and readers tolerate its absence.
+	panefile := cdir + "/pane"
+	if pane := o.LookupEnv("TMUX_PANE"); pane != "" {
+		if err := os.WriteFile(panefile, []byte(pane+"\n"), 0o644); err != nil {
+			say(stderr, "crew: adopt: %v\n", err)
+			return exitFailure
+		}
+	} else if err := os.Remove(panefile); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		say(stderr, "crew: adopt: %v\n", err)
+		return exitFailure
+	}
 
 	// A crew adopted over a dead dispatcher picks up the labels its owner
 	// claimed and never released; one adopted from a live ancestor changes

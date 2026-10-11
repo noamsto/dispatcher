@@ -672,3 +672,74 @@ func TestHelpers(t *testing.T) {
 		}
 	}
 }
+
+func panePath(p bus.Paths, id string) string { return p.CrewDir(id) + "/pane" }
+
+func TestRecordsTheDispatcherPane(t *testing.T) {
+	p := testPaths(t)
+	registerCrew(t, p, "c-pane", "4321")
+	s := &stub{now: time.Unix(1700000000, 0), env: map[string]string{"TMUX_PANE": "%42"}}
+	if got := run(t, s, p, "c-pane", "123"); got.code != 0 {
+		t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
+	}
+	data, err := os.ReadFile(panePath(p, "c-pane"))
+	if err != nil || string(data) != "%42\n" {
+		t.Errorf("pane = %q, err = %v, want %%42\\n", data, err)
+	}
+}
+
+func TestOutsideTmuxDropsAStalePane(t *testing.T) {
+	p := testPaths(t)
+	registerCrew(t, p, "c-stale", "4321")
+	if err := os.WriteFile(panePath(p, "c-stale"), []byte("%7\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &stub{now: time.Unix(1700000000, 0)}
+	if got := run(t, s, p, "c-stale", "123"); got.code != 0 {
+		t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
+	}
+	if _, err := os.Stat(panePath(p, "c-stale")); !os.IsNotExist(err) {
+		t.Errorf("pane file survived: %v", err)
+	}
+	// No pane file to begin with is not an error either.
+	registerCrew(t, p, "c-none", "4321")
+	if got := run(t, s, p, "c-none", "123"); got.code != 0 {
+		t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
+	}
+}
+
+func TestRefusedAdoptLeavesThePane(t *testing.T) {
+	p := testPaths(t)
+	registerCrew(t, p, "c-keep", "4321")
+	if err := os.WriteFile(panePath(p, "c-keep"), []byte("%7\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &stub{now: time.Unix(1700000000, 0), alive: map[int]bool{4321: true}, env: map[string]string{"TMUX_PANE": "%42"}}
+	if got := run(t, s, p, "c-keep", "123"); got.code != 1 {
+		t.Fatalf("code = %d", got.code)
+	}
+	data, err := os.ReadFile(panePath(p, "c-keep"))
+	if err != nil || string(data) != "%7\n" {
+		t.Errorf("pane = %q, err = %v, want untouched %%7\\n", data, err)
+	}
+}
+
+func TestPaneErrorsFailTheAdopt(t *testing.T) {
+	for name, env := range map[string]map[string]string{
+		"write":  {"TMUX_PANE": "%42"},
+		"remove": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := testPaths(t)
+			registerCrew(t, p, "c-err", "4321")
+			if err := os.MkdirAll(panePath(p, "c-err")+"/x", 0o755); err != nil {
+				t.Fatal(err)
+			}
+			s := &stub{now: time.Unix(1700000000, 0), env: env}
+			got := run(t, s, p, "c-err", "123")
+			if got.code != 1 || !strings.HasPrefix(got.stderr, "crew: adopt: ") {
+				t.Errorf("code = %d, stderr = %q", got.code, got.stderr)
+			}
+		})
+	}
+}
