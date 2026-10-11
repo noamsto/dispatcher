@@ -5,7 +5,7 @@ Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 `await`, `retro`, `rate` (both modes: the per-repo sweep of #895 and the
 `--report` rollup of #890), `reply`, `watch`, `resolve-target`, `where`,
 `stall-watch` (#832), `stream`, `adopt` (#920), `pr-watch` (#934), `roster-render`
-(#935), and `status`, `msg`, `register` and `deregister` (#945). Each slice must leave every bats file green;
+(#935), `fleet` (#926), and `status`, `msg`, `register` and `deregister` (#945). Each slice must leave every bats file green;
 tests may be adapted only where the Go design changes what they can observe (the
 output contract below), with each edit justified.
 
@@ -344,11 +344,15 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister)
+crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet)
   export CREW_SELF="$0"
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
 ```
+
+`fleet` needs no repo, so the preamble's not-in-a-repo refusal lets it through. The hidden
+`discover-repos` entry (`crew/internal/repos`, shared with `fleet`) is what the bash
+`rate --sweep-all` loop calls for its `<status>\t<common>` repo list.
 
 `CREW_SELF` is this script's own path, the `$0` the bash arms re-entered. Two
 read it. `stream` reads it for its inner `watch`, its `hold due` pre-check and

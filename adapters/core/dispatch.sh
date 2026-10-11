@@ -764,6 +764,26 @@ _bus_append() {
   printf '%s%s\n' "$p" "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"
 }
 
+# _registry_add <git-common-dir> — record the repo in the registry `crew fleet`
+# and `crew rate --sweep-all` discover from. A failure warns; it never aborts
+# the dispatch.
+_registry_add() {
+  local store="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
+  grep -qxF -- "$1" "$store/repos" 2>/dev/null && return 0
+  { mkdir -p "$store" && printf '%s\n' "$1" >>"$store/repos"; } 2>/dev/null ||
+    echo "dispatch: could not register $1 in $store/repos — crew fleet and crew rate --sweep-all may miss this repo" >&2
+}
+
+# _crew_append <line> — append to this repo's bus, registering the repo first
+# so it is discoverable from the moment its bus exists.
+_crew_append() {
+  if [ -z "${crew_registered:-}" ]; then
+    _registry_add "${crew_dir%/crew}"
+    crew_registered=1
+  fi
+  _bus_append "$crew_dir/events.jsonl" "$1"
+}
+
 # _fetch_origin_branch <name> — fetch an untrusted (gh/stamp-derived) branch
 # name into refs/remotes/origin/<name> only, always in the dispatcher's own
 # repo. A bare positional would parse the name as a refspec
@@ -4640,7 +4660,7 @@ if [ -n "$gh_issue" ]; then
     claim_n="${claim_issues[$claim_i]}"
     line=$(jq -nc --arg crew "$crew_id" --arg issue "$claim_n" --arg branch "$branch" --arg pid "$$" \
       '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber)}')
-    _bus_append "$crew_dir/events.jsonl" "$line"
+    _crew_append "$line"
     if ! gh issue edit "$claim_n" --add-label dispatched; then
       echo "dispatch: could not claim issue #$claim_n (adding the 'dispatched' label failed)" >&2
       [ -n "${claim_had_label[$claim_i]}" ] || gh issue edit "$claim_n" --remove-label dispatched >/dev/null 2>&1 || true
@@ -4751,7 +4771,7 @@ else
     # way if the label write fails; see #322).
     line=$(jq -nc --arg crew "$crew_id" --arg issue "$num" --arg branch "$branch" --arg pid "$$" \
       '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber)}')
-    _bus_append "$crew_dir/events.jsonl" "$line"
+    _crew_append "$line"
     gh issue edit "$num" --add-label dispatched || {
       echo "dispatch: created issue #$num but could not claim it (adding the 'dispatched' label failed)" >&2
       exit 1
@@ -4883,7 +4903,7 @@ if [ -n "$prev_wt" ]; then
     line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg state "$state" --argjson occ "$occ" \
       '{ts:(now*1000|floor), crew_id:$crew, kind:"reclaim", branch:$branch, state:$state,
           windows:($occ|map(.window))}')
-    _bus_append "$crew_dir/events.jsonl" "$line"
+    _crew_append "$line"
   fi
 fi
 
@@ -5069,7 +5089,7 @@ worker_id="worker:$branch#$session"
 # latest bus event and idle-release can never touch it again.
 line=$(jq -nc --arg crew "$crew_id" --arg from "$worker_id" \
   '{ts:(now*1000|floor), crew_id:$crew, from:$from, kind:"claim"}')
-_bus_append "$crew_dir/events.jsonl" "$line"
+_crew_append "$line"
 
 # Ask git where worktrunk actually placed the worktree — its path template is
 # user-configurable, so reconstructing it here drifts the moment that changes.
@@ -5248,7 +5268,7 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
    + if $base != "" then {base:$base} else {} end
    + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end')
-_bus_append "$crew_dir/events.jsonl" "$line"
+_crew_append "$line"
 if [ -n "$ident_locked" ]; then
   rmdir "$ident_lock" 2>/dev/null || true
   ident_locked=""

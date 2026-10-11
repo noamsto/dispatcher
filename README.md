@@ -84,6 +84,7 @@ anything.
 
 ```bash
 crew roster                  # who is working, on what, how long
+crew fleet                   # every live worker across all repos on the machine
 crew status <from> <state>   # worker → dispatcher progress
 crew watch --states blocked  # block until something needs you
 crew inbox dispatcher:<id>   # messages addressed to you
@@ -92,7 +93,7 @@ crew reap --dry-run          # reclaim worktrees whose PRs have landed
 ```
 
 Full surface: `id`, `new`, `crews`, `adopt`, `identity`, `status`, `msg`, `reply`,
-`await`, `register`, `deregister`, `watch`, `stream`, `hold`, `roster`, `inbox`,
+`await`, `register`, `deregister`, `watch`, `stream`, `hold`, `roster`, `fleet`, `inbox`,
 `where`, `stall-watch`, `pr-watch`, `log`, `report`, `rate`, `reap`.
 
 Three design notes worth knowing. `reap` gates on **the PR having landed**, never

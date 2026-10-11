@@ -5626,6 +5626,25 @@ EOF
   [ "$output" = "s7-7" ]
 }
 
+@test "dispatch: registers the repo in the crew registry once" {
+  stub_launch_bins
+  export XDG_DATA_HOME="$TEST_REPO/xdg"
+  DISPATCH_PROFILE=personal run_dispatch standard sonnet --effort medium --crew-id c1 42 "first"
+  DISPATCH_PROFILE=personal run_dispatch standard sonnet --effort medium --crew-id c1 43 "second"
+  gcd="$(git rev-parse --path-format=absolute --git-common-dir)"
+  run grep -cxF "$gcd" "$XDG_DATA_HOME/crew/repos"
+  [ "$output" = "1" ]
+}
+
+@test "dispatch: an unwritable registry warns and the dispatch still succeeds" {
+  stub_launch_bins
+  export XDG_DATA_HOME="$TEST_REPO/xdg"
+  mkdir -p "$XDG_DATA_HOME/crew/repos"
+  DISPATCH_PROFILE=personal run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "first"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"could not register"* ]]
+}
+
 @test "dispatch event carries plan" {
   stub_launch_bins
   DISPATCH_PROFILE=personal run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
