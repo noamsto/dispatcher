@@ -132,7 +132,7 @@ func publish(dir, owner string) bool {
 	if err := os.WriteFile(tmp, []byte(owner+"\n"), 0o644); err != nil {
 		return false
 	}
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 	beforeLink(owner)
 	return os.Link(tmp, filepath.Join(dir, "pid")) == nil
 }
