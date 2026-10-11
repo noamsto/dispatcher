@@ -1370,7 +1370,7 @@ usage: crew status <from> <state> [detail] [pr] [--restamp] [--]
 Post or update a session's state on the crew bus.
 
   <from>     The posting session: worker:<branch>#s… or dispatcher:<crew>
-  <state>    working | blocked | pr_open | done | failed | exited
+  <state>    working | blocked | pr_open | done | failed | exited | reaped (only reap posts it)
   [detail]   Short context; put -- before one that starts with a dash
   [pr]       PR url, which pr_open names
   --restamp  blocked only: refresh liveness without re-delivering a reply
@@ -2698,6 +2698,19 @@ reap)
     label+=" CLOSED"
   }
 
+  # _reap_post_reaped — the terminal `reaped` status row for the branch's newest
+  # session. Reads the loop's branch session scrow mode pr pr_state label log;
+  # does nothing without a session and crew. Never aborts the sweep.
+  _reap_post_reaped() {
+    [ -n "$session" ] && [ -n "$scrow" ] || return 0
+    local detail="$label"
+    [ "$mode" != pr ] || detail="PR #${pr##*/} $pr_state"
+    local row
+    row=$(jq -nc --arg c "$scrow" --arg s "$session" --arg d "$detail" \
+      '{ts:(now*1000|floor), crew_id:$c, from:$s, to:("dispatcher:"+$c), kind:"status", body:{state:"reaped", detail:$d, source:"reap"}}') || return 0
+    _bus_append "$log" "$row"
+  }
+
   # _reap_remove — the anchored removal tail shared by the candidate loop and
   # --discard. Reads the loop's branch wtpath admin state pr pr_state label
   # mode issues, plus discard discard_patch discard_st discard_tree (empty in
@@ -2843,6 +2856,7 @@ SCAFFOLD
         + (if $mode == "issue" then {issues: $ARGS.positional} else {} end)
         + (if $discard != "" then {discarded: $patch} else {} end)' --args "${issues[@]}")
       _bus_append "$log" "$line"
+      _reap_post_reaped
 
       # A squash-merged PR's branch is never an ancestor of main, so git
       # still reads it as unmerged — delete it deliberately now that
@@ -3031,7 +3045,8 @@ SCAFFOLD
   # out so a prior terminal status can resurface.
   # pr_open is a candidate here only, never for idle release. `later`: some
   # session of the branch posted after the terminal status, so it is not idle.
-  # Fields: branch state own earlier reaprow ts later. The three PR sources stay
+  # Fields: branch state own earlier reaprow ts later session crew (crew last: IFS
+  # tab collapses empty fields). The three PR sources stay
   # apart ("-" when absent) so _reap_pick_pr can validate each and decide pr_src:
   # own is the latest session's pr_url, earlier the newest of the branch's other
   # sessions, reaprow the newest reap row's.
@@ -3059,6 +3074,7 @@ SCAFFOLD
                 (max_by(.ts)) as $latest
                 | {branch: ($latest.from | wid_branch),
                    session: $latest.from,
+                   crew: $latest.crew_id,
                    ts: $latest.ts,
                    state: $latest.body.state,
                    pr_url: (map(.body.pr_url) | map(select(type == "string" and . != "")) | last)})
@@ -3070,7 +3086,8 @@ SCAFFOLD
         | .[] | . as $c
         | [.branch, (.state | if . == null or . == "" then "none" else . end), (.pr_url // "-"),
             ([$statprs[] | select(.branch == $c.branch and .from != $c.session)] | if length == 0 then "-" else max_by(.ts) | .pr end),
-            ($reapprs[.branch] // "-"), (.ts // 0), (if ($last[.branch] // 0) > .ts then "1" else "0" end)] | @tsv' "$log"
+            ($reapprs[.branch] // "-"), (.ts // 0), (if ($last[.branch] // 0) > .ts then "1" else "0" end),
+            (.session // ""), (.crew // "")] | @tsv' "$log"
   }
 
   # _artifacts_dir_bad <branch> — dispatch.sh's, on $dir: succeed, printing the
@@ -3105,8 +3122,8 @@ SCAFFOLD
     latest=$(_reap_latest "$branch") || refuse "could not read the bus"
     state=none
     pr="-"
-    own="-" earlier="-" reaprow="-"
-    [ -z "$latest" ] || IFS=$'\t' read -r _ state own earlier reaprow _ _ <<<"$latest"
+    own="-" earlier="-" reaprow="-" session="" scrow=""
+    [ -z "$latest" ] || IFS=$'\t' read -r _ state own earlier reaprow _ _ session scrow <<<"$latest"
     case "$state" in
     done | failed | exited) ;;
     *) refuse "latest status is $state" ;;
@@ -3269,7 +3286,7 @@ EOF
   _frame_classifier
 
   reaped=0
-  while IFS=$'\t' read -r branch state own earlier reaprow cand_ts later; do
+  while IFS=$'\t' read -r branch state own earlier reaprow cand_ts later session scrow; do
     [ -n "$branch" ] || continue
     wtpath=$(git worktree list --porcelain |
       awk -v b="refs/heads/$branch" '/^worktree /{p=$2} $0=="branch "b{print p}')

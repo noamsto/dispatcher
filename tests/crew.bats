@@ -3238,7 +3238,7 @@ WT
   jq -e 'select(.kind=="status" and .body.source=="reap" and .body.state=="reaped" and .from=="worker:feat/reap-me#s1-1" and .crew_id=="c1" and (.body.detail | contains("#8") and contains("MERGED")))' "$log" >/dev/null
   CREW_ID=c1 run run_crew roster c1
   [ "$status" -eq 0 ]
-  echo "$output" | jq -e 'any(.[]; (.source | contains("feat/reap-me")) and .state == "reaped")' >/dev/null
+  echo "$output" | jq -e 'any(.[]; .branch == "feat/reap-me" and .state == "reaped")' >/dev/null
 }
 
 reap_key_file() {
