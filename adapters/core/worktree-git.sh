@@ -252,13 +252,15 @@ _wt_cfg_legacy_records() { # <common> <array> — fill <array> with records for 
   for ns in remotes branches; do
     dir="$common/$ns"
     if [ -L "$dir" ]; then
-      printf -v rec '%s%s\nsymlink\n.' "$_wt_cfg_legacy_prefix" "$ns"; _wt_lr_out+=("$rec")
+      printf -v rec '%s%s\nsymlink\n.' "$_wt_cfg_legacy_prefix" "$ns"
+      _wt_lr_out+=("$rec")
       continue
     fi
     [ -d "$dir" ] || continue
     # An unlistable namespace hides its entries from the glob, yet git still opens them by path.
     if [ ! -r "$dir" ] || [ ! -x "$dir" ]; then
-      printf -v rec '%s%s\nunreadable-dir\n.' "$_wt_cfg_legacy_prefix" "$ns"; _wt_lr_out+=("$rec")
+      printf -v rec '%s%s\nunreadable-dir\n.' "$_wt_cfg_legacy_prefix" "$ns"
+      _wt_lr_out+=("$rec")
       continue
     fi
     entries=()
@@ -269,26 +271,35 @@ _wt_cfg_legacy_records() { # <common> <array> — fill <array> with records for 
       name="${entry##*/}"
       if ! _wt_cfg_legacy_name_safe "$name"; then
         printf -v shown %q "$name"
-        printf -v rec '%s%s\nunsafe-name\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$shown"; _wt_lr_out+=("$rec")
+        printf -v rec '%s%s\nunsafe-name\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$shown"
+        _wt_lr_out+=("$rec")
       elif [ -L "$entry" ]; then
-        printf -v rec '%s%s\nsymlink\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"; _wt_lr_out+=("$rec")
+        printf -v rec '%s%s\nsymlink\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+        _wt_lr_out+=("$rec")
       elif [ -f "$entry" ]; then
         if [ ! -r "$entry" ] || ! hash="$(sha256sum -- "$entry")"; then
-          printf -v rec '%s%s\nunreadable\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"; _wt_lr_out+=("$rec")
+          printf -v rec '%s%s\nunreadable\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+          _wt_lr_out+=("$rec")
         else
           hash="${hash%% *}"
-          printf -v rec '%s%s\nfile\n%s\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name" "$hash"; _wt_lr_out+=("$rec")
+          printf -v rec '%s%s\nfile\n%s\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name" "$hash"
+          _wt_lr_out+=("$rec")
         fi
       elif [ -d "$entry" ]; then
-        printf -v rec '%s%s\ndirectory\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"; _wt_lr_out+=("$rec")
+        printf -v rec '%s%s\ndirectory\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+        _wt_lr_out+=("$rec")
       elif [ -p "$entry" ]; then
-        printf -v rec '%s%s\nfifo\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"; _wt_lr_out+=("$rec")
+        printf -v rec '%s%s\nfifo\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+        _wt_lr_out+=("$rec")
       elif [ -S "$entry" ]; then
-        printf -v rec '%s%s\nsocket\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"; _wt_lr_out+=("$rec")
+        printf -v rec '%s%s\nsocket\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+        _wt_lr_out+=("$rec")
       elif [ -b "$entry" ] || [ -c "$entry" ]; then
-        printf -v rec '%s%s\ndevice\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"; _wt_lr_out+=("$rec")
+        printf -v rec '%s%s\ndevice\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+        _wt_lr_out+=("$rec")
       else
-        printf -v rec '%s%s\nother\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"; _wt_lr_out+=("$rec")
+        printf -v rec '%s%s\nother\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+        _wt_lr_out+=("$rec")
       fi
     done
   done
