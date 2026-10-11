@@ -74,24 +74,36 @@ func TestLockReclaimsDeadAndEmpty(t *testing.T) {
 	}
 }
 
-// TestLockEmptyHolderWithFutureMtimeIsReclaimed: a skewed clock puts the dir
-// mtime ahead of now; that must not read as fresh forever.
-func TestLockEmptyHolderWithFutureMtimeIsReclaimed(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "ratings.lock.d")
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writePID(t, dir, "")
-	future := time.Now().Add(10 * time.Second)
-	if err := os.Chtimes(dir, future, future); err != nil {
-		t.Fatal(err)
-	}
-	if !Acquire(dir, "12345") {
-		t.Fatal("an empty holder with a future mtime was not reclaimed")
-	}
-	got, _ := os.ReadFile(filepath.Join(dir, "pid"))
-	if string(got) != "12345\n" {
-		t.Errorf("pid file after reclaim = %q, want \"12345\\n\"", got)
+// TestLockEmptyHolderFutureMtime: a slightly skewed clock still reads as
+// mid-write, but a far-future mtime must not wedge the lock.
+func TestLockEmptyHolderFutureMtime(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		offset  time.Duration
+		acquire bool
+		wantPID string
+	}{
+		{"1s ahead is held", time.Second, false, ""},
+		{"10s ahead is reclaimed", 10 * time.Second, true, "12345\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "ratings.lock.d")
+			if err := os.Mkdir(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writePID(t, dir, "")
+			future := time.Now().Add(tc.offset)
+			if err := os.Chtimes(dir, future, future); err != nil {
+				t.Fatal(err)
+			}
+			if got := Acquire(dir, "12345"); got != tc.acquire {
+				t.Fatalf("Acquire = %v, want %v", got, tc.acquire)
+			}
+			got, _ := os.ReadFile(filepath.Join(dir, "pid"))
+			if string(got) != tc.wantPID {
+				t.Errorf("pid file = %q, want %q", got, tc.wantPID)
+			}
+		})
 	}
 }
 
