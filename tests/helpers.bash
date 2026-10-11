@@ -102,6 +102,27 @@ seed_git_baseline() {
   (. "$WORKTREE_GIT_LIB" && _wt_cfg_baseline_init "$common") 2>/dev/null
 }
 
+# plant_commondir [repo] — plant a `commondir` file in <repo>'s main git dir
+# (#993) pointing at a self-consistent bare repo: an exec key in its config,
+# recorded in its own baseline, so only the commondir pin can refuse it.
+# Sets PLANTED_COMMONDIR to the planted file, SENTINEL to what the exec key
+# touches. Run it after any git call that must see the real repo.
+plant_commondir() {
+  local repo fake
+  repo="$(realpath "${1:-$TEST_REPO}")"
+  fake="$BATS_TEST_TMPDIR/evil-common"
+  SENTINEL="$BATS_TEST_TMPDIR/SENTINEL"
+  printf '#!/bin/sh\ntouch %q\ncat\n' "$SENTINEL" >"$BATS_TEST_TMPDIR/evil-hit.sh"
+  chmod +x "$BATS_TEST_TMPDIR/evil-hit.sh"
+  git init -q --bare "$fake"
+  git --git-dir="$fake" config core.fsmonitor "$BATS_TEST_TMPDIR/evil-hit.sh"
+  mkdir -p "$fake/crew"
+  printf '%s\0' $'#covers\nredirect' $'#covers\nlegacy' $'core.fsmonitor\n'"$BATS_TEST_TMPDIR/evil-hit.sh" \
+    >"$fake/crew/git-config-baseline"
+  printf '%s\n' "$fake" >"$repo/.git/commondir"
+  export PLANTED_COMMONDIR="$repo/.git/commondir" SENTINEL
+}
+
 # seed_hold <crew> <id> <resets_at> [branch] [ref] [wait_engine] [task_engine]
 # [title] [ts_ms] — a hold row shaped like `_build_hold`'s output
 # (adapters/core/crew.sh:2508-2527), written directly to the bus so a test can

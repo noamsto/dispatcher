@@ -14847,3 +14847,88 @@ _align_squash_a() {
   run --separate-stderr run_crew stack
   [ "$status" -eq 1 ]
 }
+
+@test "reap: a commondir planted in the main git dir refuses before any gh call and keeps the worktree (#993)" {
+  git commit -q --allow-empty -m init
+  git branch feat/993-e
+  wt_path="$BATS_TEST_TMPDIR/993-e-wt"
+  git worktree add -q "$wt_path" feat/993-e
+  stub_tmux "" ""
+  printf '#!/bin/sh\nprintf "gh %%s\\n" "$*" >>%q\nprintf "MERGED\\n"\n' "$BATS_TEST_TMPDIR/gh.log" >"$STUB_DIR/gh"
+  chmod +x "$STUB_DIR/gh"
+  CREW_ID=c1 run_crew status "worker:feat/993-e" done "" "https://github.com/o/r/pull/993"
+  plant_commondir
+  CREW_ID=c1 run run_crew reap
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing git: "* ]]
+  [[ "$output" == *"$PLANTED_COMMONDIR"* ]]
+  [[ "$output" == *"redirects the git common dir"* ]]
+  [ -d "$wt_path" ]
+  [ ! -e "$BATS_TEST_TMPDIR/gh.log" ]
+  [ ! -e "$SENTINEL" ]
+}
+
+@test "git-baseline refuses a commondir planted in the main git dir, listing and --accept (#993)" {
+  git commit -q --allow-empty -m init
+  B="$TEST_REPO/.git/crew/git-config-baseline"
+  before="$(cksum "$B")"
+  plant_commondir
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing git: "* ]]
+  [[ "$output" == *"$PLANTED_COMMONDIR"* ]]
+  [[ "$output" == *"redirects the git common dir"* ]]
+  [[ "$output" != *"no drift"* ]]
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"$PLANTED_COMMONDIR"* ]]
+  [[ "$output" != *"type yes"* ]]
+  [ "$(cksum "$B")" = "$before" ]
+  [ ! -e "$SENTINEL" ]
+}
+
+@test "git-baseline lists a legacy remotes entry, exits 1 and never says no drift (#993)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  mkdir -p "$TEST_REPO/.git/remotes"
+  printf 'URL: https://x.example/r\n' >"$TEST_REPO/.git/remotes/up"
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"legacy file entry "* ]]
+  [[ "$output" == *"remotes/up"* ]]
+  [[ "$output" == *"--accept never records a legacy entry"* ]]
+  [[ "$output" != *"no drift"* ]]
+}
+
+@test "git-baseline lists a symlinked legacy entry as unsafe (#993)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  mkdir -p "$TEST_REPO/.git/branches"
+  ln -s /etc/hostname "$TEST_REPO/.git/branches/b"
+  run run_crew git-baseline
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"legacy symlink entry "* ]]
+  [[ "$output" == *"branches/b"* ]]
+  [[ "$output" == *": unsafe"* ]]
+  [[ "$output" == *"--accept never records a legacy entry"* ]]
+  [[ "$output" != *"no drift"* ]]
+}
+
+@test "git-baseline --accept refuses before the prompt while a legacy entry is listed (#993)" {
+  git commit -q --allow-empty -m init
+  seed_git_baseline
+  B="$TEST_REPO/.git/crew/git-config-baseline"
+  mkdir -p "$TEST_REPO/.git/remotes"
+  printf 'URL: https://x.example/r\n' >"$TEST_REPO/.git/remotes/up"
+  before="$(cksum "$B")"
+  crew_tty yes git-baseline --accept
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"legacy file entry "* ]]
+  [[ "$output" == *"refuses while legacy remotes/branches entries are listed"* ]]
+  [[ "$output" != *"type yes"* ]]
+  [ "$(cksum "$B")" = "$before" ]
+  rm "$TEST_REPO/.git/remotes/up"
+  run run_crew git-baseline
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no drift"* ]]
+}

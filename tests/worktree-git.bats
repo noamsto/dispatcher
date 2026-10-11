@@ -19,6 +19,39 @@ teardown() {
   teardown_repo
 }
 
+# The inspection helpers below moved from the bash lib to crew/internal/gitguard;
+# these shims map them onto `crew-go git-guard <op>` so the test bodies stay as
+# written. Value-returning shims append and strip a sentinel byte so a trailing
+# newline in a record survives command substitution.
+_wt_cfg_redirect_mark=$'#covers\nredirect'
+_wt_cfg_pairs() { "$CREW_GO_BIN" git-guard pairs "$@"; }
+_wt_cfg_union() { "$CREW_GO_BIN" git-guard union "$@"; }
+_wt_cfg_show_url() { # <s> <var> [proxy]
+  local _shim_out _shim_var="$2"
+  _shim_out=$("$CREW_GO_BIN" git-guard show-url "$1" "${@:3}" && printf x) || return
+  printf -v "$_shim_var" %s "${_shim_out%x}"
+}
+_wt_cfg_show_key() { # <k> <var>
+  local _shim_out _shim_var="$2"
+  _shim_out=$("$CREW_GO_BIN" git-guard show-key "$1" && printf x) || return
+  printf -v "$_shim_var" %s "${_shim_out%x}"
+}
+_wt_cfg_show_pair() { # <k> <v> <var> [aliases-array-name]
+  local _shim_out _shim_var="$3"
+  local -a _shim_aliases=()
+  if [ -n "${4:-}" ]; then
+    local -n _shim_ref="$4"
+    _shim_aliases=("${_shim_ref[@]}")
+  fi
+  _shim_out=$("$CREW_GO_BIN" git-guard show-pair "$1" "$2" "${_shim_aliases[@]}" && printf x) || return
+  printf -v "$_shim_var" %s "${_shim_out%x}"
+}
+_wt_cfg_canon() { # <R> <rec> <var>
+  local _shim_out _shim_var="$3"
+  _shim_out=$("$CREW_GO_BIN" git-guard canon "$1" "$2" && printf x) || return
+  printf -v "$_shim_var" %s "${_shim_out%x}"
+}
+
 # key=value lines, one per NUL-terminated key\nvalue pair.
 pairs() { _wt_cfg_pairs "$@" | tr '\n\0' '=\n'; }
 
@@ -390,10 +423,12 @@ guard_cwd_refuses() {
 @test "guard_cwd refuses when reading core.hooksPath fails (#628)" {
   git config core.hooksPath "$(hookspath_abs)"
   _wt_cfg_baseline_init "$COMMON"
-  git() {
-    if [ "$*" = 'config --get core.hooksPath' ]; then return 2; fi
-    command git "$@"
-  }
+  local real_git
+  real_git="$(command -v git)"
+  mkdir -p "$BATS_TEST_TMPDIR/shim"
+  printf '#!/bin/sh\n[ "$*" = "config --get core.hooksPath" ] && exit 2\nexec %q "$@"\n' "$real_git" >"$BATS_TEST_TMPDIR/shim/git"
+  chmod +x "$BATS_TEST_TMPDIR/shim/git"
+  PATH="$BATS_TEST_TMPDIR/shim:$PATH"
   run --separate-stderr _wt_cfg_guard_cwd "$COMMON"
   [ "$status" -eq 1 ]
   [[ $stderr == 'refusing git: '* ]]
@@ -1212,4 +1247,149 @@ fp8() { printf %s "$1" | sha256sum | cut -c1-8; }
   [[ $stderr == *remote.origin.url* ]]
   [[ $stderr != *FAKETOKEN0686* ]]
   [ "$(grep -c -a -F 'https://x:FAKETOKEN0686A@github.com/o/r.git' "$BASELINE")" -eq 1 ]
+}
+
+# fake_common [nobaseline] -> $FAKE — a bare repo a planted commondir can point
+# at. It is self-consistent: an exec key in its config, recorded in its own
+# baseline (unless "nobaseline"), so only the commondir pin can refuse it.
+fake_common() {
+  FAKE="$BATS_TEST_TMPDIR/evil"
+  rm -rf "$FAKE"
+  git init -q --bare "$FAKE"
+  git --git-dir="$FAKE" config core.fsmonitor "$HIT"
+  [ "${1:-}" = nobaseline ] && return 0
+  mkdir -p "$FAKE/crew"
+  printf '%s\0' "$_wt_cfg_redirect_mark" $'#covers\nlegacy' $'core.fsmonitor\n'"$HIT" >"$FAKE/crew/git-config-baseline"
+}
+
+@test "guard and init refuse a commondir in the common dir, with or without a baseline (#993)" {
+  local want
+  want="$(printf %q "$COMMON")/commondir"
+  git init -q --bare "$BATS_TEST_TMPDIR/evil"
+  printf '%s\n' "$BATS_TEST_TMPDIR/evil" >"$COMMON/commondir"
+
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"refusing git: "* ]]
+  [[ $stderr == *"$want"* ]]
+  [[ $stderr == *"redirects the git common dir"* ]]
+  [[ $stderr != *"no git-config baseline"* ]]
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"refusing git: "* ]]
+  [[ $stderr == *"$want"* ]]
+  [ ! -e "$BASELINE" ]
+
+  rm "$COMMON/commondir"
+  _wt_cfg_baseline_init "$COMMON"
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$BATS_TEST_TMPDIR/evil" >"$COMMON/commondir"
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"refusing git: "* ]]
+  [[ $stderr == *"$want"* ]]
+  [[ $stderr == *"redirects the git common dir"* ]]
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"$want"* ]]
+}
+
+@test "the cwd guard, commondir pin and trusted cwd refuse a commondir planted in the main git dir (#993)" {
+  local want C variant
+  want="$(printf %q "$COMMON")/commondir"
+  for variant in baseline nobaseline; do
+    fake_common "$variant"
+    printf '%s\n' "$FAKE" >"$COMMON/commondir"
+    C="$(git rev-parse --path-format=absolute --git-common-dir)"
+    [ "$C" = "$(realpath "$FAKE")" ]
+    run --separate-stderr _wt_cfg_guard_cwd "$C"
+    [ "$status" -eq 1 ]
+    [[ $stderr == *"refusing git: "* ]]
+    [[ $stderr == *"$want"* ]]
+    [[ $stderr == *"redirects the git common dir"* ]]
+    [[ $stderr != *"no git-config baseline"* ]]
+    run --separate-stderr _wt_cfg_commondir "$C"
+    [ "$status" -eq 1 ]
+    [[ $stderr == *"$want"* ]]
+    run --separate-stderr _wt_trusted_cwd "$C"
+    [ "$status" -eq 1 ]
+    [[ $stderr == *"$want"* ]]
+    [ ! -e "$SENTINEL" ]
+    rm "$COMMON/commondir"
+  done
+}
+
+@test "the commondir pin refuses a main checkout directory named worktrees (#993)" {
+  local main="$BATS_TEST_TMPDIR/x/worktrees" C
+  git init -q --bare "$BATS_TEST_TMPDIR/x"
+  git init -q -b main "$main"
+  git -C "$main" config user.email test@example.com
+  git -C "$main" config user.name test
+  git -C "$main" commit -q --allow-empty -m init
+  _wt_cfg_baseline_init "$main/.git"
+  printf '../..\n' >"$main/.git/commondir"
+  cd "$main"
+  C="$(git rev-parse --path-format=absolute --git-common-dir)"
+  [ "$C" = "$(realpath "$BATS_TEST_TMPDIR/x")" ]
+  run --separate-stderr _wt_cfg_commondir "$C"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"refusing git: "* ]]
+  [[ $stderr == *"$(printf %q "$main/.git")/commondir"* ]]
+}
+
+@test "a rewritten admin commondir is refused by the guard and _wt_git, and restoring it passes (#993)" {
+  add_worktree w
+  _wt_cfg_baseline_init "$COMMON"
+  git init -q --bare "$BATS_TEST_TMPDIR/evil"
+  printf '%s\n' "$BATS_TEST_TMPDIR/evil" >"$ADMIN/commondir"
+  run --separate-stderr _wt_cfg_guard "$COMMON" "$ADMIN"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"refusing git: "* ]]
+  [[ $stderr == *commondir* ]]
+  run --separate-stderr _wt_git "$ADMIN" "$WT" status --porcelain
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"refusing git: "* ]]
+  [[ $stderr == *commondir* ]]
+  printf '../..\n' >"$ADMIN/commondir"
+  run --separate-stderr _wt_cfg_guard "$COMMON" "$ADMIN"
+  [ "$status" -eq 0 ]
+  run --separate-stderr _wt_git "$ADMIN" "$WT" status --porcelain
+  [ "$status" -eq 0 ]
+}
+
+@test "a genuine linked worktree passes the commondir pin from the worktree and the main checkout (#993)" {
+  add_worktree w
+  _wt_cfg_baseline_init "$COMMON"
+  cd "$WT"
+  run --separate-stderr _wt_cfg_commondir "$COMMON"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+  cd "$TEST_REPO"
+  run --separate-stderr _wt_cfg_commondir "$COMMON"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+}
+
+@test "a missing crew-go binary fails every guard wrapper closed (#993)" {
+  local oid
+  add_worktree w
+  _wt_cfg_baseline_init "$COMMON"
+  oid="$(git rev-parse HEAD)"
+  CREW_GO_BIN="$BATS_TEST_TMPDIR/nope"
+  run _wt_cfg_guard "$COMMON"
+  [ "$status" -ne 0 ]
+  run _wt_cfg_guard_cwd "$COMMON"
+  [ "$status" -ne 0 ]
+  run _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -ne 0 ]
+  run _wt_cfg_commondir "$COMMON"
+  [ "$status" -ne 0 ]
+  run _wt_git_common "$COMMON" rev-parse HEAD
+  [ "$status" -ne 0 ]
+  [[ $output != *"$oid"* ]]
+  run _wt_git "$ADMIN" "$WT" status
+  [ "$status" -ne 0 ]
 }

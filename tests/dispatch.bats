@@ -5513,6 +5513,30 @@ EOF
   grep -q 'new-window' "$STUB_LOG"
 }
 
+@test "dispatch from the main checkout refuses a planted .git/commondir before any fetch or gh call (#993)" {
+  local real_git
+  stub_launch_bins
+  seed_git_baseline
+  # git is real; log its calls so a fetch / ls-remote is observable. gh logs
+  # to its own file, which must never be created.
+  real_git="$(command -v git)"
+  : >"$BATS_TEST_TMPDIR/git.log"
+  printf '#!/bin/sh\nprintf "git %%s\\n" "$*" >>%q\nexec %q "$@"\n' "$BATS_TEST_TMPDIR/git.log" "$real_git" >"$STUB_DIR/git"
+  printf '#!/bin/sh\nprintf "gh %%s\\n" "$*" >>%q\n' "$BATS_TEST_TMPDIR/gh.log" >"$STUB_DIR/gh"
+  chmod +x "$STUB_DIR/git" "$STUB_DIR/gh"
+  plant_commondir
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing git: "* ]]
+  [[ "$output" == *"$PLANTED_COMMONDIR"* ]]
+  [[ "$output" == *"redirects the git common dir"* ]]
+  [ ! -e "$SENTINEL" ]
+  [ ! -e "$BATS_TEST_TMPDIR/gh.log" ]
+  run ! grep -Eq 'ls-remote|fetch' "$BATS_TEST_TMPDIR/git.log"
+  run ! grep -Eq 'switch|new-window' "$STUB_LOG"
+}
+
 @test "--pr treats a leftover WORKER_TASK.md alone as clean, not dirty" {
   # WORKER_TASK.md is intentionally untracked and is never cleaned up on
   # reclaim (only `crew reap` trashes it) — a re-dispatch onto a --pr worktree
