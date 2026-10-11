@@ -892,14 +892,16 @@ END {
 # aliases, `config`, `submodule foreach` …), `git -c`, `gh alias`, an
 # assignment before a command word (`GIT_EDITOR=sh git commit`), or a stage with no
 # command that opens a subshell or backtick at a word start (its output runs).
-# Shells, eval, source, xargs, jq (`-f /dev/stdin` runs a program) and every
-# compound keyword are missing from the set on purpose: a heredoc reaching them
-# may run.
+# Shells, eval, source, xargs, jq (`-f /dev/stdin` runs a program), rg (`--pre`),
+# sort (`--compress-program`), patch (ed-style diffs reach ed, whose `!` runs
+# shell) and every compound keyword are missing from the set on purpose: a
+# heredoc reaching them may run. A word holding `hooks/` ends the check too: a
+# body written into a git hook runs on the next commit.
 # shellcheck disable=SC2016
 awk_sinks='
 BEGIN {
   ok = 1
-  n = split("cat tee printf echo gh git patch sponge sort tr wc head tail grep rg base64 diff cmp read mapfile readarray cd ls mkdir rm mv cp touch chmod true : test [", a, " ")
+  n = split("cat tee printf echo gh git sponge tr wc head tail grep base64 diff cmp read mapfile readarray cd ls mkdir rm mv cp touch chmod true : test [", a, " ")
   for (i = 1; i <= n; i++) SINK[a[i]] = 1
   n = split("commit tag notes apply am hash-object check-ignore check-attr mktag mktree", a, " ")
   for (i = 1; i <= n; i++) GITSUB[a[i]] = 1
@@ -917,6 +919,7 @@ function stage(g,    fo, nw, j, k, cw, as, sc) {
   fo = (substr(g, length(g)) == "\002")
   if (fo) g = substr(g, 1, length(g) - 1)
   nw = split(g, Wd)
+  for (j = 1; j <= nw; j++) if (Wd[j] ~ /hooks\//) { ok = 0; return }
   as = 0
   for (j = 1; j <= nw && ((Wd[j] in LEAD) || Wd[j] ~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/); j++) if (!(Wd[j] in LEAD)) as = 1
   if (j > nw) {
