@@ -7,8 +7,9 @@ Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 `identity` (#981),
 `stall-watch` (#832), `stream`, `adopt` (#920), `pr-watch` (#934), `roster-render`
 (#935), `fleet` (#926), `status`, `msg`, `register` and `deregister` (#945), `nudge`
-(#939), and `git-baseline` (#993), which brings the git-config guard
-(`worktree-git.sh`'s `_wt_cfg_*`) to Go as one shared implementation. Each slice must leave every bats file green;
+(#939), `git-baseline` (#993), which brings the git-config guard
+(`worktree-git.sh`'s `_wt_cfg_*`) to Go as one shared implementation, and `reap` and
+`occupants` (#997). Each slice must leave every bats file green;
 tests may be adapted only where the Go design changes what they can observe (the
 output contract below), with each edit justified.
 
@@ -71,8 +72,8 @@ output contract below), with each edit justified.
   (same argv, so a
   rejected interval costs coreutils' own message and status, which is what
   killed the arm under `set -e`).
-- `crew/internal/lock`: the lock under `ratings.lock.d`, `watch.lock.d`, `stream.lock.d`,
-  `roster-render.lock.d`, the `nudge --wait` dir and the budget refresh, as one package
+- `crew/internal/lock`: the lock under `ratings.lock.d`, `ratings.sweep.lock.d`,
+  `reap.lock.d`, `watch.lock.d`, `stream.lock.d`, `roster-render.lock.d`, the `nudge --wait` dir and the budget refresh, as one package
   instead of a copy per caller. Exclusion is `flock(2)` (`LOCK_EX|LOCK_NB`) on
   `<dir>.flock`, which the kernel drops when the holder dies, so no acquirer judges
   staleness. The record dir `<dir>/` holds `pid` (reporting only: `Holder`,
@@ -263,9 +264,9 @@ output contract below), with each edit justified.
   the 4-tick bus-read cadence and `--max-life` checked every tick. A `done` or
   `failed` bus state hands over to the release loop: claude must show
   `frame.PaneIdleReason` idle on two consecutive ticks, other engines an
-  unchanged frame for `--release` with no prompt, and `--sh release` verdict 3,
-  or a helper that failed to run, keeps watching while any other verdict
-  exits 0. Every bus write is
+  unchanged frame for `--release` with no prompt, and `reap.ReleaseWindows` verdict 3,
+  or an error from it (the release row could not be written), keeps watching while any
+  other verdict exits 0. Every bus write is
   `post`/`postBlocked`/`postClear` (INV-W1 pre-write refresh and terminal-state
   abort, INV-W3 same-prefix suppression with sticky `prompt:`/`quota:`, INV-W2
   own-prefix clearance); a row is one `bus.Append` of the arm's
@@ -289,9 +290,10 @@ output contract below), with each edit justified.
   ignore it inherits. A probe that returns into a cancelled context was cut
   short, and its failure value (empty text, a dead pane) is no evidence: the
   watch exits 128+signo without posting, as the arm died on the signal. The
-  `--sh release` op and the watchdog's own nudge and continue runs run on through a
-  signal (for at most 2 minutes), as the arm's `$(…)` child outlived it, so a typed
-  nudge or continue line or killed window still gets its bus row. D6 and D9 call
+  release call (`releaseCall`, the same signal contract as `nudgeCall`) and the watchdog's
+  own nudge and continue runs run on through a signal (for at most 2 minutes), as the
+  arm's `$(…)` child outlived it, so a typed nudge or continue line or killed window
+  still gets its bus row. D6 and D9 call
   `nudge.Pane` through `Options.Nudge` on a `context.WithoutCancel` copy with that
   same bound: the watchdog and `crew nudge` are one implementation of the decision,
   and a line a nudge is mid-way through typing is not cancelled by the tick ending.
@@ -350,8 +352,9 @@ output contract below), with each edit justified.
   straight to stdout — a buffered line would wait for a batch that may never come.
   Three children are the **crew script re-entered** (`bash -euo pipefail <self> …`,
   `self` from the `CREW_SELF` the delegation arm exports): `watch`, `hold due` and
-  `reap`, which stayed there. That keeps the arm's fault-injection rows honest and
-  keeps `crew reap` single-implemented, and it is why the port is a subprocess
+  `reap`, whose arm is now the delegation one-liner, so the re-entry runs Go. That keeps
+  the arm's fault-injection rows honest and `crew reap` single-implemented, and it is why
+  the port is a subprocess
   runner rather than three function calls: `watch` is stopped with TERM and waited
   so it can release `watch.lock.d` itself, and `reap` is never awaited nor signalled
   (an interrupted removal strands a worktree) and writes a per-child pair of files,
@@ -446,6 +449,45 @@ pr_open` for an implement task: the ledger's form, the empty-detail rule, the
   `git-baseline` listing and `--accept`. It is reached two ways: the hidden
   `crew-go git-guard <op>` that `worktree-git.sh`'s wrappers exec, and the public
   `crew git-baseline`. See "Shared guard" under Delegation.
+- `crew/internal/wtgit`: the anchored git invocation of `worktree-git.sh` (#539/#557/#578/
+  #633/#677) for Go callers: `Command` (`_wt_git`) and `CommonCommand` (`_wt_git_common`)
+  return the unstarted `*exec.Cmd`, argv-identical to the bash helpers (`NeutralCfg` and
+  `CommonExtra` in `_wt_neutral_cfg`'s order, `--attr-source` on the empty tree, `-C`,
+  `--git-dir`, `--work-tree`), after the refusals and the in-process `gitguard.Check`;
+  `Status`, `GitlinkOK`, `AdminDir` and `AnchorPath` are `_wt_status`, `_wt_gitlink_ok`,
+  `_wt_admin_dir` and `_worktree_anchor_path`; `TrustedCwd` is `_wt_trusted_cwd`, returning
+  the directory to run cwd-discovered git from instead of `cd`-ing (same refusal text, same
+  `gitguard.PinCwd` calls before and after). One place the invocation is not the helper's:
+  the command's environment is scrubbed of the variables that would re-point or extend an
+  anchored git (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_CONFIG`,
+  `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT` and the `GIT_CONFIG_KEY_*`/`_VALUE_*` pairs,
+  `GIT_ATTR_SOURCE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`), where bash
+  inherits it, and `GIT_INDEX_FILE` is set only through `Opts.IndexFile` (the `--discard`
+  scratch index); `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM` and `HOME` pass through, since
+  the suite isolates with them. The bash copy stays for `crew stack` and dispatch, so a
+  drift test parses `_wt_neutral_cfg=( … )` and the common extras from `worktree-git.sh` and
+  asserts equality with the Go lists (skipped via `internal/drift` when the file is absent).
+- `crew/internal/reap`: the `reap` arm (#997) and `occupants`, plus `_release_windows`. The
+  arm runs op-for-op in the arm's order, with its jq folds (`latest.jq`, `idle.jq`,
+  `claimed.jq`, `posted.jq`, `findpr.jq`, the forget-pairs fold and `human.jq`, the
+  transcript filter) on jqrun, each patch documented in its header. Every side effect is a
+  seam of `Probes` (tmux, gh, gtrash, process enumeration through `CREW_REAP_PROC_CMD`,
+  ancestors, kill, bus append, sleep and clock), so the arm is testable without tmux; the
+  release path's pane captures go through `stall/probe`'s `CREW_STALL_SAMPLE_CMD` and
+  `_COLOR_CMD` seams and its inter-sample sleep through `CREW_RELEASE_GAP`, while the
+  candidate loop's idle check calls `tmux capture-pane` directly, as the arm did. `reap`
+  records the caller's cwd (it still decides "this is the current worktree"), resolves
+  `wtgit.TrustedCwd` and `chdir`s there once, where the arm `cd`'d, so every cwd-discovered
+  child (`git config`, `git worktree list`, every `gh`, `gtrash`, the autosweep) runs from
+  the trusted dir. `ReleaseWindows` is the one release implementation, shared in process
+  with `stall-watch` (see Delegation); `Occupants` is the one `_occupants`, used by the
+  release, the arm and `crew occupants`. The ratings autosweep is `CREW_RATE_AUTOSWEEP`'s
+  `sync` (take `ratings.sweep.lock.d`, run `rate` in process) or the default async: a hidden
+  `crew-go reap-autosweep` child (not on the public usage, like `git-guard`) with stdin
+  `/dev/null`, output appended to `autosweep.log`, SIGHUP ignored, and the log trimmed in
+  place to its last 200 lines. `reap` takes `reap.lock.d` through `internal/lock`. SIGTERM,
+  SIGINT and SIGHUP, each only when not inherited ignored, remove the `--discard` temp dir
+  and release the locks, then exit 128+signo, as the arm's EXIT trap did.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 - `crew/internal/drift`: test-only drift-guard skip, fatal under `CREW_DRIFT_REQUIRED`.
 
@@ -457,7 +499,7 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | identity | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate | git-baseline)
+crews | log | report | sessions | roster | identity | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate | git-baseline | reap)
   export CREW_SELF="$0"
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
@@ -473,9 +515,16 @@ Candidates are byte-sorted (Go `sort.Strings`) where bash `sort -u` used the
 caller's locale collation, so `rate --sweep-all` may list repos in a different
 order; the set is identical (behaviour, not bytes).
 
+`crew occupants <worktree-path>` needs no repo either, and `reap` is ported, so the
+script's pre-repo preamble branch for `occupants` is now `exec "${CREW_GO_BIN:-@crewGoBin@}"
+occupants "$@"` and the bash `_occupants` is gone. `occupants` is dispatched before
+`bus.Locate`, like `git-guard`; `reap` joins the one-liner arm after the repo check, and
+`crew reap --help` stays in the preamble.
+
 `CREW_SELF` is this script's own path, the `$0` the bash arms re-entered. Two
 read it. `stream` reads it for its inner `watch`, its `hold due` pre-check and
-`crew reap`, all three of which stayed in the script. `roster-render` reads it as
+`crew reap`, all three of which the script still re-enters (`reap` now execs Go from
+its arm). `roster-render` reads it as
 its own build identity: the daemon compares it against the installed `crew` and
 `syscall.Exec`s that in place, so a home-manager switch reaches a daemon that
 outlived the dispatch that started it. The script's path and not the Go binary's,
@@ -505,14 +554,15 @@ stall-watch)
   ;;
 ```
 
-The helpers the loop needs (`_release_windows`,
-budget-gate.sh, local-models.sh) have other bash callers, so Go calls back
-instead of copying them: `CREW_SH stall-watch --sh <op> …` run directly when
+The helpers the loop still needs (budget-gate.sh, local-models.sh) have other bash
+callers, so Go calls back instead of copying them. The finished-worker release is not
+among them: `reap.ReleaseWindows` runs in process (`Options.Release`, wired in `main.go`
+with silent `say`/`note` and no dry run), and the `--sh release` op is gone.
+A call-out is `CREW_SH stall-watch --sh <op> …`, run directly when
 `$CREW_SH` is executable (the Nix-built `crew`, which carries its pinned bash
 and `set -euo pipefail`), otherwise `bash -euo pipefail "$CREW_SH" stall-watch
---sh <op> …` (a raw-source run) — the self-re-exec form crew.sh already uses
-(`bash -euo pipefail "$0" reap …`), which runs the helpers under the arm's own
-preamble. The child's cwd is the repo's git common dir, as the roster renderer
+--sh <op> …` (a raw-source run) — the self-re-exec form crew.sh already uses,
+which runs the helpers under the arm's own preamble. The child's cwd is the repo's git common dir, as the roster renderer
 `cd`s there: the worktree the watchdog started in may be reaped while it lives,
 and the preamble would then refuse. Each op is the arm's old call site,
 errexit-suppressed as the arm suppressed it, then exits its verdict + 10, so
@@ -522,15 +572,12 @@ as a helper that failed to run. The environment is inherited; Go strips
 trailing newlines from stdout. An unknown op or budget predicate is one `crew:
 stall-watch: unknown --sh …` line, exit 1.
 
-| op            | argv after `--sh <op>`                          | stdout                           | verdict (exit − 10)          | helper failed       |
-| ------------- | ----------------------------------------------- | -------------------------------- | ---------------------------- | ------------------- |
-| `release`     | `<branch> <session\|-> <state> <ts_ms> <grace>` | none                             | 3 keep watching; else exit 0 | keep watching, as 3 |
-| `budget`      | `<windows\|limit> <cache> <engine> <now>`       | `_budget_*`'s TSV                | 0 hit, 1 clear, 2 can't tell | can't tell (2)      |
-| `local-model` | `<model>`                                       | non-empty iff the model is local | 0                            | D8 stays on         |
+| op            | argv after `--sh <op>`                    | stdout                           | verdict (exit − 10)          | helper failed  |
+| ------------- | ----------------------------------------- | -------------------------------- | ---------------------------- | -------------- |
+| `budget`      | `<windows\|limit> <cache> <engine> <now>` | `_budget_*`'s TSV                | 0 hit, 1 clear, 2 can't tell | can't tell (2) |
+| `local-model` | `<model>`                                 | non-empty iff the model is local | 0                            | D8 stays on    |
 
-The op supplies what the arm supplied itself: `release` appends the empty
-dry-run argument to `_release_windows` (after no-op `say`/`note`). `budget` and
-`local-model` source `${BUDGET_GATE_LIB:-@budgetGateLib@}` and
+`budget` and `local-model` source `${BUDGET_GATE_LIB:-@budgetGateLib@}` and
 `${LOCAL_MODELS_LIB:-@localModelsLib@}`; `local-model` also runs
 `${DISPATCH_CONFIG_BIN:-dispatch-config}`.
 
@@ -543,7 +590,7 @@ tells the nudge which directive it is waking the lead for.
 
 `git-baseline` lists drift through the guard (`_wt_cfg_guard` and its helpers in
 `worktree-git.sh`), which also runs in `dispatch.sh`, `dispatch-resume.sh` and
-`crew reap`. So the guard moved whole, and the lib calls it instead of keeping a copy. `worktree-git.sh` keeps four one-line wrappers,
+`crew reap` (which calls `internal/gitguard` in process now). So the guard moved whole, and the lib calls it instead of keeping a copy. `worktree-git.sh` keeps four one-line wrappers,
 each `"${CREW_GO_BIN:-@crewGoBin@}" git-guard <op> …`:
 
 | wrapper                 | op                          | meaning                                                                  |
@@ -570,10 +617,12 @@ dispatched before `bus.Locate`: it takes explicit dirs and must run from any cwd
   also refuses a `<common>` that is not the git dir the cwd resolves to, when that git
   dir has no `commondir`: callers read `<common>` by discovery earlier, and a
   `commondir` removed since leaves it naming the old redirect target.
-- The anchored git invocation stays bash (see "Bash helpers that stay"): it runs
-  arbitrary git subcommands in the caller's process (background pids, `GIT_INDEX_FILE`,
-  captured stdout), which a Go exec cannot hand back, and it holds no guard logic. It calls
-  the Go check first, exactly where it called `_wt_cfg_guard` before.
+- The anchored git invocation stays bash for the callers still in bash (see "Bash helpers
+  that stay"): it runs arbitrary git subcommands in the caller's process (background pids,
+  `GIT_INDEX_FILE`, captured stdout), which a Go exec cannot hand back, and it holds no
+  guard logic. It calls the Go check first, exactly where it called `_wt_cfg_guard` before.
+  Go callers (`reap`) use `internal/wtgit`, which builds the same argv and calls
+  `gitguard.Check` in process.
 - Startup cost: one `crew-go` exec per guard call replaces the bash guard's own forks
   (each call ran `git config --list` one to three times, `sort`, `sha256sum` and
   subshells); Go runs the same git calls and nothing else. Dispatch makes on the order of
@@ -637,6 +686,25 @@ Rules that still bind a porter:
   `adopt` asks only whether that array is empty — which the window list alone
   answers — so the read would run for nothing. The two reads that decide it keep
   their argv, count and order.
+- Specific to `reap`, and not mirrored:
+  - the anchored git commands run with an environment scrubbed of `GIT_DIR`,
+    `GIT_WORK_TREE`, `GIT_CONFIG_*` and the other re-pointing variables (`internal/wtgit`);
+    bash inherited it. The arm's callers never set them, so no bats row can see it;
+  - a non-positive pid from `CREW_REAP_PROC_CMD` is never signalled (`kill 0` and `kill -1`
+    reach a whole process group or every process the user may signal);
+  - a non-numeric tmux `window_activity` or `session_attached` field reads as no human;
+    bash evaluated the activity field with `$((…))`, where a bare word is a variable name
+    and an expression counts as its value;
+  - the idle-window kill order is byte order, where `sort -u` used the caller's locale
+    collation; the set is identical;
+  - the `kind:"reap"` row is best-effort: a bus write failure prints
+    `crew reap: could not record the reap row for <branch>: <err>` on stderr and the
+    `reaped` status row, record cleanup, branch delete, label release and the next
+    candidate still run, where the arm's `set -e` aborted the sweep (#997). The release
+    row in idle release is not: its write failure still exits 1;
+  - `stream: a failing reap surfaces as one stream error line` broke reap by pointing
+    `WORKTREE_GIT_LIB` at a missing file, which the Go arm never sources; the row now fails
+    reap through a `TrustedCwd` refusal (a planted anchor record naming another crew dir).
 - Specific to `pr-watch`, and not mirrored: two places the port is not the arm.
   A `SIGTERM`/`SIGINT`/`SIGHUP` sent to `crew` is forwarded to the child and the wait
   goes on until the child is gone, exiting with the child's status and posting nothing
@@ -706,7 +774,8 @@ the bus for unread msgs (unread helper failed)` at exit 1, because the empty-sca
 
 ## Bash helpers that stay
 
-`_crew_id`, `_is_engine_cmd` and `_pane_is_engine_at` keep other callers (`reap`).
+`_crew_id` and `_is_engine_cmd` keep other callers (`_is_engine_cmd` is the canonical copy
+adapters.bats compares dispatch.sh's against; `_pane_is_engine_at` went with `reap`).
 Delete each only with its last caller. While two copies exist, guard drift:
 
 - Go tests parse crew.sh's pools and engine table and assert the Go copies
@@ -747,16 +816,17 @@ real time` pins the no-`CREW_CLOCK` branch. `watch` is deliberately outside this
 pair: its park runs on `internal/clock`'s real half only, because the arm's
 `jq -nc 'now*1000|floor'` and its `sleep` never consulted the clock file.
 
-`_lock_acquire` and `_lock_release` stay for the two bash-only locks until `reap` is
-ported, and `internal/lock` no longer copies them: it holds a `flock(2)` and reads
-a `*.d` only as the record it publishes (or, for an old build's, as the old format).
-Which lock paths either language takes, from `grep -rn '_lock_acquire\|lock\.d\|refresh\.d\|nudge-wait'`
+`_lock_acquire`, `_lock_release` and `_lock_publish_pid` are gone with `reap` (#997), and
+so are the crew.bats rows that `eval`ed them; `internal/lock` holds a `flock(2)` and reads
+a `*.d` only as the record it publishes (or, for an old build's, as the old format), and its
+tests cover the old-format holders those rows planted.
+Which lock paths either language takes, from `grep -rn 'lock\.d\|refresh\.d\|nudge-wait'`
 over the non-test code:
 
 | lock path                                  | bash (`adapters/core/crew.sh`) | Go                           |
 | ------------------------------------------ | ------------------------------ | ---------------------------- |
-| `$XDG_DATA_HOME/crew/ratings.sweep.lock.d` | `_rate_autosweep` (in `reap`)  | none                         |
-| `<crew dir>/reap.lock.d`                   | `reap`                         | none                         |
+| `$XDG_DATA_HOME/crew/ratings.sweep.lock.d` | none                           | `reap` autosweep             |
+| `<crew dir>/reap.lock.d`                   | none                           | `reap`                       |
 | `$XDG_DATA_HOME/crew/ratings.lock.d`       | none                           | `rate` sweep                 |
 | `<crew dir>/watch.lock.d`                  | none                           | `watch`                      |
 | `<crew dir or lane>/stream.lock.d`         | none                           | `stream`, fleet lane         |
@@ -764,35 +834,36 @@ over the non-test code:
 | `<bus dir>/nudge-wait/<sid>.<cksum>.d`     | none                           | `nudge --wait`               |
 | `<budget file>.refresh.d`                  | none                           | `stall-watch` budget refresh |
 
-No lock is taken by both bash and Go, so bash keeps its mkdir helper until `reap` is
-ported, and neither a `crew lock` helper nor `flock(1)` (absent on macOS by default)
-is needed. The sharing that remains is across builds, not languages: old-build
+No lock is taken by bash any more, so neither a `crew lock` helper nor `flock(1)` (absent on
+macOS by default) is needed. The sharing that remains is across builds, not languages: old-build
 processes still running after a switch (an old `stream` re-entering its old
 `CREW_SELF` for `watch`, old `stall-watch`es, an older installed `crew` whose `rate`
 and `nudge` are bash arms) take the same paths with the mkdir protocol, and
 `internal/lock`'s old-format branch handles them. Its own tests are the drift
 guard: live, dead, empty, non-numeric, `0`, out-of-range and trailing-newline
 holders against that branch, plus the `stream` rows that TERM a parked Go watch and
-replace a `--force`'d holder.
+replace a `--force`'d holder, and the reap and autosweep bats rows that plant a mkdir lock
+with a live pid.
 
 The frame classifiers (`_frame_classifier`, `_pane_idle_reason`, `_claude_idle_box`,
-`_box_rows`, the `_pi_*` helpers) stay in crew.sh for `reap`
-and `_release_windows`; dispatch.sh's byte-identical copies are pinned by adapters.bats
-and untouched. `internal/frame` is the Go copy `stall-watch` runs every tick, and
-the `LC_ALL=C.UTF-8` drift test described under Layout is the guard.
+`_box_rows`, the `_pi_*` helpers) stay in crew.sh as the canonical copies, though no
+bash caller is left: the Go drift oracle runs them (the `LC_ALL=C.UTF-8` test under
+Layout) and adapters.bats pins dispatch.sh's byte-identical copies against them.
+`internal/frame` is the Go copy `stall-watch` and `reap` run.
 `_is_quota_cursor_limit` has no bash caller left but stays, as the canonical copy
 adapters.bats compares dispatch.sh's against. `_is_bg_wait` had no bash caller
 left and no pinned copy, so it moved to Go and is gone from crew.sh.
 
 The rest of what `stall-watch` reaches stays bash and is delegated, not copied
-(one copy needs no guard):
-`_release_windows` (with `reap`), and budget-gate.sh and local-models.sh, reached
-through `--sh budget` and `--sh local-model`. `_unread_scan` was the last one
+(one copy needs no guard): budget-gate.sh and local-models.sh, reached
+through `--sh budget` and `--sh local-model`. `_release_windows`, `_human_present`,
+`_frames_busy`, `_pane_capture`, `_occupants` and `_pane_is_engine_at` went with `reap`
+(#997): `reap.ReleaseWindows` and `reap.Occupants` are the one implementation, reached in
+process by `stall-watch`, `reap` and `crew occupants`. `_unread_scan` was the last one
 with two Go callers (`stall-watch` every 4th tick and `crew nudge` per call);
-both read `internal/unread` since #968 and it is gone from crew.sh. One helper still has a Go copy and a
-guard: `release_grace` stays for `reap`, and a Go test parses `^release_grace=` from
-crew.sh and asserts it equals `--release`'s default (skipped when crew.sh is absent).
-`_publish_pane_state` is gone with its guard: `panestate` is the one copy, shared by
+both read `internal/unread` since #968 and it is gone from crew.sh. `release_grace` and its
+drift guard are gone too: `reap.ReleaseGrace` is the one constant, and stall's `releaseGrace`
+(`--release`'s default) is that value. `_publish_pane_state` is gone with its guard: `panestate` is the one copy, shared by
 `stall` and `status`.
 
 `_hold_outstanding` lost its last bash caller when `roster-render` moved (#935)
@@ -801,7 +872,7 @@ the renderer's model and by `hold list` alike, so the guard that compared the tw
 copies went with the copy. `_hold_crew` and `_hold_render` were already gone.
 `_fit_line`, `_shrink`, `_LINE_MAX`/`_ELIDED` and
 their drift guards are gone with the `status`/`msg` port (#945): `bus` is the one
-copy. `_bus_append` stays for `reap` and `_release_windows`, and `internal/bus.Append` is its Go copy.
+copy. `_bus_append` stays for `crew stack`, and `internal/bus.Append` is its Go copy.
 `_owner_pid`, `_pidfile_log` and `_has_c0` are gone (`crews.Probes.OwnerPID`,
 `crews.PidfileLog`, and `msg`'s own control-byte test). `_pid_alive`,
 `_file_mtime_s`, `_ps_elapsed_s`, `_pid_recycled` and `_recorded_pid_live` have no
@@ -827,8 +898,13 @@ baseline init and migrations, and the guard and cwd guard bodies are all
   `_wt_fetch_origin_branch` and `_worktree_anchor_path`: bash callers' helpers over git
   and the dispatcher records, with no config check in them.
 
-`crew reap` and `crew stack` are still bash, so `_wt_trusted_cwd` and the rest stay until
-they are ported.
+`crew reap` is Go (#997) and uses `internal/wtgit`, the Go copy of the anchored invocation,
+`_wt_trusted_cwd` (as a returned directory), `_wt_admin_dir`, `_wt_gitlink_ok`, `_wt_status`
+and `_worktree_anchor_path`. The bash copies stay for `crew stack` and dispatch until they
+are ported, and `wtgit`'s drift test pins `_wt_neutral_cfg` and the common extras against
+`worktree-git.sh`, so a change to either list fails until both agree. The rest of the
+invocation (the refusals, `--attr-source`, anchoring) has no second guard: it is covered by
+`wtgit`'s argv tests and by the bats rows that exercise the bash copy.
 
 ## Running the suite
 
@@ -852,7 +928,7 @@ they are ported.
    `syscall.Exec`s crew.sh (an internal `crew-sh`, path baked in via ldflags)
    for the rest.
 2. The delegating arms in crew.sh disappear.
-3. crew.sh's `$0` self-re-execs (`roster`, `dash`, `reap`, `hold`, `rate`) switch
+3. crew.sh's `$0` self-re-execs (`roster`, `dash`, `hold`, `rate`) switch
    to the `CREW_SELF` env the Go front exports. `stream` already reads that env
    rather than a `$0` of its own — it re-enters the script for its inner park, so
    once the front exports `CREW_SELF` itself the port needs no further change.
