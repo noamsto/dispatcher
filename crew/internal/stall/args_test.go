@@ -2,16 +2,9 @@ package stall
 
 import (
 	"bytes"
-	"os"
-	"regexp"
-	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/noamsto/dispatcher/crew/internal/drift"
 )
-
-const crewScript = "../../../adapters/core/crew.sh"
 
 func TestUsageLines(t *testing.T) {
 	cases := []struct {
@@ -111,22 +104,6 @@ func TestFlagsParse(t *testing.T) {
 	}
 	if c.pane != "%2" || c.engine != "pi" || c.grace != "1.5" || c.interval != "2m" || !c.noBudget || c.nudgeOn {
 		t.Errorf("parsed %+v", c)
-	}
-}
-
-// release_grace is crew.sh's default the arm read; the Go copy must not drift.
-func TestReleaseGraceMatchesCrewSh(t *testing.T) {
-	src, err := os.ReadFile(crewScript)
-	if err != nil {
-		drift.Missing(t, crewScript, err)
-	}
-	m := regexp.MustCompile(`(?m)^release_grace=([0-9]+)$`).FindSubmatch(src)
-	if m == nil {
-		t.Fatal("crew.sh no longer defines release_grace")
-	}
-	n, _ := strconv.ParseInt(string(m[1]), 10, 64)
-	if n != releaseGrace {
-		t.Errorf("crew.sh release_grace=%d, Go has %d", n, releaseGrace)
 	}
 }
 

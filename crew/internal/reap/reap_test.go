@@ -38,6 +38,10 @@ type fx struct {
 	tmux           map[string]string // `tmux <args>` → stdout
 	noGh           bool
 	appendErr      error
+	// appendFail, when set, fails the append of the lines it returns an error for.
+	appendFail     func(line string) error
+	procs          string
+	ancestors      map[int]bool
 	mu             sync.Mutex
 	calls          []string
 	ghCwd          []string
@@ -120,10 +124,13 @@ func (f *fx) opts() Options {
 				_, err := f.ghCall(args)
 				return err
 			},
-			HaveGh:    func() bool { return !f.noGh },
-			Gtrash:    func(_ context.Context, p string) { f.record("gtrash put " + p) },
-			Procs:     func(context.Context) string { return "" },
-			Ancestors: func() map[int]bool { return map[int]bool{} },
+			HaveGh: func() bool { return !f.noGh },
+			Gtrash: func(_ context.Context, p string) {
+				f.record("gtrash put " + p)
+				_ = os.RemoveAll(p)
+			},
+			Procs:     func(context.Context) string { return f.procs },
+			Ancestors: func() map[int]bool { return f.ancestors },
 			Kill:      func(pid int) { f.record(fmt.Sprintf("kill %d", pid)) },
 			Capture: func(_ context.Context, pane string, colored bool) string {
 				f.record(fmt.Sprintf("capture %s %v", pane, colored))
@@ -140,6 +147,11 @@ func (f *fx) opts() Options {
 				defer f.mu.Unlock()
 				if f.appendErr != nil {
 					return f.appendErr
+				}
+				if f.appendFail != nil {
+					if err := f.appendFail(line); err != nil {
+						return err
+					}
 				}
 				f.appended = append(f.appended, line)
 				return nil
@@ -453,17 +465,8 @@ func TestMergedPRReachesRemoval(t *testing.T) {
 	f := newFx(t)
 	f.bus(status("done", prURL, 0))
 	f.gh["pr view "+prURL+" --json state --jq .state"] = "MERGED"
-	// Scaffold is not dirt.
-	if err := os.WriteFile(filepath.Join(f.wt, "PLAN.md"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if rc := f.reap(f.main); rc != 0 {
-		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
-	}
-	f.wantOut("crew reap: nothing reclaimed")
-	f.wantErr("")
-
-	if err := os.WriteFile(filepath.Join(f.wt, "src.go"), []byte("x"), 0o644); err != nil {
+	src := filepath.Join(f.wt, "src.go")
+	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	f.reap(f.main)
@@ -472,6 +475,22 @@ func TestMergedPRReachesRemoval(t *testing.T) {
 	// The caller standing in the worktree keeps it.
 	f.reap(f.wt)
 	f.wantOut("crew reap: keeping feat/r — it is the current worktree", "crew reap: nothing reclaimed")
+
+	// Scaffold is not dirt: it goes to the trash and the tree is reaped.
+	if err := os.Remove(src); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.wt, "PLAN.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rc := f.reap(f.main); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantOut("crew reap: reaped feat/r (MERGED)", "crew reap: kept local branch feat/r — could not verify the merged PR head")
+	f.wantErr("")
+	if !slices.Contains(f.calls, "gtrash put "+f.wt+"/PLAN.md") {
+		t.Fatalf("calls %q", f.calls)
+	}
 }
 
 func TestEarlierPRHeadCheck(t *testing.T) {
@@ -499,18 +518,22 @@ func TestIdleEngineWindow(t *testing.T) {
 	if rc := f.reap(f.main, "--dry-run"); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
-	f.wantOut("crew reap: would kill window @5 (feat/r idle engine)")
-
-	f.reap(f.main)
-	f.wantOut("crew reap: killed window @5 (feat/r idle engine)", "crew reap: nothing reclaimed")
-	if !slices.Contains(f.calls, "tmux kill-window -t @5") {
-		t.Fatalf("calls %q", f.calls)
-	}
+	anchor, _ := wtgit.AnchorPath(f.wt)
+	f.wantOut("crew reap: would kill window @5 (feat/r idle engine)",
+		"crew reap: would reap feat/r (MERGED) @ "+f.wt, "crew reap: would prune record "+anchor)
 
 	// A branch that posted after the status keeps everything.
 	f.bus(status("done", prURL, 5), fmt.Sprintf(`{"ts":%d,"from":"worker:%s#s2","kind":"msg"}`, nowUnix*1000, rb))
 	f.reap(f.main)
 	f.wantOut("crew reap: keeping feat/r — an engine is still running there (session posted after its done)", "crew reap: nothing reclaimed")
+
+	f.bus(status("done", prURL, 0))
+	f.reap(f.main)
+	f.wantOut("crew reap: killed window @5 (feat/r idle engine)", "crew reap: reaped feat/r (MERGED)",
+		"crew reap: kept local branch feat/r — could not verify the merged PR head")
+	if !slices.Contains(f.calls, "tmux kill-window -t @5") {
+		t.Fatalf("calls %q", f.calls)
+	}
 }
 
 func TestIdleEngineKeepReasons(t *testing.T) {

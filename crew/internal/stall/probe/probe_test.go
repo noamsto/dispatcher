@@ -362,12 +362,12 @@ func TestSh(t *testing.T) {
 	e := envOf(nil, &stderr)
 	e.CrewSH = crewSH
 	e.Dir = t.TempDir()
-	out, rc := Default(e).Sh(context.Background(), "release", "feat/x", "-", "done", "1700000000000", "30")
+	out, rc := Default(e).Sh(context.Background(), "budget", "feat/x", "-", "done", "1700000000000", "30")
 	if rc != 3 {
 		t.Errorf("rc = %d, want 3", rc)
 	}
 	lines := strings.Split(out, "\n")
-	if len(lines) != 3 || lines[0] != "stall-watch --sh release feat/x - done 1700000000000 30" || lines[2] != e.Dir {
+	if len(lines) != 3 || lines[0] != "stall-watch --sh budget feat/x - done 1700000000000 30" || lines[2] != e.Dir {
 		t.Fatalf("out = %q, want the argv, opts and cwd lines, trailing newlines stripped", out)
 	}
 	for _, opt := range []string{"errexit", "nounset", "pipefail"} {
@@ -391,9 +391,9 @@ func TestShExecutable(t *testing.T) {
 	e.CrewSH = crewSH
 	e.Dir = t.TempDir()
 	t.Setenv("PATH", t.TempDir())
-	out, rc := Default(e).Sh(context.Background(), "release", "feat/x")
+	out, rc := Default(e).Sh(context.Background(), "budget", "feat/x")
 	lines := strings.Split(out, "\n")
-	if rc != 3 || len(lines) != 3 || lines[0] != "stall-watch --sh release feat/x" || lines[2] != e.Dir {
+	if rc != 3 || len(lines) != 3 || lines[0] != "stall-watch --sh budget feat/x" || lines[2] != e.Dir {
 		t.Fatalf("Sh = %q, %d; want the argv and cwd lines, 3", out, rc)
 	}
 	if strings.Contains(lines[1], "errexit") {

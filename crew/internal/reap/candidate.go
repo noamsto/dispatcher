@@ -531,5 +531,5 @@ func (r *run) consider(ctx context.Context, row latestRow) (bool, int) {
 	if len(idle) > 0 && !r.killIdle(ctx, c, idle) {
 		return false, 0
 	}
-	return r.remove(ctx, c), 0
+	return r.remove(ctx, c)
 }

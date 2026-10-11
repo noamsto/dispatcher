@@ -35,7 +35,7 @@ func NotifySignals(parent context.Context) (context.Context, func()) {
 		select {
 		case sig := <-ch:
 			// Stop notification here, not only in the returned func: the watch
-			// can hold on for an --sh write's 2-minute cap after the first
+			// can hold on for a release's or nudge's 2-minute cap after the first
 			// signal, and while a channel stays registered a second SIGTERM is
 			// queued to a channel nobody reads and vanishes.
 			signal.Stop(ch)

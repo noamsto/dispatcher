@@ -195,18 +195,14 @@ func TestNudgeCallNotStartedAfterCancel(t *testing.T) {
 	}
 }
 
-func TestShWriteNotStartedAfterCancel(t *testing.T) {
-	for _, op := range []string{"release"} {
-		t.Run(op, func(t *testing.T) {
-			f := newFake()
-			_, w := pdWatch(t, f, "feat/x", "--pane", "%1")
-			ctx, cancel := sigterm(t)
-			cancel()
-			w.ctx = ctx
-			_, _, _, err := w.shWrite(op)
-			if code, ok := codeOf(err); !ok || code != 143 || len(f.shCalls) != 0 {
-				t.Errorf("shWrite = (%d, %v) with %d calls, want 143 and none", code, ok, len(f.shCalls))
-			}
-		})
+func TestReleaseCallNotStartedAfterCancel(t *testing.T) {
+	f := newFake()
+	_, w := pdWatch(t, f, "feat/x", "--pane", "%1")
+	ctx, cancel := sigterm(t)
+	cancel()
+	w.ctx = ctx
+	_, err := w.releaseCall("feat/x", "-", "done", 0, 300)
+	if code, ok := codeOf(err); !ok || code != 143 || len(f.shCalls) != 0 {
+		t.Errorf("releaseCall = (%d, %v) with %d calls, want 143 and none", code, ok, len(f.shCalls))
 	}
 }

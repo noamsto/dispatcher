@@ -63,23 +63,11 @@ func (w *watch) shCall(op string, args ...string) (out string, verdict int, ok b
 	return w.shOn(w.ctx, op, args...)
 }
 
-// shWrite is shCall for an op that writes (`release` — `nudge`'s helper went
-// away in-process; see nudgeCall). The arm's `$(…)` child outlived the arm's death and
-// finished its write, so a signal must not tear one between the keystroke or kill and
-// its bus row; the watch still ends with 128+signo once the op returns. A write that
-// has not started when the signal lands never starts.
-func (w *watch) shWrite(op string, args ...string) (string, int, bool, error) {
-	if err := w.cancelled(); err != nil {
-		return "", 0, false, err
-	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(w.ctx), shWriteTimeout)
-	defer cancel()
-	return w.shOn(ctx, op, args...)
-}
-
-// nudgeCall is shWrite's signal contract around the in-process type: a nudge that has
-// not started when a signal lands never starts, and one that has runs on — bounded — so
-// its bus row lands, after which the watch still ends with 128+signo.
+// nudgeCall is the signal contract for a write: the arm's `$(…)` child outlived the
+// arm's death and finished its write, so a signal must not tear one between the
+// keystroke and its bus row. A nudge that has not started when a signal lands never
+// starts, and one that has runs on — bounded — so its bus row lands, after which the
+// watch still ends with 128+signo.
 func (w *watch) nudgeCall(req nudge.PaneRequest) (string, int, error) {
 	if err := w.cancelled(); err != nil {
 		return "", 0, err
@@ -91,6 +79,26 @@ func (w *watch) nudgeCall(req nudge.PaneRequest) (string, int, error) {
 		return "", 0, err
 	}
 	return out, rc, nil
+}
+
+// releaseCall is nudgeCall's contract around the in-process release: a release that
+// has not started when a signal lands never starts, and one that has runs on —
+// bounded — so its kill and release row are not torn.
+func (w *watch) releaseCall(branch, session, state string, tsMS, grace int64) (int, error) {
+	if err := w.cancelled(); err != nil {
+		return 0, err
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(w.ctx), shWriteTimeout)
+	defer cancel()
+	verdict, relErr := w.o.Release(ctx, branch, session, state, tsMS, grace)
+	if err := w.cancelled(); err != nil {
+		return 0, err
+	}
+	if relErr != nil {
+		w.logReleaseFailure(relErr)
+		return 3, nil
+	}
+	return verdict, nil
 }
 
 func (w *watch) shOn(ctx context.Context, op string, args ...string) (string, int, bool, error) {
@@ -113,6 +121,16 @@ func (w *watch) logHelperFailure(op string, rc int) {
 	}
 	w.shFailLogged = true
 	_, _ = fmt.Fprintf(w.stderr, "crew: stall-watch: '%s' helper failed to run (status %d)\n", op, rc)
+}
+
+// logReleaseFailure is logHelperFailure for the in-process release: the first
+// failure is on stderr and the rest are quiet.
+func (w *watch) logReleaseFailure(err error) {
+	if w.shFailLogged {
+		return
+	}
+	w.shFailLogged = true
+	_, _ = fmt.Fprintf(w.stderr, "crew: stall-watch: 'release' failed: %v\n", err)
 }
 
 // d4 is host load. Engine-independent: it reads the host, not the pane.

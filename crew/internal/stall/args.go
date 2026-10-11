@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/reap"
 )
 
 const (
@@ -14,9 +15,8 @@ const (
 	needPaneMsg = "crew: stall-watch needs --pane <id>"
 )
 
-// releaseGrace is crew.sh's `release_grace`, --release's default; a test keeps
-// the two equal.
-const releaseGrace = 300
+// releaseGrace is --release's default.
+const releaseGrace = reap.ReleaseGrace
 
 // usageError is a refusal: exit 1 with its text on stderr. An empty one is the
 // arm's silent exit — `shift 2` failing under `set -e` on a value flag that
