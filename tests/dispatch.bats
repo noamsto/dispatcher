@@ -5267,6 +5267,15 @@ ROWS
   grep -qx 'base: stacked-base' "$TEST_REPO/.worktrees/eng-7691-foo/WORKER_TASK.md"
 }
 
+@test "--pr records a null base_oid when the parent cannot be shown to be an ancestor" {
+  stub_pr_bins eng-7691-foo stacked-base
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | [.base, (.base_oid|tostring)] | join(" ")' "$log"
+  [ "$output" = "stacked-base null" ]
+}
+
 @test "a non-pr dispatch never stamps base:" {
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
@@ -5806,6 +5815,23 @@ _roster_live_dispatcher() {
   DISPATCH_PROFILE=personal run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   run jq -r 'select(.kind=="dispatch") | has("base")' "$log"
+  [ "$output" = "false" ]
+}
+
+@test "base: a --base create records the pinned parent oid as base_oid" {
+  setup_stacked_base feat/parent
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | .base_oid' "$log"
+  [ "$output" = "$STACKED_OID" ]
+}
+
+@test "base: a plain dispatch's event has no base_oid key" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | has("base_oid")' "$log"
   [ "$output" = "false" ]
 }
 

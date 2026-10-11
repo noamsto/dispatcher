@@ -551,3 +551,35 @@ _wt_gitlink_ok() { # <admin-dir> <worktree>
   [[ $target == /* ]] || target="$2/$target"
   [ "$(realpath -e -- "$target" 2>/dev/null)" = "$1" ]
 }
+
+# _wt_fetch_origin_branch <common> <name> — fetch an untrusted (gh/stamp-derived) branch
+# name into refs/remotes/origin/<name> only, always in the dispatcher's own
+# repo. A bare positional would parse the name as a refspec
+# (`+refs/heads/x:refs/remotes/origin/main` force-updates origin/main) or a
+# fetch option (`--upload-pack=...`), so it must be a plain branch name and is
+# spelled as an explicit refspec. Anchored on the common dir, so it runs the
+# same from any cwd and no worker's `.git` is consulted (#539, #633). Sets
+# fetched_oid from the fetch's own porcelain output, never a re-read: refs are
+# shared with workers, which can rewrite refs/remotes/origin/<name> between the
+# fetch and a later rev-parse (#695).
+_wt_plain_branch_name() {
+  [[ $1 == *:* || $1 == +* ]] && return 1
+  git check-ref-format --branch "$1" >/dev/null
+}
+# shellcheck disable=SC2034 # fetched_oid is the caller-visible result
+_wt_fetch_origin_branch() {
+  local common=$1 name=$2
+  local out line flag new ref oid=
+  fetched_oid=
+  _wt_plain_branch_name "$name" || return 1
+  out="$(_wt_git_common "$common" fetch --porcelain -v --no-recurse-submodules origin "+refs/heads/$name:refs/remotes/origin/$name")" || return 1
+  while IFS= read -r line; do
+    flag=${line:0:1}
+    read -r _ new ref <<<"${line:2}"
+    [ "$ref" = "refs/remotes/origin/$name" ] || continue
+    case $flag in ' ' | + | '*' | = | t) oid=$new ;; esac
+  done <<<"$out"
+  [ -n "$oid" ] || return 1
+  _wt_git_common "$common" cat-file -e "$oid^{commit}" 2>/dev/null || return 1
+  fetched_oid=$oid
+}
