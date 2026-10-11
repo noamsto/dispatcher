@@ -690,12 +690,12 @@ branch instead; the worktree carries over under `resume: true`.
   (`core.fsmonitor`, `core.hooksPath`, `core.sshCommand`,
   `credential.helper`, `filter.<d>.clean/smudge/process`,
   `hook.<name>.command`, `include.path`/`includeIf.*.path`, … — the full list
-  is `_wt_exec_keys` in `worktree-git.sh`) would run in the dispatcher's
+  is `ExecKeys` in `crew/internal/gitguard`) would run in the dispatcher's
   shell: the laundering case above. A key redirecting where git connects or
   what it trusts (`url.*.insteadOf`/`pushInsteadOf`,
   `remote.*.url`/`pushurl`/`proxy`, `http[.<url>].proxy`, `sslVerify`,
   `sslCAInfo`/`sslCAPath`, `curloptResolve`, `fetch.bundleURI` —
-  `_wt_redirect_keys`) would send either anchored network action —
+  `RedirectKeys` in the same package) would send either anchored network action —
   `git ls-remote --heads origin <pattern>` during claim checks or the explicit
   non-recursive `git fetch origin <refspec>` — with the operator's
   credential-helper token to a worker-chosen endpoint, and hand a default
@@ -728,7 +728,15 @@ branch instead; the worktree carries over under `resume: true`.
   window-kill and removal gates — so a dispatcher run from a linked
   worktree with no dispatcher record refuses the relative spelling (set
   `core.hooksPath` to the absolute `<common>/hooks`); `dispatch resume` does
-  not (it guards the record's dirs). Worktree-anchored calls (`_wt_git`) —
+  not (it guards the record's dirs). A `commondir` file in the main repository's
+  git dir (#993; only a linked worktree's admin dir legitimately has one)
+  redirects git's common dir, so the config and the baseline would both come from a
+  worker-chosen dir and the guard would pass. `dispatch`, `dispatch resume`,
+  `crew reap` and `crew git-baseline` refuse — naming the file — before any
+  fetch, `gh` call or launch, and every guard check refuses a common dir carrying one, or
+  a linked admin dir whose `commondir` resolves elsewhere, or (from a cwd) a common
+  dir that no longer matches what the cwd resolves to; the human inspects and
+  removes it. Worktree-anchored calls (`_wt_git`) —
   and, via `GIT_CONFIG_COUNT`, `dispatch`'s own `wt switch` for every switch
   but a default create — pass `core.fsmonitor=false`,
   `core.hooksPath=/dev/null`, `core.attributesFile=/dev/null` and
@@ -782,7 +790,13 @@ branch instead; the worktree carries over under `resume: true`.
   migration. Until the legacy marker is written (only a `dispatch` writes it),
   the baseline holds no legacy entries, so the guard refuses every legacy
   `remotes/`/`branches/` entry. A human must inspect and remove a refused entry before
-  re-running dispatch; the dispatcher never follows or repairs it. Migration:
+  re-running dispatch; the dispatcher never follows or repairs it. `crew git-baseline`
+  also lists that legacy drift (an unsafe entry, or a file new or changed from the
+  baseline), and `--accept` refuses while any is listed: removal is the only remedy
+  `crew git-baseline` offers — `--accept` never records a legacy entry (its content,
+  possibly a credential, is never shown, so there is nothing for the human to
+  accept) — and deleting the baseline would re-record any legacy file present, so
+  remove the entry first. Migration:
   a baseline recorded before redirect keys were covered
   (#678) lacks the redirect marker (`#covers redirect`); until it is written
   the guard checks
@@ -792,7 +806,10 @@ branch instead; the worktree carries over under `resume: true`.
   the redirect marker. A legitimate change of origin's URL, a proxy, or a local
   `insteadOf` alias then refuses like any drift until the human accepts it
   (global-scope `insteadOf` aliases are unchecked, as all global config).
-  Residual: no protection for the human's own interactive git
+  Residual: the #993 commondir classification of the cwd's git dir walks to the
+  nearest ancestor `.git` entry only, not git's per-level bare-repo shape, so a
+  dispatcher cwd inside a worker-built bare-shaped dir is not classified (the
+  dispatcher never runs from there); no protection for the human's own interactive git
   between dispatcher runs (the refusal is the warning); `--global`/system
   config is unchecked (its scope is named in the call text, and nix store
   paths there churn every rebuild); a key planted before the baseline existed

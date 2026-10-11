@@ -5492,7 +5492,21 @@ EOF
 
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"no git admin dir for $TEST_REPO/.worktrees/eng-557-noadmin"* ]]
+  # The entry pin (#993) refuses the moved admin dir before the wt switch gate reaches it.
+  [[ "$output" == *"refusing git: $TEST_REPO/.git/worktrees/eng-557-noadmin has a commondir but is not a linked-worktree admin dir"* ]]
+  run ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "dispatch refuses a previous worktree whose admin dir no longer points back at its .git before wt switch (#557)" {
+  # The admin dir stays in place, so the entry pin passes. Its back-pointer
+  # names the worktree itself rather than its .git: git still lists the
+  # worktree on the branch, but _wt_admin_dir matches no back-pointer.
+  setup_stale_pr_worktree eng-557-noadmin
+  printf '%s\n' "$TEST_REPO/.worktrees/eng-557-noadmin" >"$TEST_REPO/.git/worktrees/eng-557-noadmin/gitdir"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: no git admin dir for $TEST_REPO/.worktrees/eng-557-noadmin"* ]]
   run ! grep -q 'switch' "$STUB_LOG"
 }
 
@@ -5511,6 +5525,30 @@ EOF
   [ "$status" -eq 0 ]
   grep -q 'switch -c' "$STUB_LOG"
   grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "dispatch from the main checkout refuses a planted .git/commondir before any fetch or gh call (#993)" {
+  local real_git
+  stub_launch_bins
+  seed_git_baseline
+  # git is real; log its calls so a fetch / ls-remote is observable. gh logs
+  # to its own file, which must never be created.
+  real_git="$(command -v git)"
+  : >"$BATS_TEST_TMPDIR/git.log"
+  printf '#!/bin/sh\nprintf "git %%s\\n" "$*" >>%q\nexec %q "$@"\n' "$BATS_TEST_TMPDIR/git.log" "$real_git" >"$STUB_DIR/git"
+  printf '#!/bin/sh\nprintf "gh %%s\\n" "$*" >>%q\n' "$BATS_TEST_TMPDIR/gh.log" >"$STUB_DIR/gh"
+  chmod +x "$STUB_DIR/git" "$STUB_DIR/gh"
+  plant_commondir
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing git: "* ]]
+  [[ "$output" == *"$PLANTED_COMMONDIR"* ]]
+  [[ "$output" == *"redirects the git common dir"* ]]
+  [ ! -e "$SENTINEL" ]
+  [ ! -e "$BATS_TEST_TMPDIR/gh.log" ]
+  run ! grep -Eq 'ls-remote|fetch' "$BATS_TEST_TMPDIR/git.log"
+  run ! grep -Eq 'switch|new-window' "$STUB_LOG"
 }
 
 @test "--pr treats a leftover WORKER_TASK.md alone as clean, not dirty" {

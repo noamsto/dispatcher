@@ -2727,3 +2727,34 @@ seed_dispatch_row() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"no worker matches 'feat/other'"* ]]
 }
+
+@test "resume from a worker worktree refuses a commondir planted in the main git dir before any launch (#993)" {
+  setup_worker_wt
+  before="$(cksum "$WT/WORKER_TASK.md")"
+  plant_commondir
+  : >"$STUB_LOG"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing git: "* ]]
+  [[ "$output" == *"$PLANTED_COMMONDIR"* ]]
+  [[ "$output" == *"redirects the git common dir"* ]]
+  [ ! -e "$SENTINEL" ]
+  [ "$(cksum "$WT/WORKER_TASK.md")" = "$before" ]
+  run ! grep -q '^new-window\|^send-keys' "$STUB_LOG"
+}
+
+@test "resume <target> from the main checkout refuses a planted commondir before reading the bus (#993)" {
+  setup_worker_wt
+  seed_dispatch_row feat/7-a-thing iris "$(uname -n)"
+  plant_commondir
+  : >"$STUB_LOG"
+  cd "$TEST_REPO"
+  run run_resume '#7'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing git: "* ]]
+  [[ "$output" == *"$PLANTED_COMMONDIR"* ]]
+  [[ "$output" == *"redirects the git common dir"* ]]
+  [ ! -e "$SENTINEL" ]
+  run ! grep -q '^resolve-target\|^where\|^new-window\|^send-keys' "$STUB_LOG"
+}
