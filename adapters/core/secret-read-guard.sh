@@ -204,7 +204,7 @@ strip_templates() {
 #
 # In scope: S1 a canonical dumper word, optionally /-rooted,
 # at any bash command position, case arms included. S2 the canonical-idiom
-# wrapper list, grown only when an idiom is seen in use. S3 a separator,
+# wrapper list (a plain `eval` word included), grown only when an idiom is seen in use. S3 a separator,
 # comment, redirect or stdin ending, heredocs included. S4 a
 # backslash-newline continuation splitting the dump. S5 the shell structure
 # the masker already models. S6 a `#` misread as a comment, covered by the
@@ -218,9 +218,11 @@ strip_templates() {
 # here-string or a pipe into a shell, in a quoted argument — found by the raw
 # finder beside the dequoted one.
 #
-# Out of scope: O1 word-forming obfuscation — variables, eval, aliases and
+# Out of scope: O1 word-forming obfuscation — variables, eval of a built or
+# expanded string (`eval "$x"`), aliases and
 # ANSI-C escape decoding. O2 expansion-dependent structure — a
-# substitution expanding to nothing (`env $(true)`). O3 lexer precision
+# substitution expanding to nothing (`env $(true)`), a heredoc read into a
+# variable (read/mapfile) and expanded later. O3 lexer precision
 # beyond the masker's model — quotes in "${x#...}", an escaped quote in a
 # $'...' heredoc delimiter, a case nested in a double-quoted $(...). O4
 # non-dumper paths, and a quoted ssh remote command (`ssh h '…'`).
@@ -242,12 +244,14 @@ strip_templates() {
 # `(`…`)`) can be a wrapper's option argument: `sudo -u $(id -un) env`.
 wrap_word='[^[:space:];&|]+'
 wrap_rest='[^[:space:];&|]*'
-sudo_opts='(([[:space:]]+-[A-Za-z]*[ughpCDrtUTR][[:space:]]+'"$wrap_word"')|([[:space:]]+--(user|group|host|prompt|chdir|role|type|close-from|other-user|command-timeout)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
+sudo_opts='(([[:space:]]+-[A-Za-z]*[ughpCDrtUTRac][[:space:]]+'"$wrap_word"')|([[:space:]]+--(user|group|host|prompt|chdir|role|type|close-from|other-user|command-timeout|auth-type|login-class)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
 # env's options and NAME=value words — env reads any word holding `=` as an
 # assignment, identifier or not (`env a-b=1`): what remains when no command
 # follows is a dump (`env -0`, `env -u X`, `env FOO=1`). Any dash word counts as
-# an option (`env -- -=1`, `env -->/tmp/x`), failing closed.
-env_opts='(([[:space:]]+-[A-Za-z]*[uCSaP][[:space:]]+'"$wrap_word"')|([[:space:]]+--(unset|chdir|split-string|argv0|block-signal|default-signal|ignore-signal)[[:space:]]+'"$wrap_word"')|([[:space:]]+-'"$wrap_rest"')|([[:space:]]+([^-=[:space:];&|][^=[:space:];&|]*)?='"$wrap_rest"'))*'
+# an option (`env -- -=1`, `env -->/tmp/x`), failing closed. An assignment value
+# may hold a balanced `(...)` (`FOO=$(id -un)`) but never ends inside an open `(`,
+# which would leave its `)` to opt_end.
+env_opts='(([[:space:]]+-[A-Za-z]*[uCSaP][[:space:]]+'"$wrap_word"')|([[:space:]]+--(unset|chdir|split-string|argv0|block-signal|default-signal|ignore-signal)[[:space:]]+'"$wrap_word"')|([[:space:]]+-'"$wrap_rest"')|([[:space:]]+([^-=[:space:];&|][^=[:space:];&|]*)?=([^[:space:];&|()]|\([^)]*\))*))*'
 # A slot-free wrapper's option: a flag, optionally followed by one non-flag word
 # read as its argument.
 opt_arg='([[:space:]]+-[^[:space:];&|]*([[:space:]]+[^-[:space:];&|][^[:space:];&|]*)?)'
@@ -258,7 +262,7 @@ wrap_host='[^-[:space:];&|][^[:space:];&|]*'
 ssh_opts='(([[:space:]]+-[A-Za-z]*[bcDEeFIiJLlmOoPpRSWw][[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
 ctr_opts='(([[:space:]]+-[A-Za-z]*[ewuvplfcH][[:space:]]+'"$wrap_word"')|([[:space:]]+--(env|env-file|volume|workdir|user|name|network|entrypoint|publish|mount|platform|label|file|project-name|profile|context|host)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
 kube_opts='(([[:space:]]+-[A-Za-z]*[cn][[:space:]]+'"$wrap_word"')|([[:space:]]+--(container|namespace|context|kubeconfig)[[:space:]]+'"$wrap_word"')|([[:space:]]+--?([A-Za-z]'"$wrap_rest"')?))*'
-cmd_prefix='((then|do|else|if|elif|while|until|!|command|exec|time|nohup|builtin)[[:space:]]+|(sudo|doas)'"$sudo_opts"'[[:space:]]+|env'"$env_opts"'[[:space:]]+|direnv[[:space:]]+exec[[:space:]]+('"$wrap_word"'[[:space:]]+)?|command([[:space:]]+(-p|--))+[[:space:]]+|time([[:space:]]+-p)+[[:space:]]+|exec([[:space:]]+-[cl]+|[[:space:]]+-a[[:space:]]+'"$wrap_word"')+[[:space:]]+|timeout'"$opt_arg"'*[[:space:]]+[0-9][^[:space:];&|]*[[:space:]]+|(nice|ionice|stdbuf|setsid|xargs|watch)'"$opt_arg"'*[[:space:]]+|ssh'"${ssh_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|(docker|podman)'"$ctr_opts"'([[:space:]]+compose'"$ctr_opts"')?[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|docker-compose'"${ctr_opts}"'[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|kubectl'"${kube_opts}"'[[:space:]]+exec'"${kube_opts}"'[[:space:]]+'"${wrap_host}""$kube_opts"'([[:space:]]+--)?[[:space:]]+|mise'"$opt_arg"'*[[:space:]]+(exec|x)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+--[[:space:]]+|nix'"$opt_arg"'*[[:space:]]+(develop|shell)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(-c|--command)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
+cmd_prefix='((then|do|else|if|elif|while|until|!|command|exec|time|nohup|builtin|eval)[[:space:]]+|(sudo|doas)'"$sudo_opts"'[[:space:]]+|env'"$env_opts"'[[:space:]]+|direnv[[:space:]]+exec[[:space:]]+('"$wrap_word"'[[:space:]]+)?|command([[:space:]]+(-p|--))+[[:space:]]+|time([[:space:]]+-p)+[[:space:]]+|exec([[:space:]]+-[cl]+|[[:space:]]+-a[[:space:]]+'"$wrap_word"')+[[:space:]]+|timeout'"$opt_arg"'*[[:space:]]+[0-9][^[:space:];&|]*[[:space:]]+|(nice|ionice|stdbuf|setsid|xargs|watch)'"$opt_arg"'*[[:space:]]+|ssh'"${ssh_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|(docker|podman)'"$ctr_opts"'([[:space:]]+compose'"$ctr_opts"')?[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|docker-compose'"${ctr_opts}"'[[:space:]]+(exec|run)'"${ctr_opts}"'[[:space:]]+'"${wrap_host}"'[[:space:]]+|kubectl'"${kube_opts}"'[[:space:]]+exec'"${kube_opts}"'[[:space:]]+'"${wrap_host}""$kube_opts"'([[:space:]]+--)?[[:space:]]+|mise'"$opt_arg"'*[[:space:]]+(exec|x)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+--[[:space:]]+|nix'"$opt_arg"'*[[:space:]]+(develop|shell)([[:space:]]+[^[:space:];&|]+)*[[:space:]]+(-c|--command)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
 # A case arm (`x) env`) is a command start only at line start or after ; & or
 # `in`. A bare `)` is not: heredoc prose such as `(re)set` is scanned raw.
 cmd_start='(^[[:space:]]*|[;&|({]+[[:space:]]*|(^|[;&]|[[:space:]]in[[:space:]])[[:space:]]*\(?[^[:space:]();&]+\)[[:space:]]*)'"$cmd_prefix"
