@@ -101,7 +101,7 @@ func Discover(o Options) []Repo {
 	}
 	for _, root := range rootList {
 		if info, err := os.Stat(root); err != nil || !info.IsDir() {
-			fmt.Fprintf(stderr, "%s: %s is not a directory\n", o.Prefix, root)
+			say(stderr, "%s: %s is not a directory\n", o.Prefix, root)
 			continue
 		}
 		walk(root, add)
@@ -109,7 +109,7 @@ func Discover(o Options) []Repo {
 	sort.Strings(found)
 
 	if len(found) == 0 {
-		fmt.Fprintf(stderr, "%s: no repo with a crew bus found (roots: %s)\n", o.Prefix, strings.Join(rootList, " "))
+		say(stderr, "%s: no repo with a crew bus found (roots: %s)\n", o.Prefix, strings.Join(rootList, " "))
 	}
 	out := make([]Repo, 0, len(found))
 	for _, c := range found {
@@ -176,3 +176,6 @@ func Name(common, originURL string) string {
 	}
 	return strings.TrimSuffix(base, ".git")
 }
+
+// say writes to a stream whose failure is not worth failing the command over.
+func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }

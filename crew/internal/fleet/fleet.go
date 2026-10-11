@@ -51,13 +51,13 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 			asJSON = true
 		case "--crew":
 			if i+1 >= len(args) || args[i+1] == "" {
-				fmt.Fprintln(stderr, usage)
+				say(stderr, "%s\n", usage)
 				return 1
 			}
 			i++
 			onlyCrew = args[i]
 		default:
-			fmt.Fprintln(stderr, usage)
+			say(stderr, "%s\n", usage)
 			return 1
 		}
 	}
@@ -76,20 +76,20 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 	var rows []jsonv.Value
 	for _, r := range repos.Discover(repos.Options{Registry: o.Registry, Env: o.Env, Stderr: stderr, Prefix: "crew: fleet"}) {
 		if r.Status != repos.StatusOK {
-			fmt.Fprintf(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, r.Status)
+			say(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, r.Status)
 			continue
 		}
 		events, err := bus.ReadEventsTolerant(r.Common + "/crew/events.jsonl")
 		var decode *bus.DecodeError
 		switch {
 		case errors.Is(err, bus.ErrNoLog):
-			fmt.Fprintf(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, repos.StatusNoBus)
+			say(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, repos.StatusNoBus)
 			continue
 		case err != nil && !errors.As(err, &decode):
-			fmt.Fprintf(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, oneLine(err))
+			say(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, oneLine(err))
 			continue
 		case decode != nil:
-			fmt.Fprintf(stderr, "crew: fleet: %s: %s (rows from the readable prefix)\n", r.Common, oneLine(decode))
+			say(stderr, "crew: fleet: %s: %s (rows from the readable prefix)\n", r.Common, oneLine(decode))
 		}
 		raws := make([]jsonv.Value, len(events))
 		for i, e := range events {
@@ -100,7 +100,7 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 			Worktrees: sync.OnceValues(func() (string, error) { return o.Worktrees(r.Common) }),
 		})
 		if err != nil {
-			fmt.Fprintf(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, oneLine(err))
+			say(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, oneLine(err))
 			continue
 		}
 		name := repos.Name(r.Common, o.Origin(r.Common))
@@ -117,7 +117,7 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 		opts := jsonv.Options{Indent: true, Colors: o.Colors}
 		var buf bytes.Buffer
 		if err := jsonv.Encode(&buf, jsonv.Array(rows...), opts); err != nil {
-			fmt.Fprintf(stderr, "crew: fleet: %v\n", err)
+			say(stderr, "crew: fleet: %v\n", err)
 			return 1
 		}
 		buf.WriteByte('\n')
@@ -164,9 +164,12 @@ func oneLine(err error) string {
 	return strings.Join(strings.Fields(err.Error()), " ")
 }
 
+// say writes to a stream whose failure is not worth failing the command over.
+func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
+
 func write(stdout, stderr io.Writer, b []byte) int {
 	if _, err := stdout.Write(b); err != nil {
-		fmt.Fprintf(stderr, "crew: fleet: %v\n", err)
+		say(stderr, "crew: fleet: %v\n", err)
 		return 1
 	}
 	return 0
@@ -175,10 +178,10 @@ func write(stdout, stderr io.Writer, b []byte) int {
 func table(rows []jsonv.Value) []byte {
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "REPO\tCODENAME\tSTATE\tAGE\tENGINE\tCREW\tBRANCH\tTITLE")
+	say(tw, "REPO\tCODENAME\tSTATE\tAGE\tENGINE\tCREW\tBRANCH\tTITLE\n")
 	for _, r := range rows {
 		engine := strings.Join([]string{str(r, "engine"), str(r, "model"), str(r, "tier")}, "/")
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		say(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			str(r, "repo"), str(r, "name"), str(r, "state"), age(r), engine, str(r, "crew_id"), str(r, "branch"), str(r, "title"))
 	}
 	_ = tw.Flush()

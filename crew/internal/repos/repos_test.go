@@ -74,7 +74,9 @@ func TestRegistryOutsideRootDedupedSorted(t *testing.T) {
 	a := mkbus(t, filepath.Join(root, "a"))
 	z := mkbus(t, filepath.Join(other, "z"))
 	reg := filepath.Join(t.TempDir(), "repos")
-	os.WriteFile(reg, []byte(z+"\n"+a+"\n\n"+a+"\n"), 0o644)
+	if err := os.WriteFile(reg, []byte(z+"\n"+a+"\n\n"+a+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	rs, _ := discover(t, Options{Roots: []string{root}, Registry: reg, Env: envOf(nil)})
 	want := []string{a, z}
@@ -89,11 +91,15 @@ func TestRegistryOutsideRootDedupedSorted(t *testing.T) {
 func TestStatusGoneAndNoBus(t *testing.T) {
 	root := t.TempDir()
 	nobus := filepath.Join(root, "nb", ".git")
-	os.MkdirAll(nobus, 0o755)
+	if err := os.MkdirAll(nobus, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	gone := filepath.Join(root, "missing", ".git")
 	ok := mkbus(t, filepath.Join(root, "ok"))
 	reg := filepath.Join(t.TempDir(), "repos")
-	os.WriteFile(reg, []byte(gone+"\n"+nobus+"\n"), 0o644)
+	if err := os.WriteFile(reg, []byte(gone+"\n"+nobus+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	rs, _ := discover(t, Options{Roots: []string{t.TempDir()}, Registry: reg, Env: envOf(nil)})
 	got := map[string]Status{}
@@ -109,7 +115,9 @@ func TestStatusGoneAndNoBus(t *testing.T) {
 
 func TestNonDirRootWarnsAndNoneFoundNote(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "f")
-	os.WriteFile(file, nil, 0o644)
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	empty := t.TempDir()
 	rs, errs := discover(t, Options{Roots: []string{file + "\n" + empty}, Registry: filepath.Join(empty, "none"), Env: envOf(nil)})
 	if len(rs) != 0 {
@@ -157,11 +165,13 @@ func TestRootsResolution(t *testing.T) {
 func TestUnreadableDirDoesNotAbort(t *testing.T) {
 	root := t.TempDir()
 	locked := filepath.Join(root, "a", "locked")
-	os.MkdirAll(locked, 0o755)
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chmod(locked, 0); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 	b := mkbus(t, filepath.Join(root, "b"))
 
 	rs, _ := discover(t, Options{Roots: []string{root}, Registry: filepath.Join(root, "none"), Env: envOf(nil)})
@@ -173,7 +183,9 @@ func TestUnreadableDirDoesNotAbort(t *testing.T) {
 func TestSymlinksNotFollowed(t *testing.T) {
 	root, elsewhere := t.TempDir(), t.TempDir()
 	mkbus(t, filepath.Join(elsewhere, "r"))
-	os.Symlink(filepath.Join(elsewhere, "r"), filepath.Join(root, "link"))
+	if err := os.Symlink(filepath.Join(elsewhere, "r"), filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
 	rs, _ := discover(t, Options{Roots: []string{root}, Registry: filepath.Join(root, "none"), Env: envOf(nil)})
 	if len(rs) != 0 {
 		t.Fatalf("followed symlink: %v", rs)
