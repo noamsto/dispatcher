@@ -105,7 +105,7 @@ mkdir -p "$state_dir"
 _poll() { # -> fingerprint JSON, non-zero when gh could not be read
   local view threads
   view=$(gh pr view "$pr" --repo "$repo" \
-    --json headRefOid,state,reviewDecision,latestReviews,statusCheckRollup,comments) || return 1
+    --json headRefOid,state,reviewDecision,latestReviews,statusCheckRollup,comments,baseRefName,baseRefOid,mergeable) || return 1
   # Review-thread replies are the whole point of the watch and live on their own
   # endpoint — no `gh pr view` field carries them. --paginate: the newest reply
   # on a long thread is on the last page.
@@ -127,7 +127,9 @@ _poll() { # -> fingerprint JSON, non-zero when gh could not be read
             else "SUCCESS" end
           ),
           thread_at: ([$thread_at, (.comments[]?.createdAt)] | map(select(. != null and . != "")) | sort | last // ""),
-          thread_n: ((.comments | length) + $thread_n)
+          thread_n: ((.comments | length) + $thread_n),
+          base_sha: (.baseRefOid // ""),
+          mergeable: (.mergeable // "UNKNOWN")
         }'
 }
 
@@ -136,6 +138,18 @@ _save() { # atomic: a half-written cursor would re-fire forever
   tmp=$(mktemp "$state_dir/.$pr.XXXXXX")
   printf '%s\n' "$1" >"$tmp"
   mv -f "$tmp" "$state_file"
+}
+
+_settle() { # GitHub computes mergeable lazily, so unknown keeps the last known value.
+  local p
+  p="${prev:-null}"
+  cur=$(jq -nc --argjson cur "$cur" --argjson prev "$p" '
+    def known: . != null and . != "" and . != "UNKNOWN";
+    $cur | .mergeable = (
+      if (.mergeable | known) then .mergeable
+      elif ($prev | type == "object") and ($prev.mergeable | known) then $prev.mergeable
+      else "UNKNOWN" end
+    )')
 }
 
 # The first poll must succeed: it is the baseline, and a bad PR number or a
@@ -148,10 +162,19 @@ cur=$(_poll) || {
 
 prev=$(cat "$state_file" 2>/dev/null || true)
 printf '%s' "$prev" | jq -e type >/dev/null 2>&1 || prev=""
+_settle
+if [ -n "$prev" ]; then
+  prev=$(jq -c --argjson cur "$cur" '$cur + .' <<<"$prev")
+fi
 [ -n "$prev" ] || {
   _save "$cur"
   prev="$cur"
 }
+# A cursor from before base_sha/mergeable existed matches once those keys are
+# filled, so the park stays quiet — but the file still has to grow them.
+if [ "$prev" = "$cur" ] && [ "$(jq -c . <"$state_file")" != "$cur" ]; then
+  _save "$cur"
+fi
 
 # PR_WATCH_CLOCK=<file> is a test-only virtual clock, same pattern as
 # crew.sh's CREW_CLOCK: _pw_now_ms reads epoch milliseconds from it and
@@ -179,8 +202,12 @@ _pw_sleep() {
 start=$(_pw_now_ms)
 deadline=$((start + timeout * 1000))
 while :; do
-  changed=$(jq -nc --argjson a "$prev" --argjson b "$cur" \
-    '[$b | to_entries[] | select(.value != ($a[.key] // null)) | .key]')
+  changed=$(jq -nc --argjson a "$prev" --argjson b "$cur" '
+    def known: . != null and . != "" and . != "UNKNOWN";
+    [$b | to_entries[]
+      | select(.value != ($a[.key] // null))
+      | select(.key != "mergeable" or ((.value | known) and (($a.mergeable // null) | known)))
+      | .key]')
   [ "$changed" != "[]" ] && {
     jq -nc --arg repo "$repo" --argjson pr "$pr" --argjson changed "$changed" \
       --argjson state "$cur" --argjson was "$prev" \
@@ -191,10 +218,17 @@ while :; do
     _save "$cur"
     exit 0
   }
+  [ "$cur" != "$prev" ] && {
+    _save "$cur"
+    prev="$cur"
+  }
   [ "$(_pw_now_ms)" -ge "$deadline" ] && {
     echo "pr-watch: park ended after ${timeout}s — PR $pr unchanged" >&2
     exit 0
   }
   _pw_sleep "$interval"
-  if next=$(_poll); then cur="$next"; fi
+  if next=$(_poll); then
+    cur="$next"
+    _settle
+  fi
 done
