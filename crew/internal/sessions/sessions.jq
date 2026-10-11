@@ -9,7 +9,7 @@
 def split_wid: ltrimstr("worker:") as $r
         | ($r | capture("#(?<s>s[0-9]+-[0-9]+)\\n?\\z").s // null) as $s
         | {branch: (if $s == null then $r else ($r | rtrimstr("#" + $s)) end), session: $s};
-      def is_terminal: . as $x | (["done","failed","exited"] | index($x // "")) != null;
+      def is_terminal: . as $x | (["done","failed","exited","reaped"] | index($x // "")) != null;
       map(select($crew=="" or .crew_id==$crew))
       | ( map(select((.kind=="dispatch" or .kind=="resume") and .branch==$b))
           | map({session:(.session // null), ts:.ts}) ) as $disp
@@ -34,6 +34,6 @@ def split_wid: ltrimstr("worker:") as $r
               worker_id: ("worker:" + $b + (if $s == null then "" else "#" + $s end)),
               state: ($latest.state // null),
               ts: ($latest.ts // $d.ts),
-              terminal: ((["done","failed","exited"] | index($latest.state // "")) != null) } ]
+              terminal: ((["done","failed","exited","reaped"] | index($latest.state // "")) != null) } ]
       | sort_by(.ts)
       | map(. + {age_s: (((now*1000) - .ts) / 1000 | floor)})

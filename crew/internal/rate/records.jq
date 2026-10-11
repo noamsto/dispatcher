@@ -32,7 +32,8 @@
             .kind!="dispatch"
             and (((.from // "") | ltrimstr("worker:") | sub("#[^#]*$";"")) == $b)
             and .ts >= $t0 and .ts < $t1))) as $ev
-      | ($ev | map(select(.kind=="status"))) as $st
+      # Reap's closing row is not the worker's own outcome.
+      | ($ev | map(select(.kind=="status" and .body.state != "reaped"))) as $st
       | ($st | sort_by(.ts) | (.[-1] // null)) as $last
       | ($last.body.state) as $ls
       | ($st | map(.body.pr_url) | map(select(.!=null)) | last) as $pr

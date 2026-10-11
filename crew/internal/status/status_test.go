@@ -187,7 +187,7 @@ func TestMkdirBeforeParse(t *testing.T) {
 }
 
 func TestArgs(t *testing.T) {
-	const badState = "crew: status state must be one of working|blocked|pr_open|done|failed|exited (got '%s')\n"
+	const badState = "crew: status state must be one of working|blocked|pr_open|done|failed|exited|reaped (got '%s')\n"
 	cases := []struct {
 		name string
 		args []string
@@ -271,6 +271,8 @@ func TestTerminalDedupe(t *testing.T) {
 		{"different pr", prior(), []string{worker, "pr_open", "", "u2"}, true},
 		{"different from", prior(), []string{"worker:feat/y#s1-1", "pr_open", "", "u1"}, true},
 		{"different state", prior(), []string{worker, "done", "", "u1"}, true},
+		{"reaped deduped", []string{statusRow(worker, `{"state":"reaped"}`)}, []string{worker, "reaped"}, false},
+		{"reaped after done is new", []string{statusRow(worker, `{"state":"done"}`)}, []string{worker, "reaped"}, true},
 		{"working never deduped", []string{statusRow(worker, `{"state":"working"}`)}, []string{worker, "working"}, true},
 		{"later row for the same from wins", prior(statusRow(worker, `{"state":"working"}`)), []string{worker, "pr_open", "", "u1"}, true},
 		{"other kind ignored", prior(msgRow(worker, "x", "y")), []string{worker, "pr_open", "", "u1"}, false},
