@@ -626,9 +626,10 @@ helpers: `pairs <gitdir>`, `union <common>` (NUL-separated records), `show-url <
 `show-key <k>`, `show-pair <k> <v> [alias…]` and `canon <R> <rec>`. `git-guard` is
 dispatched before `bus.Locate`: it takes explicit dirs and must run from any cwd.
 
-- `flake.nix` substitutes `@crewGoBin@` into the lib (`worktreeGitLib`), as it already
-  did for `crew.sh`, so every Nix-built consumer (`crew`, `dispatch`, `dispatch-resume`)
-  carries the pinned binary. Raw-source runs export `CREW_GO_BIN`
+- `flake.nix` substitutes `@crewGoBin@` into the lib (`worktreeGitLib`), so each of its
+  Nix-built consumers (`dispatch`, `dispatch-resume`) carries the pinned binary;
+  `crew.sh` substitutes the same token for its own ported-arm exec, and since #1004 it
+  sources the lib no more. Raw-source runs export `CREW_GO_BIN`
   (`tests/setup_suite.bash`, `tests/harness/ensure-crew-go.sh`).
 - A missing or unrunnable binary makes the wrapper exit non-zero (127 or 126), which
   every caller already treats as a refusal: the guard fails closed. Any internal Go error

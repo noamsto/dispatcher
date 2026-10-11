@@ -436,7 +436,9 @@ placeholder_two_row() { # token
 
 # F57: @worktreeGitLib@ (#539), @grantCheckLib@ (#536) and @localModelsLib@ are
 # substituted in each consumer. An unsubstituted token is not a readable path, so the source
-# would abort under set -e. Read-only greps; no per-row reset.
+# would abort under set -e. Read-only greps; no per-row reset. A row lists only the
+# consumers that source that lib, so `crew` appears under local-models but not worktree-git
+# (#1004 ported the arm that sourced it).
 @test "shared-lib placeholders are substituted in each consumer" {
   begin_rows
   local row token b1 b2 b3
@@ -444,16 +446,17 @@ placeholder_two_row() { # token
     [ -n "$row" ] || continue
     keep_row "$row" placeholder_three_row "$token" "$b1" "$b2" "$b3"
   done <<ROWS
-worktree-git|@worktreeGitLib@|$OUT_CREW/bin/crew|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume
+worktree-git|@worktreeGitLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume
 grant-check|@grantCheckLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume|$OUT_PERMISSION_CHECK/bin/permission-check
 local-models|@localModelsLib@|$OUT_CREW/bin/crew|$OUT_DISPATCH/bin/dispatch|$OUT_REFRESH_BUDGET/bin/refresh-budget
 ROWS
   finish_rows 3
 }
 
-placeholder_three_row() { # token bin bin bin
+placeholder_three_row() { # token bin… (empty trailing bins are skipped)
   local bin
-  for bin in "$2" "$3" "$4"; do
+  for bin in "${@:2}"; do
+    [ -n "$bin" ] || continue
     run grep -c "$1" "$bin"
     [ "$output" = "0" ]
   done
