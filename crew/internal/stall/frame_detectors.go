@@ -34,8 +34,9 @@ type frameDet struct {
 	d9Count            int64  // continue helper attempts this watch, across episodes
 }
 
-// d9Limit caps continue helper attempts per watch: a lead that keeps stopping, or pane
-// text crafted to look stopped, must surface instead of being fed forever.
+// d9Limit caps continue helper attempts per watch: a lead that keeps stopping,
+// or pane text crafted to look stopped, must surface instead of being fed
+// forever.
 const d9Limit = 3
 
 // space is glibc's [[:space:]] in a UTF-8 locale, which RE2's own class is not.
@@ -421,14 +422,12 @@ func (w *watch) d0() error {
 	return nil
 }
 
-// d9 is the stopped-pi-turn detector: a pi lead whose turn ended without
-// finishing, either truncated at the output cap (#923) or on a provider error
-// (#954), then sits idle. One constant continue line per episode, typed through
-// the same gated _nudge_pane as D6's auto-nudge; it never escalates. An idle
-// box still holding text is the typed line or a human draft, so it holds the
-// episode open without resuming or clearing it. A second stopped sample is
-// required before typing, and a retype never happens: the episode must close
-// first.
+// d9 is the stopped-pi-turn detector: a pi lead whose turn ended truncated at
+// the output cap or on a provider error, then sits idle. One constant continue
+// line per episode on the second stopped sample, typed through the same gated
+// _nudge_pane as D6's auto-nudge; it never escalates. An idle box still holding
+// text is the typed line or a human draft: it holds the episode open without
+// resuming or clearing it.
 func (w *watch) d9() error {
 	fd := &w.fd
 	kind := ""
