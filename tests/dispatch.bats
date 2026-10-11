@@ -3016,6 +3016,62 @@ fleet_nproc() {
   [[ "$output" == *"live lead weight 7 + this standard dispatch (2) exceeds fleetBudget 8"* ]]
 }
 
+@test "927 fleet: a grid lead stamped role=lead counts; its other role panes do not" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_lead claude amber feat/1-a lead deep
+  fleet_lead claude amber feat/1-a reviewer deep
+  fleet_lead claude birch feat/2-b lead deep
+  fleet_lead claude cedar feat/3-c "" trivial
+  run run_dispatch standard sonnet --effort medium --crew-id c1 130 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"live lead weight 7 + this standard dispatch (2) exceeds fleetBudget 8"* ]]
+}
+
+@test "927 fleet: a pane whose worktree was deleted adds no weight" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_lead claude amber feat/1-a "" deep
+  fleet_lead claude birch feat/2-b "" deep
+  fleet_lead claude cedar feat/3-c "" deep
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\n' claude dune feat/4-d "" "$BATS_TEST_TMPDIR/gone (deleted)" >>"$STUB_DIR/fleet"
+  printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\n' claude elm feat/5-e "" "$BATS_TEST_TMPDIR/gone" >>"$STUB_DIR/fleet"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 131 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"live lead weight 9 + this standard dispatch (2)"* ]]
+}
+
+@test "927 fleet: a lead whose newest bus status is done, failed or exited weighs 0" {
+  stub_launch_bins
+  fleet_tmux
+  for n in amber birch cedar dune; do
+    wt="$BATS_TEST_TMPDIR/wt-$n"
+    mkdir -p "$wt"
+    git init -q "$wt"
+    printf 'tier: deep\n' >"$wt/WORKER_TASK.md"
+    printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\n' claude "$n" "feat/$n-x" "" "$wt" >>"$STUB_DIR/fleet"
+  done
+  # All four worktrees are separate repos; give amber and birch's repos one shared bus.
+  bus="$BATS_TEST_TMPDIR/wt-amber/.git/crew"
+  mkdir -p "$bus"
+  for n in birch cedar dune; do
+    rm -rf "$BATS_TEST_TMPDIR/wt-$n/.git"
+    printf 'gitdir: %s\n' "$BATS_TEST_TMPDIR/wt-amber/.git" >"$BATS_TEST_TMPDIR/wt-$n/.git"
+  done
+  {
+    printf '{"ts":1,"kind":"status","from":"worker:feat/amber-x#s1","body":{"state":"working"}}\n'
+    printf '{"ts":2,"kind":"status","from":"worker:feat/amber-x#s1","body":{"state":"done"}}\n'
+    printf '{"ts":3,"kind":"status","from":"worker:feat/birch-x#s2","body":{"state":"pr_open"}}\n'
+    printf '{"ts":4,"kind":"msg","from":"worker:feat/birch-x#s2","body":{"state":"done"}}\n'
+    printf '{"ts":5,"kind":"status","from":"worker:feat/cedar-x#s3","body":"junk"}\n'
+    printf '{"ts":6,"kind":"status","from":"worker:feat/cedar-x#s3","body":{"state":"failed"}}\n'
+    printf '{"ts":7,"kind":"status","from":"worker:feat/dune-x#s4","body":{"state":"exited"}}\n'
+  } >"$bus/events.jsonl"
+  DISPATCH_FLEET_BUDGET=4 run run_dispatch standard sonnet --effort medium --crew-id c1 132 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"live lead weight 3 + this standard dispatch (2) exceeds fleetBudget 4"* ]]
+}
+
 @test "927 fleet: a lead whose pane sits in a worktree subdirectory still weighs its tier" {
   stub_launch_bins
   fleet_tmux

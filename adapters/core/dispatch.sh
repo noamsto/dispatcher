@@ -976,19 +976,32 @@ local_slot_cap() {
 }
 
 # _fleet_leads — one `<weight>\x1f<name>\x1f<repo>\x1f<tier>`
-# line per live lead pane on the machine: stamped @crew_branch, no @crew_role,
-# and a pane still running an engine (_is_engine_cmd). The tier is the `tier:`
-# header of the pane's worktree WORKER_TASK.md (trivial=1, standard=2, deep=3);
-# an unreadable one counts as standard. Role panes add nothing: the tier weight
-# already includes them. No tmux server
-# yields no lines, status 0.
+# line per live lead pane on the machine: stamped @crew_branch, @crew_role empty
+# or `lead` (a grid lead; other roles are its role panes), and a pane still
+# running an engine (_is_engine_cmd) in a worktree that still exists. A lead whose
+# newest bus status on its branch is done, failed or exited is finished and
+# weighs 0; each repo's bus is read once. The tier is the `tier:` header of the
+# pane's worktree WORKER_TASK.md (trivial=1, standard=2, deep=3); an unreadable
+# one counts as standard. Role panes add nothing: the tier weight already
+# includes them. No tmux server yields no lines, status 0.
 _fleet_leads() {
-  local cmd name lbranch role path root tier w repo common
+  local cmd name lbranch role path root tier w repo common finished
+  local -A done_by_repo=()
   { tmux list-panes -a -F '#{pane_current_command}'$'\x1f''#{@crew_name}'$'\x1f''#{@crew_branch}'$'\x1f''#{@crew_role}'$'\x1f''#{pane_current_path}' 2>/dev/null || true; } |
     while IFS=$'\x1f' read -r cmd name lbranch role path; do
-      [ -n "$lbranch" ] && [ -z "$role" ] || continue
+      [ -n "$lbranch" ] || continue
+      [ -z "$role" ] || [ "$role" = lead ] || continue
       _is_engine_cmd "$cmd" || continue
+      [ -d "$path" ] || continue
       root="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)" || root="$path"
+      common="$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || common=""
+      if [ -n "$common" ]; then
+        if [ -z "${done_by_repo[$common]+x}" ]; then
+          done_by_repo[$common]="$(_fleet_finished "$common/crew/events.jsonl")"
+        fi
+        finished="${done_by_repo[$common]}"
+        case $'\n'"$finished"$'\n' in *$'\n'"$lbranch"$'\n'*) continue ;; esac
+      fi
       tier="$(sed -n 's/^tier: //p' "$root/WORKER_TASK.md" 2>/dev/null | head -1)" || tier=""
       case "$tier" in
       trivial) w=1 ;;
@@ -998,11 +1011,19 @@ _fleet_leads() {
         tier=standard
         ;;
       esac
-      common="$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || common=""
       repo="$(basename "$(dirname "${common:-?/?}")")"
       printf '%s\x1f%s\x1f%s\x1f%s\n' "$w" "${name:-?}" "$repo" "$tier"
     done
   return 0
+}
+
+# _fleet_finished <events.jsonl> — the branches whose newest worker status row
+# (in file order) is done, failed or exited, one per line.
+_fleet_finished() {
+  [ -r "$1" ] || return 0
+  jq -r 'select(.kind == "status" and ((.from // "") | startswith("worker:")))
+    | "\(.from | ltrimstr("worker:") | sub("#[^#]*$"; ""))\t\((.body? // {}) | (.state? // ""))"' "$1" 2>/dev/null |
+    awk -F'\t' '{ s[$1] = $2 } END { for (b in s) if (s[b] ~ /^(done|failed|exited)$/) print b }' || true
 }
 
 # _fleet_owned <branch>... — non-empty when a lead pane (engine alive or not)
@@ -1011,7 +1032,7 @@ _fleet_owned() {
   local cmd name lbranch role path
   { tmux list-panes -a -F '#{pane_current_command}'$'\x1f''#{@crew_name}'$'\x1f''#{@crew_branch}'$'\x1f''#{@crew_role}'$'\x1f''#{pane_current_path}' 2>/dev/null || true; } |
     while IFS=$'\x1f' read -r cmd name lbranch role path; do
-      if [ -n "$lbranch" ] && [ -z "$role" ] && [[ " $* " == *" $lbranch "* ]]; then echo "$name"; fi
+      if [ -n "$lbranch" ] && { [ -z "$role" ] || [ "$role" = lead ]; } && [[ " $* " == *" $lbranch "* ]]; then echo "$name"; fi
     done
   return 0
 }
