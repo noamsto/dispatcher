@@ -68,7 +68,28 @@ output contract below), with each edit justified.
   `watch.lock.d` (which `stream` takes, and which the child `crew watch` it
   re-enters takes for its own park). Held for the two `rate` store windows and never across a gh call;
   `watch` holds it for its whole park and releases it on every exit path,
-  including the SIGTERM/SIGINT/SIGHUP `stream` sends it.
+  including the SIGTERM/SIGINT/SIGHUP `stream` sends it. Reclaiming a dead or
+  empty-file owner is a pid-file compare-and-swap: rename the pid inside the
+  dir, compare with what was judged, publish by link; a displaced live pid is
+  linked back and the reclaimer loses. An acquirer that finds no pid file never
+  renames or rmdirs: it only links into the existing dir (after restoring a lone
+  `pid.stale.*`), so the dir is never removed by an acquirer (Release still
+  `rm -rf`s it). Pids are published atomically via temp+link. The guarantee
+  holds only among acquirers on this protocol (older installed `crew` and
+  long-lived old-build watch/stall processes still `rm -rf`) and assumes no
+  reclaimer stalls past the grace (1-2s, whole-second mtimes) between its CAS
+  and its publish. One interleaving stays outside that: a crash-left pid-less
+  dir, two acquirers on the pid-less path, and a third whose stale judgment
+  predates the crash and whose rename lands between one of them checking and
+  linking (two holders); it needs a crashed acquirer plus a judge stalled
+  across both publishes, and closing it needs an atomic rename over an empty
+  dir, which BSD `mv` cannot do. Known gaps: a Release racing a losing reclaimer's displace/restore can fail
+  its `rm -rf` (ENOTEMPTY) and leave the dir with the released holder's pid
+  relinked, so the lock reads as held until that process exits; `Holder` can
+  read empty for a live lock while a loser has its pid displaced
+  (roster-render's `Holder != owner` poll can exit spuriously; follow-up); two
+  leftover `pid.stale.*` with no pid wedge the lock until the dir is removed by
+  hand; crashed acquirers leave `<dir>.new.*` siblings that nothing sweeps.
 - `crew/internal/await`: the arm of #884, and the first port that **polls**. Its
   fold is the arm's jq through jqrun (`await.jq`), over rows the caller decoded
   one per line — the arm's `-R` + `fromjson?` skip, with the repo's own decoder.

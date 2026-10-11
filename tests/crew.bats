@@ -13876,6 +13876,7 @@ post_pr_open() {
 
 @test "_lock_acquire: an empty holder inside the grace is held, a stale one is reclaimed" {
   eval "$(sed -n '/^_lock_acquire() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_lock_publish_pid() {/,/^}/p' "$CREW")"
   eval "$(sed -n '/^_file_mtime_s() {/,/^}/p' "$CREW")"
   local d="$BATS_TEST_TMPDIR/l.d"
 
@@ -13900,4 +13901,187 @@ post_pr_open() {
   run _lock_acquire "$d" 4242
   [ "$status" -eq 0 ]
   [ "$(cat "$d/pid")" = 4242 ]
+}
+
+_lock_litter() { find "$BATS_TEST_TMPDIR" \( -name '*.stale.*' -o -name '*.new.*' \) | grep . || true; }
+
+# A happy-path guard for the new publish: it also passes on the old code.
+@test "_lock_acquire: a dead holder is reclaimed with its pid published and no litter" {
+  eval "$(sed -n '/^_lock_acquire() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_lock_publish_pid() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_file_mtime_s() {/,/^}/p' "$CREW")"
+  local d="$BATS_TEST_TMPDIR/l.d" dead
+  dead=$(sh -c 'echo $$')
+  mkdir "$d"
+  printf '%s\n' "$dead" >"$d/pid"
+
+  run _lock_acquire "$d" 4242
+  [ "$status" -eq 0 ]
+  [ "$(cat "$d/pid")" = 4242 ]
+  [ -z "$(_lock_litter)" ]
+
+  # the fresh-mkdir path publishes the same way
+  rm -rf "$d"
+  run _lock_acquire "$d" 4243
+  [ "$status" -eq 0 ]
+  [ "$(cat "$d/pid")" = 4243 ]
+  [ -z "$(_lock_litter)" ]
+}
+
+@test "_lock_acquire: a reclaimer that displaced a live pid puts it back and loses" {
+  eval "$(sed -n '/^_lock_acquire() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_lock_publish_pid() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_file_mtime_s() {/,/^}/p' "$CREW")"
+  local d="$BATS_TEST_TMPDIR/l.d" dead
+  dead=$(sh -c 'echo $$')
+  mkdir "$d"
+  printf '%s\n' "$dead" >"$d/pid"
+  # A rival reclaims between our judgment of the dead pid and our displacing it
+  kill() {
+    if [ "$2" = "$dead" ]; then
+      printf '%s\n' "$$" >"$d/pid"
+      return 1
+    fi
+    command kill "$@"
+  }
+
+  run _lock_acquire "$d" 4242
+  [ "$status" -eq 1 ]
+  [ "$(cat "$d/pid")" = "$$" ]
+  [ -z "$(_lock_litter)" ]
+}
+
+@test "_lock_acquire: an orphaned pid.stale file in a pidless dir is restored, not reclaimed" {
+  eval "$(sed -n '/^_lock_acquire() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_lock_publish_pid() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_file_mtime_s() {/,/^}/p' "$CREW")"
+  local d="$BATS_TEST_TMPDIR/l.d"
+  mkdir "$d"
+  printf '%s\n' "$$" >"$d/pid.stale.x"
+  touch -t 200001010000 "$d"
+
+  run _lock_acquire "$d" 4242
+  [ "$status" -eq 1 ]
+  [ "$(cat "$d/pid")" = "$$" ]
+  [ -z "$(_lock_litter)" ]
+}
+
+@test "_lock_acquire: a pidless dir past the grace is published into in place, never recreated" {
+  eval "$(sed -n '/^_lock_acquire() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_lock_publish_pid() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_file_mtime_s() {/,/^}/p' "$CREW")"
+  local d="$BATS_TEST_TMPDIR/l.d"
+  mkdir "$d"
+  : >"$d/marker"
+  touch -t 200001010000 "$d"
+
+  run _lock_acquire "$d" 4242
+  [ "$status" -eq 0 ]
+  [ "$(cat "$d/pid")" = 4242 ]
+  [ -e "$d/marker" ]
+  [ -z "$(_lock_litter)" ]
+}
+
+@test "_lock_acquire: a pid that vanishes under the rename is a lost race, not a reclaim" {
+  eval "$(sed -n '/^_lock_acquire() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_lock_publish_pid() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_file_mtime_s() {/,/^}/p' "$CREW")"
+  local d="$BATS_TEST_TMPDIR/l.d" dead
+  dead=$(sh -c 'echo $$')
+  mkdir "$d"
+  printf '%s\n' "$dead" >"$d/pid"
+  kill() {
+    if [ "$2" = "$dead" ]; then
+      rm -f "$d/pid"
+      return 1
+    fi
+    command kill "$@"
+  }
+
+  run _lock_acquire "$d" 4242
+  [ "$status" -eq 1 ]
+  [ -d "$d" ]
+  [ ! -e "$d/pid" ]
+  [ -z "$(_lock_litter)" ]
+}
+
+@test "_lock_acquire: two orphaned pid.stale files and no pid wedge the lock, untouched" {
+  eval "$(sed -n '/^_lock_acquire() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_lock_publish_pid() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_file_mtime_s() {/,/^}/p' "$CREW")"
+  local d="$BATS_TEST_TMPDIR/l.d"
+  mkdir "$d"
+  printf '%s\n' "$$" >"$d/pid.stale.a"
+  printf '%s\n' "$$" >"$d/pid.stale.b"
+  touch -t 200001010000 "$d"
+
+  run _lock_acquire "$d" 4242
+  [ "$status" -eq 1 ]
+  [ ! -e "$d/pid" ]
+  [ "$(cat "$d/pid.stale.a")" = "$$" ]
+  [ "$(cat "$d/pid.stale.b")" = "$$" ]
+}
+
+@test "_lock_publish_pid refuses when a pid is linked, and a fresh winner then loses" {
+  eval "$(sed -n '/^_lock_acquire() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_lock_publish_pid() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_file_mtime_s() {/,/^}/p' "$CREW")"
+  local d="$BATS_TEST_TMPDIR/l.d"
+  mkdir "$d"
+  printf '%s\n' "$$" >"$d/pid"
+
+  run _lock_publish_pid "$d" 4242
+  [ "$status" -eq 1 ]
+  [ "$(cat "$d/pid")" = "$$" ]
+  [ -z "$(_lock_litter)" ]
+
+  # a rival links its pid between our mkdir and our publish
+  rm -rf "$d"
+  mktemp() {
+    printf '%s\n' "$$" >"$d/pid"
+    command mktemp "$@"
+  }
+  run _lock_acquire "$d" 4242
+  [ "$status" -eq 1 ]
+  [ "$(cat "$d/pid")" = "$$" ]
+  [ -z "$(_lock_litter)" ]
+}
+
+@test "_lock_acquire: a pidless dir that turns fresh after the judgment is a rival mid-write" {
+  eval "$(sed -n '/^_lock_acquire() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_lock_publish_pid() {/,/^}/p' "$CREW")"
+  local d="$BATS_TEST_TMPDIR/l.d" calls="$BATS_TEST_TMPDIR/mtime-calls"
+  mkdir "$d"
+  : >"$calls"
+  # old on the first read (the grace check), now on the re-check
+  _file_mtime_s() {
+    if [ ! -s "$calls" ]; then
+      echo x >"$calls"
+      echo 946684800
+    else
+      date +%s
+    fi
+  }
+
+  run _lock_acquire "$d" 4242
+  [ "$status" -eq 1 ]
+  [ ! -e "$d/pid" ]
+  [ -z "$(_lock_litter)" ]
+}
+
+@test "_lock_acquire: a dir released between the failed mkdir and the read is acquired" {
+  eval "$(sed -n '/^_lock_acquire() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_lock_publish_pid() {/,/^}/p' "$CREW")"
+  local d="$BATS_TEST_TMPDIR/l.d"
+  mkdir "$d"
+  # the holder's release lands after our failed mkdir, as the freshness read runs
+  _file_mtime_s() {
+    rm -rf "$d"
+    return 1
+  }
+
+  run _lock_acquire "$d" 4242
+  [ "$status" -eq 0 ]
+  [ "$(cat "$d/pid")" = 4242 ]
+  [ -z "$(_lock_litter)" ]
 }

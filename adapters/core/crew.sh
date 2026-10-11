@@ -815,21 +815,49 @@ _unread_scan() {
         end' 2>/dev/null || true
 }
 
-# _lock_acquire <lockdir> <owner_pid> — atomic mkdir gate with dead-PID reclaim.
-# mkdir is atomic on POSIX, so it is the ONLY gate: exactly one caller wins.
-# Returns 0 (acquired; owner_pid written inside for liveness) or 1 (held by a
-# DIFFERENT live PID, an acquirer still writing its pid, or lost the reclaim
-# race). If the held owner equals the requested owner, returns 0 idempotently —
-# re-running /dispatcher in the same session (same session-stable PID) is a
-# no-op success, not a refusal. rm -rf here is safe — the lock dir is transient
-# coordination state, never user data.
+# _lock_publish_pid <lockdir> <owner_pid> — write the pid file atomically: the
+# full line goes to a sibling temp (outside the dir, so a crash leaves the dir
+# empty) and is linked in, so `pid` is never empty or partial and `ln` refuses
+# when another pid is already there. 0 = published.
+_lock_publish_pid() {
+  local ld="$1" owner="$2" tmp rc
+  tmp=$(mktemp "$ld.new.XXXXXX") || return 1
+  if printf '%s\n' "$owner" >"$tmp" && chmod 644 "$tmp" && ln "$tmp" "$ld/pid" 2>/dev/null; then
+    rc=0
+  else
+    rc=1
+  fi
+  rm -f "$tmp"
+  return "$rc"
+}
+
+# _lock_acquire <lockdir> <owner_pid> — mkdir gate with dead-PID reclaim.
+# mkdir creates the dir; linking the pid file in is the gate (link refuses an
+# existing pid), for a fresh lock and a reclaim alike. Returns 0 (acquired) or 1
+# (held by a DIFFERENT live PID, an acquirer still writing its pid, or lost the
+# reclaim race). The held owner equal to the requested one returns 0: re-running
+# /dispatcher in the same session (same session-stable PID) is a no-op success.
+#
+# A stale lock is never reclaimed by removing the dir: two reclaimers can judge
+# the same dead pid, and a stalled one would destroy the other's live lock. The
+# reclaimer instead renames the pid it judged to a unique name inside the dir
+# (one rename wins), compares it with the judgment, and links its own pid in; a
+# different pid is a live holder it displaced, so it links that back and loses.
+# With no pid file at all (past the grace) it never renames, only restores a
+# lone `pid.stale.*` or links into the existing dir.
+#
+# The guarantee assumes the grace holds (1-2s, whole-second mtimes) and that
+# every acquirer runs this protocol; older builds still `rm -rf`. Known
+# exception: a crash-left pid-less dir with two pid-less acquirers and a third
+# whose pre-crash judgment lands its rename between one's checks and its link.
 _lock_acquire() {
-  local ld="$1" owner="$2" held mtime age
+  local ld="$1" owner="$2" held mtime age moved cur stale had_pid=0
   if mkdir "$ld" 2>/dev/null; then
-    printf '%s\n' "$owner" >"$ld/pid"
-    return 0
+    _lock_publish_pid "$ld" "$owner"
+    return
   fi
   held=$(cat "$ld/pid" 2>/dev/null || true)
+  [ -e "$ld/pid" ] && had_pid=1
   if [ "$held" = "$owner" ]; then
     return 0 # idempotent: this same owner already holds it
   fi
@@ -844,11 +872,37 @@ _lock_acquire() {
   if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
     return 1
   fi
-  rm -rf "$ld" # stale (owner PID dead, or empty past the grace) — reclaim through the same mkdir gate
-  if mkdir "$ld" 2>/dev/null; then
-    printf '%s\n' "$owner" >"$ld/pid"
-    return 0
+  if [ "$had_pid" -eq 0 ]; then
+    if mtime=$(_file_mtime_s "$ld") && age=$(($(date +%s) - mtime)) && [ "$age" -gt -2 ] && [ "$age" -lt 2 ]; then
+      return 1
+    fi
+    if [ ! -d "$ld" ]; then # released between our failed mkdir and the read
+      mkdir "$ld" 2>/dev/null && _lock_publish_pid "$ld" "$owner"
+      return
+    fi
+    stale=("$ld"/pid.stale.*)
+    if [ -e "${stale[0]}" ]; then
+      if [ "${#stale[@]}" -eq 1 ]; then
+        ln "${stale[0]}" "$ld/pid" 2>/dev/null || true
+        rm -f "${stale[0]}"
+      fi
+      return 1
+    fi
+    _lock_publish_pid "$ld" "$owner"
+    return
   fi
+  # stale (owner PID dead, or empty past the grace). BASHPID, not $$, so
+  # subshell rivals differ; bash 3.2 lacks it, where $RANDOM still separates.
+  moved="$ld/pid.stale.$owner.${BASHPID:-$$}.$RANDOM"
+  mv "$ld/pid" "$moved" 2>/dev/null || return 1
+  cur=$(cat "$moved" 2>/dev/null) || return 1
+  if [ "$cur" = "$held" ]; then
+    rm -f "$moved"
+    _lock_publish_pid "$ld" "$owner"
+    return
+  fi
+  ln "$moved" "$ld/pid" 2>/dev/null || true # displaced a live pid: put it back
+  rm -f "$moved"
   return 1
 }
 
