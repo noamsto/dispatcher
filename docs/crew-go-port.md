@@ -641,8 +641,9 @@ dispatched before `bus.Locate`: it takes explicit dirs and must run from any cwd
   that stay"): it runs arbitrary git subcommands in the caller's process (background pids,
   `GIT_INDEX_FILE`, captured stdout), which a Go exec cannot hand back, and it holds no
   guard logic. It calls the Go check first, exactly where it called `_wt_cfg_guard` before.
-  Go callers (`reap`) use `internal/wtgit`, which builds the same argv and calls
-  `gitguard.Check` in process.
+  Go callers (`reap`, `stack`) use `internal/wtgit`, which builds the same argv
+  and calls `gitguard.Check` in process; `crew.sh` stopped sourcing the lib when
+  #1004 ported the arm that sourced it.
 - Startup cost: one `crew-go` exec per guard call replaces the bash guard's own forks
   (each call ran `git config --list` one to three times, `sort`, `sha256sum` and
   subshells); Go runs the same git calls and nothing else. Dispatch makes on the order of

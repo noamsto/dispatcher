@@ -162,8 +162,9 @@
             # stall-watch runs refresh-budget (rate-limited, host-wide) so its
             # budget: detector reads a fresh cache.
             runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gh gtrash procps]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
-            # crew never references the protocols, but reap sources the
-            # anchored-git lib (#539), so it still needs `sub`.
+            # crew never references the protocols, and since #1004 it sources no
+            # shared lib but the two `stall-watch --sh` helpers, so of `sub` it
+            # needs those (@localModelsLib@, @budgetGateLib@).
             # @crewGoBin@ is the Go port's binary, substituted in crew.sh itself
             # (not in the shared `sub`) for its ported-arm exec; the worktree-git
             # lib gets its own copy in worktreeGitLib.

@@ -461,7 +461,9 @@ placeholder_three_row() { # token bin bin bin
 
 # The git-config guard runs in crew-go, so the worktree-git lib each consumer
 # sources must name a real, executable binary: an unsubstituted token fails
-# every guard call closed (exit 127), blocking every anchored git.
+# every guard call closed (exit 127), blocking every anchored git. `crew` left
+# the list with #1004: its `stack` arm was the last bash caller, and the Go port
+# builds the same argv in internal/wtgit, so the script sources the lib no more.
 @test "the worktree-git lib names an executable crew-go in each consumer" {
   begin_rows
   local row bin
@@ -469,11 +471,10 @@ placeholder_three_row() { # token bin bin bin
     [ -n "$row" ] || continue
     keep_row "$row" worktree_git_lib_crew_go_row "$bin"
   done <<ROWS
-crew|$OUT_CREW/bin/crew
 dispatch|$OUT_DISPATCH/bin/dispatch
 dispatch-resume|$OUT_DISPATCH_RESUME/bin/dispatch-resume
 ROWS
-  finish_rows 3
+  finish_rows 2
 }
 
 worktree_git_lib_crew_go_row() { # bin
