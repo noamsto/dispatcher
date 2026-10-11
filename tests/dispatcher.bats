@@ -602,9 +602,8 @@ EOF
   chmod +x "$STUB_DIR/crew"
 }
 
-# crews_tsv <row>… — the header, then one row per argument. Each row is already
-# tab-joined by printf, so the table matches `crew crews` byte for byte; the
-# launcher's `while read` needs the newline printf adds.
+# crews_tsv <row>… — the header, then one tab-joined row per argument, ending in
+# the newline the launcher's `while read` needs to see the last row.
 crews_tsv() {
   printf 'crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\n'
   printf '%s\n' "$@"
@@ -636,8 +635,7 @@ EOF
   chmod +x "$STUB_DIR/ps"
 }
 
-# stub_engine_env — an engine stub that logs the CREW_ID it was launched with,
-# which is how a row proves an adopted crew reaches the launched session.
+# stub_engine_env — an engine stub that logs the CREW_ID it was launched with.
 stub_engine_env() {
   cat >"$STUB_DIR/claude" <<'EOF'
 #!/usr/bin/env bash
@@ -812,9 +810,8 @@ EOF
   [[ "$out" == *"'crew crews' failed"* && "$out" == *"crew id: c-minted"* ]]
 }
 
-# The AC3 case the stubs cannot show: `crew register` refuses a crew whose
-# recorded pid is alive, so this row drives the real crew — the same binary the
-# launcher runs in production — with a live pid and no pane.
+# The AC3 case a stub cannot show: `crew register` refuses a crew whose recorded
+# pid is alive, so this row drives the real crew, the binary production runs.
 @test "929: a live pid with no pane still launches when crew register refuses it" {
   local crew_bin="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
   sleep 30 &

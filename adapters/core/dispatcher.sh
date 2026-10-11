@@ -125,9 +125,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# A usage error, so it fails before the settings read or the engine gate: an
-# exported CREW_ID is an explicit "this crew", and --new is an explicit "a new
-# one". Answering both at once is how a second crew gets minted by accident.
+# Checked before the settings read: an exported CREW_ID already answers what
+# --new asks for, and answering both is how a second crew appears by accident.
 if [ "$new_crew" = 1 ] && [ -n "${CREW_ID:-}" ]; then
   echo "dispatcher: --new cannot be combined with an exported CREW_ID" >&2
   exit 2
@@ -202,20 +201,18 @@ fi
 ac="${autocompact:-$(orch_default autoCompact)}"
 
 # ---- Re-attach before minting (#929) -------------------------------------
-# A second dispatcher in one repo is almost always accidental, and it splits
-# attention: a worker's question reaches only the dispatcher that started it,
-# and each launcher counts only its own workers against the fan-out budget. So
-# the launcher reads `crew crews` first and mints only when there is nothing to
-# re-attach to — `--new` is the explicit choice to mint anyway.
+# Two dispatchers in one repo split attention: a worker's question reaches only
+# the dispatcher that started it, and each counts only its own workers against
+# the fan-out budget. So read `crew crews` first and mint only when there is
+# nothing to re-attach to; `--new` is the explicit choice to mint anyway.
 #
-# Liveness and recency come off the table's own columns (`alive`, and
-# `last_event_s` as seconds since the last event, so the smallest wins); the
-# launcher never re-implements the live-pid test.
+# `alive` and `last_event_s` come off the table itself — the launcher never
+# re-implements the live-pid test.
 
 # _pane_for_pid <pid> — the tmux pane whose pane_pid is <pid> or one of its
-# ancestors, empty for none. The walk is bounded (64 hops, it stops at the first
-# `ps` that fails or answers non-numeric, and it never climbs to init), so a
-# recycled or corrupt ppid chain cannot spin and cannot match a shared ancestor.
+# ancestors, empty for none. Bounded: 64 hops, stops at the first `ps` that
+# fails or answers non-numeric, and never climbs to init, so a recycled ppid
+# chain can neither spin nor match a shared ancestor.
 _pane_for_pid() {
   local pid=$1 entry pane ppid hop=0
   local -a panes=()
@@ -244,8 +241,8 @@ _reattach_or_switch() {
   local table row_id row_last _row_first _row_workers row_pid row_alive
   local first_id='' newest='' live_id='' live_pid='' pane='' adopt
   local header=1
-  # A failed read is not an empty table: minting here would recreate the split
-  # brain this pass exists to close, silently.
+  # A failed read must not read as an empty table: that would mint beside crews
+  # that are still there.
   if ! table=$(crew crews 2>/dev/null); then
     echo "dispatcher: 'crew crews' failed — cannot tell which crews exist, so starting a fresh one; check this repo's crew bus" >&2
     return 0
@@ -257,9 +254,8 @@ _reattach_or_switch() {
     fi
     [ -n "$row_id" ] || continue
     [ -n "$first_id" ] || first_id=$row_id
-    # The table comes back sorted by recency, so the first numeric
-    # last_event_s is the smallest. A `—` row has no events at all, so it only
-    # adopts when nothing better exists.
+    # Rows come back sorted by recency, so the first numeric last_event_s is the
+    # smallest. `—` means the crew has no events at all: last, never first.
     if [ -z "$newest" ] && [[ $row_last =~ ^[0-9]+$ ]]; then
       newest=$row_id
     fi
@@ -272,8 +268,6 @@ _reattach_or_switch() {
   if [ -n "$live_id" ]; then
     pane=$(_pane_for_pid "$live_pid") || pane=''
     if [ -n "$pane" ]; then
-      # Task words are not dropped on the floor: the caller re-sends them to the
-      # live dispatcher, or passes --new.
       if [ -n "$task" ]; then
         echo "dispatcher: crew $live_id has a live dispatcher in pane $pane — send the task there, or pass --new to start a second crew" >&2
         exit 1
@@ -287,13 +281,11 @@ _reattach_or_switch() {
       echo "dispatcher: crew $live_id already has a live dispatcher in pane $pane — nothing started"
       exit 0
     fi
-    # Alive but no pane (detached client, killed window): nothing to switch to,
-    # so it counts as not live for the switch and the crew is adopted below.
+    # Alive but no pane (detached client, killed window): not live for the
+    # switch, so the crew is adopted below.
     echo "dispatcher: crew $live_id's dispatcher pid $live_pid has no tmux pane — re-attaching to the crew instead" >&2
-    # That crew still records a live dispatcher pid, and `crew register` refuses
-    # to overwrite one (crew/internal/register). The launch goes ahead anyway —
-    # a pane-less dispatcher must not block a re-attach — so the mint block
-    # tolerates that one refusal and names the takeover instead of bypassing it.
+    # That crew still records a live pid, and `crew register` refuses to
+    # overwrite one; the mint block names the takeover instead of bypassing it.
     adopted_live=1
   fi
 
@@ -373,11 +365,10 @@ if git rev-parse --git-common-dir >/dev/null 2>&1; then
     crew register $$
   fi
 
-  # Discovery notice (#29), now a --new confirmation: the default path no longer
-  # orphans a crew, but minting next to crews the caller chose not to adopt is
-  # still worth one line. `crew adopt` is the wrong remedy on this entrance —
-  # CREW_ID is already exported into the launched agent's env, so adopt's export
-  # line would land in the wrong shell; only relaunching with it set re-attaches.
+  # --new confirmation: minting next to crews the caller chose not to adopt is
+  # worth one line. `crew adopt` is the wrong remedy on this entrance — CREW_ID
+  # is already exported into the launched agent's env, so adopt's export line
+  # would land in the wrong shell; only relaunching with it set re-attaches.
   if [ "$new_crew" = 1 ]; then
     {
       other=0
