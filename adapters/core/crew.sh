@@ -751,9 +751,9 @@ _clock_now_f() {
 # session has been handed}, one file per crew+session under $dir/await. `crew
 # await` and `crew inbox` both raise it from Go (crew/internal/marks, the same
 # path and the same two programs), so a reply taken through the straggler fold is
-# not handed back by the next `await`. These three stay for `_unread_scan` (and
-# through it `crew nudge` and `stall-watch --unread`), which read the same file, and
-# for the crew.bats guards that replay Go's writes through them. Not a bus row:
+# not handed back by the next `await`. These three stay for the crew.bats guards
+# that replay Go's writes through them (the unread scan reads the same file from
+# Go since #968, via crew/internal/unread). Not a bus row:
 # it never reaches `roster`, `watch` or another session's reads.
 _await_state() { # <crew> <agent> -> path
   local key="$1-$2"
@@ -781,38 +781,6 @@ _await_record() {
     mv "$tmp" "$st" 2>/dev/null
   fi
   rm -f "$tmp"
-}
-
-# _unread_scan <crew> <branch> <me> <from_id> <t0> <mode> — mode `oldest` prints
-# "<ts-ms> role|dispatcher" for the oldest role:<branch>:* or dispatcher:<crew>
-# msg to this lead that is past the delivered mark; a role msg also drops out
-# once answered by a later msg from the lead to that role (a dispatcher
-# directive clears only on delivery); empty when none. Mode `dispatcher`
-# considers only the undelivered dispatcher:<crew> msgs and prints
-# "<oldest-ts> <newest-ts>". A sessioned watchdog matches its session id only,
-# which scopes it to this run; a branch-keyed one has no marks to read and
-# returns nothing. A msg scrolled out of the 2000-line tail reads as gone.
-_unread_scan() {
-  local crew="$1" branch="$2" me="$3" from_id="$4" t0="$5" mode="$6"
-  # A branch-keyed watchdog cannot name the lead's session, so it cannot read
-  # that session's delivered marks; stay silent rather than misreport.
-  [ "$from_id" != "$me" ] || return 0
-  [ -f "$log" ] || return 0
-  tail -n 2000 "$log" 2>/dev/null | jq -Rnr --arg c "$crew" --arg b "role:$branch:" \
-    --arg d "dispatcher:$crew" --arg me "$me" --arg f "$from_id" --argjson t0 "$t0" \
-    --arg mode "$mode" --argjson marks "$(_await_marks "$crew" "$from_id")" '
-      def lead($x): if $f == $me then ($x == $me or ($x | startswith($me + "#")))
-                    else $x == $f end;
-      [inputs | fromjson? | select(.crew_id == $c and .kind == "msg" and (.ts >= $t0 or $f != $me))] as $m
-      | [$m[] | select(lead(.from))] as $sent
-      | [$m[] | select(((.from | strings | startswith($b)) or .from == $d) and lead(.to) and .ts > ($marks[.from] // 0))
-         | . as $r
-         | select($r.from == $d or (any($sent[]; .to == $r.from and .ts > $r.ts) | not))] as $u
-      | if $mode == "dispatcher" then
-          [$u[] | select(.from == $d)] | if length == 0 then empty else "\(min_by(.ts).ts) \(max_by(.ts).ts)" end
-        else
-          ($u | min_by(.ts) // empty) | "\(.ts) \(if .from == $d then "dispatcher" else "role" end)"
-        end' 2>/dev/null || true
 }
 
 # _lock_publish_pid <lockdir> <owner_pid> — write the pid file atomically: the
@@ -2089,10 +2057,10 @@ fi
 
 case "$sub" in
 nudge)
-  # Ported to Go (crew/internal/nudge, docs/crew-go-port.md). This arm exports CREW_SH
-  # as well as execing: the Go side calls back for `_unread_scan` — the one helper that
-  # stayed here, shared with stall-watch — through `stall-watch --sh unread`.
-  CREW_SH="$(readlink -f "$0")" exec "${CREW_GO_BIN:-@crewGoBin@}" nudge "$@"
+  # Ported to Go (crew/internal/nudge, docs/crew-go-port.md). It execs directly:
+  # the one helper this arm used to export CREW_SH for — `_unread_scan`, shared
+  # with stall-watch — moved to Go with #968 (crew/internal/unread).
+  exec "${CREW_GO_BIN:-@crewGoBin@}" nudge "$@"
   ;;
 crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet)
   # Ported to Go (crew/, docs/crew-go-port.md). CREW_GO_BIN is the
@@ -2316,7 +2284,7 @@ stall-watch)
   #
   # The loop runs in Go (crew/internal/stall, docs/crew-go-port.md); the comments
   # above document the behaviour it implements. `--sh <op>` is the Go side's
-  # call-out into the bash helpers that stay here: release, unread,
+  # call-out into the bash helpers that stay here: release,
   # budget (windows|limit) and local-model.
   # Every op exits its status + 10, so a failure before or around it — the
   # preamble's exit 1, a usage refusal, 127, a signal — never reads as a verdict.
@@ -2331,7 +2299,6 @@ stall-watch)
       note() { :; }
       _release_windows "$@" "" || rc=$?
       ;;
-    unread) _unread_scan "$@" || rc=$? ;;
     budget)
       # shellcheck source=/dev/null
       . "${BUDGET_GATE_LIB:-@budgetGateLib@}"

@@ -27,10 +27,10 @@ setup() {
   printf '#!/usr/bin/env bash\nexec bash "%s" "$@"\n' "$CREW" >"$BATS_TEST_TMPDIR/realbin/crew"
   chmod +x "$BATS_TEST_TMPDIR/realbin/crew"
   export PATH="$BATS_TEST_TMPDIR/realbin:$PATH"
-  # The delivered-marks path, from the crew.sh helper the readers use.
+  # The delivered-marks path, from the crew.sh helper the guards replay.
   dir="$COMMON/crew"
   log="$LOG"
-  eval "$(sed -n '/^_await_state() {/,/^}/p; /^_await_marks() {/,/^}/p; /^_unread_scan() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_await_state() {/,/^}/p' "$CREW")"
   ENVELOPE="$(envelope)"
 }
 
@@ -297,14 +297,6 @@ cursor_file() { printf '%s\n' "$CURDIR"/*; }
   wait
   [ "$(find "$BATS_TEST_TMPDIR" -name 'out.*' -size +0 | wc -l)" -eq 1 ]
   [ "$(cat "$BATS_TEST_TMPDIR"/out.* | grep -cF 'stop now')" -eq 1 ]
-}
-
-@test "delivery: watchdog D6's unread scan sees the directive before and not after" {
-  crew msg dispatcher:c1 "$ID" 'stop now'
-  [ -n "$(_unread_scan c1 feat/840-x worker:feat/840-x "$ID" 0 dispatcher)" ]
-  deliver
-  [ "$(grep -cF '"body":"stop now"' <<<"$(ctx)")" -eq 1 ]
-  [ -z "$(_unread_scan c1 feat/840-x worker:feat/840-x "$ID" 0 dispatcher)" ]
 }
 
 @test "delivery: a cursor that names another id is ignored and the log is rescanned" {

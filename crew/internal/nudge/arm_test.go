@@ -31,10 +31,8 @@ type armFixture struct {
 	env    map[string]string
 	crewID string
 
-	// unread is the `_unread_scan` pair, "<oldest> <newest>"; unreadOK=false is the
-	// call-out dying, a failure rather than an empty scan.
-	unread   string
-	unreadOK bool
+	// unread is the dispatcher-mode scan pair, "<oldest> <newest>".
+	unread string
 	// leadReads makes every scan after the first answer empty: the lead read the
 	// directive during the wait, which is how --wait stops without typing.
 	leadReads   bool
@@ -65,12 +63,11 @@ func newArm(t *testing.T) *armFixture {
 			Common: common, Dir: common + "/crew", Log: common + "/crew/events.jsonl",
 		},
 		stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{},
-		pane:     &fakePane{frames: acceptedFrames(t)},
-		bus:      &fakeBus{},
-		now:      time.Now().UnixMilli(),
-		crewID:   "c1",
-		unread:   idleTS + " " + idleTS,
-		unreadOK: true,
+		pane:   &fakePane{frames: acceptedFrames(t)},
+		bus:    &fakeBus{},
+		now:    time.Now().UnixMilli(),
+		crewID: "c1",
+		unread: idleTS + " " + idleTS,
 	}
 	f.pane.windows, f.pane.panes = f.windowRows("@7", featX, "lead"), f.paneRows("@7", leadID, "lead", "claude")
 	f.bus.rows = sessionRows(t, idleReq, "working")
@@ -119,12 +116,12 @@ func (f *armFixture) run(args ...string) int {
 		Exists: func(path string) bool {
 			return f.workerTask && strings.HasSuffix(path, "/WORKER_TASK.md")
 		},
-		Unread: func(context.Context, string, string, string) (string, bool) {
+		Unread: func(context.Context, string, string, string) string {
 			f.unreadScans++
 			if f.leadReads && f.unreadScans > 1 {
-				return "", f.unreadOK
+				return ""
 			}
-			return f.unread, f.unreadOK
+			return f.unread
 		},
 		Rows: func(int) ([]jsonv.Value, bool) { return f.rows, true },
 		PID:  4242,
@@ -145,8 +142,8 @@ func (f *armFixture) runWith(deps Deps, args ...string) int {
 		Deps: deps, CrewID: func() string { return f.crewID }, Getenv: env(f.env),
 		Toplevel: func(context.Context) string { return f.toplevel },
 		Exists:   func(string) bool { return false },
-		Unread: func(context.Context, string, string, string) (string, bool) {
-			return f.unread, f.unreadOK
+		Unread: func(context.Context, string, string, string) string {
+			return f.unread
 		},
 		Rows: func(int) ([]jsonv.Value, bool) { return f.rows, true },
 		PID:  4242,
@@ -451,14 +448,6 @@ func TestRunUnreadGate(t *testing.T) {
 			t.Errorf("the unread gate typed: %q", c)
 		}
 	}
-
-	// A call-out that never ran is a failure, never the empty-scan refusal.
-	f = newArm(t)
-	f.unreadOK = false
-	if rc := f.run(featX); rc != 1 ||
-		f.errOut() != "cannot scan the bus for unread msgs (unread helper failed)" {
-		t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
-	}
 }
 
 func TestRunReportsPaneOutcome(t *testing.T) {
@@ -693,8 +682,8 @@ func TestRunWaitRowFollowsCrewClock(t *testing.T) {
 		Deps: deps, CrewID: func() string { return f.crewID }, Getenv: env(f.env),
 		Toplevel: func(context.Context) string { return "" },
 		Exists:   func(string) bool { return false },
-		Unread: func(context.Context, string, string, string) (string, bool) {
-			return f.unread, true
+		Unread: func(context.Context, string, string, string) string {
+			return f.unread
 		},
 		Rows: func(int) ([]jsonv.Value, bool) { return f.rows, true },
 		PID:  4242,

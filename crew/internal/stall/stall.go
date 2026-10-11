@@ -23,6 +23,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/frame"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
+	"github.com/noamsto/dispatcher/crew/internal/unread"
 )
 
 // Options is everything Run reads beyond its argv and the bus.
@@ -32,7 +33,11 @@ type Options struct {
 	NewProbes func(pane string) probe.Probes // called once, after --pane parses
 	// Nudge is D6's keystroke: `nudge.Pane` over the arm's own probes by default, so
 	// the watchdog and `crew nudge` share one type/no-type decision. Tests fake it.
-	Nudge      func(ctx context.Context, req nudge.PaneRequest) (string, int)
+	Nudge func(ctx context.Context, req nudge.PaneRequest) (string, int)
+	// Unread is D6's scan — `internal/unread`, the helper's in-process port that
+	// replaced the `--sh unread` call-out — answered for the watch's own ids.
+	// Run wires it; tests script it.
+	Unread     func(ctx context.Context, mode unread.Mode) string
 	BudgetFile string // ${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json
 	PID        int    // lock owner ($$)
 	CrewSH     string // $CREW_SH: the crew.sh holding the --sh helpers
@@ -84,11 +89,11 @@ func Run(ctx context.Context, argv []string, paths bus.Paths, stderr io.Writer, 
 		}
 		return 1
 	}
-	// Every bash helper the watch needs — D6's unread scan and nudge, D8's
-	// budget verdict, the pi local-model check, the finished-worker release — is
-	// reached through CREW_SH, so without it they all fail with nothing on the
-	// bus. The crew wrapper always exports it: this is a direct crew-go call or
-	// a script removed mid-deploy.
+	// The bash helpers the watch still reaches are D8's budget verdict, the pi
+	// local-model check and the finished-worker release (D6's unread scan moved
+	// in process with #968); they are all reached through CREW_SH, so without it
+	// they fail with nothing on the bus. The crew wrapper always exports it:
+	// this is a direct crew-go call or a script removed mid-deploy.
 	if err := crewSHError(o.CrewSH); err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
 		return 1
@@ -98,6 +103,14 @@ func Run(ctx context.Context, argv []string, paths bus.Paths, stderr io.Writer, 
 	// so a status the launcher posted just before this start still counts.
 	cfg.runStartMS = (o.Clock.Seconds() - 1) * 1000
 	w := &watch{ctx: ctx, cfg: cfg, p: p, o: o, paths: paths, stderr: stderr}
+	if w.o.Unread == nil {
+		w.o.Unread = func(ctx context.Context, mode unread.Mode) string {
+			return unread.Scan(unread.Request{
+				Dir: paths.Dir, Log: paths.Log, Crew: cfg.crew, Branch: cfg.branch,
+				Me: cfg.me, FromID: cfg.fromID, T0: cfg.runStartMS,
+			}, mode)
+		}
+	}
 	w.cfg.budgetOn = w.decideBudget(ctx)
 	// A non-claude role watch has only D8 and its end-of-life exit live; with
 	// D8 off nothing is left, and the pane's @crew_state belongs to dispatch's

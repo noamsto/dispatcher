@@ -229,8 +229,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		})
 	}
 
-	// nudge resolves its own target, runs its own frame checks and posts its own rows.
-	// Its bash arm exports CREW_SH for the `_unread_scan` call-back (docs/crew-go-port.md).
+	// nudge resolves its own target, runs its own frame checks and posts its own rows,
+	// its unread scan in process through internal/unread (docs/crew-go-port.md).
 	if sub == "nudge" {
 		return nudge.Run(ctx, args, paths, stdout, stderr,
 			nudge.Default(paths, stderr, os.Getpid(), func() string { return bus.CrewID(ctx, cwd) }))

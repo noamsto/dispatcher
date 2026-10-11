@@ -30,7 +30,7 @@
 # refused ones — `crew status … pr_open` is routinely refused until the review,
 # deslop and (under plan: required) plan seams exist. The read is bounded and
 # rare: only once the throttle says the phase changed, over the last 2000 rows
-# (the window crew.sh's _unread_scan accepts). A row older than that reads as
+# (the window internal/unread accepts). A row older than that reads as
 # absent, so the cost is a duplicate `working` post or, rarely, an overwritten
 # terminal row.
 #

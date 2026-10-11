@@ -3,10 +3,10 @@ package stall
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
+	"github.com/noamsto/dispatcher/crew/internal/unread"
 	"regexp"
 	"strconv"
 	"strings"
@@ -45,7 +45,7 @@ func (w *watch) probePre() error {
 }
 
 // shOffset and shVerdict are the probe package's `--sh` decode under the names this
-// package's callers know it by; `nudge` reaches the same pair for its `unread` call-out.
+// package's callers know it by.
 const shOffset = probe.ShOffset
 
 // shWriteTimeout bounds an op that runs on through a signal.
@@ -63,8 +63,8 @@ func (w *watch) shCall(op string, args ...string) (out string, verdict int, ok b
 	return w.shOn(w.ctx, op, args...)
 }
 
-// shWrite is shCall for an op that writes (`release`, and `nudge` until its helper
-// went away — see nudgeCall). The arm's `$(…)` child outlived the arm's death and
+// shWrite is shCall for an op that writes (`release` — `nudge`'s helper went
+// away in-process; see nudgeCall). The arm's `$(…)` child outlived the arm's death and
 // finished its write, so a signal must not tear one between the keystroke or kill and
 // its bus row; the watch still ends with 128+signo once the op returns. A write that
 // has not started when the signal lands never starts.
@@ -332,10 +332,7 @@ func (w *watch) d6() error {
 		if w.bus.source != "watchdog" {
 			pd.d6At = 0
 		}
-		oldest, src, ok, err := w.unreadOldest()
-		if err != nil {
-			return skipNoScan(err)
-		}
+		oldest, src, ok := w.unreadOldest()
 		if ok && w.now*1000-oldest >= w.cfg.unread*1000 {
 			age := strconv.FormatInt((w.now*1000-oldest)/1000, 10)
 			detail := "unread: role verdict undelivered for " + age + "s — lead is working but has not read it; nudge it to run `crew await`"
@@ -363,10 +360,7 @@ func (w *watch) d6() error {
 		if pd.d6At == 0 || w.bus.source != "watchdog" {
 			return nil
 		}
-		oldest, src, ok, err := w.unreadOldest()
-		if err != nil {
-			return skipNoScan(err)
-		}
+		oldest, src, ok := w.unreadOldest()
 		if !ok || w.now*1000-oldest < w.cfg.unread*1000 || src != pd.d6Src {
 			if err := w.postClear("unread:"); err != nil {
 				return err
@@ -377,34 +371,16 @@ func (w *watch) d6() error {
 	return nil
 }
 
-// errNoScan is an unread scan whose helper failed to run. Its silence is not
-// "delivered", so D6 skips the tick's verdict: no post, no clear.
-var errNoScan = errors.New("unread scan failed")
-
-func skipNoScan(err error) error {
-	if errors.Is(err, errNoScan) {
-		return nil
-	}
-	return err
-}
-
-// unreadOldest is `_unread_oldest`. A branch-keyed watch cannot name the
-// lead's session, so `_unread_scan` stays silent for it; that check is made
-// here too, so such a watch spawns nothing every fourth tick.
-func (w *watch) unreadOldest() (int64, string, bool, error) {
+// unreadOldest is the in-process `_unread_scan` in oldest mode. A branch-keyed
+// watch cannot name the lead's session, so the scan stays silent for it; that
+// check is made here too, so such a watch reads nothing every fourth tick.
+func (w *watch) unreadOldest() (int64, string, bool) {
 	if w.cfg.fromID == w.cfg.me {
-		return 0, "", false, nil
+		return 0, "", false
 	}
-	out, _, ran, err := w.shCall("unread", w.cfg.crew, w.cfg.branch, w.cfg.me, w.cfg.fromID, strconv.FormatInt(w.cfg.runStartMS, 10), "oldest")
-	if err != nil {
-		return 0, "", false, err
-	}
-	if !ran {
-		return 0, "", false, errNoScan
-	}
-	a, src := readWords(out)
+	a, src := readWords(w.o.Unread(w.ctx, unread.Oldest))
 	oldest, ok := msTS(a)
-	return oldest, src, ok, nil
+	return oldest, src, ok
 }
 
 // autoNudge is D6's nudge half; true skips this tick's verdict.
@@ -421,10 +397,7 @@ func (w *watch) autoNudge() (bool, error) {
 		(w.cfg.engine != "claude" && w.cfg.engine != "pi") {
 		return false, nil
 	}
-	out, _, ran, err := w.shCall("unread", w.cfg.crew, w.cfg.branch, w.cfg.me, w.cfg.fromID, strconv.FormatInt(w.cfg.runStartMS, 10), "dispatcher")
-	if err != nil || !ran {
-		return false, err
-	}
+	out := w.o.Unread(w.ctx, unread.Dispatcher)
 	a, b := readWords(out)
 	dOld, okOld := msTS(a)
 	dNew, okNew := msTS(b)
