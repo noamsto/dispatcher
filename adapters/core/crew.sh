@@ -831,36 +831,25 @@ _lock_publish_pid() {
   return "$rc"
 }
 
-# _lock_acquire <lockdir> <owner_pid> — atomic mkdir gate with dead-PID reclaim.
-# mkdir creates the dir and linking the pid file in is the gate (link refuses an
-# existing pid), for a fresh lock and a reclaim alike. Returns 0 (acquired; owner_pid published inside for
-# liveness) or 1 (held by a DIFFERENT live PID, an acquirer still writing its
-# pid, or lost the reclaim race). If the held owner equals the requested owner,
-# returns 0 idempotently — re-running /dispatcher in the same session (same
-# session-stable PID) is a no-op success, not a refusal.
+# _lock_acquire <lockdir> <owner_pid> — mkdir gate with dead-PID reclaim.
+# mkdir creates the dir; linking the pid file in is the gate (link refuses an
+# existing pid), for a fresh lock and a reclaim alike. Returns 0 (acquired) or 1
+# (held by a DIFFERENT live PID, an acquirer still writing its pid, or lost the
+# reclaim race). The held owner equal to the requested one returns 0: re-running
+# /dispatcher in the same session (same session-stable PID) is a no-op success.
 #
-# A stale lock is reclaimed by a pid-file compare-and-swap, never by removing
-# the dir: two reclaimers can judge the same dead pid, and a stalled one that
-# then removed the dir would destroy the other's live lock (two holders). So
-# the reclaimer renames the pid it judged to a unique name INSIDE the dir
-# (only one rename can win), compares it with what it judged, and links its own pid in. A different pid
-# means a live holder was displaced: link it back and lose. That applies when
-# the pid file existed at the read (dead pid text, or an empty file).
+# A stale lock is never reclaimed by removing the dir: two reclaimers can judge
+# the same dead pid, and a stalled one would destroy the other's live lock. The
+# reclaimer instead renames the pid it judged to a unique name inside the dir
+# (one rename wins), compares it with the judgment, and links its own pid in; a
+# different pid is a live holder it displaced, so it links that back and loses.
+# With no pid file at all (past the grace) it never renames, only restores a
+# lone `pid.stale.*` or links into the existing dir.
 #
-# A dir past the grace with NO pid file is never renamed, rmdir'd or recreated:
-# a rival's pending link could land in the gap. Re-check freshness, restore a
-# lone `pid.stale.*` (a crashed reclaimer's) by link and lose; with several,
-# lose and leave them; otherwise just link our pid into the existing dir.
-#
-# Residual: the guarantee assumes the grace (1-2s: whole-second mtimes) holds,
-# i.e. no reclaimer stalls past it between its CAS and its publish (the
-# assumption the grace already makes for mkdir-then-write). One interleaving
-# remains outside it: a crash-left pid-less dir, two acquirers on the pid-less
-# path, and a third whose stale judgment predates the crash and whose rename
-# lands between another acquirer's checks and its link (two holders). It needs
-# a crashed acquirer plus a judge stalled across both full publishes. The
-# guarantee also holds only among acquirers on this protocol; older builds
-# still `rm -rf` the dir.
+# The guarantee assumes the grace holds (1-2s, whole-second mtimes) and that
+# every acquirer runs this protocol; older builds still `rm -rf`. Known
+# exception: a crash-left pid-less dir with two pid-less acquirers and a third
+# whose pre-crash judgment lands its rename between one's checks and its link.
 _lock_acquire() {
   local ld="$1" owner="$2" held mtime age moved cur stale had_pid=0
   if mkdir "$ld" 2>/dev/null; then

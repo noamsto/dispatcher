@@ -78,13 +78,9 @@ func reclaim(dir, owner, judged string) bool {
 		return false
 	}
 	if strings.TrimRight(string(data), "\n") != judged {
-		// Link, not rename, so a pid published in the gap is never clobbered.
-		// While pid is absent the dir mtime is fresh (the rename bumped it), so a
-		// late judge sees an empty holder inside the grace and refuses. That is
-		// the grace assumption, not a proof: a reclaimer that crashed or stalled
-		// past the grace between its swap and its publish leaves a pid-less dir
-		// that a pid-less acquirer may link into while a third judge's stale
-		// rename is still in flight. Narrower than the rm -rf race it replaces.
+		// Link, not rename, so a pid published in the gap is never clobbered. The
+		// rename bumped the dir mtime, so late judges refuse until this lands;
+		// that is the grace assumption, not a proof (see docs/crew-go-port.md).
 		_ = os.Link(moved, pid)
 		_ = os.Remove(moved)
 		return false
