@@ -47,14 +47,16 @@ func Acquire(dir, owner string) bool {
 // holder is mid-write and reclaiming it would give two owners.
 const emptyGrace = 2
 
-// fresh reports whether dir is younger than emptyGrace. Wall clock, because the
-// mtime is; a vanished dir is not fresh and falls through to the reclaim.
+// fresh reports whether dir's mtime is within emptyGrace of now, on either side
+// so a skewed clock cannot wedge the lock. Wall clock, because the mtime is; a
+// vanished dir is not fresh and falls through to the reclaim.
 func fresh(dir string) bool {
 	fi, err := os.Stat(dir)
 	if err != nil {
 		return false
 	}
-	return time.Now().Unix()-fi.ModTime().Unix() < emptyGrace
+	age := time.Now().Unix() - fi.ModTime().Unix()
+	return age > -emptyGrace && age < emptyGrace
 }
 
 // Release is `_lock_release`: an unconditional `rm -rf` with no owner check,

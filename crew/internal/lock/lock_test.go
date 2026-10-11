@@ -74,6 +74,27 @@ func TestLockReclaimsDeadAndEmpty(t *testing.T) {
 	}
 }
 
+// TestLockEmptyHolderWithFutureMtimeIsReclaimed: a skewed clock puts the dir
+// mtime ahead of now; that must not read as fresh forever.
+func TestLockEmptyHolderWithFutureMtimeIsReclaimed(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "ratings.lock.d")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePID(t, dir, "")
+	future := time.Now().Add(10 * time.Second)
+	if err := os.Chtimes(dir, future, future); err != nil {
+		t.Fatal(err)
+	}
+	if !Acquire(dir, "12345") {
+		t.Fatal("an empty holder with a future mtime was not reclaimed")
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "pid"))
+	if string(got) != "12345\n" {
+		t.Errorf("pid file after reclaim = %q, want \"12345\\n\"", got)
+	}
+}
+
 // TestLockEmptyHolderInGraceIsHeld: the owner writes its pid after mkdir, so an
 // empty holder in a just-made dir is an acquirer mid-write, not a dead one.
 func TestLockEmptyHolderInGraceIsHeld(t *testing.T) {

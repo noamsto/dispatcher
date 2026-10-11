@@ -13887,4 +13887,12 @@ post_pr_open() {
   run _lock_acquire "$d" 4242
   [ "$status" -eq 0 ]
   [ "$(cat "$d/pid")" = 4242 ]
+
+  # a future mtime (skewed clock) must not read as fresh forever
+  rm -rf "$d"
+  mkdir "$d"
+  touch -t 209901010000 "$d"
+  run _lock_acquire "$d" 4242
+  [ "$status" -eq 0 ]
+  [ "$(cat "$d/pid")" = 4242 ]
 }
