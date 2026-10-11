@@ -30,11 +30,11 @@ type frameDet struct {
 	d9Hits, d9TypedHit int64
 	d9At               int64
 	d9Typed            bool
-	d9Outcome          string // "typed" once a continue line went in this episode
-	d9Count            int64  // helper calls this watch, across episodes
+	d9Outcome          string // "typed": this watch typed this episode; "prior": an earlier watchdog's auto-continued row stands, nothing typed here
+	d9Count            int64  // continue helper attempts this watch, across episodes
 }
 
-// d9Limit caps continue lines per watch: a lead that keeps stopping, or pane
+// d9Limit caps continue helper attempts per watch: a lead that keeps stopping, or pane
 // text crafted to look stopped, must surface instead of being fed forever.
 const d9Limit = 3
 
@@ -454,7 +454,10 @@ func (w *watch) d9() error {
 		fd.d9Typed, fd.d9TypedHit = true, fd.d9Hits
 		return w.d9Continue()
 	}
-	if fd.d9Outcome == "typed" && fd.d9At == 0 && fd.d9Hits >= fd.d9TypedHit+2 {
+	if (fd.d9Outcome == "typed" || fd.d9Outcome == "prior") && fd.d9At == 0 && fd.d9Hits >= fd.d9TypedHit+2 {
+		if fd.d9Outcome == "prior" {
+			return w.d9Blocked(w.d9What() + " in pane " + w.cfg.pane + " — not resumed (a prior watchdog auto-continued; not retyped); check the pane (crew where)")
+		}
 		return w.d9Blocked(w.d9What() + " in pane " + w.cfg.pane + " — auto-continued but not resumed; check the pane (crew where)")
 	}
 	return nil
@@ -508,9 +511,11 @@ func (w *watch) d9Continue() error {
 		fd.d9Typed = false
 		return nil
 	case fd.d9Count == 0 && w.bus.source == "watchdog" && strings.HasPrefix(w.bus.detail, w.d9Prefix()+" auto-continued"):
-		// A previous watchdog typed for this episode and the lead has posted
-		// nothing since; this watch has typed nothing, so the row is not its own.
-		fd.d9Outcome = "typed"
+		// A previous watchdog's auto-continued row is the latest and this watch
+		// has typed nothing. It may belong to an earlier episode whose resumed
+		// lead never posted; treating it as covering this one fails safe: never
+		// a double type, at the cost of possibly not typing for this episode.
+		fd.d9Outcome = "prior"
 		return nil
 	}
 	cfg := w.cfg
@@ -528,7 +533,7 @@ func (w *watch) d9Continue() error {
 		return w.d9Blocked(notResumed + " (auto-continue " + why + ")")
 	}
 	if fd.d9Count >= d9Limit {
-		return w.d9Blocked(notResumed + " (auto-continue limit reached: " + strconv.FormatInt(d9Limit, 10) + " this watch)")
+		return w.d9Blocked(notResumed + " (auto-continue limit reached: " + strconv.FormatInt(d9Limit, 10) + " attempts this watch)")
 	}
 	fd.d9Count++
 	out, rc, ran, err := w.shWrite("continue", cfg.pane, cfg.engine, cfg.fromID, cfg.crew)

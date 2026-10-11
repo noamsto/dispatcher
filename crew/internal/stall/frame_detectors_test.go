@@ -1270,7 +1270,15 @@ func TestD9FreshBusBeforeTyping(t *testing.T) {
 			r.write(16, tc.body)
 			r.w.now = r.h.seed + 30
 			r.w.text = frameText(t, "pi_truncated_idle.txt")
-			if err := r.w.d9(); err != nil {
+			err := r.w.d9()
+			if tc.name == "done" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if rows := r.posted(); len(rows) != 0 {
+					t.Errorf("rows %q after done, want none", rows)
+				}
+			} else if err != nil {
 				if code, ok := codeOf(err); !ok || code != 0 {
 					t.Fatal(err)
 				}
@@ -1280,6 +1288,27 @@ func TestD9FreshBusBeforeTyping(t *testing.T) {
 			}
 		})
 	}
+	t.Run("worker-block-then-working-rearms", func(t *testing.T) {
+		r := newD9Rig(t, d9ID, "pi")
+		var at int64
+		r.tick(&at, "pi_truncated_idle.txt")
+		d9At := func(ts int64, body string) {
+			r.write(ts, body)
+			r.w.now = r.h.seed + ts
+			r.w.text = frameText(t, "pi_truncated_idle.txt")
+			if err := r.w.d9(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		d9At(16, workerBlock)
+		if r.continues != 0 {
+			t.Fatalf("%d continue calls while the worker is blocked, want none", r.continues)
+		}
+		d9At(31, workerLife)
+		if r.continues != 1 {
+			t.Errorf("%d continue calls after the worker resumed, want 1", r.continues)
+		}
+	})
 }
 
 func TestD9RestartedWatchDoesNotRetype(t *testing.T) {
@@ -1293,8 +1322,8 @@ func TestD9RestartedWatchDoesNotRetype(t *testing.T) {
 	if r.continues != 0 {
 		t.Errorf("%d continue calls, want none", r.continues)
 	}
-	if len(all) != 1 || !strings.HasPrefix(all[0], "blocked|truncated: ") || !strings.Contains(all[0], "auto-continued but not resumed") {
-		t.Errorf("rows %q, want one blocked auto-continued but not resumed", all)
+	if len(all) != 1 || !strings.HasPrefix(all[0], "blocked|truncated: ") || !strings.Contains(all[0], "not resumed (a prior watchdog auto-continued; not retyped)") {
+		t.Errorf("rows %q, want one blocked prior-watchdog not resumed", all)
 	}
 }
 
@@ -1330,7 +1359,7 @@ func TestD9ContinueLimitPerWatch(t *testing.T) {
 	}
 	r.tick(&at, "pi_truncated_idle.txt")
 	rows := r.tick(&at, "pi_truncated_idle.txt")
-	want := "blocked|truncated: response truncated at the output cap in pane %9 — not resumed (auto-continue limit reached: 3 this watch)"
+	want := "blocked|truncated: response truncated at the output cap in pane %9 — not resumed (auto-continue limit reached: 3 attempts this watch)"
 	if r.continues != 3 || len(rows) != 1 || rows[0] != want {
 		t.Errorf("fourth episode: rows %q, %d calls, want [%q] and 3", rows, r.continues, want)
 	}

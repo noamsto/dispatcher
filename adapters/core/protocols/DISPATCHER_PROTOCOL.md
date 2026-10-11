@@ -1321,7 +1321,7 @@ it at relay time.
   not resumed"` means the frame persisted after the line, the typed line was not accepted,
   or auto-continue was refused or off (`--no-nudge`): verify with `crew where`, then have
   the human type `continue` in that pane (capture before and after, per the pane-injection
-  rule below) or re-dispatch. The watchdog stops auto-continuing after 3 lines per watch
+  rule below) or re-dispatch. The watchdog stops auto-continuing after 3 auto-continue attempts per watch
   (`not resumed (auto-continue limit reached …)`). Never escalates to `dead:`; clears itself
   when the pane moves on.
 - `budget:` — the worker's engine (a role pane: the role's own engine, posted under
@@ -1426,14 +1426,14 @@ Two reads remain for detail:
   `source: "watchdog"` has no question behind it and nobody in `crew await` — `crew reply`
   there is a no-op that looks like an answer. Go to the pane instead (verify, then act,
   above).
-- **Pane injection beyond the `crew nudge` line is a human last resort, never an automatic path.** It covers
+- **Pane injection beyond the two constant lines below (`crew nudge`'s and the watchdog's continue line) is a human last resort, never an automatic path.** It covers
   reaching a worker outside the prompt path. Answering a verified trust prompt, with
   the pane captured before and after, is the dispatcher's own job (see the `prompt:`
   bullet above) — this rule does not cover it. A tool-permission dialog is answered
   only by `permission-check --answer`, never by hand; whatever it refuses goes to the
   human. This bullet is about everything
   else: delivering a message, or typing into a stopped
-  or re-dispatched session. Apart from the nudge, no component types into an engine pane for that.
+  or re-dispatched session. Apart from those two constant lines, no component types into an engine pane for that.
   There are two exceptions. One is the constant line `crew inbox "$CREW_WORKER_ID"`, typed into a
   claude/pi lead's pane by `crew nudge` or the watchdog; the lead's shell expands it
   to its own session id. The other is the constant line `continue from where you stopped; if a
