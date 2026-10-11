@@ -163,10 +163,18 @@ cur=$(_poll) || {
 prev=$(cat "$state_file" 2>/dev/null || true)
 printf '%s' "$prev" | jq -e type >/dev/null 2>&1 || prev=""
 _settle
+if [ -n "$prev" ]; then
+  prev=$(jq -c --argjson cur "$cur" '$cur + .' <<<"$prev")
+fi
 [ -n "$prev" ] || {
   _save "$cur"
   prev="$cur"
 }
+# A cursor from before base_sha/mergeable existed matches once those keys are
+# filled, so the park stays quiet — but the file still has to grow them.
+if [ "$prev" = "$cur" ] && [ "$(jq -c . <"$state_file")" != "$cur" ]; then
+  _save "$cur"
+fi
 
 # PR_WATCH_CLOCK=<file> is a test-only virtual clock, same pattern as
 # crew.sh's CREW_CLOCK: _pw_now_ms reads epoch milliseconds from it and

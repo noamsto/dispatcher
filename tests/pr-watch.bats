@@ -108,7 +108,7 @@ EOF
   set_view aaa11 OPEN SUCCESS basebbb MERGEABLE
   run run_pr_watch 42 --repo o/r --timeout 30 --interval 1
   [ "$status" -eq 0 ]
-  echo "$output" | jq -e '.changed | index("base_sha") != null'
+  echo "$output" | jq -e '.changed == ["base_sha"]'
   echo "$output" | jq -e '.state.base_sha == "basebbb" and .was.base_sha == "baseaaa"'
 }
 
@@ -118,8 +118,23 @@ EOF
   set_view aaa11 OPEN SUCCESS baseaaa CONFLICTING
   run run_pr_watch 42 --repo o/r --timeout 30 --interval 1
   [ "$status" -eq 0 ]
-  echo "$output" | jq -e '.changed | index("mergeable") != null'
+  echo "$output" | jq -e '.changed == ["mergeable"]'
   echo "$output" | jq -e '.state.mergeable == "CONFLICTING" and .was.mergeable == "MERGEABLE"'
+}
+
+@test "an old cursor missing base_sha stays quiet until the base moves" {
+  mkdir -p "$XDG_DATA_HOME/crew/pr-watch/o/r"
+  jq -nc '{head_sha:"aaa11",state:"OPEN",review_decision:"",review_at:"",checks:"SUCCESS",thread_at:"",thread_n:0}' \
+    >"$XDG_DATA_HOME/crew/pr-watch/o/r/42.json"
+  set_view aaa11 OPEN SUCCESS baseaaa MERGEABLE
+  run --separate-stderr run_pr_watch 42 --repo o/r --timeout 1 --interval 1
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  jq -e '.base_sha == "baseaaa"' "$XDG_DATA_HOME/crew/pr-watch/o/r/42.json"
+  set_view aaa11 OPEN SUCCESS basebbb MERGEABLE
+  run run_pr_watch 42 --repo o/r --timeout 30 --interval 1
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.changed == ["base_sha"] and .was.base_sha == "baseaaa"'
 }
 
 @test "UNKNOWN mergeable is not an event and the cursor keeps the last known value" {
