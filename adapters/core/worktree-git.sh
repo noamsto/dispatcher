@@ -116,12 +116,14 @@ _wt_git_common() { # <common> <git args…> — guard <common>, then git anchore
 _wt_trusted_cwd() { # <common> — cd out of a dispatched worker's worktree to <common>'s main checkout
   local common="$1" d rec line primary=
   local -a lines wl
-  _wt_cfg_commondir "$common" || return 1
   d="$(pwd -P)" || return 1
   while :; do
     rec="$(_worktree_anchor_path "$d")"
     [ ! -e "$rec" ] && [ ! -L "$rec" ] || break
-    [ "$d" != / ] || return 0
+    if [ "$d" = / ]; then
+      _wt_cfg_commondir "$common"
+      return
+    fi
     d="$(dirname -- "$d")"
   done
   if [ -L "$rec" ] || [ ! -f "$rec" ]; then
@@ -134,6 +136,8 @@ _wt_trusted_cwd() { # <common> — cd out of a dispatched worker's worktree to <
       "$(pwd -P)" "$d" "$common" "${lines[1]%/crew}" >&2
     return 1
   fi
+  # The record checks read no git; the worktree list would follow a planted commondir (#993).
+  _wt_cfg_commondir "$common" || return 1
   mapfile -t wl < <(git --git-dir="$common" worktree list --porcelain)
   for line in "${wl[@]}"; do
     [ -n "$line" ] || break

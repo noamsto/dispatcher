@@ -530,3 +530,25 @@ func TestRunFleetStreamNeedsCrew(t *testing.T) {
 		t.Fatalf("fleet --all after fleet stream: code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
 	}
 }
+
+func TestRunGitGuardAndBaselineOutsideRepo(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", dir)
+	e := env{getwd: func() (string, error) { return dir, nil }}
+	for _, tc := range []struct {
+		args           []string
+		code           int
+		stdout, stderr string
+	}{
+		{[]string{"git-guard"}, exitUsage, "", "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …\n"},
+		{[]string{"git-guard", "canon", "/r", "core.hookspath\n.git/hooks"}, 0, "core.hookspath\n/r/hooks", ""},
+		{[]string{"git-baseline"}, exitFailure, "", "crew: not in a git repo\n"},
+		{[]string{"git-baseline", "--bogus"}, exitFailure, "", "usage: crew git-baseline [--accept]\n"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := run(context.Background(), tc.args, &stdout, &stderr, e)
+		if code != tc.code || stdout.String() != tc.stdout || stderr.String() != tc.stderr {
+			t.Errorf("%q: code %d stdout %q stderr %q", tc.args, code, stdout.String(), stderr.String())
+		}
+	}
+}

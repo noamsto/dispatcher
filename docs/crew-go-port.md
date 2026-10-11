@@ -6,8 +6,9 @@ Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 `--report` rollup of #890), `reply`, `watch`, `resolve-target`, `where`,
 `identity` (#981),
 `stall-watch` (#832), `stream`, `adopt` (#920), `pr-watch` (#934), `roster-render`
-(#935), `fleet` (#926), `status`, `msg`, `register` and `deregister` (#945), and `nudge`
-(#939). Each slice must leave every bats file green;
+(#935), `fleet` (#926), `status`, `msg`, `register` and `deregister` (#945), `nudge`
+(#939), and `git-baseline` (#993), which brings the git-config guard
+(`worktree-git.sh`'s `_wt_cfg_*`) to Go as one shared implementation. Each slice must leave every bats file green;
 tests may be adapted only where the Go design changes what they can observe (the
 output contract below), with each edit justified.
 
@@ -433,6 +434,18 @@ pr_open` for an implement task: the ledger's form, the empty-detail rule, the
 - `crew/internal/panestate`: the three `@crew_*` pane options
   `_publish_pane_state` set (state, detail cut to 40 characters, source), in that
   order. One copy shared by `stall` and `status`, so there is nothing to guard.
+- `crew/internal/gitguard`: the git-config guard of #539/#557/#678/#944 and the #993
+  commondir pin, once, for every caller. It holds the exec and redirect key tables
+  (`ExecKeys`, `RedirectKeys`) and their glob match (only `*`, matching any byte
+  including `.` and `/`); the URL, key and pair masking; bash `%q` quoting (`quote.go`,
+  C locale); the `#covers` marks; the local/worktree-scope pair listing from
+  `git config --list --show-scope -z` and the union over the main checkout and every
+  linked admin context; the legacy `remotes/`/`branches/` records; baseline init and its
+  migrations; the guard (`Check`) and the cwd guard (`CheckCwd`, including the relative
+  `core.hooksPath` equivalence); the commondir pin (`Pin`, `PinCwd`, `PinAdmin`); and the
+  `git-baseline` listing and `--accept`. It is reached two ways: the hidden
+  `crew-go git-guard <op>` that `worktree-git.sh`'s wrappers exec, and the public
+  `crew git-baseline`. See "Shared guard" under Delegation.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 - `crew/internal/drift`: test-only drift-guard skip, fatal under `CREW_DRIFT_REQUIRED`.
 
@@ -444,7 +457,7 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | identity | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate)
+crews | log | report | sessions | roster | identity | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate | git-baseline)
   export CREW_SELF="$0"
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
@@ -525,6 +538,52 @@ dry-run argument to `_release_windows` (after no-op `say`/`note`). `budget` and
 execs Go, and since #968 the arm exports nothing — the one helper it called
 back for, `_unread_scan`, moved in process to `internal/unread`, which is what
 tells the nudge which directive it is waking the lead for.
+
+### Shared guard (`worktree-git.sh` to `crew-go git-guard`)
+
+`git-baseline` lists drift through the guard (`_wt_cfg_guard` and its helpers in
+`worktree-git.sh`), which also runs in `dispatch.sh`, `dispatch-resume.sh` and
+`crew reap`. So the guard moved whole, and the lib calls it instead of keeping a copy. `worktree-git.sh` keeps four one-line wrappers,
+each `"${CREW_GO_BIN:-@crewGoBin@}" git-guard <op> …`:
+
+| wrapper                 | op                          | meaning                                                                  |
+| ----------------------- | --------------------------- | ------------------------------------------------------------------------ |
+| `_wt_cfg_guard`         | `check <common> [<gitdir>]` | refuse exec/redirect config or legacy-file drift (empty gitdir = common) |
+| `_wt_cfg_guard_cwd`     | `check-cwd <common>`        | `check` for `<common>` and the git dir the process cwd resolves to       |
+| `_wt_cfg_baseline_init` | `init <common>`             | record the baseline once; only add coverage classes                      |
+| `_wt_cfg_commondir`     | `commondir <common>`        | the #993 pin from the process cwd                                        |
+
+Those four are the production ops. The rest are test inspection only, driven by
+test-local shims in `tests/worktree-git.bats` that stand in for the removed bash
+helpers: `pairs <gitdir>`, `union <common>` (NUL-separated records), `show-url <s> [proxy]`,
+`show-key <k>`, `show-pair <k> <v> [alias…]` and `canon <R> <rec>`. `git-guard` is
+dispatched before `bus.Locate`: it takes explicit dirs and must run from any cwd.
+
+- `flake.nix` substitutes `@crewGoBin@` into the lib (`worktreeGitLib`), as it already
+  did for `crew.sh`, so every Nix-built consumer (`crew`, `dispatch`, `dispatch-resume`)
+  carries the pinned binary. Raw-source runs export `CREW_GO_BIN`
+  (`tests/setup_suite.bash`, `tests/harness/ensure-crew-go.sh`).
+- A missing or unrunnable binary makes the wrapper exit non-zero (127 or 126), which
+  every caller already treats as a refusal: the guard fails closed. Any internal Go error
+  in a guard path exits 1, never 0.
+- The anchored git invocation stays bash (see "Bash helpers that stay"): it runs
+  arbitrary git subcommands in the caller's process (background pids, `GIT_INDEX_FILE`,
+  captured stdout), which a Go exec cannot hand back, and it holds no guard logic. It calls
+  the Go check first, exactly where it called `_wt_cfg_guard` before.
+- Startup cost: one `crew-go` exec per guard call replaces the bash guard's own forks
+  (each call ran `git config --list` one to three times, `sort`, `sha256sum` and
+  subshells); Go runs the same git calls and nothing else. Dispatch makes on the order of
+  ten to twenty guard calls, expected to stay well under a second in total.
+
+**Single implementation (#993).** Two designs were weighed. (A), chosen: one Go
+implementation behind the wrappers above. (B), rejected: keep the bash guard, add a Go
+copy for `git-baseline` and `reap`, and pin them with a cross-implementation drift suite
+that runs every guard fixture through both and compares verdict and refusal text. The
+suite would have to enumerate the guard's behaviour (the masking grammar, trust on first use,
+the migrations, the cwd hooks equivalence, the legacy entry kinds), so any case it misses is
+an undetected divergence in a security check, and every later guard fix would land twice.
+(A) costs one exec per call and a hard dependency on the binary, both bounded above. The
+guard's key tables, masking and baseline format therefore have one copy, and no drift guard.
 
 ## Output contract
 
@@ -622,6 +681,21 @@ the bus for unread msgs (unread helper failed)` at exit 1, because the empty-sca
   which stdout cannot carry without breaking the outcome line. A `nudge_wait` row is a
   plain statement in the arm, so its write failure does reach `set -e`: exit 1,
   nothing printed.
+- Specific to `git-guard` and `git-baseline`, and not mirrored; each refuses at least as
+  often as the bash guard:
+  - `%q` is bash's under `LC_ALL=C` everywhere: bytes at or above 0x80 print as `$'\ooo'`.
+    Bash used the ambient locale outside URL masking, so a UTF-8 locale printed non-ASCII
+    raw (bidi controls included). Which values are masked, and how, is unchanged for ASCII;
+  - legacy `unsafe-name` also covers invalid UTF-8 and Unicode space and control runes
+    (glibc's `[[:space:][:cntrl:]]` depends on the locale), so such names always refuse;
+  - legacy refusal and listing lines come out in byte order (`os.ReadDir`), not bash glob
+    collation;
+  - origin and key dedupe use exact sets; bash's joined-string substring test could drop a
+    line that merely looked like a duplicate;
+  - a legacy file swapped for a fifo or symlink between the `lstat` and the open reads as
+    `unreadable`;
+  - shell and `realpath` error text that bash printed before a silent refusal is not
+    printed; the refusal and the exit status stay.
 - Before deleting a bash arm, diff it against Go over a generated corpus and
   keep the evidence: compare exit status, human/agent text and JSON values
   (`jq -S`) — nothing else.
@@ -731,6 +805,26 @@ crew.sh caller left but stay, as the canonical copies adapters.bats pins
 dispatch.sh and dispatch-resume.sh against (the same arrangement as
 `_is_quota_cursor_limit`). `_crew_id` stays for the bash arms that resolve a
 crew id.
+
+The guard helpers are gone from `worktree-git.sh` (#993): the key tables and their masking,
+the `#covers` marks, the pair and union listing, the legacy records, `_wt_cfg_canon`, the
+baseline init and migrations, and the guard and cwd guard bodies are all
+`crew/internal/gitguard`, so there is no drift guard to keep. What stays in the lib, and why:
+
+- the four wrappers (`_wt_cfg_guard`, `_wt_cfg_guard_cwd`, `_wt_cfg_baseline_init`,
+  `_wt_cfg_commondir`), which exec Go;
+- the anchored git invocation: `_wt_git`, `_wt_git_common`, `_wt_common_argv`,
+  `_wt_neutral`, `_wt_neutral_cfg` and `_wt_empty_tree`. They run arbitrary git in the
+  caller's process (pids a caller backgrounds, `GIT_INDEX_FILE`, stdout capture) and hold
+  no guard logic;
+- `_wt_trusted_cwd`, which `cd`s the caller, so it cannot be a child process (it calls
+  `_wt_cfg_commondir` first and again after the `cd`);
+- `_wt_admin_dir`, `_wt_gitlink_ok`, `_wt_status`, `_wt_plain_branch_name`,
+  `_wt_fetch_origin_branch` and `_worktree_anchor_path`: bash callers' helpers over git
+  and the dispatcher records, with no config check in them.
+
+`crew reap` and `crew stack` are still bash, so `_wt_trusted_cwd` and the rest stay until
+they are ported.
 
 ## Running the suite
 

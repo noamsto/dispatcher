@@ -1379,14 +1379,10 @@ fake_common() {
   _wt_cfg_baseline_init "$COMMON"
   oid="$(git rev-parse HEAD)"
   CREW_GO_BIN="$BATS_TEST_TMPDIR/nope"
-  run _wt_cfg_guard "$COMMON"
-  [ "$status" -ne 0 ]
-  run _wt_cfg_guard_cwd "$COMMON"
-  [ "$status" -ne 0 ]
-  run _wt_cfg_baseline_init "$COMMON"
-  [ "$status" -ne 0 ]
-  run _wt_cfg_commondir "$COMMON"
-  [ "$status" -ne 0 ]
+  run -127 _wt_cfg_guard "$COMMON"
+  run -127 _wt_cfg_guard_cwd "$COMMON"
+  run -127 _wt_cfg_baseline_init "$COMMON"
+  run -127 _wt_cfg_commondir "$COMMON"
   run _wt_git_common "$COMMON" rev-parse HEAD
   [ "$status" -ne 0 ]
   [[ $output != *"$oid"* ]]

@@ -90,19 +90,7 @@ func pairs(gitdir, dir string, stderr io.Writer) ([]string, error) {
 // Union is Pairs over common and each linked admin dir `common/worktrees/<id>`
 // whose HEAD is a regular file, each admin first passing PinAdmin.
 func Union(common string, stderr io.Writer) ([]string, error) {
-	dirs := []string{common}
-	// Unreadable like bash's glob: no linked contexts.
-	entries, _ := os.ReadDir(common + "/worktrees")
-	for _, e := range entries {
-		// The glob `*` skips dot names.
-		if strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		admin := common + "/worktrees/" + e.Name()
-		if fi, err := os.Stat(admin + "/HEAD"); err == nil && fi.Mode().IsRegular() {
-			dirs = append(dirs, admin)
-		}
-	}
+	dirs := append([]string{common}, linkedAdmins(common)...)
 	var all []string
 	for i, d := range dirs {
 		if i > 0 {
@@ -117,4 +105,23 @@ func Union(common string, stderr io.Writer) ([]string, error) {
 		all = append(all, got...)
 	}
 	return sortUnique(all), nil
+}
+
+// linkedAdmins lists common's linked admin dirs `common/worktrees/<id>` whose
+// HEAD is a regular file, as bash's `common/worktrees/*/HEAD` glob did.
+func linkedAdmins(common string) []string {
+	var admins []string
+	// Unreadable like bash's glob: no linked contexts.
+	entries, _ := os.ReadDir(common + "/worktrees")
+	for _, e := range entries {
+		// The glob `*` skips dot names.
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		admin := common + "/worktrees/" + e.Name()
+		if fi, err := os.Stat(admin + "/HEAD"); err == nil && fi.Mode().IsRegular() {
+			admins = append(admins, admin)
+		}
+	}
+	return admins
 }
