@@ -459,6 +459,35 @@ placeholder_three_row() { # token bin bin bin
   done
 }
 
+# The git-config guard runs in crew-go, so the worktree-git lib each consumer
+# sources must name a real, executable binary: an unsubstituted token fails
+# every guard call closed (exit 127), blocking every anchored git.
+@test "the worktree-git lib names an executable crew-go in each consumer" {
+  begin_rows
+  local row bin
+  while IFS='|' read -r row bin; do
+    [ -n "$row" ] || continue
+    keep_row "$row" worktree_git_lib_crew_go_row "$bin"
+  done <<ROWS
+crew|$OUT_CREW/bin/crew
+dispatch|$OUT_DISPATCH/bin/dispatch
+dispatch-resume|$OUT_DISPATCH_RESUME/bin/dispatch-resume
+ROWS
+  finish_rows 3
+}
+
+worktree_git_lib_crew_go_row() { # bin
+  local lib go
+  lib="$(sed -n 's|^ *wt_git_lib="${WORKTREE_GIT_LIB:-\([^"}]*\)}"$|\1|p' "$1" | head -1)"
+  [ -n "$lib" ]
+  [ -f "$lib" ]
+  run grep -c '@crewGoBin@' "$lib"
+  [ "$output" = "0" ]
+  go="$(sed -n 's|.*${CREW_GO_BIN:-\([^}]*\)}.*|\1|p' "$lib" | head -1)"
+  [ -n "$go" ]
+  [ -x "$go" ]
+}
+
 # #936: the dirs a launcher strips must be exactly the dirs its preamble
 # prepends — anything else leaves a pinned `crew` behind or strips a tool the
 # launcher still needs. Comparing against each built launcher's own preamble line

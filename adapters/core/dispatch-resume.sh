@@ -588,6 +588,11 @@ done
 # a branch or a codename — lets this run from anywhere. A word of those shapes
 # is always a target; any other word is one only when the bus knows it (or it
 # is ambiguous), so an extra prompt such as "continue" keeps working.
+# #993: the bare-word probe and _resolve_target_worktree read the bus under the
+# discovered common dir, which a planted commondir redirects.
+if [ "${#positional[@]}" -gt 0 ] && _r_common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+  _wt_cfg_commondir "$_r_common" || exit 1
+fi
 if [ "${#positional[@]}" -gt 0 ]; then
   _first="${positional[0]}"
   if [[ $_first =~ ^#?[0-9]+$ || $_first =~ ^[A-Za-z]+-[0-9]+$ || $_first == */* || $_first == worker:* ]]; then

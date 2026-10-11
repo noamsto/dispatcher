@@ -90,10 +90,33 @@
           # source tree itself, not a projection: gen-adapters.sh copies this
           # same directory into the other three adapter trees.
           skills = ./adapters/core/skills;
+          # The Go port of crew's ported subcommands; crew.sh execs it. It
+          # references nothing in the flake, so crew listing it closes no
+          # eval-time cycle. git and tmux come from crew's own PATH at run
+          # time, and git is a check input because the bus tests run real
+          # `git init`/`git worktree`. buildGoModule names the binary after the
+          # module path's last element ("crew"), so postInstall renames it.
+          crewGo = pkgs.buildGoModule {
+            # `name`, not just pname/version, for the same reason as crew-dash.
+            name = "crew-go";
+            pname = "crew-go";
+            version = "0.1.0";
+            src = ./crew;
+            vendorHash = "sha256-9H7aWvuqfuxsL3UIoxaqNEofuFXE2D9Dq3Hk32qSHmk=";
+            nativeCheckInputs = [pkgs.git pkgs.ps];
+            postInstall = "mv $out/bin/crew $out/bin/crew-go";
+          };
+
+          # The git-config guard runs in crew-go, so every consumer of the
+          # worktree-git lib needs the binary; the lib carries it as @crewGoBin@.
+          worktreeGitLib =
+            pkgs.writeText "worktree-git.sh"
+            (builtins.replaceStrings ["@crewGoBin@"] ["${crewGo}/bin/crew-go"]
+              (builtins.readFile ./adapters/core/worktree-git.sh));
           sub =
             builtins.replaceStrings
             ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@" "@publicLeakGuard@" "@worktreeGitLib@" "@grantCheckLib@" "@claudeWorkerSettingsLib@" "@localModelsLib@" "@budgetGateLib@" "@laneProfilesDir@"]
-            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}" "${./adapters/core/worktree-git.sh}" "${./adapters/core/grant-check.sh}" "${./adapters/core/claude-worker-settings.sh}" "${./adapters/core/local-models.sh}" "${./adapters/core/budget-gate.sh}" "${./adapters/core/lane-profiles}"];
+            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}" "${worktreeGitLib}" "${./adapters/core/grant-check.sh}" "${./adapters/core/claude-worker-settings.sh}" "${./adapters/core/local-models.sh}" "${./adapters/core/budget-gate.sh}" "${./adapters/core/lane-profiles}"];
           # The settings resolver (#560), with defaults.json baked in as its base
           # layer. withConfig bakes its path into the consumers as the default for
           # their env-overridable DISPATCH_CONFIG_BIN, the WORKTREE_GIT_LIB idiom.
@@ -117,6 +140,7 @@
             builtins.replaceStrings ["@launcherRuntimePath@"] [(pkgs.lib.makeBinPath runtimeInputs)];
         in rec {
           dispatch-config = dispatchConfig;
+          crew-go = crewGo;
 
           # Its own binary, not a crew subcommand: the primitive is standalone by
           # design (no crew, no bus, no dispatcher) and `crew pr-watch` only
@@ -140,28 +164,12 @@
             runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gh gtrash procps]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
             # crew never references the protocols, but reap sources the
             # anchored-git lib (#539), so it still needs `sub`.
-            # @crewGoBin@ is the Go port's binary, substituted for crew alone
-            # (not in the shared `sub`): only crew.sh's ported-arm exec uses it.
+            # @crewGoBin@ is the Go port's binary, substituted in crew.sh itself
+            # (not in the shared `sub`) for its ported-arm exec; the worktree-git
+            # lib gets its own copy in worktreeGitLib.
             text =
-              builtins.replaceStrings ["@crewGoBin@"] ["${crew-go}/bin/crew-go"]
+              builtins.replaceStrings ["@crewGoBin@"] ["${crewGo}/bin/crew-go"]
               (sub (builtins.readFile ./adapters/core/crew.sh));
-          };
-
-          # The Go port of crew's ported subcommands; crew.sh execs it. It
-          # references nothing in the flake, so crew listing it closes no
-          # eval-time cycle. git and tmux come from crew's own PATH at run
-          # time, and git is a check input because the bus tests run real
-          # `git init`/`git worktree`. buildGoModule names the binary after the
-          # module path's last element ("crew"), so postInstall renames it.
-          crew-go = pkgs.buildGoModule {
-            # `name`, not just pname/version, for the same reason as crew-dash.
-            name = "crew-go";
-            pname = "crew-go";
-            version = "0.1.0";
-            src = ./crew;
-            vendorHash = "sha256-9H7aWvuqfuxsL3UIoxaqNEofuFXE2D9Dq3Hk32qSHmk=";
-            nativeCheckInputs = [pkgs.git pkgs.ps];
-            postInstall = "mv $out/bin/crew $out/bin/crew-go";
           };
 
           # crew is deliberately NOT a runtime input of crew-dash: crew lists

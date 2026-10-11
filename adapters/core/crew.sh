@@ -1846,6 +1846,7 @@ baseline the worktree guard enforces.
 Values print %q-escaped, so a planted escape sequence cannot redraw the terminal.
 URL userinfo and query values in redirect values and URL-subsection keys are masked
 with a sha256 fingerprint of the full value; the baseline stores full values.
+Legacy remotes/ and branches/ entries are listed and never accepted — remove them.
 
   crew git-baseline
 HELP
@@ -2028,7 +2029,7 @@ nudge)
   # with stall-watch — moved to Go with #968 (crew/internal/unread).
   exec "${CREW_GO_BIN:-@crewGoBin@}" nudge "$@"
   ;;
-crews | log | report | sessions | roster | identity | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate)
+crews | log | report | sessions | roster | identity | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate | git-baseline)
   # Ported to Go (crew/, docs/crew-go-port.md). CREW_GO_BIN is the
   # raw-source override; builds bake @crewGoBin@. CREW_SELF is this script's own
   # path — the `$0` the bash `stream` arm re-entered for its inner `watch`, its
@@ -2173,154 +2174,6 @@ stall-watch)
     exit $((rc + 10))
   fi
   CREW_SH="$(readlink -f "$0")" exec "${CREW_GO_BIN:-@crewGoBin@}" stall-watch "$@"
-  ;;
-git-baseline)
-  # Lists — or, with --accept, merges into — the exec-capable and redirecting
-  # git-config baseline _wt_cfg_guard enforces (#557, #585, #678). Only a dispatch records one
-  # unasked. Values are shown %q-escaped so a planted ESC/CR cannot redraw the
-  # terminal, URL userinfo and query values in redirect values and URL-subsection
-  # keys are masked with a sha256 fingerprint of the full value (the baseline
-  # stores full values), and --accept writes exactly the pairs this run printed: each
-  # context is read once, and a pair is shown and collected in one step.
-  case "$#:${1:-}" in
-  0:) accept= ;;
-  1:--accept) accept=1 ;;
-  *)
-    echo "usage: crew git-baseline [--accept]" >&2
-    exit 1
-    ;;
-  esac
-  if [ -n "$accept" ] && [ ! -t 0 ]; then
-    echo "crew: git-baseline --accept needs your own terminal (not Claude Code's ! prefix)" >&2
-    exit 1
-  fi
-
-  wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
-  # shellcheck source=/dev/null
-  . "$wt_git_lib"
-  baseline_file="$common/crew/git-config-baseline"
-  gb_recs=()
-  if [ -f "$baseline_file" ]; then
-    mapfile -d '' gb_recs <"$baseline_file"
-  elif [ -z "$accept" ]; then
-    echo "git-config baseline $baseline_file: none yet — the next dispatch records it, or run \`crew git-baseline --accept\` from your own terminal" >&2
-    exit 1
-  fi
-
-  declare -A gb_base=() gb_seen=() gb_re=()
-  gb_canon=
-  gb_marked=
-  gb_aliases=()
-  gb_real="$(realpath -e -- "$common")" || gb_real=
-  for gb_rec in "${gb_recs[@]}"; do
-    [ -n "$gb_rec" ] || continue
-    # shellcheck disable=SC2154 # set by the sourced worktree-git lib
-    [ "$gb_rec" != "$_wt_cfg_redirect_mark" ] || gb_marked=1
-    # A baselined alias the worker unset now can come back without drift.
-    gb_key="${gb_rec%%$'\n'*}"
-    if [[ $gb_rec == *$'\n'* && ($gb_key == url.*.insteadof || $gb_key == url.*.pushinsteadof) ]]; then
-      gb_aliases+=("${gb_rec#*$'\n'}")
-    fi
-    _wt_cfg_canon "$gb_real" "$gb_rec" gb_canon
-    gb_base["$gb_canon"]=1
-  done
-
-  gb_ctxs=("$common")
-  for gb_head in "$common"/worktrees/*/HEAD; do
-    [ -f "$gb_head" ] && gb_ctxs+=("${gb_head%/HEAD}")
-  done
-
-  if [ -f "$baseline_file" ] && [ -z "$gb_marked" ]; then
-    echo "git-config baseline $baseline_file predates redirect-key coverage — the next dispatch records the redirect keys present then, or --accept does"
-  fi
-
-  # Every context's aliases apply to every pair: git in a linked worktree
-  # may rewrite the main checkout's url through an alias only it sees.
-  gb_shown=()
-  gb_all=()
-  for gb_ctx in "${gb_ctxs[@]}"; do
-    gb_label="main checkout"
-    [ "$gb_ctx" = "$common" ] || printf -v gb_label 'worktree %q' "${gb_ctx##*/}"
-    mapfile -d '' gb_listing < <(git --git-dir="$gb_ctx" config --list --show-origin --show-scope -z)
-    if ! wait $!; then
-      echo "crew: cannot list the git config of $gb_ctx" >&2
-      exit 1
-    fi
-    for ((gb_i = 0; gb_i + 2 < ${#gb_listing[@]}; gb_i += 3)); do
-      gb_rec="${gb_listing[gb_i + 2]}"
-      gb_all+=("$gb_label" "${gb_listing[gb_i]}" "${gb_listing[gb_i + 1]}" "$gb_rec")
-      # A human's global insteadOf rewrites a local remote url too.
-      [[ ${gb_rec%%$'\n'*} == url.*.insteadof || ${gb_rec%%$'\n'*} == url.*.pushinsteadof ]] || continue
-      [[ $gb_rec == *$'\n'* ]] && gb_aliases+=("${gb_rec#*$'\n'}")
-    done
-  done
-  for ((gb_j = 0; gb_j + 3 < ${#gb_all[@]}; gb_j += 4)); do
-    [[ ${gb_all[gb_j + 1]} == local || ${gb_all[gb_j + 1]} == worktree ]] || continue
-    gb_label="${gb_all[gb_j]}"
-    gb_rec="${gb_all[gb_j + 3]}"
-    [[ $gb_rec == *$'\n'* ]] || gb_rec+=$'\n'
-    gb_key="${gb_rec%%$'\n'*}"
-    gb_value="${gb_rec#"$gb_key"$'\n'}"
-    _wt_cfg_guarded "$gb_key" "$gb_value" || continue
-    _wt_cfg_canon "$gb_real" "$gb_rec" gb_canon
-    [ -z "${gb_base["$gb_canon"]+x}" ] || continue
-    gb_origin="${gb_all[gb_j + 2]#file:}"
-    [ -z "${gb_seen["$gb_origin"$'\n'"$gb_rec"]+x}" ] || continue
-    gb_seen["$gb_origin"$'\n'"$gb_rec"]=1
-    _wt_cfg_show_pair "$gb_key" "$gb_value" gb_disp gb_aliases
-    # shellcheck disable=SC2154 # set by _wt_cfg_show_pair
-    printf '%s (%s, %q)\n' "$gb_disp" "$gb_label" "$gb_origin"
-    gb_shown+=("$gb_rec")
-    [[ $gb_key == url.*.insteadof || $gb_key == url.*.pushinsteadof ]] || continue
-    # The alias may redirect a remote url accepted earlier while shown masked.
-    # shellcheck disable=SC2034 # read by name in _wt_cfg_rewritten and _wt_cfg_show_pair
-    gb_alias=("$gb_value")
-    gb_re=()
-    for ((gb_k = 0; gb_k + 3 < ${#gb_all[@]}; gb_k += 4)); do
-      [[ ${gb_all[gb_k + 1]} == local || ${gb_all[gb_k + 1]} == worktree ]] || continue
-      gb_rrec="${gb_all[gb_k + 3]}"
-      gb_rkey="${gb_rrec%%$'\n'*}"
-      [[ $gb_rrec == *$'\n'* && ($gb_rkey == remote.*.url || $gb_rkey == remote.*.pushurl) ]] || continue
-      gb_rvalue="${gb_rrec#*$'\n'}"
-      _wt_cfg_rewritten "$gb_rvalue" gb_alias || continue
-      gb_rorigin="${gb_all[gb_k + 2]#file:}"
-      [ -z "${gb_re["$gb_rorigin"$'\n'"$gb_rrec"]+x}" ] || continue
-      gb_re["$gb_rorigin"$'\n'"$gb_rrec"]=1
-      _wt_cfg_show_pair "$gb_rkey" "$gb_rvalue" gb_disp gb_alias
-      printf '  rewritten by the alias above: %s (%s, %q)\n' "$gb_disp" "${gb_all[gb_k]}" "$gb_rorigin"
-    done
-  done
-
-  if [ "${#gb_shown[@]}" -eq 0 ] && [ -f "$baseline_file" ] && [ -n "$gb_marked" ]; then
-    echo "git-config baseline $baseline_file: no drift"
-    exit 0
-  fi
-  if [ -z "$accept" ]; then
-    exit 1
-  fi
-
-  if [ "${#gb_shown[@]}" -eq 0 ]; then
-    echo "no guarded git config yet — yes records an empty baseline"
-  fi
-  printf 'Accept these into the baseline %s? type yes: ' "$baseline_file"
-  read -r gb_answer
-  if [ "$gb_answer" != yes ]; then
-    echo "crew: baseline unchanged" >&2
-    exit 1
-  fi
-
-  mkdir -p -- "$dir" || exit 1
-  gb_tmp="$(mktemp "$baseline_file.XXXXXX")" || exit 1
-  # Merge, never replace: this run shows only the drift, so a replace would
-  # drop every pair already accepted. The marker is always written, so an
-  # empty set is never a 0-byte file or a lone NUL (an empty record).
-  if ! for gb_rec in "${gb_recs[@]}" "${gb_shown[@]}" "$_wt_cfg_redirect_mark"; do
-    [ -z "$gb_rec" ] || printf '%s\0' "$gb_rec"
-  done | LC_ALL=C sort -z -u >"$gb_tmp" || ! mv -f -- "$gb_tmp" "$baseline_file"; then
-    rm -f -- "$gb_tmp"
-    exit 1
-  fi
-  echo "git-config baseline $baseline_file: accepted"
   ;;
 reap)
   # Reclaim window + worktree for workers whose PR has landed. No crew filter:
