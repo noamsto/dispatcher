@@ -5492,7 +5492,8 @@ EOF
 
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"no git admin dir for $TEST_REPO/.worktrees/eng-557-noadmin"* ]]
+  # The entry pin (#993) refuses the moved admin dir before the wt switch gate reaches it.
+  [[ "$output" == *"refusing git: $TEST_REPO/.git/worktrees/eng-557-noadmin has a commondir but is not a linked-worktree admin dir"* ]]
   run ! grep -q 'switch' "$STUB_LOG"
 }
 
