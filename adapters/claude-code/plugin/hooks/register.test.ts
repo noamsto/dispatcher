@@ -10,6 +10,12 @@ const PANE = {
   scroll: { offset: 0, bodyRows: 40 },
   view: {},
 } as const
+const ROSTER = {
+  command: 'roster',
+  args: '',
+  origin: { kind: 'composer' },
+  presentation: { isFullscreen: false, columns: 100 },
+} as const
 
 const ROWS = [
   {
@@ -49,6 +55,31 @@ function stubEngine(on: On) {
   return calls
 }
 
+test('session.start registers /roster but does not open the pane', async ($, on) => {
+  mock.env(on, { CREW_ID: 'c1' })
+  const calls = stubEngine(on)
+  const clock = mock.clock(on)
+  const argv: string[][] = []
+  on('process.run', async (_$, e) => {
+    argv.push([...e.argv])
+    return ok('[]')
+  })
+  await $.session.start(START)
+  await clock.advance(25_000)
+  expect(calls).toEqual(['command roster'])
+  expect(argv).toEqual([])
+})
+
+test('/roster opens the pane for $CREW_ID', async ($, on) => {
+  mock.env(on, { CREW_ID: 'c1' })
+  const calls = stubEngine(on)
+  mock.clock(on)
+  on('process.run', async () => ok('[]'))
+  await $.session.start(START)
+  await $.command.run(ROSTER)
+  expect(calls).toEqual(['command roster', 'open crew-roster'])
+})
+
 test('a worker session registers nothing and runs no process', async ($, on) => {
   mock.env(on, { CREW_WORKER_ID: 'worker:x', CREW_ID: 'c1' })
   const calls = stubEngine(on)
@@ -69,6 +100,7 @@ test('rows render: active first, watchdog distinct, detail truncated, PR linked'
   const clock = mock.clock(on)
   on('process.run', async () => ok(JSON.stringify(ROWS)))
   await $.session.start(START)
+  await $.command.run(ROSTER)
   await clock.settle()
   const ui = await $.ui.mount({
     plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
@@ -88,6 +120,7 @@ test('a failing crew call shows an error line', async ($, on) => {
   const clock = mock.clock(on)
   on('process.run', async () => done(2, '', 'boom'))
   await $.session.start(START)
+  await $.command.run(ROSTER)
   await clock.advance(13_000)
   const ui = await $.ui.mount({
     plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
@@ -106,6 +139,7 @@ test('the roster refreshes on the timer and treats empty output as no workers', 
     return ok('')
   })
   await $.session.start(START)
+  await $.command.run(ROSTER)
   await clock.advance(25_000)
   // Every tick is one ownership scan plus one roster call per followed crew.
   const rosters = argv.filter(call => call[1] === 'roster')
@@ -132,6 +166,7 @@ test('the pane follows every crew this session owns, not only $CREW_ID', async (
     return ok(JSON.stringify(e.argv[2] === 'A' ? [ROWS[0]] : [ROWS[2]]))
   })
   await $.session.start(START)
+  await $.command.run(ROSTER)
   await clock.settle()
   expect(argv).toContainEqual(['crew', 'crews', '--mine'])
   expect(argv).toContainEqual(['crew', 'roster', 'A'])
@@ -154,6 +189,7 @@ test('a failing ownership scan keeps the rows and shows an error line', async ($
     e.argv[2] === '--mine' ? done(2, '', 'scan boom') : ok(JSON.stringify(ROWS)),
   )
   await $.session.start(START)
+  await $.command.run(ROSTER)
   await clock.settle()
   const ui = await $.ui.mount({
     plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
