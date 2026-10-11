@@ -254,6 +254,11 @@ _wt_cfg_legacy_records() { # <common> -> NUL records for direct legacy entries
       continue
     fi
     [ -d "$dir" ] || continue
+    # An unlistable namespace hides its entries from the glob, yet git still opens them by path.
+    if [ ! -r "$dir" ] || [ ! -x "$dir" ]; then
+      printf '%s%s\nunreadable-dir\n.\0' "$_wt_cfg_legacy_prefix" "$ns"
+      continue
+    fi
     entries=()
     shopt -s nullglob dotglob
     entries=("$dir"/*)
@@ -353,13 +358,8 @@ _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwri
       echo "refusing git-config baseline migration: legacy remotes or branches entries exist — inspect and remove them before re-running dispatch" >&2
       return 1
     fi
-    for rec in "${legacy[@]}"; do
-      [[ $rec == "$_wt_cfg_legacy_prefix"* ]] || continue
-      _wt_cfg_legacy_fields "$rec" ns kind name hash
-      [ "$kind" = file ] && legacy_add+=("$rec")
-    done
     tmp="$(mktemp "$file.XXXXXX")" || return 1
-    if ! printf '%s\0' "${recs[@]}" "${add[@]}" "${legacy_add[@]}" "$_wt_cfg_redirect_mark" "$_wt_cfg_legacy_mark" | LC_ALL=C sort -z -u >"$tmp" || ! mv -f -- "$tmp" "$file"; then
+    if ! printf '%s\0' "${recs[@]}" "${add[@]}" "$_wt_cfg_redirect_mark" "$_wt_cfg_legacy_mark" | LC_ALL=C sort -z -u >"$tmp" || ! mv -f -- "$tmp" "$file"; then
       rm -f -- "$tmp"
       return 1
     fi
@@ -383,9 +383,8 @@ _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwri
   _wt_cfg_note_keys "$file" "${recs[@]}"
 }
 _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config and legacy-file drift
-  local common="$1" gitdir="$1" file rec key value origin found i R canon kd plain redirect=
-  [ "$#" -ge 2 ] && gitdir="$2"
-  local legacy_mark=0 legacy_kind legacy_ns legacy_name
+  local common="$1" gitdir="${2:-$1}" file rec key value origin found i R canon kd plain redirect=
+  local legacy_kind legacy_ns legacy_name
   local -a pairs listing drift=() legacy_pairs=()
   local -A base=() bad=() seen=()
   file="$common/crew/git-config-baseline"
@@ -398,7 +397,6 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config and lega
   for rec in "${pairs[@]}"; do
     [ -n "$rec" ] || continue
     [ "$rec" = "$_wt_cfg_redirect_mark" ] && redirect=1
-    [ "$rec" = "$_wt_cfg_legacy_mark" ] && legacy_mark=1
     _wt_cfg_canon "$R" "$rec" canon
     base["$canon"]=1
   done
@@ -419,14 +417,16 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config and lega
       legacy_bad=1
       continue
     fi
-    [ "$legacy_mark" -eq 1 ] || continue
-    if ! [[ -v "base[$rec]" ]]; then
+    if [ -z "${base["$rec"]+x}" ]; then
       printf 'refusing git: legacy entry %q (%s/%s) is new or changed from the git-config baseline %q\n' \
-        "$common/$legacy_ns/$legacy_name" "$legacy_ns" "$legacy_name" "$file" >&2
+        "$common/$legacy_ns/$legacy_name" "$legacy_ns" "$legacy_kind" "$file" >&2
       legacy_bad=1
     fi
   done
-  [ "$legacy_bad" -eq 0 ] || return 1
+  if [ "$legacy_bad" -eq 1 ]; then
+    echo "refusing git: inspect and remove the legacy entry before re-running; the dispatcher never follows or repairs a legacy entry" >&2
+    return 1
+  fi
   for rec in "${pairs[@]}"; do
     _wt_cfg_canon "$R" "$rec" canon
     [ -z "${base["$canon"]+x}" ] || continue

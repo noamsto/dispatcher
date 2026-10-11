@@ -698,7 +698,8 @@ branch instead; the worktree carries over under `resume: true`.
   `_wt_redirect_keys`) would send either anchored network action —
   `git ls-remote --heads origin <pattern>` during claim checks or the explicit
   non-recursive `git fetch origin <refspec>` — with the operator's
-  credential-helper token to a worker-chosen endpoint. There is no anchored
+  credential-helper token to a worker-chosen endpoint, and hand a default
+  create, `--base` or `--pr` attach a tip from there. There is no anchored
   push. Defense: `dispatch`, `dispatch resume`
   and `crew reap` diff those keys' local/worktree-scope config (includes
   resolved; the call's git dir and the caller's own) against a baseline at
@@ -773,18 +774,22 @@ branch instead; the worktree carries over under `resume: true`.
   legacy `$GIT_COMMON_DIR/remotes/<name>` and
   `$GIT_COMMON_DIR/branches/<name>` entries are covered separately from
   config: the baseline records regular files, and the guard refuses an unsafe
-  entry type (including a symlink) without following it. A legacy-coverage
-  migration records its marker only when those directories are empty; it
-  refuses instead of accepting an existing entry, so a worker cannot launder
-  one through migration. A human must inspect and remove a refused entry before
+  entry type (including a symlink) without following it; a `remotes/` or
+  `branches/` directory the dispatcher cannot list is refused like an unsafe
+  entry. A legacy-coverage migration records the legacy marker (`#covers
+  legacy`) only when those directories are empty; it refuses instead of
+  accepting an existing entry, so a worker cannot launder one through
+  migration. Until the legacy marker is written (only a `dispatch` writes it),
+  the baseline holds no legacy entries, so the guard refuses every legacy
+  `remotes/`/`branches/` entry. A human must inspect and remove a refused entry before
   re-running dispatch; the dispatcher never follows or repairs it. Migration:
   a baseline recorded before redirect keys were covered
-  (#678) lacks the `#covers` marker record; until the marker is written the
-  guard checks
+  (#678) lacks the redirect marker (`#covers redirect`); until it is written
+  the guard checks
   program keys only, and the next `dispatch` entry records the redirect keys
   present at that moment (TOFU again, before any fetch) — so an existing
-  `remote.origin.url` never refuses; `crew git-baseline --accept` also writes
-  the marker. A legitimate change of origin's URL, a proxy, or a local
+  `remote.origin.url` never refuses; `crew git-baseline --accept` writes only
+  the redirect marker. A legitimate change of origin's URL, a proxy, or a local
   `insteadOf` alias then refuses like any drift until the human accepts it
   (global-scope `insteadOf` aliases are unchecked, as all global config).
   Residual: no protection for the human's own interactive git

@@ -14,6 +14,8 @@ setup() {
 }
 
 teardown() {
+  # A test may leave a legacy namespace unsearchable; rm -rf needs it back.
+  [ ! -d "${COMMON:-}/remotes" ] || chmod 700 "$COMMON/remotes"
   teardown_repo
 }
 
@@ -968,6 +970,8 @@ write_anchor() {
   mkdir -p "$COMMON/remotes"
   printf 'URL: %s\n' "$ORIGIN" >"$COMMON/remotes/origin"
   _wt_cfg_baseline_init "$COMMON"
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 0 ]
   printf 'URL: https://user:changed-secret@example.invalid/r.git\n' >"$COMMON/remotes/origin"
   run --separate-stderr _wt_git_common "$COMMON" fetch --no-recurse-submodules origin +refs/heads/main:refs/remotes/origin/main
   [ "$status" -eq 1 ]
@@ -987,6 +991,40 @@ write_anchor() {
   [[ $stderr == *remotes/origin* ]]
   [[ $stderr != *symlink-secret* ]]
   [ ! -e "$COMMON/refs/remotes/origin/main" ]
+}
+
+@test "an unreadable legacy namespace directory refuses the guard" {
+  add_origin
+  _wt_cfg_baseline_init "$COMMON"
+  git config --unset remote.origin.url
+  mkdir -p "$COMMON/remotes"
+  printf 'URL: https://user:dir-secret@example.invalid/r.git\n' >"$COMMON/remotes/origin"
+  chmod 300 "$COMMON/remotes"
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  chmod 700 "$COMMON/remotes"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *remotes* ]]
+  [[ $stderr != *dir-secret* ]]
+}
+
+@test "a baseline without legacy coverage refuses every regular legacy entry" {
+  mkdir -p "${BASELINE%/*}"
+  _wt_cfg_union "$COMMON" >"$BASELINE"
+  printf '%s\0' "$_wt_cfg_redirect_mark" >>"$BASELINE"
+  mkdir -p "$COMMON/remotes"
+  printf 'URL: https://user:mark-secret@example.invalid/r.git\n' >"$COMMON/remotes/origin"
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *remotes/origin* ]]
+  [[ $stderr != *mark-secret* ]]
+}
+
+@test "guard with an empty git-dir argument still checks the common config" {
+  _wt_cfg_baseline_init "$COMMON"
+  git config core.hooksPath /evil
+  run --separate-stderr _wt_cfg_guard "$COMMON" ""
+  [ "$status" -eq 1 ]
+  [[ $stderr == *hookspath* ]]
 }
 
 fp8() { printf %s "$1" | sha256sum | cut -c1-8; }
