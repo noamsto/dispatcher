@@ -436,7 +436,9 @@ placeholder_two_row() { # token
 
 # F57: @worktreeGitLib@ (#539), @grantCheckLib@ (#536) and @localModelsLib@ are
 # substituted in each consumer. An unsubstituted token is not a readable path, so the source
-# would abort under set -e. Read-only greps; no per-row reset.
+# would abort under set -e. Read-only greps; no per-row reset. A row lists only the
+# consumers that source that lib, so `crew` appears under local-models but not worktree-git
+# (#1004 ported the arm that sourced it).
 @test "shared-lib placeholders are substituted in each consumer" {
   begin_rows
   local row token b1 b2 b3
@@ -444,16 +446,17 @@ placeholder_two_row() { # token
     [ -n "$row" ] || continue
     keep_row "$row" placeholder_three_row "$token" "$b1" "$b2" "$b3"
   done <<ROWS
-worktree-git|@worktreeGitLib@|$OUT_CREW/bin/crew|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume
+worktree-git|@worktreeGitLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume
 grant-check|@grantCheckLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume|$OUT_PERMISSION_CHECK/bin/permission-check
 local-models|@localModelsLib@|$OUT_CREW/bin/crew|$OUT_DISPATCH/bin/dispatch|$OUT_REFRESH_BUDGET/bin/refresh-budget
 ROWS
   finish_rows 3
 }
 
-placeholder_three_row() { # token bin bin bin
+placeholder_three_row() { # token bin… (empty trailing bins are skipped)
   local bin
-  for bin in "$2" "$3" "$4"; do
+  for bin in "${@:2}"; do
+    [ -n "$bin" ] || continue
     run grep -c "$1" "$bin"
     [ "$output" = "0" ]
   done
@@ -461,7 +464,9 @@ placeholder_three_row() { # token bin bin bin
 
 # The git-config guard runs in crew-go, so the worktree-git lib each consumer
 # sources must name a real, executable binary: an unsubstituted token fails
-# every guard call closed (exit 127), blocking every anchored git.
+# every guard call closed (exit 127), blocking every anchored git. `crew` left
+# the list with #1004: its `stack` arm was the last bash caller, and the Go port
+# builds the same argv in internal/wtgit, so the script sources the lib no more.
 @test "the worktree-git lib names an executable crew-go in each consumer" {
   begin_rows
   local row bin
@@ -469,11 +474,10 @@ placeholder_three_row() { # token bin bin bin
     [ -n "$row" ] || continue
     keep_row "$row" worktree_git_lib_crew_go_row "$bin"
   done <<ROWS
-crew|$OUT_CREW/bin/crew
 dispatch|$OUT_DISPATCH/bin/dispatch
 dispatch-resume|$OUT_DISPATCH_RESUME/bin/dispatch-resume
 ROWS
-  finish_rows 3
+  finish_rows 2
 }
 
 worktree_git_lib_crew_go_row() { # bin

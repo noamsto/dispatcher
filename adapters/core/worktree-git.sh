@@ -19,9 +19,10 @@
 # (Go) and runs as `crew-go git-guard`; this file keeps the anchored git
 # invocation around it.
 #
-# Baked into crew, dispatch and dispatch-resume as @worktreeGitLib@ by
-# flake.nix, with @crewGoBin@ substituted there; raw-source runs (bats) point
-# $WORKTREE_GIT_LIB at this file and export CREW_GO_BIN.
+# Baked into dispatch and dispatch-resume as @worktreeGitLib@ by flake.nix,
+# with @crewGoBin@ substituted there (`crew` carried the lib until #1004 ported
+# its last bash caller, and substitutes @crewGoBin@ for itself); raw-source runs
+# (bats) point $WORKTREE_GIT_LIB at this file and export CREW_GO_BIN.
 # Sourced, never executed — the shebang keeps the CI shellcheck glob happy.
 
 # _worktree_anchor_path <wt> — the dispatcher-owned anchor file recording <wt>'s
