@@ -67,7 +67,7 @@ func (w *watch) shCall(op string, args ...string) (out string, verdict int, ok b
 	return w.shOn(w.ctx, op, args...)
 }
 
-// shWrite is shCall for an op that writes (nudge, release). The arm's `$(…)`
+// shWrite is shCall for an op that writes (nudge, continue, release). The arm's `$(…)`
 // child outlived the arm's death and finished its write, so a signal must not
 // tear one between the keystroke or kill and its bus row; the watch still
 // ends with 128+signo once the op returns. A write that has not started when

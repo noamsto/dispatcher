@@ -1,0 +1,12 @@
+ pi v1.1.0
+ Here is the plan for the change.
+
+Response was truncated before completion.
+ Continuing with the edit now.
+ Done with the first file.
+
+──────────────────────────────
+
+──────────────────────────────
+~/git/dispatcher
+0.0%/0 (auto)      unknown

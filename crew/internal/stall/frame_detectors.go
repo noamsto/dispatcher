@@ -25,7 +25,19 @@ type frameDet struct {
 	d7At, d7Hits   int64
 	d7Tok0         int64
 	d3At           int64
+
+	d9Kind             string
+	d9Hits, d9TypedHit int64
+	d9At               int64
+	d9Typed            bool
+	d9Outcome          string // "typed": this watch typed this episode; "prior": an earlier watchdog's auto-continued row stands, nothing typed here
+	d9Count            int64  // continue helper attempts this watch, across episodes
 }
+
+// d9Limit caps continue helper attempts per watch: a lead that keeps stopping,
+// or pane text crafted to look stopped, must surface instead of being fed
+// forever.
+const d9Limit = 3
 
 // space is glibc's [[:space:]] in a UTF-8 locale, which RE2's own class is not.
 const space = `\t\n\v\f\r \x{1680}\x{2000}-\x{2006}\x{2008}-\x{200A}\x{2028}\x{2029}\x{205F}\x{3000}`
@@ -59,9 +71,9 @@ var (
 	reRunSpace   = regexp.MustCompile(`[` + space + `]+`)
 )
 
-// frameDetect runs D1, D2, D1b, D7, D3 and D0 on this tick's frame.
+// frameDetect runs D1, D2, D1b, D7, D3, D0 and D9 on this tick's frame.
 func (w *watch) frameDetect() error {
-	for _, d := range []func() error{w.d1, w.d2, w.d1b, w.d7, w.d3, w.d0} {
+	for _, d := range []func() error{w.d1, w.d2, w.d1b, w.d7, w.d3, w.d0, w.d9} {
 		if err := d(); err != nil {
 			return err
 		}
@@ -410,6 +422,137 @@ func (w *watch) d0() error {
 	return nil
 }
 
+// d9 is the stopped-pi-turn detector: a pi lead whose turn ended truncated at
+// the output cap or on a provider error, then sits idle. One constant continue
+// line per episode on the second stopped sample, typed through the same gated
+// _nudge_pane as D6's auto-nudge; it never escalates. An idle box still holding
+// text is the typed line or a human draft: it holds the episode open without
+// resuming or clearing it.
+func (w *watch) d9() error {
+	fd := &w.fd
+	kind := ""
+	gate := !w.suppressed && !w.cfg.roleMode && w.cfg.engine == "pi"
+	if gate {
+		kind = frame.PiStopped(w.text)
+		if kind == "" && frame.PiBoxOccupied(w.text) {
+			return nil
+		}
+	}
+	if kind == "" {
+		return w.d9Close()
+	}
+	if fd.d9Kind != "" && kind != fd.d9Kind {
+		if err := w.d9Close(); err != nil {
+			return err
+		}
+	}
+	fd.d9Kind = kind
+	fd.d9Hits++
+	if fd.d9Hits >= 2 && !fd.d9Typed {
+		// Set before the call: a helper that crashes mid-type never retypes.
+		fd.d9Typed, fd.d9TypedHit = true, fd.d9Hits
+		return w.d9Continue()
+	}
+	if (fd.d9Outcome == "typed" || fd.d9Outcome == "prior") && fd.d9At == 0 && fd.d9Hits >= fd.d9TypedHit+2 {
+		if fd.d9Outcome == "prior" {
+			return w.d9Blocked(w.d9What() + " in pane " + w.cfg.pane + " — not resumed (a prior watchdog auto-continued; not retyped); check the pane (crew where)")
+		}
+		return w.d9Blocked(w.d9What() + " in pane " + w.cfg.pane + " — auto-continued but not resumed; check the pane (crew where)")
+	}
+	return nil
+}
+
+func (w *watch) d9Prefix() string {
+	if w.fd.d9Kind == "truncated" {
+		return "truncated:"
+	}
+	return "provider-error:"
+}
+
+func (w *watch) d9What() string {
+	if w.fd.d9Kind == "truncated" {
+		return "response truncated at the output cap"
+	}
+	return "model provider error"
+}
+
+func (w *watch) d9Blocked(rest string) error {
+	prefix := w.d9Prefix()
+	posted, err := w.postBlocked(prefix, prefix+" "+rest)
+	if err == nil && posted {
+		w.fd.d9At = w.now
+	}
+	return err
+}
+
+func (w *watch) d9Close() error {
+	fd := &w.fd
+	if fd.d9At != 0 {
+		if err := w.postClear(w.d9Prefix()); err != nil {
+			return err
+		}
+	}
+	fd.d9Kind, fd.d9Hits, fd.d9TypedHit, fd.d9At, fd.d9Typed, fd.d9Outcome = "", 0, 0, 0, false, ""
+	return nil
+}
+
+// d9Continue re-reads the bus first: d9 runs every tick but the loop reads
+// the bus every 4th, and the lead may have just finished or blocked itself.
+func (w *watch) d9Continue() error {
+	fd := &w.fd
+	if err := w.refresh(); err != nil {
+		return err
+	}
+	switch {
+	case w.bus.state == "done" || w.bus.state == "failed" || w.bus.state == "exited":
+		return nil
+	case w.bus.state == "blocked" && w.bus.source != "watchdog":
+		fd.d9Typed = false
+		return nil
+	case fd.d9Count == 0 && w.bus.source == "watchdog" && strings.HasPrefix(w.bus.detail, w.d9Prefix()+" auto-continued"):
+		// A previous watchdog's auto-continued row is the latest and this watch
+		// has typed nothing. It may belong to an earlier episode whose resumed
+		// lead never posted; treating it as covering this one fails safe: never
+		// a double type, at the cost of possibly not typing for this episode.
+		fd.d9Outcome = "prior"
+		return nil
+	}
+	cfg := w.cfg
+	notResumed := w.d9What() + " in pane " + cfg.pane + " — not resumed"
+	why := ""
+	switch {
+	case !cfg.nudgeOn:
+		why = "off"
+	case cfg.fromID == cfg.me:
+		why = "unavailable: no session id"
+	case w.bus.state != "" && w.bus.state != "working":
+		why = "held: worker is " + w.bus.state
+	}
+	if why != "" {
+		return w.d9Blocked(notResumed + " (auto-continue " + why + ")")
+	}
+	if fd.d9Count >= d9Limit {
+		return w.d9Blocked(notResumed + " (auto-continue limit reached: " + strconv.FormatInt(d9Limit, 10) + " attempts this watch)")
+	}
+	fd.d9Count++
+	out, rc, ran, err := w.shWrite("continue", cfg.pane, cfg.engine, cfg.fromID, cfg.crew)
+	if err != nil {
+		return err
+	}
+	switch {
+	case !ran:
+		return w.d9Blocked(notResumed + " (auto-continue helper failed)")
+	case rc == 0:
+		fd.d9Outcome = "typed"
+		return w.post("working", w.d9Prefix()+" auto-continued — pane "+cfg.pane)
+	case rc == 3:
+		reason, _, _ := strings.Cut(out, " — ")
+		return w.d9Blocked("auto-continue typed but not accepted (" + reason + ") in pane " + cfg.pane + " — not resumed; verify the pane with crew where")
+	}
+	line, _, _ := strings.Cut(out, "\n")
+	return w.d9Blocked(notResumed + " (auto-continue refused: " + line + ")")
+}
+
 // escalate is the only path to `failed`, and a second, later, independent
 // evidence check, not a timer. prompt: and quota: are exempt: a frame still on
 // screen means nobody answered (or the window has not reset), and escalating
@@ -454,10 +597,17 @@ func (w *watch) escalate() error {
 	return nil
 }
 
-// holdsEpisode is an open prompt:, quota: or runaway: episode, which never
-// escalates.
+// holdsEpisode is an open prompt:, quota:, runaway:, truncated: or
+// provider-error: episode, which never escalates. A watchdog working row
+// carrying one of the last two prefixes (auto-continued, cleared) counts only
+// while it is the latest row.
 func holdsEpisode(detail string) bool {
-	return strings.HasPrefix(detail, "prompt:") || strings.HasPrefix(detail, "quota:") || strings.HasPrefix(detail, "runaway:")
+	for _, p := range []string{"prompt:", "quota:", "runaway:", "truncated:", "provider-error:"} {
+		if strings.HasPrefix(detail, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // permissionDetail is the human-relay payload for a detected tool-permission

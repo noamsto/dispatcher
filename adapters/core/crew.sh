@@ -944,6 +944,11 @@ _nudge_busy_reason() {
 # its engine environment exports, so nothing bus- or branch-derived is typed.
 _nudge_line="crew inbox \"\$CREW_WORKER_ID\""
 
+# The line the stall-watch auto-continue types into a pi lead whose turn ended
+# on a truncated response or a provider error; msg_ts 0 keeps its nudge row from
+# covering any directive.
+_continue_line="continue from where you stopped; if a command's result is missing, re-run it"
+
 # _nudge_box_text <text> — every row inside the lead's input box (same bounds
 # as _box_rows) concatenated with claude's `❯` and all whitespace dropped, so a
 # box the engine wrapped (at a space or mid-word) still compares equal to the
@@ -2692,6 +2697,15 @@ stall-watch)
   #                  A sessioned claude/pi watchdog first auto-nudges an idle
   #                  lead past an overdue dispatcher directive (_nudge_pane,
   #                  once per newest directive); --no-nudge turns it off.
+  #   D9 truncated:/provider-error:
+  #                  a pi lead idle at an empty box under pi's `Response was
+  #                  truncated before completion.` or `Error: ...` line gets one
+  #                  constant continue line after two samples (gated like the D6
+  #                  auto-nudge: lead only, pi panes only, refused on a
+  #                  live turn, unsent input or a dialog, once per episode) and
+  #                  posts `working "truncated: auto-continued - pane %N"` /
+  #                  `provider-error: ...`; `blocked "... not resumed"` if the
+  #                  frame persists. Never escalates to dead:.
   #   D8 budget:     the engine has a quota window at >=95% that has not reset,
   #                  or its limit_reached holds, per refresh-budget's
   #                  engine-budget.json read through the launch gate's own
@@ -2729,8 +2743,8 @@ stall-watch)
   #
   # The loop runs in Go (crew/internal/stall, docs/crew-go-port.md); the comments
   # above document the behaviour it implements. `--sh <op>` is the Go side's
-  # call-out into the bash helpers that stay here: release, nudge, unread,
-  # budget (windows|limit) and local-model.
+  # call-out into the bash helpers that stay here: release, nudge, continue,
+  # unread, budget (windows|limit) and local-model.
   # Every op exits its status + 10, so a failure before or around it — the
   # preamble's exit 1, a usage refusal, 127, a signal — never reads as a verdict.
   if [ "${1:-}" = --sh ]; then
@@ -2747,6 +2761,12 @@ stall-watch)
     nudge)
       _frame_classifier
       out=$(_nudge_pane "$1" "$2" "$3" "$4" watchdog "$5") || rc=$?
+      printf '%s\n' "$out"
+      ;;
+    continue)
+      _frame_classifier
+      _nudge_line=$_continue_line
+      out=$(_nudge_pane "$1" "$2" "$3" "$4" watchdog 0) || rc=$?
       printf '%s\n' "$out"
       ;;
     unread) _unread_scan "$@" || rc=$? ;;

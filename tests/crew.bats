@@ -7609,6 +7609,42 @@ d6_rows() { bus | jq -r 'select(.kind=="status" and .body.source=="watchdog") | 
   [[ "${lines[1]}" == "blocked|unread: "*"auto-nudge typed but not accepted (nudge unconfirmed: %9 "* ]]
 }
 
+@test "stall-watch: --sh continue types the continue line into an idle pi lead" {
+  _nudge_setup pi pi
+  line="continue from where you stopped; if a command's result is missing, re-run it"
+  nudge_frames "$(fx_nudge_pi idle '')" "$(fx_nudge_pi typed2 "$line")" "$(fx_nudge_pi_live)"
+  CREW_ID=c1 run run_crew stall-watch --sh continue %9 pi 'worker:feat/x#s1-1' c1
+  [ "$status" -eq 10 ]
+  [ "$(nudge_keys)" = "$(printf '%s\n' "send-keys -t %9 -l $line" 'send-keys -t %9 Enter')" ]
+  [ "$(nudge_rows | jq -r '"\(.from) \(.result) \(.msg_ts)"')" = "watchdog accepted 0" ]
+}
+
+@test "stall-watch: --sh continue refuses a pi lead mid-turn or holding a draft" {
+  _nudge_setup pi pi
+  nudge_frames "$(fx_nudge_pi_live)"
+  CREW_ID=c1 run run_crew stall-watch --sh continue %9 pi 'worker:feat/x#s1-1' c1
+  [ "$status" -eq 12 ]
+  [[ "$output" == *"live turn or no idle input box"* ]]
+  [ -z "$(nudge_keys)" ]
+  [ -z "$(nudge_rows)" ]
+  nudge_frames "$(fx_nudge_pi draft 'hello draft')"
+  CREW_ID=c1 run run_crew stall-watch --sh continue %9 pi 'worker:feat/x#s1-1' c1
+  [ "$status" -eq 12 ]
+  [[ "$output" == *"unsent input in the input box"* ]]
+  [ -z "$(nudge_keys)" ]
+  [ -z "$(nudge_rows)" ]
+}
+
+@test "stall-watch: --sh continue refuses a codex lead" {
+  _nudge_setup codex codex
+  nudge_frames "$(fx_nudge_pi idle '')"
+  CREW_ID=c1 run run_crew stall-watch --sh continue %9 codex 'worker:feat/x#s1-1' c1
+  [ "$status" -eq 12 ]
+  [[ "$output" == *"no verified idle lead frame for codex"* ]]
+  [ -z "$(nudge_keys)" ]
+  [ -z "$(nudge_rows)" ]
+}
+
 @test "stall-watch: D6 stops auto-nudging after an anchor refusal" {
   _nudge_setup claude zsh
   seed_raw 'worker:feat/x#s1-1' working "" ""

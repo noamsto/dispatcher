@@ -1,0 +1,15 @@
+ pi v1.1.0
+ Here is the plan for the change.
+ I will edit the file next.
+
+ Response was truncated before completion.
+
+──────────────────────────────
+ Resume session?
+→ Yes
+  No
+
+  Enter to select · Esc to go back
+──────────────────────────────
+~/git/dispatcher
+0.0%/0 (auto)      unknown

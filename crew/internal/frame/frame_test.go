@@ -586,3 +586,39 @@ func lookup(r []kv, key string) (string, bool) {
 	}
 	return "", false
 }
+
+func TestPiStopped(t *testing.T) {
+	want := map[string]string{
+		"pi_truncated_idle":              "truncated",
+		"pi_truncated_padded_idle":       "truncated",
+		"pi_truncated_select":            "",
+		"pi_provider_error_idle":         "provider-error",
+		"pi_provider_error_hint_idle":    "provider-error",
+		"pi_provider_error_wrapped_idle": "provider-error",
+	}
+	for _, p := range corpus(t) {
+		name := strings.TrimSuffix(filepath.Base(p), ".txt")
+		t.Run(name, func(t *testing.T) {
+			if got := PiStopped(readFrame(t, p)); got != want[name] {
+				t.Errorf("PiStopped = %q, want %q", got, want[name])
+			}
+		})
+	}
+}
+
+func TestPiBoxOccupied(t *testing.T) {
+	for name, want := range map[string]bool{
+		"pi_truncated_draft":      true,
+		"pi_provider_error_draft": true,
+		"nudge_pi_draft":          true,
+		"pi_truncated_idle":       false,
+		"nudge_pi_idle":           false,
+		"pi_truncated_live":       false,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := PiBoxOccupied(readFrame(t, "testdata/frames/"+name+".txt")); got != want {
+				t.Errorf("PiBoxOccupied = %v, want %v", got, want)
+			}
+		})
+	}
+}

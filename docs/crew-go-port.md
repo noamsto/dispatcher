@@ -196,8 +196,10 @@ output contract below), with each edit justified.
   then `--sh local-model`; any failure to tell keeps it on) and exits early for
   a non-claude role with D8 off. One loop then samples the pane every
   `--interval` and runs D4, D8, D5 and the role-mode end-of-life check, then D1,
-  D2, D1b, D7, D3 and D0 on the frame, then D6, then the `dead:` escalation
-  (D2 and D3; D3's also needs the engine gone), with the pane-gone quorum of 3,
+  D2, D1b, D7, D3, D0 and D9 on the frame (D9 types one `continue` line into a
+  stopped pi lead and never escalates), then D6, then the `dead:` escalation
+  (D2 and D3; D3's also needs the engine gone; an open `prompt:`, `quota:`,
+  `runaway:`, `truncated:` or `provider-error:` episode is exempt), with the pane-gone quorum of 3,
   the 4-tick bus-read cadence and `--max-life` checked every tick. A `done` or
   `failed` bus state hands over to the release loop: claude must show
   `frame.PaneIdleReason` idle on two consecutive ticks, other engines an
@@ -227,9 +229,9 @@ output contract below), with each edit justified.
   ignore it inherits. A probe that returns into a cancelled context was cut
   short, and its failure value (empty text, a dead pane) is no evidence: the
   watch exits 128+signo without posting, as the arm died on the signal. The
-  `--sh nudge` and `--sh release` ops alone run on through a signal (for at
+  `--sh nudge`, `--sh continue` and `--sh release` ops alone run on through a signal (for at
   most 2 minutes), as the arm's `$(…)` child outlived it, so a typed nudge or
-  killed window still gets its bus row. Every append is one `O_APPEND` write,
+  continue line or killed window still gets its bus row. Every append is one `O_APPEND` write,
   so a kill cannot leave a torn row; the `refresh-at` stamp and the clock file
   keep tmp+rename. A failed bus write exits 1 where the arm's `set -e` did (a
   `failed` or clearance post); `_post_blocked` ran only in `if` context, so
@@ -401,13 +403,16 @@ stall-watch: unknown --sh …` line, exit 1.
 | ------------- | ------------------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------- |
 | `release`     | `<branch> <session\|-> <state> <ts_ms> <grace>`               | none                                              | 3 keep watching; else exit 0                                         | keep watching, as 3                |
 | `nudge`       | `<pane> <engine> <sid> <crew> <msg_ts>`                       | one line                                          | 0 ok; 2 refused (`anchor:` turns nudging off); 3 typed, not accepted | a refusal; never latches `anchor:` |
+| `continue`    | `<pane> <engine> <sid> <crew>`                                | one line                                          | as `nudge`: 0 ok; 2 refused; 3 typed, not accepted                   | a refusal; never latches `anchor:` |
 | `unread`      | `<crew> <branch> <me> <from_id> <t0_ms> <oldest\|dispatcher>` | `<ts> <dispatcher\|role>`, `<min> <max>` or empty | 0                                                                    | D6 skips the tick's verdict        |
 | `budget`      | `<windows\|limit> <cache> <engine> <now>`                     | `_budget_*`'s TSV                                 | 0 hit, 1 clear, 2 can't tell                                         | can't tell (2)                     |
 | `local-model` | `<model>`                                                     | non-empty iff the model is local                  | 0                                                                    | D8 stays on                        |
 
 The op supplies what the arm supplied itself: `release` appends the empty
 dry-run argument to `_release_windows` (after no-op `say`/`note`), and `nudge`
-inserts the literal `watchdog` actor before the message timestamp. `budget` and
+inserts the literal `watchdog` actor before the message timestamp. `continue`
+inserts the same actor and a msg_ts of 0 and types a constant line; it shares
+`_nudge_pane`, so it moves with `nudge`'s port. `budget` and
 `local-model` source `${BUDGET_GATE_LIB:-@budgetGateLib@}` and
 `${LOCAL_MODELS_LIB:-@localModelsLib@}`; `local-model` also runs
 `${DISPATCH_CONFIG_BIN:-dispatch-config}`.
