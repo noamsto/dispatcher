@@ -1005,7 +1005,7 @@ _fleet_leads() {
   return 0
 }
 
-# _fleet_owned <lbranch>... — non-empty when a lead pane (engine alive or not)
+# _fleet_owned <branch>... — non-empty when a lead pane (engine alive or not)
 # is stamped with one of the branches.
 _fleet_owned() {
   local cmd name lbranch role path
