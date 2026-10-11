@@ -73,7 +73,7 @@ _identity_bus_occ() {
     | (($all | map(select(.crew_id == $crew and .kind == "dispatch" and .branch == $self) | .ts) | max) // 1e18) as $selfts
     | $all | map(select(.crew_id == $crew and .kind == "dispatch" and .branch != $self))
     | group_by(.branch) | map(last)
-    | .[] | select(.ts <= $selfts) | select(($st[.branch] // "") | IN("done", "failed", "exited") | not)
+    | .[] | select(.ts <= $selfts) | select(($st[.branch] // "") | IN("done", "failed", "exited", "reaped") | not)
     | [.branch, (.name // "")] | @tsv' "$log" 2>/dev/null || true)
   printf '%s' "$occ"
 }
