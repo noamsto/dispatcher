@@ -952,7 +952,10 @@ hd_text_ok() {
     echo 0
     return
   fi
-  view=$(awk -v W=0 -v B=1 "$awk_mask_cmd$awk_chars" <<<"$1") || { echo 0; return; }
+  view=$(awk -v W=0 -v B=1 "$awk_mask_cmd$awk_chars" <<<"$1") || {
+    echo 0
+    return
+  }
   ok=$(awk "$awk_sinks" <<<"$view") || ok=0
   echo "$ok"
 }
