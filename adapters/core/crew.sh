@@ -1589,9 +1589,13 @@ never delivered twice. A per-repo stream started while the fleet lane is
 mid-park shows `another watch is already running` error lines until that park
 ends (at most --park seconds).
 
-The lane lock lives under ${XDG_STATE_HOME:-~/.local/state}/crew/fleet-stream/<crew>,
-outside every repo. Gone repos and repos without a bus are noted once on stderr
-and skipped.
+Like `crew stream`, the lane holds the watch for each repo it has joined, so a
+bare `crew watch` for that crew in that repo is refused ("another watch is
+already running") while the lane runs.
+
+The lane lock lives under
+${XDG_STATE_HOME:-~/.local/state}/crew/fleet-stream/<crew>, outside every repo.
+Gone repos and repos without a bus are noted once on stderr and skipped.
 
   crew fleet stream --crew <crew-id>
 HELP
@@ -1930,6 +1934,17 @@ hold)
     exit $?
     ;;
   esac
+  ;;
+fleet)
+  # `fleet stream` is a sub-subcommand: its --help is the second argument.
+  if [ "${1:-}" = stream ]; then
+    case "${2:-}" in
+    --help | -h)
+      _crew_help fleet
+      exit $?
+      ;;
+    esac
+  fi
   ;;
 esac
 case "${1:-}" in

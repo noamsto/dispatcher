@@ -390,7 +390,7 @@ func TestFleetSkipsGoneAndNoBus(t *testing.T) {
 	l := startFleet(t, FleetOptions{
 		Options: Options{Self: watchStub(t)},
 		Discover: func(w io.Writer) []repos.Repo {
-			fmt.Fprintf(w, "crew: fleet stream: /nowhere is not a directory\n")
+			say(w, "crew: fleet stream: /nowhere is not a directory\n")
 			betaStatus := repos.StatusOK
 			if betaGone.Load() {
 				betaStatus = repos.StatusGone
@@ -428,6 +428,56 @@ func TestFleetSkipsGoneAndNoBus(t *testing.T) {
 			t.Errorf("%q noted %d times, want once; stderr %q", want, n, stderr)
 		}
 	}
+}
+
+func TestFleetRelativeSelfStillDelivers(t *testing.T) {
+	alpha := gitRepo(t, "alpha")
+	appendRow(t, alpha, statusRow(1000, "c1", "worker:feat/a", "working"))
+	stub := watchStub(t)
+	// The child runs in alpha, not here, so only an absolute path still finds it.
+	t.Chdir(filepath.Dir(stub))
+	self := "./" + filepath.Base(stub)
+
+	l := startFleet(t, FleetOptions{
+		Options:  Options{Self: self},
+		Discover: okRepos(alpha),
+		Origin:   origins(nil),
+	}, fastFlags()...)
+
+	appendRow(t, alpha, statusRow(2000, "c1", "worker:feat/a", "pr_open"))
+	waitFor(t, "alpha's batch through a relative Self", func() bool { return l.delivered()["alpha"][2000] > 0 })
+	l.stop()
+}
+
+func TestFleetLeavesRepoDroppedFromDiscovery(t *testing.T) {
+	alpha, beta := gitRepo(t, "alpha"), gitRepo(t, "beta")
+	appendRow(t, alpha, statusRow(1000, "c1", "worker:feat/a", "working"))
+	appendRow(t, beta, statusRow(1000, "c1", "worker:feat/b", "working"))
+	var betaListed atomic.Bool
+	betaListed.Store(true)
+
+	l := startFleet(t, FleetOptions{
+		Options: Options{Self: watchStub(t)},
+		Discover: func(io.Writer) []repos.Repo {
+			if betaListed.Load() {
+				return okRepos(alpha, beta)(nil)
+			}
+			return okRepos(alpha)(nil)
+		},
+		Origin: origins(nil),
+	}, fastFlags("--rediscover", "1")...)
+
+	betaScratch := busScratch(filepath.Join(l.root, "c1"), beta)
+	waitFor(t, "beta's bus loop", func() bool { _, err := os.Stat(betaScratch); return err == nil })
+	betaListed.Store(false)
+	if err := os.RemoveAll(filepath.Dir(beta)); err != nil {
+		t.Fatal(err)
+	}
+	l.kickUntil("beta's loop to stop", func() bool { _, err := os.Stat(betaScratch); return os.IsNotExist(err) })
+
+	appendRow(t, alpha, statusRow(2000, "c1", "worker:feat/a", "pr_open"))
+	waitFor(t, "alpha's batch", func() bool { return l.delivered()["alpha"][2000] > 0 })
+	l.stop()
 }
 
 func TestFleetNoDoubleDeliveryWithPerRepoStream(t *testing.T) {

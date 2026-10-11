@@ -981,8 +981,13 @@ so one Monitor replaces a lane per repo. It shares each bus's per-crew cursor
 with `crew watch`, so it never delivers an event a per-repo stream also
 delivered, and it leaves a repo whose own `crew stream` is alive to that stream.
 It does not evaluate holds or run reaps: keep your own repo's `crew stream` for
-`hold_due` and `reap` lines. `crew fleet stream --status --crew <id>` reads the
-lane like `crew stream --status`.
+`hold_due` and `reap` lines. Cursors are per bus: remember the last `cursor` per
+`repo` (a batch without `repo` is your own stream's) and compare only within
+it, or a lower-cursor batch from another repo is dropped. A repo joins at the
+next rediscovery (`--rediscover`, default 300 s) and replays its backlog then.
+Arm the lane as its own persistent Monitor and give it the same liveness checks
+as `crew stream`, with `crew fleet stream --status --crew <id>` (a stale lane:
+`--force`; a dead one: re-arm). Its heartbeat carries no `repo`.
 
 The crew's roster diagram is drawn by `crew`, not by you: every `dispatch` and
 `dispatch resume` starts a per-crew `crew roster-render`, which redraws it into the

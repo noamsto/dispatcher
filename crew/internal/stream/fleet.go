@@ -100,6 +100,17 @@ func RunFleet(argv []string, stdout, stderr io.Writer, opts FleetOptions) int {
 	}
 	c.reapEvery = 0
 
+	// Each bus loop's child runs in its repo's git common dir, so a relative
+	// script path would resolve there instead of where it was given.
+	if strings.Contains(o.Self, "/") {
+		self, err := filepath.Abs(o.Self)
+		if err != nil {
+			say(stderr, "crew: %v\n", err)
+			return 1
+		}
+		o.Self = self
+	}
+
 	lane := filepath.Join(o.LaneRoot, c.crew)
 	if c.statusMode {
 		return status(lane, c.crew, stdout, o.Options)
@@ -253,7 +264,7 @@ func (f *fleet) shutdown(s os.Signal) int {
 }
 
 // discover is one pass over the candidates: skip notes, a loop stopped for a
-// repo that is gone, and a join for each bus that has gained a row for the crew.
+// repo that is gone or no longer listed as a bus, and a join for each bus that has gained a row for the crew.
 // A bus with none is never watched, so no cursor or crew dir is created in a
 // repo the crew never touched.
 func (f *fleet) discover() {
@@ -267,10 +278,19 @@ func (f *fleet) discover() {
 		say(f.stderr, "%s", line)
 	}
 
+	// A repo deleted under a sweep root just drops out of discovery, with no
+	// gone row to say so.
+	listed := make(map[string]bool, len(found))
 	for _, r := range found {
-		if r.Status == repos.StatusGone {
-			f.leave(r.Common)
+		listed[r.Common] = r.Status == repos.StatusOK
+	}
+	for common := range f.buses {
+		if !listed[common] {
+			f.leave(common)
 		}
+	}
+
+	for _, r := range found {
 		if r.Status != repos.StatusOK {
 			f.skip(r.Common, string(r.Status))
 			continue
@@ -350,7 +370,7 @@ func (f *fleet) join(common string) {
 	}()
 }
 
-// leave stops a gone repo's loop and waits for it, so a repo that comes back
+// leave stops a departed repo's loop and waits for it, so a repo that comes back
 // never shares a scratch dir with the loop it replaces.
 func (f *fleet) leave(common string) {
 	b := f.buses[common]

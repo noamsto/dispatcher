@@ -13735,22 +13735,41 @@ STUB
 
 # start_fleet_stream <args…> — launch `crew fleet stream` as a REAL process, for
 # the reasons start_stream gives. It adds no --reap-every, which the fleet lane
-# refuses, and its lock lives under $XDG_STATE_HOME, not in a repo.
+# refuses, and its lock lives under $XDG_STATE_HOME, not in a repo. The state
+# and sweep-root defaults keep a test that forgets them off the real home.
 start_fleet_stream() {
-  FLEET_OUT="$BATS_TEST_TMPDIR/fleet-stream.out"
-  FLEET_ERR="$BATS_TEST_TMPDIR/fleet-stream.err"
-  FLEET_LOCK="$XDG_STATE_HOME/crew/fleet-stream/c1/stream.lock.d"
-  bash -euo pipefail "$CREW" fleet stream "$@" >"$FLEET_OUT" 2>"$FLEET_ERR" </dev/null &
+  export XDG_STATE_HOME="${XDG_STATE_HOME:-$BATS_TEST_TMPDIR/state}"
+  export CREW_SWEEP_ROOTS="${CREW_SWEEP_ROOTS:-$BATS_TEST_TMPDIR/fleetroot}"
+  FLEET_N=$((${FLEET_N:-0} + 1))
+  FLEET_OUT="$BATS_TEST_TMPDIR/fleet-stream.$FLEET_N.out"
+  FLEET_ERR="$BATS_TEST_TMPDIR/fleet-stream.$FLEET_N.err"
+  local args=("$@") i crew_id=""
+  for ((i = 0; i < ${#args[@]}; i++)); do
+    [ "${args[i]}" = --crew ] && crew_id="${args[i + 1]}"
+  done
+  FLEET_LOCK="$XDG_STATE_HOME/crew/fleet-stream/$crew_id/stream.lock.d"
+  bash -euo pipefail "$CREW" fleet stream "${args[@]}" >"$FLEET_OUT" 2>"$FLEET_ERR" </dev/null &
   FLEET_PID=$!
+  FLEET_PIDS="${FLEET_PIDS:-} $FLEET_PID"
 }
 
-# stop_fleet_stream — TERM the lane and wait for its lock dir, the last thing
-# its shutdown removes, then reap it.
+# stop_fleet_stream — TERM every lane this test started and wait for the lock
+# dir, the last thing a shutdown removes, then reap them.
 stop_fleet_stream() {
-  [ -n "${FLEET_PID:-}" ] || return 0
-  kill -TERM "$FLEET_PID" 2>/dev/null || true
-  poll_for 60 test ! -d "$FLEET_LOCK" || kill -KILL "$FLEET_PID" 2>/dev/null || true
-  wait "$FLEET_PID" 2>/dev/null || true
+  local fpid
+  [ -n "${FLEET_PIDS:-}" ] || return 0
+  for fpid in $FLEET_PIDS; do
+    kill -TERM "$fpid" 2>/dev/null || true
+  done
+  poll_for 60 test ! -d "$FLEET_LOCK" || {
+    for fpid in $FLEET_PIDS; do
+      kill -KILL "$fpid" 2>/dev/null || true
+    done
+  }
+  for fpid in $FLEET_PIDS; do
+    wait "$fpid" 2>/dev/null || true
+  done
+  FLEET_PIDS=""
   FLEET_PID=""
 }
 
@@ -13820,12 +13839,14 @@ post_pr_open() {
   mkdir -p "$outside"
   cd "$outside"
 
-  start_fleet_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+  start_fleet_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1 --rediscover 1
   poll_for 100 fleet_locked
   poll_for 100 grep -q 'skipped (no bus)' "$FLEET_ERR"
   post_pr_open "$root/alpha"
   poll_for 150 fleet_at_least 1
-  sleep 2
+  # --rediscover 1 rediscovers about once a second, so this spans at least two
+  # more: a repeated note would show in the counts below.
+  sleep 3
   [ "$(fleet_lines)" -eq 1 ]
   [ "$(jq -r '.repo' "$FLEET_OUT")" = alpha ]
   [ "$(grep -c 'skipped (gone)' "$FLEET_ERR")" -eq 1 ]
@@ -13833,4 +13854,17 @@ post_pr_open() {
   run --separate-stderr run_crew fleet stream --status --crew c1
   [ "$status" -eq 0 ]
   stop_fleet_stream
+}
+
+@test "fleet stream: --help and -h print the fleet help, outside any git repo" {
+  outside="$BATS_TEST_TMPDIR/outside"
+  mkdir -p "$outside"
+  cd "$outside"
+  for flag in --help -h; do
+    run --separate-stderr run_crew fleet stream "$flag"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"usage: crew fleet stream --crew ID"* ]]
+    [[ "$output" == *"another watch is already running"* ]]
+    [ -z "$stderr" ]
+  done
 }
