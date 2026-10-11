@@ -2711,6 +2711,54 @@ reap)
     _bus_append "$log" "$row"
   }
 
+  # _reap_forget <branch> — drop the reaped branch's grants/protocol-dirs/leads
+  # files and its sessions' await marks, phase-status and directive-delivery
+  # records, by exact derived path. artifacts/<branch> stays: it can hold a
+  # --discard patch. Best-effort; always returns 0.
+  _reap_forget() {
+    local b="$1" cat leaf rel parent pairs c id key d
+    for cat in grants protocol-dirs leads; do
+      leaf="$dir/$cat/$b"
+      parent="${b%/*}"
+      [ "$parent" != "$b" ] || parent=""
+      ! _chain_bad "$dir/$cat" "$parent" >/dev/null || continue
+      { [ -f "$leaf" ] && [ ! -L "$leaf" ]; } || continue
+      rm -f -- "$leaf" || true
+      rel="$parent"
+      while [ -n "$rel" ]; do
+        rmdir -- "$dir/$cat/$rel" 2>/dev/null || break
+        case "$rel" in */*) rel="${rel%/*}" ;; *) rel="" ;; esac
+      done
+    done
+
+    pairs=$(jq -rs --arg b "$b" '
+      def wid_branch: ltrimstr("worker:") | sub("#[^#]*$"; "");
+      [ (.[] | select((.kind == "status" or .kind == "msg") and ((.from // "") | type == "string")
+            and ((.from // "") | startswith("worker:")) and ((.from // "") | wid_branch) == $b)
+          | [.crew_id, .from]),
+        (.[] | select((.kind == "dispatch" or .kind == "resume") and .branch == $b
+            and ((.session // "") | type == "string") and (.session // "") != "")
+          | [.crew_id, "worker:" + $b + "#" + .session]),
+        (.[] | select(((.from // "") | type == "string") and ((.from // "") | startswith("role:" + $b + ":"))
+            and ((.from // "")[("role:" + $b + ":" | length):] | contains(":") | not))
+          | [.crew_id, .from]) ]
+      | map(select(.[0] != null and .[0] != "" and .[1] != ""))
+      | unique | .[] | @tsv' "$log" 2>/dev/null) || return 0
+    [ -n "$pairs" ] || return 0
+    while IFS=$'\t' read -r c id; do
+      [ -n "$c" ] && [ -n "$id" ] || continue
+      key=$(_await_state "$c" "$id")
+      rm -f -- "$key" "$dir/await.lock/${key##*/}" || true
+      key=$(printf '%s' "$id" | tr -c 'A-Za-z0-9._-' '_')
+      rm -f -- "$dir/phase-status/$key.$(printf '%s' "$id" | cksum | cut -d' ' -f1)" || true
+      d="$dir/directive-delivery/$key"
+      if [ -f "$d" ] && [ ! -L "$d" ] && [ "$(sed -n 2p "$d" 2>/dev/null)" = "$id" ]; then
+        rm -f -- "$d" || true
+      fi
+    done <<<"$pairs"
+    return 0
+  }
+
   # _reap_remove — the anchored removal tail shared by the candidate loop and
   # --discard. Reads the loop's branch wtpath admin state pr pr_state label
   # mode issues, plus discard discard_patch discard_st discard_tree (empty in
@@ -2857,6 +2905,7 @@ SCAFFOLD
         + (if $discard != "" then {discarded: $patch} else {} end)' --args "${issues[@]}")
       _bus_append "$log" "$line"
       _reap_post_reaped
+      _reap_forget "$branch"
 
       # A squash-merged PR's branch is never an ancestor of main, so git
       # still reads it as unmerged — delete it deliberately now that
@@ -3090,13 +3139,13 @@ SCAFFOLD
             (.session // ""), (.crew // "")] | @tsv' "$log"
   }
 
-  # _artifacts_dir_bad <branch> — dispatch.sh's, on $dir: succeed, printing the
-  # first offender, when a component from $dir/artifacts down to the branch's
-  # leaf is a symlink or exists as a non-directory.
-  _artifacts_dir_bad() {
-    local p="$dir/artifacts" part
+  # _chain_bad <root> <relpath> — succeed, printing the first offender, when a
+  # component from <root> down to <relpath> is a symlink or exists as a
+  # non-directory.
+  _chain_bad() {
+    local p="$1" part
     local -a parts
-    IFS=/ read -ra parts <<<"$1"
+    IFS=/ read -ra parts <<<"$2"
     for part in "" "${parts[@]}"; do
       p="$p${part:+/$part}"
       if [ -L "$p" ] || { [ -e "$p" ] && [ ! -d "$p" ]; }; then
@@ -3105,6 +3154,12 @@ SCAFFOLD
       fi
     done
     return 1
+  }
+
+  # _artifacts_dir_bad <branch> — dispatch.sh's, on $dir: _chain_bad from
+  # $dir/artifacts down to the branch's leaf.
+  _artifacts_dir_bad() {
+    _chain_bad "$dir/artifacts" "$1"
   }
 
   # --discard <branch>: a human's explicit call to drop a finished worker's
