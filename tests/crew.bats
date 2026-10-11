@@ -14314,3 +14314,49 @@ EOF
   GH_CROSS=true run run_crew stack cut 7
   [ "$status" -ne 0 ]
 }
+
+@test "stack cut: a forged WORKER_TASK.md crew id in a dispatched worktree is not consulted" {
+  _stack_fixture
+  git branch feat/wt-x
+  local wt="$BATS_TEST_TMPDIR/stack-wt"
+  git worktree add -q "$wt" feat/wt-x
+  wt=$(cd "$wt" && pwd -P)
+  write_anchor_record "$wt"
+  printf 'record\n%s\n' "$(git rev-parse --path-format=absolute --git-common-dir)/crew" >"$(anchor_record_path "$wt")"
+  printf 'crew_id: evil\n' >"$wt/WORKER_TASK.md"
+  cd "$wt"
+  run run_crew stack cut feat/child
+  [ "$status" -eq 0 ]
+  [ "$output" = "$PARENT_OID" ]
+}
+
+@test "stack cut: --record <oid> records the cut the child reports when it is an ancestor of the child" {
+  _stack_fixture
+  _stack_advance_parent 0
+  run run_crew stack cut --record feat/child "$PARENT_OID"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$PARENT_OID" ]
+  [ "$(jq -c 'select(.kind == "stack_cut")' "$SLOG" | wc -l)" -eq 1 ]
+  [ "$(jq -r 'select(.kind == "stack_cut") | .cut' "$SLOG")" = "$PARENT_OID" ]
+  [ "$(jq -r 'select(.kind == "stack_cut") | .parent' "$SLOG")" = feat/parent ]
+  run run_crew stack cut feat/child
+  [ "$output" = "$PARENT_OID" ]
+}
+
+@test "stack cut: --record <oid> refuses an oid that is not an ancestor of the child" {
+  _stack_fixture
+  _stack_advance_parent 0
+  run run_crew stack cut --record feat/child "$NEW_TIP"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"is not an ancestor of origin/feat/child"* ]]
+  [ "$(jq -c 'select(.kind == "stack_cut")' "$SLOG" | wc -l)" -eq 0 ]
+}
+
+@test "stack cut: --record <oid> refuses a malformed oid" {
+  _stack_fixture
+  run run_crew stack cut --record feat/child HEAD
+  [ "$status" -ne 0 ]
+  run run_crew stack cut --record feat/child "${PARENT_OID:0:12}"
+  [ "$status" -ne 0 ]
+  [ "$(jq -c 'select(.kind == "stack_cut")' "$SLOG" | wc -l)" -eq 0 ]
+}

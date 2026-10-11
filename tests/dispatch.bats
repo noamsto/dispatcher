@@ -5827,6 +5827,55 @@ _roster_live_dispatcher() {
   [ "$output" = "$STACKED_OID" ]
 }
 
+# stub_resume_switch — after a --base create, make the next dispatch of the same
+# title a resume: nobody occupies the worktree, and wt attaches by name onto the
+# tree the create already made (setup_stale_default_branch's wt only knows -c).
+stub_resume_switch() {
+  stub_crew_gate '[]' '[]'
+  cat >"$STUB_DIR/wt" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOS
+  chmod +x "$STUB_DIR/wt"
+}
+
+@test "base: a --base re-dispatch onto an existing branch records the parent tip when the child contains it" {
+  setup_stacked_base feat/parent
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  stub_resume_switch
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"resuming branch"* ]]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  [ "$(jq -s '[.[] | select(.kind=="dispatch")] | length' "$log")" -eq 2 ]
+  run jq -sr '[.[] | select(.kind=="dispatch")] | last | .base_oid' "$log"
+  [ "$output" = "$STACKED_OID" ]
+}
+
+@test "base: a --base re-dispatch records null base_oid when the parent moved past the child" {
+  setup_stacked_base feat/parent
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  scratch="$(mktemp -d)"
+  git clone -q "$TEST_REPO/origin.git" "$scratch"
+  git -C "$scratch" -c user.email=test@example.com -c user.name=test checkout -q feat/parent
+  git -C "$scratch" -c user.email=test@example.com -c user.name=test commit --allow-empty -qm "parent moves on"
+  moved_oid="$(git -C "$scratch" rev-parse HEAD)"
+  git -C "$scratch" push -q origin feat/parent
+  rm -rf "$scratch"
+  stub_resume_switch
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"resuming branch"* ]]
+  # The fetch succeeded, so the null comes from the ancestor check.
+  [ "$(git -C "$TEST_REPO" rev-parse refs/remotes/origin/feat/parent)" = "$moved_oid" ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -sr '[.[] | select(.kind=="dispatch")] | last | .base_oid' "$log"
+  [ "$output" = "null" ]
+}
+
 @test "base: a plain dispatch's event has no base_oid key" {
   stub_launch_bins
   DISPATCH_PROFILE=personal run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
