@@ -251,9 +251,9 @@ func bashArray(t *testing.T, script, name string) []string {
 }
 
 // TestPoolsMatchCrewSh guards the Go pools against drift from the bash arrays.
-// crew.sh has no identity helper left (#981), so this is what keeps the pool
-// order a recorded identity depends on. The nix build sandbox holds only ./crew,
-// so the script is absent there.
+// crew.sh has no identity helper left, so this is what keeps the pool order a
+// recorded identity depends on. The nix build sandbox holds only ./crew, so the
+// script is absent there.
 func TestPoolsMatchCrewSh(t *testing.T) {
 	if _, err := os.Stat(crewScript); err != nil {
 		t.Skipf("%s not present: %v", crewScript, err)
@@ -413,8 +413,7 @@ func TestAssign(t *testing.T) {
 			wantName: own,
 		},
 		{
-			// jq's `==` against a `--arg` string is false for null and for a number,
-			// so neither row is this crew's, and our own slot stays ours.
+			// jq's `==` against a `--arg` string is false for null and for a number.
 			name:      "a row that recorded no crew_id belongs to no crew, not the empty one",
 			log:       fmt.Sprintf(`{"kind":"dispatch","branch":"feat/z","name":"%s","tmux":"colour1","ts":100}`, own),
 			emptyCrew: true,
@@ -440,16 +439,14 @@ func TestAssign(t *testing.T) {
 				status("worker:"+rival, "done", 300), wantName: own,
 		},
 		{
-			// Our own slot is held by a window, so the rival's codename is the next
-			// one the stepping reaches: it holds `next`, its own hash codename.
+			// The rival holds `next`, its own hash codename, so we step to `third`.
 			name:     "a rival that recorded no name counts by its hash slot",
 			log:      ours(300) + "\n" + dispatch("", 200),
 			windows:  own,
 			wantName: third,
 		},
 		{
-			// @tsv'd, the number became a token no pool holds: the rival holds
-			// nothing, and its own hash codename stays free.
+			// A number is a token no pool holds: the rival holds nothing.
 			name:     "a rival whose name is not a string holds nothing",
 			log:      ours(300) + "\n" + `{"kind":"dispatch","crew_id":"c1","branch":"` + rival + `","name":7,"tmux":"colour1","ts":200}`,
 			windows:  own,
@@ -479,8 +476,7 @@ func TestAssign(t *testing.T) {
 		{
 			name: "the bus gates a recorded name before tmux is asked",
 			log:  `{"kind":"dispatch","crew_id":"c1","branch":"feat/x","name":"zed","tmux":"colour9","ts":100}`,
-			// The arm returned before it read tmux, so a window holding the recorded
-			// name never enters: the probe is not even installed.
+			// The arm returned before it read tmux: the probe is not even installed.
 			wantID: `{"name":"zed","color":null,"tmux":"colour9"}`,
 		},
 	}

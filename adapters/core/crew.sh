@@ -20,10 +20,10 @@
 # The 16 added codes were picked by measured WCAG contrast against both bases
 # (worst added: 2.86 mocha / 2.88 latte — above the 2.54 floor of the original 16).
 #
-# Picking a slot moved to Go with #981 (crew/internal/identity), so no bash
-# caller reads these three left. They stay as the canonical pool: crew.bats's
+# Picking a slot moved to Go with #981 (crew/internal/identity), leaving no bash
+# caller for these three. They stay as the canonical pool: crew.bats's
 # `_rr_palette` enumerates `_colors` from here to compile every palette stroke
-# through d2, and the Go pools are asserted against all three (identity_test.go).
+# through d2, and identity_test.go asserts the Go pools against all three.
 _names=(sage atlas nova ember reef iris amber coral moss slate rust plum lime rose sky onyx
   pine lagoon indigo fern bronze violet khaki ash brick mauve tan crimson fuchsia blush orchid cobalt)
 _colors=(green blue magenta orange teal purple yellow salmon olive steel rust plum lime pink sky grey

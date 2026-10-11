@@ -169,8 +169,8 @@ func For(recorded map[string]jsonv.Value, branch string) jsonv.Value {
 // Probes is the arm's tmux read, injected so tests never touch a server.
 type Probes struct {
 	// Windows is `tmux list-windows -a -F '#{@crew_name}'`: every codename a live
-	// window already carries, one per line. The arm ran it under `2>/dev/null ||
-	// true`, so a failed read names nothing rather than refusing.
+	// window already carries, one per line. It ran under `2>/dev/null || true`, so
+	// a failed read — or no probe at all — names nothing rather than refusing.
 	Windows func() (string, error)
 }
 
@@ -189,9 +189,8 @@ func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 		return exitFailure
 	}
 	if argv[0] == "--hash" {
-		// The arm failed on `${2:?crew: identity --hash <name>}`, so bash wrapped
-		// that message in its own "parameter null or not set" line. The refusal and
-		// its exit code are the behaviour; this is the message.
+		// The bash arm failed on `${2:?crew: identity --hash <name>}`; the line bash
+		// printed around it was its own "parameter null or not set".
 		if len(argv) < 2 || argv[1] == "" {
 			say(stderr, "crew: identity --hash <name>\n")
 			return exitFailure
@@ -206,9 +205,6 @@ func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	if crew == "" && o.CrewID != nil {
 		crew = o.CrewID()
 	}
-	// Both of the arm's bus reads ran `jq … 2>/dev/null || true`: a log that is
-	// missing, and one jq could not slurp, are both "nothing recorded, nothing
-	// occupied", which lands on the pool fallback rather than refusing.
 	return emit(stdout, Assign(busEvents(paths.Log), branch, crew, o.Probes))
 }
 
@@ -218,8 +214,7 @@ func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 // live worker holds, falling back to the hash slot when all 32 are taken. A branch
 // always gets an identity.
 func Assign(rows []bus.Event, branch, crew string, p Probes) jsonv.Value {
-	// Only the bus occupancy gates the recorded identity: the arm checked it
-	// before it ever asked tmux.
+	// The recorded name is gated by the bus alone: tmux names join only after it.
 	occ := occupied(rows, branch, crew)
 	if rec, ok := Recorded(rawValues(rows), branch); ok {
 		name, _ := rec.Get("name")
@@ -246,9 +241,7 @@ func Assign(rows []bus.Event, branch, crew string, p Probes) jsonv.Value {
 
 // occupied is `_identity_bus_occ <branch> <crew>`: the codename of every OTHER
 // branch dispatched into the crew no later than this branch's latest dispatch,
-// whose newest `worker:` status is not terminal. A dispatch row that recorded no
-// name counts by that branch's hash slot, which is how a pre-#470 row still holds
-// a codename rather than freeing whatever slot it was handed.
+// whose newest `worker:` status is not terminal.
 func occupied(rows []bus.Event, branch, crew string) map[string]bool {
 	// The newest `worker:` status row per branch, keyed by the branch its id
 	// names: a finished worker frees the name it held.
@@ -258,10 +251,10 @@ func occupied(rows []bus.Event, branch, crew string) map[string]bool {
 	dispatch := map[string]bus.Event{}
 	selfts, haveSelf := 0.0, false
 	for _, ev := range rows {
-		// The arm's `.crew_id == $crew` on a `--arg` string: jq's `==` is false
-		// against null, false or a number, so a row that recorded no crew_id is no
-		// crew's row — not even the empty one `crew identity <branch>` resolves to
-		// outside a task doc. The typed ev.CrewID cannot tell those apart.
+		// The arm selected on `.crew_id == $crew`, a `--arg` string: jq's `==` is
+		// false against null or a number, so a row that recorded no crew_id belongs
+		// to no crew — not even the empty one `crew identity <branch>` resolves to
+		// outside a task doc, where ev.CrewID and the crew are both "".
 		stored, _ := ev.Raw.Get("crew_id")
 		cid, isStr := stored.AsString()
 		if !isStr || cid != crew {
@@ -278,8 +271,8 @@ func occupied(rows []bus.Event, branch, crew string) map[string]bool {
 		if ev.Kind != bus.KindDispatch {
 			continue
 		}
-		// A row whose branch is not a string keys nothing. The arm's jq died on it
-		// and took every occupancy with it; dropping the row alone is what it meant.
+		// A branch that is not a string keys nothing: the arm's jq died on such a
+		// row, taking every occupancy with it.
 		key, _ := ev.Raw.Get("branch")
 		name, isStr := key.AsString()
 		if !isStr {
@@ -306,7 +299,7 @@ func occupied(rows []bus.Event, branch, crew string) map[string]bool {
 		}
 		if st, ok := status[name].Body.Get("state"); ok {
 			if s, isStr := st.AsString(); isStr && bus.State(s).Terminal() {
-				continue // its worker is done, failed, exited or reaped
+				continue
 			}
 		}
 		if held, ok := heldName(ev, name); ok {
@@ -316,13 +309,10 @@ func occupied(rows []bus.Event, branch, crew string) map[string]bool {
 	return occ
 }
 
-// heldName is the codename a dispatch row holds for its branch: the one it
-// stamped, or the pool name that branch hashes to when it recorded none, which is
-// how a pre-#470 row still holds a codename. ok is false for a name that is
-// neither: bash `@tsv`'d a number or a `true` into a token no pool holds, so it
-// held nothing — and no pool codename is ever a number or a bool, so holding
-// nothing here is the same answer. (An object or array name made that jq program
-// die, taking every other branch's occupancy with it; dispatch writes strings.)
+// heldName is the codename a dispatch row holds for its branch: the string it
+// stamped, or the pool name the branch hashes to when it recorded none — jq's
+// `// ""`, which reads null, false and absent alike. ok is false for a name of any
+// other type: bash @tsv'd it into a token no pool holds, so it held nothing.
 func heldName(ev bus.Event, branch string) (string, bool) {
 	name, _ := ev.Raw.Get("name")
 	switch {
@@ -365,10 +355,9 @@ func atLeast(left, right jsonv.Value) bool {
 	return lok && lt >= rt
 }
 
-// windowNames is the arm's tmux read flattened to the codenames it lists: one per
-// window, and the arm matched them as whitespace-delimited tokens after `tr
-// '\n' ' '`, so that is how they split here. A failed read, like the arm's
-// `2>/dev/null`, names nothing.
+// windowNames is the arm's tmux read flattened to the codenames it lists. The arm
+// matched them as whitespace tokens after `tr '\n' ' '`, and a failed read — its
+// `2>/dev/null` — names nothing.
 func windowNames(p Probes) []string {
 	if p.Windows == nil {
 		return nil
@@ -381,7 +370,8 @@ func windowNames(p Probes) []string {
 }
 
 // busEvents is the arm's `jq -s … "$log" 2>/dev/null || true` over the bus: no
-// log, and one jq could not slurp, are both no rows.
+// log, and one jq could not slurp, are both no rows — the pool fallback, not a
+// refusal.
 func busEvents(path string) []bus.Event {
 	events, err := bus.ReadEvents(path)
 	if err != nil {

@@ -258,9 +258,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Probes: whereProbes(ctx),
 		})
 	}
-	// identity answers the codename a branch works under. It reads the bus for
-	// occupancy, and tmux only when it has to pick a slot, so its read is
-	// best-effort the way the arm's `2>/dev/null || true` was.
+	// identity answers the codename a branch works under. Its one tmux read is
+	// best-effort, unlike whereProbes', which turns a failure into a refusal.
 	if sub == "identity" {
 		return identity.Run(args, paths, stdout, stderr, identity.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
