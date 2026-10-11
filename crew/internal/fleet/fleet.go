@@ -160,7 +160,7 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 // isStale reports a non-terminal row with no evidence of life: no tmux window
 // stamped with its branch, and no worktree for it with a row younger than
 // staleAfter. The worktree list is the one roster already probes per repo, so
-// this adds no read; a failing probe is no evidence, not an error.
+// this adds no read; a failing probe leaves the row shown, as unknown is not stale.
 func isStale(row jsonv.Value, windows func() map[string]bool, worktrees func() (string, error)) bool {
 	branch := str(row, "branch")
 	if windows()[branch] {
@@ -172,7 +172,7 @@ func isStale(row jsonv.Value, windows func() map[string]bool, worktrees func() (
 		return true
 	}
 	porcelain, err := worktrees()
-	return err != nil || roster.WorktreePath(porcelain, branch) == ""
+	return err == nil && roster.WorktreePath(porcelain, branch) == ""
 }
 
 type crewRow struct {

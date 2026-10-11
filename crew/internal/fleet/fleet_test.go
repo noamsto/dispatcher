@@ -386,3 +386,13 @@ func TestWindowsReadOnce(t *testing.T) {
 		t.Errorf("Windows called %d times", calls)
 	}
 }
+
+func TestWorktreeProbeFailureKeepsFreshRows(t *testing.T) {
+	f := setup(t)
+	f.opts.Windows = func() string { return "" }
+	f.opts.Worktrees = func(string) (string, error) { return "", fmt.Errorf("git: boom") }
+	out, errs, _ := run(t, f)
+	if !strings.Contains(out, "feat/a") || strings.Contains(errs, "stale") {
+		t.Errorf("out %s\nerr %q", out, errs)
+	}
+}
