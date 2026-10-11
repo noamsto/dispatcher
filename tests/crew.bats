@@ -14346,9 +14346,20 @@ EOF
 @test "stack cut: --record <oid> refuses an oid that is not an ancestor of the child" {
   _stack_fixture
   _stack_advance_parent 0
+  # Present locally, so the refusal must come from the ancestor check.
+  git fetch -q origin feat/parent
+  git cat-file -e "$NEW_TIP^{commit}"
   run run_crew stack cut --record feat/child "$NEW_TIP"
   [ "$status" -ne 0 ]
   [[ "$output" == *"is not an ancestor of origin/feat/child"* ]]
+  [ "$(jq -c 'select(.kind == "stack_cut")' "$SLOG" | wc -l)" -eq 0 ]
+}
+
+@test "stack cut: --record <oid> refuses the child's own head" {
+  _stack_fixture
+  run run_crew stack cut --record feat/child "$(git -C "$SC" rev-parse feat/child)"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"own head, not a cut"* ]]
   [ "$(jq -c 'select(.kind == "stack_cut")' "$SLOG" | wc -l)" -eq 0 ]
 }
 

@@ -1860,7 +1860,8 @@ child, never guess.
             Refuses, writing nothing, when the child is not rebased onto it.
   <oid>     With --record: the cut the child reports. Recorded only when it is a
             commit and an ancestor of origin/<child>; the parent tip is not
-            checked, as the parent may have moved. Refuses otherwise.
+            checked, as the parent may have moved. Refuses otherwise,
+            including the child's own head.
 
   crew stack cut --record feat/240-child
   crew stack cut --record feat/240-child 0123456789abcdef0123456789abcdef01234567
@@ -3437,6 +3438,10 @@ stack)
     }
     # shellcheck disable=SC2154 # set by the sourced worktree-git lib
     stack_child_oid=$fetched_oid
+    if [ "$stack_oid" = "$stack_child_oid" ]; then
+      echo "crew: ${stack_oid:0:12} is origin/$stack_child's own head, not a cut — not recording it" >&2
+      exit 1
+    fi
     if ! _wt_git_common "$common" cat-file -e "$stack_oid^{commit}" ||
       ! _wt_git_common "$common" merge-base --is-ancestor "$stack_oid" "$stack_child_oid"; then
       echo "crew: ${stack_oid:0:12} is not an ancestor of origin/$stack_child — not recording it" >&2
