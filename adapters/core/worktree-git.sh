@@ -244,19 +244,21 @@ _wt_cfg_legacy_prefix=$'#legacy\n'
 _wt_cfg_legacy_name_safe() {
   [[ -n $1 && $1 != . && $1 != .. && $1 != */* && $1 != *[[:cntrl:][:space:]]* ]]
 }
-_wt_cfg_legacy_records() { # <common> -> NUL records for direct legacy entries
-  local common="$1" ns dir entry name hash shown
+_wt_cfg_legacy_records() { # <common> <array> — fill <array> with records for direct legacy entries
+  local common="$1" ns dir entry name hash shown rec
+  local -n _wt_lr_out="$2"
   local -a entries
+  _wt_lr_out=()
   for ns in remotes branches; do
     dir="$common/$ns"
     if [ -L "$dir" ]; then
-      printf '%s%s\nsymlink\n.\0' "$_wt_cfg_legacy_prefix" "$ns"
+      printf -v rec '%s%s\nsymlink\n.' "$_wt_cfg_legacy_prefix" "$ns"; _wt_lr_out+=("$rec")
       continue
     fi
     [ -d "$dir" ] || continue
     # An unlistable namespace hides its entries from the glob, yet git still opens them by path.
     if [ ! -r "$dir" ] || [ ! -x "$dir" ]; then
-      printf '%s%s\nunreadable-dir\n.\0' "$_wt_cfg_legacy_prefix" "$ns"
+      printf -v rec '%s%s\nunreadable-dir\n.' "$_wt_cfg_legacy_prefix" "$ns"; _wt_lr_out+=("$rec")
       continue
     fi
     entries=()
@@ -267,26 +269,26 @@ _wt_cfg_legacy_records() { # <common> -> NUL records for direct legacy entries
       name="${entry##*/}"
       if ! _wt_cfg_legacy_name_safe "$name"; then
         printf -v shown %q "$name"
-        printf '%s%s\nunsafe-name\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$shown"
+        printf -v rec '%s%s\nunsafe-name\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$shown"; _wt_lr_out+=("$rec")
       elif [ -L "$entry" ]; then
-        printf '%s%s\nsymlink\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+        printf -v rec '%s%s\nsymlink\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"; _wt_lr_out+=("$rec")
       elif [ -f "$entry" ]; then
         if [ ! -r "$entry" ] || ! hash="$(sha256sum -- "$entry")"; then
-          printf '%s%s\nunreadable\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+          printf -v rec '%s%s\nunreadable\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"; _wt_lr_out+=("$rec")
         else
           hash="${hash%% *}"
-          printf '%s%s\nfile\n%s\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name" "$hash"
+          printf -v rec '%s%s\nfile\n%s\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name" "$hash"; _wt_lr_out+=("$rec")
         fi
       elif [ -d "$entry" ]; then
-        printf '%s%s\ndirectory\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+        printf -v rec '%s%s\ndirectory\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"; _wt_lr_out+=("$rec")
       elif [ -p "$entry" ]; then
-        printf '%s%s\nfifo\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+        printf -v rec '%s%s\nfifo\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"; _wt_lr_out+=("$rec")
       elif [ -S "$entry" ]; then
-        printf '%s%s\nsocket\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+        printf -v rec '%s%s\nsocket\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"; _wt_lr_out+=("$rec")
       elif [ -b "$entry" ] || [ -c "$entry" ]; then
-        printf '%s%s\ndevice\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+        printf -v rec '%s%s\ndevice\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"; _wt_lr_out+=("$rec")
       else
-        printf '%s%s\nother\n%s\0' "$_wt_cfg_legacy_prefix" "$ns" "$name"
+        printf -v rec '%s%s\nother\n%s' "$_wt_cfg_legacy_prefix" "$ns" "$name"; _wt_lr_out+=("$rec")
       fi
     done
   done
@@ -352,8 +354,7 @@ _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwri
         if _wt_cfg_match _wt_redirect_keys "$key" "$value"; then add+=("$rec"); fi
       done
     fi
-    mapfile -d '' legacy < <(_wt_cfg_legacy_records "$common")
-    wait $! || return 1
+    _wt_cfg_legacy_records "$common" legacy
     if [ "$legacy_covered" -eq 0 ] && ((${#legacy[@]})); then
       echo "refusing git-config baseline migration: legacy remotes or branches entries exist — inspect and remove them before re-running dispatch" >&2
       return 1
@@ -368,8 +369,7 @@ _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwri
   fi
   mkdir -p -- "$common/crew" || return 1
   tmp="$(mktemp "$file.XXXXXX")" || return 1
-  mapfile -d '' legacy < <(_wt_cfg_legacy_records "$common")
-  wait $! || return 1
+  _wt_cfg_legacy_records "$common" legacy
   for rec in "${legacy[@]}"; do
     [[ $rec == "$_wt_cfg_legacy_prefix"* ]] || continue
     _wt_cfg_legacy_fields "$rec" ns kind name hash
@@ -405,8 +405,7 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config and lega
     echo "refusing git: cannot list the git config of $gitdir" >&2
     return 1
   fi
-  mapfile -d '' legacy_pairs < <(_wt_cfg_legacy_records "$common")
-  wait $! || return 1
+  _wt_cfg_legacy_records "$common" legacy_pairs
   local legacy_bad=0
   for rec in "${legacy_pairs[@]}"; do
     [[ $rec == "$_wt_cfg_legacy_prefix"* ]] || continue
