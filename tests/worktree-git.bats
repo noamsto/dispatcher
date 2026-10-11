@@ -1019,6 +1019,16 @@ write_anchor() {
   [[ $stderr != *mark-secret* ]]
 }
 
+@test "an unsafe legacy name is shown escaped exactly once" {
+  _wt_cfg_baseline_init "$COMMON"
+  mkdir -p "$COMMON/remotes"
+  printf 'x\n' >"$COMMON/remotes/a b"
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *'legacy unsafe-name entry '*'remotes/a\ b'* ]]
+  [[ $stderr != *'a\\\ b'* ]]
+}
+
 @test "guard with an empty git-dir argument still checks the common config" {
   _wt_cfg_baseline_init "$COMMON"
   git config core.hooksPath /evil

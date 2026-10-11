@@ -384,7 +384,7 @@ _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwri
 }
 _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config and legacy-file drift
   local common="$1" gitdir="${2:-$1}" file rec key value origin found i R canon kd plain redirect=
-  local legacy_kind legacy_ns legacy_name
+  local legacy_kind legacy_ns legacy_name shown
   local -a pairs listing drift=() legacy_pairs=()
   local -A base=() bad=() seen=()
   file="$common/crew/git-config-baseline"
@@ -411,15 +411,21 @@ _wt_cfg_guard() { # <common> [<git-dir>] — refuse exec-capable config and lega
   for rec in "${legacy_pairs[@]}"; do
     [[ $rec == "$_wt_cfg_legacy_prefix"* ]] || continue
     _wt_cfg_legacy_fields "$rec" legacy_ns legacy_kind legacy_name
+    # An unsafe-name record already stores its name %q-escaped.
+    if [ "$legacy_kind" = unsafe-name ]; then
+      printf -v shown '%q%s' "$common/$legacy_ns/" "$legacy_name"
+    else
+      printf -v shown '%q' "$common/$legacy_ns/$legacy_name"
+    fi
     if [ "$legacy_kind" != file ]; then
-      printf 'refusing git: unsafe legacy entry %q (%s/%s) in %q\n' \
-        "$common/$legacy_ns/$legacy_name" "$legacy_ns" "$legacy_kind" "$common" >&2
+      printf 'refusing git: unsafe legacy %s entry %s in %q\n' \
+        "$legacy_kind" "$shown" "$common" >&2
       legacy_bad=1
       continue
     fi
     if [ -z "${base["$rec"]+x}" ]; then
-      printf 'refusing git: legacy entry %q (%s/%s) is new or changed from the git-config baseline %q\n' \
-        "$common/$legacy_ns/$legacy_name" "$legacy_ns" "$legacy_kind" "$file" >&2
+      printf 'refusing git: legacy %s entry %s is new or changed from the git-config baseline %q\n' \
+        "$legacy_kind" "$shown" "$file" >&2
       legacy_bad=1
     fi
   done
