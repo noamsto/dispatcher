@@ -35,9 +35,10 @@ output contract below), with each edit justified.
   `crew/internal/report`: each embeds its jq program (`*.jq`, kept verbatim from
   crew.sh apart from documented patches) plus the Go glue: tmux/worktree
   probes, identity attachment, the crews pid-liveness and ancestor probes.
-  `roster` also owns the liveness rule of #999 — `Stale`, what `crew fleet`
-  already printed as `--stale`, and `Drawn`, what the diagram keeps — because the
-  two views have to agree on who is alive while each reads its own probes.
+  `roster` also owns the liveness rule of #999 — `Stale`, the flag `crew fleet`
+  already stamped its rows with and hid unless `--all`, and `Drawn`, what the
+  diagram keeps — because the two views have to agree on who is alive while each
+  reads its own probes.
 - `crew/internal/log`: the arm that runs no jq — `select(.crew_id==$crew)` is a
   member test, so it filters and re-encodes through jsonv, keeping `jq -c`'s
   torn-tail prefix via `bus.ReadEventsTolerant`.

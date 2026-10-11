@@ -13560,6 +13560,15 @@ _rr_plant() {
 @test "roster-render: the daemon survives its launch worktree being reaped" {
   _rr_mini working 'execute: tests'
   _rr_plant
+  # A second branch, finished and with no worktree of its own. It is the row that
+  # reads the probe: when the worktree list dies with the launch worktree, the
+  # probe says nothing, nothing is stale, and this row comes back.
+  _rr_dispatch feat/6-gone 1791360000000 nova magenta colour127 "Gone task" standard claude sonnet
+  _rr_status 'worker:feat/6-gone#s1' 1791360600000 done
+  # Pinned to one build: a build hop restarts the daemon in the common dir, and
+  # the restarted process would read its worktrees from there whatever this
+  # process anchors them at.
+  _rr_fakebin A
   local wt="$BATS_TEST_TMPDIR/rr-wt"
   git worktree add -q -b rr-wt "$wt"
   RR_CWD="$wt" _rr_daemon
@@ -13569,6 +13578,8 @@ _rr_plant() {
 
   _rr_status "worker:feat/1-a#s1" "$(_rr_now_ms)" working 'after-reap detail'
   _rr_wait _rr_file_has "$(_rr_file)" 'after-reap detail'
+  run grep -c 'nova' "$(_rr_file)"
+  [ "$output" = 0 ]
   kill -0 "$RR_PID"
 }
 
