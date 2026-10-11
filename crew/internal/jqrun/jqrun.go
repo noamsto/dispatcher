@@ -50,6 +50,23 @@ func WithJQFromJSON() Option {
 // emit exactly one value; a gojq runtime error (jq's type error) is returned
 // as an error, which main maps to the jq-failure exit status.
 func Run(prog string, input []jsonv.Value, now float64, vars map[string]jsonv.Value, opts ...Option) (jsonv.Value, error) {
+	p, err := Compile(prog, now, vars, opts...)
+	if err != nil {
+		return jsonv.Value{}, err
+	}
+	return p.Run(jsonv.Array(input...))
+}
+
+// Program is a jq program compiled once, with its variables bound, for a
+// caller that runs it over many inputs (one per line, like `jq -R`) where
+// compiling per input would dominate.
+type Program struct {
+	code   *gojq.Code
+	values []any
+}
+
+// Compile is Run's compile step: prog, vars, now and opts as for Run.
+func Compile(prog string, now float64, vars map[string]jsonv.Value, opts ...Option) (*Program, error) {
 	names := make([]string, 0, len(vars))
 	values := make([]any, 0, len(vars))
 	for name := range vars {
@@ -59,14 +76,14 @@ func Run(prog string, input []jsonv.Value, now float64, vars map[string]jsonv.Va
 	for _, name := range names {
 		v, err := toGo(vars[name[1:]])
 		if err != nil {
-			return jsonv.Value{}, err
+			return nil, err
 		}
 		values = append(values, v)
 	}
 
 	q, err := gojq.Parse(prog)
 	if err != nil {
-		return jsonv.Value{}, fmt.Errorf("jq program: %w", err)
+		return nil, fmt.Errorf("jq program: %w", err)
 	}
 	freezeNow(q, now)
 	compileOpts := []gojq.CompilerOption{gojq.WithVariables(names)}
@@ -75,18 +92,19 @@ func Run(prog string, input []jsonv.Value, now float64, vars map[string]jsonv.Va
 	}
 	code, err := gojq.Compile(q, compileOpts...)
 	if err != nil {
-		return jsonv.Value{}, fmt.Errorf("jq program: %w", err)
+		return nil, fmt.Errorf("jq program: %w", err)
 	}
-	in := make([]any, len(input))
-	for i, ev := range input {
-		v, err := toGo(ev)
-		if err != nil {
-			return jsonv.Value{}, err
-		}
-		in[i] = v
-	}
+	return &Program{code: code, values: values}, nil
+}
 
-	v, ok := code.Run(in, values...).Next()
+// Run evaluates the program on input and returns its first output. No
+// output is an error, as is a runtime error raised before the first output.
+func (p *Program) Run(input jsonv.Value) (jsonv.Value, error) {
+	in, err := toGo(input)
+	if err != nil {
+		return jsonv.Value{}, err
+	}
+	v, ok := p.code.Run(in, p.values...).Next()
 	if !ok {
 		return jsonv.Value{}, fmt.Errorf("jq program produced no output")
 	}

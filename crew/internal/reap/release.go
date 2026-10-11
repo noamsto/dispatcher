@@ -1,6 +1,7 @@
 package reap
 
 import (
+	"bufio"
 	"context"
 	_ "embed"
 	"math"
@@ -19,8 +20,8 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
-// humanProgram is `_human_present`'s transcript filter. See the file for the
-// patch it needs before jqrun can run it.
+// humanProgram is `_human_present`'s transcript filter, run once per decoded
+// transcript row. See the file for the patch it needs before jqrun can run it.
 //
 //go:embed human.jq
 var humanProgram string
@@ -143,7 +144,9 @@ func transcriptDir(wtp string) string {
 }
 
 // newerUserTurn reports whether the newest *.jsonl in dir holds a user turn
-// stamped after tsMS. Anything unreadable is no turn.
+// stamped after tsMS. Anything unreadable is no turn. The file is
+// worker-writable and unbounded, so it is streamed a line at a time (no line
+// length cap) and the filter runs per row, stopping at the first match.
 func newerUserTurn(dir string, tsMS int64) bool {
 	files, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
 	var latest string
@@ -160,19 +163,27 @@ func newerUserTurn(dir string, tsMS int64) bool {
 	if latest == "" {
 		return false
 	}
-	data, err := os.ReadFile(latest)
+	prog, err := jqrun.Compile(humanProgram, 0, map[string]jsonv.Value{"ts": jsonv.Num(float64(tsMS))})
 	if err != nil {
 		return false
 	}
-	var lines []jsonv.Value
-	for line := range strings.SplitSeq(string(data), "\n") {
-		if v, err := jsonv.ParseOne(line); err == nil {
-			lines = append(lines, v)
+	f, err := os.Open(latest)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	r := bufio.NewReader(f)
+	for {
+		line, readErr := r.ReadString('\n')
+		if row, err := jsonv.ParseOne(line); err == nil {
+			if _, err := prog.Run(row); err == nil {
+				return true
+			}
+		}
+		if readErr != nil {
+			return false
 		}
 	}
-	got, err := jqrun.Run(humanProgram, lines, 0,
-		map[string]jsonv.Value{"ts": jsonv.Num(float64(tsMS))})
-	return err == nil && got.Kind() == jsonv.KindTrue
 }
 
 // capture is `$(_pane_capture …)`: trailing newlines are stripped.

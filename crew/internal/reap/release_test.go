@@ -338,6 +338,12 @@ func TestReleaseTranscriptUserTurn(t *testing.T) {
 		{"assistant row", fmt.Sprintf(`{"type":"assistant","timestamp":%q,"message":{"content":"hello"}}`, stamp(5000)), false},
 		{"no timestamp", `{"type":"user","message":{"content":"hello"}}`, false},
 		{"empty text", text(""), false},
+		// jq -R ran the filter per line: an erroring row was reported and
+		// skipped, so a later typed turn still keeps the window.
+		{"numeric timestamp row before a typed turn", `{"type":"user","timestamp":5,"message":{"content":"hello"}}` + "\n" + text("hello"), true},
+		{"string message row before a typed turn", fmt.Sprintf(`{"type":"user","timestamp":%q,"message":"hello"}`, stamp(5000)) + "\n" + text("hello"), true},
+		{"erroring row alone", `{"type":"user","timestamp":5,"message":{"content":"hello"}}`, false},
+		{"line over 64 KiB before a typed turn", fmt.Sprintf(`{"type":"assistant","message":{"content":%q}}`, strings.Repeat("a", 100<<10)) + "\n" + text("hello"), true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

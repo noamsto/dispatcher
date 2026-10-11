@@ -58,8 +58,10 @@ func (c *cleaner) cleanup() {
 
 // notify runs cleanup and exits 128+signo — the status bash reported for a
 // shell killed by the signal after its EXIT trap ran — on SIGTERM, SIGINT or
-// SIGHUP. A signal inherited as ignored stays ignored (nohup, a background
-// job's SIGINT), as it did for bash. The returned func stops listening.
+// SIGHUP. An inherited-ignored SIGHUP or SIGINT (nohup, a background job's
+// SIGINT) stays ignored, as it did for bash; Go's runtime keeps an inherited
+// SIG_IGN only for those two, so SIGTERM is always handled even where bash
+// would have ignored it. The returned func stops listening.
 func (c *cleaner) notify() func() {
 	var sigs []os.Signal
 	for _, s := range []syscall.Signal{syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP} {

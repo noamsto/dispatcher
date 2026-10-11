@@ -302,7 +302,7 @@ func (r *run) deleteBranch(ctx context.Context, c *candidate) {
 	case !r.guardOK(gitguard.Check(r.paths.Common, r.paths.Common, r.stderr)):
 		r.note("kept local branch " + c.branch + " — git config drift")
 	default:
-		if cmd, err := wtgit.CommonCommand(ctx, r.paths.Common, wtgit.Opts{Stderr: io.Discard}, "branch", "-D", c.branch); err == nil {
+		if cmd, err := wtgit.CommonCommand(ctx, r.paths.Common, wtgit.Opts{Stderr: io.Discard}, "branch", "-D", "--", c.branch); err == nil {
 			_ = cmd.Run()
 		}
 	}

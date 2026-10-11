@@ -136,3 +136,17 @@ func TestRunOccupants(t *testing.T) {
 		t.Fatalf("stdout not one compact line: %q", out.String())
 	}
 }
+
+func TestProcLineSkipsUnrepresentableCwd(t *testing.T) {
+	cases := []struct{ cwd, want string }{
+		{"/wt/feat-x", "42\t/wt/feat-x\n"},
+		{"", ""},
+		{"/wt/evil\n1\t/wt/feat-x", ""},
+		{"/wt/a\tb", ""},
+	}
+	for _, c := range cases {
+		if got := procLine("42", c.cwd); got != c.want {
+			t.Errorf("procLine(42, %q) = %q, want %q", c.cwd, got, c.want)
+		}
+	}
+}

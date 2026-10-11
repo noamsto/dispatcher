@@ -145,12 +145,22 @@ func procs(ctx context.Context) string {
 			continue
 		}
 		cwd, err := os.Readlink("/proc/" + pid + "/cwd")
-		if err != nil || cwd == "" {
+		if err != nil {
 			continue
 		}
-		b.WriteString(pid + "\t" + cwd + "\n")
+		b.WriteString(procLine(pid, cwd))
 	}
 	return b.String()
+}
+
+// procLine is one "pid\tcwd\n" row of procs, or "" for an empty cwd or one
+// holding a tab or newline: a worker can create such a directory, and the row
+// would forge a pid of its choosing for reap to SIGTERM.
+func procLine(pid, cwd string) string {
+	if cwd == "" || strings.ContainsAny(cwd, "\t\n") {
+		return ""
+	}
+	return pid + "\t" + cwd + "\n"
 }
 
 // ancestors is the arm's `ancestors="$$ $BASHPID"` plus the PPid walk, which

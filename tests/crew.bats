@@ -9907,8 +9907,9 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   cdir="$(crew_dir c1)"
   mkdir -p "$cdir/stream.lock.d"
   spawn_holder
-  # A dead holder would be reclaimed by _lock_acquire itself and --force would
-  # never be exercised, so the liveness is an assertion, not an assumption.
+  # This record has no flock marker, so internal/lock's Acquire judges it by
+  # the old format's rule and reclaims a dead pid itself — --force would never
+  # be exercised, so the liveness is an assertion, not an assumption.
   kill -0 "$HOLDER_PID"
   printf '%s\n' "$HOLDER_PID" >"$cdir/stream.lock.d/pid"
 
@@ -9923,9 +9924,9 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   mkdir -p "$cdir/stream.lock.d"
   printf '%s\n' 0 >"$cdir/stream.lock.d/pid"
 
-  # 0 as a signal target hits our whole process group, and `_lock_acquire`'s
-  # own `kill -0` reads it as live — so --force must refuse before it ever
-  # calls `kill -TERM` on it.
+  # 0 as a signal target hits our whole process group, and internal/lock's
+  # old-format liveness check (kill(0, 0)) reads it as live — so --force must
+  # refuse before it ever sends SIGTERM to it.
   run --separate-stderr run_crew stream --crew c1 --force --park 1 --interval 1
   [ "$status" -eq 1 ]
   [ "$stderr" = "crew: --force found no valid holder pid for crew (c1) stream lock (got '0') — refusing to signal" ]
