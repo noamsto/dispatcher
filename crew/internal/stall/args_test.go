@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/noamsto/dispatcher/crew/internal/drift"
 )
 
 const crewScript = "../../../adapters/core/crew.sh"
@@ -116,7 +118,7 @@ func TestFlagsParse(t *testing.T) {
 func TestReleaseGraceMatchesCrewSh(t *testing.T) {
 	src, err := os.ReadFile(crewScript)
 	if err != nil {
-		t.Skip("crew.sh is not in this tree")
+		drift.Missing(t, crewScript, err)
 	}
 	m := regexp.MustCompile(`(?m)^release_grace=([0-9]+)$`).FindSubmatch(src)
 	if m == nil {

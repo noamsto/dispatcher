@@ -18,6 +18,13 @@ jobs:
         run: nix develop -c shellcheck adapters/core/*.sh adapters/core/reviewers/*.sh scripts/*.sh
       - name: go vet + golangci-lint (crew)
         run: nix develop -c sh -c 'cd crew && go vet ./... && golangci-lint run ./...'
+      # The crew Go tests that compare the port against adapters/core/ skip when
+      # the bash file they read is absent, so they need the checked-out repo:
+      # CREW_DRIFT_REQUIRED=1 turns each skip into a failure. The second command
+      # names those guards so the log shows them running; the flake build runs
+      # the same tests unrequired, because its sandbox holds only ./crew.
+      - name: go test (crew, drift guards required)
+        run: nix develop -c sh -c 'cd crew && CREW_DRIFT_REQUIRED=1 go test ./... && CREW_DRIFT_REQUIRED=1 go test -count=1 -v -run "TestDriftAgainstBash|TestRowsMatchBash|TestPoolsMatchCrewSh|TestEngineCommandsMatchCrewSh|TestReleaseGraceMatchesCrewSh|TestBurnTableOracle" ./internal/frame ./internal/identity ./internal/roster ./internal/stall ./internal/rate'
       - name: adapters are in sync
         run: |
           nix develop -c ./scripts/gen-adapters.sh

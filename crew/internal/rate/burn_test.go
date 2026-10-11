@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/noamsto/dispatcher/crew/internal/drift"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
@@ -17,7 +18,7 @@ func defaultRules(t *testing.T) []burnRule {
 	path := filepath.Join("..", "..", "..", "adapters", "core", "defaults.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Skip("defaults.json is not in this tree")
+		drift.Missing(t, path, err)
 	}
 	vals, err := jsonv.DecodeStream(strings.NewReader(string(data)))
 	if err != nil || len(vals) != 1 {

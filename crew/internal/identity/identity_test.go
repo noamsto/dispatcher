@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/drift"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
@@ -253,10 +254,10 @@ func bashArray(t *testing.T, script, name string) []string {
 // TestPoolsMatchCrewSh guards the Go pools against drift from the bash arrays.
 // crew.sh has no identity helper left, so this is what keeps the pool order a
 // recorded identity depends on. The nix build sandbox holds only ./crew, so the
-// script is absent there.
+// script is absent there and the guard skips; CI runs it with CREW_DRIFT_REQUIRED.
 func TestPoolsMatchCrewSh(t *testing.T) {
 	if _, err := os.Stat(crewScript); err != nil {
-		t.Skipf("%s not present: %v", crewScript, err)
+		drift.Missing(t, crewScript, err)
 	}
 	for _, p := range []struct {
 		bash string
