@@ -352,7 +352,10 @@ crews | log | report | sessions | roster | inbox | hold | await | watch | retro 
 
 `fleet` needs no repo, so the preamble's not-in-a-repo refusal lets it through. The hidden
 `discover-repos` entry (`crew/internal/repos`, shared with `fleet`) is what the bash
-`rate --sweep-all` loop calls for its `<status>\t<common>` repo list.
+`rate --sweep-all` loop calls for its `<status>\t<common>` repo list. Candidates are
+byte-sorted (Go `sort.Strings`) where bash `sort -u` used the caller's locale
+collation, so `rate --sweep-all` may list repos in a different order; the set is
+identical (behaviour, not bytes).
 
 `CREW_SELF` is this script's own path, the `$0` the bash arms re-entered. Two
 read it. `stream` reads it for its inner `watch`, its `hold due` pre-check and

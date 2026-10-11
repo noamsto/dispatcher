@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
 var fixedNow = time.Unix(1700000100, 0)
@@ -43,10 +44,9 @@ func mkRepo(t *testing.T, root, name, origin string, lines ...string) string {
 }
 
 type fixture struct {
-	opts   Options
-	alpha  string
-	beta   string
-	broken string
+	opts  Options
+	alpha string
+	beta  string
 }
 
 func setup(t *testing.T) fixture {
@@ -206,10 +206,25 @@ func TestUnreadableBusIsSkippedNotFatal(t *testing.T) {
 	if err := os.WriteFile(f.opts.Registry, append(reg, []byte(garbage+"\n")...), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, _, code := run(t, f)
+	out, errs, code := run(t, f)
 	if code != 0 || len(dataLines(out)) != 2 {
 		t.Errorf("code %d, rows:\n%s", code, out)
 	}
+	want := "crew: fleet: " + garbage + ": " + garbage + "/crew/events.jsonl: "
+	if line := noteFor(errs, garbage); !strings.HasPrefix(line, want) || !strings.HasSuffix(line, " (rows from the readable prefix)") {
+		t.Errorf("decode note = %q, want prefix %q; stderr %q", line, want, errs)
+	}
+}
+
+// noteFor is the stderr lines naming common, joined; a one-line note is one.
+func noteFor(errs, common string) string {
+	var hits []string
+	for _, l := range strings.Split(strings.TrimRight(errs, "\n"), "\n") {
+		if strings.Contains(l, common) {
+			hits = append(hits, l)
+		}
+	}
+	return strings.Join(hits, "\n")
 }
 
 func TestTornTailKeepsPrefix(t *testing.T) {
@@ -221,9 +236,69 @@ func TestTornTailKeepsPrefix(t *testing.T) {
 	}
 	_, _ = fh.WriteString(`{"ts":1,"kind":`)
 	_ = fh.Close()
-	out, _, code := run(t, f)
+	out, errs, code := run(t, f)
 	if code != 0 || !strings.Contains(out, "feat/c") {
 		t.Errorf("code %d, output:\n%s", code, out)
+	}
+	line := noteFor(errs, f.beta)
+	if !strings.HasPrefix(line, "crew: fleet: "+f.beta+": ") || !strings.HasSuffix(line, " (rows from the readable prefix)") || strings.Contains(line, "\n") {
+		t.Errorf("decode note = %q", line)
+	}
+}
+
+func TestWorktreesFailureNoteIsOneLine(t *testing.T) {
+	f := setup(t)
+	root := t.TempDir()
+	repo := mkRepo(t, root, "gamma", "", dispatch(1700000003, "c1", "feat/g", "feat/g"), worker(1700000040, "c1", "feat/g", "exited"))
+	reg, _ := os.ReadFile(f.opts.Registry)
+	if err := os.WriteFile(f.opts.Registry, append(reg, []byte(repo+"\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.opts.Worktrees = func(string) (string, error) {
+		return "", &roster.ExitError{Code: 128, Stderr: "fatal: dubious ownership\n"}
+	}
+	_, errs, code := run(t, f)
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	want := "crew: fleet: " + repo + ": skipped (exit status 128: fatal: dubious ownership)"
+	if got := noteFor(errs, repo); got != want {
+		t.Errorf("note = %q, want %q", got, want)
+	}
+}
+
+func TestWorktreesProbedOncePerRepo(t *testing.T) {
+	f := setup(t)
+	repo := mkRepo(t, t.TempDir(), "gamma", "",
+		dispatch(1700000003, "c1", "feat/g", "feat/g"), worker(1700000040, "c1", "feat/g", "exited"),
+		dispatch(1700000004, "c2", "feat/h", "feat/h"), worker(1700000041, "c2", "feat/h", "exited"))
+	if err := os.WriteFile(f.opts.Registry, []byte(repo+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	f.opts.Worktrees = func(string) (string, error) { calls++; return "", nil }
+	if _, _, code := run(t, f, "--all"); code != 0 || calls != 1 {
+		t.Errorf("code %d, Worktrees called %d times", code, calls)
+	}
+}
+
+func TestControlRunesAreNeutralisedInTable(t *testing.T) {
+	f := setup(t)
+	repo := mkRepo(t, t.TempDir(), "evil", "",
+		`{"ts":1700000000000,"crew_id":"c1","kind":"dispatch","branch":"feat/x","name":"n","title":"a\tb"}`,
+		`{"ts":1700000010000,"crew_id":"c1","kind":"status","from":"worker:feat/x\nFORGED\u001b[2J#s1-1","to":"dispatcher:c1","body":{"state":"working"}}`)
+	if err := os.WriteFile(f.opts.Registry, []byte(repo+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, code := run(t, f)
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if rows := dataLines(out); len(rows) != 1 {
+		t.Fatalf("want 1 row, got:\n%s", out)
+	}
+	if strings.ContainsAny(out, "\t\x1b") || strings.Count(out, "\n") != 2 {
+		t.Errorf("control bytes in table: %q", out)
 	}
 }
 

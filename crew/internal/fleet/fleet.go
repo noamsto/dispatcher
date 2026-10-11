@@ -9,8 +9,10 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
@@ -84,8 +86,10 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 			fmt.Fprintf(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, repos.StatusNoBus)
 			continue
 		case err != nil && !errors.As(err, &decode):
-			fmt.Fprintf(stderr, "crew: fleet: %s: skipped (%v)\n", r.Common, err)
+			fmt.Fprintf(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, oneLine(err))
 			continue
+		case decode != nil:
+			fmt.Fprintf(stderr, "crew: fleet: %s: %s (rows from the readable prefix)\n", r.Common, oneLine(decode))
 		}
 		raws := make([]jsonv.Value, len(events))
 		for i, e := range events {
@@ -93,10 +97,10 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 		}
 		repoRows, err := foldRepo(r.Common, events, raws, onlyCrew, nowSec, roster.Probes{
 			Panes:     livePanes,
-			Worktrees: func() (string, error) { return o.Worktrees(r.Common) },
+			Worktrees: sync.OnceValues(func() (string, error) { return o.Worktrees(r.Common) }),
 		})
 		if err != nil {
-			fmt.Fprintf(stderr, "crew: fleet: %s: skipped (%v)\n", r.Common, err)
+			fmt.Fprintf(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, oneLine(err))
 			continue
 		}
 		name := repos.Name(r.Common, o.Origin(r.Common))
@@ -154,6 +158,12 @@ func foldRepo(common string, events []bus.Event, raws []jsonv.Value, onlyCrew st
 	return out, nil
 }
 
+// oneLine flattens an error to one line: git's stderr ends in a newline and
+// may span several.
+func oneLine(err error) string {
+	return strings.Join(strings.Fields(err.Error()), " ")
+}
+
 func write(stdout, stderr io.Writer, b []byte) int {
 	if _, err := stdout.Write(b); err != nil {
 		fmt.Fprintf(stderr, "crew: fleet: %v\n", err)
@@ -176,10 +186,17 @@ func table(rows []jsonv.Value) []byte {
 }
 
 // str is a row field as table text: "-" for null or anything but a string.
+// Workers write these fields, so control runes become "?" before they can
+// forge a row or drive the terminal.
 func str(row jsonv.Value, key string) string {
 	v, _ := row.Get(key)
 	if s, ok := v.AsString(); ok && s != "" {
-		return s
+		return strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return '?'
+			}
+			return r
+		}, s)
 	}
 	return "-"
 }
