@@ -29,6 +29,7 @@ teardown() {
   # Before teardown_repo: a leaked `crew stream` (and the `crew watch` it owns)
   # would race its rm -rf. See the stream harness at the bottom of this file.
   stop_stream
+  stop_fleet_stream
   local rr
   for rr in "${RR_PID:-}" "${RR_PID2:-}"; do
     [ -n "$rr" ] || continue
@@ -13730,4 +13731,140 @@ STUB
   run --separate-stderr run_crew fleet
   [ "$status" -eq 0 ]
   [[ "$stderr" == *"skipped (gone)"* ]]
+}
+
+# start_fleet_stream <args…> — launch `crew fleet stream` as a REAL process, for
+# the reasons start_stream gives. It adds no --reap-every, which the fleet lane
+# refuses, and its lock lives under $XDG_STATE_HOME, not in a repo. The state
+# and sweep-root defaults keep a test that forgets them off the real home.
+start_fleet_stream() {
+  export XDG_STATE_HOME="${XDG_STATE_HOME:-$BATS_TEST_TMPDIR/state}"
+  export CREW_SWEEP_ROOTS="${CREW_SWEEP_ROOTS:-$BATS_TEST_TMPDIR/fleetroot}"
+  FLEET_N=$((${FLEET_N:-0} + 1))
+  FLEET_OUT="$BATS_TEST_TMPDIR/fleet-stream.$FLEET_N.out"
+  FLEET_ERR="$BATS_TEST_TMPDIR/fleet-stream.$FLEET_N.err"
+  local args=("$@") i crew_id=""
+  for ((i = 0; i < ${#args[@]}; i++)); do
+    [ "${args[i]}" = --crew ] && crew_id="${args[i + 1]}"
+  done
+  FLEET_LOCK="$XDG_STATE_HOME/crew/fleet-stream/$crew_id/stream.lock.d"
+  bash -euo pipefail "$CREW" fleet stream "${args[@]}" >"$FLEET_OUT" 2>"$FLEET_ERR" </dev/null &
+  FLEET_PID=$!
+  FLEET_PIDS="${FLEET_PIDS:-} $FLEET_PID"
+}
+
+# stop_fleet_stream — TERM every lane this test started and wait for the lock
+# dir, the last thing a shutdown removes, then reap them.
+stop_fleet_stream() {
+  local fpid
+  [ -n "${FLEET_PIDS:-}" ] || return 0
+  for fpid in $FLEET_PIDS; do
+    kill -TERM "$fpid" 2>/dev/null || true
+  done
+  poll_for 60 test ! -d "$FLEET_LOCK" || {
+    for fpid in $FLEET_PIDS; do
+      kill -KILL "$fpid" 2>/dev/null || true
+    done
+  }
+  for fpid in $FLEET_PIDS; do
+    wait "$fpid" 2>/dev/null || true
+  done
+  FLEET_PIDS=""
+  FLEET_PID=""
+}
+
+fleet_lines() { grep -c . "$FLEET_OUT" 2>/dev/null || true; }
+fleet_at_least() { [ "$(fleet_lines)" -ge "$1" ]; }
+fleet_locked() { [ -d "$FLEET_LOCK" ]; }
+
+# seed_fleet_repo <dir> — a git repo with a c1 dispatch and a working worker.
+seed_fleet_repo() {
+  mkdir -p "$1/.git/crew"
+  git init -q -b main "$1"
+  jq -nc '{ts:1000, crew_id:"c1", kind:"dispatch", branch:"feat/x", engine:"claude", model:"sonnet", tier:"standard", effort:"medium", title:"t"}' \
+    >>"$1/.git/crew/events.jsonl"
+  jq -nc '{ts:1500, crew_id:"c1", from:"worker:feat/x", to:"dispatcher:c1", kind:"status", body:{state:"working"}}' \
+    >>"$1/.git/crew/events.jsonl"
+}
+
+# post_pr_open <dir> — a pr_open row for the worker seed_fleet_repo made.
+post_pr_open() {
+  jq -nc --argjson ts "$(($(date +%s) * 1000))" \
+    '{ts:$ts, crew_id:"c1", from:"worker:feat/x", to:"dispatcher:c1", kind:"status", body:{state:"pr_open", detail:"PR"}}' \
+    >>"$1/.git/crew/events.jsonl"
+}
+
+@test "fleet stream: one lane delivers a pr_open from each repo once, tagged with its repo" {
+  root="$BATS_TEST_TMPDIR/fleetroot"
+  seed_fleet_repo "$root/alpha"
+  seed_fleet_repo "$root/beta"
+  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
+  export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"
+  export CREW_SWEEP_ROOTS="$root"
+  outside="$BATS_TEST_TMPDIR/outside"
+  mkdir -p "$outside"
+  cd "$outside"
+
+  start_fleet_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
+  poll_for 100 fleet_locked
+  post_pr_open "$root/alpha"
+  post_pr_open "$root/beta"
+  poll_for 150 fleet_at_least 2
+  # A duplicate would arrive within a park or two.
+  sleep 3
+  [ "$(fleet_lines)" -eq 2 ]
+
+  run jq -r '.repo' "$FLEET_OUT"
+  [ "$status" -eq 0 ]
+  [ "$(sort <<<"$output" | tr '\n' ' ')" = "alpha beta " ]
+  run jq -s -e 'all(.[]; ([.events[] | select(.body.state == "pr_open")] | length) == 1)' "$FLEET_OUT"
+  [ "$status" -eq 0 ]
+
+  run --separate-stderr run_crew fleet stream --status --crew c1
+  [ "$status" -eq 0 ]
+  [ "$(jq -r '.state' <<<"$output")" = alive ]
+  stop_fleet_stream
+}
+
+@test "fleet stream: a gone repo and one with no bus are noted once and the lane keeps delivering" {
+  root="$BATS_TEST_TMPDIR/fleetroot"
+  seed_fleet_repo "$root/alpha"
+  git init -q -b main "$BATS_TEST_TMPDIR/nobus"
+  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
+  export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"
+  export CREW_SWEEP_ROOTS="$root"
+  mkdir -p "$XDG_DATA_HOME/crew"
+  printf '%s\n' "$BATS_TEST_TMPDIR/vanished/.git" "$BATS_TEST_TMPDIR/nobus/.git" >"$XDG_DATA_HOME/crew/repos"
+  outside="$BATS_TEST_TMPDIR/outside"
+  mkdir -p "$outside"
+  cd "$outside"
+
+  start_fleet_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1 --rediscover 1
+  poll_for 100 fleet_locked
+  poll_for 100 grep -q 'skipped (no bus)' "$FLEET_ERR"
+  post_pr_open "$root/alpha"
+  poll_for 150 fleet_at_least 1
+  # --rediscover 1 rediscovers about once a second, so this spans at least two
+  # more: a repeated note would show in the counts below.
+  sleep 3
+  [ "$(fleet_lines)" -eq 1 ]
+  [ "$(jq -r '.repo' "$FLEET_OUT")" = alpha ]
+  [ "$(grep -c 'skipped (gone)' "$FLEET_ERR")" -eq 1 ]
+  [ "$(grep -c 'skipped (no bus)' "$FLEET_ERR")" -eq 1 ]
+  run --separate-stderr run_crew fleet stream --status --crew c1
+  [ "$status" -eq 0 ]
+  stop_fleet_stream
+}
+
+@test "fleet stream: --help and -h print the fleet help, outside any git repo" {
+  outside="$BATS_TEST_TMPDIR/outside"
+  mkdir -p "$outside"
+  cd "$outside"
+  for flag in --help -h; do
+    run --separate-stderr run_crew fleet stream "$flag"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"usage: crew fleet stream --crew ID"* ]]
+    [[ "$output" == *"another watch is already running"* ]]
+    [ -z "$stderr" ]
+  done
 }

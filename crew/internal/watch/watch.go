@@ -104,13 +104,6 @@ func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 		say(stderr, "crew: %v\n", err)
 		return 1
 	}
-	// Without --since the cursor self-seeds from the crew's file, so a stale
-	// caller cursor cannot re-deliver. A file that is missing, empty or not all
-	// digits seeds 0: `$(cat …)` plus the arm's case.
-	if !c.sinceSet {
-		c.sinceText = seedCursor(filepath.Join(cdir, "cursor"))
-		c.since = parseIntSaturate(c.sinceText)
-	}
 
 	wlock := filepath.Join(cdir, "watch.lock.d")
 	if !lock.Acquire(wlock, strconv.Itoa(os.Getpid())) {
@@ -118,6 +111,16 @@ func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 		return 1
 	}
 	defer lock.Release(wlock)
+
+	// Without --since the cursor self-seeds from the crew's file, so a stale
+	// caller cursor cannot re-deliver. A file that is missing, empty or not all
+	// digits seeds 0: `$(cat …)` plus the arm's case. Read under the lock: a seed
+	// taken before it could predate a consumer that delivered and released in
+	// between, and would re-deliver that batch.
+	if !c.sinceSet {
+		c.sinceText = seedCursor(filepath.Join(cdir, "cursor"))
+		c.since = parseIntSaturate(c.sinceText)
+	}
 
 	// `stream` stops and retries by sending TERM to this process while it is
 	// parked, and bash ran its EXIT trap for TERM, INT and HUP alike. Go's

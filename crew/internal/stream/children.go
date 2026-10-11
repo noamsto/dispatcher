@@ -19,6 +19,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 )
 
@@ -30,6 +31,8 @@ const exitCantExec = 127
 type children struct {
 	bash string
 	self string
+	// dir is the cwd of `start`'s child; empty inherits ours.
+	dir string
 }
 
 // argv is the arm's `bash -euo pipefail "$0" …`.
@@ -81,12 +84,30 @@ func (c children) start(args []string, stdoutPath, stderrPath string) (*child, e
 
 	cmd := exec.Command(c.bash, c.argv(args)...)
 	cmd.Stdout, cmd.Stderr = out, errf
+	if c.dir != "" {
+		cmd.Dir = c.dir
+		// git prefers these to the cwd, so an inherited one would point every
+		// directory-scoped child at the same repo.
+		cmd.Env = withoutGitDirs(os.Environ())
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 	ch := &child{cmd: cmd, done: make(chan struct{})}
 	go ch.reap()
 	return ch, nil
+}
+
+func withoutGitDirs(environ []string) []string {
+	out := make([]string, 0, len(environ))
+	for _, kv := range environ {
+		switch name, _, _ := strings.Cut(kv, "="); name {
+		case "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE":
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // startReap is the arm's background subshell: HUP ignored (a signal aimed at

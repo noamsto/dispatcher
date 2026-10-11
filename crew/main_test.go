@@ -503,3 +503,25 @@ func TestRunFleetOutsideRepo(t *testing.T) {
 		t.Fatalf("code %d stdout %q stderr %q (bus %s)", code, stdout.String(), stderr.String(), common)
 	}
 }
+
+func TestRunFleetStreamNeedsCrew(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("CREW_SWEEP_ROOTS", "")
+	busRepo(t, filepath.Join(home, "git"), "alpha")
+	e := env{getwd: func() (string, error) { return "", os.ErrNotExist }}
+
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"fleet", "stream"}, &stdout, &stderr, e)
+	if code != 64 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "--crew ID is required") {
+		t.Fatalf("code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(context.Background(), []string{"fleet", "--all"}, &stdout, &stderr, e); code != 0 || !strings.HasPrefix(stdout.String(), "REPO") {
+		t.Fatalf("fleet --all after fleet stream: code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
+	}
+}

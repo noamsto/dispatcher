@@ -974,6 +974,21 @@ repo — `cd <worker repo> && crew stream --crew <id>` — so point a lane at th
 repo before waiting on the worker. A single checkout's stream can never cover a
 dispatch that left its repo.
 
+For a crew whose workers span repos, one `crew fleet stream --crew <id>` lane
+covers them all: it watches every repo on the machine whose bus holds a row for
+that crew and prints the `crew stream` batch lines with a top-level `repo` field,
+so one Monitor replaces a lane per repo. It shares each bus's per-crew cursor
+with `crew watch`, so it never delivers an event a per-repo stream also
+delivered, and it leaves a repo whose own `crew stream` is alive to that stream.
+It does not evaluate holds or run reaps: keep your own repo's `crew stream` for
+`hold_due` and `reap` lines. Cursors are per bus: remember the last `cursor` per
+`repo` (a batch without `repo` is your own stream's) and compare only within
+it, or a lower-cursor batch from another repo is dropped. A repo joins at the
+next rediscovery (`--rediscover`, default 300 s) and replays its backlog then.
+Arm the lane as its own persistent Monitor and give it the same liveness checks
+as `crew stream`, with `crew fleet stream --status --crew <id>` (a stale lane:
+`--force`; a dead one: re-arm). Its heartbeat carries no `repo`.
+
 The crew's roster diagram is drawn by `crew`, not by you: every `dispatch` and
 `dispatch resume` starts a per-crew `crew roster-render`, which redraws it into the
 aeye carousel beside your pane on every bus change. Never write `roster-*.d2`

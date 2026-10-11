@@ -46,7 +46,7 @@ import (
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | fleet [--all] [--crew ID] [--json] | nudge <codename|branch|worker-id> [--crew ID] [--wait [SECONDS]] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | fleet [--all] [--crew ID] [--json] | fleet stream --crew ID [--rediscover S] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] | fleet stream --status --crew ID | nudge <codename|branch|worker-id> [--crew ID] [--wait [SECONDS]] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -428,20 +428,31 @@ func discoverRepos(args []string, stdout, stderr io.Writer) int {
 	return flush(out, stderr, 0)
 }
 
+// originOf is a git common dir's origin URL, or "" when it has none.
+func originOf(ctx context.Context, common string) string {
+	out, err := exec.CommandContext(ctx, "git", "--git-dir="+common, "config", "--get", "remote.origin.url").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSuffix(string(out), "\n")
+}
+
 func runFleet(ctx context.Context, args []string, stdout, stderr io.Writer, e env) int {
+	// The lane prints one protocol line at a time for as long as it lives, so it
+	// writes straight to stdout like stream.
+	if len(args) > 0 && args[0] == "stream" {
+		return stream.RunFleet(args[1:], stdout, stderr, stream.FleetOptions{
+			Options: stream.Options{Now: time.Now, Probes: e.procs},
+			Origin:  func(common string) string { return originOf(ctx, common) },
+		})
+	}
 	o := fleet.Options{
 		Panes: func() string { return probes(ctx, "").Panes() },
 		Worktrees: func(common string) (string, error) {
 			return worktreeList(exec.CommandContext(ctx, "git", "--git-dir="+common, "worktree", "list", "--porcelain"))
 		},
-		Origin: func(common string) string {
-			out, err := exec.CommandContext(ctx, "git", "--git-dir="+common, "config", "--get", "remote.origin.url").Output()
-			if err != nil {
-				return ""
-			}
-			return strings.TrimSuffix(string(out), "\n")
-		},
-		Now: time.Now,
+		Origin: func(common string) string { return originOf(ctx, common) },
+		Now:    time.Now,
 	}
 	if palette, _ := jsonv.ParseJQColors(e.jqColors); e.color {
 		o.Colors = &palette

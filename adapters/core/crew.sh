@@ -1559,6 +1559,45 @@ a repo column; by default only working, blocked and pr_open branches show.
 Repos that are unreadable or gone are noted on stderr and skipped.
 
   crew fleet --json | jq -r '.[] | [.repo, .branch, .state] | @tsv'
+
+usage: crew fleet stream --crew ID [--rediscover S] [--states a,b,c] [--park S]
+                         [--heartbeat S] [--coalesce S] [--retry S]
+                         [--interval S] [--force]
+       crew fleet stream --status --crew ID
+
+One long-running lane that delivers a crew's bus events from every repo on the
+machine, so a dispatcher whose workers land in other repos needs one Monitor
+instead of one `crew stream` per repo. Lines are `crew stream`'s, and each batch
+carries a top-level `repo` (the label `crew fleet` shows); error lines name the
+repo they concern, and the lane's own heartbeat has none.
+
+  --crew ID       The crew to follow (required; no ambient CREW_ID)
+  --rediscover S  Look for newly joined buses every S seconds (default 300)
+  --status        Report the lane (alive, stale or dead; exit 0, 1 or 2)
+  --force         Replace a live lane, as `crew stream --force`
+  the rest        As `crew stream`; --reap-every is refused
+
+A bus joins once it holds a row for the crew, so no cursor is ever seeded in an
+unrelated repo. It uses the same per-crew cursor `crew watch` keeps there; a
+repo joined with no cursor file replays its backlog of qualifying events on its
+first park, as a bare `crew watch` does.
+
+hold_due and reap stay per repo: the fleet lane does not run reaps and does not
+evaluate holds. The per-repo `crew stream` or `dispatch` does. A bus whose
+per-repo stream is alive is left to it (noted once on stderr), so one event is
+never delivered twice. A per-repo stream started while the fleet lane is
+mid-park shows `another watch is already running` error lines until that park
+ends (at most --park seconds).
+
+Like `crew stream`, the lane holds the watch for each repo it has joined, so a
+bare `crew watch` for that crew in that repo is refused ("another watch is
+already running") while the lane runs.
+
+The lane lock lives under
+${XDG_STATE_HOME:-~/.local/state}/crew/fleet-stream/<crew>, outside every repo.
+Gone repos and repos without a bus are noted once on stderr and skipped.
+
+  crew fleet stream --crew <crew-id>
 HELP
     ;;
   roster-render)
@@ -1895,6 +1934,17 @@ hold)
     exit $?
     ;;
   esac
+  ;;
+fleet)
+  # `fleet stream` is a sub-subcommand: its --help is the second argument.
+  if [ "${1:-}" = stream ]; then
+    case "${2:-}" in
+    --help | -h)
+      _crew_help fleet
+      exit $?
+      ;;
+    esac
+  fi
   ;;
 esac
 case "${1:-}" in

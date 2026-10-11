@@ -242,29 +242,7 @@ func cleared(pid int, o Options) bool {
 // call cannot shift the answer. A lock with no readable tick counts as `stale`,
 // the safe direction: the tick is written immediately on acquiring the lock.
 func status(cdir, crew string, stdout io.Writer, o Options) int {
-	holder := statusPID(lock.Holder(filepath.Join(cdir, "stream.lock.d")))
-	live := isSinglePositivePID(holder) && o.Probes.Alive(pidNumber(holder))
-
-	// The holder is reported whether or not it answers: `dead` still names the
-	// pid that is gone.
-	pid := jsonv.Null()
-	if holder != "" {
-		if v, ok := jsonv.ParseNumber(holder); ok {
-			pid = v
-		}
-	}
-	st, rc := "dead", 2
-	age := jsonv.Null()
-	if live {
-		st, rc = "stale", 1
-		if tick := readTick(filepath.Join(cdir, "stream.tick")); tick.ok {
-			ageS := (clockMS(o) - tick.ts) / 1000
-			age = jsonv.Num(float64(ageS))
-			if ageS < 2*tick.park+60 {
-				st, rc = "alive", 0
-			}
-		}
-	}
+	st, rc, pid, age := laneState(cdir, o)
 	say(stdout, "%s\n", encode(jsonv.Object(
 		member("stream", jsonv.Str("status")),
 		member("state", jsonv.Str(st)),
@@ -273,6 +251,36 @@ func status(cdir, crew string, stdout io.Writer, o Options) int {
 		member("age_s", age),
 	)))
 	return rc
+}
+
+// laneState is the state machine behind `--status` for the lane whose lock and
+// tick live in cdir: the state, its exit status, the holder pid and the tick's
+// age.
+func laneState(cdir string, o Options) (state string, rc int, pid, age jsonv.Value) {
+	holder := statusPID(lock.Holder(filepath.Join(cdir, "stream.lock.d")))
+	live := isSinglePositivePID(holder) && o.Probes.Alive(pidNumber(holder))
+
+	// The holder is reported whether or not it answers: `dead` still names the
+	// pid that is gone.
+	pid = jsonv.Null()
+	if holder != "" {
+		if v, ok := jsonv.ParseNumber(holder); ok {
+			pid = v
+		}
+	}
+	state, rc = "dead", 2
+	age = jsonv.Null()
+	if live {
+		state, rc = "stale", 1
+		if tick := readTick(filepath.Join(cdir, "stream.tick")); tick.ok {
+			ageS := (clockMS(o) - tick.ts) / 1000
+			age = jsonv.Num(float64(ageS))
+			if ageS < 2*tick.park+60 {
+				state, rc = "alive", 0
+			}
+		}
+	}
+	return state, rc, pid, age
 }
 
 // tickState is a stream.tick: the two numbers the writer recorded, and ok for
@@ -507,6 +515,13 @@ type loop struct {
 	reapout string
 	reaperr string
 
+	// repo marks a fleet bus loop and labels its lines. Such a loop only parks
+	// and forwards batches: the lane owns the tick, heartbeat and lock, and holds
+	// and reaps stay with each repo's own stream.
+	repo string
+	// yield, when it reports true, holds the park back for another --interval.
+	yield func() bool
+
 	// quiet is the seconds of park that have come and gone with nothing to
 	// report; the heartbeat is what it has to reach.
 	quiet    int64
@@ -534,9 +549,18 @@ func (l *loop) run(sigs chan os.Signal) int {
 		// Written at the top of every iteration — including the first, right
 		// after the lock is acquired — because a live lock pid is not evidence
 		// that notifications are flowing (see --status).
-		l.writeTick()
-		l.flushReap()
-		l.holdDue()
+		if l.repo == "" {
+			l.writeTick()
+			l.flushReap()
+			l.holdDue()
+		}
+		if l.yield != nil && l.yield() {
+			if sig := l.wait(time.Duration(l.c.interval)*time.Second, sigs); sig != nil {
+				l.cleanup()
+				return 0
+			}
+			continue
+		}
 		rc, sig := l.park(sigs)
 		if sig != nil {
 			l.cleanup()
@@ -591,11 +615,11 @@ func (l *loop) afterWatch(rc int, sigs chan os.Signal) os.Signal {
 		// A qualifying batch. Re-entering `watch` immediately would turn N
 		// events trickling in over N seconds into N notifications, so the
 		// --coalesce sleep is what holds one turn to one batch.
-		say(l.stdout, "%s\n", text)
+		l.printBatch(text)
 		l.flushReap()
 		// React to the event we already have rather than waiting out the
 		// cadence: a terminal status or a PR-merged msg is worth a reap now.
-		if wantsReap(text) {
+		if l.repo == "" && wantsReap(text) {
 			l.startReap()
 		}
 		truncate(l.outf)
@@ -605,7 +629,7 @@ func (l *loop) afterWatch(rc int, sigs chan os.Signal) os.Signal {
 	if rc == 0 {
 		// The park expired with nothing to report.
 		l.quiet += l.c.park
-		if l.quiet >= l.c.heartbeat {
+		if l.repo == "" && l.quiet >= l.c.heartbeat {
 			l.emit(jsonv.Object(
 				member("stream", jsonv.Str("heartbeat")),
 				member("crew", jsonv.Str(l.c.crew)),
@@ -787,9 +811,7 @@ func (l *loop) cleanup() {
 	// Drain before delete: stream.out is what an orphaned-then-reaped child
 	// wrote but this process never got to read.
 	if text, ok := readIfNonEmpty(l.outf); ok {
-		// With the newline: `readIfNonEmpty` strips it as command substitution
-		// does, and the arm's `printf '%s\n'`/`cat` always ended the line.
-		say(l.stdout, "%s\n", text)
+		l.printBatch(text)
 	}
 	if l.reap != nil && !l.reap.live() {
 		l.printReap(l.reap.out)
@@ -798,7 +820,9 @@ func (l *loop) cleanup() {
 	_ = os.Remove(l.errf)
 	_ = os.Remove(l.holderr)
 	sweepReaped(l.reapout, l.reaperr)
-	lock.Release(l.lockd)
+	if l.lockd != "" {
+		lock.Release(l.lockd)
+	}
 }
 
 // wait is one of the loop's two real sleeps, interruptible by a caught signal.
@@ -821,7 +845,27 @@ func (l *loop) writeTick() {
 	_ = os.WriteFile(filepath.Join(l.cdir, "stream.tick"), []byte(tick+"\n"), 0o644)
 }
 
-func (l *loop) emit(line jsonv.Value) { say(l.stdout, "%s\n", encode(line)) }
+func (l *loop) emit(line jsonv.Value) {
+	if l.repo != "" {
+		line.Set("repo", jsonv.Str(l.repo))
+	}
+	say(l.stdout, "%s\n", encode(line))
+}
+
+// printBatch passes one inner-watch batch through, newline-terminated:
+// `readIfNonEmpty` strips it as command substitution does, and the arm's
+// `printf '%s\n'`/`cat` always ended the line. A fleet loop labels the batch
+// with its repo; one that will not decode goes out verbatim rather than being
+// dropped.
+func (l *loop) printBatch(text string) {
+	if l.repo != "" {
+		if v, err := decodeOne(text); err == nil && v.Kind() == jsonv.KindObject {
+			v.Set("repo", jsonv.Str(l.repo))
+			text = encode(v)
+		}
+	}
+	say(l.stdout, "%s\n", text)
+}
 
 func (l *loop) nowMS() int64 { return clockMS(l.o) }
 
