@@ -204,8 +204,9 @@ strip_templates() {
 #
 # In scope: S1 a canonical dumper word, optionally /-rooted,
 # at any bash command position, case arms included. S2 the canonical-idiom
-# wrapper list (a plain `eval` word included), grown only when an idiom is seen in use. S3 a separator,
-# comment, redirect or stdin ending, heredocs included. S4 a
+# wrapper list (a plain `eval` word included), grown only when an idiom is
+# seen in use. S3 a separator, comment, redirect or stdin ending, heredocs
+# included. S4 a
 # backslash-newline continuation splitting the dump. S5 the shell structure
 # the masker already models. S6 a `#` misread as a comment, covered by the
 # no-comment (J) reading; a command mixing a real comment with a misread one
@@ -219,10 +220,10 @@ strip_templates() {
 # finder beside the dequoted one.
 #
 # Out of scope: O1 word-forming obfuscation — variables, eval of a built or
-# expanded string (`eval "$x"`), aliases and
-# ANSI-C escape decoding. O2 expansion-dependent structure — a
-# substitution expanding to nothing (`env $(true)`), a heredoc read into a
-# variable (read/mapfile) and expanded later. O3 lexer precision
+# expanded string (`eval "$x"`), aliases and ANSI-C escape decoding. O2
+# expansion-dependent structure — a substitution expanding to nothing
+# (`env $(true)`), a heredoc read into a variable (read/mapfile) and expanded
+# later. O3 lexer precision
 # beyond the masker's model — quotes in "${x#...}", an escaped quote in a
 # $'...' heredoc delimiter, a case nested in a double-quoted $(...). O4
 # non-dumper paths, and a quoted ssh remote command (`ssh h '…'`).
