@@ -13873,3 +13873,31 @@ post_pr_open() {
     [ -z "$stderr" ]
   done
 }
+
+@test "_lock_acquire: an empty holder inside the grace is held, a stale one is reclaimed" {
+  eval "$(sed -n '/^_lock_acquire() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_file_mtime_s() {/,/^}/p' "$CREW")"
+  local d="$BATS_TEST_TMPDIR/l.d"
+
+  mkdir "$d"
+  run _lock_acquire "$d" 4242
+  [ "$status" -eq 1 ]
+  [ ! -e "$d/pid" ]
+
+  : >"$d/pid"
+  run _lock_acquire "$d" 4242
+  [ "$status" -eq 1 ]
+
+  touch -t 200001010000 "$d"
+  run _lock_acquire "$d" 4242
+  [ "$status" -eq 0 ]
+  [ "$(cat "$d/pid")" = 4242 ]
+
+  # a future mtime (skewed clock) must not read as fresh forever
+  rm -rf "$d"
+  mkdir "$d"
+  touch -t 209901010000 "$d"
+  run _lock_acquire "$d" 4242
+  [ "$status" -eq 0 ]
+  [ "$(cat "$d/pid")" = 4242 ]
+}

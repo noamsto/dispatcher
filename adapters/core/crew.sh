@@ -818,12 +818,13 @@ _unread_scan() {
 # _lock_acquire <lockdir> <owner_pid> — atomic mkdir gate with dead-PID reclaim.
 # mkdir is atomic on POSIX, so it is the ONLY gate: exactly one caller wins.
 # Returns 0 (acquired; owner_pid written inside for liveness) or 1 (held by a
-# DIFFERENT live PID, or lost the reclaim race). If the held owner equals the
-# requested owner, returns 0 idempotently — re-running /dispatcher in the same
-# session (same session-stable PID) is a no-op success, not a refusal. rm -rf
-# here is safe — the lock dir is transient coordination state, never user data.
+# DIFFERENT live PID, an acquirer still writing its pid, or lost the reclaim
+# race). If the held owner equals the requested owner, returns 0 idempotently —
+# re-running /dispatcher in the same session (same session-stable PID) is a
+# no-op success, not a refusal. rm -rf here is safe — the lock dir is transient
+# coordination state, never user data.
 _lock_acquire() {
-  local ld="$1" owner="$2" held
+  local ld="$1" owner="$2" held mtime age
   if mkdir "$ld" 2>/dev/null; then
     printf '%s\n' "$owner" >"$ld/pid"
     return 0
@@ -832,13 +833,18 @@ _lock_acquire() {
   if [ "$held" = "$owner" ]; then
     return 0 # idempotent: this same owner already holds it
   fi
+  # The owner writes its pid after mkdir, so an empty holder in a just-made dir
+  # is an acquirer mid-write, not a stale lock; 2s mirrors crew/internal/lock.
+  if [ -z "$held" ] && mtime=$(_file_mtime_s "$ld") && age=$(($(date +%s) - mtime)) && [ "$age" -gt -2 ] && [ "$age" -lt 2 ]; then
+    return 1
+  fi
   # Bare `kill -0`, not `_pid_alive`: a `0` holder must read as held (the
   # process-group semantics `stream --force` pins), and lock holders are
   # always this tool's own uid anyway.
   if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
     return 1
   fi
-  rm -rf "$ld" # stale (owner PID dead/empty) — reclaim through the same mkdir gate
+  rm -rf "$ld" # stale (owner PID dead, or empty past the grace) — reclaim through the same mkdir gate
   if mkdir "$ld" 2>/dev/null; then
     printf '%s\n' "$owner" >"$ld/pid"
     return 0
