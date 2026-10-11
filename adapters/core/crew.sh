@@ -1133,6 +1133,7 @@ Holds:
 Maintenance:
   reap            Reclaim the window and worktree of a landed PR
   git-baseline    List or accept the exec-capable git-config baseline
+  stack           Read or record the cut point of a stacked child
   engine-cmd      Whether a tmux pane command is an engine
 HELP
     return 0
@@ -1843,6 +1844,27 @@ URL userinfo and query values in redirect values and URL-subsection keys are mas
 with a sha256 fingerprint of the full value; the baseline stores full values.
 
   crew git-baseline
+HELP
+    ;;
+  stack)
+    cat <<'HELP'
+usage: crew stack cut [--record] <child-branch|PR#> [<oid>]
+
+Print the parent oid a stacked child was last cut from, as the dispatcher
+recorded it: the child's dispatch row (base_oid) or a later --record. Worker
+status and msg rows are never read. Exit 1 when nothing is recorded: ask the
+child, never guess.
+
+  --record  Fetch origin/<parent> and origin/<child>, and when the parent tip is
+            an ancestor of the child, record it as the new cut and print it.
+            Refuses, writing nothing, when the child is not rebased onto it.
+  <oid>     With --record: the cut the child reports. Recorded only when it is a
+            commit and an ancestor of origin/<child>; the parent tip is not
+            checked, as the parent may have moved. Refuses otherwise,
+            including the child's own head.
+
+  crew stack cut --record feat/240-child
+  crew stack cut --record feat/240-child 0123456789abcdef0123456789abcdef01234567
 HELP
     ;;
   engine-cmd)
@@ -3325,6 +3347,131 @@ PANES
 $candidates
 EOF
   [ -n "$dry" ] || [ "$reaped" -gt 0 ] || note "nothing reclaimed"
+  ;;
+stack)
+  # Bash, not Go: --record needs the anchored git that only the shell lib has.
+  stack_record=""
+  stack_child=""
+  stack_oid=""
+  if [ "${1:-}" = cut ]; then
+    shift
+    if [ "${1:-}" = --record ]; then
+      stack_record=1
+      shift
+    fi
+    stack_child="${1:-}"
+    if [ -n "$stack_record" ] && [ $# -eq 2 ]; then
+      stack_oid="$2"
+      set -- "$1"
+    fi
+    [ $# -eq 1 ] || stack_child=""
+  fi
+  if [ -z "$stack_child" ]; then
+    echo "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]" >&2
+    exit 1
+  fi
+  if [ -n "$stack_oid" ] && [[ ! $stack_oid =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then
+    echo "crew: '$stack_oid' is not a full lowercase hex commit oid" >&2
+    exit 1
+  fi
+  wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
+  # shellcheck source=/dev/null
+  . "$wt_git_lib"
+  # Before any crew-id, gh or bus read: a tampered worker worktree as cwd must
+  # not steer which crew, PR or rows decide the cut (#633).
+  _wt_trusted_cwd "$common" || exit 1
+  stack_crew=$(_crew_id)
+  if [ -z "$stack_crew" ]; then
+    echo "crew: no crew id — CREW_ID unset and no WORKER_TASK.md crew_id; run 'crew crews' to find this repo's crews, 'crew adopt <id>' to re-attach, or 'crew new' to start one" >&2
+    exit 1
+  fi
+  stack_pr="${stack_child#\#}"
+  case "$stack_pr" in
+  '' | *[!0-9]*) ;;
+  *)
+    stack_pr_json=$(gh pr view "$stack_pr" --json headRefName,isCrossRepository) || {
+      echo "crew: cannot read PR #$stack_pr" >&2
+      exit 1
+    }
+    if [ "$(jq -r '.isCrossRepository' <<<"$stack_pr_json")" != false ]; then
+      echo "crew: PR #$stack_pr is from a fork; stacked cuts are recorded for same-repo branches only" >&2
+      exit 1
+    fi
+    stack_child=$(jq -r '.headRefName // empty' <<<"$stack_pr_json")
+    ;;
+  esac
+  if [ -z "$stack_child" ] || ! _wt_plain_branch_name "$stack_child"; then
+    echo "crew: '$stack_child' is not a plain branch name" >&2
+    exit 1
+  fi
+  # Trust boundary: only the dispatcher-written kinds are consulted. Worker
+  # status/msg rows can carry any body, so they never feed a cut point. A
+  # dispatch row counts only when it carries a base_oid (a --base create, where
+  # the dispatcher chose the parent); a --pr attach row's base is the PR's live
+  # baseRefName, which the worker can retarget.
+  _stack_newest() { # <dispatch field> <stack_cut field>
+    jq -Rr -n --arg crew "$stack_crew" --arg child "$stack_child" --arg df "$1" --arg sf "$2" '
+      [inputs | fromjson? | select(type == "object" and .crew_id == $crew and .branch == $child)
+        | select((.kind == "dispatch" and (.base_oid | type) == "string" and (.[$df] | type) == "string")
+              or (.kind == "stack_cut" and (.[$sf] | type) == "string"))]
+      | sort_by(.ts) | last | (.[$df] // .[$sf]) // empty' "$stack_src"
+  }
+  stack_src="$log"
+  [ -f "$stack_src" ] || stack_src=/dev/null
+  if [ -z "$stack_record" ]; then
+    stack_cut=$(_stack_newest base_oid cut)
+    if [[ $stack_cut =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then
+      printf '%s\n' "$stack_cut"
+      exit 0
+    fi
+    echo "crew: no recorded cut for $stack_child in crew $stack_crew — ask the child for the parent oid it is based on (DISPATCHER_PROTOCOL.md → Rebase coordination); never guess" >&2
+    exit 1
+  fi
+  stack_parent=$(_stack_newest base parent)
+  if [ -z "$stack_parent" ]; then
+    echo "crew: no recorded parent for $stack_child; dispatch it with --base first" >&2
+    exit 1
+  fi
+  if [ -n "$stack_oid" ]; then
+    # The child's own answer: the parent may have moved or been rewritten, so
+    # only require the oid to be a commit the child's head already contains.
+    _wt_fetch_origin_branch "$common" "$stack_child" || {
+      echo "crew: cannot fetch origin/$stack_child" >&2
+      exit 1
+    }
+    # shellcheck disable=SC2154 # set by the sourced worktree-git lib
+    stack_child_oid=$fetched_oid
+    if [ "$stack_oid" = "$stack_child_oid" ]; then
+      echo "crew: ${stack_oid:0:12} is origin/$stack_child's own head, not a cut — not recording it" >&2
+      exit 1
+    fi
+    if ! _wt_git_common "$common" cat-file -e "$stack_oid^{commit}" ||
+      ! _wt_git_common "$common" merge-base --is-ancestor "$stack_oid" "$stack_child_oid"; then
+      echo "crew: ${stack_oid:0:12} is not an ancestor of origin/$stack_child — not recording it" >&2
+      exit 1
+    fi
+    stack_tip=$stack_oid
+  else
+    _wt_fetch_origin_branch "$common" "$stack_parent" || {
+      echo "crew: cannot fetch origin/$stack_parent" >&2
+      exit 1
+    }
+    stack_tip=$fetched_oid
+    _wt_fetch_origin_branch "$common" "$stack_child" || {
+      echo "crew: cannot fetch origin/$stack_child" >&2
+      exit 1
+    }
+    stack_child_oid=$fetched_oid
+    if ! _wt_git_common "$common" merge-base --is-ancestor "$stack_tip" "$stack_child_oid"; then
+      echo "crew: origin/$stack_parent (${stack_tip:0:12}) is not an ancestor of origin/$stack_child — the parent moved or the child is not rebased onto it yet; ask the child for its cut, then record it with 'crew stack cut --record $stack_child <oid>'; never guess" >&2
+      exit 1
+    fi
+  fi
+  stack_line=$(jq -nc --arg crew "$stack_crew" --arg b "$stack_child" --arg p "$stack_parent" --arg c "$stack_tip" \
+    '{ts: (now * 1000 | floor), crew_id: $crew, kind: "stack_cut", branch: $b, parent: $p, cut: $c}')
+  mkdir -p "$dir"
+  _bus_append "$log" "$stack_line"
+  printf '%s\n' "$stack_tip"
   ;;
 *)
   # Bare `crew` and an unknown subcommand: the grouped list on stderr, not the

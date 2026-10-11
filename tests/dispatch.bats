@@ -5267,6 +5267,28 @@ ROWS
   grep -qx 'base: stacked-base' "$TEST_REPO/.worktrees/eng-7691-foo/WORKER_TASK.md"
 }
 
+@test "--pr records a null base_oid when the parent cannot be shown to be an ancestor" {
+  stub_pr_bins eng-7691-foo stacked-base
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | [.base, (.base_oid|tostring)] | join(" ")' "$log"
+  [ "$output" = "stacked-base null" ]
+}
+
+@test "--pr records a null base_oid even when gh's baseRefName names an ancestor of the child" {
+  stub_pr_bins eng-7691-foo stacked-base
+  # The PR's base is worker-retargetable, so an ancestor tip proves nothing.
+  git init -q --bare "$TEST_REPO/origin.git"
+  git -C "$TEST_REPO" remote add origin "$TEST_REPO/origin.git"
+  git -C "$TEST_REPO" push -q origin "$PR_HEAD_OID:refs/heads/stacked-base"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | [.base, (.base_oid|tostring)] | join(" ")' "$log"
+  [ "$output" = "stacked-base null" ]
+}
+
 @test "a non-pr dispatch never stamps base:" {
   stub_launch_bins
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
@@ -5806,6 +5828,66 @@ _roster_live_dispatcher() {
   DISPATCH_PROFILE=personal run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   run jq -r 'select(.kind=="dispatch") | has("base")' "$log"
+  [ "$output" = "false" ]
+}
+
+@test "base: a --base create records the pinned parent oid as base_oid" {
+  setup_stacked_base feat/parent
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | .base_oid' "$log"
+  [ "$output" = "$STACKED_OID" ]
+}
+
+# stub_resume_switch — after a --base create, make the next dispatch of the same
+# title a resume: nobody occupies the worktree, and wt attaches by name onto the
+# tree the create already made (setup_stale_default_branch's wt only knows -c).
+stub_resume_switch() {
+  stub_crew_gate '[]' '[]'
+  cat >"$STUB_DIR/wt" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+exit 0
+EOS
+  chmod +x "$STUB_DIR/wt"
+}
+
+@test "base: a --base re-dispatch records null base_oid even when the child contains the parent tip" {
+  setup_stacked_base feat/parent
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  stub_resume_switch
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"resuming branch"* ]]
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  [ "$(jq -s '[.[] | select(.kind=="dispatch")] | length' "$log")" -eq 2 ]
+  run jq -sr '[.[] | select(.kind=="dispatch")] | last | [.base, (.base_oid|tostring)] | join(" ")' "$log"
+  [ "$output" = "feat/parent null" ]
+}
+
+@test "base: a carried re-dispatch records null base_oid even when the child contains the parent tip" {
+  setup_stacked_base feat/parent
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base feat/parent --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  stub_resume_switch
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "implement thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"resuming branch"* ]]
+  grep -qx 'base: feat/parent' "$TEST_REPO/.dispatch-wt/feat-42-implement-thing/WORKER_TASK.md"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  [ "$(jq -s '[.[] | select(.kind=="dispatch")] | length' "$log")" -eq 2 ]
+  # The carried base: is read after the row is written, so the row has neither key.
+  run jq -sr '[.[] | select(.kind=="dispatch")] | last | [has("base"), has("base_oid")] | map(tostring) | join(" ")' "$log"
+  [ "$output" = "false false" ]
+}
+
+@test "base: a plain dispatch's event has no base_oid key" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  run jq -r 'select(.kind=="dispatch") | has("base_oid")' "$log"
   [ "$output" = "false" ]
 }
 

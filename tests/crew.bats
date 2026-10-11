@@ -14208,3 +14208,184 @@ _lock_litter() { find "$BATS_TEST_TMPDIR" \( -name '*.stale.*' -o -name '*.new.*
   [ "$(cat "$d/pid")" = 4242 ]
   [ -z "$(_lock_litter)" ]
 }
+
+# stack cut: a bare origin with feat/parent (on main) and feat/child (on the
+# parent), plus a dispatcher dispatch row recording the child's cut point.
+_stack_fixture() {
+  local origin="$BATS_TEST_TMPDIR/origin.git"
+  SC="$BATS_TEST_TMPDIR/scratch"
+  git init --bare -q -b main "$origin"
+  git remote add origin "$origin"
+  seed_git_baseline
+  git commit -q --allow-empty -m base
+  git push -q origin HEAD:refs/heads/main
+  git clone -q "$origin" "$SC"
+  git -C "$SC" config user.email "$(git config user.email)"
+  git -C "$SC" config user.name "$(git config user.name)"
+  git -C "$SC" checkout -q -b feat/parent origin/main
+  git -C "$SC" commit -q --allow-empty -m parent1
+  git -C "$SC" push -q origin feat/parent
+  git -C "$SC" checkout -q -b feat/child
+  git -C "$SC" commit -q --allow-empty -m child1
+  git -C "$SC" push -q origin feat/child
+  PARENT_OID=$(git -C "$SC" rev-parse feat/parent)
+  SLOG="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  mkdir -p "$(dirname "$SLOG")"
+  jq -nc --arg o "$PARENT_OID" \
+    '{ts:1,crew_id:"c1",kind:"dispatch",branch:"feat/child",base:"feat/parent",base_oid:$o}' >>"$SLOG"
+  export CREW_ID=c1
+}
+
+# _stack_advance_parent <rebase-child:0|1> — a new parent commit, optionally
+# with the child rebased onto it; both published.
+_stack_advance_parent() {
+  git -C "$SC" checkout -q feat/parent
+  git -C "$SC" commit -q --allow-empty -m parent2
+  git -C "$SC" push -q origin feat/parent
+  if [ "$1" = 1 ]; then
+    git -C "$SC" checkout -q feat/child
+    git -C "$SC" rebase -q feat/parent
+    git -C "$SC" push -q -f origin feat/child
+  fi
+  NEW_TIP=$(git -C "$SC" rev-parse feat/parent)
+}
+
+@test "stack cut: prints the oid the dispatch row recorded" {
+  _stack_fixture
+  run run_crew stack cut feat/child
+  [ "$status" -eq 0 ]
+  [ "$output" = "$PARENT_OID" ]
+}
+
+@test "stack cut: worker-written status and msg rows are never read" {
+  _stack_fixture
+  local other=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  jq -nc --arg o "$other" '{ts:5,crew_id:"c1",kind:"status",from:"worker:feat/child#s1",branch:"feat/child",body:{state:"working",cut:$o,base_oid:$o}}' >>"$SLOG"
+  jq -nc --arg o "$other" '{ts:6,crew_id:"c1",kind:"msg",from:"worker:feat/child#s1",to:"dispatcher:c1",branch:"feat/child",body:{kind:"stack_cut",cut:$o,base_oid:$o}}' >>"$SLOG"
+  run run_crew stack cut feat/child
+  [ "$status" -eq 0 ]
+  [ "$output" = "$PARENT_OID" ]
+}
+
+@test "stack cut: only forged rows means no recorded cut" {
+  _stack_fixture
+  : >"$SLOG"
+  local other=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  jq -nc --arg o "$other" '{ts:5,crew_id:"c1",kind:"status",from:"worker:feat/child#s1",branch:"feat/child",body:{cut:$o,base_oid:$o}}' >>"$SLOG"
+  run run_crew stack cut feat/child
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ask the child"* ]]
+}
+
+@test "stack cut: --record writes the parent tip once the child is rebased onto it" {
+  _stack_fixture
+  _stack_advance_parent 1
+  run run_crew stack cut --record feat/child
+  [ "$status" -eq 0 ]
+  [ "$output" = "$NEW_TIP" ]
+  [ "$(jq -c 'select(.kind == "stack_cut")' "$SLOG" | wc -l)" -eq 1 ]
+  [ "$(jq -r 'select(.kind == "stack_cut") | .cut' "$SLOG")" = "$NEW_TIP" ]
+  [ "$(jq -r 'select(.kind == "stack_cut") | .parent' "$SLOG")" = feat/parent ]
+  run run_crew stack cut feat/child
+  [ "$status" -eq 0 ]
+  [ "$output" = "$NEW_TIP" ]
+}
+
+@test "stack cut: --record refuses when the child is not rebased onto the parent tip" {
+  _stack_fixture
+  _stack_advance_parent 0
+  run run_crew stack cut --record feat/child
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not an ancestor"* ]]
+  [ "$(jq -c 'select(.kind == "stack_cut")' "$SLOG" | wc -l)" -eq 0 ]
+}
+
+@test "stack cut: a PR number resolves to its head branch; a cross-repo PR is refused" {
+  _stack_fixture
+  stub_bin gh
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+[ "$*" = "pr view 7 --json headRefName,isCrossRepository" ] || exit 1
+printf '{"headRefName":"feat/child","isCrossRepository":%s}\n' "${GH_CROSS:-false}"
+EOF
+  run run_crew stack cut '#7'
+  [ "$status" -eq 0 ]
+  [ "$output" = "$PARENT_OID" ]
+  GH_CROSS=true run run_crew stack cut 7
+  [ "$status" -ne 0 ]
+}
+
+@test "stack cut: a forged WORKER_TASK.md crew id in a dispatched worktree is not consulted" {
+  _stack_fixture
+  git branch feat/wt-x
+  local wt="$BATS_TEST_TMPDIR/stack-wt"
+  git worktree add -q "$wt" feat/wt-x
+  wt=$(cd "$wt" && pwd -P)
+  write_anchor_record "$wt"
+  printf 'record\n%s\n' "$(git rev-parse --path-format=absolute --git-common-dir)/crew" >"$(anchor_record_path "$wt")"
+  printf 'crew_id: evil\n' >"$wt/WORKER_TASK.md"
+  cd "$wt"
+  run run_crew stack cut feat/child
+  [ "$status" -eq 0 ]
+  [ "$output" = "$PARENT_OID" ]
+}
+
+@test "stack cut: --record ignores a newer --pr attach row whose base the worker could retarget" {
+  _stack_fixture
+  jq -nc '{ts:2,crew_id:"c1",kind:"dispatch",branch:"feat/child",base:"main",base_oid:null}' >>"$SLOG"
+  run run_crew stack cut --record feat/child
+  [ "$status" -eq 0 ]
+  [ "$(jq -r 'select(.kind == "stack_cut") | .parent' "$SLOG")" = feat/parent ]
+  [ "$(jq -c 'select(.kind == "stack_cut" and .parent == "main")' "$SLOG" | wc -l)" -eq 0 ]
+}
+
+@test "stack cut: --record refuses when only a --pr attach row names a base" {
+  _stack_fixture
+  jq -nc '{ts:2,crew_id:"c1",kind:"dispatch",branch:"feat/child",base:"main",base_oid:null}' >"$SLOG"
+  run run_crew stack cut --record feat/child
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no recorded parent"* ]]
+  [ "$(jq -c 'select(.kind == "stack_cut")' "$SLOG" | wc -l)" -eq 0 ]
+}
+
+@test "stack cut: --record <oid> records the cut the child reports when it is an ancestor of the child" {
+  _stack_fixture
+  _stack_advance_parent 0
+  run run_crew stack cut --record feat/child "$PARENT_OID"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$PARENT_OID" ]
+  [ "$(jq -c 'select(.kind == "stack_cut")' "$SLOG" | wc -l)" -eq 1 ]
+  [ "$(jq -r 'select(.kind == "stack_cut") | .cut' "$SLOG")" = "$PARENT_OID" ]
+  [ "$(jq -r 'select(.kind == "stack_cut") | .parent' "$SLOG")" = feat/parent ]
+  run run_crew stack cut feat/child
+  [ "$output" = "$PARENT_OID" ]
+}
+
+@test "stack cut: --record <oid> refuses an oid that is not an ancestor of the child" {
+  _stack_fixture
+  _stack_advance_parent 0
+  # Present locally, so the refusal must come from the ancestor check.
+  git fetch -q origin feat/parent
+  git cat-file -e "$NEW_TIP^{commit}"
+  run run_crew stack cut --record feat/child "$NEW_TIP"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"is not an ancestor of origin/feat/child"* ]]
+  [ "$(jq -c 'select(.kind == "stack_cut")' "$SLOG" | wc -l)" -eq 0 ]
+}
+
+@test "stack cut: --record <oid> refuses the child's own head" {
+  _stack_fixture
+  run run_crew stack cut --record feat/child "$(git -C "$SC" rev-parse feat/child)"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"own head, not a cut"* ]]
+  [ "$(jq -c 'select(.kind == "stack_cut")' "$SLOG" | wc -l)" -eq 0 ]
+}
+
+@test "stack cut: --record <oid> refuses a malformed oid" {
+  _stack_fixture
+  run run_crew stack cut --record feat/child HEAD
+  [ "$status" -ne 0 ]
+  run run_crew stack cut --record feat/child "${PARENT_OID:0:12}"
+  [ "$status" -ne 0 ]
+  [ "$(jq -c 'select(.kind == "stack_cut")' "$SLOG" | wc -l)" -eq 0 ]
+}

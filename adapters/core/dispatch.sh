@@ -784,36 +784,10 @@ _crew_append() {
   _bus_append "$crew_dir/events.jsonl" "$1"
 }
 
-# _fetch_origin_branch <name> — fetch an untrusted (gh/stamp-derived) branch
-# name into refs/remotes/origin/<name> only, always in the dispatcher's own
-# repo. A bare positional would parse the name as a refspec
-# (`+refs/heads/x:refs/remotes/origin/main` force-updates origin/main) or a
-# fetch option (`--upload-pack=...`), so it must be a plain branch name and is
-# spelled as an explicit refspec. Anchored on the common dir, so it runs the
-# same from any cwd and no worker's `.git` is consulted (#539, #633). Sets
-# fetched_oid from the fetch's own porcelain output, never a re-read: refs are
-# shared with workers, which can rewrite refs/remotes/origin/<name> between the
-# fetch and a later rev-parse (#695).
-_plain_branch_name() {
-  [[ $1 == *:* || $1 == +* ]] && return 1
-  git check-ref-format --branch "$1" >/dev/null
-}
-_fetch_origin_branch() {
-  local name=$1
-  local out line flag new ref oid=
-  fetched_oid=
-  _plain_branch_name "$name" || return 1
-  out="$(_wt_git_common "${crew_dir%/crew}" fetch --porcelain -v --no-recurse-submodules origin "+refs/heads/$name:refs/remotes/origin/$name")" || return 1
-  while IFS= read -r line; do
-    flag=${line:0:1}
-    read -r _ new ref <<<"${line:2}"
-    [ "$ref" = "refs/remotes/origin/$name" ] || continue
-    case $flag in ' ' | + | '*' | = | t) oid=$new ;; esac
-  done <<<"$out"
-  [ -n "$oid" ] || return 1
-  _wt_git_common "${crew_dir%/crew}" cat-file -e "$oid^{commit}" 2>/dev/null || return 1
-  fetched_oid=$oid
-}
+# Anchored wrappers over worktree-git.sh, which documents the fetch contract.
+fetched_oid="" # set by _wt_fetch_origin_branch (worktree-git.sh)
+_plain_branch_name() { _wt_plain_branch_name "$1"; }
+_fetch_origin_branch() { _wt_fetch_origin_branch "${crew_dir%/crew}" "$1"; }
 
 # Must read stdin to EOF: an early exit closes the pipe, SIGPIPEs git and trips pipefail.
 _branch_wts() { # <branch> — porcelain on stdin -> every worktree whose HEAD names refs/heads/<branch>
@@ -5252,6 +5226,14 @@ lead_sid=""
 case "$agent" in
 claude | pi) lead_sid="$(_uuid)" ;;
 esac
+# row_base_oid: the parent tip a --base create branched from, so a stacked rebase
+# can use it as the cut point. Anything else would rest on worker-controlled
+# input: a --pr parent is gh's baseRefName, and on any resume the only check is
+# against the child's own head. Later cuts come from `crew stack cut --record`.
+row_base_oid=""
+if [ "$switch_mode" = create ] && [ -n "$base_flag" ]; then
+  row_base_oid="$create_base_oid"
+fi
 line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$session" \
   --arg worker "$worker_id" --arg engine_session "$lead_sid" \
   --arg engine "$agent" --arg model "$model" --arg tier "$tier" --arg effort "$effort" \
@@ -5260,13 +5242,13 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --arg plan "$plan_val" --argjson resume "$([ "$switch_mode" = resume ] && echo true || echo false)" \
   --argjson ident "$ident" \
   --arg escalated_from "$escalated_from_event" \
-  --arg base "$base_ref" \
+  --arg base "$base_ref" --arg base_oid "$row_base_oid" \
   --argjson owner_auth "$([ -n "$owner_auth" ] && echo true || echo false)" \
   --argjson also_closes "$(jq -nc '$ARGS.positional | map(tonumber? // .)' --args ${also_closes[@]+"${also_closes[@]}"})" \
   --argjson also_closes_explicit "$also_closes_explicit_empty" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
-   + if $base != "" then {base:$base} else {} end
+   + if $base != "" then {base:$base, base_oid:(if $base_oid == "" then null else $base_oid end)} else {} end
    + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end')
 _crew_append "$line"
 if [ -n "$ident_locked" ]; then
