@@ -19,10 +19,9 @@ teardown() {
   teardown_repo
 }
 
-# The inspection helpers below moved from the bash lib to crew/internal/gitguard;
-# these shims map them onto `crew-go git-guard <op>` so the test bodies stay as
-# written. Value-returning shims append and strip a sentinel byte so a trailing
-# newline in a record survives command substitution.
+# Inspection helpers over `crew-go git-guard <op>`. Value-returning shims append
+# and strip a sentinel byte so a trailing newline in a record survives command
+# substitution.
 _wt_cfg_redirect_mark=$'#covers\nredirect'
 _wt_cfg_pairs() { "$CREW_GO_BIN" git-guard pairs "$@"; }
 _wt_cfg_union() { "$CREW_GO_BIN" git-guard union "$@"; }

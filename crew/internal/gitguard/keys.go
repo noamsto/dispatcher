@@ -1,8 +1,6 @@
 // Package gitguard is the git-config guard: a worker can write the repo's
 // common config, so the dispatcher refuses to run git when an exec-capable or
 // endpoint-redirecting (key, value) pair has drifted from a trusted baseline.
-// This file and its siblings are the pure core — which pairs are guarded, and
-// how a refusal prints them with URL credentials masked.
 package gitguard
 
 import "strings"

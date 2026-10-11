@@ -22,8 +22,7 @@ type ctxEntry struct {
 
 // RunBaseline is `crew git-baseline [--accept]`: it lists — or, with --accept,
 // merges into — the baseline Check enforces. Values print masked, and --accept
-// writes exactly the pairs this run printed: each context is listed once, and a
-// pair is shown and collected in one step.
+// writes exactly the pairs this run printed.
 func RunBaseline(args []string, cwd string, o BaselineOptions, stdout, stderr io.Writer) int {
 	var accept bool
 	switch {
@@ -178,8 +177,7 @@ func RunBaseline(args []string, cwd string, o BaselineOptions, stdout, stderr io
 		say(stderr, "crew: %v\n", err)
 		return 1
 	}
-	// Merge, never replace: this run shows only the drift, so a replace would
-	// drop every pair already accepted. The marker is always written, so an
+	// Merge: this run shows only the drift. The marker is always written, so an
 	// empty set is never a 0-byte file or a lone NUL (an empty record).
 	var merged []string
 	for _, rec := range append(append(recs, shown...), RedirectMark) {

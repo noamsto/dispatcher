@@ -11,16 +11,6 @@ import (
 	"strings"
 )
 
-// git-hooks.nix spells the shared core.hooksPath `.git/hooks` from the main
-// checkout and `<common>/hooks` from a linked worktree. Only that exact
-// relative string maps to `<R>/hooks` (Canon), R the realpath of the caller's
-// anchored common dir: any other spelling may name a worker-editable dir. git
-// resolves a relative value against a context the worker controls (a `.git`
-// dir or symlink, core.bare, core.worktree), so CheckCwd — run only from a
-// trusted cwd — asks git's own `--git-path hooks` whether the spellings
-// resolve to one dir. Any core.worktree turns the equivalence off: work-tree
-// commands resolve the value there, which rev-parse does not show.
-
 // CheckCwd is Check for common and for the git dir cwd resolves to, plus the
 // check that git run from cwd resolves a baselined relative hooks path to the
 // baselined dir.
@@ -67,8 +57,12 @@ func exitCode(err error) int {
 	return -1
 }
 
-// checkHooks holds git from cwd to the baselined hooks dir: the checks above
-// took a relative .git/hooks as <R>/hooks.
+// checkHooks holds a relative `.git/hooks` core.hooksPath, which the checks
+// took as `<R>/hooks` (Canon), to that dir. git resolves a relative value
+// against a context the worker controls (a `.git` dir or symlink, core.bare,
+// core.worktree), so it asks git's own `--git-path hooks` from cwd. Any
+// core.worktree refuses: work-tree commands resolve the value there, which
+// rev-parse does not show.
 func checkHooks(common, own, cwd string, stderr io.Writer) error {
 	out, err := git(cwd, stderr, "config", "--get", "core.hooksPath")
 	switch exitCode(err) {

@@ -27,7 +27,7 @@ func hasCommondir(dir string) bool {
 	return !errors.Is(err, fs.ErrNotExist)
 }
 
-// pinMain is rule 1: the common dir itself has no commondir.
+// pinMain refuses a commondir in common itself.
 func pinMain(common string, stderr io.Writer) error {
 	if hasCommondir(common) {
 		return refuseCommondir(stderr, common)
@@ -60,8 +60,8 @@ func PinCwd(common, cwd string, stderr io.Writer) error {
 	return pinGitDir(common, own, cwd, stderr)
 }
 
-// PinAdmin is rule 2b: a gitdir with a commondir must be a linked-worktree
-// admin dir of common that git resolves back to common.
+// PinAdmin requires a gitdir with a commondir to be a linked-worktree admin
+// dir of common that git resolves back to common.
 func PinAdmin(common, gitdir string, stderr io.Writer) error {
 	return pinGitDir(common, gitdir, "", stderr)
 }
@@ -74,15 +74,16 @@ func ownGitDir(cwd string, stderr io.Writer) (string, error) {
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
-// pinGitDir applies rule 2 to g; cwd is set only for the cwd entries, which
-// add rules 2a and 2c.
+// pinGitDir is PinAdmin for g. cwd is set only for the cwd entries, which
+// also refuse a main checkout's git dir with a commondir (pinMainCheckout) and
+// a commondir-less g that is not common.
 func pinGitDir(common, g, cwd string, stderr io.Writer) error {
 	realG, errG := realpath(cwd, g)
 	realC, errC := realpath(cwd, common)
 	same := errG == nil && errC == nil && realG == realC
 	if !hasCommondir(g) {
-		// Rule 2c: the caller read common by discovery from cwd earlier; a
-		// commondir removed since leaves common naming the old redirect target.
+		// The caller read common by discovery from cwd earlier; a commondir
+		// removed since leaves common naming the old redirect target.
 		if cwd == "" || same {
 			return nil
 		}
@@ -115,12 +116,12 @@ func pinGitDir(common, g, cwd string, stderr io.Writer) error {
 	return ErrRefused
 }
 
-// pinMainCheckout is rule 2a. Path shape cannot tell a main git dir from an
-// admin dir (a main checkout named `worktrees` with commondir `../..` has the
-// admin shape and resolves consistently), and git's own --show-toplevel and
-// core.bare read the redirected config, so it asks the filesystem only: the
-// nearest `.git` at or above the physical cwd being a real directory that is g
-// makes g a main repository's git dir. Anything it cannot inspect refuses.
+// pinMainCheckout refuses when g is a main repository's git dir. Path shape
+// cannot tell one from an admin dir (a main checkout named `worktrees` with
+// commondir `../..` has the admin shape and resolves consistently), and git's
+// own --show-toplevel and core.bare read the redirected config, so it asks the
+// filesystem only: is the nearest `.git` at or above the physical cwd a real
+// directory that is g? Anything it cannot inspect refuses.
 func pinMainCheckout(g, realG string, errG error, cwd string, stderr io.Writer) error {
 	if errG != nil {
 		return refuseCommondir(stderr, g)

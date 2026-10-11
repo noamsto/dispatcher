@@ -7,10 +7,9 @@ import (
 
 const guardUsage = "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …\n"
 
-// RunGuard is `crew-go git-guard <op> …`, the worktree-git.sh wrappers' entry
-// and the bats inspection shims'. A refusal's reason is already on stderr;
-// any other error (an unreadable baseline, a failed write) is printed here.
-// Either exits 1.
+// RunGuard is `crew-go git-guard <op> …`. A refusal's reason is already on
+// stderr; any other error (an unreadable baseline, a failed write) is printed
+// here. Either exits 1.
 func RunGuard(args []string, cwd string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return usageExit(stderr)
