@@ -150,7 +150,7 @@ re-attach instead, relaunch as: CREW_ID=<id> dispatcher …
 wrong advice here and saying it would be worse than saying nothing: `dispatcher.sh:102`
 has already exported `CREW_ID=<new>` into the launched agent's process env before the
 notice can be read, and launcher sessions resolve their crew from exactly that env
-(`DISPATCHER_PROTOCOL.md:122`). `crew adopt` rewrites `crews/<id>/pid` and prints an
+(`DISPATCHER_PROTOCOL.md:122`). `crew adopt` rewrites `crews/<id>/pid` (and `pane`, from `TMUX_PANE`; removed outside tmux) and prints an
 `export` line into a shell that is _not_ the agent's — so the agent would keep watching
 the new, empty crew and the split-brain would survive the fix meant to close it. The
 env-prefixed relaunch is the remedy that actually re-attaches, and it needs no new code:
@@ -389,7 +389,7 @@ whose pid is an ancestor of this session, and refuses another live dispatcher's,
 which case the agent falls through to step 3. Complexity pulled into the tool, not the
 instructions.
 
-**It does not re-run `crew register`:** `adopt` already wrote `crews/<id>/pid`, so a
+**It does not re-run `crew register`:** `adopt` already wrote `crews/<id>/pid` and `pane`, so a
 second call is a duplicate with a second chance to disagree about the pid.
 
 The terminal `echo` is not optional: lines 17-21 of that file tell the agent to note the
