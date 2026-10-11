@@ -31,7 +31,6 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/register"
 	"github.com/noamsto/dispatcher/crew/internal/reply"
 	"github.com/noamsto/dispatcher/crew/internal/report"
-	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 	"github.com/noamsto/dispatcher/crew/internal/retro"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -46,7 +45,7 @@ import (
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled]] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | fleet [--all] [--crew ID] [--json] | fleet stream --crew ID [--rediscover S] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] | fleet stream --status --crew ID | nudge <codename|branch|worker-id> [--crew ID] [--wait [SECONDS]] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled] | --sweep-all [--root DIR]…] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | fleet [--all] [--crew ID] [--json] | fleet stream --crew ID [--rediscover S] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] | fleet stream --status --crew ID | nudge <codename|branch|worker-id> [--crew ID] [--wait [SECONDS]] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -79,20 +78,25 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "stream", "roster-render", "adopt", "nudge", "stall-watch", "status", "msg", "register", "deregister", "fleet", "discover-repos":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "stream", "roster-render", "adopt", "nudge", "stall-watch", "status", "msg", "register", "deregister", "fleet":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
 	}
 	args = args[1:]
 
-	// fleet and discover-repos read every repo on the machine, so they run
+	// fleet and rate --sweep-all read every repo on the machine, so they run
 	// before Locate and outside any repo.
 	switch sub {
-	case "discover-repos":
-		return discoverRepos(args, stdout, stderr)
 	case "fleet":
 		return runFleet(ctx, args, stdout, stderr, e)
+	case "rate":
+		// --sweep-all resolves the repos it discovers and reads neither paths nor
+		// cwd; the sweep and --report fall through to the Locate below, which is
+		// the outside-a-repo refusal the bash preamble kept for them.
+		if rate.WalksEveryRepo(args) {
+			return rate.Run(args, bus.Paths{}, "", stdout, stderr, rate.Options{})
+		}
 	}
 
 	cwd, err := e.getwd()
@@ -212,9 +216,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return retro.Run(args, paths, stdout, stderr)
 	}
 
-	// rate takes both of its modes from the bash arm, which parses the flags and
-	// execs this for either. Locate above keeps the outside-a-repo refusal the
-	// bash preamble's.
+	// rate's two repo-keyed modes: the sweep of this repo, and the store rollup.
 	if sub == "rate" {
 		return rate.Run(args, paths, cwd, stdout, stderr, rate.Options{})
 	}
@@ -404,28 +406,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		say(out, "\n") // the arm's `printf '\n'` after jq -c
 	}
 	return flush(out, stderr, code)
-}
-
-// discoverRepos prints `<status>\t<common>` per candidate repo for the bash
-// `rate --sweep-all` loop, which keeps its own per-repo work.
-func discoverRepos(args []string, stdout, stderr io.Writer) int {
-	var roots []string
-	for len(args) > 0 {
-		if args[0] != "--root" {
-			say(stderr, "crew-go: usage: crew-go discover-repos [--root DIR]...\n")
-			return exitFailure
-		}
-		if len(args) < 2 || args[1] == "" {
-			say(stderr, "crew: rate --root needs a directory\n")
-			return exitFailure
-		}
-		roots, args = append(roots, args[1]), args[2:]
-	}
-	out := bufio.NewWriter(stdout)
-	for _, r := range repos.Discover(repos.Options{Roots: roots, Stderr: stderr, Prefix: "crew: rate --sweep-all"}) {
-		say(out, "%s\t%s\n", r.Status, r.Common)
-	}
-	return flush(out, stderr, 0)
 }
 
 // originOf is a git common dir's origin URL, or "" when it has none.

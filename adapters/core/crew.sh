@@ -2029,7 +2029,8 @@ fi
 common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
 if [ -z "$common" ]; then
   # `rate --sweep-all` walks every repo, so it is the one command that has no
-  # use for the caller's own (a cron job or a shell in $HOME has none).
+  # use for the caller's own (a cron job or a shell in $HOME has none). The Go
+  # side repeats the test (rate.WalksEveryRepo) for direct crew-go calls.
   case "$sub $*" in
   "rate "*--sweep-all*) ;;
   "fleet "*) ;;
@@ -2062,7 +2063,7 @@ nudge)
   # with stall-watch — moved to Go with #968 (crew/internal/unread).
   exec "${CREW_GO_BIN:-@crewGoBin@}" nudge "$@"
   ;;
-crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet)
+crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate)
   # Ported to Go (crew/, docs/crew-go-port.md). CREW_GO_BIN is the
   # raw-source override; builds bake @crewGoBin@. CREW_SELF is this script's own
   # path — the `$0` the bash `stream` arm re-entered for its inner `watch`, its
@@ -2074,129 +2075,6 @@ crews | log | report | sessions | roster | inbox | hold | await | watch | retro 
   # script and reads the binary fresh.
   export CREW_SELF="$0"
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
-  ;;
-rate)
-  # Sweep this repo's bus into the global ratings store, or (--report) render
-  # the global store's per-(engine,model,tier) rollup. The report path never
-  # touches the local bus or the network — see docs/superpowers/specs/
-  # 2026-08-10-crew-rate-reconcile-report-design.md.
-  report=false
-  json=false
-  pooled=false
-  sweep_all=false
-  sweep_roots=""
-  rate_usage="crew: rate takes --report, --json, --pooled, and --sweep-all/--root"
-  while [ $# -gt 0 ]; do
-    case "$1" in
-    --report)
-      report=true
-      shift
-      ;;
-    --json)
-      json=true
-      shift
-      ;;
-    --pooled)
-      pooled=true
-      shift
-      ;;
-    --sweep-all)
-      sweep_all=true
-      shift
-      ;;
-    --root)
-      [ $# -ge 2 ] && [ -n "$2" ] || {
-        echo "crew: rate --root needs a directory" >&2
-        exit 1
-      }
-      sweep_roots="${sweep_roots:+$sweep_roots
-}$2"
-      shift 2
-      ;;
-    *)
-      echo "$rate_usage" >&2
-      exit 1
-      ;;
-    esac
-  done
-  if [ -n "$sweep_roots" ] && [ "$sweep_all" = false ]; then
-    echo "crew: rate --root needs --sweep-all" >&2
-    exit 1
-  fi
-  if [ "$sweep_all" = true ]; then
-    if [ "$report" = true ] || [ "$json" = true ] || [ "$pooled" = true ]; then
-      echo "$rate_usage" >&2
-      exit 1
-    fi
-  elif { [ "$json" = true ] || [ "$pooled" = true ]; } && [ "$report" = false ]; then
-    echo "$rate_usage" >&2
-    exit 1
-  fi
-
-  if [ "$sweep_all" = true ]; then
-    # Sweeps every repo that has a crew bus, from any repo or none. Each repo
-    # is swept by a child `crew rate`, so the per-repo lock, reconcile and
-    # gh-credential gate stay exactly what a hand-run sweep uses.
-    store_dir="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
-    self=$(readlink -f "$0")
-    # Discovery (registry plus a walk of the roots) is shared with `crew fleet`
-    # in crew/internal/repos; it applies the CREW_SWEEP_ROOTS/$HOME defaulting.
-    root_args=()
-    while IFS= read -r root; do
-      [ -z "$root" ] || root_args+=(--root "$root")
-    done <<EOF_ROOTS
-$sweep_roots
-EOF_ROOTS
-    repos=$("${CREW_GO_BIN:-@crewGoBin@}" discover-repos ${root_args[@]+"${root_args[@]}"})
-    failed=0
-    while IFS=$'\t' read -r repo_status repo_common; do
-      [ -n "$repo_common" ] || continue
-      if [ "$repo_status" != ok ]; then
-        echo "$repo_common: skipped ($repo_status)"
-        continue
-      fi
-      workdir=$(dirname "$repo_common")
-      origin=$(git -C "$workdir" config --get remote.origin.url 2>/dev/null || true)
-      if [ -z "$origin" ]; then
-        echo "$workdir: skipped (no origin remote)"
-        continue
-      fi
-      slug=$(printf '%s' "$origin" | sed -E 's#(git@|https://)([^/:]+)[/:]##; s#\.git$##')
-      rc=0
-      (cd "$workdir" && bash -euo pipefail "$self" rate) || rc=$?
-      if [ "$rc" -ne 0 ]; then
-        echo "$slug: failed (rc=$rc)"
-        failed=$((failed + 1))
-        continue
-      fi
-      n=$(jq -s --arg r "$slug" '[.[] | select(.repo == $r) | .run_id] | unique | length' "$store_dir/ratings.jsonl" 2>/dev/null || echo 0)
-      echo "$slug: swept, $n runs in store"
-    done <<EOF_REPOS
-$repos
-EOF_REPOS
-    exit $((failed > 0))
-  fi
-
-  if [ "$report" = true ]; then
-    # Ported to Go (crew/internal/rate, docs/crew-go-port.md): reads only the
-    # global store — still zero network calls (spec §crew rate --report).
-    # Flag parsing and the refusals stayed above; the flags pass through.
-    go_args=(rate --report)
-    if [ "$json" = true ]; then
-      go_args+=(--json)
-    fi
-    if [ "$pooled" = true ]; then
-      go_args+=(--pooled)
-    fi
-    exec "${CREW_GO_BIN:-@crewGoBin@}" "${go_args[@]}"
-  fi
-
-  # Ported to Go (crew/internal/rate, docs/crew-go-port.md): the run fold, the
-  # burn table, the store lock shared with the arms that stayed bash, and the
-  # GitHub reconcile. Flag parsing, the refusals and the --sweep-all loop above
-  # stayed here, so the child re-enters this arm with no flags and inherits the
-  # preamble's repo, bus and store paths.
-  exec "${CREW_GO_BIN:-@crewGoBin@}" rate
   ;;
 stall-watch)
   # stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E] [--grace S] [--stall S]
