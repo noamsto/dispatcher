@@ -111,11 +111,13 @@ output contract below), with each edit justified.
   object is compared with `jq -S`. The fold reads the whole bus with no crew
   filter: a note is cross-run evidence, which is why a clean run prints nothing
   at all.
-- `crew/internal/rate`: the whole `rate` arm — #890's read-only `--report` and
-  #895's sweep, which is the port's first writer that is not the bus. Bash keeps
-  the flag loop, the refusals and the `--sweep-all` loop (it discovers repos
-  from the registry and re-enters this arm per repo), and execs Go for both
-  modes. The sweep is the arm op-for-op: `records.jq` folds the bus into one row
+- `crew/internal/rate`: the whole `rate` arm — #890's read-only `--report`,
+  #895's sweep, and #966's `--sweep-all` loop, which is the port's first writer
+  that is not the bus. The flag loop and every refusal line are Go now, so the
+  arm is the shared one-liner. `--sweep-all` is the mode with no repo of its own:
+  it discovers repos the way `crew fleet` does and calls the same per-repo sweep
+  the hand-run command does, where bash re-entered its own arm per repo. The
+  sweep is the arm op-for-op: `records.jq` folds the bus into one row
   per run, `plan.jq` decides per call (not per run) which gh queries a stored
   row still needs, `view.jq`/`actions.jq`/`threads.jq` ingest the three
   responses, and `merge.jq` merges forward against a fresh store read so a t2
@@ -419,18 +421,21 @@ folds that outgrew hand-translation run on jqrun.
 crew.sh stays the entrypoint (direction b). A ported arm is:
 
 ```bash
-crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet)
+crews | log | report | sessions | roster | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate)
   export CREW_SELF="$0"
   exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
 ```
 
-`fleet` needs no repo, so the preamble's not-in-a-repo refusal lets it through. The hidden
-`discover-repos` entry (`crew/internal/repos`, shared with `fleet`) is what the bash
-`rate --sweep-all` loop calls for its `<status>\t<common>` repo list. Candidates are
-byte-sorted (Go `sort.Strings`) where bash `sort -u` used the caller's locale
-collation, so `rate --sweep-all` may list repos in a different order; the set is
-identical (behaviour, not bytes).
+`fleet` and `rate --sweep-all` need no repo, so the preamble's not-in-a-repo
+refusal lets them through — and both ask the same question twice: the script with
+its `case "$sub $*"` glob, the binary with `rate.WalksEveryRepo` / the `fleet` arm,
+so a direct `crew-go` call decides the same way. Both read repo discovery from
+`crew/internal/repos`, shared between them; the hidden `discover-repos` entry the
+bash `rate --sweep-all` loop used to shell out to is gone now that the loop is Go.
+Candidates are byte-sorted (Go `sort.Strings`) where bash `sort -u` used the
+caller's locale collation, so `rate --sweep-all` may list repos in a different
+order; the set is identical (behaviour, not bytes).
 
 `CREW_SELF` is this script's own path, the `$0` the bash arms re-entered. Two
 read it. `stream` reads it for its inner `watch`, its `hold due` pre-check and
@@ -450,9 +455,9 @@ a running loop to hold that.
 preamble (`--help`, the git-repo check) runs first. Add a subcommand to this
 arm and delete its old arm. `crew hold`'s per-action `--help` text lives only in
 that preamble — it never reaches Go, and `help: crew hold <action> --help` pins
-it. `rate` execs Go for both of its modes — no flags for the sweep, `--report`
-for the rollup — with `--sweep-all`/`--root` looping in bash and re-entering the
-arm; the Go side refuses anything else with one usage line.
+it. `rate` reaches it like every other ported subcommand: its flag loop, its
+refusals and its `--sweep-all` loop moved to Go with #966, so the arm passes the
+argv through and the package decides the mode.
 
 `stall-watch` is a second shape: every invocation but the hidden `--sh` branch
 execs Go, and that branch stays in bash.

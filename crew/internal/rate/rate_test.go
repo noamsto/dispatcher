@@ -58,14 +58,53 @@ func run(t *testing.T, store *string, origin, toplevel string, args ...string) (
 
 func ptr(s string) *string { return &s }
 
+// TestFlagRefusals pins the lines an agent reads when it hands `crew rate`
+// something it cannot run: the usage line, and the two --root refusals.
 func TestFlagRefusals(t *testing.T) {
-	for _, args := range [][]string{{"--json"}, {"--pooled"}, {"--sweep-all"}, {"--report", "--root", "/x"}} {
-		_, errb, code := run(t, ptr(""), "https://github.com/acme/widgets.git", "", args...)
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--json"}, usage},
+		{[]string{"--pooled"}, usage},
+		{[]string{"--bogus"}, usage},
+		{[]string{"--sweep-all", "--report"}, usage},
+		{[]string{"--sweep-all", "--json"}, usage},
+		{[]string{"--sweep-all", "--pooled"}, usage},
+		{[]string{"--report", "--root", "/x"}, "crew: rate --root needs --sweep-all"},
+		{[]string{"--root"}, "crew: rate --root needs a directory"},
+		{[]string{"--root", ""}, "crew: rate --root needs a directory"},
+	} {
+		_, errb, code := run(t, ptr(""), "https://github.com/acme/widgets.git", "", tc.args...)
 		if code != 1 {
-			t.Fatalf("args %v: exit %d, want 1", args, code)
+			t.Fatalf("args %v: exit %d, want 1 (stderr %q)", tc.args, code, errb)
 		}
-		if strings.Count(errb, "\n") != 1 || !strings.HasPrefix(errb, "crew-go: rate takes") {
-			t.Errorf("args %v: stderr = %q", args, errb)
+		if strings.Count(errb, "\n") != 1 || strings.TrimSuffix(errb, "\n") != tc.want {
+			t.Errorf("args %v: stderr = %q, want %q", tc.args, errb, tc.want)
+		}
+	}
+}
+
+// TestFlagsAccepted checks the combinations the refusals above must not cover:
+// --json and --pooled belong to --report, and --root belongs to --sweep-all.
+func TestFlagsAccepted(t *testing.T) {
+	for _, args := range [][]string{
+		{"--report"},
+		{"--report", "--json"},
+		{"--report", "--pooled"},
+		{"--report", "--json", "--pooled"},
+	} {
+		if _, why := parseFlags(args); why != "" {
+			t.Errorf("args %v: refused %q", args, why)
+		}
+	}
+	for _, args := range [][]string{
+		{},
+		{"--sweep-all"},
+		{"--sweep-all", "--root", "/x", "--root", "/y"},
+	} {
+		if _, why := parseFlags(args); why != "" {
+			t.Errorf("args %v: refused %q", args, why)
 		}
 	}
 }

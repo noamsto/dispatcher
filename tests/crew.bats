@@ -13807,6 +13807,23 @@ STUB
   [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "fleet --all --json" ]
 }
 
+# rate's flags are the Go side's now, so the arm passes them through untouched —
+# including --sweep-all, the mode with no repo of its own.
+@test "rate: the arm execs CREW_GO_BIN with argv" {
+  stub="$BATS_TEST_TMPDIR/go-stub"
+  cat >"$stub" <<'STUB'
+#!/usr/bin/env bash
+printf '%s' "$*" >"$BATS_TEST_TMPDIR/stub.argv"
+STUB
+  chmod +x "$stub"
+  CREW_GO_BIN="$stub" run run_crew rate --report --pooled
+  [ "$status" -eq 0 ]
+  [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "rate --report --pooled" ]
+  CREW_GO_BIN="$stub" run run_crew rate --sweep-all --root "$BATS_TEST_TMPDIR"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "rate --sweep-all --root $BATS_TEST_TMPDIR" ]
+}
+
 @test "fleet: lists live workers of two repos from outside any git repo" {
   root="$BATS_TEST_TMPDIR/fleetroot"
   for d in alpha beta; do
