@@ -11,6 +11,9 @@
 package lock
 
 import (
+	"errors"
+	"io/fs"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,13 +22,15 @@ import (
 	"time"
 )
 
-// Acquire is the helper: mkdir is the ONLY gate (atomic on POSIX), the pid file
-// inside is for reclaim. Re-acquiring as the same owner is a success.
+// Acquire is the helper: mkdir creates the dir and linking the pid file in is
+// the gate (link refuses an existing pid), for a fresh lock and a reclaim alike.
+// The pid file inside is for reclaim. Re-acquiring as the same owner is a
+// success.
 func Acquire(dir, owner string) bool {
 	if tryDir(dir, owner) {
 		return true
 	}
-	held := holder(dir)
+	held, exists := readHolder(dir)
 	if held == owner {
 		return true
 	}
@@ -35,11 +40,108 @@ func Acquire(dir, owner string) bool {
 	if held != "" && pidAlive(held) {
 		return false
 	}
-	// Stale (owner PID dead, or empty in a dir past the grace) — reclaim through
-	// the same mkdir gate.
-	_ = os.RemoveAll(dir)
-	return tryDir(dir, owner)
+	// Stale (owner PID dead, or empty in a dir past the grace).
+	staleJudged(owner)
+	if !exists {
+		return reclaimMissing(dir, owner)
+	}
+	return reclaim(dir, owner, held)
 }
+
+// Test seams, each called with the acquirer's owner: staleJudged after the
+// stale judgment and before the reclaim, displaced between the displacing
+// rename and its restore, beforeLink between the temp write and the link.
+var (
+	staleJudged = func(string) {}
+	displaced   = func(string) {}
+	beforeLink  = func(string) {}
+)
+
+// reclaim removes the holder judged stale without ever removing the lock dir
+// out from under a rival: another acquirer may have judged the same holder, won
+// the reclaim and be live by now. So the destructive step is a compare-and-swap
+// on the pid file. Renaming it into the dir (exactly one rival can move a given
+// file) lets us read what we took: the judged holder is deleted and replaced by
+// our pid, anything else is someone's live pid and goes back. A rename that
+// fails means a rival is mid-reclaim, so we back off.
+func reclaim(dir, owner, judged string) bool {
+	pid := filepath.Join(dir, "pid")
+	moved := pid + ".stale." + owner + "." + nonce()
+	if err := os.Rename(pid, moved); err != nil {
+		return false
+	}
+	displaced(owner)
+	data, err := os.ReadFile(moved)
+	if err != nil {
+		_ = os.Link(moved, pid)
+		_ = os.Remove(moved)
+		return false
+	}
+	if strings.TrimRight(string(data), "\n") != judged {
+		// Link, not rename, so a pid published in the gap is never clobbered.
+		// While pid is absent the dir mtime is fresh (the rename bumped it), so a
+		// late judge sees an empty holder inside the grace and refuses. That is
+		// the grace assumption, not a proof: a reclaimer that crashed or stalled
+		// past the grace between its swap and its publish leaves a pid-less dir
+		// that a pid-less acquirer may link into while a third judge's stale
+		// rename is still in flight. Narrower than the rm -rf race it replaces.
+		_ = os.Link(moved, pid)
+		_ = os.Remove(moved)
+		return false
+	}
+	_ = os.Remove(moved)
+	return publish(dir, owner)
+}
+
+// reclaimMissing handles a dir past the grace whose pid file did not exist when
+// it was judged: a crashed acquirer, or a rival mid-displacement. There is no
+// file to swap, and a pid published after the judgment must not be displaced, so
+// it never renames and never removes the dir. A lone pid.stale.* is a rival's
+// in-flight displacement or a crashed reclaimer's leftover: putting it back is
+// always safe, and turns a wedged dir into an ordinary dead-pid dir for the next
+// acquirer. With more than one nothing is guessed. Otherwise it links its pid
+// into the existing dir, and link refuses if a rival got there first.
+func reclaimMissing(dir, owner string) bool {
+	if fresh(dir) {
+		return false
+	}
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return tryDir(dir, owner) // released between our failed mkdir and the read
+	}
+	if err != nil {
+		return false
+	}
+	var orphans []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "pid.stale.") {
+			orphans = append(orphans, filepath.Join(dir, e.Name()))
+		}
+	}
+	switch len(orphans) {
+	case 0:
+		return publish(dir, owner)
+	case 1:
+		_ = os.Link(orphans[0], filepath.Join(dir, "pid"))
+		_ = os.Remove(orphans[0])
+	}
+	return false
+}
+
+// publish writes owner's pid so the pid file is never visible empty or partial:
+// a sibling temp (outside dir, so a crash here leaves the dir truly empty) is
+// linked into place, and link refuses if a pid is already there.
+func publish(dir, owner string) bool {
+	tmp := dir + ".new." + owner + "." + nonce()
+	if err := os.WriteFile(tmp, []byte(owner+"\n"), 0o644); err != nil {
+		return false
+	}
+	defer os.Remove(tmp)
+	beforeLink(owner)
+	return os.Link(tmp, filepath.Join(dir, "pid")) == nil
+}
+
+func nonce() string { return strconv.FormatUint(rand.Uint64(), 36) }
 
 // emptyGrace is how long, in whole epoch seconds, a dir with no pid text may
 // be a live acquirer: the owner writes its pid after mkdir, so a fresh empty
@@ -64,24 +166,27 @@ func Release(dir string) { _ = os.RemoveAll(dir) }
 
 // Holder is `$(cat "$dir/pid" 2>/dev/null || true)`: the owner text a refused
 // acquisition reports, and the pid `stream --force` decides whether to signal.
-func Holder(dir string) string { return holder(dir) }
+func Holder(dir string) string {
+	held, _ := readHolder(dir)
+	return held
+}
 
 func tryDir(dir, owner string) bool {
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		return false
 	}
-	_ = os.WriteFile(filepath.Join(dir, "pid"), []byte(owner+"\n"), 0o644)
-	return true
+	return publish(dir, owner)
 }
 
-// holder is `$(cat "$ld/pid" 2>/dev/null || true)`: command substitution drops
-// trailing newlines, and a missing or unreadable file is empty.
-func holder(dir string) string {
+// readHolder is `$(cat "$ld/pid" 2>/dev/null || true)`: command substitution
+// drops trailing newlines, and an unreadable file is empty. exists tells a
+// missing file from an empty one, which the reclaim treats differently.
+func readHolder(dir string) (held string, exists bool) {
 	data, err := os.ReadFile(filepath.Join(dir, "pid"))
 	if err != nil {
-		return ""
+		return "", !errors.Is(err, fs.ErrNotExist)
 	}
-	return strings.TrimRight(string(data), "\n")
+	return strings.TrimRight(string(data), "\n"), true
 }
 
 // MaxPID is the highest pid the kernel will hand out: Linux's pid_max is

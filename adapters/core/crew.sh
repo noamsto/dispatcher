@@ -815,21 +815,60 @@ _unread_scan() {
         end' 2>/dev/null || true
 }
 
+# _lock_publish_pid <lockdir> <owner_pid> — write the pid file atomically: the
+# full line goes to a sibling temp (outside the dir, so a crash leaves the dir
+# empty) and is linked in, so `pid` is never empty or partial and `ln` refuses
+# when another pid is already there. 0 = published.
+_lock_publish_pid() {
+  local ld="$1" owner="$2" tmp rc
+  tmp=$(mktemp "$ld.new.XXXXXX") || return 1
+  if printf '%s\n' "$owner" >"$tmp" && chmod 644 "$tmp" && ln "$tmp" "$ld/pid" 2>/dev/null; then
+    rc=0
+  else
+    rc=1
+  fi
+  rm -f "$tmp"
+  return "$rc"
+}
+
 # _lock_acquire <lockdir> <owner_pid> — atomic mkdir gate with dead-PID reclaim.
-# mkdir is atomic on POSIX, so it is the ONLY gate: exactly one caller wins.
-# Returns 0 (acquired; owner_pid written inside for liveness) or 1 (held by a
-# DIFFERENT live PID, an acquirer still writing its pid, or lost the reclaim
-# race). If the held owner equals the requested owner, returns 0 idempotently —
-# re-running /dispatcher in the same session (same session-stable PID) is a
-# no-op success, not a refusal. rm -rf here is safe — the lock dir is transient
-# coordination state, never user data.
+# mkdir creates the dir and linking the pid file in is the gate (link refuses an
+# existing pid), for a fresh lock and a reclaim alike. Returns 0 (acquired; owner_pid published inside for
+# liveness) or 1 (held by a DIFFERENT live PID, an acquirer still writing its
+# pid, or lost the reclaim race). If the held owner equals the requested owner,
+# returns 0 idempotently — re-running /dispatcher in the same session (same
+# session-stable PID) is a no-op success, not a refusal.
+#
+# A stale lock is reclaimed by a pid-file compare-and-swap, never by removing
+# the dir: two reclaimers can judge the same dead pid, and a stalled one that
+# then removed the dir would destroy the other's live lock (two holders). So
+# the reclaimer renames the pid it judged to a unique name INSIDE the dir
+# (only one rename can win), compares it with what it judged, and links its own pid in. A different pid
+# means a live holder was displaced: link it back and lose. That applies when
+# the pid file existed at the read (dead pid text, or an empty file).
+#
+# A dir past the grace with NO pid file is never renamed, rmdir'd or recreated:
+# a rival's pending link could land in the gap. Re-check freshness, restore a
+# lone `pid.stale.*` (a crashed reclaimer's) by link and lose; with several,
+# lose and leave them; otherwise just link our pid into the existing dir.
+#
+# Residual: the guarantee assumes the grace (1-2s: whole-second mtimes) holds,
+# i.e. no reclaimer stalls past it between its CAS and its publish (the
+# assumption the grace already makes for mkdir-then-write). One interleaving
+# remains outside it: a crash-left pid-less dir, two acquirers on the pid-less
+# path, and a third whose stale judgment predates the crash and whose rename
+# lands between another acquirer's checks and its link (two holders). It needs
+# a crashed acquirer plus a judge stalled across both full publishes. The
+# guarantee also holds only among acquirers on this protocol; older builds
+# still `rm -rf` the dir.
 _lock_acquire() {
-  local ld="$1" owner="$2" held mtime age
+  local ld="$1" owner="$2" held mtime age moved cur stale had_pid=0
   if mkdir "$ld" 2>/dev/null; then
-    printf '%s\n' "$owner" >"$ld/pid"
-    return 0
+    _lock_publish_pid "$ld" "$owner"
+    return
   fi
   held=$(cat "$ld/pid" 2>/dev/null || true)
+  [ -e "$ld/pid" ] && had_pid=1
   if [ "$held" = "$owner" ]; then
     return 0 # idempotent: this same owner already holds it
   fi
@@ -844,11 +883,37 @@ _lock_acquire() {
   if [ -n "$held" ] && kill -0 "$held" 2>/dev/null; then
     return 1
   fi
-  rm -rf "$ld" # stale (owner PID dead, or empty past the grace) — reclaim through the same mkdir gate
-  if mkdir "$ld" 2>/dev/null; then
-    printf '%s\n' "$owner" >"$ld/pid"
-    return 0
+  if [ "$had_pid" -eq 0 ]; then
+    if mtime=$(_file_mtime_s "$ld") && age=$(($(date +%s) - mtime)) && [ "$age" -gt -2 ] && [ "$age" -lt 2 ]; then
+      return 1
+    fi
+    if [ ! -d "$ld" ]; then # released between our failed mkdir and the read
+      mkdir "$ld" 2>/dev/null && _lock_publish_pid "$ld" "$owner"
+      return
+    fi
+    stale=("$ld"/pid.stale.*)
+    if [ -e "${stale[0]}" ]; then
+      if [ "${#stale[@]}" -eq 1 ]; then
+        ln "${stale[0]}" "$ld/pid" 2>/dev/null || true
+        rm -f "${stale[0]}"
+      fi
+      return 1
+    fi
+    _lock_publish_pid "$ld" "$owner"
+    return
   fi
+  # stale (owner PID dead, or empty past the grace). BASHPID, not $$, so
+  # subshell rivals differ; bash 3.2 lacks it, where $RANDOM still separates.
+  moved="$ld/pid.stale.$owner.${BASHPID:-$$}.$RANDOM"
+  mv "$ld/pid" "$moved" 2>/dev/null || return 1
+  cur=$(cat "$moved" 2>/dev/null) || return 1
+  if [ "$cur" = "$held" ]; then
+    rm -f "$moved"
+    _lock_publish_pid "$ld" "$owner"
+    return
+  fi
+  ln "$moved" "$ld/pid" 2>/dev/null || true # displaced a live pid: put it back
+  rm -f "$moved"
   return 1
 }
 
