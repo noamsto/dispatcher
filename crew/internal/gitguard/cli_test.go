@@ -2,6 +2,8 @@ package gitguard
 
 import (
 	"bytes"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -99,5 +101,25 @@ func TestRunGuardChecks(t *testing.T) {
 		if code, out, errOut := runGuard(r.main, args...); code != 1 || out != "" || errOut != redirectLine(r.common) {
 			t.Errorf("%q: exit %d, stdout %q, stderr %q; want the commondir refusal", args, code, out, errOut)
 		}
+	}
+}
+
+func TestRunGuardReportsErrors(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file modes")
+	}
+	r := newRepo(t)
+	r.init(t)
+	mustDo(t, os.Chmod(r.baseline(), 0))
+	if code, _, errOut := runGuard(r.main, "check", r.common); code != 1 || !strings.HasPrefix(errOut, "refusing git: ") || !strings.Contains(errOut, r.baseline()) {
+		t.Errorf("check with an unreadable baseline: exit %d, stderr %q; want a refusal naming it", code, errOut)
+	}
+
+	r = newRepo(t)
+	crew := r.common + "/crew"
+	mustDo(t, os.Mkdir(crew, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(crew, 0o755) })
+	if code, _, errOut := runGuard(r.main, "init", r.common); code != 1 || !strings.HasPrefix(errOut, "refusing git: ") || !strings.Contains(errOut, crew) {
+		t.Errorf("init with a read-only crew dir: exit %d, stderr %q; want a refusal naming it", code, errOut)
 	}
 }

@@ -103,3 +103,55 @@ func TestPinRule2bShape(t *testing.T) {
 	wantRefusal(t, "refusing git: "+Quote(other)+" has a commondir but is not a linked-worktree admin dir of "+Quote(r.common)+"\n",
 		func(w io.Writer) error { return Check(r.common, other, w) })
 }
+
+func staleLine(common, cwd, g string) string {
+	return "refusing git: " + Quote(common) + " is not the git dir " + Quote(cwd) + " resolves to (" + Quote(g) + ") — the common dir changed since it was read\n"
+}
+
+func TestPinCwdStaleCommon(t *testing.T) {
+	r := newRepo(t)
+	evil := plantRedirect(t, r, true)
+	mustDo(t, os.Remove(r.common+"/commondir"))
+	want := staleLine(evil, r.main, r.common)
+	wantRefusal(t, want, func(w io.Writer) error { return PinCwd(evil, r.main, w) })
+	wantRefusal(t, want, func(w io.Writer) error { return CheckCwd(evil, r.main, w) })
+}
+
+func TestPinCwdLayouts(t *testing.T) {
+	layouts := map[string]func(t *testing.T) string{
+		"main checkout": func(t *testing.T) string {
+			r := newRepo(t)
+			sub := filepath.Join(r.main, "sub")
+			mustDo(t, os.Mkdir(sub, 0o755))
+			return sub
+		},
+		"linked worktree": func(t *testing.T) string {
+			wt, _ := newRepo(t).addWorktree(t, "wt")
+			return wt
+		},
+		"separate git dir": func(t *testing.T) string {
+			root := gitEnv(t)
+			dir := filepath.Join(root, "sd")
+			run(t, root, "init", "-q", "--separate-git-dir="+filepath.Join(root, "sep"), dir)
+			return dir
+		},
+		"symlinked .git": func(t *testing.T) string {
+			r := newRepo(t)
+			moved := filepath.Join(r.root, "moved.git")
+			mustDo(t, os.Rename(r.common, moved))
+			mustDo(t, os.Symlink(moved, r.common))
+			return r.main
+		},
+	}
+	for name, layout := range layouts {
+		t.Run(name, func(t *testing.T) {
+			cwd := layout(t)
+			common := run(t, cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
+			if out, err := capture(func(w io.Writer) error { return Init(common, w) }); err != nil {
+				t.Fatalf("Init: %v\n%s", err, out)
+			}
+			wantPass(t, func(w io.Writer) error { return PinCwd(common, cwd, w) })
+			wantPass(t, func(w io.Writer) error { return CheckCwd(common, cwd, w) })
+		})
+	}
+}

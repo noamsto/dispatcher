@@ -733,8 +733,9 @@ branch instead; the worktree carries over under `resume: true`.
   redirects git's common dir, so the config and the baseline would both come from a
   worker-chosen dir and the guard would pass. `dispatch`, `dispatch resume`,
   `crew reap` and `crew git-baseline` refuse — naming the file — before any
-  fetch or bus read, and every guard check refuses a common dir carrying one, or
-  a linked admin dir whose `commondir` resolves elsewhere; the human inspects and
+  fetch, `gh` call or launch, and every guard check refuses a common dir carrying one, or
+  a linked admin dir whose `commondir` resolves elsewhere, or (from a cwd) a common
+  dir that no longer matches what the cwd resolves to; the human inspects and
   removes it. Worktree-anchored calls (`_wt_git`) —
   and, via `GIT_CONFIG_COUNT`, `dispatch`'s own `wt switch` for every switch
   but a default create — pass `core.fsmonitor=false`,
@@ -791,9 +792,11 @@ branch instead; the worktree carries over under `resume: true`.
   `remotes/`/`branches/` entry. A human must inspect and remove a refused entry before
   re-running dispatch; the dispatcher never follows or repairs it. `crew git-baseline`
   also lists that legacy drift (an unsafe entry, or a file new or changed from the
-  baseline), and `--accept` refuses while any is listed: removal is the only remedy,
-  it never records a legacy entry (its content, possibly a credential, is never
-  shown, so there is nothing for the human to accept). Migration:
+  baseline), and `--accept` refuses while any is listed: removal is the only remedy
+  `crew git-baseline` offers — `--accept` never records a legacy entry (its content,
+  possibly a credential, is never shown, so there is nothing for the human to
+  accept) — and deleting the baseline would re-record any legacy file present, so
+  remove the entry first. Migration:
   a baseline recorded before redirect keys were covered
   (#678) lacks the redirect marker (`#covers redirect`); until it is written
   the guard checks

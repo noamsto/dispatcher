@@ -5497,6 +5497,19 @@ EOF
   run ! grep -q 'switch' "$STUB_LOG"
 }
 
+@test "dispatch refuses a previous worktree whose admin dir no longer points back at its .git before wt switch (#557)" {
+  # The admin dir stays in place, so the entry pin passes. Its back-pointer
+  # names the worktree itself rather than its .git: git still lists the
+  # worktree on the branch, but _wt_admin_dir matches no back-pointer.
+  setup_stale_pr_worktree eng-557-noadmin
+  printf '%s\n' "$TEST_REPO/.worktrees/eng-557-noadmin" >"$TEST_REPO/.git/worktrees/eng-557-noadmin/gitdir"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: no git admin dir for $TEST_REPO/.worktrees/eng-557-noadmin"* ]]
+  run ! grep -q 'switch' "$STUB_LOG"
+}
+
 @test "baseline human keys do not refuse dispatch (#557)" {
   # #557 TOFU: hooksPath and credential.helper already present when the
   # baseline is first seeded are the human's own and must never refuse a

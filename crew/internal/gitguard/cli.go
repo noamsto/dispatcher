@@ -1,14 +1,16 @@
 package gitguard
 
 import (
+	"errors"
 	"io"
 )
 
 const guardUsage = "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …\n"
 
 // RunGuard is `crew-go git-guard <op> …`, the worktree-git.sh wrappers' entry
-// and the bats inspection shims'. A refusal's reason is already on stderr, so
-// any error is a bare exit 1.
+// and the bats inspection shims'. A refusal's reason is already on stderr;
+// any other error (an unreadable baseline, a failed write) is printed here.
+// Either exits 1.
 func RunGuard(args []string, cwd string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return usageExit(stderr)
@@ -44,6 +46,9 @@ func RunGuard(args []string, cwd string, stdout, stderr io.Writer) int {
 		return usageExit(stderr)
 	}
 	if err != nil {
+		if !errors.Is(err, ErrRefused) {
+			say(stderr, "refusing git: %v\n", err)
+		}
 		return 1
 	}
 	return 0

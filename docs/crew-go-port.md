@@ -565,7 +565,11 @@ dispatched before `bus.Locate`: it takes explicit dirs and must run from any cwd
   (`tests/setup_suite.bash`, `tests/harness/ensure-crew-go.sh`).
 - A missing or unrunnable binary makes the wrapper exit non-zero (127 or 126), which
   every caller already treats as a refusal: the guard fails closed. Any internal Go error
-  in a guard path exits 1, never 0.
+  in a guard path exits 1, never 0, with the error on stderr.
+- The #993 pin from the process cwd (`commondir`, and `check-cwd` before its checks)
+  also refuses a `<common>` that is not the git dir the cwd resolves to, when that git
+  dir has no `commondir`: callers read `<common>` by discovery earlier, and a
+  `commondir` removed since leaves it naming the old redirect target.
 - The anchored git invocation stays bash (see "Bash helpers that stay"): it runs
   arbitrary git subcommands in the caller's process (background pids, `GIT_INDEX_FILE`,
   captured stdout), which a Go exec cannot hand back, and it holds no guard logic. It calls

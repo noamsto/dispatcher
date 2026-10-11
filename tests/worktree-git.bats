@@ -1320,6 +1320,27 @@ fake_common() {
   done
 }
 
+@test "the cwd guard, commondir pin and trusted cwd: a stale common dir read before a commondir was removed is refused (#993)" {
+  local C
+  _wt_cfg_baseline_init "$COMMON"
+  fake_common
+  printf '%s\n' "$FAKE" >"$COMMON/commondir"
+  C="$(git rev-parse --path-format=absolute --git-common-dir)"
+  [ "$C" = "$(realpath "$FAKE")" ]
+  rm "$COMMON/commondir"
+  run --separate-stderr _wt_cfg_commondir "$C"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"refusing git: "* ]]
+  [[ $stderr == *"the common dir changed since it was read"* ]]
+  run --separate-stderr _wt_cfg_guard_cwd "$C"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"the common dir changed since it was read"* ]]
+  run --separate-stderr _wt_trusted_cwd "$C"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"the common dir changed since it was read"* ]]
+  [ ! -e "$SENTINEL" ]
+}
+
 @test "the commondir pin refuses a main checkout directory named worktrees (#993)" {
   local main="$BATS_TEST_TMPDIR/x/worktrees" C
   git init -q --bare "$BATS_TEST_TMPDIR/x"

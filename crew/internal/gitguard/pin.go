@@ -75,14 +75,21 @@ func ownGitDir(cwd string, stderr io.Writer) (string, error) {
 }
 
 // pinGitDir applies rule 2 to g; cwd is set only for the cwd entries, which
-// add rule 2a.
+// add rules 2a and 2c.
 func pinGitDir(common, g, cwd string, stderr io.Writer) error {
-	if !hasCommondir(g) {
-		return nil
-	}
 	realG, errG := realpath(cwd, g)
 	realC, errC := realpath(cwd, common)
-	if errG == nil && errC == nil && realG == realC {
+	same := errG == nil && errC == nil && realG == realC
+	if !hasCommondir(g) {
+		// Rule 2c: the caller read common by discovery from cwd earlier; a
+		// commondir removed since leaves common naming the old redirect target.
+		if cwd == "" || same {
+			return nil
+		}
+		say(stderr, "refusing git: %s is not the git dir %s resolves to (%s) — the common dir changed since it was read\n", Quote(common), Quote(cwd), Quote(g))
+		return ErrRefused
+	}
+	if same {
 		return nil
 	}
 	if cwd != "" {
