@@ -300,14 +300,21 @@ _wt_cfg_legacy_fields() { # <record> <namespace-var> <kind-var> <name-var> [hash
   fi
 }
 _wt_cfg_note_keys() { # <what> <rec>... — print the records' keys, never their values
-  local what="$1" rec keys='' raw='' disp
+  local what="$1" rec keys='' raw='' disp ns kind name
   shift
   for rec in "$@"; do
     [ "$rec" != "$_wt_cfg_redirect_mark" ] || continue
-    rec="${rec%%$'\n'*}"
+    [ "$rec" != "$_wt_cfg_legacy_mark" ] || continue
+    if [[ $rec == "$_wt_cfg_legacy_prefix"* ]]; then
+      _wt_cfg_legacy_fields "$rec" ns kind name
+      rec="$ns/$name"
+      printf -v disp %q "$rec"
+    else
+      rec="${rec%%$'\n'*}"
+      _wt_cfg_show_key "$rec" disp
+    fi
     [[ ", $raw, " != *", $rec, "* ]] || continue
     raw="${raw:+$raw, }$rec"
-    _wt_cfg_show_key "$rec" disp
     keys="${keys:+$keys, }$disp"
   done
   # Keys only: a credential.helper value may carry a token.
@@ -330,14 +337,16 @@ _wt_cfg_baseline_init() { # <common> — record the baseline once; never overwri
     done
     [ "$redirect_covered" -eq 1 ] && [ "$legacy_covered" -eq 1 ] && return 0
     # TOFU, as at creation — but never exec-class pairs, which would launder drift.
-    mapfile -d '' union < <(_wt_cfg_union "$common")
-    wait $! || return 1
-    for rec in "${union[@]}"; do
-      key="${rec%%$'\n'*}"
-      value="${rec#"$key"}"
-      value="${value#$'\n'}"
-      if _wt_cfg_match _wt_redirect_keys "$key" "$value"; then add+=("$rec"); fi
-    done
+    if [ "$redirect_covered" -eq 0 ]; then
+      mapfile -d '' union < <(_wt_cfg_union "$common")
+      wait $! || return 1
+      for rec in "${union[@]}"; do
+        key="${rec%%$'\n'*}"
+        value="${rec#"$key"}"
+        value="${value#$'\n'}"
+        if _wt_cfg_match _wt_redirect_keys "$key" "$value"; then add+=("$rec"); fi
+      done
+    fi
     mapfile -d '' legacy < <(_wt_cfg_legacy_records "$common")
     wait $! || return 1
     if [ "$legacy_covered" -eq 0 ] && ((${#legacy[@]})); then

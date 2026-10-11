@@ -868,6 +868,9 @@ write_anchor() {
   printf 'Branch: main\n' >"$COMMON/branches/main"
   run --separate-stderr _wt_cfg_baseline_init "$COMMON"
   [ "$status" -eq 0 ]
+  [[ $stderr == *remotes/origin* ]]
+  [[ $stderr == *branches/main* ]]
+  [[ $stderr != *'#'* ]]
   local -a recs
   local rec
   mapfile -d '' recs <"$BASELINE"
@@ -903,6 +906,28 @@ write_anchor() {
     [[ $rec == $'#covers\nlegacy' ]] && found_mark=1
   done
   [ "$found_mark" -eq 1 ]
+}
+
+@test "migration to legacy coverage never re-baselines redirect keys planted after #678" {
+  local -a recs
+  local rec found_mark=0 found_evil=0
+  add_origin
+  mkdir -p "${BASELINE%/*}"
+  _wt_cfg_union "$COMMON" >"$BASELINE"
+  printf '%s\0' "$_wt_cfg_redirect_mark" >>"$BASELINE"
+  git config url.https://evil.example/.insteadOf "$ORIGIN"
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 0 ]
+  mapfile -d '' recs <"$BASELINE"
+  for rec in "${recs[@]}"; do
+    [[ $rec == $'#covers\nlegacy' ]] && found_mark=1
+    [[ $rec == url.https://evil.example/.insteadof* ]] && found_evil=1
+  done
+  [ "$found_mark" -eq 1 ]
+  [ "$found_evil" -eq 0 ]
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *insteadof* ]]
 }
 
 @test "explicit anchored fetch ignores URL-valued branch remote selection and push defaults" {
