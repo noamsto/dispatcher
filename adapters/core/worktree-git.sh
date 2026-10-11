@@ -242,7 +242,7 @@ _wt_cfg_union() { # <common> -> _wt_cfg_pairs over <common> and each linked admi
 _wt_cfg_legacy_mark=$'#covers\nlegacy'
 _wt_cfg_legacy_prefix=$'#legacy\n'
 _wt_cfg_legacy_name_safe() {
-  [[ -n $1 && $1 != . && $1 != .. && $1 != */* && $1 != *$'\n'* && $1 != *$'\r'* && $1 != *$'\t'* && $1 != *[[:cntrl:][:space:]]* ]]
+  [[ -n $1 && $1 != . && $1 != .. && $1 != */* && $1 != *[[:cntrl:][:space:]]* ]]
 }
 _wt_cfg_legacy_records() { # <common> -> NUL records for direct legacy entries
   local common="$1" ns dir entry name hash shown
