@@ -202,7 +202,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return rosterrender.Run(ctx, args, paths, rosterrender.Options{
 			Probes:    rosterrender.Default(ctx),
 			Procs:     e.procs,
-			Roster:    e.probes(ctx, cwd),
+			Roster:    renderProbes(ctx, paths.Common),
 			Clock:     clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 			Stderr:    stderr,
 			RosterDir: os.Getenv("CREW_ROSTER_DIR"),
@@ -593,6 +593,19 @@ func probes(ctx context.Context, cwd string) roster.Probes {
 			return worktreeList(cmd)
 		},
 	}
+}
+
+// renderProbes is the renderer's row fold, anchored at the common dir rather
+// than at the caller's directory: `roster-render` moves out of the worktree it
+// was started in because a reap can take that directory away while the daemon
+// lives, and a worktree list that dies with it would hide nothing (unknown is
+// not stale) while the diagram is supposed to be shrinking.
+func renderProbes(ctx context.Context, common string) roster.Probes {
+	p := probes(ctx, "")
+	p.Worktrees = func() (string, error) {
+		return worktreeList(exec.CommandContext(ctx, "git", "--git-dir="+common, "worktree", "list", "--porcelain"))
+	}
+	return p
 }
 
 // worktreeList runs a `git worktree list --porcelain` command, mapping a
