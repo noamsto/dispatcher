@@ -13720,12 +13720,17 @@ STUB
   cd "$outside"
   run --separate-stderr run_crew fleet
   [ "$status" -eq 0 ]
+  [[ "$stderr" == *"2 stale rows hidden"* ]]
+  [[ "$output" != *"feat/x"* ]]
+  run --separate-stderr run_crew fleet --all
+  [ "$status" -eq 0 ]
   [[ "$output" == *"acme/alpha"* ]]
   [[ "$output" == *"beta"* ]]
   run --separate-stderr run_crew fleet --json
   [ "$status" -eq 0 ]
   [ "$(jq 'length' <<<"$output")" -eq 2 ]
   [ "$(jq '[.[] | select(.repo != null and .repo != "")] | length' <<<"$output")" -eq 2 ]
+  [ "$(jq '[.[] | select(.stale == true)] | length' <<<"$output")" -eq 2 ]
   mkdir -p "$XDG_DATA_HOME/crew"
   echo "$BATS_TEST_TMPDIR/vanished/.git" >"$XDG_DATA_HOME/crew/repos"
   run --separate-stderr run_crew fleet
