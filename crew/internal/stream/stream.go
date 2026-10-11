@@ -16,8 +16,7 @@
 // is the same entrypoint.
 //
 // `stream.lock.d` goes through internal/lock, and is acquired before any signal
-// is caught: the refusal path stays signal-free, and a handler armed earlier
-// would have no lock of this process's to release.
+// is caught: a refused start has nothing to clean up.
 //
 // The clock is the wall clock — `date +%s`, jq's `now`, the real `sleep` — and
 // never `$CREW_CLOCK`, which the suite exports for `await`'s sake: the arm read
@@ -158,8 +157,7 @@ func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, opts Options)
 		return 1
 	}
 
-	// Only now, with the lock held, is a signal caught: the cleanup releases
-	// the lock this process holds.
+	// Only now, with the lock held, is a signal caught: the cleanup releases it.
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer signal.Stop(sigs)

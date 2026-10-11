@@ -126,8 +126,7 @@ func RunFleet(argv []string, stdout, stderr io.Writer, opts FleetOptions) int {
 		return 1
 	}
 
-	// As in Run: the refusal path stays signal-free, and a handler armed before
-	// the lock is held would have no lock of this process's to release.
+	// As in Run: signals are caught only once the lock is held.
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer signal.Stop(sigs)

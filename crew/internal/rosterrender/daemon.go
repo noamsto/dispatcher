@@ -33,8 +33,8 @@ func (o Options) daemon(ctx context.Context, paths bus.Paths, cdir string, c cal
 	owner := strconv.Itoa(o.PID)
 
 	// Acquired before the signal handler is armed, like the arm's `trap` after its
-	// `_lock_acquire`: a start refused because another renderer holds the lock
-	// stays signal-free.
+	// `_lock_acquire`: a start refused because another renderer holds the lock has
+	// nothing to clean up.
 	if !lock.Acquire(ld, owner) {
 		return exitOK
 	}

@@ -202,8 +202,8 @@ func TestLockZeroHolderIsHeld(t *testing.T) {
 
 // TestLockOutOfRangeHolderIsFree: a digits-only holder past the pid ceiling
 // names no process, and probing it answers for a different one — syscall.Kill
-// truncates to pid_t, so 4294967295 is a kill(-1) that succeeds. The lock is
-// reclaimed instead, the refusal bash's own kill handed the arm.
+// truncates to pid_t, so 4294967295 is a kill(-1) that succeeds. The record is
+// replaced instead, the refusal bash's own kill handed the arm.
 func TestLockOutOfRangeHolderIsFree(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "stream.lock.d")
 	me := strconv.Itoa(os.Getpid())
@@ -237,7 +237,7 @@ func TestLockOutOfRangeHolderIsFree(t *testing.T) {
 }
 
 // TestLockReclaimsBashDeadPidFile: a pid text with extra trailing newlines
-// still compares equal to the judged holder, which holder() trims.
+// still compares equal to the judged holder, which Holder trims.
 func TestLockReclaimsBashDeadPidFile(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "ratings.lock.d")
 	if err := os.Mkdir(dir, 0o755); err != nil {
