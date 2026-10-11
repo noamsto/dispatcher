@@ -2262,6 +2262,8 @@ assert_allow_within_each_awk() {
     deny_both "$p"$' readarray -t -C eval -c 1 <<EOF\n; env\nEOF'
     deny_both "$p"$' /tmp/cat <<EOF\nenv\nEOF'
   done
+  deny_both $'command -p cat <<EOF\nenv\nEOF'
+  deny_both $'sudo -u root cat <<EOF\nenv\nEOF'
 }
 
 @test "secret-read-guard: rule 2 — denies a dumper after a separator inside an inline comment (accepted over-deny)" {
