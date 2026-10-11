@@ -150,11 +150,6 @@ export const register: Register = on => {
       description: 'Show the live crew roster in a pane',
       argumentHint: '[crew-id]',
     })
-    const crew = await $.env.get('CREW_ID')
-    if (crew) {
-      follow($, [crew], null).catch(() => {})
-      $.ui.open({ id: PANE, title: 'Crew roster' }).catch(() => {})
-    }
 
     return next(e)
   })
