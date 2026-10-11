@@ -465,12 +465,10 @@ func (w *watch) d9() error {
 	}
 	// A resumed lead whose new turn stops again the same way before any
 	// sample catches it working never produces a non-stopped tick, so hit
-	// counting alone reports "not resumed" after it did work. The baseline
-	// is the frame the type rode on and the test is quiet:'s byte identity
-	// (the loop's raw `text != lastText`): a different frame here is proof
-	// the lead resumed and stopped again. Close the episode the way d9Close
-	// does and start a fresh one on this sample; d9Count keeps capping
-	// attempts across episodes, so a lead that keeps stopping still surfaces.
+	// counting alone reports "not resumed" after it did work. The test is
+	// quiet:'s byte identity (the loop's raw `text != lastText`). d9Count
+	// stays untouched: the per-watch cap must span episodes so a lead that
+	// keeps stopping still surfaces.
 	if fd.d9Outcome == "typed" && fd.d9Base != "" && w.text != fd.d9Base {
 		if err := w.d9Close(); err != nil {
 			return err

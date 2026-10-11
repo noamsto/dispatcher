@@ -1197,10 +1197,8 @@ func TestD9PaneChangeOpensFreshEpisode(t *testing.T) {
 	}
 }
 
-// TestD9PaneChangeClearsPostedNotResumed: the persistence fix — once a "not
-// resumed" blocked stands, a later changed pane closes the episode with
-// cleared and restarts it, and a byte-identical pane inside the fresh episode
-// still surfaces on its own not-resumed schedule.
+// TestD9PaneChangeClearsPostedNotResumed: once a "not resumed" blocked
+// stands, a later changed pane closes the episode with cleared and restarts it.
 func TestD9PaneChangeClearsPostedNotResumed(t *testing.T) {
 	r := newD9Rig(t, d9ID, "pi")
 	var at int64
