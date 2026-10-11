@@ -84,7 +84,7 @@ anything.
 
 ```bash
 crew roster                  # who is working, on what, how long
-crew fleet                   # every live worker across all repos on the machine
+crew fleet                   # every live worker across all repos (--all: stale rows too)
 crew fleet stream --crew <id>  # one lane for a crew whose workers span repos
 crew status <from> <state>   # worker → dispatcher progress
 crew watch --states blocked  # block until something needs you

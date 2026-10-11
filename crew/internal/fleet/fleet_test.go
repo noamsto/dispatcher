@@ -79,6 +79,7 @@ func setup(t *testing.T) fixture {
 			Env:       func(k string) string { return env[k] },
 			Registry:  registry,
 			Panes:     func() string { return "" },
+			Windows:   func() string { return "feat/a\nfeat/c\n" },
 			Worktrees: func(string) (string, error) { return "", nil },
 			Origin: func(common string) string {
 				if common == alpha {
@@ -290,7 +291,7 @@ func TestControlRunesAreNeutralisedInTable(t *testing.T) {
 	if err := os.WriteFile(f.opts.Registry, []byte(repo+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, _, code := run(t, f)
+	out, _, code := run(t, f, "--all")
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -323,5 +324,75 @@ func TestAge(t *testing.T) {
 		if got := age(jsonv.Object(jsonv.Member{Key: "age_s", Val: tt.v})); got != tt.want {
 			t.Errorf("age = %q, want %q", got, tt.want)
 		}
+	}
+}
+
+func TestStaleRowsHiddenByDefault(t *testing.T) {
+	f := setup(t)
+	old := fixedNow.Unix() - 20*86400
+	if err := os.WriteFile(filepath.Join(f.alpha, "crew", "events.jsonl"), []byte(strings.Join([]string{
+		dispatch(old, "c9", "feat/old", "dusk"),
+		worker(old, "c9", "feat/old", "working"),
+		dispatch(1700000000, "c1", "feat/a", "sage"),
+		worker(1700000010, "c1", "feat/a", "working"),
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, errs, _ := run(t, f)
+	if strings.Contains(out, "feat/old") || !strings.Contains(out, "feat/a") {
+		t.Errorf("default view:\n%s", out)
+	}
+	if !strings.Contains(errs, "crew fleet: 1 stale rows hidden (--all shows them)") {
+		t.Errorf("stderr %q", errs)
+	}
+
+	out, errs, _ = run(t, f, "--all")
+	if !strings.Contains(out, "feat/old") || strings.Contains(errs, "stale") {
+		t.Errorf("--all:\nout %s\nerr %q", out, errs)
+	}
+
+	out, errs, _ = run(t, f, "--json")
+	stale := map[string]any{}
+	for _, r := range jsonRows(t, out) {
+		stale[r["branch"].(string)] = r["stale"]
+	}
+	if stale["feat/old"] != true || stale["feat/a"] != false || strings.Contains(errs, "stale") {
+		t.Errorf("--json stale flags %v, stderr %q", stale, errs)
+	}
+}
+
+func TestWorktreeVouchesOnlyWhileRowIsFresh(t *testing.T) {
+	f := setup(t)
+	f.opts.Windows = func() string { return "" }
+	f.opts.Worktrees = func(string) (string, error) {
+		return "worktree /w/a\nbranch refs/heads/feat/a\n\nworktree /w/c\nbranch refs/heads/feat/c\n", nil
+	}
+	if out, _, _ := run(t, f); !strings.Contains(out, "feat/a") || !strings.Contains(out, "feat/c") {
+		t.Errorf("fresh rows with a worktree hidden:\n%s", out)
+	}
+	f.opts.Now = func() time.Time { return fixedNow.Add(72 * time.Hour) }
+	if out, errs, _ := run(t, f); strings.Contains(out, "feat/") || !strings.Contains(errs, "2 stale rows hidden") {
+		t.Errorf("old rows with a worktree shown:\n%s\n%q", out, errs)
+	}
+}
+
+func TestWindowsReadOnce(t *testing.T) {
+	f := setup(t)
+	calls := 0
+	f.opts.Windows = func() string { calls++; return "" }
+	run(t, f)
+	if calls != 1 {
+		t.Errorf("Windows called %d times", calls)
+	}
+}
+
+func TestWorktreeProbeFailureKeepsFreshRows(t *testing.T) {
+	f := setup(t)
+	f.opts.Windows = func() string { return "" }
+	f.opts.Worktrees = func(string) (string, error) { return "", fmt.Errorf("git: boom") }
+	out, errs, _ := run(t, f)
+	if !strings.Contains(out, "feat/a") || strings.Contains(errs, "stale") {
+		t.Errorf("out %s\nerr %q", out, errs)
 	}
 }

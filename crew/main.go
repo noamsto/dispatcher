@@ -448,6 +448,10 @@ func runFleet(ctx context.Context, args []string, stdout, stderr io.Writer, e en
 	}
 	o := fleet.Options{
 		Panes: func() string { return probes(ctx, "").Panes() },
+		Windows: func() string {
+			out, _ := tmuxOutput(ctx, "list-windows", "-a", "-F", "#{@crew_branch}")
+			return out
+		},
 		Worktrees: func(common string) (string, error) {
 			return worktreeList(exec.CommandContext(ctx, "git", "--git-dir="+common, "worktree", "list", "--porcelain"))
 		},
