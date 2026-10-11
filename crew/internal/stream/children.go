@@ -7,8 +7,8 @@
 //
 //   - the inner `crew watch` holds `watch.lock.d` for its whole park and
 //     releases it from its own handler, so the stream stops it with TERM and
-//     waits — never KILL, which would leak the lock until the dead pid is
-//     reclaimed;
+//     waits — never KILL, which would skip the release and leave the lock's
+//     record behind;
 //   - `crew reap` is never awaited and never signalled by the stream (an
 //     interrupted removal strands a worktree), so its output goes to files it
 //     owns rather than to pipes the stream would close on the way out.
