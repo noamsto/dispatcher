@@ -30,6 +30,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/prwatch"
 	"github.com/noamsto/dispatcher/crew/internal/rate"
+	"github.com/noamsto/dispatcher/crew/internal/reap"
 	"github.com/noamsto/dispatcher/crew/internal/register"
 	"github.com/noamsto/dispatcher/crew/internal/reply"
 	"github.com/noamsto/dispatcher/crew/internal/report"
@@ -47,7 +48,7 @@ import (
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled] | --sweep-all [--root DIR]…] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | identity <branch> [crew] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | fleet [--all] [--crew ID] [--json] | fleet stream --crew ID [--rediscover S] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] | fleet stream --status --crew ID | nudge <codename|branch|worker-id> [--crew ID] [--wait [SECONDS]] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […] | git-guard <op> … | git-baseline [--accept]"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled] | --sweep-all [--root DIR]…] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | identity <branch> [crew] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | fleet [--all] [--crew ID] [--json] | fleet stream --crew ID [--rediscover S] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] | fleet stream --status --crew ID | nudge <codename|branch|worker-id> [--crew ID] [--wait [SECONDS]] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […] | git-guard <op> … | git-baseline [--accept] | reap [--quiet] [--dry-run] [--no-wait] [--idle S] [--discard BRANCH] | occupants <worktree-path>"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -80,7 +81,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "identity", "stream", "roster-render", "adopt", "nudge", "stall-watch", "status", "msg", "register", "deregister", "fleet", "git-guard", "git-baseline":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "identity", "stream", "roster-render", "adopt", "nudge", "stall-watch", "status", "msg", "register", "deregister", "fleet", "git-guard", "git-baseline", "occupants", "reap", "reap-autosweep":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
@@ -99,6 +100,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		if rate.WalksEveryRepo(args) {
 			return rate.Run(args, bus.Paths{}, "", stdout, stderr, rate.Options{})
 		}
+	}
+
+	// occupants reads tmux and a path it is given, so it needs no repo.
+	if sub == "occupants" {
+		return reap.RunOccupants(ctx, args, stdout, stderr, reap.DefaultProbes(), os.Getenv("TMUX_PANE"))
 	}
 
 	cwd, err := e.getwd()
@@ -124,6 +130,25 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if err != nil {
 		say(stderr, "crew: not in a git repo\n")
 		return exitFailure
+	}
+
+	// reap prints its lines as it goes and runs the ratings sweep as a detached
+	// child of this binary, so it writes straight to stdout like stream.
+	if sub == "reap" || sub == "reap-autosweep" {
+		self, _ := os.Executable()
+		o := reap.Options{
+			Probes: reap.DefaultProbes(),
+			Getenv: os.Getenv,
+			PID:    os.Getpid(),
+			Self:   self,
+			RateRun: func(a []string, p bus.Paths, c string, so, se io.Writer) int {
+				return rate.Run(a, p, c, so, se, rate.Options{})
+			},
+		}
+		if sub == "reap-autosweep" {
+			return reap.RunAutosweep(args, paths, cwd, o)
+		}
+		return reap.Run(ctx, args, paths, cwd, stdout, stderr, o)
 	}
 
 	// crews emits TSV, reads the log with its own torn-line tolerance, and
@@ -344,6 +369,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			CrewSH: crewSH,
 			NewProbes: func(pane string) probe.Probes {
 				return probe.Default(probe.Env{Getenv: os.Getenv, Pane: pane, CrewSH: crewSH, Dir: paths.Common, Stderr: stderr})
+			},
+			Release: func(ctx context.Context, branch, session, state string, tsMS, grace int64) (int, error) {
+				return reap.ReleaseWindows(ctx, reap.Deps{
+					Common: paths.Common, Log: paths.Log,
+					Say: func(string) {}, Note: func(string) {},
+					P: reap.DefaultProbes(),
+				}, branch, session, state, tsMS, grace, false)
 			},
 			BudgetFile: budgetFile(),
 			PID:        os.Getpid(),

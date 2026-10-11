@@ -32,9 +32,9 @@ func (o Options) daemon(ctx context.Context, paths bus.Paths, cdir string, c cal
 	ld := filepath.Join(cdir, "roster-render.lock.d")
 	owner := strconv.Itoa(o.PID)
 
-	// Acquired before the signal handler is armed, like the arm's `trap` after its
-	// `_lock_acquire`: a start refused because another renderer holds the lock has
-	// nothing to clean up.
+	// Acquired before the signal handler is armed, like the arm's `trap` after
+	// the lock acquire: a start refused because another renderer holds the lock
+	// has nothing to clean up.
 	if !lock.Acquire(ld, owner) {
 		return exitOK
 	}

@@ -11,9 +11,9 @@
 //
 // Three children are the crew script re-entered the way the bash arm re-entered
 // `$0` (`bash -euo pipefail <self> …`): `watch` — the park, which reaches Go
-// through that arm — `hold due`, and `reap`, which stays bash. The delegation
-// arm exports the script's path as CREW_SELF; with it unset the `crew` on PATH
-// is the same entrypoint.
+// through that arm — `hold due`, and `reap`, which is Go behind the script's
+// one-line exec. The delegation arm exports the script's path as CREW_SELF;
+// with it unset the `crew` on PATH is the same entrypoint.
 //
 // `stream.lock.d` goes through internal/lock, and is acquired before any signal
 // is caught: a refused start has nothing to clean up.

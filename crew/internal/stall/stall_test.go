@@ -70,6 +70,28 @@ func (f *fake) nudgeHook() func(context.Context, nudge.PaneRequest) (string, int
 	}
 }
 
+// releaseHook is the fake's finished-worker release: it logs the argv the bash op
+// used to receive and answers what f.sh/f.shc script for "release" through the
+// --sh decode, so a status that decodes to ok=false is a release that failed.
+func (f *fake) releaseHook() func(context.Context, string, string, string, int64, int64) (int, error) {
+	return func(ctx context.Context, branch, session, state string, tsMS, grace int64) (int, error) {
+		args := []string{branch, session, state, strconv.FormatInt(tsMS, 10), strconv.FormatInt(grace, 10)}
+		f.shCalls = append(f.shCalls, strings.Join(append([]string{"release"}, args...), " "))
+		rc := shOffset
+		switch {
+		case f.shc != nil:
+			_, rc = f.shc(ctx, "release", args...)
+		case f.sh != nil:
+			_, rc = f.sh("release", args...)
+		}
+		verdict, ok := shVerdict(rc)
+		if !ok {
+			return 0, fmt.Errorf("release failed (status %d)", rc)
+		}
+		return verdict, nil
+	}
+}
+
 func (f *fake) probes() probe.Probes {
 	return probe.Probes{
 		Sample: func(context.Context) (string, bool) {
@@ -154,6 +176,7 @@ func (h *harness) options() Options {
 			return h.f.probes()
 		},
 		Nudge:      h.f.nudgeHook(),
+		Release:    h.f.releaseHook(),
 		BudgetFile: h.paths.Common + "/engine-budget.json",
 		PID:        os.Getpid(),
 	}

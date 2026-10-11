@@ -1,7 +1,6 @@
 package stall
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -22,15 +21,14 @@ func (w *watch) finishedRelease() error {
 	prevText, haveText := "", false
 	idleTicks := 0
 
-	// release ends the watch on any verdict but 3. A helper that failed to run
-	// released nothing, so it is retried like 3: nil keeps watching.
+	// release ends the watch on any verdict but 3. A release that failed to
+	// write its row is retried like 3 (releaseCall maps it): nil keeps watching.
 	release := func() error {
-		_, rc, ran, err := w.shWrite("release", w.cfg.branch, relSession, w.bus.state,
-			strconv.FormatInt(w.bus.ts, 10), strconv.FormatInt(w.cfg.release, 10))
+		verdict, err := w.releaseCall(w.cfg.branch, relSession, w.bus.state, w.bus.ts, w.cfg.release)
 		if err != nil {
 			return err
 		}
-		if ran && rc != 3 {
+		if verdict != 3 {
 			return exitCode(0)
 		}
 		idleTicks = 0

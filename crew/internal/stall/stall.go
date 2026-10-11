@@ -2,7 +2,8 @@
 // `dispatch` spawns next to each pane, ported from the arm of the same name in
 // crew.sh. That arm's header comment still documents the detectors, the
 // escalation rules and the test seams; the arm itself now only delegates here
-// and answers the `--sh` call-outs into the bash helpers that stay.
+// and answers the `--sh` call-outs into the bash helpers that stay. The
+// finished-worker release runs in process (Options.Release).
 //
 // One loop samples the pane every --interval and runs the detectors in the
 // arm's order. Every bus write goes through post, which re-reads the bus first
@@ -37,7 +38,10 @@ type Options struct {
 	// Unread is D6's scan — `internal/unread`, the helper's in-process port that
 	// replaced the `--sh unread` call-out — answered for the watch's own ids.
 	// Run wires it; tests script it.
-	Unread     func(ctx context.Context, mode unread.Mode) string
+	Unread func(ctx context.Context, mode unread.Mode) string
+	// Release is the finished-worker release — `reap.ReleaseWindows` in process,
+	// the verdict 0 or 3; an error is a release row that did not write.
+	Release    func(ctx context.Context, branch, session, state string, tsMS, grace int64) (int, error)
 	BudgetFile string // ${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json
 	PID        int    // lock owner ($$)
 	CrewSH     string // $CREW_SH: the crew.sh holding the --sh helpers
@@ -89,9 +93,9 @@ func Run(ctx context.Context, argv []string, paths bus.Paths, stderr io.Writer, 
 		}
 		return 1
 	}
-	// The bash helpers the watch still reaches are D8's budget verdict, the pi
-	// local-model check and the finished-worker release (D6's unread scan moved
-	// in process with #968); they are all reached through CREW_SH, so without it
+	// The bash helpers the watch still reaches are D8's budget verdict and the pi
+	// local-model check (D6's unread scan moved in process with #968, the release
+	// with #997); they are reached through CREW_SH, so without it
 	// they fail with nothing on the bus. The crew wrapper always exports it:
 	// this is a direct crew-go call or a script removed mid-deploy.
 	if err := crewSHError(o.CrewSH); err != nil {

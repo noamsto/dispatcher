@@ -237,12 +237,12 @@ header = \"anthropic-beta: oauth-2025-04-20\"") && [[ -n $resp ]]; then
 # NN% markers the statusline already renders, from live worker pane
 # captures. Scoped to windows `dispatch` tagged with @crew_name (excluding
 # the dispatcher's own window, tagged literally "dispatcher" — same idiom
-# as crew.sh's _occupants) rather than every tmux pane on the server: the
-# dispatcher's own pane is itself a claude session with its own statusline,
-# so an unscoped scrape could never degrade to "unknown" on a drained
-# roster, and an unanchored one could pick up a stray "⚡ NN%" sitting in a
-# worker's visible scrollback (e.g. example statusline text in a doc or task
-# file a worker has open).
+# as `crew occupants` in crew/internal/reap) rather than every tmux pane on
+# the server: the dispatcher's own pane is itself a claude session with its
+# own statusline, so an unscoped scrape could never degrade to "unknown" on a
+# drained roster, and an unanchored one could pick up a stray "⚡ NN%"
+# sitting in a worker's visible scrollback (e.g. example statusline text in a
+# doc or task file a worker has open).
 # Anchored to the bottom block of each capture: the statusline is the line
 # directly above the LAST mode/input-box line (see _pane_statusline). Rows
 # below the mode line (subagent list, blank lines) don't move the anchor, and

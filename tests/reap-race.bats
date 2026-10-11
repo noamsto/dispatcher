@@ -99,7 +99,7 @@ EOF
   export PATH="$STUB_DIR:$PATH"
 }
 
-# canon_wt_path <branch> — the path `crew reap`/`_occupants` actually compare
+# canon_wt_path <branch> — the path `crew reap`/`crew occupants` actually compare
 # against (git's own porcelain output), NOT $BATS_TEST_TMPDIR directly. On
 # macOS the two differ (/private/var/... vs /var/...) because git resolves
 # symlinks in worktree paths but bats' tmpdir var does not — feeding the raw

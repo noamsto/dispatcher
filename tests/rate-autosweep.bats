@@ -95,16 +95,17 @@ store_rows() { jq -s -c 'group_by(.run_id) | map(max_by(.swept_at))' "$XDG_DATA_
 
 # await_sweep — block until a forked async sweep has finished. The child is a
 # grandchild of the test shell, so `wait` cannot reach it; poll its lock
-# instead. `_rate_autosweep` runs `_lock_acquire` → `bash "$0" rate` (writes
-# the store) → `_lock_release`, so holding the lock means started and dropping
-# it means exited. Returns 1 rather than hanging if the child never appears.
+# instead. reap's autosweep takes `ratings.sweep.lock.d` through internal/lock,
+# runs the rate sweep (writes the store), then releases it, so the lock record
+# dir existing means started and its removal means exited. Returns 1 rather
+# than hanging if the child never appears.
 await_sweep() {
   local i started="" had_store=""
   # A store left by an earlier sweep in the same test is not evidence that
   # this one started, so only trust that sentinel when the store is new.
   [ -f "$XDG_DATA_HOME/crew/ratings.jsonl" ] && had_store=1
   # Phase 1 — started. Both sentinels are needed: the lock does not exist
-  # until the child reaches `_lock_acquire`, and a child that finished before
+  # until the child has acquired it, and a child that finished before
   # the first poll leaves only the store behind.
   for ((i = 0; i < 100; i++)); do
     if [ -d "$XDG_DATA_HOME/crew/ratings.sweep.lock.d" ]; then
