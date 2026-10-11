@@ -975,6 +975,100 @@ local_slot_cap() {
   done
 }
 
+# _fleet_leads [<branch>...] — one `<weight>\x1f<name>\x1f<repo>\x1f<tier>`
+# line per live lead pane on the machine: stamped @crew_branch, no @crew_role,
+# and a pane still running an engine (_is_engine_cmd). The tier is the `tier:`
+# header of the pane's worktree WORKER_TASK.md (trivial=1, standard=2, deep=3);
+# an unreadable one counts as standard. Role panes add nothing: the tier weight
+# already includes them. Panes on a named <branch> are skipped. No tmux server
+# yields no lines, status 0.
+_fleet_leads() {
+  local cmd name lbranch role path tier w repo common
+  { tmux list-panes -a -F '#{pane_current_command}'$'\x1f''#{@crew_name}'$'\x1f''#{@crew_branch}'$'\x1f''#{@crew_role}'$'\x1f''#{pane_current_path}' 2>/dev/null || true; } |
+    while IFS=$'\x1f' read -r cmd name lbranch role path; do
+      [ -n "$lbranch" ] && [ -z "$role" ] || continue
+      _is_engine_cmd "$cmd" || continue
+      [[ " $* " != *" $lbranch "* ]] || continue
+      tier="$(sed -n 's/^tier: //p' "$path/WORKER_TASK.md" 2>/dev/null | head -1)" || tier=""
+      case "$tier" in
+      trivial) w=1 ;;
+      deep) w=3 ;;
+      *)
+        w=2
+        tier=standard
+        ;;
+      esac
+      common="$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || common=""
+      repo="$(basename "$(dirname "${common:-?/?}")")"
+      printf '%s\x1f%s\x1f%s\x1f%s\n' "$w" "${name:-?}" "$repo" "$tier"
+    done
+  return 0
+}
+
+# _fleet_owned <lbranch>... — non-empty when a lead pane (engine alive or not)
+# is stamped with one of the branches.
+_fleet_owned() {
+  local name lbranch role
+  { tmux list-panes -a -F '#{@crew_name}'$'\x1f''#{@crew_branch}'$'\x1f''#{@crew_role}' 2>/dev/null || true; } |
+    while IFS=$'\x1f' read -r name lbranch role; do
+      if [ -n "$lbranch" ] && [ -z "$role" ] && [[ " $* " == *" $lbranch "* ]]; then echo "$name"; fi
+    done
+  return 0
+}
+
+# _host_load — print "<1-min load> <cores>"; nothing when either is unreadable.
+# $DISPATCH_LOADAVG_FILE overrides /proc/loadavg (tests).
+_host_load() {
+  local load cores
+  if [ -r "${DISPATCH_LOADAVG_FILE:-/proc/loadavg}" ]; then
+    read -r load _ <"${DISPATCH_LOADAVG_FILE:-/proc/loadavg}" || return 0
+  else
+    load="$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')"
+  fi
+  cores="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null)" || return 0
+  [[ $load =~ ^[0-9]+([.][0-9]+)?$ && $cores =~ ^[1-9][0-9]*$ ]] || return 0
+  printf '%s %s\n' "$load" "$cores"
+}
+
+# fleet_gate <tier> [<branch>...] — refuse a new lead dispatch when the live
+# lead weight on the machine plus this tier's would exceed fleetBudget, or when
+# the 1-minute load average is above the core count. 0 disables both. A dispatch
+# whose own branch already has a lead pane (re-dispatch over a finished worker)
+# is not a new lead and skips it. --ignore-budget notes the refusal and
+# proceeds. A check, not a lock: two dispatches racing can both pass.
+fleet_gate() {
+  local tier="$1" budget add=2 leads=() weight=0 w name repo ltier top who="" load cores why=""
+  shift
+  budget="$(jq -r '.fleetBudget // 8' <<<"$settings")"
+  [ "$budget" != 0 ] || return 0
+  [ "$tier" != trivial ] || add=1
+  [ "$tier" != deep ] || add=3
+  if [ $# -gt 0 ] && [ -n "$(_fleet_owned "$@")" ]; then return 0; fi
+  mapfile -t leads < <(_fleet_leads "$@")
+  for w in "${leads[@]}"; do
+    weight=$((weight + ${w%%$'\x1f'*}))
+  done
+  if [ $((weight + add)) -gt "$budget" ]; then
+    top="$(printf '%s\n' "${leads[@]}" | sort -t$'\x1f' -k1,1nr -s | head -3)"
+    while IFS=$'\x1f' read -r w name repo ltier; do
+      [ -z "$name" ] || who="${who:+$who, }$name ($repo, $ltier)"
+    done <<<"$top"
+    why="live lead weight $weight + this $tier dispatch ($add) exceeds fleetBudget $budget${who:+ — heaviest: $who}"
+  else
+    read -r load cores <<<"$(_host_load)"
+    if [ -n "${load:-}" ] && awk -v l="$load" -v c="$cores" 'BEGIN { exit !(l > c) }'; then
+      why="1-minute load average $load is above the $cores cores"
+    fi
+  fi
+  [ -n "$why" ] || return 0
+  if [ -n "${ignore_budget:-}" ]; then
+    echo "dispatch: fleet check skipped (--ignore-budget) — $why" >&2
+    return 0
+  fi
+  echo "dispatch: refused, machine at capacity — $why; wait for a worker to finish (\`crew reap\` closes finished windows), or pass --ignore-budget" >&2
+  exit 1
+}
+
 # local_probe_gate <id> — refuse unless the id's endpoint answers /models and
 # lists the model.
 local_probe_gate() {
@@ -4392,6 +4486,14 @@ done
 if [ -n "$gh_issue" ]; then
   branch="feat/$gh_issue-$slug"
 fi
+
+# Machine-wide fan-out (#927), before the claim gate's first side effect. The
+# branch is known here only for an issue or Linear id; a title or --pr dispatch
+# is a new lead either way.
+fleet_own=()
+[ -z "$gh_issue" ] || fleet_own+=("$branch")
+[ -z "$linear_id" ] || fleet_own+=("$(printf '%s' "$linear_id" | tr '[:upper:]' '[:lower:]')-$slug")
+fleet_gate "$tier" "${fleet_own[@]}"
 
 # A re-dispatch onto an existing branch keeps the bundle its first run claimed:
 # the extras are labelled already, and dropping them silently would leave the

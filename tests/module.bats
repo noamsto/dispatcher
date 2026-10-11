@@ -141,6 +141,7 @@ let
     profile = "work";
     engines = ["claude" "codex" "cursor" "pi"];
     grantRoots = ["/a/git" "/b/src"];
+    fleetBudget = 0;
     repoTrackers."factify-inc/mono" = "linear:ENG";
     orgTrackers."factify-inc" = "linear:ENG";
     openrouter = {
@@ -624,7 +625,7 @@ placeholder_three_row() { # token bin bin bin
 }
 
 @test "the module declares the engines option" {
-  for name in engines grantRoots repoTrackers orgTrackers; do
+  for name in engines grantRoots fleetBudget repoTrackers orgTrackers; do
     run jq -e --arg n "$name" '(.options | index($n)) != null' "$EVAL"
     [ "$status" -eq 0 ]
   done
@@ -663,6 +664,8 @@ placeholder_three_row() { # token bin bin bin
   run jq -e '.full.locked.grantRoots == ["/a/git", "/b/src"]' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.profile == "work"' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.fleetBudget == 0' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.engines == ["claude", "codex", "cursor", "pi"]' "$EVAL"
   [ "$status" -eq 0 ]

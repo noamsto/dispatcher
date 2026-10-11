@@ -412,6 +412,32 @@ EOF
   jq -e '.profile == {"value":"work","origin":"env"}' <<<"$output"
 }
 
+@test "fleetBudget defaults to 8; DISPATCH_FLEET_BUDGET and the user layer override it" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.fleetBudget == 8' <<<"$output"
+
+  DISPATCH_FLEET_BUDGET=0 run --separate-stderr "$CONFIG" --show-origin
+  [ "$status" -eq 0 ]
+  jq -e '.fleetBudget == {"value":0,"origin":"env"}' <<<"$output"
+
+  user_settings '{"fleetBudget":12}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.fleetBudget == 12' <<<"$output"
+}
+
+@test "a fleetBudget that is not a non-negative integer is refused" {
+  DISPATCH_FLEET_BUDGET=lots run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"fleetBudget must be a non-negative integer (merged settings)"* ]]
+
+  user_settings '{"fleetBudget":-1}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"fleetBudget must be a non-negative integer"* ]]
+}
+
 @test "rosterDiagram.autoOpen defaults to true" {
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]

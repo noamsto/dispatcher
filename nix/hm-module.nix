@@ -23,6 +23,7 @@ self: {
   lockedSettings =
     {inherit (cfg) profile grantRoots;}
     // lib.optionalAttrs (cfg.engines != null) {inherit (cfg) engines;}
+    // lib.optionalAttrs (cfg.fleetBudget != null) {inherit (cfg) fleetBudget;}
     // lib.optionalAttrs (cfg.repoTrackers != null) {inherit (cfg) repoTrackers;}
     // lib.optionalAttrs (cfg.orgTrackers != null) {inherit (cfg) orgTrackers;}
     // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;}
@@ -80,6 +81,22 @@ in {
         `["claude" "pi"]`. An empty list is rejected by the type -- leave the
         option unset instead. A per-launch `DISPATCH_ENGINES` still overrides
         every layer.
+      '';
+    };
+
+    fleetBudget = lib.mkOption {
+      type = lib.types.nullOr lib.types.ints.unsigned;
+      default = null;
+      example = 8;
+      description = ''
+        Machine-wide fan-out budget: `dispatch` refuses a new lead when the
+        tier weight of every live lead on this host (trivial=1, standard=2,
+        deep=3, across all dispatchers) plus its own would exceed this, or when
+        the 1-minute load average is above the core count. 0 disables both
+        checks; `--ignore-budget` bypasses them per launch. Set, it is emitted
+        into the locked settings layer. Unset (the default, 8 from the base
+        defaults), the user settings file governs. A per-launch
+        `DISPATCH_FLEET_BUDGET` still overrides every layer.
       '';
     };
 
