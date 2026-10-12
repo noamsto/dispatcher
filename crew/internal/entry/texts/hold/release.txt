@@ -1,0 +1,9 @@
+usage: crew hold release <id> [--crew ID]
+
+Drop a hold so it is never dispatched again (a task dispatched by hand, or one
+the owner cancelled).
+
+  <id>     Hold id from `crew hold list`
+  --crew   Crew id; defaults to this repo's crew
+
+  crew hold release h-1

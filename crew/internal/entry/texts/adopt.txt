@@ -1,0 +1,13 @@
+usage: crew adopt [--force] <id> [pid]
+
+Re-attach to an on-disk crew after a restart lost CREW_ID.
+
+  --force  Adopt even though another pid is recorded as its dispatcher
+  <id>     Crew id, from `crew crews`
+  [pid]    Dispatcher pid to record; defaults to the nearest non-shell ancestor
+
+--force is stripped from anywhere in the args, so it can never land as the pid.
+Adopting a crew whose recorded dispatcher pid is dead also releases the
+`dispatched` label from the GitHub issues that crew claimed but never finished.
+
+  crew adopt <crew-id>

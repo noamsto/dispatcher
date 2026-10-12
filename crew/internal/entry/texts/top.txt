@@ -1,0 +1,52 @@
+crew — file-based coordination bus for dispatcher and worker sessions
+
+Usage: crew <command> [args]
+
+Run 'crew <command> --help' for one command's flags and an example.
+
+Bus I/O:
+  status          Post or update a session's state on the bus
+  msg             Post a message from one agent to another
+  reply           Post a message as dispatcher:<crew>
+  await           Block until a message answers an outstanding question
+  inbox           Print the messages addressed to one agent
+  log             Print every bus event for a crew
+
+Watching:
+  watch           Park until a qualifying event lands, then print it
+  stream          Long-lived watch that pushes batches to a streaming lane
+  stall-watch     Per-pane liveness watchdog, spawned per worker
+  pr-watch        Park until a PR changes, then post the event
+  nudge           Type a wake-up line into an idle lead's input box
+
+Roster and reporting:
+  roster          One row per branch: state, age, engine, model, PR
+  fleet           One roster across every crew bus on the machine
+  roster-render   Draw and publish the crew's roster diagram
+  sessions        Every session id recorded on a branch
+  where           A human-usable address for a worker's pane
+  report          Per-run dispatch table for a crew
+  rate            Sweep the bus into the ratings store, or report it
+  retro           Roll up the retro notes runs posted
+  dash            Terminal dashboard over the bus
+
+Identity and crews:
+  id              Print this session's crew id (never mints one)
+  new             Mint a fresh crew id
+  identity        Print the codename assigned to a branch
+  occupants       Print the crewed panes holding a worktree path
+  register        Register this crew on the repo bus
+  deregister      Drop this crew's registration
+  crews           List every crew with traffic on this repo's bus
+  adopt           Re-attach to an on-disk crew id
+  resolve-target  Resolve a target to branch, codename, host and crew
+  pi-agent-dir    Print the pi agent dir prepared for a dispatch
+
+Holds:
+  hold            Park a queued dispatch on a quota window
+
+Maintenance:
+  reap            Reclaim the window and worktree of a landed PR
+  git-baseline    List or accept the exec-capable git-config baseline
+  stack           Read or record stacked cut points; plan a stack rebase
+  engine-cmd      Whether a tmux pane command is an engine

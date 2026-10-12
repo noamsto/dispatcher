@@ -1,0 +1,14 @@
+usage: crew pr-watch <N> [--repo owner/name] [--timeout S] [--interval S]
+
+Park until PR <N> changes, print the event, and post it to dispatcher:<crew> so
+an armed `crew watch` wakes.
+
+  <N>         Pull request number
+  --repo      owner/name; defaults to the current repo
+  --timeout   Seconds to park
+  --interval  Poll interval
+
+The park, the change signals and the per-PR cursor live in the pr-watch binary;
+empty stdout is that binary's timeout marker, not a failure.
+
+  crew pr-watch 123 --timeout 600

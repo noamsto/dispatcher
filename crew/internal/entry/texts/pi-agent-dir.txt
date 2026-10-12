@@ -1,0 +1,7 @@
+usage: crew pi-agent-dir
+
+Print the pi agent dir prepared for a dispatch, refreshing models.json from the
+dispatch config. Fails when a local provider name would shadow a credential the
+user stored in auth.json.
+
+  PI_OFFICIAL_CACHE_DIR=$(crew pi-agent-dir)

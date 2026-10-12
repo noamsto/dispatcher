@@ -1,0 +1,6 @@
+usage: crew new
+
+Mint a fresh crew id (timestamp-pid, unique by construction) and print it.
+Registers nothing — the dispatcher records it on its first event.
+
+  CREW_ID=$(crew new)

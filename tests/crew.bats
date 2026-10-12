@@ -1513,14 +1513,30 @@ STUB
   [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "roster c1 extra" ]
 }
 
-@test "roster: --help is answered by bash, never the Go binary" {
+# The screens moved to Go with #1007, so --help is the one case where the arm
+# does exec the binary: what the script still owns is the routing, i.e. the argv
+# it hands `help`.
+@test "roster: --help execs the Go binary with the help argv" {
   stub="$BATS_TEST_TMPDIR/go-stub"
-  printf '#!/usr/bin/env bash\ntouch "%s/stub.called"\nexit 99\n' "$BATS_TEST_TMPDIR" >"$stub"
+  cat >"$stub" <<'STUB'
+#!/usr/bin/env bash
+printf '%s' "$*" >"$BATS_TEST_TMPDIR/stub.argv"
+printf 'usage: crew roster [crew]\n'
+STUB
   chmod +x "$stub"
   CREW_GO_BIN="$stub" run run_crew roster --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"usage: crew roster"* ]]
-  [ ! -e "$BATS_TEST_TMPDIR/stub.called" ]
+  [[ "$output" == "usage: crew roster [crew]" ]]
+  [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "help roster" ]
+}
+
+@test "help: --help hold <action> execs Go with the action, not the flag" {
+  stub="$BATS_TEST_TMPDIR/go-stub"
+  printf '#!/usr/bin/env bash\nprintf "%%s" "$*" >"%s/stub.argv"\n' "$BATS_TEST_TMPDIR" >"$stub"
+  chmod +x "$stub"
+  CREW_GO_BIN="$stub" run run_crew hold due --help
+  [ "$status" -eq 0 ]
+  [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "help hold due" ]
 }
 
 @test "reply: a branch-only worker target resolves to the newest live session" {

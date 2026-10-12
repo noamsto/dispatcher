@@ -1,0 +1,12 @@
+usage: crew retro [--report [--json]]
+
+Read-only rollup of the retro notes workers and the dispatcher post to the
+synthetic retro: and metrics: sinks.
+
+  (no flags)  One row per run: branch, engine, model, tier, outcome, tags
+  --report    Aggregate rollup of tags across runs
+  --json      Machine-readable; only with --report
+
+No crew filter and no positional: notes are cross-run evidence, like `rate`.
+
+  crew retro --report

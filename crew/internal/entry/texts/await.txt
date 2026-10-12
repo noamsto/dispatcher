@@ -1,0 +1,17 @@
+usage: crew await <agent> [--from SENDER] [--timeout S] [--interval S]
+
+Block until a message answers <agent>'s outstanding question, print it, exit 0.
+
+  <agent>     The id that asked — usually "$CREW_WORKER_ID"
+  --from      Accept a reply only from this exact sender id
+  --timeout   Seconds to wait (default 300, capped at 600 — the tool ceiling).
+              On expiry stdout stays empty and stderr gets "ended after Ns"
+              — that line is the marker, the exit
+              code stays 0, so never branch on $? here
+  --interval  Poll interval in seconds (default 2)
+
+Every due message from the reply's sender prints, oldest first, one compact JSON
+object per line, so a backlog drains instead of hiding. A held poll, not a spin
+loop: zero token cost while it waits.
+
+  crew await "$CREW_WORKER_ID" --from "dispatcher:<crew-id>" --timeout 300

@@ -1,0 +1,9 @@
+usage: crew hold due [--crew ID] [--json]
+
+Only the holds whose quota window has already reset — what a dispatcher may
+dispatch now.
+
+  --crew  Crew id; defaults to this repo's crew
+  --json  Machine-readable rows
+
+  crew hold due --json

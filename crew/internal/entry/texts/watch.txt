@@ -1,0 +1,16 @@
+usage: crew watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID]
+
+Park until any worker event qualifies, then print {"cursor":TS,"events":[…]}.
+
+  --since     Cursor to read from; omitted, it self-seeds from the crew's cursor
+              file so a stale caller cursor cannot re-deliver
+  --states    States that qualify (default blocked,pr_open,done,failed,exited);
+              a msg to the dispatcher always qualifies
+  --timeout   Park length in seconds (default 3300). An indefinite park is
+              rejected: a reaped indefinite watch is undetectable
+  --interval  Poll interval in seconds (default 2)
+  --crew      Crew id when the caller's env carries no CREW_ID
+
+An expired park exits 0 with empty stdout — that is the marker, not a failure.
+
+  crew watch --since "$seen" --timeout 300

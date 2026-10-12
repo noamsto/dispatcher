@@ -1,0 +1,9 @@
+usage: crew roster [crew]
+
+A JSON array with one object per branch — sessions folded to the latest first,
+so three sessions on a branch never read as one flip-flopping identity — each
+with state, detail, age_s, engine, model, tier, pr_url, codename and colour.
+
+  [crew]  Crew id; defaults to this repo's crew
+
+  crew roster | jq -r '.[] | [.branch, .state, .name] | @tsv'

@@ -1,0 +1,8 @@
+usage: crew hold list [--crew ID] [--json]
+
+Every hold on the crew, with its window, reset time and target branch.
+
+  --crew  Crew id; defaults to this repo's crew
+  --json  Machine-readable rows
+
+  crew hold list --crew <crew-id>

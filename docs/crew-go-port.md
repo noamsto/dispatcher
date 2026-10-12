@@ -9,7 +9,8 @@ Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 (#935), `fleet` (#926), `status`, `msg`, `register` and `deregister` (#945), `nudge`
 (#939), `git-baseline` (#993), which brings the git-config guard
 (`worktree-git.sh`'s `_wt_cfg_*`) to Go as one shared implementation, and `reap` and
-`occupants` (#997). Each slice must leave every bats file green;
+`occupants` (#997), and the entry section — `help`, `id`, `new`, `engine-cmd` and `dash`
+(#1007). Each slice must leave every bats file green;
 tests may be adapted only where the Go design changes what they can observe (the
 output contract below), with each edit justified.
 
@@ -512,6 +513,23 @@ pr_open` for an implement task: the ledger's form, the empty-detail rule, the
   `internal/wtgit`'s anchored invocation, gh, the clock, the bus append), so the tests
   drive the whole command against a fixture repo and a gh stub — including the row-level
   assertions the bats rows make, which the port keeps as the contract.
+- `crew/internal/entry`: the arms that ran ahead of the repo check (#1007) —
+  `help`, `id`, `new`, `engine-cmd` and `dash`. One package because they are one
+  thing in the script: the entry section, every arm of which execs the binary
+  before `bus.Locate` is called, so none of them may read the bus. `help` is the
+  651 lines of `_crew_help`'s heredocs, extracted out of the script mechanically
+  and embedded one file per screen (`texts/`, `texts/hold/`); the routing that
+  decides _when_ help answers — `--help` as the command, as the first argument of
+  one, `hold <action> --help`, `fleet stream --help`, and never a third position
+  (#812) — stays in crew.sh, because that precedence is the preamble's own
+  contract. `id` is `bus.CrewID` behind the arm's refusal; `new` is
+  `date +%s`-`$$`, and the pid is this process's because the arm execs it; `engine-cmd`
+  is `roster.IsEngineCmd`, the table `crew roster` already read; `dash` resolves
+  `CREW_SELF` into `CREW_BIN` and `syscall.Exec`s `crew-dash` from PATH.
+  Byte identity is `scripts/help-parity.sh`: it reads the pre-change crew.sh out
+  of git, runs every help invocation AC1 of #1007 names against both sides, and
+  diffs stdout, stderr and the exit status. No in-tree drift guard can hold that
+  link, because this is the change that deleted the script's copy.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 - `crew/internal/drift`: test-only drift-guard skip, fatal under `CREW_DRIFT_REQUIRED`.
 
@@ -540,7 +558,8 @@ caller's locale collation, so `rate --sweep-all` may list repos in a different
 order; the set is identical (behaviour, not bytes).
 
 `crew stack cut|align` is Go (#1004) and joins the one-liner arm after the repo check;
-its `--help` stays in the preamble, as every ported subcommand's does. `cut` is the one
+its `--help` reaches Go as `help stack`, as every ported subcommand's does since #1007.
+`cut` is the one
 of the two that writes: one `stack_cut` row through `bus.Append`, the record of a parent
 oid a child is based on. Its reader is the same fold that reads the `dispatch` row
 `dispatch` appends when it creates the child — the newest of the two wins — and nothing
@@ -552,7 +571,15 @@ the refusal text, which the dispatcher quotes into a rebase directive.
 script's pre-repo preamble branch for `occupants` is now `exec "${CREW_GO_BIN:-@crewGoBin@}"
 occupants "$@"` and the bash `_occupants` is gone. `occupants` is dispatched before
 `bus.Locate`, like `git-guard`; `reap` joins the one-liner arm after the repo check, and
-`crew reap --help` stays in the preamble.
+`crew reap --help` reaches Go as `help reap`.
+
+The four arms of #1007 sit where they always did, ahead of the repo check, and each is
+now the one-liner form: `exec "${CREW_GO_BIN:-@crewGoBin@}" <sub> …`. `id` and `new` pass
+no arguments, because the bash arms read none; `engine-cmd` passes `${1:-}`, which is how
+the empty-argument refusal survives the exec; `dash` prefixes `CREW_SELF="$0"` the way
+`stall-watch` prefixes `CREW_SH`, and the Go side readlinks it into `CREW_BIN` — the one
+place the entry path is resolved, because `crew-dash` execs it or runs it through bash and
+needs a real file, not a symlink a switch has since repointed.
 
 `CREW_SELF` is this script's own path, the `$0` the bash arms re-entered. Two
 read it. `stream` reads it for its inner `watch`, its `hold due` pre-check and
@@ -570,10 +597,11 @@ a running loop to hold that.
 
 `flake.nix` substitutes `@crewGoBin@` with the `crew-go` package's
 `bin/crew-go`; `CREW_GO_BIN` overrides it for raw-source runs. The bash
-preamble (`--help`, the git-repo check) runs first. Add a subcommand to this
-arm and delete its old arm. `crew hold`'s per-action `--help` text lives only in
-that preamble — it never reaches Go, and `help: crew hold <action> --help` pins
-it. `rate` reaches it like every other ported subcommand: its flag loop, its
+preamble (the help routing, the git-repo check) runs first. Add a subcommand to this
+arm and delete its old arm. `crew hold`'s per-action `--help` screens are Go like
+everything else (#1007): the routing that turns `crew hold due --help` into
+`help hold due` is the preamble's, and `help: crew hold <action> --help` pins
+that it does. `rate` reaches it like every other ported subcommand: its flag loop, its
 refusals and its `--sweep-all` loop moved to Go with #966, so the arm passes the
 argv through and the package decides the mode.
 
@@ -803,6 +831,15 @@ the bus for unread msgs (unread helper failed)` at exit 1, because the empty-sca
     `unreadable`;
   - shell and `realpath` error text that bash printed before a silent refusal is not
     printed; the refusal and the exit status stay.
+- Specific to `entry`, and not mirrored:
+  - `dash` with no `crew-dash` on PATH prints Go's own lookup line under
+    `crew: dash: ` where bash printed `crew-dash: command not found`; the 127 stays (the
+    `pr-watch` precedent). A target that is found but will not exec is 126, which bash
+    reached with its own `cannot exec` line;
+  - a help name that is no case label is refused the same way whatever it looks like,
+    including one that spells a screen's path (`crew help hold/add`, `crew help ../top`);
+  - the `*)` arm of the top-level case runs the screen as a child rather than `exec`-ing
+    it, because the arm's exit stays 1 and the screen itself exits 0.
 - Before deleting a bash arm, diff it against Go over a generated corpus and
   keep the evidence: compare exit status, human/agent text and JSON values
   (`jq -S`) — nothing else.
@@ -915,8 +952,10 @@ same arrangement as `_pid_alive`), and `internal/bus.Append` is its Go copy.
 `_file_mtime_s`, `_ps_elapsed_s`, `_pid_recycled` and `_recorded_pid_live` have no
 crew.sh caller left but stay, as the canonical copies adapters.bats pins
 dispatch.sh and dispatch-resume.sh against (the same arrangement as
-`_is_quota_cursor_limit`). `_crew_id` stays for the bash arms that resolve a
-crew id.
+`_is_quota_cursor_limit`). `_crew_id` lost its last crew.sh caller with the `id` arm
+(#1007) and stays: `directive-delivery.sh` and `phase-status.sh` each resolve the crew id
+by naming its rule (task doc first, then the environment) as the thing they copy, and
+`bus.CrewID` is the Go copy of that rule.
 
 The guard helpers are gone from `worktree-git.sh` (#993): the key tables and their masking,
 the `#covers` marks, the pair and union listing, the legacy records, `_wt_cfg_canon`, the
@@ -961,6 +1000,10 @@ invocation (the refusals, `--attr-source`, anchoring) has no second guard: it is
   `CREW_DRIFT_REQUIRED=1`, so a drift guard that cannot read its bash file fails
   there instead of skipping (`nix build .#crew-go` still skips them: its sandbox
   holds only `./crew`).
+- `scripts/help-parity.sh` is the help screens' evidence run (#1007): it reads the
+  pre-change `crew.sh` out of git, runs every help invocation against both sides
+  and diffs stdout, stderr and the exit status. `--base <ref>` points it at the
+  script as it was before any later change to the screens.
 - `scripts/bats-affected.sh` maps `crew/*` to the crew bats files.
 
 ## Flipping to direction (a)
