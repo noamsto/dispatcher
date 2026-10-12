@@ -760,9 +760,8 @@ shift || true
 # below, so `crew <sub> --help` answers in a bare temp dir. Only the first
 # position counts — `crew status w1 working --help` keeps --help as the detail.
 #
-# The screens are Go (crew/internal/entry, docs/crew-go-port.md): the routing
-# stays here because where help wins is this preamble's contract, and every
-# screen is the byte-for-byte heredoc body this file used to cat (#1007).
+# The screens are Go (crew/internal/entry, docs/crew-go-port.md); the routing
+# stays here because when help wins is this preamble's contract.
 case "$sub" in
 --help | -h | help)
   exec "${CREW_GO_BIN:-@crewGoBin@}" help "${1:-}" "${2:-}"

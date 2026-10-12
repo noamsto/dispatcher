@@ -37,20 +37,16 @@ func DefaultDashOptions() DashOptions {
 // RunDash is crew.sh's `dash` arm: hand the terminal to crew-dash, naming in
 // CREW_BIN the crew entry the dashboard shells back into for every bus read.
 //
-// crew-dash is looked up on PATH because flake.nix deliberately keeps `crew` out
-// of crew-dash's own inputs (crew lists crew-dash, and naming crew back would
-// close an eval-time cycle), so "no such command" is a real outcome and keeps
-// the arm's 127.
+// crew-dash comes from PATH: flake.nix keeps `crew` out of crew-dash's inputs so
+// the two never close an eval-time cycle, which makes "no such command" a real
+// outcome here.
 func RunDash(args []string, stderr io.Writer, o DashOptions) int {
-	// CREW_SELF is unset only for a direct `crew-go dash`, which bash's `$0`
-	// never was; an empty CREW_BIN is what crew-dash reads as "use crew from
-	// PATH", which is the same fallback the arm left in place.
+	// Unset only for a direct `crew-go dash`, which bash's `$0` never was; an
+	// empty CREW_BIN is what crew-dash reads as "use crew from PATH".
 	crewBin := ""
 	if self := o.Getenv("CREW_SELF"); self != "" {
 		// `readlink -f` resolves what exists and prints the path anyway, so a
-		// failure is no reason to refuse: the unresolved path is the closest
-		// thing to it, and dash only reads CREW_BIN to exec it or bash its way
-		// back into crew.
+		// failure is no reason to refuse.
 		p, err := o.Resolve(self)
 		if err != nil {
 			p = self
@@ -64,7 +60,6 @@ func RunDash(args []string, stderr io.Writer, o DashOptions) int {
 		return exitCantExec
 	}
 	if err := o.Exec(bin, append([]string{"crew-dash"}, args...), withEnv(o.Environ(), "CREW_BIN", crewBin)); err != nil {
-		// Found but not runnable: the shell's own answer for that is 126.
 		say(stderr, "crew: dash: %v\n", err)
 		return exitNotExec
 	}

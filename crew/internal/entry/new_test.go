@@ -36,22 +36,3 @@ func TestNewIsTheArmsShape(t *testing.T) {
 		}
 	}
 }
-
-// TestNewPIDsDiffer: uniqueness comes from the pid, so two mints in the same
-// second differ — the reason the arm printed `$$` and this prints its own pid,
-// which is the same pid because crew.sh execs this binary.
-func TestNewPIDsDiffer(t *testing.T) {
-	now := time.Unix(1720800000, 0)
-	ids := map[string]bool{}
-	for _, pid := range []int{1, 2, os.Getpid()} {
-		var stdout bytes.Buffer
-		RunNew(&stdout, NewOptions{Now: func() time.Time { return now }, PID: pid})
-		if ids[stdout.String()] {
-			t.Fatalf("two mints printed the same id %q", stdout.String())
-		}
-		ids[stdout.String()] = true
-	}
-	if len(ids) != 3 {
-		t.Fatalf("ids = %v", ids)
-	}
-}

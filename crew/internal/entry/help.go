@@ -13,11 +13,9 @@ import (
 // file per screen: `top` for the grouped list, `hold/<action>` for hold's
 // per-action screens (`default` for bare `crew hold`), and the subcommand name
 // for the rest. The bodies were extracted out of the script mechanically rather
-// than retyped — 651 lines of flags and examples are not something to
-// transcribe — and scripts/help-parity.sh re-runs both sides against each other
-// from the pre-change crew.sh in git, which is the guard this package cannot
-// hold itself: the change that put these files here deleted the script's copy,
-// so there is no second copy in the tree to compare against.
+// than retyped, and scripts/help-parity.sh re-runs the two sides against each
+// other from the pre-change crew.sh in git — this change deleted the script's
+// copy, so no in-tree drift guard can hold the link.
 //
 //go:embed texts
 var helpTexts embed.FS

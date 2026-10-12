@@ -110,14 +110,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 
 	// help, id, new, engine-cmd and dash are the arms crew.sh runs ahead of its
-	// repo check, so none of them reads the bus (#1007) — and none of them may
-	// need the working directory either, which is why they sit before getwd: a
-	// worktree reaped out from under a live shell leaves bash printing a
-	// shell-init warning and answering anyway, and `engine-cmd` in particular is
-	// read as a verdict by dispatch-resume.
+	// repo check: no bus, and no working directory either — a worktree reaped out
+	// from under a live shell leaves bash printing a shell-init warning and
+	// answering anyway, and dispatch-resume reads `engine-cmd`'s exit as a verdict.
 	if sub == "id" {
-		// getwd failing is the same evidence as bash's `git rev-parse … 2>/dev/null
-		// || true`: no toplevel, so the env answers. Not a refusal.
+		// getwd failing is bash's `git rev-parse … || true` evidence: no toplevel,
+		// so the env answers.
 		dir, _ := e.getwd()
 		return entry.RunID(stdout, stderr, entry.IDOptions{
 			CrewID: func() string { return bus.CrewID(ctx, dir) },

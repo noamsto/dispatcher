@@ -11,9 +11,8 @@ const engineCmdUsage = "crew: engine-cmd <pane_current_command>\n"
 
 // RunEngineCmd is crew.sh's `engine-cmd` arm: whether tmux's
 // `#{pane_current_command}` names an engine. It prints nothing on success; exit
-// 0 is the answer. The table is roster's — the same one `crew roster` reads, and
-// the one TestEngineCommandsMatchCrewSh pins against `_is_engine_cmd`, including
-// the leading dot and the `-wrapped` suffix makeWrapper leaves behind.
+// 0 is the answer. The table is roster's, pinned against `_is_engine_cmd` by
+// TestEngineCommandsMatchCrewSh.
 func RunEngineCmd(args []string, stderr io.Writer) int {
 	cmd := ""
 	if len(args) > 0 {
