@@ -2285,6 +2285,10 @@ assert_allow_within_each_awk() {
            'source /tmp/x' '. /tmp/x'; do
     deny_both "$p"$'; bash -c \'cat <<\\EOF\n`env`\nEOF\''
   done
+  # An `eval` argument is a text the shell runs too; a lookup change in its
+  # parent text must reach the heredoc inside it.
+  deny_both $'export PATH=/tmp; eval \'cat <<\\EOF\n`env`\nEOF\''
+  deny_both $'alias cat=env; eval \'cat <<\\EOF\n`env`\nEOF\''
 }
 
 @test "secret-read-guard: rule 2 — denies a dumper after a separator inside an inline comment (accepted over-deny)" {

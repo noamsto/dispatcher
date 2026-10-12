@@ -1365,6 +1365,7 @@ shell)
   dequoted_views=()
   dequoted_fish_views=()
   word_re='^[^[:space:];&|()<>]*'
+  eval_re='(^|[[:space:]/(;&|`])eval[[:space:]]+'
   worklist=("$command")
   worklist_fish=(0)
   worklist_t=("$command_t")
@@ -1467,6 +1468,39 @@ shell)
         worklist_t+=("$sub_text")
         worklist_lookup+=("$((cur_lookup | sub_lookup))")
       done
+      matches=$((matches + 1))
+    done
+    # An `eval WORD` argument is another text the shell runs, and `eval` is not
+    # one of the extracted interpreter `-c` forms, so its heredoc never reached
+    # an hd_text_ok call: a lookup change in this text or an ancestor would
+    # leave the body blanked. Extract each command-position eval word like a
+    # `-c` body (raw text; a quote-spliced `ev""al` stays covered by the
+    # decoded dump scan).
+    eval_off=0
+    while ((matches < 20)); do
+      rest=${cur:eval_off}
+      [[ $rest =~ $eval_re ]] || break
+      match=${BASH_REMATCH[0]}
+      prefix=${rest%%"$match"*}
+      eval_off=$((eval_off + ${#prefix} + ${#match}))
+      decode_word "$cur" "$eval_off"
+      sub=$DECODED_WORD
+      eval_off=$DECODE_WORD_END
+      [[ -n $sub ]] || continue
+      sub_text=$(hd_text_ok "$sub")
+      sub_lookup=$(lookup_change "$sub")
+      if [[ $cur_lookup == 1 || $sub_lookup == 1 ]]; then sub_text=0; fi
+      masked_sub=$(mask_cmd "$sub" "$sub_text")
+      quoted_sub=$(mask_quotes "$sub" "$sub_text")
+      raw_spaces+=("$sub")
+      search_spaces+=("$masked_sub" "$quoted_sub")
+      subs+=("$sub")
+      sub_t+=("$sub_text")
+      sub_fish+=(0)
+      worklist+=("$sub")
+      worklist_fish+=(0)
+      worklist_t+=("$sub_text")
+      worklist_lookup+=("$((cur_lookup | sub_lookup))")
       matches=$((matches + 1))
     done
   done
