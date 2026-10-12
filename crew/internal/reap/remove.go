@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
@@ -334,6 +335,10 @@ func (r *run) releaseLabels(ctx context.Context, c *candidate) {
 	for _, issue := range strings.Fields(closing) {
 		if r.p.GhQuiet(ctx, "issue", "edit", issue, "--remove-label", "dispatched") != nil {
 			r.note("could not remove the dispatched label from #" + issue + " (" + c.branch + ")")
+			continue
+		}
+		if err := claimindex.Release(r.paths.Common, r.o.Getenv, issue, "", r.p.Now()); err != nil {
+			r.note("could not record the release of #" + issue + " in the claim index: " + err.Error())
 		}
 	}
 }

@@ -124,6 +124,14 @@ func TestReapRowWriteFailureContinues(t *testing.T) {
 			t.Fatalf("calls %q missing %q", f.calls, call)
 		}
 	}
+	// Only the label that actually came off is released in the claim index.
+	idx, err := os.ReadFile(filepath.Join(f.env["XDG_DATA_HOME"], "crew", "claims", "o", "r.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(idx), `"kind":"release","issue":"12"`) || strings.Contains(string(idx), `"issue":"13"`) {
+		t.Fatalf("claim index = %s", idx)
+	}
 }
 
 func TestReapRowAndAnchor(t *testing.T) {

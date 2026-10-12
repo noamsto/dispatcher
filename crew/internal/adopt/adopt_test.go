@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -534,6 +535,28 @@ func TestGhPrListFailureLeavesClaimsInPlace(t *testing.T) {
 	}
 	if s.countCalls("issue edit") != 0 {
 		t.Errorf("calls = %v", s.calls)
+	}
+}
+
+// A release row is what lets another clone re-claim the issue (#928).
+func TestReleaseIsRecordedInTheClaimIndex(t *testing.T) {
+	p := testPaths(t)
+	for _, args := range [][]string{{"init", "-q", "--bare"}, {"remote", "add", "origin", "git@github.com:Acme/Widgets.git"}} {
+		if out, err := exec.Command("git", append([]string{"--git-dir=" + p.Common}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	data := t.TempDir()
+	registerCrew(t, p, "c-dead", "4321")
+	writeLog(t, p, claimRow("c-dead", "83", "feat/83-foo", 100))
+	s := &stub{now: time.Unix(1700000000, 0), env: map[string]string{"XDG_DATA_HOME": data}}
+	run(t, s, p, "c-dead", "123")
+	idx, err := os.ReadFile(data + "/crew/claims/acme/widgets.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(idx), `"kind":"release","issue":"83","crew_id":"c-dead"`) {
+		t.Errorf("claim index = %s", idx)
 	}
 }
 
