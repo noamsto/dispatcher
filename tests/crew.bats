@@ -455,7 +455,6 @@ EOF
 
 # #908: the sender check. A tmux stub lists the bats process as a pane, so the
 # crew process (a descendant of this test) is anchored to that pane's stamps.
-# $$ is the bats test process itself: the crew process runs beneath it.
 # _stamp_pane <branch> <role> <crew> — every field may be empty (unstamped).
 _stamp_pane() {
   stub_bin tmux
