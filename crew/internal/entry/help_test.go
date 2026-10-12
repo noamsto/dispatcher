@@ -121,6 +121,32 @@ func TestHelpIgnoresTrailingArgs(t *testing.T) {
 	}
 }
 
+// TestHelpInternalNamesAreNoSubcommand: top and default are file names this
+// package invented — the grouped list, and bare `crew hold`’s screen, whose
+// label in the script was the empty pattern. Neither name was ever a case label,
+// so both stay refused even though both name a real screen.
+func TestHelpInternalNamesAreNoSubcommand(t *testing.T) {
+	top, _ := screen("top")
+	for _, args := range [][]string{{"top"}, {"default"}} {
+		stdout, stderr, code := runHelp(args...)
+		if code != 1 || stdout != "" {
+			t.Errorf("help %v = %d with stdout %q, want 1 and none", args, code, firstLine(stdout))
+		}
+		if want := "crew: no help for " + args[0] + "\n\n" + top; stderr != want {
+			t.Errorf("help %v stderr = %q, want the refusal and the grouped list", args, firstLine(stderr))
+		}
+	}
+	for _, args := range [][]string{{"hold", "default"}, {"hold", "top"}} {
+		stdout, stderr, code := runHelp(args...)
+		if code != 1 || stdout != "" {
+			t.Errorf("help %v = %d with stdout %q, want 1 and none", args, code, firstLine(stdout))
+		}
+		if want := "crew: no help for hold " + args[1] + "\n"; stderr != want {
+			t.Errorf("help %v stderr = %q, want the one-line refusal", args, stderr)
+		}
+	}
+}
+
 func firstLine(s string) string {
 	line, _, _ := strings.Cut(s, "\n")
 	return line

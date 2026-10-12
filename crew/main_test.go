@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -551,4 +553,74 @@ func TestRunGitGuardAndBaselineOutsideRepo(t *testing.T) {
 			t.Errorf("%q: code %d stdout %q stderr %q", tc.args, code, stdout.String(), stderr.String())
 		}
 	}
+}
+
+// TestRunEntryArmsSurviveAnUnreadableCwd: a worktree reaped out from under a
+// live shell leaves bash printing a shell-init warning and answering anyway,
+// because crew.sh's entry arms never asked where they were. The Go arms must not
+// turn that into a refusal: `crew engine-cmd`'s exit 0 is a verdict dispatch
+// reads, and `crew --help` answering is the whole point of a preamble that runs
+// before the repo check (#1007).
+func TestRunEntryArmsSurviveAnUnreadableCwd(t *testing.T) {
+	e := env{getwd: func() (string, error) {
+		return "", errors.New("getwd: no such file or directory")
+	}}
+	t.Setenv("CREW_ID", "c-env")
+
+	t.Run("help", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), []string{"help"}, &stdout, &stderr, e); code != 0 {
+			t.Fatalf("code %d, stderr %q", code, stderr.String())
+		}
+		if !strings.HasPrefix(stdout.String(), "crew — file-based coordination bus") {
+			t.Fatalf("stdout %q, want the grouped list", stdout.String())
+		}
+	})
+
+	t.Run("help <sub>", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), []string{"help", "status"}, &stdout, &stderr, e); code != 0 ||
+			!strings.HasPrefix(stdout.String(), "usage: crew status") {
+			t.Fatalf("code %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
+		}
+	})
+
+	t.Run("new", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), []string{"new"}, &stdout, &stderr, e); code != 0 {
+			t.Fatalf("code %d, stderr %q", code, stderr.String())
+		}
+		if !regexp.MustCompile(`^[0-9]+-[0-9]+\n$`).MatchString(stdout.String()) {
+			t.Fatalf("stdout %q, want a timestamp-pid", stdout.String())
+		}
+	})
+
+	// engine-cmd answers from its table alone, and its exit is the answer.
+	for _, c := range []struct {
+		cmd  string
+		want int
+	}{{"pi", 0}, {"fish", 1}} {
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), []string{"engine-cmd", c.cmd}, &stdout, &stderr, e); code != c.want {
+			t.Fatalf("engine-cmd %s = %d, want %d (stderr %q)", c.cmd, code, c.want, stderr.String())
+		}
+		if stdout.Len() != 0 || stderr.Len() != 0 {
+			t.Fatalf("engine-cmd %s wrote %q / %q", c.cmd, stdout.String(), stderr.String())
+		}
+	}
+
+	// id resolves what it can and prints it: from a cwd git cannot read that is
+	// the env, and the only thing it must never do is fail over where it was.
+	t.Run("id", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), []string{"id"}, &stdout, &stderr, e); code != 0 {
+			t.Fatalf("code %d, stderr %q", code, stderr.String())
+		}
+		if strings.Contains(stderr.String(), "getwd") {
+			t.Fatalf("stderr %q, want no working-directory error", stderr.String())
+		}
+		if line := strings.TrimSuffix(stdout.String(), "\n"); line == "" || strings.Contains(line, "\n") {
+			t.Fatalf("stdout %q, want one id", stdout.String())
+		}
+	})
 }

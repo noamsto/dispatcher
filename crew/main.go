@@ -109,6 +109,31 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return reap.RunOccupants(ctx, args, stdout, stderr, reap.DefaultProbes(), os.Getenv("TMUX_PANE"))
 	}
 
+	// help, id, new, engine-cmd and dash are the arms crew.sh runs ahead of its
+	// repo check, so none of them reads the bus (#1007) — and none of them may
+	// need the working directory either, which is why they sit before getwd: a
+	// worktree reaped out from under a live shell leaves bash printing a
+	// shell-init warning and answering anyway, and `engine-cmd` in particular is
+	// read as a verdict by dispatch-resume.
+	if sub == "id" {
+		// getwd failing is the same evidence as bash's `git rev-parse … 2>/dev/null
+		// || true`: no toplevel, so the env answers. Not a refusal.
+		dir, _ := e.getwd()
+		return entry.RunID(stdout, stderr, entry.IDOptions{
+			CrewID: func() string { return bus.CrewID(ctx, dir) },
+		})
+	}
+	switch sub {
+	case "help":
+		return entry.RunHelp(args, stdout, stderr)
+	case "new":
+		return entry.RunNew(stdout, entry.NewOptions{Now: time.Now, PID: os.Getpid()})
+	case "engine-cmd":
+		return entry.RunEngineCmd(args, stderr)
+	case "dash":
+		return entry.RunDash(args, stderr, entry.DefaultDashOptions())
+	}
+
 	cwd, err := e.getwd()
 	if err != nil {
 		say(stderr, "crew: %v\n", err)
@@ -126,25 +151,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			IsTTY: func() bool { return bus.IsTerminal(0) },
 			In:    os.Stdin,
 		}, stdout, stderr)
-	}
-
-	// help, id, new, engine-cmd and dash are the arms crew.sh runs ahead of its
-	// repo check, so none of them reads the bus (#1007). id resolves the crew id
-	// from the cwd's worktree, which is why they sit after getwd rather than with
-	// occupants.
-	switch sub {
-	case "help":
-		return entry.RunHelp(args, stdout, stderr)
-	case "id":
-		return entry.RunID(stdout, stderr, entry.IDOptions{
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
-		})
-	case "new":
-		return entry.RunNew(stdout, entry.NewOptions{Now: time.Now, PID: os.Getpid()})
-	case "engine-cmd":
-		return entry.RunEngineCmd(args, stderr)
-	case "dash":
-		return entry.RunDash(args, stderr, entry.DefaultDashOptions())
 	}
 
 	paths, err := bus.Locate(ctx, cwd)

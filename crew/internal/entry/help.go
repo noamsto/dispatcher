@@ -31,6 +31,14 @@ var screenNameRe = regexp.MustCompile(`^[a-z0-9-]+(/[a-z0-9-]+)?$`)
 // case label has — got the refusal rather than hold's add screen.
 var segmentRe = regexp.MustCompile(`^[a-z0-9-]+$`)
 
+// internalKey reports the two screen names this package invented rather than
+// inherited from a case label: top, the grouped list the function printed for an
+// empty subcommand, and default, bare `crew hold`’s screen (whose label in the
+// script was the empty pattern, which is no name). Both match segmentRe and both
+// name a real file, and neither was ever a subcommand — `crew help top` was
+// refused, and so it still is.
+func internalKey(key string) bool { return key == "top" || key == "default" }
+
 // screen returns the named help screen's text.
 func screen(key string) (string, bool) {
 	if !screenNameRe.MatchString(key) {
@@ -70,7 +78,7 @@ func RunHelp(args []string, stdout, stderr io.Writer) int {
 		switch {
 		case subsub == "":
 			key = "hold/default"
-		case segmentRe.MatchString(subsub):
+		case segmentRe.MatchString(subsub) && !internalKey(subsub):
 			key = "hold/" + subsub
 		}
 		if key != "" {
@@ -83,7 +91,7 @@ func RunHelp(args []string, stdout, stderr io.Writer) int {
 		return exitFailure
 	}
 
-	if segmentRe.MatchString(sub) {
+	if segmentRe.MatchString(sub) && !internalKey(sub) {
 		if text, ok := screen(sub); ok {
 			_, _ = io.WriteString(stdout, text)
 			return 0

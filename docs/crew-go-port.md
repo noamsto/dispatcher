@@ -836,8 +836,9 @@ the bus for unread msgs (unread helper failed)` at exit 1, because the empty-sca
     `crew: dash: ` where bash printed `crew-dash: command not found`; the 127 stays (the
     `pr-watch` precedent). A target that is found but will not exec is 126, which bash
     reached with its own `cannot exec` line;
-  - a help name that is no case label is refused the same way whatever it looks like,
-    including one that spells a screen's path (`crew help hold/add`, `crew help ../top`);
+  - a help name that is no case label is refused the same way whatever it looks like:
+    `crew help hold/add` and `crew help ../top` name no screen, and so do the two file
+    names this package invented (`top`, `default`), never subcommands themselves;
   - the `*)` arm of the top-level case runs the screen as a child rather than `exec`-ing
     it, because the arm's exit stays 1 and the screen itself exits 0.
 - Before deleting a bash arm, diff it against Go over a generated corpus and

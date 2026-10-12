@@ -13,7 +13,10 @@
 #   nix develop -c bash scripts/help-parity.sh --base origin/main
 set -euo pipefail
 
-base=origin/main
+# The last commit whose crew.sh still held the heredocs — the parent of the port.
+# Not origin/main: once #1007 lands, main's crew.sh has no screens left to run
+# the old side against, and the script would compare nothing against nothing.
+base=40f43f4061d0e48a1fa90b1d5c6d128404ff6c01
 while (($#)); do
   case "$1" in
   --base)
@@ -116,6 +119,18 @@ for a in $holds; do
 done
 record fleet stream --help
 record help hold
+
+# Names that were never case labels. `top` and `default` are file names the Go
+# package invented, not subcommands, and a name with a slash or a dot in it names
+# no screen either: none of these may answer with a screen.
+for n in top default; do
+  record help "$n"
+  record "$n" --help
+  record help hold "$n"
+  record hold "$n" --help
+done
+record help hold/add
+record help ../top
 
 # Bare `crew` and an unknown subcommand are the two help rows that sit after the
 # repo check, so they need a repo to reach them (outside one, both scripts say
