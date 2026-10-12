@@ -245,6 +245,10 @@ func TestAlnumAgainstGlibc(t *testing.T) {
 	if err := (&exec.Cmd{Path: bash, Args: []string{"bash", "-c", `[[ é =~ ^[[:alnum:]]$ ]]`}, Env: env}).Run(); err != nil {
 		t.Skip("no C.UTF-8 locale")
 	}
+	// Darwin's libc leaves Other_Alphabetic (Ⓐ) out of [[:alnum:]]; glibc does not.
+	if err := (&exec.Cmd{Path: bash, Args: []string{"bash", "-c", `[[ Ⓐ =~ ^[[:alnum:]]$ ]]`}, Env: env}).Run(); err != nil {
+		t.Skip("bash's libc is not glibc")
+	}
 	pinned := []rune{'A', 'z', '7', 'é', 0x093e, 0x0345, '-', ' ', '!'}
 	sample := slices.Clone(pinned)
 	for r := rune(1); r <= unicode.MaxRune; r++ {
