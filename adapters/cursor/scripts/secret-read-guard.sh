@@ -1021,9 +1021,8 @@ hd_text_ok() {
 }
 
 # 1 when a text changes command lookup (see awk_lookup). Used to taint a
-# `-c` sub-body with a lookup change made by its parent text, which the child
-# inherits (an exported PATH, for one): the parent's verdict alone never
-# reaches the child's own hd_text_ok call.
+# `-c` or `eval` sub-body with a lookup change made by its parent text, which
+# the child inherits (an exported PATH, for one).
 lookup_change() {
   local view lk
   view=$(awk -v W=0 -v B=1 "$awk_mask_cmd$awk_chars" <<<"$1") || {
@@ -1472,11 +1471,9 @@ shell)
     done
     # `eval` runs the concatenation of all of its arguments (a leading `--` is
     # an end-of-options marker, not an argument), and it is not one of the
-    # extracted interpreter `-c` forms, so a heredoc in any argument never
-    # reached an hd_text_ok call: a lookup change here or in an ancestor would
-    # leave the body blanked. Collect every argument into one text and feed it
-    # to the sub-body path. Raw text; a quote-spliced `ev""al` stays covered by
-    # the decoded dump scan.
+    # extracted interpreter `-c` forms. Collect every argument into one text
+    # and feed it to the sub-body path. Raw text; a quote-spliced `ev""al`
+    # stays covered by the decoded dump scan.
     eval_off=0
     while ((matches < 20)); do
       rest=${cur:eval_off}
