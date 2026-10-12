@@ -471,6 +471,12 @@ _claim_index_evidence() {
     # A dispatch row outlives its dispatch shell: the worker is on the issue
     # until a release row says otherwise, as the bus's own dispatch rows read.
     if [ "$kind" = dispatch ]; then
+      # The same day bound as a claim row: an abandoned worker whose branch
+      # nobody reaps must not block other clones forever.
+      case "$row_ts" in '' | *[!0-9]*) ;; *)
+        [ "$((10#$row_ts))" -ge "$(($(date +%s) * 1000 - _CLAIM_STALE_MS))" ] || continue
+        ;;
+      esac
       echo "dispatch row from clone $(_evidence_text "$clone")"
       return 0
     fi

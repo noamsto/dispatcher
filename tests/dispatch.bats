@@ -8269,6 +8269,18 @@ seed_other_clone_claim() { # <ts-ms> <pid> [<issue>] — a claim row clone A wro
   assert_claim_refused "dispatch row from clone $CLONE_A"
 }
 
+@test "claim index: a dispatch row over 24h old from another clone does not block" {
+  stub_launch_bins
+  old_ms=$(( ($(date +%s) - 90000) * 1000 ))
+  seed_other_clone_claim "$old_ms" 1
+  printf '{"ts":%s,"crew_id":"cA","kind":"dispatch","issue":"42","branch":"feat/42-do-a-thing","clone":"%s"}\n' \
+    "$((old_ms + 1))" "$CLONE_A" >>"$CLAIM_INDEX"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+}
+
 @test "claim index: a successful dispatch mirrors its dispatch row" {
   stub_launch_bins
   stub_gh_claim "" ""
