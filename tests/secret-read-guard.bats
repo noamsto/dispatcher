@@ -2289,6 +2289,9 @@ assert_allow_within_each_awk() {
   # parent text must reach the heredoc inside it.
   deny_both $'export PATH=/tmp; eval \'cat <<\\EOF\n`env`\nEOF\''
   deny_both $'alias cat=env; eval \'cat <<\\EOF\n`env`\nEOF\''
+  # A leading `--` and multiple arguments are still the text eval runs.
+  deny_both $'export PATH=/tmp; eval -- \'cat <<\\EOF\n`env`\nEOF\''
+  deny_both $'export PATH=/tmp; eval \'cat\' \'<<\\EOF\n`env`\nEOF\''
 }
 
 @test "secret-read-guard: rule 2 — denies a dumper after a separator inside an inline comment (accepted over-deny)" {

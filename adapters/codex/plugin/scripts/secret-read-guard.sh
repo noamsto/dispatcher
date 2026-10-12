@@ -1470,12 +1470,13 @@ shell)
       done
       matches=$((matches + 1))
     done
-    # An `eval WORD` argument is another text the shell runs, and `eval` is not
-    # one of the extracted interpreter `-c` forms, so its heredoc never reached
-    # an hd_text_ok call: a lookup change in this text or an ancestor would
-    # leave the body blanked. Extract each command-position eval word like a
-    # `-c` body (raw text; a quote-spliced `ev""al` stays covered by the
-    # decoded dump scan).
+    # `eval` runs the concatenation of all of its arguments (a leading `--` is
+    # an end-of-options marker, not an argument), and it is not one of the
+    # extracted interpreter `-c` forms, so a heredoc in any argument never
+    # reached an hd_text_ok call: a lookup change here or in an ancestor would
+    # leave the body blanked. Collect every argument into one text and feed it
+    # to the sub-body path. Raw text; a quote-spliced `ev""al` stays covered by
+    # the decoded dump scan.
     eval_off=0
     while ((matches < 20)); do
       rest=${cur:eval_off}
@@ -1483,10 +1484,27 @@ shell)
       match=${BASH_REMATCH[0]}
       prefix=${rest%%"$match"*}
       eval_off=$((eval_off + ${#prefix} + ${#match}))
-      decode_word "$cur" "$eval_off"
-      sub=$DECODED_WORD
-      eval_off=$DECODE_WORD_END
-      [[ -n $sub ]] || continue
+      eval_text=
+      eval_first=1
+      while :; do
+        while [[ ${cur:eval_off:1} == [[:space:]] ]]; do eval_off=$((eval_off + 1)); done
+        [[ $eval_off -lt ${#cur} ]] || break
+        case ${cur:eval_off:1} in
+        ';' | '&' | '|' | '(' | ')' | '<' | '>' | '`') break ;;
+        esac
+        prev_off=$eval_off
+        decode_word "$cur" "$eval_off"
+        eval_off=$DECODE_WORD_END
+        [[ $eval_off -gt $prev_off ]] || break
+        if ((eval_first)) && [[ $DECODED_WORD == -- ]]; then
+          eval_first=0
+          continue
+        fi
+        eval_first=0
+        if [[ -z $eval_text ]]; then eval_text=$DECODED_WORD; else eval_text+=" $DECODED_WORD"; fi
+      done
+      [[ -n $eval_text ]] || continue
+      sub=$eval_text
       sub_text=$(hd_text_ok "$sub")
       sub_lookup=$(lookup_change "$sub")
       if [[ $cur_lookup == 1 || $sub_lookup == 1 ]]; then sub_text=0; fi
