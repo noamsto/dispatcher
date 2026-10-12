@@ -1,0 +1,45 @@
+usage: crew stack cut [--record] <child-branch|PR#> [<oid>]
+
+Print the parent oid a stacked child was last cut from, as the dispatcher
+recorded it: the child's dispatch row (base_oid) or a later --record. Worker
+status and msg rows are never read. Exit 1 when nothing is recorded: ask the
+child, never guess.
+
+  --record  Fetch origin/<parent> and origin/<child>, and when the parent tip is
+            an ancestor of the child, record it as the new cut and print it.
+            Refuses, writing nothing, when the child is not rebased onto it.
+  <oid>     With --record: the cut the child reports. Recorded only when it is a
+            commit and an ancestor of origin/<child>; the parent tip is not
+            checked, as the parent may have moved. Refuses otherwise,
+            including the child's own head.
+
+  crew stack cut --record feat/240-child
+  crew stack cut --record feat/240-child 0123456789abcdef0123456789abcdef01234567
+
+usage: crew stack align <top-PR#|branch>
+
+Plan the rebase of a whole stack from its top PR down to the default branch.
+Read-only: nothing is written to the bus, dispatched, replied or pushed. Prints
+one JSON line per layer, bottom to top:
+
+  {pr, branch, parent, parent_pr, cut, mode, ready, directive, reason}
+
+  mode       none (nothing to do), ff (git rebase origin/<parent>), onto
+             (git rebase --onto origin/<parent> <cut>), or unknown (no usable
+             recorded cut or parent: ask the child, never guess).
+  directive  The text to send the child; null for none and unknown.
+  ready      True for at most one layer: the lowest with work to do, and only
+             when its cut is known; an unknown lowest layer leaves every layer
+             false. Layers above it wait for its push, with their onto plan
+             recomputed against the rewritten parent.
+
+A layer's record is its newest dispatch or stack_cut row carrying both a parent
+and a cut. A parent whose PR was squash-merged, or a layer retargeted onto the
+default branch after it, rebases onto the default branch and names the merged
+PR. The stack bottom, based on the default branch, is never rebased. A PR base
+that differs from the recorded parent is unknown, as is a missing cut or one no
+longer in the layer's branch. A branch name unsafe to put in a directive is
+refused with no output.
+
+  crew stack align 240
+  crew stack align feat/240-top

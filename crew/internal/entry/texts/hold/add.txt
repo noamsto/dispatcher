@@ -1,0 +1,29 @@
+usage: crew hold add --engine E --window W --resets-at EPOCH --agent A --ref R
+                     --branch B --tier T --model M --effort F
+                     [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE]
+                     [--crew ID] <title...>
+
+Queue a dispatch to be taken once the quota window it is parked on resets.
+
+  --engine      Engine whose quota is being waited on (required)
+  --window      Window name, e.g. week (required)
+  --resets-at   Epoch seconds when that window resets (required)
+  --agent       Engine the task will be dispatched to (required; task.engine)
+  --ref         Branch or commit to dispatch from (required)
+  --branch      Branch the worktree gets (required)
+  --tier        trivial | standard | deep (required)
+  --model       Model to launch (required)
+  --effort      Reasoning effort to launch (required)
+  --plan        Path to the plan of record
+  --mcp         MCP config to pass through
+  --draft       Open the PR as a draft
+  --shape       Task shape recorded on the dispatch row
+  --spec        Spec file to seed the worktree with
+  --crew        Crew id; defaults to this repo's crew
+  <title...>    One-line task title
+
+--engine and --agent stay distinct and neither is inferred from the other.
+
+  crew hold add --engine claude --window week --resets-at 1791600000 \
+    --agent pi --ref main --branch feat/x --tier standard \
+    --model lemonade/Qwen3.8-Flash --effort medium "Echo task"

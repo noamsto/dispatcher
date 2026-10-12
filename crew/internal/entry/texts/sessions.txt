@@ -1,0 +1,9 @@
+usage: crew sessions <branch> [--crew ID]
+
+Every session id recorded on <branch> — the ids a resume continues from, and the
+ones a watchdog or a reply may be addressed to.
+
+  <branch>  Branch name
+  --crew    Crew id; defaults to this repo's crew
+
+  crew sessions feat/x

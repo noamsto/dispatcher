@@ -1,0 +1,23 @@
+usage: crew stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S]
+                   [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S]
+       crew stream --status [--crew ID]
+
+Wrap `crew watch` in a long-lived process, so a streaming lane gets pushed
+batches instead of re-arming a one-shot park every turn.
+
+  --crew         Crew id — required in spirit: the command string a lane arms
+                 carries no ambient CREW_ID
+  --states       States that qualify (default blocked,pr_open,done,failed,exited)
+  --park         Park per cycle in seconds (default 300)
+  --heartbeat    Idle heartbeat every S seconds (default 3300)
+  --coalesce     Collapse events within S seconds (default 5)
+  --retry        Reconnect every S seconds after a failure (default 30)
+  --interval     Inner watch poll interval (default 2)
+  --force        Take over a lane that is already streaming
+  --reap-every   Reap finished workers every S seconds (default 900)
+  --status       Report the daemon's state instead of running one
+
+Crew-resolution and usage failures exit 64, not 1, so a `--status` call that
+could not find its crew does not read as the `dead` state it never measured.
+
+  crew stream --crew <crew-id> --park 300

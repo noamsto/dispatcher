@@ -1,0 +1,37 @@
+usage: crew stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E]
+                        [--grace S] [--stall S] [--window S] [--interval S] [--idle S]
+                        [--dead S] [--max-life S] [--load S] [--release S] [--bg-wait S]
+                        [--launch S] [--unread S] [--runaway-hits N] [--runaway-tokens N]
+                        [--no-budget] [--budget-refresh S] [--no-nudge]
+
+Lifetime-scoped liveness watchdog: the bus reflects only what a worker posts, so
+one parked on a prompt looks exactly like one that is working.
+
+  <target>    worker:<branch>#s…, a bare branch, or role:<branch>:<role> (a role
+              id selects prompt-only mode)
+  --pane      tmux pane id to sample (required)
+  --engine    Engine family (claude|codex|cursor|pi); the default "unknown"
+              leaves the prompt, meter, quota and runaway detectors off
+  --grace     Silence after launch (default 45)
+  --stall     Meter-advancing/token-static window before turn-stall: (default 300)
+  --window    Startup window a static pane may still be starting in (default 900)
+  --interval  Sample interval (default 15)
+  --idle      Byte-identical pane that counts as quiet: (default 1800)
+  --dead      Second-evidence delay before an episode escalates to failed (default 1800)
+  --max-life  Watchdog lifetime cap (default 43200)
+  --load      Host-load window for load: (default 300)
+  --release   Wait after a done/failed before releasing the window (default 300)
+  --bg-wait   How long a finished turn waiting on a background shell holds the
+              static-pane and quiet detectors (default 7200)
+  --launch    Seconds after which a bare shell with no engine is stalled: (default 150)
+  --unread    Age of an undelivered directive that trips unread: (default 600)
+  --runaway-hits    Samples of a leaked model sentinel before runaway: (default 3)
+  --runaway-tokens  Output growth required alongside it (default 1500)
+  --no-budget       Turn off the quota-window detector (dispatch's --ignore-budget)
+  --budget-refresh  Refresh the engine budget cache every S (default 900)
+  --no-nudge        Do not auto-nudge a lead past an overdue directive
+
+Every detector posts a recoverable blocked state; only quiet: and turn-stall:
+escalate, and only after the second --dead evidence check.
+
+  crew stall-watch "worker:feat/x#s<epoch>-<pid>" --pane %N --grace 45

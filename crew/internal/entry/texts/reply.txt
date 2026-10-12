@@ -1,0 +1,9 @@
+usage: crew reply <to> <body> [--crew ID]
+
+Post a message as dispatcher:<crew>, so a dispatcher never rebuilds its own id.
+
+  <to>    Recipient id (worker:<branch>#s…, role:<branch>:<role>)
+  <body>  One argument
+  --crew  Crew id when the caller's env carries no CREW_ID
+
+  crew reply "worker:feat/x#s<epoch>-<pid>" "rebase onto main"

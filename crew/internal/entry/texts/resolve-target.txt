@@ -1,0 +1,10 @@
+usage: crew resolve-target <target> [--crew ID]
+
+Resolve a target to one TSV line: branch, codename, host and crew.
+
+  <target>  `#N`, a Linear id, a branch, a codename or a worker id
+  --crew    Restrict the lookup to one crew
+
+Exit 1 when nothing matches, 2 when several branches do (all of them listed).
+
+  crew resolve-target '#123'

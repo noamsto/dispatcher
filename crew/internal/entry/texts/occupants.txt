@@ -1,0 +1,8 @@
+usage: crew occupants <worktree-path>
+
+Print the crewed windows and panes standing on <worktree-path> — what a dispatch
+would reuse or replace before it launches.
+
+  <worktree-path>  Absolute path, exactly as the window records it
+
+  crew occupants /home/me/git/.worktrees/repo/feat/x

@@ -1,0 +1,15 @@
+usage: crew git-baseline [--accept]
+
+List — or, with --accept, merge into — the exec-capable and redirecting git-config
+baseline the worktree guard enforces.
+
+  --accept  Merge exactly the pairs this run prints into the baseline. Needs a
+            real terminal and a typed yes, and is refused otherwise. Listing
+            exits 1 on drift or a missing baseline, 0 when clean.
+
+Values print %q-escaped, so a planted escape sequence cannot redraw the terminal.
+URL userinfo and query values in redirect values and URL-subsection keys are masked
+with a sha256 fingerprint of the full value; the baseline stores full values.
+Legacy remotes/ and branches/ entries are listed and never accepted — remove them.
+
+  crew git-baseline

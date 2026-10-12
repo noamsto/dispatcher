@@ -1,0 +1,20 @@
+usage: crew roster-render --crew ID [--pane %N] [--no-open] [--once | --detach]
+                          [--interval S] [--quiet S]
+
+Draw the crew's roster diagram from the bus and its live role panes, and publish
+it to the aeye carousel beside the recorded dispatcher pane.
+
+  --crew       Crew id (required). One renderer per repo bus: a crew spanning
+               several repos gets one diagram per repo, named by the owner
+  --pane       Dispatcher pane to publish beside
+  --no-open    Render and record without opening the carousel
+  --once       Render one frame and exit
+  --detach     Record the pane, start the daemon detached, return
+  --interval   Redraw interval (default 2)
+  --quiet      Exit after S seconds with no working/blocked/dispatched worker
+               and no outstanding hold (default 1800; 0 exits as soon as the
+               crew drains)
+
+Usage errors exit 64, like `stream`; --once and --detach together are one.
+
+  crew roster-render --crew <crew-id> --pane %N --detach

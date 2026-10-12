@@ -1,0 +1,15 @@
+usage: crew nudge <codename|branch|worker:<branch>#s…> [--crew ID] [--wait [SECONDS]]
+
+Type the constant wake-up line into a lead's idle input box, so a lead whose wake
+expired reads the directive `crew reply` already posted.
+
+  <target>  Codename, branch or session id; the pane comes from the window's
+            dispatcher-anchored stamps, never a saved pane id
+  --crew    Crew id when the caller's env carries no CREW_ID
+  --wait    Keep trying while the lead is on a live turn, up to SECONDS
+            (default 1800)
+
+Exit 0 typed and accepted, 1 usage or resolution error, 2 refused before typing,
+3 typed but not accepted.
+
+  crew nudge feat/x --crew <crew-id>

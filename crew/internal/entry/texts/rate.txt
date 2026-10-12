@@ -1,0 +1,14 @@
+usage: crew rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...]
+
+Sweep a repo's bus into the global ratings store, or render that store.
+
+  (no flags)  Sweep this repo's bus into the ratings store
+  --report    Render the per-(engine, model, tier) rollup instead; reads only the
+              global store — no bus, no network
+  --pooled    Pool the tiers into one row per engine and model
+  --json      Machine-readable report
+  --sweep-all Walk every repo instead of this one — the one command with no use
+              for the caller's own, so it runs outside a repo
+  --root      Repo root to sweep; repeatable, only with --sweep-all
+
+  crew rate --report --json

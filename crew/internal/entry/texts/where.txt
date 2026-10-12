@@ -1,0 +1,12 @@
+usage: crew where <codename|branch|%id> [--crew ID]
+
+A human-usable address for a worker's pane: codename, session:window.pane, window
+name, role and the jump command.
+
+  <target>  Codename (lime), branch, or a tmux pane id such as %N
+  --crew    Crew id; defaults to this repo's crew
+
+Resolved from dispatcher-anchored state only — never git discovery in a worktree
+or the caller's env. Non-zero with a readable message when the pane is gone.
+
+  crew where lime

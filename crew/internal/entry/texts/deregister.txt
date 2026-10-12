@@ -1,0 +1,5 @@
+usage: crew deregister
+
+Drop this crew's registration from the repo bus. Its events stay in the log.
+
+  crew deregister

@@ -1,0 +1,9 @@
+usage: crew register [pid]
+
+Register this crew on the repo bus. N crews may share a repo, each keyed by its
+crew id, so there is no cross-crew lock.
+
+  [pid]  Long-lived dispatcher pid to record; defaults to the nearest non-shell
+         ancestor, which is what an agent's shell tool needs
+
+  crew register

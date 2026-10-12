@@ -20,6 +20,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/entry"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
@@ -49,7 +50,7 @@ import (
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled] | --sweep-all [--root DIR]…] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | identity <branch> [crew] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | fleet [--all] [--crew ID] [--json] | fleet stream --crew ID [--rediscover S] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] | fleet stream --status --crew ID | nudge <codename|branch|worker-id> [--crew ID] [--wait [SECONDS]] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […] | git-guard <op> … | git-baseline [--accept] | reap [--quiet] [--dry-run] [--no-wait] [--idle S] [--discard BRANCH] | occupants <worktree-path> | stack cut [--record] <child-branch|PR#> [<oid>] | stack align <top-PR#|branch>"
+	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled] | --sweep-all [--root DIR]…] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | identity <branch> [crew] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | fleet [--all] [--crew ID] [--json] | fleet stream --crew ID [--rediscover S] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] | fleet stream --status --crew ID | nudge <codename|branch|worker-id> [--crew ID] [--wait [SECONDS]] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […] | git-guard <op> … | git-baseline [--accept] | reap [--quiet] [--dry-run] [--no-wait] [--idle S] [--discard BRANCH] | occupants <worktree-path> | stack cut [--record] <child-branch|PR#> [<oid>] | stack align <top-PR#|branch> | help [sub [subsub]] | id | new | engine-cmd <pane_current_command> | dash [--once|--json]"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
@@ -82,7 +83,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		sub = args[0]
 	}
 	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "identity", "stream", "roster-render", "adopt", "nudge", "stall-watch", "status", "msg", "register", "deregister", "fleet", "git-guard", "git-baseline", "occupants", "reap", "reap-autosweep", "stack":
+	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "identity", "stream", "roster-render", "adopt", "nudge", "stall-watch", "status", "msg", "register", "deregister", "fleet", "git-guard", "git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help", "id", "new", "engine-cmd", "dash":
 	default:
 		say(stderr, "%s\n", usage)
 		return exitUsage
@@ -106,6 +107,29 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// occupants reads tmux and a path it is given, so it needs no repo.
 	if sub == "occupants" {
 		return reap.RunOccupants(ctx, args, stdout, stderr, reap.DefaultProbes(), os.Getenv("TMUX_PANE"))
+	}
+
+	// help, id, new, engine-cmd and dash are the arms crew.sh runs ahead of its
+	// repo check: no bus, and no working directory either — a worktree reaped out
+	// from under a live shell leaves bash printing a shell-init warning and
+	// answering anyway, and dispatch-resume reads `engine-cmd`'s exit as a verdict.
+	if sub == "id" {
+		// getwd failing is bash's `git rev-parse … || true` evidence: no toplevel,
+		// so the env answers.
+		dir, _ := e.getwd()
+		return entry.RunID(stdout, stderr, entry.IDOptions{
+			CrewID: func() string { return bus.CrewID(ctx, dir) },
+		})
+	}
+	switch sub {
+	case "help":
+		return entry.RunHelp(args, stdout, stderr)
+	case "new":
+		return entry.RunNew(stdout, entry.NewOptions{Now: time.Now, PID: os.Getpid()})
+	case "engine-cmd":
+		return entry.RunEngineCmd(args, stderr)
+	case "dash":
+		return entry.RunDash(args, stderr, entry.DefaultDashOptions())
 	}
 
 	cwd, err := e.getwd()

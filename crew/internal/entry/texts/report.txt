@@ -1,0 +1,7 @@
+usage: crew report [crew]
+
+Per-run dispatch table for a crew: engine, model, tier, shape, outcome, duration.
+
+  [crew]  Crew id; defaults to this repo's crew
+
+  crew report <crew-id>

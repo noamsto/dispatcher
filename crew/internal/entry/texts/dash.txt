@@ -1,0 +1,8 @@
+usage: crew dash [--once|--json]
+
+Terminal dashboard over the crew bus: roster, budget, holds, retro.
+
+  --once  Print one snapshot and exit instead of running the UI
+  --json  Emit that snapshot as JSON
+
+  crew dash --once

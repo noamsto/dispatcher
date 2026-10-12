@@ -1,0 +1,9 @@
+usage: crew engine-cmd <pane_current_command>
+
+Whether a tmux pane command is an engine (claude, codex, cursor-agent, pi, node).
+Exit 0 when it is, 1 when it is not; prints nothing.
+
+  <pane_current_command>  tmux's #{pane_current_command}; a leading dot and a
+                          -wrapped suffix are tolerated
+
+  crew engine-cmd node && echo engine

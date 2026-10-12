@@ -1,0 +1,16 @@
+usage: crew hold add --engine E --window W --resets-at EPOCH --agent A --ref R
+                     --branch B --tier T --model M --effort F
+                     [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE]
+                     [--crew ID] <title...>
+       crew hold list [--crew ID] [--json]
+       crew hold due [--crew ID] [--json]
+       crew hold park <default> [--crew ID]
+       crew hold release <id> [--crew ID]
+
+A queued dispatch parked on a quota window, so a successor session can resume it
+without a human. Records go to the synthetic hold:<crew> sink — they can never
+wake or pollute the dispatcher that wrote them, and `crew log` still shows them.
+
+Run 'crew hold <action> --help' for one action's flags.
+
+  crew hold list --crew <crew-id>

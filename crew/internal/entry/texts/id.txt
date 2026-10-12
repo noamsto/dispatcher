@@ -1,0 +1,6 @@
+usage: crew id
+
+Print this session's crew id, resolved from WORKER_TASK.md and then CREW_ID.
+Read-only: it never mints one. Exit 1 with the recovery hints when there is none.
+
+  crew id

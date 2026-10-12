@@ -1,0 +1,11 @@
+usage: crew hold park <default> [--crew ID]
+
+Print how many seconds to park a watch for: the earlier of <default> and the
+moment the earliest outstanding hold's window resets, never below 1 — or
+<default> itself when no hold is outstanding, or the earliest already matured.
+Writes nothing; it is the length to hand 'crew watch --timeout'.
+
+  <default>  Positive whole seconds
+  --crew     Crew id; defaults to this repo's crew
+
+  crew watch --timeout "$(crew hold park 3600)"
