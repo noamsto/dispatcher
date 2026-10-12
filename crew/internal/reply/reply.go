@@ -26,6 +26,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
 )
 
@@ -42,6 +43,7 @@ type Options struct {
 	CrewID func() string
 	Clock  clock.Clock
 	Probes crews.Probes
+	Sender sender.Probes // the sender check's reads; zero checks nothing
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
@@ -72,6 +74,12 @@ func Run(args []string, paths bus.Paths, stderr io.Writer, o Options) int {
 	// still leaves the bus dir, and the append needs it on a repo with no bus yet.
 	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
 		say(stderr, "crew: reply: %v\n", err)
+		return exitFailure
+	}
+
+	// Refused before any bus read, so a worker's reply is refused rather than resolved.
+	if reason := sender.Check("dispatcher:"+crew, crew, o.Sender); reason != "" {
+		say(stderr, "crew: reply: refusing sender 'dispatcher:%s' — %s\n", crew, reason)
 		return exitFailure
 	}
 

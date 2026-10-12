@@ -2278,8 +2278,10 @@ launch_role() {
 # watcher for a role pane. It types each assignment into the pane and keeps
 # @crew_state fresh, so the role never holds a repainting `crew await`. <crew>
 # is the crew dispatch resolved, so the watcher never inherits the caller's.
+# The subshell orphans it at once: a lazy --spawn-role runs in the lead's pane,
+# and `crew msg` anchors a sender still inside that pane's tree as the lead.
 watch_role() {
-  CREW_ID="$4" nohup "$0" --role-watch "$1" --pane "$2" --engine "$3" --branch "$branch" >/dev/null 2>&1 &
+  (CREW_ID="$4" nohup "$0" --role-watch "$1" --pane "$2" --engine "$3" --branch "$branch" >/dev/null 2>&1 &)
 }
 
 # watch_role_prompts <role> <pane> <agent> <crew> — every role pane gets a

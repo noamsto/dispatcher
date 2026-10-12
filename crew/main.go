@@ -39,6 +39,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/retro"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/rosterrender"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
 	"github.com/noamsto/dispatcher/crew/internal/stack"
 	"github.com/noamsto/dispatcher/crew/internal/stall"
@@ -278,6 +279,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
 			Now:             time.Now,
 			CrewClock:       os.Getenv("CREW_CLOCK"),
+			Sender:          senderProbes(ctx, e.procs),
 		})
 	}
 
@@ -300,6 +302,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 			Probes: e.procs,
+			Sender: senderProbes(ctx, e.procs),
 		})
 	}
 
@@ -360,6 +363,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Toplevel: func() string { return bus.Toplevel(ctx, cwd) },
 			NowMS:    clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")}.RealMS,
 			Getenv:   os.Getenv,
+			Sender:   senderProbes(ctx, e.procs),
 		}
 		if _, err := exec.LookPath("tmux"); err == nil {
 			o.Tmux = func(args ...string) (string, error) { return tmuxOutput(ctx, args...) }
@@ -639,6 +643,16 @@ func tmuxOutput(ctx context.Context, args ...string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// senderProbes are the real reads behind the sender check: the caller's env, its
+// pid ancestry, and every pane's stamps when tmux is on PATH.
+func senderProbes(ctx context.Context, procs crews.Probes) sender.Probes {
+	p := sender.Probes{Getenv: os.Getenv, Parent: procs.Parent, PID: os.Getpid()}
+	if _, err := exec.LookPath("tmux"); err == nil {
+		p.Panes = func() (string, error) { return tmuxOutput(ctx, "list-panes", "-a", "-F", sender.Format) }
+	}
+	return p
 }
 
 func probes(ctx context.Context, cwd string) roster.Probes {

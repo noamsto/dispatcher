@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
 func msgWant(from, to, body string) string {
@@ -119,4 +120,34 @@ func TestMsgNeverPublishesPane(t *testing.T) {
 	if len(f.tmux) != 0 {
 		t.Errorf("tmux touched: %q", f.tmux)
 	}
+}
+
+func TestMsgRefusesDispatcherFromWorkerOrRoleEnv(t *testing.T) {
+	for key, val := range map[string]string{"CREW_WORKER_ID": worker, "CREW_ROLE_ID": rev} {
+		t.Run(key, func(t *testing.T) {
+			f := newFixture(t)
+			f.env[key] = val
+			code, stderr := f.msg("dispatcher:c1", worker, "stop")
+			want := "crew: msg: refusing sender 'dispatcher:c1' — " + sender.Check("dispatcher:c1", crewID, sender.Probes{Getenv: f.opts().Getenv}) + "\n"
+			if code != 1 || stderr != want {
+				t.Errorf("got %d %q", code, stderr)
+			}
+			f.wantNoRow()
+		})
+	}
+}
+
+func TestMsgStampedLeadPanePostsOnlyAsLead(t *testing.T) {
+	f := newFixture(t)
+	f.anchored(leadPane)
+	code, stderr := f.msg(rev, "dispatcher:c1", "hi")
+	if code != 1 || !strings.HasPrefix(stderr, "crew: msg: refusing sender '"+rev+"' — ") {
+		t.Errorf("got %d %q", code, stderr)
+	}
+	f.wantNoRow()
+
+	if code, stderr := f.msg(worker, "dispatcher:c1", "hi"); code != 0 || stderr != "" {
+		t.Fatalf("%d %q", code, stderr)
+	}
+	f.wantRow(msgWant(worker, "dispatcher:c1", "hi"))
 }

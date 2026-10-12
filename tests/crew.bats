@@ -453,6 +453,102 @@ EOF
   [ "$output" = "alice|bob|ship it" ]
 }
 
+# #908: the sender check. A tmux stub lists the bats process as a pane, so the
+# crew process (a descendant of this test) is anchored to that pane's stamps.
+# $$ is the bats test process itself: the crew process runs beneath it.
+# _stamp_pane <branch> <role> <crew> — every field may be empty (unstamped).
+_stamp_pane() {
+  stub_bin tmux
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+list-panes) printf '%s\037%s\037%s\037%s\n' "$FAKE_PANE_PID" "$FAKE_BRANCH" "$FAKE_ROLE" "$FAKE_CREW" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  export FAKE_PANE_PID=$$ FAKE_BRANCH="$1" FAKE_ROLE="$2" FAKE_CREW="$3"
+}
+
+_msg_rows() { bus | jq -s '[.[] | select(.kind=="msg")] | length'; }
+
+@test "msg: a worker session (CREW_WORKER_ID) cannot post as the dispatcher (#908)" {
+  CREW_ID=c1 CREW_WORKER_ID='worker:feat/x#s1-1' run run_crew msg dispatcher:c1 'worker:feat/x#s1-1' 'stop'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing sender 'dispatcher:c1'"* ]]
+  [ "$(_msg_rows)" = 0 ]
+}
+
+@test "msg: a role session (CREW_ROLE_ID) cannot post as the dispatcher (#908)" {
+  CREW_ID=c1 CREW_ROLE_ID='role:feat/x:reviewer' run run_crew msg dispatcher:c1 'worker:feat/x#s1-1' 'stop'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing sender 'dispatcher:c1'"* ]]
+  [ "$(_msg_rows)" = 0 ]
+}
+
+@test "reply: a worker or role session cannot reply as the dispatcher (#908)" {
+  CREW_WORKER_ID='worker:feat/x#s1-1' run run_crew reply 'worker:feat/x#s1-1' go --crew c1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing sender"* ]]
+  CREW_ROLE_ID='role:feat/x:reviewer' run run_crew reply 'worker:feat/x#s1-1' go --crew c1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing sender"* ]]
+  [ "$(_msg_rows)" = 0 ]
+}
+
+@test "msg: a stamped lead pane posts only as its own lead id (#908)" {
+  _stamp_pane feat/x lead c1
+  local from
+  for from in 'role:feat/x:reviewer' 'worker:feat/y#s1-1'; do
+    CREW_ID=c1 run run_crew msg "$from" dispatcher:c1 'hi'
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"refusing sender '$from'"* ]]
+  done
+  [ "$(_msg_rows)" = 0 ]
+  CREW_ID=c1 run run_crew msg 'worker:feat/x#s1-1' dispatcher:c1 'hi'
+  [ "$status" -eq 0 ]
+  [ "$(_msg_rows)" = 1 ]
+}
+
+@test "msg: a stamped role pane posts only as its own role id (#908)" {
+  _stamp_pane feat/x reviewer c1
+  local from
+  for from in 'worker:feat/x#s1-1' 'role:feat/x:plan-critic' 'role:feat/y:reviewer'; do
+    CREW_ID=c1 run run_crew msg "$from" dispatcher:c1 'hi'
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"refusing sender '$from'"* ]]
+  done
+  CREW_ID=c1 run run_crew status 'worker:feat/x#s1-1' failed boom
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing sender 'worker:feat/x#s1-1'"* ]]
+  [ "$(_msg_rows)" = 0 ]
+  run bash -c "bus | jq -s '[.[] | select(.kind==\"status\")] | length'"
+  [ "$output" = 0 ]
+  CREW_ID=c1 run run_crew msg 'role:feat/x:reviewer' dispatcher:c1 'hi'
+  [ "$status" -eq 0 ]
+  [ "$(_msg_rows)" = 1 ]
+}
+
+@test "msg/reply: the dispatcher still posts (#908)" {
+  CREW_ID=c1 run run_crew msg dispatcher:c1 'worker:feat/x#s1-1' go
+  [ "$status" -eq 0 ]
+  run bash -c "bus | jq -r 'select(.kind==\"msg\") | .from'"
+  [ "$output" = dispatcher:c1 ]
+  CREW_ID=c1 run run_crew reply 'worker:feat/x#s1-1' go
+  [ "$status" -eq 0 ]
+  CREW_ID= run run_crew reply 'worker:feat/x#s1-1' go --crew c1
+  [ "$status" -eq 0 ]
+  [ "$(_msg_rows)" = 3 ]
+
+  # A dispatcher pane is anchored but unstamped.
+  _stamp_pane '' '' ''
+  CREW_ID=c1 run run_crew msg dispatcher:c1 'worker:feat/x#s1-1' go
+  [ "$status" -eq 0 ]
+  CREW_ID=c1 run run_crew reply 'worker:feat/x#s1-1' go
+  [ "$status" -eq 0 ]
+  [ "$(_msg_rows)" = 5 ]
+}
+
 # F04: folded family — msg rejects an empty id after dispatcher:/worker:/retro:.
 # #46: a shell expanding an unset $CREW_ID into "dispatcher:$CREW_ID" leaves
 # a bare trailing colon — msg must fail loudly instead of logging it.

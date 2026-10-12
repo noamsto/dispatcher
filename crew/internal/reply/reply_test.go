@@ -11,6 +11,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
 )
 
@@ -511,4 +512,55 @@ func TestCreatesBusDir(t *testing.T) {
 	if _, err := os.Stat(tr.paths.Log); err != nil {
 		t.Fatalf("no row written: %v", err)
 	}
+}
+
+func envProbes(k, v string) sender.Probes {
+	return sender.Probes{Getenv: func(name string) string {
+		if name == k {
+			return v
+		}
+		return ""
+	}}
+}
+
+// panesProbes is a caller (pid 300) under a pane (pid 200) whose window carries
+// the given stamps.
+func panesProbes(line string) sender.Probes {
+	parents := map[int]int{300: 200, 200: 1}
+	return sender.Probes{
+		Panes:  func() (string, error) { return line, nil },
+		Parent: func(pid int) (int, bool) { p, ok := parents[pid]; return p, ok },
+		PID:    300,
+	}
+}
+
+func TestWorkerAndRoleSessionsCannotPostAsDispatcher(t *testing.T) {
+	for name, p := range map[string]sender.Probes{
+		"worker env":   envProbes("CREW_WORKER_ID", "worker:feat/x#s1-1"),
+		"role env":     envProbes("CREW_ROLE_ID", "role:feat/x:reviewer"),
+		"stamped role": panesProbes("200\x1ffeat/x\x1freviewer\x1fc1\n"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			tr := setup(t)
+			errs, code := tr.run(t, Options{Sender: p}, "worker:feat/x#s1-1", "go")
+			reason := sender.Check("dispatcher:c1", "c1", p)
+			if reason == "" {
+				t.Fatal("fixture does not trip the sender check")
+			}
+			if want := "crew: reply: refusing sender 'dispatcher:c1' — " + reason + "\n"; code != 1 || errs != want {
+				t.Fatalf("code %d, stderr %q, want 1, %q", code, errs, want)
+			}
+			if _, err := os.Stat(tr.paths.Log); !os.IsNotExist(err) {
+				t.Fatalf("log written on a refused sender: %v", err)
+			}
+		})
+	}
+}
+
+func TestUnstampedAnchorMayReply(t *testing.T) {
+	tr := setup(t)
+	if errs, code := tr.run(t, Options{Sender: panesProbes("200\x1f\x1f\x1f\n")}, "worker:feat/x#s1-1", "go"); code != 0 {
+		t.Fatalf("code %d: %s", code, errs)
+	}
+	tr.wantRow(t, row("c1", "worker:feat/x#s1-1", "go"))
 }

@@ -31,6 +31,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
 //go:embed outstanding.jq
@@ -65,6 +66,7 @@ type Options struct {
 	CrewID          func() string
 	Now             func() time.Time
 	CrewClock       string
+	Sender          sender.Probes // the sender check's reads; zero checks nothing
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
@@ -396,7 +398,7 @@ func add(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 		_ = fh.Close()
 	}
 	crew, ok := resolveCrew(fl.hcrew, stderr, o)
-	if !ok {
+	if !ok || !mayPost("add", crew, stderr, o) {
 		return exitFailure
 	}
 	// A `hold add` with no --spec would otherwise fail its append on a repo with
@@ -495,7 +497,7 @@ func release(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options
 		return exitFailure
 	}
 	crew, ok := resolveCrew(hcrew, stderr, o)
-	if !ok {
+	if !ok || !mayPost("release", crew, stderr, o) {
 		return exitFailure
 	}
 	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
@@ -545,6 +547,16 @@ func resolveCrew(raw string, stderr io.Writer, o Options) (string, bool) {
 		return "", false
 	}
 	return crew, true
+}
+
+// mayPost runs the sender check for the dispatcher-authored rows `add` and
+// `release` write, printing the refusal under sub.
+func mayPost(sub, crew string, stderr io.Writer, o Options) bool {
+	reason := sender.Check("dispatcher:"+crew, crew, o.Sender)
+	if reason != "" {
+		say(stderr, "crew: hold %s: refusing sender 'dispatcher:%s' — %s\n", sub, crew, reason)
+	}
+	return reason == ""
 }
 
 // clock is this call's view of the $CREW_CLOCK pair, shared with `crew await`
