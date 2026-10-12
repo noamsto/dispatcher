@@ -946,11 +946,66 @@ function stage(g,    fo, nw, j, k, cw, as, sc) {
 }
 END { print (NR ? ok : 0) }'
 
+# Anything in a text that can change what a sink name resolves to: command
+# lookup state. One linear pass over the B=1 view (heredoc bodies and quoted
+# spans blanked, so their text is never judged). Prints 1 when the text holds:
+#   - a bare assignment statement (`foo=bar`, or `PATH=$(cmd)` for a
+#     lookup-affecting variable);
+#   - an `export`/`declare`/`typeset`/`readonly`/`local`, `hash`, `enable`,
+#     `alias`/`unalias` or `source`/`.` command word;
+#   - a function definition (a `name()` word, or the `function` keyword).
+# Fail closed: a false positive is only an extra deny. The leading-assignment
+# scan mirrors awk_sinks, so a `msg=$(cat <<EOF …)` capture is not a bare
+# statement (its value is the substitution, and `msg` is not a lookup name).
+# shellcheck disable=SC2016
+awk_lookup='
+BEGIN {
+  n = split("export declare typeset readonly local hash enable alias unalias source .", a, " ")
+  for (i = 1; i <= n; i++) LOOK[a[i]] = 1
+  n = split("sudo time nice nohup exec command then do else ! {", a, " ")
+  for (i = 1; i <= n; i++) LEAD[a[i]] = 1
+  n = split("PATH CDPATH BASH_ENV ENV GLOBIGNORE IFS SHELLOPTS BASHOPTS", a, " ")
+  for (i = 1; i <= n; i++) VLOOK[a[i]] = 1
+  hit = 0
+}
+{
+  if ($0 ~ /(^|[^A-Za-z0-9_])function[ \t]/) hit = 1
+  t = $0
+  gsub(/>&/, ">\001", t); gsub(/<&/, "<\001", t); gsub(/\(/, "\002(", t)
+  ns = split(t, S, /[;&|()]/)
+  for (s = 1; s <= ns; s++) stage(S[s])
+}
+function stage(g,    fo, nw, j, as, cw, vn) {
+  fo = (substr(g, length(g)) == "\002")
+  if (fo) g = substr(g, 1, length(g) - 1)
+  nw = split(g, Wd)
+  as = 0
+  vn = ""
+  for (j = 1; j <= nw && ((Wd[j] in LEAD) || Wd[j] ~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/); j++) {
+    if (!(Wd[j] in LEAD)) {
+      as = 1
+      if (vn == "") { vn = Wd[j]; sub(/\+?=.*$/, "", vn) }
+    }
+  }
+  if (j > nw) {
+    if (as && (!fo || (vn in VLOOK))) hit = 1
+    return
+  }
+  if (as) hit = 1
+  if (fo && g ~ /^[A-Za-z_][A-Za-z0-9_]*$/) { hit = 1; return }
+  cw = Wd[j]
+  sub(/[<>].*/, "", cw)
+  if (cw in LOOK) hit = 1
+}
+END { print (hit ? 1 : 0) }'
+
 # T for one text: 1 when its heredoc bodies are text (see the masker), so
 # every view of that text shares one verdict. Text without `<<` skips both
-# passes.
+# passes. A text that changes command lookup is never text: a body the sink
+# pass would blank could then reach a name that no longer resolves to a text
+# sink.
 hd_text_ok() {
-  local view ok
+  local view ok lk
   if [[ $1 != *'<<'* ]]; then
     echo 0
     return
@@ -960,7 +1015,25 @@ hd_text_ok() {
     return
   }
   ok=$(awk "$awk_sinks" <<<"$view") || ok=0
+  lk=$(awk "$awk_lookup" <<<"$view") || lk=1
+  if [[ $lk == 1 ]]; then ok=0; fi
   echo "$ok"
+}
+
+# 1 when a text changes command lookup (see awk_lookup). Used to taint a
+# `-c` or `eval` sub-body with a lookup change made by its parent text, which
+# the child inherits (an exported PATH, for one).
+lookup_change() {
+  local view lk
+  view=$(awk -v W=0 -v B=1 "$awk_mask_cmd$awk_chars" <<<"$1") || {
+    echo 1
+    return
+  }
+  lk=$(awk "$awk_lookup" <<<"$view") || {
+    echo 1
+    return
+  }
+  echo "$lk"
 }
 
 mask_cmd() {
@@ -1281,6 +1354,8 @@ shell)
   #    sub_t) into every view of that text.
   raw_spaces=("$command")
   command_t=$(hd_text_ok "$command")
+  command_lookup=$(lookup_change "$command")
+  if [[ $command_lookup == 1 ]]; then command_t=0; fi
   search_spaces=("$(mask_cmd "$command" "$command_t")" "$(mask_quotes "$command" "$command_t")")
   fish_spaces=()
   subs=()
@@ -1289,15 +1364,19 @@ shell)
   dequoted_views=()
   dequoted_fish_views=()
   word_re='^[^[:space:];&|()<>]*'
+  eval_re='(^|[[:space:]/(;&|`])eval[[:space:]]+'
   worklist=("$command")
   worklist_fish=(0)
   worklist_t=("$command_t")
+  worklist_lookup=("$command_lookup")
   wi=0
   matches=0
   option_cap=0
   while ((wi < ${#worklist[@]})) && ((matches < 20)); do
     cur=${worklist[wi]}
     cur_t=${worklist_t[wi]}
+    cur_lookup=${worklist_lookup[wi]}
+    if [[ $cur_lookup == 1 ]]; then cur_t=0; fi
     dq=$(dequote "$cur" "$cur_t")
     dequoted_views+=("$dq")
     if ((worklist_fish[wi])); then dequoted_fish_views+=("$dq"); fi
@@ -1369,6 +1448,8 @@ shell)
       if [[ -n $frame && $frame != "${readings[0]}" ]]; then readings+=("$frame"); fi
       for sub in "${readings[@]}"; do
         sub_text=$(hd_text_ok "$sub")
+        sub_lookup=$(lookup_change "$sub")
+        if [[ $cur_lookup == 1 || $sub_lookup == 1 ]]; then sub_text=0; fi
         masked_sub=$(mask_cmd "$sub" "$sub_text")
         quoted_sub=$(mask_quotes "$sub" "$sub_text")
         raw_spaces+=("$sub")
@@ -1384,7 +1465,57 @@ shell)
         worklist+=("$sub")
         worklist_fish+=("${sub_fish[-1]}")
         worklist_t+=("$sub_text")
+        worklist_lookup+=("$((cur_lookup | sub_lookup))")
       done
+      matches=$((matches + 1))
+    done
+    # `eval` runs the concatenation of all of its arguments (a leading `--` is
+    # an end-of-options marker, not an argument), and it is not one of the
+    # extracted interpreter `-c` forms. Collect every argument into one text
+    # and feed it to the sub-body path. Raw text; a quote-spliced `ev""al`
+    # stays covered by the decoded dump scan.
+    eval_off=0
+    while ((matches < 20)); do
+      rest=${cur:eval_off}
+      [[ $rest =~ $eval_re ]] || break
+      match=${BASH_REMATCH[0]}
+      prefix=${rest%%"$match"*}
+      eval_off=$((eval_off + ${#prefix} + ${#match}))
+      eval_text=
+      eval_first=1
+      while :; do
+        while [[ ${cur:eval_off:1} == [[:space:]] ]]; do eval_off=$((eval_off + 1)); done
+        [[ $eval_off -lt ${#cur} ]] || break
+        case ${cur:eval_off:1} in
+        ';' | '&' | '|' | '(' | ')' | '<' | '>' | '`') break ;;
+        esac
+        prev_off=$eval_off
+        decode_word "$cur" "$eval_off"
+        eval_off=$DECODE_WORD_END
+        [[ $eval_off -gt $prev_off ]] || break
+        if ((eval_first)) && [[ $DECODED_WORD == -- ]]; then
+          eval_first=0
+          continue
+        fi
+        eval_first=0
+        if [[ -z $eval_text ]]; then eval_text=$DECODED_WORD; else eval_text+=" $DECODED_WORD"; fi
+      done
+      [[ -n $eval_text ]] || continue
+      sub=$eval_text
+      sub_text=$(hd_text_ok "$sub")
+      sub_lookup=$(lookup_change "$sub")
+      if [[ $cur_lookup == 1 || $sub_lookup == 1 ]]; then sub_text=0; fi
+      masked_sub=$(mask_cmd "$sub" "$sub_text")
+      quoted_sub=$(mask_quotes "$sub" "$sub_text")
+      raw_spaces+=("$sub")
+      search_spaces+=("$masked_sub" "$quoted_sub")
+      subs+=("$sub")
+      sub_t+=("$sub_text")
+      sub_fish+=(0)
+      worklist+=("$sub")
+      worklist_fish+=(0)
+      worklist_t+=("$sub_text")
+      worklist_lookup+=("$((cur_lookup | sub_lookup))")
       matches=$((matches + 1))
     done
   done

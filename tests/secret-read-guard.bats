@@ -2266,6 +2266,34 @@ assert_allow_within_each_awk() {
   deny_both $'sudo -u root cat <<EOF\nenv\nEOF'
 }
 
+@test "secret-read-guard: #992 denies a text-sink heredoc whose text changes command lookup" {
+  # A bare assignment statement in the heredoc's own text makes the whole
+  # text code, so the body is scanned instead of blanked.
+  deny_both $'foo=bar; cat <<\'EOF\'\n`env`\nEOF'
+  deny_both $'PATH=/tmp; cat <<\'EOF\'\n`env`\nEOF'
+  deny_both $'BASH_ENV=/tmp/x; cat <<\'EOF\'\n`env`\nEOF'
+  deny_both $'IFS=:; cat <<\'EOF\'\n`env`\nEOF'
+  deny_both $'PATH=$(true); cat <<\'EOF\'\n`env`\nEOF'
+  deny_both $'foo=bar\ncat <<\'EOF\'\n`env`\nEOF'
+  # A lookup change in the text that runs a `-c` sub-body holding the heredoc
+  # reaches it (an exported PATH, for one), where the sub-body's own verdict
+  # alone would call it a text sink.
+  local p
+  for p in 'export PATH=/tmp' 'declare PATH=/tmp' 'typeset PATH=/tmp' \
+           'readonly PATH=/tmp' 'local PATH=/tmp' 'hash -p /tmp/cat cat' \
+           'enable -n cat' 'alias cat=env' 'unalias cat' 'f() { :; }' \
+           'source /tmp/x' '. /tmp/x'; do
+    deny_both "$p"$'; bash -c \'cat <<\\EOF\n`env`\nEOF\''
+  done
+  # An `eval` argument is a text the shell runs too; a lookup change in its
+  # parent text must reach the heredoc inside it.
+  deny_both $'export PATH=/tmp; eval \'cat <<\\EOF\n`env`\nEOF\''
+  deny_both $'alias cat=env; eval \'cat <<\\EOF\n`env`\nEOF\''
+  # A leading `--` and multiple arguments are still the text eval runs.
+  deny_both $'export PATH=/tmp; eval -- \'cat <<\\EOF\n`env`\nEOF\''
+  deny_both $'export PATH=/tmp; eval \'cat\' \'<<\\EOF\n`env`\nEOF\''
+}
+
 @test "secret-read-guard: rule 2 — denies a dumper after a separator inside an inline comment (accepted over-deny)" {
   deny_cmd 'ls # then; env'
 }
