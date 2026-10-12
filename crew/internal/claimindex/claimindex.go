@@ -10,6 +10,7 @@ package claimindex
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,21 +46,26 @@ func Slug(url string) string {
 
 // Path is the index file for the repo whose git common dir is common, or "" when
 // its origin yields no slug. Like dispatch.sh it reads the configured URL, not
-// `git remote get-url`, which would apply insteadOf.
-func Path(common string, getenv func(string) string) string {
+// `git remote get-url`, which would apply insteadOf. An error means git could
+// not be asked; an unset origin is "".
+func Path(common string, getenv func(string) string) (string, error) {
 	out, err := exec.Command("git", "--git-dir="+common, "config", "--get", "remote.origin.url").Output()
 	if err != nil {
-		return ""
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 1 {
+			return "", nil
+		}
+		return "", err
 	}
 	slug := Slug(strings.TrimSpace(string(out)))
 	if slug == "" {
-		return ""
+		return "", nil
 	}
 	base := getenv("XDG_DATA_HOME")
 	if base == "" {
 		base = getenv("HOME") + "/.local/share"
 	}
-	return filepath.Join(base, "crew", "claims", slug+".jsonl")
+	return filepath.Join(base, "crew", "claims", slug+".jsonl"), nil
 }
 
 type release struct {
@@ -73,9 +79,9 @@ type release struct {
 // Release records that issue's claim was released, so claims older than now no
 // longer count as evidence. A repo with no slug has no index and is a no-op.
 func Release(common string, getenv func(string) string, issue, crewID string, now time.Time) error {
-	path := Path(common, getenv)
-	if path == "" {
-		return nil
+	path, err := Path(common, getenv)
+	if err != nil || path == "" {
+		return err
 	}
 	row, err := json.Marshal(release{TS: now.UnixMilli(), Kind: "release", Issue: issue, CrewID: crewID, Clone: filepath.Dir(common)})
 	if err != nil {

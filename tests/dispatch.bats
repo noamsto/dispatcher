@@ -8256,6 +8256,27 @@ seed_other_clone_claim() { # <ts-ms> <pid> [<issue>] — a claim row clone A wro
   [[ "$output" == *"stale 'dispatched' claim"* ]]
 }
 
+@test "claim index: a dispatch row from another clone refuses after its claimant exited" {
+  stub_launch_bins
+  true &
+  dead_pid=$!
+  wait "$dead_pid"
+  seed_other_clone_claim "$(( $(date +%s) * 1000 ))" "$dead_pid"
+  printf '{"ts":%s,"crew_id":"cA","kind":"dispatch","issue":"42","branch":"feat/42-do-a-thing","clone":"%s"}\n' \
+    "$(( $(date +%s) * 1000 + 1 ))" "$CLONE_A" >>"$CLAIM_INDEX"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  assert_claim_refused "dispatch row from clone $CLONE_A"
+}
+
+@test "claim index: a successful dispatch mirrors its dispatch row" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  jq -e -s 'any(.[]; .kind == "dispatch" and .issue == "42" and .branch == "feat/42-do-a-thing")' "$XDG_DATA_HOME"/crew/claims/*/origin.jsonl
+}
+
 @test "claim index: an unreadable index fails closed" {
   stub_launch_bins
   seed_other_clone_claim 1 1
@@ -8272,7 +8293,7 @@ seed_other_clone_claim() { # <ts-ms> <pid> [<issue>] — a claim row clone A wro
   stub_gh_claim "" ""
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
-  row="$(cat "$XDG_DATA_HOME"/crew/claims/*/origin.jsonl)"
+  row="$(jq -c 'select(.kind == "claim-issue")' "$XDG_DATA_HOME"/crew/claims/*/origin.jsonl)"
   [ "$(jq -r .kind <<<"$row")" = claim-issue ]
   [ "$(jq -r .issue <<<"$row")" = 42 ]
   [ "$(jq -r .clone <<<"$row")" = "$(realpath "$TEST_REPO")" ]

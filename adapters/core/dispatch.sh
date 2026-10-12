@@ -435,25 +435,45 @@ _claim_index_append() {
   { mkdir -p "${file%/*}" && _bus_append "$file" "$line"; } 2>/dev/null || true
 }
 
+# _claim_index_dispatch — mirror the dispatch row: once the claiming shell has
+# exited, this is what keeps the claim visible until the branch is pushed.
+_claim_index_dispatch() {
+  local file n line
+  file="$(_claim_index_file)"
+  [ -n "$file" ] || return 0
+  for n in "${gh_issue:-${num:-}}" ${also_closes[@]+"${also_closes[@]}"}; do
+    case "$n" in '' | *[!0-9]*) continue ;; esac
+    line="$(jq -nc --arg crew "$crew_id" --arg issue "$n" --arg branch "$branch" --arg clone "$(_claim_index_clone)" \
+      '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", issue:$issue, branch:$branch, clone:$clone}')" || return 0
+    { mkdir -p "${file%/*}" && _bus_append "$file" "$line"; } 2>/dev/null || true
+  done
+}
+
 # _claim_index_evidence <issue> — one line when another clone holds a live claim
 # on <issue>, else nothing. A release row cancels every claim older than it, from
 # any clone. Liveness is _claim_pid_live's, unchanged; only rows from other
 # clones count here, since this clone's own bus was read by the caller. An
 # unreadable index fails closed, like the bus.
 _claim_index_evidence() {
-  local file rows pid row_ts clone
+  local file rows kind pid row_ts clone
   file="$(_claim_index_file)"
   [ -n "$file" ] && [ -e "$file" ] || return 0
   rows="$(jq -nrR --arg i "$1" --arg me "$(_claim_index_clone)" '
     [inputs | fromjson? | objects | select((.issue | tostring) == $i)] as $rows
     | ([$rows[] | select(.kind == "release") | (.ts | numbers) // 0] | max // 0) as $rel
     | $rows[]
-    | select(.kind == "claim-issue" and ((.clone // "") | tostring) != $me and ((.ts | numbers) // 0) > $rel)
-    | "\(.pid) \(.ts // "") \(.clone // "?")"' "$file")" || {
+    | select((.kind == "claim-issue" or .kind == "dispatch") and ((.clone // "") | tostring) != $me and ((.ts | numbers) // 0) > $rel)
+    | "\(.kind) \(.pid // 0) \(.ts // "") \(.clone // "?")"' "$file")" || {
     echo "claim index unreadable"
     return 0
   }
-  while IFS=' ' read -r pid row_ts clone; do
+  while IFS=' ' read -r kind pid row_ts clone; do
+    # A dispatch row outlives its dispatch shell: the worker is on the issue
+    # until a release row says otherwise, as the bus's own dispatch rows read.
+    if [ "$kind" = dispatch ]; then
+      echo "dispatch row from clone $(_evidence_text "$clone")"
+      return 0
+    fi
     case "$pid" in
     '' | *[!0-9]*) continue ;;
     *[1-9]*) ;;
@@ -5330,6 +5350,7 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
    + if $base != "" then {base:$base, base_oid:(if $base_oid == "" then null else $base_oid end)} else {} end
    + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end')
 _crew_append "$line"
+_claim_index_dispatch
 if [ -n "$ident_locked" ]; then
   rmdir "$ident_lock" 2>/dev/null || true
   ident_locked=""
