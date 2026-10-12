@@ -342,7 +342,10 @@ _claim_evidence() {
     echo "origin branch $(_evidence_text "${out##*refs/heads/}")"
     return 0
   fi
-  [ -f "$events" ] || return 0
+  if [ ! -f "$events" ]; then
+    _claim_index_evidence "$issue"
+    return 0
+  fi
   # `fromjson? | objects` skips torn and non-object lines instead of failing
   # the whole read.
   out="$(jq -nrR --arg p "feat/$issue-" 'first(inputs | fromjson? | objects | select(.kind=="dispatch" and ((.branch // "") | tostring | startswith($p))) | .branch) // empty' "$events")" || {
@@ -386,7 +389,81 @@ _claim_evidence() {
       return 0
     fi
   done <<<"$pids"
+  _claim_index_evidence "$issue"
   return 0
+}
+
+# The machine-wide claim index (#928): one append-only JSONL per repo, shared by
+# every clone on this machine, so a claim whose branch is not pushed yet is still
+# visible to another clone's dispatcher. Keyed by the origin URL's last two path
+# segments (owner/repo), not the clone; crew/internal/claimindex has the Go copy
+# of this derivation, which `crew reap` and `crew adopt` release rows depend on.
+# Empty when origin yields no such slug: that clone never reads or writes it.
+_claim_index_file() {
+  local url p owner repo
+  url="$(git config --get remote.origin.url 2>/dev/null || true)"
+  p="${url%"${url##*[!/]}"}"
+  p="${p%.git}"
+  p="${p%"${p##*[!/]}"}"
+  [[ $p == */* ]] || return 0
+  repo="${p##*/}"
+  p="${p%/*}"
+  owner="${p##*/}"
+  owner="${owner##*:}"
+  for p in "$owner" "$repo"; do
+    [[ $p =~ ^[A-Za-z0-9._-]+$ && $p != . && $p != .. ]] || return 0
+  done
+  printf '%s/crew/claims/%s/%s.jsonl\n' "${XDG_DATA_HOME:-$HOME/.local/share}" \
+    "$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')" "$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')"
+}
+
+# The clone is named by the dir holding the git common dir.
+_claim_index_clone() {
+  local common="${crew_dir%/crew}"
+  printf '%s' "${common%/*}"
+}
+
+# _claim_index_append <issue> <branch> — mirror a claim-issue row into the index.
+# Best effort: the index only adds evidence, so a failed write never fails the
+# dispatch.
+_claim_index_append() {
+  local file line
+  file="$(_claim_index_file)"
+  [ -n "$file" ] || return 0
+  line="$(jq -nc --arg crew "$crew_id" --arg issue "$1" --arg branch "$2" --arg pid "$$" --arg clone "$(_claim_index_clone)" \
+    '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber), clone:$clone}')" || return 0
+  { mkdir -p "${file%/*}" && _bus_append "$file" "$line"; } 2>/dev/null || true
+}
+
+# _claim_index_evidence <issue> — one line when another clone holds a live claim
+# on <issue>, else nothing. A release row cancels every claim older than it, from
+# any clone. Liveness is _claim_pid_live's, unchanged; only rows from other
+# clones count here, since this clone's own bus was read by the caller. An
+# unreadable index fails closed, like the bus.
+_claim_index_evidence() {
+  local file rows pid row_ts clone
+  file="$(_claim_index_file)"
+  [ -n "$file" ] && [ -e "$file" ] || return 0
+  rows="$(jq -nrR --arg i "$1" --arg me "$(_claim_index_clone)" '
+    [inputs | fromjson? | objects | select((.issue | tostring) == $i)] as $rows
+    | ([$rows[] | select(.kind == "release") | (.ts | numbers) // 0] | max // 0) as $rel
+    | $rows[]
+    | select(.kind == "claim-issue" and ((.clone // "") | tostring) != $me and ((.ts | numbers) // 0) > $rel)
+    | "\(.pid) \(.ts // "") \(.clone // "?")"' "$file")" || {
+    echo "claim index unreadable"
+    return 0
+  }
+  while IFS=' ' read -r pid row_ts clone; do
+    case "$pid" in
+    '' | *[!0-9]*) continue ;;
+    *[1-9]*) ;;
+    *) continue ;;
+    esac
+    if _claim_pid_live "$pid" "$row_ts"; then
+      echo "dispatch in progress from clone $(_evidence_text "$clone") (pid $pid)"
+      return 0
+    fi
+  done <<<"$rows"
 }
 
 # A claim row older than this with no branch, remote branch or dispatch row is
@@ -4635,6 +4712,7 @@ if [ -n "$gh_issue" ]; then
     line=$(jq -nc --arg crew "$crew_id" --arg issue "$claim_n" --arg branch "$branch" --arg pid "$$" \
       '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber)}')
     _crew_append "$line"
+    _claim_index_append "$claim_n" "$branch"
     if ! gh issue edit "$claim_n" --add-label dispatched; then
       echo "dispatch: could not claim issue #$claim_n (adding the 'dispatched' label failed)" >&2
       [ -n "${claim_had_label[$claim_i]}" ] || gh issue edit "$claim_n" --remove-label dispatched >/dev/null 2>&1 || true
@@ -4746,6 +4824,7 @@ else
     line=$(jq -nc --arg crew "$crew_id" --arg issue "$num" --arg branch "$branch" --arg pid "$$" \
       '{ts:(now*1000|floor), crew_id:$crew, kind:"claim-issue", issue:$issue, branch:$branch, pid:($pid|tonumber)}')
     _crew_append "$line"
+    _claim_index_append "$num" "$branch"
     gh issue edit "$num" --add-label dispatched || {
       echo "dispatch: created issue #$num but could not claim it (adding the 'dispatched' label failed)" >&2
       exit 1

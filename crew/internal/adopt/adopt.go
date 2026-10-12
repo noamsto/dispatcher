@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
@@ -238,6 +239,9 @@ func (o Options) releaseClaims(paths bus.Paths, id string, stderr io.Writer) {
 		}
 		if err := o.GhQuiet("issue", "edit", c.issue, "--remove-label", "dispatched"); err == nil {
 			say(stderr, "crew adopt: released the dispatched label on #%s (%s)\n", c.issue, c.branch)
+			if err := claimindex.Release(paths.Common, o.LookupEnv, c.issue, id, o.Now()); err != nil {
+				say(stderr, "crew adopt: could not record the release of #%s in the claim index: %v\n", c.issue, err)
+			}
 			continue
 		}
 		say(stderr, "crew adopt: could not remove the dispatched label from #%s (%s)\n", c.issue, c.branch)

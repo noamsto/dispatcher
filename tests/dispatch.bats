@@ -8192,6 +8192,92 @@ EOF
   assert_claim_refused "dispatch in progress (pid $live_pid)"
 }
 
+# The machine-wide claim index (#928): another clone's claim is evidence even
+# before its branch is pushed. Clones of one origin share the file keyed by the
+# origin URL's last two path segments.
+seed_other_clone_claim() { # <ts-ms> <pid> [<issue>] — a claim row clone A wrote
+  local slug
+  slug="$(basename "$TEST_REPO" | tr '[:upper:]' '[:lower:]')/origin"
+  CLONE_A="$BATS_TEST_TMPDIR/cloneA"
+  [ -d "$CLONE_A" ] || git clone -q "$TEST_REPO/origin.git" "$CLONE_A"
+  CLAIM_INDEX="$XDG_DATA_HOME/crew/claims/$slug.jsonl"
+  mkdir -p "$(dirname "$CLAIM_INDEX")"
+  printf '{"ts":%s,"crew_id":"cA","kind":"claim-issue","issue":"%s","branch":"feat/42-do-a-thing","pid":%s,"clone":"%s"}\n' \
+    "$1" "${3:-42}" "$2" "$CLONE_A" >>"$CLAIM_INDEX"
+}
+
+@test "claim index: a live claim from another clone refuses and names that clone" {
+  stub_launch_bins
+  spawn_claimant
+  seed_other_clone_claim "$(( $(date +%s) * 1000 ))" "$live_pid"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  kill "$live_pid" 2>/dev/null || true
+  wait "$live_pid" 2>/dev/null || true
+  assert_claim_refused "from clone $CLONE_A (pid $live_pid)"
+}
+
+@test "claim index: a dead-pid row from another clone is stale and re-claimed" {
+  stub_launch_bins
+  true &
+  dead_pid=$!
+  wait "$dead_pid"
+  seed_other_clone_claim "$(( $(date +%s) * 1000 ))" "$dead_pid"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+  grep -q 'issue edit 42 --add-label dispatched' "$STUB_LOG"
+}
+
+@test "claim index: a row over 24h old does not block even with a live pid" {
+  stub_launch_bins
+  spawn_claimant
+  seed_other_clone_claim "$(( ($(date +%s) - 90000) * 1000 ))" "$live_pid"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  kill "$live_pid" 2>/dev/null || true
+  wait "$live_pid" 2>/dev/null || true
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+}
+
+@test "claim index: a release row newer than the claim lets the other clone re-claim" {
+  stub_launch_bins
+  spawn_claimant
+  now_ms=$(( $(date +%s) * 1000 ))
+  seed_other_clone_claim "$now_ms" "$live_pid"
+  printf '{"ts":%s,"kind":"release","issue":"42","clone":"%s"}\n' "$((now_ms + 1))" "$CLONE_A" >>"$CLAIM_INDEX"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  kill "$live_pid" 2>/dev/null || true
+  wait "$live_pid" 2>/dev/null || true
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+}
+
+@test "claim index: an unreadable index fails closed" {
+  stub_launch_bins
+  seed_other_clone_claim 1 1
+  chmod 000 "$CLAIM_INDEX"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  chmod 600 "$CLAIM_INDEX"
+  [ "$(id -u)" -eq 0 ] && skip "root reads mode-000 files"
+  assert_claim_refused "claim index unreadable"
+}
+
+@test "claim index: a claim writes a row naming this clone" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  row="$(cat "$XDG_DATA_HOME"/crew/claims/*/origin.jsonl)"
+  [ "$(jq -r .kind <<<"$row")" = claim-issue ]
+  [ "$(jq -r .issue <<<"$row")" = 42 ]
+  [ "$(jq -r .clone <<<"$row")" = "$(realpath "$TEST_REPO")" ]
+}
+
 # #351: a live pid is not claimant evidence when the process is not the dispatch
 # session that wrote the row. pid 1 predates every row, so the old one-sided
 # reuse bound read it as live and wedged the #304 self-heal forever.
