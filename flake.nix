@@ -298,8 +298,10 @@
           # dispatch-resume.sh carries byte-identical copies of dispatch.sh's
           # liveness helpers (#461); shfmt would reformat some of them and sever
           # the sync guarantee tests/adapters.bats pins. dispatch.sh and
-          # dispatch-notify.sh are excluded for the same reason: they carry the
-          # copies crew/internal/frame and tests/adapters.bats compare byte-for-byte.
+          # dispatch-notify.sh are excluded for the same reason: shfmt would
+          # re-indent the block crew/internal/frame extracts and sources (its
+          # anchors are 2-space-indented lines), and rewrite the copies
+          # tests/adapters.bats byte-compares.
           settings.global.excludes = [
             "adapters/core/dispatch.sh"
             "adapters/core/dispatch-notify.sh"
