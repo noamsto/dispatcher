@@ -518,7 +518,7 @@ func TestHelperBinaryEntry(t *testing.T) {
 			break
 		}
 	}
-	fmt.Fprintf(os.Stdout, "%s\n", strings.Join(args, " "))
+	fmt.Println(strings.Join(args, " "))
 	os.Exit(0)
 }
 
