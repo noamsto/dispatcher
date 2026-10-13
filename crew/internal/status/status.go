@@ -25,6 +25,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/panestate"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
 //go:embed seam.jq
@@ -54,6 +55,7 @@ type Options struct {
 	Getenv   func(string) string                                                                     // CREW_ROLE_ID, TMUX_PANE
 	Tmux     func(args ...string) (string, error)                                                    // stdout of `tmux args...`
 	Fold     func(prog string, rows []jsonv.Value, vars map[string]jsonv.Value) (jsonv.Value, error) // jqrun.Run by default; a test seam
+	Sender   sender.Probes                                                                           // the sender check's reads; Getenv defaults to Options.Getenv
 }
 
 func (o Options) withDefaults() Options {
@@ -65,6 +67,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.Getenv == nil {
 		o.Getenv = os.Getenv
+	}
+	if o.Sender.Getenv == nil {
+		o.Sender.Getenv = o.Getenv
 	}
 	if o.Fold == nil {
 		o.Fold = func(prog string, rows []jsonv.Value, vars map[string]jsonv.Value) (jsonv.Value, error) {
@@ -91,6 +96,16 @@ func begin(sub string, paths bus.Paths, stderr io.Writer, o Options) (string, bo
 		return "", false
 	}
 	return crew, true
+}
+
+// refuseSender prints the sender check's refusal; true when the row must not be written.
+func refuseSender(sub, from, crew string, o Options, stderr io.Writer) bool {
+	reason := sender.Check(from, crew, o.Sender)
+	if reason == "" {
+		return false
+	}
+	say(stderr, "crew: %s: refusing sender '%s' — %s\n", sub, from, reason)
+	return true
 }
 
 // stamp is the row's ts, computed once before the builder: FitLine runs it
@@ -151,6 +166,9 @@ parse:
 		return ""
 	}
 	from, state, detail, pr := at(0), at(1), at(2), at(3)
+	if refuseSender("status", from, crew, o, stderr) {
+		return exitFailure
+	}
 
 	switch state {
 	case "working", "blocked", "pr_open", "done", "failed", "exited", "reaped":

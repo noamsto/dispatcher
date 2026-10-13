@@ -13,6 +13,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
 // now is the fixed wall clock every case runs on: 2023-11-14T22:13:20.5Z, so
@@ -836,4 +837,46 @@ func jsonLen(t *testing.T, s string) int {
 		t.Fatalf("not a JSON array (%v): %q", err, s)
 	}
 	return len(v)
+}
+
+func TestWorkerAndRoleSessionsCannotWriteHolds(t *testing.T) {
+	for _, env := range []string{"CREW_WORKER_ID", "CREW_ROLE_ID"} {
+		p := sender.Probes{Getenv: func(name string) string {
+			if name == env {
+				return "x"
+			}
+			return ""
+		}}
+		reason := sender.Check("dispatcher:c1", "c1", p)
+		if reason == "" {
+			t.Fatalf("%s does not trip the sender check", env)
+		}
+		t.Run(env+"/add", func(t *testing.T) {
+			tr := setup(t)
+			spec := filepath.Join(tr.dir, "spec.md")
+			if err := os.WriteFile(spec, []byte("the spec body\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, err, code := tr.runOpts(t, Options{Sender: p}, "add", "--engine", "e", "--window", "5h",
+				"--resets-at", future, "--agent", "a", "--ref", "r", "--branch", "b", "--tier", "t",
+				"--model", "m", "--effort", "f", "--spec", spec, "refused")
+			if want := "crew: hold add: refusing sender 'dispatcher:c1' — " + reason + "\n"; code != 1 || out != "" || err != want {
+				t.Fatalf("code %d, stdout %q, stderr %q, want 1, %q", code, out, err, want)
+			}
+			if _, serr := os.Stat(tr.paths.Dir); !os.IsNotExist(serr) {
+				t.Fatalf("bus dir created on a refused sender: %v", serr)
+			}
+		})
+		t.Run(env+"/release", func(t *testing.T) {
+			tr := setup(t)
+			tr.write(t, holdRow(t, "c1", "h1", "9999999999"))
+			_, err, code := tr.runOpts(t, Options{Sender: p}, "release", "h1")
+			if want := "crew: hold release: refusing sender 'dispatcher:c1' — " + reason + "\n"; code != 1 || err != want {
+				t.Fatalf("code %d, stderr %q, want 1, %q", code, err, want)
+			}
+			if rows := tr.rows(t); len(rows) != 1 {
+				t.Fatalf("rows after a refused release: %d", len(rows))
+			}
+		})
+	}
 }

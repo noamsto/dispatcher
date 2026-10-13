@@ -1,0 +1,142 @@
+package sender
+
+import (
+	"errors"
+	"strings"
+	"testing"
+)
+
+// pane is one `tmux list-panes -a -F Format` line.
+func pane(pid, branch, role, crewID string) string {
+	return strings.Join([]string{pid, branch, role, crewID}, "\x1f") + "\n"
+}
+
+// tree is the caller's ancestry: 300 → 200 → 100 → 1.
+var tree = map[int]int{300: 200, 200: 100, 100: 1}
+
+type fixture struct {
+	env      map[string]string
+	panes    string
+	panesErr bool
+	noPanes  bool
+	noParent bool
+	tree     map[int]int
+	pid      int
+}
+
+func (f fixture) probes() Probes {
+	p := Probes{
+		Getenv: func(k string) string { return f.env[k] },
+		Panes:  func() (string, error) { return f.panes, nil },
+		Parent: func(pid int) (int, bool) {
+			pp, ok := f.tree[pid]
+			return pp, ok
+		},
+		PID: 300,
+	}
+	if f.tree == nil {
+		p.Parent = func(pid int) (int, bool) {
+			pp, ok := tree[pid]
+			return pp, ok
+		}
+	}
+	if f.pid != 0 {
+		p.PID = f.pid
+	}
+	if f.panesErr {
+		p.Panes = func() (string, error) { return "", errors.New("no server running") }
+	}
+	if f.noPanes {
+		p.Panes = nil
+	}
+	if f.noParent {
+		p.Parent = nil
+	}
+	return p
+}
+
+const (
+	tripwire = "this is a worker or role session (CREW_WORKER_ID or CREW_ROLE_ID is set) and only the dispatcher posts as dispatcher:<crew>; post as your own id ($CREW_WORKER_ID for a lead, role:<branch>:<role> for a grid role)"
+	leadX    = "this pane is stamped as the lead of feat/x, which posts only as worker:feat/x or worker:feat/x#s<session> ($CREW_WORKER_ID)"
+	roleX    = "this pane is stamped as role:feat/x:reviewer, the only id it posts as"
+)
+
+func TestCheck(t *testing.T) {
+	worker := map[string]string{"CREW_WORKER_ID": "worker:feat/x#s1-2"}
+	role := map[string]string{"CREW_ROLE_ID": "role:feat/x:reviewer"}
+	lead := pane("100", "feat/x", "lead", "c1")
+	leadNoRole := pane("100", "feat/x", "", "c1")
+	reviewer := pane("100", "feat/x", "reviewer", "c1")
+	dispatcherPane := pane("100", "", "", "")
+
+	tests := []struct {
+		name string
+		from string
+		crew string
+		f    fixture
+		want string
+	}{
+		{"tripwire worker env", "dispatcher:c1", "c1", fixture{env: worker}, tripwire},
+		{"tripwire role env", "dispatcher:c1", "c1", fixture{env: role}, tripwire},
+		{"tripwire beats an unstamped anchor", "dispatcher:c1", "c1", fixture{env: worker, panes: dispatcherPane}, tripwire},
+		{"no env no anchor allows dispatcher", "dispatcher:c1", "c1", fixture{}, ""},
+		{"tripwire ignores worker sender", "worker:feat/x", "c1", fixture{env: worker}, ""},
+		{"tripwire ignores role sender", "role:feat/x:reviewer", "c1", fixture{env: role}, ""},
+
+		{"lead allows own branch", "worker:feat/x", "c1", fixture{panes: lead}, ""},
+		{"lead allows own session", "worker:feat/x#s1-2", "c1", fixture{panes: lead}, ""},
+		{"empty role is lead", "worker:feat/x#s1-2", "c1", fixture{panes: leadNoRole}, ""},
+		{"empty role refuses other branch", "worker:feat/y#s1-2", "c1", fixture{panes: leadNoRole}, leadX},
+		{"lead refuses other branch", "worker:feat/y#s1-2", "c1", fixture{panes: lead}, leadX},
+		{"lead refuses # in session", "worker:feat/x#s1#2", "c1", fixture{panes: lead}, leadX},
+		{"lead refuses role id", "role:feat/x:reviewer", "c1", fixture{panes: lead}, leadX},
+		{"lead refuses dispatcher", "dispatcher:c1", "c1", fixture{panes: lead}, leadX},
+		{"lead refuses empty", "", "c1", fixture{panes: lead}, leadX},
+		{"lead refuses review", "review:c1", "c1", fixture{panes: lead}, leadX},
+		{"lead refuses bare prefix", "worker:feat/x#", "c1", fixture{panes: lead}, leadX},
+
+		{"branch with # allows session", "worker:a#b#s1-2", "c1", fixture{panes: pane("100", "a#b", "lead", "c1")}, ""},
+		{"branch with # allows bare", "worker:a#b", "c1", fixture{panes: pane("100", "a#b", "lead", "c1")}, ""},
+		{"branch with # refuses # in session", "worker:a#b#s1#2", "c1", fixture{panes: pane("100", "a#b", "lead", "c1")},
+			"this pane is stamped as the lead of a#b, which posts only as worker:a#b or worker:a#b#s<session> ($CREW_WORKER_ID)"},
+
+		{"role allows own id", "role:feat/x:reviewer", "c1", fixture{panes: reviewer}, ""},
+		{"role refuses lead id", "worker:feat/x#s1-2", "c1", fixture{panes: reviewer}, roleX},
+		{"role refuses other role", "role:feat/x:plan-critic", "c1", fixture{panes: reviewer}, roleX},
+		{"role refuses other branch", "role:feat/y:reviewer", "c1", fixture{panes: reviewer}, roleX},
+		{"role refuses dispatcher", "dispatcher:c1", "c1", fixture{panes: reviewer}, roleX},
+
+		{"crew mismatch", "worker:feat/x", "c2", fixture{panes: lead}, "this pane's window is stamped for crew c1, not c2"},
+		{"role crew mismatch", "role:feat/x:reviewer", "c2", fixture{panes: reviewer}, "this pane's window is stamped for crew c1, not c2"},
+		{"empty crew id unchecked", "worker:feat/x", "c2", fixture{panes: pane("100", "feat/x", "lead", "")}, ""},
+
+		{"unstamped anchor allows dispatcher", "dispatcher:c1", "c1", fixture{panes: dispatcherPane}, ""},
+		{"nearest pane wins", "worker:feat/y", "c1", fixture{panes: lead + pane("200", "feat/y", "lead", "c1")}, ""},
+		{"nearest pane refuses outer id", "worker:feat/x", "c1", fixture{panes: lead + pane("200", "feat/y", "lead", "c1")},
+			"this pane is stamped as the lead of feat/y, which posts only as worker:feat/y or worker:feat/y#s<session> ($CREW_WORKER_ID)"},
+		{"nearest unstamped pane hides outer stamp", "dispatcher:c1", "c1", fixture{panes: lead + pane("200", "", "", "")}, ""},
+		{"own pid is a pane", "worker:feat/x", "c1", fixture{panes: pane("300", "feat/x", "lead", "c1"), tree: map[int]int{}}, ""},
+		{"own pid pane refuses", "worker:feat/y", "c1", fixture{panes: pane("300", "feat/x", "lead", "c1"), tree: map[int]int{}}, leadX},
+
+		{"no pane in ancestry", "dispatcher:c1", "c1", fixture{panes: pane("999", "feat/x", "lead", "c1")}, ""},
+		{"panes error", "dispatcher:c1", "c1", fixture{panes: lead, panesErr: true}, ""},
+		{"nil panes", "dispatcher:c1", "c1", fixture{panes: lead, noPanes: true}, ""},
+		{"nil parent", "dispatcher:c1", "c1", fixture{panes: lead, noParent: true}, ""},
+		{"parent cycle terminates", "dispatcher:c1", "c1", fixture{panes: pane("999", "feat/x", "lead", "c1"), tree: map[int]int{300: 200, 200: 300}}, ""},
+		{"malformed line skipped", "worker:feat/x", "c1", fixture{panes: "garbage\n" + pane("x", "feat/y", "lead", "c1") + pane("0", "feat/y", "lead", "c1") + "100\x1ffeat/y\n" + lead}, ""},
+		{"malformed line does not anchor", "dispatcher:c1", "c1", fixture{panes: "100\x1ffeat/y\x1flead\n"}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Check(tc.from, tc.crew, tc.f.probes()); got != tc.want {
+				t.Errorf("Check(%q, %q) = %q, want %q", tc.from, tc.crew, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCheckZeroProbes(t *testing.T) {
+	if got := Check("dispatcher:c1", "c1", Probes{}); got != "" {
+		t.Errorf("Check with zero Probes = %q, want empty", got)
+	}
+}

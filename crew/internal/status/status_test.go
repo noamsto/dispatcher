@@ -13,6 +13,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
 )
 
@@ -39,6 +40,10 @@ type fixture struct {
 	noTop  bool
 	fold   foldFunc
 	crew   string
+
+	panes   string      // sender check: tmux list-panes output; "" leaves the anchor unreadable
+	parents map[int]int // sender check: pid -> parent pid
+	pid     int         // sender check: the caller's pid
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -66,6 +71,16 @@ func (f *fixture) opts() Options {
 	}
 	if f.noTop {
 		o.Toplevel = func() string { return "" }
+	}
+	if f.panes != "" {
+		o.Sender = sender.Probes{
+			Panes: func() (string, error) { return f.panes, nil },
+			Parent: func(pid int) (int, bool) {
+				ppid, ok := f.parents[pid]
+				return ppid, ok
+			},
+			PID: f.pid,
+		}
 	}
 	if !f.noTmux {
 		o.Tmux = func(args ...string) (string, error) {
@@ -941,4 +956,37 @@ func TestZeroOptionsGateTheCheckout(t *testing.T) {
 	if got, want := o.CrewID(), bus.CrewID(context.Background(), "."); got != want || got == "" {
 		t.Errorf("CrewID() = %q, want %q", got, want)
 	}
+}
+
+const (
+	leadPane = "200\x1ffeat/x\x1flead\x1fc1\n"
+	rolePane = "200\x1ffeat/x\x1freviewer\x1fc1\n"
+)
+
+// anchored places the caller (pid 300) under the pane with pid 200.
+func (f *fixture) anchored(panes string) {
+	f.panes = panes
+	f.parents = map[int]int{300: 200, 200: 1}
+	f.pid = 300
+}
+
+func TestStatusRefusesSenderAnchorMismatch(t *testing.T) {
+	f := newFixture(t)
+	f.anchored(rolePane)
+	code, stderr := f.status(worker, "failed", "boom")
+	if code != 1 || !strings.HasPrefix(stderr, "crew: status: refusing sender '"+worker+"' — ") {
+		t.Errorf("got %d %q", code, stderr)
+	}
+	f.wantNoRow()
+}
+
+func TestStatusRefusesDispatcherFromWorkerEnv(t *testing.T) {
+	f := newFixture(t)
+	f.env["CREW_WORKER_ID"] = worker
+	code, stderr := f.status("dispatcher:c1", "working")
+	want := "crew: status: refusing sender 'dispatcher:c1' — " + sender.Check("dispatcher:c1", crewID, sender.Probes{Getenv: f.opts().Getenv}) + "\n"
+	if code != 1 || stderr != want {
+		t.Errorf("got %d %q", code, stderr)
+	}
+	f.wantNoRow()
 }

@@ -5847,6 +5847,25 @@ _roster_live_dispatcher() {
   wait_for_log 'roster-render --crew c1 --pane %5 --no-open --detach$'
 }
 
+# A lazy --spawn-role runs inside the lead's pane, and `crew msg` anchors any
+# sender still in that pane's process tree as the lead, so the watcher must
+# never be a child of its caller.
+@test "watch_role: the role watcher is orphaned, never a child of its caller (#908)" {
+  stub="$BATS_TEST_TMPDIR/rolewatch-stub"
+  out="$BATS_TEST_TMPDIR/rolewatch-ppid"
+  printf '#!/usr/bin/env bash\nprintf "%%s" "$PPID" >"%s.tmp" && mv "%s.tmp" "%s"\n' "$out" "$out" "$out" >"$stub"
+  chmod +x "$stub"
+  run bash -c '
+    eval "$(sed -n "/^watch_role() {/,/^}/p" "$1")"
+    branch=feat/x
+    watch_role r %1 claude c1
+    echo "$$"
+    for _ in $(seq 50); do [ -e "$2" ] && break; sleep 0.1; done' "$stub" "$DISPATCH" "$out"
+  [ "$status" -eq 0 ]
+  [ -s "$out" ]
+  [ "$(cat "$out")" != "$output" ]
+}
+
 @test "roster-render: a --spawn-role does not start the renderer" {
   _spawn_role_fixture
   run run_dispatch --spawn-role reviewer --agent claude --model sonnet

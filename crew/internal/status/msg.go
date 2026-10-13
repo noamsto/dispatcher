@@ -22,6 +22,9 @@ func RunMsg(args []string, paths bus.Paths, stderr io.Writer, o Options) int {
 		return ""
 	}
 	from, to, body := at(0), at(1), at(2)
+	if refuseSender("msg", from, crew, o, stderr) {
+		return exitFailure
+	}
 
 	// A caller that expanded an unset shell var into the recipient (e.g.
 	// `dispatcher:$CREW_ID` with CREW_ID empty) silently lands a message nobody
