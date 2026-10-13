@@ -26,10 +26,10 @@ setup() {
   printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$CREW" >"$BATS_TEST_TMPDIR/realbin/crew"
   chmod +x "$BATS_TEST_TMPDIR/realbin/crew"
   export PATH="$BATS_TEST_TMPDIR/realbin:$PATH"
-  # The delivered-marks path, from the crew.sh helper the guards replay.
+  # The delivered-marks path, computed from the same formula crew/internal/marks
+  # writes (marks_path in helpers.bash).
   dir="$COMMON/crew"
   log="$LOG"
-  eval "$(sed -n '/^_await_state() {/,/^}/p' "$CREW_SRC")"
   ENVELOPE="$(envelope)"
 }
 
@@ -52,7 +52,7 @@ deliver() { run --separate-stderr bash "$HANDLER" <<<"$ENVELOPE"; }
 # ctx — the advisory text of the last `deliver`.
 ctx() { jq -er '.hookSpecificOutput.additionalContext' <<<"$output"; }
 
-marks_file() { _await_state c1 "$ID"; }
+marks_file() { marks_path "$dir" c1 "$ID"; }
 
 # Bounded wait until the wall-clock ms passes the newest bus row, so the next
 # row sorts strictly after it.

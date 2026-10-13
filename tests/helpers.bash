@@ -9,16 +9,15 @@ export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
 # Tests that exercise the sweep opt in explicitly.
 export CREW_RATE_AUTOSWEEP=0
 
-# The crew under test, in its three forms — exported, as the two above them are,
+# The crew under test, in its two forms — exported, as the two above them are,
 # because they are what every bats file reads. CREW is the entrypoint the suite
 # built (tests/setup_suite.bash compiles it), so run it directly: `bash "$CREW"`
-# would hand a binary to bash and get 126. CREW_SRC is the bash oracle — the
-# helpers crew.sh still carries for the drift guards — and is read, never
-# executed. CREW_GO_SRC is crew/main.go, for rows that read the subcommand list
-# out of the switch.
+# would hand a binary to bash and get 126. CREW_GO_SRC is crew/main.go, for rows
+# that read the subcommand list out of the switch.
 export CREW="${CREW_GO_BIN:?tests/setup_suite.bash did not build crew-go}"
-export CREW_SRC="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
 export CREW_GO_SRC="$BATS_TEST_DIRNAME/../crew/main.go"
+# The identity pools, for the roster-render palette test that enumerates them.
+export IDENTITY_SRC="$BATS_TEST_DIRNAME/../crew/internal/identity/identity.go"
 
 # Host-environment isolation: unset vars that leak from a running dispatcher or
 # tmux session when bats itself runs from inside one.  Plain `bats tests/`
@@ -134,9 +133,21 @@ plant_commondir() {
   export PLANTED_COMMONDIR="$repo/.git/commondir" SENTINEL
 }
 
+# marks_path <dir> <crew> <id> — the delivered-marks path of #290: <dir>/await/
+# <key with every [^A-Za-z0-9._-] byte mapped to _>.<POSIX cksum of the raw key>,
+# for key "<crew>-<id>". crew/internal/marks.Path writes it, and marks.TestPath
+# plus TestPathMatchesShell pin the formula against real tr/cksum, so a test that
+# only needs to find the file computes it here instead of replaying bash.
+marks_path() {
+  local key="$2-$3"
+  printf '%s/await/%s.%s' "$1" \
+    "$(printf '%s' "$key" | tr -c 'A-Za-z0-9._-' '_')" \
+    "$(printf '%s' "$key" | cksum | cut -d' ' -f1)"
+}
+
 # seed_hold <crew> <id> <resets_at> [branch] [ref] [wait_engine] [task_engine]
-# [title] [ts_ms] — a hold row shaped like `_build_hold`'s output
-# (adapters/core/crew.sh:2508-2527), written directly to the bus so a test can
+# [title] [ts_ms] — a hold row shaped like `crew hold add`'s `_build_hold`
+# output (crew/internal/hold), written directly to the bus so a test can
 # plant an already-matured hold: `crew hold add` refuses a `resets_at <= now`
 # (1b), so no matured hold can be created through the CLI.
 seed_hold() {

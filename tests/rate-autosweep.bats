@@ -297,9 +297,6 @@ await_sweep() {
   [ "$(printf '%s\n' "$appends" | grep -c .)" -eq 1 ]
   # one Write of the whole batch, not a per-row loop
   [ "$(grep -cE '\bf\.Write\(batch\)' "$GO_SRC")" -eq 1 ]
-  CREW_SRC="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
-  left="$(grep -nE '>>[[:space:]]*"?\$\{?store\}?"?' "$CREW_SRC" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
-  [ -z "$left" ]
 }
 
 @test "autosweep: an unrecognised value warns on stderr and still sweeps" {

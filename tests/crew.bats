@@ -2402,11 +2402,13 @@ after_await_parks() {
   [ ! -e "$dir/await" ]
 }
 
-# `crew inbox` is Go now, but `await`, `nudge` and `stall-watch` are not, and
-# they read what it writes. Drift guard: the file it leaves must be
-# `_await_state`'s path and `_await_record`'s content for the same msgs (-S:
-# the Go fold returns objects as Go maps, so key order is engine-internal).
-@test "inbox: the marks file is _await_state's path and _await_record's content" {
+# `crew inbox` is Go, and so is every reader of what it writes (`await`, `nudge`,
+# `stall-watch --unread`). What this guard still proves is the contract those
+# readers depend on: the file inbox leaves lands at marks.Path's formula for the
+# crew+session, holds one key per sender, and nothing else. The path formula
+# itself is pinned by marks.TestPath / TestPathMatchesShell, the record program by
+# marks.TestRecord / TestRecordMatchesJq.
+@test "inbox: the marks file is marks.Path's path, one key per answered sender" {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew msg "$id" dispatcher:c1 "go"
   bus_tick
@@ -2417,21 +2419,12 @@ after_await_parks() {
   [ "$status" -eq 0 ]
   [ "${#lines[@]}" -eq 2 ]
 
-  helpers="$(sed -n '/^_await_state() {/,/^}/p; /^_await_marks() {/,/^}/p; /^_await_record() {/,/^}/p' "$CREW_SRC")"
-  eval "$helpers"
   dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
   files=("$dir"/await/*)
   [ "${#files[@]}" -eq 1 ]
-  [ "${files[0]}" = "$(_await_state c1 "$id")" ]
-  local go_marks
-  go_marks="$(jq -Sc . "${files[0]}")"
-  [ "$(jq -r 'keys | length' <<<"$go_marks")" = "2" ]
-
-  # The same two msgs through the bash helper, in a dir of its own.
-  dir="$BATS_TEST_TMPDIR/ref"
-  mkdir -p "$dir"
-  _await_record c1 "$id" "$output"
-  [ "$(jq -Sc . "$dir"/await/*)" = "$go_marks" ]
+  [ "${files[0]}" = "$(marks_path "$dir" c1 "$id")" ]
+  [ "$(jq -r 'keys | length' "${files[0]}")" = "2" ]
+  jq -e 'has("dispatcher:c1") and has("role:feat/x:reviewer")' "${files[0]}" >/dev/null
 }
 
 # The other direction: a mark `await` raised is a ceiling, not a value to
@@ -12857,10 +12850,11 @@ _rr_file() {
     "$when" $((${sum%% *} % 65536))
 }
 
-# _rr_palette — every identity color, parsed from the source so a new palette
-# entry cannot be added without the compile test below seeing it.
+# _rr_palette — every identity color, parsed from the Go pool so a new palette
+# entry cannot be added without the compile test below seeing it. identity.go is
+# the only implementation: the bash array it came from is gone.
 _rr_palette() {
-  bash -c 'eval "$(sed -n "/^_colors=(/,/)/p" "$1")"; printf "%s\n" "${_colors[@]}"' _ "$CREW_SRC"
+  sed -n '/^var colors = /,/^}/p' "$IDENTITY_SRC" | grep -o '"[a-z]*"' | tr -d '"'
 }
 
 # _rr_dispatch <branch> <ts_ms> <name> <color> <tmux> <title> <tier> <engine> <model> [base]
@@ -14092,17 +14086,6 @@ STUB
   [ "$status" -eq 1 ]
   [ ! -e "$BATS_TEST_TMPDIR/stub.argv" ]
   [[ "${stderr_lines[0]}" == "crew: "* ]]
-}
-
-# The oracle library refuses to be run. Since #821 it dispatches nothing, so an
-# exit 0 would read as success to a caller the migration missed; sourcing it, the
-# way the drift guards do, stays silent.
-@test "crew.sh refuses to be run as an entrypoint" {
-  run --separate-stderr bash "$CREW_SRC" id
-  [ "$status" -eq 64 ]
-  [[ "${stderr_lines[0]}" == "crew: adapters/core/crew.sh is a library, not an entrypoint"* ]]
-  run bash -c '. "$1" && declare -F _crew_id >/dev/null && echo sourced' _ "$CREW_SRC"
-  [ "$output" = "sourced" ]
 }
 
 @test "fleet: lists live workers of two repos from outside any git repo" {
