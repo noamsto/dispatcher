@@ -500,3 +500,45 @@ func mustDecode(t *testing.T, text string) jsonv.Value {
 	}
 	return v
 }
+
+// entryHelperEnv marks the helper process below.
+const entryHelperEnv = "CREW_ENTRY_TEST_HELPER"
+
+// TestHelperBinaryEntry is the entrypoint a stream re-enters when that entry is
+// a binary: it answers with the argv after `--` and nothing else, so the caller
+// sees whether bash was put in front of it.
+func TestHelperBinaryEntry(t *testing.T) {
+	if os.Getenv(entryHelperEnv) != "1" {
+		t.Skip("helper process for the stream tests")
+	}
+	args := os.Args
+	for i, a := range args {
+		if a == "--" {
+			args = args[i+1:]
+			break
+		}
+	}
+	fmt.Fprintf(os.Stdout, "%s\n", strings.Join(args, " "))
+	os.Exit(0)
+}
+
+// TestChildrenExecABinaryEntry is #821's whole re-entry question: the entry is a
+// binary from here on, and `bash <binary>` is 126. This is the row that fails the
+// moment the loop reaches for bash again — the other stubs in this file are
+// scripts, which is exactly why they cannot show it.
+func TestChildrenExecABinaryEntry(t *testing.T) {
+	t.Setenv(entryHelperEnv, "1")
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, code := children{self: bin}.run([]string{
+		"-test.run", "^TestHelperBinaryEntry$", "-test.count", "1", "--", "watch", "--crew", "c1",
+	}, "")
+	if code != 0 {
+		t.Fatalf("code %d, want 0 (out %q)", code, out)
+	}
+	if strings.TrimSpace(out) != "watch --crew c1" {
+		t.Fatalf("the entry saw %q, want the subcommand and its flags alone", strings.TrimSpace(out))
+	}
+}

@@ -1,6 +1,7 @@
-// Command crew-go holds the Go ports of crew subcommands. crew.sh execs it as
-// `crew-go <sub> <args...>` from the arms it replaces, so stdout, stderr and the
-// exit status are the bash arm's.
+// Command crew-go is the crew entrypoint: it routes `--help` and every
+// subcommand, and reports bare `crew` and an unknown one as the grouped help on
+// stderr. flake.nix installs it as `crew` behind a PATH wrapper that keeps
+// argv[0].
 package main
 
 import (
@@ -53,12 +54,52 @@ import (
 )
 
 const (
-	usage         = "crew-go: usage: crew-go roster [crew] | sessions <branch> [--crew ID] | crews [--mine] | log [crew] | report [crew] | inbox <agent> [crew] [--since TS] [--from SENDER] [--undelivered] | hold <add|list|due|park|release> […] | await <agent> [--from S] [--timeout S] [--interval S] | watch [--since TS] [--states a,b,c] [--timeout S] [--interval S] [--crew ID] | stream [--crew ID] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] [--reap-every S] | stream --status [--crew ID] | roster-render --crew ID [--pane %id] [--interval S] [--quiet S] [--no-open] [--once] [--detach] | retro [--report [--json]] | rate [--report [--json] [--pooled] | --sweep-all [--root DIR]…] | reply <to> <body> [--crew ID] | resolve-target <target> [--crew ID] | pr-watch <N> [--repo owner/name] [--timeout S] [--interval S] | where <codename|branch|%id> [--crew ID] | identity <branch> [crew] | adopt [--force] <id> <pid> | status … | msg … | register … | deregister … | fleet [--all] [--crew ID] [--json] | fleet stream --crew ID [--rediscover S] [--states a,b,c] [--park S] [--heartbeat S] [--coalesce S] [--retry S] [--interval S] [--force] | fleet stream --status --crew ID | nudge <codename|branch|worker-id> [--crew ID] [--wait [SECONDS]] | stall-watch <worker-id|branch|role:branch:role> --pane <id> […] | git-guard <op> … | git-baseline [--accept] | reap [--quiet] [--dry-run] [--no-wait] [--idle S] [--discard BRANCH] | occupants <worktree-path> | stack cut [--record] <child-branch|PR#> [<oid>] | stack align <top-PR#|branch> | help [sub [subsub]] | id | new | engine-cmd <pane_current_command> | dash [--once|--json] | pi-agent-dir"
 	sessionsUsage = "crew: sessions <branch> [--crew ID]"
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
 	exitUsage     = 64
 )
+
+// isHelpFlag is the two spellings crew.sh's help preamble matched.
+func isHelpFlag(s string) bool { return s == "--help" || s == "-h" }
+
+// arg is args[i], or "" when the caller passed fewer arguments.
+func arg(args []string, i int) string {
+	if i < len(args) {
+		return args[i]
+	}
+	return ""
+}
+
+// routeHelp is crew.sh's help preamble (#812): `--help` as the command itself,
+// and as the FIRST argument of one. Deliberately before the repo, crew-id and
+// bus reads below, so `crew <sub> --help` answers in a bare temp dir. Only those
+// positions count: `hold` takes an action and `fleet stream` a sub-subcommand,
+// so their --help is one position deeper, and `crew status w1 working --help`
+// keeps --help as the detail text. The screens are Go (crew/internal/entry);
+// this is the routing that was the script's.
+func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) {
+	rest := []string{}
+	if len(args) > 1 {
+		rest = args[1:]
+	}
+	switch sub {
+	case "--help", "-h", "help":
+		return entry.RunHelp(rest, stdout, stderr), true
+	case "hold":
+		if isHelpFlag(arg(args, 2)) {
+			return entry.RunHelp([]string{"hold", arg(args, 1)}, stdout, stderr), true
+		}
+	case "fleet":
+		if arg(args, 1) == "stream" && isHelpFlag(arg(args, 2)) {
+			return entry.RunHelp([]string{"fleet"}, stdout, stderr), true
+		}
+	}
+	if isHelpFlag(arg(args, 1)) {
+		return entry.RunHelp([]string{sub}, stdout, stderr), true
+	}
+	return 0, false
+}
 
 // env is everything run reads from the process, so tests can supply their own.
 type env struct {
@@ -70,6 +111,9 @@ type env struct {
 }
 
 func main() {
+	// The entry path crew.sh used to export for its children, derived from how
+	// this process was invoked when its caller left it unset.
+	entry.EnsureSelf(entry.DefaultSelfProbes(), os.Args[0])
 	e := env{
 		getwd:    os.Getwd,
 		jqColors: os.Getenv("JQ_COLORS"),
@@ -85,11 +129,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if len(args) > 0 {
 		sub = args[0]
 	}
+	if code, routed := routeHelp(sub, args, stdout, stderr); routed {
+		return code
+	}
 	switch sub {
 	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "identity", "stream", "roster-render", "adopt", "nudge", "stall-watch", "status", "msg", "register", "deregister", "fleet", "git-guard", "git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help", "id", "new", "engine-cmd", "dash", "pi-agent-dir":
 	default:
-		say(stderr, "%s\n", usage)
-		return exitUsage
+		// Bare `crew` and an unknown subcommand: the grouped list on stderr, not
+		// the one 2,000-character line (#812). Exit is 1 whatever it printed.
+		_ = entry.RunHelp(nil, stderr, stderr)
+		return exitFailure
 	}
 	args = args[1:]
 

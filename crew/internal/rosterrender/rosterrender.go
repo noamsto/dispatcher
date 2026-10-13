@@ -6,6 +6,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/entry"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"io"
 	"os"
@@ -115,7 +116,7 @@ func Run(ctx context.Context, argv []string, paths bus.Paths, o Options) int {
 		// The pane was validated above and the daemon reads it back from the
 		// record, because a detached child can be reparented before it thinks
 		// about ancestry. Returns as soon as the child is started.
-		env := append(envFor(o.StartPath), "CREW_ID="+c.crew)
+		env := append(envFor(o.StartPath, o.Self), "CREW_ID="+c.crew)
 		if err := o.Probes.SpawnDetached(detachArgv(o.Self, daemon), env); err != nil {
 			say(o.Stderr, "crew: roster-render: %v\n", err)
 			return exitFailure
@@ -134,11 +135,11 @@ func Run(ctx context.Context, argv []string, paths bus.Paths, o Options) int {
 	}
 }
 
-// detachArgv is the arm's `bash -euo pipefail "$_rr_self" roster-render …`. The
-// script goes through bash rather than being exec'd: the repo copy carries no exec
-// bit and the installed one is a wrapper whose shebang carries none of the flags
-// the arm runs under. A worker entered directly, with no script in front of it,
-// starts its own binary instead.
+// detachArgv is the arm's `bash -euo pipefail "$_rr_self" roster-render …`, the
+// entry re-entered by entry.EntryArgv's rule: the binary or PATH wrapper
+// directly, bash in front of a script that carries no exec bit (the checkout's
+// does not). A worker entered directly, with no entry in front of it, starts its
+// own binary instead.
 func detachArgv(self string, daemon []string) []string {
 	if self == "" {
 		if exe, err := os.Executable(); err == nil {
@@ -146,7 +147,7 @@ func detachArgv(self string, daemon []string) []string {
 		}
 		self = "crew"
 	}
-	return append([]string{"bash", "-euo", "pipefail", self, "roster-render"}, daemon...)
+	return entry.EntryArgv(self, append([]string{"roster-render"}, daemon...)...)
 }
 
 // panePIDRe is the arm's `^%[0-9]+$`: a pane id, not a window or session target.

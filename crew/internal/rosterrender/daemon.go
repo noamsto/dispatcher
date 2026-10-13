@@ -134,7 +134,7 @@ func (o Options) hop(running string, idleSince bool, daemonArgs []string) error 
 		return nil
 	}
 	return o.Probes.Exec(want, append([]string{want, "roster-render"}, daemonArgs...),
-		envFor(o.StartPath))
+		envFor(o.StartPath, want))
 }
 
 // selfBuild is the build this process was started as: the script path the
@@ -151,17 +151,30 @@ func selfBuild(self string) string {
 	return ""
 }
 
-// envFor is the inherited environment with PATH restored and CREW_RR_START_PATH
-// pinned, so a hop never inherits the wrapper prefix it just skipped.
-func envFor(startPath string) []string {
+// envFor is the inherited environment with PATH restored, CREW_RR_START_PATH
+// pinned, so a hop never inherits the wrapper prefix it just skipped, and
+// CREW_SELF naming the entry the new process runs.
+//
+// That last one is the arm's `CREW_SELF="$0" exec`, and the daemon needs it
+// literally: `selfBuild` reads CREW_SELF to say which build it is running, so a
+// hop that inherited the previous entry would still read as the old build, hop
+// again on the next pass, and never converge. An empty self leaves the inherited
+// value alone, which is what a child of the same build needs.
+func envFor(startPath, self string) []string {
 	env := os.Environ()
-	out := make([]string, 0, len(env)+1)
+	out := make([]string, 0, len(env)+2)
 	for _, kv := range env {
-		if !strings.HasPrefix(kv, "CREW_RR_START_PATH=") && !strings.HasPrefix(kv, "PATH=") {
-			out = append(out, kv)
+		if strings.HasPrefix(kv, "CREW_RR_START_PATH=") || strings.HasPrefix(kv, "PATH=") ||
+			(self != "" && strings.HasPrefix(kv, "CREW_SELF=")) {
+			continue
 		}
+		out = append(out, kv)
 	}
-	return append(out, "PATH="+startPath, "CREW_RR_START_PATH="+startPath)
+	out = append(out, "PATH="+startPath, "CREW_RR_START_PATH="+startPath)
+	if self != "" {
+		out = append(out, "CREW_SELF="+self)
+	}
+	return out
 }
 
 // realPath is `readlink -f`, and "" for anything that does not resolve — the empty

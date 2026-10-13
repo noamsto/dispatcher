@@ -1,6 +1,7 @@
 // The loop's three subprocesses, run the way the bash arm ran them: the crew
-// script re-entered with `bash -euo pipefail <self> …`, stdin from /dev/null,
-// each stream either captured or redirected to a file.
+// entry re-entered with entry.EntryArgv (the binary or wrapper directly, bash in
+// front of a script that is not executable), stdin from /dev/null, each stream
+// either captured or redirected to a file.
 //
 // Two of them are backgrounded, and each has a reason to be a process rather
 // than a function call:
@@ -21,23 +22,26 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+
+	"github.com/noamsto/dispatcher/crew/internal/entry"
 )
 
 // exitCantExec is what `command not found` left in `$?` when the script the arm
 // re-entered was gone: the loop reads it as an inner failure, one error line.
 const exitCantExec = 127
 
-// children re-enters one crew script.
+// children re-enters one crew entrypoint.
 type children struct {
-	bash string
 	self string
 	// dir is the cwd of `start`'s child; empty inherits ours.
 	dir string
 }
 
-// argv is the arm's `bash -euo pipefail "$0" …`.
-func (c children) argv(args []string) []string {
-	return append([]string{"-euo", "pipefail", c.self}, args...)
+// command is the arm's `bash -euo pipefail "$0" …`, the entry re-entered the way
+// entry.EntryArgv runs it.
+func (c children) command(args []string) *exec.Cmd {
+	argv := entry.EntryArgv(c.self, args...)
+	return exec.Command(argv[0], argv[1:]...)
 }
 
 // run is the arm's `out=$(bash … 2>file)`: stdout captured, stderr redirected
@@ -45,7 +49,7 @@ func (c children) argv(args []string) []string {
 // child that never started is 127 with the reason where its stderr would have
 // gone, because that is the pair of facts the arm was left with.
 func (c children) run(args []string, stderrPath string) (string, int) {
-	cmd := exec.Command(c.bash, c.argv(args)...)
+	cmd := c.command(args)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if stderrPath != "" {
@@ -82,7 +86,7 @@ func (c children) start(args []string, stdoutPath, stderrPath string) (*child, e
 	}
 	defer func() { _ = errf.Close() }()
 
-	cmd := exec.Command(c.bash, c.argv(args)...)
+	cmd := c.command(args)
 	cmd.Stdout, cmd.Stderr = out, errf
 	if c.dir != "" {
 		cmd.Dir = c.dir
@@ -124,10 +128,11 @@ func (c children) startReap(dir string) (*reapRun, error) {
 		_ = out.Close()
 		return nil, err
 	}
-	// $0 is the script path, and the exec'd reap inherits this shell's two
-	// files and its HUP disposition.
-	const script = `trap '' HUP; exec bash -euo pipefail "$0" reap --quiet --no-wait`
-	cmd := exec.Command(c.bash, "-euo", "pipefail", "-c", script, c.self)
+	// $0 is the entry path, and the exec'd reap inherits this shell's two files
+	// and its HUP disposition. The outer bash exists for that trap alone; what it
+	// execs follows entry.EntryArgv's rule.
+	script := `trap '' HUP; ` + c.reapExec()
+	cmd := exec.Command("bash", "-euo", "pipefail", "-c", script, c.self)
 	cmd.Stdout, cmd.Stderr = out, errf
 	if err := cmd.Start(); err != nil {
 		_ = out.Close()
@@ -138,6 +143,16 @@ func (c children) startReap(dir string) (*reapRun, error) {
 	_ = errf.Close()
 	r := &reapRun{cmd: cmd, out: out.Name(), errf: errf.Name(), done: make(chan struct{})}
 	return r, nil
+}
+
+// reapExec is the reap's exec in that shell, by the same rule: the entry path
+// itself when it is executable, bash in front of it when it is a script.
+func (c children) reapExec() string {
+	const args = ` reap --quiet --no-wait`
+	if entry.IsExecutable(c.self) {
+		return `exec "$0"` + args
+	}
+	return `exec bash -euo pipefail "$0"` + args
 }
 
 // child is one running subprocess the loop waits on.

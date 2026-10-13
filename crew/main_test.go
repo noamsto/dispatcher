@@ -337,15 +337,89 @@ func TestRunLogAndReport(t *testing.T) {
 		}
 	})
 
-	t.Run("an unknown subcommand is still the usage exit", func(t *testing.T) {
+	t.Run("an unknown subcommand is the grouped help on stderr", func(t *testing.T) {
 		repo, _ := repoWithLog(t, nil, 0)
 		var stdout, stderr bytes.Buffer
 		e := env{getwd: func() (string, error) { return repo, nil }}
-		if code := run(context.Background(), []string{"logs"}, &stdout, &stderr, e); code != exitUsage {
-			t.Fatalf("code %d, want %d", code, exitUsage)
+		if code := run(context.Background(), []string{"logs"}, &stdout, &stderr, e); code != exitFailure {
+			t.Fatalf("code %d, want %d", code, exitFailure)
 		}
-		if stdout.Len() != 0 || !strings.Contains(stderr.String(), "crew-go: usage") {
+		if stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), helpTopTitle) {
 			t.Fatalf("stdout %q stderr %q", stdout.String(), stderr.String())
+		}
+	})
+}
+
+// helpTopTitle is the grouped list's first line: its presence says a screen was
+// printed, and its absence says the invocation was routed to a subcommand.
+const helpTopTitle = "crew — file-based coordination bus for dispatcher and worker sessions"
+
+// TestRunHelpRouting is crew.sh's help preamble, position for position: which
+// `--help` answers with a screen and which stays an argument (#812). The screen
+// rows run with an unreadable cwd, so a screen can only come from the routing —
+// `crew <sub> --help` answers with no repo, no crew id and no bus.
+func TestRunHelpRouting(t *testing.T) {
+	noCwd := env{getwd: func() (string, error) { return "", errors.New("getwd: no such file") }}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"--help", []string{"--help"}, helpTopTitle},
+		{"-h", []string{"-h"}, helpTopTitle},
+		{"help", []string{"help"}, helpTopTitle},
+		{"--help with a sub", []string{"--help", "roster"}, "usage: crew roster"},
+		{"--help with a sub and a subsub", []string{"--help", "hold", "add"}, "usage: crew hold add"},
+		{"help sub", []string{"help", "roster"}, "usage: crew roster"},
+		{"sub --help", []string{"roster", "--help"}, "usage: crew roster"},
+		{"sub -h", []string{"roster", "-h"}, "usage: crew roster"},
+		{"hold --help is the bare screen", []string{"hold", "--help"}, "usage: crew hold add"},
+		{"hold action --help", []string{"hold", "list", "--help"}, "usage: crew hold list"},
+		{"help hold action", []string{"help", "hold", "list"}, "usage: crew hold list"},
+		{"fleet --help", []string{"fleet", "--help"}, "usage: crew fleet"},
+		{"fleet stream --help", []string{"fleet", "stream", "--help"}, "usage: crew fleet"},
+		{"pi-agent-dir --help", []string{"pi-agent-dir", "--help"}, "usage: crew pi-agent-dir"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := run(context.Background(), tc.args, &stdout, &stderr, noCwd); code != 0 {
+				t.Fatalf("code %d, want 0 (stderr %q)", code, stderr.String())
+			}
+			if !strings.HasPrefix(stdout.String(), tc.want) {
+				t.Fatalf("stdout %q, want a screen starting %q", stdout.String(), tc.want)
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("stderr %q, want none", stderr.String())
+			}
+		})
+	}
+
+	// --help counts in the first position only: past the first argument it is
+	// detail text, so this is the `status` arm refusing for want of a repo and
+	// not a screen.
+	t.Run("--help past the first argument is detail text", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("GIT_CEILING_DIRECTORIES", dir)
+		e := env{getwd: func() (string, error) { return dir, nil }}
+		var stdout, stderr bytes.Buffer
+		code := run(context.Background(), []string{"status", "w1", "working", "--help"}, &stdout, &stderr, e)
+		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "crew: not in a git repo\n" {
+			t.Fatalf("code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
+		}
+	})
+
+	// The two invocations crew.sh's `*)` arm answered: exit 1, and the whole
+	// grouped list on stderr rather than stdout.
+	t.Run("bare crew and an unknown subcommand list on stderr", func(t *testing.T) {
+		for _, args := range [][]string{nil, {}, {"nosuchcmd"}, {"logs"}, {"--bogus"}} {
+			var stdout, stderr bytes.Buffer
+			if code := run(context.Background(), args, &stdout, &stderr, noCwd); code != exitFailure {
+				t.Fatalf("%v: code %d, want %d", args, code, exitFailure)
+			}
+			if stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), helpTopTitle) {
+				t.Fatalf("%v: stdout %q stderr %q", args, stdout.String(), stderr.String())
+			}
 		}
 	})
 }

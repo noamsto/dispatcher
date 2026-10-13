@@ -78,8 +78,6 @@ type Options struct {
 	// Self is the crew script the loop re-enters for `watch`, `hold due` and
 	// `reap`. Empty resolves CREW_SELF, then the `crew` on PATH.
 	Self string
-	// Bash is the interpreter the arm called its children with.
-	Bash string
 	// Probes is `_pid_alive`, the read `--status` makes of a lock's pid.
 	Probes crews.Probes
 	// Timer is each wait's channel, so a caught signal wins the race with a
@@ -93,9 +91,6 @@ func (o Options) withDefaults() Options {
 	}
 	if o.CrewID == nil {
 		o.CrewID = func() string { return "" }
-	}
-	if o.Bash == "" {
-		o.Bash = "bash"
 	}
 	if o.Probes.Alive == nil {
 		o.Probes = crews.DefaultProbes()
@@ -168,7 +163,7 @@ func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, opts Options)
 		cdir:    cdir,
 		lockd:   lockd,
 		stdout:  stdout,
-		procs:   children{bash: o.Bash, self: o.Self},
+		procs:   children{self: o.Self},
 		sup:     &suppress{key: map[string]string{}, ts: map[string]int64{}},
 		outf:    filepath.Join(cdir, "stream.out"),
 		errf:    filepath.Join(cdir, "stream.err"),
