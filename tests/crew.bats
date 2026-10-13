@@ -9062,7 +9062,7 @@ role_watch() {
   local p
   p=$(fx_idle_box)
   stall_sampler "$p"
-  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane "$p" \
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane %9 \
     --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life "$life" "$@"
 }
 
@@ -9126,7 +9126,7 @@ EOS
 @test "stall-watch: D8 budget: a claude role with --no-budget keeps polling" {
   p=$(fx_idle_box)
   stall_sampler "$p"
-  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane "$p" --engine claude \
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane %9 --engine claude \
     --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --no-budget --max-life 4
   [ "$status" -eq 0 ]
   [ "$(cat "$SAMPLER_DIR/n")" -gt 0 ]

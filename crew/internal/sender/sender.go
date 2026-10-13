@@ -46,10 +46,14 @@ func Check(from, crew string, p Probes) string {
 
 // Watch is Check for a watchdog: the --pane it watches must also be stamped for
 // `from` (when stamped at all), and sit in the caller's window when the caller
-// is anchored.
+// is anchored. The pane must be spelled as a pane id (%N), the form the lookup
+// matches.
 func Watch(from, crew, pane string, p Probes) string {
 	if reason := p.envRefusal(from); reason != "" {
 		return reason
+	}
+	if !paneID(pane) {
+		return "pane " + pane + " is not a pane id (%N)"
 	}
 	rows := p.rows()
 	a, anchored := p.anchor(rows)
@@ -75,6 +79,20 @@ func Watch(from, crew, pane string, p Probes) string {
 		return ""
 	}
 	return target.refuse(from, crew, subject)
+}
+
+// paneID: % followed by digits with no leading zero, as tmux prints #{pane_id}.
+func paneID(s string) bool {
+	d, ok := strings.CutPrefix(s, "%")
+	if !ok || d == "" || (d[0] == '0' && len(d) > 1) {
+		return false
+	}
+	for _, c := range d {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (p Probes) envRefusal(from string) string {

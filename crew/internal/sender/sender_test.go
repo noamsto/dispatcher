@@ -169,6 +169,12 @@ func TestWatch(t *testing.T) {
 		{"unanchored target crew mismatch", idX, "c2", "%2", fixture{panes: pane("500", "feat/x", "lead", "c1", "@2", "%2")}, "pane %2's window is stamped for crew c1, not c2"},
 		{"unanchored target empty crew", idX, "c2", "%2", fixture{panes: pane("500", "feat/x", "lead", "", "@2", "%2")}, ""},
 
+		{"unanchored session target", idX, "c1", "sess:1.0", fixture{panes: pane("500", "feat/y", "lead", "c1", "@2", "%2")}, "pane sess:1.0 is not a pane id (%N)"},
+		{"unanchored window-id target", idX, "c1", "@2", fixture{panes: pane("500", "feat/y", "lead", "c1", "@2", "%2")}, "pane @2 is not a pane id (%N)"},
+		{"unanchored zero-padded target", idX, "c1", "%01", fixture{panes: pane("500", "feat/y", "lead", "c1", "@1", "%1")}, "pane %01 is not a pane id (%N)"},
+		{"unanchored bare percent target", idX, "c1", "%", fixture{panes: pane("500", "feat/y", "lead", "c1", "@2", "%2")}, "pane % is not a pane id (%N)"},
+		{"unanchored %0 unlisted", idX, "c1", "%0", fixture{}, ""},
+
 		{"anchored own pane own id", idX, "c1", "%1", fixture{panes: callerLead}, ""},
 		{"anchored other id is Check's refusal", "worker:feat/y#s1-1", "c1", "%1", fixture{panes: callerLead}, leadX},
 		{"anchored target in other window", idX, "c1", "%2", fixture{panes: callerLead + pane("500", "feat/x", "lead", "c1", "@2", "%2")}, outside},
