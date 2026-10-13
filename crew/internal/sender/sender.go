@@ -14,8 +14,9 @@ import (
 )
 
 // Format is the `tmux list-panes -a -F` format Probes.Panes runs; window options
-// resolve through it, so each line is the pane's pid and its window's stamps.
-const Format = "#{pane_pid}\x1f#{@crew_branch}\x1f#{@crew_role}\x1f#{@crew_id}"
+// resolve through it, so each line is the pane's pid, its window's stamps, and
+// the window and pane ids.
+const Format = "#{pane_pid}\x1f#{@crew_branch}\x1f#{@crew_role}\x1f#{@crew_id}\x1f#{window_id}\x1f#{pane_id}"
 
 // Probes are the reads Check makes; the zero value checks nothing.
 type Probes struct {
@@ -25,28 +26,77 @@ type Probes struct {
 	PID    int                       // the caller's own pid
 }
 
-type stamp struct{ branch, role, crew string }
+type stamp struct {
+	pid                              int
+	branch, role, crew, window, pane string
+}
 
 // Check returns "" when this caller may post a row from `from` into `crew`,
 // else the refusal reason (no "crew: <sub>:" prefix, no trailing newline).
 func Check(from, crew string, p Probes) string {
+	if reason := p.envRefusal(from); reason != "" {
+		return reason
+	}
+	s, ok := p.anchor(p.rows())
+	if !ok || s.branch == "" {
+		return ""
+	}
+	return s.refuse(from, crew, "this pane")
+}
+
+// Watch is Check for a watchdog: the --pane it watches must also be stamped for
+// `from` (when stamped at all), and sit in the caller's window when the caller
+// is anchored.
+func Watch(from, crew, pane string, p Probes) string {
+	if reason := p.envRefusal(from); reason != "" {
+		return reason
+	}
+	rows := p.rows()
+	a, anchored := p.anchor(rows)
+	anchored = anchored && a.branch != ""
+	if anchored {
+		if reason := a.refuse(from, crew, "this pane"); reason != "" {
+			return reason
+		}
+	}
+	var target stamp
+	found := false
+	for _, r := range rows {
+		if r.pane == pane {
+			target, found = r, true
+			break
+		}
+	}
+	subject := "pane " + pane
+	if anchored && (!found || target.window != a.window) {
+		return subject + " is outside this pane's window"
+	}
+	if !found || target.branch == "" {
+		return ""
+	}
+	return target.refuse(from, crew, subject)
+}
+
+func (p Probes) envRefusal(from string) string {
 	if strings.HasPrefix(from, "dispatcher:") && p.Getenv != nil &&
 		(p.Getenv("CREW_WORKER_ID") != "" || p.Getenv("CREW_ROLE_ID") != "") {
 		return "this is a worker or role session (CREW_WORKER_ID or CREW_ROLE_ID is set) and only the dispatcher posts as dispatcher:<crew>; post as your own id ($CREW_WORKER_ID for a lead, role:<branch>:<role> for a grid role)"
 	}
-	s, ok := p.anchor()
-	if !ok || s.branch == "" {
-		return ""
-	}
+	return ""
+}
+
+// refuse is the stamp rule: a stamped lead pane posts only as its branch's
+// lead, a stamped role pane only as its role id, in its window's stamped crew.
+func (s stamp) refuse(from, crew, subject string) string {
 	if s.role == "" || s.role == "lead" {
 		if !leadID(from, s.branch) {
-			return "this pane is stamped as the lead of " + s.branch + ", which posts only as worker:" + s.branch + " or worker:" + s.branch + "#s<session> ($CREW_WORKER_ID)"
+			return subject + " is stamped as the lead of " + s.branch + ", which posts only as worker:" + s.branch + " or worker:" + s.branch + "#s<session> ($CREW_WORKER_ID)"
 		}
 	} else if from != "role:"+s.branch+":"+s.role {
-		return "this pane is stamped as role:" + s.branch + ":" + s.role + ", the only id it posts as"
+		return subject + " is stamped as role:" + s.branch + ":" + s.role + ", the only id it posts as"
 	}
 	if s.crew != "" && s.crew != crew {
-		return "this pane's window is stamped for crew " + s.crew + ", not " + crew
+		return subject + "'s window is stamped for crew " + s.crew + ", not " + crew
 	}
 	return ""
 }
@@ -65,27 +115,39 @@ func leadID(from, branch string) bool {
 	return ok && !strings.Contains(sid, "#")
 }
 
-// anchor is the stamps of the nearest pane whose pid is the caller or one of
-// its ancestors.
-func (p Probes) anchor() (stamp, bool) {
-	if p.Panes == nil || p.Parent == nil {
-		return stamp{}, false
+// rows parses one list-panes read; nil when there is no tmux or the read fails.
+func (p Probes) rows() []stamp {
+	if p.Panes == nil {
+		return nil
 	}
 	out, err := p.Panes()
 	if err != nil {
-		return stamp{}, false
+		return nil
 	}
-	panes := map[int]stamp{}
+	var rows []stamp
 	for line := range strings.Lines(out) {
 		f := strings.Split(strings.TrimSuffix(line, "\n"), "\x1f")
-		if len(f) != 4 {
+		if len(f) != 6 {
 			continue
 		}
 		pid, err := strconv.Atoi(f[0])
 		if err != nil || pid <= 0 {
 			continue
 		}
-		panes[pid] = stamp{branch: f[1], role: f[2], crew: f[3]}
+		rows = append(rows, stamp{pid: pid, branch: f[1], role: f[2], crew: f[3], window: f[4], pane: f[5]})
+	}
+	return rows
+}
+
+// anchor is the stamps of the nearest pane in rows whose pid is the caller or
+// one of its ancestors.
+func (p Probes) anchor(rows []stamp) (stamp, bool) {
+	if p.Parent == nil {
+		return stamp{}, false
+	}
+	panes := map[int]stamp{}
+	for _, r := range rows {
+		panes[r.pid] = r
 	}
 	cur := p.PID
 	for range 32 {

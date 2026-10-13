@@ -402,6 +402,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			CrewID: func() string { return bus.CrewIDEnvFirst(ctx, cwd) },
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 			CrewSH: crewSH,
+			Sender: senderProbes(ctx, e.procs),
 			NewProbes: func(pane string) probe.Probes {
 				return probe.Default(probe.Env{Getenv: os.Getenv, Pane: pane, CrewSH: crewSH, Dir: paths.Common, Stderr: stderr})
 			},

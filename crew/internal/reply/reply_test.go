@@ -538,7 +538,7 @@ func TestWorkerAndRoleSessionsCannotPostAsDispatcher(t *testing.T) {
 	for name, p := range map[string]sender.Probes{
 		"worker env":   envProbes("CREW_WORKER_ID", "worker:feat/x#s1-1"),
 		"role env":     envProbes("CREW_ROLE_ID", "role:feat/x:reviewer"),
-		"stamped role": panesProbes("200\x1ffeat/x\x1freviewer\x1fc1\n"),
+		"stamped role": panesProbes("200\x1ffeat/x\x1freviewer\x1fc1\x1f@1\x1f%1\n"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			tr := setup(t)
@@ -559,7 +559,7 @@ func TestWorkerAndRoleSessionsCannotPostAsDispatcher(t *testing.T) {
 
 func TestUnstampedAnchorMayReply(t *testing.T) {
 	tr := setup(t)
-	if errs, code := tr.run(t, Options{Sender: panesProbes("200\x1f\x1f\x1f\n")}, "worker:feat/x#s1-1", "go"); code != 0 {
+	if errs, code := tr.run(t, Options{Sender: panesProbes("200\x1f\x1f\x1f\x1f@1\x1f%1\n")}, "worker:feat/x#s1-1", "go"); code != 0 {
 		t.Fatalf("code %d: %s", code, errs)
 	}
 	tr.wantRow(t, row("c1", "worker:feat/x#s1-1", "go"))
