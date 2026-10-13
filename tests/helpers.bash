@@ -137,7 +137,7 @@ plant_commondir() {
 # <key with every [^A-Za-z0-9._-] byte mapped to _>.<POSIX cksum of the raw key>,
 # for key "<crew>-<id>". crew/internal/marks.Path writes it, and marks.TestPath
 # plus TestPathMatchesShell pin the formula against real tr/cksum, so a test that
-# only needs to find the file computes it here instead of replaying bash.
+# only needs to find the file computes it here.
 marks_path() {
   local key="$2-$3"
   printf '%s/await/%s.%s' "$1" \

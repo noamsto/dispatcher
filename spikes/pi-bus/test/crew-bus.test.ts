@@ -56,10 +56,8 @@ function makeTempRepo(withWorkerTask: boolean): string {
   return dir;
 }
 
-// The spike shelled the bus CLI out through a stub so CREW_BIN stayed under
-// test control. The CLI is the `crew` entrypoint — adapters/core/crew.sh, which
-// the stub used to exec, was deleted as #821 planned — so the stub execs PATH's
-// crew.
+// The stub keeps CREW_BIN under test control; the bus CLI it stands in for is
+// whatever `crew` PATH resolves, since the library this used to exec is gone.
 function makeCrewBin(dir: string): string {
   const binPath = path.join(dir, "crew-bin.sh");
   writeFileSync(binPath, '#!/usr/bin/env bash\nexec crew "$@"\n');

@@ -62,11 +62,11 @@ teardown() {
 @test "every standalone script's _bus_append copy matches dispatch.sh's" {
   # dispatch.sh, dispatch-notify.sh and dispatch-resume.sh are separate
   # writeShellApplication builds with no shared lib to source this one-liner
-  # from (#61), so each carries a copy. Nothing else keeps them in sync, so a
-  # future fix to the `dd` invocation in one could silently fail to reach the
-  # others, quietly reopening the exact splice hazard this fixes. Byte-compare
-  # each against dispatch.sh, which sources no lib either and so is as canonical
-  # as any of them (crew.sh held a fourth copy as a pure oracle; it is gone).
+  # from (#61), so each carries a copy and nothing keeps them in sync: a fix to
+  # the `dd` invocation in one would silently fail to reach the others,
+  # reopening the splice hazard the helper exists to close. Byte-compare each
+  # against dispatch.sh, which sources no lib either and so is as canonical as
+  # any of them.
   canonical="$(grep -h '^_bus_append() {' "$ROOT/adapters/core/dispatch.sh")"
   [ -n "$canonical" ]
   for f in dispatch-notify.sh dispatch-resume.sh; do
@@ -92,7 +92,7 @@ teardown() {
   # Both files are standalone builds, so each carries its own copies of the
   # dispatcher-liveness helpers (#461). Neither is treefmt-formatted
   # (flake.nix), so shfmt cannot rewrite a copy out of sync. All five are
-  # compared: a partial list is how a copy drifts unnoticed.
+  # compared, since a partial list is how a copy drifts unnoticed.
   for fn in _pid_alive _file_mtime_s _ps_elapsed_s _pid_recycled _recorded_pid_live; do
     canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch.sh")"
     [ -n "$canonical" ]

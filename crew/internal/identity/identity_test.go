@@ -217,11 +217,10 @@ func TestPoolsHaveThirtyTwoSlots(t *testing.T) {
 	}
 }
 
-// goldenPools are the three identity pools as the crew.sh arrays held them
-// before the script was deleted (#821), which is where the Go pools came from.
-// No bash copy of a pool ships anywhere, so there is nothing left to compare
-// against: the order is what a recorded identity depends on, and a rename or a
-// reordering would silently re-point every stored codename, so it is frozen.
+// goldenPools freeze the three identity pools. No bash copy of a pool ships, so
+// nothing is left to compare against, and the order is load-bearing: a rename or
+// a reordering silently re-points every codename already stored against a
+// slot.
 var goldenPools = []struct {
 	what string
 	got  []string

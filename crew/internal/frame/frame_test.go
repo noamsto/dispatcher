@@ -197,8 +197,7 @@ func coloredFor(t *testing.T, path, text string) string {
 // carries: the contiguous run of definitions from `re_option=` through the end
 // of `_pi_idle_box`, de-indented by the two spaces that keep it inside
 // watch_role_prompts. The block is definitions and scalar assignments only, so
-// sourcing it runs nothing. It is the live bash copy the Go port is guarded
-// against; the goldenKeys predicates ship nowhere and are frozen instead.
+// sourcing it runs nothing.
 func shippedPredicates(src string) (string, bool) {
 	lines := strings.Split(src, "\n")
 	start, end := -1, -1
