@@ -496,6 +496,25 @@ func TestRunRateSweepAllOutsideRepo(t *testing.T) {
 	}
 }
 
+// Every subcommand that reads the bus refuses outside a git repo with one
+// line, whatever its arguments: the check that crew.sh's preamble used to make.
+func TestRunBusSubsRefuseOutsideRepo(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", dir)
+	e := env{getwd: func() (string, error) { return dir, nil }}
+	for _, sub := range []string{
+		"crews", "log", "report", "sessions", "roster", "identity", "inbox", "hold", "await", "watch",
+		"retro", "reply", "resolve-target", "pr-watch", "where", "stream", "roster-render", "adopt",
+		"status", "msg", "register", "deregister", "rate", "git-baseline", "reap", "stack", "nudge", "stall-watch",
+	} {
+		var stdout, stderr bytes.Buffer
+		code := run(context.Background(), []string{sub}, &stdout, &stderr, e)
+		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "crew: not in a git repo\n" {
+			t.Errorf("%s: code %d stdout %q stderr %q", sub, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
 func TestRunFleetOutsideRepo(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

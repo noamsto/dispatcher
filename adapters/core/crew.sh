@@ -469,6 +469,8 @@ _clock_now_f() {
 # that replay Go's writes through them (the unread scan reads the same file from
 # Go since #968, via crew/internal/unread). Not a bus row:
 # it never reaches `roster`, `watch` or another session's reads.
+# $dir is the caller's: the guards set it to the bus dir before replaying these.
+# shellcheck disable=SC2154
 _await_state() { # <crew> <agent> -> path
   local key="$1-$2"
   printf '%s/await/%s.%s' "$dir" "$(printf '%s' "$key" | tr -c 'A-Za-z0-9._-' '_')" "$(printf '%s' "$key" | cksum | cut -d' ' -f1)"
@@ -485,6 +487,7 @@ _await_marks() {
 
 # _await_record <crew> <agent> <msg-lines> — raise each sender's mark to the
 # newest of the given msgs. Best effort: a failed write only means redelivery.
+# shellcheck disable=SC2154
 _await_record() {
   local st tmp
   st=$(_await_state "$1" "$2")
@@ -641,35 +644,98 @@ if [ "$sub" = dash ]; then
   CREW_SELF="$0" exec "${CREW_GO_BIN:-@crewGoBin@}" dash "$@"
 fi
 
-# The repo check. --path-format=absolute so main-checkout and worktrees resolve
-# to a byte-identical path (load-bearing — see #29). Every arm below execs the
-# Go binary, which resolves the bus dir itself (bus.Locate); this `dir` is left
-# for `_await_state`, the marks-path helper the crew.bats guards replay, and no
-# arm keeps a copy of `<common>/crew/events.jsonl` any more.
-common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
-if [ -z "$common" ]; then
-  # `rate --sweep-all` walks every repo, so it is the one command that has no
-  # use for the caller's own (a cron job or a shell in $HOME has none). The Go
-  # side repeats the test (rate.WalksEveryRepo) for direct crew-go calls.
-  case "$sub $*" in
-  "rate "*--sweep-all*) ;;
-  "fleet "*) ;;
-  *)
-    echo "crew: not in a git repo" >&2
-    exit 1
-    ;;
-  esac
-fi
-dir="$common/crew"
+# stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E] [--grace S] [--stall S]
+#   [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--release S]
+#   [--no-budget] [--budget-refresh S]
+#
+# Lifetime-scoped liveness watchdog, spawned per worker by `dispatch`. The bus
+# reflects only what a worker POSTS, so a worker parked on an interactive
+# prompt, or whose turn died mid-task, is indistinguishable from one that is
+# working (#31). Seven pane detectors read one capture per tick (D6 reads the
+# bus instead, D8 the engine budget cache):
+#   D0 stalled:    static pane inside the startup --window whose frame is NOT a prompt
+#   D1 prompt:     prompt frame at the verified geometry, no meter, 2 samples
+#                  (quota: is D1's own content discriminator on the SAME
+#                  geometry — see _is_quota_prompt)
+#   D1b quota:     quota refusal frame — claude's session-limit refusal or
+#                  cursor's monthly usage limit; normal status bar, no
+#                  option-select prompt, 2 samples (see _is_quota_session_limit
+#                  and _is_quota_cursor_limit)
+#   D2 turn-stall: meter clock advancing, token string static, no live subagent row
+#   D3 quiet:      byte-identical pane for --idle
+#   D4 load:       host 1m load above the core count for --load seconds —
+#                  engine-independent, and it never escalates
+#   D5 stalled:    pane still a bare shell --launch seconds in and no engine
+#                  ever seen there (`stalled: launch-not-started`, #342);
+#                  clears when the engine appears
+#   D7 runaway:    a model sentinel token (`<｜end▁of▁thinking｜>`, `<|im_end|>`,
+#                  …) leaked into assistant prose — outside any tool-output
+#                  block — for --runaway-hits samples while the output-token
+#                  count grew by --runaway-tokens (#650). claude and pi only.
+#                  Never escalates: the turn is unrecoverable but the worktree
+#                  usually isn't, so verify the pane, then kill and re-dispatch.
+#   D6 unread:     lead `working` while a role:<branch>:* or dispatcher:<crew>
+#                  msg to its session sits past the delivered mark for
+#                  --unread (#330); clears once delivered. Repainting panes
+#                  never trip D2/D3, so this reads the bus (bounded tail,
+#                  4-tick cadence). Never escalates.
+#                  A sessioned claude/pi watchdog first auto-nudges an idle
+#                  lead past an overdue dispatcher directive (crew/internal/nudge,
+#                  once per newest directive); --no-nudge turns it off.
+#   D9 truncated:/provider-error:
+#                  a pi lead idle at an empty box under pi's `Response was
+#                  truncated before completion.` or `Error: ...` line gets one
+#                  constant continue line after two samples (typed through
+#                  crew/internal/nudge, the same gate the D6 auto-nudge runs:
+#                  lead only, pi panes only, refused on a
+#                  live turn, unsent input or a dialog, once per episode) and
+#                  posts `working "truncated: auto-continued - pane %N"` /
+#                  `provider-error: ...`; `blocked "... not resumed"` if the
+#                  frame persists. Never escalates to dead:.
+#   D8 budget:     the engine has a quota window at >=95% that has not reset,
+#                  or its limit_reached holds, per refresh-budget's
+#                  engine-budget.json read through the launch gate's own
+#                  predicate (budget-gate.sh). The worker keeps running; the
+#                  dispatcher decides. Clears only on a fresh cache that reads
+#                  clear — a stale or blind one holds. Never escalates.
+#                  --no-budget turns it off (dispatch's --ignore-budget).
+# Every detector posts `blocked` — recoverable, answerable, and cheap to be
+# wrong about. Only quiet:/turn-stall: episodes escalate to `failed`, and only
+# after a second evidence check --dead later; a prompt still on screen is
+# evidence that nobody answered, not that the worker died, so it never
+# escalates (quota: never escalates either — same reasoning, opposite
+# recovery: stop dispatching, don't answer). quiet:'s escalation additionally
+# requires the pane's engine process to be gone (see _pane_engine_alive);
+# turn-stall:'s does not. Engine signatures are the data table below: claude
+# only, because a guessed signature is a false-positive generator.
+# CREW_STALL_SAMPLE_CMD overrides the sampler (stdout = pane text, exit code =
+# pane liveness) and CREW_STALL_PROC_CMD overrides the engine-liveness check
+# (see _pane_engine_alive), so the loop is testable without tmux.
+# Finished-worker release: once the worker's own latest word is `done`/`failed`
+# and --release seconds (default 300, 0 = off) have passed, release its
+# window through reap.ReleaseWindows in process — no stream or reap needed. Claude
+# panes must also show a provably idle frame on two consecutive ticks (a
+# live turn, prompt, unsent input or background shell keeps the window);
+# other engines have no idle signature, so their frame must be unchanged for
+# --release and show no prompt. A watchdog-posted `failed` (hung pane) is never
+# released here — it waits for --max-life or a reap. The worktree is never touched.
+# CREW_STALL_COLOR_CMD overrides the colored capture like CREW_STALL_SAMPLE_CMD.
+# D0/D3 stay silent (claude only) while a finished turn waits on a background
+# shell, for at most --bg-wait (default 2h) of unchanged frame.
+# role:<branch>:<role> selects prompt-only mode: a parked role pane
+# legitimately sits static, so only D1/D1b (claude) and D8 run; D0/D2-D7 and the dead:
+# escalation are off, and a role-mode-only check exits the watch once the
+# pane's engine returns to a bare shell.
+#
+# The loop runs in Go (crew/internal/stall, docs/crew-go-port.md); the comments
+# above document the behaviour it implements.
 
 case "$sub" in
 nudge)
-  # Ported to Go (crew/internal/nudge, docs/crew-go-port.md). It execs directly:
-  # the one helper this arm used to export CREW_SH for — `_unread_scan`, shared
-  # with stall-watch — moved to Go with #968 (crew/internal/unread).
+  # Ported to Go (crew/internal/nudge, docs/crew-go-port.md).
   exec "${CREW_GO_BIN:-@crewGoBin@}" nudge "$@"
   ;;
-crews | log | report | sessions | roster | identity | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate | git-baseline | reap | stack)
+crews | log | report | sessions | roster | identity | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate | git-baseline | reap | stack | stall-watch)
   # Ported to Go (crew/, docs/crew-go-port.md). CREW_GO_BIN is the
   # raw-source override; builds bake @crewGoBin@. CREW_SELF is this script's own
   # path — the `$0` the bash `stream` arm re-entered for its inner `watch`, its
@@ -679,135 +745,7 @@ crews | log | report | sessions | roster | identity | inbox | hold | await | wat
   # that when they differ, so a home-manager switch reaches a running daemon
   # instead of waiting for the next dispatch. The script's path, not the
   # binary's, because a switch replaces the script and reads the binary fresh.
-  export CREW_SELF="$0"
-  exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
-  ;;
-stall-watch)
-  # stall-watch <worker-id|branch|role:branch:role> --pane <id> [--engine E] [--grace S] [--stall S]
-  #   [--window S] [--interval S] [--idle S] [--dead S] [--max-life S] [--load S] [--release S]
-  #   [--no-budget] [--budget-refresh S]
-  #
-  # Lifetime-scoped liveness watchdog, spawned per worker by `dispatch`. The bus
-  # reflects only what a worker POSTS, so a worker parked on an interactive
-  # prompt, or whose turn died mid-task, is indistinguishable from one that is
-  # working (#31). Seven pane detectors read one capture per tick (D6 reads the
-  # bus instead, D8 the engine budget cache):
-  #   D0 stalled:    static pane inside the startup --window whose frame is NOT a prompt
-  #   D1 prompt:     prompt frame at the verified geometry, no meter, 2 samples
-  #                  (quota: is D1's own content discriminator on the SAME
-  #                  geometry — see _is_quota_prompt)
-  #   D1b quota:     quota refusal frame — claude's session-limit refusal or
-  #                  cursor's monthly usage limit; normal status bar, no
-  #                  option-select prompt, 2 samples (see _is_quota_session_limit
-  #                  and _is_quota_cursor_limit)
-  #   D2 turn-stall: meter clock advancing, token string static, no live subagent row
-  #   D3 quiet:      byte-identical pane for --idle
-  #   D4 load:       host 1m load above the core count for --load seconds —
-  #                  engine-independent, and it never escalates
-  #   D5 stalled:    pane still a bare shell --launch seconds in and no engine
-  #                  ever seen there (`stalled: launch-not-started`, #342);
-  #                  clears when the engine appears
-  #   D7 runaway:    a model sentinel token (`<｜end▁of▁thinking｜>`, `<|im_end|>`,
-  #                  …) leaked into assistant prose — outside any tool-output
-  #                  block — for --runaway-hits samples while the output-token
-  #                  count grew by --runaway-tokens (#650). claude and pi only.
-  #                  Never escalates: the turn is unrecoverable but the worktree
-  #                  usually isn't, so verify the pane, then kill and re-dispatch.
-  #   D6 unread:     lead `working` while a role:<branch>:* or dispatcher:<crew>
-  #                  msg to its session sits past the delivered mark for
-  #                  --unread (#330); clears once delivered. Repainting panes
-  #                  never trip D2/D3, so this reads the bus (bounded tail,
-  #                  4-tick cadence). Never escalates.
-  #                  A sessioned claude/pi watchdog first auto-nudges an idle
-  #                  lead past an overdue dispatcher directive (crew/internal/nudge,
-  #                  once per newest directive); --no-nudge turns it off.
-  #   D9 truncated:/provider-error:
-  #                  a pi lead idle at an empty box under pi's `Response was
-  #                  truncated before completion.` or `Error: ...` line gets one
-  #                  constant continue line after two samples (typed through
-  #                  crew/internal/nudge, the same gate the D6 auto-nudge runs:
-  #                  lead only, pi panes only, refused on a
-  #                  live turn, unsent input or a dialog, once per episode) and
-  #                  posts `working "truncated: auto-continued - pane %N"` /
-  #                  `provider-error: ...`; `blocked "... not resumed"` if the
-  #                  frame persists. Never escalates to dead:.
-  #   D8 budget:     the engine has a quota window at >=95% that has not reset,
-  #                  or its limit_reached holds, per refresh-budget's
-  #                  engine-budget.json read through the launch gate's own
-  #                  predicate (budget-gate.sh). The worker keeps running; the
-  #                  dispatcher decides. Clears only on a fresh cache that reads
-  #                  clear — a stale or blind one holds. Never escalates.
-  #                  --no-budget turns it off (dispatch's --ignore-budget).
-  # Every detector posts `blocked` — recoverable, answerable, and cheap to be
-  # wrong about. Only quiet:/turn-stall: episodes escalate to `failed`, and only
-  # after a second evidence check --dead later; a prompt still on screen is
-  # evidence that nobody answered, not that the worker died, so it never
-  # escalates (quota: never escalates either — same reasoning, opposite
-  # recovery: stop dispatching, don't answer). quiet:'s escalation additionally
-  # requires the pane's engine process to be gone (see _pane_engine_alive);
-  # turn-stall:'s does not. Engine signatures are the data table below: claude
-  # only, because a guessed signature is a false-positive generator.
-  # CREW_STALL_SAMPLE_CMD overrides the sampler (stdout = pane text, exit code =
-  # pane liveness) and CREW_STALL_PROC_CMD overrides the engine-liveness check
-  # (see _pane_engine_alive), so the loop is testable without tmux.
-  # Finished-worker release: once the worker's own latest word is `done`/`failed`
-  # and --release seconds (default 300, 0 = off) have passed, release its
-  # window through reap.ReleaseWindows in process — no stream or reap needed. Claude
-  # panes must also show a provably idle frame on two consecutive ticks (a
-  # live turn, prompt, unsent input or background shell keeps the window);
-  # other engines have no idle signature, so their frame must be unchanged for
-  # --release and show no prompt. A watchdog-posted `failed` (hung pane) is never
-  # released here — it waits for --max-life or a reap. The worktree is never touched.
-  # CREW_STALL_COLOR_CMD overrides the colored capture like CREW_STALL_SAMPLE_CMD.
-  # D0/D3 stay silent (claude only) while a finished turn waits on a background
-  # shell, for at most --bg-wait (default 2h) of unchanged frame.
-  # role:<branch>:<role> selects prompt-only mode: a parked role pane
-  # legitimately sits static, so only D1/D1b (claude) and D8 run; D0/D2-D7 and the dead:
-  # escalation are off, and a role-mode-only check exits the watch once the
-  # pane's engine returns to a bare shell.
-  #
-  # The loop runs in Go (crew/internal/stall, docs/crew-go-port.md); the comments
-  # above document the behaviour it implements. `--sh <op>` is the Go side's
-  # call-out into the bash helpers that stay here: budget (windows|limit) and
-  # local-model. The finished-worker release runs in process (reap.ReleaseWindows).
-  # Every op exits its status + 10, so a failure before or around it — the
-  # preamble's exit 1, a usage refusal, 127, a signal — never reads as a verdict.
-  if [ "${1:-}" = --sh ]; then
-    op="${2:-}"
-    shift 2 || true
-    rc=0
-    case "$op" in
-    budget)
-      # shellcheck source=/dev/null
-      . "${BUDGET_GATE_LIB:-@budgetGateLib@}"
-      case "${1:-}" in
-      windows)
-        shift
-        _budget_windows "$@" || rc=$?
-        ;;
-      limit)
-        shift
-        _budget_limit "$@" || rc=$?
-        ;;
-      *)
-        echo "crew: stall-watch: unknown --sh budget predicate '${1:-}'" >&2
-        exit 1
-        ;;
-      esac
-      ;;
-    local-model)
-      # shellcheck source=/dev/null
-      . "${LOCAL_MODELS_LIB:-@localModelsLib@}"
-      _local_entry "$("${DISPATCH_CONFIG_BIN:-dispatch-config}" 2>/dev/null)" "$1" 2>/dev/null || true
-      ;;
-    *)
-      echo "crew: stall-watch: unknown --sh op '$op'" >&2
-      exit 1
-      ;;
-    esac
-    exit $((rc + 10))
-  fi
-  CREW_SH="$(readlink -f "$0")" exec "${CREW_GO_BIN:-@crewGoBin@}" stall-watch "$@"
+  CREW_SELF="$0" exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
   ;;
 *)
   # Bare `crew` and an unknown subcommand: the grouped list on stderr, not the

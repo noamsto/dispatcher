@@ -138,7 +138,6 @@ type harness struct {
 	t      *testing.T
 	f      *fake
 	crew   string
-	crewSH string
 	paths  bus.Paths
 	clock  clock.Clock
 	seed   int64
@@ -154,12 +153,8 @@ func newHarness(t *testing.T, f *fake) *harness {
 	if err := os.WriteFile(clockFile, []byte(strconv.FormatInt(seed, 10)+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	crewSH := dir + "/crew.sh"
-	if err := os.WriteFile(crewSH, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	return &harness{
-		t: t, f: f, crew: "c1", seed: seed, ctx: t.Context(), crewSH: crewSH,
+		t: t, f: f, crew: "c1", seed: seed, ctx: t.Context(),
 		paths: bus.Paths{Common: dir, Dir: dir + "/crew", Log: dir + "/crew/events.jsonl"},
 		clock: clock.Clock{Now: time.Now, CrewClock: clockFile},
 	}
@@ -169,7 +164,6 @@ func (h *harness) options() Options {
 	return Options{
 		CrewID: func() string { return h.crew },
 		Clock:  h.clock,
-		CrewSH: h.crewSH,
 		Unread: h.f.unreadSeam(),
 		NewProbes: func(pane string) probe.Probes {
 			h.f.newProbes++

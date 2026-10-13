@@ -12,13 +12,14 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/drift"
 )
 
 func envOf(m map[string]string, stderr *bytes.Buffer) Env {
 	e := Env{
 		Getenv: func(k string) string { return m[k] },
 		Pane:   "%7",
-		CrewSH: "/nonexistent/crew.sh",
 	}
 	if stderr != nil {
 		e.Stderr = stderr
@@ -347,27 +348,32 @@ func TestSetPaneOption(t *testing.T) {
 	})
 }
 
-// shScript prints its argv, its shell options and its cwd, warns on stderr and
-// exits 3.
-const shScript = `printf '%s\n' "$*"; printf 'opts=%s\n' "$SHELLOPTS"; pwd; printf '\n'; echo warn >&2; exit 3`
-
-// A raw crew.sh source is not executable: it runs under bash with crew.sh's
-// writeShellApplication options, from the repo's git common dir.
-func TestSh(t *testing.T) {
-	crewSH := filepath.Join(t.TempDir(), "crew.sh")
-	if err := os.WriteFile(crewSH, []byte(shScript), 0o644); err != nil {
+// writeLib writes a stub lib defining the function the op calls.
+func writeLib(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "lib.sh")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return path
+}
+
+// The lib's function runs under bash -euo pipefail from Dir, its argv after the
+// predicate, and its status leaves as status + ShOffset.
+func TestSh(t *testing.T) {
+	lib := writeLib(t, `_budget_windows() {
+  printf '%s\n' "$*"; printf 'opts=%s\n' "$SHELLOPTS"; pwd; printf '\n'; echo warn >&2; return 3
+}`)
 	var stderr bytes.Buffer
 	e := envOf(nil, &stderr)
-	e.CrewSH = crewSH
+	e.BudgetLib = lib
 	e.Dir = t.TempDir()
-	out, rc := Default(e).Sh(context.Background(), "budget", "feat/x", "-", "done", "1700000000000", "30")
-	if rc != 3 {
-		t.Errorf("rc = %d, want 3", rc)
+	out, rc := Default(e).Sh(context.Background(), "budget", "windows", "cache.json", "claude", "1700000000")
+	if rc != 3+ShOffset {
+		t.Errorf("rc = %d, want %d", rc, 3+ShOffset)
 	}
 	lines := strings.Split(out, "\n")
-	if len(lines) != 3 || lines[0] != "stall-watch --sh budget feat/x - done 1700000000000 30" || lines[2] != e.Dir {
+	if len(lines) != 3 || lines[0] != "cache.json claude 1700000000" || lines[2] != e.Dir {
 		t.Fatalf("out = %q, want the argv, opts and cwd lines, trailing newlines stripped", out)
 	}
 	for _, opt := range []string{"errexit", "nounset", "pipefail"} {
@@ -380,43 +386,120 @@ func TestSh(t *testing.T) {
 	}
 }
 
-// The Nix-built crew is executable and carries its own pinned interpreter and
-// options, so it runs as is: no bash wrapper adds errexit here.
-func TestShExecutable(t *testing.T) {
-	crewSH := filepath.Join(t.TempDir(), "crew")
-	if err := os.WriteFile(crewSH, []byte(shebang(t)+shScript), 0o755); err != nil {
+func TestShLocalModel(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "dispatch-config")
+	if err := os.WriteFile(bin, []byte(shebang(t)+"echo SETTINGS\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("DISPATCH_CONFIG_BIN", bin)
 	e := envOf(nil, nil)
-	e.CrewSH = crewSH
-	e.Dir = t.TempDir()
-	t.Setenv("PATH", t.TempDir())
-	out, rc := Default(e).Sh(context.Background(), "budget", "feat/x")
-	lines := strings.Split(out, "\n")
-	if rc != 3 || len(lines) != 3 || lines[0] != "stall-watch --sh budget feat/x" || lines[2] != e.Dir {
-		t.Fatalf("Sh = %q, %d; want the argv and cwd lines, 3", out, rc)
+	e.LocalModelsLib = writeLib(t, `_local_entry() { printf 'entry:%s:%s' "$1" "$2"; }`)
+	out, rc := Default(e).Sh(context.Background(), "local-model", "qwen")
+	if rc != ShOffset || out != "entry:SETTINGS:qwen" {
+		t.Errorf("Sh = %q, %d; want the entry, %d", out, rc, ShOffset)
 	}
-	if strings.Contains(lines[1], "errexit") {
-		t.Errorf("options %q: ran under a bash -e wrapper", lines[1])
+}
+
+// Whatever keeps the helper from running must never decode as a verdict.
+func TestShRefusals(t *testing.T) {
+	lib := writeLib(t, `_budget_windows() { :; }`)
+	for _, tc := range []struct {
+		name, op, lib, arg, msg string
+	}{
+		{"unknown predicate", "budget", lib, "bogus", "crew: stall-watch: unknown --sh budget predicate 'bogus'\n"},
+		{"unknown op", "bogus", lib, "x", "crew: stall-watch: unknown --sh op 'bogus'\n"},
+		{"unset budget lib", "budget", "", "windows", ""},
+		{"missing local-models lib", "local-model", "/nonexistent/lib.sh", "m", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			e := envOf(nil, &stderr)
+			e.BudgetLib = tc.lib
+			if tc.op == "local-model" {
+				e.LocalModelsLib = tc.lib
+			}
+			_, rc := Default(e).Sh(context.Background(), tc.op, tc.arg)
+			if _, ok := ShVerdict(rc); ok {
+				t.Errorf("rc = %d decodes as a verdict", rc)
+			}
+			if tc.msg != "" && stderr.String() != tc.msg {
+				t.Errorf("stderr = %q, want %q", stderr.String(), tc.msg)
+			}
+		})
 	}
 }
 
 func TestShUnstartable(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	if _, rc := Default(envOf(nil, nil)).Sh(context.Background(), "x"); rc != -1 {
+	if _, rc := Default(envOf(nil, nil)).Sh(context.Background(), "budget", "windows"); rc != -1 {
 		t.Errorf("rc = %d, want -1 for a child that never started", rc)
 	}
 }
 
 func TestShKilledBySignal(t *testing.T) {
-	crewSH := filepath.Join(t.TempDir(), "crew.sh")
-	if err := os.WriteFile(crewSH, []byte(`kill -KILL $$`), 0o644); err != nil {
+	e := envOf(nil, nil)
+	e.BudgetLib = writeLib(t, `kill -KILL $$`)
+	if _, rc := Default(e).Sh(context.Background(), "budget", "windows"); rc != -1 {
+		t.Errorf("rc = %d, want -1 for a killed child", rc)
+	}
+}
+
+func realLib(t *testing.T, name string) string {
+	t.Helper()
+	path := "../../../../adapters/core/" + name
+	if _, err := os.Stat(path); err != nil {
+		drift.Missing(t, path, err)
+	}
+	return path
+}
+
+// The libs dispatch.sh shares, run through the probe as stall-watch does.
+func TestShRealBudgetGate(t *testing.T) {
+	e := envOf(nil, nil)
+	e.BudgetLib = realLib(t, "budget-gate.sh")
+	cache := filepath.Join(t.TempDir(), "engine-budget.json")
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(cache, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sh := func(pred string) (string, int) {
+		out, rc := Default(e).Sh(context.Background(), "budget", pred, cache, "claude", "1700000000")
+		return out, rc
+	}
+	write(`{"fetched_epoch":1700000000,"engines":{"claude":{"windows":{"five_hour":{"used_pct":97,"resets_at":null}}}}}`)
+	if out, rc := sh("windows"); rc != ShOffset || out != "five_hour\t97\t\t" {
+		t.Errorf("windows over 95%% = %q, %d; want the row, %d", out, rc, ShOffset)
+	}
+	write(`{"fetched_epoch":1700000000,"engines":{"claude":{"windows":{"five_hour":{"used_pct":10,"resets_at":null}}}}}`)
+	if out, rc := sh("windows"); rc != 1+ShOffset || out != "" {
+		t.Errorf("windows clear = %q, %d; want nothing, %d", out, rc, 1+ShOffset)
+	}
+	if _, rc := sh("limit"); rc != 1+ShOffset {
+		t.Errorf("limit clear rc = %d, want %d", rc, 1+ShOffset)
+	}
+	write(`{"fetched_epoch":1,"engines":{"claude":{"windows":{}}}}`)
+	if _, rc := sh("windows"); rc != 2+ShOffset {
+		t.Errorf("stale cache rc = %d, want %d", rc, 2+ShOffset)
+	}
+}
+
+func TestShRealLocalModels(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "dispatch-config")
+	settings := `{"localModels":{"qwen":{"maxConcurrent":2}}}`
+	if err := os.WriteFile(bin, []byte(shebang(t)+"echo '"+settings+"'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("DISPATCH_CONFIG_BIN", bin)
 	e := envOf(nil, nil)
-	e.CrewSH = crewSH
-	if _, rc := Default(e).Sh(context.Background(), "x"); rc != -1 {
-		t.Errorf("rc = %d, want -1 for a killed child", rc)
+	e.LocalModelsLib = realLib(t, "local-models.sh")
+	out, rc := Default(e).Sh(context.Background(), "local-model", "qwen")
+	if rc != ShOffset || !strings.Contains(out, `"maxConcurrent":2`) {
+		t.Errorf("known model = %q, %d; want its entry, %d", out, rc, ShOffset)
+	}
+	if out, rc := Default(e).Sh(context.Background(), "local-model", "other"); rc != ShOffset || out != "" {
+		t.Errorf("unknown model = %q, %d; want nothing, %d", out, rc, ShOffset)
 	}
 }
 

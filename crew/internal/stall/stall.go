@@ -1,9 +1,10 @@
 // Package stall is `crew stall-watch`, the per-worker liveness watchdog that
 // `dispatch` spawns next to each pane, ported from the arm of the same name in
-// crew.sh. That arm's header comment still documents the detectors, the
-// escalation rules and the test seams; the arm itself now only delegates here
-// and answers the `--sh` call-outs into the bash helpers that stay. The
-// finished-worker release runs in process (Options.Release).
+// crew.sh. That script's header comment still documents the detectors, the
+// escalation rules and the test seams; the script itself only execs here. The
+// budget verdict and the local-model check call into the bash libs dispatch.sh
+// shares (probe.Env), and the finished-worker release runs in process
+// (Options.Release).
 //
 // One loop samples the pane every --interval and runs the detectors in the
 // arm's order. Every bus write goes through post, which re-reads the bus first
@@ -17,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
@@ -45,7 +45,6 @@ type Options struct {
 	Release    func(ctx context.Context, branch, session, state string, tsMS, grace int64) (int, error)
 	BudgetFile string        // ${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json
 	PID        int           // lock owner ($$)
-	CrewSH     string        // $CREW_SH: the crew.sh holding the --sh helpers
 	Sender     sender.Probes // the sender check's reads; zero checks nothing
 }
 
@@ -99,15 +98,6 @@ func Run(ctx context.Context, argv []string, paths bus.Paths, stderr io.Writer, 
 		_, _ = fmt.Fprintf(stderr, "crew: stall-watch: refusing sender '%s' on pane %s: %s\n", cfg.fromID, cfg.pane, reason)
 		return 1
 	}
-	// The bash helpers the watch still reaches are D8's budget verdict and the pi
-	// local-model check (D6's unread scan moved in process with #968, the release
-	// with #997); they are reached through CREW_SH, so without it
-	// they fail with nothing on the bus. The crew wrapper always exports it:
-	// this is a direct crew-go call or a script removed mid-deploy.
-	if err := crewSHError(o.CrewSH); err != nil {
-		_, _ = fmt.Fprintln(stderr, err)
-		return 1
-	}
 	p := o.NewProbes(cfg.pane)
 	// One second of slack: the clock truncates to seconds while rows carry ms,
 	// so a status the launcher posted just before this start still counts.
@@ -159,19 +149,6 @@ func (w *watch) decideBudget(ctx context.Context) bool {
 		return !ok || out == ""
 	}
 	return false
-}
-
-// crewSHError is Run's precondition: an unset CREW_SH, or one pointing at
-// nothing a helper can run — a directory, or a path unlinked mid-watch.
-func crewSHError(path string) error {
-	if path == "" {
-		return errors.New("crew: stall-watch: CREW_SH is unset; run through the crew wrapper")
-	}
-	st, err := os.Stat(path)
-	if err != nil || !st.Mode().IsRegular() {
-		return fmt.Errorf("crew: stall-watch: CREW_SH '%s' is not a file", path)
-	}
-	return nil
 }
 
 // run is the arm's main loop. It only ever returns an exitCode, or the error
