@@ -574,12 +574,62 @@ from, and `CREW_SELF` must name the entry a switch repoints, not the store path 
 wrapper execs. `crew-go` remains its own package (`worktree-git.sh` bakes it, the
 tests build it).
 
-Routing lives in `main.go`: the subcommand switch, then `routeHelp` for `--help`
-anywhere in the argv and `crew help <sub> [<action>]`, and a default arm that prints
-the grouped list to **stderr** and exits 1 — the script's `*)` arm, byte for byte
+Routing lives in `main.go`: `routeHelp` for `--help` anywhere in the argv and
+`crew help <sub> [<action>]`, then the kong grammar (`main.go`'s `subcommands`
+literal) that selects the subcommand, and an input kong does not select prints the
+grouped list to **stderr** and exits 1 — the script's `*)` arm, byte for byte
 (`scripts/help-parity.sh` covers the bare and unknown cases). There is no bash
-`case` left to add an arm to; a new subcommand is a `case` in the switch plus its
+`case` left to add an arm to; a new subcommand is a name in that literal plus its
 help entry, and `tests/crew.bats`'s `_crew_cli_subs` reads the list from `main.go`.
+
+### kong, the root parser (#862)
+
+`main.go` builds one kong parser over `os.Args[1:]`. The four subcommands it has
+converted — `id`, `new`, `engine-cmd`, `occupants` — are typed commands whose
+bound `Args` is what their packages parse; every other name is a dynamic command
+sharing one `passthrough:""` capture, so kong accepts the word and stops. The
+first slice converts only the subcommands whose whole argv is "a list of words,
+the first of which may be data", and the rules below are what the rest of #862
+converts against.
+
+**Help stays embedded.** `routeHelp` runs first, and `kong.NoDefaultHelp()`,
+`kong.Writers(io.Discard, io.Discard)` and a do-nothing `kong.Exit` mean kong can
+neither print a screen nor end the process. `helpTexts` is still the source of
+every screen, which is what `scripts/help-parity.sh` proves.
+
+**An unconverted subcommand parses the raw tail, not kong's capture.** The
+capture is not verbatim: kong splits the first word after a command name at `=`,
+so `crew inbox --since=abc` — a recipient that matches no message — would arrive
+as `--since abc` and become a --since filter and a refusal. `parseCrew` returns
+the words after the command name for exactly that reason;
+`TestParseCrewSplitsLeadingEquals` pins the measurement and
+`TestRunPassthroughArgvReachesItsArm` pins the arms' answers, `--` and flag-shaped
+detail text included. A subcommand takes its own bound fields only once its table
+shows the split cannot change its answer: `engine-cmd` matches no engine name on
+either half of `--pane=x`, and `occupants` matches no worktree path.
+
+**A parse error is the grouped list.** A name kong does not select — no words at
+all, `bogus`, a flag where a name belongs — is answered by `run` with
+`entry.RunHelp(nil, stderr, …)` and exit 1, and none of kong's own text reaches
+the caller. The one input kong selects and the switch never admitted is a leading
+`--`: kong swallows the terminator and matches the word after it, so
+`crew -- status w1 working` would reach no arm and exit 0 silently. `parseCrew`
+refuses any first word that is not an admitted name, which is that refusal and
+exit 1.
+
+**Flags are the part still gated.** kong binds `--flag=value`, reads flags in any
+position, and reports its own first grammar error; the arms refused
+`--flag=value`, read the word after a flag as its value only after the flag's own
+word, and printed their leftmost refusal. Measured against the base build, that
+is the difference between refusing `crew where --crew=x nova` and answering it,
+and between `one target only` and `unknown flag '--bogus'` for
+`crew where nova iris --bogus`; and `crew identity x --hash` reads `--hash` as the
+crew argument while `crew identity --hash=x` is a branch name today. So `where`
+and `identity` keep their own parsing, and flag-bearing subcommands convert only
+once #862's owner decides whether `--flag=value` becomes an accepted spelling.
+`kong.WithHyphenPrefixedParameters(true)` would be part of that answer and not all
+of it: it makes `--crew --bogus` a value rather than a refusal, which is what the
+arms did, but it does not restore the `=` refusal or the leftmost-refusal order.
 
 `fleet` and `rate --sweep-all` need no repo, so the preamble's not-in-a-repo
 refusal lets them through — and both ask the same question twice: the script with
