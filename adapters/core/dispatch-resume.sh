@@ -1623,16 +1623,19 @@ _args_have() {
 # worktree.
 _rearm_role_panes() {
   local role_re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
-  local bad p role exited cmd r_agent delivery line snapshot="" have_ps="" watched stalled
+  local bad p role exited cmd path r_agent delivery line snapshot="" have_ps="" watched stalled
   local -a flags
   [ -f "$rj" ] && [ ! -L "$rj" ] || return 0
   if bad="$(_artifacts_dir_bad "$branch")"; then
     echo "dispatch resume: not re-arming role panes — $bad is a symlink or not a directory" >&2
     return 0
   fi
-  while IFS=$'\x1f' read -r p role exited cmd; do
+  while IFS=$'\x1f' read -r p role exited cmd path; do
     [ -n "$p" ] || continue
     { [ -z "$role" ] || [ "$role" = lead ] || [ "$exited" = 1 ]; } && continue
+    # A genuine grid's role panes sit in this worktree. Window ownership rests
+    # partly on the worker-writable agent_name header; the pane's own path does not.
+    [ "$path" = "$wt_path" ] || continue
     r_agent=""
     [[ $role =~ $role_re ]] && r_agent="$(jq -r --arg r "$role" '.[$r].agent // empty' "$rj" 2>/dev/null || true)"
     case "$r_agent" in
@@ -1673,7 +1676,7 @@ _rearm_role_panes() {
     [ -z "$ignore_budget" ] || flags+=(--no-budget)
     (CREW_ID="$crew_id" nohup crew stall-watch "role:$branch:$role" --pane "$p" --engine "$r_agent" "${flags[@]}" >/dev/null 2>&1 &)
   done <<PANES
-$(tmux list-panes -t "$win" -F '#{pane_id}'$'\x1f''#{@crew_role}'$'\x1f''#{@crew_exited}'$'\x1f''#{pane_current_command}' 2>/dev/null || true)
+$(tmux list-panes -t "$win" -F '#{pane_id}'$'\x1f''#{@crew_role}'$'\x1f''#{@crew_exited}'$'\x1f''#{pane_current_command}'$'\x1f''#{pane_current_path}' 2>/dev/null || true)
 PANES
 }
 # Resume re-stamps @crew_branch on whatever window it lands in, so only a window

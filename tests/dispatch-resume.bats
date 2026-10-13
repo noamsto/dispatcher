@@ -2764,16 +2764,16 @@ seed_dispatch_row() {
 
 # Grid window @4 as tmux-remux restores it. STUB_PANES_A feeds `list-panes -a`
 # (window, pane, path, cmd, name, role, branch) and STUB_PANES_W feeds
-# `list-panes -t @4` (pane, role, exited, cmd), one \x1f-joined row per line.
+# `list-panes -t @4` (pane, role, exited, cmd, path), one \x1f-joined row per line.
 stub_tmux_grid() {
   local u=$'\x1f'
   export STUB_PANES_A STUB_PANES_W
   STUB_PANES_A="@4${u}%8${u}$WT${u}fish${u}iris${u}lead${u}
 @4${u}%9${u}$WT${u}claude${u}iris${u}reviewer${u}
 @4${u}%10${u}$WT${u}pi${u}iris${u}plan-critic${u}"
-  STUB_PANES_W="%8${u}lead${u}${u}fish
-%9${u}reviewer${u}${u}claude
-%10${u}plan-critic${u}${u}pi"
+  STUB_PANES_W="%8${u}lead${u}${u}fish${u}$WT
+%9${u}reviewer${u}${u}claude${u}$WT
+%10${u}plan-critic${u}${u}pi${u}$WT"
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
@@ -2829,7 +2829,7 @@ setup_grid() {
 @test "resume leaves live role watchers alone and arms only the unwatched pane (#730)" {
   setup_grid
   local u=$'\x1f'
-  STUB_PANES_W+=$'\n'"%11${u}spec-critic${u}${u}claude"
+  STUB_PANES_W+=$'\n'"%11${u}spec-critic${u}${u}claude${u}$WT"
   export STUB_PS="dispatch --role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing
 crew stall-watch role:feat/7-a-thing:reviewer --pane %9 --engine claude
 dispatch --role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing
@@ -2847,15 +2847,16 @@ crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
 @test "a bare role pane is marked exited, not watched (#730)" {
   setup_grid
   local u=$'\x1f'
-  STUB_PANES_W="%8${u}lead${u}${u}fish
-%9${u}reviewer${u}${u}fish
-%11${u}spec-critic${u}${u}claude"
+  STUB_PANES_W="%8${u}lead${u}${u}fish${u}$WT
+%9${u}reviewer${u}${u}fish${u}$WT
+%11${u}spec-critic${u}${u}claude${u}$WT"
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
   grep -qF 'set-option -p -t %9 @crew_exited 1' "$STUB_LOG"
   grep -qF 'set-option -p -t %9 @crew_state exited' "$STUB_LOG"
   wait_for_log '^--role-watch spec-critic --pane %11 '
+  run ! grep -qF 'set-option -p -t %9 @crew_delivery' "$STUB_LOG"
   run ! grep -q -e '--role-watch reviewer' "$STUB_LOG"
 }
 
@@ -2886,16 +2887,30 @@ $STUB_PANES_A"
 @test "unlisted-role and exited role panes are not re-armed (#730)" {
   setup_grid
   local u=$'\x1f'
-  STUB_PANES_W="%8${u}lead${u}${u}fish
-%9${u}ghost${u}${u}claude
-%10${u}plan-critic${u}1${u}pi
-%11${u}spec-critic${u}${u}claude"
+  STUB_PANES_W="%8${u}lead${u}${u}fish${u}$WT
+%9${u}ghost${u}${u}claude${u}$WT
+%10${u}plan-critic${u}1${u}pi${u}$WT
+%11${u}spec-critic${u}${u}claude${u}$WT"
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
   wait_for_log '^--role-watch spec-critic --pane %11 '
   run ! grep -q -e '--role-watch reviewer' -e '--role-watch ghost' -e '--role-watch plan-critic' "$STUB_LOG"
   run ! grep -q -e 'stall-watch role:feat/7-a-thing:ghost' -e 'stall-watch role:feat/7-a-thing:plan-critic' "$STUB_LOG"
+}
+
+@test "a role pane outside the worktree is not re-armed (#730)" {
+  setup_grid
+  local u=$'\x1f'
+  STUB_PANES_W="%8${u}lead${u}${u}fish${u}$WT
+%11${u}spec-critic${u}${u}claude${u}$WT
+%12${u}reviewer${u}${u}claude${u}/elsewhere"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log '^--role-watch spec-critic --pane %11 '
+  run ! grep -qF 'set-option -p -t %12 @crew_delivery' "$STUB_LOG"
+  run ! grep -q -e '--role-watch reviewer --pane %12' "$STUB_LOG"
 }
 
 @test "resume re-arms a window whose panes carry the branch stamp (#730)" {
@@ -2921,7 +2936,7 @@ $STUB_PANES_A"
   run run_resume
   [ "$status" -eq 0 ]
   wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
-  sleep 0.3
+  run ! grep -qF 'set-option -p -t %9 @crew_delivery' "$STUB_LOG"
   run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
 }
 
@@ -2945,7 +2960,7 @@ $STUB_PANES_A"
   run run_resume
   [ "$status" -eq 0 ]
   wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
-  sleep 0.3
+  run ! grep -qF 'set-option -p -t %9 @crew_delivery' "$STUB_LOG"
   run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
 }
 
