@@ -14073,9 +14073,9 @@ _crew_help_rows() { # <help text>
   [ "$status" -eq 1 ]
   [ -z "$output" ]
   [[ "${stderr_lines[0]}" == "crew — file-based coordination bus"* ]]
-  # A leading `--` is no subcommand. kong swallows the terminator and matches the
-  # word after it, so `crew -- status …` is a parse the switch never had: it
-  # answers the list and 1, not the silence of an arm that matched nothing (#862).
+  # A leading `--` is no subcommand: kong swallows the terminator and matches the
+  # word after it, so `crew -- status …` is input the switch refused and this
+  # refuses the same way (#862).
   run --separate-stderr run_crew -- status w1 working
   [ "$status" -eq 1 ]
   [ -z "$output" ]

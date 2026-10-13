@@ -105,18 +105,16 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 // The kong root (#862). Every subcommand is a kong command: the converted ones
 // bind typed fields, and every name still parsing its own argv is registered
 // around one shared passthrough command, so kong accepts the word and stops.
+// Two measurements of kong v1.16.1 decide the shape.
 //
-// Two measurements of kong v1.16.1 decide the shape:
-//
-//   - kong splits the first word after a command name at `=`, so
+//   - Kong splits the first word after a command name at `=`, so
 //     `crew inbox --since=abc` would reach inbox as `--since abc` and read a
 //     --since filter where the arm read a recipient that matches nothing. The
-//     unconverted arms therefore parse the raw tail, not the capture, and the
-//     split is pinned by TestParseCrewSplitsLeadingEquals.
-//   - kong's help flag is off, its writers are discarded and its exit func does
-//     nothing, so it can neither print a screen nor end the process: routeHelp
-//     and helpTexts keep deciding when help prints and what it says, and the
-//     only answer a parse error can produce is the grouped list run prints.
+//     unconverted arms parse the raw tail, not the capture; the split is pinned
+//     by TestParseCrewSplitsLeadingEquals.
+//   - With the help flag off, the writers discarded and the exit func empty,
+//     kong can neither print a screen nor end the process, so routeHelp and
+//     helpTexts still decide when help prints and what it says.
 
 // subcommands is every word crew admits: the four the grammar types, then the
 // arms still parsing their own argv. It is the list the switch of #821 admitted,
@@ -148,15 +146,11 @@ type passthroughCmd struct {
 // else. id and new bind it and drop it, because their arms ignored argv and an
 // empty kong command would refuse `crew id extra` where the arm printed the id.
 // engine-cmd and occupants read the first word, which is data even when it is
-// flag-shaped (`crew occupants --foo` looks a path up, it does not refuse), so
-// their argv has to reach them as words.
+// flag-shaped (`crew occupants --foo` looks a path up, it does not refuse).
 //
-// Binding instead of taking the raw tail is a gate a conversion has to pass, not
-// a default: docs/crew-go-port.md ("kong, the root parser") states it, and
-// TestParseCrewSplitsLeadingEquals is the measurement it is judged against —
-// kong splits the first word at `=`, which is why the unconverted arms are
-// handed args[1:]. For these two the split cannot turn a match into a different
-// match, because no engine name and no worktree path survives half of a `=`.
+// Binding is the gate a conversion passes rather than the default, and
+// docs/crew-go-port.md ("kong, the root parser") says what it is measured
+// against: no engine name and no worktree path survives half of a `=`.
 type argvCmd struct {
 	Args []string `arg:"" optional:"" passthrough:"all" name:"args"`
 }
@@ -200,9 +194,8 @@ func newCrewParser(r *root, capture *passthroughCmd) (*kong.Kong, error) {
 // nothing — and nothing of kong's own error reaches stderr on the way out.
 //
 // The parser is built per call because kong writes the capture into the struct
-// it was handed, and one shared across calls would keep a previous call's argv
-// on any path it did not take. Building it is reflection over 38 commands, once
-// per process, in a binary that then folds a whole bus.
+// it was handed, so one shared across calls would keep a previous call's argv on
+// any path it did not take. Building it is reflection over 38 commands.
 func parseCrew(args []string) (crewArgs, bool) {
 	var (
 		r       root
@@ -215,11 +208,9 @@ func parseCrew(args []string) (crewArgs, bool) {
 	if _, err := p.Parse(args); err != nil {
 		return crewArgs{}, false
 	}
-	// kong selects a name it registered, with one exception: it swallows a
-	// leading `--` and matches the word after it, so `crew -- id` parses and the
-	// switch's own first word is the terminator. No arm ever admitted `--`, and
-	// falling through with it answers exit 0 where the switch said the list and
-	// exit 1, so it is input the grammar accepted and this refuses.
+	// The one token kong selects that no arm admitted: it swallows a leading
+	// `--` and matches the word after it, so `crew -- id` would reach no arm and
+	// exit 0 where the switch printed the list and exited 1.
 	if !slices.Contains(subcommands, args[0]) {
 		return crewArgs{}, false
 	}

@@ -858,11 +858,10 @@ func TestParseCrewRejectsWhatTheSwitchRejected(t *testing.T) {
 	}
 }
 
-// TestRunTerminatorIsNoSubcommand pins the one input kong selects without the
-// switch having admitted it: a leading `--` is swallowed by kong and the word
-// after it names a command, so the grammar accepts `crew -- id`. The answer is
-// the refusal an unknown name gets — the grouped list on stderr, nothing on
-// stdout, exit 1 — and never the silence of an arm that matched nothing.
+// TestRunTerminatorIsNoSubcommand pins the token the grammar accepts and no arm
+// admits: kong swallows a leading `--` and matches the word after it, so
+// `crew -- id` parses. The answer is the one an unknown name gets — grouped list
+// on stderr, nothing on stdout, exit 1.
 func TestRunTerminatorIsNoSubcommand(t *testing.T) {
 	repo, _ := repoWithLog(t, nil, 0)
 	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes()}
