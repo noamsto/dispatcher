@@ -172,14 +172,15 @@ func ambientDir(home, dir, set string) string {
 	return ambient
 }
 
-// realAbs is `cd "$p" && pwd -P`: EvalSymlinks keeps a relative input relative,
-// which would never prefix-match the other side's absolute path.
+// realAbs is `cd "$p" && pwd -P`. Abs joins the logical cwd ($PWD), so symlinks
+// must be resolved after it, over the whole path; a symlinked cwd would otherwise
+// stay unresolved and never prefix-match the other side's physical path.
 func realAbs(p string) (string, error) {
-	real, err := filepath.EvalSymlinks(p)
+	abs, err := filepath.Abs(p)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Abs(real)
+	return filepath.EvalSymlinks(abs)
 }
 
 // checkNesting refuses a worker dir inside the ambient one or the reverse: a

@@ -237,6 +237,26 @@ func TestWorkerDirRefusals(t *testing.T) {
 			t.Fatalf("%d %q %q", code, o.String(), e.String())
 		}
 	})
+	t.Run("relative HOME via symlinked cwd, worker dir inside ambient", func(t *testing.T) {
+		root := chdirViaSymlink(t)
+		write(t, root+"/h/.pi/dispatcher-worker/sub/auth.json", "{}", 0o600)
+		var o, e bytes.Buffer
+		code := Run(&o, &e, Options{Home: "h", HasHome: true, PIDir: root + "/h/.pi/dispatcher-worker/sub"})
+		want := "crew: ambient pi dir " + root + "/h/.pi/dispatcher-worker/sub resolves inside h/.pi/dispatcher-worker — refusing to seed pi worker dir\n"
+		if code != 1 || o.Len() != 0 || e.String() != want {
+			t.Fatalf("%d %q %q", code, o.String(), e.String())
+		}
+	})
+	t.Run("relative HOME via symlinked cwd, ambient inside worker dir", func(t *testing.T) {
+		root := chdirViaSymlink(t)
+		write(t, root+"/h/.pi/dispatcher-worker/sub/auth.json", "{}", 0o600)
+		var o, e bytes.Buffer
+		code := Run(&o, &e, Options{Home: "h", HasHome: true, PIDir: root + "/h"})
+		want := "crew: h/.pi/dispatcher-worker resolves inside the ambient pi dir " + root + "/h — refusing to seed pi worker dir\n"
+		if code != 1 || o.Len() != 0 || e.String() != want {
+			t.Fatalf("%d %q %q", code, o.String(), e.String())
+		}
+	})
 	t.Run("unsearchable ambient", func(t *testing.T) {
 		skipRoot(t)
 		f := newFixture(t)
@@ -260,6 +280,23 @@ func skipRoot(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores permission bits")
 	}
+}
+
+// chdirViaSymlink enters the temp root through a symlink so os.Getwd reports the
+// logical path, and returns the physical root.
+func chdirViaSymlink(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(link)
+	t.Setenv("PWD", link)
+	return root
 }
 
 func TestExtensions(t *testing.T) {
