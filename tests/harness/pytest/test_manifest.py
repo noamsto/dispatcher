@@ -472,7 +472,7 @@ class RoleWatch:
             "DISPATCHER_PROTOCOL_DIR": str(protocol),
             "DISPATCHER_SKILLS_DIR": str(skills),
             "CROSS_REPO_HINT_LIB": str(ROOT / "adapters/core/cross-repo-hint.sh"),
-            "CREW_REAL": str(ROOT / "adapters/core/crew.sh"),
+            "CREW_REAL": os.environ["CREW_GO_BIN"],
         })
         for name in ("DISPATCH_REPO_TRACKERS", "DISPATCH_ORG_TRACKERS"):
             h.env.pop(name, None)

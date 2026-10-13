@@ -39,9 +39,9 @@ var repoRoot = func() string {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "../../.."))
 }()
 
-// adapters/core/crew.sh names the Go binary through CREW_GO_BIN, whose fallback
-// is still the @crewGoBin@ placeholder in a checkout. The bench adapter exports
-// it once; a bare `go test ./...` builds it here, as tests/setup_suite.bash does.
+// CREW_GO_BIN is the crew entrypoint — the Go binary, and since #821 the only
+// thing `crew <sub>` runs. The bench adapter exports it once; a bare
+// `go test ./...` builds it here, as tests/setup_suite.bash does.
 func TestMain(m *testing.M) {
 	dir, err := ensureCrewGoBin()
 	if err != nil {
@@ -79,6 +79,10 @@ func ensureCrewGoBin() (string, error) {
 	}
 	return dir, nil
 }
+
+// crewEntry is the entrypoint to run: the binary TestMain made sure CREW_GO_BIN
+// names.
+func crewEntry() string { return os.Getenv("CREW_GO_BIN") }
 
 func TestManifest(t *testing.T) {
 	cases := manifestCases()
@@ -311,7 +315,7 @@ func crewCase(task string, crewID string, cwd func(*repoFixture) string, statusI
 		if crewID != "" {
 			env = f.withEnv(map[string]string{"CREW_ID": crewID})
 		}
-		result := runCommand(dir, env, "bash", "-euo", "pipefail", filepath.Join(repoRoot, "adapters/core/crew.sh"), "id")
+		result := runCommand(dir, env, crewEntry(), "id")
 		t.check(statusID, result.status == 0, "status=%d stderr=%q", result.status, result.stderr)
 		want := "c-from-taskdoc"
 		if task == "" || !strings.Contains(task, "crew_id:") {
@@ -580,7 +584,7 @@ func prCase(kind string) func(*caseTest) {
 			f.seed("pw-crew-event-seed-status", "pw-crew-event-seed-empty-stdout", "pw-crew-event-seed-timeout-stderr")
 			f.setView("bbb22", "OPEN", "SUCCESS")
 			f.installWatchShim()
-			r := runCommand(f.dir, f.withEnv(map[string]string{"CREW_ID": "c1"}), "bash", "-euo", "pipefail", filepath.Join(repoRoot, "adapters/core/crew.sh"), "pr-watch", "42", "--repo", "o/r", "--timeout", "30", "--interval", "1")
+			r := runCommand(f.dir, f.withEnv(map[string]string{"CREW_ID": "c1"}), crewEntry(), "pr-watch", "42", "--repo", "o/r", "--timeout", "30", "--interval", "1")
 			t.check("pw-crew-event-status", r.status == 0, "status=%d stderr=%q", r.status, r.stderr)
 			t.check("pw-crew-event-stdout", r.stdout != "", "stdout empty")
 			row := eventRow(t, filepath.Join(f.dir, ".git/crew/events.jsonl"))
@@ -588,13 +592,13 @@ func prCase(kind string) func(*caseTest) {
 		case "crew-timeout":
 			f.seed("pw-crew-timeout-seed-status", "pw-crew-timeout-seed-empty-stdout", "pw-crew-timeout-seed-timeout-stderr")
 			f.installWatchShim()
-			r := runCommand(f.dir, f.withEnv(map[string]string{"CREW_ID": "c1"}), "bash", "-euo", "pipefail", filepath.Join(repoRoot, "adapters/core/crew.sh"), "pr-watch", "42", "--repo", "o/r", "--timeout", "1", "--interval", "1")
+			r := runCommand(f.dir, f.withEnv(map[string]string{"CREW_ID": "c1"}), crewEntry(), "pr-watch", "42", "--repo", "o/r", "--timeout", "1", "--interval", "1")
 			t.check("pw-crew-timeout-status", r.status == 0, "status=%d stderr=%q", r.status, r.stderr)
 			t.check("pw-crew-timeout-empty-stdout", r.stdout == "", "stdout=%q", r.stdout)
 			t.check("pw-crew-timeout-no-bus-row", !exists(filepath.Join(f.dir, ".git/crew/events.jsonl")), "events file exists")
 		case "crew-child-fail":
 			f.stub("pr-watch", "printf '%s\\n' '{\"pr\":42,\"changed\":[\"head_sha\"]}'\nprintf '%s\\n' 'gh: something went wrong' >&2\nexit 3")
-			r := runCommand(f.dir, f.withEnv(map[string]string{"CREW_ID": "c1"}), "bash", "-euo", "pipefail", filepath.Join(repoRoot, "adapters/core/crew.sh"), "pr-watch", "42")
+			r := runCommand(f.dir, f.withEnv(map[string]string{"CREW_ID": "c1"}), crewEntry(), "pr-watch", "42")
 			t.check("pw-crew-child-status", r.status == 3, "status=%d stderr=%q", r.status, r.stderr)
 			t.check("pw-crew-child-stderr", strings.Contains(r.stderr, "gh: something went wrong"), "stderr=%q", r.stderr)
 			t.check("pw-crew-child-no-partial-stdout", !strings.Contains(r.stdout, `"changed"`), "stdout=%q", r.stdout)

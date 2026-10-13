@@ -1,11 +1,10 @@
 # shellcheck shell=bash
 # Source this from a harness entry, then call ensure_crew_go_bin once per run.
 #
-# adapters/core/crew.sh names the Go binary through CREW_GO_BIN, whose fallback
-# is an installed path only in the nix build: from a checkout, a harness that
-# shells into crew.sh sees the @crewGoBin@ placeholder. tests/setup_suite.bash
-# sets it for every bats run; the other harnesses have no bats suite to hook, so
-# each entry calls this.
+# CREW_GO_BIN is the crew entrypoint — the Go binary, since #821 the only thing
+# `crew <sub>` runs. A checkout has no installed build to fall back to, so every
+# harness has to name a binary it built: tests/setup_suite.bash sets it for bats,
+# and the other harnesses have no bats suite to hook, so each entry calls this.
 #
 # An existing CREW_GO_BIN always wins, so a bench adapter builds once and its
 # per-case children inherit — the build stays out of the measured window. The
