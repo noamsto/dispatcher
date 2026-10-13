@@ -68,10 +68,10 @@ map_file() {
   scripts/bats-timing.sh | scripts/bats-classify.sh | scripts/bats-coverage.sh) ;;
   scripts/harness-bench.sh | scripts/harness-inventory.sh | scripts/harness-manifest.sh | scripts/harness-split.sh) ;;
   scripts/bats-shard.sh | scripts/bats-shard-weights.sh) add bats-shard ;;
-  # help-parity.sh is the evidence script of #1007: it reads the pre-change
-  # crew.sh out of git and diffs its help output against the Go screens. Nothing
-  # in the suite runs it, and it needs no bats file to be selected for it.
-  scripts/help-parity.sh) ;;
+  # help-parity.sh (#1007) and pi-agent-dir-parity.sh (#1016) are evidence
+  # scripts: they read the pre-change crew.sh out of git and diff it against the
+  # Go port. Nothing in the suite runs them, so no bats file is selected for them.
+  scripts/help-parity.sh | scripts/pi-agent-dir-parity.sh) ;;
   adapters/core/crew.sh | adapters/core/budget-gate.sh) add "${crew_set[@]}" ;;
   adapters/core/claude-worker-settings.sh | adapters/core/cross-repo-hint.sh | adapters/core/dispatch-resume.sh | adapters/core/dispatch.sh) add "${dispatch_set[@]}" ;;
   adapters/core/directive-delivery.sh) add adapters crew directive-delivery ;;
