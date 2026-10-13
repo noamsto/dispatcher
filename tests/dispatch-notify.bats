@@ -3,7 +3,6 @@ bats_require_minimum_version 1.5.0 # `run !`
 setup() {
   load helpers
   NOTIFY="$BATS_TEST_DIRNAME/../adapters/core/dispatch-notify.sh"
-  CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
   setup_repo
   # The suite runs from a dispatched worker session, which exports CREW_WORKER_ID.
   # Inheriting it would make the session-less cases below pass against the very
@@ -68,7 +67,7 @@ real_end_still_posts_exited() {
 
 # seed_status <state> — a prior status from the live session.
 seed_status() {
-  CREW_ID=c1 bash -euo pipefail "$CREW" status 'worker:feat/x#s1-1' "$1"
+  CREW_ID=c1 "$CREW" status 'worker:feat/x#s1-1' "$1"
 }
 
 # task_doc [pane] — the doc the hook keys on. `crew_id:` is load-bearing: without it
@@ -137,7 +136,7 @@ stub_tmux() {
   run run_notify
   [ "$status" -eq 0 ]
 
-  roster="$(CREW_ID=c1 bash -euo pipefail "$CREW" roster c1)"
+  roster="$(CREW_ID=c1 "$CREW" roster c1)"
   printf '%s' "$roster" | jq -e 'length == 1'
   printf '%s' "$roster" | jq -e '.[0].state == "working"'
   printf '%s' "$roster" | jq -e '.[0].session != null'

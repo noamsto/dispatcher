@@ -44,7 +44,7 @@ report_mismatches() {
 # dispatch_setup — tests/dispatch.bats's setup() body: stub bins and a
 # protocols dir, enough for a dispatch to reach the tier gate.
 dispatch_setup() {
-  export CREW_REAL="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
+  export CREW_REAL="$CREW_GO_BIN"
   run_dispatch() { bash -euo pipefail "$DISPATCH" "$@"; }
   setup_repo
   export HOME="$TEST_REPO"
@@ -56,7 +56,7 @@ dispatch_setup() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
-pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
 esac
 exit 0
 EOF

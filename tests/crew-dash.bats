@@ -16,7 +16,6 @@ setup() {
   unset NO_COLOR FORCE_COLOR CLICOLOR CLICOLOR_FORCE COLORTERM
   CREW_DASH_BIN="${CREW_DASH_BIN:-$BATS_FILE_TMPDIR/crew-dash}"
   export CREW_DASH_BIN
-  CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
   FIXTURES="$BATS_TEST_DIRNAME/fixtures/crew-dash"
   setup_repo
   git remote add origin git@github.com:example/dash.git
@@ -26,7 +25,7 @@ setup() {
 
   cat >"$STUB_DIR/crew" <<EOF
 #!/usr/bin/env bash
-exec bash -euo pipefail "$CREW" "\$@"
+exec "$CREW" "\$@"
 EOF
   chmod +x "$STUB_DIR/crew"
 
@@ -204,16 +203,18 @@ normalize_golden() {
 # 8. Delegation
 # ---------------------------------------------------------------------------
 
-@test "crew dash delegates to crew-dash with CREW_BIN set to crew.sh's own path" {
+@test "crew dash delegates to crew-dash with CREW_BIN set to the entry's own path" {
   workdir="$(mktemp -d)"
   cat >"$STUB_DIR/crew-dash" <<'EOF'
 #!/usr/bin/env bash
 printf '%s|%s\n' "$CREW_BIN" "$*"
 EOF
   chmod +x "$STUB_DIR/crew-dash"
-  run bash -c "cd '$workdir' && bash -euo pipefail '$CREW' dash --once"
+  run bash -c "cd '$workdir' && '$CREW' dash --once"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"crew.sh|--once" ]]
+  # CREW_BIN is the entry the dashboard shells back into for every bus read —
+  # the binary itself now, not the script that used to front it.
+  [[ "$output" == "$(realpath "$CREW")|--once" ]]
   rm -rf "$workdir"
 }
 
@@ -269,7 +270,7 @@ EOF
 #!/usr/bin/env bash
 case "\$1" in
 retro) echo '{"tags":[],"unknown":[]}' ;;
-*) exec bash -euo pipefail "$CREW" "\$@" ;;
+*) exec "$CREW" "\$@" ;;
 esac
 EOF
   chmod +x "$STUB_DIR/crew"

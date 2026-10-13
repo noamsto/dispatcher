@@ -1,7 +1,7 @@
 setup() {
   load helpers
   RESUME="$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh"
-  export CREW_REAL="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
+  export CREW_REAL="$CREW_GO_BIN"
   run_resume() { bash -euo pipefail "$RESUME" "$@"; }
   setup_repo
   export HOME="$TEST_REPO"
@@ -14,8 +14,8 @@ setup() {
   cat >"$STUB_DIR/crew" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
-if [ "$1" = pi-agent-dir ]; then exec bash -euo pipefail "$CREW_REAL" pi-agent-dir; fi
-if [ "$1" = resolve-target ]; then exec bash -euo pipefail "$CREW_REAL" "$@"; fi
+if [ "$1" = pi-agent-dir ]; then exec "$CREW_REAL" pi-agent-dir; fi
+if [ "$1" = resolve-target ]; then exec "$CREW_REAL" "$@"; fi
 if [ "$1" = where ]; then
   [ -z "${STUB_WHERE_LIVE:-}" ] || { echo "iris — main:3.1 (lead pane)   jump: ! tmux switch-client -t %9"; exit 0; }
   exit 1
@@ -2567,7 +2567,7 @@ EOF
   cat >"$STUB_DIR/crew" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
-if [ "$1" = pi-agent-dir ]; then exec bash -euo pipefail "$CREW_REAL" pi-agent-dir; fi
+if [ "$1" = pi-agent-dir ]; then exec "$CREW_REAL" pi-agent-dir; fi
 if [ "$1" = engine-cmd ]; then
   c="${2#.}"
   c="${c%-wrapped}"
@@ -2576,7 +2576,7 @@ if [ "$1" = engine-cmd ]; then
   esac
   exit 1
 fi
-if [ "$1" = stream ]; then exec bash -euo pipefail "$CREW_REAL" "$@"; fi
+if [ "$1" = stream ]; then exec "$CREW_REAL" "$@"; fi
 exit 0
 EOF
   chmod +x "$STUB_DIR/crew"

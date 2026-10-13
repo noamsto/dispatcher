@@ -11,7 +11,6 @@ source "$BATS_TEST_DIRNAME/coverage.bash"
 setup() {
   load helpers
   HANDLER="$BATS_TEST_DIRNAME/../adapters/core/directive-delivery.sh"
-  CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
   setup_repo
   git switch -qc feat/840-x
   printf 'crew_id: c1\ntier: standard\nkind: implement\n' >WORKER_TASK.md
@@ -24,13 +23,13 @@ setup() {
   # `crew` is this tree's crew.sh, so the handler, the test's posts and the roster
   # read the same bus.
   mkdir -p "$BATS_TEST_TMPDIR/realbin"
-  printf '#!/usr/bin/env bash\nexec bash "%s" "$@"\n' "$CREW" >"$BATS_TEST_TMPDIR/realbin/crew"
+  printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$CREW" >"$BATS_TEST_TMPDIR/realbin/crew"
   chmod +x "$BATS_TEST_TMPDIR/realbin/crew"
   export PATH="$BATS_TEST_TMPDIR/realbin:$PATH"
   # The delivered-marks path, from the crew.sh helper the guards replay.
   dir="$COMMON/crew"
   log="$LOG"
-  eval "$(sed -n '/^_await_state() {/,/^}/p' "$CREW")"
+  eval "$(sed -n '/^_await_state() {/,/^}/p' "$CREW_SRC")"
   ENVELOPE="$(envelope)"
 }
 
@@ -226,7 +225,7 @@ cursor_file() { printf '%s\n' "$CURDIR"/*; }
   CALLS="$BATS_TEST_TMPDIR/calls"
   : >"$CALLS"
   mkdir -p "$BATS_TEST_TMPDIR/countbin"
-  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\nexec bash "%s" "$@"\n' \
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\nexec "%s" "$@"\n' \
     "$CALLS" "$CREW" >"$BATS_TEST_TMPDIR/countbin/crew"
   chmod +x "$BATS_TEST_TMPDIR/countbin/crew"
   export PATH="$BATS_TEST_TMPDIR/countbin:$PATH"
@@ -360,7 +359,7 @@ cursor_file() { printf '%s\n' "$CURDIR"/*; }
   CALLS="$BATS_TEST_TMPDIR/calls"
   : >"$CALLS"
   mkdir -p "$BATS_TEST_TMPDIR/countbin"
-  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\nexec bash "%s" "$@"\n' \
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s"\nexec "%s" "$@"\n' \
     "$CALLS" "$CREW" >"$BATS_TEST_TMPDIR/countbin/crew"
   chmod +x "$BATS_TEST_TMPDIR/countbin/crew"
   export PATH="$BATS_TEST_TMPDIR/countbin:$PATH"

@@ -813,16 +813,16 @@ EOF
 # The AC3 case a stub cannot show: `crew register` refuses a crew whose recorded
 # pid is alive, so this row drives the real crew, the binary production runs.
 @test "929: a live pid with no pane still launches when crew register refuses it" {
-  local crew_bin="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
+  local crew_bin="$CREW_GO_BIN"
   sleep 30 &
   live_pid=$!
   cat >"$STUB_DIR/crew" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"\$STUB_LOG"
-exec bash '$crew_bin' "\$@"
+exec '$crew_bin' "\$@"
 EOF
   chmod +x "$STUB_DIR/crew"
-  CREW_ID=c-live bash -euo pipefail "$crew_bin" register "$live_pid"
+  CREW_ID=c-live "$crew_bin" register "$live_pid"
   run run_launcher
   [ "$status" -eq 0 ]
   out="$output"

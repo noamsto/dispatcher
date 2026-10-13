@@ -4,8 +4,7 @@ setup() {
   load helpers
   PR_WATCH="$BATS_TEST_DIRNAME/../adapters/core/pr-watch.sh"
   run_pr_watch() { bash -euo pipefail "$PR_WATCH" "$@"; }
-  CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
-  run_crew() { bash -euo pipefail "$CREW" "$@"; }
+  run_crew() { "$CREW" "$@"; }
   setup_repo
   # The cursor lives under $XDG_DATA_HOME — keep it out of the developer's own.
   export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
@@ -272,7 +271,7 @@ echo 'gh: something went wrong' >&2
 exit 3
 SH
   chmod +x "$STUB_DIR/pr-watch"
-  run env CREW_ID=c1 PATH="$STUB_DIR:$PATH" bash "$CREW" pr-watch 42
+  run env CREW_ID=c1 PATH="$STUB_DIR:$PATH" "$CREW" pr-watch 42
   [ "$status" -eq 3 ]
   [[ "$output" == *"gh: something went wrong"* ]]
   [[ "$output" != *'"changed"'* ]]

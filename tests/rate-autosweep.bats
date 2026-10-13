@@ -2,8 +2,7 @@ bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 
 setup() {
   load helpers
-  CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
-  run_crew() { bash -euo pipefail "$CREW" "$@"; }
+  run_crew() { "$CREW" "$@"; }
   setup_repo
   # setup_repo leaves no origin remote, but the reconcile gate (a run may only
   # ever spend gh credentials on the repo it was dispatched from) reads

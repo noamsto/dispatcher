@@ -8,9 +8,8 @@
 
 setup() {
   load helpers
-  CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
   # shellcheck disable=SC2329  # invoked via `run run_crew`
-  run_crew() { bash -euo pipefail "$CREW" "$@"; }
+  run_crew() { "$CREW" "$@"; }
   setup_repo
   # reap only trusts a bus pr_url of this repo's origin.
   git config remote.origin.url https://github.com/o/r.git

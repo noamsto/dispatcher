@@ -3,7 +3,7 @@ bats_require_minimum_version 1.5.0 # `run !`
 setup() {
   load helpers
   DISPATCH="$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh"
-  export CREW_REAL="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
+  export CREW_REAL="$CREW_GO_BIN"
   run_dispatch() { bash -euo pipefail "$DISPATCH" "$@"; }
   setup_repo
   # A work shell exports DISPATCH_PROFILE and any dispatcher session exports
@@ -26,7 +26,7 @@ setup() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
-pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
 esac
 exit 0
 EOF
@@ -130,7 +130,7 @@ EOF
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
-pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
 esac
 exit 0
 EOF
@@ -227,7 +227,7 @@ EOF
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "${1:-}" in
 identity) printf '%s\n' '{"name":"coral-fox","tmux":"colour1"}' ;;
-pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
 esac
 exit 0
 EOF
@@ -3300,7 +3300,7 @@ lane_profile_resume_ready() {
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "${1:-}" in
 identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
-pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
 occupants) cat "$STUB_DIR/occ.json" ;;
 sessions) cat "$STUB_DIR/sess.json" ;;
 esac
@@ -6012,8 +6012,8 @@ EOF
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
-pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
-stream) exec bash -euo pipefail "$CREW_REAL" "$@" ;;
+pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+stream) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
 EOF
@@ -11864,7 +11864,7 @@ EOF
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
-msg) shift; exec bash "$CREW_REAL" msg "$@" ;;
+msg) shift; exec "$CREW_REAL" msg "$@" ;;
 esac
 exit 0
 EOF
@@ -12192,7 +12192,7 @@ _rw_deferrals() { _rw_count '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*
   common="$(git rev-parse --path-format=absolute --git-common-dir)"
   mkdir -p "$common/crew"
   _rw_append "$(_rw_assign_row)"
-  run env CREW_ID=c1 bash "$CREW_REAL" await role:feat/9-x:reviewer --timeout 0
+  run env CREW_ID=c1 "$CREW_REAL" await role:feat/9-x:reviewer --timeout 0
   echo "$output"
   [[ $output == *"plan the seam"* ]]
 }
@@ -13974,8 +13974,8 @@ _assert_real_anchor() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
-identity) exec bash -euo pipefail "$CREW_REAL" "$@" ;;
-pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+identity) exec "$CREW_REAL" "$@" ;;
+pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
 esac
 exit 0
 EOF2
@@ -13998,8 +13998,8 @@ EOF2
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
-identity) exec bash -euo pipefail "$CREW_REAL" "$@" ;;
-pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+identity) exec "$CREW_REAL" "$@" ;;
+pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
 esac
 exit 0
 EOF2

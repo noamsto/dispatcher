@@ -9,6 +9,17 @@ export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
 # Tests that exercise the sweep opt in explicitly.
 export CREW_RATE_AUTOSWEEP=0
 
+# The crew under test, in its three forms — exported, as the two above them are,
+# because they are what every bats file reads. CREW is the entrypoint the suite
+# built (tests/setup_suite.bash compiles it), so run it directly: `bash "$CREW"`
+# would hand a binary to bash and get 126. CREW_SRC is the bash oracle — the
+# helpers crew.sh still carries for the drift guards — and is read, never
+# executed. CREW_GO_SRC is the dispatcher's own source, for the rows that read the
+# subcommand list out of the switch that replaced crew.sh's arms.
+export CREW="${CREW_GO_BIN:?tests/setup_suite.bash did not build crew-go}"
+export CREW_SRC="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
+export CREW_GO_SRC="$BATS_TEST_DIRNAME/../crew/main.go"
+
 # Host-environment isolation: unset vars that leak from a running dispatcher or
 # tmux session when bats itself runs from inside one.  Plain `bats tests/`
 # must not inherit DISPATCH_ENGINES, the host tmux server, or other harness
@@ -63,7 +74,7 @@ setup_repo() {
   # depends on the machine it runs on.
   printf '0.00 0.00 0.00 1/1 1\n' >"$BATS_TEST_TMPDIR/loadavg"
   export DISPATCH_LOADAVG_FILE="$BATS_TEST_TMPDIR/loadavg"
-  # Raw-source runs (crew.sh/dispatch.sh/dispatch-resume.sh here, not the
+  # Raw-source runs (dispatch.sh/dispatch-resume.sh here, not the
   # `sub`-substituted nix build) never see @worktreeGitLib@ substituted, so
   # point every test at the repo copy of the anchored-git lib (#539).
   export WORKTREE_GIT_LIB="$BATS_TEST_DIRNAME/../adapters/core/worktree-git.sh"

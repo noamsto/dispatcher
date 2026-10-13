@@ -1,7 +1,6 @@
 setup() {
   load helpers
-  CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
-  run_crew() { bash -euo pipefail "$CREW" "$@"; }
+  run_crew() { "$CREW" "$@"; }
   setup_repo
 }
 
@@ -16,7 +15,7 @@ teardown() {
 
 @test "crew id: resolves from WORKER_TASK.md with no CREW_ID in the environment at all" {
   printf 'crew_id: c-from-taskdoc\n' >WORKER_TASK.md
-  run env -u CREW_ID bash -euo pipefail "$CREW" id
+  run env -u CREW_ID "$CREW" id
   [ "$status" -eq 0 ]
   [ "$output" = "c-from-taskdoc" ]
 }
@@ -32,20 +31,20 @@ teardown() {
   printf 'crew_id: c-from-taskdoc\n' >WORKER_TASK.md
   mkdir -p a/b/c
   cd a/b/c
-  run env -u CREW_ID bash -euo pipefail "$CREW" id
+  run env -u CREW_ID "$CREW" id
   [ "$status" -eq 0 ]
   [ "$output" = "c-from-taskdoc" ]
 }
 
 @test "crew id: CREW_ID still resolves when no WORKER_TASK.md exists" {
-  run env CREW_ID=c-from-env bash -euo pipefail "$CREW" id
+  run env CREW_ID=c-from-env "$CREW" id
   [ "$status" -eq 0 ]
   [ "$output" = "c-from-env" ]
 }
 
 @test "crew id: falls back to CREW_ID when WORKER_TASK.md has no crew_id: line" {
   printf 'title: some task\n' >WORKER_TASK.md
-  run env CREW_ID=c-from-env bash -euo pipefail "$CREW" id
+  run env CREW_ID=c-from-env "$CREW" id
   [ "$status" -eq 0 ]
   [ "$output" = "c-from-env" ]
 }

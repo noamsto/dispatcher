@@ -2,8 +2,7 @@ bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 
 setup() {
   load helpers
-  CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
-  run_crew() { bash -euo pipefail "$CREW" "$@"; }
+  run_crew() { "$CREW" "$@"; }
   setup_repo
   unset CREW_ID
 }
@@ -786,14 +785,14 @@ _under_engine() {
 
 @test "adopt: with no pid records the non-shell ancestor, not the calling subshell" {
   CREW_ID=c-np run_crew register 0
-  _under_engine "bash -euo pipefail '$CREW' adopt c-np >/dev/null"
+  _under_engine "'$CREW' adopt c-np >/dev/null"
   cdir="$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/c-np"
   [ "$(cat "$cdir/pid")" = "$(cat "$BATS_TEST_TMPDIR/engine.pid")" ]
 }
 
 @test "register: with no pid records the non-shell ancestor, not the calling subshell" {
   export CREW_ID=c-rg
-  _under_engine "bash -euo pipefail '$CREW' register"
+  _under_engine "'$CREW' register"
   cdir="$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/c-rg"
   [ "$(cat "$cdir/pid")" = "$(cat "$BATS_TEST_TMPDIR/engine.pid")" ]
 }
@@ -917,7 +916,7 @@ _pidfile_log_path() {
 # crew is untouched.
 @test "dispatcher: a nested launcher inheriting a live CREW_ID aborts and keeps the crew" {
   _stub_launcher_agents
-  printf '#!/usr/bin/env bash\nexec bash -euo pipefail "$CREW" "$@"\n' >"$STUB_DIR/crew"
+  printf '#!/usr/bin/env bash\nexec "$CREW" "$@"\n' >"$STUB_DIR/crew"
   chmod +x "$STUB_DIR/crew"
   export CREW LAUNCHER="$BATS_TEST_DIRNAME/../adapters/core/dispatcher.sh"
   run bash -c '
@@ -938,7 +937,7 @@ _pidfile_log_path() {
 # it. Only the launcher's `crew id:` line is trusted for the id.
 @test "dispatcher: a normal launcher exit deregisters the crew it minted" {
   _stub_launcher_agents
-  printf '#!/usr/bin/env bash\nexec bash -euo pipefail "$CREW" "$@"\n' >"$STUB_DIR/crew"
+  printf '#!/usr/bin/env bash\nexec "$CREW" "$@"\n' >"$STUB_DIR/crew"
   chmod +x "$STUB_DIR/crew"
   export CREW LAUNCHER="$BATS_TEST_DIRNAME/../adapters/core/dispatcher.sh"
   run bash -euo pipefail "$LAUNCHER"
@@ -970,7 +969,7 @@ _pidfile_log_path() {
 }
 
 @test "deregister: removes the crew when the recorded pid is the caller's parent or dead" {
-  CREW_ID=c-ppid run bash -c "bash '$CREW' register \$\$; bash '$CREW' deregister; true"
+  CREW_ID=c-ppid run bash -c "'$CREW' register \$\$; '$CREW' deregister; true"
   [ "$status" -eq 0 ]
   [ ! -e "$(_crew_dir c-ppid)" ]
   (exit 0) & dead_pid=$!
