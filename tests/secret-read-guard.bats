@@ -2950,6 +2950,29 @@ EOF
   PATH=$old_path
 }
 
+# A command with no `<` can hold no heredoc, so neither the B=1 mask nor the
+# lookup pass can matter; that fast path is what restored test 23's runtime
+# (#1024). The stub records any B=1 pass, so dropping the fast path fails here.
+@test "secret-read-guard: a command with no < runs no heredoc/lookup mask pass" {
+  local real_awk marker="$BATS_TEST_TMPDIR/b1"
+  real_awk=$(command -v awk)
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat >"$BATS_TEST_TMPDIR/bin/awk" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  [ "\$a" = B=1 ] && : >"$marker"
+done
+exec "$real_awk" "\$@"
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/awk"
+
+  local old_path=$PATH
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  deny_cmd 'env'
+  PATH=$old_path
+  [ ! -e "$marker" ]
+}
+
 # ---------------------------------------------------------------------------
 # Regression cases carried over from a downstream copy of this guard.
 # ---------------------------------------------------------------------------

@@ -440,7 +440,7 @@ function mask(c) {
 
 # Text holding `<<` runs mask() inside awk_mask_cmd's heredoc model (Q=1, see
 # there), so a text heredoc body is blanked and its apostrophes never reach
-# mask(); `$2` is the text's T verdict (hd_text_ok).
+# mask(); `$2` is the text's T verdict (text_verdicts).
 mask_quotes() {
   if [[ $1 != *'<<'* ]]; then
     awk "$awk_mask$awk_chars"'
@@ -571,7 +571,7 @@ decode_word() {
 #     and a body fed to a shell runs whole. Only an unquoted delimiter rewrites
 #     backticks. The terminator line is not blanked: an arithmetic `1<<X` that
 #     merely looks like a heredoc must not be able to hide a real `X` line.
-#   - except with T=1 (hd_text_ok: every heredoc of the text feeds a text
+#   - except with T=1 (text_verdicts: every heredoc of the text feeds a text
 #     sink), where a body line is spaces once it stops being a prefix of the
 #     delimiter. An unquoted body turns raw for good at its first backtick or
 #     `$(`, since those still run there. Accepted limit: a body written to a
@@ -579,7 +579,7 @@ decode_word() {
 #     path) is not followed.
 # Length-preserving, one pass, like mask_quotes.
 #
-# B=1 is hd_text_ok's first pass, never combined with T: every heredoc body
+# B=1 is text_verdicts' first pass, never combined with T: every heredoc body
 # and its terminator line and comment text are spaces; a quoted character
 # (opening quote included) is `_` and a `$` in "…" stays, so a quoted
 # substitution in command position still reads as a word holding `$`. It ends
@@ -999,32 +999,18 @@ function stage(g,    fo, nw, j, as, cw, vn) {
 }
 END { print (hit ? 1 : 0) }'
 
-# T for one text: 1 when its heredoc bodies are text (see the masker), so
-# every view of that text shares one verdict. Text without `<<` skips both
-# passes. A text that changes command lookup is never text: a body the sink
-# pass would blank could then reach a name that no longer resolves to a text
-# sink.
-hd_text_ok() {
-  local view ok lk
-  if [[ $1 != *'<<'* ]]; then
+# 1 when a text changes command lookup (see awk_lookup). Used to taint a
+# `-c` or `eval` sub-body with a lookup change made by its parent text, which
+# the child inherits (an exported PATH, for one). A text with no `<` cannot
+# hold a `<<` and cannot produce one in a descendant (text_verdicts), so no
+# descending heredoc exists for the change to reach and the pass is skipped —
+# this is what keeps a heredoc-free command at its pre-#1011 runtime.
+lookup_change() {
+  local view lk
+  if [[ $1 != *'<'* ]]; then
     echo 0
     return
   fi
-  view=$(awk -v W=0 -v B=1 "$awk_mask_cmd$awk_chars" <<<"$1") || {
-    echo 0
-    return
-  }
-  ok=$(awk "$awk_sinks" <<<"$view") || ok=0
-  lk=$(awk "$awk_lookup" <<<"$view") || lk=1
-  if [[ $lk == 1 ]]; then ok=0; fi
-  echo "$ok"
-}
-
-# 1 when a text changes command lookup (see awk_lookup). Used to taint a
-# `-c` or `eval` sub-body with a lookup change made by its parent text, which
-# the child inherits (an exported PATH, for one).
-lookup_change() {
-  local view lk
   view=$(awk -v W=0 -v B=1 "$awk_mask_cmd$awk_chars" <<<"$1") || {
     echo 1
     return
@@ -1034,6 +1020,34 @@ lookup_change() {
     return
   }
   echo "$lk"
+}
+
+# Prints "<sink-ok> <lookup-change>" for one text: 1/0 when its heredoc bodies
+# are text (see the masker), and 1/0 when it changes command lookup (see
+# awk_lookup). Text without `<<` has no text-sink heredoc, so sink-ok is 0 and
+# only a lookup change can still matter, by tainting a descendant heredoc. A
+# text holding `<<` masks its B=1 view once and shares it between the two
+# passes; a text with no `<` at all can hold neither a `<<` nor a descendant
+# one — decode only removes quotes and escapes, never adds a character — so
+# both verdicts are dead and the mask is skipped.
+text_verdicts() {
+  local view ok lk
+  if [[ $1 != *'<<'* ]]; then
+    if [[ $1 != *'<'* ]]; then
+      echo "0 0"
+    else
+      echo "0 $(lookup_change "$1")"
+    fi
+    return
+  fi
+  view=$(awk -v W=0 -v B=1 "$awk_mask_cmd$awk_chars" <<<"$1") || {
+    echo "0 1"
+    return
+  }
+  ok=$(awk "$awk_sinks" <<<"$view") || ok=0
+  lk=$(awk "$awk_lookup" <<<"$view") || lk=1
+  if [[ $lk == 1 ]]; then ok=0; fi
+  echo "$ok $lk"
 }
 
 mask_cmd() {
@@ -1350,12 +1364,10 @@ shell)
   #    ends it early); every match end maps back to raw text in one more pass.
   #    The two sets of raw body starts merge in order, a body both found
   #    counted once, under the shared match cap.
-  #    Each text's heredoc verdict (hd_text_ok) rides beside it (worklist_t,
+  #    Each text's heredoc verdict (text_verdicts) rides beside it (worklist_t,
   #    sub_t) into every view of that text.
   raw_spaces=("$command")
-  command_t=$(hd_text_ok "$command")
-  command_lookup=$(lookup_change "$command")
-  if [[ $command_lookup == 1 ]]; then command_t=0; fi
+  read -r command_t command_lookup < <(text_verdicts "$command")
   search_spaces=("$(mask_cmd "$command" "$command_t")" "$(mask_quotes "$command" "$command_t")")
   fish_spaces=()
   subs=()
@@ -1447,8 +1459,7 @@ shell)
       # fails closed.
       if [[ -n $frame && $frame != "${readings[0]}" ]]; then readings+=("$frame"); fi
       for sub in "${readings[@]}"; do
-        sub_text=$(hd_text_ok "$sub")
-        sub_lookup=$(lookup_change "$sub")
+        read -r sub_text sub_lookup < <(text_verdicts "$sub")
         if [[ $cur_lookup == 1 || $sub_lookup == 1 ]]; then sub_text=0; fi
         masked_sub=$(mask_cmd "$sub" "$sub_text")
         quoted_sub=$(mask_quotes "$sub" "$sub_text")
@@ -1502,8 +1513,7 @@ shell)
       done
       [[ -n $eval_text ]] || continue
       sub=$eval_text
-      sub_text=$(hd_text_ok "$sub")
-      sub_lookup=$(lookup_change "$sub")
+      read -r sub_text sub_lookup < <(text_verdicts "$sub")
       if [[ $cur_lookup == 1 || $sub_lookup == 1 ]]; then sub_text=0; fi
       masked_sub=$(mask_cmd "$sub" "$sub_text")
       quoted_sub=$(mask_quotes "$sub" "$sub_text")
