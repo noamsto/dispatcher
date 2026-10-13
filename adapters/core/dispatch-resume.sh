@@ -1000,9 +1000,10 @@ pane_cmd=""
 win_own=""
 reused=""
 # A restored grid window also has role panes at the worktree: never launch the
-# lead into one, and prefer the window stamped for this branch over a human
-# shell that happens to sit at the same path in another window. \x1f, not tab:
-# tab is IFS whitespace, so an empty field would collapse and shift the rest.
+# lead into one, and prefer this worker's own window (stamped for the branch,
+# or restored with its codename) over a human shell at the same path elsewhere.
+# \x1f, not tab: tab is IFS whitespace, so an empty field would collapse and
+# shift the rest.
 while IFS=$'\x1f' read -r cand_win cand_pane cand_path cand_cmd cand_name cand_role cand_branch; do
   [ -n "$cand_win" ] || continue
   [ "$cand_path" = "$wt_path" ] || continue
@@ -1616,8 +1617,8 @@ _args_have() {
 }
 
 # Re-arm the role panes of a restored grid window. tmux-remux brings the panes
-# back with @crew_role stamped but no role-watch and no role stall-watch; the
-# lead's pane is relaunched above, nothing else is. Identity needs no pane env:
+# back with @crew_role stamped but no role-watch and no role stall-watch.
+# Identity needs no pane env:
 # the sender anchors on the pane's @crew_role and the window's stamps. The
 # watchers find the bus through git, so they rely on resume's cwd being the
 # worktree.
