@@ -220,7 +220,7 @@
           # itself uses for `wt`.
           dispatch-resume = let
             # One list, read twice: the preamble's runtimeInputs and the bake.
-            rt = (with pkgs; [gh git jq gnused gnugrep coreutils findutils diffutils tmux]) ++ [crew];
+            rt = (with pkgs; [gh git jq gnused gnugrep coreutils findutils diffutils tmux procps]) ++ [crew];
           in
             pkgs.writeShellApplication {
               name = "dispatch-resume";

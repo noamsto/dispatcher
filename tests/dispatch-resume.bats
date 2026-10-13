@@ -1,3 +1,5 @@
+bats_require_minimum_version 1.5.0 # `run !`
+
 setup() {
   load helpers
   RESUME="$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh"
@@ -35,6 +37,7 @@ EOF
   cat >"$STUB_DIR/dispatch" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
+[ "$1" != --role-watch ] || printf 'CREW_ID=%s\n' "$CREW_ID" >>"$STUB_LOG"
 [ -n "${DISPATCH_PRECHECK:-}" ] || exit 0
 [ -z "${STUB_PRECHECK_FAIL:-}" ] || {
   echo "dispatch: --effort ultra is codex-only; claude tops out at max" >&2
@@ -929,7 +932,7 @@ stub_tmux_with_pane_at_wt() { # $1=window id  $2=pane id  $3=@crew_name value  $
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"\$STUB_LOG"
 case "\$1" in
-list-panes) printf '%s\t%s\t%s\t%s\t%s\n' '$1' '$2' '$WT' '${4:-}' '$3' ;;
+list-panes) [ "\$2" != -a ] || printf '%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s\n' '$1' '$2' '$WT' '${4:-}' '$3' '' '' ;;
 new-window) printf '%s %s\n' '%99' '%99' ;;
 display-message) printf '%s\n' '80 24 on' ;;
 esac
@@ -2757,4 +2760,218 @@ seed_dispatch_row() {
   [[ "$output" == *"redirects the git common dir"* ]]
   [ ! -e "$SENTINEL" ]
   run ! grep -q '^resolve-target\|^where\|^new-window\|^send-keys' "$STUB_LOG"
+}
+
+# Grid window @4 as tmux-remux restores it. STUB_PANES_A feeds `list-panes -a`
+# (window, pane, path, cmd, name, role, branch) and STUB_PANES_W feeds
+# `list-panes -t @4` (pane, role, exited, cmd, path), one \x1f-joined row per line.
+stub_tmux_grid() {
+  local u=$'\x1f'
+  export STUB_PANES_A STUB_PANES_W
+  STUB_PANES_A="@4${u}%8${u}$WT${u}fish${u}iris${u}lead${u}
+@4${u}%9${u}$WT${u}claude${u}iris${u}reviewer${u}
+@4${u}%10${u}$WT${u}pi${u}iris${u}plan-critic${u}"
+  STUB_PANES_W="%8${u}lead${u}${u}fish${u}$WT
+%9${u}reviewer${u}${u}claude${u}$WT
+%10${u}plan-critic${u}${u}pi${u}$WT"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+list-panes)
+  if [ "$2" = -a ]; then printf '%s\n' "$STUB_PANES_A"; else printf '%s\n' "$STUB_PANES_W"; fi
+  ;;
+new-window) printf '%s %s\n' '%99' '%99' ;;
+display-message) printf '%s\n' '80 24 on' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+# ps stub: only the live-watcher snapshot is faked; any other call is the real ps.
+stub_ps() {
+  local real
+  real="$(command -v ps)"
+  cat >"$STUB_DIR/ps" <<EOF
+#!/usr/bin/env bash
+if [ "\$*" = "-ww -A -o args=" ]; then [ -z "\${STUB_PS_FAIL:-}" ] || exit 1; printf '%s\n' "\${STUB_PS:-}"; exit 0; fi
+exec $real "\$@"
+EOF
+  chmod +x "$STUB_DIR/ps"
+}
+
+setup_grid() {
+  setup_worker_wt
+  mkdir -p "$TEST_REPO/.git/crew/artifacts/feat/7-a-thing"
+  printf '%s\n' '{"reviewer":{"agent":"claude","model":"sonnet","effort":""},"plan-critic":{"agent":"pi","model":"m","effort":""},"spec-critic":{"agent":"claude","model":"sonnet","effort":""}}' \
+    >"$TEST_REPO/.git/crew/artifacts/feat/7-a-thing/roles.json"
+  stub_tmux_grid
+  stub_ps
+}
+
+@test "resume re-arms restored role panes in place (#730)" {
+  setup_grid
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys -t %8' "$STUB_LOG"
+  wait_for_log '^--role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing$'
+  wait_for_log '^--role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing$'
+  wait_for_log '^CREW_ID=c1$'
+  wait_for_log 'stall-watch role:feat/7-a-thing:reviewer --pane %9 --engine claude'
+  wait_for_log 'stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi'
+  grep -qF 'set-option -p -t %10 @crew_delivery typed' "$STUB_LOG"
+  run ! grep -q -e '--role-watch lead' -e 'stall-watch role:feat/7-a-thing:lead' "$STUB_LOG"
+  run ! grep -q -e split-window -e kill-pane "$STUB_LOG"
+}
+
+@test "resume leaves live role watchers alone and arms only the unwatched pane (#730)" {
+  setup_grid
+  local u=$'\x1f'
+  STUB_PANES_W+=$'\n'"%11${u}spec-critic${u}${u}claude${u}$WT"
+  export STUB_PS="dispatch --role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing
+crew stall-watch role:feat/7-a-thing:reviewer --pane %9 --engine claude
+dispatch --role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing
+crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log '^--role-watch spec-critic --pane %11 '
+  wait_for_log 'stall-watch role:feat/7-a-thing:spec-critic --pane %11'
+  run ! grep -q -e '--role-watch reviewer' -e '--role-watch plan-critic' "$STUB_LOG"
+  run ! grep -q -e 'stall-watch role:feat/7-a-thing:reviewer' -e 'stall-watch role:feat/7-a-thing:plan-critic' "$STUB_LOG"
+  run ! grep -q -e split-window -e kill-pane "$STUB_LOG"
+}
+
+@test "a bare role pane is marked exited, not watched (#730)" {
+  setup_grid
+  local u=$'\x1f'
+  STUB_PANES_W="%8${u}lead${u}${u}fish${u}$WT
+%9${u}reviewer${u}${u}fish${u}$WT
+%11${u}spec-critic${u}${u}claude${u}$WT"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -qF 'set-option -p -t %9 @crew_exited 1' "$STUB_LOG"
+  grep -qF 'set-option -p -t %9 @crew_state exited' "$STUB_LOG"
+  wait_for_log '^--role-watch spec-critic --pane %11 '
+  run ! grep -qF 'set-option -p -t %9 @crew_delivery' "$STUB_LOG"
+  run ! grep -q -e '--role-watch reviewer' "$STUB_LOG"
+}
+
+@test "placement never picks a role pane listed before the lead (#730)" {
+  setup_grid
+  local u=$'\x1f'
+  STUB_PANES_A="@4${u}%9${u}$WT${u}claude${u}${u}reviewer${u}feat/7-a-thing
+@4${u}%8${u}$WT${u}fish${u}iris${u}lead${u}feat/7-a-thing"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys -t %8' "$STUB_LOG"
+  run ! grep -q 'send-keys -t %9' "$STUB_LOG"
+}
+
+@test "placement prefers the window stamped for the branch over a plain shell (#730)" {
+  setup_grid
+  local u=$'\x1f'
+  STUB_PANES_A="@5${u}%20${u}$WT${u}fish${u}${u}${u}
+$STUB_PANES_A"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -q 'send-keys -t %8' "$STUB_LOG"
+  run ! grep -q 'send-keys -t %20' "$STUB_LOG"
+}
+
+@test "unlisted-role and exited role panes are not re-armed (#730)" {
+  setup_grid
+  local u=$'\x1f'
+  STUB_PANES_W="%8${u}lead${u}${u}fish${u}$WT
+%9${u}ghost${u}${u}claude${u}$WT
+%10${u}plan-critic${u}1${u}pi${u}$WT
+%11${u}spec-critic${u}${u}claude${u}$WT"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log '^--role-watch spec-critic --pane %11 '
+  run ! grep -q -e '--role-watch reviewer' -e '--role-watch ghost' -e '--role-watch plan-critic' "$STUB_LOG"
+  run ! grep -q -e 'stall-watch role:feat/7-a-thing:ghost' -e 'stall-watch role:feat/7-a-thing:plan-critic' "$STUB_LOG"
+}
+
+@test "a role pane outside the worktree is not re-armed (#730)" {
+  setup_grid
+  local u=$'\x1f'
+  STUB_PANES_W="%8${u}lead${u}${u}fish${u}$WT
+%11${u}spec-critic${u}${u}claude${u}$WT
+%12${u}reviewer${u}${u}claude${u}/elsewhere"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log '^--role-watch spec-critic --pane %11 '
+  run ! grep -qF 'set-option -p -t %12 @crew_delivery' "$STUB_LOG"
+  run ! grep -q -e '--role-watch reviewer --pane %12' "$STUB_LOG"
+}
+
+@test "resume re-arms a window whose panes carry the branch stamp (#730)" {
+  setup_grid
+  local u=$'\x1f'
+  STUB_PANES_A="@4${u}%8${u}$WT${u}fish${u}other${u}lead${u}feat/7-a-thing
+@4${u}%9${u}$WT${u}claude${u}other${u}reviewer${u}feat/7-a-thing
+@4${u}%10${u}$WT${u}pi${u}other${u}plan-critic${u}feat/7-a-thing"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log '^--role-watch reviewer --pane %9 '
+  wait_for_log '^--role-watch plan-critic --pane %10 '
+}
+
+@test "resume does not arm role panes in a window stamped for another branch (#730)" {
+  setup_grid
+  local u=$'\x1f'
+  STUB_PANES_A="@4${u}%8${u}$WT${u}fish${u}other${u}${u}feat/other
+@4${u}%9${u}$WT${u}claude${u}other${u}reviewer${u}feat/other
+@4${u}%10${u}$WT${u}pi${u}other${u}plan-critic${u}feat/other"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
+  run ! grep -qF 'set-option -p -t %9 @crew_delivery' "$STUB_LOG"
+  run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
+}
+
+@test "resume --ignore-budget gives the claude role --no-budget and pi no role stall-watch (#730)" {
+  setup_grid
+  cd "$WT"
+  run run_resume --ignore-budget
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch role:feat/7-a-thing:reviewer --pane %9 --engine claude --no-budget$'
+  wait_for_log '^--role-watch plan-critic --pane %10 '
+  sleep 0.3
+  run ! grep -q 'stall-watch role:feat/7-a-thing:plan-critic' "$STUB_LOG"
+}
+
+@test "a symlinked roles.json arms no role panes (#730)" {
+  setup_grid
+  local art="$TEST_REPO/.git/crew/artifacts/feat/7-a-thing"
+  mv "$art/roles.json" "$BATS_TEST_TMPDIR/real-roles.json"
+  ln -s "$BATS_TEST_TMPDIR/real-roles.json" "$art/roles.json"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
+  run ! grep -qF 'set-option -p -t %9 @crew_delivery' "$STUB_LOG"
+  run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
+}
+
+@test "a failing ps snapshot arms no role panes (#730)" {
+  setup_grid
+  export STUB_PS_FAIL=1
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ps failed — not re-arming role panes"* ]]
+  wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
+  sleep 0.3
+  run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
 }
