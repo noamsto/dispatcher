@@ -2768,9 +2768,9 @@ seed_dispatch_row() {
 stub_tmux_grid() {
   local u=$'\x1f'
   export STUB_PANES_A STUB_PANES_W
-  STUB_PANES_A="@4${u}%8${u}$WT${u}fish${u}iris${u}lead${u}feat/7-a-thing
-@4${u}%9${u}$WT${u}claude${u}${u}reviewer${u}feat/7-a-thing
-@4${u}%10${u}$WT${u}pi${u}${u}plan-critic${u}feat/7-a-thing"
+  STUB_PANES_A="@4${u}%8${u}$WT${u}fish${u}iris${u}lead${u}
+@4${u}%9${u}$WT${u}claude${u}iris${u}reviewer${u}
+@4${u}%10${u}$WT${u}pi${u}iris${u}plan-critic${u}"
   STUB_PANES_W="%8${u}lead${u}${u}fish
 %9${u}reviewer${u}${u}claude
 %10${u}plan-critic${u}${u}pi"
@@ -2795,7 +2795,7 @@ stub_ps() {
   real="$(command -v ps)"
   cat >"$STUB_DIR/ps" <<EOF
 #!/usr/bin/env bash
-if [ "\$*" = "-A -o args=" ]; then printf '%s\n' "\${STUB_PS:-}"; exit 0; fi
+if [ "\$*" = "-ww -A -o args=" ]; then [ -z "\${STUB_PS_FAIL:-}" ] || exit 1; printf '%s\n' "\${STUB_PS:-}"; exit 0; fi
 exec $real "\$@"
 EOF
   chmod +x "$STUB_DIR/ps"
@@ -2848,13 +2848,14 @@ crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
   setup_grid
   local u=$'\x1f'
   STUB_PANES_W="%8${u}lead${u}${u}fish
-%9${u}reviewer${u}${u}fish"
+%9${u}reviewer${u}${u}fish
+%11${u}spec-critic${u}${u}claude"
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
   grep -qF 'set-option -p -t %9 @crew_exited 1' "$STUB_LOG"
   grep -qF 'set-option -p -t %9 @crew_state exited' "$STUB_LOG"
-  sleep 0.2
+  wait_for_log '^--role-watch spec-critic --pane %11 '
   run ! grep -q -e '--role-watch reviewer' "$STUB_LOG"
 }
 
@@ -2887,10 +2888,75 @@ $STUB_PANES_A"
   local u=$'\x1f'
   STUB_PANES_W="%8${u}lead${u}${u}fish
 %9${u}ghost${u}${u}claude
-%10${u}plan-critic${u}1${u}pi"
+%10${u}plan-critic${u}1${u}pi
+%11${u}spec-critic${u}${u}claude"
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  sleep 0.2
+  wait_for_log '^--role-watch spec-critic --pane %11 '
+  run ! grep -q -e '--role-watch reviewer' -e '--role-watch ghost' -e '--role-watch plan-critic' "$STUB_LOG"
+  run ! grep -q -e 'stall-watch role:feat/7-a-thing:ghost' -e 'stall-watch role:feat/7-a-thing:plan-critic' "$STUB_LOG"
+}
+
+@test "resume re-arms a window whose panes carry the branch stamp (#730)" {
+  setup_grid
+  local u=$'\x1f'
+  STUB_PANES_A="@4${u}%8${u}$WT${u}fish${u}other${u}lead${u}feat/7-a-thing
+@4${u}%9${u}$WT${u}claude${u}other${u}reviewer${u}feat/7-a-thing
+@4${u}%10${u}$WT${u}pi${u}other${u}plan-critic${u}feat/7-a-thing"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log '^--role-watch reviewer --pane %9 '
+  wait_for_log '^--role-watch plan-critic --pane %10 '
+}
+
+@test "resume does not arm role panes in a window stamped for another branch (#730)" {
+  setup_grid
+  local u=$'\x1f'
+  STUB_PANES_A="@4${u}%8${u}$WT${u}fish${u}other${u}${u}feat/other
+@4${u}%9${u}$WT${u}claude${u}other${u}reviewer${u}feat/other
+@4${u}%10${u}$WT${u}pi${u}other${u}plan-critic${u}feat/other"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
+  sleep 0.3
+  run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
+}
+
+@test "resume --ignore-budget gives the claude role --no-budget and pi no role stall-watch (#730)" {
+  setup_grid
+  cd "$WT"
+  run run_resume --ignore-budget
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch role:feat/7-a-thing:reviewer --pane %9 --engine claude --no-budget$'
+  wait_for_log '^--role-watch plan-critic --pane %10 '
+  sleep 0.3
+  run ! grep -q 'stall-watch role:feat/7-a-thing:plan-critic' "$STUB_LOG"
+}
+
+@test "a symlinked roles.json arms no role panes (#730)" {
+  setup_grid
+  local art="$TEST_REPO/.git/crew/artifacts/feat/7-a-thing"
+  mv "$art/roles.json" "$BATS_TEST_TMPDIR/real-roles.json"
+  ln -s "$BATS_TEST_TMPDIR/real-roles.json" "$art/roles.json"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
+  sleep 0.3
+  run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
+}
+
+@test "a failing ps snapshot arms no role panes (#730)" {
+  setup_grid
+  export STUB_PS_FAIL=1
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ps failed — not re-arming role panes"* ]]
+  wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
+  sleep 0.3
   run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
 }

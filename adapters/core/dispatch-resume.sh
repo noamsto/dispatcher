@@ -997,21 +997,25 @@ DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck"
 win=""
 pane=""
 pane_cmd=""
-win_branch=""
+win_own=""
 reused=""
 # A restored grid window also has role panes at the worktree: never launch the
 # lead into one, and prefer the window stamped for this branch over a human
 # shell that happens to sit at the same path in another window. \x1f, not tab:
 # tab is IFS whitespace, so an empty field would collapse and shift the rest.
-while IFS=$'\x1f' read -r cand_win cand_pane cand_path cand_cmd _cand_name cand_role cand_branch; do
+while IFS=$'\x1f' read -r cand_win cand_pane cand_path cand_cmd cand_name cand_role cand_branch; do
   [ -n "$cand_win" ] || continue
   [ "$cand_path" = "$wt_path" ] || continue
   [ -z "$cand_role" ] || [ "$cand_role" = lead ] || continue
-  if [ -z "$reused" ] || { [ "$cand_branch" = "$branch" ] && [ "$win_branch" != "$branch" ]; }; then
+  cand_own=""
+  if [ "$cand_branch" = "$branch" ] || { [ -z "$cand_branch" ] && [ "$cand_name" = "$agent_name" ]; }; then
+    cand_own=1
+  fi
+  if [ -z "$reused" ] || { [ -n "$cand_own" ] && [ -z "$win_own" ]; }; then
     win="$cand_win"
     pane="$cand_pane"
     pane_cmd="$cand_cmd"
-    win_branch="$cand_branch"
+    win_own="$cand_own"
     reused=1
   fi
 done <<PANES
@@ -1649,7 +1653,11 @@ _rearm_role_panes() {
     [ "$r_agent" != cursor ] || delivery=pull
     tmux set-option -p -t "$p" @crew_delivery "$delivery" 2>/dev/null || true
     if [ -z "$have_ps" ]; then
-      snapshot="$(ps -A -o args= 2>/dev/null || true)"
+      # -ww: procps truncates args to $COLUMNS otherwise
+      if ! snapshot="$(ps -ww -A -o args= 2>/dev/null)"; then
+        echo "dispatch resume: ps failed — not re-arming role panes" >&2
+        return 0
+      fi
       have_ps=1
     fi
     watched="" stalled=""
@@ -1657,6 +1665,7 @@ _rearm_role_panes() {
       _args_have "$line" "--role-watch $role" "--pane $p" "--branch $branch" && watched=1
       _args_have "$line" "stall-watch role:$branch:$role" "--pane $p" && stalled=1
     done <<<"$snapshot"
+    # Mirrors the launch rule of adapters/core/dispatch.sh watch_role / watch_role_prompts.
     [ -n "$watched" ] || (CREW_ID="$crew_id" nohup dispatch --role-watch "$role" --pane "$p" --engine "$r_agent" --branch "$branch" >/dev/null 2>&1 &)
     [ -z "$stalled" ] || continue
     [ "$r_agent" = claude ] || [ -z "$ignore_budget" ] || continue
@@ -1667,4 +1676,7 @@ _rearm_role_panes() {
 $(tmux list-panes -t "$win" -F '#{pane_id}'$'\x1f''#{@crew_role}'$'\x1f''#{@crew_exited}'$'\x1f''#{pane_current_command}' 2>/dev/null || true)
 PANES
 }
-_rearm_role_panes
+# Resume re-stamps @crew_branch on whatever window it lands in, so only a window
+# that was already this worker's (stamped for the branch, or restored with its
+# codename) may have its role panes armed.
+[ -z "$win_own" ] || _rearm_role_panes
