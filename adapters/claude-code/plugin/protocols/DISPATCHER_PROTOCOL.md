@@ -680,8 +680,8 @@ branch instead; the worktree carries over under `resume: true`.
   lead until resumed;
   and `dispatch resume` refuses a worktree whose discovered crew dir, branch or
   git dir differs from the record `dispatch` wrote when it launched there.
-  `crew msg`, `crew status`, `crew reply` and `crew hold add|release` check the
-  sender before they write. A caller whose env has `CREW_WORKER_ID` or
+  `crew msg`, `crew status`, `crew reply`, `crew hold add|release` and
+  `crew stall-watch` (its id and `--pane`) check the sender before they write. A caller whose env has `CREW_WORKER_ID` or
   `CREW_ROLE_ID` set cannot post as `dispatcher:*`, so a worker or role session
   can neither `crew reply` nor `crew hold`. A caller whose nearest ancestor tmux
   pane sits in a window stamped `@crew_branch` posts only as that pane's own
@@ -699,8 +699,8 @@ branch instead; the worktree carries over under `resume: true`.
   - a process that edits its own env (`CREW_*`, or `TMUX` to reach no server or
     a different one), rewrites tmux stamps, or double-forks out of its pane.
   - the session part of a lead's id.
-  - every writer outside those four commands, including `crew stall-watch` and
-    direct appends to `events.jsonl`.
+  - every writer outside those five commands, including direct appends to
+    `events.jsonl`.
   `crew nudge`'s sender gate (the window's stamped `@crew_id` plus a
   self-asserted bus sender or caller env) is not authentication; it is safe
   because the typed text is the constant `crew inbox "$CREW_WORKER_ID"`, which names no
