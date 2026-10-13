@@ -1,9 +1,10 @@
 // Package drift is the drift guards' one switch. The guards are the tests that
-// compare the Go port against the bash it replaces, so they read a repo file
-// outside crew/ — adapters/core/crew.sh, adapters/core/defaults.json — and the
-// Nix build sandbox (src = ./crew) does not hold those files. A missing file
-// skips there, and CI runs `go test ./...` from a full checkout with
-// CREW_DRIFT_REQUIRED=1, where the same skip would be drift passing unnoticed.
+// compare the Go port against the bash that still ships, so they read a repo
+// file outside crew/ — adapters/core/dispatch.sh, adapters/core/local-models.sh,
+// adapters/core/defaults.json — and the Nix build sandbox (src = ./crew) does
+// not hold those files. A missing file skips there, and CI runs `go test ./...`
+// from a full checkout with CREW_DRIFT_REQUIRED=1, where the same skip would be
+// drift passing unnoticed.
 package drift
 
 import (

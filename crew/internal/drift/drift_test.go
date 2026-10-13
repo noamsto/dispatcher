@@ -29,7 +29,7 @@ func TestMissingFailsWithEnv(t *testing.T) {
 	if !strings.Contains(out, "--- FAIL: TestHelperMissing") {
 		t.Errorf("child did not fail the way a Fatalf fails:\n%s", out)
 	}
-	if !strings.Contains(out, "crew.sh") {
+	if !strings.Contains(out, "dispatch.sh") {
 		t.Errorf("failure does not name the missing file:\n%s", out)
 	}
 }
@@ -62,6 +62,6 @@ func TestHelperMissing(t *testing.T) {
 	if os.Getenv(childGate) == "" {
 		t.Skip("child-process helper")
 	}
-	Missing(t, "adapters/core/crew.sh", errors.New("open adapters/core/crew.sh: no such file or directory"))
+	Missing(t, "adapters/core/dispatch.sh", errors.New("open adapters/core/dispatch.sh: no such file or directory"))
 	t.Error("Missing returned")
 }

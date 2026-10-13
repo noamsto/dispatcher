@@ -13,7 +13,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
 )
 
-const crewScript = "../../../adapters/core/crew.sh"
+const localModelsScript = "../../../adapters/core/local-models.sh"
 
 // now is fixed, so a row at ts 1700000000000 is 100s old.
 const now = 1700000100.0
@@ -602,13 +602,16 @@ func TestEngineCommands(t *testing.T) {
 	}
 }
 
-// TestEngineCommandsMatchCrewSh guards EngineCommands against drift from the
-// case pattern of _is_engine_cmd until crew.sh's copy is deleted. The nix
-// build sandbox holds only ./crew, so the script is absent there.
-func TestEngineCommandsMatchCrewSh(t *testing.T) {
-	src, err := os.ReadFile(crewScript)
+// TestEngineCommandsMatchLocalModels guards EngineCommands against drift from
+// the case pattern of _is_engine_cmd. local-models.sh is sourced by dispatch.sh
+// and carries the copy that ships; dispatch-notify.sh carries the other one,
+// pinned byte-for-byte by tests/adapters.bats. The nix build sandbox holds only
+// ./crew, so the lib is absent there and the guard skips; CI runs it with
+// CREW_DRIFT_REQUIRED.
+func TestEngineCommandsMatchLocalModels(t *testing.T) {
+	src, err := os.ReadFile(localModelsScript)
 	if err != nil {
-		drift.Missing(t, crewScript, err)
+		drift.Missing(t, localModelsScript, err)
 	}
 	var got []string
 	in := false
@@ -626,9 +629,9 @@ func TestEngineCommandsMatchCrewSh(t *testing.T) {
 		}
 	}
 	if len(got) == 0 {
-		t.Fatalf("no _is_engine_cmd case pattern found in %s", crewScript)
+		t.Fatalf("no _is_engine_cmd case pattern found in %s", localModelsScript)
 	}
 	if !slices.Equal(got, EngineCommands) {
-		t.Errorf("EngineCommands drifted from crew.sh:\n bash: %v\n go:   %v", got, EngineCommands)
+		t.Errorf("EngineCommands drifted from local-models.sh:\n bash: %v\n go:   %v", got, EngineCommands)
 	}
 }

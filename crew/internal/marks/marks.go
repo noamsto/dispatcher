@@ -3,15 +3,14 @@
 // this session has been handed}, so a reply taken through the straggler fold is
 // not handed back by the next read.
 //
-// Lock serializes a read-then-record cycle per file across processes; the bash
-// helpers do not take it, so they stay best effort against a Go writer.
+// Lock serializes a read-then-record cycle per file across processes.
 //
-// `crew inbox` is the first Go writer; the bash `await`, `stall-watch --unread`
-// and `nudge` readers still read and write the same file through crew.sh's
-// `_await_state`/`_await_marks`/`_await_record`. The path, the content and the
-// merge are therefore the helpers', op for op: the two jq programs here are
-// their programs verbatim, and the file name is the helper's sanitized key plus
-// the POSIX cksum of the unsanitized one.
+// Every reader and writer is Go now — `inbox`, `await`, `nudge`,
+// `stall-watch --unread` — so this package owns the format outright. It is
+// still the format the bash helpers of #290 defined: the two jq programs here
+// are their programs verbatim, and the file name is the helper's sanitized key
+// plus the POSIX cksum of the unsanitized one, which is what lets a mark raised
+// before the port keep suppressing redelivery.
 package marks
 
 import (
