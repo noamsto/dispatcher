@@ -149,7 +149,10 @@ snapshot() { # $1 = side
 # run of the seeder; restore any mode you removed before the measured seed
 # returns control.
 
-c_fresh_full() { fixture; seed; }
+c_fresh_full() {
+  fixture
+  seed
+}
 c_local_models() {
   fixture
   dispatcher_settings '{"localModels": {
@@ -159,7 +162,10 @@ c_local_models() {
 }}'
   seed
 }
-c_no_local_models() { fixture; seed; }
+c_no_local_models() {
+  fixture
+  seed
+}
 c_local_models_dropped() {
   fixture
   dispatcher_settings '{"localModels":{"lemonade/Alpha":{"baseUrl":"http://halo.test:13305/v1","contextWindow":4096}}}'
@@ -184,8 +190,15 @@ c_invalid_dispatcher_settings() {
   dispatcher_settings '{"localModels":{"lemonade/Alpha":{"contextWindow":4096}}}'
   seed
 }
-c_hookyard_bridge() { fixture; bridge; seed; }
-c_no_bridge() { fixture; seed; }
+c_hookyard_bridge() {
+  fixture
+  bridge
+  seed
+}
+c_no_bridge() {
+  fixture
+  seed
+}
 c_bridge_reseed_order() {
   fixture
   bridge
@@ -236,33 +249,65 @@ c_ext_nonarray_no_bridge() {
   printf '{"extensions":3}\n' >"$worker/settings.json"
   seed
 }
-c_no_ambient_auth() { fixture; rm "$ambient/auth.json"; seed; }
+c_no_ambient_auth() {
+  fixture
+  rm "$ambient/auth.json"
+  seed
+}
 c_no_ambient_auth_reseed() {
   fixture
   seed
   rm "$ambient/auth.json"
   seed
 }
-c_missing_ambient_dir() { mkdir -p "$home"; seed; }
-c_malformed_auth() { fixture; printf 'torn{\n' >"$ambient/auth.json"; seed; }
+c_missing_ambient_dir() {
+  mkdir -p "$home"
+  seed
+}
+c_malformed_auth() {
+  fixture
+  printf 'torn{\n' >"$ambient/auth.json"
+  seed
+}
 c_malformed_auth_link_kept() {
   fixture
   seed
   printf 'torn{\n' >"$ambient/auth.json"
   seed
 }
-c_array_auth() { fixture; printf '[]\n' >"$ambient/auth.json"; seed; }
-c_string_auth() { fixture; printf '"x"\n' >"$ambient/auth.json"; seed; }
-c_empty_auth() { fixture; : >"$ambient/auth.json"; seed; }
+c_array_auth() {
+  fixture
+  printf '[]\n' >"$ambient/auth.json"
+  seed
+}
+c_string_auth() {
+  fixture
+  printf '"x"\n' >"$ambient/auth.json"
+  seed
+}
+c_empty_auth() {
+  fixture
+  : >"$ambient/auth.json"
+  seed
+}
 c_mode000_auth() {
-  ((is_root)) && { skip=1; return 0; }
+  ((is_root)) && {
+    skip=1
+    return 0
+  }
   fixture
   seed
   chmod 000 "$ambient/auth.json"
   seed
   chmod 600 "$ambient/auth.json"
 }
-c_fifo_auth() { fixture; seed; rm "$ambient/auth.json"; mkfifo "$ambient/auth.json"; seed; }
+c_fifo_auth() {
+  fixture
+  seed
+  rm "$ambient/auth.json"
+  mkfifo "$ambient/auth.json"
+  seed
+}
 c_dangling_auth() {
   fixture
   seed
@@ -298,7 +343,10 @@ c_auth_symlink_relative() {
   seed
 }
 c_auth_unsearchable() {
-  ((is_root)) && { skip=1; return 0; }
+  ((is_root)) && {
+    skip=1
+    return 0
+  }
   fixture
   seed
   rm "$ambient/auth.json"
@@ -466,7 +514,11 @@ c_models_store_removed() {
   rm "$ambient/models-store.json"
   seed
 }
-c_no_models_store() { fixture; rm "$ambient/models-store.json"; seed; }
+c_no_models_store() {
+  fixture
+  rm "$ambient/models-store.json"
+  seed
+}
 c_worker_mode_loose() {
   fixture
   seed
