@@ -19,7 +19,6 @@ import crewBus from "../crew-bus.ts";
 const execFileAsync = promisify(execFile);
 
 const worktreeRoot = fileURLToPath(new URL("../../..", import.meta.url));
-const crewSh = path.join(worktreeRoot, "adapters/core/crew.sh");
 const stallCheckSh = path.join(worktreeRoot, "spikes/pi-bus/stall-check.sh");
 
 const ENV_KEYS = [
@@ -57,9 +56,13 @@ function makeTempRepo(withWorkerTask: boolean): string {
   return dir;
 }
 
+// The spike shelled the bus CLI out through a stub so CREW_BIN stayed under
+// test control. The CLI is the `crew` entrypoint — adapters/core/crew.sh, which
+// the stub used to exec, was deleted as #821 planned — so the stub execs PATH's
+// crew.
 function makeCrewBin(dir: string): string {
   const binPath = path.join(dir, "crew-bin.sh");
-  writeFileSync(binPath, `#!/usr/bin/env bash\nexec bash "${crewSh}" "$@"\n`);
+  writeFileSync(binPath, '#!/usr/bin/env bash\nexec crew "$@"\n');
   chmodSync(binPath, 0o755);
   return binPath;
 }

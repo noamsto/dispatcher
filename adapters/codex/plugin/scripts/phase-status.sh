@@ -35,7 +35,7 @@
 # terminal row.
 #
 # A watchdog `blocked` row does not suppress: dispatch spawns
-# `crew stall-watch "$worker_id"`, and crew.sh posts that row under the worker's
+# `crew stall-watch "$worker_id"`, which posts that row under the worker's
 # own session id (WORKER_PROTOCOL.md: a watchdog `blocked` means you are alive).
 #
 # A phase names what a call was attempting, not its outcome — a failed `git push`

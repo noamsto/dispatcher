@@ -4,7 +4,7 @@
 # explicitly (--crew-id > $CREW_ID > error); a binary can't export env back to
 # its caller, so the old `set -gx CREW_ID` persistence trick is gone.
 # The shebang + `set -euo pipefail` are prepended by writeShellApplication, so
-# this file is only the function body (see crew.sh for the same pattern).
+# this file is only the function body.
 
 usage() {
   echo "usage: dispatch <trivial|standard|deep> <model> --effort E [flags] [--] <title...> — see: dispatch --help" >&2
@@ -2439,8 +2439,9 @@ if [ "${1:-}" = "--role-watch" ]; then
     printf '%s\n' "$(($(_rw_now) + s))" >"$DISPATCH_ROLE_WATCH_CLOCK"
   }
 
-  # Signatures copied byte-identically from crew.sh's stall-watch (this is a
-  # standalone build; tests/adapters.bats pins each copy).
+  # Signatures this standalone build carries for itself (it has no shared lib to
+  # source them from). crew/internal/frame's drift test extracts this block and
+  # compares the Go port against it, so the copies cannot drift unnoticed.
   re_option='^[[:space:]]*(>|❯|\*)?[[:space:]]*[0-9]+\.[[:space:]]+[^[:space:]]'
   re_meter='^[^[:alnum:]]*[A-Za-z]+…[[:space:]]\(([0-9]+h([[:space:]][0-9]+m)?([[:space:]][0-9]+s)?|[0-9]+m([[:space:]][0-9]+s)?|[0-9]+s)[[:space:]]·[[:space:]]↓[[:space:]][0-9.]+k?[[:space:]]tokens'
   re_subrow='^[[:space:]]*[^[:alnum:][:space:]]+[[:space:]]+[a-z][a-z-]+[[:space:]][[:space:]]+.*[[:space:]](([0-9]+h[[:space:]])?([0-9]+m[[:space:]])?[0-9]+s)[[:space:]]·[[:space:]]↓'
@@ -2496,8 +2497,9 @@ if [ "${1:-}" = "--role-watch" ]; then
     printf '%s\n' "$above" | grep -qE "$re_option"
   }
 
-  # _is_quota_cursor_limit — byte-identical to crew.sh's stall-watch copy
-  # (tests/adapters.bats pins the pair). A cursor pane parked on the monthly
+  # _is_quota_cursor_limit — the cursor pane's monthly-limit detector; the Go
+  # port is crew/internal/frame.IsQuotaCursorLimit, guarded against this copy by
+  # that package's drift test. A cursor pane parked on the monthly
   # usage-limit frame must not receive a typed assignment; the check is gated
   # to cursor because the anchors can appear in a claude or pi pane's tail
   # (e.g. a worker reading this repo's docs) without it being a refusal frame.

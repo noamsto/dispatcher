@@ -625,8 +625,6 @@ CAP_CHARS = 2000
 
 def tool_class(name, arg):
     if name == "Read":
-        if arg.endswith("adapters/core/crew.sh"):
-            return "read:crew.sh"
         if arg.endswith("adapters/core/dispatch.sh"):
             return "read:dispatch.sh"
         if arg.endswith(".bats"):

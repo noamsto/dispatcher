@@ -52,8 +52,9 @@ cwd="$(jq -r 'if (.cwd // "") != "" then .cwd else (.workspace_roots[0] // empty
 # own `dispatch --role-exited` reports a dead role under its role id instead.
 [[ -z ${CREW_ROLE_ID:-} ]] || exit 0
 
-# _is_engine_cmd — byte-identical copy of crew.sh's table (standalone build; the
-# byte-compare in tests/adapters.bats is what keeps the two in sync).
+# _is_engine_cmd — this standalone build's copy of the engine table; the lib
+# dispatch.sh sources (local-models.sh) carries the other one, and the
+# byte-compare in tests/adapters.bats is what keeps the two in sync.
 _is_engine_cmd() {
   local c="${1#.}"
   c="${c%-wrapped}"
