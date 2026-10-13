@@ -103,6 +103,9 @@
             version = "0.1.0";
             src = ./crew;
             vendorHash = "sha256-9H7aWvuqfuxsL3UIoxaqNEofuFXE2D9Dq3Hk32qSHmk=";
+            # stall-watch sources the two libs dispatch.sh shares, under the
+            # pinned bash (the interpreter writeShellApplication gives crew).
+            ldflags = ["-s" "-w" "-X main.bashBin=${pkgs.bash}/bin/bash" "-X main.budgetGateLib=${./adapters/core/budget-gate.sh}" "-X main.localModelsLib=${./adapters/core/local-models.sh}"];
             nativeCheckInputs = [pkgs.git pkgs.ps];
             postInstall = "mv $out/bin/crew $out/bin/crew-go";
           };
@@ -162,9 +165,8 @@
             # stall-watch runs refresh-budget (rate-limited, host-wide) so its
             # budget: detector reads a fresh cache.
             runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gh gtrash procps]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
-            # crew never references the protocols, and since #1004 it sources no
-            # shared lib but the two `stall-watch --sh` helpers, so of `sub` it
-            # needs those (@localModelsLib@, @budgetGateLib@).
+            # crew never references the protocols and sources no shared lib: the
+            # two libs stall-watch needs are baked into crewGo.
             # @crewGoBin@ is the Go port's binary, substituted in crew.sh itself
             # (not in the shared `sub`) for its ported-arm exec; the worktree-git
             # lib gets its own copy in worktreeGitLib.

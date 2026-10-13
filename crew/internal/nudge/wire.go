@@ -74,7 +74,7 @@ func PaneDeps(paths bus.Paths, stderr io.Writer, clk clock.Clock) Deps {
 
 // Default wires the whole arm. The `nudge)` delegation arm execs here directly:
 // the one helper it called back for, `_unread_scan`, moved in process to
-// `internal/unread` with #968, so the arm no longer exports CREW_SH.
+// `internal/unread` with #968.
 func Default(paths bus.Paths, stderr io.Writer, pid int, crewID func() string) Options {
 	clk := clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")}
 	return Options{

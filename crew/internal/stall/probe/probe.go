@@ -1,7 +1,7 @@
 // Package probe is the side-effecting half of `crew stall-watch`: the pane,
 // process, load and budget reads the bash arm made through `_pane_capture`,
 // `_pane_cmd`, `_load_read`, `_top_consumers` and `_budget_refresh_maybe`, plus
-// the runner for the bash helpers that stay in crew.sh (`stall-watch --sh`).
+// the runner for the bash libs it still calls into (budget-gate.sh, local-models.sh).
 //
 // The CREW_STALL_*_CMD and CREW_BUDGET_REFRESH_CMD seams keep their bash
 // meaning: the text is `eval`ed there and runs under `bash -c` here, stderr is
@@ -12,6 +12,7 @@ package probe
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -49,9 +50,13 @@ type Probes struct {
 type Env struct {
 	Getenv func(string) string
 	Pane   string
-	CrewSH string // $CREW_SH
-	Dir    string // the `--sh` children's cwd: the repo's git common dir
-	Stderr io.Writer
+	Bash   string // the interpreter the libs run under; "" is bash on PATH
+	// BudgetLib and LocalModelsLib are the paths of the dispatch.sh-shared libs
+	// the Sh probe sources; an empty one makes its ops fail to run.
+	BudgetLib      string
+	LocalModelsLib string
+	Dir            string // the libs' cwd: the repo's git common dir
+	Stderr         io.Writer
 }
 
 // run executes name with args in its own process group and returns stdout with
@@ -93,12 +98,12 @@ func runSeam(ctx context.Context, cmd string) (string, int) {
 	return run(ctx, nil, "bash", "-c", cmd)
 }
 
-// ShOffset is what crew.sh's `--sh` branch adds to every op's verdict, so the child's
-// own failures — the preamble's or a usage refusal (1), a missing file (127), a signal —
-// can never read as one.
+// ShOffset is what shScript adds to every op's verdict, so the child's own
+// failures — a missing lib or a usage refusal (1), a missing file (127), a
+// signal — can never read as one.
 const ShOffset = 10
 
-// ShVerdict decodes an `--sh` exit status: ok=false means the helper failed to run, so
+// ShVerdict decodes a Sh exit status: ok=false means the helper failed to run, so
 // neither its status nor its output is the op's. 126 and up are the shell's own
 // not-executable, not-found and 128+signo statuses.
 func ShVerdict(rc int) (int, bool) {
@@ -107,6 +112,36 @@ func ShVerdict(rc int) (int, bool) {
 	}
 	return rc - ShOffset, true
 }
+
+// shScript runs one op against its lib, $1 and $2 being the op and the lib. The
+// verdict leaves as status + ShOffset.
+const shScript = `op=$1 lib=$2
+shift 2
+rc=0
+case "$op" in
+budget)
+	. "$lib" || exit 1
+	pred=${1:-}
+	shift || true
+	case "$pred" in
+	windows) _budget_windows "$@" || rc=$? ;;
+	limit) _budget_limit "$@" || rc=$? ;;
+	*)
+		echo "crew: stall-watch: unknown --sh budget predicate '$pred'" >&2
+		exit 1
+		;;
+	esac
+	;;
+local-model)
+	. "$lib" || exit 1
+	_local_entry "$("${DISPATCH_CONFIG_BIN:-dispatch-config}" 2>/dev/null)" "$1" 2>/dev/null || true
+	;;
+*)
+	echo "crew: stall-watch: unknown --sh op '$op'" >&2
+	exit 1
+	;;
+esac
+exit $((rc + 10))`
 
 // Default is the production probe set for one pane.
 func Default(e Env) Probes {
@@ -216,24 +251,18 @@ func Default(e Env) Probes {
 			tmux(ctx, "set-option", "-p", "-t", e.Pane, name, value)
 		},
 		// The common dir, not this process's cwd: the worktree it started in
-		// may be reaped while the watchdog lives, and crew.sh's preamble then
-		// refuses with exit 1.
+		// may be reaped while the watchdog lives.
 		Sh: func(ctx context.Context, op string, args ...string) (string, int) {
-			argv := append([]string{"stall-watch", "--sh", op}, args...)
-			if isExecutable(e.CrewSH) {
-				return runIn(ctx, e.Dir, e.Stderr, e.CrewSH, argv...)
+			lib := e.BudgetLib
+			if op == "local-model" {
+				lib = e.LocalModelsLib
 			}
-			return runIn(ctx, e.Dir, e.Stderr, "bash", append([]string{"-euo", "pipefail", e.CrewSH}, argv...)...)
+			bash := cmp.Or(e.Bash, "bash")
+			argv := append([]string{"-euo", "pipefail", "-c", shScript, "_", op, lib}, args...)
+			return runIn(ctx, e.Dir, e.Stderr, bash, argv...)
 		},
 		BusRows: BusRows,
 	}
-}
-
-// isExecutable tells the Nix-built crew, which carries its pinned bash and
-// `set -euo pipefail`, from a raw crew.sh source that needs both supplied.
-func isExecutable(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
 }
 
 // cwdTail is `_top_consumers`' sed -E 's#.*/([^/]+/[^/]+) #\1 #'. sed picks the

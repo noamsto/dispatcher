@@ -591,11 +591,10 @@ occupants "$@"` and the bash `_occupants` is gone. `occupants` is dispatched bef
 `bus.Locate`, like `git-guard`; `reap` joins the one-liner arm after the repo check, and
 `crew reap --help` reaches Go as `help reap`.
 
-The four arms of #1007 sit where they always did, ahead of the repo check, and each is
-now the one-liner form: `exec "${CREW_GO_BIN:-@crewGoBin@}" <sub> …`. `id` and `new` pass
+The four arms of #1007 sit where they always did, ahead of the list arm, and each is
+the one-liner form: `exec "${CREW_GO_BIN:-@crewGoBin@}" <sub> …`. `id` and `new` pass
 no arguments, because the bash arms read none; `engine-cmd` passes `${1:-}`, which is how
-the empty-argument refusal survives the exec; `dash` prefixes `CREW_SELF="$0"` the way
-`stall-watch` prefixes `CREW_SH`, and the Go side readlinks it into `CREW_BIN` — the one
+the empty-argument refusal survives the exec; `dash` prefixes `CREW_SELF="$0"`, and the Go side readlinks it into `CREW_BIN` — the one
 place the entry path is resolved, because `crew-dash` execs it or runs it through bash and
 needs a real file, not a symlink a switch has since repointed.
 
@@ -615,55 +614,46 @@ a running loop to hold that.
 
 `flake.nix` substitutes `@crewGoBin@` with the `crew-go` package's
 `bin/crew-go`; `CREW_GO_BIN` overrides it for raw-source runs. The bash
-preamble (the help routing, the git-repo check) runs first. Add a subcommand to this
-arm and delete its old arm. `crew hold`'s per-action `--help` screens are Go like
+preamble is the help routing alone: the git-repo check is Go's (`bus.Locate`, `crew:
+not in a git repo`, exit 1, with `fleet` and `rate --sweep-all` exempt). Add a
+subcommand to this arm and delete its old arm. `crew hold`'s per-action `--help` screens are Go like
 everything else (#1007): the routing that turns `crew hold due --help` into
 `help hold due` is the preamble's, and `help: crew hold <action> --help` pins
 that it does. `rate` reaches it like every other ported subcommand: its flag loop, its
 refusals and its `--sweep-all` loop moved to Go with #966, so the arm passes the
 argv through and the package decides the mode.
 
-`stall-watch` is a second shape: every invocation but the hidden `--sh` branch
-execs Go, and that branch stays in bash.
-
-```bash
-stall-watch)
-  if [ "${1:-}" = --sh ]; then …; exit $((rc + 10)); fi
-  CREW_SH="$(readlink -f "$0")" exec "${CREW_GO_BIN:-@crewGoBin@}" stall-watch "$@"
-  ;;
-```
+`stall-watch` joins that arm like the rest: the `--sh` branch and `CREW_SH` are gone, so
+`crew.sh` holds no `case` arm that does more than exec Go, apart from the oracle helper
+functions and the `*)` help screen.
 
 The helpers the loop still needs (budget-gate.sh, local-models.sh) have other bash
-callers, so Go calls back instead of copying them. The finished-worker release is not
+callers, so Go sources them instead of copying them. The finished-worker release is not
 among them: `reap.ReleaseWindows` runs in process (`Options.Release`, wired in `main.go`
-with silent `say`/`note` and no dry run), and the `--sh release` op is gone.
-A call-out is `CREW_SH stall-watch --sh <op> …`, run directly when
-`$CREW_SH` is executable (the Nix-built `crew`, which carries its pinned bash
-and `set -euo pipefail`), otherwise `bash -euo pipefail "$CREW_SH" stall-watch
---sh <op> …` (a raw-source run) — the self-re-exec form crew.sh already uses,
-which runs the helpers under the arm's own preamble. The child's cwd is the repo's git common dir, as the roster renderer
-`cd`s there: the worktree the watchdog started in may be reaped while it lives,
-and the preamble would then refuse. Each op is the arm's old call site,
-errexit-suppressed as the arm suppressed it, then exits its verdict + 10, so
-the child's own failures — the preamble's exit 1, 127, a signal (-1 to Go) —
-never read as a verdict: Go decodes 10–125 as verdict rc−10 and anything else
-as a helper that failed to run. The environment is inherited; Go strips
+with silent `say`/`note` and no dry run).
+A call-out is `probe.Probes.Sh(op, args…)`, run as `<bash> -euo pipefail -c <script> _
+<op> <lib> <args…>`: `bashBin` is the Nix build's pinned bash (`-X main.bashBin`, `bash`
+on PATH otherwise), and `<lib>` is `budgetGateLib` for `budget` and `localModelsLib` for
+`local-model`. The flake bakes both with `-X`; `BUDGET_GATE_LIB` and `LOCAL_MODELS_LIB`
+override them, as for `dispatch.sh`. The child's cwd is the repo's git common dir, as the
+roster renderer `cd`s there: the worktree the watchdog started in may be reaped while it
+lives. Each op is the arm's old call site, errexit-suppressed as the arm suppressed it,
+then exits its verdict + 10, so the child's own failures — an unreadable lib (exit 1),
+127, a signal (-1 to Go) — never read as a verdict: Go decodes 10–125 as verdict rc−10 and
+anything else as a helper that failed to run. The environment is inherited; Go strips
 trailing newlines from stdout. An unknown op or budget predicate is one `crew:
 stall-watch: unknown --sh …` line, exit 1.
 
-| op            | argv after `--sh <op>`                    | stdout                           | verdict (exit − 10)          | helper failed  |
+| op            | argv after `<op>`                         | stdout                           | verdict (exit − 10)          | helper failed  |
 | ------------- | ----------------------------------------- | -------------------------------- | ---------------------------- | -------------- |
 | `budget`      | `<windows\|limit> <cache> <engine> <now>` | `_budget_*`'s TSV                | 0 hit, 1 clear, 2 can't tell | can't tell (2) |
 | `local-model` | `<model>`                                 | non-empty iff the model is local | 0                            | D8 stays on    |
 
-`budget` and `local-model` source `${BUDGET_GATE_LIB:-@budgetGateLib@}` and
-`${LOCAL_MODELS_LIB:-@localModelsLib@}`; `local-model` also runs
-`${DISPATCH_CONFIG_BIN:-dispatch-config}`.
+`local-model` also runs `${DISPATCH_CONFIG_BIN:-dispatch-config}`.
 
-`nudge` is the `stall-watch` shape without the `--sh` branch: every invocation
-execs Go, and since #968 the arm exports nothing — the one helper it called
-back for, `_unread_scan`, moved in process to `internal/unread`, which is what
-tells the nudge which directive it is waking the lead for.
+`nudge` execs Go the same way; since #968 the one helper it called back for,
+`_unread_scan`, is in process (`internal/unread`), which is what tells the nudge
+which directive it is waking the lead for.
 
 ### Shared guard (`worktree-git.sh` to `crew-go git-guard`)
 
