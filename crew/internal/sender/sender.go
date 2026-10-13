@@ -47,7 +47,8 @@ func Check(from, crew string, p Probes) string {
 // Watch is Check for a watchdog: the --pane it watches must also be stamped for
 // `from` (when stamped at all), and sit in the caller's window when the caller
 // is anchored. The pane must be spelled as a pane id (%N), the form the lookup
-// matches.
+// matches. When tmux lists panes, the pane must exist: an id not yet allocated
+// could be created and stamped for another branch after the watchdog's grace.
 func Watch(from, crew, pane string, p Probes) string {
 	if reason := p.envRefusal(from); reason != "" {
 		return reason
@@ -74,6 +75,9 @@ func Watch(from, crew, pane string, p Probes) string {
 	subject := "pane " + pane
 	if anchored && (!found || target.window != a.window) {
 		return subject + " is outside this pane's window"
+	}
+	if !found && rows != nil {
+		return subject + " is not a live pane"
 	}
 	if !found || target.branch == "" {
 		return ""

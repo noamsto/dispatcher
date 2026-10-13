@@ -173,6 +173,8 @@ func TestWatch(t *testing.T) {
 		{"unanchored window-id target", idX, "c1", "@2", fixture{panes: pane("500", "feat/y", "lead", "c1", "@2", "%2")}, "pane @2 is not a pane id (%N)"},
 		{"unanchored zero-padded target", idX, "c1", "%01", fixture{panes: pane("500", "feat/y", "lead", "c1", "@1", "%1")}, "pane %01 is not a pane id (%N)"},
 		{"unanchored bare percent target", idX, "c1", "%", fixture{panes: pane("500", "feat/y", "lead", "c1", "@2", "%2")}, "pane % is not a pane id (%N)"},
+		{"unanchored unlisted target with panes listed", idX, "c1", "%7", fixture{panes: pane("500", "feat/x", "lead", "c1", "@2", "%2")}, "pane %7 is not a live pane"},
+		{"unanchored trailing-junk target", idX, "c1", "%2x", fixture{panes: pane("500", "feat/x", "lead", "c1", "@2", "%2")}, "pane %2x is not a pane id (%N)"},
 		{"unanchored %0 unlisted", idX, "c1", "%0", fixture{}, ""},
 
 		{"anchored own pane own id", idX, "c1", "%1", fixture{panes: callerLead}, ""},
