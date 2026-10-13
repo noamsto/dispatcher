@@ -10,7 +10,7 @@ Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 (#939), `git-baseline` (#993), which brings the git-config guard
 (`worktree-git.sh`'s `_wt_cfg_*`) to Go as one shared implementation, and `reap` and
 `occupants` (#997), and the entry section — `help`, `id`, `new`, `engine-cmd` and `dash`
-(#1007). Each slice must leave every bats file green;
+(#1007) — and `pi-agent-dir` (#1016). Each slice must leave every bats file green;
 tests may be adapted only where the Go design changes what they can observe (the
 output contract below), with each edit justified.
 
@@ -530,6 +530,24 @@ pr_open` for an implement task: the ledger's form, the empty-detail rule, the
   of git, runs every help invocation AC1 of #1007 names against both sides, and
   diffs stdout, stderr and the exit status. No in-tree drift guard can hold that
   link, because this is the change that deleted the script's copy.
+- `crew/internal/piagentdir`: `crew pi-agent-dir` (#1016), the seeder of the shared
+  `PI_CODING_AGENT_DIR` every pi worker runs with — never-trust `settings.json`, the
+  hookyard bridge and its `extensions` entry, the `auth.json` link (or `{}`), the
+  `models-store.json` copy and the dispatcher-owned `models.json`. It is trust-boundary
+  code, so every refusal (symlinked or non-directory worker dir, a worker dir and an
+  ambient dir that resolve inside one another, a non-array `extensions`, an `auth.json`
+  that is not a reachable regular file or not a JSON object, a directory where the link
+  goes, a `localModels` provider with a stored credential) keeps the arm's text and
+  exit 1, and each file keeps its mode (`settings.json`/`models.json`/copies 0644, a
+  seeded `auth.json` 0600, the dir 0700). Writes are the arm's same-dir `.seed.XXXXXX`
+  temp plus rename, skipped when the content already matches, so a re-seed rewrites
+  nothing. The two jq programs run on jqrun: the clash check is the arm's, and
+  `models.jq` is `_local_pi_models_json` from `local-models.sh` verbatim, which a drift
+  test pins because dispatch and refresh-budget still source that lib. Like the entry
+  arms it execs ahead of the repo check. Not mirrored: the arm sourced
+  `local-models.sh` first, so a missing lib failed the seed; Go embeds the program and
+  does not read the lib. `scripts/pi-agent-dir-parity.sh` runs the pre-port arm and Go
+  over the same fixture homes and compares stdout, stderr, exit status and the trees.
 - `crew/internal/testjson`: test-only value-equal JSON comparison.
 - `crew/internal/drift`: test-only drift-guard skip, fatal under `CREW_DRIFT_REQUIRED`.
 
