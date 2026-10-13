@@ -12,7 +12,7 @@
 # layered on top; bus integration is opt-in, never the substrate.
 #
 # The shebang + `set -euo pipefail` are prepended by writeShellApplication, so
-# this file is only the body (see crew.sh for the same pattern).
+# this file is only the body.
 
 usage() {
   echo "usage: pr-watch <N> [--repo owner/name] [--timeout S] [--interval S]" >&2

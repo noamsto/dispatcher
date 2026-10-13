@@ -1,9 +1,12 @@
-// Package frame classifies tmux pane captures the way the bash predicates in
-// adapters/core/crew.sh (_frame_classifier, _pane_idle_reason) do: prompt,
-// quota, background-wait, meter and input-box shapes of the claude, codex, pi
-// and cursor panes. Every function takes the sampler's stdout with trailing
-// newlines stripped, as `printf '%s\n' "$1"` presents it, and engine replaces
-// the bash predicates' read of the global $engine.
+// Package frame classifies tmux pane captures: prompt, quota, background-wait,
+// meter and input-box shapes of the claude, codex, pi and cursor panes. The
+// predicates came from bash — the ones dispatch.sh's --role-watch still ships
+// are its own copies, and the drift test compares this package against them —
+// while the quota-prompt, session-limit and idle-reason detectors exist only
+// here, their expectations frozen in testdata/golden-oracle.tsv. Every function
+// takes the sampler's stdout with trailing newlines stripped, as
+// `printf '%s\n' "$1"` presents it, and engine replaces the bash predicates'
+// read of the global $engine.
 package frame
 
 import (

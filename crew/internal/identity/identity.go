@@ -15,8 +15,9 @@ import (
 // exitFailure is the arm's exit status for a refusal.
 const exitFailure = 1
 
-// The pools mirror _names/_colors/_tmuxc in adapters/core/crew.sh; a test
-// guards them against drift.
+// The pools are the three the bash library carried (`_names`/`_colors`/`_tmuxc`)
+// and the only copy of them left; TestPoolsAreGolden freezes the order, because a
+// recorded identity is its slot.
 const poolSize = 32
 
 var names = [poolSize]string{

@@ -1024,8 +1024,8 @@ $(tmux list-panes -a -F '#{window_id}'$'\x1f''#{pane_id}'$'\x1f''#{pane_current_
 PANES
 
 # Cheap partial guard (#111): refuse a pane that is still running an engine.
-# `crew engine-cmd` shares crew.sh's own nix-wrapper-aware matcher
-# (_is_engine_cmd) rather than duplicating it here. Deliberately a
+# `crew engine-cmd` shares the nix-wrapper-aware matcher local-models.sh's
+# _is_engine_cmd carries rather than duplicating it here. Deliberately a
 # command-name sniff, not the stronger bus-state gate dispatch.sh uses for its
 # own placement refusal (dispatch.sh:699-711) — see that gate's own comment
 # for why its engine count is only advisory.

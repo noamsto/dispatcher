@@ -1,7 +1,6 @@
 package identity
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -13,11 +12,8 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/drift"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
-
-const crewScript = "../../../adapters/core/crew.sh"
 
 var longBranch = "feat/" + strings.Repeat("0123456789", 29) + "01234"
 
@@ -221,56 +217,42 @@ func TestPoolsHaveThirtyTwoSlots(t *testing.T) {
 	}
 }
 
-// bashArray returns the words of the multi-line `name=( ... )` array in script.
-func bashArray(t *testing.T, script, name string) []string {
-	t.Helper()
-	f, err := os.Open(script)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = f.Close() }()
-	var body strings.Builder
-	in := false
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := sc.Text()
-		if !in {
-			rest, ok := strings.CutPrefix(line, name+"=(")
-			if !ok {
-				continue
-			}
-			in, line = true, rest
-		}
-		end := strings.Contains(line, ")")
-		body.WriteString(strings.TrimSuffix(strings.TrimSpace(line), ")") + " ")
-		if end {
-			return strings.Fields(body.String())
-		}
-	}
-	t.Fatalf("array %s not found in %s", name, script)
-	return nil
+// goldenPools freeze the three identity pools. No bash copy of a pool ships, so
+// nothing is left to compare against, and the order is load-bearing: a rename or
+// a reordering silently re-points every codename already stored against a
+// slot.
+var goldenPools = []struct {
+	what string
+	got  []string
+	want []string
+}{
+	{"names", names[:], []string{
+		"sage", "atlas", "nova", "ember", "reef", "iris", "amber", "coral",
+		"moss", "slate", "rust", "plum", "lime", "rose", "sky", "onyx",
+		"pine", "lagoon", "indigo", "fern", "bronze", "violet", "khaki", "ash",
+		"brick", "mauve", "tan", "crimson", "fuchsia", "blush", "orchid", "cobalt",
+	}},
+	{"colors", colors[:], []string{
+		"green", "blue", "magenta", "orange", "teal", "purple", "yellow", "salmon",
+		"olive", "steel", "rust", "plum", "lime", "pink", "sky", "grey",
+		"seagreen", "darkcyan", "indigo", "forestgreen", "darkgoldenrod", "mediumpurple", "darkkhaki", "dimgrey",
+		"indianred", "palevioletred", "peru", "crimson", "mediumvioletred", "hotpink", "orchid", "royalblue",
+	}},
+	{"tmuxc", tmuxc[:], []string{
+		"colour28", "colour32", "colour127", "colour130", "colour30", "colour98", "colour136", "colour167",
+		"colour100", "colour67", "colour166", "colour96", "colour64", "colour162", "colour25", "colour244",
+		"colour29", "colour31", "colour61", "colour65", "colour94", "colour97", "colour101", "colour102",
+		"colour131", "colour132", "colour137", "colour160", "colour163", "colour168", "colour169", "colour68",
+	}},
 }
 
-// TestPoolsMatchCrewSh guards the Go pools against drift from the bash arrays.
-// crew.sh has no identity helper left, so this is what keeps the pool order a
-// recorded identity depends on. The nix build sandbox holds only ./crew, so the
-// script is absent there and the guard skips; CI runs it with CREW_DRIFT_REQUIRED.
-func TestPoolsMatchCrewSh(t *testing.T) {
-	if _, err := os.Stat(crewScript); err != nil {
-		drift.Missing(t, crewScript, err)
-	}
-	for _, p := range []struct {
-		bash string
-		want []string
-	}{
-		{"_names", names[:]},
-		{"_colors", colors[:]},
-		{"_tmuxc", tmuxc[:]},
-	} {
-		got := bashArray(t, crewScript, p.bash)
-		if strings.Join(got, " ") != strings.Join(p.want, " ") {
-			t.Errorf("%s drifted from crew.sh:\n bash: %v\n go:   %v", p.bash, got, p.want)
-		}
+func TestPoolsAreGolden(t *testing.T) {
+	for _, p := range goldenPools {
+		t.Run(p.what, func(t *testing.T) {
+			if strings.Join(p.got, " ") != strings.Join(p.want, " ") {
+				t.Errorf("%s drifted from the frozen pool:\n got:  %v\nwant:   %v", p.what, p.got, p.want)
+			}
+		})
 	}
 }
 

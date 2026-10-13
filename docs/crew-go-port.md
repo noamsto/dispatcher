@@ -1,6 +1,6 @@
 # Porting crew to Go
 
-Issue: #822. `adapters/core/crew.sh` moves to Go one subcommand at a time.
+Issue: #822. `adapters/core/crew.sh` moved to Go one subcommand at a time.
 Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 `await`, `retro`, `rate` (both modes: the per-repo sweep of #895 and the
 `--report` rollup of #890), `reply`, `watch`, `resolve-target`, `where`,
@@ -11,8 +11,10 @@ Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 (`worktree-git.sh`'s `_wt_cfg_*`) to Go as one shared implementation, and `reap` and
 `occupants` (#997), and the entry section — `help`, `id`, `new`, `engine-cmd` and `dash`
 (#1007) — and `pi-agent-dir` (#1016). #821 finished the direction flip: the Go
-binary is what `crew` runs, and `crew.sh` is what the arms left behind — the bash
-helpers the drift guards still read, with no entry logic of its own.
+binary is what `crew` runs, and the script the arms left behind — the bash helpers
+the drift guards still read, with no entry logic of its own — is deleted, its
+helpers that are still live already carried by the scripts that call them (see
+"What the bash scripts still carry").
 Each slice must leave every bats file green;
 tests may be adapted only where the Go design changes what they can observe (the
 output contract below), with each edit justified.
@@ -254,8 +256,12 @@ output contract below), with each edit justified.
   in bash under an explicit `LC_ALL=C.UTF-8` and asserts that every predicate,
   for every engine, agrees with Go over `testdata/frames` (the crew.bats
   fixtures, a frame per engine, multibyte and NBSP edge frames). It skips when
-  crew.sh is absent, as in the Nix sandbox. crew.sh dropped `_is_bg_wait`, so
-  its pre-port body is kept in `testdata/is_bg_wait.bash` as the oracle.
+  dispatch.sh is absent, as in the Nix sandbox. Since #821 the block it extracts
+  is dispatch.sh's `--role-watch` one, the only bash copy that ships; the
+  predicates with no bash copy (`_is_quota_prompt`, `_is_quota_session_limit`,
+  `_pane_idle_reason`) are frozen in `testdata/golden-oracle.tsv`, and
+  `_is_bg_wait`, which shipped nowhere else either, keeps its pre-port body in
+  `testdata/is_bg_wait.bash` as the oracle.
 
 - `crew/internal/stall`: the `stall-watch` arm of #832. Go parses the arm's
   argv in its order (the five `crew: stall-watch…` lines and the
@@ -874,22 +880,47 @@ the bus for unread msgs (unread helper failed)` at exit 1, because the empty-sca
   keep the evidence: compare exit status, human/agent text and JSON values
   (`jq -S`) — nothing else.
 
-## Bash helpers that stay
+## What the bash scripts still carry
 
-`_crew_id` and `_is_engine_cmd` keep other callers (`_is_engine_cmd` is the canonical copy
-adapters.bats compares dispatch.sh's against; `_pane_is_engine_at` went with `reap`).
-Delete each only with its last caller. While two copies exist, guard drift:
+#821 deleted `adapters/core/crew.sh`. Every helper still in it had either no caller
+left or a live copy in the script that calls it, so deleting it moved no behaviour;
+what is left of the drift-guard set is what the table says. Where a live copy
+exists, that copy is what the guard now reads — the library was never the only
+implementation of those, only the one they were all named after. Where the library
+held the only copy of a rule Go already implements, the expectation is frozen
+instead of compared, because there is nothing left to compare against.
 
-- Go tests parse crew.sh's pools and engine table and assert the Go copies
-  match (skipped when crew.sh is absent, as in the Nix sandbox; CI runs them
-  required — see Running the suite).
+| helper                                                                                | what ships                                                                    | guard                                                                                                                           |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `_bus_append`                                                                         | dispatch.sh, dispatch-notify.sh, dispatch-resume.sh (three standalone builds) | adapters.bats byte-compares the three, dispatch.sh first                                                                        |
+| `_is_engine_cmd`                                                                      | local-models.sh (the lib dispatch.sh sources), dispatch-notify.sh             | adapters.bats byte-compares the pair; `TestEngineCommandsMatchLocalModels` parses the case pattern into `roster.EngineCommands` |
+| `_pid_alive`, `_file_mtime_s`, `_ps_elapsed_s`, `_pid_recycled`, `_recorded_pid_live` | dispatch.sh, dispatch-resume.sh                                               | adapters.bats byte-compares all five                                                                                            |
+| the `--role-watch` frame predicates (`re_option` … `_pi_idle_box`, 20 of them)        | dispatch.sh — the only bash copy that ships                                   | `TestDriftAgainstBash` extracts the block and compares Go against it                                                            |
+| `_pane_idle_reason`, `_is_quota_prompt`, `_is_quota_session_limit`                    | nothing: no bash script carries them                                          | `TestGoldenOracle` against `testdata/golden-oracle.tsv`                                                                         |
+| `_names`, `_colors`, `_tmuxc`                                                         | nothing                                                                       | `TestPoolsAreGolden` against the frozen 32-entry lists                                                                          |
+| `_await_state`, `_await_marks`, `_await_record`                                       | nothing: every reader and writer is Go                                        | `marks.TestPath` / `TestPathMatchesShell` (real `tr`/`cksum`), `TestRecord` / `TestRecordMatchesJq`                             |
+| `_clock_now`, `_clock_now_f`                                                          | phase-status.sh and the `--sh` ops, each in its own script                    | unchanged: both sides read and write one `CREW_CLOCK` file                                                                      |
+| `_crew_id`                                                                            | nothing; directive-delivery.sh and phase-status.sh each restate the rule      | `bus.CrewID`'s tests, and the bats rows that resolve a crew id                                                                  |
+| `_gh_json`                                                                            | nothing                                                                       | nothing to guard: `jqrun` is the implementation, its tests the guard                                                            |
+
+The golden rows were generated, not retyped: a throwaway Go test drove the then-live
+crew.sh oracle over `testdata/frames` and over every `rows()` input, and wrote one
+`<input>\t<key>\t<value>` row per case; the generator was deleted once the file
+landed, so nothing in the tree reads the deleted script. `TestGoldenOracle` fails on
+an unknown row, a duplicate, or a corpus frame with no row, so the file cannot
+quietly stop covering the package.
+
+What follows is where each helper went, kept because the guards above still name them.
+
+`_is_engine_cmd` keeps two callers, and each copy is now the lib's or the standalone
+build's (`_pane_is_engine_at` went with `reap`). While two copies exist, guard drift.
 
 The `_identity*` helpers lost their last caller with the `identity` arm (#981) and
-are gone; `crew/internal/identity` is now the only picker of a codename. The three
-pools stay: no bash caller reads them either, but they are the canonical copy —
-crew.bats's `_rr_palette` enumerates `_colors` from here to compile every palette
-stroke through d2, and `identity_test.go` asserts the Go pools against all three,
-which is what keeps a slot from being reordered under a recorded identity.
+are gone; `crew/internal/identity` is now the only picker of a codename. Its three
+pools are the only copy of the palette: `identity_test.go`'s `TestPoolsAreGolden`
+freezes all three against the lists the bash arrays held, which is what keeps a slot
+from being reordered under a recorded identity, and crew.bats's `_rr_palette`
+enumerates the Go array to compile every palette stroke through d2.
 
 `_sessions` and `_resolve_target` lost their last caller with the `nudge` arm and
 are gone, and their drift guards went with them: `crew sessions` and
@@ -898,15 +929,13 @@ through them (`sessions.Fold` for the newest-session gate, `resolve.Rows` for it
 "ambiguous target … pass a branch" refusal, which `crew resolve-target` cannot
 print because it exits 2 with an empty stdout there).
 
-`_await_state`, `_await_marks` and `_await_record` stay for the crew.bats
-guards that replay Go's writes through them, even
-though neither `crew await` nor `crew inbox` calls them any more: both write it
-from `internal/marks`, and `internal/unread` has read it since #968. Two of the three drift guards above apply — crew.bats
-compares the Go marks file with `_await_state`'s path and `_await_record`'s
-content on the same msgs, and `internal/marks` runs the helpers' own two programs
-through jqrun — and one more read the other way: crew.bats hands the marks a Go
-`await` raised to `crew nudge`, whose scan is `internal/unread`'s (the bash
-`_unread_scan` replay guards moved into that package's tests with #968).
+`_await_state`, `_await_marks` and `_await_record` went with the script: every
+reader and writer of the marks file is Go now, `internal/marks` owning the format the
+helpers defined. The guards moved into the package — `TestPath` and
+`TestPathMatchesShell` pin the sanitized-key-plus-cksum name against real `tr` and
+`cksum`, `TestRecord` and `TestRecordMatchesJq` pin the merge program — and the two
+bats rows that replayed the helpers compute the path from the same formula
+(`marks_path` in tests/helpers.bash) instead of sourcing a helper.
 
 `_clock_now` and `_clock_now_f` stay for `roster-render` and the `--sh` ops, and
 `internal/clock` is their Go copy for `hold`, `await`, `stall-watch` and `nudge`;
@@ -925,16 +954,16 @@ tests cover the old-format holders those rows planted.
 Which lock paths either language takes, from `grep -rn 'lock\.d\|refresh\.d\|nudge-wait'`
 over the non-test code:
 
-| lock path                                  | bash (`adapters/core/crew.sh`) | Go                           |
-| ------------------------------------------ | ------------------------------ | ---------------------------- |
-| `$XDG_DATA_HOME/crew/ratings.sweep.lock.d` | none                           | `reap` autosweep             |
-| `<crew dir>/reap.lock.d`                   | none                           | `reap`                       |
-| `$XDG_DATA_HOME/crew/ratings.lock.d`       | none                           | `rate` sweep                 |
-| `<crew dir>/watch.lock.d`                  | none                           | `watch`                      |
-| `<crew dir or lane>/stream.lock.d`         | none                           | `stream`, fleet lane         |
-| `<crew dir>/roster-render.lock.d`          | none                           | `roster-render`              |
-| `<bus dir>/nudge-wait/<sid>.<cksum>.d`     | none                           | `nudge --wait`               |
-| `<budget file>.refresh.d`                  | none                           | `stall-watch` budget refresh |
+| lock path                                  | bash | Go                           |
+| ------------------------------------------ | ---- | ---------------------------- |
+| `$XDG_DATA_HOME/crew/ratings.sweep.lock.d` | none | `reap` autosweep             |
+| `<crew dir>/reap.lock.d`                   | none | `reap`                       |
+| `$XDG_DATA_HOME/crew/ratings.lock.d`       | none | `rate` sweep                 |
+| `<crew dir>/watch.lock.d`                  | none | `watch`                      |
+| `<crew dir or lane>/stream.lock.d`         | none | `stream`, fleet lane         |
+| `<crew dir>/roster-render.lock.d`          | none | `roster-render`              |
+| `<bus dir>/nudge-wait/<sid>.<cksum>.d`     | none | `nudge --wait`               |
+| `<budget file>.refresh.d`                  | none | `stall-watch` budget refresh |
 
 No lock is taken by bash any more, so neither a `crew lock` helper nor `flock(1)` (absent on
 macOS by default) is needed. The sharing that remains is across builds, not languages: old-build
@@ -948,13 +977,15 @@ replace a `--force`'d holder, and the reap and autosweep bats rows that plant a 
 with a live pid.
 
 The frame classifiers (`_frame_classifier`, `_pane_idle_reason`, `_claude_idle_box`,
-`_box_rows`, the `_pi_*` helpers) stay in crew.sh as the canonical copies, though no
-bash caller is left: the Go drift oracle runs them (the `LC_ALL=C.UTF-8` test under
-Layout) and adapters.bats pins dispatch.sh's byte-identical copies against them.
-`internal/frame` is the Go copy `stall-watch` and `reap` run.
-`_is_quota_cursor_limit` has no bash caller left but stays, as the canonical copy
-adapters.bats compares dispatch.sh's against. `_is_bg_wait` had no bash caller
-left and no pinned copy, so it moved to Go and is gone from crew.sh.
+`_box_rows`, the `_pi_*` helpers) leave dispatch.sh's copies as the only bash ones:
+`internal/frame` is the Go implementation `stall-watch` and `reap` run, and its drift
+test extracts dispatch.sh's `--role-watch` block and compares Go against it, which is
+the same comparison adapters.bats used to make with the library as the middleman.
+`_is_quota_cursor_limit` ships only in dispatch.sh, and is inside that extracted
+block. `_is_quota_prompt`, `_is_quota_session_limit` and `_pane_idle_reason` ship in
+no bash script, so their cases are the golden table above. `_is_bg_wait` had no bash
+caller left and no pinned copy, so it moved to Go and its pre-port body is the
+vendored oracle.
 
 The rest of what `stall-watch` reaches stays bash and is delegated, not copied
 (one copy needs no guard): budget-gate.sh and local-models.sh, reached
@@ -974,17 +1005,18 @@ the renderer's model and by `hold list` alike, so the guard that compared the tw
 copies went with the copy. `_hold_crew` and `_hold_render` were already gone.
 `_fit_line`, `_shrink`, `_LINE_MAX`/`_ELIDED` and
 their drift guards are gone with the `status`/`msg` port (#945): `bus` is the one
-copy. `_bus_append` has had no crew.sh caller since `crew stack` moved (#1004); it stays
-as the canonical copy adapters.bats pins dispatch.sh and dispatch-notify.sh against (the
-same arrangement as `_pid_alive`), and `internal/bus.Append` is its Go copy.
+copy. `_bus_append` had no library caller since `crew stack` moved (#1004); the three
+standalone builds that call it each carry a copy, and adapters.bats byte-compares them
+with dispatch.sh as the one it names (the same arrangement as `_pid_alive`), while
+`internal/bus.Append` is the Go copy.
 `_owner_pid`, `_pidfile_log` and `_has_c0` are gone (`crews.Probes.OwnerPID`,
 `crews.PidfileLog`, and `msg`'s own control-byte test). `_pid_alive`,
-`_file_mtime_s`, `_ps_elapsed_s`, `_pid_recycled` and `_recorded_pid_live` have no
-crew.sh caller left but stay, as the canonical copies adapters.bats pins
-dispatch.sh and dispatch-resume.sh against (the same arrangement as
-`_is_quota_cursor_limit`). `_crew_id` lost its last crew.sh caller with the `id` arm
-(#1007) and stays: `directive-delivery.sh` and `phase-status.sh` each resolve the crew id
-by naming its rule (task doc first, then the environment) as the thing they copy, and
+`_file_mtime_s`, `_ps_elapsed_s`, `_pid_recycled` and `_recorded_pid_live` are carried
+by dispatch.sh and dispatch-resume.sh, two standalone builds, and adapters.bats
+byte-compares all five between them (the same arrangement as `_is_quota_cursor_limit`).
+`_crew_id` lost its last library caller with the `id` arm (#1007) and went with the
+script: `directive-delivery.sh` and `phase-status.sh` each resolve the crew id by
+naming its rule (task doc first, then the environment) as the thing they copy, and
 `bus.CrewID` is the Go copy of that rule.
 
 The guard helpers are gone from `worktree-git.sh` (#993): the key tables and their masking,
@@ -1051,5 +1083,8 @@ any more, because nothing was left for it to run.
    `CREW_SELF` the entry exports; `stream` re-enters the entry through
    `entry.EntryArgv` instead of a bash script of its own.
 4. `run_crew` and `CREW_REAL` in the bats files are the Go binary (`tests/helpers.bash`
-   defines `CREW` from `CREW_GO_BIN`), and `CREW_SRC` is what a row reads when it
-   wants the bash oracle.
+   defines `CREW` from `CREW_GO_BIN`).
+5. The library itself is deleted. The helpers still live in the scripts that call
+   them, the guards that compared Go against a library copy read those copies
+   instead, and the comparisons that had no copy left became golden tables — see
+   "What the bash scripts still carry".

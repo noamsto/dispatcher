@@ -5,7 +5,7 @@ export function statusArgs(
   pr?: string,
 ): string[] {
   const args = ["status", id, state];
-  // crew.sh reads `status <from> <state> [detail] [pr]` positionally, so a pr
+  // `crew status` reads `<from> <state> [detail] [pr]` positionally, so a pr
   // without a detail still needs the empty detail slot.
   if (pr !== undefined) {
     args.push(detail ?? "", pr);

@@ -1,7 +1,7 @@
 # spikes/pi-bus
 
 Spike A prototype for #142: a thin pi extension that lets a `pi` worker talk
-to the crew bus (`adapters/core/crew.sh`) through tools and heartbeats instead
+to the crew bus (the `crew` entrypoint) through tools and heartbeats instead
 of shelling out to `crew` directly. **Not wired into dispatch** — nothing in
 `adapters/` loads this, and there is no bus format change. This is evidence
 for the compose-vs-build evaluation, not a shipped feature.

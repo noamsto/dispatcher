@@ -19,7 +19,6 @@ import crewBus from "../crew-bus.ts";
 const execFileAsync = promisify(execFile);
 
 const worktreeRoot = fileURLToPath(new URL("../../..", import.meta.url));
-const crewSh = path.join(worktreeRoot, "adapters/core/crew.sh");
 const stallCheckSh = path.join(worktreeRoot, "spikes/pi-bus/stall-check.sh");
 
 const ENV_KEYS = [
@@ -57,9 +56,11 @@ function makeTempRepo(withWorkerTask: boolean): string {
   return dir;
 }
 
+// The stub keeps CREW_BIN under test control; the bus CLI it stands in for is
+// whatever `crew` PATH resolves, since the library this used to exec is gone.
 function makeCrewBin(dir: string): string {
   const binPath = path.join(dir, "crew-bin.sh");
-  writeFileSync(binPath, `#!/usr/bin/env bash\nexec bash "${crewSh}" "$@"\n`);
+  writeFileSync(binPath, '#!/usr/bin/env bash\nexec crew "$@"\n');
   chmodSync(binPath, 0o755);
   return binPath;
 }

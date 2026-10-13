@@ -1,0 +1,876 @@
+bgwait_churned.txt	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+bgwait_churned.txt	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+bgwait_churned.txt	idle_reason.skip1.color	rc=0 reason=
+bgwait_churned.txt	idle_reason.skip1.plain	rc=0 reason=
+bgwait_churned.txt	quota_prompt	0
+bgwait_churned.txt	quota_session_limit	0
+bgwait_crunched.txt	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+bgwait_crunched.txt	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+bgwait_crunched.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+bgwait_crunched.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+bgwait_crunched.txt	quota_prompt	0
+bgwait_crunched.txt	quota_session_limit	0
+bgwait_noshell.txt	idle_reason.skip0.color	rc=0 reason=
+bgwait_noshell.txt	idle_reason.skip0.plain	rc=0 reason=
+bgwait_noshell.txt	idle_reason.skip1.color	rc=0 reason=
+bgwait_noshell.txt	idle_reason.skip1.plain	rc=0 reason=
+bgwait_noshell.txt	quota_prompt	0
+bgwait_noshell.txt	quota_session_limit	0
+claude_long.10.0k.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+claude_long.10.0k.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+claude_long.10.0k.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+claude_long.10.0k.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+claude_long.10.0k.txt	quota_prompt	0
+claude_long.10.0k.txt	quota_session_limit	0
+claude_runaway.10.0k.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+claude_runaway.10.0k.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+claude_runaway.10.0k.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+claude_runaway.10.0k.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+claude_runaway.10.0k.txt	quota_prompt	0
+claude_runaway.10.0k.txt	quota_session_limit	0
+claude_stale.10.0k.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+claude_stale.10.0k.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+claude_stale.10.0k.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+claude_stale.10.0k.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+claude_stale.10.0k.txt	quota_prompt	0
+claude_stale.10.0k.txt	quota_session_limit	0
+claude_toolsent.10.0k.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+claude_toolsent.10.0k.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+claude_toolsent.10.0k.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+claude_toolsent.10.0k.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+claude_toolsent.10.0k.txt	quota_prompt	0
+claude_toolsent.10.0k.txt	quota_session_limit	0
+codex_hooks_review.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+codex_hooks_review.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+codex_hooks_review.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+codex_hooks_review.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+codex_hooks_review.txt	quota_prompt	0
+codex_hooks_review.txt	quota_session_limit	0
+codex_hooks_review_reordered.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+codex_hooks_review_reordered.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+codex_hooks_review_reordered.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+codex_hooks_review_reordered.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+codex_hooks_review_reordered.txt	quota_prompt	0
+codex_hooks_review_reordered.txt	quota_session_limit	0
+cursor_monthly_limit.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+cursor_monthly_limit.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+cursor_monthly_limit.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+cursor_monthly_limit.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+cursor_monthly_limit.txt	quota_prompt	0
+cursor_monthly_limit.txt	quota_session_limit	0
+cursor_monthly_limit_distant.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+cursor_monthly_limit_distant.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+cursor_monthly_limit_distant.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+cursor_monthly_limit_distant.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+cursor_monthly_limit_distant.txt	quota_prompt	0
+cursor_monthly_limit_distant.txt	quota_session_limit	0
+done_idle.txt	idle_reason.skip0.color	rc=0 reason=
+done_idle.txt	idle_reason.skip0.plain	rc=0 reason=
+done_idle.txt	idle_reason.skip1.color	rc=0 reason=
+done_idle.txt	idle_reason.skip1.plain	rc=0 reason=
+done_idle.txt	quota_prompt	0
+done_idle.txt	quota_session_limit	0
+edge_blank_lines.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_blank_lines.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_blank_lines.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_blank_lines.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_blank_lines.txt	quota_prompt	0
+edge_blank_lines.txt	quota_session_limit	0
+edge_box_beyond_window.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_box_beyond_window.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_box_beyond_window.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_box_beyond_window.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_box_beyond_window.txt	quota_prompt	0
+edge_box_beyond_window.txt	quota_session_limit	0
+edge_box_blank_split.txt	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+edge_box_blank_split.txt	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+edge_box_blank_split.txt	idle_reason.skip1.color	rc=0 reason=
+edge_box_blank_split.txt	idle_reason.skip1.plain	rc=0 reason=
+edge_box_blank_split.txt	quota_prompt	0
+edge_box_blank_split.txt	quota_session_limit	0
+edge_box_boundary.txt	idle_reason.skip0.color	rc=0 reason=
+edge_box_boundary.txt	idle_reason.skip0.plain	rc=0 reason=
+edge_box_boundary.txt	idle_reason.skip1.color	rc=0 reason=
+edge_box_boundary.txt	idle_reason.skip1.plain	rc=0 reason=
+edge_box_boundary.txt	quota_prompt	0
+edge_box_boundary.txt	quota_session_limit	0
+edge_box_six_after.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_box_six_after.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_box_six_after.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_box_six_after.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_box_six_after.txt	quota_prompt	0
+edge_box_six_after.txt	quota_session_limit	0
+edge_box_too_tall.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_box_too_tall.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_box_too_tall.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_box_too_tall.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_box_too_tall.txt	quota_prompt	0
+edge_box_too_tall.txt	quota_session_limit	0
+edge_codex_hooks_review_trailing.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_codex_hooks_review_trailing.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_codex_hooks_review_trailing.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_codex_hooks_review_trailing.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_codex_hooks_review_trailing.txt	quota_prompt	0
+edge_codex_hooks_review_trailing.txt	quota_session_limit	0
+edge_empty.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_empty.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_empty.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_empty.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_empty.txt	quota_prompt	0
+edge_empty.txt	quota_session_limit	0
+edge_meter_nonascii.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_meter_nonascii.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_meter_nonascii.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_meter_nonascii.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_meter_nonascii.txt	quota_prompt	0
+edge_meter_nonascii.txt	quota_session_limit	0
+edge_nbsp_draft.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_nbsp_draft.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_nbsp_draft.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_nbsp_draft.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_nbsp_draft.txt	quota_prompt	0
+edge_nbsp_draft.txt	quota_session_limit	0
+edge_nbsp_ghost.txt	idle_reason.skip0.color	rc=0 reason=
+edge_nbsp_ghost.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_nbsp_ghost.txt	idle_reason.skip1.color	rc=0 reason=
+edge_nbsp_ghost.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_nbsp_ghost.txt	quota_prompt	0
+edge_nbsp_ghost.txt	quota_session_limit	0
+edge_permission_multibyte_header.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+edge_permission_multibyte_header.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+edge_permission_multibyte_header.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+edge_permission_multibyte_header.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+edge_permission_multibyte_header.txt	quota_prompt	0
+edge_permission_multibyte_header.txt	quota_session_limit	0
+edge_pi_rule_ex.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_ex.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_ex.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_ex.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_ex.txt	quota_prompt	0
+edge_pi_rule_ex.txt	quota_session_limit	0
+edge_pi_rule_insert.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_insert.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_insert.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_insert.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_insert.txt	quota_prompt	0
+edge_pi_rule_insert.txt	quota_session_limit	0
+edge_pi_rule_normal.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_normal.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_normal.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_normal.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_normal.txt	quota_prompt	0
+edge_pi_rule_normal.txt	quota_session_limit	0
+edge_pi_rule_scroll_insert.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_scroll_insert.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_scroll_insert.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_scroll_insert.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_rule_scroll_insert.txt	quota_prompt	0
+edge_pi_rule_scroll_insert.txt	quota_session_limit	0
+edge_pi_vim_working_row.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_vim_working_row.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_vim_working_row.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_vim_working_row.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+edge_pi_vim_working_row.txt	quota_prompt	0
+edge_pi_vim_working_row.txt	quota_session_limit	0
+edge_spinner_nonascii_above_box.txt	idle_reason.skip0.color	rc=0 reason=
+edge_spinner_nonascii_above_box.txt	idle_reason.skip0.plain	rc=0 reason=
+edge_spinner_nonascii_above_box.txt	idle_reason.skip1.color	rc=0 reason=
+edge_spinner_nonascii_above_box.txt	idle_reason.skip1.plain	rc=0 reason=
+edge_spinner_nonascii_above_box.txt	quota_prompt	0
+edge_spinner_nonascii_above_box.txt	quota_session_limit	0
+idle_box.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+idle_box.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+idle_box.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+idle_box.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+idle_box.txt	quota_prompt	0
+idle_box.txt	quota_session_limit	0
+meter.1h_5m_3s.120.4k.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+meter.1h_5m_3s.120.4k.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+meter.1h_5m_3s.120.4k.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+meter.1h_5m_3s.120.4k.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+meter.1h_5m_3s.120.4k.txt	quota_prompt	0
+meter.1h_5m_3s.120.4k.txt	quota_session_limit	0
+meter.1m2s.3.1k.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+meter.1m2s.3.1k.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+meter.1m2s.3.1k.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+meter.1m2s.3.1k.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+meter.1m2s.3.1k.txt	quota_prompt	0
+meter.1m2s.3.1k.txt	quota_session_limit	0
+meter.2s.1.2k.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+meter.2s.1.2k.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+meter.2s.1.2k.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+meter.2s.1.2k.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+meter.2s.1.2k.txt	quota_prompt	0
+meter.2s.1.2k.txt	quota_session_limit	0
+meter.5m_29s.25.0k.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+meter.5m_29s.25.0k.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+meter.5m_29s.25.0k.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+meter.5m_29s.25.0k.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+meter.5m_29s.25.0k.txt	quota_prompt	0
+meter.5m_29s.25.0k.txt	quota_session_limit	0
+meter_hours.1h_20m.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+meter_hours.1h_20m.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+meter_hours.1h_20m.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+meter_hours.1h_20m.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+meter_hours.1h_20m.txt	quota_prompt	0
+meter_hours.1h_20m.txt	quota_session_limit	0
+meter_transcribed.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+meter_transcribed.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+meter_transcribed.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+meter_transcribed.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+meter_transcribed.txt	quota_prompt	0
+meter_transcribed.txt	quota_session_limit	0
+nudge_bgwait_typed.txt	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+nudge_bgwait_typed.txt	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+nudge_bgwait_typed.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_bgwait_typed.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_bgwait_typed.txt	quota_prompt	0
+nudge_bgwait_typed.txt	quota_session_limit	0
+nudge_draft.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_draft.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_draft.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_draft.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_draft.txt	quota_prompt	0
+nudge_draft.txt	quota_session_limit	0
+nudge_fresh.txt	idle_reason.skip0.color	rc=1 reason=no finished-turn marker above the input box
+nudge_fresh.txt	idle_reason.skip0.plain	rc=1 reason=no finished-turn marker above the input box
+nudge_fresh.txt	idle_reason.skip1.color	rc=1 reason=no finished-turn marker above the input box
+nudge_fresh.txt	idle_reason.skip1.plain	rc=1 reason=no finished-turn marker above the input box
+nudge_fresh.txt	quota_prompt	0
+nudge_fresh.txt	quota_session_limit	0
+nudge_pi_draft.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_draft.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_draft.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_draft.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_draft.txt	quota_prompt	0
+nudge_pi_draft.txt	quota_session_limit	0
+nudge_pi_idle.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_idle.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_idle.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_idle.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_idle.txt	quota_prompt	0
+nudge_pi_idle.txt	quota_session_limit	0
+nudge_pi_live.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_live.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_live.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_live.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_live.txt	quota_prompt	0
+nudge_pi_live.txt	quota_session_limit	0
+nudge_pi_typed.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_typed.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_typed.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_typed.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_pi_typed.txt	quota_prompt	0
+nudge_pi_typed.txt	quota_session_limit	0
+nudge_typed.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_typed.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_typed.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_typed.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_typed.txt	quota_prompt	0
+nudge_typed.txt	quota_session_limit	0
+nudge_typed_wrapped.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_typed_wrapped.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_typed_wrapped.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_typed_wrapped.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+nudge_typed_wrapped.txt	quota_prompt	0
+nudge_typed_wrapped.txt	quota_session_limit	0
+permission_sanitize.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+permission_sanitize.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+permission_sanitize.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+permission_sanitize.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+permission_sanitize.txt	quota_prompt	0
+permission_sanitize.txt	quota_session_limit	0
+permission_scrollback.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+permission_scrollback.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+permission_scrollback.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+permission_scrollback.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+permission_scrollback.txt	quota_prompt	0
+permission_scrollback.txt	quota_session_limit	0
+permission_subagent.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+permission_subagent.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+permission_subagent.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+permission_subagent.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+permission_subagent.txt	quota_prompt	0
+permission_subagent.txt	quota_session_limit	0
+pi_aborted_idle.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_aborted_idle.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_aborted_idle.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_aborted_idle.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_aborted_idle.txt	quota_prompt	0
+pi_aborted_idle.txt	quota_session_limit	0
+pi_busy.19.0k.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_busy.19.0k.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_busy.19.0k.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_busy.19.0k.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_busy.19.0k.txt	quota_prompt	0
+pi_busy.19.0k.txt	quota_session_limit	0
+pi_busy.37.0k.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_busy.37.0k.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_busy.37.0k.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_busy.37.0k.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_busy.37.0k.txt	quota_prompt	0
+pi_busy.37.0k.txt	quota_session_limit	0
+pi_error_aborted_idle.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_error_aborted_idle.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_error_aborted_idle.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_error_aborted_idle.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_error_aborted_idle.txt	quota_prompt	0
+pi_error_aborted_idle.txt	quota_session_limit	0
+pi_provider_error_draft.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_draft.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_draft.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_draft.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_draft.txt	quota_prompt	0
+pi_provider_error_draft.txt	quota_session_limit	0
+pi_provider_error_hint_idle.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_hint_idle.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_hint_idle.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_hint_idle.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_hint_idle.txt	quota_prompt	0
+pi_provider_error_hint_idle.txt	quota_session_limit	0
+pi_provider_error_idle.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_idle.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_idle.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_idle.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_idle.txt	quota_prompt	0
+pi_provider_error_idle.txt	quota_session_limit	0
+pi_provider_error_live.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_live.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_live.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_live.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_live.txt	quota_prompt	0
+pi_provider_error_live.txt	quota_session_limit	0
+pi_provider_error_wrapped_idle.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_wrapped_idle.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_wrapped_idle.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_wrapped_idle.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_provider_error_wrapped_idle.txt	quota_prompt	0
+pi_provider_error_wrapped_idle.txt	quota_session_limit	0
+pi_runaway.19.0k.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_runaway.19.0k.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_runaway.19.0k.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_runaway.19.0k.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_runaway.19.0k.txt	quota_prompt	0
+pi_runaway.19.0k.txt	quota_session_limit	0
+pi_runaway.21.2k.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_runaway.21.2k.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_runaway.21.2k.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_runaway.21.2k.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_runaway.21.2k.txt	quota_prompt	0
+pi_runaway.21.2k.txt	quota_session_limit	0
+pi_toolsent.19.0k.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_toolsent.19.0k.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_toolsent.19.0k.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_toolsent.19.0k.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_toolsent.19.0k.txt	quota_prompt	0
+pi_toolsent.19.0k.txt	quota_session_limit	0
+pi_truncated_continued.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_continued.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_continued.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_continued.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_continued.txt	quota_prompt	0
+pi_truncated_continued.txt	quota_session_limit	0
+pi_truncated_dialog.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+pi_truncated_dialog.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+pi_truncated_dialog.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+pi_truncated_dialog.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+pi_truncated_dialog.txt	quota_prompt	0
+pi_truncated_dialog.txt	quota_session_limit	0
+pi_truncated_draft.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_draft.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_draft.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_draft.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_draft.txt	quota_prompt	0
+pi_truncated_draft.txt	quota_session_limit	0
+pi_truncated_idle.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_idle.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_idle.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_idle.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_idle.txt	quota_prompt	0
+pi_truncated_idle.txt	quota_session_limit	0
+pi_truncated_live.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_live.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_live.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_live.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_live.txt	quota_prompt	0
+pi_truncated_live.txt	quota_session_limit	0
+pi_truncated_padded_idle.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_padded_idle.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_padded_idle.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_padded_idle.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_padded_idle.txt	quota_prompt	0
+pi_truncated_padded_idle.txt	quota_session_limit	0
+pi_truncated_select.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_select.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_select.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_select.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+pi_truncated_select.txt	quota_prompt	0
+pi_truncated_select.txt	quota_session_limit	0
+prompt_quota.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+prompt_quota.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+prompt_quota.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+prompt_quota.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+prompt_quota.txt	quota_prompt	1
+prompt_quota.txt	quota_session_limit	0
+prompt_scrollback.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+prompt_scrollback.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+prompt_scrollback.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+prompt_scrollback.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+prompt_scrollback.txt	quota_prompt	0
+prompt_scrollback.txt	quota_session_limit	0
+prompt_select.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+prompt_select.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+prompt_select.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+prompt_select.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+prompt_select.txt	quota_prompt	0
+prompt_select.txt	quota_session_limit	0
+prompt_trust.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+prompt_trust.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+prompt_trust.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+prompt_trust.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+prompt_trust.txt	quota_prompt	0
+prompt_trust.txt	quota_session_limit	0
+prompt_trust_distant.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+prompt_trust_distant.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+prompt_trust_distant.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+prompt_trust_distant.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+prompt_trust_distant.txt	quota_prompt	0
+prompt_trust_distant.txt	quota_session_limit	0
+prompt_trust_distant_session_limit.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+prompt_trust_distant_session_limit.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+prompt_trust_distant_session_limit.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+prompt_trust_distant_session_limit.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+prompt_trust_distant_session_limit.txt	quota_prompt	0
+prompt_trust_distant_session_limit.txt	quota_session_limit	0
+row:idle reason: background monitor	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+row:idle reason: background monitor	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+row:idle reason: background monitor	idle_reason.skip1.color	rc=1 reason=no finished-turn marker above the input box
+row:idle reason: background monitor	idle_reason.skip1.plain	rc=1 reason=no finished-turn marker above the input box
+row:idle reason: background monitor	quota_prompt	0
+row:idle reason: background monitor	quota_session_limit	0
+row:idle reason: background shell	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+row:idle reason: background shell	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+row:idle reason: background shell	idle_reason.skip1.color	rc=0 reason=
+row:idle reason: background shell	idle_reason.skip1.plain	rc=0 reason=
+row:idle reason: background shell	quota_prompt	0
+row:idle reason: background shell	quota_session_limit	0
+row:idle reason: background shell skipped	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+row:idle reason: background shell skipped	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+row:idle reason: background shell skipped	idle_reason.skip1.color	rc=0 reason=
+row:idle reason: background shell skipped	idle_reason.skip1.plain	rc=0 reason=
+row:idle reason: background shell skipped	quota_prompt	0
+row:idle reason: background shell skipped	quota_session_limit	0
+row:idle reason: engine is forced to claude	idle_reason.skip0.color	rc=1 reason=prompt on screen
+row:idle reason: engine is forced to claude	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+row:idle reason: engine is forced to claude	idle_reason.skip1.color	rc=1 reason=prompt on screen
+row:idle reason: engine is forced to claude	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+row:idle reason: engine is forced to claude	quota_prompt	0
+row:idle reason: engine is forced to claude	quota_session_limit	0
+row:idle reason: finished idle turn	idle_reason.skip0.color	rc=0 reason=
+row:idle reason: finished idle turn	idle_reason.skip0.plain	rc=0 reason=
+row:idle reason: finished idle turn	idle_reason.skip1.color	rc=0 reason=
+row:idle reason: finished idle turn	idle_reason.skip1.plain	rc=0 reason=
+row:idle reason: finished idle turn	quota_prompt	0
+row:idle reason: finished idle turn	quota_session_limit	0
+row:idle reason: live turn	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+row:idle reason: live turn	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+row:idle reason: live turn	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+row:idle reason: live turn	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+row:idle reason: live turn	quota_prompt	0
+row:idle reason: live turn	quota_session_limit	0
+row:idle reason: no finished-turn marker	idle_reason.skip0.color	rc=1 reason=no finished-turn marker above the input box
+row:idle reason: no finished-turn marker	idle_reason.skip0.plain	rc=1 reason=no finished-turn marker above the input box
+row:idle reason: no finished-turn marker	idle_reason.skip1.color	rc=1 reason=no finished-turn marker above the input box
+row:idle reason: no finished-turn marker	idle_reason.skip1.plain	rc=1 reason=no finished-turn marker above the input box
+row:idle reason: no finished-turn marker	quota_prompt	0
+row:idle reason: no finished-turn marker	quota_session_limit	0
+row:idle reason: permission dialog	idle_reason.skip0.color	rc=1 reason=prompt on screen
+row:idle reason: permission dialog	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+row:idle reason: permission dialog	idle_reason.skip1.color	rc=1 reason=prompt on screen
+row:idle reason: permission dialog	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+row:idle reason: permission dialog	quota_prompt	0
+row:idle reason: permission dialog	quota_session_limit	0
+row:idle reason: prompt on screen	idle_reason.skip0.color	rc=1 reason=prompt on screen
+row:idle reason: prompt on screen	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+row:idle reason: prompt on screen	idle_reason.skip1.color	rc=1 reason=prompt on screen
+row:idle reason: prompt on screen	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+row:idle reason: prompt on screen	quota_prompt	0
+row:idle reason: prompt on screen	quota_session_limit	0
+row:quota prompt phrase 11 rows above the end	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+row:quota prompt phrase 11 rows above the end	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+row:quota prompt phrase 11 rows above the end	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+row:quota prompt phrase 11 rows above the end	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+row:quota prompt phrase 11 rows above the end	quota_prompt	1
+row:quota prompt phrase 11 rows above the end	quota_session_limit	0
+row:quota prompt phrase 12 rows above the end	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+row:quota prompt phrase 12 rows above the end	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+row:quota prompt phrase 12 rows above the end	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+row:quota prompt phrase 12 rows above the end	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+row:quota prompt phrase 12 rows above the end	quota_prompt	0
+row:quota prompt phrase 12 rows above the end	quota_session_limit	0
+row:quota prompt phrase in the last 12 rows	idle_reason.skip0.color	rc=1 reason=prompt on screen
+row:quota prompt phrase in the last 12 rows	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+row:quota prompt phrase in the last 12 rows	idle_reason.skip1.color	rc=1 reason=prompt on screen
+row:quota prompt phrase in the last 12 rows	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+row:quota prompt phrase in the last 12 rows	quota_prompt	1
+row:quota prompt phrase in the last 12 rows	quota_session_limit	0
+row:session limit anchors within the tail	idle_reason.skip0.color	rc=1 reason=prompt on screen
+row:session limit anchors within the tail	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+row:session limit anchors within the tail	idle_reason.skip1.color	rc=1 reason=prompt on screen
+row:session limit anchors within the tail	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+row:session limit anchors within the tail	quota_prompt	0
+row:session limit anchors within the tail	quota_session_limit	1
+row:session limit one anchor missing	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+row:session limit one anchor missing	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+row:session limit one anchor missing	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+row:session limit one anchor missing	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+row:session limit one anchor missing	quota_prompt	0
+row:session limit one anchor missing	quota_session_limit	0
+row:session limit weekly hint 7 rows from the end	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+row:session limit weekly hint 7 rows from the end	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+row:session limit weekly hint 7 rows from the end	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+row:session limit weekly hint 7 rows from the end	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+row:session limit weekly hint 7 rows from the end	quota_prompt	0
+row:session limit weekly hint 7 rows from the end	quota_session_limit	0
+rw_claude_draft.txt	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+rw_claude_draft.txt	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+rw_claude_draft.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_claude_draft.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_claude_draft.txt	quota_prompt	0
+rw_claude_draft.txt	quota_session_limit	0
+rw_claude_ghost.txt	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+rw_claude_ghost.txt	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+rw_claude_ghost.txt	idle_reason.skip1.color	rc=0 reason=
+rw_claude_ghost.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_claude_ghost.txt	quota_prompt	0
+rw_claude_ghost.txt	quota_session_limit	0
+rw_claude_held.txt	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+rw_claude_held.txt	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+rw_claude_held.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_claude_held.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_claude_held.txt	quota_prompt	0
+rw_claude_held.txt	quota_session_limit	0
+rw_claude_spinner_empty.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_claude_spinner_empty.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_claude_spinner_empty.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_claude_spinner_empty.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_claude_spinner_empty.txt	quota_prompt	0
+rw_claude_spinner_empty.txt	quota_session_limit	0
+rw_claude_substring_draft.txt	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+rw_claude_substring_draft.txt	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+rw_claude_substring_draft.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_claude_substring_draft.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_claude_substring_draft.txt	quota_prompt	0
+rw_claude_substring_draft.txt	quota_session_limit	0
+rw_claude_with_cursor_anchors.txt	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+rw_claude_with_cursor_anchors.txt	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+rw_claude_with_cursor_anchors.txt	idle_reason.skip1.color	rc=0 reason=
+rw_claude_with_cursor_anchors.txt	idle_reason.skip1.plain	rc=0 reason=
+rw_claude_with_cursor_anchors.txt	quota_prompt	0
+rw_claude_with_cursor_anchors.txt	quota_session_limit	0
+rw_codex_after_assignment.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_assignment.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_assignment.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_assignment.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_assignment.txt	quota_prompt	0
+rw_codex_after_assignment.txt	quota_session_limit	0
+rw_codex_after_assignment_dialog_overlay.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_assignment_dialog_overlay.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_assignment_dialog_overlay.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_assignment_dialog_overlay.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_assignment_dialog_overlay.txt	quota_prompt	0
+rw_codex_after_assignment_dialog_overlay.txt	quota_session_limit	0
+rw_codex_after_decoy_footer_assignment.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_decoy_footer_assignment.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_decoy_footer_assignment.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_decoy_footer_assignment.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_decoy_footer_assignment.txt	quota_prompt	0
+rw_codex_after_decoy_footer_assignment.txt	quota_session_limit	0
+rw_codex_after_literal_newline_assignment.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_literal_newline_assignment.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_literal_newline_assignment.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_literal_newline_assignment.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_literal_newline_assignment.txt	quota_prompt	0
+rw_codex_after_literal_newline_assignment.txt	quota_session_limit	0
+rw_codex_after_mismatched_wrapped_assignment.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_mismatched_wrapped_assignment.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_mismatched_wrapped_assignment.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_mismatched_wrapped_assignment.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_mismatched_wrapped_assignment.txt	quota_prompt	0
+rw_codex_after_mismatched_wrapped_assignment.txt	quota_session_limit	0
+rw_codex_after_wrapped_assignment.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_wrapped_assignment.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_wrapped_assignment.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_wrapped_assignment.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_after_wrapped_assignment.txt	quota_prompt	0
+rw_codex_after_wrapped_assignment.txt	quota_session_limit	0
+rw_codex_approval_probe.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_approval_probe.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_approval_probe.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_approval_probe.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_approval_probe.txt	quota_prompt	0
+rw_codex_approval_probe.txt	quota_session_limit	0
+rw_codex_boot_update.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_boot_update.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_boot_update.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_boot_update.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_boot_update.txt	quota_prompt	0
+rw_codex_boot_update.txt	quota_session_limit	0
+rw_codex_folder_trust_dialog.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_folder_trust_dialog.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_folder_trust_dialog.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_folder_trust_dialog.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_folder_trust_dialog.txt	quota_prompt	0
+rw_codex_folder_trust_dialog.txt	quota_session_limit	0
+rw_codex_historical_assignment_arbitrary.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_historical_assignment_arbitrary.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_historical_assignment_arbitrary.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_historical_assignment_arbitrary.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_historical_assignment_arbitrary.txt	quota_prompt	0
+rw_codex_historical_assignment_arbitrary.txt	quota_session_limit	0
+rw_codex_historical_assignment_empty.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_historical_assignment_empty.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_historical_assignment_empty.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_historical_assignment_empty.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_historical_assignment_empty.txt	quota_prompt	0
+rw_codex_historical_assignment_empty.txt	quota_session_limit	0
+rw_codex_idle_empty.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_idle_empty.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_idle_empty.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_idle_empty.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_idle_empty.txt	quota_prompt	0
+rw_codex_idle_empty.txt	quota_session_limit	0
+rw_codex_idle_unsent.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_idle_unsent.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_idle_unsent.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_idle_unsent.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_idle_unsent.txt	quota_prompt	0
+rw_codex_idle_unsent.txt	quota_session_limit	0
+rw_codex_live_turn.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_live_turn.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_live_turn.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_live_turn.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_codex_live_turn.txt	quota_prompt	0
+rw_codex_live_turn.txt	quota_session_limit	0
+rw_cursor_after_assignment.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_assignment.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_assignment.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_assignment.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_assignment.txt	quota_prompt	0
+rw_cursor_after_assignment.txt	quota_session_limit	0
+rw_cursor_after_assignment_dialog_overlay.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_assignment_dialog_overlay.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_assignment_dialog_overlay.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_assignment_dialog_overlay.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_assignment_dialog_overlay.txt	quota_prompt	0
+rw_cursor_after_assignment_dialog_overlay.txt	quota_session_limit	0
+rw_cursor_after_decoy_footer_assignment.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_decoy_footer_assignment.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_decoy_footer_assignment.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_decoy_footer_assignment.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_decoy_footer_assignment.txt	quota_prompt	0
+rw_cursor_after_decoy_footer_assignment.txt	quota_session_limit	0
+rw_cursor_after_literal_newline_assignment.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_literal_newline_assignment.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_literal_newline_assignment.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_literal_newline_assignment.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_literal_newline_assignment.txt	quota_prompt	0
+rw_cursor_after_literal_newline_assignment.txt	quota_session_limit	0
+rw_cursor_after_mismatched_wrapped_assignment.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_mismatched_wrapped_assignment.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_mismatched_wrapped_assignment.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_mismatched_wrapped_assignment.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_mismatched_wrapped_assignment.txt	quota_prompt	0
+rw_cursor_after_mismatched_wrapped_assignment.txt	quota_session_limit	0
+rw_cursor_after_wrapped_assignment.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_wrapped_assignment.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_wrapped_assignment.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_wrapped_assignment.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_after_wrapped_assignment.txt	quota_prompt	0
+rw_cursor_after_wrapped_assignment.txt	quota_session_limit	0
+rw_cursor_ask_dialog.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_ask_dialog.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_ask_dialog.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_ask_dialog.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_ask_dialog.txt	quota_prompt	0
+rw_cursor_ask_dialog.txt	quota_session_limit	0
+rw_cursor_ask_hook_settled.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_ask_hook_settled.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_ask_hook_settled.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_ask_hook_settled.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_ask_hook_settled.txt	quota_prompt	0
+rw_cursor_ask_hook_settled.txt	quota_session_limit	0
+rw_cursor_historical_assignment_arbitrary.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_historical_assignment_arbitrary.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_historical_assignment_arbitrary.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_historical_assignment_arbitrary.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_historical_assignment_arbitrary.txt	quota_prompt	0
+rw_cursor_historical_assignment_arbitrary.txt	quota_session_limit	0
+rw_cursor_historical_assignment_empty.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_historical_assignment_empty.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_historical_assignment_empty.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_historical_assignment_empty.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_historical_assignment_empty.txt	quota_prompt	0
+rw_cursor_historical_assignment_empty.txt	quota_session_limit	0
+rw_cursor_idle_empty.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_idle_empty.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_idle_empty.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_idle_empty.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_idle_empty.txt	quota_prompt	0
+rw_cursor_idle_empty.txt	quota_session_limit	0
+rw_cursor_idle_unsent.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_idle_unsent.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_idle_unsent.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_idle_unsent.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_idle_unsent.txt	quota_prompt	0
+rw_cursor_idle_unsent.txt	quota_session_limit	0
+rw_cursor_live_turn.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_live_turn.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_live_turn.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_live_turn.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_live_turn.txt	quota_prompt	0
+rw_cursor_live_turn.txt	quota_session_limit	0
+rw_cursor_monthly_limit.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_monthly_limit.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_monthly_limit.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_monthly_limit.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_monthly_limit.txt	quota_prompt	0
+rw_cursor_monthly_limit.txt	quota_session_limit	0
+rw_cursor_pull_idle.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_pull_idle.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_pull_idle.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_pull_idle.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_cursor_pull_idle.txt	quota_prompt	0
+rw_cursor_pull_idle.txt	quota_session_limit	0
+rw_idle.txt	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+rw_idle.txt	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+rw_idle.txt	idle_reason.skip1.color	rc=0 reason=
+rw_idle.txt	idle_reason.skip1.plain	rc=0 reason=
+rw_idle.txt	quota_prompt	0
+rw_idle.txt	quota_session_limit	0
+rw_live.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_live.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_live.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_live.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_live.txt	quota_prompt	0
+rw_live.txt	quota_session_limit	0
+rw_permission.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+rw_permission.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+rw_permission.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+rw_permission.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+rw_permission.txt	quota_prompt	0
+rw_permission.txt	quota_session_limit	0
+rw_pi_held.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_held.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_held.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_held.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_held.txt	quota_prompt	0
+rw_pi_held.txt	quota_session_limit	0
+rw_pi_idle.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_idle.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_idle.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_idle.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_idle.txt	quota_prompt	0
+rw_pi_idle.txt	quota_session_limit	0
+rw_pi_idle_vim.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_idle_vim.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_idle_vim.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_idle_vim.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_idle_vim.txt	quota_prompt	0
+rw_pi_idle_vim.txt	quota_session_limit	0
+rw_pi_live.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_live.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_live.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_live.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_live.txt	quota_prompt	0
+rw_pi_live.txt	quota_session_limit	0
+rw_pi_midscroll_held.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_midscroll_held.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_midscroll_held.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_midscroll_held.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_midscroll_held.txt	quota_prompt	0
+rw_pi_midscroll_held.txt	quota_session_limit	0
+rw_pi_normal_held.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_normal_held.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_normal_held.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_normal_held.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_normal_held.txt	quota_prompt	0
+rw_pi_normal_held.txt	quota_session_limit	0
+rw_pi_paste_marker.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_paste_marker.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_paste_marker.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_paste_marker.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_paste_marker.txt	quota_prompt	0
+rw_pi_paste_marker.txt	quota_session_limit	0
+rw_pi_paste_marker_wrong.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_paste_marker_wrong.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_paste_marker_wrong.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_paste_marker_wrong.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_paste_marker_wrong.txt	quota_prompt	0
+rw_pi_paste_marker_wrong.txt	quota_session_limit	0
+rw_pi_scrolled_held.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_scrolled_held.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_scrolled_held.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_scrolled_held.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_scrolled_held.txt	quota_prompt	0
+rw_pi_scrolled_held.txt	quota_session_limit	0
+rw_pi_vim_held.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_vim_held.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_vim_held.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_vim_held.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_vim_held.txt	quota_prompt	0
+rw_pi_vim_held.txt	quota_session_limit	0
+rw_pi_vim_live.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_vim_live.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_vim_live.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_vim_live.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_pi_vim_live.txt	quota_prompt	0
+rw_pi_vim_live.txt	quota_session_limit	0
+rw_quota.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+rw_quota.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+rw_quota.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+rw_quota.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+rw_quota.txt	quota_prompt	1
+rw_quota.txt	quota_session_limit	0
+rw_select.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+rw_select.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+rw_select.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+rw_select.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+rw_select.txt	quota_prompt	0
+rw_select.txt	quota_session_limit	0
+rw_shell.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_shell.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_shell.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_shell.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_shell.txt	quota_prompt	0
+rw_shell.txt	quota_session_limit	0
+rw_unknown.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_unknown.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_unknown.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+rw_unknown.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+rw_unknown.txt	quota_prompt	0
+rw_unknown.txt	quota_session_limit	0
+select_scrollback.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+select_scrollback.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+select_scrollback.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+select_scrollback.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+select_scrollback.txt	quota_prompt	0
+select_scrollback.txt	quota_session_limit	0
+session_limit_refusal.txt	idle_reason.skip0.color	rc=1 reason=prompt on screen
+session_limit_refusal.txt	idle_reason.skip0.plain	rc=1 reason=prompt on screen
+session_limit_refusal.txt	idle_reason.skip1.color	rc=1 reason=prompt on screen
+session_limit_refusal.txt	idle_reason.skip1.plain	rc=1 reason=prompt on screen
+session_limit_refusal.txt	quota_prompt	0
+session_limit_refusal.txt	quota_session_limit	1
+subbatch.26m_57s.3m_29s.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+subbatch.26m_57s.3m_29s.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+subbatch.26m_57s.3m_29s.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+subbatch.26m_57s.3m_29s.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+subbatch.26m_57s.3m_29s.txt	quota_prompt	0
+subbatch.26m_57s.3m_29s.txt	quota_session_limit	0
+subbatch.28m_13s.4m_45s.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+subbatch.28m_13s.4m_45s.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+subbatch.28m_13s.4m_45s.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+subbatch.28m_13s.4m_45s.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+subbatch.28m_13s.4m_45s.txt	quota_prompt	0
+subbatch.28m_13s.4m_45s.txt	quota_session_limit	0

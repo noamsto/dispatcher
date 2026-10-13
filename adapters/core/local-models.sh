@@ -16,7 +16,9 @@ _local_entry() {
     '.localModels[$id] // empty | {maxConcurrent: 1, tiers: ["trivial", "standard"]} + . | .maxConcurrent |= floor' <<<"$1"
 }
 
-# Byte-identical copy of crew.sh's engine table, pinned by tests/adapters.bats.
+# The engine-signature table dispatch.sh sources this lib for. dispatch-notify.sh
+# is a standalone build and carries the other copy; tests/adapters.bats pins the
+# pair.
 _is_engine_cmd() {
   local c="${1#.}"
   c="${c%-wrapped}"

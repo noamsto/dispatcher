@@ -761,7 +761,6 @@ generator output. Two reasons it must not be reformatted:
 ```
 adapters/
 ├── core/                    engine-neutral
-│   ├── crew.sh              583 L · bus helpers, the Go port's drift oracle
 │   ├── pr-watch.sh          177 L · park until a PR changes (standalone)
 │   ├── dispatch.sh          309 L · worker scaffolder
 │   ├── dispatcher.sh        146 L · orchestrator launcher

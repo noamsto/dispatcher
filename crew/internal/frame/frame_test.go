@@ -15,11 +15,24 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/drift"
 )
 
-const crewScript = "../../../adapters/core/crew.sh"
+const dispatchScript = "../../../adapters/core/dispatch.sh"
 
 var engines = []string{"claude", "codex", "pi", "cursor"}
 
-// driver runs after the extracted functions are sourced. Usage:
+// goldenKeys are the predicates whose bash is gone: no shipped script carries
+// them, so Go is the only implementation and their expectations are frozen in
+// testdata/golden-oracle.tsv (#821). Every other key still has a live bash copy
+// in dispatch.sh's --role-watch block, which TestDriftAgainstBash compares.
+var goldenKeys = map[string]bool{
+	"quota_prompt":            true,
+	"quota_session_limit":     true,
+	"idle_reason.skip0.plain": true,
+	"idle_reason.skip0.color": true,
+	"idle_reason.skip1.plain": true,
+	"idle_reason.skip1.color": true,
+}
+
+// driver runs after the shipped predicates are defined. Usage:
 // driver <engine> <mode> <frame file>...; a frame's colored capture is the
 // sibling <name>.color.txt, else the plain text itself. It prints
 // "@@ <file name>" and then one "key<TAB>value" line per predicate result,
@@ -47,17 +60,10 @@ box() { # key text first-row-regex
   emit "$1.rc" "$rc"
   emit "$1.out" "$out"
 }
-idle() { # key text colored skipBg
-  local out rc
-  out=$(_pane_idle_reason "$2" "$3" "$4")
-  rc=$?
-  emit "$1" "rc=$rc reason=$out"
-}
 
 engine=$1
 mode=$2
 shift 2
-_frame_classifier
 . "$ISBGWAIT"
 for f in "$@"; do
   echo "@@ ${f##*/}"
@@ -68,8 +74,6 @@ for f in "$@"; do
   flag permission_prompt _is_permission_prompt "$text"
   flag prompt _is_prompt "$text"
   [ "$mode" = full ] || continue
-  flag quota_prompt _is_quota_prompt "$text"
-  flag quota_session_limit _is_quota_session_limit "$text"
   flag quota_cursor_limit _is_quota_cursor_limit "$text"
   flag bg_wait _is_bg_wait "$text"
   emit meter "$(_meter_line "$text")"
@@ -84,10 +88,6 @@ for f in "$@"; do
   flag claude_idle_box.own0.color _claude_idle_box "$text" "$col" 0
   flag claude_idle_box.own1.plain _claude_idle_box "$text" "" 1
   flag claude_idle_box.own1.color _claude_idle_box "$text" "$col" 1
-  idle idle_reason.skip0.plain "$text" "" 0
-  idle idle_reason.skip0.color "$text" "$col" 0
-  idle idle_reason.skip1.plain "$text" "" 1
-  idle idle_reason.skip1.color "$text" "$col" 1
 done
 `
 
@@ -193,45 +193,59 @@ func coloredFor(t *testing.T, path, text string) string {
 	return readFrame(t, cf)
 }
 
-// extractFunc returns the column-0 `name() {` ... `}` block of src.
-func extractFunc(src, name string) (string, bool) {
-	var out []string
-	in := false
-	for _, l := range strings.Split(src, "\n") {
-		if !in && l != name+"() {" {
-			continue
+// shippedPredicates returns the --role-watch predicate block dispatch.sh
+// carries: the contiguous run of definitions from `re_option=` through the end
+// of `_pi_idle_box`, de-indented by the two spaces that keep it inside
+// watch_role_prompts. The block is definitions and scalar assignments only, so
+// sourcing it runs nothing.
+func shippedPredicates(src string) (string, bool) {
+	lines := strings.Split(src, "\n")
+	start, end := -1, -1
+	for i, l := range lines {
+		if start < 0 && strings.HasPrefix(l, "  re_option=") {
+			start = i
 		}
-		in = true
-		out = append(out, l)
-		if l == "}" {
-			return strings.Join(out, "\n") + "\n", true
+		if start >= 0 && strings.HasPrefix(l, "  _pi_idle_box() {") {
+			for j := i + 1; j < len(lines); j++ {
+				if lines[j] == "  }" {
+					end = j
+					break
+				}
+			}
+			break
 		}
 	}
-	return "", false
+	if start < 0 || end < 0 {
+		return "", false
+	}
+	var sb strings.Builder
+	for _, l := range lines[start : end+1] {
+		sb.WriteString(strings.TrimPrefix(l, "  "))
+		sb.WriteString("\n")
+	}
+	return sb.String(), true
 }
 
-// bashScript writes the bash program that defines the classifier from
-// crew.sh and runs the driver.
+// bashScript writes the bash program that defines the classifier from the copy
+// dispatch.sh ships and runs the driver.
 func bashScript(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not on PATH")
 	}
-	src, err := os.ReadFile(crewScript)
+	src, err := os.ReadFile(dispatchScript)
 	if os.IsNotExist(err) {
-		drift.Missing(t, crewScript, err)
+		drift.Missing(t, dispatchScript, err)
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sb strings.Builder
-	for _, fn := range []string{"_frame_classifier", "_pane_idle_reason"} {
-		body, ok := extractFunc(string(src), fn)
-		if !ok {
-			t.Fatalf("%s not found in %s", fn, crewScript)
-		}
-		sb.WriteString(body)
+	body, ok := shippedPredicates(string(src))
+	if !ok {
+		t.Fatalf("the --role-watch predicate block is not in %s", dispatchScript)
 	}
+	var sb strings.Builder
+	sb.WriteString(body)
 	sb.WriteString(driver)
 	path := filepath.Join(t.TempDir(), "drift.bash")
 	if err := os.WriteFile(path, []byte(sb.String()), 0o600); err != nil {
@@ -330,6 +344,9 @@ func TestDriftAgainstBash(t *testing.T) {
 			name := filepath.Base(path)
 			text := readFrame(t, path)
 			for _, g := range results(engine, text, coloredFor(t, path, text)) {
+				if goldenKeys[g.key] {
+					continue // no bash side: TestGoldenOracle covers these
+				}
 				w, ok := want(bash, engine, name, g.key)
 				if !ok {
 					t.Fatalf("%s / %s / %s: bash printed no result", engine, name, g.key)
@@ -549,6 +566,9 @@ func TestRowsMatchBash(t *testing.T) {
 	dir := t.TempDir()
 	byEngine := map[string][]string{}
 	for i, c := range rows() {
+		if goldenKeys[c.key] {
+			continue // no bash side: TestGoldenOracle covers these
+		}
 		p := filepath.Join(dir, fmt.Sprintf("%03d.txt", i))
 		if err := os.WriteFile(p, []byte(c.text+"\n"), 0o600); err != nil {
 			t.Fatal(err)
@@ -569,6 +589,9 @@ func TestRowsMatchBash(t *testing.T) {
 		bash[engine] = res
 	}
 	for i, c := range rows() {
+		if goldenKeys[c.key] {
+			continue // no bash side: TestGoldenOracle covers these
+		}
 		got, ok := bash[c.engine][fmt.Sprintf("%03d.txt", i)][c.key]
 		if !ok {
 			t.Errorf("%s: bash printed no %s", c.name, c.key)
@@ -576,6 +599,83 @@ func TestRowsMatchBash(t *testing.T) {
 		}
 		if got != c.want {
 			t.Errorf("%s: bash gives %q for %s, want %q", c.name, got, c.key, c.want)
+		}
+	}
+}
+
+// TestGoldenOracle checks the six predicates that ship in no bash script against
+// the values the crew.sh oracle produced before it was deleted (#821). Each row
+// of the file is `<input>\t<key>\t<value>`: an input is a frame under
+// testdata/frames, or `row:<name>` for a hand-written rows() case. The keys here
+// are exactly goldenKeys, so the file cannot quietly stop covering one.
+func TestGoldenOracle(t *testing.T) {
+	src, err := os.ReadFile("testdata/golden-oracle.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := map[string]string{}
+	for _, p := range corpus(t) {
+		paths[filepath.Base(p)] = p
+	}
+	cases := map[string]row{}
+	for _, c := range rows() {
+		if _, dup := cases[c.name]; dup {
+			t.Fatalf("rows() has two cases named %q, so the golden file cannot key them", c.name)
+		}
+		cases[c.name] = c
+	}
+
+	seen := map[string]int{}
+	covered := map[string]bool{}
+	for _, l := range strings.Split(strings.TrimSuffix(string(src), "\n"), "\n") {
+		input, rest, ok := strings.Cut(l, "\t")
+		if !ok {
+			t.Fatalf("malformed golden row %q", l)
+		}
+		key, want, ok := strings.Cut(rest, "\t")
+		if !ok {
+			t.Fatalf("malformed golden row %q", l)
+		}
+		if !goldenKeys[key] {
+			t.Errorf("golden row %s names %q, which is not a golden key", input, key)
+			continue
+		}
+		var engine, text, colored string
+		if name, isRow := strings.CutPrefix(input, "row:"); isRow {
+			c, ok := cases[name]
+			if !ok {
+				t.Fatalf("golden row names no rows() case: %q", name)
+			}
+			engine, text, colored = c.engine, c.text, c.colored
+			covered[name] = true
+		} else {
+			p, ok := paths[input]
+			if !ok {
+				t.Fatalf("golden row names no frame: %q", input)
+			}
+			engine = "claude"
+			text, colored = readFrame(t, p), coloredFor(t, p, readFrame(t, p))
+		}
+		if colored == "" {
+			colored = text
+		}
+		got, ok := lookup(results(engine, text, colored), key)
+		if !ok {
+			t.Fatalf("%s / %s: results() has no such key", input, key)
+		}
+		if got != want {
+			t.Errorf("%s / %s: Go %q, golden %q", input, key, got, want)
+		}
+		seen[key]++
+	}
+	for key := range goldenKeys {
+		if seen[key] == 0 {
+			t.Errorf("golden file covers no %s case", key)
+		}
+	}
+	for name, c := range cases {
+		if goldenKeys[c.key] && !covered[name] {
+			t.Errorf("rows() case %q (%s) has no golden row", name, c.key)
 		}
 	}
 }

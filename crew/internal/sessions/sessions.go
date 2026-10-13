@@ -1,8 +1,8 @@
-// Package sessions folds a branch's bus rows into one entry per session,
-// oldest first. The fold is the original `_sessions` jq program from
-// adapters/core/crew.sh, run through gojq: under the value-equal contract
-// (#821) the jq program is the clearest expression of the fold, and the
-// program file (sessions.jq) keeps one shared source with crew.sh.
+// Package sessions folds a branch's bus rows into one entry per session, oldest
+// first. The fold is the `_sessions` jq program, ported verbatim from the bash
+// library and run through gojq: under the value-equal contract (#821) the jq
+// program is the clearest expression of the fold, and sessions.jq is its only
+// source.
 package sessions
 
 import (

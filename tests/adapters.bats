@@ -59,82 +59,46 @@ teardown() {
   [ -z "$offenders" ] || { printf '%s\n' "$offenders" >&2; false; }
 }
 
-@test "every standalone script's _bus_append copy matches crew.sh's" {
-  # dispatch.sh and dispatch-notify.sh each carry their own copy of this
-  # one-liner (#61) — they're separate writeShellApplication builds with no
-  # shared lib to source it from. Nothing else keeps those copies in sync, so
-  # a future fix to crew.sh's `dd` invocation (the source of truth) could
-  # silently fail to reach the other two, quietly reopening the exact splice
-  # hazard this fixes. Byte-compares the three definitions instead.
-  canonical="$(grep -h '^_bus_append() {' "$ROOT/adapters/core/crew.sh")"
+@test "every standalone script's _bus_append copy matches dispatch.sh's" {
+  # dispatch.sh, dispatch-notify.sh and dispatch-resume.sh are separate
+  # writeShellApplication builds with no shared lib to source this one-liner
+  # from (#61), so each carries a copy and nothing keeps them in sync: a fix to
+  # the `dd` invocation in one would silently fail to reach the others,
+  # reopening the splice hazard the helper exists to close. Byte-compare each
+  # against dispatch.sh, which sources no lib either and so is as canonical as
+  # any of them.
+  canonical="$(grep -h '^_bus_append() {' "$ROOT/adapters/core/dispatch.sh")"
   [ -n "$canonical" ]
-  for f in "$ROOT/adapters/core/dispatch.sh" "$ROOT/adapters/core/dispatch-notify.sh"; do
-    found="$(grep -h '^_bus_append() {' "$f")"
+  for f in dispatch-notify.sh dispatch-resume.sh; do
+    found="$(grep -h '^_bus_append() {' "$ROOT/adapters/core/$f")"
     [ "$found" = "$canonical" ]
   done
 }
 
-@test "every standalone _is_engine_cmd copy matches crew.sh's" {
+@test "every standalone _is_engine_cmd copy matches local-models.sh's" {
+  # local-models.sh (#669) is the shared lib dispatch.sh sources, and
   # dispatch-notify.sh (the #531 child-session guard) is a standalone build with
-  # no shared lib, and local-models.sh (#669) is sourced by crew.sh itself, so
-  # both carry a copy of crew.sh's engine-signature table. crew.sh and
-  # dispatch-notify.sh are excluded from treefmt but local-models.sh is not, so
-  # an unformatted change to crew.sh's copy fails here once shfmt rewrites the
-  # lib's; byte-compare each, like the _bus_append copies above.
-  canonical="$(sed -n '/^_is_engine_cmd() {/,/^}/p' "$ROOT/adapters/core/crew.sh")"
+  # no lib at all, so those two carry the engine-signature table. Only
+  # local-models.sh is treefmt-formatted, so an unformatted change to the other
+  # copy fails here once shfmt rewrites the lib's; byte-compare each, like the
+  # _bus_append copies above.
+  canonical="$(sed -n '/^_is_engine_cmd() {/,/^}/p' "$ROOT/adapters/core/local-models.sh")"
   [ -n "$canonical" ]
-  for f in dispatch-notify.sh local-models.sh; do
-    found="$(sed -n '/^_is_engine_cmd() {/,/^}/p' "$ROOT/adapters/core/$f")"
-    [ "$found" = "$canonical" ]
-  done
+  found="$(sed -n '/^_is_engine_cmd() {/,/^}/p' "$ROOT/adapters/core/dispatch-notify.sh")"
+  [ "$found" = "$canonical" ]
 }
 
-@test "dispatch.sh's --role-watch prompt signatures match crew.sh's stall-watch" {
-  # --role-watch gates send-keys on the same frame signatures stall-watch uses
-  # (#445). dispatch.sh is a standalone build with no shared lib, so it carries
-  # copies; byte-compare each against crew.sh, the source of truth. The
-  # multi-line ones are 2-space indented and end at the first `  }`.
-  crew="$ROOT/adapters/core/crew.sh"
-  disp="$ROOT/adapters/core/dispatch.sh"
-  for name in _is_codex_hook_review_prompt _is_permission_prompt _is_prompt _is_quota_cursor_limit _box_rows _claude_idle_box _pi_live_turn _pi_working_row _pi_working_label _pi_idle_box; do
-    canonical="$(awk -v n="  ${name}() {" '$0 == n { p = 1 } p { print } p && $0 == "  }" { exit }' "$crew")"
-    [ -n "$canonical" ]
-    found="$(awk -v n="  ${name}() {" '$0 == n { p = 1 } p { print } p && $0 == "  }" { exit }' "$disp")"
-    [ "$found" = "$canonical" ]
-  done
-  for prefix in '  re_option=' '  re_meter=' '  re_subrow=' '  _meter_line() ' '  _has_subrow() ' \
-    '  csi_re=' '  _rw_esc=' '  _rw_ghost_marker='; do
-    canonical="$(grep -hF -- "$prefix" "$crew")"
-    [ -n "$canonical" ]
-    [ "$(printf '%s\n' "$canonical" | wc -l)" -eq 1 ]
-    found="$(grep -hF -- "$prefix" "$disp")"
-    [ "$found" = "$canonical" ]
-  done
-}
-
-@test "dispatch-resume's liveness-helper copies match crew.sh's" {
-  # dispatch-resume.sh is a standalone build, so it carries its own copies of
-  # crew.sh's dispatcher-liveness helpers (#461). crew.sh is the source of
-  # truth; flake.nix excludes the file from treefmt so shfmt cannot rewrite
-  # the copies out of sync. The `_ps_elapsed_s` crew.sh/dispatch.sh pair is
-  # pinned in "dispatch.sh's _ps_elapsed_s matches crew.sh's" below.
+@test "dispatch-resume's liveness-helper copies match dispatch.sh's" {
+  # Both files are standalone builds, so each carries its own copies of the
+  # dispatcher-liveness helpers (#461). Neither is treefmt-formatted
+  # (flake.nix), so shfmt cannot rewrite a copy out of sync. All five are
+  # compared, since a partial list is how a copy drifts unnoticed.
   for fn in _pid_alive _file_mtime_s _ps_elapsed_s _pid_recycled _recorded_pid_live; do
-    canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/crew.sh")"
+    canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch.sh")"
     [ -n "$canonical" ]
     found="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch-resume.sh")"
     [ "$found" = "$canonical" ]
   done
-}
-
-@test "dispatch.sh's _ps_elapsed_s matches crew.sh's" {
-  # dispatch.sh carries its own byte-identical copy of crew.sh's _ps_elapsed_s
-  # (#462). dispatch.sh is excluded from treefmt (flake.nix), so shfmt cannot
-  # rewrite the copy out of sync.
-  fn=_ps_elapsed_s
-  canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/crew.sh")"
-  [ -n "$canonical" ]
-  found="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch.sh")"
-  [ "$found" = "$canonical" ]
 }
 
 @test "generator is idempotent" {
