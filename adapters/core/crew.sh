@@ -1,11 +1,10 @@
 # shellcheck shell=bash
-# The crew bash ORACLE LIBRARY — helpers only, and not an entrypoint.
-#
-# Run rather than sourced, this file refuses (see the guard at its foot).
+# The crew bash ORACLE LIBRARY — helpers only, and not an entrypoint. Run rather
+# than sourced, it refuses (see the guard at its foot).
 #
 # `crew` is the Go binary: flake.nix builds the `crew` package as a wrapper around
 # it, and crew/main.go holds the routing that used to be here (#821). This file is
-# no longer installed, and running it does nothing at all.
+# no longer installed.
 #
 # It stays because the Go port is pinned to it: the drift guards in crew/internal/
 # {frame,roster,identity,stall,rate} extract these functions by name and run them

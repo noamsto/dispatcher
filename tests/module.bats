@@ -521,10 +521,8 @@ worktree_git_lib_crew_go_row() { # bin
   [ -f "$dir/local.md" ]
 }
 
-# Since #821 the `crew` package is the Go binary behind a PATH wrapper, so there
-# is no @crewGoBin@ placeholder in it — the wrapper names the binary directly, and
-# hands it its own path as argv[0] (--inherit-argv0) because that is what
-# CREW_SELF, and with it roster-render's build hop, is derived from.
+# The `crew` package names its Go entry directly, with no @crewGoBin@ placeholder,
+# and hands it its own path as argv[0] (--inherit-argv0).
 @test "the crew package wraps the Go entry and keeps its own argv[0]" {
   run grep -c '@crewGoBin@' "$OUT_CREW/bin/crew"
   [ "$output" = "0" ]

@@ -9231,11 +9231,10 @@ start_stream() {
   STREAM_PIDS="${STREAM_PIDS:-} $STREAM_PID"
 }
 
-# _crew_entry <path> [bash line…] — write an executable crew entry that runs the
-# binary under test, with the given lines spliced in front of it. The stream and
-# roster-render rows need an entry of their own to re-enter ($0), and before #821
-# they spliced those lines into a copy of crew.sh; the wrapper is the same thing
-# now, and it exports CREW_SELF exactly as the script's delegation arm did.
+# _crew_entry <path> [bash line…] — an executable crew entry that runs the binary
+# under test, with the given lines spliced in front of it. The stream and
+# roster-render rows need an entry of their own to re-enter ($0), so it exports
+# CREW_SELF="$0" the way the delegation arm used to.
 _crew_entry() {
   local path="$1"
   shift
@@ -14080,10 +14079,8 @@ _crew_help_rows() { # <help text>
   [[ "${stderr_lines[0]}" == "crew — file-based coordination bus"* ]]
 }
 
-# Two rows used here asserted that crew.sh's `fleet` and `rate` arms exec'd
-# CREW_GO_BIN with argv intact. That hop is gone — the entry is the Go binary —
-# so what is left to pin is that the indirection stays out of the picture: a
-# stale CREW_GO_BIN inherited from an old harness must not reroute anything.
+# The entry dispatches itself: a CREW_GO_BIN inherited from an old harness is read
+# by nothing that dispatches with it.
 @test "the entry ignores a stale CREW_GO_BIN" {
   stub="$BATS_TEST_TMPDIR/go-stub"
   cat >"$stub" <<'STUB'

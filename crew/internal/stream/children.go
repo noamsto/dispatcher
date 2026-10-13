@@ -36,8 +36,7 @@ type children struct {
 	dir string
 }
 
-// command is the arm's `bash -euo pipefail "$0" …`, the entry re-entered the way
-// entry.EntryArgv runs it.
+// command re-enters the entry: `self` named directly, then args.
 func (c children) command(args []string) *exec.Cmd {
 	argv := entry.EntryArgv(c.self, args...)
 	return exec.Command(argv[0], argv[1:]...)
@@ -61,9 +60,8 @@ func (c children) run(args []string, stderrPath string) (string, int) {
 	}
 	err := cmd.Run()
 	// Anything but a wait status is a child that never started — a `self` that is
-	// gone or carries no exec bit — and the arm left `$?` of 127 with the reason
-	// where its stderr went. Start failures reach us as *exec.Error and the
-	// kernel's refusal as *fs.PathError, both after the fork.
+	// gone or carries no exec bit — reported as 127 with the reason where its
+	// stderr went. The kernel's refusal reaches us as *fs.PathError, after the fork.
 	var ws *exec.ExitError
 	if err != nil && !errors.As(err, &ws) {
 		if stderrPath != "" {
@@ -133,10 +131,9 @@ func (c children) startReap(dir string) (*reapRun, error) {
 		_ = out.Close()
 		return nil, err
 	}
-	// $0 is the entry path, and the exec'd reap inherits this shell's two files
-	// and its HUP disposition. The outer bash exists for that trap alone: what it
-	// execs is the entry itself, entry.EntryArgv's rule.
-	script := `trap '' HUP; ` + c.reapExec()
+	// The outer bash exists for the HUP trap alone: it execs $0, the entry path,
+	// so the reap inherits this shell's two files and its HUP disposition.
+	const script = `trap '' HUP; exec "$0" reap --quiet --no-wait`
 	cmd := exec.Command("bash", "-euo", "pipefail", "-c", script, c.self)
 	cmd.Stdout, cmd.Stderr = out, errf
 	if err := cmd.Start(); err != nil {
@@ -148,13 +145,6 @@ func (c children) startReap(dir string) (*reapRun, error) {
 	_ = errf.Close()
 	r := &reapRun{cmd: cmd, out: out.Name(), errf: errf.Name(), done: make(chan struct{})}
 	return r, nil
-}
-
-// reapExec is the reap's exec in that shell: $0, the entry, named directly. A
-// `self` that cannot be exec'd is the child's 126, not a bash no-op — see
-// entry.EntryArgv.
-func (c children) reapExec() string {
-	return `exec "$0"` + ` reap --quiet --no-wait`
 }
 
 // child is one running subprocess the loop waits on.

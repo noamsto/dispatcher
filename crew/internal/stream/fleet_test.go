@@ -82,11 +82,10 @@ func watchStub(t *testing.T) string {
 	return script
 }
 
-// bashShebang is the interpreter line for a stub the stream execs directly. Since
-// #821 `self` is exec'd rather than handed to bash, so `#!/usr/bin/env bash` would
-// have to resolve — and it does not inside the nix sandbox, where there is no
-// /usr/bin/env. Point it at the bash this environment has, the same patch
-// tests/helpers.bash's crew_go_bin applies to a built entry.
+// bashShebang is the interpreter line for a stub the stream execs directly:
+// `#!/usr/bin/env bash` does not resolve inside the nix sandbox, so point it at
+// the bash this environment has — the same patch tests/helpers.bash's crew_go_bin
+// applies to a built entry.
 func bashShebang() string {
 	if b, err := exec.LookPath("bash"); err == nil {
 		return "#!" + b + "\n"
@@ -94,8 +93,8 @@ func bashShebang() string {
 	return "#!/usr/bin/env bash\n"
 }
 
-// chmodExecutable gives a stub the bit the entry it stands in for has: since #821
-// the stream execs `self` rather than putting bash in front of it.
+// chmodExecutable gives a stub the bit the entry it stands in for has, since the
+// stream execs `self` rather than putting bash in front of it.
 func chmodExecutable(t *testing.T, path string) {
 	t.Helper()
 	if err := os.Chmod(path, 0o755); err != nil {

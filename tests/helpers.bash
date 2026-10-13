@@ -14,8 +14,8 @@ export CREW_RATE_AUTOSWEEP=0
 # built (tests/setup_suite.bash compiles it), so run it directly: `bash "$CREW"`
 # would hand a binary to bash and get 126. CREW_SRC is the bash oracle — the
 # helpers crew.sh still carries for the drift guards — and is read, never
-# executed. CREW_GO_SRC is the dispatcher's own source, for the rows that read the
-# subcommand list out of the switch that replaced crew.sh's arms.
+# executed. CREW_GO_SRC is crew/main.go, for rows that read the subcommand list
+# out of the switch.
 export CREW="${CREW_GO_BIN:?tests/setup_suite.bash did not build crew-go}"
 export CREW_SRC="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
 export CREW_GO_SRC="$BATS_TEST_DIRNAME/../crew/main.go"

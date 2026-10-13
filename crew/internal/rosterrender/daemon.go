@@ -155,11 +155,10 @@ func selfBuild(self string) string {
 // pinned, so a hop never inherits the wrapper prefix it just skipped, and
 // CREW_SELF naming the entry the new process runs.
 //
-// That last one is the arm's `CREW_SELF="$0" exec`, and the daemon needs it
-// literally: `selfBuild` reads CREW_SELF to say which build it is running, so a
-// hop that inherited the previous entry would still read as the old build, hop
-// again on the next pass, and never converge. An empty self leaves the inherited
-// value alone, which is what a child of the same build needs.
+// `selfBuild` reads CREW_SELF to say which build it is running, so a hop that
+// inherited the previous entry would still read as the old build, hop again on
+// the next pass, and never converge. An empty self leaves the inherited value
+// alone, which is what a child of the same build needs.
 func envFor(startPath, self string) []string {
 	env := os.Environ()
 	out := make([]string, 0, len(env)+2)

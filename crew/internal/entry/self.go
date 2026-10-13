@@ -36,8 +36,7 @@ func DefaultSelfProbes() SelfProbes {
 // so a home-manager switch reaches a running daemon).
 //
 // An inherited value is kept exactly as it is: a caller that names the entry it
-// wants outranks anything derived here, which is what the arm's
-// `CREW_SELF="$0" exec` meant for the process it replaced.
+// wants outranks anything derived here.
 func EnsureSelf(p SelfProbes, argv0 string) string {
 	if self := p.Getenv("CREW_SELF"); self != "" {
 		return self
@@ -53,13 +52,7 @@ func EnsureSelf(p SelfProbes, argv0 string) string {
 // EntryArgv is the argv that runs the crew entry `self` names, with `args` after
 // it. The entry is a program — the Go binary, or the PATH wrapper flake.nix
 // installs behind it — so it is named as it is, and a `self` that is not
-// executable fails as the child's 126/127.
-//
-// Putting bash in front of a non-executable `self`, as the script did, would make
-// that case silent: since #821 `crew.sh` dispatches nothing, so `bash crew.sh
-// watch` exits 0 having done nothing, and the stream would read its inner park as
-// a success. `dash` names CREW_BIN by resolving the same value (`RunDash`), and
-// has no re-entry of its own.
+// executable fails as the child's 126/127 rather than running as a script.
 func EntryArgv(self string, args ...string) []string {
 	return append([]string{self}, args...)
 }

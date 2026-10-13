@@ -522,10 +522,9 @@ func TestHelperBinaryEntry(t *testing.T) {
 	os.Exit(0)
 }
 
-// TestChildrenExecABinaryEntry is #821's whole re-entry question: the entry is a
-// binary from here on, and `bash <binary>` is 126. This is the row that fails the
-// moment the loop reaches for bash again — the other stubs in this file are
-// scripts, which is exactly why they cannot show it.
+// TestChildrenExecABinaryEntry runs a child through a binary entry, which the
+// other stubs in this file cannot show: they are scripts, and `bash <script>`
+// works either way. `bash <binary>` is 126.
 func TestChildrenExecABinaryEntry(t *testing.T) {
 	t.Setenv(entryHelperEnv, "1")
 	bin, err := os.Executable()
@@ -543,10 +542,9 @@ func TestChildrenExecABinaryEntry(t *testing.T) {
 	}
 }
 
-// TestChildrenReportAnUnrunnableEntry is the other half of that rule: a `self`
-// that cannot be exec'd — a stray CREW_SELF naming the checkout's crew.sh, say —
-// is the child's 127, not the silent 0 it would get from running that script with
-// bash now that the script dispatches nothing.
+// TestChildrenReportAnUnrunnableEntry: a `self` that cannot be exec'd — a stray
+// CREW_SELF naming the checkout's crew.sh, say — is the child's 127, not the
+// silent 0 that script would answer with if bash were put in front of it.
 func TestChildrenReportAnUnrunnableEntry(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "crew.sh")
 	if err := os.WriteFile(script, []byte("#!/usr/bin/env bash\n"), 0o644); err != nil {

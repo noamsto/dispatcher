@@ -76,8 +76,7 @@ func arg(args []string, i int) string {
 // bus reads below, so `crew <sub> --help` answers in a bare temp dir. Only those
 // positions count: `hold` takes an action and `fleet stream` a sub-subcommand,
 // so their --help is one position deeper, and `crew status w1 working --help`
-// keeps --help as the detail text. The screens are Go (crew/internal/entry);
-// this is the routing that was the script's.
+// keeps --help as the detail text. The screens are crew/internal/entry.
 func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) {
 	rest := []string{}
 	if len(args) > 1 {
