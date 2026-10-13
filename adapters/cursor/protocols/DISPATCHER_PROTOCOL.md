@@ -699,8 +699,8 @@ branch instead; the worktree carries over under `resume: true`.
   - a process that edits its own env (`CREW_*`, or `TMUX` to reach no server or
     a different one), rewrites tmux stamps, or double-forks out of its pane.
   - the session part of a lead's id.
-  - every writer outside those four commands, including `crew stall-watch` and
-    direct appends to `events.jsonl`.
+  - every writer outside those five commands, including direct appends to
+    `events.jsonl`.
   `crew nudge`'s sender gate (the window's stamped `@crew_id` plus a
   self-asserted bus sender or caller env) is not authentication; it is safe
   because the typed text is the constant `crew inbox "$CREW_WORKER_ID"`, which names no
