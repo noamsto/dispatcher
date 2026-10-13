@@ -268,7 +268,7 @@ func newRoleWatch(t *caseTest) *roleWatch {
 		"DISPATCHER_PROTOCOL_DIR": protocolDir,
 		"DISPATCHER_SKILLS_DIR":   filepath.Join(f.dir, "harness-skills"),
 		"CROSS_REPO_HINT_LIB":     filepath.Join(repoRoot, "adapters/core/cross-repo-hint.sh"),
-		"CREW_REAL":               filepath.Join(repoRoot, "adapters/core/crew.sh"),
+		"CREW_REAL":               crewEntry(),
 	}, "DISPATCH_REPO_TRACKERS", "DISPATCH_ORG_TRACKERS")
 
 	commit := runCommand(f.dir, f.env, "git", "commit", "-q", "--allow-empty", "-m", "init")

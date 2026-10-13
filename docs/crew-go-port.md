@@ -10,7 +10,10 @@ Ported so far: `log`, `report`, `sessions`, `roster`, `crews`, `inbox`, `hold`,
 (#939), `git-baseline` (#993), which brings the git-config guard
 (`worktree-git.sh`'s `_wt_cfg_*`) to Go as one shared implementation, and `reap` and
 `occupants` (#997), and the entry section — `help`, `id`, `new`, `engine-cmd` and `dash`
-(#1007) — and `pi-agent-dir` (#1016). Each slice must leave every bats file green;
+(#1007) — and `pi-agent-dir` (#1016). #821 finished the direction flip: the Go
+binary is what `crew` runs, and `crew.sh` is what the arms left behind — the bash
+helpers the drift guards still read, with no entry logic of its own.
+Each slice must leave every bats file green;
 tests may be adapted only where the Go design changes what they can observe (the
 output contract below), with each edit justified.
 
@@ -554,16 +557,23 @@ pr_open` for an implement task: the ledger's form, the empty-detail rule, the
 New subcommands get an `internal/<sub>` package; shared reads go through `bus`;
 folds that outgrew hand-translation run on jqrun.
 
-## Delegation
+## Entrypoint
 
-crew.sh stays the entrypoint (direction b). A ported arm is:
+The `crew` command is the Go binary (#821): `flake.nix` builds `crewGo` and installs
+its `bin/crew-go` as `crew` behind a PATH wrapper, so the tools the old
+`writeShellApplication` preamble prepended for crew.sh — gh, gtrash, crew-dash,
+dispatch-config, refresh-budget, pr-watch — are still there for the subcommands that
+shell out. `--inherit-argv0` is load-bearing: argv[0] is what `CREW_SELF` is derived
+from, and `CREW_SELF` must name the entry a switch repoints, not the store path the
+wrapper execs. `crew-go` remains its own package (`worktree-git.sh` bakes it, the
+tests build it).
 
-```bash
-crews | log | report | sessions | roster | identity | inbox | hold | await | watch | retro | reply | resolve-target | pr-watch | where | stream | roster-render | adopt | status | msg | register | deregister | fleet | rate | git-baseline | reap | stack)
-  export CREW_SELF="$0"
-  exec "${CREW_GO_BIN:-@crewGoBin@}" "$sub" "$@"
-  ;;
-```
+Routing lives in `main.go`: the subcommand switch, then `routeHelp` for `--help`
+anywhere in the argv and `crew help <sub> [<action>]`, and a default arm that prints
+the grouped list to **stderr** and exits 1 — the script's `*)` arm, byte for byte
+(`scripts/help-parity.sh` covers the bare and unknown cases). There is no bash
+`case` left to add an arm to; a new subcommand is a `case` in the switch plus its
+help entry, and `tests/crew.bats`'s `_crew_cli_subs` reads the list from `main.go`.
 
 `fleet` and `rate --sweep-all` need no repo, so the preamble's not-in-a-repo
 refusal lets them through — and both ask the same question twice: the script with
@@ -598,34 +608,45 @@ the empty-argument refusal survives the exec; `dash` prefixes `CREW_SELF="$0"`, 
 place the entry path is resolved, because `crew-dash` execs it or runs it through bash and
 needs a real file, not a symlink a switch has since repointed.
 
-`CREW_SELF` is this script's own path, the `$0` the bash arms re-entered. Two
-read it. `stream` reads it for its inner `watch`, its `hold due` pre-check and
-`crew reap`, all three of which the script still re-enters (`reap` now execs Go from
-its arm). `roster-render` reads it as
+`CREW_SELF` names the entry — the path the arms used to re-enter as `$0`. Since
+#821 nothing exports it on the way in: `entry.EnsureSelf` derives it once at start
+from `argv[0]` when the caller left it unset (the shell hands a PATH-resolved
+command its own full path, so that is the profile path a home-manager switch
+repoints) and otherwise keeps the inherited value exactly as it is — a caller that
+names the entry it wants outranks anything derived here, which is what the arm's
+`CREW_SELF="$0" exec` meant for the process it replaced. Two read it. `stream`
+reads it for its inner `watch`, its `hold due` pre-check and `crew reap`, all three
+of which it re-enters through `entry.EntryArgv`, which names the entry directly —
+`children.bash` and `Options.Bash` went with the script, and so did the bash prefix
+the script put in front of a `self` without an exec bit: running `crew.sh` that way
+would exit 0 having done nothing, where naming it leaves the child's 126.
+`roster-render` reads it as
 its own build identity: the daemon compares it against the installed `crew` and
 `syscall.Exec`s that in place, so a home-manager switch reaches a daemon that
-outlived the dispatch that started it. The script's path and not the Go binary's,
-because a switch replaces the script and the binary it execs is read fresh each
-time. And resolved **once**, at start — `CREW_SELF` names the entry, which is the
+outlived the dispatch that started it. The entry's path and not the binary's under
+it — the `crew` package is that binary behind a `makeWrapper --inherit-argv0`
+wrapper, and the wrapper's path is what a switch replaces while the binary it execs
+is read fresh each time. And resolved **once**, at start — `CREW_SELF` names the entry, which is the
 very symlink a switch repoints, so re-resolving it per tick follows the new build
 and reads as "no hop needed" forever.
 `TestDaemonFollowsTheInstalledEntryNotItsOwnStart` repoints a fixture entry under
 a running loop to hold that.
 
-`flake.nix` substitutes `@crewGoBin@` with the `crew-go` package's
-`bin/crew-go`; `CREW_GO_BIN` overrides it for raw-source runs. The bash
-preamble is the help routing alone: the git-repo check is Go's (`bus.Locate`, `crew:
-not in a git repo`, exit 1, with `fleet` and `rate --sweep-all` exempt). Add a
-subcommand to this arm and delete its old arm. `crew hold`'s per-action `--help` screens are Go like
-everything else (#1007): the routing that turns `crew hold due --help` into
-`help hold due` is the preamble's, and `help: crew hold <action> --help` pins
-that it does. `rate` reaches it like every other ported subcommand: its flag loop, its
+`crew-go` is the binary the tests and the harnesses run; `CREW_GO_BIN` names it for
+raw-source runs, and it is no longer an indirection the entry consults — the entry
+is that file. The git-repo check is Go's (`bus.Locate`, `crew:
+not in a git repo`, exit 1, with `fleet` and `rate --sweep-all` exempt). `crew hold`'s
+per-action `--help` screens are Go like everything else (#1007): the routing that
+turns `crew hold due --help` into `help hold due` is the entry's, and
+`help: hold due --help prints that action's screen, not the flag's` pins that it
+does. `rate` reaches it like every other subcommand: its flag loop, its
 refusals and its `--sweep-all` loop moved to Go with #966, so the arm passes the
 argv through and the package decides the mode.
 
-`stall-watch` joins that arm like the rest: the `--sh` branch and `CREW_SH` are gone, so
-`crew.sh` holds no `case` arm that does more than exec Go, apart from the oracle helper
-functions and the `*)` help screen.
+`stall-watch` joined that switch like the rest: the `--sh` branch and `CREW_SH` are
+gone, and with #821 `crew.sh` holds no `case` arm at all — what remains is the
+oracle helper functions the drift guards and adapters.bats read, and nothing that
+dispatches a subcommand.
 
 The helpers the loop still needs (budget-gate.sh, local-models.sh) have other bash
 callers, so Go sources them instead of copying them. The finished-worker release is not
@@ -677,8 +698,8 @@ dispatched before `bus.Locate`: it takes explicit dirs and must run from any cwd
 
 - `flake.nix` substitutes `@crewGoBin@` into the lib (`worktreeGitLib`), so each of its
   Nix-built consumers (`dispatch`, `dispatch-resume`) carries the pinned binary;
-  `crew.sh` substitutes the same token for its own ported-arm exec, and since #1004 it
-  sources the lib no more. Raw-source runs export `CREW_GO_BIN`
+  `crew.sh` stopped substituting it when its arms exec'd nothing left to exec (#821).
+  Raw-source runs export `CREW_GO_BIN`
   (`tests/setup_suite.bash`, `tests/harness/ensure-crew-go.sh`).
 - A missing or unrunnable binary makes the wrapper exit non-zero (127 or 126), which
   every caller already treats as a refusal: the guard fails closed. Any internal Go error
@@ -999,8 +1020,8 @@ invocation (the refusals, `--attr-source`, anchoring) has no second guard: it is
 
 - `bats tests/...`: `tests/setup_suite.bash` builds `crew-go` from the working
   tree once per run and exports `CREW_GO_BIN`; a failed build fails the run.
-- The bench harnesses shell into crew.sh from the checkout as well, so their
-  entries export it too. `tests/harness/ensure-crew-go.sh` builds unless
+- The bench harnesses run the same binary from the checkout, so their entries
+  export it too. `tests/harness/ensure-crew-go.sh` builds unless
   `CREW_GO_BIN` is already set: a bench adapter builds once and its per-case
   children inherit, keeping the build out of the measured per-case window.
 - `cd crew && go test ./... && go vet ./... && golangci-lint run ./...`.
@@ -1017,12 +1038,18 @@ invocation (the refusals, `--attr-source`, anchoring) has no second guard: it is
 
 ## Flipping to direction (a)
 
-1. The Go binary becomes the `crew` package: it runs ported subcommands and
-   `syscall.Exec`s crew.sh (an internal `crew-sh`, path baked in via ldflags)
-   for the rest.
-2. The delegating arms in crew.sh disappear.
-3. crew.sh's `$0` self-re-execs (`roster`, `dash`, `hold`, `rate`) switch
-   to the `CREW_SELF` env the Go front exports. `stream` already reads that env
-   rather than a `$0` of its own — it re-enters the script for its inner park, so
-   once the front exports `CREW_SELF` itself the port needs no further change.
-4. `run_crew` and `CREW_REAL` in the bats files switch to the Go binary.
+Done in #821, and not the way this list first sketched it: nothing execs crew.sh
+any more, because nothing was left for it to run.
+
+1. The Go binary became the `crew` package — `makeWrapper` of `crew-go`, with
+   `--inherit-argv0` so the entry still sees the profile path. No internal
+   `crew-sh` fallback: an unknown subcommand is the help screen and exit 1, which
+   is what the script's `*)` arm already did.
+2. The delegating arms in crew.sh are gone, with the help routing and the `*)` arm
+   that followed them.
+3. crew.sh's `$0` self-re-execs (`roster`, `dash`, `hold`, `rate`) read the
+   `CREW_SELF` the entry exports; `stream` re-enters the entry through
+   `entry.EntryArgv` instead of a bash script of its own.
+4. `run_crew` and `CREW_REAL` in the bats files are the Go binary (`tests/helpers.bash`
+   defines `CREW` from `CREW_GO_BIN`), and `CREW_SRC` is what a row reads when it
+   wants the bash oracle.

@@ -2,8 +2,7 @@ bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 
 setup() {
   load helpers
-  CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
-  run_crew() { bash -euo pipefail "$CREW" "$@"; }
+  run_crew() { "$CREW" "$@"; }
   setup_repo
   # reap only trusts a bus pr_url of this repo's origin.
   case "$BATS_TEST_DESCRIPTION" in reap:*) git config remote.origin.url https://github.com/o/r.git ;; esac
@@ -668,7 +667,7 @@ ROWS
   for i in 1 2 3 4 5 6 7 8; do
     (
       for _ in 1 2 3 4 5; do
-        CREW_ID=c1 bash -euo pipefail "$CREW" status "worker:b$i" working "$big"
+        CREW_ID=c1 "$CREW" status "worker:b$i" working "$big"
       done
     ) &
   done
@@ -698,7 +697,7 @@ ROWS
   for i in 1 2 3 4 5 6 7 8; do
     (
       for _ in 1 2 3 4 5; do
-        CREW_ID=c1 bash -euo pipefail "$CREW" reply "peer$i" "$big"
+        CREW_ID=c1 "$CREW" reply "peer$i" "$big"
       done
     ) &
   done
@@ -1309,7 +1308,7 @@ _pi_seeded() {
 
 # The timeout turns a seeder blocked on open() into a failure instead of a hung suite.
 _pi_run_seed() {
-  run --separate-stderr timeout 10 bash -euo pipefail "$CREW" pi-agent-dir
+  run --separate-stderr timeout 10 "$CREW" pi-agent-dir
 }
 
 _pi_assert_refused() {
@@ -1594,59 +1593,23 @@ _pi_assert_refused() {
   cmp "$f" <(jq -c . "$f"; echo)
 }
 
-@test "sessions: the arm execs CREW_GO_BIN with argv and stdin, passing its stderr and exit status" {
-  stub="$BATS_TEST_TMPDIR/go-stub"
-  cat >"$stub" <<'STUB'
-#!/usr/bin/env bash
-printf '%s' "$*" >"$BATS_TEST_TMPDIR/stub.argv"
-cat >"$BATS_TEST_TMPDIR/stub.stdin"
-echo boom >&2
-exit 7
-STUB
-  chmod +x "$stub"
-  CREW_GO_BIN="$stub" run --separate-stderr run_crew sessions feat/x --crew c1 <<<"in"
-  [ "$status" -eq 7 ]
-  [ "$stderr" = "boom" ]
-  [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "sessions feat/x --crew c1" ]
-  [ "$(cat "$BATS_TEST_TMPDIR/stub.stdin")" = "in" ]
+# Three rows here put a stub at CREW_GO_BIN to check what argv, stdin and exit
+# status crew.sh's arms handed the Go binary. The entry is that binary now, so the
+# hop is gone; what survives of them is the routing, which runs for real below.
+@test "roster: --help prints the roster screen" {
+  run --separate-stderr run_crew roster --help
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == "usage: crew roster [crew]" ]]
 }
 
-@test "roster: the arm execs CREW_GO_BIN with argv" {
-  stub="$BATS_TEST_TMPDIR/go-stub"
-  cat >"$stub" <<'STUB'
-#!/usr/bin/env bash
-printf '%s' "$*" >"$BATS_TEST_TMPDIR/stub.argv"
-STUB
-  chmod +x "$stub"
-  CREW_GO_BIN="$stub" run run_crew roster c1 extra
+# --help after the subcommand is the subcommand's help, and for a grouped command
+# it is that action's screen — the entry asks for `help hold due`, never `help
+# hold --help`.
+@test "help: hold due --help prints that action's screen, not the flag's" {
+  run --separate-stderr run_crew hold due --help
   [ "$status" -eq 0 ]
-  [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "roster c1 extra" ]
-}
-
-# The screens moved to Go with #1007, so --help is the one case where the arm
-# does exec the binary: what the script still owns is the routing, i.e. the argv
-# it hands `help`.
-@test "roster: --help execs the Go binary with the help argv" {
-  stub="$BATS_TEST_TMPDIR/go-stub"
-  cat >"$stub" <<'STUB'
-#!/usr/bin/env bash
-printf '%s' "$*" >"$BATS_TEST_TMPDIR/stub.argv"
-printf 'usage: crew roster [crew]\n'
-STUB
-  chmod +x "$stub"
-  CREW_GO_BIN="$stub" run run_crew roster --help
-  [ "$status" -eq 0 ]
-  [[ "$output" == "usage: crew roster [crew]" ]]
-  [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "help roster" ]
-}
-
-@test "help: --help hold <action> execs Go with the action, not the flag" {
-  stub="$BATS_TEST_TMPDIR/go-stub"
-  printf '#!/usr/bin/env bash\nprintf "%%s" "$*" >"%s/stub.argv"\n' "$BATS_TEST_TMPDIR" >"$stub"
-  chmod +x "$stub"
-  CREW_GO_BIN="$stub" run run_crew hold due --help
-  [ "$status" -eq 0 ]
-  [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "help hold due" ]
+  [[ "${lines[0]}" == "usage: crew hold due [--crew ID] [--json]" ]]
+  [[ "$output" == *"quota window has already reset"* ]]
 }
 
 @test "reply: a branch-only worker target resolves to the newest live session" {
@@ -1676,7 +1639,7 @@ STUB
 
 @test "reply: CREW_ID unset resolves the single crew with a live session (#302)" {
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
-  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
+  run env -u CREW_ID "$CREW" reply "worker:feat/x" "go"
   [ "$status" -eq 0 ]
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   run jq -r 'select(.kind=="msg") | "\(.crew_id) \(.to)"' "$log"
@@ -1686,7 +1649,7 @@ STUB
 @test "reply: --crew works with CREW_ID unset (#302)" {
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
   CREW_ID=c2 run_crew status "worker:feat/x#s2-2" working
-  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go" --crew c2
+  run env -u CREW_ID "$CREW" reply "worker:feat/x" "go" --crew c2
   [ "$status" -eq 0 ]
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   run jq -r 'select(.kind=="msg") | .to' "$log"
@@ -1696,14 +1659,14 @@ STUB
 @test "reply: CREW_ID unset with live sessions in two crews refuses naming both (#302)" {
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
   CREW_ID=c2 run_crew status "worker:feat/x#s2-2" working
-  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
+  run env -u CREW_ID "$CREW" reply "worker:feat/x" "go"
   [ "$status" -eq 1 ]
   [[ "$output" == *"c1"* && "$output" == *"c2"* && "$output" == *"--crew"* ]]
 }
 
 @test "reply: CREW_ID unset with only a terminal session names the unset crew (#302)" {
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
-  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
+  run env -u CREW_ID "$CREW" reply "worker:feat/x" "go"
   [ "$status" -eq 1 ]
   [[ "$output" == *"CREW_ID not set"* ]]
 }
@@ -1718,7 +1681,7 @@ STUB
   # current crew: a live registered pid and a newer live session on the branch.
   CREW_ID=c-cur run_crew register "$$"
   CREW_ID=c-cur run_crew status "worker:feat/x#s2-2" working
-  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
+  run env -u CREW_ID "$CREW" reply "worker:feat/x" "go"
   [ "$status" -eq 0 ]
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   run jq -r 'select(.kind=="msg") | "\(.crew_id) \(.to)"' "$log"
@@ -1732,7 +1695,7 @@ STUB
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
   CREW_ID=c2 run_crew register "$live_b"
   CREW_ID=c2 run_crew status "worker:feat/x#s2-2" working
-  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
+  run env -u CREW_ID "$CREW" reply "worker:feat/x" "go"
   [ "$status" -eq 1 ]
   [[ "$output" == *"c1"* && "$output" == *"c2"* && "$output" == *"--crew"* ]]
   kill "$live_a" "$live_b" 2>/dev/null || true
@@ -1750,7 +1713,7 @@ STUB
   CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
   CREW_ID=c2 run_crew register "$dead_b"
   CREW_ID=c2 run_crew status "worker:feat/x#s2-2" working
-  run env -u CREW_ID bash -euo pipefail "$CREW" reply "worker:feat/x" "go"
+  run env -u CREW_ID "$CREW" reply "worker:feat/x" "go"
   [ "$status" -eq 1 ]
   [[ "$output" == *"c1"* && "$output" == *"c2"* && "$output" == *"--crew"* ]]
 }
@@ -1899,7 +1862,7 @@ after_await_parks() {
 
 @test "await: a sessioned id still receives a reply" {
   (
-    CREW_ID=c1 after_await_parks bash -euo pipefail "$CREW" reply "worker:feat/x#s1-1" hi
+    CREW_ID=c1 after_await_parks "$CREW" reply "worker:feat/x#s1-1" hi
   ) >/dev/null 2>&1 &
   CREW_ID=c1 run run_crew await "worker:feat/x#s1-1" --timeout 300 --interval 1
   wait
@@ -2103,7 +2066,7 @@ after_await_parks() {
   bus_tick
   CREW_ID=c1 run_crew msg "$plan" "$id" "plan verdict"
   (
-    CREW_ID=c1 after_await_parks bash -euo pipefail "$CREW" msg "$rev" "$id" "review verdict"
+    CREW_ID=c1 after_await_parks "$CREW" msg "$rev" "$id" "review verdict"
   ) >/dev/null 2>&1 &
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --from "$rev" --timeout 300 --interval 1
   wait
@@ -2314,7 +2277,7 @@ after_await_parks() {
 @test "await: a reply a bash crew msg appends mid-wait is delivered" {
   id="worker:feat/x#s1-1"
   (
-    CREW_ID=c1 after_await_parks bash -euo pipefail "$CREW" msg dispatcher:c1 "$id" "mid-wait"
+    CREW_ID=c1 after_await_parks "$CREW" msg dispatcher:c1 "$id" "mid-wait"
   ) >/dev/null 2>&1 &
   CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 300 --interval 1
   wait
@@ -2434,7 +2397,7 @@ after_await_parks() {
   id="worker:feat/x#s1-1"
   CREW_ID=c1 run_crew reply "$id" "answer"
   dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  run bash -c "CREW_ID=c1 bash -euo pipefail '$CREW' inbox '$id' c1 >/dev/full"
+  run bash -c "CREW_ID=c1 '$CREW' inbox '$id' c1 >/dev/full"
   [ "$status" -eq 1 ]
   [ ! -e "$dir/await" ]
 }
@@ -2454,7 +2417,7 @@ after_await_parks() {
   [ "$status" -eq 0 ]
   [ "${#lines[@]}" -eq 2 ]
 
-  helpers="$(sed -n '/^_await_state() {/,/^}/p; /^_await_marks() {/,/^}/p; /^_await_record() {/,/^}/p' "$CREW")"
+  helpers="$(sed -n '/^_await_state() {/,/^}/p; /^_await_marks() {/,/^}/p; /^_await_record() {/,/^}/p' "$CREW_SRC")"
   eval "$helpers"
   dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
   files=("$dir"/await/*)
@@ -4596,7 +4559,7 @@ crew_tty() {
   shift
   [ -n "$REAL_TMUX" ] || skip "tmux not installed"
   rm -f "$out" "$rc"
-  printf 'bash -euo pipefail %q' "$CREW" >"$script"
+  printf '%q' "$CREW" >"$script"
   printf ' %q' "$@" >>"$script"
   printf ' >%q 2>&1\necho $? >%q\n' "$out" "$rc" >>"$script"
   "$REAL_TMUX" -L "$sock" -f /dev/null new-session -d -x 200 -y 50 -c "$PWD" "bash $script"
@@ -7582,7 +7545,7 @@ EOF
   seed_raw worker:feat/x#s1-1 working "" ""
   seed_msg role:feat/x:reviewer worker:feat/x#s1-1 30
   # The lead reads its inbox just before the 3rd sample, after D6 has posted.
-  export CREW_STALL_SAMPLE_CMD="[ \"\$(cat $SAMPLER_DIR/n)\" != 2 ] || bash $CREW inbox worker:feat/x#s1-1 c1 >/dev/null; $CREW_STALL_SAMPLE_CMD"
+  export CREW_STALL_SAMPLE_CMD="[ \"\$(cat $SAMPLER_DIR/n)\" != 2 ] || $CREW inbox worker:feat/x#s1-1 c1 >/dev/null; $CREW_STALL_SAMPLE_CMD"
   CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude \
     --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 9
   run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
@@ -7619,7 +7582,7 @@ EOF
   stall_sampler "$p"
   seed_raw worker:feat/x#s1-1 working "" ""
   seed_msg dispatcher:c1 worker:feat/x#s1-1 30
-  export CREW_STALL_SAMPLE_CMD="[ \"\$(cat $SAMPLER_DIR/n)\" != 2 ] || bash $CREW inbox worker:feat/x#s1-1 c1 >/dev/null; $CREW_STALL_SAMPLE_CMD"
+  export CREW_STALL_SAMPLE_CMD="[ \"\$(cat $SAMPLER_DIR/n)\" != 2 ] || $CREW inbox worker:feat/x#s1-1 c1 >/dev/null; $CREW_STALL_SAMPLE_CMD"
   CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude --no-nudge \
     --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 9
   run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
@@ -7635,7 +7598,7 @@ EOF
   seed_raw worker:feat/x#s1-1 working "" ""
   seed_msg dispatcher:c1 worker:feat/x#s1-1 30
   mkdir -p "$BATS_TEST_TMPDIR/realbin"
-  printf '#!/usr/bin/env bash\nexec bash "%s" "$@"\n' "$CREW" >"$BATS_TEST_TMPDIR/realbin/crew"
+  printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$CREW" >"$BATS_TEST_TMPDIR/realbin/crew"
   chmod +x "$BATS_TEST_TMPDIR/realbin/crew"
   export PATH="$BATS_TEST_TMPDIR/realbin:$PATH"
   hook="$BATS_TEST_DIRNAME/../adapters/core/directive-delivery.sh"
@@ -7680,7 +7643,7 @@ EOF
   seed_raw worker:feat/x#s1-1 working "" ""
   seed_msg role:feat/x:reviewer worker:feat/x#s1-1 40
   seed_msg dispatcher:c1 worker:feat/x#s1-1 30
-  export CREW_STALL_SAMPLE_CMD="[ \"\$(cat $SAMPLER_DIR/n)\" != 2 ] || CREW_ID=c1 bash $CREW await worker:feat/x#s1-1 --from role:feat/x:reviewer --timeout 1 >/dev/null; $CREW_STALL_SAMPLE_CMD"
+  export CREW_STALL_SAMPLE_CMD="[ \"\$(cat $SAMPLER_DIR/n)\" != 2 ] || CREW_ID=c1 $CREW await worker:feat/x#s1-1 --from role:feat/x:reviewer --timeout 1 >/dev/null; $CREW_STALL_SAMPLE_CMD"
   CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %9 --engine claude --no-nudge \
     --grace 0 --interval 1 --unread 10 --window 0 --stall 999 --idle 999 --dead 999 --max-life 13
   run bash -c "bus | jq -r 'select(.kind==\"status\" and .body.source==\"watchdog\") | \"\(.body.state)|\(.body.detail)\"'"
@@ -7716,7 +7679,7 @@ if [ "\$n" -le "\$(cat "\$d/busy_n")" ]; then
 elif grep -q '^send-keys -t %9 Enter' "\$STUB_LOG" 2>/dev/null; then
   a=\$((\$(cat "\$d/after_n") + 1))
   printf '%s' "\$a" >"\$d/after_n"
-  [ "\$a" != 3 ] || [ -z "\${D6_INBOX:-}" ] || bash "$CREW" inbox 'worker:feat/x#s1-1' c1 >/dev/null
+  [ "\$a" != 3 ] || [ -z "\${D6_INBOX:-}" ] || "$CREW" inbox 'worker:feat/x#s1-1' c1 >/dev/null
   cat "\$d/after"
 elif grep -q '^send-keys -t %9 -l' "\$STUB_LOG" 2>/dev/null; then
   cat "\$d/typed"
@@ -9090,7 +9053,7 @@ sleep 30
 EOS
   chmod +x "$BATS_TEST_TMPDIR/refresh-stub"
   export CREW_BUDGET_REFRESH_CMD="$BATS_TEST_TMPDIR/refresh-stub"
-  CREW_ID=c1 bash -euo pipefail "$CREW" stall-watch worker:feat/x --pane %9 \
+  CREW_ID=c1 "$CREW" stall-watch worker:feat/x --pane %9 \
     --engine claude --grace 0 --interval 1 --budget-refresh 1 --max-life 600 \
     >"$BATS_TEST_TMPDIR/out" 2>"$BATS_TEST_TMPDIR/err" </dev/null &
   pid=$!
@@ -9263,9 +9226,24 @@ start_stream() {
   # Defaults to no cadence reap: without this every pre-existing stream test's
   # batch would spawn a background `crew reap` against the host tmux server.
   [ -n "$has_reap_every" ] || args+=(--reap-every 0)
-  bash -euo pipefail "${STREAM_CREW:-$CREW}" stream "${args[@]}" >"$STREAM_OUT" 2>"$STREAM_ERR" </dev/null &
+  "${STREAM_CREW:-$CREW}" stream "${args[@]}" >"$STREAM_OUT" 2>"$STREAM_ERR" </dev/null &
   STREAM_PID=$!
   STREAM_PIDS="${STREAM_PIDS:-} $STREAM_PID"
+}
+
+# _crew_entry <path> [bash line…] — an executable crew entry that runs the binary
+# under test, with the given lines spliced in front of it. The stream and
+# roster-render rows need an entry of their own to re-enter ($0), so it exports
+# CREW_SELF="$0" the way the delegation arm used to.
+_crew_entry() {
+  local path="$1"
+  shift
+  {
+    printf '#!/usr/bin/env bash\n'
+    [ "$#" -eq 0 ] || printf '%s\n' "$@"
+    printf 'CREW_SELF="$0" exec %q "$@"\n' "$CREW"
+  } >"$path"
+  chmod +x "$path"
 }
 
 # stop_stream — TERM every stream this test started, then reap it. The lock dir
@@ -9459,7 +9437,7 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
 
   # Not `run_crew … &`: backgrounding the helper function backgrounds a subshell
   # of its own, and its pid is not the one the park writes in the lock.
-  bash -euo pipefail "$CREW" watch --crew c1 --timeout 30 --interval 1 >"$BATS_TEST_TMPDIR/park.out" 2>&1 &
+  "$CREW" watch --crew c1 --timeout 30 --interval 1 >"$BATS_TEST_TMPDIR/park.out" 2>&1 &
   local pid=$!
   poll_for 100 test -f "$cdir/watch.lock.d/pid"
   # The pid the arm wrote is `$$`, and the exec'd Go binary keeps it.
@@ -9476,7 +9454,7 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   # The group-shaped signal: a terminal's Ctrl-C reaches the park and its
   # in-flight `sleep` child, and `set -e` exited on the killed child, so the
   # status is the signal's. Killing the child alone is the same shape.
-  bash -euo pipefail "$CREW" watch --crew c1 --timeout 60 --interval 5 >/dev/null 2>&1 &
+  "$CREW" watch --crew c1 --timeout 60 --interval 5 >/dev/null 2>&1 &
   local pid2=$!
   poll_for 100 test -f "$cdir/watch.lock.d/pid"
   local wpid
@@ -9826,10 +9804,10 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   # same first stderr line, so the suppression key is stable.
   mkdir -p "$cdir/watch.lock.d"
   printf '%s\n' "$$" >"$cdir/watch.lock.d/pid"
-  # Run the stream from a copy, so the fault below can be swapped in without
-  # touching the file the rest of the suite runs.
-  STREAM_CREW="$BATS_TEST_TMPDIR/crew-copy.sh"
-  cp "$CREW" "$STREAM_CREW"
+  # Run the stream from an entry of its own, so the fault below can be swapped
+  # in without touching the binary the rest of the suite runs.
+  STREAM_CREW="$BATS_TEST_TMPDIR/crew-entry.sh"
+  _crew_entry "$STREAM_CREW"
 
   start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
   poll_for 200 at_least_lines 1
@@ -9858,12 +9836,13 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   # the loop under `set -e` instead of failing one iteration of it — and the
   # assertion below would then hold vacuously.
   rm -rf "$cdir/watch.lock.d"
-  tmp=$(mktemp "$BATS_TEST_TMPDIR/crew-copy.XXXXXX")
+  tmp=$(mktemp "$BATS_TEST_TMPDIR/crew-entry.XXXXXX")
   printf '%s\n' '#!/usr/bin/env bash' \
     'case "${1:-}" in' \
     '  watch) echo "crew: fault injected" >&2; exit 3 ;;' \
     '  *) exit 0 ;;' \
     'esac' >"$tmp"
+  chmod +x "$tmp"
   mv -f "$tmp" "$STREAM_CREW"
 
   poll_for 200 at_least_lines 2
@@ -9972,12 +9951,8 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   # $0 for `watch` too, and failing both would leave the inner-watch error
   # line indistinguishable from this one.
   STREAM_CREW="$BATS_TEST_TMPDIR/crew-holdfault.sh"
-  {
-    head -n1 "$CREW"
-    printf '%s\n' 'if [ "${1:-}" = hold ] && [ "${2:-}" = due ]; then echo "crew: hold fault injected" >&2; exit 3; fi'
-    tail -n +2 "$CREW"
-  } >"$STREAM_CREW"
-  chmod +x "$STREAM_CREW"
+  _crew_entry "$STREAM_CREW" \
+    'if [ "${1:-}" = hold ] && [ "${2:-}" = due ]; then echo "crew: hold fault injected" >&2; exit 3; fi'
 
   start_stream --crew c1 --park 1 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1
   poll_for 200 at_least_lines 1
@@ -10368,19 +10343,14 @@ has_reap_line() { grep -q '"stream":"reap"' "$STREAM_OUT" 2>/dev/null; }
 # then B reaps. On base both share stream.reap.out; per-child files keep them apart.
 @test "stream: a reap child that outlives its stream cannot clobber the next stream's reap output" {
   git commit -q --allow-empty -m init
-  STREAM_CREW="$BATS_TEST_TMPDIR/crew-copy.sh"
-  cp "$CREW" "$STREAM_CREW"
-  # Prepend a hook point: only `reap` is diverted, so the stream loop itself
-  # runs unmodified, and a nested `reap` re-enters the copy and hits the hook.
-  copy="$BATS_TEST_TMPDIR/crew-copy.hooked.sh"
-  {
-    printf '%s\n' \
-      'if [ "${1:-}" = reap ] && [ -n "${CREW_TEST_REAP_HOOK:-}" ]; then' \
-      '  bash "$CREW_TEST_REAP_HOOK" "$@"; exit $?' \
-      'fi'
-    cat "$STREAM_CREW"
-  } >"$copy"
-  mv -f "$copy" "$STREAM_CREW"
+  # A hook point in front of the entry: only `reap` is diverted, so the stream
+  # loop itself runs unmodified, and a nested `reap` re-enters the entry and hits
+  # the hook.
+  STREAM_CREW="$BATS_TEST_TMPDIR/crew-reaphook.sh"
+  _crew_entry "$STREAM_CREW" \
+    'if [ "${1:-}" = reap ] && [ -n "${CREW_TEST_REAP_HOOK:-}" ]; then' \
+    '  bash "$CREW_TEST_REAP_HOOK" "$@"; exit $?' \
+    'fi'
 
   hook="$BATS_TEST_TMPDIR/reap-hook.sh"
   cat >"$hook" <<'EOF'
@@ -12650,7 +12620,7 @@ EOS
   nudge_frames "$(fx_done_idle)"
   cp "$(fx_meter 2s 1.2k)" "$STUB_DIR/frames/%9.1"
   cp "$(fx_meter 2s 1.2k)" "$STUB_DIR/frames/%9.2"
-  _nudge_wrap_tmux 2 "bash '$CREW' inbox 'worker:feat/x#s1-1' c1"
+  _nudge_wrap_tmux 2 "'$CREW' inbox 'worker:feat/x#s1-1' c1"
   CREW_ID=c1 run run_crew nudge nova --wait 60
   [ "$status" -eq 0 ]
   [[ "$output" == *"read the msg during the wait"* ]]
@@ -12890,7 +12860,7 @@ _rr_file() {
 # _rr_palette — every identity color, parsed from the source so a new palette
 # entry cannot be added without the compile test below seeing it.
 _rr_palette() {
-  bash -c 'eval "$(sed -n "/^_colors=(/,/)/p" "$1")"; printf "%s\n" "${_colors[@]}"' _ "$CREW"
+  bash -c 'eval "$(sed -n "/^_colors=(/,/)/p" "$1")"; printf "%s\n" "${_colors[@]}"' _ "$CREW_SRC"
 }
 
 # _rr_dispatch <branch> <ts_ms> <name> <color> <tmux> <title> <tier> <engine> <model> [base]
@@ -13588,7 +13558,7 @@ _rr_daemon() {
   d="$BATS_TEST_TMPDIR/rr-ownbin-$n"
   mkdir -p "$d"
   ln -sfn "$entry" "$d/crew"
-  (cd -- "${RR_CWD:-.}" && exec env PATH="$d:$PATH" bash -euo pipefail "${RR_ENTRY:-$CREW}" roster-render \
+  (cd -- "${RR_CWD:-.}" && exec env PATH="$d:$PATH" "${RR_ENTRY:-$CREW}" roster-render \
     --crew c1 --interval 1 "$@") >"$log" 2>&1 3>&- &
   echo "$!" >"$BATS_TEST_TMPDIR/rr-daemon-$n.pid"
   if [ "$n" -eq 1 ]; then RR_PID=$!; else RR_PID2=$!; fi
@@ -13702,7 +13672,7 @@ _rr_plant() {
   _rr_daemon --pane %7
   _rr_wait _rr_publish_logged "$target --pane %7 --open"
 
-  run timeout 10 bash -euo pipefail "$CREW" roster-render --crew c1 --interval 1 --pane %9
+  run timeout 10 "$CREW" roster-render --crew c1 --interval 1 --pane %9
   [ "$status" -eq 0 ]
   _rr_wait _rr_publish_logged "$target --pane %9 --open"
   kill -0 "$RR_PID"
@@ -13789,7 +13759,7 @@ _rr_plant() {
 @test "roster-render: --detach records the pane and returns, leaving a daemon on the lock" {
   _rr_mini working 'execute: tests'
   _rr_hermetic_path
-  run timeout 10 bash -euo pipefail "$CREW" roster-render --crew c1 --detach --pane %7 --interval 1 3>&-
+  run timeout 10 "$CREW" roster-render --crew c1 --detach --pane %7 --interval 1 3>&-
   [ "$status" -eq 0 ]
   _rr_wait _rr_lock_taken
   kill -0 "$RR_PID"
@@ -13807,14 +13777,14 @@ _rr_plant() {
 _rr_fake_build() { # <name> -> path of the build's crew
   local dir="$BATS_TEST_TMPDIR/rr-build-$1"
   mkdir -p "$dir/wbin"
-  {
-    printf '#!/usr/bin/env bash\nset -euo pipefail\n'
-    printf 'export PATH="%s/wbin:$PATH"\n' "$dir"
-    printf 'if [ "${1:-}" = roster-render ]; then printf "%%s %%s %%s\\n" "%s" "$$" "$*" >>"$RR_BUILDS_LOG"; fi\n' "$1"
-    printf 'if [ "${RR_PATH_PROBE:-}" = 1 ] && [ "${1:-}" = roster-render ]; then printf "%%s\\n%%s\\n" "$$" "$PATH" >>"$RR_PATHS_LOG"; fi\n'
-    cat "$CREW"
-  } >"$dir/crew"
-  chmod +x "$dir/crew"
+  # The prologue the writeShellApplication wrapper used to carry: prepend its
+  # runtimeInputs dirs, and log every roster-render start of this build (and,
+  # opt-in, the PATH it started with).
+  _crew_entry "$dir/crew" \
+    'set -euo pipefail' \
+    "export PATH=\"$dir/wbin:\$PATH\"" \
+    "if [ \"\${1:-}\" = roster-render ]; then printf '%s %s %s\\n' \"$1\" \"\$\$\" \"\$*\" >>\"\$RR_BUILDS_LOG\"; fi" \
+    "if [ \"\${RR_PATH_PROBE:-}\" = 1 ] && [ \"\${1:-}\" = roster-render ]; then printf '%s\\n%s\\n' \"\$\$\" \"\$PATH\" >>\"\$RR_PATHS_LOG\"; fi"
   printf '%s' "$dir/crew"
 }
 
@@ -14003,14 +13973,15 @@ _rr_built_twice() { [ "$(_rr_build_count "$1" "$2")" -eq 2 ]; }
 # --- crew --help: per-subcommand and grouped top-level (#812) ---------------
 
 # _crew_cli_subs — every top-level subcommand, parsed out of the dispatcher
-# itself: the arms of the top-level `case "$sub"` (they sit at column 0) plus the
-# `if [ "$sub" = … ]` blocks that run ahead of it. A command that gains an arm
-# and no help entry fails the rows below, which is the point.
+# itself: the case list of main.go's subcommand switch, which is what routes
+# `crew <sub>` now that the script's arms are gone (#821). Three names are
+# dropped — `help` (the screen printer, never a row of its own), `git-guard` and
+# `reap-autosweep` (callable, deliberately undocumented). A command that gains an
+# arm and no help entry fails the rows below, which is the point.
 _crew_cli_subs() {
-  {
-    grep -E '^[a-z][a-z0-9_| -]*\)$' "$CREW" | tr -d ' ' | tr '|' '\n' | sed 's/)$//'
-    grep -oE '^if \[ "\$sub" = [a-z-]+ \]' "$CREW" | sed -E 's/.* = ([a-z-]+) \]/\1/'
-  } | grep -v '^$' | sort -u
+  sed -nE 's/^\tcase ("roster", .*)$/\1/p' "$CREW_GO_SRC" |
+    tr ',' '\n' | tr -d ' "' | sed 's/:$//' |
+    grep -vE '^(help|git-guard|reap-autosweep)$' | sort -u
 }
 
 # _crew_help_rows — the subcommand rows of the grouped list: two spaces, the
@@ -14108,33 +14079,30 @@ _crew_help_rows() { # <help text>
   [[ "${stderr_lines[0]}" == "crew — file-based coordination bus"* ]]
 }
 
-@test "fleet: the arm execs CREW_GO_BIN with argv" {
+# The entry dispatches itself: a CREW_GO_BIN inherited from an old harness is read
+# by nothing that dispatches with it.
+@test "the entry ignores a stale CREW_GO_BIN" {
   stub="$BATS_TEST_TMPDIR/go-stub"
   cat >"$stub" <<'STUB'
 #!/usr/bin/env bash
 printf '%s' "$*" >"$BATS_TEST_TMPDIR/stub.argv"
 STUB
   chmod +x "$stub"
-  CREW_GO_BIN="$stub" run run_crew fleet --all --json
-  [ "$status" -eq 0 ]
-  [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "fleet --all --json" ]
+  CREW_ID= CREW_GO_BIN="$stub" run --separate-stderr run_crew id
+  [ "$status" -eq 1 ]
+  [ ! -e "$BATS_TEST_TMPDIR/stub.argv" ]
+  [[ "${stderr_lines[0]}" == "crew: "* ]]
 }
 
-# rate's flags are the Go side's now, so the arm passes them through untouched —
-# including --sweep-all, the mode with no repo of its own.
-@test "rate: the arm execs CREW_GO_BIN with argv" {
-  stub="$BATS_TEST_TMPDIR/go-stub"
-  cat >"$stub" <<'STUB'
-#!/usr/bin/env bash
-printf '%s' "$*" >"$BATS_TEST_TMPDIR/stub.argv"
-STUB
-  chmod +x "$stub"
-  CREW_GO_BIN="$stub" run run_crew rate --report --pooled
-  [ "$status" -eq 0 ]
-  [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "rate --report --pooled" ]
-  CREW_GO_BIN="$stub" run run_crew rate --sweep-all --root "$BATS_TEST_TMPDIR"
-  [ "$status" -eq 0 ]
-  [ "$(cat "$BATS_TEST_TMPDIR/stub.argv")" = "rate --sweep-all --root $BATS_TEST_TMPDIR" ]
+# The oracle library refuses to be run. Since #821 it dispatches nothing, so an
+# exit 0 would read as success to a caller the migration missed; sourcing it, the
+# way the drift guards do, stays silent.
+@test "crew.sh refuses to be run as an entrypoint" {
+  run --separate-stderr bash "$CREW_SRC" id
+  [ "$status" -eq 64 ]
+  [[ "${stderr_lines[0]}" == "crew: adapters/core/crew.sh is a library, not an entrypoint"* ]]
+  run bash -c '. "$1" && declare -F _crew_id >/dev/null && echo sourced' _ "$CREW_SRC"
+  [ "$output" = "sourced" ]
 }
 
 @test "fleet: lists live workers of two repos from outside any git repo" {
@@ -14189,7 +14157,7 @@ start_fleet_stream() {
     [ "${args[i]}" = --crew ] && crew_id="${args[i + 1]}"
   done
   FLEET_LOCK="$XDG_STATE_HOME/crew/fleet-stream/$crew_id/stream.lock.d"
-  bash -euo pipefail "$CREW" fleet stream "${args[@]}" >"$FLEET_OUT" 2>"$FLEET_ERR" </dev/null &
+  "$CREW" fleet stream "${args[@]}" >"$FLEET_OUT" 2>"$FLEET_ERR" </dev/null &
   FLEET_PID=$!
   FLEET_PIDS="${FLEET_PIDS:-} $FLEET_PID"
 }

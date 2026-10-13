@@ -396,7 +396,7 @@ func TestSignalReleasesEverything(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "crew-stub.sh")
 	batch := `{"cursor":1,"events":[{"ts":1,"crew_id":"c1","from":"worker:feat/x","to":"dispatcher:c1","kind":"status","body":{"state":"done"}}]}`
 	if err := os.WriteFile(script, []byte(
-		"#!/usr/bin/env bash\ncase \"${1:-}\" in\n"+
+		bashShebang()+"case \"${1:-}\" in\n"+
 			"  watch) printf '%s\\n' "+`'`+batch+`'`+"; exit 0 ;;\n"+
 			"  hold) printf '[]\\n'; exit 1 ;;\n"+
 			"  *) exit 0 ;;\nesac\n"), 0o755); err != nil {
@@ -499,4 +499,59 @@ func mustDecode(t *testing.T, text string) jsonv.Value {
 		t.Fatalf("decode %q: %v", text, err)
 	}
 	return v
+}
+
+// entryHelperEnv marks the helper process below.
+const entryHelperEnv = "CREW_ENTRY_TEST_HELPER"
+
+// TestHelperBinaryEntry is the entrypoint a stream re-enters when that entry is
+// a binary: it answers with the argv after `--` and nothing else, so the caller
+// sees whether bash was put in front of it.
+func TestHelperBinaryEntry(t *testing.T) {
+	if os.Getenv(entryHelperEnv) != "1" {
+		t.Skip("helper process for the stream tests")
+	}
+	args := os.Args
+	for i, a := range args {
+		if a == "--" {
+			args = args[i+1:]
+			break
+		}
+	}
+	fmt.Println(strings.Join(args, " "))
+	os.Exit(0)
+}
+
+// TestChildrenExecABinaryEntry runs a child through a binary entry, which the
+// other stubs in this file cannot show: they are scripts, and `bash <script>`
+// works either way. `bash <binary>` is 126.
+func TestChildrenExecABinaryEntry(t *testing.T) {
+	t.Setenv(entryHelperEnv, "1")
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, code := children{self: bin}.run([]string{
+		"-test.run", "^TestHelperBinaryEntry$", "-test.count", "1", "--", "watch", "--crew", "c1",
+	}, "")
+	if code != 0 {
+		t.Fatalf("code %d, want 0 (out %q)", code, out)
+	}
+	if strings.TrimSpace(out) != "watch --crew c1" {
+		t.Fatalf("the entry saw %q, want the subcommand and its flags alone", strings.TrimSpace(out))
+	}
+}
+
+// TestChildrenReportAnUnrunnableEntry: a `self` that cannot be exec'd — a stray
+// CREW_SELF naming the checkout's crew.sh, say — is the child's 127, not the
+// silent 0 that script would answer with if bash were put in front of it.
+func TestChildrenReportAnUnrunnableEntry(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "crew.sh")
+	if err := os.WriteFile(script, []byte("#!/usr/bin/env bash\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := children{self: script}
+	if out, code := c.run([]string{"watch", "--crew", "c1"}, ""); code != exitCantExec {
+		t.Fatalf("code %d, want %d (out %q)", code, exitCantExec, out)
+	}
 }

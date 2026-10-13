@@ -1,6 +1,6 @@
 // The loop's three subprocesses, run the way the bash arm ran them: the crew
-// script re-entered with `bash -euo pipefail <self> …`, stdin from /dev/null,
-// each stream either captured or redirected to a file.
+// entry re-entered with entry.EntryArgv (the binary or the PATH wrapper behind
+// it), stdin from /dev/null, each stream either captured or redirected to a file.
 //
 // Two of them are backgrounded, and each has a reason to be a process rather
 // than a function call:
@@ -21,23 +21,25 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+
+	"github.com/noamsto/dispatcher/crew/internal/entry"
 )
 
 // exitCantExec is what `command not found` left in `$?` when the script the arm
 // re-entered was gone: the loop reads it as an inner failure, one error line.
 const exitCantExec = 127
 
-// children re-enters one crew script.
+// children re-enters one crew entrypoint.
 type children struct {
-	bash string
 	self string
 	// dir is the cwd of `start`'s child; empty inherits ours.
 	dir string
 }
 
-// argv is the arm's `bash -euo pipefail "$0" …`.
-func (c children) argv(args []string) []string {
-	return append([]string{"-euo", "pipefail", c.self}, args...)
+// command re-enters the entry: `self` named directly, then args.
+func (c children) command(args []string) *exec.Cmd {
+	argv := entry.EntryArgv(c.self, args...)
+	return exec.Command(argv[0], argv[1:]...)
 }
 
 // run is the arm's `out=$(bash … 2>file)`: stdout captured, stderr redirected
@@ -45,7 +47,7 @@ func (c children) argv(args []string) []string {
 // child that never started is 127 with the reason where its stderr would have
 // gone, because that is the pair of facts the arm was left with.
 func (c children) run(args []string, stderrPath string) (string, int) {
-	cmd := exec.Command(c.bash, c.argv(args)...)
+	cmd := c.command(args)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if stderrPath != "" {
@@ -57,11 +59,16 @@ func (c children) run(args []string, stderrPath string) (string, int) {
 		cmd.Stderr = f
 	}
 	err := cmd.Run()
-	var startErr *exec.Error
-	if errors.As(err, &startErr) {
-		if f, cerr := os.Create(stderrPath); cerr == nil {
-			_, _ = f.WriteString(err.Error() + "\n")
-			_ = f.Close()
+	// Anything but a wait status is a child that never started — a `self` that is
+	// gone or carries no exec bit — reported as 127 with the reason where its
+	// stderr went. The kernel's refusal reaches us as *fs.PathError, after the fork.
+	var ws *exec.ExitError
+	if err != nil && !errors.As(err, &ws) {
+		if stderrPath != "" {
+			if f, cerr := os.Create(stderrPath); cerr == nil {
+				_, _ = f.WriteString(err.Error() + "\n")
+				_ = f.Close()
+			}
 		}
 		return "", exitCantExec
 	}
@@ -82,7 +89,7 @@ func (c children) start(args []string, stdoutPath, stderrPath string) (*child, e
 	}
 	defer func() { _ = errf.Close() }()
 
-	cmd := exec.Command(c.bash, c.argv(args)...)
+	cmd := c.command(args)
 	cmd.Stdout, cmd.Stderr = out, errf
 	if c.dir != "" {
 		cmd.Dir = c.dir
@@ -124,10 +131,10 @@ func (c children) startReap(dir string) (*reapRun, error) {
 		_ = out.Close()
 		return nil, err
 	}
-	// $0 is the script path, and the exec'd reap inherits this shell's two
-	// files and its HUP disposition.
-	const script = `trap '' HUP; exec bash -euo pipefail "$0" reap --quiet --no-wait`
-	cmd := exec.Command(c.bash, "-euo", "pipefail", "-c", script, c.self)
+	// The outer bash exists for the HUP trap alone: it execs $0, the entry path,
+	// so the reap inherits this shell's two files and its HUP disposition.
+	const script = `trap '' HUP; exec "$0" reap --quiet --no-wait`
+	cmd := exec.Command("bash", "-euo", "pipefail", "-c", script, c.self)
 	cmd.Stdout, cmd.Stderr = out, errf
 	if err := cmd.Start(); err != nil {
 		_ = out.Close()

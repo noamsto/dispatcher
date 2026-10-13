@@ -231,6 +231,57 @@ func TestDaemonFollowsTheInstalledEntryNotItsOwnStart(t *testing.T) {
 	}
 }
 
+// TestDaemonHopNamesTheEntryItNowRuns is the convergence the bash arm got from
+// `CREW_SELF="$0" exec` (#821). Entered as a store path — what `dispatch`'s PATH
+// prefix resolves `crew` to, and the one case InstalledCrew deliberately skips —
+// the daemon hops to the installed entry, and the process it exec'd must name
+// that entry as its own: inherit the store path instead and every pass reads the
+// old build, so the hop repeats forever.
+func TestDaemonHopNamesTheEntryItNowRuns(t *testing.T) {
+	l := newLoop(t)
+	l.seed(t)
+	entered := filepath.Join(t.TempDir(), "crew")
+	if err := os.WriteFile(entered, []byte("#!/usr/bin/env bash\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	installed := filepath.Join(t.TempDir(), "crew")
+	if err := os.WriteFile(installed, []byte("#!/usr/bin/env bash\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := mustReal(t, installed)
+	l.opts.Probes.InstalledCrew = func(string) string { return want }
+
+	if err := l.opts.hop(realPath(entered), false, nil); err != nil {
+		t.Fatalf("an installed entry other than the running build did not hop: %v", err)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.hops) != 1 {
+		t.Fatalf("hops = %d, want 1", len(l.hops))
+	}
+	n := 0
+	for _, kv := range l.hops[0].env {
+		if strings.HasPrefix(kv, "CREW_SELF=") {
+			n++
+			if got := strings.TrimPrefix(kv, "CREW_SELF="); got != want {
+				t.Errorf("CREW_SELF = %q, want the entry it now runs (%q)", got, want)
+			}
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d CREW_SELF entries in the hopped env, want exactly 1", n)
+	}
+
+	// The hopped process reads its own build off that value, so the next pass
+	// agrees with the installed entry and stays put.
+	if err := l.opts.hop(realPath(want), false, nil); err != nil {
+		t.Fatalf("the hopped build re-exec'd again: %v", err)
+	}
+	if len(l.hops) != 1 {
+		t.Fatalf("hops = %d, want the one hop", len(l.hops))
+	}
+}
+
 func mustReal(t *testing.T, p string) string {
 	t.Helper()
 	r, err := filepath.EvalSymlinks(p)
@@ -243,7 +294,7 @@ func mustReal(t *testing.T, p string) string {
 // TestDaemonRestoresItsStartPathOnEveryHop is the arm's `PATH=… exec`: a hop
 // carries one wrapper prefix, never N.
 func TestDaemonRestoresItsStartPathOnEveryHop(t *testing.T) {
-	env := envFor("/start/path")
+	env := envFor("/start/path", "")
 	var path, start string
 	for _, kv := range env {
 		switch {

@@ -424,7 +424,7 @@ placeholder_two_row() { # token
 
 @test "the substituted budget-gate lib exists and defines the quota predicates" {
   local bin
-  for bin in "$OUT_CREW/bin/crew" "$OUT_DISPATCH/bin/dispatch"; do
+  for bin in "$OUT_DISPATCH/bin/dispatch"; do
     run grep -c '@budgetGateLib@' "$bin"
     [ "$output" = "0" ]
   done
@@ -437,8 +437,9 @@ placeholder_two_row() { # token
 # F57: @worktreeGitLib@ (#539), @grantCheckLib@ (#536) and @localModelsLib@ are
 # substituted in each consumer. An unsubstituted token is not a readable path, so the source
 # would abort under set -e. Read-only greps; no per-row reset. A row lists only the
-# consumers that source that lib, so `crew` appears under local-models but not worktree-git
-# (#1004 ported the arm that sourced it).
+# consumers that source that lib: `crew` left both rows with #821, since the entry
+# is the Go binary and sources no shared lib (it left worktree-git earlier, in
+# #1004).
 @test "shared-lib placeholders are substituted in each consumer" {
   begin_rows
   local row token b1 b2 b3
@@ -448,7 +449,7 @@ placeholder_two_row() { # token
   done <<ROWS
 worktree-git|@worktreeGitLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume
 grant-check|@grantCheckLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume|$OUT_PERMISSION_CHECK/bin/permission-check
-local-models|@localModelsLib@|$OUT_CREW/bin/crew|$OUT_DISPATCH/bin/dispatch|$OUT_REFRESH_BUDGET/bin/refresh-budget
+local-models|@localModelsLib@|$OUT_DISPATCH/bin/dispatch|$OUT_REFRESH_BUDGET/bin/refresh-budget
 ROWS
   finish_rows 3
 }
@@ -520,14 +521,42 @@ worktree_git_lib_crew_go_row() { # bin
   [ -f "$dir/local.md" ]
 }
 
-@test "the crew-go placeholder is substituted in crew and points at an executable" {
+# The `crew` package names its Go entry directly, with no @crewGoBin@ placeholder,
+# and hands it its own path as argv[0] (--inherit-argv0).
+@test "the crew package wraps the Go entry and keeps its own argv[0]" {
   run grep -c '@crewGoBin@' "$OUT_CREW/bin/crew"
   [ "$output" = "0" ]
   go_bin="$(grep -o '/nix/store/[^"}[:space:]]*-crew-go/bin/crew-go' "$OUT_CREW/bin/crew" | head -1)"
   [ -n "$go_bin" ]
   [ -x "$go_bin" ]
-  run "$go_bin"
-  [ "$status" -eq 64 ]
+  grep -q 'exec -a "$0"' "$OUT_CREW/bin/crew"
+
+  # The entry's own contract, through the installed name: help on stdout, an
+  # unknown subcommand failing with the list on stderr, and no repo needed.
+  run "$OUT_CREW/bin/crew" --help
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == "crew — file-based coordination bus"* ]]
+  run --separate-stderr env -u CREW_ID -u CREW_WORKER_ID \
+    HOME="$BATS_TEST_TMPDIR/home" XDG_DATA_HOME="$BATS_TEST_TMPDIR/data" \
+    "$OUT_CREW/bin/crew" nosuchcommand
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  [[ "${stderr_lines[0]}" == "crew — file-based coordination bus"* ]]
+}
+
+# What matters is not only how the wrapper is written but what the exec'd binary
+# sees, since CREW_SELF is derived from argv[0]: a copy of the wrapper named
+# otherwise must show up under its own name in the entry's cmdline.
+@test "the crew wrapper hands the entry its own argv[0]" {
+  cp "$OUT_CREW/bin/crew" "$BATS_TEST_TMPDIR/crew-renamed"
+  CREW_ID=c1 "$BATS_TEST_TMPDIR/crew-renamed" watch --crew c1 --timeout 3 --interval 5 \
+    >"$BATS_TEST_TMPDIR/watch.out" 2>&1 &
+  local pid=$!
+  sleep 0.4
+  local argv0
+  argv0="$(tr '\0' '\n' <"/proc/$pid/cmdline" | head -1)"
+  wait "$pid"
+  [ "$argv0" = "$BATS_TEST_TMPDIR/crew-renamed" ]
 }
 
 @test "the built scripts and the built protocol dir carry the same revision" {
@@ -622,8 +651,8 @@ worktree_git_lib_crew_go_row() { # bin
 }
 
 @test "crew does not retain the protocols as a runtime closure reference" {
-  # `crew` intentionally reads its source directly; unlike dispatch and
-  # dispatcher it must not gain a runtime dependency on the protocol tree.
+  # Unlike dispatch and dispatcher, `crew` must not gain a runtime dependency on
+  # the protocol tree — as the Go entry it has no source to read either.
   protocols="$(nix store add-path "$ROOT/adapters/core/protocols")"
   run nix-store -q --requisites "$OUT_CREW"
   [ "$status" -eq 0 ]

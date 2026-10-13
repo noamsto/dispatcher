@@ -6,7 +6,6 @@ ROOT=$(git rev-parse --show-toplevel)
 readonly ROOT
 readonly MANIFEST="$ROOT/tests/harness/manifest.tsv"
 readonly ASSERTIONS="$ROOT/tests/harness/assertions.tsv"
-readonly CREW="$ROOT/adapters/core/crew.sh"
 readonly DISPATCH="$ROOT/adapters/core/dispatch.sh"
 readonly REFRESH_MODELS="$ROOT/adapters/core/refresh-models.sh"
 readonly PR_WATCH="$ROOT/adapters/core/pr-watch.sh"
@@ -30,11 +29,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The ported crew arms need CREW_GO_BIN, and a bare `shellspec` run reaches here
-# without run.sh having set it. This file runs without `set -e`: fail the case.
+# The crew entrypoint is the Go binary, and a bare `shellspec` run reaches here
+# without run.sh having built it. This file runs without `set -e`: fail the case.
 # shellcheck source=/dev/null
 source "$ROOT/tests/harness/ensure-crew-go.sh"
 ensure_crew_go_bin || exit 1
+readonly CREW="$CREW_GO_BIN"
 
 fail() {
   printf '%s\n' "$*" >&2
@@ -236,13 +236,13 @@ run_crew_id_cases() {
   case "$CASE_ID" in
   crew-id-crew-id-resolves-from-worker-task-md-with-no-crew-id-in-the-environment-at-all)
     printf 'crew_id: c-from-taskdoc\n' >WORKER_TASK.md
-    capture env -u CREW_ID bash -euo pipefail "$CREW" id
+    capture env -u CREW_ID "$CREW" id
     check_eq cid-taskdoc-unset-status "$CAPTURE_STATUS" 0
     check_eq cid-taskdoc-unset-stdout "$CAPTURE_STDOUT" c-from-taskdoc
     ;;
   crew-id-crew-id-the-task-document-wins-over-a-disagreeing-crew-id)
     printf 'crew_id: c-from-taskdoc\n' >WORKER_TASK.md
-    capture env CREW_ID=c-from-env bash -euo pipefail "$CREW" id
+    capture env CREW_ID=c-from-env "$CREW" id
     check_eq cid-taskdoc-wins-status "$CAPTURE_STATUS" 0
     check_eq cid-taskdoc-wins-stdout "$CAPTURE_STDOUT" c-from-taskdoc
     ;;
@@ -250,18 +250,18 @@ run_crew_id_cases() {
     printf 'crew_id: c-from-taskdoc\n' >WORKER_TASK.md
     mkdir -p a/b/c
     cd a/b/c || return 1
-    capture env -u CREW_ID bash -euo pipefail "$CREW" id
+    capture env -u CREW_ID "$CREW" id
     check_eq cid-subdir-status "$CAPTURE_STATUS" 0
     check_eq cid-subdir-stdout "$CAPTURE_STDOUT" c-from-taskdoc
     ;;
   crew-id-crew-id-crew-id-still-resolves-when-no-worker-task-md-exists)
-    capture env CREW_ID=c-from-env bash -euo pipefail "$CREW" id
+    capture env CREW_ID=c-from-env "$CREW" id
     check_eq cid-env-status "$CAPTURE_STATUS" 0
     check_eq cid-env-stdout "$CAPTURE_STDOUT" c-from-env
     ;;
   crew-id-crew-id-falls-back-to-crew-id-when-worker-task-md-has-no-crew-id-line)
     printf 'title: some task\n' >WORKER_TASK.md
-    capture env CREW_ID=c-from-env bash -euo pipefail "$CREW" id
+    capture env CREW_ID=c-from-env "$CREW" id
     check_eq cid-taskdoc-missing-status "$CAPTURE_STATUS" 0
     check_eq cid-taskdoc-missing-stdout "$CAPTURE_STDOUT" c-from-env
     ;;
@@ -442,7 +442,7 @@ EOF
     seed pw-crew-event
     set_view bbb22 OPEN SUCCESS
     install_pr_watch_shim
-    capture env CREW_ID=c1 bash -euo pipefail "$CREW" pr-watch 42 --repo o/r --timeout 30 --interval 1
+    capture env CREW_ID=c1 "$CREW" pr-watch 42 --repo o/r --timeout 30 --interval 1
     check_eq pw-crew-event-status "$CAPTURE_STATUS" 0
     check_ne pw-crew-event-stdout "$CAPTURE_STDOUT" ''
     log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
@@ -453,7 +453,7 @@ EOF
   pr-watch-crew-pr-watch-posts-nothing-when-the-park-times-out)
     seed pw-crew-timeout
     install_pr_watch_shim
-    capture env CREW_ID=c1 bash -euo pipefail "$CREW" pr-watch 42 --repo o/r --timeout 1 --interval 1
+    capture env CREW_ID=c1 "$CREW" pr-watch 42 --repo o/r --timeout 1 --interval 1
     check_eq pw-crew-timeout-status "$CAPTURE_STATUS" 0
     check_eq pw-crew-timeout-empty-stdout "$CAPTURE_STDOUT" ''
     log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl" ||
@@ -468,7 +468,7 @@ echo 'gh: something went wrong' >&2
 exit 3
 EOF
     chmod +x "$STUB_DIR/pr-watch"
-    capture env CREW_ID=c1 bash -euo pipefail "$CREW" pr-watch 42
+    capture env CREW_ID=c1 "$CREW" pr-watch 42
     check_eq pw-crew-child-status "$CAPTURE_STATUS" 3
     check_contains pw-crew-child-stderr "$CAPTURE_STDERR" 'gh: something went wrong'
     check_not_contains pw-crew-child-no-partial-stdout "$CAPTURE_STDOUT" '"changed"'
@@ -646,7 +646,7 @@ setup_role_watch() {
   setup_repo
   export HOME="$TEST_REPO"
   export STUB_PANE_PID=$$
-  export CREW_REAL="$ROOT/adapters/core/crew.sh"
+  export CREW_REAL="$CREW_GO_BIN"
   export GRANT_CHECK_LIB="$ROOT/adapters/core/grant-check.sh"
   export DISPATCH_CONFIG_BIN="$ROOT/adapters/core/dispatch-config.sh"
   export CROSS_REPO_HINT_LIB="$ROOT/adapters/core/cross-repo-hint.sh"

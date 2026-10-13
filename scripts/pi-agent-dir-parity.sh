@@ -6,9 +6,10 @@
 # the working tree is never touched), snapshots stdout, stderr, the exit status and
 # the whole tree under the fixture home, then rebuilds the same fixture at the
 # SAME path (the paths embed $HOME) and does the same against the working tree's
-# crew.sh with the current Go binary behind CREW_GO_BIN. The two snapshots must
-# match byte for byte. Re-seed cases run their first seed(s) with the side under
-# test, so each side is judged against its own earlier output.
+# Go binary — the entrypoint since #821, run directly with no bash and no
+# crew.sh in front of it. The two snapshots must match byte for byte. Re-seed
+# cases run their first seed(s) with the side under test, so each side is judged
+# against its own earlier output.
 #
 # Run it from a dev shell, which is where `go` and `jq` live:
 #
@@ -16,9 +17,11 @@
 #   nix develop -c bash scripts/pi-agent-dir-parity.sh --base origin/main
 set -euo pipefail
 
-# The seeder lives in crew.sh only until the port lands; a later main has no
-# bash side left to compare against.
-base=origin/main
+# The last commit whose crew.sh still held the seeder — the parent of the port.
+# Not origin/main: main's crew.sh has had no bash side to run since #1016, and
+# the script would compare nothing against nothing (the reason help-parity.sh
+# pins its own base).
+base=90205b8195a31675c06d3ad78fd5ec10fec12282
 while (($#)); do
   case "$1" in
   --base)
@@ -53,13 +56,12 @@ grep -q '^_pi_agent_dir()' "$old_sh" || {
   echo "$base's crew.sh has no _pi_agent_dir to compare against" >&2
   exit 1
 }
-new_sh="$root/adapters/core/crew.sh"
-
 (
   cd "$root/crew"
   go build -o "$work/crew-go" .
 )
-export CREW_GO_BIN="$work/crew-go"
+crew_go="$work/crew-go"
+export CREW_GO_BIN="$crew_go"
 
 # Nothing from the host may reach a case.
 unset DISPATCH_LOCKED_SETTINGS PI_CODING_AGENT_DIR
@@ -102,12 +104,16 @@ bridge() {
   printf '// hookyard bridge\n' >"$ambient/bin/hookyard-bridge.ts"
 }
 
-# seed — run the current side's crew.sh; the last call of a case is the measured
-# one (earlier calls are first seeds). Fixtures never print secrets.
+# seed — run the side under test; the last call of a case is the measured one
+# (earlier calls are first seeds). The old side is a script, so bash runs it; the
+# new side is the entrypoint itself. Fixtures never print secrets.
 seed() {
-  local script rc=0
-  if [ "$side" = old ]; then script="$old_sh"; else script="$new_sh"; fi
-  (cd "$home" && timeout 10 bash -euo pipefail "$script" pi-agent-dir >"$work/$side.out" 2>"$work/$side.err") || rc=$?
+  local rc=0
+  if [ "$side" = old ]; then
+    (cd "$home" && timeout 10 bash -euo pipefail "$old_sh" pi-agent-dir >"$work/$side.out" 2>"$work/$side.err") || rc=$?
+  else
+    (cd "$home" && timeout 10 "$crew_go" pi-agent-dir >"$work/$side.out" 2>"$work/$side.err") || rc=$?
+  fi
   printf '%s\n' "$rc" >"$work/$side.rc"
 }
 

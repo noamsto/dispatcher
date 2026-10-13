@@ -761,7 +761,7 @@ generator output. Two reasons it must not be reformatted:
 ```
 adapters/
 ├── core/                    engine-neutral
-│   ├── crew.sh              900 L · the bus
+│   ├── crew.sh              583 L · bus helpers, the Go port's drift oracle
 │   ├── pr-watch.sh          177 L · park until a PR changes (standalone)
 │   ├── dispatch.sh          309 L · worker scaffolder
 │   ├── dispatcher.sh        146 L · orchestrator launcher
@@ -771,6 +771,7 @@ adapters/
 ├── claude-code/plugin/      commands · agents · skills · workflows · hooks
 ├── codex/plugin/            skills · hooks   (no agents/workflows: unsupported)
 └── cursor/                  rules · commands · scripts (no plugin format)
+crew/                        the crew entrypoint in Go: every subcommand
 scripts/gen-adapters.sh      projects core/commands into all three shapes
 nix/hm-module.nix            Home Manager module
 ```

@@ -90,11 +90,14 @@
           # source tree itself, not a projection: gen-adapters.sh copies this
           # same directory into the other three adapter trees.
           skills = ./adapters/core/skills;
-          # The Go port of crew's ported subcommands; crew.sh execs it. It
-          # references nothing in the flake, so crew listing it closes no
-          # eval-time cycle. git and tmux come from crew's own PATH at run
-          # time, and git is a check input because the bus tests run real
-          # `git init`/`git worktree`. buildGoModule names the binary after the
+          # The crew entrypoint's code: every subcommand, plus the help routing
+          # and the `*)` fallback crew.sh used to own (#821). The `crew` package
+          # below installs this binary as `crew`; `crew-go` is the same file under
+          # its own name, which worktree-git.sh bakes as @crewGoBin@ and the test
+          # suite builds for itself. It references nothing in the flake, so crew
+          # listing it closes no eval-time cycle. git and tmux come from crew's own
+          # PATH at run time, and git is a check input because the bus tests run
+          # real `git init`/`git worktree`. buildGoModule names the binary after the
           # module path's last element ("crew"), so postInstall renames it.
           crewGo = pkgs.buildGoModule {
             # `name`, not just pname/version, for the same reason as crew-dash.
@@ -154,26 +157,33 @@
             text = builtins.readFile ./adapters/core/pr-watch.sh;
           };
 
-          crew = pkgs.writeShellApplication {
-            name = "crew";
-            # gh + gtrash are for `reap`: it reads PR state via gh and trashes
-            # the finished worker's task doc via gtrash so a post-mortem can
-            # still recover it. crew-dash is for `dash`, which delegates to it.
-            # dispatch-config (#606) is on PATH so `crew rate` / _burn_weight
-            # resolve the burn table out of the box, with no DISPATCH_CONFIG_BIN
-            # and no ambient resolver required.
-            # stall-watch runs refresh-budget (rate-limited, host-wide) so its
-            # budget: detector reads a fresh cache.
+          # The `crew` command: the Go binary behind a PATH wrapper. The tools the
+          # writeShellApplication preamble used to prepend for crew.sh are prefixed
+          # here instead, so every subcommand still finds its helper:
+          #   gh + gtrash for `reap` (PR state, and trashing a finished worker's
+          #   task doc); crew-dash for `dash`; dispatch-config (#606) so `crew rate`
+          #   resolves the burn table with no DISPATCH_CONFIG_BIN; refresh-budget so
+          #   stall-watch's budget: detector reads a fresh cache; pr-watch for
+          #   `crew pr-watch`, which shells out to it.
+          #
+          # --inherit-argv0 is not cosmetic: the wrapper must hand the binary its
+          # own path as argv[0], because that is what CREW_SELF is derived from and
+          # CREW_SELF must name the entry a home-manager switch repoints —
+          # roster-render compares it against the installed `crew` and re-execs on a
+          # switch (crew/internal/entry/self.go). Without it the binary would report
+          # the store path makeWrapper execs, which is a build, not the entry.
+          #
+          # crew never references the protocols and sources no shared lib: the two
+          # libs stall-watch needs are baked into crewGo's ldflags.
+          crew = let
             runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gh gtrash procps]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
-            # crew never references the protocols and sources no shared lib: the
-            # two libs stall-watch needs are baked into crewGo.
-            # @crewGoBin@ is the Go port's binary, substituted in crew.sh itself
-            # (not in the shared `sub`) for its ported-arm exec; the worktree-git
-            # lib gets its own copy in worktreeGitLib.
-            text =
-              builtins.replaceStrings ["@crewGoBin@"] ["${crewGo}/bin/crew-go"]
-              (sub (builtins.readFile ./adapters/core/crew.sh));
-          };
+          in
+            pkgs.runCommand "crew" {nativeBuildInputs = [pkgs.makeWrapper];} ''
+              mkdir -p $out/bin
+              makeWrapper ${crewGo}/bin/crew-go $out/bin/crew \
+                --inherit-argv0 \
+                --prefix PATH : ${pkgs.lib.makeBinPath runtimeInputs}
+            '';
 
           # crew is deliberately NOT a runtime input of crew-dash: crew lists
           # crew-dash so its `dash` subcommand can exec this one, and naming

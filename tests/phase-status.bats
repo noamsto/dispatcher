@@ -11,7 +11,6 @@ source "$BATS_TEST_DIRNAME/coverage.bash"
 setup() {
   load helpers
   HANDLER="$BATS_TEST_DIRNAME/../adapters/core/phase-status.sh"
-  CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
   setup_repo
   # setup_repo leaves HEAD unborn; the handler resolves the branch for nothing,
   # but a real branch keeps the fixture ids honest.
@@ -77,7 +76,7 @@ seed_row() {
 real_crew() {
   local bin="$BATS_TEST_TMPDIR/realbin"
   mkdir -p "$bin"
-  printf '#!/usr/bin/env bash\nexec bash "%s" "$@"\n' "$CREW" >"$bin/crew"
+  printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$CREW" >"$bin/crew"
   chmod +x "$bin/crew"
   export PATH="$bin:$PATH"
 }
@@ -304,7 +303,7 @@ MSG"
   real_crew
   run_handler <<<"$(post_edit Write "$PWD/plan.md")"
   run_handler <<<"$(post_bash 'bats tests/a.bats')"
-  roster="$(CREW_ID=c1 bash -euo pipefail "$CREW" roster c1)"
+  roster="$(CREW_ID=c1 "$CREW" roster c1)"
   printf '%s' "$roster" | jq -e --arg m "$CREW_WORKER_ID" \
     'length == 1 and .[0].state == "working" and (.[0].detail == "test (auto)")'
 }

@@ -2,8 +2,7 @@ bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 
 setup() {
   load helpers
-  CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
-  run_crew() { bash -euo pipefail "$CREW" "$@"; }
+  run_crew() { "$CREW" "$@"; }
   setup_repo
   # setup_repo leaves no origin remote, but the reconcile gate (a run may only
   # ever spend gh credentials on the repo it was dispatched from) reads
@@ -795,7 +794,7 @@ EOF
   seed_dispatch cost-no-config 1000 claude opus deep high
   seed_status worker:cost-no-config 601000 done
   export DISPATCH_CONFIG_BIN="$BATS_TEST_TMPDIR/no-such-dispatch-config"
-  run --separate-stderr bash -euo pipefail "$CREW" rate
+  run --separate-stderr "$CREW" rate
   [ "$status" -eq 0 ]
   [[ "$stderr" == *"dispatch-config unavailable"* ]]
 }

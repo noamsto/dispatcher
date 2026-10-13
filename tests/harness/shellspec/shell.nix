@@ -18,8 +18,8 @@ in
         findutils
         git
         gh
-        # go: the crew arms ported to Go exec crew-go through CREW_GO_BIN, which
-        # case-runner.sh builds when the bench adapter has not exported it.
+        # go: CREW_GO_BIN names the crew entrypoint, the Go binary case-runner.sh
+        # builds when the bench adapter has not exported it.
         go
         gtrash
         jq

@@ -7,7 +7,7 @@ bats_require_minimum_version 1.5.0
 setup() {
   load helpers
   DISPATCH="$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh"
-  export CREW_REAL="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
+  export CREW_REAL="$CREW_GO_BIN"
   run_dispatch() { bash -euo pipefail "$DISPATCH" "$@"; }
   setup_repo
   export HOME="$TEST_REPO"
@@ -18,7 +18,7 @@ setup() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
-pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
 esac
 exit 0
 EOF
@@ -93,7 +93,7 @@ EOF
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
-pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
 esac
 exit 0
 EOF

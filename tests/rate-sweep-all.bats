@@ -2,8 +2,7 @@ bats_require_minimum_version 1.5.0
 
 setup() {
   load helpers
-  CREW="$BATS_TEST_DIRNAME/../adapters/core/crew.sh"
-  run_crew() { bash -euo pipefail "$CREW" "$@"; }
+  run_crew() { "$CREW" "$@"; }
   # The host repo the sweep is launched from: no bus, no origin.
   setup_repo
   export HOME="$BATS_TEST_TMPDIR/home"

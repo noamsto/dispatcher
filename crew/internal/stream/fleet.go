@@ -361,7 +361,7 @@ func (f *fleet) join(common string) {
 		o:       f.o.Options,
 		cdir:    scratch,
 		stdout:  f.out,
-		procs:   children{bash: f.o.Bash, self: f.o.Self, dir: common},
+		procs:   children{self: f.o.Self, dir: common},
 		sup:     &suppress{key: map[string]string{}, ts: map[string]int64{}},
 		outf:    filepath.Join(scratch, "stream.out"),
 		errf:    filepath.Join(scratch, "stream.err"),

@@ -12,11 +12,12 @@ ROOT = Path(__file__).resolve().parents[3]
 
 @pytest.fixture(scope="session", autouse=True)
 def crew_go_bin():
-    """Build crew-go for a direct pytest run; crew.sh names it through
-    CREW_GO_BIN, whose fallback is the @crewGoBin@ placeholder in a checkout.
+    """Build the crew entrypoint for a direct pytest run.
 
-    An adapter that exports CREW_GO_BIN for a whole bench run makes this a no-op,
-    so the build stays out of the measured per-case window.
+    CREW_GO_BIN is that binary — `crew <sub>` runs it directly since #821 — and a
+    checkout has no installed build to fall back to. An adapter that exports it
+    for a whole bench run makes this a no-op, so the build stays out of the
+    measured per-case window.
     """
     if os.environ.get("CREW_GO_BIN"):
         # A generator fixture has to yield on every path; pytest 9 fails the
@@ -102,8 +103,20 @@ class Harness:
             capture_output=True,
         )
 
+    def run_bin(self, prog, *args, cwd=None, env=None):
+        run_env = self.env | (env or {})
+        return subprocess.run(
+            [str(prog), *map(str, args)],
+            cwd=cwd or self.repo,
+            env=run_env,
+            text=True,
+            capture_output=True,
+        )
+
     def crew(self, *args, cwd=None, env=None):
-        return self.run("adapters/core/crew.sh", *args, cwd=cwd, env=env)
+        # The entrypoint is a binary: running it through bash, as the shell
+        # adapters above do, would only collect a 126.
+        return self.run_bin(os.environ["CREW_GO_BIN"], *args, cwd=cwd, env=env)
 
     def pr_watch(self, *args, cwd=None, env=None):
         return self.run("adapters/core/pr-watch.sh", *args, cwd=cwd, env=env)

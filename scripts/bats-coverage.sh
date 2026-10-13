@@ -249,8 +249,8 @@ startup_self_test() {
   dir="$(mktemp -d)"
   cat >"$dir/coverage-selftest.bats" <<EOF
 source "$REPO/tests/coverage.bash"
-@test "startup self-test traces adapters/core/crew.sh" {
-  bash "$REPO/adapters/core/crew.sh" id || true
+@test "startup self-test traces adapters/core/dispatch.sh" {
+  bash "$REPO/adapters/core/dispatch.sh" >/dev/null 2>&1 || true
 }
 EOF
   if ! BATS_COVERAGE_DIR="$WORK" bats --formatter tap "$dir/coverage-selftest.bats" >"$dir/out.tap"; then
@@ -260,8 +260,8 @@ EOF
     exit 1
   fi
   trace="$WORK/coverage-selftest.1.trace"
-  if [[ ! -f $trace ]] || ! grep -qE 'adapters/core/crew\.sh:[0-9]+\+' "$trace"; then
-    printf 'bats-coverage: startup self-test failed: trace has no adapters/core/crew.sh line\n' >&2
+  if [[ ! -f $trace ]] || ! grep -qE 'adapters/core/dispatch\.sh:[0-9]+\+' "$trace"; then
+    printf 'bats-coverage: startup self-test failed: trace has no adapters/core/dispatch.sh line\n' >&2
     if [[ -f $trace ]]; then
       printf 'bats-coverage: trace head:\n' >&2
       head -n 30 "$trace" >&2 || true

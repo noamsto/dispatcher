@@ -77,15 +77,37 @@ func watchStub(t *testing.T) string {
 		t.Fatal(err)
 	}
 	script := filepath.Join(t.TempDir(), "crew-stub.sh")
-	writeFile(t, script, "#!/usr/bin/env bash\nexport "+helperEnv+"=1\nexec '"+bin+"' -test.run='^TestHelperCrewWatch$' -- \"$@\"\n")
+	writeFile(t, script, bashShebang()+"export "+helperEnv+"=1\nexec '"+bin+"' -test.run='^TestHelperCrewWatch$' -- \"$@\"\n")
+	chmodExecutable(t, script)
 	return script
+}
+
+// bashShebang is the interpreter line for a stub the stream execs directly:
+// `#!/usr/bin/env bash` does not resolve inside the nix sandbox, so point it at
+// the bash this environment has — the same patch tests/helpers.bash's crew_go_bin
+// applies to a built entry.
+func bashShebang() string {
+	if b, err := exec.LookPath("bash"); err == nil {
+		return "#!" + b + "\n"
+	}
+	return "#!/usr/bin/env bash\n"
+}
+
+// chmodExecutable gives a stub the bit the entry it stands in for has, since the
+// stream execs `self` rather than putting bash in front of it.
+func chmodExecutable(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // scriptStub is a crew script whose `watch` runs body.
 func scriptStub(t *testing.T, body string) string {
 	t.Helper()
 	script := filepath.Join(t.TempDir(), "crew-stub.sh")
-	writeFile(t, script, "#!/usr/bin/env bash\ncase \"${1:-}\" in\n  watch) "+body+" ;;\n  *) exit 0 ;;\nesac\n")
+	writeFile(t, script, bashShebang()+"case \"${1:-}\" in\n  watch) "+body+" ;;\n  *) exit 0 ;;\nesac\n")
+	chmodExecutable(t, script)
 	return script
 }
 
