@@ -13967,14 +13967,16 @@ _rr_built_twice() { [ "$(_rr_build_count "$1" "$2")" -eq 2 ]; }
 # --- crew --help: per-subcommand and grouped top-level (#812) ---------------
 
 # _crew_cli_subs — every top-level subcommand, parsed out of the dispatcher
-# itself: the case list of main.go's subcommand switch, which is what routes
-# `crew <sub>` now that the script's arms are gone (#821). Three names are
-# dropped — `help` (the screen printer, never a row of its own), `git-guard` and
-# `reap-autosweep` (callable, deliberately undocumented). A command that gains an
-# arm and no help entry fails the rows below, which is the point.
+# itself: main.go's `subcommands` literal, which is what routes `crew <sub>`
+# since the script's arms went away (#821) and what the kong grammar registers
+# now that the switch is a parser (#862). Three names are dropped — `help` (the
+# screen printer, never a row of its own), `git-guard` and `reap-autosweep`
+# (callable, deliberately undocumented). A command that gains an arm and no help
+# entry fails the rows below, which is the point.
 _crew_cli_subs() {
-  sed -nE 's/^\tcase ("roster", .*)$/\1/p' "$CREW_GO_SRC" |
-    tr ',' '\n' | tr -d ' "' | sed 's/:$//' |
+  sed -n '/^var subcommands = \[\]string{$/,/^}$/p' "$CREW_GO_SRC" |
+    tr ',' '\n' | tr -d '\t "' |
+    grep -E '^[a-z][a-z0-9-]*$' |
     grep -vE '^(help|git-guard|reap-autosweep)$' | sort -u
 }
 
@@ -14068,6 +14070,13 @@ _crew_help_rows() { # <help text>
     return 1
   fi
   run --separate-stderr run_crew bogus
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  [[ "${stderr_lines[0]}" == "crew — file-based coordination bus"* ]]
+  # A leading `--` is no subcommand: kong swallows the terminator and matches the
+  # word after it, so `crew -- status …` is input the switch refused and this
+  # refuses the same way (#862).
+  run --separate-stderr run_crew -- status w1 working
   [ "$status" -eq 1 ]
   [ -z "$output" ]
   [[ "${stderr_lines[0]}" == "crew — file-based coordination bus"* ]]

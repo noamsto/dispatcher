@@ -105,7 +105,7 @@
             pname = "crew-go";
             version = "0.1.0";
             src = ./crew;
-            vendorHash = "sha256-9H7aWvuqfuxsL3UIoxaqNEofuFXE2D9Dq3Hk32qSHmk=";
+            vendorHash = "sha256-56E2cjtgQ49ypGTEE6Fo51fVMvAKQyHlSZYPnBzRmog=";
             # stall-watch sources the two libs dispatch.sh shares, under the
             # pinned bash (the interpreter writeShellApplication gives crew).
             ldflags = ["-s" "-w" "-X main.bashBin=${pkgs.bash}/bin/bash" "-X main.budgetGateLib=${./adapters/core/budget-gate.sh}" "-X main.localModelsLib=${./adapters/core/local-models.sh}"];

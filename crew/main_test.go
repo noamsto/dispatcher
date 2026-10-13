@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -716,4 +718,288 @@ func TestRunEntryArmsSurviveAnUnreadableCwd(t *testing.T) {
 			t.Fatalf("stdout %q, want one id", stdout.String())
 		}
 	})
+}
+
+// The kong root (#862): which names the grammar admits, what kong's capture
+// actually holds, and that an arm's argv arrives as its caller typed it.
+//
+// Every expected value below is copied from the base build of this branch:
+//
+//	mkdir -p /tmp/crew862 && git archive 5e53264b crew | tar -x -C /tmp/crew862
+//	(cd /tmp/crew862/crew && go build -o /tmp/crew862/crew-base .)
+//	tmp=$(mktemp -d) && cd "$tmp" && git init -q . && mkdir -p .git/crew
+//	printf '%s\n' '<the bus row below>' > .git/crew/events.jsonl
+//	CREW_ID=c1 /tmp/crew862/crew-base <the row's args>; echo $?
+//
+// and its `code` is that shell exit status.
+var statusRow = `{"ts":1700000001000,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working","detail":"go"}}` + "\n"
+
+// noTouchProbes is the roster probe set for a run that must read neither tmux
+// nor a worktree list: the folds answer from the bus alone.
+func noTouchProbes() func(context.Context, string) roster.Probes {
+	return func(context.Context, string) roster.Probes {
+		return roster.Probes{
+			Panes:     func() string { return "" },
+			Worktrees: func() (string, error) { return "", nil },
+		}
+	}
+}
+
+// TestAdmittedSubcommands pins the grammar against the switch that admitted
+// these names before this file had one. A name that silently drops out of the
+// grammar becomes "unknown subcommand" for every protocol, script and agent
+// that shells out to it, which no test of the arm itself would notice.
+func TestAdmittedSubcommands(t *testing.T) {
+	// The `case` list of run() at 5e53264b, copied out of that revision.
+	admitted := []string{
+		"roster", "sessions", "crews", "log", "report", "inbox", "hold", "await",
+		"watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where",
+		"identity", "stream", "roster-render", "adopt", "nudge", "stall-watch",
+		"status", "msg", "register", "deregister", "fleet", "git-guard",
+		"git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help",
+		"id", "new", "engine-cmd", "dash", "pi-agent-dir",
+	}
+	for _, name := range []string{"engine-cmd", "id", "new", "occupants"} {
+		if !typedSubcommands[name] {
+			t.Errorf("%s types no argv", name)
+		}
+		if !slices.Contains(subcommands, name) {
+			t.Errorf("%s is typed but admitted by no list", name)
+		}
+	}
+	p, err := newCrewParser(&root{}, &passthroughCmd{})
+	if err != nil {
+		t.Fatalf("grammar: %v", err)
+	}
+	got := make([]string, 0, len(admitted))
+	for _, child := range p.Model.Children {
+		got = append(got, child.Name)
+	}
+	sort.Strings(got)
+	sort.Strings(admitted)
+	// The set, not the order: which names answer, not which line of the grammar
+	// declares them.
+	if strings.Join(got, " ") != strings.Join(admitted, " ") {
+		missing, extra := []string{}, []string{}
+		seen := map[string]bool{}
+		for _, n := range admitted {
+			seen[n] = true
+		}
+		for _, n := range got {
+			if !seen[n] {
+				extra = append(extra, n)
+			}
+			delete(seen, n)
+		}
+		for _, n := range admitted {
+			if seen[n] {
+				missing = append(missing, n)
+			}
+		}
+		t.Errorf("the grammar admits a different set: missing %v, extra %v", missing, extra)
+	}
+}
+
+// TestParseCrewSplitsLeadingEquals is the measurement that decides who parses
+// what: kong splits the first word after a command name at `=`, so the capture
+// is not the argv an arm may be handed. `crew inbox --since=abc` is a recipient
+// that matches no message today; the split makes it a --since filter and then a
+// refusal, which is a different command.
+func TestParseCrewSplitsLeadingEquals(t *testing.T) {
+	for _, tc := range []struct {
+		args, captured []string
+	}{
+		{[]string{"inbox", "--since=abc"}, []string{"--since", "abc"}},
+		{[]string{"roster", "--since=5"}, []string{"--since", "5"}},
+		{[]string{"reap", "--idle=5"}, []string{"--idle", "5"}},
+		// Everything else about a passthrough command's argv does arrive whole,
+		// `--` and flag-shaped detail text included.
+		{[]string{"status", "w1", "working", "--help"}, []string{"w1", "working", "--help"}},
+		{[]string{"reap", "--", "--idle=5"}, []string{"--", "--idle=5"}},
+		{[]string{"log", "--"}, []string{"--"}},
+		{[]string{"roster", "-x"}, []string{"-x"}},
+		{[]string{"roster", ""}, []string{""}},
+	} {
+		var (
+			r       root
+			capture passthroughCmd
+		)
+		p, err := newCrewParser(&r, &capture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.Parse(tc.args); err != nil {
+			t.Fatalf("%q: %v", tc.args, err)
+		}
+		if got := fmt.Sprintf("%q", capture.Args); got != fmt.Sprintf("%q", tc.captured) {
+			t.Errorf("crew %q captured %s, want %s", tc.args[1:], got, tc.captured)
+		}
+	}
+}
+
+// TestParseCrewRejectsWhatTheSwitchRejected is the other half: the input kong
+// refuses is exactly the input the switch's default arm refused, so the grouped
+// help on stderr and exit 1 stay the only answer.
+func TestParseCrewRejectsWhatTheSwitchRejected(t *testing.T) {
+	for _, args := range [][]string{nil, {}, {"bogus"}, {""}, {"-x"}, {"--help"}, {"--"},
+		// kong swallows a leading `--` and matches the word after it, so these
+		// parse and are refused here, which is where the switch refused them.
+		{"--", "id"}, {"--", "status", "w1", "working"}, {"--", "msg", "a", "b", "{}"}} {
+		if _, ok := parseCrew(args); ok {
+			t.Errorf("crew %q parsed, want a refusal", args)
+		}
+	}
+	for _, args := range [][]string{{"id"}, {"id", "extra", "--whatever", "-x"}, {"new"}, {"engine-cmd", "--pane=x"},
+		{"occupants", "--foo"}, {"roster"}, {"status", "w1", "working", "--help"}, {"where", "--crew=x", "nova"},
+		{"identity", "--hash=x"}, {"hold", "add", "--help"}, {"pi-agent-dir", "--", "-x"}} {
+		if _, ok := parseCrew(args); !ok {
+			t.Errorf("crew %q refused, want it to reach its arm", args)
+		}
+	}
+}
+
+// TestRunTerminatorIsNoSubcommand pins the token the grammar accepts and no arm
+// admits: kong swallows a leading `--` and matches the word after it, so
+// `crew -- id` parses. The answer is the one an unknown name gets — grouped list
+// on stderr, nothing on stdout, exit 1.
+func TestRunTerminatorIsNoSubcommand(t *testing.T) {
+	repo, _ := repoWithLog(t, nil, 0)
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes()}
+	var stdout, stderr, want bytes.Buffer
+	if code := run(context.Background(), []string{"bogus"}, &stdout, &want, e); code != exitFailure {
+		t.Fatalf("an unknown subcommand exited %d, want %d", code, exitFailure)
+	}
+	if want.Len() == 0 {
+		t.Fatal("an unknown subcommand printed no list")
+	}
+	for _, args := range [][]string{{"--"}, {"--", "id"}, {"--", "roster"},
+		{"--", "status", "w1", "working"}, {"--", "msg", "a", "b", "{}"}} {
+		stdout.Reset()
+		stderr.Reset()
+		if code := run(context.Background(), args, &stdout, &stderr, e); code != exitFailure {
+			t.Errorf("crew %q exited %d, want %d", args, code, exitFailure)
+		}
+		if stdout.String() != "" {
+			t.Errorf("crew %q printed %q on stdout, want nothing", args, stdout.String())
+		}
+		if stderr.String() != want.String() {
+			t.Errorf("crew %q printed a different refusal than an unknown subcommand", args)
+		}
+	}
+}
+
+// TestRunConvertedSubcommands is the acceptance table for the four subcommands
+// kong now parses: success, every refusal, the exact bytes and the exit status,
+// all of it as the base build answered them.
+func TestRunConvertedSubcommands(t *testing.T) {
+	repo, _ := repoWithLog(t, nil, 0)
+	t.Setenv("CREW_ID", "c1")
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes()}
+
+	const (
+		engineCmdUsage = "crew: engine-cmd <pane_current_command>\n"
+		occupantsUsage = "crew: occupants <worktree-path>\n"
+	)
+	for _, tc := range []struct {
+		name           string
+		args           []string
+		code           int
+		stdout, stderr string
+		custom         bool // the answer is a minted id, checked below
+	}{
+		{name: "id", args: []string{"id"}, code: 0, stdout: "c1\n"},
+		// The arm ignored argv entirely, so an argument kong would otherwise
+		// refuse is still just ignored.
+		{name: "id ignores every argument", args: []string{"id", "extra", "--whatever", "-x"}, code: 0, stdout: "c1\n"},
+		{name: "id ignores a separator", args: []string{"id", "--", "--"}, code: 0, stdout: "c1\n"},
+		{name: "new mints", args: []string{"new"}, code: 0, custom: true},
+		{name: "new ignores its arguments", args: []string{"new", "ignored"}, code: 0, custom: true},
+		{name: "engine-cmd needs a command", args: []string{"engine-cmd"}, code: exitFailure, stderr: engineCmdUsage},
+		{name: "engine-cmd empty command", args: []string{"engine-cmd", ""}, code: exitFailure, stderr: engineCmdUsage},
+		{name: "engine-cmd engine", args: []string{"engine-cmd", "node"}, code: 0},
+		{name: "engine-cmd not an engine", args: []string{"engine-cmd", "zzz"}, code: exitFailure},
+		// A flag-shaped word is the pane command the arm was asked about, and
+		// splitting `--pane=x` at the `=` cannot change which of the two it is.
+		{name: "engine-cmd flag-shaped", args: []string{"engine-cmd", "-x"}, code: exitFailure},
+		{name: "engine-cmd equals-shaped", args: []string{"engine-cmd", "--pane=x"}, code: exitFailure},
+		{name: "engine-cmd extra arguments", args: []string{"engine-cmd", "claude", "extra"}, code: 0},
+		{name: "occupants needs a path", args: []string{"occupants"}, code: exitFailure, stderr: occupantsUsage},
+		{name: "occupants empty path", args: []string{"occupants", ""}, code: exitFailure, stderr: occupantsUsage},
+		{name: "occupants flag-shaped path", args: []string{"occupants", "--foo"}, code: 0, stdout: "[]\n"},
+		{name: "occupants equals-shaped path", args: []string{"occupants", "--path=x"}, code: 0, stdout: "[]\n"},
+		{name: "occupants unknown path", args: []string{"occupants", "/tmp/definitely-not-a-worktree", "extra"}, code: 0, stdout: "[]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run(context.Background(), tc.args, &stdout, &stderr, e)
+			if code != tc.code {
+				t.Fatalf("code %d, want %d (stderr %q)", code, tc.code, stderr.String())
+			}
+			if stderr.String() != tc.stderr {
+				t.Errorf("stderr %q, want %q", stderr.String(), tc.stderr)
+			}
+			switch {
+			case tc.custom:
+				if !regexp.MustCompile(`^\d{10}-\d+\n$`).MatchString(stdout.String()) {
+					t.Errorf("stdout %q, want the <unix seconds>-<pid> the arm mints", stdout.String())
+				}
+			default:
+				if stdout.String() != tc.stdout {
+					t.Errorf("stdout %q, want %q", stdout.String(), tc.stdout)
+				}
+			}
+		})
+	}
+}
+
+// TestRunPassthroughArgvReachesItsArm is the other half of the contract: a
+// subcommand kong only names still parses its own words. Each row is an answer
+// only the arm's own parsing produces, so a dropped, split or re-read token
+// fails it — `--since=abc` as one word, `--idle=5` as an unknown flag rather
+// than a value, `--help` as detail text.
+func TestRunPassthroughArgvReachesItsArm(t *testing.T) {
+	repo, _ := repoWithLog(t, &statusRow, 0o644)
+	t.Setenv("CREW_ID", "c1")
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes()}
+
+	for _, tc := range []struct {
+		name           string
+		args           []string
+		code           int
+		stdout, stderr string
+	}{
+		{name: "inbox reads --since=abc as its recipient", args: []string{"inbox", "worker:feat/x#s1-1", "--since=abc"}},
+		{name: "inbox reads --since with no value", args: []string{"inbox", "worker:feat/x#s1-1", "--since"},
+			code: exitFailure, stderr: "crew: --since needs a value\n"},
+		{name: "inbox reads --since and its value", args: []string{"inbox", "worker:feat/x#s1-1", "--since", "abc"},
+			code: exitFailure, stderr: "crew: --since must be an integer ms timestamp\n"},
+		{name: "roster reads an unknown flag as a crew", args: []string{"roster", "--since=5"}, stdout: "[]\n"},
+		{name: "log reads a separator as a crew", args: []string{"log", "--", "--since"}},
+		{name: "reap refuses --idle=5 as an unknown flag", args: []string{"reap", "--idle=5"}, code: exitFailure,
+			stderr: "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH (got '--idle=5')\n"},
+		{name: "reap keeps words after a separator together", args: []string{"reap", "--dry-run", "--idle=5"}, code: exitFailure,
+			stderr: "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH (got '--idle=5')\n"},
+		{name: "hold reads --crew with no value", args: []string{"hold", "list", "--crew"}, code: exitFailure,
+			stderr: "crew: --crew needs a value\n"},
+		{name: "status reads --help as an unknown argument", args: []string{"status", "w1", "working", "--help"},
+			code: exitFailure, stderr: "crew: status: unknown arg '--help' (use -- before a detail that starts with dashes)\n"},
+		{name: "where keeps its own flag grammar", args: []string{"where", "--crew=x", "nova"}, code: exitFailure,
+			stderr: "crew: where: unknown flag '--crew=x' (usage: crew where <codename|branch|%id> [--crew ID])\n"},
+		{name: "identity reads --hash=x as a branch", args: []string{"identity", "--hash=x"},
+			stdout: `{"name":"rust","color":"rust","tmux":"colour166"}` + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run(context.Background(), tc.args, &stdout, &stderr, e)
+			if code != tc.code {
+				t.Fatalf("code %d, want %d (stderr %q)", code, tc.code, stderr.String())
+			}
+			if stdout.String() != tc.stdout {
+				t.Errorf("stdout %q, want %q", stdout.String(), tc.stdout)
+			}
+			if stderr.String() != tc.stderr {
+				t.Errorf("stderr %q, want %q", stderr.String(), tc.stderr)
+			}
+		})
+	}
 }

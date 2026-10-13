@@ -14,9 +14,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/alecthomas/kong"
 	"github.com/noamsto/dispatcher/crew/internal/adopt"
 	"github.com/noamsto/dispatcher/crew/internal/await"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -100,6 +102,123 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 	return 0, false
 }
 
+// The kong root (#862). Every subcommand is a kong command: the converted ones
+// bind typed fields, and every name still parsing its own argv is registered
+// around one shared passthrough command, so kong accepts the word and stops.
+// Two measurements of kong v1.16.1 decide the shape.
+//
+//   - Kong splits the first word after a command name at `=`, so
+//     `crew inbox --since=abc` would reach inbox as `--since abc` and read a
+//     --since filter where the arm read a recipient that matches nothing. The
+//     unconverted arms parse the raw tail, not the capture; the split is pinned
+//     by TestParseCrewSplitsLeadingEquals.
+//   - With the help flag off, the writers discarded and the exit func empty,
+//     kong can neither print a screen nor end the process, so routeHelp and
+//     helpTexts still decide when help prints and what it says.
+
+// subcommands is every word crew admits: the four the grammar types, then the
+// arms still parsing their own argv. It is the list the switch of #821 admitted,
+// and tests/crew.bats parses this literal to prove every subcommand has its own
+// row in the grouped help; TestAdmittedSubcommands pins it against that
+// revision and against what the grammar really admits.
+var subcommands = []string{
+	"id", "new", "engine-cmd", "occupants",
+	"adopt", "await", "crews", "dash", "deregister", "fleet", "git-baseline",
+	"git-guard", "help", "hold", "identity", "inbox", "log", "msg", "nudge",
+	"pi-agent-dir", "pr-watch", "rate", "reap", "reap-autosweep", "register",
+	"reply", "report", "resolve-target", "retro", "roster", "roster-render",
+	"sessions", "stack", "stall-watch", "status", "stream", "watch", "where",
+}
+
+// typedSubcommands are the subcommands whose argv root binds. Every other name
+// is registered as a dynamic passthrough command sharing one capture.
+var typedSubcommands = map[string]bool{"engine-cmd": true, "id": true, "new": true, "occupants": true}
+
+// passthroughCmd is one unconverted subcommand to kong: its name, then whatever
+// words it wants, kept as the caller typed them — an unknown flag, a `--`
+// separator and a `--help` that is detail text rather than a request, all of
+// them reaching the arm that reads them.
+type passthroughCmd struct {
+	Args []string `arg:"" optional:"" passthrough:"" name:"args"`
+}
+
+// argvCmd is a converted subcommand whose argv is a list of words and nothing
+// else. id and new bind it and drop it, because their arms ignored argv and an
+// empty kong command would refuse `crew id extra` where the arm printed the id.
+// engine-cmd and occupants read the first word, which is data even when it is
+// flag-shaped (`crew occupants --foo` looks a path up, it does not refuse).
+//
+// Binding is the gate a conversion passes rather than the default, and
+// docs/crew-go-port.md ("kong, the root parser") says what it is measured
+// against: no engine name and no worktree path survives half of a `=`.
+type argvCmd struct {
+	Args []string `arg:"" optional:"" passthrough:"all" name:"args"`
+}
+
+// root is the grammar's converted half: the four typed subcommands.
+type root struct {
+	ID        argvCmd `cmd:"" name:"id" help:"Print this session's crew id."`
+	New       argvCmd `cmd:"" name:"new" help:"Mint a crew id."`
+	EngineCmd argvCmd `cmd:"" name:"engine-cmd" help:"Is this pane command an engine?"`
+	Occupants argvCmd `cmd:"" name:"occupants" help:"The worker windows on a worktree."`
+}
+
+// crewArgs is what the root parse resolves to: the word that named the
+// subcommand, the raw tail an unconverted arm parses, and the bound fields of
+// the converted ones.
+type crewArgs struct {
+	sub   string
+	argv  []string
+	typed root
+}
+
+// newCrewParser builds the grammar: the converted subcommands as fields of
+// root, every other admitted name as a dynamic command sharing one capture.
+func newCrewParser(r *root, capture *passthroughCmd) (*kong.Kong, error) {
+	opts := []kong.Option{
+		kong.Name("crew"),
+		kong.NoDefaultHelp(),
+		kong.Writers(io.Discard, io.Discard),
+		kong.Exit(func(int) {}),
+	}
+	for _, name := range subcommands {
+		if !typedSubcommands[name] {
+			opts = append(opts, kong.DynamicCommand(name, "", "", capture))
+		}
+	}
+	return kong.New(r, opts...)
+}
+
+// parseCrew selects the subcommand. ok is false for exactly the input the
+// switch's default arm rejected — no words at all, or a first word that names
+// nothing — and nothing of kong's own error reaches stderr on the way out.
+//
+// The parser is built per call because kong writes the capture into the struct
+// it was handed, so one shared across calls would keep a previous call's argv on
+// any path it did not take. Building it is reflection over 38 commands.
+func parseCrew(args []string) (crewArgs, bool) {
+	var (
+		r       root
+		capture passthroughCmd
+	)
+	p, err := newCrewParser(&r, &capture)
+	if err != nil {
+		panic("crew: kong grammar: " + err.Error())
+	}
+	if _, err := p.Parse(args); err != nil {
+		return crewArgs{}, false
+	}
+	// The one token kong selects that no arm admitted: it swallows a leading
+	// `--` and matches the word after it, so `crew -- id` would reach no arm and
+	// exit 0 where the switch printed the list and exited 1.
+	if !slices.Contains(subcommands, args[0]) {
+		return crewArgs{}, false
+	}
+	// kong matched args[0] to a command, so the words it describes are the rest
+	// of the argv — the tail the arms have always been handed.
+	return crewArgs{sub: args[0], argv: args[1:], typed: r}, true
+}
+
 // env is everything run reads from the process, so tests can supply their own.
 type env struct {
 	getwd    func() (string, error)
@@ -131,15 +250,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if code, routed := routeHelp(sub, args, stdout, stderr); routed {
 		return code
 	}
-	switch sub {
-	case "roster", "sessions", "crews", "log", "report", "inbox", "hold", "await", "watch", "retro", "rate", "reply", "resolve-target", "pr-watch", "where", "identity", "stream", "roster-render", "adopt", "nudge", "stall-watch", "status", "msg", "register", "deregister", "fleet", "git-guard", "git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help", "id", "new", "engine-cmd", "dash", "pi-agent-dir":
-	default:
+	parsed, ok := parseCrew(args)
+	if !ok {
 		// Bare `crew` and an unknown subcommand: the grouped list on stderr, not
 		// the one 2,000-character line (#812). Exit is 1 whatever it printed.
 		_ = entry.RunHelp(nil, stderr, stderr)
 		return exitFailure
 	}
-	args = args[1:]
+	sub, args = parsed.sub, parsed.argv
 
 	// fleet and rate --sweep-all read every repo on the machine, so they run
 	// before Locate and outside any repo.
@@ -157,7 +275,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 
 	// occupants reads tmux and a path it is given, so it needs no repo.
 	if sub == "occupants" {
-		return reap.RunOccupants(ctx, args, stdout, stderr, reap.DefaultProbes(), os.Getenv("TMUX_PANE"))
+		return reap.RunOccupants(ctx, parsed.typed.Occupants.Args, stdout, stderr, reap.DefaultProbes(), os.Getenv("TMUX_PANE"))
 	}
 
 	// help, id, new, engine-cmd and dash are the arms crew.sh runs ahead of its
@@ -178,7 +296,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	case "new":
 		return entry.RunNew(stdout, entry.NewOptions{Now: time.Now, PID: os.Getpid()})
 	case "engine-cmd":
-		return entry.RunEngineCmd(args, stderr)
+		return entry.RunEngineCmd(parsed.typed.EngineCmd.Args, stderr)
 	case "dash":
 		return entry.RunDash(args, stderr, entry.DefaultDashOptions())
 	case "pi-agent-dir":
