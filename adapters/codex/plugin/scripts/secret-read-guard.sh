@@ -1002,9 +1002,9 @@ END { print (hit ? 1 : 0) }'
 # 1 when a text changes command lookup (see awk_lookup). Used to taint a
 # `-c` or `eval` sub-body with a lookup change made by its parent text, which
 # the child inherits (an exported PATH, for one). A text with no `<` cannot
-# hold a `<<` and cannot produce one in a descendant (text_verdicts), so no
-# descending heredoc exists for the change to reach and the pass is skipped —
-# this is what keeps a heredoc-free command at its pre-#1011 runtime.
+# hold a `<<` and cannot produce one in a descendant (decode only removes
+# quotes and escapes, never adds a character), so no descending heredoc exists
+# for the change to reach and the mask is skipped.
 lookup_change() {
   local view lk
   if [[ $1 != *'<'* ]]; then
@@ -1023,13 +1023,11 @@ lookup_change() {
 }
 
 # Prints "<sink-ok> <lookup-change>" for one text: 1/0 when its heredoc bodies
-# are text (see the masker), and 1/0 when it changes command lookup (see
+# are text (see the masker) and 1/0 when it changes command lookup (see
 # awk_lookup). Text without `<<` has no text-sink heredoc, so sink-ok is 0 and
 # only a lookup change can still matter, by tainting a descendant heredoc. A
-# text holding `<<` masks its B=1 view once and shares it between the two
-# passes; a text with no `<` at all can hold neither a `<<` nor a descendant
-# one — decode only removes quotes and escapes, never adds a character — so
-# both verdicts are dead and the mask is skipped.
+# text holding `<<` masks its B=1 view once for the two passes; a text with no
+# `<` skips the mask entirely (see lookup_change).
 text_verdicts() {
   local view ok lk
   if [[ $1 != *'<<'* ]]; then

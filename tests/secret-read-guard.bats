@@ -2951,8 +2951,8 @@ EOF
 }
 
 # A command with no `<` can hold no heredoc, so neither the B=1 mask nor the
-# lookup pass can matter; that fast path is what restored test 23's runtime
-# (#1024). The stub records any B=1 pass, so dropping the fast path fails here.
+# lookup pass can matter. The stub records any B=1 pass, so dropping the fast
+# path fails here.
 @test "secret-read-guard: a command with no < runs no heredoc/lookup mask pass" {
   local real_awk marker="$BATS_TEST_TMPDIR/b1"
   real_awk=$(command -v awk)
