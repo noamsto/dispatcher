@@ -14097,6 +14097,17 @@ STUB
   [[ "${stderr_lines[0]}" == "crew: "* ]]
 }
 
+# The oracle library refuses to be run. Since #821 it dispatches nothing, so an
+# exit 0 would read as success to a caller the migration missed; sourcing it, the
+# way the drift guards do, stays silent.
+@test "crew.sh refuses to be run as an entrypoint" {
+  run --separate-stderr bash "$CREW_SRC" id
+  [ "$status" -eq 64 ]
+  [[ "${stderr_lines[0]}" == "crew: adapters/core/crew.sh is a library, not an entrypoint"* ]]
+  run bash -c '. "$1" && declare -F _crew_id >/dev/null && echo sourced' _ "$CREW_SRC"
+  [ "$output" = "sourced" ]
+}
+
 @test "fleet: lists live workers of two repos from outside any git repo" {
   root="$BATS_TEST_TMPDIR/fleetroot"
   for d in alpha beta; do

@@ -396,7 +396,7 @@ func TestSignalReleasesEverything(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "crew-stub.sh")
 	batch := `{"cursor":1,"events":[{"ts":1,"crew_id":"c1","from":"worker:feat/x","to":"dispatcher:c1","kind":"status","body":{"state":"done"}}]}`
 	if err := os.WriteFile(script, []byte(
-		"#!/usr/bin/env bash\ncase \"${1:-}\" in\n"+
+		bashShebang()+"case \"${1:-}\" in\n"+
 			"  watch) printf '%s\\n' "+`'`+batch+`'`+"; exit 0 ;;\n"+
 			"  hold) printf '[]\\n'; exit 1 ;;\n"+
 			"  *) exit 0 ;;\nesac\n"), 0o755); err != nil {
@@ -540,5 +540,20 @@ func TestChildrenExecABinaryEntry(t *testing.T) {
 	}
 	if strings.TrimSpace(out) != "watch --crew c1" {
 		t.Fatalf("the entry saw %q, want the subcommand and its flags alone", strings.TrimSpace(out))
+	}
+}
+
+// TestChildrenReportAnUnrunnableEntry is the other half of that rule: a `self`
+// that cannot be exec'd — a stray CREW_SELF naming the checkout's crew.sh, say —
+// is the child's 127, not the silent 0 it would get from running that script with
+// bash now that the script dispatches nothing.
+func TestChildrenReportAnUnrunnableEntry(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "crew.sh")
+	if err := os.WriteFile(script, []byte("#!/usr/bin/env bash\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := children{self: script}
+	if out, code := c.run([]string{"watch", "--crew", "c1"}, ""); code != exitCantExec {
+		t.Fatalf("code %d, want %d (out %q)", code, exitCantExec, out)
 	}
 }

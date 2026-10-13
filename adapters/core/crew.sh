@@ -1,6 +1,8 @@
 # shellcheck shell=bash
 # The crew bash ORACLE LIBRARY — helpers only, and not an entrypoint.
 #
+# Run rather than sourced, this file refuses (see the guard at its foot).
+#
 # `crew` is the Go binary: flake.nix builds the `crew` package as a wrapper around
 # it, and crew/main.go holds the routing that used to be here (#821). This file is
 # no longer installed, and running it does nothing at all.
@@ -581,3 +583,11 @@ _gh_json() {
   return 0
 }
 
+
+# The guard's own contract: executed, there is nothing here to run, and exiting 0
+# would look like success to a caller the #821 migration missed. The `crew`
+# command is the Go binary.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  printf 'crew: adapters/core/crew.sh is a library, not an entrypoint; run the crew binary\n' >&2
+  exit 64
+fi

@@ -136,10 +136,9 @@ func Run(ctx context.Context, argv []string, paths bus.Paths, o Options) int {
 }
 
 // detachArgv is the arm's `bash -euo pipefail "$_rr_self" roster-render …`, the
-// entry re-entered by entry.EntryArgv's rule: the binary or PATH wrapper
-// directly, bash in front of a script that carries no exec bit (the checkout's
-// does not). A worker entered directly, with no entry in front of it, starts its
-// own binary instead.
+// entry re-entered by entry.EntryArgv's rule: the binary or the PATH wrapper
+// behind it, named directly. A worker entered directly, with no entry in front of
+// it, starts its own binary instead.
 func detachArgv(self string, daemon []string) []string {
 	if self == "" {
 		if exe, err := os.Executable(); err == nil {

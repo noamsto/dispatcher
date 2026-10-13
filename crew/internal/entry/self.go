@@ -50,30 +50,18 @@ func EnsureSelf(p SelfProbes, argv0 string) string {
 	return self
 }
 
-// EntryArgv is the argv prefix that runs the crew entry `self` names, with
-// `args` after it: the file itself when it is executable — the Go binary, or the
-// PATH wrapper flake.nix installs it behind — and bash in front of it otherwise,
-// which is how a non-executable script gets run. Before this change the entry
-// was always that script, and every re-entry said so in code.
+// EntryArgv is the argv that runs the crew entry `self` names, with `args` after
+// it. The entry is a program — the Go binary, or the PATH wrapper flake.nix
+// installs behind it — so it is named as it is, and a `self` that is not
+// executable fails as the child's 126/127.
 //
-// dash/main.go:resolveCrew resolves CREW_BIN by the same rule; it is a separate
-// module, so it keeps its own copy.
+// Putting bash in front of a non-executable `self`, as the script did, would make
+// that case silent: since #821 `crew.sh` dispatches nothing, so `bash crew.sh
+// watch` exits 0 having done nothing, and the stream would read its inner park as
+// a success. `dash` names CREW_BIN by resolving the same value (`RunDash`), and
+// has no re-entry of its own.
 func EntryArgv(self string, args ...string) []string {
-	if !IsExecutable(self) {
-		return append([]string{"bash", "-euo", "pipefail", self}, args...)
-	}
 	return append([]string{self}, args...)
-}
-
-// IsExecutable is a regular file with any execute bit, the way a shell decides
-// to run a path directly. It is EntryArgv's rule, exported for the one caller
-// that has to write the re-entry into a shell command line of its own.
-func IsExecutable(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir() && info.Mode()&0o111 != 0
 }
 
 // resolveSelf derives the entry path from how this process was invoked: a name

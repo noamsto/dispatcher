@@ -1,7 +1,6 @@
 // The loop's three subprocesses, run the way the bash arm ran them: the crew
-// entry re-entered with entry.EntryArgv (the binary or wrapper directly, bash in
-// front of a script that is not executable), stdin from /dev/null, each stream
-// either captured or redirected to a file.
+// entry re-entered with entry.EntryArgv (the binary or the PATH wrapper behind
+// it), stdin from /dev/null, each stream either captured or redirected to a file.
 //
 // Two of them are backgrounded, and each has a reason to be a process rather
 // than a function call:
@@ -61,11 +60,17 @@ func (c children) run(args []string, stderrPath string) (string, int) {
 		cmd.Stderr = f
 	}
 	err := cmd.Run()
-	var startErr *exec.Error
-	if errors.As(err, &startErr) {
-		if f, cerr := os.Create(stderrPath); cerr == nil {
-			_, _ = f.WriteString(err.Error() + "\n")
-			_ = f.Close()
+	// Anything but a wait status is a child that never started — a `self` that is
+	// gone or carries no exec bit — and the arm left `$?` of 127 with the reason
+	// where its stderr went. Start failures reach us as *exec.Error and the
+	// kernel's refusal as *fs.PathError, both after the fork.
+	var ws *exec.ExitError
+	if err != nil && !errors.As(err, &ws) {
+		if stderrPath != "" {
+			if f, cerr := os.Create(stderrPath); cerr == nil {
+				_, _ = f.WriteString(err.Error() + "\n")
+				_ = f.Close()
+			}
 		}
 		return "", exitCantExec
 	}
@@ -129,8 +134,8 @@ func (c children) startReap(dir string) (*reapRun, error) {
 		return nil, err
 	}
 	// $0 is the entry path, and the exec'd reap inherits this shell's two files
-	// and its HUP disposition. The outer bash exists for that trap alone; what it
-	// execs follows entry.EntryArgv's rule.
+	// and its HUP disposition. The outer bash exists for that trap alone: what it
+	// execs is the entry itself, entry.EntryArgv's rule.
 	script := `trap '' HUP; ` + c.reapExec()
 	cmd := exec.Command("bash", "-euo", "pipefail", "-c", script, c.self)
 	cmd.Stdout, cmd.Stderr = out, errf
@@ -145,14 +150,11 @@ func (c children) startReap(dir string) (*reapRun, error) {
 	return r, nil
 }
 
-// reapExec is the reap's exec in that shell, by the same rule: the entry path
-// itself when it is executable, bash in front of it when it is a script.
+// reapExec is the reap's exec in that shell: $0, the entry, named directly. A
+// `self` that cannot be exec'd is the child's 126, not a bash no-op — see
+// entry.EntryArgv.
 func (c children) reapExec() string {
-	const args = ` reap --quiet --no-wait`
-	if entry.IsExecutable(c.self) {
-		return `exec "$0"` + args
-	}
-	return `exec bash -euo pipefail "$0"` + args
+	return `exec "$0"` + ` reap --quiet --no-wait`
 }
 
 // child is one running subprocess the loop waits on.

@@ -612,10 +612,15 @@ needs a real file, not a symlink a switch has since repointed.
 #821 nothing exports it on the way in: `entry.EnsureSelf` derives it once at start
 from `argv[0]` when the caller left it unset (the shell hands a PATH-resolved
 command its own full path, so that is the profile path a home-manager switch
-repoints), and keeps an inherited value only when it names something executable.
-Two read it. `stream` reads it for its inner `watch`, its `hold due` pre-check and
-`crew reap`, all three of which it re-enters through `entry.EntryArgv` — the entry
-itself now, so `children.bash` and `Options.Bash` went with it. `roster-render` reads it as
+repoints) and otherwise keeps the inherited value exactly as it is — a caller that
+names the entry it wants outranks anything derived here, which is what the arm's
+`CREW_SELF="$0" exec` meant for the process it replaced. Two read it. `stream`
+reads it for its inner `watch`, its `hold due` pre-check and `crew reap`, all three
+of which it re-enters through `entry.EntryArgv`, which names the entry directly —
+`children.bash` and `Options.Bash` went with the script, and so did the bash prefix
+the script put in front of a `self` without an exec bit: running `crew.sh` that way
+would exit 0 having done nothing, where naming it leaves the child's 126.
+`roster-render` reads it as
 its own build identity: the daemon compares it against the installed `crew` and
 `syscall.Exec`s that in place, so a home-manager switch reaches a daemon that
 outlived the dispatch that started it. The entry's path and not the binary's under

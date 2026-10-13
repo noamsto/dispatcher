@@ -124,8 +124,8 @@ func TestResolveSelfReportsAFailedLookup(t *testing.T) {
 
 func TestEntryArgv(t *testing.T) {
 	dir := t.TempDir()
-	script := filepath.Join(dir, "crew")
-	if err := os.WriteFile(script, []byte("#!/usr/bin/env bash\n"), 0o644); err != nil {
+	plain := filepath.Join(dir, "crew")
+	if err := os.WriteFile(plain, []byte("#!/usr/bin/env bash\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(dir, "crew-binary")
@@ -133,18 +133,13 @@ func TestEntryArgv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The checkout's crew.sh and a test's stub carry no exec bit, so only bash
-	// can run them; the entry that ships is executable and runs as itself.
-	if got := EntryArgv(script, "watch", "--crew", "c1"); strings.Join(got, " ") !=
-		"bash -euo pipefail "+script+" watch --crew c1" {
-		t.Errorf("EntryArgv(script) = %v", got)
-	}
-	if got := EntryArgv(binary, "watch"); strings.Join(got, " ") != binary+" watch" {
-		t.Errorf("EntryArgv(binary) = %v, want the file itself", got)
-	}
-	// A path that is not there is not executable either, so bash is what reports
-	// the failure — the 127 the loop reads as an inner error.
-	if got := EntryArgv(filepath.Join(dir, "gone"), "watch"); got[0] != "bash" {
-		t.Errorf("EntryArgv(missing) = %v, want bash in front", got)
+	// The entry is named as it is, exec bit or not. Prefixing bash for a file
+	// without one would run crew.sh — which since #821 dispatches nothing — and
+	// the caller would read a silent 0 where it should see the child's 126.
+	for _, path := range []string{binary, plain, filepath.Join(dir, "gone")} {
+		got := EntryArgv(path, "watch", "--crew", "c1")
+		if strings.Join(got, " ") != path+" watch --crew c1" {
+			t.Errorf("EntryArgv(%s) = %v, want the entry named first", path, got)
+		}
 	}
 }
