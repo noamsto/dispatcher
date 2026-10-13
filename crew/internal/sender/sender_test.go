@@ -7,8 +7,8 @@ import (
 )
 
 // pane is one `tmux list-panes -a -F Format` line.
-func pane(pid, branch, role, crewID string) string {
-	return strings.Join([]string{pid, branch, role, crewID}, "\x1f") + "\n"
+func pane(pid, branch, role, crewID, win, id string) string {
+	return strings.Join([]string{pid, branch, role, crewID, win, id}, "\x1f") + "\n"
 }
 
 // tree is the caller's ancestry: 300 → 200 → 100 → 1.
@@ -64,10 +64,10 @@ const (
 func TestCheck(t *testing.T) {
 	worker := map[string]string{"CREW_WORKER_ID": "worker:feat/x#s1-2"}
 	role := map[string]string{"CREW_ROLE_ID": "role:feat/x:reviewer"}
-	lead := pane("100", "feat/x", "lead", "c1")
-	leadNoRole := pane("100", "feat/x", "", "c1")
-	reviewer := pane("100", "feat/x", "reviewer", "c1")
-	dispatcherPane := pane("100", "", "", "")
+	lead := pane("100", "feat/x", "lead", "c1", "@1", "%1")
+	leadNoRole := pane("100", "feat/x", "", "c1", "@1", "%1")
+	reviewer := pane("100", "feat/x", "reviewer", "c1", "@1", "%1")
+	dispatcherPane := pane("100", "", "", "", "@1", "%1")
 
 	tests := []struct {
 		name string
@@ -95,9 +95,9 @@ func TestCheck(t *testing.T) {
 		{"lead refuses review", "review:c1", "c1", fixture{panes: lead}, leadX},
 		{"lead refuses bare prefix", "worker:feat/x#", "c1", fixture{panes: lead}, leadX},
 
-		{"branch with # allows session", "worker:a#b#s1-2", "c1", fixture{panes: pane("100", "a#b", "lead", "c1")}, ""},
-		{"branch with # allows bare", "worker:a#b", "c1", fixture{panes: pane("100", "a#b", "lead", "c1")}, ""},
-		{"branch with # refuses # in session", "worker:a#b#s1#2", "c1", fixture{panes: pane("100", "a#b", "lead", "c1")},
+		{"branch with # allows session", "worker:a#b#s1-2", "c1", fixture{panes: pane("100", "a#b", "lead", "c1", "@1", "%1")}, ""},
+		{"branch with # allows bare", "worker:a#b", "c1", fixture{panes: pane("100", "a#b", "lead", "c1", "@1", "%1")}, ""},
+		{"branch with # refuses # in session", "worker:a#b#s1#2", "c1", fixture{panes: pane("100", "a#b", "lead", "c1", "@1", "%1")},
 			"this pane is stamped as the lead of a#b, which posts only as worker:a#b or worker:a#b#s<session> ($CREW_WORKER_ID)"},
 
 		{"role allows own id", "role:feat/x:reviewer", "c1", fixture{panes: reviewer}, ""},
@@ -108,22 +108,22 @@ func TestCheck(t *testing.T) {
 
 		{"crew mismatch", "worker:feat/x", "c2", fixture{panes: lead}, "this pane's window is stamped for crew c1, not c2"},
 		{"role crew mismatch", "role:feat/x:reviewer", "c2", fixture{panes: reviewer}, "this pane's window is stamped for crew c1, not c2"},
-		{"empty crew id unchecked", "worker:feat/x", "c2", fixture{panes: pane("100", "feat/x", "lead", "")}, ""},
+		{"empty crew id unchecked", "worker:feat/x", "c2", fixture{panes: pane("100", "feat/x", "lead", "", "@1", "%1")}, ""},
 
 		{"unstamped anchor allows dispatcher", "dispatcher:c1", "c1", fixture{panes: dispatcherPane}, ""},
-		{"nearest pane wins", "worker:feat/y", "c1", fixture{panes: lead + pane("200", "feat/y", "lead", "c1")}, ""},
-		{"nearest pane refuses outer id", "worker:feat/x", "c1", fixture{panes: lead + pane("200", "feat/y", "lead", "c1")},
+		{"nearest pane wins", "worker:feat/y", "c1", fixture{panes: lead + pane("200", "feat/y", "lead", "c1", "@1", "%1")}, ""},
+		{"nearest pane refuses outer id", "worker:feat/x", "c1", fixture{panes: lead + pane("200", "feat/y", "lead", "c1", "@1", "%1")},
 			"this pane is stamped as the lead of feat/y, which posts only as worker:feat/y or worker:feat/y#s<session> ($CREW_WORKER_ID)"},
-		{"nearest unstamped pane hides outer stamp", "dispatcher:c1", "c1", fixture{panes: lead + pane("200", "", "", "")}, ""},
-		{"own pid is a pane", "worker:feat/x", "c1", fixture{panes: pane("300", "feat/x", "lead", "c1"), tree: map[int]int{}}, ""},
-		{"own pid pane refuses", "worker:feat/y", "c1", fixture{panes: pane("300", "feat/x", "lead", "c1"), tree: map[int]int{}}, leadX},
+		{"nearest unstamped pane hides outer stamp", "dispatcher:c1", "c1", fixture{panes: lead + pane("200", "", "", "", "@1", "%1")}, ""},
+		{"own pid is a pane", "worker:feat/x", "c1", fixture{panes: pane("300", "feat/x", "lead", "c1", "@1", "%1"), tree: map[int]int{}}, ""},
+		{"own pid pane refuses", "worker:feat/y", "c1", fixture{panes: pane("300", "feat/x", "lead", "c1", "@1", "%1"), tree: map[int]int{}}, leadX},
 
-		{"no pane in ancestry", "dispatcher:c1", "c1", fixture{panes: pane("999", "feat/x", "lead", "c1")}, ""},
+		{"no pane in ancestry", "dispatcher:c1", "c1", fixture{panes: pane("999", "feat/x", "lead", "c1", "@1", "%1")}, ""},
 		{"panes error", "dispatcher:c1", "c1", fixture{panes: lead, panesErr: true}, ""},
 		{"nil panes", "dispatcher:c1", "c1", fixture{panes: lead, noPanes: true}, ""},
 		{"nil parent", "dispatcher:c1", "c1", fixture{panes: lead, noParent: true}, ""},
-		{"parent cycle terminates", "dispatcher:c1", "c1", fixture{panes: pane("999", "feat/x", "lead", "c1"), tree: map[int]int{300: 200, 200: 300}}, ""},
-		{"malformed line skipped", "worker:feat/x", "c1", fixture{panes: "garbage\n" + pane("x", "feat/y", "lead", "c1") + pane("0", "feat/y", "lead", "c1") + "100\x1ffeat/y\n" + lead}, ""},
+		{"parent cycle terminates", "dispatcher:c1", "c1", fixture{panes: pane("999", "feat/x", "lead", "c1", "@1", "%1"), tree: map[int]int{300: 200, 200: 300}}, ""},
+		{"malformed line skipped", "worker:feat/x", "c1", fixture{panes: "garbage\n" + pane("x", "feat/y", "lead", "c1", "@1", "%1") + pane("0", "feat/y", "lead", "c1", "@1", "%1") + "100\x1ffeat/y\n" + lead}, ""},
 		{"malformed line does not anchor", "dispatcher:c1", "c1", fixture{panes: "100\x1ffeat/y\x1flead\n"}, ""},
 	}
 	for _, tc := range tests {
@@ -138,5 +138,64 @@ func TestCheck(t *testing.T) {
 func TestCheckZeroProbes(t *testing.T) {
 	if got := Check("dispatcher:c1", "c1", Probes{}); got != "" {
 		t.Errorf("Check with zero Probes = %q, want empty", got)
+	}
+}
+
+func TestWatch(t *testing.T) {
+	const idX = "worker:feat/x#s1-1"
+	callerLead := pane("100", "feat/x", "lead", "c1", "@1", "%1")
+	callerRole := pane("100", "feat/x", "reviewer", "c1", "@1", "%1")
+	const (
+		leadY    = "pane %2 is stamped as the lead of feat/x, which posts only as worker:feat/x or worker:feat/x#s<session> ($CREW_WORKER_ID)"
+		roleRev  = "pane %2 is stamped as role:feat/x:reviewer, the only id it posts as"
+		outside  = "pane %2 is outside this pane's window"
+		outside9 = "pane %9 is outside this pane's window"
+	)
+	tests := []struct {
+		name string
+		from string
+		crew string
+		pane string
+		f    fixture
+		want string
+	}{
+		{"unanchored unlisted target", idX, "c1", "%2", fixture{}, ""},
+		{"unanchored unstamped target", idX, "c1", "%2", fixture{panes: pane("500", "", "", "", "@2", "%2")}, ""},
+		{"unanchored lead target ok", idX, "c1", "%2", fixture{panes: pane("500", "feat/x", "lead", "c1", "@2", "%2")}, ""},
+		{"unanchored lead target other branch", "worker:feat/y#s1-1", "c1", "%2", fixture{panes: pane("500", "feat/x", "lead", "c1", "@2", "%2")}, leadY},
+		{"unanchored role target ok", "role:feat/x:reviewer", "c1", "%2", fixture{panes: pane("500", "feat/x", "reviewer", "c1", "@2", "%2")}, ""},
+		{"unanchored role target other role", "role:feat/x:plan-critic", "c1", "%2", fixture{panes: pane("500", "feat/x", "reviewer", "c1", "@2", "%2")}, roleRev},
+		{"unanchored role target lead id", "worker:feat/x", "c1", "%2", fixture{panes: pane("500", "feat/x", "reviewer", "c1", "@2", "%2")}, roleRev},
+		{"unanchored target crew mismatch", idX, "c2", "%2", fixture{panes: pane("500", "feat/x", "lead", "c1", "@2", "%2")}, "pane %2's window is stamped for crew c1, not c2"},
+		{"unanchored target empty crew", idX, "c2", "%2", fixture{panes: pane("500", "feat/x", "lead", "", "@2", "%2")}, ""},
+
+		{"unanchored session target", idX, "c1", "sess:1.0", fixture{panes: pane("500", "feat/y", "lead", "c1", "@2", "%2")}, "pane sess:1.0 is not a pane id (%N)"},
+		{"unanchored window-id target", idX, "c1", "@2", fixture{panes: pane("500", "feat/y", "lead", "c1", "@2", "%2")}, "pane @2 is not a pane id (%N)"},
+		{"unanchored zero-padded target", idX, "c1", "%01", fixture{panes: pane("500", "feat/y", "lead", "c1", "@1", "%1")}, "pane %01 is not a pane id (%N)"},
+		{"unanchored bare percent target", idX, "c1", "%", fixture{panes: pane("500", "feat/y", "lead", "c1", "@2", "%2")}, "pane % is not a pane id (%N)"},
+		{"unanchored unlisted target with panes listed", idX, "c1", "%7", fixture{panes: pane("500", "feat/x", "lead", "c1", "@2", "%2")}, "pane %7 is not a live pane"},
+		{"unanchored trailing-junk target", idX, "c1", "%2x", fixture{panes: pane("500", "feat/x", "lead", "c1", "@2", "%2")}, "pane %2x is not a pane id (%N)"},
+		{"unanchored %0 unlisted", idX, "c1", "%0", fixture{}, ""},
+
+		{"anchored own pane own id", idX, "c1", "%1", fixture{panes: callerLead}, ""},
+		{"anchored other id is Check's refusal", "worker:feat/y#s1-1", "c1", "%1", fixture{panes: callerLead}, leadX},
+		{"anchored target in other window", idX, "c1", "%2", fixture{panes: callerLead + pane("500", "feat/x", "lead", "c1", "@2", "%2")}, outside},
+		{"anchored unlisted target", idX, "c1", "%9", fixture{panes: callerLead}, outside9},
+		{"anchored same-window role pane with lead id", idX, "c1", "%3", fixture{panes: callerLead + pane("501", "feat/x", "reviewer", "c1", "@1", "%3")}, "pane %3 is stamped as role:feat/x:reviewer, the only id it posts as"},
+		{"anchored role own pane", "role:feat/x:reviewer", "c1", "%1", fixture{panes: callerRole}, ""},
+		{"anchored role watching lead pane", "role:feat/x:reviewer", "c1", "%3", fixture{panes: callerRole + pane("501", "feat/x", "lead", "c1", "@1", "%3")}, "pane %3 is stamped as the lead of feat/x, which posts only as worker:feat/x or worker:feat/x#s<session> ($CREW_WORKER_ID)"},
+
+		{"panes error", idX, "c1", "%2", fixture{panes: callerLead, panesErr: true}, ""},
+		{"nil probes", idX, "c1", "%2", fixture{noPanes: true}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Watch(tc.from, tc.crew, tc.pane, tc.f.probes()); got != tc.want {
+				t.Errorf("Watch(%q, %q, %q) = %q, want %q", tc.from, tc.crew, tc.pane, got, tc.want)
+			}
+		})
+	}
+	if got := Watch(idX, "c1", "%2", Probes{}); got != "" {
+		t.Errorf("Watch with zero Probes = %q, want empty", got)
 	}
 }

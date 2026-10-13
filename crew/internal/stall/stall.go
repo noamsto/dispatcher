@@ -23,6 +23,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/frame"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 	"github.com/noamsto/dispatcher/crew/internal/unread"
 )
@@ -42,9 +43,10 @@ type Options struct {
 	// Release is the finished-worker release — `reap.ReleaseWindows` in process,
 	// the verdict 0 or 3; an error is a release row that did not write.
 	Release    func(ctx context.Context, branch, session, state string, tsMS, grace int64) (int, error)
-	BudgetFile string // ${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json
-	PID        int    // lock owner ($$)
-	CrewSH     string // $CREW_SH: the crew.sh holding the --sh helpers
+	BudgetFile string        // ${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json
+	PID        int           // lock owner ($$)
+	CrewSH     string        // $CREW_SH: the crew.sh holding the --sh helpers
+	Sender     sender.Probes // the sender check's reads; zero checks nothing
 }
 
 // exitCode ends the watch with that status: every `exit` in the arm is one.
@@ -91,6 +93,10 @@ func Run(ctx context.Context, argv []string, paths bus.Paths, stderr io.Writer, 
 		if msg := err.Error(); msg != "" {
 			_, _ = fmt.Fprintln(stderr, msg)
 		}
+		return 1
+	}
+	if reason := sender.Watch(cfg.fromID, cfg.crew, cfg.pane, o.Sender); reason != "" {
+		_, _ = fmt.Fprintf(stderr, "crew: stall-watch: refusing sender '%s' on pane %s: %s\n", cfg.fromID, cfg.pane, reason)
 		return 1
 	}
 	// The bash helpers the watch still reaches are D8's budget verdict and the pi

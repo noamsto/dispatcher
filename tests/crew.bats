@@ -456,12 +456,16 @@ EOF
 # #908: the sender check. A tmux stub lists the bats process as a pane, so the
 # crew process (a descendant of this test) is anchored to that pane's stamps.
 # _stamp_pane <branch> <role> <crew> — every field may be empty (unstamped).
+# FAKE_EXTRA holds extra pane rows (target panes) in the same US-separated shape.
 _stamp_pane() {
   stub_bin tmux
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
-list-panes) printf '%s\037%s\037%s\037%s\n' "$FAKE_PANE_PID" "$FAKE_BRANCH" "$FAKE_ROLE" "$FAKE_CREW" ;;
+list-panes)
+  printf '%s\037%s\037%s\037%s\037@1\037%%1\n' "$FAKE_PANE_PID" "$FAKE_BRANCH" "$FAKE_ROLE" "$FAKE_CREW"
+  printf '%s' "${FAKE_EXTRA:-}"
+  ;;
 esac
 exit 0
 EOF
@@ -6925,6 +6929,62 @@ EOF
   [[ "${lines[0]}" == "blocked|watchdog|prompt: interactive prompt in pane %9 —"* ]]
 }
 
+@test "stall-watch: a stamped lead pane cannot watch as another branch (#908)" {
+  _stamp_pane feat/x lead c1
+  CREW_ID=c1 run run_crew stall-watch worker:feat/y#s1-1 --pane %1 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing sender 'worker:feat/y#s1-1' on pane %1"* ]]
+  [ "$(bus | jq -s '[.[] | select(.kind=="status")] | length')" = 0 ]
+}
+
+@test "stall-watch: a stamped lead pane cannot target a pane outside its window (#908)" {
+  _stamp_pane feat/x lead c1
+  export FAKE_EXTRA=$'999999\x1ffeat/y\x1flead\x1fc1\x1f@2\x1f%2\n'
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %2 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"outside this pane's window"* ]]
+  [ "$(bus | jq -s '[.[] | select(.kind=="status")] | length')" = 0 ]
+}
+
+@test "stall-watch: an unanchored watchdog's id must match its pane's stamps (#908)" {
+  _stamp_pane feat/x lead c1
+  export FAKE_PANE_PID=999998
+  export FAKE_EXTRA=$'999999\x1ffeat/y\x1flead\x1fc1\x1f@2\x1f%2\n'
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %2 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing sender 'worker:feat/x#s1-1' on pane %2"* ]]
+  [ "$(bus | jq -s '[.[] | select(.kind=="status")] | length')" = 0 ]
+}
+
+@test "stall-watch: a stamped lead pane watching itself still posts (#908)" {
+  _stamp_pane feat/x lead c1
+  p=$(fx_prompt_select)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %1 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  run bash -c "bus | jq -r 'select(.kind==\"status\") | \"\(.body.state)|\(.body.source)|\(.body.detail)\"'"
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "blocked|watchdog|prompt: interactive prompt in pane %1 —"* ]]
+}
+
+@test "stall-watch: a stamped role pane watches only as its own role (#908)" {
+  _stamp_pane feat/x reviewer c1
+  CREW_ID=c1 run run_crew stall-watch worker:feat/x#s1-1 --pane %1 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing sender 'worker:feat/x#s1-1' on pane %1"* ]]
+  p=$(fx_prompt_select)
+  stall_sampler "$p" "$p" "$p" "$p"
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane %1 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 0 ]
+  [ "$(bus | jq -s '[.[] | select(.kind=="status")] | length')" = 1 ]
+}
+
 @test "stall-watch: a blocked post marks the pane source watchdog" {
   stub_bin tmux
   p=$(fx_prompt_select)
@@ -9002,7 +9062,7 @@ role_watch() {
   local p
   p=$(fx_idle_box)
   stall_sampler "$p"
-  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane "$p" \
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane %9 \
     --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life "$life" "$@"
 }
 
@@ -9066,7 +9126,7 @@ EOS
 @test "stall-watch: D8 budget: a claude role with --no-budget keeps polling" {
   p=$(fx_idle_box)
   stall_sampler "$p"
-  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane "$p" --engine claude \
+  CREW_ID=c1 run run_crew stall-watch role:feat/x:reviewer --pane %9 --engine claude \
     --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --no-budget --max-life 4
   [ "$status" -eq 0 ]
   [ "$(cat "$SAMPLER_DIR/n")" -gt 0 ]

@@ -16,6 +16,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 	"github.com/noamsto/dispatcher/crew/internal/unread"
 )
@@ -529,5 +530,29 @@ func TestSignalExitCode(t *testing.T) {
 	code, _ := h.run("feat/x", "--pane", "%1")
 	if code != 143 || f.samples != 0 {
 		t.Errorf("exit %d samples %d, want 143 before sampling", code, f.samples)
+	}
+}
+
+func TestRunRefusesForeignSender(t *testing.T) {
+	f := newFake()
+	h := newHarness(t, f)
+	o := h.options()
+	o.Sender = sender.Probes{
+		Panes:  func() (string, error) { return "100\x1ffeat/x\x1flead\x1fc1\x1f@1\x1f%1\n", nil },
+		Parent: func(pid int) (int, bool) { return 1, true },
+		PID:    100,
+	}
+	code := Run(h.ctx, []string{"worker:feat/y#s1-1", "--pane", "%1"}, h.paths, &h.stderr, o)
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	if want := "crew: stall-watch: refusing sender 'worker:feat/y#s1-1' on pane %1: "; !strings.Contains(h.stderr.String(), want) {
+		t.Errorf("stderr %q lacks %q", h.stderr.String(), want)
+	}
+	if f.newProbes != 0 {
+		t.Errorf("NewProbes called %d times, want 0", f.newProbes)
+	}
+	if _, err := os.Stat(h.paths.Log); !os.IsNotExist(err) {
+		t.Errorf("bus log stat err = %v, want not-exist", err)
 	}
 }

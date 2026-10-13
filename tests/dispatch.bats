@@ -5866,6 +5866,29 @@ _roster_live_dispatcher() {
   [ "$(cat "$out")" != "$output" ]
 }
 
+@test "watch_role_prompts: the role stall-watch is orphaned, never a child of its caller (#908)" {
+  mkdir "$BATS_TEST_TMPDIR/rolebin"
+  out="$BATS_TEST_TMPDIR/rolestall-ppid"
+  printf '#!/usr/bin/env bash\nprintf "%%s" "$PPID" >"%s.tmp" && mv "%s.tmp" "%s"\n' "$out" "$out" "$out" >"$BATS_TEST_TMPDIR/rolebin/crew"
+  chmod +x "$BATS_TEST_TMPDIR/rolebin/crew"
+  PATH="$BATS_TEST_TMPDIR/rolebin:$PATH" run bash -c '
+    eval "$(sed -n "/^watch_role_prompts() {/,/^}/p" "$1")"
+    branch=feat/x
+    unset ignore_budget
+    watch_role_prompts r %1 claude c1
+    echo "$$"
+    for _ in $(seq 50); do [ -e "$2" ] && break; sleep 0.1; done' _ "$DISPATCH" "$out"
+  [ "$status" -eq 0 ]
+  [ -s "$out" ]
+  [ "$(cat "$out")" != "$output" ]
+}
+
+@test "stall-watch: dispatch and resume spawn the lead watchdog orphaned (#908)" {
+  for f in "$DISPATCH" "$(dirname "$DISPATCH")/dispatch-resume.sh"; do
+    [ "$(grep -c '^(CREW_ID="$crew_id" nohup crew stall-watch "$worker_id"' "$f")" -eq 1 ]
+  done
+}
+
 @test "roster-render: a --spawn-role does not start the renderer" {
   _spawn_role_fixture
   run run_dispatch --spawn-role reviewer --agent claude --model sonnet

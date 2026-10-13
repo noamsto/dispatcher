@@ -2288,12 +2288,14 @@ watch_role() {
 # stall-watch under its role: id. The prompt detectors stay claude-only inside
 # stall-watch, while the budget detector judges the role's own engine.
 # --ignore-budget is the human's spend decision, so it passes --no-budget; a
-# non-claude role with --no-budget has nothing to watch.
+# non-claude role with --no-budget has nothing to watch. The subshell orphans
+# it: a lazy --spawn-role runs in the lead's pane, and stall-watch anchors its
+# caller like `crew msg`.
 watch_role_prompts() {
   [ "$3" = claude ] || [ -z "${ignore_budget:-}" ] || return 0
   local -a flags=()
   [ -n "${ignore_budget:-}" ] && flags+=(--no-budget)
-  CREW_ID="$4" nohup crew stall-watch "role:$branch:$1" --pane "$2" --engine "$3" "${flags[@]}" >/dev/null 2>&1 &
+  (CREW_ID="$4" nohup crew stall-watch "role:$branch:$1" --pane "$2" --engine "$3" "${flags[@]}" >/dev/null 2>&1 &)
 }
 
 # `dispatch --role-watch <role> --pane <pane> [--engine E] [--branch <b>]
@@ -5877,9 +5879,10 @@ fi
 # `crew watch` wakes to recover. Engine-agnostic. nohup detaches it
 # so it outlives this short-lived dispatch process; it self-exits on progress, a
 # terminal state, or a vanished pane. --ignore-budget waives its budget detector.
+# The subshell orphans it: dispatch may run inside another worker's stamped pane.
 stall_flags=()
 [ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
-CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &
+(CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &)
 # A human dispatching from an exited worker's pane (its env carries CREW_ID)
 # must not retarget the renderer there while the crew's dispatcher is live;
 # only the registered dispatcher's pane may move it.

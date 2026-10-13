@@ -959,8 +959,8 @@ func TestZeroOptionsGateTheCheckout(t *testing.T) {
 }
 
 const (
-	leadPane = "200\x1ffeat/x\x1flead\x1fc1\n"
-	rolePane = "200\x1ffeat/x\x1freviewer\x1fc1\n"
+	leadPane = "200\x1ffeat/x\x1flead\x1fc1\x1f@1\x1f%1\n"
+	rolePane = "200\x1ffeat/x\x1freviewer\x1fc1\x1f@1\x1f%1\n"
 )
 
 // anchored places the caller (pid 300) under the pane with pid 200.

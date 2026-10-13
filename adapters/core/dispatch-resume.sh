@@ -1578,10 +1578,11 @@ tmux send-keys -t "$pane" "$launch_line" Enter
 
 # Re-arm the stall watchdog: the original self-exited when it saw the terminal
 # state, and a resumed worker can wedge exactly the same way. --ignore-budget
-# waives its budget detector.
+# waives its budget detector. The subshell orphans it: resume may run inside
+# another worker's stamped pane.
 stall_flags=()
 [ -n "$ignore_budget" ] && stall_flags+=(--no-budget)
-CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &
+(CREW_ID="$crew_id" nohup crew stall-watch "$worker_id" --pane "$pane" --engine "$agent" "${stall_flags[@]}" >/dev/null 2>&1 &)
 # A human resuming from a worker's own pane must not retarget the renderer
 # there; only the registered dispatcher's pane may move it.
 rr_pane="${TMUX_PANE:-}"
