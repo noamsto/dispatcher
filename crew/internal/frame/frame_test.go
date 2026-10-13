@@ -24,12 +24,12 @@ var engines = []string{"claude", "codex", "pi", "cursor"}
 // testdata/golden-oracle.tsv (#821). Every other key still has a live bash copy
 // in dispatch.sh's --role-watch block, which TestDriftAgainstBash compares.
 var goldenKeys = map[string]bool{
-	"quota_prompt":             true,
-	"quota_session_limit":      true,
-	"idle_reason.skip0.plain":  true,
-	"idle_reason.skip0.color":  true,
-	"idle_reason.skip1.plain":  true,
-	"idle_reason.skip1.color":  true,
+	"quota_prompt":            true,
+	"quota_session_limit":     true,
+	"idle_reason.skip0.plain": true,
+	"idle_reason.skip0.color": true,
+	"idle_reason.skip1.plain": true,
+	"idle_reason.skip1.color": true,
 }
 
 // driver runs after the shipped predicates are defined. Usage:
