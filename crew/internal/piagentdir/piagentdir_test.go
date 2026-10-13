@@ -226,6 +226,17 @@ func TestWorkerDirRefusals(t *testing.T) {
 		// Same real path: the dir-inside-ambient check fires first, as in bash.
 		f.refused(t, alias, "crew: "+f.dir+" resolves inside the ambient pi dir "+alias+" — refusing to seed pi worker dir")
 	})
+	t.Run("relative HOME", func(t *testing.T) {
+		root := t.TempDir()
+		t.Chdir(root)
+		write(t, root+"/h/.pi/dispatcher-worker/sub/auth.json", "{}", 0o600)
+		var o, e bytes.Buffer
+		code := Run(&o, &e, Options{Home: "h", HasHome: true, PIDir: root + "/h/.pi/dispatcher-worker/sub"})
+		want := "crew: ambient pi dir " + root + "/h/.pi/dispatcher-worker/sub resolves inside h/.pi/dispatcher-worker — refusing to seed pi worker dir\n"
+		if code != 1 || o.Len() != 0 || e.String() != want {
+			t.Fatalf("%d %q %q", code, o.String(), e.String())
+		}
+	})
 	t.Run("unsearchable ambient", func(t *testing.T) {
 		skipRoot(t)
 		f := newFixture(t)

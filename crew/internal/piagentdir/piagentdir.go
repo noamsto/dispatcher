@@ -172,10 +172,20 @@ func ambientDir(home, dir, set string) string {
 	return ambient
 }
 
+// realAbs is `cd "$p" && pwd -P`: EvalSymlinks keeps a relative input relative,
+// which would never prefix-match the other side's absolute path.
+func realAbs(p string) (string, error) {
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(real)
+}
+
 // checkNesting refuses a worker dir inside the ambient one or the reverse: a
 // symlinked parent or an aliased PI_CODING_AGENT_DIR defeats the literal check.
 func checkNesting(dir, ambient string) error {
-	dirReal, err := filepath.EvalSymlinks(dir)
+	dirReal, err := realAbs(dir)
 	if err != nil {
 		return err
 	}
@@ -186,7 +196,7 @@ func checkNesting(dir, ambient string) error {
 	if syscall.Access(ambient, xOK) != nil {
 		return refuse("crew: cd: %s: Permission denied", ambient)
 	}
-	ambientReal, err := filepath.EvalSymlinks(ambient)
+	ambientReal, err := realAbs(ambient)
 	if err != nil {
 		return err
 	}

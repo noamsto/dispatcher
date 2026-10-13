@@ -513,6 +513,8 @@ c_idempotent() {
 cases=$(declare -F | sed -n 's/^declare -f c_//p')
 
 ncases=0
+seeded=0
+refused=0
 diffs=0
 skipped=0
 
@@ -563,6 +565,7 @@ for c in $cases; do
     continue
   fi
   ncases=$((ncases + 1))
+  if [ "$(cat "$work/old.rc")" -eq 0 ]; then seeded=$((seeded + 1)); else refused=$((refused + 1)); fi
 
   bad=()
   cmp -s "$work/old.out" "$work/new.out" || bad+=(stdout)
@@ -582,7 +585,6 @@ for c in $cases; do
   fi
 
   if [ "$c" = idempotent ]; then
-    ncases=$((ncases + 1))
     for s in old new; do
       if ! cmp -s "$work/$s.idem1" "$work/$s.idem2"; then
         report "idempotent-unchanged ($s)" "second seed changed inodes or mtimes"
@@ -592,7 +594,11 @@ for c in $cases; do
   fi
 done
 
-printf '\n%d cases, %d diffs' "$ncases" "$diffs"
+printf '\n%d cases (%d seeded, %d refused), %d diffs' "$ncases" "$seeded" "$refused" "$diffs"
 ((skipped == 0)) || printf ' (%d skipped)' "$skipped"
 printf '\n'
+if ((seeded == 0)); then
+  echo "no case seeded successfully — the comparison covered refusals only" >&2
+  exit 1
+fi
 ((diffs == 0))
