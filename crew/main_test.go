@@ -1528,7 +1528,7 @@ func TestFlagSpellingsAreIdentical(t *testing.T) {
 		{"hold park --crew empty", []string{"hold", "park", "60", "--crew", ""}, []string{"hold", "park", "60", "--crew="}, true},
 		{"hold release --crew empty", []string{"hold", "release", "h1", "--crew", ""}, []string{"hold", "release", "h1", "--crew="}, true},
 		{"reply --crew empty", []string{"reply", "--crew", "", "worker:feat/x", "go"}, []string{"reply", "--crew=", "worker:feat/x", "go"}, true},
-		{"reply --crew", []string{"reply", "--crew", "c9", "role:a", "go"}, []string{"reply", "--crew=c9", "role:a", "go"}, true},
+		{"reply --crew", []string{"reply", "--crew", "c9", "worker:feat/none", "go"}, []string{"reply", "--crew=c9", "worker:feat/none", "go"}, true},
 		{"nudge --crew empty", []string{"nudge", "--crew", "", "nova"}, []string{"nudge", "--crew=", "nova"}, true},
 		{"nudge --wait word", []string{"nudge", "nova", "--wait", "abc"}, []string{"nudge", "nova", "--wait=abc"}, true},
 		{"await --from empty", []string{"await", me, "--from", ""}, []string{"await", me, "--from="}, true},
