@@ -823,7 +823,10 @@ worktree_git_lib_crew_go_row() { # bin
   grep -q "$pi_dir" "$out/bin/dispatch"
   null_dispatch=$(jq -r .noAgentBrowser.dispatchDrv "$EVAL")
   out=$(nix-store --realise "$null_dispatch")
-  ! grep -q "agent-browser" <(grep -o '/nix/store/[^"]*adapters/core/skills' "$out/bin/dispatch")
+  null_pi=$(jq -r .noAgentBrowser.sessionVariables.DISPATCHER_SKILLS_DIR "$EVAL")
+  grep -qF "$null_pi" "$out/bin/dispatch"
+  run grep -qF "pi-skills-agent-browser" "$out/bin/dispatch"
+  [ "$status" -eq 1 ]
   # An engine left out gets no copy.
   run jq -e '.codexOnly.skillDrvs == []' "$EVAL"
   [ "$status" -eq 0 ]
@@ -837,7 +840,8 @@ worktree_git_lib_crew_go_row() { # bin
   run yq --front-matter=extract -r '.description' "$skill"
   [ "$status" -eq 0 ]
   [[ "$output" != *"over any built-in"* ]]
-  ! grep -q 'npm i\|hidden:' "$skill"
+  run grep -q 'npm i\|hidden:' "$skill"
+  [ "$status" -eq 1 ]
   # Run the real activation text against a scratch HOME, store-style read-only modes included.
   home="$BATS_TEST_TMPDIR/chome"
   mkdir -p "$home"
