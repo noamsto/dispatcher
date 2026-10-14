@@ -147,6 +147,7 @@ var typedSubcommands = map[string]bool{
 	"status": true, "msg": true, "reply": true, "hold": true,
 	"nudge": true, "await": true, "watch": true, "stream": true,
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
+	"adopt": true,
 }
 
 // passthroughCmd is one unconverted subcommand to kong: its name, then whatever
@@ -207,6 +208,8 @@ type root struct {
 
 	GitGuard    gitGuardCmd    `cmd:"" name:"git-guard" help:"The git-config guard worktree-git.sh runs."`
 	GitBaseline gitBaselineCmd `cmd:"" name:"git-baseline" help:"List or accept the git-config baseline."`
+
+	Adopt adoptCmd `cmd:"" name:"adopt" help:"Re-attach to a crew already on disk."`
 
 	Reap          reapCmd `cmd:"" name:"reap" help:"Reclaim the windows and worktrees of landed workers."`
 	ReapAutosweep argvCmd `cmd:"" name:"reap-autosweep" help:"The detached ratings sweep reap starts."`
@@ -687,7 +690,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// adopt records the caller's own identity in pidfile.log: `$$`, `$PPID` and
 	// `$PWD`, which crew.sh's exec leaves ours.
 	if sub == "adopt" {
-		return adopt.Run(args, paths, stdout, stderr, adopt.Options{
+		c := parsed.typed.Adopt
+		return adopt.Run(adopt.Request{ID: c.ID, PID: c.PID, Force: c.Force}, paths, stdout, stderr, adopt.Options{
 			Probes: e.procs,
 			Now:    time.Now,
 			PID:    os.Getpid(),

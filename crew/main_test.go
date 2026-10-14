@@ -737,17 +737,6 @@ func TestRunEntryArmsSurviveAnUnreadableCwd(t *testing.T) {
 
 // The kong root (#862): which names the grammar admits, what kong's capture
 // actually holds, and that an arm's argv arrives as its caller typed it.
-//
-// Every expected value below is copied from the base build of this branch:
-//
-//	mkdir -p /tmp/crew862 && git archive 5e53264b crew | tar -x -C /tmp/crew862
-//	(cd /tmp/crew862/crew && go build -o /tmp/crew862/crew-base .)
-//	tmp=$(mktemp -d) && cd "$tmp" && git init -q . && mkdir -p .git/crew
-//	printf '%s\n' '<the bus row below>' > .git/crew/events.jsonl
-//	CREW_ID=c1 /tmp/crew862/crew-base <the row's args>; echo $?
-//
-// and its `code` is that shell exit status.
-var statusRow = `{"ts":1700000001000,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working","detail":"go"}}` + "\n"
 
 // noTouchProbes is the roster probe set for a run that must read neither tmux
 // nor a worktree list: the folds answer from the bus alone.
@@ -777,7 +766,7 @@ func TestAdmittedSubcommands(t *testing.T) {
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
-		"status", "msg", "reply", "hold", "nudge", "await", "watch", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep"} {
+		"status", "msg", "reply", "hold", "nudge", "await", "watch", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -820,21 +809,17 @@ func TestAdmittedSubcommands(t *testing.T) {
 
 // TestParseCrewSplitsLeadingEquals is the measurement that decides who parses
 // what: kong splits the first word after a command name at `=`, so the capture
-// is not the argv an unconverted arm may be handed. `crew adopt --crew=x` is a
-// word the arm reads whole; the split makes it `--crew x`, a different
+// is not the argv an unconverted arm may be handed. `crew pr-watch --since=5` is a
+// word the arm reads whole; the split makes it `--since 5`, a different
 // command. The typed subcommands want the split (TestFlagSpellingsAreIdentical).
 func TestParseCrewSplitsLeadingEquals(t *testing.T) {
 	for _, tc := range []struct {
 		args, captured []string
 	}{
-		{[]string{"adopt", "--crew=x"}, []string{"--crew", "x"}},
 		{[]string{"pr-watch", "--since=5"}, []string{"--since", "5"}},
 		// Everything else about a passthrough command's argv does arrive whole,
 		// `--` and flag-shaped detail text included.
 		{[]string{"pr-watch", "w1", "working", "--help"}, []string{"w1", "working", "--help"}},
-		{[]string{"adopt", "--"}, []string{"--"}},
-		{[]string{"adopt", "-x"}, []string{"-x"}},
-		{[]string{"adopt", ""}, []string{""}},
 	} {
 		var (
 			r       root
@@ -966,40 +951,6 @@ func TestRunConvertedSubcommands(t *testing.T) {
 				if stdout.String() != tc.stdout {
 					t.Errorf("stdout %q, want %q", stdout.String(), tc.stdout)
 				}
-			}
-		})
-	}
-}
-
-// TestRunPassthroughArgvReachesItsArm is the other half of the contract: a
-// subcommand kong only names still parses its own words. Each row is an answer
-// only the arm's own parsing produces, so a dropped, split or re-read token
-// fails it — a flag-shaped id read whole rather than as a flag.
-func TestRunPassthroughArgvReachesItsArm(t *testing.T) {
-	repo, _ := repoWithLog(t, &statusRow, 0o644)
-	t.Setenv("CREW_ID", "c1")
-	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes()}
-
-	for _, tc := range []struct {
-		name           string
-		args           []string
-		code           int
-		stdout, stderr string
-	}{
-		{name: "adopt reads a flag-shaped id whole", args: []string{"adopt", "--bogus"}, code: exitFailure,
-			stderr: "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			code := run(context.Background(), tc.args, &stdout, &stderr, e)
-			if code != tc.code {
-				t.Fatalf("code %d, want %d (stderr %q)", code, tc.code, stderr.String())
-			}
-			if stdout.String() != tc.stdout {
-				t.Errorf("stdout %q, want %q", stdout.String(), tc.stdout)
-			}
-			if stderr.String() != tc.stderr {
-				t.Errorf("stderr %q, want %q", stderr.String(), tc.stderr)
 			}
 		})
 	}
@@ -1216,6 +1167,9 @@ var refusalRows = []struct {
 	{"reap idle empty value", []string{"reap", "--idle", ""}, "crew: --idle needs a value in seconds", 1},
 	{"reap discard missing value", []string{"reap", "--discard"}, "crew: --discard needs a branch", 1},
 	{"reap idle not digits", []string{"reap", "--idle", "abc"}, "crew: --idle must be a non-negative integer number of seconds", 1},
+	{"adopt unknown flag", []string{"adopt", "--bogus"}, "crew: adopt: unknown flag '--bogus'", 1},
+	{"adopt extra positional", []string{"adopt", "c1", "1", "2"}, "crew: adopt: unexpected argument '2'", 1},
+	{"adopt negative number", []string{"adopt", "-5"}, "crew: adopt: unknown flag '-5'", 1},
 	{"reap idle negative", []string{"reap", "--idle", "-5"}, "crew: --idle must be a non-negative integer number of seconds", 1},
 }
 
@@ -1664,6 +1618,8 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 		{"reap --idle", []string{"reap", "--idle", "5"}, []string{"reap", "--idle=5"}, false},
 		{"reap --discard", []string{"reap", "--discard", "b"}, []string{"reap", "--discard=b"}, false},
 		{"reap bools", []string{"reap", "--quiet", "--dry-run", "--no-wait"}, []string{"reap", "--quiet=true", "--dry-run=true", "--no-wait=true"}, false},
+		{"adopt --force", []string{"adopt", "--force", "c1"}, []string{"adopt", "--force=true", "c1"}, false},
+		{"adopt --force last", []string{"adopt", "c1", "--force"}, []string{"adopt", "c1", "--force=true"}, false},
 		{"reap --idle empty", []string{"reap", "--idle", ""}, []string{"reap", "--idle="}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -258,6 +258,12 @@ type reapCmd struct {
 	Discard *string `name:"discard"`
 }
 
+type adoptCmd struct {
+	Force bool   `name:"force"`
+	ID    string `arg:"" optional:"" name:"id"`
+	PID   string `arg:"" optional:"" name:"pid"`
+}
+
 type gitBaselineCmd struct {
 	Accept bool `name:"accept"`
 }
@@ -437,6 +443,7 @@ var wordings = map[string]wording{
 	"register":     plain("register"),
 	"deregister":   plain("deregister"),
 	"log":          plain("log"),
+	"adopt":        plain("adopt"),
 	"git-baseline": {all: gitBaselineUsage, code: exitFailure},
 	"git-guard":    {all: gitguard.GuardUsage, code: exitUsage},
 	"reap": {
