@@ -16,7 +16,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/signal"
@@ -81,19 +80,31 @@ func (o FleetOptions) withDefaults() FleetOptions {
 	return o
 }
 
-// RunFleet is `crew fleet stream`. It takes `crew stream`'s flags except
-// --reap-every, plus --rediscover, and --crew is required: the lane spans
-// repos, so no one repo's ambient crew can stand in for it.
-func RunFleet(argv []string, stdout, stderr io.Writer, opts FleetOptions) int {
+// FleetRequest is one `crew fleet stream` call: `crew stream`'s request, whose
+// ReapEvery the lane ignores, plus --rediscover ("" for its default).
+type FleetRequest struct {
+	Request
+	Rediscover string
+}
+
+// RunFleet is `crew fleet stream`. --crew is required: the lane spans repos,
+// so no one repo's ambient crew can stand in for it.
+func RunFleet(r FleetRequest, stdout, stderr io.Writer, opts FleetOptions) int {
 	o := opts.withDefaults()
-	rest, rediscover, msg := fleetFlags(argv)
-	if msg != "" {
-		say(stderr, "%s\n", msg)
+	rediscoverText := r.Rediscover
+	if rediscoverText == "" {
+		rediscoverText = strconv.Itoa(defaultRediscover)
+	}
+	rediscover, ok := positiveInt(rediscoverText)
+	if !ok {
+		say(stderr, "crew: --rediscover must be a positive integer number of seconds\n")
 		return exitUsage
 	}
-	po := o.Options
-	po.CrewID = func() string { return "" }
-	c, msg := parse(rest, po)
+	if r.Crew == "" {
+		say(stderr, "crew: fleet stream: --crew ID is required\n")
+		return exitUsage
+	}
+	c, msg := check(r.Request, o.Options)
 	if msg != "" {
 		say(stderr, "%s\n", msg)
 		return exitUsage
@@ -149,47 +160,6 @@ func RunFleet(argv []string, stdout, stderr io.Writer, opts FleetOptions) int {
 		said:       map[string]bool{},
 	}
 	return f.run(sigs)
-}
-
-// fleetFlags takes what only the fleet reads — --rediscover, the required
-// --crew, the refused --reap-every — and leaves the rest, --crew included, to
-// parse.
-func fleetFlags(argv []string) (rest []string, rediscover int64, msg string) {
-	var crew string
-	rediscoverText := strconv.Itoa(defaultRediscover)
-	for i := 0; i < len(argv); i++ {
-		switch flag := argv[i]; flag {
-		case "--force", "--status":
-			rest = append(rest, flag)
-			continue
-		case "--reap-every":
-			return nil, 0, "crew: fleet stream: --reap-every is not supported — the fleet lane does not reap (each repo's own stream or dispatch does)"
-		case "--crew", "--states", "--park", "--heartbeat", "--coalesce", "--retry", "--interval", "--rediscover":
-		default:
-			return nil, 0, fmt.Sprintf("crew: fleet stream: unknown arg '%s'", flag)
-		}
-		if i+1 >= len(argv) || argv[i+1] == "" {
-			return nil, 0, fmt.Sprintf("crew: %s needs a value", argv[i])
-		}
-		flag, value := argv[i], argv[i+1]
-		i++
-		switch flag {
-		case "--rediscover":
-			rediscoverText = value
-			continue
-		case "--crew":
-			crew = value
-		}
-		rest = append(rest, flag, value)
-	}
-	rediscover, ok := positiveInt(rediscoverText)
-	if !ok {
-		return nil, 0, "crew: --rediscover must be a positive integer number of seconds"
-	}
-	if crew == "" {
-		return nil, 0, "crew: fleet stream: --crew ID is required"
-	}
-	return rest, rediscover, ""
 }
 
 // fleet is the coordinator: the only goroutine that discovers, joins and stops

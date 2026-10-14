@@ -128,12 +128,19 @@ type call struct {
 	force, statusMode                        bool
 }
 
-// Run is the arm, flag for flag and refusal for refusal. Usage and
+// Request is one `crew stream` call as the grammar bound it: each value flag
+// as the caller's text, "" for its default.
+type Request struct {
+	Crew, States, Park, Heartbeat, Coalesce, Retry, Interval, ReapEvery string
+	Force, Status                                                       bool
+}
+
+// Run is the arm, refusal for refusal. Usage and
 // crew-resolution failures exit 64, not 1 — otherwise a `--status` call that
 // simply could not find its crew reads as the `dead` state it never measured.
-func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, opts Options) int {
+func Run(r Request, paths bus.Paths, stdout, stderr io.Writer, opts Options) int {
 	o := opts.withDefaults()
-	c, msg := parse(argv, o)
+	c, msg := check(r, o)
 	if msg != "" {
 		say(stderr, "%s\n", msg)
 		return exitUsage
@@ -338,61 +345,28 @@ func pidNumber(text string) int {
 	return n
 }
 
-// parse reads the arm's flag loop and its value checks, in its order: the loop
-// first, then the five positive intervals, then --reap-every (non-negative: 0
-// is how the cadence reap is disabled, not an error), then --states, the crew
-// and the crew's charset.
-func parse(argv []string, o Options) (call, string) {
-	var (
-		c                 call
-		heartbeatText     = strconv.Itoa(defaultHeartbeat)
-		coalesceText      = strconv.Itoa(defaultCoalesce)
-		retryText         = strconv.Itoa(defaultRetry)
-		reapEveryText     = strconv.Itoa(defaultReapEvery)
-		statesText        = defaultStates
-		parkText          = strconv.Itoa(defaultPark)
-		intervalText      = strconv.Itoa(defaultInterval)
-		crew              string
-		force, statusMode bool
-	)
-	for len(argv) > 0 {
-		var dst *string
-		switch flag := argv[0]; flag {
-		case "--crew":
-			dst = &crew
-		case "--states":
-			dst = &statesText
-		case "--park":
-			dst = &parkText
-		case "--heartbeat":
-			dst = &heartbeatText
-		case "--coalesce":
-			dst = &coalesceText
-		case "--retry":
-			dst = &retryText
-		case "--interval":
-			dst = &intervalText
-		case "--reap-every":
-			dst = &reapEveryText
-		case "--force":
-			force = true
-			argv = argv[1:]
-			continue
-		case "--status":
-			statusMode = true
-			argv = argv[1:]
-			continue
-		default:
-			return c, fmt.Sprintf("crew: stream: unknown arg '%s'", flag)
+// check is the arm's value checks, in its order: the five positive intervals,
+// then --reap-every (non-negative: 0 is how the cadence reap is disabled, not an
+// error), then --states, the crew and the crew's charset.
+func check(r Request, o Options) (call, string) {
+	or := func(text, def string) string {
+		if text == "" {
+			return def
 		}
-		if len(argv) < 2 || argv[1] == "" {
-			return c, fmt.Sprintf("crew: %s needs a value", argv[0])
-		}
-		*dst, argv = argv[1], argv[2:]
+		return text
 	}
-
-	c.statesText, c.parkText, c.intervalText, c.crew = statesText, parkText, intervalText, crew
-	c.force, c.statusMode = force, statusMode
+	var (
+		c             call
+		heartbeatText = or(r.Heartbeat, strconv.Itoa(defaultHeartbeat))
+		coalesceText  = or(r.Coalesce, strconv.Itoa(defaultCoalesce))
+		retryText     = or(r.Retry, strconv.Itoa(defaultRetry))
+		reapEveryText = or(r.ReapEvery, strconv.Itoa(defaultReapEvery))
+		statesText    = or(r.States, defaultStates)
+		parkText      = or(r.Park, strconv.Itoa(defaultPark))
+		intervalText  = or(r.Interval, strconv.Itoa(defaultInterval))
+	)
+	c.statesText, c.parkText, c.intervalText, c.crew = statesText, parkText, intervalText, r.Crew
+	c.force, c.statusMode = r.Force, r.Status
 	for _, f := range []struct {
 		name, text string
 		dst        *int64

@@ -86,13 +86,58 @@ type rateCmd struct {
 	Root     []*string `name:"root" sep:"none"`
 }
 
-// fleetCmd.Rest is the words kong leaves alone once it meets one that is no flag:
-// `stream` and whatever follows reach the lane's own parser untouched.
+// fleetTableCmd is bare `crew fleet`: the hidden default command, so the table's
+// flags sit on it rather than on fleet, where they would clash with the lane's
+// own --crew. Its name is flag-shaped so no word selects it: `crew fleet table`
+// stays the usage refusal it always was.
+type fleetTableCmd struct {
+	All  bool    `name:"all"`
+	JSON bool    `name:"json"`
+	Crew *string `name:"crew"`
+}
+
 type fleetCmd struct {
-	All  bool     `name:"all"`
-	JSON bool     `name:"json"`
-	Crew *string  `name:"crew"`
-	Rest []string `arg:"" optional:"" passthrough:"partial" name:"rest"`
+	Table  fleetTableCmd  `cmd:"" name:"-table" default:"withargs" hidden:""`
+	Stream fleetStreamCmd `cmd:"" name:"stream"`
+}
+
+// streamFlags are the flags `crew stream` and `crew fleet stream` share.
+type streamFlags struct {
+	Crew      *string `name:"crew"`
+	States    *string `name:"states"`
+	Park      *string `name:"park"`
+	Heartbeat *string `name:"heartbeat"`
+	Coalesce  *string `name:"coalesce"`
+	Retry     *string `name:"retry"`
+	Interval  *string `name:"interval"`
+	Force     bool    `name:"force"`
+	Status    bool    `name:"status"`
+}
+
+type streamCmd struct {
+	streamFlags `embed:""`
+	ReapEvery   *string `name:"reap-every"`
+}
+
+// valueFlag is a *string flag under the name a refusal gives it.
+type valueFlag struct {
+	name string
+	v    *string
+}
+
+// valueFlags are the shared value flags in the order their refusals are judged.
+func (f streamFlags) valueFlags() []valueFlag {
+	return []valueFlag{
+		{"--crew", f.Crew}, {"--states", f.States}, {"--park", f.Park}, {"--heartbeat", f.Heartbeat},
+		{"--coalesce", f.Coalesce}, {"--retry", f.Retry}, {"--interval", f.Interval},
+	}
+}
+
+// fleetStreamCmd.ReapEvery is bound only to be refused with the lane's reason.
+type fleetStreamCmd struct {
+	streamFlags `embed:""`
+	Rediscover  *string `name:"rediscover"`
+	ReapEvery   *string `name:"reap-every" hidden:""`
 }
 
 type stackCutCmd struct {
@@ -298,6 +343,16 @@ var wordings = map[string]wording{
 		extra:       func(w string) string { return fmt.Sprintf("crew: watch: unknown arg '%s'", w) },
 		code:        exitFailure,
 	},
+	"stream": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: stream: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: stream: unknown arg '%s'", w) },
+		code:        exitUsage,
+	},
+	"fleet stream": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: fleet stream: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: fleet stream: unknown arg '%s'", w) },
+		code:        exitUsage,
+	},
 	"roster": plain("roster"),
 	"report": plain("report"),
 	"retro":  {all: retro.Usage, code: exitFailure},
@@ -477,14 +532,30 @@ func validate(sub string, r *root) *refusal {
 				return fail(rateRootUsage)
 			}
 		}
+	case "stream":
+		c := r.Stream
+		for _, f := range append(c.valueFlags(), valueFlag{"--reap-every", c.ReapEvery}) {
+			if given(f.v) {
+				return &refusal{fmt.Sprintf("crew: %s needs a value", f.name), exitUsage}
+			}
+		}
 	case "fleet":
-		c := r.Fleet
-		if given(c.Crew) {
+		if given(r.Fleet.Table.Crew) {
 			return fail(fleet.Usage)
 		}
-		// Only the lane takes a word, and it takes none of fleet's own flags.
-		if len(c.Rest) > 0 && (c.Rest[0] != "stream" || c.All || c.JSON || c.Crew != nil) {
+	case "fleet stream":
+		// `fleet --all stream` selects the lane with the table's flags bound.
+		if t := r.Fleet.Table; t.All || t.JSON || t.Crew != nil {
 			return fail(fleet.Usage)
+		}
+		c := r.Fleet.Stream
+		if c.ReapEvery != nil {
+			return &refusal{"crew: fleet stream: --reap-every is not supported — the fleet lane does not reap (each repo's own stream or dispatch does)", exitUsage}
+		}
+		for _, f := range append(c.valueFlags(), valueFlag{"--rediscover", c.Rediscover}) {
+			if given(f.v) {
+				return &refusal{fmt.Sprintf("crew: %s needs a value", f.name), exitUsage}
+			}
 		}
 	case "stack":
 		c := r.Stack

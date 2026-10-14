@@ -189,7 +189,7 @@ type fleetLane struct {
 	rc         int
 }
 
-func startFleet(t *testing.T, fo FleetOptions, argv ...string) *fleetLane {
+func startFleet(t *testing.T, fo FleetOptions, r FleetRequest) *fleetLane {
 	t.Helper()
 	l := &fleetLane{t: t, root: t.TempDir(), out: &lockedWriter{}, errb: &lockedWriter{},
 		tick: make(chan time.Time), done: make(chan int, 1)}
@@ -206,7 +206,7 @@ func startFleet(t *testing.T, fo FleetOptions, argv ...string) *fleetLane {
 		l.waits.Add(1)
 		return l.tick
 	}
-	go func() { l.done <- RunFleet(argv, l.out, l.errb, fo) }()
+	go func() { l.done <- RunFleet(r, l.out, l.errb, fo) }()
 	waitFor(t, "the lane's first iteration", func() bool { return l.waits.Load() >= 1 })
 	t.Cleanup(func() { l.stop() })
 	return l
@@ -328,8 +328,15 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-func fastFlags(extra ...string) []string {
-	return append([]string{"--crew", "c1", "--park", "1", "--interval", "1", "--coalesce", "1", "--retry", "1"}, extra...)
+func fastRequest() FleetRequest {
+	return FleetRequest{Request: Request{Crew: "c1", Park: "1", Interval: "1", Coalesce: "1", Retry: "1"}}
+}
+
+// rediscoverEachSecond is fastRequest with a rediscovery due every second.
+func rediscoverEachSecond() FleetRequest {
+	r := fastRequest()
+	r.Rediscover = "1"
+	return r
 }
 
 func noLines(t *testing.T, l *fleetLane, kinds ...string) {
@@ -360,7 +367,7 @@ func TestFleetDeliversFromEitherRepoOnceTagged(t *testing.T) {
 		Options:  Options{Self: watchStub(t)},
 		Discover: okRepos(alpha, beta, gamma),
 		Origin:   origins(map[string]string{alpha: "https://github.com/acme/alpha.git"}),
-	}, fastFlags()...)
+	}, fastRequest())
 
 	appendRow(t, alpha, statusRow(2000, "c1", "worker:feat/a", "pr_open"))
 	appendRow(t, beta, statusRow(2001, "c1", "worker:feat/b", "pr_open"))
@@ -403,7 +410,7 @@ func TestFleetJoinsRepoAtNextRediscovery(t *testing.T) {
 		Options:  Options{Self: watchStub(t)},
 		Discover: okRepos(alpha, gamma),
 		Origin:   origins(nil),
-	}, fastFlags("--rediscover", "1")...)
+	}, rediscoverEachSecond())
 
 	// gamma's first c1 row lands after the first discovery passed it over.
 	appendRow(t, gamma, statusRow(1500, "c1", "worker:feat/g", "working"))
@@ -447,7 +454,7 @@ func TestFleetSkipsGoneAndNoBus(t *testing.T) {
 			}
 		},
 		Origin: origins(nil),
-	}, fastFlags("--rediscover", "1")...)
+	}, rediscoverEachSecond())
 
 	betaScratch := busScratch(filepath.Join(l.root, "c1"), beta)
 	waitFor(t, "beta's bus loop", func() bool { _, err := os.Stat(betaScratch); return err == nil })
@@ -494,7 +501,7 @@ func TestFleetRelativeSelfStillDelivers(t *testing.T) {
 				Options:  Options{Self: tc.self(stub)},
 				Discover: okRepos(alpha),
 				Origin:   origins(nil),
-			}, fastFlags()...)
+			}, fastRequest())
 
 			appendRow(t, alpha, statusRow(2000, "c1", "worker:feat/a", "pr_open"))
 			waitFor(t, "alpha's batch through a relative Self", func() bool { return l.delivered()["alpha"][2000] > 0 })
@@ -519,7 +526,7 @@ func TestFleetLeavesRepoDroppedFromDiscovery(t *testing.T) {
 			return okRepos(alpha)(nil)
 		},
 		Origin: origins(nil),
-	}, fastFlags("--rediscover", "1")...)
+	}, rediscoverEachSecond())
 
 	betaScratch := busScratch(filepath.Join(l.root, "c1"), beta)
 	waitFor(t, "beta's bus loop", func() bool { _, err := os.Stat(betaScratch); return err == nil })
@@ -555,7 +562,7 @@ func TestFleetNoDoubleDeliveryWithPerRepoStream(t *testing.T) {
 		}},
 		Discover: okRepos(alpha),
 		Origin:   origins(nil),
-	}, fastFlags()...)
+	}, fastRequest())
 
 	// (a) The per-repo stream is alive: the fleet never parks on this bus.
 	const aliveNote = "crew: fleet stream: alpha: per-repo stream alive (pid 4242) — not watching\n"
@@ -660,7 +667,7 @@ func TestFleetStopTagsDrainedBatch(t *testing.T) {
 		Options:  Options{Self: scriptStub(t, "printf '%s\\n' '"+batch+"'; exec sleep 60")},
 		Discover: okRepos(alpha),
 		Origin:   origins(map[string]string{alpha: "git@github.com:acme/alpha.git"}),
-	}, fastFlags()...)
+	}, fastRequest())
 
 	outf := filepath.Join(busScratch(filepath.Join(l.root, "c1"), alpha), "stream.out")
 	waitFor(t, "the parked child's batch", func() bool { _, ok := readIfNonEmpty(outf); return ok })
@@ -688,7 +695,7 @@ func TestFleetKeepsCwdDotfiles(t *testing.T) {
 		Options:  Options{Self: scriptStub(t, "exec sleep 60")},
 		Discover: okRepos(alpha),
 		Origin:   origins(nil),
-	}, fastFlags()...)
+	}, fastRequest())
 	lane := filepath.Join(l.root, "c1")
 	waitFor(t, "alpha's bus loop", func() bool { _, err := os.Stat(busScratch(lane, alpha)); return err == nil })
 	if _, err := os.Stat(keep); err != nil {
@@ -711,7 +718,9 @@ func TestFleetKeepsCwdDotfiles(t *testing.T) {
 }
 
 func TestFleetLaneHeartbeat(t *testing.T) {
-	l := startFleet(t, FleetOptions{Options: Options{Self: scriptStub(t, "exit 0")}}, fastFlags("--heartbeat", "1")...)
+	r := fastRequest()
+	r.Heartbeat = "1"
+	l := startFleet(t, FleetOptions{Options: Options{Self: scriptStub(t, "exit 0")}}, r)
 	l.kickUntil("a lane heartbeat", func() bool {
 		for _, line := range decodeLinesT(t, l.out.str()) {
 			if line["stream"] == "heartbeat" {
@@ -733,7 +742,7 @@ func TestFleetLaneHeartbeat(t *testing.T) {
 func runFleetStatus(t *testing.T, root string, probes crews.Probes) (int, map[string]any) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	rc := RunFleet([]string{"--status", "--crew", "c1"}, &out, &errb, FleetOptions{LaneRoot: root, Options: Options{Probes: probes}})
+	rc := RunFleet(FleetRequest{Request: Request{Status: true, Crew: "c1"}}, &out, &errb, FleetOptions{LaneRoot: root, Options: Options{Probes: probes}})
 	lines := decodeLinesT(t, out.String())
 	if len(lines) != 1 {
 		t.Fatalf("--status printed %q, stderr %q", out.String(), errb.String())
@@ -771,8 +780,10 @@ func TestFleetStatus(t *testing.T) {
 
 	var out, errb lockedWriter
 	done := make(chan int, 1)
+	force := fastRequest()
+	force.Force = true
 	go func() {
-		done <- RunFleet(append(fastFlags(), "--force"), &out, &errb, FleetOptions{LaneRoot: root, Discover: okRepos()})
+		done <- RunFleet(force, &out, &errb, FleetOptions{LaneRoot: root, Discover: okRepos()})
 	}()
 	me := fmt.Sprint(os.Getpid())
 	waitFor(t, "the reclaimed lane's tick", func() bool {
@@ -805,37 +816,37 @@ func TestFleetStatus(t *testing.T) {
 	}
 }
 
+// The checks after the grammar, which refuses an unknown flag, an empty value
+// and --reap-every (crew/main_test.go). --rediscover is judged before the crew.
 func TestFleetRefusals(t *testing.T) {
+	crew := func(r Request) Request { r.Crew = "c1"; return r }
 	for _, tc := range []struct {
-		argv []string
-		msg  string
+		r   FleetRequest
+		msg string
 	}{
-		{nil, "crew: fleet stream: --crew ID is required"},
-		{[]string{"--status"}, "crew: fleet stream: --crew ID is required"},
-		{[]string{"--park", "5"}, "crew: fleet stream: --crew ID is required"},
-		{[]string{"--crew"}, "crew: --crew needs a value"},
-		{[]string{"--crew", "c1", "--bogus"}, "crew: fleet stream: unknown arg '--bogus'"},
-		{[]string{"--crew", "c1", "--reap-every", "0"}, "crew: fleet stream: --reap-every is not supported — the fleet lane does not reap (each repo's own stream or dispatch does)"},
-		{[]string{"--crew", "c1", "--rediscover", "0"}, "crew: --rediscover must be a positive integer number of seconds"},
-		{[]string{"--crew", "c1", "--rediscover"}, "crew: --rediscover needs a value"},
-		{[]string{"--crew", "c1", "--park", "0"}, "crew: --park must be a positive integer number of seconds"},
-		{[]string{"--crew", "../escaped"}, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'"},
+		{FleetRequest{}, "crew: fleet stream: --crew ID is required"},
+		{FleetRequest{Request: Request{Status: true}}, "crew: fleet stream: --crew ID is required"},
+		{FleetRequest{Request: Request{Park: "5"}}, "crew: fleet stream: --crew ID is required"},
+		{FleetRequest{Rediscover: "0"}, "crew: --rediscover must be a positive integer number of seconds"},
+		{FleetRequest{Request: crew(Request{}), Rediscover: "0"}, "crew: --rediscover must be a positive integer number of seconds"},
+		{FleetRequest{Request: crew(Request{Park: "0"})}, "crew: --park must be a positive integer number of seconds"},
+		{FleetRequest{Request: Request{Crew: "../escaped"}}, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'"},
 	} {
 		var out, errb bytes.Buffer
 		// An ambient crew is never a fallback: the lane spans repos, so the crew
 		// must be named.
-		rc := RunFleet(tc.argv, &out, &errb, FleetOptions{
+		rc := RunFleet(tc.r, &out, &errb, FleetOptions{
 			LaneRoot: t.TempDir(),
 			Options:  Options{CrewID: func() string { return "c9" }},
 		})
 		if rc != exitUsage {
-			t.Errorf("%v exit = %d, want %d (%s)", tc.argv, rc, exitUsage, errb.String())
+			t.Errorf("%+v exit = %d, want %d (%s)", tc.r, rc, exitUsage, errb.String())
 		}
 		if got := strings.TrimSuffix(errb.String(), "\n"); got != tc.msg {
-			t.Errorf("%v stderr = %q, want %q", tc.argv, got, tc.msg)
+			t.Errorf("%+v stderr = %q, want %q", tc.r, got, tc.msg)
 		}
 		if out.Len() != 0 {
-			t.Errorf("%v printed %q on stdout", tc.argv, out.String())
+			t.Errorf("%+v printed %q on stdout", tc.r, out.String())
 		}
 	}
 }
@@ -864,7 +875,7 @@ func TestFleetLeavesRepoNoLongerListedOK(t *testing.T) {
 			}
 		},
 		Origin: origins(nil),
-	}, fastFlags("--rediscover", "1")...)
+	}, rediscoverEachSecond())
 
 	betaScratch := busScratch(filepath.Join(l.root, "c1"), beta)
 	waitFor(t, "beta's bus loop", func() bool { _, err := os.Stat(betaScratch); return err == nil })

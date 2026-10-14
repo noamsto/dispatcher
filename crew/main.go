@@ -121,7 +121,7 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 //     kong can neither print a screen nor end the process, so routeHelp and
 //     helpTexts still decide when help prints and what it says.
 
-// subcommands is every word crew admits: the twenty-eight the grammar types, then
+// subcommands is every word crew admits: the twenty-nine the grammar types, then
 // the arms still parsing their own argv. It is the list the switch of #821 admitted,
 // and tests/crew.bats parses this literal to prove every subcommand has its own
 // row in the grouped help; TestAdmittedSubcommands pins it against that
@@ -145,7 +145,7 @@ var typedSubcommands = map[string]bool{
 	"roster": true, "report": true, "retro": true, "rate": true, "fleet": true,
 	"stack": true, "roster-render": true, "pi-agent-dir": true,
 	"status": true, "msg": true, "reply": true, "hold": true,
-	"nudge": true, "await": true, "watch": true,
+	"nudge": true, "await": true, "watch": true, "stream": true,
 }
 
 // passthroughCmd is one unconverted subcommand to kong: its name, then whatever
@@ -202,6 +202,7 @@ type root struct {
 	Nudge  nudgeCmd  `cmd:"" name:"nudge" help:"Type into a lead's pane."`
 	Await  awaitCmd  `cmd:"" name:"await" help:"Block until a msg answers an agent."`
 	Watch  watchCmd  `cmd:"" name:"watch" help:"Park until a worker event qualifies."`
+	Stream streamCmd `cmd:"" name:"stream" help:"The long-lived lane that pushes batches."`
 }
 
 // crewArgs is what the root parse resolves to: the word that named the
@@ -267,7 +268,14 @@ func parseCrew(args []string) (crewArgs, bool) {
 	}
 	// kong matched args[0] to a command, so the words it describes are the rest
 	// of the argv — the tail the arms have always been handed.
-	return crewArgs{sub: args[0], argv: args[1:], typed: r, refusal: validate(refusalKey(args), &r), cmd: kctx.Command()}, true
+	cmd := kctx.Command()
+	key := refusalKey(args)
+	// `fleet --all stream` selects the lane behind a table flag, which only the
+	// selected command shows.
+	if strings.HasPrefix(cmd, "fleet stream") {
+		key = "fleet stream"
+	}
+	return crewArgs{sub: args[0], argv: args[1:], typed: r, refusal: validate(key, &r), cmd: cmd}, true
 }
 
 // refusalKey names the wording and checks a typed argv is judged by: the
@@ -357,7 +365,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		if parsed.refusal != nil {
 			return refuse(stderr, parsed.refusal)
 		}
-		return runFleet(ctx, parsed.typed.Fleet, stdout, stderr, e)
+		return runFleet(ctx, parsed, stdout, stderr, e)
 	case "rate":
 		// --sweep-all resolves the repos it discovers and reads neither paths nor
 		// cwd; the sweep and --report fall through to the Locate below, which is
@@ -525,7 +533,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// batch that may never come. It re-enters the crew script for its children,
 	// which is why it takes the environment's CREW_SELF through Options.
 	if sub == "stream" {
-		return stream.Run(args, paths, stdout, stderr, stream.Options{
+		return stream.Run(streamRequest(parsed.typed.Stream.streamFlags, parsed.typed.Stream.ReapEvery), paths, stdout, stderr, stream.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Now:    time.Now,
 			Probes: e.procs,
@@ -813,12 +821,22 @@ func originOf(ctx context.Context, common string) string {
 	return strings.TrimSuffix(string(out), "\n")
 }
 
-func runFleet(ctx context.Context, c fleetCmd, stdout, stderr io.Writer, e env) int {
+// streamRequest is the typed stream call; an absent flag is "", the default.
+func streamRequest(f streamFlags, reapEvery *string) stream.Request {
+	return stream.Request{
+		Crew: str(f.Crew), States: str(f.States), Park: str(f.Park), Heartbeat: str(f.Heartbeat),
+		Coalesce: str(f.Coalesce), Retry: str(f.Retry), Interval: str(f.Interval), ReapEvery: str(reapEvery),
+		Force: f.Force, Status: f.Status,
+	}
+}
+
+func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) int {
 	// The lane prints one protocol line at a time for as long as it lives, so it
-	// writes straight to stdout like stream. validate lets a word through only
-	// when it is `stream`.
-	if len(c.Rest) > 0 {
-		return stream.RunFleet(c.Rest[1:], stdout, stderr, stream.FleetOptions{
+	// writes straight to stdout like stream.
+	if strings.HasPrefix(p.cmd, "fleet stream") {
+		s := p.typed.Fleet.Stream
+		req := stream.FleetRequest{Request: streamRequest(s.streamFlags, nil), Rediscover: str(s.Rediscover)}
+		return stream.RunFleet(req, stdout, stderr, stream.FleetOptions{
 			Options: stream.Options{Now: time.Now, Probes: e.procs},
 			Origin:  func(common string) string { return originOf(ctx, common) },
 		})
@@ -838,6 +856,7 @@ func runFleet(ctx context.Context, c fleetCmd, stdout, stderr io.Writer, e env) 
 	if palette, _ := jsonv.ParseJQColors(e.jqColors); e.color {
 		o.Colors = &palette
 	}
+	c := p.typed.Fleet.Table
 	return fleet.Run(fleet.Request{All: c.All, JSON: c.JSON, Crew: str(c.Crew)}, stdout, stderr, o)
 }
 

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
@@ -773,7 +774,7 @@ func TestAdmittedSubcommands(t *testing.T) {
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
-		"status", "msg", "reply", "hold", "nudge", "await", "watch"} {
+		"status", "msg", "reply", "hold", "nudge", "await", "watch", "stream"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -1176,6 +1177,25 @@ var refusalRows = []struct {
 	{"watch interval empty value equals", []string{"watch", "--interval="}, "crew: --interval needs a value", 1},
 	{"watch crew empty value", []string{"watch", "--crew", ""}, "crew: --crew needs a value", 1},
 
+	{"stream unknown flag", []string{"stream", "--bogus"}, "crew: stream: unknown arg '--bogus'", 64},
+	{"stream single-dash flag", []string{"stream", "-x"}, "crew: stream: unknown arg '-x'", 64},
+	{"stream extra positional", []string{"stream", "x"}, "crew: stream: unknown arg 'x'", 64},
+	{"stream bad bool", []string{"stream", "--force=nope"},
+		`crew: stream: --force: bool value must be true, 1, yes, false, 0 or no but got "nope"`, 64},
+	{"stream status bad bool", []string{"stream", "--status=nope"},
+		`crew: stream: --status: bool value must be true, 1, yes, false, 0 or no but got "nope"`, 64},
+	{"stream crew missing value", []string{"stream", "--crew"}, "crew: --crew needs a value", 64},
+	{"stream states empty value", []string{"stream", "--states", ""}, "crew: --states needs a value", 64},
+	{"stream park empty value equals", []string{"stream", "--park="}, "crew: --park needs a value", 64},
+	{"stream heartbeat missing value", []string{"stream", "--crew", "c1", "--heartbeat"}, "crew: --heartbeat needs a value", 64},
+	{"stream coalesce empty value", []string{"stream", "--coalesce", ""}, "crew: --coalesce needs a value", 64},
+	{"stream retry empty value equals", []string{"stream", "--retry="}, "crew: --retry needs a value", 64},
+	{"stream interval missing value", []string{"stream", "--interval"}, "crew: --interval needs a value", 64},
+	{"stream reap-every empty value", []string{"stream", "--reap-every", ""}, "crew: --reap-every needs a value", 64},
+	// The flag table's order decides which empty value is named, not argv order.
+	{"stream two empty values", []string{"stream", "--interval", "", "--crew", ""}, "crew: --crew needs a value", 64},
+	{"stream unknown beats empty value", []string{"stream", "--crew", "", "--bogus"}, "crew: stream: unknown arg '--bogus'", 64},
+
 	{"roster-render unknown flag", []string{"roster-render", "--bogus"}, "crew: roster-render: unknown arg '--bogus'", 64},
 	{"roster-render extra positional", []string{"roster-render", "--crew", "c1", "x"}, "crew: roster-render: unknown arg 'x'", 64},
 	{"roster-render crew missing value", []string{"roster-render", "--crew"}, "crew: --crew needs a value", 64},
@@ -1203,7 +1223,33 @@ var preLocateRefusalRows = []struct {
 	{"fleet crew empty value", []string{"fleet", "--crew", ""}, fleetUsage, 1},
 	{"fleet crew empty value equals", []string{"fleet", "--crew="}, fleetUsage, 1},
 	{"fleet bad bool", []string{"fleet", "--all=nope"}, fleetUsage, 1},
+	{"fleet word that names no lane", []string{"fleet", "table"}, fleetUsage, 1},
 	{"fleet stream behind a flag", []string{"fleet", "--json", "stream"}, fleetUsage, 1},
+	{"fleet stream behind all", []string{"fleet", "--all", "stream"}, fleetUsage, 1},
+	{"fleet stream behind crew", []string{"fleet", "--crew", "x", "stream"}, fleetUsage, 1},
+	{"fleet stream behind a flag with its own", []string{"fleet", "--all", "stream", "--crew", "c1"}, fleetUsage, 1},
+	{"fleet stream behind a flag unknown flag", []string{"fleet", "--all", "stream", "--bogus"}, fleetUsage, 1},
+	{"fleet stream unknown flag", []string{"fleet", "stream", "--bogus"}, "crew: fleet stream: unknown arg '--bogus'", 64},
+	{"fleet stream single-dash flag", []string{"fleet", "stream", "-x"}, "crew: fleet stream: unknown arg '-x'", 64},
+	{"fleet stream extra positional", []string{"fleet", "stream", "x"}, "crew: fleet stream: unknown arg 'x'", 64},
+	{"fleet stream table flag", []string{"fleet", "stream", "--all"}, "crew: fleet stream: unknown arg '--all'", 64},
+	{"fleet stream bad bool", []string{"fleet", "stream", "--force=nope"},
+		`crew: fleet stream: --force: bool value must be true, 1, yes, false, 0 or no but got "nope"`, 64},
+	{"fleet stream reap-every", []string{"fleet", "stream", "--crew", "c1", "--reap-every", "0"}, fleetReapEvery, 64},
+	{"fleet stream reap-every missing value", []string{"fleet", "stream", "--reap-every"}, fleetReapEvery, 64},
+	{"fleet stream reap-every equals", []string{"fleet", "stream", "--reap-every=5"}, fleetReapEvery, 64},
+	{"fleet stream reap-every beats empty value", []string{"fleet", "stream", "--park", "", "--reap-every", "5"}, fleetReapEvery, 64},
+	{"fleet stream unknown beats reap-every", []string{"fleet", "stream", "--reap-every", "5", "--bogus"}, "crew: fleet stream: unknown arg '--bogus'", 64},
+	{"fleet stream crew missing value", []string{"fleet", "stream", "--crew"}, "crew: --crew needs a value", 64},
+	{"fleet stream crew empty value", []string{"fleet", "stream", "--crew", ""}, "crew: --crew needs a value", 64},
+	{"fleet stream states empty value equals", []string{"fleet", "stream", "--states="}, "crew: --states needs a value", 64},
+	{"fleet stream park missing value", []string{"fleet", "stream", "--crew", "c1", "--park"}, "crew: --park needs a value", 64},
+	{"fleet stream heartbeat empty value", []string{"fleet", "stream", "--heartbeat", ""}, "crew: --heartbeat needs a value", 64},
+	{"fleet stream coalesce empty value equals", []string{"fleet", "stream", "--coalesce="}, "crew: --coalesce needs a value", 64},
+	{"fleet stream retry missing value", []string{"fleet", "stream", "--retry"}, "crew: --retry needs a value", 64},
+	{"fleet stream interval empty value", []string{"fleet", "stream", "--interval", ""}, "crew: --interval needs a value", 64},
+	{"fleet stream rediscover missing value", []string{"fleet", "stream", "--crew", "c1", "--rediscover"}, "crew: --rediscover needs a value", 64},
+	{"fleet stream rediscover empty value equals", []string{"fleet", "stream", "--rediscover="}, "crew: --rediscover needs a value", 64},
 	{"rate sweep-all unknown flag", []string{"rate", "--sweep-all", "--bogus"}, rateUsage, 1},
 	{"rate sweep-all root missing value", []string{"rate", "--sweep-all", "--root"}, rateRootNeedsDir, 1},
 	{"rate sweep-all root empty value", []string{"rate", "--sweep-all", "--root", ""}, rateRootNeedsDir, 1},
@@ -1215,6 +1261,7 @@ const (
 	retroUsage       = "crew: retro takes --report and --json"
 	rateUsage        = "crew: rate takes --report, --json, --pooled, and --sweep-all/--root"
 	fleetUsage       = "crew: fleet [--all] [--crew ID] [--json]"
+	fleetReapEvery   = "crew: fleet stream: --reap-every is not supported — the fleet lane does not reap (each repo's own stream or dispatch does)"
 	stackUsage       = "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n       crew stack align <top-PR#|branch>"
 	rateRootNeedsDir = "crew: rate --root needs a directory"
 	whereUsage       = "usage: crew where <codename|branch|%id> [--crew ID]"
@@ -1279,6 +1326,11 @@ func TestKongErrorClassification(t *testing.T) {
 		{[]string{"await", "a", "b"}, "unexpected argument b"},
 		{[]string{"watch", "--bogus"}, "unknown flag --bogus"},
 		{[]string{"watch", "x"}, "unexpected argument x"},
+		{[]string{"stream", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"stream", "x"}, "unexpected argument x"},
+		{[]string{"stream", "--force=nope"}, "--force: bool value must be"},
+		{[]string{"fleet", "stream", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"fleet", "stream", "x"}, "unexpected argument x"},
 	} {
 		var (
 			r       root
@@ -1570,6 +1622,18 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 		{"watch all flags", []string{"watch", "--since", "5", "--states", "done", "--timeout", "30", "--interval", "1", "--crew", "c1"},
 			[]string{"watch", "--since=5", "--states=done", "--timeout=30", "--interval=1", "--crew=c1"}, false},
 		{"watch --since empty", []string{"watch", "--since", ""}, []string{"watch", "--since="}, true},
+		{"stream all value flags", spelled([]string{"stream"}, streamValueFlags, "7", false), spelled([]string{"stream"}, streamValueFlags, "7", true), false},
+		{"stream all value flags empty", spelled([]string{"stream"}, streamValueFlags, "", false), spelled([]string{"stream"}, streamValueFlags, "", true), true},
+		{"stream --reap-every", []string{"stream", "--reap-every", "0"}, []string{"stream", "--reap-every=0"}, false},
+		{"stream bools", []string{"stream", "--force", "--status"}, []string{"stream", "--force=true", "--status=true"}, false},
+		{"fleet stream all value flags", spelled([]string{"fleet", "stream"}, fleetStreamValueFlags, "7", false),
+			spelled([]string{"fleet", "stream"}, fleetStreamValueFlags, "7", true), false},
+		{"fleet stream all value flags empty", spelled([]string{"fleet", "stream"}, fleetStreamValueFlags, "", false),
+			spelled([]string{"fleet", "stream"}, fleetStreamValueFlags, "", true), true},
+		{"fleet stream --rediscover", []string{"fleet", "stream", "--rediscover", "60"}, []string{"fleet", "stream", "--rediscover=60"}, false},
+		{"fleet stream --reap-every", []string{"fleet", "stream", "--reap-every", "0"}, []string{"fleet", "stream", "--reap-every=0"}, true},
+		{"fleet stream bools", []string{"fleet", "stream", "--crew", "c1", "--force", "--status"},
+			[]string{"fleet", "stream", "--crew=c1", "--force=true", "--status=true"}, false},
 		{"roster-render bools", []string{"roster-render", "--no-open", "--once", "--detach"},
 			[]string{"roster-render", "--no-open=true", "--once=true", "--detach=true"}, false},
 	} {
@@ -1607,6 +1671,25 @@ func holdAddJoined(v string) []string {
 		args = append(args, "--"+f+"="+v)
 	}
 	return append(args, "t")
+}
+
+// streamValueFlags are `stream`'s value flags; fleetStreamValueFlags are the lane's.
+var (
+	streamValueFlags      = []string{"crew", "states", "park", "heartbeat", "coalesce", "retry", "interval", "reap-every"}
+	fleetStreamValueFlags = []string{"crew", "states", "park", "heartbeat", "coalesce", "retry", "interval", "rediscover"}
+)
+
+// spelled is cmd with every flag set to v, spaced or joined.
+func spelled(cmd, flags []string, v string, joined bool) []string {
+	args := slices.Clone(cmd)
+	for _, f := range flags {
+		if joined {
+			args = append(args, "--"+f+"="+v)
+		} else {
+			args = append(args, "--"+f, v)
+		}
+	}
+	return args
 }
 
 // TestHoldAddEachValueFlagSpellsTheSame: one flag at a time, so a flag the table
@@ -1751,6 +1834,18 @@ func TestStreamChildWatchArgv(t *testing.T) {
 	if w.Since != nil || str(w.Crew) != "c1" || str(w.Timeout) != "300" ||
 		str(w.States) != "blocked,done" || str(w.Interval) != "2" {
 		t.Errorf("stream's child argv bound %+v", w)
+	}
+}
+
+// TestStreamChildHoldDueArgv pins the argv `crew stream` re-enters `crew hold
+// due` with (internal/stream/stream.go holdDue).
+func TestStreamChildHoldDueArgv(t *testing.T) {
+	parsed, ok := parseCrew([]string{"hold", "due", "--crew", "c1", "--json"})
+	if !ok || parsed.refusal != nil || parsed.cmd != "hold due" {
+		t.Fatalf("stream's child argv refused: ok %v cmd %q refusal %v", ok, parsed.cmd, parsed.refusal)
+	}
+	if got := holdRequest(parsed); !reflect.DeepEqual(got, hold.Request{Action: "due", JSON: true, Crew: "c1"}) {
+		t.Errorf("stream's child argv bound %+v", got)
 	}
 }
 
