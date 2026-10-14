@@ -147,7 +147,7 @@ var typedSubcommands = map[string]bool{
 	"status": true, "msg": true, "reply": true, "hold": true,
 	"nudge": true, "await": true, "watch": true, "stream": true,
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
-	"adopt": true,
+	"adopt": true, "pr-watch": true,
 }
 
 // passthroughCmd is one unconverted subcommand to kong: its name, then whatever
@@ -210,6 +210,8 @@ type root struct {
 	GitBaseline gitBaselineCmd `cmd:"" name:"git-baseline" help:"List or accept the git-config baseline."`
 
 	Adopt adoptCmd `cmd:"" name:"adopt" help:"Re-attach to a crew already on disk."`
+
+	PRWatch prWatchCmd `cmd:"" name:"pr-watch" help:"Park on a PR and post its change event to the bus."`
 
 	Reap          reapCmd `cmd:"" name:"reap" help:"Reclaim the windows and worktrees of landed workers."`
 	ReapAutosweep argvCmd `cmd:"" name:"reap-autosweep" help:"The detached ratings sweep reap starts."`
@@ -664,7 +666,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// pr-watch runs the standalone pr-watch binary as a child and posts the event it
 	// printed, so it owns its run the way watch does rather than folding the bus.
 	if sub == "pr-watch" {
-		return prwatch.Run(ctx, args, paths, stdout, stderr, prwatch.Options{
+		c := parsed.typed.PRWatch
+		return prwatch.Run(ctx, prwatch.Request{PR: c.PR, Repo: c.Repo, Timeout: c.Timeout, Interval: c.Interval}, paths, stdout, stderr, prwatch.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 		})

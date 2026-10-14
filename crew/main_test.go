@@ -766,7 +766,7 @@ func TestAdmittedSubcommands(t *testing.T) {
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
-		"status", "msg", "reply", "hold", "nudge", "await", "watch", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt"} {
+		"status", "msg", "reply", "hold", "nudge", "await", "watch", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "pr-watch"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -809,17 +809,18 @@ func TestAdmittedSubcommands(t *testing.T) {
 
 // TestParseCrewSplitsLeadingEquals is the measurement that decides who parses
 // what: kong splits the first word after a command name at `=`, so the capture
-// is not the argv an unconverted arm may be handed. `crew pr-watch --since=5` is a
+// is not the argv an unconverted arm may be handed. `crew dash --since=5` is a
 // word the arm reads whole; the split makes it `--since 5`, a different
-// command. The typed subcommands want the split (TestFlagSpellingsAreIdentical).
+// command; dash is why one passthrough is left. The typed subcommands want the split (TestFlagSpellingsAreIdentical).
 func TestParseCrewSplitsLeadingEquals(t *testing.T) {
 	for _, tc := range []struct {
 		args, captured []string
 	}{
-		{[]string{"pr-watch", "--since=5"}, []string{"--since", "5"}},
+		{[]string{"dash", "--since=5"}, []string{"--since", "5"}},
 		// Everything else about a passthrough command's argv does arrive whole,
 		// `--` and flag-shaped detail text included.
-		{[]string{"pr-watch", "w1", "working", "--help"}, []string{"w1", "working", "--help"}},
+		{[]string{"dash", "w1", "working", "--help"}, []string{"w1", "working", "--help"}},
+		{[]string{"dash", "--"}, []string{"--"}},
 	} {
 		var (
 			r       root
@@ -1170,6 +1171,8 @@ var refusalRows = []struct {
 	{"adopt unknown flag", []string{"adopt", "--bogus"}, "crew: adopt: unknown flag '--bogus'", 1},
 	{"adopt extra positional", []string{"adopt", "c1", "1", "2"}, "crew: adopt: unexpected argument '2'", 1},
 	{"adopt negative number", []string{"adopt", "-5"}, "crew: adopt: unknown flag '-5'", 1},
+	{"pr-watch unknown flag", []string{"pr-watch", "12", "--bogus"}, "pr-watch: unknown arg '--bogus'", 1},
+	{"pr-watch extra positional", []string{"pr-watch", "12", "13"}, "pr-watch: unknown arg '13'", 1},
 	{"reap idle negative", []string{"reap", "--idle", "-5"}, "crew: --idle must be a non-negative integer number of seconds", 1},
 }
 
@@ -1620,6 +1623,10 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 		{"reap bools", []string{"reap", "--quiet", "--dry-run", "--no-wait"}, []string{"reap", "--quiet=true", "--dry-run=true", "--no-wait=true"}, false},
 		{"adopt --force", []string{"adopt", "--force", "c1"}, []string{"adopt", "--force=true", "c1"}, false},
 		{"adopt --force last", []string{"adopt", "c1", "--force"}, []string{"adopt", "c1", "--force=true"}, false},
+		{"pr-watch --repo", []string{"pr-watch", "12", "--repo", "o/r"}, []string{"pr-watch", "12", "--repo=o/r"}, false},
+		{"pr-watch --timeout", []string{"pr-watch", "12", "--timeout", "5"}, []string{"pr-watch", "12", "--timeout=5"}, false},
+		{"pr-watch --interval", []string{"pr-watch", "12", "--interval", "1"}, []string{"pr-watch", "12", "--interval=1"}, false},
+		{"pr-watch --repo empty", []string{"pr-watch", "12", "--repo", ""}, []string{"pr-watch", "12", "--repo="}, false},
 		{"reap --idle empty", []string{"reap", "--idle", ""}, []string{"reap", "--idle="}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -258,6 +258,13 @@ type reapCmd struct {
 	Discard *string `name:"discard"`
 }
 
+type prWatchCmd struct {
+	Repo     *string `name:"repo"`
+	Timeout  *string `name:"timeout"`
+	Interval *string `name:"interval"`
+	PR       string  `arg:"" optional:"" name:"pr"`
+}
+
 type adoptCmd struct {
 	Force bool   `name:"force"`
 	ID    string `arg:"" optional:"" name:"id"`
@@ -439,11 +446,16 @@ var wordings = map[string]wording{
 		extra:       func(w string) string { return "crew: roster-render: unknown arg '" + w + "'" },
 		code:        exitUsage,
 	},
-	"inbox":        plain("inbox"),
-	"register":     plain("register"),
-	"deregister":   plain("deregister"),
-	"log":          plain("log"),
-	"adopt":        plain("adopt"),
+	"inbox":      plain("inbox"),
+	"register":   plain("register"),
+	"deregister": plain("deregister"),
+	"log":        plain("log"),
+	"adopt":      plain("adopt"),
+	"pr-watch": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("pr-watch: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("pr-watch: unknown arg '%s'", w) },
+		code:        exitFailure,
+	},
 	"git-baseline": {all: gitBaselineUsage, code: exitFailure},
 	"git-guard":    {all: gitguard.GuardUsage, code: exitUsage},
 	"reap": {

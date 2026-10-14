@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -51,7 +52,7 @@ func TestMain(m *testing.M) {
 		// the test never races the signal handler: `started` means Notify is
 		// registered (Run registers it before it starts the child), `forwarded`
 		// means the first TERM reached the child, which never exits.
-		os.Exit(Run(context.Background(), []string{"42"}, bus.Paths{}, io.Discard, io.Discard,
+		os.Exit(Run(context.Background(), Request{PR: "42"}, bus.Paths{}, io.Discard, io.Discard,
 			Options{CrewID: func() string { return "c1" }, Clock: fixedClock(), Start: func(context.Context, []string, io.Writer, io.Writer) (Child, error) {
 				_ = os.WriteFile(os.Getenv(markerEnv), []byte("x"), 0o644)
 				return parkedChild{}, nil
@@ -159,7 +160,7 @@ func TestNoCrewID(t *testing.T) {
 	tr := newTree(t)
 	s := &stub{out: event + "\n", code: 0}
 	var out, errOut strings.Builder
-	if code := Run(context.Background(), []string{"42"}, tr.paths, &out, &errOut,
+	if code := Run(context.Background(), Request{PR: "42"}, tr.paths, &out, &errOut,
 		Options{CrewID: func() string { return "" }, Clock: fixedClock(), Start: park(s)}); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
@@ -181,7 +182,7 @@ func TestChildFailure(t *testing.T) {
 	tr := newTree(t)
 	s := &stub{out: "partial output\n" + event + "\n", code: 3}
 	var out, errOut strings.Builder
-	if code := Run(context.Background(), []string{"42"}, tr.paths, &out, &errOut,
+	if code := Run(context.Background(), Request{PR: "42"}, tr.paths, &out, &errOut,
 		Options{CrewID: func() string { return "c1" }, Clock: fixedClock(), Start: park(s)}); code != 3 {
 		t.Fatalf("exit = %d, want the child's 3", code)
 	}
@@ -198,7 +199,7 @@ func TestTimeoutMarker(t *testing.T) {
 	// `$(…)` strips trailing newlines, so a bare newline is the timeout marker.
 	s := &stub{out: "\n", code: 0}
 	var out, errOut strings.Builder
-	if code := Run(context.Background(), []string{"42"}, tr.paths, &out, &errOut,
+	if code := Run(context.Background(), Request{PR: "42"}, tr.paths, &out, &errOut,
 		Options{CrewID: func() string { return "c1" }, Clock: fixedClock(), Start: park(s)}); code != 0 {
 		t.Fatalf("exit = %d, want 0 (a park that timed out is not a failure)", code)
 	}
@@ -214,7 +215,7 @@ func TestEvent(t *testing.T) {
 	tr := newTree(t)
 	s := &stub{out: event + "\n", code: 0}
 	var out, errOut strings.Builder
-	if code := Run(context.Background(), []string{"42", "--repo", "o/r"}, tr.paths, &out, &errOut,
+	if code := Run(context.Background(), Request{PR: "42", Repo: ptr("o/r")}, tr.paths, &out, &errOut,
 		Options{CrewID: func() string { return "c1" }, Clock: fixedClock(), Start: park(s)}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
@@ -237,7 +238,7 @@ func TestFromIsTheFirstArgumentEvenWhenAFlag(t *testing.T) {
 	tr := newTree(t)
 	s := &stub{out: event + "\n", code: 0}
 	var out, errOut strings.Builder
-	if code := Run(context.Background(), []string{"--interval", "1"}, tr.paths, &out, &errOut,
+	if code := Run(context.Background(), Request{PR: "--interval"}, tr.paths, &out, &errOut,
 		Options{CrewID: func() string { return "c1" }, Clock: fixedClock(), Start: park(s)}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
@@ -250,7 +251,7 @@ func TestNoArguments(t *testing.T) {
 	tr := newTree(t)
 	s := &stub{out: event + "\n", code: 0}
 	var out, errOut strings.Builder
-	if code := Run(context.Background(), nil, tr.paths, &out, &errOut,
+	if code := Run(context.Background(), Request{}, tr.paths, &out, &errOut,
 		Options{CrewID: func() string { return "c1" }, Clock: fixedClock(), Start: park(s)}); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
 	}
@@ -269,7 +270,7 @@ func TestStopSignalForwardsAndPostsNothing(t *testing.T) {
 	var out strings.Builder
 	done := make(chan int, 1)
 	go func() {
-		done <- Run(context.Background(), []string{"42"}, tr.paths, &out, io.Discard,
+		done <- Run(context.Background(), Request{PR: "42"}, tr.paths, &out, io.Discard,
 			Options{CrewID: func() string { return "c1" }, Clock: fixedClock(), Start: park(s), Signals: sigs})
 	}()
 
@@ -327,7 +328,7 @@ func TestStopSignal(t *testing.T) {
 	done := make(chan int, 1)
 	var out strings.Builder
 	go func() {
-		done <- Run(context.Background(), []string{"42"}, tr.paths, &out, io.Discard,
+		done <- Run(context.Background(), Request{PR: "42"}, tr.paths, &out, io.Discard,
 			Options{CrewID: func() string { return "c1" }, Clock: fixedClock()})
 	}()
 
@@ -359,7 +360,7 @@ func TestMissingBinary(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir)
 	var out, errOut strings.Builder
-	if code := Run(context.Background(), []string{"42"}, tr.paths, &out, &errOut,
+	if code := Run(context.Background(), Request{PR: "42"}, tr.paths, &out, &errOut,
 		Options{CrewID: func() string { return "c1" }, Clock: fixedClock()}); code != 127 {
 		t.Fatalf("exit = %d, want 127 (the arm's command not found)", code)
 	}
@@ -372,7 +373,7 @@ func TestStartFailure(t *testing.T) {
 	tr := newTree(t)
 	var out, errOut strings.Builder
 	boom := errors.New("cannot fork")
-	if code := Run(context.Background(), []string{"42"}, tr.paths, &out, &errOut,
+	if code := Run(context.Background(), Request{PR: "42"}, tr.paths, &out, &errOut,
 		Options{CrewID: func() string { return "c1" }, Clock: fixedClock(),
 			Start: func(context.Context, []string, io.Writer, io.Writer) (Child, error) {
 				return nil, boom
@@ -474,4 +475,26 @@ func waitFor(t *testing.T, path, why string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal(why)
+}
+
+func ptr(s string) *string { return &s }
+
+func TestArgv(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  Request
+		want []string
+	}{
+		{"all flags", Request{PR: "42", Repo: ptr("o/r"), Timeout: ptr("5"), Interval: ptr("1")},
+			[]string{"42", "--repo", "o/r", "--timeout", "5", "--interval", "1"}},
+		{"empty PR keeps its slot", Request{Repo: ptr("o/r")}, []string{"", "--repo", "o/r"}},
+		{"empty repo is forwarded", Request{PR: "42", Repo: ptr("")}, []string{"42", "--repo", ""}},
+		{"no flags", Request{PR: "42"}, []string{"42"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.req.Argv(); !slices.Equal(got, tc.want) {
+				t.Errorf("Argv() = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
