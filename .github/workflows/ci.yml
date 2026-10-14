@@ -155,9 +155,23 @@ jobs:
       - name: build packages for the cache
         run: nix build .#default --no-link
 
+  # Darwin consumers otherwise compile crew-go (and run its suite) themselves,
+  # and macOS-only test failures surface first in their rebuilds.
+  build-darwin:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/cachix-action@v17
+        with:
+          name: dispatcher
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: build packages for the cache
+        run: nix build .#default --no-link
+
   check:
     if: always()
-    needs: [lint, bats, bats-module, bats-timing, flake-check]
+    needs: [lint, bats, bats-module, bats-timing, flake-check, build-darwin]
     runs-on: ubuntu-latest
     steps:
       - name: report failed dependencies
