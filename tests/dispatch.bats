@@ -16162,7 +16162,7 @@ setup_bundle_resume() {
   [[ "$line" == *"ENABLE_CLAUDEAI_MCP_SERVERS=false claude --name iris "* ]]
 }
 
-@test "lean: a claude lead launch disables only the worker's unused plugins" {
+@test "lean: a claude lead launch disables the worker's unused plugins and denies the default browser MCP servers" {
   stub_launch_bins
   unset CLAUDE_WORKER_SETTINGS_LIB
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
@@ -16172,16 +16172,6 @@ setup_bundle_resume() {
   [[ "$line" == *"--settings $settings --add-dir "* ]]
   [[ "$line" != *disableAllHooks* ]]
   [[ "$line" != *gopls-lsp* ]]
-}
-
-@test "a claude lead's worker settings deny the default browser MCP servers" {
-  stub_launch_bins
-  unset CLAUDE_WORKER_SETTINGS_LIB
-  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
-  [ "$status" -eq 0 ]
-  line="$(grep -F 'claude --name iris ' <(launch_log))"
-  printf -v deny '%q' '"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*"]}'
-  [[ "$line" == *"$deny"* ]]
 }
 
 @test "an overridden workerDeniedMcpServers replaces the default list" {
@@ -16211,7 +16201,7 @@ setup_bundle_resume() {
 
 # ── Per-branch agent-browser session ───────────────────────────
 
-browser_session_re='AGENT_BROWSER_SESSION=(dispatch-[a-z0-9-]*-[0-9a-f]{8}) '
+browser_session_re='AGENT_BROWSER_SESSION=(dispatch-[a-z0-9-]*-[0-9a-f]{8}) AGENT_BROWSER_CONFIG=([^ ]*/agent-browser-worker.json) '
 
 @test "AGENT_BROWSER_SESSION: a claude lead and its role pane share one per-branch session" {
   stub_launch_bins
@@ -16256,15 +16246,19 @@ browser_session_re='AGENT_BROWSER_SESSION=(dispatch-[a-z0-9-]*-[0-9a-f]{8}) '
   [ "${BASH_REMATCH[1]}" != "$first" ]
 }
 
-@test "worker_browser_env: sanitized, bounded and distinct per branch" {
+@test "worker_browser_env: sanitized, bounded, distinct per worktree and pins the config" {
   . "$BATS_TEST_DIRNAME/../adapters/core/claude-worker-settings.sh"
-  [ "$(worker_browser_env 'feat/x')" != "$(worker_browser_env 'feat-x')" ]
+  cfg="$BATS_TEST_DIRNAME/../adapters/core/agent-browser-worker.json"
+  [ "$(worker_browser_env feat/x /wt/a "$cfg")" != "$(worker_browser_env feat/x /wt/b "$cfg")" ]
+  [ "$(worker_browser_env feat/x /wt/a "$cfg")" = "$(worker_browser_env feat/x /wt/a "$cfg")" ]
   long="$(printf 'a/%.0s' {1..100})"
-  out="$(worker_browser_env "$long")"
-  value="${out#AGENT_BROWSER_SESSION=}"
-  value="${value% }"
-  [ "${#value}" -le 60 ]
-  [[ "$value" =~ ^[A-Za-z0-9_-]+$ ]]
+  out="$(worker_browser_env "$long" /wt/a "$cfg")"
+  [[ "$out" =~ ^AGENT_BROWSER_SESSION=([^\ ]+)\ AGENT_BROWSER_CONFIG=([^\ ]+)\ $ ]]
+  session="${BASH_REMATCH[1]}"
+  [ "${BASH_REMATCH[2]}" = "$cfg" ]
+  [ "${#session}" -le 38 ]
+  [[ "$session" =~ ^[A-Za-z0-9_-]+$ ]]
+  [ "$(cat "$cfg")" = '{}' ]
 }
 
 @test "lean: DISPATCH_CLAUDE_CONNECTORS=1 opts out" {

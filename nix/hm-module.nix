@@ -57,7 +57,7 @@ self: {
         name = "agent-browser";
         paths = [cfg.agentBrowser.package];
         nativeBuildInputs = [pkgs.makeWrapper];
-        postBuild = "wrapProgram $out/bin/agent-browser --set-default AGENT_BROWSER_EXECUTABLE_PATH ${lib.escapeShellArg cfg.agentBrowser.executablePath}";
+        postBuild = "test -x ${lib.escapeShellArg cfg.agentBrowser.executablePath} && wrapProgram $out/bin/agent-browser --set-default AGENT_BROWSER_EXECUTABLE_PATH ${lib.escapeShellArg cfg.agentBrowser.executablePath}";
       };
   pkgsFor = self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.mkPackages lockedFile;
 in {
@@ -330,7 +330,8 @@ in {
         server part of a tool name `mcp__<server>__<tool>`; a plugin's server
         is `plugin_<plugin>_<server>`. Set, it lands in the locked layer and
         replaces the list (the base default in adapters/core/defaults.json
-        covers `plugin_hm_playwright` and `plugin_hm_firefox-devtools`).
+        covers `plugin_hm_playwright` and `plugin_hm_firefox-devtools`;
+        include the defaults to extend it).
         Unset, the locked layer omits the key.
       '';
     };

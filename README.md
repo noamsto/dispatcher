@@ -290,7 +290,10 @@ Linux, Playwright's Chrome for Testing
 downloads Chrome for Testing), a system Chrome (darwin `/Applications`; Linux
 `chromium`/`google-chrome` on `PATH`) or the Puppeteer/Playwright caches.
 `dispatch` and `dispatch resume` export `AGENT_BROWSER_SESSION` (keyed on the
-branch) on every launch, so parallel workers never share cookies, storage or tabs.
+branch slug plus a hash of the worktree) on every launch, so parallel workers
+never share cookies, storage or tabs. They also export `AGENT_BROWSER_CONFIG`
+pointing at a dispatcher-owned empty config, so neither the repo's
+`./agent-browser.json` nor `~/.agent-browser/config.json` applies to workers.
 
 ### Lean claude workers
 
@@ -307,10 +310,12 @@ those drive the owner's authenticated browser or a shared, locked profile. Claud
 workers get `permissions.deny` rules for them from the worker-only settings
 layer, built from `workerDeniedMcpServers` (default `plugin_hm_playwright`,
 `plugin_hm_firefox-devtools`; `programs.dispatcher.workerDeniedMcpServers`
-overrides it). Codex and cursor worker MCP configs are generated in the owner's
+replaces it, so list the defaults too to extend it; honoured from any settings
+layer). Codex and cursor worker MCP configs are generated in the owner's
 nix-config, which keeps browser servers out of them; codex's worker profile
-`shell_environment_policy` must pass `AGENT_BROWSER_SESSION` through, else a
-codex worker silently uses the shared default session.
+`shell_environment_policy` must pass `AGENT_BROWSER_SESSION` and
+`AGENT_BROWSER_CONFIG` through, else a codex worker silently uses the shared
+default session.
 
 ### Settings
 
