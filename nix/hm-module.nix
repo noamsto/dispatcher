@@ -80,7 +80,7 @@ self: {
     else base;
   claudePluginDir = withAgentBrowserSkill "claude" ccPlugin "skills";
   piSkillsDir = withAgentBrowserSkill "pi" "${self}/adapters/core/skills" ".";
-  pkgsFor = self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.mkPackages lockedFile;
+  pkgsFor = self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.mkPackagesWith lockedFile piSkillsDir;
 in {
   options.programs.dispatcher = {
     enable = lib.mkEnableOption "the dispatcher agent fan-out harness";
@@ -523,8 +523,9 @@ in {
             run rm -rf "$HOME/${codexCache}"
             run mkdir -p "$HOME/${codexCache}"
             run cp -rL ${codexPlugin} "$HOME/${codexCache}/${codexVersion}"
-            ${lib.optionalString (cfg.agentBrowser.package != null) ''run cp -rL ${agentBrowserSkillTree}/agent-browser "$HOME/${codexCache}/${codexVersion}/skills/"''}
             run chmod -R u+w "$HOME/${codexCache}"
+            ${lib.optionalString (cfg.agentBrowser.package != null) ''run cp -rL ${agentBrowserSkillTree}/agent-browser "$HOME/${codexCache}/${codexVersion}/skills/"''}
+            ${lib.optionalString (cfg.agentBrowser.package != null) ''run chmod -R u+w "$HOME/${codexCache}/${codexVersion}/skills/agent-browser"''}
           '';
         }
         // lib.optionalAttrs (hasEngine "cursor") {
@@ -539,14 +540,22 @@ in {
           dispatcherCursorSkills = lib.hm.dag.entryAfter ["writeBoundary"] ''
             skills_dir="$HOME/.cursor/skills"
             run mkdir -p "$skills_dir"
+            ab_link="$skills_dir/agent-browser"
+            case "$(readlink "$ab_link" 2>/dev/null)" in
+              /nix/store/*-agent-browser-skill/agent-browser) ab_ours=1 ;;
+              *) ab_ours= ;;
+            esac
             ${
               if cfg.agentBrowser.package != null
-              then ''run ln -sfn "${agentBrowserSkillTree}/agent-browser" "$skills_dir/agent-browser"''
+              then ''
+                if [ -n "$ab_ours" ] || { [ ! -e "$ab_link" ] && [ ! -L "$ab_link" ]; }; then
+                  run ln -sfn "${agentBrowserSkillTree}/agent-browser" "$ab_link"
+                else
+                  echo "agent-browser skill: $ab_link is owned elsewhere, leaving it" >&2
+                fi''
               else ''
                 # Package turned off: drop only our own link, never another producer's.
-                case "$(readlink "$skills_dir/agent-browser" 2>/dev/null)" in
-                  /nix/store/*-agent-browser-skill/agent-browser) run rm -f "$skills_dir/agent-browser" ;;
-                esac''
+                if [ -n "$ab_ours" ]; then run rm -f "$ab_link"; fi''
             }
             ${lib.concatMapStrings (name: "run ln -sfn \"${self}/adapters/cursor/skills/${name}\" \"$skills_dir/${name}\"\n") (builtins.attrNames (lib.filterAttrs (_: t: t == "directory") (builtins.readDir "${self}/adapters/cursor/skills")))}'';
         };

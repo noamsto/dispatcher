@@ -1,6 +1,6 @@
 ---
 name: agent-browser
-description: Headless, isolated browser checks with the agent-browser CLI: verify that a page or flow renders and behaves, take snapshots and screenshots, drive forms. In an interactive session the Playwright and Firefox DevTools MCPs stay the right tool; use this for scripted, throwaway checks.
+description: "Headless, isolated browser checks with the agent-browser CLI: verify that a page or flow renders and behaves, take snapshots and screenshots, drive forms. In an interactive session the Playwright and Firefox DevTools MCPs stay the right tool; use this for scripted, throwaway checks."
 allowed-tools: Bash(agent-browser:*)
 ---
 

@@ -60,7 +60,12 @@
         # The package set with `lockedSettings` (a JSON file, or null for none)
         # baked into dispatch-config as its locked layer. nix/hm-module.nix
         # calls it with the file it generates.
-        mkPackages = lockedSettings: let
+        mkPackages = lockedSettings: mkPackagesWith lockedSettings ./adapters/core/skills;
+        # `skills` is the dir baked as @skillsDir@; nix/hm-module.nix passes a
+        # derived one when it adds a skill, so the exported
+        # DISPATCHER_SKILLS_DIR equals the baked default (else _resolve_dir
+        # treats it as stale).
+        mkPackagesWith = lockedSettings: skills: let
           protocols = ./adapters/core/protocols;
           # @protocolDir@ is the build-time default for the env-overridable
           # PROTOCOL_DIR in dispatch.sh / dispatcher.sh. Substituting a store
@@ -85,11 +90,11 @@
             (builtins.concatStringsSep "" (map
               (n: "${n}:${builtins.hashFile "sha256" (protocols + "/${n}")};")
               protocolFiles)));
-          # @skillsDir@ is the build-time default for the env-overridable
-          # DISPATCHER_SKILLS_DIR that pi workers are handed via --skill. The
-          # source tree itself, not a projection: gen-adapters.sh copies this
-          # same directory into the other three adapter trees.
-          skills = ./adapters/core/skills;
+          # @skillsDir@ (the `skills` argument) is the build-time default for
+          # the env-overridable DISPATCHER_SKILLS_DIR that pi workers are
+          # handed via --skill. By default the source tree itself, not a
+          # projection: gen-adapters.sh copies the same directory into the
+          # other three adapter trees.
           # The crew entrypoint's code: every subcommand, plus the help routing
           # and the `*)` fallback crew.sh used to own (#821). The `crew` package
           # below installs this binary as `crew`; `crew-go` is the same file under
@@ -377,7 +382,7 @@
 
         packages = mkPackages null;
 
-        legacyPackages.mkPackages = mkPackages;
+        legacyPackages = {inherit mkPackages mkPackagesWith;};
 
         devShells.default = pkgs.mkShell {
           inherit (config.pre-commit) shellHook;
