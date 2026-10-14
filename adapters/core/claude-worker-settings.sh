@@ -30,7 +30,10 @@ claude_worker_plugin_settings() {
     {enabledPlugins: $plugins}
     + (($settings.workerDeniedMcpServers // []) as $deny
        | if ($deny | length) > 0 then {permissions: {deny: ($deny | map("mcp__\(.)__*"))}} else {} end)' |
-    { read -r json; printf '%q' "$json"; }
+    {
+      read -r json
+      printf '%q' "$json"
+    }
 }
 
 # worker_browser_env <branch> — print the AGENT_BROWSER_SESSION assignment, with
