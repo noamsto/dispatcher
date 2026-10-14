@@ -926,7 +926,7 @@ agent_browser_worker_config="${AGENT_BROWSER_WORKER_CONFIG:-@agentBrowserWorkerC
 # replaceStrings rewrites the token on both sides of an equality check, so a
 # string compare against the placeholder always matches after bake.
 if [ ! -f "$agent_browser_worker_config" ]; then
-  agent_browser_worker_config="$(dirname -- "${BASH_SOURCE[0]}")/agent-browser-worker.json"
+  agent_browser_worker_config="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/agent-browser-worker.json"
 fi
 
 # The localModels lane helpers, shared with crew and refresh-budget.

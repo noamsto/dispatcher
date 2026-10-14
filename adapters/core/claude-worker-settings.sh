@@ -36,20 +36,34 @@ claude_worker_plugin_settings() {
     }
 }
 
-# worker_browser_env <branch> <worktree> <config> — print the agent-browser
-# assignments, with a trailing space, that give each worktree its own session and
-# pin the config file. agent-browser merges ./agent-browser.json from the repo
-# under work over the owner's ~/.agent-browser/config.json, so either could point
-# a worker at the owner's browser (profile, autoConnect, cdp, args); naming a
-# config makes it the only one read. Role panes share their lead's session
+# worker_browser_env <branch> <worktree> <config> — print an `env` prefix, with a
+# trailing space, that gives each worktree its own agent-browser session, pins the
+# config file and strips the AGENT_BROWSER_* variables that can redirect a worker.
+# agent-browser merges ./agent-browser.json from the repo under work over the
+# owner's ~/.agent-browser/config.json, so either could point a worker at the
+# owner's browser (profile, autoConnect, cdp, args); naming a config makes it the
+# only one read. It also reads AGENT_BROWSER_* variables on top of any config, and
+# a worker inherits the owner's shell and tmux environment, so the ones that pick
+# another browser or session state are unset. AGENT_BROWSER_EXECUTABLE_PATH stays:
+# the Nix wrapper defaults it. Role panes share their lead's session
 # because they share its worktree. The worktree path, not the branch, is hashed so
 # two repos on the same branch name never share a session. Session names allow
 # only [A-Za-z0-9_-] and the socket path <socket dir>/<session>.sock caps at 103
 # bytes (the socket dir is $HOME/.agent-browser on darwin, so the budget depends
 # on it), hence the short slug.
+readonly -a WORKER_BROWSER_STRIPPED_ENV=(
+  AGENT_BROWSER_AUTO_CONNECT AGENT_BROWSER_CDP AGENT_BROWSER_PROFILE
+  AGENT_BROWSER_PROVIDER AGENT_BROWSER_EXTENSIONS AGENT_BROWSER_ARGS
+  AGENT_BROWSER_INIT_SCRIPTS AGENT_BROWSER_PLUGINS AGENT_BROWSER_STATE
+  AGENT_BROWSER_RESTORE AGENT_BROWSER_SESSION_NAME AGENT_BROWSER_NAMESPACE
+  AGENT_BROWSER_SOCKET_DIR
+)
+
 worker_browser_env() {
-  local slug sum
+  local slug sum var
   slug="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed -e 's/^-//' -e 's/-$//' | cut -c1-20)"
   sum="$(printf '%s' "$2" | cksum | cut -d' ' -f1)"
+  printf 'env '
+  for var in "${WORKER_BROWSER_STRIPPED_ENV[@]}"; do printf -- '-u %s ' "$var"; done
   printf 'AGENT_BROWSER_SESSION=dispatch-%s-%08x AGENT_BROWSER_CONFIG=%q ' "$slug" "$sum" "$3"
 }

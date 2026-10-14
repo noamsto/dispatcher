@@ -16199,11 +16199,12 @@ setup_bundle_resume() {
   [[ "$line" == *"--settings "*enabledPlugins* ]]
 }
 
-# ── Per-branch agent-browser session ───────────────────────────
+# ── Per-worktree agent-browser session ───────────────────────────
 
-browser_session_re='AGENT_BROWSER_SESSION=(dispatch-[a-z0-9-]*-[0-9a-f]{8}) AGENT_BROWSER_CONFIG=([^ ]*/agent-browser-worker.json) '
+browser_session_re='AGENT_BROWSER_SESSION=(dispatch-[a-z0-9-]*-[0-9a-f]{8}) AGENT_BROWSER_CONFIG=(/[^ ]*/agent-browser-worker.json) '
+browser_env_prefix='env -u AGENT_BROWSER_AUTO_CONNECT -u AGENT_BROWSER_CDP -u AGENT_BROWSER_PROFILE '
 
-@test "AGENT_BROWSER_SESSION: a claude lead and its role pane share one per-branch session" {
+@test "AGENT_BROWSER_SESSION: a claude lead and its role pane share one per-worktree session" {
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --roles reviewer=claude:sonnet --crew-id c1 42 "browser"
   [ "$status" -eq 0 ]
@@ -16212,7 +16213,7 @@ browser_session_re='AGENT_BROWSER_SESSION=(dispatch-[a-z0-9-]*-[0-9a-f]{8}) AGEN
   [[ "$lead" =~ $browser_session_re ]]
   lead_session="${BASH_REMATCH[1]}"
   [ "$(grep -o 'AGENT_BROWSER_SESSION=' <<<"$lead" | wc -l | tr -d ' ')" = 1 ]
-  [[ "$lead" == *"${BASH_REMATCH[0]}"*"claude --name iris "* ]]
+  [[ "$lead" == *"$browser_env_prefix"*"${BASH_REMATCH[0]}"*"claude --name iris "* ]]
   [[ "$role" =~ $browser_session_re ]]
   [ "${BASH_REMATCH[1]}" = "$lead_session" ]
 }
@@ -16228,12 +16229,12 @@ browser_session_re='AGENT_BROWSER_SESSION=(dispatch-[a-z0-9-]*-[0-9a-f]{8}) AGEN
   [[ "$lead" =~ $browser_session_re ]]
   lead_session="${BASH_REMATCH[1]}"
   [ "$(grep -o 'AGENT_BROWSER_SESSION=' <<<"$lead" | wc -l | tr -d ' ')" = 1 ]
-  [[ "$lead" == *"${BASH_REMATCH[0]}PI_CODING_AGENT_DIR="* ]]
+  [[ "$lead" == *"$browser_env_prefix"*"${BASH_REMATCH[0]}PI_CODING_AGENT_DIR="* ]]
   [[ "$role" =~ $browser_session_re ]]
   [ "${BASH_REMATCH[1]}" = "$lead_session" ]
 }
 
-@test "AGENT_BROWSER_SESSION: different branches get different sessions" {
+@test "AGENT_BROWSER_SESSION: different worktrees get different sessions" {
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "first"
   [ "$status" -eq 0 ]
@@ -16253,9 +16254,12 @@ browser_session_re='AGENT_BROWSER_SESSION=(dispatch-[a-z0-9-]*-[0-9a-f]{8}) AGEN
   [ "$(worker_browser_env feat/x /wt/a "$cfg")" = "$(worker_browser_env feat/x /wt/a "$cfg")" ]
   long="$(printf 'a/%.0s' {1..100})"
   out="$(worker_browser_env "$long" /wt/a "$cfg")"
-  [[ "$out" =~ ^AGENT_BROWSER_SESSION=([^\ ]+)\ AGENT_BROWSER_CONFIG=([^\ ]+)\ $ ]]
-  session="${BASH_REMATCH[1]}"
-  [ "${BASH_REMATCH[2]}" = "$cfg" ]
+  [[ "$out" == "env -u "* ]]
+  [[ "$out" == *"-u AGENT_BROWSER_AUTO_CONNECT "*"-u AGENT_BROWSER_CDP "*"-u AGENT_BROWSER_PROFILE "* ]]
+  [[ "$out" != *AGENT_BROWSER_EXECUTABLE_PATH* ]]
+  [[ "$out" =~ ^env\ (-u\ [A-Z_]+\ )+AGENT_BROWSER_SESSION=([^\ ]+)\ AGENT_BROWSER_CONFIG=([^\ ]+)\ $ ]]
+  session="${BASH_REMATCH[2]}"
+  [ "${BASH_REMATCH[3]}" = "$cfg" ]
   [ "${#session}" -le 38 ]
   [[ "$session" =~ ^[A-Za-z0-9_-]+$ ]]
   [ "$(cat "$cfg")" = '{}' ]

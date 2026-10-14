@@ -294,6 +294,9 @@ branch slug plus a hash of the worktree) on every launch, so parallel workers
 never share cookies, storage or tabs. They also export `AGENT_BROWSER_CONFIG`
 pointing at a dispatcher-owned empty config, so neither the repo's
 `./agent-browser.json` nor `~/.agent-browser/config.json` applies to workers.
+Launches also strip inherited `AGENT_BROWSER_*` variables that redirect the
+browser (profile, CDP, auto-connect) from the owner's shell or tmux environment;
+a repo `.envrc` loaded by direnv inside a worker shell is not covered.
 
 ### Lean claude workers
 

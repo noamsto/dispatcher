@@ -57,7 +57,13 @@ self: {
         name = "agent-browser";
         paths = [cfg.agentBrowser.package];
         nativeBuildInputs = [pkgs.makeWrapper];
-        postBuild = "test -x ${lib.escapeShellArg cfg.agentBrowser.executablePath} && wrapProgram $out/bin/agent-browser --set-default AGENT_BROWSER_EXECUTABLE_PATH ${lib.escapeShellArg cfg.agentBrowser.executablePath}";
+        postBuild = let
+          path = lib.escapeShellArg cfg.agentBrowser.executablePath;
+        in
+          lib.optionalString (lib.hasPrefix "/nix/store/" cfg.agentBrowser.executablePath) ''
+            [ -x ${path} ] || { echo "programs.dispatcher.agentBrowser.executablePath is not executable: "${path} >&2; exit 1; }
+          ''
+          + "wrapProgram $out/bin/agent-browser --set-default AGENT_BROWSER_EXECUTABLE_PATH ${path}";
       };
   pkgsFor = self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.mkPackages lockedFile;
 in {
@@ -367,7 +373,9 @@ in {
           /Applications; Linux: chromium/google-chrome on PATH). This points it
           at a Nix-provided Chromium instead (nixpkgs chromium is Linux-only;
           on aarch64-darwin, Playwright's Chrome for Testing). Null leaves the
-          binary unwrapped (then run `agent-browser install` once). The wrapper
+          binary unwrapped (then run `agent-browser install` once). A
+          `/nix/store` path is checked to be executable at build time (a host
+          path is not visible in the build sandbox, so it is not). The wrapper
           uses `--set-default`, so an exported
           `AGENT_BROWSER_EXECUTABLE_PATH` still wins.
         '';
