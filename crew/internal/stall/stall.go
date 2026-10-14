@@ -28,7 +28,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/unread"
 )
 
-// Options is everything Run reads beyond its argv and the bus.
+// Options is everything Run reads beyond its request and the bus.
 type Options struct {
 	CrewID    func() string
 	Clock     clock.Clock
@@ -80,18 +80,16 @@ type watch struct {
 }
 
 // Run is the arm: it returns the status the arm exited with.
-func Run(ctx context.Context, argv []string, paths bus.Paths, stderr io.Writer, o Options) int {
+func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o Options) int {
 	if o.Nudge == nil {
 		deps := nudge.PaneDeps(paths, stderr, o.Clock)
 		o.Nudge = func(ctx context.Context, req nudge.PaneRequest) (string, int) {
 			return nudge.Pane(ctx, req, deps)
 		}
 	}
-	cfg, err := parseArgs(argv, o.CrewID)
+	cfg, err := parseArgs(req, o.CrewID)
 	if err != nil {
-		if msg := err.Error(); msg != "" {
-			_, _ = fmt.Fprintln(stderr, msg)
-		}
+		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
 	if reason := sender.Watch(cfg.fromID, cfg.crew, cfg.pane, o.Sender); reason != "" {

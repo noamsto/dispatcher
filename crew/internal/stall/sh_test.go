@@ -32,7 +32,7 @@ func TestD8HelperFailureHolds(t *testing.T) {
 	for _, rc := range helperFailures {
 		t.Run(strconv.Itoa(rc), func(t *testing.T) {
 			f := newFake()
-			h, w := d8Watch(t, f)
+			h, w := d8Watch(t, f, Request{})
 			const blocked = "blocked|budget: claude 5h at 100% (no reset time)"
 			f.sh = budgetSh("5h\t100\t\t", 0, "", 1)
 			pdOK(t, w, 0, 0, w.probePre)
@@ -52,7 +52,7 @@ func TestD8HelperFailureNoEpisode(t *testing.T) {
 	for _, rc := range helperFailures {
 		t.Run(strconv.Itoa(rc), func(t *testing.T) {
 			f := newFake()
-			h, w := d8Watch(t, f)
+			h, w := d8Watch(t, f, Request{})
 			h.writeRows(h.status("worker:feat/x", 1, `{"state":"working"}`))
 			f.sh = func(string, ...string) (string, int) { return "", rc }
 			pdOK(t, w, 0, 0, w.probePre)
@@ -80,7 +80,7 @@ func TestReleaseHelperFailureKeepsWatching(t *testing.T) {
 				}
 				return "", shOffset
 			}
-			_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, "--engine", "claude")
+			_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, Request{Engine: ptr("claude")})
 			if code, ok := codeOf(w.finishedRelease()); !ok || code != 0 {
 				t.Fatalf("finishedRelease = %d, %v", code, ok)
 			}
@@ -97,7 +97,7 @@ func TestReleaseHelperFailureKeepsWatching(t *testing.T) {
 func TestHelperFailureLoggedOnce(t *testing.T) {
 	f := newFake()
 	f.sample = sampling("static frame")
-	h, w := d8Watch(t, f)
+	h, w := d8Watch(t, f, Request{})
 	f.sh = func(string, ...string) (string, int) { return "", 127 }
 	pdOK(t, w, 0, 0, w.probePre)
 	pdOK(t, w, 60, 4, w.probePre)

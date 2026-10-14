@@ -117,7 +117,7 @@ func TestBudgetDetail(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFake()
 			h := newHarness(t, f)
-			w := h.watch("feat/x", "--pane", "%1", "--engine", tc.engine)
+			w := h.watch(Request{Target: "feat/x", Pane: ptr("%1"), Engine: ptr(tc.engine)})
 			w.now = h.seed
 			win, lim := tc.win, tc.lim
 			reset := strconv.FormatInt(h.seed+tc.resetOff, 10)
@@ -193,7 +193,7 @@ func TestBudgetDetailCreditsCover(t *testing.T) {
 	for _, tc := range cases {
 		f := newFake()
 		h := newHarness(t, f)
-		w := h.watch("feat/x", "--pane", "%1", "--engine", "claude")
+		w := h.watch(Request{Target: "feat/x", Pane: ptr("%1"), Engine: ptr("claude")})
 		w.now = h.seed
 		if tc.cache != "" {
 			writeFile(t, h.options().BudgetFile, tc.cache)
@@ -211,7 +211,7 @@ func TestBudgetDetailCreditsCover(t *testing.T) {
 	// The suffix follows a limit too.
 	f := newFake()
 	h := newHarness(t, f)
-	w := h.watch("feat/x", "--pane", "%1", "--engine", "codex")
+	w := h.watch(Request{Target: "feat/x", Pane: ptr("%1"), Engine: ptr("codex")})
 	w.now = h.seed
 	writeFile(t, h.options().BudgetFile, `{"engines":{"codex":{"credits_cover":true}}}`)
 	f.sh = budgetSh("", 1, "spend control reached\t\t", 0)
@@ -245,7 +245,7 @@ func TestBudgetLastTry(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, newFake())
-			w := h.watch("feat/x", "--pane", "%1")
+			w := h.watch(Request{Target: "feat/x", Pane: ptr("%1")})
 			file := h.options().BudgetFile
 			if tc.cache != "" {
 				writeFile(t, file, tc.cache)
@@ -260,11 +260,11 @@ func TestBudgetLastTry(t *testing.T) {
 	}
 }
 
-// refreshWatch is a watch whose RefreshBudget counts its calls.
-func refreshWatch(t *testing.T, argv ...string) (*harness, *watch, *int) {
+// refreshWatch is a watch with that --budget-refresh whose RefreshBudget counts its calls.
+func refreshWatch(t *testing.T, budgetRefresh string) (*harness, *watch, *int) {
 	t.Helper()
 	h := newHarness(t, newFake())
-	w := h.watch(append([]string{"feat/x", "--pane", "%1"}, argv...)...)
+	w := h.watch(Request{Target: "feat/x", Pane: ptr("%1"), BudgetRefresh: ptr(budgetRefresh)})
 	w.now = h.seed
 	calls := 0
 	w.p.RefreshBudget = func(context.Context) {
@@ -290,7 +290,7 @@ func TestBudgetRefreshMaybe(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h, w, calls := refreshWatch(t, "--budget-refresh", tc.interval)
+			h, w, calls := refreshWatch(t, tc.interval)
 			file := w.o.BudgetFile
 			off := int64(-100)
 			if tc.ran {
@@ -330,7 +330,7 @@ func TestBudgetRefreshMaybe(t *testing.T) {
 
 // The stamp rate-limits a refresh that never writes the cache.
 func TestBudgetRefreshStampHoldsBack(t *testing.T) {
-	h, w, calls := refreshWatch(t, "--budget-refresh", "900")
+	h, w, calls := refreshWatch(t, "900")
 	for _, off := range []int64{0, 300, 899} {
 		w.now = h.seed + off
 		if _, err := w.refreshMaybe(); err != nil {
@@ -347,7 +347,7 @@ func TestBudgetRefreshStampHoldsBack(t *testing.T) {
 }
 
 func TestBudgetRefreshLockHeldByLivePid(t *testing.T) {
-	_, w, calls := refreshWatch(t, "--budget-refresh", "900")
+	_, w, calls := refreshWatch(t, "900")
 	dir := w.o.BudgetFile + ".refresh.d"
 	writeFile(t, dir+"/pid", strconv.Itoa(os.Getppid())+"\n")
 	ran, err := w.refreshMaybe()
@@ -364,7 +364,7 @@ func TestBudgetRefreshLockHeldByLivePid(t *testing.T) {
 
 // A dead holder's lock is reclaimed.
 func TestBudgetRefreshLockStaleReclaimed(t *testing.T) {
-	_, w, calls := refreshWatch(t, "--budget-refresh", "900")
+	_, w, calls := refreshWatch(t, "900")
 	writeFile(t, w.o.BudgetFile+".refresh.d/pid", "\n")
 	old := time.Now().Add(-10 * time.Second)
 	if err := os.Chtimes(w.o.BudgetFile+".refresh.d", old, old); err != nil {
@@ -386,8 +386,8 @@ func TestBudgetRefreshUnwritableDir(t *testing.T) {
 	writeFile(t, blocker, "")
 	o := h.options()
 	o.BudgetFile = blocker + "/crew/engine-budget.json"
-	code := Run(h.ctx, []string{"feat/x", "--pane", "%1", "--engine", "claude", "--grace", "0",
-		"--stall", "30", "--budget-refresh", "60", "--max-life", "120"}, h.paths, &h.stderr, o)
+	code := Run(h.ctx, Request{Target: "feat/x", Pane: ptr("%1"), Engine: ptr("claude"), Grace: ptr("0"),
+		Stall: ptr("30"), BudgetRefresh: ptr("60"), MaxLife: ptr("120")}, h.paths, &h.stderr, o)
 	if code != 0 {
 		t.Fatalf("exit %d stderr %q, want the watch to run to --max-life", code, h.stderr.String())
 	}
@@ -405,7 +405,7 @@ func TestBudgetRefreshStampFailureStillRefreshes(t *testing.T) {
 		{"rename", func(w *watch) string { return w.o.BudgetFile + ".refresh-at" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, w, calls := refreshWatch(t, "--budget-refresh", "900")
+			_, w, calls := refreshWatch(t, "900")
 			writeFile(t, tc.path(w)+"/x", "")
 			if ran, err := w.refreshMaybe(); err != nil || !ran || *calls != 1 {
 				t.Errorf("ran %v calls %d err %v, want a refresh", ran, *calls, err)

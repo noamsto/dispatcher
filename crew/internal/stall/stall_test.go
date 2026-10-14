@@ -177,9 +177,9 @@ func (h *harness) options() Options {
 	}
 }
 
-func (h *harness) run(argv ...string) (int, string) {
+func (h *harness) run(req Request) (int, string) {
 	h.stderr.Reset()
-	code := Run(h.ctx, argv, h.paths, &h.stderr, h.options())
+	code := Run(h.ctx, req, h.paths, &h.stderr, h.options())
 	return code, h.stderr.String()
 }
 
@@ -189,9 +189,9 @@ func (h *harness) clockText() string {
 }
 
 // watch builds the watch Run would, for driving its methods directly.
-func (h *harness) watch(argv ...string) *watch {
+func (h *harness) watch(req Request) *watch {
 	h.t.Helper()
-	cfg, err := parseArgs(argv, func() string { return h.crew })
+	cfg, err := parseArgs(req, func() string { return h.crew })
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -222,6 +222,8 @@ func (h *harness) status(from string, offMS int64, body string) string {
 	return fmt.Sprintf(`{"ts":%d,"crew_id":"c1","from":%q,"to":"dispatcher:c1","kind":"status","body":%s}`,
 		h.seed*1000+offMS, from, body)
 }
+
+func ptr(s string) *string { return &s }
 
 func codeOf(err error) (int, bool) {
 	var c exitCode
@@ -303,7 +305,7 @@ func TestRefreshView(t *testing.T) {
 			if tc.rows != nil {
 				h.writeRows(tc.rows(h)...)
 			}
-			w := h.watch(tc.id, "--pane", "%1")
+			w := h.watch(Request{Target: tc.id, Pane: ptr("%1")})
 			w.bus = busView{ts: 99, state: "stale"}
 			if err := w.refresh(); err != nil {
 				t.Fatalf("refresh: %v", err)
@@ -337,7 +339,7 @@ func TestRefreshStepAside(t *testing.T) {
 				h.status(tc.from, 1, `{"state":"working"}`),
 				h.status("worker:feat/x#s100-1", 2, `{"state":"working"}`),
 			)
-			w := h.watch("worker:feat/x#s100-1", "--pane", "%1")
+			w := h.watch(Request{Target: "worker:feat/x#s100-1", Pane: ptr("%1")})
 			code, isExit := codeOf(w.refresh())
 			if isExit != tc.step || code != 0 {
 				t.Errorf("exit=%v code=%d, want step-aside=%v", isExit, code, tc.step)
@@ -354,7 +356,7 @@ func TestRefreshStepAsideAfterBadRow(t *testing.T) {
 		h.status("worker:feat/x#s100-1", 2, `"not an object"`),
 		h.status("worker:feat/x#s200-5", 3, `{"state":"working"}`),
 	)
-	w := h.watch("worker:feat/x#s100-1", "--pane", "%1")
+	w := h.watch(Request{Target: "worker:feat/x#s100-1", Pane: ptr("%1")})
 	if code, ok := codeOf(w.refresh()); !ok || code != 0 {
 		t.Errorf("refresh did not step aside past the bad row")
 	}
@@ -365,7 +367,7 @@ func TestRefreshStepAsideAfterBadRow(t *testing.T) {
 func TestRefreshStepAsideRunScoped(t *testing.T) {
 	h := newHarness(t, newFake())
 	h.writeRows(h.status("worker:feat/x#s200-5", -5000, `{"state":"working"}`))
-	w := h.watch("worker:feat/x#s100-1", "--pane", "%1")
+	w := h.watch(Request{Target: "worker:feat/x#s100-1", Pane: ptr("%1")})
 	if err := w.refresh(); err != nil {
 		t.Errorf("refresh: %v", err)
 	}
@@ -375,7 +377,7 @@ func TestStepAsideExitsRun(t *testing.T) {
 	f := newFake()
 	h := newHarness(t, f)
 	h.writeRows(h.status("worker:feat/x#s200-5", 1, `{"state":"working"}`))
-	code, _ := h.run("worker:feat/x#s100-1", "--pane", "%1", "--grace", "0")
+	code, _ := h.run(Request{Target: "worker:feat/x#s100-1", Pane: ptr("%1"), Grace: ptr("0")})
 	if code != 0 || f.samples != 0 {
 		t.Errorf("exit %d after %d samples, want 0 before sampling", code, f.samples)
 	}
@@ -385,7 +387,7 @@ func TestPaneGoneQuorum(t *testing.T) {
 	f := newFake()
 	f.sample = func(int) (string, bool) { return "", false }
 	h := newHarness(t, f)
-	code, stderr := h.run("feat/x", "--pane", "%1", "--grace", "0", "--interval", "15")
+	code, stderr := h.run(Request{Target: "feat/x", Pane: ptr("%1"), Grace: ptr("0"), Interval: ptr("15")})
 	if code != 0 || stderr != "" {
 		t.Fatalf("exit %d stderr %q", code, stderr)
 	}
@@ -402,7 +404,7 @@ func TestPaneGoneQuorumResets(t *testing.T) {
 	f := newFake()
 	f.sample = func(n int) (string, bool) { return "x", n%3 == 2 }
 	h := newHarness(t, f)
-	code, _ := h.run("feat/x", "--pane", "%1", "--grace", "0", "--max-life", "300")
+	code, _ := h.run(Request{Target: "feat/x", Pane: ptr("%1"), Grace: ptr("0"), MaxLife: ptr("300")})
 	if code != 0 || f.samples != 20 {
 		t.Errorf("exit %d after %d samples, want 0 after 20 (max-life)", code, f.samples)
 	}
@@ -416,7 +418,7 @@ func TestMaxLife(t *testing.T) {
 	for _, tc := range cases {
 		f := newFake()
 		h := newHarness(t, f)
-		code, _ := h.run("feat/x", "--pane", "%1", "--grace", tc.grace, "--max-life", "60")
+		code, _ := h.run(Request{Target: "feat/x", Pane: ptr("%1"), Grace: ptr(tc.grace), MaxLife: ptr("60")})
 		if code != 0 || f.samples != tc.samples {
 			t.Errorf("grace %s: exit %d after %d samples, want 0 after %d", tc.grace, code, f.samples, tc.samples)
 		}
@@ -426,7 +428,7 @@ func TestMaxLife(t *testing.T) {
 func TestBusCadence(t *testing.T) {
 	f := newFake()
 	h := newHarness(t, f)
-	code, _ := h.run("feat/x", "--pane", "%1", "--grace", "0", "--max-life", "150")
+	code, _ := h.run(Request{Target: "feat/x", Pane: ptr("%1"), Grace: ptr("0"), MaxLife: ptr("150")})
 	if code != 0 || f.samples != 10 {
 		t.Fatalf("exit %d after %d samples", code, f.samples)
 	}
@@ -448,7 +450,7 @@ func TestPaneGoneTickMarksBusStale(t *testing.T) {
 		f := newFake()
 		f.sample = func(n int) (string, bool) { return "x", n != 3 }
 		h := newHarness(t, f)
-		w := h.watch("feat/x", "--pane", "%1", "--grace", "0", "--max-life", tc.maxLife)
+		w := h.watch(Request{Target: "feat/x", Pane: ptr("%1"), Grace: ptr("0"), MaxLife: ptr(tc.maxLife)})
 		if code, ok := codeOf(w.run()); !ok || code != 0 {
 			t.Fatalf("max-life %s: run ended with %d", tc.maxLife, code)
 		}
@@ -462,16 +464,16 @@ func TestTerminalStates(t *testing.T) {
 	cases := []struct {
 		name    string
 		id      string
-		args    []string
+		req     Request
 		state   string
 		samples bool
 	}{
-		{"done release off", "feat/x", []string{"--release", "0"}, "done", false},
-		{"failed role", "role:feat/x:rev", []string{"--engine", "claude"}, "failed", false},
-		{"exited", "feat/x", nil, "exited", false},
-		{"reaped", "feat/x", nil, "reaped", false},
-		{"pr_open keeps watching", "feat/x", nil, "pr_open", true},
-		{"working keeps watching", "feat/x", nil, "working", true},
+		{"done release off", "feat/x", Request{Release: ptr("0")}, "done", false},
+		{"failed role", "role:feat/x:rev", Request{Engine: ptr("claude")}, "failed", false},
+		{"exited", "feat/x", Request{}, "exited", false},
+		{"reaped", "feat/x", Request{}, "reaped", false},
+		{"pr_open keeps watching", "feat/x", Request{}, "pr_open", true},
+		{"working keeps watching", "feat/x", Request{}, "working", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -482,8 +484,9 @@ func TestTerminalStates(t *testing.T) {
 				from = tc.id
 			}
 			h.writeRows(h.status(from, 1, `{"state":"`+tc.state+`"}`))
-			argv := append([]string{tc.id, "--pane", "%1", "--grace", "0", "--max-life", "30"}, tc.args...)
-			code, _ := h.run(argv...)
+			req := tc.req
+			req.Target, req.Pane, req.Grace, req.MaxLife = tc.id, ptr("%1"), ptr("0"), ptr("30")
+			code, _ := h.run(req)
 			if code != 0 || (f.samples > 0) != tc.samples {
 				t.Errorf("exit %d samples %d, want 0 and sampling=%v", code, f.samples, tc.samples)
 			}
@@ -496,7 +499,7 @@ func TestLoopState(t *testing.T) {
 	f.sample = func(n int) (string, bool) { return "same", true }
 	h := newHarness(t, f)
 	h.writeRows(h.status("worker:feat/x", 1, `{"state":"blocked","detail":"waiting"}`))
-	w := h.watch("feat/x", "--pane", "%1", "--grace", "0", "--max-life", "60")
+	w := h.watch(Request{Target: "feat/x", Pane: ptr("%1"), Grace: ptr("0"), MaxLife: ptr("60")})
 	if _, ok := codeOf(w.run()); !ok {
 		t.Fatal("run did not exit")
 	}
@@ -509,7 +512,7 @@ func TestSleepFailureExitsOne(t *testing.T) {
 	f := newFake()
 	h := newHarness(t, f)
 	h.clock.CrewClock = ""
-	code, stderr := h.run("feat/x", "--pane", "%1", "--grace", "abc")
+	code, stderr := h.run(Request{Target: "feat/x", Pane: ptr("%1"), Grace: ptr("abc")})
 	if code != 1 || stderr == "" || f.samples != 0 {
 		t.Errorf("exit %d stderr %q samples %d, want 1 with sleep's message", code, stderr, f.samples)
 	}
@@ -521,7 +524,7 @@ func TestSignalExitCode(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(t.Context())
 	cancel(SignalError{Sig: syscall.SIGTERM})
 	h.ctx = ctx
-	code, _ := h.run("feat/x", "--pane", "%1")
+	code, _ := h.run(Request{Target: "feat/x", Pane: ptr("%1")})
 	if code != 143 || f.samples != 0 {
 		t.Errorf("exit %d samples %d, want 143 before sampling", code, f.samples)
 	}
@@ -536,7 +539,7 @@ func TestRunRefusesForeignSender(t *testing.T) {
 		Parent: func(pid int) (int, bool) { return 1, true },
 		PID:    100,
 	}
-	code := Run(h.ctx, []string{"worker:feat/y#s1-1", "--pane", "%1"}, h.paths, &h.stderr, o)
+	code := Run(h.ctx, Request{Target: "worker:feat/y#s1-1", Pane: ptr("%1")}, h.paths, &h.stderr, o)
 	if code != 1 {
 		t.Errorf("exit %d, want 1", code)
 	}

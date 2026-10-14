@@ -2,6 +2,7 @@ package stall
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -18,10 +19,10 @@ import (
 
 // pdWatch is a watch started at the clock seed, for driving detector ticks by
 // hand.
-func pdWatch(t *testing.T, f *fake, argv ...string) (*harness, *watch) {
+func pdWatch(t *testing.T, f *fake, req Request) (*harness, *watch) {
 	t.Helper()
 	h := newHarness(t, f)
-	w := h.watch(argv...)
+	w := h.watch(req)
 	w.start = h.seed
 	return h, w
 }
@@ -106,7 +107,7 @@ func countScans(f *fake, mode string) int {
 
 func TestD4LoadEpisode(t *testing.T) {
 	f := newFake()
-	h, w := pdWatch(t, f, "feat/x", "--pane", "%1")
+	h, w := pdWatch(t, f, Request{Target: "feat/x", Pane: ptr("%1")})
 	load, tops := "9.50 8", 0
 	w.p.Load = func(context.Context) string { return load }
 	w.p.Top = func(context.Context) string {
@@ -143,7 +144,7 @@ func TestD4TopSuffix(t *testing.T) {
 	}
 	for _, tc := range cases {
 		f := newFake()
-		h, w := pdWatch(t, f, "feat/x", "--pane", "%1", "--load", "60")
+		h, w := pdWatch(t, f, Request{Target: "feat/x", Pane: ptr("%1"), Load: ptr("60")})
 		w.p.Load = func(context.Context) string { return "8.5 8" }
 		w.p.Top = func(context.Context) string { return tc.top }
 		pdOK(t, w, 0, 0, w.probePre)
@@ -155,7 +156,7 @@ func TestD4TopSuffix(t *testing.T) {
 // A malformed read is silent that tick: it neither starts, resets nor clears.
 func TestD4MalformedLoad(t *testing.T) {
 	f := newFake()
-	h, w := pdWatch(t, f, "feat/x", "--pane", "%1", "--load", "100")
+	h, w := pdWatch(t, f, Request{Target: "feat/x", Pane: ptr("%1"), Load: ptr("100")})
 	loads := map[int64]string{0: "9 8", 20: "garbage", 40: "9.5", 50: "9 8 1", 60: "", 70: "9. 8", 80: "-9 8", 100: "9 8"}
 	w.p.Load = func(context.Context) string { return loads[w.now-w.start] }
 	for _, off := range []int64{0, 20, 40, 50, 60, 70, 80} {
@@ -176,7 +177,7 @@ func TestD4ComparesAsNumbers(t *testing.T) {
 	}{{"8.0 8", false}, {"8.01 8", true}, {"10 9", true}, {"9 10", false}, {"100.5 16", true}}
 	for _, tc := range cases {
 		f := newFake()
-		h, w := pdWatch(t, f, "feat/x", "--pane", "%1", "--load", "0")
+		h, w := pdWatch(t, f, Request{Target: "feat/x", Pane: ptr("%1"), Load: ptr("0")})
 		w.p.Load = func(context.Context) string { return tc.load }
 		pdOK(t, w, 0, 0, w.probePre)
 		if got := len(pdRows(t, h)) == 1; got != tc.fire {
@@ -191,7 +192,7 @@ func TestD4OffWhenSuppressedOrRole(t *testing.T) {
 		{"role:feat/x:rev", ""},
 	} {
 		f := newFake()
-		h, w := pdWatch(t, f, tc.id, "--pane", "%1", "--load", "0", "--engine", "claude")
+		h, w := pdWatch(t, f, Request{Target: tc.id, Pane: ptr("%1"), Load: ptr("0"), Engine: ptr("claude")})
 		if tc.row != "" {
 			h.writeRows(h.status("worker:"+tc.id, 1, tc.row))
 		}
@@ -209,16 +210,17 @@ func TestD4OffWhenSuppressedOrRole(t *testing.T) {
 
 // ---- D8 ----
 
-func d8Watch(t *testing.T, f *fake, argv ...string) (*harness, *watch) {
+func d8Watch(t *testing.T, f *fake, req Request) (*harness, *watch) {
 	t.Helper()
-	h, w := pdWatch(t, f, append([]string{"feat/x", "--pane", "%1", "--engine", "claude", "--budget-refresh", "0"}, argv...)...)
+	req.Target, req.Pane, req.Engine, req.BudgetRefresh = "feat/x", ptr("%1"), ptr("claude"), cmp.Or(req.BudgetRefresh, ptr("0"))
+	h, w := pdWatch(t, f, req)
 	w.cfg.budgetOn = true
 	return h, w
 }
 
 func TestD8Episode(t *testing.T) {
 	f := newFake()
-	h, w := d8Watch(t, f)
+	h, w := d8Watch(t, f, Request{})
 	const blocked = "blocked|budget: claude 5h at 100% (no reset time)"
 	steps := []struct {
 		tick int
@@ -247,7 +249,7 @@ func TestD8Episode(t *testing.T) {
 // A cache that can't tell never announces anything, open episode or not.
 func TestD8CantTellHolds(t *testing.T) {
 	f := newFake()
-	h, w := d8Watch(t, f)
+	h, w := d8Watch(t, f, Request{})
 	f.sh = budgetSh("", 2, "", 2)
 	pdOK(t, w, 0, 0, w.probePre)
 	f.sh = budgetSh("", 1, "", 1)
@@ -258,7 +260,7 @@ func TestD8CantTellHolds(t *testing.T) {
 // A window episode raised by another watchdog on the branch holds this one's.
 func TestD8EpisodeOpenElsewhere(t *testing.T) {
 	f := newFake()
-	h, w := d8Watch(t, f)
+	h, w := d8Watch(t, f, Request{})
 	h.writeRows(h.status("worker:feat/x", 1, `{"state":"blocked","source":"watchdog","detail":"budget: claude 5h at 99%"}`))
 	f.sh = budgetSh("5h\t100\t\t", 0, "", 1)
 	pdOK(t, w, 0, 0, w.probePre)
@@ -286,7 +288,7 @@ func TestD8Gating(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFake()
-			h, w := d8Watch(t, f)
+			h, w := d8Watch(t, f, Request{})
 			w.cfg.budgetOn = !tc.noD8
 			if tc.row != "" {
 				h.writeRows(h.status("worker:feat/x", 1, tc.row))
@@ -304,7 +306,7 @@ func TestD8Gating(t *testing.T) {
 // the rest of the tick, D5 included.
 func TestD8RaisesSuppressed(t *testing.T) {
 	f := newFake()
-	h, w := d8Watch(t, f)
+	h, w := d8Watch(t, f, Request{})
 	if err := w.refresh(); err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +334,7 @@ func TestD8RaisesSuppressed(t *testing.T) {
 // gates D8, because a real refresh re-reads the bus.
 func TestD8RefreshRereadsBus(t *testing.T) {
 	f := newFake()
-	h, w := d8Watch(t, f, "--budget-refresh", "900")
+	h, w := d8Watch(t, f, Request{BudgetRefresh: ptr("900")})
 	w.p.RefreshBudget = func(context.Context) {
 		h.writeRows(h.status("worker:feat/x", 1, `{"state":"pr_open"}`))
 	}
@@ -354,7 +356,7 @@ func TestD8RefreshRereadsBus(t *testing.T) {
 func TestD8BusStaleRereads(t *testing.T) {
 	for _, stale := range []bool{false, true} {
 		f := newFake()
-		_, w := d8Watch(t, f)
+		_, w := d8Watch(t, f, Request{})
 		f.sh = budgetSh("", 1, "", 1)
 		reads := f.busReads
 		w.now, w.tick, w.busStale = w.start, 0, stale
@@ -372,7 +374,7 @@ func TestD8BusStaleRereads(t *testing.T) {
 }
 
 // busReadsRun runs a whole watch and returns how many times it read the bus.
-func busReadsRun(t *testing.T, cache string, refreshes *int, extra ...string) int {
+func busReadsRun(t *testing.T, cache string, refreshes *int, noBudget bool) int {
 	t.Helper()
 	f := newFake()
 	f.sh = budgetSh("", 1, "", 1)
@@ -387,9 +389,9 @@ func busReadsRun(t *testing.T, cache string, refreshes *int, extra ...string) in
 		p.RefreshBudget = func(context.Context) { *refreshes++ }
 		return p
 	}
-	argv := append([]string{"worker:feat/x", "--pane", "%9", "--engine", "claude", "--grace", "0", "--interval", "1",
-		"--window", "0", "--idle", "999", "--dead", "999", "--budget-refresh", "900", "--max-life", "10"}, extra...)
-	if code := Run(h.ctx, argv, h.paths, &h.stderr, o); code != 0 {
+	req := Request{Target: "worker:feat/x", Pane: ptr("%9"), Engine: ptr("claude"), Grace: ptr("0"), Interval: ptr("1"),
+		Window: ptr("0"), Idle: ptr("999"), Dead: ptr("999"), BudgetRefresh: ptr("900"), MaxLife: ptr("10"), NoBudget: noBudget}
+	if code := Run(h.ctx, req, h.paths, &h.stderr, o); code != 0 {
 		t.Fatalf("exit %d: %s", code, h.stderr.String())
 	}
 	return f.busReads
@@ -399,12 +401,12 @@ func busReadsRun(t *testing.T, cache string, refreshes *int, extra ...string) in
 // once more.
 func TestBusReadsD8(t *testing.T) {
 	refreshes := 0
-	off := busReadsRun(t, `{"fetched_epoch":%d}`, &refreshes, "--no-budget")
-	skipped := busReadsRun(t, `{"fetched_epoch":%d}`, &refreshes)
+	off := busReadsRun(t, `{"fetched_epoch":%d}`, &refreshes, true)
+	skipped := busReadsRun(t, `{"fetched_epoch":%d}`, &refreshes, false)
 	if refreshes != 0 {
 		t.Fatalf("a fresh cache refreshed %d times", refreshes)
 	}
-	refreshed := busReadsRun(t, "", &refreshes)
+	refreshed := busReadsRun(t, "", &refreshes, false)
 	if off == 0 || skipped != off || refreshes != 1 || refreshed != off+1 {
 		t.Errorf("off %d skipped %d refreshed %d (refreshes %d), want skipped = off, refreshed = off+1, one refresh",
 			off, skipped, refreshed, refreshes)
@@ -440,8 +442,8 @@ func TestSigtermLockReleasedDuringRefresh(t *testing.T) {
 		case <-t.Context().Done():
 		}
 	}()
-	code := Run(ctx, []string{"worker:feat/x", "--pane", "%9", "--engine", "claude", "--grace", "0", "--interval", "1",
-		"--budget-refresh", "1", "--max-life", "600"}, h.paths, &h.stderr, o)
+	code := Run(ctx, Request{Target: "worker:feat/x", Pane: ptr("%9"), Engine: ptr("claude"), Grace: ptr("0"), Interval: ptr("1"),
+		BudgetRefresh: ptr("1"), MaxLife: ptr("600")}, h.paths, &h.stderr, o)
 	if code != 143 {
 		t.Errorf("exit %d, want 143", code)
 	}
@@ -460,7 +462,7 @@ const d5Detail = "stalled: launch-not-started — pane %1 still a shell (zsh) 15
 
 func TestD5LaunchNotStarted(t *testing.T) {
 	f := newFake()
-	h, w := pdWatch(t, f, "feat/x", "--pane", "%1")
+	h, w := pdWatch(t, f, Request{Target: "feat/x", Pane: ptr("%1")})
 	f.paneCmd = "-zsh"
 	pdOK(t, w, 149, 0, w.probePre)
 	wantRows(t, h)
@@ -490,25 +492,27 @@ func TestD5LaunchNotStarted(t *testing.T) {
 func TestD5Cases(t *testing.T) {
 	cases := []struct {
 		name, cmd, row string
-		args           []string
+		req            Request
 		off            int64
 		want           string
 	}{
-		{"bash", "bash", "", nil, 150, "stalled: launch-not-started — pane %1 still a shell (bash) 150s after launch; the engine is not running"},
-		{"fish via --launch", "fish", "", []string{"--launch", "30"}, 30, "stalled: launch-not-started — pane %1 still a shell (fish) 30s after launch; the engine is not running"},
-		{"working row", "sh", `{"state":"working"}`, nil, 150, "stalled: launch-not-started — pane %1 still a shell (sh) 150s after launch; the engine is not running"},
-		{"empty command", "", "", nil, 500, ""},
-		{"unknown command", "make", "", nil, 500, ""},
-		{"double dash only strips one", "--bash", "", nil, 500, ""},
-		{"engine", "claude", "", nil, 500, ""},
-		{"pr_open", "bash", `{"state":"pr_open"}`, nil, 500, ""},
-		{"watchdog blocked", "bash", `{"state":"blocked","source":"watchdog","detail":"stalled: x"}`, nil, 500, ""},
-		{"suppressed", "bash", `{"state":"blocked","detail":"awaiting"}`, nil, 500, ""},
+		{"bash", "bash", "", Request{}, 150, "stalled: launch-not-started — pane %1 still a shell (bash) 150s after launch; the engine is not running"},
+		{"fish via --launch", "fish", "", Request{Launch: ptr("30")}, 30, "stalled: launch-not-started — pane %1 still a shell (fish) 30s after launch; the engine is not running"},
+		{"working row", "sh", `{"state":"working"}`, Request{}, 150, "stalled: launch-not-started — pane %1 still a shell (sh) 150s after launch; the engine is not running"},
+		{"empty command", "", "", Request{}, 500, ""},
+		{"unknown command", "make", "", Request{}, 500, ""},
+		{"double dash only strips one", "--bash", "", Request{}, 500, ""},
+		{"engine", "claude", "", Request{}, 500, ""},
+		{"pr_open", "bash", `{"state":"pr_open"}`, Request{}, 500, ""},
+		{"watchdog blocked", "bash", `{"state":"blocked","source":"watchdog","detail":"stalled: x"}`, Request{}, 500, ""},
+		{"suppressed", "bash", `{"state":"blocked","detail":"awaiting"}`, Request{}, 500, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFake()
-			h, w := pdWatch(t, f, append([]string{"feat/x", "--pane", "%1"}, tc.args...)...)
+			req := tc.req
+			req.Target, req.Pane = "feat/x", ptr("%1")
+			h, w := pdWatch(t, f, req)
 			f.paneCmd = tc.cmd
 			if tc.row != "" {
 				h.writeRows(h.status("worker:feat/x", 1, tc.row))
@@ -531,7 +535,7 @@ func TestD5Cases(t *testing.T) {
 
 func TestRoleEndOfLife(t *testing.T) {
 	f := newFake()
-	h, w := pdWatch(t, f, "role:feat/x:rev", "--pane", "%1", "--engine", "claude")
+	h, w := pdWatch(t, f, Request{Target: "role:feat/x:rev", Pane: ptr("%1"), Engine: ptr("claude")})
 	steps := []struct {
 		cmd  string
 		exit bool
@@ -571,12 +575,13 @@ func (s *d6Script) pane(context.Context, nudge.PaneRequest) (string, int) {
 	return s.nudgeOut, s.nudgeRC
 }
 
-func d6Watch(t *testing.T, s *d6Script, argv ...string) (*harness, *fake, *watch) {
+func d6Watch(t *testing.T, s *d6Script, req Request) (*harness, *fake, *watch) {
 	t.Helper()
 	f := newFake()
 	f.unread = s.answer
 	f.nudge = s.pane
-	h, w := pdWatch(t, f, append([]string{d6ID, "--pane", "%1", "--engine", "claude"}, argv...)...)
+	req.Target, req.Pane, req.Engine = d6ID, ptr("%1"), ptr("claude")
+	h, w := pdWatch(t, f, req)
 	return h, f, w
 }
 
@@ -601,7 +606,7 @@ func TestD6OldestDetails(t *testing.T) {
 	}
 	for _, tc := range cases {
 		s := &d6Script{}
-		h, f, w := d6Watch(t, s)
+		h, f, w := d6Watch(t, s, Request{})
 		if tc.src != "" {
 			s.oldest = fmt.Sprintf("%d %s", agedMS(w, 0, tc.age), tc.src)
 		}
@@ -623,7 +628,7 @@ func TestD6OldestDetails(t *testing.T) {
 
 func TestD6ClearOnDelivery(t *testing.T) {
 	s := &d6Script{}
-	h, _, w := d6Watch(t, s)
+	h, _, w := d6Watch(t, s, Request{})
 	s.oldest = fmt.Sprintf("%d role", agedMS(w, 0, 700))
 	pdOK(t, w, 0, 0, w.d6)
 	// Still unread: the open episode holds.
@@ -637,7 +642,7 @@ func TestD6ClearOnDelivery(t *testing.T) {
 
 func TestD6ClearOnSourceChange(t *testing.T) {
 	s := &d6Script{}
-	h, _, w := d6Watch(t, s, "--no-nudge")
+	h, _, w := d6Watch(t, s, Request{NoNudge: true})
 	s.oldest = fmt.Sprintf("%d role", agedMS(w, 0, 700))
 	pdOK(t, w, 0, 0, w.d6)
 	s.oldest = fmt.Sprintf("%d dispatcher", agedMS(w, 60, 650))
@@ -651,7 +656,7 @@ func TestD6ClearOnSourceChange(t *testing.T) {
 // it.
 func TestD6OtherEpisode(t *testing.T) {
 	s := &d6Script{}
-	h, f, w := d6Watch(t, s)
+	h, f, w := d6Watch(t, s, Request{})
 	h.writeRows(h.status(d6ID, 1, `{"state":"blocked","source":"watchdog","detail":"stalled: x"}`))
 	s.oldest = fmt.Sprintf("%d role", agedMS(w, 0, 700))
 	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
@@ -666,19 +671,21 @@ func TestD6Gating(t *testing.T) {
 	cases := []struct {
 		name string
 		id   string
-		args []string
+		req  Request
 		tick int
 		row  string
 	}{
-		{"between cadence ticks", d6ID, nil, 2, ""},
-		{"role mode", "role:feat/x:rev", nil, 0, ""},
-		{"suppressed", d6ID, nil, 0, `{"state":"blocked","detail":"awaiting"}`},
+		{"between cadence ticks", d6ID, Request{}, 2, ""},
+		{"role mode", "role:feat/x:rev", Request{}, 0, ""},
+		{"suppressed", d6ID, Request{}, 0, `{"state":"blocked","detail":"awaiting"}`},
 	}
 	for _, tc := range cases {
 		s := &d6Script{}
 		f := newFake()
 		f.unread = s.answer
-		h, w := pdWatch(t, f, append([]string{tc.id, "--pane", "%1", "--engine", "claude"}, tc.args...)...)
+		req := tc.req
+		req.Target, req.Pane, req.Engine = tc.id, ptr("%1"), ptr("claude")
+		h, w := pdWatch(t, f, req)
 		if tc.row != "" {
 			h.writeRows(h.status(d6ID, 1, tc.row))
 		}
@@ -693,20 +700,22 @@ func TestNudgeGating(t *testing.T) {
 	cases := []struct {
 		name  string
 		id    string
-		args  []string
+		req   Request
 		nudge bool
 	}{
-		{"claude session", d6ID, nil, true},
-		{"pi", d6ID, []string{"--engine", "pi"}, true},
-		{"codex", d6ID, []string{"--engine", "codex"}, false},
-		{"--no-nudge", d6ID, []string{"--no-nudge"}, false},
-		{"sessionless", "feat/x", nil, false},
+		{"claude session", d6ID, Request{}, true},
+		{"pi", d6ID, Request{Engine: ptr("pi")}, true},
+		{"codex", d6ID, Request{Engine: ptr("codex")}, false},
+		{"--no-nudge", d6ID, Request{NoNudge: true}, false},
+		{"sessionless", "feat/x", Request{}, false},
 	}
 	for _, tc := range cases {
 		s := &d6Script{}
 		f := newFake()
 		f.unread = s.answer
-		_, w := pdWatch(t, f, append([]string{tc.id, "--pane", "%1", "--engine", "claude"}, tc.args...)...)
+		req := tc.req
+		req.Target, req.Pane, req.Engine = tc.id, ptr("%1"), cmp.Or(req.Engine, ptr("claude"))
+		_, w := pdWatch(t, f, req)
 		s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
 		s.oldest = fmt.Sprintf("%d dispatcher", agedMS(w, 0, 700))
 		pdOK(t, w, 0, 0, w.d6)
@@ -735,7 +744,7 @@ func TestNudgeScanParse(t *testing.T) {
 	}
 	for _, tc := range cases {
 		s := &d6Script{nudgeRC: 0}
-		_, f, w := d6Watch(t, s)
+		_, f, w := d6Watch(t, s, Request{})
 		if tc.out != "" {
 			s.dispatcher = fmt.Sprintf(tc.out, agedMS(w, 0, 700), agedMS(w, 0, 650))
 		}
@@ -753,7 +762,7 @@ func TestNudgeThresholds(t *testing.T) {
 	}{{599, false}, {600, true}}
 	for _, tc := range cases {
 		s := &d6Script{}
-		_, f, w := d6Watch(t, s)
+		_, f, w := d6Watch(t, s, Request{})
 		s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, tc.age), agedMS(w, 0, 10))
 		pdOK(t, w, 0, 0, w.d6)
 		if got := countCalls(f, "nudge ") == 1; got != tc.nudge {
@@ -766,7 +775,7 @@ func TestNudgeThresholds(t *testing.T) {
 // nudged twice, and its verdict follows on the next cadence tick.
 func TestNudgeAccepted(t *testing.T) {
 	s := &d6Script{nudgeOut: "nudged", nudgeRC: 0}
-	h, f, w := d6Watch(t, s)
+	h, f, w := d6Watch(t, s, Request{})
 	newest := agedMS(w, 0, 650)
 	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), newest)
 	s.oldest = fmt.Sprintf("%d dispatcher", agedMS(w, 0, 700))
@@ -793,7 +802,7 @@ func TestNudgeAccepted(t *testing.T) {
 // unread: episode does not swallow it.
 func TestNudgeTypedNotAccepted(t *testing.T) {
 	s := &d6Script{nudgeOut: "typed: prompt still holds the text — check the pane", nudgeRC: 3}
-	h, _, w := d6Watch(t, s)
+	h, _, w := d6Watch(t, s, Request{})
 	s.oldest = fmt.Sprintf("%d role", agedMS(w, 0, 700))
 	pdOK(t, w, 0, 0, w.d6)
 	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 60, 700), agedMS(w, 60, 650))
@@ -816,7 +825,7 @@ func TestNudgeRefusals(t *testing.T) {
 	}
 	for _, tc := range cases {
 		s := &d6Script{nudgeOut: tc.out, nudgeRC: 2}
-		h, f, w := d6Watch(t, s)
+		h, f, w := d6Watch(t, s, Request{})
 		s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
 		pdOK(t, w, 0, 0, w.d6)
 		if w.pd.nudgeOff != tc.latch {
@@ -870,7 +879,7 @@ func TestNudgeAlreadyNudged(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &d6Script{nudgeRC: 0}
-			h, f, w := d6Watch(t, s)
+			h, f, w := d6Watch(t, s, Request{})
 			newest := agedMS(w, 0, 650)
 			s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), newest)
 			rows := tc.rows(strconv.FormatInt(newest, 10))
@@ -898,7 +907,7 @@ func TestNudgeAlreadyNudged(t *testing.T) {
 // costs memory proportional to a log that never shrinks.
 func TestBusReadsAreBounded(t *testing.T) {
 	s := &d6Script{}
-	_, f, w := d6Watch(t, s)
+	_, f, w := d6Watch(t, s, Request{})
 	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
 	runRead := fmt.Sprintf("%d/0", w.cfg.runStartMS)
 	tailRead := fmt.Sprintf("0/%d", nudgedTailLines)

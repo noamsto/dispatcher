@@ -30,7 +30,7 @@ func TestEscalateCancelledPostsNothing(t *testing.T) {
 		{"turn-stall:", func(w *watch) { w.fd.d2At = w.start }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := newFDRig(t, "", "", "--idle", "60", "--dead", "120")
+			r := newFDRig(t, "", "", Request{Idle: ptr("60"), Dead: ptr("120")})
 			w := r.w
 			ctx, cancel := sigterm(t)
 			cancel()
@@ -56,7 +56,7 @@ func TestPaneGoneQuorumCancelled(t *testing.T) {
 		}
 		return "", false
 	}
-	code, _ := h.run("feat/x", "--pane", "%1", "--grace", "0", "--interval", "15")
+	code, _ := h.run(Request{Target: "feat/x", Pane: ptr("%1"), Grace: ptr("0"), Interval: ptr("15")})
 	if code != 143 || f.samples != 3 {
 		t.Errorf("exit %d after %d samples, want 143 after 3", code, f.samples)
 	}
@@ -64,7 +64,7 @@ func TestPaneGoneQuorumCancelled(t *testing.T) {
 
 func TestReleaseSampleCancelled(t *testing.T) {
 	f := newFake()
-	_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, "--engine", "claude")
+	_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, Request{Engine: ptr("claude")})
 	ctx, cancel := sigterm(t)
 	w.ctx = ctx
 	f.sample = func(int) (string, bool) {
@@ -79,7 +79,7 @@ func TestReleaseSampleCancelled(t *testing.T) {
 // A cancelled Top drops the `(top: …)` suffix; the arm never posted that row.
 func TestD4TopCancelled(t *testing.T) {
 	f := newFake()
-	h, w := pdWatch(t, f, "feat/x", "--pane", "%1", "--load", "0")
+	h, w := pdWatch(t, f, Request{Target: "feat/x", Pane: ptr("%1"), Load: ptr("0")})
 	ctx, cancel := sigterm(t)
 	w.ctx = ctx
 	w.p.Load = func(context.Context) string { return "9.50 8" }
@@ -126,7 +126,7 @@ func slowNudge(cancel func(), finished *bool) func(context.Context, nudge.PaneRe
 
 func TestNudgeSurvivesCancel(t *testing.T) {
 	s := &d6Script{}
-	h, _, w := d6Watch(t, s)
+	h, _, w := d6Watch(t, s, Request{})
 	ctx, cancel := sigterm(t)
 	w.ctx = ctx
 	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
@@ -144,7 +144,7 @@ func TestNudgeSurvivesCancel(t *testing.T) {
 func TestReleaseSurvivesCancel(t *testing.T) {
 	f := newFake()
 	f.sample = sampling(frameText(t, "done_idle.txt"))
-	_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, "--engine", "claude")
+	_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, Request{Engine: ptr("claude")})
 	ctx, cancel := sigterm(t)
 	w.ctx = ctx
 	finished := false
@@ -161,7 +161,7 @@ func TestReleaseSurvivesCancel(t *testing.T) {
 // cancellable call-out, must not start the write: the arm died before typing.
 func TestNudgeNotStartedAfterCancel(t *testing.T) {
 	s := &d6Script{}
-	h, f, w := d6Watch(t, s)
+	h, f, w := d6Watch(t, s, Request{})
 	ctx, cancel := sigterm(t)
 	w.ctx = ctx
 	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
@@ -184,7 +184,7 @@ func TestNudgeNotStartedAfterCancel(t *testing.T) {
 // it typed, so nothing may type after it.
 func TestNudgeCallNotStartedAfterCancel(t *testing.T) {
 	f := newFake()
-	_, w := pdWatch(t, f, "feat/x", "--pane", "%1")
+	_, w := pdWatch(t, f, Request{Target: "feat/x", Pane: ptr("%1")})
 	ctx, cancel := sigterm(t)
 	cancel()
 	w.ctx = ctx
@@ -197,7 +197,7 @@ func TestNudgeCallNotStartedAfterCancel(t *testing.T) {
 
 func TestReleaseCallNotStartedAfterCancel(t *testing.T) {
 	f := newFake()
-	_, w := pdWatch(t, f, "feat/x", "--pane", "%1")
+	_, w := pdWatch(t, f, Request{Target: "feat/x", Pane: ptr("%1")})
 	ctx, cancel := sigterm(t)
 	cancel()
 	w.ctx = ctx

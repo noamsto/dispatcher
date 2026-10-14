@@ -265,6 +265,29 @@ type prWatchCmd struct {
 	PR       string  `arg:"" optional:"" name:"pr"`
 }
 
+type stallWatchCmd struct {
+	Target        string  `arg:"" optional:"" name:"target"`
+	Pane          *string `name:"pane"`
+	Engine        *string `name:"engine"`
+	Grace         *string `name:"grace"`
+	Interval      *string `name:"interval"`
+	Stall         *string `name:"stall"`
+	Window        *string `name:"window"`
+	Idle          *string `name:"idle"`
+	Dead          *string `name:"dead"`
+	MaxLife       *string `name:"max-life"`
+	Load          *string `name:"load"`
+	Release       *string `name:"release"`
+	BgWait        *string `name:"bg-wait"`
+	Launch        *string `name:"launch"`
+	Unread        *string `name:"unread"`
+	RunawayHits   *string `name:"runaway-hits"`
+	RunawayTokens *string `name:"runaway-tokens"`
+	BudgetRefresh *string `name:"budget-refresh"`
+	NoBudget      bool    `name:"no-budget"`
+	NoNudge       bool    `name:"no-nudge"`
+}
+
 type adoptCmd struct {
 	Force bool   `name:"force"`
 	ID    string `arg:"" optional:"" name:"id"`
@@ -454,6 +477,11 @@ var wordings = map[string]wording{
 	"pr-watch": {
 		unknownFlag: func(f string) string { return fmt.Sprintf("pr-watch: unknown arg '%s'", f) },
 		extra:       func(w string) string { return fmt.Sprintf("pr-watch: unknown arg '%s'", w) },
+		code:        exitFailure,
+	},
+	"stall-watch": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: stall-watch: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: stall-watch: unknown arg '%s'", w) },
 		code:        exitFailure,
 	},
 	"git-baseline": {all: gitBaselineUsage, code: exitFailure},

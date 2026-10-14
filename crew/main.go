@@ -147,7 +147,7 @@ var typedSubcommands = map[string]bool{
 	"status": true, "msg": true, "reply": true, "hold": true,
 	"nudge": true, "await": true, "watch": true, "stream": true,
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
-	"adopt": true, "pr-watch": true,
+	"adopt": true, "pr-watch": true, "stall-watch": true,
 }
 
 // passthroughCmd is one unconverted subcommand to kong: its name, then whatever
@@ -212,6 +212,8 @@ type root struct {
 	Adopt adoptCmd `cmd:"" name:"adopt" help:"Re-attach to a crew already on disk."`
 
 	PRWatch prWatchCmd `cmd:"" name:"pr-watch" help:"Park on a PR and post its change event to the bus."`
+
+	StallWatch stallWatchCmd `cmd:"" name:"stall-watch" help:"The per-worker liveness watchdog."`
 
 	Reap          reapCmd `cmd:"" name:"reap" help:"Reclaim the windows and worktrees of landed workers."`
 	ReapAutosweep argvCmd `cmd:"" name:"reap-autosweep" help:"The detached ratings sweep reap starts."`
@@ -359,6 +361,18 @@ func guardRequest(p crewArgs) gitguard.GuardRequest {
 		req.Root, req.Rec = g.Canon.Root, g.Canon.Rec
 	}
 	return req
+}
+
+// stallRequest is the typed stall-watch call.
+func stallRequest(p crewArgs) stall.Request {
+	c := p.typed.StallWatch
+	return stall.Request{
+		Target: c.Target, Pane: c.Pane, Engine: c.Engine, Grace: c.Grace, Interval: c.Interval,
+		Release: c.Release, BudgetRefresh: c.BudgetRefresh, Stall: c.Stall, Window: c.Window,
+		Idle: c.Idle, Dead: c.Dead, MaxLife: c.MaxLife, Load: c.Load, BgWait: c.BgWait,
+		Launch: c.Launch, Unread: c.Unread, RunawayHits: c.RunawayHits, RunawayTokens: c.RunawayTokens,
+		NoBudget: c.NoBudget, NoNudge: c.NoNudge,
+	}
 }
 
 // env is everything run reads from the process, so tests can supply their own.
@@ -751,7 +765,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "stall-watch" {
 		ctx, stop := stall.NotifySignals(ctx)
 		defer stop()
-		return stall.Run(ctx, args, paths, stderr, stall.Options{
+		return stall.Run(ctx, stallRequest(parsed), paths, stderr, stall.Options{
 			// Anchor, don't discover: dispatch hands a watchdog its crew in the
 			// env, and its cwd is a worktree whose WORKER_TASK.md the watched
 			// worker can rewrite.

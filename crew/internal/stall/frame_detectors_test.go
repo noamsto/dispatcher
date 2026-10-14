@@ -1,6 +1,7 @@
 package stall
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -30,7 +31,7 @@ type fdRig struct {
 	logged int
 }
 
-func newFDRig(t *testing.T, id, engine string, argv ...string) *fdRig {
+func newFDRig(t *testing.T, id, engine string, req Request) *fdRig {
 	t.Helper()
 	if id == "" {
 		id = "feat/x"
@@ -39,7 +40,8 @@ func newFDRig(t *testing.T, id, engine string, argv ...string) *fdRig {
 		engine = "claude"
 	}
 	h := newHarness(t, newFake())
-	w := h.watch(append([]string{id, "--pane", "%1", "--engine", engine}, argv...)...)
+	req.Target, req.Pane, req.Engine = id, cmp.Or(req.Pane, ptr("%1")), ptr(engine)
+	w := h.watch(req)
 	w.start, w.now, w.lastChange = h.seed, h.seed, h.seed
 	return &fdRig{t: t, h: h, w: w}
 }
@@ -108,7 +110,7 @@ type fdBus struct {
 // fdScript is a pane scripted over ticks 15s apart, from 0 through end.
 type fdScript struct {
 	id, engine, cmd string
-	argv            []string
+	req             Request
 	end             int64
 	frame           func(at int64) string
 	bus             []fdBus
@@ -119,7 +121,7 @@ type fdScript struct {
 
 func runScript(t *testing.T, s fdScript) {
 	t.Helper()
-	r := newFDRig(t, s.id, s.engine, s.argv...)
+	r := newFDRig(t, s.id, s.engine, s.req)
 	r.h.f.paneCmd = s.cmd
 	for at := int64(0); at <= s.end; at += 15 {
 		for _, b := range s.bus {
@@ -300,7 +302,7 @@ func TestD1Prompt(t *testing.T) {
 // sticky against quiet:, so the frozen frame never earns a dead: row.
 func TestD1PromptStickyAgainstQuiet(t *testing.T) {
 	runScript(t, fdScript{
-		argv: []string{"--idle", "60", "--dead", "120", "--stall", "9999"}, end: 240,
+		req: Request{Idle: ptr("60"), Dead: ptr("120"), Stall: ptr("9999")}, end: 240,
 		frame: static(fixture(t, "prompt_select.txt")),
 		want:  map[int64][]string{15: {promptDetail}},
 		check: func(t *testing.T, w *watch) {
@@ -312,7 +314,7 @@ func TestD1PromptStickyAgainstQuiet(t *testing.T) {
 }
 
 func TestD1PermissionDetailOnTheBus(t *testing.T) {
-	r := newFDRig(t, "", "")
+	r := newFDRig(t, "", "", Request{})
 	perm := fixture(t, "permission_sanitize.txt")
 	for _, at := range []int64{0, 15} {
 		rows, err := r.step(at, perm)
@@ -399,26 +401,26 @@ func TestD2TurnStall(t *testing.T) {
 			return second(at)
 		}
 	}
-	argv := []string{"--idle", "60"}
+	req := Request{Idle: ptr("60")}
 	cases := []struct {
 		name string
 		s    fdScript
 	}{
 		{"clock advances over static tokens for --idle", fdScript{
-			argv: argv, end: 120, frame: meterFrame("1.0k"),
+			req: req, end: 120, frame: meterFrame("1.0k"),
 			want: map[int64][]string{60: {fmt.Sprintf(stalled, "1.0k", 60)}},
 		}},
 		{"a token change restarts the window", fdScript{
-			argv: argv, end: 120,
+			req: req, end: 120,
 			frame: frameThen(meterFrame("1.0k"), meterFrame("1.1k"), 45),
 			want:  map[int64][]string{105: {fmt.Sprintf(stalled, "1.1k", 60)}},
 		}},
 		{"a static clock is a frozen renderer: silent", fdScript{
-			argv: argv, end: 120,
+			req: req, end: 120,
 			frame: func(at int64) string { return fmt.Sprintf("line %d\n✻ Working… (7s · ↓ 1.0k tokens)", at) },
 		}},
 		{"a live subagent row is a veto", fdScript{
-			argv: argv, end: 120,
+			req: req, end: 120,
 			frame: func(at int64) string { return meterFrame("1.0k")(at) + "\n" + subrow },
 			check: func(t *testing.T, w *watch) {
 				if w.fd.d2Since != 0 || w.fd.d2Tok != "" || w.fd.d2Moved {
@@ -427,7 +429,7 @@ func TestD2TurnStall(t *testing.T) {
 			},
 		}},
 		{"the veto clears an open episode", fdScript{
-			argv: argv, end: 120,
+			req: req, end: 120,
 			frame: func(at int64) string {
 				if at >= 75 {
 					return meterFrame("1.0k")(at) + "\n" + subrow
@@ -437,7 +439,7 @@ func TestD2TurnStall(t *testing.T) {
 			want: map[int64][]string{60: {fmt.Sprintf(stalled, "1.0k", 60)}, 75: {"working|turn-stall: cleared"}},
 		}},
 		{"losing the meter clears an open episode", fdScript{
-			argv: argv, end: 120,
+			req: req, end: 120,
 			frame: func(at int64) string {
 				if at >= 90 {
 					return fmt.Sprintf("no meter %d", at)
@@ -447,27 +449,27 @@ func TestD2TurnStall(t *testing.T) {
 			want: map[int64][]string{60: {fmt.Sprintf(stalled, "1.0k", 60)}, 90: {"working|turn-stall: cleared"}},
 		}},
 		{"a token change clears an open episode", fdScript{
-			argv: argv, end: 120,
+			req: req, end: 120,
 			frame: frameThen(meterFrame("1.0k"), meterFrame("1.2k"), 90),
 			want:  map[int64][]string{60: {fmt.Sprintf(stalled, "1.0k", 60)}, 90: {"working|turn-stall: cleared"}},
 		}},
 		{"a worker status in the window restarts it", fdScript{
-			argv: argv, end: 90, frame: meterFrame("1.0k"),
+			req: req, end: 90, frame: meterFrame("1.0k"),
 			bus:  []fdBus{{15, 10, workerLife}},
 			want: map[int64][]string{75: {fmt.Sprintf(stalled, "1.0k", 60)}},
 		}},
 		{"a watchdog row is no sign of life", fdScript{
-			argv: argv, end: 90, frame: meterFrame("1.0k"),
+			req: req, end: 90, frame: meterFrame("1.0k"),
 			bus:  []fdBus{{15, 10, wd("stalled: no output for 30s")}},
 			want: map[int64][]string{60: {fmt.Sprintf(stalled, "1.0k", 60)}},
 		}},
 		{"the worker's own blocked suppresses", fdScript{
-			argv: argv, end: 90, frame: meterFrame("1.0k"), bus: []fdBus{{0, 0, workerBlock}},
+			req: req, end: 90, frame: meterFrame("1.0k"), bus: []fdBus{{0, 0, workerBlock}},
 		}},
-		{"an engine without the meter signature", fdScript{engine: "codex", argv: argv, end: 90, frame: meterFrame("1.0k")}},
-		{"a role pane has no D2", fdScript{id: "role:feat/x:rev", argv: argv, end: 90, frame: meterFrame("1.0k")}},
+		{"an engine without the meter signature", fdScript{engine: "codex", req: req, end: 90, frame: meterFrame("1.0k")}},
+		{"a role pane has no D2", fdScript{id: "role:feat/x:rev", req: req, end: 90, frame: meterFrame("1.0k")}},
 		{"clock and tokens are raw strings", fdScript{
-			argv: argv, end: 60,
+			req: req, end: 60,
 			frame: func(at int64) string { return fmt.Sprintf("✻ Working… (1h 2m %ds · ↓ 120.4k tokens)", at+10) },
 			want:  map[int64][]string{60: {fmt.Sprintf(stalled, "120.4k", 60)}},
 		}},
@@ -504,7 +506,7 @@ func TestD2MeterFields(t *testing.T) {
 func TestD7Runaway(t *testing.T) {
 	const posted = "blocked|runaway: leaked model sentinel in pane %%1 for %d samples while output tokens grew by %d — " +
 		"the turn is degenerate; verify the pane, then kill and re-dispatch (the worktree usually survives)"
-	argv := []string{"--runaway-hits", "3", "--runaway-tokens", "500"}
+	req := Request{RunawayHits: ptr("3"), RunawayTokens: ptr("500")}
 	// A pi pane: sentinel prose over a footer whose output-token count follows toks.
 	pi := func(toks ...string) func(int64) string {
 		return func(at int64) string {
@@ -524,7 +526,7 @@ func TestD7Runaway(t *testing.T) {
 		s    fdScript
 	}{
 		{"hits and growth post, a clean sample clears", fdScript{
-			engine: "pi", argv: argv, end: 60, frame: pi("1.0k", "1.3k", "1.6k", "1.9k", "clean"),
+			engine: "pi", req: req, end: 60, frame: pi("1.0k", "1.3k", "1.6k", "1.9k", "clean"),
 			want: map[int64][]string{30: {fmt.Sprintf(posted, 3, 600)}, 60: {"working|runaway: cleared"}},
 			check: func(t *testing.T, w *watch) {
 				if w.fd.d7At != 0 || w.fd.d7Hits != 0 || w.fd.d7Tok0 != 0 {
@@ -533,21 +535,21 @@ func TestD7Runaway(t *testing.T) {
 			},
 		}},
 		{"hits without growth never post", fdScript{
-			engine: "pi", argv: argv, end: 120, frame: pi("1.0k", "1.0k", "1.0k", "1.0k", "1.1k", "1.1k", "1.1k", "1.1k", "1.1k"),
+			engine: "pi", req: req, end: 120, frame: pi("1.0k", "1.0k", "1.0k", "1.0k", "1.1k", "1.1k", "1.1k", "1.1k", "1.1k"),
 		}},
 		{"growth is measured from the first hit", fdScript{
-			engine: "pi", argv: argv, end: 60, frame: pi("1.0k", "1.1k", "1.2k", "1.3k", "1.6k"),
+			engine: "pi", req: req, end: 60, frame: pi("1.0k", "1.1k", "1.2k", "1.3k", "1.6k"),
 			want: map[int64][]string{60: {fmt.Sprintf(posted, 5, 600)}},
 		}},
 		{"a falling count moves the baseline", fdScript{
-			engine: "pi", argv: argv, end: 60, frame: pi("5.0k", "1.0k", "1.3k", "1.6k"),
+			engine: "pi", req: req, end: 60, frame: pi("5.0k", "1.0k", "1.3k", "1.6k"),
 			want: map[int64][]string{45: {fmt.Sprintf(posted, 4, 600)}},
 		}},
 		{"a clean sample resets the hit count", fdScript{
-			engine: "pi", argv: argv, end: 60, frame: pi("1.0k", "1.5k", "clean", "2.0k", "2.5k"),
+			engine: "pi", req: req, end: 60, frame: pi("1.0k", "1.5k", "clean", "2.0k", "2.5k"),
 		}},
 		{"a sentinel with no token count neither counts nor resets", fdScript{
-			engine: "pi", argv: argv, end: 60, frame: pi("1.0k", "1.2k", "-", "1.6k"),
+			engine: "pi", req: req, end: 60, frame: pi("1.0k", "1.2k", "-", "1.6k"),
 			want: map[int64][]string{45: {fmt.Sprintf(posted, 3, 600)}},
 			check: func(t *testing.T, w *watch) {
 				if w.fd.d7Hits != 3 {
@@ -556,7 +558,7 @@ func TestD7Runaway(t *testing.T) {
 			},
 		}},
 		{"claude: a sentinel in prose, tool output and quoted prompt excluded", fdScript{
-			argv: argv, end: 45,
+			req: req, end: 45,
 			frame: func(at int64) string {
 				toks := []string{"10.0k", "10.3k", "10.6k", "10.9k"}
 				return strings.ReplaceAll(fixture(t, "claude_runaway.10.0k.txt"), "10.0k", toks[at/15])
@@ -564,13 +566,13 @@ func TestD7Runaway(t *testing.T) {
 			want: map[int64][]string{30: {fmt.Sprintf(posted, 3, 600)}},
 		}},
 		{"claude: sentinels only inside tool output stay silent", fdScript{
-			argv: argv, end: 90,
+			req: req, end: 90,
 			frame: func(at int64) string {
 				return strings.ReplaceAll(fixture(t, "claude_toolsent.10.0k.txt"), "10.0k", strconv.FormatInt(10+at, 10)+".0k")
 			},
 		}},
 		{"a worker blocked in await suppresses and resets", fdScript{
-			engine: "pi", argv: argv, end: 60, frame: pi("1.0k", "1.3k", "1.6k", "1.9k", "2.2k"),
+			engine: "pi", req: req, end: 60, frame: pi("1.0k", "1.3k", "1.6k", "1.9k", "2.2k"),
 			bus: []fdBus{{30, 25, workerBlock}},
 			check: func(t *testing.T, w *watch) {
 				if w.fd.d7Hits != 0 {
@@ -578,8 +580,8 @@ func TestD7Runaway(t *testing.T) {
 				}
 			},
 		}},
-		{"engines without the runaway signature", fdScript{engine: "codex", argv: argv, end: 60, frame: pi("1.0k", "1.3k", "1.6k", "1.9k", "2.2k")}},
-		{"a role pane has no D7", fdScript{id: "role:feat/x:rev", argv: argv, end: 60, frame: pi("1.0k", "1.3k", "1.6k", "1.9k", "2.2k")}},
+		{"engines without the runaway signature", fdScript{engine: "codex", req: req, end: 60, frame: pi("1.0k", "1.3k", "1.6k", "1.9k", "2.2k")}},
+		{"a role pane has no D7", fdScript{id: "role:feat/x:rev", req: req, end: 60, frame: pi("1.0k", "1.3k", "1.6k", "1.9k", "2.2k")}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { runScript(t, tc.s) })
@@ -587,14 +589,14 @@ func TestD7Runaway(t *testing.T) {
 }
 
 func TestD3Quiet(t *testing.T) {
-	argv := []string{"--idle", "60", "--stall", "9999"}
+	req := Request{Idle: ptr("60"), Stall: ptr("9999")}
 	idle := "$ nothing happens"
 	cases := []struct {
 		name string
 		s    fdScript
 	}{
 		{"unchanged for --idle, clears when the pane moves", fdScript{
-			argv: argv, end: 105,
+			req: req, end: 105,
 			frame: func(at int64) string {
 				if at >= 90 {
 					return "something new"
@@ -604,34 +606,34 @@ func TestD3Quiet(t *testing.T) {
 			want: map[int64][]string{60: {"blocked|quiet: pane unchanged for 60s"}, 90: {"working|quiet: cleared"}},
 		}},
 		{"a worker status newer than the last change silences it", fdScript{
-			argv: argv, end: 120, frame: static(idle), bus: []fdBus{{30, 20, workerLife}},
+			req: req, end: 120, frame: static(idle), bus: []fdBus{{30, 20, workerLife}},
 		}},
 		{"a worker status older than the last change does not", fdScript{
-			argv: argv, end: 105,
+			req: req, end: 105,
 			frame: func(at int64) string { return fmt.Sprintf("%s %d", idle, min(at/45, 1)) },
 			bus:   []fdBus{{0, 0, workerLife}},
 			want:  map[int64][]string{105: {"blocked|quiet: pane unchanged for 60s"}},
 		}},
 		{"quiet: over an open stalled: (D0 then D3)", fdScript{
-			argv: []string{"--idle", "60", "--stall", "30", "--window", "100"}, end: 75, frame: static(idle),
+			req: Request{Idle: ptr("60"), Stall: ptr("30"), Window: ptr("100")}, end: 75, frame: static(idle),
 			want: map[int64][]string{30: {"blocked|stalled: no output for 30s"}, 60: {"blocked|quiet: pane unchanged for 60s"}},
 		}},
 		{"a background-shell wait is silent up to --bg-wait", fdScript{
-			argv: []string{"--idle", "60", "--stall", "30", "--window", "100", "--bg-wait", "120"}, end: 135,
+			req: Request{Idle: ptr("60"), Stall: ptr("30"), Window: ptr("100"), BgWait: ptr("120")}, end: 135,
 			frame: static(fixture(t, "bgwait_churned.txt")),
 			want:  map[int64][]string{120: {"blocked|quiet: pane unchanged for 120s"}},
 		}},
 		{"the bg-wait grace is claude's alone", fdScript{
-			engine: "pi", argv: []string{"--idle", "60", "--stall", "9999", "--bg-wait", "120"}, end: 75,
+			engine: "pi", req: Request{Idle: ptr("60"), Stall: ptr("9999"), BgWait: ptr("120")}, end: 75,
 			frame: static(fixture(t, "bgwait_churned.txt")),
 			want:  map[int64][]string{60: {"blocked|quiet: pane unchanged for 60s"}},
 		}},
 		{"the worker's own blocked suppresses", fdScript{
-			argv: argv, end: 90, frame: static(idle), bus: []fdBus{{0, 0, workerBlock}},
+			req: req, end: 90, frame: static(idle), bus: []fdBus{{0, 0, workerBlock}},
 		}},
-		{"a role pane has no D3", fdScript{id: "role:feat/x:rev", argv: argv, end: 120, frame: static(idle)}},
+		{"a role pane has no D3", fdScript{id: "role:feat/x:rev", req: req, end: 120, frame: static(idle)}},
 		{"codex is covered by byte identity alone", fdScript{
-			engine: "codex", argv: argv, end: 75, frame: static(idle),
+			engine: "codex", req: req, end: 75, frame: static(idle),
 			want: map[int64][]string{60: {"blocked|quiet: pane unchanged for 60s"}},
 		}},
 	}
@@ -641,7 +643,7 @@ func TestD3Quiet(t *testing.T) {
 }
 
 func TestD0StartupSilence(t *testing.T) {
-	argv := []string{"--stall", "30", "--window", "100"}
+	req := Request{Stall: ptr("30"), Window: ptr("100")}
 	idle := "$ nothing happens"
 	const stalled = "blocked|stalled: no output for 30s"
 	cases := []struct {
@@ -649,34 +651,34 @@ func TestD0StartupSilence(t *testing.T) {
 		s    fdScript
 	}{
 		{"static pane inside the window", fdScript{
-			argv: argv, end: 90, frame: static(idle),
+			req: req, end: 90, frame: static(idle),
 			want: map[int64][]string{30: {stalled}},
 		}},
 		{"static after the window closed", fdScript{
-			argv: argv, end: 150,
+			req: req, end: 150,
 			frame: func(at int64) string { return fmt.Sprintf("%s %d", idle, min(at, 90)) },
 		}},
 		{"a worker status of working does not stop it", fdScript{
-			argv: argv, end: 45, frame: static(idle), bus: []fdBus{{0, 0, workerLife}},
+			req: req, end: 45, frame: static(idle), bus: []fdBus{{0, 0, workerLife}},
 			want: map[int64][]string{30: {stalled}},
 		}},
 		{"any other state does", fdScript{
-			argv: argv, end: 90, frame: static(idle),
+			req: req, end: 90, frame: static(idle),
 			bus: []fdBus{{0, 0, `{"state":"pr_open","detail":"CI"}`}},
 		}},
 		{"the worker's own blocked suppresses", fdScript{
-			argv: argv, end: 90, frame: static(idle), bus: []fdBus{{0, 0, workerBlock}},
+			req: req, end: 90, frame: static(idle), bus: []fdBus{{0, 0, workerBlock}},
 		}},
 		{"a pane the engine has no prompt signature for is judged static", fdScript{
-			engine: "pi", argv: argv, end: 45, frame: static(fixture(t, "prompt_select.txt")),
+			engine: "pi", req: req, end: 45, frame: static(fixture(t, "prompt_select.txt")),
 			want: map[int64][]string{30: {stalled}},
 		}},
 		{"a background-shell wait is silent", fdScript{
-			argv: argv, end: 90, frame: static(fixture(t, "bgwait_churned.txt")),
+			req: req, end: 90, frame: static(fixture(t, "bgwait_churned.txt")),
 		}},
-		{"a role pane has no D0", fdScript{id: "role:feat/x:rev", argv: argv, end: 90, frame: static(idle)}},
+		{"a role pane has no D0", fdScript{id: "role:feat/x:rev", req: req, end: 90, frame: static(idle)}},
 		{"a meter-vetoed prompt is still D1's frame", fdScript{
-			argv: argv, end: 90, frame: static("✻ Working… (5s · ↓ 1.0k tokens)\n" + fixture(t, "prompt_select.txt")),
+			req: req, end: 90, frame: static("✻ Working… (5s · ↓ 1.0k tokens)\n" + fixture(t, "prompt_select.txt")),
 		}},
 	}
 	for _, tc := range cases {
@@ -686,7 +688,7 @@ func TestD0StartupSilence(t *testing.T) {
 
 // D0 leaves a permission dialog to D1 even when D1 has not posted.
 func TestD0LeavesPermissionFrameToD1(t *testing.T) {
-	r := newFDRig(t, "", "", "--stall", "30", "--window", "100")
+	r := newFDRig(t, "", "", Request{Stall: ptr("30"), Window: ptr("100")})
 	w := r.w
 	w.text = fixture(t, "permission_subagent.txt")
 	w.now, w.quietFor = w.start+40, 40
@@ -703,31 +705,31 @@ func TestDeadEscalation(t *testing.T) {
 	const deadStall = "failed|dead: turn-stall: unchanged for 120s"
 	const deadQuiet = "failed|dead: quiet: unchanged for 120s"
 	const stalled = "blocked|turn-stall: token count static at 1.0k for 60s while the pane clock advanced"
-	d2 := []string{"--idle", "60", "--dead", "120"}
-	d3 := []string{"--idle", "60", "--dead", "120", "--stall", "9999"}
+	d2 := Request{Idle: ptr("60"), Dead: ptr("120")}
+	d3 := Request{Idle: ptr("60"), Dead: ptr("120"), Stall: ptr("9999")}
 	idle := "$ nothing happens"
 	cases := []struct {
 		name string
 		s    fdScript
 	}{
 		{"turn-stall: escalates --dead after the episode", fdScript{
-			argv: d2, end: 240, frame: meterFrame("1.0k"), exit: 180,
+			req: d2, end: 240, frame: meterFrame("1.0k"), exit: 180,
 			want: map[int64][]string{60: {stalled}, 180: {deadStall}},
 		}},
 		{"quiet: escalates once the engine is gone", fdScript{
-			argv: d3, end: 240, cmd: "bash", frame: static(idle), exit: 180,
+			req: d3, end: 240, cmd: "bash", frame: static(idle), exit: 180,
 			want: map[int64][]string{60: {"blocked|quiet: pane unchanged for 60s"}, 180: {deadQuiet}},
 		}},
 		{"quiet: waits while the engine process is resident", fdScript{
-			argv: d3, end: 240, cmd: "claude", frame: static(idle),
+			req: d3, end: 240, cmd: "claude", frame: static(idle),
 			want: map[int64][]string{60: {"blocked|quiet: pane unchanged for 60s"}},
 		}},
 		{"quiet: waits while the pane command is unknown", fdScript{
-			argv: d3, end: 240, cmd: "", frame: static(idle), exit: 180,
+			req: d3, end: 240, cmd: "", frame: static(idle), exit: 180,
 			want: map[int64][]string{60: {"blocked|quiet: pane unchanged for 60s"}, 180: {deadQuiet}},
 		}},
 		{"before --dead nothing is posted", fdScript{
-			argv: d3, end: 165, cmd: "bash", frame: static(idle),
+			req: d3, end: 165, cmd: "bash", frame: static(idle),
 			want: map[int64][]string{60: {"blocked|quiet: pane unchanged for 60s"}},
 		}},
 	}
@@ -738,14 +740,14 @@ func TestDeadEscalation(t *testing.T) {
 				name string
 				s    fdScript
 			}{"turn-stall: is blocked by an open " + prefix, fdScript{
-				argv: d2, end: 240, frame: meterFrame("1.0k"), bus: bus,
+				req: d2, end: 240, frame: meterFrame("1.0k"), bus: bus,
 				want: map[int64][]string{60: {stalled}},
 			}},
 			struct {
 				name string
 				s    fdScript
 			}{"quiet: is blocked by an open " + prefix, fdScript{
-				argv: d3, end: 240, cmd: "bash", frame: static(idle), bus: bus,
+				req: d3, end: 240, cmd: "bash", frame: static(idle), bus: bus,
 				want: map[int64][]string{60: {"blocked|quiet: pane unchanged for 60s"}},
 			}},
 		)
@@ -754,7 +756,7 @@ func TestDeadEscalation(t *testing.T) {
 		name string
 		s    fdScript
 	}{"a stalled: episode does not block quiet:'s escalation", fdScript{
-		argv: []string{"--idle", "60", "--dead", "120", "--stall", "30", "--window", "100"}, end: 240,
+		req: Request{Idle: ptr("60"), Dead: ptr("120"), Stall: ptr("30"), Window: ptr("100")}, end: 240,
 		cmd: "bash", frame: static(idle), exit: 180,
 		want: map[int64][]string{
 			30: {"blocked|stalled: no output for 30s"}, 60: {"blocked|quiet: pane unchanged for 60s"}, 180: {deadQuiet},
@@ -767,7 +769,7 @@ func TestDeadEscalation(t *testing.T) {
 
 // A finished worker ends the watch instead of taking a failed row.
 func TestDeadEscalationStopsOnTerminalBus(t *testing.T) {
-	r := newFDRig(t, "", "", "--idle", "60", "--dead", "120")
+	r := newFDRig(t, "", "", Request{Idle: ptr("60"), Dead: ptr("120")})
 	w := r.w
 	w.fd.d2At = w.start
 	w.now = w.start + 200
@@ -779,7 +781,7 @@ func TestDeadEscalationStopsOnTerminalBus(t *testing.T) {
 }
 
 func TestDeadEscalationOffInRolePanes(t *testing.T) {
-	r := newFDRig(t, "role:feat/x:rev", "", "--idle", "60", "--dead", "120")
+	r := newFDRig(t, "role:feat/x:rev", "", Request{Idle: ptr("60"), Dead: ptr("120")})
 	w := r.w
 	w.fd.d2At, w.fd.d3At = w.start, w.start
 	w.now = w.start + 500
@@ -1068,9 +1070,10 @@ type d9Rig struct {
 	continueAt []string
 }
 
-func newD9Rig(t *testing.T, id, engine string, argv ...string) *d9Rig {
+func newD9Rig(t *testing.T, id, engine string, req Request) *d9Rig {
 	t.Helper()
-	r := &d9Rig{fdRig: newFDRig(t, id, engine, append([]string{"--pane", "%9"}, argv...)...)}
+	req.Pane = ptr("%9")
+	r := &d9Rig{fdRig: newFDRig(t, id, engine, req)}
 	r.h.f.nudge = func(_ context.Context, req nudge.PaneRequest) (string, int) {
 		r.continues++
 		r.continueAt = append(r.continueAt, strings.Join([]string{
@@ -1101,7 +1104,7 @@ var d9Kinds = []struct{ name, stopped, live, prefix string }{
 func TestD9TypesOncePerEpisode(t *testing.T) {
 	for _, k := range d9Kinds {
 		t.Run(k.name, func(t *testing.T) {
-			r := newD9Rig(t, d9ID, "pi")
+			r := newD9Rig(t, d9ID, "pi", Request{})
 			var at int64
 			if rows := r.tick(&at, k.stopped); rows != nil || r.continues != 0 {
 				t.Fatalf("tick 1: rows %q, %d calls, want none", rows, r.continues)
@@ -1134,7 +1137,7 @@ func TestD9TypesOncePerEpisode(t *testing.T) {
 }
 
 func TestD9HeldLineHoldsEpisode(t *testing.T) {
-	r := newD9Rig(t, d9ID, "pi")
+	r := newD9Rig(t, d9ID, "pi", Request{})
 	r.rc, r.out = 3, "nudge held: %9 worker:feat/x — prompt still holds the text"
 	var at int64
 	r.tick(&at, "pi_truncated_idle.txt")
@@ -1156,7 +1159,7 @@ func TestD9HeldLineHoldsEpisode(t *testing.T) {
 }
 
 func TestD9EpisodeClearsOnChange(t *testing.T) {
-	r := newD9Rig(t, d9ID, "pi")
+	r := newD9Rig(t, d9ID, "pi", Request{})
 	var at int64
 	r.tick(&at, "pi_truncated_idle.txt")
 	r.tick(&at, "pi_truncated_idle.txt")
@@ -1176,7 +1179,7 @@ func TestD9EpisodeClearsOnChange(t *testing.T) {
 // "not resumed": the changed pane closes the episode and a fresh one opens on
 // that sample, typing again within d9Limit.
 func TestD9PaneChangeOpensFreshEpisode(t *testing.T) {
-	r := newD9Rig(t, d9ID, "pi")
+	r := newD9Rig(t, d9ID, "pi", Request{})
 	var at int64
 	r.tick(&at, "pi_truncated_idle.txt")
 	if rows := r.tick(&at, "pi_truncated_idle.txt"); len(rows) != 1 ||
@@ -1199,7 +1202,7 @@ func TestD9PaneChangeOpensFreshEpisode(t *testing.T) {
 // TestD9PaneChangeClearsPostedNotResumed: once a "not resumed" blocked
 // stands, a later changed pane closes the episode with cleared and restarts it.
 func TestD9PaneChangeClearsPostedNotResumed(t *testing.T) {
-	r := newD9Rig(t, d9ID, "pi")
+	r := newD9Rig(t, d9ID, "pi", Request{})
 	var at int64
 	r.tick(&at, "pi_truncated_idle.txt")
 	r.tick(&at, "pi_truncated_idle.txt")
@@ -1220,7 +1223,7 @@ func TestD9PaneChangeClearsPostedNotResumed(t *testing.T) {
 // TestD9IdenticalPaneStillPostsNotResumed: the pane staying byte-identical
 // after the type keeps today's post, exactly as before the baseline existed.
 func TestD9IdenticalPaneStillPostsNotResumed(t *testing.T) {
-	r := newD9Rig(t, d9ID, "pi")
+	r := newD9Rig(t, d9ID, "pi", Request{})
 	var at int64
 	r.tick(&at, "pi_truncated_idle.txt")
 	r.tick(&at, "pi_truncated_idle.txt")
@@ -1235,7 +1238,7 @@ func TestD9IdenticalPaneStillPostsNotResumed(t *testing.T) {
 func TestD9Refusals(t *testing.T) {
 	cases := []struct {
 		name, id, engine, frame string
-		argv                    []string
+		req                     Request
 		body                    string // a worker status row written first
 		want                    string // the one row expected after two ticks, "" for none
 	}{
@@ -1249,7 +1252,7 @@ func TestD9Refusals(t *testing.T) {
 		{name: "role", id: "role:feat/x:reviewer", frame: "pi_truncated_idle.txt"},
 		{name: "branch-keyed", id: "feat/x", frame: "pi_truncated_idle.txt",
 			want: "blocked|truncated: response truncated at the output cap in pane %9 — not resumed (auto-continue unavailable: no session id)"},
-		{name: "no-nudge", argv: []string{"--no-nudge"}, frame: "pi_truncated_idle.txt",
+		{name: "no-nudge", req: Request{NoNudge: true}, frame: "pi_truncated_idle.txt",
 			want: "blocked|truncated: response truncated at the output cap in pane %9 — not resumed (auto-continue off)"},
 		{name: "worker-blocked", frame: "pi_truncated_idle.txt", body: `{"state":"blocked","detail":"waiting"}`},
 		{name: "pr_open", frame: "pi_truncated_idle.txt", body: `{"state":"pr_open","detail":"x"}`,
@@ -1264,7 +1267,7 @@ func TestD9Refusals(t *testing.T) {
 			if engine == "" {
 				engine = "pi"
 			}
-			r := newD9Rig(t, id, engine, tc.argv...)
+			r := newD9Rig(t, id, engine, tc.req)
 			if tc.body != "" {
 				r.write(1, tc.body)
 			}
@@ -1288,7 +1291,7 @@ func TestD9Refusals(t *testing.T) {
 
 func TestD9CallFailures(t *testing.T) {
 	t.Run("refused", func(t *testing.T) {
-		r := newD9Rig(t, d9ID, "pi")
+		r := newD9Rig(t, d9ID, "pi", Request{})
 		r.rc, r.out = 2, "anchor: %9 is not the lead pane of @1\nmore"
 		var at int64
 		r.tick(&at, "pi_truncated_idle.txt")
@@ -1298,7 +1301,7 @@ func TestD9CallFailures(t *testing.T) {
 		}
 	})
 	t.Run("signal-mid-type-ends-the-watch", func(t *testing.T) {
-		r := newD9Rig(t, d9ID, "pi")
+		r := newD9Rig(t, d9ID, "pi", Request{})
 		ctx, cancel := sigterm(t)
 		r.w.ctx = ctx
 		r.h.f.nudge = func(context.Context, nudge.PaneRequest) (string, int) {
@@ -1322,7 +1325,7 @@ func TestD9FreshBusBeforeTyping(t *testing.T) {
 		{"worker-blocked", workerBlock},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := newD9Rig(t, d9ID, "pi")
+			r := newD9Rig(t, d9ID, "pi", Request{})
 			var at int64
 			r.tick(&at, "pi_truncated_idle.txt")
 			r.write(16, tc.body)
@@ -1347,7 +1350,7 @@ func TestD9FreshBusBeforeTyping(t *testing.T) {
 		})
 	}
 	t.Run("worker-block-then-working-rearms", func(t *testing.T) {
-		r := newD9Rig(t, d9ID, "pi")
+		r := newD9Rig(t, d9ID, "pi", Request{})
 		var at int64
 		r.tick(&at, "pi_truncated_idle.txt")
 		d9At := func(ts int64, body string) {
@@ -1370,7 +1373,7 @@ func TestD9FreshBusBeforeTyping(t *testing.T) {
 }
 
 func TestD9RestartedWatchDoesNotRetype(t *testing.T) {
-	r := newD9Rig(t, d9ID, "pi")
+	r := newD9Rig(t, d9ID, "pi", Request{})
 	r.write(1, `{"state":"working","detail":"truncated: auto-continued — pane %9","source":"watchdog"}`)
 	var at int64
 	var all []string
@@ -1386,7 +1389,7 @@ func TestD9RestartedWatchDoesNotRetype(t *testing.T) {
 }
 
 func TestD9SuppressedRefusalTellsNoContinueStory(t *testing.T) {
-	r := newD9Rig(t, d9ID, "pi")
+	r := newD9Rig(t, d9ID, "pi", Request{})
 	r.rc, r.out = 2, "anchor: %9 is not the lead pane of @1"
 	r.write(1, wd("prompt: x"))
 	var at int64
@@ -1405,7 +1408,7 @@ func TestD9SuppressedRefusalTellsNoContinueStory(t *testing.T) {
 }
 
 func TestD9ContinueLimitPerWatch(t *testing.T) {
-	r := newD9Rig(t, d9ID, "pi")
+	r := newD9Rig(t, d9ID, "pi", Request{})
 	var at int64
 	for range 3 {
 		r.tick(&at, "pi_truncated_idle.txt")

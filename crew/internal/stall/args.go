@@ -18,9 +18,17 @@ const (
 // releaseGrace is --release's default.
 const releaseGrace = reap.ReleaseGrace
 
-// usageError is a refusal: exit 1 with its text on stderr. An empty one is the
-// arm's silent exit — `shift 2` failing under `set -e` on a value flag that
-// ends the argv.
+// Request is one stall-watch invocation as the grammar bound it. A nil flag
+// was not given; a given flag keeps its value verbatim, empty included.
+type Request struct {
+	Target                        string
+	Pane, Engine, Grace, Interval *string
+	Release, BudgetRefresh, Stall, Window, Idle, Dead, MaxLife,
+	Load, BgWait, Launch, Unread, RunawayHits, RunawayTokens *string
+	NoBudget, NoNudge bool
+}
+
+// usageError is a refusal: exit 1 with its text on stderr.
 type usageError string
 
 func (e usageError) Error() string { return string(e) }
@@ -40,81 +48,66 @@ type config struct {
 // it fed to arithmetic and crashed on; here they are refused the same way.
 type numFlag struct {
 	name  string
+	src   func(*Request) *string
 	dst   func(*config) *int64
 	def   int64
 	count bool
 }
 
 var numFlags = []numFlag{
-	{"--release", func(c *config) *int64 { return &c.release }, releaseGrace, false},
-	{"--budget-refresh", func(c *config) *int64 { return &c.budgetRefresh }, 900, false},
-	{"--stall", func(c *config) *int64 { return &c.stall }, 300, false},
-	{"--window", func(c *config) *int64 { return &c.window }, 900, false},
-	{"--idle", func(c *config) *int64 { return &c.idle }, 1800, false},
-	{"--dead", func(c *config) *int64 { return &c.dead }, 1800, false},
-	{"--max-life", func(c *config) *int64 { return &c.maxLife }, 43200, false},
-	{"--load", func(c *config) *int64 { return &c.loadWin }, 300, false},
-	{"--bg-wait", func(c *config) *int64 { return &c.bgWait }, 7200, false},
-	{"--launch", func(c *config) *int64 { return &c.launch }, 150, false},
-	{"--unread", func(c *config) *int64 { return &c.unread }, 600, false},
-	{"--runaway-hits", func(c *config) *int64 { return &c.runawayHits }, 3, true},
-	{"--runaway-tokens", func(c *config) *int64 { return &c.runawayTokens }, 1500, true},
+	{"--release", func(r *Request) *string { return r.Release }, func(c *config) *int64 { return &c.release }, releaseGrace, false},
+	{"--budget-refresh", func(r *Request) *string { return r.BudgetRefresh }, func(c *config) *int64 { return &c.budgetRefresh }, 900, false},
+	{"--stall", func(r *Request) *string { return r.Stall }, func(c *config) *int64 { return &c.stall }, 300, false},
+	{"--window", func(r *Request) *string { return r.Window }, func(c *config) *int64 { return &c.window }, 900, false},
+	{"--idle", func(r *Request) *string { return r.Idle }, func(c *config) *int64 { return &c.idle }, 1800, false},
+	{"--dead", func(r *Request) *string { return r.Dead }, func(c *config) *int64 { return &c.dead }, 1800, false},
+	{"--max-life", func(r *Request) *string { return r.MaxLife }, func(c *config) *int64 { return &c.maxLife }, 43200, false},
+	{"--load", func(r *Request) *string { return r.Load }, func(c *config) *int64 { return &c.loadWin }, 300, false},
+	{"--bg-wait", func(r *Request) *string { return r.BgWait }, func(c *config) *int64 { return &c.bgWait }, 7200, false},
+	{"--launch", func(r *Request) *string { return r.Launch }, func(c *config) *int64 { return &c.launch }, 150, false},
+	{"--unread", func(r *Request) *string { return r.Unread }, func(c *config) *int64 { return &c.unread }, 600, false},
+	{"--runaway-hits", func(r *Request) *string { return r.RunawayHits }, func(c *config) *int64 { return &c.runawayHits }, 3, true},
+	{"--runaway-tokens", func(r *Request) *string { return r.RunawayTokens }, func(c *config) *int64 { return &c.runawayTokens }, 1500, true},
 }
 
-// parseArgs is the arm's prologue in its order: the id, the crew, the flags,
-// then the checks. The crew is resolved before any flag is looked at, so a
-// missing crew wins over a bad flag.
-func parseArgs(argv []string, crewID func() string) (config, error) {
-	if len(argv) == 0 || argv[0] == "" {
+// parseArgs is the arm's prologue in its order: the id, the crew, then the
+// checks. The crew is resolved before any flag is looked at, so a missing crew
+// wins over a bad flag.
+func parseArgs(req Request, crewID func() string) (config, error) {
+	if req.Target == "" {
 		return config{}, usageError(usageMsg)
 	}
 	var c config
-	c.identify(argv[0])
+	c.identify(req.Target)
 	c.crew = crewID()
 	if c.crew == "" {
 		return config{}, usageError(noCrewMsg)
 	}
-	c.engine = "unknown"
-	c.grace, c.interval = "45", "15"
-	c.nudgeOn = true
-
-	strs := map[string]*string{"--pane": &c.pane, "--engine": &c.engine, "--grace": &c.grace, "--interval": &c.interval}
-	nums := map[string]string{}
-	for _, n := range numFlags {
-		nums[n.name] = strconv.FormatInt(n.def, 10)
-	}
-	for i := 1; i < len(argv); {
-		a := argv[i]
-		switch a {
-		case "--no-budget":
-			c.noBudget = true
-			i++
-			continue
-		case "--no-nudge":
-			c.nudgeOn = false
-			i++
+	c.engine, c.grace, c.interval = "unknown", "45", "15"
+	for _, f := range []struct {
+		name string
+		src  *string
+		dst  *string
+	}{{"--engine", req.Engine, &c.engine}, {"--grace", req.Grace, &c.grace}, {"--interval", req.Interval, &c.interval}} {
+		if f.src == nil {
 			continue
 		}
-		dst, isStr := strs[a]
-		_, isNum := nums[a]
-		if !isStr && !isNum {
-			return config{}, usageError(fmt.Sprintf("crew: stall-watch: unknown arg '%s'", a))
+		if *f.src == "" {
+			return config{}, usageError(fmt.Sprintf("crew: stall-watch: %s needs a value", f.name))
 		}
-		if i+1 >= len(argv) {
-			return config{}, usageError("")
-		}
-		if isStr {
-			*dst = argv[i+1]
-		} else {
-			nums[a] = argv[i+1]
-		}
-		i += 2
+		*f.dst = *f.src
 	}
-	if c.pane == "" {
+	if req.Pane == nil || *req.Pane == "" {
 		return config{}, usageError(needPaneMsg)
 	}
+	c.pane = *req.Pane
+	c.noBudget, c.nudgeOn = req.NoBudget, !req.NoNudge
 	for _, n := range numFlags {
-		v, ok := nonNegInt(nums[n.name])
+		s := strconv.FormatInt(n.def, 10)
+		if p := n.src(&req); p != nil {
+			s = *p
+		}
+		v, ok := nonNegInt(s)
 		if !ok {
 			unit := " number of seconds"
 			if n.count {
