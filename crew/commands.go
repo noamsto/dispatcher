@@ -9,6 +9,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
+	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/rate"
@@ -249,6 +250,55 @@ type watchCmd struct {
 	Crew     *string `name:"crew"`
 }
 
+type gitBaselineCmd struct {
+	Accept bool `name:"accept"`
+}
+
+// guardDirCmd is a git-guard op that takes the common dir and nothing else.
+type guardDirCmd struct {
+	Common string `arg:"" name:"common"`
+}
+
+type guardCheckCmd struct {
+	Common string `arg:"" name:"common"`
+	Gitdir string `arg:"" optional:"" name:"gitdir"`
+}
+
+type guardShowURLCmd struct {
+	URL  string `arg:"" name:"url"`
+	Mode string `arg:"" optional:"" name:"mode"`
+}
+
+type guardShowKeyCmd struct {
+	Key string `arg:"" name:"key"`
+}
+
+type guardShowPairCmd struct {
+	Key     string   `arg:"" name:"key"`
+	Value   string   `arg:"" name:"value"`
+	Aliases []string `arg:"" optional:"" name:"aliases"`
+}
+
+type guardCanonCmd struct {
+	Root string `arg:"" name:"root"`
+	Rec  string `arg:"" name:"rec"`
+}
+
+// gitGuardCmd's ops take paths and config text from worktree-git.sh, never a
+// dash-led word: kong reads one as an unknown flag, the guard's usage line.
+type gitGuardCmd struct {
+	Check     guardCheckCmd    `cmd:"" name:"check"`
+	CheckCwd  guardDirCmd      `cmd:"" name:"check-cwd"`
+	Init      guardDirCmd      `cmd:"" name:"init"`
+	Commondir guardDirCmd      `cmd:"" name:"commondir"`
+	Pairs     guardDirCmd      `cmd:"" name:"pairs"`
+	Union     guardDirCmd      `cmd:"" name:"union"`
+	ShowURL   guardShowURLCmd  `cmd:"" name:"show-url"`
+	ShowKey   guardShowKeyCmd  `cmd:"" name:"show-key"`
+	ShowPair  guardShowPairCmd `cmd:"" name:"show-pair"`
+	Canon     guardCanonCmd    `cmd:"" name:"canon"`
+}
+
 // refusal is the stderr line and exit status a typed subcommand's argv earned.
 type refusal struct {
 	msg  string
@@ -260,6 +310,7 @@ const (
 	identityHashUsage = "crew: identity --hash <name>"
 	identitySignature = "usage: crew identity <branch> [crew]"
 	rateRootUsage     = "crew: rate --root needs a directory"
+	gitBaselineUsage  = "usage: crew git-baseline [--accept]"
 )
 
 // wording is how one subcommand phrases the two grammar failures kong reports
@@ -374,10 +425,12 @@ var wordings = map[string]wording{
 		extra:       func(w string) string { return "crew: roster-render: unknown arg '" + w + "'" },
 		code:        exitUsage,
 	},
-	"inbox":      plain("inbox"),
-	"register":   plain("register"),
-	"deregister": plain("deregister"),
-	"log":        plain("log"),
+	"inbox":        plain("inbox"),
+	"register":     plain("register"),
+	"deregister":   plain("deregister"),
+	"log":          plain("log"),
+	"git-baseline": {all: gitBaselineUsage, code: exitFailure},
+	"git-guard":    {all: gitguard.GuardUsage, code: exitUsage},
 }
 
 // kongRefusal maps kong's error for the refusal key (a subcommand, or `hold <action>`

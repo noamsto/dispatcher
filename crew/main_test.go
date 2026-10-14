@@ -651,6 +651,9 @@ func TestRunGitGuardAndBaselineOutsideRepo(t *testing.T) {
 	}{
 		{[]string{"git-guard"}, exitUsage, "", "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …\n"},
 		{[]string{"git-guard", "canon", "/r", "core.hookspath\n.git/hooks"}, 0, "core.hookspath\n/r/hooks", ""},
+		{[]string{"git-guard", "canon", "", "core.hookspath"}, 0, "core.hookspath", ""},
+		{[]string{"git-guard", "show-key", "core.pager"}, 0, "core.pager", ""},
+		{[]string{"git-guard", "show-pair", "remote.origin.url", "https://t@h.example/r", "https://t@h"}, 0, "remote.origin.url=https://t@h.example/r", ""},
 		{[]string{"git-baseline"}, exitFailure, "", "crew: not in a git repo\n"},
 		{[]string{"git-baseline", "--bogus"}, exitFailure, "", "usage: crew git-baseline [--accept]\n"},
 	} {
@@ -774,7 +777,7 @@ func TestAdmittedSubcommands(t *testing.T) {
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
-		"status", "msg", "reply", "hold", "nudge", "await", "watch", "stream"} {
+		"status", "msg", "reply", "hold", "nudge", "await", "watch", "stream", "git-guard", "git-baseline"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -1260,6 +1263,20 @@ var preLocateRefusalRows = []struct {
 	{"rate sweep-all root missing value", []string{"rate", "--sweep-all", "--root"}, rateRootNeedsDir, 1},
 	{"rate sweep-all root empty value", []string{"rate", "--sweep-all", "--root", ""}, rateRootNeedsDir, 1},
 	{"rate sweep-all root empty value equals", []string{"rate", "--sweep-all", "--root="}, rateRootNeedsDir, 1},
+	{"git-baseline unknown flag", []string{"git-baseline", "--bogus"}, baselineUsage, 1},
+	{"git-baseline extra positional", []string{"git-baseline", "extra"}, baselineUsage, 1},
+	{"git-baseline extra after accept", []string{"git-baseline", "--accept", "x"}, baselineUsage, 1},
+	{"git-baseline bad bool", []string{"git-baseline", "--accept=maybe"}, baselineUsage, 1},
+	{"git-guard no op", []string{"git-guard"}, guardUsage, 64},
+	{"git-guard unknown op", []string{"git-guard", "bogus"}, guardUsage, 64},
+	{"git-guard unknown flag", []string{"git-guard", "--bogus"}, guardUsage, 64},
+	{"git-guard check no dir", []string{"git-guard", "check"}, guardUsage, 64},
+	{"git-guard check three words", []string{"git-guard", "check", "a", "b", "c"}, guardUsage, 64},
+	{"git-guard init two words", []string{"git-guard", "init", "a", "b"}, guardUsage, 64},
+	{"git-guard show-url three words", []string{"git-guard", "show-url", "a", "proxy", "x"}, guardUsage, 64},
+	{"git-guard show-pair one word", []string{"git-guard", "show-pair", "k"}, guardUsage, 64},
+	{"git-guard canon one word", []string{"git-guard", "canon", "/r"}, guardUsage, 64},
+	{"git-guard dash-led value", []string{"git-guard", "show-key", "-x"}, guardUsage, 64},
 }
 
 const (
@@ -1271,6 +1288,8 @@ const (
 	stackUsage       = "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n       crew stack align <top-PR#|branch>"
 	rateRootNeedsDir = "crew: rate --root needs a directory"
 	whereUsage       = "usage: crew where <codename|branch|%id> [--crew ID]"
+	baselineUsage    = "usage: crew git-baseline [--accept]"
+	guardUsage       = "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …"
 )
 
 // TestTypedRefusals pins each typed subcommand's refusals at the parse: the
@@ -1639,6 +1658,7 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 			[]string{"fleet", "stream", "--crew=c1", "--force=true", "--status=true"}, false},
 		{"roster-render bools", []string{"roster-render", "--no-open", "--once", "--detach"},
 			[]string{"roster-render", "--no-open=true", "--once=true", "--detach=true"}, false},
+		{"git-baseline --accept", []string{"git-baseline", "--accept"}, []string{"git-baseline", "--accept=true"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, okA := parseCrew(tc.a)

@@ -146,6 +146,7 @@ var typedSubcommands = map[string]bool{
 	"stack": true, "roster-render": true, "pi-agent-dir": true,
 	"status": true, "msg": true, "reply": true, "hold": true,
 	"nudge": true, "await": true, "watch": true, "stream": true,
+	"git-guard": true, "git-baseline": true,
 }
 
 // passthroughCmd is one unconverted subcommand to kong: its name, then whatever
@@ -203,6 +204,9 @@ type root struct {
 	Await  awaitCmd  `cmd:"" name:"await" help:"Block until a msg answers an agent."`
 	Watch  watchCmd  `cmd:"" name:"watch" help:"Park until a worker event qualifies."`
 	Stream streamCmd `cmd:"" name:"stream" help:"The long-lived lane that pushes batches."`
+
+	GitGuard    gitGuardCmd    `cmd:"" name:"git-guard" help:"The git-config guard worktree-git.sh runs."`
+	GitBaseline gitBaselineCmd `cmd:"" name:"git-baseline" help:"List or accept the git-config baseline."`
 }
 
 // crewArgs is what the root parse resolves to: the word that named the
@@ -319,6 +323,36 @@ func holdRequest(p crewArgs) hold.Request {
 	}
 }
 
+// guardRequest is the typed git-guard call: the op is the word after
+// `git-guard` in the command kong selected.
+func guardRequest(p crewArgs) gitguard.GuardRequest {
+	g := p.typed.GitGuard
+	req := gitguard.GuardRequest{Op: strings.Fields(p.cmd)[1]}
+	switch req.Op {
+	case "check":
+		req.Dir, req.Gitdir = g.Check.Common, g.Check.Gitdir
+	case "check-cwd":
+		req.Dir = g.CheckCwd.Common
+	case "init":
+		req.Dir = g.Init.Common
+	case "commondir":
+		req.Dir = g.Commondir.Common
+	case "pairs":
+		req.Dir = g.Pairs.Common
+	case "union":
+		req.Dir = g.Union.Common
+	case "show-url":
+		req.URL, req.Mode = g.ShowURL.URL, g.ShowURL.Mode
+	case "show-key":
+		req.Key = g.ShowKey.Key
+	case "show-pair":
+		req.Key, req.Value, req.Aliases = g.ShowPair.Key, g.ShowPair.Value, g.ShowPair.Aliases
+	case "canon":
+		req.Root, req.Rec = g.Canon.Root, g.Canon.Rec
+	}
+	return req
+}
+
 // env is everything run reads from the process, so tests can supply their own.
 type env struct {
 	getwd    func() (string, error)
@@ -419,10 +453,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// common dir, so neither reads the bus. getwd keeps a logical $PWD that
 	// names the cwd: refusals print the path the caller typed.
 	switch sub {
-	case "git-guard":
-		return gitguard.RunGuard(args, cwd, stdout, stderr)
-	case "git-baseline":
-		return gitguard.RunBaseline(args, cwd, gitguard.BaselineOptions{
+	case "git-guard", "git-baseline":
+		if parsed.refusal != nil {
+			return refuse(stderr, parsed.refusal)
+		}
+		if sub == "git-guard" {
+			return gitguard.RunGuard(guardRequest(parsed), cwd, stdout, stderr)
+		}
+		return gitguard.RunBaseline(parsed.typed.GitBaseline.Accept, cwd, gitguard.BaselineOptions{
 			IsTTY: func() bool { return bus.IsTerminal(0) },
 			In:    os.Stdin,
 		}, stdout, stderr)
