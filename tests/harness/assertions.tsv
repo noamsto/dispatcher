@@ -48,6 +48,31 @@ pr-watch-one-in-flight-check-keeps-the-rollup-pending-not-successful	pw-pending-
 pr-watch-one-in-flight-check-keeps-the-rollup-pending-not-successful	pw-pending-seed-empty-stdout	tests/pr-watch.bats	58	stdout	[ -z "$output" ]
 pr-watch-one-in-flight-check-keeps-the-rollup-pending-not-successful	pw-pending-seed-timeout-stderr	tests/pr-watch.bats	59	stderr	[[ "$stderr" == *"park ended after 1s"* ]]
 pr-watch-one-in-flight-check-keeps-the-rollup-pending-not-successful	pw-pending-state	tests/pr-watch.bats	101	side-effect-json	jq -e '.checks == "PENDING"' "$XDG_DATA_HOME/crew/pr-watch/o/r/42.json"
+pr-watch-fires-when-the-base-tip-advances	pw-base-seed-status	tests/pr-watch.bats	57	status	[ "$status" -eq 0 ]
+pr-watch-fires-when-the-base-tip-advances	pw-base-seed-empty-stdout	tests/pr-watch.bats	58	stdout	[ -z "$output" ]
+pr-watch-fires-when-the-base-tip-advances	pw-base-seed-timeout-stderr	tests/pr-watch.bats	59	stderr	[[ "$stderr" == *"park ended after 1s"* ]]
+pr-watch-fires-when-the-base-tip-advances	pw-base-status	tests/pr-watch.bats	109	status	[ "$status" -eq 0 ]
+pr-watch-fires-when-the-base-tip-advances	pw-base-event	tests/pr-watch.bats	110	stdout-json	echo "$output" | jq -e '.changed == ["base_sha"]'
+pr-watch-fires-when-the-base-tip-advances	pw-base-state-transition	tests/pr-watch.bats	111	stdout-json	echo "$output" | jq -e '.state.base_sha == "basebbb" and .was.base_sha == "baseaaa"'
+pr-watch-fires-when-mergeable-flips-to-conflicting	pw-conflict-seed-status	tests/pr-watch.bats	57	status	[ "$status" -eq 0 ]
+pr-watch-fires-when-mergeable-flips-to-conflicting	pw-conflict-seed-empty-stdout	tests/pr-watch.bats	58	stdout	[ -z "$output" ]
+pr-watch-fires-when-mergeable-flips-to-conflicting	pw-conflict-seed-timeout-stderr	tests/pr-watch.bats	59	stderr	[[ "$stderr" == *"park ended after 1s"* ]]
+pr-watch-fires-when-mergeable-flips-to-conflicting	pw-conflict-status	tests/pr-watch.bats	119	status	[ "$status" -eq 0 ]
+pr-watch-fires-when-mergeable-flips-to-conflicting	pw-conflict-event	tests/pr-watch.bats	120	stdout-json	echo "$output" | jq -e '.changed == ["mergeable"]'
+pr-watch-fires-when-mergeable-flips-to-conflicting	pw-conflict-state-transition	tests/pr-watch.bats	121	stdout-json	echo "$output" | jq -e '.state.mergeable == "CONFLICTING" and .was.mergeable == "MERGEABLE"'
+pr-watch-an-old-cursor-missing-base-sha-stays-quiet-until-the-base-moves	pw-oldcursor-quiet-status	tests/pr-watch.bats	130	status	[ "$status" -eq 0 ]
+pr-watch-an-old-cursor-missing-base-sha-stays-quiet-until-the-base-moves	pw-oldcursor-quiet-empty-stdout	tests/pr-watch.bats	131	stdout	[ -z "$output" ]
+pr-watch-an-old-cursor-missing-base-sha-stays-quiet-until-the-base-moves	pw-oldcursor-base-backfilled	tests/pr-watch.bats	132	side-effect-json	jq -e '.base_sha == "baseaaa"' "$XDG_DATA_HOME/crew/pr-watch/o/r/42.json"
+pr-watch-an-old-cursor-missing-base-sha-stays-quiet-until-the-base-moves	pw-oldcursor-event-status	tests/pr-watch.bats	135	status	[ "$status" -eq 0 ]
+pr-watch-an-old-cursor-missing-base-sha-stays-quiet-until-the-base-moves	pw-oldcursor-event	tests/pr-watch.bats	136	stdout-json	echo "$output" | jq -e '.changed == ["base_sha"] and .was.base_sha == "baseaaa"'
+pr-watch-unknown-mergeable-is-not-an-event-and-the-cursor-keeps-the-last-known-value	pw-unknown-mergeable-seed-status	tests/pr-watch.bats	57	status	[ "$status" -eq 0 ]
+pr-watch-unknown-mergeable-is-not-an-event-and-the-cursor-keeps-the-last-known-value	pw-unknown-mergeable-seed-empty-stdout	tests/pr-watch.bats	58	stdout	[ -z "$output" ]
+pr-watch-unknown-mergeable-is-not-an-event-and-the-cursor-keeps-the-last-known-value	pw-unknown-mergeable-seed-timeout-stderr	tests/pr-watch.bats	59	stderr	[[ "$stderr" == *"park ended after 1s"* ]]
+pr-watch-unknown-mergeable-is-not-an-event-and-the-cursor-keeps-the-last-known-value	pw-unknown-mergeable-status	tests/pr-watch.bats	144	status	[ "$status" -eq 0 ]
+pr-watch-unknown-mergeable-is-not-an-event-and-the-cursor-keeps-the-last-known-value	pw-unknown-mergeable-empty-stdout	tests/pr-watch.bats	145	stdout	[ -z "$output" ]
+pr-watch-unknown-mergeable-is-not-an-event-and-the-cursor-keeps-the-last-known-value	pw-unknown-mergeable-cursor-kept	tests/pr-watch.bats	146	side-effect-json	jq -e '.mergeable == "MERGEABLE"' "$XDG_DATA_HOME/crew/pr-watch/o/r/42.json"
+pr-watch-unknown-mergeable-is-not-an-event-and-the-cursor-keeps-the-last-known-value	pw-unknown-mergeable-recover-status	tests/pr-watch.bats	149	status	[ "$status" -eq 0 ]
+pr-watch-unknown-mergeable-is-not-an-event-and-the-cursor-keeps-the-last-known-value	pw-unknown-mergeable-recover-empty-stdout	tests/pr-watch.bats	150	stdout	[ -z "$output" ]
 pr-watch-fires-when-the-pr-merges	pw-merged-seed-status	tests/pr-watch.bats	57	status	[ "$status" -eq 0 ]
 pr-watch-fires-when-the-pr-merges	pw-merged-seed-empty-stdout	tests/pr-watch.bats	58	stdout	[ -z "$output" ]
 pr-watch-fires-when-the-pr-merges	pw-merged-seed-timeout-stderr	tests/pr-watch.bats	59	stderr	[[ "$stderr" == *"park ended after 1s"* ]]

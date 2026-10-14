@@ -211,11 +211,12 @@ EOF
   set_view aaa11 OPEN SUCCESS
 }
 
-set_view() {
+set_view() { # <head-sha> <state> <check-conclusion> [base-sha] [mergeable]
+  local base=${4:-baseaaa} mergeable=${5:-MERGEABLE}
   cat >"$GH_VIEW" <<EOF
 {"headRefOid":"$1","state":"$2","reviewDecision":"","latestReviews":[],
  "statusCheckRollup":[{"name":"check","status":"COMPLETED","conclusion":"$3"}],
- "comments":[]}
+ "comments":[],"baseRefOid":"$base","baseRefName":"main","mergeable":"$mergeable"}
 EOF
 }
 
@@ -367,6 +368,47 @@ run_pr_watch_cases() {
 EOF
     seed pw-pending
     check_json_file pw-pending-state "$XDG_DATA_HOME/crew/pr-watch/o/r/42.json" '.checks == "PENDING"'
+    ;;
+  pr-watch-fires-when-the-base-tip-advances)
+    seed pw-base
+    set_view aaa11 OPEN SUCCESS basebbb MERGEABLE
+    run_pr_watch 42 --repo o/r --timeout 30 --interval 1
+    check_eq pw-base-status "$CAPTURE_STATUS" 0
+    check_json pw-base-event "$CAPTURE_STDOUT" '.changed == ["base_sha"]'
+    check_json pw-base-state-transition "$CAPTURE_STDOUT" '.state.base_sha == "basebbb" and .was.base_sha == "baseaaa"'
+    ;;
+  pr-watch-fires-when-mergeable-flips-to-conflicting)
+    seed pw-conflict
+    set_view aaa11 OPEN SUCCESS baseaaa CONFLICTING
+    run_pr_watch 42 --repo o/r --timeout 30 --interval 1
+    check_eq pw-conflict-status "$CAPTURE_STATUS" 0
+    check_json pw-conflict-event "$CAPTURE_STDOUT" '.changed == ["mergeable"]'
+    check_json pw-conflict-state-transition "$CAPTURE_STDOUT" '.state.mergeable == "CONFLICTING" and .was.mergeable == "MERGEABLE"'
+    ;;
+  pr-watch-an-old-cursor-missing-base-sha-stays-quiet-until-the-base-moves)
+    mkdir -p "$XDG_DATA_HOME/crew/pr-watch/o/r"
+    jq -nc '{head_sha:"aaa11",state:"OPEN",review_decision:"",review_at:"",checks:"SUCCESS",thread_at:"",thread_n:0}' \
+      >"$XDG_DATA_HOME/crew/pr-watch/o/r/42.json"
+    run_pr_watch 42 --repo o/r --timeout 1 --interval 1
+    check_eq pw-oldcursor-quiet-status "$CAPTURE_STATUS" 0
+    check_eq pw-oldcursor-quiet-empty-stdout "$CAPTURE_STDOUT" ''
+    check_json_file pw-oldcursor-base-backfilled "$XDG_DATA_HOME/crew/pr-watch/o/r/42.json" '.base_sha == "baseaaa"'
+    set_view aaa11 OPEN SUCCESS basebbb MERGEABLE
+    run_pr_watch 42 --repo o/r --timeout 30 --interval 1
+    check_eq pw-oldcursor-event-status "$CAPTURE_STATUS" 0
+    check_json pw-oldcursor-event "$CAPTURE_STDOUT" '.changed == ["base_sha"] and .was.base_sha == "baseaaa"'
+    ;;
+  pr-watch-unknown-mergeable-is-not-an-event-and-the-cursor-keeps-the-last-known-value)
+    seed pw-unknown-mergeable
+    set_view aaa11 OPEN SUCCESS baseaaa UNKNOWN
+    run_pr_watch 42 --repo o/r --timeout 1 --interval 1
+    check_eq pw-unknown-mergeable-status "$CAPTURE_STATUS" 0
+    check_eq pw-unknown-mergeable-empty-stdout "$CAPTURE_STDOUT" ''
+    check_json_file pw-unknown-mergeable-cursor-kept "$XDG_DATA_HOME/crew/pr-watch/o/r/42.json" '.mergeable == "MERGEABLE"'
+    set_view aaa11 OPEN SUCCESS baseaaa MERGEABLE
+    run_pr_watch 42 --repo o/r --timeout 1 --interval 1
+    check_eq pw-unknown-mergeable-recover-status "$CAPTURE_STATUS" 0
+    check_eq pw-unknown-mergeable-recover-empty-stdout "$CAPTURE_STDOUT" ''
     ;;
   pr-watch-fires-when-the-pr-merges)
     seed pw-merged

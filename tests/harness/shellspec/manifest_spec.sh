@@ -99,6 +99,34 @@ The output should be blank
 The stderr should be blank
 End
 
+It 'pr-watch-fires-when-the-base-tip-advances'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "pr-watch-fires-when-the-base-tip-advances"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
+It 'pr-watch-fires-when-mergeable-flips-to-conflicting'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "pr-watch-fires-when-mergeable-flips-to-conflicting"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
+It 'pr-watch-an-old-cursor-missing-base-sha-stays-quiet-until-the-base-moves'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "pr-watch-an-old-cursor-missing-base-sha-stays-quiet-until-the-base-moves"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
+It 'pr-watch-unknown-mergeable-is-not-an-event-and-the-cursor-keeps-the-last-known-value'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "pr-watch-unknown-mergeable-is-not-an-event-and-the-cursor-keeps-the-last-known-value"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
 It 'pr-watch-fires-when-the-pr-merges'
 When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "pr-watch-fires-when-the-pr-merges"
 The status should be success
