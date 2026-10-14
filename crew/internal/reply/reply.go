@@ -50,22 +50,14 @@ type Options struct {
 // or nowhere, for stderr) — main.go's helper, same reason.
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
-// Run is the arm: the `--crew` flag loop, the target, then the append. Nothing
-// prints on success, so there is no stdout to write.
-func Run(args []string, paths bus.Paths, stderr io.Writer, o Options) int {
-	rc, pos, msg := parse(args)
-	if msg != "" {
-		say(stderr, "%s\n", msg)
-		return exitFailure
-	}
-	to, body := "", ""
-	if len(pos) > 0 {
-		to = pos[0]
-	}
-	if len(pos) > 1 {
-		body = pos[1]
-	}
-	crew := rc
+// Request is `crew reply [--crew ID] <to> <body>`; an empty Crew is the caller's own.
+type Request struct{ Crew, To, Body string }
+
+// Run is the arm: the target, then the append. Nothing prints on success, so
+// there is no stdout to write.
+func Run(req Request, paths bus.Paths, stderr io.Writer, o Options) int {
+	to, body := req.To, req.Body
+	crew := req.Crew
 	if crew == "" && o.CrewID != nil {
 		crew = o.CrewID()
 	}
@@ -119,25 +111,6 @@ func Run(args []string, paths bus.Paths, stderr io.Writer, o Options) int {
 		return exitFailure
 	}
 	return 0
-}
-
-// parse is the arm's flag loop: `--crew` is taken wherever it appears (the last
-// one wins) and everything else is positional, in order. msg is the arm's line
-// for a `--crew` with no value — an empty one included, which `[ -n "${2:-}" ]`
-// refuses too.
-func parse(args []string) (crew string, pos []string, msg string) {
-	for len(args) > 0 {
-		if args[0] == "--crew" {
-			if len(args) < 2 || args[1] == "" {
-				return "", nil, "crew: --crew needs a value"
-			}
-			crew, args = args[1], args[2:]
-			continue
-		}
-		pos = append(pos, args[0])
-		args = args[1:]
-	}
-	return crew, pos, ""
 }
 
 // read is the log `_sessions` reads: `jq -s`, so no torn-tail tolerance, and

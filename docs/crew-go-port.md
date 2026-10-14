@@ -589,7 +589,8 @@ converted — `id`, `new`, `engine-cmd`, `occupants` (argv words) and, since the
 second slice, `where`, `identity`, `resolve-target`, `crews`, `register`,
 `deregister`, `log`, `sessions`, `inbox` (typed flags and positionals, in
 `crew/commands.go`) and, since the third, `roster`, `report`, `retro`, `rate`,
-`fleet`, `stack`, `roster-render` and `pi-agent-dir` — are typed commands; every other name is a dynamic command
+`fleet`, `stack`, `roster-render` and `pi-agent-dir` and, since the fourth, `msg`, `status`, `reply`,
+`hold`, `nudge`, `await`, `watch` and `stream` (with `fleet stream`) — are typed commands; every other name is a dynamic command
 sharing one `passthrough:""` capture, so kong accepts the word and stops. The
 first slice converts only the subcommands whose whole argv is "a list of words,
 the first of which may be data", and the rules below are what the rest of #862
@@ -604,7 +605,7 @@ every screen, which is what `scripts/help-parity.sh` proves.
 capture is not verbatim: kong splits the first word after a command name at `=`,
 so an unconverted `crew <sub> --since=abc` would arrive as `--since abc`. `parseCrew` returns
 the words after the command name for exactly that reason;
-`TestParseCrewSplitsLeadingEquals` pins the measurement (on `hold`, `nudge`,
+`TestParseCrewSplitsLeadingEquals` pins the measurement (on `adopt`, `pr-watch`,
 `reap`) and `TestRunPassthroughArgvReachesItsArm` pins the arms' answers, `--` and flag-shaped
 detail text included. A subcommand takes its own bound fields only once its table
 shows the split cannot change its answer: `engine-cmd` matches no engine name on
@@ -646,10 +647,10 @@ The third slice (`roster`, `report`, `retro`, `rate`, `fleet`, `stack`,
   `rate --root needs a directory`. The mode combinations (`--json` without
   `--report`, `--root` without `--sweep-all`) stay in `rate.Run`, shared with
   `reap`'s in-process sweep.
-- `fleet` binds `Rest` with `passthrough:"partial"`: `fleet stream …` reaches
-  `stream.RunFleet` untouched, because the lane's flags are `stream`'s shared
-  parser (a later slice). Any other word, or `stream` behind a `fleet` flag,
-  is the fleet usage line.
+- `fleet` binds `Rest` with `passthrough:"partial"`: `fleet stream …` reached
+  `stream.RunFleet` untouched, because the lane's flags were `stream`'s shared
+  parser; the fourth slice types that lane (below). Any other word, or `stream`
+  behind a `fleet` flag, is the fleet usage line.
 - `stack cut|align` are kong subcommands; every grammar failure is the two-line
   stack usage, and `--record` may sit anywhere after `cut`.
 - `roster-render` keeps `--interval`/`--quiet` as the caller's bytes (they are
@@ -663,6 +664,43 @@ The third slice (`roster`, `report`, `retro`, `rate`, `fleet`, `stack`,
   `--sweep-all…` word as the mode. `rate --root --sweep-all` is such a line (kong
   does not take the flag as `--root`'s value): it prints the rate usage line,
   where the arm said `--root needs --sweep-all`.
+
+The fourth slice (`msg`, `status`, `reply`, `hold`, `nudge`, `await`, `watch`,
+`stream`, `fleet stream`) follows the same rules, with these differences:
+
+- `msg` binds its words with `passthrough:"all"`: from, to and body are data,
+  flag-shaped included (`msg a b -x` posts `-x`); words past the third are ignored
+  as before; only a leading `--a=b` from is split by kong.
+- `status` binds `<from> <state> [detail] [pr]` positionally beside `--restamp`: a
+  detail that starts with any dash, single included, now needs `--` (was: only
+  `--`-led ones); a fifth word refuses; the unknown-flag line keeps the `use --`
+  hint. `reply` binds `<to> <body>` and `--crew` anywhere (it is documented after
+  the body), so a dash-led body needs `--` too (was: posted); a third word refuses (was
+  ignored) and the unknown-flag line carries the `use --` hint.
+- `hold`'s actions are kong subcommands; each action's grammar fault prints that
+  action's usage line, anything else `crew: hold add|list|due|park|release`.
+  `hold add`'s title is `passthrough:"partial"`: from the first title word on,
+  every word is title, as the arm's `break` had it; a leading `--` is still
+  refused. `hold park -5` and `hold park abc --bogus` now print the park usage
+  line (kong reads `-5` as a flag) where the arm printed `must be a positive
+integer number of seconds`.
+- `nudge --wait` is a `*string`: a bare trailing `--wait` is 1800 s, a non-digit
+  value with no target becomes the target (the arm's `--wait nova`), with a target
+  bound it is the `one target only` refusal. `--wait --crew c nova` binds `--crew`
+  as the value (was: default wait).
+- `stream` and `fleet stream` share one embedded flag struct; `fleet`'s table flags
+  moved onto a hidden default subcommand named `-table` (a dash-led name no word
+  can select; on the parent they would clash with the lane's `--crew`), and a lane
+  selected behind a table flag is the fleet usage line. `fleet stream`'s refusals
+  still print before the repo check; `--reap-every` is a hidden flag whose
+  presence is the arm's refusal.
+- `kongRefusal`/`validate` are keyed by `hold <action>` / `fleet stream`
+  (`refusalKey`), so each action keeps its own usage line.
+- Grammar refusals print in `run` before the package runs, so they now precede the
+  checks the arms ran first: `begin`'s crew check (`status`, `msg`), `await`'s crew
+  check, `watch`'s bus mkdir, and `nudge`'s dispatcher-only refusal (exit 2) for a
+  worker passing a bad flag. No write happens on any of those paths; the sender
+  check itself did not move.
 
 `fleet` and `rate --sweep-all` need no repo, so the preamble's not-in-a-repo
 refusal lets them through — and both ask the same question twice: the script with

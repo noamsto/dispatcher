@@ -62,7 +62,7 @@ func writeTick(t *testing.T, p bus.Paths, text string) {
 func runStatus(t *testing.T, p bus.Paths, live ...string) (int, map[string]any) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	rc := Run([]string{"--status", "--crew", "c1"}, p, &out, &errb,
+	rc := Run(Request{Status: true, Crew: "c1"}, p, &out, &errb,
 		Options{Probes: crews.Probes{Alive: alive(live...)}})
 	var line map[string]any
 	if err := json.Unmarshal(out.Bytes(), &line); err != nil {
@@ -155,44 +155,41 @@ func TestStatusHolders(t *testing.T) {
 	}
 }
 
+// The value checks after the grammar, which binds each flag and refuses an
+// unknown or empty one (crew/main_test.go).
 func TestRefusals(t *testing.T) {
 	p := fixture(t)
 	for _, tc := range []struct {
-		argv []string
-		msg  string
+		r   Request
+		msg string
 	}{
-		{[]string{"--bogus"}, "crew: stream: unknown arg '--bogus'"},
-		{[]string{"--crew"}, "crew: --crew needs a value"},
-		{[]string{"--crew", ""}, "crew: --crew needs a value"},
-		{[]string{"--park"}, "crew: --park needs a value"},
-		{[]string{"--park", "0"}, "crew: --park must be a positive integer number of seconds"},
-		{[]string{"--park", "-1"}, "crew: --park must be a positive integer number of seconds"},
-		{[]string{"--park", "1x"}, "crew: --park must be a positive integer number of seconds"},
-		{[]string{"--heartbeat", "0"}, "crew: --heartbeat must be a positive integer number of seconds"},
-		{[]string{"--coalesce", "abc"}, "crew: --coalesce must be a positive integer number of seconds"},
-		{[]string{"--retry", "0"}, "crew: --retry must be a positive integer number of seconds"},
-		{[]string{"--interval", "0"}, "crew: --interval must be a positive integer number of seconds"},
+		{Request{Park: "0"}, "crew: --park must be a positive integer number of seconds"},
+		{Request{Park: "-1"}, "crew: --park must be a positive integer number of seconds"},
+		{Request{Park: "1x"}, "crew: --park must be a positive integer number of seconds"},
+		{Request{Heartbeat: "0"}, "crew: --heartbeat must be a positive integer number of seconds"},
+		{Request{Coalesce: "abc"}, "crew: --coalesce must be a positive integer number of seconds"},
+		{Request{Retry: "0"}, "crew: --retry must be a positive integer number of seconds"},
+		{Request{Interval: "0"}, "crew: --interval must be a positive integer number of seconds"},
+		// The arm's order: the intervals before --reap-every, --states and the crew.
+		{Request{Interval: "0", Park: "0", ReapEvery: "x", States: ","}, "crew: --park must be a positive integer number of seconds"},
 		// Non-negative, not positive: 0 is how the cadence reap is disabled.
-		{[]string{"--reap-every", "-1"}, "crew: --reap-every must be a non-negative integer number of seconds"},
-		{[]string{"--reap-every", "nope"}, "crew: --reap-every must be a non-negative integer number of seconds"},
-		{[]string{"--states", ","}, "crew: --states must be non-empty"},
-		// An empty value is "missing" to the arm's `[ -n "${2:-}" ]`, not the
-		// empty set: the refusal is the flag's, before --states is judged.
-		{[]string{"--states", ""}, "crew: --states needs a value"},
-		{[]string{"--crew", "../../escaped"}, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'"},
-		{[]string{"--crew", "-x"}, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'"},
-		{[]string{"--status"}, "crew: CREW_ID unset and no WORKER_TASK.md crew_id"},
+		{Request{ReapEvery: "-1"}, "crew: --reap-every must be a non-negative integer number of seconds"},
+		{Request{ReapEvery: "nope", States: ","}, "crew: --reap-every must be a non-negative integer number of seconds"},
+		{Request{States: ","}, "crew: --states must be non-empty"},
+		{Request{Crew: "../../escaped"}, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'"},
+		{Request{Crew: "-x"}, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'"},
+		{Request{Status: true}, "crew: CREW_ID unset and no WORKER_TASK.md crew_id"},
 	} {
 		var out, errb bytes.Buffer
-		rc := Run(tc.argv, p, &out, &errb, Options{CrewID: func() string { return "" }})
+		rc := Run(tc.r, p, &out, &errb, Options{CrewID: func() string { return "" }})
 		if rc != exitUsage {
-			t.Errorf("%v exit = %d, want %d (%s)", tc.argv, rc, exitUsage, errb.String())
+			t.Errorf("%+v exit = %d, want %d (%s)", tc.r, rc, exitUsage, errb.String())
 		}
 		if got := strings.TrimSuffix(errb.String(), "\n"); got != tc.msg {
-			t.Errorf("%v stderr = %q, want %q", tc.argv, got, tc.msg)
+			t.Errorf("%+v stderr = %q, want %q", tc.r, got, tc.msg)
 		}
 		if out.Len() != 0 {
-			t.Errorf("%v printed %q on stdout", tc.argv, out.String())
+			t.Errorf("%+v printed %q on stdout", tc.r, out.String())
 		}
 	}
 }
@@ -216,11 +213,11 @@ func TestSignalTargetIsTheOnlyTarget(t *testing.T) {
 
 // The flags the inner `crew watch` is re-entered with keep the caller's bytes,
 // and the defaults are the arm's.
-func TestParseKeepsInnerWatchTextVerbatim(t *testing.T) {
-	c, msg := parse([]string{"--crew", "c1", "--park", "07", "--interval", "02", "--states", "a,,b"},
+func TestCheckKeepsInnerWatchTextVerbatim(t *testing.T) {
+	c, msg := check(Request{Crew: "c1", Park: "07", Interval: "02", States: "a,,b"},
 		Options{CrewID: func() string { return "" }})
 	if msg != "" {
-		t.Fatalf("parse: %s", msg)
+		t.Fatalf("check: %s", msg)
 	}
 	if c.parkText != "07" || c.intervalText != "02" || c.statesText != "a,,b" {
 		t.Errorf("texts = %q %q %q", c.parkText, c.intervalText, c.statesText)
@@ -236,11 +233,11 @@ func TestParseKeepsInnerWatchTextVerbatim(t *testing.T) {
 		t.Errorf("the inner watch must get the caller's text")
 	}
 	// --reap-every 0 parses: it disables the cadence reap.
-	if c, msg := parse([]string{"--crew", "c1", "--reap-every", "0"}, Options{}); msg != "" || c.reapEvery != 0 {
+	if c, msg := check(Request{Crew: "c1", ReapEvery: "0"}, Options{}); msg != "" || c.reapEvery != 0 {
 		t.Errorf("--reap-every 0 = (%d, %q), want (0, \"\")", c.reapEvery, msg)
 	}
 	// A crew resolved from the environment still passes the charset guard.
-	if c, msg := parse(nil, Options{CrewID: func() string { return "c9" }}); msg != "" || c.crew != "c9" {
+	if c, msg := check(Request{}, Options{CrewID: func() string { return "c9" }}); msg != "" || c.crew != "c9" {
 		t.Errorf("CrewID fallback = (%q, %q)", c.crew, msg)
 	}
 }
@@ -406,8 +403,8 @@ func TestSignalReleasesEverything(t *testing.T) {
 	out := &lockedWriter{}
 	done := make(chan int, 1)
 	go func() {
-		done <- Run([]string{"--crew", "c1", "--park", "1", "--interval", "1", "--coalesce", "1",
-			"--heartbeat", "3600", "--retry", "1", "--reap-every", "0"},
+		done <- Run(Request{Crew: "c1", Park: "1", Interval: "1", Coalesce: "1",
+			Heartbeat: "3600", Retry: "1", ReapEvery: "0"},
 			p, out, os.Stderr, Options{Self: script, Timer: func(time.Duration) <-chan time.Time { return ready() }})
 	}()
 

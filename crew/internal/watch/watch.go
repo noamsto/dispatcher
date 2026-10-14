@@ -83,7 +83,7 @@ type call struct {
 }
 
 // Run is the arm, flag for flag and refusal for refusal.
-func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
@@ -94,7 +94,7 @@ func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	// writes under here.
 	_ = os.MkdirAll(paths.Dir, 0o755)
 
-	c, msg := parse(argv, o)
+	c, msg := check(req, o)
 	if msg != "" {
 		say(stderr, "%s\n", msg)
 		return 1
@@ -189,37 +189,26 @@ func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	}
 }
 
-// parse reads the arm's flag loop and its value checks, in its order: the loop
-// first (so `--since` is read before `--timeout` is judged), then since,
-// timeout, states, the crew, and the crew's charset.
-func parse(argv []string, o Options) (call, string) {
+// Request is the typed watch call. Since nil seeds the cursor from the crew's
+// file; every other "" is the default (3300 seconds, the five terminal states,
+// interval 2, the checkout's crew).
+type Request struct {
+	Since                           *string
+	States, Timeout, Interval, Crew string
+}
+
+// check judges a request in the arm's order: since, timeout (digits, then > 0),
+// states, the crew, and the crew's charset.
+func check(r Request, o Options) (call, string) {
 	c := call{
 		sinceText:   "0",
-		timeoutText: defaultTimeout,
-		statesText:  defaultStates,
-		interval:    defaultInterv,
+		timeoutText: orDefault(r.Timeout, defaultTimeout),
+		statesText:  orDefault(r.States, defaultStates),
+		interval:    orDefault(r.Interval, defaultInterv),
+		crew:        r.Crew,
 	}
-	for len(argv) > 0 {
-		var dst *string
-		switch flag := argv[0]; flag {
-		case "--since":
-			dst = &c.sinceText
-			c.sinceSet = true
-		case "--states":
-			dst = &c.statesText
-		case "--timeout":
-			dst = &c.timeoutText
-		case "--interval":
-			dst = &c.interval
-		case "--crew":
-			dst = &c.crew
-		default:
-			return c, fmt.Sprintf("crew: watch: unknown arg '%s'", flag)
-		}
-		if len(argv) < 2 || argv[1] == "" {
-			return c, fmt.Sprintf("crew: %s needs a value", argv[0])
-		}
-		*dst, argv = argv[1], argv[2:]
+	if r.Since != nil {
+		c.sinceText, c.sinceSet = *r.Since, true
 	}
 	if !isDigits(c.sinceText) {
 		return c, "crew: --since must be an integer ms timestamp"
@@ -251,6 +240,13 @@ func parse(argv []string, o Options) (call, string) {
 	}
 	c.since = parseIntSaturate(c.sinceText)
 	return c, ""
+}
+
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
 }
 
 // splitStates is the arm's `jq -Rc 'split(",") | map(select(length>0))'`, so

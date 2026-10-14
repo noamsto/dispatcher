@@ -121,7 +121,7 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 //     kong can neither print a screen nor end the process, so routeHelp and
 //     helpTexts still decide when help prints and what it says.
 
-// subcommands is every word crew admits: the twenty-one the grammar types, then
+// subcommands is every word crew admits: the twenty-nine the grammar types, then
 // the arms still parsing their own argv. It is the list the switch of #821 admitted,
 // and tests/crew.bats parses this literal to prove every subcommand has its own
 // row in the grouped help; TestAdmittedSubcommands pins it against that
@@ -144,6 +144,8 @@ var typedSubcommands = map[string]bool{
 	"deregister": true, "log": true, "sessions": true, "inbox": true,
 	"roster": true, "report": true, "retro": true, "rate": true, "fleet": true,
 	"stack": true, "roster-render": true, "pi-agent-dir": true,
+	"status": true, "msg": true, "reply": true, "hold": true,
+	"nudge": true, "await": true, "watch": true, "stream": true,
 }
 
 // passthroughCmd is one unconverted subcommand to kong: its name, then whatever
@@ -192,6 +194,15 @@ type root struct {
 	Stack        stackCmd        `cmd:"" name:"stack" help:"Cut points and rebase plans of a stack."`
 	RosterRender rosterRenderCmd `cmd:"" name:"roster-render" help:"The per-crew diagram daemon."`
 	PiAgentDir   argvCmd         `cmd:"" name:"pi-agent-dir" help:"The pi agent dir."`
+
+	Status statusCmd `cmd:"" name:"status" help:"Post a worker's state."`
+	Msg    argvCmd   `cmd:"" name:"msg" help:"Post a message."`
+	Reply  replyCmd  `cmd:"" name:"reply" help:"Answer a worker as the dispatcher."`
+	Hold   holdCmd   `cmd:"" name:"hold" help:"Queued dispatches waiting on a quota window."`
+	Nudge  nudgeCmd  `cmd:"" name:"nudge" help:"Type into a lead's pane."`
+	Await  awaitCmd  `cmd:"" name:"await" help:"Block until a msg answers an agent."`
+	Watch  watchCmd  `cmd:"" name:"watch" help:"Park until a worker event qualifies."`
+	Stream streamCmd `cmd:"" name:"stream" help:"The long-lived lane that pushes batches."`
 }
 
 // crewArgs is what the root parse resolves to: the word that named the
@@ -202,6 +213,7 @@ type crewArgs struct {
 	argv    []string
 	typed   root
 	refusal *refusal
+	cmd     string // kong's selected command path, "" when the parse failed
 }
 
 // newCrewParser builds the grammar: the converted subcommands as fields of
@@ -214,6 +226,7 @@ func newCrewParser(r *root, capture *passthroughCmd) (*kong.Kong, error) {
 		kong.WithHyphenPrefixedParameters(true),
 		kong.Writers(io.Discard, io.Discard),
 		kong.Exit(func(int) {}),
+		kong.NamedMapper("optwait", kong.MapperFunc(optWaitMapper)),
 	}
 	for _, name := range subcommands {
 		if !typedSubcommands[name] {
@@ -239,11 +252,12 @@ func parseCrew(args []string) (crewArgs, bool) {
 	if err != nil {
 		panic("crew: kong grammar: " + err.Error())
 	}
-	if _, err := p.Parse(args); err != nil {
+	kctx, err := p.Parse(args)
+	if err != nil {
 		// An error inside a typed subcommand's argv is that subcommand's refusal;
 		// everywhere else it is the unknown word the switch rejected.
 		if len(args) > 0 && typedSubcommands[args[0]] {
-			return crewArgs{sub: args[0], argv: args[1:], refusal: kongRefusal(args[0], err)}, true
+			return crewArgs{sub: args[0], argv: args[1:], refusal: kongRefusal(refusalKey(args), err)}, true
 		}
 		return crewArgs{}, false
 	}
@@ -255,7 +269,54 @@ func parseCrew(args []string) (crewArgs, bool) {
 	}
 	// kong matched args[0] to a command, so the words it describes are the rest
 	// of the argv — the tail the arms have always been handed.
-	return crewArgs{sub: args[0], argv: args[1:], typed: r, refusal: validate(args[0], &r)}, true
+	cmd := kctx.Command()
+	key := refusalKey(args)
+	// `fleet --all stream` selects the lane behind a table flag, which only the
+	// selected command shows.
+	if strings.HasPrefix(cmd, "fleet stream") {
+		key = "fleet stream"
+	}
+	return crewArgs{sub: args[0], argv: args[1:], typed: r, refusal: validate(key, &r), cmd: cmd}, true
+}
+
+// refusalKey names the wording and checks a typed argv is judged by: the
+// subcommand, or its action word when the subcommand has one.
+func refusalKey(args []string) string {
+	if len(args) > 1 {
+		switch {
+		case args[0] == "hold" && slices.Contains([]string{"add", "list", "due", "park", "release"}, args[1]):
+			return "hold " + args[1]
+		case args[0] == "fleet" && args[1] == "stream":
+			return "fleet stream"
+		}
+	}
+	return args[0]
+}
+
+// holdRequest is the typed hold call: the action is the word after `hold` in
+// the command kong selected.
+func holdRequest(p crewArgs) hold.Request {
+	h := p.typed.Hold
+	action := strings.Fields(p.cmd)[1]
+	switch action {
+	case "add":
+		a := h.Add
+		return hold.Request{Action: action, Crew: str(a.Crew), Add: hold.AddRequest{
+			Engine: str(a.Engine), Window: str(a.Window), ResetsAt: str(a.ResetsAt),
+			Agent: str(a.Agent), Ref: str(a.Ref), Branch: str(a.Branch),
+			Tier: str(a.Tier), Model: str(a.Model), Effort: str(a.Effort),
+			Plan: str(a.Plan), MCP: str(a.MCP), Shape: str(a.Shape), Spec: str(a.Spec),
+			Draft: a.Draft, Title: a.Title,
+		}}
+	case "list":
+		return hold.Request{Action: action, JSON: h.List.JSON, Crew: str(h.List.Crew)}
+	case "due":
+		return hold.Request{Action: action, JSON: h.Due.JSON, Crew: str(h.Due.Crew)}
+	case "park":
+		return hold.Request{Action: action, Crew: str(h.Park.Crew), Default: h.Park.Default}
+	default:
+		return hold.Request{Action: action, Crew: str(h.Release.Crew), ID: h.Release.ID}
+	}
 }
 
 // env is everything run reads from the process, so tests can supply their own.
@@ -305,7 +366,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		if parsed.refusal != nil {
 			return refuse(stderr, parsed.refusal)
 		}
-		return runFleet(ctx, parsed.typed.Fleet, stdout, stderr, e)
+		return runFleet(ctx, parsed, stdout, stderr, e)
 	case "rate":
 		// --sweep-all resolves the repos it discovers and reads neither paths nor
 		// cwd; the sweep and --report fall through to the Locate below, which is
@@ -438,9 +499,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// delivered marks of whatever it printed once that is on the wire, so it owns
 	// its run like inbox does.
 	if sub == "await" {
+		aw := parsed.typed.Await
 		out := bufio.NewWriterSize(stdout, 64<<10)
 		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
-		code := await.Run(args, paths, out, stderr, await.Options{
+		code := await.Run(await.Request{Me: aw.Agent, From: str(aw.From), Timeout: str(aw.Timeout), Interval: str(aw.Interval)}, paths, out, stderr, await.Options{
 			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
 			Flush:           out.Flush,
 			JQColorsInvalid: !colorsOK,
@@ -453,9 +515,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// batch value rather than lines, so it owns its run like await does. Its
 	// cursor file moves once that value is on the wire.
 	if sub == "watch" {
+		w := parsed.typed.Watch
 		out := bufio.NewWriterSize(stdout, 64<<10)
 		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
-		code := watch.Run(args, paths, out, stderr, watch.Options{
+		code := watch.Run(watch.Request{
+			Since: w.Since, States: str(w.States), Timeout: str(w.Timeout), Interval: str(w.Interval), Crew: str(w.Crew),
+		}, paths, out, stderr, watch.Options{
 			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
 			Flush:           out.Flush,
 			Now:             time.Now,
@@ -469,7 +534,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// batch that may never come. It re-enters the crew script for its children,
 	// which is why it takes the environment's CREW_SELF through Options.
 	if sub == "stream" {
-		return stream.Run(args, paths, stdout, stderr, stream.Options{
+		return stream.Run(streamRequest(parsed.typed.Stream.streamFlags, parsed.typed.Stream.ReapEvery), paths, stdout, stderr, stream.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Now:    time.Now,
 			Probes: e.procs,
@@ -503,7 +568,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// and appends to the bus itself, so it owns its run like inbox does.
 	if sub == "hold" {
 		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
-		return hold.Run(args, paths, stdout, stderr, hold.Options{
+		return hold.Run(holdRequest(parsed), paths, stdout, stderr, hold.Options{
 			JQColorsInvalid: !colorsOK,
 			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
 			Now:             time.Now,
@@ -526,7 +591,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// reply resolves its target against the bus, then appends one row itself, so
 	// it owns its run like hold does — and it prints nothing on success.
 	if sub == "reply" {
-		return reply.Run(args, paths, stderr, reply.Options{
+		c := parsed.typed.Reply
+		return reply.Run(reply.Request{Crew: str(c.Crew), To: c.To, Body: c.Body}, paths, stderr, reply.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 			Probes: e.procs,
@@ -537,7 +603,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// nudge resolves its own target, runs its own frame checks and posts its own rows,
 	// its unread scan in process through internal/unread (docs/crew-go-port.md).
 	if sub == "nudge" {
-		return nudge.Run(ctx, args, paths, stdout, stderr,
+		n := parsed.typed.Nudge
+		req, _ := nudge.NewRequest(str(n.Crew), n.Target, n.Wait)
+		return nudge.Run(ctx, req, paths, stdout, stderr,
 			nudge.Default(paths, stderr, os.Getpid(), func() string { return bus.CrewID(ctx, cwd) }))
 	}
 
@@ -587,6 +655,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// status and msg append one row each as the caller; the stamp is real time,
 	// never CREW_CLOCK, as jq's `now` was.
 	if sub == "status" || sub == "msg" {
+		// msg's words are data: the first three are from, to and body, the rest ignored.
+		words := parsed.typed.Msg.Args
+		word := func(i int) string {
+			if i < len(words) {
+				return words[i]
+			}
+			return ""
+		}
 		o := status.Options{
 			CrewID:   func() string { return bus.CrewID(ctx, cwd) },
 			Toplevel: func() string { return bus.Toplevel(ctx, cwd) },
@@ -598,9 +674,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			o.Tmux = func(args ...string) (string, error) { return tmuxOutput(ctx, args...) }
 		}
 		if sub == "status" {
-			return status.RunStatus(args, paths, stderr, o)
+			c := parsed.typed.Status
+			return status.RunStatus(status.StatusRequest{From: c.From, State: c.State, Detail: c.Detail, PR: c.PR, Restamp: c.Restamp}, paths, stderr, o)
 		}
-		return status.RunMsg(args, paths, stderr, o)
+		return status.RunMsg(status.MsgRequest{From: word(0), To: word(1), Body: word(2)}, paths, stderr, o)
 	}
 
 	// register and deregister record the caller's own identity like adopt does.
@@ -745,12 +822,22 @@ func originOf(ctx context.Context, common string) string {
 	return strings.TrimSuffix(string(out), "\n")
 }
 
-func runFleet(ctx context.Context, c fleetCmd, stdout, stderr io.Writer, e env) int {
+// streamRequest is the typed stream call; an absent flag is "", the default.
+func streamRequest(f streamFlags, reapEvery *string) stream.Request {
+	return stream.Request{
+		Crew: str(f.Crew), States: str(f.States), Park: str(f.Park), Heartbeat: str(f.Heartbeat),
+		Coalesce: str(f.Coalesce), Retry: str(f.Retry), Interval: str(f.Interval), ReapEvery: str(reapEvery),
+		Force: f.Force, Status: f.Status,
+	}
+}
+
+func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) int {
 	// The lane prints one protocol line at a time for as long as it lives, so it
-	// writes straight to stdout like stream. validate lets a word through only
-	// when it is `stream`.
-	if len(c.Rest) > 0 {
-		return stream.RunFleet(c.Rest[1:], stdout, stderr, stream.FleetOptions{
+	// writes straight to stdout like stream.
+	if strings.HasPrefix(p.cmd, "fleet stream") {
+		s := p.typed.Fleet.Stream
+		req := stream.FleetRequest{Request: streamRequest(s.streamFlags, nil), Rediscover: str(s.Rediscover)}
+		return stream.RunFleet(req, stdout, stderr, stream.FleetOptions{
 			Options: stream.Options{Now: time.Now, Probes: e.procs},
 			Origin:  func(common string) string { return originOf(ctx, common) },
 		})
@@ -770,6 +857,7 @@ func runFleet(ctx context.Context, c fleetCmd, stdout, stderr io.Writer, e env) 
 	if palette, _ := jsonv.ParseJQColors(e.jqColors); e.color {
 		o.Colors = &palette
 	}
+	c := p.typed.Fleet.Table
 	return fleet.Run(fleet.Request{All: c.All, JSON: c.JSON, Crew: str(c.Crew)}, stdout, stderr, o)
 }
 

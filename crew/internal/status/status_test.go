@@ -94,16 +94,31 @@ func (f *fixture) opts() Options {
 	return o
 }
 
+// status runs the positionals from, state, detail, pr; the words past the
+// fourth belong to the grammar, which main_test.go covers.
 func (f *fixture) status(args ...string) (int, string) {
+	return f.statusReq(StatusRequest{
+		From: at(args, 0), State: at(args, 1), Detail: at(args, 2), PR: at(args, 3),
+	})
+}
+
+func (f *fixture) statusReq(req StatusRequest) (int, string) {
 	var stderr bytes.Buffer
-	code := RunStatus(args, f.paths, &stderr, f.opts())
+	code := RunStatus(req, f.paths, &stderr, f.opts())
 	return code, stderr.String()
 }
 
 func (f *fixture) msg(args ...string) (int, string) {
 	var stderr bytes.Buffer
-	code := RunMsg(args, f.paths, &stderr, f.opts())
+	code := RunMsg(MsgRequest{From: at(args, 0), To: at(args, 1), Body: at(args, 2)}, f.paths, &stderr, f.opts())
 	return code, stderr.String()
+}
+
+func at(args []string, i int) string {
+	if i < len(args) {
+		return args[i]
+	}
+	return ""
 }
 
 // doc writes the checkout's WORKER_TASK.md.
@@ -205,29 +220,25 @@ func TestArgs(t *testing.T) {
 	const badState = "crew: status state must be one of working|blocked|pr_open|done|failed|exited|reaped (got '%s')\n"
 	cases := []struct {
 		name string
-		args []string
+		req  StatusRequest
 		code int
 		err  string
 		body string
 	}{
-		{"restamp first", []string{"--restamp", worker, "blocked", "why"}, 0, "", `{"state":"blocked","detail":"why","restamp":true}`},
-		{"restamp middle", []string{worker, "--restamp", "blocked", "why"}, 0, "", `{"state":"blocked","detail":"why","restamp":true}`},
-		{"restamp last", []string{worker, "blocked", "why", "--restamp"}, 0, "", `{"state":"blocked","detail":"why","restamp":true}`},
-		{"dashes after --", []string{worker, "working", "--", "--x"}, 0, "", `{"state":"working","detail":"--x"}`},
-		{"everything after -- positional", []string{"--", worker, "working", "--restamp"}, 0, "", `{"state":"working","detail":"--restamp"}`},
-		{"unknown arg", []string{worker, "working", "--x"}, 1, "crew: status: unknown arg '--x' (use -- before a detail that starts with dashes)\n", ""},
-		{"unknown arg beats state", []string{worker, "bogus", "--force"}, 1, "crew: status: unknown arg '--force' (use -- before a detail that starts with dashes)\n", ""},
-		{"single dash is positional", []string{worker, "working", "-x"}, 0, "", `{"state":"working","detail":"-x"}`},
-		{"invalid state", []string{worker, "bogus"}, 1, strings.Replace(badState, "%s", "bogus", 1), ""},
-		{"no state", []string{worker}, 1, strings.Replace(badState, "%s", "", 1), ""},
-		{"no args", nil, 1, strings.Replace(badState, "%s", "", 1), ""},
-		{"restamp needs blocked", []string{worker, "working", "--restamp"}, 1, "crew: --restamp is only valid with blocked\n", ""},
-		{"state checked before restamp", []string{worker, "nope", "--restamp"}, 1, strings.Replace(badState, "%s", "nope", 1), ""},
+		{"restamp", StatusRequest{From: worker, State: "blocked", Detail: "why", Restamp: true}, 0, "", `{"state":"blocked","detail":"why","restamp":true}`},
+		{"dashes in detail", StatusRequest{From: worker, State: "working", Detail: "--x"}, 0, "", `{"state":"working","detail":"--x"}`},
+		{"restamp text in detail", StatusRequest{From: worker, State: "working", Detail: "--restamp"}, 0, "", `{"state":"working","detail":"--restamp"}`},
+		{"single dash detail", StatusRequest{From: worker, State: "working", Detail: "-x"}, 0, "", `{"state":"working","detail":"-x"}`},
+		{"invalid state", StatusRequest{From: worker, State: "bogus"}, 1, strings.Replace(badState, "%s", "bogus", 1), ""},
+		{"no state", StatusRequest{From: worker}, 1, strings.Replace(badState, "%s", "", 1), ""},
+		{"no args", StatusRequest{}, 1, strings.Replace(badState, "%s", "", 1), ""},
+		{"restamp needs blocked", StatusRequest{From: worker, State: "working", Restamp: true}, 1, "crew: --restamp is only valid with blocked\n", ""},
+		{"state checked before restamp", StatusRequest{From: worker, State: "nope", Restamp: true}, 1, strings.Replace(badState, "%s", "nope", 1), ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
-			code, stderr := f.status(tc.args...)
+			code, stderr := f.statusReq(tc.req)
 			if code != tc.code || stderr != tc.err {
 				t.Fatalf("got %d %q, want %d %q", code, stderr, tc.code, tc.err)
 			}

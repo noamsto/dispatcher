@@ -2,10 +2,15 @@ package main
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
+
+	"github.com/alecthomas/kong"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
+	"github.com/noamsto/dispatcher/crew/internal/hold"
+	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/rate"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 	"github.com/noamsto/dispatcher/crew/internal/retro"
@@ -84,13 +89,58 @@ type rateCmd struct {
 	Root     []*string `name:"root" sep:"none"`
 }
 
-// fleetCmd.Rest is the words kong leaves alone once it meets one that is no flag:
-// `stream` and whatever follows reach the lane's own parser untouched.
+// fleetTableCmd is bare `crew fleet`: the hidden default command, so the table's
+// flags sit on it rather than on fleet, where they would clash with the lane's
+// own --crew. Its name is flag-shaped so no word selects it: `crew fleet table`
+// stays the usage refusal it always was.
+type fleetTableCmd struct {
+	All  bool    `name:"all"`
+	JSON bool    `name:"json"`
+	Crew *string `name:"crew"`
+}
+
 type fleetCmd struct {
-	All  bool     `name:"all"`
-	JSON bool     `name:"json"`
-	Crew *string  `name:"crew"`
-	Rest []string `arg:"" optional:"" passthrough:"partial" name:"rest"`
+	Table  fleetTableCmd  `cmd:"" name:"-table" default:"withargs" hidden:""`
+	Stream fleetStreamCmd `cmd:"" name:"stream"`
+}
+
+// streamFlags are the flags `crew stream` and `crew fleet stream` share.
+type streamFlags struct {
+	Crew      *string `name:"crew"`
+	States    *string `name:"states"`
+	Park      *string `name:"park"`
+	Heartbeat *string `name:"heartbeat"`
+	Coalesce  *string `name:"coalesce"`
+	Retry     *string `name:"retry"`
+	Interval  *string `name:"interval"`
+	Force     bool    `name:"force"`
+	Status    bool    `name:"status"`
+}
+
+type streamCmd struct {
+	streamFlags `embed:""`
+	ReapEvery   *string `name:"reap-every"`
+}
+
+// valueFlag is a *string flag under the name a refusal gives it.
+type valueFlag struct {
+	name string
+	v    *string
+}
+
+// valueFlags are the shared value flags in the order their refusals are judged.
+func (f streamFlags) valueFlags() []valueFlag {
+	return []valueFlag{
+		{"--crew", f.Crew}, {"--states", f.States}, {"--park", f.Park}, {"--heartbeat", f.Heartbeat},
+		{"--coalesce", f.Coalesce}, {"--retry", f.Retry}, {"--interval", f.Interval},
+	}
+}
+
+// fleetStreamCmd.ReapEvery is bound only to be refused with the lane's reason.
+type fleetStreamCmd struct {
+	streamFlags `embed:""`
+	Rediscover  *string `name:"rediscover"`
+	ReapEvery   *string `name:"reap-every" hidden:""`
 }
 
 type stackCutCmd struct {
@@ -118,6 +168,85 @@ type rosterRenderCmd struct {
 	NoOpen   bool    `name:"no-open"`
 	Once     bool    `name:"once"`
 	Detach   bool    `name:"detach"`
+}
+
+type statusCmd struct {
+	Restamp bool   `name:"restamp"`
+	From    string `arg:"" optional:"" name:"from"`
+	State   string `arg:"" optional:"" name:"state"`
+	Detail  string `arg:"" optional:"" name:"detail"`
+	PR      string `arg:"" optional:"" name:"pr"`
+}
+
+type replyCmd struct {
+	Crew *string `name:"crew"`
+	To   string  `arg:"" optional:"" name:"to"`
+	Body string  `arg:"" optional:"" name:"body"`
+}
+
+type holdReadCmd struct {
+	JSON bool    `name:"json"`
+	Crew *string `name:"crew"`
+}
+
+type holdParkCmd struct {
+	Crew    *string `name:"crew"`
+	Default string  `arg:"" optional:"" name:"default"`
+}
+
+type holdReleaseCmd struct {
+	Crew *string `name:"crew"`
+	ID   string  `arg:"" optional:"" name:"id"`
+}
+
+// holdAddCmd.Title is the words kong leaves alone once it meets one that is no
+// flag: a later `--draft` is part of the title.
+type holdAddCmd struct {
+	Engine   *string  `name:"engine"`
+	Window   *string  `name:"window"`
+	ResetsAt *string  `name:"resets-at"`
+	Agent    *string  `name:"agent"`
+	Ref      *string  `name:"ref"`
+	Branch   *string  `name:"branch"`
+	Tier     *string  `name:"tier"`
+	Model    *string  `name:"model"`
+	Effort   *string  `name:"effort"`
+	Plan     *string  `name:"plan"`
+	MCP      *string  `name:"mcp"`
+	Shape    *string  `name:"shape"`
+	Spec     *string  `name:"spec"`
+	Crew     *string  `name:"crew"`
+	Draft    bool     `name:"draft"`
+	Title    []string `arg:"" optional:"" passthrough:"partial" name:"title"`
+}
+
+type holdCmd struct {
+	Add     holdAddCmd     `cmd:"" name:"add"`
+	List    holdReadCmd    `cmd:"" name:"list"`
+	Due     holdReadCmd    `cmd:"" name:"due"`
+	Park    holdParkCmd    `cmd:"" name:"park"`
+	Release holdReleaseCmd `cmd:"" name:"release"`
+}
+
+type nudgeCmd struct {
+	Crew   *string `name:"crew"`
+	Wait   *string `name:"wait" type:"optwait"`
+	Target string  `arg:"" optional:"" name:"target"`
+}
+
+type awaitCmd struct {
+	From     *string `name:"from"`
+	Timeout  *string `name:"timeout"`
+	Interval *string `name:"interval"`
+	Agent    string  `arg:"" optional:"" name:"agent"`
+}
+
+type watchCmd struct {
+	Since    *string `name:"since"`
+	States   *string `name:"states"`
+	Timeout  *string `name:"timeout"`
+	Interval *string `name:"interval"`
+	Crew     *string `name:"crew"`
 }
 
 // refusal is the stderr line and exit status a typed subcommand's argv earned.
@@ -182,6 +311,57 @@ var wordings = map[string]wording{
 		extra:       func(w string) string { return fmt.Sprintf("crew: crews: unknown arg '%s'", w) },
 		code:        exitUsage,
 	},
+	"status": {
+		unknownFlag: func(f string) string {
+			return fmt.Sprintf("crew: status: unknown arg '%s' (use -- before a detail that starts with dashes)", f)
+		},
+		extra: func(w string) string { return fmt.Sprintf("crew: status: unexpected argument '%s'", w) },
+		code:  exitFailure,
+	},
+	"reply": {
+		unknownFlag: func(f string) string {
+			return fmt.Sprintf("crew: reply: unknown arg '%s' (use -- before a body that starts with dashes)", f)
+		},
+		extra: func(w string) string { return fmt.Sprintf("crew: reply: unexpected argument '%s'", w) },
+		code:  exitFailure,
+	},
+	"hold": {all: hold.Usage, code: exitFailure},
+	"hold add": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: hold add: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: hold add: unknown arg '%s'", w) },
+		code:        exitFailure,
+	},
+	"hold list":    {all: hold.ListUsage, code: exitFailure},
+	"hold due":     {all: hold.DueUsage, code: exitFailure},
+	"hold park":    {all: hold.ParkUsage, code: exitFailure},
+	"hold release": {all: hold.ReleaseUsage, code: exitFailure},
+	"nudge": {
+		unknownFlag: func(f string) string {
+			return fmt.Sprintf("crew: nudge: unknown flag '%s' (usage: %s)", f, nudge.Usage)
+		},
+		extra: func(string) string { return "crew: nudge: one target only (usage: " + nudge.Usage + ")" },
+		code:  exitFailure,
+	},
+	"await": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: await: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: await: unknown arg '%s'", w) },
+		code:        exitFailure,
+	},
+	"watch": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: watch: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: watch: unknown arg '%s'", w) },
+		code:        exitFailure,
+	},
+	"stream": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: stream: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: stream: unknown arg '%s'", w) },
+		code:        exitUsage,
+	},
+	"fleet stream": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: fleet stream: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: fleet stream: unknown arg '%s'", w) },
+		code:        exitUsage,
+	},
 	"roster": plain("roster"),
 	"report": plain("report"),
 	"retro":  {all: retro.Usage, code: exitFailure},
@@ -200,7 +380,8 @@ var wordings = map[string]wording{
 	"log":        plain("log"),
 }
 
-// kongRefusal maps kong's error for sub onto the subcommand's wording. The two
+// kongRefusal maps kong's error for the refusal key (a subcommand, or `hold <action>`
+// and `fleet stream`) onto the subcommand's wording. The two
 // prefixes are kong's own text, pinned by TestKongErrorClassification; anything
 // else (a bad bool value) keeps kong's sentence under the subcommand's name.
 func kongRefusal(sub string, err error) *refusal {
@@ -225,6 +406,30 @@ func kongRefusal(sub string, err error) *refusal {
 		return &refusal{w.extra(word), w.code}
 	}
 	return &refusal{fmt.Sprintf("crew: %s: %s", sub, text), w.code}
+}
+
+// optWaitMapper binds `--wait`: a value only when `--wait=V`, or the next
+// token is all digits, as the old arm took it. Any other next token, a flag
+// or a word, stays for kong, and a bare `--wait` binds "" (the default wait).
+func optWaitMapper(ctx *kong.DecodeContext, target reflect.Value) error {
+	v := ""
+	switch t := ctx.Scan.Peek(); {
+	case t.Type == kong.FlagValueToken:
+		v = ctx.Scan.Pop().String()
+	case t.Type == kong.UntypedToken && isDigits(t.String()):
+		v = ctx.Scan.Pop().String()
+	}
+	target.Set(reflect.ValueOf(&v))
+	return nil
+}
+
+func isDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // given is a *string flag that was passed with an empty or missing value.
@@ -288,20 +493,105 @@ func validate(sub string, r *root) *refusal {
 		if c.Undelivered && !strings.HasPrefix(c.Agent, "worker:") {
 			return fail("crew: inbox: --undelivered needs a worker session id ($CREW_WORKER_ID)")
 		}
+	case "reply":
+		if given(r.Reply.Crew) {
+			return fail("crew: --crew needs a value")
+		}
+	case "nudge":
+		c := r.Nudge
+		if given(c.Crew) {
+			return fail("crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")")
+		}
+		if _, ok := nudge.NewRequest("", c.Target, c.Wait); !ok {
+			return fail("crew: nudge: one target only (usage: " + nudge.Usage + ")")
+		}
+	case "await":
+		c := r.Await
+		for _, f := range []struct {
+			name string
+			v    *string
+		}{{"--from", c.From}, {"--timeout", c.Timeout}, {"--interval", c.Interval}} {
+			if given(f.v) {
+				return fail(fmt.Sprintf("crew: %s needs a value", f.name))
+			}
+		}
+	case "watch":
+		c := r.Watch
+		for _, f := range []struct {
+			name string
+			v    *string
+		}{{"--since", c.Since}, {"--states", c.States}, {"--timeout", c.Timeout}, {"--interval", c.Interval}, {"--crew", c.Crew}} {
+			if given(f.v) {
+				return fail(fmt.Sprintf("crew: %s needs a value", f.name))
+			}
+		}
+	case "hold add":
+		c := r.Hold.Add
+		for _, f := range []struct {
+			name string
+			v    *string
+		}{
+			{"--engine", c.Engine}, {"--window", c.Window}, {"--resets-at", c.ResetsAt},
+			{"--agent", c.Agent}, {"--ref", c.Ref}, {"--branch", c.Branch},
+			{"--tier", c.Tier}, {"--model", c.Model}, {"--effort", c.Effort},
+			{"--plan", c.Plan}, {"--mcp", c.MCP}, {"--shape", c.Shape},
+			{"--spec", c.Spec}, {"--crew", c.Crew},
+		} {
+			if given(f.v) {
+				return fail(fmt.Sprintf("crew: %s needs a value", f.name))
+			}
+		}
+		if len(c.Title) > 0 && c.Title[0] == "--" {
+			return fail("crew: hold add: unknown arg '--'")
+		}
+	case "hold list", "hold due", "hold park", "hold release":
+		var crew *string
+		switch sub {
+		case "hold list":
+			crew = r.Hold.List.Crew
+		case "hold due":
+			crew = r.Hold.Due.Crew
+		case "hold park":
+			crew = r.Hold.Park.Crew
+		default:
+			if r.Hold.Release.ID == "" {
+				return fail(hold.ReleaseUsage)
+			}
+			crew = r.Hold.Release.Crew
+		}
+		if given(crew) {
+			return fail("crew: --crew needs a value")
+		}
 	case "rate":
 		for _, d := range r.Rate.Root {
 			if given(d) {
 				return fail(rateRootUsage)
 			}
 		}
+	case "stream":
+		c := r.Stream
+		for _, f := range append(c.valueFlags(), valueFlag{"--reap-every", c.ReapEvery}) {
+			if given(f.v) {
+				return &refusal{fmt.Sprintf("crew: %s needs a value", f.name), exitUsage}
+			}
+		}
 	case "fleet":
-		c := r.Fleet
-		if given(c.Crew) {
+		if given(r.Fleet.Table.Crew) {
 			return fail(fleet.Usage)
 		}
-		// Only the lane takes a word, and it takes none of fleet's own flags.
-		if len(c.Rest) > 0 && (c.Rest[0] != "stream" || c.All || c.JSON || c.Crew != nil) {
+	case "fleet stream":
+		// `fleet --all stream` selects the lane with the table's flags bound.
+		if t := r.Fleet.Table; t.All || t.JSON || t.Crew != nil {
 			return fail(fleet.Usage)
+		}
+		c := r.Fleet.Stream
+		if c.ReapEvery != nil {
+			return &refusal{"crew: fleet stream: --reap-every is not supported — the fleet lane does not reap (each repo's own stream or dispatch does)", exitUsage}
+		}
+		for _, f := range append(c.valueFlags(), valueFlag{"--rediscover", c.Rediscover}) {
+			if given(f.v) {
+				return &refusal{fmt.Sprintf("crew: %s needs a value", f.name), exitUsage}
+			}
 		}
 	case "stack":
 		c := r.Stack

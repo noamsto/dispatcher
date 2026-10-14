@@ -12,10 +12,14 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/hold"
+	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
@@ -769,7 +773,8 @@ func TestAdmittedSubcommands(t *testing.T) {
 	}
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
-		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir"} {
+		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
+		"status", "msg", "reply", "hold", "nudge", "await", "watch", "stream"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -812,23 +817,23 @@ func TestAdmittedSubcommands(t *testing.T) {
 
 // TestParseCrewSplitsLeadingEquals is the measurement that decides who parses
 // what: kong splits the first word after a command name at `=`, so the capture
-// is not the argv an unconverted arm may be handed. `crew hold --crew=x` is a
+// is not the argv an unconverted arm may be handed. `crew adopt --crew=x` is a
 // word the arm reads whole; the split makes it `--crew x`, a different
 // command. The typed subcommands want the split (TestFlagSpellingsAreIdentical).
 func TestParseCrewSplitsLeadingEquals(t *testing.T) {
 	for _, tc := range []struct {
 		args, captured []string
 	}{
-		{[]string{"hold", "--crew=x"}, []string{"--crew", "x"}},
-		{[]string{"nudge", "--since=5"}, []string{"--since", "5"}},
+		{[]string{"adopt", "--crew=x"}, []string{"--crew", "x"}},
+		{[]string{"pr-watch", "--since=5"}, []string{"--since", "5"}},
 		{[]string{"reap", "--idle=5"}, []string{"--idle", "5"}},
 		// Everything else about a passthrough command's argv does arrive whole,
 		// `--` and flag-shaped detail text included.
-		{[]string{"status", "w1", "working", "--help"}, []string{"w1", "working", "--help"}},
+		{[]string{"pr-watch", "w1", "working", "--help"}, []string{"w1", "working", "--help"}},
 		{[]string{"reap", "--", "--idle=5"}, []string{"--", "--idle=5"}},
-		{[]string{"hold", "--"}, []string{"--"}},
-		{[]string{"hold", "-x"}, []string{"-x"}},
-		{[]string{"hold", ""}, []string{""}},
+		{[]string{"adopt", "--"}, []string{"--"}},
+		{[]string{"adopt", "-x"}, []string{"-x"}},
+		{[]string{"adopt", ""}, []string{""}},
 	} {
 		var (
 			r       root
@@ -985,10 +990,8 @@ func TestRunPassthroughArgvReachesItsArm(t *testing.T) {
 			stderr: "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH (got '--idle=5')\n"},
 		{name: "reap keeps words after a separator together", args: []string{"reap", "--dry-run", "--idle=5"}, code: exitFailure,
 			stderr: "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH (got '--idle=5')\n"},
-		{name: "hold reads --crew with no value", args: []string{"hold", "list", "--crew"}, code: exitFailure,
-			stderr: "crew: --crew needs a value\n"},
-		{name: "status reads --help as an unknown argument", args: []string{"status", "w1", "working", "--help"},
-			code: exitFailure, stderr: "crew: status: unknown arg '--help' (use -- before a detail that starts with dashes)\n"},
+		{name: "adopt reads a flag-shaped id whole", args: []string{"adopt", "--bogus"}, code: exitFailure,
+			stderr: "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -1099,6 +1102,106 @@ var refusalRows = []struct {
 	{"stack align extra positional", []string{"stack", "align", "3", "4"}, stackUsage, 1},
 	{"stack align record", []string{"stack", "align", "--record", "3"}, stackUsage, 1},
 
+	{"status unknown flag", []string{"status", "w1", "blocked", "--bogus"},
+		"crew: status: unknown arg '--bogus' (use -- before a detail that starts with dashes)", 1},
+	{"status single-dash detail", []string{"status", "w1", "blocked", "-x"},
+		"crew: status: unknown arg '-x' (use -- before a detail that starts with dashes)", 1},
+	{"status extra positional", []string{"status", "w1", "blocked", "why", "url", "extra"}, "crew: status: unexpected argument 'extra'", 1},
+	{"status bad bool", []string{"status", "w1", "blocked", "--restamp=nope"},
+		`crew: status: --restamp: bool value must be true, 1, yes, false, 0 or no but got "nope"`, 1},
+
+	{"reply unknown flag", []string{"reply", "--bogus", "worker:x", "go"}, "crew: reply: unknown arg '--bogus' (use -- before a body that starts with dashes)", 1},
+	{"reply single-dash body", []string{"reply", "worker:x", "-5"}, "crew: reply: unknown arg '-5' (use -- before a body that starts with dashes)", 1},
+	{"reply extra positional", []string{"reply", "worker:x", "go", "more"}, "crew: reply: unexpected argument 'more'", 1},
+	{"reply crew missing value", []string{"reply", "worker:x", "go", "--crew"}, "crew: --crew needs a value", 1},
+	{"reply crew empty value", []string{"reply", "worker:x", "go", "--crew", ""}, "crew: --crew needs a value", 1},
+	{"reply crew empty value equals", []string{"reply", "--crew=", "worker:x", "go"}, "crew: --crew needs a value", 1},
+
+	{"hold no action", []string{"hold"}, holdUsage, 1},
+	{"hold unknown action", []string{"hold", "bogus"}, holdUsage, 1},
+	{"hold flag as action", []string{"hold", "--bogus"}, holdUsage, 1},
+	{"hold list unknown flag", []string{"hold", "list", "--bogus"}, "crew: hold list [--crew ID] [--json]", 1},
+	{"hold list extra positional", []string{"hold", "list", "x"}, "crew: hold list [--crew ID] [--json]", 1},
+	{"hold list bad bool", []string{"hold", "list", "--json=nope"}, "crew: hold list [--crew ID] [--json]", 1},
+	{"hold list crew missing value", []string{"hold", "list", "--json", "--crew"}, "crew: --crew needs a value", 1},
+	{"hold list crew empty value", []string{"hold", "list", "--crew", ""}, "crew: --crew needs a value", 1},
+	{"hold list crew empty value equals", []string{"hold", "list", "--crew="}, "crew: --crew needs a value", 1},
+	{"hold due unknown flag", []string{"hold", "due", "--bogus"}, "crew: hold due [--crew ID] [--json]", 1},
+	{"hold due extra positional", []string{"hold", "due", "x"}, "crew: hold due [--crew ID] [--json]", 1},
+	{"hold due crew missing value", []string{"hold", "due", "--crew"}, "crew: --crew needs a value", 1},
+	{"hold due crew empty value", []string{"hold", "due", "--crew", ""}, "crew: --crew needs a value", 1},
+	{"hold park json is unknown", []string{"hold", "park", "60", "--json"}, "crew: hold park <default> [--crew ID]", 1},
+	{"hold park unknown flag", []string{"hold", "park", "60", "--bogus"}, "crew: hold park <default> [--crew ID]", 1},
+	{"hold park extra positional", []string{"hold", "park", "60", "90"}, "crew: hold park <default> [--crew ID]", 1},
+	{"hold park crew missing value", []string{"hold", "park", "60", "--crew"}, "crew: --crew needs a value", 1},
+	{"hold park crew empty value", []string{"hold", "park", "60", "--crew", ""}, "crew: --crew needs a value", 1},
+	{"hold release no id", []string{"hold", "release"}, "crew: hold release <id> [--crew ID]", 1},
+	{"hold release empty id", []string{"hold", "release", ""}, "crew: hold release <id> [--crew ID]", 1},
+	{"hold release json is unknown", []string{"hold", "release", "h1", "--json"}, "crew: hold release <id> [--crew ID]", 1},
+	{"hold release extra positional", []string{"hold", "release", "h1", "h2"}, "crew: hold release <id> [--crew ID]", 1},
+	{"hold release crew missing value", []string{"hold", "release", "h1", "--crew"}, "crew: --crew needs a value", 1},
+	{"hold release crew empty value", []string{"hold", "release", "h1", "--crew", ""}, "crew: --crew needs a value", 1},
+	{"hold add unknown flag", []string{"hold", "add", "--bogus"}, "crew: hold add: unknown arg '--bogus'", 1},
+	{"hold add single-dash flag", []string{"hold", "add", "-x"}, "crew: hold add: unknown arg '-x'", 1},
+	{"hold add unknown flag after values", []string{"hold", "add", "--engine", "e", "--bogus", "t"}, "crew: hold add: unknown arg '--bogus'", 1},
+	{"hold add bad bool", []string{"hold", "add", "--draft=nope"},
+		`crew: hold add: --draft: bool value must be true, 1, yes, false, 0 or no but got "nope"`, 1},
+	{"hold add engine missing value", []string{"hold", "add", "--engine"}, "crew: --engine needs a value", 1},
+	{"hold add window empty value", []string{"hold", "add", "--window", ""}, "crew: --window needs a value", 1},
+	{"hold add resets-at empty value equals", []string{"hold", "add", "--resets-at="}, "crew: --resets-at needs a value", 1},
+	{"hold add spec missing value", []string{"hold", "add", "--engine", "e", "--spec"}, "crew: --spec needs a value", 1},
+	{"hold add crew empty value", []string{"hold", "add", "--crew", "", "t"}, "crew: --crew needs a value", 1},
+	{"hold add leading double dash", []string{"hold", "add", "--engine", "e", "--window", "w", "--", "--t"}, "crew: hold add: unknown arg '--'", 1},
+	{"hold add bare double dash", []string{"hold", "add", "--engine", "e", "--window", "w", "--"}, "crew: hold add: unknown arg '--'", 1},
+	// The flag table's order decides which empty value is named, not argv order.
+	{"hold add two empty values", []string{"hold", "add", "--model", "", "--window", ""}, "crew: --window needs a value", 1},
+	{"hold add empty value before double dash", []string{"hold", "add", "--window", "", "--", "t"}, "crew: --window needs a value", 1},
+
+	{"nudge unknown flag", []string{"nudge", "--bogus", "nova"}, "crew: nudge: unknown flag '--bogus' (usage: " + nudge.Usage + ")", 1},
+	{"nudge extra positional", []string{"nudge", "nova", "iris"}, "crew: nudge: one target only (usage: " + nudge.Usage + ")", 1},
+	{"nudge crew missing value", []string{"nudge", "nova", "--crew"}, "crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")", 1},
+	{"nudge crew empty value", []string{"nudge", "--crew", "", "nova"}, "crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")", 1},
+	{"nudge crew empty value equals", []string{"nudge", "--crew=", "nova"}, "crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")", 1},
+	// A bare --wait leaves a following flag to kong, so the flag still refuses on its own.
+	{"nudge bare wait before an unknown flag", []string{"nudge", "--wait", "--bogus", "nova"}, "crew: nudge: unknown flag '--bogus' (usage: " + nudge.Usage + ")", 1},
+	{"nudge bare wait before an empty crew", []string{"nudge", "nova", "--wait", "--crew", ""}, "crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")", 1},
+	// `--wait abc` after a target is a second target, as the arm answered.
+	{"nudge wait word after a target", []string{"nudge", "nova", "--wait", "abc"}, "crew: nudge: one target only (usage: " + nudge.Usage + ")", 1},
+	{"nudge wait word before a target", []string{"nudge", "--wait", "abc", "nova"}, "crew: nudge: one target only (usage: " + nudge.Usage + ")", 1},
+
+	{"await unknown flag", []string{"await", "worker:x#s1-1", "--bogus"}, "crew: await: unknown arg '--bogus'", 1},
+	{"await extra positional", []string{"await", "worker:x#s1-1", "extra"}, "crew: await: unknown arg 'extra'", 1},
+	{"await from missing value", []string{"await", "worker:x#s1-1", "--from"}, "crew: --from needs a value", 1},
+	{"await timeout empty value", []string{"await", "worker:x#s1-1", "--timeout", ""}, "crew: --timeout needs a value", 1},
+	{"await interval empty value equals", []string{"await", "worker:x#s1-1", "--interval="}, "crew: --interval needs a value", 1},
+
+	{"watch unknown flag", []string{"watch", "--bogus"}, "crew: watch: unknown arg '--bogus'", 1},
+	{"watch extra positional", []string{"watch", "x"}, "crew: watch: unknown arg 'x'", 1},
+	{"watch since missing value", []string{"watch", "--since"}, "crew: --since needs a value", 1},
+	{"watch states empty value", []string{"watch", "--states", ""}, "crew: --states needs a value", 1},
+	{"watch timeout missing value", []string{"watch", "--timeout"}, "crew: --timeout needs a value", 1},
+	{"watch interval empty value equals", []string{"watch", "--interval="}, "crew: --interval needs a value", 1},
+	{"watch crew empty value", []string{"watch", "--crew", ""}, "crew: --crew needs a value", 1},
+
+	{"stream unknown flag", []string{"stream", "--bogus"}, "crew: stream: unknown arg '--bogus'", 64},
+	{"stream single-dash flag", []string{"stream", "-x"}, "crew: stream: unknown arg '-x'", 64},
+	{"stream extra positional", []string{"stream", "x"}, "crew: stream: unknown arg 'x'", 64},
+	{"stream bad bool", []string{"stream", "--force=nope"},
+		`crew: stream: --force: bool value must be true, 1, yes, false, 0 or no but got "nope"`, 64},
+	{"stream status bad bool", []string{"stream", "--status=nope"},
+		`crew: stream: --status: bool value must be true, 1, yes, false, 0 or no but got "nope"`, 64},
+	{"stream crew missing value", []string{"stream", "--crew"}, "crew: --crew needs a value", 64},
+	{"stream states empty value", []string{"stream", "--states", ""}, "crew: --states needs a value", 64},
+	{"stream park empty value equals", []string{"stream", "--park="}, "crew: --park needs a value", 64},
+	{"stream heartbeat missing value", []string{"stream", "--crew", "c1", "--heartbeat"}, "crew: --heartbeat needs a value", 64},
+	{"stream coalesce empty value", []string{"stream", "--coalesce", ""}, "crew: --coalesce needs a value", 64},
+	{"stream retry empty value equals", []string{"stream", "--retry="}, "crew: --retry needs a value", 64},
+	{"stream interval missing value", []string{"stream", "--interval"}, "crew: --interval needs a value", 64},
+	{"stream reap-every empty value", []string{"stream", "--reap-every", ""}, "crew: --reap-every needs a value", 64},
+	// The flag table's order decides which empty value is named, not argv order.
+	{"stream two empty values", []string{"stream", "--interval", "", "--crew", ""}, "crew: --crew needs a value", 64},
+	{"stream unknown beats empty value", []string{"stream", "--crew", "", "--bogus"}, "crew: stream: unknown arg '--bogus'", 64},
+
 	{"roster-render unknown flag", []string{"roster-render", "--bogus"}, "crew: roster-render: unknown arg '--bogus'", 64},
 	{"roster-render extra positional", []string{"roster-render", "--crew", "c1", "x"}, "crew: roster-render: unknown arg 'x'", 64},
 	{"roster-render crew missing value", []string{"roster-render", "--crew"}, "crew: --crew needs a value", 64},
@@ -1126,7 +1229,33 @@ var preLocateRefusalRows = []struct {
 	{"fleet crew empty value", []string{"fleet", "--crew", ""}, fleetUsage, 1},
 	{"fleet crew empty value equals", []string{"fleet", "--crew="}, fleetUsage, 1},
 	{"fleet bad bool", []string{"fleet", "--all=nope"}, fleetUsage, 1},
+	{"fleet word that names no lane", []string{"fleet", "table"}, fleetUsage, 1},
 	{"fleet stream behind a flag", []string{"fleet", "--json", "stream"}, fleetUsage, 1},
+	{"fleet stream behind all", []string{"fleet", "--all", "stream"}, fleetUsage, 1},
+	{"fleet stream behind crew", []string{"fleet", "--crew", "x", "stream"}, fleetUsage, 1},
+	{"fleet stream behind a flag with its own", []string{"fleet", "--all", "stream", "--crew", "c1"}, fleetUsage, 1},
+	{"fleet stream behind a flag unknown flag", []string{"fleet", "--all", "stream", "--bogus"}, fleetUsage, 1},
+	{"fleet stream unknown flag", []string{"fleet", "stream", "--bogus"}, "crew: fleet stream: unknown arg '--bogus'", 64},
+	{"fleet stream single-dash flag", []string{"fleet", "stream", "-x"}, "crew: fleet stream: unknown arg '-x'", 64},
+	{"fleet stream extra positional", []string{"fleet", "stream", "x"}, "crew: fleet stream: unknown arg 'x'", 64},
+	{"fleet stream table flag", []string{"fleet", "stream", "--all"}, "crew: fleet stream: unknown arg '--all'", 64},
+	{"fleet stream bad bool", []string{"fleet", "stream", "--force=nope"},
+		`crew: fleet stream: --force: bool value must be true, 1, yes, false, 0 or no but got "nope"`, 64},
+	{"fleet stream reap-every", []string{"fleet", "stream", "--crew", "c1", "--reap-every", "0"}, fleetReapEvery, 64},
+	{"fleet stream reap-every missing value", []string{"fleet", "stream", "--reap-every"}, fleetReapEvery, 64},
+	{"fleet stream reap-every equals", []string{"fleet", "stream", "--reap-every=5"}, fleetReapEvery, 64},
+	{"fleet stream reap-every beats empty value", []string{"fleet", "stream", "--park", "", "--reap-every", "5"}, fleetReapEvery, 64},
+	{"fleet stream unknown beats reap-every", []string{"fleet", "stream", "--reap-every", "5", "--bogus"}, "crew: fleet stream: unknown arg '--bogus'", 64},
+	{"fleet stream crew missing value", []string{"fleet", "stream", "--crew"}, "crew: --crew needs a value", 64},
+	{"fleet stream crew empty value", []string{"fleet", "stream", "--crew", ""}, "crew: --crew needs a value", 64},
+	{"fleet stream states empty value equals", []string{"fleet", "stream", "--states="}, "crew: --states needs a value", 64},
+	{"fleet stream park missing value", []string{"fleet", "stream", "--crew", "c1", "--park"}, "crew: --park needs a value", 64},
+	{"fleet stream heartbeat empty value", []string{"fleet", "stream", "--heartbeat", ""}, "crew: --heartbeat needs a value", 64},
+	{"fleet stream coalesce empty value equals", []string{"fleet", "stream", "--coalesce="}, "crew: --coalesce needs a value", 64},
+	{"fleet stream retry missing value", []string{"fleet", "stream", "--retry"}, "crew: --retry needs a value", 64},
+	{"fleet stream interval empty value", []string{"fleet", "stream", "--interval", ""}, "crew: --interval needs a value", 64},
+	{"fleet stream rediscover missing value", []string{"fleet", "stream", "--crew", "c1", "--rediscover"}, "crew: --rediscover needs a value", 64},
+	{"fleet stream rediscover empty value equals", []string{"fleet", "stream", "--rediscover="}, "crew: --rediscover needs a value", 64},
 	{"rate sweep-all unknown flag", []string{"rate", "--sweep-all", "--bogus"}, rateUsage, 1},
 	{"rate sweep-all root missing value", []string{"rate", "--sweep-all", "--root"}, rateRootNeedsDir, 1},
 	{"rate sweep-all root empty value", []string{"rate", "--sweep-all", "--root", ""}, rateRootNeedsDir, 1},
@@ -1134,9 +1263,11 @@ var preLocateRefusalRows = []struct {
 }
 
 const (
+	holdUsage        = "crew: hold add|list|due|park|release"
 	retroUsage       = "crew: retro takes --report and --json"
 	rateUsage        = "crew: rate takes --report, --json, --pooled, and --sweep-all/--root"
 	fleetUsage       = "crew: fleet [--all] [--crew ID] [--json]"
+	fleetReapEvery   = "crew: fleet stream: --reap-every is not supported — the fleet lane does not reap (each repo's own stream or dispatch does)"
 	stackUsage       = "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n       crew stack align <top-PR#|branch>"
 	rateRootNeedsDir = "crew: rate --root needs a directory"
 	whereUsage       = "usage: crew where <codename|branch|%id> [--crew ID]"
@@ -1179,6 +1310,33 @@ func TestKongErrorClassification(t *testing.T) {
 		{[]string{"roster", "a", "b"}, "unexpected argument b"},
 		{[]string{"rate", "--root"}, "--root: missing value"},
 		{[]string{"roster-render", "--once=nope"}, "--once: bool value must be"},
+		{[]string{"status", "w1", "blocked", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"status", "w1", "blocked", "-x"}, "unknown flag -x"},
+		{[]string{"status", "w1", "blocked", "a", "b", "c"}, "unexpected argument c"},
+		{[]string{"status", "--restamp=nope"}, "--restamp: bool value must be"},
+		{[]string{"reply", "--bogus", "a", "b"}, "unknown flag --bogus"},
+		{[]string{"reply", "a", "-5"}, "unknown flag -5"},
+		{[]string{"reply", "a", "b", "c"}, "unexpected argument c"},
+		{[]string{"hold", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"hold", "bogus"}, "unexpected argument bogus"},
+		{[]string{"hold", "list", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"hold", "list", "x"}, "unexpected argument x"},
+		{[]string{"hold", "list", "--json=nope"}, "--json: bool value must be"},
+		{[]string{"hold", "park", "1", "2"}, "unexpected argument 2"},
+		{[]string{"hold", "release", "a", "b"}, "unexpected argument b"},
+		{[]string{"hold", "add", "-x"}, "unknown flag -x"},
+		{[]string{"hold", "add", "--draft=nope"}, "--draft: bool value must be"},
+		{[]string{"nudge", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"nudge", "a", "b"}, "unexpected argument b"},
+		{[]string{"await", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"await", "a", "b"}, "unexpected argument b"},
+		{[]string{"watch", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"watch", "x"}, "unexpected argument x"},
+		{[]string{"stream", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"stream", "x"}, "unexpected argument x"},
+		{[]string{"stream", "--force=nope"}, "--force: bool value must be"},
+		{[]string{"fleet", "stream", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"fleet", "stream", "x"}, "unexpected argument x"},
 	} {
 		var (
 			r       root
@@ -1363,6 +1521,30 @@ func TestFlagSpellingsAreIdentical(t *testing.T) {
 			[]string{"roster-render", "--crew=c1", "--quiet=x"}, true},
 		{"roster-render --once --detach", []string{"roster-render", "--crew", "c1", "--once", "--detach"},
 			[]string{"roster-render", "--crew", "c1", "--once=true", "--detach=true"}, true},
+		{"hold list --json --crew", []string{"hold", "list", "--json", "--crew", "c1"}, []string{"hold", "list", "--json=true", "--crew=c1"}, false},
+		{"hold due --json --crew", []string{"hold", "due", "--json", "--crew", "c1"}, []string{"hold", "due", "--json=true", "--crew=c1"}, false},
+		{"hold park --crew", []string{"hold", "park", "60", "--crew", "c1"}, []string{"hold", "park", "60", "--crew=c1"}, false},
+		{"hold list --crew empty", []string{"hold", "list", "--crew", ""}, []string{"hold", "list", "--crew="}, true},
+		{"hold due --crew empty", []string{"hold", "due", "--crew", ""}, []string{"hold", "due", "--crew="}, true},
+		{"hold park --crew empty", []string{"hold", "park", "60", "--crew", ""}, []string{"hold", "park", "60", "--crew="}, true},
+		{"hold release --crew empty", []string{"hold", "release", "h1", "--crew", ""}, []string{"hold", "release", "h1", "--crew="}, true},
+		{"reply --crew empty", []string{"reply", "--crew", "", "worker:feat/x", "go"}, []string{"reply", "--crew=", "worker:feat/x", "go"}, true},
+		{"reply --crew", []string{"reply", "--crew", "c9", "worker:feat/none", "go"}, []string{"reply", "--crew=c9", "worker:feat/none", "go"}, true},
+		{"nudge --crew empty", []string{"nudge", "--crew", "", "nova"}, []string{"nudge", "--crew=", "nova"}, true},
+		{"await --from empty", []string{"await", me, "--from", ""}, []string{"await", me, "--from="}, true},
+		{"await --timeout empty", []string{"await", me, "--timeout", ""}, []string{"await", me, "--timeout="}, true},
+		{"await --interval empty", []string{"await", me, "--interval", ""}, []string{"await", me, "--interval="}, true},
+		{"await --timeout bad", []string{"await", me, "--timeout", "abc"}, []string{"await", me, "--timeout=abc"}, true},
+		{"watch --since empty", []string{"watch", "--since", ""}, []string{"watch", "--since="}, true},
+		{"watch --states empty", []string{"watch", "--states", ""}, []string{"watch", "--states="}, true},
+		{"watch --timeout empty", []string{"watch", "--timeout", ""}, []string{"watch", "--timeout="}, true},
+		{"watch --interval empty", []string{"watch", "--interval", ""}, []string{"watch", "--interval="}, true},
+		{"watch --crew empty", []string{"watch", "--crew", ""}, []string{"watch", "--crew="}, true},
+		{"watch --timeout zero", []string{"watch", "--timeout", "0"}, []string{"watch", "--timeout=0"}, true},
+		{"watch --states only commas", []string{"watch", "--states", ","}, []string{"watch", "--states=,"}, true},
+		{"watch --since bad", []string{"watch", "--since", "x"}, []string{"watch", "--since=x"}, true},
+		// refused once the sender check passes: --restamp needs state blocked.
+		{"status --restamp", []string{"status", me, "working", "--restamp"}, []string{"status", me, "working", "--restamp=true"}, true},
 		{"stack cut --record", []string{"stack", "cut", "--record", "feat/x", "abc"},
 			[]string{"stack", "cut", "--record=true", "feat/x", "abc"}, true},
 	} {
@@ -1412,6 +1594,49 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 		{"rate --sweep-all", []string{"rate", "--sweep-all"}, []string{"rate", "--sweep-all=true"}, false},
 		{"fleet bools", []string{"fleet", "--all", "--json"}, []string{"fleet", "--all=true", "--json=true"}, false},
 		{"stack cut --record", []string{"stack", "cut", "--record", "feat/x"}, []string{"stack", "cut", "--record=true", "feat/x"}, false},
+		{"status --restamp", []string{"status", "w1", "blocked", "why", "--restamp"}, []string{"status", "w1", "blocked", "why", "--restamp=true"}, false},
+		{"status --restamp first", []string{"status", "--restamp", "w1", "blocked"}, []string{"status", "--restamp=true", "w1", "blocked"}, false},
+		{"reply --crew", []string{"reply", "--crew", "c1", "worker:x", "go"}, []string{"reply", "--crew=c1", "worker:x", "go"}, false},
+		{"reply --crew after body", []string{"reply", "worker:x", "go", "--crew", "c1"}, []string{"reply", "worker:x", "go", "--crew=c1"}, false},
+		{"hold list flags", []string{"hold", "list", "--json", "--crew", "c1"}, []string{"hold", "list", "--json=true", "--crew=c1"}, false},
+		{"hold due flags", []string{"hold", "due", "--json", "--crew", "c1"}, []string{"hold", "due", "--json=true", "--crew=c1"}, false},
+		{"hold park --crew", []string{"hold", "park", "60", "--crew", "c1"}, []string{"hold", "park", "60", "--crew=c1"}, false},
+		{"hold park --crew first", []string{"hold", "park", "--crew", "c1", "60"}, []string{"hold", "park", "--crew=c1", "60"}, false},
+		{"hold release --crew", []string{"hold", "release", "h1", "--crew", "c1"}, []string{"hold", "release", "h1", "--crew=c1"}, false},
+		{"hold add --draft", []string{"hold", "add", "--draft", "t"}, []string{"hold", "add", "--draft=true", "t"}, false},
+		{"hold add all value flags", holdAddSpaced("v"), holdAddJoined("v"), false},
+		{"hold add all value flags empty", holdAddSpaced(""), holdAddJoined(""), true},
+		{"nudge --crew", []string{"nudge", "--crew", "c1", "nova"}, []string{"nudge", "--crew=c1", "nova"}, false},
+		{"nudge --crew after target", []string{"nudge", "nova", "--crew", "c1"}, []string{"nudge", "nova", "--crew=c1"}, false},
+		{"nudge --crew empty", []string{"nudge", "--crew", "", "nova"}, []string{"nudge", "--crew=", "nova"}, true},
+		{"nudge --wait", []string{"nudge", "nova", "--wait", "5"}, []string{"nudge", "nova", "--wait=5"}, false},
+		{"nudge --wait first", []string{"nudge", "--wait", "5", "nova"}, []string{"nudge", "--wait=5", "nova"}, false},
+		{"await --from", []string{"await", "worker:x#s1-1", "--from", "dispatcher:c1"}, []string{"await", "worker:x#s1-1", "--from=dispatcher:c1"}, false},
+		{"await --timeout", []string{"await", "worker:x#s1-1", "--timeout", "5"}, []string{"await", "worker:x#s1-1", "--timeout=5"}, false},
+		{"await --interval", []string{"await", "worker:x#s1-1", "--interval", "3"}, []string{"await", "worker:x#s1-1", "--interval=3"}, false},
+		{"await flags first", []string{"await", "--from", "d", "--timeout", "5", "--interval", "3", "worker:x#s1-1"},
+			[]string{"await", "--from=d", "--timeout=5", "--interval=3", "worker:x#s1-1"}, false},
+		{"await --timeout empty", []string{"await", "worker:x#s1-1", "--timeout", ""}, []string{"await", "worker:x#s1-1", "--timeout="}, true},
+		{"watch --since", []string{"watch", "--since", "5"}, []string{"watch", "--since=5"}, false},
+		{"watch --states", []string{"watch", "--states", "blocked,done"}, []string{"watch", "--states=blocked,done"}, false},
+		{"watch --timeout", []string{"watch", "--timeout", "30"}, []string{"watch", "--timeout=30"}, false},
+		{"watch --interval", []string{"watch", "--interval", "1"}, []string{"watch", "--interval=1"}, false},
+		{"watch --crew", []string{"watch", "--crew", "c1"}, []string{"watch", "--crew=c1"}, false},
+		{"watch all flags", []string{"watch", "--since", "5", "--states", "done", "--timeout", "30", "--interval", "1", "--crew", "c1"},
+			[]string{"watch", "--since=5", "--states=done", "--timeout=30", "--interval=1", "--crew=c1"}, false},
+		{"watch --since empty", []string{"watch", "--since", ""}, []string{"watch", "--since="}, true},
+		{"stream all value flags", spelled([]string{"stream"}, streamValueFlags, "7", false), spelled([]string{"stream"}, streamValueFlags, "7", true), false},
+		{"stream all value flags empty", spelled([]string{"stream"}, streamValueFlags, "", false), spelled([]string{"stream"}, streamValueFlags, "", true), true},
+		{"stream --reap-every", []string{"stream", "--reap-every", "0"}, []string{"stream", "--reap-every=0"}, false},
+		{"stream bools", []string{"stream", "--force", "--status"}, []string{"stream", "--force=true", "--status=true"}, false},
+		{"fleet stream all value flags", spelled([]string{"fleet", "stream"}, fleetStreamValueFlags, "7", false),
+			spelled([]string{"fleet", "stream"}, fleetStreamValueFlags, "7", true), false},
+		{"fleet stream all value flags empty", spelled([]string{"fleet", "stream"}, fleetStreamValueFlags, "", false),
+			spelled([]string{"fleet", "stream"}, fleetStreamValueFlags, "", true), true},
+		{"fleet stream --rediscover", []string{"fleet", "stream", "--rediscover", "60"}, []string{"fleet", "stream", "--rediscover=60"}, false},
+		{"fleet stream --reap-every", []string{"fleet", "stream", "--reap-every", "0"}, []string{"fleet", "stream", "--reap-every=0"}, true},
+		{"fleet stream bools", []string{"fleet", "stream", "--crew", "c1", "--force", "--status"},
+			[]string{"fleet", "stream", "--crew=c1", "--force=true", "--status=true"}, false},
 		{"roster-render bools", []string{"roster-render", "--no-open", "--once", "--detach"},
 			[]string{"roster-render", "--no-open=true", "--once=true", "--detach=true"}, false},
 	} {
@@ -1431,6 +1656,88 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 	}
 }
 
+// holdFlags are `hold add`'s fourteen value flags.
+var holdFlags = []string{"engine", "window", "resets-at", "agent", "ref", "branch", "tier", "model",
+	"effort", "plan", "mcp", "shape", "spec", "crew"}
+
+func holdAddSpaced(v string) []string {
+	args := []string{"hold", "add"}
+	for _, f := range holdFlags {
+		args = append(args, "--"+f, v)
+	}
+	return append(args, "t")
+}
+
+func holdAddJoined(v string) []string {
+	args := []string{"hold", "add"}
+	for _, f := range holdFlags {
+		args = append(args, "--"+f+"="+v)
+	}
+	return append(args, "t")
+}
+
+// streamValueFlags are `stream`'s value flags; fleetStreamValueFlags are the lane's.
+var (
+	streamValueFlags      = []string{"crew", "states", "park", "heartbeat", "coalesce", "retry", "interval", "reap-every"}
+	fleetStreamValueFlags = []string{"crew", "states", "park", "heartbeat", "coalesce", "retry", "interval", "rediscover"}
+)
+
+// spelled is cmd with every flag set to v, spaced or joined.
+func spelled(cmd, flags []string, v string, joined bool) []string {
+	args := slices.Clone(cmd)
+	for _, f := range flags {
+		if joined {
+			args = append(args, "--"+f+"="+v)
+		} else {
+			args = append(args, "--"+f, v)
+		}
+	}
+	return args
+}
+
+// TestHoldAddEachValueFlagSpellsTheSame: one flag at a time, so a flag the table
+// loses or mis-binds is named by the row, not hidden behind the other thirteen.
+func TestHoldAddEachValueFlagSpellsTheSame(t *testing.T) {
+	for _, f := range holdFlags {
+		for _, v := range []string{"v", ""} {
+			t.Run(f+"/"+v, func(t *testing.T) {
+				a, okA := parseCrew([]string{"hold", "add", "--" + f, v, "t"})
+				b, okB := parseCrew([]string{"hold", "add", "--" + f + "=" + v, "t"})
+				if !okA || !okB {
+					t.Fatal("hold add selected no subcommand")
+				}
+				if !reflect.DeepEqual(a.typed, b.typed) || !reflect.DeepEqual(a.refusal, b.refusal) {
+					t.Errorf("spellings differ:\n %+v %v\n %+v %v", a.typed, a.refusal, b.typed, b.refusal)
+				}
+				if wantRefused := v == ""; (a.refusal != nil) != wantRefused {
+					t.Errorf("refusal = %v, want refused %v", a.refusal, wantRefused)
+				}
+			})
+		}
+	}
+}
+
+// TestHoldAddTitleIsVerbatimAfterTheFirstWord pins add's grammar: flags up to
+// the first title word, then every word is title text.
+func TestHoldAddTitleIsVerbatimAfterTheFirstWord(t *testing.T) {
+	for _, tc := range []struct {
+		args  []string
+		draft bool
+		title []string
+	}{
+		{[]string{"hold", "add", "my", "--draft", "title"}, false, []string{"my", "--draft", "title"}},
+		{[]string{"hold", "add", "--draft", "my", "--engine", "x"}, true, []string{"my", "--engine", "x"}},
+		{[]string{"hold", "add", "a", "-x"}, false, []string{"a", "-x"}},
+		{[]string{"hold", "add", "fix", "--", "x"}, false, []string{"fix", "--", "x"}},
+	} {
+		parsed, ok := parseCrew(tc.args)
+		got := parsed.typed.Hold.Add
+		if !ok || parsed.refusal != nil || got.Draft != tc.draft || !slices.Equal(got.Title, tc.title) || got.Engine != nil {
+			t.Errorf("crew %q: ok %v refusal %v draft %v title %q", tc.args, ok, parsed.refusal, got.Draft, got.Title)
+		}
+	}
+}
+
 func assertSameRun(t *testing.T, e env, a, b []string, refused bool) {
 	t.Helper()
 	var out, errOut [2]bytes.Buffer
@@ -1444,5 +1751,133 @@ func assertSameRun(t *testing.T, e env, a, b []string, refused bool) {
 	}
 	if refused && codes[0] == 0 {
 		t.Errorf("crew %q succeeded, want a refusal", a)
+	}
+}
+
+// TestMsgWordsAreVerbatim pins msg's grammar: every word is data, flag-shaped
+// ones included, and only a leading `--a=b` is split by kong.
+func TestMsgWordsAreVerbatim(t *testing.T) {
+	for _, tc := range []struct{ args, words []string }{
+		{[]string{"msg", "a", "b", "-1"}, []string{"a", "b", "-1"}},
+		{[]string{"msg", "a", "b", "--help"}, []string{"a", "b", "--help"}},
+		{[]string{"msg", "a", "b", "x=y", "extra"}, []string{"a", "b", "x=y", "extra"}},
+		{[]string{"msg", "a", "b", "--restamp=true"}, []string{"a", "b", "--restamp=true"}},
+		{[]string{"msg", "--a=b", "to", "body"}, []string{"--a", "b", "to", "body"}},
+	} {
+		parsed, ok := parseCrew(tc.args)
+		if !ok || parsed.refusal != nil || !slices.Equal(parsed.typed.Msg.Args, tc.words) {
+			t.Errorf("crew %q: ok %v refusal %v words %q, want %q", tc.args, ok, parsed.refusal, parsed.typed.Msg.Args, tc.words)
+		}
+	}
+}
+
+// TestRunSenderCheckSurvivesTyping: a caller that is not the dispatcher cannot
+// post as dispatcher:c1, however the grammar spells the sender or the crew.
+func TestRunSenderCheckSurvivesTyping(t *testing.T) {
+	const worker = "worker:feat/x#s1-1"
+	log := logRowC1 + "\n" + dispatch + "\n"
+	repo, logPath := repoWithLog(t, &log, 0o644)
+	t.Setenv("CREW_ID", "c1")
+	t.Setenv("CREW_WORKER_ID", worker)
+	t.Setenv("TMUX_PANE", "")
+	if err := os.Unsetenv("TMUX_PANE"); err != nil {
+		t.Fatal(err)
+	}
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil)}
+	resets := strconv.FormatInt(time.Now().Unix()+3600, 10)
+	add := func(crew ...string) []string {
+		return append(append([]string{"hold", "add"}, crew...),
+			"--engine", "claude", "--window", "w", "--resets-at", resets, "--agent", "a", "--ref", "r",
+			"--branch", "feat/x", "--tier", "standard", "--model", "m", "--effort", "medium", "a", "title")
+	}
+	for _, tc := range []struct {
+		name string
+		sub  string
+		args []string
+	}{
+		{"msg", "msg", []string{"msg", "dispatcher:c1", "x", "y"}},
+		{"msg from a worker env", "msg", []string{"msg", "dispatcher:c1", worker, "hi"}},
+		{"reply crew equals", "reply", []string{"reply", worker, "go", "--crew=c1"}},
+		{"reply crew spaced", "reply", []string{"reply", "--crew", "c1", worker, "go"}},
+		{"reply crew after body", "reply", []string{"reply", worker, "go", "--crew", "c1"}},
+		{"hold add crew equals", "hold add", add("--crew=c1")},
+		{"hold add crew spaced", "hold add", add("--crew", "c1")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr bytes.Buffer
+			code := run(context.Background(), tc.args, &stdout, &stderr, e)
+			want := "crew: " + tc.sub + ": refusing sender 'dispatcher:c1' — "
+			if code != exitFailure || !strings.HasPrefix(stderr.String(), want) {
+				t.Fatalf("code %d stderr %q, want exit 1 and prefix %q", code, stderr.String(), want)
+			}
+			after, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Errorf("the log changed: %q", after)
+			}
+		})
+	}
+}
+
+// TestStreamChildWatchArgv pins the argv `crew stream` re-enters `crew watch`
+// with (internal/stream/stream.go park): it must keep parsing clean under the
+// typed grammar, to the request it was built from.
+func TestStreamChildWatchArgv(t *testing.T) {
+	parsed, ok := parseCrew([]string{"watch", "--crew", "c1", "--timeout", "300",
+		"--states", "blocked,done", "--interval", "2"})
+	if !ok || parsed.refusal != nil {
+		t.Fatalf("stream's child argv refused: ok %v refusal %v", ok, parsed.refusal)
+	}
+	w := parsed.typed.Watch
+	if w.Since != nil || str(w.Crew) != "c1" || str(w.Timeout) != "300" ||
+		str(w.States) != "blocked,done" || str(w.Interval) != "2" {
+		t.Errorf("stream's child argv bound %+v", w)
+	}
+}
+
+// TestStreamChildHoldDueArgv pins the argv `crew stream` re-enters `crew hold
+// due` with (internal/stream/stream.go holdDue).
+func TestStreamChildHoldDueArgv(t *testing.T) {
+	parsed, ok := parseCrew([]string{"hold", "due", "--crew", "c1", "--json"})
+	if !ok || parsed.refusal != nil || parsed.cmd != "hold due" {
+		t.Fatalf("stream's child argv refused: ok %v cmd %q refusal %v", ok, parsed.cmd, parsed.refusal)
+	}
+	if got := holdRequest(parsed); !reflect.DeepEqual(got, hold.Request{Action: "due", JSON: true, Crew: "c1"}) {
+		t.Errorf("stream's child argv bound %+v", got)
+	}
+}
+
+// TestNudgeWaitBinding pins what the typed Wait and Target make of the
+// positions `--wait` can take.
+func TestNudgeWaitBinding(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want nudge.Request
+	}{
+		{[]string{"nudge", "nova"}, nudge.Request{Target: "nova"}},
+		{[]string{"nudge", "nova", "--wait"}, nudge.Request{Target: "nova", Wait: "1800"}},
+		{[]string{"nudge", "nova", "--wait", "5"}, nudge.Request{Target: "nova", Wait: "5"}},
+		{[]string{"nudge", "--wait=5", "nova", "--crew=c1"}, nudge.Request{Crew: "c1", Target: "nova", Wait: "5"}},
+		{[]string{"nudge", "--wait", "nova"}, nudge.Request{Target: "nova", Wait: "1800"}},
+		{[]string{"nudge", "nova", "--wait", "--crew", "X"}, nudge.Request{Crew: "X", Target: "nova", Wait: "1800"}},
+		{[]string{"nudge", "--wait", "--crew", "X", "nova"}, nudge.Request{Crew: "X", Target: "nova", Wait: "1800"}},
+		{[]string{"nudge", "nova", "--wait", "60", "--crew", "X"}, nudge.Request{Crew: "X", Target: "nova", Wait: "60"}},
+	} {
+		parsed, ok := parseCrew(tc.args)
+		if !ok || parsed.refusal != nil {
+			t.Errorf("crew %q refused: %v", tc.args, parsed.refusal)
+			continue
+		}
+		n := parsed.typed.Nudge
+		got, _ := nudge.NewRequest(str(n.Crew), n.Target, n.Wait)
+		if got != tc.want {
+			t.Errorf("crew %q = %+v, want %+v", tc.args, got, tc.want)
+		}
 	}
 }

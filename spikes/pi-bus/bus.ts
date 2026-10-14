@@ -5,12 +5,11 @@ export function statusArgs(
   pr?: string,
 ): string[] {
   const args = ["status", id, state];
-  // `crew status` reads `<from> <state> [detail] [pr]` positionally, so a pr
-  // without a detail still needs the empty detail slot.
+  // A detail may start with a dash, which `crew status` would read as a flag.
   if (pr !== undefined) {
-    args.push(detail ?? "", pr);
+    args.push("--", detail ?? "", pr);
   } else if (detail !== undefined) {
-    args.push(detail);
+    args.push("--", detail);
   }
   return args;
 }

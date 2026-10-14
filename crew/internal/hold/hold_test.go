@@ -61,12 +61,24 @@ func (tr *tree) rows(t *testing.T) []string {
 }
 
 // run is one arm invocation with the crew the fixture resolves to.
-func (tr *tree) run(t *testing.T, args ...string) (string, string, int) {
+func (tr *tree) run(t *testing.T, req Request) (string, string, int) {
 	t.Helper()
-	return tr.runOpts(t, Options{}, args...)
+	return tr.runOpts(t, Options{}, req)
 }
 
-func (tr *tree) runOpts(t *testing.T, o Options, args ...string) (string, string, int) {
+// fullAdd is an `add` that passes every check; a case edits the field it probes.
+func fullAdd(edit func(*AddRequest)) Request {
+	a := AddRequest{
+		Engine: "e", Window: "5h", ResetsAt: future, Agent: "a", Ref: "r",
+		Branch: "b", Tier: "t", Model: "m", Effort: "f", Title: []string{"x"},
+	}
+	if edit != nil {
+		edit(&a)
+	}
+	return Request{Action: "add", Add: a}
+}
+
+func (tr *tree) runOpts(t *testing.T, o Options, req Request) (string, string, int) {
 	t.Helper()
 	if o.CrewID == nil {
 		o.CrewID = func() string { return "c1" }
@@ -75,7 +87,7 @@ func (tr *tree) runOpts(t *testing.T, o Options, args ...string) (string, string
 		o.Now = func() time.Time { return now }
 	}
 	var out, err bytes.Buffer
-	code := Run(args, tr.paths, &out, &err, o)
+	code := Run(req, tr.paths, &out, &err, o)
 	return out.String(), err.String(), code
 }
 
@@ -90,23 +102,17 @@ func (tr *tree) clock(t *testing.T, seconds string) Options {
 
 func TestUnknownAction(t *testing.T) {
 	usage := "crew: hold add|list|due|park|release\n"
-	cases := []struct {
-		args []string
-		want string
-	}{
-		{nil, usage},
-		{[]string{"hold"}, usage},
-		{[]string{"bogus"}, usage},
-		{[]string{"add", "--crew"}, "crew: --crew needs a value\n"},
-		{[]string{"list", "--json", "--crew"}, "crew: --crew needs a value\n"},
-		{[]string{"release"}, "crew: hold release <id> [--crew ID]\n"},
-	}
-	for _, tc := range cases {
+	for _, action := range []string{"", "hold", "bogus"} {
 		tr := setup(t)
-		_, err, code := tr.run(t, tc.args...)
-		if code != 1 || err != tc.want {
-			t.Errorf("%v: code %d, stderr %q, want %q", tc.args, code, err, tc.want)
+		_, err, code := tr.run(t, Request{Action: action})
+		if code != 1 || err != usage {
+			t.Errorf("%q: code %d, stderr %q, want %q", action, code, err, usage)
 		}
+	}
+	tr := setup(t)
+	_, err, code := tr.run(t, Request{Action: "release"})
+	if code != 0 || err != "" {
+		t.Errorf("release with no id is the parser's refusal, not Run's: %d %q", code, err)
 	}
 }
 
@@ -114,11 +120,12 @@ func TestUnknownAction(t *testing.T) {
 // so its key order is part of the value and `jq -S` cannot normalise it.
 func TestAddRowMatchesTheBuilder(t *testing.T) {
 	tr := setup(t)
-	out, err, code := tr.run(t, "add",
-		"--engine", "claude", "--window", "5h", "--resets-at", future,
-		"--agent", "codex", "--ref", "r1", "--branch", "b1", "--tier", "standard",
-		"--model", "sonnet", "--effort", "medium", "--plan", "p.md", "--mcp", "m.json",
-		"--draft", "--shape", "round-trip", "--crew", "c9", "a title")
+	out, err, code := tr.run(t, Request{Action: "add", Crew: "c9", Add: AddRequest{
+		Engine: "claude", Window: "5h", ResetsAt: future,
+		Agent: "codex", Ref: "r1", Branch: "b1", Tier: "standard",
+		Model: "sonnet", Effort: "medium", Plan: "p.md", MCP: "m.json",
+		Draft: true, Shape: "round-trip", Title: []string{"a", "title"},
+	}})
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, err)
 	}
@@ -165,10 +172,7 @@ func TestAddResetsAtLiteral(t *testing.T) {
 	for resets, wantLeaf := range cases {
 		t.Run(resets, func(t *testing.T) {
 			tr := setup(t)
-			_, err, code := tr.run(t, "add",
-				"--engine", "claude", "--window", "5h", "--resets-at", resets,
-				"--agent", "codex", "--ref", "r1", "--branch", "b1", "--tier", "standard",
-				"--model", "sonnet", "--effort", "medium", "t")
+			_, err, code := tr.run(t, fullAdd(func(a *AddRequest) { a.ResetsAt = resets }))
 			// A 20-digit literal is out of int64: bash's `test` fails, so the
 			// arm says "future"; Go's parse overflows the same way.
 			if resets == "99999999999999999999" {
@@ -191,43 +195,34 @@ func TestAddResetsAtLiteral(t *testing.T) {
 // wins, and the clock test comes after the integer test.
 func TestAddValidationOrder(t *testing.T) {
 	cases := map[string]struct {
-		args []string
+		req  Request
 		want string
 	}{
 		"missing engine": {
-			[]string{"add", "--window", "5h", "--resets-at", future, "--agent", "a",
-				"--ref", "r", "--branch", "b", "--tier", "t", "--model", "m", "--effort", "f", "x"},
+			fullAdd(func(a *AddRequest) { a.Engine = "" }),
 			"crew: hold add: --engine is required\n",
 		},
+		"two missing, the first in the table wins": {
+			fullAdd(func(a *AddRequest) { a.Model, a.Window = "", "" }),
+			"crew: hold add: --window is required\n",
+		},
 		"missing title": {
-			[]string{"add", "--engine", "e", "--window", "5h", "--resets-at", future, "--agent", "a",
-				"--ref", "r", "--branch", "b", "--tier", "t", "--model", "m", "--effort", "f"},
+			fullAdd(func(a *AddRequest) { a.Title = nil }),
 			"crew: hold add: a title is required\n",
 		},
 		"non-integer resets": {
-			[]string{"add", "--engine", "e", "--window", "5h", "--resets-at", "abc", "--agent", "a",
-				"--ref", "r", "--branch", "b", "--tier", "t", "--model", "m", "--effort", "f", "x"},
+			fullAdd(func(a *AddRequest) { a.ResetsAt = "abc" }),
 			"crew: hold add: --resets-at must be an integer epoch-seconds timestamp\n",
 		},
-		"flag without a value": {
-			[]string{"add", "--engine"},
-			"crew: --engine needs a value\n",
-		},
-		"unknown flag": {
-			[]string{"add", "--engine", "e", "--bogus", "x"},
-			"crew: hold add: unknown arg '--bogus'\n",
-		},
 		"invalid crew": {
-			[]string{"add", "--engine", "e", "--window", "5h", "--resets-at", future, "--agent", "a",
-				"--ref", "r", "--branch", "b", "--tier", "t", "--model", "m", "--effort", "f",
-				"--crew", "a/b", "x"},
+			func() Request { r := fullAdd(nil); r.Crew = "a/b"; return r }(),
 			"crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n",
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			tr := setup(t)
-			_, err, code := tr.run(t, tc.args...)
+			_, err, code := tr.run(t, tc.req)
 			if code != 1 || err != tc.want {
 				t.Errorf("code %d, stderr %q, want %q", code, err, tc.want)
 			}
@@ -238,10 +233,7 @@ func TestAddValidationOrder(t *testing.T) {
 func TestAddNoCrewID(t *testing.T) {
 	tr := setup(t)
 	// The arm's `_hold_crew ""` dies in `_crew_id`, before any validation.
-	_, err, code := tr.runOpts(t, Options{CrewID: func() string { return "" }}, "add",
-		"--engine", "e", "--window", "5h", "--resets-at", future,
-		"--agent", "a", "--ref", "r", "--branch", "b", "--tier", "t", "--model", "m",
-		"--effort", "f", "x")
+	_, err, code := tr.runOpts(t, Options{CrewID: func() string { return "" }}, fullAdd(nil))
 	if code != 1 || err != "crew: CREW_ID unset and no WORKER_TASK.md crew_id\n" {
 		t.Errorf("code %d, stderr %q", code, err)
 	}
@@ -253,9 +245,7 @@ func TestAddNoCrewID(t *testing.T) {
 func TestAddFutureFollowsTheVirtualClock(t *testing.T) {
 	tr := setup(t)
 	add := func(resets string) (string, int) {
-		_, err, code := tr.runOpts(t, tr.clock(t, "1800000000"), "add",
-			"--engine", "e", "--window", "5h", "--resets-at", resets, "--agent", "a",
-			"--ref", "r", "--branch", "b", "--tier", "t", "--model", "m", "--effort", "f", "x")
+		_, err, code := tr.runOpts(t, tr.clock(t, "1800000000"), fullAdd(func(a *AddRequest) { a.ResetsAt = resets }))
 		return err, code
 	}
 	if err, code := add("1800000001"); code != 0 {
@@ -273,9 +263,7 @@ func TestAddSpec(t *testing.T) {
 	if err := os.WriteFile(spec, []byte("the spec body\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err, code := tr.run(t, "add", "--engine", "e", "--window", "5h", "--resets-at", future,
-		"--agent", "a", "--ref", "r", "--branch", "b", "--tier", "t", "--model", "m",
-		"--effort", "f", "--spec", spec, "with spec")
+	out, err, code := tr.run(t, fullAdd(func(a *AddRequest) { a.Spec, a.Title = spec, []string{"with", "spec"} }))
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, err)
 	}
@@ -314,9 +302,7 @@ func TestAddSpecErrors(t *testing.T) {
 			if name == "unreadable" && os.Geteuid() == 0 {
 				t.Skip("root reads a 0o000 file")
 			}
-			_, err, code := tr.run(t, "add", "--engine", "e", "--window", "5h", "--resets-at", future,
-				"--agent", "a", "--ref", "r", "--branch", "b", "--tier", "t", "--model", "m",
-				"--effort", "f", "--spec", tc.spec, "x")
+			_, err, code := tr.run(t, fullAdd(func(a *AddRequest) { a.Spec = tc.spec }))
 			if code != 1 || !strings.Contains(err, tc.want) {
 				t.Errorf("code %d, stderr %q", code, err)
 			}
@@ -337,9 +323,7 @@ func TestAddLongTitleFitsAndKeepsItsShape(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			tr := setup(t)
-			out, err, code := tr.run(t, "add", "--engine", "e", "--window", "5h",
-				"--resets-at", future, "--agent", "a", "--ref", "r", "--branch", "keep-me",
-				"--tier", "t", "--model", "m", "--effort", "f", title)
+			out, err, code := tr.run(t, fullAdd(func(a *AddRequest) { a.Branch, a.Title = "keep-me", []string{title} }))
 			if code != 0 {
 				t.Fatalf("exit %d: %s", code, err)
 			}
@@ -383,9 +367,7 @@ func TestAddMultiLineTitleShrinksEachLine(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			tr := setup(t)
-			_, err, code := tr.run(t, "add", "--engine", "e", "--window", "5h",
-				"--resets-at", future, "--agent", "a", "--ref", "r", "--branch", "b",
-				"--tier", "t", "--model", "m", "--effort", "f", tc.title)
+			_, err, code := tr.run(t, fullAdd(func(a *AddRequest) { a.Title = []string{tc.title} }))
 			if code != 0 {
 				t.Fatalf("exit %d: %s", code, err)
 			}
@@ -437,7 +419,7 @@ func TestReleaseAppendsAndIsIdempotent(t *testing.T) {
 	tr := setup(t)
 	tr.write(t, holdRow(t, "c1", "h1", "9999999999"))
 	for i := 0; i < 2; i++ {
-		out, err, code := tr.run(t, "release", "h1")
+		out, err, code := tr.run(t, Request{Action: "release", ID: "h1"})
 		if code != 0 || out != "" {
 			t.Fatalf("release %d: code %d, stdout %q, stderr %q", i, code, out, err)
 		}
@@ -456,7 +438,7 @@ func TestReleaseAppendsAndIsIdempotent(t *testing.T) {
 		t.Errorf("release body %q", row.Body)
 	}
 	// Two releases of one id still fold to nothing outstanding.
-	out, _, code := tr.run(t, "list", "--json")
+	out, _, code := tr.run(t, Request{Action: "list", JSON: true})
 	if code != 0 || strings.TrimSpace(out) != "[]" {
 		t.Errorf("list after release: %q (%d)", out, code)
 	}
@@ -467,7 +449,7 @@ func TestReleaseAppendsAndIsIdempotent(t *testing.T) {
 func TestReleaseLongIDShrinksTheLeaf(t *testing.T) {
 	tr := setup(t)
 	hid := strings.Repeat("z", 20000)
-	_, err, code := tr.run(t, "release", hid)
+	_, err, code := tr.run(t, Request{Action: "release", ID: hid})
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, err)
 	}
@@ -500,21 +482,21 @@ func TestListAndDueReadTheBus(t *testing.T) {
 		holdRow(t, "c2", "other", "9999999999"),
 		`{"ts":9,"crew_id":"c1","from":"d","to":"hold:c1","kind":"msg","body":"not json"}`,
 	)
-	out, err, code := tr.run(t, "list", "--json")
+	out, err, code := tr.run(t, Request{Action: "list", JSON: true})
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, err)
 	}
 	if got := jsonLen(t, out); got != 1 {
 		t.Errorf("list --json length %d: %s", got, out)
 	}
-	out, _, _ = tr.run(t, "list")
+	out, _, _ = tr.run(t, Request{Action: "list"})
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	if len(lines) != 2 || lines[0] != renderHeader ||
 		!strings.HasSuffix(lines[1], "\tt-h1") {
 		t.Errorf("tsv:\n%s", out)
 	}
 	// A foreign crew's hold is invisible, and nothing is matured.
-	if _, _, code = tr.run(t, "due", "--json"); code != 1 {
+	if _, _, code = tr.run(t, Request{Action: "due", JSON: true}); code != 1 {
 		t.Errorf("due with nothing matured: code %d", code)
 	}
 }
@@ -534,7 +516,7 @@ func TestDueMaturityBoundary(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			tr := setup(t)
 			tr.write(t, holdRow(t, "c1", "h1", tc.resetsAt))
-			out, _, code := tr.runOpts(t, tr.clock(t, "1800000000"), "due", "--json")
+			out, _, code := tr.runOpts(t, tr.clock(t, "1800000000"), Request{Action: "due", JSON: true})
 			if got := jsonLen(t, out); got != tc.want {
 				t.Errorf("matured %d, want %d (%s)", got, tc.want, out)
 			}
@@ -555,18 +537,18 @@ func TestAbsentLogReadsAsEmpty(t *testing.T) {
 	// `due` exits 1 on an empty set, `list` 0; the header and the `[]` are the
 	// arm's, and the warning appears wherever the arm started a jq.
 	cases := []struct {
-		args   []string
+		args   Request
 		stdout string
 		code   int
 		warns  int
 	}{
-		{[]string{"list"}, renderHeader + "\n", 0, 1},
-		{[]string{"list", "--json"}, "[]\n", 0, 0},
-		{[]string{"due"}, renderHeader + "\n", 1, 1},
-		{[]string{"due", "--json"}, "[]\n", 1, 1},
+		{Request{Action: "list"}, renderHeader + "\n", 0, 1},
+		{Request{Action: "list", JSON: true}, "[]\n", 0, 0},
+		{Request{Action: "due"}, renderHeader + "\n", 1, 1},
+		{Request{Action: "due", JSON: true}, "[]\n", 1, 1},
 	}
 	for _, tc := range cases {
-		out, err, code := tr.runOpts(t, Options{JQColorsInvalid: true}, tc.args...)
+		out, err, code := tr.runOpts(t, Options{JQColorsInvalid: true}, tc.args)
 		if out != tc.stdout {
 			t.Errorf("%v printed %q, want %q", tc.args, out, tc.stdout)
 		}
@@ -599,8 +581,8 @@ func TestCorruptBusExitsFive(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			tr := setup(t)
 			tr.write(t, tc.rows...)
-			for _, args := range [][]string{{"list", "--json"}, {"due", "--json"}, {"park", "60"}} {
-				out, err, code := tr.run(t, args...)
+			for _, args := range []Request{{Action: "list", JSON: true}, {Action: "due", JSON: true}, {Action: "park", Default: "60"}} {
+				out, err, code := tr.run(t, args)
 				if code != exitType || out != "" || !strings.Contains(err, tc.want) {
 					t.Errorf("%v: code %d, stdout %q, stderr %q", args, code, out, err)
 				}
@@ -617,14 +599,14 @@ func TestCorruptBusExitsFive(t *testing.T) {
 func TestHostileBodiesExitFive(t *testing.T) {
 	tr := setup(t)
 	tr.write(t, `{"ts":1,"crew_id":"c1","from":"d","to":"hold:c1","kind":"msg","body":"5"}`)
-	if _, err, code := tr.run(t, "list", "--json"); code != exitType ||
+	if _, err, code := tr.run(t, Request{Action: "list", JSON: true}); code != exitType ||
 		!strings.Contains(err, "expected an object") {
 		t.Errorf("list --json: code %d, stderr %q", code, err)
 	}
 	tr2 := setup(t)
 	tr2.write(t, `{"ts":1,"crew_id":"c1","from":"d","to":"hold:c1","kind":"msg",`+
 		`"body":"{\"id\":[\"arr\"],\"wait\":{\"resets_at\":1},\"task\":{}}"}`)
-	if _, err, code := tr2.run(t, "list"); code != exitType ||
+	if _, err, code := tr2.run(t, Request{Action: "list"}); code != exitType ||
 		!strings.Contains(err, "@tsv") {
 		t.Errorf("list: code %d, stderr %q", code, err)
 	}
@@ -659,7 +641,7 @@ func TestParkBranches(t *testing.T) {
 				tr.write(t, holdRow(t, "c1", "h1", tc.resetsAt))
 			}
 			opts = tr.clock(t, "1800000000")
-			out, err, code := tr.runOpts(t, opts, "park", tc.def)
+			out, err, code := tr.runOpts(t, opts, Request{Action: "park", Default: tc.def})
 			if code != 0 || out != tc.want {
 				t.Errorf("park %s: code %d, stdout %q (%s), want %q", tc.def, code, out, err, tc.want)
 			}
@@ -672,31 +654,9 @@ func TestParkBranches(t *testing.T) {
 func TestParkNeverReturnsZero(t *testing.T) {
 	tr := setup(t)
 	tr.write(t, holdRow(t, "c1", "h1", "1800000000"))
-	out, _, code := tr.runOpts(t, tr.clock(t, "1800000000"), "park", "1")
+	out, _, code := tr.runOpts(t, tr.clock(t, "1800000000"), Request{Action: "park", Default: "1"})
 	if code != 0 || out != "1\n" {
 		t.Errorf("park 1: %q (%d)", out, code)
-	}
-}
-
-// Only `list` and `due` have a --json. The arm's `park` and `release` loops fall
-// through to their usage branch on it, in either order.
-func TestParkAndReleaseRejectJSON(t *testing.T) {
-	tr := setup(t)
-	cases := [][]string{
-		{"park", "5", "--json"},
-		{"park", "5", "--crew", "c9", "--json"},
-		{"release", "h1", "--json"},
-		{"release", "h1", "--crew", "c9", "--json"},
-	}
-	for _, args := range cases {
-		out, err, code := tr.run(t, args...)
-		want := "crew: hold park <default> [--crew ID]\n"
-		if args[0] == "release" {
-			want = "crew: hold release <id> [--crew ID]\n"
-		}
-		if code != 1 || out != "" || err != want {
-			t.Errorf("%v: code %d, stdout %q, stderr %q, want %q", args, code, out, err, want)
-		}
 	}
 }
 
@@ -704,14 +664,10 @@ func TestParkRejectsABadDefault(t *testing.T) {
 	tr := setup(t)
 	want := "crew: hold park <default> must be a positive integer number of seconds\n"
 	for _, def := range []string{"", "0", "-5", "abc", "1.5", "99999999999999999999"} {
-		_, err, code := tr.run(t, "park", def)
+		_, err, code := tr.run(t, Request{Action: "park", Default: def})
 		if code != 1 || err != want {
 			t.Errorf("park %q: code %d, stderr %q", def, code, err)
 		}
-	}
-	_, err, code := tr.run(t, "park", "60", "--bogus")
-	if code != 1 || err != "crew: hold park <default> [--crew ID]\n" {
-		t.Errorf("stray flag: code %d, stderr %q", code, err)
 	}
 }
 
@@ -721,16 +677,17 @@ func TestParkRejectsABadDefault(t *testing.T) {
 func TestJQColorsWarningOnce(t *testing.T) {
 	cases := map[string]struct {
 		rows []string
-		args []string
+		req  Request
 		want int
 	}{
-		"list with a log":      {[]string{holdRowString()}, []string{"list"}, 1},
-		"list without a log":   {nil, []string{"list"}, 1},
-		"list --json with log": {[]string{holdRowString()}, []string{"list", "--json"}, 1},
-		"list --json no log":   {nil, []string{"list", "--json"}, 0},
-		"due":                  {nil, []string{"due", "--json"}, 1},
-		"park":                 {nil, []string{"park", "60"}, 1},
-		"add":                  {nil, []string{"add"}, 0},
+		"list with a log":      {[]string{holdRowString()}, Request{Action: "list"}, 1},
+		"list without a log":   {nil, Request{Action: "list"}, 1},
+		"list --json with log": {[]string{holdRowString()}, Request{Action: "list", JSON: true}, 1},
+		"list --json no log":   {nil, Request{Action: "list", JSON: true}, 0},
+		"due":                  {nil, Request{Action: "due", JSON: true}, 1},
+		"park":                 {nil, Request{Action: "park", Default: "60"}, 1},
+		// A rejected `add` starts no jq in the arm either.
+		"add": {nil, Request{Action: "add", Add: AddRequest{Engine: "e"}}, 0},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -738,12 +695,7 @@ func TestJQColorsWarningOnce(t *testing.T) {
 			if tc.rows != nil {
 				tr.write(t, tc.rows...)
 			}
-			args := tc.args
-			if args[0] == "add" {
-				// A rejected `add` starts no jq in the arm either.
-				args = append(args, "--engine", "e")
-			}
-			_, err, _ := tr.runOpts(t, Options{JQColorsInvalid: true}, args...)
+			_, err, _ := tr.runOpts(t, Options{JQColorsInvalid: true}, tc.req)
 			if got := strings.Count(err, "Failed to set $JQ_COLORS"); got != tc.want {
 				t.Errorf("%s warned %d times, want %d (%q)", name, got, tc.want, err)
 			}
@@ -857,9 +809,7 @@ func TestWorkerAndRoleSessionsCannotWriteHolds(t *testing.T) {
 			if err := os.WriteFile(spec, []byte("the spec body\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			out, err, code := tr.runOpts(t, Options{Sender: p}, "add", "--engine", "e", "--window", "5h",
-				"--resets-at", future, "--agent", "a", "--ref", "r", "--branch", "b", "--tier", "t",
-				"--model", "m", "--effort", "f", "--spec", spec, "refused")
+			out, err, code := tr.runOpts(t, Options{Sender: p}, fullAdd(func(a *AddRequest) { a.Spec, a.Title = spec, []string{"refused"} }))
 			if want := "crew: hold add: refusing sender 'dispatcher:c1' — " + reason + "\n"; code != 1 || out != "" || err != want {
 				t.Fatalf("code %d, stdout %q, stderr %q, want 1, %q", code, out, err, want)
 			}
@@ -870,7 +820,7 @@ func TestWorkerAndRoleSessionsCannotWriteHolds(t *testing.T) {
 		t.Run(env+"/release", func(t *testing.T) {
 			tr := setup(t)
 			tr.write(t, holdRow(t, "c1", "h1", "9999999999"))
-			_, err, code := tr.runOpts(t, Options{Sender: p}, "release", "h1")
+			_, err, code := tr.runOpts(t, Options{Sender: p}, Request{Action: "release", ID: "h1"})
 			if want := "crew: hold release: refusing sender 'dispatcher:c1' — " + reason + "\n"; code != 1 || err != want {
 				t.Fatalf("code %d, stderr %q, want 1, %q", code, err, want)
 			}

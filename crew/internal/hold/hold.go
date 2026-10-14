@@ -47,8 +47,13 @@ var parkProg string
 var renderProg string
 
 const (
-	// usageAction is what the arm prints for an action it does not have.
-	usageAction = "crew: hold add|list|due|park|release"
+	// Usage is what the arm prints for an action it does not have.
+	Usage = "crew: hold add|list|due|park|release"
+	// ListUsage and its siblings are the action's line for a grammar error.
+	ListUsage    = "crew: hold list [--crew ID] [--json]"
+	DueUsage     = "crew: hold due [--crew ID] [--json]"
+	ParkUsage    = "crew: hold park <default> [--crew ID]"
+	ReleaseUsage = "crew: hold release <id> [--crew ID]"
 	// renderHeader is `_hold_render`'s printf, matching the fold's columns.
 	renderHeader = "id\tengine\twindow\tresets_at\tref\tbranch\ttitle"
 	// exitType is jq's status for a fold that fails on a row it cannot use.
@@ -73,27 +78,44 @@ type Options struct {
 // or nowhere, for stderr) — main.go's helper, same reason.
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
+// AddRequest is `crew hold add`'s flags and title words. Engine is the engine
+// whose quota is being waited on and Agent the engine the task will be
+// dispatched to (task.engine): both are required and kept distinct.
+type AddRequest struct {
+	Engine, Window, ResetsAt, Agent, Ref, Branch, Tier, Model, Effort string
+	Plan, MCP, Shape, Spec                                            string
+	Draft                                                             bool
+	Title                                                             []string
+}
+
+// Request is one `crew hold` call: the action and the fields that action reads.
+// Crew is the action's --crew, "" for the caller's own.
+type Request struct {
+	Action  string
+	JSON    bool
+	Crew    string
+	Default string
+	ID      string
+	Add     AddRequest
+}
+
 // Run is the arm's `case "$holdsub"`. `--help` never reaches here: the crew.sh
 // preamble answers `crew hold --help` and `crew hold <action> --help` before the
 // delegation arm runs.
-func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	action, rest := "", args
-	if len(args) > 0 {
-		action, rest = args[0], args[1:]
-	}
-	switch action {
+func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+	switch req.Action {
 	case "add":
-		return add(rest, paths, stdout, stderr, o)
+		return add(req, paths, stdout, stderr, o)
 	case "list":
-		return list(rest, paths, stdout, stderr, o)
+		return list(req, paths, stdout, stderr, o)
 	case "due":
-		return due(rest, paths, stdout, stderr, o)
+		return due(req, paths, stdout, stderr, o)
 	case "park":
-		return park(rest, paths, stdout, stderr, o)
+		return park(req, paths, stdout, stderr, o)
 	case "release":
-		return release(rest, paths, stdout, stderr, o)
+		return release(req, paths, stdout, stderr, o)
 	default:
-		say(stderr, "%s\n", usageAction)
+		say(stderr, "%s\n", Usage)
 		return exitFailure
 	}
 }
@@ -160,38 +182,9 @@ func holdVars(crew string) map[string]jsonv.Value {
 	}
 }
 
-// `list` and `due`: `[--json] [--crew ID]` in either order, as the arm's loop
-// left them. msg is the arm's stderr line when the arguments themselves fail.
-// jsonFlag is false for `park` and `release`, whose loops have no `--json` case
-// and fall through to their `*)` usage branch.
-func parseRead(args []string, usage string, jsonFlag bool) (jsonOut bool, hcrew, msg string) {
-	for len(args) > 0 {
-		switch args[0] {
-		case "--json":
-			if !jsonFlag {
-				return false, "", usage
-			}
-			jsonOut = true
-			args = args[1:]
-		case "--crew":
-			if len(args) < 2 || args[1] == "" {
-				return false, "", "crew: --crew needs a value"
-			}
-			hcrew, args = args[1], args[2:]
-		default:
-			return false, "", usage
-		}
-	}
-	return jsonOut, hcrew, ""
-}
-
-func list(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	jsonOut, hcrew, msg := parseRead(args, "crew: hold list [--crew ID] [--json]", true)
-	if msg != "" {
-		say(stderr, "%s\n", msg)
-		return exitFailure
-	}
-	crew, ok := resolveCrew(hcrew, stderr, o)
+func list(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+	jsonOut := req.JSON
+	crew, ok := resolveCrew(req.Crew, stderr, o)
 	if !ok {
 		return exitFailure
 	}
@@ -207,13 +200,9 @@ func list(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) i
 	return render(f, stdout, holds)
 }
 
-func due(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	jsonOut, hcrew, msg := parseRead(args, "crew: hold due [--crew ID] [--json]", true)
-	if msg != "" {
-		say(stderr, "%s\n", msg)
-		return exitFailure
-	}
-	crew, ok := resolveCrew(hcrew, stderr, o)
+func due(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+	jsonOut := req.JSON
+	crew, ok := resolveCrew(req.Crew, stderr, o)
 	if !ok {
 		return exitFailure
 	}
@@ -241,14 +230,11 @@ func due(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	return exitFailure
 }
 
-func park(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+func park(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	// The arm validates the default before it reads a crew or a log: empty or
 	// non-digit first, then the positive test — where a value outside int64 fails
 	// bash's `test` and lands in the same branch.
-	defStr, rest := "", args
-	if len(args) > 0 {
-		defStr, rest = args[0], args[1:]
-	}
+	defStr := req.Default
 	badDefault := func() int {
 		say(stderr, "crew: hold park <default> must be a positive integer number of seconds\n")
 		return exitFailure
@@ -260,12 +246,7 @@ func park(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) i
 	if err != nil || def <= 0 {
 		return badDefault()
 	}
-	_, hcrew, msg := parseRead(rest, "crew: hold park <default> [--crew ID]", false)
-	if msg != "" {
-		say(stderr, "%s\n", msg)
-		return exitFailure
-	}
-	crew, ok := resolveCrew(hcrew, stderr, o)
+	crew, ok := resolveCrew(req.Crew, stderr, o)
 	if !ok {
 		return exitFailure
 	}
@@ -301,86 +282,36 @@ func render(f *folds, stdout io.Writer, holds jsonv.Value) int {
 	return 0
 }
 
-// addFlags is the arm's local variables for `hold add`.
-type addFlags struct {
-	engine, window, resetsAt, agent, ref, branch, tier, model, effort string
-	plan, mcp, shape, spec, hcrew                                     string
-	draft                                                             bool
-	title                                                             string
-}
-
-// valueFlag maps each flag that takes a value to its variable. `--engine` is the
-// engine whose quota is being waited on and `--agent` the engine the task will be
-// dispatched to (task.engine): both are required and kept distinct.
-func (f *addFlags) valueFlag(name string) (*string, bool) {
-	for _, fl := range []struct {
-		name string
-		dst  *string
-	}{
-		{"--engine", &f.engine}, {"--window", &f.window}, {"--resets-at", &f.resetsAt},
-		{"--agent", &f.agent}, {"--ref", &f.ref}, {"--branch", &f.branch},
-		{"--tier", &f.tier}, {"--model", &f.model}, {"--effort", &f.effort},
-		{"--plan", &f.plan}, {"--mcp", &f.mcp}, {"--shape", &f.shape},
-		{"--spec", &f.spec}, {"--crew", &f.hcrew},
-	} {
-		if fl.name == name {
-			return fl.dst, true
-		}
-	}
-	return nil, false
-}
-
-func add(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	var fl addFlags
-	for len(args) > 0 {
-		if args[0] == "--draft" {
-			fl.draft = true
-			args = args[1:]
-			continue
-		}
-		if dst, ok := fl.valueFlag(args[0]); ok {
-			if len(args) < 2 || args[1] == "" {
-				say(stderr, "crew: %s needs a value\n", args[0])
-				return exitFailure
-			}
-			*dst = args[1]
-			args = args[2:]
-			continue
-		}
-		if strings.HasPrefix(args[0], "-") {
-			say(stderr, "crew: hold add: unknown arg '%s'\n", args[0])
-			return exitFailure
-		}
-		break
-	}
-	fl.title = strings.Join(args, " ")
+func add(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+	fl := req.Add
+	title := strings.Join(fl.Title, " ")
 
 	// Reject a missing required field by name. The order is the arm's, and it
 	// decides which line a doubly-incomplete call prints.
 	for _, req := range []struct{ flag, val string }{
-		{"--engine", fl.engine}, {"--window", fl.window}, {"--resets-at", fl.resetsAt},
-		{"--agent", fl.agent}, {"--ref", fl.ref}, {"--branch", fl.branch},
-		{"--tier", fl.tier}, {"--model", fl.model}, {"--effort", fl.effort},
+		{"--engine", fl.Engine}, {"--window", fl.Window}, {"--resets-at", fl.ResetsAt},
+		{"--agent", fl.Agent}, {"--ref", fl.Ref}, {"--branch", fl.Branch},
+		{"--tier", fl.Tier}, {"--model", fl.Model}, {"--effort", fl.Effort},
 	} {
 		if req.val == "" {
 			say(stderr, "crew: hold add: %s is required\n", req.flag)
 			return exitFailure
 		}
 	}
-	if fl.title == "" {
+	if title == "" {
 		say(stderr, "crew: hold add: a title is required\n")
 		return exitFailure
 	}
 	// Shape only, never the floor — `refresh-budget.sh` alone owns the 85%/95%
 	// judgment. Seconds here, matching `resets_at`'s own unit; `id`/`ts` below are
 	// milliseconds, a different clock.
-	if !isDigits(fl.resetsAt) {
+	if !isDigits(fl.ResetsAt) {
 		say(stderr, "crew: hold add: --resets-at must be an integer epoch-seconds timestamp\n")
 		return exitFailure
 	}
 	// A default outside int64 makes bash's `test` fail outright, so it lands here
 	// too (minus the shell's own diagnostic, which is not ours to invent).
-	resets, err := strconv.ParseInt(fl.resetsAt, 10, 64)
+	resets, err := strconv.ParseInt(fl.ResetsAt, 10, 64)
 	if err != nil {
 		say(stderr, "crew: hold add: --resets-at must be in the future\n")
 		return exitFailure
@@ -389,15 +320,15 @@ func add(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 		say(stderr, "crew: hold add: --resets-at must be in the future\n")
 		return exitFailure
 	}
-	if fl.spec != "" {
-		fh, err := os.Open(fl.spec)
+	if fl.Spec != "" {
+		fh, err := os.Open(fl.Spec)
 		if err != nil {
-			say(stderr, "crew: hold add: --spec file '%s' is not readable\n", fl.spec)
+			say(stderr, "crew: hold add: --spec file '%s' is not readable\n", fl.Spec)
 			return exitFailure
 		}
 		_ = fh.Close()
 	}
-	crew, ok := resolveCrew(fl.hcrew, stderr, o)
+	crew, ok := resolveCrew(req.Crew, stderr, o)
 	if !ok || !mayPost("add", crew, stderr, o) {
 		return exitFailure
 	}
@@ -418,15 +349,15 @@ func add(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	id := ts + "-" + strconv.Itoa(os.Getpid())
 
 	specpath := ""
-	if fl.spec != "" {
+	if fl.Spec != "" {
 		if err := os.MkdirAll(filepath.Join(paths.Dir, "holds"), 0o755); err != nil {
 			say(stderr, "crew: hold add: %v\n", err)
 			return exitFailure
 		}
 		specpath = filepath.Join(paths.Dir, "holds", id+".md")
-		data, err := os.ReadFile(fl.spec)
+		data, err := os.ReadFile(fl.Spec)
 		if err != nil {
-			say(stderr, "crew: hold add: cannot copy --spec %s: %v\n", fl.spec, err)
+			say(stderr, "crew: hold add: cannot copy --spec %s: %v\n", fl.Spec, err)
 			return exitFailure
 		}
 		if err := os.WriteFile(specpath, data, 0o644); err != nil {
@@ -440,7 +371,7 @@ func add(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	// its own row's `ts` on any shrunk record.
 	line := bus.FitLine(func(title string) string {
 		return compact(addRow(crew, id, ts, &fl, specpath, title))
-	}, fl.title)
+	}, title)
 	if err := bus.Append(paths.Log, line); err != nil {
 		say(stderr, "crew: hold add: %v\n", err)
 		return exitFailure
@@ -452,8 +383,8 @@ func add(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 // addRow is `_build_hold`: every fixed field closes over the enclosing scope and
 // the title is the only shrinkable part. Handing Shrink the whole body would
 // truncate `id`, `task.branch` and `task.spec` along with the title.
-func addRow(crew, id, ts string, fl *addFlags, specpath, title string) jsonv.Value {
-	resets, _ := jsonv.ParseNumber(digitsLiteral(fl.resetsAt))
+func addRow(crew, id, ts string, fl *AddRequest, specpath, title string) jsonv.Value {
+	resets, _ := jsonv.ParseNumber(digitsLiteral(fl.ResetsAt))
 	return jsonv.Object(
 		jsonv.Member{Key: "ts", Val: tsValue(ts)},
 		jsonv.Member{Key: "crew_id", Val: jsonv.Str(crew)},
@@ -463,21 +394,21 @@ func addRow(crew, id, ts string, fl *addFlags, specpath, title string) jsonv.Val
 		jsonv.Member{Key: "body", Val: jsonv.Str(compact(jsonv.Object(
 			jsonv.Member{Key: "id", Val: jsonv.Str(id)},
 			jsonv.Member{Key: "wait", Val: jsonv.Object(
-				jsonv.Member{Key: "engine", Val: jsonv.Str(fl.engine)},
-				jsonv.Member{Key: "window", Val: jsonv.Str(fl.window)},
+				jsonv.Member{Key: "engine", Val: jsonv.Str(fl.Engine)},
+				jsonv.Member{Key: "window", Val: jsonv.Str(fl.Window)},
 				jsonv.Member{Key: "resets_at", Val: resets},
 			)},
 			jsonv.Member{Key: "task", Val: jsonv.Object(
-				jsonv.Member{Key: "ref", Val: jsonv.Str(fl.ref)},
-				jsonv.Member{Key: "branch", Val: jsonv.Str(fl.branch)},
-				jsonv.Member{Key: "tier", Val: jsonv.Str(fl.tier)},
-				jsonv.Member{Key: "engine", Val: jsonv.Str(fl.agent)},
-				jsonv.Member{Key: "model", Val: jsonv.Str(fl.model)},
-				jsonv.Member{Key: "effort", Val: jsonv.Str(fl.effort)},
-				jsonv.Member{Key: "plan", Val: orNull(fl.plan)},
-				jsonv.Member{Key: "mcp", Val: orNull(fl.mcp)},
-				jsonv.Member{Key: "draft", Val: jsonv.Bool(fl.draft)},
-				jsonv.Member{Key: "shape", Val: orNull(fl.shape)},
+				jsonv.Member{Key: "ref", Val: jsonv.Str(fl.Ref)},
+				jsonv.Member{Key: "branch", Val: jsonv.Str(fl.Branch)},
+				jsonv.Member{Key: "tier", Val: jsonv.Str(fl.Tier)},
+				jsonv.Member{Key: "engine", Val: jsonv.Str(fl.Agent)},
+				jsonv.Member{Key: "model", Val: jsonv.Str(fl.Model)},
+				jsonv.Member{Key: "effort", Val: jsonv.Str(fl.Effort)},
+				jsonv.Member{Key: "plan", Val: orNull(fl.Plan)},
+				jsonv.Member{Key: "mcp", Val: orNull(fl.MCP)},
+				jsonv.Member{Key: "draft", Val: jsonv.Bool(fl.Draft)},
+				jsonv.Member{Key: "shape", Val: orNull(fl.Shape)},
 				jsonv.Member{Key: "title", Val: jsonv.Str(title)},
 				jsonv.Member{Key: "spec", Val: orNull(specpath)},
 			)},
@@ -485,18 +416,9 @@ func addRow(crew, id, ts string, fl *addFlags, specpath, title string) jsonv.Val
 	)
 }
 
-func release(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	if len(args) == 0 || args[0] == "" {
-		say(stderr, "crew: hold release <id> [--crew ID]\n")
-		return exitFailure
-	}
-	hid, args := args[0], args[1:]
-	_, hcrew, msg := parseRead(args, "crew: hold release <id> [--crew ID]", false)
-	if msg != "" {
-		say(stderr, "%s\n", msg)
-		return exitFailure
-	}
-	crew, ok := resolveCrew(hcrew, stderr, o)
+func release(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+	hid := req.ID
+	crew, ok := resolveCrew(req.Crew, stderr, o)
 	if !ok || !mayPost("release", crew, stderr, o) {
 		return exitFailure
 	}

@@ -23,21 +23,39 @@ test("statusArgs: state + detail", () => {
     "status",
     "worker:x#s1",
     "blocked",
+    "--",
     "waiting on ci",
+  ]);
+});
+
+test("statusArgs: detail starting with a dash comes after the terminator", () => {
+  assert.deepEqual(statusArgs("worker:x#s1", "blocked", "-x flag-shaped"), [
+    "status",
+    "worker:x#s1",
+    "blocked",
+    "--",
+    "-x flag-shaped",
   ]);
 });
 
 test("statusArgs: state + pr with no detail fills an empty detail slot", () => {
   assert.deepEqual(
     statusArgs("worker:x#s1", "pr_open", undefined, "https://example/pr/1"),
-    ["status", "worker:x#s1", "pr_open", "", "https://example/pr/1"],
+    ["status", "worker:x#s1", "pr_open", "--", "", "https://example/pr/1"],
   );
 });
 
 test("statusArgs: state + detail + pr", () => {
   assert.deepEqual(
     statusArgs("worker:x#s1", "pr_open", "opened", "https://example/pr/1"),
-    ["status", "worker:x#s1", "pr_open", "opened", "https://example/pr/1"],
+    [
+      "status",
+      "worker:x#s1",
+      "pr_open",
+      "--",
+      "opened",
+      "https://example/pr/1",
+    ],
   );
 });
 

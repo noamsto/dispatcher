@@ -91,14 +91,16 @@ func quote(s string) string {
 	return strconv.Quote(s)
 }
 
+func since(s string) *string { return &s }
+
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
-func run(t *testing.T, p bus.Paths, args ...string) (string, string, int, *park) {
+func run(t *testing.T, p bus.Paths, req Request) (string, string, int, *park) {
 	t.Helper()
-	return runOpts(t, p, Options{}, args...)
+	return runOpts(t, p, Options{}, req)
 }
 
-func runOpts(t *testing.T, p bus.Paths, o Options, args ...string) (string, string, int, *park) {
+func runOpts(t *testing.T, p bus.Paths, o Options, req Request) (string, string, int, *park) {
 	t.Helper()
 	pk := &park{now: base}
 	if o.CrewID == nil {
@@ -111,7 +113,7 @@ func runOpts(t *testing.T, p bus.Paths, o Options, args ...string) (string, stri
 		o.Sleep = pk.Sleep
 	}
 	var out, errB bytes.Buffer
-	code := Run(args, p, &out, &errB, o)
+	code := Run(req, p, &out, &errB, o)
 	return out.String(), errB.String(), code, pk
 }
 
@@ -137,7 +139,7 @@ func TestQualifyingStatusPrintsBatchAndMovesCursor(t *testing.T) {
 	row := status(1785951264000, "worker:feat/x#s1-1", "done", "", "")
 	writeLog(t, p, row)
 
-	stdout, stderr, code, _ := run(t, p, "--since", "0", "--timeout", "1", "--interval", "1")
+	stdout, stderr, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
 	if code != 0 || stderr != "" {
 		t.Fatalf("code %d stderr %q", code, stderr)
 	}
@@ -159,7 +161,7 @@ func TestMsgToDispatcherAndStarWake(t *testing.T) {
 			p := fixture(t)
 			row := msg(1785951264000, "worker:feat/x#s1-1", to)
 			writeLog(t, p, row)
-			_, stderr, code, _ := run(t, p, "--since", "0", "--timeout", "1", "--interval", "1")
+			_, stderr, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
 			if code != 0 || stderr != "" {
 				t.Fatalf("code %d stderr %q", code, stderr)
 			}
@@ -172,14 +174,14 @@ func TestStatesNarrowTheWakeSet(t *testing.T) {
 	writeLog(t, p, status(1785951264000, "worker:feat/x#s1-1", "working", "", ""))
 
 	// `working` is not in the default set, so the park expires quietly.
-	_, stderr, code, _ := run(t, p, "--since", "0", "--timeout", "1", "--interval", "1")
+	_, stderr, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
 	if code != 0 || stderr != "crew: watch park ended after 1s — no new events (cursor 0)\n" {
 		t.Fatalf("code %d stderr %q", code, stderr)
 	}
 
 	p2 := fixture(t)
 	writeLog(t, p2, status(1785951264000, "worker:feat/x#s1-1", "working", "", ""))
-	stdout, stderr, code, _ := run(t, p2, "--states", "blocked,working", "--since", "0", "--timeout", "1")
+	stdout, stderr, code, _ := run(t, p2, Request{States: "blocked,working", Since: since("0"), Timeout: "1"})
 	if code != 0 || stderr != "" {
 		t.Fatalf("code %d stderr %q", code, stderr)
 	}
@@ -193,7 +195,7 @@ func TestStatesNarrowTheWakeSet(t *testing.T) {
 func TestReapedStatusDoesNotWake(t *testing.T) {
 	p := fixture(t)
 	writeLog(t, p, status(1785951264000, "worker:feat/x#s1-1", "reaped", "PR #8 MERGED", "reap"))
-	stdout, stderr, code, _ := run(t, p, "--since", "0", "--timeout", "1", "--interval", "1")
+	stdout, stderr, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
 	if code != 0 || stdout != "" || stderr != "crew: watch park ended after 1s — no new events (cursor 0)\n" {
 		t.Fatalf("code %d stdout %q stderr %q", code, stdout, stderr)
 	}
@@ -201,7 +203,7 @@ func TestReapedStatusDoesNotWake(t *testing.T) {
 	p2 := fixture(t)
 	row := status(1785951264000, "worker:feat/x#s1-1", "done", "PR #8 MERGED", "reap")
 	writeLog(t, p2, row)
-	stdout, stderr, code, _ = run(t, p2, "--since", "0", "--timeout", "1", "--interval", "1")
+	stdout, stderr, code, _ = run(t, p2, Request{Since: since("0"), Timeout: "1", Interval: "1"})
 	if code != 0 || stderr != "" || stdout != want(t, 1785951264000, row) {
 		t.Fatalf("control: code %d stdout %q stderr %q", code, stdout, stderr)
 	}
@@ -225,7 +227,7 @@ func TestExitedWakesOnlyAsFirstTerminalState(t *testing.T) {
 			writeLog(t, p,
 				status(1000, from, tc.prev, "", ""),
 				status(2000, from, "exited", "", ""))
-			stdout, _, code, _ := run(t, p, "--since", "1000", "--timeout", "1", "--interval", "1")
+			stdout, _, code, _ := run(t, p, Request{Since: since("1000"), Timeout: "1", Interval: "1"})
 			if code != 0 {
 				t.Fatalf("code %d", code)
 			}
@@ -252,7 +254,7 @@ func TestBlockedRestampSuppression(t *testing.T) {
 			writeLog(t, p,
 				status(1000, from, "blocked", first, ""),
 				status(2000, from, "blocked", tc.detail, ""))
-			stdout, _, code, _ := run(t, p, "--since", "1000", "--timeout", "1", "--interval", "1")
+			stdout, _, code, _ := run(t, p, Request{Since: since("1000"), Timeout: "1", Interval: "1"})
 			if code != 0 {
 				t.Fatalf("code %d", code)
 			}
@@ -275,8 +277,7 @@ func TestWatchdogClearedSuppressed(t *testing.T) {
 			p := fixture(t)
 			from := "worker:feat/x#s1-1"
 			writeLog(t, p, status(1000, from, "working", tc.detail, "watchdog"))
-			stdout, _, code, _ := run(t, p, "--states", "blocked,working", "--since", "0",
-				"--timeout", "1", "--interval", "1")
+			stdout, _, code, _ := run(t, p, Request{States: "blocked,working", Since: since("0"), Timeout: "1", Interval: "1"})
 			if code != 0 {
 				t.Fatalf("code %d", code)
 			}
@@ -297,7 +298,7 @@ func TestBlockedAfterWorkingWakesWithSameDetail(t *testing.T) {
 		status(1000, from, "blocked", d, ""),
 		status(2000, from, "working", d, ""),
 		status(3000, from, "blocked", d, ""))
-	stdout, _, code, _ := run(t, p, "--since", "2000", "--timeout", "1", "--interval", "1")
+	stdout, _, code, _ := run(t, p, Request{Since: since("2000"), Timeout: "1", Interval: "1"})
 	if code != 0 {
 		t.Fatalf("code %d", code)
 	}
@@ -333,7 +334,7 @@ func TestCursorSelfSeed(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			stdout, _, code, _ := run(t, p, "--timeout", "1", "--interval", "1")
+			stdout, _, code, _ := run(t, p, Request{Timeout: "1", Interval: "1"})
 			if code != 0 {
 				t.Fatalf("code %d", code)
 			}
@@ -361,7 +362,7 @@ func TestExplicitSinceZeroDoesNotSelfSeed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(p.CrewDir("c1"), "cursor"), []byte("9999999999999\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stdout, _, code, _ := run(t, p, "--since", "0", "--timeout", "1", "--interval", "1")
+	stdout, _, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
 	if code != 0 {
 		t.Fatalf("code %d", code)
 	}
@@ -376,7 +377,7 @@ func TestEqualTimestampsKeepLogOrder(t *testing.T) {
 	writeLog(t, p,
 		status(1000, "worker:feat/a#s1-1", "done", "", ""),
 		status(1000, "worker:feat/b#s1-1", "done", "", ""))
-	stdout, _, code, _ := run(t, p, "--since", "0", "--timeout", "1", "--interval", "1")
+	stdout, _, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
 	if code != 0 {
 		t.Fatalf("code %d", code)
 	}
@@ -389,7 +390,7 @@ func TestParkExpiry(t *testing.T) {
 	p := fixture(t)
 	writeLog(t, p, status(1000, "worker:feat/x#s1-1", "working", "", ""))
 
-	stdout, stderr, code, pk := run(t, p, "--since", "0", "--timeout", "3", "--interval", "1")
+	stdout, stderr, code, pk := run(t, p, Request{Since: since("0"), Timeout: "3", Interval: "1"})
 	if code != 0 {
 		t.Fatalf("an expired park is exit 0, got %d", code)
 	}
@@ -412,7 +413,7 @@ func TestParkExpiry(t *testing.T) {
 // `$since` did.
 func TestExpiryLineKeepsCallerText(t *testing.T) {
 	p := fixture(t)
-	_, stderr, code, _ := run(t, p, "--since", "07", "--timeout", "0300", "--interval", "1")
+	_, stderr, code, _ := run(t, p, Request{Since: since("07"), Timeout: "0300", Interval: "1"})
 	if code != 0 {
 		t.Fatalf("code %d", code)
 	}
@@ -422,49 +423,41 @@ func TestExpiryLineKeepsCallerText(t *testing.T) {
 }
 
 func TestRefusals(t *testing.T) {
+	const (
+		sinceMsg  = "crew: --since must be an integer ms timestamp"
+		digitsMsg = "crew: --timeout must be a positive integer number of seconds"
+		positive  = "crew: --timeout must be > 0 (indefinite watch unsupported: a reaped watch would be undetectable)"
+	)
+	// The argv grammar's refusals are main_test.go's; these are the value checks.
 	for _, tc := range []struct {
 		name string
-		args []string
+		req  Request
 		want string
 	}{
-		{"--since needs a value", []string{"--since"}, "crew: --since needs a value"},
-		{"--states needs a value", []string{"--states"}, "crew: --states needs a value"},
-		{"--timeout needs a value", []string{"--timeout"}, "crew: --timeout needs a value"},
-		{"--interval needs a value", []string{"--interval"}, "crew: --interval needs a value"},
-		{"--crew needs a value", []string{"--crew"}, "crew: --crew needs a value"},
-		// A following flag is a value like any other word: the arm's
-		// `[ -n "${2:-}" ]` was satisfied by it, and the arm's own check on that
+		// A following flag is a value like any other word: the check on that
 		// value is what speaks next.
-		{"a flag swallows the next flag", []string{"--since", "--timeout"}, "crew: --since must be an integer ms timestamp"},
-		{"…and leaves the rest as args", []string{"--since", "--timeout", "1"}, "crew: watch: unknown arg '1'"},
-		{"empty --since is no value", []string{"--since", ""}, "crew: --since needs a value"},
-		{"empty --states is no value", []string{"--states", ""}, "crew: --states needs a value"},
-		{"unknown long arg", []string{"--bogus"}, "crew: watch: unknown arg '--bogus'"},
-		{"unknown positional arg", []string{"x"}, "crew: watch: unknown arg 'x'"},
-		{"--flag=value is not the flag", []string{"--since=1"}, "crew: watch: unknown arg '--since=1'"},
-		{"non-integer --since", []string{"--since", "1x"}, "crew: --since must be an integer ms timestamp"},
-		{"negative --since", []string{"--since", "-1"}, "crew: --since must be an integer ms timestamp"},
-		{"non-integer --timeout", []string{"--timeout", "1x"}, "crew: --timeout must be a positive integer number of seconds"},
-		{"negative --timeout", []string{"--timeout", "-1"}, "crew: --timeout must be a positive integer number of seconds"},
-		{"zero --timeout", []string{"--timeout", "0"}, "crew: --timeout must be > 0 (indefinite watch unsupported: a reaped watch would be undetectable)"},
+		{"a flag swallowed as the since", Request{Since: since("--timeout")}, sinceMsg},
+		{"non-integer --since", Request{Since: since("1x")}, sinceMsg},
+		{"negative --since", Request{Since: since("-1")}, sinceMsg},
+		{"non-integer --timeout", Request{Timeout: "1x"}, digitsMsg},
+		{"negative --timeout", Request{Timeout: "-1"}, digitsMsg},
+		{"zero --timeout", Request{Timeout: "0"}, positive},
 		// bash's `[ "$timeout" -gt 0 ]` errors on a value past its signed long,
 		// and `set -e` made that this same refusal: an unbounded park is what
 		// the flag rules out, so it never becomes one.
-		{"past-int64 --timeout", []string{"--timeout", "9223372036854775808"}, "crew: --timeout must be > 0 (indefinite watch unsupported: a reaped watch would be undetectable)"},
-		{"20-digit --timeout", []string{"--timeout", "99999999999999999999"}, "crew: --timeout must be > 0 (indefinite watch unsupported: a reaped watch would be undetectable)"},
-		{"empty --states set", []string{"--states", ","}, "crew: --states must be non-empty"},
-		{"all-empty --states set", []string{"--states", ",,"}, "crew: --states must be non-empty"},
-		{"traversal --crew", []string{"--crew", "../escaped"}, badCrewMsg},
-		{"dot-dot --crew", []string{"--crew", ".."}, badCrewMsg},
-		// The flag loop runs before every value check, and the value checks in
-		// the arm's order: since, timeout, states.
-		{"loop before value checks", []string{"--bogus", "--timeout", "0"}, "crew: watch: unknown arg '--bogus'"},
-		{"since before timeout", []string{"--since", "x", "--timeout", "0"}, "crew: --since must be an integer ms timestamp"},
-		{"timeout before states", []string{"--states", ",", "--timeout", "0"}, "crew: --timeout must be > 0 (indefinite watch unsupported: a reaped watch would be undetectable)"},
+		{"past-int64 --timeout", Request{Timeout: "9223372036854775808"}, positive},
+		{"20-digit --timeout", Request{Timeout: "99999999999999999999"}, positive},
+		{"empty --states set", Request{States: ","}, "crew: --states must be non-empty"},
+		{"all-empty --states set", Request{States: ",,"}, "crew: --states must be non-empty"},
+		{"traversal --crew", Request{Crew: "../escaped"}, badCrewMsg},
+		{"dot-dot --crew", Request{Crew: ".."}, badCrewMsg},
+		// The value checks run in the arm's order: since, timeout, states.
+		{"since before timeout", Request{Since: since("x"), Timeout: "0"}, sinceMsg},
+		{"timeout before states", Request{States: ",", Timeout: "0"}, positive},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := fixture(t)
-			_, stderr, code, _ := run(t, p, tc.args...)
+			_, stderr, code, _ := run(t, p, tc.req)
 			if code != 1 {
 				t.Fatalf("code %d, want 1", code)
 			}
@@ -482,7 +475,7 @@ func TestRefusals(t *testing.T) {
 // With no --crew and no `_crew_id`, the arm's refusal is the unset one.
 func TestNoCrewResolvesToRefusal(t *testing.T) {
 	p := fixture(t)
-	_, stderr, code, _ := runOpts(t, p, Options{CrewID: func() string { return "" }}, "--timeout", "1")
+	_, stderr, code, _ := runOpts(t, p, Options{CrewID: func() string { return "" }}, Request{Timeout: "1"})
 	if code != 1 || stderr != "crew: CREW_ID unset and no WORKER_TASK.md crew_id\n" {
 		t.Fatalf("code %d stderr %q", code, stderr)
 	}
@@ -494,7 +487,7 @@ func TestCrewFlagOwnsCursorAndLock(t *testing.T) {
 	writeLog(t, p,
 		status(1000, "worker:feat/x#s1-1", "done", "", ""),
 		statusIn("c9", 2000, "worker:feat/y#s1-1", "done", "", ""))
-	_, _, code, _ := run(t, p, "--crew", "c9", "--since", "0", "--timeout", "1", "--interval", "1")
+	_, _, code, _ := run(t, p, Request{Crew: "c9", Since: since("0"), Timeout: "1", Interval: "1"})
 	if code != 0 {
 		t.Fatalf("code %d", code)
 	}
@@ -541,7 +534,7 @@ func TestLockHeldAndReclaimed(t *testing.T) {
 				t.Fatal(err)
 			}
 			writeLog(t, p, status(1000, "worker:feat/x#s1-1", "done", "", ""))
-			_, stderr, code, _ := run(t, p, "--since", "0", "--timeout", "1", "--interval", "1")
+			_, stderr, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
 			if tc.refuses {
 				if code != 1 ||
 					stderr != "crew: another watch is already running for this crew (c1)\n" {
@@ -560,7 +553,7 @@ func TestLockHeldAndReclaimed(t *testing.T) {
 // validated it, so coreutils owns the grammar.
 func TestIntervalReachesSleepVerbatim(t *testing.T) {
 	p := fixture(t)
-	_, _, _, pk := run(t, p, "--since", "0", "--timeout", "1", "--interval", "0.1")
+	_, _, _, pk := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "0.1"})
 	if len(pk.intervals) == 0 || pk.intervals[0] != "0.1" {
 		t.Errorf("intervals = %v, want the caller's string", pk.intervals)
 	}
@@ -575,7 +568,7 @@ func TestRejectedIntervalExitsFailure(t *testing.T) {
 		slept = append(slept, interval)
 		err := (&park{}).Sleep(interval, stderr)
 		return err
-	}}, "--since", "0", "--timeout", "1", "--interval", "not-an-interval")
+	}}, Request{Since: since("0"), Timeout: "1", Interval: "not-an-interval"})
 	if code != 1 {
 		t.Fatalf("code %d, want 1 (slept %v)", code, slept)
 	}
@@ -588,7 +581,7 @@ func TestSincePastInt64ParksQuietly(t *testing.T) {
 	p := fixture(t)
 	writeLog(t, p, status(1000, "worker:feat/x#s1-1", "done", "", ""))
 	const huge = "99999999999999999999"
-	stdout, stderr, code, _ := run(t, p, "--since", huge, "--timeout", "1", "--interval", "1")
+	stdout, stderr, code, _ := run(t, p, Request{Since: since(huge), Timeout: "1", Interval: "1"})
 	if code != 0 || stdout != "" {
 		t.Fatalf("code %d stdout %q", code, stdout)
 	}
@@ -604,7 +597,7 @@ func TestOverflowingTimeoutExpires(t *testing.T) {
 	for _, timeout := range []string{"9223372036854775807", "4611686018427387904"} {
 		t.Run(timeout, func(t *testing.T) {
 			p := fixture(t)
-			stdout, stderr, code, _ := run(t, p, "--since", "0", "--timeout", timeout, "--interval", "1")
+			stdout, stderr, code, _ := run(t, p, Request{Since: since("0"), Timeout: timeout, Interval: "1"})
 			if code != 0 || stdout != "" {
 				t.Fatalf("code %d stdout %q", code, stdout)
 			}
@@ -666,7 +659,7 @@ func TestExitStatus(t *testing.T) {
 // The bus dir is the arm's first statement, so even a refusal creates it.
 func TestRunCreatesBusDir(t *testing.T) {
 	p := fixture(t)
-	if _, _, code, _ := run(t, p, "--bogus"); code != 1 {
+	if _, _, code, _ := run(t, p, Request{Timeout: "0"}); code != 1 {
 		t.Fatalf("code %d", code)
 	}
 	if st, err := os.Stat(p.Dir); err != nil || !st.IsDir() {
@@ -701,7 +694,7 @@ func TestUnreadRestampSuppressed(t *testing.T) {
 			writeLog(t, p,
 				status(1000, from, "blocked", tc.first, ""),
 				status(2000, from, "blocked", tc.second, ""))
-			stdout, _, code, _ := run(t, p, "--since", "1000", "--timeout", "1", "--interval", "1")
+			stdout, _, code, _ := run(t, p, Request{Since: since("1000"), Timeout: "1", Interval: "1"})
 			if code != 0 {
 				t.Fatalf("code %d", code)
 			}
@@ -720,7 +713,7 @@ func TestFirstUnreadWakesRestampQuiet(t *testing.T) {
 	writeLog(t, p,
 		status(1000, from, "blocked", fmt.Sprintf("unread: dispatcher directive undelivered for %ds — lead is working but has not reached a peek seam (long stage or idle on a background task)", 644), ""),
 		status(2000, from, "blocked", fmt.Sprintf("unread: dispatcher directive undelivered for %ds — lead is working but has not reached a peek seam (long stage or idle on a background task)", 1850), ""))
-	stdout, _, code, _ := run(t, p, "--since", "0", "--timeout", "1", "--interval", "1")
+	stdout, _, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
 	if code != 0 {
 		t.Fatalf("code %d", code)
 	}
@@ -1064,7 +1057,7 @@ func TestMalformedSessionKeysDoNotThrowTheFold(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p := fixture(t)
 			writeLog(t, p, tc.rows...)
-			stdout, _, code, _ := run(t, p, "--since", "0", "--timeout", "1", "--interval", "1")
+			stdout, _, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
 			if code != 0 {
 				t.Fatalf("code %d", code)
 			}
