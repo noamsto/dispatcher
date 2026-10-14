@@ -1151,10 +1151,11 @@ var refusalRows = []struct {
 	{"hold add resets-at empty value equals", []string{"hold", "add", "--resets-at="}, "crew: --resets-at needs a value", 1},
 	{"hold add spec missing value", []string{"hold", "add", "--engine", "e", "--spec"}, "crew: --spec needs a value", 1},
 	{"hold add crew empty value", []string{"hold", "add", "--crew", "", "t"}, "crew: --crew needs a value", 1},
-	// The flag table's order decides which empty value is named, not argv order.
 	{"hold add leading double dash", []string{"hold", "add", "--engine", "e", "--window", "w", "--", "--t"}, "crew: hold add: unknown arg '--'", 1},
 	{"hold add bare double dash", []string{"hold", "add", "--engine", "e", "--window", "w", "--"}, "crew: hold add: unknown arg '--'", 1},
+	// The flag table's order decides which empty value is named, not argv order.
 	{"hold add two empty values", []string{"hold", "add", "--model", "", "--window", ""}, "crew: --window needs a value", 1},
+	{"hold add empty value before double dash", []string{"hold", "add", "--window", "", "--", "t"}, "crew: --window needs a value", 1},
 
 	{"nudge unknown flag", []string{"nudge", "--bogus", "nova"}, "crew: nudge: unknown flag '--bogus' (usage: " + nudge.Usage + ")", 1},
 	{"nudge extra positional", []string{"nudge", "nova", "iris"}, "crew: nudge: one target only (usage: " + nudge.Usage + ")", 1},

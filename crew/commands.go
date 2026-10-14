@@ -500,9 +500,6 @@ func validate(sub string, r *root) *refusal {
 		}
 	case "hold add":
 		c := r.Hold.Add
-		if len(c.Title) > 0 && c.Title[0] == "--" {
-			return fail("crew: hold add: unknown arg '--'")
-		}
 		for _, f := range []struct {
 			name string
 			v    *string
@@ -516,6 +513,9 @@ func validate(sub string, r *root) *refusal {
 			if given(f.v) {
 				return fail(fmt.Sprintf("crew: %s needs a value", f.name))
 			}
+		}
+		if len(c.Title) > 0 && c.Title[0] == "--" {
+			return fail("crew: hold add: unknown arg '--'")
 		}
 	case "hold list", "hold due", "hold park", "hold release":
 		var crew *string
