@@ -72,7 +72,7 @@ var numFlags = []numFlag{
 
 // parseArgs is the arm's prologue in its order: the id, the crew, then the
 // checks. The crew is resolved before any flag is looked at, so a missing crew
-// wins over a bad flag.
+// wins over a bad flag value.
 func parseArgs(req Request, crewID func() string) (config, error) {
 	if req.Target == "" {
 		return config{}, usageError(usageMsg)

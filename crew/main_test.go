@@ -1174,18 +1174,18 @@ var refusalRows = []struct {
 	{"reap idle not digits", []string{"reap", "--idle", "abc"}, "crew: --idle must be a non-negative integer number of seconds", 1},
 	{"reap bad bool", []string{"reap", "--quiet=maybe"},
 		`crew: reap: --quiet: bool value must be true, 1, yes, false, 0 or no but got "maybe"`, 1},
-	{"adopt unknown flag",[]string{"adopt", "--bogus"}, "crew: adopt: unknown flag '--bogus'", 1},
+	{"adopt unknown flag", []string{"adopt", "--bogus"}, "crew: adopt: unknown flag '--bogus'", 1},
 	{"adopt extra positional", []string{"adopt", "c1", "1", "2"}, "crew: adopt: unexpected argument '2'", 1},
 	{"adopt negative number", []string{"adopt", "-5"}, "crew: adopt: unknown flag '-5'", 1},
 	{"adopt bad bool", []string{"adopt", "--force=maybe", "c1"},
 		`crew: adopt: --force: bool value must be true, 1, yes, false, 0 or no but got "maybe"`, 1},
-	{"pr-watch unknown flag",[]string{"pr-watch", "12", "--bogus"}, "pr-watch: unknown arg '--bogus'", 1},
+	{"pr-watch unknown flag", []string{"pr-watch", "12", "--bogus"}, "pr-watch: unknown arg '--bogus'", 1},
 	{"pr-watch extra positional", []string{"pr-watch", "12", "13"}, "pr-watch: unknown arg '13'", 1},
 	{"stall-watch unknown flag", []string{"stall-watch", "feat/x", "--bogus"}, "crew: stall-watch: unknown arg '--bogus'", 1},
 	{"stall-watch extra positional", []string{"stall-watch", "feat/x", "extra"}, "crew: stall-watch: unknown arg 'extra'", 1},
 	{"stall-watch bad bool", []string{"stall-watch", "feat/x", "--no-budget=maybe"},
 		`crew: stall-watch: --no-budget: bool value must be true, 1, yes, false, 0 or no but got "maybe"`, 1},
-	{"reap idle negative",[]string{"reap", "--idle", "-5"}, "crew: --idle must be a non-negative integer number of seconds", 1},
+	{"reap idle negative", []string{"reap", "--idle", "-5"}, "crew: --idle must be a non-negative integer number of seconds", 1},
 }
 
 // preLocateRefusalRows are the refusals of the two modes that run outside any
@@ -1847,8 +1847,8 @@ func TestRunSenderCheckSurvivesTyping(t *testing.T) {
 
 // TestStallWatchSenderCheckSurvivesTyping: a worker's stamped pane cannot start
 // a watch as another sender, however the grammar spells the id and --pane. A
-// foreign worker or role id is refused through the stamped-pane anchor, a
-// dispatcher id through the worker env, and both before any probe or bus write.
+// foreign id is refused through the stamped-pane anchor (a dispatcher: target
+// becomes worker:dispatcher:…), before any probe or bus write.
 func TestStallWatchSenderCheckSurvivesTyping(t *testing.T) {
 	for _, tc := range []struct {
 		id   string
