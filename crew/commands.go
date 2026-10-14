@@ -120,6 +120,14 @@ type rosterRenderCmd struct {
 	Detach   bool    `name:"detach"`
 }
 
+type statusCmd struct {
+	Restamp bool   `name:"restamp"`
+	From    string `arg:"" optional:"" name:"from"`
+	State   string `arg:"" optional:"" name:"state"`
+	Detail  string `arg:"" optional:"" name:"detail"`
+	PR      string `arg:"" optional:"" name:"pr"`
+}
+
 // refusal is the stderr line and exit status a typed subcommand's argv earned.
 type refusal struct {
 	msg  string
@@ -182,6 +190,13 @@ var wordings = map[string]wording{
 		extra:       func(w string) string { return fmt.Sprintf("crew: crews: unknown arg '%s'", w) },
 		code:        exitUsage,
 	},
+	"status": {
+		unknownFlag: func(f string) string {
+			return fmt.Sprintf("crew: status: unknown arg '%s' (use -- before a detail that starts with dashes)", f)
+		},
+		extra: func(w string) string { return fmt.Sprintf("crew: status: unexpected argument '%s'", w) },
+		code:  exitFailure,
+	},
 	"roster": plain("roster"),
 	"report": plain("report"),
 	"retro":  {all: retro.Usage, code: exitFailure},
@@ -200,7 +215,8 @@ var wordings = map[string]wording{
 	"log":        plain("log"),
 }
 
-// kongRefusal maps kong's error for sub onto the subcommand's wording. The two
+// kongRefusal maps kong's error for the refusal key (a subcommand, or `hold <action>`
+// and `fleet stream`) onto the subcommand's wording. The two
 // prefixes are kong's own text, pinned by TestKongErrorClassification; anything
 // else (a bad bool value) keeps kong's sentence under the subcommand's name.
 func kongRefusal(sub string, err error) *refusal {

@@ -121,7 +121,7 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 //     kong can neither print a screen nor end the process, so routeHelp and
 //     helpTexts still decide when help prints and what it says.
 
-// subcommands is every word crew admits: the twenty-one the grammar types, then
+// subcommands is every word crew admits: the twenty-three the grammar types, then
 // the arms still parsing their own argv. It is the list the switch of #821 admitted,
 // and tests/crew.bats parses this literal to prove every subcommand has its own
 // row in the grouped help; TestAdmittedSubcommands pins it against that
@@ -144,6 +144,7 @@ var typedSubcommands = map[string]bool{
 	"deregister": true, "log": true, "sessions": true, "inbox": true,
 	"roster": true, "report": true, "retro": true, "rate": true, "fleet": true,
 	"stack": true, "roster-render": true, "pi-agent-dir": true,
+	"status": true, "msg": true,
 }
 
 // passthroughCmd is one unconverted subcommand to kong: its name, then whatever
@@ -192,6 +193,9 @@ type root struct {
 	Stack        stackCmd        `cmd:"" name:"stack" help:"Cut points and rebase plans of a stack."`
 	RosterRender rosterRenderCmd `cmd:"" name:"roster-render" help:"The per-crew diagram daemon."`
 	PiAgentDir   argvCmd         `cmd:"" name:"pi-agent-dir" help:"The pi agent dir."`
+
+	Status statusCmd `cmd:"" name:"status" help:"Post a worker's state."`
+	Msg    argvCmd   `cmd:"" name:"msg" help:"Post a message."`
 }
 
 // crewArgs is what the root parse resolves to: the word that named the
@@ -202,6 +206,7 @@ type crewArgs struct {
 	argv    []string
 	typed   root
 	refusal *refusal
+	cmd     string // kong's selected command path, "" when the parse failed
 }
 
 // newCrewParser builds the grammar: the converted subcommands as fields of
@@ -239,11 +244,12 @@ func parseCrew(args []string) (crewArgs, bool) {
 	if err != nil {
 		panic("crew: kong grammar: " + err.Error())
 	}
-	if _, err := p.Parse(args); err != nil {
+	kctx, err := p.Parse(args)
+	if err != nil {
 		// An error inside a typed subcommand's argv is that subcommand's refusal;
 		// everywhere else it is the unknown word the switch rejected.
 		if len(args) > 0 && typedSubcommands[args[0]] {
-			return crewArgs{sub: args[0], argv: args[1:], refusal: kongRefusal(args[0], err)}, true
+			return crewArgs{sub: args[0], argv: args[1:], refusal: kongRefusal(refusalKey(args), err)}, true
 		}
 		return crewArgs{}, false
 	}
@@ -255,7 +261,21 @@ func parseCrew(args []string) (crewArgs, bool) {
 	}
 	// kong matched args[0] to a command, so the words it describes are the rest
 	// of the argv — the tail the arms have always been handed.
-	return crewArgs{sub: args[0], argv: args[1:], typed: r, refusal: validate(args[0], &r)}, true
+	return crewArgs{sub: args[0], argv: args[1:], typed: r, refusal: validate(refusalKey(args), &r), cmd: kctx.Command()}, true
+}
+
+// refusalKey names the wording and checks a typed argv is judged by: the
+// subcommand, or its action word when the subcommand has one.
+func refusalKey(args []string) string {
+	if len(args) > 1 {
+		switch {
+		case args[0] == "hold" && slices.Contains([]string{"add", "list", "due", "park", "release"}, args[1]):
+			return "hold " + args[1]
+		case args[0] == "fleet" && args[1] == "stream":
+			return "fleet stream"
+		}
+	}
+	return args[0]
 }
 
 // env is everything run reads from the process, so tests can supply their own.
@@ -587,6 +607,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// status and msg append one row each as the caller; the stamp is real time,
 	// never CREW_CLOCK, as jq's `now` was.
 	if sub == "status" || sub == "msg" {
+		// msg's words are data: the first three are from, to and body, the rest ignored.
+		words := parsed.typed.Msg.Args
+		word := func(i int) string {
+			if i < len(words) {
+				return words[i]
+			}
+			return ""
+		}
 		o := status.Options{
 			CrewID:   func() string { return bus.CrewID(ctx, cwd) },
 			Toplevel: func() string { return bus.Toplevel(ctx, cwd) },
@@ -598,9 +626,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			o.Tmux = func(args ...string) (string, error) { return tmuxOutput(ctx, args...) }
 		}
 		if sub == "status" {
-			return status.RunStatus(args, paths, stderr, o)
+			c := parsed.typed.Status
+			return status.RunStatus(status.StatusRequest{From: c.From, State: c.State, Detail: c.Detail, PR: c.PR, Restamp: c.Restamp}, paths, stderr, o)
 		}
-		return status.RunMsg(args, paths, stderr, o)
+		return status.RunMsg(status.MsgRequest{From: word(0), To: word(1), Body: word(2)}, paths, stderr, o)
 	}
 
 	// register and deregister record the caller's own identity like adopt does.

@@ -131,41 +131,21 @@ func post(sub string, paths bus.Paths, stderr io.Writer, build func(text string)
 	return 0
 }
 
-// RunStatus is `crew status <from> <state> [detail] [pr_url] [--restamp] [--]`.
-func RunStatus(args []string, paths bus.Paths, stderr io.Writer, o Options) int {
+// StatusRequest is `crew status <from> <state> [detail] [pr_url] [--restamp]`.
+type StatusRequest struct {
+	From, State, Detail, PR string
+	Restamp                 bool
+}
+
+// RunStatus posts a worker's state.
+func RunStatus(req StatusRequest, paths bus.Paths, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
 	crew, ok := begin("status", paths, stderr, o)
 	if !ok {
 		return exitFailure
 	}
 
-	// --restamp may sit anywhere; stripping it keeps the positionals in order.
-	restamp := false
-	var pos []string
-parse:
-	for len(args) > 0 {
-		switch a := args[0]; {
-		case a == "--restamp":
-			restamp = true
-			args = args[1:]
-		case a == "--":
-			pos = append(pos, args[1:]...)
-			break parse
-		case strings.HasPrefix(a, "--"):
-			say(stderr, "crew: status: unknown arg '%s' (use -- before a detail that starts with dashes)\n", a)
-			return exitFailure
-		default:
-			pos = append(pos, a)
-			args = args[1:]
-		}
-	}
-	at := func(i int) string {
-		if i < len(pos) {
-			return pos[i]
-		}
-		return ""
-	}
-	from, state, detail, pr := at(0), at(1), at(2), at(3)
+	from, state, detail, pr, restamp := req.From, req.State, req.Detail, req.PR, req.Restamp
 	if refuseSender("status", from, crew, o, stderr) {
 		return exitFailure
 	}

@@ -8,20 +8,17 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
-// RunMsg is `crew msg <from> <to> <body>`.
-func RunMsg(args []string, paths bus.Paths, stderr io.Writer, o Options) int {
+// MsgRequest is `crew msg <from> <to> <body>`.
+type MsgRequest struct{ From, To, Body string }
+
+// RunMsg posts a message.
+func RunMsg(req MsgRequest, paths bus.Paths, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
 	crew, ok := begin("msg", paths, stderr, o)
 	if !ok {
 		return exitFailure
 	}
-	at := func(i int) string {
-		if i < len(args) {
-			return args[i]
-		}
-		return ""
-	}
-	from, to, body := at(0), at(1), at(2)
+	from, to, body := req.From, req.To, req.Body
 	if refuseSender("msg", from, crew, o, stderr) {
 		return exitFailure
 	}

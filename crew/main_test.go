@@ -12,8 +12,10 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -769,7 +771,8 @@ func TestAdmittedSubcommands(t *testing.T) {
 	}
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
-		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir"} {
+		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
+		"status", "msg"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -824,7 +827,7 @@ func TestParseCrewSplitsLeadingEquals(t *testing.T) {
 		{[]string{"reap", "--idle=5"}, []string{"--idle", "5"}},
 		// Everything else about a passthrough command's argv does arrive whole,
 		// `--` and flag-shaped detail text included.
-		{[]string{"status", "w1", "working", "--help"}, []string{"w1", "working", "--help"}},
+		{[]string{"pr-watch", "w1", "working", "--help"}, []string{"w1", "working", "--help"}},
 		{[]string{"reap", "--", "--idle=5"}, []string{"--", "--idle=5"}},
 		{[]string{"hold", "--"}, []string{"--"}},
 		{[]string{"hold", "-x"}, []string{"-x"}},
@@ -987,8 +990,6 @@ func TestRunPassthroughArgvReachesItsArm(t *testing.T) {
 			stderr: "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH (got '--idle=5')\n"},
 		{name: "hold reads --crew with no value", args: []string{"hold", "list", "--crew"}, code: exitFailure,
 			stderr: "crew: --crew needs a value\n"},
-		{name: "status reads --help as an unknown argument", args: []string{"status", "w1", "working", "--help"},
-			code: exitFailure, stderr: "crew: status: unknown arg '--help' (use -- before a detail that starts with dashes)\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -1099,6 +1100,14 @@ var refusalRows = []struct {
 	{"stack align extra positional", []string{"stack", "align", "3", "4"}, stackUsage, 1},
 	{"stack align record", []string{"stack", "align", "--record", "3"}, stackUsage, 1},
 
+	{"status unknown flag", []string{"status", "w1", "blocked", "--bogus"},
+		"crew: status: unknown arg '--bogus' (use -- before a detail that starts with dashes)", 1},
+	{"status single-dash detail", []string{"status", "w1", "blocked", "-x"},
+		"crew: status: unknown arg '-x' (use -- before a detail that starts with dashes)", 1},
+	{"status extra positional", []string{"status", "w1", "blocked", "why", "url", "extra"}, "crew: status: unexpected argument 'extra'", 1},
+	{"status bad bool", []string{"status", "w1", "blocked", "--restamp=nope"},
+		`crew: status: --restamp: bool value must be true, 1, yes, false, 0 or no but got "nope"`, 1},
+
 	{"roster-render unknown flag", []string{"roster-render", "--bogus"}, "crew: roster-render: unknown arg '--bogus'", 64},
 	{"roster-render extra positional", []string{"roster-render", "--crew", "c1", "x"}, "crew: roster-render: unknown arg 'x'", 64},
 	{"roster-render crew missing value", []string{"roster-render", "--crew"}, "crew: --crew needs a value", 64},
@@ -1179,6 +1188,10 @@ func TestKongErrorClassification(t *testing.T) {
 		{[]string{"roster", "a", "b"}, "unexpected argument b"},
 		{[]string{"rate", "--root"}, "--root: missing value"},
 		{[]string{"roster-render", "--once=nope"}, "--once: bool value must be"},
+		{[]string{"status", "w1", "blocked", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"status", "w1", "blocked", "-x"}, "unknown flag -x"},
+		{[]string{"status", "w1", "blocked", "a", "b", "c"}, "unexpected argument c"},
+		{[]string{"status", "--restamp=nope"}, "--restamp: bool value must be"},
 	} {
 		var (
 			r       root
@@ -1363,6 +1376,8 @@ func TestFlagSpellingsAreIdentical(t *testing.T) {
 			[]string{"roster-render", "--crew=c1", "--quiet=x"}, true},
 		{"roster-render --once --detach", []string{"roster-render", "--crew", "c1", "--once", "--detach"},
 			[]string{"roster-render", "--crew", "c1", "--once=true", "--detach=true"}, true},
+		// refused once the sender check passes: --restamp needs state blocked.
+		{"status --restamp", []string{"status", me, "working", "--restamp"}, []string{"status", me, "working", "--restamp=true"}, true},
 		{"stack cut --record", []string{"stack", "cut", "--record", "feat/x", "abc"},
 			[]string{"stack", "cut", "--record=true", "feat/x", "abc"}, true},
 	} {
@@ -1412,6 +1427,8 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 		{"rate --sweep-all", []string{"rate", "--sweep-all"}, []string{"rate", "--sweep-all=true"}, false},
 		{"fleet bools", []string{"fleet", "--all", "--json"}, []string{"fleet", "--all=true", "--json=true"}, false},
 		{"stack cut --record", []string{"stack", "cut", "--record", "feat/x"}, []string{"stack", "cut", "--record=true", "feat/x"}, false},
+		{"status --restamp", []string{"status", "w1", "blocked", "why", "--restamp"}, []string{"status", "w1", "blocked", "why", "--restamp=true"}, false},
+		{"status --restamp first", []string{"status", "--restamp", "w1", "blocked"}, []string{"status", "--restamp=true", "w1", "blocked"}, false},
 		{"roster-render bools", []string{"roster-render", "--no-open", "--once", "--detach"},
 			[]string{"roster-render", "--no-open=true", "--once=true", "--detach=true"}, false},
 	} {
@@ -1444,5 +1461,75 @@ func assertSameRun(t *testing.T, e env, a, b []string, refused bool) {
 	}
 	if refused && codes[0] == 0 {
 		t.Errorf("crew %q succeeded, want a refusal", a)
+	}
+}
+
+// TestMsgWordsAreVerbatim pins msg's grammar: every word is data, flag-shaped
+// ones included, and only a leading `--a=b` is split by kong.
+func TestMsgWordsAreVerbatim(t *testing.T) {
+	for _, tc := range []struct{ args, words []string }{
+		{[]string{"msg", "a", "b", "-1"}, []string{"a", "b", "-1"}},
+		{[]string{"msg", "a", "b", "--help"}, []string{"a", "b", "--help"}},
+		{[]string{"msg", "a", "b", "x=y", "extra"}, []string{"a", "b", "x=y", "extra"}},
+		{[]string{"msg", "a", "b", "--restamp=true"}, []string{"a", "b", "--restamp=true"}},
+		{[]string{"msg", "--a=b", "to", "body"}, []string{"--a", "b", "to", "body"}},
+	} {
+		parsed, ok := parseCrew(tc.args)
+		if !ok || parsed.refusal != nil || !slices.Equal(parsed.typed.Msg.Args, tc.words) {
+			t.Errorf("crew %q: ok %v refusal %v words %q, want %q", tc.args, ok, parsed.refusal, parsed.typed.Msg.Args, tc.words)
+		}
+	}
+}
+
+// TestRunSenderCheckSurvivesTyping: a caller that is not the dispatcher cannot
+// post as dispatcher:c1, however the grammar spells the sender or the crew.
+func TestRunSenderCheckSurvivesTyping(t *testing.T) {
+	const worker = "worker:feat/x#s1-1"
+	log := logRowC1 + "\n" + dispatch + "\n"
+	repo, logPath := repoWithLog(t, &log, 0o644)
+	t.Setenv("CREW_ID", "c1")
+	t.Setenv("CREW_WORKER_ID", worker)
+	t.Setenv("TMUX_PANE", "")
+	if err := os.Unsetenv("TMUX_PANE"); err != nil {
+		t.Fatal(err)
+	}
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil)}
+	resets := strconv.FormatInt(time.Now().Unix()+3600, 10)
+	add := func(crew ...string) []string {
+		return append(append([]string{"hold", "add"}, crew...),
+			"--engine", "claude", "--window", "w", "--resets-at", resets, "--agent", "a", "--ref", "r",
+			"--branch", "feat/x", "--tier", "standard", "--model", "m", "--effort", "medium", "a", "title")
+	}
+	for _, tc := range []struct {
+		name string
+		sub  string
+		args []string
+	}{
+		{"msg", "msg", []string{"msg", "dispatcher:c1", "x", "y"}},
+		{"msg from a worker env", "msg", []string{"msg", "dispatcher:c1", worker, "hi"}},
+		{"reply crew equals", "reply", []string{"reply", worker, "go", "--crew=c1"}},
+		{"reply crew spaced", "reply", []string{"reply", "--crew", "c1", worker, "go"}},
+		{"reply crew after body", "reply", []string{"reply", worker, "go", "--crew", "c1"}},
+		{"hold add crew spaced", "hold add", add("--crew", "c1")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr bytes.Buffer
+			code := run(context.Background(), tc.args, &stdout, &stderr, e)
+			want := "crew: " + tc.sub + ": refusing sender 'dispatcher:c1' — "
+			if code != exitFailure || !strings.HasPrefix(stderr.String(), want) {
+				t.Fatalf("code %d stderr %q, want exit 1 and prefix %q", code, stderr.String(), want)
+			}
+			after, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Errorf("the log changed: %q", after)
+			}
+		})
 	}
 }
