@@ -246,10 +246,20 @@ EOF
 
 @test "crews: an unknown flag is a usage error, not the full table" {
   CREW_ID=c1 run_crew register "$$"
-  run --separate-stderr run_crew crews --mine=yes
+  run --separate-stderr run_crew crews --bogus
   [ "$status" -eq 64 ]
   [ -z "$output" ]
-  [[ "$stderr" == *"crews: unknown arg '--mine=yes'"* ]]
+  [[ "$stderr" == *"crews: unknown arg '--bogus'"* ]]
+}
+
+@test "crews: --mine=yes is --mine, not the full table" {
+  CREW_ID=c1 run_crew register "$$"
+  run run_crew crews --mine
+  [ "$status" -eq 0 ]
+  mine=$output
+  run run_crew crews --mine=yes
+  [ "$status" -eq 0 ]
+  [ "$output" = "$mine" ]
 }
 
 # ---- id -----------------------------------------------------------------

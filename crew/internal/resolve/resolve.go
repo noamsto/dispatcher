@@ -103,13 +103,18 @@ func Resolve(rows []jsonv.Value, target, crew string) []Row {
 	return matched
 }
 
+// Usage is the arm's bare refusal when no target is given.
+const Usage = "usage: crew resolve-target <target> [--crew ID]"
+
+// Request is the arm's validated arguments. Unlike `where`, this arm has no
+// `_crew_id` default — `--crew` or nothing — and Target is never empty.
+type Request struct {
+	Crew, Target string
+}
+
 // Run is the `resolve-target` arm.
-func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer) int {
-	crew, target, msg := parse(argv)
-	if msg != "" {
-		say(stderr, "%s\n", msg)
-		return exitFailure
-	}
+func Run(req Request, paths bus.Paths, stdout, stderr io.Writer) int {
+	crew, target := req.Crew, req.Target
 	rows := Resolve(Rows(paths.Log), target, crew)
 	switch len(rows) {
 	case 0:
@@ -129,31 +134,4 @@ func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer) int {
 			target, strings.ReplaceAll(strings.Join(branches, ","), ",", ", "))
 		return exitAmbiguous
 	}
-}
-
-// parse is the arm's flag loop, in its order: a second positional is refused
-// where it appears, not at the end. Unlike `where`, this arm has no `_crew_id`
-// default — `--crew` or nothing.
-func parse(args []string) (crew, target, msg string) {
-	for len(args) > 0 {
-		arg := args[0]
-		switch {
-		case arg == "--crew":
-			if len(args) < 2 || args[1] == "" {
-				return "", "", "crew: resolve-target: --crew needs an id"
-			}
-			crew, args = args[1], args[2:]
-		case strings.HasPrefix(arg, "--"):
-			return "", "", fmt.Sprintf("crew: resolve-target: unknown flag '%s'", arg)
-		default:
-			if target != "" {
-				return "", "", "crew: resolve-target: one target only"
-			}
-			target, args = arg, args[1:]
-		}
-	}
-	if target == "" {
-		return "", "", "usage: crew resolve-target <target> [--crew ID]"
-	}
-	return crew, target, ""
 }

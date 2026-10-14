@@ -60,10 +60,20 @@ func status(ts int64, crew, from string) string {
 	return fmt.Sprintf(`{"ts":%d,"crew_id":"%s","kind":"status","from":"%s","body":{"state":"working"}}`, ts, crew, from)
 }
 
-func run(t *testing.T, p bus.Paths, o Options, args ...string) (string, string, int) {
+func run(t *testing.T, p bus.Paths, o Options) (string, string, int) {
+	t.Helper()
+	return runWith(t, false, p, o)
+}
+
+func runMine(t *testing.T, p bus.Paths, o Options) (string, string, int) {
+	t.Helper()
+	return runWith(t, true, p, o)
+}
+
+func runWith(t *testing.T, mine bool, p bus.Paths, o Options) (string, string, int) {
 	t.Helper()
 	var out, errB bytes.Buffer
-	code := Run(args, p, &out, &errB, o)
+	code := Run(mine, p, &out, &errB, o)
 	return out.String(), errB.String(), code
 }
 
@@ -184,22 +194,6 @@ func TestTableJQColorsWarnsOnce(t *testing.T) {
 	}
 }
 
-func TestUnknownArg(t *testing.T) {
-	p := fixture(t)
-	out, errB, code := run(t, p, opts(nil, nil), "--mine=yes")
-	if code != 64 {
-		t.Fatalf("code %d", code)
-	}
-	if errB != "crew: crews: unknown arg '--mine=yes'\n" || out != "" {
-		t.Errorf("out %q stderr %q", out, errB)
-	}
-	// The arm's `case "${1:-}"` sends an empty first arg to the table.
-	_, _, code = run(t, p, opts(nil, nil), "")
-	if code != 0 {
-		t.Fatalf("empty arg must take the table branch, code %d", code)
-	}
-}
-
 func TestMineListsOnlyLiveAncestors(t *testing.T) {
 	p := fixture(t)
 	const ancestor, stranger = 4242, 9999
@@ -213,7 +207,7 @@ func TestMineListsOnlyLiveAncestors(t *testing.T) {
 	// The walk: os.Getpid() → 300 → ancestor. stranger is live but never on
 	// the chain, 8888 is dead, c-nopid has no pid file, c-log only log traffic.
 	parents := map[int]int{os.Getpid(): 300, 300: ancestor}
-	out, _, code := run(t, p, opts(live, parents), "--mine")
+	out, _, code := runMine(t, p, opts(live, parents))
 	if code != 0 {
 		t.Fatalf("code %d", code)
 	}
@@ -224,17 +218,9 @@ func TestMineListsOnlyLiveAncestors(t *testing.T) {
 
 func TestMineNoCrewsDir(t *testing.T) {
 	p := fixture(t)
-	out, errB, code := run(t, p, opts(nil, nil), "--mine")
+	out, errB, code := runMine(t, p, opts(nil, nil))
 	if code != 0 || out != "" || errB != "" {
 		t.Fatalf("code %d out %q stderr %q", code, out, errB)
-	}
-}
-
-func TestMineExtraArgsIgnored(t *testing.T) {
-	p := fixture(t)
-	_, _, code := run(t, p, opts(nil, nil), "--mine", "junk")
-	if code != 0 {
-		t.Fatalf("code %d", code)
 	}
 }
 

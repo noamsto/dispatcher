@@ -41,12 +41,26 @@ func (tr *tree) write(t *testing.T, rows ...string) {
 	}
 }
 
+// request reads the test's `target [--crew ID]` shorthand; the argv grammar
+// itself is main's (TestResolveTargetRefusals).
+func request(args []string) Request {
+	var r Request
+	for len(args) > 0 {
+		if args[0] == "--crew" {
+			r.Crew, args = args[1], args[2:]
+			continue
+		}
+		r.Target, args = args[0], args[1:]
+	}
+	return r
+}
+
 // run is one arm invocation: stdout and stderr apart, since which stream a line
 // takes is part of the contract.
 func (tr *tree) run(t *testing.T, args ...string) (out, errOut string, code int) {
 	t.Helper()
 	var o, e bytes.Buffer
-	code = Run(args, tr.paths, &o, &e)
+	code = Run(request(args), tr.paths, &o, &e)
 	return o.String(), e.String(), code
 }
 
@@ -204,25 +218,12 @@ func TestCrewFilter(t *testing.T) {
 	}
 }
 
-func TestRefusals(t *testing.T) {
+func TestNoMatchRefusal(t *testing.T) {
 	tr := setup(t)
 	tr.write(t, dispatch(1, "c1", "feat/x", "sage", "h1"))
-	cases := []struct {
-		args []string
-		want string
-	}{
-		{nil, "usage: crew resolve-target <target> [--crew ID]\n"},
-		{[]string{"--crew"}, "crew: resolve-target: --crew needs an id\n"},
-		{[]string{"--crew", ""}, "crew: resolve-target: --crew needs an id\n"},
-		{[]string{"--bogus", "sage"}, "crew: resolve-target: unknown flag '--bogus'\n"},
-		{[]string{"sage", "again"}, "crew: resolve-target: one target only\n"},
-		{[]string{"nobody"}, "crew: resolve-target: no worker matches 'nobody'\n"},
-	}
-	for _, c := range cases {
-		out, errOut, code := tr.run(t, c.args...)
-		if code != exitFailure || out != "" || errOut != c.want {
-			t.Errorf("%v: code %d, out %q, err %q, want %q", c.args, code, out, errOut, c.want)
-		}
+	out, errOut, code := tr.run(t, "nobody")
+	if code != exitFailure || out != "" || errOut != "crew: resolve-target: no worker matches 'nobody'\n" {
+		t.Errorf("code %d, out %q, err %q", code, out, errOut)
 	}
 }
 
