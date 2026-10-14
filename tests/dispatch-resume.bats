@@ -1137,7 +1137,7 @@ EOF
   cd "$WT"
   DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ ENABLE_CLAUDEAI_MCP_SERVERS=false claude --continue' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: AGENT_BROWSER_SESSION=[^ ]+ CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ ENABLE_CLAUDEAI_MCP_SERVERS=false claude --continue' <(launch_log)
   grep -q 'CREW_WORKER_ID=worker:feat/7-a-thing#s2-100 CREW_ID=c1 ENABLE_CLAUDEAI_MCP_SERVERS=false claude --continue' <(launch_log)
   grep -q -- '--model sonnet' <(launch_log)
   grep -q -- '--effort medium' <(launch_log)
@@ -1152,10 +1152,40 @@ EOF
   DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --continue' <(launch_log))"
-  settings='\{\"enabledPlugins\":\{\"superpowers@superpowers-dev\":false\,\"agent-smith@agent-smith\":false\,\"frontend-design@claude-plugins-official\":false\,\"refactoring-agent@xdg-claude\":false\,\"commit-commands@claude-code-plugins\":false\,\"resolved@resolved\":false\,\"context-efficient-tools@xdg-claude\":false\}\}'
+  printf -v settings '%q' '{"enabledPlugins":{"superpowers@superpowers-dev":false,"agent-smith@agent-smith":false,"frontend-design@claude-plugins-official":false,"refactoring-agent@xdg-claude":false,"commit-commands@claude-code-plugins":false,"resolved@resolved":false,"context-efficient-tools@xdg-claude":false},"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*"]}}'
   [[ "$line" == *"--settings $settings --add-dir "* ]]
   [[ "$line" != *disableAllHooks* ]]
   [[ "$line" != *gopls-lsp* ]]
+}
+
+@test "claude resume denies the default browser MCP servers" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  unset CLAUDE_WORKER_SETTINGS_LIB
+  DISPATCH_SESSION_ID=s2-100 run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  printf -v deny '%q' '"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*"]}'
+  [[ "$line" == *"$deny"* ]]
+}
+
+@test "claude resume and pi resume carry the branch's AGENT_BROWSER_SESSION" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_SESSION_ID=s2-100 run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$(grep -F 'claude --continue' <(launch_log))" =~ AGENT_BROWSER_SESSION=(dispatch-[a-z0-9-]*-[0-9a-f]{8})\  ]]
+  claude_session="${BASH_REMATCH[1]}"
+  [[ "$claude_session" == dispatch-feat-7-a-thing-* ]]
+
+  : >"$STUB_LOG"
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$(grep -F 'pi --continue' <(launch_log))" =~ AGENT_BROWSER_SESSION=(dispatch-[a-z0-9-]*-[0-9a-f]{8})\  ]]
+  [ "${BASH_REMATCH[1]}" = "$claude_session" ]
 }
 
 @test "claude resume drops the claude.ai connectors unless DISPATCH_CLAUDE_CONNECTORS=1" {
@@ -1363,7 +1393,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ ENABLE_CLAUDEAI_MCP_SERVERS=false claude ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: AGENT_BROWSER_SESSION=[^ ]+ CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ ENABLE_CLAUDEAI_MCP_SERVERS=false claude ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
   sid="$(grep -oE -- "--session-id $UUID_RE" <(launch_log) | head -1 | cut -d' ' -f2)"
@@ -1415,7 +1445,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: AGENT_BROWSER_SESSION=[^ ]+ CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ codex ' <(launch_log)
   run grep -c -- 'resume --last' <(launch_log)
   [ "$status" -ne 0 ]
   [ "$(jq -c 'select(.kind == "resume") | .engine_session' "$(bus_log)" | tail -1)" = null ]
@@ -1441,7 +1471,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   cd "$WT"
   DISPATCH_PROFILE=work run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: AGENT_BROWSER_SESSION=[^ ]+ CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ CURSOR_CLI_INDEXED_GREP=0 cursor-agent ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }
@@ -1535,7 +1565,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   cd "$WT"
   run run_resume --fresh
   [ "$status" -eq 0 ]
-  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ PI_CODING_AGENT_DIR=[^ ]+ pi ' <(launch_log)
+  grep -qE 'send-keys -t %8 (-u DISPATCHER_[A-Z]+_DIR )*(DISPATCHER_[A-Z]+_DIR=[^ ]+ |DISPATCH_GRANT_ROOTS=[^ ]+ )*GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: AGENT_BROWSER_SESSION=[^ ]+ CREW_WORKER_ID=[^ ]+ CREW_ID=[^ ]+ PI_CODING_AGENT_DIR=[^ ]+ pi ' <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$status" -ne 0 ]
 }

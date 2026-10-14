@@ -171,7 +171,13 @@ let
     laneProfiles."pi/lemonade/*" = {name = "local";};
     laneProfiles.claude = {name = "security";};
     laneProfiles."pi/gemma/*" = {name = "local";notes = "- targeted only";};
+    workerDeniedMcpServers = ["my_browser"];
     userSettings = "/home/u/cfg/settings.json";
+  };
+
+  noAgentBrowserCfg = {
+    enable = true;
+    agentBrowser.package = null;
   };
 
   minimalCfg = {enable = true;};
@@ -206,6 +212,8 @@ in {
     mkResult fullCfg
     // {cursorSkills = builtins.replaceStrings ["\n"] [" "] (eval fullCfg).home.activation.dispatcherCursorSkills.data;};
   minimal = mkResult minimalCfg // mkDrvs minimalCfg;
+  noAgentBrowser = mkResult noAgentBrowserCfg;
+  agentBrowserPath = (eval fullCfg).programs.dispatcher.agentBrowser.executablePath;
   cursorless = mkResult cursorlessCfg;
   float = mkResult floatCfg;
   codexOnly = mkResult codexOnlyCfg // mkDrvs codexOnlyCfg;
@@ -672,6 +680,10 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   run jq -e '(.options | index("laneProfiles")) != null' "$EVAL"
   [ "$status" -eq 0 ]
+  run jq -e '(.options | index("workerDeniedMcpServers")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '(.options | index("agentBrowser")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
 }
 
 @test "the laneProfiles option type rejects a name that is not a profile id" {
@@ -741,6 +753,8 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.localModels == {"lemonade/Qwen3.8-Flash-Next-MTP": {"baseUrl": "http://halo:13305/v1", "contextWindow": 131072, "maxConcurrent": 1, "tiers": ["trivial", "standard"], "workerNotes": "- Run only targeted bats files."}, "lemonade/Reasoner": {"baseUrl": "http://halo:13305/v1", "contextWindow": 4096, "maxConcurrent": 1, "maxTokens": 32768, "tiers": ["trivial", "standard"], "reasoning": true, "thinkingFormat": "qwen-chat-template", "effortThinking": {"low": "off"}}, "lemonade/Plain": {"baseUrl": "http://halo:13305/v1", "contextWindow": 8192, "maxConcurrent": 1, "tiers": ["trivial", "standard"]}}' "$EVAL"
   [ "$status" -eq 0 ]
+  run jq -e '.full.locked.workerDeniedMcpServers == ["my_browser"]' "$EVAL"
+  [ "$status" -eq 0 ]
 
   # Lane profiles: set entries land in the locked layer, and a name-only entry
   # carries no `notes` field at all (an emitted null would fail dispatch-config).
@@ -756,6 +770,15 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
 
   run jq -e '.float.locked.openrouter.monthlyUsd == 12.5' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "agent-browser is installed unless agentBrowser.package is null" {
+  run jq -e '.full.packageNames | any(startswith("agent-browser"))' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.noAgentBrowser.packageNames | any(startswith("agent-browser")) | not' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.agentBrowserPath == null or (.agentBrowserPath | endswith("chromium") or endswith("Google Chrome for Testing"))' "$EVAL"
   [ "$status" -eq 0 ]
 }
 

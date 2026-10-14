@@ -2261,11 +2261,11 @@ launch_role() {
       exit 1
     }
     printf -v quoted_dir '%q' "$pi_agent_dir"
-    cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $quoted_name --model $quoted_model --thinking $(_local_thinking "$settings" "$r_model" "$r_effort") --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt"
+    cmd="${git_env}$(worker_browser_env "$branch")PI_CODING_AGENT_DIR=$quoted_dir pi --name $quoted_name --model $quoted_model --thinking $(_local_thinking "$settings" "$r_model" "$r_effort") --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt"
     ;;
-  claude) cmd="${git_env}$(claude_lean_env)claude --name $quoted_name --model $quoted_model --effort $r_effort --settings $(claude_worker_plugin_settings)$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt" ;;
-  codex) cmd="${git_env}codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first" ;;
-  cursor) cmd="${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first" ;;
+  claude) cmd="${git_env}$(worker_browser_env "$branch")$(claude_lean_env)claude --name $quoted_name --model $quoted_model --effort $r_effort --settings $(claude_worker_plugin_settings "$settings")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt" ;;
+  codex) cmd="${git_env}$(worker_browser_env "$branch")codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first" ;;
+  cursor) cmd="${git_env}$(worker_browser_env "$branch")CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first" ;;
   esac
   write_launch_script launch_line "$cmd"
   write_launch_script exit_line "$exit_cmd" exit
@@ -5795,7 +5795,7 @@ if [ "$agent" = codex ]; then
   # codex and cursor cannot pre-assign a session id, so there is none to verify:
   # the record names the engine with `-`, replacing any earlier lead's record.
   _record_lead_session "$agent" -
-  launch_cmd="${git_env}codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox $quoted_prompt"
+  launch_cmd="${git_env}$(worker_browser_env "$branch")codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox $quoted_prompt"
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
   # id ($model, e.g. claude-opus-5-high); composer-2.5 has no effort variants.
@@ -5813,7 +5813,7 @@ elif [ "$agent" = cursor ]; then
   prompt="Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session "$agent" -
-  launch_cmd="${git_env}CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' $quoted_prompt"
+  launch_cmd="${git_env}$(worker_browser_env "$branch")CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model '$model' $quoted_prompt"
 elif [ "$agent" = pi ]; then
   # pi's interactive TUI keeps pane output live. It accepts a file path as a
   # real appended system prompt; --no-approve ignores project-local resources,
@@ -5822,12 +5822,12 @@ elif [ "$agent" = pi ]; then
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session pi "$lead_sid"
-  launch_cmd="${git_env}PI_CODING_AGENT_DIR=$quoted_dir pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort") --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt"
+  launch_cmd="${git_env}$(worker_browser_env "$branch")PI_CODING_AGENT_DIR=$quoted_dir pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort") --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt"
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session claude "$lead_sid"
-  launch_cmd="${git_env}$(claude_lean_env)claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp --settings $(claude_worker_plugin_settings)$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto $quoted_prompt"
+  launch_cmd="${git_env}$(worker_browser_env "$branch")$(claude_lean_env)claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp --settings $(claude_worker_plugin_settings "$settings")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto $quoted_prompt"
 fi
 write_launch_script launch_line "$launch_cmd"
 # Role grid: split the task window into one pane per role. Each role pane parks

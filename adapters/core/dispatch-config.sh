@@ -28,6 +28,8 @@
 #
 # localModels maps "<provider>/<model>" dispatch ids to local OpenAI-compatible
 # endpoints for pi; it is validated on the merged tree and has no env var.
+# workerDeniedMcpServers names the MCP servers claude workers must not load
+# (interactive browsers); it is validated on the merged tree and has no env var.
 #
 # laneProfiles maps an engine or "<engine>/<model>" glob to a lane profile (its
 # name, and optionally inline notes text) that `dispatch` applies to the task
@@ -335,6 +337,7 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["fleetBudget"]; "a non-negative integer"; type == "number" and . == floor and . >= 0)
   | need(["repoTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | need(["orgTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
+  | need(["workerDeniedMcpServers"]; "an array of MCP server names (letters, digits, \"_\", \"-\")"; string_array and all(.[]; test("^[A-Za-z0-9_-]+$")))
   | if has("localModels") then (first(local_model_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
   | if has("laneProfiles") then (first(lane_profile_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
   | if $show_origin then tag({base: $base, user: $user, locked: $locked, env: $env}; []) else . end'

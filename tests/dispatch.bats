@@ -16168,10 +16168,103 @@ setup_bundle_resume() {
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris ' <(launch_log))"
-  settings='\{\"enabledPlugins\":\{\"superpowers@superpowers-dev\":false\,\"agent-smith@agent-smith\":false\,\"frontend-design@claude-plugins-official\":false\,\"refactoring-agent@xdg-claude\":false\,\"commit-commands@claude-code-plugins\":false\,\"resolved@resolved\":false\,\"context-efficient-tools@xdg-claude\":false\}\}'
+  printf -v settings '%q' '{"enabledPlugins":{"superpowers@superpowers-dev":false,"agent-smith@agent-smith":false,"frontend-design@claude-plugins-official":false,"refactoring-agent@xdg-claude":false,"commit-commands@claude-code-plugins":false,"resolved@resolved":false,"context-efficient-tools@xdg-claude":false},"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*"]}}'
   [[ "$line" == *"--settings $settings --add-dir "* ]]
   [[ "$line" != *disableAllHooks* ]]
   [[ "$line" != *gopls-lsp* ]]
+}
+
+@test "a claude lead's worker settings deny the default browser MCP servers" {
+  stub_launch_bins
+  unset CLAUDE_WORKER_SETTINGS_LIB
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  printf -v deny '%q' '"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*"]}'
+  [[ "$line" == *"$deny"* ]]
+}
+
+@test "an overridden workerDeniedMcpServers replaces the default list" {
+  stub_launch_bins
+  unset CLAUDE_WORKER_SETTINGS_LIB
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"workerDeniedMcpServers":["my_browser"]}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  printf -v deny '%q' '"permissions":{"deny":["mcp__my_browser__*"]}'
+  [[ "$line" == *"$deny"* ]]
+  [[ "$line" != *plugin_hm_playwright* ]]
+}
+
+@test "an empty workerDeniedMcpServers leaves no permissions key in the worker settings" {
+  stub_launch_bins
+  unset CLAUDE_WORKER_SETTINGS_LIB
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"workerDeniedMcpServers":[]}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" != *permissions* ]]
+  [[ "$line" == *"--settings "*enabledPlugins* ]]
+}
+
+# ── Per-branch agent-browser session ───────────────────────────
+
+browser_session_re='AGENT_BROWSER_SESSION=(dispatch-[a-z0-9-]*-[0-9a-f]{8}) '
+
+@test "AGENT_BROWSER_SESSION: a claude lead and its role pane share one per-branch session" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --roles reviewer=claude:sonnet --crew-id c1 42 "browser"
+  [ "$status" -eq 0 ]
+  lead="$(grep -F 'claude --name iris ' <(launch_log))"
+  role="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$lead" =~ $browser_session_re ]]
+  lead_session="${BASH_REMATCH[1]}"
+  [ "$(grep -o 'AGENT_BROWSER_SESSION=' <<<"$lead" | wc -l | tr -d ' ')" = 1 ]
+  [[ "$lead" == *"${BASH_REMATCH[0]}"*"claude --name iris "* ]]
+  [[ "$role" =~ $browser_session_re ]]
+  [ "${BASH_REMATCH[1]}" = "$lead_session" ]
+}
+
+@test "AGENT_BROWSER_SESSION: a pi lead and its pi role pane carry the session" {
+  stub_launch_bins
+  mkdir -p "$HOME/.pi/agent"
+  printf '{"opencode":{"type":"api_key","key":"x"}}\n' >"$HOME/.pi/agent/auth.json"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --roles reviewer=pi:openrouter/deepseek/deepseek-v4-flash --crew-id c1 42 "browser"
+  [ "$status" -eq 0 ]
+  lead="$(grep -F 'pi --name iris --model' <(launch_log))"
+  role="$(grep -F 'pi --name iris-reviewer' <(launch_log))"
+  [[ "$lead" =~ $browser_session_re ]]
+  lead_session="${BASH_REMATCH[1]}"
+  [ "$(grep -o 'AGENT_BROWSER_SESSION=' <<<"$lead" | wc -l | tr -d ' ')" = 1 ]
+  [[ "$lead" == *"${BASH_REMATCH[0]}PI_CODING_AGENT_DIR="* ]]
+  [[ "$role" =~ $browser_session_re ]]
+  [ "${BASH_REMATCH[1]}" = "$lead_session" ]
+}
+
+@test "AGENT_BROWSER_SESSION: different branches get different sessions" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "first"
+  [ "$status" -eq 0 ]
+  [[ "$(grep -F 'claude --name iris ' <(launch_log))" =~ $browser_session_re ]]
+  first="${BASH_REMATCH[1]}"
+  : >"$STUB_LOG"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 43 "second"
+  [ "$status" -eq 0 ]
+  [[ "$(grep -F 'claude --name iris ' <(launch_log))" =~ $browser_session_re ]]
+  [ "${BASH_REMATCH[1]}" != "$first" ]
+}
+
+@test "worker_browser_env: sanitized, bounded and distinct per branch" {
+  . "$BATS_TEST_DIRNAME/../adapters/core/claude-worker-settings.sh"
+  [ "$(worker_browser_env 'feat/x')" != "$(worker_browser_env 'feat-x')" ]
+  long="$(printf 'a/%.0s' {1..100})"
+  out="$(worker_browser_env "$long")"
+  value="${out#AGENT_BROWSER_SESSION=}"
+  value="${value% }"
+  [ "${#value}" -le 60 ]
+  [[ "$value" =~ ^[A-Za-z0-9_-]+$ ]]
 }
 
 @test "lean: DISPATCH_CLAUDE_CONNECTORS=1 opts out" {
@@ -16199,7 +16292,7 @@ setup_bundle_resume() {
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
   [[ "$line" == *"ENABLE_CLAUDEAI_MCP_SERVERS=false claude --name iris-reviewer "* ]]
-  settings='\{\"enabledPlugins\":\{\"superpowers@superpowers-dev\":false\,\"agent-smith@agent-smith\":false\,\"frontend-design@claude-plugins-official\":false\,\"refactoring-agent@xdg-claude\":false\,\"commit-commands@claude-code-plugins\":false\,\"resolved@resolved\":false\,\"context-efficient-tools@xdg-claude\":false\}\}'
+  printf -v settings '%q' '{"enabledPlugins":{"superpowers@superpowers-dev":false,"agent-smith@agent-smith":false,"frontend-design@claude-plugins-official":false,"refactoring-agent@xdg-claude":false,"commit-commands@claude-code-plugins":false,"resolved@resolved":false,"context-efficient-tools@xdg-claude":false},"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*"]}}'
   [[ "$line" == *"--settings $settings --add-dir "* ]]
   [[ "$line" != *disableAllHooks* ]]
   [[ "$line" != *gopls-lsp* ]]

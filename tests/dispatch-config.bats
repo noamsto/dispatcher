@@ -152,6 +152,25 @@ locked_settings() {
   [[ "$stderr" == *engines* ]]
 }
 
+@test "workerDeniedMcpServers must be an array of MCP server names" {
+  for bad in '"x"' '[1]' '["a/b"]' '["a b"]' '[""]'; do
+    user_settings "{\"workerDeniedMcpServers\":$bad}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"workerDeniedMcpServers must be an array of MCP server names"* ]]
+  done
+}
+
+@test "workerDeniedMcpServers defaults to the interactive browser MCP servers and takes an override" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.workerDeniedMcpServers == ["plugin_hm_playwright", "plugin_hm_firefox-devtools"]' <<<"$output"
+  user_settings '{"workerDeniedMcpServers":["my_browser"]}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.workerDeniedMcpServers == ["my_browser"]' <<<"$output"
+}
+
 @test "openrouter must be an object" {
   user_settings '{"openrouter":"x"}'
   run --separate-stderr "$CONFIG"

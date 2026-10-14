@@ -378,5 +378,6 @@
     "pi": {"model": "openrouter/deepseek/deepseek-v4.1-flash", "effort": "high"}
   },
   "rosterDiagram": {"autoOpen": true},
+  "workerDeniedMcpServers": ["plugin_hm_playwright", "plugin_hm_firefox-devtools"],
   "fleetBudget": 8
 }
