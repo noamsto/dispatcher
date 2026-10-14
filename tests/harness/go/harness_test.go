@@ -453,8 +453,8 @@ func (f *prFixture) setView(sha, state, conclusion string) {
 	f.setViewMergeable(sha, state, conclusion, "baseaaa", "MERGEABLE")
 }
 
-// setViewMergeable additionally pins the base tip and the mergeability state,
-// the two fields pr-watch fires base_sha and mergeable events on.
+// setViewMergeable pins the base tip and the mergeability state, the two
+// fields pr-watch fires base_sha and mergeable events on.
 func (f *prFixture) setViewMergeable(sha, state, conclusion, base, mergeable string) {
 	f.t.Helper()
 	view := fmt.Sprintf(`{"headRefOid":%q,"state":%q,"reviewDecision":"","latestReviews":[],"statusCheckRollup":[{"name":"check","status":"COMPLETED","conclusion":%q}],"comments":[],"baseRefOid":%q,"baseRefName":"main","mergeable":%q}`+"\n", sha, state, conclusion, base, mergeable)
