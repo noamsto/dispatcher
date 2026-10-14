@@ -112,13 +112,15 @@ def refresh_models(h, case_id):
         expect("rm-atomic-model-count", len(json.loads(cache.read_text())["models"]) == 5)
 
 
-def set_view(h, head="aaa11", state="OPEN", conclusion="SUCCESS", pending=False):
+def set_view(h, head="aaa11", state="OPEN", conclusion="SUCCESS", pending=False,
+             base="baseaaa", mergeable="MERGEABLE"):
     checks = ([{"name": "a", "status": "COMPLETED", "conclusion": "SUCCESS"},
                {"name": "b", "status": "IN_PROGRESS", "conclusion": ""}]
               if pending else [{"name": "check", "status": "COMPLETED", "conclusion": conclusion}])
     Path(h.env["GH_VIEW"]).write_text(json.dumps({
         "headRefOid": head, "state": state, "reviewDecision": "",
         "latestReviews": [], "statusCheckRollup": checks, "comments": [],
+        "baseRefOid": base, "baseRefName": "main", "mergeable": mergeable,
     }))
 
 
@@ -144,6 +146,22 @@ def cursor(h, repo="o/r"):
 
 def pr_watch(h, case_id):
     prepare_pr_watch(h)
+    if "missing-base-sha" in case_id:
+        cursor(h).parent.mkdir(parents=True, exist_ok=True)
+        cursor(h).write_text(json.dumps({
+            "head_sha": "aaa11", "state": "OPEN", "review_decision": "", "review_at": "",
+            "checks": "SUCCESS", "thread_at": "", "thread_n": 0,
+        }) + "\n")
+        quiet = h.pr_watch("42", "--repo", "o/r", "--timeout", "1", "--interval", "1")
+        expect("pw-oldcursor-quiet-status", quiet.returncode == 0)
+        expect("pw-oldcursor-quiet-empty-stdout", not quiet.stdout)
+        expect("pw-oldcursor-base-backfilled", json.loads(cursor(h).read_text())["base_sha"] == "baseaaa")
+        set_view(h, base="basebbb")
+        result = h.pr_watch("42", "--repo", "o/r", "--timeout", "30", "--interval", "1")
+        event = json.loads(result.stdout)
+        expect("pw-oldcursor-event-status", result.returncode == 0)
+        expect("pw-oldcursor-event", event["changed"] == ["base_sha"] and event["was"]["base_sha"] == "baseaaa")
+        return
     if "aborts-without" in case_id:
         result = h.pr_watch("--repo", "o/r")
         expect("pw-missing-pr-status", result.returncode == 1)
@@ -197,6 +215,8 @@ def pr_watch(h, case_id):
 
     prefixes = {
         "first-park": "pw",
+        "base-tip": "pw-base", "mergeable-flips": "pw-conflict",
+        "unknown-mergeable": "pw-unknown-mergeable",
         "head-sha": "pw-head", "review-thread": "pw-thread", "in-flight": "pw-pending",
         "rollup": "pw-checks", "merges": "pw-merged", "unchanged": "pw-unchanged",
         "re-delivery": "pw-restart", "crew-id-unset": "pw-no-crew",
@@ -206,6 +226,33 @@ def pr_watch(h, case_id):
     if prefix == "pw-pending":
         set_view(h, pending=True)
     seed(h, prefix)
+    if prefix == "pw-base":
+        set_view(h, base="basebbb")
+        result = h.pr_watch("42", "--repo", "o/r", "--timeout", "30", "--interval", "1")
+        event = json.loads(result.stdout)
+        expect("pw-base-status", result.returncode == 0)
+        expect("pw-base-event", event["changed"] == ["base_sha"])
+        expect("pw-base-state-transition", event["state"]["base_sha"] == "basebbb" and event["was"]["base_sha"] == "baseaaa")
+        return
+    if prefix == "pw-conflict":
+        set_view(h, mergeable="CONFLICTING")
+        result = h.pr_watch("42", "--repo", "o/r", "--timeout", "30", "--interval", "1")
+        event = json.loads(result.stdout)
+        expect("pw-conflict-status", result.returncode == 0)
+        expect("pw-conflict-event", event["changed"] == ["mergeable"])
+        expect("pw-conflict-state-transition", event["state"]["mergeable"] == "CONFLICTING" and event["was"]["mergeable"] == "MERGEABLE")
+        return
+    if prefix == "pw-unknown-mergeable":
+        set_view(h, mergeable="UNKNOWN")
+        result = h.pr_watch("42", "--repo", "o/r", "--timeout", "1", "--interval", "1")
+        expect("pw-unknown-mergeable-status", result.returncode == 0)
+        expect("pw-unknown-mergeable-empty-stdout", not result.stdout)
+        expect("pw-unknown-mergeable-cursor-kept", json.loads(cursor(h).read_text())["mergeable"] == "MERGEABLE")
+        set_view(h)
+        again = h.pr_watch("42", "--repo", "o/r", "--timeout", "1", "--interval", "1")
+        expect("pw-unknown-mergeable-recover-status", again.returncode == 0)
+        expect("pw-unknown-mergeable-recover-empty-stdout", not again.stdout)
+        return
     if "first-park" in case_id:
         expect("pw-first-cursor-exists", cursor(h).is_file())
         return

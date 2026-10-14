@@ -154,8 +154,8 @@ func checkRegistryParity(t *testing.T, cases []testCase) {
 		}
 		wantAssertions[fields[0]][fields[1]] = true
 	}
-	if len(cases) != 33 || len(wantCases) != 33 {
-		t.Fatalf("registry has %d cases and manifest has %d; want 33 each", len(cases), len(wantCases))
+	if len(cases) != 37 || len(wantCases) != 37 {
+		t.Fatalf("registry has %d cases and manifest has %d; want 37 each", len(cases), len(wantCases))
 	}
 	seenCases := make(map[string]bool)
 	for _, tc := range cases {
@@ -450,8 +450,14 @@ case "$1" in pr) cat "$GH_VIEW" ;; api) cat "$GH_THREADS" ;; esac`)
 }
 
 func (f *prFixture) setView(sha, state, conclusion string) {
+	f.setViewMergeable(sha, state, conclusion, "baseaaa", "MERGEABLE")
+}
+
+// setViewMergeable additionally pins the base tip and the mergeability state,
+// the two fields pr-watch fires base_sha and mergeable events on.
+func (f *prFixture) setViewMergeable(sha, state, conclusion, base, mergeable string) {
 	f.t.Helper()
-	view := fmt.Sprintf(`{"headRefOid":%q,"state":%q,"reviewDecision":"","latestReviews":[],"statusCheckRollup":[{"name":"check","status":"COMPLETED","conclusion":%q}],"comments":[]}`+"\n", sha, state, conclusion)
+	view := fmt.Sprintf(`{"headRefOid":%q,"state":%q,"reviewDecision":"","latestReviews":[],"statusCheckRollup":[{"name":"check","status":"COMPLETED","conclusion":%q}],"comments":[],"baseRefOid":%q,"baseRefName":"main","mergeable":%q}`+"\n", sha, state, conclusion, base, mergeable)
 	if err := os.WriteFile(f.view, []byte(view), 0o644); err != nil {
 		f.t.Fatal(err)
 	}
@@ -526,6 +532,55 @@ func prCase(kind string) func(*caseTest) {
 			f.seed("pw-pending-seed-status", "pw-pending-seed-empty-stdout", "pw-pending-seed-timeout-stderr")
 			state := readJSON(t, filepath.Join(f.data, "crew/pr-watch/o/r/42.json"))
 			t.check("pw-pending-state", state["checks"] == "PENDING", "state=%v", state)
+		case "base-tip":
+			f.seed("pw-base-seed-status", "pw-base-seed-empty-stdout", "pw-base-seed-timeout-stderr")
+			f.setViewMergeable("aaa11", "OPEN", "SUCCESS", "basebbb", "MERGEABLE")
+			r := f.runWatch(f.dir, "42", "--repo", "o/r", "--timeout", "30", "--interval", "1")
+			e := decode(t, r.stdout)
+			t.check("pw-base-status", r.status == 0, "status=%d stderr=%q", r.status, r.stderr)
+			t.check("pw-base-event", strings.Join(changed(e), ",") == "base_sha", "event=%v", e)
+			state, was := e["state"].(map[string]any), e["was"].(map[string]any)
+			t.check("pw-base-state-transition", state["base_sha"] == "basebbb" && was["base_sha"] == "baseaaa", "event=%v", e)
+		case "conflicting":
+			f.seed("pw-conflict-seed-status", "pw-conflict-seed-empty-stdout", "pw-conflict-seed-timeout-stderr")
+			f.setViewMergeable("aaa11", "OPEN", "SUCCESS", "baseaaa", "CONFLICTING")
+			r := f.runWatch(f.dir, "42", "--repo", "o/r", "--timeout", "30", "--interval", "1")
+			e := decode(t, r.stdout)
+			t.check("pw-conflict-status", r.status == 0, "status=%d stderr=%q", r.status, r.stderr)
+			t.check("pw-conflict-event", strings.Join(changed(e), ",") == "mergeable", "event=%v", e)
+			state, was := e["state"].(map[string]any), e["was"].(map[string]any)
+			t.check("pw-conflict-state-transition", state["mergeable"] == "CONFLICTING" && was["mergeable"] == "MERGEABLE", "event=%v", e)
+		case "old-cursor":
+			cursor := filepath.Join(f.data, "crew/pr-watch/o/r/42.json")
+			if err := os.MkdirAll(filepath.Dir(cursor), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			legacy := `{"head_sha":"aaa11","state":"OPEN","review_decision":"","review_at":"","checks":"SUCCESS","thread_at":"","thread_n":0}` + "\n"
+			if err := os.WriteFile(cursor, []byte(legacy), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			quiet := f.runWatch(f.dir, "42", "--repo", "o/r", "--timeout", "1", "--interval", "1")
+			t.check("pw-oldcursor-quiet-status", quiet.status == 0, "status=%d stderr=%q", quiet.status, quiet.stderr)
+			t.check("pw-oldcursor-quiet-empty-stdout", quiet.stdout == "", "stdout=%q", quiet.stdout)
+			state := readJSON(t, cursor)
+			t.check("pw-oldcursor-base-backfilled", state["base_sha"] == "baseaaa", "state=%v", state)
+			f.setViewMergeable("aaa11", "OPEN", "SUCCESS", "basebbb", "MERGEABLE")
+			r := f.runWatch(f.dir, "42", "--repo", "o/r", "--timeout", "30", "--interval", "1")
+			e := decode(t, r.stdout)
+			t.check("pw-oldcursor-event-status", r.status == 0, "status=%d stderr=%q", r.status, r.stderr)
+			t.check("pw-oldcursor-event", strings.Join(changed(e), ",") == "base_sha" && e["was"].(map[string]any)["base_sha"] == "baseaaa", "event=%v", e)
+		case "unknown-mergeable":
+			f.seed("pw-unknown-mergeable-seed-status", "pw-unknown-mergeable-seed-empty-stdout", "pw-unknown-mergeable-seed-timeout-stderr")
+			f.setViewMergeable("aaa11", "OPEN", "SUCCESS", "baseaaa", "UNKNOWN")
+			r := f.runWatch(f.dir, "42", "--repo", "o/r", "--timeout", "1", "--interval", "1")
+			t.check("pw-unknown-mergeable-status", r.status == 0, "status=%d stderr=%q", r.status, r.stderr)
+			t.check("pw-unknown-mergeable-empty-stdout", r.stdout == "", "stdout=%q", r.stdout)
+			state := readJSON(t, filepath.Join(f.data, "crew/pr-watch/o/r/42.json"))
+			t.check("pw-unknown-mergeable-cursor-kept", state["mergeable"] == "MERGEABLE", "state=%v", state)
+			f.setView("aaa11", "OPEN", "SUCCESS")
+			again := f.runWatch(f.dir, "42", "--repo", "o/r", "--timeout", "1", "--interval", "1")
+			t.check("pw-unknown-mergeable-recover-status", again.status == 0, "status=%d stderr=%q", again.status, again.stderr)
+			t.check("pw-unknown-mergeable-recover-empty-stdout", again.stdout == "", "stdout=%q", again.stdout)
 		case "merged":
 			f.seed("pw-merged-seed-status", "pw-merged-seed-empty-stdout", "pw-merged-seed-timeout-stderr")
 			f.setView("aaa11", "MERGED", "SUCCESS")
@@ -690,6 +745,10 @@ func manifestCases() []testCase {
 		{"pr-watch-fires-on-a-new-review-thread-reply", ids("pw-thread-seed-status", "pw-thread-seed-empty-stdout", "pw-thread-seed-timeout-stderr", "pw-thread-status", "pw-thread-change-set", "pw-thread-count"), prCase("thread")},
 		{"pr-watch-fires-when-the-check-rollup-conclusion-flips", ids("pw-checks-seed-status", "pw-checks-seed-empty-stdout", "pw-checks-seed-timeout-stderr", "pw-checks-status", "pw-checks-event"), prCase("checks")},
 		{"pr-watch-one-in-flight-check-keeps-the-rollup-pending-not-successful", ids("pw-pending-seed-status", "pw-pending-seed-empty-stdout", "pw-pending-seed-timeout-stderr", "pw-pending-state"), prCase("pending")},
+		{"pr-watch-fires-when-the-base-tip-advances", ids("pw-base-seed-status", "pw-base-seed-empty-stdout", "pw-base-seed-timeout-stderr", "pw-base-status", "pw-base-event", "pw-base-state-transition"), prCase("base-tip")},
+		{"pr-watch-fires-when-mergeable-flips-to-conflicting", ids("pw-conflict-seed-status", "pw-conflict-seed-empty-stdout", "pw-conflict-seed-timeout-stderr", "pw-conflict-status", "pw-conflict-event", "pw-conflict-state-transition"), prCase("conflicting")},
+		{"pr-watch-an-old-cursor-missing-base-sha-stays-quiet-until-the-base-moves", ids("pw-oldcursor-quiet-status", "pw-oldcursor-quiet-empty-stdout", "pw-oldcursor-base-backfilled", "pw-oldcursor-event-status", "pw-oldcursor-event"), prCase("old-cursor")},
+		{"pr-watch-unknown-mergeable-is-not-an-event-and-the-cursor-keeps-the-last-known-value", ids("pw-unknown-mergeable-seed-status", "pw-unknown-mergeable-seed-empty-stdout", "pw-unknown-mergeable-seed-timeout-stderr", "pw-unknown-mergeable-status", "pw-unknown-mergeable-empty-stdout", "pw-unknown-mergeable-cursor-kept", "pw-unknown-mergeable-recover-status", "pw-unknown-mergeable-recover-empty-stdout"), prCase("unknown-mergeable")},
 		{"pr-watch-fires-when-the-pr-merges", ids("pw-merged-seed-status", "pw-merged-seed-empty-stdout", "pw-merged-seed-timeout-stderr", "pw-merged-status", "pw-merged-event"), prCase("merged")},
 		{"pr-watch-an-unchanged-poll-reports-nothing-and-exits-0", ids("pw-unchanged-seed-status", "pw-unchanged-seed-empty-stdout", "pw-unchanged-seed-timeout-stderr", "pw-unchanged-status", "pw-unchanged-empty-stdout"), prCase("unchanged")},
 		{"pr-watch-the-cursor-prevents-re-delivery-across-restarts", ids("pw-restart-seed-status", "pw-restart-seed-empty-stdout", "pw-restart-seed-timeout-stderr", "pw-restart-event-status", "pw-restart-event-stdout", "pw-restart-repeat-status", "pw-restart-repeat-empty-stdout"), prCase("restart")},

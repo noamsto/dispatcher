@@ -1,6 +1,6 @@
 # ShellSpec prototype
 
-This bench-only suite ports the 26 canonical cases without adding ShellSpec to
+This bench-only suite ports the 37 canonical cases without adding ShellSpec to
 the default development shell. Run it with:
 
 ```console
