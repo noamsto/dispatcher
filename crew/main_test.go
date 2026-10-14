@@ -1110,8 +1110,8 @@ var refusalRows = []struct {
 	{"status bad bool", []string{"status", "w1", "blocked", "--restamp=nope"},
 		`crew: status: --restamp: bool value must be true, 1, yes, false, 0 or no but got "nope"`, 1},
 
-	{"reply unknown flag", []string{"reply", "--bogus", "worker:x", "go"}, "crew: reply: unknown flag '--bogus'", 1},
-	{"reply single-dash body", []string{"reply", "worker:x", "-5"}, "crew: reply: unknown flag '-5'", 1},
+	{"reply unknown flag", []string{"reply", "--bogus", "worker:x", "go"}, "crew: reply: unknown arg '--bogus' (use -- before a body that starts with dashes)", 1},
+	{"reply single-dash body", []string{"reply", "worker:x", "-5"}, "crew: reply: unknown arg '-5' (use -- before a body that starts with dashes)", 1},
 	{"reply extra positional", []string{"reply", "worker:x", "go", "more"}, "crew: reply: unexpected argument 'more'", 1},
 	{"reply crew missing value", []string{"reply", "worker:x", "go", "--crew"}, "crew: --crew needs a value", 1},
 	{"reply crew empty value", []string{"reply", "worker:x", "go", "--crew", ""}, "crew: --crew needs a value", 1},
@@ -1152,6 +1152,8 @@ var refusalRows = []struct {
 	{"hold add spec missing value", []string{"hold", "add", "--engine", "e", "--spec"}, "crew: --spec needs a value", 1},
 	{"hold add crew empty value", []string{"hold", "add", "--crew", "", "t"}, "crew: --crew needs a value", 1},
 	// The flag table's order decides which empty value is named, not argv order.
+	{"hold add leading double dash", []string{"hold", "add", "--engine", "e", "--window", "w", "--", "--t"}, "crew: hold add: unknown arg '--'", 1},
+	{"hold add bare double dash", []string{"hold", "add", "--engine", "e", "--window", "w", "--"}, "crew: hold add: unknown arg '--'", 1},
 	{"hold add two empty values", []string{"hold", "add", "--model", "", "--window", ""}, "crew: --window needs a value", 1},
 
 	{"nudge unknown flag", []string{"nudge", "--bogus", "nova"}, "crew: nudge: unknown flag '--bogus' (usage: " + nudge.Usage + ")", 1},
@@ -1159,6 +1161,8 @@ var refusalRows = []struct {
 	{"nudge crew missing value", []string{"nudge", "nova", "--crew"}, "crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")", 1},
 	{"nudge crew empty value", []string{"nudge", "--crew", "", "nova"}, "crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")", 1},
 	{"nudge crew empty value equals", []string{"nudge", "--crew=", "nova"}, "crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")", 1},
+	// A bare --wait takes the next flag as its value, so it must come last or take a number.
+	{"nudge bare wait before a flag", []string{"nudge", "--wait", "--crew", "X", "nova"}, "crew: nudge: one target only (usage: " + nudge.Usage + ")", 1},
 	// `--wait abc` after a target is a second target, as the arm answered.
 	{"nudge wait word after a target", []string{"nudge", "nova", "--wait", "abc"}, "crew: nudge: one target only (usage: " + nudge.Usage + ")", 1},
 	{"nudge wait word before a target", []string{"nudge", "--wait", "abc", "nova"}, "crew: nudge: one target only (usage: " + nudge.Usage + ")", 1},
@@ -1515,7 +1519,6 @@ func TestFlagSpellingsAreIdentical(t *testing.T) {
 			[]string{"roster-render", "--crew=c1", "--quiet=x"}, true},
 		{"roster-render --once --detach", []string{"roster-render", "--crew", "c1", "--once", "--detach"},
 			[]string{"roster-render", "--crew", "c1", "--once=true", "--detach=true"}, true},
-		// refused once the sender check passes: --restamp needs state blocked.
 		{"hold list --json --crew", []string{"hold", "list", "--json", "--crew", "c1"}, []string{"hold", "list", "--json=true", "--crew=c1"}, false},
 		{"hold due --json --crew", []string{"hold", "due", "--json", "--crew", "c1"}, []string{"hold", "due", "--json=true", "--crew=c1"}, false},
 		{"hold park --crew", []string{"hold", "park", "60", "--crew", "c1"}, []string{"hold", "park", "60", "--crew=c1"}, false},
@@ -1539,6 +1542,7 @@ func TestFlagSpellingsAreIdentical(t *testing.T) {
 		{"watch --timeout zero", []string{"watch", "--timeout", "0"}, []string{"watch", "--timeout=0"}, true},
 		{"watch --states only commas", []string{"watch", "--states", ","}, []string{"watch", "--states=,"}, true},
 		{"watch --since bad", []string{"watch", "--since", "x"}, []string{"watch", "--since=x"}, true},
+		// refused once the sender check passes: --restamp needs state blocked.
 		{"status --restamp", []string{"status", me, "working", "--restamp"}, []string{"status", me, "working", "--restamp=true"}, true},
 		{"stack cut --record", []string{"stack", "cut", "--record", "feat/x", "abc"},
 			[]string{"stack", "cut", "--record=true", "feat/x", "abc"}, true},
@@ -1725,6 +1729,7 @@ func TestHoldAddTitleIsVerbatimAfterTheFirstWord(t *testing.T) {
 		{[]string{"hold", "add", "my", "--draft", "title"}, false, []string{"my", "--draft", "title"}},
 		{[]string{"hold", "add", "--draft", "my", "--engine", "x"}, true, []string{"my", "--engine", "x"}},
 		{[]string{"hold", "add", "a", "-x"}, false, []string{"a", "-x"}},
+		{[]string{"hold", "add", "fix", "--", "x"}, false, []string{"fix", "--", "x"}},
 	} {
 		parsed, ok := parseCrew(tc.args)
 		got := parsed.typed.Hold.Add

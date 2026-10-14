@@ -315,8 +315,14 @@ var wordings = map[string]wording{
 		extra: func(w string) string { return fmt.Sprintf("crew: status: unexpected argument '%s'", w) },
 		code:  exitFailure,
 	},
-	"reply": plain("reply"),
-	"hold":  {all: hold.Usage, code: exitFailure},
+	"reply": {
+		unknownFlag: func(f string) string {
+			return fmt.Sprintf("crew: reply: unknown arg '%s' (use -- before a body that starts with dashes)", f)
+		},
+		extra: func(w string) string { return fmt.Sprintf("crew: reply: unexpected argument '%s'", w) },
+		code:  exitFailure,
+	},
+	"hold": {all: hold.Usage, code: exitFailure},
 	"hold add": {
 		unknownFlag: func(f string) string { return fmt.Sprintf("crew: hold add: unknown arg '%s'", f) },
 		extra:       func(w string) string { return fmt.Sprintf("crew: hold add: unknown arg '%s'", w) },
@@ -494,6 +500,9 @@ func validate(sub string, r *root) *refusal {
 		}
 	case "hold add":
 		c := r.Hold.Add
+		if len(c.Title) > 0 && c.Title[0] == "--" {
+			return fail("crew: hold add: unknown arg '--'")
+		}
 		for _, f := range []struct {
 			name string
 			v    *string

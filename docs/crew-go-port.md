@@ -675,11 +675,15 @@ The fourth slice (`msg`, `status`, `reply`, `hold`, `nudge`, `await`, `watch`,
   detail that starts with any dash, single included, now needs `--` (was: only
   `--`-led ones); a fifth word refuses; the unknown-flag line keeps the `use --`
   hint. `reply` binds `<to> <body>` and `--crew` anywhere (it is documented after
-  the body), so a dash-led body needs `--` too (was: posted).
+  the body), so a dash-led body needs `--` too (was: posted); a third word refuses (was
+  ignored) and the unknown-flag line carries the `use --` hint.
 - `hold`'s actions are kong subcommands; each action's grammar fault prints that
   action's usage line, anything else `crew: hold add|list|due|park|release`.
   `hold add`'s title is `passthrough:"partial"`: from the first title word on,
-  every word is title, as the arm's `break` had it.
+  every word is title, as the arm's `break` had it; a leading `--` is still
+  refused. `hold park -5` and `hold park abc --bogus` now print the park usage
+  line (kong reads `-5` as a flag) where the arm printed `must be a positive
+integer number of seconds`.
 - `nudge --wait` is a `*string`: a bare trailing `--wait` is 1800 s, a non-digit
   value with no target becomes the target (the arm's `--wait nova`), with a target
   bound it is the `one target only` refusal. `--wait --crew c nova` binds `--crew`
