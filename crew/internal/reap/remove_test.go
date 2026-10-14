@@ -92,7 +92,7 @@ func TestReapRowWriteFailureContinues(t *testing.T) {
 		return nil
 	}
 
-	if rc := f.reap(f.main); rc != 0 {
+	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	f.wantOut(
@@ -154,7 +154,7 @@ func TestReapRowAndAnchor(t *testing.T) {
 		"@1 " + f.wt + " ", "@2 /elsewhere " + f.wt, "@3 " + f.wt + "x /x",
 	}, "\n")
 
-	if rc := f.reap(f.main); rc != 0 {
+	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	f.wantOut(
@@ -196,7 +196,7 @@ func TestReapKeepsDirectoryAnchor(t *testing.T) {
 	f.gh["pr view "+prURL+" --json state --jq .state"] = "CLOSED"
 	f.gh["pr view "+prURL+" --json closingIssuesReferences --jq .closingIssuesReferences[].number"] = ""
 
-	if rc := f.reap(f.main); rc != 0 {
+	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	if fi, err := os.Lstat(anchor); err != nil || !fi.IsDir() {
@@ -213,7 +213,7 @@ func TestIssueModeReap(t *testing.T) {
 	f.bus(status("done", "", 0), `{"ts":1,"crew_id":"c1","kind":"claim-issue","branch":"`+rb+`","issue":5}`)
 	f.gh["pr list --head feat/r --state all --json url,state,headRefOid,isCrossRepository"] = "[]"
 	f.gh["issue view 5 --json state --jq .state"] = "CLOSED"
-	if rc := f.reap(f.main); rc != 0 {
+	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	f.wantOut("crew reap: reaped feat/r (issue #5 CLOSED)")
@@ -237,7 +237,7 @@ func TestLeftoverProcesses(t *testing.T) {
 	}, "\n")
 	f.ancestors = map[int]bool{104: true}
 	anchor, _ := wtgit.AnchorPath(f.wt)
-	f.reap(f.main, "--dry-run")
+	f.reap(f.main, Request{DryRun: true})
 	f.wantOut(
 		"crew reap: would kill pid 101 (cwd "+f.wt+")",
 		"crew reap: would kill pid 102 (cwd "+f.wt+"/sub (deleted))",
@@ -248,7 +248,7 @@ func TestLeftoverProcesses(t *testing.T) {
 		t.Fatalf("dry run signalled: %q", f.calls)
 	}
 
-	f.reap(f.main)
+	f.reap(f.main, Request{})
 	if !slices.Contains(f.calls, "kill 101") || !slices.Contains(f.calls, "kill 102") || slices.Contains(f.calls, "kill 103") || slices.Contains(f.calls, "kill 104") {
 		t.Fatalf("calls %q", f.calls)
 	}

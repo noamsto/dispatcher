@@ -63,12 +63,8 @@ type run struct {
 //
 // Run changes the process's working directory to the trusted cwd, as the arm
 // `cd`'d.
-func Run(ctx context.Context, args []string, paths bus.Paths, cwd string, stdout, stderr io.Writer, o Options) int {
-	fl, ok := parseFlags(args, stderr)
-	if !ok {
-		return 1
-	}
-	r := &run{flags: fl, paths: paths, reapCwd: cwd, p: o.Probes, o: o, stdout: stdout, stderr: stderr, clean: &cleaner{}}
+func Run(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, stderr io.Writer, o Options) int {
+	r := &run{flags: newFlags(req), paths: paths, reapCwd: cwd, p: o.Probes, o: o, stdout: stdout, stderr: stderr, clean: &cleaner{}}
 	// Never run reap's git from a worker's worktree (#633).
 	dir, err := wtgit.TrustedCwd(paths.Common, cwd, stderr)
 	if err == nil {

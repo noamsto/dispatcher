@@ -777,7 +777,7 @@ func TestAdmittedSubcommands(t *testing.T) {
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
-		"status", "msg", "reply", "hold", "nudge", "await", "watch", "stream", "git-guard", "git-baseline"} {
+		"status", "msg", "reply", "hold", "nudge", "await", "watch", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -829,11 +829,9 @@ func TestParseCrewSplitsLeadingEquals(t *testing.T) {
 	}{
 		{[]string{"adopt", "--crew=x"}, []string{"--crew", "x"}},
 		{[]string{"pr-watch", "--since=5"}, []string{"--since", "5"}},
-		{[]string{"reap", "--idle=5"}, []string{"--idle", "5"}},
 		// Everything else about a passthrough command's argv does arrive whole,
 		// `--` and flag-shaped detail text included.
 		{[]string{"pr-watch", "w1", "working", "--help"}, []string{"w1", "working", "--help"}},
-		{[]string{"reap", "--", "--idle=5"}, []string{"--", "--idle=5"}},
 		{[]string{"adopt", "--"}, []string{"--"}},
 		{[]string{"adopt", "-x"}, []string{"-x"}},
 		{[]string{"adopt", ""}, []string{""}},
@@ -976,8 +974,7 @@ func TestRunConvertedSubcommands(t *testing.T) {
 // TestRunPassthroughArgvReachesItsArm is the other half of the contract: a
 // subcommand kong only names still parses its own words. Each row is an answer
 // only the arm's own parsing produces, so a dropped, split or re-read token
-// fails it — `--idle=5` as an unknown flag rather than a value, `--help` as
-// detail text.
+// fails it — a flag-shaped id read whole rather than as a flag.
 func TestRunPassthroughArgvReachesItsArm(t *testing.T) {
 	repo, _ := repoWithLog(t, &statusRow, 0o644)
 	t.Setenv("CREW_ID", "c1")
@@ -989,10 +986,6 @@ func TestRunPassthroughArgvReachesItsArm(t *testing.T) {
 		code           int
 		stdout, stderr string
 	}{
-		{name: "reap refuses --idle=5 as an unknown flag", args: []string{"reap", "--idle=5"}, code: exitFailure,
-			stderr: "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH (got '--idle=5')\n"},
-		{name: "reap keeps words after a separator together", args: []string{"reap", "--dry-run", "--idle=5"}, code: exitFailure,
-			stderr: "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH (got '--idle=5')\n"},
 		{name: "adopt reads a flag-shaped id whole", args: []string{"adopt", "--bogus"}, code: exitFailure,
 			stderr: "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n"},
 	} {
@@ -1216,6 +1209,14 @@ var refusalRows = []struct {
 		`crew: roster-render: --once: bool value must be true, 1, yes, false, 0 or no but got "nope"`, 64},
 	// An unknown argument outranks a bad interval, as it did in the arm's loop.
 	{"roster-render unknown beats interval", []string{"roster-render", "--bogus", "--interval", "x"}, "crew: roster-render: unknown arg '--bogus'", 64},
+	{"reap unknown flag", []string{"reap", "--bogus"}, reapUsage + "(got '--bogus')", 1},
+	{"reap extra positional", []string{"reap", "extra"}, reapUsage + "(got 'extra')", 1},
+	{"reap unknown flag equals", []string{"reap", "--bogus=x"}, reapUsage + "(got '--bogus')", 1},
+	{"reap idle missing value", []string{"reap", "--idle"}, "crew: --idle needs a value in seconds", 1},
+	{"reap idle empty value", []string{"reap", "--idle", ""}, "crew: --idle needs a value in seconds", 1},
+	{"reap discard missing value", []string{"reap", "--discard"}, "crew: --discard needs a branch", 1},
+	{"reap idle not digits", []string{"reap", "--idle", "abc"}, "crew: --idle must be a non-negative integer number of seconds", 1},
+	{"reap idle negative", []string{"reap", "--idle", "-5"}, "crew: --idle must be a non-negative integer number of seconds", 1},
 }
 
 // preLocateRefusalRows are the refusals of the two modes that run outside any
@@ -1288,6 +1289,7 @@ const (
 	stackUsage       = "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n       crew stack align <top-PR#|branch>"
 	rateRootNeedsDir = "crew: rate --root needs a directory"
 	whereUsage       = "usage: crew where <codename|branch|%id> [--crew ID]"
+	reapUsage        = "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH "
 	baselineUsage    = "usage: crew git-baseline [--accept]"
 	guardUsage       = "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …"
 )
@@ -1659,6 +1661,10 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 		{"roster-render bools", []string{"roster-render", "--no-open", "--once", "--detach"},
 			[]string{"roster-render", "--no-open=true", "--once=true", "--detach=true"}, false},
 		{"git-baseline --accept", []string{"git-baseline", "--accept"}, []string{"git-baseline", "--accept=true"}, false},
+		{"reap --idle", []string{"reap", "--idle", "5"}, []string{"reap", "--idle=5"}, false},
+		{"reap --discard", []string{"reap", "--discard", "b"}, []string{"reap", "--discard=b"}, false},
+		{"reap bools", []string{"reap", "--quiet", "--dry-run", "--no-wait"}, []string{"reap", "--quiet=true", "--dry-run=true", "--no-wait=true"}, false},
+		{"reap --idle empty", []string{"reap", "--idle", ""}, []string{"reap", "--idle="}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, okA := parseCrew(tc.a)

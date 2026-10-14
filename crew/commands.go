@@ -250,6 +250,14 @@ type watchCmd struct {
 	Crew     *string `name:"crew"`
 }
 
+type reapCmd struct {
+	Quiet   bool    `name:"quiet"`
+	DryRun  bool    `name:"dry-run"`
+	NoWait  bool    `name:"no-wait"`
+	Idle    *string `name:"idle"`
+	Discard *string `name:"discard"`
+}
+
 type gitBaselineCmd struct {
 	Accept bool `name:"accept"`
 }
@@ -431,6 +439,15 @@ var wordings = map[string]wording{
 	"log":          plain("log"),
 	"git-baseline": {all: gitBaselineUsage, code: exitFailure},
 	"git-guard":    {all: gitguard.GuardUsage, code: exitUsage},
+	"reap": {
+		unknownFlag: reapUnknown,
+		extra:       reapUnknown,
+		code:        exitFailure,
+	},
+}
+
+func reapUnknown(tok string) string {
+	return "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH (got '" + tok + "')"
 }
 
 // kongRefusal maps kong's error for the refusal key (a subcommand, or `hold <action>`
@@ -545,6 +562,17 @@ func validate(sub string, r *root) *refusal {
 		// Marks exist only for a session; the suffix check above covers any worker id.
 		if c.Undelivered && !strings.HasPrefix(c.Agent, "worker:") {
 			return fail("crew: inbox: --undelivered needs a worker session id ($CREW_WORKER_ID)")
+		}
+	case "reap":
+		c := r.Reap
+		if given(c.Idle) {
+			return fail("crew: --idle needs a value in seconds")
+		}
+		if given(c.Discard) {
+			return fail("crew: --discard needs a branch")
+		}
+		if c.Idle != nil && !isDigits(*c.Idle) {
+			return fail("crew: --idle must be a non-negative integer number of seconds")
 		}
 	case "reply":
 		if given(r.Reply.Crew) {

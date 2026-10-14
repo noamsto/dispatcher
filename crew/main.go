@@ -146,7 +146,7 @@ var typedSubcommands = map[string]bool{
 	"stack": true, "roster-render": true, "pi-agent-dir": true,
 	"status": true, "msg": true, "reply": true, "hold": true,
 	"nudge": true, "await": true, "watch": true, "stream": true,
-	"git-guard": true, "git-baseline": true,
+	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
 }
 
 // passthroughCmd is one unconverted subcommand to kong: its name, then whatever
@@ -207,6 +207,9 @@ type root struct {
 
 	GitGuard    gitGuardCmd    `cmd:"" name:"git-guard" help:"The git-config guard worktree-git.sh runs."`
 	GitBaseline gitBaselineCmd `cmd:"" name:"git-baseline" help:"List or accept the git-config baseline."`
+
+	Reap          reapCmd `cmd:"" name:"reap" help:"Reclaim the windows and worktrees of landed workers."`
+	ReapAutosweep argvCmd `cmd:"" name:"reap-autosweep" help:"The detached ratings sweep reap starts."`
 }
 
 // crewArgs is what the root parse resolves to: the word that named the
@@ -490,9 +493,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			},
 		}
 		if sub == "reap-autosweep" {
-			return reap.RunAutosweep(args, paths, cwd, o)
+			return reap.RunAutosweep(paths, cwd, o)
 		}
-		return reap.Run(ctx, args, paths, cwd, stdout, stderr, o)
+		c := parsed.typed.Reap
+		return reap.Run(ctx, reap.Request{
+			Quiet: c.Quiet, DryRun: c.DryRun, NoWait: c.NoWait, Idle: str(c.Idle), Discard: str(c.Discard),
+		}, paths, cwd, stdout, stderr, o)
 	}
 
 	// stack cut/align read the bus and the anchored git of the repo they are

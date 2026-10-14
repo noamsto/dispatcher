@@ -168,12 +168,12 @@ func (f *fx) opts() Options {
 	}
 }
 
-// reap runs `crew reap args…` from cwd.
-func (f *fx) reap(cwd string, args ...string) int {
+// reap runs `crew reap` from cwd with req.
+func (f *fx) reap(cwd string, req Request) int {
 	f.t.Helper()
 	f.stdout.Reset()
 	f.stderr.Reset()
-	return Run(context.Background(), args, f.paths, cwd, &f.stdout, &f.stderr, f.opts())
+	return Run(context.Background(), req, f.paths, cwd, &f.stdout, &f.stderr, f.opts())
 }
 
 func (f *fx) bus(rows ...string) {
@@ -211,35 +211,14 @@ func (f *fx) wantErr(want string) {
 	}
 }
 
-func TestFlagRefusals(t *testing.T) {
-	cases := []struct {
-		args []string
-		line string
-	}{
-		{[]string{"--idle"}, "crew: --idle needs a value in seconds"},
-		{[]string{"--idle", ""}, "crew: --idle needs a value in seconds"},
-		{[]string{"--discard"}, "crew: --discard needs a branch"},
-		{[]string{"--quiet", "--bogus"}, "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH (got '--bogus')"},
-		{[]string{"--idle", "1x"}, "crew: --idle must be a non-negative integer number of seconds"},
-		{[]string{"--idle", "-1"}, "crew: --idle must be a non-negative integer number of seconds"},
-	}
-	for _, c := range cases {
-		var stdout, stderr bytes.Buffer
-		rc := Run(context.Background(), c.args, bus.Paths{}, "/nonexistent", &stdout, &stderr, Options{})
-		if rc != 1 || stdout.Len() != 0 || stderr.String() != c.line+"\n" {
-			t.Errorf("%q: rc=%d stdout=%q stderr=%q, want 1 and %q", c.args, rc, stdout.String(), stderr.String(), c.line)
-		}
-	}
-}
-
 func TestMissingLog(t *testing.T) {
 	f := newFx(t)
-	if rc := f.reap(f.main); rc != 0 {
+	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d, want 0", rc)
 	}
 	f.wantOut()
 	f.wantErr("")
-	if rc := f.reap(f.main, "--discard", rb); rc != 1 {
+	if rc := f.reap(f.main, Request{Discard: rb}); rc != 1 {
 		t.Fatalf("--discard rc=%d, want 1", rc)
 	}
 	f.wantErr("crew reap: refusing --discard feat/r — latest status is none\n")
@@ -261,7 +240,7 @@ func TestTrustedCwdChdir(t *testing.T) {
 	}
 	f.bus(status("done", prURL, 0))
 	f.gh["pr view "+prURL+" --json state --jq .state"] = "OPEN"
-	if rc := f.reap(f.wt); rc != 0 {
+	if rc := f.reap(f.wt, Request{}); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	f.wantOut("crew reap: keeping feat/r — PR OPEN", "crew reap: nothing reclaimed")
@@ -281,7 +260,7 @@ func TestTrustedCwdRefusalExits1(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.bus(status("done", prURL, 0))
-	if rc := f.reap(f.wt); rc != 1 {
+	if rc := f.reap(f.wt, Request{}); rc != 1 {
 		t.Fatalf("rc=%d, want 1", rc)
 	}
 	if !strings.Contains(f.stderr.String(), "possible tampering") || len(f.calls) != 0 {
@@ -298,21 +277,21 @@ func TestLockBusy(t *testing.T) {
 	}
 	t.Cleanup(func() { lock.Release(ld) })
 
-	if rc := f.reap(f.main, "--no-wait"); rc != 0 {
+	if rc := f.reap(f.main, Request{NoWait: true}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
 	f.wantOut("crew reap: another reap is running — skipped")
-	if rc := f.reap(f.main, "--no-wait", "--quiet"); rc != 0 {
+	if rc := f.reap(f.main, Request{NoWait: true, Quiet: true}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
 	f.wantOut()
-	if rc := f.reap(f.main, "--no-wait", "--discard", rb); rc != 1 {
+	if rc := f.reap(f.main, Request{NoWait: true, Discard: rb}); rc != 1 {
 		t.Fatalf("--discard rc=%d", rc)
 	}
 	f.wantErr("crew reap: refusing --discard feat/r — another reap is running\n")
 
 	f.sleeps = 0
-	if rc := f.reap(f.main); rc != 0 {
+	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
 	f.wantOut("crew reap: another reap is still running after 120s — skipped")
@@ -324,7 +303,7 @@ func TestLockBusy(t *testing.T) {
 func TestReleasesLockOnReturn(t *testing.T) {
 	f := newFx(t)
 	f.bus()
-	if rc := f.reap(f.main); rc != 0 {
+	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
 	f.wantOut("crew reap: nothing done to reap")
@@ -340,7 +319,7 @@ func TestCandidateFoldOnCorruptBus(t *testing.T) {
 	if err := os.WriteFile(f.paths.Log, []byte(status("done", prURL, 0)+"\n{\"ts\":\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if rc := f.reap(f.main); rc != 5 {
+	if rc := f.reap(f.main, Request{}); rc != 5 {
 		t.Fatalf("rc=%d, want 5; stderr %q", rc, f.stderr.String())
 	}
 	f.wantOut()
@@ -359,7 +338,7 @@ func TestCandidateFoldOnUnreadableBus(t *testing.T) {
 	if err := os.Chmod(f.paths.Log, 0); err != nil {
 		t.Fatal(err)
 	}
-	if rc := f.reap(f.main); rc != 2 {
+	if rc := f.reap(f.main, Request{}); rc != 2 {
 		t.Fatalf("rc=%d, want 2; stderr %q", rc, f.stderr.String())
 	}
 	if !strings.HasPrefix(f.stderr.String(), "crew: reap: "+f.paths.Log+": ") {
@@ -371,7 +350,7 @@ func TestNeedsGh(t *testing.T) {
 	f := newFx(t)
 	f.bus(status("done", prURL, 0))
 	f.noGh = true
-	if rc := f.reap(f.main); rc != 0 {
+	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
 	f.wantOut("crew reap: needs gh")
@@ -386,7 +365,7 @@ func TestOrphanWindows(t *testing.T) {
 		"@7\tfeat/gone\t/other/crew",
 		"@6\t\t" + f.paths.Dir,
 	}, "\n")
-	if rc := f.reap(f.main); rc != 0 {
+	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
 	f.wantOut(
@@ -401,7 +380,7 @@ func TestCrossRepoPRIgnoredThenGitHubPR(t *testing.T) {
 	f.gh["pr list --head feat/r --state all --json url,state,headRefOid,isCrossRepository"] =
 		`[{"url":"https://github.com/z/fork/pull/3","isCrossRepository":true},{"url":"https://github.com/o/r/pull/9","state":"OPEN","headRefOid":"abc","isCrossRepository":false}]`
 	f.gh["pr view https://github.com/o/r/pull/9 --json state --jq .state"] = "OPEN"
-	if rc := f.reap(f.main); rc != 0 {
+	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d", rc)
 	}
 	f.wantOut(
@@ -415,12 +394,12 @@ func TestFindPRFailures(t *testing.T) {
 	f.bus(status("done", "", 0))
 	list := "pr list --head feat/r --state all --json url,state,headRefOid,isCrossRepository"
 	f.ghFail[list] = true
-	f.reap(f.main)
+	f.reap(f.main, Request{})
 	f.wantOut("crew reap: keeping feat/r — could not list PRs for feat/r", "crew reap: nothing reclaimed")
 
 	f.ghFail[list] = false
 	f.gh[list] = `[{"url":"https://example.com/nope","isCrossRepository":false}]`
-	f.reap(f.main)
+	f.reap(f.main, Request{})
 	f.wantOut("crew reap: keeping feat/r — could not read PRs for feat/r", "crew reap: nothing reclaimed")
 }
 
@@ -433,16 +412,16 @@ func TestIssueMode(t *testing.T) {
 	f.gh["pr list --head feat/r --state all --json url,state,headRefOid,isCrossRepository"] = "[]"
 	f.gh["issue view 5 --json state --jq .state"] = "CLOSED"
 	f.gh["issue view 6 --json state --jq .state"] = "OPEN"
-	f.reap(f.main)
+	f.reap(f.main, Request{})
 	f.wantOut("crew reap: keeping feat/r — done but no PR on the bus or GitHub; issue #6 is OPEN", "crew reap: nothing reclaimed")
 
 	// Both closed: no origin default branch ref in this repo keeps it.
 	f.gh["issue view 6 --json state --jq .state"] = "CLOSED"
-	f.reap(f.main)
+	f.reap(f.main, Request{})
 	f.wantOut("crew reap: keeping feat/r — done but no PR on the bus or GitHub; no origin default branch ref", "crew reap: nothing reclaimed")
 
 	f.bus(status("exited", "", 0))
-	f.reap(f.main)
+	f.reap(f.main, Request{})
 	f.wantOut("crew reap: keeping feat/r — exited but no PR on the bus or GitHub; only done/failed reclaim on a closed issue", "crew reap: nothing reclaimed")
 }
 
@@ -469,11 +448,11 @@ func TestMergedPRReachesRemoval(t *testing.T) {
 	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	f.reap(f.main)
+	f.reap(f.main, Request{})
 	f.wantOut("crew reap: keeping feat/r — uncommitted changes", "crew reap: nothing reclaimed")
 
 	// The caller standing in the worktree keeps it.
-	f.reap(f.wt)
+	f.reap(f.wt, Request{})
 	f.wantOut("crew reap: keeping feat/r — it is the current worktree", "crew reap: nothing reclaimed")
 
 	// Scaffold is not dirt: it goes to the trash and the tree is reaped.
@@ -483,7 +462,7 @@ func TestMergedPRReachesRemoval(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.wt, "PLAN.md"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if rc := f.reap(f.main); rc != 0 {
+	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	f.wantOut("crew reap: reaped feat/r (MERGED)", "crew reap: kept local branch feat/r — could not verify the merged PR head")
@@ -500,7 +479,7 @@ func TestEarlierPRHeadCheck(t *testing.T) {
 	f.bus(earlier, status("done", "", 0))
 	f.gh["pr view "+prURL+" --json state --jq .state"] = "MERGED"
 	f.gh["pr view "+prURL+" --json headRefOid --jq .headRefOid"] = "0123456789012345678901234567890123456789"
-	f.reap(f.main)
+	f.reap(f.main, Request{})
 	f.wantOut("crew reap: keeping feat/r — could not compare with "+prURL+" head (not fetched?)", "crew reap: nothing reclaimed")
 }
 
@@ -515,7 +494,7 @@ func TestIdleEngineWindow(t *testing.T) {
 		f.tmux["capture-pane -p -t "+p] = idle
 		f.tmux["capture-pane -e -p -t "+p] = idle
 	}
-	if rc := f.reap(f.main, "--dry-run"); rc != 0 {
+	if rc := f.reap(f.main, Request{DryRun: true}); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	anchor, _ := wtgit.AnchorPath(f.wt)
@@ -524,11 +503,11 @@ func TestIdleEngineWindow(t *testing.T) {
 
 	// A branch that posted after the status keeps everything.
 	f.bus(status("done", prURL, 5), fmt.Sprintf(`{"ts":%d,"from":"worker:%s#s2","kind":"msg"}`, nowUnix*1000, rb))
-	f.reap(f.main)
+	f.reap(f.main, Request{})
 	f.wantOut("crew reap: keeping feat/r — an engine is still running there (session posted after its done)", "crew reap: nothing reclaimed")
 
 	f.bus(status("done", prURL, 0))
-	f.reap(f.main)
+	f.reap(f.main, Request{})
 	f.wantOut("crew reap: killed window @5 (feat/r idle engine)", "crew reap: reaped feat/r (MERGED)",
 		"crew reap: kept local branch feat/r — could not verify the merged PR head")
 	if !slices.Contains(f.calls, "tmux kill-window -t @5") {
@@ -543,15 +522,15 @@ func TestIdleEngineKeepReasons(t *testing.T) {
 	panes := "list-panes -a -F #{window_id}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}"
 
 	f.tmux[panes] = "@5\t%5\tcodex\t" + f.wt
-	f.reap(f.main)
+	f.reap(f.main, Request{})
 	f.wantOut("crew reap: keeping feat/r — an engine is still running there (codex has no idle signature)", "crew reap: nothing reclaimed")
 
 	f.tmux[panes] = "@5\t%5\tclaude\t" + f.wt
-	f.reap(f.main)
+	f.reap(f.main, Request{})
 	f.wantOut("crew reap: keeping feat/r — an engine is still running there (empty capture of %5)", "crew reap: nothing reclaimed")
 
 	f.bus(status("failed", prURL, 0))
-	f.reap(f.main)
+	f.reap(f.main, Request{})
 	f.wantOut("crew reap: keeping feat/r — an engine is still running there (failed session)", "crew reap: nothing reclaimed")
 }
 
@@ -561,7 +540,7 @@ func TestIdleReleaseWritesRowAndAbortsOnAppendError(t *testing.T) {
 	f.ghFail["pr list --head feat/r --state all --json url,state,headRefOid,isCrossRepository"] = true
 	f.tmux["list-windows -a -F #{window_id}\t#{@crew_name}\t#{pane_current_path}"] = "@5\tworker\t" + f.wt
 	f.tmux["list-panes -a -F #{window_id}\t#{pane_id}\t#{pane_current_command}"] = "@5\t%5\tzsh"
-	if rc := f.reap(f.main, "--quiet"); rc != 0 {
+	if rc := f.reap(f.main, Request{Quiet: true}); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	f.wantOut("crew reap: released @5 at " + f.wt + " (feat/r done)")
@@ -570,7 +549,7 @@ func TestIdleReleaseWritesRowAndAbortsOnAppendError(t *testing.T) {
 	}
 
 	f.appendErr = errors.New("disk full")
-	if rc := f.reap(f.main, "--quiet"); rc != 1 {
+	if rc := f.reap(f.main, Request{Quiet: true}); rc != 1 {
 		t.Fatalf("rc=%d, want 1", rc)
 	}
 	f.wantErr("crew: reap: disk full\n")
@@ -582,7 +561,7 @@ func TestIdleFoldFailureIsSilent(t *testing.T) {
 	// never does arithmetic on a status ts, so the reap carries on.
 	f.bus(`{"ts":"x","from":"worker:feat/r#s1","kind":"status","body":{"state":"done"}}`)
 	f.noGh = true
-	if rc := f.reap(f.main); rc != 0 {
+	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	f.wantOut("crew reap: needs gh")
@@ -593,17 +572,17 @@ func TestAutosweep(t *testing.T) {
 	f := newFx(t)
 	f.bus()
 	f.env["CREW_RATE_AUTOSWEEP"] = "yes"
-	f.reap(f.main, "--dry-run")
+	f.reap(f.main, Request{DryRun: true})
 	f.wantErr("crew reap: CREW_RATE_AUTOSWEEP='yes' is not 0, 1 or sync — sweeping anyway\n")
 	f.wantOut("crew reap: dry run — skipping ratings sweep", "crew reap: nothing done to reap")
 
 	f.env["CREW_RATE_AUTOSWEEP"] = "sync"
-	f.reap(f.main, "--discard", rb)
+	f.reap(f.main, Request{Discard: rb})
 	if slices.Contains(f.calls, "rate") {
 		t.Fatal("--discard swept")
 	}
 
-	f.reap(f.main)
+	f.reap(f.main, Request{})
 	if !slices.Equal(f.rateCwd, []string{f.main}) {
 		t.Fatalf("rate ran from %q", f.rateCwd)
 	}
@@ -612,7 +591,7 @@ func TestAutosweep(t *testing.T) {
 		t.Fatal("sweep lock still held")
 	}
 	f.rateCwd = nil
-	f.reap(f.main)
+	f.reap(f.main, Request{})
 	lock.Release(ld)
 	f.wantOut("crew reap: a ratings sweep is already running — skipped", "crew reap: nothing done to reap")
 	if f.rateCwd != nil {
