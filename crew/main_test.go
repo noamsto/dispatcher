@@ -770,7 +770,7 @@ func TestAdmittedSubcommands(t *testing.T) {
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
-		"status", "msg", "reply", "hold", "nudge", "await", "watch", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "pr-watch", "stall-watch"} {
+		"status", "msg", "reply", "hold", "nudge", "await", "watch", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "pr-watch", "stall-watch", "help"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}

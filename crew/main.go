@@ -107,22 +107,21 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 }
 
 // The kong root (#862). Every subcommand is a kong command: the converted ones
-// bind typed fields (commands.go), and every name still parsing its own argv is
-// registered around one shared passthrough command, so kong accepts the word and
-// stops. Two measurements of kong v1.16.1 decide the shape.
+// bind typed fields (commands.go), and dash alone is registered around the
+// passthrough command, so kong accepts the word and stops. Two measurements of
+// kong v1.16.1 decide the shape.
 //
 //   - Kong splits the first word after a command name at `=`, so
-//     `crew hold --crew=x` would reach hold as `--crew x` and read a flag
-//     where the arm read a word. The unconverted arms parse the raw
-//     tail, not the capture; the split is pinned by
+//     `crew dash --crew=x` would reach dash as `--crew x`. Dash parses the
+//     raw tail, not the capture; the split is pinned by
 //     TestParseCrewSplitsLeadingEquals. The typed commands want that split:
 //     `--flag=value` is `--flag value`.
 //   - With the help flag off, the writers discarded and the exit func empty,
 //     kong can neither print a screen nor end the process, so routeHelp and
 //     helpTexts still decide when help prints and what it says.
 
-// subcommands is every word crew admits: the twenty-nine the grammar types, then
-// the arms still parsing their own argv. It is the list the switch of #821 admitted,
+// subcommands is every word crew admits: the thirty-seven the grammar types, then
+// dash, which parses its own argv. It is the list the switch of #821 admitted,
 // and tests/crew.bats parses this literal to prove every subcommand has its own
 // row in the grouped help; TestAdmittedSubcommands pins it against that
 // revision and against what the grammar really admits.
@@ -136,8 +135,8 @@ var subcommands = []string{
 	"reply", "stall-watch", "status", "stream", "watch",
 }
 
-// typedSubcommands are the subcommands whose argv root binds. Every other name
-// is registered as a dynamic passthrough command sharing one capture.
+// typedSubcommands are the subcommands whose argv root binds: every name but
+// dash, which is registered as a dynamic passthrough command.
 var typedSubcommands = map[string]bool{
 	"engine-cmd": true, "id": true, "new": true, "occupants": true,
 	"where": true, "identity": true, "resolve-target": true, "crews": true, "register": true,
@@ -147,11 +146,11 @@ var typedSubcommands = map[string]bool{
 	"status": true, "msg": true, "reply": true, "hold": true,
 	"nudge": true, "await": true, "watch": true, "stream": true,
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
-	"adopt": true, "pr-watch": true, "stall-watch": true,
+	"adopt": true, "pr-watch": true, "stall-watch": true, "help": true,
 }
 
-// passthroughCmd is one unconverted subcommand to kong: its name, then whatever
-// words it wants, kept as the caller typed them — an unknown flag, a `--`
+// passthroughCmd is dash to kong: its name, then whatever words it wants, kept
+// as the caller typed them — an unknown flag, a `--`
 // separator and a `--help` that is detail text rather than a request, all of
 // them reaching the arm that reads them.
 type passthroughCmd struct {
@@ -171,7 +170,7 @@ type argvCmd struct {
 	Args []string `arg:"" optional:"" passthrough:"all" name:"args"`
 }
 
-// root is the grammar's converted half: the typed subcommands.
+// root is the grammar's typed subcommands.
 type root struct {
 	ID        argvCmd `cmd:"" name:"id" help:"Print this session's crew id."`
 	New       argvCmd `cmd:"" name:"new" help:"Mint a crew id."`
@@ -217,11 +216,13 @@ type root struct {
 
 	Reap          reapCmd `cmd:"" name:"reap" help:"Reclaim the windows and worktrees of landed workers."`
 	ReapAutosweep argvCmd `cmd:"" name:"reap-autosweep" help:"The detached ratings sweep reap starts."`
+
+	Help argvCmd `cmd:"" name:"help" help:"The grouped help."`
 }
 
 // crewArgs is what the root parse resolves to: the word that named the
-// subcommand, the raw tail an unconverted arm parses, the bound fields of the
-// converted ones, and the refusal a typed subcommand's argv earned, if any.
+// subcommand, the raw tail dash parses, the bound fields of the typed
+// subcommands, and the refusal a typed subcommand's argv earned, if any.
 type crewArgs struct {
 	sub     string
 	argv    []string
@@ -231,7 +232,7 @@ type crewArgs struct {
 }
 
 // newCrewParser builds the grammar: the converted subcommands as fields of
-// root, every other admitted name as a dynamic command sharing one capture.
+// root, and dash as a dynamic command on the capture.
 func newCrewParser(r *root, capture *passthroughCmd) (*kong.Kong, error) {
 	opts := []kong.Option{
 		kong.Name("crew"),
@@ -256,7 +257,7 @@ func newCrewParser(r *root, capture *passthroughCmd) (*kong.Kong, error) {
 //
 // The parser is built per call because kong writes the capture into the struct
 // it was handed, so one shared across calls would keep a previous call's argv on
-// any path it did not take. Building it is reflection over 38 commands.
+// any path it did not take. Building it is reflection over every command.
 func parseCrew(args []string) (crewArgs, bool) {
 	var (
 		r       root
@@ -454,7 +455,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 	switch sub {
 	case "help":
-		return entry.RunHelp(args, stdout, stderr)
+		return entry.RunHelp(parsed.typed.Help.Args, stdout, stderr)
 	case "new":
 		return entry.RunNew(stdout, entry.NewOptions{Now: time.Now, PID: os.Getpid()})
 	case "engine-cmd":

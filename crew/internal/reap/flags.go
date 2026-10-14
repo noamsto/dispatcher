@@ -9,7 +9,7 @@ type Request struct {
 	Idle, Discard         string
 }
 
-// flags is the arm's option loop.
+// flags is what the typed reap command resolves to.
 type flags struct {
 	quiet, dry, nowait bool
 	// idle is --idle's seconds as given: digits only, so it is both the jq
