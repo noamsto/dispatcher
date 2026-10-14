@@ -724,11 +724,14 @@ The fifth slice (`reap`, `reap-autosweep`, `adopt`, `pr-watch`, `stall-watch`,
   child's `pr-watch: unknown arg` wording, now printed by crew before the child
   runs and before the missing-crew refusal.
 - `stall-watch`: the sender/pane check (`sender.Watch` in `stall.Run`) still compares
-  the same id and pane at the same point, and flags may now precede the id. A
-  grammar refusal prints before the missing-crew refusal (still before any bus
-  write); an empty or trailing `--engine`, `--grace`, `--interval` is `--<flag>
-needs a value`. `TestStallWatchSenderCheckSurvivesTyping` and the #908 bats rows
-  pin it.
+  the same id and pane at the same point, and flags may now precede the id. Kong's
+  unknown and extra refusals print before the missing-crew refusal (still before any
+  bus write); an empty or trailing `--engine`, `--grace`, `--interval` is `--<flag>
+needs a value`, checked in `stall.parseArgs` after the crew.
+  `TestStallWatchSenderCheckSurvivesTyping` and the #908 bats rows pin it.
+- A bad bool value (`reap --quiet=maybe`, `adopt --force=maybe`, `stall-watch
+--no-budget=maybe`) now gets kong's bool line under the sub's name, as
+  `status --restamp=nope` did in slice 4.
 
 `fleet` and `rate --sweep-all` need no repo, so the preamble's not-in-a-repo
 refusal lets them through — and both ask the same question twice: the script with
