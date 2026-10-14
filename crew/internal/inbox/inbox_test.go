@@ -33,12 +33,38 @@ func writeLog(t *testing.T, p bus.Paths, body string) {
 	}
 }
 
+// request reads the tests' `agent [crew] [--since TS] [--from S] [--undelivered]`
+// shorthand in any order; the argv grammar itself is main's (TestRunInbox).
+func request(args ...string) Request {
+	var q Request
+	var words []string
+	for len(args) > 0 {
+		switch args[0] {
+		case "--since":
+			q.Since, args = args[1], args[2:]
+		case "--from":
+			q.From, args = args[1], args[2:]
+		case "--undelivered":
+			q.Undelivered, args = true, args[1:]
+		default:
+			words, args = append(words, args[0]), args[1:]
+		}
+	}
+	if len(words) > 0 {
+		q.Me = words[0]
+	}
+	if len(words) > 1 {
+		q.Crew = words[1]
+	}
+	return q
+}
+
 // run is the arm with the crew default stubbed: a test that wants the default
 // passes an empty crew in args, one that does not passes it explicitly.
 func run(t *testing.T, p bus.Paths, args ...string) (string, string, int) {
 	t.Helper()
 	var out, errB bytes.Buffer
-	code := Run(args, p, &out, &errB, Options{CrewID: func() string { return "c1" }})
+	code := Run(request(args...), p, &out, &errB, Options{CrewID: func() string { return "c1" }})
 	return out.String(), errB.String(), code
 }
 
@@ -145,29 +171,6 @@ func TestSince(t *testing.T) {
 	}
 }
 
-func TestSinceArgumentOrder(t *testing.T) {
-	p := fixture(t)
-	writeLog(t, p, msgRow+"\n")
-
-	for _, args := range [][]string{{me, "c1", "--since", "0"}, {me, "--since", "0", "c1"}, {me, "--since", "0"}} {
-		stdout, stderr, code := run(t, p, args...)
-		if code != 0 || stderr != "" || stdout != msgRow+"\n" {
-			t.Errorf("args %v: code %d stderr %q stdout %q", args, code, stderr, stdout)
-		}
-	}
-}
-
-// The arm's last positional and last --since win.
-func TestLastArgumentWins(t *testing.T) {
-	p := fixture(t)
-	writeLog(t, p, msgRow+"\n"+otherCrew+"\n")
-
-	stdout, _, code := run(t, p, me, "c9", "c1", "--since", "5", "--since", "0")
-	if code != 0 || stdout != msgRow+"\n" {
-		t.Fatalf("code %d stdout %q", code, stdout)
-	}
-}
-
 func TestCrewDefaults(t *testing.T) {
 	p := fixture(t)
 	writeLog(t, p, msgRow+"\n"+otherCrew+"\n")
@@ -191,7 +194,7 @@ func TestEmptyCrewMatchesNoCrewValue(t *testing.T) {
 		`{"ts":3,"crew_id":5,"kind":"msg","to":"me","from":"c"}`+"\n")
 
 	var out, errB bytes.Buffer
-	empty := Run([]string{"me"}, p, &out, &errB, Options{CrewID: func() string { return "" }})
+	empty := Run(request("me"), p, &out, &errB, Options{CrewID: func() string { return "" }})
 	if empty != 0 || errB.String() != "" {
 		t.Fatalf("code %d stderr %q", empty, errB.String())
 	}
@@ -212,30 +215,6 @@ func TestArgumentErrors(t *testing.T) {
 		wantStderr string
 	}{
 		{
-			name:       "branch-only worker id",
-			args:       []string{"worker:feat/x", "c1"},
-			wantCode:   1,
-			wantStderr: "crew: inbox: 'worker:feat/x' has no session suffix — pass the session id ($CREW_WORKER_ID); a branch-only worker id matches no message\n",
-		},
-		{
-			name:       "worker id whose suffix is not a session",
-			args:       []string{"worker:feat/x#s1", "c1"},
-			wantCode:   1,
-			wantStderr: "crew: inbox: 'worker:feat/x#s1' has no session suffix",
-		},
-		{
-			name:       "--since without a value",
-			args:       []string{me, "c1", "--since"},
-			wantCode:   1,
-			wantStderr: "crew: --since needs a value\n",
-		},
-		{
-			name:       "--since with an empty value",
-			args:       []string{me, "c1", "--since", ""},
-			wantCode:   1,
-			wantStderr: "crew: --since needs a value\n",
-		},
-		{
 			name:       "--since not an integer",
 			args:       []string{me, "c1", "--since", "1785951264000x"},
 			wantCode:   1,
@@ -246,36 +225,6 @@ func TestArgumentErrors(t *testing.T) {
 			args:       []string{me, "c1", "--since", "-1"},
 			wantCode:   1,
 			wantStderr: "crew: --since must be an integer ms timestamp\n",
-		},
-		{
-			name:       "--from without a value",
-			args:       []string{me, "c1", "--from"},
-			wantCode:   1,
-			wantStderr: "crew: --from needs a value\n",
-		},
-		{
-			name:       "--from with an empty value",
-			args:       []string{me, "c1", "--from", ""},
-			wantCode:   1,
-			wantStderr: "crew: --from needs a value\n",
-		},
-		{
-			name:       "--undelivered on a role id",
-			args:       []string{"role:feat/x:reviewer", "c1", "--undelivered"},
-			wantCode:   1,
-			wantStderr: "crew: inbox: --undelivered needs a worker session id ($CREW_WORKER_ID)\n",
-		},
-		{
-			name:       "--undelivered on a dispatcher id",
-			args:       []string{"dispatcher:c1", "--undelivered"},
-			wantCode:   1,
-			wantStderr: "crew: inbox: --undelivered needs a worker session id ($CREW_WORKER_ID)\n",
-		},
-		{
-			name:       "--undelivered on a branch-only worker id",
-			args:       []string{"worker:feat/x", "c1", "--undelivered"},
-			wantCode:   1,
-			wantStderr: "crew: inbox: 'worker:feat/x' has no session suffix",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -325,7 +274,7 @@ func TestAbsentLogIsSilent(t *testing.T) {
 	t.Run("no log at all", func(t *testing.T) {
 		p := fixture(t)
 		var out, errB bytes.Buffer
-		code := Run([]string{me, "c1"}, p, &out, &errB, Options{JQColorsInvalid: true, CrewID: func() string { return "c1" }})
+		code := Run(request(me, "c1"), p, &out, &errB, Options{JQColorsInvalid: true, CrewID: func() string { return "c1" }})
 		if out.Len() != 0 || errB.String() != "" || code != 0 {
 			t.Fatalf("code %d stderr %q", code, errB.String())
 		}
@@ -338,15 +287,6 @@ func TestAbsentLogIsSilent(t *testing.T) {
 		stdout, stderr, code := run(t, p, me, "c1", "--since", "abc")
 		if stdout != "" || stderr != "" || code != 0 {
 			t.Fatalf("code %d stderr %q stdout %q", code, stderr, stdout)
-		}
-	})
-
-	// ... but the value check happens while parsing, before the log is opened.
-	t.Run("--since without a value is an error without a log", func(t *testing.T) {
-		p := fixture(t)
-		_, stderr, code := run(t, p, me, "c1", "--since")
-		if code != 1 || stderr != "crew: --since needs a value\n" {
-			t.Fatalf("code %d stderr %q", code, stderr)
 		}
 	})
 
@@ -490,7 +430,7 @@ func TestJQColorsWarning(t *testing.T) {
 	writeLog(t, p, msgRow+"\n")
 
 	var out, errB bytes.Buffer
-	code := Run([]string{me, "c1"}, p, &out, &errB, Options{JQColorsInvalid: true, CrewID: func() string { return "c1" }})
+	code := Run(request(me, "c1"), p, &out, &errB, Options{JQColorsInvalid: true, CrewID: func() string { return "c1" }})
 	if code != 0 {
 		t.Fatalf("code %d", code)
 	}
@@ -503,7 +443,7 @@ func TestJQColorsWarning(t *testing.T) {
 
 	// The check that exits before jq starts prints no warning.
 	var out2, err2 bytes.Buffer
-	if code := Run([]string{me, "c1", "--since", "x"}, p, &out2, &err2, Options{JQColorsInvalid: true, CrewID: func() string { return "c1" }}); code != 1 ||
+	if code := Run(request(me, "c1", "--since", "x"), p, &out2, &err2, Options{JQColorsInvalid: true, CrewID: func() string { return "c1" }}); code != 1 ||
 		strings.Contains(err2.String(), "JQ_COLORS") {
 		t.Errorf("code %d stderr %q", code, err2.String())
 	}
@@ -517,7 +457,7 @@ func TestAFailedPrintRecordsNoMarks(t *testing.T) {
 	writeLog(t, p, msgRow+"\n")
 
 	var out, errB bytes.Buffer
-	code := Run([]string{me, "c1"}, p, &out, &errB, Options{
+	code := Run(request(me, "c1"), p, &out, &errB, Options{
 		CrewID: func() string { return "c1" },
 		Flush:  func() error { return errors.New("no space left on device") },
 	})
@@ -540,7 +480,7 @@ func TestPrintComesBeforeTheMarks(t *testing.T) {
 
 	var out, errB bytes.Buffer
 	w := &flushProbe{buf: &out, marksSeen: func() bool { return readMarks(t, p, "c1", me) != "" }}
-	code := Run([]string{me, "c1"}, p, w, &errB, Options{
+	code := Run(request(me, "c1"), p, w, &errB, Options{
 		CrewID: func() string { return "c1" },
 		Flush:  w.flush,
 	})
@@ -814,7 +754,7 @@ func TestUndeliveredExactlyOnceUnderConcurrency(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			var out, errB bytes.Buffer
-			code := Run([]string{me, "c1", "--from", "dispatcher:c1", "--undelivered"}, p, &out, &errB, Options{CrewID: func() string { return "c1" }})
+			code := Run(request(me, "c1", "--from", "dispatcher:c1", "--undelivered"), p, &out, &errB, Options{CrewID: func() string { return "c1" }})
 			if code != 0 || errB.Len() != 0 {
 				t.Errorf("code %d stderr %q", code, errB.String())
 			}

@@ -585,8 +585,10 @@ help entry, and `tests/crew.bats`'s `_crew_cli_subs` reads the list from `main.g
 ### kong, the root parser (#862)
 
 `main.go` builds one kong parser over `os.Args[1:]`. The four subcommands it has
-converted — `id`, `new`, `engine-cmd`, `occupants` — are typed commands whose
-bound `Args` is what their packages parse; every other name is a dynamic command
+converted — `id`, `new`, `engine-cmd`, `occupants` (argv words) and, since the
+second slice, `where`, `identity`, `resolve-target`, `crews`, `register`,
+`deregister`, `log`, `sessions`, `inbox` (typed flags and positionals, in
+`crew/commands.go`) — are typed commands; every other name is a dynamic command
 sharing one `passthrough:""` capture, so kong accepts the word and stops. The
 first slice converts only the subcommands whose whole argv is "a list of words,
 the first of which may be data", and the rules below are what the rest of #862
@@ -599,11 +601,10 @@ every screen, which is what `scripts/help-parity.sh` proves.
 
 **An unconverted subcommand parses the raw tail, not kong's capture.** The
 capture is not verbatim: kong splits the first word after a command name at `=`,
-so `crew inbox --since=abc` — a recipient that matches no message — would arrive
-as `--since abc` and become a --since filter and a refusal. `parseCrew` returns
+so an unconverted `crew <sub> --since=abc` would arrive as `--since abc`. `parseCrew` returns
 the words after the command name for exactly that reason;
-`TestParseCrewSplitsLeadingEquals` pins the measurement and
-`TestRunPassthroughArgvReachesItsArm` pins the arms' answers, `--` and flag-shaped
+`TestParseCrewSplitsLeadingEquals` pins the measurement (on `report`, `roster`,
+`reap`) and `TestRunPassthroughArgvReachesItsArm` pins the arms' answers, `--` and flag-shaped
 detail text included. A subcommand takes its own bound fields only once its table
 shows the split cannot change its answer: `engine-cmd` matches no engine name on
 either half of `--pane=x`, and `occupants` matches no worktree path.
@@ -617,19 +618,23 @@ the caller. The one input kong selects and the switch never admitted is a leadin
 refuses any first word that is not an admitted name, which is that refusal and
 exit 1.
 
-**Flags are the part still gated.** kong binds `--flag=value`, reads flags in any
-position, and reports its own first grammar error; the arms refused
-`--flag=value`, read the word after a flag as its value only after the flag's own
-word, and printed their leftmost refusal. Measured against the base build, that
-is the difference between refusing `crew where --crew=x nova` and answering it,
-and between `one target only` and `unknown flag '--bogus'` for
-`crew where nova iris --bogus`; and `crew identity x --hash` reads `--hash` as the
-crew argument while `crew identity --hash=x` is a branch name today. So `where`
-and `identity` keep their own parsing, and flag-bearing subcommands convert only
-once #862's owner decides whether `--flag=value` becomes an accepted spelling.
-`kong.WithHyphenPrefixedParameters(true)` would be part of that answer and not all
-of it: it makes `--crew --bogus` a value rather than a refusal, which is what the
-arms did, but it does not restore the `=` refusal or the leftmost-refusal order.
+**Flags: `--flag=value` is accepted (owner decision, 2026-10-14).** The nine
+second-slice subcommands bind typed flags, so `--flag value` and `--flag=value`
+are one spelling (`TestFlagSpellingsAreIdentical` runs both for every flag), flags
+may sit in any position, and no guard refuses the `=` form. The measured
+consequences against the first-slice build: `crew where --crew=x nova` is a lookup,
+`crew identity --hash=x` is the hash form, `crews --mine=yes` is `--mine`, `--`
+is swallowed (`crew where -- nova` succeeds) and a single-dash word (`-x`) is an
+unknown flag. `kong.WithHyphenPrefixedParameters(true)` keeps `--crew --bogus` a
+value as the arms had it, and binds a trailing `--crew` to `""`, so a flag whose
+empty or missing value is a refusal is a `*string` checked after the parse.
+Refusals keep the arms' wording and exit status (`kongRefusal` maps kong's
+`unknown flag ` / `unexpected argument ` text per subcommand; pinned by
+`TestKongErrorClassification`); a refusal prints after the not-in-a-repo check,
+as the arms' did. Extra positionals now refuse where `identity`, `log`,
+`register`, `deregister`, `crews` and `inbox` ignored or last-won them (an empty
+word included: `crew crews ""` is a refusal, exit 64, where it printed the table). The
+grammar's first error wins, not the arms' leftmost one.
 
 `fleet` and `rate --sweep-all` need no repo, so the preamble's not-in-a-repo
 refusal lets them through — and both ask the same question twice: the script with

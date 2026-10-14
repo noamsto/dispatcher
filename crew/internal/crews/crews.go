@@ -48,26 +48,13 @@ type Options struct {
 // status, or nowhere, for stderr) — main.go's helper, same reason.
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
-// Run is the arm: --mine lists this caller's crews, no argument prints the
-// table, anything else is a usage exit. Table and --mine exit 0; only the
-// unknown argument fails.
-func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	// The arm's `case "${1:-}"`: only the first argument is inspected, and
-	// an empty one takes the table branch.
-	arg := ""
-	if len(args) > 0 {
-		arg = args[0]
-	}
-	switch arg {
-	case "--mine":
+// Run is the arm: --mine lists this caller's crews, otherwise the table prints.
+func Run(mineOnly bool, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+	if mineOnly {
 		mine(paths, stdout, o)
 		return 0
-	case "":
-		return table(paths, stdout, stderr, o)
-	default:
-		say(stderr, "crew: crews: unknown arg '%s'\n", arg)
-		return 64
 	}
+	return table(paths, stdout, stderr, o)
 }
 
 // mine is the arm's --mine branch: crews whose recorded dispatcher pid is a

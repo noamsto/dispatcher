@@ -12,9 +12,6 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
-// exitFailure is the arm's exit status for a refusal.
-const exitFailure = 1
-
 // The pools are the three the bash library carried (`_names`/`_colors`/`_tmuxc`)
 // and the only copy of them left; TestPoolsAreGolden freezes the order, because a
 // recorded identity is its slot.
@@ -182,31 +179,23 @@ type Options struct {
 	Probes Probes
 }
 
-// Run is the `crew identity <branch> [crew]` arm: the usage refusal, the `--hash`
-// form, and the identity a branch gets.
-func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	if len(argv) == 0 || argv[0] == "" {
-		say(stderr, "crew: identity <branch> [crew]\n")
-		return exitFailure
+// Request is the arm's validated arguments: Hash, when set, is the `--hash`
+// form and wins; otherwise Branch is never empty and Crew "" takes the default.
+type Request struct {
+	Branch, Crew, Hash string
+}
+
+// Run is the `crew identity <branch> [crew]` arm: the `--hash` form, and the
+// identity a branch gets.
+func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+	if req.Hash != "" {
+		return emit(stdout, At(Slot(req.Hash)))
 	}
-	if argv[0] == "--hash" {
-		// The bash arm failed on `${2:?crew: identity --hash <name>}`; the line bash
-		// printed around it was its own "parameter null or not set".
-		if len(argv) < 2 || argv[1] == "" {
-			say(stderr, "crew: identity --hash <name>\n")
-			return exitFailure
-		}
-		return emit(stdout, At(Slot(argv[1])))
-	}
-	branch := argv[0]
-	crew := ""
-	if len(argv) > 1 {
-		crew = argv[1]
-	}
+	crew := req.Crew
 	if crew == "" && o.CrewID != nil {
 		crew = o.CrewID()
 	}
-	return emit(stdout, Assign(busEvents(paths.Log), branch, crew, o.Probes))
+	return emit(stdout, Assign(busEvents(paths.Log), req.Branch, crew, o.Probes))
 }
 
 // Assign is `_identity_assign <branch> <crew>`: the identity a dispatch stamps.

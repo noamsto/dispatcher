@@ -41,8 +41,8 @@ type Options struct {
 }
 
 // Run is the `register | deregister)` arm. sub is "register" or "deregister";
-// args are the arm's positional arguments after it.
-func Run(sub string, args []string, paths bus.Paths, stderr io.Writer, o Options) int {
+// pid is register's optional pid argument, written verbatim.
+func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 	crew := o.CrewID()
 	if crew == "" {
 		say(stderr, "crew: CREW_ID unset and no WORKER_TASK.md crew_id — run 'crew crews' to find this repo's crews, 'crew adopt <id>' to re-attach, or 'crew new' to start one\n")
@@ -69,10 +69,6 @@ func Run(sub string, args []string, paths bus.Paths, stderr io.Writer, o Options
 	}
 
 	if sub == "register" {
-		pid := ""
-		if len(args) > 0 {
-			pid = args[0]
-		}
 		if pid == "" {
 			pid = strconv.Itoa(o.Probes.OwnerPID(o.PPID))
 		}

@@ -58,9 +58,9 @@ func seed(t *testing.T, p bus.Paths, id, pid string) {
 	}
 }
 
-func run(sub string, args []string, p bus.Paths, w *world) (int, string) {
+func run(sub, pid string, p bus.Paths, w *world) (int, string) {
 	var errb bytes.Buffer
-	code := Run(sub, args, p, &errb, w.options())
+	code := Run(sub, pid, p, &errb, w.options())
 	return code, errb.String()
 }
 
@@ -80,7 +80,7 @@ func logText(p bus.Paths) string {
 
 func TestUnsetCrewID(t *testing.T) {
 	for _, sub := range []string{"register", "deregister"} {
-		code, stderr := run(sub, nil, testPaths(t), newWorld(""))
+		code, stderr := run(sub, "", testPaths(t), newWorld(""))
 		want := "crew: CREW_ID unset and no WORKER_TASK.md crew_id — run 'crew crews' to find this repo's crews, 'crew adopt <id>' to re-attach, or 'crew new' to start one\n"
 		if code != 1 || stderr != want {
 			t.Errorf("%s: code=%d stderr=%q", sub, code, stderr)
@@ -92,7 +92,7 @@ func TestInvalidCrewID(t *testing.T) {
 	for _, id := range []string{"..", ".", "-x", "a/b"} {
 		for _, sub := range []string{"register", "deregister"} {
 			p := testPaths(t)
-			code, stderr := run(sub, nil, p, newWorld(id))
+			code, stderr := run(sub, "", p, newWorld(id))
 			want := "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n"
 			if code != 1 || stderr != want {
 				t.Errorf("%s %q: code=%d stderr=%q", sub, id, code, stderr)
@@ -109,7 +109,7 @@ func TestRegisterRefusedOnLiveOtherPid(t *testing.T) {
 	seed(t, p, "c1", "777")
 	w := newWorld("c1")
 	w.alive[777] = true
-	code, stderr := run("register", []string{"888"}, p, w)
+	code, stderr := run("register", "888", p, w)
 	want := "crew: crew 'c1' still has a live dispatcher (pid 777) — 'crew new' starts your own crew; if that pid is a stale reuse, recover with 'crew adopt --force c1'\n"
 	if code != 1 || stderr != want {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
@@ -148,7 +148,7 @@ func TestRegisterOK(t *testing.T) {
 			if tc.pane != "" {
 				w.env["TMUX_PANE"] = tc.pane
 			}
-			code, stderr := run("register", []string{"888"}, p, w)
+			code, stderr := run("register", "888", p, w)
 			if code != 0 || stderr != "" {
 				t.Fatalf("code=%d stderr=%q", code, stderr)
 			}
@@ -181,7 +181,7 @@ func TestRegisterDefaultsToOwnerPID(t *testing.T) {
 	w.comm[4241] = "bash"
 	w.parent[4241] = 4000
 	w.comm[4000] = "claude"
-	code, _ := run("register", nil, p, w)
+	code, _ := run("register", "", p, w)
 	if code != 0 {
 		t.Fatalf("code=%d", code)
 	}
@@ -192,7 +192,7 @@ func TestRegisterDefaultsToOwnerPID(t *testing.T) {
 
 func TestRegisterWritesPidVerbatim(t *testing.T) {
 	p := testPaths(t)
-	code, _ := run("register", []string{"abc"}, p, newWorld("c1"))
+	code, _ := run("register", "abc", p, newWorld("c1"))
 	if code != 0 || readFile(t, p.CrewDir("c1")+"/pid") != "abc\n" {
 		t.Errorf("code=%d", code)
 	}
@@ -204,7 +204,7 @@ func TestDeregisterRefused(t *testing.T) {
 	w := newWorld("c1")
 	w.alive[777] = true
 	w.comm[4241] = "claude"
-	code, stderr := run("deregister", nil, p, w)
+	code, stderr := run("deregister", "", p, w)
 	want := "crew: crew 'c1' still has a live dispatcher (pid 777) that is not this caller's parent or owner — left in place\n"
 	if code != 0 || stderr != want {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
@@ -239,7 +239,7 @@ func TestDeregisterRemoved(t *testing.T) {
 			seed(t, p, "c1", tc.epid)
 			w := newWorld("c1")
 			tc.w(w)
-			code, stderr := run("deregister", nil, p, w)
+			code, stderr := run("deregister", "", p, w)
 			if code != 0 || stderr != "" {
 				t.Fatalf("code=%d stderr=%q", code, stderr)
 			}
@@ -256,7 +256,7 @@ func TestDeregisterRemoved(t *testing.T) {
 
 func TestDeregisterAbsentDir(t *testing.T) {
 	p := testPaths(t)
-	code, stderr := run("deregister", nil, p, newWorld("c1"))
+	code, stderr := run("deregister", "", p, newWorld("c1"))
 	if code != 0 || stderr != "" {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
 	}
@@ -283,7 +283,7 @@ func TestDeregisterRemoveFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
-	code, stderr := run("deregister", nil, p, newWorld("c1"))
+	code, stderr := run("deregister", "", p, newWorld("c1"))
 	if code != 1 || !strings.HasPrefix(stderr, "crew: deregister: ") {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
 	}

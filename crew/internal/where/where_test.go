@@ -52,8 +52,19 @@ func (tr *tree) run(t *testing.T, wins, panes string, crewID func() string, args
 func (tr *tree) runProbes(t *testing.T, p Probes, crewID func() string, args ...string) (out, errOut string, code int) {
 	t.Helper()
 	var o, e bytes.Buffer
-	code = Run(args, tr.paths, &o, &e, Options{CrewID: crewID, Probes: p})
+	code = Run(request(args), tr.paths, &o, &e, Options{CrewID: crewID, Probes: p})
 	return o.String(), e.String(), code
+}
+
+// request reads the test's `[--crew ID] target` shorthand; the argv grammar
+// itself is main's (TestWhereRefusals).
+func request(args []string) Request {
+	var r Request
+	if len(args) == 3 && args[0] == "--crew" {
+		r.Crew, args = args[1], args[2:]
+	}
+	r.Target = args[0]
+	return r
 }
 
 func okProbes(wins, panes string) Probes {
@@ -267,32 +278,6 @@ func TestResolverBackedRefusals(t *testing.T) {
 	if _, errOut, code := tr.run(t, wins, panes, crewIs("c1"), "feat/9-gone"); code != exitFailure ||
 		!strings.Contains(errOut, "its window is gone") {
 		t.Errorf("torn tail: code %d, err %q", code, errOut)
-	}
-}
-
-func TestFlagRefusals(t *testing.T) {
-	tr := setup(t)
-	const usage = "crew: where: usage: crew where <codename|branch|%id> [--crew ID]"
-	cases := []struct {
-		args []string
-		want string
-	}{
-		{nil, usage + "\n"},
-		{[]string{"--crew"}, "crew: where: --crew needs an id (usage: crew where <codename|branch|%id> [--crew ID])\n"},
-		{[]string{"--crew", "", "nova"}, "crew: where: --crew needs an id (usage: crew where <codename|branch|%id> [--crew ID])\n"},
-		{[]string{"--bogus", "nova"}, "crew: where: unknown flag '--bogus' (usage: crew where <codename|branch|%id> [--crew ID])\n"},
-		{[]string{"nova", "iris"}, "crew: where: one target only (usage: crew where <codename|branch|%id> [--crew ID])\n"},
-	}
-	for _, c := range cases {
-		// A refused argument never reaches tmux, so poisoned probes are fine.
-		poison := Probes{
-			Windows: func() (string, error) { return "", errors.New("must not run") },
-			Panes:   func() (string, error) { return "", errors.New("must not run") },
-		}
-		out, errOut, code := tr.runProbes(t, poison, crewIs("c1"), c.args...)
-		if code != exitFailure || out != "" || errOut != c.want {
-			t.Errorf("%v: code %d, out %q, err %q, want %q", c.args, code, out, errOut, c.want)
-		}
 	}
 }
 

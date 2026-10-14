@@ -103,36 +103,42 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 }
 
 // The kong root (#862). Every subcommand is a kong command: the converted ones
-// bind typed fields, and every name still parsing its own argv is registered
-// around one shared passthrough command, so kong accepts the word and stops.
-// Two measurements of kong v1.16.1 decide the shape.
+// bind typed fields (commands.go), and every name still parsing its own argv is
+// registered around one shared passthrough command, so kong accepts the word and
+// stops. Two measurements of kong v1.16.1 decide the shape.
 //
 //   - Kong splits the first word after a command name at `=`, so
-//     `crew inbox --since=abc` would reach inbox as `--since abc` and read a
-//     --since filter where the arm read a recipient that matches nothing. The
-//     unconverted arms parse the raw tail, not the capture; the split is pinned
-//     by TestParseCrewSplitsLeadingEquals.
+//     `crew roster --since=5` would reach roster as `--since 5` and read a
+//     filter where the arm read a crew id. The unconverted arms parse the raw
+//     tail, not the capture; the split is pinned by
+//     TestParseCrewSplitsLeadingEquals. The typed commands want that split:
+//     `--flag=value` is `--flag value`.
 //   - With the help flag off, the writers discarded and the exit func empty,
 //     kong can neither print a screen nor end the process, so routeHelp and
 //     helpTexts still decide when help prints and what it says.
 
-// subcommands is every word crew admits: the four the grammar types, then the
-// arms still parsing their own argv. It is the list the switch of #821 admitted,
+// subcommands is every word crew admits: the thirteen the grammar types, then
+// the arms still parsing their own argv. It is the list the switch of #821 admitted,
 // and tests/crew.bats parses this literal to prove every subcommand has its own
 // row in the grouped help; TestAdmittedSubcommands pins it against that
 // revision and against what the grammar really admits.
 var subcommands = []string{
 	"id", "new", "engine-cmd", "occupants",
-	"adopt", "await", "crews", "dash", "deregister", "fleet", "git-baseline",
-	"git-guard", "help", "hold", "identity", "inbox", "log", "msg", "nudge",
-	"pi-agent-dir", "pr-watch", "rate", "reap", "reap-autosweep", "register",
-	"reply", "report", "resolve-target", "retro", "roster", "roster-render",
-	"sessions", "stack", "stall-watch", "status", "stream", "watch", "where",
+	"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
+	"adopt", "await", "dash", "fleet", "git-baseline",
+	"git-guard", "help", "hold", "msg", "nudge",
+	"pi-agent-dir", "pr-watch", "rate", "reap", "reap-autosweep",
+	"reply", "report", "retro", "roster", "roster-render",
+	"stack", "stall-watch", "status", "stream", "watch",
 }
 
 // typedSubcommands are the subcommands whose argv root binds. Every other name
 // is registered as a dynamic passthrough command sharing one capture.
-var typedSubcommands = map[string]bool{"engine-cmd": true, "id": true, "new": true, "occupants": true}
+var typedSubcommands = map[string]bool{
+	"engine-cmd": true, "id": true, "new": true, "occupants": true,
+	"where": true, "identity": true, "resolve-target": true, "crews": true, "register": true,
+	"deregister": true, "log": true, "sessions": true, "inbox": true,
+}
 
 // passthroughCmd is one unconverted subcommand to kong: its name, then whatever
 // words it wants, kept as the caller typed them — an unknown flag, a `--`
@@ -155,21 +161,32 @@ type argvCmd struct {
 	Args []string `arg:"" optional:"" passthrough:"all" name:"args"`
 }
 
-// root is the grammar's converted half: the four typed subcommands.
+// root is the grammar's converted half: the typed subcommands.
 type root struct {
 	ID        argvCmd `cmd:"" name:"id" help:"Print this session's crew id."`
 	New       argvCmd `cmd:"" name:"new" help:"Mint a crew id."`
 	EngineCmd argvCmd `cmd:"" name:"engine-cmd" help:"Is this pane command an engine?"`
 	Occupants argvCmd `cmd:"" name:"occupants" help:"The worker windows on a worktree."`
+
+	Where      whereCmd      `cmd:"" name:"where" help:"Where a worker's pane is."`
+	Identity   identityCmd   `cmd:"" name:"identity" help:"The codename a branch works under."`
+	Resolve    resolveCmd    `cmd:"" name:"resolve-target" help:"What a target names on the bus."`
+	Crews      crewsCmd      `cmd:"" name:"crews" help:"This repo's crews."`
+	Register   registerCmd   `cmd:"" name:"register" help:"Claim this crew directory."`
+	Deregister deregisterCmd `cmd:"" name:"deregister" help:"Release this crew directory."`
+	Log        logCmd        `cmd:"" name:"log" help:"The crew's bus rows."`
+	Sessions   sessionsCmd   `cmd:"" name:"sessions" help:"A branch's sessions."`
+	Inbox      inboxCmd      `cmd:"" name:"inbox" help:"Msgs addressed to one agent."`
 }
 
 // crewArgs is what the root parse resolves to: the word that named the
-// subcommand, the raw tail an unconverted arm parses, and the bound fields of
-// the converted ones.
+// subcommand, the raw tail an unconverted arm parses, the bound fields of the
+// converted ones, and the refusal a typed subcommand's argv earned, if any.
 type crewArgs struct {
-	sub   string
-	argv  []string
-	typed root
+	sub     string
+	argv    []string
+	typed   root
+	refusal *refusal
 }
 
 // newCrewParser builds the grammar: the converted subcommands as fields of
@@ -178,6 +195,8 @@ func newCrewParser(r *root, capture *passthroughCmd) (*kong.Kong, error) {
 	opts := []kong.Option{
 		kong.Name("crew"),
 		kong.NoDefaultHelp(),
+		// A flag's value may start with `--`, as it did for the arms' own loops.
+		kong.WithHyphenPrefixedParameters(true),
 		kong.Writers(io.Discard, io.Discard),
 		kong.Exit(func(int) {}),
 	}
@@ -206,6 +225,11 @@ func parseCrew(args []string) (crewArgs, bool) {
 		panic("crew: kong grammar: " + err.Error())
 	}
 	if _, err := p.Parse(args); err != nil {
+		// An error inside a typed subcommand's argv is that subcommand's refusal;
+		// everywhere else it is the unknown word the switch rejected.
+		if len(args) > 0 && typedSubcommands[args[0]] {
+			return crewArgs{sub: args[0], refusal: kongRefusal(args[0], err)}, true
+		}
 		return crewArgs{}, false
 	}
 	// The one token kong selects that no arm admitted: it swallows a leading
@@ -216,7 +240,7 @@ func parseCrew(args []string) (crewArgs, bool) {
 	}
 	// kong matched args[0] to a command, so the words it describes are the rest
 	// of the argv — the tail the arms have always been handed.
-	return crewArgs{sub: args[0], argv: args[1:], typed: r}, true
+	return crewArgs{sub: args[0], argv: args[1:], typed: r, refusal: validate(args[0], &r)}, true
 }
 
 // env is everything run reads from the process, so tests can supply their own.
@@ -328,6 +352,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return exitFailure
 	}
 
+	if parsed.refusal != nil {
+		say(stderr, "%s\n", parsed.refusal.msg)
+		return parsed.refusal.code
+	}
+
 	// reap prints its lines as it goes and runs the ratings sweep as a detached
 	// child of this binary, so it writes straight to stdout like stream.
 	if sub == "reap" || sub == "reap-autosweep" {
@@ -358,7 +387,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "crews" {
 		out := bufio.NewWriterSize(stdout, 64<<10)
 		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
-		code := crews.Run(args, paths, out, stderr, crews.Options{
+		code := crews.Run(parsed.typed.Crews.Mine, paths, out, stderr, crews.Options{
 			Probes:          e.procs,
 			JQColorsInvalid: !colorsOK,
 			Now:             time.Now,
@@ -372,7 +401,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "inbox" {
 		out := bufio.NewWriterSize(stdout, 64<<10)
 		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
-		code := inbox.Run(args, paths, out, stderr, inbox.Options{
+		in := parsed.typed.Inbox
+		code := inbox.Run(inbox.Request{
+			Me: in.Agent, Crew: in.Crew, Since: str(in.Since), From: str(in.From), Undelivered: in.Undelivered,
+		}, paths, out, stderr, inbox.Options{
 			JQColorsInvalid: !colorsOK,
 			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
 			Flush:           out.Flush,
@@ -486,7 +518,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// The two target readers own their run the way hold does: neither is a fold
 	// over every event.
 	if sub == "resolve-target" {
-		return resolve.Run(args, paths, stdout, stderr)
+		return resolve.Run(resolve.Request{Crew: str(parsed.typed.Resolve.Crew), Target: parsed.typed.Resolve.Target}, paths, stdout, stderr)
 	}
 	// pr-watch runs the standalone pr-watch binary as a child and posts the event it
 	// printed, so it owns its run the way watch does rather than folding the bus.
@@ -497,7 +529,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		})
 	}
 	if sub == "where" {
-		return where.Run(args, paths, stdout, stderr, where.Options{
+		return where.Run(where.Request{Crew: str(parsed.typed.Where.Crew), Target: parsed.typed.Where.Target}, paths, stdout, stderr, where.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Probes: whereProbes(ctx),
 		})
@@ -505,7 +537,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// identity answers the codename a branch works under. Its one tmux read is
 	// best-effort, unlike whereProbes', which turns a failure into a refusal.
 	if sub == "identity" {
-		return identity.Run(args, paths, stdout, stderr, identity.Options{
+		id := parsed.typed.Identity
+		return identity.Run(identity.Request{Branch: id.Branch, Crew: id.Crew, Hash: str(id.Hash)}, paths, stdout, stderr, identity.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Probes: identity.Probes{Windows: func() (string, error) {
 				return tmuxOutput(ctx, "list-windows", "-a", "-F", "#{@crew_name}")
@@ -546,7 +579,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 
 	// register and deregister record the caller's own identity like adopt does.
 	if sub == "register" || sub == "deregister" {
-		return register.Run(sub, args, paths, stderr, register.Options{
+		return register.Run(sub, parsed.typed.Register.PID, paths, stderr, register.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Probes: e.procs,
 			Now:    time.Now,
@@ -595,7 +628,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// bus with its arm's tolerance (log keeps jq -c's torn-tail prefix, report
 	// has none), so they own their read too.
 	if sub == "log" || sub == "report" {
-		crew := crewArg(args, ctx, cwd)
+		crew := parsed.typed.Log.Crew
+		if sub == "report" {
+			crew = crewArg(args, ctx, cwd)
+		} else if crew == "" {
+			crew = bus.CrewID(ctx, cwd)
+		}
 		out := bufio.NewWriterSize(stdout, 64<<10)
 		palette, colorsOK := jsonv.ParseJQColors(e.jqColors)
 		var code int
@@ -619,11 +657,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		pretty       bool
 	)
 	if sub == "sessions" {
-		var msg string
-		if branch, crew, msg = parseSessions(args); msg != "" {
-			say(stderr, "%s\n", msg)
-			return exitFailure
-		}
+		branch, crew = parsed.typed.Sessions.Branch, str(parsed.typed.Sessions.Crew)
 	} else {
 		pretty = true
 		crew = crewArg(args, ctx, cwd)
@@ -753,27 +787,6 @@ func crewArg(args []string, ctx context.Context, cwd string) string {
 		crew = bus.CrewID(ctx, cwd)
 	}
 	return crew
-}
-
-// parseSessions mirrors the bash arm: branch is the first argument, the rest
-// are `--crew ID` pairs, and msg is the stderr line when the arguments fail.
-func parseSessions(args []string) (branch, crew, msg string) {
-	if len(args) > 0 {
-		branch, args = args[0], args[1:]
-	}
-	for len(args) > 0 {
-		if args[0] != "--crew" {
-			return "", "", sessionsUsage
-		}
-		if len(args) < 2 || args[1] == "" {
-			return "", "", "crew: --crew needs a value"
-		}
-		crew, args = args[1], args[2:]
-	}
-	if branch == "" {
-		return "", "", sessionsUsage
-	}
-	return branch, crew, ""
 }
 
 // fold runs the subcommand's fold over the read events, or maps the read or

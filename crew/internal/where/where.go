@@ -25,8 +25,8 @@ import (
 
 const (
 	exitFailure = 1
-	// usage is the arm's `crew where` signature, quoted in every refusal.
-	usage = "usage: crew where <codename|branch|%id> [--crew ID]"
+	// Usage is the arm's `crew where` signature, quoted in every refusal.
+	Usage = "usage: crew where <codename|branch|%id> [--crew ID]"
 	// jump is the line's tail: what a human or a dispatcher pastes to get there.
 	jump = "   jump: ! tmux switch-client -t "
 )
@@ -68,11 +68,17 @@ func die(stderr io.Writer, format string, args ...any) int {
 	return exitFailure
 }
 
-// Run is the arm: the flag loop, the two tmux reads, the resolution, the line.
-func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	crew, target, msg := parse(argv, o.CrewID)
-	if msg != "" {
-		return die(stderr, "%s", msg)
+// Request is the arm's validated arguments: Crew is the `--crew` override ("" for
+// the `_crew_id` default) and Target is never empty.
+type Request struct {
+	Crew, Target string
+}
+
+// Run is the arm: the two tmux reads, the resolution, the line.
+func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+	crew, target := req.Crew, req.Target
+	if crew == "" && o.CrewID != nil {
+		crew = o.CrewID()
 	}
 
 	// A tmux read failure is not "the target is gone".
@@ -116,36 +122,6 @@ func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	say(stdout, "%s — %s:%s.%s \"%s\" (%s pane)%s%s\n",
 		name, win.session, win.index, hit.index, win.winName, role, jump, hit.id)
 	return 0
-}
-
-// parse is the arm's flag loop: `--crew` replaces the `_crew_id` default, and a
-// second positional is refused where it appears. Every refusal carries the
-// `(usage: …)` tail, which the bare no-target call does not.
-func parse(args []string, crewID func() string) (crew, target, msg string) {
-	if crewID != nil {
-		crew = crewID()
-	}
-	for len(args) > 0 {
-		arg := args[0]
-		switch {
-		case arg == "--crew":
-			if len(args) < 2 || args[1] == "" {
-				return "", "", "--crew needs an id (" + usage + ")"
-			}
-			crew, args = args[1], args[2:]
-		case strings.HasPrefix(arg, "--"):
-			return "", "", fmt.Sprintf("unknown flag '%s' (%s)", arg, usage)
-		default:
-			if target != "" {
-				return "", "", "one target only (" + usage + ")"
-			}
-			target, args = arg, args[1:]
-		}
-	}
-	if target == "" {
-		return "", "", usage
-	}
-	return crew, target, ""
 }
 
 // readWindows is the arm's crew filter over `list-windows`: the eight format

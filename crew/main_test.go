@@ -29,36 +29,6 @@ func crewsProbes(live map[int]bool, parents map[int]int) crews.Probes {
 	}
 }
 
-func TestParseSessions(t *testing.T) {
-	const (
-		needsValue = "crew: --crew needs a value"
-	)
-	tests := []struct {
-		name                string
-		args                []string
-		branch, crew, wants string
-	}{
-		{"branch only", []string{"b"}, "b", "", ""},
-		{"crew filter", []string{"b", "--crew", "c1"}, "b", "c1", ""},
-		{"later crew wins", []string{"b", "--crew", "c1", "--crew", "c2"}, "b", "c2", ""},
-		{"no args", nil, "", "", sessionsUsage},
-		{"empty branch", []string{""}, "", "", sessionsUsage},
-		{"crew taken as branch", []string{"--crew", "x"}, "", "", sessionsUsage},
-		{"missing value", []string{"b", "--crew"}, "", "", needsValue},
-		{"empty value", []string{"b", "--crew", ""}, "", "", needsValue},
-		{"second positional", []string{"b", "x"}, "", "", sessionsUsage},
-		{"empty branch with crew", []string{"", "--crew", "c1"}, "", "", sessionsUsage},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			branch, crew, msg := parseSessions(tt.args)
-			if branch != tt.branch || crew != tt.crew || msg != tt.wants {
-				t.Errorf("parseSessions(%q) = %q, %q, %q; want %q, %q, %q", tt.args, branch, crew, msg, tt.branch, tt.crew, tt.wants)
-			}
-		})
-	}
-}
-
 const exitedRow = `{"ts":1700000001000,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"exited"}}` + "\n"
 
 // repoWithLog makes a git repo and returns it with the bus log's path. A nil
@@ -200,8 +170,8 @@ func TestRunCrews(t *testing.T) {
 		repo, _ := repoWithLog(t, nil, 0)
 		var stdout, stderr bytes.Buffer
 		e := env{getwd: func() (string, error) { return repo, nil }}
-		code := run(context.Background(), []string{"crews", "--mine=yes"}, &stdout, &stderr, e)
-		if code != 64 || stdout.Len() != 0 || stderr.String() != "crew: crews: unknown arg '--mine=yes'\n" {
+		code := run(context.Background(), []string{"crews", "--bogus=yes"}, &stdout, &stderr, e)
+		if code != 64 || stdout.Len() != 0 || stderr.String() != "crew: crews: unknown arg '--bogus'\n" {
 			t.Fatalf("code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
 		}
 	})
@@ -222,33 +192,40 @@ func TestRunCrews(t *testing.T) {
 		}
 	})
 
-	t.Run("--mine lists the live ancestor through the probes", func(t *testing.T) {
-		repo, logPath := repoWithLog(t, nil, 0)
-		crewDir := filepath.Join(filepath.Dir(logPath), "crews")
-		for _, id := range []string{"c-anc", "c-str"} {
-			if err := os.MkdirAll(filepath.Join(crewDir, id), 0o755); err != nil {
-				t.Fatal(err)
-			}
+	for _, spelling := range []string{"--mine", "--mine=yes", "--mine=true"} {
+		t.Run(spelling+" lists the live ancestor through the probes", func(t *testing.T) {
+			testCrewsMine(t, spelling)
+		})
+	}
+}
+
+func testCrewsMine(t *testing.T, spelling string) {
+	t.Helper()
+	repo, logPath := repoWithLog(t, nil, 0)
+	crewDir := filepath.Join(filepath.Dir(logPath), "crews")
+	for _, id := range []string{"c-anc", "c-str"} {
+		if err := os.MkdirAll(filepath.Join(crewDir, id), 0o755); err != nil {
+			t.Fatal(err)
 		}
-		write := func(id, pid string) {
-			if err := os.WriteFile(filepath.Join(crewDir, id, "pid"), []byte(pid+"\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+	}
+	write := func(id, pid string) {
+		if err := os.WriteFile(filepath.Join(crewDir, id, "pid"), []byte(pid+"\n"), 0o644); err != nil {
+			t.Fatal(err)
 		}
-		write("c-anc", "4242")
-		write("c-str", "9999")
-		var stdout, stderr bytes.Buffer
-		e := env{
-			getwd: func() (string, error) { return repo, nil },
-			procs: crewsProbes(map[int]bool{4242: true, 9999: true}, map[int]int{os.Getpid(): 4242}),
-		}
-		if code := run(context.Background(), []string{"crews", "--mine"}, &stdout, &stderr, e); code != 0 {
-			t.Fatalf("code %d", code)
-		}
-		if stdout.String() != "c-anc\n" || stderr.Len() != 0 {
-			t.Fatalf("stdout %q stderr %q", stdout.String(), stderr.String())
-		}
-	})
+	}
+	write("c-anc", "4242")
+	write("c-str", "9999")
+	var stdout, stderr bytes.Buffer
+	e := env{
+		getwd: func() (string, error) { return repo, nil },
+		procs: crewsProbes(map[int]bool{4242: true, 9999: true}, map[int]int{os.Getpid(): 4242}),
+	}
+	if code := run(context.Background(), []string{"crews", spelling}, &stdout, &stderr, e); code != 0 {
+		t.Fatalf("code %d", code)
+	}
+	if stdout.String() != "c-anc\n" || stderr.Len() != 0 {
+		t.Fatalf("stdout %q stderr %q", stdout.String(), stderr.String())
+	}
 }
 
 // The bus rows the two new arms read; the expectations are the bash arms'.
@@ -589,6 +566,14 @@ func TestRunBusSubsRefuseOutsideRepo(t *testing.T) {
 			t.Errorf("%s: code %d stdout %q stderr %q", sub, code, stdout.String(), stderr.String())
 		}
 	}
+	// A typed subcommand's bad argv is refused after the repo check, not before.
+	for _, tc := range refusalRows {
+		var stdout, stderr bytes.Buffer
+		code := run(context.Background(), tc.args, &stdout, &stderr, e)
+		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "crew: not in a git repo\n" {
+			t.Errorf("%s: code %d stdout %q stderr %q", tc.name, code, stdout.String(), stderr.String())
+		}
+	}
 }
 
 func TestRunFleetOutsideRepo(t *testing.T) {
@@ -759,7 +744,8 @@ func TestAdmittedSubcommands(t *testing.T) {
 		"git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help",
 		"id", "new", "engine-cmd", "dash", "pi-agent-dir",
 	}
-	for _, name := range []string{"engine-cmd", "id", "new", "occupants"} {
+	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
+		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -802,21 +788,21 @@ func TestAdmittedSubcommands(t *testing.T) {
 
 // TestParseCrewSplitsLeadingEquals is the measurement that decides who parses
 // what: kong splits the first word after a command name at `=`, so the capture
-// is not the argv an arm may be handed. `crew inbox --since=abc` is a recipient
-// that matches no message today; the split makes it a --since filter and then a
-// refusal, which is a different command.
+// is not the argv an unconverted arm may be handed. `crew report --crew=x` is a
+// crew id the arm reads whole; the split makes it `--crew x`, a different
+// command. The typed subcommands want the split (TestFlagSpellingsAreIdentical).
 func TestParseCrewSplitsLeadingEquals(t *testing.T) {
 	for _, tc := range []struct {
 		args, captured []string
 	}{
-		{[]string{"inbox", "--since=abc"}, []string{"--since", "abc"}},
+		{[]string{"report", "--crew=x"}, []string{"--crew", "x"}},
 		{[]string{"roster", "--since=5"}, []string{"--since", "5"}},
 		{[]string{"reap", "--idle=5"}, []string{"--idle", "5"}},
 		// Everything else about a passthrough command's argv does arrive whole,
 		// `--` and flag-shaped detail text included.
 		{[]string{"status", "w1", "working", "--help"}, []string{"w1", "working", "--help"}},
 		{[]string{"reap", "--", "--idle=5"}, []string{"--", "--idle=5"}},
-		{[]string{"log", "--"}, []string{"--"}},
+		{[]string{"report", "--"}, []string{"--"}},
 		{[]string{"roster", "-x"}, []string{"-x"}},
 		{[]string{"roster", ""}, []string{""}},
 	} {
@@ -851,6 +837,8 @@ func TestParseCrewRejectsWhatTheSwitchRejected(t *testing.T) {
 	}
 	for _, args := range [][]string{{"id"}, {"id", "extra", "--whatever", "-x"}, {"new"}, {"engine-cmd", "--pane=x"},
 		{"occupants", "--foo"}, {"roster"}, {"status", "w1", "working", "--help"}, {"where", "--crew=x", "nova"},
+		// A typed subcommand's bad argv is that subcommand's refusal, not an unknown name.
+		{"where", "--bogus"}, {"inbox", "--since"}, {"crews", "extra"},
 		{"identity", "--hash=x"}, {"hold", "add", "--help"}, {"pi-agent-dir", "--", "-x"}} {
 		if _, ok := parseCrew(args); !ok {
 			t.Errorf("crew %q refused, want it to reach its arm", args)
@@ -955,8 +943,8 @@ func TestRunConvertedSubcommands(t *testing.T) {
 // TestRunPassthroughArgvReachesItsArm is the other half of the contract: a
 // subcommand kong only names still parses its own words. Each row is an answer
 // only the arm's own parsing produces, so a dropped, split or re-read token
-// fails it — `--since=abc` as one word, `--idle=5` as an unknown flag rather
-// than a value, `--help` as detail text.
+// fails it — `--idle=5` as an unknown flag rather than a value, `--help` as
+// detail text.
 func TestRunPassthroughArgvReachesItsArm(t *testing.T) {
 	repo, _ := repoWithLog(t, &statusRow, 0o644)
 	t.Setenv("CREW_ID", "c1")
@@ -968,13 +956,7 @@ func TestRunPassthroughArgvReachesItsArm(t *testing.T) {
 		code           int
 		stdout, stderr string
 	}{
-		{name: "inbox reads --since=abc as its recipient", args: []string{"inbox", "worker:feat/x#s1-1", "--since=abc"}},
-		{name: "inbox reads --since with no value", args: []string{"inbox", "worker:feat/x#s1-1", "--since"},
-			code: exitFailure, stderr: "crew: --since needs a value\n"},
-		{name: "inbox reads --since and its value", args: []string{"inbox", "worker:feat/x#s1-1", "--since", "abc"},
-			code: exitFailure, stderr: "crew: --since must be an integer ms timestamp\n"},
 		{name: "roster reads an unknown flag as a crew", args: []string{"roster", "--since=5"}, stdout: "[]\n"},
-		{name: "log reads a separator as a crew", args: []string{"log", "--", "--since"}},
 		{name: "reap refuses --idle=5 as an unknown flag", args: []string{"reap", "--idle=5"}, code: exitFailure,
 			stderr: "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH (got '--idle=5')\n"},
 		{name: "reap keeps words after a separator together", args: []string{"reap", "--dry-run", "--idle=5"}, code: exitFailure,
@@ -983,10 +965,6 @@ func TestRunPassthroughArgvReachesItsArm(t *testing.T) {
 			stderr: "crew: --crew needs a value\n"},
 		{name: "status reads --help as an unknown argument", args: []string{"status", "w1", "working", "--help"},
 			code: exitFailure, stderr: "crew: status: unknown arg '--help' (use -- before a detail that starts with dashes)\n"},
-		{name: "where keeps its own flag grammar", args: []string{"where", "--crew=x", "nova"}, code: exitFailure,
-			stderr: "crew: where: unknown flag '--crew=x' (usage: crew where <codename|branch|%id> [--crew ID])\n"},
-		{name: "identity reads --hash=x as a branch", args: []string{"identity", "--hash=x"},
-			stdout: `{"name":"rust","color":"rust","tmux":"colour166"}` + "\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -1001,5 +979,236 @@ func TestRunPassthroughArgvReachesItsArm(t *testing.T) {
 				t.Errorf("stderr %q, want %q", stderr.String(), tc.stderr)
 			}
 		})
+	}
+}
+
+// refusalRows is each typed subcommand's grammar and semantic refusals: the
+// stderr line and exit status the old argv loop of that arm printed, plus the
+// kong-shaped ones for input the loops ignored. Every row of the same kind
+// (unknown flag, extra positional, missing value, empty value) is here for
+// each subcommand that has one.
+var refusalRows = []struct {
+	name string
+	args []string
+	msg  string
+	code int
+}{
+	{"where unknown flag", []string{"where", "--bogus", "nova"}, "crew: where: unknown flag '--bogus' (" + whereUsage + ")", 1},
+	{"where extra positional", []string{"where", "nova", "iris"}, "crew: where: one target only (" + whereUsage + ")", 1},
+	{"where missing value", []string{"where", "nova", "--crew"}, "crew: where: --crew needs an id (" + whereUsage + ")", 1},
+	{"where empty value", []string{"where", "--crew", "", "nova"}, "crew: where: --crew needs an id (" + whereUsage + ")", 1},
+	{"where empty value equals", []string{"where", "--crew=", "nova"}, "crew: where: --crew needs an id (" + whereUsage + ")", 1},
+	{"where no target", []string{"where"}, "crew: where: " + whereUsage, 1},
+
+	{"resolve-target unknown flag", []string{"resolve-target", "--bogus", "sage"}, "crew: resolve-target: unknown flag '--bogus'", 1},
+	{"resolve-target extra positional", []string{"resolve-target", "sage", "again"}, "crew: resolve-target: one target only", 1},
+	{"resolve-target missing value", []string{"resolve-target", "sage", "--crew"}, "crew: resolve-target: --crew needs an id", 1},
+	{"resolve-target empty value", []string{"resolve-target", "--crew", "", "sage"}, "crew: resolve-target: --crew needs an id", 1},
+	{"resolve-target no target", []string{"resolve-target"}, "usage: crew resolve-target <target> [--crew ID]", 1},
+
+	{"identity unknown flag", []string{"identity", "--bogus"}, "crew: identity: unknown flag '--bogus' (usage: crew identity <branch> [crew])", 1},
+	{"identity extra positional", []string{"identity", "a", "b", "c"}, "crew: identity <branch> [crew]", 1},
+	{"identity missing value", []string{"identity", "--hash"}, "crew: identity --hash <name>", 1},
+	{"identity empty value", []string{"identity", "--hash", ""}, "crew: identity --hash <name>", 1},
+	{"identity no branch", []string{"identity"}, "crew: identity <branch> [crew]", 1},
+	{"identity empty branch", []string{"identity", ""}, "crew: identity <branch> [crew]", 1},
+
+	{"crews unknown flag", []string{"crews", "--bogus"}, "crew: crews: unknown arg '--bogus'", 64},
+	{"crews empty positional", []string{"crews", ""}, "crew: crews: unknown arg ''", 64},
+	{"crews extra positional", []string{"crews", "x"}, "crew: crews: unknown arg 'x'", 64},
+	{"crews bad bool", []string{"crews", "--mine=nope"}, `crew: crews: --mine: bool value must be true, 1, yes, false, 0 or no but got "nope"`, 64},
+
+	{"register unknown flag", []string{"register", "--bogus"}, "crew: register: unknown flag '--bogus'", 1},
+	{"register extra positional", []string{"register", "1", "2"}, "crew: register: unexpected argument '2'", 1},
+	{"deregister unknown flag", []string{"deregister", "--bogus"}, "crew: deregister: unknown flag '--bogus'", 1},
+	{"deregister extra positional", []string{"deregister", "1"}, "crew: deregister: unexpected argument '1'", 1},
+	{"log unknown flag", []string{"log", "--bogus"}, "crew: log: unknown flag '--bogus'", 1},
+	{"log extra positional", []string{"log", "c1", "c2"}, "crew: log: unexpected argument 'c2'", 1},
+
+	{"sessions unknown flag", []string{"sessions", "feat/x", "--bogus"}, sessionsUsage, 1},
+	{"sessions extra positional", []string{"sessions", "feat/x", "more"}, sessionsUsage, 1},
+	{"sessions missing value", []string{"sessions", "feat/x", "--crew"}, "crew: --crew needs a value", 1},
+	{"sessions empty value", []string{"sessions", "feat/x", "--crew", ""}, "crew: --crew needs a value", 1},
+	{"sessions no branch", []string{"sessions"}, sessionsUsage, 1},
+	{"sessions empty branch", []string{"sessions", ""}, sessionsUsage, 1},
+
+	{"inbox unknown flag", []string{"inbox", "--bogus"}, "crew: inbox: unknown flag '--bogus'", 1},
+	{"inbox extra positional", []string{"inbox", "me", "c1", "c2"}, "crew: inbox: unexpected argument 'c2'", 1},
+	{"inbox since missing value", []string{"inbox", "me", "--since"}, "crew: --since needs a value", 1},
+	{"inbox since empty value", []string{"inbox", "me", "--since", ""}, "crew: --since needs a value", 1},
+	{"inbox from missing value", []string{"inbox", "me", "--from"}, "crew: --from needs a value", 1},
+	{"inbox from empty value", []string{"inbox", "me", "--from="}, "crew: --from needs a value", 1},
+	{"inbox bad bool", []string{"inbox", "me", "--undelivered=x"}, `crew: inbox: --undelivered: bool value must be true, 1, yes, false, 0 or no but got "x"`, 1},
+	{"inbox branch-only worker id", []string{"inbox", "worker:feat/x", "--since"},
+		"crew: inbox: 'worker:feat/x' has no session suffix — pass the session id ($CREW_WORKER_ID); a branch-only worker id matches no message", 1},
+	{"inbox undelivered needs a session", []string{"inbox", "dispatcher:c1", "--undelivered"},
+		"crew: inbox: --undelivered needs a worker session id ($CREW_WORKER_ID)", 1},
+}
+
+const whereUsage = "usage: crew where <codename|branch|%id> [--crew ID]"
+
+// TestTypedRefusals pins each typed subcommand's refusals at the parse: the
+// line and status are the old arms', and every one is a refusal on a parse that
+// still selected the subcommand.
+func TestTypedRefusals(t *testing.T) {
+	for _, tc := range refusalRows {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed, ok := parseCrew(tc.args)
+			if !ok || parsed.sub != tc.args[0] {
+				t.Fatalf("crew %q did not select its subcommand (ok %v, sub %q)", tc.args, ok, parsed.sub)
+			}
+			if parsed.refusal == nil {
+				t.Fatalf("crew %q parsed clean, want %q", tc.args, tc.msg)
+			}
+			if parsed.refusal.msg != tc.msg || parsed.refusal.code != tc.code {
+				t.Errorf("crew %q refused %q (%d), want %q (%d)", tc.args, parsed.refusal.msg, parsed.refusal.code, tc.msg, tc.code)
+			}
+		})
+	}
+}
+
+// TestKongErrorClassification pins the two kong error prefixes kongRefusal maps
+// by text, so a kong bump that rewords them fails here rather than turning an
+// unknown flag into the generic fallback line.
+func TestKongErrorClassification(t *testing.T) {
+	for _, tc := range []struct {
+		args   []string
+		prefix string
+	}{
+		{[]string{"where", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"where", "-x"}, "unknown flag -x"},
+		{[]string{"where", "a", "b"}, "unexpected argument b"},
+		{[]string{"deregister", "x"}, "unexpected argument x"},
+		{[]string{"crews", "--mine=nope"}, "--mine: bool value must be"},
+	} {
+		var (
+			r       root
+			capture passthroughCmd
+		)
+		p, err := newCrewParser(&r, &capture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = p.Parse(tc.args)
+		if err == nil || !strings.HasPrefix(err.Error(), tc.prefix) {
+			t.Errorf("crew %q: kong said %v, want it to start %q", tc.args, err, tc.prefix)
+		}
+	}
+}
+
+// TestRunConvertedFlagSubcommands runs the nine through run(): the refusals
+// before any bus read, and the answers an arm gives once it has typed values.
+func TestRunConvertedFlagSubcommands(t *testing.T) {
+	log := logRowC1 + "\n" + dispatch + "\n"
+	repo, _ := repoWithLog(t, &log, 0o644)
+	t.Setenv("CREW_ID", "c1")
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil)}
+
+	for _, tc := range refusalRows {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run(context.Background(), tc.args, &stdout, &stderr, e)
+			if code != tc.code || stdout.Len() != 0 || stderr.String() != tc.msg+"\n" {
+				t.Errorf("code %d stdout %q stderr %q, want %d and %q", code, stdout.String(), stderr.String(), tc.code, tc.msg)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name           string
+		args           []string
+		code           int
+		stdout, stderr string
+	}{
+		{name: "identity hash wins over a branch", args: []string{"identity", "--hash", "x", "a-branch"},
+			stdout: `{"name":"ember","color":"orange","tmux":"colour130"}` + "\n"},
+		{name: "identity hash equals", args: []string{"identity", "--hash=x"},
+			stdout: `{"name":"ember","color":"orange","tmux":"colour130"}` + "\n"},
+		{name: "resolve-target a branch", args: []string{"resolve-target", "feat/x", "--crew", "c1"}, stdout: "feat/x\t\t\tc1\n"},
+		{name: "resolve-target a crew filter", args: []string{"resolve-target", "--crew=c9", "feat/x"}, code: exitFailure,
+			stderr: "crew: resolve-target: no worker matches 'feat/x'\n"},
+		{name: "sessions flag after the branch", args: []string{"sessions", "feat/x", "--crew=c9"}, stdout: "[]\n\n"},
+		{name: "sessions flag before the branch", args: []string{"sessions", "--crew", "c9", "feat/x"}, stdout: "[]\n\n"},
+		{name: "crews mine bool value", args: []string{"crews", "--mine=yes"}},
+		{name: "log a crew", args: []string{"log", "c9"}},
+		{name: "inbox equals flags", args: []string{"inbox", "worker:feat/x#s1-1", "c1", "--since=0", "--from=dispatcher:c1"}},
+		{name: "inbox since not an integer", args: []string{"inbox", "worker:feat/x#s1-1", "--since=abc"}, code: exitFailure,
+			stderr: "crew: --since must be an integer ms timestamp\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run(context.Background(), tc.args, &stdout, &stderr, e)
+			if code != tc.code || stdout.String() != tc.stdout || stderr.String() != tc.stderr {
+				t.Errorf("code %d stdout %q stderr %q, want %d %q %q", code, stdout.String(), stderr.String(), tc.code, tc.stdout, tc.stderr)
+			}
+		})
+	}
+}
+
+// TestFlagSpellingsAreIdentical is the decision of #862: `--flag value` and
+// `--flag=value` are one command, whatever the subcommand answers.
+func TestFlagSpellingsAreIdentical(t *testing.T) {
+	const me = "worker:feat/x#s1-1"
+	log := logRowC1 + "\n" + dispatch + "\n"
+	repo, _ := repoWithLog(t, &log, 0o644)
+	t.Setenv("CREW_ID", "c1")
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil)}
+
+	// value flags: the spaced form, then the same words with the flag joined.
+	for _, tc := range []struct {
+		name         string
+		before, flag []string
+		value        string
+		after        []string
+		refused      bool
+	}{
+		{name: "where --crew", before: []string{"where"}, value: "c1", after: []string{"nova"}},
+		{name: "where --crew empty", before: []string{"where"}, value: "", after: []string{"nova"}, refused: true},
+		{name: "resolve-target --crew", before: []string{"resolve-target"}, value: "c1", after: []string{"feat/x"}},
+		{name: "resolve-target --crew empty", before: []string{"resolve-target"}, value: "", after: []string{"feat/x"}, refused: true},
+		{name: "sessions --crew", before: []string{"sessions", "feat/x"}, value: "c1"},
+		{name: "sessions --crew empty", before: []string{"sessions", "feat/x"}, value: "", refused: true},
+		{name: "identity --hash", before: []string{"identity"}, value: "reviewer"},
+		{name: "identity --hash empty", before: []string{"identity"}, value: "", refused: true},
+		{name: "inbox --since", before: []string{"inbox", me, "c1"}, value: "0"},
+		{name: "inbox --since bad", before: []string{"inbox", me, "c1"}, value: "abc"},
+		{name: "inbox --since empty", before: []string{"inbox", me, "c1"}, value: "", refused: true},
+		{name: "inbox --from", before: []string{"inbox", me, "c1"}, value: "dispatcher:c1"},
+		{name: "inbox --from empty", before: []string{"inbox", me, "c1"}, value: "", refused: true},
+	} {
+		flag := tc.name[strings.LastIndex(tc.name, "--"):]
+		flag, _, _ = strings.Cut(flag, " ")
+		t.Run(tc.name, func(t *testing.T) {
+			spaced := append(append(slices.Clone(tc.before), flag, tc.value), tc.after...)
+			joined := append(append(slices.Clone(tc.before), flag+"="+tc.value), tc.after...)
+			assertSameRun(t, e, spaced, joined, tc.refused)
+		})
+	}
+
+	// bool flags take no separate value: the bare flag and `=true` are one.
+	for _, tc := range []struct {
+		name         string
+		bare, joined []string
+	}{
+		{"crews --mine", []string{"crews", "--mine"}, []string{"crews", "--mine=true"}},
+		{"inbox --undelivered", []string{"inbox", me, "c1", "--undelivered"}, []string{"inbox", me, "c1", "--undelivered=true"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assertSameRun(t, e, tc.bare, tc.joined, false) })
+	}
+}
+
+func assertSameRun(t *testing.T, e env, a, b []string, refused bool) {
+	t.Helper()
+	var out, errOut [2]bytes.Buffer
+	codes := [2]int{
+		run(context.Background(), a, &out[0], &errOut[0], e),
+		run(context.Background(), b, &out[1], &errOut[1], e),
+	}
+	if codes[0] != codes[1] || out[0].String() != out[1].String() || errOut[0].String() != errOut[1].String() {
+		t.Errorf("crew %q and crew %q differ:\n %d %q %q\n %d %q %q",
+			a, b, codes[0], out[0].String(), errOut[0].String(), codes[1], out[1].String(), errOut[1].String())
+	}
+	if refused && codes[0] == 0 {
+		t.Errorf("crew %q succeeded, want a refusal", a)
 	}
 }

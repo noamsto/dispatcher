@@ -501,35 +501,18 @@ func TestRun(t *testing.T) {
 		}
 		return bus.Paths{Dir: dir, Log: path}
 	}
-	run := func(t *testing.T, argv []string, paths bus.Paths, crewID string) (string, string, int) {
+	run := func(t *testing.T, req Request, paths bus.Paths, crewID string) (string, string, int) {
 		t.Helper()
 		var out, errOut strings.Builder
-		code := Run(argv, paths, &out, &errOut, Options{CrewID: func() string { return crewID }})
+		code := Run(req, paths, &out, &errOut, Options{CrewID: func() string { return crewID }})
 		return out.String(), errOut.String(), code
 	}
 
-	t.Run("no branch refuses", func(t *testing.T) {
-		out, errOut, code := run(t, nil, bus.Paths{}, crew)
-		if code != 1 || errOut != "crew: identity <branch> [crew]\n" || out != "" {
-			t.Errorf("Run(nil) = %d %q %q", code, out, errOut)
-		}
-	})
-	t.Run("an empty branch refuses", func(t *testing.T) {
-		if _, _, code := run(t, []string{""}, bus.Paths{}, crew); code != 1 {
-			t.Errorf("Run(\"\") = %d, want 1", code)
-		}
-	})
 	t.Run("--hash maps a name to its slot", func(t *testing.T) {
-		out, errOut, code := run(t, []string{"--hash", "reviewer"}, bus.Paths{}, crew)
+		out, errOut, code := run(t, Request{Hash: "reviewer"}, bus.Paths{}, crew)
 		want := compact(At(Slot("reviewer"))) + "\n"
 		if code != 0 || out != want || errOut != "" {
 			t.Errorf("Run(--hash reviewer) = %d %q %q, want %s", code, out, errOut, want)
-		}
-	})
-	t.Run("--hash without a name refuses", func(t *testing.T) {
-		out, errOut, code := run(t, []string{"--hash"}, bus.Paths{}, crew)
-		if code != 1 || errOut != "crew: identity --hash <name>\n" || out != "" {
-			t.Errorf("Run(--hash) = %d %q %q", code, out, errOut)
 		}
 	})
 	t.Run("the crew defaults to the caller's", func(t *testing.T) {
@@ -537,19 +520,19 @@ func TestRun(t *testing.T) {
 		paths := log(t, fmt.Sprintf(
 			`{"kind":"dispatch","crew_id":"%s","branch":"%s","name":"%s","tmux":"colour1","ts":100}`,
 			crew, rival, own)+"\n")
-		out, _, code := run(t, []string{branch}, paths, crew)
+		out, _, code := run(t, Request{Branch: branch}, paths, crew)
 		if code != 0 || out != pool(t, names[(Slot(branch)+1)%poolSize])+"\n" {
 			t.Errorf("Run = %d %q, want the next codename", code, out)
 		}
 	})
 	t.Run("no log at all is the pool fallback", func(t *testing.T) {
-		out, errOut, code := run(t, []string{branch}, bus.Paths{Log: filepath.Join(t.TempDir(), "absent.jsonl")}, crew)
+		out, errOut, code := run(t, Request{Branch: branch}, bus.Paths{Log: filepath.Join(t.TempDir(), "absent.jsonl")}, crew)
 		if code != 0 || out != pool(t, own)+"\n" || errOut != "" {
 			t.Errorf("Run = %d %q %q, want %s", code, out, errOut, pool(t, own))
 		}
 	})
 	t.Run("a log jq could not slurp is the pool fallback", func(t *testing.T) {
-		out, _, code := run(t, []string{branch}, log(t, "{not json\n"), crew)
+		out, _, code := run(t, Request{Branch: branch}, log(t, "{not json\n"), crew)
 		if code != 0 || out != pool(t, own)+"\n" {
 			t.Errorf("Run = %d %q, want %s", code, out, pool(t, own))
 		}
