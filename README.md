@@ -271,13 +271,32 @@ four `DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`,
 installs the Codex plugin and writes the Cursor rule, commands, skills and
 rosters when those engines are included in `engines`. The settings above
 (`profile`, `engines`, `grantRoots`, `fleetBudget`, `repoTrackers`, `orgTrackers`,
-`openrouter`, `localModels`, `laneProfiles`) are not exported as `DISPATCH_*`: they go into a locked settings
+`openrouter`, `localModels`, `laneProfiles`, `workerDeniedMcpServers`) are not exported as `DISPATCH_*`: they go into a locked settings
 file baked into `dispatch-config` and every CLI that resolves through it
 (`dispatch`, `dispatch-resume`, `dispatcher`, `refresh-budget`), so no
 locked-layer path is exported to go stale. `userSettings` symlinks
 `${XDG_CONFIG_HOME:-~/.config}/dispatcher/settings.json` out of the store to a
 file you manage — above, a git-tracked file in a nix-config repo. The module
 does not create the target.
+
+The module also installs `agent-browser` (nixpkgs; `programs.dispatcher.agentBrowser.package`
+overrides it, `null` skips the install), the headless CLI workers use for browser
+checks. It needs Chrome/Chromium, so the module wraps it with
+`AGENT_BROWSER_EXECUTABLE_PATH` defaulting to a Nix Chromium: `pkgs.chromium` on
+Linux, Playwright's Chrome for Testing
+(`pkgs.playwright-driver.components.chromium`) on aarch64-darwin. Set
+`programs.dispatcher.agentBrowser.executablePath = null` to leave it unwrapped;
+`agent-browser` then finds `~/.agent-browser/browsers` (`agent-browser install`
+downloads Chrome for Testing), a system Chrome (darwin `/Applications`; Linux
+`chromium`/`google-chrome` on `PATH`) or the Puppeteer/Playwright caches.
+`dispatch` and `dispatch resume` export `AGENT_BROWSER_SESSION` (keyed on the
+branch slug plus a hash of the worktree) on every launch, so parallel workers
+never share cookies, storage or tabs. They also export `AGENT_BROWSER_CONFIG`
+pointing at a dispatcher-owned empty config, so neither the repo's
+`./agent-browser.json` nor `~/.agent-browser/config.json` applies to workers.
+Launches also strip inherited `AGENT_BROWSER_*` variables that redirect the
+browser (profile, CDP, auto-connect) from the owner's shell or tmux environment;
+a repo `.envrc` loaded by direnv inside a worker shell is not covered.
 
 ### Lean claude workers
 
@@ -288,6 +307,18 @@ ride every turn's context. Plugin and `--mcp` profile servers are unaffected.
 Set `DISPATCH_CLAUDE_CONNECTORS=1` in the dispatching shell to opt out (it is carried onto the worker so later role spawns and resumes keep it). Claude
 Code has no per-launch way to disable individual plugins without also dropping
 the hooks and skills workers need, so plugins are left alone.
+
+Workers check UI with `agent-browser`, never an interactive browser MCP server:
+those drive the owner's authenticated browser or a shared, locked profile. Claude
+workers get `permissions.deny` rules for them from the worker-only settings
+layer, built from `workerDeniedMcpServers` (default `plugin_hm_playwright`,
+`plugin_hm_firefox-devtools`; `programs.dispatcher.workerDeniedMcpServers`
+replaces it, so list the defaults too to extend it; honoured from any settings
+layer). Codex and cursor worker MCP configs are generated in the owner's
+nix-config, which keeps browser servers out of them; codex's worker profile
+`shell_environment_policy` must pass `AGENT_BROWSER_SESSION` and
+`AGENT_BROWSER_CONFIG` through, else a codex worker silently uses the shared
+default session.
 
 ### Settings
 
@@ -308,7 +339,8 @@ another file); a raw-source run or the flake's plain `packages` output honours
 it as the dev/test override it always was.
 `grantRoots` and `openrouter.keyFile` widen what a worker can read, so they
 are honoured only from the locked layer or the environment — a copy in the
-base or user layer is dropped with a warning. `fleetBudget` (default 8, 0
+base or user layer is dropped with a warning. `workerDeniedMcpServers` lists the MCP servers denied to claude workers (see
+"Lean claude workers"). `fleetBudget` (default 8, 0
 disables) is the machine-wide fan-out cap: `dispatch` refuses a new lead when
 the live leads on the host (trivial=1, standard=2, deep=3, from every
 dispatcher) plus its own would exceed it, or when the 1-minute load average is

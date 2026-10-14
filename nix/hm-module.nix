@@ -28,7 +28,8 @@ self: {
     // lib.optionalAttrs (cfg.orgTrackers != null) {inherit (cfg) orgTrackers;}
     // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;}
     // lib.optionalAttrs (cfg.localModels != null) {localModels = lockFields cfg.localModels;}
-    // lib.optionalAttrs (cfg.laneProfiles != null) {laneProfiles = lockFields cfg.laneProfiles;};
+    // lib.optionalAttrs (cfg.laneProfiles != null) {laneProfiles = lockFields cfg.laneProfiles;}
+    // lib.optionalAttrs (cfg.workerDeniedMcpServers != null) {inherit (cfg) workerDeniedMcpServers;};
   # Submodule defaults are emitted into the evalModules result, so an unset
   # `workerNotes`/`notes`/`reasoning` would reach the locked layer as JSON null
   # and dispatch-config would refuse it -- drop the unset fields per entry, the
@@ -48,6 +49,22 @@ self: {
       (map (k: "${id}.effortThinking.${k}") (lib.subtractLists effortRungs (builtins.attrNames cfg.localModels.${id}.effortThinking))))
     (builtins.attrNames cfg.localModels));
   lockedFile = pkgs.writeText "dispatcher-locked-settings.json" (builtins.toJSON lockedSettings);
+  agentBrowserPackage =
+    if cfg.agentBrowser.executablePath == null
+    then cfg.agentBrowser.package
+    else
+      pkgs.symlinkJoin {
+        name = "agent-browser";
+        paths = [cfg.agentBrowser.package];
+        nativeBuildInputs = [pkgs.makeWrapper];
+        postBuild = let
+          path = lib.escapeShellArg cfg.agentBrowser.executablePath;
+        in
+          lib.optionalString (lib.hasPrefix "/nix/store/" cfg.agentBrowser.executablePath) ''
+            [ -x ${path} ] || { echo "programs.dispatcher.agentBrowser.executablePath is not executable: "${path} >&2; exit 1; }
+          ''
+          + "wrapProgram $out/bin/agent-browser --set-default AGENT_BROWSER_EXECUTABLE_PATH ${path}";
+      };
   pkgsFor = self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.mkPackages lockedFile;
 in {
   options.programs.dispatcher = {
@@ -308,6 +325,63 @@ in {
       };
     };
 
+    workerDeniedMcpServers = lib.mkOption {
+      type = lib.types.nullOr (lib.types.listOf (lib.types.strMatching "[A-Za-z0-9_-]+"));
+      default = null;
+      example = ["plugin_hm_playwright" "plugin_hm_firefox-devtools"];
+      description = ''
+        MCP servers that Claude workers get as `permissions.deny`
+        `mcp__<server>__*` rules in their worker-only settings layer, so a
+        worker never drives the owner's interactive browser. `<server>` is the
+        server part of a tool name `mcp__<server>__<tool>`; a plugin's server
+        is `plugin_<plugin>_<server>`. Set, it lands in the locked layer and
+        replaces the list (the base default in adapters/core/defaults.json
+        covers `plugin_hm_playwright` and `plugin_hm_firefox-devtools`;
+        include the defaults to extend it).
+        Unset, the locked layer omits the key.
+      '';
+    };
+
+    agentBrowser = {
+      package = lib.mkOption {
+        type = lib.types.nullOr lib.types.package;
+        default = pkgs.agent-browser;
+        defaultText = lib.literalExpression "pkgs.agent-browser";
+        description = ''
+          The headless browser CLI workers use for browser-check acceptance
+          items; the worker protocol depends on it. Null installs nothing.
+        '';
+      };
+
+      executablePath = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default =
+          if pkgs.stdenv.hostPlatform.isLinux
+          then lib.getExe pkgs.chromium
+          else if pkgs.stdenv.hostPlatform.system == "aarch64-darwin"
+          then "${pkgs.playwright-driver.components.chromium}/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+          else null;
+        defaultText = lib.literalExpression ''
+          if isLinux then lib.getExe pkgs.chromium
+          else if system == "aarch64-darwin" then "''${pkgs.playwright-driver.components.chromium}/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+          else null
+        '';
+        description = ''
+          Browser binary for agent-browser. It finds no browser on its own
+          unless `agent-browser install` downloaded Chrome for Testing into
+          ~/.agent-browser/browsers or a system Chrome exists (darwin:
+          /Applications; Linux: chromium/google-chrome on PATH). This points it
+          at a Nix-provided Chromium instead (nixpkgs chromium is Linux-only;
+          on aarch64-darwin, Playwright's Chrome for Testing). Null leaves the
+          binary unwrapped (then run `agent-browser install` once). A
+          `/nix/store` path is checked to be executable at build time (a host
+          path is not visible in the build sandbox, so it is not). The wrapper
+          uses `--set-default`, so an exported
+          `AGENT_BROWSER_EXECUTABLE_PATH` still wins.
+        '';
+      };
+    };
+
     claudePluginDir = lib.mkOption {
       type = lib.types.str;
       readOnly = true;
@@ -360,7 +434,7 @@ in {
     # One `home` attrset, not four `home.*` assignments — statix flags the
     # repeated key.
     home = {
-      packages = [pkgsFor.crew pkgsFor.crew-dash pkgsFor.dispatch pkgsFor.dispatch-resume pkgsFor.dispatcher pkgsFor.refresh-scores pkgsFor.refresh-budget pkgsFor.refresh-models pkgsFor.pr-watch pkgsFor.reviewer-roster pkgsFor.permission-check pkgsFor.dispatch-config];
+      packages = [pkgsFor.crew pkgsFor.crew-dash pkgsFor.dispatch pkgsFor.dispatch-resume pkgsFor.dispatcher pkgsFor.refresh-scores pkgsFor.refresh-budget pkgsFor.refresh-models pkgsFor.pr-watch pkgsFor.reviewer-roster pkgsFor.permission-check pkgsFor.dispatch-config] ++ lib.optional (cfg.agentBrowser.package != null) agentBrowserPackage;
 
       sessionVariables = {
         # Exported, not merely baked into the CLIs. The `dispatcher` slash
