@@ -226,6 +226,7 @@ func newCrewParser(r *root, capture *passthroughCmd) (*kong.Kong, error) {
 		kong.WithHyphenPrefixedParameters(true),
 		kong.Writers(io.Discard, io.Discard),
 		kong.Exit(func(int) {}),
+		kong.NamedMapper("optwait", kong.MapperFunc(optWaitMapper)),
 	}
 	for _, name := range subcommands {
 		if !typedSubcommands[name] {

@@ -1162,8 +1162,9 @@ var refusalRows = []struct {
 	{"nudge crew missing value", []string{"nudge", "nova", "--crew"}, "crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")", 1},
 	{"nudge crew empty value", []string{"nudge", "--crew", "", "nova"}, "crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")", 1},
 	{"nudge crew empty value equals", []string{"nudge", "--crew=", "nova"}, "crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")", 1},
-	// A bare --wait takes the next flag as its value, so it must come last or take a number.
-	{"nudge bare wait before a flag", []string{"nudge", "--wait", "--crew", "X", "nova"}, "crew: nudge: one target only (usage: " + nudge.Usage + ")", 1},
+	// A bare --wait leaves a following flag to kong, so the flag still refuses on its own.
+	{"nudge bare wait before an unknown flag", []string{"nudge", "--wait", "--bogus", "nova"}, "crew: nudge: unknown flag '--bogus' (usage: " + nudge.Usage + ")", 1},
+	{"nudge bare wait before an empty crew", []string{"nudge", "nova", "--wait", "--crew", ""}, "crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")", 1},
 	// `--wait abc` after a target is a second target, as the arm answered.
 	{"nudge wait word after a target", []string{"nudge", "nova", "--wait", "abc"}, "crew: nudge: one target only (usage: " + nudge.Usage + ")", 1},
 	{"nudge wait word before a target", []string{"nudge", "--wait", "abc", "nova"}, "crew: nudge: one target only (usage: " + nudge.Usage + ")", 1},
@@ -1530,7 +1531,6 @@ func TestFlagSpellingsAreIdentical(t *testing.T) {
 		{"reply --crew empty", []string{"reply", "--crew", "", "worker:feat/x", "go"}, []string{"reply", "--crew=", "worker:feat/x", "go"}, true},
 		{"reply --crew", []string{"reply", "--crew", "c9", "worker:feat/none", "go"}, []string{"reply", "--crew=c9", "worker:feat/none", "go"}, true},
 		{"nudge --crew empty", []string{"nudge", "--crew", "", "nova"}, []string{"nudge", "--crew=", "nova"}, true},
-		{"nudge --wait word", []string{"nudge", "nova", "--wait", "abc"}, []string{"nudge", "nova", "--wait=abc"}, true},
 		{"await --from empty", []string{"await", me, "--from", ""}, []string{"await", me, "--from="}, true},
 		{"await --timeout empty", []string{"await", me, "--timeout", ""}, []string{"await", me, "--timeout="}, true},
 		{"await --interval empty", []string{"await", me, "--interval", ""}, []string{"await", me, "--interval="}, true},
@@ -1611,8 +1611,6 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 		{"nudge --crew empty", []string{"nudge", "--crew", "", "nova"}, []string{"nudge", "--crew=", "nova"}, true},
 		{"nudge --wait", []string{"nudge", "nova", "--wait", "5"}, []string{"nudge", "nova", "--wait=5"}, false},
 		{"nudge --wait first", []string{"nudge", "--wait", "5", "nova"}, []string{"nudge", "--wait=5", "nova"}, false},
-		{"nudge --wait word", []string{"nudge", "--wait", "nova"}, []string{"nudge", "--wait=nova"}, false},
-		{"nudge --wait word and target", []string{"nudge", "nova", "--wait", "abc"}, []string{"nudge", "nova", "--wait=abc"}, true},
 		{"await --from", []string{"await", "worker:x#s1-1", "--from", "dispatcher:c1"}, []string{"await", "worker:x#s1-1", "--from=dispatcher:c1"}, false},
 		{"await --timeout", []string{"await", "worker:x#s1-1", "--timeout", "5"}, []string{"await", "worker:x#s1-1", "--timeout=5"}, false},
 		{"await --interval", []string{"await", "worker:x#s1-1", "--interval", "3"}, []string{"await", "worker:x#s1-1", "--interval=3"}, false},
@@ -1867,6 +1865,9 @@ func TestNudgeWaitBinding(t *testing.T) {
 		{[]string{"nudge", "nova", "--wait", "5"}, nudge.Request{Target: "nova", Wait: "5"}},
 		{[]string{"nudge", "--wait=5", "nova", "--crew=c1"}, nudge.Request{Crew: "c1", Target: "nova", Wait: "5"}},
 		{[]string{"nudge", "--wait", "nova"}, nudge.Request{Target: "nova", Wait: "1800"}},
+		{[]string{"nudge", "nova", "--wait", "--crew", "X"}, nudge.Request{Crew: "X", Target: "nova", Wait: "1800"}},
+		{[]string{"nudge", "--wait", "--crew", "X", "nova"}, nudge.Request{Crew: "X", Target: "nova", Wait: "1800"}},
+		{[]string{"nudge", "nova", "--wait", "60", "--crew", "X"}, nudge.Request{Crew: "X", Target: "nova", Wait: "60"}},
 	} {
 		parsed, ok := parseCrew(tc.args)
 		if !ok || parsed.refusal != nil {

@@ -2,7 +2,10 @@ package main
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
+
+	"github.com/alecthomas/kong"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
@@ -227,7 +230,7 @@ type holdCmd struct {
 
 type nudgeCmd struct {
 	Crew   *string `name:"crew"`
-	Wait   *string `name:"wait"`
+	Wait   *string `name:"wait" type:"optwait"`
 	Target string  `arg:"" optional:"" name:"target"`
 }
 
@@ -403,6 +406,30 @@ func kongRefusal(sub string, err error) *refusal {
 		return &refusal{w.extra(word), w.code}
 	}
 	return &refusal{fmt.Sprintf("crew: %s: %s", sub, text), w.code}
+}
+
+// optWaitMapper binds `--wait`: a value only when `--wait=V`, or the next
+// token is all digits, as the old arm took it. Any other next token, a flag
+// or a word, stays for kong, and a bare `--wait` binds "" (the default wait).
+func optWaitMapper(ctx *kong.DecodeContext, target reflect.Value) error {
+	v := ""
+	switch t := ctx.Scan.Peek(); {
+	case t.Type == kong.FlagValueToken:
+		v = ctx.Scan.Pop().String()
+	case t.Type == kong.UntypedToken && isDigits(t.String()):
+		v = ctx.Scan.Pop().String()
+	}
+	target.Set(reflect.ValueOf(&v))
+	return nil
+}
+
+func isDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // given is a *string flag that was passed with an empty or missing value.
