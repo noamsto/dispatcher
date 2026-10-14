@@ -20,7 +20,8 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
-const usage = "crew: fleet [--all] [--crew ID] [--json]"
+// Usage is the line every fleet grammar refusal prints.
+const Usage = "crew: fleet [--all] [--crew ID] [--json]"
 
 // Options carry every outside read, so tests use temp dirs and stubs.
 type Options struct {
@@ -38,29 +39,17 @@ type Options struct {
 	Colors *jsonv.Palette
 }
 
+// Request is `crew fleet`'s flags: Crew limits the rows to one crew id.
+type Request struct {
+	All  bool
+	JSON bool
+	Crew string
+}
+
 // Run lists the rows of every discovered bus. A repo it cannot read is noted
 // on stderr and skipped, so one bad bus never blinds the machine view.
-func Run(args []string, stdout, stderr io.Writer, o Options) int {
-	var all, asJSON bool
-	var onlyCrew string
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--all":
-			all = true
-		case "--json":
-			asJSON = true
-		case "--crew":
-			if i+1 >= len(args) || args[i+1] == "" {
-				say(stderr, "%s\n", usage)
-				return 1
-			}
-			i++
-			onlyCrew = args[i]
-		default:
-			say(stderr, "%s\n", usage)
-			return 1
-		}
-	}
+func Run(req Request, stdout, stderr io.Writer, o Options) int {
+	all, asJSON, onlyCrew := req.All, req.JSON, req.Crew
 
 	var panes *string
 	livePanes := func() string {

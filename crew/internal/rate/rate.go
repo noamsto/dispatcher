@@ -1,8 +1,7 @@
 // Package rate is `crew rate`: the per-repo sweep that folds this repo's crew
 // bus into the global ratings store, the `--report` rollup of that store, and
 // the `--sweep-all` loop that sweeps every repo on the machine. The package owns
-// the flag parsing and every refusal line; crew.sh routes the subcommand here
-// the way it routes the other ported arms.
+// the mode-combination refusals; the command line itself is main's kong grammar.
 //
 // The folds are the original jq programs from adapters/core/crew.sh
 // (records.jq, plan.jq, view.jq, actions.jq, threads.jq, dedupe.jq, merge.jq,
@@ -37,9 +36,9 @@ var program string
 var dedupeProgram string
 
 const (
-	// usage is the line an agent reads when it hands rate flags it cannot run;
+	// Usage is the line an agent reads when it hands rate flags it cannot run;
 	// it is the arm's own, kept verbatim.
-	usage       = "crew: rate takes --report, --json, --pooled, and --sweep-all/--root"
+	Usage       = "crew: rate takes --report, --json, --pooled, and --sweep-all/--root"
 	exitType    = 5
 	exitFailure = 1
 )
@@ -102,91 +101,54 @@ func (o Options) withDefaults() Options {
 // or nowhere, for stderr) — main.go's helper, same reason.
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
-// flags is one parse of `crew rate`'s command line.
-type flags struct {
-	report   bool
-	jsonOut  bool
-	pooled   bool
-	sweepAll bool
-	roots    []string
+// Request is one parse of `crew rate`'s command line.
+type Request struct {
+	Report   bool
+	JSON     bool
+	Pooled   bool
+	SweepAll bool
+	Roots    []string
 }
 
-// WalksEveryRepo is the one question main.go asks before it resolves the
-// caller's repo: --sweep-all is the mode with no repo of its own, so it is
-// dispatched outside any repo. It is a substring test because the bash
-// preamble's exemption was a glob (`rate *--sweep-all*`) over the joined args.
-func WalksEveryRepo(args []string) bool {
-	for _, a := range args {
-		if strings.Contains(a, "--sweep-all") {
-			return true
-		}
-	}
-	return false
-}
-
-// parseFlags is the arm's flag loop and its refusals, in the arm's order: an
-// unknown flag or a --root without a directory dies during the loop, --root
-// without --sweep-all before the modes are read, and each mode then refuses the
-// flags it cannot use. The refusal is the whole line to print; empty is no
-// refusal.
-func parseFlags(args []string) (flags, string) {
-	var fl flags
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--report":
-			fl.report = true
-		case "--json":
-			fl.jsonOut = true
-		case "--pooled":
-			fl.pooled = true
-		case "--sweep-all":
-			fl.sweepAll = true
-		case "--root":
-			if i+1 >= len(args) || args[i+1] == "" {
-				return fl, "crew: rate --root needs a directory"
-			}
-			i++
-			fl.roots = append(fl.roots, args[i])
-		default:
-			return fl, usage
-		}
-	}
+// refusal is the mode-combination check, in the arm's order: --root without
+// --sweep-all before the modes are read, then each mode refuses the flags it
+// cannot use. It is the whole line to print; empty is no refusal.
+func (r Request) refusal() string {
 	switch {
-	case len(fl.roots) > 0 && !fl.sweepAll:
-		return fl, "crew: rate --root needs --sweep-all"
-	case fl.sweepAll && (fl.report || fl.jsonOut || fl.pooled):
-		return fl, usage
-	case (fl.jsonOut || fl.pooled) && !fl.report:
-		return fl, usage
+	case len(r.Roots) > 0 && !r.SweepAll:
+		return "crew: rate --root needs --sweep-all"
+	case r.SweepAll && (r.Report || r.JSON || r.Pooled):
+		return Usage
+	case (r.JSON || r.Pooled) && !r.Report:
+		return Usage
 	}
-	return fl, ""
+	return ""
 }
 
 // Run is `crew rate`: no flags sweeps this repo, `--report` renders the store,
 // `--sweep-all` sweeps every repo it can find, and anything else is refused with
 // one line. jq's exit status is mirrored (0, or 5 when a fold fails on a row it
 // cannot use), its error wording is not.
-func Run(args []string, paths bus.Paths, cwd string, stdout, stderr io.Writer, o Options) int {
+func Run(req Request, paths bus.Paths, cwd string, stdout, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
-	fl, why := parseFlags(args)
-	if why != "" {
+	if why := req.refusal(); why != "" {
 		say(stderr, "%s\n", why)
 		return exitFailure
 	}
-	if fl.sweepAll {
+	if req.SweepAll {
 		// The loop reads the repos it discovers, never the caller's own, which is
 		// why main.go may hand Run the zero paths.
-		return sweepAll(fl.roots, stdout, stderr, o)
+		return sweepAll(req.Roots, stdout, stderr, o)
 	}
-	if fl.report {
-		return report(fl, cwd, stdout, stderr, o)
+	if req.Report {
+		return report(req, cwd, stdout, stderr, o)
 	}
 	return runSweep(paths, cwd, stderr, o)
 }
 
 // report renders the global store: no bus, and no network beyond the one local
 // git probe the scoped mode makes.
-func report(fl flags, cwd string, stdout, stderr io.Writer, o Options) int {
+func report(fl Request, cwd string, stdout, stderr io.Writer, o Options) int {
 	store := storePath(o.StorePath, o.LookupEnv)
 	var rows []jsonv.Value
 	if data, err := os.ReadFile(store); err == nil {
@@ -202,13 +164,13 @@ func report(fl flags, cwd string, stdout, stderr io.Writer, o Options) int {
 	}
 
 	currentRepo := ""
-	if !fl.pooled {
+	if !fl.Pooled {
 		currentRepo = currentRepoScope(o.git(), cwd)
 	}
 	out, err := jqrun.Run(program, deduped.Elems(), 0, map[string]jsonv.Value{
-		"want_json":    jsonv.Bool(fl.jsonOut),
+		"want_json":    jsonv.Bool(fl.JSON),
 		"current_repo": jsonv.Str(currentRepo),
-		"pooled":       jsonv.Bool(fl.pooled),
+		"pooled":       jsonv.Bool(fl.Pooled),
 	})
 	if err != nil {
 		say(stderr, "crew: rate: %s: %v\n", store, err)
@@ -218,7 +180,7 @@ func report(fl flags, cwd string, stdout, stderr io.Writer, o Options) int {
 	// --json is the mode's only non-string output, so the only shape jq
 	// pretty-printed; the table is one string the fold already joined, which
 	// `jq -r` printed plus one newline. Terminal colour is a process quirk.
-	if fl.jsonOut {
+	if fl.JSON {
 		if err := jsonv.Encode(stdout, out, jsonv.Options{Indent: true}); err != nil {
 			say(stderr, "crew: rate: %v\n", err)
 			return exitFailure

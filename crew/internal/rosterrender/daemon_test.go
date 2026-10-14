@@ -143,15 +143,15 @@ func (l *loop) sleep(ctx context.Context, _ time.Duration) error {
 // run drives the loop to its own exit, or to the ceiling. A code of exitOK means
 // the daemon decided to stop; the tick count says whether that was the decision
 // under test or the ceiling.
-func (l *loop) run(args ...string) int {
+func (l *loop) run(quiet string) int {
 	l.t.Helper()
-	return l.runCtx(context.Background(), args...)
+	return l.runCtx(context.Background(), quiet)
 }
 
 // runCtx is run with the caller's context, for the tests that drive a signal.
-func (l *loop) runCtx(ctx context.Context, args ...string) int {
+func (l *loop) runCtx(ctx context.Context, quiet string) int {
 	l.t.Helper()
-	c, msg, code := parse(append([]string{"--crew", "c1"}, args...))
+	c, msg, code := check(Request{Crew: "c1", Quiet: quiet})
 	if msg != "" {
 		l.t.Fatalf("parse: %s (%d)", msg, code)
 	}
@@ -327,7 +327,7 @@ func TestDaemonExitsAfterTheQuietWindow(t *testing.T) {
 		if err := os.WriteFile(l.paths.Log, nil, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		code := l.run("--quiet", "5")
+		code := l.run("5")
 		if code != exitOK {
 			t.Errorf("code = %d", code)
 		}
@@ -341,7 +341,7 @@ func TestDaemonExitsAfterTheQuietWindow(t *testing.T) {
 		l.panes = l.cdir() + "\tc1\tfeat/1-a\tspec-critic\tidle\t\n"
 		// The only way out of this loop is the ceiling: a live crew never
 		// reaches the quiet window.
-		l.run("--quiet", "5")
+		l.run("5")
 		if !l.hitCeiling() {
 			t.Errorf("a live crew retired itself after %d ticks", l.slept)
 		}
@@ -364,7 +364,7 @@ func TestDaemonKeepsTheLastLiveCountWhenAPassFails(t *testing.T) {
 		}
 		return first(ctx, d)
 	}
-	l.run("--quiet", "5")
+	l.run("5")
 	if !l.hitCeiling() {
 		t.Errorf("a malformed bus retired the renderer after %d ticks", l.slept)
 	}
@@ -389,7 +389,7 @@ func TestASignalAtTheHopBoundaryExits(t *testing.T) {
 	cancel()
 	// The lock is taken before the signal handler is armed, so a cancelled context
 	// still runs its first pass and then stops at the hop rather than execing past it.
-	if code := l.runCtx(ctx, "--quiet", "5"); code != exitOK {
+	if code := l.runCtx(ctx, "5"); code != exitOK {
 		t.Errorf("exit code = %d, want %d", code, exitOK)
 	}
 	if got := l.hops; len(got) != 0 {
@@ -413,7 +413,7 @@ func TestDaemonRefusesASecondCopySilently(t *testing.T) {
 	}
 	var stderr bytes.Buffer
 	l.opts.Stderr = &stderr
-	if code := l.run(); code != exitOK {
+	if code := l.run(""); code != exitOK {
 		t.Errorf("code = %d", code)
 	}
 	if stderr.Len() != 0 {
@@ -438,7 +438,7 @@ func TestDaemonExitsWhenItLosesTheLock(t *testing.T) {
 		}
 		return first(ctx, d)
 	}
-	if code := l.run("--quiet", "600"); code != exitOK {
+	if code := l.run("600"); code != exitOK {
 		t.Errorf("code = %d", code)
 	}
 	if l.slept > 3 {
@@ -461,7 +461,7 @@ func TestDaemonReleasesOnlyItsOwnLock(t *testing.T) {
 		}
 		return first(ctx, d)
 	}
-	if code := l.run("--quiet", "600"); code != exitOK {
+	if code := l.run("600"); code != exitOK {
 		t.Errorf("code = %d", code)
 	}
 	if got := l.lockOwner(); got != "4242" {

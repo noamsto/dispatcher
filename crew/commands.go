@@ -5,7 +5,11 @@ import (
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/fleet"
+	"github.com/noamsto/dispatcher/crew/internal/rate"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
+	"github.com/noamsto/dispatcher/crew/internal/retro"
+	"github.com/noamsto/dispatcher/crew/internal/stack"
 	"github.com/noamsto/dispatcher/crew/internal/where"
 )
 
@@ -57,6 +61,65 @@ type inboxCmd struct {
 	Crew        string  `arg:"" optional:"" name:"crew"`
 }
 
+type rosterCmd struct {
+	Crew string `arg:"" optional:"" name:"crew"`
+}
+
+type reportCmd struct {
+	Crew string `arg:"" optional:"" name:"crew"`
+}
+
+type retroCmd struct {
+	Report bool `name:"report"`
+	JSON   bool `name:"json"`
+}
+
+// rateCmd.Root keeps every value whole (`sep:"none"`, so a comma stays in the
+// path) and binds an empty one, which validate refuses.
+type rateCmd struct {
+	Report   bool      `name:"report"`
+	JSON     bool      `name:"json"`
+	Pooled   bool      `name:"pooled"`
+	SweepAll bool      `name:"sweep-all"`
+	Root     []*string `name:"root" sep:"none"`
+}
+
+// fleetCmd.Rest is the words kong leaves alone once it meets one that is no flag:
+// `stream` and whatever follows reach the lane's own parser untouched.
+type fleetCmd struct {
+	All  bool     `name:"all"`
+	JSON bool     `name:"json"`
+	Crew *string  `name:"crew"`
+	Rest []string `arg:"" optional:"" passthrough:"partial" name:"rest"`
+}
+
+type stackCutCmd struct {
+	Record bool   `name:"record"`
+	Child  string `arg:"" optional:"" name:"child"`
+	Oid    string `arg:"" optional:"" name:"oid"`
+}
+
+type stackAlignCmd struct {
+	Top string `arg:"" optional:"" name:"top"`
+}
+
+type stackCmd struct {
+	Cut   stackCutCmd   `cmd:"" name:"cut"`
+	Align stackAlignCmd `cmd:"" name:"align"`
+}
+
+// rosterRenderCmd keeps interval and quiet as the caller's bytes: they are what
+// the detached daemon is started with.
+type rosterRenderCmd struct {
+	Crew     *string `name:"crew"`
+	Pane     *string `name:"pane"`
+	Interval *string `name:"interval"`
+	Quiet    *string `name:"quiet"`
+	NoOpen   bool    `name:"no-open"`
+	Once     bool    `name:"once"`
+	Detach   bool    `name:"detach"`
+}
+
 // refusal is the stderr line and exit status a typed subcommand's argv earned.
 type refusal struct {
 	msg  string
@@ -67,13 +130,16 @@ const (
 	identityUsage     = "crew: identity <branch> [crew]"
 	identityHashUsage = "crew: identity --hash <name>"
 	identitySignature = "usage: crew identity <branch> [crew]"
+	rateRootUsage     = "crew: rate --root needs a directory"
 )
 
 // wording is how one subcommand phrases the two grammar failures kong reports
-// by prefix: the offending token is handed in bare.
+// by prefix: the offending token is handed in bare. A subcommand with one usage
+// line for every grammar failure sets all instead.
 type wording struct {
 	unknownFlag func(flag string) string
 	extra       func(word string) string
+	all         string
 	code        int
 }
 
@@ -116,6 +182,18 @@ var wordings = map[string]wording{
 		extra:       func(w string) string { return fmt.Sprintf("crew: crews: unknown arg '%s'", w) },
 		code:        exitUsage,
 	},
+	"roster": plain("roster"),
+	"report": plain("report"),
+	"retro":  {all: retro.Usage, code: exitFailure},
+	"rate":   {all: rate.Usage, code: exitFailure},
+	"fleet":  {all: fleet.Usage, code: exitFailure},
+	// stack.Usage ends in the newline run adds back.
+	"stack": {all: strings.TrimSuffix(stack.Usage, "\n"), code: exitFailure},
+	"roster-render": {
+		unknownFlag: func(f string) string { return "crew: roster-render: unknown arg '" + f + "'" },
+		extra:       func(w string) string { return "crew: roster-render: unknown arg '" + w + "'" },
+		code:        exitUsage,
+	},
 	"inbox":      plain("inbox"),
 	"register":   plain("register"),
 	"deregister": plain("deregister"),
@@ -133,6 +211,13 @@ func kongRefusal(sub string, err error) *refusal {
 	text := err.Error()
 	// kong appends a suggestion to some of its messages.
 	text, _, _ = strings.Cut(text, ", did you mean")
+	// A trailing --root binds no value, unlike the *string flags, which bind "".
+	if sub == "rate" && strings.HasPrefix(text, "--root: missing value") {
+		return &refusal{rateRootUsage, exitFailure}
+	}
+	if w.all != "" {
+		return &refusal{w.all, w.code}
+	}
 	if flag, ok := strings.CutPrefix(text, "unknown flag "); ok {
 		return &refusal{w.unknownFlag(flag), w.code}
 	}
@@ -202,6 +287,36 @@ func validate(sub string, r *root) *refusal {
 		// Marks exist only for a session; the suffix check above covers any worker id.
 		if c.Undelivered && !strings.HasPrefix(c.Agent, "worker:") {
 			return fail("crew: inbox: --undelivered needs a worker session id ($CREW_WORKER_ID)")
+		}
+	case "rate":
+		for _, d := range r.Rate.Root {
+			if given(d) {
+				return fail(rateRootUsage)
+			}
+		}
+	case "fleet":
+		c := r.Fleet
+		if given(c.Crew) {
+			return fail(fleet.Usage)
+		}
+		// Only the lane takes a word, and it takes none of fleet's own flags.
+		if len(c.Rest) > 0 && (c.Rest[0] != "stream" || c.All || c.JSON || c.Crew != nil) {
+			return fail(fleet.Usage)
+		}
+	case "stack":
+		c := r.Stack
+		if (c.Cut.Child == "" && c.Align.Top == "") || (c.Cut.Oid != "" && !c.Cut.Record) {
+			return fail(strings.TrimSuffix(stack.Usage, "\n"))
+		}
+	case "roster-render":
+		c := r.RosterRender
+		for _, f := range []struct {
+			name string
+			v    *string
+		}{{"--crew", c.Crew}, {"--pane", c.Pane}, {"--interval", c.Interval}, {"--quiet", c.Quiet}} {
+			if given(f.v) {
+				return &refusal{fmt.Sprintf("crew: %s needs a value", f.name), exitUsage}
+			}
 		}
 	}
 	return nil

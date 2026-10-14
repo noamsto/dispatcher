@@ -1,7 +1,7 @@
 package rosterrender
 
 import (
-	"fmt"
+	"cmp"
 	"strconv"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -9,8 +9,6 @@ import (
 
 // The arm's refusals, in its order. Every one is exit 64, like `stream`.
 const (
-	errNeedsValue   = "crew: %s needs a value"
-	errUnknownArg   = "crew: roster-render: unknown arg '%s'"
 	errInterval     = "crew: --interval must be a positive integer number of seconds"
 	errQuiet        = "crew: --quiet must be a non-negative integer number of seconds"
 	errCrewRequired = "crew: roster-render: --crew is required"
@@ -37,46 +35,22 @@ type call struct {
 	detach       bool
 }
 
-// parse is the arm's flag loop plus the five refusals that follow it, in that
-// order: an unknown argument beats a bad interval, which beats a missing crew.
-// msg is the stderr line and code its status when the arguments themselves fail.
-func parse(args []string) (call, string, int) {
-	var c call
+// Request is `crew roster-render`'s flags as the caller typed them. An empty
+// string is a flag never passed: a given-empty one is refused before it gets here.
+type Request struct {
+	Crew, Pane, Interval, Quiet string
+	NoOpen, Once, Detach        bool
+}
+
+// check is the arm's five refusals that follow its flag loop, in that order: a
+// bad interval beats a missing crew. msg is the stderr line and code its status
+// when the arguments themselves fail.
+func check(r Request) (call, string, int) {
+	c := call{crew: r.Crew, pane: r.Pane, noOpen: r.NoOpen, once: r.Once, detach: r.Detach}
 	// The arm's initialisers: a flag the caller never passed still reaches the
 	// daemon with the default's own bytes.
-	intervalText, quietText := strconv.Itoa(defaultInterval), strconv.Itoa(defaultQuiet)
+	intervalText, quietText := cmp.Or(r.Interval, strconv.Itoa(defaultInterval)), cmp.Or(r.Quiet, strconv.Itoa(defaultQuiet))
 	var interval, quiet int64
-
-	for len(args) > 0 {
-		switch a := args[0]; a {
-		case "--crew", "--pane", "--interval", "--quiet":
-			if len(args) < 2 || args[1] == "" {
-				return c, fmt.Sprintf(errNeedsValue, a), exitUsage
-			}
-			switch a {
-			case "--crew":
-				c.crew = args[1]
-			case "--pane":
-				c.pane = args[1]
-			case "--interval":
-				intervalText = args[1]
-			case "--quiet":
-				quietText = args[1]
-			}
-			args = args[2:]
-		case "--no-open":
-			c.noOpen = true
-			args = args[1:]
-		case "--once":
-			c.once = true
-			args = args[1:]
-		case "--detach":
-			c.detach = true
-			args = args[1:]
-		default:
-			return c, fmt.Sprintf(errUnknownArg, a), exitUsage
-		}
-	}
 
 	// The arm tests the digits and then the sign, both against the same message.
 	var ok bool

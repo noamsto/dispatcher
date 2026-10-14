@@ -102,7 +102,7 @@ func (f *fixture) seedPRRow() {
 func (f *fixture) runQuiet() (string, int) {
 	f.t.Helper()
 	var out, errb bytes.Buffer
-	code := Run(nil, f.paths, "/repo", &out, &errb, f.options())
+	code := Run(Request{}, f.paths, "/repo", &out, &errb, f.options())
 	if out.Len() != 0 {
 		f.t.Errorf("stdout = %q, want clean", out.String())
 	}

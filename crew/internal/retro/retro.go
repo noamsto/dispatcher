@@ -28,9 +28,9 @@ var program string
 const (
 	// header is the arm's printf, printed before jq starts and only without --report.
 	header = "branch\tengine\tmodel\ttier\toutcome\ttags"
-	// usage is one line for two refusals: the flag loop's `*)` branch and the
+	// Usage is one line for two refusals: a flag outside the grammar and the
 	// `--json` without `--report` test print it and take the same status.
-	usage       = "crew: retro takes --report and --json"
+	Usage       = "crew: retro takes --report and --json"
 	exitType    = 5
 	exitFailure = 1
 )
@@ -39,23 +39,19 @@ const (
 // or nowhere, for stderr) — main.go's helper, same reason.
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
-// Run is the arm: the flag loop first (so a bad argument costs nothing but its
-// own line), then the arm's `[ -f "$log" ]`, then the header, then the fold.
-func Run(args []string, paths bus.Paths, stdout, stderr io.Writer) int {
-	report, jsonOut := false, false
-	for _, arg := range args {
-		switch arg {
-		case "--report":
-			report = true
-		case "--json":
-			jsonOut = true
-		default:
-			say(stderr, "%s\n", usage)
-			return exitFailure
-		}
-	}
+// Request is `crew retro`'s two flags.
+type Request struct {
+	Report bool
+	JSON   bool
+}
+
+// Run is the arm: the `--json` without `--report` test first (so a bad argument
+// costs nothing but its own line), then the arm's `[ -f "$log" ]`, then the
+// header, then the fold.
+func Run(req Request, paths bus.Paths, stdout, stderr io.Writer) int {
+	report, jsonOut := req.Report, req.JSON
 	if jsonOut && !report {
-		say(stderr, "%s\n", usage)
+		say(stderr, "%s\n", Usage)
 		return exitFailure
 	}
 

@@ -35,15 +35,15 @@ const oneRun = `{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/a","e
 	`{"ts":2000,"crew_id":"c1","kind":"dispatch","branch":"feat/clean","engine":"pi","model":"lemonade","tier":"trivial","title":"t"}` + "\n" +
 	`{"ts":2100,"crew_id":"c1","kind":"status","from":"worker:feat/clean#s1","to":"dispatcher:c1","body":{"state":"done"}}` + "\n"
 
-func run(t *testing.T, events string, args ...string) (string, string, int) {
+func run(t *testing.T, events string, req Request) (string, string, int) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	code := Run(args, fixture(t, events), &out, &errb)
+	code := Run(req, fixture(t, events), &out, &errb)
 	return out.String(), errb.String(), code
 }
 
 func TestBareRowsMatchTheArm(t *testing.T) {
-	out, errb, code := run(t, oneRun)
+	out, errb, code := run(t, oneRun, Request{})
 	if code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, errb)
 	}
@@ -55,7 +55,7 @@ func TestBareRowsMatchTheArm(t *testing.T) {
 }
 
 func TestReportTableMatchesTheArm(t *testing.T) {
-	out, errb, code := run(t, oneRun, "--report")
+	out, errb, code := run(t, oneRun, Request{Report: true})
 	if code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, errb)
 	}
@@ -69,7 +69,7 @@ func TestReportTableMatchesTheArm(t *testing.T) {
 }
 
 func TestReportJSONIsFoldedAndOrdered(t *testing.T) {
-	out, errb, code := run(t, oneRun, "--report", "--json")
+	out, errb, code := run(t, oneRun, Request{Report: true, JSON: true})
 	if code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, errb)
 	}
@@ -111,7 +111,7 @@ func TestUnknownTagsAreListedOnce(t *testing.T) {
 		`{"ts":1100,"crew_id":"c1","kind":"msg","from":"worker:feat/a#s1","to":"retro:c1","body":"{\"seam\":\"execute\",\"tag\":\"oops\",\"detail\":\"x\"}"}` + "\n" +
 		`{"ts":1150,"crew_id":"c1","kind":"msg","from":"worker:feat/a#s1","to":"retro:c1","body":"{\"seam\":\"gate\",\"tag\":\"oops\",\"detail\":\"y\"}"}` + "\n" +
 		`{"ts":1200,"crew_id":"c1","kind":"status","from":"worker:feat/a#s1","to":"dispatcher:c1","body":{"state":"failed"}}` + "\n"
-	out, _, code := run(t, events, "--report")
+	out, _, code := run(t, events, Request{Report: true})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -121,7 +121,7 @@ func TestUnknownTagsAreListedOnce(t *testing.T) {
 	if !strings.HasSuffix(out, "1 unrecognized tag(s): oops\n") {
 		t.Errorf("unknown tag trailer missing:\n%s", out)
 	}
-	jsonOut, _, _ := run(t, events, "--report", "--json")
+	jsonOut, _, _ := run(t, events, Request{Report: true, JSON: true})
 	if !strings.Contains(jsonOut, `unknown`) || !strings.Contains(jsonOut, `"oops"`) {
 		t.Errorf("the JSON shape should list the unknown tag:\n%s", jsonOut)
 	}
@@ -132,7 +132,7 @@ func TestBareRowCountsRepeatedTags(t *testing.T) {
 		`{"ts":1100,"crew_id":"c1","kind":"msg","from":"worker:feat/a#s1","to":"retro:c1","body":"{\"seam\":\"execute\",\"tag\":\"other\",\"detail\":\"x\"}"}` + "\n" +
 		`{"ts":1150,"crew_id":"c1","kind":"msg","from":"worker:feat/a#s1","to":"retro:c1","body":"{\"seam\":\"gate\",\"tag\":\"other\",\"detail\":\"y\"}"}` + "\n" +
 		`{"ts":1200,"crew_id":"c1","kind":"status","from":"worker:feat/a#s1","to":"dispatcher:c1","body":{"state":"failed"}}` + "\n"
-	out, _, _ := run(t, events)
+	out, _, _ := run(t, events, Request{})
 	if !strings.HasSuffix(out, "failed\tother x2\n") {
 		t.Errorf("the bare row counts repeats: %q", out)
 	}
@@ -141,7 +141,7 @@ func TestBareRowCountsRepeatedTags(t *testing.T) {
 func TestCleanRunPrintsNoRow(t *testing.T) {
 	events := `{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/a","engine":"claude","model":"m","tier":"standard","title":"t"}` + "\n" +
 		`{"ts":1200,"crew_id":"c1","kind":"status","from":"worker:feat/a#s1","to":"dispatcher:c1","body":{"state":"done"}}` + "\n"
-	out, errb, code := run(t, events)
+	out, errb, code := run(t, events, Request{})
 	if code != 0 || errb != "" {
 		t.Fatalf("exit %d, stderr %q", code, errb)
 	}
@@ -152,34 +152,19 @@ func TestCleanRunPrintsNoRow(t *testing.T) {
 
 func TestNoLogIsSilent(t *testing.T) {
 	// Not one byte — the arm exits before its header printf.
-	for _, args := range [][]string{{}, {"--report"}, {"--report", "--json"}} {
-		out, errb, code := run(t, "", args...)
+	for _, req := range []Request{{}, {Report: true}, {Report: true, JSON: true}} {
+		out, errb, code := run(t, "", req)
 		if code != 0 || out != "" || errb != "" {
-			t.Errorf("%v on a missing bus: exit %d, stdout %q, stderr %q", args, code, out, errb)
+			t.Errorf("%+v on a missing bus: exit %d, stdout %q, stderr %q", req, code, out, errb)
 		}
 	}
 }
 
-func TestFlagErrorsCostOneLine(t *testing.T) {
-	// The arm's flag loop and its `--json` without `--report` test share one
-	// message and one status, and neither reaches the bus.
-	for _, args := range [][]string{{"--json"}, {"--bogus"}, {"c1"}, {"--report", "--bogus"}} {
-		out, errb, code := run(t, oneRun, args...)
-		if code != 1 || out != "" || errb != usage+"\n" {
-			t.Errorf("%v: exit %d, stdout %q, stderr %q", args, code, out, errb)
-		}
-	}
-}
-
-func TestFlagsAreOrderFree(t *testing.T) {
-	plain, _, _ := run(t, oneRun, "--report", "--json")
-	swapped, _, _ := run(t, oneRun, "--json", "--report")
-	if plain != swapped {
-		t.Errorf("--json --report differs from --report --json:\n%s\n%s", plain, swapped)
-	}
-	twice, _, code := run(t, oneRun, "--report", "--report")
-	if code != 0 || !strings.Contains(twice, "gate_thrash") {
-		t.Errorf("a repeated flag should be harmless: exit %d, %q", code, twice)
+func TestJSONWithoutReportCostsOneLine(t *testing.T) {
+	// The refusal never reaches the bus.
+	out, errb, code := run(t, oneRun, Request{JSON: true})
+	if code != 1 || out != "" || errb != Usage+"\n" {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, out, errb)
 	}
 }
 
@@ -187,7 +172,7 @@ func TestTornTailFailsTheWholeFold(t *testing.T) {
 	// `jq -s` has no tolerance: the break costs every row, header included in
 	// the bare mode because the arm prints it before jq starts.
 	out, errb, code := run(t, `{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/a","engine":"claude","model":"m","tier":"standard","title":"t"}`+
-		"\n"+`{"ts":1100,"crew_id":"c1","kind":"msg","from":"worker:feat/a`)
+		"\n"+`{"ts":1100,"crew_id":"c1","kind":"msg","from":"worker:feat/a`, Request{})
 	if code != 5 {
 		t.Fatalf("a torn tail should exit 5, got %d (%s)", code, errb)
 	}
@@ -218,7 +203,7 @@ func TestUnreadableLogExitsTwo(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(paths.Log, 0o644) })
 	var out, errb bytes.Buffer
-	code := Run(nil, paths, &out, &errb)
+	code := Run(Request{}, paths, &out, &errb)
 	if code != 2 {
 		t.Fatalf("an unreadable bus should exit 2, got %d (%s)", code, errb.String())
 	}
@@ -233,7 +218,7 @@ func TestCorruptBusIsOurOwnLine(t *testing.T) {
 	t.Setenv("JQ_COLORS", "bad")
 	var out, errb bytes.Buffer
 	paths := fixture(t, "{not json\n")
-	code := Run(nil, paths, &out, &errb)
+	code := Run(Request{}, paths, &out, &errb)
 	if code != 5 {
 		t.Fatalf("exit %d", code)
 	}
@@ -250,7 +235,7 @@ func TestFoldTypeFailureExitsFive(t *testing.T) {
 	// is an object has no place in a @tsv row. Both are the arm's exit 5, and
 	// unlike the arm Go prints no row it had already streamed (docs/crew-go-port.md).
 	out, errb, code := run(t, oneRun+`{"ts":3000,"crew_id":"c1","kind":"dispatch","branch":"feat/b","engine":{"nested":true},"model":"m","tier":"standard","title":"t"}`+
-		"\n"+`{"ts":3100,"crew_id":"c1","kind":"msg","from":"worker:feat/b#s1","to":"retro:c1","body":"{\"seam\":\"execute\",\"tag\":\"other\",\"detail\":\"d\"}"}`+"\n")
+		"\n"+`{"ts":3100,"crew_id":"c1","kind":"msg","from":"worker:feat/b#s1","to":"retro:c1","body":"{\"seam\":\"execute\",\"tag\":\"other\",\"detail\":\"d\"}"}`+"\n", Request{})
 	if code != 5 {
 		t.Fatalf("a fold type error should exit 5, got %d (%s)", code, errb)
 	}
@@ -268,7 +253,7 @@ func TestUnparseableNoteBodyDoesNotAbortTheFold(t *testing.T) {
 		`{"ts":1100,"crew_id":"c1","kind":"msg","from":"worker:feat/a#s1","to":"retro:c1","body":"not json at all"}` + "\n" +
 		`{"ts":1150,"crew_id":"c1","kind":"msg","from":"worker:feat/a#s1","to":"retro:c1","body":"{\"seam\":\"execute\",\"tag\":\"other\",\"detail\":\"kept\"}"}` + "\n" +
 		`{"ts":1200,"crew_id":"c1","kind":"status","from":"worker:feat/a#s1","to":"dispatcher:c1","body":{"state":"failed"}}` + "\n"
-	out, errb, code := run(t, events)
+	out, errb, code := run(t, events, Request{})
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %s", code, errb)
 	}
@@ -285,14 +270,14 @@ func TestNonASCIIIsUntouched(t *testing.T) {
 		`{"ts":1100,"crew_id":"c1","kind":"msg","from":"worker:feat/日本語#s1","to":"retro:c1","body":` +
 		jsonString(`{"seam":"execute","tag":"other","detail":"`+detail+`"}`) + `}` + "\n" +
 		`{"ts":1200,"crew_id":"c1","kind":"status","from":"worker:feat/日本語#s1","to":"dispatcher:c1","body":{"state":"done"}}` + "\n"
-	out, _, code := run(t, events)
+	out, _, code := run(t, events, Request{})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 	if !strings.Contains(out, "feat/日本語\tclaude\tm\tstandard\tdone\tother") {
 		t.Errorf("bare row: %q", out)
 	}
-	report, _, _ := run(t, events, "--report")
+	report, _, _ := run(t, events, Request{Report: true})
 	if !strings.Contains(report, strings.Repeat("日本語", 20)+"…") {
 		t.Errorf("the sample should cut at 60 codepoints:\n%s", report)
 	}
@@ -307,7 +292,7 @@ func TestControlCharactersAreStripped(t *testing.T) {
 	events := `{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/a","engine":"claude","model":"m","tier":"standard","title":"t"}` + "\n" +
 		`{"ts":1100,"crew_id":"c1","kind":"msg","from":"worker:feat/a#s1","to":"retro:c1","body":` + jsonString(body) + `}` + "\n" +
 		`{"ts":1200,"crew_id":"c1","kind":"status","from":"worker:feat/a#s1","to":"dispatcher:c1","body":{"state":"done"}}` + "\n"
-	out, _, code := run(t, events, "--report")
+	out, _, code := run(t, events, Request{Report: true})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -324,7 +309,7 @@ func TestJSONIsNeverColoured(t *testing.T) {
 	// is compared by value.
 	for _, env := range []string{"", "0;32:1;33:0;36:1;35:0;34:1;32:1;35"} {
 		t.Setenv("JQ_COLORS", env)
-		out, _, code := run(t, oneRun, "--report", "--json")
+		out, _, code := run(t, oneRun, Request{Report: true, JSON: true})
 		if code != 0 {
 			t.Fatalf("exit %d", code)
 		}

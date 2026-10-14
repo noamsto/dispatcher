@@ -588,7 +588,8 @@ help entry, and `tests/crew.bats`'s `_crew_cli_subs` reads the list from `main.g
 converted — `id`, `new`, `engine-cmd`, `occupants` (argv words) and, since the
 second slice, `where`, `identity`, `resolve-target`, `crews`, `register`,
 `deregister`, `log`, `sessions`, `inbox` (typed flags and positionals, in
-`crew/commands.go`) — are typed commands; every other name is a dynamic command
+`crew/commands.go`) and, since the third, `roster`, `report`, `retro`, `rate`,
+`fleet`, `stack`, `roster-render` and `pi-agent-dir` — are typed commands; every other name is a dynamic command
 sharing one `passthrough:""` capture, so kong accepts the word and stops. The
 first slice converts only the subcommands whose whole argv is "a list of words,
 the first of which may be data", and the rules below are what the rest of #862
@@ -603,7 +604,7 @@ every screen, which is what `scripts/help-parity.sh` proves.
 capture is not verbatim: kong splits the first word after a command name at `=`,
 so an unconverted `crew <sub> --since=abc` would arrive as `--since abc`. `parseCrew` returns
 the words after the command name for exactly that reason;
-`TestParseCrewSplitsLeadingEquals` pins the measurement (on `report`, `roster`,
+`TestParseCrewSplitsLeadingEquals` pins the measurement (on `hold`, `nudge`,
 `reap`) and `TestRunPassthroughArgvReachesItsArm` pins the arms' answers, `--` and flag-shaped
 detail text included. A subcommand takes its own bound fields only once its table
 shows the split cannot change its answer: `engine-cmd` matches no engine name on
@@ -618,8 +619,8 @@ the caller. The one input kong selects and the switch never admitted is a leadin
 refuses any first word that is not an admitted name, which is that refusal and
 exit 1.
 
-**Flags: `--flag=value` is accepted (owner decision, 2026-10-14).** The nine
-second-slice subcommands bind typed flags, so `--flag value` and `--flag=value`
+**Flags: `--flag=value` is accepted (owner decision, 2026-10-14).** The typed
+subcommands bind flags, so `--flag value` and `--flag=value`
 are one spelling (`TestFlagSpellingsAreIdentical` runs both for every flag), flags
 may sit in any position, and no guard refuses the `=` form. The measured
 consequences against the first-slice build: `crew where --crew=x nova` is a lookup,
@@ -636,9 +637,36 @@ as the arms' did. Extra positionals now refuse where `identity`, `log`,
 word included: `crew crews ""` is a refusal, exit 64, where it printed the table). The
 grammar's first error wins, not the arms' leftmost one.
 
+The third slice (`roster`, `report`, `retro`, `rate`, `fleet`, `stack`,
+`roster-render`, `pi-agent-dir`) follows the same rules, with these differences:
+
+- `rate --root` is a `[]*string` with `sep:"none"` (a comma stays in the path, an
+  empty value binds and is refused). A trailing `--root` binds nothing, so
+  `kongRefusal` maps kong's `--root: missing value` to the arm's
+  `rate --root needs a directory`. The mode combinations (`--json` without
+  `--report`, `--root` without `--sweep-all`) stay in `rate.Run`, shared with
+  `reap`'s in-process sweep.
+- `fleet` binds `Rest` with `passthrough:"partial"`: `fleet stream …` reaches
+  `stream.RunFleet` untouched, because the lane's flags are `stream`'s shared
+  parser (a later slice). Any other word, or `stream` behind a `fleet` flag,
+  is the fleet usage line.
+- `stack cut|align` are kong subcommands; every grammar failure is the two-line
+  stack usage, and `--record` may sit anywhere after `cut`.
+- `roster-render` keeps `--interval`/`--quiet` as the caller's bytes (they are
+  handed to the detached daemon); its digit, crew-required, `--once`/`--detach`
+  and crew-id checks stay in `rosterrender.check`. Its refusals exit 64.
+- `dash` stays a passthrough: it forwards raw argv to `crew-dash`, and kong's
+  split of the first word at `=` would alter it.
+- The refusals of `fleet` and `rate --sweep-all` print before the repo check, as
+  those modes run outside one. A kong parse error carries no typed value, so
+  `parseCrew` keeps the raw tail and `run` treats a refused rate line with a
+  `--sweep-all…` word as the mode. `rate --root --sweep-all` is such a line (kong
+  does not take the flag as `--root`'s value): it prints the rate usage line,
+  where the arm said `--root needs --sweep-all`.
+
 `fleet` and `rate --sweep-all` need no repo, so the preamble's not-in-a-repo
 refusal lets them through — and both ask the same question twice: the script with
-its `case "$sub $*"` glob, the binary with `rate.WalksEveryRepo` / the `fleet` arm,
+its `case "$sub $*"` glob, the binary with the typed `SweepAll` / the `fleet` arm,
 so a direct `crew-go` call decides the same way. Both read repo discovery from
 `crew/internal/repos`, shared between them; the hidden `discover-repos` entry the
 bash `rate --sweep-all` loop used to shell out to is gone now that the loop is Go.
