@@ -65,7 +65,22 @@ self: {
           ''
           + "wrapProgram $out/bin/agent-browser --set-default AGENT_BROWSER_EXECUTABLE_PATH ${path}";
       };
-  pkgsFor = self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.mkPackages lockedFile;
+  # Our own short discovery stub, not the package's: the upstream one is hidden
+  # and tells agents to prefer agent-browser over every other browser tool. Its
+  # guidance comes from `agent-browser skills get core` at run time, so the text
+  # tracks the installed binary without being copied.
+  agentBrowserSkillTree = ./agent-browser-skill;
+  withAgentBrowserSkill = engine: base: subdir:
+    if cfg.agentBrowser.package != null && hasEngine engine
+    then
+      pkgs.symlinkJoin {
+        name = "${engine}-skills-agent-browser";
+        paths = [base (pkgs.runCommandLocal "agent-browser-skill-${engine}" {} "mkdir -p $out/${subdir} && cp -r ${agentBrowserSkillTree}/agent-browser $out/${subdir}/")];
+      }
+    else base;
+  claudePluginDir = withAgentBrowserSkill "claude" ccPlugin "skills";
+  piSkillsDir = withAgentBrowserSkill "pi" "${self}/adapters/core/skills" ".";
+  pkgsFor = self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.mkPackagesWith lockedFile piSkillsDir;
 in {
   options.programs.dispatcher = {
     enable = lib.mkEnableOption "the dispatcher agent fan-out harness";
@@ -385,7 +400,7 @@ in {
     claudePluginDir = lib.mkOption {
       type = lib.types.str;
       readOnly = true;
-      default = ccPlugin;
+      default = "${claudePluginDir}";
       description = ''
         Pass to claude via --plugin-dir. Read-only; consumers reference it
         rather than reconstructing the store path.
@@ -458,7 +473,7 @@ in {
         DISPATCHER_CRITICS_DIR = "${self}/adapters/core/critics";
         # pi only: the other three load the harness skills from their own
         # adapter trees, so pi is the one engine dispatch has to hand a path.
-        DISPATCHER_SKILLS_DIR = "${self}/adapters/core/skills";
+        DISPATCHER_SKILLS_DIR = "${piSkillsDir}";
       };
 
       # Cursor has no plugin format — loose files are the only channel. The .mdc
@@ -509,6 +524,8 @@ in {
             run mkdir -p "$HOME/${codexCache}"
             run cp -rL ${codexPlugin} "$HOME/${codexCache}/${codexVersion}"
             run chmod -R u+w "$HOME/${codexCache}"
+            ${lib.optionalString (cfg.agentBrowser.package != null) ''run cp -rL ${agentBrowserSkillTree}/agent-browser "$HOME/${codexCache}/${codexVersion}/skills/"''}
+            ${lib.optionalString (cfg.agentBrowser.package != null) ''run chmod -R u+w "$HOME/${codexCache}/${codexVersion}/skills/agent-browser"''}
           '';
         }
         // lib.optionalAttrs (hasEngine "cursor") {
@@ -523,6 +540,23 @@ in {
           dispatcherCursorSkills = lib.hm.dag.entryAfter ["writeBoundary"] ''
             skills_dir="$HOME/.cursor/skills"
             run mkdir -p "$skills_dir"
+            ab_link="$skills_dir/agent-browser"
+            case "$(readlink "$ab_link" 2>/dev/null)" in
+              /nix/store/*-agent-browser-skill/agent-browser) ab_ours=1 ;;
+              *) ab_ours= ;;
+            esac
+            ${
+              if cfg.agentBrowser.package != null
+              then ''
+                if [ -n "$ab_ours" ] || { [ ! -e "$ab_link" ] && [ ! -L "$ab_link" ]; }; then
+                  run ln -sfn "${agentBrowserSkillTree}/agent-browser" "$ab_link"
+                else
+                  echo "agent-browser skill: $ab_link is owned elsewhere, leaving it" >&2
+                fi''
+              else ''
+                # Package turned off: drop only our own link, never another producer's.
+                if [ -n "$ab_ours" ]; then run rm -f "$ab_link"; fi''
+            }
             ${lib.concatMapStrings (name: "run ln -sfn \"${self}/adapters/cursor/skills/${name}\" \"$skills_dir/${name}\"\n") (builtins.attrNames (lib.filterAttrs (_: t: t == "directory") (builtins.readDir "${self}/adapters/cursor/skills")))}'';
         };
     };

@@ -595,7 +595,7 @@ guard_ships_row() { # script basename
 
 @test "the deslop skill ships to every engine" {
   [ -f "$ROOT/adapters/core/skills/deslop/SKILL.md" ]
-  run grep -F 'DISPATCHER_SKILLS_DIR = "${self}/adapters/core/skills";' "$ROOT/nix/hm-module.nix"
+  run grep -F 'piSkillsDir = withAgentBrowserSkill "pi" "${self}/adapters/core/skills"' "$ROOT/nix/hm-module.nix"
   [ "$status" -eq 0 ]
   run cmp -s "$ROOT/adapters/core/skills/deslop/SKILL.md" "$ROOT/adapters/claude-code/plugin/skills/deslop/SKILL.md"
   [ "$status" -eq 0 ]
