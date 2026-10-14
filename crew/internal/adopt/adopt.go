@@ -91,22 +91,17 @@ type claim struct {
 	branches []string
 }
 
-func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+// Request is the parsed argv of `crew adopt [--force] <id> [pid]`.
+type Request struct {
+	ID    string
+	PID   string
+	Force bool
+}
+
+func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
 
-	// `--force` is stripped from anywhere in the argv, so `crew adopt <id>
-	// --force` cannot record the literal string "--force" as the pid.
-	force := false
-	var pos []string
-	for _, a := range args {
-		if a == "--force" {
-			force = true
-			continue
-		}
-		pos = append(pos, a)
-	}
-
-	id := arg(pos, 0)
+	id := req.ID
 	if id == "" {
 		say(stderr, "%s\n", usage)
 		return exitFailure
@@ -121,7 +116,7 @@ func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	// The pid to record. `${2:-…}` falls back to the owner walk on an empty
 	// second arg as well as a missing one, and whatever text results is written
 	// verbatim — the arm never checks it names a real process.
-	pidText := arg(pos, 1)
+	pidText := req.PID
 	if pidText == "" {
 		pidText = strconv.Itoa(o.Probes.OwnerPID(o.PPID))
 	}
@@ -143,7 +138,7 @@ func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 		live = true
 	}
 
-	if !force && live {
+	if !req.Force && live {
 		// A live owner that is this process's ancestor is the idempotent case:
 		// `dispatch` adopts the crew it just made on every retry. Liveness
 		// already proved the text is a positive integer, so the parse cannot fail.
@@ -164,7 +159,7 @@ func Run(args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 		return exitFailure
 	}
 	outcome := "ok"
-	if force && live {
+	if req.Force && live {
 		outcome = "forced"
 	}
 	o.pidfileLog(paths, "adopt", outcome, id, epid, pidText)
@@ -354,13 +349,6 @@ func (o Options) withDefaults() Options {
 		o.Pwd, _ = os.Getwd()
 	}
 	return o
-}
-
-func arg(args []string, i int) string {
-	if i < len(args) {
-		return args[i]
-	}
-	return ""
 }
 
 // read3 is `IFS=$'\t' read -r wid nm path` over one line. Tab is IFS

@@ -7,54 +7,31 @@ import (
 	"testing"
 )
 
-func runGuard(cwd string, args ...string) (int, string, string) {
+func runGuard(cwd string, req GuardRequest) (int, string, string) {
 	var stdout, stderr bytes.Buffer
-	code := RunGuard(args, cwd, &stdout, &stderr)
+	code := RunGuard(req, cwd, &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
-}
-
-func TestRunGuardUsage(t *testing.T) {
-	for _, args := range [][]string{
-		nil,
-		{"nope"},
-		{"check"},
-		{"check", "a", "b", "c"},
-		{"check-cwd"},
-		{"init", "a", "b"},
-		{"commondir"},
-		{"pairs"},
-		{"union", "a", "b"},
-		{"show-url"},
-		{"show-url", "a", "proxy", "x"},
-		{"show-key", "a", "b"},
-		{"show-pair", "k"},
-		{"canon", "r"},
-	} {
-		code, out, errOut := runGuard("", args...)
-		if code != 64 || out != "" || errOut != guardUsage {
-			t.Errorf("%q: exit %d, stdout %q, stderr %q; want the usage exit", args, code, out, errOut)
-		}
-	}
 }
 
 func TestRunGuardValueOps(t *testing.T) {
 	for _, tc := range []struct {
-		args []string
+		req  GuardRequest
 		want string
 	}{
-		{[]string{"show-key", "core.pager"}, "core.pager"},
-		{[]string{"show-key", "url.https://u:p@h.example/.insteadof"}, ShowKey("url.https://u:p@h.example/.insteadof")},
-		{[]string{"show-url", "u:p@h.example:8080", "proxy"}, ShowURL("u:p@h.example:8080", true)},
-		{[]string{"show-url", "u:p@h.example:8080"}, ShowURL("u:p@h.example:8080", false)},
-		{[]string{"show-pair", "remote.origin.url", "https://t@h.example/r", "https://t@h"}, "remote.origin.url=https://t@h.example/r"},
-		{[]string{"show-pair", "remote.origin.url", "https://t@h.example/r"}, ShowPair("remote.origin.url", "https://t@h.example/r", nil)},
-		{[]string{"canon", "/r", "core.hookspath\n.git/hooks"}, "core.hookspath\n/r/hooks"},
-		{[]string{"canon", "", "core.hookspath\n.git/hooks"}, "core.hookspath\n.git/hooks"},
-		{[]string{"canon", "/r", "core.pager\nx\n"}, "core.pager\nx\n"},
+		{GuardRequest{Op: "show-key", Key: "core.pager"}, "core.pager"},
+		{GuardRequest{Op: "show-key", Key: "url.https://u:p@h.example/.insteadof"}, ShowKey("url.https://u:p@h.example/.insteadof")},
+		{GuardRequest{Op: "show-url", URL: "u:p@h.example:8080", Mode: "proxy"}, ShowURL("u:p@h.example:8080", true)},
+		{GuardRequest{Op: "show-url", URL: "u:p@h.example:8080"}, ShowURL("u:p@h.example:8080", false)},
+		{GuardRequest{Op: "show-url", URL: "u:p@h.example:8080", Mode: "other"}, ShowURL("u:p@h.example:8080", false)},
+		{GuardRequest{Op: "show-pair", Key: "remote.origin.url", Value: "https://t@h.example/r", Aliases: []string{"https://t@h"}}, "remote.origin.url=https://t@h.example/r"},
+		{GuardRequest{Op: "show-pair", Key: "remote.origin.url", Value: "https://t@h.example/r"}, ShowPair("remote.origin.url", "https://t@h.example/r", nil)},
+		{GuardRequest{Op: "canon", Root: "/r", Rec: "core.hookspath\n.git/hooks"}, "core.hookspath\n/r/hooks"},
+		{GuardRequest{Op: "canon", Rec: "core.hookspath\n.git/hooks"}, "core.hookspath\n.git/hooks"},
+		{GuardRequest{Op: "canon", Root: "/r", Rec: "core.pager\nx\n"}, "core.pager\nx\n"},
 	} {
-		code, out, errOut := runGuard("", tc.args...)
+		code, out, errOut := runGuard("", tc.req)
 		if code != 0 || out != tc.want || errOut != "" {
-			t.Errorf("%q: exit %d, stdout %q, stderr %q; want %q", tc.args, code, out, errOut, tc.want)
+			t.Errorf("%+v: exit %d, stdout %q, stderr %q; want %q", tc.req, code, out, errOut, tc.want)
 		}
 	}
 }
@@ -65,41 +42,40 @@ func TestRunGuardRecordOps(t *testing.T) {
 	r.config(t, "core.fsmonitor", "x")
 	want := "core.fsmonitor\nx\x00core.pager\nless\x00"
 	for _, op := range []string{"pairs", "union"} {
-		if code, out, errOut := runGuard("", op, r.common); code != 0 || out != want || errOut != "" {
+		if code, out, errOut := runGuard("", GuardRequest{Op: op, Dir: r.common}); code != 0 || out != want || errOut != "" {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q; want %q", op, code, out, errOut, want)
 		}
 	}
 	shimGit(t, "--show-scope")
-	if code, out, _ := runGuard("", "pairs", r.common); code != 1 || out != "" {
+	if code, out, _ := runGuard("", GuardRequest{Op: "pairs", Dir: r.common}); code != 1 || out != "" {
 		t.Errorf("pairs with a failing git: exit %d, stdout %q; want exit 1, nothing", code, out)
 	}
 }
 
 func TestRunGuardChecks(t *testing.T) {
 	r := newRepo(t)
-	code, out, errOut := runGuard(r.main, "check", r.common)
+	code, out, errOut := runGuard(r.main, GuardRequest{Op: "check", Dir: r.common})
 	if want := "refusing git: no git-config baseline at " + r.baseline() + " — the next dispatch records it, or run `crew git-baseline --accept` from your own terminal\n"; code != 1 || out != "" || errOut != want {
 		t.Fatalf("check without a baseline: exit %d, stdout %q, stderr %q", code, out, errOut)
 	}
-	if code, out, errOut := runGuard(r.main, "init", r.common); code != 0 || out != "" {
+	if code, out, errOut := runGuard(r.main, GuardRequest{Op: "init", Dir: r.common}); code != 0 || out != "" {
 		t.Fatalf("init: exit %d, stdout %q, stderr %q", code, out, errOut)
 	}
 	_, admin := r.addWorktree(t, "w")
-	for _, args := range [][]string{
-		{"check", r.common},
-		{"check", r.common, ""},
-		{"check", r.common, admin},
-		{"check-cwd", r.common},
-		{"commondir", r.common},
+	for _, req := range []GuardRequest{
+		{Op: "check", Dir: r.common},
+		{Op: "check", Dir: r.common, Gitdir: admin},
+		{Op: "check-cwd", Dir: r.common},
+		{Op: "commondir", Dir: r.common},
 	} {
-		if code, out, errOut := runGuard(r.main, args...); code != 0 || out != "" || errOut != "" {
-			t.Errorf("%q: exit %d, stdout %q, stderr %q; want a silent pass", args, code, out, errOut)
+		if code, out, errOut := runGuard(r.main, req); code != 0 || out != "" || errOut != "" {
+			t.Errorf("%+v: exit %d, stdout %q, stderr %q; want a silent pass", req, code, out, errOut)
 		}
 	}
 	writeFile(t, r.common+"/commondir", "/elsewhere\n")
-	for _, args := range [][]string{{"check", r.common}, {"check-cwd", r.common}, {"init", r.common}, {"commondir", r.common}} {
-		if code, out, errOut := runGuard(r.main, args...); code != 1 || out != "" || errOut != redirectLine(r.common) {
-			t.Errorf("%q: exit %d, stdout %q, stderr %q; want the commondir refusal", args, code, out, errOut)
+	for _, op := range []string{"check", "check-cwd", "init", "commondir"} {
+		if code, out, errOut := runGuard(r.main, GuardRequest{Op: op, Dir: r.common}); code != 1 || out != "" || errOut != redirectLine(r.common) {
+			t.Errorf("%s: exit %d, stdout %q, stderr %q; want the commondir refusal", op, code, out, errOut)
 		}
 	}
 }
@@ -111,7 +87,7 @@ func TestRunGuardReportsErrors(t *testing.T) {
 	r := newRepo(t)
 	r.init(t)
 	mustDo(t, os.Chmod(r.baseline(), 0))
-	if code, _, errOut := runGuard(r.main, "check", r.common); code != 1 || !strings.HasPrefix(errOut, "refusing git: ") || !strings.Contains(errOut, r.baseline()) {
+	if code, _, errOut := runGuard(r.main, GuardRequest{Op: "check", Dir: r.common}); code != 1 || !strings.HasPrefix(errOut, "refusing git: ") || !strings.Contains(errOut, r.baseline()) {
 		t.Errorf("check with an unreadable baseline: exit %d, stderr %q; want a refusal naming it", code, errOut)
 	}
 
@@ -119,7 +95,7 @@ func TestRunGuardReportsErrors(t *testing.T) {
 	crew := r.common + "/crew"
 	mustDo(t, os.Mkdir(crew, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(crew, 0o755) })
-	if code, _, errOut := runGuard(r.main, "init", r.common); code != 1 || !strings.HasPrefix(errOut, "refusing git: ") || !strings.Contains(errOut, crew) {
+	if code, _, errOut := runGuard(r.main, GuardRequest{Op: "init", Dir: r.common}); code != 1 || !strings.HasPrefix(errOut, "refusing git: ") || !strings.Contains(errOut, crew) {
 		t.Errorf("init with a read-only crew dir: exit %d, stderr %q; want a refusal naming it", code, errOut)
 	}
 }

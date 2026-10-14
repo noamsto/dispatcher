@@ -67,10 +67,32 @@ type Options struct {
 	Signals <-chan os.Signal
 }
 
+// Request is the parsed command line. A nil flag was not given; a non-nil empty
+// one was, and the child refuses it.
+type Request struct {
+	PR                      string
+	Repo, Timeout, Interval *string
+}
+
+// Argv is the child's command line. The PR is always element 0, even when
+// empty, so a flag never shifts into the child's `$1`.
+func (r Request) Argv() []string {
+	argv := []string{r.PR}
+	for _, f := range []struct {
+		name string
+		v    *string
+	}{{"--repo", r.Repo}, {"--timeout", r.Timeout}, {"--interval", r.Interval}} {
+		if f.v != nil {
+			argv = append(argv, f.name, *f.v)
+		}
+	}
+	return argv
+}
+
 // Run is the arm: the crew id first (before anything is run), then the park,
 // then — only for a non-empty event from a child that exited 0 — the post and
 // the print.
-func Run(ctx context.Context, args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	crew := ""
 	if o.CrewID != nil {
 		crew = o.CrewID()
@@ -104,7 +126,7 @@ func Run(ctx context.Context, args []string, paths bus.Paths, stdout, stderr io.
 		start = startChild
 	}
 	var out bytes.Buffer
-	child, err := start(ctx, args, &out, stderr)
+	child, err := start(ctx, req.Argv(), &out, stderr)
 	if err != nil {
 		// The arm had no child to run at all: `command not found`, 127, and
 		// nothing posted.
@@ -140,12 +162,6 @@ func Run(ctx context.Context, args []string, paths bus.Paths, stdout, stderr io.
 		return 0
 	}
 
-	// `from` is the arm's `"pr-watch:${1:-}"`: the first argument verbatim, a
-	// flag included, and the empty string when there was no argument at all.
-	from := ""
-	if len(args) > 0 {
-		from = args[0]
-	}
 	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
 		say(stderr, "crew: pr-watch: %v\n", err)
 		return exitFailure
@@ -154,7 +170,7 @@ func Run(ctx context.Context, args []string, paths bus.Paths, stdout, stderr io.
 	line := compact(jsonv.Object(
 		jsonv.Member{Key: "ts", Val: jsonv.Num(float64(ts))},
 		jsonv.Member{Key: "crew_id", Val: jsonv.Str(crew)},
-		jsonv.Member{Key: "from", Val: jsonv.Str("pr-watch:" + from)},
+		jsonv.Member{Key: "from", Val: jsonv.Str("pr-watch:" + req.PR)},
 		jsonv.Member{Key: "to", Val: jsonv.Str("dispatcher:" + crew)},
 		jsonv.Member{Key: "kind", Val: jsonv.Str("msg")},
 		jsonv.Member{Key: "body", Val: jsonv.Str(ev)},

@@ -6905,6 +6905,24 @@ EOF
   [ "$(bus | jq -s '[.[] | select(.kind=="status")] | length')" = 0 ]
 }
 
+@test "stall-watch: the sender check holds for a flag-first --pane=%1 spelling (#908)" {
+  _stamp_pane feat/x lead c1
+  CREW_ID=c1 run run_crew stall-watch --pane=%1 worker:feat/y#s1-1 --engine claude \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing sender 'worker:feat/y#s1-1' on pane %1"* ]]
+  [ "$(bus | jq -s '[.[] | select(.kind=="status")] | length')" = 0 ]
+}
+
+@test "stall-watch: the sender check holds for a flag-first role spelling (#908)" {
+  _stamp_pane feat/x lead c1
+  CREW_ID=c1 run run_crew stall-watch --pane %1 --engine=claude role:feat/y:reviewer \
+    --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --max-life 3
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing sender 'role:feat/y:reviewer' on pane %1"* ]]
+  [ "$(bus | jq -s '[.[] | select(.kind=="status")] | length')" = 0 ]
+}
+
 @test "stall-watch: a stamped lead pane cannot target a pane outside its window (#908)" {
   _stamp_pane feat/x lead c1
   export FAKE_EXTRA=$'999999\x1ffeat/y\x1flead\x1fc1\x1f@2\x1f%2\n'

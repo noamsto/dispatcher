@@ -7,40 +7,34 @@ import (
 )
 
 func TestUsageLines(t *testing.T) {
+	const sec = " must be a non-negative integer number of seconds"
 	cases := []struct {
 		name string
-		argv []string
+		req  Request
 		crew string
 		want string
 	}{
-		{"no arg", nil, "c1", usageMsg},
-		{"empty arg", []string{"", "--pane", "%1"}, "c1", usageMsg},
-		{"no crew before flags", []string{"feat/x", "--bogus"}, "", noCrewMsg},
-		{"unknown arg", []string{"feat/x", "--pane", "%1", "--bogus"}, "c1", "crew: stall-watch: unknown arg '--bogus'"},
-		{"unknown arg before missing pane", []string{"feat/x", "extra"}, "c1", "crew: stall-watch: unknown arg 'extra'"},
-		{"value flag last", []string{"feat/x", "--pane"}, "c1", ""},
-		{"grace last", []string{"feat/x", "--pane", "%1", "--grace"}, "c1", ""},
-		{"value flag last before unknown check", []string{"feat/x", "--release"}, "c1", ""},
-		{"missing pane", []string{"feat/x", "--engine", "claude"}, "c1", needPaneMsg},
-		{"empty pane", []string{"feat/x", "--pane", ""}, "c1", needPaneMsg},
-		{"pane before release", []string{"feat/x", "--release", "x"}, "c1", needPaneMsg},
-		{"release empty", []string{"feat/x", "--pane", "%1", "--release", ""}, "c1",
-			"crew: stall-watch: --release must be a non-negative integer number of seconds"},
-		{"release non-digit", []string{"feat/x", "--pane", "%1", "--release", "-1"}, "c1",
-			"crew: stall-watch: --release must be a non-negative integer number of seconds"},
-		{"release before budget-refresh", []string{"feat/x", "--pane", "%1", "--budget-refresh", "x", "--release", "1s"}, "c1",
-			"crew: stall-watch: --release must be a non-negative integer number of seconds"},
-		{"budget-refresh", []string{"feat/x", "--pane", "%1", "--budget-refresh", "15m"}, "c1",
-			"crew: stall-watch: --budget-refresh must be a non-negative integer number of seconds"},
-		{"stall", []string{"feat/x", "--pane", "%1", "--stall", "1.5"}, "c1",
-			"crew: stall-watch: --stall must be a non-negative integer number of seconds"},
-		{"max-life", []string{"feat/x", "--pane", "%1", "--max-life", ""}, "c1",
-			"crew: stall-watch: --max-life must be a non-negative integer number of seconds"},
-		{"load", []string{"feat/x", "--pane", "%1", "--load", "x"}, "c1",
-			"crew: stall-watch: --load must be a non-negative integer number of seconds"},
-		{"runaway-hits", []string{"feat/x", "--pane", "%1", "--runaway-hits", "a"}, "c1",
+		{"no arg", Request{}, "c1", usageMsg},
+		{"empty arg", Request{Pane: ptr("%1")}, "c1", usageMsg},
+		{"no crew before flags", Request{Target: "feat/x", Engine: ptr("")}, "", noCrewMsg},
+		{"engine empty", Request{Target: "feat/x", Pane: ptr("%1"), Engine: ptr("")}, "c1", "crew: stall-watch: --engine needs a value"},
+		{"grace empty", Request{Target: "feat/x", Pane: ptr("%1"), Grace: ptr("")}, "c1", "crew: stall-watch: --grace needs a value"},
+		{"interval empty", Request{Target: "feat/x", Pane: ptr("%1"), Interval: ptr("")}, "c1", "crew: stall-watch: --interval needs a value"},
+		{"empty value before missing pane", Request{Target: "feat/x", Grace: ptr("")}, "c1", "crew: stall-watch: --grace needs a value"},
+		{"missing pane", Request{Target: "feat/x", Engine: ptr("claude")}, "c1", needPaneMsg},
+		{"empty pane", Request{Target: "feat/x", Pane: ptr("")}, "c1", needPaneMsg},
+		{"pane before release", Request{Target: "feat/x", Release: ptr("x")}, "c1", needPaneMsg},
+		{"release empty", Request{Target: "feat/x", Pane: ptr("%1"), Release: ptr("")}, "c1", "crew: stall-watch: --release" + sec},
+		{"release non-digit", Request{Target: "feat/x", Pane: ptr("%1"), Release: ptr("-1")}, "c1", "crew: stall-watch: --release" + sec},
+		{"release before budget-refresh", Request{Target: "feat/x", Pane: ptr("%1"), BudgetRefresh: ptr("x"), Release: ptr("1s")}, "c1",
+			"crew: stall-watch: --release" + sec},
+		{"budget-refresh", Request{Target: "feat/x", Pane: ptr("%1"), BudgetRefresh: ptr("15m")}, "c1", "crew: stall-watch: --budget-refresh" + sec},
+		{"stall", Request{Target: "feat/x", Pane: ptr("%1"), Stall: ptr("1.5")}, "c1", "crew: stall-watch: --stall" + sec},
+		{"max-life", Request{Target: "feat/x", Pane: ptr("%1"), MaxLife: ptr("")}, "c1", "crew: stall-watch: --max-life" + sec},
+		{"load", Request{Target: "feat/x", Pane: ptr("%1"), Load: ptr("x")}, "c1", "crew: stall-watch: --load" + sec},
+		{"runaway-hits", Request{Target: "feat/x", Pane: ptr("%1"), RunawayHits: ptr("a")}, "c1",
 			"crew: stall-watch: --runaway-hits must be a non-negative integer"},
-		{"runaway-tokens", []string{"feat/x", "--pane", "%1", "--runaway-tokens", "-5"}, "c1",
+		{"runaway-tokens", Request{Target: "feat/x", Pane: ptr("%1"), RunawayTokens: ptr("-5")}, "c1",
 			"crew: stall-watch: --runaway-tokens must be a non-negative integer"},
 	}
 	for _, tc := range cases {
@@ -48,16 +42,12 @@ func TestUsageLines(t *testing.T) {
 			f := newFake()
 			h := newHarness(t, f)
 			h.crew = tc.crew
-			code, stderr := h.run(tc.argv...)
+			code, stderr := h.run(tc.req)
 			if code != 1 {
 				t.Errorf("exit %d, want 1", code)
 			}
-			want := ""
-			if tc.want != "" {
-				want = tc.want + "\n"
-			}
-			if stderr != want {
-				t.Errorf("stderr %q, want %q", stderr, want)
+			if stderr != tc.want+"\n" {
+				t.Errorf("stderr %q, want %q", stderr, tc.want+"\n")
 			}
 			if f.newProbes != 0 {
 				t.Errorf("probes built %d times before a usage error", f.newProbes)
@@ -67,7 +57,7 @@ func TestUsageLines(t *testing.T) {
 }
 
 func TestDefaults(t *testing.T) {
-	c, err := parseArgs([]string{"feat/x", "--pane", "%7"}, func() string { return "c1" })
+	c, err := parseArgs(Request{Target: "feat/x", Pane: ptr("%7")}, func() string { return "c1" })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,12 +74,12 @@ func TestDefaults(t *testing.T) {
 }
 
 func TestFlagsParse(t *testing.T) {
-	c, err := parseArgs([]string{
-		"feat/x", "--pane", "%1", "--engine", "pi", "--grace", "1.5", "--interval", "2m",
-		"--stall", "1", "--window", "2", "--idle", "3", "--dead", "4", "--max-life", "5",
-		"--load", "6", "--release", "0", "--bg-wait", "8", "--launch", "9", "--unread", "10",
-		"--runaway-hits", "11", "--runaway-tokens", "12", "--no-budget", "--budget-refresh", "13",
-		"--no-nudge", "--pane", "%2",
+	c, err := parseArgs(Request{
+		Target: "feat/x", Pane: ptr("%2"), Engine: ptr("pi"), Grace: ptr("1.5"), Interval: ptr("2m"),
+		Stall: ptr("1"), Window: ptr("2"), Idle: ptr("3"), Dead: ptr("4"), MaxLife: ptr("5"),
+		Load: ptr("6"), Release: ptr("0"), BgWait: ptr("8"), Launch: ptr("9"), Unread: ptr("10"),
+		RunawayHits: ptr("11"), RunawayTokens: ptr("12"), NoBudget: true, BudgetRefresh: ptr("13"),
+		NoNudge: true,
 	}, func() string { return "c1" })
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +115,7 @@ func TestIdentity(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.arg, func(t *testing.T) {
-			c, err := parseArgs([]string{tc.arg, "--pane", "%1"}, func() string { return "c1" })
+			c, err := parseArgs(Request{Target: tc.arg, Pane: ptr("%1")}, func() string { return "c1" })
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -159,7 +149,7 @@ func TestSignatureTable(t *testing.T) {
 		if tc.role {
 			id = "role:feat/x:rev"
 		}
-		c, err := parseArgs([]string{id, "--pane", "%1", "--engine", tc.engine}, func() string { return "c1" })
+		c, err := parseArgs(Request{Target: id, Pane: ptr("%1"), Engine: ptr(tc.engine)}, func() string { return "c1" })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -173,21 +163,21 @@ func TestSignatureTable(t *testing.T) {
 func TestBudgetOn(t *testing.T) {
 	cases := []struct {
 		name     string
-		args     []string
+		req      Request
 		model    string
 		local    string
 		want     bool
 		wantShOp string
 	}{
-		{"claude", []string{"--engine", "claude"}, "", "", true, ""},
-		{"codex", []string{"--engine", "codex"}, "", "", true, ""},
-		{"cursor", []string{"--engine", "cursor"}, "", "", true, ""},
-		{"unknown engine", nil, "", "", false, ""},
-		{"no-budget", []string{"--engine", "claude", "--no-budget"}, "", "", false, ""},
-		{"pi no model", []string{"--engine", "pi"}, "", "x", true, ""},
-		{"pi remote model", []string{"--engine", "pi"}, "openrouter/x", "", true, "local-model openrouter/x"},
-		{"pi local model", []string{"--engine", "pi"}, "qwen", "{\"id\":\"qwen\"}", false, "local-model qwen"},
-		{"pi local model helper failed", []string{"--engine", "pi"}, "qwen", "{\"id\":\"qwen\"}", true, "local-model qwen"},
+		{"claude", Request{Engine: ptr("claude")}, "", "", true, ""},
+		{"codex", Request{Engine: ptr("codex")}, "", "", true, ""},
+		{"cursor", Request{Engine: ptr("cursor")}, "", "", true, ""},
+		{"unknown engine", Request{}, "", "", false, ""},
+		{"no-budget", Request{Engine: ptr("claude"), NoBudget: true}, "", "", false, ""},
+		{"pi no model", Request{Engine: ptr("pi")}, "", "x", true, ""},
+		{"pi remote model", Request{Engine: ptr("pi")}, "openrouter/x", "", true, "local-model openrouter/x"},
+		{"pi local model", Request{Engine: ptr("pi")}, "qwen", "{\"id\":\"qwen\"}", false, "local-model qwen"},
+		{"pi local model helper failed", Request{Engine: ptr("pi")}, "qwen", "{\"id\":\"qwen\"}", true, "local-model qwen"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -199,7 +189,9 @@ func TestBudgetOn(t *testing.T) {
 				}
 				return tc.local, shOffset
 			}
-			c, err := parseArgs(append([]string{"feat/x", "--pane", "%1"}, tc.args...), func() string { return "c1" })
+			req := tc.req
+			req.Target, req.Pane = "feat/x", ptr("%1")
+			c, err := parseArgs(req, func() string { return "c1" })
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -219,13 +211,13 @@ func TestBudgetOn(t *testing.T) {
 func TestNonClaudeRoleNoBudgetExitsEarly(t *testing.T) {
 	cases := []struct {
 		name  string
-		args  []string
+		req   Request
 		model string
 		local string
 	}{
-		{"codex no-budget", []string{"--engine", "codex", "--no-budget"}, "", ""},
-		{"unknown engine", nil, "", ""},
-		{"pi local model", []string{"--engine", "pi"}, "qwen", "local"},
+		{"codex no-budget", Request{Engine: ptr("codex"), NoBudget: true}, "", ""},
+		{"unknown engine", Request{}, "", ""},
+		{"pi local model", Request{Engine: ptr("pi")}, "qwen", "local"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -234,7 +226,9 @@ func TestNonClaudeRoleNoBudgetExitsEarly(t *testing.T) {
 			f.sh = func(string, ...string) (string, int) { return tc.local, shOffset }
 			h := newHarness(t, f)
 			before := h.clockText()
-			code, stderr := h.run(append([]string{"role:feat/x:rev", "--pane", "%1"}, tc.args...)...)
+			req := tc.req
+			req.Target, req.Pane = "role:feat/x:rev", ptr("%1")
+			code, stderr := h.run(req)
 			if code != 0 || stderr != "" {
 				t.Fatalf("exit %d stderr %q", code, stderr)
 			}
@@ -252,7 +246,7 @@ func TestClaudeRoleNoBudgetStillWatches(t *testing.T) {
 	f := newFake()
 	f.sample = func(int) (string, bool) { return "", false }
 	h := newHarness(t, f)
-	code, _ := h.run("role:feat/x:rev", "--pane", "%1", "--engine", "claude", "--no-budget", "--grace", "0")
+	code, _ := h.run(Request{Target: "role:feat/x:rev", Pane: ptr("%1"), Engine: ptr("claude"), NoBudget: true, Grace: ptr("0")})
 	if code != 0 || f.samples != 3 {
 		t.Errorf("exit %d after %d samples, want 0 after 3", code, f.samples)
 	}
@@ -262,7 +256,7 @@ func TestNewProbesGetsPane(t *testing.T) {
 	f := newFake()
 	f.sample = func(int) (string, bool) { return "", false }
 	h := newHarness(t, f)
-	h.run("feat/x", "--pane", "%9", "--grace", "0")
+	h.run(Request{Target: "feat/x", Pane: ptr("%9"), Grace: ptr("0")})
 	if f.newProbes != 1 || f.pane != "%9" {
 		t.Errorf("NewProbes called %d times with %q", f.newProbes, f.pane)
 	}

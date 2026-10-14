@@ -122,7 +122,7 @@ func (r *run) sweepAsync() {
 // SIGHUP, as the arm's subshell did (it trapped HUP to the empty action), and
 // SIGINT and SIGQUIT, as bash ignores them for an asynchronous command
 // without job control. Its status is never read.
-func RunAutosweep(args []string, paths bus.Paths, cwd string, o Options) int {
+func RunAutosweep(paths bus.Paths, cwd string, o Options) int {
 	signal.Ignore(syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT)
 	store := storeDir(o.Getenv)
 	if err := os.MkdirAll(store, 0o777); err != nil {

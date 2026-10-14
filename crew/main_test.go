@@ -17,10 +17,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
+	"github.com/noamsto/dispatcher/crew/internal/stall"
+	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 )
 
 // crewsProbes fakes the pid probes crews reads: liveness is the live set and
@@ -651,6 +655,9 @@ func TestRunGitGuardAndBaselineOutsideRepo(t *testing.T) {
 	}{
 		{[]string{"git-guard"}, exitUsage, "", "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …\n"},
 		{[]string{"git-guard", "canon", "/r", "core.hookspath\n.git/hooks"}, 0, "core.hookspath\n/r/hooks", ""},
+		{[]string{"git-guard", "canon", "", "core.hookspath"}, 0, "core.hookspath", ""},
+		{[]string{"git-guard", "show-key", "core.pager"}, 0, "core.pager", ""},
+		{[]string{"git-guard", "show-pair", "remote.origin.url", "https://t@h.example/r", "https://t@h"}, 0, "remote.origin.url=https://t@h.example/r", ""},
 		{[]string{"git-baseline"}, exitFailure, "", "crew: not in a git repo\n"},
 		{[]string{"git-baseline", "--bogus"}, exitFailure, "", "usage: crew git-baseline [--accept]\n"},
 	} {
@@ -734,17 +741,6 @@ func TestRunEntryArmsSurviveAnUnreadableCwd(t *testing.T) {
 
 // The kong root (#862): which names the grammar admits, what kong's capture
 // actually holds, and that an arm's argv arrives as its caller typed it.
-//
-// Every expected value below is copied from the base build of this branch:
-//
-//	mkdir -p /tmp/crew862 && git archive 5e53264b crew | tar -x -C /tmp/crew862
-//	(cd /tmp/crew862/crew && go build -o /tmp/crew862/crew-base .)
-//	tmp=$(mktemp -d) && cd "$tmp" && git init -q . && mkdir -p .git/crew
-//	printf '%s\n' '<the bus row below>' > .git/crew/events.jsonl
-//	CREW_ID=c1 /tmp/crew862/crew-base <the row's args>; echo $?
-//
-// and its `code` is that shell exit status.
-var statusRow = `{"ts":1700000001000,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working","detail":"go"}}` + "\n"
 
 // noTouchProbes is the roster probe set for a run that must read neither tmux
 // nor a worktree list: the folds answer from the bus alone.
@@ -774,7 +770,7 @@ func TestAdmittedSubcommands(t *testing.T) {
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
-		"status", "msg", "reply", "hold", "nudge", "await", "watch", "stream"} {
+		"status", "msg", "reply", "hold", "nudge", "await", "watch", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "pr-watch", "stall-watch", "help"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -817,23 +813,18 @@ func TestAdmittedSubcommands(t *testing.T) {
 
 // TestParseCrewSplitsLeadingEquals is the measurement that decides who parses
 // what: kong splits the first word after a command name at `=`, so the capture
-// is not the argv an unconverted arm may be handed. `crew adopt --crew=x` is a
-// word the arm reads whole; the split makes it `--crew x`, a different
-// command. The typed subcommands want the split (TestFlagSpellingsAreIdentical).
+// is not the argv an unconverted arm may be handed. `crew dash --since=5` is a
+// word the arm reads whole; the split makes it `--since 5`, a different
+// command; dash is why one passthrough is left. The typed subcommands want the split (TestFlagSpellingsAreIdentical).
 func TestParseCrewSplitsLeadingEquals(t *testing.T) {
 	for _, tc := range []struct {
 		args, captured []string
 	}{
-		{[]string{"adopt", "--crew=x"}, []string{"--crew", "x"}},
-		{[]string{"pr-watch", "--since=5"}, []string{"--since", "5"}},
-		{[]string{"reap", "--idle=5"}, []string{"--idle", "5"}},
+		{[]string{"dash", "--since=5"}, []string{"--since", "5"}},
 		// Everything else about a passthrough command's argv does arrive whole,
 		// `--` and flag-shaped detail text included.
-		{[]string{"pr-watch", "w1", "working", "--help"}, []string{"w1", "working", "--help"}},
-		{[]string{"reap", "--", "--idle=5"}, []string{"--", "--idle=5"}},
-		{[]string{"adopt", "--"}, []string{"--"}},
-		{[]string{"adopt", "-x"}, []string{"-x"}},
-		{[]string{"adopt", ""}, []string{""}},
+		{[]string{"dash", "w1", "working", "--help"}, []string{"w1", "working", "--help"}},
+		{[]string{"dash", "--"}, []string{"--"}},
 	} {
 		var (
 			r       root
@@ -965,45 +956,6 @@ func TestRunConvertedSubcommands(t *testing.T) {
 				if stdout.String() != tc.stdout {
 					t.Errorf("stdout %q, want %q", stdout.String(), tc.stdout)
 				}
-			}
-		})
-	}
-}
-
-// TestRunPassthroughArgvReachesItsArm is the other half of the contract: a
-// subcommand kong only names still parses its own words. Each row is an answer
-// only the arm's own parsing produces, so a dropped, split or re-read token
-// fails it — `--idle=5` as an unknown flag rather than a value, `--help` as
-// detail text.
-func TestRunPassthroughArgvReachesItsArm(t *testing.T) {
-	repo, _ := repoWithLog(t, &statusRow, 0o644)
-	t.Setenv("CREW_ID", "c1")
-	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes()}
-
-	for _, tc := range []struct {
-		name           string
-		args           []string
-		code           int
-		stdout, stderr string
-	}{
-		{name: "reap refuses --idle=5 as an unknown flag", args: []string{"reap", "--idle=5"}, code: exitFailure,
-			stderr: "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH (got '--idle=5')\n"},
-		{name: "reap keeps words after a separator together", args: []string{"reap", "--dry-run", "--idle=5"}, code: exitFailure,
-			stderr: "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH (got '--idle=5')\n"},
-		{name: "adopt reads a flag-shaped id whole", args: []string{"adopt", "--bogus"}, code: exitFailure,
-			stderr: "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			code := run(context.Background(), tc.args, &stdout, &stderr, e)
-			if code != tc.code {
-				t.Fatalf("code %d, want %d (stderr %q)", code, tc.code, stderr.String())
-			}
-			if stdout.String() != tc.stdout {
-				t.Errorf("stdout %q, want %q", stdout.String(), tc.stdout)
-			}
-			if stderr.String() != tc.stderr {
-				t.Errorf("stderr %q, want %q", stderr.String(), tc.stderr)
 			}
 		})
 	}
@@ -1213,6 +1165,27 @@ var refusalRows = []struct {
 		`crew: roster-render: --once: bool value must be true, 1, yes, false, 0 or no but got "nope"`, 64},
 	// An unknown argument outranks a bad interval, as it did in the arm's loop.
 	{"roster-render unknown beats interval", []string{"roster-render", "--bogus", "--interval", "x"}, "crew: roster-render: unknown arg '--bogus'", 64},
+	{"reap unknown flag", []string{"reap", "--bogus"}, reapUsage + "(got '--bogus')", 1},
+	{"reap extra positional", []string{"reap", "extra"}, reapUsage + "(got 'extra')", 1},
+	{"reap unknown flag equals", []string{"reap", "--bogus=x"}, reapUsage + "(got '--bogus')", 1},
+	{"reap idle missing value", []string{"reap", "--idle"}, "crew: --idle needs a value in seconds", 1},
+	{"reap idle empty value", []string{"reap", "--idle", ""}, "crew: --idle needs a value in seconds", 1},
+	{"reap discard missing value", []string{"reap", "--discard"}, "crew: --discard needs a branch", 1},
+	{"reap idle not digits", []string{"reap", "--idle", "abc"}, "crew: --idle must be a non-negative integer number of seconds", 1},
+	{"reap bad bool", []string{"reap", "--quiet=maybe"},
+		`crew: reap: --quiet: bool value must be true, 1, yes, false, 0 or no but got "maybe"`, 1},
+	{"adopt unknown flag", []string{"adopt", "--bogus"}, "crew: adopt: unknown flag '--bogus'", 1},
+	{"adopt extra positional", []string{"adopt", "c1", "1", "2"}, "crew: adopt: unexpected argument '2'", 1},
+	{"adopt negative number", []string{"adopt", "-5"}, "crew: adopt: unknown flag '-5'", 1},
+	{"adopt bad bool", []string{"adopt", "--force=maybe", "c1"},
+		`crew: adopt: --force: bool value must be true, 1, yes, false, 0 or no but got "maybe"`, 1},
+	{"pr-watch unknown flag", []string{"pr-watch", "12", "--bogus"}, "pr-watch: unknown arg '--bogus'", 1},
+	{"pr-watch extra positional", []string{"pr-watch", "12", "13"}, "pr-watch: unknown arg '13'", 1},
+	{"stall-watch unknown flag", []string{"stall-watch", "feat/x", "--bogus"}, "crew: stall-watch: unknown arg '--bogus'", 1},
+	{"stall-watch extra positional", []string{"stall-watch", "feat/x", "extra"}, "crew: stall-watch: unknown arg 'extra'", 1},
+	{"stall-watch bad bool", []string{"stall-watch", "feat/x", "--no-budget=maybe"},
+		`crew: stall-watch: --no-budget: bool value must be true, 1, yes, false, 0 or no but got "maybe"`, 1},
+	{"reap idle negative", []string{"reap", "--idle", "-5"}, "crew: --idle must be a non-negative integer number of seconds", 1},
 }
 
 // preLocateRefusalRows are the refusals of the two modes that run outside any
@@ -1260,6 +1233,20 @@ var preLocateRefusalRows = []struct {
 	{"rate sweep-all root missing value", []string{"rate", "--sweep-all", "--root"}, rateRootNeedsDir, 1},
 	{"rate sweep-all root empty value", []string{"rate", "--sweep-all", "--root", ""}, rateRootNeedsDir, 1},
 	{"rate sweep-all root empty value equals", []string{"rate", "--sweep-all", "--root="}, rateRootNeedsDir, 1},
+	{"git-baseline unknown flag", []string{"git-baseline", "--bogus"}, baselineUsage, 1},
+	{"git-baseline extra positional", []string{"git-baseline", "extra"}, baselineUsage, 1},
+	{"git-baseline extra after accept", []string{"git-baseline", "--accept", "x"}, baselineUsage, 1},
+	{"git-baseline bad bool", []string{"git-baseline", "--accept=maybe"}, baselineUsage, 1},
+	{"git-guard no op", []string{"git-guard"}, guardUsage, 64},
+	{"git-guard unknown op", []string{"git-guard", "bogus"}, guardUsage, 64},
+	{"git-guard unknown flag", []string{"git-guard", "--bogus"}, guardUsage, 64},
+	{"git-guard check no dir", []string{"git-guard", "check"}, guardUsage, 64},
+	{"git-guard check three words", []string{"git-guard", "check", "a", "b", "c"}, guardUsage, 64},
+	{"git-guard init two words", []string{"git-guard", "init", "a", "b"}, guardUsage, 64},
+	{"git-guard show-url three words", []string{"git-guard", "show-url", "a", "proxy", "x"}, guardUsage, 64},
+	{"git-guard show-pair one word", []string{"git-guard", "show-pair", "k"}, guardUsage, 64},
+	{"git-guard canon one word", []string{"git-guard", "canon", "/r"}, guardUsage, 64},
+	{"git-guard dash-led value", []string{"git-guard", "show-key", "-x"}, guardUsage, 64},
 }
 
 const (
@@ -1271,6 +1258,9 @@ const (
 	stackUsage       = "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n       crew stack align <top-PR#|branch>"
 	rateRootNeedsDir = "crew: rate --root needs a directory"
 	whereUsage       = "usage: crew where <codename|branch|%id> [--crew ID]"
+	reapUsage        = "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH "
+	baselineUsage    = "usage: crew git-baseline [--accept]"
+	guardUsage       = "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …"
 )
 
 // TestTypedRefusals pins each typed subcommand's refusals at the parse: the
@@ -1639,6 +1629,36 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 			[]string{"fleet", "stream", "--crew=c1", "--force=true", "--status=true"}, false},
 		{"roster-render bools", []string{"roster-render", "--no-open", "--once", "--detach"},
 			[]string{"roster-render", "--no-open=true", "--once=true", "--detach=true"}, false},
+		{"git-baseline --accept", []string{"git-baseline", "--accept"}, []string{"git-baseline", "--accept=true"}, false},
+		{"reap --idle", []string{"reap", "--idle", "5"}, []string{"reap", "--idle=5"}, false},
+		{"reap --discard", []string{"reap", "--discard", "b"}, []string{"reap", "--discard=b"}, false},
+		{"reap bools", []string{"reap", "--quiet", "--dry-run", "--no-wait"}, []string{"reap", "--quiet=true", "--dry-run=true", "--no-wait=true"}, false},
+		{"adopt --force", []string{"adopt", "--force", "c1"}, []string{"adopt", "--force=true", "c1"}, false},
+		{"adopt --force last", []string{"adopt", "c1", "--force"}, []string{"adopt", "c1", "--force=true"}, false},
+		{"pr-watch --repo", []string{"pr-watch", "12", "--repo", "o/r"}, []string{"pr-watch", "12", "--repo=o/r"}, false},
+		{"pr-watch --timeout", []string{"pr-watch", "12", "--timeout", "5"}, []string{"pr-watch", "12", "--timeout=5"}, false},
+		{"pr-watch --interval", []string{"pr-watch", "12", "--interval", "1"}, []string{"pr-watch", "12", "--interval=1"}, false},
+		{"pr-watch --repo empty", []string{"pr-watch", "12", "--repo", ""}, []string{"pr-watch", "12", "--repo="}, false},
+		{"stall-watch --pane", []string{"stall-watch", "feat/x", "--pane", "%1"}, []string{"stall-watch", "feat/x", "--pane=%1"}, false},
+		{"stall-watch --engine", []string{"stall-watch", "feat/x", "--engine", "claude"}, []string{"stall-watch", "feat/x", "--engine=claude"}, false},
+		{"stall-watch --grace", []string{"stall-watch", "feat/x", "--grace", "0"}, []string{"stall-watch", "feat/x", "--grace=0"}, false},
+		{"stall-watch --interval", []string{"stall-watch", "feat/x", "--interval", "1"}, []string{"stall-watch", "feat/x", "--interval=1"}, false},
+		{"stall-watch --stall", []string{"stall-watch", "feat/x", "--stall", "1"}, []string{"stall-watch", "feat/x", "--stall=1"}, false},
+		{"stall-watch --window", []string{"stall-watch", "feat/x", "--window", "2"}, []string{"stall-watch", "feat/x", "--window=2"}, false},
+		{"stall-watch --idle", []string{"stall-watch", "feat/x", "--idle", "3"}, []string{"stall-watch", "feat/x", "--idle=3"}, false},
+		{"stall-watch --dead", []string{"stall-watch", "feat/x", "--dead", "4"}, []string{"stall-watch", "feat/x", "--dead=4"}, false},
+		{"stall-watch --max-life", []string{"stall-watch", "feat/x", "--max-life", "5"}, []string{"stall-watch", "feat/x", "--max-life=5"}, false},
+		{"stall-watch --load", []string{"stall-watch", "feat/x", "--load", "6"}, []string{"stall-watch", "feat/x", "--load=6"}, false},
+		{"stall-watch --release", []string{"stall-watch", "feat/x", "--release", "7"}, []string{"stall-watch", "feat/x", "--release=7"}, false},
+		{"stall-watch --bg-wait", []string{"stall-watch", "feat/x", "--bg-wait", "8"}, []string{"stall-watch", "feat/x", "--bg-wait=8"}, false},
+		{"stall-watch --launch", []string{"stall-watch", "feat/x", "--launch", "9"}, []string{"stall-watch", "feat/x", "--launch=9"}, false},
+		{"stall-watch --unread", []string{"stall-watch", "feat/x", "--unread", "10"}, []string{"stall-watch", "feat/x", "--unread=10"}, false},
+		{"stall-watch --runaway-hits", []string{"stall-watch", "feat/x", "--runaway-hits", "11"}, []string{"stall-watch", "feat/x", "--runaway-hits=11"}, false},
+		{"stall-watch --runaway-tokens", []string{"stall-watch", "feat/x", "--runaway-tokens", "12"}, []string{"stall-watch", "feat/x", "--runaway-tokens=12"}, false},
+		{"stall-watch --budget-refresh", []string{"stall-watch", "feat/x", "--budget-refresh", "13"}, []string{"stall-watch", "feat/x", "--budget-refresh=13"}, false},
+		{"stall-watch bools", []string{"stall-watch", "feat/x", "--no-budget", "--no-nudge"}, []string{"stall-watch", "feat/x", "--no-budget=true", "--no-nudge=true"}, false},
+		{"stall-watch --engine trailing", []string{"stall-watch", "feat/x", "--pane", "%1", "--engine"}, []string{"stall-watch", "feat/x", "--pane", "%1", "--engine="}, false},
+		{"reap --idle empty", []string{"reap", "--idle", ""}, []string{"reap", "--idle="}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, okA := parseCrew(tc.a)
@@ -1820,6 +1840,62 @@ func TestRunSenderCheckSurvivesTyping(t *testing.T) {
 			}
 			if !bytes.Equal(before, after) {
 				t.Errorf("the log changed: %q", after)
+			}
+		})
+	}
+}
+
+// TestStallWatchSenderCheckSurvivesTyping: a worker's stamped pane cannot start
+// a watch as another sender, however the grammar spells the id and --pane. A
+// foreign id is refused through the stamped-pane anchor (a dispatcher: target
+// becomes worker:dispatcher:…), before any probe or bus write.
+func TestStallWatchSenderCheckSurvivesTyping(t *testing.T) {
+	for _, tc := range []struct {
+		id   string
+		args []string
+	}{
+		{"worker:feat/y#s1-1", []string{"stall-watch", "worker:feat/y#s1-1", "--pane", "%1"}},
+		{"worker:feat/y#s1-1", []string{"stall-watch", "worker:feat/y#s1-1", "--pane=%1"}},
+		{"worker:feat/y#s1-1", []string{"stall-watch", "--pane", "%1", "worker:feat/y#s1-1"}},
+		{"role:feat/y:reviewer", []string{"stall-watch", "--pane=%1", "role:feat/y:reviewer"}},
+		{"worker:dispatcher:c1", []string{"stall-watch", "dispatcher:c1", "--pane=%1"}},
+	} {
+		t.Run(strings.Join(tc.args[1:], " "), func(t *testing.T) {
+			parsed, ok := parseCrew(tc.args)
+			if !ok || parsed.refusal != nil {
+				t.Fatalf("parse refused: ok %v refusal %v", ok, parsed.refusal)
+			}
+			dir := t.TempDir()
+			paths := bus.Paths{Common: dir, Dir: dir + "/crew", Log: dir + "/crew/events.jsonl"}
+			probes := 0
+			var stderr bytes.Buffer
+			code := stall.Run(t.Context(), stallRequest(parsed), paths, &stderr, stall.Options{
+				CrewID: func() string { return "c1" },
+				NewProbes: func(string) probe.Probes {
+					probes++
+					return probe.Probes{}
+				},
+				Sender: sender.Probes{
+					Getenv: func(k string) string {
+						if k == "CREW_WORKER_ID" {
+							return "worker:feat/x#s1-1"
+						}
+						return ""
+					},
+					Panes:  func() (string, error) { return "100\x1ffeat/x\x1flead\x1fc1\x1f@1\x1f%1\n", nil },
+					Parent: func(int) (int, bool) { return 1, true },
+					PID:    100,
+				},
+			})
+			want := "crew: stall-watch: refusing sender '" + tc.id + "' on pane %1: "
+			if code != exitFailure || !strings.HasPrefix(stderr.String(), want) {
+				t.Errorf("code %d stderr %q, want exit 1 and prefix %q", code, stderr.String(), want)
+			}
+			if probes != 0 {
+				t.Errorf("NewProbes called %d times, want 0", probes)
+			}
+			if _, err := os.Stat(paths.Log); !os.IsNotExist(err) {
+				t.Errorf("bus log stat err = %v, want not-exist", err)
 			}
 		})
 	}

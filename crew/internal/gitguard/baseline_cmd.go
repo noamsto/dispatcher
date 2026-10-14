@@ -23,16 +23,7 @@ type ctxEntry struct {
 // RunBaseline is `crew git-baseline [--accept]`: it lists — or, with --accept,
 // merges into — the baseline Check enforces. Values print masked, and --accept
 // writes exactly the pairs this run printed.
-func RunBaseline(args []string, cwd string, o BaselineOptions, stdout, stderr io.Writer) int {
-	var accept bool
-	switch {
-	case len(args) == 0:
-	case len(args) == 1 && args[0] == "--accept":
-		accept = true
-	default:
-		say(stderr, "usage: crew git-baseline [--accept]\n")
-		return 1
-	}
+func RunBaseline(accept bool, cwd string, o BaselineOptions, stdout, stderr io.Writer) int {
 	if accept && !o.IsTTY() {
 		say(stderr, "crew: git-baseline --accept needs your own terminal (not Claude Code's ! prefix)\n")
 		return 1

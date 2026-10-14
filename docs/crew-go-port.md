@@ -584,32 +584,33 @@ help entry, and `tests/crew.bats`'s `_crew_cli_subs` reads the list from `main.g
 
 ### kong, the root parser (#862)
 
-`main.go` builds one kong parser over `os.Args[1:]`. The four subcommands it has
-converted — `id`, `new`, `engine-cmd`, `occupants` (argv words) and, since the
-second slice, `where`, `identity`, `resolve-target`, `crews`, `register`,
-`deregister`, `log`, `sessions`, `inbox` (typed flags and positionals, in
-`crew/commands.go`) and, since the third, `roster`, `report`, `retro`, `rate`,
-`fleet`, `stack`, `roster-render` and `pi-agent-dir` and, since the fourth, `msg`, `status`, `reply`,
-`hold`, `nudge`, `await`, `watch` and `stream` (with `fleet stream`) — are typed commands; every other name is a dynamic command
-sharing one `passthrough:""` capture, so kong accepts the word and stops. The
-first slice converts only the subcommands whose whole argv is "a list of words,
-the first of which may be data", and the rules below are what the rest of #862
-converts against.
+`main.go` builds one kong parser over `os.Args[1:]`. The conversion is complete:
+every subcommand except `dash` is a typed command. The first slice took `id`,
+`new`, `engine-cmd`, `occupants` (argv words); the second `where`, `identity`,
+`resolve-target`, `crews`, `register`, `deregister`, `log`, `sessions`, `inbox`
+(typed flags and positionals, in `crew/commands.go`); the third `roster`,
+`report`, `retro`, `rate`, `fleet`, `stack`, `roster-render` and `pi-agent-dir`;
+the fourth `msg`, `status`, `reply`, `hold`, `nudge`, `await`, `watch` and
+`stream` (with `fleet stream`); the fifth `reap`, `reap-autosweep`, `adopt`,
+`pr-watch`, `stall-watch`, `git-baseline`, `git-guard` and `help`. `dash` is the
+one dynamic command, with a `passthrough:""` capture, so kong accepts the word
+and stops; it stays that way for good (see below). The first slice converted only
+the subcommands whose whole argv is "a list of words, the first of which may be
+data", and the rules below are what the rest of #862 converted against.
 
 **Help stays embedded.** `routeHelp` runs first, and `kong.NoDefaultHelp()`,
 `kong.Writers(io.Discard, io.Discard)` and a do-nothing `kong.Exit` mean kong can
 neither print a screen nor end the process. `helpTexts` is still the source of
 every screen, which is what `scripts/help-parity.sh` proves.
 
-**An unconverted subcommand parses the raw tail, not kong's capture.** The
-capture is not verbatim: kong splits the first word after a command name at `=`,
-so an unconverted `crew <sub> --since=abc` would arrive as `--since abc`. `parseCrew` returns
-the words after the command name for exactly that reason;
-`TestParseCrewSplitsLeadingEquals` pins the measurement (on `adopt`, `pr-watch`,
-`reap`) and `TestRunPassthroughArgvReachesItsArm` pins the arms' answers, `--` and flag-shaped
-detail text included. A subcommand takes its own bound fields only once its table
-shows the split cannot change its answer: `engine-cmd` matches no engine name on
-either half of `--pane=x`, and `occupants` matches no worktree path.
+**`dash` parses the raw tail, not kong's capture.** The capture is not verbatim:
+kong splits the first word after a command name at `=`, so `crew dash --since=abc`
+would arrive as `--since abc`. `dash` forwards its raw argv to `crew-dash`, which
+is why it is the one passthrough left for good; `parseCrew` returns the words
+after the command name for exactly that reason, and `TestParseCrewSplitsLeadingEquals`
+pins the measurement on `dash`. A subcommand takes its own bound fields only once
+its table shows the split cannot change its answer: `engine-cmd` matches no engine
+name on either half of `--pane=x`, and `occupants` matches no worktree path.
 
 **A parse error is the grouped list.** A name kong does not select — no words at
 all, `bogus`, a flag where a name belongs — is answered by `run` with
@@ -701,6 +702,36 @@ integer number of seconds`.
   check, `watch`'s bus mkdir, and `nudge`'s dispatcher-only refusal (exit 2) for a
   worker passing a bad flag. No write happens on any of those paths; the sender
   check itself did not move.
+
+The fifth slice (`reap`, `reap-autosweep`, `adopt`, `pr-watch`, `stall-watch`,
+`git-baseline`, `git-guard`, `help`) follows the same rules, with these differences:
+
+- `git-guard`'s ops are kong subcommands; every grammar failure is the guard usage
+  line, exit 64, printed before `bus.Locate` and before any git call. A dash-led
+  value (`show-key --x=y`, `show-pair k -v`) is now that refusal, where it was
+  printed.
+- `git-baseline --accept` is a bool: `=true|yes|1` reach the same tty and typed-`yes`
+  gate in `RunBaseline`, and `=false` lists. Its refusal prints before `bus.Locate`.
+- `reap`'s refusals (needs-a-value, digits, unknown/extra as `reap takes … (got
+'…')`) print after `bus.Locate` and before the config guard; `--idle=5` is
+  accepted, and `--bogus=x` is named `--bogus`. `reap-autosweep` binds its words
+  and drops them.
+- `adopt` binds `--force`, the id and the pid; a dash-led word is an unknown flag
+  (it was read as the crew id) and a third word is refused (it was ignored).
+- `pr-watch` binds `--repo`, `--timeout`, `--interval` and the PR, and rebuilds the
+  child argv PR-first, so `--repo` may precede the PR. An empty or trailing value is
+  forwarded and the child's own refusal answers; unknown and extra words use the
+  child's `pr-watch: unknown arg` wording, now printed by crew before the child
+  runs and before the missing-crew refusal.
+- `stall-watch`: the sender/pane check (`sender.Watch` in `stall.Run`) still compares
+  the same id and pane at the same point, and flags may now precede the id. Kong's
+  unknown and extra refusals print before the missing-crew refusal (still before any
+  bus write); an empty or trailing `--engine`, `--grace`, `--interval` is `--<flag>
+needs a value`, checked in `stall.parseArgs` after the crew.
+  `TestStallWatchSenderCheckSurvivesTyping` and the #908 bats rows pin it.
+- A bad bool value (`reap --quiet=maybe`, `adopt --force=maybe`, `stall-watch
+--no-budget=maybe`) now gets kong's bool line under the sub's name, as
+  `status --restamp=nope` did in slice 4.
 
 `fleet` and `rate --sweep-all` need no repo, so the preamble's not-in-a-repo
 refusal lets them through — and both ask the same question twice: the script with

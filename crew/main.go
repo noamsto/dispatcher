@@ -107,22 +107,21 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 }
 
 // The kong root (#862). Every subcommand is a kong command: the converted ones
-// bind typed fields (commands.go), and every name still parsing its own argv is
-// registered around one shared passthrough command, so kong accepts the word and
-// stops. Two measurements of kong v1.16.1 decide the shape.
+// bind typed fields (commands.go), and dash alone is registered around the
+// passthrough command, so kong accepts the word and stops. Two measurements of
+// kong v1.16.1 decide the shape.
 //
 //   - Kong splits the first word after a command name at `=`, so
-//     `crew hold --crew=x` would reach hold as `--crew x` and read a flag
-//     where the arm read a word. The unconverted arms parse the raw
-//     tail, not the capture; the split is pinned by
+//     `crew dash --crew=x` would reach dash as `--crew x`. Dash parses the
+//     raw tail, not the capture; the split is pinned by
 //     TestParseCrewSplitsLeadingEquals. The typed commands want that split:
 //     `--flag=value` is `--flag value`.
 //   - With the help flag off, the writers discarded and the exit func empty,
 //     kong can neither print a screen nor end the process, so routeHelp and
 //     helpTexts still decide when help prints and what it says.
 
-// subcommands is every word crew admits: the twenty-nine the grammar types, then
-// the arms still parsing their own argv. It is the list the switch of #821 admitted,
+// subcommands is every word crew admits: the thirty-seven the grammar types, then
+// dash, which parses its own argv. It is the list the switch of #821 admitted,
 // and tests/crew.bats parses this literal to prove every subcommand has its own
 // row in the grouped help; TestAdmittedSubcommands pins it against that
 // revision and against what the grammar really admits.
@@ -136,8 +135,8 @@ var subcommands = []string{
 	"reply", "stall-watch", "status", "stream", "watch",
 }
 
-// typedSubcommands are the subcommands whose argv root binds. Every other name
-// is registered as a dynamic passthrough command sharing one capture.
+// typedSubcommands are the subcommands whose argv root binds: every name but
+// dash, which is registered as a dynamic passthrough command.
 var typedSubcommands = map[string]bool{
 	"engine-cmd": true, "id": true, "new": true, "occupants": true,
 	"where": true, "identity": true, "resolve-target": true, "crews": true, "register": true,
@@ -146,10 +145,12 @@ var typedSubcommands = map[string]bool{
 	"stack": true, "roster-render": true, "pi-agent-dir": true,
 	"status": true, "msg": true, "reply": true, "hold": true,
 	"nudge": true, "await": true, "watch": true, "stream": true,
+	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
+	"adopt": true, "pr-watch": true, "stall-watch": true, "help": true,
 }
 
-// passthroughCmd is one unconverted subcommand to kong: its name, then whatever
-// words it wants, kept as the caller typed them — an unknown flag, a `--`
+// passthroughCmd is dash to kong: its name, then whatever words it wants, kept
+// as the caller typed them — an unknown flag, a `--`
 // separator and a `--help` that is detail text rather than a request, all of
 // them reaching the arm that reads them.
 type passthroughCmd struct {
@@ -169,7 +170,7 @@ type argvCmd struct {
 	Args []string `arg:"" optional:"" passthrough:"all" name:"args"`
 }
 
-// root is the grammar's converted half: the typed subcommands.
+// root is the grammar's typed subcommands.
 type root struct {
 	ID        argvCmd `cmd:"" name:"id" help:"Print this session's crew id."`
 	New       argvCmd `cmd:"" name:"new" help:"Mint a crew id."`
@@ -203,11 +204,25 @@ type root struct {
 	Await  awaitCmd  `cmd:"" name:"await" help:"Block until a msg answers an agent."`
 	Watch  watchCmd  `cmd:"" name:"watch" help:"Park until a worker event qualifies."`
 	Stream streamCmd `cmd:"" name:"stream" help:"The long-lived lane that pushes batches."`
+
+	GitGuard    gitGuardCmd    `cmd:"" name:"git-guard" help:"The git-config guard worktree-git.sh runs."`
+	GitBaseline gitBaselineCmd `cmd:"" name:"git-baseline" help:"List or accept the git-config baseline."`
+
+	Adopt adoptCmd `cmd:"" name:"adopt" help:"Re-attach to a crew already on disk."`
+
+	PRWatch prWatchCmd `cmd:"" name:"pr-watch" help:"Park on a PR and post its change event to the bus."`
+
+	StallWatch stallWatchCmd `cmd:"" name:"stall-watch" help:"The per-worker liveness watchdog."`
+
+	Reap          reapCmd `cmd:"" name:"reap" help:"Reclaim the windows and worktrees of landed workers."`
+	ReapAutosweep argvCmd `cmd:"" name:"reap-autosweep" help:"The detached ratings sweep reap starts."`
+
+	Help argvCmd `cmd:"" name:"help" help:"The grouped help."`
 }
 
 // crewArgs is what the root parse resolves to: the word that named the
-// subcommand, the raw tail an unconverted arm parses, the bound fields of the
-// converted ones, and the refusal a typed subcommand's argv earned, if any.
+// subcommand, the raw tail dash parses, the bound fields of the typed
+// subcommands, and the refusal a typed subcommand's argv earned, if any.
 type crewArgs struct {
 	sub     string
 	argv    []string
@@ -217,7 +232,7 @@ type crewArgs struct {
 }
 
 // newCrewParser builds the grammar: the converted subcommands as fields of
-// root, every other admitted name as a dynamic command sharing one capture.
+// root, and dash as a dynamic command on the capture.
 func newCrewParser(r *root, capture *passthroughCmd) (*kong.Kong, error) {
 	opts := []kong.Option{
 		kong.Name("crew"),
@@ -242,7 +257,7 @@ func newCrewParser(r *root, capture *passthroughCmd) (*kong.Kong, error) {
 //
 // The parser is built per call because kong writes the capture into the struct
 // it was handed, so one shared across calls would keep a previous call's argv on
-// any path it did not take. Building it is reflection over 38 commands.
+// any path it did not take. Building it is reflection over every command.
 func parseCrew(args []string) (crewArgs, bool) {
 	var (
 		r       root
@@ -316,6 +331,48 @@ func holdRequest(p crewArgs) hold.Request {
 		return hold.Request{Action: action, Crew: str(h.Park.Crew), Default: h.Park.Default}
 	default:
 		return hold.Request{Action: action, Crew: str(h.Release.Crew), ID: h.Release.ID}
+	}
+}
+
+// guardRequest is the typed git-guard call: the op is the word after
+// `git-guard` in the command kong selected.
+func guardRequest(p crewArgs) gitguard.GuardRequest {
+	g := p.typed.GitGuard
+	req := gitguard.GuardRequest{Op: strings.Fields(p.cmd)[1]}
+	switch req.Op {
+	case "check":
+		req.Dir, req.Gitdir = g.Check.Common, g.Check.Gitdir
+	case "check-cwd":
+		req.Dir = g.CheckCwd.Common
+	case "init":
+		req.Dir = g.Init.Common
+	case "commondir":
+		req.Dir = g.Commondir.Common
+	case "pairs":
+		req.Dir = g.Pairs.Common
+	case "union":
+		req.Dir = g.Union.Common
+	case "show-url":
+		req.URL, req.Mode = g.ShowURL.URL, g.ShowURL.Mode
+	case "show-key":
+		req.Key = g.ShowKey.Key
+	case "show-pair":
+		req.Key, req.Value, req.Aliases = g.ShowPair.Key, g.ShowPair.Value, g.ShowPair.Aliases
+	case "canon":
+		req.Root, req.Rec = g.Canon.Root, g.Canon.Rec
+	}
+	return req
+}
+
+// stallRequest is the typed stall-watch call.
+func stallRequest(p crewArgs) stall.Request {
+	c := p.typed.StallWatch
+	return stall.Request{
+		Target: c.Target, Pane: c.Pane, Engine: c.Engine, Grace: c.Grace, Interval: c.Interval,
+		Release: c.Release, BudgetRefresh: c.BudgetRefresh, Stall: c.Stall, Window: c.Window,
+		Idle: c.Idle, Dead: c.Dead, MaxLife: c.MaxLife, Load: c.Load, BgWait: c.BgWait,
+		Launch: c.Launch, Unread: c.Unread, RunawayHits: c.RunawayHits, RunawayTokens: c.RunawayTokens,
+		NoBudget: c.NoBudget, NoNudge: c.NoNudge,
 	}
 }
 
@@ -398,7 +455,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 	switch sub {
 	case "help":
-		return entry.RunHelp(args, stdout, stderr)
+		return entry.RunHelp(parsed.typed.Help.Args, stdout, stderr)
 	case "new":
 		return entry.RunNew(stdout, entry.NewOptions{Now: time.Now, PID: os.Getpid()})
 	case "engine-cmd":
@@ -419,10 +476,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// common dir, so neither reads the bus. getwd keeps a logical $PWD that
 	// names the cwd: refusals print the path the caller typed.
 	switch sub {
-	case "git-guard":
-		return gitguard.RunGuard(args, cwd, stdout, stderr)
-	case "git-baseline":
-		return gitguard.RunBaseline(args, cwd, gitguard.BaselineOptions{
+	case "git-guard", "git-baseline":
+		if parsed.refusal != nil {
+			return refuse(stderr, parsed.refusal)
+		}
+		if sub == "git-guard" {
+			return gitguard.RunGuard(guardRequest(parsed), cwd, stdout, stderr)
+		}
+		return gitguard.RunBaseline(parsed.typed.GitBaseline.Accept, cwd, gitguard.BaselineOptions{
 			IsTTY: func() bool { return bus.IsTerminal(0) },
 			In:    os.Stdin,
 		}, stdout, stderr)
@@ -452,9 +513,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			},
 		}
 		if sub == "reap-autosweep" {
-			return reap.RunAutosweep(args, paths, cwd, o)
+			return reap.RunAutosweep(paths, cwd, o)
 		}
-		return reap.Run(ctx, args, paths, cwd, stdout, stderr, o)
+		c := parsed.typed.Reap
+		return reap.Run(ctx, reap.Request{
+			Quiet: c.Quiet, DryRun: c.DryRun, NoWait: c.NoWait, Idle: str(c.Idle), Discard: str(c.Discard),
+		}, paths, cwd, stdout, stderr, o)
 	}
 
 	// stack cut/align read the bus and the anchored git of the repo they are
@@ -617,7 +681,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// pr-watch runs the standalone pr-watch binary as a child and posts the event it
 	// printed, so it owns its run the way watch does rather than folding the bus.
 	if sub == "pr-watch" {
-		return prwatch.Run(ctx, args, paths, stdout, stderr, prwatch.Options{
+		c := parsed.typed.PRWatch
+		return prwatch.Run(ctx, prwatch.Request{PR: c.PR, Repo: c.Repo, Timeout: c.Timeout, Interval: c.Interval}, paths, stdout, stderr, prwatch.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 		})
@@ -643,7 +708,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// adopt records the caller's own identity in pidfile.log: `$$`, `$PPID` and
 	// `$PWD`, which crew.sh's exec leaves ours.
 	if sub == "adopt" {
-		return adopt.Run(args, paths, stdout, stderr, adopt.Options{
+		c := parsed.typed.Adopt
+		return adopt.Run(adopt.Request{ID: c.ID, PID: c.PID, Force: c.Force}, paths, stdout, stderr, adopt.Options{
 			Probes: e.procs,
 			Now:    time.Now,
 			PID:    os.Getpid(),
@@ -700,7 +766,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "stall-watch" {
 		ctx, stop := stall.NotifySignals(ctx)
 		defer stop()
-		return stall.Run(ctx, args, paths, stderr, stall.Options{
+		return stall.Run(ctx, stallRequest(parsed), paths, stderr, stall.Options{
 			// Anchor, don't discover: dispatch hands a watchdog its crew in the
 			// env, and its cwd is a worktree whose WORKER_TASK.md the watched
 			// worker can rewrite.

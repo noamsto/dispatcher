@@ -49,12 +49,12 @@ func TestDiscardSavesApplicablePatch(t *testing.T) {
 	}
 	patch := f.patchPath()
 
-	if rc := f.reap(f.main, "--discard", rb, "--dry-run"); rc != 0 {
+	if rc := f.reap(f.main, Request{Discard: rb, DryRun: true}); rc != 0 {
 		t.Fatalf("dry rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	f.wantOut("crew reap: would save uncommitted state to "+patch, "crew reap: would reap feat/r (MERGED) @ "+f.wt)
 
-	if rc := f.reap(f.main, "--discard", rb); rc != 0 {
+	if rc := f.reap(f.main, Request{Discard: rb}); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	f.wantOut("crew reap: saved uncommitted state to "+patch, "crew reap: reaped feat/r (MERGED, discarded)")
@@ -86,7 +86,7 @@ func TestDiscardSavesApplicablePatch(t *testing.T) {
 
 func TestDiscardCleanTree(t *testing.T) {
 	f := discardFx(t)
-	if rc := f.reap(f.main, "--discard", rb); rc != 0 {
+	if rc := f.reap(f.main, Request{Discard: rb}); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	f.wantOut("crew reap: no uncommitted changes to save", "crew reap: reaped feat/r (MERGED, discarded)")
@@ -102,13 +102,13 @@ func TestDiscardRefusals(t *testing.T) {
 	if err := os.WriteFile(f.wt+"/a.txt", []byte("dirty\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	refused := func(why string, args ...string) {
+	refused := func(why, branch string) {
 		t.Helper()
-		if rc := f.reap(f.main, append([]string{"--discard"}, args...)...); rc != 1 {
-			t.Fatalf("%q: rc=%d stdout=%q", args, rc, f.stdout.String())
+		if rc := f.reap(f.main, Request{Discard: branch}); rc != 1 {
+			t.Fatalf("%q: rc=%d stdout=%q", branch, rc, f.stdout.String())
 		}
 		f.wantOut()
-		f.wantErr("crew reap: refusing --discard " + args[0] + " — " + why + "\n")
+		f.wantErr("crew reap: refusing --discard " + branch + " — " + why + "\n")
 		if !isDir(f.wt) {
 			t.Fatal("worktree removed")
 		}
@@ -131,7 +131,7 @@ func TestDiscardRefusals(t *testing.T) {
 	refused("latest status is working", rb)
 	f.bus(status("done", prURL, 0))
 
-	if rc := f.reap(f.wt, "--discard", rb); rc != 1 {
+	if rc := f.reap(f.wt, Request{Discard: rb}); rc != 1 {
 		t.Fatalf("rc=%d", rc)
 	}
 	f.wantErr("crew reap: refusing --discard feat/r — it is the current worktree\n")
@@ -176,7 +176,7 @@ func TestDiscardRefusesEmbeddedRepo(t *testing.T) {
 	}
 	git(t, nested, "init", "-q")
 	git(t, nested, "commit", "-q", "--allow-empty", "-m", "n")
-	if rc := f.reap(f.main, "--discard", rb); rc != 1 {
+	if rc := f.reap(f.main, Request{Discard: rb}); rc != 1 {
 		t.Fatalf("rc=%d stdout=%q", rc, f.stdout.String())
 	}
 	f.wantErr("crew reap: refusing --discard feat/r — it holds an embedded git repository\n")

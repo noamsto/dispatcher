@@ -145,30 +145,30 @@ type result struct {
 	stderr string
 }
 
-func run(t *testing.T, s *stub, p bus.Paths, args ...string) result {
+func run(t *testing.T, s *stub, p bus.Paths, req Request) result {
 	t.Helper()
 	var out, errOut strings.Builder
-	code := Run(args, p, &out, &errOut, s.options())
+	code := Run(req, p, &out, &errOut, s.options())
 	return result{code, out.String(), errOut.String()}
 }
 
 func TestUsageAndInvalidIDs(t *testing.T) {
 	cases := []struct {
 		name string
-		args []string
+		req  Request
 		want string
 	}{
-		{"no id", nil, "crew: adopt [--force] <id> [pid]"},
-		{"empty id", []string{""}, "crew: adopt [--force] <id> [pid]"},
-		{"path escape", []string{"../../etc"}, "crew: invalid crew id"},
-		{"leading dash", []string{"-x"}, "crew: invalid crew id"},
-		{"dot", []string{"."}, "crew: invalid crew id"},
-		{"shell metacharacters", []string{"c; rm -rf /"}, "crew: invalid crew id"},
+		{"no id", Request{}, "crew: adopt [--force] <id> [pid]"},
+		{"empty id", Request{}, "crew: adopt [--force] <id> [pid]"},
+		{"path escape", Request{ID: "../../etc"}, "crew: invalid crew id"},
+		{"leading dash", Request{ID: "-x"}, "crew: invalid crew id"},
+		{"dot", Request{ID: "."}, "crew: invalid crew id"},
+		{"shell metacharacters", Request{ID: "c; rm -rf /"}, "crew: invalid crew id"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &stub{now: time.Unix(1700000000, 0)}
-			got := run(t, s, testPaths(t), tc.args...)
+			got := run(t, s, testPaths(t), tc.req)
 			if got.code != 1 || got.stdout != "" {
 				t.Errorf("code = %d, stdout = %q", got.code, got.stdout)
 			}
@@ -181,7 +181,7 @@ func TestUsageAndInvalidIDs(t *testing.T) {
 
 func TestUnknownCrew(t *testing.T) {
 	s := &stub{now: time.Unix(1700000000, 0)}
-	got := run(t, s, testPaths(t), "c-nope", "123")
+	got := run(t, s, testPaths(t), Request{ID: "c-nope", PID: "123"})
 	if got.code != 1 || got.stdout != "" {
 		t.Fatalf("code = %d, stdout = %q", got.code, got.stdout)
 	}
@@ -200,7 +200,7 @@ func TestKnownFromTheLogAlone(t *testing.T) {
 	p := testPaths(t)
 	writeLog(t, p, statusRow(1700000000000, "c-log"))
 	s := &stub{now: time.Unix(1700000000, 0)}
-	got := run(t, s, p, "c-log", "123")
+	got := run(t, s, p, Request{ID: "c-log", PID: "123"})
 	if got.code != 0 || got.stdout != "c-log\n" {
 		t.Fatalf("code = %d, stdout = %q, stderr = %q", got.code, got.stdout, got.stderr)
 	}
@@ -213,7 +213,7 @@ func TestRefusesALiveDispatcher(t *testing.T) {
 	p := testPaths(t)
 	registerCrew(t, p, "c-live", "4321")
 	s := &stub{now: time.Unix(1700000000, 0), alive: map[int]bool{4321: true}}
-	got := run(t, s, p, "c-live", "123")
+	got := run(t, s, p, Request{ID: "c-live", PID: "123"})
 	if got.code != 1 || got.stdout != "" {
 		t.Fatalf("code = %d, stdout = %q", got.code, got.stdout)
 	}
@@ -239,7 +239,7 @@ func TestLiveAncestorIsIdempotent(t *testing.T) {
 		alive:  map[int]bool{4321: true},
 		parent: map[int]int{os.Getpid(): 4321},
 	}
-	got := run(t, s, p, "c-own", "123")
+	got := run(t, s, p, Request{ID: "c-own", PID: "123"})
 	if got.code != 0 || got.stdout != "c-own\n" {
 		t.Fatalf("code = %d, stdout = %q, stderr = %q", got.code, got.stdout, got.stderr)
 	}
@@ -256,7 +256,7 @@ func TestForceOverridesALiveOwner(t *testing.T) {
 	registerCrew(t, p, "c-live", "4321")
 	writeLog(t, p, claimRow("c-live", "55", "feat/55-z", 100))
 	s := &stub{now: time.Unix(1700000000, 0), alive: map[int]bool{4321: true}}
-	got := run(t, s, p, "c-live", "--force", "123")
+	got := run(t, s, p, Request{ID: "c-live", PID: "123", Force: true})
 	if got.code != 0 || got.stdout != "c-live\n" {
 		t.Fatalf("code = %d, stdout = %q, stderr = %q", got.code, got.stdout, got.stderr)
 	}
@@ -281,7 +281,7 @@ func TestForceIsNotWrittenAsThePid(t *testing.T) {
 		parent: map[int]int{4241: 4240, 4240: 4239},
 		comm:   map[int]string{4241: "bash", 4240: "-/run/bin/zsh", 4239: "claude"},
 	}
-	if got := run(t, s, p, "c-force", "--force"); got.code != 0 {
+	if got := run(t, s, p, Request{ID: "c-force", Force: true}); got.code != 0 {
 		t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
 	}
 	if pid := readPid(t, p, "c-force"); pid != "4239" {
@@ -289,7 +289,7 @@ func TestForceIsNotWrittenAsThePid(t *testing.T) {
 	}
 	// A process ps cannot name ends the walk at the direct parent.
 	s.comm = nil
-	run(t, s, p, "c-force")
+	run(t, s, p, Request{ID: "c-force"})
 	if pid := readPid(t, p, "c-force"); pid != "4241" {
 		t.Errorf("pid file = %q, want the fallback parent", pid)
 	}
@@ -300,7 +300,7 @@ func TestPidfileLogLine(t *testing.T) {
 	by := strings.Repeat("a", 110) + " 日本語テキストあいう"
 	s := &stub{now: time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC), args: by}
 	registerCrew(t, p, "c-new", "")
-	if got := run(t, s, p, "c-new", "123"); got.code != 0 {
+	if got := run(t, s, p, Request{ID: "c-new", PID: "123"}); got.code != 0 {
 		t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
 	}
 	want := "2026-03-04T05:06:07Z adopt ok crew=c-new old=- new=123 pid=4242 ppid=4241 cwd=/repo by=" +
@@ -324,7 +324,7 @@ func TestReleasesADeadCrewsClaim(t *testing.T) {
 		claimRow("c-other", "99", "feat/99-b", 100),
 	)
 	s := &stub{now: time.Unix(1700000000, 0)}
-	got := run(t, s, p, "c-dead", "123")
+	got := run(t, s, p, Request{ID: "c-dead", PID: "123"})
 	if got.stdout != "c-dead\n" {
 		t.Errorf("stdout = %q, want the bare id", got.stdout)
 	}
@@ -346,7 +346,7 @@ func TestNoClaimRowsMeansNoGhCalls(t *testing.T) {
 	registerCrew(t, p, "c-dead", "4321")
 	writeLog(t, p, statusRow(1, "c-dead"))
 	s := &stub{now: time.Unix(1700000000, 0)}
-	if got := run(t, s, p, "c-dead", "123"); got.code != 0 {
+	if got := run(t, s, p, Request{ID: "c-dead", PID: "123"}); got.code != 0 {
 		t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
 	}
 	if len(s.calls) != 0 {
@@ -407,7 +407,7 @@ func TestNewestClaimWinsAcrossCrews(t *testing.T) {
 			registerCrew(t, p, "c-dead", "4321")
 			writeLog(t, p, tc.rows...)
 			s := &stub{now: time.Unix(1700000000, 0)}
-			run(t, s, p, "c-dead", "123")
+			run(t, s, p, Request{ID: "c-dead", PID: "123"})
 			want := fmt.Sprintf("gh issue edit %s --remove-label dispatched", tc.issue)
 			if got := s.called(want); got != tc.release {
 				t.Errorf("calls = %v, want %q released = %v", s.calls, want, tc.release)
@@ -465,7 +465,7 @@ func TestEveryClaimedBranchIsGated(t *testing.T) {
 				claimRow("c-dead", tc.issue, tc.own, 100),
 			)
 			s := &stub{now: time.Unix(1700000000, 0), ghOut: tc.ghOut, wtOut: tc.wtOut, wins: tc.wins}
-			got := run(t, s, p, "c-dead", "123")
+			got := run(t, s, p, Request{ID: "c-dead", PID: "123"})
 			if !strings.Contains(got.stderr, tc.wantMsg) {
 				t.Errorf("stderr = %q, want %q", got.stderr, tc.wantMsg)
 			}
@@ -525,7 +525,7 @@ func TestGhPrListFailureLeavesClaimsInPlace(t *testing.T) {
 	registerCrew(t, p, "c-dead", "4321")
 	writeLog(t, p, claimRow("c-dead", "83", "feat/83-foo", 100))
 	s := &stub{now: time.Unix(1700000000, 0), ghOut: "gh: could not resolve host", ghErr: errors.New("exit status 1")}
-	got := run(t, s, p, "c-dead", "123")
+	got := run(t, s, p, Request{ID: "c-dead", PID: "123"})
 	if got.code != 0 || got.stdout != "c-dead\n" {
 		t.Fatalf("a failed claim release never fails the adopt: code = %d, stdout = %q", got.code, got.stdout)
 	}
@@ -550,7 +550,7 @@ func TestReleaseIsRecordedInTheClaimIndex(t *testing.T) {
 	registerCrew(t, p, "c-dead", "4321")
 	writeLog(t, p, claimRow("c-dead", "83", "feat/83-foo", 100))
 	s := &stub{now: time.Unix(1700000000, 0), env: map[string]string{"XDG_DATA_HOME": data}}
-	run(t, s, p, "c-dead", "123")
+	run(t, s, p, Request{ID: "c-dead", PID: "123"})
 	idx, err := os.ReadFile(data + "/crew/claims/acme/widgets.jsonl")
 	if err != nil {
 		t.Fatal(err)
@@ -565,7 +565,7 @@ func TestLabelRemovalFailureIsReported(t *testing.T) {
 	registerCrew(t, p, "c-dead", "4321")
 	writeLog(t, p, claimRow("c-dead", "83", "feat/83-foo", 100))
 	s := &stub{now: time.Unix(1700000000, 0), ghEdit: errors.New("exit status 1")}
-	got := run(t, s, p, "c-dead", "123")
+	got := run(t, s, p, Request{ID: "c-dead", PID: "123"})
 	want := "crew adopt: could not remove the dispatched label from #83 (feat/83-foo)\n"
 	if got.stderr != want {
 		t.Errorf("stderr = %q, want %q", got.stderr, want)
@@ -583,7 +583,7 @@ func TestMalformedIssueIsSkipped(t *testing.T) {
 		claimRow("c-dead", "91", "feat/91-ok", 100),
 	)
 	s := &stub{now: time.Unix(1700000000, 0)}
-	got := run(t, s, p, "c-dead", "123")
+	got := run(t, s, p, Request{ID: "c-dead", PID: "123"})
 	want := "crew adopt: skipping a claim row whose issue is not a number (90; rm -rf .)\n"
 	if !strings.Contains(got.stderr, want) {
 		t.Errorf("stderr = %q, want %q", got.stderr, want)
@@ -612,7 +612,7 @@ func TestClaimsReleaseAfterThePidFileIsWritten(t *testing.T) {
 		return nil
 	}
 	var out, errOut strings.Builder
-	Run([]string{"c-dead", "123"}, p, &out, &errOut, o)
+	Run(Request{ID: "c-dead", PID: "123"}, p, &out, &errOut, o)
 	if pidAtCall != "123" {
 		t.Errorf("pid file at the gh call = %q, want it already rewritten", pidAtCall)
 	}
@@ -630,7 +630,7 @@ func TestCorruptLogMeansNoClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &stub{now: time.Unix(1700000000, 0)}
-	if got := run(t, s, p, "c-dead", "123"); got.code != 0 || got.stderr != "" {
+	if got := run(t, s, p, Request{ID: "c-dead", PID: "123"}); got.code != 0 || got.stderr != "" {
 		t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
 	}
 	if len(s.calls) != 0 {
@@ -702,7 +702,7 @@ func TestRecordsTheDispatcherPane(t *testing.T) {
 	p := testPaths(t)
 	registerCrew(t, p, "c-pane", "4321")
 	s := &stub{now: time.Unix(1700000000, 0), env: map[string]string{"TMUX_PANE": "%42"}}
-	if got := run(t, s, p, "c-pane", "123"); got.code != 0 {
+	if got := run(t, s, p, Request{ID: "c-pane", PID: "123"}); got.code != 0 {
 		t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
 	}
 	data, err := os.ReadFile(panePath(p, "c-pane"))
@@ -718,7 +718,7 @@ func TestOutsideTmuxDropsAStalePane(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &stub{now: time.Unix(1700000000, 0)}
-	if got := run(t, s, p, "c-stale", "123"); got.code != 0 {
+	if got := run(t, s, p, Request{ID: "c-stale", PID: "123"}); got.code != 0 {
 		t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
 	}
 	if _, err := os.Stat(panePath(p, "c-stale")); !os.IsNotExist(err) {
@@ -726,7 +726,7 @@ func TestOutsideTmuxDropsAStalePane(t *testing.T) {
 	}
 	// No pane file to begin with is not an error either.
 	registerCrew(t, p, "c-none", "4321")
-	if got := run(t, s, p, "c-none", "123"); got.code != 0 {
+	if got := run(t, s, p, Request{ID: "c-none", PID: "123"}); got.code != 0 {
 		t.Fatalf("code = %d, stderr = %q", got.code, got.stderr)
 	}
 }
@@ -738,7 +738,7 @@ func TestRefusedAdoptLeavesThePane(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &stub{now: time.Unix(1700000000, 0), alive: map[int]bool{4321: true}, env: map[string]string{"TMUX_PANE": "%42"}}
-	if got := run(t, s, p, "c-keep", "123"); got.code != 1 {
+	if got := run(t, s, p, Request{ID: "c-keep", PID: "123"}); got.code != 1 {
 		t.Fatalf("code = %d", got.code)
 	}
 	data, err := os.ReadFile(panePath(p, "c-keep"))
@@ -759,7 +759,7 @@ func TestPaneErrorsFailTheAdopt(t *testing.T) {
 				t.Fatal(err)
 			}
 			s := &stub{now: time.Unix(1700000000, 0), env: env}
-			got := run(t, s, p, "c-err", "123")
+			got := run(t, s, p, Request{ID: "c-err", PID: "123"})
 			if got.code != 1 || !strings.HasPrefix(got.stderr, "crew: adopt: ") {
 				t.Errorf("code = %d, stderr = %q", got.code, got.stderr)
 			}

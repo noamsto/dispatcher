@@ -1,6 +1,7 @@
 package stall
 
 import (
+	"cmp"
 	"context"
 	"os"
 	"reflect"
@@ -25,14 +26,14 @@ func frameText(t *testing.T, name string) string {
 
 // releaseWatch is a watch on feat/x whose worker posted body 999ms into the
 // second the clock starts at, so the integer division by 1000 matters.
-func releaseWatch(t *testing.T, f *fake, id, body string, extra ...string) (*harness, *watch) {
+func releaseWatch(t *testing.T, f *fake, id, body string, req Request) (*harness, *watch) {
 	t.Helper()
 	h := newHarness(t, f)
 	if body != "" {
 		h.writeRows(h.status(id, 999, body))
 	}
-	argv := append([]string{id, "--pane", "%1", "--grace", "0", "--interval", "15", "--release", "15"}, extra...)
-	w := h.watch(argv...)
+	req.Target, req.Pane, req.Grace, req.Interval, req.Release = id, ptr("%1"), ptr("0"), ptr("15"), cmp.Or(req.Release, ptr("15"))
+	w := h.watch(req)
 	w.start = h.clock.Seconds()
 	return h, w
 }
@@ -52,7 +53,7 @@ func TestReleaseClaudeNeedsTwoIdleTicks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFake()
 			f.sample = sampling(frameText(t, "done_idle.txt"))
-			h, w := releaseWatch(t, f, tc.id, `{"state":"done"}`, "--engine", "claude")
+			h, w := releaseWatch(t, f, tc.id, `{"state":"done"}`, Request{Engine: ptr("claude")})
 			code, ok := codeOf(w.finishedRelease())
 			if !ok || code != 0 {
 				t.Fatalf("finishedRelease = %d, %v; want exit 0", code, ok)
@@ -72,7 +73,7 @@ func TestReleaseClaudeNeedsTwoIdleTicks(t *testing.T) {
 func TestReleaseWaitsForTheGrace(t *testing.T) {
 	f := newFake()
 	f.sample = sampling(frameText(t, "done_idle.txt"))
-	h, w := releaseWatch(t, f, "worker:feat/x", `{"state":"failed"}`, "--engine", "claude", "--release", "60")
+	h, w := releaseWatch(t, f, "worker:feat/x", `{"state":"failed"}`, Request{Engine: ptr("claude"), Release: ptr("60")})
 	if code, ok := codeOf(w.finishedRelease()); !ok || code != 0 {
 		t.Fatalf("finishedRelease = %d, %v", code, ok)
 	}
@@ -90,7 +91,7 @@ func TestReleaseClaudeLiveTurnNeverReleases(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newFake()
 			f.sample = sampling(frameText(t, name))
-			_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, "--engine", "claude", "--max-life", "90")
+			_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, Request{Engine: ptr("claude"), MaxLife: ptr("90")})
 			if code, ok := codeOf(w.finishedRelease()); !ok || code != 0 {
 				t.Fatalf("finishedRelease = %d, %v", code, ok)
 			}
@@ -111,7 +112,7 @@ func TestReleaseClaudeIdleTicksMustBeConsecutive(t *testing.T) {
 		}
 		return live, true
 	}
-	_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, "--engine", "claude", "--max-life", "90")
+	_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, Request{Engine: ptr("claude"), MaxLife: ptr("90")})
 	if code, ok := codeOf(w.finishedRelease()); !ok || code != 0 {
 		t.Fatalf("finishedRelease = %d, %v", code, ok)
 	}
@@ -141,7 +142,7 @@ func TestReleaseRC3KeepsLooping(t *testing.T) {
 				}
 				return "", shOffset
 			}
-			_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, "--engine", tc.engine, "--release", tc.release)
+			_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, Request{Engine: ptr(tc.engine), Release: ptr(tc.release)})
 			if code, ok := codeOf(w.finishedRelease()); !ok || code != 0 {
 				t.Fatalf("finishedRelease = %d, %v", code, ok)
 			}
@@ -158,7 +159,7 @@ func TestReleaseOtherStatusExits(t *testing.T) {
 			f := newFake()
 			f.sample = sampling(frameText(t, "done_idle.txt"))
 			f.sh = func(string, ...string) (string, int) { return "", rc + shOffset }
-			_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, "--engine", "claude")
+			_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, Request{Engine: ptr("claude")})
 			if code, ok := codeOf(w.finishedRelease()); !ok || code != 0 {
 				t.Fatalf("finishedRelease = %d, %v", code, ok)
 			}
@@ -187,7 +188,7 @@ func TestReleaseNonClaudeQuietWindow(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFake()
 			f.sample = tc.sample
-			_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, "--engine", tc.engine, "--release", "30", "--max-life", tc.maxLife)
+			_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, Request{Engine: ptr(tc.engine), Release: ptr("30"), MaxLife: ptr(tc.maxLife)})
 			if code, ok := codeOf(w.finishedRelease()); !ok || code != 0 {
 				t.Fatalf("finishedRelease = %d, %v", code, ok)
 			}
@@ -209,7 +210,7 @@ func TestReleaseNonClaudePromptResetsQuiet(t *testing.T) {
 			text := frameText(t, tc.frame)
 			f := newFake()
 			f.sample = sampling(text)
-			_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, "--engine", tc.engine, "--release", "30", "--max-life", "150")
+			_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, Request{Engine: ptr(tc.engine), Release: ptr("30"), MaxLife: ptr("150")})
 			if !frame.IsPrompt(tc.engine, text) && !frame.IsPermissionPrompt(tc.engine, text) {
 				t.Fatalf("%s is not a %s prompt", tc.frame, tc.engine)
 			}
@@ -225,7 +226,7 @@ func TestReleaseNonClaudePromptResetsQuiet(t *testing.T) {
 
 func TestReleaseWatchdogFailedKeepsTheEvidence(t *testing.T) {
 	f := newFake()
-	_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"failed","source":"watchdog","detail":"quiet: x"}`, "--engine", "claude")
+	_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"failed","source":"watchdog","detail":"quiet: x"}`, Request{Engine: ptr("claude")})
 	if code, ok := codeOf(w.finishedRelease()); !ok || code != 0 {
 		t.Fatalf("finishedRelease = %d, %v", code, ok)
 	}
@@ -237,7 +238,7 @@ func TestReleaseWatchdogFailedKeepsTheEvidence(t *testing.T) {
 func TestReleaseSampleFailureExits(t *testing.T) {
 	f := newFake()
 	f.sample = func(int) (string, bool) { return "", false }
-	_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, "--engine", "claude")
+	_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, Request{Engine: ptr("claude")})
 	if code, ok := codeOf(w.finishedRelease()); !ok || code != 0 {
 		t.Fatalf("finishedRelease = %d, %v", code, ok)
 	}
@@ -249,7 +250,7 @@ func TestReleaseSampleFailureExits(t *testing.T) {
 
 func TestReleaseMaxLifeBeforeSampling(t *testing.T) {
 	f := newFake()
-	_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, "--engine", "claude", "--max-life", "15")
+	_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, Request{Engine: ptr("claude"), MaxLife: ptr("15")})
 	if code, ok := codeOf(w.finishedRelease()); !ok || code != 0 {
 		t.Fatalf("finishedRelease = %d, %v", code, ok)
 	}
@@ -262,7 +263,7 @@ func TestReleaseMaxLifeBeforeSampling(t *testing.T) {
 // max-life check, until a later status ends it.
 func TestReleaseEmptyStateLoopsWithoutMaxLife(t *testing.T) {
 	f := newFake()
-	h, w := releaseWatch(t, f, "worker:feat/x", "", "--engine", "claude", "--max-life", "10")
+	h, w := releaseWatch(t, f, "worker:feat/x", "", Request{Engine: ptr("claude"), MaxLife: ptr("10")})
 	reads := 0
 	w.p.BusRows = func(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool) {
 		reads++
@@ -284,7 +285,7 @@ func TestReleaseEmptyStateLoopsWithoutMaxLife(t *testing.T) {
 
 func TestReleaseSleepSignalExits(t *testing.T) {
 	f := newFake()
-	h, w := releaseWatch(t, f, "worker:feat/x", "", "--engine", "claude")
+	h, w := releaseWatch(t, f, "worker:feat/x", "", Request{Engine: ptr("claude")})
 	ctx, cancel := context.WithCancelCause(t.Context())
 	cancel(SignalError{Sig: syscall.SIGTERM})
 	w.ctx, h.ctx = ctx, ctx
@@ -300,7 +301,7 @@ func TestReleaseStepsAside(t *testing.T) {
 		h.status("worker:feat/x#s100-1", 1, `{"state":"done"}`),
 		h.status("worker:feat/x#s200-5", 2, `{"state":"working"}`),
 	)
-	w := h.watch("worker:feat/x#s100-1", "--pane", "%1", "--release", "15")
+	w := h.watch(Request{Target: "worker:feat/x#s100-1", Pane: ptr("%1"), Release: ptr("15")})
 	w.start = h.clock.Seconds()
 	if code, ok := codeOf(w.finishedRelease()); !ok || code != 0 || f.samples != 0 {
 		t.Errorf("finishedRelease = %d, %v after %d samples; want exit 0 before sampling", code, ok, f.samples)
@@ -320,8 +321,7 @@ func TestReleaseReopenedResumesWatching(t *testing.T) {
 		}
 		return idle, true
 	}
-	code, _ := h.run("feat/x", "--pane", "%1", "--grace", "0", "--interval", "15", "--release", "120",
-		"--engine", "claude", "--max-life", "90", "--no-budget")
+	code, _ := h.run(Request{Target: "feat/x", Pane: ptr("%1"), Grace: ptr("0"), Interval: ptr("15"), Release: ptr("120"), Engine: ptr("claude"), MaxLife: ptr("90"), NoBudget: true})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}

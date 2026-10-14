@@ -9,6 +9,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
+	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/rate"
@@ -249,6 +250,99 @@ type watchCmd struct {
 	Crew     *string `name:"crew"`
 }
 
+type reapCmd struct {
+	Quiet   bool    `name:"quiet"`
+	DryRun  bool    `name:"dry-run"`
+	NoWait  bool    `name:"no-wait"`
+	Idle    *string `name:"idle"`
+	Discard *string `name:"discard"`
+}
+
+type prWatchCmd struct {
+	Repo     *string `name:"repo"`
+	Timeout  *string `name:"timeout"`
+	Interval *string `name:"interval"`
+	PR       string  `arg:"" optional:"" name:"pr"`
+}
+
+type stallWatchCmd struct {
+	Target        string  `arg:"" optional:"" name:"target"`
+	Pane          *string `name:"pane"`
+	Engine        *string `name:"engine"`
+	Grace         *string `name:"grace"`
+	Interval      *string `name:"interval"`
+	Stall         *string `name:"stall"`
+	Window        *string `name:"window"`
+	Idle          *string `name:"idle"`
+	Dead          *string `name:"dead"`
+	MaxLife       *string `name:"max-life"`
+	Load          *string `name:"load"`
+	Release       *string `name:"release"`
+	BgWait        *string `name:"bg-wait"`
+	Launch        *string `name:"launch"`
+	Unread        *string `name:"unread"`
+	RunawayHits   *string `name:"runaway-hits"`
+	RunawayTokens *string `name:"runaway-tokens"`
+	BudgetRefresh *string `name:"budget-refresh"`
+	NoBudget      bool    `name:"no-budget"`
+	NoNudge       bool    `name:"no-nudge"`
+}
+
+type adoptCmd struct {
+	Force bool   `name:"force"`
+	ID    string `arg:"" optional:"" name:"id"`
+	PID   string `arg:"" optional:"" name:"pid"`
+}
+
+type gitBaselineCmd struct {
+	Accept bool `name:"accept"`
+}
+
+// guardDirCmd is a git-guard op that takes the common dir and nothing else.
+type guardDirCmd struct {
+	Common string `arg:"" name:"common"`
+}
+
+type guardCheckCmd struct {
+	Common string `arg:"" name:"common"`
+	Gitdir string `arg:"" optional:"" name:"gitdir"`
+}
+
+type guardShowURLCmd struct {
+	URL  string `arg:"" name:"url"`
+	Mode string `arg:"" optional:"" name:"mode"`
+}
+
+type guardShowKeyCmd struct {
+	Key string `arg:"" name:"key"`
+}
+
+type guardShowPairCmd struct {
+	Key     string   `arg:"" name:"key"`
+	Value   string   `arg:"" name:"value"`
+	Aliases []string `arg:"" optional:"" name:"aliases"`
+}
+
+type guardCanonCmd struct {
+	Root string `arg:"" name:"root"`
+	Rec  string `arg:"" name:"rec"`
+}
+
+// gitGuardCmd's ops take paths and config text from worktree-git.sh, never a
+// dash-led word: kong reads one as an unknown flag, the guard's usage line.
+type gitGuardCmd struct {
+	Check     guardCheckCmd    `cmd:"" name:"check"`
+	CheckCwd  guardDirCmd      `cmd:"" name:"check-cwd"`
+	Init      guardDirCmd      `cmd:"" name:"init"`
+	Commondir guardDirCmd      `cmd:"" name:"commondir"`
+	Pairs     guardDirCmd      `cmd:"" name:"pairs"`
+	Union     guardDirCmd      `cmd:"" name:"union"`
+	ShowURL   guardShowURLCmd  `cmd:"" name:"show-url"`
+	ShowKey   guardShowKeyCmd  `cmd:"" name:"show-key"`
+	ShowPair  guardShowPairCmd `cmd:"" name:"show-pair"`
+	Canon     guardCanonCmd    `cmd:"" name:"canon"`
+}
+
 // refusal is the stderr line and exit status a typed subcommand's argv earned.
 type refusal struct {
 	msg  string
@@ -260,6 +354,7 @@ const (
 	identityHashUsage = "crew: identity --hash <name>"
 	identitySignature = "usage: crew identity <branch> [crew]"
 	rateRootUsage     = "crew: rate --root needs a directory"
+	gitBaselineUsage  = "usage: crew git-baseline [--accept]"
 )
 
 // wording is how one subcommand phrases the two grammar failures kong reports
@@ -378,6 +473,28 @@ var wordings = map[string]wording{
 	"register":   plain("register"),
 	"deregister": plain("deregister"),
 	"log":        plain("log"),
+	"adopt":      plain("adopt"),
+	"pr-watch": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("pr-watch: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("pr-watch: unknown arg '%s'", w) },
+		code:        exitFailure,
+	},
+	"stall-watch": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: stall-watch: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: stall-watch: unknown arg '%s'", w) },
+		code:        exitFailure,
+	},
+	"git-baseline": {all: gitBaselineUsage, code: exitFailure},
+	"git-guard":    {all: gitguard.GuardUsage, code: exitUsage},
+	"reap": {
+		unknownFlag: reapUnknown,
+		extra:       reapUnknown,
+		code:        exitFailure,
+	},
+}
+
+func reapUnknown(tok string) string {
+	return "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH (got '" + tok + "')"
 }
 
 // kongRefusal maps kong's error for the refusal key (a subcommand, or `hold <action>`
@@ -492,6 +609,17 @@ func validate(sub string, r *root) *refusal {
 		// Marks exist only for a session; the suffix check above covers any worker id.
 		if c.Undelivered && !strings.HasPrefix(c.Agent, "worker:") {
 			return fail("crew: inbox: --undelivered needs a worker session id ($CREW_WORKER_ID)")
+		}
+	case "reap":
+		c := r.Reap
+		if given(c.Idle) {
+			return fail("crew: --idle needs a value in seconds")
+		}
+		if given(c.Discard) {
+			return fail("crew: --discard needs a branch")
+		}
+		if c.Idle != nil && !isDigits(*c.Idle) {
+			return fail("crew: --idle must be a non-negative integer number of seconds")
 		}
 	case "reply":
 		if given(r.Reply.Crew) {

@@ -33,7 +33,7 @@ func lineCount(h *harness) int {
 func TestPostRow(t *testing.T) {
 	h := newHarness(t, newFake())
 	h.clock.Now = func() time.Time { return time.UnixMilli(1760000000123).Add(456 * time.Microsecond) }
-	w := h.watch("worker:feat/x#s1-1", "--pane", "%1")
+	w := h.watch(Request{Target: "worker:feat/x#s1-1", Pane: ptr("%1")})
 	if err := w.post("blocked", "quiet: pane unchanged for 1800s — é"); err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestPostRowMatchesArmJQ(t *testing.T) {
 	}
 	h := newHarness(t, newFake())
 	h.clock.Now = func() time.Time { return time.UnixMilli(1760000000123) }
-	w := h.watch("worker:feat/x#s1-1", "--pane", "%1")
+	w := h.watch(Request{Target: "worker:feat/x#s1-1", Pane: ptr("%1")})
 	detail := "prompt: \"quoted\"\ttab\\ — ✓"
 	if err := w.post("working", detail); err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestPostAbortsOnTerminal(t *testing.T) {
 			f := newFake()
 			h := newHarness(t, f)
 			h.writeRows(h.status("worker:feat/x", 1, `{"state":"`+state+`"}`))
-			w := h.watch("feat/x", "--pane", "%1")
+			w := h.watch(Request{Target: "feat/x", Pane: ptr("%1")})
 			code, ok := codeOf(w.post("blocked", "quiet: x"))
 			if !ok || code != 0 {
 				t.Fatalf("post did not exit 0")
@@ -95,7 +95,7 @@ func TestPostAbortsOnTerminal(t *testing.T) {
 
 func TestPostCreatesBusDir(t *testing.T) {
 	h := newHarness(t, newFake())
-	w := h.watch("feat/x", "--pane", "%1")
+	w := h.watch(Request{Target: "feat/x", Pane: ptr("%1")})
 	if err := w.post("working", "x"); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestPostPaneOptions(t *testing.T) {
 	for _, tc := range cases {
 		f := newFake()
 		h := newHarness(t, f)
-		w := h.watch(tc.id, "--pane", "%1")
+		w := h.watch(Request{Target: tc.id, Pane: ptr("%1")})
 		if err := w.post(tc.state, "d"); err != nil {
 			t.Fatal(err)
 		}
@@ -168,7 +168,7 @@ func TestPostBlocked(t *testing.T) {
 				h.writeRows(h.status("worker:feat/x", 1, tc.body))
 				before = 1
 			}
-			w := h.watch("feat/x", "--pane", "%1")
+			w := h.watch(Request{Target: "feat/x", Pane: ptr("%1")})
 			posted, err := w.postBlocked(tc.prefix, tc.prefix+" new")
 			if err != nil {
 				t.Fatal(err)
@@ -186,7 +186,7 @@ func TestPostBlocked(t *testing.T) {
 func TestPostBlockedAbortsOnTerminal(t *testing.T) {
 	h := newHarness(t, newFake())
 	h.writeRows(h.status("worker:feat/x", 1, `{"state":"done"}`))
-	w := h.watch("feat/x", "--pane", "%1")
+	w := h.watch(Request{Target: "feat/x", Pane: ptr("%1")})
 	posted, err := w.postBlocked("quiet:", "quiet: x")
 	if code, ok := codeOf(err); posted || !ok || code != 0 {
 		t.Errorf("posted=%v err=%v, want exit 0", posted, err)
@@ -200,7 +200,7 @@ func TestPostAppendFailure(t *testing.T) {
 	if err := os.MkdirAll(h.paths.Log, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	w := h.watch("feat/x", "--pane", "%1")
+	w := h.watch(Request{Target: "feat/x", Pane: ptr("%1")})
 	posted, err := w.postBlocked("quiet:", "quiet: x")
 	if posted || err != nil {
 		t.Errorf("postBlocked = %v, %v; want false, nil", posted, err)
@@ -215,7 +215,7 @@ func TestPostAppendFailure(t *testing.T) {
 
 // A detector whose post failed keeps its episode unopened and the watch runs.
 func TestDetectorPostFailureRetried(t *testing.T) {
-	r := newFDRig(t, "", "", "--stall", "30")
+	r := newFDRig(t, "", "", Request{Stall: ptr("30")})
 	if err := os.MkdirAll(r.h.paths.Log, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func TestPostClear(t *testing.T) {
 				h.writeRows(h.status("worker:feat/x", 1, tc.body))
 				before = 1
 			}
-			w := h.watch("feat/x", "--pane", "%1")
+			w := h.watch(Request{Target: "feat/x", Pane: ptr("%1")})
 			if err := w.postClear(tc.prefix); err != nil {
 				t.Fatal(err)
 			}
@@ -275,7 +275,7 @@ func TestEngineAlive(t *testing.T) {
 	for cmd, want := range cases {
 		f := newFake()
 		f.paneCmd = cmd
-		w := newHarness(t, f).watch("feat/x", "--pane", "%1")
+		w := newHarness(t, f).watch(Request{Target: "feat/x", Pane: ptr("%1")})
 		if got, err := w.engineAlive(); err != nil || got != want {
 			t.Errorf("engineAlive(%q) = %v, %v; want %v", cmd, got, err, want)
 		}
