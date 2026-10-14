@@ -40,7 +40,8 @@ var (
 )
 
 const (
-	usage = "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n" +
+	// Usage is the two lines every stack grammar refusal prints.
+	Usage = "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n" +
 		"       crew stack align <top-PR#|branch>\n"
 	noCrewID = "crew: no crew id — CREW_ID unset and no WORKER_TASK.md crew_id; " +
 		"run 'crew crews' to find this repo's crews, 'crew adopt <id>' to re-attach, " +
@@ -80,39 +81,18 @@ type stackCmd struct {
 	defaultBranch  string
 }
 
+// Request is a parsed `crew stack` command line: Top names an align, and
+// otherwise Child (with Record and Oid) names a cut.
+type Request struct {
+	Record bool
+	Child  string
+	Oid    string
+	Top    string
+}
+
 // Run is crew.sh's `stack)` arm.
-func Run(ctx context.Context, args []string, paths bus.Paths, cwd string, stdout, stderr io.Writer, o Options) int {
-	sub, rest := "", args
-	if len(args) > 0 {
-		sub, rest = args[0], args[1:]
-	}
-	var (
-		record          bool
-		child, oid, top string
-	)
-	switch sub {
-	case "cut":
-		if len(rest) > 0 && rest[0] == "--record" {
-			record, rest = true, rest[1:]
-		}
-		switch len(rest) {
-		case 1:
-			child = rest[0]
-		case 2:
-			// The arm only took an oid with --record; `cut child oid` is usage.
-			if record {
-				child, oid = rest[0], rest[1]
-			}
-		}
-	case "align":
-		if len(rest) == 1 {
-			top = rest[0]
-		}
-	}
-	if child == "" && top == "" {
-		_, _ = fmt.Fprint(stderr, usage)
-		return 1
-	}
+func Run(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, stderr io.Writer, o Options) int {
+	child, oid, top := req.Child, req.Oid, req.Top
 	if oid != "" && !oidRe.MatchString(oid) {
 		_, _ = fmt.Fprintf(stderr, "crew: '%s' is not a full lowercase hex commit oid\n", oid)
 		return 1
@@ -145,7 +125,7 @@ func Run(ctx context.Context, args []string, paths bus.Paths, cwd string, stdout
 		s.p = s.p.withDefaults()
 	}
 	if top == "" {
-		err = s.cut(ctx, record, child, oid)
+		err = s.cut(ctx, req.Record, child, oid)
 	} else {
 		err = s.align(ctx, top)
 	}

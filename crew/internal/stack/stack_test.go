@@ -201,7 +201,7 @@ func (f *fixture) addCrossPR(number int, head, base string) {
 func numberFor(n int) string { return fmt.Sprintf("%d", n) }
 
 // stackRun runs the command and reports its exit code and both streams.
-func (f *fixture) stackRun(t *testing.T, args ...string) (int, string, string) {
+func (f *fixture) stackRun(t *testing.T, req Request) (int, string, string) {
 	f.t.Helper()
 	f.stdout.Reset()
 	f.stderr.Reset()
@@ -212,7 +212,7 @@ func (f *fixture) stackRun(t *testing.T, args ...string) (int, string, string) {
 		Append: func(path, line string) error { f.appended = append(f.appended, line); return bus.Append(path, line) },
 	}
 	paths := bus.Paths{Common: f.common(), Dir: f.common() + "/crew", Log: f.log}
-	code := Run(context.Background(), args, paths, f.main, f.stdout, f.stderr, Options{Probes: p})
+	code := Run(context.Background(), req, paths, f.main, f.stdout, f.stderr, Options{Probes: p})
 	_ = os.Chdir(f.main)
 	return code, f.stdout.String(), f.stderr.String()
 }
@@ -327,44 +327,24 @@ func (f *fixture) cmd() *stackCmd {
 	}
 }
 
-func TestUsageAndOid(t *testing.T) {
-	f := newFixture(t)
-	f.bus()
-	for _, args := range [][]string{
-		{}, {"cut"}, {"cut", "feat/child", "extra"}, {"cut", "--record"}, {"cut", "--record", "a", "b", "c"},
-		{"align"}, {"align", "3", "extra"}, {"nonsense"}, {"cut", "--record", "feat/child", "extra", "oid"},
-	} {
-		code, out, errOut := f.stackRun(t, args...)
-		if code != 1 {
-			t.Errorf("%v: exit %d, want 1 (%s)", args, code, errOut)
-		}
-		if out != "" {
-			t.Errorf("%v: stdout %q, want empty", args, out)
-		}
-		if !strings.HasPrefix(errOut, "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n       crew stack align <top-PR#|branch>\n") {
-			t.Errorf("%v: stderr %q, want the arm's two usage lines", args, errOut)
-		}
-	}
-}
-
 func TestOidFormat(t *testing.T) {
 	f := newFixture(t)
 	f.bus()
 	const oid = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	for _, bad := range []string{"HEAD", oid[:12], strings.ToUpper(oid), oid + "z", " " + oid} {
-		code, out, errOut := f.stackRun(t, "cut", "--record", "feat/child", bad)
+		code, out, errOut := f.stackRun(t, Request{Record: true, Child: "feat/child", Oid: bad})
 		if code != 1 || out != "" || errOut != "crew: '"+bad+"' is not a full lowercase hex commit oid\n" {
 			t.Errorf("oid %q: exit %d, stdout %q, stderr %q", bad, code, out, errOut)
 		}
 	}
 	// A sha256 oid is a full oid, so it reaches the next check (the recorded
 	// parent, not the oid format).
-	if _, _, errOut := f.stackRun(t, "cut", "--record", "feat/child", strings.Repeat("a", 64)); !strings.Contains(errOut, "no recorded parent") {
+	if _, _, errOut := f.stackRun(t, Request{Record: true, Child: "feat/child", Oid: strings.Repeat("a", 64)}); !strings.Contains(errOut, "no recorded parent") {
 		t.Errorf("a 64-hex oid was refused as an oid: %s", errOut)
 	}
 	// An empty second argument is no oid at all, exactly as bash's `[ -n … ]`
 	// read it: the format check is skipped and the parent tip path runs.
-	if _, _, errOut := f.stackRun(t, "cut", "--record", "feat/child", ""); !strings.Contains(errOut, "no recorded parent") {
+	if _, _, errOut := f.stackRun(t, Request{Record: true, Child: "feat/child", Oid: ""}); !strings.Contains(errOut, "no recorded parent") {
 		t.Errorf("an empty oid argument: %s", errOut)
 	}
 }

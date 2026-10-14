@@ -108,8 +108,8 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 // stops. Two measurements of kong v1.16.1 decide the shape.
 //
 //   - Kong splits the first word after a command name at `=`, so
-//     `crew roster --since=5` would reach roster as `--since 5` and read a
-//     filter where the arm read a crew id. The unconverted arms parse the raw
+//     `crew hold --crew=x` would reach hold as `--crew x` and read a flag
+//     where the arm read a word. The unconverted arms parse the raw
 //     tail, not the capture; the split is pinned by
 //     TestParseCrewSplitsLeadingEquals. The typed commands want that split:
 //     `--flag=value` is `--flag value`.
@@ -117,7 +117,7 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 //     kong can neither print a screen nor end the process, so routeHelp and
 //     helpTexts still decide when help prints and what it says.
 
-// subcommands is every word crew admits: the thirteen the grammar types, then
+// subcommands is every word crew admits: the twenty-one the grammar types, then
 // the arms still parsing their own argv. It is the list the switch of #821 admitted,
 // and tests/crew.bats parses this literal to prove every subcommand has its own
 // row in the grouped help; TestAdmittedSubcommands pins it against that
@@ -125,11 +125,11 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 var subcommands = []string{
 	"id", "new", "engine-cmd", "occupants",
 	"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
-	"adopt", "await", "dash", "fleet", "git-baseline",
+	"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
+	"adopt", "await", "dash", "git-baseline",
 	"git-guard", "help", "hold", "msg", "nudge",
-	"pi-agent-dir", "pr-watch", "rate", "reap", "reap-autosweep",
-	"reply", "report", "retro", "roster", "roster-render",
-	"stack", "stall-watch", "status", "stream", "watch",
+	"pr-watch", "reap", "reap-autosweep",
+	"reply", "stall-watch", "status", "stream", "watch",
 }
 
 // typedSubcommands are the subcommands whose argv root binds. Every other name
@@ -138,6 +138,8 @@ var typedSubcommands = map[string]bool{
 	"engine-cmd": true, "id": true, "new": true, "occupants": true,
 	"where": true, "identity": true, "resolve-target": true, "crews": true, "register": true,
 	"deregister": true, "log": true, "sessions": true, "inbox": true,
+	"roster": true, "report": true, "retro": true, "rate": true, "fleet": true,
+	"stack": true, "roster-render": true, "pi-agent-dir": true,
 }
 
 // passthroughCmd is one unconverted subcommand to kong: its name, then whatever
@@ -149,7 +151,7 @@ type passthroughCmd struct {
 }
 
 // argvCmd is a converted subcommand whose argv is a list of words and nothing
-// else. id and new bind it and drop it, because their arms ignored argv and an
+// else. id, new and pi-agent-dir bind it and drop it, because their arms ignored argv and an
 // empty kong command would refuse `crew id extra` where the arm printed the id.
 // engine-cmd and occupants read the first word, which is data even when it is
 // flag-shaped (`crew occupants --foo` looks a path up, it does not refuse).
@@ -177,6 +179,15 @@ type root struct {
 	Log        logCmd        `cmd:"" name:"log" help:"The crew's bus rows."`
 	Sessions   sessionsCmd   `cmd:"" name:"sessions" help:"A branch's sessions."`
 	Inbox      inboxCmd      `cmd:"" name:"inbox" help:"Msgs addressed to one agent."`
+
+	Roster       rosterCmd       `cmd:"" name:"roster" help:"This crew's workers."`
+	Report       reportCmd       `cmd:"" name:"report" help:"The crew's report."`
+	Retro        retroCmd        `cmd:"" name:"retro" help:"The retro notes."`
+	Rate         rateCmd         `cmd:"" name:"rate" help:"The ratings sweep and report."`
+	Fleet        fleetCmd        `cmd:"" name:"fleet" help:"Every crew on the machine."`
+	Stack        stackCmd        `cmd:"" name:"stack" help:"Cut points and rebase plans of a stack."`
+	RosterRender rosterRenderCmd `cmd:"" name:"roster-render" help:"The per-crew diagram daemon."`
+	PiAgentDir   argvCmd         `cmd:"" name:"pi-agent-dir" help:"The pi agent dir."`
 }
 
 // crewArgs is what the root parse resolves to: the word that named the
@@ -284,16 +295,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	sub, args = parsed.sub, parsed.argv
 
 	// fleet and rate --sweep-all read every repo on the machine, so they run
-	// before Locate and outside any repo.
+	// before Locate and outside any repo, and their refusals print before it too.
 	switch sub {
 	case "fleet":
-		return runFleet(ctx, args, stdout, stderr, e)
+		if parsed.refusal != nil {
+			return refuse(stderr, parsed.refusal)
+		}
+		return runFleet(ctx, parsed.typed.Fleet, stdout, stderr, e)
 	case "rate":
 		// --sweep-all resolves the repos it discovers and reads neither paths nor
 		// cwd; the sweep and --report fall through to the Locate below, which is
 		// the outside-a-repo refusal the bash preamble kept for them.
-		if rate.WalksEveryRepo(args) {
-			return rate.Run(args, bus.Paths{}, "", stdout, stderr, rate.Options{})
+		if parsed.typed.Rate.SweepAll {
+			if parsed.refusal != nil {
+				return refuse(stderr, parsed.refusal)
+			}
+			return rate.Run(rateRequest(parsed.typed.Rate), bus.Paths{}, "", stdout, stderr, rate.Options{})
 		}
 	}
 
@@ -302,7 +319,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return reap.RunOccupants(ctx, parsed.typed.Occupants.Args, stdout, stderr, reap.DefaultProbes(), os.Getenv("TMUX_PANE"))
 	}
 
-	// help, id, new, engine-cmd and dash are the arms crew.sh runs ahead of its
+	// help, id, new, engine-cmd, dash and pi-agent-dir are the arms crew.sh runs ahead of its
 	// repo check: no bus, and no working directory either — a worktree reaped out
 	// from under a live shell leaves bash printing a shell-init warning and
 	// answering anyway, and dispatch-resume reads `engine-cmd`'s exit as a verdict.
@@ -353,8 +370,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 
 	if parsed.refusal != nil {
-		say(stderr, "%s\n", parsed.refusal.msg)
-		return parsed.refusal.code
+		return refuse(stderr, parsed.refusal)
 	}
 
 	// reap prints its lines as it goes and runs the ratings sweep as a detached
@@ -366,8 +382,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Getenv: os.Getenv,
 			PID:    os.Getpid(),
 			Self:   self,
-			RateRun: func(a []string, p bus.Paths, c string, so, se io.Writer) int {
-				return rate.Run(a, p, c, so, se, rate.Options{})
+			RateRun: func(_ []string, p bus.Paths, c string, so, se io.Writer) int {
+				return rate.Run(rate.Request{}, p, c, so, se, rate.Options{})
 			},
 		}
 		if sub == "reap-autosweep" {
@@ -379,7 +395,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// stack cut/align read the bus and the anchored git of the repo they are
 	// called in, and change the process's cwd to the trusted one first, like reap.
 	if sub == "stack" {
-		return stack.Run(ctx, args, paths, cwd, stdout, stderr, stack.Options{Probes: stack.DefaultProbes()})
+		st := parsed.typed.Stack
+		req := stack.Request{Record: st.Cut.Record, Child: st.Cut.Child, Oid: st.Cut.Oid, Top: st.Align.Top}
+		return stack.Run(ctx, req, paths, cwd, stdout, stderr, stack.Options{Probes: stack.DefaultProbes()})
 	}
 
 	// crews emits TSV, reads the log with its own torn-line tolerance, and
@@ -458,7 +476,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// newer installed build, so it takes the environment's CREW_SELF as its own
 	// identity the way stream takes it for its children.
 	if sub == "roster-render" {
-		return rosterrender.Run(ctx, args, paths, rosterrender.Options{
+		rr := parsed.typed.RosterRender
+		req := rosterrender.Request{
+			Crew: str(rr.Crew), Pane: str(rr.Pane), Interval: str(rr.Interval), Quiet: str(rr.Quiet),
+			NoOpen: rr.NoOpen, Once: rr.Once, Detach: rr.Detach,
+		}
+		return rosterrender.Run(ctx, req, paths, rosterrender.Options{
 			Probes:    rosterrender.Default(ctx),
 			Procs:     e.procs,
 			Roster:    renderProbes(ctx, paths.Common),
@@ -485,16 +508,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		})
 	}
 
-	// retro reads its own two flags, folds the whole bus with no crew filter, and
-	// prints the TSV rows, the padded report or one JSON object, so it owns its
-	// run like hold does.
+	// retro folds the whole bus with no crew filter, and prints the TSV rows, the
+	// padded report or one JSON object, so it owns its run like hold does.
 	if sub == "retro" {
-		return retro.Run(args, paths, stdout, stderr)
+		return retro.Run(retro.Request{Report: parsed.typed.Retro.Report, JSON: parsed.typed.Retro.JSON}, paths, stdout, stderr)
 	}
 
 	// rate's two repo-keyed modes: the sweep of this repo, and the store rollup.
 	if sub == "rate" {
-		return rate.Run(args, paths, cwd, stdout, stderr, rate.Options{})
+		return rate.Run(rateRequest(parsed.typed.Rate), paths, cwd, stdout, stderr, rate.Options{})
 	}
 
 	// reply resolves its target against the bus, then appends one row itself, so
@@ -630,8 +652,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "log" || sub == "report" {
 		crew := parsed.typed.Log.Crew
 		if sub == "report" {
-			crew = crewArg(args, ctx, cwd)
-		} else if crew == "" {
+			crew = parsed.typed.Report.Crew
+		}
+		if crew == "" {
 			crew = bus.CrewID(ctx, cwd)
 		}
 		out := bufio.NewWriterSize(stdout, 64<<10)
@@ -660,7 +683,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		branch, crew = parsed.typed.Sessions.Branch, str(parsed.typed.Sessions.Crew)
 	} else {
 		pretty = true
-		crew = crewArg(args, ctx, cwd)
+		crew = cmp.Or(parsed.typed.Roster.Crew, bus.CrewID(ctx, cwd))
 	}
 
 	out := bufio.NewWriterSize(stdout, 64<<10)
@@ -718,11 +741,12 @@ func originOf(ctx context.Context, common string) string {
 	return strings.TrimSuffix(string(out), "\n")
 }
 
-func runFleet(ctx context.Context, args []string, stdout, stderr io.Writer, e env) int {
+func runFleet(ctx context.Context, c fleetCmd, stdout, stderr io.Writer, e env) int {
 	// The lane prints one protocol line at a time for as long as it lives, so it
-	// writes straight to stdout like stream.
-	if len(args) > 0 && args[0] == "stream" {
-		return stream.RunFleet(args[1:], stdout, stderr, stream.FleetOptions{
+	// writes straight to stdout like stream. validate lets a word through only
+	// when it is `stream`.
+	if len(c.Rest) > 0 {
+		return stream.RunFleet(c.Rest[1:], stdout, stderr, stream.FleetOptions{
 			Options: stream.Options{Now: time.Now, Probes: e.procs},
 			Origin:  func(common string) string { return originOf(ctx, common) },
 		})
@@ -742,7 +766,7 @@ func runFleet(ctx context.Context, args []string, stdout, stderr io.Writer, e en
 	if palette, _ := jsonv.ParseJQColors(e.jqColors); e.color {
 		o.Colors = &palette
 	}
-	return fleet.Run(args, stdout, stderr, o)
+	return fleet.Run(fleet.Request{All: c.All, JSON: c.JSON, Crew: str(c.Crew)}, stdout, stderr, o)
 }
 
 // The Nix build sets these with -X: the pinned bash and the two libs
@@ -776,17 +800,19 @@ func flush(out *bufio.Writer, stderr io.Writer, code int) int {
 	return code
 }
 
-// crewArg is an arm's `"${1:-$(_crew_id)}"`: the first argument, falling back
-// to this repo's crew when it is absent or empty.
-func crewArg(args []string, ctx context.Context, cwd string) string {
-	crew := ""
-	if len(args) > 0 {
-		crew = args[0]
+// refuse prints a typed subcommand's refusal and returns its status.
+func refuse(stderr io.Writer, r *refusal) int {
+	say(stderr, "%s\n", r.msg)
+	return r.code
+}
+
+// rateRequest is the typed flags rate.Run takes.
+func rateRequest(c rateCmd) rate.Request {
+	roots := make([]string, len(c.Root))
+	for i, d := range c.Root {
+		roots[i] = *d
 	}
-	if crew == "" {
-		crew = bus.CrewID(ctx, cwd)
-	}
-	return crew
+	return rate.Request{Report: c.Report, JSON: c.JSON, Pooled: c.Pooled, SweepAll: c.SweepAll, Roots: roots}
 }
 
 // fold runs the subcommand's fold over the read events, or maps the read or

@@ -123,12 +123,11 @@ func (f *sweepAllFixture) options() Options {
 	}
 }
 
-// run drives a whole command line through Run, so the flags the loop takes are
-// under test too. The paths and cwd are the zero values main.go hands --sweep-all.
-func (f *sweepAllFixture) run(o Options, args ...string) (string, string, int) {
+// run drives a request through Run. The paths and cwd are the zero values main.go hands --sweep-all.
+func (f *sweepAllFixture) run(o Options, req Request) (string, string, int) {
 	f.t.Helper()
 	var out, errb bytes.Buffer
-	code := Run(args, bus.Paths{}, "", &out, &errb, o)
+	code := Run(req, bus.Paths{}, "", &out, &errb, o)
 	return out.String(), errb.String(), code
 }
 
@@ -149,7 +148,7 @@ func TestSweepAllLinesAndExitStatus(t *testing.T) {
 		storeRow("other/repo", "r4"),
 	)
 
-	out, errb, code := f.run(f.options(), "--sweep-all", "--root", f.root)
+	out, errb, code := f.run(f.options(), Request{SweepAll: true, Roots: []string{f.root}})
 	// A repo with an origin reports the slug its store rows are keyed by; a
 	// skipped one reports the path discovery found, which is the only name it has.
 	want := strings.Join([]string{
@@ -177,7 +176,7 @@ func TestSweepAllExitsZeroWhenNoRepoFails(t *testing.T) {
 	f.repo("alpha", "https://github.com/acme/alpha.git")
 	f.repo("noremote", "")
 
-	out, errb, code := f.run(f.options(), "--sweep-all", "--root", f.root)
+	out, errb, code := f.run(f.options(), Request{SweepAll: true, Roots: []string{f.root}})
 	want := strings.Join([]string{
 		"acme/alpha: swept, 0 runs in store",
 		filepath.Join(f.root, "noremote") + ": skipped (no origin remote)",
@@ -198,7 +197,7 @@ func TestSweepAllRoots(t *testing.T) {
 	f.repo("alpha", "https://github.com/acme/alpha.git")
 	typo := filepath.Join(t.TempDir(), "typo")
 
-	out, errb, code := f.run(f.options(), "--sweep-all", "--root", f.root, "--root", typo)
+	out, errb, code := f.run(f.options(), Request{SweepAll: true, Roots: []string{f.root, typo}})
 	if code != 0 || !strings.Contains(out, "alpha: swept") {
 		t.Fatalf("exit %d stdout %q stderr %q", code, out, errb)
 	}
@@ -222,7 +221,7 @@ func TestSweepAllRoots(t *testing.T) {
 			}
 			return ""
 		}
-		out, errb, code := f.run(o, "--sweep-all")
+		out, errb, code := f.run(o, Request{SweepAll: true})
 		if code != 0 || !strings.Contains(out, "alpha: swept") {
 			t.Errorf("%s: exit %d stdout %q stderr %q", tc.name, code, out, errb)
 		}
@@ -233,7 +232,7 @@ func TestSweepAllRoots(t *testing.T) {
 // on stderr, not a failure.
 func TestSweepAllNoReposFound(t *testing.T) {
 	f := newSweepAllFixture(t)
-	out, errb, code := f.run(f.options(), "--sweep-all", "--root", f.root)
+	out, errb, code := f.run(f.options(), Request{SweepAll: true, Roots: []string{f.root}})
 	if code != 0 || out != "" {
 		t.Fatalf("exit %d stdout %q, want 0 and nothing", code, out)
 	}
@@ -260,7 +259,7 @@ func TestSweepAllRunsTheRepoSweep(t *testing.T) {
 		}
 		return "", nil
 	}
-	out, errb, code := f.run(o, "--sweep-all", "--root", f.root)
+	out, errb, code := f.run(o, Request{SweepAll: true, Roots: []string{f.root}})
 	want := strings.Join([]string{
 		"acme/bad: failed (rc=5)",
 		"acme/empty: swept, 0 runs in store",
@@ -304,24 +303,5 @@ func TestRunsInStore(t *testing.T) {
 				t.Errorf("runsInStore = %d, want %d", got, tc.want)
 			}
 		})
-	}
-}
-
-// TestWalksEveryRepo pins the routing question main.go asks before it resolves a
-// repo. It is a substring test because the bash preamble's exemption was a glob.
-func TestWalksEveryRepo(t *testing.T) {
-	for _, tc := range []struct {
-		args []string
-		want bool
-	}{
-		{args: []string{"--sweep-all"}, want: true},
-		{args: []string{"--sweep-all", "--root", "/x"}, want: true},
-		{args: []string{"--root", "/tmp/--sweep-all-thing"}, want: true},
-		{args: nil, want: false},
-		{args: []string{"--report"}, want: false},
-	} {
-		if got := WalksEveryRepo(tc.args); got != tc.want {
-			t.Errorf("WalksEveryRepo(%v) = %v, want %v", tc.args, got, tc.want)
-		}
 	}
 }

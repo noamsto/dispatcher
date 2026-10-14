@@ -54,7 +54,7 @@ func (f *fixture) dropRows(branch string) {
 func TestAlignNothingToDo(t *testing.T) {
 	f := newFixture(t)
 	aOID, bOID := f.alignStack(t)
-	code, out, errOut := f.stackRun(t, "align", "3")
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
 	if code != 0 {
 		t.Fatalf("align 3 = %d (%s)", code, errOut)
 	}
@@ -87,7 +87,7 @@ func TestAlignFastForwardedParent(t *testing.T) {
 	aOID, bOID := f.alignStack(t)
 	f.advance("feat/a", "a-2")
 
-	code, out, errOut := f.stackRun(t, "align", "feat/c")
+	code, out, errOut := f.stackRun(t, Request{Top: "feat/c"})
 	if code != 0 {
 		t.Fatalf("align feat/c = %d (%s)", code, errOut)
 	}
@@ -116,7 +116,7 @@ func TestAlignRewrittenParent(t *testing.T) {
 	aOID, _ := f.alignStack(t)
 	f.rewrite("feat/a", "a-rewritten")
 
-	code, out, errOut := f.stackRun(t, "align", "3")
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
 	if code != 0 {
 		t.Fatalf("align 3 = %d (%s)", code, errOut)
 	}
@@ -135,7 +135,7 @@ func TestAlignSquashMergedParent(t *testing.T) {
 	aOID, bOID := f.alignStack(t)
 	f.squashMergeA()
 
-	code, out, errOut := f.stackRun(t, "align", "3")
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
 	if code != 0 {
 		t.Fatalf("align 3 = %d (%s)", code, errOut)
 	}
@@ -165,7 +165,7 @@ func TestAlignRetargetedOntoDefaultBranch(t *testing.T) {
 	// squash-merge plan, still naming PR #1.
 	f.addPR(2, "feat/b", "main", "OPEN")
 
-	code, out, errOut := f.stackRun(t, "align", "3")
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
 	if code != 0 {
 		t.Fatalf("align 3 = %d (%s)", code, errOut)
 	}
@@ -178,7 +178,7 @@ func TestAlignRetargetedOntoDefaultBranch(t *testing.T) {
 	})
 	// A newer `--pr` re-dispatch row that recorded main does not hide the retarget.
 	f.appendBus(`{"ts":9,"crew_id":"c1","kind":"dispatch","branch":"feat/b","base":"main","base_oid":null}`)
-	if _, out, _ := f.stackRun(t, "align", "3"); !strings.Contains(out, "parent PR #1 squash-merged") {
+	if _, out, _ := f.stackRun(t, Request{Top: "3"}); !strings.Contains(out, "parent PR #1 squash-merged") {
 		t.Fatalf("a newer attach row hid the recorded parent:\n%s", out)
 	}
 }
@@ -190,7 +190,7 @@ func TestAlignRetargetedWhileParentUnmerged(t *testing.T) {
 	f.advance("feat/a", "a-2")
 	for _, state := range []string{"OPEN", "CLOSED"} {
 		f.addPR(1, "feat/a", "main", state)
-		code, out, errOut := f.stackRun(t, "align", "3")
+		code, out, errOut := f.stackRun(t, Request{Top: "3"})
 		if code != 0 {
 			t.Fatalf("state %s: align 3 = %d (%s)", state, code, errOut)
 		}
@@ -220,7 +220,7 @@ func TestAlignStaleCutIsUnknown(t *testing.T) {
 	f.push(f.main, "feat/b")
 	f.advance("main", "main-2")
 
-	code, out, errOut := f.stackRun(t, "align", "3")
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
 	if code != 0 {
 		t.Fatalf("align 3 = %d (%s)", code, errOut)
 	}
@@ -239,7 +239,7 @@ func TestAlignNoRecordedCut(t *testing.T) {
 	f.dropRows("feat/b")
 	f.advance("feat/a", "a-2")
 
-	code, out, errOut := f.stackRun(t, "align", "3")
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
 	if code != 0 {
 		t.Fatalf("align 3 = %d (%s)", code, errOut)
 	}
@@ -261,7 +261,7 @@ func TestAlignBaseDiffersFromRecordedParent(t *testing.T) {
 	f.appendBus(fmt.Sprintf(`{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/b","base":"feat/z","base_oid":%q}`, aOID))
 	f.advance("feat/a", "a-2")
 
-	code, out, errOut := f.stackRun(t, "align", "3")
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
 	if code != 0 {
 		t.Fatalf("align 3 = %d (%s)", code, errOut)
 	}
@@ -279,7 +279,7 @@ func TestAlignWaitingLayerWithADoubtStaysUnknown(t *testing.T) {
 	f.appendBus(fmt.Sprintf(`{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/c","base":"feat/z","base_oid":%q}`, bOID))
 	f.advance("feat/a", "a-2")
 
-	code, out, errOut := f.stackRun(t, "align", "3")
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
 	if code != 0 {
 		t.Fatalf("align 3 = %d (%s)", code, errOut)
 	}
@@ -301,7 +301,7 @@ func TestAlignBottomLayerStaysBottom(t *testing.T) {
 	f.appendBus(dispatchRow(4, "feat/a", "main", "1111111111111111111111111111111111111111"))
 	f.advance("main", "main-2")
 
-	code, out, errOut := f.stackRun(t, "align", "3")
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
 	if code != 0 {
 		t.Fatalf("align 3 = %d (%s)", code, errOut)
 	}
@@ -318,7 +318,7 @@ func TestAlignRefusesAForkACycleAndABadTop(t *testing.T) {
 	f.alignStack(t)
 
 	f.addCrossPR(3, "feat/c", "feat/b")
-	code, out, errOut := f.stackRun(t, "align", "3")
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
 	if code != 1 || out != "" || !strings.Contains(errOut, "PR for 3 is from a fork") {
 		t.Fatalf("cross-repo top: %d, %q, %q", code, out, errOut)
 	}
@@ -326,7 +326,7 @@ func TestAlignRefusesAForkACycleAndABadTop(t *testing.T) {
 
 	// feat/c ← feat/b ← feat/a ← feat/c.
 	f.addPR(1, "feat/a", "feat/c", "OPEN")
-	code, out, errOut = f.stackRun(t, "align", "3")
+	code, out, errOut = f.stackRun(t, Request{Top: "3"})
 	if code != 1 || out != "" || !strings.Contains(errOut, "cycle in the stack at feat/c") {
 		t.Fatalf("cycle: %d, %q, %q", code, out, errOut)
 	}
@@ -334,7 +334,7 @@ func TestAlignRefusesAForkACycleAndABadTop(t *testing.T) {
 
 	// A closed top PR has no stack to align.
 	f.addPR(3, "feat/c", "feat/b", "CLOSED")
-	if code, _, errOut := f.stackRun(t, "align", "3"); code != 1 ||
+	if code, _, errOut := f.stackRun(t, Request{Top: "3"}); code != 1 ||
 		!strings.Contains(errOut, "PR #3 is CLOSED, not OPEN") {
 		t.Fatalf("closed top: %d, %q", code, errOut)
 	}
@@ -342,12 +342,12 @@ func TestAlignRefusesAForkACycleAndABadTop(t *testing.T) {
 
 	// A branch ref whose PR has another head is refused, not planned.
 	f.prs["feat/other"] = pr{number: 3, head: "feat/c", base: "feat/b", state: "OPEN"}
-	if code, _, errOut := f.stackRun(t, "align", "feat/other"); code != 1 ||
+	if code, _, errOut := f.stackRun(t, Request{Top: "feat/other"}); code != 1 ||
 		!strings.Contains(errOut, "the PR for feat/other has head feat/c, not feat/other") {
 		t.Fatalf("branch ref mismatch: %d, %q", code, errOut)
 	}
 	// A ref that is not a plain branch name never reaches gh.
-	if code, _, errOut := f.stackRun(t, "align", "+refs/heads/x:refs/remotes/origin/main"); code != 1 ||
+	if code, _, errOut := f.stackRun(t, Request{Top: "+refs/heads/x:refs/remotes/origin/main"}); code != 1 ||
 		!strings.Contains(errOut, "is not a plain branch name") {
 		t.Fatalf("unsafe top ref: %d, %q", code, errOut)
 	}
@@ -358,7 +358,7 @@ func TestAlignRefusesUnsafeNamesFromGh(t *testing.T) {
 	f.alignStack(t)
 	for _, bad := range []string{"feat/a..b", "bad name"} {
 		f.replacePR(2, "feat/b", bad, "feat/a", "OPEN")
-		code, out, errOut := f.stackRun(t, "align", "feat/c")
+		code, out, errOut := f.stackRun(t, Request{Top: "feat/c"})
 		if code != 1 || out != "" || !strings.Contains(errOut, "PR #2") {
 			t.Fatalf("head %q: %d, %q, %q", bad, code, out, errOut)
 		}
@@ -366,7 +366,7 @@ func TestAlignRefusesUnsafeNamesFromGh(t *testing.T) {
 	f.addPR(2, "feat/b", "feat/a", "OPEN")
 	for _, bad := range []string{"feat/x;id", "a$(id)", "x|sh"} {
 		f.replacePR(2, "feat/b", "feat/b", bad, "OPEN")
-		code, out, errOut := f.stackRun(t, "align", "3")
+		code, out, errOut := f.stackRun(t, Request{Top: "3"})
 		if code != 1 || out != "" || !strings.Contains(errOut, "unsafe") {
 			t.Fatalf("base %q: %d, %q, %q", bad, code, out, errOut)
 		}
@@ -380,12 +380,12 @@ func TestAlignRefusesAParentThatDidNotLandOnDefault(t *testing.T) {
 	f := newFixture(t)
 	f.alignStack(t)
 	f.addPR(2, "feat/b", "feat/a", "MERGED")
-	code, out, errOut := f.stackRun(t, "align", "3")
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
 	if code != 1 || out != "" || !strings.Contains(errOut, "PR #2 for feat/b merged into feat/a, not main") {
 		t.Fatalf("merged into another branch: %d, %q, %q", code, out, errOut)
 	}
 	f.addPR(2, "feat/b", "feat/a", "CLOSED")
-	if code, _, errOut := f.stackRun(t, "align", "3"); code != 1 ||
+	if code, _, errOut := f.stackRun(t, Request{Top: "3"}); code != 1 ||
 		!strings.Contains(errOut, "PR #2 for feat/b is CLOSED, not merged") {
 		t.Fatalf("closed parent: %d, %q", code, errOut)
 	}
@@ -399,7 +399,7 @@ func TestAlignNeverWritesTheBus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errOut := f.stackRun(t, "align", "3"); code != 0 {
+	if code, _, errOut := f.stackRun(t, Request{Top: "3"}); code != 0 {
 		t.Fatalf("align 3 = %d (%s)", code, errOut)
 	}
 	after, err := os.ReadFile(f.log)
@@ -424,7 +424,7 @@ func TestAlignUnreadableBus(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(f.log, 0o600) })
-	code, out, errOut := f.stackRun(t, "align", "3")
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
 	if code != 1 || out != "" || errOut != "crew: cannot read the bus\n" {
 		t.Fatalf("align over an unreadable bus = %d, %q, %q", code, out, errOut)
 	}

@@ -42,7 +42,7 @@ func fakeGit(origin, toplevel string) func(string, ...string) string {
 
 // run points Run at a fresh store path; a nil store leaves the file unwritten,
 // so the missing-store case never reads the caller's real XDG store.
-func run(t *testing.T, store *string, origin, toplevel string, args ...string) (string, string, int) {
+func run(t *testing.T, store *string, origin, toplevel string, req Request) (string, string, int) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "ratings.jsonl")
 	if store != nil {
@@ -51,67 +51,59 @@ func run(t *testing.T, store *string, origin, toplevel string, args ...string) (
 		}
 	}
 	var out, errb bytes.Buffer
-	code := Run(args, bus.Paths{Log: filepath.Join(t.TempDir(), "events.jsonl")}, "/repo",
+	code := Run(req, bus.Paths{Log: filepath.Join(t.TempDir(), "events.jsonl")}, "/repo",
 		&out, &errb, Options{StorePath: path, Git: fakeGit(origin, toplevel)})
 	return out.String(), errb.String(), code
 }
 
 func ptr(s string) *string { return &s }
 
-// TestFlagRefusals pins the lines an agent reads when it hands `crew rate`
-// something it cannot run: the usage line, and the two --root refusals.
-func TestFlagRefusals(t *testing.T) {
+// TestModeRefusals pins the lines an agent reads when it hands `crew rate` a
+// combination of modes it cannot run.
+func TestModeRefusals(t *testing.T) {
 	for _, tc := range []struct {
-		args []string
+		name string
+		req  Request
 		want string
 	}{
-		{[]string{"--json"}, usage},
-		{[]string{"--pooled"}, usage},
-		{[]string{"--bogus"}, usage},
-		{[]string{"--sweep-all", "--report"}, usage},
-		{[]string{"--sweep-all", "--json"}, usage},
-		{[]string{"--sweep-all", "--pooled"}, usage},
-		{[]string{"--report", "--root", "/x"}, "crew: rate --root needs --sweep-all"},
-		{[]string{"--root"}, "crew: rate --root needs a directory"},
-		{[]string{"--root", ""}, "crew: rate --root needs a directory"},
+		{"json alone", Request{JSON: true}, Usage},
+		{"pooled alone", Request{Pooled: true}, Usage},
+		{"sweep-all report", Request{SweepAll: true, Report: true}, Usage},
+		{"sweep-all json", Request{SweepAll: true, JSON: true}, Usage},
+		{"sweep-all pooled", Request{SweepAll: true, Pooled: true}, Usage},
+		{"root without sweep-all", Request{Report: true, Roots: []string{"/x"}}, "crew: rate --root needs --sweep-all"},
 	} {
-		_, errb, code := run(t, ptr(""), "https://github.com/acme/widgets.git", "", tc.args...)
+		_, errb, code := run(t, ptr(""), "https://github.com/acme/widgets.git", "", tc.req)
 		if code != 1 {
-			t.Fatalf("args %v: exit %d, want 1 (stderr %q)", tc.args, code, errb)
+			t.Fatalf("%s: exit %d, want 1 (stderr %q)", tc.name, code, errb)
 		}
 		if strings.Count(errb, "\n") != 1 || strings.TrimSuffix(errb, "\n") != tc.want {
-			t.Errorf("args %v: stderr = %q, want %q", tc.args, errb, tc.want)
+			t.Errorf("%s: stderr = %q, want %q", tc.name, errb, tc.want)
 		}
 	}
 }
 
-// TestFlagsAccepted checks the combinations the refusals above must not cover:
+// TestModesAccepted checks the combinations the refusals above must not cover:
 // --json and --pooled belong to --report, and --root belongs to --sweep-all.
-func TestFlagsAccepted(t *testing.T) {
-	for _, args := range [][]string{
-		{"--report"},
-		{"--report", "--json"},
-		{"--report", "--pooled"},
-		{"--report", "--json", "--pooled"},
-	} {
-		if _, why := parseFlags(args); why != "" {
-			t.Errorf("args %v: refused %q", args, why)
-		}
-	}
-	for _, args := range [][]string{
+func TestModesAccepted(t *testing.T) {
+	for _, req := range []Request{
+		{Report: true},
+		{Report: true, JSON: true},
+		{Report: true, Pooled: true},
+		{Report: true, JSON: true, Pooled: true},
 		{},
-		{"--sweep-all"},
-		{"--sweep-all", "--root", "/x", "--root", "/y"},
+		{SweepAll: true},
+		{SweepAll: true, Roots: []string{"/x", "/y"}},
 	} {
-		if _, why := parseFlags(args); why != "" {
-			t.Errorf("args %v: refused %q", args, why)
+		if why := req.refusal(); why != "" {
+			t.Errorf("request %+v: refused %q", req, why)
 		}
 	}
 }
 
 func TestScopedTableScopesToTheOriginSlug(t *testing.T) {
 	store := rowA + "\n" + rowB + "\n"
-	out, errb, code := run(t, ptr(store), "https://github.com/acme/widgets.git", "/home/dev/widgets", "--report")
+	out, errb, code := run(t, ptr(store), "https://github.com/acme/widgets.git", "/home/dev/widgets", Request{Report: true})
 	if code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, errb)
 	}
@@ -135,7 +127,7 @@ func TestScopedTableScopesToTheOriginSlug(t *testing.T) {
 
 func TestPooledFooterNamesEveryRepo(t *testing.T) {
 	store := rowA + "\n" + rowB + "\n"
-	out, errb, code := run(t, ptr(store), "https://github.com/acme/widgets.git", "", "--report", "--pooled")
+	out, errb, code := run(t, ptr(store), "https://github.com/acme/widgets.git", "", Request{Report: true, Pooled: true})
 	if code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, errb)
 	}
@@ -151,11 +143,11 @@ func TestScopingFallsBackToToplevelThenUnknownRepo(t *testing.T) {
 	// The store row is labeled "widgets" so the toplevel-basename scope
 	// actually matches it; the unknown-repo case renders the empty state.
 	store := strings.ReplaceAll(rowA, `"repo":"acme/widgets"`, `"repo":"widgets"`) + "\n"
-	out, _, _ := run(t, ptr(store), "", "/home/dev/widgets", "--report")
+	out, _, _ := run(t, ptr(store), "", "/home/dev/widgets", Request{Report: true})
 	if !strings.Contains(out, "Scoped to widgets: 1 runs.") {
 		t.Errorf("toplevel fallback:\n%s", out)
 	}
-	out, _, _ = run(t, ptr(store), "", "", "--report")
+	out, _, _ = run(t, ptr(store), "", "", Request{Report: true})
 	if out != "unknown-repo: no runs swept for this repo yet\n" {
 		t.Errorf("unknown-repo fallback = %q", out)
 	}
@@ -163,7 +155,7 @@ func TestScopingFallsBackToToplevelThenUnknownRepo(t *testing.T) {
 
 func TestJSONAggregatesCarryValueKN(t *testing.T) {
 	store := rowA + "\n"
-	out, errb, code := run(t, ptr(store), "https://github.com/acme/widgets.git", "", "--report", "--json")
+	out, errb, code := run(t, ptr(store), "https://github.com/acme/widgets.git", "", Request{Report: true, JSON: true})
 	if code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, errb)
 	}
@@ -189,7 +181,7 @@ func TestDuplicateRunIDsFoldLastWins(t *testing.T) {
 	fresh := `{"repo":"acme/widgets","run_id":"r1","engine":"claude","model":"opus","tier":"deep","outcome":"merged","reached_pr":true,"pr_state":"MERGED","blocked_count":0,"watchdog_blocked_count":0,"swept_at":2}`
 	stale := `{"repo":"acme/widgets","run_id":"r1","engine":"claude","model":"opus","tier":"deep","outcome":"incomplete","reached_pr":false,"pr_state":null,"blocked_count":0,"watchdog_blocked_count":0,"swept_at":1}`
 	store := stale + "\n" + fresh + "\n"
-	out, errb, code := run(t, ptr(store), "https://github.com/acme/widgets.git", "", "--report", "--json")
+	out, errb, code := run(t, ptr(store), "https://github.com/acme/widgets.git", "", Request{Report: true, JSON: true})
 	if code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, errb)
 	}
@@ -219,14 +211,14 @@ func TestStoreFailuresFoldToEmpty(t *testing.T) {
 		"bare number": ptr("5\n"),
 	}
 	for name, store := range cases {
-		out, errb, code := run(t, store, "https://github.com/acme/widgets.git", "", "--report")
+		out, errb, code := run(t, store, "https://github.com/acme/widgets.git", "", Request{Report: true})
 		if code != 0 || errb != "" {
 			t.Errorf("%s: exit %d, stderr %q", name, code, errb)
 		}
 		if out != "acme/widgets: no runs swept for this repo yet\n" {
 			t.Errorf("%s: scoped output = %q", name, out)
 		}
-		out, errb, code = run(t, store, "https://github.com/acme/widgets.git", "", "--report", "--pooled")
+		out, errb, code = run(t, store, "https://github.com/acme/widgets.git", "", Request{Report: true, Pooled: true})
 		if code != 0 || errb != "" {
 			t.Errorf("%s pooled: exit %d, stderr %q", name, code, errb)
 		}

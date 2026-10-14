@@ -71,8 +71,8 @@ func say(w io.Writer, format string, args ...any) {
 // Run is the arm, flag for flag and refusal for refusal. It moves the process to
 // the git common dir before anything else resolves a path, so a worktree reaped
 // while the daemon lives cannot take the bus down with it.
-func Run(ctx context.Context, argv []string, paths bus.Paths, o Options) int {
-	c, msg, code := parse(argv)
+func Run(ctx context.Context, req Request, paths bus.Paths, o Options) int {
+	c, msg, code := check(req)
 	if msg != "" {
 		say(o.Stderr, "%s\n", msg)
 		return code

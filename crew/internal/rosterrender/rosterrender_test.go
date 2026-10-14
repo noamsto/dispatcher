@@ -98,15 +98,15 @@ func hex(s string) string {
 	return fmt.Sprintf("%04x", identity.CKsum([]byte(s))%65536)
 }
 
-func TestParseIsTheArmInItsOrder(t *testing.T) {
+func TestCheckIsTheArmInItsOrder(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		args  []string
+		req   Request
 		msg   string
 		code  int
 		check func(*testing.T, call)
 	}{
-		{name: "crew alone is a full call", args: []string{"--crew", "c1"},
+		{name: "crew alone is a full call", req: Request{Crew: "c1"},
 			check: func(t *testing.T, c call) {
 				if c.crew != "c1" || c.interval != 2 || c.quiet != 1800 {
 					t.Errorf("defaults drifted: %+v", c)
@@ -115,41 +115,35 @@ func TestParseIsTheArmInItsOrder(t *testing.T) {
 					t.Errorf("the daemon must be handed the caller's bytes: %q %q", c.intervalText, c.quietText)
 				}
 			}},
-		{name: "the texts keep their spelling", args: []string{"--crew", "c1", "--interval", "02", "--quiet", "0"},
+		{name: "the texts keep their spelling", req: Request{Crew: "c1", Interval: "02", Quiet: "0"},
 			check: func(t *testing.T, c call) {
 				if c.interval != 2 || c.quiet != 0 {
 					t.Errorf("values: %+v", c)
 				}
 			}},
-		{name: "missing value", args: []string{"--crew"}, msg: "crew: --crew needs a value", code: exitUsage},
-		{name: "empty value", args: []string{"--pane", ""}, msg: "crew: --pane needs a value", code: exitUsage},
-		{name: "unknown arg", args: []string{"--nope"}, msg: "crew: roster-render: unknown arg '--nope'", code: exitUsage},
-		// An unknown argument outranks a bad interval, as it does in the arm's loop.
-		{name: "unknown beats interval", args: []string{"--nope", "--interval", "x"},
-			msg: "crew: roster-render: unknown arg '--nope'", code: exitUsage},
-		{name: "interval zero", args: []string{"--crew", "c1", "--interval", "0"}, msg: errInterval, code: exitUsage},
-		{name: "interval negative", args: []string{"--crew", "c1", "--interval", "-1"}, msg: errInterval, code: exitUsage},
-		{name: "interval not a number", args: []string{"--crew", "c1", "--interval", "2s"}, msg: errInterval, code: exitUsage},
+		{name: "interval zero", req: Request{Crew: "c1", Interval: "0"}, msg: errInterval, code: exitUsage},
+		{name: "interval negative", req: Request{Crew: "c1", Interval: "-1"}, msg: errInterval, code: exitUsage},
+		{name: "interval not a number", req: Request{Crew: "c1", Interval: "2s"}, msg: errInterval, code: exitUsage},
 		// bash's `[ "$v" -gt 0 ]` errors on a digit string it cannot read, so the
 		// arm refused it with the same message; clamping it would be a daemon that
 		// never wakes.
-		{name: "interval overflows", args: []string{"--crew", "c1", "--interval", "99999999999999999999"},
+		{name: "interval overflows", req: Request{Crew: "c1", Interval: "99999999999999999999"},
 			msg: errInterval, code: exitUsage},
 		// Fits an int64, but seconds times a billion does not: the product would wrap
 		// negative and the poll would spin instead of waiting.
-		{name: "interval past a duration", args: []string{"--crew", "c1", "--interval", "10000000000"},
+		{name: "interval past a duration", req: Request{Crew: "c1", Interval: "10000000000"},
 			msg: errInterval, code: exitUsage},
-		{name: "quiet overflows", args: []string{"--crew", "c1", "--quiet", "99999999999999999999"},
+		{name: "quiet overflows", req: Request{Crew: "c1", Quiet: "99999999999999999999"},
 			msg: errQuiet, code: exitUsage},
-		{name: "quiet negative", args: []string{"--crew", "c1", "--quiet", "-1"}, msg: errQuiet, code: exitUsage},
-		{name: "no crew", args: []string{"--interval", "3"}, msg: errCrewRequired, code: exitUsage},
-		{name: "once and detach", args: []string{"--crew", "c1", "--once", "--detach"}, msg: errOnceDetach, code: exitUsage},
+		{name: "quiet negative", req: Request{Crew: "c1", Quiet: "-1"}, msg: errQuiet, code: exitUsage},
+		{name: "no crew", req: Request{Interval: "3"}, msg: errCrewRequired, code: exitUsage},
+		{name: "once and detach", req: Request{Crew: "c1", Once: true, Detach: true}, msg: errOnceDetach, code: exitUsage},
 		// The crew id check is the arm's last, after once/detach.
-		{name: "bad crew id", args: []string{"--crew", "a/b", "--once", "--detach"}, msg: errOnceDetach, code: exitUsage},
-		{name: "bad crew id alone", args: []string{"--crew", "a/b"}, msg: errCrewID, code: exitUsage},
-		{name: "leading dash", args: []string{"--crew", "-x"}, msg: errCrewID, code: exitUsage},
-		{name: "dot", args: []string{"--crew", "."}, msg: errCrewID, code: exitUsage},
-		{name: "no-open", args: []string{"--crew", "c1", "--no-open"},
+		{name: "bad crew id", req: Request{Crew: "a/b", Once: true, Detach: true}, msg: errOnceDetach, code: exitUsage},
+		{name: "bad crew id alone", req: Request{Crew: "a/b"}, msg: errCrewID, code: exitUsage},
+		{name: "leading dash", req: Request{Crew: "-x"}, msg: errCrewID, code: exitUsage},
+		{name: "dot", req: Request{Crew: "."}, msg: errCrewID, code: exitUsage},
+		{name: "no-open", req: Request{Crew: "c1", NoOpen: true},
 			check: func(t *testing.T, c call) {
 				if !c.noOpen {
 					t.Error("--no-open not recorded")
@@ -157,7 +151,7 @@ func TestParseIsTheArmInItsOrder(t *testing.T) {
 			}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c, msg, code := parse(tc.args)
+			c, msg, code := check(tc.req)
 			if tc.msg != "" {
 				if msg != tc.msg || code != tc.code {
 					t.Errorf("got (%q, %d), want (%q, %d)", msg, code, tc.msg, tc.code)

@@ -92,10 +92,10 @@ func setup(t *testing.T) fixture {
 	}
 }
 
-func run(t *testing.T, f fixture, args ...string) (stdout, stderr string, code int) {
+func run(t *testing.T, f fixture, req Request) (stdout, stderr string, code int) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	code = Run(args, &out, &errb, f.opts)
+	code = Run(req, &out, &errb, f.opts)
 	return out.String(), errb.String(), code
 }
 
@@ -115,7 +115,7 @@ func jsonRows(t *testing.T, out string) []map[string]any {
 
 func TestDefaultTableListsLiveRowsAcrossRepos(t *testing.T) {
 	f := setup(t)
-	out, errs, code := run(t, f)
+	out, errs, code := run(t, f, Request{})
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, errs)
 	}
@@ -142,7 +142,7 @@ func TestDefaultTableListsLiveRowsAcrossRepos(t *testing.T) {
 
 func TestJSONHasRepoAndCrew(t *testing.T) {
 	f := setup(t)
-	out, _, code := run(t, f, "--json")
+	out, _, code := run(t, f, Request{JSON: true})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -163,18 +163,18 @@ func TestJSONHasRepoAndCrew(t *testing.T) {
 func TestCrewAndAllFilters(t *testing.T) {
 	tests := []struct {
 		name string
-		args []string
+		req  Request
 		want int
 		has  string
 	}{
-		{"crew c2 with all", []string{"--crew", "c2", "--all"}, 1, "feat/b"},
-		{"crew c2 hides done", []string{"--crew", "c2"}, 0, ""},
-		{"crew c1", []string{"--crew", "c1"}, 2, "feat/c"},
-		{"all", []string{"--all"}, 3, "feat/b"},
+		{"crew c2 with all", Request{Crew: "c2", All: true}, 1, "feat/b"},
+		{"crew c2 hides done", Request{Crew: "c2"}, 0, ""},
+		{"crew c1", Request{Crew: "c1"}, 2, "feat/c"},
+		{"all", Request{All: true}, 3, "feat/b"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out, _, code := run(t, setup(t), tt.args...)
+			out, _, code := run(t, setup(t), tt.req)
 			if code != 0 {
 				t.Fatalf("exit %d", code)
 			}
@@ -188,15 +188,6 @@ func TestCrewAndAllFilters(t *testing.T) {
 	}
 }
 
-func TestUsageErrors(t *testing.T) {
-	for _, args := range [][]string{{"--bogus"}, {"--crew"}, {"--crew", ""}, {"extra"}} {
-		out, errs, code := run(t, setup(t), args...)
-		if code != 1 || out != "" || strings.TrimSpace(errs) != usage {
-			t.Errorf("%q: code %d, stdout %q, stderr %q", args, code, out, errs)
-		}
-	}
-}
-
 func TestUnreadableBusIsSkippedNotFatal(t *testing.T) {
 	f := setup(t)
 	garbage := mkRepo(t, t.TempDir(), "junk", "")
@@ -207,7 +198,7 @@ func TestUnreadableBusIsSkippedNotFatal(t *testing.T) {
 	if err := os.WriteFile(f.opts.Registry, append(reg, []byte(garbage+"\n")...), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, errs, code := run(t, f)
+	out, errs, code := run(t, f, Request{})
 	if code != 0 || len(dataLines(out)) != 2 {
 		t.Errorf("code %d, rows:\n%s", code, out)
 	}
@@ -237,7 +228,7 @@ func TestTornTailKeepsPrefix(t *testing.T) {
 	}
 	_, _ = fh.WriteString(`{"ts":1,"kind":`)
 	_ = fh.Close()
-	out, errs, code := run(t, f)
+	out, errs, code := run(t, f, Request{})
 	if code != 0 || !strings.Contains(out, "feat/c") {
 		t.Errorf("code %d, output:\n%s", code, out)
 	}
@@ -258,7 +249,7 @@ func TestWorktreesFailureNoteIsOneLine(t *testing.T) {
 	f.opts.Worktrees = func(string) (string, error) {
 		return "", &roster.ExitError{Code: 128, Stderr: "fatal: dubious ownership\n"}
 	}
-	_, errs, code := run(t, f)
+	_, errs, code := run(t, f, Request{})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -278,7 +269,7 @@ func TestWorktreesProbedOncePerRepo(t *testing.T) {
 	}
 	calls := 0
 	f.opts.Worktrees = func(string) (string, error) { calls++; return "", nil }
-	if _, _, code := run(t, f, "--all"); code != 0 || calls != 1 {
+	if _, _, code := run(t, f, Request{All: true}); code != 0 || calls != 1 {
 		t.Errorf("code %d, Worktrees called %d times", code, calls)
 	}
 }
@@ -291,7 +282,7 @@ func TestControlRunesAreNeutralisedInTable(t *testing.T) {
 	if err := os.WriteFile(f.opts.Registry, []byte(repo+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, _, code := run(t, f, "--all")
+	out, _, code := run(t, f, Request{All: true})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -307,7 +298,7 @@ func TestPanesReadOnce(t *testing.T) {
 	f := setup(t)
 	calls := 0
 	f.opts.Panes = func() string { calls++; return "" }
-	if _, _, code := run(t, f, "--all"); code != 0 || calls > 1 {
+	if _, _, code := run(t, f, Request{All: true}); code != 0 || calls > 1 {
 		t.Errorf("code %d, Panes called %d times", code, calls)
 	}
 }
@@ -339,7 +330,7 @@ func TestStaleRowsHiddenByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, errs, _ := run(t, f)
+	out, errs, _ := run(t, f, Request{})
 	if strings.Contains(out, "feat/old") || !strings.Contains(out, "feat/a") {
 		t.Errorf("default view:\n%s", out)
 	}
@@ -347,12 +338,12 @@ func TestStaleRowsHiddenByDefault(t *testing.T) {
 		t.Errorf("stderr %q", errs)
 	}
 
-	out, errs, _ = run(t, f, "--all")
+	out, errs, _ = run(t, f, Request{All: true})
 	if !strings.Contains(out, "feat/old") || strings.Contains(errs, "stale") {
 		t.Errorf("--all:\nout %s\nerr %q", out, errs)
 	}
 
-	out, errs, _ = run(t, f, "--json")
+	out, errs, _ = run(t, f, Request{JSON: true})
 	stale := map[string]any{}
 	for _, r := range jsonRows(t, out) {
 		stale[r["branch"].(string)] = r["stale"]
@@ -368,11 +359,11 @@ func TestWorktreeVouchesOnlyWhileRowIsFresh(t *testing.T) {
 	f.opts.Worktrees = func(string) (string, error) {
 		return "worktree /w/a\nbranch refs/heads/feat/a\n\nworktree /w/c\nbranch refs/heads/feat/c\n", nil
 	}
-	if out, _, _ := run(t, f); !strings.Contains(out, "feat/a") || !strings.Contains(out, "feat/c") {
+	if out, _, _ := run(t, f, Request{}); !strings.Contains(out, "feat/a") || !strings.Contains(out, "feat/c") {
 		t.Errorf("fresh rows with a worktree hidden:\n%s", out)
 	}
 	f.opts.Now = func() time.Time { return fixedNow.Add(72 * time.Hour) }
-	if out, errs, _ := run(t, f); strings.Contains(out, "feat/") || !strings.Contains(errs, "2 stale rows hidden") {
+	if out, errs, _ := run(t, f, Request{}); strings.Contains(out, "feat/") || !strings.Contains(errs, "2 stale rows hidden") {
 		t.Errorf("old rows with a worktree shown:\n%s\n%q", out, errs)
 	}
 }
@@ -381,7 +372,7 @@ func TestWindowsReadOnce(t *testing.T) {
 	f := setup(t)
 	calls := 0
 	f.opts.Windows = func() string { calls++; return "" }
-	run(t, f)
+	run(t, f, Request{})
 	if calls != 1 {
 		t.Errorf("Windows called %d times", calls)
 	}
@@ -391,7 +382,7 @@ func TestWorktreeProbeFailureKeepsFreshRows(t *testing.T) {
 	f := setup(t)
 	f.opts.Windows = func() string { return "" }
 	f.opts.Worktrees = func(string) (string, error) { return "", fmt.Errorf("git: boom") }
-	out, errs, _ := run(t, f)
+	out, errs, _ := run(t, f, Request{})
 	if !strings.Contains(out, "feat/a") || strings.Contains(errs, "stale") {
 		t.Errorf("out %s\nerr %q", out, errs)
 	}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -576,6 +577,28 @@ func TestRunBusSubsRefuseOutsideRepo(t *testing.T) {
 	}
 }
 
+// The fleet and rate --sweep-all refusals print before the repo check, because
+// those modes run outside any repo.
+func TestPreLocateRefusalsPrintOutsideRepo(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", dir)
+	e := env{getwd: func() (string, error) { return dir, nil }}
+	for _, tc := range preLocateRefusalRows {
+		var stdout, stderr bytes.Buffer
+		code := run(context.Background(), tc.args, &stdout, &stderr, e)
+		if code != tc.code || stdout.Len() != 0 || stderr.String() != tc.msg+"\n" {
+			t.Errorf("%s: code %d stdout %q stderr %q, want %d and %q", tc.name, code, stdout.String(), stderr.String(), tc.code, tc.msg)
+		}
+	}
+	// A parse error carries no typed value, so a malformed --sweep-all line is
+	// not known to be one and meets the repo check first.
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"rate", "--sweep-all", "--bogus"}, &stdout, &stderr, e)
+	if code != exitFailure || stdout.Len() != 0 || stderr.String() != "crew: not in a git repo\n" {
+		t.Errorf("rate --sweep-all --bogus: code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestRunFleetOutsideRepo(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -745,7 +768,8 @@ func TestAdmittedSubcommands(t *testing.T) {
 		"id", "new", "engine-cmd", "dash", "pi-agent-dir",
 	}
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
-		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox"} {
+		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
+		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -788,23 +812,23 @@ func TestAdmittedSubcommands(t *testing.T) {
 
 // TestParseCrewSplitsLeadingEquals is the measurement that decides who parses
 // what: kong splits the first word after a command name at `=`, so the capture
-// is not the argv an unconverted arm may be handed. `crew report --crew=x` is a
-// crew id the arm reads whole; the split makes it `--crew x`, a different
+// is not the argv an unconverted arm may be handed. `crew hold --crew=x` is a
+// word the arm reads whole; the split makes it `--crew x`, a different
 // command. The typed subcommands want the split (TestFlagSpellingsAreIdentical).
 func TestParseCrewSplitsLeadingEquals(t *testing.T) {
 	for _, tc := range []struct {
 		args, captured []string
 	}{
-		{[]string{"report", "--crew=x"}, []string{"--crew", "x"}},
-		{[]string{"roster", "--since=5"}, []string{"--since", "5"}},
+		{[]string{"hold", "--crew=x"}, []string{"--crew", "x"}},
+		{[]string{"nudge", "--since=5"}, []string{"--since", "5"}},
 		{[]string{"reap", "--idle=5"}, []string{"--idle", "5"}},
 		// Everything else about a passthrough command's argv does arrive whole,
 		// `--` and flag-shaped detail text included.
 		{[]string{"status", "w1", "working", "--help"}, []string{"w1", "working", "--help"}},
 		{[]string{"reap", "--", "--idle=5"}, []string{"--", "--idle=5"}},
-		{[]string{"report", "--"}, []string{"--"}},
-		{[]string{"roster", "-x"}, []string{"-x"}},
-		{[]string{"roster", ""}, []string{""}},
+		{[]string{"hold", "--"}, []string{"--"}},
+		{[]string{"hold", "-x"}, []string{"-x"}},
+		{[]string{"hold", ""}, []string{""}},
 	} {
 		var (
 			r       root
@@ -839,6 +863,7 @@ func TestParseCrewRejectsWhatTheSwitchRejected(t *testing.T) {
 		{"occupants", "--foo"}, {"roster"}, {"status", "w1", "working", "--help"}, {"where", "--crew=x", "nova"},
 		// A typed subcommand's bad argv is that subcommand's refusal, not an unknown name.
 		{"where", "--bogus"}, {"inbox", "--since"}, {"crews", "extra"},
+		{"roster", "--bogus"}, {"rate", "--root"}, {"fleet", "extra"}, {"stack"}, {"roster-render", "--once=nope"},
 		{"identity", "--hash=x"}, {"hold", "add", "--help"}, {"pi-agent-dir", "--", "-x"}} {
 		if _, ok := parseCrew(args); !ok {
 			t.Errorf("crew %q refused, want it to reach its arm", args)
@@ -956,7 +981,6 @@ func TestRunPassthroughArgvReachesItsArm(t *testing.T) {
 		code           int
 		stdout, stderr string
 	}{
-		{name: "roster reads an unknown flag as a crew", args: []string{"roster", "--since=5"}, stdout: "[]\n"},
 		{name: "reap refuses --idle=5 as an unknown flag", args: []string{"reap", "--idle=5"}, code: exitFailure,
 			stderr: "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH (got '--idle=5')\n"},
 		{name: "reap keeps words after a separator together", args: []string{"reap", "--dry-run", "--idle=5"}, code: exitFailure,
@@ -1043,15 +1067,85 @@ var refusalRows = []struct {
 		"crew: inbox: 'worker:feat/x' has no session suffix — pass the session id ($CREW_WORKER_ID); a branch-only worker id matches no message", 1},
 	{"inbox undelivered needs a session", []string{"inbox", "dispatcher:c1", "--undelivered"},
 		"crew: inbox: --undelivered needs a worker session id ($CREW_WORKER_ID)", 1},
+
+	{"roster unknown flag", []string{"roster", "--bogus"}, "crew: roster: unknown flag '--bogus'", 1},
+	{"roster extra positional", []string{"roster", "c1", "c2"}, "crew: roster: unexpected argument 'c2'", 1},
+	{"report unknown flag", []string{"report", "--bogus"}, "crew: report: unknown flag '--bogus'", 1},
+	{"report extra positional", []string{"report", "c1", "c2"}, "crew: report: unexpected argument 'c2'", 1},
+
+	{"retro unknown flag", []string{"retro", "--bogus"}, retroUsage, 1},
+	{"retro extra positional", []string{"retro", "c1"}, retroUsage, 1},
+	{"retro bad bool", []string{"retro", "--report=nope"}, retroUsage, 1},
+
+	{"rate unknown flag", []string{"rate", "--bogus"}, rateUsage, 1},
+	{"rate extra positional", []string{"rate", "x"}, rateUsage, 1},
+	{"rate bad bool", []string{"rate", "--report=nope"}, rateUsage, 1},
+	{"rate root missing value", []string{"rate", "--root"}, rateRootNeedsDir, 1},
+	{"rate root missing value after a flag", []string{"rate", "--sweep-all", "--root"}, rateRootNeedsDir, 1},
+	{"rate root empty value", []string{"rate", "--root", ""}, rateRootNeedsDir, 1},
+	{"rate root empty value equals", []string{"rate", "--root="}, rateRootNeedsDir, 1},
+	{"rate root empty among others", []string{"rate", "--root", "/x", "--root", ""}, rateRootNeedsDir, 1},
+
+	{"stack no subcommand", []string{"stack"}, stackUsage, 1},
+	{"stack unknown subcommand", []string{"stack", "nonsense"}, stackUsage, 1},
+	{"stack unknown flag", []string{"stack", "cut", "--bogus", "a"}, stackUsage, 1},
+	{"stack cut no child", []string{"stack", "cut"}, stackUsage, 1},
+	{"stack cut empty child", []string{"stack", "cut", ""}, stackUsage, 1},
+	{"stack cut record no child", []string{"stack", "cut", "--record"}, stackUsage, 1},
+	{"stack cut oid without record", []string{"stack", "cut", "a", "b"}, stackUsage, 1},
+	{"stack cut extra positional", []string{"stack", "cut", "--record", "a", "b", "c"}, stackUsage, 1},
+	{"stack cut bad bool", []string{"stack", "cut", "--record=nope", "a"}, stackUsage, 1},
+	{"stack align no top", []string{"stack", "align"}, stackUsage, 1},
+	{"stack align empty top", []string{"stack", "align", ""}, stackUsage, 1},
+	{"stack align extra positional", []string{"stack", "align", "3", "4"}, stackUsage, 1},
+	{"stack align record", []string{"stack", "align", "--record", "3"}, stackUsage, 1},
+
+	{"roster-render unknown flag", []string{"roster-render", "--bogus"}, "crew: roster-render: unknown arg '--bogus'", 64},
+	{"roster-render extra positional", []string{"roster-render", "--crew", "c1", "x"}, "crew: roster-render: unknown arg 'x'", 64},
+	{"roster-render crew missing value", []string{"roster-render", "--crew"}, "crew: --crew needs a value", 64},
+	{"roster-render crew empty value", []string{"roster-render", "--crew", ""}, "crew: --crew needs a value", 64},
+	{"roster-render pane empty value equals", []string{"roster-render", "--pane="}, "crew: --pane needs a value", 64},
+	{"roster-render interval missing value", []string{"roster-render", "--crew", "c1", "--interval"}, "crew: --interval needs a value", 64},
+	{"roster-render quiet empty value", []string{"roster-render", "--quiet", ""}, "crew: --quiet needs a value", 64},
+	{"roster-render bad bool", []string{"roster-render", "--once=nope"},
+		`crew: roster-render: --once: bool value must be true, 1, yes, false, 0 or no but got "nope"`, 64},
+	// An unknown argument outranks a bad interval, as it did in the arm's loop.
+	{"roster-render unknown beats interval", []string{"roster-render", "--bogus", "--interval", "x"}, "crew: roster-render: unknown arg '--bogus'", 64},
 }
 
-const whereUsage = "usage: crew where <codename|branch|%id> [--crew ID]"
+// preLocateRefusalRows are the refusals of the two modes that run outside any
+// repo: they print before the repo check, so they are not in refusalRows.
+var preLocateRefusalRows = []struct {
+	name string
+	args []string
+	msg  string
+	code int
+}{
+	{"fleet unknown flag", []string{"fleet", "--bogus"}, fleetUsage, 1},
+	{"fleet extra positional", []string{"fleet", "extra"}, fleetUsage, 1},
+	{"fleet crew missing value", []string{"fleet", "--crew"}, fleetUsage, 1},
+	{"fleet crew empty value", []string{"fleet", "--crew", ""}, fleetUsage, 1},
+	{"fleet crew empty value equals", []string{"fleet", "--crew="}, fleetUsage, 1},
+	{"fleet bad bool", []string{"fleet", "--all=nope"}, fleetUsage, 1},
+	{"fleet stream behind a flag", []string{"fleet", "--json", "stream"}, fleetUsage, 1},
+	{"rate sweep-all root empty value", []string{"rate", "--sweep-all", "--root", ""}, rateRootNeedsDir, 1},
+	{"rate sweep-all root empty value equals", []string{"rate", "--sweep-all", "--root="}, rateRootNeedsDir, 1},
+}
+
+const (
+	retroUsage       = "crew: retro takes --report and --json"
+	rateUsage        = "crew: rate takes --report, --json, --pooled, and --sweep-all/--root"
+	fleetUsage       = "crew: fleet [--all] [--crew ID] [--json]"
+	stackUsage       = "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n       crew stack align <top-PR#|branch>"
+	rateRootNeedsDir = "crew: rate --root needs a directory"
+	whereUsage       = "usage: crew where <codename|branch|%id> [--crew ID]"
+)
 
 // TestTypedRefusals pins each typed subcommand's refusals at the parse: the
 // line and status are the old arms', and every one is a refusal on a parse that
 // still selected the subcommand.
 func TestTypedRefusals(t *testing.T) {
-	for _, tc := range refusalRows {
+	for _, tc := range slices.Concat(refusalRows, preLocateRefusalRows) {
 		t.Run(tc.name, func(t *testing.T) {
 			parsed, ok := parseCrew(tc.args)
 			if !ok || parsed.sub != tc.args[0] {
@@ -1080,6 +1174,10 @@ func TestKongErrorClassification(t *testing.T) {
 		{[]string{"where", "a", "b"}, "unexpected argument b"},
 		{[]string{"deregister", "x"}, "unexpected argument x"},
 		{[]string{"crews", "--mine=nope"}, "--mine: bool value must be"},
+		{[]string{"roster", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"roster", "a", "b"}, "unexpected argument b"},
+		{[]string{"rate", "--root"}, "--root: missing value"},
+		{[]string{"roster-render", "--once=nope"}, "--once: bool value must be"},
 	} {
 		var (
 			r       root
@@ -1104,7 +1202,7 @@ func TestRunConvertedFlagSubcommands(t *testing.T) {
 	t.Setenv("CREW_ID", "c1")
 	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil)}
 
-	for _, tc := range refusalRows {
+	for _, tc := range slices.Concat(refusalRows, preLocateRefusalRows) {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			code := run(context.Background(), tc.args, &stdout, &stderr, e)
@@ -1132,6 +1230,29 @@ func TestRunConvertedFlagSubcommands(t *testing.T) {
 		{name: "crews mine bool value", args: []string{"crews", "--mine=yes"}},
 		{name: "log a crew", args: []string{"log", "c9"}},
 		{name: "inbox equals flags", args: []string{"inbox", "worker:feat/x#s1-1", "c1", "--since=0", "--from=dispatcher:c1"}},
+		{name: "roster a crew", args: []string{"roster", "c9"}, stdout: "[]\n"},
+		{name: "retro json needs report", args: []string{"retro", "--json"}, code: exitFailure, stderr: retroUsage + "\n"},
+		{name: "retro report json equals", args: []string{"retro", "--report=true", "--json=true"},
+			stdout: "{\n  \"rows\": [],\n  \"tags\": [],\n  \"unknown\": []\n}\n"},
+		{name: "rate json needs report", args: []string{"rate", "--json"}, code: exitFailure, stderr: rateUsage + "\n"},
+		{name: "rate root needs sweep-all", args: []string{"rate", "--root", "/x"}, code: exitFailure,
+			stderr: "crew: rate --root needs --sweep-all\n"},
+		{name: "rate sweep-all and report", args: []string{"rate", "--sweep-all", "--report"}, code: exitFailure, stderr: rateUsage + "\n"},
+		{name: "stack cut refuses a short oid", args: []string{"stack", "cut", "--record", "feat/x", "abc"}, code: exitFailure,
+			stderr: "crew: 'abc' is not a full lowercase hex commit oid\n"},
+		{name: "stack cut oid after the child and flag", args: []string{"stack", "cut", "feat/x", "abc", "--record"}, code: exitFailure,
+			stderr: "crew: 'abc' is not a full lowercase hex commit oid\n"},
+		// roster-render refuses before it touches the bus, a lock or tmux.
+		{name: "roster-render interval zero", args: []string{"roster-render", "--crew", "c1", "--interval", "0"}, code: exitUsage,
+			stderr: "crew: --interval must be a positive integer number of seconds\n"},
+		{name: "roster-render interval negative", args: []string{"roster-render", "--crew", "c1", "--interval", "-1"}, code: exitUsage,
+			stderr: "crew: --interval must be a positive integer number of seconds\n"},
+		{name: "roster-render no crew", args: []string{"roster-render"}, code: exitUsage,
+			stderr: "crew: roster-render: --crew is required\n"},
+		{name: "roster-render once and detach", args: []string{"roster-render", "--crew=c1", "--once", "--detach=true"}, code: exitUsage,
+			stderr: "crew: roster-render: --once and --detach are mutually exclusive\n"},
+		{name: "roster-render dash-led crew value", args: []string{"roster-render", "--crew", "--once"}, code: exitUsage,
+			stderr: "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'\n"},
 		{name: "inbox since not an integer", args: []string{"inbox", "worker:feat/x#s1-1", "--since=abc"}, code: exitFailure,
 			stderr: "crew: --since must be an integer ms timestamp\n"},
 	} {
@@ -1142,6 +1263,28 @@ func TestRunConvertedFlagSubcommands(t *testing.T) {
 				t.Errorf("code %d stdout %q stderr %q, want %d %q %q", code, stdout.String(), stderr.String(), tc.code, tc.stdout, tc.stderr)
 			}
 		})
+	}
+}
+
+// TestRunRosterAndReportFallBackToTheAmbientCrew pins the empty-crew fallback
+// the typed Crew keeps: no word, and an empty one, both read this repo's crew.
+func TestRunRosterAndReportFallBackToTheAmbientCrew(t *testing.T) {
+	log := logRowC1 + "\n" + dispatch + "\n"
+	repo, _ := repoWithLog(t, &log, 0o644)
+	t.Setenv("CREW_ID", "c1")
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil)}
+	for _, tc := range []struct {
+		args []string
+		want string // a row only c1's bus holds
+	}{
+		{[]string{"roster"}, "feat/x"}, {[]string{"roster", ""}, "feat/x"}, {[]string{"roster", "c1"}, "feat/x"},
+		{[]string{"report"}, "claude\tsonnet"}, {[]string{"report", ""}, "claude\tsonnet"}, {[]string{"report", "c1"}, "claude\tsonnet"},
+	} {
+		args := tc.args
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), args, &stdout, &stderr, e); code != 0 || !strings.Contains(stdout.String(), tc.want) || stderr.Len() != 0 {
+			t.Errorf("crew %q: code %d stdout %q stderr %q", args, code, stdout.String(), stderr.String())
+		}
 	}
 }
 
@@ -1194,6 +1337,96 @@ func TestFlagSpellingsAreIdentical(t *testing.T) {
 		{"inbox --undelivered", []string{"inbox", me, "c1", "--undelivered"}, []string{"inbox", me, "c1", "--undelivered=true"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) { assertSameRun(t, e, tc.bare, tc.joined, false) })
+	}
+
+	// The rest of the converted subcommands, where running both spellings is safe:
+	// roster-render only through argv it refuses, rate and retro through reads.
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	for _, tc := range []struct {
+		name         string
+		bare, joined []string
+		refused      bool
+	}{
+		{"retro --report", []string{"retro", "--report"}, []string{"retro", "--report=true"}, false},
+		{"retro --report --json", []string{"retro", "--report", "--json"}, []string{"retro", "--report=true", "--json=true"}, false},
+		{"rate --report", []string{"rate", "--report"}, []string{"rate", "--report=true"}, false},
+		{"rate --report --json --pooled", []string{"rate", "--report", "--json", "--pooled"},
+			[]string{"rate", "--report=true", "--json=true", "--pooled=true"}, false},
+		{"rate --root", []string{"rate", "--root", "/x"}, []string{"rate", "--root=/x"}, true},
+		{"rate --root empty", []string{"rate", "--root", ""}, []string{"rate", "--root="}, true},
+		{"roster-render --crew empty", []string{"roster-render", "--crew", ""}, []string{"roster-render", "--crew="}, true},
+		{"roster-render --pane empty", []string{"roster-render", "--pane", ""}, []string{"roster-render", "--pane="}, true},
+		{"roster-render --interval", []string{"roster-render", "--crew", "c1", "--interval", "0"},
+			[]string{"roster-render", "--crew=c1", "--interval=0"}, true},
+		{"roster-render --quiet", []string{"roster-render", "--crew", "c1", "--quiet", "x"},
+			[]string{"roster-render", "--crew=c1", "--quiet=x"}, true},
+		{"roster-render --once --detach", []string{"roster-render", "--crew", "c1", "--once", "--detach"},
+			[]string{"roster-render", "--crew", "c1", "--once=true", "--detach=true"}, true},
+		{"stack cut --record", []string{"stack", "cut", "--record", "feat/x", "abc"},
+			[]string{"stack", "cut", "--record=true", "feat/x", "abc"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assertSameRun(t, e, tc.bare, tc.joined, tc.refused) })
+	}
+
+	// fleet runs outside any repo; only its refusals are run, since its table
+	// carries ages.
+	for _, tc := range []struct {
+		name         string
+		bare, joined []string
+	}{
+		{"fleet --crew empty", []string{"fleet", "--crew", ""}, []string{"fleet", "--crew="}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assertSameRun(t, e, tc.bare, tc.joined, true) })
+	}
+}
+
+// TestParseSpellingsAreIdentical is the same decision at the parse, for every
+// converted flag: the spaced and the joined spelling bind the same values and
+// earn the same refusal. It reaches the flags a run could not safely drive.
+func TestParseSpellingsAreIdentical(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		a, b     []string
+		refusing bool
+	}{
+		{"rate --root", []string{"rate", "--sweep-all", "--root", "/x"}, []string{"rate", "--sweep-all", "--root=/x"}, false},
+		{"rate --root repeated", []string{"rate", "--sweep-all", "--root", "/x", "--root", "/y"},
+			[]string{"rate", "--sweep-all", "--root=/x", "--root=/y"}, false},
+		{"rate --root first word", []string{"rate", "--root", "/x", "--sweep-all"}, []string{"rate", "--root=/x", "--sweep-all"}, false},
+		{"rate --root commas", []string{"rate", "--root", "/a,b"}, []string{"rate", "--root=/a,b"}, false},
+		{"rate --root empty", []string{"rate", "--root", ""}, []string{"rate", "--root="}, true},
+		{"fleet --crew", []string{"fleet", "--crew", "c1"}, []string{"fleet", "--crew=c1"}, false},
+		{"fleet --crew empty", []string{"fleet", "--crew", ""}, []string{"fleet", "--crew="}, true},
+		{"roster-render --crew", []string{"roster-render", "--crew", "c1"}, []string{"roster-render", "--crew=c1"}, false},
+		{"roster-render --pane", []string{"roster-render", "--crew", "c1", "--pane", "%3"}, []string{"roster-render", "--crew=c1", "--pane=%3"}, false},
+		{"roster-render --interval", []string{"roster-render", "--crew", "c1", "--interval", "5"},
+			[]string{"roster-render", "--crew", "c1", "--interval=5"}, false},
+		{"roster-render --interval negative", []string{"roster-render", "--interval", "-1"}, []string{"roster-render", "--interval=-1"}, false},
+		{"roster-render --quiet", []string{"roster-render", "--crew", "c1", "--quiet", "0"},
+			[]string{"roster-render", "--crew", "c1", "--quiet=0"}, false},
+		{"roster-render --quiet empty", []string{"roster-render", "--quiet", ""}, []string{"roster-render", "--quiet="}, true},
+		// bool flags: bare and `=true` are one.
+		{"retro bools", []string{"retro", "--report", "--json"}, []string{"retro", "--report=true", "--json=true"}, false},
+		{"rate bools", []string{"rate", "--report", "--json", "--pooled"}, []string{"rate", "--report=true", "--json=true", "--pooled=true"}, false},
+		{"rate --sweep-all", []string{"rate", "--sweep-all"}, []string{"rate", "--sweep-all=true"}, false},
+		{"fleet bools", []string{"fleet", "--all", "--json"}, []string{"fleet", "--all=true", "--json=true"}, false},
+		{"stack cut --record", []string{"stack", "cut", "--record", "feat/x"}, []string{"stack", "cut", "--record=true", "feat/x"}, false},
+		{"roster-render bools", []string{"roster-render", "--no-open", "--once", "--detach"},
+			[]string{"roster-render", "--no-open=true", "--once=true", "--detach=true"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, okA := parseCrew(tc.a)
+			b, okB := parseCrew(tc.b)
+			if !okA || !okB {
+				t.Fatalf("crew %q or %q selected no subcommand", tc.a, tc.b)
+			}
+			if !reflect.DeepEqual(a.typed, b.typed) || !reflect.DeepEqual(a.refusal, b.refusal) {
+				t.Errorf("crew %q and crew %q parse differently:\n %+v %v\n %+v %v", tc.a, tc.b, a.typed, a.refusal, b.typed, b.refusal)
+			}
+			if (a.refusal != nil) != tc.refusing {
+				t.Errorf("crew %q refusal = %v, want refused %v", tc.a, a.refusal, tc.refusing)
+			}
+		})
 	}
 }
 
