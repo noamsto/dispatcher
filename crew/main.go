@@ -65,6 +65,10 @@ const (
 // isHelpFlag is the two spellings crew.sh's help preamble matched.
 func isHelpFlag(s string) bool { return s == "--help" || s == "-h" }
 
+// isSweepAll names the mode on a line kong could not parse, so its refusal still
+// prints outside a repo.
+func isSweepAll(a string) bool { return strings.HasPrefix(a, "--sweep-all") }
+
 // arg is args[i], or "" when the caller passed fewer arguments.
 func arg(args []string, i int) string {
 	if i < len(args) {
@@ -239,7 +243,7 @@ func parseCrew(args []string) (crewArgs, bool) {
 		// An error inside a typed subcommand's argv is that subcommand's refusal;
 		// everywhere else it is the unknown word the switch rejected.
 		if len(args) > 0 && typedSubcommands[args[0]] {
-			return crewArgs{sub: args[0], refusal: kongRefusal(args[0], err)}, true
+			return crewArgs{sub: args[0], argv: args[1:], refusal: kongRefusal(args[0], err)}, true
 		}
 		return crewArgs{}, false
 	}
@@ -306,7 +310,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		// --sweep-all resolves the repos it discovers and reads neither paths nor
 		// cwd; the sweep and --report fall through to the Locate below, which is
 		// the outside-a-repo refusal the bash preamble kept for them.
-		if parsed.typed.Rate.SweepAll {
+		if parsed.typed.Rate.SweepAll || (parsed.refusal != nil && slices.ContainsFunc(parsed.argv, isSweepAll)) {
 			if parsed.refusal != nil {
 				return refuse(stderr, parsed.refusal)
 			}

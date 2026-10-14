@@ -659,7 +659,10 @@ The third slice (`roster`, `report`, `retro`, `rate`, `fleet`, `stack`,
   split of the first word at `=` would alter it.
 - The refusals of `fleet` and `rate --sweep-all` print before the repo check, as
   those modes run outside one. A kong parse error carries no typed value, so
-  `rate --sweep-all --bogus` outside a repo meets `not in a git repo` first.
+  `parseCrew` keeps the raw tail and `run` treats a refused rate line with a
+  `--sweep-all…` word as the mode. `rate --root --sweep-all` is such a line (kong
+  does not take the flag as `--root`'s value): it prints the rate usage line,
+  where the arm said `--root needs --sweep-all`.
 
 `fleet` and `rate --sweep-all` need no repo, so the preamble's not-in-a-repo
 refusal lets them through — and both ask the same question twice: the script with

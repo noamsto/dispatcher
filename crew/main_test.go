@@ -590,12 +590,12 @@ func TestPreLocateRefusalsPrintOutsideRepo(t *testing.T) {
 			t.Errorf("%s: code %d stdout %q stderr %q, want %d and %q", tc.name, code, stdout.String(), stderr.String(), tc.code, tc.msg)
 		}
 	}
-	// A parse error carries no typed value, so a malformed --sweep-all line is
-	// not known to be one and meets the repo check first.
+	// kong reads `--root --sweep-all` as a bad line, where the bash glob saw the
+	// mode and the arm took --sweep-all as the directory.
 	var stdout, stderr bytes.Buffer
-	code := run(context.Background(), []string{"rate", "--sweep-all", "--bogus"}, &stdout, &stderr, e)
-	if code != exitFailure || stdout.Len() != 0 || stderr.String() != "crew: not in a git repo\n" {
-		t.Errorf("rate --sweep-all --bogus: code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
+	code := run(context.Background(), []string{"rate", "--root", "--sweep-all"}, &stdout, &stderr, e)
+	if code != exitFailure || stdout.Len() != 0 || stderr.String() != rateUsage+"\n" {
+		t.Errorf("rate --root --sweep-all: code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
 	}
 }
 
@@ -1081,7 +1081,6 @@ var refusalRows = []struct {
 	{"rate extra positional", []string{"rate", "x"}, rateUsage, 1},
 	{"rate bad bool", []string{"rate", "--report=nope"}, rateUsage, 1},
 	{"rate root missing value", []string{"rate", "--root"}, rateRootNeedsDir, 1},
-	{"rate root missing value after a flag", []string{"rate", "--sweep-all", "--root"}, rateRootNeedsDir, 1},
 	{"rate root empty value", []string{"rate", "--root", ""}, rateRootNeedsDir, 1},
 	{"rate root empty value equals", []string{"rate", "--root="}, rateRootNeedsDir, 1},
 	{"rate root empty among others", []string{"rate", "--root", "/x", "--root", ""}, rateRootNeedsDir, 1},
@@ -1128,6 +1127,8 @@ var preLocateRefusalRows = []struct {
 	{"fleet crew empty value equals", []string{"fleet", "--crew="}, fleetUsage, 1},
 	{"fleet bad bool", []string{"fleet", "--all=nope"}, fleetUsage, 1},
 	{"fleet stream behind a flag", []string{"fleet", "--json", "stream"}, fleetUsage, 1},
+	{"rate sweep-all unknown flag", []string{"rate", "--sweep-all", "--bogus"}, rateUsage, 1},
+	{"rate sweep-all root missing value", []string{"rate", "--sweep-all", "--root"}, rateRootNeedsDir, 1},
 	{"rate sweep-all root empty value", []string{"rate", "--sweep-all", "--root", ""}, rateRootNeedsDir, 1},
 	{"rate sweep-all root empty value equals", []string{"rate", "--sweep-all", "--root="}, rateRootNeedsDir, 1},
 }
