@@ -7,6 +7,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
+	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/rate"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 	"github.com/noamsto/dispatcher/crew/internal/retro"
@@ -179,6 +180,27 @@ type holdCmd struct {
 	Release holdReleaseCmd `cmd:"" name:"release"`
 }
 
+type nudgeCmd struct {
+	Crew   *string `name:"crew"`
+	Wait   *string `name:"wait"`
+	Target string  `arg:"" optional:"" name:"target"`
+}
+
+type awaitCmd struct {
+	From     *string `name:"from"`
+	Timeout  *string `name:"timeout"`
+	Interval *string `name:"interval"`
+	Agent    string  `arg:"" optional:"" name:"agent"`
+}
+
+type watchCmd struct {
+	Since    *string `name:"since"`
+	States   *string `name:"states"`
+	Timeout  *string `name:"timeout"`
+	Interval *string `name:"interval"`
+	Crew     *string `name:"crew"`
+}
+
 // refusal is the stderr line and exit status a typed subcommand's argv earned.
 type refusal struct {
 	msg  string
@@ -259,11 +281,28 @@ var wordings = map[string]wording{
 	"hold due":     {all: hold.DueUsage, code: exitFailure},
 	"hold park":    {all: hold.ParkUsage, code: exitFailure},
 	"hold release": {all: hold.ReleaseUsage, code: exitFailure},
-	"roster":       plain("roster"),
-	"report":       plain("report"),
-	"retro":        {all: retro.Usage, code: exitFailure},
-	"rate":         {all: rate.Usage, code: exitFailure},
-	"fleet":        {all: fleet.Usage, code: exitFailure},
+	"nudge": {
+		unknownFlag: func(f string) string {
+			return fmt.Sprintf("crew: nudge: unknown flag '%s' (usage: %s)", f, nudge.Usage)
+		},
+		extra: func(string) string { return "crew: nudge: one target only (usage: " + nudge.Usage + ")" },
+		code:  exitFailure,
+	},
+	"await": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: await: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: await: unknown arg '%s'", w) },
+		code:        exitFailure,
+	},
+	"watch": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: watch: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: watch: unknown arg '%s'", w) },
+		code:        exitFailure,
+	},
+	"roster": plain("roster"),
+	"report": plain("report"),
+	"retro":  {all: retro.Usage, code: exitFailure},
+	"rate":   {all: rate.Usage, code: exitFailure},
+	"fleet":  {all: fleet.Usage, code: exitFailure},
 	// stack.Usage ends in the newline run adds back.
 	"stack": {all: strings.TrimSuffix(stack.Usage, "\n"), code: exitFailure},
 	"roster-render": {
@@ -369,6 +408,34 @@ func validate(sub string, r *root) *refusal {
 	case "reply":
 		if given(r.Reply.Crew) {
 			return fail("crew: --crew needs a value")
+		}
+	case "nudge":
+		c := r.Nudge
+		if given(c.Crew) {
+			return fail("crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")")
+		}
+		if _, ok := nudge.NewRequest("", c.Target, c.Wait); !ok {
+			return fail("crew: nudge: one target only (usage: " + nudge.Usage + ")")
+		}
+	case "await":
+		c := r.Await
+		for _, f := range []struct {
+			name string
+			v    *string
+		}{{"--from", c.From}, {"--timeout", c.Timeout}, {"--interval", c.Interval}} {
+			if given(f.v) {
+				return fail(fmt.Sprintf("crew: %s needs a value", f.name))
+			}
+		}
+	case "watch":
+		c := r.Watch
+		for _, f := range []struct {
+			name string
+			v    *string
+		}{{"--since", c.Since}, {"--states", c.States}, {"--timeout", c.Timeout}, {"--interval", c.Interval}, {"--crew", c.Crew}} {
+			if given(f.v) {
+				return fail(fmt.Sprintf("crew: %s needs a value", f.name))
+			}
 		}
 	case "hold add":
 		c := r.Hold.Add

@@ -28,7 +28,7 @@ var alreadyProgram string
 //go:embed joined.jq
 var joinedProgram string
 
-const usage = "crew nudge <codename|branch|worker:<branch>#s…> [--crew ID] [--wait [SECONDS]]"
+const Usage = "crew nudge <codename|branch|worker:<branch>#s…> [--crew ID] [--wait [SECONDS]]"
 
 // waitTailLines is the arm's `tail -n 2000` over the log for both --wait folds.
 const waitTailLines = 2000
@@ -65,9 +65,34 @@ type Options struct {
 	PID int
 }
 
+// Request is the typed nudge call. Crew "" is the checkout's crew; Wait "" is no
+// wait, otherwise the seconds to wait.
+type Request struct {
+	Crew, Target, Wait string
+}
+
+// NewRequest folds the typed argv into a Request. A --wait value is a number of
+// seconds only when it is all digits: `--wait nova` waits the default and leaves
+// `nova` the target, and `nova --wait abc` has no such target to give, so ok is false.
+func NewRequest(crew, target string, wait *string) (r Request, ok bool) {
+	r = Request{Crew: crew, Target: target}
+	switch {
+	case wait == nil:
+	case *wait == "":
+		r.Wait = "1800"
+	case allDigits(*wait):
+		r.Wait = *wait
+	case target != "":
+		return r, false
+	default:
+		r.Target, r.Wait = *wait, "1800"
+	}
+	return r, true
+}
+
 // Run is the arm. Nothing about the target is typed: the pane comes from the window's
 // dispatcher-anchored @crew_* stamps, and the text is the package's own constant.
-func Run(ctx context.Context, args []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	// Typing into a sibling's pane is the dispatcher's call alone: a session that
 	// carries a worker or role id, or sits in a checkout with its own WORKER_TASK.md,
 	// is a worker. Note this refusal prints without the `crew: nudge:` prefix and
@@ -80,36 +105,13 @@ func Run(ctx context.Context, args []string, paths bus.Paths, stdout, stderr io.
 	}
 
 	a := &arm{ctx: ctx, paths: paths, o: o, stdout: stdout, stderr: stderr}
-	a.crew = o.CrewID()
-	target, wait := "", ""
-	for len(args) > 0 {
-		switch {
-		case args[0] == "--crew":
-			if len(args) < 2 || args[1] == "" {
-				return fail(stderr, "--crew needs an id (usage: "+usage+")")
-			}
-			a.crew, args = args[1], args[2:]
-		case args[0] == "--wait":
-			// A value is taken only when it is all digits, so `--wait nova` waits the
-			// default and leaves `nova` the target, and `--wait abc` becomes a second
-			// positional the loop below refuses.
-			wait = "1800"
-			if len(args) > 1 && allDigits(args[1]) {
-				wait, args = args[1], args[2:]
-			} else {
-				args = args[1:]
-			}
-		case strings.HasPrefix(args[0], "--"):
-			return fail(stderr, "unknown flag '"+args[0]+"' (usage: "+usage+")")
-		default:
-			if target != "" {
-				return fail(stderr, "one target only (usage: "+usage+")")
-			}
-			target, args = args[0], args[1:]
-		}
+	a.crew = r.Crew
+	if a.crew == "" {
+		a.crew = o.CrewID()
 	}
+	target, wait := r.Target, r.Wait
 	if target == "" {
-		return fail(stderr, "usage: "+usage)
+		return fail(stderr, "usage: "+Usage)
 	}
 	if a.crew == "" {
 		return fail(stderr, "CREW_ID not set and no WORKER_TASK.md crew_id — pass --crew <id>")

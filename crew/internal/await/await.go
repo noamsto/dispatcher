@@ -67,13 +67,13 @@ type call struct {
 // Run is the arm. A timeout is not a failure: empty stdout, not the exit status,
 // is the marker, and every msg of the winning sender's due backlog prints so a
 // backlog is drained instead of hidden.
-func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	crew := o.CrewID()
 	if crew == "" {
 		say(stderr, "%s\n", noCrewMsg)
 		return 1
 	}
-	c, msg := parse(argv)
+	c, msg := check(req)
 	if msg != "" {
 		say(stderr, "%s\n", msg)
 		return 1
@@ -134,14 +134,18 @@ func Run(argv []string, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 	}
 }
 
-// parse reads the arm's arguments in its order: the agent is argv[0] whatever it
-// is (`--timeout` included, which the arm accepted as an addressee), then the
-// flags with the last of each winning. msg is the arm's stderr line for a call
-// it refuses.
-func parse(argv []string) (call, string) {
-	c := call{timeout: defaultTimeout, interval: defaultInterval}
-	if len(argv) > 0 {
-		c.me, argv = argv[0], argv[1:]
+// Request is the typed await call. From, Timeout and Interval are the flag
+// values; "" is the default (no sender, 300 seconds, 2).
+type Request struct {
+	Me, From, Timeout, Interval string
+}
+
+// check judges a request in the arm's order: the agent, its session suffix, then
+// the timeout. msg is the arm's stderr line for a call it refuses.
+func check(r Request) (call, string) {
+	c := call{me: r.Me, from: r.From, timeout: defaultTimeout, interval: r.Interval}
+	if c.interval == "" {
+		c.interval = defaultInterval
 	}
 	if c.me == "" {
 		return c, usageMsg
@@ -152,29 +156,14 @@ func parse(argv []string) (call, string) {
 		return c, fmt.Sprintf(
 			"crew: await: '%s' has no session suffix — pass the session id ($CREW_WORKER_ID); a branch-only worker id matches no message", c.me)
 	}
-	timeoutText := strconv.Itoa(defaultTimeout)
-	for len(argv) > 0 {
-		var dst *string
-		switch flag := argv[0]; flag {
-		case "--timeout":
-			dst = &timeoutText
-		case "--interval":
-			dst = &c.interval
-		case "--from":
-			dst = &c.from
-		default:
-			return c, fmt.Sprintf("crew: await: unknown arg '%s'", flag)
-		}
-		if len(argv) < 2 || argv[1] == "" {
-			return c, fmt.Sprintf("crew: %s needs a value", argv[0])
-		}
-		*dst, argv = argv[1], argv[2:]
+	if r.Timeout == "" {
+		return c, ""
 	}
-	if !timeoutRe.MatchString(timeoutText) {
+	if !timeoutRe.MatchString(r.Timeout) {
 		return c, timeoutUsage
 	}
 	// Base 10 like the arm's `$((10#$timeout))`, so `010` is ten and not eight.
-	c.timeout, _ = strconv.Atoi(timeoutText)
+	c.timeout, _ = strconv.Atoi(r.Timeout)
 	return c, ""
 }
 

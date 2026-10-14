@@ -85,7 +85,7 @@ func (f *armFixture) paneRows(win, pane, role, cmd string) string {
 	return win + "\t" + pane + "\t" + role + "\t" + cmd
 }
 
-func (f *armFixture) run(args ...string) int {
+func (f *armFixture) run(req Request) int {
 	f.t.Helper()
 	deps := newDeps(f.pane, f.bus, f.env)
 	deps.Sleep = func(_ context.Context, secs string) error {
@@ -108,7 +108,7 @@ func (f *armFixture) run(args ...string) int {
 			f.t.Fatal(err)
 		}
 	}
-	return Run(context.Background(), args, f.paths, f.stdout, f.stderr, Options{
+	return Run(context.Background(), req, f.paths, f.stdout, f.stderr, Options{
 		Deps:     deps,
 		CrewID:   func() string { return f.crewID },
 		Getenv:   env(f.env),
@@ -136,9 +136,9 @@ func (f *armFixture) clock() clock.Clock {
 
 // runWith drives the arm with Deps a test has rewritten (a failing bus write),
 // leaving the rest of the fixture alone.
-func (f *armFixture) runWith(deps Deps, args ...string) int {
+func (f *armFixture) runWith(deps Deps, req Request) int {
 	f.t.Helper()
-	return Run(context.Background(), args, f.paths, f.stdout, f.stderr, Options{
+	return Run(context.Background(), req, f.paths, f.stdout, f.stderr, Options{
 		Deps: deps, CrewID: func() string { return f.crewID }, Getenv: env(f.env),
 		Toplevel: func(context.Context) string { return f.toplevel },
 		Exists:   func(string) bool { return false },
@@ -209,7 +209,7 @@ func TestRunIsDispatcherOnly(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newArm(t)
 			f.env, f.toplevel, f.workerTask = tc.env, tc.toplevel, tc.workerTask
-			if rc := f.run(idleReq); rc != 2 {
+			if rc := f.run(Request{Target: idleReq}); rc != 2 {
 				t.Errorf("rc = %d, want 2", rc)
 			}
 			// This refusal prints bare and exits 2: it is not a nudge that refused,
@@ -227,23 +227,19 @@ func TestRunIsDispatcherOnly(t *testing.T) {
 func TestRunUsage(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		args []string
+		req  Request
 		want string
 	}{
-		{"no target", nil, "usage: crew nudge"},
-		{"unknown flag", []string{"--bogus", featX}, "unknown flag '--bogus'"},
-		{"two targets", []string{featX, "%9"}, "one target only"},
-		{"--crew without an id", []string{"--crew"}, "--crew needs an id"},
-		{"empty --crew", []string{"--crew", "", featX}, "--crew needs an id"},
-		{"pane id target", []string{"%9"}, "a pane id is not an anchored address"},
-		{"no crew", []string{featX}, "CREW_ID not set"},
+		{"no target", Request{}, "usage: crew nudge"},
+		{"pane id target", Request{Target: "%9"}, "a pane id is not an anchored address"},
+		{"no crew", Request{Target: featX}, "CREW_ID not set"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newArm(t)
 			if tc.name == "no crew" {
 				f.crewID = ""
 			}
-			if rc := f.run(tc.args...); rc != 1 {
+			if rc := f.run(tc.req); rc != 1 {
 				t.Errorf("rc = %d, want 1", rc)
 			}
 			if !strings.Contains(f.errOut(), tc.want) {
@@ -256,7 +252,7 @@ func TestRunUsage(t *testing.T) {
 func TestRunResolvesTarget(t *testing.T) {
 	t.Run("branch", func(t *testing.T) {
 		f := newArm(t)
-		if rc := f.run(featX); rc != 0 {
+		if rc := f.run(Request{Target: featX}); rc != 0 {
 			t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 		}
 		if !strings.Contains(f.out(), "nudge accepted: "+leadID+" "+idleReq) {
@@ -264,10 +260,17 @@ func TestRunResolvesTarget(t *testing.T) {
 		}
 	})
 
+	t.Run("crew from the request beats the checkout's", func(t *testing.T) {
+		f := newArm(t)
+		f.crewID = ""
+		if rc := f.run(Request{Crew: "c1", Target: featX}); rc != 0 {
+			t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
+		}
+	})
 	t.Run("codename", func(t *testing.T) {
 		f := newArm(t)
 		f.pane.windows = f.windowRows("@7", featX, "reef")
-		if rc := f.run("reef"); rc != 0 {
+		if rc := f.run(Request{Target: "reef"}); rc != 0 {
 			t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 		}
 	})
@@ -278,7 +281,7 @@ func TestRunResolvesTarget(t *testing.T) {
 			f.windowRows("@7", featX, "reef"),
 			f.windowRows("@8", "feat/y", "reef"),
 		}, "\n")
-		if rc := f.run("reef"); rc != 1 ||
+		if rc := f.run(Request{Target: "reef"}); rc != 1 ||
 			!strings.Contains(f.errOut(), "ambiguous codename 'reef' — matches feat/x,feat/y; pass a branch") {
 			t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
 		}
@@ -287,7 +290,7 @@ func TestRunResolvesTarget(t *testing.T) {
 	t.Run("another checkout's window", func(t *testing.T) {
 		f := newArm(t)
 		f.pane.windows = "@7\tfeat/x\t/other/crew\tc1\treef"
-		if rc := f.run(featX); rc != 1 || !strings.Contains(f.errOut(), "no worker matches 'feat/x'") {
+		if rc := f.run(Request{Target: featX}); rc != 1 || !strings.Contains(f.errOut(), "no worker matches 'feat/x'") {
 			t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
 		}
 	})
@@ -295,7 +298,7 @@ func TestRunResolvesTarget(t *testing.T) {
 	t.Run("another crew's window", func(t *testing.T) {
 		f := newArm(t)
 		f.pane.windows = "@7\tfeat/x\t" + f.paths.Dir + "\tc2\treef"
-		if rc := f.run(featX); rc != 1 || !strings.Contains(f.errOut(), "no worker matches 'feat/x'") {
+		if rc := f.run(Request{Target: featX}); rc != 1 || !strings.Contains(f.errOut(), "no worker matches 'feat/x'") {
 			t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
 		}
 	})
@@ -312,7 +315,7 @@ func TestRunResolvesTarget(t *testing.T) {
 		if err := bus.Append(f.paths.Log, line); err != nil {
 			t.Fatal(err)
 		}
-		if rc := f.run(featX); rc != 1 ||
+		if rc := f.run(Request{Target: featX}); rc != 1 ||
 			!strings.Contains(f.errOut(), "no live pane for 'feat/x' (branch feat/x) — its window is gone") {
 			t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
 		}
@@ -321,7 +324,7 @@ func TestRunResolvesTarget(t *testing.T) {
 	t.Run("window with no pane", func(t *testing.T) {
 		f := newArm(t)
 		f.pane.panes = ""
-		if rc := f.run(featX); rc != 1 || !strings.Contains(f.errOut(), "no pane in the window for 'feat/x'") {
+		if rc := f.run(Request{Target: featX}); rc != 1 || !strings.Contains(f.errOut(), "no pane in the window for 'feat/x'") {
 			t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
 		}
 	})
@@ -334,7 +337,7 @@ func TestRunResolvesTarget(t *testing.T) {
 			f.paneRows("@7", "%8", "reviewer", "claude"),
 			f.paneRows("@7", leadID, "lead", "claude"),
 		}, "\n")
-		if rc := f.run(featX); rc != 0 {
+		if rc := f.run(Request{Target: featX}); rc != 0 {
 			t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 		}
 		for _, c := range f.pane.tmux {
@@ -347,13 +350,13 @@ func TestRunResolvesTarget(t *testing.T) {
 	t.Run("tmux unreadable", func(t *testing.T) {
 		f := newArm(t)
 		f.pane.failWindows = true
-		if rc := f.run(featX); rc != 1 ||
+		if rc := f.run(Request{Target: featX}); rc != 1 ||
 			!strings.Contains(f.errOut(), "cannot read tmux windows (is a tmux server running?)") {
 			t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
 		}
 		f = newArm(t)
 		f.pane.failPanes = true
-		if rc := f.run(featX); rc != 1 ||
+		if rc := f.run(Request{Target: featX}); rc != 1 ||
 			!strings.Contains(f.errOut(), "cannot read tmux panes (is a tmux server running?)") {
 			t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
 		}
@@ -400,7 +403,7 @@ func TestRunSessionGate(t *testing.T) {
 			if target == "" {
 				target = featX
 			}
-			if rc := f.run(target); rc != 2 {
+			if rc := f.run(Request{Target: target}); rc != 2 {
 				t.Errorf("rc = %d, want 2 (a refusal, not a failure)", rc)
 			}
 			if f.errOut() != tc.want {
@@ -418,7 +421,7 @@ func TestRunSessionGate(t *testing.T) {
 func TestRunEngineGate(t *testing.T) {
 	f := newArm(t)
 	f.rows = nil
-	if rc := f.run(featX); rc != 2 ||
+	if rc := f.run(Request{Target: featX}); rc != 2 ||
 		f.errOut() != "no dispatch or resume row records "+idleReq+"'s engine" {
 		t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
 	}
@@ -430,7 +433,7 @@ func TestRunEngineGate(t *testing.T) {
 		fixture(t, "nudge_pi_idle.txt"), fixture(t, "nudge_pi_idle.txt"),
 		fixture(t, "nudge_pi_typed.txt"), fixture(t, "nudge_pi_live.txt"),
 	}
-	if rc := f.run(featX); rc != 0 {
+	if rc := f.run(Request{Target: featX}); rc != 0 {
 		t.Errorf("rc = %d, stderr = %q, want accepted on pi frames", rc, f.errOut())
 	}
 }
@@ -438,7 +441,7 @@ func TestRunEngineGate(t *testing.T) {
 func TestRunUnreadGate(t *testing.T) {
 	f := newArm(t)
 	f.unread = ""
-	if rc := f.run(featX); rc != 2 ||
+	if rc := f.run(Request{Target: featX}); rc != 2 ||
 		!strings.Contains(f.errOut(), "no unread msg from dispatcher:c1 to "+idleReq+
 			" — post the directive first (crew reply), then nudge") {
 		t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
@@ -453,7 +456,7 @@ func TestRunUnreadGate(t *testing.T) {
 func TestRunReportsPaneOutcome(t *testing.T) {
 	f := newArm(t)
 	f.pane.frames = []string{fixture(t, "nudge_draft.txt")}
-	if rc := f.run(featX); rc != 2 {
+	if rc := f.run(Request{Target: featX}); rc != 2 {
 		t.Fatalf("rc = %d, want 2", rc)
 	}
 	if f.errOut() != "refused — unsent input in the input box" {
@@ -469,7 +472,7 @@ func TestRunReportsPaneOutcome(t *testing.T) {
 	f.pane.frames = acceptedFrames(t)
 	deps := newDeps(f.pane, f.bus, f.env)
 	deps.Append = func(jsonv.Value) error { return os.ErrPermission }
-	if rc := f.runWith(deps, featX); rc != 0 || !strings.Contains(f.out(), "nudge accepted: %9") {
+	if rc := f.runWith(deps, Request{Target: featX}); rc != 0 || !strings.Contains(f.out(), "nudge accepted: %9") {
 		t.Errorf("rc = %d, out = %q, want the accepted outcome at 0", rc, f.out())
 	}
 
@@ -481,7 +484,7 @@ func TestRunReportsPaneOutcome(t *testing.T) {
 	deps.Append = func(jsonv.Value) error { return os.ErrPermission }
 	deps.Sleep = func(context.Context, string) error { return nil }
 	deps.Clock = f.clock()
-	if rc := f.runWith(deps, "--wait", "30", idleReq); rc != 1 ||
+	if rc := f.runWith(deps, Request{Wait: "30", Target: idleReq}); rc != 1 ||
 		!strings.Contains(f.errOut(), "permission denied") {
 		t.Errorf("rc = %d, stderr = %q, want the wait-row write failure", rc, f.errOut())
 	}
@@ -498,7 +501,7 @@ func TestRunWaitJoining(t *testing.T) {
 	f.rows = append(dispatchRows(t, "claude"), row(t,
 		`{"ts":9999999999999,"crew_id":"c1","kind":"nudge_wait","state":"resolved","to":"`+idleReq+
 			`","result":"accepted","rc":0,"detail":"the lead took the line","msg_ts":`+idleTS+`}`))
-	if rc := f.run("--wait", "30", idleReq); rc != 0 {
+	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 0 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 	}
 	if !strings.Contains(f.out(), "nudge joining: "+leadID+" "+idleReq+" — another crew nudge --wait (pid "+f.holdLock+") owns this lead's wait") {
@@ -517,7 +520,7 @@ func TestRunWaitJoinerTimesOut(t *testing.T) {
 	f.holdLock = strconv.Itoa(os.Getpid())
 	f.rows = dispatchRows(t, "claude")
 	// A zero budget refuses on the first look: the other waiter still owns the lead.
-	if rc := f.run("--wait", "0", idleReq); rc != 2 {
+	if rc := f.run(Request{Wait: "0", Target: idleReq}); rc != 2 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 	}
 	if want := "refused — still waiting on another crew nudge --wait (pid " + f.holdLock + ")"; f.errOut() != want {
@@ -534,7 +537,7 @@ func TestRunWaitAlreadyTyped(t *testing.T) {
 	f := newArm(t)
 	f.rows = append(dispatchRows(t, "claude"), row(t,
 		`{"ts":2,"crew_id":"c1","kind":"nudge","to":"`+idleReq+`","result":"held","detail":"still in the box","msg_ts":`+idleTS+`}`))
-	if rc := f.run("--wait", "30", idleReq); rc != 3 {
+	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 3 {
 		t.Fatalf("rc = %d, want 3 (a held nudge is typed-but-not-accepted)", rc)
 	}
 	if !strings.Contains(f.out(), "nudge already typed: "+leadID+" "+idleReq+" — held: still in the box") {
@@ -550,7 +553,7 @@ func TestRunWaitAlreadyTyped(t *testing.T) {
 	f = newArm(t)
 	f.rows = append(dispatchRows(t, "claude"), row(t,
 		`{"ts":2,"crew_id":"c1","kind":"nudge","to":"`+idleReq+`","result":"accepted","detail":"took the line","msg_ts":`+idleTS+`}`))
-	if rc := f.run("--wait", "30", idleReq); rc != 0 {
+	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 0 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 	}
 }
@@ -561,7 +564,7 @@ func TestRunWaitLeadReadIt(t *testing.T) {
 	// The directive was there when the call started and is gone by the next look:
 	// the lead read it, so nothing is typed.
 	f.leadReads = true
-	if rc := f.run("--wait", "30", idleReq); rc != 0 {
+	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 0 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 	}
 	if want := "nudge not needed: " + leadID + " " + idleReq +
@@ -584,7 +587,7 @@ func TestRunWaitParksThenTypes(t *testing.T) {
 		fixture(t, "nudge_typed.txt"), fixture(t, "meter.2s.1.2k.txt"),
 	}
 	f.env = map[string]string{"CREW_NUDGE_WAIT_INTERVAL": "5"}
-	if rc := f.run("--wait", "30", idleReq); rc != 0 {
+	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 0 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 	}
 	if !strings.Contains(f.out(), "nudge waiting: "+leadID+" "+idleReq+" — live turn; re-checking every 5s for up to 30s") {
@@ -619,7 +622,7 @@ func TestRunWaitTimeout(t *testing.T) {
 	f := newArm(t)
 	f.pane.frames = []string{fixture(t, "meter.2s.1.2k.txt")}
 	f.env = map[string]string{"CREW_NUDGE_WAIT_INTERVAL": "5"}
-	if rc := f.run("--wait", "10", idleReq); rc != 2 {
+	if rc := f.run(Request{Wait: "10", Target: idleReq}); rc != 2 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 	}
 	if want := "refused — live turn or no idle input box (waited 10s)"; f.errOut() != want {
@@ -650,7 +653,7 @@ func TestRunWaitTimeout(t *testing.T) {
 func TestRunWaitRefusesNonLiveTurnImmediately(t *testing.T) {
 	f := newArm(t)
 	f.pane.frames = []string{fixture(t, "nudge_draft.txt")}
-	if rc := f.run("--wait", "30", idleReq); rc != 2 {
+	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 2 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 	}
 	if len(f.slept) != 0 {
@@ -678,7 +681,7 @@ func TestRunWaitRowFollowsCrewClock(t *testing.T) {
 		f.slept = append(f.slept, secs)
 		return nil
 	}
-	if rc := Run(context.Background(), []string{"--wait", "30", idleReq}, f.paths, f.stdout, f.stderr, Options{
+	if rc := Run(context.Background(), Request{Wait: "30", Target: idleReq}, f.paths, f.stdout, f.stderr, Options{
 		Deps: deps, CrewID: func() string { return f.crewID }, Getenv: env(f.env),
 		Toplevel: func(context.Context) string { return "" },
 		Exists:   func(string) bool { return false },
@@ -709,11 +712,11 @@ func TestRunWaitRowFollowsCrewClock(t *testing.T) {
 func TestRunWaitParsesOnlyDigits(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		args   []string
+		req    Request
 		budget string
 	}{
-		{"no value waits the default", []string{"--wait", idleReq}, "1800"},
-		{"value", []string{"--wait", "7", idleReq}, "7"},
+		{"no value waits the default", Request{Wait: "1800", Target: idleReq}, "1800"},
+		{"value", Request{Wait: "7", Target: idleReq}, "7"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newArm(t)
@@ -721,7 +724,7 @@ func TestRunWaitParsesOnlyDigits(t *testing.T) {
 			f.env = map[string]string{"CREW_NUDGE_WAIT_INTERVAL": "1"}
 			// The budget shows up verbatim in the timeout line, which is how the test
 			// reads back what `--wait` took.
-			if rc := f.run(tc.args...); rc != 2 {
+			if rc := f.run(tc.req); rc != 2 {
 				t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 			}
 			if !strings.Contains(f.errOut(), "(waited "+tc.budget+"s)") {
@@ -730,15 +733,30 @@ func TestRunWaitParsesOnlyDigits(t *testing.T) {
 		})
 	}
 
-	// A value that is not all digits is the target, not the budget: `--wait abc
-	// feat/x` is two targets, which the arm refuses rather than reading as a wait.
-	f := newArm(t)
-	if rc := f.run("--wait", "abc", idleReq); rc != 1 || !strings.Contains(f.errOut(), "one target only") {
-		t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
-	}
-	// `--wait nova` is a wait for a target named nova, budget still the default.
-	f = newArm(t)
-	if rc := f.run("--wait", "nova"); rc != 1 || !strings.Contains(f.errOut(), "no worker matches 'nova'") {
-		t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
+}
+
+func TestNewRequest(t *testing.T) {
+	str := func(s string) *string { return &s }
+	for _, tc := range []struct {
+		name   string
+		target string
+		wait   *string
+		want   Request
+		ok     bool
+	}{
+		{"no wait", "nova", nil, Request{Target: "nova"}, true},
+		{"bare wait is the default", "nova", str(""), Request{Target: "nova", Wait: "1800"}, true},
+		{"digits", "nova", str("5"), Request{Target: "nova", Wait: "5"}, true},
+		// `--wait abc nova` is two targets, which the arm refuses rather than reading as a wait.
+		{"word with a target is a second target", "nova", str("abc"), Request{Target: "nova"}, false},
+		// `--wait nova` is a wait for a target named nova, budget still the default.
+		{"word with no target is the target", "", str("nova"), Request{Target: "nova", Wait: "1800"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := NewRequest("", tc.target, tc.wait)
+			if ok != tc.ok || (ok && got != tc.want) {
+				t.Errorf("NewRequest = %+v, %v; want %+v, %v", got, ok, tc.want, tc.ok)
+			}
+		})
 	}
 }

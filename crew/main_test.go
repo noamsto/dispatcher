@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
@@ -772,7 +773,7 @@ func TestAdmittedSubcommands(t *testing.T) {
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
-		"status", "msg", "reply", "hold"} {
+		"status", "msg", "reply", "hold", "nudge", "await", "watch"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -823,7 +824,7 @@ func TestParseCrewSplitsLeadingEquals(t *testing.T) {
 		args, captured []string
 	}{
 		{[]string{"adopt", "--crew=x"}, []string{"--crew", "x"}},
-		{[]string{"nudge", "--since=5"}, []string{"--since", "5"}},
+		{[]string{"pr-watch", "--since=5"}, []string{"--since", "5"}},
 		{[]string{"reap", "--idle=5"}, []string{"--idle", "5"}},
 		// Everything else about a passthrough command's argv does arrive whole,
 		// `--` and flag-shaped detail text included.
@@ -1152,6 +1153,29 @@ var refusalRows = []struct {
 	// The flag table's order decides which empty value is named, not argv order.
 	{"hold add two empty values", []string{"hold", "add", "--model", "", "--window", ""}, "crew: --window needs a value", 1},
 
+	{"nudge unknown flag", []string{"nudge", "--bogus", "nova"}, "crew: nudge: unknown flag '--bogus' (usage: " + nudge.Usage + ")", 1},
+	{"nudge extra positional", []string{"nudge", "nova", "iris"}, "crew: nudge: one target only (usage: " + nudge.Usage + ")", 1},
+	{"nudge crew missing value", []string{"nudge", "nova", "--crew"}, "crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")", 1},
+	{"nudge crew empty value", []string{"nudge", "--crew", "", "nova"}, "crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")", 1},
+	{"nudge crew empty value equals", []string{"nudge", "--crew=", "nova"}, "crew: nudge: --crew needs an id (usage: " + nudge.Usage + ")", 1},
+	// `--wait abc` after a target is a second target, as the arm answered.
+	{"nudge wait word after a target", []string{"nudge", "nova", "--wait", "abc"}, "crew: nudge: one target only (usage: " + nudge.Usage + ")", 1},
+	{"nudge wait word before a target", []string{"nudge", "--wait", "abc", "nova"}, "crew: nudge: one target only (usage: " + nudge.Usage + ")", 1},
+
+	{"await unknown flag", []string{"await", "worker:x#s1-1", "--bogus"}, "crew: await: unknown arg '--bogus'", 1},
+	{"await extra positional", []string{"await", "worker:x#s1-1", "extra"}, "crew: await: unknown arg 'extra'", 1},
+	{"await from missing value", []string{"await", "worker:x#s1-1", "--from"}, "crew: --from needs a value", 1},
+	{"await timeout empty value", []string{"await", "worker:x#s1-1", "--timeout", ""}, "crew: --timeout needs a value", 1},
+	{"await interval empty value equals", []string{"await", "worker:x#s1-1", "--interval="}, "crew: --interval needs a value", 1},
+
+	{"watch unknown flag", []string{"watch", "--bogus"}, "crew: watch: unknown arg '--bogus'", 1},
+	{"watch extra positional", []string{"watch", "x"}, "crew: watch: unknown arg 'x'", 1},
+	{"watch since missing value", []string{"watch", "--since"}, "crew: --since needs a value", 1},
+	{"watch states empty value", []string{"watch", "--states", ""}, "crew: --states needs a value", 1},
+	{"watch timeout missing value", []string{"watch", "--timeout"}, "crew: --timeout needs a value", 1},
+	{"watch interval empty value equals", []string{"watch", "--interval="}, "crew: --interval needs a value", 1},
+	{"watch crew empty value", []string{"watch", "--crew", ""}, "crew: --crew needs a value", 1},
+
 	{"roster-render unknown flag", []string{"roster-render", "--bogus"}, "crew: roster-render: unknown arg '--bogus'", 64},
 	{"roster-render extra positional", []string{"roster-render", "--crew", "c1", "x"}, "crew: roster-render: unknown arg 'x'", 64},
 	{"roster-render crew missing value", []string{"roster-render", "--crew"}, "crew: --crew needs a value", 64},
@@ -1249,6 +1273,12 @@ func TestKongErrorClassification(t *testing.T) {
 		{[]string{"hold", "release", "a", "b"}, "unexpected argument b"},
 		{[]string{"hold", "add", "-x"}, "unknown flag -x"},
 		{[]string{"hold", "add", "--draft=nope"}, "--draft: bool value must be"},
+		{[]string{"nudge", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"nudge", "a", "b"}, "unexpected argument b"},
+		{[]string{"await", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"await", "a", "b"}, "unexpected argument b"},
+		{[]string{"watch", "--bogus"}, "unknown flag --bogus"},
+		{[]string{"watch", "x"}, "unexpected argument x"},
 	} {
 		var (
 			r       root
@@ -1443,6 +1473,20 @@ func TestFlagSpellingsAreIdentical(t *testing.T) {
 		{"hold release --crew empty", []string{"hold", "release", "h1", "--crew", ""}, []string{"hold", "release", "h1", "--crew="}, true},
 		{"reply --crew empty", []string{"reply", "--crew", "", "worker:feat/x", "go"}, []string{"reply", "--crew=", "worker:feat/x", "go"}, true},
 		{"reply --crew", []string{"reply", "--crew", "c9", "role:a", "go"}, []string{"reply", "--crew=c9", "role:a", "go"}, true},
+		{"nudge --crew empty", []string{"nudge", "--crew", "", "nova"}, []string{"nudge", "--crew=", "nova"}, true},
+		{"nudge --wait word", []string{"nudge", "nova", "--wait", "abc"}, []string{"nudge", "nova", "--wait=abc"}, true},
+		{"await --from empty", []string{"await", me, "--from", ""}, []string{"await", me, "--from="}, true},
+		{"await --timeout empty", []string{"await", me, "--timeout", ""}, []string{"await", me, "--timeout="}, true},
+		{"await --interval empty", []string{"await", me, "--interval", ""}, []string{"await", me, "--interval="}, true},
+		{"await --timeout bad", []string{"await", me, "--timeout", "abc"}, []string{"await", me, "--timeout=abc"}, true},
+		{"watch --since empty", []string{"watch", "--since", ""}, []string{"watch", "--since="}, true},
+		{"watch --states empty", []string{"watch", "--states", ""}, []string{"watch", "--states="}, true},
+		{"watch --timeout empty", []string{"watch", "--timeout", ""}, []string{"watch", "--timeout="}, true},
+		{"watch --interval empty", []string{"watch", "--interval", ""}, []string{"watch", "--interval="}, true},
+		{"watch --crew empty", []string{"watch", "--crew", ""}, []string{"watch", "--crew="}, true},
+		{"watch --timeout zero", []string{"watch", "--timeout", "0"}, []string{"watch", "--timeout=0"}, true},
+		{"watch --states only commas", []string{"watch", "--states", ","}, []string{"watch", "--states=,"}, true},
+		{"watch --since bad", []string{"watch", "--since", "x"}, []string{"watch", "--since=x"}, true},
 		{"status --restamp", []string{"status", me, "working", "--restamp"}, []string{"status", me, "working", "--restamp=true"}, true},
 		{"stack cut --record", []string{"stack", "cut", "--record", "feat/x", "abc"},
 			[]string{"stack", "cut", "--record=true", "feat/x", "abc"}, true},
@@ -1505,6 +1549,27 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 		{"hold add --draft", []string{"hold", "add", "--draft", "t"}, []string{"hold", "add", "--draft=true", "t"}, false},
 		{"hold add all value flags", holdAddSpaced("v"), holdAddJoined("v"), false},
 		{"hold add all value flags empty", holdAddSpaced(""), holdAddJoined(""), true},
+		{"nudge --crew", []string{"nudge", "--crew", "c1", "nova"}, []string{"nudge", "--crew=c1", "nova"}, false},
+		{"nudge --crew after target", []string{"nudge", "nova", "--crew", "c1"}, []string{"nudge", "nova", "--crew=c1"}, false},
+		{"nudge --crew empty", []string{"nudge", "--crew", "", "nova"}, []string{"nudge", "--crew=", "nova"}, true},
+		{"nudge --wait", []string{"nudge", "nova", "--wait", "5"}, []string{"nudge", "nova", "--wait=5"}, false},
+		{"nudge --wait first", []string{"nudge", "--wait", "5", "nova"}, []string{"nudge", "--wait=5", "nova"}, false},
+		{"nudge --wait word", []string{"nudge", "--wait", "nova"}, []string{"nudge", "--wait=nova"}, false},
+		{"nudge --wait word and target", []string{"nudge", "nova", "--wait", "abc"}, []string{"nudge", "nova", "--wait=abc"}, true},
+		{"await --from", []string{"await", "worker:x#s1-1", "--from", "dispatcher:c1"}, []string{"await", "worker:x#s1-1", "--from=dispatcher:c1"}, false},
+		{"await --timeout", []string{"await", "worker:x#s1-1", "--timeout", "5"}, []string{"await", "worker:x#s1-1", "--timeout=5"}, false},
+		{"await --interval", []string{"await", "worker:x#s1-1", "--interval", "3"}, []string{"await", "worker:x#s1-1", "--interval=3"}, false},
+		{"await flags first", []string{"await", "--from", "d", "--timeout", "5", "--interval", "3", "worker:x#s1-1"},
+			[]string{"await", "--from=d", "--timeout=5", "--interval=3", "worker:x#s1-1"}, false},
+		{"await --timeout empty", []string{"await", "worker:x#s1-1", "--timeout", ""}, []string{"await", "worker:x#s1-1", "--timeout="}, true},
+		{"watch --since", []string{"watch", "--since", "5"}, []string{"watch", "--since=5"}, false},
+		{"watch --states", []string{"watch", "--states", "blocked,done"}, []string{"watch", "--states=blocked,done"}, false},
+		{"watch --timeout", []string{"watch", "--timeout", "30"}, []string{"watch", "--timeout=30"}, false},
+		{"watch --interval", []string{"watch", "--interval", "1"}, []string{"watch", "--interval=1"}, false},
+		{"watch --crew", []string{"watch", "--crew", "c1"}, []string{"watch", "--crew=c1"}, false},
+		{"watch all flags", []string{"watch", "--since", "5", "--states", "done", "--timeout", "30", "--interval", "1", "--crew", "c1"},
+			[]string{"watch", "--since=5", "--states=done", "--timeout=30", "--interval=1", "--crew=c1"}, false},
+		{"watch --since empty", []string{"watch", "--since", ""}, []string{"watch", "--since="}, true},
 		{"roster-render bools", []string{"roster-render", "--no-open", "--once", "--detach"},
 			[]string{"roster-render", "--no-open=true", "--once=true", "--detach=true"}, false},
 	} {
@@ -1670,5 +1735,47 @@ func TestRunSenderCheckSurvivesTyping(t *testing.T) {
 				t.Errorf("the log changed: %q", after)
 			}
 		})
+	}
+}
+
+// TestStreamChildWatchArgv pins the argv `crew stream` re-enters `crew watch`
+// with (internal/stream/stream.go park): it must keep parsing clean under the
+// typed grammar, to the request it was built from.
+func TestStreamChildWatchArgv(t *testing.T) {
+	parsed, ok := parseCrew([]string{"watch", "--crew", "c1", "--timeout", "300",
+		"--states", "blocked,done", "--interval", "2"})
+	if !ok || parsed.refusal != nil {
+		t.Fatalf("stream's child argv refused: ok %v refusal %v", ok, parsed.refusal)
+	}
+	w := parsed.typed.Watch
+	if w.Since != nil || str(w.Crew) != "c1" || str(w.Timeout) != "300" ||
+		str(w.States) != "blocked,done" || str(w.Interval) != "2" {
+		t.Errorf("stream's child argv bound %+v", w)
+	}
+}
+
+// TestNudgeWaitBinding pins what the typed Wait and Target make of the
+// positions `--wait` can take.
+func TestNudgeWaitBinding(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want nudge.Request
+	}{
+		{[]string{"nudge", "nova"}, nudge.Request{Target: "nova"}},
+		{[]string{"nudge", "nova", "--wait"}, nudge.Request{Target: "nova", Wait: "1800"}},
+		{[]string{"nudge", "nova", "--wait", "5"}, nudge.Request{Target: "nova", Wait: "5"}},
+		{[]string{"nudge", "--wait=5", "nova", "--crew=c1"}, nudge.Request{Crew: "c1", Target: "nova", Wait: "5"}},
+		{[]string{"nudge", "--wait", "nova"}, nudge.Request{Target: "nova", Wait: "1800"}},
+	} {
+		parsed, ok := parseCrew(tc.args)
+		if !ok || parsed.refusal != nil {
+			t.Errorf("crew %q refused: %v", tc.args, parsed.refusal)
+			continue
+		}
+		n := parsed.typed.Nudge
+		got, _ := nudge.NewRequest(str(n.Crew), n.Target, n.Wait)
+		if got != tc.want {
+			t.Errorf("crew %q = %+v, want %+v", tc.args, got, tc.want)
+		}
 	}
 }

@@ -56,10 +56,32 @@ func TestHelperCrewWatch(t *testing.T) {
 		fmt.Fprintf(os.Stderr, "helper: unexpected argv %q\n", args)
 		os.Exit(94)
 	}
-	os.Exit(watch.Run(args[1:], paths, os.Stdout, os.Stderr, watch.Options{
+	os.Exit(watch.Run(watchRequest(args[1:]), paths, os.Stdout, os.Stderr, watch.Options{
 		Now:   time.Now,
 		Sleep: func(string, io.Writer) error { time.Sleep(50 * time.Millisecond); return nil },
 	}))
+}
+
+// watchRequest maps the `--flag value` argv a stream child hands `crew watch`
+// onto its typed request; the grammar itself is parsed by the crew binary.
+func watchRequest(args []string) watch.Request {
+	var r watch.Request
+	for i := 0; i+1 < len(args); i += 2 {
+		v := args[i+1]
+		switch args[i] {
+		case "--since":
+			r.Since = &v
+		case "--states":
+			r.States = v
+		case "--timeout":
+			r.Timeout = v
+		case "--interval":
+			r.Interval = v
+		case "--crew":
+			r.Crew = v
+		}
+	}
+	return r
 }
 
 func realPath(p string) string {
@@ -592,7 +614,7 @@ func TestFleetNoDoubleDeliveryWithPerRepoStream(t *testing.T) {
 	stop := time.Now().Add(20 * time.Second)
 	for i := 0; !complete() && time.Now().Before(stop); i++ {
 		var out bytes.Buffer
-		rc := watch.Run([]string{"--crew", "c1", "--timeout", "1", "--interval", "1"}, paths, &out, io.Discard, watch.Options{
+		rc := watch.Run(watchRequest([]string{"--crew", "c1", "--timeout", "1", "--interval", "1"}), paths, &out, io.Discard, watch.Options{
 			Now:   time.Now,
 			Sleep: func(string, io.Writer) error { time.Sleep(30 * time.Millisecond); return nil },
 		})

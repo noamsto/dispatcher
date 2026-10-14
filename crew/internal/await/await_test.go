@@ -61,12 +61,12 @@ func clockIn(t *testing.T, seconds int64) clock.Clock {
 	return clock.Clock{Now: func() time.Time { return now }, CrewClock: path}
 }
 
-func run(t *testing.T, p bus.Paths, args ...string) (string, string, int) {
+func run(t *testing.T, p bus.Paths, req Request) (string, string, int) {
 	t.Helper()
-	return runOpts(t, p, Options{}, args...)
+	return runOpts(t, p, Options{}, req)
 }
 
-func runOpts(t *testing.T, p bus.Paths, o Options, args ...string) (string, string, int) {
+func runOpts(t *testing.T, p bus.Paths, o Options, req Request) (string, string, int) {
 	t.Helper()
 	if o.CrewID == nil {
 		o.CrewID = func() string { return "c1" }
@@ -76,7 +76,7 @@ func runOpts(t *testing.T, p bus.Paths, o Options, args ...string) (string, stri
 		o.Clock = clockIn(t, 1800000000)
 	}
 	var out, errB bytes.Buffer
-	code := Run(args, p, &out, &errB, o)
+	code := Run(req, p, &out, &errB, o)
 	return out.String(), errB.String(), code
 }
 
@@ -113,7 +113,7 @@ func TestDeliversDueReply(t *testing.T) {
 	row := msg(1785951264000, disp, me, "answer")
 	writeLog(t, p, row)
 
-	stdout, stderr, code := run(t, p, me, "--timeout", "0")
+	stdout, stderr, code := run(t, p, Request{Me: me, Timeout: "0"})
 	if code != 0 || stderr != "" {
 		t.Fatalf("code %d stderr %q", code, stderr)
 	}
@@ -132,7 +132,7 @@ func TestAlreadyHandedReplyTimesOut(t *testing.T) {
 	writeLog(t, p, row)
 	mark(t, p, me, row)
 
-	stdout, stderr, code := run(t, p, me, "--timeout", "0")
+	stdout, stderr, code := run(t, p, Request{Me: me, Timeout: "0"})
 	if stdout != "" || code != 0 {
 		t.Errorf("stdout %q code %d", stdout, code)
 	}
@@ -153,7 +153,7 @@ func TestLastDueSenderWinsOldestFirst(t *testing.T) {
 	a3 := msg(500, disp, me, "a3")
 	writeLog(t, p, a1, b1, a2, b2, a3)
 
-	stdout, _, code := run(t, p, me, "--timeout", "0")
+	stdout, _, code := run(t, p, Request{Me: me, Timeout: "0"})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -172,7 +172,7 @@ func TestFromRestrictsTheSender(t *testing.T) {
 	b1 := msg(200, role, me, "b1")
 	writeLog(t, p, a1, b1)
 
-	stdout, _, code := run(t, p, me, "--from", role, "--timeout", "0")
+	stdout, _, code := run(t, p, Request{Me: me, From: role, Timeout: "0"})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -190,7 +190,7 @@ func TestFromMismatchTimesOut(t *testing.T) {
 	p := fixture(t)
 	writeLog(t, p, msg(100, disp, me, "a1"))
 
-	stdout, stderr, code := run(t, p, me, "--from", "dispatcher:c9", "--timeout", "0")
+	stdout, stderr, code := run(t, p, Request{Me: me, From: "dispatcher:c9", Timeout: "0"})
 	if stdout != "" || code != 0 {
 		t.Errorf("stdout %q code %d", stdout, code)
 	}
@@ -204,7 +204,7 @@ func TestBroadcastIsNotDelivered(t *testing.T) {
 	p := fixture(t)
 	writeLog(t, p, msg(100, role, "*", "all"))
 
-	stdout, _, code := run(t, p, me, "--timeout", "0")
+	stdout, _, code := run(t, p, Request{Me: me, Timeout: "0"})
 	if stdout != "" || code != 0 {
 		t.Errorf("stdout %q code %d", stdout, code)
 	}
@@ -228,7 +228,7 @@ func TestUnparseableLinesAreSkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stdout, _, code := run(t, p, me, "--timeout", "0")
+	stdout, _, code := run(t, p, Request{Me: me, Timeout: "0"})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -244,7 +244,7 @@ func TestEqualTsKeepsLogOrder(t *testing.T) {
 	second := msg(100, disp, me, "second")
 	writeLog(t, p, first, second)
 
-	stdout, _, code := run(t, p, me, "--timeout", "0")
+	stdout, _, code := run(t, p, Request{Me: me, Timeout: "0"})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -261,7 +261,7 @@ func TestUnindexableRowStopsTheFold(t *testing.T) {
 		p := fixture(t)
 		writeLog(t, p, msg(100, disp, me, "answer"), bad)
 
-		stdout, stderr, code := run(t, p, me, "--timeout", "0")
+		stdout, stderr, code := run(t, p, Request{Me: me, Timeout: "0"})
 		if stdout != "" || code != 0 {
 			t.Errorf("row %s: stdout %q code %d", bad, stdout, code)
 		}
@@ -283,7 +283,7 @@ func TestNonStringFromStopsTheFold(t *testing.T) {
 		p := fixture(t)
 		writeLog(t, p, row)
 
-		stdout, _, code := run(t, p, me, "--timeout", "0")
+		stdout, _, code := run(t, p, Request{Me: me, Timeout: "0"})
 		if stdout != "" || code != 0 {
 			t.Errorf("%s: stdout %q code %d", row, stdout, code)
 		}
@@ -296,7 +296,7 @@ func TestNonObjectBody(t *testing.T) {
 	row := `{"ts":100,"crew_id":"c1","kind":"msg","from":"` + disp + `","to":"` + me + `","body":{"verdict":"accept"}}`
 	writeLog(t, p, row)
 
-	stdout, _, code := run(t, p, me, "--timeout", "0")
+	stdout, _, code := run(t, p, Request{Me: me, Timeout: "0"})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -317,7 +317,7 @@ func TestStringMarkOutranksTs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stdout, _, code := run(t, p, me, "--timeout", "0")
+	stdout, _, code := run(t, p, Request{Me: me, Timeout: "0"})
 	if stdout != "" || code != 0 {
 		t.Errorf("stdout %q code %d", stdout, code)
 	}
@@ -336,7 +336,7 @@ func TestGarbageMarksFileStillDelivers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stdout, _, code := run(t, p, me, "--timeout", "0")
+	stdout, _, code := run(t, p, Request{Me: me, Timeout: "0"})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -352,7 +352,7 @@ func TestMarksMergeWithTheOnesHeld(t *testing.T) {
 	row := msg(100, disp, me, "answer")
 	writeLog(t, p, row)
 
-	if _, _, code := run(t, p, me, "--timeout", "0"); code != 0 {
+	if _, _, code := run(t, p, Request{Me: me, Timeout: "0"}); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 	if got := readMarks(t, p, me); got != `{"`+disp+`":100,"`+role+`":900}` {
@@ -367,13 +367,13 @@ func TestLogThatIsNotARegularFile(t *testing.T) {
 	if err := os.MkdirAll(p.Log, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	stdout, _, code := run(t, p, me, "--timeout", "0")
+	stdout, _, code := run(t, p, Request{Me: me, Timeout: "0"})
 	if stdout != "" || code != 0 {
 		t.Errorf("stdout %q code %d", stdout, code)
 	}
 
 	p2 := fixture(t)
-	if _, _, code := run(t, p2, me, "--timeout", "0"); code != 0 {
+	if _, _, code := run(t, p2, Request{Me: me, Timeout: "0"}); code != 0 {
 		t.Errorf("missing log: exit %d", code)
 	}
 }
@@ -382,7 +382,7 @@ func TestLogThatIsNotARegularFile(t *testing.T) {
 // that is the interval times the polls, exactly as the bats row reads it.
 func TestTimeoutNoteReportsTheElapsedWait(t *testing.T) {
 	p := fixture(t)
-	stdout, stderr, code := run(t, p, me, "--timeout", "7", "--interval", "3")
+	stdout, stderr, code := run(t, p, Request{Me: me, Timeout: "7", Interval: "3"})
 	if stdout != "" || code != 0 {
 		t.Errorf("stdout %q code %d", stdout, code)
 	}
@@ -423,7 +423,7 @@ func TestReplyLandsMidWait(t *testing.T) {
 
 	_, stderr, code := runOpts(t, p, Options{
 		Clock: clock.Clock{Now: func() time.Time { return now }, CrewClock: path},
-	}, me, "--timeout", "30", "--interval", "1")
+	}, Request{Me: me, Timeout: "30", Interval: "1"})
 	<-posted
 	if code != 0 {
 		t.Fatalf("exit %d stderr %q", code, stderr)
@@ -435,7 +435,7 @@ func TestReplyLandsMidWait(t *testing.T) {
 
 func TestClampNotice(t *testing.T) {
 	p := fixture(t)
-	_, stderr, code := run(t, p, me, "--timeout", "5000", "--interval", "60")
+	_, stderr, code := run(t, p, Request{Me: me, Timeout: "5000", Interval: "60"})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -450,7 +450,7 @@ func TestClampNotice(t *testing.T) {
 // `010` is ten, not eight: the arm parsed with `$((10#$timeout))`.
 func TestTimeoutIsDecimalWithLeadingZeros(t *testing.T) {
 	p := fixture(t)
-	_, stderr, code := run(t, p, me, "--timeout", "010", "--interval", "4")
+	_, stderr, code := run(t, p, Request{Me: me, Timeout: "010", Interval: "4"})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -459,30 +459,28 @@ func TestTimeoutIsDecimalWithLeadingZeros(t *testing.T) {
 	}
 }
 
-// The arm's validation order and every one of its strings.
+// The arm's value checks in its order: usage, the session suffix, the timeout.
+// The argv grammar's refusals are main_test.go's.
 func TestValidation(t *testing.T) {
 	cases := []struct {
 		name string
-		args []string
+		req  Request
 		want string
 	}{
-		{"no agent", nil, usageMsg},
-		{"empty agent", []string{"", "--timeout", "0"}, usageMsg},
-		{"branch-only worker id", []string{"worker:feat/x", "--timeout", "1"},
+		{"no agent", Request{}, usageMsg},
+		{"empty agent with a timeout", Request{Timeout: "0"}, usageMsg},
+		{"branch-only worker id", Request{Me: "worker:feat/x", Timeout: "1"},
 			"crew: await: 'worker:feat/x' has no session suffix — pass the session id ($CREW_WORKER_ID); a branch-only worker id matches no message"},
-		{"timeout needs a value", []string{me, "--timeout"}, "crew: --timeout needs a value"},
-		{"timeout empty value", []string{me, "--timeout", ""}, "crew: --timeout needs a value"},
-		{"interval needs a value", []string{me, "--interval"}, "crew: --interval needs a value"},
-		{"from needs a value", []string{me, "--from"}, "crew: --from needs a value"},
-		{"unknown arg", []string{me, "--mine"}, "crew: await: unknown arg '--mine'"},
-		{"timeout not digits", []string{me, "--timeout", "abc"}, timeoutUsage},
-		{"timeout negative", []string{me, "--timeout", "-1"}, timeoutUsage},
-		{"timeout ten digits", []string{me, "--timeout", "1234567890"}, timeoutUsage},
-		{"timeout float", []string{me, "--timeout", "1.5"}, timeoutUsage},
+		{"suffix before a bad timeout", Request{Me: "worker:feat/x", Timeout: "abc"},
+			"crew: await: 'worker:feat/x' has no session suffix — pass the session id ($CREW_WORKER_ID); a branch-only worker id matches no message"},
+		{"timeout not digits", Request{Me: me, Timeout: "abc"}, timeoutUsage},
+		{"timeout negative", Request{Me: me, Timeout: "-1"}, timeoutUsage},
+		{"timeout ten digits", Request{Me: me, Timeout: "1234567890"}, timeoutUsage},
+		{"timeout float", Request{Me: me, Timeout: "1.5"}, timeoutUsage},
 	}
 	for _, tc := range cases {
 		p := fixture(t)
-		_, stderr, code := run(t, p, tc.args...)
+		_, stderr, code := run(t, p, tc.req)
 		if code != 1 || stderr != tc.want+"\n" {
 			t.Errorf("%s: code %d stderr %q, want %q", tc.name, code, stderr, tc.want)
 		}
@@ -492,7 +490,7 @@ func TestValidation(t *testing.T) {
 // The crew check comes first, as it does in the arm.
 func TestNoCrewID(t *testing.T) {
 	p := fixture(t)
-	_, stderr, code := runOpts(t, p, Options{CrewID: func() string { return "" }}, me, "--timeout", "0")
+	_, stderr, code := runOpts(t, p, Options{CrewID: func() string { return "" }}, Request{Me: me, Timeout: "0"})
 	if code != 1 || stderr != noCrewMsg+"\n" {
 		t.Errorf("code %d stderr %q", code, stderr)
 	}
@@ -504,7 +502,7 @@ func TestMarksRaisedForAnyAgent(t *testing.T) {
 	row := msg(100, disp, role, "verdict")
 	writeLog(t, p, row)
 
-	stdout, _, code := run(t, p, role, "--timeout", "0")
+	stdout, _, code := run(t, p, Request{Me: role, Timeout: "0"})
 	if code != 0 || stdout != want(t, row) {
 		t.Fatalf("stdout %q code %d", stdout, code)
 	}
@@ -520,7 +518,7 @@ func TestFlushFailureLeavesMarksAlone(t *testing.T) {
 	row := msg(100, disp, me, "answer")
 	writeLog(t, p, row)
 
-	_, _, code := runOpts(t, p, Options{Flush: func() error { return errors.New("no space") }}, me, "--timeout", "0")
+	_, _, code := runOpts(t, p, Options{Flush: func() error { return errors.New("no space") }}, Request{Me: me, Timeout: "0"})
 	if code != 1 {
 		t.Errorf("code %d", code)
 	}
@@ -534,7 +532,7 @@ func TestFlushFailureLeavesMarksAlone(t *testing.T) {
 func TestJQColorsWarning(t *testing.T) {
 	p := fixture(t)
 	_, stderr, code := runOpts(t, p, Options{JQColorsInvalid: true, Clock: clock.Clock{Now: func() time.Time { return now }}},
-		me, "--timeout", "0")
+		Request{Me: me, Timeout: "0"})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -543,7 +541,7 @@ func TestJQColorsWarning(t *testing.T) {
 	}
 
 	p2 := fixture(t)
-	_, stderr, code = runOpts(t, p2, Options{JQColorsInvalid: true, Clock: clockIn(t, 1800000000)}, me, "--timeout", "7", "--interval", "3")
+	_, stderr, code = runOpts(t, p2, Options{JQColorsInvalid: true, Clock: clockIn(t, 1800000000)}, Request{Me: me, Timeout: "7", Interval: "3"})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -557,7 +555,7 @@ func TestJQColorsWarning(t *testing.T) {
 func TestBadIntervalExits(t *testing.T) {
 	p := fixture(t)
 	_, _, code := runOpts(t, p, Options{Clock: clock.Clock{Now: func() time.Time { return now }}},
-		me, "--timeout", "300", "--interval", "not-an-interval")
+		Request{Me: me, Timeout: "300", Interval: "not-an-interval"})
 	if code != 1 {
 		t.Errorf("code %d", code)
 	}

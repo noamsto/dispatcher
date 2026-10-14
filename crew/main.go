@@ -121,7 +121,7 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 //     kong can neither print a screen nor end the process, so routeHelp and
 //     helpTexts still decide when help prints and what it says.
 
-// subcommands is every word crew admits: the twenty-five the grammar types, then
+// subcommands is every word crew admits: the twenty-eight the grammar types, then
 // the arms still parsing their own argv. It is the list the switch of #821 admitted,
 // and tests/crew.bats parses this literal to prove every subcommand has its own
 // row in the grouped help; TestAdmittedSubcommands pins it against that
@@ -145,6 +145,7 @@ var typedSubcommands = map[string]bool{
 	"roster": true, "report": true, "retro": true, "rate": true, "fleet": true,
 	"stack": true, "roster-render": true, "pi-agent-dir": true,
 	"status": true, "msg": true, "reply": true, "hold": true,
+	"nudge": true, "await": true, "watch": true,
 }
 
 // passthroughCmd is one unconverted subcommand to kong: its name, then whatever
@@ -198,6 +199,9 @@ type root struct {
 	Msg    argvCmd   `cmd:"" name:"msg" help:"Post a message."`
 	Reply  replyCmd  `cmd:"" name:"reply" help:"Answer a worker as the dispatcher."`
 	Hold   holdCmd   `cmd:"" name:"hold" help:"Queued dispatches waiting on a quota window."`
+	Nudge  nudgeCmd  `cmd:"" name:"nudge" help:"Type into a lead's pane."`
+	Await  awaitCmd  `cmd:"" name:"await" help:"Block until a msg answers an agent."`
+	Watch  watchCmd  `cmd:"" name:"watch" help:"Park until a worker event qualifies."`
 }
 
 // crewArgs is what the root parse resolves to: the word that named the
@@ -486,9 +490,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// delivered marks of whatever it printed once that is on the wire, so it owns
 	// its run like inbox does.
 	if sub == "await" {
+		aw := parsed.typed.Await
 		out := bufio.NewWriterSize(stdout, 64<<10)
 		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
-		code := await.Run(args, paths, out, stderr, await.Options{
+		code := await.Run(await.Request{Me: aw.Agent, From: str(aw.From), Timeout: str(aw.Timeout), Interval: str(aw.Interval)}, paths, out, stderr, await.Options{
 			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
 			Flush:           out.Flush,
 			JQColorsInvalid: !colorsOK,
@@ -501,9 +506,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// batch value rather than lines, so it owns its run like await does. Its
 	// cursor file moves once that value is on the wire.
 	if sub == "watch" {
+		w := parsed.typed.Watch
 		out := bufio.NewWriterSize(stdout, 64<<10)
 		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
-		code := watch.Run(args, paths, out, stderr, watch.Options{
+		code := watch.Run(watch.Request{
+			Since: w.Since, States: str(w.States), Timeout: str(w.Timeout), Interval: str(w.Interval), Crew: str(w.Crew),
+		}, paths, out, stderr, watch.Options{
 			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
 			Flush:           out.Flush,
 			Now:             time.Now,
@@ -586,7 +594,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// nudge resolves its own target, runs its own frame checks and posts its own rows,
 	// its unread scan in process through internal/unread (docs/crew-go-port.md).
 	if sub == "nudge" {
-		return nudge.Run(ctx, args, paths, stdout, stderr,
+		n := parsed.typed.Nudge
+		req, _ := nudge.NewRequest(str(n.Crew), n.Target, n.Wait)
+		return nudge.Run(ctx, req, paths, stdout, stderr,
 			nudge.Default(paths, stderr, os.Getpid(), func() string { return bus.CrewID(ctx, cwd) }))
 	}
 
