@@ -127,6 +127,11 @@ let
       packageNames = map (p: p.name) r.home.packages;
       xdgConfigFile = r.xdg.configFile;
       locked = builtins.fromJSON (builtins.readFile r.programs.dispatcher.lockedSettingsFile);
+      claudePluginDir = r.programs.dispatcher.claudePluginDir;
+      codexPlugin = builtins.replaceStrings ["\n"] [" "] (r.home.activation.dispatcherCodexPlugin.data or "");
+      cursorSkills = builtins.replaceStrings ["\n"] [" "] (r.home.activation.dispatcherCursorSkills.data or "");
+      # Realisable derivations behind the two derived skill trees.
+      skillDrvs = builtins.filter (nixlib.hasSuffix ".drv") (builtins.attrNames (builtins.getContext (r.programs.dispatcher.claudePluginDir + r.home.sessionVariables.DISPATCHER_SKILLS_DIR)));
     };
 
   mkDrvs = cfg: let
@@ -208,9 +213,7 @@ let
   };
 in {
   options = optionNames;
-  full =
-    mkResult fullCfg
-    // {cursorSkills = builtins.replaceStrings ["\n"] [" "] (eval fullCfg).home.activation.dispatcherCursorSkills.data;};
+  full = mkResult fullCfg;
   minimal = mkResult minimalCfg // mkDrvs minimalCfg;
   noAgentBrowser = mkResult noAgentBrowserCfg;
   agentBrowserPath = (eval fullCfg).programs.dispatcher.agentBrowser.executablePath;
@@ -724,7 +727,7 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   run jq -e '.full.sessionVariables.DISPATCHER_CRITICS_DIR | endswith("/adapters/core/critics")' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '.full.sessionVariables.DISPATCHER_SKILLS_DIR | endswith("/adapters/core/skills")' "$EVAL"
+  run jq -e '.noAgentBrowser.sessionVariables.DISPATCHER_SKILLS_DIR | endswith("/adapters/core/skills")' "$EVAL"
   [ "$status" -eq 0 ]
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
@@ -779,6 +782,40 @@ worktree_git_lib_crew_go_row() { # bin
   run jq -e '.noAgentBrowser.packageNames | any(startswith("agent-browser")) | not' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.agentBrowserPath == null or (.agentBrowserPath | endswith("chromium") or endswith("Google Chrome for Testing"))' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "agent-browser skill reaches every enabled engine only when the package is set" {
+  # claude: derived plugin dir; pi: derived skills dir; both realised for real.
+  run jq -e '.full.skillDrvs | length == 2' "$EVAL"
+  [ "$status" -eq 0 ]
+  # The derived claude dir still carries the shipped plugin and skills.
+  claude_dir=$(jq -r .full.claudePluginDir "$EVAL")
+  jq -r '.full.skillDrvs[]' "$EVAL" | xargs nix-store --realise >/dev/null
+  [ -f "$claude_dir/skills/agent-browser/SKILL.md" ]
+  [ -f "$claude_dir/skills/deslop/SKILL.md" ]
+  [ -f "$claude_dir/.claude-plugin/plugin.json" ]
+  pi_dir=$(jq -r .full.sessionVariables.DISPATCHER_SKILLS_DIR "$EVAL")
+  [ -f "$pi_dir/agent-browser/SKILL.md" ]
+  [ -f "$pi_dir/spec-plan-critic/SKILL.md" ]
+  # codex and cursor: activation links/copies it.
+  run jq -e '.full.codexPlugin | contains("agent-browser")' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.cursorSkills | contains("ln -sfn") and contains("-agent-browser-skill/agent-browser\" \"")' "$EVAL"
+  [ "$status" -eq 0 ]
+  # package = null: nothing shipped, static trees, cursor only removes its own link.
+  run jq -e '.noAgentBrowser.skillDrvs == []' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.noAgentBrowser.claudePluginDir | endswith("/adapters/claude-code/plugin")' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.noAgentBrowser.sessionVariables.DISPATCHER_SKILLS_DIR | endswith("/adapters/core/skills")' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.noAgentBrowser.codexPlugin | contains("agent-browser") | not' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.noAgentBrowser.cursorSkills | contains("/nix/store/*-agent-browser-skill/agent-browser) run rm -f") and (contains("agent-browser\" \"") | not)' "$EVAL"
+  [ "$status" -eq 0 ]
+  # An engine left out gets no copy.
+  run jq -e '.codexOnly.skillDrvs == []' "$EVAL"
   [ "$status" -eq 0 ]
 }
 
