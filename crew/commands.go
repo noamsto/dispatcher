@@ -6,6 +6,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
+	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/rate"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 	"github.com/noamsto/dispatcher/crew/internal/retro"
@@ -128,6 +129,56 @@ type statusCmd struct {
 	PR      string `arg:"" optional:"" name:"pr"`
 }
 
+type replyCmd struct {
+	Crew *string `name:"crew"`
+	To   string  `arg:"" optional:"" name:"to"`
+	Body string  `arg:"" optional:"" name:"body"`
+}
+
+type holdReadCmd struct {
+	JSON bool    `name:"json"`
+	Crew *string `name:"crew"`
+}
+
+type holdParkCmd struct {
+	Crew    *string `name:"crew"`
+	Default string  `arg:"" optional:"" name:"default"`
+}
+
+type holdReleaseCmd struct {
+	Crew *string `name:"crew"`
+	ID   string  `arg:"" optional:"" name:"id"`
+}
+
+// holdAddCmd.Title is the words kong leaves alone once it meets one that is no
+// flag: a later `--draft` is part of the title.
+type holdAddCmd struct {
+	Engine   *string  `name:"engine"`
+	Window   *string  `name:"window"`
+	ResetsAt *string  `name:"resets-at"`
+	Agent    *string  `name:"agent"`
+	Ref      *string  `name:"ref"`
+	Branch   *string  `name:"branch"`
+	Tier     *string  `name:"tier"`
+	Model    *string  `name:"model"`
+	Effort   *string  `name:"effort"`
+	Plan     *string  `name:"plan"`
+	MCP      *string  `name:"mcp"`
+	Shape    *string  `name:"shape"`
+	Spec     *string  `name:"spec"`
+	Crew     *string  `name:"crew"`
+	Draft    bool     `name:"draft"`
+	Title    []string `arg:"" optional:"" passthrough:"partial" name:"title"`
+}
+
+type holdCmd struct {
+	Add     holdAddCmd     `cmd:"" name:"add"`
+	List    holdReadCmd    `cmd:"" name:"list"`
+	Due     holdReadCmd    `cmd:"" name:"due"`
+	Park    holdParkCmd    `cmd:"" name:"park"`
+	Release holdReleaseCmd `cmd:"" name:"release"`
+}
+
 // refusal is the stderr line and exit status a typed subcommand's argv earned.
 type refusal struct {
 	msg  string
@@ -197,11 +248,22 @@ var wordings = map[string]wording{
 		extra: func(w string) string { return fmt.Sprintf("crew: status: unexpected argument '%s'", w) },
 		code:  exitFailure,
 	},
-	"roster": plain("roster"),
-	"report": plain("report"),
-	"retro":  {all: retro.Usage, code: exitFailure},
-	"rate":   {all: rate.Usage, code: exitFailure},
-	"fleet":  {all: fleet.Usage, code: exitFailure},
+	"reply": plain("reply"),
+	"hold":  {all: hold.Usage, code: exitFailure},
+	"hold add": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: hold add: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: hold add: unknown arg '%s'", w) },
+		code:        exitFailure,
+	},
+	"hold list":    {all: hold.ListUsage, code: exitFailure},
+	"hold due":     {all: hold.DueUsage, code: exitFailure},
+	"hold park":    {all: hold.ParkUsage, code: exitFailure},
+	"hold release": {all: hold.ReleaseUsage, code: exitFailure},
+	"roster":       plain("roster"),
+	"report":       plain("report"),
+	"retro":        {all: retro.Usage, code: exitFailure},
+	"rate":         {all: rate.Usage, code: exitFailure},
+	"fleet":        {all: fleet.Usage, code: exitFailure},
 	// stack.Usage ends in the newline run adds back.
 	"stack": {all: strings.TrimSuffix(stack.Usage, "\n"), code: exitFailure},
 	"roster-render": {
@@ -303,6 +365,44 @@ func validate(sub string, r *root) *refusal {
 		// Marks exist only for a session; the suffix check above covers any worker id.
 		if c.Undelivered && !strings.HasPrefix(c.Agent, "worker:") {
 			return fail("crew: inbox: --undelivered needs a worker session id ($CREW_WORKER_ID)")
+		}
+	case "reply":
+		if given(r.Reply.Crew) {
+			return fail("crew: --crew needs a value")
+		}
+	case "hold add":
+		c := r.Hold.Add
+		for _, f := range []struct {
+			name string
+			v    *string
+		}{
+			{"--engine", c.Engine}, {"--window", c.Window}, {"--resets-at", c.ResetsAt},
+			{"--agent", c.Agent}, {"--ref", c.Ref}, {"--branch", c.Branch},
+			{"--tier", c.Tier}, {"--model", c.Model}, {"--effort", c.Effort},
+			{"--plan", c.Plan}, {"--mcp", c.MCP}, {"--shape", c.Shape},
+			{"--spec", c.Spec}, {"--crew", c.Crew},
+		} {
+			if given(f.v) {
+				return fail(fmt.Sprintf("crew: %s needs a value", f.name))
+			}
+		}
+	case "hold list", "hold due", "hold park", "hold release":
+		var crew *string
+		switch sub {
+		case "hold list":
+			crew = r.Hold.List.Crew
+		case "hold due":
+			crew = r.Hold.Due.Crew
+		case "hold park":
+			crew = r.Hold.Park.Crew
+		default:
+			if r.Hold.Release.ID == "" {
+				return fail(hold.ReleaseUsage)
+			}
+			crew = r.Hold.Release.Crew
+		}
+		if given(crew) {
+			return fail("crew: --crew needs a value")
 		}
 	case "rate":
 		for _, d := range r.Rate.Root {

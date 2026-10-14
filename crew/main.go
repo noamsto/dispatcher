@@ -121,7 +121,7 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 //     kong can neither print a screen nor end the process, so routeHelp and
 //     helpTexts still decide when help prints and what it says.
 
-// subcommands is every word crew admits: the twenty-three the grammar types, then
+// subcommands is every word crew admits: the twenty-five the grammar types, then
 // the arms still parsing their own argv. It is the list the switch of #821 admitted,
 // and tests/crew.bats parses this literal to prove every subcommand has its own
 // row in the grouped help; TestAdmittedSubcommands pins it against that
@@ -144,7 +144,7 @@ var typedSubcommands = map[string]bool{
 	"deregister": true, "log": true, "sessions": true, "inbox": true,
 	"roster": true, "report": true, "retro": true, "rate": true, "fleet": true,
 	"stack": true, "roster-render": true, "pi-agent-dir": true,
-	"status": true, "msg": true,
+	"status": true, "msg": true, "reply": true, "hold": true,
 }
 
 // passthroughCmd is one unconverted subcommand to kong: its name, then whatever
@@ -196,6 +196,8 @@ type root struct {
 
 	Status statusCmd `cmd:"" name:"status" help:"Post a worker's state."`
 	Msg    argvCmd   `cmd:"" name:"msg" help:"Post a message."`
+	Reply  replyCmd  `cmd:"" name:"reply" help:"Answer a worker as the dispatcher."`
+	Hold   holdCmd   `cmd:"" name:"hold" help:"Queued dispatches waiting on a quota window."`
 }
 
 // crewArgs is what the root parse resolves to: the word that named the
@@ -276,6 +278,32 @@ func refusalKey(args []string) string {
 		}
 	}
 	return args[0]
+}
+
+// holdRequest is the typed hold call: the action is the word after `hold` in
+// the command kong selected.
+func holdRequest(p crewArgs) hold.Request {
+	h := p.typed.Hold
+	action := strings.Fields(p.cmd)[1]
+	switch action {
+	case "add":
+		a := h.Add
+		return hold.Request{Action: action, Crew: str(a.Crew), Add: hold.AddRequest{
+			Engine: str(a.Engine), Window: str(a.Window), ResetsAt: str(a.ResetsAt),
+			Agent: str(a.Agent), Ref: str(a.Ref), Branch: str(a.Branch),
+			Tier: str(a.Tier), Model: str(a.Model), Effort: str(a.Effort),
+			Plan: str(a.Plan), MCP: str(a.MCP), Shape: str(a.Shape), Spec: str(a.Spec),
+			Draft: a.Draft, Title: a.Title,
+		}}
+	case "list":
+		return hold.Request{Action: action, JSON: h.List.JSON, Crew: str(h.List.Crew)}
+	case "due":
+		return hold.Request{Action: action, JSON: h.Due.JSON, Crew: str(h.Due.Crew)}
+	case "park":
+		return hold.Request{Action: action, Crew: str(h.Park.Crew), Default: h.Park.Default}
+	default:
+		return hold.Request{Action: action, Crew: str(h.Release.Crew), ID: h.Release.ID}
+	}
 }
 
 // env is everything run reads from the process, so tests can supply their own.
@@ -523,7 +551,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// and appends to the bus itself, so it owns its run like inbox does.
 	if sub == "hold" {
 		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
-		return hold.Run(args, paths, stdout, stderr, hold.Options{
+		return hold.Run(holdRequest(parsed), paths, stdout, stderr, hold.Options{
 			JQColorsInvalid: !colorsOK,
 			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
 			Now:             time.Now,
@@ -546,7 +574,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// reply resolves its target against the bus, then appends one row itself, so
 	// it owns its run like hold does — and it prints nothing on success.
 	if sub == "reply" {
-		return reply.Run(args, paths, stderr, reply.Options{
+		c := parsed.typed.Reply
+		return reply.Run(reply.Request{Crew: str(c.Crew), To: c.To, Body: c.Body}, paths, stderr, reply.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 			Probes: e.procs,

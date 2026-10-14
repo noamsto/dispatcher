@@ -89,7 +89,12 @@ func (tr *tree) crewDir(t *testing.T, id, pid string) {
 // run is one arm invocation. The crew defaults to c1 so the with-crew path reads
 // like the arm's `CREW_ID=c1 crew reply …`; a case wanting the cross-crew path
 // passes its own Options.
-func (tr *tree) run(t *testing.T, o Options, args ...string) (string, int) {
+func (tr *tree) run(t *testing.T, o Options, to, body string) (string, int) {
+	t.Helper()
+	return tr.runReq(t, o, Request{To: to, Body: body})
+}
+
+func (tr *tree) runReq(t *testing.T, o Options, req Request) (string, int) {
 	t.Helper()
 	if o.CrewID == nil {
 		o.CrewID = func() string { return "c1" }
@@ -101,7 +106,7 @@ func (tr *tree) run(t *testing.T, o Options, args ...string) (string, int) {
 		o.Probes = liveProbes(nil)
 	}
 	var errB bytes.Buffer
-	code := Run(args, tr.paths, &errB, o)
+	code := Run(req, tr.paths, &errB, o)
 	return errB.String(), code
 }
 
@@ -441,22 +446,17 @@ func TestNoCrewAtAll(t *testing.T) {
 	}
 }
 
-func TestFlagsAndPassthroughTargets(t *testing.T) {
+func TestRequestTargets(t *testing.T) {
 	cases := []struct {
-		name   string
-		args   []string
-		crewID string
-		want   string
-		err    string
+		name string
+		req  Request
+		want string
 	}{
-		{name: "--crew needs a value", args: []string{"role:a", "go", "--crew"}, err: "crew: --crew needs a value"},
-		{name: "--crew refuses an empty value", args: []string{"role:a", "go", "--crew", ""}, err: "crew: --crew needs a value"},
-		{name: "--crew after the positionals", args: []string{"role:a", "go", "--crew", "c2"}, want: row("c2", "role:a", "go")},
-		{name: "the last --crew wins", args: []string{"--crew", "c2", "--crew", "c3", "role:a", "go"}, want: row("c3", "role:a", "go")},
-		{name: "a non-worker target is untouched", args: []string{"metrics:c1", "{}"}, want: row("c1", "metrics:c1", "{}")},
-		{name: "a branch with a # is branch-only", args: []string{"worker:feat/12-a#b", "go"}, want: row("c1", "worker:feat/12-a#b#s9-9", "go")},
-		{name: "a missing body is the empty string", args: []string{"role:a"}, want: row("c1", "role:a", "")},
-		{name: "no arguments at all", args: nil, want: row("c1", "", "")},
+		{name: "an explicit crew", req: Request{Crew: "c2", To: "role:a", Body: "go"}, want: row("c2", "role:a", "go")},
+		{name: "a non-worker target is untouched", req: Request{To: "metrics:c1", Body: "{}"}, want: row("c1", "metrics:c1", "{}")},
+		{name: "a branch with a # is branch-only", req: Request{To: "worker:feat/12-a#b", Body: "go"}, want: row("c1", "worker:feat/12-a#b#s9-9", "go")},
+		{name: "a missing body is the empty string", req: Request{To: "role:a"}, want: row("c1", "role:a", "")},
+		{name: "an empty request", req: Request{}, want: row("c1", "", "")},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -465,17 +465,7 @@ func TestFlagsAndPassthroughTargets(t *testing.T) {
 				status(1785951000000, "c1", "worker:feat/12-a#b#s9-9", "working"),
 				status(1785951100000, "c1", "worker:feat/x#s1-1", "working"),
 			)
-			before := len(fx.rows(t))
-			errs, code := fx.run(t, Options{}, c.args...)
-			if c.err != "" {
-				if code != 1 || errs != c.err+"\n" {
-					t.Fatalf("code %d stderr %q, want 1 %q", code, errs, c.err)
-				}
-				if len(fx.rows(t)) != before {
-					t.Fatal("the refusal wrote a row")
-				}
-				return
-			}
+			errs, code := fx.runReq(t, Options{}, c.req)
 			if code != 0 {
 				t.Fatalf("code %d, want 0 (%s)", code, errs)
 			}
