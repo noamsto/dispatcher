@@ -87,7 +87,7 @@ func (a *autosweepCLI) appendBus(rows ...string) {
 	}
 }
 
-// dispatchWithPR seeds one more run, the way tests/rate fixtures did.
+// dispatchWithPR adds a run with an open PR on the host repo.
 func (a *autosweepCLI) dispatchWithPR(branch string, ts int, n int) {
 	a.t.Helper()
 	a.appendBus(
@@ -305,7 +305,7 @@ func TestAutosweepFlagAndTheForkCompose(t *testing.T) {
 	}
 }
 
-// Call-site guard, like the bus-append guards in tests/adapters.bats. No
+// Call-site guard. No
 // behavioural test can see this: a loop of per-row appends fails identically to
 // the single-write form, so reverting it would leave the suite green. Hence a
 // grep on the call site's shape.
