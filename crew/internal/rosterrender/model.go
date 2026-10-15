@@ -77,8 +77,10 @@ func model(paths bus.Paths, crew string, nowSec float64, roleRows []string, rp r
 		return jsonv.Value{}, err
 	}
 	raws := make([]jsonv.Value, len(events))
+	docs := make([]any, len(events))
 	for i, ev := range events {
 		raws[i] = ev.Raw
+		docs[i] = ev.Doc
 	}
 
 	rows, err := roster.Fold(raws, crew, nowSec, rp)
@@ -97,7 +99,17 @@ func model(paths bus.Paths, crew string, nowSec float64, roleRows []string, rp r
 	if err != nil {
 		return jsonv.Value{}, err
 	}
-	holds, err := hold.Outstanding(raws, crew)
+	holdsAny, err := hold.Outstanding(docs, crew)
+	if err != nil {
+		return jsonv.Value{}, err
+	}
+	// hold answers in gojq's form; this package's modelProg is still jsonv-typed
+	// (#1066 row 20), so the fold's result goes back through its JSON text.
+	holdsJSON, err := hold.JSON(holdsAny)
+	if err != nil {
+		return jsonv.Value{}, err
+	}
+	holds, err := jsonv.ParseOne(string(holdsJSON))
 	if err != nil {
 		return jsonv.Value{}, err
 	}

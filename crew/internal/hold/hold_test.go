@@ -14,7 +14,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
@@ -193,6 +192,46 @@ func TestAddResetsAtLiteral(t *testing.T) {
 	}
 }
 
+// `bus.FitLine` measures the encoded line against LineMax, and jq wrote `<`, `>`
+// and `&` as one byte each, so both encoders (the body's and the row's) must
+// leave them raw — an escaped `\u003c` is five bytes longer and moves the shrink
+// point. A title reaches the row only through the body string.
+func TestAddRowKeepsHTMLRaw(t *testing.T) {
+	tr := setup(t)
+	_, err, code := tr.run(t, fullAdd(func(a *AddRequest) { a.Title = []string{`<b> & </b>`} }))
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, err)
+	}
+	if row := tr.rows(t)[0]; !strings.Contains(row, `<b> & </b>`) {
+		t.Errorf("the row escaped the title's html: %s", row)
+	}
+}
+
+// D4: the body string uses Go's encoding, not jq's. Three leaves come out
+// differently and every consumer reads the body with `fromjson`, which makes all
+// three value-equal.
+func TestAddRowEncodesStringsLikeGo(t *testing.T) {
+	cases := map[string]struct{ title, want string }{
+		"DEL is raw, not \\u007f": {"d\x7fhere", "\"title\":\"d\x7fhere\""},
+		"U+2028 is escaped":       {"s\u2028here", "\"title\":\"s\\u2028here\""},
+		"a bad byte is one U+FFFD, escaped": {
+			"bad \xff byte", "\"title\":\"bad \\ufffd byte\"",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tr := setup(t)
+			_, err, code := tr.run(t, fullAdd(func(a *AddRequest) { a.Title = []string{tc.title} }))
+			if code != 0 {
+				t.Fatalf("exit %d: %s", code, err)
+			}
+			if body := mustBody(t, tr.rows(t)[0]); !strings.Contains(body, tc.want) {
+				t.Errorf("body %s has no %s", body, tc.want)
+			}
+		})
+	}
+}
+
 // The arm's rejection order is observable: the first missing required flag
 // wins, and the clock test comes after the integer test.
 func TestAddValidationOrder(t *testing.T) {
@@ -280,7 +319,7 @@ func TestAddPrintsOnlyTheMintedID(t *testing.T) {
 // `list` folds adds minus releases; an add after a release of another id stays.
 func TestListFoldsAddsMinusReleases(t *testing.T) {
 	tr := setup(t)
-	tr.write(t, holdRow(t, "c1", "h1", future), holdRow(t, "c1", "h2", future))
+	tr.write(t, seedHold(t, "c1", "h1", future), seedHold(t, "c1", "h2", future))
 	if _, err, code := tr.run(t, Request{Action: "release", ID: "h1"}); code != 0 {
 		t.Fatalf("release: %d %s", code, err)
 	}
@@ -311,7 +350,7 @@ func TestReleaseUnknownIDExitsZero(t *testing.T) {
 // `due --json` reports the matured hold and leaves the unmatured one out.
 func TestDueJSONReportsOnlyTheMaturedHold(t *testing.T) {
 	tr := setup(t)
-	tr.write(t, holdRow(t, "c1", "due1", "1500000000"), holdRow(t, "c1", "future1", future))
+	tr.write(t, seedHold(t, "c1", "due1", "1500000000"), seedHold(t, "c1", "future1", future))
 	out, _, code := tr.runOpts(t, tr.clock(t, "1700000000"), Request{Action: "due", JSON: true})
 	var held []struct {
 		ID string `json:"id"`
@@ -327,7 +366,7 @@ func TestDueJSONReportsOnlyTheMaturedHold(t *testing.T) {
 // Another crew's holds are invisible to list and due, and due exits 1 for it.
 func TestHoldsAreInvisibleToAnotherCrew(t *testing.T) {
 	tr := setup(t)
-	tr.write(t, holdRow(t, "c1", "h1", "1500000000"))
+	tr.write(t, seedHold(t, "c1", "h1", "1500000000"))
 	for action, wantCode := range map[string]int{"list": 0, "due": 1} {
 		out, _, code := tr.run(t, Request{Action: action, JSON: true, Crew: "c2"})
 		if code != wantCode || out != "[]\n" {
@@ -340,12 +379,12 @@ func TestHoldsAreInvisibleToAnotherCrew(t *testing.T) {
 func TestDueAndParkUseRealTimeWithoutAVirtualClock(t *testing.T) {
 	real := func() time.Time { return time.Now() }
 	tr := setup(t)
-	tr.write(t, holdRow(t, "c1", "h1", fmt.Sprint(time.Now().Unix()-10)))
+	tr.write(t, seedHold(t, "c1", "h1", fmt.Sprint(time.Now().Unix()-10)))
 	if _, _, code := tr.runOpts(t, Options{Now: real}, Request{Action: "due"}); code != 0 {
 		t.Errorf("a matured hold: due exited %d", code)
 	}
 	tr2 := setup(t)
-	tr2.write(t, holdRow(t, "c1", "h2", fmt.Sprint(time.Now().Unix()+30)))
+	tr2.write(t, seedHold(t, "c1", "h2", fmt.Sprint(time.Now().Unix()+30)))
 	out, _, _ := tr2.runOpts(t, Options{Now: real}, Request{Action: "park", Default: "1000"})
 	if n, err := strconv.Atoi(strings.TrimSpace(out)); err != nil || n < 1 || n > 30 {
 		t.Errorf("park printed %q, want 1..30", out)
@@ -552,7 +591,7 @@ func mustBody(t *testing.T, row string) string {
 
 func TestReleaseAppendsAndIsIdempotent(t *testing.T) {
 	tr := setup(t)
-	tr.write(t, holdRow(t, "c1", "h1", "9999999999"))
+	tr.write(t, seedHold(t, "c1", "h1", "9999999999"))
 	for i := 0; i < 2; i++ {
 		out, err, code := tr.run(t, Request{Action: "release", ID: "h1"})
 		if code != 0 || out != "" {
@@ -613,8 +652,8 @@ func TestReleaseLongIDShrinksTheLeaf(t *testing.T) {
 func TestListAndDueReadTheBus(t *testing.T) {
 	tr := setup(t)
 	tr.write(t,
-		holdRow(t, "c1", "h1", "9999999999"),
-		holdRow(t, "c2", "other", "9999999999"),
+		seedHold(t, "c1", "h1", "9999999999"),
+		seedHold(t, "c2", "other", "9999999999"),
 		`{"ts":9,"crew_id":"c1","from":"d","to":"hold:c1","kind":"msg","body":"not json"}`,
 	)
 	out, err, code := tr.run(t, Request{Action: "list", JSON: true})
@@ -650,7 +689,7 @@ func TestDueMaturityBoundary(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			tr := setup(t)
-			tr.write(t, holdRow(t, "c1", "h1", tc.resetsAt))
+			tr.write(t, seedHold(t, "c1", "h1", tc.resetsAt))
 			out, _, code := tr.runOpts(t, tr.clock(t, "1800000000"), Request{Action: "due", JSON: true})
 			if got := jsonLen(t, out); got != tc.want {
 				t.Errorf("matured %d, want %d (%s)", got, tc.want, out)
@@ -773,7 +812,7 @@ func TestParkBranches(t *testing.T) {
 			tr := setup(t)
 			var opts Options
 			if tc.resetsAt != "" {
-				tr.write(t, holdRow(t, "c1", "h1", tc.resetsAt))
+				tr.write(t, seedHold(t, "c1", "h1", tc.resetsAt))
 			}
 			opts = tr.clock(t, "1800000000")
 			out, err, code := tr.runOpts(t, opts, Request{Action: "park", Default: tc.def})
@@ -788,7 +827,7 @@ func TestParkBranches(t *testing.T) {
 // fail the cursor re-arm.
 func TestParkNeverReturnsZero(t *testing.T) {
 	tr := setup(t)
-	tr.write(t, holdRow(t, "c1", "h1", "1800000000"))
+	tr.write(t, seedHold(t, "c1", "h1", "1800000000"))
 	out, _, code := tr.runOpts(t, tr.clock(t, "1800000000"), Request{Action: "park", Default: "1"})
 	if code != 0 || out != "1\n" {
 		t.Errorf("park 1: %q (%d)", out, code)
@@ -851,20 +890,20 @@ func TestDigitsLiteral(t *testing.T) {
 }
 
 func TestOrNulAndElems(t *testing.T) {
-	if orNull("").Kind() != jsonv.KindNull || orNull("x").Kind() != jsonv.KindString {
+	if orNull("") != nil || orNull("x") == nil || *orNull("x") != "x" {
 		t.Error(`orNull: "" must be null and "x" a string`)
 	}
-	if elems(jsonv.Str("x")) != nil {
+	if elems("x") != nil {
 		t.Error("elems of a non-array is no input at all")
 	}
-	if got := elems(jsonv.Array()); len(got) != 0 {
+	if got := elems([]any{}); got == nil || len(got) != 0 {
 		t.Error("elems of an empty array must be an empty slice, so `.` is []")
 	}
 }
 
-// holdRow is a seed shaped like `_build_hold`'s output, written straight to the
+// seedHold is a seed row shaped like `_build_hold`'s output, written straight to the
 // bus so a test can plant a matured hold (`add` refuses a past --resets-at).
-func holdRow(t *testing.T, crew, id, resetsAt string) string {
+func seedHold(t *testing.T, crew, id, resetsAt string) string {
 	t.Helper()
 	return holdRowBody(t, crew, id, mustJSON(t, map[string]any{
 		"id": id,
@@ -919,7 +958,7 @@ func mustJSON(t *testing.T, v any) string {
 
 func jsonLen(t *testing.T, s string) int {
 	t.Helper()
-	var v []jsonv.Value
+	var v []any
 	if err := json.Unmarshal([]byte(s), &v); err != nil {
 		t.Fatalf("not a JSON array (%v): %q", err, s)
 	}
@@ -954,7 +993,7 @@ func TestWorkerAndRoleSessionsCannotWriteHolds(t *testing.T) {
 		})
 		t.Run(env+"/release", func(t *testing.T) {
 			tr := setup(t)
-			tr.write(t, holdRow(t, "c1", "h1", "9999999999"))
+			tr.write(t, seedHold(t, "c1", "h1", "9999999999"))
 			_, err, code := tr.runOpts(t, Options{Sender: p}, Request{Action: "release", ID: "h1"})
 			if want := "crew: hold release: refusing sender 'dispatcher:c1' — " + reason + "\n"; code != 1 || err != want {
 				t.Fatalf("code %d, stderr %q, want 1, %q", code, err, want)
