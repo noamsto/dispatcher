@@ -129,13 +129,6 @@ tests/dispatch.bats	trust	!timing	24875
 tests/dispatch.bats	worktree anchor	!timing	21476
 tests/dispatcher.bats	*	!timing	49160
 tests/dispatcher.bats	orchestrator defaults are data	!timing	1651
-tests/hold.bats	crew clock	!timing	1271
-tests/hold.bats	hold	!timing	484
-tests/hold.bats	hold add	!timing	3822
-tests/hold.bats	hold due	!timing	1170
-tests/hold.bats	hold due --json	!timing	285
-tests/hold.bats	hold park	!timing	1054
-tests/hold.bats	hold release	!timing	312
 tests/model-map-doc.bats	*	!timing	3811
 tests/model-map.bats	model map	!timing	223238
 tests/permission-check.bats	permission-check	!timing	61306

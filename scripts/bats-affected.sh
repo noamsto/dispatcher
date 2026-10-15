@@ -51,7 +51,7 @@ add() {
 # Sets shared by several rows.
 dispatch_set=(adapters crews dispatch-comment dispatch-resume dispatch model-map module)
 prompt_set=(adapters crews dispatch-comment dispatch-resume dispatch dispatcher model-map module permission-check)
-crew_set=(adapters crew-dash crew-id crew crews directive-delivery dispatch-comment dispatch-notify dispatch-resume dispatch dispatcher hold model-map module pr-watch rate-autosweep rate-sweep-all rate reap-race retro)
+crew_set=(adapters crew-dash crew-id crew crews directive-delivery dispatch-comment dispatch-notify dispatch-resume dispatch dispatcher model-map module pr-watch rate-autosweep rate-sweep-all rate reap-race retro)
 
 map_file() {
   local f="$1"

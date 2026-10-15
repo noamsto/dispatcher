@@ -59,7 +59,6 @@ them as relative.
 | reap-race.bats                 |     6 |     7.8 |  0.4% |
 | dispatch-comment.bats          |    10 |     6.7 |  0.3% |
 | dispatcher.bats                |    39 |     5.8 |  0.3% |
-| hold.bats                      |    24 |     5.2 |  0.3% |
 | retro.bats                     |    29 |     4.9 |  0.3% |
 | dispatch-config.bats           |    40 |     4.1 |  0.2% |
 | rate-sweep-all.bats            |    11 |     3.4 |  0.2% |
@@ -151,7 +150,6 @@ doc-pinning test was then triaged by hand (see the cut list).
 | dispatcher.bats        |        39 |           0 |         0 |         0 |       39 |
 | dispatch-notify.bats   |        15 |           0 |         0 |         1 |       16 |
 | dispatch-resume.bats   |       147 |           0 |         4 |         0 |      151 |
-| hold.bats              |        24 |           0 |         0 |         0 |       24 |
 | model-map.bats         |         6 |           0 |         1 |         0 |        7 |
 | model-map-doc.bats     |         9 |           0 |         0 |         0 |        9 |
 | module.bats            |        37 |           0 |         2 |         0 |       39 |
@@ -501,7 +499,6 @@ Blind spots:
 | dispatcher.bats        |    39 |       39 |          0 |            0.8205 |
 | dispatch-notify.bats   |    15 |       15 |          0 |            0.9333 |
 | dispatch-resume.bats   |   162 |      157 |          5 |            0.8471 |
-| hold.bats              |    24 |       24 |          0 |            0.7083 |
 | model-map.bats         |     6 |        6 |          0 |            1.0000 |
 | model-map-doc.bats     |     9 |        9 |          0 |            0.8889 |
 | module.bats            |    39 |        0 |         39 |                na |

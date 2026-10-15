@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -230,6 +232,126 @@ func TestAddValidationOrder(t *testing.T) {
 	}
 }
 
+// Each required flag, left out alone, is refused by name.
+func TestAddEachRequiredFlagRejected(t *testing.T) {
+	omit := map[string]func(*AddRequest){
+		"--engine":    func(a *AddRequest) { a.Engine = "" },
+		"--window":    func(a *AddRequest) { a.Window = "" },
+		"--resets-at": func(a *AddRequest) { a.ResetsAt = "" },
+		"--agent":     func(a *AddRequest) { a.Agent = "" },
+		"--ref":       func(a *AddRequest) { a.Ref = "" },
+		"--branch":    func(a *AddRequest) { a.Branch = "" },
+		"--tier":      func(a *AddRequest) { a.Tier = "" },
+		"--model":     func(a *AddRequest) { a.Model = "" },
+		"--effort":    func(a *AddRequest) { a.Effort = "" },
+	}
+	for flag, edit := range omit {
+		t.Run(flag, func(t *testing.T) {
+			tr := setup(t)
+			_, err, code := tr.run(t, fullAdd(edit))
+			if want := "crew: hold add: " + flag + " is required\n"; code != 1 || err != want {
+				t.Errorf("code %d, stderr %q, want %q", code, err, want)
+			}
+		})
+	}
+}
+
+// A --resets-at behind the clock is refused with the same line as one equal to it.
+func TestAddRejectsAPastResetsAt(t *testing.T) {
+	tr := setup(t)
+	_, err, code := tr.run(t, fullAdd(func(a *AddRequest) { a.ResetsAt = "1600000000" }))
+	if want := "crew: hold add: --resets-at must be in the future\n"; code != 1 || err != want {
+		t.Errorf("code %d, stderr %q, want %q", code, err, want)
+	}
+	if _, serr := os.Stat(tr.paths.Log); serr == nil {
+		t.Error("a rejected add still wrote a log")
+	}
+}
+
+// What `add` prints is the minted id and nothing else.
+func TestAddPrintsOnlyTheMintedID(t *testing.T) {
+	tr := setup(t)
+	out, _, code := tr.run(t, fullAdd(nil))
+	if code != 0 || !regexp.MustCompile(`^[0-9]+-[0-9]+\n$`).MatchString(out) {
+		t.Errorf("code %d, stdout %q", code, out)
+	}
+}
+
+// `list` folds adds minus releases; an add after a release of another id stays.
+func TestListFoldsAddsMinusReleases(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, holdRow(t, "c1", "h1", future), holdRow(t, "c1", "h2", future))
+	if _, err, code := tr.run(t, Request{Action: "release", ID: "h1"}); code != 0 {
+		t.Fatalf("release: %d %s", code, err)
+	}
+	out, _, code := tr.run(t, Request{Action: "list", JSON: true})
+	var held []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(out), &held); err != nil || code != 0 {
+		t.Fatalf("code %d, %q (%v)", code, out, err)
+	}
+	if len(held) != 1 || held[0].ID != "h2" {
+		t.Errorf("outstanding %v, want only h2", held)
+	}
+}
+
+// Releasing an id nothing ever added is a quiet success that still writes its row.
+func TestReleaseUnknownIDExitsZero(t *testing.T) {
+	tr := setup(t)
+	out, err, code := tr.run(t, Request{Action: "release", ID: "does-not-exist"})
+	if code != 0 || out != "" || err != "" {
+		t.Errorf("code %d, stdout %q, stderr %q", code, out, err)
+	}
+	if rows := tr.rows(t); len(rows) != 1 {
+		t.Errorf("rows: %d, want the release row", len(rows))
+	}
+}
+
+// `due --json` reports the matured hold and leaves the unmatured one out.
+func TestDueJSONReportsOnlyTheMaturedHold(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, holdRow(t, "c1", "due1", "1500000000"), holdRow(t, "c1", "future1", future))
+	out, _, code := tr.runOpts(t, tr.clock(t, "1700000000"), Request{Action: "due", JSON: true})
+	var held []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(out), &held); err != nil || code != 0 {
+		t.Fatalf("code %d, %q (%v)", code, out, err)
+	}
+	if len(held) != 1 || held[0].ID != "due1" {
+		t.Errorf("due %v, want only due1", held)
+	}
+}
+
+// Another crew's holds are invisible to list and due, and due exits 1 for it.
+func TestHoldsAreInvisibleToAnotherCrew(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, holdRow(t, "c1", "h1", "1500000000"))
+	for action, wantCode := range map[string]int{"list": 0, "due": 1} {
+		out, _, code := tr.run(t, Request{Action: action, JSON: true, Crew: "c2"})
+		if code != wantCode || out != "[]\n" {
+			t.Errorf("%s: code %d, stdout %q", action, code, out)
+		}
+	}
+}
+
+// With no CREW_CLOCK the maturity test and `park`'s remaining time read the real clock.
+func TestDueAndParkUseRealTimeWithoutAVirtualClock(t *testing.T) {
+	real := func() time.Time { return time.Now() }
+	tr := setup(t)
+	tr.write(t, holdRow(t, "c1", "h1", fmt.Sprint(time.Now().Unix()-10)))
+	if _, _, code := tr.runOpts(t, Options{Now: real}, Request{Action: "due"}); code != 0 {
+		t.Errorf("a matured hold: due exited %d", code)
+	}
+	tr2 := setup(t)
+	tr2.write(t, holdRow(t, "c1", "h2", fmt.Sprint(time.Now().Unix()+30)))
+	out, _, _ := tr2.runOpts(t, Options{Now: real}, Request{Action: "park", Default: "1000"})
+	if n, err := strconv.Atoi(strings.TrimSpace(out)); err != nil || n < 1 || n > 30 {
+		t.Errorf("park printed %q, want 1..30", out)
+	}
+}
+
 func TestAddNoCrewID(t *testing.T) {
 	tr := setup(t)
 	// The arm's `_hold_crew ""` dies in `_crew_id`, before any validation.
@@ -308,6 +430,11 @@ func TestAddSpecErrors(t *testing.T) {
 			}
 			if _, statErr := os.Stat(tr.paths.Log); statErr == nil {
 				t.Errorf("a rejected --spec still wrote a log")
+			}
+			// A directory passes the readability test and fails in the copy, after
+			// holds/ exists; the readability refusals come before it.
+			if _, statErr := os.Stat(filepath.Join(tr.paths.Dir, "holds")); name != "directory" && statErr == nil {
+				t.Errorf("a rejected --spec still created holds/")
 			}
 		})
 	}
