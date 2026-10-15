@@ -50,13 +50,13 @@ func status(ts int64, from string) string {
 // readers raise are marks.Record's, so a delivered msg disappears from the scan.
 func deliver(t *testing.T, dir string, rows ...string) {
 	t.Helper()
-	vs := make([]jsonv.Value, len(rows))
+	vs := make([]any, len(rows))
 	for i, r := range rows {
 		v, err := jsonv.ParseOne(r)
 		if err != nil {
 			t.Fatal(err)
 		}
-		vs[i] = v
+		vs[i] = jsonv.ToAny(v)
 	}
 	if !marks.Record(dir, crew, sid, vs) {
 		t.Fatal("marks.Record failed")

@@ -103,7 +103,7 @@ func readMarks(t *testing.T, p bus.Paths, who string) string {
 
 func mark(t *testing.T, p bus.Paths, who, row string) {
 	t.Helper()
-	if !marks.Record(p.Dir, "c1", who, []jsonv.Value{testjson.MustParse(t, row)}) {
+	if !marks.Record(p.Dir, "c1", who, []any{jsonv.ToAny(testjson.MustParse(t, row))}) {
 		t.Fatal("marks.Record failed")
 	}
 }

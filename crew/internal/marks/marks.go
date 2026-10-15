@@ -15,6 +15,9 @@ package marks
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -25,7 +28,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 //go:embed read.jq
@@ -96,30 +98,38 @@ func Lock(dir, crew, me string) (unlock func(), err error) {
 	}, nil
 }
 
-// Read is `_await_marks`: the file as one JSON object, with a missing,
-// unreadable, torn or non-object file reading as {} — redeliver rather than go
-// blind. jq's `map(objects) | add // {}` drops non-objects and lets the last
-// object holding a key win (`add` folds with `+`, and jq's `+` on objects is
-// shallow), so it runs through jqrun rather than being re-typed in Go.
-func Read(dir, crew, me string) jsonv.Value {
+// Read is `_await_marks`: the file as one JSON object in jqrun's form, with a
+// missing, unreadable, torn or non-object file reading as {} — redeliver rather
+// than go blind. jq's `map(objects) | add // {}` drops non-objects and lets the
+// last object holding a key win (`add` folds with `+`, and jq's `+` on objects
+// is shallow), so it runs through jqrun rather than being re-typed in Go.
+func Read(dir, crew, me string) any {
 	b, err := os.ReadFile(Path(dir, crew, me))
 	if err != nil {
-		return jsonv.Object()
+		return map[string]any{}
 	}
-	vs, err := jsonv.DecodeStream(bytes.NewReader(b))
-	if err != nil {
-		return jsonv.Object()
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	vs := []any{}
+	for {
+		var v any
+		if err := dec.Decode(&v); err == io.EOF {
+			break
+		} else if err != nil {
+			return map[string]any{}
+		}
+		vs = append(vs, v)
 	}
-	old, err := jqrun.Run(readProgram, vs, 0, nil)
+	old, err := jqrun.RunAny(readProgram, vs, 0, nil)
 	if err != nil {
-		return jsonv.Object()
+		return map[string]any{}
 	}
 	return old
 }
 
 // Record is `_await_record` under Lock: when the lock cannot be taken it records
 // unlocked, as before, since a lost mark only means redelivery.
-func Record(dir, crew, me string, msgs []jsonv.Value) bool {
+func Record(dir, crew, me string, msgs []any) bool {
 	if unlock, err := Lock(dir, crew, me); err == nil {
 		defer unlock()
 	}
@@ -128,7 +138,7 @@ func Record(dir, crew, me string, msgs []jsonv.Value) bool {
 
 // RecordHeld is Record for a caller that already holds Lock: a second flock
 // fd in the same process would block on the first and self-deadlock.
-func RecordHeld(dir, crew, me string, msgs []jsonv.Value) bool {
+func RecordHeld(dir, crew, me string, msgs []any) bool {
 	return record(dir, crew, me, msgs)
 }
 
@@ -138,7 +148,7 @@ func RecordHeld(dir, crew, me string, msgs []jsonv.Value) bool {
 // The reduce is the helper's, so a msg whose `from` is not a string fails the
 // whole write rather than skipping that one msg, exactly as `jq` exiting 5
 // inside the helper's `if` does.
-func record(dir, crew, me string, msgs []jsonv.Value) bool {
+func record(dir, crew, me string, msgs []any) bool {
 	if err := os.MkdirAll(dir+"/"+dirName, 0o755); err != nil {
 		return false
 	}
@@ -148,11 +158,16 @@ func record(dir, crew, me string, msgs []jsonv.Value) bool {
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
 
-	out, err := jqrun.Run(recordProgram, msgs, 0, map[string]jsonv.Value{"old": Read(dir, crew, me)})
+	out, err := jqrun.RunAny(recordProgram, msgs, 0, map[string]any{"old": Read(dir, crew, me)})
 	if err == nil {
 		// jq -sc writes the object and its newline; one Write keeps the file from
 		// ever holding a half value.
-		_, err = tmp.Write(append(jsonv.Append(nil, out, jsonv.Options{}), '\n'))
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err = enc.Encode(clamp(out)); err == nil {
+			_, err = tmp.Write(buf.Bytes())
+		}
 	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
@@ -161,4 +176,33 @@ func record(dir, crew, me string, msgs []jsonv.Value) bool {
 		return false
 	}
 	return os.Rename(tmp.Name(), Path(dir, crew, me)) == nil
+}
+
+// clamp is jq's output rule for the computed doubles a ts can carry in from the
+// bus, which json.Marshal refuses: NaN prints as null and ±Inf as ±MaxFloat64.
+func clamp(v any) any {
+	switch x := v.(type) {
+	case float64:
+		switch {
+		case math.IsNaN(x):
+			return nil
+		case math.IsInf(x, 1):
+			return math.MaxFloat64
+		case math.IsInf(x, -1):
+			return -math.MaxFloat64
+		}
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = clamp(e)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, e := range x {
+			out[k] = clamp(e)
+		}
+		return out
+	}
+	return v
 }

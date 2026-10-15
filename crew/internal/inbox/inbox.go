@@ -85,7 +85,7 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		return code
 	}
 
-	var held jsonv.Value
+	var held any
 	if q.Undelivered {
 		unlock, err := marks.Lock(paths.Dir, crew, me)
 		if err != nil {
@@ -145,10 +145,14 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		}
 	}
 	if strings.HasPrefix(me, "worker:") && len(printed) > 0 {
+		recorded := make([]any, len(printed))
+		for i, v := range printed {
+			recorded[i] = jsonv.ToAny(v)
+		}
 		if q.Undelivered {
-			marks.RecordHeld(paths.Dir, crew, me, printed)
+			marks.RecordHeld(paths.Dir, crew, me, recorded)
 		} else {
-			marks.Record(paths.Dir, crew, me, printed)
+			marks.Record(paths.Dir, crew, me, recorded)
 		}
 	}
 	if decode != nil {
@@ -206,7 +210,7 @@ func selects(v jsonv.Value, crew, me, since, from string) bool {
 // left outranks a number ts as `_unread_scan` has it. A msg whose `from` is not
 // a string is dropped first — it has no mark to compare with, and record.jq
 // would fail the whole write over it.
-func pastMarks(rows []jsonv.Value, held jsonv.Value) ([]jsonv.Value, error) {
+func pastMarks(rows []jsonv.Value, held any) ([]jsonv.Value, error) {
 	var named []jsonv.Value
 	for _, v := range rows {
 		if f, ok := v.Get("from"); ok && f.Kind() == jsonv.KindString {
@@ -216,7 +220,11 @@ func pastMarks(rows []jsonv.Value, held jsonv.Value) ([]jsonv.Value, error) {
 	if len(named) == 0 {
 		return nil, nil
 	}
-	keep, err := jqrun.Run("map(.ts > ($marks[.from] // 0))", named, 0, map[string]jsonv.Value{"marks": held})
+	p, err := jqrun.CompileAny("map(.ts > ($marks[.from] // 0))", 0, map[string]any{"marks": held})
+	if err != nil {
+		return nil, err
+	}
+	keep, err := p.Run(jsonv.Array(named...))
 	if err != nil {
 		return nil, err
 	}
