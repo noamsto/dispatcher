@@ -230,16 +230,20 @@ func valueEqual(a, b any) bool {
 }
 
 func numEqual(a, b any) bool {
-	fa, okA := asFloat(a)
-	fb, okB := asFloat(b)
-	if !okA || !okB {
-		return false
-	}
-	switch {
-	case math.IsNaN(fa) || math.IsNaN(fb):
-		return math.IsNaN(fa) && math.IsNaN(fb)
-	case math.IsInf(fa, 0) || math.IsInf(fb, 0):
-		return fa == fb
+	_, aFloat := a.(float64)
+	_, bFloat := b.(float64)
+	if aFloat || bFloat {
+		fa, okA := asFloat(a)
+		fb, okB := asFloat(b)
+		if !okA || !okB {
+			return false
+		}
+		switch {
+		case math.IsNaN(fa) || math.IsNaN(fb):
+			return math.IsNaN(fa) && math.IsNaN(fb)
+		case math.IsInf(fa, 0) || math.IsInf(fb, 0):
+			return fa == fb
+		}
 	}
 	ra, okA := numRat(a)
 	rb, okB := numRat(b)
@@ -365,7 +369,8 @@ func TestRunAnyForm(t *testing.T) {
 		{name: "fraction literal", prog: `.[0].v`, input: []any{map[string]any{"v": json.Number("1699999000000.50")}}, want: json.Number("1699999000000.50")},
 		{name: "big int", prog: `.[0].v`, input: []any{map[string]any{"v": json.Number("12345678901234567891")}}, want: json.Number("12345678901234567891")},
 		{name: "computed NaN", prog: `.[0].v | . - .`, input: []any{map[string]any{"v": nan}}, want: nan},
-		{name: "computed -Inf", prog: `.[0].v`, input: []any{map[string]any{"v": negInf}}, want: negInf},
+		{name: "-Inf passthrough", prog: `.[0].v`, input: []any{map[string]any{"v": negInf}}, want: negInf},
+		{name: "huge exponent", prog: `.[0].v`, input: []any{map[string]any{"v": json.Number("1e1000")}}, want: json.Number("1e1000")},
 		{name: "integer result", prog: `now - 10`, now: 42, want: json.Number("32")},
 		{name: "nested passthrough", prog: `.[0]`,
 			input: []any{map[string]any{"a": []any{json.Number("1"), "s", nil, true, map[string]any{"k": 2.5}}}},
