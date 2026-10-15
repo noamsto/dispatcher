@@ -220,8 +220,8 @@ func (r *run) isAncestor(ctx context.Context, branch, head string) int {
 // enginePane is one `live` row running an engine in the candidate's worktree.
 type enginePane struct{ win, pane, cmd string }
 
-// idleSample is a provably idle claude pane's window, pane and first capture.
-type idleSample struct{ win, pane, frame string }
+// idleSample is a provably idle claude or pi pane's window, pane and first capture.
+type idleSample struct{ win, pane, engine, frame string }
 
 // enginePanes is the live panes running an engine at exactly wt.
 func (r *run) enginePanes(wt string) []enginePane {
@@ -257,7 +257,7 @@ func fields(line string, n int) []string {
 
 // idleEngines is the engine-pane keep ladder: a branch with an engine in its
 // tree is reclaimed only when it is done (or pr_open) with nothing posted since,
-// and every engine pane is a claude pane provably idle on its first sample. The
+// and every engine pane is a claude or pi pane provably idle on its first sample. The
 // idle samples come back for the re-check before the kill; false has noted why
 // the branch is kept.
 func (r *run) idleEngines(ctx context.Context, c *candidate) ([]idleSample, bool) {
@@ -275,7 +275,8 @@ func (r *run) idleEngines(ctx context.Context, c *candidate) ([]idleSample, bool
 	var idle []idleSample
 	if keep == "" {
 		for _, p := range panes {
-			if strings.TrimSuffix(strings.TrimPrefix(p.cmd, "."), "-wrapped") != "claude" {
+			engine := strings.TrimSuffix(strings.TrimPrefix(p.cmd, "."), "-wrapped")
+			if engine != "claude" && engine != "pi" {
 				keep = p.cmd + " has no idle signature"
 				break
 			}
@@ -284,12 +285,11 @@ func (r *run) idleEngines(ctx context.Context, c *candidate) ([]idleSample, bool
 				keep = "empty capture of " + p.pane
 				break
 			}
-			colored := r.p.Tmux(ctx, "capture-pane", "-e", "-p", "-t", p.pane)
-			if why, ok := frame.PaneIdleReason(plain, colored, false); !ok {
+			if why, ok := r.paneIdle(ctx, engine, p.pane, plain); !ok {
 				keep = why
 				break
 			}
-			idle = append(idle, idleSample{p.win, p.pane, plain})
+			idle = append(idle, idleSample{p.win, p.pane, engine, plain})
 		}
 	}
 	if keep != "" {
@@ -297,6 +297,20 @@ func (r *run) idleEngines(ctx context.Context, c *candidate) ([]idleSample, bool
 		return nil, false
 	}
 	return idle, true
+}
+
+// paneIdle is the engine's idle predicate over an already-taken plain capture.
+// A pi keep reason names the pi frame.
+func (r *run) paneIdle(ctx context.Context, engine, pane, plain string) (string, bool) {
+	if engine == "pi" {
+		why, ok := frame.PiIdleReason(plain)
+		if !ok {
+			why = "pi frame: " + why
+		}
+		return why, ok
+	}
+	colored := r.p.Tmux(ctx, "capture-pane", "-e", "-p", "-t", pane)
+	return frame.PaneIdleReason(plain, colored, false)
 }
 
 // treeGates are the gates before reap's own anchored reads of the tree: the
@@ -451,8 +465,7 @@ func (r *run) killIdle(ctx context.Context, c *candidate, idle []idleSample) boo
 	resample := ""
 	for _, s := range idle {
 		plain := r.p.Tmux(ctx, "capture-pane", "-p", "-t", s.pane)
-		colored := r.p.Tmux(ctx, "capture-pane", "-e", "-p", "-t", s.pane)
-		if _, ok := frame.PaneIdleReason(plain, colored, false); plain != s.frame || !ok {
+		if _, ok := r.paneIdle(ctx, s.engine, s.pane, plain); plain != s.frame || !ok {
 			resample = "pane changed between samples"
 			break
 		}

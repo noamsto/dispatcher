@@ -482,6 +482,27 @@ func PaneIdleReason(plain, colored string, skipBg bool) (reason string, idle boo
 	return "", true
 }
 
+// PiIdleReason is the pi counterpart of PaneIdleReason: idle, or the keep
+// reason. pi paints no finished-turn marker, so the frame alone proves only
+// that no turn is running; callers add the bus condition (done, nothing
+// posted since). Anything unrecognised is not idle.
+func PiIdleReason(text string) (reason string, idle bool) {
+	switch {
+	case IsPrompt("pi", text):
+		return "prompt on screen", false
+	case !PiIdleBox(text):
+		return "live turn or no idle input box", false
+	case PiWorkingLabel(text):
+		return "working row on screen", false
+	case PiBoxOccupied(text):
+		return "unsent input", false
+	}
+	if stopped := PiStopped(text); stopped != "" {
+		return "stopped on " + stopped, false
+	}
+	return "", true
+}
+
 // maxRecapRows bounds the wrapped rows of one recap.
 const maxRecapRows = 12
 

@@ -432,10 +432,43 @@ func TestReleaseNixWrappedClaudeUsesIdleCheck(t *testing.T) {
 
 func TestReleaseNonClaudePromptKeeps(t *testing.T) {
 	r := newRel(t)
-	r.panes = "@5\t%5\tpi"
-	r.plain["%5"] = []string{"Pick one\n 1. a\n 2. b\nEnter to select"}
+	r.panes = "@5\t%5\tcodex"
+	r.plain["%5"] = []string{piFrame(t, "frames/codex_hooks_review.txt")}
 	rc, err := r.release("done", 300, false)
 	r.wantKept(rc, err, "keeping feat/x — pane busy: %5 shows a prompt")
+}
+
+func piFrame(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile("../frame/testdata/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimRight(string(b), "\n")
+}
+
+func TestReleasePiUsesIdleCheck(t *testing.T) {
+	cases := []struct{ name, frame, kept string }{
+		{"idle", "frames/nudge_pi_idle.txt", ""},
+		{"mid-turn", "pi/midturn_working_rule.txt", "keeping feat/x — pane busy: %5 is not idle (pi frame: live turn or no idle input box)"},
+		{"unsent input", "frames/nudge_pi_draft.txt", "keeping feat/x — pane busy: %5 is not idle (pi frame: unsent input)"},
+		{"truncated", "frames/pi_truncated_idle.txt", "keeping feat/x — pane busy: %5 is not idle (pi frame: stopped on truncated)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRel(t)
+			r.panes = "@5\t%5\tpi"
+			r.plain["%5"] = []string{piFrame(t, tc.frame)}
+			rc, err := r.release("done", 300, false)
+			if tc.kept != "" {
+				r.wantKept(rc, err, tc.kept)
+				return
+			}
+			if rc != 0 || err != nil || len(r.kills()) != 1 {
+				t.Fatalf("rc=%d err=%v notes=%q", rc, err, r.notes)
+			}
+		})
+	}
 }
 
 func TestReleaseNonClaudeStablePaneReleases(t *testing.T) {

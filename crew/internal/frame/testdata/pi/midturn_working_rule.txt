@@ -1,0 +1,62 @@
+
+ ... (105 earlier lines, ctrl+o to expand)
+   [ "$status" -eq 0 ]
+   [ "${#lines[@]}" -eq "$(suite_count)" ]
+   [[ "$output" == *tests/module.bats* ]]
+   [[ "$stderr" == *"full suite"* ]]
+ }
+
+ Took 0.0s
+
+
+ Now I understand the test style. For testing harness-inventory.sh write mode, the script does cd "$(dirname
+ "${BASH_SOURCE[0]}")/..", so to test on fixtures I need to create a fake repo: a tmpdir with
+ scripts/harness-inventory.sh (copy or symlink), tests/harness/{manifest,assertions,boundaries}.tsv, and small
+ fixture bats files.
+
+ Careful: the check's awk reads manifest + bats files with a hardcoded list of files: tests/crew-id.bats
+ tests/refresh-models.bats tests/pr-watch.bats tests/dispatch.bats (duplicated for the double-pass helper tracking).
+ So a fixture repo must have those 4 files (they can be empty/small). And manifest.tsv must contain case_ids
+ matching, boundaries.tsv must have a row per manifest case, and assertions must have at least one row per case,
+ etc. That's a heavy fixture. Alternative: copy the real repo's tests/harness TSVs and the 4 bats files into a
+ scratch dir. That's the approach: create a mini-repo in $BATS_TEST_TMPDIR with:
+ - scripts/harness-inventory.sh (copy of the real script)
+ - tests/harness/{manifest.tsv,assertions.tsv,boundaries.tsv} (copies of real files)
+ - tests/{crew-id,refresh-models,pr-watch,dispatch}.bats (copies of real files)
+
+ Then mutate the copy of pr-watch.bats (insert a blank line) and run write mode on the copy. That reproduces AC2/AC3
+ on fixture copies (not the real files). Copying real bats files: dispatch.bats is 785 tests, ~12k lines; copying is
+ fine (fast). Total ~ a few MB.
+
+ Actually, could I shrink further? The check requires the 4 bats files exist (awk FILENAME loop: pass[FILENAME]++ —
+ a missing file makes awk error out? With a nonexistent file argument, awk exits with error → if ! diff fails →
+ stale message. So they must exist.) Also manifest/boundaries validation requires every manifest case to have an
+ assertion row and a boundary row. So the fixture must be self-consistent. Copying the real files is simplest and
+ honest: it tests the actual join against the real inventory.
+
+ Hmm, but a subtlety: the fixture copies must be consistent for write mode to succeed. Copying the real repo state
+ gives that (assuming main is green — CI says the check passes on main).
+
+ Alternatively write a minimal synthetic fixture: 1 case in manifest, 1 boundary row, 1-2 assertion rows, a tiny
+ bats file with @test "x" { and assertions. But manifest requires all 4 files present and each manifest case
+ covered. I could make the manifest have 1 case whose source_file is tests/crew-id.bats, and have empty (or
+ near-empty) other 3 bats files. boundaries.tsv with 1 row with 11 columns. That's much lighter and tests the join
+ logic directly, including duplicate-expression ordering (ascending line consumption).
+
+ But AC2 says "after inserting a blank line near the top of tests/pr-watch.bats" — that's the real-tree check (AC2
+ is about the real repo, run manually as acceptance evidence). AC4 says "a targeted bats test covers AC2 and AC3 on
+ fixture copies (not the real files)".
+
+ I think a hybrid: the bats test builds a small synthetic repo fixture. That's cleaner and faster, and directly
+ exercises: (a) write mode idempotent on a clean tree (byte-identical), (b) shifted lines → write fixes only column
+ 4, (c) missing/added assertion → refuses, names row, leaves TSV unchanged.
+
+ However, a synthetic fixture risks not matching the real check's expectations (heredoc/helper logic, case_at
+ mapping requires @test lines at manifest source_line). I need to build the fixture so that --check passes on it
+ first — that's the fixture's own sanity gate
+
+── ⠼ Working ────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+~/git/.worktrees/git/dispatcher/feat-1028-harness-inventory-sh-write-mode-for-asse (feat/1028-harness-inventory-sh...
+↑31k ↓3.0k R251k CH97.1% 19.7%/262k (auto)                              (lemonade) Qwen3.8-Flash-Next-Strata • medium

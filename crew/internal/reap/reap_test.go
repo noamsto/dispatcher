@@ -515,6 +515,39 @@ func TestIdleEngineWindow(t *testing.T) {
 	}
 }
 
+func TestIdlePiEngineWindow(t *testing.T) {
+	read := func(name string) string {
+		b, err := os.ReadFile("../frame/testdata/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimRight(string(b), "\n")
+	}
+	idle, working, draft, truncated := read("frames/nudge_pi_idle.txt"), read("pi/midturn_working_rule.txt"), read("frames/nudge_pi_draft.txt"), read("frames/pi_truncated_idle.txt")
+	f := newFx(t)
+	f.bus(status("done", prURL, 0))
+	f.gh["pr view "+prURL+" --json state --jq .state"] = "MERGED"
+	f.tmux["list-panes -a -F #{window_id}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}"] = "@5\t%5\tpi\t" + f.wt
+
+	f.tmux["capture-pane -p -t %5"] = idle
+	f.reap(f.main, Request{DryRun: true})
+	anchor, _ := wtgit.AnchorPath(f.wt)
+	f.wantOut("crew reap: would kill window @5 (feat/r idle engine)",
+		"crew reap: would reap feat/r (MERGED) @ "+f.wt, "crew reap: would prune record "+anchor)
+
+	f.tmux["capture-pane -p -t %5"] = working
+	f.reap(f.main, Request{DryRun: true})
+	f.wantOut("crew reap: keeping feat/r — an engine is still running there (pi frame: live turn or no idle input box)")
+
+	f.tmux["capture-pane -p -t %5"] = draft
+	f.reap(f.main, Request{DryRun: true})
+	f.wantOut("crew reap: keeping feat/r — an engine is still running there (pi frame: unsent input)")
+
+	f.tmux["capture-pane -p -t %5"] = truncated
+	f.reap(f.main, Request{DryRun: true})
+	f.wantOut("crew reap: keeping feat/r — an engine is still running there (pi frame: stopped on truncated)")
+}
+
 func TestIdleEngineKeepReasons(t *testing.T) {
 	f := newFx(t)
 	f.bus(status("done", prURL, 0))

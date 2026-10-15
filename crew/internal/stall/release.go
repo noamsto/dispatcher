@@ -70,12 +70,18 @@ func (w *watch) finishedRelease() error {
 			prevChange = t
 		}
 		if t-w.bus.ts/1000 >= w.cfg.release {
-			if w.cfg.engine == "claude" {
-				colored := w.p.SampleColored(w.ctx)
-				if err := w.cancelled(); err != nil {
-					return err
+			if w.cfg.engine == "claude" || w.cfg.engine == "pi" {
+				idle := false
+				if w.cfg.engine == "pi" {
+					_, idle = frame.PiIdleReason(plain)
+				} else {
+					colored := w.p.SampleColored(w.ctx)
+					if err := w.cancelled(); err != nil {
+						return err
+					}
+					_, idle = frame.PaneIdleReason(plain, colored, false)
 				}
-				if _, idle := frame.PaneIdleReason(plain, colored, false); idle {
+				if idle {
 					idleTicks++
 				} else {
 					idleTicks = 0
