@@ -285,6 +285,24 @@ _ensure_dispatched_label() {
     --description "Claimed by a dispatcher crew; a worker is on it" >/dev/null 2>&1 || true
 }
 
+# _branch_finished <events-file> <branch> [<git-dir>] — 0 when <branch>'s newest
+# dispatch row belongs to a worker whose latest status is `reaped` by `crew reap`
+# and the branch has no local ref (#1045). Origin refs are the caller's business.
+# Fail-closed: an unreadable file, a row without a worker id or a jq failure all
+# return 1, so the row keeps counting as evidence.
+_branch_finished() {
+  local events="$1" branch="$2" gitdir="${3:-}" worker state rc=0
+  local -a git_cmd=(git)
+  [ -n "$gitdir" ] && git_cmd=(git --git-dir="$gitdir")
+  [ -r "$events" ] || return 1
+  worker="$(jq -nrR --arg b "$branch" '[inputs | fromjson? | objects | select(.kind=="dispatch" and (.branch // "") == $b)] | last | .worker_id // empty' "$events")" || return 1
+  [ -n "$worker" ] || return 1
+  state="$(jq -nrR --arg w "$worker" '[inputs | fromjson? | objects | select(.kind=="status" and .from == $w)] | last | select(.body.state == "reaped" and .body.source == "reap") | "reaped"' "$events")" || return 1
+  [ "$state" = reaped ] || return 1
+  "${git_cmd[@]}" show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null || rc=$?
+  [ "$rc" -eq 1 ]
+}
+
 # Print one line naming the first sign that a `dispatched` claim on <issue> is
 # still live, or nothing when it is stale (#304). Always returns 0 and signals
 # only via stdout: the caller runs it under `set -e`, and every failure to look
@@ -348,14 +366,20 @@ _claim_evidence() {
   fi
   # `fromjson? | objects` skips torn and non-object lines instead of failing
   # the whole read.
-  out="$(jq -nrR --arg p "feat/$issue-" 'first(inputs | fromjson? | objects | select(.kind=="dispatch" and ((.branch // "") | tostring | startswith($p))) | .branch) // empty' "$events")" || {
+  out="$(jq -nrR --arg p "feat/$issue-" 'inputs | fromjson? | objects | select(.kind=="dispatch" and ((.branch // "") | tostring | startswith($p))) | .branch | tostring' "$events")" || {
     echo "events log unreadable"
     return 0
   }
-  if [ -n "$out" ]; then
-    echo "dispatch row for $(_evidence_text "$out")"
+  # A branch whose worker was reaped is finished, not a claim (#1045).
+  local seen=$'\n' br
+  while IFS= read -r br; do
+    [ -n "$br" ] || continue
+    case "$seen" in *$'\n'"$br"$'\n'*) continue ;; esac
+    seen+="$br"$'\n'
+    _branch_finished "$events" "$br" && continue
+    echo "dispatch row for $(_evidence_text "$br")"
     return 0
-  fi
+  done <<<"$out"
   # A bundled issue's branch is named for its primary, so only the row's
   # also_closes names it.
   out="$(jq -nrR --arg i "$issue" 'first(inputs | fromjson? | objects | select(.kind=="dispatch" and any((.also_closes | arrays)[]?; tostring == $i)) | (.branch // "?") | tostring) // empty' "$events")" || {
@@ -455,7 +479,7 @@ _claim_index_dispatch() {
 # clones count here, since this clone's own bus was read by the caller. An
 # unreadable index fails closed, like the bus.
 _claim_index_evidence() {
-  local file rows kind pid row_ts clone
+  local file rows kind pid row_ts branch clone
   file="$(_claim_index_file)"
   [ -n "$file" ] && [ -e "$file" ] || return 0
   rows="$(jq -nrR --arg i "$1" --arg me "$(_claim_index_clone)" '
@@ -463,14 +487,19 @@ _claim_index_evidence() {
     | ([$rows[] | select(.kind == "release") | (.ts | numbers) // 0] | max // 0) as $rel
     | $rows[]
     | select((.kind == "claim-issue" or .kind == "dispatch") and ((.clone // "") | tostring) != $me and ((.ts | numbers) // 0) > $rel)
-    | "\(.kind) \(.pid // 0) \(.ts // "") \(.clone // "?")"' "$file")" || {
+    | "\(.kind) \(.pid // 0) \(.ts // "") \(((.branch // "") | tostring | gsub("[ \t\n]"; "_") | if . == "" then "?" else . end)) \(.clone // "?")"' "$file")" || {
     echo "claim index unreadable"
     return 0
   }
-  while IFS=' ' read -r kind pid row_ts clone; do
+  while IFS=' ' read -r kind pid row_ts branch clone; do
     # A dispatch row outlives its dispatch shell: the worker is on the issue
     # until a release row says otherwise, as the bus's own dispatch rows read.
     if [ "$kind" = dispatch ]; then
+      # The owning clone's own bus says whether this branch was reaped (#1045).
+      case "$branch" in "feat/$1-"*)
+        [ -d "$clone" ] && _branch_finished "$clone/.git/crew/events.jsonl" "$branch" "$clone/.git" && continue
+        ;;
+      esac
       # The same day bound as a claim row: an abandoned worker whose branch
       # nobody reaps must not block other clones forever.
       case "$row_ts" in '' | *[!0-9]*) ;; *)

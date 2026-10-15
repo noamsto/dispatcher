@@ -7991,6 +7991,86 @@ ROWS
   fi
 }
 
+# Reap writes a `reaped` status under the dispatch row's worker id and reclaims
+# the branch and worktree; the dispatch row itself stays in the log (#1045).
+dispatch_slice_a() { # run a real dispatch of issue 42 titled "Do a thing"
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  : >"$STUB_LOG"
+  stub_gh_claim dispatched ""
+}
+
+seed_reaped() { # <worker-id> — the status row `crew reap` writes
+  seed_claim_row "$(jq -nc --arg w "$1" '{ts:9000000000000,kind:"status",from:$w,body:{state:"reaped",source:"reap"}}')"
+}
+
+reclaim_branch_a() { # drop slice A's worktree and local branch like reap
+  git -C "$TEST_REPO" worktree remove --force "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  git -C "$TEST_REPO" branch -D feat/42-do-a-thing
+}
+
+slice_a_worker() {
+  jq -r 'select(.kind=="dispatch" and .branch=="feat/42-do-a-thing") | .worker_id' "$TEST_REPO/.git/crew/events.jsonl" | tail -n 1
+}
+
+@test "claim: a reaped branch's old dispatch row no longer counts as a claim (#1045)" {
+  dispatch_slice_a
+  local w
+  w="$(slice_a_worker)"
+  [ -n "$w" ]
+  seed_reaped "$w"
+  reclaim_branch_a
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do another thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+  grep -q 'issue edit 42 --add-label dispatched' "$STUB_LOG"
+}
+
+@test "claim: a dispatch row with no reaped status still refuses (#1045)" {
+  dispatch_slice_a
+  reclaim_branch_a
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do another thing"
+  assert_claim_refused "dispatch row for feat/42-do-a-thing"
+}
+
+@test "claim: a reaped dispatch row still refuses while its local branch exists (#1045)" {
+  dispatch_slice_a
+  seed_reaped "$(slice_a_worker)"
+  git -C "$TEST_REPO" worktree remove --force "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do another thing"
+  assert_claim_refused "'feat/42-do-a-thing' already exists"
+}
+
+@test "claim: a status after the reaped one keeps the dispatch row live (#1045)" {
+  dispatch_slice_a
+  local w
+  w="$(slice_a_worker)"
+  seed_reaped "$w"
+  seed_claim_row "$(jq -nc --arg w "$w" '{ts:9000000000001,kind:"status",from:$w,body:{state:"working"}}')"
+  reclaim_branch_a
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do another thing"
+  assert_claim_refused "dispatch row for feat/42-do-a-thing"
+}
+
+@test "claim: a reaped status from a manual source keeps the dispatch row live (#1045)" {
+  dispatch_slice_a
+  seed_claim_row "$(jq -nc --arg w "$(slice_a_worker)" '{ts:9000000000000,kind:"status",from:$w,body:{state:"reaped",source:"manual"}}')"
+  reclaim_branch_a
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do another thing"
+  assert_claim_refused "dispatch row for feat/42-do-a-thing"
+}
+
+@test "claim: a newer dispatch row for the reaped branch keeps it live (#1045)" {
+  dispatch_slice_a
+  seed_reaped "$(slice_a_worker)"
+  seed_claim_row '{"ts":9000000000002,"kind":"dispatch","branch":"feat/42-do-a-thing","worker_id":"worker:feat/42-do-a-thing#s2"}'
+  reclaim_branch_a
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do another thing"
+  assert_claim_refused "dispatch row for feat/42-do-a-thing"
+}
+
 @test "claim: a torn line in the bus does not hide a dispatch row or wedge the gate" {
   stub_launch_bins
   seed_claim_row '{"ts":1,"crew_id":"c0","kind":"disp'
@@ -8306,6 +8386,72 @@ seed_other_clone_claim() { # <ts-ms> <pid> [<issue>] — a claim row clone A wro
   seed_other_clone_claim "$(( $(date +%s) * 1000 ))" "$dead_pid"
   printf '{"ts":%s,"crew_id":"cA","kind":"dispatch","issue":"42","branch":"feat/42-do-a-thing","clone":"%s"}\n' \
     "$(( $(date +%s) * 1000 + 1 ))" "$CLONE_A" >>"$CLAIM_INDEX"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  assert_claim_refused "dispatch row from clone $CLONE_A"
+}
+
+# A cloned bus holding the dispatch row and its reaped status; the index row
+# only points at the clone (#1045).
+seed_clone_bus() { # <reaped: yes|no>
+  local bus="$CLONE_A/.git/crew/events.jsonl"
+  mkdir -p "${bus%/*}"
+  printf '{"ts":1,"kind":"dispatch","branch":"feat/42-do-a-thing","worker_id":"worker:feat/42-do-a-thing#s1"}\n' >"$bus"
+  [ "$1" = yes ] || return 0
+  printf '{"ts":2,"kind":"status","from":"worker:feat/42-do-a-thing#s1","body":{"state":"reaped","source":"reap"}}\n' >>"$bus"
+}
+
+seed_other_clone_dispatch() {
+  true &
+  dead_pid=$!
+  wait "$dead_pid"
+  seed_other_clone_claim "$(( $(date +%s) * 1000 ))" "$dead_pid"
+  printf '{"ts":%s,"crew_id":"cA","kind":"dispatch","issue":"42","branch":"feat/42-do-a-thing","clone":"%s"}\n' \
+    "$(( $(date +%s) * 1000 + 1 ))" "$CLONE_A" >>"$CLAIM_INDEX"
+}
+
+@test "claim index: a dispatch row whose branch the other clone reaped does not block (#1045)" {
+  stub_launch_bins
+  seed_other_clone_dispatch
+  seed_clone_bus yes
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+}
+
+@test "claim index: a reaped dispatch row still refuses while the other clone has the local branch (#1045)" {
+  stub_launch_bins
+  seed_other_clone_dispatch
+  seed_clone_bus yes
+  git -C "$CLONE_A" branch feat/42-do-a-thing origin/main
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  assert_claim_refused "dispatch row from clone $CLONE_A"
+}
+
+@test "claim index: a dispatch row without a reaped status in the other clone still refuses (#1045)" {
+  stub_launch_bins
+  seed_other_clone_dispatch
+  seed_clone_bus no
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  assert_claim_refused "dispatch row from clone $CLONE_A"
+}
+
+@test "claim index: a reaped dispatch row still refuses when the other clone's git dir is broken (#1045)" {
+  stub_launch_bins
+  seed_other_clone_dispatch
+  seed_clone_bus yes
+  rm "$CLONE_A/.git/HEAD"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  assert_claim_refused "dispatch row from clone $CLONE_A"
+}
+
+@test "claim index: a dispatch row whose clone bus is missing still refuses (#1045)" {
+  stub_launch_bins
+  seed_other_clone_dispatch
   stub_gh_claim dispatched ""
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   assert_claim_refused "dispatch row from clone $CLONE_A"
