@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,11 +16,16 @@ import (
 // TestMain lets reap's detached ratings sweep run: the async path execs
 // os.Executable() with `reap-autosweep`, which under `go test` is this binary.
 func TestMain(m *testing.M) {
+	pkgDir, _ = os.Getwd()
 	if len(os.Args) > 1 && os.Args[1] == "reap-autosweep" {
 		os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, env{getwd: os.Getwd}))
 	}
 	os.Exit(m.Run())
 }
+
+// pkgDir is the package directory, captured before any test changes cwd
+// (reap chdirs the process) and without runtime.Caller, which -trimpath breaks.
+var pkgDir string
 
 const (
 	widgetsPR  = "https://github.com/acme/widgets/pull/"
@@ -42,6 +46,8 @@ func newAutosweepCLI(t *testing.T) *autosweepCLI {
 	unsetenv(t, "TMUX", "TMUX_PANE", "PR_OPEN_BRANCH", "TMUX_WINDOWS", "CREW_RATE_AUTOSWEEP")
 	a := &autosweepCLI{sweepAllCLI: c}
 	a.repoDir = c.repo(filepath.Join(filepath.Dir(c.root), "widgets"), "acme/widgets")
+	// reap chdirs the process to the repo; t.Chdir restores it afterwards.
+	t.Chdir(a.repoDir)
 	return a
 }
 
@@ -55,6 +61,9 @@ func (a *autosweepCLI) reap(args ...string) (string, string, int) {
 func (a *autosweepCLI) reapOK(mode string, args ...string) string {
 	a.t.Helper()
 	a.t.Setenv("CREW_RATE_AUTOSWEEP", mode)
+	if mode == "1" {
+		a.t.Cleanup(a.settle)
+	}
 	out, errb, code := a.reap(args...)
 	if code != 0 {
 		a.t.Fatalf("reap %v (%s): code %d\nstdout %q\nstderr %q", args, mode, code, out, errb)
@@ -133,6 +142,32 @@ func (a *autosweepCLI) awaitLog(re string, want int) {
 			a.t.Fatalf("autosweep.log never had %d match(es) of %q:\n%s", want, re, data)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// settle waits until the async child has stopped writing the log: its last
+// write is the trim, after which it exits, so a stable log means it is safe to
+// remove the temp dir (and, for the trim test, that the trim has landed).
+func (a *autosweepCLI) settle() {
+	a.t.Helper()
+	deadline := time.Now().Add(asyncLimit)
+	var last int64 = -1
+	stable := 0
+	for stable < 10 && time.Now().Before(deadline) {
+		info, err := os.Stat(a.autosweepLog())
+		size := int64(-2)
+		if err == nil {
+			size = info.Size()
+		}
+		if size == last {
+			stable++
+		} else {
+			stable, last = 0, size
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	if stable < 10 {
+		a.t.Fatal("autosweep.log never settled")
 	}
 }
 
@@ -275,9 +310,7 @@ func TestAutosweepFlagAndTheForkCompose(t *testing.T) {
 // the single-write form, so reverting it would leave the suite green. Hence a
 // grep on the call site's shape.
 func TestGuardRatingsStoreAppendIsOneAtomicOAppendWrite(t *testing.T) {
-	// reap changes the process's cwd, so locate the source from this file.
-	_, self, _, _ := runtime.Caller(0)
-	src, err := os.ReadFile(filepath.Join(filepath.Dir(self), "internal", "rate", "sweep.go"))
+	src, err := os.ReadFile(filepath.Join(pkgDir, "internal", "rate", "sweep.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,9 +459,8 @@ func TestAutosweepTrimmingTheLogKeepsAConcurrentSweepsLaterLines(t *testing.T) {
 	defer func() { _ = holder.Close() }()
 	a.reapOK("1")
 	a.awaitLog(`already running — skipped`, 1)
-	// The skip trims the log as its last write; give it a beat to land before
-	// the holder writes.
-	time.Sleep(time.Second)
+	// The skip trims the log as its last write; the holder writes after it.
+	a.settle()
 	if _, err := holder.WriteString("HOLDER-LATE-LINE\n"); err != nil {
 		t.Fatal(err)
 	}

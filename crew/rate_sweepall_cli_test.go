@@ -52,6 +52,9 @@ func newSweepAllCLI(t *testing.T) *sweepAllCLI {
 	if err := os.MkdirAll(c.root, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Mkdir(filepath.Join(tmp, "home"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	stubs := filepath.Join(tmp, "stubs")
 	if err := os.Mkdir(stubs, 0o755); err != nil {
 		t.Fatal(err)
