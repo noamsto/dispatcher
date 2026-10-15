@@ -2,7 +2,9 @@ package stall
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -10,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 )
 
@@ -29,16 +30,21 @@ func epoch(s string) (int64, bool) {
 // cacheValue is the budget cache as one JSON value; ok=false when it is
 // missing, unreadable or not exactly one value, which every jq read of it
 // treated as no answer.
-func (w *watch) cacheValue() (jsonv.Value, bool) {
+func (w *watch) cacheValue() (any, bool) {
 	data, err := os.ReadFile(w.o.BudgetFile)
 	if err != nil {
-		return jsonv.Value{}, false
+		return nil, false
 	}
-	vs, err := jsonv.DecodeStream(bytes.NewReader(data))
-	if err != nil || len(vs) != 1 {
-		return jsonv.Value{}, false
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, false
 	}
-	return vs[0], true
+	if dec.Decode(new(any)) != io.EOF {
+		return nil, false
+	}
+	return v, true
 }
 
 // lastTry is `_budget_last_try`: the later of the cache's fetched_epoch and
@@ -46,10 +52,12 @@ func (w *watch) cacheValue() (jsonv.Value, bool) {
 func (w *watch) lastTry() int64 {
 	var fetched int64
 	if v, ok := w.cacheValue(); ok {
-		fe, _ := v.Get("fetched_epoch")
-		if x, ok := fe.AsFloat(); ok {
-			if f := math.Floor(x); f >= 0 && f < 1e12 {
-				fetched = int64(f)
+		obj, _ := v.(map[string]any)
+		if n, ok := obj["fetched_epoch"].(json.Number); ok {
+			if x, err := n.Float64(); err == nil {
+				if f := math.Floor(x); f >= 0 && f < 1e12 {
+					fetched = int64(f)
+				}
 			}
 		}
 	}
@@ -197,8 +205,9 @@ func (w *watch) creditsCover() bool {
 	if !ok {
 		return false
 	}
-	engines, _ := v.Get("engines")
-	e, _ := engines.Get(w.cfg.engine)
-	cover, _ := e.Get("credits_cover")
-	return cover.Kind() == jsonv.KindTrue
+	obj, _ := v.(map[string]any)
+	engines, _ := obj["engines"].(map[string]any)
+	e, _ := engines[w.cfg.engine].(map[string]any)
+	cover, _ := e["credits_cover"].(bool)
+	return cover
 }

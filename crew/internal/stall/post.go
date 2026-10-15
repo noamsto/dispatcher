@@ -1,13 +1,14 @@
 package stall
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/panestate"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
@@ -33,6 +34,22 @@ type writeError struct{ err error }
 
 func (e writeError) Error() string { return e.err.Error() }
 
+// statusRow is the watchdog's bus row; field order is the wire order.
+type statusRow struct {
+	TS     int64      `json:"ts"`
+	CrewID string     `json:"crew_id"`
+	From   string     `json:"from"`
+	To     string     `json:"to"`
+	Kind   string     `json:"kind"`
+	Body   statusBody `json:"body"`
+}
+
+type statusBody struct {
+	State  string `json:"state"`
+	Detail string `json:"detail"`
+	Source string `json:"source"`
+}
+
 // postRow is post with a failed write returned as a writeError. A signal ends
 // the watch before anything is written: the arm died on it posting nothing.
 func (w *watch) postRow(state, detail string) error {
@@ -49,19 +66,21 @@ func (w *watch) postRow(state, detail string) error {
 	if err := os.MkdirAll(w.paths.Dir, 0o755); err != nil {
 		return writeError{err}
 	}
-	row := jsonv.Object(
-		jsonv.Member{Key: "ts", Val: jsonv.Num(float64(w.o.Clock.RealMS()))},
-		jsonv.Member{Key: "crew_id", Val: jsonv.Str(w.cfg.crew)},
-		jsonv.Member{Key: "from", Val: jsonv.Str(w.cfg.fromID)},
-		jsonv.Member{Key: "to", Val: jsonv.Str("dispatcher:" + w.cfg.crew)},
-		jsonv.Member{Key: "kind", Val: jsonv.Str("status")},
-		jsonv.Member{Key: "body", Val: jsonv.Object(
-			jsonv.Member{Key: "state", Val: jsonv.Str(state)},
-			jsonv.Member{Key: "detail", Val: jsonv.Str(detail)},
-			jsonv.Member{Key: "source", Val: jsonv.Str("watchdog")},
-		)},
-	)
-	if err := bus.Append(w.paths.Log, string(jsonv.Append(nil, row, jsonv.Options{}))); err != nil {
+	row := statusRow{
+		TS:     w.o.Clock.RealMS(),
+		CrewID: w.cfg.crew,
+		From:   w.cfg.fromID,
+		To:     "dispatcher:" + w.cfg.crew,
+		Kind:   "status",
+		Body:   statusBody{State: state, Detail: detail, Source: "watchdog"},
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(row); err != nil {
+		return writeError{err}
+	}
+	if err := bus.Append(w.paths.Log, strings.TrimSuffix(buf.String(), "\n")); err != nil {
 		return writeError{err}
 	}
 	// --role-watch owns @crew_state for a role pane. Only `blocked` carries
