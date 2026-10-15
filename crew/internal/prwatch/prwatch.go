@@ -174,8 +174,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		Kind:   "msg",
 		Body:   ev,
 	})
-	line := string(b)
-	if err := bus.Append(paths.Log, line); err != nil {
+	if err := bus.Append(paths.Log, string(b)); err != nil {
 		say(stderr, "crew: pr-watch: %v\n", err)
 		return exitFailure
 	}
