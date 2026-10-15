@@ -59,7 +59,6 @@ them as relative.
 | reap-race.bats                 |     6 |     7.8 |  0.4% |
 | dispatch-comment.bats          |    10 |     6.7 |  0.3% |
 | dispatcher.bats                |    39 |     5.8 |  0.3% |
-| retro.bats                     |    29 |     4.9 |  0.3% |
 | dispatch-config.bats           |    40 |     4.1 |  0.2% |
 | rate-sweep-all.bats            |    11 |     3.4 |  0.2% |
 | crew-dash.bats                 |    12 |     3.3 |  0.2% |
@@ -163,7 +162,6 @@ doc-pinning test was then triaged by hand (see the cut list).
 | refresh-budget.bats    |        99 |           0 |         0 |         1 |      100 |
 | refresh-models.bats    |         4 |           0 |         0 |         0 |        4 |
 | refresh-scores.bats    |         6 |           0 |         0 |         0 |        6 |
-| retro.bats             |        29 |           0 |         0 |         0 |       29 |
 | secret-read-guard.bats |       475 |           0 |         0 |         0 |      475 |
 | smoke.bats             |         3 |           0 |         0 |         0 |        3 |
 | worktree-git.bats      |        59 |           0 |         0 |         0 |       59 |
@@ -512,7 +510,6 @@ Blind spots:
 | refresh-budget.bats    |   100 |      100 |          0 |            0.9300 |
 | refresh-models.bats    |     4 |        4 |          0 |            0.5000 |
 | refresh-scores.bats    |     6 |        6 |          0 |            0.6667 |
-| retro.bats             |    29 |       29 |          0 |            0.9310 |
 | secret-read-guard.bats |   483 |      479 |          4 |            0.9958 |
 | smoke.bats             |     3 |        0 |          3 |                na |
 | worktree-git.bats      |    59 |       59 |          0 |            0.8983 |

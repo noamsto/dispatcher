@@ -167,16 +167,6 @@ tests/refresh-budget.bats	local slots	!timing	3249
 tests/refresh-budget.bats	the key file is exclusive	!timing	1531
 tests/refresh-models.bats	*	!timing	1757
 tests/refresh-scores.bats	*	!timing	4961
-tests/retro.bats	*	!timing	5373
-tests/retro.bats	--json rows	!timing	225
-tests/retro.bats	cross-path dedupe	!timing	246
-tests/retro.bats	dispatcher notes	!timing	284
-tests/retro.bats	killed worker	!timing	278
-tests/retro.bats	oversized gate_thrash detail	!timing	565
-tests/retro.bats	plan_required_unaudited	!timing	3303
-tests/retro.bats	snapshot supersede	!timing	259
-tests/retro.bats	unknown tag	!timing	292
-tests/retro.bats	windowing	!timing	298
 tests/secret-read-guard.bats	secret-read-guard	!timing	327738
 tests/secret-read-guard.bats	secret-read-guard	timing	79342
 tests/secret-read-guard.bats	secret-read-guard (merged)	!timing	34400

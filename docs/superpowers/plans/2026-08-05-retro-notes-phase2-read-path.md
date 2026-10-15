@@ -114,7 +114,7 @@ cross-repo retro rollup — if wanted later — has a field to key on without
   `watch`/`inbox` filter on `to == dispatcher:<crew>` or `*`
   (`adapters/core/crew.sh`); a `to` of `retro:<crew>` or `metrics:<crew>`
   matches neither. Exercised directly by "the retro sink does not wake the
-  dispatcher" (`tests/retro.bats:297`).
+  dispatcher" (`the retro tests (since ported to Go, #1065)`).
 - **Snapshot-inherited supersede semantics.** A note learned mid-execute is
   emitted immediately to `retro:<crew>` _and_ carried in the final metrics
   snapshot; a resumed run's later snapshot supersedes the earlier one (`crew
@@ -133,7 +133,7 @@ rate`'s latest-snapshot-wins rule), and `retro`'s dedupe on
    dispatcher-row assembly, tag grouping with vocabulary-then-alphabetical
    ordering, and the three render modes. Extended the `usage:` string to
    `retro [--report [--json]]`.
-2. **`tests/retro.bats`** — 15 tests covering fold/windowing, vocabulary
+2. **`the retro tests (since ported to Go, #1065)`** — 15 tests covering fold/windowing, vocabulary
    drift, silence/dispatcher-notes/robustness, and flags (see "Testing"
    below).
 3. **Dispatcher synthesis** — the "Retro synthesis" section in
@@ -221,7 +221,7 @@ untruncated:
 Maps to the design's "Testing" list:
 
 - **Fold + windowing** — "windowing: two dispatches on one branch keep their
-  own notes" (`tests/retro.bats:53`).
+  own notes" (`the retro tests (since ported to Go, #1065)`).
 - **Killed worker** — "killed worker: seam notes survive a run with no
   terminal status" (`:79`): outcome renders `—` (no terminal status) or
   `working`, with notes retained either way.
@@ -246,7 +246,7 @@ error-path tests (`:314,320,330`).
 `tests/adapters.bats` adds "dispatcher protocol synthesizes retro notes at a
 drained roster" (line 308) for the Phase 3 protocol prose.
 
-Baseline was 413 tests; it is now 429 (16 new: 15 in `tests/retro.bats`, 1 in
+Baseline was 413 tests; it is now 429 (16 new: 15 in `the retro tests (since ported to Go, #1065)`, 1 in
 `tests/adapters.bats`).
 
 ## Verification
