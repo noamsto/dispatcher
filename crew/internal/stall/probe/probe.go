@@ -23,8 +23,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // waitDelay bounds how long Wait lingers on a pipe a grandchild still holds
@@ -43,7 +41,7 @@ type Probes struct {
 	RefreshBudget func(ctx context.Context)
 	SetPaneOption func(ctx context.Context, name, value string)
 	Sh            func(ctx context.Context, op string, args ...string) (out string, rc int)
-	BusRows       func(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool) // log tail, oldest first; ok=false if not a regular file
+	BusRows       func(path string, sinceMS int64, maxLines int) ([]any, bool) // log tail, oldest first; ok=false if not a regular file
 }
 
 // Env is what the probes read from their surroundings.

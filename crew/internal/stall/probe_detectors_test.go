@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strconv"
@@ -12,7 +14,6 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 )
@@ -54,21 +55,23 @@ func pdRows(t *testing.T, h *harness) []string {
 	if err != nil {
 		return nil
 	}
-	vs, err := jsonv.DecodeStream(bytes.NewReader(data))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
 	var rows []string
-	for _, v := range vs {
-		body, _ := v.Get("body")
-		src, _ := body.Get("source")
-		if s, _ := src.AsString(); s != "watchdog" {
+	for {
+		var v any
+		if err := dec.Decode(&v); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		row, _ := v.(map[string]any)
+		body, _ := row["body"].(map[string]any)
+		if s, _ := body["source"].(string); s != "watchdog" {
 			continue
 		}
-		state, _ := body.Get("state")
-		detail, _ := body.Get("detail")
-		st, _ := state.AsString()
-		dt, _ := detail.AsString()
+		st, _ := body["state"].(string)
+		dt, _ := body["detail"].(string)
 		rows = append(rows, st+"|"+dt)
 	}
 	return rows
@@ -912,7 +915,7 @@ func TestBusReadsAreBounded(t *testing.T) {
 	runRead := fmt.Sprintf("%d/0", w.cfg.runStartMS)
 	tailRead := fmt.Sprintf("0/%d", nudgedTailLines)
 	seen := map[string]int{}
-	f.busRows = func(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool) {
+	f.busRows = func(path string, sinceMS int64, maxLines int) ([]any, bool) {
 		seen[fmt.Sprintf("%d/%d", sinceMS, maxLines)]++
 		return probe.BusRows(path, sinceMS, maxLines)
 	}

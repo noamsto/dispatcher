@@ -3,6 +3,7 @@ package nudge
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -40,7 +41,7 @@ type armFixture struct {
 
 	// rows are the log lines the arm reads; toplevel/workerTask drive the
 	// dispatcher-only gate.
-	rows         []jsonv.Value
+	rows         []any
 	toplevel     string
 	workerTask   bool
 	releaseAfter int
@@ -123,7 +124,7 @@ func (f *armFixture) run(req Request) int {
 			}
 			return f.unread
 		},
-		Rows: func(int) ([]jsonv.Value, bool) { return f.rows, true },
+		Rows: func(int) ([]any, bool) { return f.rows, true },
 		PID:  4242,
 	})
 }
@@ -145,7 +146,7 @@ func (f *armFixture) runWith(deps Deps, req Request) int {
 		Unread: func(context.Context, string, string, string) string {
 			return f.unread
 		},
-		Rows: func(int) ([]jsonv.Value, bool) { return f.rows, true },
+		Rows: func(int) ([]any, bool) { return f.rows, true },
 		PID:  4242,
 	})
 }
@@ -188,10 +189,26 @@ func (f *armFixture) rowAt(i int) string {
 	return lines[i]
 }
 
-// dispatchRows is the log the engine lookup reads.
-func dispatchRows(t *testing.T, engine string) []jsonv.Value {
+// anyRows decodes each line into gojq form, numbers as json.Number.
+func anyRows(t *testing.T, lines ...string) []any {
 	t.Helper()
-	return rows(t, `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","session":"s100-1",`+
+	out := make([]any, 0, len(lines))
+	for _, l := range lines {
+		dec := json.NewDecoder(strings.NewReader(l))
+		dec.UseNumber()
+		var v any
+		if err := dec.Decode(&v); err != nil {
+			t.Fatalf("anyRows %q: %v", l, err)
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// dispatchRows is the log the engine lookup reads.
+func dispatchRows(t *testing.T, engine string) []any {
+	t.Helper()
+	return anyRows(t, `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","session":"s100-1",`+
 		`"worker_id":"`+idleReq+`","engine":"`+engine+`"}`)
 }
 
@@ -428,7 +445,7 @@ func TestRunEngineGate(t *testing.T) {
 
 	// A resume row carries the engine the same way, and the pi frames decide with it.
 	f = newArm(t)
-	f.rows = rows(t, `{"ts":3,"crew_id":"c1","kind":"resume","branch":"feat/x","worker_id":"`+idleReq+`","engine":"pi"}`)
+	f.rows = anyRows(t, `{"ts":3,"crew_id":"c1","kind":"resume","branch":"feat/x","worker_id":"`+idleReq+`","engine":"pi"}`)
 	f.pane.frames = []string{
 		fixture(t, "nudge_pi_idle.txt"), fixture(t, "nudge_pi_idle.txt"),
 		fixture(t, "nudge_pi_typed.txt"), fixture(t, "nudge_pi_live.txt"),
@@ -498,9 +515,9 @@ func TestRunWaitJoining(t *testing.T) {
 	f.releasePath, f.releaseAfter = f.lockDir(), 1
 	// The first waiter resolved this lead's nudge after the joiner started, for a msg
 	// at least as new: the joiner reports it instead of typing.
-	f.rows = append(dispatchRows(t, "claude"), row(t,
+	f.rows = append(dispatchRows(t, "claude"), anyRows(t,
 		`{"ts":9999999999999,"crew_id":"c1","kind":"nudge_wait","state":"resolved","to":"`+idleReq+
-			`","result":"accepted","rc":0,"detail":"the lead took the line","msg_ts":`+idleTS+`}`))
+			`","result":"accepted","rc":0,"detail":"the lead took the line","msg_ts":`+idleTS+`}`)...)
 	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 0 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 	}
@@ -535,8 +552,8 @@ func TestRunWaitJoinerTimesOut(t *testing.T) {
 
 func TestRunWaitAlreadyTyped(t *testing.T) {
 	f := newArm(t)
-	f.rows = append(dispatchRows(t, "claude"), row(t,
-		`{"ts":2,"crew_id":"c1","kind":"nudge","to":"`+idleReq+`","result":"held","detail":"still in the box","msg_ts":`+idleTS+`}`))
+	f.rows = append(dispatchRows(t, "claude"), anyRows(t,
+		`{"ts":2,"crew_id":"c1","kind":"nudge","to":"`+idleReq+`","result":"held","detail":"still in the box","msg_ts":`+idleTS+`}`)...)
 	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 3 {
 		t.Fatalf("rc = %d, want 3 (a held nudge is typed-but-not-accepted)", rc)
 	}
@@ -551,8 +568,8 @@ func TestRunWaitAlreadyTyped(t *testing.T) {
 
 	// The same check with an accepted outcome exits 0.
 	f = newArm(t)
-	f.rows = append(dispatchRows(t, "claude"), row(t,
-		`{"ts":2,"crew_id":"c1","kind":"nudge","to":"`+idleReq+`","result":"accepted","detail":"took the line","msg_ts":`+idleTS+`}`))
+	f.rows = append(dispatchRows(t, "claude"), anyRows(t,
+		`{"ts":2,"crew_id":"c1","kind":"nudge","to":"`+idleReq+`","result":"accepted","detail":"took the line","msg_ts":`+idleTS+`}`)...)
 	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 0 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 	}
@@ -688,7 +705,7 @@ func TestRunWaitRowFollowsCrewClock(t *testing.T) {
 		Unread: func(context.Context, string, string, string) string {
 			return f.unread
 		},
-		Rows: func(int) ([]jsonv.Value, bool) { return f.rows, true },
+		Rows: func(int) ([]any, bool) { return f.rows, true },
 		PID:  4242,
 	}); rc != 0 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())

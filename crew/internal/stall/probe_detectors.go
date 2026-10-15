@@ -3,6 +3,7 @@ package stall
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
@@ -470,10 +470,10 @@ func (w *watch) nudged(msgTS int64) bool {
 	if !ok {
 		return false
 	}
-	out, err := jqrun.Run(nudgedProgram, rows, 0, map[string]jsonv.Value{
-		"c":  jsonv.Str(w.cfg.crew),
-		"to": jsonv.Str(w.cfg.fromID),
-		"m":  jsonv.Num(float64(msgTS)),
+	out, err := jqrun.RunAny(nudgedProgram, rows, 0, map[string]any{
+		"c":  w.cfg.crew,
+		"to": w.cfg.fromID,
+		"m":  json.Number(strconv.FormatInt(msgTS, 10)),
 	})
-	return err == nil && out.Kind() == jsonv.KindTrue
+	return err == nil && out == true
 }

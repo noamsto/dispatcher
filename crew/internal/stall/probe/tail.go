@@ -2,11 +2,10 @@ package probe
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // tailChunk is the first window the bus tail reader reads. It doubles until a
@@ -35,7 +34,8 @@ const tailDisorder = 5 * 60 * 1000
 //
 // A line that does not decode to exactly one value is skipped — the arm's
 // `jq -R 'fromjson?'` — so the torn tail of a concurrent append drops out alone.
-func BusRows(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool) {
+// Rows are gojq values: numbers are json.Number, objects map[string]any.
+func BusRows(path string, sinceMS int64, maxLines int) ([]any, bool) {
 	st, err := os.Stat(path)
 	if err != nil || !st.Mode().IsRegular() {
 		return nil, false
@@ -69,7 +69,7 @@ func BusRows(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool) {
 // newest first, returning the rows it kept oldest first. stop is true when the
 // caller may return them: an older-than-sinceMS row ended the scan, maxLines
 // lines were read, or the window covers the file.
-func scanWindow(f *os.File, size, window, sinceMS int64, maxLines int) (rows []jsonv.Value, stop, ok bool) {
+func scanWindow(f *os.File, size, window, sinceMS int64, maxLines int) (rows []any, stop, ok bool) {
 	buf := make([]byte, window)
 	if window > 0 {
 		if _, err := f.ReadAt(buf, size-window); err != nil && !errors.Is(err, io.EOF) {
@@ -91,7 +91,7 @@ func scanWindow(f *os.File, size, window, sinceMS int64, maxLines int) (rows []j
 	// decodes to a row, so the same rule skips both.
 	parts := bytes.Split(buf, []byte("\n"))
 	stop = window == size
-	rev := make([]jsonv.Value, 0, len(parts))
+	rev := make([]any, 0, len(parts))
 	read := 0
 	for i := len(parts) - 1; i >= 0; i-- {
 		if len(parts[i]) == 0 {
@@ -126,30 +126,41 @@ func afterNewline(f *os.File, off int64) bool {
 }
 
 // row decodes one line, the caller's `fromjson?`: anything but exactly one
-// value is not a row.
-func row(line []byte) (jsonv.Value, bool) {
-	vs, err := jsonv.DecodeStream(bytes.NewReader(line))
-	if err != nil || len(vs) != 1 {
-		return jsonv.Value{}, false
+// value is not a row. Numbers stay json.Number, and NaN or Infinity, which
+// encoding/json rejects, make the line no row.
+func row(line []byte) (any, bool) {
+	dec := json.NewDecoder(bytes.NewReader(line))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, false
 	}
-	return vs[0], true
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, false
+	}
+	return v, true
 }
 
 // older is whether v's ts falls before bound. A bound of 0 or less bounds
-// nothing, and a ts that is not a number cannot be shown to fall before one.
-func older(v jsonv.Value, bound int64) bool {
+// nothing, and a row that is not an object or whose ts is not a number cannot
+// be shown to fall before one.
+func older(v any, bound int64) bool {
 	if bound <= 0 {
 		return false
 	}
-	ts, ok := v.Get("ts")
+	obj, ok := v.(map[string]any)
 	if !ok {
 		return false
 	}
-	f, ok := ts.AsFloat()
-	return ok && f < float64(bound)
+	n, ok := obj["ts"].(json.Number)
+	if !ok {
+		return false
+	}
+	f, err := n.Float64()
+	return err == nil && f < float64(bound)
 }
 
-func reverse(vs []jsonv.Value) []jsonv.Value {
+func reverse(vs []any) []any {
 	for i, j := 0, len(vs)-1; i < j; i, j = i+1, j-1 {
 		vs[i], vs[j] = vs[j], vs[i]
 	}

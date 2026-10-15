@@ -514,8 +514,7 @@ func TestBusRows(t *testing.T) {
 	if !ok || len(rows) != 2 {
 		t.Fatalf("BusRows = %d rows, ok=%v; want the 2 whole rows, true", len(rows), ok)
 	}
-	v, _ := rows[1].Get("b")
-	if s, _ := v.AsString(); s != "x" {
+	if s, _ := rows[1].(map[string]any)["b"].(string); s != "x" {
 		t.Errorf("row 1 field b = %q, want x", s)
 	}
 	if _, ok := p.BusRows(dir, 0, 0); ok {

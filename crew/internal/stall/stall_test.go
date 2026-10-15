@@ -14,7 +14,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
@@ -40,7 +39,7 @@ type fake struct {
 	nudge   func(context.Context, nudge.PaneRequest) (string, int)
 	shCalls []string
 	opts    [][]string // tmux set-option argv, as the bash stub logs it
-	busRows func(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool)
+	busRows func(path string, sinceMS int64, maxLines int) ([]any, bool)
 }
 
 func newFake() *fake { return &fake{} }
@@ -122,7 +121,7 @@ func (f *fake) probes() probe.Probes {
 			}
 			return f.sh(op, args...)
 		},
-		BusRows: func(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool) {
+		BusRows: func(path string, sinceMS int64, maxLines int) ([]any, bool) {
 			f.busReads++
 			if f.busRows != nil {
 				return f.busRows(path, sinceMS, maxLines)

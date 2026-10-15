@@ -2,10 +2,10 @@ package stall
 
 import (
 	_ "embed"
+	"encoding/json"
 	"strconv"
 
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 //go:embed refresh.jq
@@ -26,18 +26,18 @@ func (w *watch) refresh() error {
 	if !ok {
 		return nil
 	}
-	out, err := jqrun.Run(refreshProgram, rows, 0, map[string]jsonv.Value{
-		"c":  jsonv.Str(w.cfg.crew),
-		"m":  jsonv.Str(w.cfg.me),
-		"f":  jsonv.Str(w.cfg.fromID),
-		"e0": jsonv.Str(w.cfg.ownEpoch),
-		"t0": jsonv.Num(float64(w.cfg.runStartMS)),
+	out, err := jqrun.RunAny(refreshProgram, rows, 0, map[string]any{
+		"c":  w.cfg.crew,
+		"m":  w.cfg.me,
+		"f":  w.cfg.fromID,
+		"e0": w.cfg.ownEpoch,
+		"t0": json.Number(strconv.FormatInt(w.cfg.runStartMS, 10)),
 	})
 	// A jq that cannot run at all is the arm's `2>/dev/null || true`: no rows.
 	if err != nil {
 		return nil
 	}
-	matched := out.Elems()
+	matched, _ := out.([]any)
 	for _, r := range matched {
 		if field(r, 0) == "1" {
 			return exitCode(0)
@@ -51,9 +51,12 @@ func (w *watch) refresh() error {
 	return nil
 }
 
-func field(row jsonv.Value, i int) string {
-	v, _ := row.At(i)
-	s, _ := v.AsString()
+func field(row any, i int) string {
+	r, _ := row.([]any)
+	if i < 0 || i >= len(r) {
+		return ""
+	}
+	s, _ := r[i].(string)
 	return s
 }
 

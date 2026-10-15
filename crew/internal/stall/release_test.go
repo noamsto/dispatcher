@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/frame"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 )
 
@@ -292,7 +291,7 @@ func TestReleaseEmptyStateLoopsWithoutMaxLife(t *testing.T) {
 	f := newFake()
 	h, w := releaseWatch(t, f, "worker:feat/x", "", Request{Engine: ptr("claude"), MaxLife: ptr("10")})
 	reads := 0
-	w.p.BusRows = func(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool) {
+	w.p.BusRows = func(path string, sinceMS int64, maxLines int) ([]any, bool) {
 		reads++
 		if reads == 5 {
 			h.writeRows(h.status("worker:feat/x", 1, `{"state":"working"}`))
