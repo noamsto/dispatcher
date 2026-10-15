@@ -13,13 +13,13 @@ package retro
 
 import (
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 //go:embed retro.jq
@@ -71,13 +71,13 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer) int {
 		return code
 	}
 
-	raws := make([]jsonv.Value, len(events))
+	docs := make([]any, len(events))
 	for i, ev := range events {
-		raws[i] = ev.Raw
+		docs[i] = ev.Doc
 	}
-	out, err := jqrun.Run(program, raws, 0, map[string]jsonv.Value{
-		"want_report": jsonv.Bool(report),
-		"want_json":   jsonv.Bool(jsonOut),
+	out, err := jqrun.RunAny(program, docs, 0, map[string]any{
+		"want_report": report,
+		"want_json":   jsonOut,
 	})
 	if err != nil {
 		say(stderr, "crew: retro: %s: %v\n", paths.Log, err)
@@ -89,14 +89,16 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer) int {
 	// printed them plus one newline, and the empty string — zero rows, never a
 	// row without its tabs — printed nothing.
 	if jsonOut {
-		if err := jsonv.Encode(stdout, out, jsonv.Options{Indent: true}); err != nil {
+		enc := json.NewEncoder(stdout)
+		enc.SetEscapeHTML(false)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
 			say(stderr, "crew: retro: %v\n", err)
 			return exitFailure
 		}
-		say(stdout, "\n")
 		return 0
 	}
-	if s, _ := out.AsString(); s != "" {
+	if s, _ := out.(string); s != "" {
 		say(stdout, "%s\n", s)
 	}
 	return 0
