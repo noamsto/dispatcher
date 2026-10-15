@@ -23,7 +23,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 //go:embed crews_stats.jq
@@ -111,7 +110,7 @@ func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		return 0
 	}
 
-	meta := make([]jsonv.Value, 0, len(ids))
+	meta := make([]any, 0, len(ids))
 	for _, id := range ids {
 		pidfile := paths.Dir + "/crews/" + id + "/pid"
 		pid, hasFile := PidFileText(pidfile)
@@ -121,27 +120,23 @@ func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		// `$(cat ... || true)` of an empty value is null, a junk or 0 pid is
 		// not alive, and only a positive-integer live-and-not-recycled pid
 		// is.
-		pidV, alive := jsonv.Null(), jsonv.Null()
+		var pidV, alive any
 		if pid != "" {
-			pidV = jsonv.Str(pid)
+			pidV = pid
 			if a := PidAlive(o.Probes, now, pidfile, pid); a != nil {
-				alive = jsonv.Bool(*a)
+				alive = *a
 			}
 		}
-		meta = append(meta, jsonv.Object(
-			jsonv.Member{Key: "id", Val: jsonv.Str(id)},
-			jsonv.Member{Key: "pid", Val: pidV},
-			jsonv.Member{Key: "alive", Val: alive},
-		))
+		meta = append(meta, map[string]any{"id": id, "pid": pidV, "alive": alive})
 	}
 
-	stats := jsonv.Object()
+	var stats any = map[string]any{}
 	if logOK {
-		raws := make([]jsonv.Value, len(events))
+		docs := make([]any, len(events))
 		for i, ev := range events {
-			raws[i] = ev.Raw
+			docs[i] = ev.Doc
 		}
-		if v, err := jqrun.Run(statsProgram, raws, nowSec, nil); err == nil {
+		if v, err := jqrun.RunAny(statsProgram, docs, nowSec, nil); err == nil {
 			stats = v
 		}
 	}
@@ -149,7 +144,7 @@ func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	if o.JQColorsInvalid {
 		say(stderr, "Failed to set $JQ_COLORS\n")
 	}
-	out, err := jqrun.Run(finalProgram, meta, nowSec, map[string]jsonv.Value{"stats": stats})
+	out, err := jqrun.RunAny(finalProgram, meta, nowSec, map[string]any{"stats": stats})
 	if err != nil {
 		// Reachable on a corrupt bus: a stats row whose last/first is null
 		// (a crew whose only ts is missing) makes gojq subtract null, and
@@ -160,7 +155,7 @@ func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		say(stderr, "crew: crews: %v\n", err)
 		return 5
 	}
-	if s, _ := out.AsString(); s != "" {
+	if s, _ := out.(string); s != "" {
 		say(stdout, "%s\n", s)
 	}
 	return 0
