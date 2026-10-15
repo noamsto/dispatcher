@@ -99,7 +99,7 @@ Full surface: `id`, `new`, `crews`, `adopt`, `identity`, `status`, `msg`, `reply
 
 Three design notes worth knowing. `reap` gates on **the PR having landed**, never
 on elapsed time — a worker sits in `done` for as long as review takes, and a
-time-based sweep would delete live work. A claude worker that reported `done` (or
+time-based sweep would delete live work. A claude or pi worker that reported `done` (or
 `pr_open`) and whose PR landed is reclaimed even while its engine idles at the prompt,
 but only on a provably idle frame. `crew stream` reaps on its own every `--reap-every`
 seconds (default 900; `0` disables it) and after batches carrying a terminal status or
