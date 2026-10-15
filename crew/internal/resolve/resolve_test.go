@@ -305,3 +305,14 @@ func TestRowShapes(t *testing.T) {
 		t.Errorf("name-less row: code %d, out %q", code, out)
 	}
 }
+
+// encoding/json repairs each invalid byte in a bus row to U+FFFD, so a target
+// carrying the same raw byte must be repaired alike to match it.
+func TestInvalidUTF8TargetMatchesRepairedBranch(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, "{\"ts\":1,\"crew_id\":\"c1\",\"kind\":\"dispatch\",\"branch\":\"feat/\xff\",\"name\":\"sage\",\"host\":\"h1\"}")
+	out, _, code := tr.run(t, "feat/\xff")
+	if code != 0 || out != "feat/\ufffd\tsage\th1\tc1\n" {
+		t.Errorf("code %d, out %q", code, out)
+	}
+}

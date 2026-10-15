@@ -13,16 +13,18 @@
 package resolve
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	_ "embed"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 //go:embed resolve.jq
@@ -55,8 +57,14 @@ func (r Row) line() string {
 // Rows is the log `_resolve_target` reads: `jq -R` with `fromjson?`, so a line
 // that does not decode to exactly one value is skipped and its neighbours still
 // resolve. A missing, non-regular or unreadable log is no rows at all, which is
-// the arm's `[ -f "$log" ]` miss and its swallowed open failure.
-func Rows(path string) []jsonv.Value {
+// the arm's `[ -f "$log" ]` miss and its swallowed open failure. Numbers stay
+// json.Number, gojq's form, with their literal text intact.
+//
+// Unlike jq, a line with NaN/Infinity, a leading BOM or a leading-zero number is
+// skipped, a lone high-surrogate escape decodes as U+FFFD, invalid UTF-8 is
+// repaired per byte, and a number literal keeps its own text rather than jq's
+// canonical form.
+func Rows(path string) []any {
 	st, err := os.Stat(path)
 	if err != nil || !st.Mode().IsRegular() {
 		return nil
@@ -65,32 +73,54 @@ func Rows(path string) []jsonv.Value {
 	if err != nil {
 		return nil
 	}
-	var rows []jsonv.Value
+	var rows []any
 	for _, line := range strings.Split(string(data), "\n") {
-		vs, err := jsonv.DecodeStream(strings.NewReader(line))
-		if err != nil || len(vs) != 1 {
+		dec := json.NewDecoder(strings.NewReader(line))
+		dec.UseNumber()
+		var v any
+		if dec.Decode(&v) != nil {
 			continue
 		}
-		rows = append(rows, vs[0])
+		if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+			continue
+		}
+		rows = append(rows, v)
 	}
 	return rows
+}
+
+// validUTF8 replaces each invalid byte with U+FFFD, matching encoding/json's
+// per-byte repair of the rows the vars are compared against.
+func validUTF8(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && n == 1 {
+			b.WriteRune(utf8.RuneError)
+		} else {
+			b.WriteString(s[i : i+n])
+		}
+		i += n
+	}
+	return b.String()
 }
 
 // Resolve is `_resolve_target <target> <crew>`: one Row per branch the target
 // names, newest `dispatch` row per branch, in the fold's branch-sorted order —
 // the order the ambiguity list and `where`'s branch join are printed in. A fold
 // that fails on this bus is the arm's swallowed jq failure: no rows.
-func Resolve(rows []jsonv.Value, target, crew string) []Row {
-	out, err := jqrun.Run(program, rows, 0, map[string]jsonv.Value{
-		"t": jsonv.Str(target),
-		"c": jsonv.Str(crew),
-	})
-	if err != nil || out.Kind() != jsonv.KindArray {
+func Resolve(rows []any, target, crew string) []Row {
+	out, err := jqrun.RunAny(program, rows, 0, map[string]any{"t": validUTF8(target), "c": validUTF8(crew)})
+	arr, ok := out.([]any)
+	if err != nil || !ok {
 		return nil
 	}
 	var matched []Row
-	for _, v := range out.Elems() {
-		s, ok := v.AsString()
+	for _, v := range arr {
+		s, ok := v.(string)
 		if !ok {
 			continue
 		}
