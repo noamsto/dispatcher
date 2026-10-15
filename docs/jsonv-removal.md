@@ -99,8 +99,9 @@ conversion; D1 and D2 are owner decisions (last section).
   reading as a record (stack `TestFoldRecord`) or a seam verdict (status
   `TestSeamsRefuseLoneHighSurrogates`); gojq's and `encoding/json`'s
   `fromjson` accept the surrogate. `ParseOne` also takes what `encoding/json`
-  rejects: `Infinity`/`-Infinity`/`inf` (clamped), every NaN spelling
-  (`nan`, `-nan`, `snan`, zero-payload `nan0` -> `null`; `nan1` errors),
+  rejects: `Infinity`/`-Infinity`/`inf` (+-Inf `float64`, printed clamped),
+  every NaN spelling (`nan`, `-nan`, `snan`, zero-payload `nan0` -> NaN
+  `float64`, printed `null`, `type` stays `"number"`; `nan1` errors),
   `+1`/`.5`/`01` and a leading BOM. status `diff_test` feeds `Infinity`,
   `-Infinity`, `nan0`, `snan`, a BOM line and `"n":Infinity` through
   `_jqfromjson` in `TestFoldsMatchJQ` (:84, :86, :96), which skips without jq
@@ -117,7 +118,9 @@ conversion; D1 and D2 are owner decisions (last section).
   (DEL raw, U+2028/9 escaped, per-byte invalid-UTF-8 repair; see the hold
   entry): either a jq-style string encoder for the inner body or accept the
   differences, D4. A consumer reading the body by `fromjson` sees the same
-  value either way; the `FitLine` shrink point moves. `status.msg` passes the
+  value for DEL and U+2028/9, but not for invalid UTF-8 (a truncated-lead or
+  encoded-surrogate sequence in an argv title is one U+FFFD under jsonv, one
+  per byte under Go); the `FitLine` shrink point moves. `status.msg` passes the
   caller's text through as a string (no re-encode), and `bus.Shrink` re-encodes JSON text leaf by leaf
   with source key order kept (bus `TestShrinkKeepsJSONShape`), so Shrink needs
   an order-preserving token walker, not `any`.
@@ -328,14 +331,17 @@ orders them.
   `msg_ts` number literal from `ParseNumber(a.ts)` and optional `rc`. No
   FitLine, no `body`. Breaks: the folds consume tolerant-decoded rows
   (`Rows` is `probe.BusRows`); `msg_ts` is `a.ts`, the unread scan's text
-  output (arm.go :295-297, trimmed, not digit-checked), so a foreign row can
-  make it non-numeric: `ParseNumber` failure prints `"msg_ts":null`, but
-  `json.Number("zz")` makes Marshal error (row unwritten, `waitRow` returns
-  the write error); digit strings beyond `int64` stay exact only as a literal
+  output (arm.go :295-297), digit-checked upstream: `waitRow` runs only after
+  `Pane` refused with "live turn or no idle input box" (:372-384, and `end`
+  only once `waiting` is set), and `Pane` refuses a non-digit `MsgTS` first
+  (nudge.go :99). Leading zeros pass (a foreign string ts `"0017"` sorts above
+  every number in `unread.jq`'s `max_by(.ts)`): `ParseNumber` prints `17`,
+  `json.Number("0017")` makes Marshal error, and `null` would break
+  `joined.jq`'s `(.msg_ts // 0) >= $m`, so a joiner misses the resolved row;
+  digit strings beyond `int64` stay exact only as a literal
   (unpinned); arm_test pins `"msg_ts":1700000000000`, `"rc":2` substrings.
   Verdict: split. Folds keep (c); `waitRow` small helper (struct;
-  `msg_ts` is `json.Number(a.ts)` only when `a.ts` is a valid JSON number,
-  else `nil` -> `null`).
+  `msg_ts` as `json.Number(digitsLiteral(a.ts))`, as in nudge.go).
 - `crew/internal/nudge/nudge.go` — (a), (c). Exported `Deps.Events func()
 ([]jsonv.Value, error)` (:78) and `Deps.Append func(jsonv.Value) error`
   (:79); `nudgeRow` (:215) is ts, nine strings and a `msg_ts` literal (its
@@ -385,9 +391,13 @@ orders them.
   `"3"`, :44-45) or `match` is an `UnmarshalTypeError`: one bad rule would drop
   every rule (unpinned).
   `byEffort` lookup is first-truthy-match over ordered members, and keys are
-  unique after duplicate folding. Verdict: replace, but decode `weight` and
-  `class` (also the `byEffort` entries') as `json.RawMessage` and parse per field with `jqText`/`argjson`
-  semantics, so a bad field degrades only itself; or record the divergence.
+  unique after duplicate folding. jsonv also skips a non-object row (:37-39),
+  drops a rule whose `match` is not a string (:41-43, :55-57) and ignores a
+  non-object `byEffort` (:51). Verdict: replace, but decode `burnClasses` as
+  `[]json.RawMessage` and each row as `map[string]json.RawMessage`, parsing
+  each field with `jqText`/`argjson` semantics and skipping rows and fields
+  that do not fit, so a bad row or field degrades only itself; or record the
+  divergence.
 - `crew/internal/rate/rate.go` — (c), (a). Store read whole with `DecodeStream`
   (:153-158), `Array()` fallback (:163), `deduped.Elems()` (:170), `Bool`/`Str`
   vars (:171-173), `--json` printed with `Encode` + `Indent` (:184). Breaks:
@@ -796,7 +806,7 @@ last, which isolates D1 to one step.
 | 3     | bus          | A: `Event.Doc any` (gojq form) next to `Raw`/`TS`/`Body`; B (step 33): swap the decoder to a Decoder loop (or the tolerant helper), drop `Raw`/`TS`/`Body`                                                                                        | A after 2; B after 4-32 and D1                                                        | B keeps prefix-on-error, `DecodeError` mapping, BOM trim, `UseNumber`; `Shrink` becomes an order-preserving token walker with `SetEscapeHTML(false)` (or stays on jsonv)                                                                                   |
 | 4     | stack        | align/cut: typed gh struct + row structs, `int64` ts, field order `pr, branch, parent, parent_pr, cut, mode, ready, directive, reason`; stack.go: strings in, `any` out                                                                           | stack.go after 2; align and cut can land before                                       | `_jqfromjson` stays in jqrun; drop `member`/`jsonvAppend`/`jqTostring`                                                                                                                                                                                     |
 | 5     | stream       | structs, `json.RawMessage` for `holds`, `json.Number` ticks                                                                                                                                                                                       | `wantsReap` after 2                                                                   | `leading-zero-stripping` pid text helper for stderr; `fieldText` over `map[string]json.RawMessage`; heartbeat line stays compact (bats greps)                                                                                                              |
-| 6     | rate         | burn rules with `json.RawMessage` weight/class parsed per field, `any` for the store, `MarshalIndent`                                                                                                                                             | after 2, 3 (A)                                                                        | `appendBatch` with `SetEscapeHTML(false)`; non-nil `[]` for empty folds                                                                                                                                                                                    |
+| 6     | rate         | burn rules decoded as `[]json.RawMessage` rows of `map[string]json.RawMessage`, parsed per field, `any` for the store, `MarshalIndent`                                                                                                            | after 2, 3 (A)                                                                        | `appendBatch` with `SetEscapeHTML(false)`; non-nil `[]` for empty folds                                                                                                                                                                                    |
 | 7     | piagentdir   | `map[string]json.RawMessage` settings, `MarshalIndent`; keep exit-2 text                                                                                                                                                                          | folds after 2                                                                         | `ParseOne` -> `Unmarshal` into `any`; surrogate rule not needed (Go config)                                                                                                                                                                                |
 | 8     | sessions     | `Fold([]any, ...) (any, error)`                                                                                                                                                                                                                   | after 2, 3                                                                            | callers nudge (nudge.go :384), reply (:214), main.go (:859) adapt at the call site; tests: `TestFold` cases re-decode with `UseNumber`                                                                                                                     |
 | 9     | resolve      | `Rows() []any` (`UseNumber`), `Resolve([]any, ...)`                                                                                                                                                                                               | after 2; callers where (:203), nudge arm.go (:231)                                    | decoder per line follows D1                                                                                                                                                                                                                                |
@@ -805,7 +815,7 @@ last, which isolates D1 to one step.
 | 12    | stall/probe  | `BusRows(...) ([]any, bool)` (`UseNumber`), ts via `json.Number.Float64`                                                                                                                                                                          | after 2; moves with stall, unread, nudge (`Rows`) and the four test stubs             | decoder per line follows D1                                                                                                                                                                                                                                |
 | 13    | stall        | budget: `any` + type assertions; post: struct (`ts, crew_id, from, to, kind, body{state,detail,source}`), `SetEscapeHTML(false)`; bus.go and probe_detectors.go: `[]any` rows                                                                     | budget and post any time; rest after 12                                               | `TestPostRow` is byte-exact: keep field order and raw `é`                                                                                                                                                                                                  |
 | 14    | unread       | `any` rows and marks                                                                                                                                                                                                                              | after 11, 12                                                                          | `TestScan` junk-line cases depend on the decoder (D1)                                                                                                                                                                                                      |
-| 15    | nudge        | row structs (nudge.go `msg_ts` as `json.Number(digitsLiteral(ts))`; arm.go `waitRow` `msg_ts` as `json.Number(a.ts)` if a valid JSON number, else `null`), `Append` takes the struct, `Events`/`Rows` -> `[]any`                                  | after 8, 9, 12                                                                        | arm.go folds keep gojq; `rc` via `strconv.Itoa`; wire.go is the mechanical follow-on                                                                                                                                                                       |
+| 15    | nudge        | row structs (`msg_ts` as `json.Number(digitsLiteral(ts))` in both nudge.go and arm.go `waitRow`), `Append` takes the struct, `Events`/`Rows` -> `[]any`                                                                                           | after 8, 9, 12                                                                        | arm.go folds keep gojq; `rc` via `strconv.Itoa`; wire.go is the mechanical follow-on                                                                                                                                                                       |
 | 16    | await        | `any` rows, `marks` any                                                                                                                                                                                                                           | after 11                                                                              | per-line decode follows D1; drop `Options` colour per D2                                                                                                                                                                                                   |
 | 17    | identity     | `Identity{Name, Tmux string; Color json.RawMessage}`, `Palette() []string`, `For() Identity`, `Assign`                                                                                                                                            | after 3 (A), 2; moves with roster, rosterrender, where                                | `TestRecorded` keeps "color passes through as any json" (RawMessage), non-string name rejects                                                                                                                                                              |
 | 18    | hold         | write: ordered `holdRow`/`holdBody` structs, `*string` for `plan`, `mcp`, `shape`, `spec`, `SetEscapeHTML(false)` on both the body marshal and the row; read: `Outstanding([]any, crew) (any, error)`                                             | write any time; read after 1, 2, 3 (A)                                                | body is JSON text in a string: key order pinned by `TestAddRowMatchesTheBuilder`; `resets_at` is `int64`; string encoder per D4                                                                                                                            |
@@ -837,7 +847,7 @@ After step 35 the importers are gone and what survives depends on D1 and D2:
   `jsonval` package): a clamping marshaller (NaN to `null`, +-Inf to
   +-`1.7976931348623157e308`, `json.Number` verbatim, no HTML escaping) and a
   `ParseOne`-equivalent for `_jqfromjson` (lone-high-surrogate error; `nan`,
-  `-nan`, `snan`, `nan0` to `null`; `Infinity`/`inf` clamped; BOM trim;
+  `-nan`, `snan`, `nan0` to NaN `float64`; `Infinity`/`inf` to +-Inf; BOM trim;
   `+1`/`.5`/`01`; or the jsonv parser itself). Both are pinned by jqrun tests,
   the status/stack surrogate tests and the jq-oracle `TestFoldsMatchJQ`
   (skipped without jq on PATH).
@@ -878,5 +888,6 @@ Decisions for the owner:
   this one file.
 - D4. `hold`'s inner `body` string (JSON text in a string): add a jq-style
   string encoder (DEL as `\u007f`, U+2028/9 raw, jq's invalid-UTF-8 repair) or
-  accept `encoding/json`'s differences, which are value-equal after `fromjson`
-  but change the string text and the `FitLine` length at the boundary.
+  accept `encoding/json`'s differences: DEL and U+2028/9 are value-equal after
+  `fromjson`, invalid-UTF-8 repair is not (argv titles), and all three change
+  the string text and the `FitLine` length at the boundary.
