@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
@@ -23,11 +22,14 @@ func (s *stackCmd) cut(ctx context.Context, record bool, child, oid string) erro
 		if err != nil {
 			return s.refuse("crew: cannot read PR #%s\n", pr)
 		}
-		v, ok := parseJSON(out)
-		if !ok || !isFalse(v, "isCrossRepository") {
+		var g struct {
+			HeadRefName       string `json:"headRefName"`
+			IsCrossRepository *bool  `json:"isCrossRepository"`
+		}
+		if !decodeGh(out, &g) || g.IsCrossRepository == nil || *g.IsCrossRepository {
 			return s.refuse("crew: PR #%s is from a fork; stacked cuts are recorded for same-repo branches only\n", pr)
 		}
-		child = jqString(v, "headRefName")
+		child = g.HeadRefName
 	}
 	if child == "" || !wtgit.PlainBranchName(ctx, child, s.o) {
 		return s.refuse("crew: '%s' is not a plain branch name\n", child)
@@ -93,18 +95,27 @@ func (s *stackCmd) cut(ctx context.Context, record bool, child, oid string) erro
 	return nil
 }
 
+// cutRow is the stack_cut bus row, in the arm's key order.
+type cutRow struct {
+	TS     int64  `json:"ts"`
+	CrewID string `json:"crew_id"`
+	Kind   string `json:"kind"`
+	Branch string `json:"branch"`
+	Parent string `json:"parent"`
+	Cut    string `json:"cut"`
+}
+
 // recordRow is the arm's `jq -nc … ; mkdir -p "$dir"; _bus_append "$log" …`.
 // The row's keys are the arm's order; `body` is not a string, so the row is
 // value-equal, not byte-exact (docs/crew-go-port.md, "Output contract").
 func (s *stackCmd) recordRow(ctx context.Context, child, parent, tip string) error {
-	line := string(jsonvAppend(jsonv.Object(
-		member("ts", jsonv.Num(float64(s.p.Now().UnixMilli()))),
-		member("crew_id", jsonv.Str(s.crew)),
-		member("kind", jsonv.Str("stack_cut")),
-		member("branch", jsonv.Str(child)),
-		member("parent", jsonv.Str(parent)),
-		member("cut", jsonv.Str(tip)),
-	)))
+	line, err := marshalRow(cutRow{
+		TS: s.p.Now().UnixMilli(), CrewID: s.crew, Kind: "stack_cut",
+		Branch: child, Parent: parent, Cut: tip,
+	})
+	if err != nil {
+		return s.refuse("crew: stack: %v\n", err)
+	}
 	if err := os.MkdirAll(s.paths.Dir, 0o755); err != nil {
 		return s.refuse("crew: stack: %v\n", err)
 	}

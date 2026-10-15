@@ -2,10 +2,10 @@ package stack
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
@@ -92,15 +92,17 @@ func (s *stackCmd) pr(ctx context.Context, ref string) (prInfo, error) {
 	if err != nil {
 		return prInfo{}, s.refuse("crew: cannot read the PR for %s\n", ref)
 	}
-	v, ok := parseJSON(out)
-	if !ok || !isFalse(v, "isCrossRepository") {
+	var g struct {
+		Number            json.Number `json:"number"`
+		HeadRefName       string      `json:"headRefName"`
+		BaseRefName       string      `json:"baseRefName"`
+		State             string      `json:"state"`
+		IsCrossRepository *bool       `json:"isCrossRepository"`
+	}
+	if !decodeGh(out, &g) || g.IsCrossRepository == nil || *g.IsCrossRepository {
 		return prInfo{}, s.refuse("crew: the PR for %s is from a fork; stacks are planned for same-repo branches only\n", ref)
 	}
-	num, ok := v.Get("number")
-	if !ok {
-		num = jsonv.Null()
-	}
-	n := jqTostring(num) // `jq -r '.number | tostring'`
+	n := g.Number.String()
 	if !isNumber(n) {
 		return prInfo{}, s.refuse("crew: the PR for %s has no usable number\n", ref)
 	}
@@ -109,8 +111,7 @@ func (s *stackCmd) pr(ctx context.Context, ref string) (prInfo, error) {
 	if err != nil {
 		return prInfo{}, s.refuse("crew: the PR for %s has no usable number\n", ref)
 	}
-	head, base := jqString(v, "headRefName"), jqString(v, "baseRefName")
-	state := jqString(v, "state")
+	head, base, state := g.HeadRefName, g.BaseRefName, g.State
 	if head == "" || !wtgit.PlainBranchName(ctx, head, s.o) ||
 		base == "" || !wtgit.PlainBranchName(ctx, base, s.o) {
 		return prInfo{}, s.refuse("crew: PR #%s has a head or base that is not a plain branch name\n", n)
@@ -310,27 +311,36 @@ func (s *stackCmd) plan(ctx context.Context, layers []layer) error {
 // (docs/crew-go-port.md, "Output contract"), with the arm's key order and its
 // nulls — an empty parent PR, cut or directive is JSON null, not "".
 func layerRow(pr int64, branch, parent string, ppr int64, hasPPR bool, cut, mode string, ready bool, directive, reason string) string {
-	parentPR := jsonv.Null()
-	if hasPPR {
-		parentPR = jsonv.Num(float64(ppr))
+	row := layerOut{
+		PR: pr, Branch: branch, Parent: parent,
+		Cut: nullWhenEmpty(cut), Mode: mode, Ready: ready,
+		Directive: nullWhenEmpty(directive), Reason: reason,
 	}
-	return string(jsonvAppend(jsonv.Object(
-		member("pr", jsonv.Num(float64(pr))),
-		member("branch", jsonv.Str(branch)),
-		member("parent", jsonv.Str(parent)),
-		member("parent_pr", parentPR),
-		member("cut", nullWhenEmpty(cut)),
-		member("mode", jsonv.Str(mode)),
-		member("ready", jsonv.Bool(ready)),
-		member("directive", nullWhenEmpty(directive)),
-		member("reason", jsonv.Str(reason)),
-	)))
+	if hasPPR {
+		row.ParentPR = &ppr
+	}
+	// Plain strings, ints and bools always encode.
+	line, _ := marshalRow(row)
+	return line
+}
+
+// layerOut is the layer row, in the arm's key order.
+type layerOut struct {
+	PR        int64   `json:"pr"`
+	Branch    string  `json:"branch"`
+	Parent    string  `json:"parent"`
+	ParentPR  *int64  `json:"parent_pr"`
+	Cut       *string `json:"cut"`
+	Mode      string  `json:"mode"`
+	Ready     bool    `json:"ready"`
+	Directive *string `json:"directive"`
+	Reason    string  `json:"reason"`
 }
 
 // nullWhenEmpty is the arm's `(if $x == "" then null else $x end)`.
-func nullWhenEmpty(s string) jsonv.Value {
+func nullWhenEmpty(s string) *string {
 	if s == "" {
-		return jsonv.Null()
+		return nil
 	}
-	return jsonv.Str(s)
+	return &s
 }

@@ -450,3 +450,11 @@ func countReady(out string) int {
 	}
 	return n
 }
+
+func TestLayerRowLeavesHTMLUnescaped(t *testing.T) {
+	got := layerRow(7, "a<b>&c", "main", 0, false, "", "none", false, "", "")
+	want := `{"pr":7,"branch":"a<b>&c","parent":"main","parent_pr":null,"cut":null,"mode":"none","ready":false,"directive":null,"reason":""}`
+	if got != want {
+		t.Errorf("layerRow = %s, want %s", got, want)
+	}
+}
