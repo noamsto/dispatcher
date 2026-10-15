@@ -5,6 +5,9 @@
 // are fine; the bus still decodes with jsonv (it accepts jq's NaN extension,
 // which encoding/json rejects) and main.go still encodes with jsonv (canonical
 // pretty output and $JQ_COLORS).
+//
+// Run and Compile take jsonv values; RunAny and CompileAny take gojq's own
+// form directly and are the shared core the jsonv entry points adapt.
 package jqrun
 
 import (
@@ -57,6 +60,17 @@ func Run(prog string, input []jsonv.Value, now float64, vars map[string]jsonv.Va
 	return p.Run(jsonv.Array(input...))
 }
 
+// RunAny is Run over gojq's form: input, the elements of the slurped array,
+// and vars must be json.Number, float64, string, bool, nil, []any or
+// map[string]any. The result is in Normalize's form.
+func RunAny(prog string, input []any, now float64, vars map[string]any, opts ...Option) (any, error) {
+	p, err := CompileAny(prog, now, vars, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return p.RunAny(input)
+}
+
 // Program is a jq program compiled once, with its variables bound, for a
 // caller that runs it over many inputs (one per line, like `jq -R`) where
 // compiling per input would dominate.
@@ -67,6 +81,20 @@ type Program struct {
 
 // Compile is Run's compile step: prog, vars, now and opts as for Run.
 func Compile(prog string, now float64, vars map[string]jsonv.Value, opts ...Option) (*Program, error) {
+	goVars := make(map[string]any, len(vars))
+	for name, v := range vars {
+		g, err := toGo(v)
+		if err != nil {
+			return nil, err
+		}
+		goVars[name] = g
+	}
+	return CompileAny(prog, now, goVars, opts...)
+}
+
+// CompileAny is Compile over gojq's form: vars must be json.Number, float64,
+// string, bool, nil, []any or map[string]any.
+func CompileAny(prog string, now float64, vars map[string]any, opts ...Option) (*Program, error) {
 	names := make([]string, 0, len(vars))
 	values := make([]any, 0, len(vars))
 	for name := range vars {
@@ -74,11 +102,7 @@ func Compile(prog string, now float64, vars map[string]jsonv.Value, opts ...Opti
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		v, err := toGo(vars[name[1:]])
-		if err != nil {
-			return nil, err
-		}
-		values = append(values, v)
+		values = append(values, vars[name[1:]])
 	}
 
 	q, err := gojq.Parse(prog)
@@ -104,14 +128,66 @@ func (p *Program) Run(input jsonv.Value) (jsonv.Value, error) {
 	if err != nil {
 		return jsonv.Value{}, err
 	}
-	v, ok := p.code.Run(in, p.values...).Next()
-	if !ok {
-		return jsonv.Value{}, fmt.Errorf("jq program produced no output")
-	}
-	if err, isErr := v.(error); isErr {
+	out, err := p.RunAny(in)
+	if err != nil {
 		return jsonv.Value{}, err
 	}
-	return fromGo(v)
+	return fromGo(out)
+}
+
+// RunAny is Run over gojq's form: input must be json.Number, float64, string,
+// bool, nil, []any or map[string]any. The result is in Normalize's form.
+func (p *Program) RunAny(input any) (any, error) {
+	v, ok := p.code.Run(input, p.values...).Next()
+	if !ok {
+		return nil, fmt.Errorf("jq program produced no output")
+	}
+	if err, isErr := v.(error); isErr {
+		return nil, err
+	}
+	return Normalize(v)
+}
+
+// Normalize maps a gojq output to json.Number (exact text of integers and
+// big numbers), float64 (computed doubles, including NaN and infinities),
+// string, bool, nil, []any and map[string]any.
+func Normalize(v any) (any, error) {
+	switch t := v.(type) {
+	case nil, bool, float64, json.Number, string:
+		return t, nil
+	case int:
+		return json.Number(strconv.FormatInt(int64(t), 10)), nil
+	case int64:
+		return json.Number(strconv.FormatInt(t, 10)), nil
+	case uint64:
+		return json.Number(strconv.FormatUint(t, 10)), nil
+	case *big.Int:
+		return json.Number(t.String()), nil
+	case *big.Float:
+		return json.Number(t.Text('g', -1)), nil
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			n, err := Normalize(e)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = n
+		}
+		return out, nil
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			n, err := Normalize(e)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = n
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("jqrun: unexpected output type %T", v)
+	}
 }
 
 // freezeNow shadows gojq's builtin `now` by prepending `def now: <now>;` to
@@ -175,8 +251,8 @@ func toGo(v jsonv.Value) (any, error) {
 	}
 }
 
-// fromGo converts gojq's output back. Numbers rebuild from their exact text
-// where gojq has one (passed-through literals, big integers, integer
+// fromGo converts Normalize's output back. Numbers rebuild from their exact
+// text where there is one (passed-through literals, big integers, integer
 // results); computed doubles become computed values. gojq objects are
 // map[string]any (order lost), so members are emitted sorted by key:
 // output is deterministic and, under the value-equal contract, key order is
@@ -189,16 +265,6 @@ func fromGo(v any) (jsonv.Value, error) {
 		return jsonv.Bool(t), nil
 	case float64:
 		return jsonv.Num(t), nil
-	case int:
-		return numText(strconv.FormatInt(int64(t), 10))
-	case int64:
-		return numText(strconv.FormatInt(t, 10))
-	case uint64:
-		return numText(strconv.FormatUint(t, 10))
-	case *big.Int:
-		return numText(t.String())
-	case *big.Float:
-		return numText(t.Text('g', -1))
 	case json.Number:
 		return numText(t.String())
 	case string:
