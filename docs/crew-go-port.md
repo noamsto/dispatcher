@@ -894,8 +894,8 @@ Idiomatic Go, behaviour not bytes (#821). **Exact:** exit codes, usage and
 refusal lines, and the text people or agents read (the tables, the one-line
 errors). **Value-equal only:** JSON — key order, indentation and colour are
 free, compare with `jq -S`; emit through `encoding/json` or typed structs where
-`docs/jsonv-removal.md` classifies a package's jsonv use as bytes-only, and
-through `jsonv` where it records jsonv's semantics as load-bearing.
+`docs/jsonv-removal.md`'s verdict for that file is replace or small helper,
+under that entry's conditions, and through `jsonv` elsewhere.
 **Not mirrored, not documented:** incidental jq/bash quirks — the
 `$JQ_COLORS` warning count, TTY colouring, jq's own error wording, and the
 rewrites `$(...)`/`cut`/`awk` apply to strings.
