@@ -83,7 +83,12 @@ Runs in a local checkout.
 3. Refuse, before any ssh, with exit 2:
    - an unknown host: `crew: remote-run: unknown host '<h>' (no hosts.<h> in settings)`;
    - a missing mapping: `crew: remote-run: host '<h>' has no clone mapped for <owner/repo> (settings hosts.<h>.repos)`;
-   - a bad `--env` key or value, or an invalid `ssh` value.
+   - a bad `--env` key or value, or an invalid `ssh` value;
+   - a caller that is not this crew's dispatcher (`sender.Check`, §Trust
+     boundary 4);
+   - a cwd in a worker worktree whose `.git` no longer matches its dispatcher
+     record (`wtgit.TrustedCwd`, #633). The slug and routing bus are read only
+     after this check.
 4. Build the request as one JSON object:
    `{"v":1,"repo":<remote path>,"slug":<owner/repo>,"argv":[…],"env":{…},"spec":<file text, if --spec-file>}`.
 5. Run `ssh -T -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ForwardAgent=no -o ForwardX11=no -o ClearAllForwardings=yes -o PermitLocalCommand=no -- <ssh> crew remote-exec`
@@ -538,9 +543,11 @@ check) and cannot create a local claim or row (Trust boundary).
    - Agent, X11 and port forwarding are forced off, so no dispatcher-side
      credential becomes reachable on the remote.
 4. **Dispatcher identity on the remote.**
-   - `crew remote-run` is gated locally: it runs `sender.Check("dispatcher:<c>")`
-     before any ssh. The far side cannot see the caller's env or pane ancestry,
-     so the check cannot be left to `remote-exec`.
+   - Every routed call is gated locally. `crew remote-run` and the in-process
+     reply, nudge, where and roster routes all go through one helper that runs
+     `sender.Check("dispatcher:<c>")` before the only `remote.Run`, which is the
+     only ssh. The far side cannot see the caller's env or pane ancestry, so the
+     check cannot be left to `remote-exec`.
    - A routed write runs under sshd, outside tmux, with no `CREW_WORKER_ID` or
      `CREW_ROLE_ID` in its env. The remote's unchanged sender check therefore
      accepts `dispatcher:<c>`.
@@ -564,9 +571,7 @@ check) and cannot create a local claim or row (Trust boundary).
 6. **Laundering check (the protocol's three-part test).** The new inputs a
    remote claude worker controls are its own remote bus rows. `crew remote-run`
    is a new input too: the sanctioned path (`crew remote-run`) refuses a worker by its
-   local sender check, and a direct ssh is §4's residual. A routed `crew nudge`
-   currently relies on nudge's own env/WORKER_TASK.md gate, which is narrower than
-   remote-run's pane-ancestry check — a known gap tracked separately. They reach the
+   local sender check, and a direct ssh is §4's residual. They reach the
    dispatcher only as stream data, the same as a local worker's rows today: no
    execution, grant or identity. `dispatch_row:` is produced by the remote
    `dispatch` process, not the worker, and is validated before the local append.
