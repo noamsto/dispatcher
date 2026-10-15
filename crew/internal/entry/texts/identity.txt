@@ -1,10 +1,14 @@
 usage: crew identity <branch> [crew]
        crew identity --hash <name>
+       crew identity --occupied [--crew ID]
 
 Print the codename and colours for <branch>, assigning one from the pool on first
-call; --hash goes the other way, from a name to its identity.
+call; --hash goes the other way, from a name to its identity; --occupied prints,
+one per line, the codenames already taken here (live dispatches and tmux windows,
+mirror windows included), for a remote dispatch to avoid.
 
   <branch>  Branch whose identity to print or assign
   [crew]    Crew the assignment is recorded for; defaults to this repo's crew
+  --crew    Crew id, in place of the [crew] word
 
   crew identity feat/x

@@ -103,6 +103,34 @@ func TestTargetShapes(t *testing.T) {
 	}
 }
 
+// A `remote:true` row prints a fifth column, `1`; every other row keeps the four,
+// so `cut -f5` is empty for a local worker and nothing that reads columns shifts.
+func TestRemoteRowsPrintAFifthColumn(t *testing.T) {
+	tr := setup(t)
+	tr.write(t,
+		dispatch(1, "c1", "feat/local", "sage", "h1"),
+		dispatch(2, "c1", "feat/far", "nova", "", `"remote":true`),
+		dispatch(3, "c1", "feat/flagless", "iris", "", `"remote":false`),
+		dispatch(4, "c1", "feat/was-remote", "kai", "", `"remote":true`),
+		dispatch(5, "c1", "feat/was-remote", "kai", ""),
+	)
+	for target, want := range map[string]string{
+		"sage":            "feat/local\tsage\th1\tc1\n",
+		"nova":            "feat/far\tnova\t\tc1\t1\n",
+		"feat/far":        "feat/far\tnova\t\tc1\t1\n",
+		"iris":            "feat/flagless\tiris\t\tc1\n",
+		"feat/was-remote": "feat/was-remote\tkai\t\tc1\n",
+	} {
+		if out, errOut, code := tr.run(t, target); code != 0 || out != want || errOut != "" {
+			t.Errorf("%q: code %d, out %q, err %q, want %q", target, code, out, errOut, want)
+		}
+	}
+	rows := Resolve(Rows(tr.paths.Log), "nova", "c1")
+	if len(rows) != 1 || !rows[0].Remote {
+		t.Errorf("Resolve(nova) = %+v, want one remote row", rows)
+	}
+}
+
 // The codename is matched whole, so a branch that merely contains the digits is
 // no issue match, and `#N` needs the branch shape `(^|/)N-`.
 func TestTargetKinds(t *testing.T) {

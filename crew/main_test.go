@@ -796,12 +796,12 @@ func TestAdmittedSubcommands(t *testing.T) {
 		"identity", "stream", "roster-render", "adopt", "nudge", "stall-watch",
 		"status", "msg", "register", "deregister", "fleet", "git-guard",
 		"git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help",
-		"id", "new", "engine-cmd", "dash", "pi-agent-dir",
+		"id", "new", "engine-cmd", "dash", "pi-agent-dir", "relay",
 	}
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
-		"status", "msg", "reply", "hold", "nudge", "await", "watch", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "pr-watch", "stall-watch", "help"} {
+		"status", "msg", "reply", "hold", "nudge", "await", "watch", "relay", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "pr-watch", "stall-watch", "help"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -1021,6 +1021,8 @@ var refusalRows = []struct {
 	{"identity missing value", []string{"identity", "--hash"}, "crew: identity --hash <name>", 1},
 	{"identity empty value", []string{"identity", "--hash", ""}, "crew: identity --hash <name>", 1},
 	{"identity no branch", []string{"identity"}, "crew: identity <branch> [crew]", 1},
+	{"identity occupied with a branch", []string{"identity", "--occupied", "feat/x"}, "crew: identity: --occupied takes no branch", 2},
+	{"identity occupied crew missing value", []string{"identity", "--occupied", "--crew"}, "crew: identity: --crew needs an id", 1},
 	{"identity empty branch", []string{"identity", ""}, "crew: identity <branch> [crew]", 1},
 
 	{"crews unknown flag", []string{"crews", "--bogus"}, "crew: crews: unknown arg '--bogus'", 64},

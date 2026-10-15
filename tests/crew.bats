@@ -12827,6 +12827,7 @@ EOF
     printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/9-gone","name":"sage","host":"h1"}'
     printf '%s\n' '{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"eng-12-thing","name":"nova","also_closes":["ENG-13"]}'
     printf '%s\n' '{"ts":3,"crew_id":"c1","kind":"dispatch","branch":"fix/10-b","name":"nova"}'
+    printf '%s\n' '{"ts":4,"crew_id":"c1","kind":"dispatch","branch":"feat/far","name":"iris","remote":true}'
   } >"$dir/events.jsonl"
   for target in '#9' 9 feat/9-gone sage 'worker:feat/9-gone#s1-2'; do
     run run_crew resolve-target "$target"
@@ -12842,6 +12843,10 @@ EOF
   run run_crew resolve-target nova
   [ "$status" -eq 2 ]
   [[ "$output" == *"ambiguous"*"eng-12-thing"*"fix/10-b"* ]]
+  # only a remote:true row prints a fifth column
+  run run_crew resolve-target iris
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf 'feat/far\tiris\t\tc1\t1')" ]
   run run_crew resolve-target nobody
   [ "$status" -eq 1 ]
   [[ "$output" == *"no worker matches 'nobody'"* ]]

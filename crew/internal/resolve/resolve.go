@@ -41,17 +41,23 @@ func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format
 
 // Row is one branch the target names: the arm's four `@tsv` columns, still in
 // the escaped form `@tsv` wrote (it escapes any tab or newline inside a field,
-// which is why splitting on a raw tab is exact).
+// which is why splitting on a raw tab is exact). Remote is the fifth column a
+// `remote:true` dispatch row adds; every other row stays four wide.
 type Row struct {
 	Branch string
 	Name   string
 	Host   string
 	CrewID string
+	Remote bool
 }
 
-// line is the arm's stdout: the four columns as `jq -r` printed them.
+// line is the arm's stdout: the columns as `jq -r` printed them.
 func (r Row) line() string {
-	return strings.Join([]string{r.Branch, r.Name, r.Host, r.CrewID}, "\t")
+	cols := []string{r.Branch, r.Name, r.Host, r.CrewID}
+	if r.Remote {
+		cols = append(cols, "1")
+	}
+	return strings.Join(cols, "\t")
 }
 
 // Rows is the log `_resolve_target` reads: `jq -R` with `fromjson?`, so a line
@@ -125,10 +131,10 @@ func Resolve(rows []any, target, crew string) []Row {
 			continue
 		}
 		f := strings.Split(s, "\t")
-		if len(f) != 4 {
+		if len(f) != 4 && len(f) != 5 {
 			continue
 		}
-		matched = append(matched, Row{Branch: f[0], Name: f[1], Host: f[2], CrewID: f[3]})
+		matched = append(matched, Row{Branch: f[0], Name: f[1], Host: f[2], CrewID: f[3], Remote: len(f) == 5})
 	}
 	return matched
 }

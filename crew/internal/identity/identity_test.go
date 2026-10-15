@@ -3,13 +3,16 @@ package identity
 import (
 	"errors"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
@@ -477,7 +480,7 @@ func TestAssign(t *testing.T) {
 			if tc.emptyCrew {
 				ask = ""
 			}
-			got := compact(Assign(rows(t, tc.log), branch, ask, p))
+			got := compact(Assign(rows(t, tc.log), branch, ask, p, nil, 0))
 			want := tc.wantID
 			if want == "" {
 				want = pool(t, tc.wantName)
@@ -537,4 +540,132 @@ func TestRun(t *testing.T) {
 			t.Errorf("Run = %d %q, want %s", code, out, pool(t, own))
 		}
 	})
+}
+
+func TestAssignAvoidsTheListedNames(t *testing.T) {
+	const branch, crew = "feat/x", "c1"
+	slot := Slot(branch)
+	own, next, third := names[slot], names[(slot+1)%poolSize], names[(slot+2)%poolSize]
+	recorded := `{"kind":"dispatch","crew_id":"c1","branch":"feat/x","name":"zed","tmux":"colour9","ts":100}`
+
+	t.Run("a recorded name on the list is re-picked", func(t *testing.T) {
+		got := compact(Assign(rows(t, recorded), branch, crew, Probes{}, []string{"zed"}, 0))
+		if got != pool(t, own) {
+			t.Errorf("Assign = %s, want %s", got, pool(t, own))
+		}
+	})
+	t.Run("a name off the list is untouched", func(t *testing.T) {
+		got := compact(Assign(rows(t, recorded), branch, crew, Probes{}, []string{"kelp"}, 0))
+		if want := `{"name":"zed","color":null,"tmux":"colour9"}`; got != want {
+			t.Errorf("Assign = %s, want %s", got, want)
+		}
+	})
+	t.Run("the tokens join the occupied set and nothing else changes", func(t *testing.T) {
+		for _, tc := range []struct {
+			avoid []string
+			want  string
+		}{
+			{[]string{own}, next},
+			{[]string{own, next}, third},
+			{[]string{"kelp", own}, next},
+			{nil, own},
+		} {
+			if got := compact(Assign(rows(t, "\n"), branch, crew, Probes{}, tc.avoid, 0)); got != pool(t, tc.want) {
+				t.Errorf("Assign(avoid %v) = %s, want %s", tc.avoid, got, pool(t, tc.want))
+			}
+		}
+	})
+	t.Run("Run reads CREW_IDENTITY_AVOID through Getenv", func(t *testing.T) {
+		var out strings.Builder
+		code := Run(Request{Branch: branch}, bus.Paths{Log: filepath.Join(t.TempDir(), "absent.jsonl")}, &out, io.Discard, Options{
+			CrewID: func() string { return crew },
+			Getenv: func(k string) string {
+				if k == "CREW_IDENTITY_AVOID" {
+					return own + "," + next
+				}
+				return ""
+			},
+		})
+		if code != 0 || out.String() != pool(t, third)+"\n" {
+			t.Errorf("Run = %d %q, want %s", code, out.String(), pool(t, third))
+		}
+	})
+}
+
+func TestRemoteRowsHoldTheirNameForADay(t *testing.T) {
+	const branch, crew = "feat/x", "c1"
+	slot := Slot(branch)
+	own, next := names[slot], names[(slot+1)%poolSize]
+	rival := branchAtSlot(t, (slot+1)%poolSize)
+	const now = int64(1800000000000)
+	row := func(age int64, remote string) string {
+		return fmt.Sprintf(`{"kind":"dispatch","crew_id":"c1","branch":"%s","name":"%s","tmux":"colour1","ts":%d%s}`,
+			rival, own, now-age, remote)
+	}
+	const hour = int64(3600 * 1000)
+	for _, tc := range []struct {
+		name string
+		log  string
+		want string
+	}{
+		{"a remote row under 24h holds its name with no status", row(hour, `,"remote":true`), next},
+		{"a remote row past 24h frees it", row(25*hour, `,"remote":true`), own},
+		{"a local row of the same age still holds it", row(25*hour, ""), next},
+		{"a remote row under 24h with a terminal status is free", row(hour, `,"remote":true`) + "\n" +
+			fmt.Sprintf(`{"kind":"status","crew_id":"c1","from":"worker:%s","body":{"state":"done"},"ts":%d}`, rival, now), own},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := compact(Assign(rows(t, tc.log), branch, crew, Probes{}, nil, now))
+			if got != pool(t, tc.want) {
+				t.Errorf("Assign = %s, want %s", got, pool(t, tc.want))
+			}
+		})
+	}
+}
+
+func TestWindowNamesIncludeBridgeStamps(t *testing.T) {
+	p := Probes{Windows: func() (string, error) { return "sage kelp\n \nmoss \n atlas\n", nil }}
+	if got, want := windowNames(p), []string{"sage", "kelp", "moss", "atlas"}; !slices.Equal(got, want) {
+		t.Errorf("windowNames = %v, want %v", got, want)
+	}
+}
+
+func TestOccupied(t *testing.T) {
+	const crew = "c1"
+	const now = int64(1800000000000)
+	log := strings.Join([]string{
+		// Dispatched, no status yet: still holds its name.
+		fmt.Sprintf(`{"kind":"dispatch","crew_id":"c1","branch":"feat/a","name":"zed","tmux":"colour1","ts":%d}`, now-1000),
+		// Done: its name is free.
+		fmt.Sprintf(`{"kind":"dispatch","crew_id":"c1","branch":"feat/b","name":"quill","tmux":"colour1","ts":%d}`, now-2000),
+		fmt.Sprintf(`{"kind":"status","crew_id":"c1","from":"worker:feat/b","body":{"state":"done"},"ts":%d}`, now-500),
+		fmt.Sprintf(`{"kind":"dispatch","crew_id":"c1","branch":"feat/c","name":"mesa","tmux":"colour1","ts":%d,"remote":true}`, now-3000),
+		fmt.Sprintf(`{"kind":"dispatch","crew_id":"c2","branch":"feat/d","name":"other","tmux":"colour1","ts":%d}`, now-3000),
+	}, "\n")
+	p := Probes{Windows: func() (string, error) { return "atlas \n zed kelp\n", nil }}
+
+	got := Occupied(rows(t, log), crew, p, now)
+	if want := []string{"atlas", "kelp", "mesa", "zed"}; !slices.Equal(got, want) {
+		t.Errorf("Occupied = %v, want %v", got, want)
+	}
+	if got := Occupied(nil, crew, Probes{}, now); len(got) != 0 {
+		t.Errorf("Occupied on an empty bus = %v", got)
+	}
+}
+
+func TestRunOccupiedPrintsOneNamePerLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	log := `{"kind":"dispatch","crew_id":"c1","branch":"feat/a","name":"zed","tmux":"colour1","ts":100}` + "\n"
+	if err := os.WriteFile(path, []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	code := Run(Request{Occupied: true}, bus.Paths{Log: path}, &out, io.Discard, Options{
+		CrewID: func() string { return "c1" },
+		Now:    func() time.Time { return time.UnixMilli(200) },
+		Probes: Probes{Windows: func() (string, error) { return "atlas", nil }},
+	})
+	if code != 0 || out.String() != "atlas\nzed\n" {
+		t.Errorf("Run = %d %q", code, out.String())
+	}
 }

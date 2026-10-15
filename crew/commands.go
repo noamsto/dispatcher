@@ -30,9 +30,11 @@ type whereCmd struct {
 }
 
 type identityCmd struct {
-	Hash   *string `name:"hash"`
-	Branch string  `arg:"" optional:"" name:"branch"`
-	Crew   string  `arg:"" optional:"" name:"crew"`
+	Hash     *string `name:"hash"`
+	Occupied bool    `name:"occupied"`
+	CrewFlag *string `name:"crew"`
+	Branch   string  `arg:"" optional:"" name:"branch"`
+	Crew     string  `arg:"" optional:"" name:"crew"`
 }
 
 type resolveCmd struct {
@@ -250,6 +252,14 @@ type watchCmd struct {
 	Crew     *string `name:"crew"`
 }
 
+type relayCmd struct {
+	Since     *string `name:"since"`
+	States    *string `name:"states"`
+	Interval  *string `name:"interval"`
+	Heartbeat *string `name:"heartbeat"`
+	Crew      *string `name:"crew"`
+}
+
 type reapCmd struct {
 	Quiet   bool    `name:"quiet"`
 	DryRun  bool    `name:"dry-run"`
@@ -447,6 +457,11 @@ var wordings = map[string]wording{
 		extra:       func(w string) string { return fmt.Sprintf("crew: watch: unknown arg '%s'", w) },
 		code:        exitFailure,
 	},
+	"relay": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: relay: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: relay: unknown arg '%s'", w) },
+		code:        exitFailure,
+	},
 	"stream": {
 		unknownFlag: func(f string) string { return fmt.Sprintf("crew: stream: unknown arg '%s'", f) },
 		extra:       func(w string) string { return fmt.Sprintf("crew: stream: unknown arg '%s'", w) },
@@ -581,7 +596,13 @@ func validate(sub string, r *root) *refusal {
 			}
 			return nil
 		}
-		if c.Branch == "" {
+		if given(c.CrewFlag) {
+			return fail("crew: identity: --crew needs an id")
+		}
+		if c.Occupied && c.Branch != "" {
+			return &refusal{"crew: identity: --occupied takes no branch", exitOpen}
+		}
+		if c.Branch == "" && !c.Occupied {
 			return fail(identityUsage)
 		}
 	case "sessions":
@@ -649,6 +670,16 @@ func validate(sub string, r *root) *refusal {
 			name string
 			v    *string
 		}{{"--since", c.Since}, {"--states", c.States}, {"--timeout", c.Timeout}, {"--interval", c.Interval}, {"--crew", c.Crew}} {
+			if given(f.v) {
+				return fail(fmt.Sprintf("crew: %s needs a value", f.name))
+			}
+		}
+	case "relay":
+		c := r.Relay
+		for _, f := range []struct {
+			name string
+			v    *string
+		}{{"--since", c.Since}, {"--states", c.States}, {"--interval", c.Interval}, {"--heartbeat", c.Heartbeat}, {"--crew", c.Crew}} {
 			if given(f.v) {
 				return fail(fmt.Sprintf("crew: %s needs a value", f.name))
 			}

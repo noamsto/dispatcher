@@ -120,7 +120,7 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 //     kong can neither print a screen nor end the process, so routeHelp and
 //     helpTexts still decide when help prints and what it says.
 
-// subcommands is every word crew admits: the thirty-seven the grammar types, then
+// subcommands is every word crew admits: the thirty-eight the grammar types, then
 // dash, which parses its own argv. It is the list the switch of #821 admitted,
 // and tests/crew.bats parses this literal to prove every subcommand has its own
 // row in the grouped help; TestAdmittedSubcommands pins it against that
@@ -132,7 +132,7 @@ var subcommands = []string{
 	"adopt", "await", "dash", "git-baseline",
 	"git-guard", "help", "hold", "msg", "nudge",
 	"pr-watch", "reap", "reap-autosweep",
-	"reply", "stall-watch", "status", "stream", "watch",
+	"relay", "reply", "stall-watch", "status", "stream", "watch",
 }
 
 // typedSubcommands are the subcommands whose argv root binds: every name but
@@ -144,7 +144,7 @@ var typedSubcommands = map[string]bool{
 	"roster": true, "report": true, "retro": true, "rate": true, "fleet": true,
 	"stack": true, "roster-render": true, "pi-agent-dir": true,
 	"status": true, "msg": true, "reply": true, "hold": true,
-	"nudge": true, "await": true, "watch": true, "stream": true,
+	"nudge": true, "await": true, "watch": true, "relay": true, "stream": true,
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
 	"adopt": true, "pr-watch": true, "stall-watch": true, "help": true,
 }
@@ -203,6 +203,7 @@ type root struct {
 	Nudge  nudgeCmd  `cmd:"" name:"nudge" help:"Type into a lead's pane."`
 	Await  awaitCmd  `cmd:"" name:"await" help:"Block until a msg answers an agent."`
 	Watch  watchCmd  `cmd:"" name:"watch" help:"Park until a worker event qualifies."`
+	Relay  relayCmd  `cmd:"" name:"relay" help:"Follow this bus and print watch batches, for a remote dispatcher."`
 	Stream streamCmd `cmd:"" name:"stream" help:"The long-lived lane that pushes batches."`
 
 	GitGuard    gitGuardCmd    `cmd:"" name:"git-guard" help:"The git-config guard worktree-git.sh runs."`
@@ -593,6 +594,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return flush(out, stderr, code)
 	}
 
+	// relay follows the bus for as long as its reader keeps the pipe open: it
+	// holds no lock and writes no cursor, and ends quietly when a write fails.
+	if sub == "relay" {
+		r := parsed.typed.Relay
+		out := bufio.NewWriterSize(stdout, 64<<10)
+		// Relay flushes every line itself, and a failed flush is its exit 0.
+		return watch.Relay(watch.RelayRequest{
+			Since: r.Since, States: str(r.States), Interval: str(r.Interval), Heartbeat: str(r.Heartbeat), Crew: str(r.Crew),
+		}, paths, out, stderr, watch.Options{
+			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			Flush:  out.Flush,
+			Now:    time.Now,
+		})
+	}
+
 	// stream runs for as long as the lane lives and prints one protocol line at
 	// a time, so it writes straight to stdout: a buffered line would wait for a
 	// batch that may never come. It re-enters the crew script for its children,
@@ -697,11 +713,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// best-effort, unlike whereProbes', which turns a failure into a refusal.
 	if sub == "identity" {
 		id := parsed.typed.Identity
-		return identity.Run(identity.Request{Branch: id.Branch, Crew: id.Crew, Hash: str(id.Hash)}, paths, stdout, stderr, identity.Options{
+		crew := id.Crew
+		if id.CrewFlag != nil {
+			crew = *id.CrewFlag
+		}
+		return identity.Run(identity.Request{Branch: id.Branch, Crew: crew, Hash: str(id.Hash), Occupied: id.Occupied}, paths, stdout, stderr, identity.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Probes: identity.Probes{Windows: func() (string, error) {
-				return tmuxOutput(ctx, "list-windows", "-a", "-F", "#{@crew_name}")
+				return tmuxOutput(ctx, "list-windows", "-a", "-F", "#{@crew_name} #{@bridge_crew_name}")
 			}},
+			Getenv: os.Getenv,
 		})
 	}
 

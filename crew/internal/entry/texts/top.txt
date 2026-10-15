@@ -14,6 +14,7 @@ Bus I/O:
 
 Watching:
   watch           Park until a qualifying event lands, then print it
+  relay           Follow this bus lock-free and print watch batches (remote hosts)
   stream          Long-lived watch that pushes batches to a streaming lane
   stall-watch     Per-pane liveness watchdog, spawned per worker
   pr-watch        Park until a PR changes, then post the event
