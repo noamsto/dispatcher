@@ -431,6 +431,6 @@ a second branch, and picking for them is what the issue asks us not to do.
     existing create-mode gate test ("gate: refuses a live occupant on a
     create-mode re-dispatch") rather than being built from scratch; criterion 12
     is a protocol-text assertion in `tests/adapters.bats`, the only place this
-    repo pins protocol wording. `tests/crews.bats` stubs nothing in `setup()`, so
+    repo pins protocol wording. `the crews tests (since ported to Go, #1084)` stubs nothing in `setup()`, so
     criterion 10 needs both `gh` and `tmux` stubs. `shellcheck adapters/core/*.sh
 scripts/*.sh` clean; `bats tests/` green; adapters in sync.

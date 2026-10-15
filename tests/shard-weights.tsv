@@ -49,18 +49,6 @@ tests/crew.bats	stream --status	!timing	7906
 tests/crew.bats	watch	!timing	48846
 tests/crew.bats	watch and stream	!timing	2343
 tests/crew.bats	where	!timing	13669
-tests/crews.bats	*	!timing	490
-tests/crews.bats	adopt	!timing	11778
-tests/crews.bats	crews	!timing	5251
-tests/crews.bats	deregister	!timing	1309
-tests/crews.bats	dispatch	!timing	88
-tests/crews.bats	dispatcher	!timing	2834
-tests/crews.bats	id	!timing	431
-tests/crews.bats	new	!timing	358
-tests/crews.bats	pidfile.log	!timing	400
-tests/crews.bats	register	!timing	2988
-tests/crews.bats	register/deregister	!timing	283
-tests/crews.bats	worker worktree	!timing	240
 tests/dispatch-comment.bats	*	!timing	44295
 tests/dispatch-config.bats	*	!timing	50123
 tests/dispatch-config.bats	no user, locked or env layer	!timing	457

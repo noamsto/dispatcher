@@ -8,7 +8,7 @@ refusal message, new `crews` / `new` / `adopt` subcommands, usage line),
 `crew id` → `crew new`, plus the discovery notice of §4.1),
 `adapters/core/commands/dispatcher.md` (the mint step becomes a discover-then-attach
 step), regenerated adapter trees via `scripts/gen-adapters.sh`, a new
-`tests/crews.bats`, and a two-test deletion in `tests/crew.bats` (see §7).
+`the crews tests (since ported to Go, #1084)`, and a two-test deletion in `tests/crew.bats` (see §7).
 
 ## 1. The problem
 
@@ -203,7 +203,7 @@ that literal block.
 `jq -nc` objects with no such key. A naive `map(.crew_id) | unique` therefore yields a
 `null` row, so any repo that has ever run `crew reap` would list a phantom crew — in the
 primary output of the primary deliverable. The extraction is
-`select(.crew_id != null and .crew_id != "")`, and `tests/crews.bats` seeds a `reap`
+`select(.crew_id != null and .crew_id != "")`, and `the crews tests (since ported to Go, #1084)` seeds a `reap`
 line and asserts no extra row appears.
 
 Rows are deduplicated by id and sorted newest-activity first; a crew with no events
@@ -252,7 +252,7 @@ emitted survive), and the stats pass — `jq -s`, which is all-or-nothing — fa
 `|| echo '{}'`, costing the age and worker columns but never the table.
 
 Ordering **among** no-event crews is undefined (they have no activity to sort by), so
-`tests/crews.bats` asserts row presence and field values, never full-table row order.
+`the crews tests (since ported to Go, #1084)` asserts row presence and field values, never full-table row order.
 
 It deliberately does **not** mark "the current crew": in the situation `crews` exists to
 serve, `CREW_ID` is unset by definition, so the column would be empty exactly when it is
@@ -278,7 +278,7 @@ into `adopt` it writes the **crew id** into `crews/<id>/pid`, and both the `aliv
 column and `adopt`'s own liveness guard then read garbage. `--force` is stripped from
 the argument list wherever it appears *before* the positionals are read, so
 `crew adopt <id> --force` cannot land the literal string `--force` in the pid file;
-`tests/crews.bats` covers that ordering. The optional `pid` is
+`the crews tests (since ported to Go, #1084)` covers that ordering. The optional `pid` is
 not decoration: `adapters/core/commands/dispatcher.md:9` passes `$PPID` *because* the
 shell inside a Claude Code Bash call is throwaway and `$PPID` is the long-lived agent
 process. A standalone `crew adopt <id>` — which is what both new error messages tell the
@@ -441,7 +441,7 @@ repo's crews, 'crew adopt <id> $PPID' to re-attach, or 'crew new' to start one
 
 **Bare `crew id` with nothing to report** — the message the incident's operator actually
 reaches, since `dispatch` aborts and `crew id` is the obvious next keystroke. It gets
-the same text, and `tests/crews.bats` asserts on it:
+the same text, and `the crews tests (since ported to Go, #1084)` asserts on it:
 
 ```
 crew: no crew id — CREW_ID unset and no WORKER_TASK.md crew_id; run 'crew crews' to find
@@ -453,7 +453,7 @@ already see. Note this is a *self-imposed* consistency, not a test constraint: t
 existing `*"CREW_ID unset"*` assertion at `tests/crew.bats:112` belongs to
 `@test "status: fails when no crew id can be resolved"` and guards the **`status`** arm,
 which this change leaves alone. No test asserts `crew register`'s refusal text today;
-`tests/crews.bats` adds one.
+`the crews tests (since ported to Go, #1084)` adds one.
 
 **Deliberately unchanged:** the identical refusal in the `status | msg`, `reply`, and
 `watch` arms. The issue names exactly two messages, and `crew msg` is being edited by a
@@ -463,7 +463,7 @@ noted in the PR body.
 **The two `tests/crew.bats` deletions** are unavoidable, not scope creep: both tests
 assert the exact behaviour the issue requires removing, and the gate requires bats
 green. They sit at lines 40-50, well away from the `msg` / `reap` / `rate` regions the
-live workers are editing. Every replacement lands in the new `tests/crews.bats`.
+live workers are editing. Every replacement lands in the new `the crews tests (since ported to Go, #1084)`.
 
 `WORKER_TASK.md` fences that file, so the deletion is **posted to the dispatcher on the
 bus as a question, not an announcement** — whether to touch a file three live workers
@@ -482,27 +482,27 @@ operation rather than an aspiration. Called out in the PR body either way.
 
 | criterion | verified by |
 | --- | --- |
-| `crews` lists both sources, including a `--crew-id`-only crew | `tests/crews.bats`: events-only crew, pid-dir-only crew, and a crew in both appearing exactly once |
-| `crews` does not invent a phantom crew from crew-less events | `tests/crews.bats`: a seeded `reap` line adds no row |
-| `crews` reports pid liveness | `tests/crews.bats`: a live pid (`$$`) reads `yes`, an unused one `no`, none `—` |
-| bare `crew id` no longer mints; two consecutive calls do not differ | `tests/crews.bats`: both calls exit 1 with identical (empty) stdout |
-| bare `crew id` says how to get unstuck | `tests/crews.bats` asserts `crew crews` / `crew adopt` / `crew new` all appear in its stderr |
+| `crews` lists both sources, including a `--crew-id`-only crew | `the crews tests (since ported to Go, #1084)`: events-only crew, pid-dir-only crew, and a crew in both appearing exactly once |
+| `crews` does not invent a phantom crew from crew-less events | `the crews tests (since ported to Go, #1084)`: a seeded `reap` line adds no row |
+| `crews` reports pid liveness | `the crews tests (since ported to Go, #1084)`: a live pid (`$$`) reads `yes`, an unused one `no`, none `—` |
+| bare `crew id` no longer mints; two consecutive calls do not differ | `the crews tests (since ported to Go, #1084)`: both calls exit 1 with identical (empty) stdout |
+| bare `crew id` says how to get unstuck | `the crews tests (since ported to Go, #1084)` asserts `crew crews` / `crew adopt` / `crew new` all appear in its stderr |
 | every existing `crew id` call site still works | §4 table; regression tests for `CREW_ID` set, `WORKER_TASK.md` resolution, `new` minting, `new` outside a repo, and the launcher minting via a stubbed `crew` |
-| both messages name the unblocking command | `tests/crews.bats` asserts on `dispatch.sh`'s abort and `crew register`'s refusal |
-| the launcher restart path is not silent, and names a remedy that works | `tests/crews.bats`: minting with other crews on disk prints a notice naming the `CREW_ID=<id>` relaunch; **minting with no other crews prints nothing**; inheriting `CREW_ID` prints nothing; `dispatcher.bats:48` already pins that an inherited id is honoured |
-| every printed recovery instruction is runnable as printed | `tests/crews.bats`: all three messages contain `crew adopt <id> $PPID`, not bare `crew adopt <id>` |
-| `adopt` cannot become a second way to mint | `tests/crews.bats`: unknown id refused; another session's live-pid crew refused; the refusal does not leak the pid; `--force` overrides; events-only crew adoptable |
-| `adopt` prints a value that is never shell | `tests/crews.bats`: output is the bare id, with no `export` prefix; an injection-shaped id is refused outright |
-| a crew id can never escape the bus dir | `tests/crews.bats`: a `../`-traversal id is refused and writes nothing outside `crews/` |
-| a session can re-adopt its own live crew | `tests/crews.bats`: adopting a crew registered to an ancestor pid succeeds |
-| a torn `events.jsonl` does not cost the table | `tests/crews.bats`: a truncated trailing line still lists the well-formed crews and exits 0 |
-| a non-positive pid never reads as alive | `tests/crews.bats`: a pid file of `0` reads `alive: no` and stays adoptable |
+| both messages name the unblocking command | `tests/dispatch.bats` asserts on `dispatch.sh`'s abort and `the crews tests (since ported to Go, #1084)` on `crew register`'s refusal |
+| the launcher restart path is not silent, and names a remedy that works | `tests/dispatcher.bats`: minting with other crews on disk prints a notice naming the `CREW_ID=<id>` relaunch; **minting with no other crews prints nothing**; inheriting `CREW_ID` prints nothing; `dispatcher.bats:48` already pins that an inherited id is honoured |
+| every printed recovery instruction is runnable as printed | `the crews tests (since ported to Go, #1084)` and `tests/dispatch.bats`: all three messages contain `crew adopt <id> $PPID`, not bare `crew adopt <id>` |
+| `adopt` cannot become a second way to mint | `the crews tests (since ported to Go, #1084)`: unknown id refused; another session's live-pid crew refused; the refusal does not leak the pid; `--force` overrides; events-only crew adoptable |
+| `adopt` prints a value that is never shell | `the crews tests (since ported to Go, #1084)`: output is the bare id, with no `export` prefix; an injection-shaped id is refused outright |
+| a crew id can never escape the bus dir | `the crews tests (since ported to Go, #1084)`: a `../`-traversal id is refused and writes nothing outside `crews/` |
+| a session can re-adopt its own live crew | `the crews tests (since ported to Go, #1084)`: adopting a crew registered to an ancestor pid succeeds |
+| a torn `events.jsonl` does not cost the table | `the crews tests (since ported to Go, #1084)`: a truncated trailing line still lists the well-formed crews and exits 0 |
+| a non-positive pid never reads as alive | `the crews tests (since ported to Go, #1084)`: a pid file of `0` reads `alive: no` and stays adoptable |
 | restart → re-attached from printed messages alone | literal transcript in the PR body |
 | `shellcheck` clean; `bats tests/` green | the gate, minus the two known-red reap-release tests in `tests/crew.bats` (#54, #58, owned by #49) |
 
 The launcher and `dispatch` rows need a **richer `crew` stub than `stub_bin`**, which
 prints nothing and exits 0 (`tests/helpers.bash:24-35`) — `crew new` would return an
-empty id and `crew crews` no rows. `tests/crews.bats` defines a local stub that answers
+empty id and `crew crews` no rows. `tests/dispatcher.bats` defines a local stub that answers
 `new` and `crews`. Nothing in `tests/dispatcher.bats` breaks: every test there sets
 `CREW_ID`, which suppresses the notice, and its two `grep -cx` assertions (lines 88, 90)
 are exact-match, so an extra `crews` line in the stub log cannot perturb them.

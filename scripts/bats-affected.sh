@@ -49,9 +49,9 @@ add() {
 }
 
 # Sets shared by several rows.
-dispatch_set=(adapters crews dispatch-comment dispatch-resume dispatch model-map module)
-prompt_set=(adapters crews dispatch-comment dispatch-resume dispatch dispatcher model-map module permission-check)
-crew_set=(adapters crew-dash crew-id crew crews directive-delivery dispatch-comment dispatch-notify dispatch-resume dispatch dispatcher model-map module pr-watch rate-autosweep rate-sweep-all rate reap-race)
+dispatch_set=(adapters dispatch-comment dispatch-resume dispatch model-map module)
+prompt_set=(adapters dispatch-comment dispatch-resume dispatch dispatcher model-map module permission-check)
+crew_set=(adapters crew-dash crew-id crew directive-delivery dispatch-comment dispatch-notify dispatch-resume dispatch dispatcher model-map module pr-watch rate-autosweep rate-sweep-all rate reap-race)
 
 map_file() {
   local f="$1"
@@ -79,7 +79,7 @@ map_file() {
   adapters/core/claude-worker-settings.sh | adapters/core/cross-repo-hint.sh | adapters/core/dispatch-resume.sh | adapters/core/dispatch.sh) add "${dispatch_set[@]}" ;;
   adapters/core/directive-delivery.sh) add adapters crew directive-delivery ;;
   adapters/core/dispatch-notify.sh) add adapters dispatch-notify dispatch ;;
-  adapters/core/dispatcher.sh) add adapters crews dispatch dispatcher module ;;
+  adapters/core/dispatcher.sh) add adapters dispatch dispatcher module ;;
   adapters/core/permission-check.sh) add adapters dispatch-resume dispatch module permission-check ;;
   adapters/core/phase-status.sh) add adapters phase-status ;;
   adapters/core/pr-watch.sh) add adapters dispatch module pr-watch ;;

@@ -16468,3 +16468,30 @@ browser_env_prefix='env -u AGENT_BROWSER_AUTO_CONNECT -u AGENT_BROWSER_CDP -u AG
   [[ "$line" != *disableAllHooks* ]]
   [[ "$line" != *gopls-lsp* ]]
 }
+
+# ---- dispatch's crew-id abort ----
+
+# _run_dispatch_no_crew_id — reaches dispatch.sh's crew-id abort. Needs
+# tests/dispatch.bats's env hygiene: a dev shell exports CREW_ID and
+# DISPATCH_PROFILE, which would otherwise suppress the very abort under test.
+# A full arg set is required too — dispatch demands --effort before it ever
+# looks at crew id.
+_run_dispatch_no_crew_id() {
+  export HOME="$TEST_REPO"
+  unset DISPATCH_PROFILE CREW_ID DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC DISPATCH_SHAPE TMUX_PANE
+  run bash -euo pipefail "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh" trivial some-model --effort low
+}
+
+@test "dispatch: aborts with no crew id and names the discovery commands" {
+  _run_dispatch_no_crew_id
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"crew crews"* ]]
+  [[ "$output" == *"crew adopt"* ]]
+  [[ "$output" == *"crew new"* ]]
+}
+
+@test "dispatch: the crew-id abort names adopt with no pid" {
+  _run_dispatch_no_crew_id
+  [[ "$output" == *'crew adopt <id>'* ]]
+  [[ "$output" != *'$PPID'* ]]
+}

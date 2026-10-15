@@ -855,3 +855,61 @@ EOF
   [[ "$out" == *"re-attached to crew c-fresh"* ]]
   [[ "$out" != *"keeps its live dispatcher pid"* ]]
 }
+
+# ---- launcher crew lifecycle ----
+
+_crew_dir() {
+  echo "$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/$1"
+}
+
+_pidfile_log_path() {
+  echo "$(git rev-parse --path-format=absolute --git-common-dir)/crew/pidfile.log"
+}
+
+# #929 moved the default off minting, so the notice is a --new confirmation:
+# this row's one dead crew is what the launcher would have adopted instead.
+@test "dispatcher: --new with other crews on disk prints the discovery notice" {
+  stub_crew_table "$(crews_tsv "$(printf 'c-other\t5\t5\t1\t111\tno')")"
+  run run_launcher --new
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"minted a NEW crew"* ]]
+  [[ "$output" == *"CREW_ID=<id> dispatcher"* ]]
+}
+
+# The nested launcher runs the REAL dispatcher.sh under a live "outer" dispatcher
+# that owns c-live. Its `crew register $$` aborts it (errexit) before an agent
+# launches and before it ever reaches its exit-time deregister, so the outer
+# crew is untouched.
+@test "dispatcher: a nested launcher inheriting a live CREW_ID aborts and keeps the crew" {
+  printf '#!/usr/bin/env bash\nexec "$CREW" "$@"\n' >"$STUB_DIR/crew"
+  chmod +x "$STUB_DIR/crew"
+  export CREW LAUNCHER
+  run bash -c '
+    echo $$ >"$BATS_TEST_TMPDIR/outer.pid"
+    export CREW_ID=c-live
+    crew register $$
+    bash -euo pipefail "$LAUNCHER"
+    echo $? >"$BATS_TEST_TMPDIR/rc"
+    true'
+  [ "$(cat "$BATS_TEST_TMPDIR/rc")" -ne 0 ]
+  [[ "$output" == *"still has a live dispatcher"* ]]
+  if grep -q -- --append-system-prompt-file "$STUB_LOG"; then return 1; fi
+  [ "$(cat "$(_crew_dir c-live)/pid")" = "$(cat "$BATS_TEST_TMPDIR/outer.pid")" ]
+}
+
+# The counterpart to the nested test: a launcher that mints its own crew must
+# have its exit-time `crew deregister` (PPID == the recorded launcher $$) remove
+# it. Only the launcher's `crew id:` line is trusted for the id.
+@test "dispatcher: a normal launcher exit deregisters the crew it minted" {
+  printf '#!/usr/bin/env bash\nexec "$CREW" "$@"\n' >"$STUB_DIR/crew"
+  chmod +x "$STUB_DIR/crew"
+  export CREW
+  run run_launcher
+  [ "$status" -eq 0 ]
+  id="$(sed -n 's/^crew id: //p' <<<"$output")"
+  [ -n "$id" ]
+  [ ! -e "$(_crew_dir "$id")" ]
+  run cat "$(_pidfile_log_path)"
+  [[ "$output" == *"register ok crew=$id"* ]]
+  [[ "$output" == *"deregister removed crew=$id"* ]]
+}

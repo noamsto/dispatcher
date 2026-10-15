@@ -54,7 +54,6 @@ them as relative.
 | pr-watch.bats                  |    17 |    18.6 |  1.0% |
 | permission-check.bats          |   147 |    16.3 |  0.8% |
 | rate.bats                      |    44 |    10.3 |  0.5% |
-| crews.bats                     |    64 |     9.0 |  0.5% |
 | rate-autosweep.bats            |    21 |     8.3 |  0.4% |
 | reap-race.bats                 |     6 |     7.8 |  0.4% |
 | dispatch-comment.bats          |    10 |     6.7 |  0.3% |
@@ -142,7 +141,6 @@ doc-pinning test was then triaged by hand (see the cut list).
 | crew.bats              |       520 |           1 |         0 |         0 |      521 |
 | crew-dash.bats         |        12 |           0 |         0 |         0 |       12 |
 | crew-id.bats           |         5 |           0 |         0 |         0 |        5 |
-| crews.bats             |        63 |           0 |         0 |         1 |       64 |
 | dispatch.bats          |       776 |           1 |        14 |         1 |      792 |
 | dispatch-comment.bats  |        10 |           0 |         0 |         0 |       10 |
 | dispatch-config.bats   |        40 |           0 |         0 |         0 |       40 |
@@ -373,7 +371,7 @@ README roster count. They survive section moves.
 
 | delete                                                                                  | duplicate of               | evidence                                                                                 |
 | --------------------------------------------------------------------------------------- | -------------------------- | ---------------------------------------------------------------------------------------- |
-| `crews.bats` "id: honours CREW_ID when set"                                             | `crew.bats:244`            | identical commands and assertions; crew.bats' extra setup does not touch `crew id`       |
+| `the crews tests (since ported to Go, #1084)` "id: honours CREW_ID when set"            | `crew.bats:244`            | identical commands and assertions; crew.bats' extra setup does not touch `crew id`       |
 | `dispatch.bats:2673` "the grammar floor holds with no codex cache"                      | `dispatch.bats:2598`       | same file and setup, same `run_dispatch deep gpt-5.6 --agent codex`, same two assertions |
 | `dispatch-notify.bats:263` "a SessionEnd with the lead process gone still posts exited" | `dispatch-notify.bats:107` | same file and setup; only the name and comment differ                                    |
 
@@ -414,7 +412,7 @@ on a cold nix cache.
 | item | result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | C1   | 44 tests deleted and 16 collapsed into `protocol and command anchors other docs and code rely on are present` (one table row per anchor, canonical copy only); `adapters.bats` went from 190 to 131 tests and lost ~1,200 lines. The 15 lint tests and `adapters.bats:393` are kept.                                                                                                                                                                                                          |
-| C2   | 3 exact duplicates deleted (`crews.bats`, `dispatch.bats`, `dispatch-notify.bats`).                                                                                                                                                                                                                                                                                                                                                                                                           |
+| C2   | 3 exact duplicates deleted, one each in the crews tests (since ported to Go, #1084), `dispatch.bats` and `dispatch-notify.bats`.                                                                                                                                                                                                                                                                                                                                                              |
 | C3   | No change.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | S1   | `crew stall-watch` reads time through `_sw_now`/`_sw_sleep`. When `CREW_STALL_CLOCK` is unset these are exactly `date +%s` and `sleep`. When a test sets it to a file, the clock starts at real time and only moves forward, so bus rows written in real time still sort at or before the watchdog's `now`. Two tests that waited in real time now key off the sampler's call count. Stall-watch subset at `--jobs 16`: **622.6s → 49.0s summed, 54.4s → 10.3s wall**, three runs, no flakes. |
 | S2   | **Dropped, no change.** The audit's premise was wrong: every slow `role-watch:` test already polls at `--interval 0.2`. Their time is fixed test-side waits (`_rw_start`'s `sleep 0.6`, closing `sleep 0.8`/`1.2`), which this task did not rework; that is a follow-up.                                                                                                                                                                                                                      |
@@ -490,7 +488,6 @@ Blind spots:
 | crew.bats              |   539 |      539 |          0 |            0.8479 |
 | crew-dash.bats         |    12 |       11 |          1 |            0.9091 |
 | crew-id.bats           |     5 |        5 |          0 |            1.0000 |
-| crews.bats             |    63 |       63 |          0 |            0.8889 |
 | dispatch.bats          |   800 |      780 |         20 |            0.8167 |
 | dispatch-comment.bats  |    10 |       10 |          0 |            1.0000 |
 | dispatch-config.bats   |    40 |       37 |          3 |            0.9189 |

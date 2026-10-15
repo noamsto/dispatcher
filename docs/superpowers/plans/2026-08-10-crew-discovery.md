@@ -158,9 +158,9 @@ echo …`; `eval "$(…)" && …` does **not** guard (verified: `eval "$(false)"
   `gen-adapters.sh` produces no further diff (CI's drift gate asserts this);
   `bats tests/adapters.bats` green.
 
-- [ ] **Step 7: tests** — new `tests/crews.bats`, plus the approved deletion
+- [ ] **Step 7: tests** — new `the crews tests (since ported to Go, #1084)`, plus the approved deletion
 
-  New file `tests/crews.bats` following `tests/crew.bats`'s `setup()` shape
+  New file `the crews tests (since ported to Go, #1084)` following `tests/crew.bats`'s `setup()` shape
   (`load helpers`, `run_crew`, `setup_repo`). It needs a **local** `crew` stub for the
   launcher/dispatch rows — the shared `stub_bin` prints nothing and exits 0, so
   `crew new` would return an empty id. The `dispatch` row additionally needs
@@ -197,7 +197,7 @@ unset` and `id: works outside a git repo`, which encode the removed contract.
      printed messages alone get you there, and only a real transcript demonstrates it.
   2. **The `crew id` call-site enumeration** (`WORKER_TASK.md:110`) — spec §4's table.
   3. **The test deletion, made legible** (the dispatcher's bus reply, note 1) — name both
-     deleted tests, say they encoded the old contract, and point at their `crews.bats`
+     deleted tests, say they encoded the old contract, and point at their `the crews tests (since ported to Go, #1084)`
      replacements, so a reviewer does not read the diff as coverage loss.
 
   Plus, under `## Escalated`, the spec-phase escalation (below) and the deliberately
