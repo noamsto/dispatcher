@@ -893,7 +893,9 @@ guard's key tables, masking and baseline format therefore have one copy, and no 
 Idiomatic Go, behaviour not bytes (#821). **Exact:** exit codes, usage and
 refusal lines, and the text people or agents read (the tables, the one-line
 errors). **Value-equal only:** JSON — key order, indentation and colour are
-free, compare with `jq -S`; emit through `jsonv`, never `encoding/json`.
+free, compare with `jq -S`; emit through `encoding/json` or typed structs where
+`docs/jsonv-removal.md`'s verdict for that file is replace or small helper,
+under that entry's conditions, and through `jsonv` elsewhere.
 **Not mirrored, not documented:** incidental jq/bash quirks — the
 `$JQ_COLORS` warning count, TTY colouring, jq's own error wording, and the
 rewrites `$(...)`/`cut`/`awk` apply to strings.

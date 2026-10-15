@@ -2,12 +2,14 @@ package prwatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -212,25 +214,43 @@ func TestTimeoutMarker(t *testing.T) {
 }
 
 func TestEvent(t *testing.T) {
-	tr := newTree(t)
-	s := &stub{out: event + "\n", code: 0}
-	var out, errOut strings.Builder
-	if code := Run(context.Background(), Request{PR: "42", Repo: ptr("o/r")}, tr.paths, &out, &errOut,
-		Options{CrewID: func() string { return "c1" }, Clock: fixedClock(), Start: park(s)}); code != 0 {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	if out.String() != event+"\n" {
-		t.Errorf("stdout = %q, want the event plus a newline", out.String())
-	}
-	rows := tr.rows()
-	if len(rows) != 1 {
-		t.Fatalf("bus has %d rows, want 1", len(rows))
-	}
-	// The row is value-equal, so compare that way; the body is the event text.
-	want := `{"body":"` + strings.ReplaceAll(event, `"`, `\"`) +
-		`","crew_id":"c1","from":"pr-watch:42","kind":"msg","to":"dispatcher:c1","ts":1700000000500}`
-	if got := testjson.Compact(testjson.MustParse(t, rows[0])); got != want {
-		t.Errorf("bus row = %s, want %s", got, want)
+	// The second event is every character where an encoder has to escape or may
+	// differ from jq: quote, backslash, HTML-sensitive, tab, control, U+2028, non-ASCII.
+	for name, ev := range map[string]string{
+		"plain":   event,
+		"escapes": "q\" b\\ <a href=\"x\">&</a>\ttab \x01 \u2028 \u00e9 \U0001F642",
+	} {
+		t.Run(name, func(t *testing.T) {
+			tr := newTree(t)
+			s := &stub{out: ev + "\n", code: 0}
+			var out, errOut strings.Builder
+			if code := Run(context.Background(), Request{PR: "42", Repo: ptr("o/r")}, tr.paths, &out, &errOut,
+				Options{CrewID: func() string { return "c1" }, Clock: fixedClock(), Start: park(s)}); code != 0 {
+				t.Fatalf("exit = %d, want 0", code)
+			}
+			if out.String() != ev+"\n" {
+				t.Errorf("stdout = %q, want the event plus a newline", out.String())
+			}
+			rows := tr.rows()
+			if len(rows) != 1 {
+				t.Fatalf("bus has %d rows, want 1", len(rows))
+			}
+			// The row is value-equal, so compare decoded; the body is the event text.
+			var got map[string]any
+			if err := json.Unmarshal([]byte(rows[0]), &got); err != nil {
+				t.Fatalf("bus row %q is not JSON: %v", rows[0], err)
+			}
+			if got["body"] != ev {
+				t.Errorf("body = %q, want the event %q", got["body"], ev)
+			}
+			want := map[string]any{
+				"body": ev, "crew_id": "c1", "from": "pr-watch:42", "kind": "msg",
+				"to": "dispatcher:c1", "ts": 1700000000500.0,
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("bus row = %v, want %v", got, want)
+			}
+		})
 	}
 }
 
