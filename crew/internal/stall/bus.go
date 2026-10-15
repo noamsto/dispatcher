@@ -53,7 +53,7 @@ func (w *watch) refresh() error {
 
 func field(row any, i int) string {
 	r, _ := row.([]any)
-	if i < 0 || i >= len(r) {
+	if i >= len(r) {
 		return ""
 	}
 	s, _ := r[i].(string)
