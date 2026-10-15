@@ -178,7 +178,10 @@ var checkCases = []checkCase{
 	{name: "nesting past jq limit refuses the row", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":` + strings.Repeat("[", 9999) + `"waive AC3"` + strings.Repeat("]", 9999) + `}`}, want: waiverLine("AC3")},
 	{name: "a leading BOM is skipped", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{"\xef\xbb\xbf" + reply("waive AC3")}},
 	{name: "invalid UTF-8 in a bus line never waives", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{strings.Replace(reply("waive AC3"), "waive AC3", "waive\xff AC3", 1)}, want: waiverLine("AC3")},
-	{name: "invalid UTF-8 in the detail's id never waives", detail: "AC\xe2\x82b waived(dispatcher)", doc: docList, log: []string{reply("waive AC��b")}, want: waiverLine("AC��b")},
+	{name: "invalid UTF-8 in the detail's id is malformed", detail: "AC\xe2\x82b waived(dispatcher)", doc: docList, log: []string{reply("waive AC��b")}, want: malform},
+	// jq folds the truncated lead byte and the ")" into one U+FFFD, so it calls this malformed.
+	{name: "invalid UTF-8 swallowing a paren is malformed", detail: "AC1 pass(ok\xf0)", doc: docList, want: malform},
+	{name: "invalid UTF-8 swallowing a paren, no list", detail: "AC1 pass(ok\xf0)", doc: docNone, want: noList},
 	{name: "the same line repaired waives", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{reply("waive\ufffd AC3")}},
 	{name: "waived without an id", detail: "waived(dispatcher)", doc: docList, want: noID},
 	{name: "colon-only id strips to empty", detail: ": waived(dispatcher)", doc: docList, want: noID},
@@ -194,6 +197,30 @@ func TestCheck(t *testing.T) {
 			got := Check(Input{From: from, Crew: crew, Detail: tc.detail, TaskDoc: tc.doc, TaskDocErr: tc.docErr, Log: tc.log})
 			if got != tc.want {
 				t.Errorf("Check(%q)\n got %q\nwant %q", tc.detail, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestWaivedBodyBound pins the 1 MiB bound: an oversize row stops every waiver
+// from counting, jq aborting on it, and a body exactly at the bound still counts.
+func TestWaivedBodyBound(t *testing.T) {
+	pad := func(lead string, n int) string { return lead + strings.Repeat("x", n-len(lead)) }
+	tests := []struct {
+		name string
+		log  []string
+		want bool
+	}{
+		{"long negated clause beside a plain waiver", []string{reply("waive AC3 not " + strings.Repeat("x", 12_000_000)), reply("waive AC3")}, false},
+		{"oversize row after a plain waiver", []string{reply("waive AC3"), reply(pad("waive AC3 ", maxBody+1))}, false},
+		{"body at the bound", []string{reply(pad("waive AC3 ", maxBody))}, true},
+		{"body one byte over", []string{reply(pad("waive AC3 ", maxBody+1))}, false},
+		{"oversize row for another session is ignored", []string{row(crew, "dispatcher:"+crew, "worker:feat/x#s1", pad("x", maxBody+1)), reply("waive AC3")}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := waived(tc.log, crew, from, "AC3"); got != tc.want {
+				t.Errorf("waived = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -485,6 +512,25 @@ func ledgerCorpus() []string {
 		}
 		corpus = append(corpus, s)
 	}
+	// Invalid UTF-8 that jq folds into one U+FFFD, sometimes with the next ASCII
+	// byte: spliced into item-shaped details at rune boundaries, and set inside
+	// the evidence where jq can still call the ledger conforming.
+	bad := []string{"\xe2\x82", "\xff", "\xf0", "\xf0)", "\xf0(", "\xf0;", "\xc0\x80", "\xe2\x82)", "\xf0\x9f"}
+	shaped := corpus[len(corpus)-3000:]
+	for range 300 {
+		s := shaped[r.IntN(len(shaped))]
+		i := r.IntN(len(s) + 1)
+		for i > 0 && i < len(s) && s[i]&0xc0 == 0x80 {
+			i--
+		}
+		corpus = append(corpus, s[:i]+bad[r.IntN(len(bad))]+s[i:])
+	}
+	evs := []string{"ok", "x (y)", "", " ", "CI", "a;b"}
+	tails := []string{")", ")", "x)", " )", "))", ") ", ");"}
+	for range 300 {
+		d := ids[r.IntN(len(ids))] + "pass(" + evs[r.IntN(len(evs))] + bad[r.IntN(len(bad))] + tails[r.IntN(len(tails))]
+		corpus = append(corpus, d, d+seps[r.IntN(len(seps))])
+	}
 	return corpus
 }
 
@@ -494,7 +540,7 @@ func TestDifferentialAgainstJQ(t *testing.T) {
 
 	t.Run("ledger", func(t *testing.T) {
 		prog := program(t, "ledger.jq")
-		var yes atomic.Int64
+		var yes, bad, badYes atomic.Int64
 		parallel(len(corpus), func(i int) {
 			d := corpus[i]
 			_, rc := runJQ(t, bin, "", "-en", "--arg", "d", d, prog)
@@ -502,20 +548,36 @@ func TestDifferentialAgainstJQ(t *testing.T) {
 				t.Errorf("jq exit %d for %q", rc, d)
 				return
 			}
-			if rc == 1 {
+			valid := utf8.ValidString(d)
+			want := rc == 1
+			if want {
 				yes.Add(1)
 			}
-			if want := rc == 1; conforms(d) != want {
-				t.Errorf("conforms(%q) = %v, jq says %v", d, !want, want)
+			if !valid {
+				bad.Add(1)
+				if want {
+					badYes.Add(1)
+				}
+			}
+			// Check refuses invalid UTF-8 outright, where jq repairs it and may accept.
+			got := valid && conforms(d)
+			if got && !want || want && !got && valid {
+				t.Errorf("conforms(%q) = %v, jq says %v", d, got, want)
 			}
 		})
-		t.Logf("%d details, %d conforming", len(corpus), yes.Load())
+		if bad.Load() == 0 {
+			t.Error("no invalid UTF-8 details in the corpus")
+		}
+		t.Logf("%d details, %d conforming, %d invalid UTF-8 of which jq accepted %d", len(corpus), yes.Load(), bad.Load(), badYes.Load())
 	})
 
 	t.Run("items", func(t *testing.T) {
 		prog := program(t, "items.jq")
 		parallel(len(corpus), func(i int) {
 			d := corpus[i]
+			if !utf8.ValidString(d) {
+				return // Check refuses these before the item scan
+			}
 			out, rc := runJQ(t, bin, "", "-nr", "--arg", "d", d, prog)
 			if rc != 0 {
 				t.Errorf("jq exit %d for %q", rc, d)
@@ -582,6 +644,30 @@ func TestDifferentialAgainstJQ(t *testing.T) {
 			}
 		}
 		t.Logf("%d logs, %d waived, %d invalid UTF-8; per shape %v; jq [refused waived] per shape %v", len(cases), yes.Load(), invalid, count, outcome)
+	})
+
+	// A matching row with a long negated clause makes Oniguruma hit its retry
+	// limit, which aborts the whole program, so a second plain waiver is refused too.
+	t.Run("waiver retry limit", func(t *testing.T) {
+		prog := program(t, "waiver.jq")
+		run := func(log []string) int {
+			_, rc := runJQ(t, bin, strings.Join(log, "\n")+"\n", "-e", "-n", "-R", "--arg", "c", crew, "--arg", "f", from, "--arg", "id", "AC3", prog)
+			return rc
+		}
+		long := []string{reply("waive AC3 not " + strings.Repeat("x", 12_000_000)), reply("waive AC3")}
+		if rc := run(long); rc != 5 {
+			t.Errorf("jq exit %d on the long negated clause, want 5", rc)
+		}
+		if waived(long, crew, from, "AC3") {
+			t.Error("waived on the long negated clause, jq aborts")
+		}
+		atBound := []string{reply("waive AC3 " + strings.Repeat("x", maxBody-len("waive AC3 ")))}
+		if rc := run(atBound); rc != 0 {
+			t.Errorf("jq exit %d on a body at the bound, want 0", rc)
+		}
+		if !waived(atBound, crew, from, "AC3") {
+			t.Error("not waived on a body at the bound, jq waives")
+		}
 	})
 
 	t.Run("word class", func(t *testing.T) {

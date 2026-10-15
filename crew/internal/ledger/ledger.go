@@ -12,9 +12,11 @@
 //   - an id run through `awk -v` that unescapes to invalid UTF-8 (`\xff`) is
 //     compared as U+FFFD runes, and awk's warning about an unknown escape is not
 //     printed.
-//   - invalid UTF-8 in a bus line, the ledger detail, or the crew or session
-//     argument stops the waiver from counting, where jq repairs it to U+FFFD and
-//     may match.
+//   - a ledger detail holding invalid UTF-8 is refused outright, where jq repairs
+//     it to U+FFFD and may accept; a bus line or the crew or session argument
+//     holding it stops the waiver from counting, where jq repairs it and may match.
+//   - a waiver row whose body text exceeds 1 MiB stops any waiver from counting,
+//     since jq can abort on such a row.
 //   - [:alnum:] follows each engine's Unicode tables: glibc 2.42's (bash's =~)
 //     are Unicode 16, Go's 15, and gawk's regex lags both. The CI test uses Go's
 //     narrower class and the run-evidence boundary also counts every mark and
@@ -57,7 +59,7 @@ func Check(in Input) string {
 	refuse := func(reason string) string { return "crew: refusing pr_open for " + in.From + " — " + reason }
 	// An unreadable doc fails grep quietly, which reads as no list.
 	hasList := !in.TaskDocErr && hasAcceptanceList(in.TaskDoc)
-	if !conforms(in.Detail) {
+	if !utf8.ValidString(in.Detail) || !conforms(in.Detail) {
 		if hasList {
 			return refuse(hint)
 		}
@@ -90,8 +92,7 @@ func Check(in Input) string {
 		if iid == "" {
 			return refuse("a waived(dispatcher) item needs its acceptance id (e.g. AC3 waived(dispatcher)) so the dispatcher's waiver can name it.")
 		}
-		// scan repairs the id per byte where jq folds, hiding bad bytes from waived.
-		if in.Log != nil && utf8.ValidString(in.Detail) && waived(in.Log, in.Crew, in.From, iid) {
+		if in.Log != nil && waived(in.Log, in.Crew, in.From, iid) {
 			continue
 		}
 		return refuse("waived(dispatcher) needs a dispatcher waiver on the bus: a crew reply to this session (" + in.From + ") that names the item ('" + iid + `') in a waive phrase, e.g. "waive ` + iid + `"; a negation ("will not waive") does not count (a reply sent to an earlier session does not carry over). Block and ask the dispatcher to waive the item; do not write the waiver yourself.`)
@@ -437,8 +438,8 @@ type text struct {
 }
 
 // scan reads d as jq's --arg does, except that invalid UTF-8 becomes one U+FFFD
-// per byte where jq folds a truncated sequence into one; Oniguruma's \s is
-// Unicode White_Space, which is unicode.IsSpace.
+// per byte where jq folds a truncated sequence into one, which Check never lets
+// reach it; Oniguruma's \s is Unicode White_Space, which is unicode.IsSpace.
 func scan(d string) *text {
 	rs := []rune(d)
 	n := len(rs)
@@ -620,6 +621,11 @@ func items(d string) []item {
 	return out
 }
 
+// maxBody bounds a matching row's body text: Oniguruma's retry limit aborts the
+// whole jq program on a long enough clause (somewhere past 9M chars), and 1 MiB
+// stays far below that.
+const maxBody = 1 << 20
+
 // waived is the arm's waiver jq program: a `msg` from dispatcher:<crew> to this
 // exact session whose body (ASCII-lowercased, split into clauses) has a clause
 // with a waive word, the id as a token, and no negation before a waive word.
@@ -630,6 +636,8 @@ func waived(log []string, crew, from, id string) bool {
 		return false
 	}
 	ide := []rune(asciiLower(id))
+	// jq can abort on an oversize row after an earlier waiver, so no early return.
+	found := false
 	for _, line := range log {
 		row, ok := decodeRow(line)
 		if !ok {
@@ -638,13 +646,17 @@ func waived(log []string, crew, from, id string) bool {
 		if !field(row, "crew_id", crew) || !field(row, "kind", "msg") || !field(row, "from", "dispatcher:"+crew) || !field(row, "to", from) {
 			continue
 		}
-		for _, c := range clauses([]rune(asciiLower(body(row)))) {
+		text := body(row)
+		if len(text) > maxBody {
+			return false
+		}
+		for _, c := range clauses([]rune(asciiLower(text))) {
 			if waiveWord(c) && !negated(c) && hasToken(c, ide) {
-				return true
+				found = true
 			}
 		}
 	}
-	return false
+	return found
 }
 
 // decodeRow is a log line holding exactly one JSON object, as jq reads it
