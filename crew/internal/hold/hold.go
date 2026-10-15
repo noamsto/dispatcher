@@ -12,12 +12,14 @@
 // The write side (`add`, `release`) cannot be jq at all. The row's `body` is
 // `{...} | tostring`, and gojq returns object keys sorted where jq keeps
 // construction order — and `body` is a *string*, so `jq -S` cannot sort it back
-// and `crew log` prints it verbatim. It is built with jsonv, whose objects keep
-// insertion order, and appended through bus.Append/bus.FitLine.
+// and `crew log` prints it verbatim. It is built from structs whose field order
+// is that construction order, encoded without HTML escaping, and appended
+// through bus.Append/bus.FitLine.
 package hold
 
 import (
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,7 +32,6 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
@@ -133,15 +134,20 @@ type folds struct {
 // call is one fold — the arm's one jq process, including its one $JQ_COLORS
 // warning, which the folds copy prints once per invocation rather than once per
 // step.
-func (f *folds) call(prog string, in []jsonv.Value, vars map[string]jsonv.Value) (jsonv.Value, int) {
+func (f *folds) call(prog string, in []any, vars map[string]any) (any, int) {
 	if !f.warned && f.o.JQColorsInvalid {
 		f.warned = true
 		say(f.stderr, "Failed to set $JQ_COLORS\n")
 	}
-	out, err := jqrun.Run(prog, in, 0, vars)
+	// `jq -s` always hands the program an array; a nil slice would reach gojq as
+	// `null`, which every fold's `.[]` reads as a type error instead.
+	if in == nil {
+		in = []any{}
+	}
+	out, err := jqrun.RunAny(prog, in, 0, vars)
 	if err != nil {
 		say(f.stderr, "crew: hold: %s: %v\n", f.paths.Log, err)
-		return jsonv.Value{}, exitType
+		return nil, exitType
 	}
 	return out, 0
 }
@@ -150,35 +156,37 @@ func (f *folds) call(prog string, in []jsonv.Value, vars map[string]jsonv.Value)
 // torn-tail tolerance) around the embedded fold: `[]` and no jq at all where the
 // log is not a regular file — `due` and `list` depend on that unambiguous
 // empty-array read — and otherwise the fold over the decoded events.
-func (f *folds) outstanding(crew string) (jsonv.Value, int) {
+func (f *folds) outstanding(crew string) (any, int) {
 	events, err := bus.ReadEvents(f.paths.Log)
 	if errors.Is(err, bus.ErrNoLog) {
-		return jsonv.Array(), 0
+		return []any{}, 0
 	}
 	if err != nil {
 		msg, code := bus.JQFailure(err)
 		say(f.stderr, "crew: hold: %s: %s\n", f.paths.Log, msg)
-		return jsonv.Value{}, code
+		return nil, code
 	}
-	raws := make([]jsonv.Value, len(events))
+	docs := make([]any, len(events))
 	for i, ev := range events {
-		raws[i] = ev.Raw
+		docs[i] = ev.Doc
 	}
-	return f.call(outstandingProg, raws, holdVars(crew))
+	return f.call(outstandingProg, docs, holdVars(crew))
 }
 
 // Outstanding is the `_hold_outstanding` fold over events the caller already
-// read: the adds to `hold:<crew>` with no matching release, one per `crew hold
-// list --json` row. `roster-render` reads it for the hexagons beside the workers.
-func Outstanding(events []jsonv.Value, crew string) (jsonv.Value, error) {
-	return jqrun.Run(outstandingProg, events, 0, holdVars(crew))
+// read, in gojq's form (`bus.Event.Doc`): the adds to `hold:<crew>` with no
+// matching release, one per `crew hold list --json` row. `roster-render` reads
+// it for the hexagons beside the workers; `JSON` hands the result to a caller
+// that still builds its jq inputs with jsonv.
+func Outstanding(events []any, crew string) (any, error) {
+	return jqrun.RunAny(outstandingProg, events, 0, holdVars(crew))
 }
 
 // holdVars are the fold's two `--arg`s.
-func holdVars(crew string) map[string]jsonv.Value {
-	return map[string]jsonv.Value{
-		"crew": jsonv.Str(crew),
-		"to":   jsonv.Str("hold:" + crew),
+func holdVars(crew string) map[string]any {
+	return map[string]any{
+		"crew": crew,
+		"to":   "hold:" + crew,
 	}
 }
 
@@ -213,7 +221,7 @@ func due(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	}
 	// `--argjson now "$(_clock_now_f)"`: seconds, fractional unless the virtual
 	// clock is set. The compare is jq's, so a hold maturing this second is due.
-	matured, code := f.call(maturedProg, elems(holds), map[string]jsonv.Value{"now": jsonv.Num(o.clock().NowF())})
+	matured, code := f.call(maturedProg, elems(holds), map[string]any{"now": o.clock().NowF()})
 	if code != 0 {
 		return code
 	}
@@ -224,7 +232,8 @@ func due(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	}
 	// Exits 0 when any hold is matured, 1 when none — including a missing log,
 	// since the outstanding fold already answered `[]` for that case.
-	if matured.Kind() == jsonv.KindArray && matured.Len() > 0 {
+	held, ok := matured.([]any)
+	if ok && len(held) > 0 {
 		return 0
 	}
 	return exitFailure
@@ -255,9 +264,9 @@ func park(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int
 	if code != 0 {
 		return code
 	}
-	out, code := f.call(parkProg, elems(holds), map[string]jsonv.Value{
-		"default": jsonv.Num(float64(def)),
-		"now":     jsonv.Num(o.clock().NowF()),
+	out, code := f.call(parkProg, elems(holds), map[string]any{
+		"default": float64(def),
+		"now":     o.clock().NowF(),
 	})
 	if code != 0 {
 		return code
@@ -268,7 +277,7 @@ func park(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int
 
 // render is `_hold_render`: the header goes out before the rows' jq starts, so a
 // fold that then fails still leaves it on stdout.
-func render(f *folds, stdout io.Writer, holds jsonv.Value) int {
+func render(f *folds, stdout io.Writer, holds any) int {
 	say(stdout, "%s\n", renderHeader)
 	rows, code := f.call(renderProg, elems(holds), nil)
 	if code != 0 {
@@ -276,7 +285,7 @@ func render(f *folds, stdout io.Writer, holds jsonv.Value) int {
 	}
 	// The `join("\n")` patch (report.jq's) means one value for jqrun; an empty
 	// string is zero rows, and `jq -r` printed no bytes for those.
-	if s, _ := rows.AsString(); s != "" {
+	if s, _ := rows.(string); s != "" {
 		say(stdout, "%s\n", s)
 	}
 	return 0
@@ -370,7 +379,7 @@ func add(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	// while shrinking the title, and an `id` minted inside it would stop matching
 	// its own row's `ts` on any shrunk record.
 	line := bus.FitLine(func(title string) string {
-		return compact(addRow(crew, id, ts, &fl, specpath, title))
+		return encode(addRow(crew, id, ts, &fl, specpath, title))
 	}, title)
 	if err := bus.Append(paths.Log, line); err != nil {
 		say(stderr, "crew: hold add: %v\n", err)
@@ -380,40 +389,92 @@ func add(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	return 0
 }
 
+// holdRow is one `hold` bus row. Field order is the row's byte order — the arm
+// built it in jq's construction order and `crew log` prints the line verbatim.
+// `ts` is a json.Number so the minted digits print as written, the way the
+// arm's `--argjson` passed them.
+type holdRow struct {
+	TS     json.Number `json:"ts"`
+	CrewID string      `json:"crew_id"`
+	From   string      `json:"from"`
+	To     string      `json:"to"`
+	Kind   string      `json:"kind"`
+	Body   string      `json:"body"`
+}
+
+// holdBody is `add`'s body, releaseBody `release`'s. Both are JSON text inside
+// the row's `body` *string*, so their key order is part of the value and `jq -S`
+// cannot normalise it; `TestAddRowMatchesTheBuilder` pins the exact text.
+type holdBody struct {
+	ID   string   `json:"id"`
+	Wait holdWait `json:"wait"`
+	Task holdTask `json:"task"`
+}
+
+type holdWait struct {
+	Engine   string `json:"engine"`
+	Window   string `json:"window"`
+	ResetsAt int64  `json:"resets_at"`
+}
+
+type holdTask struct {
+	Ref    string `json:"ref"`
+	Branch string `json:"branch"`
+	Tier   string `json:"tier"`
+	// Engine is `task.engine`, the dispatch target; holdWait's engine is the
+	// quota being waited on. AddRequest keeps them distinct for the same reason.
+	Engine string  `json:"engine"`
+	Model  string  `json:"model"`
+	Effort string  `json:"effort"`
+	Plan   *string `json:"plan"`
+	MCP    *string `json:"mcp"`
+	Draft  bool    `json:"draft"`
+	Shape  *string `json:"shape"`
+	Title  string  `json:"title"`
+	Spec   *string `json:"spec"`
+}
+
+type releaseBody struct {
+	ID       string `json:"id"`
+	Released bool   `json:"released"`
+}
+
 // addRow is `_build_hold`: every fixed field closes over the enclosing scope and
 // the title is the only shrinkable part. Handing Shrink the whole body would
 // truncate `id`, `task.branch` and `task.spec` along with the title.
-func addRow(crew, id, ts string, fl *AddRequest, specpath, title string) jsonv.Value {
-	resets, _ := jsonv.ParseNumber(digitsLiteral(fl.ResetsAt))
-	return jsonv.Object(
-		jsonv.Member{Key: "ts", Val: tsValue(ts)},
-		jsonv.Member{Key: "crew_id", Val: jsonv.Str(crew)},
-		jsonv.Member{Key: "from", Val: jsonv.Str("dispatcher:" + crew)},
-		jsonv.Member{Key: "to", Val: jsonv.Str("hold:" + crew)},
-		jsonv.Member{Key: "kind", Val: jsonv.Str("msg")},
-		jsonv.Member{Key: "body", Val: jsonv.Str(compact(jsonv.Object(
-			jsonv.Member{Key: "id", Val: jsonv.Str(id)},
-			jsonv.Member{Key: "wait", Val: jsonv.Object(
-				jsonv.Member{Key: "engine", Val: jsonv.Str(fl.Engine)},
-				jsonv.Member{Key: "window", Val: jsonv.Str(fl.Window)},
-				jsonv.Member{Key: "resets_at", Val: resets},
-			)},
-			jsonv.Member{Key: "task", Val: jsonv.Object(
-				jsonv.Member{Key: "ref", Val: jsonv.Str(fl.Ref)},
-				jsonv.Member{Key: "branch", Val: jsonv.Str(fl.Branch)},
-				jsonv.Member{Key: "tier", Val: jsonv.Str(fl.Tier)},
-				jsonv.Member{Key: "engine", Val: jsonv.Str(fl.Agent)},
-				jsonv.Member{Key: "model", Val: jsonv.Str(fl.Model)},
-				jsonv.Member{Key: "effort", Val: jsonv.Str(fl.Effort)},
-				jsonv.Member{Key: "plan", Val: orNull(fl.Plan)},
-				jsonv.Member{Key: "mcp", Val: orNull(fl.MCP)},
-				jsonv.Member{Key: "draft", Val: jsonv.Bool(fl.Draft)},
-				jsonv.Member{Key: "shape", Val: orNull(fl.Shape)},
-				jsonv.Member{Key: "title", Val: jsonv.Str(title)},
-				jsonv.Member{Key: "spec", Val: orNull(specpath)},
-			)},
-		)))},
-	)
+func addRow(crew, id, ts string, fl *AddRequest, specpath, title string) holdRow {
+	// `--argjson resets_at <digits>`: digitsLiteral is that literal, and int64
+	// holds every value `add`'s own ParseInt bound above, so this cannot fail.
+	resets, _ := strconv.ParseInt(digitsLiteral(fl.ResetsAt), 10, 64)
+	return holdRow{
+		TS:     json.Number(ts),
+		CrewID: crew,
+		From:   "dispatcher:" + crew,
+		To:     "hold:" + crew,
+		Kind:   "msg",
+		Body: encode(holdBody{
+			ID: id,
+			Wait: holdWait{
+				Engine:   fl.Engine,
+				Window:   fl.Window,
+				ResetsAt: resets,
+			},
+			Task: holdTask{
+				Ref:    fl.Ref,
+				Branch: fl.Branch,
+				Tier:   fl.Tier,
+				Engine: fl.Agent,
+				Model:  fl.Model,
+				Effort: fl.Effort,
+				Plan:   orNull(fl.Plan),
+				MCP:    orNull(fl.MCP),
+				Draft:  fl.Draft,
+				Shape:  orNull(fl.Shape),
+				Title:  title,
+				Spec:   orNull(specpath),
+			},
+		}),
+	}
 }
 
 func release(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
@@ -432,19 +493,16 @@ func release(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) 
 	// Always appended — the bus is append-only — so an unknown or already
 	// released id is a no-op by construction: the outstanding fold excludes any id
 	// with a matching release, however many it finds.
-	body := compact(jsonv.Object(
-		jsonv.Member{Key: "id", Val: jsonv.Str(hid)},
-		jsonv.Member{Key: "released", Val: jsonv.Bool(true)},
-	))
+	body := encode(releaseBody{ID: hid, Released: true})
 	line := bus.FitLine(func(b string) string {
-		return compact(jsonv.Object(
-			jsonv.Member{Key: "ts", Val: tsValue(strconv.FormatInt(o.clock().RealMS(), 10))},
-			jsonv.Member{Key: "crew_id", Val: jsonv.Str(crew)},
-			jsonv.Member{Key: "from", Val: jsonv.Str("dispatcher:" + crew)},
-			jsonv.Member{Key: "to", Val: jsonv.Str("hold:" + crew)},
-			jsonv.Member{Key: "kind", Val: jsonv.Str("msg")},
-			jsonv.Member{Key: "body", Val: jsonv.Str(b)},
-		))
+		return encode(holdRow{
+			TS:     json.Number(strconv.FormatInt(o.clock().RealMS(), 10)),
+			CrewID: crew,
+			From:   "dispatcher:" + crew,
+			To:     "hold:" + crew,
+			Kind:   "msg",
+			Body:   b,
+		})
 	}, body)
 	if err := bus.Append(paths.Log, line); err != nil {
 		say(stderr, "crew: hold release: %v\n", err)
@@ -487,21 +545,13 @@ func (o Options) clock() clock.Clock {
 	return clock.Clock{Now: o.Now, CrewClock: o.CrewClock}
 }
 
-// tsValue is the row's `ts`: a number literal, so the digits print as written.
-func tsValue(digits string) jsonv.Value {
-	v, ok := jsonv.ParseNumber(digits)
-	if !ok {
-		return jsonv.Num(0)
-	}
-	return v
-}
-
-// orNull is the arm's `(if $x == "" then null else $x end)`.
-func orNull(s string) jsonv.Value {
+// orNull is the arm's `(if $x == "" then null else $x end)`, which the four
+// nullable task fields print as `null` when their flag was empty.
+func orNull(s string) *string {
 	if s == "" {
-		return jsonv.Null()
+		return nil
 	}
-	return jsonv.Str(s)
+	return &s
 }
 
 // digitsLiteral is what `jq --argjson` makes of a digit string: the value, so
@@ -531,13 +581,35 @@ func isDigits(s string) bool {
 
 // elems hands a program whose `.` is an array the array's elements: jqrun makes
 // `.` the slice it is passed, which is the arm's pipe from one jq to the next.
-func elems(v jsonv.Value) []jsonv.Value {
-	if v.Kind() != jsonv.KindArray {
-		return nil
+func elems(v any) []any {
+	if a, ok := v.([]any); ok {
+		return a
 	}
-	return v.Elems()
+	return nil
 }
 
-func compact(v jsonv.Value) string { return string(jsonv.Append(nil, v, jsonv.Options{})) }
+// JSON is a fold result as compact JSON for a caller that still builds its jq
+// inputs with jsonv, and the row and body encoder every writer here uses: one
+// line, with `<`, `>` and `&` left raw the way jq printed them (a row built
+// inside bus.FitLine must not grow by five bytes per `<`).
+func JSON(v any) ([]byte, error) {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return []byte(strings.TrimSuffix(b.String(), "\n")), nil
+}
 
-func print_(w io.Writer, v jsonv.Value) { say(w, "%s\n", compact(v)) }
+// encode is JSON for a value this package builds, which encoding/json can always
+// write: every leaf is a string, bool, int64, json.Number or a fold's own output.
+func encode(v any) string {
+	b, err := JSON(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+func print_(w io.Writer, v any) { say(w, "%s\n", encode(v)) }
