@@ -47,6 +47,9 @@ func TestDoneBehindPostTurn(t *testing.T) {
 		{"unanchored hook prose", join(filler, []string{done, "● I saw hooks.json changed — reloaded it"}), false},
 		{"no marker", join(filler, []string{hook}), false},
 		{"marker beyond window", join([]string{done}, wrap(40), []string{hook}), false},
+		{"new turn under old recap", join(filler, []string{done, recapStart, "❯ run the deploy", "● Bash(rm -rf build)", "  ⎿  removed", "  Now check the settings in /config)"}), false},
+		{"prose ending in config without recap", join(filler, []string{done, "  Now check the settings in /config)"}), false},
+		{"marker glyph inside recap", join(filler, []string{done, recapStart, "  ● Bash(x)", recapEnd}), false},
 		{"spinner above recap", join(filler, []string{done, "✻ Churning… (3s · ↓ 1k tokens)", recapStart, recapEnd}), false},
 	}
 	for _, c := range cases {

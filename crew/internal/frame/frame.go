@@ -48,7 +48,8 @@ var (
 	// The post-turn lines claude can print under the finished-turn marker.
 	reClearHint  = posix(`^[[:space:]]*new task\?[[:space:]]+/clear[[:space:]]`)
 	reHookReload = posix(`^[[:space:]]*●[[:space:]]+[^[:space:]:]+:[[:space:]]+hooks\.json changed — reloaded`)
-	reRecapEnd   = posix(`/config\)[[:space:]]*$`)
+	reRecapEnd   = posix(`(^|[[:space:]])in[[:space:]]+/config\)[[:space:]]*$`)
+	reRecapWrap  = posix(`^  [^[:space:]●❯⎿✻※─>]`)
 	reRecap      = posix(`^[[:space:]]*※[[:space:]]+recap:`)
 
 	rePiScrollUp   = regexp.MustCompile(`↑ [0-9]+ more`)
@@ -487,7 +488,7 @@ const maxRecapRows = 12
 // doneBehindPostTurn finds the finished-turn marker past the fixed window above
 // the box, walking up through nothing but the hint, hook-reload and recap lines
 // claude prints after a turn ends. A recap is one contiguous block that ends
-// with its `(disable recaps in /config)` tail and starts at `※ recap:`. Any
+// with its `(disable recaps in /config)` tail, its wrapped rows are indented prose, and it starts at `※ recap:`. Any
 // other row ends the walk, so the pane stays not-idle.
 func doneBehindPostTurn(text string) bool {
 	_, plain, a, _, off, ok := scanBox(text)
@@ -509,11 +510,14 @@ func doneBehindPostTurn(text string) bool {
 			}
 			inRecap = false
 		case !inRecap:
-			if !reRecapEnd.MatchString(row) {
+			if !reRecapWrap.MatchString(row) || !reRecapEnd.MatchString(row) {
 				return false
 			}
 			inRecap, rows = true, 0
 		default:
+			if !reRecapWrap.MatchString(row) {
+				return false
+			}
 			if rows++; rows >= maxRecapRows {
 				return false
 			}
