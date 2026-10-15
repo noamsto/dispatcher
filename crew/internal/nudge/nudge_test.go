@@ -107,16 +107,6 @@ func (b *fakeBus) append(row jsonv.Value) error {
 	return nil
 }
 
-// row is a bus row from JSON text, the way a test writes one on the log.
-func row(t *testing.T, text string) jsonv.Value {
-	t.Helper()
-	vs, err := jsonv.DecodeStream(strings.NewReader(text))
-	if err != nil || len(vs) != 1 {
-		t.Fatalf("row %q: %v", text, err)
-	}
-	return vs[0]
-}
-
 // env is a Deps.Getenv that answers from a map and defaults to "".
 func env(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }
