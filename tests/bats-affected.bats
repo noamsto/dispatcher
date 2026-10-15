@@ -24,18 +24,18 @@ suite_count() { find "$REPO_ROOT/tests" -maxdepth 1 -name '*.bats' | wc -l; }
   [ -z "$stderr" ]
 }
 
-@test "affected: budget-gate.sh selects its 14 files and not unrelated suites" {
+@test "affected: budget-gate.sh selects its 13 files and not unrelated suites" {
   affected --files adapters/core/budget-gate.sh
   [ "$status" -eq 0 ]
-  [ "${#lines[@]}" -eq 14 ]
+  [ "${#lines[@]}" -eq 13 ]
   [[ "$output" == *tests/crew.bats* ]]
   [[ "$output" != *tests/secret-read-guard.bats* ]]
 }
 
-@test "affected: crew/ Go sources select the crew set's 14 files" {
+@test "affected: crew/ Go sources select the crew set's 13 files" {
   affected --files crew/main.go
   [ "$status" -eq 0 ]
-  [ "${#lines[@]}" -eq 14 ]
+  [ "${#lines[@]}" -eq 13 ]
   [[ "$output" == *tests/crew.bats* ]]
   [[ "$output" != *tests/secret-read-guard.bats* ]]
 }

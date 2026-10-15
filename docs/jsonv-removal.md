@@ -447,8 +447,8 @@ raws, now, {"b": Str(branch)})`, result via `cells` (:38-42). Breaks: jqrun
   `RunOccupants` (:104) `Append` + `"\n"`; no `body`, no FitLine. Breaks:
   only a nil slice must print `[]` not `null` (`TestRunOccupants` :104) and an
   empty pane prints `null` (use `*string`); tests compare by value
-  (`TestOccupantsJSON` :90); tests/crew.bats 845-886 and tests/reap-race.bats
-  125, 145 run `crew occupants`. Verdict: replace (non-nil `[]occupantJSON`).
+  (`TestOccupantsJSON` :90); tests/crew.bats 845-886 and the former reap-race bats
+  (since ported to Go) run `crew occupants`. Verdict: replace (non-nil `[]occupantJSON`).
 - `crew/internal/reap/release.go` — (a) row, (c)+(b) transcript filter. Row
   (:92-104): `kind:"release"` with `ts`, `branch`, `session`, `state`, `windows`
   `[]string`, appended with no FitLine; `newerUserTurn` (:165-182) compiles
