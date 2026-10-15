@@ -609,7 +609,7 @@ targeting. Steps 21–23 then turn it green; re-run it after each of them. Step
          `TMUX_PANE` is set: export a fake `TMUX_PANE`, and have the stub
          `tmux` wrapper answer `display-message … '#{session_name}'` with
          `main`.
-    2. Start `crew stream --crew c1 --park 2 --retry 1 --coalesce 0 --interval 1`
+    2. Start `crew stream --crew c1 --park 2 --retry 1 --coalesce 1 --interval 1`
        locally, in the background, to a file. Register a trap that kills it.
     3. In the remote env, run
        `CREW_WORKER_ID=<worker id> crew status <worker id> blocked "need input"`

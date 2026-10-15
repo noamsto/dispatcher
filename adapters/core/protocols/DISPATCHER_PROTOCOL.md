@@ -423,8 +423,10 @@ When a worker reports an evidence/review/recurrence block, resolve the stated
 decision or route to a supported reviewer; green CI is not a waiver.
 
 ```
-dispatch <tier> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <role[=model|agent:model][@effort],…>] [--plan provided|required] [--base <ref|PR>] [--pr N] [--review] [--add-dir DIR]... [LINEAR-ID] [--] <title…>
+dispatch <tier> <model> --effort <low|medium|high|xhigh|max|ultra> [--agent claude|codex|cursor|pi] [--mcp <profile>] [--grid] [--roles <role[=model|agent:model][@effort],…>] [--plan provided|required] [--base <ref|PR>] [--pr N] [--review] [--add-dir DIR]... [--host <name>] [LINEAR-ID] [--] <title…>
 ```
+
+To re-attach after a broken link: `dispatch --host <name> --recover <session> [--crew-id <id>]`.
 
 `--` ends option parsing: every token after it is title text, so a title
 containing a flag-shaped word (e.g. `--base`) passes verbatim. Only the first
@@ -463,6 +465,16 @@ branch instead; the worktree carries over under `resume: true`.
   - **Merge.** `gh stack merge` — like any PR merge — only on explicit user approval, never on a worker's or the dispatcher's own initiative. When every layer up to the one you are shipping is green, prefer `gh stack merge <stack number or top PR> --squash` to merging layer by layer: it merges every layer at once, all or nothing, and makes the child's post-merge `--onto` rebase unnecessary. Keep the per-layer path for when only the lower layers are ready; neither merges without the human's approval.
   - **Reap edge.** `crew reap` reclaims only a MERGED/CLOSED PR (`crew.sh` `reap)`), so a parent whose PR is still open is never pulled out from under a live child. After the parent merges, GitHub retargets the child PR (delete-branch-on-merge), and the worker follows its own PR's live `baseRefName` — reap does not rewrite children's stamps: doing so would mean scanning every other worktree and rewriting a file a live worker may be reading mid-run, and it would still miss a retarget reap never sees.
   - **Holds.** `crew hold` does not record `--base` — refer to the parent as "stacked on #N" in the spec's prose, and re-pass `--base` from it when you release the hold, otherwise the released dispatch forks from the default branch instead of its parent.
+- **Remote workers (`--host <name>`).** Runs the worker on another machine; everything else about the dispatch is unchanged.
+  - **Settings.** `hosts.<name> = {ssh, repos."owner/repo" = path}` — `programs.dispatcher.hosts` in home-manager, or user settings. The ssh target and path always come from settings, never from a bus row.
+  - **Preconditions.** The clone already exists at the mapped path. `crew`, `dispatch` and `tmux` are on the remote's non-interactive ssh `PATH`. The remote's engine logins are present. On a macOS remote the engine's keychain login works only in a tmux server started from the GUI login session — keep one running there; a server first started by sshd cannot reach the login keychain.
+  - **Refused with `--host`:** `--add-dir`, `--base`, `--status`, `--lazy`. The engine roster is the remote's (`--agent` must be in its `dispatch --engines`); claude quota is checked locally; the fan-out budget and load gate are judged by the remote, not here.
+  - **Window.** The remote worker lives in the remote tmux session `crew-<id>`. The dispatch mirrors it with `og-remote-open <ssh> crew-<id> --into <session>`; otherwise it prints `ssh -t <ssh> tmux attach -t crew-<id>`. Only `dispatch` and `dispatch resume` set the mirror up: re-run that `og-remote-open` after a local tmux or dispatcher restart.
+  - **Routed to the remote.** `crew reply`, `crew nudge`, `crew where` (prints ` [host <h>]`; the mirror window comes first), `permission-check` and `dispatch resume`. Name a remote worker by branch or codename, never a `%pane` — remote pane ids mean nothing here.
+  - **Roster.** `crew roster` adds remote rows with `host` and `live` (judged on the remote's tmux). An unreachable host gives `host_error` rows with `state` and `live` null: never read that as dead.
+  - **Inbox.** `crew inbox dispatcher:<c>` covers local rows only; a remote worker's messages arrive in stream batches (see "Read the bus").
+  - **Broken link.** Exit 255 means the link dropped mid-dispatch and the remote worker could not be confirmed. The message names `dispatch --host <h> --recover <session> --crew-id <id>`: run it once the link is back. It writes nothing when the remote made no worker.
+  - **Holds.** `crew hold` does not record `--host` — name the host in the held spec's prose and re-pass `--host` on release, as with `--base`.
 - **Task-specific dirs.** When the task body names a path outside the worktree that the
   worker must read, pass `--add-dir <DIR>` (repeatable) with the **narrowest** dir that
   covers it — e.g. `~/other-repo/docs/specs`, not
@@ -1047,6 +1059,8 @@ next rediscovery (`--rediscover`, default 300 s) and replays its backlog then.
 Arm the lane as its own persistent Monitor and give it the same liveness checks
 as `crew stream`, with `crew fleet stream --status --crew <id>` (a stale lane:
 `--force`; a dead one: re-arm). Its heartbeat carries no `repo`.
+
+A remote worker (`dispatch --host`) is followed by a relay inside the streaming lanes, so it needs a `crew stream` or `crew fleet stream` lane: a one-shot `crew watch` park sees no remote events, and the fleet lane also reaps remote hosts. Relayed batches carry `host` (and so does every event inside); keep the last `cursor` per `host` (and per `repo` in fleet mode) and compare only within it. `{"stream":"error",…,"host":"<h>"}` means that relay's link dropped: it reconnects by itself and resumes from its cursor, so run `crew roster` to see `host_error` rather than re-arming. `{"stream":"reap",…,"host":"<h>"}` is the remote's own reap, informational like any reap.
 
 The crew's roster diagram is drawn by `crew`, not by you: every `dispatch` and
 `dispatch resume` starts a per-crew `crew roster-render`, which redraws it into the
