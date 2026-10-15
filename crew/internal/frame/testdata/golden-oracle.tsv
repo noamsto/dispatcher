@@ -874,3 +874,39 @@ subbatch.28m_13s.4m_45s.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsen
 subbatch.28m_13s.4m_45s.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
 subbatch.28m_13s.4m_45s.txt	quota_prompt	0
 subbatch.28m_13s.4m_45s.txt	quota_session_limit	0
+post_turn_idle_full.txt	idle_reason.skip0.color	rc=0 reason=
+post_turn_idle_full.txt	idle_reason.skip0.plain	rc=0 reason=
+post_turn_idle_full.txt	idle_reason.skip1.color	rc=0 reason=
+post_turn_idle_full.txt	idle_reason.skip1.plain	rc=0 reason=
+post_turn_idle_full.txt	quota_prompt	0
+post_turn_idle_full.txt	quota_session_limit	0
+post_turn_idle_wrapped.txt	idle_reason.skip0.color	rc=0 reason=
+post_turn_idle_wrapped.txt	idle_reason.skip0.plain	rc=0 reason=
+post_turn_idle_wrapped.txt	idle_reason.skip1.color	rc=0 reason=
+post_turn_idle_wrapped.txt	idle_reason.skip1.plain	rc=0 reason=
+post_turn_idle_wrapped.txt	quota_prompt	0
+post_turn_idle_wrapped.txt	quota_session_limit	0
+post_turn_draft.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+post_turn_draft.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+post_turn_draft.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+post_turn_draft.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+post_turn_draft.txt	quota_prompt	0
+post_turn_draft.txt	quota_session_limit	0
+post_turn_live.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
+post_turn_live.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
+post_turn_live.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
+post_turn_live.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
+post_turn_live.txt	quota_prompt	0
+post_turn_live.txt	quota_session_limit	0
+post_turn_shell.txt	idle_reason.skip0.color	rc=1 reason=background shell or monitor still running
+post_turn_shell.txt	idle_reason.skip0.plain	rc=1 reason=background shell or monitor still running
+post_turn_shell.txt	idle_reason.skip1.color	rc=1 reason=no finished-turn marker above the input box
+post_turn_shell.txt	idle_reason.skip1.plain	rc=1 reason=no finished-turn marker above the input box
+post_turn_shell.txt	quota_prompt	0
+post_turn_shell.txt	quota_session_limit	0
+post_turn_unknown.txt	idle_reason.skip0.color	rc=1 reason=no finished-turn marker above the input box
+post_turn_unknown.txt	idle_reason.skip0.plain	rc=1 reason=no finished-turn marker above the input box
+post_turn_unknown.txt	idle_reason.skip1.color	rc=1 reason=no finished-turn marker above the input box
+post_turn_unknown.txt	idle_reason.skip1.plain	rc=1 reason=no finished-turn marker above the input box
+post_turn_unknown.txt	quota_prompt	0
+post_turn_unknown.txt	quota_session_limit	0

@@ -1,0 +1,15 @@
+  The behaviour deltas and the consumer map are in the PR body.
+  ✻ Churned for 36s · done 11:20 AM
+
+● dispatcher: hooks.json changed — reloaded (modules: hooks/register.tsx unchanged; 3 hooks: session.start, command.run, ui.render)
+
+※ recap: Goal: convert crew's remaining subcommands to typed kong commands for
+  #862. Slice 3 is done as PR #1039 with CI green and the worker marked done, so
+  the one next action is for the dispatcher to review and merge it. (disable
+  recaps in /config)
+                                                                      new task? /clear to save 179.9k tokens
+───────────────────────────── lime ─
+❯ hello
+─────────────────────────────
+  🤖 Sonnet 5.5 🧠 med | 📊 180k/1M
+  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
