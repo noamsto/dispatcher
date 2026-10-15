@@ -9,6 +9,7 @@ package rate
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
@@ -150,12 +151,12 @@ func argjson(text string) any {
 		return v
 	}
 	// jq's number grammar is looser than JSON's; the arm's `--argjson` accepted these.
-	t := strings.TrimSpace(text)
+	t := strings.Trim(text, " \t\r\n")
 	if !looseNumber.MatchString(t) {
 		return nil
 	}
 	f, err := strconv.ParseFloat(t, 64)
-	if err != nil {
+	if err != nil && !errors.Is(err, strconv.ErrRange) {
 		return nil
 	}
 	return f

@@ -2,6 +2,7 @@ package rate
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -271,7 +272,7 @@ func TestArgjsonLooseNumbers(t *testing.T) {
 		in   string
 		want float64
 	}{
-		{".5", 0.5}, {"+2", 2}, {"5.", 5}, {"02", 2}, {"-.5e1", -5},
+		{".5", 0.5}, {"+2", 2}, {"5.", 5}, {"02", 2}, {"-.5e1", -5}, {"+1e400", math.Inf(1)},
 	}
 	for _, c := range nums {
 		if got := argjson(c.in); !weightTruth(got, c.want) {
@@ -281,7 +282,7 @@ func TestArgjsonLooseNumbers(t *testing.T) {
 	if got := argjson("1.50"); got != json.Number("1.50") {
 		t.Errorf("argjson(%q) = %#v, want json.Number(\"1.50\")", "1.50", got)
 	}
-	for _, in := range []string{"nan", "Infinity", "inf", "0x10", "1_0", "abc", "", "1 2", ".", "+", "e5"} {
+	for _, in := range []string{"nan", "Infinity", "inf", "0x10", "1_0", "abc", "", "1 2", ".", "+", "e5", " .5"} {
 		if got := argjson(in); got != nil {
 			t.Errorf("argjson(%q) = %#v, want nil", in, got)
 		}
