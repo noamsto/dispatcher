@@ -217,8 +217,8 @@ func seedSettings(dir, bridgeEntry string) error {
 	base := map[string]json.RawMessage{}
 	if b, err := os.ReadFile(dir + "/settings.json"); err == nil {
 		var m map[string]json.RawMessage
-		// `null` decodes to a nil map without an error, and a failed decode may
-		// have filled m halfway.
+		// `null` decodes to a nil map with no error, and a failed decode may have
+		// filled m halfway.
 		if json.Unmarshal(b, &m) == nil && m != nil {
 			base = m
 		}
@@ -227,7 +227,8 @@ func seedSettings(dir, bridgeEntry string) error {
 	// it would make jq die with an opaque `cannot be added`. Refuse legibly.
 	ext, hasExt := base["extensions"]
 	var elems []json.RawMessage
-	// Absent and null both read as no entries, and appending to them starts a list.
+	// Absent and null both leave elems with no entries; anything but an array
+	// fails to unmarshal.
 	isArray := !hasExt || json.Unmarshal(ext, &elems) == nil
 	if bridgeEntry != "" && !isArray {
 		return refuse("crew: %s/settings.json has a non-array extensions value — refusing to seed pi worker dir", dir)
@@ -248,11 +249,11 @@ func seedSettings(dir, bridgeEntry string) error {
 			if err != nil {
 				return err
 			}
-			row, err := encodeJSON(append(elems, json.RawMessage(quoted)), false)
+			raw, err := encodeJSON(append(elems, json.RawMessage(quoted)), false)
 			if err != nil {
 				return err
 			}
-			base["extensions"] = json.RawMessage(row)
+			base["extensions"] = json.RawMessage(raw)
 		}
 	}
 	text, err := encodeJSON(base, true)
@@ -347,8 +348,7 @@ func seedModels(stderr io.Writer, dir, bin string) error {
 
 // encodeJSON is the arm's jq writer: `<`, `>` and `&` left raw the way jq printed
 // them, one line or indented two spaces per level. Its error goes back to the
-// caller: on a value encoding/json cannot write, the output is empty, and an
-// empty file would replace a good one.
+// caller: on a value encoding/json cannot write, the output is empty.
 func encodeJSON(v any, indent bool) (string, error) {
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
@@ -363,8 +363,7 @@ func encodeJSON(v any, indent bool) (string, error) {
 }
 
 // parseOne is the arm's `jq -n --argjson s "$out"`: exactly one value in gojq's
-// form — json.Number for every number literal, never a float64 — so empty input,
-// a torn tail or a second value is an error.
+// form, json.Number for every number literal and never a float64.
 func parseOne(text string) (any, error) {
 	dec := json.NewDecoder(strings.NewReader(text))
 	dec.UseNumber()
@@ -378,9 +377,8 @@ func parseOne(text string) (any, error) {
 	return v, nil
 }
 
-// readValues is `jq -s` over a file: every value in it in gojq's form. A decode
-// error comes back with no values, and an empty file with a non-nil empty slice,
-// which is `[]` to gojq where nil would be null.
+// readValues is `jq -s` over a file: every value in it in gojq's form. An empty
+// file is a non-nil empty slice, which is `[]` to gojq where nil would be null.
 func readValues(path string) ([]any, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -401,7 +399,6 @@ func readValues(path string) ([]any, error) {
 	}
 }
 
-// isObject is gojq's kind check for a JSON object.
 func isObject(v any) bool { _, ok := v.(map[string]any); return ok }
 
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }

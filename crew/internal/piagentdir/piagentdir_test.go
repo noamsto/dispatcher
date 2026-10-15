@@ -532,9 +532,9 @@ func TestDispatchConfigFailures(t *testing.T) {
 	}
 }
 
-// A big or fractional number literal keeps its own text through the seed:
-// settings.json values are carried raw and the jq hand-off is json.Number, so
-// nothing here goes through float64 (which would print 18446744073709552000).
+// A number literal keeps its own text through the seed: settings.json values are
+// carried raw and the jq hand-off is json.Number, so nothing goes through
+// float64 (which would print 18446744073709552000).
 func TestNumberLiteralsKeepTheirText(t *testing.T) {
 	f := newFixture(t)
 	f.setConfig(t, `{"localModels":{"p/m":{"baseUrl":"http://h/v1","contextWindow":18446744073709551617,"maxTokens":1.50}}}`)
