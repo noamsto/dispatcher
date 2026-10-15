@@ -17,14 +17,14 @@ const helperEnv = "CREW_REMOTE_TEST_HELPER"
 // fakeBin is a dir holding a fake `dispatch`, `permission-check` and `crew`.
 // Each dumps into $REMOTE_TEST_DUMP: its argv NUL-separated, its cwd, a copy
 // of $DISPATCH_SPEC (mode kept) and its path, and the allowlisted env plus
-// CREW_WORKER_ID. With $FAKE_MARKER set it first sleeps 2 s, writes to stdout,
-// then touches the marker.
+// CREW_WORKER_ID. With $FAKE_MARKER set it touches $FAKE_MARKER.started, sleeps
+// 2 s, writes to stdout, then touches the marker.
 func fakeBin(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	body := func(argv0 string) string {
 		return `d="$REMOTE_TEST_DUMP"
-if [ -n "${FAKE_MARKER:-}" ]; then sleep 2; echo late; : > "$FAKE_MARKER"; exit 0; fi
+if [ -n "${FAKE_MARKER:-}" ]; then : > "$FAKE_MARKER.started"; sleep 2; echo late; : > "$FAKE_MARKER"; exit 0; fi
 printf '%s\0' ` + argv0 + ` "$@" > "$d/argv"
 pwd -P > "$d/pwd"
 if [ -n "${DISPATCH_SPEC:-}" ]; then cp -p "$DISPATCH_SPEC" "$d/spec"; printf '%s' "$DISPATCH_SPEC" > "$d/spec-path"; fi
@@ -276,7 +276,16 @@ func TestServeDetachedDispatchSurvivesCaller(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(500 * time.Millisecond)
+	started := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(marker + ".started"); err == nil {
+			break
+		}
+		if time.Now().After(started) {
+			t.Fatal("the dispatch never started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}

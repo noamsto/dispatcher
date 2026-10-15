@@ -8,6 +8,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -23,9 +24,10 @@ const remoteTimeout = 30 * time.Second
 type Capture func(ctx context.Context, host string, argv []string, stdout, stderr io.Writer) int
 
 // MergeRemote appends the rows of the crew's remote workers to the local rows:
-// per host, the rows of `crew roster <crew> --live` run there, for the branches
-// this bus dispatched to it, tagged with `host`. A host that cannot answer
-// leaves one placeholder per branch, `state` and `live` null and the reason in
+// per host, the rows of `crew roster --live <crew>` run there, for the branches
+// this bus dispatched to it, tagged with `host`. Hosts are asked at once and
+// answer in host order. A host that cannot answer leaves one placeholder per
+// branch, `state` and `live` null, `ts` the dispatch row's and the reason in
 // `host_error`: it is never reported dead for having no local window. With no
 // remote worker the rows come back untouched.
 func MergeRemote(ctx context.Context, rows jsonv.Value, events []bus.Event, crew string, capture Capture) jsonv.Value {
@@ -33,15 +35,24 @@ func MergeRemote(ctx context.Context, rows jsonv.Value, events []bus.Event, crew
 	if len(workers) == 0 {
 		return rows
 	}
-	merged := slices.Clone(rows.Elems())
+	var byHost [][]remote.Worker
 	for len(workers) > 0 {
-		host := workers[0].Host
 		n := 0
-		for n < len(workers) && workers[n].Host == host {
+		for n < len(workers) && workers[n].Host == workers[0].Host {
 			n++
 		}
-		merged = append(merged, hostRows(ctx, host, workers[:n], crew, capture)...)
+		byHost = append(byHost, workers[:n])
 		workers = workers[n:]
+	}
+	answers := make([][]jsonv.Value, len(byHost))
+	var wg sync.WaitGroup
+	for i, ws := range byHost {
+		wg.Go(func() { answers[i] = hostRows(ctx, ws[0].Host, ws, crew, capture) })
+	}
+	wg.Wait()
+	merged := slices.Clone(rows.Elems())
+	for _, a := range answers {
+		merged = append(merged, a...)
 	}
 	return jsonv.Array(merged...)
 }
@@ -69,7 +80,7 @@ func askHost(ctx context.Context, host, crew string, capture Capture) ([]jsonv.V
 	ctx, cancel := context.WithTimeout(ctx, remoteTimeout)
 	defer cancel()
 	var stdout, stderr bytes.Buffer
-	if rc := capture(ctx, host, []string{"crew", "roster", crew, "--live"}, &stdout, &stderr); rc != 0 {
+	if rc := capture(ctx, host, []string{"crew", "roster", "--live", "--", crew}, &stdout, &stderr); rc != 0 {
 		if line, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n"); line != "" {
 			return nil, errors.New(line)
 		}
@@ -94,6 +105,7 @@ func placeholders(host string, workers []remote.Worker, reason string) []jsonv.V
 			jsonv.Member{Key: "host", Val: jsonv.Str(host)},
 			jsonv.Member{Key: "state", Val: jsonv.Null()},
 			jsonv.Member{Key: "live", Val: jsonv.Null()},
+			jsonv.Member{Key: "ts", Val: w.TS},
 			jsonv.Member{Key: "host_error", Val: jsonv.Str(reason)},
 		)
 	}

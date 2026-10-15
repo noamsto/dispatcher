@@ -258,7 +258,7 @@ func (a *arm) route(target, want, wait, localBranch string, stderr io.Writer) (c
 	if wait != "" {
 		argv = append(argv, "--wait", wait)
 	}
-	return a.o.Remote(host, append(argv, cmp.Or(want, branch))), true
+	return a.o.Remote(host, append(argv, "--", cmp.Or(want, branch))), true
 }
 
 // resolveFallback is the arm's `_resolve_target` step: the target names a branch on the

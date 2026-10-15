@@ -16,7 +16,7 @@ import (
 )
 
 // relayStub is the crew entry a relaying loop re-enters. `watch` parks briefly
-// with nothing to report; `remote-run` logs its argv and runs the next
+// with nothing to report, or for 30 s once a `park` file exists; `remote-run` logs its argv and runs the next
 // `relay.<n>` file (or `relay.default`) for a relay, `reap` for a reap. Each
 // relay records its pid, which is also its process group.
 func relayStub(t *testing.T) (script, dir string) {
@@ -25,7 +25,7 @@ func relayStub(t *testing.T) (script, dir string) {
 	script = filepath.Join(t.TempDir(), "crew-stub.sh")
 	writeFile(t, script, bashShebang()+`d='`+dir+`'
 case "${1:-}" in
-  watch) echo watch >> "$d/watch.log"; sleep 0.1; exit 0 ;;
+  watch) echo watch >> "$d/watch.log"; [ -f "$d/park" ] && exec sleep 30; sleep 0.1; exit 0 ;;
   hold) printf '[]\n'; exit 1 ;;
   remote-run)
     printf '%s\n' "$*" >> "$d/argv.log"
@@ -410,4 +410,67 @@ func TestFleetRelayLabelsRepoAndReapsPeriodically(t *testing.T) {
 		}
 		return false
 	})
+}
+
+// A remote dispatch row that lands while the loop is parked starts its relay
+// on the --interval cadence, not once the park ends.
+func TestRelayStartsWhileTheLoopIsParked(t *testing.T) {
+	p := fixture(t)
+	if err := os.MkdirAll(p.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := bus.Append(p.Log, `{"ts":1,"crew_id":"c1","from":"dispatcher:c1","kind":"dispatch","branch":"feat/l"}`); err != nil {
+		t.Fatal(err)
+	}
+	self, dir := relayStub(t)
+	writeFile(t, filepath.Join(dir, "park"), "")
+	startStream(t, p, self, Request{}, fastRelay())
+
+	waitFor(t, "the loop to park", func() bool { return readFile(filepath.Join(dir, "watch.log")) != "" })
+	if err := bus.Append(p.Log, remoteDispatchRow("c1", "mini")); err != nil {
+		t.Fatal(err)
+	}
+	appended := time.Now()
+	waitFor(t, "the relay while parked", func() bool { return relayStarts(dir) == 1 })
+	if waited := time.Since(appended); waited > 5*time.Second {
+		t.Errorf("the relay started %v after its row, want about --interval (1s)", waited)
+	}
+	if n := strings.Count(readFile(filepath.Join(dir, "watch.log")), "\n"); n != 1 {
+		t.Errorf("the loop parked %d times, want the relay to start inside the first park", n)
+	}
+}
+
+// sync reads the bus only when its size or mtime moved: an unchanged log is
+// not re-read on every tick.
+func TestRelaySyncSkipsAnUnchangedLog(t *testing.T) {
+	p := relayBus(t)
+	self, _ := relayStub(t)
+	rs := &relays{
+		out: &lockedWriter{}, procs: children{self: self}, log: p.Log, cdir: p.CrewDir("c1"),
+		crew: "c1", states: defaultStates, owner: "test", retry: time.Second, heartbeat: 10 * time.Second,
+		now: func() int64 { return 0 }, hosts: map[string]*relay{}, stop: make(chan struct{}),
+	}
+	defer rs.shutdown()
+	rs.sync()
+	st, err := os.Stat(p.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same size, same mtime, a different host: only a re-read would see it.
+	text := strings.Replace(readFile(p.Log), `"mini"`, `"mino"`, 1)
+	writeFile(t, p.Log, text)
+	if err := os.Chtimes(p.Log, st.ModTime(), st.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	rs.sync()
+	if rs.hosts["mino"] != nil {
+		t.Error("sync re-read a log whose size and mtime had not moved")
+	}
+	if err := bus.Append(p.Log, remoteDispatchRow("c1", "maxi")); err != nil {
+		t.Fatal(err)
+	}
+	rs.sync()
+	if rs.hosts["mini"] == nil || rs.hosts["maxi"] == nil {
+		t.Errorf("hosts = %v, want mini and maxi", rs.hosts)
+	}
 }

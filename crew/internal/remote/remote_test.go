@@ -2,8 +2,10 @@ package remote
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -224,6 +226,30 @@ func TestRoute(t *testing.T) {
 	} {
 		if got := Route(rows, tc.branch, tc.crew); got != tc.want {
 			t.Errorf("Route(%s, %s) = %q, want %q", tc.branch, tc.crew, got, tc.want)
+		}
+	}
+}
+
+func TestRouteAny(t *testing.T) {
+	rows := busRows(t,
+		`{"kind":"dispatch","crew_id":"c","branch":"feat/a","host":"mini","remote":true}`,
+		`{"kind":"dispatch","crew_id":"c","branch":"feat/b","host":"mini","remote":true}`,
+		`{"kind":"dispatch","crew_id":"c","branch":"feat/b","host":"laptop"}`,
+		`{"kind":"dispatch","crew_id":"c","branch":"feat/d","host":"laptop"}`,
+		`{"kind":"dispatch","crew_id":"d","branch":"feat/d","host":"maxi","remote":true}`,
+		`{"kind":"dispatch","crew_id":"c","branch":"feat/l"}`,
+		`{"kind":"dispatch","crew_id":"d","branch":"feat/l"}`,
+	)
+	for _, tc := range []struct{ branch, host, crew, err string }{
+		{branch: "feat/a", host: "mini", crew: "c"},
+		{branch: "feat/b"}, // the newest row is local
+		{branch: "feat/d", err: "feat/d is dispatched in crews c, d, one of them on a remote host — pass --crew <id>"},
+		{branch: "feat/l"}, // local in two crews: the local path's own cross-crew lookup decides
+		{branch: "feat/z"},
+	} {
+		host, crew, err := RouteAny(rows, tc.branch)
+		if host != tc.host || crew != tc.crew || fmt.Sprint(err) != cmp.Or(tc.err, "<nil>") {
+			t.Errorf("RouteAny(%s) = %q, %q, %v; want %q, %q, %s", tc.branch, host, crew, err, tc.host, tc.crew, tc.err)
 		}
 	}
 }

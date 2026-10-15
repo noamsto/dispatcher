@@ -46,9 +46,10 @@ type Probes struct {
 type Options struct {
 	CrewID func() string
 	Probes Probes
-	// Remote runs argv on host with its stdout going to stdout, and returns its
-	// status: how a worker dispatched there is asked where it is. Nil routes nothing.
-	Remote func(host string, argv []string, stdout io.Writer) int
+	// Remote runs argv on host as crew with its stdout going to stdout, and
+	// returns its status: how a worker dispatched there is asked where it is.
+	// Nil routes nothing.
+	Remote func(host, crew string, argv []string, stdout io.Writer) int
 }
 
 // window is one crew-anchored window, in the six fields the arm kept from the
@@ -97,13 +98,21 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	}
 	panes := readPanes(panesRaw)
 
-	if o.Remote != nil && crew != "" {
+	if o.Remote != nil {
 		host, branch, err := remote.ResolveTarget(resolve.Rows(paths.Log), target, crew, localMatch(readWindows(winsRaw, paths.Dir, crew), target))
 		if err != nil {
 			return die(stderr, "%v", err)
 		}
+		as := crew
+		if host != "" && crew == "" {
+			// No crew of its own: the remote is asked as the dispatch row's crew.
+			events, _ := bus.ReadEventsTolerant(paths.Log)
+			if host, as, err = remote.RouteAny(events, branch); err != nil {
+				return die(stderr, "CREW_ID not set and %v", err)
+			}
+		}
 		if host != "" {
-			return whereRemote(host, branch, crew, winsRaw, panes, paths, stdout, stderr, o)
+			return whereRemote(host, branch, as, winsRaw, panes, paths, stdout, stderr, o)
 		}
 	}
 
@@ -163,7 +172,7 @@ func whereRemote(host, branch, crew, winsRaw string, panes []pane, paths bus.Pat
 	mirror, ok := mirrorWindow(winsRaw, branch, crew)
 	if !ok {
 		var out bytes.Buffer
-		if rc := o.Remote(host, []string{"crew", "where", "--crew", crew, branch}, &out); rc != 0 {
+		if rc := o.Remote(host, crew, []string{"crew", "where", "--crew", crew, "--", branch}, &out); rc != 0 {
 			return rc
 		}
 		say(stdout, "%s [host %s]\n", strings.TrimSuffix(out.String(), "\n"), host)

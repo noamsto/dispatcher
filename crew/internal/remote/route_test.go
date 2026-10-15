@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 )
 
@@ -85,15 +86,18 @@ func TestResolveTargetPaneNeverRouted(t *testing.T) {
 func TestRemoteWorkers(t *testing.T) {
 	rows := busRows(t,
 		`{"kind":"dispatch","crew_id":"c","branch":"feat/b","name":"old","host":"mini","remote":true}`,
-		`{"kind":"dispatch","crew_id":"c","branch":"feat/b","name":"bee","host":"mini","remote":true}`,
-		`{"kind":"dispatch","crew_id":"c","branch":"feat/a","name":"ant","host":"big","remote":true}`,
+		`{"ts":2,"kind":"dispatch","crew_id":"c","branch":"feat/b","name":"bee","host":"mini","remote":true}`,
+		`{"ts":3,"kind":"dispatch","crew_id":"c","branch":"feat/a","name":"ant","host":"big","remote":true}`,
 		`{"kind":"dispatch","crew_id":"c","branch":"feat/moved","name":"mo","host":"mini","remote":true}`,
 		`{"kind":"dispatch","crew_id":"c","branch":"feat/moved","name":"mo","host":"laptop"}`,
 		`{"kind":"dispatch","crew_id":"d","branch":"feat/other","name":"ot","host":"mini","remote":true}`,
 		`{"kind":"status","crew_id":"c","branch":"feat/s","host":"mini","remote":true}`,
 	)
-	got := RemoteWorkers(rows, "c")
-	want := []Worker{{"big", "feat/a", "ant"}, {"mini", "feat/b", "bee"}}
+	var got []string
+	for _, w := range RemoteWorkers(rows, "c") {
+		got = append(got, strings.Join([]string{w.Host, w.Branch, w.Name, string(jsonv.Append(nil, w.TS, jsonv.Options{}))}, " "))
+	}
+	want := []string{"big feat/a ant 3", "mini feat/b bee 2"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("RemoteWorkers = %v, want %v", got, want)
 	}

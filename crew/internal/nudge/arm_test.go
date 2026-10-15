@@ -806,11 +806,11 @@ func TestRunRoutesARemoteWorker(t *testing.T) {
 		req  Request
 		argv []string
 	}{
-		{"branch", Request{Target: "feat/far"}, []string{"crew", "nudge", "--crew", "c1", "feat/far"}},
-		{"codename", Request{Target: "iris"}, []string{"crew", "nudge", "--crew", "c1", "feat/far"}},
-		{"wait", Request{Target: "iris", Wait: "60"}, []string{"crew", "nudge", "--crew", "c1", "--wait", "60", "feat/far"}},
-		{"crew flag", Request{Crew: "c1", Target: "feat/far"}, []string{"crew", "nudge", "--crew", "c1", "feat/far"}},
-		{"session id", Request{Target: "worker:feat/far#s1-2"}, []string{"crew", "nudge", "--crew", "c1", "worker:feat/far#s1-2"}},
+		{"branch", Request{Target: "feat/far"}, []string{"crew", "nudge", "--crew", "c1", "--", "feat/far"}},
+		{"codename", Request{Target: "iris"}, []string{"crew", "nudge", "--crew", "c1", "--", "feat/far"}},
+		{"wait", Request{Target: "iris", Wait: "60"}, []string{"crew", "nudge", "--crew", "c1", "--wait", "60", "--", "feat/far"}},
+		{"crew flag", Request{Crew: "c1", Target: "feat/far"}, []string{"crew", "nudge", "--crew", "c1", "--", "feat/far"}},
+		{"session id", Request{Target: "worker:feat/far#s1-2"}, []string{"crew", "nudge", "--crew", "c1", "--", "worker:feat/far#s1-2"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newArm(t)

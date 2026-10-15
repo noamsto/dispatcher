@@ -634,6 +634,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// dispatch-row answers the same question for a session on this bus.
 	if sub == "remote-run" {
 		c := parsed.typed.RemoteRun
+		// The remote takes the request as the dispatcher's, since ssh carries
+		// neither this env nor this pane, so the sender check runs here.
+		crew := bus.CrewID(ctx, cwd)
+		for _, kv := range c.Env {
+			if v, ok := strings.CutPrefix(kv, "CREW_ID="); ok {
+				crew = v
+			}
+		}
+		if reason := sender.Check("dispatcher:"+crew, crew, senderProbes(ctx, e.procs)); reason != "" {
+			say(stderr, "crew: remote-run: %s\n", reason)
+			return exitRemoteUsage
+		}
 		return remote.Run(ctx, remote.Call{
 			Host: str(c.Host), Cwd: cwd, Env: c.Env, SpecFile: str(c.SpecFile), Argv: remoteArgv(c.Argv),
 		}, stdout, stderr)
@@ -713,8 +725,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 			Probes: e.procs,
 			Sender: senderProbes(ctx, e.procs),
-			Remote: func(host string, argv []string) int {
-				return remoteAs(ctx, cwd, cmp.Or(str(c.Crew), crewID()))(host, argv, stdout, stderr)
+			Remote: func(host, crew string, argv []string) int {
+				return remoteAs(ctx, cwd, crew)(host, argv, stdout, stderr)
 			},
 		})
 	}
@@ -752,8 +764,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return where.Run(where.Request{Crew: str(w.Crew), Target: w.Target}, paths, stdout, stderr, where.Options{
 			CrewID: crewID,
 			Probes: whereProbes(ctx),
-			Remote: func(host string, argv []string, out io.Writer) int {
-				return remoteAs(ctx, cwd, cmp.Or(str(w.Crew), crewID()))(host, argv, out, stderr)
+			Remote: func(host, crew string, argv []string, out io.Writer) int {
+				return remoteAs(ctx, cwd, crew)(host, argv, out, stderr)
 			},
 		})
 	}

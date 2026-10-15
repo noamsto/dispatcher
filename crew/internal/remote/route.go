@@ -7,13 +7,15 @@ import (
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 )
 
 // Worker is a branch whose newest dispatch row in a crew is remote:true: where
-// it runs, and the codename the row records.
+// it runs, and the codename and ts the row records.
 type Worker struct {
 	Host, Branch, Name string
+	TS                 jsonv.Value
 }
 
 // RemoteWorkers is crew's remote workers, sorted by host then branch.
@@ -26,7 +28,7 @@ func RemoteWorkers(rows []bus.Event, crew string) []Worker {
 		}
 		name, _ := doc["name"].(string)
 		if host, remote := isRemote(doc); remote && host != "" {
-			newest[e.Branch] = Worker{Host: host, Branch: e.Branch, Name: name}
+			newest[e.Branch] = Worker{Host: host, Branch: e.Branch, Name: name, TS: e.TS}
 		} else {
 			delete(newest, e.Branch)
 		}

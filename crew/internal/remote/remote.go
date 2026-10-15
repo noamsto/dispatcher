@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -236,6 +237,35 @@ func Route(rows []bus.Event, branch, crew string) string {
 		return ""
 	}
 	return ""
+}
+
+// RouteAny is Route for a caller with no crew: the host and crew of the one
+// crew whose newest dispatch row for branch is remote:true. When several crews
+// dispatched the branch and one of them is remote, the target could be either
+// crew's worker, so it is refused rather than guessed.
+func RouteAny(rows []bus.Event, branch string) (host, crew string, err error) {
+	newest := map[string]map[string]any{}
+	for _, e := range rows {
+		if e.CrewID == "" || e.Branch != branch {
+			continue
+		}
+		if doc, ok := dispatchRow(e, e.CrewID); ok {
+			newest[e.CrewID] = doc
+		}
+	}
+	for c, doc := range newest {
+		if h, remote := isRemote(doc); remote && h != "" {
+			host, crew = h, c
+		}
+	}
+	if host == "" {
+		return "", "", nil
+	}
+	if len(newest) > 1 {
+		crews := slices.Sorted(maps.Keys(newest))
+		return "", "", fmt.Errorf("%s is dispatched in crews %s, one of them on a remote host — pass --crew <id>", branch, strings.Join(crews, ", "))
+	}
+	return host, crew, nil
 }
 
 // RemoteHosts is the sorted distinct hosts of crew's remote:true dispatch rows.

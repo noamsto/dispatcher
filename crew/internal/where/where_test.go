@@ -317,15 +317,20 @@ func remoteDispatch(ts int64, branch, name, host string) string {
 }
 
 type remoteCall struct {
-	host string
-	argv []string
+	host, crew string
+	argv       []string
 }
 
-// runRemote is one invocation with Options.Remote answering as the host would.
-func (tr *tree) runRemote(t *testing.T, wins, panes string, remote func(string, []string, io.Writer) int, args ...string) (out, errOut string, code int) {
+// runRemote is one invocation as crew c1 with Options.Remote answering as the host would.
+func (tr *tree) runRemote(t *testing.T, wins, panes string, remote func(string, string, []string, io.Writer) int, args ...string) (out, errOut string, code int) {
+	t.Helper()
+	return tr.runRemoteAs(t, crewIs("c1"), wins, panes, remote, args...)
+}
+
+func (tr *tree) runRemoteAs(t *testing.T, crewID func() string, wins, panes string, remote func(string, string, []string, io.Writer) int, args ...string) (out, errOut string, code int) {
 	t.Helper()
 	var o, e bytes.Buffer
-	code = Run(request(args), tr.paths, &o, &e, Options{CrewID: crewIs("c1"), Probes: okProbes(wins, panes), Remote: remote})
+	code = Run(request(args), tr.paths, &o, &e, Options{CrewID: crewID, Probes: okProbes(wins, panes), Remote: remote})
 	return o.String(), e.String(), code
 }
 
@@ -337,8 +342,8 @@ func TestRemoteWorkerRoutesToItsHost(t *testing.T) {
 			tr := setup(t)
 			tr.write(t, remoteDispatch(1, "feat/far", "iris", "mini"))
 			var calls []remoteCall
-			out, errOut, code := tr.runRemote(t, "", "", func(host string, argv []string, stdout io.Writer) int {
-				calls = append(calls, remoteCall{host, argv})
+			out, errOut, code := tr.runRemote(t, "", "", func(host, crew string, argv []string, stdout io.Writer) int {
+				calls = append(calls, remoteCall{host, crew, argv})
 				_, _ = io.WriteString(stdout, farLine+"\n")
 				return 0
 			}, target)
@@ -346,7 +351,7 @@ func TestRemoteWorkerRoutesToItsHost(t *testing.T) {
 			if code != 0 || out != want || errOut != "" {
 				t.Errorf("code %d, out %q, err %q; want %q", code, out, errOut, want)
 			}
-			wantCalls := []remoteCall{{"mini", []string{"crew", "where", "--crew", "c1", "feat/far"}}}
+			wantCalls := []remoteCall{{"mini", "c1", []string{"crew", "where", "--crew", "c1", "--", "feat/far"}}}
 			if !reflect.DeepEqual(calls, wantCalls) {
 				t.Errorf("remote calls = %v, want %v", calls, wantCalls)
 			}
@@ -354,10 +359,45 @@ func TestRemoteWorkerRoutesToItsHost(t *testing.T) {
 	}
 }
 
+// With no crew of its own the caller still finds a remote worker, asked as the
+// crew its dispatch row names, rather than reading it as a window that is gone.
+func TestCrewlessWhereRoutesOnTheDispatchRowsCrew(t *testing.T) {
+	for _, target := range []string{"iris", "feat/far"} {
+		t.Run(target, func(t *testing.T) {
+			tr := setup(t)
+			tr.write(t, remoteDispatch(1, "feat/far", "iris", "mini"))
+			var calls []remoteCall
+			out, errOut, code := tr.runRemoteAs(t, crewIs(""), "", "", func(host, crew string, argv []string, stdout io.Writer) int {
+				calls = append(calls, remoteCall{host, crew, argv})
+				_, _ = io.WriteString(stdout, farLine+"\n")
+				return 0
+			}, target)
+			if want := farLine + " [host mini]\n"; code != 0 || out != want || errOut != "" {
+				t.Errorf("code %d, out %q, err %q; want %q", code, out, errOut, want)
+			}
+			wantCalls := []remoteCall{{"mini", "c1", []string{"crew", "where", "--crew", "c1", "--", "feat/far"}}}
+			if !reflect.DeepEqual(calls, wantCalls) {
+				t.Errorf("remote calls = %v, want %v", calls, wantCalls)
+			}
+		})
+	}
+}
+
+func TestCrewlessWhereRefusesAmbiguousCrews(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, dispatch(1, "c0", "feat/far", "iris"), remoteDispatch(2, "feat/far", "iris", "mini"))
+	out, errOut, code := tr.runRemoteAs(t, crewIs(""), "", "",
+		func(string, string, []string, io.Writer) int { t.Fatal("an ambiguous target was routed"); return 0 }, "iris")
+	want := "crew: where: CREW_ID not set and feat/far is dispatched in crews c0, c1, one of them on a remote host — pass --crew <id>\n"
+	if code != 1 || out != "" || errOut != want {
+		t.Errorf("code %d, out %q, err %q; want 1 and %q", code, out, errOut, want)
+	}
+}
+
 func TestRemoteFailureIsPassedThrough(t *testing.T) {
 	tr := setup(t)
 	tr.write(t, remoteDispatch(1, "feat/far", "iris", "mini"))
-	out, errOut, code := tr.runRemote(t, "", "", func(string, []string, io.Writer) int { return 255 }, "iris")
+	out, errOut, code := tr.runRemote(t, "", "", func(string, string, []string, io.Writer) int { return 255 }, "iris")
 	if code != 255 || out != "" || errOut != "" {
 		t.Errorf("code %d, out %q, err %q; want 255 and nothing printed here", code, out, errOut)
 	}
@@ -367,7 +407,7 @@ func TestMirrorWindowIsTheJumpTarget(t *testing.T) {
 	tr := setup(t)
 	tr.write(t, remoteDispatch(1, "feat/far", "iris", "mini"))
 	panes := paneLine("@40", "%88", "", "1")
-	remote := func(string, []string, io.Writer) int { t.Fatal("a mirrored worker was routed"); return 0 }
+	remote := func(string, string, []string, io.Writer) int { t.Fatal("a mirrored worker was routed"); return 0 }
 	want := `iris — local:4.1 "far-win" (lead pane)   jump: ! tmux switch-client -t %88 [host mini]` + "\n"
 	for name, wins := range map[string]string{
 		"crew id set":   mirrorLine("@40", "feat/far", "c1", "local", "4", "far-win"),
@@ -387,7 +427,7 @@ func TestMirrorWindowOfAnotherBranchOrCrewIsNotAHit(t *testing.T) {
 	tr.write(t, remoteDispatch(1, "feat/far", "iris", "mini"))
 	wins := mirrorLine("@40", "feat/other", "c1", "local", "4", "w") + "\n" + mirrorLine("@41", "feat/far", "c2", "local", "5", "w")
 	var called bool
-	out, _, code := tr.runRemote(t, wins, paneLine("@40", "%88", "", "1"), func(_ string, _ []string, stdout io.Writer) int {
+	out, _, code := tr.runRemote(t, wins, paneLine("@40", "%88", "", "1"), func(_, _ string, _ []string, stdout io.Writer) int {
 		called = true
 		_, _ = io.WriteString(stdout, farLine+"\n")
 		return 0
@@ -402,7 +442,7 @@ func TestTargetOnBothSidesIsAmbiguous(t *testing.T) {
 	tr.write(t, remoteDispatch(1, "feat/far", "iris", "mini"))
 	wins := winLine(tr.paths.Dir, "@624", "feat/here", "c1", "iris", "sess", "3", "w")
 	out, errOut, code := tr.runRemote(t, wins, paneLine("@624", "%204", "lead", "1"),
-		func(string, []string, io.Writer) int { t.Fatal("an ambiguous target was routed"); return 0 }, "iris")
+		func(string, string, []string, io.Writer) int { t.Fatal("an ambiguous target was routed"); return 0 }, "iris")
 	want := "crew: where: ambiguous target 'iris' — matches a local worker (feat/here) and a remote one on mini (feat/far); pass a branch\n"
 	if code != 1 || out != "" || errOut != want {
 		t.Errorf("code %d, out %q, err %q; want 1 and %q", code, out, errOut, want)
@@ -413,7 +453,7 @@ func TestPaneIDIsNeverRouted(t *testing.T) {
 	tr := setup(t)
 	tr.write(t, remoteDispatch(1, "feat/far", "iris", "mini"))
 	_, errOut, code := tr.runRemote(t, "", "",
-		func(string, []string, io.Writer) int { t.Fatal("a pane id was routed"); return 0 }, "%9")
+		func(string, string, []string, io.Writer) int { t.Fatal("a pane id was routed"); return 0 }, "%9")
 	if code != 1 || !strings.Contains(errOut, "no pane %9") {
 		t.Errorf("code %d, err %q; want the local `no pane` refusal", code, errOut)
 	}
@@ -426,7 +466,7 @@ func TestLocalWorkerOutputIsUnchangedByRouting(t *testing.T) {
 	wins := winLine(tr.paths.Dir, "@624", "feat/618-x", "c1", "nova", "sess", "3", "win-name")
 	panes := paneLine("@624", "%204", "lead", "1")
 	want := `nova — sess:3.1 "win-name" (lead pane)   jump: ! tmux switch-client -t %204` + "\n"
-	remote := func(string, []string, io.Writer) int { t.Fatal("a local worker was routed"); return 0 }
+	remote := func(string, string, []string, io.Writer) int { t.Fatal("a local worker was routed"); return 0 }
 	out, errOut, code := tr.runRemote(t, wins, panes, remote, "nova")
 	if code != 0 || out != want || errOut != "" {
 		t.Errorf("code %d, out %q, err %q", code, out, errOut)

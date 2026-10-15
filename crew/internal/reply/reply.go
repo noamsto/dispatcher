@@ -47,9 +47,10 @@ type Options struct {
 	Clock  clock.Clock
 	Probes crews.Probes
 	Sender sender.Probes // the sender check's reads; zero checks nothing
-	// Remote runs argv on host and returns its status. It is how a reply to a
-	// worker dispatched there reaches that host's bus; nil routes nothing.
-	Remote func(host string, argv []string) int
+	// Remote runs argv on host as crew and returns its status. It is how a
+	// reply to a worker dispatched there reaches that host's bus; nil routes
+	// nothing.
+	Remote func(host, crew string, argv []string) int
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
@@ -81,9 +82,15 @@ func Run(req Request, paths bus.Paths, stderr io.Writer, o Options) int {
 		return exitFailure
 	}
 
-	// The remote writes the row to its own bus, where the worker reads it.
-	if host := routeHost(paths, crew, to, o); host != "" {
-		return o.Remote(host, []string{"crew", "reply", "--crew", crew, to, body})
+	// The remote writes the row to its own bus, where the worker reads it. The
+	// `--` keeps a body that starts with a dash from reading there as a flag.
+	host, as, err := routeHost(paths, crew, to, o)
+	if err != nil {
+		say(stderr, "crew: reply: CREW_ID not set and %v\n", err)
+		return exitFailure
+	}
+	if host != "" {
+		return o.Remote(host, as, []string{"crew", "reply", "--crew", as, "--", to, body})
 	}
 
 	if strings.HasPrefix(to, "worker:") && !bus.IsSessionID(to) {
@@ -119,19 +126,26 @@ func Run(req Request, paths bus.Paths, stderr io.Writer, o Options) int {
 	return 0
 }
 
-// routeHost is the host a reply to a worker goes to: the one its branch was
-// dispatched on, "" for a local worker. The bus is read tolerantly, so a bus
-// the local path would refuse routes nothing and the local path refuses it.
-func routeHost(paths bus.Paths, crew, to string, o Options) string {
+// routeHost is the host a reply to a worker goes to, the one its branch was
+// dispatched on, and the crew it posts there as; host is "" for a local worker.
+// With no crew named, the crew is the one the remote dispatch row names. The
+// bus is read tolerantly, so a bus the local path would refuse routes nothing
+// and the local path refuses it.
+func routeHost(paths bus.Paths, crew, to string, o Options) (host, as string, err error) {
 	branch, ok := strings.CutPrefix(to, "worker:")
-	if o.Remote == nil || crew == "" || !ok {
-		return ""
+	if o.Remote == nil || !ok {
+		return "", "", nil
 	}
-	if bus.IsSessionID(branch) {
+	// The local path's own reading of a session id: a branch named like one,
+	// with no '#', is still a branch.
+	if bus.IsSessionID(to) {
 		branch = branch[:strings.LastIndex(branch, "#")]
 	}
 	events, _ := bus.ReadEventsTolerant(paths.Log)
-	return remote.Route(events, branch, crew)
+	if crew == "" {
+		return remote.RouteAny(events, branch)
+	}
+	return remote.Route(events, branch, crew), crew, nil
 }
 
 // msgRow is the msg the arm appends; body stays last, where FitLine's shrink marker lands.

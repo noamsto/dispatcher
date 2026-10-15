@@ -657,6 +657,8 @@ func TestRemoteRunSendsItsArgv(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("DISPATCH_CONFIG_BIN", filepath.Join(bin, "config"))
+	t.Setenv("CREW_WORKER_ID", "")
+	t.Setenv("CREW_ROLE_ID", "")
 	e := env{getwd: func() (string, error) { return repo, nil }}
 	for _, args := range [][]string{
 		{"remote-run", "--host", "mini", "--env", "CREW_ID=c1", "--", "crew", "where", "lime"},
@@ -674,6 +676,32 @@ func TestRemoteRunSendsItsArgv(t *testing.T) {
 		if string(got) != want {
 			t.Errorf("%q sent %s, want %s", args, got, want)
 		}
+	}
+}
+
+// remote-run carries neither the caller's env nor its pane to the remote, which
+// takes the request as the dispatcher's, so a worker is refused before any ssh.
+func TestRemoteRunRefusesAWorker(t *testing.T) {
+	for name, args := range map[string][]string{
+		"crew from --env": {"remote-run", "--host", "mini", "--env", "CREW_ID=c", "--", "crew", "reply", "worker:feat/x", "do it"},
+		"crew from env":   {"remote-run", "--host", "mini", "--", "crew", "where", "lime"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo, _ := repoWithLog(t, nil, 0o644)
+			sent := remoteStubs(t, repo, "exit 0")
+			t.Setenv("CREW_ID", "c")
+			t.Setenv("CREW_WORKER_ID", "worker:feat/y#s1-1")
+			e := env{getwd: func() (string, error) { return repo, nil }, procs: crewsProbes(nil, nil)}
+			var stdout, stderr bytes.Buffer
+			code := run(context.Background(), args, &stdout, &stderr, e)
+			reason := sender.Check("dispatcher:c", "c", sender.Probes{Getenv: os.Getenv})
+			if want := "crew: remote-run: " + reason + "\n"; reason == "" || code != exitRemoteUsage || stderr.String() != want {
+				t.Fatalf("code %d stderr %q, want %d and %q", code, stderr.String(), exitRemoteUsage, want)
+			}
+			if _, err := os.Stat(sent); err == nil {
+				t.Error("ssh ran for a refused sender")
+			}
+		})
 	}
 }
 
@@ -845,7 +873,34 @@ func TestReplyToARemoteWorkerGoesToItsHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"v":1,"repo":"/srv/widgets","slug":"acme/widgets","argv":["crew","reply","--crew","c1","worker:feat/far#s1-2","go on"],"env":{"CREW_ID":"c1"}}`
+	want := `{"v":1,"repo":"/srv/widgets","slug":"acme/widgets","argv":["crew","reply","--crew","c1","--","worker:feat/far#s1-2","go on"],"env":{"CREW_ID":"c1"}}`
+	if string(got) != want {
+		t.Errorf("sent %s\nwant %s", got, want)
+	}
+	if data, _ := os.ReadFile(logPath); string(data) != log {
+		t.Errorf("a routed reply wrote a local row: %q", data)
+	}
+}
+
+// With no CREW_ID, a reply to a remote worker still goes to its host, as the
+// crew its dispatch row names: the local bus would hold the row where nobody
+// reads it.
+func TestCrewlessReplyToARemoteWorkerGoesToItsHost(t *testing.T) {
+	log := farRow
+	repo, logPath := repoWithLog(t, &log, 0o644)
+	sent := remoteStubs(t, repo, "exit 0")
+	t.Setenv("CREW_WORKER_ID", "")
+	t.Setenv("CREW_ROLE_ID", "")
+	e := env{getwd: func() (string, error) { return repo, nil }, procs: crewsProbes(nil, nil)}
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"reply", "worker:feat/far", "x"}, &stdout, &stderr, e); code != 0 {
+		t.Fatalf("code %d stderr %q", code, stderr.String())
+	}
+	got, err := os.ReadFile(sent)
+	if err != nil {
+		t.Fatalf("not routed: %v", err)
+	}
+	want := `{"v":1,"repo":"/srv/widgets","slug":"acme/widgets","argv":["crew","reply","--crew","c1","--","worker:feat/far","x"],"env":{"CREW_ID":"c1"}}`
 	if string(got) != want {
 		t.Errorf("sent %s\nwant %s", got, want)
 	}
@@ -884,7 +939,7 @@ func TestWhereAndNudgeRouteARemoteWorker(t *testing.T) {
 	if want := `iris — mini:2.1 "far" (lead pane)   jump: ! tmux switch-client -t %9 [host mini]` + "\n"; stdout.String() != want {
 		t.Errorf("where printed %q, want %q", stdout.String(), want)
 	}
-	if got, _ := os.ReadFile(sent); !strings.Contains(string(got), `"argv":["crew","where","--crew","c1","feat/far"]`) {
+	if got, _ := os.ReadFile(sent); !strings.Contains(string(got), `"argv":["crew","where","--crew","c1","--","feat/far"]`) {
 		t.Errorf("where sent %s", got)
 	}
 
@@ -893,7 +948,7 @@ func TestWhereAndNudgeRouteARemoteWorker(t *testing.T) {
 	if code := run(context.Background(), []string{"nudge", "iris", "--wait", "30"}, &stdout, &stderr, e); code != 0 {
 		t.Fatalf("nudge: code %d stderr %q", code, stderr.String())
 	}
-	if got, _ := os.ReadFile(sent); !strings.Contains(string(got), `"argv":["crew","nudge","--crew","c1","--wait","30","feat/far"]`) {
+	if got, _ := os.ReadFile(sent); !strings.Contains(string(got), `"argv":["crew","nudge","--crew","c1","--wait","30","--","feat/far"]`) {
 		t.Errorf("nudge sent %s", got)
 	}
 

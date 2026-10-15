@@ -47,9 +47,11 @@ type relayTiming struct {
 	heartbeat, retry, reapEvery time.Duration
 }
 
-// relays is a loop's relay sources. hosts is touched only by the loop's own
-// goroutine (sync and shutdown); each relay runs in its own goroutine and
-// writes only through out, which is the loop's shared, line-locked writer.
+// relays is a loop's relay sources. hosts and the log's last size and mtime
+// are touched only by sync, which after the first call runs on start's own
+// goroutine; each relay runs in its own goroutine and writes only through out,
+// which is the loop's shared, line-locked writer. wg counts the sync goroutine
+// as well as the relays, so every relay's Add happens while it is non-zero.
 type relays struct {
 	out          io.Writer
 	procs        children
@@ -66,6 +68,10 @@ type relays struct {
 	hosts map[string]*relay
 	stop  chan struct{}
 	wg    sync.WaitGroup
+
+	size   int64
+	mtime  time.Time
+	missed bool // a host the last sync could not start, retried whatever the log does
 }
 
 // newRelays is l's relay sources over the bus log, keeping their locks and
@@ -107,9 +113,36 @@ func newRelays(l *loop, log, cdir string) *relays {
 	}
 }
 
-// sync starts a relay for each remote host on the bus that has none yet. A host
-// whose lock another loop holds is tried again on the next sync.
+// start syncs now and then every interval until shutdown, on its own
+// goroutine: the loop spends most of its time parked, and a new remote host
+// must not wait out the park for its relay.
+func (rs *relays) start(interval time.Duration) {
+	rs.sync()
+	rs.wg.Add(1)
+	go func() {
+		defer rs.wg.Done()
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-rs.stop:
+				return
+			case <-t.C:
+				rs.sync()
+			}
+		}
+	}()
+}
+
+// sync starts a relay for each remote host on the bus that has none yet. The
+// bus is append-only, so a log whose size and mtime have not moved is not
+// read again, unless a host whose lock another loop held is waiting for a retry.
 func (rs *relays) sync() {
+	st, err := os.Stat(rs.log)
+	if err != nil || !rs.missed && st.Size() == rs.size && st.ModTime().Equal(rs.mtime) {
+		return
+	}
+	rs.size, rs.mtime, rs.missed = st.Size(), st.ModTime(), false
 	events, _ := bus.ReadEventsTolerant(rs.log)
 	for _, h := range remote.RemoteHosts(events, rs.crew) {
 		if rs.hosts[h] != nil || !remote.HostNameRe.MatchString(h) {
@@ -117,10 +150,12 @@ func (rs *relays) sync() {
 		}
 		dir := filepath.Join(rs.cdir, "relay")
 		if os.MkdirAll(dir, 0o755) != nil {
+			rs.missed = true
 			continue
 		}
 		lockd := filepath.Join(dir, h+".lock.d")
 		if !lock.Acquire(lockd, rs.owner) {
+			rs.missed = true
 			continue
 		}
 		r := &relay{
@@ -137,8 +172,9 @@ func (rs *relays) sync() {
 	}
 }
 
-// shutdown kills every relay child's process group and waits for each relay to
-// release its lock. A remote reap in flight is left to finish, as a local one is.
+// shutdown stops the syncs, kills every relay child's process group and waits
+// for each relay to release its lock. A remote reap in flight is left to
+// finish, as a local one is.
 func (rs *relays) shutdown() {
 	close(rs.stop)
 	rs.wg.Wait()

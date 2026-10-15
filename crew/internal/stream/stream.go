@@ -582,6 +582,7 @@ func (l *loop) run(sigs chan os.Signal) int {
 	// orphan pair a previous child left behind.
 	sweepReaped(l.reapout, l.reaperr)
 	l.lastReap = l.o.Now().Unix()
+	l.relays.start(time.Duration(l.c.interval) * time.Second)
 
 	for {
 		if pending(sigs) {
@@ -591,7 +592,6 @@ func (l *loop) run(sigs chan os.Signal) int {
 			l.cleanup()
 			return 0
 		}
-		l.relays.sync()
 		// Written at the top of every iteration — including the first, right
 		// after the lock is acquired — because a live lock pid is not evidence
 		// that notifications are flowing (see --status).
