@@ -18,7 +18,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
 )
 
@@ -152,6 +151,24 @@ func TestQualifyingStatusPrintsBatchAndMovesCursor(t *testing.T) {
 	// The lock is the park's, so a finished park leaves none behind.
 	if _, err := os.Stat(filepath.Join(p.CrewDir("c1"), "watch.lock.d")); !os.IsNotExist(err) {
 		t.Error("the park left watch.lock.d behind")
+	}
+}
+
+func TestNonFiniteBodyNumbersPrintLikeJq(t *testing.T) {
+	p := fixture(t)
+	const head = `{"ts":1785951264000,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"msg","body":`
+	writeLog(t, p, head+`[NaN,Infinity,-Infinity]}`)
+
+	stdout, stderr, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
+	if code != 0 || stderr != "" {
+		t.Fatalf("code %d stderr %q", code, stderr)
+	}
+	row := head + `[null,1.7976931348623157e308,-1.7976931348623157e308]}`
+	if stdout != want(t, 1785951264000, row) {
+		t.Errorf("stdout = %s, want %s", stdout, want(t, 1785951264000, row))
+	}
+	if got := cursorOf(t, p, "c1"); got != "1785951264000" {
+		t.Errorf("cursor file = %q", got)
 	}
 }
 
@@ -828,34 +845,49 @@ func legacyProgram(t testing.TB) string {
 
 // foldWith runs one program the way fold does — same bindings, and the same
 // "no value means poll again" outcome — and returns the batch line.
-func foldWith(prog string, rows []jsonv.Value, since int64, states []string) (string, bool) {
-	sv := make([]jsonv.Value, len(states))
+func foldWith(prog string, rows []any, since int64, states []string) (string, bool) {
+	sv := make([]any, len(states))
 	for i, s := range states {
-		sv[i] = jsonv.Str(s)
+		sv[i] = s
 	}
-	out, err := jqrun.Run(prog, rows, 0, map[string]jsonv.Value{
-		"crew":   jsonv.Str("c1"),
-		"me":     jsonv.Str("dispatcher:c1"),
-		"since":  jsonv.Num(float64(since)),
-		"states": jsonv.Array(sv...),
+	res, err := jqrun.RunAny(prog, rows, 0, map[string]any{
+		"crew":   "c1",
+		"me":     "dispatcher:c1",
+		"since":  json.Number(strconv.FormatInt(since, 10)),
+		"states": sv,
 	})
-	if err != nil || out.Kind() != jsonv.KindObject {
+	if err != nil {
+		return "", false
+	}
+	out, ok := res.(map[string]any)
+	if !ok {
 		return "", false
 	}
 	var b strings.Builder
-	if err := jsonv.Encode(&b, out, jsonv.Options{}); err != nil {
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(out); err != nil {
 		return "encode error: " + err.Error(), true
 	}
-	return b.String(), true
+	return strings.TrimSuffix(b.String(), "\n"), true
 }
 
-func parseRows(t testing.TB, rows []string) []jsonv.Value {
+func parseRows(t testing.TB, rows []string) []any {
 	t.Helper()
-	vs, err := jsonv.DecodeStream(strings.NewReader(strings.Join(rows, "\n")))
-	if err != nil {
-		t.Fatal(err)
+	dec := json.NewDecoder(strings.NewReader(strings.Join(rows, "\n")))
+	dec.UseNumber()
+	var vs []any
+	for {
+		var v any
+		err := dec.Decode(&v)
+		if err == io.EOF {
+			return vs
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		vs = append(vs, v)
 	}
-	return vs
 }
 
 type genRow struct {
@@ -999,20 +1031,20 @@ func TestFoldEquivalentToLegacyProgram(t *testing.T) {
 
 // The #910 poll cost, measured at the size the issue cites: 20k rows, one
 // fold each. `go test -bench 'Fold' -benchtime 3x`.
-func benchFoldPrograms(b *testing.B, prog string, rows []jsonv.Value) {
+func benchFoldPrograms(b *testing.B, prog string, rows []any) {
 	states := []string{"blocked", "pr_open", "done", "failed", "exited"}
-	sv := make([]jsonv.Value, len(states))
+	sv := make([]any, len(states))
 	for i, s := range states {
-		sv[i] = jsonv.Str(s)
+		sv[i] = s
 	}
-	vars := map[string]jsonv.Value{
-		"crew":   jsonv.Str("c1"),
-		"me":     jsonv.Str("dispatcher:c1"),
-		"since":  jsonv.Num(0),
-		"states": jsonv.Array(sv...),
+	vars := map[string]any{
+		"crew":   "c1",
+		"me":     "dispatcher:c1",
+		"since":  json.Number("0"),
+		"states": sv,
 	}
 	for b.Loop() {
-		if _, err := jqrun.Run(prog, rows, 0, vars); err != nil {
+		if _, err := jqrun.RunAny(prog, rows, 0, vars); err != nil {
 			b.Fatal(err)
 		}
 	}
