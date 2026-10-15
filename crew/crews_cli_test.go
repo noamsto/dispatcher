@@ -41,7 +41,7 @@ exit 0
 )
 
 // crewsCLI drives run() in the process, with gh and tmux stubbed on PATH and
-// the process cwd in the repo, as the bats suite ran crew from TEST_REPO.
+// the process cwd in the repo, where adopt and reap run git.
 type crewsCLI struct {
 	*holdCLI
 	procs crews.Probes
