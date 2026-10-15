@@ -599,6 +599,7 @@ func TestRunBusSubsRefuseOutsideRepo(t *testing.T) {
 		"crews", "log", "report", "sessions", "roster", "identity", "inbox", "hold", "await", "watch",
 		"retro", "reply", "resolve-target", "pr-watch", "where", "stream", "roster-render", "adopt",
 		"status", "msg", "register", "deregister", "rate", "git-baseline", "reap", "stack", "nudge", "stall-watch",
+		"remote-run", "dispatch-row",
 	} {
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), []string{sub}, &stdout, &stderr, e)
@@ -613,6 +614,295 @@ func TestRunBusSubsRefuseOutsideRepo(t *testing.T) {
 		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "crew: not in a git repo\n" {
 			t.Errorf("%s: code %d stdout %q stderr %q", tc.name, code, stdout.String(), stderr.String())
 		}
+	}
+}
+
+// sshd starts `crew remote-exec` in the remote user's $HOME, which is no git
+// repo: it answers with its own refusal, before the working directory or the
+// repo is read.
+func TestRemoteExecRunsOutsideARepo(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", dir)
+	for name, getwd := range map[string]func() (string, error){
+		"not a repo":   func() (string, error) { return dir, nil },
+		"getwd failed": func() (string, error) { return "", errors.New("no cwd") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := env{getwd: getwd, stdin: strings.NewReader(`{"v":2}`)}
+			var stdout, stderr bytes.Buffer
+			code := run(context.Background(), []string{"remote-exec"}, &stdout, &stderr, e)
+			if code != 2 || stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "crew: remote-exec: ") {
+				t.Errorf("code %d stdout %q stderr %q, want 2 and remote-exec's own refusal", code, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
+// remote-run sends the words after its flags as the command, with or without
+// the `--` that ended them, to ssh's stdin as one request.
+func TestRemoteRunSendsItsArgv(t *testing.T) {
+	repo, _ := repoWithLog(t, nil, 0o644)
+	if out, err := exec.Command("git", "-C", repo, "remote", "add", "origin", "git@github.com:acme/widgets.git").CombinedOutput(); err != nil {
+		t.Fatalf("git remote add: %v\n%s", err, out)
+	}
+	bin := t.TempDir()
+	sent := filepath.Join(bin, "sent")
+	for name, body := range map[string]string{
+		"ssh":    "#!/bin/sh\ncat > '" + sent + "'\n",
+		"config": "#!/bin/sh\n" + `echo '{"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widgets":"/srv/widgets"}}}}'` + "\n",
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("DISPATCH_CONFIG_BIN", filepath.Join(bin, "config"))
+	e := env{getwd: func() (string, error) { return repo, nil }}
+	for _, args := range [][]string{
+		{"remote-run", "--host", "mini", "--env", "CREW_ID=c1", "--", "crew", "where", "lime"},
+		{"remote-run", "--host=mini", "--env=CREW_ID=c1", "crew", "where", "lime"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), args, &stdout, &stderr, e); code != 0 {
+			t.Fatalf("%q: code %d stderr %q", args, code, stderr.String())
+		}
+		got, err := os.ReadFile(sent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := `{"v":1,"repo":"/srv/widgets","slug":"acme/widgets","argv":["crew","where","lime"],"env":{"CREW_ID":"c1"}}`
+		if string(got) != want {
+			t.Errorf("%q sent %s, want %s", args, got, want)
+		}
+	}
+}
+
+// remoteStubs gives a repo whose origin is acme/widgets a settings file that maps
+// it on host mini, and puts a stub ssh first on PATH running sshBody with the
+// request on its stdin. The request ssh received is left in the returned file.
+func remoteStubs(t *testing.T, repo, sshBody string) (sent string) {
+	t.Helper()
+	if out, err := exec.Command("git", "-C", repo, "remote", "add", "origin", "git@github.com:acme/widgets.git").CombinedOutput(); err != nil {
+		t.Fatalf("git remote add: %v\n%s", err, out)
+	}
+	bin := t.TempDir()
+	sent = filepath.Join(bin, "sent")
+	for name, body := range map[string]string{
+		"ssh":    "#!/bin/sh\ncat > '" + sent + "'\n" + sshBody + "\n",
+		"config": "#!/bin/sh\n" + `echo '{"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widgets":"/srv/widgets"}}}}'` + "\n",
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("DISPATCH_CONFIG_BIN", filepath.Join(bin, "config"))
+	return sent
+}
+
+const (
+	nearRow = `{"ts":1700000000000,"crew_id":"c1","kind":"dispatch","branch":"feat/near","name":"nova"}` + "\n" +
+		`{"ts":1700000001000,"crew_id":"c1","kind":"status","from":"worker:feat/near#s1-1","body":{"state":"working"}}` + "\n"
+	farRow = `{"ts":1700000002000,"crew_id":"c1","kind":"dispatch","branch":"feat/far","name":"iris","host":"mini","remote":true}` + "\n"
+)
+
+func runRoster(t *testing.T, repo string, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil)}
+	var out, errOut bytes.Buffer
+	code = run(context.Background(), append([]string{"roster"}, args...), &out, &errOut, e)
+	return out.String(), errOut.String(), code
+}
+
+func TestRosterMergesRemoteWorkers(t *testing.T) {
+	log := nearRow + farRow
+	repo, _ := repoWithLog(t, &log, 0o644)
+	remoteStubs(t, repo, `echo '[{"branch":"feat/far","state":"working","live":true},{"branch":"feat/stranger","state":"working","live":true}]'`)
+	out, errOut, code := runRoster(t, repo, "c1")
+	if code != 0 || errOut != "" {
+		t.Fatalf("code %d stderr %q", code, errOut)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	if len(rows) != 2 || rows[0]["branch"] != "feat/near" || rows[1]["branch"] != "feat/far" || rows[1]["host"] != "mini" || rows[1]["live"] != true {
+		t.Errorf("rows = %v, want the local row then feat/far tagged host mini", rows)
+	}
+	if _, ok := rows[0]["host"]; ok {
+		t.Errorf("a local row was tagged: %v", rows[0])
+	}
+}
+
+func TestRosterUnreachableHostKeepsTheWorkersListed(t *testing.T) {
+	log := nearRow + farRow
+	repo, _ := repoWithLog(t, &log, 0o644)
+	remoteStubs(t, repo, `echo 'ssh: connect to host mini: Connection refused' >&2; exit 255`)
+	out, _, code := runRoster(t, repo, "c1")
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil || code != 0 || len(rows) != 2 {
+		t.Fatalf("code %d, err %v, rows %v", code, err, rows)
+	}
+	far := rows[1]
+	if far["branch"] != "feat/far" || far["name"] != "iris" || far["host"] != "mini" || far["state"] != nil || far["live"] != nil ||
+		far["host_error"] != "ssh: connect to host mini: Connection refused" {
+		t.Errorf("placeholder = %v", far)
+	}
+}
+
+// Without a remote dispatch row, no host is asked and the output is what it was.
+func TestRosterWithoutRemoteRowsAsksNoHost(t *testing.T) {
+	repo, _ := repoWithLog(t, func() *string { s := nearRow; return &s }(), 0o644)
+	sent := remoteStubs(t, repo, "exit 1")
+	out, errOut, code := runRoster(t, repo, "c1")
+	if code != 0 || errOut != "" || strings.Contains(out, "host") || strings.Contains(out, "live") {
+		t.Errorf("code %d stdout %q stderr %q", code, out, errOut)
+	}
+	if _, err := os.Stat(sent); err == nil {
+		t.Error("ssh ran for a bus with no remote worker")
+	}
+}
+
+func TestRosterLiveReadsThisCrewsWindows(t *testing.T) {
+	log := nearRow + `{"ts":1700000002000,"crew_id":"c1","kind":"dispatch","branch":"feat/gone","name":"sage"}` + "\n" +
+		`{"ts":1700000003000,"crew_id":"c1","kind":"status","from":"worker:feat/gone#s1-1","body":{"state":"working"}}` + "\n"
+	repo, _ := repoWithLog(t, &log, 0o644)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\nprintf 'feat/near\\tc1\\nfeat/gone\\tc2\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, errOut, code := runRoster(t, repo, "c1", "--live")
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil || code != 0 || len(rows) != 2 {
+		t.Fatalf("code %d, err %v, stderr %q, rows %v", code, err, errOut, rows)
+	}
+	live := map[string]any{}
+	for _, r := range rows {
+		live[r["branch"].(string)] = r["live"]
+	}
+	if live["feat/near"] != true || live["feat/gone"] != false {
+		t.Errorf("live = %v, want feat/near true and feat/gone (another crew's window) false", live)
+	}
+	plain, _, _ := runRoster(t, repo, "c1")
+	if strings.Contains(plain, `"live"`) {
+		t.Errorf("roster without --live carries live: %s", plain)
+	}
+}
+
+// The routed form answers for its own host only, so two hosts never ask each other.
+func TestRosterLiveDoesNotMergeRemoteWorkers(t *testing.T) {
+	log := nearRow + farRow
+	repo, _ := repoWithLog(t, &log, 0o644)
+	sent := remoteStubs(t, repo, `echo '[{"branch":"feat/far","state":"working","live":true}]'`)
+	stubTmux(t, "feat/near\tc1\n", "")
+	out, errOut, code := runRoster(t, repo, "c1", "--live")
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil || code != 0 || errOut != "" || len(rows) != 1 || rows[0]["branch"] != "feat/near" {
+		t.Fatalf("code %d, err %v, stderr %q, rows %v", code, err, errOut, rows)
+	}
+	if _, err := os.Stat(sent); err == nil {
+		t.Error("ssh ran for roster --live")
+	}
+}
+
+// With the last window gone the tmux server is gone too: list-windows fails,
+// and every row is simply not live. It is no probe error.
+func TestRosterLiveWithNoTmuxServerIsFalse(t *testing.T) {
+	log := nearRow
+	repo, _ := repoWithLog(t, &log, 0o644)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\necho 'no server running' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, errOut, code := runRoster(t, repo, "c1", "--live")
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil || code != 0 || errOut != "" || len(rows) != 1 {
+		t.Fatalf("code %d, err %v, stderr %q, rows %v", code, err, errOut, rows)
+	}
+	if rows[0]["live"] != false {
+		t.Errorf("live = %v, want false", rows[0]["live"])
+	}
+	if _, ok := rows[0]["host_error"]; ok {
+		t.Errorf("a missing tmux server became a host_error: %v", rows[0])
+	}
+}
+
+func TestReplyToARemoteWorkerGoesToItsHost(t *testing.T) {
+	log := nearRow + farRow
+	repo, logPath := repoWithLog(t, &log, 0o644)
+	sent := remoteStubs(t, repo, "exit 0")
+	t.Setenv("CREW_ID", "c1")
+	t.Setenv("CREW_WORKER_ID", "")
+	t.Setenv("CREW_ROLE_ID", "")
+	e := env{getwd: func() (string, error) { return repo, nil }, procs: crewsProbes(nil, nil)}
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"reply", "worker:feat/far#s1-2", "go on"}, &stdout, &stderr, e); code != 0 {
+		t.Fatalf("code %d stderr %q", code, stderr.String())
+	}
+	got, err := os.ReadFile(sent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"v":1,"repo":"/srv/widgets","slug":"acme/widgets","argv":["crew","reply","--crew","c1","worker:feat/far#s1-2","go on"],"env":{"CREW_ID":"c1"}}`
+	if string(got) != want {
+		t.Errorf("sent %s\nwant %s", got, want)
+	}
+	if data, _ := os.ReadFile(logPath); string(data) != log {
+		t.Errorf("a routed reply wrote a local row: %q", data)
+	}
+}
+
+// stubTmux puts a tmux on PATH that answers each read with the given text.
+func stubTmux(t *testing.T, windows, panes string) {
+	t.Helper()
+	bin := t.TempDir()
+	script := "#!/bin/sh\ncase \"$1\" in\nlist-windows) printf '%s' '" + windows + "' ;;\nlist-panes) printf '%s' '" + panes + "' ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestWhereAndNudgeRouteARemoteWorker(t *testing.T) {
+	log := nearRow + farRow
+	repo, _ := repoWithLog(t, &log, 0o644)
+	for _, k := range []string{"CREW_WORKER_ID", "CREW_ROLE_ID"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("CREW_ID", "c1")
+	t.Chdir(repo) // nudge asks git whether its own checkout is a worker's
+	stubTmux(t, "", "")
+	sent := remoteStubs(t, repo, `echo 'iris — mini:2.1 "far" (lead pane)   jump: ! tmux switch-client -t %9'`)
+	e := env{getwd: func() (string, error) { return repo, nil }, procs: crewsProbes(nil, nil)}
+
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"where", "iris"}, &stdout, &stderr, e); code != 0 {
+		t.Fatalf("where: code %d stderr %q", code, stderr.String())
+	}
+	if want := `iris — mini:2.1 "far" (lead pane)   jump: ! tmux switch-client -t %9 [host mini]` + "\n"; stdout.String() != want {
+		t.Errorf("where printed %q, want %q", stdout.String(), want)
+	}
+	if got, _ := os.ReadFile(sent); !strings.Contains(string(got), `"argv":["crew","where","--crew","c1","feat/far"]`) {
+		t.Errorf("where sent %s", got)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(context.Background(), []string{"nudge", "iris", "--wait", "30"}, &stdout, &stderr, e); code != 0 {
+		t.Fatalf("nudge: code %d stderr %q", code, stderr.String())
+	}
+	if got, _ := os.ReadFile(sent); !strings.Contains(string(got), `"argv":["crew","nudge","--crew","c1","--wait","30","feat/far"]`) {
+		t.Errorf("nudge sent %s", got)
+	}
+
+	// A pane id is never routed.
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(context.Background(), []string{"where", "%9"}, &stdout, &stderr, e); code != exitFailure ||
+		!strings.Contains(stderr.String(), "no pane %9") {
+		t.Errorf("where %%9: code %d stderr %q", code, stderr.String())
 	}
 }
 
@@ -797,11 +1087,13 @@ func TestAdmittedSubcommands(t *testing.T) {
 		"status", "msg", "register", "deregister", "fleet", "git-guard",
 		"git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help",
 		"id", "new", "engine-cmd", "dash", "pi-agent-dir", "relay",
+		"remote-run", "remote-exec", "dispatch-row",
 	}
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
-		"status", "msg", "reply", "hold", "nudge", "await", "watch", "relay", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "pr-watch", "stall-watch", "help"} {
+		"status", "msg", "reply", "hold", "nudge", "await", "watch", "relay", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "pr-watch", "stall-watch", "help",
+		"remote-run", "remote-exec", "dispatch-row"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -1218,6 +1510,14 @@ var refusalRows = []struct {
 	{"stall-watch extra positional", []string{"stall-watch", "feat/x", "extra"}, "crew: stall-watch: unknown arg 'extra'", 1},
 	{"stall-watch bad bool", []string{"stall-watch", "feat/x", "--no-budget=maybe"},
 		`crew: stall-watch: --no-budget: bool value must be true, 1, yes, false, 0 or no but got "maybe"`, 1},
+	{"remote-run no host", []string{"remote-run", "--", "crew", "where", "x"}, wantRemoteRunUsage, 2},
+	{"remote-run empty host", []string{"remote-run", "--host", "", "--", "crew", "where", "x"}, wantRemoteRunUsage, 2},
+	{"remote-run host missing value", []string{"remote-run", "--host"}, wantRemoteRunUsage, 2},
+	{"dispatch-row no session", []string{"dispatch-row"}, wantDispatchRowUsage, 2},
+	{"dispatch-row empty session", []string{"dispatch-row", "--session", ""}, wantDispatchRowUsage, 2},
+	{"dispatch-row crew missing value", []string{"dispatch-row", "--session", "s1-2", "--crew"}, wantDispatchRowUsage, 2},
+	{"dispatch-row unknown flag", []string{"dispatch-row", "--bogus"}, "crew: dispatch-row: unknown flag '--bogus' (" + wantDispatchRowUsage + ")", 2},
+	{"dispatch-row extra positional", []string{"dispatch-row", "x"}, "crew: dispatch-row: unexpected argument 'x' (" + wantDispatchRowUsage + ")", 2},
 	{"reap idle negative", []string{"reap", "--idle", "-5"}, "crew: --idle must be a non-negative integer number of seconds", 1},
 }
 
@@ -1283,17 +1583,19 @@ var preLocateRefusalRows = []struct {
 }
 
 const (
-	holdUsage        = "crew: hold add|list|due|park|release"
-	retroUsage       = "crew: retro takes --report and --json"
-	rateUsage        = "crew: rate takes --report, --json, --pooled, and --sweep-all/--root"
-	fleetUsage       = "crew: fleet [--all] [--crew ID] [--json]"
-	fleetReapEvery   = "crew: fleet stream: --reap-every is not supported — the fleet lane does not reap (each repo's own stream or dispatch does)"
-	stackUsage       = "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n       crew stack align <top-PR#|branch>"
-	rateRootNeedsDir = "crew: rate --root needs a directory"
-	whereUsage       = "usage: crew where <codename|branch|%id> [--crew ID]"
-	reapUsage        = "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH "
-	baselineUsage    = "usage: crew git-baseline [--accept]"
-	guardUsage       = "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …"
+	holdUsage            = "crew: hold add|list|due|park|release"
+	retroUsage           = "crew: retro takes --report and --json"
+	rateUsage            = "crew: rate takes --report, --json, --pooled, and --sweep-all/--root"
+	fleetUsage           = "crew: fleet [--all] [--crew ID] [--json]"
+	fleetReapEvery       = "crew: fleet stream: --reap-every is not supported — the fleet lane does not reap (each repo's own stream or dispatch does)"
+	stackUsage           = "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n       crew stack align <top-PR#|branch>"
+	rateRootNeedsDir     = "crew: rate --root needs a directory"
+	whereUsage           = "usage: crew where <codename|branch|%id> [--crew ID]"
+	reapUsage            = "crew: reap takes --quiet, --dry-run, --no-wait, --idle S and --discard BRANCH "
+	baselineUsage        = "usage: crew git-baseline [--accept]"
+	wantRemoteRunUsage   = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] -- <argv>..."
+	wantDispatchRowUsage = "usage: crew dispatch-row --session S [--crew ID]"
+	guardUsage           = "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …"
 )
 
 // TestTypedRefusals pins each typed subcommand's refusals at the parse: the

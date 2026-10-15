@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -553,4 +554,75 @@ func TestUnstampedAnchorMayReply(t *testing.T) {
 		t.Fatalf("code %d: %s", code, errs)
 	}
 	tr.wantRow(t, row("c1", "worker:feat/x#s1-1", "go"))
+}
+
+// remoteDispatch is a dispatch row of crew c1 that put the branch on host.
+func remoteDispatch(ts int64, branch, host string) string {
+	return fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":%q,"host":%q,"remote":true}`, ts, branch, host)
+}
+
+type remoteCall struct {
+	host string
+	argv []string
+}
+
+func TestReplyRoutesToTheWorkersHost(t *testing.T) {
+	for _, to := range []string{"worker:feat/far", "worker:feat/far#s1-2"} {
+		t.Run(to, func(t *testing.T) {
+			tr := setup(t)
+			tr.write(t, dispatch(1, "c1", "feat/near", "s1-1"), remoteDispatch(2, "feat/far", "mini"))
+			before := tr.rawLog(t)
+			var calls []remoteCall
+			errs, code := tr.run(t, Options{Remote: func(host string, argv []string) int {
+				calls = append(calls, remoteCall{host, argv})
+				return 7
+			}}, to, "go on")
+			if code != 7 || errs != "" {
+				t.Fatalf("code %d stderr %q, want the remote's 7 and nothing", code, errs)
+			}
+			want := []remoteCall{{"mini", []string{"crew", "reply", "--crew", "c1", to, "go on"}}}
+			if !reflect.DeepEqual(calls, want) {
+				t.Fatalf("remote calls = %v, want %v", calls, want)
+			}
+			if got := tr.rawLog(t); got != before {
+				t.Fatalf("a routed reply wrote a local row: %q", got[len(before):])
+			}
+		})
+	}
+}
+
+func TestReplyToALocalWorkerIsNotRouted(t *testing.T) {
+	for name, rows := range map[string][]string{
+		"local worker":          {dispatch(1, "c1", "feat/near", "s1-1")},
+		"newest dispatch local": {remoteDispatch(1, "feat/near", "mini"), dispatch(2, "c1", "feat/near", "s2-2")},
+		"remote in another crew": {`{"ts":1,"crew_id":"c9","kind":"dispatch","branch":"feat/near","host":"mini","remote":true}`,
+			dispatch(2, "c1", "feat/near", "s1-1")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tr := setup(t)
+			tr.write(t, append(rows, status(3, "c1", "worker:feat/near#s1-1", "working"))...)
+			o := Options{Remote: func(string, []string) int { t.Fatal("a local worker's reply reached Remote"); return 0 }}
+			if errs, code := tr.run(t, o, "worker:feat/near#s1-1", "go"); code != 0 {
+				t.Fatalf("code %d: %s", code, errs)
+			}
+			tr.wantRow(t, row("c1", "worker:feat/near#s1-1", "go"))
+		})
+	}
+}
+
+func TestRefusedSenderNeverReachesRemote(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, remoteDispatch(1, "feat/far", "mini"))
+	before := tr.rawLog(t)
+	p := envProbes("CREW_WORKER_ID", "worker:feat/x#s1-1")
+	errs, code := tr.run(t, Options{
+		Sender: p,
+		Remote: func(string, []string) int { t.Fatal("a refused sender reached Remote"); return 0 },
+	}, "worker:feat/far", "go")
+	if want := "crew: reply: refusing sender 'dispatcher:c1' — " + sender.Check("dispatcher:c1", "c1", p) + "\n"; code != 1 || errs != want {
+		t.Fatalf("code %d, stderr %q, want 1, %q", code, errs, want)
+	}
+	if got := tr.rawLog(t); got != before {
+		t.Fatalf("log changed on a refused sender")
+	}
 }

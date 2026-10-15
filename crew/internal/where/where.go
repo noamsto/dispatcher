@@ -14,12 +14,14 @@
 package where
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
+	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 )
 
@@ -44,6 +46,9 @@ type Probes struct {
 type Options struct {
 	CrewID func() string
 	Probes Probes
+	// Remote runs argv on host with its stdout going to stdout, and returns its
+	// status: how a worker dispatched there is asked where it is. Nil routes nothing.
+	Remote func(host string, argv []string, stdout io.Writer) int
 }
 
 // window is one crew-anchored window, in the six fields the arm kept from the
@@ -92,6 +97,16 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	}
 	panes := readPanes(panesRaw)
 
+	if o.Remote != nil && crew != "" {
+		host, branch, err := remote.ResolveTarget(resolve.Rows(paths.Log), target, crew, localMatch(readWindows(winsRaw, paths.Dir, crew), target))
+		if err != nil {
+			return die(stderr, "%v", err)
+		}
+		if host != "" {
+			return whereRemote(host, branch, crew, winsRaw, panes, paths, stdout, stderr, o)
+		}
+	}
+
 	win, hit, code := resolveTarget(readWindows(winsRaw, paths.Dir, crew), panes, target, crew, paths, stderr)
 	if code != 0 {
 		return code
@@ -122,6 +137,73 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	say(stdout, "%s — %s:%s.%s \"%s\" (%s pane)%s%s\n",
 		name, win.session, win.index, hit.index, win.winName, role, jump, hit.id)
 	return 0
+}
+
+// localMatch is the branch the local windows give a target (its own, else its
+// codename's), joined with "," when several share the codename, and "" for none.
+func localMatch(wins []window, target string) string {
+	for _, w := range wins {
+		if w.branch == target {
+			return w.branch
+		}
+	}
+	var matches []window
+	for _, w := range wins {
+		if w.name == target {
+			matches = append(matches, w)
+		}
+	}
+	return joinBranches(matches, ",")
+}
+
+// whereRemote answers for a worker dispatched on host. A mirror window on this
+// machine is the jump target, and its line is the usual one; with no mirror the
+// host is asked, and its line is passed on. Either way the line ends ` [host h]`.
+func whereRemote(host, branch, crew, winsRaw string, panes []pane, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+	mirror, ok := mirrorWindow(winsRaw, branch, crew)
+	if !ok {
+		var out bytes.Buffer
+		if rc := o.Remote(host, []string{"crew", "where", "--crew", crew, branch}, &out); rc != 0 {
+			return rc
+		}
+		say(stdout, "%s [host %s]\n", strings.TrimSuffix(out.String(), "\n"), host)
+		return 0
+	}
+	hit, code := leadPane(panes, mirror.id)
+	if code != 0 {
+		return die(stderr, "no pane in the window for '%s'", branch)
+	}
+	name := mirror.name
+	if name == "" {
+		for _, r := range resolve.Resolve(resolve.Rows(paths.Log), branch, crew) {
+			if r.Branch == branch {
+				name = r.Name
+			}
+		}
+	}
+	if name == "" {
+		name = poolName(branch)
+	}
+	role := hit.role
+	if role == "" {
+		role = "lead"
+	}
+	say(stdout, "%s — %s:%s.%s \"%s\" (%s pane)%s%s [host %s]\n",
+		name, mirror.session, mirror.index, hit.index, mirror.winName, role, jump, hit.id, host)
+	return 0
+}
+
+// mirrorWindow is the local window that mirrors a remote worker's: the one whose
+// @bridge_crew_branch is the branch and whose @bridge_crew_id is unset or this crew's.
+func mirrorWindow(raw, branch, crew string) (window, bool) {
+	for _, line := range strings.Split(raw, "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) < 10 || f[8] != branch || (f[9] != "" && f[9] != crew) {
+			continue
+		}
+		return window{id: f[0], name: f[4], session: f[5], index: f[6], winName: f[7]}, true
+	}
+	return window{}, false
 }
 
 // readWindows is the arm's crew filter over `list-windows`: the eight format

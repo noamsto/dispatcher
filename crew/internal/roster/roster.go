@@ -43,6 +43,25 @@ type Probes struct {
 	// Worktrees is the stdout of `git worktree list --porcelain`. A failure
 	// is an *ExitError: the arm dies with git's status.
 	Worktrees func() (string, error)
+	// LiveBranches, when set, is the branches with a tmux window on this host
+	// (`crew roster --live`); each row then gains `live`. Nil leaves the rows
+	// as the bus alone makes them.
+	LiveBranches func() map[string]bool
+}
+
+// CrewWindowBranches parses the stdout of
+// `tmux list-windows -a -F '#{@crew_branch}\t#{@crew_id}'` into the branches
+// this crew has a window for: a window stamped for another crew is not its.
+// An unset @crew_id counts as any crew's, as it did before windows carried one.
+func CrewWindowBranches(out, crew string) map[string]bool {
+	branches := map[string]bool{}
+	for line := range strings.SplitSeq(out, "\n") {
+		branch, id, _ := strings.Cut(line, "\t")
+		if branch != "" && (id == "" || id == crew) {
+			branches[branch] = true
+		}
+	}
+	return branches
 }
 
 // Fold is `crew roster <crew>` once the log exists: one row per branch, with
@@ -70,6 +89,15 @@ func Fold(events []jsonv.Value, crew string, nowSec float64, p Probes) (jsonv.Va
 	})
 	if err != nil {
 		return jsonv.Value{}, err
+	}
+	if p.LiveBranches != nil {
+		windows := p.LiveBranches()
+		rows := out.Elems()
+		for i := range rows {
+			branch, _ := rows[i].Get("branch")
+			name, _ := branch.AsString()
+			rows[i].Set("live", jsonv.Bool(windows[name]))
+		}
 	}
 	return out, nil
 }

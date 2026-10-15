@@ -43,6 +43,11 @@ Identity and crews:
   resolve-target  Resolve a target to branch, codename, host and crew
   pi-agent-dir    Print the pi agent dir prepared for a dispatch
 
+Remote hosts:
+  remote-run      Run a command in this repo's clone on a remote host
+  remote-exec     The ssh side of remote-run (reads a request on stdin)
+  dispatch-row    Print the dispatch row of one session, for link-loss recovery
+
 Holds:
   hold            Park a queued dispatch on a quota window
 

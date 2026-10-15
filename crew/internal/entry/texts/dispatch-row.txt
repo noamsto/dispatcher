@@ -1,0 +1,10 @@
+usage: crew dispatch-row --session S [--crew ID]
+
+Print the newest dispatch row of session S on this bus as one JSON line, or exit
+1 when there is none. A dispatcher whose ssh link dropped mid-dispatch asks it
+whether the remote created the worker. Exits 2 for a bad session or crew id.
+
+  --session  Session id (s<epoch>-<pid>) the dispatch was started with
+  --crew     Crew id; defaults to this repo's crew
+
+  crew dispatch-row --session s1700000000-4242

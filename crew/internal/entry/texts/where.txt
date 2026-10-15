@@ -6,6 +6,10 @@ name, role and the jump command.
   <target>  Codename (lime), branch, or a tmux pane id such as %N
   --crew    Crew id; defaults to this repo's crew
 
+A worker dispatched to a remote host answers with its line and ` [host H]` after
+it: the local mirror window's when there is one, else the host's own. A target
+that names a local and a remote worker is refused; a `%id` is never routed.
+
 Resolved from dispatcher-anchored state only — never git discovery in a worktree
 or the caller's env. Non-zero with a readable message when the pane is gone.
 

@@ -2,6 +2,8 @@ usage: crew reply <to> <body> [--crew ID]
 
 Post a message as dispatcher:<crew>, so a dispatcher never rebuilds its own id.
 
+A reply to a worker dispatched to a remote host is posted on that host's bus.
+
   <to>    Recipient id (worker:<branch>#s…, role:<branch>:<role>)
   <body>  One argument
   --crew  Crew id when the caller's env carries no CREW_ID

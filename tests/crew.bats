@@ -327,7 +327,7 @@ write_anchor_record() {
 @test "every bus-reading subcommand refuses outside a git repo with one line" {
   cd /
   for sub in crews log report sessions roster identity inbox hold await watch retro reply resolve-target \
-    pr-watch where stream roster-render adopt msg register deregister rate git-baseline reap stack nudge stall-watch; do
+    pr-watch where stream roster-render adopt msg register deregister rate git-baseline reap stack nudge stall-watch remote-run dispatch-row; do
     CREW_ID=c1 run --separate-stderr run_crew "$sub"
     [ "$status" -eq 1 ] || { echo "$sub: status $status"; return 1; }
     [ -z "$output" ] || { echo "$sub: stdout $output"; return 1; }

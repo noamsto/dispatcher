@@ -38,6 +38,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/rate"
 	"github.com/noamsto/dispatcher/crew/internal/reap"
 	"github.com/noamsto/dispatcher/crew/internal/register"
+	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/reply"
 	"github.com/noamsto/dispatcher/crew/internal/report"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
@@ -60,6 +61,8 @@ const (
 	exitFailure   = 1
 	exitOpen      = 2 // sessions prints [] where jq slurps zero inputs
 	exitUsage     = 64
+	// exitRemoteUsage is the refusal status of the remote-* transport commands.
+	exitRemoteUsage = 2
 )
 
 // isHelpFlag is the two spellings crew.sh's help preamble matched.
@@ -133,6 +136,7 @@ var subcommands = []string{
 	"git-guard", "help", "hold", "msg", "nudge",
 	"pr-watch", "reap", "reap-autosweep",
 	"relay", "reply", "stall-watch", "status", "stream", "watch",
+	"remote-run", "remote-exec", "dispatch-row",
 }
 
 // typedSubcommands are the subcommands whose argv root binds: every name but
@@ -147,6 +151,7 @@ var typedSubcommands = map[string]bool{
 	"nudge": true, "await": true, "watch": true, "relay": true, "stream": true,
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
 	"adopt": true, "pr-watch": true, "stall-watch": true, "help": true,
+	"remote-run": true, "remote-exec": true, "dispatch-row": true,
 }
 
 // passthroughCmd is dash to kong: its name, then whatever words it wants, kept
@@ -205,6 +210,10 @@ type root struct {
 	Watch  watchCmd  `cmd:"" name:"watch" help:"Park until a worker event qualifies."`
 	Relay  relayCmd  `cmd:"" name:"relay" help:"Follow this bus and print watch batches, for a remote dispatcher."`
 	Stream streamCmd `cmd:"" name:"stream" help:"The long-lived lane that pushes batches."`
+
+	RemoteRun   remoteRunCmd   `cmd:"" name:"remote-run" help:"Run a command in the clone on a remote host."`
+	RemoteExec  remoteExecCmd  `cmd:"" name:"remote-exec" help:"The ssh-side of remote-run: serve one request."`
+	DispatchRow dispatchRowCmd `cmd:"" name:"dispatch-row" help:"The dispatch row of one session."`
 
 	GitGuard    gitGuardCmd    `cmd:"" name:"git-guard" help:"The git-config guard worktree-git.sh runs."`
 	GitBaseline gitBaselineCmd `cmd:"" name:"git-baseline" help:"List or accept the git-config baseline."`
@@ -384,6 +393,7 @@ type env struct {
 	color    bool   // stdout is a terminal and $NO_COLOR is unset
 	probes   func(ctx context.Context, cwd string) roster.Probes
 	procs    crews.Probes // the pid probes crews reads
+	stdin    io.Reader    // remote-exec's request
 }
 
 func main() {
@@ -396,6 +406,7 @@ func main() {
 		color:    bus.IsTerminal(1) && os.Getenv("NO_COLOR") == "",
 		probes:   probes,
 		procs:    crews.DefaultProbes(),
+		stdin:    os.Stdin,
 	}
 	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, e))
 }
@@ -435,6 +446,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			}
 			return rate.Run(rateRequest(parsed.typed.Rate), bus.Paths{}, "", stdout, stderr, rate.Options{})
 		}
+	}
+
+	// remote-exec is what sshd starts in the remote user's $HOME, so it runs
+	// before the working directory and the repo are read: Serve changes into the
+	// clone its request names and never trusts its own cwd.
+	if sub == "remote-exec" {
+		if parsed.refusal != nil {
+			return refuse(stderr, parsed.refusal)
+		}
+		return remote.Serve(e.stdin, stdout, stderr, remote.DefaultServeOptions())
 	}
 
 	// occupants reads tmux and a path it is given, so it needs no repo.
@@ -609,6 +630,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		})
 	}
 
+	// remote-run sends one command to the clone of this repo on a remote host;
+	// dispatch-row answers the same question for a session on this bus.
+	if sub == "remote-run" {
+		c := parsed.typed.RemoteRun
+		return remote.Run(ctx, remote.Call{
+			Host: str(c.Host), Cwd: cwd, Env: c.Env, SpecFile: str(c.SpecFile), Argv: remoteArgv(c.Argv),
+		}, stdout, stderr)
+	}
+	if sub == "dispatch-row" {
+		c := parsed.typed.DispatchRow
+		crew := cmp.Or(str(c.Crew), bus.CrewID(ctx, cwd))
+		return remote.DispatchRow(paths.Log, crew, str(c.Session), stdout, stderr)
+	}
+
 	// stream runs for as long as the lane lives and prints one protocol line at
 	// a time, so it writes straight to stdout: a buffered line would wait for a
 	// batch that may never come. It re-enters the crew script for its children,
@@ -672,11 +707,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// it owns its run like hold does — and it prints nothing on success.
 	if sub == "reply" {
 		c := parsed.typed.Reply
+		crewID := func() string { return bus.CrewID(ctx, cwd) }
 		return reply.Run(reply.Request{Crew: str(c.Crew), To: c.To, Body: c.Body}, paths, stderr, reply.Options{
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			CrewID: crewID,
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 			Probes: e.procs,
 			Sender: senderProbes(ctx, e.procs),
+			Remote: func(host string, argv []string) int {
+				return remoteAs(ctx, cwd, cmp.Or(str(c.Crew), crewID()))(host, argv, stdout, stderr)
+			},
 		})
 	}
 
@@ -685,8 +724,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "nudge" {
 		n := parsed.typed.Nudge
 		req, _ := nudge.NewRequest(str(n.Crew), n.Target, n.Wait)
-		return nudge.Run(ctx, req, paths, stdout, stderr,
-			nudge.Default(paths, stderr, os.Getpid(), func() string { return bus.CrewID(ctx, cwd) }))
+		crewID := func() string { return bus.CrewID(ctx, cwd) }
+		o := nudge.Default(paths, stderr, os.Getpid(), crewID)
+		o.Remote = func(host string, argv []string) int {
+			return remoteAs(ctx, cwd, cmp.Or(req.Crew, crewID()))(host, argv, stdout, stderr)
+		}
+		return nudge.Run(ctx, req, paths, stdout, stderr, o)
 	}
 
 	// The two target readers own their run the way hold does: neither is a fold
@@ -704,9 +747,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		})
 	}
 	if sub == "where" {
-		return where.Run(where.Request{Crew: str(parsed.typed.Where.Crew), Target: parsed.typed.Where.Target}, paths, stdout, stderr, where.Options{
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+		w := parsed.typed.Where
+		crewID := func() string { return bus.CrewID(ctx, cwd) }
+		return where.Run(where.Request{Crew: str(w.Crew), Target: w.Target}, paths, stdout, stderr, where.Options{
+			CrewID: crewID,
 			Probes: whereProbes(ctx),
+			Remote: func(host string, argv []string, out io.Writer) int {
+				return remoteAs(ctx, cwd, cmp.Or(str(w.Crew), crewID()))(host, argv, out, stderr)
+			},
 		})
 	}
 	// identity answers the codename a branch works under. Its one tmux read is
@@ -892,7 +940,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			}
 			return outs[0], nil
 		}
-		return roster.Fold(evs, crew, nowSec, e.probes(ctx, cwd))
+		p := e.probes(ctx, cwd)
+		if parsed.typed.Roster.Live {
+			p.LiveBranches = func() map[string]bool {
+				out, _ := tmuxOutput(ctx, "list-windows", "-a", "-F", "#{@crew_branch}\t#{@crew_id}")
+				return roster.CrewWindowBranches(out, crew)
+			}
+		}
+		return roster.Fold(evs, crew, nowSec, p)
 	})
 	if code == exitOpen && sub == "sessions" {
 		// jq slurps zero inputs when it cannot open the file, so the program
@@ -900,6 +955,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		raw = jsonv.Array()
 	} else if code != 0 {
 		return code
+	}
+
+	// --live is the form a dispatcher routes to this host: it answers for this
+	// host alone, so hosts never ask each other.
+	if sub == "roster" && !parsed.typed.Roster.Live {
+		raw = roster.MergeRemote(ctx, raw, events, crew, func(ctx context.Context, host string, argv []string, so, se io.Writer) int {
+			return remoteAs(ctx, cwd, crew)(host, argv, so, se)
+		})
 	}
 
 	if err := jsonv.Encode(out, raw, opts); err != nil {
@@ -911,6 +974,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		say(out, "\n") // the arm's `printf '\n'` after jq -c
 	}
 	return flush(out, stderr, code)
+}
+
+// remoteAs runs a command on a remote host in this checkout's clone, as crew.
+// The checks of what runs there are remote-exec's, not the caller's.
+func remoteAs(ctx context.Context, cwd, crew string) func(host string, argv []string, stdout, stderr io.Writer) int {
+	return func(host string, argv []string, stdout, stderr io.Writer) int {
+		return remote.Run(ctx, remote.Call{Host: host, Cwd: cwd, Env: []string{"CREW_ID=" + crew}, Argv: argv}, stdout, stderr)
+	}
+}
+
+// remoteArgv is remote-run's command: the words after the flags, without the
+// `--` that ended them.
+func remoteArgv(words []string) []string {
+	if len(words) > 0 && words[0] == "--" {
+		return words[1:]
+	}
+	return words
 }
 
 // originOf is a git common dir's origin URL, or "" when it has none.
@@ -1041,7 +1121,7 @@ func whereProbes(ctx context.Context) where.Probes {
 	return where.Probes{
 		Windows: func() (string, error) {
 			return tmuxOutput(ctx, "list-windows", "-a", "-F",
-				"#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{session_name}\t#{window_index}\t#{window_name}")
+				"#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{session_name}\t#{window_index}\t#{window_name}\t#{@bridge_crew_branch}\t#{@bridge_crew_id}")
 		},
 		Panes: func() (string, error) {
 			return tmuxOutput(ctx, "list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_index}")

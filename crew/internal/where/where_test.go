@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -301,5 +303,132 @@ func TestTmuxFailure(t *testing.T) {
 	}, crewIs("c1"), "nova")
 	if code != exitFailure || errOut != "crew: where: cannot read tmux panes (is a tmux server running?)\n" {
 		t.Errorf("panes: code %d, err %q", code, errOut)
+	}
+}
+
+// mirrorLine is a `list-windows` line of a mirror window: the eight fields with
+// no @crew_branch, then @bridge_crew_branch and @bridge_crew_id.
+func mirrorLine(id, bridgeBranch, bridgeCrew, session, index, winName string) string {
+	return strings.Join([]string{id, "", "", "", "", session, index, winName, bridgeBranch, bridgeCrew}, "\t")
+}
+
+func remoteDispatch(ts int64, branch, name, host string) string {
+	return fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":%q,"name":%q,"host":%q,"remote":true}`, ts, branch, name, host)
+}
+
+type remoteCall struct {
+	host string
+	argv []string
+}
+
+// runRemote is one invocation with Options.Remote answering as the host would.
+func (tr *tree) runRemote(t *testing.T, wins, panes string, remote func(string, []string, io.Writer) int, args ...string) (out, errOut string, code int) {
+	t.Helper()
+	var o, e bytes.Buffer
+	code = Run(request(args), tr.paths, &o, &e, Options{CrewID: crewIs("c1"), Probes: okProbes(wins, panes), Remote: remote})
+	return o.String(), e.String(), code
+}
+
+const farLine = `iris — mini-sess:2.1 "far-win" (lead pane)   jump: ! tmux switch-client -t %9`
+
+func TestRemoteWorkerRoutesToItsHost(t *testing.T) {
+	for _, target := range []string{"iris", "feat/far"} {
+		t.Run(target, func(t *testing.T) {
+			tr := setup(t)
+			tr.write(t, remoteDispatch(1, "feat/far", "iris", "mini"))
+			var calls []remoteCall
+			out, errOut, code := tr.runRemote(t, "", "", func(host string, argv []string, stdout io.Writer) int {
+				calls = append(calls, remoteCall{host, argv})
+				_, _ = io.WriteString(stdout, farLine+"\n")
+				return 0
+			}, target)
+			want := farLine + " [host mini]\n"
+			if code != 0 || out != want || errOut != "" {
+				t.Errorf("code %d, out %q, err %q; want %q", code, out, errOut, want)
+			}
+			wantCalls := []remoteCall{{"mini", []string{"crew", "where", "--crew", "c1", "feat/far"}}}
+			if !reflect.DeepEqual(calls, wantCalls) {
+				t.Errorf("remote calls = %v, want %v", calls, wantCalls)
+			}
+		})
+	}
+}
+
+func TestRemoteFailureIsPassedThrough(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, remoteDispatch(1, "feat/far", "iris", "mini"))
+	out, errOut, code := tr.runRemote(t, "", "", func(string, []string, io.Writer) int { return 255 }, "iris")
+	if code != 255 || out != "" || errOut != "" {
+		t.Errorf("code %d, out %q, err %q; want 255 and nothing printed here", code, out, errOut)
+	}
+}
+
+func TestMirrorWindowIsTheJumpTarget(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, remoteDispatch(1, "feat/far", "iris", "mini"))
+	panes := paneLine("@40", "%88", "", "1")
+	remote := func(string, []string, io.Writer) int { t.Fatal("a mirrored worker was routed"); return 0 }
+	want := `iris — local:4.1 "far-win" (lead pane)   jump: ! tmux switch-client -t %88 [host mini]` + "\n"
+	for name, wins := range map[string]string{
+		"crew id set":   mirrorLine("@40", "feat/far", "c1", "local", "4", "far-win"),
+		"crew id unset": mirrorLine("@40", "feat/far", "", "local", "4", "far-win"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, errOut, code := tr.runRemote(t, wins, panes, remote, "iris")
+			if code != 0 || out != want || errOut != "" {
+				t.Errorf("code %d, out %q, err %q; want %q", code, out, errOut, want)
+			}
+		})
+	}
+}
+
+func TestMirrorWindowOfAnotherBranchOrCrewIsNotAHit(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, remoteDispatch(1, "feat/far", "iris", "mini"))
+	wins := mirrorLine("@40", "feat/other", "c1", "local", "4", "w") + "\n" + mirrorLine("@41", "feat/far", "c2", "local", "5", "w")
+	var called bool
+	out, _, code := tr.runRemote(t, wins, paneLine("@40", "%88", "", "1"), func(_ string, _ []string, stdout io.Writer) int {
+		called = true
+		_, _ = io.WriteString(stdout, farLine+"\n")
+		return 0
+	}, "iris")
+	if !called || code != 0 || out != farLine+" [host mini]\n" {
+		t.Errorf("called %t, code %d, out %q; want the remote's answer", called, code, out)
+	}
+}
+
+func TestTargetOnBothSidesIsAmbiguous(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, remoteDispatch(1, "feat/far", "iris", "mini"))
+	wins := winLine(tr.paths.Dir, "@624", "feat/here", "c1", "iris", "sess", "3", "w")
+	out, errOut, code := tr.runRemote(t, wins, paneLine("@624", "%204", "lead", "1"),
+		func(string, []string, io.Writer) int { t.Fatal("an ambiguous target was routed"); return 0 }, "iris")
+	want := "crew: where: ambiguous target 'iris' — matches a local worker (feat/here) and a remote one on mini (feat/far); pass a branch\n"
+	if code != 1 || out != "" || errOut != want {
+		t.Errorf("code %d, out %q, err %q; want 1 and %q", code, out, errOut, want)
+	}
+}
+
+func TestPaneIDIsNeverRouted(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, remoteDispatch(1, "feat/far", "iris", "mini"))
+	_, errOut, code := tr.runRemote(t, "", "",
+		func(string, []string, io.Writer) int { t.Fatal("a pane id was routed"); return 0 }, "%9")
+	if code != 1 || !strings.Contains(errOut, "no pane %9") {
+		t.Errorf("code %d, err %q; want the local `no pane` refusal", code, errOut)
+	}
+}
+
+// A local worker answers exactly as it did, whether or not the bus holds remote rows.
+func TestLocalWorkerOutputIsUnchangedByRouting(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, remoteDispatch(1, "feat/far", "iris", "mini"), dispatch(2, "c1", "feat/618-x", "nova"))
+	wins := winLine(tr.paths.Dir, "@624", "feat/618-x", "c1", "nova", "sess", "3", "win-name")
+	panes := paneLine("@624", "%204", "lead", "1")
+	want := `nova — sess:3.1 "win-name" (lead pane)   jump: ! tmux switch-client -t %204` + "\n"
+	remote := func(string, []string, io.Writer) int { t.Fatal("a local worker was routed"); return 0 }
+	out, errOut, code := tr.runRemote(t, wins, panes, remote, "nova")
+	if code != 0 || out != want || errOut != "" {
+		t.Errorf("code %d, out %q, err %q", code, out, errOut)
 	}
 }

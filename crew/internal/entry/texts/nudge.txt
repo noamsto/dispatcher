@@ -9,6 +9,9 @@ expired reads the directive `crew reply` already posted.
   --wait    Keep trying while the lead is on a live turn, up to SECONDS
             (default 1800)
 
+A worker dispatched to a remote host is nudged there, by that host's own checks;
+a target that names a local and a remote worker is refused.
+
 Exit 0 typed and accepted, 1 usage or resolution error, 2 refused before typing,
 3 typed but not accepted.
 
