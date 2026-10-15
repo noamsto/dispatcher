@@ -1,13 +1,13 @@
 package unread
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 )
 
@@ -52,11 +52,11 @@ func deliver(t *testing.T, dir string, rows ...string) {
 	t.Helper()
 	vs := make([]any, len(rows))
 	for i, r := range rows {
-		v, err := jsonv.ParseOne(r)
-		if err != nil {
+		dec := json.NewDecoder(strings.NewReader(r))
+		dec.UseNumber()
+		if err := dec.Decode(&vs[i]); err != nil {
 			t.Fatal(err)
 		}
-		vs[i] = jsonv.ToAny(v)
 	}
 	if !marks.Record(dir, crew, sid, vs) {
 		t.Fatal("marks.Record failed")
