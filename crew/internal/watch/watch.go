@@ -38,6 +38,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 )
 
@@ -154,10 +155,8 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 			return signalStatus(s)
 		}
 		if folded, ok := fold(paths.Log, c); ok {
-			out := clamp(folded).(map[string]any)
-			enc := json.NewEncoder(stdout)
-			enc.SetEscapeHTML(false)
-			if err := enc.Encode(out); err != nil {
+			out := jsonval.Clamp(folded).(map[string]any)
+			if err := jsonval.Encode(stdout, out, false); err != nil {
 				say(stderr, "crew: %v\n", err)
 				return 1
 			}
@@ -289,35 +288,6 @@ func fold(path string, c call) (map[string]any, bool) {
 	}
 	out, ok := res.(map[string]any)
 	return out, ok
-}
-
-// clamp is jq's output rule for the computed doubles a row can carry in from the
-// bus, which json.Marshal refuses: NaN prints as null and ±Inf as ±MaxFloat64.
-func clamp(v any) any {
-	switch x := v.(type) {
-	case float64:
-		switch {
-		case math.IsNaN(x):
-			return nil
-		case math.IsInf(x, 1):
-			return math.MaxFloat64
-		case math.IsInf(x, -1):
-			return -math.MaxFloat64
-		}
-	case []any:
-		out := make([]any, len(x))
-		for i, e := range x {
-			out[i] = clamp(e)
-		}
-		return out
-	case map[string]any:
-		out := make(map[string]any, len(x))
-		for k, e := range x {
-			out[k] = clamp(e)
-		}
-		return out
-	}
-	return v
 }
 
 // cursorText is `jq -r '.cursor'`: the batch's cursor as the number text the
