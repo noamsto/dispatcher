@@ -179,6 +179,10 @@ let
     laneProfiles."pi/lemonade/*" = {name = "local";};
     laneProfiles.claude = {name = "security";};
     laneProfiles."pi/gemma/*" = {name = "local";notes = "- targeted only";};
+    hosts.mini = {
+      ssh = "me@mini";
+      repos."acme/widget" = "/r/widget";
+    };
     workerDeniedMcpServers = ["my_browser"];
     userSettings = "/home/u/cfg/settings.json";
   };
@@ -776,6 +780,17 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
 
   run jq -e '.float.locked.openrouter.monthlyUsd == 12.5' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "the hosts option lands in the locked layer, only when set" {
+  run jq -e '(.options | index("hosts")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.hosts == {"mini": {"ssh": "me@mini", "repos": {"acme/widget": "/r/widget"}}}' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.hosts.mini.ssh == "me@mini"' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.minimal.locked | has("hosts") | not' "$EVAL"
   [ "$status" -eq 0 ]
 }
 

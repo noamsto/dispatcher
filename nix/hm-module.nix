@@ -29,6 +29,7 @@ self: {
     // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;}
     // lib.optionalAttrs (cfg.localModels != null) {localModels = lockFields cfg.localModels;}
     // lib.optionalAttrs (cfg.laneProfiles != null) {laneProfiles = lockFields cfg.laneProfiles;}
+    // lib.optionalAttrs (cfg.hosts != null) {inherit (cfg) hosts;}
     // lib.optionalAttrs (cfg.workerDeniedMcpServers != null) {inherit (cfg) workerDeniedMcpServers;};
   # Submodule defaults are emitted into the evalModules result, so an unset
   # `workerNotes`/`notes`/`reasoning` would reach the locked layer as JSON null
@@ -303,6 +304,37 @@ in {
         you mean to win. Unset, the key is left out and the user file governs
         alone. Executor "personas" are out of scope: this is text and a header
         stamp, not a different way to run a model.
+      '';
+    };
+
+    hosts = lib.mkOption {
+      type = lib.types.nullOr (lib.types.attrsOf (lib.types.submodule {
+        options = {
+          ssh = lib.mkOption {
+            type = lib.types.str;
+            example = "noam@mini.local";
+            description = "The ssh destination `crew remote-run` connects to: a user@host or an `~/.ssh/config` alias (use one for ports or jump hosts). It must not start with `-`.";
+          };
+          repos = lib.mkOption {
+            type = lib.types.attrsOf lib.types.str;
+            default = {};
+            example = {"noamsto/dispatcher" = "/Users/noam/git/dispatcher";};
+            description = "The host's clone of each repo it can run workers for: `owner/repo` to an absolute path.";
+          };
+        };
+      }));
+      default = null;
+      example = {
+        mini = {
+          ssh = "noam@mini.local";
+          repos."noamsto/dispatcher" = "/Users/noam/git/dispatcher";
+        };
+      };
+      description = ''
+        Remote hosts `dispatch --host <name>` can run a worker on, over ssh.
+        Set, each entry lands in the locked settings layer and merges per host
+        with the user file. Unset, the key is left out and the user file
+        governs alone.
       '';
     };
 

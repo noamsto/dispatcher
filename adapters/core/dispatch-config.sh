@@ -35,6 +35,11 @@
 # name, and optionally inline notes text) that `dispatch` applies to the task
 # doc; like localModels it is validated on the merged tree and has no env var.
 #
+# hosts maps a host name to an ssh destination and the remote clone path of each
+# owner/repo, for `crew remote-run`; like localModels it is validated on the
+# merged tree and has no env var. Unlike grantRoots it is allowed from the user
+# layer: an entry only chooses where work is sent and grants the worker nothing.
+#
 # Tracker map keys (repoTrackers/orgTrackers) are lowercased within each layer
 # before the merge, so a later layer's entry for the same key (any case)
 # collapses and wins.
@@ -318,6 +323,27 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
             ($v | select(has("notes") and (($v.notes | type) != "string")) | [$p + ["notes"], "a string"])
           end
       end;
+  # One [path, what] per violation in .hosts, entries in key order. Names and
+  # the ssh value reach an ssh argv, so they are anchored with \z (a "$" would
+  # let a trailing newline through) and an ssh value never starts with "-".
+  def host_violations:
+    .hosts as $all
+    | if ($all | type) != "object" then [["hosts"], "an object"]
+      else
+        ($all | to_entries[]) as {key: $k, value: $v}
+        | ["hosts", $k] as $p
+        | if ($k | test("\\A[A-Za-z0-9][A-Za-z0-9._-]*\\z") | not)
+          then [$p, "a name of letters, digits, \".\", \"_\" or \"-\" starting with a letter or digit"]
+          elif ($v | type) != "object" then [$p, "an object"]
+          else
+            ($v | keys[] | select(IN("ssh", "repos") | not) | [$p + [.], "one of ssh, repos"]),
+            ($v | select((.ssh | type != "string") or ((.ssh | test("\\A[A-Za-z0-9_][A-Za-z0-9._@%+-]*\\z")) | not)) | [$p + ["ssh"], "an ssh destination of letters, digits and \"._@%+-\" not starting with \"-\" (use an ~/.ssh/config alias for options)"]),
+            ($v | select(has("repos") and ((.repos | type) != "object")) | [$p + ["repos"], "an object"]),
+            (($v.repos | if type == "object" then to_entries[] else empty end) as {key: $r, value: $d}
+              | [$p + ["repos", $r], "an owner/repo key mapped to an absolute path without control characters"]
+              | select(($r | test("\\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\\z") | not) or ($d | type != "string" or (startswith("/") | not) or test("[[:cntrl:]]"))))
+          end
+      end;
   def tag($layers; $p):
     if type == "object" and length > 0
     then with_entries(.key as $k | .value |= tag($layers; $p + [$k]))
@@ -340,4 +366,5 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["workerDeniedMcpServers"]; "an array of MCP server names (letters, digits, \"_\", \"-\")"; string_array and all(.[]; test("^[A-Za-z0-9_-]+$")))
   | if has("localModels") then (first(local_model_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
   | if has("laneProfiles") then (first(lane_profile_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
+  | if has("hosts") then (first(host_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
   | if $show_origin then tag({base: $base, user: $user, locked: $locked, env: $env}; []) else . end'
