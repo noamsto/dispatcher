@@ -279,19 +279,19 @@ func TestRecord(t *testing.T) {
 
 // TestRecordClampsComputedTs pins jq's output rule for a ts the bus decoder
 // handed over as a computed double: NaN writes as null, ±Inf as ±MaxFloat64.
-// jq's `max` ranks NaN and -Inf below the 0 default, so NaN rides in an object.
+// jq's `max` ranks NaN and -Inf below the 0 default, so those ride in an object.
 func TestRecordClampsComputedTs(t *testing.T) {
 	d := dir(t)
 	msgs := []any{
 		map[string]any{"from": "a", "ts": map[string]any{"x": math.NaN()}},
 		map[string]any{"from": "b", "ts": math.Inf(1)},
-		map[string]any{"from": "c", "ts": math.Inf(-1)},
+		map[string]any{"from": "c", "ts": map[string]any{"x": math.Inf(-1)}},
 	}
 	if !Record(d, "c1", "me", msgs) {
 		t.Fatal("Record failed")
 	}
 	got := testjson.Compact(testjson.MustParse(t, readRaw(t, d, "c1", "me")))
-	if want := `{"a":{"x":null},"b":1.7976931348623157e+308,"c":0}`; got != want {
+	if want := `{"a":{"x":null},"b":1.7976931348623157e+308,"c":{"x":-1.7976931348623157e+308}}`; got != want {
 		t.Errorf("marks = %s, want %s", got, want)
 	}
 }
