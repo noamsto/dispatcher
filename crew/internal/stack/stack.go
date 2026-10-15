@@ -15,8 +15,10 @@
 package stack
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,7 +29,6 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
@@ -182,15 +183,15 @@ func (s *stackCmd) newest(branch, df, sf string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	out, err := jqrun.Run(newestProg, stringValues(lines), 0, map[string]jsonv.Value{
-		"crew": jsonv.Str(s.crew), "child": jsonv.Str(branch), "df": jsonv.Str(df), "sf": jsonv.Str(sf),
+	out, err := jqrun.RunAny(newestProg, stringValues(lines), 0, map[string]any{
+		"crew": s.crew, "child": branch, "df": df, "sf": sf,
 	}, jqrun.WithJQFromJSON())
 	if err != nil {
 		// jq itself failing is the arm's `_stack_bus_fail`; its empty output is
 		// the patched "" (newest.jq).
 		return "", errBus
 	}
-	v, _ := out.AsString()
+	v, _ := out.(string)
 	return v, nil
 }
 
@@ -220,14 +221,15 @@ func (s *stackCmd) record(branch string) (parent, cut string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	out, err := jqrun.Run(recordProg, stringValues(lines), 0, map[string]jsonv.Value{
-		"crew": jsonv.Str(s.crew), "b": jsonv.Str(branch),
+	out, err := jqrun.RunAny(recordProg, stringValues(lines), 0, map[string]any{
+		"crew": s.crew, "b": branch,
 	}, jqrun.WithJQFromJSON())
 	if err != nil {
 		return "", "", errBus
 	}
-	parent = jqString(out, "p")
-	cut = jqString(out, "c")
+	m, _ := out.(map[string]any)
+	parent, _ = m["p"].(string)
+	cut, _ = m["c"].(string)
 	if !oidRe.MatchString(cut) {
 		cut = ""
 	}
@@ -270,74 +272,33 @@ func isNumber(s string) bool {
 	return s != "" && strings.Trim(s, "0123456789") == ""
 }
 
-func stringValues(lines []string) []jsonv.Value {
-	out := make([]jsonv.Value, len(lines))
+func stringValues(lines []string) []any {
+	out := make([]any, len(lines))
 	for i, l := range lines {
-		out[i] = jsonv.Str(l)
+		out[i] = l
 	}
 	return out
-}
-
-// isFalse is the arm's `[ "$(jq -r '.k' …)" != false ]`: only a JSON false reads
-// as false. A missing key prints jq's "null" and a string spelled "false" is not
-// a JSON false, so both are refused.
-func isFalse(v jsonv.Value, key string) bool {
-	f, ok := v.Get(key)
-	return ok && f.Kind() == jsonv.KindFalse
 }
 
 // trimOne is bash's `${x#pat}`: one leading occurrence, not every one.
 func trimOne(s, prefix string) string { return strings.TrimPrefix(s, prefix) }
 
-func member(key string, v jsonv.Value) jsonv.Member { return jsonv.Member{Key: key, Val: v} }
-
-func jsonvAppend(v jsonv.Value) []byte { return jsonv.Append(nil, v, jsonv.Options{}) }
-
-// jqString is `jq -r '.k // empty'` over one object: a string is itself, null
-// and an absent key are "", anything else is the text jq would print.
-func jqString(v jsonv.Value, key string) string {
-	f, ok := v.Get(key)
-	if !ok || f.IsNull() {
-		return ""
-	}
-	if s, ok := f.AsString(); ok {
-		return s
-	}
-	return jqTostring(f)
-}
-
-// jqTostring is `jq '.k | tostring'`.
-func jqTostring(v jsonv.Value) string {
-	switch v.Kind() {
-	case jsonv.KindNull:
-		return "null"
-	case jsonv.KindString:
-		s, _ := v.AsString()
-		return s
-	case jsonv.KindNumber:
-		return v.NumberText()
-	case jsonv.KindTrue:
-		return "true"
-	case jsonv.KindFalse:
-		return "false"
-	case jsonv.KindArray, jsonv.KindObject:
-		return string(jsonv.Append(nil, v, jsonv.Options{}))
-	}
-	// Every jsonv.Kind is cased above, so this tail is unreachable; the compiler
-	// needs a return and `exhaustive` forbids a default (rate/burn.go, same shape).
-	return ""
-}
-
 // bashQuote is the `%q` of the arm's refusal: bash's C-locale quoting, which
 // gitguard already implements.
 func bashQuote(s string) string { return gitguard.Quote(s) }
 
-// parseJSON is the arm's `jq -r … <<<"$json"`: output gh did not print as JSON
-// reads as no field at all, which every caller refuses.
-func parseJSON(s string) (jsonv.Value, bool) {
-	v, err := jsonv.ParseOne(s)
-	if err != nil || v.Kind() != jsonv.KindObject {
-		return jsonv.Null(), false
+// decodeGh is the arm's `jq -r … <<<"$json"`: output gh did not print as the
+// expected JSON object reads as no field at all, which every caller refuses.
+func decodeGh(out string, v any) bool { return json.Unmarshal([]byte(out), v) == nil }
+
+// marshalRow encodes a row as one line without escaping <, > or &, as jq -c
+// does.
+func marshalRow(v any) (string, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return "", err
 	}
-	return v, true
+	return strings.TrimSuffix(b.String(), "\n"), nil
 }
