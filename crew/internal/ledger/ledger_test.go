@@ -152,6 +152,9 @@ var checkCases = []checkCase{
 	{name: "a sentence end splits off the period", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{reply("Waived AC3.")}},
 	{name: "id needs a token boundary", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{reply("waive AC3x")}, want: waiverLine("AC3")},
 	{name: "object body is its JSON text", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":{"note":"waive AC3"}}`}},
+	{name: "duplicate nested key takes the last value", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":{"x":"waive AC3","x":""}}`}, want: waiverLine("AC3")},
+	{name: "duplicate nested key last value waives", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":{"x":"not","x":"waive AC3"}}`}},
+	{name: "number literal prints as jq does", detail: "AC1E2 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":["waive",1e2]}`}, want: waiverLine("AC1E2")},
 	{name: "waived without an id", detail: "waived(dispatcher)", doc: docList, want: noID},
 	{name: "colon-only id strips to empty", detail: ": waived(dispatcher)", doc: docList, want: noID},
 	{name: "trailing colon id", detail: "AC3: waived(dispatcher)", doc: docList, log: []string{reply("waive ac3")}},
@@ -556,7 +559,7 @@ func waiverCorpus() []waiverCase {
 		var line string
 		switch r.IntN(8) {
 		case 0:
-			line = `{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":{"n":` + strconv.Quote(body) + `,"k":[1,1.50,null,true]}}`
+			line = `{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":{"n":` + strconv.Quote(body) + `,"k":[1,1.50,null,true,1e2,0.00000001,1E400,-0,12.30e-5,0e5]}}`
 		case 1:
 			line = row(crew, "dispatcher:"+crew, "worker:feat/x#s1", body)
 		case 2:
@@ -569,4 +572,21 @@ func waiverCorpus() []waiverCase {
 		out = append(out, waiverCase{id: id, log: []string{"garbage", line}})
 	}
 	return out
+}
+
+func TestJQNumberAgainstJQ(t *testing.T) {
+	bin := jqBin(t)
+	for _, lit := range []string{"1", "1.50", "1e2", "1E2", "0.00000001", "1.5e-10", "1e1000", "-0", "12.30e-5", "0e5", "-1E400", "123456789012345678901234567890", "0.000001", "100e-2", "1e+2"} {
+		out, rc := runJQ(t, bin, lit, "-c", ".|tostring")
+		if rc != 0 {
+			t.Fatalf("jq exit %d for %s", rc, lit)
+		}
+		want, err := strconv.Unquote(strings.TrimSpace(out))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := jqNumber(lit); got != want {
+			t.Errorf("jqNumber(%s) = %s, jq says %s", lit, got, want)
+		}
+	}
 }

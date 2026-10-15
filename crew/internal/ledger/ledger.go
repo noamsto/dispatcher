@@ -662,8 +662,9 @@ func jqArg(s string) string {
 }
 
 func field(row map[string]json.RawMessage, key, want string) bool {
+	raw := row[key]
 	var s string
-	return json.Unmarshal(row[key], &s) == nil && s == want
+	return len(raw) > 0 && raw[0] == '"' && json.Unmarshal(raw, &s) == nil && s == want
 }
 
 // body is `(.body // "") | tostring`: a non-string is its compact JSON text.
@@ -697,35 +698,58 @@ func tostring(raw json.RawMessage) (string, error) {
 		}
 		switch t := tok.(type) {
 		case json.Delim:
-			closer := byte(']')
-			if t == '{' {
-				closer = '}'
-			}
-			out.WriteByte(byte(t))
-			for first := true; dec.More(); first = false {
-				if !first {
-					out.WriteByte(',')
-				}
-				if t == '{' {
-					key, err := dec.Token()
-					if err != nil {
+			if t == '[' {
+				out.WriteByte('[')
+				for first := true; dec.More(); first = false {
+					if !first {
+						out.WriteByte(',')
+					}
+					if err := walk(); err != nil {
 						return err
 					}
-					quote(&out, key.(string))
-					out.WriteByte(':')
 				}
-				if err := walk(); err != nil {
-					return err
-				}
-			}
-			if _, err := dec.Token(); err != nil {
+				out.WriteByte(']')
+				_, err := dec.Token()
 				return err
 			}
-			out.WriteByte(closer)
+			// A repeated key keeps its first position and takes the last value.
+			var keys []string
+			vals := map[string]string{}
+			for dec.More() {
+				key, err := dec.Token()
+				if err != nil {
+					return err
+				}
+				var sb strings.Builder
+				quote(&sb, key.(string))
+				k := sb.String()
+				outer := out
+				out = strings.Builder{}
+				err = walk()
+				v := out.String()
+				out = outer
+				if err != nil {
+					return err
+				}
+				if _, seen := vals[k]; !seen {
+					keys = append(keys, k)
+				}
+				vals[k] = v
+			}
+			out.WriteByte('{')
+			for i, k := range keys {
+				if i > 0 {
+					out.WriteByte(',')
+				}
+				out.WriteString(k + ":" + vals[k])
+			}
+			out.WriteByte('}')
+			_, err := dec.Token()
+			return err
 		case string:
 			quote(&out, t)
 		case json.Number:
-			out.WriteString(t.String())
+			out.WriteString(jqNumber(t.String()))
 		case bool:
 			out.WriteString(strconv.FormatBool(t))
 		case nil:
@@ -737,6 +761,53 @@ func tostring(raw json.RawMessage) (string, error) {
 		return "", err
 	}
 	return out.String(), nil
+}
+
+// jqNumber is decNumber's to-scientific-string of a JSON number literal, which
+// is what jq prints for a literal it has not done arithmetic on; a literal past
+// decNumber's Emax is the double jq prints for infinity.
+func jqNumber(lit string) string {
+	neg := strings.HasPrefix(lit, "-")
+	lit = strings.TrimPrefix(lit, "-")
+	mant, expText, hasExp := strings.Cut(strings.ToLower(lit), "e")
+	e := 0
+	if hasExp {
+		var err error
+		if e, err = strconv.Atoi(expText); err != nil {
+			e = max(min(e, 1<<40), -(1 << 40))
+		}
+	}
+	ip, frac, _ := strings.Cut(mant, ".")
+	digits := strings.TrimLeft(ip+frac, "0")
+	if digits == "" {
+		digits = "0"
+	}
+	e -= len(frac)
+	adjusted := e + len(digits) - 1
+	sign := ""
+	if neg {
+		sign = "-"
+	}
+	n := len(digits)
+	switch {
+	case digits != "0" && adjusted > 999999999:
+		return sign + "1.7976931348623157e+308"
+	case e == 0:
+		return sign + digits
+	case e < 0 && adjusted >= -6:
+		if n > -e {
+			return sign + digits[:n+e] + "." + digits[n+e:]
+		}
+		return sign + "0." + strings.Repeat("0", -e-n) + digits
+	}
+	out := sign + digits[:1]
+	if n > 1 {
+		out += "." + digits[1:]
+	}
+	if adjusted >= 0 {
+		return out + "E+" + strconv.Itoa(adjusted)
+	}
+	return out + "E" + strconv.Itoa(adjusted)
 }
 
 // quote writes s as a jq string literal: only the quote, backslash, control
