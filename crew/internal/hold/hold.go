@@ -391,8 +391,8 @@ func add(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 
 // holdRow is one `hold` bus row. Field order is the row's byte order — the arm
 // built it in jq's construction order and `crew log` prints the line verbatim.
-// `ts` is a json.Number so the minted digits print as written, the way the
-// arm's `--argjson` passed them.
+// `ts` is a json.Number so the minted digits print as written, never through a
+// float64.
 type holdRow struct {
 	TS     json.Number `json:"ts"`
 	CrewID string      `json:"crew_id"`
@@ -422,7 +422,7 @@ type holdTask struct {
 	Branch string `json:"branch"`
 	Tier   string `json:"tier"`
 	// Engine is `task.engine`, the dispatch target; holdWait's engine is the
-	// quota being waited on. AddRequest keeps them distinct for the same reason.
+	// quota being waited on.
 	Engine string  `json:"engine"`
 	Model  string  `json:"model"`
 	Effort string  `json:"effort"`
@@ -443,8 +443,8 @@ type releaseBody struct {
 // the title is the only shrinkable part. Handing Shrink the whole body would
 // truncate `id`, `task.branch` and `task.spec` along with the title.
 func addRow(crew, id, ts string, fl *AddRequest, specpath, title string) holdRow {
-	// `--argjson resets_at <digits>`: digitsLiteral is that literal, and int64
-	// holds every value `add`'s own ParseInt bound above, so this cannot fail.
+	// The arm's `--argjson resets_at <digits>`: digitsLiteral is that literal,
+	// and int64 holds every value the ParseInt in `add` bounded.
 	resets, _ := strconv.ParseInt(digitsLiteral(fl.ResetsAt), 10, 64)
 	return holdRow{
 		TS:     json.Number(ts),
@@ -545,8 +545,7 @@ func (o Options) clock() clock.Clock {
 	return clock.Clock{Now: o.Now, CrewClock: o.CrewClock}
 }
 
-// orNull is the arm's `(if $x == "" then null else $x end)`, which the four
-// nullable task fields print as `null` when their flag was empty.
+// orNull is the arm's `(if $x == "" then null else $x end)`.
 func orNull(s string) *string {
 	if s == "" {
 		return nil
@@ -589,9 +588,9 @@ func elems(v any) []any {
 }
 
 // JSON is a fold result as compact JSON for a caller that still builds its jq
-// inputs with jsonv, and the row and body encoder every writer here uses: one
-// line, with `<`, `>` and `&` left raw the way jq printed them (a row built
-// inside bus.FitLine must not grow by five bytes per `<`).
+// inputs with jsonv. Every writer here encodes through it, with `<`, `>` and `&`
+// left raw as jq printed them: bus.FitLine measures the encoded line, so an
+// escaped `<` would move the shrink point by five bytes.
 func JSON(v any) ([]byte, error) {
 	var b strings.Builder
 	enc := json.NewEncoder(&b)
@@ -602,8 +601,8 @@ func JSON(v any) ([]byte, error) {
 	return []byte(strings.TrimSuffix(b.String(), "\n")), nil
 }
 
-// encode is JSON for a value this package builds, which encoding/json can always
-// write: every leaf is a string, bool, int64, json.Number or a fold's own output.
+// encode is JSON for a value this package builds: its leaves are strings, bools,
+// int64s, json.Number and a fold's own output, all of which encode.
 func encode(v any) string {
 	b, err := JSON(v)
 	if err != nil {

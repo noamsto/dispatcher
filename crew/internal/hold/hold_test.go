@@ -195,8 +195,7 @@ func TestAddResetsAtLiteral(t *testing.T) {
 // `bus.FitLine` measures the encoded line against LineMax, and jq wrote `<`, `>`
 // and `&` as one byte each, so both encoders (the body's and the row's) must
 // leave them raw — an escaped `\u003c` is five bytes longer and moves the shrink
-// point. The title reaches the row only through the body string, so one check
-// covers the two.
+// point. A title reaches the row only through the body string.
 func TestAddRowKeepsHTMLRaw(t *testing.T) {
 	tr := setup(t)
 	_, err, code := tr.run(t, fullAdd(func(a *AddRequest) { a.Title = []string{`<b> & </b>`} }))
@@ -210,8 +209,7 @@ func TestAddRowKeepsHTMLRaw(t *testing.T) {
 
 // D4: the body string uses Go's encoding, not jq's. Three leaves come out
 // differently and every consumer reads the body with `fromjson`, which makes all
-// three value-equal; `TestAddRowMatchesTheBuilder` pins the key order this
-// leaves untouched.
+// three value-equal.
 func TestAddRowEncodesStringsLikeGo(t *testing.T) {
 	cases := map[string]struct{ title, want string }{
 		"DEL is raw, not \\u007f": {"d\x7fhere", "\"title\":\"d\x7fhere\""},
