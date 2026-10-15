@@ -358,13 +358,10 @@ dispatch_remote() { # <extra dispatch args...> — a standard dispatch to crew c
   grep -Eq '^dispatcher_pane: ?$' "$wt/WORKER_TASK.md"
   grep -qF 'Body line.' "$wt/WORKER_TASK.md"
   remote_tmux list-windows -t =crew-c1 -F '#{@crew_branch}' | grep -qxF "$branch"
-  # The dispatch that started the remote tmux server left none of its
-  # per-dispatch vars in the server's global environment.
-  local var
-  for var in DISPATCH_SESSION_ID DISPATCH_SPEC DISPATCH_EMIT_ROW DISPATCH_TMUX_SESSION CREW_IDENTITY_AVOID; do
-    run remote_tmux show-environment -g "$var"
-    [[ "$output" != "$var="* ]] || return 1
-  done
+  # The dispatch that started the remote tmux server left no CREW_ or
+  # DISPATCH_ var (CREW_ID among them) in the server's global environment.
+  # Names only, never values.
+  [ "$(remote_tmux show-environment -g | cut -d= -f1 | grep -cE '^(CREW|DISPATCH)_')" -eq 0 ]
   grep -qF 'mini crew-c1 --into main' "$OG_LOG"
   assert_ssh_command_is_literal
 

@@ -158,7 +158,7 @@ refuse_claude_sonnet_cap() {
 # pace_rule_target <agent> <model> <effort> — refuse one premium launch target
 # when its fresh pace window (7d, or pi's/cursor's month) is materially ahead of pace.
 pace_rule_target() {
-  local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" model_downgrade_label="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause
+  local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" model_downgrade_label="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause escape
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
   model_downgrade="$(_pace_downgrade "$target_agent" "$target_model")"
   # Only shed a rung when the downgrade burns less (defaults.json
@@ -211,7 +211,10 @@ pace_rule_target() {
       if [ "$model_downgrade" = sonnet ] && [ -n "$effort_downgrade" ]; then
         model_downgrade_label="$model_downgrade at $effort_downgrade"
       fi
-      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium rung ($target_model) is refused; use the standard rung ($model_downgrade_label) instead, set DISPATCH_IGNORE_RUNG=$target_model to override just this refusal, or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
+      # --host refuses DISPATCH_IGNORE_RUNG, so it is no escape there.
+      escape=""
+      [ -n "${remote_host:-}" ] || escape="set DISPATCH_IGNORE_RUNG=$target_model to override just this refusal, "
+      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium rung ($target_model) is refused; use the standard rung ($model_downgrade_label) instead, ${escape}or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
       exit 1
     fi
   fi
@@ -219,7 +222,9 @@ pace_rule_target() {
     if [ "${DISPATCH_IGNORE_RUNG:-}" = "$target_effort" ]; then
       echo "dispatch: effort refusal skipped (DISPATCH_IGNORE_RUNG) — '$target_effort' on --agent $target_agent at $win ${used_pct}%${pace_notice}" >&2
     else
-      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium effort ($target_effort) is refused; use $effort_downgrade instead, set DISPATCH_IGNORE_RUNG=$target_effort to override just this refusal, or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
+      escape=""
+      [ -n "${remote_host:-}" ] || escape="set DISPATCH_IGNORE_RUNG=$target_effort to override just this refusal, "
+      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium effort ($target_effort) is refused; use $effort_downgrade instead, ${escape}or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
       exit 1
     fi
   fi
@@ -1444,13 +1449,17 @@ engine_path() {
 # pane, run under engine_path. Only these two calls take it: a pane inherits the
 # PATH of the client that opens it, and no other tmux call here opens one. tmux is
 # resolved before the swap, while the pinned dirs still hold; a box without tmux,
-# or a raw run with nothing to strip, takes plain tmux. The client also drops the
-# per-dispatch remote-mode vars: a client that starts the tmux server seeds the
+# or a raw run with nothing to strip, takes plain tmux. The client also drops
+# every CREW_ and DISPATCH_ var: a client that starts the tmux server seeds the
 # server's global environment with its own, and every later window there inherits
-# it — a later dispatch would reuse this session id, or a deleted spec path.
+# it — a later dispatch would reuse this crew or session id, or a deleted spec
+# path. Each pane gets its CREW_ID and CREW_WORKER_ID explicitly instead.
 _pane_client() {
-  local cleaned tmux_bin
-  local -a scrub=(-u DISPATCH_TMUX_SESSION -u DISPATCH_SESSION_ID -u DISPATCH_EMIT_ROW -u CREW_IDENTITY_AVOID -u DISPATCH_SPEC)
+  local cleaned tmux_bin v
+  local -a scrub=()
+  for v in "${!CREW_@}" "${!DISPATCH_@}"; do
+    scrub+=(-u "$v")
+  done
   cleaned="$(engine_path)"
   tmux_bin="$(command -v tmux || true)"
   if [ -n "$tmux_bin" ] && [ -n "$cleaned" ] && [ "$cleaned" != "$PATH" ]; then

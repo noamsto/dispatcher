@@ -48,6 +48,10 @@ trap '[ "$decided" = 1 ] || { printf "human: internal error\n"; exit 1; }' EXIT
 grant_check_lib="${GRANT_CHECK_LIB:-@grantCheckLib@}"
 # shellcheck source=/dev/null
 . "$grant_check_lib"
+# The anchored-git lib, for _wt_trusted_cwd.
+wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
+# shellcheck source=/dev/null
+. "$wt_git_lib"
 
 usage() {
   decided=1
@@ -123,6 +127,12 @@ parse_args() {
     local common
     common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) ||
       usage "--crew-dir not given and not inside a git repository"
+    # #633: a worker's own .git must not pick the crew dir, and so the route.
+    (_wt_trusted_cwd "$common") || {
+      decided=1
+      printf 'human: cwd: git refused here; run from the main checkout or pass --crew-dir\n'
+      exit 2
+    }
     CREW_DIR="$common/crew"
   fi
   [ -n "$PROJECTS_DIR" ] || PROJECTS_DIR="$HOME/.claude/projects"

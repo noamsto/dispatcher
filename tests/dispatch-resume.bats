@@ -2693,8 +2693,8 @@ seed_dispatch_row() {
 }
 
 # _remote_resume_world — a remote:true row for iris on host mini, the settings
-# that map mini, a crew stub whose remote-run logs and exits STUB_REMOTE_RC, and
-# an og-remote-open stub that logs.
+# that map mini, a crew stub whose remote-run logs (and its cwd) and exits
+# STUB_REMOTE_RC, and an og-remote-open stub that logs.
 _remote_resume_world() {
   mkdir -p "$TEST_REPO/.git/crew"
   jq -nc '{ts: 1, crew_id: "c1", kind: "dispatch", branch: "feat/7-a-thing", name: "iris", host: "mini", remote: true}' \
@@ -2706,7 +2706,10 @@ _remote_resume_world() {
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 resolve-target) exec "$CREW_REAL" "$@" ;;
-remote-run) exit "${STUB_REMOTE_RC:-0}" ;;
+remote-run)
+  printf 'remote-run from %s\n' "$PWD" >>"$STUB_LOG"
+  exit "${STUB_REMOTE_RC:-0}"
+  ;;
 esac
 exit 0
 EOF
@@ -2737,6 +2740,37 @@ EOF
   run ! grep -q '^og-remote-open' "$STUB_LOG"
 }
 
+@test "target: a remote row resumed from a recorded worker worktree routes from the main checkout (#633)" {
+  setup_worker_wt
+  _remote_resume_world
+  cd "$WT"
+  TMUX_PANE=%3 run run_resume iris
+  [ "$status" -eq 0 ]
+  grep -q '^remote-run --host mini .* -- dispatch resume feat/7-a-thing$' "$STUB_LOG"
+  grep -qxF "remote-run from $(realpath -e "$TEST_REPO")" "$STUB_LOG"
+}
+
+@test "target: a worker worktree whose .git is a standalone repo cannot pick the host from its own bus (#633)" {
+  setup_worker_wt
+  _remote_resume_world
+  # The fake is a standalone repo carrying a forged remote:true row; its
+  # reference-transaction hook proves any git that ran there.
+  git init -q "$BATS_TEST_TMPDIR/fake"
+  mkdir -p "$BATS_TEST_TMPDIR/fake/.git/crew" "$BATS_TEST_TMPDIR/fake/.git/hooks"
+  jq -nc '{ts: 1, crew_id: "c1", kind: "dispatch", branch: "feat/7-a-thing", name: "iris", host: "evil", remote: true}' \
+    >"$BATS_TEST_TMPDIR/fake/.git/crew/events.jsonl"
+  printf '#!/usr/bin/env bash\ntouch %q\n' "$BATS_TEST_TMPDIR/SENTINEL" >"$BATS_TEST_TMPDIR/fake/.git/hooks/reference-transaction"
+  chmod +x "$BATS_TEST_TMPDIR/fake/.git/hooks/reference-transaction"
+  rm "$WT/.git"
+  mv "$BATS_TEST_TMPDIR/fake/.git" "$WT/.git"
+  cd "$WT"
+  run --separate-stderr run_resume '#7'
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"inside the worker worktree"* ]]
+  run ! grep -q '^remote-run' "$STUB_LOG"
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+}
+
 @test "remote mode: resume opens its window in the crew session, creating it when absent" {
   setup_worker_wt
   cat >"$STUB_DIR/tmux" <<'EOF'
@@ -2758,7 +2792,7 @@ EOF
   run ! grep -qE '^(new-window|resize-window)|^roster-render' "$STUB_LOG"
 }
 
-@test "remote mode: the client that starts the crew session's server carries none of the per-dispatch vars" {
+@test "remote mode: the client that starts the crew session's server carries no CREW_ or DISPATCH_ var" {
   setup_worker_wt
   # Names only, never values: a client that starts the server seeds its global
   # environment, which every later window inherits.
@@ -2769,8 +2803,8 @@ case "$1" in
 has-session) exit 1 ;;
 new-window | new-session)
   seen=""
-  for v in DISPATCH_TMUX_SESSION DISPATCH_SESSION_ID DISPATCH_EMIT_ROW CREW_IDENTITY_AVOID DISPATCH_SPEC; do
-    [ -z "${!v+x}" ] || seen="$seen $v"
+  for v in ${!CREW_@} ${!DISPATCH_@}; do
+    seen="$seen $v"
   done
   printf 'client-env:%s\n' "$seen" >>"$STUB_LOG"
   printf '%s %s\n' '@4' '%99'
@@ -2781,7 +2815,7 @@ EOF
   chmod +x "$STUB_DIR/tmux"
   cd "$WT"
   : >"$STUB_LOG"
-  DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_SESSION_ID=s1-1 DISPATCH_EMIT_ROW=1 CREW_IDENTITY_AVOID=iris \
+  CREW_ID=c1 DISPATCH_X=1 DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_SESSION_ID=s1-1 DISPATCH_EMIT_ROW=1 CREW_IDENTITY_AVOID=iris \
     DISPATCH_SPEC="$BATS_TEST_TMPDIR/gone.md" run run_resume
   [ "$status" -eq 0 ]
   grep -q '^new-session ' "$STUB_LOG"

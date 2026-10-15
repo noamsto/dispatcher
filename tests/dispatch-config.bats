@@ -693,12 +693,23 @@ laneprofiles_refuse_row() { # json fragment
 {"hosts":{"mini":{"ssh":"me@mini","repos":{"widget":"/r/widget"}}}}|mini.repos.widget
 {"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widget":"r/widget"}}}}|mini.repos.acme/widget
 {"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widget":"/r/wid\nget"}}}}|mini.repos.acme/widget
+{"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widget":"/r/wid\tget"}}}}|mini.repos.acme/widget
+{"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widget":"/r/wid\u007fget"}}}}|mini.repos.acme/widget
 {"hosts":{"mini":{"ssh":"me@mini","repos":["/r"]}}}|mini.repos
 {"hosts":{"mini":{"ssh":"me@mini","port":22}}}|mini.port
 {"hosts":{"mini":"me@mini"}}|mini
 {"hosts":[]}|hosts
 EOF
-  finish_rows 11
+  finish_rows 13
+}
+
+# The module's strMatching "/[^[:cntrl:]]*" is byte-based: a C1 code point is
+# two non-control UTF-8 bytes there, so the resolver admits it too.
+@test "a C1 control in a hosts repo path is accepted, as the module type admits it" {
+  user_settings '{"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widget":"/r/wid\u0085get"}}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.hosts.mini.repos["acme/widget"] == "/r/wid\u0085get"' <<<"$output"
 }
 
 hosts_refuse_row() { # json fragment

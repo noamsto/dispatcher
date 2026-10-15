@@ -341,7 +341,7 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
             ($v | select(has("repos") and ((.repos | type) != "object")) | [$p + ["repos"], "an object"]),
             (($v.repos | if type == "object" then to_entries[] else empty end) as {key: $r, value: $d}
               | [$p + ["repos", $r], "an owner/repo key mapped to an absolute path without control characters"]
-              | select(($r | test("\\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\\z") | not) or ($d | type != "string" or (startswith("/") | not) or test("[[:cntrl:]]"))))
+              | select(($r | test("\\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\\z") | not) or ($d | type != "string" or (startswith("/") | not) or test("[\\x00-\\x1f\\x7f]"))))
           end
       end;
   def tag($layers; $p):

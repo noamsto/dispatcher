@@ -3602,9 +3602,9 @@ EOF
   [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ]
 }
 
-@test "remote mode: the tmux client that may start the crew server carries none of the per-dispatch vars" {
+@test "remote mode: the tmux client that may start the crew server carries no CREW_ or DISPATCH_ var" {
   stub_launch_bins
-  # _remote_mode_tmux, also logging which per-dispatch vars a window-opening
+  # _remote_mode_tmux, also logging which CREW_/DISPATCH_ vars a window-opening
   # client sees (names only): a client that starts the server seeds its
   # global environment, which every later window inherits.
   cat >"$STUB_DIR/tmux" <<'EOF'
@@ -3614,8 +3614,8 @@ case "$1" in
 has-session) [ -n "${STUB_HAS_SESSION:-}" ] || exit 1 ;;
 new-window | new-session)
   seen=""
-  for v in DISPATCH_TMUX_SESSION DISPATCH_SESSION_ID DISPATCH_EMIT_ROW CREW_IDENTITY_AVOID DISPATCH_SPEC; do
-    [ -z "${!v+x}" ] || seen="$seen $v"
+  for v in ${!CREW_@} ${!DISPATCH_@}; do
+    seen="$seen $v"
   done
   printf 'client-env:%s\n' "$seen" >>"$STUB_LOG"
   printf '%s %s\n' '@1' '%1'
@@ -3632,6 +3632,7 @@ EOF
     [ "$issue" = 42 ] || has=1
     : >"$STUB_LOG"
     STUB_HAS_SESSION="$has" DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_EMIT_ROW=1 DISPATCH_SESSION_ID="s1-$issue" \
+      CREW_ID=c1 DISPATCH_X=1 \
       CREW_IDENTITY_AVOID=iris DISPATCH_SPEC="$BATS_TEST_TMPDIR/spec.md" \
       run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 "$issue" "remote worker"
     [ "$status" -eq 0 ]
@@ -3748,6 +3749,8 @@ EOF
   run --separate-stderr run_dispatch deep opus --agent claude --host mini --effort high --crew-id c1 42 "t"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"the premium rung (opus) is refused"* ]]
+  # --host refuses DISPATCH_IGNORE_RUNG, so the refusal never offers it.
+  [[ "$stderr" != *DISPATCH_IGNORE_RUNG* ]]
   run ! grep -q -- '-- dispatch deep' "$STUB_LOG"
   # A role on claude under the same lead gets the same gate.
   run --separate-stderr run_dispatch deep sonnet --agent claude --host mini --effort high --roles 'reviewer=opus' --crew-id c1 42 "t"
@@ -5206,6 +5209,36 @@ ROWS
   [ "$status" -eq 1 ]
   [[ "$output" == *"the premium rung"* ]]
   [[ "$output" == *"sonnet at high"* ]]
+}
+
+@test "pace refusals under --host offer no DISPATCH_IGNORE_RUNG escape" {
+  load_dispatch_fns _settings_load _pace_downgrade _pace_burn_weight pace_rule_target
+  _settings_load
+  # Read by the eval'd pace_rule_target, not by this function body.
+  # shellcheck disable=SC2034
+  budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
+  # shellcheck disable=SC2034
+  ignore_budget=
+  budget_json_at claude 77 345600
+  local host
+  for host in "" mini; do
+    # shellcheck disable=SC2034
+    remote_host="$host"
+    run pace_rule_target claude opus high
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"use the standard rung (sonnet) instead"*"--ignore-budget"* ]]
+    run pace_rule_target claude sonnet xhigh
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"use high instead"*"--ignore-budget"* ]]
+    if [ -n "$host" ]; then
+      [[ "$output" != *DISPATCH_IGNORE_RUNG* ]]
+    else
+      [[ "$output" == *"DISPATCH_IGNORE_RUNG=xhigh"* ]]
+    fi
+  done
+  remote_host=mini
+  run pace_rule_target claude opus high
+  [[ "$output" != *DISPATCH_IGNORE_RUNG* ]]
 }
 
 @test "pace gate effort escape is exact and null reset still refuses" {

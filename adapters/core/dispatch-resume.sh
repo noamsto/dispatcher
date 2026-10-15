@@ -196,11 +196,14 @@ engine_path() {
 }
 
 # _pane_client <tmux args...> — dispatch.sh's: the tmux client that opens the
-# window, under engine_path and without the per-dispatch remote-mode vars a
-# server it starts would hand every later window.
+# window, under engine_path and without the CREW_ and DISPATCH_ vars a server it
+# starts would hand every later window.
 _pane_client() {
-  local cleaned tmux_bin
-  local -a scrub=(-u DISPATCH_TMUX_SESSION -u DISPATCH_SESSION_ID -u DISPATCH_EMIT_ROW -u CREW_IDENTITY_AVOID -u DISPATCH_SPEC)
+  local cleaned tmux_bin v
+  local -a scrub=()
+  for v in "${!CREW_@}" "${!DISPATCH_@}"; do
+    scrub+=(-u "$v")
+  done
   cleaned="$(engine_path)"
   tmux_bin="$(command -v tmux || true)"
   if [ -n "$tmux_bin" ] && [ -n "$cleaned" ] && [ "$cleaned" != "$PATH" ]; then
@@ -529,6 +532,8 @@ _resolve_target_worktree() {
     echo "dispatch resume: '$target' needs the repo's crew bus — run from inside the repository (any worktree)" >&2
     exit 1
   }
+  # #633: a worker's own .git must not pick the row, and so the host.
+  _wt_trusted_cwd "$(git rev-parse --path-format=absolute --git-common-dir)" || exit 1
   err="$(mktemp)"
   row="$(crew resolve-target "$target" 2>"$err")" || rc=$?
   if [ "$rc" -ne 0 ]; then

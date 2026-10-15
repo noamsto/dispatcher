@@ -267,6 +267,11 @@ in {
         hosts.h = {ssh = "me@h"; repos = {"a/b" = "/r";};};
       }).programs.dispatcher.hosts
       true))
+    (builtins.tryEval (builtins.deepSeq (eval {
+        enable = true;
+        hosts.h = {ssh = "me@h"; repos = {"a/b" = "/a\tb";};};
+      }).programs.dispatcher.hosts
+      true))
   ]);
   goodLocalModelAsserts = builtins.filter (a: !a.assertion) (eval fullCfg).assertions;
   # `engines = []` must be a type error, not a silently-accepted value that
@@ -495,7 +500,7 @@ placeholder_two_row() { # token
     [ -n "$row" ] || continue
     keep_row "$row" placeholder_three_row "$token" "$b1" "$b2" "$b3"
   done <<ROWS
-worktree-git|@worktreeGitLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume
+worktree-git|@worktreeGitLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume|$OUT_PERMISSION_CHECK/bin/permission-check
 grant-check|@grantCheckLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume|$OUT_PERMISSION_CHECK/bin/permission-check
 local-models|@localModelsLib@|$OUT_DISPATCH/bin/dispatch|$OUT_REFRESH_BUDGET/bin/refresh-budget
 ROWS
@@ -525,8 +530,9 @@ placeholder_three_row() { # token bin… (empty trailing bins are skipped)
   done <<ROWS
 dispatch|$OUT_DISPATCH/bin/dispatch
 dispatch-resume|$OUT_DISPATCH_RESUME/bin/dispatch-resume
+permission-check|$OUT_PERMISSION_CHECK/bin/permission-check
 ROWS
-  finish_rows 2
+  finish_rows 3
 }
 
 worktree_git_lib_crew_go_row() { # bin
@@ -746,7 +752,7 @@ worktree_git_lib_crew_go_row() { # bin
 }
 
 @test "hosts ssh and repo path values the resolver refuses fail the option type" {
-  run jq -e '.badHostValuesRejected == 2' "$EVAL"
+  run jq -e '.badHostValuesRejected == 3' "$EVAL"
   [ "$status" -eq 0 ]
 }
 
