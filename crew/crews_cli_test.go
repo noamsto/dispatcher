@@ -24,14 +24,14 @@ const (
 	noCrewIDMsg      = "crew: no crew id — CREW_ID unset and no WORKER_TASK.md crew_id; run 'crew crews' to find this repo's crews, 'crew adopt <id>' to re-attach, or 'crew new' to start one\n"
 	noCrewRegMsg     = "crew: CREW_ID unset and no WORKER_TASK.md crew_id — run 'crew crews' to find this repo's crews, 'crew adopt <id>' to re-attach, or 'crew new' to start one\n"
 	crewNewHelperEnv = "CREW_NEW_HELPER"
-	ghStub           = `#!/usr/bin/env bash
+	ghStub           = `#!/bin/sh
 printf '%s\n' "$*" >>"$GH_LOG"
 case "$*" in
 "pr list "*) [ -z "${PR_OPEN_BRANCH:-}" ] || printf '%s\n' "$PR_OPEN_BRANCH" ;;
 esac
 exit 0
 `
-	tmuxStub = `#!/usr/bin/env bash
+	tmuxStub = `#!/bin/sh
 printf '%s\n' "$*" >>"$TMUX_LOG"
 case "$1 $2" in
 "list-windows -a") [ -z "${TMUX_WINDOWS:-}" ] || printf '%s\n' "$TMUX_WINDOWS" ;;
