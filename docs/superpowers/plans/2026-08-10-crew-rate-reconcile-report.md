@@ -16,7 +16,7 @@
 
 - **Default branch is `extract`, not `main`.** Open the PR against `extract`.
 - **Scope guard — files this plan may touch, and no others:**
-  - Own: `adapters/core/crew.sh` — **the `rate)` case arm**, plus **two** new helper functions (`_burn_weight`, `_gh_json`) beside the other `_`-prefixed helpers, plus the one-line `usage:` string at the bottom. Nothing else in that file. Also a **new** `tests/rate.bats`, and the two docs already written (spec + this plan).
+  - Own: `adapters/core/crew.sh` — **the `rate)` case arm**, plus **two** new helper functions (`_burn_weight`, `_gh_json`) beside the other `_`-prefixed helpers, plus the one-line `usage:` string at the bottom. Nothing else in that file. Also a **new** `the rate tests (since ported to Go, #1099)`, and the two docs already written (spec + this plan).
   - **Never touch:** `crew msg`, `crew reap`, `crew id`, `_crew_id`, `crew register`, `crew roster`, `crew watch`, `crew status`, or the shared prologue (`crew.sh:226-234`) — live workers are executing every one of those right now. **`tests/crew.bats` is owned by another live worker: do not open it for editing.** Also never touch `adapters/claude-code/**`, `adapters/codex/**`, `adapters/cursor/**` (generated trees), `DISPATCHER_PROTOCOL.md`, `dispatch-orchestration.md`, or `dispatch.sh`.
   - **`WORKER_PROTOCOL.md` needs no edit** (spec §Scope boundary: the `metrics:` emit is already all-tier). Therefore **`scripts/gen-adapters.sh` does not need to run.** If you find yourself wanting to edit a protocol, stop and ask the dispatcher on the bus instead.
 - **Tasks 1–4 all edit the same `rate)` region and MUST run SEQUENTIALLY** — never as concurrent subagents. Task 5 (tests) may only start once Task 4 lands, because it asserts the finished behaviour. Strict chain: 1 → 2 → 3 → 4 → 5 → 6.
@@ -120,7 +120,7 @@
 
 **Model:** default (sonnet).
 
-**Files:** Modify `adapters/core/crew.sh`; create `tests/rate.bats`; regenerate the sample block in the spec (Step 6).
+**Files:** Modify `adapters/core/crew.sh`; create `the rate tests (since ported to Go, #1099)`; regenerate the sample block in the spec (Step 6).
 
 **Sequencing:** after Task 3.
 
@@ -133,20 +133,20 @@
 - [ ] **Step 3: Render markers** — `value` when `k == n`, `value(k)` when it differs; `!` appended when `k < 5`; `n` itself takes `!` when `n < 5`; raw counts never take a marker; `—` for `k == 0`.
 - [ ] **Step 4: Emit the table** with widths computed in jq (decision 6 — no `column`). **One padding rule, stated so the golden test has a reachable target:** build each cell's text by concatenating `value` + `(k)` + `!` _first_; column width = `max(len(header), max len(cell))`; `engine`/`model`/`tier` left-aligned, every other column right-aligned; two spaces between columns. Then the legend line, then a footer counting **rows** that carry at least one small-sample quantity.
 - [ ] **Step 5: `--json`** emits the same per-cell structure with each aggregate as `{value, k, n}` and raw counts as plain numbers.
-- [ ] **Step 6: Land the golden-fixture test now, not in Task 5.** Build the store that produces the spec's worked example and assert the rendered rows byte-for-byte in `tests/rate.bats` (create the file with just the harness + this test). The harness needs `load helpers` + `setup_repo` + `export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"`, exactly as `tests/pr-watch.bats:3-14` does — `--report` still goes through the prologue's git-repo gate. Pad in jq with `length`, which counts **codepoints**, so `—` measures as 1 and needs no byte-length workaround. `--report` with `n` visible is a whole acceptance criterion; shipping it behind "eyeball it" leaves it unverified until the last task.
+- [ ] **Step 6: Land the golden-fixture test now, not in Task 5.** Build the store that produces the spec's worked example and assert the rendered rows byte-for-byte in `the rate tests (since ported to Go, #1099)` (create the file with just the harness + this test). The harness needs `load helpers` + `setup_repo` + `export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"`, exactly as `tests/pr-watch.bats:3-14` does — `--report` still goes through the prologue's git-repo gate. Pad in jq with `length`, which counts **codepoints**, so `—` measures as 1 and needs no byte-length workaround. `--report` with `n` visible is a whole acceptance criterion; shipping it behind "eyeball it" leaves it unverified until the last task.
   - **The spec's sample block is hand-aligned and no uniform rule reproduces it byte-for-byte** — its `!` sits outside the field in the `n` and `ttpr` columns but inside it in `pr%`. So: **regenerate the fenced block in the spec from the implementation's actual output, in this same commit**, and assert against the regenerated block. The spec is inside this plan's touchable file set, so this is in scope.
   - **The regeneration may change whitespace only.** Every `(k)`, `!`, `—` and numeric value in the example must come out identical — those are what the golden exists to pin, and a "fix" that alters one is a renderer bug, not an alignment difference. If a value changes, stop and fix the renderer instead of the spec.
   - Every value in the block **is** reachable from integer inputs — verified: `0.6(11)`=7/11, `1.1`=13/12, `0.3`=4/12, `0.2`=2/12, `0.5(2)`={0,1}, `0.7`=2/3, `1.3`=4/3, `90(10)`=9/10, `89(9)`=8/9, `67`=2/3. Build the fixture to hit them; do not adjust the block to match a fixture you found easier to write.
 
-**Verify:** `nix develop -c bats tests/rate.bats` green.
+**Verify:** `nix develop -c bats the rate tests (since ported to Go, #1099)` green.
 
 ---
 
-### Task 5: `tests/rate.bats`
+### Task 5: `the rate tests (since ported to Go, #1099)`
 
 **Model:** default (sonnet).
 
-**Files:** Extend `tests/rate.bats` (created in Task 4 Step 6). **Do not open `tests/crew.bats`.**
+**Files:** Extend `the rate tests (since ported to Go, #1099)` (created in Task 4 Step 6). **Do not open `tests/crew.bats`.**
 
 **Sequencing:** after Task 4. Four themed steps rather than one bulk step, so each subagent turn stays reviewable.
 
@@ -156,7 +156,7 @@
 - [ ] **Step 4: Derived fields and the report** — `review_rounds` batching (3 reviews + 1 commit ⇒ 1; APPROVED ⇒ not a round; trailing reviews ⇒ 0); `first_ci_green` (earliest-sha, mixed ⇒ false, none in window ⇒ null); `unresolved_notes`; `reverted` null when the merge commit is absent locally; `outcome` precedence, one fixture per row of the table; cost (known ⇒ weight×wall-clock, `kimi-k3-high` ⇒ null class and proxy); the report's `!` firing on a small-denominator quantity inside a large-`n` row.
 - [ ] **Step 5: The `crew watch` test** — emit the `metrics:` msg **first**, then run `crew watch --since 0 --timeout 1 --interval 1` synchronously and assert empty stdout. `watch` is a poll over `events.jsonl`, so ordering it this way asserts the same property without backgrounding (bats `run` cannot background, and `watch` needs `CREW_ID`). Split streams with `run --separate-stderr` as `tests/pr-watch.bats` does.
 
-**Verify:** `nix develop -c bats tests/rate.bats` fully green.
+**Verify:** `nix develop -c bats the rate tests (since ported to Go, #1099)` fully green.
 
 ---
 
@@ -166,4 +166,4 @@
 
 - [ ] **Step 1:** `nix develop -c shellcheck adapters/core/crew.sh` clean.
 - [ ] **Step 2:** `nix develop -c bats tests/` — green **except** the two known-red reap-release tests in `tests/crew.bats` (#54, #58), a pre-existing macOS-host failure owned by another worker under #49. Do not fix them; do not report them as this branch's failures.
-- [ ] **Step 3:** Confirm `git status` shows only: `adapters/core/crew.sh`, `tests/rate.bats`, the spec, this plan — **plus the untracked `WORKER_TASK.md`, which is this worker's own dispatch artifact and must never be removed** (`_crew_id` at `crew.sh:188-198` falls back to reading `crew_id:` out of it whenever `CREW_ID` is unset, so deleting it silently breaks every remaining `crew status`/`crew msg` this session makes). Any _other_ path is a scope-guard violation — revert it.
+- [ ] **Step 3:** Confirm `git status` shows only: `adapters/core/crew.sh`, `the rate tests (since ported to Go, #1099)`, the spec, this plan — **plus the untracked `WORKER_TASK.md`, which is this worker's own dispatch artifact and must never be removed** (`_crew_id` at `crew.sh:188-198` falls back to reading `crew_id:` out of it whenever `CREW_ID` is unset, so deleting it silently breaks every remaining `crew status`/`crew msg` this session makes). Any _other_ path is a scope-guard violation — revert it.

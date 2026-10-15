@@ -21,7 +21,7 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
-# Copied from rate.bats — that file defines these at its own top level, not
+# Copied from the rate tests (since ported to Go, #1099) — that file defined these at its own top level, not
 # in tests/helpers.bash, so this file does not inherit them.
 # ---------------------------------------------------------------------------
 

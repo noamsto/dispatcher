@@ -502,7 +502,7 @@ rather than hides. Re-sweeping their repo upgrades them.
 
 Touched: `adapters/core/crew.sh` (the `rate)` region only — `msg`, `reap`, `id`,
 `_crew_id`, `register` and the shared prologue are untouched; workers are live in
-all of them), a new `tests/rate.bats`, this spec. `scripts/gen-adapters.sh` reruns
+all of them), a new `the rate tests (since ported to Go, #1099)`, this spec. `scripts/gen-adapters.sh` reruns
 only if a protocol file changes — none is expected to.
 
 **`WORKER_PROTOCOL.md` needs no change.** Its `metrics:` emit is already all-tier,
@@ -518,7 +518,7 @@ wires it in.
 
 ## Testing
 
-`tests/rate.bats`, synthetic `events.jsonl` + a PATH-shim `gh`:
+`the rate tests (since ported to Go, #1099)`, synthetic `events.jsonl` + a PATH-shim `gh`:
 
 - **The four pre-existing `crew rate` tests in `tests/crew.bats` pass unmodified** —
   that file is off-limits. This is why the network gate is a URL-shape match:
