@@ -2874,7 +2874,7 @@ EOF
 EOF
   CREW_ID=c1 run_crew status "worker:feat/idle-done-live#s1-1" done
   CREW_ID=c1 run run_crew reap --idle 0
-  [[ "$output" == *"pane busy: %33 shows a prompt"* ]]
+  [[ "$output" == *"pane busy: %33 is not idle (pi frame: prompt on screen)"* ]]
   run ! grep -q 'kill-window' "$STUB_LOG"
 }
 
@@ -3630,7 +3630,7 @@ EOF
   : >"$wt_path/WORKER_TASK.md"
   : >"$wt_path/REVIEW_NOTES.md"
   export CREW_RELEASE_GAP=0
-  stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\tpi\n@23\t%%34\tpi\n')"
+  stub_tmux "$(printf '@23\tsage\t%s\n' "$wt_path")" "$(printf '@23\t%%33\tcodex\n@23\t%%34\tcodex\n')"
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
