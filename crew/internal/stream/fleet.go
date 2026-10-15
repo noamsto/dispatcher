@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 )
@@ -207,12 +206,12 @@ func (f *fleet) run(sigs chan os.Signal) int {
 			f.discover()
 		}
 		if quiet := f.out.quiet(); quiet >= time.Duration(f.c.heartbeat)*time.Second {
-			say(f.out, "%s\n", encode(jsonv.Object(
-				member("stream", jsonv.Str("heartbeat")),
-				member("crew", jsonv.Str(f.c.crew)),
-				member("quiet_s", jsonv.Num(float64(int64(quiet/time.Second)))),
-				member("ts", jsonv.Num(float64(clockMS(f.o.Options)))),
-			)))
+			say(f.out, "%s\n", encode(heartbeatLine{
+				Stream: "heartbeat",
+				Crew:   f.c.crew,
+				QuietS: int64(quiet / time.Second),
+				TS:     clockMS(f.o.Options),
+			}))
 		}
 		select {
 		case s := <-sigs:
@@ -374,7 +373,7 @@ func (f *fleet) yielder(repo, cdir string) func() bool {
 		alive := state == "alive"
 		switch {
 		case alive && !yielding:
-			say(f.stderr, "crew: fleet stream: %s: per-repo stream alive (pid %s) — not watching\n", repo, encode(pid))
+			say(f.stderr, "crew: fleet stream: %s: per-repo stream alive (pid %s) — not watching\n", repo, pidText(pid))
 		case !alive && yielding:
 			say(f.stderr, "crew: fleet stream: %s: per-repo stream no longer alive — resumed\n", repo)
 		}

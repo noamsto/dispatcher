@@ -25,6 +25,7 @@ package stream
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -40,7 +41,6 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 )
 
@@ -231,6 +231,54 @@ func cleared(pid int, o Options) bool {
 	return false
 }
 
+// The stdout lines the arm built with `jq -nc '{…}'`, one struct per kind.
+// Field order is the arm's construction order, with `repo` — the label a fleet
+// bus loop adds — last. JSON is judged by value (#821), but the order stays:
+// a dispatcher parses these lines and `tests/crew.bats` greps them for
+// `"stream":"<kind>"`.
+type statusLine struct {
+	Stream string          `json:"stream"`
+	State  string          `json:"state"`
+	Crew   string          `json:"crew"`
+	PID    json.RawMessage `json:"pid"`
+	AgeS   *int64          `json:"age_s"`
+}
+
+type heartbeatLine struct {
+	Stream string `json:"stream"`
+	Crew   string `json:"crew"`
+	QuietS int64  `json:"quiet_s"`
+	TS     int64  `json:"ts"`
+	Repo   string `json:"repo,omitempty"`
+}
+
+type errorLine struct {
+	Stream string `json:"stream"`
+	Crew   string `json:"crew"`
+	RC     int64  `json:"rc"`
+	Detail string `json:"detail"`
+	TS     int64  `json:"ts"`
+	Repo   string `json:"repo,omitempty"`
+}
+
+// holdDueLine carries `crew hold due --json`'s answer as its own bytes.
+type holdDueLine struct {
+	Stream string          `json:"stream"`
+	Crew   string          `json:"crew"`
+	Holds  json.RawMessage `json:"holds"`
+	TS     int64           `json:"ts"`
+	Repo   string          `json:"repo,omitempty"`
+}
+
+// reapLine is written to the reap child's own file, which printReap forwards.
+// Only a lane's stream reaps, so it has no repo label.
+type reapLine struct {
+	Stream string   `json:"stream"`
+	Crew   string   `json:"crew"`
+	Lines  []string `json:"lines"`
+	TS     int64    `json:"ts"`
+}
+
 // status is `--status`: the state machine a dispatcher reads before it decides
 // whether to arm a stream at all.
 //
@@ -242,44 +290,68 @@ func cleared(pid int, o Options) bool {
 // the safe direction: the tick is written immediately on acquiring the lock.
 func status(cdir, crew string, stdout io.Writer, o Options) int {
 	st, rc, pid, age := laneState(cdir, o)
-	say(stdout, "%s\n", encode(jsonv.Object(
-		member("stream", jsonv.Str("status")),
-		member("state", jsonv.Str(st)),
-		member("crew", jsonv.Str(crew)),
-		member("pid", pid),
-		member("age_s", age),
-	)))
+	say(stdout, "%s\n", encode(statusLine{
+		Stream: "status",
+		State:  st,
+		Crew:   crew,
+		PID:    pid,
+		AgeS:   age,
+	}))
 	return rc
 }
 
 // laneState is the state machine behind `--status` for the lane whose lock and
 // tick live in cdir: the state, its exit status, the holder pid and the tick's
 // age.
-func laneState(cdir string, o Options) (state string, rc int, pid, age jsonv.Value) {
+func laneState(cdir string, o Options) (state string, rc int, pid json.RawMessage, age *int64) {
 	holder := statusPID(lock.Holder(filepath.Join(cdir, "stream.lock.d")))
 	live := isSinglePositivePID(holder) && o.Probes.Alive(pidNumber(holder))
 
 	// The holder is reported whether or not it answers: `dead` still names the
 	// pid that is gone.
-	pid = jsonv.Null()
-	if holder != "" {
-		if v, ok := jsonv.ParseNumber(holder); ok {
-			pid = v
-		}
-	}
+	pid = holderPID(holder)
 	state, rc = "dead", 2
-	age = jsonv.Null()
 	if live {
 		state, rc = "stale", 1
 		if tick := readTick(filepath.Join(cdir, "stream.tick")); tick.ok {
 			ageS := (clockMS(o) - tick.ts) / 1000
-			age = jsonv.Num(float64(ageS))
+			age = &ageS
 			if ageS < 2*tick.park+60 {
 				state, rc = "alive", 0
 			}
 		}
 	}
 	return state, rc, pid, age
+}
+
+// holderPID is the pid `--status` reports for a holder's digits: those digits
+// with the leading zeros jq drops (`00` reads 0, `007` reads 7), and nil for no
+// holder.
+func holderPID(holder string) json.RawMessage {
+	if holder == "" {
+		return nil
+	}
+	text := strings.TrimLeft(holder, "0")
+	if text == "" {
+		text = "0"
+	}
+	return json.RawMessage(text)
+}
+
+// pidText renders a holder pid for the lane's stderr note, `null` and all.
+func pidText(pid json.RawMessage) string {
+	if len(pid) == 0 {
+		return "null"
+	}
+	return string(pid)
+}
+
+// tickFile is the stream.tick `--status` reads: the writer's pid, park and
+// instant.
+type tickFile struct {
+	PID  int64 `json:"pid"`
+	TS   int64 `json:"ts"`
+	Park int64 `json:"park"`
 }
 
 // tickState is a stream.tick: the two numbers the writer recorded, and ok for
@@ -293,7 +365,7 @@ type tickState struct {
 // missing file, one that will not decode, and a non-numeric field all read the
 // same — no tick.
 func readTick(path string) tickState {
-	v, err := decodeOne(readFile(path))
+	v, err := decodeObject(readFile(path))
 	if err != nil {
 		return tickState{}
 	}
@@ -596,12 +668,13 @@ func (l *loop) afterWatch(rc int, sigs chan os.Signal) os.Signal {
 		// The park expired with nothing to report.
 		l.quiet += l.c.park
 		if l.repo == "" && l.quiet >= l.c.heartbeat {
-			l.emit(jsonv.Object(
-				member("stream", jsonv.Str("heartbeat")),
-				member("crew", jsonv.Str(l.c.crew)),
-				member("quiet_s", jsonv.Num(float64(l.quiet))),
-				member("ts", jsonv.Num(float64(l.nowMS()))),
-			))
+			l.emit(heartbeatLine{
+				Stream: "heartbeat",
+				Crew:   l.c.crew,
+				QuietS: l.quiet,
+				TS:     l.nowMS(),
+				Repo:   l.repo,
+			})
 			l.quiet = 0
 		}
 		return nil
@@ -611,13 +684,14 @@ func (l *loop) afterWatch(rc int, sigs chan os.Signal) os.Signal {
 	detail := firstLine(l.errf)
 	ts := l.nowMS()
 	if l.sup.repeat("watch", fmt.Sprintf("%d:%s", rc, digitsToN(detail)), ts, l.heartbeatMS()) {
-		l.emit(jsonv.Object(
-			member("stream", jsonv.Str("error")),
-			member("crew", jsonv.Str(l.c.crew)),
-			member("rc", jsonv.Num(float64(rc))),
-			member("detail", jsonv.Str(detail)),
-			member("ts", jsonv.Num(float64(ts))),
-		))
+		l.emit(errorLine{
+			Stream: "error",
+			Crew:   l.c.crew,
+			RC:     int64(rc),
+			Detail: detail,
+			TS:     ts,
+			Repo:   l.repo,
+		})
 	}
 	return l.wait(time.Duration(l.c.retry)*time.Second, sigs)
 }
@@ -635,13 +709,14 @@ func (l *loop) holdDue() {
 		detail := firstLine(l.holderr)
 		ts := l.nowMS()
 		if l.sup.repeat("holderr", fmt.Sprintf("%d:%s", rc, digitsToN(detail)), ts, l.heartbeatMS()) {
-			l.emit(jsonv.Object(
-				member("stream", jsonv.Str("error")),
-				member("crew", jsonv.Str(l.c.crew)),
-				member("rc", jsonv.Num(float64(rc))),
-				member("detail", jsonv.Str("hold due: "+detail)),
-				member("ts", jsonv.Num(float64(ts))),
-			))
+			l.emit(errorLine{
+				Stream: "error",
+				Crew:   l.c.crew,
+				RC:     int64(rc),
+				Detail: "hold due: " + detail,
+				TS:     ts,
+				Repo:   l.repo,
+			})
 		}
 		out = ""
 	}
@@ -662,12 +737,13 @@ func (l *loop) holdDue() {
 	// iteration instead of stranding until the stream restarts.
 	ts := l.nowMS()
 	if l.sup.repeat("hold", holdIDs(holds), ts, l.heartbeatMS()) {
-		l.emit(jsonv.Object(
-			member("stream", jsonv.Str("hold_due")),
-			member("crew", jsonv.Str(l.c.crew)),
-			member("holds", holds),
-			member("ts", jsonv.Num(float64(ts))),
-		))
+		l.emit(holdDueLine{
+			Stream: "hold_due",
+			Crew:   l.c.crew,
+			Holds:  holds,
+			TS:     ts,
+			Repo:   l.repo,
+		})
 	}
 }
 
@@ -702,23 +778,23 @@ func (l *loop) startReap() {
 // below reads and prints.
 func (l *loop) writeReapLines(r *reapRun) {
 	out := strings.TrimRight(readFile(r.out), "\n")
-	var lines []jsonv.Value
+	var lines []any
 	if out != "" {
-		lines = append(lines, jsonv.Object(
-			member("stream", jsonv.Str("reap")),
-			member("crew", jsonv.Str(l.c.crew)),
-			member("lines", reapLines(out)),
-			member("ts", jsonv.Num(float64(r.ts))),
-		))
+		lines = append(lines, reapLine{
+			Stream: "reap",
+			Crew:   l.c.crew,
+			Lines:  reapLines(out),
+			TS:     r.ts,
+		})
 	}
 	if r.code != 0 {
-		lines = append(lines, jsonv.Object(
-			member("stream", jsonv.Str("error")),
-			member("crew", jsonv.Str(l.c.crew)),
-			member("rc", jsonv.Num(float64(r.code))),
-			member("detail", jsonv.Str("reap: "+firstLine(r.errf))),
-			member("ts", jsonv.Num(float64(r.ts))),
-		))
+		lines = append(lines, errorLine{
+			Stream: "error",
+			Crew:   l.c.crew,
+			RC:     int64(r.code),
+			Detail: "reap: " + firstLine(r.errf),
+			TS:     r.ts,
+		})
 	}
 	var b strings.Builder
 	for _, v := range lines {
@@ -752,7 +828,7 @@ func (l *loop) printReap(path string) {
 		if line == "" {
 			continue
 		}
-		if v, err := decodeOne(line); err == nil && fieldText(v, "stream") == "error" {
+		if v, err := decodeObject(line); err == nil && fieldText(v, "stream") == "error" {
 			key := digitsToN(fieldText(v, "rc") + ":" + fieldText(v, "detail"))
 			if !l.sup.repeat("reaperr", key, l.nowMS(), l.heartbeatMS()) {
 				continue
@@ -803,18 +879,15 @@ func (l *loop) wait(d time.Duration, sigs chan os.Signal) os.Signal {
 
 // writeTick is the tick `--status` measures: this pid, this park, this instant.
 func (l *loop) writeTick() {
-	tick := encode(jsonv.Object(
-		member("pid", jsonv.Num(float64(os.Getpid()))),
-		member("ts", jsonv.Num(float64(l.nowMS()))),
-		member("park", jsonv.Num(float64(l.c.park))),
-	))
+	tick := encode(tickFile{
+		PID:  int64(os.Getpid()),
+		TS:   l.nowMS(),
+		Park: l.c.park,
+	})
 	_ = os.WriteFile(filepath.Join(l.cdir, "stream.tick"), []byte(tick+"\n"), 0o644)
 }
 
-func (l *loop) emit(line jsonv.Value) {
-	if l.repo != "" {
-		line.Set("repo", jsonv.Str(l.repo))
-	}
+func (l *loop) emit(line any) {
 	say(l.stdout, "%s\n", encode(line))
 }
 
@@ -825,13 +898,17 @@ func (l *loop) emit(line jsonv.Value) {
 // dropped.
 func (l *loop) printBatch(text string) {
 	if l.repo != "" {
-		if v, err := decodeOne(text); err == nil && v.Kind() == jsonv.KindObject {
-			v.Set("repo", jsonv.Str(l.repo))
-			text = encode(v)
+		if obj, err := decodeObject(text); err == nil {
+			obj["repo"] = jsonString(l.repo)
+			text = encode(obj)
 		}
 	}
 	say(l.stdout, "%s\n", text)
 }
+
+// jsonString quotes a label into the raw field of a batch; encode already emits
+// a JSON string.
+func jsonString(s string) json.RawMessage { return json.RawMessage(encode(s)) }
 
 func (l *loop) nowMS() int64 { return clockMS(l.o) }
 
@@ -854,33 +931,48 @@ func wantsReap(batch string) bool {
 	if err != nil {
 		return false
 	}
-	out, err := jqrun.Run(wantsReapProg, rows, 0, nil)
+	out, err := jqrun.RunAny(wantsReapProg, rows, 0, nil)
 	if err != nil {
 		return false
 	}
-	return out.Truthy()
+	return truthy(out)
 }
 
+// truthy is jq's truthiness over a gojq value: null and false are false, and
+// everything else — including 0 and "" — is true.
+func truthy(v any) bool { return v != nil && v != false }
+
 // reapLines is the arm's `split("\n") | map(select(length>0) | sub("^crew reap: ";""))`.
-func reapLines(out string) jsonv.Value {
-	var vs []jsonv.Value
+// It starts from an empty slice so a set with nothing in it prints `[]`.
+func reapLines(out string) []string {
+	lines := []string{}
 	for _, line := range strings.Split(out, "\n") {
 		if line == "" {
 			continue
 		}
-		vs = append(vs, jsonv.Str(strings.TrimPrefix(line, "crew reap: ")))
+		lines = append(lines, strings.TrimPrefix(line, "crew reap: "))
 	}
-	return jsonv.Array(vs...)
+	return lines
 }
 
 // holdIDs is the arm's `[.[].id] | sort | join(",")`: the matured set, keyed on
-// its ids.
-func holdIDs(holds jsonv.Value) string {
+// its ids. A row that is not an object, or carries no string id, joins an empty
+// id, as `jq -r '.id'` on null printed one.
+func holdIDs(holds json.RawMessage) string {
+	var rows []json.RawMessage
+	if err := json.Unmarshal(holds, &rows); err != nil {
+		return ""
+	}
 	var ids []string
-	for _, h := range holds.Elems() {
-		id, _ := h.Get("id")
-		s, _ := id.AsString()
-		ids = append(ids, s)
+	for _, row := range rows {
+		id := ""
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(row, &obj); err == nil {
+			if raw, ok := obj["id"]; ok {
+				_ = json.Unmarshal(raw, &id)
+			}
+		}
+		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 	return strings.Join(ids, ",")
