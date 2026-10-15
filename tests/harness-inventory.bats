@@ -1,13 +1,12 @@
 bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 
-# scripts/harness-inventory.sh write mode (#1028): an edit above a recorded line
-# shifts `source_line`, so write mode re-derives column 4 of
-# tests/harness/assertions.tsv by joining each row onto the line the check
-# expects for its (case_id, source_file, expression), and refuses to write when
-# that join is not total — an assertion added, removed or changed in a bats file
-# is an inventory edit, not a line shift. The check locates cases through
-# tests/harness/manifest.tsv, so an edit above a `@test` line goes through
-# scripts/harness-manifest.sh first.
+# scripts/harness-inventory.sh: --check compares rows by identity — (case_id,
+# source_file, expression) with multiplicity — and ignores `source_line`, so an
+# edit that only moves lines passes while an assertion added, removed or changed
+# fails. Write mode (#1028) re-derives column 4 of tests/harness/assertions.tsv
+# by joining each row onto the line the check expects for its identity, and
+# refuses to write when that join is not total. Cases are located by @test name
+# through tests/harness/manifest.tsv, never by its source_line.
 #
 # Every case runs against a fixture repo under $BATS_TEST_TMPDIR; the real
 # inventories are never read or written here.
@@ -72,16 +71,6 @@ shift_down() {
   } >"$file.new" && mv "$file.new" "$file"
 }
 
-# manifest_line CASE LINE: what scripts/harness-manifest.sh does to
-# manifest.tsv when a case's @test line moves.
-manifest_line() {
-  awk -F '\t' -v OFS='\t' -v case_id="$1" -v line="$2" '
-    { if (NR > 1 && $1 == case_id) $3 = line }
-    { print }
-  ' "$HARNESS/manifest.tsv" >"$HARNESS/manifest.tsv.new" &&
-    mv "$HARNESS/manifest.tsv.new" "$HARNESS/manifest.tsv"
-}
-
 insert_after() { # <file> <line> <text>
   awk -v line="$2" -v text="$3" '{ print } NR == line { print text }' "$1" >"$1.new" &&
     mv "$1.new" "$1"
@@ -108,13 +97,17 @@ delete_line() { # <file> <line>
   [ "$status" -eq 0 ]
 }
 
-@test "write mode re-derives shifted lines and touches only column 4" {
+@test "--check ignores line shifts, stale manifest lines included" {
   shift_down "$REPO/tests/pr-watch.bats"
-  manifest_line demo-beta 4
 
   inventory --check
-  [ "$status" -eq 1 ]
-  [[ $stderr == *"assertion inventory is stale or incomplete"* ]]
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ -z "$stderr" ]
+}
+
+@test "write mode re-derives shifted lines and touches only column 4" {
+  shift_down "$REPO/tests/pr-watch.bats"
 
   inventory
   [ "$status" -eq 0 ]
@@ -129,14 +122,39 @@ delete_line() { # <file> <line>
   [ "$status" -eq 0 ]
 }
 
-@test "write mode refuses while the manifest still points at the old @test line" {
-  shift_down "$REPO/tests/pr-watch.bats"
+@test "--check fails naming the row when an assertion is removed" {
+  delete_line "$REPO/tests/pr-watch.bats" 4
 
-  inventory
-  [ "$status" -ne 0 ]
-  [[ $stderr == *"no bats assertion matches row beta-status"* ]]
-  [[ $stderr == *"nothing written"* ]]
-  cmp "$HARNESS/assertions.tsv" "$BATS_TEST_TMPDIR/before.tsv"
+  inventory --check
+  [ "$status" -eq 1 ]
+  [[ $output == *'+demo-beta'*'tests/pr-watch.bats'*'[ "$status" -eq 0 ]'* ]]
+  [[ $stderr == *"assertion inventory is stale or incomplete"* ]]
+}
+
+@test "--check fails naming the row when an assertion is changed" {
+  delete_line "$REPO/tests/pr-watch.bats" 5
+  insert_after "$REPO/tests/pr-watch.bats" 4 '  [ "$output" = "rewritten" ]'
+
+  inventory --check
+  [ "$status" -eq 1 ]
+  [[ $output == *'-demo-beta'*'[ "$output" = "rewritten" ]'* ]]
+  [[ $output == *'+demo-beta'*'[ "$output" = "ok" ]'* ]]
+}
+
+@test "--check fails when a repeated assertion gains a copy" {
+  insert_after "$REPO/tests/pr-watch.bats" 6 '  [ "$status" -eq 0 ]'
+
+  inventory --check
+  [ "$status" -eq 1 ]
+  [[ $output == *'-demo-beta'*'[ "$status" -eq 0 ]'* ]]
+}
+
+@test "--check fails when a sampled @test is renamed" {
+  sed -i 's/@test "beta one"/@test "beta renamed"/' "$REPO/tests/pr-watch.bats"
+
+  inventory --check
+  [ "$status" -eq 1 ]
+  [[ $output == *'+demo-beta'* ]]
 }
 
 @test "write mode refuses when a bats assertion was removed, leaving the TSV alone" {

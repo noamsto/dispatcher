@@ -149,7 +149,10 @@ if [[ $mode == check ]]; then
     echo "harness-manifest: missing $manifest" >&2
     exit 1
   fi
-  if ! diff -u "$manifest" <(printf '%s\n' "$generated"); then
+  # source_line (column 3) is dropped from both sides: a line shift alone is not
+  # staleness; an added, removed or edited @test still is.
+  if ! diff -u <(cut -f1,2,4-6 "$manifest" | LC_ALL=C sort) \
+    <(printf '%s\n' "$generated" | cut -f1,2,4-6 | LC_ALL=C sort); then
     echo "harness-manifest: $manifest is stale" >&2
     exit 1
   fi

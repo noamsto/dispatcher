@@ -73,8 +73,9 @@ if ! awk -F '\t' '
 fi
 
 # The rows the inventory must hold, read from the bats files as they are now:
-# case_id, source_file, source_line, expression. --check diffs this against the
-# inventory; write mode joins it back onto the existing rows.
+# case_id, source_file, source_line, expression. Cases are found by @test name
+# through the manifest, never by its source_line. --check diffs this against the
+# inventory ignoring source_line; write mode joins it back onto the existing rows.
 expected_rows() {
   awk -F '\t' -v sq="'" '
       function is_assertion(line) {
@@ -102,7 +103,7 @@ expected_rows() {
       }
 
       FILENAME == ARGV[1] {
-        if (FNR > 1) case_at[$2 SUBSEP $3] = $1
+        if (FNR > 1) case_at[$2 SUBSEP $5] = $1
         next
       }
 
@@ -129,7 +130,10 @@ expected_rows() {
       }
 
       /^@test / {
-        current_case = case_at[FILENAME SUBSEP FNR]
+        name = $0
+        sub(/^@test "/, "", name)
+        sub(/" \{$/, "", name)
+        current_case = case_at[FILENAME SUBSEP name]
         next
       }
       current_case != "" && /^}/ {
@@ -155,12 +159,10 @@ expected_rows() {
 }
 
 if [[ $mode == check ]]; then
-  if ! diff -u <(expected_rows) \
-    <(
-      tail -n +2 "$assertions" |
-        cut -f1,3,4,6 |
-        LC_ALL=C sort -t $'\t' -k1,1 -k2,2 -k3,3n
-    ); then
+  # source_line is dropped from both sides, so a line shift alone never fails;
+  # a whole-row sort keeps each key's multiplicity.
+  if ! diff -u <(expected_rows | cut -f1,2,4 | LC_ALL=C sort) \
+    <(tail -n +2 "$assertions" | cut -f1,3,6 | LC_ALL=C sort); then
     echo "harness-inventory: assertion inventory is stale or incomplete" >&2
     exit 1
   fi
@@ -214,7 +216,7 @@ else
         }
       }
       if (missing || extra) {
-        print "harness-inventory: the bats files and the inventory disagree; nothing written (if a bats edit moved a @test line, run scripts/harness-manifest.sh first)" > "/dev/stderr"
+        print "harness-inventory: the bats files and the inventory disagree; nothing written" > "/dev/stderr"
         exit 1
       }
     }
