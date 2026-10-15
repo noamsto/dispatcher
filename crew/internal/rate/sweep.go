@@ -9,7 +9,9 @@ import (
 	"bytes"
 	_ "embed"
 	"errors"
+	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,7 +21,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 )
 
@@ -99,9 +100,9 @@ func runSweep(paths bus.Paths, cwd string, stderr io.Writer, o Options) int {
 		return code
 	}
 
-	raws := make([]jsonv.Value, len(events))
+	raws := make([]any, len(events))
 	for i, ev := range events {
-		raws[i] = ev.Raw
+		raws[i] = ev.Doc
 	}
 	repo, ghRepo := s.repoScopes()
 	s.ghRepo = ghRepo
@@ -151,34 +152,30 @@ func runSweep(paths bus.Paths, cwd string, stderr io.Writer, o Options) int {
 // foldRecords runs the arm's run fold over the whole bus. The burn table
 // reaches it as a priced map because jq cannot call `_burn_weight`: each
 // distinct model+effort of the dispatch rows resolves once, here.
-func (s *sweep) foldRecords(raws []jsonv.Value, repo string) (jsonv.Value, int) {
-	records, err := jqrun.Run(recordsProgram, raws, s.clock(), map[string]jsonv.Value{
-		"repo":    jsonv.Str(repo),
+func (s *sweep) foldRecords(raws []any, repo string) (any, int) {
+	records, err := jqrun.RunAny(recordsProgram, raws, s.clock(), map[string]any{
+		"repo":    repo,
 		"costmap": s.costmap(raws),
 	})
 	if err != nil {
 		say(s.stderr, "crew: rate: %s: %v\n", s.paths.Log, err)
-		return jsonv.Value{}, exitType
+		return nil, exitType
 	}
 	return records, 0
 }
 
 // costmap prices every distinct model+effort pair of the dispatch rows, keyed
 // "model\teffort" because opus prices per effort (its class follows effort).
-func (s *sweep) costmap(raws []jsonv.Value) jsonv.Value {
+func (s *sweep) costmap(raws []any) map[string]any {
 	settings := s.settings()
 	if settings == "" {
 		say(s.stderr, "%s\n", burnWarn)
-		return jsonv.Object()
+		return map[string]any{}
 	}
-	vals, err := jsonv.DecodeStream(strings.NewReader(settings))
-	if err != nil || len(vals) != 1 {
-		return jsonv.Object()
-	}
-	rules := burnRules(vals[0])
+	rules := burnRules(settings)
 
 	seen := map[string]bool{}
-	out := jsonv.Object()
+	out := map[string]any{}
 	for _, ev := range raws {
 		if kind := fieldText(ev, "kind"); kind != "dispatch" {
 			continue
@@ -193,7 +190,7 @@ func (s *sweep) costmap(raws []jsonv.Value) jsonv.Value {
 		}
 		seen[key] = true
 		if class, weight, ok := burnWeight(rules, model, strings.SplitN(key, "\t", 2)[1]); ok {
-			out.Set(key, jsonv.Array(jsonv.Str(class), weight))
+			out[key] = []any{class, weight}
 		}
 	}
 	return out
@@ -231,8 +228,8 @@ func (s *sweep) repoScopes() (repo, ghRepo string) {
 // plan is the skip-decision fold: per call, not per run (spec §Per-call
 // finality), because a run-level skip would strand any field whose own call
 // failed on the sweep that first saw the merge.
-func (s *sweep) plan(records, snapshot jsonv.Value) []jsonv.Value {
-	rows, err := jqrun.Run(planProgram, nil, s.clock(), map[string]jsonv.Value{
+func (s *sweep) plan(records, snapshot any) []any {
+	out, err := jqrun.RunAny(planProgram, []any{}, s.clock(), map[string]any{
 		"records": records,
 		"snap":    snapshot,
 	})
@@ -240,16 +237,17 @@ func (s *sweep) plan(records, snapshot jsonv.Value) []jsonv.Value {
 		say(s.stderr, "crew: rate: %s: %v\n", s.store, err)
 		return nil
 	}
-	return rows.Elems()
+	rows, _ := out.([]any)
+	return rows
 }
 
 // lockedFold is lock window 1: the store read that decides which calls to
 // skip. A store the fold cannot read is the arm's `[]` — `2>/dev/null || true`
 // hid that a torn line costs every row to every reader.
-func (s *sweep) lockedFold() (jsonv.Value, int) {
+func (s *sweep) lockedFold() ([]any, int) {
 	if !lock.Acquire(s.lockd, s.pid) {
 		say(s.stderr, "%s\n", busy)
-		return jsonv.Value{}, exitFailure
+		return nil, exitFailure
 	}
 	defer lock.Release(s.lockd)
 	return foldStore(s.store), 0
@@ -258,14 +256,14 @@ func (s *sweep) lockedFold() (jsonv.Value, int) {
 // lockedMerge is lock window 2: a fresh fold, the merge-forward, and the batch
 // append — all under the lock, none of it across the network. The release is
 // deferred, so a fold or write failure cannot strand the lock either.
-func (s *sweep) lockedMerge(records, patches jsonv.Value) int {
+func (s *sweep) lockedMerge(records any, patches map[string]any) int {
 	if !lock.Acquire(s.lockd, s.pid) {
 		say(s.stderr, "%s\n", busy)
 		return exitFailure
 	}
 	defer lock.Release(s.lockd)
 
-	rows, err := jqrun.Run(mergeProgram, nil, s.clock(), map[string]jsonv.Value{
+	out, err := jqrun.RunAny(mergeProgram, []any{}, s.clock(), map[string]any{
 		"records": records,
 		"stored":  foldStore(s.store),
 		"patches": patches,
@@ -274,7 +272,8 @@ func (s *sweep) lockedMerge(records, patches jsonv.Value) int {
 		say(s.stderr, "crew: rate: %s: %v\n", s.store, err)
 		return exitType
 	}
-	if err := appendBatch(s.store, rows.Elems()); err != nil {
+	rows, _ := out.([]any)
+	if err := appendBatch(s.store, rows); err != nil {
 		say(s.stderr, "crew: rate: %s: %v\n", s.store, err)
 		return exitFailure
 	}
@@ -283,8 +282,8 @@ func (s *sweep) lockedMerge(records, patches jsonv.Value) int {
 
 // reconcile is the unlocked t2 phase: the gh calls, the local revert probe,
 // and the per-run patch each of them contributes to the merge.
-func (s *sweep) reconcile(records jsonv.Value, rows []jsonv.Value) (jsonv.Value, int) {
-	patches := jsonv.Object()
+func (s *sweep) reconcile(records any, rows []any) (map[string]any, int) {
+	patches := map[string]any{}
 	ghFailures := 0
 	for _, row := range rows {
 		url := fieldText(row, "pr_url")
@@ -294,7 +293,7 @@ func (s *sweep) reconcile(records jsonv.Value, rows []jsonv.Value) (jsonv.Value,
 		owner, name := splitSlug(s.ghRepo)
 		number := url[strings.LastIndex(url, "/")+1:]
 
-		patch := jsonv.Object()
+		patch := map[string]any{}
 		tried, ok := false, true
 		mCommit := fieldText(row, "s_commit")
 		mAt := fieldText(row, "s_merged")
@@ -306,7 +305,7 @@ func (s *sweep) reconcile(records jsonv.Value, rows []jsonv.Value) (jsonv.Value,
 			gh, callOK := s.gh("pr", "view", url,
 				"--json", "state,closedAt,mergedAt,mergeCommit,commits,reviews")
 			if callOK {
-				next, err := s.patch(viewProgram, gh, jsonv.Member{Key: "p", Val: patch})
+				next, err := s.patch(viewProgram, gh, map[string]any{"p": patch})
 				if err != nil {
 					ghFailures++
 					continue
@@ -325,14 +324,11 @@ func (s *sweep) reconcile(records jsonv.Value, rows []jsonv.Value) (jsonv.Value,
 			gh, callOK := s.gh("api", "--method", "GET", "repos/"+owner+"/"+name+"/actions/runs",
 				"-f", "branch="+fieldText(row, "branch"), "-F", "per_page=100")
 			if callOK {
-				we := jsonv.Null()
-				if w, has := row.Get("win_end"); has && !w.IsNull() {
-					we = w
-				}
-				next, err := s.patch(actionsProgram, gh,
-					jsonv.Member{Key: "p", Val: patch},
-					jsonv.Member{Key: "t0", Val: memberOf(row, "t0_ms")},
-					jsonv.Member{Key: "we", Val: we})
+				next, err := s.patch(actionsProgram, gh, map[string]any{
+					"p":  patch,
+					"t0": field(row, "t0_ms"),
+					"we": field(row, "win_end"),
+				})
 				if err != nil {
 					ghFailures++
 					continue
@@ -349,7 +345,7 @@ func (s *sweep) reconcile(records jsonv.Value, rows []jsonv.Value) (jsonv.Value,
 			gh, callOK := s.gh("api", "graphql", "-f", "query="+threadsQuery,
 				"-F", "owner="+owner, "-F", "name="+name, "-F", "number="+number)
 			if callOK {
-				next, err := s.patch(threadsProgram, gh, jsonv.Member{Key: "p", Val: patch})
+				next, err := s.patch(threadsProgram, gh, map[string]any{"p": patch})
 				if err != nil {
 					ghFailures++
 					continue
@@ -366,13 +362,13 @@ func (s *sweep) reconcile(records jsonv.Value, rows []jsonv.Value) (jsonv.Value,
 		// checkout": without it every unfetched repo would report a clean false.
 		if mCommit != "" && mAt != "" {
 			if rev, known := s.reverted(mCommit, mAt); known {
-				patch.Set("reverted", jsonv.Bool(rev))
+				patch["reverted"] = rev
 			}
 		}
 		if tried {
-			patch.Set("last_query_ok", jsonv.Bool(ok))
+			patch["last_query_ok"] = ok
 		}
-		patches.Set(fieldText(row, "run_id"), patch)
+		patches[fieldText(row, "run_id")] = patch
 	}
 	return patches, ghFailures
 }
@@ -398,63 +394,73 @@ func (s *sweep) reverted(commit, mergedAt string) (bool, bool) {
 // gh runs one gh call: stdout captured, stderr dropped, and a call counts as
 // failed on a non-zero exit OR empty stdout (`_gh_json` prints nothing on
 // failure, and every call site tests `-n "$out"`).
-func (s *sweep) gh(args ...string) (jsonv.Value, bool) {
+func (s *sweep) gh(args ...string) (any, bool) {
 	out, err := s.o.Run(append([]string{"gh"}, args...)...)
 	if err != nil || out == "" {
-		return jsonv.Value{}, false
+		return nil, false
 	}
-	vals, derr := jsonv.DecodeStream(strings.NewReader(out))
-	if derr != nil || len(vals) != 1 {
-		return jsonv.Value{}, false
-	}
-	return vals[0], true
+	return parseOne(out)
 }
 
 // patch runs one gh-ingest fold. The arm piped gh's value into `jq -c`, so
 // each fold opens with `$gh |` (jqrun hands its input as an array). A fold
 // that cannot use the response is the arm's dead pipeline: counted as a failed
 // call, not a reason to kill the sweep.
-func (s *sweep) patch(prog string, gh jsonv.Value, vars ...jsonv.Member) (jsonv.Value, error) {
-	in := map[string]jsonv.Value{"gh": gh}
-	for _, v := range vars {
-		in[v.Key] = v.Val
+func (s *sweep) patch(prog string, gh any, vars map[string]any) (map[string]any, error) {
+	in := map[string]any{"gh": gh}
+	maps.Copy(in, vars)
+	out, err := jqrun.RunAny(prog, []any{}, s.clock(), in)
+	if err != nil {
+		return nil, err
 	}
-	return jqrun.Run(prog, nil, s.clock(), in)
+	m, ok := out.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("fold produced %T, want an object", out)
+	}
+	return m, nil
 }
 
 // foldStore is the arm's `jq -s -c "$store_fold" "$store" 2>/dev/null || true`
 // and `:-[]`: a missing, empty, torn or unusable store folds to [].
-func foldStore(store string) jsonv.Value {
+func foldStore(store string) []any {
 	data, err := os.ReadFile(store)
 	if err != nil {
-		return jsonv.Array()
+		return []any{}
 	}
-	rows, err := jsonv.DecodeStream(bytes.NewReader(data))
+	rows, err := decodeAll(bytes.NewReader(data))
 	if err != nil {
-		return jsonv.Array()
+		return []any{}
 	}
-	folded, err := jqrun.Run(dedupeProgram, rows, 0, nil)
+	if rows == nil {
+		rows = []any{}
+	}
+	folded, err := jqrun.RunAny(dedupeProgram, rows, 0, nil)
 	if err != nil {
-		return jsonv.Array()
+		return []any{}
 	}
-	return folded
+	out, ok := folded.([]any)
+	if !ok {
+		return []any{}
+	}
+	return out
 }
 
 // appendBatch is the arm's `dd bs=1048576 iflag=fullblock >>"$store"`: the
 // whole batch in one O_APPEND write, so a concurrent `--report` reader never
 // sees half a row. The guarantee holds while one write() holds, and an empty
 // batch still creates the file the way the shell redirect did.
-func appendBatch(store string, rows []jsonv.Value) error {
-	var batch []byte
+func appendBatch(store string, rows []any) error {
+	var batch bytes.Buffer
 	for _, row := range rows {
-		batch = jsonv.Append(batch, row, jsonv.Options{})
-		batch = append(batch, '\n')
+		if err := encode(&batch, row, false); err != nil {
+			return err
+		}
 	}
 	f, err := os.OpenFile(store, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(batch); err != nil {
+	if _, err := f.Write(batch.Bytes()); err != nil {
 		_ = f.Close()
 		return err
 	}
@@ -522,28 +528,19 @@ func (s *sweep) gitOK(args ...string) bool {
 // kindOf and fieldText are jq's `(.field // "")` for the bus fields the arm
 // reads as text; a non-string reaches the fold as its JSON text, which is what
 // the arm's `@tsv` printed.
-func fieldText(ev jsonv.Value, field string) string {
-	v, ok := ev.Get(field)
-	if !ok || v.IsNull() {
+func fieldText(ev any, key string) string {
+	v := field(ev, key)
+	if v == nil {
 		return ""
 	}
-	if s, ok := v.AsString(); ok {
+	if s, ok := v.(string); ok {
 		return s
 	}
 	return jqText(v)
 }
 
-func truthy(v jsonv.Value, key string) bool {
-	got, ok := v.Get(key)
-	return ok && got.Truthy()
-}
-
-func memberOf(v jsonv.Value, key string) jsonv.Value {
-	got, ok := v.Get(key)
-	if !ok {
-		return jsonv.Null()
-	}
-	return got
+func truthy(v any, key string) bool {
+	return isTruthy(field(v, key))
 }
 
 // clockSeconds is jqrun's frozen `now`, at microsecond precision so a fold's

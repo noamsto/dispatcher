@@ -1,13 +1,12 @@
 package rate
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/drift"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // defaultRules is the shipped burn table, the same file dispatch-config
@@ -20,11 +19,7 @@ func defaultRules(t *testing.T) []burnRule {
 	if err != nil {
 		drift.Missing(t, path, err)
 	}
-	vals, err := jsonv.DecodeStream(strings.NewReader(string(data)))
-	if err != nil || len(vals) != 1 {
-		t.Fatalf("defaults.json: %v", err)
-	}
-	return burnRules(vals[0])
+	return burnRules(string(data))
 }
 
 // TestBurnTableOracle crosses every classed model with every effort the
@@ -220,26 +215,26 @@ func TestBurnRulesEdgeCases(t *testing.T) {
 	}
 	for _, c := range []struct {
 		model, effort, class string
-		weight               jsonv.Value
+		weight               any
 	}{
-		{"x", "high", "first", jsonv.Num(1)},
-		{"xy", "high", "first", jsonv.Num(1)},
-		{"by", "low", "l", jsonv.Num(1)},
-		{"by", "high", "null", jsonv.Null()},
-		{"def", "anything", "d", jsonv.Num(3)},
-		{"bare", "high", "", jsonv.Null()},
+		{"x", "high", "first", json.Number("1")},
+		{"xy", "high", "first", json.Number("1")},
+		{"by", "low", "l", json.Number("1")},
+		{"by", "high", "null", nil},
+		{"def", "anything", "d", json.Number("3")},
+		{"bare", "high", "", nil},
 		// The reviewer's repro: bash priced the unterminated set as a literal,
 		// so `[weird` matches the model id `[weird` and nothing else — a table
 		// with `[weird` must not price the plain id.
-		{"[weird", "high", "weird", jsonv.Num(5)},
+		{"[weird", "high", "weird", json.Number("5")},
 	} {
 		class, weight, ok := burnWeight(rules, c.model, c.effort)
-		if !ok || class != c.class || weight.Kind() != c.weight.Kind() {
+		if !ok || class != c.class || (weight == nil) != (c.weight == nil) {
 			t.Errorf("burnWeight(%q, %q) = (%q, %v, %v), want (%q, %v, true)",
 				c.model, c.effort, class, weight, ok, c.class, c.weight)
 			continue
 		}
-		if !c.weight.IsNull() && !weightTruth(weight, num(c.weight)) {
+		if c.weight != nil && !weightTruth(weight, num(c.weight)) {
 			t.Errorf("burnWeight(%q, %q) weight = %v, want %v", c.model, c.effort, weight, c.weight)
 		}
 	}
@@ -257,21 +252,14 @@ func TestBurnRulesNoTable(t *testing.T) {
 	}
 }
 
-func decodeOne(t *testing.T, src string) jsonv.Value {
-	t.Helper()
-	vals, err := jsonv.DecodeStream(strings.NewReader(src))
-	if err != nil || len(vals) != 1 {
-		t.Fatalf("decode %s: %v", src, err)
-	}
-	return vals[0]
-}
+func decodeOne(_ *testing.T, src string) string { return src }
 
-func weightTruth(v jsonv.Value, want float64) bool {
-	f, ok := v.AsFloat()
+func weightTruth(v any, want float64) bool {
+	f, ok := asFloat(v)
 	return ok && f == want
 }
 
-func num(v jsonv.Value) float64 {
-	f, _ := v.AsFloat()
+func num(v any) float64 {
+	f, _ := asFloat(v)
 	return f
 }

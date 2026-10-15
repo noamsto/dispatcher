@@ -12,7 +12,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 )
 
@@ -90,15 +89,18 @@ func runsInStore(store, slug string) int {
 	if err != nil {
 		return 0
 	}
-	rows, err := jsonv.DecodeStream(bytes.NewReader(data))
+	rows, err := decodeAll(bytes.NewReader(data))
 	if err != nil {
 		return 0
 	}
-	n, err := jqrun.Run(runsProgram, rows, 0, map[string]jsonv.Value{"r": jsonv.Str(slug)})
+	if rows == nil {
+		rows = []any{}
+	}
+	n, err := jqrun.RunAny(runsProgram, rows, 0, map[string]any{"r": slug})
 	if err != nil {
 		return 0
 	}
-	count, ok := n.AsFloat()
+	count, ok := asFloat(n)
 	if !ok {
 		return 0
 	}
