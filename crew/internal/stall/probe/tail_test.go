@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // rowAt is one log row: a status of `from` at ts, the shape refresh filters on.
@@ -81,6 +80,9 @@ func TestBusRowsRunFloor(t *testing.T) {
 		{"scan stops past the margin", []string{
 			rowAt(run+2, "worker:oldest"), rowAt(run-tailDisorder-1, "worker:old"), rowAt(run+3, "worker:newer"),
 		}, run, []string{itoa(run + 3)}},
+		{"a NaN ts line is not a row", []string{
+			rowAt(run, "worker:b"), `{"ts":NaN,"crew_id":"c1","kind":"status"}`, rowAt(run+1, "worker:c"),
+		}, run, []string{itoa(run), itoa(run + 1)}},
 		{"blank lines and a torn tail are skipped", []string{
 			rowAt(run, "worker:b"), "", `{"ts":`,
 		}, run, []string{itoa(run)}},
@@ -113,17 +115,26 @@ func TestBusRowsRunFloor(t *testing.T) {
 
 // tsOf names a row by its ts: the number, the string, or "-" for a row without
 // one.
-func tsOf(t *testing.T, v jsonv.Value) string {
+func tsOf(t *testing.T, v any) string {
 	t.Helper()
-	ts, ok := v.Get("ts")
+	obj, ok := v.(map[string]any)
 	if !ok {
+		t.Fatalf("row is %T, want an object", v)
+	}
+	switch ts := obj["ts"].(type) {
+	case nil:
 		return "-"
-	}
-	if f, ok := ts.AsFloat(); ok {
+	case json.Number:
+		f, err := ts.Float64()
+		if err != nil {
+			t.Fatal(err)
+		}
 		return itoa(int64(f))
+	case string:
+		return ts
 	}
-	s, _ := ts.AsString()
-	return s
+	t.Fatalf("ts is %T", obj["ts"])
+	return ""
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
@@ -171,15 +182,12 @@ func TestBusRowsDoublesWindows(t *testing.T) {
 		t.Fatalf("%d rows, want 3", len(rows))
 	}
 	for i, want := range []int64{run + 1, run + 2, run + 3} {
-		v, _ := rows[i].Get("ts")
-		got, _ := v.AsFloat()
-		if int64(got) != want {
-			t.Errorf("row %d ts = %d, want %d", i, int64(got), want)
+		if got := tsOf(t, rows[i]); got != itoa(want) {
+			t.Errorf("row %d ts = %s, want %d", i, got, want)
 		}
 	}
 	// The straddling row survived both windows whole, not split or doubled.
-	v, _ := rows[1].Get("from")
-	s, _ := v.AsString()
+	s, _ := rows[1].(map[string]any)["from"].(string)
 	if s != "worker:"+strings.Repeat("b", tailChunk-60) {
 		t.Errorf("the straddling row was misread: %d bytes, want %d", len(s), tailChunk-60+7)
 	}
@@ -261,9 +269,15 @@ func wholeLogRead(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 	defer func() { _ = f.Close() }()
-	rows, err := jsonv.DecodeStreamPrefix(f)
-	if err != nil {
-		t.Fatal(err)
+	dec := json.NewDecoder(f)
+	dec.UseNumber()
+	var rows []any
+	for {
+		var v any
+		if dec.Decode(&v) != nil {
+			break
+		}
+		rows = append(rows, v)
 	}
 	if len(rows) == 0 {
 		t.Fatal("no rows")

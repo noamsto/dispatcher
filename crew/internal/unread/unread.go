@@ -16,6 +16,8 @@ package unread
 
 import (
 	_ "embed"
+	"encoding/json"
+	"strconv"
 
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
@@ -70,19 +72,19 @@ func Scan(r Request, mode Mode) string {
 	if !ok {
 		return ""
 	}
-	out, err := jqrun.Run(scanProgram, rows, 0, map[string]jsonv.Value{
-		"c":     jsonv.Str(r.Crew),
-		"b":     jsonv.Str("role:" + r.Branch + ":"),
-		"d":     jsonv.Str("dispatcher:" + r.Crew),
-		"me":    jsonv.Str(r.Me),
-		"f":     jsonv.Str(r.FromID),
-		"t0":    jsonv.Num(float64(r.T0)),
-		"mode":  jsonv.Str(string(mode)),
-		"marks": marks.Read(r.Dir, r.Crew, r.FromID),
+	out, err := jqrun.RunAny(scanProgram, rows, 0, map[string]any{
+		"c":     r.Crew,
+		"b":     "role:" + r.Branch + ":",
+		"d":     "dispatcher:" + r.Crew,
+		"me":    r.Me,
+		"f":     r.FromID,
+		"t0":    json.Number(strconv.FormatInt(r.T0, 10)),
+		"mode":  string(mode),
+		"marks": jsonv.ToAny(marks.Read(r.Dir, r.Crew, r.FromID)),
 	})
 	if err != nil {
 		return ""
 	}
-	s, _ := out.AsString()
+	s, _ := out.(string)
 	return s
 }

@@ -85,7 +85,7 @@ func Default(paths bus.Paths, stderr io.Writer, pid int, crewID func() string) O
 				Me: "worker:" + branch, FromID: sid,
 			}, unread.Dispatcher)
 		},
-		Rows: func(maxLines int) ([]jsonv.Value, bool) { return probe.BusRows(paths.Log, 0, maxLines) },
+		Rows: func(maxLines int) ([]any, bool) { return probe.BusRows(paths.Log, 0, maxLines) },
 		Toplevel: func(ctx context.Context) string {
 			out, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
 			if err != nil {

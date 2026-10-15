@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 )
@@ -165,7 +164,7 @@ func TestNudgeNotStartedAfterCancel(t *testing.T) {
 	ctx, cancel := sigterm(t)
 	w.ctx = ctx
 	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
-	f.busRows = func(path string, sinceMS int64, maxLines int) ([]jsonv.Value, bool) {
+	f.busRows = func(path string, sinceMS int64, maxLines int) ([]any, bool) {
 		if maxLines == nudgedTailLines {
 			cancel() // the signal lands mid-scan, before the write could start
 		}

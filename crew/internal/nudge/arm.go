@@ -7,6 +7,7 @@ package nudge
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -60,7 +61,7 @@ type Options struct {
 	// arm's `tail -n N | jq -R 'fromjson?'`. The engine lookup reads the whole log
 	// (maxLines 0, where the arm's `jq -Rr inputs` reads all of it) and the two --wait
 	// folds read its last 2000 lines.
-	Rows func(maxLines int) ([]jsonv.Value, bool)
+	Rows func(maxLines int) ([]any, bool)
 	// PID is the lock owner, the arm's `$$`.
 	PID int
 }
@@ -276,10 +277,10 @@ func (a *arm) checkEngine(stderr io.Writer) int {
 	rows, ok := a.o.Rows(0)
 	if ok {
 		for _, r := range rows {
-			kind := textOf(r, "kind")
-			if textOf(r, "crew_id") == a.crew && (kind == "dispatch" || kind == "resume") &&
-				textOf(r, "worker_id") == a.sid {
-				a.engine = textOf(r, "engine")
+			kind := rowText(r, "kind")
+			if rowText(r, "crew_id") == a.crew && (kind == "dispatch" || kind == "resume") &&
+				rowText(r, "worker_id") == a.sid {
+				a.engine = rowText(r, "engine")
 			}
 		}
 	}
@@ -345,22 +346,22 @@ func (a *arm) wait(ctx context.Context, wait string) int {
 	defer lock.Release(lockDir)
 
 	if joining {
-		if prev, ok := a.fold(joinedProgram, map[string]jsonv.Value{
-			"t": jsonv.Num(float64(startMS)), "m": jsonv.Num(float64(num(a.ts))),
+		if prev, ok := a.fold(joinedProgram, map[string]any{
+			"t": json.Number(strconv.FormatInt(startMS, 10)), "m": json.Number(strconv.FormatInt(num(a.ts), 10)),
 		}); ok {
-			res := textOf(prev, "result") + ": " + textOf(prev, "detail")
+			res := rowText(prev, "result") + ": " + rowText(prev, "detail")
 			return a.end("joined", int(numOf(prev, "rc")), res, "nudge joined: "+a.pane+" "+a.sid+" — "+res)
 		}
 	}
 
 	for {
-		if prev, ok := a.fold(alreadyProgram, map[string]jsonv.Value{"m": jsonv.Num(float64(num(a.ts)))}); ok {
-			res := textOf(prev, "result")
+		if prev, ok := a.fold(alreadyProgram, map[string]any{"m": json.Number(strconv.FormatInt(num(a.ts), 10))}); ok {
+			res := rowText(prev, "result")
 			rc := exitTyped
 			if res == "accepted" {
 				rc = 0
 			}
-			detail := res + ": " + textOf(prev, "detail")
+			detail := res + ": " + rowText(prev, "detail")
 			return a.end("already", rc, detail, "nudge already typed: "+a.pane+" "+a.sid+" — "+detail)
 		}
 		oldest := a.unread()
@@ -444,18 +445,19 @@ func (a *arm) waitRow(state, result, rc, detail string) error {
 
 // fold runs one of the arm's two wait-loop programs over the log's tail. A missing row
 // is the fold's own `last // empty`: none, not a failure.
-func (a *arm) fold(prog string, vars map[string]jsonv.Value) (jsonv.Value, bool) {
+func (a *arm) fold(prog string, vars map[string]any) (map[string]any, bool) {
 	rows, ok := a.o.Rows(waitTailLines)
 	if !ok {
-		return jsonv.Value{}, false
+		return nil, false
 	}
-	vars["c"] = jsonv.Str(a.crew)
-	vars["to"] = jsonv.Str(a.sid)
-	out, err := jqrun.Run(prog, rows, 0, vars)
-	if err != nil || out.IsNull() {
-		return jsonv.Value{}, false
+	vars["c"] = a.crew
+	vars["to"] = a.sid
+	out, err := jqrun.RunAny(prog, rows, 0, vars)
+	if err != nil {
+		return nil, false
 	}
-	return out, true
+	m, ok := out.(map[string]any)
+	return m, ok
 }
 
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
@@ -492,12 +494,23 @@ func num(s string) int64 {
 	return v
 }
 
-func numOf(v jsonv.Value, key string) int64 {
-	x, _ := v.Get(key)
-	if n, ok := x.AsFloat(); ok {
+func numOf(v any, key string) int64 {
+	m, _ := v.(map[string]any)
+	switch n := m[key].(type) {
+	case json.Number:
+		f, _ := n.Float64()
+		return int64(f)
+	case float64:
 		return int64(n)
 	}
 	return 0
+}
+
+// rowText is textOf over a gojq-form row: the string value of key, else "".
+func rowText(v any, key string) string {
+	m, _ := v.(map[string]any)
+	s, _ := m[key].(string)
+	return s
 }
 
 // PID is on Options because the arm's `$$` is the lock owner's text a joiner prints.
