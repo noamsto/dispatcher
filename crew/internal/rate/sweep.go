@@ -450,17 +450,18 @@ func foldStore(store string) []any {
 // sees half a row. The guarantee holds while one write() holds, and an empty
 // batch still creates the file the way the shell redirect did.
 func appendBatch(store string, rows []any) error {
-	var batch bytes.Buffer
+	var buf bytes.Buffer
 	for _, row := range rows {
-		if err := encode(&batch, row, false); err != nil {
+		if err := encode(&buf, row, false); err != nil {
 			return err
 		}
 	}
+	batch := buf.Bytes()
 	f, err := os.OpenFile(store, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(batch.Bytes()); err != nil {
+	if _, err := f.Write(batch); err != nil {
 		_ = f.Close()
 		return err
 	}
