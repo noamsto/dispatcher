@@ -856,7 +856,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		now := time.Now()
 		nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
 		if sub == "sessions" {
-			return sessions.Fold(evs, branch, crew, nowSec)
+			docs := make([]any, len(evs))
+			for i, ev := range evs {
+				docs[i] = jsonv.ToAny(ev)
+			}
+			folded, err := sessions.Fold(docs, branch, crew, nowSec)
+			if err != nil {
+				return jsonv.Value{}, err
+			}
+			b, err := sessions.JSON(folded)
+			if err != nil {
+				return jsonv.Value{}, err
+			}
+			outs, err := jsonv.DecodeStream(bytes.NewReader(b))
+			if err != nil || len(outs) != 1 {
+				return jsonv.Value{}, fmt.Errorf("fold result: %v", err)
+			}
+			return outs[0], nil
 		}
 		return roster.Fold(evs, crew, nowSec, e.probes(ctx, cwd))
 	})

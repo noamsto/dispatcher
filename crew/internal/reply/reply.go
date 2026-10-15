@@ -15,6 +15,7 @@
 package reply
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -205,13 +206,18 @@ func resolve(branch, crew string, events []bus.Event, paths bus.Paths, stderr io
 // row, or null when the branch has none for that crew. A fold that fails on this
 // bus is the arm's jq failure — one line naming the log, and jq's status.
 func newestSession(events []bus.Event, branch, crew, log string, stderr io.Writer, o Options) (jsonv.Value, int) {
-	raws := make([]jsonv.Value, len(events))
+	docs := make([]any, len(events))
 	for i, ev := range events {
-		raws[i] = ev.Raw
+		docs[i] = ev.Doc
 	}
 	// age_s is the one field of the fold this arm never reads, so the fold's `now`
 	// is whatever the clock says rather than a value any output carries.
-	out, err := sessions.Fold(raws, branch, crew, float64(o.Clock.RealMS())/1000)
+	folded, err := sessions.Fold(docs, branch, crew, float64(o.Clock.RealMS())/1000)
+	if err != nil {
+		say(stderr, "crew: reply: %s: %v\n", log, err)
+		return jsonv.Value{}, exitType
+	}
+	out, err := foldValue(folded)
 	if err != nil {
 		say(stderr, "crew: reply: %s: %v\n", log, err)
 		return jsonv.Value{}, exitType
@@ -220,6 +226,19 @@ func newestSession(events []bus.Event, branch, crew, log string, stderr io.Write
 		return jsonv.Null(), 0
 	}
 	return out.Elems()[out.Len()-1], 0
+}
+
+// foldValue is the fold's result as a jsonv value, for the arm's jsonv row reads.
+func foldValue(folded any) (jsonv.Value, error) {
+	b, err := sessions.JSON(folded)
+	if err != nil {
+		return jsonv.Value{}, err
+	}
+	vs, err := jsonv.DecodeStream(bytes.NewReader(b))
+	if err != nil || len(vs) != 1 {
+		return jsonv.Value{}, fmt.Errorf("fold result: %v", err)
+	}
+	return vs[0], nil
 }
 
 // crewIDs is `jq -r 'select(.crew_id != null) | .crew_id' | sort -u`, minus the

@@ -1,11 +1,12 @@
 package sessions
 
 import (
+	"encoding/json"
+	"math"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
-	"github.com/noamsto/dispatcher/crew/internal/testjson"
 )
 
 // now is jq's `now`, fixed (jqrun rewrites the bare `now` to $now). Every
@@ -23,6 +24,9 @@ type testCase struct {
 	crew    string
 	want    string
 	wantErr bool
+	// nanTS sets every event's ts to NaN after decoding: encoding/json rejects
+	// the NaN literal, but a bus row can still reach the fold with one.
+	nanTS bool
 }
 
 var cases = []testCase{
@@ -410,32 +414,104 @@ true
 		// this pins the gojq fold's actual behaviour: one row per session, the
 		// reversed-order row wins, age_s/ts read back null.
 		name: "NaN ts keys: gojq's NaN order reverses them (jq keeps input order)", events: `
-{"ts":NaN,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"status","body":{"state":"working"}}
-{"ts":NaN,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"status","body":{"state":"exited"}}
-{"ts":NaN,"crew_id":"c1","from":"worker:feat/x#s2-2","to":"dispatcher:c1","kind":"status","body":{"state":"done"}}
-`, branch: "feat/x", crew: "", want: `[{"session":"s2-2","worker_id":"worker:feat/x#s2-2","state":"done","ts":null,"terminal":true,"age_s":null},{"session":"s1-1","worker_id":"worker:feat/x#s1-1","state":"working","ts":null,"terminal":false,"age_s":null}]`},
+{"ts":null,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"status","body":{"state":"working"}}
+{"ts":null,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"status","body":{"state":"exited"}}
+{"ts":null,"crew_id":"c1","from":"worker:feat/x#s2-2","to":"dispatcher:c1","kind":"status","body":{"state":"done"}}
+`, branch: "feat/x", crew: "", nanTS: true, want: `[{"session":"s2-2","worker_id":"worker:feat/x#s2-2","state":"done","ts":null,"terminal":true,"age_s":null},{"session":"s1-1","worker_id":"worker:feat/x#s1-1","state":"working","ts":null,"terminal":false,"age_s":null}]`},
+}
+
+// decodeAll decodes every JSON value in s into gojq's form (json.Number for
+// number literals).
+func decodeAll(t *testing.T, s string) []any {
+	t.Helper()
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
+	var vs []any
+	for dec.More() {
+		var v any
+		if err := dec.Decode(&v); err != nil {
+			t.Fatal(err)
+		}
+		vs = append(vs, v)
+	}
+	return vs
+}
+
+// canon reduces a gojq-form value to what compares by value: numbers as
+// float64, NaN as null and infinities clamped, as jq prints them.
+func canon(v any) any {
+	switch x := v.(type) {
+	case json.Number:
+		f, _ := strconv.ParseFloat(x.String(), 64) // out of range yields ±Inf
+		return canon(f)
+	case float64:
+		switch {
+		case math.IsNaN(x):
+			return nil
+		case math.IsInf(x, 1):
+			return math.MaxFloat64
+		case math.IsInf(x, -1):
+			return -math.MaxFloat64
+		}
+		return x
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = canon(e)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, e := range x {
+			out[k] = canon(e)
+		}
+		return out
+	}
+	return v
 }
 
 func TestFold(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			events, err := jsonv.DecodeStream(strings.NewReader(tc.events))
-			if err != nil {
-				t.Fatal(err)
+			events := decodeAll(t, tc.events)
+			if tc.nanTS {
+				for _, e := range events {
+					e.(map[string]any)["ts"] = math.NaN()
+				}
 			}
 			got, err := Fold(events, tc.branch, tc.crew, now)
 			if tc.wantErr {
 				if err == nil {
-					t.Fatalf("got %s, nil error; want the jq runtime error", jsonv.Append(nil, got, jsonv.Options{}))
+					t.Fatalf("got %v, nil error; want the jq runtime error", got)
 				}
 				return
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if s, want := testjson.Compact(got), testjson.Compact(testjson.MustParse(t, tc.want)); s != want {
-				t.Errorf("got  %s\nwant %s", s, want)
+			want := decodeAll(t, tc.want)
+			if len(want) != 1 {
+				t.Fatalf("want fixture holds %d values, need 1", len(want))
+			}
+			if g, w := canon(got), canon(want[0]); !reflect.DeepEqual(g, w) {
+				t.Errorf("got  %v\nwant %v", g, w)
 			}
 		})
+	}
+}
+
+func TestJSON(t *testing.T) {
+	got, err := JSON([]any{map[string]any{
+		"nan":  math.NaN(),
+		"pinf": math.Inf(1),
+		"ninf": math.Inf(-1),
+		"num":  json.Number("1E+1000"),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"nan":null,"ninf":-1.7976931348623157e+308,"num":1E+1000,"pinf":1.7976931348623157e+308}]`
+	if string(got) != want {
+		t.Errorf("got  %s\nwant %s", got, want)
 	}
 }

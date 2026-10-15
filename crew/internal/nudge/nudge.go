@@ -15,7 +15,9 @@
 package nudge
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -381,10 +383,23 @@ func foldNewest(d Deps, branch, crew string) (jsonv.Value, error) {
 	if err != nil {
 		return jsonv.Null(), err
 	}
-	out, err := sessions.Fold(events, branch, crew, float64(d.Clock.RealMS())/1000)
+	docs := make([]any, len(events))
+	for i, ev := range events {
+		docs[i] = jsonv.ToAny(ev)
+	}
+	folded, err := sessions.Fold(docs, branch, crew, float64(d.Clock.RealMS())/1000)
 	if err != nil {
 		return jsonv.Null(), err
 	}
+	b, err := sessions.JSON(folded)
+	if err != nil {
+		return jsonv.Null(), err
+	}
+	outs, err := jsonv.DecodeStream(bytes.NewReader(b))
+	if err != nil || len(outs) != 1 {
+		return jsonv.Null(), fmt.Errorf("fold result: %v", err)
+	}
+	out := outs[0]
 	if out.Kind() != jsonv.KindArray || out.Len() == 0 {
 		return jsonv.Null(), nil
 	}
