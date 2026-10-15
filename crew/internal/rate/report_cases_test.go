@@ -225,7 +225,6 @@ func TestReportBurnMedianIsTheGroupMedianInHoursAndNullWhenEveryRowIsNull(t *tes
 	}
 }
 
-// valueOf reads an aggregate's .value.
 func valueOf(agg any) float64 {
 	v, _ := agg.(map[string]any)["value"].(float64)
 	return v

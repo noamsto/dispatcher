@@ -49,7 +49,6 @@ func newSweepFixture(t *testing.T) *sweepFixture {
 	return f
 }
 
-// dispatchAs is a dispatch event with an explicit ts and identity.
 func (f *sweepFixture) dispatchAs(branch string, ts int64, engine, model, tier, effort string) {
 	f.event(fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":%q,"engine":%q,"model":%q,"tier":%q,"effort":%q,"title":"t"}`,
 		ts, branch, engine, model, tier, effort))
