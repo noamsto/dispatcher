@@ -58,7 +58,7 @@ Decoder with and without `UseNumber`, Marshal, Encoder with
 | `$JQ_COLORS`, pretty                                                       | 8-field SGR palette, `-C` walker, indent                                 | none; `MarshalIndent("", "  ")` matches jq's indent                                                                                         | structure yes; colour not applicable               | jsonv `testdata/jqcolors.tsv`; main `TestRunMapsFoldErrorsToExitCodes` and the "honours JQ_COLORS" case; log, crews, await, hold, inbox, report tests assert `Failed to set $JQ_COLORS\n` (retro asserts its absence)                                          |
 
 Verdict per semantic. "Helper" means a small function that survives the
-conversion; D1 and D2 are owner decisions (last section).
+conversion; D1-D4 are owner decisions, recorded in the last section.
 
 - NaN, Infinity, `-nan` as input tokens. Load-bearing today in the bus
   decoder (`ReadEventsTolerant`), `probe.BusRows`, `resolve.Rows`, the
@@ -203,8 +203,8 @@ orders them.
   (Decoder loop + `UseNumber` + BOM trim, `Raw json.RawMessage`, prefix on
   error). Sixteen internal packages and `main.go` read `Raw`; see the plan for
   the staged `Doc` field.
-- `crew/internal/clock/clock.go` — (c). `NowF` returns `jsonv.Num(...)`
-  (:74-79); consumers: hold (jqrun `now` var, hold.go :216, :260) and
+- `crew/internal/clock/clock.go` — (c), done (step 1). `NowF` returned `jsonv.Num(...)`;
+  consumers: hold (jqrun `now` var, hold.go :216, :260) and
   rosterrender (`AsFloat` to int64). Breaks: only `clock_test`
   `TestRealMSAndNowFPrecision`, whose `compact()` text assertion (`1700000000.0005`)
   becomes a float compare; gojq already receives `float64`. Verdict: replace
@@ -801,7 +801,7 @@ last, which isolates D1 to one step.
 | order | package      | target                                                                                                                                                                                                                                            | depends on / moves with                                                               | notes                                                                                                                                                                                                                                                      |
 | ----- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0     | prwatch      | done: struct + `encoding/json`                                                                                                                                                                                                                    | none                                                                                  | see Converted                                                                                                                                                                                                                                              |
-| 1     | clock        | `NowF() float64`                                                                                                                                                                                                                                  | none                                                                                  | callers hold (:216, :260) wrap `jsonv.Num(f)` until step 18; rosterrender reads the float; test reads a float compare                                                                                                                                      |
+| 1     | clock        | done: `NowF() float64`                                                                                                                                                                                                                            | none                                                                                  | callers hold (:216, :260) wrap `jsonv.Num(f)` until step 18; rosterrender reads the float; test reads a float compare                                                                                                                                      |
 | 2     | jqrun        | A: `any` entry points beside the jsonv ones, export the normaliser; B (step 34): delete the jsonv-typed ones                                                                                                                                      | none for A; B after 4-32                                                              | keep the `json.Number`/`float64` normaliser, the clamping marshal and the `ParseOne` equivalent for `_jqfromjson`; re-pin `TestNumberLiteralsRoundTripExactly`, `TestComputedNumbersStayComputed`, `TestToGoNaNStaysFloat`, `TestJQFromJSON` on the helper |
 | 3     | bus          | A: `Event.Doc any` (gojq form) next to `Raw`/`TS`/`Body`; B (step 33): swap the decoder to a Decoder loop (or the tolerant helper), drop `Raw`/`TS`/`Body`                                                                                        | A after 2; B after 4-32 and D1                                                        | B keeps prefix-on-error, `DecodeError` mapping, BOM trim, `UseNumber`; `Shrink` becomes an order-preserving token walker with `SetEscapeHTML(false)` (or stays on jsonv)                                                                                   |
 | 4     | stack        | align/cut: typed gh struct + row structs, `int64` ts, field order `pr, branch, parent, parent_pr, cut, mode, ready, directive, reason`; stack.go: strings in, `any` out                                                                           | stack.go after 2; align and cut can land before                                       | `_jqfromjson` stays in jqrun; drop `member`/`jsonvAppend`/`jqTostring`                                                                                                                                                                                     |
@@ -841,7 +841,7 @@ jsonv-typed jqrun entry points. Row 35 follows.
 
 ## What jsonv must still provide
 
-After step 35 the importers are gone and what survives depends on D1 and D2:
+After step 35 the importers are gone and what survives follows the owner decisions (D1-D4, below):
 
 - Kept in either case (about 100 lines, moved into `jqrun` or a small
   `jsonval` package): a clamping marshaller (NaN to `null`, +-Inf to
@@ -851,23 +851,21 @@ After step 35 the importers are gone and what survives depends on D1 and D2:
   `+1`/`.5`/`01`; or the jsonv parser itself). Both are pinned by jqrun tests,
   the status/stack surrogate tests and the jq-oracle `TestFoldsMatchJQ`
   (skipped without jq on PATH).
-- If D1 keeps NaN/Infinity tolerance on bus rows: a stream decoder producing
-  `any` with `json.Number` literals, BOM trim, `+1`/`.5`/`01` tolerance and the
-  torn-tail prefix (today's `decode.go` parser retargeted from `Value` to
-  `any`, about 340 lines).
-- If D2 keeps the `Failed to set $JQ_COLORS` warning: `ParseJQColors` as a
-  validity check only (about 15 lines).
+- D1 drops NaN/Infinity tolerance, so no tolerant stream decoder survives:
+  the bus decoder is a plain Decoder loop with `json.Number`.
+- D2 drops the `Failed to set $JQ_COLORS` warning, so no `ParseJQColors`
+  validity check survives.
 
 Deletable: the `Value`/`Kind`/`Member` model and its accessors, `Object`/`Array`
 builders, dup-key folding (maps do it), the decNumber canonicaliser
 (`parseDecimal`, `1e2` -> `1E+2`), `FormatComputed`, the invalid-UTF-8 repair
-on encode (`validUTF8`, unless D3 keeps it for `ledger`), the pretty and
+on encode (`validUTF8`, which D3 keeps for `ledger`), the pretty and
 colour encoder (about 170 lines) if colour is dropped, and the
 `DefaultPalette`/`Palette` API with it.
 
-Decisions for the owner:
+Owner decisions (#1066), chosen branch first:
 
-- D1. Must a bus row, `fromjson?`-style per-line input or `gh`/store text
+- D1 = drop NaN/Infinity tolerance. Must a bus row, `fromjson?`-style per-line input or `gh`/store text
   containing `NaN`, `Infinity` or `-nan` still decode? No shipped writer
   emits them (`jq -c` writes `null`; the Go writers clamp), so dropping costs
   only hand-edited or foreign lines: a NaN row in the bus becomes a decode
@@ -876,17 +874,17 @@ Decisions for the owner:
   inbox "NaN never"/"Infinity always" cases, the roster and sessions NaN input
   cases and the `Shrink` `[NaN]` branch, and lets the bus decoder be a Decoder
   loop.
-- D2. Drop `$JQ_COLORS` colouring and the `Failed to set $JQ_COLORS` warning?
+- D2 = drop colouring and the warning. Drop `$JQ_COLORS` colouring and the `Failed to set $JQ_COLORS` warning?
   The port doc already lists TTY colouring and the warning count as not
   mirrored; seven test files (main, report, log, crews, inbox, await, hold)
   assert the warning, `retro_test` asserts none, `main_test` asserts coloured
   `[]`, and `internal/watch/watch.go` (:142) also emits the warning (no test).
-- D3. `ledger`'s waiver gate: convert only if the jq-oracle fuzz stays green on
+- D3 = keep jq-exact parsing for `ledger` (no conversion of its waiver gate). `ledger`'s waiver gate: convert only if the jq-oracle fuzz stays green on
   the current corpus (it covers `1.50`, key order, a two-value line and
   `"body":false`, not invalid UTF-8 or `1e3`), accepting duplicate-key, DEL and
   invalid-UTF-8 differences in a security-relevant check, or keep jsonv for
   this one file.
-- D4. `hold`'s inner `body` string (JSON text in a string): add a jq-style
+- D4 = hold's inner body uses Go's encoding (no jq-style string encoder). `hold`'s inner `body` string (JSON text in a string): add a jq-style
   string encoder (DEL as `\u007f`, U+2028/9 raw, jq's invalid-UTF-8 repair) or
   accept `encoding/json`'s differences: DEL and U+2028/9 are value-equal after
   `fromjson`, invalid-UTF-8 repair is not (argv titles), and all three change

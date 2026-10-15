@@ -59,8 +59,7 @@ func (o Options) wallSec() int64 { return o.Clock.Now().Unix() }
 // The two are deliberately different reads, as they are in the arm — a test drives
 // the timers through CREW_CLOCK while `now` stays real.
 func (o Options) clockSec() int64 {
-	n, _ := o.Clock.NowF().AsFloat()
-	return int64(n)
+	return int64(o.Clock.NowF())
 }
 
 // say is the arm's `echo … >&2`: a line its caller cannot act on.

@@ -213,7 +213,7 @@ func due(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	}
 	// `--argjson now "$(_clock_now_f)"`: seconds, fractional unless the virtual
 	// clock is set. The compare is jq's, so a hold maturing this second is due.
-	matured, code := f.call(maturedProg, elems(holds), map[string]jsonv.Value{"now": o.clock().NowF()})
+	matured, code := f.call(maturedProg, elems(holds), map[string]jsonv.Value{"now": jsonv.Num(o.clock().NowF())})
 	if code != 0 {
 		return code
 	}
@@ -257,7 +257,7 @@ func park(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int
 	}
 	out, code := f.call(parkProg, elems(holds), map[string]jsonv.Value{
 		"default": jsonv.Num(float64(def)),
-		"now":     o.clock().NowF(),
+		"now":     jsonv.Num(o.clock().NowF()),
 	})
 	if code != 0 {
 		return code
