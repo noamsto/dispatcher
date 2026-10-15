@@ -26,7 +26,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 //go:embed report.jq
@@ -150,27 +149,31 @@ func Run(req Request, paths bus.Paths, cwd string, stdout, stderr io.Writer, o O
 // git probe the scoped mode makes.
 func report(fl Request, cwd string, stdout, stderr io.Writer, o Options) int {
 	store := storePath(o.StorePath, o.LookupEnv)
-	var rows []jsonv.Value
+	rows := []any{}
 	if data, err := os.ReadFile(store); err == nil {
-		if vals, err := jsonv.DecodeStream(bytes.NewReader(data)); err == nil {
+		if vals, err := decodeAll(bytes.NewReader(data)); err == nil && vals != nil {
 			rows = vals
 		}
 	}
-	deduped, err := jqrun.Run(dedupeProgram, rows, 0, nil)
+	deduped, err := jqrun.RunAny(dedupeProgram, rows, 0, nil)
 	if err != nil {
 		// A row `.run_id` cannot index (a bare number, say) failed the arm's
 		// dedupe jq too, and its stderr went to /dev/null: fold to [].
-		deduped = jsonv.Array()
+		deduped = []any{}
+	}
+	list, _ := deduped.([]any)
+	if list == nil {
+		list = []any{}
 	}
 
 	currentRepo := ""
 	if !fl.Pooled {
 		currentRepo = currentRepoScope(o.git(), cwd)
 	}
-	out, err := jqrun.Run(program, deduped.Elems(), 0, map[string]jsonv.Value{
-		"want_json":    jsonv.Bool(fl.JSON),
-		"current_repo": jsonv.Str(currentRepo),
-		"pooled":       jsonv.Bool(fl.Pooled),
+	out, err := jqrun.RunAny(program, list, 0, map[string]any{
+		"want_json":    fl.JSON,
+		"current_repo": currentRepo,
+		"pooled":       fl.Pooled,
 	})
 	if err != nil {
 		say(stderr, "crew: rate: %s: %v\n", store, err)
@@ -181,14 +184,13 @@ func report(fl Request, cwd string, stdout, stderr io.Writer, o Options) int {
 	// pretty-printed; the table is one string the fold already joined, which
 	// `jq -r` printed plus one newline. Terminal colour is a process quirk.
 	if fl.JSON {
-		if err := jsonv.Encode(stdout, out, jsonv.Options{Indent: true}); err != nil {
+		if err := encode(stdout, out, true); err != nil {
 			say(stderr, "crew: rate: %v\n", err)
 			return exitFailure
 		}
-		say(stdout, "\n")
 		return 0
 	}
-	s, _ := out.AsString()
+	s, _ := out.(string)
 	say(stdout, "%s\n", s)
 	return 0
 }

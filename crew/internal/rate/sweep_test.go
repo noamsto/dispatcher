@@ -624,13 +624,13 @@ func TestFoldStoreTornFileIsEmpty(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"run_id":"a","swept_at":1}`+"\n"+`{"run_id":"b","swept`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if rows := foldStore(path).Len(); rows != 0 {
+	if rows := len(foldStore(path)); rows != 0 {
 		t.Errorf("a torn store folded to %d rows, want []", rows)
 	}
 	if err := os.WriteFile(path, []byte(`{"run_id":"a","swept_at":1}`+"\n"+`{"run_id":"a","swept_at":2}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if rows := foldStore(path); rows.Len() != 1 {
-		t.Errorf("last-wins fold kept %d rows, want the newest one", rows.Len())
+	if rows := foldStore(path); len(rows) != 1 {
+		t.Errorf("last-wins fold kept %d rows, want the newest one", len(rows))
 	}
 }

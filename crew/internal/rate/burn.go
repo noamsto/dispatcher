@@ -7,12 +7,14 @@
 package rate
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // burnRule is one burnClasses row. class/weight are the row's own values,
@@ -20,37 +22,44 @@ import (
 type burnRule struct {
 	match    string
 	class    string
-	weight   jsonv.Value
-	byEffort []jsonv.Member
+	weight   any
+	byEffort map[string]json.RawMessage
 	hasBy    bool
 }
 
 // burnRules reads `.burnClasses` out of the resolved settings. A missing key
 // or a non-array value is the arm's empty rule list: every model unclassed.
-func burnRules(settings jsonv.Value) []burnRule {
-	list, ok := settings.Get("burnClasses")
-	if !ok || list.Kind() != jsonv.KindArray {
+func burnRules(settings string) []burnRule {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(settings), &top); err != nil {
+		return nil
+	}
+	var list []json.RawMessage
+	if err := json.Unmarshal(top["burnClasses"], &list); err != nil {
 		return nil
 	}
 	var rules []burnRule
-	for _, row := range list.Elems() {
-		if row.Kind() != jsonv.KindObject {
+	for _, raw := range list {
+		var row map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &row); err != nil || row == nil {
 			continue
 		}
 		var rule burnRule
-		if m, ok := row.Get("match"); ok {
-			rule.match, _ = m.AsString()
+		if m, ok := row["match"]; ok {
+			_ = json.Unmarshal(m, &rule.match)
 		}
-		if c, ok := row.Get("class"); ok {
-			rule.class = jqText(c)
+		if c, ok := row["class"]; ok {
+			rule.class = jqTextRaw(c)
 		}
-		rule.weight = jsonv.Null()
-		if w, ok := row.Get("weight"); ok {
-			rule.weight = argjson(jqText(w))
+		if w, ok := row["weight"]; ok {
+			rule.weight = argjson(jqTextRaw(w))
 		}
-		if by, ok := row.Get("byEffort"); ok && by.Kind() == jsonv.KindObject {
-			rule.hasBy = true
-			rule.byEffort = by.Members()
+		if by, ok := row["byEffort"]; ok {
+			var m map[string]json.RawMessage
+			if err := json.Unmarshal(by, &m); err == nil && m != nil {
+				rule.hasBy = true
+				rule.byEffort = m
+			}
 		}
 		if rule.match == "" {
 			continue
@@ -64,7 +73,7 @@ func burnRules(settings jsonv.Value) []burnRule {
 // A byEffort map naming neither the effort nor a `default` prices as jq's
 // string interpolation does — the literal class "null", a null weight —
 // because that is what the arm wrote into the store.
-func burnWeight(rules []burnRule, model, effort string) (string, jsonv.Value, bool) {
+func burnWeight(rules []burnRule, model, effort string) (string, any, bool) {
 	for _, r := range rules {
 		if !globMatch(r.match, model) {
 			continue
@@ -72,36 +81,31 @@ func burnWeight(rules []burnRule, model, effort string) (string, jsonv.Value, bo
 		if !r.hasBy {
 			return r.class, r.weight, true
 		}
-		entry := byEffortEntry(r.byEffort, effort)
 		class := "null"
-		weight := jsonv.Null()
-		if entry.Kind() == jsonv.KindObject {
-			if c, ok := entry.Get("class"); ok {
-				class = jqText(c)
+		var weight any
+		var entry map[string]json.RawMessage
+		if err := json.Unmarshal(byEffortEntry(r.byEffort, effort), &entry); err == nil && entry != nil {
+			if c, ok := entry["class"]; ok {
+				class = jqTextRaw(c)
 			}
-			if w, ok := entry.Get("weight"); ok {
-				weight = argjson(jqText(w))
+			if w, ok := entry["weight"]; ok {
+				weight = argjson(jqTextRaw(w))
 			}
 		}
 		return class, weight, true
 	}
-	return "", jsonv.Null(), false
+	return "", nil, false
 }
 
 // byEffortEntry is jq's `.[$e] // .default`: an absent, null or false effort
 // entry falls through to `default`, which may itself be absent.
-func byEffortEntry(members []jsonv.Member, effort string) jsonv.Value {
-	for _, m := range members {
-		if m.Key == effort && m.Val.Truthy() {
-			return m.Val
+func byEffortEntry(by map[string]json.RawMessage, effort string) json.RawMessage {
+	if raw, ok := by[effort]; ok {
+		if v, ok := parseOne(string(raw)); ok && isTruthy(v) {
+			return raw
 		}
 	}
-	for _, m := range members {
-		if m.Key == "default" {
-			return m.Val
-		}
-	}
-	return jsonv.Null()
+	return by["default"]
 }
 
 // jqText is jq's scalar rendering (`@tsv`'s own rule for the two columns
@@ -109,40 +113,57 @@ func byEffortEntry(members []jsonv.Member, effort string) jsonv.Value {
 // arm reached only string, number and null — a class is a string and a weight a
 // number, and `@tsv` would have errored on anything else — so the boolean and
 // container arms exist for the switch, not for the data.
-func jqText(v jsonv.Value) string {
-	switch v.Kind() {
-	case jsonv.KindString:
-		s, _ := v.AsString()
-		return s
-	case jsonv.KindNull:
+func jqText(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case nil:
 		return "null"
-	case jsonv.KindTrue:
-		return "true"
-	case jsonv.KindFalse:
-		return "false"
-	case jsonv.KindNumber:
-		if text := v.NumberText(); text != "" {
-			return text
-		}
-		f, _ := v.AsFloat()
-		return strconv.FormatFloat(f, 'g', -1, 64)
-	case jsonv.KindArray, jsonv.KindObject:
-		return string(jsonv.Append(nil, v, jsonv.Options{}))
+	case bool:
+		return strconv.FormatBool(x)
+	case json.Number:
+		return x.String()
+	case float64:
+		return strconv.FormatFloat(x, 'g', -1, 64)
+	case []any, map[string]any:
+		var buf bytes.Buffer
+		_ = encode(&buf, x, false)
+		return strings.TrimSuffix(buf.String(), "\n")
 	}
 	return ""
+}
+
+// jqTextRaw is jqText of a raw JSON value; text that does not parse is "".
+func jqTextRaw(raw json.RawMessage) string {
+	v, ok := parseOne(string(raw))
+	if !ok {
+		return ""
+	}
+	return jqText(v)
 }
 
 // argjson is bash's `--argjson w "$text"`: the text is parsed as JSON, so the
 // class/weight round-trip through the arm's TSV comes back a number. Text the
 // arm would have died on (`--argjson` rejects it under `set -e`) prices as
 // null rather than killing the sweep over a malformed table row.
-func argjson(text string) jsonv.Value {
-	vals, err := jsonv.DecodeStream(strings.NewReader(text))
-	if err != nil || len(vals) != 1 {
-		return jsonv.Null()
+func argjson(text string) any {
+	if v, ok := parseOne(text); ok {
+		return v
 	}
-	return vals[0]
+	// jq's number grammar is looser than JSON's (`.5`, `+2`, `02`) and keeps an
+	// out-of-range exponent as ±Inf; the arm's `--argjson` accepted both.
+	t := strings.Trim(text, " \t\r\n")
+	if !looseNumber.MatchString(t) {
+		return nil
+	}
+	f, err := strconv.ParseFloat(t, 64)
+	if err != nil && !errors.Is(err, strconv.ErrRange) {
+		return nil
+	}
+	return f
 }
+
+var looseNumber = regexp.MustCompile(`^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$`)
 
 // globMatch is bash's `case` pattern match, not path.Match: `*` and `?` cross
 // `/` (a model id like `openrouter/anthropic/claude-opus-4.1` is priced by
