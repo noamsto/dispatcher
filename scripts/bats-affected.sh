@@ -67,7 +67,8 @@ map_file() {
   scripts/bats-affected.sh) add bats-affected ;;
   scripts/bats-timing.sh | scripts/bats-classify.sh | scripts/bats-coverage.sh) ;;
   scripts/harness-inventory.sh) add harness-inventory ;;
-  scripts/harness-bench.sh | scripts/harness-manifest.sh | scripts/harness-split.sh) ;;
+  scripts/harness-manifest.sh) add harness-manifest ;;
+  scripts/harness-bench.sh | scripts/harness-split.sh) ;;
   scripts/bats-shard.sh | scripts/bats-shard-weights.sh) add bats-shard ;;
   # help-parity.sh (#1007) and pi-agent-dir-parity.sh (#1016) are evidence
   # scripts: they read the pre-change crew.sh out of git history and diff it
