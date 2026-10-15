@@ -468,7 +468,7 @@ branch instead; the worktree carries over under `resume: true`.
 - **Remote workers (`--host <name>`).** Runs the worker on another machine; everything else about the dispatch is unchanged.
   - **Settings.** `hosts.<name> = {ssh, repos."owner/repo" = path}` — `programs.dispatcher.hosts` in home-manager, or user settings. The ssh target and path always come from settings, never from a bus row.
   - **Preconditions.** The clone already exists at the mapped path. `crew`, `dispatch` and `tmux` are on the remote's non-interactive ssh `PATH`. The remote's engine logins are present. On a macOS remote the engine's keychain login works only in a tmux server started from the GUI login session — keep one running there; a server first started by sshd cannot reach the login keychain. Dispatch `--host` only from a streaming lane (`crew stream`, `crew fleet stream`): a dispatcher on a park lane (cursor, codex, pi) runs `crew watch`, which has no relay, so it never sees the remote worker's events and does not use `--host`.
-  - **Refused with `--host`:** `--add-dir`, `--base`, `--status`, `--lazy`. The engine roster is the remote's (`--agent` must be in its `dispatch --engines`); claude quota is checked locally; the fan-out budget and load gate are judged by the remote, not here.
+  - **Refused with `--host`:** `--add-dir`, `--base`, `--status`, `--lazy`, and the env overrides `DISPATCH_PRECHECK`, `DISPATCH_IGNORE_RUNG`, `DISPATCH_SKIP_MODEL_CHECK`, `DISPATCH_SHAPE` and `DISPATCH_CLAUDE_CONNECTORS` (the remote never sees this env). So a claude rung or pace refusal under `--host` means drop to the standard rung or ask the human; the `DISPATCH_IGNORE_RUNG` escape named elsewhere in this protocol does not apply with `--host`. `DISPATCH_DRAFT_PR=1` is the one override that travels, as `--draft`. The engine roster is the remote's (`--agent` must be in its `dispatch --engines`); claude quota is checked locally; the fan-out budget and load gate are judged by the remote, not here.
   - **Window.** The remote worker lives in the remote tmux session `crew-<id>`. The dispatch mirrors it with `og-remote-open <ssh> crew-<id> --into <session>`; otherwise it prints `ssh -t <ssh> tmux attach -t crew-<id>`. Only `dispatch` and `dispatch resume` set the mirror up: re-run that `og-remote-open` after a local tmux or dispatcher restart.
   - **Routed to the remote.** `crew reply`, `crew nudge`, `crew where` (prints ` [host <h>]`; the mirror window comes first), `permission-check` and `dispatch resume`. Name a remote worker by branch or codename; a `%pane` is that host's, meaningless to local `tmux` and `crew where`. The one exception is `permission-check --pane <%id> --branch <branch> [--answer]`: take the `%id` verbatim from the relayed `prompt:` detail (it is that host's pane, and the check runs there). For any other `%id` from a batch carrying `host`, see the "verify, then act" recovery — never aim local `tmux` at it.
   - **Roster.** `crew roster` adds remote rows with `host` and `live` (judged on the remote's tmux). An unreachable host gives `host_error` rows with `state` and `live` null: never read that as dead.
@@ -1447,7 +1447,8 @@ literally, would have killed three healthy workers parked on a trust prompt. Rec
 
 1. `tmux capture-pane -p -t %<id>` on the pane named in the `detail`. **Always** — the
    `detail` exists to make this one command possible. For a batch carrying `host`
-   the `%id` is that host's: capture with `ssh <hosts.<h>.ssh> tmux capture-pane -p -t <%id>`
+   the `%id` is that host's: capture with `ssh <hosts.<h>.ssh> tmux capture-pane -p -t <%id>`,
+   where `<hosts.<h>.ssh>` is `dispatch-config | jq -r --arg h <h> '.hosts[$h].ssh'`
    (or look at the mirror window `crew where <branch>` finds); never run local
    `tmux` on it — a local pane may have the same id. A `load:` detail names process
    `cwd`s, not a pane — skip the capture and go to the `load:` bullet's
@@ -1458,7 +1459,7 @@ literally, would have killed three healthy workers parked on a trust prompt. Rec
    `permission-check … --answer`; otherwise it goes to the human with the captured
    request (see the `prompt:` bullet).
 3. The pane confirms a dead turn or a dead pane → kill the window, then re-dispatch.
-   For a remote worker: `ssh <hosts.<h>.ssh> tmux kill-window -t <%id>`, then
+   For a remote worker: `ssh <hosts.<h>.ssh> tmux kill-window -t <%id>` (target looked up as above), then
    `dispatch resume <branch>` (routed to the host).
 4. The pane shows work in flight (a live meter, advancing subagent rows) → it is a
    **false positive. Do not kill.** Post nothing; the watchdog clears itself on the next

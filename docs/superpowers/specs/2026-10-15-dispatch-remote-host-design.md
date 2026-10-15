@@ -551,8 +551,10 @@ check) and cannot create a local claim or row (Trust boundary).
      pane ancestry, and is refused `dispatcher:` exactly as on one host.
    - The residual is the existing one: the sender is self-asserted, the uid is
      shared, and a process that edits its env or double-forks out of its pane
-     can post as anything. The protocol already documents this; no new hole is
-     added.
+     can post as anything, or invokes `ssh <target> crew …` directly: sshd starts it
+     with no worker env and outside any pane (the cross-host form of the
+     double-fork; the same uid holds the ssh keys). The protocol already documents
+     this; no new hole is added.
 5. **Relayed data carries no authority.**
    - Relayed events are tagged `host` and printed as stream lines. They are
      never appended to the local bus, so they satisfy no local gate (waiver
@@ -561,7 +563,10 @@ check) and cannot create a local claim or row (Trust boundary).
    - The ssh stderr line in an `error` detail is JSON-encoded.
 6. **Laundering check (the protocol's three-part test).** The new inputs a
    remote claude worker controls are its own remote bus rows. `crew remote-run`
-   is a new input too, but a worker is refused by its local sender check. They reach the
+   is a new input too: the sanctioned path (`crew remote-run`) refuses a worker by its
+   local sender check, and a direct ssh is §4's residual. A routed `crew nudge`
+   currently relies on nudge's own env/WORKER_TASK.md gate, which is narrower than
+   remote-run's pane-ancestry check — a known gap tracked separately. They reach the
    dispatcher only as stream data, the same as a local worker's rows today: no
    execution, grant or identity. `dispatch_row:` is produced by the remote
    `dispatch` process, not the worker, and is validated before the local append.

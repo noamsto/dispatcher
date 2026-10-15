@@ -7,8 +7,10 @@ is sent as one JSON request to `crew remote-exec` on the other side, which runs
 only an allowlisted argv: dispatch, permission-check, or crew reply, nudge,
 where, roster, relay, reap and dispatch-row.
 
-Exits 2, before any ssh, for an unknown host, a clone that is not mapped, or a
-bad --env; otherwise with ssh's own status (255: the ssh itself failed).
+Exits 2, before any ssh, for an unknown host, a clone that is not mapped, a bad
+--env, or a caller that is not this crew's dispatcher (the sender check runs here,
+before any ssh, since the remote cannot see this env or pane); otherwise with
+ssh's own status (255: the ssh itself failed).
 
   --host       Host name, as in the settings
   --env        KEY=VALUE for the remote command; only CREW_ID, DISPATCH_TMUX_SESSION,

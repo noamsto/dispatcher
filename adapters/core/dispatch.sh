@@ -48,7 +48,9 @@ Tracker
 
 Remote host
   --host NAME             Run the worker on settings host NAME (hosts.NAME), followed from here
-                          (refused with --add-dir, --base, --status, --lazy)
+                          (refused with --add-dir, --base, --status, --lazy, and the env overrides
+                          DISPATCH_PRECHECK, DISPATCH_IGNORE_RUNG, DISPATCH_SKIP_MODEL_CHECK,
+                          DISPATCH_SHAPE, DISPATCH_CLAUDE_CONNECTORS; DISPATCH_DRAFT_PR=1 travels as --draft)
 
 Base and PR
   --base REF              Branch to base the worktree on, for a stacked layer
