@@ -102,6 +102,18 @@ suite_count() { find "$REPO_ROOT/tests" -maxdepth 1 -name '*.bats' | wc -l; }
   [ "$output" = "$(printf '%s\n' tests/adapters.bats tests/dispatch.bats tests/module.bats tests/pr-watch.bats tests/secret-read-guard.bats)" ]
 }
 
+@test "affected: the inventory script selects its own test, the other harness scripts none" {
+  affected --files scripts/harness-inventory.sh
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf '%s\n' tests/harness-inventory.bats)" ]
+  [ -z "$stderr" ]
+
+  affected --files scripts/harness-manifest.sh
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 0 ]
+  [ -z "$stderr" ]
+}
+
 @test "affected: every tracked core script, script and reviewer script has a map row" {
   local f missing=()
   while IFS= read -r f; do

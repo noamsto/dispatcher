@@ -7,10 +7,17 @@ readonly manifest=tests/harness/manifest.tsv
 readonly assertions=tests/harness/assertions.tsv
 readonly boundaries=tests/harness/boundaries.tsv
 
-if [[ $# -ne 1 || $1 != --check ]]; then
-  echo "usage: $0 --check" >&2
+usage() {
+  echo "usage: $0 [--check]" >&2
   exit 2
-fi
+}
+
+case "${1:-}" in
+"") mode="write" ;;
+--check) mode="check" ;;
+*) usage ;;
+esac
+(($# <= 1)) || usage
 
 for file in "$manifest" "$assertions" "$boundaries"; do
   if [[ ! -f $file ]]; then
@@ -65,9 +72,11 @@ if ! awk -F '\t' '
   exit 1
 fi
 
-if ! diff -u \
-  <(
-    awk -F '\t' -v sq="'" '
+# The rows the inventory must hold, read from the bats files as they are now:
+# case_id, source_file, source_line, expression. --check diffs this against the
+# inventory; write mode joins it back onto the existing rows.
+expected_rows() {
+  awk -F '\t' -v sq="'" '
       function is_assertion(line) {
         return (line ~ /^[[:space:]]*(\[ |\[\[ )/ && line !~ /\][[:space:]]*&&[[:space:]]*(continue|break|return)/) || \
           line ~ /(^[[:space:]]*|[|;][[:space:]]*)jq[[:space:]]+-e([[:space:]]|$)/
@@ -140,15 +149,78 @@ if ! diff -u \
         }
       }
     ' "$manifest" \
-      tests/crew-id.bats tests/refresh-models.bats tests/pr-watch.bats tests/dispatch.bats \
-      tests/crew-id.bats tests/refresh-models.bats tests/pr-watch.bats tests/dispatch.bats |
-      LC_ALL=C sort -t $'\t' -k1,1 -k2,2 -k3,3n
-  ) \
-  <(
-    tail -n +2 "$assertions" |
-      cut -f1,3,4,6 |
-      LC_ALL=C sort -t $'\t' -k1,1 -k2,2 -k3,3n
-  ); then
-  echo "harness-inventory: assertion inventory is stale or incomplete" >&2
-  exit 1
+    tests/crew-id.bats tests/refresh-models.bats tests/pr-watch.bats tests/dispatch.bats \
+    tests/crew-id.bats tests/refresh-models.bats tests/pr-watch.bats tests/dispatch.bats |
+    LC_ALL=C sort -t $'\t' -k1,1 -k2,2 -k3,3n
+}
+
+if [[ $mode == check ]]; then
+  if ! diff -u <(expected_rows) \
+    <(
+      tail -n +2 "$assertions" |
+        cut -f1,3,4,6 |
+        LC_ALL=C sort -t $'\t' -k1,1 -k2,2 -k3,3n
+    ); then
+    echo "harness-inventory: assertion inventory is stale or incomplete" >&2
+    exit 1
+  fi
+else
+  scratch=$(mktemp -d)
+  trap 'rm -rf "$scratch"' EXIT
+  expected_rows >"$scratch/expected.tsv"
+
+  # Join each inventory row onto the expected line of its
+  # (case_id, source_file, expression), taking a key's lines in ascending order
+  # so repeated expressions keep their relative order; only column 4 moves.
+  # A row that matches nothing, or an expected line no row claims, means the
+  # bats file gained, lost or changed an assertion — writing then would invent
+  # or drop inventory rows, so a partial join writes nothing.
+  if ! awk -F '\t' -v OFS='\t' '
+    FILENAME == ARGV[1] {
+      key = $1 SUBSEP $2 SUBSEP $4
+      # key_order keeps the refusal messages deterministic: awk hash order is not.
+      if (count[key] == 0) key_order[++key_count] = key
+      n = ++count[key]
+      line_of[key SUBSEP n] = $3 + 0
+      row_of[key SUBSEP n] = $0
+      next
+    }
+    FNR == 1 { print; next }
+    {
+      key = $1 SUBSEP $3 SUBSEP $6
+      pick = 0
+      for (i = 1; i <= count[key]; i++) {
+        if (!used[key SUBSEP i] && (pick == 0 || line_of[key SUBSEP i] < line_of[key SUBSEP pick])) {
+          pick = i
+        }
+      }
+      if (pick == 0) {
+        printf "harness-inventory: no bats assertion matches row %s (%s %s: %s)\n", $2, $1, $3, $6 > "/dev/stderr"
+        missing++
+        next
+      }
+      used[key SUBSEP pick] = 1
+      $4 = line_of[key SUBSEP pick]
+      print
+    }
+    END {
+      for (o = 1; o <= key_count; o++) {
+        key = key_order[o]
+        for (i = 1; i <= count[key]; i++) {
+          if (used[key SUBSEP i]) continue
+          split(row_of[key SUBSEP i], f, "\t")
+          printf "harness-inventory: bats assertion %s at %s:%s is not in the inventory: %s\n", f[1], f[2], f[3], f[4] > "/dev/stderr"
+          extra++
+        }
+      }
+      if (missing || extra) {
+        print "harness-inventory: the bats files and the inventory disagree; nothing written (if a bats edit moved a @test line, run scripts/harness-manifest.sh first)" > "/dev/stderr"
+        exit 1
+      }
+    }
+  ' "$scratch/expected.tsv" "$assertions" >"$scratch/out.tsv"; then
+    exit 1
+  fi
+
+  cat "$scratch/out.tsv" >"$assertions"
 fi
