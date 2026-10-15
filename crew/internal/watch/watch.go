@@ -20,8 +20,8 @@
 package watch
 
 import (
-	"bytes"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -38,7 +38,6 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 )
 
@@ -155,11 +154,12 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 			return signalStatus(s)
 		}
 		if out, ok := fold(paths.Log, c); ok {
-			if err := jsonv.Encode(stdout, out, jsonv.Options{}); err != nil {
+			enc := json.NewEncoder(stdout)
+			enc.SetEscapeHTML(false)
+			if err := enc.Encode(out); err != nil {
 				say(stderr, "crew: %v\n", err)
 				return 1
 			}
-			say(stdout, "\n")
 			// On the wire before the cursor moves: a reader that sees the new
 			// cursor has to have been able to see the batch it came from.
 			if o.Flush != nil {
@@ -264,40 +264,40 @@ func splitStates(text string) []string {
 // fold is the arm's one pass over the log: `jq -c -s` on the file, so a missing
 // or non-regular log, an unreadable one and one it cannot parse all fold to
 // "nothing yet" — the arm ran jq under `2>/dev/null || true` and kept polling.
-func fold(path string, c call) (jsonv.Value, bool) {
+func fold(path string, c call) (map[string]any, bool) {
 	events, err := bus.ReadEvents(path)
 	if err != nil {
-		return jsonv.Value{}, false
+		return nil, false
 	}
-	in := make([]jsonv.Value, len(events))
+	in := make([]any, len(events))
 	for i, ev := range events {
-		in[i] = ev.Raw
+		in[i] = ev.Doc
 	}
-	states := make([]jsonv.Value, len(c.states))
+	states := make([]any, len(c.states))
 	for i, s := range c.states {
-		states[i] = jsonv.Str(s)
+		states[i] = s
 	}
-	out, err := jqrun.Run(program, in, 0, map[string]jsonv.Value{
-		"crew":   jsonv.Str(c.crew),
-		"me":     jsonv.Str("dispatcher:" + c.crew),
-		"since":  jsonv.Num(float64(c.since)),
-		"states": jsonv.Array(states...),
+	res, err := jqrun.RunAny(program, in, 0, map[string]any{
+		"crew":   c.crew,
+		"me":     "dispatcher:" + c.crew,
+		"since":  json.Number(strconv.FormatInt(c.since, 10)),
+		"states": states,
 	})
-	if err != nil || out.Kind() != jsonv.KindObject {
-		return jsonv.Value{}, false
+	if err != nil {
+		return nil, false
 	}
-	return out, true
+	out, ok := res.(map[string]any)
+	return out, ok
 }
 
 // cursorText is `jq -r '.cursor'`: the batch's cursor as the number text the
 // cursor file holds.
-func cursorText(out jsonv.Value) string {
-	cursor, _ := out.Get("cursor")
-	var b bytes.Buffer
-	if err := jsonv.Encode(&b, cursor, jsonv.Options{}); err != nil {
+func cursorText(out map[string]any) string {
+	b, err := json.Marshal(out["cursor"])
+	if err != nil {
 		return ""
 	}
-	return b.String()
+	return string(b)
 }
 
 // writeCursor is the arm's `mktemp "$dir/.cursor.XXXXXX"` + `printf` + `mv -f`:
