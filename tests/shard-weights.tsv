@@ -12,8 +12,6 @@ tests/adapters.bats	worker Base ref	!timing	195
 tests/bats-affected.bats	affected	!timing	3908
 tests/bats-affected.bats	affected git	!timing	1670
 tests/bats-shard.bats	*	!timing	53964
-tests/crew-dash.bats	*	!timing	9034
-tests/crew-dash.bats	--json shape	!timing	352
 tests/crew-id.bats	crew id	!timing	2390
 tests/crew.bats	*	!timing	65735
 tests/crew.bats	await	!timing	67822

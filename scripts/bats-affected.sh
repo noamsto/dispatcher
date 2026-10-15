@@ -51,7 +51,7 @@ add() {
 # Sets shared by several rows.
 dispatch_set=(adapters dispatch-comment dispatch-resume dispatch model-map module)
 prompt_set=(adapters dispatch-comment dispatch-resume dispatch dispatcher model-map module permission-check)
-crew_set=(adapters crew-dash crew-id crew directive-delivery dispatch-comment dispatch-notify dispatch-resume dispatch dispatcher model-map module pr-watch)
+crew_set=(adapters crew-id crew directive-delivery dispatch-comment dispatch-notify dispatch-resume dispatch dispatcher model-map module pr-watch)
 
 map_file() {
   local f="$1"
@@ -84,7 +84,7 @@ map_file() {
   adapters/core/phase-status.sh) add adapters phase-status ;;
   adapters/core/pr-watch.sh) add adapters dispatch module pr-watch ;;
   adapters/core/public-leak-guard.sh) add "${dispatch_set[@]}" public-leak-guard ;;
-  adapters/core/refresh-budget.sh) add adapters crew-dash dispatch module refresh-budget ;;
+  adapters/core/refresh-budget.sh) add adapters dispatch module refresh-budget ;;
   adapters/core/refresh-models.sh) add adapters dispatch module refresh-models ;;
   adapters/core/refresh-scores.sh) add adapters dispatch module refresh-scores ;;
   adapters/core/secret-read-guard.sh) add adapters dispatch secret-read-guard ;;
@@ -100,7 +100,7 @@ map_file() {
   README.md) add adapters dispatch permission-check ;;
   hookyard.json) add adapters crew directive-delivery phase-status public-leak-guard secret-read-guard test-scope-guard ;;
   crew/*) add "${crew_set[@]}" ;;
-  dash/*) add crew-dash module ;;
+  dash/*) add module ;;
   docs/* | spikes/* | EVIDENCE-*.txt | LICENSE | .gitignore | .envrc | WORKER_TASK.md) ;;
   *) full_suite "full suite: $f has no map row" ;;
   esac
