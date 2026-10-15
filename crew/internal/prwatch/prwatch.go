@@ -13,6 +13,7 @@ package prwatch
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,7 +25,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 const (
@@ -166,21 +166,31 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		say(stderr, "crew: pr-watch: %v\n", err)
 		return exitFailure
 	}
-	ts := o.Clock.RealMS()
-	line := compact(jsonv.Object(
-		jsonv.Member{Key: "ts", Val: jsonv.Num(float64(ts))},
-		jsonv.Member{Key: "crew_id", Val: jsonv.Str(crew)},
-		jsonv.Member{Key: "from", Val: jsonv.Str("pr-watch:" + req.PR)},
-		jsonv.Member{Key: "to", Val: jsonv.Str("dispatcher:" + crew)},
-		jsonv.Member{Key: "kind", Val: jsonv.Str("msg")},
-		jsonv.Member{Key: "body", Val: jsonv.Str(ev)},
-	))
+	b, _ := json.Marshal(busRow{
+		TS:     o.Clock.RealMS(),
+		CrewID: crew,
+		From:   "pr-watch:" + req.PR,
+		To:     "dispatcher:" + crew,
+		Kind:   "msg",
+		Body:   ev,
+	})
+	line := string(b)
 	if err := bus.Append(paths.Log, line); err != nil {
 		say(stderr, "crew: pr-watch: %v\n", err)
 		return exitFailure
 	}
 	say(stdout, "%s\n", ev)
 	return 0
+}
+
+// busRow is the message pr-watch posts for the event it parked on.
+type busRow struct {
+	TS     int64  `json:"ts"`
+	CrewID string `json:"crew_id"`
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Kind   string `json:"kind"`
+	Body   string `json:"body"`
 }
 
 // startChild is the default Start: the `pr-watch` binary from PATH.
@@ -237,5 +247,3 @@ func (p *process) Wait() int {
 // say writes to a stream whose failure is reported elsewhere (the exit status,
 // or nowhere, for stderr) — main.go's helper, same reason.
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
-
-func compact(v jsonv.Value) string { return string(jsonv.Append(nil, v, jsonv.Options{})) }
