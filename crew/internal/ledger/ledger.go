@@ -12,8 +12,9 @@
 //   - an id run through `awk -v` that unescapes to invalid UTF-8 (`\xff`) is
 //     compared as U+FFFD runes, and awk's warning about an unknown escape is not
 //     printed.
-//   - invalid UTF-8 in a bus line or in the crew, session or id argument stops
-//     the waiver from counting, where jq repairs it to U+FFFD and may match.
+//   - invalid UTF-8 in a bus line, the ledger detail, or the crew or session
+//     argument stops the waiver from counting, where jq repairs it to U+FFFD and
+//     may match.
 //   - [:alnum:] follows each engine's Unicode tables: glibc 2.42's (bash's =~)
 //     are Unicode 16, Go's 15, and gawk's regex lags both. The CI test uses Go's
 //     narrower class and the run-evidence boundary also counts every mark and
@@ -89,7 +90,8 @@ func Check(in Input) string {
 		if iid == "" {
 			return refuse("a waived(dispatcher) item needs its acceptance id (e.g. AC3 waived(dispatcher)) so the dispatcher's waiver can name it.")
 		}
-		if in.Log != nil && waived(in.Log, in.Crew, in.From, iid) {
+		// scan repairs the id per byte where jq folds a truncated sequence, so waived cannot see the bad bytes.
+		if in.Log != nil && utf8.ValidString(in.Detail) && waived(in.Log, in.Crew, in.From, iid) {
 			continue
 		}
 		return refuse("waived(dispatcher) needs a dispatcher waiver on the bus: a crew reply to this session (" + in.From + ") that names the item ('" + iid + `') in a waive phrase, e.g. "waive ` + iid + `"; a negation ("will not waive") does not count (a reply sent to an earlier session does not carry over). Block and ask the dispatcher to waive the item; do not write the waiver yourself.`)
@@ -434,7 +436,8 @@ type text struct {
 	stop  []int // first ')' or unmatched '(' at or after i, skipping balanced groups
 }
 
-// scan reads d as jq's --arg does, invalid UTF-8 as U+FFFD; Oniguruma's \s is
+// scan reads d as jq's --arg does, except that invalid UTF-8 becomes one U+FFFD
+// per byte where jq folds a truncated sequence into one; Oniguruma's \s is
 // Unicode White_Space, which is unicode.IsSpace.
 func scan(d string) *text {
 	rs := []rune(d)

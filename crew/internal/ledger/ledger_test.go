@@ -178,6 +178,7 @@ var checkCases = []checkCase{
 	{name: "nesting past jq limit refuses the row", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":` + strings.Repeat("[", 9999) + `"waive AC3"` + strings.Repeat("]", 9999) + `}`}, want: waiverLine("AC3")},
 	{name: "a leading BOM is skipped", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{"\xef\xbb\xbf" + reply("waive AC3")}},
 	{name: "invalid UTF-8 in a bus line never waives", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{strings.Replace(reply("waive AC3"), "waive AC3", "waive\xff AC3", 1)}, want: waiverLine("AC3")},
+	{name: "invalid UTF-8 in the detail's id never waives", detail: "AC\xe2\x82b waived(dispatcher)", doc: docList, log: []string{reply("waive AC��b")}, want: waiverLine("AC��b")},
 	{name: "the same line repaired waives", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{reply("waive\ufffd AC3")}},
 	{name: "waived without an id", detail: "waived(dispatcher)", doc: docList, want: noID},
 	{name: "colon-only id strips to empty", detail: ": waived(dispatcher)", doc: docList, want: noID},
@@ -631,7 +632,7 @@ var waiverWords = []string{
 
 // badBytes pair an invalid UTF-8 sequence with how jq repairs it.
 var badBytes = []struct{ bad, fixed string }{
-	{"\xe2\x82", "�"}, {"\xff", "�"}, {"\xff\xff", "��"}, {"\xf0A", "�A"}, {"\xc0\x80", "��"},
+	{"\xe2\x82", "�"}, {"\xff", "�"}, {"\xff\xff", "��"}, {"\xf0A", "�"}, {"\xc0\x80", "��"},
 }
 
 // waiverCorpus is half word soup and half waive-shaped phrases (an optional
