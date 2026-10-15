@@ -81,7 +81,6 @@ func encode(w io.Writer, v any, indent bool) error {
 	return enc.Encode(clamp(v))
 }
 
-// field returns v's member key when v is an object, else nil.
 func field(v any, key string) any {
 	m, _ := v.(map[string]any)
 	return m[key]

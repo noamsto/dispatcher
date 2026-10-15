@@ -150,7 +150,8 @@ func argjson(text string) any {
 	if v, ok := parseOne(text); ok {
 		return v
 	}
-	// jq's number grammar is looser than JSON's; the arm's `--argjson` accepted these.
+	// jq's number grammar is looser than JSON's (`.5`, `+2`, `02`) and keeps an
+	// out-of-range exponent as ±Inf; the arm's `--argjson` accepted both.
 	t := strings.Trim(text, " \t\r\n")
 	if !looseNumber.MatchString(t) {
 		return nil
