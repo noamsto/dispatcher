@@ -16,17 +16,18 @@ package reply
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
 )
@@ -98,20 +99,25 @@ func Run(req Request, paths bus.Paths, stderr io.Writer, o Options) int {
 	// pass, and a stamp taken inside would move with the loop.
 	ts := o.Clock.RealMS()
 	line := bus.FitLine(func(b string) string {
-		return compact(jsonv.Object(
-			jsonv.Member{Key: "ts", Val: jsonv.Num(float64(ts))},
-			jsonv.Member{Key: "crew_id", Val: jsonv.Str(crew)},
-			jsonv.Member{Key: "from", Val: jsonv.Str("dispatcher:" + crew)},
-			jsonv.Member{Key: "to", Val: jsonv.Str(to)},
-			jsonv.Member{Key: "kind", Val: jsonv.Str("msg")},
-			jsonv.Member{Key: "body", Val: jsonv.Str(b)},
-		))
+		return compact(msgRow{
+			TS: ts, CrewID: crew, From: "dispatcher:" + crew, To: to, Kind: "msg", Body: b,
+		})
 	}, body)
 	if err := bus.Append(paths.Log, line); err != nil {
 		say(stderr, "crew: reply: %v\n", err)
 		return exitFailure
 	}
 	return 0
+}
+
+// msgRow is the msg the arm appends; body stays last, where FitLine's shrink marker lands.
+type msgRow struct {
+	TS     int64  `json:"ts"`
+	CrewID string `json:"crew_id"`
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Kind   string `json:"kind"`
+	Body   string `json:"body"`
 }
 
 // read is the log `_sessions` reads: `jq -s`, so no torn-tail tolerance, and
@@ -133,7 +139,7 @@ func read(paths bus.Paths, stderr io.Writer) ([]bus.Event, int) {
 // candidate is one crew's newest non-terminal session on the branch, with the
 // three-state liveness of that crew's registered pid.
 type candidate struct {
-	row   jsonv.Value
+	row   any
 	crew  string
 	alive *bool
 }
@@ -143,14 +149,14 @@ type candidate struct {
 // session row to address and the crew to post as — the second only the cross-crew
 // path can supply — with a non-zero code when it printed a refusal or a fold
 // failure.
-func resolve(branch, crew string, events []bus.Event, paths bus.Paths, stderr io.Writer, o Options) (jsonv.Value, string, int) {
+func resolve(branch, crew string, events []bus.Event, paths bus.Paths, stderr io.Writer, o Options) (any, string, int) {
 	if crew != "" {
 		newest, code := newestSession(events, branch, crew, paths.Log, stderr, o)
 		if code != 0 {
-			return jsonv.Value{}, "", code
+			return nil, "", code
 		}
 		if ok, code := refuse(newest, branch, stderr); !ok {
-			return jsonv.Value{}, crew, code
+			return nil, crew, code
 		}
 		return newest, crew, 0
 	}
@@ -161,11 +167,11 @@ func resolve(branch, crew string, events []bus.Event, paths bus.Paths, stderr io
 	for _, c := range crewIDs(events) {
 		newest, code := newestSession(events, branch, c, paths.Log, stderr, o)
 		if code != 0 {
-			return jsonv.Value{}, "", code
+			return nil, "", code
 		}
 		// `last // empty | select(.terminal | not)`: a crew whose newest session
 		// on the branch is terminal is no candidate at all.
-		if newest.IsNull() || text(newest, "terminal") == "true" {
+		if newest == nil || text(newest, "terminal") == "true" {
 			continue
 		}
 		pidfile := paths.CrewDir(c) + "/pid"
@@ -186,10 +192,10 @@ func resolve(branch, crew string, events []bus.Event, paths bus.Paths, stderr io
 	switch len(cands) {
 	case 0:
 		say(stderr, "crew: CREW_ID not set and no live session on %s in any crew — pass --crew <id> (or dispatch a worker before replying to one)\n", branch)
-		return jsonv.Value{}, "", exitFailure
+		return nil, "", exitFailure
 	case 1:
 		if ok, code := refuse(cands[0].row, branch, stderr); !ok {
-			return jsonv.Value{}, cands[0].crew, code
+			return nil, cands[0].crew, code
 		}
 		return cands[0].row, cands[0].crew, 0
 	default:
@@ -198,14 +204,14 @@ func resolve(branch, crew string, events []bus.Event, paths bus.Paths, stderr io
 			names[i] = c.crew
 		}
 		say(stderr, "crew: CREW_ID not set and %s has live sessions in crews: %s — pass --crew <id>\n", branch, strings.Join(names, ", "))
-		return jsonv.Value{}, "", exitFailure
+		return nil, "", exitFailure
 	}
 }
 
 // newestSession is `_sessions <branch> <crew> | jq -c 'last'`: the newest session
 // row, or null when the branch has none for that crew. A fold that fails on this
 // bus is the arm's jq failure — one line naming the log, and jq's status.
-func newestSession(events []bus.Event, branch, crew, log string, stderr io.Writer, o Options) (jsonv.Value, int) {
+func newestSession(events []bus.Event, branch, crew, log string, stderr io.Writer, o Options) (any, int) {
 	docs := make([]any, len(events))
 	for i, ev := range events {
 		docs[i] = ev.Doc
@@ -215,30 +221,13 @@ func newestSession(events []bus.Event, branch, crew, log string, stderr io.Write
 	folded, err := sessions.Fold(docs, branch, crew, float64(o.Clock.RealMS())/1000)
 	if err != nil {
 		say(stderr, "crew: reply: %s: %v\n", log, err)
-		return jsonv.Value{}, exitType
+		return nil, exitType
 	}
-	out, err := foldValue(folded)
-	if err != nil {
-		say(stderr, "crew: reply: %s: %v\n", log, err)
-		return jsonv.Value{}, exitType
+	out, _ := folded.([]any)
+	if len(out) == 0 {
+		return nil, 0
 	}
-	if out.Kind() != jsonv.KindArray || out.Len() == 0 {
-		return jsonv.Null(), 0
-	}
-	return out.Elems()[out.Len()-1], 0
-}
-
-// foldValue is the fold's result as a jsonv value, for the arm's jsonv row reads.
-func foldValue(folded any) (jsonv.Value, error) {
-	b, err := sessions.JSON(folded)
-	if err != nil {
-		return jsonv.Value{}, err
-	}
-	vs, err := jsonv.DecodeStream(bytes.NewReader(b))
-	if err != nil || len(vs) != 1 {
-		return jsonv.Value{}, fmt.Errorf("fold result: %v", err)
-	}
-	return vs[0], nil
+	return out[len(out)-1], 0
 }
 
 // crewIDs is `jq -r 'select(.crew_id != null) | .crew_id' | sort -u`, minus the
@@ -257,8 +246,8 @@ func crewIDs(events []bus.Event) []string {
 // refuse is the arm's three shared checks on the resolved row, in its order: no
 // session at all, a terminal newest, a newest with no session id to address. ok
 // is true when none of them fired.
-func refuse(newest jsonv.Value, branch string, stderr io.Writer) (bool, int) {
-	if newest.IsNull() {
+func refuse(newest any, branch string, stderr io.Writer) (bool, int) {
+	if newest == nil {
 		say(stderr, "crew: no session on %s — dispatch a worker before replying to one\n", branch)
 		return false, exitFailure
 	}
@@ -278,23 +267,32 @@ func refuse(newest jsonv.Value, branch string, stderr io.Writer) (bool, int) {
 // key as the four letters the arm compared, and an array or object in jq's pretty
 // form — `-r` passes only strings through bare, and `.state` is read straight off
 // the bus, so a row carrying a container prints the container.
-func text(v jsonv.Value, key string) string {
-	x, _ := v.Get(key)
-	switch x.Kind() {
-	case jsonv.KindString:
-		s, _ := x.AsString()
-		return s
-	case jsonv.KindNumber:
-		return x.NumberText()
-	case jsonv.KindTrue:
-		return "true"
-	case jsonv.KindFalse:
-		return "false"
-	case jsonv.KindArray, jsonv.KindObject:
-		return string(jsonv.Append(nil, x, jsonv.Options{Indent: true}))
-	case jsonv.KindNull:
+func text(v any, key string) string {
+	m, _ := v.(map[string]any)
+	switch x := m[key].(type) {
+	case string:
+		return x
+	case json.Number:
+		return x.String()
+	case float64:
+		return strconv.FormatFloat(x, 'g', -1, 64)
+	case bool:
+		return strconv.FormatBool(x)
+	case []any, map[string]any:
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(x)
+		return strings.TrimSuffix(buf.String(), "\n")
 	}
 	return "null"
 }
 
-func compact(v jsonv.Value) string { return string(jsonv.Append(nil, v, jsonv.Options{})) }
+func compact(r msgRow) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(r)
+	return strings.TrimSuffix(buf.String(), "\n")
+}
