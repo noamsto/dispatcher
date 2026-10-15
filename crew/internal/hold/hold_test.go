@@ -401,30 +401,38 @@ func TestAddSpec(t *testing.T) {
 }
 
 func TestAddSpecErrors(t *testing.T) {
-	tr := setup(t)
-	dir := filepath.Join(tr.dir, "adir")
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cases := map[string]struct{ spec, want string }{
-		"missing": {filepath.Join(tr.dir, "nope.md"), "is not readable"},
-		"unreadable": {func() string {
-			p := filepath.Join(tr.dir, "secret.md")
+	// Each case builds its own fixture: the directory case creates holds/, which
+	// would leak into whichever case ran after it.
+	cases := map[string]struct {
+		spec func(t *testing.T, dir string) string
+		want string
+	}{
+		"missing": {func(_ *testing.T, dir string) string { return filepath.Join(dir, "nope.md") }, "is not readable"},
+		"unreadable": {func(t *testing.T, dir string) string {
+			p := filepath.Join(dir, "secret.md")
 			if err := os.WriteFile(p, []byte("x"), 0o000); err != nil {
 				t.Fatal(err)
 			}
 			return p
-		}(), "is not readable"},
+		}, "is not readable"},
 		// `[ -r dir ]` is true, so the arm reaches cp and cp refuses it; Go
 		// reaches the copy and fails the same way (wording aside).
-		"directory": {dir, "cannot copy --spec"},
+		"directory": {func(t *testing.T, dir string) string {
+			p := filepath.Join(dir, "adir")
+			if err := os.Mkdir(p, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return p
+		}, "cannot copy --spec"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			if name == "unreadable" && os.Geteuid() == 0 {
 				t.Skip("root reads a 0o000 file")
 			}
-			_, err, code := tr.run(t, fullAdd(func(a *AddRequest) { a.Spec = tc.spec }))
+			tr := setup(t)
+			spec := tc.spec(t, tr.dir)
+			_, err, code := tr.run(t, fullAdd(func(a *AddRequest) { a.Spec = spec }))
 			if code != 1 || !strings.Contains(err, tc.want) {
 				t.Errorf("code %d, stderr %q", code, err)
 			}
