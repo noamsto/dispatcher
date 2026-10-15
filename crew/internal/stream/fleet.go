@@ -340,6 +340,7 @@ func (f *fleet) join(common string) {
 		repo:    repo,
 		yield:   f.yielder(repo, filepath.Join(common, "crew", "crews", f.c.crew)),
 	}
+	l.relays = newRelays(l, filepath.Join(common, "crew", "events.jsonl"), filepath.Join(common, "crew", "crews", f.c.crew))
 	b := &busLoop{sigs: make(chan os.Signal, 1), done: make(chan struct{}), scratch: scratch}
 	f.buses[common] = b
 	f.wg.Add(1)
