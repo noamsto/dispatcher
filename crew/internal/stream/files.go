@@ -13,8 +13,8 @@ import (
 	"strings"
 )
 
-// encode is the arm's `jq -c`: one compact line, HTML characters raw. Key order
-// is a struct's declaration order; JSON itself is judged by value (#821).
+// encode is the arm's `jq -c`: one compact line, with `<`, `>` and `&` left raw
+// the way jq printed them.
 func encode(v any) string {
 	var b strings.Builder
 	enc := json.NewEncoder(&b)
@@ -25,28 +25,23 @@ func encode(v any) string {
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
-var (
-	errEmpty   = errors.New("empty")
-	errOneJSON = errors.New("not one JSON value")
-	errObject  = errors.New("not a JSON object")
-)
+var errOneJSON = errors.New("not one JSON value")
 
 // decodeOne is one `printf '%s' "$text" | jq -r …`: the text's one JSON value as
 // its own bytes, or an error for text the arm's jq would have refused — empty,
-// torn, a second value, trailing garbage. Dropping jq's tolerance of NaN and
-// Infinity (decision D1) means such a line reads as one more unparseable line,
-// and no shipped writer emits those tokens.
+// torn, a second value, trailing garbage, or (decision D1) a NaN or Infinity
+// token.
 func decodeOne(text string) (json.RawMessage, error) {
 	if text == "" {
-		return nil, errEmpty
+		return nil, errors.New("empty")
 	}
 	dec := json.NewDecoder(strings.NewReader(text))
 	var v json.RawMessage
 	if err := dec.Decode(&v); err != nil {
 		return nil, errOneJSON
 	}
-	// Anything past the first value — a second one, or garbage — is what made
-	// the arm's jq refuse the line; only a clean end of input is not.
+	// A second value, or garbage after the first, is what the arm's jq refused;
+	// only a clean end of input is not.
 	var extra json.RawMessage
 	if err := dec.Decode(&extra); err != io.EOF {
 		return nil, errOneJSON
@@ -54,9 +49,9 @@ func decodeOne(text string) (json.RawMessage, error) {
 	return v, nil
 }
 
-// decodeObject is decodeOne for the callers that read fields off a row. A value
-// that is not an object is an error, as the arm's `jq -r '.field'` on one read
-// as no field at all.
+// decodeObject is decodeOne for the callers that read fields off a row. `null`
+// decodes into a nil map, and is refused with the non-objects rather than read
+// as an object with no fields.
 func decodeObject(text string) (map[string]json.RawMessage, error) {
 	raw, err := decodeOne(text)
 	if err != nil {
@@ -64,7 +59,7 @@ func decodeObject(text string) (map[string]json.RawMessage, error) {
 	}
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
-		return nil, errObject
+		return nil, errors.New("not a JSON object")
 	}
 	return obj, nil
 }
@@ -88,7 +83,7 @@ func decodeLines(text string) ([]any, error) {
 }
 
 // decodeRow is decodeOne in gojq's form — `json.Number` for every number
-// literal, never a float64 — which is what jqrun.RunAny takes and what keeps a
+// literal, never a float64 — which is what jqrun.RunAny takes, and what keeps a
 // big or fractional literal's own text intact.
 func decodeRow(text string) (any, error) {
 	raw, err := decodeOne(text)

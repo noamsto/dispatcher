@@ -233,9 +233,9 @@ func cleared(pid int, o Options) bool {
 
 // The stdout lines the arm built with `jq -nc '{…}'`, one struct per kind.
 // Field order is the arm's construction order, with `repo` — the label a fleet
-// bus loop adds, empty for a lane's own stream — last, where its `Set` appended
-// it. JSON is judged by value (#821); the order stays because a human reads
-// these lines and `tests/crew.bats` greps them for `"stream":"<kind>"`.
+// bus loop adds — last. JSON is judged by value (#821), but the order stays:
+// a dispatcher parses these lines and `tests/crew.bats` greps them for
+// `"stream":"<kind>"`.
 type statusLine struct {
 	Stream string          `json:"stream"`
 	State  string          `json:"state"`
@@ -261,8 +261,7 @@ type errorLine struct {
 	Repo   string `json:"repo,omitempty"`
 }
 
-// holdDueLine carries `crew hold due --json`'s answer as its own bytes: the row
-// embeds the batch unchanged, so its text is the reader's, not a re-encoding.
+// holdDueLine carries `crew hold due --json`'s answer as its own bytes.
 type holdDueLine struct {
 	Stream string          `json:"stream"`
 	Crew   string          `json:"crew"`
@@ -325,10 +324,9 @@ func laneState(cdir string, o Options) (state string, rc int, pid json.RawMessag
 	return state, rc, pid, age
 }
 
-// holderPID is the pid `--status` reports for a holder's digits: the number they
-// read as, with the leading zeros jq would drop (`00` reads 0, `007` reads 7,
-// a text past int64 stays itself), and nil for no holder — the null the arm
-// printed.
+// holderPID is the pid `--status` reports for a holder's digits: those digits
+// with the leading zeros jq drops (`00` reads 0, `007` reads 7), and nil for no
+// holder.
 func holderPID(holder string) json.RawMessage {
 	if holder == "" {
 		return nil
@@ -340,7 +338,7 @@ func holderPID(holder string) json.RawMessage {
 	return json.RawMessage(text)
 }
 
-// pidText renders that field for the lane's stderr note, `null` and all.
+// pidText renders a holder pid for the lane's stderr note, `null` and all.
 func pidText(pid json.RawMessage) string {
 	if len(pid) == 0 {
 		return "null"
@@ -348,7 +346,8 @@ func pidText(pid json.RawMessage) string {
 	return string(pid)
 }
 
-// tickFile is the stream.tick: the three numbers the arm wrote for `--status`.
+// tickFile is the stream.tick `--status` reads: the writer's pid, park and
+// instant.
 type tickFile struct {
 	PID  int64 `json:"pid"`
 	TS   int64 `json:"ts"`
@@ -888,8 +887,6 @@ func (l *loop) writeTick() {
 	_ = os.WriteFile(filepath.Join(l.cdir, "stream.tick"), []byte(tick+"\n"), 0o644)
 }
 
-// emit writes one line. The repo label rides the struct: a lane's own stream has
-// none, which is why the field is omitempty.
 func (l *loop) emit(line any) {
 	say(l.stdout, "%s\n", encode(line))
 }
@@ -909,7 +906,8 @@ func (l *loop) printBatch(text string) {
 	say(l.stdout, "%s\n", text)
 }
 
-// jsonString is a label as a JSON string value, for a raw field of a batch.
+// jsonString quotes a label into the raw field of a batch; encode already emits
+// a JSON string.
 func jsonString(s string) json.RawMessage { return json.RawMessage(encode(s)) }
 
 func (l *loop) nowMS() int64 { return clockMS(l.o) }
@@ -945,8 +943,7 @@ func wantsReap(batch string) bool {
 func truthy(v any) bool { return v != nil && v != false }
 
 // reapLines is the arm's `split("\n") | map(select(length>0) | sub("^crew reap: ";""))`.
-// It starts from an empty slice so a set with nothing in it prints `[]`, as the
-// arm's `jq -c '[]'` did.
+// It starts from an empty slice so a set with nothing in it prints `[]`.
 func reapLines(out string) []string {
 	lines := []string{}
 	for _, line := range strings.Split(out, "\n") {
@@ -959,9 +956,8 @@ func reapLines(out string) []string {
 }
 
 // holdIDs is the arm's `[.[].id] | sort | join(",")`: the matured set, keyed on
-// its ids. A row that is not an object, or carries no string id, contributes an
-// empty id exactly as `jq -r '.id'` on null did, and a value that is not an
-// array has no ids at all.
+// its ids. A row that is not an object, or carries no string id, joins an empty
+// id, as `jq -r '.id'` on null printed one.
 func holdIDs(holds json.RawMessage) string {
 	var rows []json.RawMessage
 	if err := json.Unmarshal(holds, &rows); err != nil {
