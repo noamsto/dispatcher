@@ -344,7 +344,7 @@ func TestExtensions(t *testing.T) {
 	})
 	t.Run("unusable settings reset to an object", func(t *testing.T) {
 		f := newFixture(t)
-		for _, s := range []string{`[1]`, `{"a":1} {"b":2}`, `{broken`, ``} {
+		for _, s := range []string{`[1]`, `{"a":1} {"b":2}`, `{broken`, `null`, ``} {
 			write(t, f.dir+"/settings.json", s, 0o644)
 			f.ok(t)
 			if strings.Contains(read(t, f.dir+"/settings.json"), `"a"`) {
@@ -529,6 +529,22 @@ func TestDispatchConfigFailures(t *testing.T) {
 	f.setConfig(t, `not json`)
 	if code, out, errOut := f.run(t, ""); code != 2 || out != "" || errOut != "jq: Invalid JSON text passed to --argjson\n" {
 		t.Fatalf("%d %q %q", code, out, errOut)
+	}
+}
+
+// A number literal keeps its own text through the seed: settings.json values are
+// carried raw and the jq hand-off is json.Number, so nothing goes through
+// float64 (which would print 18446744073709552000).
+func TestNumberLiteralsKeepTheirText(t *testing.T) {
+	f := newFixture(t)
+	f.setConfig(t, `{"localModels":{"p/m":{"baseUrl":"http://h/v1","contextWindow":18446744073709551617,"maxTokens":1.50}}}`)
+	write(t, f.dir+"/settings.json", `{"contextWindow":18446744073709551617,"theme":"x"}`, 0o644)
+	f.ok(t)
+	if got := read(t, f.dir+"/settings.json"); !strings.Contains(got, "18446744073709551617") {
+		t.Errorf("settings.json lost the literal: %s", got)
+	}
+	if got := read(t, f.dir+"/models.json"); !strings.Contains(got, "18446744073709551617") || !strings.Contains(got, "1.50") {
+		t.Errorf("models.json lost a literal: %s", got)
 	}
 }
 

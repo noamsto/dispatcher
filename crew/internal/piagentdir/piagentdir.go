@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,7 +27,6 @@ import (
 	"syscall"
 
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 var (
@@ -211,32 +211,56 @@ func checkNesting(dir, ambient string) error {
 }
 
 func seedSettings(dir, bridgeEntry string) error {
-	base := jsonv.Object()
-	if vs, err := readValues(dir + "/settings.json"); err == nil && len(vs) == 1 && vs[0].Kind() == jsonv.KindObject {
-		base = vs[0]
+	// One object, or nothing at all: a torn file, a second value or a non-object
+	// reads as no settings. Raw values keep unknown keys and number literals in
+	// their own text.
+	base := map[string]json.RawMessage{}
+	if b, err := os.ReadFile(dir + "/settings.json"); err == nil {
+		var m map[string]json.RawMessage
+		// `null` decodes to a nil map with no error, and a failed decode may have
+		// filled m halfway.
+		if json.Unmarshal(b, &m) == nil && m != nil {
+			base = m
+		}
 	}
 	// A non-array extensions value is hand-edited or future-schema; appending to
 	// it would make jq die with an opaque `cannot be added`. Refuse legibly.
-	ext, hasExt := base.Get("extensions")
-	if bridgeEntry != "" && hasExt && ext.Kind() != jsonv.KindNull && ext.Kind() != jsonv.KindArray {
+	ext, hasExt := base["extensions"]
+	var elems []json.RawMessage
+	// Absent and null both leave elems with no entries; anything but an array
+	// fails to unmarshal.
+	isArray := !hasExt || json.Unmarshal(ext, &elems) == nil
+	if bridgeEntry != "" && !isArray {
 		return refuse("crew: %s/settings.json has a non-array extensions value — refusing to seed pi worker dir", dir)
 	}
-	base.Set("defaultProjectTrust", jsonv.Str("never"))
+	base["defaultProjectTrust"] = json.RawMessage(`"never"`)
 	// Append-if-absent is order-preserving: a sort would reorder a pi-written
 	// multi-entry extensions list on every reseed.
 	if bridgeEntry != "" {
-		elems := ext.Elems() // null or absent: none
 		registered := false
 		for _, e := range elems {
-			if s, ok := e.AsString(); ok && s == bridgeEntry {
+			var s string
+			if json.Unmarshal(e, &s) == nil && s == bridgeEntry {
 				registered = true
 			}
 		}
 		if !registered {
-			base.Set("extensions", jsonv.Array(append(append([]jsonv.Value{}, elems...), jsonv.Str(bridgeEntry))...))
+			quoted, err := encodeJSON(bridgeEntry, false)
+			if err != nil {
+				return err
+			}
+			raw, err := encodeJSON(append(elems, json.RawMessage(quoted)), false)
+			if err != nil {
+				return err
+			}
+			base["extensions"] = json.RawMessage(raw)
 		}
 	}
-	return writeIfChanged(dir+"/settings.json", 0o644, pretty(base))
+	text, err := encodeJSON(base, true)
+	if err != nil {
+		return err
+	}
+	return writeIfChanged(dir+"/settings.json", 0o644, text+"\n")
 }
 
 // seedAuth links the ambient auth.json, or seeds an empty object when there is
@@ -268,7 +292,7 @@ func seedAuth(dir, ambient string) error {
 	// Linking hands pi the file unparsed, so validate here — a worker that dies
 	// on a malformed auth.json reports it as "no API key", far from the cause.
 	vs, err := readValues(auth)
-	if err != nil || len(vs) == 0 || vs[len(vs)-1].Kind() != jsonv.KindObject {
+	if err != nil || len(vs) == 0 || !isObject(vs[len(vs)-1]) {
 		return refuse("crew: %s is unreadable or not a JSON object — refusing to seed pi credentials", auth)
 	}
 	return linkIfChanged(dir+"/auth.json", auth)
@@ -287,7 +311,7 @@ func seedModels(stderr io.Writer, dir, bin string) error {
 		}
 		return refuse("crew: could not resolve the dispatcher settings for the pi worker models.json — refusing to seed pi worker dir")
 	}
-	settings, err := jsonv.ParseOne(string(out))
+	settings, err := parseOne(string(out))
 	if err != nil {
 		return &refusal{msg: "jq: Invalid JSON text passed to --argjson", code: exitJQUsage}
 	}
@@ -299,36 +323,83 @@ func seedModels(stderr io.Writer, dir, bin string) error {
 	// pi prefers a stored auth.json credential over a models.json apiKey, and
 	// the worker's auth.json links the user's real one — a clashing provider
 	// name would send that credential to the local endpoint.
-	clash, err := jqrun.Run(clashProg, nil, 0, map[string]jsonv.Value{"s": settings, "a": jsonv.Array(auths...)})
+	clash, err := jqrun.RunAny(clashProg, []any{}, 0, map[string]any{"s": settings, "a": auths})
 	if err != nil {
 		return &refusal{msg: "jq: error: " + err.Error(), code: exitJQError}
 	}
-	if name, _ := clash.AsString(); name != "" {
+	if name, _ := clash.(string); name != "" {
 		return refuse("crew: localModels provider '%s' has a stored pi credential in auth.json — rename the provider so the credential is never sent to a local endpoint", name)
 	}
 
-	prog, err := jqrun.Compile(modelsProg, 0, nil)
+	prog, err := jqrun.CompileAny(modelsProg, 0, nil)
 	if err != nil {
 		return err
 	}
-	models, err := prog.Run(settings)
+	models, err := prog.RunAny(settings)
 	if err != nil {
 		return &refusal{msg: "jq: error: " + err.Error(), code: exitJQError}
 	}
-	return writeIfChanged(dir+"/models.json", 0o644, pretty(models))
+	text, err := encodeJSON(models, true)
+	if err != nil {
+		return err
+	}
+	return writeIfChanged(dir+"/models.json", 0o644, text+"\n")
 }
 
-func pretty(v jsonv.Value) string {
-	return string(jsonv.Append(nil, v, jsonv.Options{Indent: true})) + "\n"
+// encodeJSON is the arm's jq writer: `<`, `>` and `&` left raw the way jq printed
+// them, one line or indented two spaces per level. Its error goes back to the
+// caller: on a value encoding/json cannot write, the output is empty.
+func encodeJSON(v any, indent bool) (string, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if indent {
+		enc.SetIndent("", "  ")
+	}
+	if err := enc.Encode(v); err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(b.String(), "\n"), nil
 }
 
-func readValues(path string) ([]jsonv.Value, error) {
+// parseOne is the arm's `jq -n --argjson s "$out"`: exactly one value in gojq's
+// form, json.Number for every number literal and never a float64.
+func parseOne(text string) (any, error) {
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	if err := dec.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return nil, errors.New("more than one JSON value")
+	}
+	return v, nil
+}
+
+// readValues is `jq -s` over a file: every value in it in gojq's form. An empty
+// file is a non-nil empty slice, which is `[]` to gojq where nil would be null.
+func readValues(path string) ([]any, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return jsonv.DecodeStream(bytes.NewReader(b))
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	vs := []any{}
+	for {
+		var v any
+		if err := dec.Decode(&v); err != nil {
+			if errors.Is(err, io.EOF) {
+				return vs, nil
+			}
+			return nil, err
+		}
+		vs = append(vs, v)
+	}
 }
+
+func isObject(v any) bool { _, ok := v.(map[string]any); return ok }
 
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 
