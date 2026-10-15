@@ -805,13 +805,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			crew = bus.CrewID(ctx, cwd)
 		}
 		out := bufio.NewWriterSize(stdout, 64<<10)
-		palette, colorsOK := jsonv.ParseJQColors(e.jqColors)
+		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
 		var code int
 		if sub == "log" {
 			opts := log.Options{JQColorsInvalid: !colorsOK}
-			if e.color {
-				opts.Colors = &palette
-			}
 			code = log.Run(crew, paths, out, stderr, opts)
 		} else {
 			code = report.Run(crew, paths, out, stderr, report.Options{

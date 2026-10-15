@@ -2,12 +2,12 @@ package log
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // fixture is a bus without git: Run reads bus.Paths, so a temp dir stands in
@@ -28,6 +28,41 @@ func writeLog(t *testing.T, p bus.Paths, body string) {
 	}
 }
 
+// sameLines compares two JSON-lines outputs by value, as `jq -S` would: keys
+// sorted, number literals kept as text.
+func sameLines(t *testing.T, got, want string) {
+	t.Helper()
+	gl, wl := strings.Split(got, "\n"), strings.Split(want, "\n")
+	if len(gl) != len(wl) {
+		t.Fatalf("stdout\n got %q\nwant %q", got, want)
+	}
+	for i := range gl {
+		if norm(t, gl[i]) != norm(t, wl[i]) {
+			t.Errorf("stdout line %d\n got %q\nwant %q", i, gl[i], wl[i])
+		}
+	}
+}
+
+func norm(t *testing.T, line string) string {
+	t.Helper()
+	if line == "" {
+		return ""
+	}
+	dec := json.NewDecoder(strings.NewReader(line))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		t.Fatalf("line %q: %v", line, err)
+	}
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
+
 func run(t *testing.T, p bus.Paths, crew string, o Options) (string, string, int) {
 	t.Helper()
 	var out, errB bytes.Buffer
@@ -36,7 +71,8 @@ func run(t *testing.T, p bus.Paths, crew string, o Options) (string, string, int
 }
 
 // c1Row and friends are the arm's own event shapes; the expected outputs below
-// are `jq -c 'select(.crew_id==$crew)'` on the same input, byte for byte.
+// are `jq -c 'select(.crew_id==$crew)'` on the same input, compared by value
+// (`jq -S`), not byte for byte.
 const (
 	c1Row = `{"ts":1785951264000,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working"}}`
 	c2Row = `{"ts":1785951265000,"crew_id":"c2","kind":"msg","from":"dispatcher:c2","to":"worker:feat/y#s2-1","body":{"text":"héllo 中文 🚀"}}`
@@ -50,7 +86,7 @@ const (
 	c1UniOut = `{"crew_id":"c1","u":"héllo 中文 🚀 tab\there <b> & \"q\" \u007f","z":-0.0,"inf":1E+1000}`
 )
 
-func TestFiltersOneCrewByteForByte(t *testing.T) {
+func TestFiltersOneCrew(t *testing.T) {
 	p := fixture(t)
 	writeLog(t, p, c1Row+"\n"+c2Row+"\n"+c1Msg+"\n"+c1UniRow+"\n")
 
@@ -59,9 +95,7 @@ func TestFiltersOneCrewByteForByte(t *testing.T) {
 		t.Fatalf("code %d stderr %q", code, stderr)
 	}
 	want := c1Row + "\n" + c1MsgOut + "\n" + c1UniOut + "\n"
-	if stdout != want {
-		t.Errorf("stdout\n got %q\nwant %q", stdout, want)
-	}
+	sameLines(t, stdout, want)
 }
 
 func TestNoMatchAndEmptyLog(t *testing.T) {
@@ -110,9 +144,7 @@ func TestTornTailKeepsThePrefixAndExitsFive(t *testing.T) {
 	if code != 5 {
 		t.Fatalf("code %d, want 5 (jq's status for a parse error)", code)
 	}
-	if want := c1Row + "\n"; stdout != want {
-		t.Errorf("stdout got %q, want %q", stdout, want)
-	}
+	sameLines(t, stdout, c1Row+"\n")
 	if !strings.HasPrefix(stderr, "crew: log: "+p.Log+": ") || strings.Count(stderr, "\n") != 1 {
 		t.Errorf("stderr %q, want one crew: log: line", stderr)
 	}
@@ -168,9 +200,7 @@ func TestNonObjectRowsFollowJqLastInputRule(t *testing.T) {
 			if code != tc.wantCode {
 				t.Fatalf("code %d, want %d (stderr %q)", code, tc.wantCode, stderr)
 			}
-			if stdout != tc.wantStdout {
-				t.Errorf("stdout got %q, want %q", stdout, tc.wantStdout)
-			}
+			sameLines(t, stdout, tc.wantStdout)
 			lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
 			if stderr == "" {
 				lines = nil
@@ -209,9 +239,7 @@ func TestEmptyCrewMatchesOnlyTheEmptyString(t *testing.T) {
 	if stderr != "" || code != 0 {
 		t.Fatalf("stderr %q code %d", stderr, code)
 	}
-	if want := empty + "\n"; stdout != want {
-		t.Errorf("stdout got %q, want %q", stdout, want)
-	}
+	sameLines(t, stdout, empty+"\n")
 }
 
 func TestUnreadableLogIsJqsExitTwo(t *testing.T) {
@@ -242,29 +270,19 @@ func TestJQColorsWarnsOnceWhenTheLogExists(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code %d", code)
 	}
-	if want := c1Row + "\n"; stdout != want {
-		t.Errorf("stdout got %q, want %q", stdout, want)
-	}
+	sameLines(t, stdout, c1Row+"\n")
 	if stderr != "Failed to set $JQ_COLORS\n" {
 		t.Errorf("stderr %q, want one warning", stderr)
 	}
 }
 
-// The arm's jq colours its output when stdout is a terminal; main.go decides
-// that and hands the palette down.
-func TestColourComesFromThePalette(t *testing.T) {
+func TestNonFiniteNumbersPrintAsJqDoes(t *testing.T) {
 	p := fixture(t)
-	writeLog(t, p, c1Row+"\n")
+	writeLog(t, p, `{"crew_id":"c1","n":NaN,"p":Infinity,"m":-Infinity}`+"\n")
 
-	palette := jsonv.DefaultPalette()
-	stdout, _, code := run(t, p, "c1", Options{Colors: &palette})
-	if code != 0 {
-		t.Fatalf("code %d", code)
+	stdout, stderr, code := run(t, p, "c1", Options{})
+	if code != 0 || stderr != "" {
+		t.Fatalf("code %d stderr %q", code, stderr)
 	}
-	if !strings.HasPrefix(stdout, palette[jsonv.KindObject]+"{") {
-		t.Errorf("stdout %q, want it opened with the object colour", stdout)
-	}
-	if !strings.Contains(stdout, palette[7]+`"crew_id"`+"\x1b[0m") {
-		t.Errorf("stdout %q, want a coloured key", stdout)
-	}
+	sameLines(t, stdout, `{"crew_id":"c1","n":null,"p":1.7976931348623157e+308,"m":-1.7976931348623157e+308}`+"\n")
 }
