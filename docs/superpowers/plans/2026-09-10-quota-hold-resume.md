@@ -324,7 +324,7 @@ New `the hold tests (since ported to Go, #1059)`; additions to `tests/crew.bats`
 **Seeding matured holds.** `crew hold add` refuses a `resets_at <= now` (1b), so no
 matured hold can be created through the CLI. Two routes, both fine:
 `crew hold add --resets-at $((now+1))` is legal and matures a second later, which
-`poll_for` already handles; or seed the bus row directly, like `tests/retro.bats:40-46`'s
+`poll_for` already handles; or seed the bus row directly, like `the retro tests (since ported to Go, #1065)`'s
 `seed_msg` — but that helper hardcodes `crew_id:"c1"`, so write a parameterised
 `seed_hold <crew> <id> <resets_at> …`. **Put `seed_hold` in `tests/helpers.bash`**,
 not in `the hold tests (since ported to Go, #1059)`: 6b needs matured holds too, and a helper defined in the
