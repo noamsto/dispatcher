@@ -14,11 +14,14 @@
 package adopt
 
 import (
+	"bytes"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -28,7 +31,6 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
@@ -289,17 +291,18 @@ func claimRows(paths bus.Paths, id string) []claim {
 	if err != nil {
 		return nil
 	}
-	raws := make([]jsonv.Value, len(events))
+	docs := make([]any, len(events))
 	for i, ev := range events {
-		raws[i] = ev.Raw
+		docs[i] = ev.Doc
 	}
-	out, err := jqrun.Run(claimsProgram, raws, 0, map[string]jsonv.Value{"id": jsonv.Str(id)})
+	out, err := jqrun.RunAny(claimsProgram, docs, 0, map[string]any{"id": id})
 	if err != nil {
 		return nil
 	}
 	var adopted []claim
-	for _, row := range out.Elems() {
-		cols := row.Elems()
+	rows, _ := out.([]any)
+	for _, row := range rows {
+		cols, _ := row.([]any)
 		// The fold emits [issue, branch, others…]; anything shorter is not a row.
 		if len(cols) < 2 {
 			continue
@@ -400,22 +403,69 @@ func hasLine(text, line string) bool {
 }
 
 // fieldText is the text `@tsv` wrote for one fold field.
-func fieldText(v jsonv.Value) string {
-	switch v.Kind() {
-	case jsonv.KindString:
-		s, _ := v.AsString()
-		return s
-	case jsonv.KindNumber:
-		return v.NumberText()
-	case jsonv.KindTrue:
-		return "true"
-	case jsonv.KindFalse:
-		return "false"
-	case jsonv.KindArray, jsonv.KindObject:
-		return string(jsonv.Append(nil, v, jsonv.Options{}))
-	case jsonv.KindNull:
+func fieldText(v any) string {
+	switch v := v.(type) {
+	case string:
+		return v
+	case json.Number:
+		return v.String()
+	case bool:
+		return strconv.FormatBool(v)
+	case float64:
+		return clampText(v)
+	case []any, map[string]any:
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(clamp(v)); err != nil {
+			return "null"
+		}
+		return strings.TrimSuffix(buf.String(), "\n")
 	}
 	return "null"
+}
+
+// clampText is jq's text for a computed double: NaN is null, ±Inf is
+// ±MaxFloat64.
+func clampText(x float64) string {
+	if math.IsNaN(x) {
+		return "null"
+	}
+	return strconv.FormatFloat(clampFloat(x), 'g', -1, 64)
+}
+
+func clampFloat(x float64) float64 {
+	switch {
+	case math.IsInf(x, 1):
+		return math.MaxFloat64
+	case math.IsInf(x, -1):
+		return -math.MaxFloat64
+	}
+	return x
+}
+
+// clamp makes a value encoding/json accepts: NaN becomes nil, ±Inf ±MaxFloat64.
+func clamp(v any) any {
+	switch x := v.(type) {
+	case float64:
+		if math.IsNaN(x) {
+			return nil
+		}
+		return clampFloat(x)
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = clamp(e)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, e := range x {
+			out[k] = clamp(e)
+		}
+		return out
+	}
+	return v
 }
 
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
