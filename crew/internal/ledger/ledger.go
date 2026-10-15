@@ -12,6 +12,8 @@
 //   - an id run through `awk -v` that unescapes to invalid UTF-8 (`\xff`) is
 //     compared as U+FFFD runes, and awk's warning about an unknown escape is not
 //     printed.
+//   - invalid UTF-8 in a bus line or in the crew, session or id argument stops
+//     the waiver from counting, where jq repairs it to U+FFFD and may match.
 //   - [:alnum:] follows each engine's Unicode tables: glibc 2.42's (bash's =~)
 //     are Unicode 16, Go's 15, and gawk's regex lags both. The CI test uses Go's
 //     narrower class and the run-evidence boundary also counts every mark and
@@ -618,9 +620,13 @@ func items(d string) []item {
 // waived is the arm's waiver jq program: a `msg` from dispatcher:<crew> to this
 // exact session whose body (ASCII-lowercased, split into clauses) has a clause
 // with a waive word, the id as a token, and no negation before a waive word.
+// An argument holding invalid UTF-8 never waives: jq repairs it, folding a
+// truncated sequence into one U+FFFD, and refusing is the fail-safe side.
 func waived(log []string, crew, from, id string) bool {
-	crew, from = jqArg(crew), jqArg(from)
-	ide := []rune(asciiLower(jqArg(id)))
+	if !utf8.ValidString(crew) || !utf8.ValidString(from) || !utf8.ValidString(id) {
+		return false
+	}
+	ide := []rune(asciiLower(id))
 	for _, line := range log {
 		row, ok := decodeRow(line)
 		if !ok {
@@ -639,10 +645,11 @@ func waived(log []string, crew, from, id string) bool {
 }
 
 // decodeRow is a log line holding exactly one JSON object, as jq reads it
-// (last duplicate key wins, a leading BOM skipped).
+// (last duplicate key wins, a leading BOM skipped); a line holding invalid UTF-8
+// is refused, as jq would repair it.
 func decodeRow(line string) (map[string]json.RawMessage, bool) {
 	line = strings.TrimPrefix(line, "\xef\xbb\xbf")
-	if jqRefuses(line) {
+	if !utf8.ValidString(line) || jqRefuses(line) {
 		return nil, false
 	}
 	dec := json.NewDecoder(strings.NewReader(line))
@@ -707,19 +714,6 @@ func hex4(s string, at int) (int, bool) {
 	}
 	n, err := strconv.ParseUint(s[at:at+4], 16, 16)
 	return int(n), err == nil
-}
-
-// jqArg is a --arg value as jq holds it: each invalid byte becomes U+FFFD.
-// strings.ToValidUTF8 would collapse a run of bad bytes into one.
-func jqArg(s string) string {
-	if utf8.ValidString(s) {
-		return s
-	}
-	var b strings.Builder
-	for _, r := range s {
-		b.WriteRune(r)
-	}
-	return b.String()
 }
 
 func field(row map[string]json.RawMessage, key, want string) bool {

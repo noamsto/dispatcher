@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -59,6 +60,23 @@ func row(c, sender, to, body string) string {
 }
 
 func reply(body string) string { return row(crew, "dispatcher:"+crew, from, body) }
+
+// jsonStr is s as a JSON string literal, DEL and non-ASCII raw.
+func jsonStr(s string) string {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s)
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+// inner is jsonStr without the quotes, for splicing raw text into a literal.
+func inner(s string) string { j := jsonStr(s); return j[1 : len(j)-1] }
+
+// rawRow is a bus line whose body is already JSON text.
+func rawRow(c, sender, to, bodyJSON string) string {
+	return `{"crew_id":` + jsonStr(c) + `,"kind":"msg","from":` + jsonStr(sender) + `,"to":` + jsonStr(to) + `,"body":` + bodyJSON + `}`
+}
 
 type checkCase struct {
 	name   string
@@ -158,6 +176,9 @@ var checkCases = []checkCase{
 	{name: "lone high surrogate refuses the row", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":"\ud800 waive AC3"}`}, want: waiverLine("AC3")},
 	{name: "paired surrogate is fine", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":"\ud83d\ude00 waive AC3"}`}},
 	{name: "nesting past jq limit refuses the row", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":` + strings.Repeat("[", 9999) + `"waive AC3"` + strings.Repeat("]", 9999) + `}`}, want: waiverLine("AC3")},
+	{name: "a leading BOM is skipped", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{"\xef\xbb\xbf" + reply("waive AC3")}},
+	{name: "invalid UTF-8 in a bus line never waives", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{strings.Replace(reply("waive AC3"), "waive AC3", "waive\xff AC3", 1)}, want: waiverLine("AC3")},
+	{name: "the same line repaired waives", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{reply("waive\ufffd AC3")}},
 	{name: "waived without an id", detail: "waived(dispatcher)", doc: docList, want: noID},
 	{name: "colon-only id strips to empty", detail: ": waived(dispatcher)", doc: docList, want: noID},
 	{name: "trailing colon id", detail: "AC3: waived(dispatcher)", doc: docList, log: []string{reply("waive ac3")}},
@@ -172,6 +193,41 @@ func TestCheck(t *testing.T) {
 			got := Check(Input{From: from, Crew: crew, Detail: tc.detail, TaskDoc: tc.doc, TaskDocErr: tc.docErr, Log: tc.log})
 			if got != tc.want {
 				t.Errorf("Check(%q)\n got %q\nwant %q", tc.detail, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestWaivedRefusesInvalidUTF8 pins that an argument or a bus line holding
+// invalid UTF-8 never waives, though jq would repair it; each control is the
+// same waiver with the repaired spelling, which does.
+func TestWaivedRefusesInvalidUTF8(t *testing.T) {
+	waiver := func(c, to, body string) string { return row(c, "dispatcher:"+c, to, body) }
+	tests := []struct {
+		name                    string
+		log                     []string
+		crew, from, id          string
+		ctlCrew, ctlFrom, ctlID string
+		ctlLog                  []string
+	}{
+		{name: "from truncated sequence", log: []string{waiver(crew, "w\ufffd\ufffd", "waive AC3")}, crew: crew, from: "w\xe2\x82", id: "AC3", ctlCrew: crew, ctlFrom: "w\ufffd\ufffd", ctlID: "AC3"},
+		{name: "from invalid bytes", log: []string{waiver(crew, "w\ufffd\ufffd", "waive AC3")}, crew: crew, from: "w\xff\xff", id: "AC3", ctlCrew: crew, ctlFrom: "w\ufffd\ufffd", ctlID: "AC3"},
+		{name: "crew", log: []string{waiver("c\ufffd\ufffd", from, "waive AC3")}, crew: "c\xe2\x82", from: from, id: "AC3", ctlCrew: "c\ufffd\ufffd", ctlFrom: from, ctlID: "AC3"},
+		{name: "id truncated sequence", log: []string{reply("waive ac\ufffd\ufffd")}, crew: crew, from: from, id: "AC\xe2\x82", ctlCrew: crew, ctlFrom: from, ctlID: "AC\ufffd\ufffd"},
+		{name: "id invalid lead byte", log: []string{reply("waive x\ufffdA")}, crew: crew, from: from, id: "x\xf0A", ctlCrew: crew, ctlFrom: from, ctlID: "x\ufffdA"},
+		{name: "bus line", log: []string{strings.Replace(reply("waive AC3"), "waive AC3", "waive\xff AC3", 1)}, crew: crew, from: from, id: "AC3", ctlCrew: crew, ctlFrom: from, ctlID: "AC3", ctlLog: []string{reply("waive\ufffd AC3")}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctl := tc.log
+			if tc.ctlLog != nil {
+				ctl = tc.ctlLog
+			}
+			if !waived(ctl, tc.ctlCrew, tc.ctlFrom, tc.ctlID) {
+				t.Fatal("control does not waive")
+			}
+			if waived(tc.log, tc.crew, tc.from, tc.id) {
+				t.Error("waived invalid UTF-8")
 			}
 		})
 	}
@@ -478,21 +534,53 @@ func TestDifferentialAgainstJQ(t *testing.T) {
 		prog := program(t, "waiver.jq")
 		cases := waiverCorpus()
 		var yes atomic.Int64
+		var mu sync.Mutex
+		outcome := map[string][2]int{} // shape -> jq [refused, waived]
+		count := map[string]int{}
+		invalid := 0
+		for _, c := range cases {
+			count[c.shape]++
+			if !c.validUTF8() {
+				invalid++
+			}
+		}
 		parallel(len(cases), func(i int) {
 			c := cases[i]
-			_, rc := runJQ(t, bin, strings.Join(c.log, "\n")+"\n", "-e", "-n", "-R", "--arg", "c", crew, "--arg", "f", from, "--arg", "id", c.id, prog)
+			_, rc := runJQ(t, bin, strings.Join(c.log, "\n")+"\n", "-e", "-n", "-R", "--arg", "c", c.crew, "--arg", "f", c.from, "--arg", "id", c.id, prog)
 			if rc != 0 && rc != 1 {
-				t.Errorf("jq exit %d for %q %q", rc, c.id, c.log)
+				t.Errorf("jq exit %d for %.300q %.300q", rc, c.id, c.log)
 				return
 			}
-			if rc == 0 {
+			want := rc == 0
+			if want {
 				yes.Add(1)
 			}
-			if want := rc == 0; waived(c.log, crew, from, c.id) != want {
-				t.Errorf("waived(%q, id %q) = %v, jq says %v", c.log, c.id, !want, want)
+			mu.Lock()
+			o := outcome[c.shape]
+			if want {
+				o[1]++
+			} else {
+				o[0]++
+			}
+			outcome[c.shape] = o
+			mu.Unlock()
+			// Refusing invalid UTF-8 where jq repairs it is the one allowed gap.
+			got := waived(c.log, c.crew, c.from, c.id)
+			if got && !want || want && !got && c.validUTF8() {
+				t.Errorf("waived(%.300q, crew %q, from %q, id %q) = %v, jq says %v", c.log, c.crew, c.from, c.id, got, want)
 			}
 		})
-		t.Logf("%d logs, %d waived", len(cases), yes.Load())
+		for _, s := range waiverShapes {
+			if count[s] == 0 {
+				t.Errorf("no %s cases generated", s)
+			}
+		}
+		for _, s := range []string{"deep-array", "deep-object"} {
+			if o := outcome[s]; o[0] == 0 || o[1] == 0 {
+				t.Errorf("%s cases never fall on both sides of jq's limit: jq refused %d, waived %d", s, o[0], o[1])
+			}
+		}
+		t.Logf("%d logs, %d waived, %d invalid UTF-8; per shape %v; jq [refused waived] per shape %v", len(cases), yes.Load(), invalid, count, outcome)
 	})
 
 	t.Run("word class", func(t *testing.T) {
@@ -520,24 +608,45 @@ func TestDifferentialAgainstJQ(t *testing.T) {
 }
 
 type waiverCase struct {
-	id  string
-	log []string
+	shape, id, crew, from string
+	log                   []string
+}
+
+func (c waiverCase) validUTF8() bool {
+	return utf8.ValidString(c.id) && utf8.ValidString(c.crew) && utf8.ValidString(c.from) && !slices.ContainsFunc(c.log, func(l string) bool { return !utf8.ValidString(l) })
+}
+
+// waiverShapes are the corpus shapes the differential must generate.
+var waiverShapes = []string{
+	"object-body", "object-control", "dup-key", "surrogate", "bom", "deep-array", "deep-object",
+	"invalid-body", "invalid-from", "invalid-id", "invalid-crew",
 }
 
 var waiverWords = []string{
 	"waive", "waived", "waiver", "waives", "waiving", "waivers", "WAIVE", "not", "never", "no", "cannot", "without",
 	"won't", "won’t", "don't", "nothing", "but", "BUT", "butter", "ac3", "AC3", "ac4", "ac33", "ac3-x", "ac3.x", "x",
-	" ", " ", " ", ".", "!", "?", ";", "\n", ",", "é", "Ⓐ", "²", "_", "-", "(", ")", ":", "\"", " ", "ࢗ", "3",
+	" ", " ", " ", ".", "!", "?", ";", "\n", ",", "é", "Ⓐ", "²", "_", "-", "(", ")", ":", "\"", " ", "ࢗ", "3",
+	"\x7f", "\x01", "\x1f", "\b", "\f",
+}
+
+// badBytes pair an invalid UTF-8 sequence with how jq repairs it.
+var badBytes = []struct{ bad, fixed string }{
+	{"\xe2\x82", "�"}, {"\xff", "�"}, {"\xff\xff", "��"}, {"\xf0A", "�A"}, {"\xc0\x80", "��"},
 }
 
 // waiverCorpus is half word soup and half waive-shaped phrases (an optional
 // negation, a waive word, an id spelling, a tail), each in one of the row shapes
-// the program must tell apart.
+// the program must tell apart, then the shapes that need hand-built lines:
+// deep nesting at jq's limit and invalid UTF-8 in a line or an argument.
 func waiverCorpus() []waiverCase {
 	r := rand.New(rand.NewPCG(2683, 945))
 	ids := []string{"AC3", "ac3", "3", "AC-3", "ac3.x", "é1", "a(b", `a\b`, "AC3É"}
-	pick := func(from []string) string { return from[r.IntN(len(from))] }
+	pick := func(xs []string) string { return xs[r.IntN(len(xs))] }
 	var out []waiverCase
+	add := func(shape, id string, log ...string) {
+		out = append(out, waiverCase{shape: shape, id: id, crew: crew, from: from, log: log})
+	}
+	const k = `,"k":[1,1.50,null,true,1e2,0.00000001,1E400,-0,12.30e-5,0e5]`
 	for n := range 4000 {
 		id := pick(ids)
 		var b strings.Builder
@@ -554,25 +663,118 @@ func waiverCorpus() []waiverCase {
 		} else {
 			b.WriteString(pick([]string{"", "", "I will not ", "we won’t ", "never ", "no, ", "nothing to ", "cannot ", "Please ", "ok. ", "don't ", "not now but "}))
 			b.WriteString(pick([]string{"waive", "Waived", "WAIVING", "waiver for", "waives", "éwaive", "waivex", "rewaive", "waive_", "waiv"}))
-			b.WriteString(pick([]string{" ", " ", ": ", "\n", " item ", "²", " (", "."}))
+			b.WriteString(pick([]string{" ", " ", ": ", "\n", " item ", "²", " (", ".", "\x7f", "\x01"}))
 			b.WriteString(pick([]string{id, strings.ToUpper(id), strings.ToLower(id), id + ".", id + "x", "x" + id, "-" + id, id + "-", "_" + id, "(" + id + ")", "ac4"}))
 			b.WriteString(pick([]string{"", "", ".", "! thanks", " but not ac4", "; no", " now", "\n", ", not waiving ac4", " ok?"}))
 		}
 		body := b.String()
-		var line string
-		switch r.IntN(8) {
-		case 0:
-			line = `{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":{"n":` + strconv.Quote(body) + `,"k":[1,1.50,null,true,1e2,0.00000001,1E400,-0,12.30e-5,0e5]}}`
-		case 1:
-			line = row(crew, "dispatcher:"+crew, "worker:feat/x#s1", body)
-		case 2:
-			line = `{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":false}`
-		case 3:
-			line = reply(body) + " {}"
+		str := jsonStr(body)
+		switch r.IntN(16) {
+		case 0, 1, 2, 3:
+			shape := "object-body"
+			if strings.ContainsAny(body, "\x7f\x01\x1f") {
+				shape = "object-control"
+			}
+			add(shape, id, "garbage", rawRow(crew, "dispatcher:"+crew, from, `{"n":`+str+k+`}`))
+		case 4:
+			add("other-session", id, "garbage", row(crew, "dispatcher:"+crew, "worker:feat/x#s1", body))
+		case 5:
+			add("body-false", id, "garbage", rawRow(crew, "dispatcher:"+crew, from, "false"))
+		case 6:
+			add("trailing-object", id, "garbage", reply(body)+" {}")
+		case 7:
+			var nested string
+			switch r.IntN(4) {
+			case 0:
+				nested = `{"n":` + str + `,"n":"x"}`
+			case 1:
+				nested = `{"n":"x","n":` + str + `}`
+			case 2:
+				nested = `{"a":{"n":` + str + `,"n":"x"}}`
+			default:
+				nested = `{"a":{"n":"x","n":` + str + `}}`
+			}
+			add("dup-key", id, "garbage", rawRow(crew, "dispatcher:"+crew, from, nested))
+		case 8:
+			esc := pick([]string{`\ud800`, `\udc00`, `\ud800A`, `\ud83d\ude00`})
+			in := str[1 : len(str)-1]
+			at := max(strings.LastIndex(asciiLower(in), asciiLower(inner(id))), 0)
+			if r.IntN(2) == 0 {
+				at = 0
+			}
+			lit := `"` + in[:at] + esc + in[at:] + `"`
+			if r.IntN(3) == 0 {
+				lit = `{"n":` + lit + `}`
+			}
+			add("surrogate", id, "garbage", rawRow(crew, "dispatcher:"+crew, from, lit))
+		case 9:
+			line := reply(body)
+			if r.IntN(2) == 0 {
+				line = rawRow(crew, "dispatcher:"+crew, from, `{"n":`+str+`}`)
+			}
+			add("bom", id, "garbage", "\xef\xbb\xbf"+line)
 		default:
-			line = reply(body)
+			add("plain", id, "garbage", reply(body))
 		}
-		out = append(out, waiverCase{id: id, log: []string{"garbage", line}})
+	}
+	// The row object takes 2 of jq's 10000 stack slots, so 9998 arrays or 4999
+	// objects still parse and one more does not.
+	for _, phrase := range []string{"waive AC3", "do not waive AC3", "waive ac3 now", "waive AC3x"} {
+		for depth := 9995; depth <= 10000; depth++ {
+			add("deep-array", "AC3", rawRow(crew, "dispatcher:"+crew, from, strings.Repeat("[", depth)+jsonStr(phrase)+strings.Repeat("]", depth)))
+		}
+		for depth := 4996; depth <= 5000; depth++ {
+			add("deep-object", "AC3", rawRow(crew, "dispatcher:"+crew, from, strings.Repeat(`{"a":`, depth)+jsonStr(phrase)+strings.Repeat("}", depth)))
+		}
+	}
+	// A repaired spelling in the row can match the argument jq repairs.
+	esc := func(s string) string { return strings.ReplaceAll(s, "�", `\ufffd`) }
+	for n := range 600 {
+		p := badBytes[r.IntN(len(badBytes))]
+		fixed := p.fixed
+		if r.IntN(3) == 0 {
+			fixed = "�"
+		}
+		c := waiverCase{id: "AC3", crew: crew, from: from}
+		sender := "dispatcher:" + crew
+		to, cid, text := from, crew, "waive AC3"
+		switch n % 4 {
+		case 0:
+			c.shape = "invalid-body"
+			pre := pick([]string{"", "waive ", "x ", "waive AC3 ", "will not "})
+			post := pick([]string{" waive AC3", "waive AC3", " AC3", "AC3 waive", ""})
+			bodyJSON := `"` + inner(pre) + p.bad + inner(post) + `"`
+			line := rawRow(crew, sender, to, bodyJSON)
+			if r.IntN(4) == 0 {
+				line = rawRow(crew, sender, to, jsonStr(text))
+				line = line[:len(line)-1] + `,"note":"` + p.bad + `"}`
+			}
+			c.log = []string{"garbage", line}
+			if r.IntN(4) == 0 {
+				c.log = []string{"garbage" + p.bad, rawRow(crew, sender, to, jsonStr(text))}
+			}
+		case 1:
+			c.shape = "invalid-from"
+			c.from = "w" + p.bad
+			to = "w" + fixed
+		case 2:
+			c.shape = "invalid-id"
+			c.id = pick([]string{"AC", "x", "ac-"}) + p.bad
+			text = "waive " + pick([]string{"AC", "ac", "x", "ac-"}) + fixed + pick([]string{"", ".", " ok"})
+		default:
+			c.shape = "invalid-crew"
+			c.crew = "c" + p.bad
+			cid = "c" + fixed
+			sender = "dispatcher:" + cid
+		}
+		if c.log == nil {
+			line := rawRow(cid, sender, to, jsonStr(text))
+			if r.IntN(2) == 0 {
+				line = esc(line)
+			}
+			c.log = []string{"garbage", line}
+		}
+		out = append(out, c)
 	}
 	return out
 }
