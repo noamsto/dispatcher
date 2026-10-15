@@ -8,7 +8,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
 const defaultHeartbeat = "30"
@@ -55,12 +55,12 @@ func Relay(req RelayRequest, paths bus.Paths, stdout, stderr io.Writer, o Option
 	lastLine := o.Now()
 	for {
 		var line bytes.Buffer
-		if out, ok := fold(paths.Log, c); ok {
-			if err := jsonv.Encode(&line, out, jsonv.Options{}); err != nil {
+		if folded, ok := fold(paths.Log, c); ok {
+			out := jsonval.Clamp(folded).(map[string]any)
+			if err := jsonval.Encode(&line, out, false); err != nil {
 				say(stderr, "crew: %v\n", err)
 				return 1
 			}
-			line.WriteByte('\n')
 			c.since = parseIntSaturate(cursorText(out))
 		} else if o.Now().Sub(lastLine) >= beat {
 			b, _ := json.Marshal(struct {
