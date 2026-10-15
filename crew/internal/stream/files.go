@@ -3,49 +3,82 @@
 package stream
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strconv"
 	"strings"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
-// member is one key of a line the arm built with `jq -nc '{…}'`.
-func member(key string, v jsonv.Value) jsonv.Member { return jsonv.Member{Key: key, Val: v} }
-
-func encode(v jsonv.Value) string {
+// encode is the arm's `jq -c`: one compact line, HTML characters raw. Key order
+// is a struct's declaration order; JSON itself is judged by value (#821).
+func encode(v any) string {
 	var b strings.Builder
-	if err := jsonv.Encode(&b, v, jsonv.Options{}); err != nil {
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
 		return ""
 	}
-	return b.String()
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
-// decodeOne is one `printf '%s' "$text" | jq -r …`: the value, or an error for
-// text the arm's jq would have refused.
-func decodeOne(text string) (jsonv.Value, error) {
+var (
+	errEmpty   = errors.New("empty")
+	errOneJSON = errors.New("not one JSON value")
+	errObject  = errors.New("not a JSON object")
+)
+
+// decodeOne is one `printf '%s' "$text" | jq -r …`: the text's one JSON value as
+// its own bytes, or an error for text the arm's jq would have refused — empty,
+// torn, a second value, trailing garbage. Dropping jq's tolerance of NaN and
+// Infinity (decision D1) means such a line reads as one more unparseable line,
+// and no shipped writer emits those tokens.
+func decodeOne(text string) (json.RawMessage, error) {
 	if text == "" {
-		return jsonv.Value{}, fmt.Errorf("empty")
+		return nil, errEmpty
 	}
-	vs, err := jsonv.DecodeStream(strings.NewReader(text))
-	if err != nil || len(vs) != 1 {
-		return jsonv.Value{}, fmt.Errorf("not one JSON value")
+	dec := json.NewDecoder(strings.NewReader(text))
+	var v json.RawMessage
+	if err := dec.Decode(&v); err != nil {
+		return nil, errOneJSON
 	}
-	return vs[0], nil
+	// Anything past the first value — a second one, or garbage — is what made
+	// the arm's jq refuse the line; only a clean end of input is not.
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
+		return nil, errOneJSON
+	}
+	return v, nil
+}
+
+// decodeObject is decodeOne for the callers that read fields off a row. A value
+// that is not an object is an error, as the arm's `jq -r '.field'` on one read
+// as no field at all.
+func decodeObject(text string) (map[string]json.RawMessage, error) {
+	raw, err := decodeOne(text)
+	if err != nil {
+		return nil, err
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+		return nil, errObject
+	}
+	return obj, nil
 }
 
 // decodeLines is the arm's `jq -e -s` over a batch: one value per line, and an
 // error the moment a line is not one — the arm's jq failed the whole slurp,
 // which read as "no reap".
-func decodeLines(text string) ([]jsonv.Value, error) {
-	var rows []jsonv.Value
+func decodeLines(text string) ([]any, error) {
+	var rows []any
 	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
 		if line == "" {
 			continue
 		}
-		v, err := decodeOne(line)
+		v, err := decodeRow(line)
 		if err != nil {
 			return nil, err
 		}
@@ -54,25 +87,44 @@ func decodeLines(text string) ([]jsonv.Value, error) {
 	return rows, nil
 }
 
-// fieldText is the arm's `jq -r '.field'` on a decoded value: the string
-// itself, a number's own digits, and "" for null, an absent key or any other
+// decodeRow is decodeOne in gojq's form — `json.Number` for every number
+// literal, never a float64 — which is what jqrun.RunAny takes and what keeps a
+// big or fractional literal's own text intact.
+func decodeRow(text string) (any, error) {
+	raw, err := decodeOne(text)
+	if err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, errOneJSON
+	}
+	return v, nil
+}
+
+// fieldText is the arm's `jq -r '.field'` on a decoded object: the string
+// itself, a number's own text, and "" for null, an absent key or any other
 // type — `// empty` had the same shape.
-func fieldText(v jsonv.Value, key string) string {
-	f, ok := v.Get(key)
+func fieldText(obj map[string]json.RawMessage, key string) string {
+	raw, ok := obj[key]
 	if !ok {
 		return ""
 	}
-	switch f.Kind() {
-	case jsonv.KindString:
-		s, _ := f.AsString()
-		return s
-	case jsonv.KindNumber:
-		if text := f.NumberText(); text != "" {
-			return text
+	text := strings.TrimSpace(string(raw))
+	if text == "" {
+		return ""
+	}
+	switch text[0] {
+	case '"':
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return ""
 		}
-		n, _ := f.AsFloat()
-		return jsonv.FormatComputed(n)
-	case jsonv.KindNull, jsonv.KindFalse, jsonv.KindTrue, jsonv.KindArray, jsonv.KindObject:
+		return s
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		return text
 	}
 	return ""
 }
@@ -80,8 +132,8 @@ func fieldText(v jsonv.Value, key string) string {
 // digitsField is the arm's `jq -r '.field // empty'` followed by its
 // digits-only `case`: the number a field reads as, and false for anything the
 // arm would have cleared.
-func digitsField(v jsonv.Value, key string) (int64, bool) {
-	text := fieldText(v, key)
+func digitsField(obj map[string]json.RawMessage, key string) (int64, bool) {
+	text := fieldText(obj, key)
 	if !isDigits(text) {
 		return 0, false
 	}

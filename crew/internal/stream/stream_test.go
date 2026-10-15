@@ -15,7 +15,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // alive is _pid_alive over just the pids a fixture names live.
@@ -142,6 +141,9 @@ func TestStatusHolders(t *testing.T) {
 		{"4242\n", nil, float64(4242)},
 		{"4294967295\n", []string{"4294967295"}, float64(4294967295)},
 		{"4194305\n", []string{"4194305"}, float64(4194305)},
+		// Leading zeros are the holder's, not the pid's: jq reads them away.
+		{"000\n", nil, float64(0)},
+		{"007\n", nil, float64(7)},
 	} {
 		p := fixture(t)
 		writeLock(t, p, tc.holder)
@@ -283,6 +285,9 @@ func TestWantsReap(t *testing.T) {
 		{"pr other change", `{"cursor":1,"events":[{"kind":"msg","from":"pr-watch:1","body":"{\"changed\":[\"head\"],\"state\":{\"state\":\"MERGED\"}}"}]}`, false},
 		{"empty", `{"cursor":1,"events":[]}`, false},
 		{"two lines, one terminal", "{\"cursor\":1,\"events\":[]}\n{\"cursor\":2,\"events\":[{\"kind\":\"status\",\"body\":{\"state\":\"done\"}}]}", true},
+		// A row whose numbers are big literals: decoded with UseNumber they are
+		// the row's own text, where a float64 decode would refuse the line.
+		{"big literal cursor", `{"cursor":18446744073709551617,"events":[{"ts":17000000000000000000,"kind":"status","body":{"state":"done"}}]}`, true},
 		{"not json", "not json", false},
 		{"empty text", "", false},
 	} {
@@ -298,12 +303,53 @@ func TestReapLinesAndHoldIDs(t *testing.T) {
 	if want := `["reaped feat/x","reaped feat/y"]`; got != want {
 		t.Errorf("reapLines = %s, want %s", got, want)
 	}
+	if got := encode(reapLines("")); got != "[]" {
+		t.Errorf("reapLines of nothing = %s, want []", got)
+	}
 	ids := holdIDs(mustDecode(t, `[{"id":"h2"},{"id":"h1"},{"id":"h10"}]`))
 	if ids != "h1,h10,h2" {
 		t.Errorf("holdIDs = %q, want the ids sorted and joined", ids)
 	}
 	if ids := holdIDs(mustDecode(t, `[]`)); ids != "" {
 		t.Errorf("holdIDs of no holds = %q", ids)
+	}
+	// A row that is not an object, or whose id is not a string, still joins an
+	// empty id: `jq -r '.id'` read null as "", and the sort puts those first.
+	if ids := holdIDs(mustDecode(t, `[{"id":"h1"},{},{"id":7}]`)); ids != ",,h1" {
+		t.Errorf("holdIDs = %q, want %q", ids, ",,h1")
+	}
+	// A value that is not an array has no ids at all, and never a panic.
+	if ids := holdIDs(mustDecode(t, `"h1"`)); ids != "" {
+		t.Errorf("holdIDs of a string = %q", ids)
+	}
+}
+
+// The hold_due line is one line, however the batch it embeds is printed, and it
+// keeps `"stream":"hold_due"` adjacent for the bats grep.
+func TestHoldDueLineIsOneCompactLine(t *testing.T) {
+	line := encode(holdDueLine{
+		Stream: "hold_due",
+		Crew:   "c1",
+		Holds:  mustDecode(t, "[\n  {\"id\": \"h1\", \"spec\": \"a & b <c>\"}\n]"),
+		TS:     1700000000000,
+	})
+	if strings.Contains(line, "\n") {
+		t.Errorf("hold_due line is not one line: %q", line)
+	}
+	if !strings.Contains(line, `"stream":"hold_due"`) {
+		t.Errorf("hold_due line lost its tag: %q", line)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(line), &got); err != nil {
+		t.Fatalf("line %q: %v", line, err)
+	}
+	holds, ok := got["holds"].([]any)
+	if !ok || len(holds) != 1 {
+		t.Fatalf("holds = %v", got["holds"])
+	}
+	row, _ := holds[0].(map[string]any)
+	if row["id"] != "h1" || row["spec"] != "a & b <c>" {
+		t.Errorf("the embedded batch changed: %v", row)
 	}
 }
 
@@ -322,7 +368,7 @@ func TestDigitsToN(t *testing.T) {
 }
 
 func TestFieldTextAndDigits(t *testing.T) {
-	v := mustDecode(t, `{"n":1700000000000,"s":"done","f":1.5,"z":null,"o":{},"neg":-1}`)
+	v := mustDecodeObject(t, `{"n":1700000000000,"s":"done","f":1.5,"z":null,"o":{},"neg":-1}`)
 	if got := fieldText(v, "s"); got != "done" {
 		t.Errorf("fieldText(s) = %q", got)
 	}
@@ -337,6 +383,16 @@ func TestFieldTextAndDigits(t *testing.T) {
 	// `jq -r` prints a number's own text; only digits-only survives the case.
 	if got := fieldText(v, "f"); got != "1.5" {
 		t.Errorf("fieldText(f) = %q", got)
+	}
+	// A string keeps its escapes; a value of any other type reads as no text.
+	esc := mustDecodeObject(t, `{"s":"a\u003cb\u007fc","t":true,"arr":[1]}`)
+	if got := fieldText(esc, "s"); got != "a<b\u007fc" {
+		t.Errorf("fieldText(s) = %q, want the decoded string", got)
+	}
+	for _, k := range []string{"t", "arr", "missing"} {
+		if got := fieldText(esc, k); got != "" {
+			t.Errorf("fieldText(%s) = %q, want absent", k, got)
+		}
 	}
 }
 
@@ -489,9 +545,18 @@ func writeFile(t *testing.T, path, text string) {
 	}
 }
 
-func mustDecode(t *testing.T, text string) jsonv.Value {
+func mustDecode(t *testing.T, text string) json.RawMessage {
 	t.Helper()
 	v, err := decodeOne(text)
+	if err != nil {
+		t.Fatalf("decode %q: %v", text, err)
+	}
+	return v
+}
+
+func mustDecodeObject(t *testing.T, text string) map[string]json.RawMessage {
+	t.Helper()
+	v, err := decodeObject(text)
 	if err != nil {
 		t.Fatalf("decode %q: %v", text, err)
 	}
