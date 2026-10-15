@@ -5448,6 +5448,17 @@ EOF
 }
 
 @test "reap: a non-claude engine pane is kept — no idle signature" {
+  reap_idle_fixture idle-codex codex
+  set_frame %1 <<'EOF'
+──────────────────────────────
+❯
+──────────────────────────────
+EOF
+  CREW_ID=c1 run run_crew reap
+  assert_engine_kept "codex has no idle signature"
+}
+
+@test "reap: a pi pane with no footer row under its box is kept — not provably idle" {
   reap_idle_fixture idle-pi pi
   set_frame %1 <<'EOF'
 ──────────────────────────────
@@ -5455,7 +5466,7 @@ EOF
 ──────────────────────────────
 EOF
   CREW_ID=c1 run run_crew reap
-  assert_engine_kept "pi has no idle signature"
+  assert_engine_kept "pi frame: live turn or no idle input box"
 }
 
 @test "reap: an empty box with no finished-turn marker (fresh boot) is kept" {

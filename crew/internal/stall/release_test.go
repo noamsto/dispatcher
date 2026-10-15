@@ -199,11 +199,10 @@ func TestReleaseNonClaudeQuietWindow(t *testing.T) {
 	}
 }
 
-// A prompt on screen resets the quiet clock to zero for every non-claude engine.
+// A prompt on screen resets the quiet clock to zero for every quiet-window engine.
 func TestReleaseNonClaudePromptResetsQuiet(t *testing.T) {
 	cases := []struct{ engine, frame string }{
 		{"codex", "codex_hooks_review.txt"},
-		{"pi", "prompt_select.txt"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.engine, func(t *testing.T) {
@@ -219,6 +218,34 @@ func TestReleaseNonClaudePromptResetsQuiet(t *testing.T) {
 			}
 			if len(f.shCalls) != 0 {
 				t.Errorf("released with a prompt on screen: %q", f.shCalls)
+			}
+		})
+	}
+}
+
+func TestReleasePiNeedsTwoIdleTicks(t *testing.T) {
+	cases := []struct {
+		name, frame string
+		wantSh      int
+		samples     int
+	}{
+		{"idle", "nudge_pi_idle.txt", 1, 3},
+		{"mid-turn", "pi_busy.19.0k.txt", 0, 10},
+		{"unsent input", "nudge_pi_draft.txt", 0, 10},
+		{"truncated", "pi_truncated_idle.txt", 0, 10},
+		{"provider error", "pi_provider_error_idle.txt", 0, 10},
+		{"dialog", "pi_truncated_dialog.txt", 0, 10},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFake()
+			f.sample = sampling(frameText(t, tc.frame))
+			_, w := releaseWatch(t, f, "worker:feat/x", `{"state":"done"}`, Request{Engine: ptr("pi"), MaxLife: ptr("150")})
+			if code, ok := codeOf(w.finishedRelease()); !ok || code != 0 {
+				t.Fatalf("finishedRelease = %d, %v", code, ok)
+			}
+			if len(f.shCalls) != tc.wantSh || f.samples != tc.samples {
+				t.Errorf("sh calls %d samples %d, want %d and %d", len(f.shCalls), f.samples, tc.wantSh, tc.samples)
 			}
 		})
 	}

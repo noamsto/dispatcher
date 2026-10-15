@@ -201,7 +201,7 @@ func releaseGap() time.Duration {
 
 // framesBusy is `_frames_busy`: why, and true, when any engine pane of a
 // finished worker's windows is not provably idle. Every pane is sampled twice,
-// one gap apart: claude panes must pass the idle check on both with identical
+// one gap apart: claude and pi panes must pass their idle check on both with identical
 // text; other engines have no idle signature, so they need an unchanged frame
 // and no prompt. An unreadable pane keeps.
 func framesBusy(ctx context.Context, p Probes, occ []Occupant) (string, bool) {
@@ -233,6 +233,10 @@ func framesBusy(ctx context.Context, p Probes, occ []Occupant) (string, bool) {
 		if engine == "claude" {
 			if why, idle := frame.PaneIdleReason(plain[i], colored[i], false); !idle {
 				return pane + " is not idle (" + why + ")", true
+			}
+		} else if engine == "pi" {
+			if why, idle := frame.PiIdleReason(plain[i]); !idle {
+				return pane + " is not idle (pi frame: " + why + ")", true
 			}
 		} else if frame.IsPrompt(engine, plain[i]) || frame.IsPermissionPrompt(engine, plain[i]) {
 			return pane + " shows a prompt", true

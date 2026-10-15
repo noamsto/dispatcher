@@ -1,0 +1,62 @@
+ $ cd /home/noams/git/.worktrees/git/dispatcher/feat-1045-protocol-drop-stray-issue-ref-from-the-c && cat > /tmp/pr-body-1045.md <<'EOF'
+ Closes #1045
+
+ ## Summary
+
+ Drop the stray `#1045` reference from the claim paragraph of `DISPATCHER_PROTOCOL.md` — protocol text doesn't cite issue numbers for behaviour that is now just how the code works. Edited the core
+ source and regenerated the three generated adapter copies with `scripts/gen-adapters.sh`.
+
+ ## Testing
+
+ - `git grep -n '#1045' -- adapters` → no output (AC1).
+ - `git diff --stat` → exactly the four `DISPATCHER_PROTOCOL.md` copies, one line each (AC2).
+ - `bash scripts/gen-adapters.sh` → regenerated copies match the committed tree; CI's `nix flake check` asserts generated adapters are current (AC3 — run id below).
+ EOF
+ base=$(sed -nE '/^$/q; s/^base: //p' WORKER_TASK.md); echo "base=[$base]"; gh pr create --title "protocol: drop stray issue ref from the claim paragraph" --body-file /tmp/pr-body-1045.md
+ --assignee noamsto 2>&1 | tail -3 (timeout 120s)
+
+ base=[]
+ https://github.com/noamsto/dispatcher/pull/1054
+
+ Took 3.5s
+
+
+ PR #1054 created. Posting pr_open and the metrics snapshot, then waiting for CI (AC3).
+
+
+ $ cd /home/noams/git/.worktrees/git/dispatcher/feat-1045-protocol-drop-stray-issue-ref-from-the-c && crew status "$CREW_WORKER_ID" pr_open "AC1 pass(git grep -n '#1045' -- adapters: no output);
+ AC2 pass(git diff --stat: 4 files, 1 line each); AC3 pending" https://github.com/noamsto/dispatcher/pull/1054
+
+ ... (1 earlier lines, ctrl+o to expand)
+ e.g. "AC1 pass(bats 12/12); AC2 waived(dispatcher)", with any note inside those parentheses; pending, not run, skipped, n/a, partial, or a note after the parentheses is refused. An item you
+ cannot run is not a pass: post blocked "acceptance: <item> — <why>" and await the dispatcher, who alone waives it.
+
+
+ Command exited with code 1
+
+ Took 0.1s
+
+
+
+ $ cd /home/noams/git/.worktrees/git/dispatcher/feat-1045-protocol-drop-stray-issue-ref-from-the-c && gh run list --branch feat/1045-protocol-drop-stray-issue-ref-from-the-c --limit 5 --json
+ databaseId,status,conclusion,name 2>&1 (timeout 60s)
+
+ [{"conclusion":"","databaseId":38714560350,"name":"ci","status":"in_progress"}]
+
+ Took 0.8s
+
+
+ CI run 38714560350 is in progress. I'll wait for it with gh run watch before posting the ledger.
+
+
+ $ cd /home/noams/git/.worktrees/git/dispatcher/feat-1045-protocol-drop-stray-issue-ref-from-the-c && crew status "$CREW_WORKER_ID" working "CI wait" && gh run watch 38714560350 --exit-status 2>&1
+ | tail -15; echo "watch exit: $?" (timeout 1800s)
+
+ Elapsed 27.1s
+
+
+── ⠧ Working ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+~/git/.worktrees/git/dispatcher/feat-1045-protocol-drop-stray-issue-ref-from-the-c (feat/1045-protocol-drop-stray-issue-ref-from-the-c) • lime
+↑50k ↓2.2k R729k CH99.9% 20.0%/262k (auto)                                                                                                        (lemonade) Qwen3.8-Flash-Next-Strata • thinking off
