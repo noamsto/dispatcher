@@ -634,19 +634,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// dispatch-row answers the same question for a session on this bus.
 	if sub == "remote-run" {
 		c := parsed.typed.RemoteRun
-		// The remote takes the request as the dispatcher's, since ssh carries
-		// neither this env nor this pane, so the sender check runs here.
-		crew := bus.CrewID(ctx, cwd)
-		for _, kv := range c.Env {
-			if v, ok := strings.CutPrefix(kv, "CREW_ID="); ok {
-				crew = v
-			}
-		}
-		if reason := sender.Check("dispatcher:"+crew, crew, senderProbes(ctx, e.procs)); reason != "" {
-			say(stderr, "crew: remote-run: %s\n", reason)
-			return exitRemoteUsage
-		}
-		return remote.Run(ctx, remote.Call{
+		return remoteRun(ctx, e, remote.Call{
 			Host: str(c.Host), Cwd: cwd, Env: c.Env, SpecFile: str(c.SpecFile), Argv: remoteArgv(c.Argv),
 		}, stdout, stderr)
 	}
@@ -726,7 +714,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Probes: e.procs,
 			Sender: senderProbes(ctx, e.procs),
 			Remote: func(host, crew string, argv []string) int {
-				return remoteAs(ctx, cwd, crew)(host, argv, stdout, stderr)
+				return remoteAs(ctx, e, cwd, crew)(host, argv, stdout, stderr)
 			},
 		})
 	}
@@ -739,7 +727,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		crewID := func() string { return bus.CrewID(ctx, cwd) }
 		o := nudge.Default(paths, stderr, os.Getpid(), crewID)
 		o.Remote = func(host string, argv []string) int {
-			return remoteAs(ctx, cwd, cmp.Or(req.Crew, crewID()))(host, argv, stdout, stderr)
+			return remoteAs(ctx, e, cwd, cmp.Or(req.Crew, crewID()))(host, argv, stdout, stderr)
 		}
 		return nudge.Run(ctx, req, paths, stdout, stderr, o)
 	}
@@ -765,7 +753,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			CrewID: crewID,
 			Probes: whereProbes(ctx),
 			Remote: func(host, crew string, argv []string, out io.Writer) int {
-				return remoteAs(ctx, cwd, crew)(host, argv, out, stderr)
+				return remoteAs(ctx, e, cwd, crew)(host, argv, out, stderr)
 			},
 		})
 	}
@@ -973,7 +961,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// host alone, so hosts never ask each other.
 	if sub == "roster" && !parsed.typed.Roster.Live {
 		raw = roster.MergeRemote(ctx, raw, events, crew, func(ctx context.Context, host string, argv []string, so, se io.Writer) int {
-			return remoteAs(ctx, cwd, crew)(host, argv, so, se)
+			return remoteAs(ctx, e, cwd, crew)(host, argv, so, se)
 		})
 	}
 
@@ -990,10 +978,27 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 
 // remoteAs runs a command on a remote host in this checkout's clone, as crew.
 // The checks of what runs there are remote-exec's, not the caller's.
-func remoteAs(ctx context.Context, cwd, crew string) func(host string, argv []string, stdout, stderr io.Writer) int {
+func remoteAs(ctx context.Context, e env, cwd, crew string) func(host string, argv []string, stdout, stderr io.Writer) int {
 	return func(host string, argv []string, stdout, stderr io.Writer) int {
-		return remote.Run(ctx, remote.Call{Host: host, Cwd: cwd, Env: []string{"CREW_ID=" + crew}, Argv: argv}, stdout, stderr)
+		return remoteRun(ctx, e, remote.Call{Host: host, Cwd: cwd, Env: []string{"CREW_ID=" + crew}, Argv: argv}, stdout, stderr)
 	}
+}
+
+// remoteRun is every call to a remote host. The remote takes the request as the
+// dispatcher's, since ssh carries neither this env nor this pane, so the sender
+// check runs here for every argv, read or write, as the crew the call names.
+func remoteRun(ctx context.Context, e env, c remote.Call, stdout, stderr io.Writer) int {
+	crew := bus.CrewID(ctx, c.Cwd)
+	for _, kv := range c.Env {
+		if v, ok := strings.CutPrefix(kv, "CREW_ID="); ok {
+			crew = v
+		}
+	}
+	if reason := sender.Check("dispatcher:"+crew, crew, senderProbes(ctx, e.procs)); reason != "" {
+		say(stderr, "crew: remote-run: %s\n", reason)
+		return exitRemoteUsage
+	}
+	return remote.Run(ctx, c, stdout, stderr)
 }
 
 // remoteArgv is remote-run's command: the words after the flags, without the

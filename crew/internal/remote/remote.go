@@ -28,6 +28,8 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
+	"github.com/noamsto/dispatcher/crew/internal/gitguard"
+	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
 // The settings and request patterns, shared by the client and the server.
@@ -299,7 +301,9 @@ type Call struct {
 func Run(ctx context.Context, c Call, stdout, stderr io.Writer) int {
 	target, req, err := prepare(ctx, c, stderr)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, err)
+		if !errors.Is(err, gitguard.ErrRefused) {
+			_, _ = fmt.Fprintln(stderr, err)
+		}
 		return exitUsage
 	}
 	cmd := exec.CommandContext(ctx, "ssh", SSHArgv(target.SSH)...)
@@ -321,7 +325,19 @@ func prepare(ctx context.Context, c Call, stderr io.Writer) (Target, []byte, err
 	if _, err := lookupHost(hosts, c.Host); err != nil {
 		return Target{}, nil, err
 	}
-	slug, err := originSlug(ctx, c.Cwd)
+	paths, err := bus.Locate(ctx, c.Cwd)
+	if err != nil {
+		return Target{}, nil, fmt.Errorf("crew: remote-run: %s is not inside a git checkout", c.Cwd)
+	}
+	// A worker worktree's planted .git would pick the slug, and so the clone the
+	// call lands in (#633).
+	if _, err := wtgit.TrustedCwd(paths.Common, c.Cwd, stderr); err != nil {
+		if errors.Is(err, gitguard.ErrRefused) {
+			return Target{}, nil, err
+		}
+		return Target{}, nil, fmt.Errorf("crew: remote-run: %v", err)
+	}
+	slug, err := originSlug(ctx, paths.Common)
 	if err != nil {
 		return Target{}, nil, err
 	}
@@ -346,14 +362,10 @@ func prepare(ctx context.Context, c Call, stderr io.Writer) (Target, []byte, err
 	return target, req, err
 }
 
-// originSlug is the owner/repo of the checkout containing cwd, derived the way
-// the claims index derives it.
-func originSlug(ctx context.Context, cwd string) (string, error) {
-	paths, err := bus.Locate(ctx, cwd)
-	if err != nil {
-		return "", fmt.Errorf("crew: remote-run: %s is not inside a git checkout", cwd)
-	}
-	url := originURL(ctx, paths.Common)
+// originSlug is the owner/repo of the checkout whose common dir is common,
+// derived the way the claims index derives it.
+func originSlug(ctx context.Context, common string) (string, error) {
+	url := originURL(ctx, common)
 	slug := claimindex.Slug(url)
 	if slug == "" {
 		return "", fmt.Errorf("crew: remote-run: no owner/repo in this checkout's origin (%q)", url)

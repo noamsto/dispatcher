@@ -26,6 +26,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/stall"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
+	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
 // crewsProbes fakes the pid probes crews reads: liveness is the live set and
@@ -705,11 +706,158 @@ func TestRemoteRunRefusesAWorker(t *testing.T) {
 	}
 }
 
+// Every in-process route to a host takes its request as the dispatcher's just as
+// remote-run does, so a caller whose pane is stamped for a worker is refused
+// before any ssh even with its env scrubbed and no WORKER_TASK.md in its cwd.
+// roster keeps its local rows and shows the refusal as the host's error.
+func TestRemoteCallersRefuseAnAnchoredWorker(t *testing.T) {
+	const far = `{"ts":1700000002000,"crew_id":"c","kind":"dispatch","branch":"feat/x","name":"iris","host":"mini","remote":true}` + "\n"
+	pane := fmt.Sprintf("%d\x1ffeat/y\x1f\x1fc\x1f@1\x1f%%1\n", os.Getpid())
+	reason := sender.Check("dispatcher:c", "c", sender.Probes{
+		Panes:  func() (string, error) { return pane, nil },
+		Parent: func(int) (int, bool) { return 0, false },
+		PID:    os.Getpid(),
+	})
+	if reason == "" {
+		t.Fatal("the stamped pane does not anchor the sender check")
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"remote-run", []string{"remote-run", "--host", "mini", "--", "crew", "where", "lime"}},
+		{"reply", []string{"reply", "worker:feat/x", "go on"}},
+		{"nudge", []string{"nudge", "--crew", "c", "feat/x"}},
+		{"where", []string{"where", "--crew", "c", "feat/x"}},
+		{"roster", []string{"roster", "c"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			log := far
+			repo, _ := repoWithLog(t, &log, 0o644)
+			sent := remoteStubs(t, repo, "exit 0")
+			stubTmux(t, "", pane)
+			t.Setenv("CREW_ID", "c")
+			t.Chdir(repo)
+			e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil)}
+			var stdout, stderr bytes.Buffer
+			code := run(context.Background(), tc.args, &stdout, &stderr, e)
+			if _, err := os.Stat(sent); err == nil {
+				t.Error("ssh ran for a caller anchored in a worker's pane")
+			}
+			if tc.name != "roster" {
+				if code == 0 || !strings.Contains(stderr.String(), reason) {
+					t.Fatalf("code %d stderr %q, want a refusal carrying %q", code, stderr.String(), reason)
+				}
+				return
+			}
+			var rows []map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &rows); err != nil || code != 0 || len(rows) != 1 {
+				t.Fatalf("code %d, err %v, stderr %q, stdout %q", code, err, stderr.String(), stdout.String())
+			}
+			if he, _ := rows[0]["host_error"].(string); rows[0]["host"] != "mini" || !strings.Contains(he, reason) {
+				t.Errorf("row = %v, want host mini with host_error carrying %q", rows[0], reason)
+			}
+		})
+	}
+}
+
+// A worker worktree whose .git was swapped for a standalone repo would steer the
+// origin slug and so the clone a call lands in (#633): every client call is
+// refused from it before any ssh. The dispatcher's own checkout and a recorded
+// genuine worker worktree still route.
+func TestRemoteCallersRefuseAForgedWorktree(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"remote-run", []string{"remote-run", "--host", "mini", "--env", "CREW_ID=c1", "--", "crew", "where", "lime"}},
+		{"reply", []string{"reply", "worker:feat/far", "go on"}},
+		{"nudge", []string{"nudge", "--crew", "c1", "feat/far"}},
+	}
+	git := func(t *testing.T, dir string, args ...string) {
+		t.Helper()
+		full := append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)
+		if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	record := func(t *testing.T, wt, crewDir string) {
+		t.Helper()
+		rec, err := wtgit.AnchorPath(wt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(rec), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(rec, []byte("feat/far\n"+crewDir+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range cases {
+		for _, from := range []string{"forged", "main", "genuine"} {
+			t.Run(tc.name+" from "+from, func(t *testing.T) {
+				log := farRow
+				repo, _ := repoWithLog(t, &log, 0o644)
+				sent := remoteStubs(t, repo, "exit 0")
+				stubTmux(t, "", "")
+				t.Setenv("XDG_DATA_HOME", t.TempDir())
+				t.Setenv("CREW_ID", "c1")
+				git(t, repo, "commit", "-q", "--allow-empty", "-m", "init")
+				cwd := repo
+				switch from {
+				case "genuine":
+					cwd = filepath.Join(filepath.Dir(repo), "wt")
+					git(t, repo, "worktree", "add", "-q", "-b", "feat/far", cwd)
+					record(t, cwd, filepath.Join(repo, ".git", "crew"))
+				case "forged":
+					cwd = filepath.Join(filepath.Dir(repo), "forged")
+					git(t, filepath.Dir(repo), "init", "-q", cwd)
+					git(t, cwd, "remote", "add", "origin", "git@github.com:acme/widgets.git")
+					forgedLog := filepath.Join(cwd, ".git", "crew", "events.jsonl")
+					if err := os.MkdirAll(filepath.Dir(forgedLog), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(forgedLog, []byte(farRow), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					record(t, cwd, filepath.Join(repo, ".git", "crew"))
+				}
+				t.Chdir(cwd)
+				e := env{getwd: func() (string, error) { return cwd, nil }, procs: crewsProbes(nil, nil)}
+				var stdout, stderr bytes.Buffer
+				code := run(context.Background(), tc.args, &stdout, &stderr, e)
+				_, statErr := os.Stat(sent)
+				if from != "forged" {
+					if code != 0 || statErr != nil {
+						t.Fatalf("code %d stderr %q, sent %v; want a routed call", code, stderr.String(), statErr)
+					}
+					return
+				}
+				if code != exitRemoteUsage || !strings.Contains(stderr.String(), "possible tampering") {
+					t.Fatalf("code %d stderr %q, want %d and the trusted-cwd refusal", code, stderr.String(), exitRemoteUsage)
+				}
+				if statErr == nil {
+					t.Error("ssh ran from a forged worker worktree")
+				}
+			})
+		}
+	}
+}
+
 // remoteStubs gives a repo whose origin is acme/widgets a settings file that maps
 // it on host mini, and puts a stub ssh first on PATH running sshBody with the
 // request on its stdin. The request ssh received is left in the returned file.
+// Every call to a host runs the sender check, so the worker ids of a test run
+// from inside a worker session are cleared.
 func remoteStubs(t *testing.T, repo, sshBody string) (sent string) {
 	t.Helper()
+	for _, k := range []string{"CREW_WORKER_ID", "CREW_ROLE_ID"} {
+		t.Setenv(k, "")
+		if err := os.Unsetenv(k); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if out, err := exec.Command("git", "-C", repo, "remote", "add", "origin", "git@github.com:acme/widgets.git").CombinedOutput(); err != nil {
 		t.Fatalf("git remote add: %v\n%s", err, out)
 	}
