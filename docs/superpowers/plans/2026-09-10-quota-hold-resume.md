@@ -317,7 +317,7 @@ pins every comparable prose feature.
 
 ## Step 6: tests
 
-New `tests/hold.bats`; additions to `tests/crew.bats` and
+New `the hold tests (since ported to Go, #1059)`; additions to `tests/crew.bats` and
 `tests/refresh-budget.bats`. Follow the existing idiom: `load helpers`,
 `setup_repo`, a `run_crew` wrapper, `run --separate-stderr` where stderr is asserted.
 
@@ -327,10 +327,10 @@ matured hold can be created through the CLI. Two routes, both fine:
 `poll_for` already handles; or seed the bus row directly, like `tests/retro.bats:40-46`'s
 `seed_msg` — but that helper hardcodes `crew_id:"c1"`, so write a parameterised
 `seed_hold <crew> <id> <resets_at> …`. **Put `seed_hold` in `tests/helpers.bash`**,
-not in `tests/hold.bats`: 6b needs matured holds too, and a helper defined in the
+not in `the hold tests (since ported to Go, #1059)`: 6b needs matured holds too, and a helper defined in the
 former file is unreachable from the latter.
 
-- [ ] **6a — `tests/hold.bats`.** The synthetic sink (a hold neither wakes `watch` nor
+- [ ] **6a — `the hold tests (since ported to Go, #1059)`.** The synthetic sink (a hold neither wakes `watch` nor
       shows in `inbox`, but does appear in `crew log`); each required flag rejected by
       name; an absent or past `--resets-at` refused; `--agent` and `--engine` landing
       in `task.engine` and `wait.engine` respectively and both non-null; `--spec`
@@ -378,7 +378,7 @@ former file is unreachable from the latter.
       predicate**. The last two are named in this step's preamble but would otherwise
       ship with no assertion at all. The existing slice guard at `:974-1001` must still pass.
 
-**Verify:** `bats tests/hold.bats tests/crew.bats tests/refresh-budget.bats
+**Verify:** `bats the hold tests (since ported to Go, #1059) tests/crew.bats tests/refresh-budget.bats
 tests/adapters.bats`, then step 7.
 
 ---

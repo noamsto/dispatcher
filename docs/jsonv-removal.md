@@ -239,7 +239,7 @@ orders them.
   where jsonv writes `\u007f`, escapes U+2028/9 where jsonv writes them raw,
   and repairs invalid UTF-8 per byte (titles and ids come from argv, :386-415)
   where jsonv follows jq. `TestAddRowMatchesTheBuilder` pins only key order, so
-  nothing settles it (D4); hold.bats reads the body with
+  nothing settles it (D4); the old bats suite read the body with
   `fromjson` (by value). `TestHostileBodiesExitFive`, `TestCorruptBusExitsFive`
   pin the read side. Verdict: split. Write side replace (ordered structs,
   `*string` for nullable fields, `digitsLiteral` stays; the inner string

@@ -64,7 +64,7 @@ func TestAppendTornTailAndEmptyLog(t *testing.T) {
 }
 
 // Every line of a log written through Append parses, torn tail included — the
-// property the interleave test in hold.bats asserts across writers.
+// property TestHoldRowsInterleaveWithBusWritersIntoAllJSON asserts across writers.
 func TestAppendKeepsEveryLineParseable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.jsonl")
 	if err := os.WriteFile(path, []byte(`{"crew_id":"c1"`), 0o644); err != nil {
