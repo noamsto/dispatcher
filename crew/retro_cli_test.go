@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"maps"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -204,7 +205,7 @@ func TestRetroLaterMetricsSnapshotWinsAndDoesNotDuplicate(t *testing.T) {
 		t.Fatalf("tags = %v, want only gate_thrash", r.Tags)
 	}
 	tg := r.tag(t, "gate_thrash")
-	if tg["hits"] != float64(1) || len(tg["details"].([]any)) != 1 || tg["details"].([]any)[0] != "late" {
+	if tg["hits"] != float64(1) || !slices.Equal(anyStrings(t, tg["details"]), []string{"late"}) {
 		t.Errorf("gate_thrash = %v", tg)
 	}
 }
@@ -336,7 +337,7 @@ func TestRetroDispatcherNotesGetTheirOwnRowWithoutRunAttribution(t *testing.T) {
 
 	r := retroJSON(t, h)
 	m := r.tag(t, "misrouted")
-	if m["runs"] != float64(0) || len(m["engines"].([]any)) != 0 || m["nondone_pct"] != nil {
+	if m["runs"] != float64(0) || len(anyStrings(t, m["engines"])) != 0 || m["nondone_pct"] != nil {
 		t.Errorf("misrouted = %v", m)
 	}
 	if r.tag(t, "session_summary")["runs"] != float64(0) {
@@ -506,8 +507,8 @@ func TestRetroOversizedGateThrashDetailIsOneParseableLineThroughCrewMsg(t *testi
 	if rep := retroLines(retroOK(t, h, "--report")); !strings.HasSuffix(rep[1], "…") {
 		t.Errorf("report row = %q, want a truncated sample", rep[1])
 	}
-	details := retroJSON(t, h).Tags[0]["details"].([]any)
-	if utf8.RuneCountInString(details[0].(string)) <= 60 {
+	details := anyStrings(t, retroJSON(t, h).Tags[0]["details"])
+	if utf8.RuneCountInString(details[0]) <= 60 {
 		t.Errorf("--json detail was cut to %q", details[0])
 	}
 }
@@ -676,7 +677,7 @@ func TestRetroJSONRowsAreOneRunRowAndOneDispatcherRow(t *testing.T) {
 func TestRetroJSONWithoutReportIsAnError(t *testing.T) {
 	h := newHoldCLI(t)
 	out, errOut, code := h.run("retro", "--json")
-	if code != 1 || out != "" || errOut != retroUsage+"\n" {
+	if code != 1 || out != "" || errOut != "crew: retro takes --report and --json\n" {
 		t.Errorf("code %d, stdout %q, stderr %q", code, out, errOut)
 	}
 }
@@ -685,7 +686,7 @@ func TestRetroUnknownFlagAndPositionalAreTheSameError(t *testing.T) {
 	h := newHoldCLI(t)
 	for _, args := range [][]string{{"retro", "--bogus"}, {"retro", "c1"}} {
 		out, errOut, code := h.run(args...)
-		if code != 1 || out != "" || errOut != retroUsage+"\n" {
+		if code != 1 || out != "" || errOut != "crew: retro takes --report and --json\n" {
 			t.Errorf("%v: code %d, stdout %q, stderr %q", args, code, out, errOut)
 		}
 	}
@@ -699,4 +700,20 @@ func TestRetroMissingBusExitsZeroWithNoOutput(t *testing.T) {
 			t.Errorf("%v: code %d, stdout %q, stderr %q", args, code, out, errOut)
 		}
 	}
+}
+
+// anyStrings reads a decoded JSON array of strings, failing on any other shape.
+func anyStrings(t *testing.T, v any) []string {
+	t.Helper()
+	arr, ok := v.([]any)
+	if !ok {
+		t.Fatalf("%v is not a JSON array", v)
+	}
+	out := make([]string, len(arr))
+	for i, e := range arr {
+		if out[i], ok = e.(string); !ok {
+			t.Fatalf("element %d of %v is not a string", i, arr)
+		}
+	}
+	return out
 }
