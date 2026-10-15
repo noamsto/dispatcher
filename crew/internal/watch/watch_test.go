@@ -154,6 +154,24 @@ func TestQualifyingStatusPrintsBatchAndMovesCursor(t *testing.T) {
 	}
 }
 
+func TestNonFiniteBodyNumbersPrintLikeJq(t *testing.T) {
+	p := fixture(t)
+	const head = `{"ts":1785951264000,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"msg","body":`
+	writeLog(t, p, head+`[NaN,Infinity,-Infinity]}`)
+
+	stdout, stderr, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
+	if code != 0 || stderr != "" {
+		t.Fatalf("code %d stderr %q", code, stderr)
+	}
+	row := head + `[null,1.7976931348623157e308,-1.7976931348623157e308]}`
+	if stdout != want(t, 1785951264000, row) {
+		t.Errorf("stdout = %s, want %s", stdout, want(t, 1785951264000, row))
+	}
+	if got := cursorOf(t, p, "c1"); got != "1785951264000" {
+		t.Errorf("cursor file = %q", got)
+	}
+}
+
 func TestMsgToDispatcherAndStarWake(t *testing.T) {
 	for _, to := range []string{"dispatcher:c1", "*"} {
 		t.Run("to "+to, func(t *testing.T) {
