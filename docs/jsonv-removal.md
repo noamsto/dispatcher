@@ -845,7 +845,8 @@ After step 35 the importers are gone and what survives follows the owner decisio
 
 - Kept in either case (about 100 lines, moved into `jqrun` or a small
   `jsonval` package): a clamping marshaller (NaN to `null`, +-Inf to
-  +-`1.7976931348623157e308`, `json.Number` verbatim, no HTML escaping) and a
+  +-`1.7976931348623157e308`, `json.Number` verbatim, no HTML escaping; the
+  converted packages' local copies are consolidated in `internal/jsonval`) and a
   `ParseOne`-equivalent for `_jqfromjson` (lone-high-surrogate error; `nan`,
   `-nan`, `snan`, `nan0` to NaN `float64`; `Infinity`/`inf` to +-Inf; BOM trim;
   `+1`/`.5`/`01`; or the jsonv parser itself). Both are pinned by jqrun tests,

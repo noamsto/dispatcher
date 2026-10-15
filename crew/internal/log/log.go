@@ -14,9 +14,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
 // jq's status for a log whose last row it could not index, and for one it could
@@ -55,8 +55,6 @@ func Run(crew string, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		return code
 	}
 
-	enc := json.NewEncoder(stdout)
-	enc.SetEscapeHTML(false)
 	// `.crew_id` is jq's index: an object either carries the crew or does not,
 	// null indexes to null, and any other value is a type error — one stderr
 	// line each, and jq's exit status is the *last* input's outcome rather than
@@ -68,7 +66,7 @@ func Run(crew string, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 			// jq compares values: a non-string crew_id matches no crew, the empty
 			// crew of a caller with no id to default to included.
 			if id, ok := doc["crew_id"].(string); ok && id == crew {
-				_ = enc.Encode(clamp(doc))
+				_ = jsonval.Encode(stdout, doc, false)
 			}
 			failed = false
 		case nil:
@@ -98,32 +96,4 @@ func typeName(v any) string {
 		return "string"
 	}
 	return "array"
-}
-
-// clamp is jq's output rule for NaN and ±Inf, which json.Marshal refuses.
-func clamp(v any) any {
-	switch x := v.(type) {
-	case float64:
-		switch {
-		case math.IsNaN(x):
-			return nil
-		case math.IsInf(x, 1):
-			return math.MaxFloat64
-		case math.IsInf(x, -1):
-			return -math.MaxFloat64
-		}
-	case []any:
-		out := make([]any, len(x))
-		for i, e := range x {
-			out[i] = clamp(e)
-		}
-		return out
-	case map[string]any:
-		out := make(map[string]any, len(x))
-		for k, e := range x {
-			out[k] = clamp(e)
-		}
-		return out
-	}
-	return v
 }

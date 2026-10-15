@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math"
 	"strings"
+
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
 // decodeAll reads every JSON value from r. A torn or garbage stream returns
@@ -41,44 +42,9 @@ func parseOne(s string) (any, bool) {
 	return v, true
 }
 
-// clamp maps the floats encoding/json rejects the way jq prints them: NaN
-// becomes null and ±Inf the largest finite double.
-func clamp(v any) any {
-	switch x := v.(type) {
-	case float64:
-		switch {
-		case math.IsNaN(x):
-			return nil
-		case math.IsInf(x, 1):
-			return math.MaxFloat64
-		case math.IsInf(x, -1):
-			return -math.MaxFloat64
-		}
-		return x
-	case []any:
-		out := make([]any, len(x))
-		for i, e := range x {
-			out[i] = clamp(e)
-		}
-		return out
-	case map[string]any:
-		out := make(map[string]any, len(x))
-		for k, e := range x {
-			out[k] = clamp(e)
-		}
-		return out
-	}
-	return v
-}
-
 // encode writes v as JSON plus a newline, without HTML escaping.
 func encode(w io.Writer, v any, indent bool) error {
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	if indent {
-		enc.SetIndent("", "  ")
-	}
-	return enc.Encode(clamp(v))
+	return jsonval.Encode(w, v, indent)
 }
 
 func field(v any, key string) any {

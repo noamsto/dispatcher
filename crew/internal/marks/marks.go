@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -28,6 +27,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
 //go:embed read.jq
@@ -163,9 +163,7 @@ func record(dir, crew, me string, msgs []any) bool {
 		// jq -sc writes the object and its newline; one Write keeps the file from
 		// ever holding a half value.
 		var buf bytes.Buffer
-		enc := json.NewEncoder(&buf)
-		enc.SetEscapeHTML(false)
-		if err = enc.Encode(clamp(out)); err == nil {
+		if err = jsonval.Encode(&buf, out, false); err == nil {
 			_, err = tmp.Write(buf.Bytes())
 		}
 	}
@@ -176,33 +174,4 @@ func record(dir, crew, me string, msgs []any) bool {
 		return false
 	}
 	return os.Rename(tmp.Name(), Path(dir, crew, me)) == nil
-}
-
-// clamp is jq's output rule for the computed doubles a ts can carry in from the
-// bus, which json.Marshal refuses: NaN prints as null and ±Inf as ±MaxFloat64.
-func clamp(v any) any {
-	switch x := v.(type) {
-	case float64:
-		switch {
-		case math.IsNaN(x):
-			return nil
-		case math.IsInf(x, 1):
-			return math.MaxFloat64
-		case math.IsInf(x, -1):
-			return -math.MaxFloat64
-		}
-	case []any:
-		out := make([]any, len(x))
-		for i, e := range x {
-			out[i] = clamp(e)
-		}
-		return out
-	case map[string]any:
-		out := make(map[string]any, len(x))
-		for k, e := range x {
-			out[k] = clamp(e)
-		}
-		return out
-	}
-	return v
 }
