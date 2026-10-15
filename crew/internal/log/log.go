@@ -1,20 +1,22 @@
 // Package log is `crew log`: every bus event of one crew as JSON lines, the
 // contract behind the dispatcher's `crew log <crew> | jq …` idiom. The arm's
 // jq program was `select(.crew_id==$crew)` — a member test, no fold — so this
-// port runs no jq at all: it filters and re-encodes through jsonv, which keeps
-// each line one compact JSON value with its source key order and number
-// literals, and it keeps `jq -c`'s torn-tail behaviour through
+// port runs no jq at all: it filters bus rows in gojq form (Event.Doc) and
+// re-encodes through encoding/json, one compact JSON value per line,
+// value-equal to `jq -c` (keys sorted, number literals kept as json.Number
+// text), and it keeps `jq -c`'s torn-tail behaviour through
 // bus.ReadEventsTolerant (the well-formed prefix goes out, the parse error
 // after it decides the exit status).
 package log
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // jq's status for a log whose last row it could not index, and for one it could
@@ -22,12 +24,9 @@ import (
 const exitType = 5
 
 // Options is everything Run reads beyond the bus: whether $JQ_COLORS was
-// invalid (jq warns once, at startup, even when stdout is not a terminal), and
-// the palette to colour with when it is a terminal (nil for plain `jq -c`
-// output).
+// invalid (jq warns once, at startup, even when stdout is not a terminal).
 type Options struct {
 	JQColorsInvalid bool
-	Colors          *jsonv.Palette
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
@@ -56,29 +55,26 @@ func Run(crew string, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		return code
 	}
 
-	opts := jsonv.Options{Colors: o.Colors}
+	enc := json.NewEncoder(stdout)
+	enc.SetEscapeHTML(false)
 	// `.crew_id` is jq's index: an object either carries the crew or does not,
 	// null indexes to null, and any other value is a type error — one stderr
 	// line each, and jq's exit status is the *last* input's outcome rather than
 	// a sticky flag (`5 {…}` exits 0, `{…} 5` exits 5).
 	failed := false
 	for _, ev := range events {
-		v := ev.Raw
-		switch v.Kind() {
-		case jsonv.KindObject:
+		switch doc := ev.Doc.(type) {
+		case map[string]any:
 			// jq compares values: a non-string crew_id matches no crew, the empty
 			// crew of a caller with no id to default to included.
-			if id, ok := v.Get("crew_id"); ok {
-				if s, isStr := id.AsString(); isStr && s == crew {
-					_ = jsonv.Encode(stdout, v, opts)
-					say(stdout, "\n")
-				}
+			if id, ok := doc["crew_id"].(string); ok && id == crew {
+				_ = enc.Encode(clamp(doc))
 			}
 			failed = false
-		case jsonv.KindNull:
+		case nil:
 			failed = false
-		case jsonv.KindFalse, jsonv.KindTrue, jsonv.KindNumber, jsonv.KindString, jsonv.KindArray:
-			say(stderr, "crew: log: %s: cannot index %v with \"crew_id\"\n", paths.Log, v.Kind())
+		default:
+			say(stderr, "crew: log: %s: cannot index %s with \"crew_id\"\n", paths.Log, typeName(doc))
 			failed = true
 		}
 	}
@@ -90,4 +86,44 @@ func Run(crew string, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		return exitType
 	}
 	return 0
+}
+
+func typeName(v any) string {
+	switch v.(type) {
+	case bool:
+		return "boolean"
+	case json.Number, float64:
+		return "number"
+	case string:
+		return "string"
+	}
+	return "array"
+}
+
+// clamp is jq's output rule for NaN and ±Inf, which json.Marshal refuses.
+func clamp(v any) any {
+	switch x := v.(type) {
+	case float64:
+		switch {
+		case math.IsNaN(x):
+			return nil
+		case math.IsInf(x, 1):
+			return math.MaxFloat64
+		case math.IsInf(x, -1):
+			return -math.MaxFloat64
+		}
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = clamp(e)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, e := range x {
+			out[k] = clamp(e)
+		}
+		return out
+	}
+	return v
 }

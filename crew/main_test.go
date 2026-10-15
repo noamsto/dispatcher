@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -244,6 +245,36 @@ const (
 	dispatch = `{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/x","engine":"claude","model":"sonnet","tier":"standard"}`
 )
 
+// sameJSONLines compares JSON-lines output by value (`jq -S`): log re-encodes
+// rows with sorted keys, so the source's key order does not survive.
+func sameJSONLines(t *testing.T, got, want string) {
+	t.Helper()
+	norm := func(s string) []string {
+		var out []string
+		for _, line := range strings.Split(s, "\n") {
+			if line == "" {
+				out = append(out, "")
+				continue
+			}
+			dec := json.NewDecoder(strings.NewReader(line))
+			dec.UseNumber()
+			var v any
+			if err := dec.Decode(&v); err != nil {
+				t.Fatalf("line %q: %v", line, err)
+			}
+			b, err := json.Marshal(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, string(b))
+		}
+		return out
+	}
+	if !slices.Equal(norm(got), norm(want)) {
+		t.Errorf("stdout got %q, want %q", got, want)
+	}
+}
+
 func TestRunLogAndReport(t *testing.T) {
 	const reportHeader = "engine\tmodel\ttier\tshape\toutcome\tduration_s\n"
 
@@ -256,8 +287,9 @@ func TestRunLogAndReport(t *testing.T) {
 		if code := run(context.Background(), []string{"log", "c1"}, &stdout, &stderr, e); code != 0 {
 			t.Fatalf("code %d", code)
 		}
-		if want := logRowC1 + "\n" + dispatch + "\n"; stdout.String() != want || stderr.Len() != 0 {
-			t.Fatalf("log: stdout %q stderr %q", stdout.String(), stderr.String())
+		sameJSONLines(t, stdout.String(), logRowC1+"\n"+dispatch+"\n")
+		if stderr.Len() != 0 {
+			t.Fatalf("log: stderr %q", stderr.String())
 		}
 
 		stdout, stderr = bytes.Buffer{}, bytes.Buffer{}
@@ -282,8 +314,9 @@ func TestRunLogAndReport(t *testing.T) {
 		if code := run(context.Background(), []string{"log"}, &stdout, &stderr, e); code != 0 {
 			t.Fatalf("code %d", code)
 		}
-		if want := logRowC2 + "\n"; stdout.String() != want || stderr.Len() != 0 {
-			t.Fatalf("stdout %q stderr %q", stdout.String(), stderr.String())
+		sameJSONLines(t, stdout.String(), logRowC2+"\n")
+		if stderr.Len() != 0 {
+			t.Fatalf("stderr %q", stderr.String())
 		}
 	})
 
@@ -312,9 +345,7 @@ func TestRunLogAndReport(t *testing.T) {
 		if code := run(context.Background(), []string{"log", "c1"}, &stdout, &stderr, e); code != 5 {
 			t.Fatalf("log: code %d, want 5", code)
 		}
-		if want := logRowC1 + "\n" + dispatch + "\n"; stdout.String() != want {
-			t.Fatalf("log: stdout %q, want %q", stdout.String(), want)
-		}
+		sameJSONLines(t, stdout.String(), logRowC1+"\n"+dispatch+"\n")
 
 		stdout, stderr = bytes.Buffer{}, bytes.Buffer{}
 		if code := run(context.Background(), []string{"report", "c1"}, &stdout, &stderr, e); code != 5 {
