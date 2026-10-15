@@ -2,6 +2,7 @@ package await
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
 )
@@ -103,7 +103,13 @@ func readMarks(t *testing.T, p bus.Paths, who string) string {
 
 func mark(t *testing.T, p bus.Paths, who, row string) {
 	t.Helper()
-	if !marks.Record(p.Dir, "c1", who, []any{jsonv.ToAny(testjson.MustParse(t, row))}) {
+	dec := json.NewDecoder(strings.NewReader(row))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		t.Fatal(err)
+	}
+	if !marks.Record(p.Dir, "c1", who, []any{v}) {
 		t.Fatal("marks.Record failed")
 	}
 }
