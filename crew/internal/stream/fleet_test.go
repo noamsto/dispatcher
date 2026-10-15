@@ -531,10 +531,12 @@ func TestFleetLeavesRepoDroppedFromDiscovery(t *testing.T) {
 	betaScratch := busScratch(filepath.Join(l.root, "c1"), beta)
 	waitFor(t, "beta's bus loop", func() bool { _, err := os.Stat(betaScratch); return err == nil })
 	betaListed.Store(false)
+	l.kickUntil("beta's loop to stop", func() bool { _, err := os.Stat(betaScratch); return os.IsNotExist(err) })
+	// beta's watch child keeps writing under beta/.git until its loop exits,
+	// so the tree only goes after the leave (#1038).
 	if err := os.RemoveAll(filepath.Dir(beta)); err != nil {
 		t.Fatal(err)
 	}
-	l.kickUntil("beta's loop to stop", func() bool { _, err := os.Stat(betaScratch); return os.IsNotExist(err) })
 
 	appendRow(t, alpha, statusRow(2000, "c1", "worker:feat/a", "pr_open"))
 	waitFor(t, "alpha's batch", func() bool { return l.delivered()["alpha"][2000] > 0 })
