@@ -20,7 +20,6 @@ import (
 	"strconv"
 
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 )
@@ -80,7 +79,7 @@ func Scan(r Request, mode Mode) string {
 		"f":     r.FromID,
 		"t0":    json.Number(strconv.FormatInt(r.T0, 10)),
 		"mode":  string(mode),
-		"marks": jsonv.ToAny(marks.Read(r.Dir, r.Crew, r.FromID)),
+		"marks": marks.Read(r.Dir, r.Crew, r.FromID),
 	})
 	if err != nil {
 		return ""

@@ -1,7 +1,10 @@
 package marks
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
 )
 
@@ -39,16 +41,32 @@ func write(t *testing.T, d, crew, me, body string) {
 }
 
 // lines is the arm's `jq -c` output: one event per line, in order.
-func lines(t *testing.T, body string) []jsonv.Value {
+func lines(t *testing.T, body string) []any {
 	t.Helper()
-	if body == "" {
-		return nil
+	dec := json.NewDecoder(strings.NewReader(body))
+	dec.UseNumber()
+	var vs []any
+	for {
+		var v any
+		err := dec.Decode(&v)
+		if err == io.EOF {
+			return vs
+		}
+		if err != nil {
+			t.Fatalf("parse msgs: %v", err)
+		}
+		vs = append(vs, v)
 	}
-	vs, err := jsonv.DecodeStream(strings.NewReader(body))
+}
+
+// compact renders a gojq-form value through testjson's canonical compact form.
+func compact(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
 	if err != nil {
-		t.Fatalf("parse msgs: %v", err)
+		t.Fatal(err)
 	}
-	return vs
+	return testjson.Compact(testjson.MustParse(t, string(b)))
 }
 
 func readRaw(t *testing.T, d, crew, me string) string {
@@ -126,16 +144,16 @@ func TestRead(t *testing.T) {
 			d := dir(t)
 			write(t, d, "c1", "worker:feat/x#s1-1", tc.body)
 			got := Read(d, "c1", "worker:feat/x#s1-1")
-			if testjson.Compact(got) != tc.want {
-				t.Errorf("Read = %s, want %s", testjson.Compact(got), tc.want)
+			if compact(t, got) != tc.want {
+				t.Errorf("Read = %s, want %s", compact(t, got), tc.want)
 			}
 		})
 	}
 
 	t.Run("no file at all", func(t *testing.T) {
 		d := dir(t)
-		if got := Read(d, "c1", "worker:feat/x#s1-1"); testjson.Compact(got) != "{}" {
-			t.Errorf("Read = %s, want {}", testjson.Compact(got))
+		if got := Read(d, "c1", "worker:feat/x#s1-1"); compact(t, got) != "{}" {
+			t.Errorf("Read = %s, want {}", compact(t, got))
 		}
 	})
 
@@ -144,8 +162,8 @@ func TestRead(t *testing.T) {
 		if err := os.MkdirAll(Path(d, "c1", "me"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if got := Read(d, "c1", "me"); testjson.Compact(got) != "{}" {
-			t.Errorf("Read = %s, want {}", testjson.Compact(got))
+		if got := Read(d, "c1", "me"); compact(t, got) != "{}" {
+			t.Errorf("Read = %s, want {}", compact(t, got))
 		}
 	})
 }
@@ -259,6 +277,25 @@ func TestRecord(t *testing.T) {
 	}
 }
 
+// TestRecordClampsComputedTs pins jq's output rule for a ts the bus decoder
+// handed over as a computed double: NaN writes as null, ±Inf as ±MaxFloat64.
+// jq's `max` ranks NaN and -Inf below the 0 default, so NaN rides in an object.
+func TestRecordClampsComputedTs(t *testing.T) {
+	d := dir(t)
+	msgs := []any{
+		map[string]any{"from": "a", "ts": map[string]any{"x": math.NaN()}},
+		map[string]any{"from": "b", "ts": math.Inf(1)},
+		map[string]any{"from": "c", "ts": math.Inf(-1)},
+	}
+	if !Record(d, "c1", "me", msgs) {
+		t.Fatal("Record failed")
+	}
+	got := testjson.Compact(testjson.MustParse(t, readRaw(t, d, "c1", "me")))
+	if want := `{"a":{"x":null},"b":1.7976931348623157e+308,"c":0}`; got != want {
+		t.Errorf("marks = %s, want %s", got, want)
+	}
+}
+
 // TestRecordModeIsPrivate pins the mode mktemp gives the file: the marks hold
 // nothing secret, but a port that switched to os.WriteFile would silently
 // widen it.
@@ -302,8 +339,8 @@ func TestRecordConcurrent(t *testing.T) {
 	wg.Wait()
 	marks := Read(d, "c1", me)
 	for i := 0; i < 32; i++ {
-		v, ok := marks.Get(fmt.Sprintf("s%d", i))
-		if !ok || testjson.Compact(v) != strconv.Itoa(i+1) {
+		v, ok := marks.(map[string]any)[fmt.Sprintf("s%d", i)]
+		if !ok || compact(t, v) != strconv.Itoa(i+1) {
 			t.Errorf("mark s%d = %v, want %d", i, ok, i+1)
 		}
 	}
@@ -393,7 +430,7 @@ func TestRecordMatchesJq(t *testing.T) {
 // mustOld is what the helper passes as --argjson old: _await_marks' own output.
 func mustOld(t *testing.T, d string) string {
 	t.Helper()
-	return testjson.Compact(Read(d, "c1", "me"))
+	return compact(t, Read(d, "c1", "me"))
 }
 
 // TestReadMatchesJq pins the read program the same way, over files no single
@@ -413,7 +450,7 @@ func TestReadMatchesJq(t *testing.T) {
 	} {
 		d := dir(t)
 		write(t, d, "c1", "me", body)
-		got := testjson.Compact(Read(d, "c1", "me"))
+		got := compact(t, Read(d, "c1", "me"))
 
 		cmd := exec.Command(bin, "-cs", strings.TrimSpace(readProgram))
 		cmd.Stdin = strings.NewReader(body)

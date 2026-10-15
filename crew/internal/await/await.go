@@ -119,7 +119,11 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 					return 1
 				}
 			}
-			marks.Record(paths.Dir, crew, c.me, rows)
+			recorded := make([]any, len(rows))
+			for i, r := range rows {
+				recorded[i] = jsonv.ToAny(r)
+			}
+			marks.Record(paths.Dir, crew, c.me, recorded)
 			return 0
 		}
 		now := nowMS()
@@ -172,7 +176,7 @@ func check(r Request) (call, string) {
 // under `2>/dev/null || true`, so a row it cannot index, a torn tail, an
 // unreadable log and a missing log all leave stdout empty and the poll running
 // to the deadline.
-func due(path, crew string, c call, got jsonv.Value) []jsonv.Value {
+func due(path, crew string, c call, got any) []jsonv.Value {
 	st, err := os.Stat(path)
 	if err != nil || !st.Mode().IsRegular() {
 		return nil
@@ -189,12 +193,11 @@ func due(path, crew string, c call, got jsonv.Value) []jsonv.Value {
 		}
 		in = append(in, vs[0])
 	}
-	out, err := jqrun.Run(program, in, 0, map[string]jsonv.Value{
-		"crew": jsonv.Str(crew),
-		"me":   jsonv.Str(c.me),
-		"from": jsonv.Str(c.from),
-		"got":  got,
-	})
+	p, err := jqrun.CompileAny(program, 0, map[string]any{"crew": crew, "me": c.me, "from": c.from, "got": got})
+	if err != nil {
+		return nil
+	}
+	out, err := p.Run(jsonv.Array(in...))
 	if err != nil || out.Kind() != jsonv.KindArray {
 		return nil
 	}
