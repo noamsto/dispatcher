@@ -487,9 +487,9 @@ const maxRecapRows = 12
 
 // doneBehindPostTurn finds the finished-turn marker past the fixed window above
 // the box, walking up through nothing but the hint, hook-reload and recap lines
-// claude prints after a turn ends. A recap is one contiguous block that ends
-// with its `(disable recaps in /config)` tail, its wrapped rows are indented prose, and it starts at `※ recap:`. Any
-// other row ends the walk, so the pane stays not-idle.
+// claude prints after a turn ends. A recap is one contiguous block of indented
+// prose that starts at `※ recap:` and ends with its `(disable recaps in /config)`
+// tail. Any other row ends the walk, so the pane stays not-idle.
 func doneBehindPostTurn(text string) bool {
 	_, plain, a, _, off, ok := scanBox(text)
 	if !ok {
