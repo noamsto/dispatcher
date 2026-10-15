@@ -12,6 +12,12 @@
 //   - an id run through `awk -v` that unescapes to invalid UTF-8 (`\xff`) is
 //     compared as U+FFFD runes, and awk's warning about an unknown escape is not
 //     printed.
+//   - a ledger detail holding invalid UTF-8 is refused outright, where jq repairs
+//     it to U+FFFD and may accept; a bus line or the crew or session argument
+//     holding it stops the waiver from counting, where jq repairs it and may match.
+//   - a matching row whose body text exceeds 1 MiB, or whose line does when Go
+//     cannot stringify its body, and any unreadable line over 1 MiB stop any
+//     waiver from counting, since jq can abort on them.
 //   - [:alnum:] follows each engine's Unicode tables: glibc 2.42's (bash's =~)
 //     are Unicode 16, Go's 15, and gawk's regex lags both. The CI test uses Go's
 //     narrower class and the run-evidence boundary also counts every mark and
@@ -23,14 +29,17 @@
 package ledger
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"unicode"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"unicode/utf8"
 )
 
 // Input is what the arm reads for the gate.
@@ -51,7 +60,7 @@ func Check(in Input) string {
 	refuse := func(reason string) string { return "crew: refusing pr_open for " + in.From + " — " + reason }
 	// An unreadable doc fails grep quietly, which reads as no list.
 	hasList := !in.TaskDocErr && hasAcceptanceList(in.TaskDoc)
-	if !conforms(in.Detail) {
+	if !utf8.ValidString(in.Detail) || !conforms(in.Detail) {
 		if hasList {
 			return refuse(hint)
 		}
@@ -429,8 +438,9 @@ type text struct {
 	stop  []int // first ')' or unmatched '(' at or after i, skipping balanced groups
 }
 
-// scan reads d as jq's --arg does, invalid UTF-8 as U+FFFD; Oniguruma's \s is
-// Unicode White_Space, which is unicode.IsSpace.
+// scan reads d as jq's --arg does, except that invalid UTF-8 becomes one U+FFFD
+// per byte where jq folds a truncated sequence into one, which Check never lets
+// reach it; Oniguruma's \s is Unicode White_Space, which is unicode.IsSpace.
 func scan(d string) *text {
 	rs := []rune(d)
 	n := len(rs)
@@ -612,52 +622,303 @@ func items(d string) []item {
 	return out
 }
 
+// maxBody bounds a matching row's body text, and any line Go cannot read or
+// stringify: Oniguruma's retry limit aborts the whole jq program on a long
+// enough clause (about 10M chars), and 1 MiB stays below that even after
+// tostring grows a line up to 6x (DEL prints as \u007f).
+const maxBody = 1 << 20
+
 // waived is the arm's waiver jq program: a `msg` from dispatcher:<crew> to this
 // exact session whose body (ASCII-lowercased, split into clauses) has a clause
 // with a waive word, the id as a token, and no negation before a waive word.
+// An argument holding invalid UTF-8 never waives: jq repairs it, folding a
+// truncated sequence into one U+FFFD, and refusing is the fail-safe side.
 func waived(log []string, crew, from, id string) bool {
-	crew, from = jqArg(crew), jqArg(from)
-	ide := []rune(asciiLower(jqArg(id)))
+	if !utf8.ValidString(crew) || !utf8.ValidString(from) || !utf8.ValidString(id) {
+		return false
+	}
+	ide := []rune(asciiLower(id))
+	// jq can abort on an oversize row after an earlier waiver, so no early return.
+	found := false
 	for _, line := range log {
-		vs, err := jsonv.DecodeStream(strings.NewReader(line))
-		if err != nil || len(vs) != 1 || vs[0].Kind() != jsonv.KindObject {
+		row, ok := decodeRow(line)
+		if !ok {
+			if len(line) > maxBody {
+				return false
+			}
 			continue
 		}
-		row := vs[0]
 		if !field(row, "crew_id", crew) || !field(row, "kind", "msg") || !field(row, "from", "dispatcher:"+crew) || !field(row, "to", from) {
 			continue
 		}
-		for _, c := range clauses([]rune(asciiLower(body(row)))) {
+		text, ok := body(row)
+		if !ok && len(line) > maxBody || len(text) > maxBody {
+			return false
+		}
+		for _, c := range clauses([]rune(asciiLower(text))) {
 			if waiveWord(c) && !negated(c) && hasToken(c, ide) {
+				found = true
+			}
+		}
+	}
+	return found
+}
+
+// decodeRow is a log line holding exactly one JSON object, as jq reads it
+// (last duplicate key wins, a leading BOM skipped); a line holding invalid UTF-8
+// is refused, as jq would repair it.
+func decodeRow(line string) (map[string]json.RawMessage, bool) {
+	line = strings.TrimPrefix(line, "\xef\xbb\xbf")
+	if !utf8.ValidString(line) || jqRefuses(line) {
+		return nil, false
+	}
+	dec := json.NewDecoder(strings.NewReader(line))
+	var row map[string]json.RawMessage
+	if dec.Decode(&row) != nil || row == nil {
+		return nil, false
+	}
+	return row, dec.Decode(new(json.RawMessage)) == io.EOF
+}
+
+// jqRefuses is what jq's parser rejects that encoding/json accepts: a high
+// surrogate escape not followed by a low one, and nesting past jq's 10000 stack
+// slots (an array takes one, an object two).
+func jqRefuses(line string) bool {
+	const maxDepth = 10000
+	var stack []int
+	depth := 0
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case '[', '{':
+			if depth >= maxDepth {
 				return true
+			}
+			cost := 1
+			if line[i] == '{' {
+				cost = 2
+			}
+			stack = append(stack, cost)
+			depth += cost
+		case ']', '}':
+			if len(stack) == 0 {
+				return false
+			}
+			depth -= stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+		case '"':
+			for i++; i < len(line) && line[i] != '"'; i++ {
+				if line[i] != '\\' {
+					continue
+				}
+				i++
+				if i >= len(line) || line[i] != 'u' {
+					continue
+				}
+				hi, ok := hex4(line, i+1)
+				if !ok || hi < 0xd800 || hi > 0xdbff {
+					continue
+				}
+				lo, ok := hex4(line, i+7)
+				if !ok || line[i+5] != '\\' || line[i+6] != 'u' || lo < 0xdc00 || lo > 0xdfff {
+					return true
+				}
 			}
 		}
 	}
 	return false
 }
 
-// jqArg is a --arg value as jq holds it, invalid UTF-8 replaced.
-func jqArg(s string) string {
-	v, _ := jsonv.Str(s).AsString()
-	return v
+func hex4(s string, at int) (int, bool) {
+	if at+4 > len(s) {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(s[at:at+4], 16, 16)
+	return int(n), err == nil
 }
 
-func field(row jsonv.Value, key, want string) bool {
-	v, _ := row.Get(key)
-	s, ok := v.AsString()
-	return ok && s == want
+func field(row map[string]json.RawMessage, key, want string) bool {
+	raw := row[key]
+	var s string
+	return len(raw) > 0 && raw[0] == '"' && json.Unmarshal(raw, &s) == nil && s == want
 }
 
-// body is `(.body // "") | tostring`: a non-string is its compact JSON text.
-func body(row jsonv.Value) string {
-	v, _ := row.Get("body")
-	if !v.Truthy() {
-		return ""
+// body is `(.body // "") | tostring`: a non-string is its compact JSON text;
+// false when tostring fails, where jq's text is unknown.
+func body(row map[string]json.RawMessage) (string, bool) {
+	raw := row["body"]
+	if s := string(raw); s == "" || s == "null" || s == "false" {
+		return "", true
 	}
-	if s, ok := v.AsString(); ok {
-		return s
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s, true
 	}
-	return string(jsonv.Append(nil, v, jsonv.Options{}))
+	text, err := tostring(raw)
+	return text, err == nil
+}
+
+// tostring is jq's compact text of a decoded value: key order and number
+// literals in decNumber form, strings re-encoded the way jq prints them.
+func tostring(raw json.RawMessage) (string, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var out strings.Builder
+	var walk func() error
+	walk = func() error {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		switch t := tok.(type) {
+		case json.Delim:
+			if t == '[' {
+				out.WriteByte('[')
+				for first := true; dec.More(); first = false {
+					if !first {
+						out.WriteByte(',')
+					}
+					if err := walk(); err != nil {
+						return err
+					}
+				}
+				out.WriteByte(']')
+				_, err := dec.Token()
+				return err
+			}
+			// A repeated key keeps its first position and takes the last value.
+			var keys []string
+			vals := map[string]string{}
+			for dec.More() {
+				key, err := dec.Token()
+				if err != nil {
+					return err
+				}
+				var sb strings.Builder
+				quote(&sb, key.(string))
+				k := sb.String()
+				outer := out
+				out = strings.Builder{}
+				err = walk()
+				v := out.String()
+				out = outer
+				if err != nil {
+					return err
+				}
+				if _, seen := vals[k]; !seen {
+					keys = append(keys, k)
+				}
+				vals[k] = v
+			}
+			out.WriteByte('{')
+			for i, k := range keys {
+				if i > 0 {
+					out.WriteByte(',')
+				}
+				out.WriteString(k + ":" + vals[k])
+			}
+			out.WriteByte('}')
+			_, err := dec.Token()
+			return err
+		case string:
+			quote(&out, t)
+		case json.Number:
+			n, ok := jqNumber(t.String())
+			if !ok {
+				return errors.New("number outside decNumber's range")
+			}
+			out.WriteString(n)
+		case bool:
+			out.WriteString(strconv.FormatBool(t))
+		case nil:
+			out.WriteString("null")
+		}
+		return nil
+	}
+	if err := walk(); err != nil {
+		return "", err
+	}
+	return out.String(), nil
+}
+
+// jqNumber is decNumber's to-scientific-string of a JSON number literal, which
+// is what jq prints for a literal it has not done arithmetic on; a literal past
+// decNumber's Emax is the double jq prints for infinity.
+func jqNumber(lit string) (string, bool) {
+	neg := strings.HasPrefix(lit, "-")
+	lit = strings.TrimPrefix(lit, "-")
+	mant, expText, hasExp := strings.Cut(strings.ToLower(lit), "e")
+	e := 0
+	if hasExp {
+		var err error
+		if e, err = strconv.Atoi(expText); err != nil {
+			e = max(min(e, 1<<40), -(1 << 40))
+		}
+	}
+	ip, frac, _ := strings.Cut(mant, ".")
+	digits := strings.TrimLeft(ip+frac, "0")
+	if digits == "" {
+		digits = "0"
+	}
+	e -= len(frac)
+	if e < -1_000_000_000 {
+		return "", false // jq underflows these to a different exponent
+	}
+	if digits == "0" {
+		e = min(e, 999999999)
+	}
+	adjusted := e + len(digits) - 1
+	sign := ""
+	if neg {
+		sign = "-"
+	}
+	n := len(digits)
+	switch {
+	case digits != "0" && adjusted > 999999999:
+		return sign + "1.7976931348623157e+308", true
+	case e == 0:
+		return sign + digits, true
+	case e < 0 && adjusted >= -6:
+		if n > -e {
+			return sign + digits[:n+e] + "." + digits[n+e:], true
+		}
+		return sign + "0." + strings.Repeat("0", -e-n) + digits, true
+	}
+	out := sign + digits[:1]
+	if n > 1 {
+		out += "." + digits[1:]
+	}
+	if adjusted >= 0 {
+		return out + "E+" + strconv.Itoa(adjusted), true
+	}
+	return out + "E" + strconv.Itoa(adjusted), true
+}
+
+// quote writes s as a jq string literal: only the quote, backslash, control
+// characters and DEL are escaped.
+func quote(b *strings.Builder, s string) {
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '"' || r == '\\':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r == '\b':
+			b.WriteString(`\b`)
+		case r == '\f':
+			b.WriteString(`\f`)
+		case r < 0x20 || r == 0x7f:
+			fmt.Fprintf(b, `\u%04x`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
 }
 
 func asciiLower(s string) string {
