@@ -101,6 +101,15 @@ teardown() {
   done
 }
 
+@test "dispatch-resume's _remote_window copy matches dispatch.sh's" {
+  # A routed resume mirrors the remote window the way dispatch --host does;
+  # both are standalone builds, so each carries a copy.
+  canonical="$(sed -n '/^_remote_window() {/,/^}/p' "$ROOT/adapters/core/dispatch.sh")"
+  [ -n "$canonical" ]
+  found="$(sed -n '/^_remote_window() {/,/^}/p' "$ROOT/adapters/core/dispatch-resume.sh")"
+  [ "$found" = "$canonical" ]
+}
+
 @test "generator is idempotent" {
   # Compare checksums across two runs rather than `git diff --exit-code`: that
   # conflates generator drift with any unrelated uncommitted edit, and is

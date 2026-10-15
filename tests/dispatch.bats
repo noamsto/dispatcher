@@ -3550,6 +3550,104 @@ EOF
   [ "$resize_line" -lt "$launch_line" ]
 }
 
+# Remote mode, the far side of dispatch --host: the stub tmux answers
+# has-session per STUB_HAS_SESSION and logs every call.
+_remote_mode_tmux() {
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+has-session) [ -n "${STUB_HAS_SESSION:-}" ] || exit 1 ;;
+new-window | new-session) printf '%s %s\n' '@1' '%1' ;;
+display-message) printf '%s\n' '200 50 off' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "remote mode: with no crew session the worker window is the new session's first" {
+  stub_launch_bins
+  _remote_mode_tmux
+  TMUX_PANE=%7 DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_EMIT_ROW=1 \
+    run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "remote worker"
+  [ "$status" -eq 0 ]
+  row="$(sed -n 's/^dispatch_row: //p' <<<"$output")"
+  [ "$(grep -c . <<<"$row")" -eq 1 ]
+  jq -e '.kind == "dispatch" and .crew_id == "c1" and .branch == "feat/42-remote-worker"' <<<"$row"
+  [ "$row" = "$(jq -c 'select(.kind == "dispatch")' "$TEST_REPO/.git/crew/events.jsonl")" ]
+  grep -qE '^new-session -d -s crew-c1 -c .* -n feat-42-remote-worker .* -P' "$STUB_LOG"
+  grep -qx 'set-environment -t =crew-c1 -u CREW_WORKER_ID' "$STUB_LOG"
+  grep -qx 'dispatcher_pane: ' "$TEST_REPO/.dispatch-wt/feat-42-remote-worker/WORKER_TASK.md"
+  run ! grep -qE '^(new-window|resize-window)|^roster-render' "$STUB_LOG"
+}
+
+@test "remote mode: an existing crew session gets a new window" {
+  stub_launch_bins
+  _remote_mode_tmux
+  STUB_HAS_SESSION=1 DISPATCH_TMUX_SESSION=crew-c1 \
+    run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "remote worker"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"dispatch_row:"* ]]
+  grep -qE '^new-window -d -t =crew-c1: -c .* -n feat-42-remote-worker .* -P' "$STUB_LOG"
+  run ! grep -qE '^new-session|^resize-window' "$STUB_LOG"
+}
+
+@test "remote mode: a DISPATCH_TMUX_SESSION outside crew-<id> is refused before any scaffolding" {
+  stub_launch_bins
+  _remote_mode_tmux
+  DISPATCH_TMUX_SESSION='main:1' run run_dispatch standard sonnet --effort medium --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"DISPATCH_TMUX_SESSION must match"* ]]
+  [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ]
+}
+
+# dispatch --host's local side against a stub `crew remote-run`: the engine
+# preflight answers claude, the dispatch call exits STUB_REMOTE_RC.
+_host_crew_stub() {
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+remote-run)
+  case " $* " in
+  *" -- dispatch --engines "*) echo claude ;;
+  *" -- dispatch "*) exit "${STUB_REMOTE_RC:-3}" ;;
+  esac
+  ;;
+identity) printf 'iris\nbad name\n' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+}
+
+@test "dispatch --host forwards the parsed options and a dash title, never --host or --crew-id" {
+  stub_launch_bins
+  _host_crew_stub
+  run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 --draft 42 -- --dash title
+  [ "$status" -eq 3 ]
+  [[ "$stderr" == *"dispatch: --host mini: remote dispatch failed (exit 3)"* ]]
+  [[ "$stderr" == *"not passing codename 'bad name'"* ]]
+  call="$(grep -- '-- dispatch standard' "$STUB_LOG")"
+  [[ "$call" == "remote-run --host mini --env CREW_ID=c1 --env DISPATCH_TMUX_SESSION=crew-c1 --env DISPATCH_EMIT_ROW=1 --env DISPATCH_SESSION_ID=s"*" --env CREW_IDENTITY_AVOID=iris -- dispatch standard sonnet --effort medium --draft 42 --crew-id c1 -- --dash title" ]]
+  [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ]
+}
+
+@test "dispatch --host refuses the local-only flags before any remote call" {
+  stub_launch_bins
+  _host_crew_stub
+  local flag
+  for flag in '--base main' '--add-dir /tmp' --status --lazy; do
+    : >"$STUB_LOG"
+    # shellcheck disable=SC2086 # the flag and its value are two words
+    run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 $flag 42 "t"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"--host cannot combine with ${flag%% *}"* ]] || return 1
+    run ! grep -q '^remote-run' "$STUB_LOG"
+  done
+}
+
 # #947: these rows pin the PATH of the tmux *client* that opens a pane, so the
 # stub logs its own environment next to the argv. _grid_tmux_stub runs first for
 # its tmux-grid-refit filter.

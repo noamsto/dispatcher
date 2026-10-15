@@ -782,6 +782,25 @@ path_checks() {
   done
 }
 
+# route_remote <arg...> — a --pane check for a worker dispatched with --host:
+# its pane, transcripts and process table are on that host, so the whole check
+# runs there, with the same arguments. The one-line contract holds through a
+# dead link: a failed or silent call is the human's.
+route_remote() {
+  local row host out rc=0
+  row=$(crew resolve-target "$BRANCH" 2>/dev/null || true)
+  [ "$(cut -f5 <<<"$row")" = 1 ] || return 0
+  host=$(cut -f3 <<<"$row")
+  out=$(crew remote-run --host "$host" -- permission-check "$@") || rc=$?
+  decided=1
+  if [ "$rc" = 255 ] || [ -z "$out" ]; then
+    printf 'human: ssh to host %s failed\n' "$host"
+    exit 2
+  fi
+  printf '%s\n' "$out"
+  exit "$rc"
+}
+
 # decide — one observation: the frame, the call it binds to, and that call's
 # command. Any failed rule refuses, which exits: it runs in the main shell, so
 # a refusal at either observation is the one stdout line.
@@ -805,6 +824,7 @@ verdict() {
 main() {
   local frame id
   parse_args "$@"
+  [ -z "$PANE" ] || route_remote "$@"
   grant_roots
   [ -z "$PANE" ] || pane_worktree
   decide

@@ -1380,3 +1380,57 @@ pane_token_row() {
   [ "${#lines[@]}" -eq 1 ]
   [[ "$output" == "human: usage: "* ]]
 }
+
+# ---------------------------------------------------------------------------
+# A worker dispatched with --host: the whole check runs on its host
+# ---------------------------------------------------------------------------
+
+# remote_crew — a crew stub on STUBS: resolve-target answers a remote:true row
+# on host mini; remote-run logs its argv to CREW_LOG, prints STUB_REMOTE_OUT and
+# exits STUB_REMOTE_RC.
+remote_crew() {
+  cat >"$STUBS/crew" <<'STUB'
+#!/usr/bin/env bash
+case $1 in
+resolve-target) printf '%s\t%s\t%s\t%s\t%s\n' "$2" iris mini c1 1 ;;
+remote-run)
+  printf '%s\n' "$*" >>"$CREW_LOG"
+  [ -z "${STUB_REMOTE_OUT:-}" ] || printf '%s\n' "$STUB_REMOTE_OUT"
+  exit "${STUB_REMOTE_RC:-0}"
+  ;;
+esac
+exit 1
+STUB
+  chmod +x "$STUBS/crew"
+  export CREW_LOG="$BATS_TEST_TMPDIR/crew.log"
+}
+
+@test "permission-check: a remote worker's check runs on its host with the same args" {
+  remote_crew
+  STUB_REMOTE_OUT=allow-once pane --answer
+  [ "$status" -eq 0 ]
+  [ "$output" = allow-once ]
+  [ "$(cat "$CREW_LOG")" = "remote-run --host mini -- permission-check --pane %9 --branch $BRANCH --crew-dir $CREW --answer" ]
+  [ ! -e "$TMUX_LOG" ]
+}
+
+@test "permission-check: a remote refusal passes through with its status" {
+  remote_crew
+  STUB_REMOTE_OUT='human: frame: no dialog' STUB_REMOTE_RC=1 pane
+  assert_refused "frame: no dialog"
+}
+
+@test "permission-check: a dead link to the remote is one human line, exit 2" {
+  remote_crew
+  STUB_REMOTE_RC=255 pane
+  [ "$status" -eq 2 ]
+  [ "${#lines[@]}" -eq 1 ]
+  [ "$output" = "human: ssh to host mini failed" ]
+}
+
+@test "permission-check: a silent remote is one human line, exit 2" {
+  remote_crew
+  STUB_REMOTE_RC=0 pane
+  [ "$status" -eq 2 ]
+  [ "$output" = "human: ssh to host mini failed" ]
+}

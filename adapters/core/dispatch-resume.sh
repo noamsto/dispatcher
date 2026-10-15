@@ -464,6 +464,43 @@ _check_protocol_rev() {
   fi
 }
 
+# _remote_window <ssh> <crew_id> — mirror the remote crew-<id> session into this
+# tmux session, else say how to attach. og-remote-open is idempotent, so every
+# dispatch and resume runs it. Never fails: the remote worker exists either way.
+_remote_window() {
+  local into reason
+  if [ -z "${TMUX_PANE:-}" ]; then
+    reason="not inside tmux"
+  elif ! command -v og-remote-open >/dev/null 2>&1; then
+    reason="og-remote-open not on PATH"
+  else
+    into="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)"
+    if [ -z "$into" ]; then
+      reason="no tmux session for $TMUX_PANE"
+    elif og-remote-open "$1" "crew-$2" --into "$into" >&2; then
+      return 0
+    else
+      reason="og-remote-open failed"
+    fi
+  fi
+  echo "dispatch: remote window not mirrored ($reason); attach with: ssh -t $1 tmux attach -t crew-$2" >&2
+}
+
+# _resume_remote <branch> <host> <crew> — a remote:true row's worker lives on
+# <host>: its own dispatch resume runs there, against its own bus and tmux,
+# with every resume argument but the target. The host name keys settings,
+# which alone give the ssh target.
+_resume_remote() {
+  local rc=0 ssh
+  local -a rest=("${resume_args[@]:0:target_at}" "${resume_args[@]:target_at+1}")
+  crew remote-run --host "$2" --env "CREW_ID=$3" --env "DISPATCH_TMUX_SESSION=crew-$3" -- \
+    dispatch resume "$1" ${rest[@]+"${rest[@]}"} || rc=$?
+  [ "$rc" -eq 0 ] || exit "$rc"
+  ssh="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}" | jq -r --arg h "$2" '.hosts[$h].ssh // empty')"
+  _remote_window "$ssh" "$3"
+  exit 0
+}
+
 # _resolve_target_worktree <target> — resolve a target to its worktree
 # and cd there, so the cwd-bound path below runs unchanged (its record-mismatch
 # refusals included). The branch comes from the dispatcher's own bus rows
@@ -491,6 +528,9 @@ _resolve_target_worktree() {
   t_branch="$(cut -f1 <<<"$row")"
   host="$(cut -f3 <<<"$row")"
   t_crew="$(cut -f4 <<<"$row")"
+  if [ "$(cut -f5 <<<"$row")" = 1 ]; then
+    _resume_remote "$t_branch" "$host" "$t_crew"
+  fi
   here="${HOSTNAME:-$(uname -n)}"
   if [ -n "$host" ] && [ "$host" != "$here" ]; then
     echo "dispatch resume: $t_branch was dispatched on host '$host' (this is '$here') — its worktree and session transcript live there; run dispatch resume on $host" >&2
@@ -531,6 +571,9 @@ mcp_flag_val=""
 extra=""
 target=""
 positional=()
+# A routed resume forwards these, minus the target at index target_at.
+resume_args=("$@")
+target_at=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -587,11 +630,19 @@ while [ $# -gt 0 ]; do
     exit 1
     ;;
   *)
+    [ -n "$target_at" ] || target_at=$((${#resume_args[@]} - $#))
     positional+=("$1")
     shift
     ;;
   esac
 done
+
+# Remote mode: a dispatcher on another host asked for the window in the crew's
+# own session. The value becomes a tmux target, so its shape is fixed.
+if [ -n "${DISPATCH_TMUX_SESSION:-}" ] && [[ ! $DISPATCH_TMUX_SESSION =~ ^crew-[A-Za-z0-9_-]+$ ]]; then
+  echo "dispatch resume: DISPATCH_TMUX_SESSION must match ^crew-[A-Za-z0-9_-]+\$ (got '$DISPATCH_TMUX_SESSION')" >&2
+  exit 1
+fi
 
 # An optional leading target — `#N`/N, a Linear id, `worker:<branch>#<session>`,
 # a branch or a codename — lets this run from anywhere. A word of those shapes
@@ -1193,27 +1244,6 @@ fi
 
 if [ -z "$pane" ]; then
   sanitized="${branch//\//-}"
-  # Same client-geometry handling as dispatch: a detached new-window otherwise
-  # inherits tmux's fallback size, and codex's startup banner never redraws.
-  client_target=()
-  [ -n "${TMUX_PANE:-}" ] && client_target=(-t "$TMUX_PANE")
-  client_size="$(tmux display-message -p "${client_target[@]}" '#{client_width} #{client_height} #{status}' 2>/dev/null || true)"
-  client_width=""
-  client_height=""
-  if [[ $client_size =~ ^([1-9][0-9]*)[[:space:]]+([1-9][0-9]*)[[:space:]]+(off|on|[0-9]+)$ ]]; then
-    client_width="${BASH_REMATCH[1]}"
-    client_height="${BASH_REMATCH[2]}"
-    case "${BASH_REMATCH[3]}" in
-    off) status_rows=0 ;;
-    on) status_rows=1 ;;
-    *) status_rows="${BASH_REMATCH[3]}" ;;
-    esac
-    client_height=$((client_height - status_rows))
-    if ((client_height <= 0)); then
-      client_width=""
-      client_height=""
-    fi
-  fi
   # tmux takes the window's PATH from the client that opens it, so the client
   # runs under the cleaned PATH; tmux itself is resolved first, while the pinned
   # PATH still holds. The `|| true` keeps a box without tmux reaching the "could
@@ -1224,7 +1254,43 @@ if [ -z "$pane" ]; then
   if [ -n "$tmux_bin" ] && [ -n "$engine_env_path" ] && [ "$engine_env_path" != "$PATH" ]; then
     pane_client=(env PATH="$engine_env_path" "$tmux_bin")
   fi
-  read -r win pane < <("${pane_client[@]}" new-window -d -c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
+  client_width=""
+  client_height=""
+  if [ -n "${DISPATCH_TMUX_SESSION:-}" ]; then
+    # Remote mode, as in dispatch: the crew's own session, created with the
+    # window when absent; no client to size from.
+    win_args=(-c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
+    # A failed client leaves win_ids empty for the message below, as above.
+    if tmux has-session -t "=$DISPATCH_TMUX_SESSION" 2>/dev/null; then
+      win_ids="$("${pane_client[@]}" new-window -d -t "=$DISPATCH_TMUX_SESSION:" "${win_args[@]}" || true)"
+    else
+      # A racing dispatch may create the session first.
+      win_ids="$("${pane_client[@]}" new-session -d -s "$DISPATCH_TMUX_SESSION" "${win_args[@]}" 2>/dev/null)" ||
+        win_ids="$("${pane_client[@]}" new-window -d -t "=$DISPATCH_TMUX_SESSION:" "${win_args[@]}" || true)"
+    fi
+    read -r win pane <<<"$win_ids"
+  else
+    # Same client-geometry handling as dispatch: a detached new-window otherwise
+    # inherits tmux's fallback size, and codex's startup banner never redraws.
+    client_target=()
+    [ -n "${TMUX_PANE:-}" ] && client_target=(-t "$TMUX_PANE")
+    client_size="$(tmux display-message -p "${client_target[@]}" '#{client_width} #{client_height} #{status}' 2>/dev/null || true)"
+    if [[ $client_size =~ ^([1-9][0-9]*)[[:space:]]+([1-9][0-9]*)[[:space:]]+(off|on|[0-9]+)$ ]]; then
+      client_width="${BASH_REMATCH[1]}"
+      client_height="${BASH_REMATCH[2]}"
+      case "${BASH_REMATCH[3]}" in
+      off) status_rows=0 ;;
+      on) status_rows=1 ;;
+      *) status_rows="${BASH_REMATCH[3]}" ;;
+      esac
+      client_height=$((client_height - status_rows))
+      if ((client_height <= 0)); then
+        client_width=""
+        client_height=""
+      fi
+    fi
+    read -r win pane < <("${pane_client[@]}" new-window -d -c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
+  fi
   if [ -n "$client_width" ]; then
     tmux resize-window -t "$win" -x "$client_width" -y "$client_height"
   fi
@@ -1612,7 +1678,8 @@ rr_pane="${TMUX_PANE:-}"
 if [ -n "$dispatcher_live" ] && [ "$rr_pane" != "$dispatcher_pane_new" ]; then
   rr_pane=""
 fi
-_ensure_roster_render "$crew_id" "$rr_pane"
+# A remote-mode worker's roster diagram belongs to its dispatcher's host.
+[ -n "${DISPATCH_TMUX_SESSION:-}" ] || _ensure_roster_render "$crew_id" "$rr_pane"
 
 # _args_have <argv line> <token>... — true when every token appears in the line
 # as whole space-separated words, in the given order.
