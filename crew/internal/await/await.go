@@ -8,7 +8,9 @@
 package await
 
 import (
+	"bytes"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -19,7 +21,6 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 )
 
@@ -106,10 +107,10 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 
 	for {
 		if rows := due(paths.Log, crew, c, delivered); len(rows) > 0 {
-			opts := jsonv.Options{}
+			enc := json.NewEncoder(stdout)
+			enc.SetEscapeHTML(false)
 			for _, r := range rows {
-				_ = jsonv.Encode(stdout, r, opts)
-				say(stdout, "\n")
+				_ = enc.Encode(r)
 			}
 			// Flush before recording: a mark raised for rows nobody received
 			// makes the next await skip them for good (inbox took the same
@@ -119,11 +120,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 					return 1
 				}
 			}
-			recorded := make([]any, len(rows))
-			for i, r := range rows {
-				recorded[i] = jsonv.ToAny(r)
-			}
-			marks.Record(paths.Dir, crew, c.me, recorded)
+			marks.Record(paths.Dir, crew, c.me, rows)
 			return 0
 		}
 		now := nowMS()
@@ -176,7 +173,7 @@ func check(r Request) (call, string) {
 // under `2>/dev/null || true`, so a row it cannot index, a torn tail, an
 // unreadable log and a missing log all leave stdout empty and the poll running
 // to the deadline.
-func due(path, crew string, c call, got any) []jsonv.Value {
+func due(path, crew string, c call, got any) []any {
 	st, err := os.Stat(path)
 	if err != nil || !st.Mode().IsRegular() {
 		return nil
@@ -185,23 +182,37 @@ func due(path, crew string, c call, got any) []jsonv.Value {
 	if err != nil {
 		return nil
 	}
-	var in []jsonv.Value
-	for _, line := range strings.Split(string(data), "\n") {
-		vs, err := jsonv.DecodeStream(strings.NewReader(line))
-		if err != nil || len(vs) != 1 {
-			continue
+	in := []any{}
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		if v, ok := row(line); ok {
+			in = append(in, v)
 		}
-		in = append(in, vs[0])
 	}
 	p, err := jqrun.CompileAny(program, 0, map[string]any{"crew": crew, "me": c.me, "from": c.from, "got": got})
 	if err != nil {
 		return nil
 	}
-	out, err := p.Run(jsonv.Array(in...))
-	if err != nil || out.Kind() != jsonv.KindArray {
+	out, err := p.RunAny(in)
+	if err != nil {
 		return nil
 	}
-	return out.Elems()
+	rows, _ := out.([]any)
+	return rows
+}
+
+// row decodes one log line as exactly one JSON value; a blank, torn or
+// multi-value line is skipped, like the arm's `fromjson?`.
+func row(line []byte) (any, bool) {
+	dec := json.NewDecoder(bytes.NewReader(line))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, false
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, false
+	}
+	return v, true
 }
 
 // fromNote is the arm's `${from:+ from $from}`.
