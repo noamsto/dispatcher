@@ -310,7 +310,7 @@ _escalation_hop` byte-identically from dispatch.sh (only what resume calls)
     refresh-budget.sh — after `warn()` is defined, `settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"`,
     `[[ -n ${DISPATCH_OPENROUTER_MONTHLY_USD:-} ]] || DISPATCH_OPENROUTER_MONTHLY_USD="$(jq -r '.openrouter.monthlyUsd // "" | tostring' <<<"$settings")"`,
     `[[ -n ${DISPATCH_OPENROUTER_KEY_FILE:-} ]] || DISPATCH_OPENROUTER_KEY_FILE="$(jq -r '.openrouter.keyFile // ""' <<<"$settings")"`; header comment notes the resolver.
-    Proof: `bats tests/dispatcher.bats tests/refresh-budget.bats tests/crews.bats` green (new ones red before the edit); `shellcheck` both; `shfmt -i 2 -d` both empty.
+    Proof: `bats tests/dispatcher.bats tests/refresh-budget.bats the crews tests (since ported to Go, #1084)` green (new ones red before the edit); `shellcheck` both; `shfmt -i 2 -d` both empty.
 
 - [ ] **Step 12: doc renderer + generated regions + flake check**
       Files: `scripts/gen-model-map-doc.sh`, `scripts/gen-adapters.sh`, `adapters/core/protocols/dispatch-orchestration.md`, `flake.nix`, `tests/model-map.bats` (append), mirrors.

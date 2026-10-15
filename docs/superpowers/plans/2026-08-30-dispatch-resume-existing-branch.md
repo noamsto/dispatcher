@@ -132,7 +132,7 @@ a free existing issue before crew reap` asserts `claim_line < reap_line`, so it
   - **Guard the candidate query on `[ -f "$log" ]`.** `crew register` writes only
     `crews/<id>/pid`, never the bus log, so `events.jsonl` is routinely absent —
     and bare `jq` on a missing file exits 2, fatal under `bash -euo pipefail`.
-    Unguarded this turns two currently-green tests red: `tests/crews.bats`
+    Unguarded this turns two currently-green tests red: `the crews tests (since ported to Go, #1084)`
     "adopt: a registered pid of 0 does not read as a live dispatcher" and
     "adopt: a dead-pid registered crew is adoptable without --force", both of
     which register a pid, write no events, and take the dead-pid release branch.
@@ -140,7 +140,7 @@ a free existing issue before crew reap` asserts `claim_line < reap_line`, so it
     route a missing/empty log to "no candidates", which already short-circuits
     every `gh` call.
   - Every message to **stderr**; stdout stays exactly the bare crew id.
-  - _Verify:_ `bats tests/crews.bats -f "adopt:"`.
+  - _Verify:_ `bats the crews tests (since ported to Go, #1084) -f "adopt:"`.
 
 ## E. protocols
 
@@ -214,7 +214,7 @@ a free existing issue before crew reap` asserts `claim_line < reap_line`, so it
     non-`--pr` path, including #72's terminal-`exited`-with-live-engine case;
     fork warning names the sibling branch, prints the title as data, exits 0.
 
-- [ ] **Step 19: `tests/crews.bats` — adopt release** — acceptance 10
+- [ ] **Step 19: `the crews tests (since ported to Go, #1084)` — adopt release** — acceptance 10
   - `setup()` stubs nothing, so these tests need `stub_bin gh` **and** a `tmux`
     stub with a `list-windows -a -F` response, since the live-occupant case runs
     through `_occupants`.

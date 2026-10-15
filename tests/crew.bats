@@ -2199,7 +2199,7 @@ after_await_parks() {
 }
 
 # A hard kill mid-append leaves a torn trailing line (crew.sh documents this
-# crash mode; tests/crews.bats pins the same tolerance for `crews`). await must
+# crash mode; crew/crews_cli_test.go pins the same tolerance for `crews`). await must
 # still read the well-formed reply above it, not abort the whole log read.
 @test "await: a torn trailing log line does not hide a reply" {
   id="worker:feat/x#s1-1"
