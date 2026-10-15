@@ -1,5 +1,5 @@
 // Package once renders a data.Snapshot as the plain "--once" text: the four
-// "== Pane ==" sections tests/fixtures/crew-dash/once.golden pins, byte for
+// "== Pane ==" sections dash/internal/once/testdata/once.golden pins, byte for
 // byte.
 package once
 

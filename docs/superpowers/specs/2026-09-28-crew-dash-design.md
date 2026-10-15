@@ -146,7 +146,7 @@ only — the table columns do not change.
 
 ## `--once` text (format unchanged from the first slice)
 
-The plain renderer keeps the accepted pane text exactly, so `tests/fixtures/crew-dash/once.golden` stays the contract; `--once` sections are headed `== Settings ==` etc. and never truncate.
+The plain renderer keeps the accepted pane text exactly, so `dash/internal/once/testdata/once.golden` stays the contract; `--once` sections are headed `== Settings ==` etc. and never truncate.
 
 **1 Settings.** The `--show-origin` tree, one row per leaf (a node is a leaf
 only when its keys are exactly `origin` and `value` and `.origin` is a string —
@@ -269,7 +269,7 @@ tea.Cmd` consulted by the root model for keys no view consumed; the command
   origin's badge renders differently under TrueColor).
 - `nix build .#crew-dash` runs all Go tests; `checks.crew-dash` puts them in
   `nix flake check`.
-- `tests/crew-dash.bats` keeps the end-to-end contract through the real CLIs:
+- the crew-dash CLI tests (now `dash/main_test.go`) keeps the end-to-end contract through the real CLIs:
   it uses a prebuilt `$CREW_DASH_BIN` when set (e.g. `nix build
 .#crew-dash`, works offline), else builds once with `go build` in
   `setup_file` and keeps the
@@ -281,7 +281,7 @@ tea.Cmd` consulted by the root model for keys no view consumed; the command
 
 - Golden `--once` over fixture settings/budget/retro/ratings (all three layers,
   a locked key, an ahead-of-pace engine, an empty retro store):
-  `bats tests/crew-dash.bats` (real CLIs) and `go test ./internal/once`.
+  the crew-dash CLI tests (real CLIs) and `go test ./internal/once`.
 - Interactive 80×24 and resize without bleed: `go test ./internal/ui` golden
   frames + resize test; charm-tui-reviewer and go-reviewer at review.
 - Packaged in the flake; `nix flake check` builds and tests it; shellcheck
