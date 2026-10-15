@@ -155,6 +155,9 @@ var checkCases = []checkCase{
 	{name: "duplicate nested key takes the last value", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":{"x":"waive AC3","x":""}}`}, want: waiverLine("AC3")},
 	{name: "duplicate nested key last value waives", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":{"x":"not","x":"waive AC3"}}`}},
 	{name: "number literal prints as jq does", detail: "AC1E2 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":["waive",1e2]}`}, want: waiverLine("AC1E2")},
+	{name: "lone high surrogate refuses the row", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":"\ud800 waive AC3"}`}, want: waiverLine("AC3")},
+	{name: "paired surrogate is fine", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":"\ud83d\ude00 waive AC3"}`}},
+	{name: "nesting past jq limit refuses the row", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":` + strings.Repeat("[", 9999) + `"waive AC3"` + strings.Repeat("]", 9999) + `}`}, want: waiverLine("AC3")},
 	{name: "waived without an id", detail: "waived(dispatcher)", doc: docList, want: noID},
 	{name: "colon-only id strips to empty", detail: ": waived(dispatcher)", doc: docList, want: noID},
 	{name: "trailing colon id", detail: "AC3: waived(dispatcher)", doc: docList, log: []string{reply("waive ac3")}},
@@ -576,7 +579,7 @@ func waiverCorpus() []waiverCase {
 
 func TestJQNumberAgainstJQ(t *testing.T) {
 	bin := jqBin(t)
-	for _, lit := range []string{"1", "1.50", "1e2", "1E2", "0.00000001", "1.5e-10", "1e1000", "-0", "12.30e-5", "0e5", "-1E400", "123456789012345678901234567890", "0.000001", "100e-2", "1e+2"} {
+	for _, lit := range []string{"1", "1.50", "1e2", "1E2", "0.00000001", "1.5e-10", "1e1000", "-0", "12.30e-5", "0e5", "-1E400", "123456789012345678901234567890", "0.000001", "100e-2", "1e+2", "0e1000000000", "-0e9999999999", "1e-900000000"} {
 		out, rc := runJQ(t, bin, lit, "-c", ".|tostring")
 		if rc != 0 {
 			t.Fatalf("jq exit %d for %s", rc, lit)
@@ -585,7 +588,7 @@ func TestJQNumberAgainstJQ(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := jqNumber(lit); got != want {
+		if got, ok := jqNumber(lit); !ok || got != want {
 			t.Errorf("jqNumber(%s) = %s, jq says %s", lit, got, want)
 		}
 	}

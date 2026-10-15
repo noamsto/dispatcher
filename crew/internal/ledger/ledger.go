@@ -25,6 +25,7 @@ package ledger
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -640,12 +641,72 @@ func waived(log []string, crew, from, id string) bool {
 // decodeRow is a log line holding exactly one JSON object, as jq reads it
 // (last duplicate key wins, a leading BOM skipped).
 func decodeRow(line string) (map[string]json.RawMessage, bool) {
-	dec := json.NewDecoder(strings.NewReader(strings.TrimPrefix(line, "\xef\xbb\xbf")))
+	line = strings.TrimPrefix(line, "\xef\xbb\xbf")
+	if jqRefuses(line) {
+		return nil, false
+	}
+	dec := json.NewDecoder(strings.NewReader(line))
 	var row map[string]json.RawMessage
 	if dec.Decode(&row) != nil || row == nil {
 		return nil, false
 	}
 	return row, dec.Decode(new(json.RawMessage)) == io.EOF
+}
+
+// jqRefuses is what jq's parser rejects that encoding/json accepts: a high
+// surrogate escape not followed by a low one, and nesting past jq's 10000 stack
+// slots (an array takes one, an object two).
+func jqRefuses(line string) bool {
+	const maxDepth = 10000
+	var stack []int
+	depth := 0
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case '[', '{':
+			if depth >= maxDepth {
+				return true
+			}
+			cost := 1
+			if line[i] == '{' {
+				cost = 2
+			}
+			stack = append(stack, cost)
+			depth += cost
+		case ']', '}':
+			if len(stack) == 0 {
+				return false
+			}
+			depth -= stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+		case '"':
+			for i++; i < len(line) && line[i] != '"'; i++ {
+				if line[i] != '\\' {
+					continue
+				}
+				i++
+				if i >= len(line) || line[i] != 'u' {
+					continue
+				}
+				hi, ok := hex4(line, i+1)
+				if !ok || hi < 0xd800 || hi > 0xdbff {
+					continue
+				}
+				lo, ok := hex4(line, i+7)
+				if !ok || line[i+5] != '\\' || line[i+6] != 'u' || lo < 0xdc00 || lo > 0xdfff {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func hex4(s string, at int) (int, bool) {
+	if at+4 > len(s) {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(s[at:at+4], 16, 16)
+	return int(n), err == nil
 }
 
 // jqArg is a --arg value as jq holds it: each invalid byte becomes U+FFFD.
@@ -749,7 +810,11 @@ func tostring(raw json.RawMessage) (string, error) {
 		case string:
 			quote(&out, t)
 		case json.Number:
-			out.WriteString(jqNumber(t.String()))
+			n, ok := jqNumber(t.String())
+			if !ok {
+				return errors.New("number outside decNumber's range")
+			}
+			out.WriteString(n)
 		case bool:
 			out.WriteString(strconv.FormatBool(t))
 		case nil:
@@ -766,7 +831,7 @@ func tostring(raw json.RawMessage) (string, error) {
 // jqNumber is decNumber's to-scientific-string of a JSON number literal, which
 // is what jq prints for a literal it has not done arithmetic on; a literal past
 // decNumber's Emax is the double jq prints for infinity.
-func jqNumber(lit string) string {
+func jqNumber(lit string) (string, bool) {
 	neg := strings.HasPrefix(lit, "-")
 	lit = strings.TrimPrefix(lit, "-")
 	mant, expText, hasExp := strings.Cut(strings.ToLower(lit), "e")
@@ -783,6 +848,12 @@ func jqNumber(lit string) string {
 		digits = "0"
 	}
 	e -= len(frac)
+	if e < -1_000_000_000 {
+		return "", false // jq underflows these to a different exponent
+	}
+	if digits == "0" {
+		e = min(e, 999999999)
+	}
 	adjusted := e + len(digits) - 1
 	sign := ""
 	if neg {
@@ -791,23 +862,23 @@ func jqNumber(lit string) string {
 	n := len(digits)
 	switch {
 	case digits != "0" && adjusted > 999999999:
-		return sign + "1.7976931348623157e+308"
+		return sign + "1.7976931348623157e+308", true
 	case e == 0:
-		return sign + digits
+		return sign + digits, true
 	case e < 0 && adjusted >= -6:
 		if n > -e {
-			return sign + digits[:n+e] + "." + digits[n+e:]
+			return sign + digits[:n+e] + "." + digits[n+e:], true
 		}
-		return sign + "0." + strings.Repeat("0", -e-n) + digits
+		return sign + "0." + strings.Repeat("0", -e-n) + digits, true
 	}
 	out := sign + digits[:1]
 	if n > 1 {
 		out += "." + digits[1:]
 	}
 	if adjusted >= 0 {
-		return out + "E+" + strconv.Itoa(adjusted)
+		return out + "E+" + strconv.Itoa(adjusted), true
 	}
-	return out + "E" + strconv.Itoa(adjusted)
+	return out + "E" + strconv.Itoa(adjusted), true
 }
 
 // quote writes s as a jq string literal: only the quote, backslash, control
