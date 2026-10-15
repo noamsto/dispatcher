@@ -34,6 +34,14 @@ jobs:
       # with scripts/bats-shard-weights.sh.
       - name: shard plan covers the suite
         run: nix develop -c bash scripts/bats-shard.sh --check
+      # Both harness inventories record source_line values for the sampled bats
+      # files, so adding a case shifts every row below it. harness-bench.yml
+      # checks the manifest but only triggers on tests/harness/** and
+      # scripts/harness-*.sh, so a bats-only edit goes unchecked there.
+      - name: harness inventory is current
+        run: |
+          nix develop -c bash scripts/harness-manifest.sh --check
+          nix develop -c bash scripts/harness-inventory.sh --check
 
   # module.bats's setup_file does a multi-output nix build of this flake.
   # On a cold git-fetcher cache that races inside nix, so this file runs
