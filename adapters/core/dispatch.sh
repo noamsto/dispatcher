@@ -286,8 +286,11 @@ _ensure_dispatched_label() {
 }
 
 # _branch_finished <events-file> <branch> [<git-dir>] — 0 when <branch>'s newest
-# dispatch row belongs to a worker whose latest status is `reaped` by `crew reap`
-# and the branch has no local ref (#1045). Origin refs are the caller's business.
+# session's latest status is `reaped` by `crew reap` and the branch has no local
+# ref. The newest session is the newest dispatch row's worker followed through
+# any `resume` rows chained by prev_worker_id, because `crew reap` posts under the
+# branch's newest session, which a resume makes a different one than the dispatch
+# row's. Origin refs are the caller's business.
 # Fail-closed: an unreadable file, a row without a worker id or a jq failure all
 # return 1, so the row keeps counting as evidence.
 _branch_finished() {
@@ -295,7 +298,9 @@ _branch_finished() {
   local -a git_cmd=(git)
   [ -n "$gitdir" ] && git_cmd=(git --git-dir="$gitdir")
   [ -r "$events" ] || return 1
-  worker="$(jq -nrR --arg b "$branch" '[inputs | fromjson? | objects | select(.kind=="dispatch" and (.branch // "") == $b)] | last | .worker_id // empty' "$events")" || return 1
+  worker="$(jq -nrR --arg b "$branch" '[inputs | fromjson? | objects | select((.kind=="dispatch" or .kind=="resume") and (.branch // "") == $b)] as $rows
+    | ([$rows[] | select(.kind=="dispatch")] | last | .worker_id // empty) as $first
+    | reduce ($rows[] | select(.kind=="resume" and (.worker_id | type) == "string" and .worker_id != "")) as $r ($first; if ($r.prev_worker_id // "") == . then $r.worker_id else . end)' "$events")" || return 1
   [ -n "$worker" ] || return 1
   state="$(jq -nrR --arg w "$worker" '[inputs | fromjson? | objects | select(.kind=="status" and .from == $w)] | last | select(.body.state == "reaped" and .body.source == "reap") | "reaped"' "$events")" || return 1
   [ "$state" = reaped ] || return 1
@@ -370,7 +375,7 @@ _claim_evidence() {
     echo "events log unreadable"
     return 0
   }
-  # A branch whose worker was reaped is finished, not a claim (#1045).
+  # A branch whose newest session was reaped is finished, not a claim.
   local seen=$'\n' br
   while IFS= read -r br; do
     [ -n "$br" ] || continue
@@ -495,7 +500,7 @@ _claim_index_evidence() {
     # A dispatch row outlives its dispatch shell: the worker is on the issue
     # until a release row says otherwise, as the bus's own dispatch rows read.
     if [ "$kind" = dispatch ]; then
-      # The owning clone's own bus says whether this branch was reaped (#1045).
+      # The owning clone's own bus says whether this branch was reaped.
       case "$branch" in "feat/$1-"*)
         [ -d "$clone" ] && _branch_finished "$clone/.git/crew/events.jsonl" "$branch" "$clone/.git" && continue
         ;;
