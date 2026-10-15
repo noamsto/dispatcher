@@ -126,25 +126,6 @@ tests/public-leak-guard.bats	public-leak-guard	!timing	6891
 tests/rate-autosweep.bats	autosweep	!timing	32134
 tests/rate-autosweep.bats	guard	!timing	84
 tests/rate-sweep-all.bats	sweep-all	!timing	23204
-tests/rate.bats	*	!timing	1336
-tests/rate.bats	--report	!timing	325
-tests/rate.bats	--report --json	!timing	531
-tests/rate.bats	--report on an empty store	!timing	182
-tests/rate.bats	cost	!timing	4149
-tests/rate.bats	crew watch	!timing	1425
-tests/rate.bats	first_ci_green	!timing	1809
-tests/rate.bats	lock	!timing	1877
-tests/rate.bats	outcome	!timing	1719
-tests/rate.bats	rate --report	!timing	2283
-tests/rate.bats	rate --report (default)	!timing	574
-tests/rate.bats	rate --report --pooled	!timing	327
-tests/rate.bats	reconcile	!timing	6713
-tests/rate.bats	reverted	!timing	1588
-tests/rate.bats	review_rounds	!timing	463
-tests/rate.bats	sweep	!timing	5147
-tests/rate.bats	task_kind	!timing	644
-tests/rate.bats	terminal_state	!timing	972
-tests/rate.bats	unresolved_notes	!timing	1687
 tests/reap-race.bats	reap	!timing	20375
 tests/refresh-budget.bats	*	!timing	181711
 tests/refresh-budget.bats	--report usage	!timing	221
