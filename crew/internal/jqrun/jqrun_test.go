@@ -1,7 +1,10 @@
 package jqrun
 
 import (
+	"encoding/json"
 	"math"
+	"math/big"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -142,5 +145,251 @@ func TestJQFromJSON(t *testing.T) {
 func TestJQFromJSONIsOptIn(t *testing.T) {
 	if _, err := Run(`"1" | _jqfromjson`, nil, 0, nil); err == nil {
 		t.Error("_jqfromjson defined without WithJQFromJSON")
+	}
+}
+
+func toGoAll(t *testing.T, vs []jsonv.Value) []any {
+	t.Helper()
+	if vs == nil {
+		return nil
+	}
+	out := make([]any, len(vs))
+	for i, v := range vs {
+		g, err := toGo(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[i] = g
+	}
+	return out
+}
+
+func toGoVars(t *testing.T, vars map[string]jsonv.Value) map[string]any {
+	t.Helper()
+	if vars == nil {
+		return nil
+	}
+	out := make(map[string]any, len(vars))
+	for k, v := range vars {
+		g, err := toGo(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[k] = g
+	}
+	return out
+}
+
+func asFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case json.Number:
+		f, _, err := big.ParseFloat(n.String(), 10, 64, big.ToNearestEven)
+		if err != nil {
+			return 0, false
+		}
+		f64, _ := f.Float64()
+		return f64, true
+	}
+	return 0, false
+}
+
+// valueEqual compares gojq-form values, treating json.Number and float64 as
+// the same number when they denote the same value.
+func valueEqual(a, b any) bool {
+	switch x := a.(type) {
+	case []any:
+		y, ok := b.([]any)
+		if !ok || len(x) != len(y) {
+			return false
+		}
+		for i := range x {
+			if !valueEqual(x[i], y[i]) {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		y, ok := b.(map[string]any)
+		if !ok || len(x) != len(y) {
+			return false
+		}
+		for k, xv := range x {
+			yv, ok := y[k]
+			if !ok || !valueEqual(xv, yv) {
+				return false
+			}
+		}
+		return true
+	case json.Number, float64:
+		return numEqual(a, b)
+	default:
+		return reflect.DeepEqual(a, b)
+	}
+}
+
+func numEqual(a, b any) bool {
+	_, aFloat := a.(float64)
+	_, bFloat := b.(float64)
+	if aFloat || bFloat {
+		fa, okA := asFloat(a)
+		fb, okB := asFloat(b)
+		if !okA || !okB {
+			return false
+		}
+		switch {
+		case math.IsNaN(fa) || math.IsNaN(fb):
+			return math.IsNaN(fa) && math.IsNaN(fb)
+		case math.IsInf(fa, 0) || math.IsInf(fb, 0):
+			return fa == fb
+		}
+	}
+	ra, okA := numRat(a)
+	rb, okB := numRat(b)
+	return okA && okB && ra.Cmp(rb) == 0
+}
+
+func numRat(v any) (*big.Rat, bool) {
+	r := new(big.Rat)
+	switch n := v.(type) {
+	case json.Number:
+		return r.SetString(n.String())
+	case float64:
+		return r.SetFloat64(n), true
+	}
+	return nil, false
+}
+
+func onlyNormalised(v any) bool {
+	switch t := v.(type) {
+	case nil, bool, string, float64, json.Number:
+		return true
+	case []any:
+		for _, e := range t {
+			if !onlyNormalised(e) {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		for _, e := range t {
+			if !onlyNormalised(e) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func TestAnyEntryPointsMatchJSONV(t *testing.T) {
+	fromJSON := []jsonv.Value{
+		jsonv.Str(`{"a":"\udc00","n":-nan}`),
+		jsonv.Str(`{"a":"\ud83d"}`),
+		jsonv.Str(`1 2`),
+		jsonv.Str(``),
+		jsonv.Num(5),
+	}
+	for _, tc := range []struct {
+		name    string
+		prog    string
+		input   []jsonv.Value
+		vars    map[string]jsonv.Value
+		opts    []Option
+		now     float64
+		wantErr bool
+	}{
+		{name: "overrides now", prog: `{got: .[0].a, b: $b, m: $m.x, age: (now - 10)}`, input: decode(t, `{"a": 1}`), now: 42,
+			vars: map[string]jsonv.Value{"b": jsonv.Str("br"), "m": jsonv.Object(jsonv.Member{Key: "x", Val: jsonv.Str("y")})}},
+		{name: "now string literals", prog: `{msg: "right now", n: now}`, input: decode(t, `{}`), now: 42},
+		{name: "runtime error", prog: `.[0].a`, input: decode(t, `5`), wantErr: true},
+		{name: "words and comments", prog: "# last-known now\n.[0] | {age: ((now*1000) - .ts), known: \"known\", msg: \"right now\"}\n", input: decode(t, `{"ts":1}`), now: 42},
+		{name: "big int", prog: `.[0]`, input: decode(t, `{"v":12345678901234567891}`)},
+		{name: "exponent", prog: `.[0]`, input: decode(t, `{"v":1.0e3}`)},
+		{name: "fraction", prog: `.[0]`, input: decode(t, `{"v":1699999000000.50}`)},
+		{name: "huge exponent", prog: `.[0]`, input: decode(t, `{"v":1e1000}`)},
+		{name: "plain int", prog: `.[0]`, input: decode(t, `{"v":1700000000000}`)},
+		{name: "floor", prog: `.[0].v | floor`, input: decode(t, `{"v":1.7}`)},
+		{name: "nan and inf", prog: `.[0] | {n: .nan, i: (now - .big), p: (.big * 2)}`, input: decode(t, `{"nan":NaN,"big":1e1000}`)},
+		{name: "sorted keys", prog: `.[0] as $x | {b: 1, a: $x.k} | to_entries | from_entries`, input: decode(t, `{"k":2}`)},
+		{name: "jqfromjson", prog: `[.[] | [try _jqfromjson catch "err"], [_jqfromjson?], [(_jqfromjson? // null)]]`, input: fromJSON, opts: []Option{WithJQFromJSON()}},
+		{name: "jqfromjson opt-in", prog: `"1" | _jqfromjson`, wantErr: true},
+		{name: "null passthrough", prog: `.[0]`, input: decode(t, `null`)},
+		{name: "nil input slurp", prog: `length`},
+		{name: "nested passthrough", prog: `.[0]`, input: decode(t, `{"z":1,"a":{"y":null,"b":2}}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			want, wantErr := Run(tc.prog, tc.input, tc.now, tc.vars, tc.opts...)
+			if (wantErr != nil) != tc.wantErr {
+				t.Fatalf("jsonv Run err = %v, wantErr %v", wantErr, tc.wantErr)
+			}
+			in, goVars := toGoAll(t, tc.input), toGoVars(t, tc.vars)
+			viaRun, errRun := RunAny(tc.prog, in, tc.now, goVars, tc.opts...)
+			var viaProg any
+			p, errProg := CompileAny(tc.prog, tc.now, goVars, tc.opts...)
+			if errProg == nil {
+				slurped, err := toGo(jsonv.Array(tc.input...))
+				if err != nil {
+					t.Fatal(err)
+				}
+				viaProg, errProg = p.RunAny(slurped)
+			}
+			if (errRun != nil) != tc.wantErr || (errProg != nil) != tc.wantErr {
+				t.Fatalf("any errs = %v, %v; wantErr %v", errRun, errProg, tc.wantErr)
+			}
+			if tc.wantErr {
+				return
+			}
+			wantGo, err := toGo(want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, got := range map[string]any{"RunAny": viaRun, "Program.RunAny": viaProg} {
+				if !onlyNormalised(got) {
+					t.Errorf("%s: non-normalised output %#v", name, got)
+				}
+				if !valueEqual(got, wantGo) {
+					t.Errorf("%s: got %#v, want %#v", name, got, wantGo)
+				}
+			}
+		})
+	}
+}
+
+func TestRunAnyForm(t *testing.T) {
+	nan, negInf := math.NaN(), math.Inf(-1)
+	for _, tc := range []struct {
+		name  string
+		prog  string
+		input []any
+		now   float64
+		want  any
+	}{
+		{name: "fraction literal", prog: `.[0].v`, input: []any{map[string]any{"v": json.Number("1699999000000.50")}}, want: json.Number("1699999000000.50")},
+		{name: "big int", prog: `.[0].v`, input: []any{map[string]any{"v": json.Number("12345678901234567891")}}, want: json.Number("12345678901234567891")},
+		{name: "computed NaN", prog: `.[0].v | . - .`, input: []any{map[string]any{"v": nan}}, want: nan},
+		{name: "-Inf passthrough", prog: `.[0].v`, input: []any{map[string]any{"v": negInf}}, want: negInf},
+		{name: "huge exponent", prog: `.[0].v`, input: []any{map[string]any{"v": json.Number("1e1000")}}, want: json.Number("1e1000")},
+		{name: "integer result", prog: `now - 10`, now: 42, want: json.Number("32")},
+		{name: "nested passthrough", prog: `.[0]`,
+			input: []any{map[string]any{"a": []any{json.Number("1"), "s", nil, true, map[string]any{"k": 2.5}}}},
+			want:  map[string]any{"a": []any{json.Number("1"), "s", nil, true, map[string]any{"k": 2.5}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := RunAny(tc.prog, tc.input, tc.now, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if f, ok := tc.want.(float64); ok && math.IsNaN(f) {
+				if g, ok := got.(float64); !ok || !math.IsNaN(g) {
+					t.Errorf("got %#v, want float64 NaN", got)
+				}
+				return
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("got %#v, want %#v", got, tc.want)
+			}
+		})
 	}
 }
