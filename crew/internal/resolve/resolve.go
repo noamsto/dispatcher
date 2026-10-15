@@ -13,6 +13,8 @@
 package resolve
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,7 +24,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 //go:embed resolve.jq
@@ -55,8 +56,9 @@ func (r Row) line() string {
 // Rows is the log `_resolve_target` reads: `jq -R` with `fromjson?`, so a line
 // that does not decode to exactly one value is skipped and its neighbours still
 // resolve. A missing, non-regular or unreadable log is no rows at all, which is
-// the arm's `[ -f "$log" ]` miss and its swallowed open failure.
-func Rows(path string) []jsonv.Value {
+// the arm's `[ -f "$log" ]` miss and its swallowed open failure. Numbers stay
+// json.Number, gojq's form, with their literal text intact.
+func Rows(path string) []any {
 	st, err := os.Stat(path)
 	if err != nil || !st.Mode().IsRegular() {
 		return nil
@@ -65,13 +67,18 @@ func Rows(path string) []jsonv.Value {
 	if err != nil {
 		return nil
 	}
-	var rows []jsonv.Value
+	var rows []any
 	for _, line := range strings.Split(string(data), "\n") {
-		vs, err := jsonv.DecodeStream(strings.NewReader(line))
-		if err != nil || len(vs) != 1 {
+		dec := json.NewDecoder(strings.NewReader(line))
+		dec.UseNumber()
+		var v any
+		if dec.Decode(&v) != nil {
 			continue
 		}
-		rows = append(rows, vs[0])
+		if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+			continue
+		}
+		rows = append(rows, v)
 	}
 	return rows
 }
@@ -80,17 +87,15 @@ func Rows(path string) []jsonv.Value {
 // names, newest `dispatch` row per branch, in the fold's branch-sorted order —
 // the order the ambiguity list and `where`'s branch join are printed in. A fold
 // that fails on this bus is the arm's swallowed jq failure: no rows.
-func Resolve(rows []jsonv.Value, target, crew string) []Row {
-	out, err := jqrun.Run(program, rows, 0, map[string]jsonv.Value{
-		"t": jsonv.Str(target),
-		"c": jsonv.Str(crew),
-	})
-	if err != nil || out.Kind() != jsonv.KindArray {
+func Resolve(rows []any, target, crew string) []Row {
+	out, err := jqrun.RunAny(program, rows, 0, map[string]any{"t": target, "c": crew})
+	arr, ok := out.([]any)
+	if err != nil || !ok {
 		return nil
 	}
 	var matched []Row
-	for _, v := range out.Elems() {
-		s, ok := v.AsString()
+	for _, v := range arr {
+		s, ok := v.(string)
 		if !ok {
 			continue
 		}
