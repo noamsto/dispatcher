@@ -32,12 +32,23 @@ suite_count() { find "$REPO_ROOT/tests" -maxdepth 1 -name '*.bats' | wc -l; }
   [[ "$output" != *tests/secret-read-guard.bats* ]]
 }
 
-@test "affected: crew/ Go sources select the crew set's 12 files" {
+@test "affected: crew/ Go sources select the crew set's 12 files and remote-host" {
   affected --files crew/main.go
   [ "$status" -eq 0 ]
-  [ "${#lines[@]}" -eq 12 ]
+  [ "${#lines[@]}" -eq 13 ]
   [[ "$output" == *tests/crew.bats* ]]
+  [[ "$output" == *tests/remote-host.bats* ]]
   [[ "$output" != *tests/secret-read-guard.bats* ]]
+}
+
+@test "affected: the dispatch launchers and permission-check select remote-host" {
+  local f
+  for f in dispatch dispatch-resume permission-check; do
+    affected --files "adapters/core/$f.sh"
+    [[ "$output" == *tests/remote-host.bats* ]]
+  done
+  affected --files adapters/core/cross-repo-hint.sh
+  [[ "$output" != *tests/remote-host.bats* ]]
 }
 
 @test "affected: tests/helpers.bash selects the full suite and says why on stderr" {
