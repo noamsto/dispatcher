@@ -31,8 +31,8 @@ pr-watch-crew-pr-watch-posts-the-event-to-the-crew-s-dispatcher	tests/pr-watch.b
 pr-watch-crew-pr-watch-posts-nothing-when-the-park-times-out	tests/pr-watch.bats	250	pr-watch	crew pr-watch posts nothing when the park times out	slow
 pr-watch-crew-pr-watch-exits-with-the-child-s-status-and-posts-nothing	tests/pr-watch.bats	264	pr-watch	crew pr-watch exits with the child's status and posts nothing	slow
 pr-watch-default-clock-a-1s-park-really-waits	tests/pr-watch.bats	281	pr-watch	default clock: a 1s park really waits	slow
-role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once	tests/dispatch.bats	11349	role-watch	role-watch: a permission dialog receives no keys until it clears, then the assignment lands once	slow
-role-watch-role-watch-option-select-quota-live-turn-and-unrecognised-claude-frames-defer	tests/dispatch.bats	11364	role-watch	role-watch: option-select, quota, live-turn and unrecognised claude frames defer	slow
-role-watch-role-watch-an-idle-claude-input-box-receives-the-assignment	tests/dispatch.bats	11399	role-watch	role-watch: an idle claude input box receives the assignment	slow
-role-watch-role-watch-queued-assignments-go-out-one-per-tick-in-order	tests/dispatch.bats	11756	role-watch	role-watch: queued assignments go out one per tick, in order	slow
-role-watch-role-watch-a-dialog-raised-after-the-text-is-typed-is-never-confirmed	tests/dispatch.bats	11771	role-watch	role-watch: a dialog raised after the text is typed is never confirmed	slow
+role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once	tests/dispatch.bats	11495	role-watch	role-watch: a permission dialog receives no keys until it clears, then the assignment lands once	slow
+role-watch-role-watch-option-select-quota-live-turn-and-unrecognised-claude-frames-defer	tests/dispatch.bats	11510	role-watch	role-watch: option-select, quota, live-turn and unrecognised claude frames defer	slow
+role-watch-role-watch-an-idle-claude-input-box-receives-the-assignment	tests/dispatch.bats	11545	role-watch	role-watch: an idle claude input box receives the assignment	slow
+role-watch-role-watch-queued-assignments-go-out-one-per-tick-in-order	tests/dispatch.bats	11902	role-watch	role-watch: queued assignments go out one per tick, in order	slow
+role-watch-role-watch-a-dialog-raised-after-the-text-is-typed-is-never-confirmed	tests/dispatch.bats	11917	role-watch	role-watch: a dialog raised after the text is typed is never confirmed	slow
