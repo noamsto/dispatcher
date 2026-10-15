@@ -20,8 +20,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // Clock is the two things the helpers read: the real time source (required;
@@ -71,12 +69,12 @@ func (c Clock) RealMS() int64 {
 // otherwise. The arm handed either to `--argjson`, so a computed double is what
 // jq compared against either way, and the un-virtual one keeps the sub-second
 // precision a hold maturing inside the current second depends on.
-func (c Clock) NowF() jsonv.Value {
+func (c Clock) NowF() float64 {
 	if c.CrewClock == "" {
-		return jsonv.Num(c.realMS() / 1000)
+		return c.realMS() / 1000
 	}
 	n, _ := strconv.ParseFloat(c.Text(), 64)
-	return jsonv.Num(n)
+	return n
 }
 
 // NowMS is `_clock_now_ms`: the virtual clock's whole seconds times 1000 under

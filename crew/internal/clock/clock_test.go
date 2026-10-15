@@ -10,14 +10,10 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // now is 1700000000, the second the hold fixtures stamp their clock file with.
 var now = time.Date(2023, 11, 14, 22, 13, 20, 0, time.UTC)
-
-func compact(v jsonv.Value) string { return string(jsonv.Append(nil, v, jsonv.Options{})) }
 
 func clockIn(t *testing.T, text string) Clock {
 	t.Helper()
@@ -86,11 +82,11 @@ func TestRealMSAndNowFPrecision(t *testing.T) {
 	if got := c.RealMS(); got != 1700000000000 {
 		t.Errorf("RealMS = %d", got)
 	}
-	if got := compact(c.NowF()); got != "1700000000.0005" {
-		t.Errorf("NowF = %s", got)
+	if got := c.NowF(); got != 1700000000.0005 {
+		t.Errorf("NowF = %v", got)
 	}
-	if got := compact(clockIn(t, "1800000000").NowF()); got != "1800000000" {
-		t.Errorf("virtual NowF = %s", got)
+	if got := clockIn(t, "1800000000").NowF(); got != 1800000000 {
+		t.Errorf("virtual NowF = %v", got)
 	}
 }
 
