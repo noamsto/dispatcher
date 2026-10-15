@@ -1,0 +1,10 @@
+  The behaviour deltas and the consumer map are in the PR body.
+  ✻ Churned for 36s · done 11:20 AM
+
+● dispatcher: hooks.json changed — reloaded (modules: hooks/register.tsx unchanged; 3 hooks: session.start, command.run, ui.render)
+
+───────────────────────────── lime ─
+❯ 
+─────────────────────────────
+  🤖 Sonnet 5.5 🧠 med | 📊 180k/1M
+  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

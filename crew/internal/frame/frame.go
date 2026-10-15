@@ -45,6 +45,13 @@ var (
 	reDraft   = posixLongest("^[[:space:]]*❯([[:space:]]|\u00a0)*")
 	reCSI     = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
+	// The post-turn lines claude can print under the finished-turn marker.
+	reClearHint  = posix(`^[[:space:]]*new task\?[[:space:]]+/clear[[:space:]]`)
+	reHookReload = posix(`^[[:space:]]*●[[:space:]]+[^[:space:]:]+:[[:space:]]+hooks\.json changed — reloaded`)
+	reRecapEnd   = posix(`(^|[[:space:]])in[[:space:]]+/config\)[[:space:]]*$`)
+	reRecapWrap  = posix(`^  [^[:space:]●❯⎿✻※─>]`)
+	reRecap      = posix(`^[[:space:]]*※[[:space:]]+recap:`)
+
 	rePiScrollUp   = regexp.MustCompile(`↑ [0-9]+ more`)
 	rePiScrollDown = regexp.MustCompile(`↓ [0-9]+ more`)
 	rePiVimMode    = posixLongest(`[[:space:]]+(INSERT|NORMAL|EX|VISUAL|V-LINE)([[:space:]].*)?[[:space:]]*$`)
@@ -469,8 +476,52 @@ func PaneIdleReason(plain, colored string, skipBg bool) (reason string, idle boo
 	if !ClaudeIdleBox(plain, colored, false) {
 		return "live turn, unsent input, or no idle input box", false
 	}
-	if _, above, _ := BoxRows(plain, FirstRowClaude); !anyMatch(above, reDone) {
+	if _, above, _ := BoxRows(plain, FirstRowClaude); !anyMatch(above, reDone) && !doneBehindPostTurn(plain) {
 		return "no finished-turn marker above the input box", false
 	}
 	return "", true
+}
+
+// maxRecapRows bounds the wrapped rows of one recap.
+const maxRecapRows = 12
+
+// doneBehindPostTurn finds the finished-turn marker past the fixed window above
+// the box, walking up through nothing but the hint, hook-reload and recap lines
+// claude prints after a turn ends. A recap is one contiguous block of indented
+// prose that starts at `※ recap:` and ends with its `(disable recaps in /config)`
+// tail. Any other row ends the walk, so the pane stays not-idle.
+func doneBehindPostTurn(text string) bool {
+	_, plain, a, _, off, ok := scanBox(text)
+	if !ok {
+		return false
+	}
+	inRecap, rows := false, 0
+	for j := a - 1; j >= off; j-- {
+		switch row := plain[j]; {
+		case reDone.MatchString(row):
+			return !inRecap
+		case reClearHint.MatchString(row) || reHookReload.MatchString(row):
+			if inRecap {
+				return false
+			}
+		case reRecap.MatchString(row):
+			if !inRecap && !reRecapEnd.MatchString(row) {
+				return false
+			}
+			inRecap = false
+		case !inRecap:
+			if !reRecapWrap.MatchString(row) || !reRecapEnd.MatchString(row) {
+				return false
+			}
+			inRecap, rows = true, 0
+		default:
+			if !reRecapWrap.MatchString(row) {
+				return false
+			}
+			if rows++; rows >= maxRecapRows {
+				return false
+			}
+		}
+	}
+	return false
 }
