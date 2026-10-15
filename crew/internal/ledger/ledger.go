@@ -746,7 +746,7 @@ func body(row map[string]json.RawMessage) string {
 }
 
 // tostring is jq's compact text of a decoded value: key order and number
-// literals kept, strings re-encoded the way jq prints them.
+// literals in decNumber form, strings re-encoded the way jq prints them.
 func tostring(raw json.RawMessage) (string, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
