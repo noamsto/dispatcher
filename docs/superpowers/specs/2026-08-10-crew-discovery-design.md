@@ -488,9 +488,9 @@ operation rather than an aspiration. Called out in the PR body either way.
 | bare `crew id` no longer mints; two consecutive calls do not differ | `the crews tests (since ported to Go, #1084)`: both calls exit 1 with identical (empty) stdout |
 | bare `crew id` says how to get unstuck | `the crews tests (since ported to Go, #1084)` asserts `crew crews` / `crew adopt` / `crew new` all appear in its stderr |
 | every existing `crew id` call site still works | §4 table; regression tests for `CREW_ID` set, `WORKER_TASK.md` resolution, `new` minting, `new` outside a repo, and the launcher minting via a stubbed `crew` |
-| both messages name the unblocking command | `the crews tests (since ported to Go, #1084)` asserts on `dispatch.sh`'s abort and `crew register`'s refusal |
-| the launcher restart path is not silent, and names a remedy that works | `the crews tests (since ported to Go, #1084)`: minting with other crews on disk prints a notice naming the `CREW_ID=<id>` relaunch; **minting with no other crews prints nothing**; inheriting `CREW_ID` prints nothing; `dispatcher.bats:48` already pins that an inherited id is honoured |
-| every printed recovery instruction is runnable as printed | `the crews tests (since ported to Go, #1084)`: all three messages contain `crew adopt <id> $PPID`, not bare `crew adopt <id>` |
+| both messages name the unblocking command | `tests/dispatch.bats` asserts on `dispatch.sh`'s abort and `the crews tests (since ported to Go, #1084)` on `crew register`'s refusal |
+| the launcher restart path is not silent, and names a remedy that works | `tests/dispatcher.bats`: minting with other crews on disk prints a notice naming the `CREW_ID=<id>` relaunch; **minting with no other crews prints nothing**; inheriting `CREW_ID` prints nothing; `dispatcher.bats:48` already pins that an inherited id is honoured |
+| every printed recovery instruction is runnable as printed | `the crews tests (since ported to Go, #1084)` and `tests/dispatch.bats`: all three messages contain `crew adopt <id> $PPID`, not bare `crew adopt <id>` |
 | `adopt` cannot become a second way to mint | `the crews tests (since ported to Go, #1084)`: unknown id refused; another session's live-pid crew refused; the refusal does not leak the pid; `--force` overrides; events-only crew adoptable |
 | `adopt` prints a value that is never shell | `the crews tests (since ported to Go, #1084)`: output is the bare id, with no `export` prefix; an injection-shaped id is refused outright |
 | a crew id can never escape the bus dir | `the crews tests (since ported to Go, #1084)`: a `../`-traversal id is refused and writes nothing outside `crews/` |
@@ -502,7 +502,7 @@ operation rather than an aspiration. Called out in the PR body either way.
 
 The launcher and `dispatch` rows need a **richer `crew` stub than `stub_bin`**, which
 prints nothing and exits 0 (`tests/helpers.bash:24-35`) — `crew new` would return an
-empty id and `crew crews` no rows. `the crews tests (since ported to Go, #1084)` defines a local stub that answers
+empty id and `crew crews` no rows. `tests/dispatcher.bats` defines a local stub that answers
 `new` and `crews`. Nothing in `tests/dispatcher.bats` breaks: every test there sets
 `CREW_ID`, which suppresses the notice, and its two `grep -cx` assertions (lines 88, 90)
 are exact-match, so an extra `crews` line in the stub log cannot perturb them.
