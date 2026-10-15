@@ -176,7 +176,7 @@ func TestReportSmallSampleMarkerFollowsTheScopedPopulation(t *testing.T) {
 	}
 	store := storeOf(rows...)
 	pooled := lineWithPrefix(t, reportOut(t, store, Request{Pooled: true}), "claude  ")
-	if !strings.Contains(pooled, " 6 ") || strings.Contains(pooled, "6!") {
+	if !strings.Contains(pooled, " 6 ") || strings.Contains(pooled, "!") {
 		t.Errorf("pooled row = %q, want n=6 unmarked", pooled)
 	}
 	scoped := lineWithPrefix(t, reportOut(t, store, Request{}), "claude  ")

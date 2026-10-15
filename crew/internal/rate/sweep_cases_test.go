@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/drift"
 )
 
 const (
@@ -18,7 +20,7 @@ const (
 	noThreads   = `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}`
 )
 
-// sweepFixture is the fixture with the shipped burn table, a gh serving the
+// sweepFixture is the fixture with a small burn table, a gh serving the
 // three calls a sweep can make from per-test responses, and a clock that moves
 // one second per read so successive sweeps get distinct swept_at values.
 type sweepFixture struct {
@@ -29,11 +31,7 @@ type sweepFixture struct {
 func newSweepFixture(t *testing.T) *sweepFixture {
 	t.Helper()
 	f := &sweepFixture{fixture: newFixture(t), view: viewOpen, runs: noRuns, threads: noThreads}
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "adapters", "core", "defaults.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.config = string(data)
+	f.seedSettings()
 	reads := 0
 	f.optionsNow = func() time.Time {
 		reads++
@@ -405,6 +403,11 @@ func TestSweepTerminalStateIsTheWorkersOwnLastState(t *testing.T) {
 }
 
 func TestSweepCostIsWeightTimesWallClock(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "adapters", "core", "defaults.json")
+	shipped, err := os.ReadFile(path)
+	if err != nil {
+		drift.Missing(t, path, err)
+	}
 	type want struct {
 		class any
 		proxy any
@@ -432,6 +435,7 @@ func TestSweepCostIsWeightTimesWallClock(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newSweepFixture(t)
+			f.config = string(shipped)
 			f.dispatchAs("cost", 1000, tc.engine, tc.model, tc.tier, tc.effort)
 			f.status("worker:cost", 601000, "done")
 			f.sweep()
@@ -517,5 +521,44 @@ func TestSweepTaskKindIsCarriedFromTheDispatchEventNullWhenAbsent(t *testing.T) 
 	}
 	if got := f.row("tk-legacy")["task_kind"]; got != nil {
 		t.Errorf("tk-legacy task_kind = %v, want null", got)
+	}
+}
+
+// The round trip the single-sweep tests above cannot show: a sweep writes the
+// t2 fields a later sweep carries forward, and a MERGED row with known notes
+// makes the next sweep skip pr view and threads.
+func TestSweepGHFailureAfterAGoodSweepPreservesStoredT2(t *testing.T) {
+	f := newSweepFixture(t)
+	f.prRun("feat/mf", 1000)
+	f.threads = `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":false}]}}}}}`
+	f.sweep()
+	row := f.only()
+	if row["pr_state"] != "OPEN" || row["unresolved_notes"] != float64(1) || row["last_query_ok"] != true {
+		t.Fatalf("good sweep row = %v, want OPEN/1/true", row)
+	}
+	f.gh = func(string) (string, bool) { return "", false }
+	f.sweep()
+	row = f.only()
+	if row["pr_state"] != "OPEN" || row["unresolved_notes"] != float64(1) || row["last_query_ok"] != false {
+		t.Errorf("failed sweep row = %v, want OPEN/1/false", row)
+	}
+}
+
+func TestSweepMergedRowFromASweepSkipsViewAndThreadsNextTime(t *testing.T) {
+	f := newSweepFixture(t)
+	f.prRun("feat/finality", 1000)
+	f.view = viewMerged5
+	f.sweep()
+	row := f.only()
+	if row["pr_state"] != "MERGED" || row["first_ci_green"] != nil || row["unresolved_notes"] != float64(0) {
+		t.Fatalf("first sweep row = %v, want MERGED/null/0", row)
+	}
+	f.calls = nil
+	f.sweep()
+	if f.ghCalled("pr view") || f.ghCalled("api graphql") {
+		t.Errorf("second sweep re-queried a settled MERGED row: %v", f.ghCalls())
+	}
+	if !f.ghCalled("api --method GET repos/acme/widgets/actions/runs") {
+		t.Errorf("second sweep skipped Actions while first_ci_green is null: %v", f.ghCalls())
 	}
 }
