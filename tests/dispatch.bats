@@ -8071,6 +8071,33 @@ slice_a_worker() {
   assert_claim_refused "dispatch row for feat/42-do-a-thing"
 }
 
+seed_resume() { # <prev-worker> <worker> — the row `dispatch resume` writes
+  seed_claim_row "$(jq -nc --arg p "$1" --arg w "$2" '{ts:9000000000001,kind:"resume",branch:"feat/42-do-a-thing",worker_id:$w,prev_worker_id:$p}')"
+}
+
+@test "claim: a resumed then reaped branch no longer counts as a claim" {
+  dispatch_slice_a
+  seed_resume "$(slice_a_worker)" "worker:feat/42-do-a-thing#s2"
+  seed_resume "worker:feat/42-do-a-thing#s2" "worker:feat/42-do-a-thing#s3"
+  seed_reaped "worker:feat/42-do-a-thing#s3"
+  reclaim_branch_a
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do another thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale 'dispatched' claim"* ]]
+  grep -q 'issue edit 42 --add-label dispatched' "$STUB_LOG"
+}
+
+@test "claim: a resumed branch whose newest session is not reaped still refuses" {
+  dispatch_slice_a
+  local w
+  w="$(slice_a_worker)"
+  seed_reaped "$w"
+  seed_resume "$w" "worker:feat/42-do-a-thing#s2"
+  reclaim_branch_a
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do another thing"
+  assert_claim_refused "dispatch row for feat/42-do-a-thing"
+}
+
 @test "claim: a torn line in the bus does not hide a dispatch row or wedge the gate" {
   stub_launch_bins
   seed_claim_row '{"ts":1,"crew_id":"c0","kind":"disp'
