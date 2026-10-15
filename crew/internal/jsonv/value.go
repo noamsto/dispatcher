@@ -1,6 +1,7 @@
 package jsonv
 
 import (
+	"encoding/json"
 	"strings"
 	"unicode/utf8"
 )
@@ -216,4 +217,44 @@ func invalidRun(b []byte) int {
 		}
 	}
 	return want
+}
+
+// ToAny converts v to gojq's representation: nil, bool, string, []any,
+// map[string]any, and json.Number or float64 for numbers. Number literals go
+// over as json.Number of their canonical text: gojq normalizes those lazily,
+// so pass-through output keeps the literal verbatim (jq 1.7+ semantics) and
+// big integers order exactly, while arithmetic still computes in doubles.
+// Computed numbers (NaN, infinities, decoded values beyond decNumber's
+// range) carry no text and go over as float64.
+func ToAny(v Value) any {
+	switch v.kind {
+	case KindNull:
+		return nil
+	case KindTrue:
+		return true
+	case KindFalse:
+		return false
+	case KindNumber:
+		if text := v.NumberText(); text != "" {
+			return json.Number(text)
+		}
+		f, _ := v.AsFloat()
+		return f
+	case KindString:
+		s, _ := v.AsString()
+		return s
+	case KindArray:
+		out := make([]any, 0, len(v.a))
+		for _, e := range v.a {
+			out = append(out, ToAny(e))
+		}
+		return out
+	case KindObject:
+		out := make(map[string]any, len(v.m))
+		for _, m := range v.m {
+			out[m.Key] = ToAny(m.Val)
+		}
+		return out
+	}
+	return nil
 }

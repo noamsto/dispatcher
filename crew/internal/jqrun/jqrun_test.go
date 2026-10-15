@@ -112,13 +112,10 @@ func TestFromGoSortsObjectKeys(t *testing.T) {
 
 func TestToGoNaNStaysFloat(t *testing.T) {
 	v := jsonv.Num(math.NaN())
-	g, err := toGo(v)
-	if err != nil {
-		t.Fatal(err)
-	}
+	g := jsonv.ToAny(v)
 	f, isFloat := g.(float64)
 	if !isFloat || !math.IsNaN(f) {
-		t.Errorf("toGo(NaN) = %#v", g)
+		t.Errorf("ToAny(NaN) = %#v", g)
 	}
 }
 
@@ -148,34 +145,24 @@ func TestJQFromJSONIsOptIn(t *testing.T) {
 	}
 }
 
-func toGoAll(t *testing.T, vs []jsonv.Value) []any {
-	t.Helper()
+func toGoAll(vs []jsonv.Value) []any {
 	if vs == nil {
 		return nil
 	}
 	out := make([]any, len(vs))
 	for i, v := range vs {
-		g, err := toGo(v)
-		if err != nil {
-			t.Fatal(err)
-		}
-		out[i] = g
+		out[i] = jsonv.ToAny(v)
 	}
 	return out
 }
 
-func toGoVars(t *testing.T, vars map[string]jsonv.Value) map[string]any {
-	t.Helper()
+func toGoVars(vars map[string]jsonv.Value) map[string]any {
 	if vars == nil {
 		return nil
 	}
 	out := make(map[string]any, len(vars))
 	for k, v := range vars {
-		g, err := toGo(v)
-		if err != nil {
-			t.Fatal(err)
-		}
-		out[k] = g
+		out[k] = jsonv.ToAny(v)
 	}
 	return out
 }
@@ -324,16 +311,12 @@ func TestAnyEntryPointsMatchJSONV(t *testing.T) {
 			if (wantErr != nil) != tc.wantErr {
 				t.Fatalf("jsonv Run err = %v, wantErr %v", wantErr, tc.wantErr)
 			}
-			in, goVars := toGoAll(t, tc.input), toGoVars(t, tc.vars)
+			in, goVars := toGoAll(tc.input), toGoVars(tc.vars)
 			viaRun, errRun := RunAny(tc.prog, in, tc.now, goVars, tc.opts...)
 			var viaProg any
 			p, errProg := CompileAny(tc.prog, tc.now, goVars, tc.opts...)
 			if errProg == nil {
-				slurped, err := toGo(jsonv.Array(tc.input...))
-				if err != nil {
-					t.Fatal(err)
-				}
-				viaProg, errProg = p.RunAny(slurped)
+				viaProg, errProg = p.RunAny(jsonv.ToAny(jsonv.Array(tc.input...)))
 			}
 			if (errRun != nil) != tc.wantErr || (errProg != nil) != tc.wantErr {
 				t.Fatalf("any errs = %v, %v; wantErr %v", errRun, errProg, tc.wantErr)
@@ -341,10 +324,7 @@ func TestAnyEntryPointsMatchJSONV(t *testing.T) {
 			if tc.wantErr {
 				return
 			}
-			wantGo, err := toGo(want)
-			if err != nil {
-				t.Fatal(err)
-			}
+			wantGo := jsonv.ToAny(want)
 			for name, got := range map[string]any{"RunAny": viaRun, "Program.RunAny": viaProg} {
 				if !onlyNormalised(got) {
 					t.Errorf("%s: non-normalised output %#v", name, got)
