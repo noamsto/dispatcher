@@ -23,14 +23,16 @@
 package ledger
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"unicode"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"unicode/utf8"
 )
 
 // Input is what the arm reads for the gate.
@@ -619,11 +621,10 @@ func waived(log []string, crew, from, id string) bool {
 	crew, from = jqArg(crew), jqArg(from)
 	ide := []rune(asciiLower(jqArg(id)))
 	for _, line := range log {
-		vs, err := jsonv.DecodeStream(strings.NewReader(line))
-		if err != nil || len(vs) != 1 || vs[0].Kind() != jsonv.KindObject {
+		row, ok := decodeRow(line)
+		if !ok {
 			continue
 		}
-		row := vs[0]
 		if !field(row, "crew_id", crew) || !field(row, "kind", "msg") || !field(row, "from", "dispatcher:"+crew) || !field(row, "to", from) {
 			continue
 		}
@@ -636,28 +637,134 @@ func waived(log []string, crew, from, id string) bool {
 	return false
 }
 
-// jqArg is a --arg value as jq holds it, invalid UTF-8 replaced.
-func jqArg(s string) string {
-	v, _ := jsonv.Str(s).AsString()
-	return v
+// decodeRow is a log line holding exactly one JSON object, as jq reads it
+// (last duplicate key wins, a leading BOM skipped).
+func decodeRow(line string) (map[string]json.RawMessage, bool) {
+	dec := json.NewDecoder(strings.NewReader(strings.TrimPrefix(line, "\xef\xbb\xbf")))
+	var row map[string]json.RawMessage
+	if dec.Decode(&row) != nil || row == nil {
+		return nil, false
+	}
+	return row, dec.Decode(new(json.RawMessage)) == io.EOF
 }
 
-func field(row jsonv.Value, key, want string) bool {
-	v, _ := row.Get(key)
-	s, ok := v.AsString()
-	return ok && s == want
+// jqArg is a --arg value as jq holds it: each invalid byte becomes U+FFFD.
+// strings.ToValidUTF8 would collapse a run of bad bytes into one.
+func jqArg(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func field(row map[string]json.RawMessage, key, want string) bool {
+	var s string
+	return json.Unmarshal(row[key], &s) == nil && s == want
 }
 
 // body is `(.body // "") | tostring`: a non-string is its compact JSON text.
-func body(row jsonv.Value) string {
-	v, _ := row.Get("body")
-	if !v.Truthy() {
+func body(row map[string]json.RawMessage) string {
+	raw := row["body"]
+	if s := string(raw); s == "" || s == "null" || s == "false" {
 		return ""
 	}
-	if s, ok := v.AsString(); ok {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
 		return s
 	}
-	return string(jsonv.Append(nil, v, jsonv.Options{}))
+	text, err := tostring(raw)
+	if err != nil {
+		return ""
+	}
+	return text
+}
+
+// tostring is jq's compact text of a decoded value: key order and number
+// literals kept, strings re-encoded the way jq prints them.
+func tostring(raw json.RawMessage) (string, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var out strings.Builder
+	var walk func() error
+	walk = func() error {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		switch t := tok.(type) {
+		case json.Delim:
+			closer := byte(']')
+			if t == '{' {
+				closer = '}'
+			}
+			out.WriteByte(byte(t))
+			for first := true; dec.More(); first = false {
+				if !first {
+					out.WriteByte(',')
+				}
+				if t == '{' {
+					key, err := dec.Token()
+					if err != nil {
+						return err
+					}
+					quote(&out, key.(string))
+					out.WriteByte(':')
+				}
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			if _, err := dec.Token(); err != nil {
+				return err
+			}
+			out.WriteByte(closer)
+		case string:
+			quote(&out, t)
+		case json.Number:
+			out.WriteString(t.String())
+		case bool:
+			out.WriteString(strconv.FormatBool(t))
+		case nil:
+			out.WriteString("null")
+		}
+		return nil
+	}
+	if err := walk(); err != nil {
+		return "", err
+	}
+	return out.String(), nil
+}
+
+// quote writes s as a jq string literal: only the quote, backslash, control
+// characters and DEL are escaped.
+func quote(b *strings.Builder, s string) {
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '"' || r == '\\':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r == '\b':
+			b.WriteString(`\b`)
+		case r == '\f':
+			b.WriteString(`\f`)
+		case r < 0x20 || r == 0x7f:
+			fmt.Fprintf(b, `\u%04x`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
 }
 
 func asciiLower(s string) string {

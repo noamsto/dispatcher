@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -14,8 +15,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"unicode"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 const (
@@ -45,14 +44,18 @@ func waiverLine(id string) string {
 
 // row is one bus line as `crew reply` writes it, with a string body.
 func row(c, sender, to, body string) string {
-	return string(jsonv.Append(nil, jsonv.Object(
-		jsonv.Member{Key: "ts", Val: jsonv.Num(1)},
-		jsonv.Member{Key: "crew_id", Val: jsonv.Str(c)},
-		jsonv.Member{Key: "kind", Val: jsonv.Str("msg")},
-		jsonv.Member{Key: "from", Val: jsonv.Str(sender)},
-		jsonv.Member{Key: "to", Val: jsonv.Str(to)},
-		jsonv.Member{Key: "body", Val: jsonv.Str(body)},
-	), jsonv.Options{}))
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(struct {
+		TS     int    `json:"ts"`
+		CrewID string `json:"crew_id"`
+		Kind   string `json:"kind"`
+		From   string `json:"from"`
+		To     string `json:"to"`
+		Body   string `json:"body"`
+	}{1, c, "msg", sender, to, body})
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 func reply(body string) string { return row(crew, "dispatcher:"+crew, from, body) }
