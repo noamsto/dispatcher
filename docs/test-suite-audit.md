@@ -53,7 +53,6 @@ them as relative.
 | worktree-git.bats              |    59 |    20.8 |  1.1% |
 | pr-watch.bats                  |    17 |    18.6 |  1.0% |
 | permission-check.bats          |   147 |    16.3 |  0.8% |
-| reap-race.bats                 |     6 |     7.8 |  0.4% |
 | dispatch-comment.bats          |    10 |     6.7 |  0.3% |
 | dispatcher.bats                |    39 |     5.8 |  0.3% |
 | dispatch-config.bats           |    40 |     4.1 |  0.2% |
@@ -150,7 +149,6 @@ doc-pinning test was then triaged by hand (see the cut list).
 | permission-check.bats  |       146 |           0 |         1 |         0 |      147 |
 | pr-watch.bats          |        17 |           0 |         0 |         0 |       17 |
 | public-leak-guard.bats |        16 |           0 |         0 |         0 |       16 |
-| reap-race.bats         |         6 |           0 |         0 |         0 |        6 |
 | refresh-budget.bats    |        99 |           0 |         0 |         1 |      100 |
 | refresh-models.bats    |         4 |           0 |         0 |         0 |        4 |
 | refresh-scores.bats    |         6 |           0 |         0 |         0 |        6 |
@@ -494,7 +492,6 @@ Blind spots:
 | permission-check.bats  |   147 |      146 |          1 |            0.9384 |
 | pr-watch.bats          |    17 |       17 |          0 |            0.6471 |
 | public-leak-guard.bats |    16 |       16 |          0 |            0.7500 |
-| reap-race.bats         |     6 |        6 |          0 |            1.0000 |
 | refresh-budget.bats    |   100 |      100 |          0 |            0.9300 |
 | refresh-models.bats    |     4 |        4 |          0 |            0.5000 |
 | refresh-scores.bats    |     6 |        6 |          0 |            0.6667 |
