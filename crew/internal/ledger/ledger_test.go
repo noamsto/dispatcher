@@ -202,21 +202,39 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+// oversizeRows are matching-looking rows over the bound that Go cannot read or
+// stringify as jq does, while jq runs its regexes on the 12M-char clause.
+func oversizeRows() map[string]string {
+	long := "waive ac3 not " + strings.Repeat("x", 12_000_000)
+	head := strings.TrimSuffix(reply(""), `"body":""}`)
+	return map[string]string{
+		"tostring error": head + `"body":[` + jsonStr(long) + `,1e-1000000001]}`,
+		"nan field":      head + `"body":` + jsonStr(long) + `,"n":nan}`,
+		"leading zero":   head + `"body":` + jsonStr(long) + `,"n":01}`,
+		"invalid UTF-8":  strings.Replace(reply(long), "not ", "not \xff", 1),
+	}
+}
+
 // TestWaivedBodyBound pins the 1 MiB bound: an oversize row stops every waiver
 // from counting, jq aborting on it, and a body exactly at the bound still counts.
 func TestWaivedBodyBound(t *testing.T) {
 	pad := func(lead string, n int) string { return lead + strings.Repeat("x", n-len(lead)) }
-	tests := []struct {
+	type boundCase struct {
 		name string
 		log  []string
 		want bool
-	}{
+	}
+	tests := []boundCase{
 		{"long negated clause beside a plain waiver", []string{reply("waive AC3 not " + strings.Repeat("x", 12_000_000)), reply("waive AC3")}, false},
 		{"oversize row after a plain waiver", []string{reply("waive AC3"), reply(pad("waive AC3 ", maxBody+1))}, false},
 		{"body at the bound", []string{reply(pad("waive AC3 ", maxBody))}, true},
 		{"body one byte over", []string{reply(pad("waive AC3 ", maxBody+1))}, false},
 		{"oversize row for another session is ignored", []string{row(crew, "dispatcher:"+crew, "worker:feat/x#s1", pad("x", maxBody+1)), reply("waive AC3")}, true},
 	}
+	for name, line := range oversizeRows() {
+		tests = append(tests, boundCase{"oversize " + name, []string{line, reply("waive AC3")}, false})
+	}
+	tests = append(tests, boundCase{"undecodable line under the bound", []string{"not json", reply("waive AC3")}, true})
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := waived(tc.log, crew, from, "AC3"); got != tc.want {
@@ -660,6 +678,15 @@ func TestDifferentialAgainstJQ(t *testing.T) {
 		}
 		if waived(long, crew, from, "AC3") {
 			t.Error("waived on the long negated clause, jq aborts")
+		}
+		for name, line := range oversizeRows() {
+			log := []string{line, reply("waive AC3")}
+			if rc := run(log); rc != 5 {
+				t.Errorf("jq exit %d on the oversize %s row, want 5", rc, name)
+			}
+			if waived(log, crew, from, "AC3") {
+				t.Errorf("waived on the oversize %s row, jq aborts", name)
+			}
 		}
 		atBound := []string{reply("waive AC3 " + strings.Repeat("x", maxBody-len("waive AC3 ")))}
 		if rc := run(atBound); rc != 0 {

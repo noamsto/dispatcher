@@ -15,8 +15,8 @@
 //   - a ledger detail holding invalid UTF-8 is refused outright, where jq repairs
 //     it to U+FFFD and may accept; a bus line or the crew or session argument
 //     holding it stops the waiver from counting, where jq repairs it and may match.
-//   - a waiver row whose body text exceeds 1 MiB stops any waiver from counting,
-//     since jq can abort on such a row.
+//   - a matching row whose body text, or any line Go cannot read or stringify,
+//     exceeds 1 MiB stops any waiver from counting, since jq can abort on it.
 //   - [:alnum:] follows each engine's Unicode tables: glibc 2.42's (bash's =~)
 //     are Unicode 16, Go's 15, and gawk's regex lags both. The CI test uses Go's
 //     narrower class and the run-evidence boundary also counts every mark and
@@ -621,9 +621,10 @@ func items(d string) []item {
 	return out
 }
 
-// maxBody bounds a matching row's body text: Oniguruma's retry limit aborts the
-// whole jq program on a long enough clause (somewhere past 9M chars), and 1 MiB
-// stays far below that.
+// maxBody bounds a matching row's body text, and any line Go cannot read or
+// stringify: Oniguruma's retry limit aborts the whole jq program on a long
+// enough clause (somewhere past 9M chars), and 1 MiB (tripled at worst by
+// tostring) stays far below that.
 const maxBody = 1 << 20
 
 // waived is the arm's waiver jq program: a `msg` from dispatcher:<crew> to this
@@ -641,13 +642,16 @@ func waived(log []string, crew, from, id string) bool {
 	for _, line := range log {
 		row, ok := decodeRow(line)
 		if !ok {
+			if len(line) > maxBody {
+				return false
+			}
 			continue
 		}
 		if !field(row, "crew_id", crew) || !field(row, "kind", "msg") || !field(row, "from", "dispatcher:"+crew) || !field(row, "to", from) {
 			continue
 		}
-		text := body(row)
-		if len(text) > maxBody {
+		text, ok := body(row)
+		if !ok && len(line) > maxBody || len(text) > maxBody {
 			return false
 		}
 		for _, c := range clauses([]rune(asciiLower(text))) {
@@ -737,21 +741,19 @@ func field(row map[string]json.RawMessage, key, want string) bool {
 	return len(raw) > 0 && raw[0] == '"' && json.Unmarshal(raw, &s) == nil && s == want
 }
 
-// body is `(.body // "") | tostring`: a non-string is its compact JSON text.
-func body(row map[string]json.RawMessage) string {
+// body is `(.body // "") | tostring`: a non-string is its compact JSON text;
+// false when tostring fails, where jq's text is unknown.
+func body(row map[string]json.RawMessage) (string, bool) {
 	raw := row["body"]
 	if s := string(raw); s == "" || s == "null" || s == "false" {
-		return ""
+		return "", true
 	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		return s
+		return s, true
 	}
 	text, err := tostring(raw)
-	if err != nil {
-		return ""
-	}
-	return text
+	return text, err == nil
 }
 
 // tostring is jq's compact text of a decoded value: key order and number
