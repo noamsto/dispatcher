@@ -11,6 +11,7 @@ func TestPiIdleReason(t *testing.T) {
 		{"empty box", "frames/nudge_pi_idle.txt", true, ""},
 		{"vim mode rule", "frames/rw_pi_idle_vim.txt", true, ""},
 		{"operation aborted", "frames/pi_aborted_idle.txt", true, ""},
+		{"aborted after retries", "frames/pi_aborted_retry_idle.txt", true, ""},
 		{"truncated then continued", "frames/pi_truncated_continued.txt", true, ""},
 		{"live pane, working rule", "pi/midturn_working_rule.txt", false, "live turn or no idle input box"},
 		{"live pane, tool output", "pi/midturn_tool_output.txt", false, "live turn or no idle input box"},
@@ -20,6 +21,7 @@ func TestPiIdleReason(t *testing.T) {
 		{"typed input", "frames/nudge_pi_typed.txt", false, "unsent input"},
 		{"truncated", "frames/pi_truncated_idle.txt", false, "stopped on truncated"},
 		{"provider error", "frames/pi_provider_error_idle.txt", false, "stopped on provider-error"},
+		{"provider timeout", "frames/pi_provider_error_timeout_idle.txt", false, "stopped on provider-error"},
 		{"truncated dialog", "frames/pi_truncated_dialog.txt", false, "prompt on screen"},
 		{"claude finished turn", "frames/done_idle.txt", false, "live turn or no idle input box"},
 	}

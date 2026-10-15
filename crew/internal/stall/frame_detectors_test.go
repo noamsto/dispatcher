@@ -1099,6 +1099,7 @@ func (r *d9Rig) tick(at *int64, frameName string) []string {
 var d9Kinds = []struct{ name, stopped, live, prefix string }{
 	{"truncated", "pi_truncated_idle.txt", "pi_truncated_live.txt", "truncated:"},
 	{"provider-error", "pi_provider_error_idle.txt", "pi_provider_error_live.txt", "provider-error:"},
+	{"provider-error timeout", "pi_provider_error_timeout_idle.txt", "pi_provider_error_live.txt", "provider-error:"},
 }
 
 func TestD9TypesOncePerEpisode(t *testing.T) {
@@ -1131,6 +1132,23 @@ func TestD9TypesOncePerEpisode(t *testing.T) {
 			r.tick(&at, k.stopped)
 			if r.continues != 2 {
 				t.Errorf("%d calls after a second episode, want 2", r.continues)
+			}
+		})
+	}
+}
+
+func TestD9UserAbortNotContinued(t *testing.T) {
+	for _, f := range []string{"pi_aborted_idle.txt", "pi_aborted_retry_idle.txt"} {
+		t.Run(f, func(t *testing.T) {
+			r := newD9Rig(t, d9ID, "pi", Request{})
+			var at int64
+			for i := range 3 {
+				if rows := r.tick(&at, f); rows != nil {
+					t.Fatalf("tick %d: rows %q, want none", i+1, rows)
+				}
+			}
+			if r.continues != 0 {
+				t.Errorf("%d calls, want 0", r.continues)
 			}
 		})
 	}

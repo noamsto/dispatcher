@@ -63,7 +63,7 @@ var (
 	rePiTruncated = regexp.MustCompile(`^ ?Response was truncated before completion\.`)
 	rePiError     = regexp.MustCompile(`^ ?Error: `)
 	rePiBugHint   = regexp.MustCompile(`^ ?If this looks like a `)
-	reAborted     = regexp.MustCompile(`(?i)\b(abort(ed)?|cancel(l?ed)?)\b`)
+	rePiAborted   = regexp.MustCompile(`^ ?(Operation aborted|Aborted after \d+ retry attempts?) *$`)
 )
 
 const (
@@ -417,7 +417,9 @@ func anyNonBlank(lines []string) bool {
 // PiStopped classifies why an idle pi turn ended without finishing: pi paints
 // "Response was truncated before completion." (stopReason length) or
 // "Error: <provider message>" (stopReason error) just above an empty editor
-// box. It returns "truncated", "provider-error" or "".
+// box. It returns "truncated", "provider-error" or "". A user abort paints
+// "Operation aborted" or "Aborted after N retry attempt(s)" with no "Error:"
+// prefix, so every "Error:" row is a provider error, abort words included.
 func PiStopped(text string) string {
 	if IsPrompt("pi", text) || !PiIdleBox(text) {
 		return ""
@@ -447,8 +449,9 @@ func PiStopped(text string) string {
 	switch {
 	case len(block) == 1 && rePiTruncated.MatchString(block[0]):
 		return "truncated"
-	case len(block) > 0 && len(block) <= 4 && rePiError.MatchString(block[0]) &&
-		!reAborted.MatchString(strings.Join(block, "\n")):
+	case len(block) > 0 && rePiAborted.MatchString(block[0]):
+		return ""
+	case len(block) > 0 && len(block) <= 4 && rePiError.MatchString(block[0]):
 		return "provider-error"
 	}
 	return ""

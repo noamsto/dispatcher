@@ -697,6 +697,8 @@ func TestPiStopped(t *testing.T) {
 		"pi_provider_error_idle":         "provider-error",
 		"pi_provider_error_hint_idle":    "provider-error",
 		"pi_provider_error_wrapped_idle": "provider-error",
+		"pi_provider_error_timeout_idle": "provider-error",
+		"pi_error_aborted_idle":          "provider-error",
 	}
 	for _, p := range corpus(t) {
 		name := strings.TrimSuffix(filepath.Base(p), ".txt")
