@@ -90,7 +90,7 @@ func Check(in Input) string {
 		if iid == "" {
 			return refuse("a waived(dispatcher) item needs its acceptance id (e.g. AC3 waived(dispatcher)) so the dispatcher's waiver can name it.")
 		}
-		// scan repairs the id per byte where jq folds a truncated sequence, so waived cannot see the bad bytes.
+		// scan repairs the id per byte where jq folds, hiding bad bytes from waived.
 		if in.Log != nil && utf8.ValidString(in.Detail) && waived(in.Log, in.Crew, in.From, iid) {
 			continue
 		}
