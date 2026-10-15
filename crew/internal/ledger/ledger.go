@@ -15,8 +15,9 @@
 //   - a ledger detail holding invalid UTF-8 is refused outright, where jq repairs
 //     it to U+FFFD and may accept; a bus line or the crew or session argument
 //     holding it stops the waiver from counting, where jq repairs it and may match.
-//   - a matching row whose body text, or any line Go cannot read or stringify,
-//     exceeds 1 MiB stops any waiver from counting, since jq can abort on it.
+//   - a matching row whose body text exceeds 1 MiB, or whose line does when Go
+//     cannot stringify its body, and any unreadable line over 1 MiB stop any
+//     waiver from counting, since jq can abort on them.
 //   - [:alnum:] follows each engine's Unicode tables: glibc 2.42's (bash's =~)
 //     are Unicode 16, Go's 15, and gawk's regex lags both. The CI test uses Go's
 //     narrower class and the run-evidence boundary also counts every mark and
@@ -623,8 +624,8 @@ func items(d string) []item {
 
 // maxBody bounds a matching row's body text, and any line Go cannot read or
 // stringify: Oniguruma's retry limit aborts the whole jq program on a long
-// enough clause (somewhere past 9M chars), and 1 MiB (tripled at worst by
-// tostring) stays far below that.
+// enough clause (about 10M chars), and 1 MiB stays below that even after
+// tostring grows a line up to 6x (DEL prints as \u007f).
 const maxBody = 1 << 20
 
 // waived is the arm's waiver jq program: a `msg` from dispatcher:<crew> to this
