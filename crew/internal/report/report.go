@@ -14,7 +14,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 //go:embed report.jq
@@ -61,18 +60,18 @@ func Run(crew string, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		return code
 	}
 
-	raws := make([]jsonv.Value, len(events))
+	docs := make([]any, len(events))
 	for i, ev := range events {
-		raws[i] = ev.Raw
+		docs[i] = ev.Doc
 	}
 	now := o.Now()
 	nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
-	out, err := jqrun.Run(program, raws, nowSec, map[string]jsonv.Value{"crew": jsonv.Str(crew)})
+	out, err := jqrun.RunAny(program, docs, nowSec, map[string]any{"crew": crew})
 	if err != nil {
 		say(stderr, "crew: report: %s: %v\n", paths.Log, err)
 		return exitType
 	}
-	if s, _ := out.AsString(); s != "" {
+	if s, _ := out.(string); s != "" {
 		say(stdout, "%s\n", s)
 	}
 	return 0
