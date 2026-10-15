@@ -161,6 +161,11 @@ Runs on the remote host, under sshd.
 **Refused alongside it:** `--add-dir`, `--base`, `--status`, `--lazy`, and
 `DISPATCH_PRECHECK`. Those flags are local by nature, or would be stacked work.
 
+**Env-carried overrides.** `DISPATCH_DRAFT_PR` is forwarded as `--draft`.
+`DISPATCH_IGNORE_RUNG`, `DISPATCH_SKIP_MODEL_CHECK`, `DISPATCH_SHAPE` and
+`DISPATCH_CLAUDE_CONNECTORS` are refused with `--host`: the remote cannot see
+the caller's env, so honouring them silently would not do what the caller set.
+
 **When to branch.** Right after the crew id is resolved (≈`dispatch.sh:4051`),
 and before any engine, budget, fleet or claim step, dispatch takes the remote
 path. That path has no side effects until the remote call succeeds:
@@ -174,7 +179,8 @@ path. That path has no side effects until the remote call succeeds:
      ssh failure; each surfaces its own message.
 3. **Claude quota on the dispatcher host.** When the lead engine is `claude`,
    run the existing `budget_stop claude` and `absolute_limit_stop claude`
-   against the local `engine-budget.json`. `--ignore-budget` waives them as
+   against the local `engine-budget.json`, plus `pace_rule_target` and the
+   claude-role budgets. `--ignore-budget` waives them as
    before.
    - The fan-out budget and the load gate (`fleet_gate`) are per host. They are
      **not** run locally; the remote `dispatch` runs its own.
@@ -532,6 +538,9 @@ check) and cannot create a local claim or row (Trust boundary).
    - Agent, X11 and port forwarding are forced off, so no dispatcher-side
      credential becomes reachable on the remote.
 4. **Dispatcher identity on the remote.**
+   - `crew remote-run` is gated locally: it runs `sender.Check("dispatcher:<c>")`
+     before any ssh. The far side cannot see the caller's env or pane ancestry,
+     so the check cannot be left to `remote-exec`.
    - A routed write runs under sshd, outside tmux, with no `CREW_WORKER_ID` or
      `CREW_ROLE_ID` in its env. The remote's unchanged sender check therefore
      accepts `dispatcher:<c>`.
@@ -551,7 +560,8 @@ check) and cannot create a local claim or row (Trust boundary).
    - The relay parses each line as JSON and only adds fields.
    - The ssh stderr line in an `error` detail is JSON-encoded.
 6. **Laundering check (the protocol's three-part test).** The new inputs a
-   remote claude worker controls are its own remote bus rows. They reach the
+   remote claude worker controls are its own remote bus rows. `crew remote-run`
+   is a new input too, but a worker is refused by its local sender check. They reach the
    dispatcher only as stream data, the same as a local worker's rows today: no
    execution, grant or identity. `dispatch_row:` is produced by the remote
    `dispatch` process, not the worker, and is validated before the local append.

@@ -43,6 +43,14 @@ self: {
   badLocalModelKeys =
     lib.optionals (cfg.localModels != null)
     (lib.filter (k: !localModelKeyValid k) (builtins.attrNames cfg.localModels));
+  badHostNames =
+    lib.optionals (cfg.hosts != null)
+    (lib.filter (h: builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*" h == null) (builtins.attrNames cfg.hosts));
+  badHostRepoKeys =
+    lib.optionals (cfg.hosts != null)
+    (lib.concatMap
+      (h: map (r: "${h}.${r}") (lib.filter (r: builtins.match "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" r == null) (builtins.attrNames cfg.hosts.${h}.repos)))
+      (builtins.attrNames cfg.hosts));
   effortRungs = ["low" "medium" "high" "xhigh" "max"];
   badEffortThinking = lib.optionals (cfg.localModels != null) (lib.concatMap
     (id:
@@ -311,15 +319,15 @@ in {
       type = lib.types.nullOr (lib.types.attrsOf (lib.types.submodule {
         options = {
           ssh = lib.mkOption {
-            type = lib.types.str;
+            type = lib.types.strMatching "[A-Za-z0-9_][A-Za-z0-9._@%+-]*";
             example = "noam@mini.local";
-            description = "The ssh destination `crew remote-run` connects to: a user@host or an `~/.ssh/config` alias (use one for ports or jump hosts). It must not start with `-`.";
+            description = "The ssh destination `crew remote-run` connects to: a user@host or an `~/.ssh/config` alias (use one for ports or jump hosts). Letters, digits and `._@%+-`, not starting with `-`.";
           };
           repos = lib.mkOption {
-            type = lib.types.attrsOf lib.types.str;
+            type = lib.types.attrsOf (lib.types.strMatching "/[^[:cntrl:]]*");
             default = {};
             example = {"noamsto/dispatcher" = "/Users/noam/git/dispatcher";};
-            description = "The host's clone of each repo it can run workers for: `owner/repo` to an absolute path.";
+            description = "The host's clone of each repo it can run workers for: `owner/repo` to an absolute path without control characters.";
           };
         };
       }));
@@ -471,6 +479,14 @@ in {
       {
         assertion = badLocalModelKeys == [];
         message = "programs.dispatcher.localModels: invalid id(s) ${lib.concatStringsSep ", " badLocalModelKeys} -- keys are <provider>/<model> (letters, digits, \".\", \"_\", \"-\", \"/\"; provider not openrouter); dispatch-config would refuse them at runtime, taking every dispatch down.";
+      }
+      {
+        assertion = badHostNames == [];
+        message = "programs.dispatcher.hosts: invalid host name(s) ${lib.concatStringsSep ", " badHostNames} -- names are letters, digits, \".\", \"_\", \"-\", starting with a letter or digit; dispatch-config would refuse them at runtime, taking every dispatch down.";
+      }
+      {
+        assertion = badHostRepoKeys == [];
+        message = "programs.dispatcher.hosts: invalid repo key(s) ${lib.concatStringsSep ", " badHostRepoKeys} -- keys are <owner>/<repo> (letters, digits, \".\", \"_\", \"-\"); dispatch-config would refuse them at runtime, taking every dispatch down.";
       }
       {
         assertion = badEffortThinking == [];

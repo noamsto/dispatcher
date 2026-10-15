@@ -238,6 +238,36 @@ in {
       "ok/model" = {baseUrl = "http://h/v1"; contextWindow = 1;};
     };
   }).assertions);
+  # A host name or repo key dispatch-config would refuse at runtime must trip
+  # an HM assertion naming it.
+  badHostAsserts = map (a: a.message) (builtins.filter (a: !a.assertion) (eval {
+    enable = true;
+    hosts = {
+      "-bad" = {ssh = "me@h"; repos = {"ok/repo" = "/r";};};
+      "good" = {ssh = "me@h"; repos = {"no-slash" = "/r"; "acme/widget" = "/r";};};
+    };
+  }).assertions);
+  goodHostAsserts = builtins.filter (a: !a.assertion) (eval fullCfg).assertions;
+  # An ssh value starting with `-` would be read as an ssh option, and a
+  # relative or control-character repo path is refused by dispatch-config:
+  # the option types refuse them at eval time.
+  badHostValuesRejected = builtins.length (builtins.filter (x: !x.success) [
+    (builtins.tryEval (builtins.deepSeq (eval {
+        enable = true;
+        hosts.h = {ssh = "-oProxyCommand=y";};
+      }).programs.dispatcher.hosts
+      true))
+    (builtins.tryEval (builtins.deepSeq (eval {
+        enable = true;
+        hosts.h = {ssh = "me@h"; repos = {"a/b" = "relative";};};
+      }).programs.dispatcher.hosts
+      true))
+    (builtins.tryEval (builtins.deepSeq (eval {
+        enable = true;
+        hosts.h = {ssh = "me@h"; repos = {"a/b" = "/r";};};
+      }).programs.dispatcher.hosts
+      true))
+  ]);
   goodLocalModelAsserts = builtins.filter (a: !a.assertion) (eval fullCfg).assertions;
   # `engines = []` must be a type error, not a silently-accepted value that
   # bakes `"engines": []` into the locked settings file (dispatch-config dies
@@ -705,6 +735,18 @@ worktree_git_lib_crew_go_row() { # bin
   run jq -e '(.badLocalModelAsserts | length) == 1 and (.badLocalModelAsserts[0] | contains("no-slash") and contains("OpenRouter/m") and (contains("ok/model") | not))' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.goodLocalModelAsserts == []' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "the module declares assertions that reject bad hosts names and repo keys" {
+  run jq -e '(.badHostAsserts | length) == 2 and (.badHostAsserts | map(contains("-bad")) | any) and (.badHostAsserts | map(contains("good.no-slash")) | any) and (.badHostAsserts | map(contains("acme/widget")) | any | not)' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.goodHostAsserts == []' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "hosts ssh and repo path values the resolver refuses fail the option type" {
+  run jq -e '.badHostValuesRejected == 2' "$EVAL"
   [ "$status" -eq 0 ]
 }
 

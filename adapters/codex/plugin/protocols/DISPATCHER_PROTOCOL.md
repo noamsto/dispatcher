@@ -467,10 +467,10 @@ branch instead; the worktree carries over under `resume: true`.
   - **Holds.** `crew hold` does not record `--base` — refer to the parent as "stacked on #N" in the spec's prose, and re-pass `--base` from it when you release the hold, otherwise the released dispatch forks from the default branch instead of its parent.
 - **Remote workers (`--host <name>`).** Runs the worker on another machine; everything else about the dispatch is unchanged.
   - **Settings.** `hosts.<name> = {ssh, repos."owner/repo" = path}` — `programs.dispatcher.hosts` in home-manager, or user settings. The ssh target and path always come from settings, never from a bus row.
-  - **Preconditions.** The clone already exists at the mapped path. `crew`, `dispatch` and `tmux` are on the remote's non-interactive ssh `PATH`. The remote's engine logins are present. On a macOS remote the engine's keychain login works only in a tmux server started from the GUI login session — keep one running there; a server first started by sshd cannot reach the login keychain.
+  - **Preconditions.** The clone already exists at the mapped path. `crew`, `dispatch` and `tmux` are on the remote's non-interactive ssh `PATH`. The remote's engine logins are present. On a macOS remote the engine's keychain login works only in a tmux server started from the GUI login session — keep one running there; a server first started by sshd cannot reach the login keychain. Dispatch `--host` only from a streaming lane (`crew stream`, `crew fleet stream`): a dispatcher on a park lane (cursor, codex, pi) runs `crew watch`, which has no relay, so it never sees the remote worker's events and does not use `--host`.
   - **Refused with `--host`:** `--add-dir`, `--base`, `--status`, `--lazy`. The engine roster is the remote's (`--agent` must be in its `dispatch --engines`); claude quota is checked locally; the fan-out budget and load gate are judged by the remote, not here.
   - **Window.** The remote worker lives in the remote tmux session `crew-<id>`. The dispatch mirrors it with `og-remote-open <ssh> crew-<id> --into <session>`; otherwise it prints `ssh -t <ssh> tmux attach -t crew-<id>`. Only `dispatch` and `dispatch resume` set the mirror up: re-run that `og-remote-open` after a local tmux or dispatcher restart.
-  - **Routed to the remote.** `crew reply`, `crew nudge`, `crew where` (prints ` [host <h>]`; the mirror window comes first), `permission-check` and `dispatch resume`. Name a remote worker by branch or codename, never a `%pane` — remote pane ids mean nothing here.
+  - **Routed to the remote.** `crew reply`, `crew nudge`, `crew where` (prints ` [host <h>]`; the mirror window comes first), `permission-check` and `dispatch resume`. Name a remote worker by branch or codename; a `%pane` is that host's, meaningless to local `tmux` and `crew where`. The one exception is `permission-check --pane <%id> --branch <branch> [--answer]`: take the `%id` verbatim from the relayed `prompt:` detail (it is that host's pane, and the check runs there). For any other `%id` from a batch carrying `host`, see the "verify, then act" recovery — never aim local `tmux` at it.
   - **Roster.** `crew roster` adds remote rows with `host` and `live` (judged on the remote's tmux). An unreachable host gives `host_error` rows with `state` and `live` null: never read that as dead.
   - **Inbox.** `crew inbox dispatcher:<c>` covers local rows only; a remote worker's messages arrive in stream batches (see "Read the bus").
   - **Broken link.** Exit 255 means the link dropped mid-dispatch and the remote worker could not be confirmed. The message names `dispatch --host <h> --recover <session> --crew-id <id>`: run it once the link is back. It writes nothing when the remote made no worker.
@@ -1060,7 +1060,7 @@ Arm the lane as its own persistent Monitor and give it the same liveness checks
 as `crew stream`, with `crew fleet stream --status --crew <id>` (a stale lane:
 `--force`; a dead one: re-arm). Its heartbeat carries no `repo`.
 
-A remote worker (`dispatch --host`) is followed by a relay inside the streaming lanes, so it needs a `crew stream` or `crew fleet stream` lane: a one-shot `crew watch` park sees no remote events, and the fleet lane also reaps remote hosts. Relayed batches carry `host` (and so does every event inside); keep the last `cursor` per `host` (and per `repo` in fleet mode) and compare only within it. `{"stream":"error",…,"host":"<h>"}` means that relay's link dropped: it reconnects by itself and resumes from its cursor, so run `crew roster` to see `host_error` rather than re-arming. `{"stream":"reap",…,"host":"<h>"}` is the remote's own reap, informational like any reap.
+A remote worker (`dispatch --host`) is followed by a relay inside the streaming lanes, so it needs a `crew stream` or `crew fleet stream` lane: a one-shot `crew watch` park sees no remote events, and the fleet lane also reaps remote hosts. Dispatchers on a park lane (cursor, codex, pi) do not dispatch `--host`: only a streaming lane follows a remote worker. Relayed batches carry `host` (and so does every event inside); keep the last `cursor` per `host` (and per `repo` in fleet mode) and compare only within it. A `{"stream":"error",…,"host":"<h>"}` line is read by its `detail`: `relay to <h> lost:` is a dropped link — it reconnects by itself and resumes from its cursor, so run `crew roster` to see `host_error` rather than re-arming; `relay from <h>: undecodable line` is a malformed remote line, dropped without advancing the cursor; a `reap:` detail is the remote's reap failing, handled like a local reap failure (the **Reap** bullet below). `{"stream":"reap",…,"host":"<h>"}` is the remote's own reap, informational like any reap.
 
 The crew's roster diagram is drawn by `crew`, not by you: every `dispatch` and
 `dispatch resume` starts a per-crew `crew roster-render`, which redraws it into the
@@ -1292,7 +1292,9 @@ the manual injection fallback — give the `crew where <codename|branch|%id>` li
 instead of a bare `%id`: it names the codename, `session:window.pane`, the window
 name, the role, and the `jump:` command. The `%id` in a watchdog `detail` stays
 the stable key `permission-check` and `capture-pane` use; `crew where` translates
-it at relay time.
+it at relay time. For a batch or event carrying `host`, the `%id` belongs to that
+host: never run `crew where` or local `tmux` on it — name the worker by
+branch or codename (`crew where <branch>` finds its mirror window).
 
 - `prompt:` — the pane is parked on an interactive prompt (commonly the workspace-trust
   question a fresh worktree draws). Answer it **in the pane**; the worker resumes and
@@ -1444,7 +1446,10 @@ literally, would have killed three healthy workers parked on a trust prompt. Rec
 **verify, then act**:
 
 1. `tmux capture-pane -p -t %<id>` on the pane named in the `detail`. **Always** — the
-   `detail` exists to make this one command possible. A `load:` detail names process
+   `detail` exists to make this one command possible. For a batch carrying `host`
+   the `%id` is that host's: capture with `ssh <hosts.<h>.ssh> tmux capture-pane -p -t <%id>`
+   (or look at the mirror window `crew where <branch>` finds); never run local
+   `tmux` on it — a local pane may have the same id. A `load:` detail names process
    `cwd`s, not a pane — skip the capture and go to the `load:` bullet's
    attribute-then-act branch. A `budget:` detail names an engine window, not a pane
    problem — skip the capture and go to the `budget:` bullet.
@@ -1453,6 +1458,8 @@ literally, would have killed three healthy workers parked on a trust prompt. Rec
    `permission-check … --answer`; otherwise it goes to the human with the captured
    request (see the `prompt:` bullet).
 3. The pane confirms a dead turn or a dead pane → kill the window, then re-dispatch.
+   For a remote worker: `ssh <hosts.<h>.ssh> tmux kill-window -t <%id>`, then
+   `dispatch resume <branch>` (routed to the host).
 4. The pane shows work in flight (a live meter, advancing subagent rows) → it is a
    **false positive. Do not kill.** Post nothing; the watchdog clears itself on the next
    sample. The glance **is** the guard: "kill and re-dispatch" as an unconditional
