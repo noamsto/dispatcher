@@ -1,6 +1,8 @@
 package jsonv_test
 
 import (
+	"encoding/json"
+	"math"
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
@@ -105,5 +107,43 @@ func TestExtraction(t *testing.T) {
 		if got := one(t, src).Kind().String(); got != want {
 			t.Errorf("type of %s = %s, want %s", src, got, want)
 		}
+	}
+}
+
+func TestToAny(t *testing.T) {
+	for _, lit := range []string{"1.50", "12345678901234567890123"} {
+		if got := jsonv.ToAny(one(t, lit)); got != json.Number(lit) {
+			t.Errorf("ToAny(%s) = %#v, want json.Number", lit, got)
+		}
+	}
+	for _, tc := range []struct {
+		src  string
+		want func(float64) bool
+	}{
+		{"NaN", math.IsNaN},
+		{"Infinity", func(f float64) bool { return math.IsInf(f, 1) }},
+		{"-Infinity", func(f float64) bool { return math.IsInf(f, -1) }},
+	} {
+		f, ok := jsonv.ToAny(one(t, tc.src)).(float64)
+		if !ok || !tc.want(f) {
+			t.Errorf("ToAny(%s) = %v (float64 %v)", tc.src, f, ok)
+		}
+	}
+
+	got := jsonv.ToAny(one(t, `{"a":[1,{"b":null}],"s":"x","t":true,"f":false}`))
+	m, ok := got.(map[string]any)
+	if !ok || len(m) != 4 {
+		t.Fatalf("object = %#v", got)
+	}
+	arr, ok := m["a"].([]any)
+	if !ok || len(arr) != 2 || arr[0] != json.Number("1") {
+		t.Fatalf("a = %#v", m["a"])
+	}
+	inner, ok := arr[1].(map[string]any)
+	if v, has := inner["b"]; !ok || !has || v != nil {
+		t.Errorf("a[1] = %#v", arr[1])
+	}
+	if m["s"] != "x" || m["t"] != true || m["f"] != false {
+		t.Errorf("leaves = %#v", m)
 	}
 }

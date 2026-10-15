@@ -118,7 +118,9 @@ func (s State) Terminal() bool {
 // folds that must reproduce jq's type errors work from it. The typed fields are
 // conveniences for object events: a string field that is absent or not a string
 // reads as "", an absent TS or Body as null, and a non-object value leaves all
-// of them empty.
+// of them empty. Doc is Raw in gojq's form (json.Number literals, float64 for
+// NaN and ±Inf, []any, map[string]any), derived from Raw so the two cannot
+// disagree; it does not keep key order.
 type Event struct {
 	TS      jsonv.Value
 	CrewID  string
@@ -129,10 +131,11 @@ type Event struct {
 	Session string
 	Body    jsonv.Value
 	Raw     jsonv.Value
+	Doc     any
 }
 
 func newEvent(raw jsonv.Value) Event {
-	e := Event{Raw: raw}
+	e := Event{Raw: raw, Doc: jsonv.ToAny(raw)}
 	if raw.Kind() != jsonv.KindObject {
 		return e
 	}

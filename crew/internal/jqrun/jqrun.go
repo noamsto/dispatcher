@@ -39,11 +39,7 @@ func WithJQFromJSON() Option {
 		if err != nil {
 			return fmt.Errorf("%w (while parsing '%s')", err, s)
 		}
-		g, err := toGo(parsed)
-		if err != nil {
-			return err
-		}
-		return g
+		return jsonv.ToAny(parsed)
 	})}
 }
 
@@ -83,11 +79,7 @@ type Program struct {
 func Compile(prog string, now float64, vars map[string]jsonv.Value, opts ...Option) (*Program, error) {
 	goVars := make(map[string]any, len(vars))
 	for name, v := range vars {
-		g, err := toGo(v)
-		if err != nil {
-			return nil, err
-		}
-		goVars[name] = g
+		goVars[name] = jsonv.ToAny(v)
 	}
 	return CompileAny(prog, now, goVars, opts...)
 }
@@ -124,11 +116,7 @@ func CompileAny(prog string, now float64, vars map[string]any, opts ...Option) (
 // Run evaluates the program on input and returns its first output. No
 // output is an error, as is a runtime error raised before the first output.
 func (p *Program) Run(input jsonv.Value) (jsonv.Value, error) {
-	in, err := toGo(input)
-	if err != nil {
-		return jsonv.Value{}, err
-	}
-	out, err := p.RunAny(in)
+	out, err := p.RunAny(jsonv.ToAny(input))
 	if err != nil {
 		return jsonv.Value{}, err
 	}
@@ -201,54 +189,6 @@ func freezeNow(q *gojq.Query, now float64) {
 		Number: strconv.FormatFloat(now, 'g', -1, 64),
 	}}
 	q.FuncDefs = append([]*gojq.FuncDef{{Name: "now", Body: body}}, q.FuncDefs...)
-}
-
-// toGo converts a jsonv value to gojq's representation. Number literals go
-// over as json.Number of their canonical text: gojq normalizes those lazily,
-// so pass-through output keeps the literal verbatim (jq 1.7+ semantics) and
-// big integers order exactly, while arithmetic still computes in doubles.
-// Computed numbers (NaN, infinities, decoded values beyond decNumber's
-// range) carry no text and go over as float64.
-func toGo(v jsonv.Value) (any, error) {
-	switch v.Kind() {
-	case jsonv.KindNull:
-		return nil, nil
-	case jsonv.KindTrue:
-		return true, nil
-	case jsonv.KindFalse:
-		return false, nil
-	case jsonv.KindNumber:
-		if text := v.NumberText(); text != "" {
-			return json.Number(text), nil
-		}
-		f, _ := v.AsFloat()
-		return f, nil
-	case jsonv.KindString:
-		s, _ := v.AsString()
-		return s, nil
-	case jsonv.KindArray:
-		out := make([]any, 0, v.Len())
-		for _, e := range v.Elems() {
-			g, err := toGo(e)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, g)
-		}
-		return out, nil
-	case jsonv.KindObject:
-		out := make(map[string]any, v.Len())
-		for _, m := range v.Members() {
-			g, err := toGo(m.Val)
-			if err != nil {
-				return nil, err
-			}
-			out[m.Key] = g
-		}
-		return out, nil
-	default:
-		return nil, fmt.Errorf("jqrun: cannot convert kind %v", v.Kind())
-	}
 }
 
 // fromGo converts Normalize's output back. Numbers rebuild from their exact

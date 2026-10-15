@@ -3,10 +3,13 @@ package bus
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
@@ -26,6 +29,48 @@ func compact(t *testing.T, v jsonv.Value) string {
 		t.Fatal(err)
 	}
 	return b.String()
+}
+
+// docEqual is reflect.DeepEqual except that two NaN float64s are equal.
+func docEqual(a, b any) bool {
+	switch x := a.(type) {
+	case float64:
+		y, ok := b.(float64)
+		return ok && (x == y || (math.IsNaN(x) && math.IsNaN(y)))
+	case []any:
+		y, ok := b.([]any)
+		if !ok || len(x) != len(y) {
+			return false
+		}
+		for i := range x {
+			if !docEqual(x[i], y[i]) {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		y, ok := b.(map[string]any)
+		if !ok || len(x) != len(y) {
+			return false
+		}
+		for k, xv := range x {
+			yv, ok := y[k]
+			if !ok || !docEqual(xv, yv) {
+				return false
+			}
+		}
+		return true
+	}
+	return reflect.DeepEqual(a, b)
+}
+
+func assertDoc(t *testing.T, evs []Event) {
+	t.Helper()
+	for i, e := range evs {
+		if want := jsonv.ToAny(e.Raw); !docEqual(e.Doc, want) {
+			t.Fatalf("evs[%d].Doc = %#v, want %#v", i, e.Doc, want)
+		}
+	}
 }
 
 func TestReadEventsAbsent(t *testing.T) {
@@ -171,6 +216,7 @@ func TestReadEventsFields(t *testing.T) {
 	if compact(t, odd.TS) != `"str"` || compact(t, odd.Body) != "3" {
 		t.Fatalf("TS/Body keep their raw value: %+v", odd)
 	}
+	assertDoc(t, evs)
 }
 
 func TestReadEventsRawRoundTrip(t *testing.T) {
@@ -184,6 +230,7 @@ func TestReadEventsRawRoundTrip(t *testing.T) {
 	if got := compact(t, evs[0].Raw); got != want {
 		t.Fatalf("Raw = %s\nwant  %s", got, want)
 	}
+	assertDoc(t, evs)
 }
 
 func TestReadEventsOrderAcrossCrews(t *testing.T) {
@@ -239,6 +286,7 @@ func TestReadEventsStreamShapes(t *testing.T) {
 					t.Fatalf("evs[%d].Kind = %q, want %q", i, evs[i].Kind, k)
 				}
 			}
+			assertDoc(t, evs)
 		})
 	}
 }
@@ -262,6 +310,89 @@ func TestReadEventsNonObjectValues(t *testing.T) {
 			t.Fatalf("evs[%d] typed fields must stay empty: %+v", i, evs[i])
 		}
 	}
+	assertDoc(t, evs)
+}
+
+func TestReadEventsDoc(t *testing.T) {
+	cases := []struct {
+		name, content string
+		tolerant      bool
+	}{
+		{"fraction literal", `{"n":1.50}`, false},
+		{"big integer literal", `{"n":12345678901234567890123}`, false},
+		{"nan and infinity", `{"a":[NaN,Infinity,-Infinity]}`, false},
+		{"nested containers", `{"a":[1,{"b":[null,{"c":"x"}]}]}`, false},
+		{"bare null", "null", false},
+		{"bom", "\xef\xbb\xbf{\"kind\":\"msg\"}", false},
+		{"torn tail", `{"n":1.50}` + "\n" + `{"kind":"st`, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "events.jsonl")
+			writeFile(t, path, c.content)
+			read := ReadEvents
+			if c.tolerant {
+				read = ReadEventsTolerant
+			}
+			evs, err := read(path)
+			var de *DecodeError
+			if c.tolerant != errors.As(err, &de) || (!c.tolerant && err != nil) {
+				t.Fatalf("err = %v", err)
+			}
+			if len(evs) != 1 {
+				t.Fatalf("len = %d, want 1", len(evs))
+			}
+			assertDoc(t, evs)
+		})
+	}
+
+	readOne := func(t *testing.T, content string) Event {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "events.jsonl")
+		writeFile(t, path, content)
+		evs, err := ReadEvents(path)
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("evs=%v err=%v", evs, err)
+		}
+		return evs[0]
+	}
+	t.Run("number literals keep their text", func(t *testing.T) {
+		doc, ok := readOne(t, `{"ts":1.50,"body":{"n":12345678901234567890123}}`).Doc.(map[string]any)
+		if !ok {
+			t.Fatal("Doc is not a map[string]any")
+		}
+		if doc["ts"] != json.Number("1.50") {
+			t.Fatalf("ts = %#v", doc["ts"])
+		}
+		body, ok := doc["body"].(map[string]any)
+		if !ok || body["n"] != json.Number("12345678901234567890123") {
+			t.Fatalf("body = %#v", doc["body"])
+		}
+	})
+	t.Run("nan and infinity are float64", func(t *testing.T) {
+		doc, ok := readOne(t, `{"a":[NaN,Infinity,-Infinity]}`).Doc.(map[string]any)
+		if !ok {
+			t.Fatal("Doc is not a map[string]any")
+		}
+		a, ok := doc["a"].([]any)
+		if !ok || len(a) != 3 {
+			t.Fatalf("a = %#v", doc["a"])
+		}
+		f := make([]float64, 3)
+		for i := range f {
+			if f[i], ok = a[i].(float64); !ok {
+				t.Fatalf("a[%d] = %#v, want float64", i, a[i])
+			}
+		}
+		if !math.IsNaN(f[0]) || !math.IsInf(f[1], 1) || !math.IsInf(f[2], -1) {
+			t.Fatalf("a = %v", f)
+		}
+	})
+	t.Run("bare null is nil", func(t *testing.T) {
+		if doc := readOne(t, "null").Doc; doc != nil {
+			t.Fatalf("Doc = %#v, want nil", doc)
+		}
+	})
 }
 
 func TestStateTerminal(t *testing.T) {
@@ -604,6 +735,7 @@ func TestReadEventsTolerant(t *testing.T) {
 		if len(evs) != 1 || evs[0].CrewID != "a" {
 			t.Fatalf("prefix lost: %v", evs)
 		}
+		assertDoc(t, evs)
 		if strict, err2 := ReadEvents(path); strict != nil || err2 == nil {
 			t.Fatalf("ReadEvents must keep returning no events on a decode error: %v %v", strict, err2)
 		}
