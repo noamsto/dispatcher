@@ -926,7 +926,7 @@ func TestRosterUnreachableHostKeepsTheWorkersListed(t *testing.T) {
 	}
 }
 
-// Without a remote dispatch row, no host is asked and the output is what it was.
+// Without a remote dispatch row, no host is asked and the rows are the local ones alone.
 func TestRosterWithoutRemoteRowsAsksNoHost(t *testing.T) {
 	repo, _ := repoWithLog(t, func() *string { s := nearRow; return &s }(), 0o644)
 	sent := remoteStubs(t, repo, "exit 1")

@@ -459,7 +459,7 @@ func TestPaneIDIsNeverRouted(t *testing.T) {
 	}
 }
 
-// A local worker answers exactly as it did, whether or not the bus holds remote rows.
+// A local worker's answer is the same whether or not the bus holds remote rows.
 func TestLocalWorkerOutputIsUnchangedByRouting(t *testing.T) {
 	tr := setup(t)
 	tr.write(t, remoteDispatch(1, "feat/far", "iris", "mini"), dispatch(2, "c1", "feat/618-x", "nova"))

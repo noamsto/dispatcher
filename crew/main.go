@@ -630,8 +630,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		})
 	}
 
-	// remote-run sends one command to the clone of this repo on a remote host;
-	// dispatch-row answers the same question for a session on this bus.
+	// remote-run sends one command to the clone of this repo on a remote host.
 	if sub == "remote-run" {
 		c := parsed.typed.RemoteRun
 		return remoteRun(ctx, e, remote.Call{
@@ -977,7 +976,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 }
 
 // remoteAs runs a command on a remote host in this checkout's clone, as crew.
-// The checks of what runs there are remote-exec's, not the caller's.
 func remoteAs(ctx context.Context, e env, cwd, crew string) func(host string, argv []string, stdout, stderr io.Writer) int {
 	return func(host string, argv []string, stdout, stderr io.Writer) int {
 		return remoteRun(ctx, e, remote.Call{Host: host, Cwd: cwd, Env: []string{"CREW_ID=" + crew}, Argv: argv}, stdout, stderr)

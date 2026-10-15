@@ -16,9 +16,10 @@ import (
 )
 
 // relayStub is the crew entry a relaying loop re-enters. `watch` parks briefly
-// with nothing to report, or for 30 s once a `park` file exists; `remote-run` logs its argv and runs the next
-// `relay.<n>` file (or `relay.default`) for a relay, `reap` for a reap. Each
-// relay records its pid, which is also its process group.
+// with nothing to report, or for 30 s once a `park` file exists; `remote-run`
+// logs its argv and runs the next `relay.<n>` file (or `relay.default`) for a
+// relay, `reap` for a reap. Each relay records its pid, which is also its
+// process group.
 func relayStub(t *testing.T) (script, dir string) {
 	t.Helper()
 	dir = t.TempDir()

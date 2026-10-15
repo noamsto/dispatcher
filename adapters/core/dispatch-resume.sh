@@ -1264,15 +1264,14 @@ fi
 
 if [ -z "$pane" ]; then
   sanitized="${branch//\//-}"
-  # The `|| true` keeps a box without tmux reaching the "could not resolve a
-  # tmux pane" message below instead of dying under errexit.
   client_width=""
   client_height=""
   if [ -n "${DISPATCH_TMUX_SESSION:-}" ]; then
     # Remote mode, as in dispatch: the crew's own session, created with the
     # window when absent; no client to size from.
     win_args=(-c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
-    # A failed client leaves win_ids empty for the message below, as above.
+    # The `|| true` keeps a failed client reaching the "could not resolve a
+    # tmux pane" message below instead of dying under errexit.
     if tmux has-session -t "=$DISPATCH_TMUX_SESSION" 2>/dev/null; then
       win_ids="$(_pane_client new-window -d -t "=$DISPATCH_TMUX_SESSION:" "${win_args[@]}" || true)"
     else

@@ -694,8 +694,8 @@ func TestCrewlessReplyRefusesAmbiguousCrews(t *testing.T) {
 	}
 }
 
-// A branch named like a session id (no '#') is a branch, as it was before
-// routing: the reply resolves it on the local bus.
+// A branch named like a session id (no '#') is a branch: the reply resolves it
+// on the local bus.
 func TestReplyToASessionShapedBranch(t *testing.T) {
 	tr := setup(t)
 	tr.write(t, dispatch(1, "c1", "feat/near", "s1-1"))

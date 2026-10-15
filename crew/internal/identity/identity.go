@@ -170,8 +170,9 @@ func For(recorded map[string]jsonv.Value, branch string) jsonv.Value {
 // Probes is the arm's tmux read, injected so tests never touch a server.
 type Probes struct {
 	// Windows is `tmux list-windows -a -F '#{@crew_name} #{@bridge_crew_name}'`:
-	// every codename a live or mirror window already carries, whitespace-separated. It ran under `2>/dev/null || true`, so
-	// a failed read — or no probe at all — names nothing rather than refusing.
+	// every codename a live or mirror window already carries, whitespace-separated.
+	// It ran under `2>/dev/null || true`, so a failed read — or no probe at all —
+	// names nothing rather than refusing.
 	Windows func() (string, error)
 }
 
