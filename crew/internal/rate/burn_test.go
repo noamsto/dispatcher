@@ -263,3 +263,27 @@ func num(v any) float64 {
 	f, _ := asFloat(v)
 	return f
 }
+
+// TestArgjsonLooseNumbers: the arm's `--argjson` accepted jq's looser number
+// grammar, so a quoted weight like ".5" must still price.
+func TestArgjsonLooseNumbers(t *testing.T) {
+	nums := []struct {
+		in   string
+		want float64
+	}{
+		{".5", 0.5}, {"+2", 2}, {"5.", 5}, {"02", 2}, {"-.5e1", -5},
+	}
+	for _, c := range nums {
+		if got := argjson(c.in); !weightTruth(got, c.want) {
+			t.Errorf("argjson(%q) = %#v, want %v", c.in, got, c.want)
+		}
+	}
+	if got := argjson("1.50"); got != json.Number("1.50") {
+		t.Errorf("argjson(%q) = %#v, want json.Number(\"1.50\")", "1.50", got)
+	}
+	for _, in := range []string{"nan", "Infinity", "inf", "0x10", "1_0", "abc", "", "1 2", ".", "+", "e5"} {
+		if got := argjson(in); got != nil {
+			t.Errorf("argjson(%q) = %#v, want nil", in, got)
+		}
+	}
+}

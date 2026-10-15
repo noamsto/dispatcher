@@ -9,6 +9,7 @@ package rate
 import (
 	"bytes"
 	"encoding/json"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
@@ -145,9 +146,22 @@ func jqTextRaw(raw json.RawMessage) string {
 // arm would have died on (`--argjson` rejects it under `set -e`) prices as
 // null rather than killing the sweep over a malformed table row.
 func argjson(text string) any {
-	v, _ := parseOne(text)
-	return v
+	if v, ok := parseOne(text); ok {
+		return v
+	}
+	// jq's number grammar is looser than JSON's; the arm's `--argjson` accepted these.
+	t := strings.TrimSpace(text)
+	if !looseNumber.MatchString(t) {
+		return nil
+	}
+	f, err := strconv.ParseFloat(t, 64)
+	if err != nil {
+		return nil
+	}
+	return f
 }
+
+var looseNumber = regexp.MustCompile(`^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$`)
 
 // globMatch is bash's `case` pattern match, not path.Match: `*` and `?` cross
 // `/` (a model id like `openrouter/anthropic/claude-opus-4.1` is priced by
