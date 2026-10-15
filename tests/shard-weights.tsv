@@ -123,9 +123,6 @@ tests/permission-check.bats	permission-check	!timing	61306
 tests/pr-watch.bats	*	!timing	10296
 tests/pr-watch.bats	default clock	!timing	1184
 tests/public-leak-guard.bats	public-leak-guard	!timing	6891
-tests/rate-autosweep.bats	autosweep	!timing	32134
-tests/rate-autosweep.bats	guard	!timing	84
-tests/rate-sweep-all.bats	sweep-all	!timing	23204
 tests/reap-race.bats	reap	!timing	20375
 tests/refresh-budget.bats	*	!timing	181711
 tests/refresh-budget.bats	--report usage	!timing	221

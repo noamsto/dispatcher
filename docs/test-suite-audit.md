@@ -53,12 +53,10 @@ them as relative.
 | worktree-git.bats              |    59 |    20.8 |  1.1% |
 | pr-watch.bats                  |    17 |    18.6 |  1.0% |
 | permission-check.bats          |   147 |    16.3 |  0.8% |
-| rate-autosweep.bats            |    21 |     8.3 |  0.4% |
 | reap-race.bats                 |     6 |     7.8 |  0.4% |
 | dispatch-comment.bats          |    10 |     6.7 |  0.3% |
 | dispatcher.bats                |    39 |     5.8 |  0.3% |
 | dispatch-config.bats           |    40 |     4.1 |  0.2% |
-| rate-sweep-all.bats            |    11 |     3.4 |  0.2% |
 | crew-dash.bats                 |    12 |     3.3 |  0.2% |
 | dispatch-notify.bats           |    16 |     3.2 |  0.2% |
 | module.bats                    |    39 |     1.5 |  0.1% |
@@ -152,8 +150,6 @@ doc-pinning test was then triaged by hand (see the cut list).
 | permission-check.bats  |       146 |           0 |         1 |         0 |      147 |
 | pr-watch.bats          |        17 |           0 |         0 |         0 |       17 |
 | public-leak-guard.bats |        16 |           0 |         0 |         0 |       16 |
-| rate-autosweep.bats    |        20 |           0 |         1 |         0 |       21 |
-| rate-sweep-all.bats    |        11 |           0 |         0 |         0 |       11 |
 | reap-race.bats         |         6 |           0 |         0 |         0 |        6 |
 | refresh-budget.bats    |        99 |           0 |         0 |         1 |      100 |
 | refresh-models.bats    |         4 |           0 |         0 |         0 |        4 |
@@ -498,8 +494,6 @@ Blind spots:
 | permission-check.bats  |   147 |      146 |          1 |            0.9384 |
 | pr-watch.bats          |    17 |       17 |          0 |            0.6471 |
 | public-leak-guard.bats |    16 |       16 |          0 |            0.7500 |
-| rate-autosweep.bats    |    21 |       20 |          1 |            0.9500 |
-| rate-sweep-all.bats    |    11 |       11 |          0 |            0.6364 |
 | reap-race.bats         |     6 |        6 |          0 |            1.0000 |
 | refresh-budget.bats    |   100 |      100 |          0 |            0.9300 |
 | refresh-models.bats    |     4 |        4 |          0 |            0.5000 |
@@ -509,8 +503,8 @@ Blind spots:
 | worktree-git.bats      |    59 |       59 |          0 |            0.8983 |
 
 With ~2,850 tests sharing entry paths, zero-unique reads high everywhere
-(0.65–1.00 on 25 of 28 measured files; `pr-watch.bats` is 0.6471,
-`rate-sweep-all.bats` is 0.6364, `refresh-models.bats` is 0.5000). The table
+(0.65–1.00 on 25 of 28 measured files; `pr-watch.bats` is 0.6471 and
+`refresh-models.bats` is 0.5000). The table
 is descriptive: it finds tests with large unique sets worth protecting and
 feeds the candidate list. It is not a cut signal by itself.
 
