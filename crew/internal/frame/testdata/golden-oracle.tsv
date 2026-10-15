@@ -910,3 +910,15 @@ post_turn_unknown.txt	idle_reason.skip1.color	rc=1 reason=no finished-turn marke
 post_turn_unknown.txt	idle_reason.skip1.plain	rc=1 reason=no finished-turn marker above the input box
 post_turn_unknown.txt	quota_prompt	0
 post_turn_unknown.txt	quota_session_limit	0
+post_turn_unknown_below.txt	idle_reason.skip0.color	rc=1 reason=no finished-turn marker above the input box
+post_turn_unknown_below.txt	idle_reason.skip0.plain	rc=1 reason=no finished-turn marker above the input box
+post_turn_unknown_below.txt	idle_reason.skip1.color	rc=1 reason=no finished-turn marker above the input box
+post_turn_unknown_below.txt	idle_reason.skip1.plain	rc=1 reason=no finished-turn marker above the input box
+post_turn_unknown_below.txt	quota_prompt	0
+post_turn_unknown_below.txt	quota_session_limit	0
+post_turn_hook_only.txt	idle_reason.skip0.color	rc=0 reason=
+post_turn_hook_only.txt	idle_reason.skip0.plain	rc=0 reason=
+post_turn_hook_only.txt	idle_reason.skip1.color	rc=0 reason=
+post_turn_hook_only.txt	idle_reason.skip1.plain	rc=0 reason=
+post_turn_hook_only.txt	quota_prompt	0
+post_turn_hook_only.txt	quota_session_limit	0

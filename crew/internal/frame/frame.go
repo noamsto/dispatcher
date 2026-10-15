@@ -47,7 +47,8 @@ var (
 
 	// The post-turn lines claude can print under the finished-turn marker.
 	reClearHint  = posix(`^[[:space:]]*new task\?[[:space:]]+/clear[[:space:]]`)
-	reHookReload = posix(`^[[:space:]]*●[[:space:]].*hooks\.json changed — reloaded`)
+	reHookReload = posix(`^[[:space:]]*●[[:space:]]+[^[:space:]:]+:[[:space:]]+hooks\.json changed — reloaded`)
+	reRecapEnd   = posix(`/config\)[[:space:]]*$`)
 	reRecap      = posix(`^[[:space:]]*※[[:space:]]+recap:`)
 
 	rePiScrollUp   = regexp.MustCompile(`↑ [0-9]+ more`)
@@ -480,31 +481,40 @@ func PaneIdleReason(plain, colored string, skipBg bool) (reason string, idle boo
 	return "", true
 }
 
-// maxRecapRows bounds the wrapped continuation rows of a recap.
+// maxRecapRows bounds the wrapped rows of one recap.
 const maxRecapRows = 12
 
 // doneBehindPostTurn finds the finished-turn marker past the fixed window above
 // the box, walking up through nothing but the hint, hook-reload and recap lines
-// claude prints after a turn ends. Any other row ends the walk, so the pane
-// stays not-idle.
+// claude prints after a turn ends. A recap is one contiguous block that ends
+// with its `(disable recaps in /config)` tail and starts at `※ recap:`. Any
+// other row ends the walk, so the pane stays not-idle.
 func doneBehindPostTurn(text string) bool {
 	_, plain, a, _, off, ok := scanBox(text)
 	if !ok {
 		return false
 	}
-	pending := 0 // unclassified rows seen since the last recognised line
+	inRecap, rows := false, 0
 	for j := a - 1; j >= off; j-- {
 		switch row := plain[j]; {
 		case reDone.MatchString(row):
-			return pending == 0
+			return !inRecap
 		case reClearHint.MatchString(row) || reHookReload.MatchString(row):
-			if pending > 0 {
+			if inRecap {
 				return false
 			}
 		case reRecap.MatchString(row):
-			pending = 0
+			if !inRecap && !reRecapEnd.MatchString(row) {
+				return false
+			}
+			inRecap = false
+		case !inRecap:
+			if !reRecapEnd.MatchString(row) {
+				return false
+			}
+			inRecap, rows = true, 0
 		default:
-			if pending++; pending > maxRecapRows {
+			if rows++; rows >= maxRecapRows {
 				return false
 			}
 		}
