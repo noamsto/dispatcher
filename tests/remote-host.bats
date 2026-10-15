@@ -78,6 +78,26 @@ setup() {
   export OG_LOG="$BATS_TEST_TMPDIR/og-remote-open.log"
   unset SSH_FAIL_AFTER SSH_DROP_AFTER_DISPATCH SSH_DOWN_AFTER_DROP
   make_bins
+  write_remote_env
+}
+
+# write_remote_env — the remote side's whole environment, NUL-separated in
+# $REMOTE_ENV for `env -i`: what sshd sets plus the harness pins a real
+# dispatch.sh run needs. Nothing else of the local side (its CREW_ID, TMUX,
+# DISPATCH_* overrides) reaches the remote.
+write_remote_env() {
+  local v
+  local -a vars=(PATH="$PATH" HOME="$RHOME" TMPDIR="${TMPDIR:-/tmp}" SHELL=/bin/sh
+    XDG_DATA_HOME="$RHOME/data" XDG_CONFIG_HOME="$RHOME/config" XDG_STATE_HOME="$RHOME/state"
+    TMUX_TMPDIR="$RTMUX")
+  for v in USER LOGNAME LANG LC_ALL GIT_CONFIG_GLOBAL CREW_GO_BIN CREW_RATE_AUTOSWEEP DISPATCH_LOADAVG_FILE \
+    DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR CROSS_REPO_HINT_LIB CLAUDE_WORKER_SETTINGS_LIB \
+    DISPATCH_CONFIG_BIN GRANT_CHECK_LIB LOCAL_MODELS_LIB BUDGET_GATE_LIB WORKTREE_GIT_LIB \
+    BASH_ENV BATS_COVERAGE_FILE; do
+    [ -z "${!v+x}" ] || vars+=("$v=${!v}")
+  done
+  export REMOTE_ENV="$BATS_TEST_TMPDIR/remote.env"
+  printf '%s\0' "${vars[@]}" >"$REMOTE_ENV"
 }
 
 teardown() {
@@ -88,7 +108,10 @@ teardown() {
     while read -r pid; do
       cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
       case "$cmd" in
-      *remote-exec* | *" relay "*) kill "$pid" 2>/dev/null || true ;;
+      *remote-exec*)
+        pkill -P "$pid" 2>/dev/null || true
+        kill "$pid" 2>/dev/null || true
+        ;;
       esac
     done <"$SSH_PIDS"
   fi
@@ -221,9 +244,8 @@ if [ -n "${SSH_DROP_AFTER_DISPATCH:-}" ]; then
 fi
 
 cd "$RHOME" || exit 254
-remote_env=(env -u TMUX -u TMUX_PANE -u CREW_ID -u CREW_WORKER_ID -u CREW_ROLE_ID -u DISPATCH_SPEC
-  HOME="$RHOME" XDG_DATA_HOME="$RHOME/data" XDG_CONFIG_HOME="$RHOME/config"
-  XDG_STATE_HOME="$RHOME/state" TMUX_TMPDIR="$RTMUX")
+mapfile -d '' -t renv <"$REMOTE_ENV"
+remote_env=(env -i "${renv[@]}")
 if [ -n "$drop" ]; then
   "${remote_env[@]}" sh -c "$*" >/dev/null || true
   [ -z "${SSH_DOWN_AFTER_DROP:-}" ] || : >"$SSH_DOWN"
@@ -240,12 +262,9 @@ EOF
 on_remote() {
   local dir="$1"
   shift
-  (
-    cd "$dir" &&
-      env -u TMUX -u TMUX_PANE -u CREW_ID -u CREW_WORKER_ID -u CREW_ROLE_ID -u DISPATCH_SPEC \
-        HOME="$RHOME" XDG_DATA_HOME="$RHOME/data" XDG_CONFIG_HOME="$RHOME/config" \
-        XDG_STATE_HOME="$RHOME/state" TMUX_TMPDIR="$RTMUX" "$@"
-  )
+  local -a renv
+  mapfile -d '' -t renv <"$REMOTE_ENV"
+  (cd "$dir" && env -i "${renv[@]}" "$@")
 }
 
 poll_for() { # <tries> <cmd...> — retry every 0.1s
@@ -339,6 +358,13 @@ dispatch_remote() { # <extra dispatch args...> — a standard dispatch to crew c
   grep -Eq '^dispatcher_pane: ?$' "$wt/WORKER_TASK.md"
   grep -qF 'Body line.' "$wt/WORKER_TASK.md"
   remote_tmux list-windows -t =crew-c1 -F '#{@crew_branch}' | grep -qxF "$branch"
+  # The dispatch that started the remote tmux server left none of its
+  # per-dispatch vars in the server's global environment.
+  local var
+  for var in DISPATCH_SESSION_ID DISPATCH_SPEC DISPATCH_EMIT_ROW DISPATCH_TMUX_SESSION CREW_IDENTITY_AVOID; do
+    run remote_tmux show-environment -g "$var"
+    [[ "$output" != "$var="* ]] || return 1
+  done
   grep -qF 'mini crew-c1 --into main' "$OG_LOG"
   assert_ssh_command_is_literal
 
@@ -371,6 +397,15 @@ dispatch_remote() { # <extra dispatch args...> — a standard dispatch to crew c
   [ "$status" -eq 0 ]
   jq -e --arg b "$branch" '.[] | select(.branch == $b and .host == "mini") | .live == false' <<<"$output"
   stop_stream
+}
+
+@test "dispatch --host carries DISPATCH_DRAFT_PR=1 to the remote worker" {
+  DISPATCH_DRAFT_PR=1 run --separate-stderr dispatch_remote --host mini 42 "Draft title"
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  grep -qx 'draft: true' "$(remote_wt "$(local_dispatch_rows | jq -r .branch)")/WORKER_TASK.md"
 }
 
 @test "dispatch --host with an unknown host is refused before any ssh or local write" {

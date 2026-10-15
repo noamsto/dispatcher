@@ -1392,9 +1392,12 @@ remote_crew() {
   cat >"$STUBS/crew" <<'STUB'
 #!/usr/bin/env bash
 case $1 in
-resolve-target) printf '%s\t%s\t%s\t%s\t%s\n' "$2" iris mini c1 1 ;;
+resolve-target)
+  printf 'resolve-target from %s\n' "$PWD" >>"$CREW_LOG"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$2" iris mini c1 1
+  ;;
 remote-run)
-  printf '%s\n' "$*" >>"$CREW_LOG"
+  printf '%s from %s\n' "$*" "$PWD" >>"$CREW_LOG"
   [ -z "${STUB_REMOTE_OUT:-}" ] || printf '%s\n' "$STUB_REMOTE_OUT"
   exit "${STUB_REMOTE_RC:-0}"
   ;;
@@ -1405,12 +1408,16 @@ STUB
   export CREW_LOG="$BATS_TEST_TMPDIR/crew.log"
 }
 
-@test "permission-check: a remote worker's check runs on its host with the same args" {
+@test "permission-check: a remote worker's check runs on its host with the same args, routed by the crew dir's repo" {
   remote_crew
+  # The cwd is not the crew dir's repo: the route is read from --crew-dir's.
+  cd "$WT"
   STUB_REMOTE_OUT=allow-once pane --answer
   [ "$status" -eq 0 ]
   [ "$output" = allow-once ]
-  [ "$(cat "$CREW_LOG")" = "remote-run --host mini -- permission-check --pane %9 --branch $BRANCH --crew-dir $CREW --answer" ]
+  # The local --crew-dir means nothing there: the remote derives its own.
+  [ "$(cat "$CREW_LOG")" = "resolve-target from ${CREW%/crew}
+remote-run --host mini -- permission-check --pane %9 --branch $BRANCH --answer from ${CREW%/crew}" ]
   [ ! -e "$TMUX_LOG" ]
 }
 

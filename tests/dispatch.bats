@@ -3602,17 +3602,67 @@ EOF
   [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ]
 }
 
+@test "remote mode: the tmux client that may start the crew server carries none of the per-dispatch vars" {
+  stub_launch_bins
+  # _remote_mode_tmux, also logging which per-dispatch vars a window-opening
+  # client sees (names only): a client that starts the server seeds its
+  # global environment, which every later window inherits.
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+has-session) [ -n "${STUB_HAS_SESSION:-}" ] || exit 1 ;;
+new-window | new-session)
+  seen=""
+  for v in DISPATCH_TMUX_SESSION DISPATCH_SESSION_ID DISPATCH_EMIT_ROW CREW_IDENTITY_AVOID DISPATCH_SPEC; do
+    [ -z "${!v+x}" ] || seen="$seen $v"
+  done
+  printf 'client-env:%s\n' "$seen" >>"$STUB_LOG"
+  printf '%s %s\n' '@1' '%1'
+  ;;
+display-message) printf '%s\n' '200 50 off' ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  printf 'spec body\n' >"$BATS_TEST_TMPDIR/spec.md"
+  local issue has
+  for issue in 42 43; do
+    has=""
+    [ "$issue" = 42 ] || has=1
+    : >"$STUB_LOG"
+    STUB_HAS_SESSION="$has" DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_EMIT_ROW=1 DISPATCH_SESSION_ID="s1-$issue" \
+      CREW_IDENTITY_AVOID=iris DISPATCH_SPEC="$BATS_TEST_TMPDIR/spec.md" \
+      run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 "$issue" "remote worker"
+    [ "$status" -eq 0 ]
+    grep -qE '^new-(session|window) ' "$STUB_LOG"
+    [ "$(grep -c '^client-env:' "$STUB_LOG")" -ge 1 ]
+    run ! grep -q '^client-env: ' "$STUB_LOG"
+  done
+  grep -q 'spec body' "$TEST_REPO/.dispatch-wt/feat-42-remote-worker/WORKER_TASK.md"
+}
+
 # dispatch --host's local side against a stub `crew remote-run`: the engine
-# preflight answers claude, the dispatch call exits STUB_REMOTE_RC.
+# preflight answers STUB_ENGINES (claude), the dispatch call exits
+# STUB_REMOTE_RC, first printing a valid row for its session when
+# STUB_REMOTE_ROW is set. CREW_PWD_LOG, when set, gets each remote-run's cwd.
 _host_crew_stub() {
   cat >"$STUB_DIR/crew" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 remote-run)
+  [ -z "${CREW_PWD_LOG:-}" ] || printf '%s\n' "$PWD" >>"$CREW_PWD_LOG"
   case " $* " in
-  *" -- dispatch --engines "*) echo claude ;;
-  *" -- dispatch "*) exit "${STUB_REMOTE_RC:-3}" ;;
+  *" -- dispatch --engines "*) printf '%s\n' ${STUB_ENGINES:-claude} ;;
+  *" -- dispatch "*)
+    if [ -n "${STUB_REMOTE_ROW:-}" ]; then
+      s="$(grep -o 'DISPATCH_SESSION_ID=s[0-9]*-[0-9]*' <<<"$*" | cut -d= -f2)"
+      printf 'worker_id: worker:feat/42-t#%s\n' "$s"
+      printf 'dispatch_row: {"kind":"dispatch","crew_id":"c1","session":"%s","branch":"feat/42-t","worker_id":"worker:feat/42-t#%s"}\n' "$s" "$s"
+    fi
+    exit "${STUB_REMOTE_RC:-3}"
+    ;;
   esac
   ;;
 identity) printf 'iris\nbad name\n' ;;
@@ -3646,6 +3696,116 @@ EOF
     [[ "$stderr" == *"--host cannot combine with ${flag%% *}"* ]] || return 1
     run ! grep -q '^remote-run' "$STUB_LOG"
   done
+}
+
+@test "dispatch --host refuses an env override the remote dispatch would not see" {
+  stub_launch_bins
+  _host_crew_stub
+  local var
+  for var in DISPATCH_IGNORE_RUNG=opus DISPATCH_SKIP_MODEL_CHECK=sonnet DISPATCH_SHAPE=solo DISPATCH_CLAUDE_CONNECTORS=1 DISPATCH_PRECHECK=1; do
+    : >"$STUB_LOG"
+    run --separate-stderr env "$var" bash -euo pipefail "$DISPATCH" standard sonnet --host mini --effort medium --crew-id c1 42 "t"
+    [ "$status" -eq 1 ] || return 1
+    [[ "$stderr" == *"--host cannot combine with ${var%%=*}"* ]] || return 1
+    run ! grep -q '^remote-run' "$STUB_LOG"
+  done
+}
+
+@test "dispatch --host forwards DISPATCH_DRAFT_PR=1 as --draft, and an explicit --no-draft wins" {
+  stub_launch_bins
+  _host_crew_stub
+  DISPATCH_DRAFT_PR=1 run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 42 "t"
+  [ "$status" -eq 3 ]
+  call="$(grep -- '-- dispatch standard' "$STUB_LOG")"
+  [[ "$call" == *" -- dispatch standard sonnet --draft --effort medium 42 --crew-id c1 -- t" ]]
+  : >"$STUB_LOG"
+  DISPATCH_DRAFT_PR=1 run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --no-draft --crew-id c1 42 "t"
+  [ "$status" -eq 3 ]
+  call="$(grep -- '-- dispatch standard' "$STUB_LOG")"
+  [[ "$call" == *" -- dispatch standard sonnet --effort medium --no-draft 42 --crew-id c1 -- t" ]]
+}
+
+@test "dispatch --host prints the --recover hint when the remote fails after writing its row" {
+  stub_launch_bins
+  _host_crew_stub
+  STUB_REMOTE_ROW=1 STUB_REMOTE_RC=3 run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 42 "t"
+  [ "$status" -eq 3 ]
+  [[ "$stderr" == *"remote dispatch failed (exit 3)"* ]]
+  session="$(grep -o 'DISPATCH_SESSION_ID=s[0-9]*-[0-9]*' "$STUB_LOG" | head -1 | cut -d= -f2)"
+  [[ "$stderr" == *"dispatch --host mini --recover $session --crew-id c1"* ]]
+  [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ]
+  # No row, no hint.
+  : >"$STUB_LOG"
+  STUB_REMOTE_RC=3 run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 42 "t"
+  [ "$status" -eq 3 ]
+  [[ "$stderr" != *"--recover"* ]]
+}
+
+@test "dispatch --host runs the claude pace gate on the lead and a claude role, and honours --ignore-budget" {
+  stub_launch_bins
+  _host_crew_stub
+  budget_json 75 "$(date +%s)"
+  run --separate-stderr run_dispatch deep opus --agent claude --host mini --effort high --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung (opus) is refused"* ]]
+  run ! grep -q -- '-- dispatch deep' "$STUB_LOG"
+  # A role on claude under the same lead gets the same gate.
+  run --separate-stderr run_dispatch deep sonnet --agent claude --host mini --effort high --roles 'reviewer=opus' --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung (opus) is refused"* ]]
+  run ! grep -q -- '-- dispatch deep' "$STUB_LOG"
+  run --separate-stderr run_dispatch deep opus --agent claude --host mini --effort high --ignore-budget --crew-id c1 42 "t"
+  [ "$status" -eq 3 ]
+  grep -q -- '-- dispatch deep opus --agent claude --effort high --ignore-budget 42' "$STUB_LOG"
+}
+
+@test "dispatch --host runs the claude quota stop for a role on claude under a non-claude lead" {
+  stub_launch_bins
+  _host_crew_stub
+  budget_json 96 "$(date +%s)"
+  STUB_ENGINES='claude codex' run --separate-stderr run_dispatch standard gpt-5.5 --agent codex --host mini --effort medium \
+    --roles 'reviewer=claude:sonnet@medium' --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"role 'reviewer' (claude) quota exhausted"* ]]
+  run ! grep -q -- '-- dispatch standard' "$STUB_LOG"
+  # A role on the lead's own codex is not claude's.
+  STUB_ENGINES='claude codex' run --separate-stderr run_dispatch standard gpt-5.5 --agent codex --host mini --effort medium \
+    --roles 'reviewer=gpt-5.5' --crew-id c1 42 "t"
+  [ "$status" -eq 3 ]
+}
+
+@test "dispatch --host refuses from a worker worktree whose .git is already a standalone repo (#633)" {
+  setup_recorded_w9
+  _host_crew_stub
+  make_fake_gitdir "$BATS_TEST_TMPDIR/fake"
+  rm "$TEST_REPO/w9/.git"
+  mv "$BATS_TEST_TMPDIR/fake/.git" "$TEST_REPO/w9/.git"
+  cd "$TEST_REPO/w9"
+  run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"inside the worker worktree"* ]]
+  run ! grep -q '^remote-run' "$STUB_LOG"
+  run --separate-stderr run_dispatch --host mini --recover s1-1 --crew-id c1
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"inside the worker worktree"* ]]
+  run ! grep -q '^remote-run' "$STUB_LOG"
+  [ ! -e "$BATS_TEST_TMPDIR/SENTINEL" ]
+  [ ! -e "$TEST_REPO/w9/.git/crew" ]
+}
+
+@test "dispatch --host runs crew remote-run from the main checkout, the spec resolved against the caller (#633)" {
+  setup_recorded_w9
+  _host_crew_stub
+  export CREW_PWD_LOG="$BATS_TEST_TMPDIR/remote-pwd"
+  printf 'the spec body\n' >"$TEST_REPO/w9/spec.md"
+  cd "$TEST_REPO/w9"
+  DISPATCH_SPEC=spec.md run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 3 ]
+  grep -qF -- "--spec-file $TEST_REPO/w9/spec.md -- dispatch standard" "$STUB_LOG"
+  while IFS= read -r dir; do
+    [ "$(realpath "$dir")" = "$(realpath "$TEST_REPO")" ] || return 1
+  done <"$CREW_PWD_LOG"
+  [ "$(wc -l <"$CREW_PWD_LOG")" -eq 2 ]
 }
 
 # #947: these rows pin the PATH of the tmux *client* that opens a pane, so the

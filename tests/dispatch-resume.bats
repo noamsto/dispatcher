@@ -2758,6 +2758,37 @@ EOF
   run ! grep -qE '^(new-window|resize-window)|^roster-render' "$STUB_LOG"
 }
 
+@test "remote mode: the client that starts the crew session's server carries none of the per-dispatch vars" {
+  setup_worker_wt
+  # Names only, never values: a client that starts the server seeds its global
+  # environment, which every later window inherits.
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+has-session) exit 1 ;;
+new-window | new-session)
+  seen=""
+  for v in DISPATCH_TMUX_SESSION DISPATCH_SESSION_ID DISPATCH_EMIT_ROW CREW_IDENTITY_AVOID DISPATCH_SPEC; do
+    [ -z "${!v+x}" ] || seen="$seen $v"
+  done
+  printf 'client-env:%s\n' "$seen" >>"$STUB_LOG"
+  printf '%s %s\n' '@4' '%99'
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+  cd "$WT"
+  : >"$STUB_LOG"
+  DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_SESSION_ID=s1-1 DISPATCH_EMIT_ROW=1 CREW_IDENTITY_AVOID=iris \
+    DISPATCH_SPEC="$BATS_TEST_TMPDIR/gone.md" run run_resume
+  [ "$status" -eq 0 ]
+  grep -q '^new-session ' "$STUB_LOG"
+  grep -qx 'client-env:' "$STUB_LOG"
+  run ! grep -q '^client-env: ' "$STUB_LOG"
+}
+
 @test "target: an ambiguous target lists its candidates" {
   setup_worker_wt
   seed_dispatch_row feat/7-a-thing iris "$(uname -n)"

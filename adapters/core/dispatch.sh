@@ -1442,15 +1442,19 @@ engine_path() {
 # pane, run under engine_path. Only these two calls take it: a pane inherits the
 # PATH of the client that opens it, and no other tmux call here opens one. tmux is
 # resolved before the swap, while the pinned dirs still hold; a box without tmux,
-# or a raw run with nothing to strip, takes plain tmux.
+# or a raw run with nothing to strip, takes plain tmux. The client also drops the
+# per-dispatch remote-mode vars: a client that starts the tmux server seeds the
+# server's global environment with its own, and every later window there inherits
+# it — a later dispatch would reuse this session id, or a deleted spec path.
 _pane_client() {
   local cleaned tmux_bin
+  local -a scrub=(-u DISPATCH_TMUX_SESSION -u DISPATCH_SESSION_ID -u DISPATCH_EMIT_ROW -u CREW_IDENTITY_AVOID -u DISPATCH_SPEC)
   cleaned="$(engine_path)"
   tmux_bin="$(command -v tmux || true)"
   if [ -n "$tmux_bin" ] && [ -n "$cleaned" ] && [ "$cleaned" != "$PATH" ]; then
-    env PATH="$cleaned" "$tmux_bin" "$@"
+    env "${scrub[@]}" PATH="$cleaned" "$tmux_bin" "$@"
   else
-    tmux "$@"
+    env "${scrub[@]}" tmux "$@"
   fi
 }
 
@@ -3869,18 +3873,32 @@ _remote_dup_holder() {
 # that guard this machine's quota and claims, the remote dispatch, then the
 # local record of the row the remote confirms.
 _dispatch_remote() {
-  local refused="" engines out row rc=0 wid occupied tok n holder
-  local -a avoid=() run_env=()
+  local refused="" engines out row rc=0 wid occupied tok n holder v spec rest role_agent role_model role_effort
+  local -a avoid=() run_env=() role_specs=()
   [ "${#add_dir_flags[@]}" -eq 0 ] || refused=--add-dir
   [ -z "$base_flag" ] || refused=--base
   [ -z "$grid_status" ] || refused=--status
   [ -z "$grid_lazy" ] || refused=--lazy
-  [ -z "${DISPATCH_PRECHECK:-}" ] || refused=DISPATCH_PRECHECK
+  # Env overrides of this run's gates or launch: the remote dispatch never sees
+  # this environment, so it would silently run without them.
+  for v in DISPATCH_PRECHECK DISPATCH_IGNORE_RUNG DISPATCH_SKIP_MODEL_CHECK DISPATCH_SHAPE DISPATCH_CLAUDE_CONNECTORS; do
+    [ -z "${!v:-}" ] || refused=$v
+  done
   [ -z "$refused" ] || {
     echo "dispatch: --host cannot combine with $refused — it is local to this machine" >&2
     exit 1
   }
   _remote_check_crew_id
+  # DISPATCH_DRAFT_PR is the one env override that travels, as the flag.
+  [ "$draft" != true ] || [ -n "$draft_flag" ] || host_fwd_args=(--draft ${host_fwd_args[@]+"${host_fwd_args[@]}"})
+
+  # #633: crew and git never run from a worker's worktree. A relative spec is
+  # the caller's.
+  crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  if [ -n "${DISPATCH_SPEC:-}" ] && [[ $DISPATCH_SPEC != /* ]]; then
+    DISPATCH_SPEC="$PWD/$DISPATCH_SPEC"
+  fi
+  _wt_trusted_cwd "${crew_dir%/crew}" || exit 1
 
   # The engine roster is the remote's; this call is also the preflight that
   # surfaces an unknown host, a missing clone mapping or a dead link.
@@ -3890,15 +3908,36 @@ _dispatch_remote() {
     exit 1
   }
 
-  # The claude quota is the shared account's, cached on this host. The fan-out
-  # budget and load gate are per host: the remote dispatch runs its own.
+  # The claude quota is the shared account's, cached on this host: its gates run
+  # here for the lead and for every role on claude (a role naming no engine runs
+  # on the lead's). The fan-out budget and load gate are per host: the remote
+  # dispatch runs its own.
   _settings_load
   if [ "$agent" = claude ]; then
+    pace_rule_target claude "$model" "$effort"
     budget_stop claude
     absolute_limit_stop claude
   fi
+  [ -z "$grid_roles" ] || IFS=',' read -r -a role_specs <<<"$grid_roles"
+  for spec in ${role_specs[@]+"${role_specs[@]}"}; do
+    role_effort="$effort"
+    [[ $spec != *@* ]] || role_effort="${spec##*@}"
+    spec="${spec%@*}"
+    rest=""
+    [[ $spec != *=* ]] || rest="${spec#*=}"
+    role_agent="$agent" role_model="${rest:-$model}"
+    case "$rest" in
+    claude:* | codex:* | cursor:* | pi:*)
+      role_agent="${rest%%:*}"
+      role_model="${rest#*:}"
+      ;;
+    esac
+    [ "$role_agent" = claude ] || continue
+    pace_rule_target claude "$role_model" "$role_effort"
+    budget_stop claude "${spec%%=*}"
+    absolute_limit_stop claude "${spec%%=*}"
+  done
 
-  crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
   for n in "${gh_issue:-}" ${also_closes[@]+"${also_closes[@]}"}; do
     case "$n" in '' | *[!0-9]*) continue ;; esac
     holder="$(_remote_dup_holder "$n")"
@@ -3940,6 +3979,10 @@ _dispatch_remote() {
     echo "dispatch: --host $remote_host: the ssh link dropped after the remote created the worker; recovered its dispatch row" >&2
   elif [ "$rc" -ne 0 ]; then
     echo "dispatch: --host $remote_host: remote dispatch failed (exit $rc)" >&2
+    row="$(sed -n 's/^dispatch_row: //p' <<<"$out")"
+    if [ "$(grep -c . <<<"$row")" -eq 1 ] && _remote_row_valid "$row"; then
+      echo "dispatch: --host $remote_host: the remote wrote its dispatch row before failing, so the worker may exist there; to follow it run: dispatch --host $remote_host --recover $session --crew-id $crew_id" >&2
+    fi
     exit "$rc"
   else
     row="$(sed -n 's/^dispatch_row: //p' <<<"$out")"
@@ -3977,8 +4020,9 @@ if [ "${1:-}" = --host ] && [ "${3:-}" = --recover ]; then
     echo "dispatch: --host needs a host name from settings hosts" >&2
     exit 1
   }
-  _settings_load
   crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  _wt_trusted_cwd "${crew_dir%/crew}" || exit 1
+  _settings_load
   _remote_recover
   exit 0
 fi
@@ -4046,6 +4090,7 @@ ignore_map=""
 remote_host=""
 host_fwd_args=()
 draft=false
+draft_flag=""
 if [ "${DISPATCH_DRAFT_PR:-}" = 1 ]; then
   draft=true
 fi
@@ -4194,10 +4239,12 @@ while [ $# -gt 0 ]; do
     ;;
   --draft)
     draft=true
+    draft_flag=1
     shift
     ;;
   --no-draft)
     draft=false
+    draft_flag=1
     shift
     ;;
   --ignore-budget)

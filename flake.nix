@@ -282,7 +282,9 @@
 
           permission-check = pkgs.writeShellApplication {
             name = "permission-check";
-            runtimeInputs = with pkgs; [jq coreutils findutils gnused tmux git procps];
+            # crew: a --host worker's check routes through `crew remote-run`; with
+            # crew missing the route lookup would fail and the check run locally.
+            runtimeInputs = (with pkgs; [jq coreutils findutils gnused tmux git procps]) ++ [crew];
             text = withConfig (sub (builtins.readFile ./adapters/core/permission-check.sh));
           };
 

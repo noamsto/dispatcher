@@ -784,14 +784,30 @@ path_checks() {
 
 # route_remote <arg...> — a --pane check for a worker dispatched with --host:
 # its pane, transcripts and process table are on that host, so the whole check
-# runs there, with the same arguments. The one-line contract holds through a
-# dead link: a failed or silent call is the human's.
+# runs there, with the same arguments but --crew-dir, a path on this host: the
+# remote derives its own. The route is the crew dir's repo's, not the cwd's. The
+# one-line contract holds through a dead link: a failed or silent call is the
+# human's.
 route_remote() {
-  local row host out rc=0
-  row=$(crew resolve-target "$BRANCH" 2>/dev/null || true)
+  local row host out rc=0 repo="${CREW_DIR%/crew}"
+  local -a fwd=()
+  row=$(cd "$repo" 2>/dev/null && crew resolve-target "$BRANCH" 2>/dev/null || true)
   [ "$(cut -f5 <<<"$row")" = 1 ] || return 0
   host=$(cut -f3 <<<"$row")
-  out=$(crew remote-run --host "$host" -- permission-check "$@") || rc=$?
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --crew-dir) shift 2 ;;
+    --answer)
+      fwd+=("$1")
+      shift
+      ;;
+    *)
+      fwd+=("$1" "$2")
+      shift 2
+      ;;
+    esac
+  done
+  out=$(cd "$repo" && crew remote-run --host "$host" -- permission-check "${fwd[@]}") || rc=$?
   decided=1
   if [ "$rc" = 255 ] || [ -z "$out" ]; then
     printf 'human: ssh to host %s failed\n' "$host"

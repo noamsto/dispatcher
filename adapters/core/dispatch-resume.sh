@@ -195,6 +195,21 @@ engine_path() {
   printf '%s' "${kept[*]}"
 }
 
+# _pane_client <tmux args...> — dispatch.sh's: the tmux client that opens the
+# window, under engine_path and without the per-dispatch remote-mode vars a
+# server it starts would hand every later window.
+_pane_client() {
+  local cleaned tmux_bin
+  local -a scrub=(-u DISPATCH_TMUX_SESSION -u DISPATCH_SESSION_ID -u DISPATCH_EMIT_ROW -u CREW_IDENTITY_AVOID -u DISPATCH_SPEC)
+  cleaned="$(engine_path)"
+  tmux_bin="$(command -v tmux || true)"
+  if [ -n "$tmux_bin" ] && [ -n "$cleaned" ] && [ "$cleaned" != "$PATH" ]; then
+    env "${scrub[@]}" PATH="$cleaned" "$tmux_bin" "$@"
+  else
+    env "${scrub[@]}" tmux "$@"
+  fi
+}
+
 write_launch_script() {
   local -n _launch="$1"
   local _dir="$crew_dir/launch" _file _quoted
@@ -1244,16 +1259,8 @@ fi
 
 if [ -z "$pane" ]; then
   sanitized="${branch//\//-}"
-  # tmux takes the window's PATH from the client that opens it, so the client
-  # runs under the cleaned PATH; tmux itself is resolved first, while the pinned
-  # PATH still holds. The `|| true` keeps a box without tmux reaching the "could
-  # not resolve a tmux pane" message below instead of dying under errexit.
-  engine_env_path="$(engine_path)"
-  tmux_bin="$(command -v tmux || true)"
-  pane_client=(tmux)
-  if [ -n "$tmux_bin" ] && [ -n "$engine_env_path" ] && [ "$engine_env_path" != "$PATH" ]; then
-    pane_client=(env PATH="$engine_env_path" "$tmux_bin")
-  fi
+  # The `|| true` keeps a box without tmux reaching the "could not resolve a
+  # tmux pane" message below instead of dying under errexit.
   client_width=""
   client_height=""
   if [ -n "${DISPATCH_TMUX_SESSION:-}" ]; then
@@ -1262,11 +1269,11 @@ if [ -z "$pane" ]; then
     win_args=(-c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
     # A failed client leaves win_ids empty for the message below, as above.
     if tmux has-session -t "=$DISPATCH_TMUX_SESSION" 2>/dev/null; then
-      win_ids="$("${pane_client[@]}" new-window -d -t "=$DISPATCH_TMUX_SESSION:" "${win_args[@]}" || true)"
+      win_ids="$(_pane_client new-window -d -t "=$DISPATCH_TMUX_SESSION:" "${win_args[@]}" || true)"
     else
       # A racing dispatch may create the session first.
-      win_ids="$("${pane_client[@]}" new-session -d -s "$DISPATCH_TMUX_SESSION" "${win_args[@]}" 2>/dev/null)" ||
-        win_ids="$("${pane_client[@]}" new-window -d -t "=$DISPATCH_TMUX_SESSION:" "${win_args[@]}" || true)"
+      win_ids="$(_pane_client new-session -d -s "$DISPATCH_TMUX_SESSION" "${win_args[@]}" 2>/dev/null)" ||
+        win_ids="$(_pane_client new-window -d -t "=$DISPATCH_TMUX_SESSION:" "${win_args[@]}" || true)"
     fi
     read -r win pane <<<"$win_ids"
   else
@@ -1289,7 +1296,7 @@ if [ -z "$pane" ]; then
         client_height=""
       fi
     fi
-    read -r win pane < <("${pane_client[@]}" new-window -d -c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
+    read -r win pane < <(_pane_client new-window -d -c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
   fi
   if [ -n "$client_width" ]; then
     tmux resize-window -t "$win" -x "$client_width" -y "$client_height"
