@@ -83,6 +83,8 @@ type Options struct {
 	// Timer is each wait's channel, so a caught signal wins the race with a
 	// coalesce or retry sleep. nil is time.After.
 	Timer func(d time.Duration) <-chan time.Time
+	// relay is the relay sources' timing; zero is the production defaults.
+	relay relayTiming
 }
 
 func (o Options) withDefaults() Options {
@@ -169,7 +171,7 @@ func Run(r Request, paths bus.Paths, stdout, stderr io.Writer, opts Options) int
 		o:       o,
 		cdir:    cdir,
 		lockd:   lockd,
-		stdout:  stdout,
+		stdout:  &laneWriter{w: stdout, now: o.Now, last: o.Now()},
 		procs:   children{self: o.Self},
 		sup:     &suppress{key: map[string]string{}, ts: map[string]int64{}},
 		outf:    filepath.Join(cdir, "stream.out"),
@@ -178,6 +180,7 @@ func Run(r Request, paths bus.Paths, stdout, stderr io.Writer, opts Options) int
 		reapout: filepath.Join(cdir, "stream.reap.out"),
 		reaperr: filepath.Join(cdir, "stream.reap.err"),
 	}
+	l.relays = newRelays(l, paths.Log, cdir)
 	return l.run(sigs)
 }
 
@@ -255,6 +258,7 @@ type heartbeatLine struct {
 type errorLine struct {
 	Stream string `json:"stream"`
 	Crew   string `json:"crew"`
+	Host   string `json:"host,omitempty"`
 	RC     int64  `json:"rc"`
 	Detail string `json:"detail"`
 	TS     int64  `json:"ts"`
@@ -270,11 +274,13 @@ type holdDueLine struct {
 	Repo   string          `json:"repo,omitempty"`
 }
 
-// reapLine is written to the reap child's own file, which printReap forwards.
-// Only a lane's stream reaps, so it has no repo label.
+// reapLine is written to the reap child's own file, which printReap forwards,
+// or by a relay for its host's remote reap. Only a lane's stream reaps local
+// repos, so it has no repo label.
 type reapLine struct {
 	Stream string   `json:"stream"`
 	Crew   string   `json:"crew"`
+	Host   string   `json:"host,omitempty"`
 	Lines  []string `json:"lines"`
 	TS     int64    `json:"ts"`
 }
@@ -566,6 +572,7 @@ type loop struct {
 	lastReap int64
 	child    *child
 	reap     *reapRun
+	relays   *relays
 }
 
 func (l *loop) run(sigs chan os.Signal) int {
@@ -575,6 +582,7 @@ func (l *loop) run(sigs chan os.Signal) int {
 	// orphan pair a previous child left behind.
 	sweepReaped(l.reapout, l.reaperr)
 	l.lastReap = l.o.Now().Unix()
+	l.relays.start(time.Duration(l.c.interval) * time.Second)
 
 	for {
 		if pending(sigs) {
@@ -843,6 +851,7 @@ func (l *loop) printReap(path string) {
 // this process never got to, take the temp files and the lock with you, and
 // leave the way its closing `exit 0` did.
 func (l *loop) cleanup() {
+	l.relays.shutdown()
 	// TERM (not KILL): the inner watch's own handler releases watch.lock.d, and
 	// it is normally parked in `sleep`, so the wait is what bounds this —
 	// draining without it reads stream.out empty or partial for a batch whose

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -48,6 +49,8 @@ type armFixture struct {
 	releasePath  string
 	// holdLock is a live pid owning the wait lock, so the arm joins instead.
 	holdLock string
+	// remote is Options.Remote: where a remote worker's nudge goes.
+	remote func(host string, argv []string) int
 }
 
 const (
@@ -124,8 +127,9 @@ func (f *armFixture) run(req Request) int {
 			}
 			return f.unread
 		},
-		Rows: func(int) ([]any, bool) { return f.rows, true },
-		PID:  4242,
+		Rows:   func(int) ([]any, bool) { return f.rows, true },
+		PID:    4242,
+		Remote: f.remote,
 	})
 }
 
@@ -775,5 +779,89 @@ func TestNewRequest(t *testing.T) {
 				t.Errorf("NewRequest = %+v, %v; want %+v, %v", got, ok, tc.want, tc.ok)
 			}
 		})
+	}
+}
+
+// remoteLog seeds the bus with the dispatch rows that put branches on hosts.
+func (f *armFixture) remoteLog(rows ...string) {
+	f.t.Helper()
+	if err := os.MkdirAll(f.paths.Dir, 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.WriteFile(f.paths.Log, []byte(strings.Join(rows, "\n")+"\n"), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+const farRow = `{"ts":5,"crew_id":"c1","kind":"dispatch","branch":"feat/far","name":"iris","host":"mini","remote":true}`
+
+type remoteCall struct {
+	host string
+	argv []string
+}
+
+func TestRunRoutesARemoteWorker(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  Request
+		argv []string
+	}{
+		{"branch", Request{Target: "feat/far"}, []string{"crew", "nudge", "--crew", "c1", "--", "feat/far"}},
+		{"codename", Request{Target: "iris"}, []string{"crew", "nudge", "--crew", "c1", "--", "feat/far"}},
+		{"wait", Request{Target: "iris", Wait: "60"}, []string{"crew", "nudge", "--crew", "c1", "--wait", "60", "--", "feat/far"}},
+		{"crew flag", Request{Crew: "c1", Target: "feat/far"}, []string{"crew", "nudge", "--crew", "c1", "--", "feat/far"}},
+		{"session id", Request{Target: "worker:feat/far#s1-2"}, []string{"crew", "nudge", "--crew", "c1", "--", "worker:feat/far#s1-2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newArm(t)
+			f.remoteLog(farRow)
+			var calls []remoteCall
+			f.remote = func(host string, argv []string) int {
+				calls = append(calls, remoteCall{host, argv})
+				return 3
+			}
+			if rc := f.run(tc.req); rc != 3 {
+				t.Fatalf("rc = %d (stderr %q), want the remote's 3", rc, f.errOut())
+			}
+			if len(calls) != 1 || calls[0].host != "mini" || !reflect.DeepEqual(calls[0].argv, tc.argv) {
+				t.Fatalf("remote calls = %v, want one to mini with %v", calls, tc.argv)
+			}
+			if f.out() != "" || f.pane.captures != 0 || len(f.bus.appended) != 0 {
+				t.Errorf("a routed nudge touched the local pane or bus: out %q captures %d rows %d", f.out(), f.pane.captures, len(f.bus.appended))
+			}
+		})
+	}
+}
+
+func TestRunWithoutARemoteRowStaysLocal(t *testing.T) {
+	f := newArm(t)
+	f.remoteLog(farRow)
+	f.remote = func(string, []string) int { t.Fatal("a local worker's nudge reached Remote"); return 0 }
+	if rc := f.run(Request{Target: featX}); rc != 0 {
+		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
+	}
+	if !strings.Contains(f.out(), "nudge accepted: "+leadID+" "+idleReq) {
+		t.Errorf("out = %q", f.out())
+	}
+}
+
+func TestRunRefusesATargetOnBothSides(t *testing.T) {
+	f := newArm(t)
+	f.pane.windows = f.windowRows("@7", featX, "iris")
+	f.remoteLog(farRow)
+	f.remote = func(string, []string) int { t.Fatal("an ambiguous target reached Remote"); return 0 }
+	want := "ambiguous target 'iris' — matches a local worker (feat/x) and a remote one on mini (feat/far); pass a branch"
+	if rc := f.run(Request{Target: "iris"}); rc != 1 || f.errOut() != want {
+		t.Errorf("rc = %d, stderr = %q, want 1 and %q", rc, f.errOut(), want)
+	}
+}
+
+func TestRunDispatcherGateComesBeforeRouting(t *testing.T) {
+	f := newArm(t)
+	f.env = map[string]string{"CREW_WORKER_ID": "worker:feat/x#s1-1"}
+	f.remoteLog(farRow)
+	f.remote = func(string, []string) int { t.Fatal("a worker's nudge reached Remote"); return 0 }
+	if rc := f.run(Request{Target: "iris"}); rc != 2 {
+		t.Errorf("rc = %d, want the dispatcher-only refusal's 2", rc)
 	}
 }

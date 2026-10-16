@@ -48,6 +48,10 @@ trap '[ "$decided" = 1 ] || { printf "human: internal error\n"; exit 1; }' EXIT
 grant_check_lib="${GRANT_CHECK_LIB:-@grantCheckLib@}"
 # shellcheck source=/dev/null
 . "$grant_check_lib"
+# The anchored-git lib, for _wt_trusted_cwd.
+wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
+# shellcheck source=/dev/null
+. "$wt_git_lib"
 
 usage() {
   decided=1
@@ -123,6 +127,12 @@ parse_args() {
     local common
     common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) ||
       usage "--crew-dir not given and not inside a git repository"
+    # #633: a worker's own .git must not pick the crew dir, and so the route.
+    (_wt_trusted_cwd "$common") || {
+      decided=1
+      printf 'human: cwd: git refused here; run from the main checkout or pass --crew-dir\n'
+      exit 2
+    }
     CREW_DIR="$common/crew"
   fi
   [ -n "$PROJECTS_DIR" ] || PROJECTS_DIR="$HOME/.claude/projects"
@@ -782,6 +792,41 @@ path_checks() {
   done
 }
 
+# route_remote <arg...> — a --pane check for a worker dispatched with --host:
+# its pane, transcripts and process table are on that host, so the whole check
+# runs there, with the same arguments but --crew-dir, a path on this host: the
+# remote derives its own. The route is the crew dir's repo's, not the cwd's. The
+# one-line contract holds through a dead link: a failed or silent call is the
+# human's.
+route_remote() {
+  local row host out rc=0 repo="${CREW_DIR%/crew}"
+  local -a fwd=()
+  row=$(cd "$repo" 2>/dev/null && crew resolve-target "$BRANCH" 2>/dev/null || true)
+  [ "$(cut -f5 <<<"$row")" = 1 ] || return 0
+  host=$(cut -f3 <<<"$row")
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --crew-dir) shift 2 ;;
+    --answer)
+      fwd+=("$1")
+      shift
+      ;;
+    *)
+      fwd+=("$1" "$2")
+      shift 2
+      ;;
+    esac
+  done
+  out=$(cd "$repo" && crew remote-run --host "$host" -- permission-check "${fwd[@]}") || rc=$?
+  decided=1
+  if [ "$rc" = 255 ] || [ -z "$out" ]; then
+    printf 'human: ssh to host %s failed\n' "$host"
+    exit 2
+  fi
+  printf '%s\n' "$out"
+  exit "$rc"
+}
+
 # decide — one observation: the frame, the call it binds to, and that call's
 # command. Any failed rule refuses, which exits: it runs in the main shell, so
 # a refusal at either observation is the one stdout line.
@@ -805,6 +850,7 @@ verdict() {
 main() {
   local frame id
   parse_args "$@"
+  [ -z "$PANE" ] || route_remote "$@"
   grant_roots
   [ -z "$PANE" ] || pane_worktree
   decide

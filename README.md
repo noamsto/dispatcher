@@ -271,7 +271,7 @@ four `DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`,
 installs the Codex plugin and writes the Cursor rule, commands, skills and
 rosters when those engines are included in `engines`. The settings above
 (`profile`, `engines`, `grantRoots`, `fleetBudget`, `repoTrackers`, `orgTrackers`,
-`openrouter`, `localModels`, `laneProfiles`, `workerDeniedMcpServers`) are not exported as `DISPATCH_*`: they go into a locked settings
+`openrouter`, `localModels`, `laneProfiles`, `hosts`, `workerDeniedMcpServers`) are not exported as `DISPATCH_*`: they go into a locked settings
 file baked into `dispatch-config` and every CLI that resolves through it
 (`dispatch`, `dispatch-resume`, `dispatcher`, `refresh-budget`), so no
 locked-layer path is exported to go stale. `userSettings` symlinks
@@ -386,6 +386,15 @@ specific glob still wins selection (pin the glob you mean to win); a `name`
 outside `[A-Za-z0-9._-]` is refused by the option type and by `dispatch-config`.
 Notes are text and a stamp: executor "personas" are out of scope, since what
 moves executor quality is the brief, the guards and the tests.
+
+`hosts` names the remote machines `dispatch --host <name>` can run a worker on:
+`{"<name>": {"ssh": "user@host", "repos": {"owner/repo": "/abs/path/to/clone"}}}`.
+`ssh` is a destination or an `~/.ssh/config` alias (use one for ports or jump
+hosts) and never starts with `-`; `repos` maps each repo the host can serve to
+its clone there. Unlike `grantRoots` it is honoured from the user layer: an
+entry only chooses where work is sent and grants the worker nothing. It merges
+per host across layers; `dispatch-config` refuses a malformed entry, naming the
+bad key. `programs.dispatcher.hosts` pins entries in the locked layer.
 
 `repoTrackers` and `orgTrackers` say where a repo's work is tracked, as
 settings-tree keys (`{"owner/repo": "github" | "linear:TEAM"}`, case

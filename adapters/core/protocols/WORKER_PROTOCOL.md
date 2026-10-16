@@ -515,7 +515,7 @@ CPU-contention timing-flake repros are allowed but crew-wide on a shared host. B
 
 ## When done
 
-(After the code review gate and its seam, on standard/deep) pre-PR peek → open the PR → `crew status "$CREW_WORKER_ID" pr_open "<acceptance ledger>" <url>` → emit the complete metrics snapshot → pre-done peek → `crew status "$CREW_WORKER_ID" done`. Fresh-PR path: reporting and `done` detail per "Deferred findings". Ping the dispatcher pane once: `dispatcher_pane:` → `tmux display-message -t "$dispatcher_pane" -d 4000 "<agent_name> done: <branch> — PR <url>"`.
+(After the code review gate and its seam, on standard/deep) pre-PR peek → open the PR → `crew status "$CREW_WORKER_ID" pr_open "<acceptance ledger>" <url>` → emit the complete metrics snapshot → pre-done peek → `crew status "$CREW_WORKER_ID" done`. Fresh-PR path: reporting and `done` detail per "Deferred findings". Ping the dispatcher pane once (skip when `dispatcher_pane:` is empty — always on a remote host): `dispatcher_pane:` → `tmux display-message -t "$dispatcher_pane" -d 4000 "<agent_name> done: <branch> — PR <url>"`.
 
 - Every worker, all tiers, emits metrics before stopping (one ratings row per run):
   ```

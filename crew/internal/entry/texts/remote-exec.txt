@@ -1,0 +1,10 @@
+usage: crew remote-exec
+
+The ssh side of remote-run. Reads one JSON request on stdin (at most 1 MiB),
+checks it, and runs its argv in the clone it names with the allowlisted
+environment; exits with the command's status, or 2 for a refused request. It is
+what `ssh host crew remote-exec` starts, so it reads nothing from its own cwd.
+A dispatch it runs is detached from the link, so a dropped connection cannot
+leave a worker half-scaffolded.
+
+  crew remote-exec < request.json

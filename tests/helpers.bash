@@ -33,6 +33,8 @@ unset DISPATCH_SPEC DISPATCH_SHAPE DISPATCH_DRAFT_PR DISPATCH_CLAUDE_CONNECTORS
 export DISPATCH_CONFIG_BIN="$BATS_TEST_DIRNAME/../adapters/core/dispatch-config.sh"
 # Same idiom, for the shared --add-dir grant validator lib.
 export GRANT_CHECK_LIB="$BATS_TEST_DIRNAME/../adapters/core/grant-check.sh"
+# And for the anchored-git lib (#539).
+export WORKTREE_GIT_LIB="$BATS_TEST_DIRNAME/../adapters/core/worktree-git.sh"
 # And for the shared localModels lane lib.
 export LOCAL_MODELS_LIB="$BATS_TEST_DIRNAME/../adapters/core/local-models.sh"
 # And for the shared quota-predicate lib.
@@ -73,10 +75,6 @@ setup_repo() {
   # depends on the machine it runs on.
   printf '0.00 0.00 0.00 1/1 1\n' >"$BATS_TEST_TMPDIR/loadavg"
   export DISPATCH_LOADAVG_FILE="$BATS_TEST_TMPDIR/loadavg"
-  # Raw-source runs (dispatch.sh/dispatch-resume.sh here, not the
-  # `sub`-substituted nix build) never see @worktreeGitLib@ substituted, so
-  # point every test at the repo copy of the anchored-git lib (#539).
-  export WORKTREE_GIT_LIB="$BATS_TEST_DIRNAME/../adapters/core/worktree-git.sh"
   # Every engine CLI stubbed by default: dispatch's on-PATH probe
   # (check_engine) must not fail a test merely because this environment (CI)
   # has no real engine CLIs installed. A test that needs a genuinely missing

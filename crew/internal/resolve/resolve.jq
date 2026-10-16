@@ -22,7 +22,8 @@
 # $t and $c are the arm's `--arg t`/`--arg c`: the target, and the crew filter
 # that is empty for "every crew on the bus". `group_by(.branch)` sorts the
 # branches, so the single row and the ambiguity list both come out in branch
-# order, and `max_by(.ts)` keeps the newest dispatch row per branch.
+# order, and `max_by(.ts)` keeps the newest dispatch row per branch. A newest
+# row with `remote:true` adds a fifth column, `1`; no other row prints one.
 
 ($t | ltrimstr("#")) as $s
 | ($s | ascii_downcase) as $l
@@ -36,4 +37,4 @@
     | select(.branch == $b or (.name // "") == $t
         or ($k == "issue" and ((.branch | test("(^|/)" + $s + "-")) or any(((.also_closes // []) | if type == "array" then .[] else empty end); tostring == $s)))
         or ($k == "linear" and ((.branch | ascii_downcase | test("(^|/)" + $l + "-")) or any(((.also_closes // []) | if type == "array" then .[] else empty end); tostring | ascii_downcase == $l))))
-    | [.branch, (.name // ""), (.host // ""), (.crew_id // "")] | @tsv ]
+    | [.branch, (.name // ""), (.host // ""), (.crew_id // "")] + (if .remote == true then ["1"] else [] end) | @tsv ]

@@ -76,11 +76,12 @@ map_file() {
   # selected for them.
   scripts/help-parity.sh | scripts/pi-agent-dir-parity.sh) ;;
   adapters/core/budget-gate.sh) add "${crew_set[@]}" ;;
-  adapters/core/claude-worker-settings.sh | adapters/core/cross-repo-hint.sh | adapters/core/dispatch-resume.sh | adapters/core/dispatch.sh) add "${dispatch_set[@]}" ;;
+  adapters/core/claude-worker-settings.sh | adapters/core/cross-repo-hint.sh) add "${dispatch_set[@]}" ;;
+  adapters/core/dispatch-resume.sh | adapters/core/dispatch.sh) add "${dispatch_set[@]}" remote-host ;;
   adapters/core/directive-delivery.sh) add adapters crew directive-delivery ;;
   adapters/core/dispatch-notify.sh) add adapters dispatch-notify dispatch ;;
   adapters/core/dispatcher.sh) add adapters dispatch dispatcher module ;;
-  adapters/core/permission-check.sh) add adapters dispatch-resume dispatch module permission-check ;;
+  adapters/core/permission-check.sh) add adapters dispatch-resume dispatch module permission-check remote-host ;;
   adapters/core/phase-status.sh) add adapters phase-status ;;
   adapters/core/pr-watch.sh) add adapters dispatch module pr-watch ;;
   adapters/core/public-leak-guard.sh) add "${dispatch_set[@]}" public-leak-guard ;;
@@ -99,7 +100,7 @@ map_file() {
   scripts/gen-model-map-doc.sh) add adapters model-map-doc ;;
   README.md) add adapters dispatch permission-check ;;
   hookyard.json) add adapters crew directive-delivery phase-status public-leak-guard secret-read-guard test-scope-guard ;;
-  crew/*) add "${crew_set[@]}" ;;
+  crew/*) add "${crew_set[@]}" remote-host ;;
   dash/*) add module ;;
   docs/* | spikes/* | EVIDENCE-*.txt | LICENSE | .gitignore | .envrc | WORKER_TASK.md) ;;
   *) full_suite "full suite: $f has no map row" ;;

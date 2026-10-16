@@ -669,6 +669,57 @@ laneprofiles_refuse_row() { # json fragment
   [[ "$stderr" == *"$2"* ]]
 }
 
+# #1104 remote workers: `hosts` maps a name to an ssh destination and the
+# remote clone of each repo; `crew remote-run` reads it, so it is validated on
+# the merged tree.
+@test "hosts from the user layer reaches the merged output" {
+  user_settings '{"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widget":"/r/widget"}}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.hosts == {"mini":{"ssh":"me@mini","repos":{"acme/widget":"/r/widget"}}}' <<<"$output"
+}
+
+@test "malformed hosts is refused, naming the path" {
+  begin_rows
+  local json fragment
+  while IFS='|' read -r json fragment; do
+    [ -n "$json" ] || continue
+    keep_row "$fragment" hosts_refuse_row "$json" "$fragment"
+  done <<EOF
+{"hosts":{"-x":{"ssh":"me@mini"}}}|-x
+{"hosts":{"mini":{"ssh":"-oProxyCommand=x"}}}|mini.ssh
+{"hosts":{"mini":{"ssh":"me@mini host"}}}|mini.ssh
+{"hosts":{"mini":{"repos":{"acme/widget":"/r/widget"}}}}|mini.ssh
+{"hosts":{"mini":{"ssh":"me@mini","repos":{"widget":"/r/widget"}}}}|mini.repos.widget
+{"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widget":"r/widget"}}}}|mini.repos.acme/widget
+{"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widget":"/r/wid\nget"}}}}|mini.repos.acme/widget
+{"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widget":"/r/wid\tget"}}}}|mini.repos.acme/widget
+{"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widget":"/r/wid\u007fget"}}}}|mini.repos.acme/widget
+{"hosts":{"mini":{"ssh":"me@mini","repos":["/r"]}}}|mini.repos
+{"hosts":{"mini":{"ssh":"me@mini","port":22}}}|mini.port
+{"hosts":{"mini":"me@mini"}}|mini
+{"hosts":[]}|hosts
+EOF
+  finish_rows 13
+}
+
+# The module's strMatching "/[^[:cntrl:]]*" is byte-based: a C1 code point is
+# two non-control UTF-8 bytes there, so the resolver admits it too.
+@test "a C1 control in a hosts repo path is accepted, as the module type admits it" {
+  user_settings '{"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widget":"/r/wid\u0085get"}}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.hosts.mini.repos["acme/widget"] == "/r/wid\u0085get"' <<<"$output"
+}
+
+hosts_refuse_row() { # json fragment
+  user_settings "$1"
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *hosts* ]]
+  [[ "$stderr" == *"$2"* ]]
+}
+
 @test "a baked build ignores DISPATCH_LOCKED_SETTINGS, warning when it differs" {
   locked_settings '{"engines":["codex"]}'
   local baked="$BATS_TEST_TMPDIR/baked.sh"

@@ -5,8 +5,11 @@ package identity
 import (
 	"fmt"
 	"io"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
@@ -166,23 +169,35 @@ func For(recorded map[string]jsonv.Value, branch string) jsonv.Value {
 
 // Probes is the arm's tmux read, injected so tests never touch a server.
 type Probes struct {
-	// Windows is `tmux list-windows -a -F '#{@crew_name}'`: every codename a live
-	// window already carries, one per line. It ran under `2>/dev/null || true`, so
-	// a failed read — or no probe at all — names nothing rather than refusing.
+	// Windows is `tmux list-windows -a -F '#{@crew_name} #{@bridge_crew_name}'`:
+	// every codename a live or mirror window already carries, whitespace-separated.
+	// It ran under `2>/dev/null || true`, so a failed read — or no probe at all —
+	// names nothing rather than refusing.
 	Windows func() (string, error)
 }
 
+// remoteHold is how long a `remote:true` dispatch row holds its codename. The
+// remote worker's terminal status never reaches this bus, so without a bound the
+// name would never free.
+const remoteHold = 24 * time.Hour
+
 // Options is everything Run reads beyond the bus: the crew the arm defaults to
-// (`_crew_id`) and the tmux probe.
+// (`_crew_id`), the tmux probe, the environment CREW_IDENTITY_AVOID comes from
+// and the clock the remote hold is measured on. A nil Getenv reads no variable
+// and a nil Now is the wall clock.
 type Options struct {
 	CrewID func() string
 	Probes Probes
+	Getenv func(string) string
+	Now    func() time.Time
 }
 
 // Request is the arm's validated arguments: Hash, when set, is the `--hash`
-// form and wins; otherwise Branch is never empty and Crew "" takes the default.
+// form and wins; Occupied, when set, lists the names taken in Crew instead of
+// assigning one; otherwise Branch is never empty and Crew "" takes the default.
 type Request struct {
 	Branch, Crew, Hash string
+	Occupied           bool
 }
 
 // Run is the `crew identity <branch> [crew]` arm: the `--hash` form, and the
@@ -195,17 +210,51 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	if crew == "" && o.CrewID != nil {
 		crew = o.CrewID()
 	}
-	return emit(stdout, Assign(busEvents(paths.Log), req.Branch, crew, o.Probes))
+	now := time.Now
+	if o.Now != nil {
+		now = o.Now
+	}
+	if req.Occupied {
+		for _, name := range Occupied(busEvents(paths.Log), crew, o.Probes, now().UnixMilli()) {
+			say(stdout, "%s\n", name)
+		}
+		return 0
+	}
+	return emit(stdout, Assign(busEvents(paths.Log), req.Branch, crew, o.Probes, avoidList(o.Getenv), now().UnixMilli()))
+}
+
+// avoidList is CREW_IDENTITY_AVOID: the codenames a dispatching host already
+// holds elsewhere, comma-separated.
+func avoidList(getenv func(string) string) []string {
+	if getenv == nil {
+		return nil
+	}
+	return slices.DeleteFunc(strings.Split(getenv("CREW_IDENTITY_AVOID"), ","), func(s string) bool { return s == "" })
+}
+
+// Occupied is every raw codename Assign would treat as taken for crew, sorted:
+// the bus's live dispatches (a just-dispatched worker with no status yet
+// included) and the names stamped on tmux windows, local and bridge.
+func Occupied(rows []bus.Event, crew string, p Probes, nowMS int64) []string {
+	occ := occupied(rows, "", crew, nowMS)
+	for _, win := range windowNames(p) {
+		occ[win] = true
+	}
+	return slices.Sorted(maps.Keys(occ))
 }
 
 // Assign is `_identity_assign <branch> <crew>`: the identity a dispatch stamps.
 // A branch keeps the identity it recorded unless another live worker holds that
 // name; otherwise it takes its hash slot stepped forward to the first codename no
 // live worker holds, falling back to the hash slot when all 32 are taken. A branch
-// always gets an identity.
-func Assign(rows []bus.Event, branch, crew string, p Probes) jsonv.Value {
+// always gets an identity. The avoid names are held elsewhere (another host's
+// workers) and count as live workers on the bus.
+func Assign(rows []bus.Event, branch, crew string, p Probes, avoid []string, nowMS int64) jsonv.Value {
 	// The recorded name is gated by the bus alone: tmux names join only after it.
-	occ := occupied(rows, branch, crew)
+	occ := occupied(rows, branch, crew, nowMS)
+	for _, name := range avoid {
+		occ[name] = true
+	}
 	if rec, ok := Recorded(rawValues(rows), branch); ok {
 		name, _ := rec.Get("name")
 		if held, _ := name.AsString(); !occ[held] {
@@ -231,8 +280,9 @@ func Assign(rows []bus.Event, branch, crew string, p Probes) jsonv.Value {
 
 // occupied is `_identity_bus_occ <branch> <crew>`: the codename of every OTHER
 // branch dispatched into the crew no later than this branch's latest dispatch,
-// whose newest `worker:` status is not terminal.
-func occupied(rows []bus.Event, branch, crew string) map[string]bool {
+// whose newest `worker:` status is not terminal. A `remote:true` row also stops
+// holding its name once it is remoteHold old.
+func occupied(rows []bus.Event, branch, crew string, nowMS int64) map[string]bool {
 	// The newest `worker:` status row per branch, keyed by the branch its id
 	// names: a finished worker frees the name it held.
 	status := map[string]bus.Event{}
@@ -289,6 +339,11 @@ func occupied(rows []bus.Event, branch, crew string) map[string]bool {
 		}
 		if st, ok := status[name].Body.Get("state"); ok {
 			if s, isStr := st.AsString(); isStr && bus.State(s).Terminal() {
+				continue
+			}
+		}
+		if remote, _ := ev.Raw.Get("remote"); remote.Kind() == jsonv.KindTrue {
+			if ts, ok := ev.TS.AsFloat(); ok && nowMS-int64(ts) >= remoteHold.Milliseconds() {
 				continue
 			}
 		}

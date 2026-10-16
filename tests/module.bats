@@ -179,6 +179,10 @@ let
     laneProfiles."pi/lemonade/*" = {name = "local";};
     laneProfiles.claude = {name = "security";};
     laneProfiles."pi/gemma/*" = {name = "local";notes = "- targeted only";};
+    hosts.mini = {
+      ssh = "me@mini";
+      repos."acme/widget" = "/r/widget";
+    };
     workerDeniedMcpServers = ["my_browser"];
     userSettings = "/home/u/cfg/settings.json";
   };
@@ -234,6 +238,41 @@ in {
       "ok/model" = {baseUrl = "http://h/v1"; contextWindow = 1;};
     };
   }).assertions);
+  # A host name or repo key dispatch-config would refuse at runtime must trip
+  # an HM assertion naming it.
+  badHostAsserts = map (a: a.message) (builtins.filter (a: !a.assertion) (eval {
+    enable = true;
+    hosts = {
+      "-bad" = {ssh = "me@h"; repos = {"ok/repo" = "/r";};};
+      "good" = {ssh = "me@h"; repos = {"no-slash" = "/r"; "acme/widget" = "/r";};};
+    };
+  }).assertions);
+  goodHostAsserts = builtins.filter (a: !a.assertion) (eval fullCfg).assertions;
+  # An ssh value starting with `-` would be read as an ssh option, and a
+  # relative or control-character repo path is refused by dispatch-config:
+  # the option types refuse them at eval time.
+  badHostValuesRejected = builtins.length (builtins.filter (x: !x.success) [
+    (builtins.tryEval (builtins.deepSeq (eval {
+        enable = true;
+        hosts.h = {ssh = "-oProxyCommand=y";};
+      }).programs.dispatcher.hosts
+      true))
+    (builtins.tryEval (builtins.deepSeq (eval {
+        enable = true;
+        hosts.h = {ssh = "me@h"; repos = {"a/b" = "relative";};};
+      }).programs.dispatcher.hosts
+      true))
+    (builtins.tryEval (builtins.deepSeq (eval {
+        enable = true;
+        hosts.h = {ssh = "me@h"; repos = {"a/b" = "/r";};};
+      }).programs.dispatcher.hosts
+      true))
+    (builtins.tryEval (builtins.deepSeq (eval {
+        enable = true;
+        hosts.h = {ssh = "me@h"; repos = {"a/b" = "/a\tb";};};
+      }).programs.dispatcher.hosts
+      true))
+  ]);
   goodLocalModelAsserts = builtins.filter (a: !a.assertion) (eval fullCfg).assertions;
   # `engines = []` must be a type error, not a silently-accepted value that
   # bakes `"engines": []` into the locked settings file (dispatch-config dies
@@ -461,7 +500,7 @@ placeholder_two_row() { # token
     [ -n "$row" ] || continue
     keep_row "$row" placeholder_three_row "$token" "$b1" "$b2" "$b3"
   done <<ROWS
-worktree-git|@worktreeGitLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume
+worktree-git|@worktreeGitLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume|$OUT_PERMISSION_CHECK/bin/permission-check
 grant-check|@grantCheckLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume|$OUT_PERMISSION_CHECK/bin/permission-check
 local-models|@localModelsLib@|$OUT_DISPATCH/bin/dispatch|$OUT_REFRESH_BUDGET/bin/refresh-budget
 ROWS
@@ -491,8 +530,9 @@ placeholder_three_row() { # token bin… (empty trailing bins are skipped)
   done <<ROWS
 dispatch|$OUT_DISPATCH/bin/dispatch
 dispatch-resume|$OUT_DISPATCH_RESUME/bin/dispatch-resume
+permission-check|$OUT_PERMISSION_CHECK/bin/permission-check
 ROWS
-  finish_rows 2
+  finish_rows 3
 }
 
 worktree_git_lib_crew_go_row() { # bin
@@ -704,6 +744,18 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
 }
 
+@test "the module declares assertions that reject bad hosts names and repo keys" {
+  run jq -e '(.badHostAsserts | length) == 2 and (.badHostAsserts | map(contains("-bad")) | any) and (.badHostAsserts | map(contains("good.no-slash")) | any) and (.badHostAsserts | map(contains("acme/widget")) | any | not)' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.goodHostAsserts == []' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "hosts ssh and repo path values the resolver refuses fail the option type" {
+  run jq -e '.badHostValuesRejected == 3' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
 @test "the module declares the engines option" {
   for name in engines grantRoots fleetBudget repoTrackers orgTrackers; do
     run jq -e --arg n "$name" '(.options | index($n)) != null' "$EVAL"
@@ -776,6 +828,17 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
 
   run jq -e '.float.locked.openrouter.monthlyUsd == 12.5' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "the hosts option lands in the locked layer, only when set" {
+  run jq -e '(.options | index("hosts")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.hosts == {"mini": {"ssh": "me@mini", "repos": {"acme/widget": "/r/widget"}}}' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.hosts.mini.ssh == "me@mini"' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.minimal.locked | has("hosts") | not' "$EVAL"
   [ "$status" -eq 0 ]
 }
 

@@ -14,6 +14,7 @@ Bus I/O:
 
 Watching:
   watch           Park until a qualifying event lands, then print it
+  relay           Follow this bus lock-free and print watch batches (remote hosts)
   stream          Long-lived watch that pushes batches to a streaming lane
   stall-watch     Per-pane liveness watchdog, spawned per worker
   pr-watch        Park until a PR changes, then post the event
@@ -41,6 +42,11 @@ Identity and crews:
   adopt           Re-attach to an on-disk crew id
   resolve-target  Resolve a target to branch, codename, host and crew
   pi-agent-dir    Print the pi agent dir prepared for a dispatch
+
+Remote hosts:
+  remote-run      Run a command in this repo's clone on a remote host
+  remote-exec     The ssh side of remote-run (reads a request on stdin)
+  dispatch-row    Print the dispatch row of one session, for link-loss recovery
 
 Holds:
   hold            Park a queued dispatch on a quota window

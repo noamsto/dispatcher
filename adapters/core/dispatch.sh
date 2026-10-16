@@ -19,6 +19,7 @@ usage: dispatch <trivial|standard|deep> <model> [flags] [--] <title...>
        dispatch resume [<target>] [flags]
        dispatch --engines [--in-budget]
        dispatch --models [--json]
+       dispatch --host <name> --recover <session> [--crew-id <id>]
 
 Scaffold a worker session: claim or mint its issue, create the branch, the
 worktree and WORKER_TASK.md, then launch the engine in a tmux window. Flags
@@ -45,6 +46,12 @@ Tracker
   --also-closes N         Extra issue this branch and PR also close (repeatable)
   --crew-id ID            Crew to post to (otherwise $CREW_ID)
 
+Remote host
+  --host NAME             Run the worker on settings host NAME (hosts.NAME), followed from here
+                          (refused with --add-dir, --base, --status, --lazy, and the env overrides
+                          DISPATCH_PRECHECK, DISPATCH_IGNORE_RUNG, DISPATCH_SKIP_MODEL_CHECK,
+                          DISPATCH_SHAPE, DISPATCH_CLAUDE_CONNECTORS; DISPATCH_DRAFT_PR=1 travels as --draft)
+
 Base and PR
   --base REF              Branch to base the worktree on, for a stacked layer
   --pr N                  Reuse an open PR: its branch, its base and its title
@@ -67,6 +74,7 @@ Other entry points
   dispatch resume ...     Relaunch the worker of the worktree you are standing in
   dispatch --engines      Engines enabled and installed here (--in-budget: affordable)
   dispatch --models       The tier map per engine: default and accepted models (--json: machine-readable)
+  dispatch --host H --recover S   Record the remote worker of session S after a dropped ssh link
 
 Internal (called by workers and the harness, not by hand)
   --spawn-role ROLE       Start one lazy grid role pane in the worker's window
@@ -150,7 +158,7 @@ refuse_claude_sonnet_cap() {
 # pace_rule_target <agent> <model> <effort> — refuse one premium launch target
 # when its fresh pace window (7d, or pi's/cursor's month) is materially ahead of pace.
 pace_rule_target() {
-  local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" model_downgrade_label="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause
+  local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" model_downgrade_label="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause escape
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
   model_downgrade="$(_pace_downgrade "$target_agent" "$target_model")"
   # Only shed a rung when the downgrade burns less (defaults.json
@@ -203,7 +211,10 @@ pace_rule_target() {
       if [ "$model_downgrade" = sonnet ] && [ -n "$effort_downgrade" ]; then
         model_downgrade_label="$model_downgrade at $effort_downgrade"
       fi
-      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium rung ($target_model) is refused; use the standard rung ($model_downgrade_label) instead, set DISPATCH_IGNORE_RUNG=$target_model to override just this refusal, or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
+      # --host refuses DISPATCH_IGNORE_RUNG, so it is no escape there.
+      escape=""
+      [ -n "${remote_host:-}" ] || escape="set DISPATCH_IGNORE_RUNG=$target_model to override just this refusal, "
+      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium rung ($target_model) is refused; use the standard rung ($model_downgrade_label) instead, ${escape}or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
       exit 1
     fi
   fi
@@ -211,7 +222,9 @@ pace_rule_target() {
     if [ "${DISPATCH_IGNORE_RUNG:-}" = "$target_effort" ]; then
       echo "dispatch: effort refusal skipped (DISPATCH_IGNORE_RUNG) — '$target_effort' on --agent $target_agent at $win ${used_pct}%${pace_notice}" >&2
     else
-      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium effort ($target_effort) is refused; use $effort_downgrade instead, set DISPATCH_IGNORE_RUNG=$target_effort to override just this refusal, or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
+      escape=""
+      [ -n "${remote_host:-}" ] || escape="set DISPATCH_IGNORE_RUNG=$target_effort to override just this refusal, "
+      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium effort ($target_effort) is refused; use $effort_downgrade instead, ${escape}or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
       exit 1
     fi
   fi
@@ -465,15 +478,18 @@ _claim_index_append() {
 }
 
 # _claim_index_dispatch — mirror the dispatch row: once the claiming shell has
-# exited, this is what keeps the claim visible until the branch is pushed.
+# exited, this is what keeps the claim visible until the branch is pushed. A
+# dispatch --host row carries its host, so the --host duplicate guard can tell
+# a same-host claim from a foreign one.
 _claim_index_dispatch() {
   local file n line
   file="$(_claim_index_file)"
   [ -n "$file" ] || return 0
   for n in "${gh_issue:-${num:-}}" ${also_closes[@]+"${also_closes[@]}"}; do
     case "$n" in '' | *[!0-9]*) continue ;; esac
-    line="$(jq -nc --arg crew "$crew_id" --arg issue "$n" --arg branch "$branch" --arg clone "$(_claim_index_clone)" \
-      '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", issue:$issue, branch:$branch, clone:$clone}')" || return 0
+    line="$(jq -nc --arg crew "$crew_id" --arg issue "$n" --arg branch "$branch" --arg clone "$(_claim_index_clone)" --arg host "${remote_host:-}" \
+      '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", issue:$issue, branch:$branch, clone:$clone}
+       + if $host != "" then {host:$host, remote:true} else {} end')" || return 0
     { mkdir -p "${file%/*}" && _bus_append "$file" "$line"; } 2>/dev/null || true
   done
 }
@@ -1433,15 +1449,23 @@ engine_path() {
 # pane, run under engine_path. Only these two calls take it: a pane inherits the
 # PATH of the client that opens it, and no other tmux call here opens one. tmux is
 # resolved before the swap, while the pinned dirs still hold; a box without tmux,
-# or a raw run with nothing to strip, takes plain tmux.
+# or a raw run with nothing to strip, takes plain tmux. The client also drops
+# every CREW_ and DISPATCH_ var: a client that starts the tmux server seeds the
+# server's global environment with its own, and every later window there inherits
+# it — a later dispatch would reuse this crew or session id, or a deleted spec
+# path. Each pane gets its CREW_ID and CREW_WORKER_ID explicitly instead.
 _pane_client() {
-  local cleaned tmux_bin
+  local cleaned tmux_bin v
+  local -a scrub=()
+  for v in "${!CREW_@}" "${!DISPATCH_@}"; do
+    scrub+=(-u "$v")
+  done
   cleaned="$(engine_path)"
   tmux_bin="$(command -v tmux || true)"
   if [ -n "$tmux_bin" ] && [ -n "$cleaned" ] && [ "$cleaned" != "$PATH" ]; then
-    env PATH="$cleaned" "$tmux_bin" "$@"
+    env "${scrub[@]}" PATH="$cleaned" "$tmux_bin" "$@"
   else
-    tmux "$@"
+    env "${scrub[@]}" tmux "$@"
   fi
 }
 
@@ -3695,6 +3719,325 @@ if [ "${1:-}" = --models ]; then
   exit 0
 fi
 
+# --- dispatch --host: the dispatcher-side half of a worker on another host ---
+# The remote runs its own dispatch through `crew remote-run`, the one place that
+# builds an ssh call; this side only records the row the remote confirms. The
+# ssh target always comes from settings, never from a bus row.
+
+_remote_ssh() { jq -r --arg h "$remote_host" '.hosts[$h].ssh // empty' <<<"$settings"; }
+
+_remote_check_crew_id() {
+  [[ $crew_id =~ ^[A-Za-z0-9_-]+$ ]] || {
+    echo "dispatch: --host needs a crew id matching ^[A-Za-z0-9_-]+\$ (got '$crew_id'): it names the remote tmux session crew-<id>" >&2
+    exit 1
+  }
+}
+
+# _remote_window <ssh> <crew_id> — mirror the remote crew-<id> session into this
+# tmux session, else say how to attach. og-remote-open is idempotent, so every
+# dispatch and resume runs it. Never fails: the remote worker exists either way.
+_remote_window() {
+  local into reason
+  if [ -z "${TMUX_PANE:-}" ]; then
+    reason="not inside tmux"
+  elif ! command -v og-remote-open >/dev/null 2>&1; then
+    reason="og-remote-open not on PATH"
+  else
+    into="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)"
+    if [ -z "$into" ]; then
+      reason="no tmux session for $TMUX_PANE"
+    elif og-remote-open "$1" "crew-$2" --into "$into" >&2; then
+      return 0
+    else
+      reason="og-remote-open failed"
+    fi
+  fi
+  echo "dispatch: remote window not mirrored ($reason); attach with: ssh -t $1 tmux attach -t crew-$2" >&2
+}
+
+_remote_link_failed() {
+  echo "dispatch: --host $remote_host: ssh link failed mid-dispatch (exit 255); the remote worker could not be confirmed — once the link is back run: dispatch --host $remote_host --recover $session --crew-id $crew_id" >&2
+  exit 255
+}
+
+_remote_unfollowable() {
+  echo "dispatch: --host $remote_host: the remote dispatch gave no valid dispatch_row for session $session — the worker may exist on $remote_host but cannot be followed; once that is fixed run: dispatch --host $remote_host --recover $session --crew-id $crew_id" >&2
+  exit 1
+}
+
+# _remote_row_valid <row> — the remote's dispatch row is this crew's, this
+# session's, and names a real branch, before anything local trusts it.
+_remote_row_valid() {
+  jq -e --arg c "$crew_id" --arg s "$session" '
+    type == "object" and .kind == "dispatch" and .crew_id == $c and .session == $s
+    and (.branch | type) == "string" and .worker_id == "worker:\(.branch)#\($s)"' <<<"$1" >/dev/null 2>&1 &&
+    git check-ref-format --branch "$(jq -r .branch <<<"$1")" >/dev/null 2>&1
+}
+
+# _remote_recover_row — after a broken link, ask the remote bus for the row its
+# detached dispatch wrote under $session. Prints it and returns 0; 255 at the
+# first query the link fails (waiting out the rest cannot help); 1 when every
+# try found none.
+_remote_recover_row() {
+  local tries="${DISPATCH_HOST_RECOVER_TRIES:-6}" pause="${DISPATCH_HOST_RECOVER_SLEEP:-10}" i=0 out rc
+  while :; do
+    rc=0
+    out="$(crew remote-run --host "$remote_host" --env "CREW_ID=$crew_id" -- crew dispatch-row --crew "$crew_id" --session "$session")" || rc=$?
+    if [ "$rc" -eq 0 ] && [ -n "$out" ]; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    [ "$rc" -ne 255 ] || return 255
+    i=$((i + 1))
+    [ "$i" -lt "$tries" ] || return 1
+    sleep "$pause"
+  done
+}
+
+# _remote_finish <row> — record a confirmed remote worker: the row on the local
+# bus as this host's route to it, its claims-index mirror, then the window.
+_remote_finish() {
+  mkdir -p "$crew_dir"
+  _crew_append "$(jq -c --arg h "$remote_host" '. + {ts:(now*1000|floor), host:$h, remote:true}' <<<"$1")"
+  branch="$(jq -r .branch <<<"$1")"
+  mapfile -t also_closes < <(jq -r '.also_closes // [] | .[] | tostring' <<<"$1")
+  num=""
+  if [[ $branch =~ ^feat/([0-9]+)- ]]; then
+    num="${BASH_REMATCH[1]}"
+  fi
+  _claim_index_dispatch
+  _remote_window "$(_remote_ssh)" "$crew_id"
+  echo "worker_id: $(jq -r .worker_id <<<"$1")"
+  echo "dispatch: remote worker on host $remote_host — followed by this repo's crew stream"
+}
+
+# _remote_recover — `dispatch --host H --recover S`: record the worker a dropped
+# link left unconfirmed. A session already recorded only gets its window again.
+_remote_recover() {
+  local row rc=0
+  if [ -f "$crew_dir/events.jsonl" ] && jq -enR --arg s "$session" --arg h "$remote_host" '
+    [inputs | fromjson? | objects | select(.kind == "dispatch" and .remote == true and .session == $s and .host == $h)] | length > 0' \
+    "$crew_dir/events.jsonl" >/dev/null; then
+    _remote_window "$(_remote_ssh)" "$crew_id"
+    return 0
+  fi
+  row="$(_remote_recover_row)" || rc=$?
+  case "$rc" in
+  0) ;;
+  255) _remote_link_failed ;;
+  *)
+    echo "dispatch: --host $remote_host: no remote dispatch row for session $session" >&2
+    exit 1
+    ;;
+  esac
+  _remote_row_valid "$row" || _remote_unfollowable
+  _remote_finish "$row"
+}
+
+# _remote_dup_holder <issue> — the worker that already holds <issue> against a
+# dispatch to $remote_host, or nothing. A local worker holds it until reaped; a
+# worker on another host for a day, the claims-index aging rule, since its
+# `reaped` row never reaches this bus. Same-host rows pass: the remote dispatch
+# decides resume or refusal with its own claim logic.
+_remote_dup_holder() {
+  local fresh_ms branch host remote ts clone index
+  fresh_ms=$(($(date +%s) * 1000 - _CLAIM_STALE_MS))
+  if [ -f "$crew_dir/events.jsonl" ]; then
+    while IFS=$'\t' read -r branch host remote ts; do
+      if [ "$remote" = true ]; then
+        [ "$host" != "$remote_host" ] && [ "$ts" -ge "$fresh_ms" ] || continue
+      else
+        ! _branch_finished "$crew_dir/events.jsonl" "$branch" || continue
+      fi
+      echo "$branch on host $host"
+      return 0
+    done < <(jq -nrR --arg n "$1" '[inputs | fromjson? | objects
+      | select(.kind == "dispatch" and ((.branch // null) | type) == "string" and .branch != ""
+        and ((.branch | test("(^|/)" + $n + "-")) or any((.also_closes // []) | if type == "array" then .[] else empty end; tostring == $n)))]
+      | group_by(.branch) | map(max_by(.ts))[]
+      | [.branch, ((.host // "") | tostring | if . == "" then "?" else . end), (.remote == true | tostring), ((.ts | numbers) // 0 | floor | tostring)] | @tsv' \
+      "$crew_dir/events.jsonl")
+  fi
+  index="$(_claim_index_file)"
+  [ -n "$index" ] && [ -f "$index" ] || return 0
+  while IFS=$'\t' read -r branch host remote ts clone; do
+    [ "$ts" -ge "$fresh_ms" ] || continue
+    if [ "$remote" = true ]; then
+      [ "$host" != "$remote_host" ] || continue
+    else
+      # This clone's own workers were read from its bus above.
+      [ "$clone" != "$(_claim_index_clone)" ] || continue
+      [ -d "$clone" ] && _branch_finished "$clone/.git/crew/events.jsonl" "$branch" "$clone/.git" && continue
+      host="this machine (clone $clone)"
+    fi
+    echo "$branch on host $host"
+    return 0
+  done < <(jq -nrR --arg n "$1" '[inputs | fromjson? | objects | select((.issue | tostring) == $n)] as $rows
+    | ([$rows[] | select(.kind == "release") | (.ts | numbers) // 0] | max // 0) as $rel
+    | $rows[] | select(.kind == "dispatch" and ((.ts | numbers) // 0) > $rel)
+    | [((.branch // "") | tostring | if . == "" then "?" else . end), ((.host // "") | tostring | if . == "" then "?" else . end),
+       (.remote == true | tostring), ((.ts | numbers) // 0 | floor | tostring), ((.clone // "") | tostring | if . == "" then "?" else . end)] | @tsv' \
+    "$index")
+}
+
+# _dispatch_remote <title...> — `dispatch --host`: preflight, the local gates
+# that guard this machine's quota and claims, the remote dispatch, then the
+# local record of the row the remote confirms.
+_dispatch_remote() {
+  local refused="" engines out row rc=0 wid occupied tok n holder v spec rest role_agent role_model role_effort
+  local -a avoid=() run_env=() role_specs=()
+  [ "${#add_dir_flags[@]}" -eq 0 ] || refused=--add-dir
+  [ -z "$base_flag" ] || refused=--base
+  [ -z "$grid_status" ] || refused=--status
+  [ -z "$grid_lazy" ] || refused=--lazy
+  # Env overrides of this run's gates or launch: the remote dispatch never sees
+  # this environment, so it would silently run without them.
+  for v in DISPATCH_PRECHECK DISPATCH_IGNORE_RUNG DISPATCH_SKIP_MODEL_CHECK DISPATCH_SHAPE DISPATCH_CLAUDE_CONNECTORS; do
+    [ -z "${!v:-}" ] || refused=$v
+  done
+  [ -z "$refused" ] || {
+    echo "dispatch: --host cannot combine with $refused — it is local to this machine" >&2
+    exit 1
+  }
+  _remote_check_crew_id
+  # DISPATCH_DRAFT_PR is the one env override that travels, as the flag.
+  [ "$draft" != true ] || [ -n "$draft_flag" ] || host_fwd_args=(--draft ${host_fwd_args[@]+"${host_fwd_args[@]}"})
+
+  # #633: crew and git never run from a worker's worktree. A relative spec is
+  # the caller's.
+  crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  if [ -n "${DISPATCH_SPEC:-}" ] && [[ $DISPATCH_SPEC != /* ]]; then
+    DISPATCH_SPEC="$PWD/$DISPATCH_SPEC"
+  fi
+  _wt_trusted_cwd "${crew_dir%/crew}" || exit 1
+
+  # The engine roster is the remote's; this call is also the preflight that
+  # surfaces an unknown host, a missing clone mapping or a dead link.
+  engines="$(crew remote-run --host "$remote_host" --env "CREW_ID=$crew_id" -- dispatch --engines)" || exit $?
+  grep -qxF -- "$agent" <<<"$engines" || {
+    echo "dispatch: --host $remote_host: --agent $agent is not enabled and installed there (engines: $(paste -sd' ' - <<<"$engines"))" >&2
+    exit 1
+  }
+
+  # The claude quota is the shared account's, cached on this host: its gates run
+  # here for the lead and for every role on claude (a role naming no engine runs
+  # on the lead's). The fan-out budget and load gate are per host: the remote
+  # dispatch runs its own.
+  _settings_load
+  if [ "$agent" = claude ]; then
+    pace_rule_target claude "$model" "$effort"
+    budget_stop claude
+    absolute_limit_stop claude
+  fi
+  [ -z "$grid_roles" ] || IFS=',' read -r -a role_specs <<<"$grid_roles"
+  for spec in ${role_specs[@]+"${role_specs[@]}"}; do
+    role_effort="$effort"
+    [[ $spec != *@* ]] || role_effort="${spec##*@}"
+    spec="${spec%@*}"
+    rest=""
+    [[ $spec != *=* ]] || rest="${spec#*=}"
+    role_agent="$agent" role_model="${rest:-$model}"
+    case "$rest" in
+    claude:* | codex:* | cursor:* | pi:*)
+      role_agent="${rest%%:*}"
+      role_model="${rest#*:}"
+      ;;
+    esac
+    [ "$role_agent" = claude ] || continue
+    pace_rule_target claude "$role_model" "$role_effort"
+    budget_stop claude "${spec%%=*}"
+    absolute_limit_stop claude "${spec%%=*}"
+  done
+
+  for n in "${gh_issue:-}" ${also_closes[@]+"${also_closes[@]}"}; do
+    case "$n" in '' | *[!0-9]*) continue ;; esac
+    holder="$(_remote_dup_holder "$n")"
+    [ -z "$holder" ] || {
+      echo "dispatch: --host $remote_host: issue #$n is already held by $holder — the remote cannot see this machine's bus, so it would re-claim it" >&2
+      exit 1
+    }
+  done
+
+  session="s$(date +%s)-$$"
+  # Codenames stay unique across hosts: the remote's Assign also avoids every
+  # name this host holds.
+  occupied="$(crew identity --occupied --crew "$crew_id")" || {
+    echo "dispatch: --host: could not list this host's occupied codenames; the remote may reuse one" >&2
+    occupied=""
+  }
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    if [[ $tok =~ ^[A-Za-z0-9-]+$ ]]; then
+      avoid+=("$tok")
+    else
+      echo "dispatch: --host: not passing codename '$tok' to the remote (not [A-Za-z0-9-]+)" >&2
+    fi
+  done <<<"$occupied"
+  run_env=(--env "CREW_ID=$crew_id" --env "DISPATCH_TMUX_SESSION=crew-$crew_id" --env DISPATCH_EMIT_ROW=1 --env "DISPATCH_SESSION_ID=$session")
+  [ "${#avoid[@]}" -eq 0 ] || run_env+=(--env "CREW_IDENTITY_AVOID=$(
+    IFS=,
+    echo "${avoid[*]}"
+  )")
+  [ -z "${DISPATCH_SPEC:-}" ] || run_env+=(--spec-file "$DISPATCH_SPEC")
+
+  out="$(crew remote-run --host "$remote_host" "${run_env[@]}" -- \
+    dispatch "$tier" "$model" ${host_fwd_args[@]+"${host_fwd_args[@]}"} --crew-id "$crew_id" -- "$@")" || rc=$?
+  if [ "$rc" -eq 255 ]; then
+    # The remote dispatch runs detached, so it may have finished regardless.
+    rc=0
+    row="$(_remote_recover_row)" || rc=$?
+    [ "$rc" -eq 0 ] || _remote_link_failed
+    echo "dispatch: --host $remote_host: the ssh link dropped after the remote created the worker; recovered its dispatch row" >&2
+  elif [ "$rc" -ne 0 ]; then
+    echo "dispatch: --host $remote_host: remote dispatch failed (exit $rc)" >&2
+    row="$(sed -n 's/^dispatch_row: //p' <<<"$out")"
+    if [ "$(grep -c . <<<"$row")" -eq 1 ] && _remote_row_valid "$row"; then
+      echo "dispatch: --host $remote_host: the remote wrote its dispatch row before failing, so the worker may exist there; to follow it run: dispatch --host $remote_host --recover $session --crew-id $crew_id" >&2
+    fi
+    exit "$rc"
+  else
+    row="$(sed -n 's/^dispatch_row: //p' <<<"$out")"
+    wid="$(sed -n 's/^worker_id: //p' <<<"$out")"
+    if [ "$(grep -c . <<<"$row")" -ne 1 ] || [ "$wid" != "$(jq -r '.worker_id? // empty' <<<"$row" 2>/dev/null)" ]; then
+      _remote_unfollowable
+    fi
+  fi
+  _remote_row_valid "$row" || _remote_unfollowable
+  _remote_finish "$row"
+}
+
+# `dispatch --host H --recover S [--crew-id ID]` — the re-runnable recovery for
+# a link that dropped mid-dispatch. Above the tier parse: it needs no tier,
+# model or effort, so the printed hint works as written.
+if [ "${1:-}" = --host ] && [ "${3:-}" = --recover ]; then
+  remote_host="${2:-}"
+  session="${4:-}"
+  crew_id_flag=""
+  case "$#:${5:-}" in
+  4:) ;;
+  6:--crew-id) crew_id_flag="$6" ;;
+  *)
+    echo "usage: dispatch --host <name> --recover <session> [--crew-id <id>]" >&2
+    exit 1
+    ;;
+  esac
+  [[ $session =~ ^s[0-9]+-[0-9]+$ ]] || {
+    echo "dispatch: --recover needs a session id like s<epoch>-<pid> (got '$session')" >&2
+    exit 1
+  }
+  crew_id="${crew_id_flag:-${CREW_ID:-}}"
+  _remote_check_crew_id
+  [ -n "$remote_host" ] || {
+    echo "dispatch: --host needs a host name from settings hosts" >&2
+    exit 1
+  }
+  crew_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
+  _wt_trusted_cwd "${crew_dir%/crew}" || exit 1
+  _settings_load
+  _remote_recover
+  exit 0
+fi
+
 # `dispatch resume` is its own binary — resume skips the issue claim, branch
 # creation, task-document rewrite and new-window paths this file is built
 # around. Intercepted here so the subcommand reads as part of dispatch, and
@@ -3755,11 +4098,15 @@ crew_id_flag=""
 plan_val="required"
 ignore_budget=""
 ignore_map=""
+remote_host=""
+host_fwd_args=()
 draft=false
+draft_flag=""
 if [ "${DISPATCH_DRAFT_PR:-}" = 1 ]; then
   draft=true
 fi
 while [ $# -gt 0 ]; do
+  fwd_n=$# fwd_1="$1" fwd_2="${2-}"
   case "$1" in
   --)
     # End-of-options separator: every token after it is title text, so a title
@@ -3825,6 +4172,14 @@ while [ $# -gt 0 ]; do
     crew_id_flag="${2:-}"
     [ -n "$crew_id_flag" ] || {
       echo "dispatch: --crew-id needs a value" >&2
+      exit 1
+    }
+    shift 2
+    ;;
+  --host)
+    remote_host="${2:-}"
+    [ -n "$remote_host" ] || {
+      echo "dispatch: --host needs a host name from settings hosts" >&2
       exit 1
     }
     shift 2
@@ -3895,10 +4250,12 @@ while [ $# -gt 0 ]; do
     ;;
   --draft)
     draft=true
+    draft_flag=1
     shift
     ;;
   --no-draft)
     draft=false
+    draft_flag=1
     shift
     ;;
   --ignore-budget)
@@ -3932,6 +4289,15 @@ while [ $# -gt 0 ]; do
     else
       break
     fi
+    ;;
+  esac
+  # dispatch --host re-runs this parse on the remote: every option token
+  # consumed above travels, except the two the remote call sets itself.
+  case "$fwd_1" in
+  --host | --crew-id) ;;
+  *)
+    host_fwd_args+=("$fwd_1")
+    [ $((fwd_n - $#)) -lt 2 ] || host_fwd_args+=("$fwd_2")
     ;;
   esac
 done
@@ -4053,6 +4419,19 @@ crew_id="${crew_id_flag:-${CREW_ID:-}}"
   echo 'dispatch: no crew id — run '\''crew crews'\'' to find this repo'\''s crews and '\''crew adopt <id>'\'' to re-attach, or '\''crew new'\'' to start one; then pass --crew-id <id> or export CREW_ID' >&2
   exit 1
 }
+
+# Remote mode: a dispatcher on another host asked for this worker's window in
+# the crew's own session. The value becomes a tmux target, so its shape is fixed.
+if [ -n "${DISPATCH_TMUX_SESSION:-}" ] && [[ ! $DISPATCH_TMUX_SESSION =~ ^crew-[A-Za-z0-9_-]+$ ]]; then
+  echo "dispatch: DISPATCH_TMUX_SESSION must match ^crew-[A-Za-z0-9_-]+\$ (got '$DISPATCH_TMUX_SESSION')" >&2
+  exit 1
+fi
+
+# dispatch --host: nothing local happens until the remote confirms the worker.
+if [ -n "$remote_host" ]; then
+  _dispatch_remote "$@"
+  exit
+fi
 
 # Engine gate. An engine must be enabled (on this machine's roster) and
 # available (its CLI installed). The roster is $DISPATCH_ENGINES when set,
@@ -5405,6 +5784,8 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
    + if $base != "" then {base:$base, base_oid:(if $base_oid == "" then null else $base_oid end)} else {} end
    + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end')
 _crew_append "$line"
+# A dispatcher on another host records the same row from this line.
+[ "${DISPATCH_EMIT_ROW:-}" != 1 ] || printf 'dispatch_row: %s\n' "$line"
 _claim_index_dispatch
 if [ -n "$ident_locked" ]; then
   rmdir "$ident_lock" 2>/dev/null || true
@@ -5561,6 +5942,10 @@ _record_worktree_anchor "$wt_path" "$wt_admin"
 # frozen for the doc's life from here: `dispatch resume` patches header lines
 # only, so a resume keeps the lane this task was dispatched in.
 _resolve_lane_profile
+# A remote-mode worker's dispatcher pane is on another tmux server: stamped
+# empty, so dispatch-notify skips its ping.
+task_dispatcher_pane="${TMUX_PANE:-}"
+[ -z "${DISPATCH_TMUX_SESSION:-}" ] || task_dispatcher_pane=""
 {
   printf 'tier: %s\nkind: %s\ndraft: %s\nengine: %s\nmodel: %s\neffort: %s\n' \
     "$tier" "$kind" "$draft" "$agent" "$model" "$effort"
@@ -5572,7 +5957,7 @@ _resolve_lane_profile
   done
   [ -n "$tracker_stamp" ] && printf 'tracker: %s\n' "$tracker_stamp"
   printf 'dispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\nprotocol_dir: %s\n' \
-    "${TMUX_PANE:-}" "$crew_dir" "$crew_id" "$agent_name" "$worker_id" "$PROTOCOL_DIR"
+    "$task_dispatcher_pane" "$crew_dir" "$crew_id" "$agent_name" "$worker_id" "$PROTOCOL_DIR"
   if [ -n "$base_ref" ]; then
     printf 'base: %s\n' "$base_ref"
   fi
@@ -5664,31 +6049,48 @@ fi
 # redraw cleanly, so `default-size` (lazytmux) already covers them. This
 # fixes codex, and gives every engine the invoking client's own geometry,
 # which only dispatch knows.
-client_target=()
-[ -n "${TMUX_PANE:-}" ] && client_target=(-t "$TMUX_PANE")
-client_size="$(tmux display-message -p "${client_target[@]}" '#{client_width} #{client_height} #{status}' 2>/dev/null || true)"
-window_size_mode="$(tmux show-option -qv "${client_target[@]}" window-size 2>/dev/null || true)"
-if [ -z "$window_size_mode" ]; then
-  window_size_mode="$(tmux show-option -gqv window-size 2>/dev/null || true)"
-fi
 client_width=""
 client_height=""
-status_rows=""
-if [[ $client_size =~ ^([1-9][0-9]*)[[:space:]]+([1-9][0-9]*)[[:space:]]+(off|on|[0-9]+)$ ]]; then
-  client_width="${BASH_REMATCH[1]}"
-  client_height="${BASH_REMATCH[2]}"
-  case "${BASH_REMATCH[3]}" in
-  off) status_rows=0 ;;
-  on) status_rows=1 ;;
-  *) status_rows="${BASH_REMATCH[3]}" ;;
-  esac
-  client_height=$((client_height - status_rows))
-  if ((client_height <= 0)); then
-    client_width=""
-    client_height=""
+if [ -n "${DISPATCH_TMUX_SESSION:-}" ]; then
+  # Remote mode: the window goes in the crew's own session, which is created
+  # with it when absent, so no placeholder shell window gets mirrored. There is
+  # no client to size from; the mirror resizes.
+  win_args=(-c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -P -F '#{window_id} #{pane_id}')
+  if tmux has-session -t "=$DISPATCH_TMUX_SESSION" 2>/dev/null; then
+    win_ids="$(_pane_client new-window -d -t "=$DISPATCH_TMUX_SESSION:" "${win_args[@]}")"
+  elif win_ids="$(_pane_client new-session -d -s "$DISPATCH_TMUX_SESSION" "${win_args[@]}" 2>/dev/null)"; then
+    # new-session -e sets the session environment, which later windows inherit.
+    tmux set-environment -t "=$DISPATCH_TMUX_SESSION" -u CREW_WORKER_ID
+  else
+    # A racing dispatch created the session first.
+    win_ids="$(_pane_client new-window -d -t "=$DISPATCH_TMUX_SESSION:" "${win_args[@]}")"
   fi
+  read -r win pane <<<"$win_ids"
+else
+  client_target=()
+  [ -n "${TMUX_PANE:-}" ] && client_target=(-t "$TMUX_PANE")
+  client_size="$(tmux display-message -p "${client_target[@]}" '#{client_width} #{client_height} #{status}' 2>/dev/null || true)"
+  window_size_mode="$(tmux show-option -qv "${client_target[@]}" window-size 2>/dev/null || true)"
+  if [ -z "$window_size_mode" ]; then
+    window_size_mode="$(tmux show-option -gqv window-size 2>/dev/null || true)"
+  fi
+  status_rows=""
+  if [[ $client_size =~ ^([1-9][0-9]*)[[:space:]]+([1-9][0-9]*)[[:space:]]+(off|on|[0-9]+)$ ]]; then
+    client_width="${BASH_REMATCH[1]}"
+    client_height="${BASH_REMATCH[2]}"
+    case "${BASH_REMATCH[3]}" in
+    off) status_rows=0 ;;
+    on) status_rows=1 ;;
+    *) status_rows="${BASH_REMATCH[3]}" ;;
+    esac
+    client_height=$((client_height - status_rows))
+    if ((client_height <= 0)); then
+      client_width=""
+      client_height=""
+    fi
+  fi
+  read -r win pane < <(_pane_client new-window -d -c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -P -F '#{window_id} #{pane_id}')
 fi
-read -r win pane < <(_pane_client new-window -d -c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -P -F '#{window_id} #{pane_id}')
 if [ -n "$client_width" ]; then
   tmux resize-window -t "$win" -x "$client_width" -y "$client_height"
   if [ -n "$window_size_mode" ] && [ "$window_size_mode" != manual ]; then
@@ -5937,4 +6339,5 @@ if _recorded_pid_live "$rr_pid" "$crew_dir/crews/$crew_id/pid" &&
   [ "$rr_pane" != "$(cat "$crew_dir/crews/$crew_id/pane" 2>/dev/null || true)" ]; then
   rr_pane=""
 fi
-_ensure_roster_render "$crew_id" "$rr_pane"
+# A remote-mode worker's roster diagram belongs to its dispatcher's host.
+[ -n "${DISPATCH_TMUX_SESSION:-}" ] || _ensure_roster_render "$crew_id" "$rr_pane"

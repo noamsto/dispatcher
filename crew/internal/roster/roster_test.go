@@ -589,6 +589,64 @@ func TestFold(t *testing.T) {
 	}
 }
 
+// --live adds one boolean to each row, and only when asked: the rows are
+// otherwise the ones TestFold pins.
+func TestFoldLive(t *testing.T) {
+	events := decodeEvents(t, []string{
+		status(t0+1000, "worker:feat/a#s1-1", state("working")),
+		status(t0+2000, "worker:feat/b#s1-1", state("working")),
+	})
+	probes := func(liveBranches func() map[string]bool) Probes {
+		return Probes{
+			Panes:        func() string { return "" },
+			Worktrees:    func() (string, error) { return "", nil },
+			LiveBranches: liveBranches,
+		}
+	}
+	plain, err := Fold(events, "c1", now, probes(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	live, err := Fold(events, "c1", now, probes(func() map[string]bool {
+		calls++
+		return map[string]bool{"feat/a": true}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Errorf("LiveBranches called %d times, want 1", calls)
+	}
+	for i, row := range live.Elems() {
+		want := map[string]jsonv.Value{"feat/a": jsonv.Bool(true), "feat/b": jsonv.Bool(false)}
+		b, _ := row.Get("branch")
+		branch, _ := b.AsString()
+		got, ok := row.Get("live")
+		if !ok || testjson.Compact(got) != testjson.Compact(want[branch]) {
+			t.Errorf("%s: live = %s (present %t), want %s", branch, testjson.Compact(got), ok, testjson.Compact(want[branch]))
+		}
+		if _, ok := plain.Elems()[i].Get("live"); ok {
+			t.Errorf("%s: a fold without LiveBranches carries live", branch)
+		}
+		// Everything but live is the plain row.
+		stripped := jsonv.Object(slices.DeleteFunc(slices.Clone(row.Members()), func(m jsonv.Member) bool { return m.Key == "live" })...)
+		if testjson.Compact(stripped) != testjson.Compact(plain.Elems()[i]) {
+			t.Errorf("%s: --live changed more than live:\n%s\n%s", branch, testjson.Compact(stripped), testjson.Compact(plain.Elems()[i]))
+		}
+	}
+}
+
+func TestCrewWindowBranches(t *testing.T) {
+	out := "feat/a\tc1\nfeat/b\t\nfeat/c\tc2\n\tc1\nfeat/d\n"
+	got := CrewWindowBranches(out, "c1")
+	for branch, want := range map[string]bool{"feat/a": true, "feat/b": true, "feat/c": false, "feat/d": true, "": false} {
+		if got[branch] != want {
+			t.Errorf("%q live = %t, want %t", branch, got[branch], want)
+		}
+	}
+}
+
 func TestEngineCommands(t *testing.T) {
 	for cmd, want := range map[string]bool{
 		"claude": true, ".claude-wrapped": true, "codex": true, ".codex-wrapped": true,

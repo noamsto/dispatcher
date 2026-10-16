@@ -1380,3 +1380,113 @@ pane_token_row() {
   [ "${#lines[@]}" -eq 1 ]
   [[ "$output" == "human: usage: "* ]]
 }
+
+# ---------------------------------------------------------------------------
+# A worker dispatched with --host: the whole check runs on its host
+# ---------------------------------------------------------------------------
+
+# remote_crew — a crew stub on STUBS: resolve-target answers a remote:true row
+# on host mini; remote-run logs its argv to CREW_LOG, prints STUB_REMOTE_OUT and
+# exits STUB_REMOTE_RC.
+remote_crew() {
+  cat >"$STUBS/crew" <<'STUB'
+#!/usr/bin/env bash
+case $1 in
+resolve-target)
+  printf 'resolve-target from %s\n' "$PWD" >>"$CREW_LOG"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$2" iris mini c1 1
+  ;;
+remote-run)
+  printf '%s from %s\n' "$*" "$PWD" >>"$CREW_LOG"
+  [ -z "${STUB_REMOTE_OUT:-}" ] || printf '%s\n' "$STUB_REMOTE_OUT"
+  exit "${STUB_REMOTE_RC:-0}"
+  ;;
+esac
+exit 1
+STUB
+  chmod +x "$STUBS/crew"
+  export CREW_LOG="$BATS_TEST_TMPDIR/crew.log"
+}
+
+@test "permission-check: a remote worker's check runs on its host with the same args, routed by the crew dir's repo" {
+  remote_crew
+  # The cwd is not the crew dir's repo: the route is read from --crew-dir's.
+  cd "$WT"
+  STUB_REMOTE_OUT=allow-once pane --answer
+  [ "$status" -eq 0 ]
+  [ "$output" = allow-once ]
+  # The local --crew-dir means nothing there: the remote derives its own.
+  [ "$(cat "$CREW_LOG")" = "resolve-target from ${CREW%/crew}
+remote-run --host mini -- permission-check --pane %9 --branch $BRANCH --answer from ${CREW%/crew}" ]
+  [ ! -e "$TMUX_LOG" ]
+}
+
+@test "permission-check: a remote refusal passes through with its status" {
+  remote_crew
+  STUB_REMOTE_OUT='human: frame: no dialog' STUB_REMOTE_RC=1 pane
+  assert_refused "frame: no dialog"
+}
+
+@test "permission-check: a dead link to the remote is one human line, exit 2" {
+  remote_crew
+  STUB_REMOTE_RC=255 pane
+  [ "$status" -eq 2 ]
+  [ "${#lines[@]}" -eq 1 ]
+  [ "$output" = "human: ssh to host mini failed" ]
+}
+
+@test "permission-check: a silent remote is one human line, exit 2" {
+  remote_crew
+  STUB_REMOTE_RC=0 pane
+  [ "$status" -eq 2 ]
+  [ "$output" = "human: ssh to host mini failed" ]
+}
+
+# recorded_worker_repo — a real repo REPO with W9, a worktree on the world's
+# branch, and the dispatcher record dispatch writes for it.
+recorded_worker_repo() {
+  local common key
+  REPO="$BATS_TEST_TMPDIR/repo"
+  W9="$REPO/w9"
+  git init -q -b main "$REPO"
+  git -C "$REPO" config user.email test@example.com
+  git -C "$REPO" config user.name test
+  git -C "$REPO" commit -q --allow-empty -m init
+  git -C "$REPO" worktree add -q -b "$BRANCH" "$W9"
+  common="$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)"
+  key="$(printf %s "$(realpath -e -- "$W9")" | sha256sum | cut -c1-64)"
+  mkdir -p "$XDG_DATA_HOME/crew/worktrees"
+  printf '%s\n' "$(realpath -e -- "$W9")" "$(realpath -m -- "$common/crew")" "$BRANCH" \
+    "$(realpath -e -- "$common/worktrees/w9")" >"$XDG_DATA_HOME/crew/worktrees/$key"
+}
+
+@test "permission-check: with no --crew-dir, the main checkout and a recorded worker worktree both route" {
+  remote_crew
+  recorded_worker_repo
+  local dir
+  for dir in "$REPO" "$W9"; do
+    : >"$CREW_LOG"
+    cd "$dir"
+    run --separate-stderr env PATH="$STUBS:$PATH" HOME="$PANE_HOME" STUB_REMOTE_OUT=allow-once \
+      bash "$CHECK" --pane %9 --branch "$BRANCH"
+    [ "$status" -eq 0 ]
+    [ "$output" = allow-once ]
+    grep -qxF "remote-run --host mini -- permission-check --pane %9 --branch $BRANCH from $(realpath -e "$REPO/.git")" "$CREW_LOG"
+  done
+}
+
+@test "permission-check: with no --crew-dir, a worker worktree whose .git is a standalone repo is one human line (#633)" {
+  remote_crew
+  recorded_worker_repo
+  git init -q "$BATS_TEST_TMPDIR/fake"
+  rm "$W9/.git"
+  mv "$BATS_TEST_TMPDIR/fake/.git" "$W9/.git"
+  cd "$W9"
+  run --separate-stderr env PATH="$STUBS:$PATH" HOME="$PANE_HOME" STUB_REMOTE_OUT=allow-once \
+    bash "$CHECK" --pane %9 --branch "$BRANCH"
+  [ "$status" -eq 2 ]
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "$output" == "human: "* ]]
+  [[ "$stderr" == *"inside the worker worktree"* ]]
+  run ! grep -q '^remote-run' "$CREW_LOG"
+}

@@ -30,9 +30,11 @@ type whereCmd struct {
 }
 
 type identityCmd struct {
-	Hash   *string `name:"hash"`
-	Branch string  `arg:"" optional:"" name:"branch"`
-	Crew   string  `arg:"" optional:"" name:"crew"`
+	Hash     *string `name:"hash"`
+	Occupied bool    `name:"occupied"`
+	CrewFlag *string `name:"crew"`
+	Branch   string  `arg:"" optional:"" name:"branch"`
+	Crew     string  `arg:"" optional:"" name:"crew"`
 }
 
 type resolveCmd struct {
@@ -68,6 +70,7 @@ type inboxCmd struct {
 }
 
 type rosterCmd struct {
+	Live bool   `name:"live"`
 	Crew string `arg:"" optional:"" name:"crew"`
 }
 
@@ -250,6 +253,32 @@ type watchCmd struct {
 	Crew     *string `name:"crew"`
 }
 
+type relayCmd struct {
+	Since     *string `name:"since"`
+	States    *string `name:"states"`
+	Interval  *string `name:"interval"`
+	Heartbeat *string `name:"heartbeat"`
+	Crew      *string `name:"crew"`
+}
+
+// remoteRunCmd.Env keeps every value whole (`sep:"none"`, so a comma stays in
+// CREW_IDENTITY_AVOID's list). Argv is everything after the flags, `--` included
+// or not, as the remote command.
+type remoteRunCmd struct {
+	Host     *string  `name:"host"`
+	Env      []string `name:"env" sep:"none"`
+	SpecFile *string  `name:"spec-file"`
+	Argv     []string `arg:"" optional:"" passthrough:"all" name:"argv"`
+}
+
+// remoteExecCmd takes no argv: its request is the JSON on stdin.
+type remoteExecCmd struct{}
+
+type dispatchRowCmd struct {
+	Crew    *string `name:"crew"`
+	Session *string `name:"session"`
+}
+
 type reapCmd struct {
 	Quiet   bool    `name:"quiet"`
 	DryRun  bool    `name:"dry-run"`
@@ -355,6 +384,8 @@ const (
 	identitySignature = "usage: crew identity <branch> [crew]"
 	rateRootUsage     = "crew: rate --root needs a directory"
 	gitBaselineUsage  = "usage: crew git-baseline [--accept]"
+	remoteRunUsage    = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] -- <argv>..."
+	dispatchRowUsage  = "usage: crew dispatch-row --session S [--crew ID]"
 )
 
 // wording is how one subcommand phrases the two grammar failures kong reports
@@ -446,6 +477,34 @@ var wordings = map[string]wording{
 		unknownFlag: func(f string) string { return fmt.Sprintf("crew: watch: unknown arg '%s'", f) },
 		extra:       func(w string) string { return fmt.Sprintf("crew: watch: unknown arg '%s'", w) },
 		code:        exitFailure,
+	},
+	"relay": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: relay: unknown arg '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: relay: unknown arg '%s'", w) },
+		code:        exitFailure,
+	},
+	"remote-run": {
+		unknownFlag: func(f string) string {
+			return fmt.Sprintf("crew: remote-run: unknown flag '%s' (%s)", f, remoteRunUsage)
+		},
+		extra: func(w string) string {
+			return fmt.Sprintf("crew: remote-run: unexpected argument '%s' (%s)", w, remoteRunUsage)
+		},
+		code: exitRemoteUsage,
+	},
+	"remote-exec": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: remote-exec: unknown flag '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: remote-exec: takes no arguments (got '%s')", w) },
+		code:        exitRemoteUsage,
+	},
+	"dispatch-row": {
+		unknownFlag: func(f string) string {
+			return fmt.Sprintf("crew: dispatch-row: unknown flag '%s' (%s)", f, dispatchRowUsage)
+		},
+		extra: func(w string) string {
+			return fmt.Sprintf("crew: dispatch-row: unexpected argument '%s' (%s)", w, dispatchRowUsage)
+		},
+		code: exitRemoteUsage,
 	},
 	"stream": {
 		unknownFlag: func(f string) string { return fmt.Sprintf("crew: stream: unknown arg '%s'", f) },
@@ -581,7 +640,13 @@ func validate(sub string, r *root) *refusal {
 			}
 			return nil
 		}
-		if c.Branch == "" {
+		if given(c.CrewFlag) {
+			return fail("crew: identity: --crew needs an id")
+		}
+		if c.Occupied && c.Branch != "" {
+			return &refusal{"crew: identity: --occupied takes no branch", exitOpen}
+		}
+		if c.Branch == "" && !c.Occupied {
 			return fail(identityUsage)
 		}
 	case "sessions":
@@ -652,6 +717,25 @@ func validate(sub string, r *root) *refusal {
 			if given(f.v) {
 				return fail(fmt.Sprintf("crew: %s needs a value", f.name))
 			}
+		}
+	case "relay":
+		c := r.Relay
+		for _, f := range []struct {
+			name string
+			v    *string
+		}{{"--since", c.Since}, {"--states", c.States}, {"--interval", c.Interval}, {"--heartbeat", c.Heartbeat}, {"--crew", c.Crew}} {
+			if given(f.v) {
+				return fail(fmt.Sprintf("crew: %s needs a value", f.name))
+			}
+		}
+	case "remote-run":
+		if h := r.RemoteRun.Host; h == nil || *h == "" {
+			return &refusal{remoteRunUsage, exitRemoteUsage}
+		}
+	case "dispatch-row":
+		c := r.DispatchRow
+		if given(c.Crew) || c.Session == nil || *c.Session == "" {
+			return &refusal{dispatchRowUsage, exitRemoteUsage}
 		}
 	case "hold add":
 		c := r.Hold.Add

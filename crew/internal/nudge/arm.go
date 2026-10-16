@@ -5,6 +5,7 @@
 package nudge
 
 import (
+	"cmp"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -20,6 +21,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
+	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 )
 
@@ -64,6 +66,9 @@ type Options struct {
 	Rows func(maxLines int) ([]any, bool)
 	// PID is the lock owner, the arm's `$$`.
 	PID int
+	// Remote runs argv on host and returns its status: how a nudge reaches a
+	// worker dispatched there, whose pane is on that host's tmux. Nil routes nothing.
+	Remote func(host string, argv []string) int
 }
 
 // Request is the typed nudge call. Crew "" is the checkout's crew; Wait "" is no
@@ -149,20 +154,28 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 		}
 	}
 	win := firstWhere(cwins, func(r []string) bool { return field(r, 1) == target })
+	var matches [][]string
 	if win == nil {
-		var matches [][]string
 		for _, r := range cwins {
 			if field(r, 4) == target {
 				matches = append(matches, r)
 			}
 		}
+	}
+	var local []string
+	if win != nil {
+		local = []string{field(win, 1)}
+	}
+	for _, r := range matches {
+		local = append(local, field(r, 1))
+	}
+	if code, routed := a.route(target, want, wait, strings.Join(local, ","), stderr); routed {
+		return code
+	}
+	if win == nil {
 		if len(matches) > 1 {
-			var branches []string
-			for _, r := range matches {
-				branches = append(branches, field(r, 1))
-			}
 			return fail(stderr, "ambiguous codename '"+target+"' — matches "+
-				strings.Join(branches, ",")+"; pass a branch")
+				strings.Join(local, ",")+"; pass a branch")
 		}
 		win = first(matches)
 	}
@@ -223,6 +236,29 @@ func (a *arm) request(actor string) PaneRequest {
 	return PaneRequest{
 		Pane: a.pane, Engine: a.engine, Session: a.sid, Crew: a.crew, Actor: actor, MsgTS: a.ts,
 	}
+}
+
+// route sends the nudge to the host its target was dispatched on, when the bus
+// says it is remote and no local window claims the same target. The remote runs
+// its own session, engine, unread and frame gates against its own tmux. localBranch
+// is what the local windows matched, "" for nothing; routed is false when the local
+// path should go on.
+func (a *arm) route(target, want, wait, localBranch string, stderr io.Writer) (code int, routed bool) {
+	if a.o.Remote == nil {
+		return 0, false
+	}
+	host, branch, err := remote.ResolveTarget(resolve.Rows(a.paths.Log), target, a.crew, localBranch)
+	if err != nil {
+		return fail(stderr, err.Error()), true
+	}
+	if host == "" {
+		return 0, false
+	}
+	argv := []string{"crew", "nudge", "--crew", a.crew}
+	if wait != "" {
+		argv = append(argv, "--wait", wait)
+	}
+	return a.o.Remote(host, append(argv, "--", cmp.Or(want, branch))), true
 }
 
 // resolveFallback is the arm's `_resolve_target` step: the target names a branch on the

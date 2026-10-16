@@ -1,0 +1,15 @@
+usage: crew relay [--since TS] [--states a,b,c] [--interval S] [--heartbeat S] [--crew ID]
+
+Follow this bus and print {"cursor":TS,"events":[…]} batch lines as events qualify,
+with a {"relay":"heartbeat","ts":MS} line when nothing has for a while. Runs until
+its reader closes the pipe. Unlike watch it holds no lock and writes no cursor file;
+the cursor lives in the reader, which passes it back as --since.
+
+  --since      Cursor to read from (default 0)
+  --states     States that qualify (default blocked,pr_open,done,failed,exited);
+               a msg to the dispatcher always qualifies
+  --interval   Poll interval in seconds (default 2)
+  --heartbeat  Seconds of silence before a heartbeat line (default 30)
+  --crew       Crew id when the caller's env carries no CREW_ID
+
+  crew relay --crew "$id" --since "$cursor"

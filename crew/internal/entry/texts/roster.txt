@@ -4,6 +4,13 @@ A JSON array with one object per branch — sessions folded to the latest first,
 so three sessions on a branch never read as one flip-flopping identity — each
 with state, detail, age_s, engine, model, tier, pr_url, codename and colour.
 
+Workers dispatched to a remote host are asked on that host and appended with a
+`host` field; a host that does not answer leaves one row per worker with null
+state and live, and the reason in `host_error`.
+
   [crew]  Crew id; defaults to this repo's crew
+  --live  Add `live` to each row: whether a tmux window on this host carries the
+          branch for this crew. Answers for this host alone: remote workers are
+          neither queried nor appended
 
   crew roster | jq -r '.[] | [.branch, .state, .name] | @tsv'

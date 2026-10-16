@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -553,4 +554,157 @@ func TestUnstampedAnchorMayReply(t *testing.T) {
 		t.Fatalf("code %d: %s", code, errs)
 	}
 	tr.wantRow(t, row("c1", "worker:feat/x#s1-1", "go"))
+}
+
+// remoteDispatch is a dispatch row of crew c1 that put the branch on host.
+func remoteDispatch(ts int64, branch, host string) string {
+	return fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":%q,"host":%q,"remote":true}`, ts, branch, host)
+}
+
+type remoteCall struct {
+	host, crew string
+	argv       []string
+}
+
+// recorder is a Remote that records each call and answers rc.
+func recorder(calls *[]remoteCall, rc int) func(string, string, []string) int {
+	return func(host, crew string, argv []string) int {
+		*calls = append(*calls, remoteCall{host, crew, argv})
+		return rc
+	}
+}
+
+func TestReplyRoutesToTheWorkersHost(t *testing.T) {
+	for _, to := range []string{"worker:feat/far", "worker:feat/far#s1-2"} {
+		t.Run(to, func(t *testing.T) {
+			tr := setup(t)
+			tr.write(t, dispatch(1, "c1", "feat/near", "s1-1"), remoteDispatch(2, "feat/far", "mini"))
+			before := tr.rawLog(t)
+			var calls []remoteCall
+			errs, code := tr.run(t, Options{Remote: recorder(&calls, 7)}, to, "go on")
+			if code != 7 || errs != "" {
+				t.Fatalf("code %d stderr %q, want the remote's 7 and nothing", code, errs)
+			}
+			want := []remoteCall{{"mini", "c1", []string{"crew", "reply", "--crew", "c1", "--", to, "go on"}}}
+			if !reflect.DeepEqual(calls, want) {
+				t.Fatalf("remote calls = %v, want %v", calls, want)
+			}
+			if got := tr.rawLog(t); got != before {
+				t.Fatalf("a routed reply wrote a local row: %q", got[len(before):])
+			}
+		})
+	}
+}
+
+func TestReplyToALocalWorkerIsNotRouted(t *testing.T) {
+	for name, rows := range map[string][]string{
+		"local worker":          {dispatch(1, "c1", "feat/near", "s1-1")},
+		"newest dispatch local": {remoteDispatch(1, "feat/near", "mini"), dispatch(2, "c1", "feat/near", "s2-2")},
+		"remote in another crew": {`{"ts":1,"crew_id":"c9","kind":"dispatch","branch":"feat/near","host":"mini","remote":true}`,
+			dispatch(2, "c1", "feat/near", "s1-1")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tr := setup(t)
+			tr.write(t, append(rows, status(3, "c1", "worker:feat/near#s1-1", "working"))...)
+			o := Options{Remote: func(string, string, []string) int { t.Fatal("a local worker's reply reached Remote"); return 0 }}
+			if errs, code := tr.run(t, o, "worker:feat/near#s1-1", "go"); code != 0 {
+				t.Fatalf("code %d: %s", code, errs)
+			}
+			tr.wantRow(t, row("c1", "worker:feat/near#s1-1", "go"))
+		})
+	}
+}
+
+func TestRefusedSenderNeverReachesRemote(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, remoteDispatch(1, "feat/far", "mini"))
+	before := tr.rawLog(t)
+	p := envProbes("CREW_WORKER_ID", "worker:feat/x#s1-1")
+	errs, code := tr.run(t, Options{
+		Sender: p,
+		Remote: func(string, string, []string) int { t.Fatal("a refused sender reached Remote"); return 0 },
+	}, "worker:feat/far", "go")
+	if want := "crew: reply: refusing sender 'dispatcher:c1' — " + sender.Check("dispatcher:c1", "c1", p) + "\n"; code != 1 || errs != want {
+		t.Fatalf("code %d, stderr %q, want 1, %q", code, errs, want)
+	}
+	if got := tr.rawLog(t); got != before {
+		t.Fatalf("log changed on a refused sender")
+	}
+}
+
+// A body is data on the remote too: one that starts with a dash is never read
+// there as a flag.
+func TestRoutedReplyEndsFlagsBeforeTheBody(t *testing.T) {
+	for _, body := range []string{"- fix it", "--crew=zz"} {
+		t.Run(body, func(t *testing.T) {
+			tr := setup(t)
+			tr.write(t, remoteDispatch(1, "feat/far", "mini"))
+			var calls []remoteCall
+			if errs, code := tr.run(t, Options{Remote: recorder(&calls, 0)}, "worker:feat/far", body); code != 0 {
+				t.Fatalf("code %d: %s", code, errs)
+			}
+			want := []remoteCall{{"mini", "c1", []string{"crew", "reply", "--crew", "c1", "--", "worker:feat/far", body}}}
+			if !reflect.DeepEqual(calls, want) {
+				t.Fatalf("remote calls = %v, want %v", calls, want)
+			}
+		})
+	}
+}
+
+// With no crew named, a remote worker is still routed: the crew is the one its
+// dispatch row names, and nothing lands on the local bus, where the mirrored
+// dispatch row would read as a live session nobody reads.
+func TestCrewlessReplyRoutesOnTheDispatchRowsCrew(t *testing.T) {
+	for _, to := range []string{"worker:feat/far", "worker:feat/far#s1-2"} {
+		t.Run(to, func(t *testing.T) {
+			tr := setup(t)
+			tr.write(t, remoteDispatch(1, "feat/far", "mini"))
+			before := tr.rawLog(t)
+			var calls []remoteCall
+			errs, code := tr.run(t, Options{CrewID: func() string { return "" }, Remote: recorder(&calls, 0)}, to, "x")
+			if code != 0 || errs != "" {
+				t.Fatalf("code %d stderr %q", code, errs)
+			}
+			want := []remoteCall{{"mini", "c1", []string{"crew", "reply", "--crew", "c1", "--", to, "x"}}}
+			if !reflect.DeepEqual(calls, want) {
+				t.Fatalf("remote calls = %v, want %v", calls, want)
+			}
+			if got := tr.rawLog(t); got != before {
+				t.Fatalf("a routed reply wrote a local row: %q", got[len(before):])
+			}
+		})
+	}
+}
+
+// A branch dispatched in several crews, one of them remote, names no single
+// crew to route as: the reply is refused rather than guessed.
+func TestCrewlessReplyRefusesAmbiguousCrews(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, dispatch(1, "c0", "feat/far", "s1-1"), remoteDispatch(2, "feat/far", "mini"))
+	before := tr.rawLog(t)
+	errs, code := tr.run(t, Options{
+		CrewID: func() string { return "" },
+		Remote: func(string, string, []string) int { t.Fatal("an ambiguous reply reached Remote"); return 0 },
+	}, "worker:feat/far", "x")
+	if want := "crew: reply: CREW_ID not set and feat/far is dispatched in crews c0, c1, one of them on a remote host — pass --crew <id>\n"; code != 1 || errs != want {
+		t.Fatalf("code %d stderr %q, want 1 and %q", code, errs, want)
+	}
+	if got := tr.rawLog(t); got != before {
+		t.Fatal("an ambiguous reply wrote a row")
+	}
+}
+
+// A branch named like a session id (no '#') is a branch: the reply resolves it
+// on the local bus.
+func TestReplyToASessionShapedBranch(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, dispatch(1, "c1", "feat/near", "s1-1"))
+	want, wantCode := tr.run(t, Options{}, "worker:s1-2", "hi")
+	errs, code := tr.run(t, Options{Remote: func(string, string, []string) int { t.Fatal("routed"); return 0 }}, "worker:s1-2", "hi")
+	if code != wantCode || errs != want {
+		t.Fatalf("code %d stderr %q, want %d and %q", code, errs, wantCode, want)
+	}
+	if want := "crew: no session on s1-2 — dispatch a worker before replying to one\n"; errs != want {
+		t.Fatalf("stderr %q, want %q", errs, want)
+	}
 }
