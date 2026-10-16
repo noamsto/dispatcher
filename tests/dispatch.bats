@@ -5241,6 +5241,26 @@ ROWS
   [[ "$output" != *DISPATCH_IGNORE_RUNG* ]]
 }
 
+@test "pace refusals in a --host remote launch offer no DISPATCH_IGNORE_RUNG escape" {
+  load_dispatch_fns _settings_load _pace_downgrade _pace_burn_weight pace_rule_target
+  _settings_load
+  # shellcheck disable=SC2034
+  budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
+  # shellcheck disable=SC2034
+  ignore_budget=
+  # shellcheck disable=SC2034
+  remote_host=
+  budget_json_at claude 77 345600
+  DISPATCH_TMUX_SESSION=crew-x run pace_rule_target claude opus high
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"use the standard rung (sonnet) instead"* ]]
+  [[ "$output" != *DISPATCH_IGNORE_RUNG* ]]
+  DISPATCH_TMUX_SESSION=crew-x run pace_rule_target claude sonnet xhigh
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"use high instead"* ]]
+  [[ "$output" != *DISPATCH_IGNORE_RUNG* ]]
+}
+
 @test "pace gate effort escape is exact and null reset still refuses" {
   load_dispatch_fns _settings_load _pace_downgrade _pace_burn_weight pace_rule_target
   _settings_load
