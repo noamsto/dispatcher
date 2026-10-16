@@ -100,11 +100,10 @@ func (c children) start(args []string, stdoutPath, stderrPath string) (*child, e
 		// directory-scoped child at the same repo.
 		env = withoutGitDirs(env)
 	}
-	// CREW_WATCH_PARENT names this stream as the inner watch's owner, so the
-	// watch can exit without folding once reparented (an orphan would otherwise
-	// hold watch.lock.d and consume the events meant for a restarted lane). An
-	// inherited value is dropped first: a nested spawn must not keep an outer
-	// owner's pid and mistake this live parent for the one that is gone.
+	// CREW_WATCH_PARENT names this stream as the inner watch's owner, so an
+	// orphaned watch can stop without folding or advancing the cursor (see
+	// watch.Run). An inherited value is dropped first: a nested spawn must not
+	// mistake this live parent for an outer owner that is gone.
 	env = append(slices.DeleteFunc(env, func(kv string) bool {
 		name, _, _ := strings.Cut(kv, "=")
 		return name == "CREW_WATCH_PARENT"

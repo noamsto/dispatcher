@@ -708,8 +708,7 @@ func (l *loop) afterWatch(rc int, sigs chan os.Signal) os.Signal {
 			Repo:   l.repo,
 		})
 		if l.stderr != nil {
-			// Once per cause, next to the suppressed stdout error line, so a lane
-			// that cannot watch a discovered repo is visible on stderr.
+			// A lane that cannot watch a discovered repo must not be silent.
 			if l.repo != "" {
 				say(l.stderr, "crew: fleet stream: %s: inner watch failed (rc %d): %s\n", l.repo, rc, detail)
 			} else {
