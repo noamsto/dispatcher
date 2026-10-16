@@ -19,6 +19,8 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -91,12 +93,22 @@ func (c children) start(args []string, stdoutPath, stderrPath string) (*child, e
 
 	cmd := c.command(args)
 	cmd.Stdout, cmd.Stderr = out, errf
+	cmd.Dir = c.dir
+	env := os.Environ()
 	if c.dir != "" {
-		cmd.Dir = c.dir
 		// git prefers these to the cwd, so an inherited one would point every
 		// directory-scoped child at the same repo.
-		cmd.Env = withoutGitDirs(os.Environ())
+		env = withoutGitDirs(env)
 	}
+	// CREW_WATCH_PARENT names this stream as the inner watch's owner, so an
+	// orphaned watch can stop without folding or advancing the cursor (see
+	// watch.Run). An inherited value is dropped first: a nested spawn must not
+	// mistake this live parent for an outer owner that is gone.
+	env = append(slices.DeleteFunc(env, func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return name == "CREW_WATCH_PARENT"
+	}), "CREW_WATCH_PARENT="+strconv.Itoa(os.Getpid()))
+	cmd.Env = env
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}

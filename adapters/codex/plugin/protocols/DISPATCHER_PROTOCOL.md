@@ -1056,7 +1056,11 @@ It does not evaluate holds or run reaps: keep your own repo's `crew stream` for
 `repo` (a batch without `repo` is your own stream's) and compare only within
 it, or a lower-cursor batch from another repo is dropped. A repo joins at the
 next rediscovery (`--rediscover`, default 300 s) and replays its backlog then.
-Arm the lane as its own persistent Monitor and give it the same liveness checks
+A discovered repo it cannot watch (that repo's per-crew `watch` lock is held) is
+reported on the lane's stderr, and an inner watch orphaned by a killed lane
+exits rather than advancing that repo's cursor — so a status posted after the
+lane is re-armed is still delivered. Arm the lane as its own persistent Monitor
+and give it the same liveness checks
 as `crew stream`, with `crew fleet stream --status --crew <id>` (a stale lane:
 `--force`; a dead one: re-arm). Its heartbeat carries no `repo`.
 

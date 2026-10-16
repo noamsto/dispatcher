@@ -145,6 +145,17 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	}
 
 	start := nowMS()
+	// A stream-spawned inner watch names its owner in CREW_WATCH_PARENT. Once
+	// the owner is gone the watch is an orphan: it must not fold or advance the
+	// cursor, or it would swallow events a restarted lane should deliver. A
+	// directly armed `crew watch` carries no such variable and is unchecked.
+	owner := 0
+	if v := os.Getenv("CREW_WATCH_PARENT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			owner = n
+		}
+	}
+	orphaned := func() bool { return owner != 0 && os.Getppid() != owner }
 	// The arm's `$((start + timeout * 1000))` in bash's intmax_t. Go's int64
 	// wraps the same way, and a product that overflows lands in the past: an
 	// expiry, never the unbounded park the flag exists to prevent.
@@ -153,6 +164,9 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	for {
 		if s, ok := pending(sigs); ok {
 			return signalStatus(s)
+		}
+		if orphaned() {
+			return 1
 		}
 		if folded, ok := fold(paths.Log, c); ok {
 			out := jsonval.Clamp(folded).(map[string]any)
@@ -166,6 +180,11 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 				if err := o.Flush(); err != nil {
 					return 1
 				}
+			}
+			// Re-checked here as well as at the loop top: the owner can die while
+			// the fold runs, and an orphan must not advance the cursor.
+			if orphaned() {
+				return 1
 			}
 			writeCursor(paths.Dir, filepath.Join(cdir, "cursor"), cursorText(out))
 			return 0
