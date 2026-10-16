@@ -157,6 +157,9 @@ refuse_claude_sonnet_cap() {
 
 # pace_rule_target <agent> <model> <effort> — refuse one premium launch target
 # when its fresh pace window (7d, or pi's/cursor's month) is materially ahead of pace.
+# The DISPATCH_IGNORE_RUNG escape is omitted on --host, which refuses that
+# variable: on the local side remote_host is set, and on the remote side the
+# launch carries DISPATCH_TMUX_SESSION instead.
 pace_rule_target() {
   local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" model_downgrade_label="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause escape
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
@@ -211,9 +214,8 @@ pace_rule_target() {
       if [ "$model_downgrade" = sonnet ] && [ -n "$effort_downgrade" ]; then
         model_downgrade_label="$model_downgrade at $effort_downgrade"
       fi
-      # --host refuses DISPATCH_IGNORE_RUNG, so it is no escape there.
       escape=""
-      [ -n "${remote_host:-}" ] || escape="set DISPATCH_IGNORE_RUNG=$target_model to override just this refusal, "
+      [ -n "${remote_host:-}" ] || [ -n "${DISPATCH_TMUX_SESSION:-}" ] || escape="set DISPATCH_IGNORE_RUNG=$target_model to override just this refusal, "
       echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium rung ($target_model) is refused; use the standard rung ($model_downgrade_label) instead, ${escape}or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
       exit 1
     fi
@@ -223,7 +225,7 @@ pace_rule_target() {
       echo "dispatch: effort refusal skipped (DISPATCH_IGNORE_RUNG) — '$target_effort' on --agent $target_agent at $win ${used_pct}%${pace_notice}" >&2
     else
       escape=""
-      [ -n "${remote_host:-}" ] || escape="set DISPATCH_IGNORE_RUNG=$target_effort to override just this refusal, "
+      [ -n "${remote_host:-}" ] || [ -n "${DISPATCH_TMUX_SESSION:-}" ] || escape="set DISPATCH_IGNORE_RUNG=$target_effort to override just this refusal, "
       echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium effort ($target_effort) is refused; use $effort_downgrade instead, ${escape}or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
       exit 1
     fi
