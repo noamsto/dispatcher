@@ -330,6 +330,7 @@ func (f *fleet) join(common string) {
 		o:       f.o.Options,
 		cdir:    scratch,
 		stdout:  f.out,
+		stderr:  f.stderr,
 		procs:   children{self: f.o.Self, dir: common},
 		sup:     &suppress{key: map[string]string{}, ts: map[string]int64{}},
 		outf:    filepath.Join(scratch, "stream.out"),

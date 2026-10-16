@@ -154,6 +154,29 @@ func TestQualifyingStatusPrintsBatchAndMovesCursor(t *testing.T) {
 	}
 }
 
+// A stream-spawned inner watch whose named owner is not its parent is an orphan:
+// it must exit without folding or advancing the shared cursor, so a restarted
+// lane still delivers the events (#1139). A directly armed `crew watch` carries
+// no CREW_WATCH_PARENT and stays unchecked (the rest of this file).
+func TestOrphanExitsWithoutAdvancingCursor(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p, status(1785951264000, "worker:feat/x#s1-1", "done", "", ""))
+	// A process is never its own parent, so this owner pid can never match
+	// os.Getppid() and the watch is orphaned by construction.
+	t.Setenv("CREW_WATCH_PARENT", itoa(int64(os.Getpid())))
+
+	stdout, _, code, _ := run(t, p, Request{Crew: "c1"})
+	if code != 1 {
+		t.Errorf("code = %d, want 1", code)
+	}
+	if stdout != "" {
+		t.Errorf("orphan printed a batch: %q", stdout)
+	}
+	if got := cursorOf(t, p, "c1"); got != "<missing>" {
+		t.Errorf("cursor = %q, want untouched", got)
+	}
+}
+
 func TestNonFiniteBodyNumbersPrintLikeJq(t *testing.T) {
 	p := fixture(t)
 	const head = `{"ts":1785951264000,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"msg","body":`

@@ -7,7 +7,9 @@
 // Every stdout line is a protocol message a dispatcher parses: the batch
 // itself, then `{"stream":"heartbeat"|"error"|"hold_due"|"reap"|"status",…}`.
 // The stream's own stderr stays empty in normal operation — the inner watch's
-// stderr goes to a file, or its prose would sit next to the JSON.
+// stderr goes to a file, or its prose would sit next to the JSON. A failed
+// inner watch is the exception: it is also announced on stderr, once per cause,
+// so a lane that cannot watch a repo is not silent.
 //
 // Three children are the crew script re-entered the way the bash arm re-entered
 // `$0` (`bash -euo pipefail <self> …`): `watch` — the park, which reaches Go
@@ -172,6 +174,7 @@ func Run(r Request, paths bus.Paths, stdout, stderr io.Writer, opts Options) int
 		cdir:    cdir,
 		lockd:   lockd,
 		stdout:  &laneWriter{w: stdout, now: o.Now, last: o.Now()},
+		stderr:  &laneWriter{w: stderr, now: o.Now, last: o.Now()},
 		procs:   children{self: o.Self},
 		sup:     &suppress{key: map[string]string{}, ts: map[string]int64{}},
 		outf:    filepath.Join(cdir, "stream.out"),
@@ -550,6 +553,10 @@ type loop struct {
 	cdir   string
 	lockd  string
 	stdout io.Writer
+	// stderr is where a failed inner watch is announced: its own stderr goes to
+	// a file so prose cannot sit next to the JSON, but a lane that cannot watch
+	// a repo must still say so where the operator is looking.
+	stderr io.Writer
 	procs  children
 	sup    *suppress
 
@@ -700,6 +707,15 @@ func (l *loop) afterWatch(rc int, sigs chan os.Signal) os.Signal {
 			TS:     ts,
 			Repo:   l.repo,
 		})
+		if l.stderr != nil {
+			// Once per cause, next to the suppressed stdout error line, so a lane
+			// that cannot watch a discovered repo is visible on stderr.
+			if l.repo != "" {
+				say(l.stderr, "crew: fleet stream: %s: inner watch failed (rc %d): %s\n", l.repo, rc, detail)
+			} else {
+				say(l.stderr, "crew: stream: inner watch failed (rc %d): %s\n", rc, detail)
+			}
+		}
 	}
 	return l.wait(time.Duration(l.c.retry)*time.Second, sigs)
 }

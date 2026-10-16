@@ -14222,11 +14222,16 @@ seed_fleet_repo() {
     >>"$1/.git/crew/events.jsonl"
 }
 
+# post_status <dir> <state> — a status row for the worker seed_fleet_repo made.
+post_status() {
+  jq -nc --argjson ts "$(($(date +%s) * 1000))" --arg st "$2" \
+    '{ts:$ts, crew_id:"c1", from:"worker:feat/x", to:"dispatcher:c1", kind:"status", body:{state:$st, detail:"PR"}}' \
+    >>"$1/.git/crew/events.jsonl"
+}
+
 # post_pr_open <dir> — a pr_open row for the worker seed_fleet_repo made.
 post_pr_open() {
-  jq -nc --argjson ts "$(($(date +%s) * 1000))" \
-    '{ts:$ts, crew_id:"c1", from:"worker:feat/x", to:"dispatcher:c1", kind:"status", body:{state:"pr_open", detail:"PR"}}' \
-    >>"$1/.git/crew/events.jsonl"
+  post_status "$1" pr_open
 }
 
 @test "fleet stream: one lane delivers a pr_open from each repo once, tagged with its repo" {
@@ -14258,6 +14263,46 @@ post_pr_open() {
   run --separate-stderr run_crew fleet stream --status --crew c1
   [ "$status" -eq 0 ]
   [ "$(jq -r '.state' <<<"$output")" = alive ]
+  stop_fleet_stream
+}
+
+@test "fleet stream: a hard-killed lane's orphaned watch does not swallow the next status" {
+  root="$BATS_TEST_TMPDIR/fleetroot"
+  seed_fleet_repo "$root/alpha"
+  seed_fleet_repo "$root/beta"
+  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
+  export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"
+  export CREW_SWEEP_ROOTS="$root"
+  outside="$BATS_TEST_TMPDIR/outside"
+  mkdir -p "$outside"
+  cd "$outside"
+
+  start_fleet_stream --crew c1 --park 30 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1 --rediscover 1
+  poll_for 100 fleet_locked
+  post_status "$root/beta" pr_open
+  poll_for 200 grep -q '"state":"pr_open"' "$FLEET_OUT"
+  lane1_out="$FLEET_OUT"
+  # The batch is printed during --coalesce while no watch holds the lock, so wait
+  # for the loop to re-park its next watch: killing then orphans a live watch.
+  poll_for 200 test -d "$root/beta/.git/crew/crews/c1/watch.lock.d"
+  [ -d "$root/beta/.git/crew/crews/c1/watch.lock.d" ]
+
+  # Hard-kill the lane only. The parked inner watch orphans; before the fix it
+  # kept beta's watch lock and swallowed the next status.
+  kill -KILL "$FLEET_PID" 2>/dev/null || true
+  wait "$FLEET_PID" 2>/dev/null || true
+
+  start_fleet_stream --crew c1 --park 30 --interval 1 --coalesce 1 --heartbeat 3600 --retry 1 --rediscover 1
+  poll_for 100 fleet_locked
+  post_status "$root/beta" done
+  poll_for 400 grep -q '"state":"done"' "$FLEET_OUT"
+
+  # The restarted lane delivered beta's next status, exactly once; the killed
+  # lane replayed the backlog and stopped at pr_open.
+  run jq -s -e '[.[] | select(.repo == "beta" and .events != null) | .events[] | select(.body.state == "done")] | length == 1' "$FLEET_OUT"
+  [ "$status" -eq 0 ]
+  run jq -s -e '[.[] | select(.repo == "beta" and .events != null) | .events[] | select(.body.state == "done")] | length == 0' "$lane1_out"
+  [ "$status" -eq 0 ]
   stop_fleet_stream
 }
 

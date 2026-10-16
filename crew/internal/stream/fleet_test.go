@@ -401,6 +401,26 @@ func TestFleetDeliversFromEitherRepoOnceTagged(t *testing.T) {
 	}
 }
 
+// A bus loop whose inner watch cannot start must say so on the lane's stderr,
+// naming the repo: a discovered-but-unwatchable repo must not stay silent
+// (#1139). The stub stands in for `crew watch` refusing a held watch lock.
+func TestFleetReportsInnerWatchFailureOnStderr(t *testing.T) {
+	alpha := gitRepo(t, "alpha")
+	appendRow(t, alpha, statusRow(1000, "c1", "worker:feat/a", "working"))
+	l := startFleet(t, FleetOptions{
+		Options:  Options{Self: scriptStub(t, "echo 'crew: another watch is already running for this crew (c1)' >&2; exit 1")},
+		Discover: okRepos(alpha),
+		Origin:   origins(nil),
+	}, fastRequest())
+
+	want := "crew: fleet stream: alpha: inner watch failed (rc 1): crew: another watch is already running for this crew (c1)"
+	waitFor(t, "the stderr diagnostic", func() bool { return strings.Contains(l.errb.str(), want) })
+	l.stop()
+	if n := strings.Count(l.errb.str(), "inner watch failed"); n != 1 {
+		t.Errorf("diagnostic printed %d times, want once; stderr %q", n, l.errb.str())
+	}
+}
+
 func TestFleetJoinsRepoAtNextRediscovery(t *testing.T) {
 	alpha, gamma := gitRepo(t, "alpha"), gitRepo(t, "gamma")
 	appendRow(t, alpha, statusRow(1000, "c1", "worker:feat/a", "working"))
