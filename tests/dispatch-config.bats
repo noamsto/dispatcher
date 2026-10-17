@@ -580,6 +580,13 @@ ROWS
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"localModels.lemonade/deep-one.maxTokens must be a positive integer"* ]]
+
+  # #1141: `input` is the pi input-modality declaration, so a vision endpoint
+  # declares ["text","image"] and it survives the merge unchanged.
+  user_settings '{"localModels":{"lemonade/vision":{"baseUrl":"http://h:1/v1","contextWindow":8192,"input":["text","image"]}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.localModels."lemonade/vision".input == ["text","image"]' <<<"$output"
 }
 
 @test "malformed localModels is refused, naming the path" {
@@ -594,6 +601,12 @@ ROWS
 {"qwen":{$ok}}|qwen
 {"lemonade/q":{"contextWindow":8192}}|lemonade/q.baseUrl
 {"lemonade/q":{$ok,"reasoning":"yes"}}|lemonade/q.reasoning
+{"lemonade/q":{$ok,"input":"text"}}|lemonade/q.input
+{"lemonade/q":{$ok,"input":[]}}|lemonade/q.input
+{"lemonade/q":{$ok,"input":["image"]}}|lemonade/q.input
+{"lemonade/q":{$ok,"input":["text","vision"]}}|lemonade/q.input
+{"lemonade/q":{$ok,"input":["text","text"]}}|lemonade/q.input
+{"lemonade/q":{$ok,"input":[7]}}|lemonade/q.input
 {"lemonade/q":{$ok,"thinkingFormat":7}}|lemonade/q.thinkingFormat
 {"lemonade/q":{$ok,"thinkingLevelMap":[]}}|lemonade/q.thinkingLevelMap
 {"lemonade/q":{$ok,"thinkingLevelMap":{"high":5}}}|lemonade/q.thinkingLevelMap
@@ -621,7 +634,7 @@ ROWS
 {"lemonade/a":{$ok},"lemonade/b":{"baseUrl":"http://other:1/v1","contextWindow":8192}}|lemonade/b
 []|localModels
 EOF
-  finish_rows 30
+  finish_rows 36
 }
 
 # #842 lane profiles: the settings half of the feature is a name plus optional

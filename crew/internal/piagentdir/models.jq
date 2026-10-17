@@ -9,7 +9,7 @@
         api: "openai-completions",
         apiKey: .[0].provider,
         models: (map({id, contextWindow: .value.contextWindow}
-          + (.value | {reasoning, maxTokens, thinkingLevelMap, samplingParams, samplingParamsByThinkingLevel}
+          + (.value | {reasoning, input, maxTokens, thinkingLevelMap, samplingParams, samplingParamsByThinkingLevel}
             + (if .thinkingFormat then {compat: {thinkingFormat}} else {} end)
             | with_entries(select(.value != null))))
           | sort_by(.id))}})

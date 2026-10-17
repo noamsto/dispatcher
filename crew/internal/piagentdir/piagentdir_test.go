@@ -548,6 +548,21 @@ func TestNumberLiteralsKeepTheirText(t *testing.T) {
 	}
 }
 
+// #1141: pi registers a custom model as text-only unless models.json carries
+// `input`, so the entry's array has to reach it verbatim — and an entry that
+// declares none gains no `input` key at all.
+func TestInputFieldPassthrough(t *testing.T) {
+	f := newFixture(t)
+	f.setConfig(t, `{"localModels":{
+  "p/vision":{"baseUrl":"http://h:1/v1","contextWindow":1000,"input":["text","image"]},
+  "p/plain":{"baseUrl":"http://h:1/v1","contextWindow":2000}}}`)
+	f.ok(t)
+	sameJSON(t, read(t, f.dir+"/models.json"), `{"providers":{"p":{
+  "baseUrl":"http://h:1/v1","api":"openai-completions","apiKey":"p","models":[
+    {"id":"plain","contextWindow":2000},
+    {"id":"vision","contextWindow":1000,"input":["text","image"]}]}}}`)
+}
+
 func TestMatchesBash(t *testing.T) {
 	path := "../../../adapters/core/local-models.sh"
 	b, err := os.ReadFile(path)

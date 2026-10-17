@@ -57,6 +57,17 @@ self: {
       lib.optionals (cfg.localModels.${id}.effortThinking != null)
       (map (k: "${id}.effortThinking.${k}") (lib.subtractLists effortRungs (builtins.attrNames cfg.localModels.${id}.effortThinking))))
     (builtins.attrNames cfg.localModels));
+  # The option type restricts the values to text/image; it cannot express
+  # dispatch-config's rule that the list is non-empty, duplicate-free and holds
+  # "text", so that half is checked here rather than at dispatch time.
+  badLocalModelInputs = lib.optionals (cfg.localModels != null) (lib.concatMap
+    (id: let
+      v = cfg.localModels.${id}.input;
+    in
+      lib.optionals
+      (v != null && (v == [] || !(lib.elem "text" v) || builtins.length (lib.unique v) != builtins.length v))
+      ["${id}.input"])
+    (builtins.attrNames cfg.localModels));
   lockedFile = pkgs.writeText "dispatcher-locked-settings.json" (builtins.toJSON lockedSettings);
   agentBrowserPackage =
     if cfg.agentBrowser.executablePath == null
@@ -208,6 +219,17 @@ in {
               pi's per-response output cap for this model, in tokens. Unset,
               pi's own default (16384) applies. Thinking tokens count against
               the cap.
+            '';
+          };
+          input = lib.mkOption {
+            type = lib.types.nullOr (lib.types.listOf (lib.types.enum ["text" "image"]));
+            default = null;
+            example = ["text" "image"];
+            description = ''
+              pi's input modalities for this model, passed through to
+              `models.json`. Unset, pi registers the model as text-only, so a
+              vision-capable endpoint never sees the screenshots a worker takes.
+              The list must hold `"text"`; `"image"` is what makes it vision.
             '';
           };
           tiers = lib.mkOption {
@@ -491,6 +513,10 @@ in {
       {
         assertion = badEffortThinking == [];
         message = "programs.dispatcher.localModels: invalid effortThinking rung(s) ${lib.concatStringsSep ", " badEffortThinking} -- rungs are ${lib.concatStringsSep ", " effortRungs}; dispatch-config would refuse them at runtime, taking every dispatch down.";
+      }
+      {
+        assertion = badLocalModelInputs == [];
+        message = "programs.dispatcher.localModels: invalid input list(s) ${lib.concatStringsSep ", " badLocalModelInputs} -- input is a non-empty list of distinct \"text\"/\"image\" values holding \"text\"; dispatch-config would refuse them at runtime, taking every dispatch down.";
       }
     ];
 

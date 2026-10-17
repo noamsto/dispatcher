@@ -348,6 +348,11 @@ count against that cap, so a local model that thinks can spend a whole turn
 thinking and come back truncated (`Response was truncated before completion`).
 Qwen3.8 recommends 32,768 for general use and more for hard reasoning.
 
+`input` (a non-empty array of distinct `"text"`/`"image"` values holding
+`"text"`) reaches `models.json` as pi's `input`, the model's input modalities.
+Omitted, pi registers the model as text-only, so a vision-capable endpoint
+never sees the screenshots a worker takes: declare `["text", "image"]` for one.
+
 This lane's recommended entry adds `"reasoning": true, "thinkingFormat":
 "qwen-chat-template", "effortThinking": {"low": "off"}`: `--effort low` runs
 with thinking off, every other rung with it on.
