@@ -290,7 +290,7 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
           then [$p, "keyed <provider>/<model> with letters, digits, \".\", \"_\", \"-\" and \"/\" (no \":\")"]
           elif ($v | type) != "object" then [$p, "an object"]
           else
-            ($v | keys[] | select(IN("baseUrl", "contextWindow", "maxConcurrent", "maxTokens", "tiers", "workerNotes", "reasoning", "thinkingFormat", "thinkingLevelMap", "samplingParams", "samplingParamsByThinkingLevel", "effortThinking") | not) | [$p + [.], "one of baseUrl, contextWindow, maxConcurrent, maxTokens, tiers, workerNotes, reasoning, thinkingFormat, thinkingLevelMap, samplingParams, samplingParamsByThinkingLevel, effortThinking"]),
+            ($v | keys[] | select(IN("baseUrl", "contextWindow", "maxConcurrent", "maxTokens", "tiers", "workerNotes", "reasoning", "thinkingFormat", "thinkingLevelMap", "samplingParams", "samplingParamsByThinkingLevel", "effortThinking", "input") | not) | [$p + [.], "one of baseUrl, contextWindow, maxConcurrent, maxTokens, tiers, workerNotes, reasoning, thinkingFormat, thinkingLevelMap, samplingParams, samplingParamsByThinkingLevel, effortThinking, input"]),
             ($v.baseUrl | select(type != "string" or (test("^https?://[^[:space:]]*[^/[:space:]]$") | not)) | [$p + ["baseUrl"], "an http(s) URL without whitespace or a trailing \"/\""]),
             ($v.contextWindow | select(pos_int | not) | [$p + ["contextWindow"], "a positive integer"]),
             ($v | select(has("maxConcurrent") and (.maxConcurrent | pos_int | not)) | [$p + ["maxConcurrent"], "a positive integer"]),
@@ -298,6 +298,10 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
             ($v | select(has("tiers") and ((.tiers | type == "array" and length > 0 and all(.[]; IN("trivial", "standard", "deep"))) | not)) | [$p + ["tiers"], "a non-empty array of trivial, standard or deep"]),
             ($v | select(has("workerNotes") and (($v.workerNotes | type) != "string")) | [$p + ["workerNotes"], "a string"]),
             ($v | select(has("reasoning") and (.reasoning | type != "boolean")) | [$p + ["reasoning"], "a boolean"]),
+            # pi treats a model with no `input` as text-only, so a vision
+            # endpoint declares ["text","image"]; `text` is required, and a
+            # repeat would reach pi unchanged.
+            ($v | select(has("input") and ((.input | string_array and length > 0 and ((unique | length) == length) and all(.[]; IN("text", "image")) and index("text") != null) | not)) | [$p + ["input"], "a non-empty array of distinct \"text\" or \"image\" values including \"text\""]),
             ($v | select(has("thinkingFormat") and (.thinkingFormat | type != "string" or length == 0)) | [$p + ["thinkingFormat"], "a non-empty string"]),
             ($v | to_entries[] | select(.key | IN("thinkingLevelMap", "samplingParams", "samplingParamsByThinkingLevel")) | select((.value | type != "object") or (.key == "thinkingLevelMap" and (.value | all(.[]; . == null or type == "string")) == false) or (.key == "samplingParamsByThinkingLevel" and (.value | all(.[]; type == "object")) == false)) | [$p + [.key], (if .key == "thinkingLevelMap" then "an object of strings or null" elif .key == "samplingParamsByThinkingLevel" then "an object of objects" else "an object" end)]),
             ($v | select(has("effortThinking") and ((.effortThinking | type == "object" and all(.[]; IN("off", "minimal", "low", "medium", "high", "xhigh", "max"))) | not)) | [$p + ["effortThinking"], "an object of pi thinking levels (off, minimal, low, medium, high, xhigh or max)"]),

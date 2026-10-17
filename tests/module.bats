@@ -168,6 +168,7 @@ let
       reasoning = true;
       thinkingFormat = "qwen-chat-template";
       maxTokens = 32768;
+      input = ["text" "image"];
       effortThinking.low = "off";
     };
     # A second id with no workerNotes: its locked entry must come out without
@@ -274,6 +275,18 @@ in {
       true))
   ]);
   goodLocalModelAsserts = builtins.filter (a: !a.assertion) (eval fullCfg).assertions;
+  # An `input` list dispatch-config would refuse -- empty, missing "text", or
+  # repeating a value -- trips the module's assertion naming the id instead of
+  # refusing every dispatch at runtime.
+  badLocalModelInputAsserts = map (a: a.message) (builtins.filter (a: !a.assertion) (eval {
+    enable = true;
+    localModels = {
+      "a/empty" = {baseUrl = "http://h/v1"; contextWindow = 1; input = [];};
+      "a/imageonly" = {baseUrl = "http://h/v1"; contextWindow = 1; input = ["image"];};
+      "a/dup" = {baseUrl = "http://h/v1"; contextWindow = 1; input = ["text" "text"];};
+      "a/ok" = {baseUrl = "http://h/v1"; contextWindow = 1; input = ["text" "image"];};
+    };
+  }).assertions);
   # `engines = []` must be a type error, not a silently-accepted value that
   # bakes `"engines": []` into the locked settings file (dispatch-config dies
   # on that at runtime).
@@ -744,6 +757,11 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
 }
 
+@test "the module asserts a localModels input list dispatch-config would refuse" {
+  run jq -e '(.badLocalModelInputAsserts | length) == 1 and (.badLocalModelInputAsserts[0] | contains("a/empty") and contains("a/imageonly") and contains("a/dup") and (contains("a/ok") | not))' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
 @test "the module declares assertions that reject bad hosts names and repo keys" {
   run jq -e '(.badHostAsserts | length) == 2 and (.badHostAsserts | map(contains("-bad")) | any) and (.badHostAsserts | map(contains("good.no-slash")) | any) and (.badHostAsserts | map(contains("acme/widget")) | any | not)' "$EVAL"
   [ "$status" -eq 0 ]
@@ -809,7 +827,13 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.openrouter.monthlyUsd == 50' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '.full.locked.localModels == {"lemonade/Qwen3.8-Flash-Next-MTP": {"baseUrl": "http://halo:13305/v1", "contextWindow": 131072, "maxConcurrent": 1, "tiers": ["trivial", "standard"], "workerNotes": "- Run only targeted bats files."}, "lemonade/Reasoner": {"baseUrl": "http://halo:13305/v1", "contextWindow": 4096, "maxConcurrent": 1, "maxTokens": 32768, "tiers": ["trivial", "standard"], "reasoning": true, "thinkingFormat": "qwen-chat-template", "effortThinking": {"low": "off"}}, "lemonade/Plain": {"baseUrl": "http://halo:13305/v1", "contextWindow": 8192, "maxConcurrent": 1, "tiers": ["trivial", "standard"]}}' "$EVAL"
+  run jq -e '.full.locked.localModels == {"lemonade/Qwen3.8-Flash-Next-MTP": {"baseUrl": "http://halo:13305/v1", "contextWindow": 131072, "maxConcurrent": 1, "tiers": ["trivial", "standard"], "workerNotes": "- Run only targeted bats files."}, "lemonade/Reasoner": {"baseUrl": "http://halo:13305/v1", "contextWindow": 4096, "maxConcurrent": 1, "maxTokens": 32768, "input": ["text", "image"], "tiers": ["trivial", "standard"], "reasoning": true, "thinkingFormat": "qwen-chat-template", "effortThinking": {"low": "off"}}, "lemonade/Plain": {"baseUrl": "http://halo:13305/v1", "contextWindow": 8192, "maxConcurrent": 1, "tiers": ["trivial", "standard"]}}' "$EVAL"
+  [ "$status" -eq 0 ]
+  # `input` set renders into the locked entry; unset leaves the key out entirely
+  # (a JSON null there would make dispatch-config refuse the entry).
+  run jq -e '.full.locked.localModels."lemonade/Reasoner".input == ["text", "image"]' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.localModels."lemonade/Plain" | has("input") | not' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.workerDeniedMcpServers == ["my_browser"]' "$EVAL"
   [ "$status" -eq 0 ]
