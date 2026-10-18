@@ -279,13 +279,7 @@ func sendEnter(ctx context.Context, d Deps, pane string) bool {
 // not ok, which is what `pane unreadable` means.
 func capture(ctx context.Context, d Deps, pane string, colored bool) (string, bool) {
 	text, ok := probe.Capture(ctx, d.Tmux, d.Getenv, pane, colored)
-	if !colored {
-		return text, ok
-	}
-	if !ok {
-		text = ""
-	}
-	return text, text != ""
+	return text, ok && (!colored || text != "")
 }
 
 // frameGate is `_nudge_frame_gate`: the pane shows an idle, empty input box, or the

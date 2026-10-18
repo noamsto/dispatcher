@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -209,52 +210,47 @@ func Default(e Env) Probes {
 	}
 }
 
-// Capture is `_pane_capture`: the colored or sample seam when set, else
-// capture-pane. The text is kept on failure; callers derive their own failure
-// convention from ok.
-func Capture(ctx context.Context, c tmux.Client, getenv func(string) string, pane string, colored bool) (string, bool) {
-	if colored {
-		if cmd := getenv("CREW_STALL_COLOR_CMD"); cmd != "" {
-			text, rc := runSeam(ctx, cmd)
-			return text, rc == 0
+// Capture is `_pane_capture`: the color or sample seam when set, else
+// capture-pane. A failed colored capture is "" and not ok.
+func Capture(ctx context.Context, t tmux.Client, getenv func(string) string, pane string, colored bool) (text string, ok bool) {
+	cmd := getenv("CREW_STALL_SAMPLE_CMD")
+	if c := getenv("CREW_STALL_COLOR_CMD"); colored && c != "" {
+		cmd = c
+	}
+	if cmd != "" {
+		var rc int
+		text, rc = runSeam(ctx, cmd)
+		ok = rc == 0
+	} else {
+		args := []string{"capture-pane", "-p", "-t", pane}
+		if colored {
+			args = slices.Insert(args, 1, "-e")
 		}
+		var err error
+		text, err = t.Run(ctx, args...)
+		ok = err == nil
 	}
-	if cmd := getenv("CREW_STALL_SAMPLE_CMD"); cmd != "" {
-		text, rc := runSeam(ctx, cmd)
-		return text, rc == 0
+	if colored && !ok {
+		text = ""
 	}
-	args := []string{"capture-pane", "-p", "-t", pane}
-	if colored {
-		args = []string{"capture-pane", "-e", "-p", "-t", pane}
-	}
-	text, err := c.Run(ctx, args...)
-	return text, err == nil
+	return text, ok
 }
 
-// Sample is the pane's text and whether capture succeeded.
 func (p Probes) Sample(ctx context.Context) (string, bool) {
 	return Capture(ctx, p.Tmux, p.Getenv, p.Pane, false)
 }
 
-// SampleColored is the pane's text with escapes; a failure is "".
 func (p Probes) SampleColored(ctx context.Context) string {
-	text, ok := Capture(ctx, p.Tmux, p.Getenv, p.Pane, true)
-	if !ok {
-		return ""
-	}
+	text, _ := Capture(ctx, p.Tmux, p.Getenv, p.Pane, true)
 	return text
 }
 
-// PaneCmd is the pane's foreground command.
 func (p Probes) PaneCmd(ctx context.Context) string {
 	if c := p.Getenv("CREW_STALL_PROC_CMD"); c != "" {
 		text, _ := runSeam(ctx, c)
 		return text
 	}
-	rows, err := p.Tmux.Run(ctx, "list-panes", "-a", "-F", "#{pane_id}\t#{pane_current_command}")
-	if err != nil {
-		return ""
-	}
+	rows := tmux.Output(ctx, p.Tmux, "list-panes", "-a", "-F", "#{pane_id}\t#{pane_current_command}")
 	for row := range strings.SplitSeq(rows, "\n") {
 		if id, cmd, _ := strings.Cut(row, "\t"); id == p.Pane {
 			return cmd
@@ -263,16 +259,10 @@ func (p Probes) PaneCmd(ctx context.Context) string {
 	return ""
 }
 
-// PaneModel is the pane's @crew_model.
 func (p Probes) PaneModel(ctx context.Context) string {
-	text, err := p.Tmux.Run(ctx, "show-options", "-pqv", "-t", p.Pane, "@crew_model")
-	if err != nil {
-		return ""
-	}
-	return text
+	return tmux.Output(ctx, p.Tmux, "show-options", "-pqv", "-t", p.Pane, "@crew_model")
 }
 
-// SetPaneOption sets a pane option; failure is ignored.
 func (p Probes) SetPaneOption(ctx context.Context, name, value string) {
 	_, _ = p.Tmux.Run(ctx, "set-option", "-p", "-t", p.Pane, name, value)
 }

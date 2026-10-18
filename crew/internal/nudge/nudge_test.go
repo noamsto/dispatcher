@@ -53,10 +53,9 @@ func (f *fakePane) frameAt(i int) string {
 	return f.frames[i]
 }
 
-// run answers the tmux calls. capture-pane counts the plain and colored reads
-// separately, as the bats tmux stub does: the plain captures are the ones a row
-// scripts (gate, gate-again, confirm, classify), and the colored read answers the
-// same frame because every fixture here is unstyled. Only the other calls are logged.
+// run answers the tmux calls. capture-pane counts plain and colored reads
+// separately, as the bats stub does: rows script the plain ones, and the colored
+// read answers the same frame (every fixture is unstyled). Other calls are logged.
 func (f *fakePane) run(args []string) (string, error) {
 	if args[0] == "capture-pane" {
 		if args[len(args)-1] != "%9" {
@@ -87,11 +86,8 @@ func (f *fakePane) run(args []string) (string, error) {
 		}
 		return f.panes, nil
 	case "send-keys":
-		fails := f.keysFail
-		if len(args) > 3 && args[3] == "Enter" {
-			fails = f.enterFails
-		}
-		if fails {
+		enter := len(args) > 3 && args[3] == "Enter"
+		if enter && f.enterFails || !enter && f.keysFail {
 			return "", tmuxtest.ErrNoServer
 		}
 	}

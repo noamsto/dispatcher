@@ -37,29 +37,19 @@ type Options struct {
 	Now       func() time.Time
 }
 
-// onceClient runs each distinct argv once and replays its result, so every
-// crew's and repo's fold shares one pane list.
-type onceClient struct {
+// onceTmux reads each argv once and shares it, a failed read as no output, so
+// every crew's fold sees one pane list.
+type onceTmux struct {
 	tmux.Client
-	mu   sync.Mutex
-	memo map[string]onceResult
+	out map[string]string
 }
 
-type onceResult struct {
-	out string
-	err error
-}
-
-func (c *onceClient) Run(ctx context.Context, args ...string) (string, error) {
-	key := strings.Join(args, "\x00")
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if r, ok := c.memo[key]; ok {
-		return r.out, r.err
+func (m onceTmux) Run(ctx context.Context, args ...string) (string, error) {
+	key := strings.Join(args, " ")
+	if _, ok := m.out[key]; !ok {
+		m.out[key] = tmux.Output(ctx, m.Client, args...)
 	}
-	out, err := c.Client.Run(ctx, args...)
-	c.memo[key] = onceResult{out, err}
-	return out, err
+	return m.out[key], nil
 }
 
 // Request is `crew fleet`'s flags: Crew limits the rows to one crew id.
@@ -74,14 +64,8 @@ type Request struct {
 func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) int {
 	all, asJSON, onlyCrew := req.All, req.JSON, req.Crew
 
-	once := &onceClient{Client: o.Tmux, memo: map[string]onceResult{}}
-	var windows map[string]bool
-	windowBranches := func() map[string]bool {
-		if windows == nil {
-			windows = roster.Windows(ctx, o.Tmux)
-		}
-		return windows
-	}
+	once := onceTmux{o.Tmux, map[string]string{}}
+	windowBranches := func() map[string]bool { return roster.Windows(ctx, once) }
 	now := o.Now()
 	hidden := 0
 	nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6

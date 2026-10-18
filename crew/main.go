@@ -655,7 +655,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			NoOpen: rr.NoOpen, Once: rr.Once, Detach: rr.Detach,
 		}
 		return rosterrender.Run(ctx, req, paths, rosterrender.Options{
-			Probes:    rosterrender.Default(ctx),
+			Probes:    rosterrender.Default(),
 			Procs:     e.procs,
 			Roster:    roster.Probes{Worktrees: commonWorktrees(ctx, paths.Common)},
 			Clock:     clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},

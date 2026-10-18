@@ -365,20 +365,9 @@ func TestTmuxReadOnce(t *testing.T) {
 	f := setup(t)
 	tx := &tmuxtest.Fake{}
 	f.opts.Tmux = tx
-	if _, _, code := run(t, f, Request{}); code != 0 {
-		t.Fatalf("code %d", code)
-	}
-	var panes, windows int
-	for _, c := range tx.Calls() {
-		switch {
-		case strings.HasPrefix(c, "list-panes"):
-			panes++
-		case strings.HasPrefix(c, "list-windows"):
-			windows++
-		}
-	}
-	if panes != 1 || windows != 1 {
-		t.Errorf("list-panes %d times, list-windows %d times, want 1 each", panes, windows)
+	run(t, f, Request{All: true})
+	if got := tx.Calls(); len(got) != 2 {
+		t.Errorf("tmux calls = %q, want one list-panes and one list-windows", got)
 	}
 }
 

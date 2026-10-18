@@ -41,7 +41,7 @@ type fake struct {
 	nudge   func(context.Context, nudge.PaneRequest) (string, int)
 	shCalls []string
 	opts    [][]string // tmux set-option argv
-	tm      *tmuxtest.Fake
+	tm      tmuxtest.Fake
 	busRows func(path string, sinceMS int64, maxLines int) ([]any, bool)
 }
 
@@ -95,8 +95,7 @@ func (f *fake) releaseHook() func(context.Context, string, string, string, int64
 	}
 }
 
-// tmuxFunc answers the pane reads the loop makes: one frame per capture-pane,
-// the pane's command row and model, and logs every set-option into f.opts.
+// tmuxFunc answers the loop's pane reads; set-option lands in f.opts.
 func (f *fake) tmuxFunc(args []string) (string, error) {
 	switch args[0] {
 	case "capture-pane":
@@ -105,10 +104,10 @@ func (f *fake) tmuxFunc(args []string) (string, error) {
 		}
 		n := f.samples
 		f.samples++
-		if f.sample == nil {
-			return "frame " + strconv.Itoa(n), nil
+		text, alive := "frame "+strconv.Itoa(n), true
+		if f.sample != nil {
+			text, alive = f.sample(n)
 		}
-		text, alive := f.sample(n)
 		if !alive {
 			return text, tmuxtest.ErrNoServer
 		}
@@ -124,12 +123,10 @@ func (f *fake) tmuxFunc(args []string) (string, error) {
 }
 
 func (f *fake) probes() probe.Probes {
-	if f.tm == nil {
-		f.tm = &tmuxtest.Fake{Func: f.tmuxFunc}
-	}
+	f.tm.Func = f.tmuxFunc
 	return probe.Probes{
 		Env:           probe.Env{Pane: f.pane, Getenv: func(string) string { return "" }},
-		Tmux:          f.tm,
+		Tmux:          &f.tm,
 		Load:          func(context.Context) string { return "" },
 		Top:           func(context.Context) string { return "" },
 		RefreshBudget: func(context.Context) {},

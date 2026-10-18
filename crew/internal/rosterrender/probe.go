@@ -37,7 +37,7 @@ type Probes struct {
 
 // Default wires the real tmux and aeye reads. Each aeye call takes the ctx of
 // its caller, so a killed worker never leaves a `timeout 60 aeye` behind it.
-func Default(context.Context) Probes {
+func Default() Probes {
 	return Probes{
 		Tmux: tmux.Exec{},
 		AeyeHelp: func(ctx context.Context) (string, error) {

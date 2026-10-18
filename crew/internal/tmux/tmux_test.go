@@ -9,74 +9,33 @@ import (
 	"time"
 )
 
-// stubTmux installs a `tmux` shell script as the only thing on PATH. Tools the
-// script needs are resolved first and written in by absolute path.
-func stubTmux(t *testing.T, body string) {
-	t.Helper()
-	dir := t.TempDir()
-	script := "#!/bin/sh\n" + body + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir)
-}
-
-func lookPath(t *testing.T, name string) string {
-	t.Helper()
-	p, err := exec.LookPath(name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return p
-}
-
-func TestExecRun(t *testing.T) {
-	printf := lookPath(t, "printf")
-	tests := []struct {
-		name    string
-		body    string
-		want    string
-		wantErr bool
+func TestExec(t *testing.T) {
+	sleep, _ := exec.LookPath("sleep")
+	for _, tt := range []struct {
+		body, run, output string // body "" = no tmux on PATH
+		fail              bool
 	}{
-		{"strips trailing newlines", printf + ` 'a\nb\n\n'`, "a\nb", false},
-		{"keeps stdout on failure", printf + ` 'partial\n'; exit 3`, "partial", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			stubTmux(t, tt.body)
-			got, err := Exec{}.Run(context.Background(), "list-panes")
-			if got != tt.want || (err != nil) != tt.wantErr {
-				t.Fatalf("Run = %q, %v; want %q, err=%v", got, err, tt.want, tt.wantErr)
+		{"echo a; echo b; echo; echo", "a\nb", "a\nb", false},
+		{"echo partial; exit 3", "partial", "", true},
+		{"", "", "", true},
+		{sleep + " 30 &\nwait", "", "", true}, // WaitDelay must free the orphaned sleep's pipe
+	} {
+		dir := t.TempDir()
+		if tt.body != "" {
+			if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte("#!/bin/sh\n"+tt.body), 0o755); err != nil {
+				t.Fatal(err)
 			}
-			wantOut := tt.want
-			if tt.wantErr {
-				wantOut = ""
-			}
-			if out := Output(context.Background(), Exec{}, "list-panes"); out != wantOut {
-				t.Fatalf("Output = %q; want %q", out, wantOut)
-			}
-		})
-	}
-}
-
-func TestExecRunNoTmux(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-	if _, err := (Exec{}).Run(context.Background(), "list-panes"); err == nil {
-		t.Fatal("want error with no tmux on PATH")
-	}
-}
-
-func TestExecRunCancelKillsGroup(t *testing.T) {
-	sleep := lookPath(t, "sleep")
-	stubTmux(t, sleep+" 30 &\nwait")
-	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(200*time.Millisecond, cancel)
-	start := time.Now()
-	_, err := Exec{}.Run(ctx, "list-panes")
-	if err == nil {
-		t.Fatal("want error on cancel")
-	}
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Fatalf("Run took %v after cancel", elapsed)
+		}
+		t.Setenv("PATH", dir)
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		start := time.Now()
+		got, err := Exec{}.Run(ctx, "list-panes")
+		cancel()
+		if got != tt.run || (err != nil) != tt.fail || time.Since(start) > 5*time.Second {
+			t.Errorf("%q: Run = %q, %v after %v", tt.body, got, err, time.Since(start))
+		}
+		if tt.run != "" && Output(context.Background(), Exec{}, "list-panes") != tt.output {
+			t.Errorf("%q: Output != %q", tt.body, tt.output)
+		}
 	}
 }

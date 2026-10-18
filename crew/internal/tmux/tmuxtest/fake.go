@@ -10,15 +10,14 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
-// ErrNoServer is what a call no Out key answers fails with: tmux with no server.
+// ErrNoServer is what a call no Out key answers fails with.
 var ErrNoServer = errors.New("tmuxtest: no server")
 
 var _ tmux.Client = (*Fake)(nil)
 
-// Fake is a scripted tmux.Client, safe for concurrent use. Every call is
-// recorded as its space-joined argv. Func, when set, answers every call;
-// otherwise the longest Out key that is the joined argv or a word prefix of
-// it answers, and a call no key matches fails with "" and ErrNoServer.
+// Fake is a scripted tmux.Client, safe for concurrent use. Func, when set,
+// answers every call; otherwise the longest Out key that is a word prefix of
+// the space-joined argv answers, and an unmatched call fails with ErrNoServer.
 type Fake struct {
 	Out  map[string]string
 	Func func(args []string) (string, error)
@@ -27,29 +26,23 @@ type Fake struct {
 	calls []string
 }
 
-// Run implements tmux.Client.
 func (f *Fake) Run(_ context.Context, args ...string) (string, error) {
-	joined := strings.Join(args, " ")
 	f.mu.Lock()
-	f.calls = append(f.calls, joined)
+	f.calls = append(f.calls, strings.Join(args, " "))
 	f.mu.Unlock()
 
 	if f.Func != nil {
 		return f.Func(args)
 	}
-	best, found := "", false
-	for k := range f.Out {
-		if (joined == k || strings.HasPrefix(joined, k+" ")) && (!found || len(k) > len(best)) {
-			best, found = k, true
+	for n := len(args); n > 0; n-- {
+		if out, ok := f.Out[strings.Join(args[:n], " ")]; ok {
+			return out, nil
 		}
 	}
-	if !found {
-		return "", ErrNoServer
-	}
-	return f.Out[best], nil
+	return "", ErrNoServer
 }
 
-// Calls returns the recorded argv strings in call order (a copy).
+// Calls returns the space-joined argv of each call, in order.
 func (f *Fake) Calls() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

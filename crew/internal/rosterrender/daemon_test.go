@@ -57,13 +57,11 @@ func newLoop(t *testing.T) *loop {
 		Stderr: &bytes.Buffer{},
 		Probes: Probes{
 			Tmux: &tmuxtest.Fake{Func: func(args []string) (string, error) {
-				switch {
-				// The fixtures' one branch is stamped on a window, which is what
-				// keeps its row live: these tests are about the loop, not the
-				// liveness rule.
-				case args[0] == "list-windows":
+				// The fixtures' one branch is on a window, keeping its row live.
+				if args[0] == "list-windows" {
 					return "feat/1-a", nil
-				case args[0] == "list-panes" && args[3] == rolePaneFormat:
+				}
+				if args[0] == "list-panes" && args[3] == rolePaneFormat {
 					return l.rolePanes(), nil
 				}
 				return "", tmuxtest.ErrNoServer

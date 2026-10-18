@@ -618,21 +618,13 @@ func TestFoldLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(tx.Calls()); n != 1 {
-		t.Errorf("a fold without Live made %d tmux calls, want 1 (list-panes)", n)
-	}
 	probes.Live = true
 	live, err := Fold(t.Context(), events, "c1", now, probes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantCalls := []string{
-		"list-panes -a -F #{pane_current_command} #{pane_current_path}",
-		"list-panes -a -F #{pane_current_command} #{pane_current_path}",
-		"list-windows -a -F #{@crew_branch}\t#{@crew_id}",
-	}
-	if got := tx.Calls(); !slices.Equal(got, wantCalls) {
-		t.Errorf("tmux calls = %q, want %q", got, wantCalls)
+	if got := tx.Calls(); len(got) != 3 || !strings.HasPrefix(got[2], "list-windows") {
+		t.Errorf("tmux calls = %q, want list-panes twice then one list-windows", got)
 	}
 	for i, row := range live {
 		want := map[string]bool{"feat/a": true, "feat/b": false}

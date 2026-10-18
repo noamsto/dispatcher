@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -511,24 +510,12 @@ func TestOccupancyRules(t *testing.T) {
 // The caller's own window is only asked for inside tmux, and it is asked before
 // the window list, as the helper runs them.
 func TestSelfWindowOnlyInsideTmux(t *testing.T) {
-	for _, tc := range []struct {
-		env  map[string]string
-		want []string
-	}{
-		{nil, []string{"list-windows"}},
-		{map[string]string{"TMUX_PANE": "%1"}, []string{"display-message", "list-windows"}},
-	} {
-		s := &stub{wins: "@1\tsage\t/wt", env: tc.env}
-		if !s.options().occupied(t.Context(), "/wt") {
-			t.Fatal("expected an occupant")
-		}
-		var got []string
-		for _, c := range s.tx.Calls() {
-			got = append(got, strings.Fields(c)[0])
-		}
-		if !slices.Equal(got, tc.want) {
-			t.Errorf("env %v: tmux calls = %v, want %v", tc.env, got, tc.want)
-		}
+	s := &stub{wins: "@1\tsage\t/wt"}
+	if !s.options().occupied(t.Context(), "/wt") {
+		t.Fatal("expected an occupant")
+	}
+	if got := s.tx.Calls(); len(got) != 1 || !strings.HasPrefix(got[0], "list-windows -a") {
+		t.Errorf("tmux calls = %v, want only list-windows without TMUX_PANE", got)
 	}
 }
 

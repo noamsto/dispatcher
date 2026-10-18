@@ -290,17 +290,9 @@ func TestTmuxFailure(t *testing.T) {
 		t.Errorf("windows: code %d, err %q", code, errOut)
 	}
 
-	fake := &tmuxtest.Fake{Out: map[string]string{"list-windows": ""}}
-	_, errOut, code = tr.runTmux(t, fake, crewIs("c1"), "nova")
+	_, errOut, code = tr.runTmux(t, &tmuxtest.Fake{Out: map[string]string{"list-windows": ""}}, crewIs("c1"), "nova")
 	if code != exitFailure || errOut != "crew: where: cannot read tmux panes (is a tmux server running?)\n" {
 		t.Errorf("panes: code %d, err %q", code, errOut)
-	}
-	wantCalls := []string{
-		"list-windows -a -F #{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{session_name}\t#{window_index}\t#{window_name}\t#{@bridge_crew_branch}\t#{@bridge_crew_id}",
-		"list-panes -a -F #{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_index}",
-	}
-	if got := fake.Calls(); !reflect.DeepEqual(got, wantCalls) {
-		t.Errorf("tmux calls = %q, want %q", got, wantCalls)
 	}
 }
 

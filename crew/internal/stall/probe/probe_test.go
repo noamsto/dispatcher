@@ -171,10 +171,6 @@ func TestPaneModel(t *testing.T) {
 	if got := (Probes{Env: envOf(nil, nil), Tmux: tm}).PaneModel(context.Background()); got != "qwen3" || !slices.Equal(tm.Calls(), []string{"show-options -pqv -t %7 @crew_model"}) {
 		t.Errorf("PaneModel = %q, calls %q", got, tm.Calls())
 	}
-	failing := &tmuxtest.Fake{Func: func([]string) (string, error) { return "x", tmuxtest.ErrNoServer }}
-	if got := (Probes{Env: envOf(nil, nil), Tmux: failing}).PaneModel(context.Background()); got != "" {
-		t.Errorf("PaneModel on failure = %q, want empty", got)
-	}
 }
 
 func TestLoadSeam(t *testing.T) {

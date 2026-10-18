@@ -127,8 +127,7 @@ func newRel(t *testing.T) *rel {
 func (r *rel) tmux(args []string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	switch args[0] {
-	case "capture-pane":
+	if args[0] == "capture-pane" {
 		pane, kind := args[len(args)-1], "plain"
 		if args[1] == "-e" {
 			kind = "colored"
@@ -144,17 +143,16 @@ func (r *rel) tmux(args []string) (string, error) {
 		i := min(r.capSeen[pane], len(seq)-1)
 		r.capSeen[pane]++
 		return seq[i], nil
-	case "list-windows":
-		r.calls = append(r.calls, "tmux "+strings.Join(args, " "))
-		if strings.Contains(args[3], "window_active") {
-			return r.wlist, nil
-		}
-		return r.wins, nil
-	case "list-panes":
-		r.calls = append(r.calls, "tmux "+strings.Join(args, " "))
-		return r.panes, nil
 	}
 	r.calls = append(r.calls, "tmux "+strings.Join(args, " "))
+	switch {
+	case args[0] == "list-windows" && strings.Contains(args[3], "window_active"):
+		return r.wlist, nil
+	case args[0] == "list-windows":
+		return r.wins, nil
+	case args[0] == "list-panes":
+		return r.panes, nil
+	}
 	return "", nil
 }
 

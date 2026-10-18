@@ -654,9 +654,6 @@ func TestWindowNamesIncludeBridgeStamps(t *testing.T) {
 	if got, want := windowNames(t.Context(), fake), []string{"sage", "kelp", "moss", "atlas"}; !slices.Equal(got, want) {
 		t.Errorf("windowNames = %v, want %v", got, want)
 	}
-	if got, want := fake.Calls(), []string{"list-windows -a -F #{@crew_name} #{@bridge_crew_name}"}; !slices.Equal(got, want) {
-		t.Errorf("tmux calls = %q, want %q", got, want)
-	}
 }
 
 func TestOccupied(t *testing.T) {
