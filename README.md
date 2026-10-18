@@ -628,6 +628,7 @@ cannot be identified (e.g. role panes share the worktree):
 dispatch resume                     # continue this worktree's worker
 dispatch resume --print             # show what a resume would launch
 dispatch resume --fresh             # relaunch without the prior conversation
+dispatch resume --rearm-roles       # re-arm a restored grid's role panes only
 dispatch resume the review comments are the priority
 ```
 

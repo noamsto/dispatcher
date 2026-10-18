@@ -442,7 +442,14 @@ codename or a `worker:<branch>#<session>` id. A target is resolved from your own
 `kind:"dispatch"` rows and the dispatcher-written worktree record, then takes the
 same path as the cwd-bound form; it refuses a live worker (naming its window), a
 branch dispatched on another host, an ambiguous target (listing the candidates)
-and an unknown one. A leading word that is none of those shapes and that no row
+and an unknown one.
+A window tmux-remux restored for that same worktree is not a live worker: a
+target proceeds when every pane stamped with the branch sits in the recorded
+worktree and no lead pane runs an engine. When tmux-og already relaunched the
+lead's engine (a full resume refuses that pane), `dispatch resume [<target>]
+--rearm-roles` re-attaches the restored window's role panes (watchers,
+stall-watch, window stamps) and launches nothing.
+A leading word that is none of those shapes and that no row
 names is an extra prompt, as before. Either way it resumes the
 lead's own recorded session (by id), or relaunches fresh with the reorient note
 when that session cannot be identified (e.g. role panes share the worktree),

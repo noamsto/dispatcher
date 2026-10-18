@@ -11704,7 +11704,8 @@ display-message)
   *'#{@crew_exited}'*) printf '%s\n' 0 ;;
   *'#{pane_width}'*) [ -e "$STUB_DIR/pane_width" ] && cat "$STUB_DIR/pane_width" ;;
   *'#{@crew_role}|#{window_id}'*)
-    if [ -e "$STUB_DIR/pull" ]; then printf '%s\n' 'reviewer|@1|pull'; else printf '%s\n' 'reviewer|@1'; fi
+    if [ -e "$STUB_DIR/remux_role" ]; then printf '%s\n' 'planner|@1'
+    elif [ -e "$STUB_DIR/pull" ]; then printf '%s\n' 'reviewer|@1|pull'; else printf '%s\n' 'reviewer|@1'; fi
     ;;
   *)
     [ -e "$STUB_DIR/stop" ] && exit 1
@@ -11714,7 +11715,7 @@ display-message)
   ;;
 show-options)
   case "${*: -1}" in
-  @crew_branch) printf '%s\n' feat/9-x ;;
+  @crew_branch) if [ -e "$STUB_DIR/remux_branch" ]; then printf '%s\n' feat/other; else printf '%s\n' feat/9-x; fi ;;
   @crew_id) [ -e "$STUB_DIR/no_crew_id" ] || printf '%s\n' c1 ;;
   esac
   ;;
@@ -12305,6 +12306,69 @@ EOF
   _rw_poll "grep -qx 'send-keys -t %6 Enter' \"\$STUB_LOG\""
   _rw_stop
   grep -qx 'send-keys -t %6 Enter' "$STUB_LOG"
+}
+
+# After a tmux server kill and a remux restore, a pane id can be reused by
+# another pane: the watcher re-reads the stamps before each delivery.
+_rw_inline_start() {
+  export STUB_DIR STUB_LOG
+  export DISPATCH_ROLE_WATCH_CLOCK="$BATS_TEST_TMPDIR/role-watch-clock"
+  bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 >/dev/null 2>&1 &
+  RW_PID=$!
+  _rw_poll "grep -qF 'set-option -p -t %6 @crew_state idle' \"\$STUB_LOG\""
+}
+
+# _rw_expect_exit — the inline watcher must exit on its own; kill it otherwise.
+_rw_expect_exit() {
+  local exited=0
+  _rw_poll "! kill -0 $RW_PID 2>/dev/null" || exited=1
+  kill "$RW_PID" 2>/dev/null || true
+  wait "$RW_PID" 2>/dev/null || true
+  [ "$exited" -eq 0 ]
+}
+
+@test "role-watch: a pane re-stamped with another role after a remux restore gets no paste" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  _rw_inline_start
+  touch "$STUB_DIR/remux_role"
+  _rw_post 'worker:feat/9-x#s1-1'
+  _rw_expect_exit
+  run ! grep -qE '^(paste |load-buffer)' "$STUB_LOG"
+}
+
+@test "role-watch: a window re-stamped with another branch after a remux restore gets no paste" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  _rw_inline_start
+  touch "$STUB_DIR/remux_branch"
+  _rw_post 'worker:feat/9-x#s1-1'
+  _rw_expect_exit
+  run ! grep -qE '^(paste |load-buffer)' "$STUB_LOG"
+}
+
+@test "role-watch: a stamp that flips after the first Enter gets no retry Enter after a remux restore" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  {
+    printf '  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)\n'
+    printf '────────────────── reef ─\n'
+    printf '❯ Assignment: {"role":"reviewer","roster":"/abs/path/to/roster.json","question":"Review this diff. 1. first"}\n'
+    printf '  continuation of the wrapped assignment text 2. second\n'
+    printf '──────────────────\n'
+    printf '  -- INSERT -- ⏵⏵ auto mode on · ← for agents\n'
+  } >"$STUB_DIR/frame_after"
+  touch "$STUB_DIR/flip"
+  cat >"$STUB_DIR/hook" <<'EOF'
+#!/usr/bin/env bash
+[ "$*" = "send-keys -t %6 Enter" ] && touch "$STUB_DIR/remux_role"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/hook"
+  _rw_inline_start
+  _rw_post 'worker:feat/9-x#s1-1'
+  _rw_expect_exit
+  [ "$(grep -c '^send-keys -t %6 Enter$' "$STUB_LOG")" -eq 1 ]
 }
 
 @test "role-watch: an idle box under an esc-to-interrupt turn line defers" {

@@ -2406,6 +2406,10 @@ watch_role_prompts() {
 # is still there, only Enter is re-sent (`--submit-retries N`, default 3, with
 # backoff), never the text. When that runs out, an `assignment_unsubmitted` msg
 # goes to the lead and dispatcher and the text is left in place.
+#
+# Before each delivery (the paste and any Enter re-send) it re-checks the
+# pane's role and window branch stamps and exits on a mismatch: a watcher can
+# outlive a tmux server kill, and the pane id be reused by another pane.
 if [ "${1:-}" = "--role-watch" ]; then
   role="${2:-}"
   [ -n "$role" ] || {
@@ -2486,6 +2490,12 @@ if [ "${1:-}" = "--role-watch" ]; then
   # live to --spawn-role, and no assignment is typed into its shell prompt.
   watch_exited() {
     [ "$(tmux display-message -p -t "$watch_pane" '#{@crew_exited}' 2>/dev/null || true)" = 1 ]
+  }
+  _rw_stamped() {
+    local r w b
+    IFS='|' read -r r w _ <<<"$(tmux display-message -p -t "$watch_pane" '#{@crew_role}|#{window_id}' 2>/dev/null || true)"
+    b="$(tmux show-options -wqv -t "$w" @crew_branch 2>/dev/null || true)"
+    [ "$r" = "$role" ] && [ "$b" = "$watch_branch" ]
   }
   watch_set_state() {
     watch_exited && return 0
@@ -3230,6 +3240,7 @@ if [ "${1:-}" = "--role-watch" ]; then
       held)
         unknown_ticks=0
         if [ "$submit_tries" -lt "$submit_retries" ]; then
+          _rw_stamped || break
           tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
           submit_tries=$((submit_tries + 1))
           cooldown=$((1 << submit_tries))
@@ -3285,6 +3296,7 @@ if [ "${1:-}" = "--role-watch" ]; then
     elif [ "$cooldown" -gt 0 ]; then
       cooldown=$((cooldown - 1))
     elif ! watch_exited; then
+      _rw_stamped || break
       frame_e="$(tmux capture-pane -e -p -t "$watch_pane" 2>/dev/null || true)"
       frame="$(printf '%s' "$frame_e" | sed -E "$csi_sed" 2>/dev/null || true)"
       if ! _role_assignment_safe "${pending[0]}"; then
