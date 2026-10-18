@@ -7,9 +7,12 @@ import (
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
 )
+
+// jqUnreadable is jq's exit status for an input it cannot read: a log file that
+// will not open.
+const jqUnreadable = 2
 
 // gate is the arm's pr_open/done gate for a worker session.
 type gate struct {
@@ -74,61 +77,31 @@ func (g gate) check() string {
 	if i := strings.LastIndex(b, "#s"); i >= 0 {
 		b = b[:i]
 	}
-	vars := map[string]jsonv.Value{
-		"c": jsonv.Str(g.crew),
-		"b": jsonv.Str(b),
-		"r": jsonv.Str("role:" + strings.TrimPrefix(b, "worker:") + ":reviewer"),
-		"e": jsonv.Str(doc.engine),
+	k := seamKeys{crew: g.crew, branch: b, reviewer: "role:" + strings.TrimPrefix(b, "worker:") + ":reviewer", pi: doc.engine == "pi"}
+	type seam struct {
+		name    string
+		found   func([]string, seamKeys) bool
+		refusal string
 	}
-	if line, ok := g.seam("review", seamProg, log, vars); !ok {
-		if line != "" {
-			return line
-		}
-		return fmt.Sprintf(`crew: refusing %s for %s session %s — no review seam on the bus for this branch; run the code review gate, ingest its verdict, then crew msg "$CREW_WORKER_ID" "review:%s" '{"seam":"review","review_mode":"full"}' (or downgraded) and retry; a review request or a pane that has not returned a verdict is not a review; a review that cannot run goes blocked/failed, never pr_open/done. On pi the reviewer pane's latest verdict decides: accept passes, revise needs your own review:%s seam after you fix it, a reject (or any reply that is not an exact accept/revise) blocks until the reviewer's next verdict, and a re-request (any msg from you to the reviewer except the {"final":true} release) cancels every earlier verdict and your own earlier seam until a new verdict arrives`,
-			g.state, doc.tier, g.from, g.crew, g.crew)
-	}
-	if line, ok := g.seam("deslop", deslopProg, log, vars); !ok {
-		if line != "" {
-			return line
-		}
-		return fmt.Sprintf(`crew: refusing %s for %s session %s — no deslop seam on the bus for this branch; run the harness deslop skill (dispatcher:deslop on claude, $deslop on codex, deslop on cursor and pi) over the diff you are about to push, commit its cleanup, then crew msg "$CREW_WORKER_ID" "review:%s" '{"seam":"deslop"}' and retry. The seam records that the skill ran — never post it just to get past this gate`,
-			g.state, doc.tier, g.from, g.crew)
+	seams := []seam{
+		{"review", foldReview, fmt.Sprintf(`crew: refusing %s for %s session %s — no review seam on the bus for this branch; run the code review gate, ingest its verdict, then crew msg "$CREW_WORKER_ID" "review:%s" '{"seam":"review","review_mode":"full"}' (or downgraded) and retry; a review request or a pane that has not returned a verdict is not a review; a review that cannot run goes blocked/failed, never pr_open/done. On pi the reviewer pane's latest verdict decides: accept passes, revise needs your own review:%s seam after you fix it, a reject (or any reply that is not an exact accept/revise) blocks until the reviewer's next verdict, and a re-request (any msg from you to the reviewer except the {"final":true} release) cancels every earlier verdict and your own earlier seam until a new verdict arrives`,
+			g.state, doc.tier, g.from, g.crew, g.crew)},
+		{"deslop", foldDeslop, fmt.Sprintf(`crew: refusing %s for %s session %s — no deslop seam on the bus for this branch; run the harness deslop skill (dispatcher:deslop on claude, $deslop on codex, deslop on cursor and pi) over the diff you are about to push, commit its cleanup, then crew msg "$CREW_WORKER_ID" "review:%s" '{"seam":"deslop"}' and retry. The seam records that the skill ran — never post it just to get past this gate`,
+			g.state, doc.tier, g.from, g.crew)},
 	}
 	if doc.plan == "required" && doc.resume != "true" {
-		if line, ok := g.seam("plan", planProg, log, vars); !ok {
-			if line != "" {
-				return line
-			}
-			return fmt.Sprintf(`crew: refusing %s for %s session %s — plan: required but no plan seam on the bus for this branch; run the plan critic (spec-plan-critic, or the plan-critic role pane), ingest its first verdict, then crew msg "$CREW_WORKER_ID" "review:%s" '{"seam":"plan","plan_critic_first_pass":"accept"}' (or revise/reject: the critic's first verdict) and retry. A plan phase you skipped or could not run is reported, not papered over: post crew status blocked naming why and await the dispatcher (it can re-dispatch with plan: provided); never post the seam without a critic verdict`,
-				g.state, doc.tier, g.from, g.crew)
+		seams = append(seams, seam{"plan", foldPlan, fmt.Sprintf(`crew: refusing %s for %s session %s — plan: required but no plan seam on the bus for this branch; run the plan critic (spec-plan-critic, or the plan-critic role pane), ingest its first verdict, then crew msg "$CREW_WORKER_ID" "review:%s" '{"seam":"plan","plan_critic_first_pass":"accept"}' (or revise/reject: the critic's first verdict) and retry. A plan phase you skipped or could not run is reported, not papered over: post crew status blocked naming why and await the dispatcher (it can re-dispatch with plan: provided); never post the seam without a critic verdict`,
+			g.state, doc.tier, g.from, g.crew)})
+	}
+	if log.err != nil {
+		return fmt.Sprintf("crew: refusing %s for %s — could not read the crew log for the %s seam (jq exit %d)", g.state, g.from, seams[0].name, jqUnreadable)
+	}
+	for _, s := range seams {
+		if !s.found(log.lines, k) {
+			return s.refusal
 		}
 	}
 	return ""
-}
-
-// seam runs one fold over the log's lines. ok is true when the fold found the
-// seam; otherwise line is the "could not read the crew log" refusal, or "" for a
-// plain miss (no log file counts as one).
-func (g gate) seam(name, prog string, log logFile, vars map[string]jsonv.Value) (line string, ok bool) {
-	if !log.exists {
-		return "", false
-	}
-	unreadable := func(code int) string {
-		return fmt.Sprintf("crew: refusing %s for %s — could not read the crew log for the %s seam (jq exit %d)", g.state, g.from, name, code)
-	}
-	if log.err != nil {
-		return unreadable(jqUnreadable), false
-	}
-	rows := make([]jsonv.Value, len(log.lines))
-	for i, l := range log.lines {
-		rows[i] = jsonv.Str(l)
-	}
-	v, err := g.o.Fold(prog, rows, vars)
-	if err != nil {
-		return unreadable(jqRuntime), false
-	}
-	f, isNum := v.AsFloat()
-	return "", isNum && f == 1
 }
 
 // logFile is the bus log as `jq -R` reads it: lines, a final unterminated one

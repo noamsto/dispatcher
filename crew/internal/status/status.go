@@ -5,15 +5,13 @@
 // is refused unless its task doc's acceptance ledger conforms (pr_open,
 // internal/ledger) and, for a standard or deep implement session, the log holds
 // the lead's review seam and deslop seam, plus a plan seam (or a resume of the
-// branch) when its task doc says `plan: required`. The seam folds are jq
-// programs (the arm's own seam.jq and deslop.jq, plus plan.jq), run through
-// jqrun. Refusing less often than the arm is a regression: every gate fails
+// branch) when its task doc says `plan: required`. The seam folds are Go
+// (seam.go). Refusing less often than the arm is a regression: every gate fails
 // closed.
 package status
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"io"
 	"os"
@@ -22,40 +20,25 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
-	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/panestate"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
-//go:embed seam.jq
-var seamProg string
-
-//go:embed deslop.jq
-var deslopProg string
-
-//go:embed plan.jq
-var planProg string
-
 const (
 	exitFailure = 1
-
-	// jq's statuses for a fold that cannot run: 2 unreadable input, 5 a runtime error.
-	jqUnreadable = 2
-	jqRuntime    = 5
 )
 
 // Options is everything the arms read beyond the bus. Nil fields take the
 // production default (CrewID and Toplevel read the process's working
 // directory) except Tmux, where nil means no tmux on PATH.
 type Options struct {
-	CrewID   func() string                                                                           // `_crew_id`
-	Toplevel func() string                                                                           // `git rev-parse --show-toplevel`, "" outside a checkout
-	NowMS    func() int64                                                                            // jq's `now*1000|floor`; real time, never CREW_CLOCK
-	Getenv   func(string) string                                                                     // CREW_ROLE_ID, TMUX_PANE
-	Tmux     func(args ...string) (string, error)                                                    // stdout of `tmux args...`
-	Fold     func(prog string, rows []jsonv.Value, vars map[string]jsonv.Value) (jsonv.Value, error) // jqrun.Run by default; a test seam
-	Sender   sender.Probes                                                                           // the sender check's reads; Getenv defaults to Options.Getenv
+	CrewID   func() string                        // `_crew_id`
+	Toplevel func() string                        // `git rev-parse --show-toplevel`, "" outside a checkout
+	NowMS    func() int64                         // jq's `now*1000|floor`; real time, never CREW_CLOCK
+	Getenv   func(string) string                  // CREW_ROLE_ID, TMUX_PANE
+	Tmux     func(args ...string) (string, error) // stdout of `tmux args...`
+	Sender   sender.Probes                        // the sender check's reads; Getenv defaults to Options.Getenv
 }
 
 func (o Options) withDefaults() Options {
@@ -70,11 +53,6 @@ func (o Options) withDefaults() Options {
 	}
 	if o.Sender.Getenv == nil {
 		o.Sender.Getenv = o.Getenv
-	}
-	if o.Fold == nil {
-		o.Fold = func(prog string, rows []jsonv.Value, vars map[string]jsonv.Value) (jsonv.Value, error) {
-			return jqrun.Run(prog, rows, 0, vars, jqrun.WithJQFromJSON())
-		}
 	}
 	return o
 }

@@ -3,7 +3,6 @@ package status
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,8 +24,6 @@ const (
 	tsText = `1700000000500`
 )
 
-type foldFunc = func(prog string, rows []jsonv.Value, vars map[string]jsonv.Value) (jsonv.Value, error)
-
 // fixture is a checkout with a bus: Toplevel and the bus paths are plain temp
 // dirs, so no git is involved.
 type fixture struct {
@@ -38,7 +35,6 @@ type fixture struct {
 	role   string     // stdout of the @crew_role query
 	noTmux bool
 	noTop  bool
-	fold   foldFunc
 	crew   string
 
 	panes   string      // sender check: tmux list-panes output; "" leaves the anchor unreadable
@@ -67,7 +63,6 @@ func (f *fixture) opts() Options {
 		Toplevel: func() string { return f.top },
 		NowMS:    func() int64 { return 1700000000500 },
 		Getenv:   func(k string) string { return f.env[k] },
-		Fold:     f.fold,
 	}
 	if f.noTop {
 		o.Toplevel = func() string { return "" }
@@ -736,34 +731,6 @@ func TestUnreadableLog(t *testing.T) {
 			want := "crew: refusing " + state + " for " + worker + " — could not read the crew log for the review seam (jq exit 2)\n"
 			if code, stderr := f.status(worker, state); code != 1 || stderr != want {
 				t.Errorf("got %d %q", code, stderr)
-			}
-		})
-	}
-}
-
-func TestFoldErrors(t *testing.T) {
-	boom := errors.New("boom")
-	for _, c := range []struct{ which, doc, failing string }{
-		{"review", standardDoc, seamProg},
-		{"deslop", standardDoc, deslopProg},
-		{"plan", planDoc, planProg},
-	} {
-		t.Run(c.which, func(t *testing.T) {
-			f := newFixture(t)
-			f.doc(c.doc)
-			f.log(reviewSeam, deslopSeam, planSeam)
-			f.fold = func(prog string, rows []jsonv.Value, vars map[string]jsonv.Value) (jsonv.Value, error) {
-				if prog == c.failing {
-					return jsonv.Value{}, boom
-				}
-				return Options{}.withDefaults().Fold(prog, rows, vars)
-			}
-			want := "crew: refusing pr_open for " + worker + " — could not read the crew log for the " + c.which + " seam (jq exit 5)\n"
-			if code, stderr := f.status(worker, "pr_open"); code != 1 || stderr != want {
-				t.Errorf("got %d %q", code, stderr)
-			}
-			if got := len(f.lines()); got != 3 {
-				t.Errorf("log has %d rows, want 3", got)
 			}
 		})
 	}
