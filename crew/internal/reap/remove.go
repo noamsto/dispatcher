@@ -173,11 +173,11 @@ func (r *run) trashScaffold(ctx context.Context, c *candidate) {
 
 // killWindows kills every window whose pane path or @worktree is wt.
 func (r *run) killWindows(ctx context.Context, wt string) {
-	rows := r.p.Tmux(ctx, "list-windows", "-a", "-F", "#{window_id} #{pane_current_path} #{@worktree}")
+	rows := r.p.tmuxOut(ctx, "list-windows", "-a", "-F", "#{window_id} #{pane_current_path} #{@worktree}")
 	for line := range strings.SplitSeq(rows, "\n") {
 		f := strings.Fields(line)
 		if (len(f) > 1 && f[1] == wt) || (len(f) > 2 && f[2] == wt) {
-			r.p.TmuxRun(ctx, "kill-window", "-t", f[0])
+			_, _ = r.p.Tmux.Run(ctx, "kill-window", "-t", f[0])
 		}
 	}
 }

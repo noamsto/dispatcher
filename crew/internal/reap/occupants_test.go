@@ -6,22 +6,13 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
-// occTmux answers the three reads `_occupants` makes and records every argv.
-func occTmux(self, wins, panes string, calls *[]string) func(context.Context, ...string) string {
-	return func(_ context.Context, args ...string) string {
-		*calls = append(*calls, strings.Join(args, " "))
-		switch args[0] {
-		case "display-message":
-			return self
-		case "list-windows":
-			return wins
-		case "list-panes":
-			return panes
-		}
-		return ""
-	}
+// occTmux answers the three reads `_occupants` makes.
+func occTmux(self, wins, panes string) *tmuxtest.Fake {
+	return &tmuxtest.Fake{Out: map[string]string{"display-message": self, "list-windows": wins, "list-panes": panes}}
 }
 
 func TestOccupantsFiltersAndShape(t *testing.T) {
@@ -43,8 +34,8 @@ func TestOccupantsFiltersAndShape(t *testing.T) {
 		"@6\t%6\tfish",
 		"@7\t%7\tpi",
 	}, "\n")
-	var calls []string
-	p := Probes{Tmux: occTmux("@5", wins, panes, &calls)}
+	tm := occTmux("@5", wins, panes)
+	p := Probes{Tmux: tm}
 
 	got := Occupants(context.Background(), p, "/wt/a", "%0")
 	want := []Occupant{
@@ -61,19 +52,18 @@ func TestOccupantsFiltersAndShape(t *testing.T) {
 		"list-windows -a -F #{window_id}\t#{@crew_name}\t#{pane_current_path}",
 		"list-panes -a -F #{window_id}\t#{pane_id}\t#{pane_current_command}",
 	}
-	if !slices.Equal(calls, wantCalls) {
+	if calls := tm.Calls(); !slices.Equal(calls, wantCalls) {
 		t.Fatalf("tmux calls:\n got %q\nwant %q", calls, wantCalls)
 	}
 }
 
 func TestOccupantsNoTmuxPaneSkipsSelfLookup(t *testing.T) {
-	var calls []string
-	p := Probes{Tmux: occTmux("@1", "@1\tw\t/x", "", &calls)}
-	got := Occupants(context.Background(), p, "/x", "")
+	tm := occTmux("@1", "@1\tw\t/x", "")
+	got := Occupants(context.Background(), Probes{Tmux: tm}, "/x", "")
 	if len(got) != 1 || got[0].Window != "@1" {
 		t.Fatalf("got %+v", got)
 	}
-	if len(calls) != 2 || strings.HasPrefix(calls[0], "display-message") {
+	if calls := tm.Calls(); len(calls) != 2 || strings.HasPrefix(calls[0], "display-message") {
 		t.Fatalf("calls %q", calls)
 	}
 }
@@ -99,8 +89,7 @@ func TestOccupantsJSON(t *testing.T) {
 }
 
 func TestRunOccupants(t *testing.T) {
-	var calls []string
-	p := Probes{Tmux: occTmux("", "@1\tw\t/x", "@1\t%1\tclaude", &calls)}
+	p := Probes{Tmux: occTmux("", "@1\tw\t/x", "@1\t%1\tclaude")}
 
 	var out, errb bytes.Buffer
 	if rc := RunOccupants(context.Background(), nil, &out, &errb, p, ""); rc != 1 {

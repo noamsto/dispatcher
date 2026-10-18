@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 // fixture is one of the shared pane fixtures the frame package and the bats rows use, so
@@ -44,21 +46,6 @@ type fakePane struct {
 	keysFail       bool
 }
 
-// capture counts the two kinds separately, as the bats tmux stub does: the plain
-// captures are the ones a row scripts (gate, gate-again, confirm, classify), and the
-// colored read answers the same frame because every fixture here is unstyled.
-func (f *fakePane) capture(_ context.Context, pane string, colored bool) (string, bool) {
-	if pane != "%9" {
-		return "", false
-	}
-	if colored {
-		f.colored++
-		return f.frameAt(f.colored - 1), true
-	}
-	f.captures++
-	return f.frameAt(f.captures - 1), true
-}
-
 func (f *fakePane) frameAt(i int) string {
 	if i >= len(f.frames) {
 		return f.frames[len(f.frames)-1]
@@ -66,31 +53,49 @@ func (f *fakePane) frameAt(i int) string {
 	return f.frames[i]
 }
 
-func (f *fakePane) run(_ context.Context, args ...string) (string, bool) {
+// run answers the tmux calls. capture-pane counts the plain and colored reads
+// separately, as the bats tmux stub does: the plain captures are the ones a row
+// scripts (gate, gate-again, confirm, classify), and the colored read answers the
+// same frame because every fixture here is unstyled. Only the other calls are logged.
+func (f *fakePane) run(args []string) (string, error) {
+	if args[0] == "capture-pane" {
+		if args[len(args)-1] != "%9" {
+			return "", tmuxtest.ErrNoServer
+		}
+		if slices.Contains(args, "-e") {
+			f.colored++
+			return f.frameAt(f.colored - 1), nil
+		}
+		f.captures++
+		return f.frameAt(f.captures - 1), nil
+	}
 	f.tmux = append(f.tmux, strings.Join(args, " "))
 	switch args[0] {
 	case "list-windows":
 		if f.failWindows {
-			return "", false
+			return "", tmuxtest.ErrNoServer
 		}
 		// The bats stub answers per query: the arm asks for five columns including
 		// @crew_dir, the pane's own anchor gate for three. One fixture, projected.
 		if !strings.Contains(args[len(args)-1], "@crew_dir") {
-			return project(f.windows), true
+			return project(f.windows), nil
 		}
-		return f.windows, true
+		return f.windows, nil
 	case "list-panes":
 		if f.failPanes {
-			return "", false
+			return "", tmuxtest.ErrNoServer
 		}
-		return f.panes, true
+		return f.panes, nil
 	case "send-keys":
+		fails := f.keysFail
 		if len(args) > 3 && args[3] == "Enter" {
-			return "", !f.enterFails
+			fails = f.enterFails
 		}
-		return "", !f.keysFail
+		if fails {
+			return "", tmuxtest.ErrNoServer
+		}
 	}
-	return "", true
+	return "", nil
 }
 
 // fakeBus is the anchor's fold input and the rows the call appended.
@@ -116,13 +121,12 @@ func env(m map[string]string) func(string) string {
 // row's `now*1000|floor` stamp is checked against the wall clock.
 func newDeps(p *fakePane, b *fakeBus, getenv map[string]string) Deps {
 	return Deps{
-		Capture: p.capture,
-		Tmux:    p.run,
-		Events:  b.events,
-		Append:  b.append,
-		Sleep:   func(context.Context, string) error { return nil },
-		Getenv:  env(getenv),
-		Clock:   clock.Clock{Now: time.Now},
+		Tmux:   &tmuxtest.Fake{Func: p.run},
+		Events: b.events,
+		Append: b.append,
+		Sleep:  func(context.Context, string) error { return nil },
+		Getenv: env(getenv),
+		Clock:  clock.Clock{Now: time.Now},
 	}
 }
 

@@ -25,6 +25,8 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/frame"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
+	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
 // line is `_nudge_line`, typed literally: the lead's own shell expands the variable its
@@ -68,19 +70,16 @@ func (r PaneRequest) key() string {
 }
 
 // Deps are the pane's side effects, injected so every refusal path is testable
-// in-process. Capture is the sampler's read of a pane, plain or colored (ok=false is a
-// failed capture, which is what `pane unreadable` means); Tmux runs a tmux argv and
-// reports whether it ran and its stdout; Events is the whole bus log, strictly decoded,
+// in-process. Tmux reads and types into panes; Events is the whole bus log, strictly decoded,
 // for the anchor's session fold; Append posts one bus row; Clock stamps the row and
 // pauses between the keystrokes.
 type Deps struct {
-	Capture func(ctx context.Context, pane string, colored bool) (string, bool)
-	Tmux    func(ctx context.Context, args ...string) (string, bool)
-	Events  func() ([]any, error)
-	Append  func(row any) error
-	Sleep   func(ctx context.Context, seconds string) error
-	Getenv  func(string) string
-	Clock   clock.Clock
+	Tmux   tmux.Client
+	Events func() ([]any, error)
+	Append func(row any) error
+	Sleep  func(ctx context.Context, seconds string) error
+	Getenv func(string) string
+	Clock  clock.Clock
 	// Warn is what the caller must see but stdout cannot carry: the arm's stdout is
 	// one outcome line, so a bus row that could not be written would otherwise be
 	// invisible.
@@ -120,7 +119,7 @@ func Pane(ctx context.Context, req PaneRequest, d Deps) (string, int) {
 	if why, ok := frameGate(ctx, d, req.Pane, req.Engine); !ok {
 		return why, exitRefused
 	}
-	if _, ok := d.Tmux(ctx, "send-keys", "-t", req.Pane, "-l", req.text()); !ok {
+	if _, err := d.Tmux.Run(ctx, "send-keys", "-t", req.Pane, "-l", req.text()); err != nil {
 		return "send-keys failed", exitRefused
 	}
 
@@ -272,15 +271,21 @@ func branchOf(sid string) string {
 // sendEnter is the arm's second send-keys; its failure is the `unknown` result, since
 // the typed text may still sit in the box.
 func sendEnter(ctx context.Context, d Deps, pane string) bool {
-	_, ok := d.Tmux(ctx, "send-keys", "-t", pane, "Enter")
-	return ok
+	_, err := d.Tmux.Run(ctx, "send-keys", "-t", pane, "Enter")
+	return err == nil
 }
 
+// capture is the sampler's read of a pane. A failed colored capture is "" and
+// not ok, which is what `pane unreadable` means.
 func capture(ctx context.Context, d Deps, pane string, colored bool) (string, bool) {
-	if d.Capture == nil {
-		return "", false
+	text, ok := probe.Capture(ctx, d.Tmux, d.Getenv, pane, colored)
+	if !colored {
+		return text, ok
 	}
-	return d.Capture(ctx, pane, colored)
+	if !ok {
+		text = ""
+	}
+	return text, text != ""
 }
 
 // frameGate is `_nudge_frame_gate`: the pane shows an idle, empty input box, or the
@@ -341,12 +346,12 @@ func busyReason(plain, colored, why string) string {
 // nudging this directive rather than retry it.
 func anchorGate(ctx context.Context, d Deps, req PaneRequest) (string, bool) {
 	branch := strings.TrimPrefix(strings.TrimSuffix(req.Session, lastHash(req.Session)), "worker:")
-	wins, ok := d.Tmux(ctx, "list-windows", "-a", "-F", "#{window_id}\t#{@crew_branch}\t#{@crew_id}")
-	if !ok {
+	wins, err := d.Tmux.Run(ctx, "list-windows", "-a", "-F", "#{window_id}\t#{@crew_branch}\t#{@crew_id}")
+	if err != nil {
 		return "anchor: cannot read tmux windows", false
 	}
-	panes, ok := d.Tmux(ctx, "list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_current_command}")
-	if !ok {
+	panes, err := d.Tmux.Run(ctx, "list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_current_command}")
+	if err != nil {
 		return "anchor: cannot read tmux panes", false
 	}
 	rows := tsvRows(panes)

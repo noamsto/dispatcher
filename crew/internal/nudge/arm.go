@@ -134,14 +134,14 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 		}
 	}
 
-	wins, ok := o.Deps.Tmux(ctx, "list-windows", "-a", "-F",
+	wins, err := o.Deps.Tmux.Run(ctx, "list-windows", "-a", "-F",
 		"#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}")
-	if !ok {
+	if err != nil {
 		return fail(stderr, "cannot read tmux windows (is a tmux server running?)")
 	}
-	panes, ok := o.Deps.Tmux(ctx, "list-panes", "-a", "-F",
+	panes, err := o.Deps.Tmux.Run(ctx, "list-panes", "-a", "-F",
 		"#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_current_command}")
-	if !ok {
+	if err != nil {
 		return fail(stderr, "cannot read tmux panes (is a tmux server running?)")
 	}
 

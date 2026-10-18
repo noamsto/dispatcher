@@ -305,6 +305,10 @@ func TestD8Gating(t *testing.T) {
 	}
 }
 
+func paneCmdReads(f *fake) int {
+	return len(slices.DeleteFunc(f.tm.Calls(), func(c string) bool { return !strings.HasPrefix(c, "list-panes") }))
+}
+
 // D8's own re-read can find the worker parked in an await; that suppresses
 // the rest of the tick, D5 included.
 func TestD8RaisesSuppressed(t *testing.T) {
@@ -314,18 +318,13 @@ func TestD8RaisesSuppressed(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.writeRows(h.status("worker:feat/x", 1, `{"state":"blocked","detail":"awaiting"}`))
-	cmds := 0
-	w.p.PaneCmd = func(context.Context) string {
-		cmds++
-		return "bash"
-	}
 	f.sh = budgetSh("5h\t100\t\t", 0, "", 1)
 	w.now, w.tick, w.busStale = w.start+600, 0, true
 	if err := w.probePre(); err != nil {
 		t.Fatal(err)
 	}
-	if !w.suppressed || w.busStale || cmds != 0 || countCalls(f, "budget ") != 0 {
-		t.Errorf("suppressed=%v busStale=%v paneCmd=%d budget=%d", w.suppressed, w.busStale, cmds, countCalls(f, "budget "))
+	if !w.suppressed || w.busStale || paneCmdReads(f) != 0 || countCalls(f, "budget ") != 0 {
+		t.Errorf("suppressed=%v busStale=%v paneCmd=%d budget=%d", w.suppressed, w.busStale, paneCmdReads(f), countCalls(f, "budget "))
 	}
 	if err := w.d6(); err != nil || len(f.shCalls) != 0 {
 		t.Errorf("d6 ran while suppressed: %v %q", err, f.shCalls)
@@ -480,14 +479,10 @@ func TestD5LaunchNotStarted(t *testing.T) {
 		t.Error("engine not marked seen")
 	}
 	// An engine that exits later is quiet:/dead: territory, never D5.
-	cmds := 0
-	w.p.PaneCmd = func(context.Context) string {
-		cmds++
-		return "bash"
-	}
+	before := paneCmdReads(f)
 	pdOK(t, w, 900, 4, w.probePre)
-	if cmds != 0 {
-		t.Errorf("pane command read %d times after the engine was seen", cmds)
+	if n := paneCmdReads(f) - before; n != 0 {
+		t.Errorf("pane command read %d times after the engine was seen", n)
 	}
 	wantRows(t, h, "blocked|"+d5Detail, "working|stalled: launch-not-started cleared")
 }

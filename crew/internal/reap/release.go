@@ -18,6 +18,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/frame"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
+	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 )
 
 // humanProgram is `_human_present`'s transcript filter, run once per decoded
@@ -83,7 +84,7 @@ func ReleaseWindows(ctx context.Context, d Deps, branch, session, state string, 
 			d.Say("would release " + w + " at " + wt + " (" + branch + " " + state + ")")
 			continue
 		}
-		d.P.TmuxRun(ctx, "kill-window", "-t", w)
+		_, _ = d.P.Tmux.Run(ctx, "kill-window", "-t", w)
 		d.Say("released " + w + " at " + wt + " (" + branch + " " + state + ")")
 	}
 	if dry {
@@ -116,7 +117,7 @@ type releaseRow struct {
 // user turn newer than the status.
 func humanPresent(ctx context.Context, p Probes, windows []string, wtp string, tsMS, grace int64) (string, bool) {
 	now := p.Now().Unix()
-	rows := p.Tmux(ctx, "list-windows", "-a", "-F", "#{window_id}\t#{window_active}\t#{session_attached}\t#{window_activity}")
+	rows := p.tmuxOut(ctx, "list-windows", "-a", "-F", "#{window_id}\t#{window_active}\t#{session_attached}\t#{window_activity}")
 	for row := range strings.SplitSeq(rows, "\n") {
 		f := strings.SplitN(row, "\t", 4)
 		for len(f) < 4 {
@@ -193,7 +194,11 @@ func newerUserTurn(dir string, tsMS int64) bool {
 
 // capture is `$(_pane_capture …)`: trailing newlines are stripped.
 func capture(ctx context.Context, p Probes, pane string, colored bool) string {
-	return strings.TrimRight(p.Capture(ctx, pane, colored), "\n")
+	text, ok := probe.Capture(ctx, p.Tmux, os.Getenv, pane, colored)
+	if colored && !ok {
+		text = ""
+	}
+	return strings.TrimRight(text, "\n")
 }
 
 // releaseGap is `sleep "${CREW_RELEASE_GAP:-1}"`; a value sleep would refuse is

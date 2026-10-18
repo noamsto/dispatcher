@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/frame"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 const (
@@ -121,47 +122,45 @@ func newRel(t *testing.T) *rel {
 	return r
 }
 
+// tmux answers the occupant and activity reads and the pane captures, logging
+// them with the sleeps in one ordered r.calls.
+func (r *rel) tmux(args []string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	switch args[0] {
+	case "capture-pane":
+		pane, kind := args[len(args)-1], "plain"
+		if args[1] == "-e" {
+			kind = "colored"
+		}
+		r.calls = append(r.calls, "capture "+kind+" "+pane)
+		if kind == "colored" {
+			return r.colored, nil
+		}
+		seq := r.plain[pane]
+		if len(seq) == 0 {
+			return "", nil
+		}
+		i := min(r.capSeen[pane], len(seq)-1)
+		r.capSeen[pane]++
+		return seq[i], nil
+	case "list-windows":
+		r.calls = append(r.calls, "tmux "+strings.Join(args, " "))
+		if strings.Contains(args[3], "window_active") {
+			return r.wlist, nil
+		}
+		return r.wins, nil
+	case "list-panes":
+		r.calls = append(r.calls, "tmux "+strings.Join(args, " "))
+		return r.panes, nil
+	}
+	r.calls = append(r.calls, "tmux "+strings.Join(args, " "))
+	return "", nil
+}
+
 func (r *rel) probes() Probes {
 	return Probes{
-		Tmux: func(_ context.Context, args ...string) string {
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			r.calls = append(r.calls, "tmux "+strings.Join(args, " "))
-			switch args[0] {
-			case "list-windows":
-				if strings.Contains(args[3], "window_active") {
-					return r.wlist
-				}
-				return r.wins
-			case "list-panes":
-				return r.panes
-			}
-			return ""
-		},
-		TmuxRun: func(_ context.Context, args ...string) {
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			r.calls = append(r.calls, "tmux "+strings.Join(args, " "))
-		},
-		Capture: func(_ context.Context, pane string, colored bool) string {
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			kind := "plain"
-			if colored {
-				kind = "colored"
-			}
-			r.calls = append(r.calls, "capture "+kind+" "+pane)
-			if colored {
-				return r.colored
-			}
-			seq := r.plain[pane]
-			if len(seq) == 0 {
-				return ""
-			}
-			i := min(r.capSeen[pane], len(seq)-1)
-			r.capSeen[pane]++
-			return seq[i]
-		},
+		Tmux: &tmuxtest.Fake{Func: r.tmux},
 		Sleep: func(d time.Duration) {
 			r.mu.Lock()
 			defer r.mu.Unlock()

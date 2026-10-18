@@ -35,10 +35,10 @@ type Occupant struct {
 func Occupants(ctx context.Context, p Probes, wtp, tmuxPane string) []Occupant {
 	selfWin := ""
 	if tmuxPane != "" {
-		selfWin = p.Tmux(ctx, "display-message", "-p", "-t", tmuxPane, "#{window_id}")
+		selfWin = p.tmuxOut(ctx, "display-message", "-p", "-t", tmuxPane, "#{window_id}")
 	}
-	wins := p.Tmux(ctx, "list-windows", "-a", "-F", "#{window_id}\t#{@crew_name}\t#{pane_current_path}")
-	panes := p.Tmux(ctx, "list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{pane_current_command}")
+	wins := p.tmuxOut(ctx, "list-windows", "-a", "-F", "#{window_id}\t#{@crew_name}\t#{pane_current_path}")
+	panes := p.tmuxOut(ctx, "list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{pane_current_command}")
 
 	var out []Occupant
 	for row := range strings.SplitSeq(wins, "\n") {

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/drift"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 func envOf(m map[string]string, stderr *bytes.Buffer) Env {
@@ -104,7 +106,6 @@ func TestSeamRunsUnderBashC(t *testing.T) {
 }
 
 func TestSampleColoredOrder(t *testing.T) {
-	dir := stubBin(t, map[string]string{"tmux": `printf 'tmux-colored\n'`})
 	cases := []struct {
 		name string
 		env  map[string]string
@@ -115,38 +116,28 @@ func TestSampleColoredOrder(t *testing.T) {
 		{"tmux last", map[string]string{}, "tmux-colored"},
 		{"failing color cmd is empty, no fallthrough", map[string]string{"CREW_STALL_COLOR_CMD": "printf partial; exit 1", "CREW_STALL_SAMPLE_CMD": "printf sample"}, ""},
 	}
+	tm := &tmuxtest.Fake{Out: map[string]string{"capture-pane": "tmux-colored"}}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			p := Default(envOf(c.env, nil))
+			p := Probes{Env: envOf(c.env, nil), Tmux: tm}
 			if got := p.SampleColored(context.Background()); got != c.want {
 				t.Errorf("SampleColored = %q, want %q", got, c.want)
 			}
 		})
 	}
-	if got := readLog(t, dir, "tmux"); got != "[capture-pane][-e][-p][-t][%7]\n" {
-		t.Errorf("tmux argv = %q", got)
+	if got := tm.Calls(); !slices.Equal(got, []string{"capture-pane -e -p -t %7"}) {
+		t.Errorf("tmux calls = %q", got)
 	}
 }
 
-func TestSampleDefaultArgv(t *testing.T) {
-	dir := stubBin(t, map[string]string{"tmux": `printf 'frame\n\n'`})
-	text, alive := Default(envOf(nil, nil)).Sample(context.Background())
-	if text != "frame" || !alive {
-		t.Errorf("Sample = %q, %v; want frame, true", text, alive)
+func TestSampleDefault(t *testing.T) {
+	tm := &tmuxtest.Fake{Out: map[string]string{"capture-pane": "frame"}}
+	text, alive := Probes{Env: envOf(nil, nil), Tmux: tm}.Sample(context.Background())
+	if text != "frame" || !alive || !slices.Equal(tm.Calls(), []string{"capture-pane -p -t %7"}) {
+		t.Errorf("Sample = %q, %v, calls %q; want frame, true, capture-pane -p -t %%7", text, alive, tm.Calls())
 	}
-	if got := readLog(t, dir, "tmux"); got != "[capture-pane][-p][-t][%7]\n" {
-		t.Errorf("tmux argv = %q", got)
-	}
-}
-
-func TestSampleDefaultFailureIsNotAlive(t *testing.T) {
-	stubBin(t, map[string]string{"tmux": `echo "can't find pane" >&2; exit 1`})
-	var stderr bytes.Buffer
-	if text, alive := Default(envOf(nil, &stderr)).Sample(context.Background()); text != "" || alive {
-		t.Errorf("Sample = %q, %v; want empty, false", text, alive)
-	}
-	if stderr.Len() != 0 {
-		t.Errorf("tmux stderr leaked: %q", stderr.String())
+	if text, alive := (Probes{Env: envOf(nil, nil), Tmux: &tmuxtest.Fake{}}).Sample(context.Background()); text != "" || alive {
+		t.Errorf("Sample on failure = %q, %v; want empty, false", text, alive)
 	}
 }
 
@@ -157,39 +148,31 @@ func TestPaneCmd(t *testing.T) {
 			t.Errorf("PaneCmd = %q, want claude (output survives a nonzero rc)", got)
 		}
 	})
-	t.Run("default picks the pane's row", func(t *testing.T) {
-		dir := stubBin(t, map[string]string{"tmux": `printf '%%1\tfish\n%%7\tclaude\n%%70\tnvim\n'`})
-		if got := Default(envOf(nil, nil)).PaneCmd(context.Background()); got != "claude" {
-			t.Errorf("PaneCmd = %q, want claude", got)
-		}
-		if got := readLog(t, dir, "tmux"); got != "[list-panes][-a][-F][#{pane_id}\t#{pane_current_command}]\n" {
-			t.Errorf("tmux argv = %q", got)
-		}
-	})
-	t.Run("default without the pane is empty", func(t *testing.T) {
-		stubBin(t, map[string]string{"tmux": `printf '%%1\tfish\n'`})
-		if got := Default(envOf(nil, nil)).PaneCmd(context.Background()); got != "" {
-			t.Errorf("PaneCmd = %q, want empty", got)
-		}
-	})
-	t.Run("default on failure is empty", func(t *testing.T) {
-		stubBin(t, map[string]string{"tmux": `printf '%%7\tclaude\n'; exit 1`})
-		if got := Default(envOf(nil, nil)).PaneCmd(context.Background()); got != "" {
-			t.Errorf("PaneCmd = %q, want empty", got)
-		}
-	})
+	list := "list-panes -a -F #{pane_id}\t#{pane_current_command}"
+	for _, c := range []struct {
+		name string
+		tm   *tmuxtest.Fake
+		want string
+	}{
+		{"default picks the pane's row", &tmuxtest.Fake{Out: map[string]string{list: "%1\tfish\n%7\tclaude\n%70\tnvim"}}, "claude"},
+		{"default without the pane is empty", &tmuxtest.Fake{Out: map[string]string{list: "%1\tfish"}}, ""},
+		{"default on failure is empty", &tmuxtest.Fake{Func: func([]string) (string, error) { return "%7\tclaude", tmuxtest.ErrNoServer }}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := (Probes{Env: envOf(nil, nil), Tmux: c.tm}).PaneCmd(context.Background()); got != c.want {
+				t.Errorf("PaneCmd = %q, want %q", got, c.want)
+			}
+		})
+	}
 }
 
 func TestPaneModel(t *testing.T) {
-	dir := stubBin(t, map[string]string{"tmux": `printf 'qwen3\n\n'`})
-	if got := Default(envOf(nil, nil)).PaneModel(context.Background()); got != "qwen3" {
-		t.Errorf("PaneModel = %q, want qwen3", got)
+	tm := &tmuxtest.Fake{Out: map[string]string{"show-options": "qwen3"}}
+	if got := (Probes{Env: envOf(nil, nil), Tmux: tm}).PaneModel(context.Background()); got != "qwen3" || !slices.Equal(tm.Calls(), []string{"show-options -pqv -t %7 @crew_model"}) {
+		t.Errorf("PaneModel = %q, calls %q", got, tm.Calls())
 	}
-	if got := readLog(t, dir, "tmux"); got != "[show-options][-pqv][-t][%7][@crew_model]\n" {
-		t.Errorf("tmux argv = %q", got)
-	}
-	stubBin(t, map[string]string{"tmux": `printf 'x'; exit 1`})
-	if got := Default(envOf(nil, nil)).PaneModel(context.Background()); got != "" {
+	failing := &tmuxtest.Fake{Func: func([]string) (string, error) { return "x", tmuxtest.ErrNoServer }}
+	if got := (Probes{Env: envOf(nil, nil), Tmux: failing}).PaneModel(context.Background()); got != "" {
 		t.Errorf("PaneModel on failure = %q, want empty", got)
 	}
 }
@@ -331,21 +314,11 @@ func TestRefreshBudgetNoCommandIsNoop(t *testing.T) {
 }
 
 func TestSetPaneOption(t *testing.T) {
-	t.Run("argv, errors ignored", func(t *testing.T) {
-		var stderr bytes.Buffer
-		dir := stubBin(t, map[string]string{"tmux": `echo no >&2; exit 1`})
-		Default(envOf(nil, &stderr)).SetPaneOption(context.Background(), "@crew_detail", "two words")
-		if got := readLog(t, dir, "tmux"); got != "[set-option][-p][-t][%7][@crew_detail][two words]\n" {
-			t.Errorf("tmux argv = %q", got)
-		}
-		if stderr.Len() != 0 {
-			t.Errorf("stderr leaked: %q", stderr.String())
-		}
-	})
-	t.Run("no tmux is a noop", func(t *testing.T) {
-		t.Setenv("PATH", t.TempDir())
-		Default(envOf(nil, nil)).SetPaneOption(context.Background(), "@crew_state", "idle")
-	})
+	tm := &tmuxtest.Fake{}
+	Probes{Env: envOf(nil, nil), Tmux: tm}.SetPaneOption(context.Background(), "@crew_detail", "two words")
+	if got := tm.Calls(); !slices.Equal(got, []string{"set-option -p -t %7 @crew_detail two words"}) {
+		t.Errorf("tmux calls = %q", got)
+	}
 }
 
 // writeLib writes a stub lib defining the function the op calls.

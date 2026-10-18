@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -17,6 +18,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 	"github.com/noamsto/dispatcher/crew/internal/unread"
 )
 
@@ -38,7 +40,8 @@ type fake struct {
 	// bash `--sh nudge` op used to appear.
 	nudge   func(context.Context, nudge.PaneRequest) (string, int)
 	shCalls []string
-	opts    [][]string // tmux set-option argv, as the bash stub logs it
+	opts    [][]string // tmux set-option argv
+	tm      *tmuxtest.Fake
 	busRows func(path string, sinceMS int64, maxLines int) ([]any, bool)
 }
 
@@ -92,25 +95,44 @@ func (f *fake) releaseHook() func(context.Context, string, string, string, int64
 	}
 }
 
+// tmuxFunc answers the pane reads the loop makes: one frame per capture-pane,
+// the pane's command row and model, and logs every set-option into f.opts.
+func (f *fake) tmuxFunc(args []string) (string, error) {
+	switch args[0] {
+	case "capture-pane":
+		if slices.Contains(args, "-e") {
+			return "", nil
+		}
+		n := f.samples
+		f.samples++
+		if f.sample == nil {
+			return "frame " + strconv.Itoa(n), nil
+		}
+		text, alive := f.sample(n)
+		if !alive {
+			return text, tmuxtest.ErrNoServer
+		}
+		return text, nil
+	case "list-panes":
+		return f.pane + "\t" + f.paneCmd, nil
+	case "show-options":
+		return f.paneModel, nil
+	case "set-option":
+		f.opts = append(f.opts, args)
+	}
+	return "", nil
+}
+
 func (f *fake) probes() probe.Probes {
+	if f.tm == nil {
+		f.tm = &tmuxtest.Fake{Func: f.tmuxFunc}
+	}
 	return probe.Probes{
-		Sample: func(context.Context) (string, bool) {
-			n := f.samples
-			f.samples++
-			if f.sample == nil {
-				return "frame " + strconv.Itoa(n), true
-			}
-			return f.sample(n)
-		},
-		SampleColored: func(context.Context) string { return "" },
-		PaneCmd:       func(context.Context) string { return f.paneCmd },
-		PaneModel:     func(context.Context) string { return f.paneModel },
+		Env:           probe.Env{Pane: f.pane, Getenv: func(string) string { return "" }},
+		Tmux:          f.tm,
 		Load:          func(context.Context) string { return "" },
 		Top:           func(context.Context) string { return "" },
 		RefreshBudget: func(context.Context) {},
-		SetPaneOption: func(_ context.Context, name, value string) {
-			f.opts = append(f.opts, []string{"set-option", "-p", "-t", f.pane, name, value})
-		},
 		Sh: func(ctx context.Context, op string, args ...string) (string, int) {
 			f.shCalls = append(f.shCalls, strings.Join(append([]string{op}, args...), " "))
 			switch {

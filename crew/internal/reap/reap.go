@@ -120,7 +120,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, 
 	}
 	// Panes running an engine, to tell "finished worker" from "someone is in
 	// there right now". Path-keyed like roster: lazytmux rewrites window names.
-	r.live = r.p.Tmux(ctx, "list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}")
+	r.live = r.p.tmuxOut(ctx, "list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}")
 	reaped := 0
 	for _, row := range rows {
 		if row.branch == "" {
@@ -286,7 +286,7 @@ func (r *run) idleRelease(ctx context.Context) int {
 // orphans reports windows stamped for this bus whose worktree is gone —
 // report only: a human may be using one.
 func (r *run) orphans(ctx context.Context) int {
-	rows := r.p.Tmux(ctx, "list-windows", "-a", "-F", "#{window_id}\t#{@crew_branch}\t#{@crew_dir}")
+	rows := r.p.tmuxOut(ctx, "list-windows", "-a", "-F", "#{window_id}\t#{@crew_branch}\t#{@crew_dir}")
 	for line := range strings.SplitSeq(rows, "\n") {
 		f := fields(line, 3)
 		wid, branch, dir := f[0], f[1], f[2]

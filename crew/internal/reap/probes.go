@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
 // ReleaseGrace is how long, in seconds, a finished worker's window may stay
@@ -32,11 +32,7 @@ const ReleaseGrace = 300
 // Probes are the reap path's side effects. A nil-free struct so tests
 // substitute any field.
 type Probes struct {
-	// Tmux is `$(tmux … 2>/dev/null || true)`: stderr dropped, a failure is "",
-	// trailing newlines stripped.
-	Tmux func(ctx context.Context, args ...string) string
-	// TmuxRun is `tmux … 2>/dev/null || true`, output discarded.
-	TmuxRun func(ctx context.Context, args ...string)
+	Tmux tmux.Client
 	// Gh is `gh …` with stderr dropped and trailing newlines stripped.
 	Gh func(ctx context.Context, args ...string) (string, error)
 	// GhAll is `gh … 2>&1`, stdout and stderr combined.
@@ -54,12 +50,9 @@ type Probes struct {
 	Ancestors func() map[int]bool
 	// Kill sends SIGTERM and ignores the error. A non-positive pid is never
 	// signalled: it would reach the caller's own process group or every process.
-	Kill func(pid int)
-	// Capture is `_pane_capture`: the pane's text, or its ANSI-colored capture,
-	// through the CREW_STALL_SAMPLE_CMD / CREW_STALL_COLOR_CMD seams.
-	Capture func(ctx context.Context, pane string, colored bool) string
-	Sleep   func(d time.Duration)
-	Now     func() time.Time
+	Kill  func(pid int)
+	Sleep func(d time.Duration)
+	Now   func() time.Time
 	// Append is `_bus_append`.
 	Append func(path, line string) error
 }
@@ -67,13 +60,7 @@ type Probes struct {
 // DefaultProbes is the production probe set.
 func DefaultProbes() Probes {
 	return Probes{
-		Tmux: func(ctx context.Context, args ...string) string {
-			out, _ := output(ctx, "tmux", args, false)
-			return out
-		},
-		TmuxRun: func(ctx context.Context, args ...string) {
-			_ = exec.CommandContext(ctx, "tmux", args...).Run()
-		},
+		Tmux: tmux.Exec{},
 		Gh: func(ctx context.Context, args ...string) (string, error) {
 			return output(ctx, "gh", args, false)
 		},
@@ -97,18 +84,16 @@ func DefaultProbes() Probes {
 				_ = syscall.Kill(pid, syscall.SIGTERM)
 			}
 		},
-		Capture: func(ctx context.Context, pane string, colored bool) string {
-			p := probe.Default(probe.Env{Getenv: os.Getenv, Pane: pane})
-			if colored {
-				return p.SampleColored(ctx)
-			}
-			text, _ := p.Sample(ctx)
-			return text
-		},
 		Sleep:  time.Sleep,
 		Now:    time.Now,
 		Append: bus.Append,
 	}
+}
+
+// tmuxOut is `$(tmux … 2>/dev/null || true)`: whatever tmux printed, failed or not.
+func (p Probes) tmuxOut(ctx context.Context, args ...string) string {
+	out, _ := p.Tmux.Run(ctx, args...)
+	return out
 }
 
 // output runs name and returns its stdout, trailing newlines stripped, with
