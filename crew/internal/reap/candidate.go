@@ -215,7 +215,7 @@ func (r *run) isAncestor(ctx context.Context, branch, head string) int {
 		return 1
 	}
 	cmd.Stdout = r.stdout
-	return exitStatus(cmd.Run())
+	return shellStatus(cmd.Run())
 }
 
 // enginePane is one `live` row running an engine in the candidate's worktree.

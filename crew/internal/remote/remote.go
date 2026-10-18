@@ -310,7 +310,7 @@ func Run(ctx context.Context, c Call, stdout, stderr io.Writer) int {
 	cmd.Stdin = bytes.NewReader(req)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	rc := exitStatus(cmd.Run(), stderr, "crew: remote-run: ssh")
+	rc := reportStatus(cmd.Run(), stderr, "crew: remote-run: ssh")
 	if rc == 255 {
 		_, _ = fmt.Fprintf(stderr, "crew: remote-run: ssh to host '%s' (%s) failed (exit 255)\n", c.Host, target.SSH)
 	}
@@ -382,10 +382,10 @@ func originURL(ctx context.Context, common string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// exitStatus maps a finished command to a shell-style status: its exit code,
+// reportStatus maps a finished command to a shell-style status: its exit code,
 // or 128+n when signal n killed it. A command that could not start is
 // reported on stderr as 127 (not found) or 126.
-func exitStatus(err error, stderr io.Writer, what string) int {
+func reportStatus(err error, stderr io.Writer, what string) int {
 	if err == nil {
 		return 0
 	}

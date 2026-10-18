@@ -204,7 +204,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 			if s, ok := pending(sigs); ok {
 				return signalStatus(s)
 			}
-			return exitStatus(err)
+			return childStatus(err)
 		}
 	}
 }
@@ -371,10 +371,10 @@ func parseIntSaturate(text string) int64 {
 	return n
 }
 
-// exitStatus is what `set -e` would have exited the arm with: the child's own
+// childStatus is what `set -e` would have exited the arm with: the child's own
 // status, or 128+n when it died of a signal. Anything Go could not read a
 // status from (the exec itself failed) is the shell's generic 1.
-func exitStatus(err error) int {
+func childStatus(err error) int {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		if ws, ok := ee.Sys().(syscall.WaitStatus); ok {

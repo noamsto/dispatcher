@@ -189,14 +189,14 @@ func (r *run) worktreePath(ctx context.Context, branch string) (string, int) {
 	cmd.Stderr = r.stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return "", exitStatus(err)
+		return "", shellStatus(err)
 	}
 	return roster.WorktreePath(string(out), branch), 0
 }
 
-// exitStatus is the shell's `$?` for a finished command: 127 when it never
+// shellStatus is the shell's `$?` for a finished command: 127 when it never
 // started.
-func exitStatus(err error) int {
+func shellStatus(err error) int {
 	if err == nil {
 		return 0
 	}

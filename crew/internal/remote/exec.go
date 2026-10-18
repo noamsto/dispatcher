@@ -91,7 +91,7 @@ func Serve(stdin io.Reader, stdout, stderr io.Writer, o ServeOptions) int {
 	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	return exitStatus(cmd.Run(), stderr, "crew: remote-exec: "+req.Argv[0])
+	return reportStatus(cmd.Run(), stderr, "crew: remote-exec: "+req.Argv[0])
 }
 
 // admit decodes and checks a request, returning it and its clone's git common
@@ -286,7 +286,7 @@ func runDetached(cmd *exec.Cmd, scratch string, stdout, stderr io.Writer) int {
 	_ = errF.Close()
 	copyOut(stdout, outPath)
 	copyOut(stderr, errPath)
-	return exitStatus(runErr, stderr, "crew: remote-exec: dispatch")
+	return reportStatus(runErr, stderr, "crew: remote-exec: dispatch")
 }
 
 // copyOut relays a finished child's output file; a hung-up reader is no

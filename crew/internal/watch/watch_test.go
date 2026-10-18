@@ -678,21 +678,21 @@ func (osSignalStub) Signal()        {}
 // an interval it rejects, and 128+n when a signal killed it mid-poll.
 func TestExitStatus(t *testing.T) {
 	if _, err := exec.Command("sh", "-c", "exit 3").Output(); err != nil {
-		if got := exitStatus(err); got != 3 {
-			t.Errorf("exitStatus(exit 3) = %d, want 3", got)
+		if got := childStatus(err); got != 3 {
+			t.Errorf("childStatus(exit 3) = %d, want 3", got)
 		}
 	} else {
 		t.Fatal("`exit 3` succeeded")
 	}
 	if _, err := exec.Command("sh", "-c", "kill -TERM $$").Output(); err != nil {
-		if got := exitStatus(err); got != 143 {
-			t.Errorf("exitStatus(SIGTERM) = %d, want 143", got)
+		if got := childStatus(err); got != 143 {
+			t.Errorf("childStatus(SIGTERM) = %d, want 143", got)
 		}
 	} else {
 		t.Skip("`kill -TERM $$` did not fail the child")
 	}
-	if got := exitStatus(errors.New("exec never started")); got != 1 {
-		t.Errorf("exitStatus(non-ExitError) = %d, want 1", got)
+	if got := childStatus(errors.New("exec never started")); got != 1 {
+		t.Errorf("childStatus(non-ExitError) = %d, want 1", got)
 	}
 }
 
