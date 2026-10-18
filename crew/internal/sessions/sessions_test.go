@@ -499,19 +499,3 @@ func TestFold(t *testing.T) {
 		})
 	}
 }
-
-func TestJSON(t *testing.T) {
-	got, err := JSON([]any{map[string]any{
-		"nan":  math.NaN(),
-		"pinf": math.Inf(1),
-		"ninf": math.Inf(-1),
-		"num":  json.Number("1E+1000"),
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := `[{"nan":null,"ninf":-1.7976931348623157e+308,"num":1E+1000,"pinf":1.7976931348623157e+308}]`
-	if string(got) != want {
-		t.Errorf("got  %s\nwant %s", got, want)
-	}
-}

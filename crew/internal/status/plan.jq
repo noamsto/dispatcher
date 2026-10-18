@@ -15,9 +15,8 @@
 # no crew check), and a resume counts only after the branch's latest dispatch.
 #
 # Under jqrun `.` is the array of the log's lines, and every `fromjson` is
-# `_jqfromjson` (jqrun.WithJQFromJSON), jq's own fromjson: gojq's accepts a
-# lone high surrogate escape that jq refuses, and a refused line or body must
-# not count as a seam.
+# `_jqfromjson` (jqrun.WithJQFromJSON), fromjson that also skips a leading
+# byte order mark, as jq's does and gojq's does not.
 ($b | ltrimstr("worker:")) as $n
 | reduce .[] as $line (
   {seam: false, resumed: false};

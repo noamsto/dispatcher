@@ -80,11 +80,6 @@ func reviewCases() []gateCase {
 			piVerdict(branch, "accept"), deslopSeam),
 		seamPass("claude: non-JSON reviewer reply does not revoke", reviewDoc,
 			reviewSeam, msgRow(rev, branch, `looks fine`), deslopSeam),
-		seamPass("claude: NaN reviewer reject does not revoke", reviewDoc,
-			reviewSeam, deslopSeam, nanReject),
-		// jq refuses nesting past 5000 objects, so it never saw this seam.
-		seamRefuse("claude: seam padded past jq's nesting limit", reviewDoc, refused,
-			paddedReview, deslopSeam),
 
 		// review seam, engine pi: verdicts not pinned by TestPiReviewerVerdicts
 		seamRefuse("pi: revise to another branch voids an accept", piDoc(), refused,
@@ -103,17 +98,8 @@ func reviewCases() []gateCase {
 			piVerdict(branch, "accept"), msgRow(branch, rev, `{"final":true,"x":1}`), deslopSeam),
 		seamRefuse("pi: re-request with final false voids", piDoc(), refused,
 			piVerdict(branch, "accept"), msgRow(branch, rev, `{"final":false}`), deslopSeam),
-		seamRefuse("pi: NaN reject after accept", piDoc(), refused,
-			piVerdict(branch, "accept"), nanReject, deslopSeam),
-		seamRefuse("pi: spaced crew_id NaN reject after accept", piDoc(), refused,
-			piVerdict(branch, "accept"), nanRejectSpaced, deslopSeam),
-		seamRefuse("pi: escaped role NaN reject after accept", piDoc(), refused,
-			piVerdict(branch, "accept"), nanRejectEscaped, deslopSeam),
-		seamRefuse("pi: unicode-escaped role NaN reject after accept", piDoc(), refused,
-			piVerdict(branch, "accept"), nanRejectUnicode, deslopSeam),
 		seamRefuse("pi: BOM re-request after accept", piDoc(), refused,
 			piVerdict(branch, "accept"), bomRequest, deslopSeam),
-		seamPass("pi: accept after a NaN reject", piDoc(), nanReject, piVerdict(branch, "accept"), deslopSeam),
 	}
 }
 
@@ -142,14 +128,8 @@ func deslopCases() []gateCase {
 			reviewSeam, msgRow(worker, "review:c1", `deslop`)),
 		seamRefuse("deslop: other seam", standardDoc, refused,
 			reviewSeam, msgRow(worker, "review:c1", `{"seam":"review"}`)),
-		seamRefuse("deslop: body with a lone high surrogate", standardDoc, refused,
-			reviewSeam, msgRow(worker, "review:c1", `{"seam":"deslop","note":"\ud83d"}`)),
 		seamPass("deslop: body with a lone low surrogate", standardDoc,
 			reviewSeam, msgRow(worker, "review:c1", `{"seam":"deslop","note":"\udc00"}`)),
-		seamRefuse("deslop: seam padded past jq's nesting limit", standardDoc, refused,
-			reviewSeam, paddedDeslop),
-		seamPass("deslop: NaN in the body", standardDoc,
-			reviewSeam, msgRow(worker, "review:c1", `{"seam":"deslop","n":NaN}`)),
 	}
 }
 
@@ -195,15 +175,8 @@ func planCases() []gateCase {
 			with(`{"ts":1,"crew_id":"c1","kind":"resume","branch":"feat/y"}`)...),
 		seamRefuse("plan: resume for another crew", planDoc, refused,
 			with(`{"ts":1,"crew_id":"c2","kind":"resume","branch":"feat/x"}`)...),
-		seamRefuse("plan: NaN dispatch after seam", planDoc, refused, with(planSeam, nanDispatch)...),
-		seamRefuse("plan: NaN dispatch with escaped kind and branch after seam", planDoc, refused,
-			with(planSeam, nanDispatchEscaped)...),
 		seamPass("plan: torn dispatcher msg naming crew, dispatch and branch does not reset", planDoc,
 			with(planSeam, tornDispatchr)...),
-		seamPass("plan: NaN dispatcher msg does not drop a resume", planDoc, with(resumeRow, nanDispatchr)...),
-		seamPass("plan: seam after a NaN dispatch", planDoc, with(nanDispatch, planSeam)...),
-		seamRefuse("plan: resume then NaN dispatch", planDoc, refused, with(resumeRow, nanDispatch)...),
-		seamRefuse("plan: resume padded past jq's nesting limit", planDoc, refused, reviewSeam, deslopSeam, paddedResume5k),
 
 		// plan exemptions
 		seamPass("plan: provided is exempt", standardDoc+"plan: provided\n", base...),

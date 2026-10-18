@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -113,7 +114,7 @@ func Run(req Request, stdout, stderr io.Writer, o Options) int {
 			case stale && !all && !asJSON:
 				hidden++
 			default:
-				rows = append(rows, jsonval.Clamp(row.Row).(map[string]any))
+				rows = append(rows, row.Row)
 			}
 		}
 	}
@@ -213,6 +214,9 @@ func age(row map[string]any) string {
 	var s int64
 	switch v := row["age_s"].(type) {
 	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return "-"
+		}
 		s = int64(v)
 	case json.Number:
 		f, err := v.Float64()

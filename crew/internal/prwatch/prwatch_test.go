@@ -411,11 +411,11 @@ func TestStartFailure(t *testing.T) {
 // field is one string field of a bus row.
 func field(t *testing.T, row, key string) string {
 	t.Helper()
-	v, ok := testjson.MustParse(t, row).Get(key)
+	v, ok := testjson.MustParse(t, row).(map[string]any)[key]
 	if !ok {
 		t.Fatalf("row %s has no %q", row, key)
 	}
-	s, _ := v.AsString()
+	s, _ := v.(string)
 	return s
 }
 

@@ -7,9 +7,8 @@
 # Patch: `inputs` is `.[]` — jqrun takes the log's lines as `.` instead of
 # reading the file with `-R`.
 #
-# Patch: `fromjson?` is `_jqfromjson?` (jqrun.WithJQFromJSON), jq's own
-# fromjson over the repo's decoder: gojq's accepts a lone high-surrogate escape
-# that jq refuses, and a forged row must not read as a record.
+# Patch: `fromjson?` is `_jqfromjson?` (jqrun.WithJQFromJSON), fromjson that
+# also skips a leading byte order mark, as jq's does and gojq's does not.
 #
 # Patch: the arm's `empty` output is `""` here. jqrun returns one value and
 # counts no output as an error, and the arm's caller read the empty `$(…)` as

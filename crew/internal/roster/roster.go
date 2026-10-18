@@ -13,6 +13,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
 //go:embed roster_base.jq
@@ -68,7 +69,7 @@ func CrewWindowBranches(out, crew string) map[string]bool {
 // as an error (main maps it to the jq-failure exit status), a failing
 // worktree probe as its *ExitError.
 func Fold(events []any, crew string, nowSec float64, p Probes) ([]map[string]any, error) {
-	base, err := jqrun.RunAny(baseProgram, events, nowSec, map[string]any{"crew": crew})
+	base, err := jqrun.RunAny(baseProgram, events, nowSec, map[string]any{"crew": jsonval.ValidUTF8(crew)})
 	if err != nil {
 		return nil, err
 	}

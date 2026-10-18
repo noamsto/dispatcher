@@ -30,6 +30,7 @@ func TestEncode(t *testing.T) {
 		{"number in array", []any{json.Number("1.50"), nan}, false, "[1.50,null]\n"},
 		{"html unescaped", "<&>", false, "\"<&>\"\n"},
 		{"html in map", map[string]any{"k<": "a&b>"}, false, `{"k<":"a&b>"}` + "\n"},
+		{"rows", []map[string]any{{"a": inf}, {"b": nan}}, false, `[{"a":` + max + `},{"b":null}]` + "\n"},
 		{"indent", map[string]any{"a": []any{nan, 1.0}}, true, "{\n  \"a\": [\n    null,\n    1\n  ]\n}\n"},
 	}
 	for _, tt := range tests {
@@ -101,6 +102,18 @@ func TestRawText(t *testing.T) {
 	} {
 		if got := RawText(c.in); got != c.want {
 			t.Errorf("RawText(%#v) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestValidUTF8(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"a\xff\xfeb", "a\ufffd\ufffdb"},
+		{"héllo", "héllo"},
+		{"", ""},
+	} {
+		if got := ValidUTF8(c.in); got != c.want {
+			t.Errorf("ValidUTF8(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }

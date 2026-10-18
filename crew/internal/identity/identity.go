@@ -100,6 +100,7 @@ func Palette() []string { return slices.Clone(colors[:]) }
 // Recorded is the identity of the last well-formed `dispatch` event for
 // branch, across every crew. Events that are not objects never match.
 func Recorded(events []any, branch string) (Identity, bool) {
+	branch = jsonval.ValidUTF8(branch)
 	var last Identity
 	found := false
 	for _, ev := range events {

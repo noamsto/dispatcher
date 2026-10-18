@@ -1,13 +1,13 @@
 package remote
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 )
 
@@ -95,7 +95,11 @@ func TestRemoteWorkers(t *testing.T) {
 	)
 	var got []string
 	for _, w := range RemoteWorkers(rows, "c") {
-		got = append(got, strings.Join([]string{w.Host, w.Branch, w.Name, string(jsonv.Append(nil, w.TS, jsonv.Options{}))}, " "))
+		ts, err := json.Marshal(w.TS)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, strings.Join([]string{w.Host, w.Branch, w.Name, string(ts)}, " "))
 	}
 	want := []string{"big feat/a ant 3", "mini feat/b bee 2"}
 	if !reflect.DeepEqual(got, want) {

@@ -183,6 +183,18 @@ func TestRecorded(t *testing.T) {
 	}
 }
 
+// encoding/json repairs each invalid byte in a bus row to U+FFFD, so a branch
+// argument carrying the same raw byte must be repaired alike to match it.
+func TestRecordedInvalidUTF8Branch(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{"kind": "dispatch", "branch": "feat/\xff", "name": "zed", "tmux": "colour9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := Recorded(events(t, string(raw)), "feat/\xff"); !ok {
+		t.Error("Recorded found no dispatch row for the repaired branch")
+	}
+}
+
 func TestFor(t *testing.T) {
 	const b = "feat/x"
 	rec := RecordedAll(events(t, `{"kind":"dispatch","branch":"feat/x","name":"zed","color":"red","tmux":"colour9"}`))

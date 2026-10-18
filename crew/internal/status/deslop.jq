@@ -7,9 +7,9 @@
 # runs through jqrun with `.` = the array of the log's lines, so
 # `first(inputs | ...)` is `first(.[] | ...)`.
 #
-# Patch: every `fromjson` is `_jqfromjson` (jqrun.WithJQFromJSON), jq's own
-# fromjson: gojq's accepts a lone high surrogate escape that jq refuses, and
-# a refused line or body must not count as a seam. Nothing else differs.
+# Patch: every `fromjson` is `_jqfromjson` (jqrun.WithJQFromJSON), fromjson
+# that also skips a leading byte order mark, as jq's does and gojq's does not.
+# Nothing else differs.
 first(.[]
   | (try _jqfromjson catch null)
   | select(type == "object" and .crew_id == $c and .kind == "msg"
