@@ -11786,8 +11786,7 @@ _rw_settle() {
 
 # _rw_clock_now — the virtual clock's current value. The watcher rewrites the
 # file with `printf … >` every tick, which truncates before writing, so a plain
-# `cat` can catch it empty or mid-write; retry until a whole line is read, and
-# print nothing (non-zero) if it never is.
+# `cat` can catch it empty or mid-write; retry until a whole line is read.
 _rw_clock_now() {
   local n cur
   for n in $(seq 1 200); do
@@ -12670,10 +12669,8 @@ _rw_deferrals() { _rw_count '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*
   RW_EXTRA="--defer-notice 3" _rw_launch cursor
   _rw_poll "[ -s \"\$DISPATCH_ROLE_WATCH_CLOCK\" ]"
   # A still-booting pull role gets 5x --defer-notice (15 clock seconds) before
-  # the deferral. Read the clock before queuing the assignment (the watcher's
-  # deferred_since is then at least base) and wait out well under the grace:
-  # the watcher spins on the virtual clock, so a display-message count like
-  # _rw_settle can advance far past its nominal ticks while the test appends.
+  # the deferral. Read the clock before queuing so the watcher's deferred_since
+  # is at least base, then wait out well under the grace.
   base=$(_rw_clock_now) || { echo "role-watch: no base clock" >&2; return 1; }
   _rw_append "$(_rw_assign_row)"
   _rw_wait_clock $((base + 6))
