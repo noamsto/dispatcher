@@ -2214,6 +2214,13 @@ assert_allow_within_each_awk() {
   deny_both $'/usr/bin/python3.12 -c \'import os; print(os.environ)\''
   deny_both $'uv run python3 -c \'import os; print(os.environ)\''
   deny_both $'python3 <<PY\nprint(1)\n$(env)\nPY'
+  deny_both $'ruby -e \'p ENV\''
+  deny_both $'ruby -e \'puts ENV.to_h\''
+  deny_both $'deno eval \'console.log(Deno.env.toObject())\''
+  deny_both $'bun -e \'console.log(Bun.env)\''
+  deny_both $'python3 -c \'from os import environ; print(environ)\''
+  deny_both $'"$HOME/.venv/bin/python" -c \'import os; print(os.environ)\''
+  deny_both $'tsx -e \'console.log(process.env)\''
 }
 
 @test "secret-read-guard: #1143 allows interpreter presence tests and python heredoc text" {
@@ -2229,6 +2236,9 @@ assert_allow_within_each_awk() {
   allow_both $'python3 - <<\'EOF\'\nadd=\'\'\'\n- reviewer ran it in the worktree\'s direnv shell.\n- Never use `bash -x`, `set -x`, `env`, `printenv` to dump variables.\n\'\'\'\nprint(len(add))\nEOF'
   allow_both $'rg \'os.environ\' src/'
   allow_both $'git commit -m "python3 reads os.environ"'
+  allow_both $'rg -n \'os.environ\' src && python3 -m pytest'
+  allow_both $'git commit -m \'use process.env\' && node --version'
+  allow_both $'ruby -e \'p ENV.key?("X")\''
 }
 
 @test "secret-read-guard: #1143 keeps denying shell dumpers outside an interpreter" {
@@ -2238,6 +2248,9 @@ assert_allow_within_each_awk() {
   deny_both 'declare -p'
   deny_both $'fish -c \'set -S\''
   deny_both 'tmux show-environment'
+  deny_both $'perl <<\'PL\'\nprint `env`;\nPL'
+  deny_both $'ruby <<\'RB\'\nputs `env`\nRB'
+  deny_both $'php <<\'PHP\'\n<?php echo `env`;\nPHP'
 }
 
 @test "secret-read-guard: #992 still denies heredoc bodies that reach a shell or are not heredocs" {
