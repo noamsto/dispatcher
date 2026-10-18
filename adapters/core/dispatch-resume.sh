@@ -18,8 +18,8 @@ usage() {
 _resume_help() {
   cat <<'HELP'
 usage: dispatch resume [<target>] [--agent E] [--model M] [--effort E]
-                     [--mcp P] [--fresh] [--print] [--ignore-budget]
-                     [--ignore-map] [extra prompt...]
+                     [--mcp P] [--fresh] [--print] [--rearm-roles]
+                     [--ignore-budget] [--ignore-map] [extra prompt...]
 
 Relaunch the worker whose worktree you are standing in, continuing its own
 engine session, and re-run only the gates this command names.
@@ -33,6 +33,9 @@ engine session, and re-run only the gates this command names.
   --mcp P             MCP profile to launch the engine with
   --fresh             Start a new engine session instead of continuing the old one
   --print             Print the launch command instead of running it
+  --rearm-roles       Re-arm the role panes of this worker's restored window and
+                      launch nothing (no launch flag or extra prompt;
+                      --ignore-budget still applies)
   --ignore-budget     Spend past the quota stop (a human's spend decision)
   --ignore-map        Skip the tier-map model refusals (a human's model call)
   [extra prompt...]   Words appended to the carried task body for this run
@@ -526,7 +529,7 @@ _resume_remote() {
 # whose crew dir and branch both match — never from git state in a worktree or
 # the worker's env.
 _resolve_target_worktree() {
-  local target="$1" row err rc=0 t_branch t_crew host here common cdir rec rec_wt where_out
+  local target="$1" row err rc=0 t_branch t_crew host here common cdir rec rec_wt where_out alive stamped p_path p_cmd p_role p_branch
   local -a hits=()
   git rev-parse --git-common-dir >/dev/null 2>&1 || {
     echo "dispatch resume: '$target' needs the repo's crew bus — run from inside the repository (any worktree)" >&2
@@ -556,9 +559,9 @@ _resolve_target_worktree() {
     echo "dispatch resume: $t_branch was dispatched on host '$host' (this is '$here') — its worktree and session transcript live there; run dispatch resume on $host" >&2
     exit 1
   fi
+  alive=""
   if where_out="$(crew where "$t_branch" ${t_crew:+--crew "$t_crew"} 2>/dev/null)"; then
-    echo "dispatch resume: $t_branch is still alive — $where_out" >&2
-    exit 1
+    alive=1
   fi
   common="$(git rev-parse --path-format=absolute --git-common-dir)"
   cdir="$(realpath -m -- "$common/crew")"
@@ -577,11 +580,38 @@ _resolve_target_worktree() {
     exit 1
   fi
   rec_wt="${hits[0]}"
+  if [ -n "$alive" ]; then
+    # tmux-remux restores this worker's own window, which `crew where` still
+    # sees. Proceed only when that window vouches for itself: every pane stamped
+    # with the branch sits at the recorded worktree, and no lead pane runs an
+    # engine. No @crew_dir filter, so the same branch name in another repo's
+    # window fails closed. Role panes may run engines: tmux-og relaunches them.
+    stamped=""
+    while IFS=$'\x1f' read -r _ _ p_path p_cmd _ p_role p_branch; do
+      [ "$p_branch" = "$t_branch" ] || continue
+      stamped=1
+      if [ "$p_path" != "$rec_wt" ]; then
+        stamped=""
+        break
+      fi
+      if [ -z "$rearm_roles" ] && { [ -z "$p_role" ] || [ "$p_role" = lead ]; } && crew engine-cmd "$p_cmd" 2>/dev/null; then
+        stamped=""
+        break
+      fi
+    done <<PANES
+$(tmux list-panes -a -F '#{window_id}'$'\x1f''#{pane_id}'$'\x1f''#{pane_current_path}'$'\x1f''#{pane_current_command}'$'\x1f''#{@crew_name}'$'\x1f''#{@crew_role}'$'\x1f''#{@crew_branch}' 2>/dev/null || true)
+PANES
+    if [ -z "$stamped" ]; then
+      echo "dispatch resume: $t_branch is still alive — $where_out" >&2
+      exit 1
+    fi
+  fi
   cd -- "$rec_wt" || exit 1
 }
 
 fresh=""
 do_print=""
+rearm_roles=""
 ignore_budget=""
 ignore_map=""
 agent_flag=""
@@ -637,6 +667,10 @@ while [ $# -gt 0 ]; do
     do_print=1
     shift
     ;;
+  --rearm-roles)
+    rearm_roles=1
+    shift
+    ;;
   --ignore-budget)
     ignore_budget=1
     shift
@@ -687,6 +721,11 @@ if [ "${#positional[@]}" -gt 0 ]; then
   fi
 fi
 extra="${positional[*]}"
+
+if [ -n "$rearm_roles" ] && [ -n "$fresh$do_print$ignore_map$agent_flag$model_flag$effort_flag$mcp_flag_val$extra" ]; then
+  usage
+  exit 1
+fi
 
 if [ -n "$target" ]; then
   _resolve_target_worktree "$target"
@@ -1064,7 +1103,86 @@ else
     fi
   fi
 fi
-DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck" || exit 1
+if [ -z "$rearm_roles" ]; then
+  DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck" || exit 1
+fi
+
+# _args_have <argv line> <token>... — true when every token appears in the line
+# as whole space-separated words, in the given order.
+_args_have() {
+  local line=" $1 " tok
+  shift
+  for tok in "$@"; do
+    [[ $line == *" $tok "* ]] || return 1
+    line=" ${line#*" $tok "}"
+  done
+}
+
+# Re-arm the role panes of a restored grid window. tmux-remux brings the panes
+# back with @crew_role stamped but no role-watch and no role stall-watch.
+# Identity needs no pane env:
+# the sender anchors on the pane's @crew_role and the window's stamps. The
+# watchers find the bus through git, so they rely on resume's cwd being the
+# worktree.
+_rearm_role_panes() {
+  local role_re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+  local bad p role exited cmd path r_agent delivery line snapshot="" have_ps="" watched stalled
+  local -a flags
+  [ -f "$rj" ] && [ ! -L "$rj" ] || return 0
+  if bad="$(_artifacts_dir_bad "$branch")"; then
+    echo "dispatch resume: not re-arming role panes — $bad is a symlink or not a directory" >&2
+    return 0
+  fi
+  while IFS=$'\x1f' read -r p role exited cmd path; do
+    [ -n "$p" ] || continue
+    { [ -z "$role" ] || [ "$role" = lead ] || [ "$exited" = 1 ]; } && continue
+    # A genuine grid's role panes sit in this worktree. Window ownership rests
+    # partly on the worker-writable agent_name header; the pane's own path does not.
+    [ "$path" = "$wt_path" ] || continue
+    r_agent=""
+    [[ $role =~ $role_re ]] && r_agent="$(jq -r --arg r "$role" '.[$r].agent // empty' "$rj" 2>/dev/null || true)"
+    case "$r_agent" in
+    claude | codex | cursor | pi) ;;
+    *)
+      echo "dispatch resume: role pane $p ($role) has no usable engine in roles.json — not re-armed" >&2
+      continue
+      ;;
+    esac
+    if ! crew engine-cmd "$cmd" 2>/dev/null; then
+      # A bare shell: let the lead's died-role path respawn it through --spawn-role.
+      tmux set-option -p -t "$p" @crew_exited 1 2>/dev/null || true
+      tmux set-option -p -t "$p" @crew_state exited 2>/dev/null || true
+      echo "dispatch resume: role pane $p ($role) runs no engine — marked exited for the lead to respawn" >&2
+      continue
+    fi
+    delivery=typed
+    [ "$r_agent" != cursor ] || delivery=pull
+    tmux set-option -p -t "$p" @crew_delivery "$delivery" 2>/dev/null || true
+    if [ -z "$have_ps" ]; then
+      # -ww: procps truncates args to $COLUMNS otherwise
+      if ! snapshot="$(ps -ww -A -o args= 2>/dev/null)"; then
+        echo "dispatch resume: ps failed — not re-arming role panes" >&2
+        return 0
+      fi
+      have_ps=1
+    fi
+    rearmed=$((rearmed + 1))
+    watched="" stalled=""
+    while IFS= read -r line; do
+      _args_have "$line" "--role-watch $role" "--pane $p" "--branch $branch" && watched=1
+      _args_have "$line" "stall-watch role:$branch:$role" "--pane $p" && stalled=1
+    done <<<"$snapshot"
+    # Mirrors the launch rule of adapters/core/dispatch.sh watch_role / watch_role_prompts.
+    [ -n "$watched" ] || (CREW_ID="$crew_id" nohup dispatch --role-watch "$role" --pane "$p" --engine "$r_agent" --branch "$branch" >/dev/null 2>&1 &)
+    [ -z "$stalled" ] || continue
+    [ "$r_agent" = claude ] || [ -z "$ignore_budget" ] || continue
+    flags=()
+    [ -z "$ignore_budget" ] || flags+=(--no-budget)
+    (CREW_ID="$crew_id" nohup crew stall-watch "role:$branch:$role" --pane "$p" --engine "$r_agent" "${flags[@]}" >/dev/null 2>&1 &)
+  done <<PANES
+$(tmux list-panes -t "$win" -F '#{pane_id}'$'\x1f''#{@crew_role}'$'\x1f''#{@crew_exited}'$'\x1f''#{pane_current_command}'$'\x1f''#{pane_current_path}' 2>/dev/null || true)
+PANES
+}
 
 # Placement. dispatch always opens a fresh window and refuses when anything
 # already sits at the worktree — including a pane with an empty @crew_name,
@@ -1074,6 +1192,9 @@ DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck"
 #
 # Keyed on pane_current_path, not the window name: lazytmux renames worker
 # windows, so the name dispatch assigned is long gone by now.
+rj="$crew_dir/artifacts/$branch/roles.json"
+# Role panes _rearm_role_panes handled (watched or already watched).
+rearmed=0
 win=""
 pane=""
 pane_cmd=""
@@ -1103,6 +1224,25 @@ done <<PANES
 $(tmux list-panes -a -F '#{window_id}'$'\x1f''#{pane_id}'$'\x1f''#{pane_current_path}'$'\x1f''#{pane_current_command}'$'\x1f''#{@crew_name}'$'\x1f''#{@crew_role}'$'\x1f''#{@crew_branch}' 2>/dev/null || true)
 PANES
 
+if [ -n "$rearm_roles" ]; then
+  if [ -z "$reused" ] || [ -z "$win_own" ]; then
+    echo "dispatch resume: no window of this worker to re-arm at $wt_path — nothing to do" >&2
+    exit 1
+  fi
+  # Same stamps as the full path: tmux-remux does not restore @crew_branch, and
+  # --role-watch refuses a window whose stamp mismatches.
+  tmux set-window-option -t "$win" @crew_dir "$crew_dir"
+  tmux set-window-option -t "$win" @crew_branch "$branch"
+  tmux set-window-option -t "$win" @crew_id "$crew_id"
+  _rearm_role_panes
+  if [ "$rearmed" -gt 0 ]; then
+    echo "dispatch resume: re-armed $rearmed role pane(s) in window $win; lead not relaunched"
+  else
+    echo "dispatch resume: no role panes to re-arm in window $win"
+  fi
+  exit 0
+fi
+
 # Cheap partial guard (#111): refuse a pane that is still running an engine.
 # `crew engine-cmd` shares the nix-wrapper-aware matcher local-models.sh's
 # _is_engine_cmd carries rather than duplicating it here. Deliberately a
@@ -1111,6 +1251,7 @@ PANES
 # for why its engine count is only advisory.
 if [ -n "$reused" ] && crew engine-cmd "$pane_cmd" 2>/dev/null; then
   echo "dispatch resume: $wt_path's pane ($pane) is running $pane_cmd — a worker session is already alive there. Attach to it instead of resuming (tmux select-window -t $win), or wait for it to exit/finish first." >&2
+  [ -z "$win_own" ] || echo "dispatch resume: if only the role panes of this restored window need their watchers, run: dispatch resume --rearm-roles" >&2
   exit 1
 fi
 
@@ -1143,7 +1284,6 @@ legacy_cont="--continue"
 # it after the artifacts-dir check, for the role's engine only.
 has_roles=""
 [ -z "$grid_roles" ] || has_roles=1
-rj="$crew_dir/artifacts/$branch/roles.json"
 { [ -e "$rj" ] || [ -L "$rj" ]; } && has_roles=1
 
 rec_state=none
@@ -1692,81 +1832,6 @@ fi
 # A remote-mode worker's roster diagram belongs to its dispatcher's host.
 [ -n "${DISPATCH_TMUX_SESSION:-}" ] || _ensure_roster_render "$crew_id" "$rr_pane"
 
-# _args_have <argv line> <token>... — true when every token appears in the line
-# as whole space-separated words, in the given order.
-_args_have() {
-  local line=" $1 " tok
-  shift
-  for tok in "$@"; do
-    [[ $line == *" $tok "* ]] || return 1
-    line=" ${line#*" $tok "}"
-  done
-}
-
-# Re-arm the role panes of a restored grid window. tmux-remux brings the panes
-# back with @crew_role stamped but no role-watch and no role stall-watch.
-# Identity needs no pane env:
-# the sender anchors on the pane's @crew_role and the window's stamps. The
-# watchers find the bus through git, so they rely on resume's cwd being the
-# worktree.
-_rearm_role_panes() {
-  local role_re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
-  local bad p role exited cmd path r_agent delivery line snapshot="" have_ps="" watched stalled
-  local -a flags
-  [ -f "$rj" ] && [ ! -L "$rj" ] || return 0
-  if bad="$(_artifacts_dir_bad "$branch")"; then
-    echo "dispatch resume: not re-arming role panes — $bad is a symlink or not a directory" >&2
-    return 0
-  fi
-  while IFS=$'\x1f' read -r p role exited cmd path; do
-    [ -n "$p" ] || continue
-    { [ -z "$role" ] || [ "$role" = lead ] || [ "$exited" = 1 ]; } && continue
-    # A genuine grid's role panes sit in this worktree. Window ownership rests
-    # partly on the worker-writable agent_name header; the pane's own path does not.
-    [ "$path" = "$wt_path" ] || continue
-    r_agent=""
-    [[ $role =~ $role_re ]] && r_agent="$(jq -r --arg r "$role" '.[$r].agent // empty' "$rj" 2>/dev/null || true)"
-    case "$r_agent" in
-    claude | codex | cursor | pi) ;;
-    *)
-      echo "dispatch resume: role pane $p ($role) has no usable engine in roles.json — not re-armed" >&2
-      continue
-      ;;
-    esac
-    if ! crew engine-cmd "$cmd" 2>/dev/null; then
-      # A bare shell: let the lead's died-role path respawn it through --spawn-role.
-      tmux set-option -p -t "$p" @crew_exited 1 2>/dev/null || true
-      tmux set-option -p -t "$p" @crew_state exited 2>/dev/null || true
-      echo "dispatch resume: role pane $p ($role) runs no engine — marked exited for the lead to respawn" >&2
-      continue
-    fi
-    delivery=typed
-    [ "$r_agent" != cursor ] || delivery=pull
-    tmux set-option -p -t "$p" @crew_delivery "$delivery" 2>/dev/null || true
-    if [ -z "$have_ps" ]; then
-      # -ww: procps truncates args to $COLUMNS otherwise
-      if ! snapshot="$(ps -ww -A -o args= 2>/dev/null)"; then
-        echo "dispatch resume: ps failed — not re-arming role panes" >&2
-        return 0
-      fi
-      have_ps=1
-    fi
-    watched="" stalled=""
-    while IFS= read -r line; do
-      _args_have "$line" "--role-watch $role" "--pane $p" "--branch $branch" && watched=1
-      _args_have "$line" "stall-watch role:$branch:$role" "--pane $p" && stalled=1
-    done <<<"$snapshot"
-    # Mirrors the launch rule of adapters/core/dispatch.sh watch_role / watch_role_prompts.
-    [ -n "$watched" ] || (CREW_ID="$crew_id" nohup dispatch --role-watch "$role" --pane "$p" --engine "$r_agent" --branch "$branch" >/dev/null 2>&1 &)
-    [ -z "$stalled" ] || continue
-    [ "$r_agent" = claude ] || [ -z "$ignore_budget" ] || continue
-    flags=()
-    [ -z "$ignore_budget" ] || flags+=(--no-budget)
-    (CREW_ID="$crew_id" nohup crew stall-watch "role:$branch:$role" --pane "$p" --engine "$r_agent" "${flags[@]}" >/dev/null 2>&1 &)
-  done <<PANES
-$(tmux list-panes -t "$win" -F '#{pane_id}'$'\x1f''#{@crew_role}'$'\x1f''#{@crew_exited}'$'\x1f''#{pane_current_command}'$'\x1f''#{pane_current_path}' 2>/dev/null || true)
-PANES
-}
 # Resume re-stamps @crew_branch on whatever window it lands in, so only a window
 # that was already this worker's (stamped for the branch, or restored with its
 # codename) may have its role panes armed.

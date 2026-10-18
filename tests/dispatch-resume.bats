@@ -3128,3 +3128,126 @@ $STUB_PANES_A"
   sleep 0.3
   run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
 }
+
+# setup_grid with the lead's engine already live, as tmux-og relaunches it.
+_grid_live_lead() {
+  setup_grid
+  STUB_PANES_A="${STUB_PANES_A/\%8$'\x1f'$WT$'\x1f'fish/%8$'\x1f'$WT$'\x1f'claude}"
+  STUB_PANES_W="${STUB_PANES_W/\%8$'\x1f'lead$'\x1f'$'\x1f'fish/%8$'\x1f'lead$'\x1f'$'\x1f'claude}"
+}
+
+@test "resume --rearm-roles re-arms role panes without relaunching the live lead (#730)" {
+  _grid_live_lead
+  cd "$WT"
+  run run_resume --rearm-roles
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"re-armed 2 role pane(s) in window @4"* ]]
+  wait_for_log '^--role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing$'
+  wait_for_log '^--role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing$'
+  wait_for_log '^CREW_ID=c1$'
+  [ "$(grep -c -e '--role-watch reviewer --pane %9 ' "$STUB_LOG")" -eq 1 ]
+  [ "$(grep -c -e '--role-watch plan-critic --pane %10 ' "$STUB_LOG")" -eq 1 ]
+  grep -qF 'set-window-option -t @4 @crew_branch feat/7-a-thing' "$STUB_LOG"
+  run ! grep -q 'send-keys -t %8' "$STUB_LOG"
+  run ! grep -q 'kind":"resume"' "$TEST_REPO/.git/crew/events.jsonl"
+}
+
+@test "resume --rearm-roles starts no duplicate watcher (#730)" {
+  _grid_live_lead
+  export STUB_PS="dispatch --role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing
+crew stall-watch role:feat/7-a-thing:reviewer --pane %9 --engine claude
+dispatch --role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing
+crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
+  cd "$WT"
+  run run_resume --rearm-roles
+  [ "$status" -eq 0 ]
+  sleep 0.3
+  run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
+}
+
+@test "resume without --rearm-roles still refuses a live lead and names the flag (#730)" {
+  _grid_live_lead
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"already alive there"* ]]
+  [[ "$output" == *"--rearm-roles"* ]]
+  run ! grep -q -e '--role-watch' "$STUB_LOG"
+}
+
+@test "resume --rearm-roles is exclusive with the launch flags and an extra prompt (#730)" {
+  _grid_live_lead
+  cd "$WT"
+  for args in "--fresh" "--print" "--agent pi" "--model m" "--effort high" "--mcp p" "--ignore-map" "continue"; do
+    # shellcheck disable=SC2086
+    run run_resume --rearm-roles $args
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"usage:"* ]]
+  done
+  run ! grep -q -e '--role-watch' "$STUB_LOG"
+}
+
+@test "resume --rearm-roles refuses when no window of this worker is there (#730)" {
+  _grid_live_lead
+  local u=$'\x1f'
+  STUB_PANES_A="@4${u}%8${u}$WT${u}claude${u}other${u}${u}feat/other
+@4${u}%9${u}$WT${u}claude${u}other${u}reviewer${u}feat/other"
+  cd "$WT"
+  run run_resume --rearm-roles
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no window of this worker to re-arm"* ]]
+  run ! grep -q -e '--role-watch' "$STUB_LOG"
+}
+
+# A restored own window: every pane carries the branch stamp, and the bus knows
+# the worker, so the target form runs from the main checkout.
+_target_restored_fixture() {
+  setup_grid
+  seed_dispatch_row feat/7-a-thing iris "$(uname -n)"
+  local u=$'\x1f'
+  STUB_PANES_A="@4${u}%8${u}$WT${u}fish${u}iris${u}lead${u}feat/7-a-thing
+@4${u}%9${u}$WT${u}claude${u}iris${u}reviewer${u}feat/7-a-thing
+@4${u}%10${u}$WT${u}pi${u}iris${u}plan-critic${u}feat/7-a-thing"
+  export STUB_WHERE_LIVE=1
+  cd "$TEST_REPO"
+}
+
+@test "target: a restored own window with no lead engine proceeds (#730)" {
+  _target_restored_fixture
+  run run_resume '#7' --print
+  [ "$status" -eq 0 ]
+  sleep 0.3
+  run ! grep -q -e '--role-watch' "$STUB_LOG"
+}
+
+@test "target: a restored own window whose lead runs an engine is still alive (#730)" {
+  _target_restored_fixture
+  STUB_PANES_A="${STUB_PANES_A/\%8$'\x1f'$WT$'\x1f'fish/%8$'\x1f'$WT$'\x1f'claude}"
+  run run_resume '#7' --print
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is still alive"* ]]
+}
+
+@test "target: --rearm-roles proceeds past a live lead engine (#730)" {
+  _target_restored_fixture
+  STUB_PANES_A="${STUB_PANES_A/\%8$'\x1f'$WT$'\x1f'fish/%8$'\x1f'$WT$'\x1f'claude}"
+  run run_resume '#7' --rearm-roles
+  [ "$status" -eq 0 ]
+  wait_for_log '^--role-watch reviewer --pane %9 '
+}
+
+@test "target: a window stamped with the branch at another path is still alive (#730)" {
+  _target_restored_fixture
+  STUB_PANES_A+=$'\n'"@5"$'\x1f'"%20"$'\x1f'"/elsewhere"$'\x1f'"fish"$'\x1f'"iris"$'\x1f'"lead"$'\x1f'"feat/7-a-thing"
+  run run_resume '#7' --print
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is still alive"* ]]
+}
+
+@test "target: crew where live but no pane carries the branch stamp is still alive (#730)" {
+  _target_restored_fixture
+  STUB_PANES_A=""
+  run run_resume '#7' --print
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"is still alive"* ]]
+}
