@@ -6,12 +6,15 @@ import (
 	"io"
 	"strings"
 
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
 // PaneCmd is one engine pane of an occupant window.
-type PaneCmd struct{ Pane, Command string }
+type PaneCmd struct {
+	Pane    string `json:"pane"`
+	Command string `json:"command"`
+}
 
 // Occupant is a worker window rooted at a worktree path. Pane and Command name
 // the window's first engine pane; Panes lists all of them.
@@ -67,32 +70,35 @@ func Occupants(ctx context.Context, p Probes, wtp, tmuxPane string) []Occupant {
 	return out
 }
 
-// OccupantsJSON is the array `crew occupants` prints:
+// occupantJSON is one element of the array `crew occupants` prints.
+type occupantJSON struct {
+	Window  string    `json:"window"`
+	Name    string    `json:"name"`
+	Pane    *string   `json:"pane"`
+	Command string    `json:"command"`
+	Engine  bool      `json:"engine"`
+	Panes   []PaneCmd `json:"panes"`
+}
+
+// occupantsJSON is the array `crew occupants` prints:
 // [{window,name,pane|null,command,engine,panes:[{pane,command}]}].
-func OccupantsJSON(occ []Occupant) jsonv.Value {
-	rows := make([]jsonv.Value, 0, len(occ))
+func occupantsJSON(occ []Occupant) []occupantJSON {
+	rows := make([]occupantJSON, 0, len(occ))
 	for _, o := range occ {
-		panes := make([]jsonv.Value, 0, len(o.Panes))
-		for _, pc := range o.Panes {
-			panes = append(panes, jsonv.Object(
-				jsonv.Member{Key: "pane", Val: jsonv.Str(pc.Pane)},
-				jsonv.Member{Key: "command", Val: jsonv.Str(pc.Command)},
-			))
-		}
-		pane := jsonv.Null()
+		var pane *string
 		if o.Pane != "" {
-			pane = jsonv.Str(o.Pane)
+			pane = &o.Pane
 		}
-		rows = append(rows, jsonv.Object(
-			jsonv.Member{Key: "window", Val: jsonv.Str(o.Window)},
-			jsonv.Member{Key: "name", Val: jsonv.Str(o.Name)},
-			jsonv.Member{Key: "pane", Val: pane},
-			jsonv.Member{Key: "command", Val: jsonv.Str(o.Command)},
-			jsonv.Member{Key: "engine", Val: jsonv.Bool(o.Engine)},
-			jsonv.Member{Key: "panes", Val: jsonv.Array(panes...)},
-		))
+		rows = append(rows, occupantJSON{
+			Window:  o.Window,
+			Name:    o.Name,
+			Pane:    pane,
+			Command: o.Command,
+			Engine:  o.Engine,
+			Panes:   append([]PaneCmd{}, o.Panes...),
+		})
 	}
-	return jsonv.Array(rows...)
+	return rows
 }
 
 // RunOccupants is `crew occupants <worktree-path>`. It needs no repo.
@@ -101,7 +107,6 @@ func RunOccupants(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		_, _ = fmt.Fprintln(stderr, "crew: occupants <worktree-path>")
 		return 1
 	}
-	line := jsonv.Append(nil, OccupantsJSON(Occupants(ctx, p, args[0], tmuxPane)), jsonv.Options{})
-	_, _ = fmt.Fprintf(stdout, "%s\n", line)
+	_ = jsonval.Encode(stdout, occupantsJSON(Occupants(ctx, p, args[0], tmuxPane)), false)
 	return 0
 }

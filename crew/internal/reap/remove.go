@@ -12,7 +12,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
@@ -236,25 +235,33 @@ func (r *run) wtIndexOutput(ctx context.Context, c *candidate, idx string, stder
 // reapRow is the `kind:"reap"` row: the PR source `_reap_latest` falls back to
 // and what the ratings records read.
 func (r *run) reapRow(c *candidate) string {
-	row := jsonv.Object(
-		jsonv.Member{Key: "ts", Val: jsonv.Num(float64(r.p.Now().UnixMilli()))},
-		jsonv.Member{Key: "kind", Val: jsonv.Str("reap")},
-		jsonv.Member{Key: "branch", Val: jsonv.Str(c.branch)},
-		jsonv.Member{Key: "pr", Val: jsonv.Str(c.pr)},
-		jsonv.Member{Key: "pr_state", Val: jsonv.Str(c.prState)},
-		jsonv.Member{Key: "worktree", Val: jsonv.Str(c.wtpath)},
-	)
+	row := reapRowJSON{
+		TS:       r.p.Now().UnixMilli(),
+		Kind:     "reap",
+		Branch:   c.branch,
+		PR:       c.pr,
+		PRState:  c.prState,
+		Worktree: c.wtpath,
+	}
 	if c.mode == "issue" {
-		issues := make([]jsonv.Value, len(c.issues))
-		for i, n := range c.issues {
-			issues[i] = jsonv.Str(n)
-		}
-		row.Set("issues", jsonv.Array(issues...))
+		row.Issues = append([]string{}, c.issues...)
 	}
 	if r.discard != "" {
-		row.Set("discarded", jsonv.Str(r.discardPatch))
+		patch := r.discardPatch
+		row.Discarded = &patch
 	}
-	return string(jsonv.Append(nil, row, jsonv.Options{}))
+	return rowLine(row)
+}
+
+type reapRowJSON struct {
+	TS        int64    `json:"ts"`
+	Kind      string   `json:"kind"`
+	Branch    string   `json:"branch"`
+	PR        string   `json:"pr"`
+	PRState   string   `json:"pr_state"`
+	Worktree  string   `json:"worktree"`
+	Issues    []string `json:"issues,omitzero"`
+	Discarded *string  `json:"discarded,omitempty"`
 }
 
 // postReaped is `_reap_post_reaped`: the terminal `reaped` status row for the
@@ -268,19 +275,29 @@ func (r *run) postReaped(c *candidate) {
 	if c.mode == "pr" {
 		detail = "PR #" + c.pr[strings.LastIndex(c.pr, "/")+1:] + " " + c.prState
 	}
-	row := jsonv.Object(
-		jsonv.Member{Key: "ts", Val: jsonv.Num(float64(r.p.Now().UnixMilli()))},
-		jsonv.Member{Key: "crew_id", Val: jsonv.Str(c.scrow)},
-		jsonv.Member{Key: "from", Val: jsonv.Str(c.session)},
-		jsonv.Member{Key: "to", Val: jsonv.Str("dispatcher:" + c.scrow)},
-		jsonv.Member{Key: "kind", Val: jsonv.Str("status")},
-		jsonv.Member{Key: "body", Val: jsonv.Object(
-			jsonv.Member{Key: "state", Val: jsonv.Str("reaped")},
-			jsonv.Member{Key: "detail", Val: jsonv.Str(detail)},
-			jsonv.Member{Key: "source", Val: jsonv.Str("reap")},
-		)},
-	)
-	_ = r.p.Append(r.paths.Log, string(jsonv.Append(nil, row, jsonv.Options{})))
+	_ = r.p.Append(r.paths.Log, rowLine(reapedRow{
+		TS:     r.p.Now().UnixMilli(),
+		CrewID: c.scrow,
+		From:   c.session,
+		To:     "dispatcher:" + c.scrow,
+		Kind:   "status",
+		Body:   reapedBody{State: "reaped", Detail: detail, Source: "reap"},
+	}))
+}
+
+type reapedRow struct {
+	TS     int64      `json:"ts"`
+	CrewID string     `json:"crew_id"`
+	From   string     `json:"from"`
+	To     string     `json:"to"`
+	Kind   string     `json:"kind"`
+	Body   reapedBody `json:"body"`
+}
+
+type reapedBody struct {
+	State  string `json:"state"`
+	Detail string `json:"detail"`
+	Source string `json:"source"`
 }
 
 // deleteBranch deletes a MERGED PR's local branch: a squash-merged branch is

@@ -6,8 +6,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // occTmux answers the three reads `_occupants` makes and records every argv.
@@ -88,20 +86,14 @@ func equalOcc(a, b []Occupant) bool {
 }
 
 func TestOccupantsJSON(t *testing.T) {
-	got := OccupantsJSON([]Occupant{
+	got := rowLine(occupantsJSON([]Occupant{
 		{Window: "@1", Name: "w", Pane: "%2", Command: "claude", Engine: true, Panes: []PaneCmd{{"%2", "claude"}}},
 		{Window: "@6", Name: "s"},
-	})
-	want, err := jsonv.ParseOne(`[
+	}))
+	sameJSON(t, got, `[
 	  {"window":"@1","name":"w","pane":"%2","command":"claude","engine":true,"panes":[{"pane":"%2","command":"claude"}]},
 	  {"window":"@6","name":"s","pane":null,"command":"","engine":false,"panes":[]}]`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if g, w := string(jsonv.Append(nil, got, jsonv.Options{})), string(jsonv.Append(nil, want, jsonv.Options{})); g != w {
-		t.Fatalf("json:\n got %s\nwant %s", g, w)
-	}
-	if empty := string(jsonv.Append(nil, OccupantsJSON(nil), jsonv.Options{})); empty != "[]" {
+	if empty := rowLine(occupantsJSON(nil)); empty != "[]" {
 		t.Fatalf("empty = %s", empty)
 	}
 }
@@ -124,14 +116,10 @@ func TestRunOccupants(t *testing.T) {
 		t.Fatalf("rc = %d", rc)
 	}
 	want := `[{"window":"@1","name":"w","pane":"%1","command":"claude","engine":true,"panes":[{"pane":"%1","command":"claude"}]}]` + "\n"
-	got, err := jsonv.ParseOne(strings.TrimSuffix(out.String(), "\n"))
-	if err != nil || !strings.HasSuffix(out.String(), "\n") {
-		t.Fatalf("stdout %q (%v)", out.String(), err)
-	}
-	wantV, _ := jsonv.ParseOne(strings.TrimSuffix(want, "\n"))
-	if string(jsonv.Append(nil, got, jsonv.Options{})) != string(jsonv.Append(nil, wantV, jsonv.Options{})) {
+	if !strings.HasSuffix(out.String(), "\n") {
 		t.Fatalf("stdout %q", out.String())
 	}
+	sameJSON(t, strings.TrimSuffix(out.String(), "\n"), strings.TrimSuffix(want, "\n"))
 	if strings.Count(out.String(), "\n") != 1 {
 		t.Fatalf("stdout not one compact line: %q", out.String())
 	}

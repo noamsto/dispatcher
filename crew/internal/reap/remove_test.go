@@ -13,8 +13,6 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/identity"
-	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
@@ -47,18 +45,7 @@ func (f *fx) addWorktree(branch string) string {
 // wantJSON asserts got and want are equal JSON values.
 func wantJSON(t *testing.T, got, want string) {
 	t.Helper()
-	g, err := jsonv.ParseOne(got)
-	if err != nil {
-		t.Fatalf("row %q: %v", got, err)
-	}
-	w, err := jsonv.ParseOne(want)
-	if err != nil {
-		t.Fatalf("want %q: %v", want, err)
-	}
-	eq, err := jqrun.Run(".[0] == .[1]", []jsonv.Value{g, w}, 0, nil)
-	if err != nil || eq.Kind() != jsonv.KindTrue {
-		t.Fatalf("row:\n got %s\nwant %s", got, want)
-	}
+	sameJSON(t, got, want)
 }
 
 func (f *fx) rows(kind string) []string {

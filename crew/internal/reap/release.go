@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	_ "embed"
+	"encoding/json"
 	"math"
 	"os"
 	"os/exec"
@@ -16,7 +17,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/frame"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
@@ -89,19 +89,25 @@ func ReleaseWindows(ctx context.Context, d Deps, branch, session, state string, 
 	if dry {
 		return 0, nil
 	}
-	wins := make([]jsonv.Value, len(windows))
-	for i, w := range windows {
-		wins[i] = jsonv.Str(w)
+	row := releaseRow{
+		TS:      d.P.Now().UnixMilli(),
+		Kind:    "release",
+		Branch:  branch,
+		Session: session,
+		State:   state,
+		Windows: append([]string{}, windows...),
 	}
-	row := jsonv.Object(
-		jsonv.Member{Key: "ts", Val: jsonv.Num(float64(d.P.Now().UnixMilli()))},
-		jsonv.Member{Key: "kind", Val: jsonv.Str("release")},
-		jsonv.Member{Key: "branch", Val: jsonv.Str(branch)},
-		jsonv.Member{Key: "session", Val: jsonv.Str(session)},
-		jsonv.Member{Key: "state", Val: jsonv.Str(state)},
-		jsonv.Member{Key: "windows", Val: jsonv.Array(wins...)},
-	)
-	return 0, d.P.Append(d.Log, string(jsonv.Append(nil, row, jsonv.Options{})))
+	return 0, d.P.Append(d.Log, rowLine(row))
+}
+
+// releaseRow is the bus row a release appends.
+type releaseRow struct {
+	TS      int64    `json:"ts"`
+	Kind    string   `json:"kind"`
+	Branch  string   `json:"branch"`
+	Session string   `json:"session"`
+	State   string   `json:"state"`
+	Windows []string `json:"windows"`
 }
 
 // humanPresent is `_human_present`: why, and true, when a person is evidently
@@ -162,7 +168,7 @@ func newerUserTurn(dir string, tsMS int64) bool {
 	if latest == "" {
 		return false
 	}
-	prog, err := jqrun.Compile(humanProgram, 0, map[string]jsonv.Value{"ts": jsonv.Num(float64(tsMS))})
+	prog, err := jqrun.CompileAny(humanProgram, 0, map[string]any{"ts": json.Number(strconv.FormatInt(tsMS, 10))})
 	if err != nil {
 		return false
 	}
@@ -174,8 +180,8 @@ func newerUserTurn(dir string, tsMS int64) bool {
 	r := bufio.NewReader(f)
 	for {
 		line, readErr := r.ReadString('\n')
-		if row, err := jsonv.ParseOne(line); err == nil {
-			if _, err := prog.Run(row); err == nil {
+		if row, err := parseOne(line); err == nil {
+			if _, err := prog.RunAny(row); err == nil {
 				return true
 			}
 		}

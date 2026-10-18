@@ -8,7 +8,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 )
 
@@ -39,7 +38,7 @@ func (r *run) forget(branch string) {
 	if err != nil {
 		return
 	}
-	pairs, err := jqrun.Run(forgetProg, raws, r.nowSec(), map[string]jsonv.Value{"b": jsonv.Str(branch)})
+	pairs, err := jqrun.RunAny(forgetProg, raws, r.nowSec(), map[string]any{"b": branch})
 	if err != nil {
 		return
 	}
