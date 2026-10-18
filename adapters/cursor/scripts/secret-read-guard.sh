@@ -1611,7 +1611,7 @@ shell)
         exit 1
       }
       if [[ $verdict == 1 ]]; then
-        deny "This interpreter code reads the environment (os.environ, os.getenv, process.env, Deno.env, Bun.env, ENV[…], %ENV, getenv), which prints live values into this transcript — the same leak as env/printenv, through an interpreter. To test presence, name the one variable and test it without printing its value: \"NAME\" in os.environ, os.environ.get(\"NAME\") is not None, len(os.environ)."
+        deny 'This interpreter code reads the environment (os.environ, os.getenv, process.env, Deno.env, Bun.env, ENV[…], %ENV, getenv), which prints live values into this transcript — the same leak as env/printenv, through an interpreter. To test presence, name the one variable and test it without printing its value: "NAME" in os.environ, os.environ.get("NAME") is not None, len(os.environ).'
       fi
     done
   fi
