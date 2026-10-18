@@ -107,6 +107,25 @@ func Union(common string, stderr io.Writer) ([]string, error) {
 	return sortUnique(all), nil
 }
 
+// aliasValues lists the insteadOf and pushInsteadOf values of every scope
+// common and its linkedAdmins read: a human's global alias rewrites a local
+// remote url too.
+func aliasValues(common string, stderr io.Writer) ([]string, error) {
+	var vals []string
+	for _, d := range append([]string{common}, linkedAdmins(common)...) {
+		out, err := git("", stderr, "--git-dir="+d, "config", "--list", "-z")
+		if err != nil {
+			return nil, err
+		}
+		for _, rec := range splitNUL(out) {
+			if k, v, ok := strings.Cut(rec, "\n"); ok && isAliasKey(k) {
+				vals = append(vals, v)
+			}
+		}
+	}
+	return vals, nil
+}
+
 // linkedAdmins lists common's linked admin dirs: the matches of the
 // `common/worktrees/*/HEAD` glob that are regular files, so a dot name is
 // skipped and an unreadable worktrees dir has none.

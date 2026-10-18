@@ -76,11 +76,13 @@ func TestInitFresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "git-config baseline: recorded " + r.baseline() + ": branches/.hidden, remotes/foo, core.pager, remote.origin.url\n"
+	want := "git-config baseline: recorded " + r.baseline() + ": branches/.hidden, remotes/foo, core.pager, remote.origin.url\n" +
+		"  remote.origin.url=https://***@example.com/r.git [sha256:" + sha8("https://u:tok@example.com/r.git") + "]\n" +
+		noteHint(r.baseline())
 	if got != want {
 		t.Fatalf("note %q, want %q", got, want)
 	}
-	if strings.Contains(got, "SECRET") || strings.Contains(got, "tok") {
+	if strings.Contains(got, "SECRET") || strings.Contains(got, "tok") || strings.Contains(got, "u:") {
 		t.Fatal("note shows a value")
 	}
 	recs, err := ReadBaseline(r.baseline())
@@ -144,13 +146,98 @@ func TestInitMigrationAddsRedirectPairsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "git-config baseline: recorded redirect keys in " + r.baseline() + ": remote.origin.url\n"; got != want {
+	want := "git-config baseline: recorded redirect keys in " + r.baseline() + ": remote.origin.url\n" +
+		"  remote.origin.url=https://example.com/r.git\n" +
+		noteHint(r.baseline())
+	if got != want {
 		t.Fatalf("note %q, want %q", got, want)
 	}
 	recs, _ := ReadBaseline(r.baseline())
-	want := []string{LegacyMark, RedirectMark, "core.pager\nless", "remote.origin.url\nhttps://example.com/r.git"}
-	if !slices.Equal(recs, want) {
-		t.Fatalf("baseline %q, want %q", recs, want)
+	wantRecs := []string{LegacyMark, RedirectMark, "core.pager\nless", "remote.origin.url\nhttps://example.com/r.git"}
+	if !slices.Equal(recs, wantRecs) {
+		t.Fatalf("baseline %q, want %q", recs, wantRecs)
+	}
+}
+
+// withheldNote is the fixed text that stands in for a value the mask grammar
+// cannot cover; the note reaches the dispatcher, not the human's terminal.
+const withheldNote = ": value withheld (outside the mask grammar) — check it in your own terminal, from each checkout or worktree that may set it: "
+
+func TestInitMigrationNoteMasksOrWithholdsValues(t *testing.T) {
+	r := newRepo(t)
+	pairs := [][2]string{
+		{"remote.origin.url", "https://u:tok@example.com/o/r.git"},
+		{"remote.origin.pushurl", "https://u:tok@[::1]/r.git"},
+		{"http.proxy", "user:pw@proxy.example:8080"},
+		{"http.https://u:tok@example.com/.proxy", "http://p:pw@[::1]:3128"},
+	}
+	r.config(t, "core.pager", "less")
+	r.config(t, "core.editor", "vim -SECRET")
+	var recs []string
+	for _, p := range pairs {
+		r.config(t, p[0], p[1])
+		recs = append(recs, p[0]+"\n"+p[1])
+	}
+	slices.Sort(recs)
+	writeFile(t, r.baseline(), "core.pager\nless\x00")
+	got, err := capture(func(w io.Writer) error { return Init(r.common, w) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := map[string]string{
+		"remote.origin.url":                     "  " + ShowKey("remote.origin.url") + "=https://***@example.com/o/r.git [sha256:" + sha8("https://u:tok@example.com/o/r.git") + "]\n",
+		"remote.origin.pushurl":                 "  " + ShowKey("remote.origin.pushurl") + withheldNote + "git config --show-origin --get-all remote.origin.pushurl\n",
+		"http.proxy":                            "  " + ShowKey("http.proxy") + "=***@proxy.example:8080 [sha256:" + sha8("user:pw@proxy.example:8080") + "]\n",
+		"http.https://u:tok@example.com/.proxy": "  " + ShowKey("http.https://u:tok@example.com/.proxy") + withheldNote + "git config --show-origin --get-regexp " + Quote("^http\\.") + "\n",
+	}
+	var keys []string
+	var lines strings.Builder
+	for _, rec := range recs {
+		k, _, _ := strings.Cut(rec, "\n")
+		keys = append(keys, ShowKey(k))
+		lines.WriteString(line[k])
+	}
+	want := "git-config baseline: recorded redirect keys in " + r.baseline() + ": " + strings.Join(keys, ", ") + "\n" +
+		lines.String() + noteHint(r.baseline())
+	if got != want {
+		t.Fatalf("note:\n%q\nwant:\n%q", got, want)
+	}
+	for _, leak := range []string{"tok", "pw", "u:", "SECRET"} {
+		if strings.Contains(got, leak) {
+			t.Fatalf("note shows %q: %q", leak, got)
+		}
+	}
+}
+
+func TestInitMigrationWithholdsAliasRewrittenRemote(t *testing.T) {
+	const url = "ssh://git@example.com/o/r.git"
+	for _, tc := range []struct {
+		name  string
+		alias bool
+		line  string
+	}{
+		{"global alias rewrites the remote", true, "  remote.upstream.url" + withheldNote + "git config --show-origin --get-all remote.upstream.url\n"},
+		{"no alias masks it", false, "  remote.upstream.url=ssh://***@example.com/o/r.git [sha256:" + sha8(url) + "]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRepo(t)
+			if tc.alias {
+				global := filepath.Join(r.root, "gitconfig")
+				writeFile(t, global, "[url \"https://mirror.example/\"]\n\tinsteadOf = ssh://git@\n")
+				t.Setenv("GIT_CONFIG_GLOBAL", global)
+			}
+			r.config(t, "remote.upstream.url", url)
+			writeFile(t, r.baseline(), "core.pager\nless\x00")
+			got, err := capture(func(w io.Writer) error { return Init(r.common, w) })
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "git-config baseline: recorded redirect keys in " + r.baseline() + ": remote.upstream.url\n" +
+				tc.line + noteHint(r.baseline())
+			if got != want {
+				t.Fatalf("note:\n%q\nwant:\n%q", got, want)
+			}
+		})
 	}
 }
 

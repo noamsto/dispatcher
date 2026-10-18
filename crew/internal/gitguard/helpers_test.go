@@ -2,6 +2,8 @@ package gitguard
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"os"
 	"os/exec"
@@ -126,4 +128,14 @@ func shimGit(t *testing.T, fail string) {
 
 func clearHint(file string) string {
 	return "  to clear it: list drift with `crew git-baseline`, remove any key you did not set (git config --unset-all), then accept the rest from your own terminal: `crew git-baseline --accept` (deleting " + Quote(file) + " instead re-records EVERYTHING present at the next dispatch)\n"
+}
+
+// sha8 is the 8-hex fingerprint the baseline note prints after a masked value.
+func sha8(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])[:8]
+}
+
+func noteHint(file string) string {
+	return "  human: check each value above is yours — a planted one stays trusted: restore it in its config file, delete " + Quote(file) + ", then run `crew git-baseline --accept` in your own terminal\n"
 }
