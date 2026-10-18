@@ -2490,10 +2490,10 @@ func sameRow(t *testing.T, got, want string) bool {
 	return strings.HasSuffix(got, "\n") && strings.Count(got, "\n") == 1 && reflect.DeepEqual(decode(got), decode(want))
 }
 
-// A corrupt bus ts makes gojq compute NaN ts/age_s; the roster must print
-// them as null rather than fail to encode.
+// A bus ts of 1e400 makes gojq compute an infinite age_s; the roster must clamp
+// it to a finite number rather than fail to encode.
 func TestRosterClampsNonFiniteTimes(t *testing.T) {
-	log := `{"ts":NaN,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working"}}` + "\n"
+	log := `{"ts":1e400,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working"}}` + "\n"
 	repo, _ := repoWithLog(t, &log, 0o644)
 	// --live skips the remote merge, so it prints the fold's rows directly.
 	for _, args := range [][]string{{"c1"}, {"c1", "--live"}} {
@@ -2501,8 +2501,8 @@ func TestRosterClampsNonFiniteTimes(t *testing.T) {
 		if code != 0 || errOut != "" {
 			t.Fatalf("%v: code %d stderr %q stdout %q", args, code, errOut, out)
 		}
-		if !strings.Contains(out, `"ts": null`) || !strings.Contains(out, `"age_s": null`) {
-			t.Errorf("%v: stdout = %s, want ts and age_s null", args, out)
+		if !strings.Contains(out, `"ts": 1e400`) || !strings.Contains(out, `"age_s": -1.7976931348623157e+308`) {
+			t.Errorf("%v: stdout = %s, want ts 1e400 and age_s clamped", args, out)
 		}
 	}
 }

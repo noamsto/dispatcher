@@ -148,11 +148,12 @@ func stringField(obj map[string]any, key string) string {
 	return s
 }
 
-// decodeValues reads every JSON value in data, in gojq's form. On a syntax error
-// or a torn tail it returns the values before it alongside the error. NaN and
-// Infinity are not JSON, so a value holding one is a syntax error.
+// decodeValues reads every JSON value in data, in gojq's form, after a leading
+// UTF-8 BOM. On a syntax error or a torn tail it returns the values before it
+// alongside the error. NaN and Infinity are not JSON, so a value holding one is
+// a syntax error.
 func decodeValues(data []byte) ([]any, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
+	dec := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))))
 	dec.UseNumber()
 	var vs []any
 	for {
@@ -192,7 +193,7 @@ func ReadEventsTolerant(path string) ([]Event, error) {
 	if err != nil {
 		return nil, &OpenError{Path: path, Err: err}
 	}
-	vs, decErr := decodeValues(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf")))
+	vs, decErr := decodeValues(data)
 	evs := make([]Event, len(vs))
 	for i, v := range vs {
 		evs[i] = newEvent(v)

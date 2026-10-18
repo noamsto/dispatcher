@@ -11,6 +11,10 @@ or typed structs wherever byte-exact jq formatting was its only reason, and to
 keep it (or a much smaller replacement) only where its semantics are
 load-bearing or it bridges into gojq (`internal/jqrun`).
 
+Status: the removal is complete (#1168). `crew/internal/jsonv` is deleted; "What
+replaced it" below says what each of its jobs became. The rest of this doc is
+the historical decomposition.
+
 This doc is the decomposition: what each importer needs, what breaks on a
 switch, and the order to convert in. Line numbers are as of the commit that
 introduced this doc.
@@ -802,8 +806,8 @@ last, which isolates D1 to one step.
 | ----- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0     | prwatch      | done: struct + `encoding/json` (#1052)                                                                                                                                                                                                            | none                                                                                  | see Converted                                                                                                                                                                                                                                              |
 | 1     | clock        | done: `NowF() float64` (#1069)                                                                                                                                                                                                                    | none                                                                                  | callers hold (:216, :260) wrap `jsonv.Num(f)` until step 18; rosterrender reads the float; test reads a float compare                                                                                                                                      |
-| 2     | jqrun        | A done (#1071): `any` entry points beside the jsonv ones; B (step 34) open: delete the jsonv-typed ones                                                                                                                                           | none for A; B after 4-32                                                              | keep the `json.Number`/`float64` normaliser, the clamping marshal and the `ParseOne` equivalent for `_jqfromjson`; re-pin `TestNumberLiteralsRoundTripExactly`, `TestComputedNumbersStayComputed`, `TestToGoNaNStaysFloat`, `TestJQFromJSON` on the helper |
-| 3     | bus          | A done (#1077): `Event.Doc any` next to `Raw`/`TS`/`Body`; B (step 33) open: swap the decoder, drop `Raw`/`TS`/`Body`                                                                                                                             | A after 2; B after 4-32 and D1                                                        | B keeps prefix-on-error, `DecodeError` mapping, BOM trim, `UseNumber`; `Shrink` becomes an order-preserving token walker with `SetEscapeHTML(false)` (or stays on jsonv)                                                                                   |
+| 2     | jqrun        | A done (#1071): `any` entry points beside the jsonv ones; B (step 34) done (#1168): the jsonv-typed ones are deleted                                                                                                                              | none for A; B after 4-32                                                              | keep the `json.Number`/`float64` normaliser, the clamping marshal and the `ParseOne` equivalent for `_jqfromjson`; re-pin `TestNumberLiteralsRoundTripExactly`, `TestComputedNumbersStayComputed`, `TestToGoNaNStaysFloat`, `TestJQFromJSON` on the helper |
+| 3     | bus          | A done (#1077): `Event.Doc any` next to `Raw`/`TS`/`Body`; B (step 33) done (#1168): `encoding/json` decoder loop, `Raw`/`TS`/`Body` dropped                                                                                                      | A after 2; B after 4-32 and D1                                                        | B keeps prefix-on-error, `DecodeError` mapping, BOM trim, `UseNumber`; `Shrink` becomes an order-preserving token walker with `SetEscapeHTML(false)` (or stays on jsonv)                                                                                   |
 | 4     | stack        | done (#1081): typed gh and row structs, `any` out of stack.go                                                                                                                                                                                     | stack.go after 2; align and cut can land before                                       | `_jqfromjson` stays in jqrun; drop `member`/`jsonvAppend`/`jqTostring`                                                                                                                                                                                     |
 | 5     | stream       | done (#1086): structs, `json.RawMessage` holds, `json.Number` ticks                                                                                                                                                                               | `wantsReap` after 2                                                                   | `leading-zero-stripping` pid text helper for stderr; `fieldText` over `map[string]json.RawMessage`; heartbeat line stays compact (bats greps)                                                                                                              |
 | 6     | rate         | done (#1085): burn rules as `RawMessage` rows, `any` store, `MarshalIndent`                                                                                                                                                                       | after 2, 3 (A)                                                                        | `appendBatch` with `SetEscapeHTML(false)`; non-nil `[]` for empty folds                                                                                                                                                                                    |
@@ -833,38 +837,30 @@ last, which isolates D1 to one step.
 | 30    | log          | print `Event.Doc`/`Raw` through the marshaller; drop `Options.Colors` (D2)                                                                                                                                                                        | after 3                                                                               | `TestFiltersOneCrewByteForByte` becomes a `jq -S` compare; big ints stay `json.Number`                                                                                                                                                                     |
 | 31    | inbox        | `json.Number` text compare + type-rank switch; marks any; print via the marshaller                                                                                                                                                                | after 3, 11; D1 for the NaN/Infinity `TestSince` cases                                | `TestPrintsTheRowUnchanged` becomes value-equal                                                                                                                                                                                                            |
 | 32    | main.go      | validity check only (or drop with D2); `fold()` callbacks over `any`; pretty via `MarshalIndent`                                                                                                                                                  | after 21, 30 and every `ParseJQColors` user                                           | main_test coloured cases deleted or kept per D2                                                                                                                                                                                                            |
-| 35    | testjson     | `Equal(t, got, want string)` over `any` with `UseNumber`, or delete                                                                                                                                                                               | after step 34                                                                         | NaN/Infinity cases go with D1                                                                                                                                                                                                                              |
+| 35    | testjson     | done (#1168): `MustParse`/`Compact` over `any`                                                                                                                                                                                                    | after step 34                                                                         | NaN/Infinity cases go with D1                                                                                                                                                                                                                              |
 
 Steps 33 and 34 are the B halves of rows 3 and 2: 33 swaps the bus decoder
 (the only step that changes NaN behaviour on bus rows, D1); 34 deletes the
 jsonv-typed jqrun entry points. Row 35 follows.
 
-## What jsonv must still provide
+## What replaced it
 
-After step 35 the importers are gone and what survives follows the owner decisions (D1-D4, below):
+- Bus log reader: an `encoding/json` Decoder loop with `UseNumber`. NaN and
+  Infinity are a decode error (D1); the values before it are kept alongside a
+  `*DecodeError`.
+- `Shrink`: the same decoder plus `jsonval.Encode`; key order is not kept.
+- `_jqfromjson`: an `encoding/json` one-value decode with `UseNumber` and a BOM
+  trim. No NaN spellings, a lone surrogate becomes U+FFFD, and there is no jq
+  nesting-depth limit.
+- Clamping marshaller: `jsonval.Encode` and `jsonval.Clamp` (Clamp also walks
+  `[]map[string]any`). It stays because gojq can compute +-Inf from valid JSON,
+  e.g. a `1e400` literal or a float overflow.
+- Argv invalid-UTF-8 repair: `jsonval.ValidUTF8`, one U+FFFD per byte as
+  `encoding/json` does.
+- `testjson`: `MustParse` and `Compact` over `any`.
+- `ledger` keeps its own exact parsing (D3).
 
-- Kept in either case (about 100 lines, moved into `jqrun` or a small
-  `jsonval` package): a clamping marshaller (NaN to `null`, +-Inf to
-  +-`1.7976931348623157e308`, `json.Number` verbatim, no HTML escaping; the
-  converted packages' local copies are consolidated in `internal/jsonval`) and a
-  `ParseOne`-equivalent for `_jqfromjson` (lone-high-surrogate error; `nan`,
-  `-nan`, `snan`, `nan0` to NaN `float64`; `Infinity`/`inf` to +-Inf; BOM trim;
-  `+1`/`.5`/`01`; or the jsonv parser itself). Both are pinned by jqrun tests,
-  the status/stack surrogate tests and the jq-oracle `TestFoldsMatchJQ`
-  (skipped without jq on PATH).
-- D1 drops NaN/Infinity tolerance, so no tolerant stream decoder survives:
-  the bus decoder is a plain Decoder loop with `json.Number`.
-- D2 drops the `Failed to set $JQ_COLORS` warning, so no `ParseJQColors`
-  validity check survives.
-
-For now marks, watch and adopt each carry a local copy of the clamping marshaller, consolidated by #1126.
-
-Deletable: the `Value`/`Kind`/`Member` model and its accessors, `Object`/`Array`
-builders, dup-key folding (maps do it), the decNumber canonicaliser
-(`parseDecimal`, `1e2` -> `1E+2`), `FormatComputed`, the invalid-UTF-8 repair
-on encode (`validUTF8`, which D3 keeps for `ledger`), the pretty and
-colour encoder (about 170 lines) if colour is dropped, and the
-`DefaultPalette`/`Palette` API with it.
+## Owner decisions
 
 Owner decisions (#1066), chosen branch first:
 

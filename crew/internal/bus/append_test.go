@@ -130,6 +130,7 @@ func TestShrinkStreamBranch(t *testing.T) {
 		// The last value is a scalar, so jq -e is false and the blob cut wins.
 		"last is a scalar": {`{"a":"aaaaaaaa"} 5`, `{"` + elided},
 		"trailing junk":    {`{"a":"aaaaaaaa"} x`, `{"` + elided},
+		"leading BOM":      {"\xef\xbb\xbf" + `{"a":"aaaaaaaa"}`, `{"a":"aa` + elided + `"}`},
 		"empty text":       {"", elided},
 		"scalar":           {"5", "5" + elided},
 	}
