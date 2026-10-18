@@ -153,7 +153,7 @@ func TestPrintsTheRowUnchanged(t *testing.T) {
 		}
 		return v
 	}
-	if !strings.HasSuffix(stdout, "\n") || !reflect.DeepEqual(decode(stdout), decode(want)) {
+	if strings.Count(stdout, "\n") != 1 || !strings.HasSuffix(stdout, "\n") || !reflect.DeepEqual(decode(stdout), decode(want)) {
 		t.Errorf("stdout\n got %q\nwant value-equal to %q", stdout, want)
 	}
 }
