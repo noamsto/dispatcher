@@ -6,6 +6,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
@@ -45,7 +46,7 @@ func Relay(req RelayRequest, paths bus.Paths, stdout, stderr io.Writer, o Option
 		return 1
 	}
 	beatText := orDefault(req.Heartbeat, defaultHeartbeat)
-	if !isDigits(beatText) || parseIntSaturate(beatText) == 0 {
+	if !ascii.IsDigits(beatText) || parseIntSaturate(beatText) == 0 {
 		say(stderr, "crew: --heartbeat must be a positive integer number of seconds\n")
 		return 1
 	}
@@ -80,7 +81,7 @@ func Relay(req RelayRequest, paths bus.Paths, stdout, stderr io.Writer, o Option
 			lastLine = o.Now()
 		}
 		if err := o.Sleep(c.interval, stderr); err != nil {
-			return exitStatus(err)
+			return childStatus(err)
 		}
 	}
 }

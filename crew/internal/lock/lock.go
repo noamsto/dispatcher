@@ -26,6 +26,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 )
 
 type handle struct {
@@ -267,7 +269,7 @@ func ValidHolder(text string) bool {
 }
 
 func validHolder(text string) (int, bool) {
-	if text == "" || text == "0" || !isDigits(text) {
+	if text == "" || text == "0" || !ascii.IsDigits(text) {
 		return 0, false
 	}
 	n, err := strconv.ParseInt(text, 10, 64)
@@ -275,18 +277,6 @@ func validHolder(text string) (int, bool) {
 		return 0, false
 	}
 	return int(n), true
-}
-
-func isDigits(text string) bool {
-	if text == "" {
-		return false
-	}
-	for _, r := range text {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // pidAlive is a bare `kill -0`, not the roster's `_pid_alive`: a `0` holder

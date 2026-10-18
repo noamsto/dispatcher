@@ -52,12 +52,6 @@ func field(v any, key string) any {
 	return m[key]
 }
 
-// isTruthy follows jq: only null and false are falsy.
-func isTruthy(v any) bool {
-	b, ok := v.(bool)
-	return v != nil && (!ok || b)
-}
-
 func asFloat(v any) (float64, bool) {
 	switch x := v.(type) {
 	case json.Number:

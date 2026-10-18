@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
@@ -30,7 +31,7 @@ func (r *run) discardBranch(ctx context.Context) int {
 	if code != 0 {
 		return code
 	}
-	if wt == "" || !isDir(wt) {
+	if wt == "" || !filekind.IsDir(wt) {
 		return r.refuse("no worktree for it")
 	}
 	c.wtpath = wt

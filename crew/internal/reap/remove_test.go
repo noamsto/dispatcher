@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
@@ -268,7 +269,7 @@ func TestRemoveKeepsTamperedGitlink(t *testing.T) {
 		t.Fatalf("removed=%v code=%d", removed, code)
 	}
 	f.wantOut("crew reap: keeping feat/r — " + tampered)
-	if !isDir(f.wt) {
+	if !filekind.IsDir(f.wt) {
 		t.Fatal("worktree removed")
 	}
 }

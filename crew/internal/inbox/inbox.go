@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
@@ -70,7 +71,7 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	// The integer check sits where the arm put it: after the log test, before
 	// jq starts, so a missing log exits 0 with neither line and a bad TS costs
 	// no $JQ_COLORS warning.
-	if since != "" && !isDigits(since) {
+	if since != "" && !ascii.IsDigits(since) {
 		say(stderr, "crew: --since must be an integer ms timestamp\n")
 		return 1
 	}
@@ -161,20 +162,6 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		return exitType
 	}
 	return 0
-}
-
-// isDigits is what the arm's `--since` case test accepts: a non-empty run of
-// digits, which is all jq's `--argjson` needs for an integer ms timestamp.
-func isDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // selects is the arm's select: the crew, the kind and the addressee are

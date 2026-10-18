@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 )
 
 // Probes are the process reads the bash arm makes through `kill -0`, `ps`
@@ -87,7 +89,7 @@ func pidAlive(pid int) bool {
 // whole, like the arm's `tr -d '[:space:]'`.
 func psElapsedS(pid int) (int64, bool) {
 	s := psField("-o", "etimes=", "-p", strconv.Itoa(pid))
-	if isDigits(s) {
+	if ascii.IsDigits(s) {
 		n, err := strconv.ParseInt(s, 10, 64)
 		return n, err == nil
 	}
@@ -139,18 +141,6 @@ func psField(args ...string) string {
 		}
 		return r
 	}, string(out))
-}
-
-func isDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // fileMtimeS is _file_mtime_s behind _pid_recycled's `[ -f ]`: a missing or

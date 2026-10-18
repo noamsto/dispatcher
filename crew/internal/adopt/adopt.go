@@ -14,9 +14,7 @@
 package adopt
 
 import (
-	"bytes"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,9 +24,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -129,7 +129,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	// A crew is known from the directory, or from the bus when a restart took
 	// the directory with it: the id still has to appear in the log to be
 	// adopted rather than invented.
-	if !isDir(cdir) && !loggedCrew(paths, id) {
+	if !filekind.IsDir(cdir) && !loggedCrew(paths, id) {
 		say(stderr, "crew: no crew '%s' in this repo — run 'crew crews' to list them, or 'crew new' to start one\n", id)
 		return exitFailure
 	}
@@ -226,7 +226,7 @@ func (o Options) releaseClaims(paths bus.Paths, id string, stderr io.Writer) {
 		// `gh issue edit` takes a number, and the bus is caller-writable, so a
 		// malformed issue is reported and skipped rather than passed as an argv
 		// word. The well-formed rows beside it still release.
-		if !isNumber(c.issue) {
+		if !ascii.IsDigits(c.issue) {
 			say(stderr, "crew adopt: skipping a claim row whose issue is not a number (%s)\n", c.issue)
 			continue
 		}
@@ -252,7 +252,7 @@ func (o Options) releaseClaims(paths bus.Paths, id string, stderr io.Writer) {
 func (o Options) held(c claim, heads string) string {
 	for _, cb := range c.branches {
 		wt := roster.WorktreePath(o.Worktrees(), cb)
-		if wt != "" && isDir(wt) && o.occupied(wt) {
+		if wt != "" && filekind.IsDir(wt) && o.occupied(wt) {
 			return fmt.Sprintf("crew adopt: keeping #%s — a worker still occupies %s", c.issue, cb)
 		}
 		if hasLine(heads, cb) {
@@ -307,9 +307,9 @@ func claimRows(paths bus.Paths, id string) []claim {
 		if len(cols) < 2 {
 			continue
 		}
-		c := claim{issue: fieldText(cols[0]), branch: fieldText(cols[1])}
+		c := claim{issue: jsonval.RawText(cols[0]), branch: jsonval.RawText(cols[1])}
 		for _, b := range cols[1:] {
-			c.branches = append(c.branches, fieldText(b))
+			c.branches = append(c.branches, jsonval.RawText(b))
 		}
 		adopted = append(adopted, c)
 	}
@@ -373,24 +373,6 @@ func cutTab(s string) (field, rest string) {
 	return field, strings.TrimLeft(rest, "\t")
 }
 
-func isDir(path string) bool {
-	st, err := os.Stat(path)
-	return err == nil && st.IsDir()
-}
-
-// isNumber is the arm's `case "$cissue" in *[!0-9]*)`: digits, and not empty.
-func isNumber(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
-
 // hasLine is the arm's `grep -qxF` over the PR head refs: whole-line equality,
 // not a substring of a longer branch name.
 func hasLine(text, line string) bool {
@@ -400,27 +382,6 @@ func hasLine(text, line string) bool {
 		}
 	}
 	return false
-}
-
-// fieldText is the text `@tsv` wrote for one fold field.
-func fieldText(v any) string {
-	switch v := v.(type) {
-	case string:
-		return v
-	case json.Number:
-		return v.String()
-	case bool:
-		return strconv.FormatBool(v)
-	case float64:
-		return jsonval.Text(v)
-	case []any, map[string]any:
-		var buf bytes.Buffer
-		if err := jsonval.Encode(&buf, v, false); err != nil {
-			return "null"
-		}
-		return strings.TrimSuffix(buf.String(), "\n")
-	}
-	return "null"
 }
 
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }

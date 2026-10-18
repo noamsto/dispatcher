@@ -35,6 +35,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
@@ -203,7 +204,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 			if s, ok := pending(sigs); ok {
 				return signalStatus(s)
 			}
-			return exitStatus(err)
+			return childStatus(err)
 		}
 	}
 }
@@ -229,10 +230,10 @@ func check(r Request, o Options) (call, string) {
 	if r.Since != nil {
 		c.sinceText, c.sinceSet = *r.Since, true
 	}
-	if !isDigits(c.sinceText) {
+	if !ascii.IsDigits(c.sinceText) {
 		return c, "crew: --since must be an integer ms timestamp"
 	}
-	if !isDigits(c.timeoutText) {
+	if !ascii.IsDigits(c.timeoutText) {
 		return c, "crew: --timeout must be a positive integer number of seconds"
 	}
 	// The arm's `[ "$timeout" -gt 0 ]`, on the same digits. bash's `test` errors
@@ -352,24 +353,10 @@ func seedCursor(path string) string {
 		return "0"
 	}
 	seed := strings.TrimRight(string(data), "\n")
-	if !isDigits(seed) {
+	if !ascii.IsDigits(seed) {
 		return "0"
 	}
 	return seed
-}
-
-// isDigits is the arm's `case … in ”|*[!0-9]*)` rejection: one digit or more,
-// digits only. Empty fails, which is what makes a missing cursor 0.
-func isDigits(text string) bool {
-	if text == "" {
-		return false
-	}
-	for _, r := range text {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // parseIntSaturate reads the arm's `--argjson since`, whose input the arm had
@@ -384,10 +371,10 @@ func parseIntSaturate(text string) int64 {
 	return n
 }
 
-// exitStatus is what `set -e` would have exited the arm with: the child's own
+// childStatus is what `set -e` would have exited the arm with: the child's own
 // status, or 128+n when it died of a signal. Anything Go could not read a
 // status from (the exec itself failed) is the shell's generic 1.
-func exitStatus(err error) int {
+func childStatus(err error) int {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		if ws, ok := ee.Sys().(syscall.WaitStatus); ok {

@@ -11,6 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/frame"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -214,7 +215,7 @@ func (r *run) isAncestor(ctx context.Context, branch, head string) int {
 		return 1
 	}
 	cmd.Stdout = r.stdout
-	return exitStatus(cmd.Run())
+	return shellStatus(cmd.Run())
 }
 
 // enginePane is one `live` row running an engine in the candidate's worktree.
@@ -505,7 +506,7 @@ func (r *run) consider(ctx context.Context, row latestRow) (bool, int) {
 	if code != 0 {
 		return false, code
 	}
-	if wt == "" || !isDir(wt) {
+	if wt == "" || !filekind.IsDir(wt) {
 		return false, 0
 	}
 	c.wtpath = wt

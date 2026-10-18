@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
@@ -17,7 +18,7 @@ func (s *stackCmd) cut(ctx context.Context, record bool, child, oid string) erro
 	// A PR number resolves to its head branch; a fork's branch belongs to
 	// another repo, so its cut is never recorded.
 	pr := trimOne(child, "#")
-	if isNumber(pr) {
+	if ascii.IsDigits(pr) {
 		out, err := s.p.Gh(ctx, "pr", "view", pr, "--json", "headRefName,isCrossRepository")
 		if err != nil {
 			return s.refuse("crew: cannot read PR #%s\n", pr)

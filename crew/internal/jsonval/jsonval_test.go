@@ -77,3 +77,30 @@ func TestClampDoesNotMutate(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
+
+func TestTruthy(t *testing.T) {
+	for _, v := range []any{true, 0.0, "", json.Number("0"), []any{}} {
+		if !Truthy(v) {
+			t.Errorf("Truthy(%#v) = false", v)
+		}
+	}
+	if Truthy(nil) || Truthy(false) {
+		t.Error("null or false is truthy")
+	}
+}
+
+func TestRawText(t *testing.T) {
+	inf, nan := math.Inf(1), math.NaN()
+	for _, c := range []struct {
+		in   any
+		want string
+	}{
+		{"a b", "a b"}, {nil, "null"}, {true, "true"}, {1e-7, "1e-07"}, {json.Number("73.0"), "73.0"},
+		{inf, "1.7976931348623157e+308"}, {nan, "null"}, {[]any{inf, nan}, "[1.7976931348623157e+308,null]"},
+		{map[string]any{"x": nan}, `{"x":null}`},
+	} {
+		if got := RawText(c.in); got != c.want {
+			t.Errorf("RawText(%#v) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

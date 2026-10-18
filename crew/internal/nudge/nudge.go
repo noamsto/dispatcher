@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/frame"
@@ -96,7 +97,7 @@ func Pane(ctx context.Context, req PaneRequest, d Deps) (string, int) {
 	if !bus.IsSessionID(req.Session) {
 		return "'" + req.Session + "' is not a sessioned worker id", exitRefused
 	}
-	if req.MsgTS == "" || !allDigits(req.MsgTS) {
+	if req.MsgTS == "" || !ascii.IsDigits(req.MsgTS) {
 		return "msg ts '" + req.MsgTS + "' is not a ms timestamp", exitRefused
 	}
 	if req.Engine != "claude" && req.Engine != "pi" {
@@ -252,16 +253,6 @@ func digitsLiteral(digits string) string {
 		return "0"
 	}
 	return trimmed
-}
-
-// allDigits is the arm's `case *[!0-9]*)` inverse: ASCII digits only, and not empty.
-func allDigits(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return s != ""
 }
 
 // envOr is `${CREW_NUDGE_SETTLE:-1}` and friends: read per call, as the arm does.

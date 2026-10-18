@@ -1,10 +1,8 @@
 package adopt
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"os/exec"
 	"strings"
@@ -686,16 +684,6 @@ func TestHelpers(t *testing.T) {
 	if !hasLine("feat/83\nfeat/84", "feat/84") {
 		t.Error("hasLine missed a whole line")
 	}
-	for _, bad := range []string{"", "0x1", "1a", "-1", "1.0", " 1"} {
-		if isNumber(bad) {
-			t.Errorf("isNumber(%q) = true", bad)
-		}
-	}
-	for _, good := range []string{"1", "007", "91"} {
-		if !isNumber(good) {
-			t.Errorf("isNumber(%q) = false", good)
-		}
-	}
 }
 
 func panePath(p bus.Paths, id string) string { return p.CrewDir(id) + "/pane" }
@@ -766,23 +754,5 @@ func TestPaneErrorsFailTheAdopt(t *testing.T) {
 				t.Errorf("code = %d, stderr = %q", got.code, got.stderr)
 			}
 		})
-	}
-}
-
-func TestFieldTextComputedDoubles(t *testing.T) {
-	inf, nan := math.Inf(1), math.NaN()
-	for _, c := range []struct {
-		in   any
-		want string
-	}{
-		{inf, "1.7976931348623157e+308"},
-		{nan, "null"},
-		{[]any{inf, nan}, "[1.7976931348623157e+308,null]"},
-		{map[string]any{"x": nan}, `{"x":null}`},
-		{json.Number("73.0"), "73.0"},
-	} {
-		if got := fieldText(c.in); got != c.want {
-			t.Errorf("fieldText(%v) = %q, want %q", c.in, got, c.want)
-		}
 	}
 }

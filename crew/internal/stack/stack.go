@@ -266,12 +266,6 @@ func short(s string) string {
 	return s
 }
 
-// isNumber is the arm's `case "$x" in ”|*[!0-9]*)` test, inverted: non-empty
-// and all digits.
-func isNumber(s string) bool {
-	return s != "" && strings.Trim(s, "0123456789") == ""
-}
-
 func stringValues(lines []string) []any {
 	out := make([]any, len(lines))
 	for i, l := range lines {

@@ -21,6 +21,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 )
 
@@ -298,7 +299,7 @@ func (s *sweep) reconcile(records any, rows []any) (map[string]any, int) {
 		mCommit := fieldText(row, "s_commit")
 		mAt := fieldText(row, "s_merged")
 
-		if truthy(row, "do_view") {
+		if jsonval.Truthy(field(row, "do_view")) {
 			tried = true
 			// Always with the URL: a bare `gh pr view` resolves the sweeping
 			// checkout's own branch and would write that PR into every row.
@@ -319,7 +320,7 @@ func (s *sweep) reconcile(records any, rows []any) (map[string]any, int) {
 			}
 		}
 
-		if truthy(row, "do_actions") {
+		if jsonval.Truthy(field(row, "do_actions")) {
 			tried = true
 			gh, callOK := s.gh("api", "--method", "GET", "repos/"+owner+"/"+name+"/actions/runs",
 				"-f", "branch="+fieldText(row, "branch"), "-F", "per_page=100")
@@ -340,7 +341,7 @@ func (s *sweep) reconcile(records any, rows []any) (map[string]any, int) {
 			}
 		}
 
-		if truthy(row, "do_threads") {
+		if jsonval.Truthy(field(row, "do_threads")) {
 			tried = true
 			gh, callOK := s.gh("api", "graphql", "-f", "query="+threadsQuery,
 				"-F", "owner="+owner, "-F", "name="+name, "-F", "number="+number)
@@ -537,11 +538,7 @@ func fieldText(ev any, key string) string {
 	if s, ok := v.(string); ok {
 		return s
 	}
-	return jqText(v)
-}
-
-func truthy(v any, key string) bool {
-	return isTruthy(field(v, key))
+	return jsonval.RawText(v)
 }
 
 // clockSeconds is jqrun's frozen `now`, at microsecond precision so a fold's
