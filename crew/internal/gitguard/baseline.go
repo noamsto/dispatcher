@@ -144,11 +144,9 @@ func migrate(common, file string, stderr io.Writer) error {
 	return nil
 }
 
-// noteKeys prints the records' keys, then each redirect pair's value as
-// ShowPair renders it. An exec value is never printed (a credential.helper
-// value may carry a token), and neither is one ShowPair would print whole
-// while it carries userinfo or a query: this note reaches the dispatcher, not
-// the human's terminal.
+// noteKeys prints the records' keys, then each redirect pair through
+// showRecorded. An exec value is never printed: a credential.helper value may
+// carry a token.
 func noteKeys(stderr io.Writer, file, what string, recs, aliases []string) {
 	var keys []string
 	seen := map[string]bool{}
@@ -194,7 +192,8 @@ func noteKeys(stderr io.Writer, file, what string, recs, aliases []string) {
 
 // showRecorded is ShowPair, or the key and a pointer to read the value from
 // one's own terminal when ShowPair would print it whole while it may carry
-// userinfo or a query.
+// userinfo or a query: the note reaches the dispatcher, not the human's
+// terminal.
 func showRecorded(k, v string, aliases []string) string {
 	kd, shown := ShowKey(k), ShowPair(k, v, aliases)
 	if !strings.ContainsAny(v, "@?") || shown != kd+"="+Quote(v) {

@@ -159,8 +159,7 @@ func TestInitMigrationAddsRedirectPairsOnly(t *testing.T) {
 	}
 }
 
-// withheld is the fixed text that stands in for a value the note cannot show;
-// the note reaches the dispatcher, not the human's terminal.
+// withheld is the text the note prints in place of a value it cannot show.
 func withheld(reason string) string {
 	return ": value withheld (" + reason + ") — check it in your own terminal, from each checkout or worktree that may set it: "
 }
