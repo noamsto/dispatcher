@@ -11784,6 +11784,24 @@ _rw_settle() {
   _rw_poll "[ \"\$(_rw_count '^display-message')\" -ge $start ]"
 }
 
+# _rw_clock_now — the virtual clock's current value. The watcher rewrites the
+# file with `printf … >` every tick, which truncates before writing, so a plain
+# `cat` can catch it empty or mid-write; retry until a whole line is read, and
+# print nothing (non-zero) if it never is.
+_rw_clock_now() {
+  local n cur
+  for n in $(seq 1 200); do
+    cur=""
+    if read -r cur <"$DISPATCH_ROLE_WATCH_CLOCK" 2>/dev/null && [ -n "$cur" ]; then
+      printf '%s\n' "$cur"
+      return 0
+    fi
+    sleep 0.002
+  done
+  echo "role-watch: virtual clock unreadable" >&2
+  return 1
+}
+
 # _rw_wait_clock <epoch-seconds> — wait until the virtual clock file reaches
 # <epoch-seconds>. _rw_settle counts display-message lines, which is only a
 # lower bound on the watcher's virtual time: in test-clock mode _rw_sleep never
@@ -12656,7 +12674,7 @@ _rw_deferrals() { _rw_count '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*
   # deferred_since is then at least base) and wait out well under the grace:
   # the watcher spins on the virtual clock, so a display-message count like
   # _rw_settle can advance far past its nominal ticks while the test appends.
-  base=$(cat "$DISPATCH_ROLE_WATCH_CLOCK")
+  base=$(_rw_clock_now) || { echo "role-watch: no base clock" >&2; return 1; }
   _rw_append "$(_rw_assign_row)"
   _rw_wait_clock $((base + 6))
   _rw_stop
