@@ -1183,6 +1183,7 @@ _rearm_role_panes() {
 $(tmux list-panes -t "$win" -F '#{pane_id}'$'\x1f''#{@crew_role}'$'\x1f''#{@crew_exited}'$'\x1f''#{pane_current_command}'$'\x1f''#{pane_current_path}' 2>/dev/null || true)
 PANES
 }
+
 # Placement. dispatch always opens a fresh window and refuses when anything
 # already sits at the worktree — including a pane with an empty @crew_name,
 # i.e. a human in a plain shell, which is exactly whoever runs this command.

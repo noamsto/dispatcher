@@ -2408,7 +2408,7 @@ watch_role_prompts() {
 # goes to the lead and dispatcher and the text is left in place.
 #
 # Before each delivery (the paste and any Enter re-send) it re-checks the
-# pane's role and window branch stamps and exits on a mismatch: a watcher can
+# pane's role and window branch and crew stamps and exits on a mismatch: a watcher can
 # outlive a tmux server kill, and the pane id be reused by another pane.
 if [ "${1:-}" = "--role-watch" ]; then
   role="${2:-}"
