@@ -11,7 +11,7 @@ import (
 	"syscall"
 
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
-	"github.com/noamsto/dispatcher/crew/internal/filetest"
+	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
@@ -92,7 +92,7 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 	}
 	if _, err := os.Stat(c.wtpath); left != "" || err == nil {
 		switch {
-		case !filetest.IsDir(c.admin):
+		case !filekind.IsDir(c.admin):
 			// git validates the gitfile before deleting anything, so a gone
 			// admin dir means a real tree whose contents only partly went.
 			r.say("keeping " + c.branch + " — removal failed partway; " + c.wtpath + " is no longer a worktree: tell the human (fix its permissions, then remove it)")

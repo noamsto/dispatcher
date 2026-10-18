@@ -27,7 +27,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/filetest"
+	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 )
@@ -115,7 +115,7 @@ func RunFleet(r FleetRequest, stdout, stderr io.Writer, opts FleetOptions) int {
 	// script path would resolve there instead of where it was given. bash runs
 	// a bare name from the cwd before searching PATH, so one that exists here
 	// is relative too.
-	if !filepath.IsAbs(o.Self) && (strings.Contains(o.Self, "/") || filetest.IsRegular(o.Self)) {
+	if !filepath.IsAbs(o.Self) && (strings.Contains(o.Self, "/") || filekind.IsRegular(o.Self)) {
 		self, err := filepath.Abs(o.Self)
 		if err != nil {
 			say(stderr, "crew: %v\n", err)

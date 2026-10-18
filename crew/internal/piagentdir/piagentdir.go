@@ -26,7 +26,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/noamsto/dispatcher/crew/internal/filetest"
+	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 )
 
@@ -123,7 +123,7 @@ func seed(stderr io.Writer, o Options) (string, error) {
 	// the right one) and register it below. No ambient bridge means hookyard is
 	// not installed; leave the worker unhooked rather than dangle an entry.
 	bridgeEntry := ""
-	if filetest.IsRegular(ambient + bridgeRel) {
+	if filekind.IsRegular(ambient + bridgeRel) {
 		if err := os.MkdirAll(dir+"/bin", 0o777); err != nil {
 			return "", err
 		}
@@ -142,7 +142,7 @@ func seed(stderr io.Writer, o Options) (string, error) {
 
 	// A cold catalog costs pi the model's context window, cost and
 	// thinkingLevelMap — the last is what --thinking resolves against.
-	if filetest.IsRegular(ambient + "/models-store.json") {
+	if filekind.IsRegular(ambient + "/models-store.json") {
 		if err := copyIfChanged(dir+"/models-store.json", ambient+"/models-store.json"); err != nil {
 			return "", err
 		}
@@ -191,7 +191,7 @@ func checkNesting(dir, ambient string) error {
 	if err != nil {
 		return err
 	}
-	if !filetest.IsDir(ambient) {
+	if !filekind.IsDir(ambient) {
 		return nil
 	}
 	// Bash resolved it with `cd`, which needs search permission.
@@ -283,11 +283,11 @@ func seedAuth(dir, ambient string) error {
 			probe = "/"
 		}
 	}
-	if probe != auth && filetest.IsDir(probe) && syscall.Access(probe, xOK) == nil {
+	if probe != auth && filekind.IsDir(probe) && syscall.Access(probe, xOK) == nil {
 		// No ambient file: seed an empty object so pi falls through to the env vars.
 		return writeIfChanged(dir+"/auth.json", 0o600, "{}\n")
 	}
-	if !filetest.IsRegular(auth) {
+	if !filekind.IsRegular(auth) {
 		return refuse("crew: %s is not a reachable regular file — refusing to seed pi credentials", auth)
 	}
 	// Linking hands pi the file unparsed, so validate here — a worker that dies
@@ -473,7 +473,7 @@ func copyIfChanged(target, source string) error {
 // PI_CODING_AGENT_DIR with no path override, so the worker needs its own entry.
 func linkIfChanged(target, source string) error {
 	// Stat also catches a symlinked dir, which would swallow the rename into it.
-	if filetest.IsDir(target) {
+	if filekind.IsDir(target) {
 		return refuse("crew: %s is a directory — refusing to seed pi worker dir", target)
 	}
 	if cur, err := os.Readlink(target); err == nil && cur == source {

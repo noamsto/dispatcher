@@ -1,6 +1,6 @@
-// Package filetest is the shell's `test -d` and `test -f`: both follow
+// Package filekind is the shell's `test -d` and `test -f`: both follow
 // symlinks, and anything Stat cannot read is false.
-package filetest
+package filekind
 
 import "os"
 

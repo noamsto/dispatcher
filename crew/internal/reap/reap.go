@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/filetest"
+	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -297,7 +297,7 @@ func (r *run) orphans(ctx context.Context) int {
 		if code != 0 {
 			return code
 		}
-		if wt != "" && filetest.IsDir(wt) {
+		if wt != "" && filekind.IsDir(wt) {
 			continue
 		}
 		r.note("window " + wid + " is stamped " + branch + " but its worktree is gone — not killed")
