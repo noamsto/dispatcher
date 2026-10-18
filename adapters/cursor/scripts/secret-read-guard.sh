@@ -388,9 +388,9 @@ proc_environ_re="(^|[[:space:]\"'<=])/proc/[^[:space:]\"']*/environ"
 # flag may carry its code glued on (`-le'print…'` reads `-leprint_…`), and any
 # words, option arguments included (`python3 -X utf8 -c`), may precede it; a
 # `--cov`-style double-dash word does not arm. Over-arming only costs the
-# accepted co-occurrence false positive. A `/`
-# before it is fine (`/usr/bin/python3`, `uv run python3`); `-`, `.` or a name
-# char around it make it another word (`my-python`, `python3-config`). Plain
+# accepted co-occurrence false positive. A `/` before it is fine
+# (`/usr/bin/python3`, `uv run python3`); `-`, `.` or a name char around it
+# make it another word (`my-python`, `python3-config`). Plain
 # runs (`python3 -m pytest`, `node --version`) arm nothing. grep -E is a DFA,
 # so the optional-word loops stay linear.
 interp_word='(python[0-9.]*|pypy[0-9.]*|node|nodejs|deno|bun|tsx|ts-node|ruby|perl|php)'
@@ -923,7 +923,7 @@ END {
 # node, deno, bun, versioned names like python3.12 included) are sinks: their
 # body is not shell, so a shell-dumper word in it is text. ruby, perl and php are
 # not: their backticks, qx() and %x() run a shell, so their heredoc bodies keep
-# the shell-dumper scan. The sinks own environment reads are judged by
+# the shell-dumper scan. The sinks' own environment reads are judged by
 # awk_interp_dump, and a shell-out from their code (os.system) is a non-dumper
 # path (O4) — an accepted limit.
 # shellcheck disable=SC2016
@@ -980,10 +980,10 @@ END { print (NR ? ok : 0) }'
 # `environ.items(`, process.env, Deno.env, Bun.env, `from os import environ`, a
 # ruby/perl-shaped ENV use (`p ENV`, `puts ENV`, ENV.to_h, ENV[, `$ENV{X}`,
 # %ENV; not prose or a Dockerfile `ENV PATH`, a shell `ENV=x` assignment),
-# getenv(, $_ENV. Presence forms: len(os.environ), `"X" in os.environ` (also not in, and
-# process.env) unless a name, `.`, `[` or `(` follows, `os.environ.get("X") is
-# [not] None` (also os.getenv), ruby `ENV.key?(` (also has_key?, include?,
-# member?), and a subscript assignment `os.environ["X"] =`
+# getenv(, $_ENV. Presence forms: len(os.environ), `"X" in os.environ` (also
+# not in, and process.env) unless a name, `.`, `[` or `(` follows,
+# `os.environ.get("X") is [not] None` (also os.getenv), ruby `ENV.key?(` (also
+# has_key?, include?, member?), and a subscript assignment `os.environ["X"] =`
 # (a write, not a print). Every pattern is anchored on a literal, with classes
 # disjoint from it, so the scan stays linear.
 # shellcheck disable=SC2016
