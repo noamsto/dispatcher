@@ -12,8 +12,9 @@ var fromJSON = sync.OnceValues(func() (*jqrun.Program, error) {
 	return jqrun.CompileAny("_jqfromjson", 0, nil, jqrun.WithJQFromJSON())
 })
 
-// parseOne is jq's `fromjson`. encoding/json would accept a lone high-surrogate
-// escape and reject the NaN/Infinity spellings, both the other way round in jq.
+// parseOne is jq's `fromjson`. Not encoding/json: it accepts a lone
+// high-surrogate escape that jq rejects, and rejects the NaN/Infinity spellings
+// jq accepts.
 func parseOne(s string) (any, error) {
 	prog, err := fromJSON()
 	if err != nil {
