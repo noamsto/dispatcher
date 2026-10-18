@@ -152,6 +152,7 @@ func (f *fx) opts() Options {
 				f.appended = append(f.appended, line)
 				return nil
 			},
+			Getenv: func(string) string { return "" },
 		},
 		Getenv: func(k string) string { return f.env[k] },
 		PID:    os.Getpid(),

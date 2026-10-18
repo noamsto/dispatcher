@@ -32,16 +32,21 @@ in a package named for its concern.
 | `rate.Options`                                   |                                                          | Run²                       | Git               |                                    | Now               | LookupEnv                                 |
 | `register.Options`                               |                                                          |                            |                   | Args                               | Now               | Getenv                                    |
 | `remote` exec                                    |                                                          |                            |                   | LookPath, Self                     |                   |                                           |
-| `stream`, `watch`, `hold`, `report`, `entry.new` |                                                          |                            |                   |                                    | Now, Sleep, Timer | Env                                       |
+| `stream`, `watch`, `hold`, `report`, `entry.new` |                                                          |                            | Origin (stream)   |                                    | Now, Sleep, Timer | Env                                       |
+| `entry` dash, `repos`, `reap.Options`            |                                                          |                            |                   | Exec, LookPath, Resolve            |                   | Getenv, Environ, Env; RateRun             |
+| `crews.Options`, `where`/`nudge.Options`         |                                                          |                            |                   |                                    | Now               | Remote (ssh)                              |
 
 ¹ fields on `identity.Options`. ² `rate.Run` runs gh and git alike.
+Holding a `clock.Clock` value already: `await`, `hold`, `nudge`, `prwatch`,
+`reply`, `rosterrender.Options`, `stall.Options`.
 Not a seam field: `panestate.Publish(set func(option, value string), …)` takes
 the pane-option setter as a parameter; its callers pass a tmux closure.
 
 Real calls behind them: tmux wrappers in `main.go` (`tmuxOutput`), `adopt/commands.go`,
 `nudge/wire.go`, `reap/probes.go`, `rosterrender/probe.go`, `stall/probe` (own
 process-group runner); gh in `reap`, `stack`, `adopt`; git in `main.go`,
-`adopt`, `nudge`, `reap`, `rate`, `bus`, `wtgit`; ps and `/proc` reads in `crews`,
+`adopt`, `nudge`, `reap` (six sites), `rate`, `bus`, `claimindex`, `gitguard`,
+`remote`, `wtgit`; ps and `/proc` reads in `crews`,
 `reap`, `adopt`; `time.Now`/`time.Sleep` and `clock.Clock` everywhere.
 
 ## Interfaces
@@ -51,14 +56,14 @@ concern (`Tmux`, `Gh`, `Git`, `Proc`, `Clock`). The single-method interfaces are
 shared, not redeclared consumer-side: one declaration is shorter than one per
 consumer. Fakes live in a `<concern>test` package imported only from tests.
 
-| concern     | interface                                                                                                                                                                                   | real                                                             | fake                                                        |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------- |
-| tmux (done) | `tmux.Client{ Run(ctx, args...) (string, error) }` + `tmux.Output` (failure = "")                                                                                                           | `tmux.Exec{}`                                                    | `tmuxtest.Fake{Out, Func}` + `Calls()`                      |
-| gh          | `gh.Client{ Run(ctx, args...) (string, error); Combined(ctx, args...) (string, error) }`; quiet = `Run` with the output dropped; `HaveGh` = `errors.Is(err, exec.ErrNotFound)`              | `gh.Exec{}`                                                      | `ghtest.Fake` (same shape as `tmuxtest`)                    |
-| git         | `git.Client{ Run(ctx, dir string, args...) (string, error) }` + funcs `Worktrees`, `Toplevel`, `Origin` over it; `wtgit` keeps the porcelain layer                                          | `git.Exec{}`                                                     | `gittest.Fake` keyed by dir + argv                          |
-| proc        | `proc.Table{ Alive(pid) bool; Elapsed(pid) (int64, bool); Parent(pid) (int, bool); Comm(pid) (string, bool); Args(pid) string; Kill(pid) }`, plus `Procs`/`Ancestors` as funcs over `/proc` | `proc.OS{}` (from `crews.DefaultProbes`, `reap`, `adopt.PsArgs`) | `proctest.Table` (map pid → proc)                           |
-| clock       | `clock.Clock` gains `Sleep(ctx, d)`; packages take a `clock.Clock` instead of bare `Now`/`Sleep` funcs                                                                                      | `clock.Real()`                                                   | `clock.Clock{Now: fixed}` (existing struct; no new package) |
-| env         | no interface: `Getenv func(string) string` is already the stdlib shape; rename `Env`/`LookupEnv` fields to `Getenv` and drop duplicates                                                     | `os.Getenv`                                                      | a map's lookup                                              |
+| concern     | interface                                                                                                                                                                                                                                                                                                       | real                                                             | fake                                                           |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------- |
+| tmux (done) | `tmux.Client{ Run(ctx, args...) (string, error) }` + `tmux.Output` (failure = "")                                                                                                                                                                                                                               | `tmux.Exec{}`                                                    | `tmuxtest.Fake{Out, Func}` + `Calls()`                         |
+| gh          | `gh.Client{ Run(ctx, args...) (string, error); Combined(ctx, args...) (string, error) }`; quiet = `Run` with the output dropped; `HaveGh` = `errors.Is(err, exec.ErrNotFound)`                                                                                                                                  | `gh.Exec{}`                                                      | `ghtest.Fake` (same shape as `tmuxtest`)                       |
+| git         | `git.Client{ Run(ctx, dir string, args...) (string, error) }` + funcs `Worktrees`, `Toplevel`, `Origin` over it; `wtgit` keeps the porcelain layer                                                                                                                                                              | `git.Exec{}`                                                     | `gittest.Fake` keyed by dir + argv                             |
+| proc        | `proc.Table{ Alive(pid) bool; Elapsed(pid) (int64, bool); Parent(pid) (int, bool); Comm(pid) (string, bool); Args(pid) string; Kill(pid) }`, plus `Procs`/`Ancestors` as funcs over `/proc`                                                                                                                     | `proc.OS{}` (from `crews.DefaultProbes`, `reap`, `adopt.PsArgs`) | `proctest.Table` (map pid → proc)                              |
+| clock       | packages take the existing `clock.Clock` value instead of bare `Now` funcs; its `Sleep`/`SleepCtx` already advance a `CrewClock` file instead of sleeping. The wall-clock `time.Duration` sleeps (`reap`, `rosterrender`, which must never follow `CREW_CLOCK`) and `stream`'s timers are decided in that slice | new `clock.FromEnv()` (what `main.go` builds by hand today)      | `clock.Clock{Now: fixed, CrewClock: tmpfile}` (no new package) |
+| env         | no interface: `Getenv func(string) string` is already the stdlib shape; rename `Env`/`LookupEnv` fields to `Getenv` and drop duplicates                                                                                                                                                                         | `os.Getenv`                                                      | a map's lookup                                                 |
 
 Left as they are: bus reads/appends (in-repo, not a system call), `stall/probe.Sh`
 and the `CREW_STALL_*_CMD` seams (bash libs and test seams under `bash -c` with
@@ -80,7 +85,14 @@ their own group-kill runner), aeye, gtrash, `rosterrender`'s exec hop.
   `sender.Check`/`Watch`, `status`, `hold`, `reply`).
 - Kept: `roster.Liveness.Windows` (a memo of a parse, built from `roster.Windows`),
   `stall.Options.NewProbes` (constructor taking a pane id).
-- Lines (crew/, `wc -l` over `*.go`): non-test 27415 → 27401 (−14), test 44252 → 44240 (−12), with the new
+- Shape changes: `probe.Probes` embeds `Env`; `roster.Probes` lost `Panes` and
+  `LiveBranches` for `Tmux` and `Live bool`; `fleet` memoises each argv once
+  per run, as its `Panes`/`Windows` closures did.
+- One execution change: `stall/probe`'s tmux calls ran in their own process
+  group, killed as a group on cancel; they now share `Exec`'s plain kill plus
+  `WaitDelay`, as every other site already did. A tmux client forks no
+  children, so only a forking PATH stub could tell.
+- Lines (crew/, `wc -l` over `*.go`): non-test 27415 → 27404 (−11), test 44252 → 44242 (−10), with the new
   `tmux` and `tmuxtest` packages counted (`tmuxtest` is not a `_test.go` file).
 
 ## Slice order
@@ -88,16 +100,17 @@ their own group-kill runner), aeye, gtrash, `rosterrender`'s exec hop.
 One PR each, largest duplication first. Savings are estimates from the field
 and fake counts above (net Go lines, non-test + test).
 
-| #   | concern | packages                                                | fakes replaced                                                                             | est. net lines |
-| --- | ------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------- |
-| 1   | tmux    | 13 + main                                               | ~19 test files                                                                             | measured above |
-| 2   | proc    | crews, reap, sender, adopt, register, stall/probe, main | ~12 test files (`crews_test`, `register_test`, `adopt_test`, `reply_test`, `main_test`, …) | −60 to −120    |
-| 3   | git     | main, roster, fleet, adopt, nudge, status, rate, stream | ~6 test files                                                                              | −40 to −90     |
-| 4   | gh      | reap, stack, adopt, rate                                | ~4 test files                                                                              | −30 to −60     |
-| 5   | clock   | ~15 `Now` and 4 `Sleep` fields                          | most test files set `Now`                                                                  | −20 to −50     |
-| 6   | env     | ~17 `Getenv`/`LookupEnv`/`Env` fields                   | —                                                                                          | −10 to −30     |
+| #   | concern | packages                                                                                                            | fakes replaced                                                                             | est. net lines |
+| --- | ------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------- |
+| 1   | tmux    | 14 + main                                                                                                           | 20 test files                                                                              | measured above |
+| 2   | proc    | crews, reap, sender, adopt, register, stall/probe, main                                                             | ~12 test files (`crews_test`, `register_test`, `adopt_test`, `reply_test`, `main_test`, …) | −60 to −120    |
+| 3   | git     | main, roster, fleet, adopt, nudge, status, rate, reap, bus, claimindex, gitguard, remote; `stream`'s `Origin` field | ~10 test files                                                                             | −60 to −120    |
+| 4   | gh      | reap, stack, adopt, rate                                                                                            | ~4 test files                                                                              | −30 to −60     |
+| 5   | clock   | 15 `Now` and 6 `Sleep`/`Timer` fields, 7 `clock.Clock` holders                                                      | most test files set `Now`                                                                  | −20 to −50     |
+| 6   | env     | 17 `Getenv`/`LookupEnv`/`Env`/`Setenv`/`Environ` fields                                                             | —                                                                                          | −10 to −30     |
 
 Each slice follows the tmux slice's shape: add the package and fake, convert
 one dependency cluster per commit (consumers that share an entry point move
 together), wire `main.go` last, then check that only the new package execs the
-binary (`rg 'exec\.(Command|CommandContext|LookPath)\([^)]*"<bin>"'`).
+binary (`rg 'exec\.(Command|CommandContext|LookPath)\([^)]*"<bin>"'`; the git
+slice exempts `wtgit`, the porcelain layer the new client sits beside).

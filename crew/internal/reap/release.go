@@ -194,7 +194,7 @@ func newerUserTurn(dir string, tsMS int64) bool {
 
 // capture is `$(_pane_capture …)`: trailing newlines are stripped.
 func capture(ctx context.Context, p Probes, pane string, colored bool) string {
-	text, _ := probe.Capture(ctx, p.Tmux, os.Getenv, pane, colored)
+	text, _ := probe.Capture(ctx, p.Tmux, p.Getenv, pane, colored)
 	return strings.TrimRight(text, "\n")
 }
 

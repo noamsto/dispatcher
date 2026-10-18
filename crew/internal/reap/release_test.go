@@ -175,6 +175,7 @@ func (r *rel) probes() Probes {
 			r.appended = append(r.appended, path+"\t"+line)
 			return nil
 		},
+		Getenv: func(string) string { return "" },
 	}
 }
 

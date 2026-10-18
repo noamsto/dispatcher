@@ -33,6 +33,8 @@ const ReleaseGrace = 300
 // substitute any field.
 type Probes struct {
 	Tmux tmux.Client
+	// Getenv reads the CREW_STALL_*_CMD capture seams.
+	Getenv func(string) string
 	// Gh is `gh …` with stderr dropped and trailing newlines stripped.
 	Gh func(ctx context.Context, args ...string) (string, error)
 	// GhAll is `gh … 2>&1`, stdout and stderr combined.
@@ -87,6 +89,7 @@ func DefaultProbes() Probes {
 		Sleep:  time.Sleep,
 		Now:    time.Now,
 		Append: bus.Append,
+		Getenv: os.Getenv,
 	}
 }
 
