@@ -11716,7 +11716,7 @@ display-message)
 show-options)
   case "${*: -1}" in
   @crew_branch) if [ -e "$STUB_DIR/remux_branch" ]; then printf '%s\n' feat/other; else printf '%s\n' feat/9-x; fi ;;
-  @crew_id) [ -e "$STUB_DIR/no_crew_id" ] || printf '%s\n' c1 ;;
+  @crew_id) if [ -e "$STUB_DIR/remux_crew" ]; then printf '%s\n' c9; elif [ ! -e "$STUB_DIR/no_crew_id" ]; then printf '%s\n' c1; fi ;;
   esac
   ;;
 capture-pane)
@@ -12346,6 +12346,17 @@ _rw_expect_exit() {
   _rw_post 'worker:feat/9-x#s1-1'
   _rw_expect_exit
   run ! grep -qE '^(paste |load-buffer)' "$STUB_LOG"
+}
+
+@test "role-watch: a window re-stamped with another crew after a remux restore gets no paste" {
+  _spawn_role_fixture
+  _rw_stub rw_frame_idle
+  _rw_inline_start
+  touch "$STUB_DIR/remux_crew"
+  _rw_post 'worker:feat/9-x#s1-1'
+  _rw_expect_exit
+  run ! grep -qE '^(paste |load-buffer)' "$STUB_LOG"
+  [ "$(grep -c '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*assignment_orphaned' "$STUB_LOG")" -eq 1 ]
 }
 
 @test "role-watch: a stamp that flips after the first Enter gets no retry Enter after a remux restore" {
