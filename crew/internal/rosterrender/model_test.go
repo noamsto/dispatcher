@@ -116,7 +116,6 @@ func TestModelWithoutABusIsTheArmsEmptyOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A map keeps no key order, so the arm's literal is compared by value.
 	if want := decodeOne(t, `{"rows":[],"holds":[],"roles":[]}`); !reflect.DeepEqual(m, want) {
 		t.Errorf("model = %s", compact(m))
 	}
