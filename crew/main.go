@@ -392,8 +392,9 @@ type env struct {
 	jqColors string // $JQ_COLORS
 	color    bool   // stdout is a terminal and $NO_COLOR is unset
 	probes   func(ctx context.Context, cwd string) roster.Probes
-	procs    crews.Probes // the pid probes crews reads
-	stdin    io.Reader    // remote-exec's request
+	procs    crews.Probes     // the pid probes crews reads
+	stdin    io.Reader        // remote-exec's request
+	now      func() time.Time // the fold's clock (jq's `now`); nil is the wall clock
 }
 
 func main() {
@@ -919,6 +920,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 
 	raw, code := fold(sub, events, err, paths.Log, stderr, func(evs []jsonv.Value) (jsonv.Value, error) {
 		now := time.Now()
+		if e.now != nil {
+			now = e.now()
+		}
 		nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
 		if sub == "sessions" {
 			docs := make([]any, len(evs))
