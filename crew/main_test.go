@@ -2495,11 +2495,14 @@ func sameRow(t *testing.T, got, want string) bool {
 func TestRosterClampsNonFiniteTimes(t *testing.T) {
 	log := `{"ts":NaN,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working"}}` + "\n"
 	repo, _ := repoWithLog(t, &log, 0o644)
-	out, errOut, code := runRoster(t, repo, "c1")
-	if code != 0 || errOut != "" {
-		t.Fatalf("code %d stderr %q stdout %q", code, errOut, out)
-	}
-	if !strings.Contains(out, `"ts": null`) || !strings.Contains(out, `"age_s": null`) {
-		t.Errorf("stdout = %s, want ts and age_s null", out)
+	// --live skips the remote merge, so it prints the fold's rows directly.
+	for _, args := range [][]string{{"c1"}, {"c1", "--live"}} {
+		out, errOut, code := runRoster(t, repo, args...)
+		if code != 0 || errOut != "" {
+			t.Fatalf("%v: code %d stderr %q stdout %q", args, code, errOut, out)
+		}
+		if !strings.Contains(out, `"ts": null`) || !strings.Contains(out, `"age_s": null`) {
+			t.Errorf("%v: stdout = %s, want ts and age_s null", args, out)
+		}
 	}
 }
