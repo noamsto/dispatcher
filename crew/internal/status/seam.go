@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -17,6 +16,8 @@ type seamKeys struct {
 	pi       bool   // the worker's engine is pi
 }
 
+var highEscape = regexp.MustCompile(`(\\+)u[dD][89abAB][0-9a-fA-F]{2}(\\u[dD][c-fC-F][0-9a-fA-F]{2})?`)
+
 // fromJSON decodes s as exactly one JSON value; ok is false for anything else.
 func fromJSON(s string) (v any, ok bool) {
 	dec := json.NewDecoder(strings.NewReader(s))
@@ -27,46 +28,15 @@ func fromJSON(s string) (v any, ok bool) {
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return nil, false
 	}
-	// encoding/json decodes an unpaired high surrogate escape to U+FFFD where
+	// encoding/json substitutes U+FFFD for an unpaired high surrogate escape where
 	// jq's fromjson errors, and a line or body jq refuses must not grant a seam.
-	if loneHighSurrogate(s) {
-		return nil, false
+	// An even backslash run is escaped backslashes before literal text.
+	for _, m := range highEscape.FindAllStringSubmatch(s, -1) {
+		if len(m[1])%2 == 1 && m[2] == "" {
+			return nil, false
+		}
 	}
 	return v, true
-}
-
-// loneHighSurrogate reports a \uD800-\uDBFF escape not followed by a
-// \uDC00-\uDFFF one. s is valid JSON, so every backslash opens an escape
-// inside a string and the escape is complete.
-func loneHighSurrogate(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] != '\\' {
-			continue
-		}
-		i++
-		if s[i] != 'u' {
-			continue
-		}
-		cp := hex4(s[i+1 : i+5])
-		i += 4
-		if cp < 0xD800 || cp > 0xDBFF {
-			continue
-		}
-		rest := s[i+1:]
-		if !strings.HasPrefix(rest, `\u`) {
-			return true
-		}
-		if lo := hex4(rest[2:6]); lo < 0xDC00 || lo > 0xDFFF {
-			return true
-		}
-		i += 6
-	}
-	return false
-}
-
-func hex4(s string) uint64 {
-	n, _ := strconv.ParseUint(s, 16, 16)
-	return n
 }
 
 // object is s decoded when it is a JSON object, else nil.
@@ -78,10 +48,7 @@ func object(s string) map[string]any {
 
 // msgBody is a msg row's body string decoded when it is a JSON object, else nil.
 func msgBody(m map[string]any) map[string]any {
-	s, ok := m["body"].(string)
-	if !ok {
-		return nil
-	}
+	s, _ := m["body"].(string)
 	return object(s)
 }
 
@@ -134,21 +101,14 @@ func foldReview(lines []string, k seamKeys) bool {
 			}
 			continue
 		}
-		m, isObject := p.(map[string]any)
-		if !isObject {
+		m, _ := p.(map[string]any)
+		if m["crew_id"] != k.crew || m["kind"] != "msg" {
 			continue
 		}
-		mine := m["crew_id"] == k.crew && m["kind"] == "msg"
-		var o map[string]any
-		if mine {
-			o = msgBody(m)
-		}
+		o := msgBody(m)
 		f, t := sessionless(m["from"]), sessionless(m["to"])
 		switch {
-		case o == nil:
-			if !k.pi || !mine {
-				continue
-			}
+		case o == nil && k.pi:
 			if f == k.reviewer {
 				ok, rejected = false, true
 			} else if f == k.branch && m["to"] == k.reviewer {
@@ -161,10 +121,9 @@ func foldReview(lines []string, k seamKeys) bool {
 					pending, ok, rejected = false, true, false
 				}
 			case o["seam"] == "review" && o["verdict"] == "revise":
+				ok = false
 				if t == k.branch {
-					pending, ok, rejected = false, false, false
-				} else {
-					ok = false
+					pending, rejected = false, false
 				}
 			default:
 				ok, rejected = false, true
@@ -176,10 +135,9 @@ func foldReview(lines []string, k seamKeys) bool {
 		case o["seam"] != "review" || has(o, "tag"):
 			// Not a lead review seam: no change.
 		case f == k.branch && m["to"] == "review:"+k.crew &&
-			(!has(o, "review_mode") || o["review_mode"] == "full" || o["review_mode"] == "downgraded"):
-			if !rejected && !pending {
-				ok = true
-			}
+			(!has(o, "review_mode") || o["review_mode"] == "full" || o["review_mode"] == "downgraded") &&
+			!rejected && !pending:
+			ok = true
 		}
 	}
 	return ok
@@ -230,9 +188,7 @@ func foldPlan(lines []string, k seamKeys) bool {
 			o := msgBody(m)
 			switch o["plan_critic_first_pass"] {
 			case "accept", "revise", "reject":
-				if o["seam"] == "plan" && !has(o, "tag") {
-					seam = true
-				}
+				seam = seam || (o["seam"] == "plan" && !has(o, "tag"))
 			}
 		}
 	}

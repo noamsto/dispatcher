@@ -3,6 +3,7 @@ package status
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
@@ -171,7 +171,13 @@ func (f *fixture) wantNoRow() {
 	}
 }
 
-func jsonStr(s string) string { return string(jsonv.Append(nil, jsonv.Str(s), jsonv.Options{})) }
+func jsonStr(s string) string {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s)
+	return strings.TrimSuffix(b.String(), "\n")
+}
 
 func statusRow(from, body string) string {
 	return `{"ts":` + tsText + `,"crew_id":"c1","from":"` + from + `","to":"dispatcher:c1","kind":"status","body":` + body + `}`

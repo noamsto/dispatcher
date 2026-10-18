@@ -32,8 +32,9 @@ type taskDoc struct {
 // check returns the refusal line, or "" when the row may be posted. The review,
 // deslop and (for `plan: required`) plan seams are checked in that order. Seams
 // from any earlier session on this branch in this crew count (the resume case;
-// the plan seam only since the branch's latest dispatch), and a worker that cannot review stops on an ungated state (blocked/failed), so
-// refusing here never strands one.
+// the plan seam only since the branch's latest dispatch), and a worker that
+// cannot review stops on an ungated state (blocked/failed), so refusing here
+// never strands one.
 func (g gate) check() string {
 	if g.state != "pr_open" && g.state != "done" || !strings.HasPrefix(g.from, "worker:") {
 		return ""
@@ -47,11 +48,7 @@ func (g gate) check() string {
 		return ""
 	}
 	doc := readTaskDoc(path)
-	kind := doc.kind
-	if kind == "" {
-		kind = "implement"
-	}
-	if kind != "implement" {
+	if doc.kind != "" && doc.kind != "implement" {
 		return ""
 	}
 
@@ -60,9 +57,6 @@ func (g gate) check() string {
 		in := ledger.Input{From: g.from, Crew: g.crew, Detail: g.detail, TaskDoc: doc.text, TaskDocErr: doc.unreadable}
 		if log.exists {
 			in.Log = log.lines
-			if in.Log == nil {
-				in.Log = []string{}
-			}
 		}
 		if line := ledger.Check(in); line != "" {
 			return line
@@ -105,7 +99,8 @@ func (g gate) check() string {
 }
 
 // logFile is the bus log as `jq -R` reads it: lines, a final unterminated one
-// included. exists is `[ -f "$log" ]`; err is a regular file that will not open.
+// included, never nil once the file exists. exists is `[ -f "$log" ]`; err is a
+// regular file that will not open.
 type logFile struct {
 	exists bool
 	lines  []string
@@ -118,43 +113,36 @@ func readLog(path string) logFile {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return logFile{exists: true, err: err}
+		return logFile{exists: true, lines: []string{}, err: err}
 	}
 	if len(data) == 0 {
-		return logFile{exists: true}
+		return logFile{exists: true, lines: []string{}}
 	}
 	return logFile{exists: true, lines: strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")}
 }
 
-var (
-	tierRe   = regexp.MustCompile(`^tier:(.*)`)
-	kindRe   = regexp.MustCompile(`^kind:(.*)`)
-	engineRe = regexp.MustCompile(`^engine:(.*)`)
-	planRe   = regexp.MustCompile(`^plan:(.*)`)
-	resumeRe = regexp.MustCompile(`^resume:(.*)`)
-	spaceRe  = regexp.MustCompile(`[ \t\n\v\f\r]+`)
-)
+var spaceRe = regexp.MustCompile(`[ \t\n\v\f\r]+`)
 
 // readTaskDoc is the doc plus its five header fields, each the first line
-// anywhere that starts `field:`
-// (`sed -n 's/^f:[[:space:]]*//p' | head -1 | tr -d '[:space:]'`): sed strips
-// leading glibc spaces, multibyte ones included, then tr deletes every ASCII
-// one. An unreadable doc leaves every field empty.
+// anywhere that starts `field:` (`sed -n 's/^f:[[:space:]]*//p' | head -1 |
+// tr -d '[:space:]'`): sed strips leading glibc spaces, multibyte ones
+// included, then tr deletes every ASCII one. An unreadable doc leaves every
+// field empty.
 func readTaskDoc(path string) taskDoc {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return taskDoc{unreadable: true}
 	}
 	d := taskDoc{text: string(data)}
-	field := func(re *regexp.Regexp) string {
+	field := func(name string) string {
 		for line := range strings.SplitSeq(d.text, "\n") {
-			if m := re.FindStringSubmatch(line); m != nil {
-				return spaceRe.ReplaceAllString(strings.TrimLeftFunc(m[1], ledger.GlibcSpace), "")
+			if v, ok := strings.CutPrefix(line, name+":"); ok {
+				return spaceRe.ReplaceAllString(strings.TrimLeftFunc(v, ledger.GlibcSpace), "")
 			}
 		}
 		return ""
 	}
-	d.tier, d.kind, d.engine = field(tierRe), field(kindRe), field(engineRe)
-	d.plan, d.resume = field(planRe), field(resumeRe)
+	d.tier, d.kind, d.engine = field("tier"), field("kind"), field("engine")
+	d.plan, d.resume = field("plan"), field("resume")
 	return d
 }

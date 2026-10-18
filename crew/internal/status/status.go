@@ -11,6 +11,7 @@
 package status
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -20,14 +21,12 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/panestate"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
-const (
-	exitFailure = 1
-)
+const exitFailure = 1
 
 // Options is everything the arms read beyond the bus. Nil fields take the
 // production default (CrewID and Toplevel read the process's working
@@ -50,6 +49,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.Getenv == nil {
 		o.Getenv = os.Getenv
+	}
+	if o.NowMS == nil {
+		o.NowMS = clock.Clock{Now: time.Now}.RealMS
 	}
 	if o.Sender.Getenv == nil {
 		o.Sender.Getenv = o.Getenv
@@ -86,21 +88,34 @@ func refuseSender(sub, from, crew string, o Options, stderr io.Writer) bool {
 	return true
 }
 
-// stamp is the row's ts, computed once before the builder: FitLine runs it
-// again for every shrink pass, and a stamp taken inside would move with the loop.
-func stamp(o Options) jsonv.Value {
-	if o.NowMS == nil {
-		return jsonv.Num(float64(clock.Clock{Now: time.Now}.RealMS()))
-	}
-	return jsonv.Num(float64(o.NowMS()))
+// row is a row as written; field order is the key order.
+type row[B any] struct {
+	TS     int64    `json:"ts"`
+	CrewID string   `json:"crew_id"`
+	From   string   `json:"from"`
+	To     string   `json:"to"`
+	Kind   bus.Kind `json:"kind"`
+	Body   B        `json:"body"`
 }
 
-func member(key string, v jsonv.Value) jsonv.Member { return jsonv.Member{Key: key, Val: v} }
+type statusBody struct {
+	State   string `json:"state"`
+	Detail  string `json:"detail,omitempty"`
+	PRURL   string `json:"pr_url,omitempty"`
+	Restamp bool   `json:"restamp,omitempty"`
+}
 
-func compact(v jsonv.Value) string { return string(jsonv.Append(nil, v, jsonv.Options{})) }
+// encodeLine is v as one compact JSON line. Unescaped <>& keep the measured
+// length of a line equal to the written one.
+func encodeLine(v any) string {
+	var b bytes.Buffer
+	_ = jsonval.Encode(&b, v, false)
+	return strings.TrimSuffix(b.String(), "\n")
+}
 
 // post fits the row to a bus line and appends it, the arm's `_fit_line` and
-// `_bus_append`.
+// `_bus_append`. Callers take the row's ts once before build: FitLine reruns it
+// for every shrink pass, and a ts taken inside would move with the loop.
 func post(sub string, paths bus.Paths, stderr io.Writer, build func(text string) string, full string) int {
 	if err := bus.Append(paths.Log, bus.FitLine(build, full)); err != nil {
 		say(stderr, "crew: %s: %v\n", sub, err)
@@ -158,26 +173,12 @@ func RunStatus(req StatusRequest, paths bus.Paths, stderr io.Writer, o Options) 
 		return exitFailure
 	}
 
-	ts := stamp(o)
+	ts := o.NowMS()
 	code := post("status", paths, stderr, func(d string) string {
-		body := []jsonv.Member{member("state", jsonv.Str(state))}
-		if d != "" {
-			body = append(body, member("detail", jsonv.Str(d)))
-		}
-		if pr != "" {
-			body = append(body, member("pr_url", jsonv.Str(pr)))
-		}
-		if restamp {
-			body = append(body, member("restamp", jsonv.Bool(true)))
-		}
-		return compact(jsonv.Object(
-			member("ts", ts),
-			member("crew_id", jsonv.Str(crew)),
-			member("from", jsonv.Str(from)),
-			member("to", jsonv.Str("dispatcher:"+crew)),
-			member("kind", jsonv.Str("status")),
-			member("body", jsonv.Object(body...)),
-		))
+		return encodeLine(row[statusBody]{
+			TS: ts, CrewID: crew, From: from, To: "dispatcher:" + crew, Kind: bus.KindStatus,
+			Body: statusBody{State: state, Detail: d, PRURL: pr, Restamp: restamp},
+		})
 	}, detail)
 	if code != 0 {
 		return code
@@ -205,55 +206,40 @@ func publishPane(o Options, state, detail string) {
 	}, state, detail, "")
 }
 
-// lastPosted is the arm's
-//
-//	jq -r 'select(.crew_id==$c and .kind=="status" and .from==$m)
-//	       | "\(.body.state)\t\(.body.pr_url // "")"' log 2>/dev/null | tail -1
-//
-// "" when nothing prints. jq stops at the first parse error, so the
-// well-formed prefix decides; a row whose evaluation would error (a
-// non-object row, a selected row with a non-object body) prints nothing and
-// jq moves on.
+// lastPosted is the terminal dedupe key, "<state>\t<pr_url>", of the last
+// status row this crew's from posted; "" when there is none. The well-formed
+// prefix of the log decides (a torn tail is ignored). A row whose from is
+// missing or not a string matches no from, and a body that is neither an object
+// nor null is skipped. A key holding a newline keeps only its last line.
 func lastPosted(log, crew, from string) string {
 	events, _ := bus.ReadEventsTolerant(log)
-	var out strings.Builder
+	var last string
 	for _, ev := range events {
-		if ev.Raw.Kind() != jsonv.KindObject || ev.CrewID != crew || ev.Kind != bus.KindStatus {
+		m, ok := ev.Doc.(map[string]any)
+		if !ok || ev.CrewID != crew || ev.Kind != bus.KindStatus || m["from"] != from {
 			continue
 		}
-		// A missing or non-string from is null to jq, which equals no string.
-		if f, _ := ev.Raw.Get("from"); f.Kind() != jsonv.KindString || ev.From != from {
+		var state, pr string
+		switch body := m["body"].(type) {
+		case nil:
+			state = "null"
+		case map[string]any:
+			state = text(body["state"])
+			if v := body["pr_url"]; v != nil && v != false {
+				pr = text(v)
+			}
+		default:
 			continue
 		}
-		state, pr, ok := bodyFields(ev.Body)
-		if !ok {
-			continue
-		}
-		out.WriteString(interpolate(state) + "\t" + interpolate(pr.Or(jsonv.Str(""))) + "\n")
+		last = state + "\t" + pr
 	}
-	text := strings.TrimSuffix(out.String(), "\n")
-	return text[strings.LastIndex(text, "\n")+1:]
+	return last[strings.LastIndex(last, "\n")+1:]
 }
 
-// bodyFields is `.body.state` and `.body.pr_url`; ok is false where jq's index
-// would error, on a body that is neither an object nor null.
-func bodyFields(body jsonv.Value) (state, pr jsonv.Value, ok bool) {
-	switch body.Kind() {
-	case jsonv.KindNull:
-		return jsonv.Null(), jsonv.Null(), true
-	case jsonv.KindObject:
-		state, _ = body.Get("state")
-		pr, _ = body.Get("pr_url")
-		return state, pr, true
-	case jsonv.KindFalse, jsonv.KindTrue, jsonv.KindNumber, jsonv.KindString, jsonv.KindArray:
-	}
-	return jsonv.Null(), jsonv.Null(), false
-}
-
-// interpolate is jq's `"\(v)"`: a string raw, anything else as compact JSON.
-func interpolate(v jsonv.Value) string {
-	if s, ok := v.AsString(); ok {
+// text is a string raw, anything else as compact JSON.
+func text(v any) string {
+	if s, ok := v.(string); ok {
 		return s
 	}
-	return compact(v)
+	return encodeLine(v)
 }
