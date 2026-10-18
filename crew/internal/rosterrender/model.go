@@ -2,19 +2,20 @@ package rosterrender
 
 import (
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
@@ -47,12 +48,8 @@ var engines = []string{"claude", "codex", "cursor", "pi"}
 
 // emptyModel is the arm's `{"rows":[],"holds":[],"roles":[]}`: what a repo with
 // no bus yet renders as, with no jq run at all.
-func emptyModel() jsonv.Value {
-	return jsonv.Object(
-		jsonv.Member{Key: "rows", Val: jsonv.Array()},
-		jsonv.Member{Key: "holds", Val: jsonv.Array()},
-		jsonv.Member{Key: "roles", Val: jsonv.Array()},
-	)
+func emptyModel() map[string]any {
+	return map[string]any{"rows": []any{}, "holds": []any{}, "roles": []any{}}
 }
 
 // model is `_rr_model`: the renderer's whole input, {rows, holds, roles}. Every
@@ -68,89 +65,77 @@ func emptyModel() jsonv.Value {
 // pending dispatch survive — a session launched and not yet posting is live by
 // definition — and so the live count, the legend and the boxes speak of the same
 // rows.
-func model(paths bus.Paths, crew string, nowSec float64, roleRows []string, rp roster.Probes, live roster.Liveness) (jsonv.Value, error) {
+func model(paths bus.Paths, crew string, nowSec float64, roleRows []string, rp roster.Probes, live roster.Liveness) (map[string]any, error) {
 	events, err := bus.ReadEvents(paths.Log)
 	if errors.Is(err, bus.ErrNoLog) {
 		return emptyModel(), nil
 	}
 	if err != nil {
-		return jsonv.Value{}, err
+		return nil, err
 	}
-	raws := make([]jsonv.Value, len(events))
 	docs := make([]any, len(events))
 	for i, ev := range events {
-		raws[i] = ev.Raw
 		docs[i] = ev.Doc
 	}
 
-	rows, err := roster.Fold(raws, crew, nowSec, rp)
+	rows, err := roster.Fold(docs, crew, nowSec, rp)
 	if err != nil {
-		return jsonv.Value{}, err
+		return nil, err
 	}
-	kept := make([]jsonv.Value, 0, rows.Len())
-	for _, row := range rows.Elems() {
+	kept := make([]any, 0, len(rows))
+	for _, row := range rows {
 		if live.Drawn(row) {
 			kept = append(kept, row)
 		}
 	}
-	pending, err := jqrun.Run(pendingProg, raws, nowSec, map[string]jsonv.Value{
-		"crew": jsonv.Str(crew),
-	})
+	pending, err := jqrun.RunAny(pendingProg, docs, nowSec, map[string]any{"crew": crew})
 	if err != nil {
-		return jsonv.Value{}, err
+		return nil, err
 	}
-	holdsAny, err := hold.Outstanding(docs, crew)
+	holds, err := hold.Outstanding(docs, crew)
 	if err != nil {
-		return jsonv.Value{}, err
+		return nil, err
 	}
-	// hold answers in gojq's form; this package's modelProg is still jsonv-typed
-	// (#1066 row 20), so the fold's result goes back through its JSON text.
-	holdsJSON, err := hold.JSON(holdsAny)
-	if err != nil {
-		return jsonv.Value{}, err
-	}
-	holds, err := jsonv.ParseOne(string(holdsJSON))
-	if err != nil {
-		return jsonv.Value{}, err
-	}
-	out, err := jqrun.Run(modelProg,
-		[]jsonv.Value{jsonv.Array(kept...), pending, identityIDs(raws, pending), holds, roleList(roleRows, paths.Dir)},
+	out, err := jqrun.RunAny(modelProg,
+		[]any{kept, pending, identityIDs(docs, pending), holds, roleList(roleRows, paths.Dir)},
 		nowSec, nil)
 	if err != nil {
-		return jsonv.Value{}, err
+		return nil, err
 	}
-	return out, nil
+	m, ok := out.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("roster-render: model is %T, not an object", out)
+	}
+	return m, nil
 }
 
 // identityIDs is the arm's `ids` map: one entry per pending branch, the identity
 // its dispatch recorded, else the pool one. The arm read the branches one line at
 // a time, so a branch holding a space still keys itself here (unlike in `roster`,
 // whose unquoted `$(…)` word-splits).
-func identityIDs(events []jsonv.Value, pending jsonv.Value) jsonv.Value {
-	recorded := identity.RecordedAll(events)
-	seen := map[string]bool{}
-	var members []jsonv.Member
-	for _, p := range pending.Elems() {
-		pend, _ := p.Get("pending")
-		if !pend.Truthy() {
+func identityIDs(docs []any, pending any) map[string]any {
+	recorded := identity.RecordedAll(docs)
+	ids := map[string]any{}
+	list, _ := pending.([]any)
+	for _, p := range list {
+		doc, _ := p.(map[string]any)
+		if pend := doc["pending"]; pend == nil || pend == false {
 			continue
 		}
-		br, _ := p.Get("branch")
-		branch, isStr := br.AsString()
-		if !isStr || branch == "" || seen[branch] {
+		branch, _ := doc["branch"].(string)
+		if _, seen := ids[branch]; branch == "" || seen {
 			continue
 		}
-		seen[branch] = true
-		members = append(members, jsonv.Member{Key: branch, Val: identity.For(recorded, branch)})
+		ids[branch] = identity.For(recorded, branch).Value()
 	}
-	return jsonv.Object(members...)
+	return ids
 }
 
 // roleList is the arm's roles loop over `_rr_role_panes`' rows: `branch\trole\t
 // state` per live role pane, with the engine read from the worker-writable
 // roles.json beside it.
-func roleList(rows []string, dir string) jsonv.Value {
-	out := make([]jsonv.Value, 0, len(rows))
+func roleList(rows []string, dir string) []any {
+	out := make([]any, 0, len(rows))
 	for _, line := range rows {
 		if line == "" {
 			continue
@@ -163,14 +148,14 @@ func roleList(rows []string, dir string) jsonv.Value {
 		if !roleRe.MatchString(role) {
 			continue
 		}
-		out = append(out, jsonv.Object(
-			jsonv.Member{Key: "branch", Val: jsonv.Str(br)},
-			jsonv.Member{Key: "role", Val: jsonv.Str(role)},
-			jsonv.Member{Key: "state", Val: jsonv.Str(state)},
-			jsonv.Member{Key: "engine", Val: jsonv.Str(roleEngine(dir, br, role))},
-		))
+		out = append(out, map[string]any{
+			"branch": br,
+			"role":   role,
+			"state":  state,
+			"engine": roleEngine(dir, br, role),
+		})
 	}
-	return jsonv.Array(out...)
+	return out
 }
 
 // roleEngine is the arm's engine read: roles.json sits under a worker's own
@@ -187,52 +172,44 @@ func roleEngine(dir, branch, role string) string {
 	if err != nil {
 		return "?"
 	}
-	vs, err := jsonv.DecodeStream(strings.NewReader(string(data)))
-	if err != nil || len(vs) != 1 {
+	var doc any
+	if json.Unmarshal(data, &doc) != nil {
 		return "?"
 	}
-	entry, ok := member(vs[0], role)
-	if !ok {
-		return "?"
-	}
-	agent, ok := member(entry, "agent")
-	if !ok {
-		return "?"
-	}
-	name, isStr := agent.AsString()
-	if !isStr || !slices.Contains(engines, name) {
+	roles, _ := doc.(map[string]any)
+	entry, _ := roles[role].(map[string]any)
+	name, _ := entry["agent"].(string)
+	if !slices.Contains(engines, name) {
 		return "?"
 	}
 	return name
-}
-
-func member(v jsonv.Value, key string) (jsonv.Value, bool) {
-	if v.Kind() != jsonv.KindObject {
-		return jsonv.Value{}, false
-	}
-	got, ok := v.Get(key)
-	return got, ok
 }
 
 // renderText is `_rr_d2`: the model to D2 text. The program emits one string per
 // output line; the arm read them through `jq -r` into `$(…)`, which strips every
 // trailing newline, and wrote `printf '%s\n'` of that — so Go joins with one
 // newline, trims any trailing ones, and appends exactly one.
-func renderText(m jsonv.Value) (string, error) {
-	hex, err := jsonv.DecodeStream(strings.NewReader(string(hexJSON)))
-	if err != nil || len(hex) != 1 {
+func renderText(m map[string]any) (string, error) {
+	var table map[string]string
+	if err := json.Unmarshal(hexJSON, &table); err != nil {
 		return "", fmt.Errorf("roster-render: hex table: %v", err)
 	}
-	out, err := jqrun.Run(d2Prog, []jsonv.Value{m}, 0, map[string]jsonv.Value{
-		"palette": identity.Palette(),
-		"hex":     hex[0],
-	})
+	hex := make(map[string]any, len(table))
+	for k, v := range table {
+		hex[k] = v
+	}
+	var palette []any
+	for _, c := range identity.Palette() {
+		palette = append(palette, c)
+	}
+	out, err := jqrun.RunAny(d2Prog, []any{m}, 0, map[string]any{"palette": palette, "hex": hex})
 	if err != nil {
 		return "", err
 	}
 	var lines []string
-	for _, e := range out.Elems() {
-		s, _ := e.AsString()
+	elems, _ := out.([]any)
+	for _, e := range elems {
+		s, _ := e.(string)
 		lines = append(lines, s)
 	}
 	return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n", nil
@@ -241,17 +218,25 @@ func renderText(m jsonv.Value) (string, error) {
 // liveCount is `_rr_pass`' live number: working, blocked and dispatched rows
 // plus the outstanding holds. It is the only thing the renderer prints, and the
 // only thing its quiet window reads.
-func liveCount(m jsonv.Value) (int64, error) {
-	out, err := jqrun.Run(liveProg, []jsonv.Value{m}, 0, nil)
+func liveCount(m map[string]any) (int64, error) {
+	out, err := jqrun.RunAny(liveProg, []any{m}, 0, nil)
 	if err != nil {
 		return 0, err
 	}
-	lines := out.Elems()
+	lines, _ := out.([]any)
 	if len(lines) != 1 {
 		return 0, fmt.Errorf("roster-render: live count: %d values", len(lines))
 	}
-	n, ok := lines[0].AsFloat()
-	if !ok {
+	var n float64
+	switch v := lines[0].(type) {
+	case json.Number:
+		n, err = strconv.ParseFloat(v.String(), 64)
+		if err != nil {
+			return 0, errors.New("roster-render: live count is not a number")
+		}
+	case float64:
+		n = v
+	default:
 		return 0, errors.New("roster-render: live count is not a number")
 	}
 	return int64(n), nil

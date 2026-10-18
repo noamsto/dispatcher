@@ -1,11 +1,11 @@
 package roster
 
 import (
+	"encoding/json"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // LiveStates are the non-terminal states a row can hold: what `crew fleet`
@@ -49,12 +49,11 @@ func WindowBranches(out string) map[string]bool {
 // Stale reports a non-terminal row with no evidence of life: no tmux window
 // stamped with its branch, and no worktree for it with a row younger than
 // staleAfter.
-func (l Liveness) Stale(row jsonv.Value) bool {
+func (l Liveness) Stale(row map[string]any) bool {
 	if l.Windows()[rowBranch(row)] {
 		return false
 	}
-	v, _ := row.Get("age_s")
-	ageS, ok := v.AsFloat()
+	ageS, ok := number(row["age_s"])
 	if !ok || time.Duration(ageS*float64(time.Second)) >= staleAfter {
 		return true
 	}
@@ -68,7 +67,7 @@ func (l Liveness) Stale(row jsonv.Value) bool {
 //
 // "Any other row" includes a state this build does not know. Staleness governs
 // that too, so a state `crew status` learns tomorrow cannot make a worker vanish.
-func (l Liveness) Drawn(row jsonv.Value) bool {
+func (l Liveness) Drawn(row map[string]any) bool {
 	state, branch := rowState(row), rowBranch(row)
 	switch {
 	case branch == "" || state == "":
@@ -85,23 +84,34 @@ func (l Liveness) Drawn(row jsonv.Value) bool {
 // worktreeGone reports the one thing the rules read from the worktree list with
 // certainty: a probe that ran, and did not list a worktree for the row's branch.
 // A probe that failed says nothing, so it hides nothing.
-func (l Liveness) worktreeGone(row jsonv.Value) bool {
+func (l Liveness) worktreeGone(row map[string]any) bool {
 	porcelain, err := l.Worktrees()
 	return err == nil && WorktreePath(porcelain, rowBranch(row)) == ""
 }
 
 // rowBranch is a row's branch as the fold wrote it, and "" when the row has no
 // string there.
-func rowBranch(row jsonv.Value) string {
-	v, _ := row.Get("branch")
-	s, _ := v.AsString()
+func rowBranch(row map[string]any) string {
+	s, _ := row["branch"].(string)
 	return s
 }
 
 // rowState is a row's state as the fold wrote it, and "" when it has no string
 // there — which is no state, and so no row.
-func rowState(row jsonv.Value) string {
-	v, _ := row.Get("state")
-	s, _ := v.AsString()
+func rowState(row map[string]any) string {
+	s, _ := row["state"].(string)
 	return s
+}
+
+// number reads a gojq-form value as a float. A literal out of float64 range
+// reads as ±Inf, as the jq programs read it.
+func number(v any) (float64, bool) {
+	switch x := v.(type) {
+	case json.Number:
+		f, _ := strconv.ParseFloat(string(x), 64)
+		return f, true
+	case float64:
+		return x, true
+	}
+	return 0, false
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
@@ -88,13 +89,13 @@ func Run(req Request, stdout, stderr io.Writer, o Options) int {
 		case decode != nil:
 			say(stderr, "crew: fleet: %s: %s (rows from the readable prefix)\n", r.Common, oneLine(decode))
 		}
-		raws := make([]jsonv.Value, len(events))
+		docs := make([]any, len(events))
 		for i, e := range events {
-			raws[i] = e.Raw
+			docs[i] = e.Doc
 		}
 		worktrees := sync.OnceValues(func() (string, error) { return o.Worktrees(r.Common) })
 		live := roster.Liveness{Windows: windowBranches, Worktrees: worktrees}
-		repoRows, err := foldRepo(r.Common, events, raws, onlyCrew, nowSec, roster.Probes{
+		repoRows, err := foldRepo(r.Common, events, docs, onlyCrew, nowSec, roster.Probes{
 			Panes:     livePanes,
 			Worktrees: worktrees,
 		})
@@ -107,7 +108,7 @@ func Run(req Request, stdout, stderr io.Writer, o Options) int {
 			row.Val.Set("repo", jsonv.Str(name))
 			row.Val.Set("crew_id", jsonv.Str(row.crew))
 			nonTerminal := slices.Contains(roster.LiveStates, str(row.Val, "state"))
-			stale := nonTerminal && live.Stale(row.Val)
+			stale := nonTerminal && live.Stale(row.Row)
 			row.Val.Set("stale", jsonv.Bool(stale))
 			switch {
 			case !all && !nonTerminal:
@@ -136,13 +137,14 @@ func Run(req Request, stdout, stderr io.Writer, o Options) int {
 }
 
 type crewRow struct {
+	Row  map[string]any
 	Val  jsonv.Value
 	crew string
 }
 
 // foldRepo folds each of the repo's crews: the one asked for, else every crew
 // that has a worker status row, which is exactly what roster can produce rows for.
-func foldRepo(common string, events []bus.Event, raws []jsonv.Value, onlyCrew string, nowSec float64, p roster.Probes) ([]crewRow, error) {
+func foldRepo(common string, events []bus.Event, docs []any, onlyCrew string, nowSec float64, p roster.Probes) ([]crewRow, error) {
 	crews := []string{onlyCrew}
 	if onlyCrew == "" {
 		crews = crews[:0]
@@ -156,12 +158,20 @@ func foldRepo(common string, events []bus.Event, raws []jsonv.Value, onlyCrew st
 	}
 	var out []crewRow
 	for _, c := range crews {
-		folded, err := roster.Fold(raws, c, nowSec, p)
+		folded, err := roster.Fold(docs, c, nowSec, p)
 		if err != nil {
 			return nil, err
 		}
-		for _, row := range folded.Elems() {
-			out = append(out, crewRow{Val: row, crew: c})
+		for _, row := range folded {
+			var b bytes.Buffer
+			if err := jsonval.Encode(&b, row, false); err != nil {
+				return nil, err
+			}
+			val, err := jsonv.ParseOne(b.String())
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, crewRow{Row: row, Val: val, crew: c})
 		}
 	}
 	return out, nil

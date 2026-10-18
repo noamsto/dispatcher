@@ -13,7 +13,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 //go:embed roster_base.jq
@@ -68,38 +67,41 @@ func CrewWindowBranches(out, crew string) map[string]bool {
 // age_s computed against nowSec (jq's `now`). A jq runtime error is returned
 // as an error (main maps it to the jq-failure exit status), a failing
 // worktree probe as its *ExitError.
-func Fold(events []jsonv.Value, crew string, nowSec float64, p Probes) (jsonv.Value, error) {
-	base, err := jqrun.Run(baseProgram, events, nowSec, map[string]jsonv.Value{
-		"crew": jsonv.Str(crew),
-	})
+func Fold(events []any, crew string, nowSec float64, p Probes) ([]map[string]any, error) {
+	base, err := jqrun.RunAny(baseProgram, events, nowSec, map[string]any{"crew": crew})
 	if err != nil {
-		return jsonv.Value{}, err
+		return nil, err
 	}
-	rows := base.Elems()
+	rows, _ := base.([]any)
 	// $(...) drops trailing newlines, so the here-doc over $live is exactly
 	// these lines.
 	live := strings.Split(strings.TrimRight(p.Panes(), "\n"), "\n")
-	for i := range rows {
-		if err := resolveExited(&rows[i], live, p.Worktrees); err != nil {
-			return jsonv.Value{}, err
+	for _, row := range rows {
+		if err := resolveExited(row, live, p.Worktrees); err != nil {
+			return nil, err
 		}
 	}
-	out, err := jqrun.Run(finalProgram, rows, nowSec, map[string]jsonv.Value{
+	out, err := jqrun.RunAny(finalProgram, rows, nowSec, map[string]any{
 		"m": identityMap(events, rows),
 	})
 	if err != nil {
-		return jsonv.Value{}, err
+		return nil, err
+	}
+	outRows, _ := out.([]any)
+	folded := make([]map[string]any, 0, len(outRows))
+	for _, r := range outRows {
+		if row, ok := r.(map[string]any); ok {
+			folded = append(folded, row)
+		}
 	}
 	if p.LiveBranches != nil {
 		windows := p.LiveBranches()
-		rows := out.Elems()
-		for i := range rows {
-			branch, _ := rows[i].Get("branch")
-			name, _ := branch.AsString()
-			rows[i].Set("live", jsonv.Bool(windows[name]))
+		for _, row := range folded {
+			name, _ := row["branch"].(string)
+			row["live"] = windows[name]
 		}
 	}
-	return out, nil
+	return folded, nil
 }
 
 // identityMap is the arm's `for br in $(jq -r '.[].branch'); do ... done`
@@ -108,30 +110,34 @@ func Fold(events []jsonv.Value, crew string, nowSec float64, p Probes) (jsonv.Va
 // word-splits, so a branch holding a space, tab or newline never keys
 // itself (and the empty word is dropped): such rows get no entry. Words
 // holding glob characters are not mirrored — git refuses those names.
-func identityMap(events, rows []jsonv.Value) jsonv.Value {
+func identityMap(events, rows []any) map[string]any {
 	recorded := identity.RecordedAll(events)
-	var members []jsonv.Member
-	seen := map[string]bool{}
-	for _, row := range rows {
-		br, _ := row.Get("branch")
-		branch, isStr := br.AsString()
-		if !isStr || branch == "" || strings.ContainsAny(branch, " \t\n") || seen[branch] {
+	m := map[string]any{}
+	for _, r := range rows {
+		row, _ := r.(map[string]any)
+		branch, isStr := row["branch"].(string)
+		if !isStr || branch == "" || strings.ContainsAny(branch, " \t\n") {
 			continue
 		}
-		seen[branch] = true
-		members = append(members, jsonv.Member{Key: branch, Val: identity.For(recorded, branch)})
+		if _, seen := m[branch]; seen {
+			continue
+		}
+		m[branch] = identity.For(recorded, branch).Value()
 	}
-	return jsonv.Object(members...)
+	return m
 }
 
 // resolveExited turns a false `exited` back into the row's previous state when
 // an engine pane sits in the branch's worktree. It reads `.state` and
-// `.branch` through `$(jq -r ...)`, which drops trailing newlines.
-func resolveExited(row *jsonv.Value, live []string, worktrees func() (string, error)) error {
-	state, _ := row.Get("state")
-	st, _ := state.AsString()
-	br, _ := row.Get("branch")
-	branch, _ := br.AsString()
+// `.branch` through `$(jq -r ...)`, which drops trailing newlines. A row that
+// is not an object is left alone.
+func resolveExited(r any, live []string, worktrees func() (string, error)) error {
+	row, ok := r.(map[string]any)
+	if !ok {
+		return nil
+	}
+	st, _ := row["state"].(string)
+	branch, _ := row["branch"].(string)
 	branch = strings.TrimRight(branch, "\n")
 	if strings.TrimRight(st, "\n") != "exited" || branch == "" {
 		return nil
@@ -144,9 +150,12 @@ func resolveExited(row *jsonv.Value, live []string, worktrees func() (string, er
 	if wt == "" || !slices.ContainsFunc(live, func(pane string) bool { return paneIsEngineAt(pane, wt) }) {
 		return nil
 	}
-	prev, _ := row.Get("prev_state")
-	row.Set("state", prev.Or(jsonv.Str("working")))
-	row.Set("exit_suspect", jsonv.Bool(true))
+	if prev := row["prev_state"]; prev != nil && prev != false {
+		row["state"] = prev
+	} else {
+		row["state"] = "working"
+	}
+	row["exit_suspect"] = true
 	return nil
 }
 

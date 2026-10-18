@@ -155,8 +155,7 @@ func TestPoolNameFallback(t *testing.T) {
 	tr := setup(t)
 	wins := winLine(tr.paths.Dir, "@624", "feat/618-x", "c1", "", "sess", "3", "win-name")
 	out, _, code := tr.run(t, wins, paneLine("@624", "%204", "lead", "1"), crewIs("c1"), "feat/618-x")
-	id, _ := identity.At(identity.Slot("feat/618-x")).Get("name")
-	pool, _ := id.AsString()
+	pool := identity.At(identity.Slot("feat/618-x")).Name
 	want := fmt.Sprintf("%s — sess:3.1 %q (lead pane)   jump: ! tmux switch-client -t %%204\n", pool, "win-name")
 	if code != 0 || out != want {
 		t.Errorf("code %d, out %q, want %q", code, out, want)
