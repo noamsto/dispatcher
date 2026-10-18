@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 const (
@@ -34,8 +36,8 @@ type fixture struct {
 	top    string
 	paths  bus.Paths
 	env    map[string]string
-	tmux   [][]string // argv of every tmux call
-	role   string     // stdout of the @crew_role query
+	tm     *tmuxtest.Fake // every tmux call; answers the @crew_role query with role
+	role   string         // stdout of the @crew_role query
 	noTmux bool
 	noTop  bool
 	fold   foldFunc
@@ -52,13 +54,20 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &fixture{
+	f := &fixture{
 		t:     t,
 		top:   root,
 		paths: bus.Paths{Common: root + "/.git", Dir: root + "/.git/crew", Log: root + "/.git/crew/events.jsonl"},
 		env:   map[string]string{},
 		crew:  crewID,
 	}
+	f.tm = &tmuxtest.Fake{Func: func(args []string) (string, error) {
+		if args[0] == "display-message" {
+			return f.role, nil
+		}
+		return "", nil
+	}}
+	return f
 }
 
 func (f *fixture) opts() Options {
@@ -74,7 +83,7 @@ func (f *fixture) opts() Options {
 	}
 	if f.panes != "" {
 		o.Sender = sender.Probes{
-			Panes: func() (string, error) { return f.panes, nil },
+			Tmux: &tmuxtest.Fake{Out: map[string]string{"list-panes": f.panes}},
 			Parent: func(pid int) (int, bool) {
 				ppid, ok := f.parents[pid]
 				return ppid, ok
@@ -83,13 +92,7 @@ func (f *fixture) opts() Options {
 		}
 	}
 	if !f.noTmux {
-		o.Tmux = func(args ...string) (string, error) {
-			f.tmux = append(f.tmux, args)
-			if args[0] == "display-message" {
-				return f.role, nil
-			}
-			return "", nil
-		}
+		o.Tmux = f.tm
 	}
 	return o
 }
@@ -104,13 +107,13 @@ func (f *fixture) status(args ...string) (int, string) {
 
 func (f *fixture) statusReq(req StatusRequest) (int, string) {
 	var stderr bytes.Buffer
-	code := RunStatus(req, f.paths, &stderr, f.opts())
+	code := RunStatus(f.t.Context(), req, f.paths, &stderr, f.opts())
 	return code, stderr.String()
 }
 
 func (f *fixture) msg(args ...string) (int, string) {
 	var stderr bytes.Buffer
-	code := RunMsg(MsgRequest{From: at(args, 0), To: at(args, 1), Body: at(args, 2)}, f.paths, &stderr, f.opts())
+	code := RunMsg(f.t.Context(), MsgRequest{From: at(args, 0), To: at(args, 1), Body: at(args, 2)}, f.paths, &stderr, f.opts())
 	return code, stderr.String()
 }
 
@@ -861,24 +864,19 @@ func TestUnreadableTaskDoc(t *testing.T) {
 
 func TestPanePublish(t *testing.T) {
 	long := strings.Repeat("é", 30) + strings.Repeat("✓", 20)
-	display := []string{"display-message", "-p", "-t", "%5", "#{@crew_role}"}
-	set := func(opt, val string) []string { return []string{"set-option", "-p", "-t", "%5", opt, val} }
+	display := "display-message -p -t %5 #{@crew_role}"
+	set := func(opt, val string) string { return "set-option -p -t %5 " + opt + " " + val }
 
 	t.Run("lead pane", func(t *testing.T) {
 		f := newFixture(t)
 		f.env["TMUX_PANE"] = "%5"
-		f.role = "lead\n"
+		f.role = "lead"
 		if code, _ := f.status(worker, "blocked", long); code != 0 {
 			t.Fatal(code)
 		}
-		want := [][]string{display, set("@crew_state", "blocked"), set("@crew_detail", strings.Repeat("é", 30)+strings.Repeat("✓", 10)), set("@crew_source", "")}
-		if len(f.tmux) != len(want) {
-			t.Fatalf("tmux calls %q", f.tmux)
-		}
-		for i := range want {
-			if strings.Join(f.tmux[i], "\x1f") != strings.Join(want[i], "\x1f") {
-				t.Errorf("call %d: %q, want %q", i, f.tmux[i], want[i])
-			}
+		want := []string{display, set("@crew_state", "blocked"), set("@crew_detail", strings.Repeat("é", 30)+strings.Repeat("✓", 10)), set("@crew_source", "")}
+		if got := f.tm.Calls(); !slices.Equal(got, want) {
+			t.Errorf("tmux calls %q, want %q", got, want)
 		}
 	})
 	t.Run("detail is the original, not the shrunk one", func(t *testing.T) {
@@ -886,8 +884,8 @@ func TestPanePublish(t *testing.T) {
 		f.env["TMUX_PANE"] = "%5"
 		f.role = "lead"
 		f.status(worker, "working", strings.Repeat("x", 9000))
-		if got := f.tmux[2][5]; got != strings.Repeat("x", 40) {
-			t.Errorf("detail %q", got)
+		if got := f.tm.Calls()[2]; got != "set-option -p -t %5 @crew_detail "+strings.Repeat("x", 40) {
+			t.Errorf("detail call %q", got)
 		}
 	})
 	skipped := []struct {
@@ -907,8 +905,8 @@ func TestPanePublish(t *testing.T) {
 			if code, _ := f.status(worker, "working", "d"); code != 0 {
 				t.Fatal(code)
 			}
-			for _, c := range f.tmux {
-				if c[0] == "set-option" {
+			for _, c := range f.tm.Calls() {
+				if strings.HasPrefix(c, "set-option") {
 					t.Errorf("published: %q", c)
 				}
 			}
@@ -921,8 +919,8 @@ func TestPanePublish(t *testing.T) {
 		f.log(statusRow(worker, `{"state":"done"}`))
 		f.status(worker, "done")
 		f.status(worker, "bogus")
-		if len(f.tmux) != 0 {
-			t.Errorf("tmux touched: %q", f.tmux)
+		if got := f.tm.Calls(); len(got) != 0 {
+			t.Errorf("tmux touched: %q", got)
 		}
 	})
 }
@@ -973,7 +971,7 @@ func TestStatusRefusesDispatcherFromWorkerEnv(t *testing.T) {
 	f := newFixture(t)
 	f.env["CREW_WORKER_ID"] = worker
 	code, stderr := f.status("dispatcher:c1", "working")
-	want := "crew: status: refusing sender 'dispatcher:c1' — " + sender.Check("dispatcher:c1", crewID, sender.Probes{Getenv: f.opts().Getenv}) + "\n"
+	want := "crew: status: refusing sender 'dispatcher:c1' — " + sender.Check(t.Context(), "dispatcher:c1", crewID, sender.Probes{Getenv: f.opts().Getenv}) + "\n"
 	if code != 1 || stderr != want {
 		t.Errorf("got %d %q", code, stderr)
 	}

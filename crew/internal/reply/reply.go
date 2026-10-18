@@ -16,6 +16,7 @@ package reply
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,7 +63,7 @@ type Request struct{ Crew, To, Body string }
 
 // Run is the arm: the target, then the append. Nothing prints on success, so
 // there is no stdout to write.
-func Run(req Request, paths bus.Paths, stderr io.Writer, o Options) int {
+func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o Options) int {
 	to, body := req.To, req.Body
 	crew := req.Crew
 	if crew == "" && o.CrewID != nil {
@@ -77,7 +78,7 @@ func Run(req Request, paths bus.Paths, stderr io.Writer, o Options) int {
 	}
 
 	// Refused before any bus read, so a worker's reply is refused rather than resolved.
-	if reason := sender.Check("dispatcher:"+crew, crew, o.Sender); reason != "" {
+	if reason := sender.Check(ctx, "dispatcher:"+crew, crew, o.Sender); reason != "" {
 		say(stderr, "crew: reply: refusing sender 'dispatcher:%s' — %s\n", crew, reason)
 		return exitFailure
 	}

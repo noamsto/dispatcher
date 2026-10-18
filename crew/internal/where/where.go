@@ -15,6 +15,7 @@ package where
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
 const (
@@ -33,19 +35,19 @@ const (
 	jump = "   jump: ! tmux switch-client -t "
 )
 
-// Probes are the arm's two tmux reads, injected so tests never touch a server.
-// A non-nil error is the arm's failed `tmux … 2>/dev/null`: the read itself
-// broke, which the arm refuses as itself rather than as "the target is gone".
-type Probes struct {
-	Windows func() (string, error)
-	Panes   func() (string, error)
-}
+// The arm's two tmux reads. A failed read is the arm's own refusal rather than
+// "the target is gone".
+var (
+	windowsArgs = []string{"list-windows", "-a", "-F",
+		"#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{session_name}\t#{window_index}\t#{window_name}\t#{@bridge_crew_branch}\t#{@bridge_crew_id}"}
+	panesArgs = []string{"list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_index}"}
+)
 
 // Options is everything Run reads beyond the bus: the crew the arm defaults to
-// (`_crew_id`), which `--crew` overrides, and the tmux probes.
+// (`_crew_id`), which `--crew` overrides, and tmux.
 type Options struct {
 	CrewID func() string
-	Probes Probes
+	Tmux   tmux.Client
 	// Remote runs argv on host as crew with its stdout going to stdout, and
 	// returns its status: how a worker dispatched there is asked where it is.
 	// Nil routes nothing.
@@ -81,18 +83,18 @@ type Request struct {
 }
 
 // Run is the arm: the two tmux reads, the resolution, the line.
-func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	crew, target := req.Crew, req.Target
 	if crew == "" && o.CrewID != nil {
 		crew = o.CrewID()
 	}
 
 	// A tmux read failure is not "the target is gone".
-	winsRaw, err := o.Probes.Windows()
+	winsRaw, err := o.Tmux.Run(ctx, windowsArgs...)
 	if err != nil {
 		return die(stderr, "cannot read tmux windows (is a tmux server running?)")
 	}
-	panesRaw, err := o.Probes.Panes()
+	panesRaw, err := o.Tmux.Run(ctx, panesArgs...)
 	if err != nil {
 		return die(stderr, "cannot read tmux panes (is a tmux server running?)")
 	}

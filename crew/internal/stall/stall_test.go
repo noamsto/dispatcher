@@ -556,7 +556,7 @@ func TestRunRefusesForeignSender(t *testing.T) {
 	h := newHarness(t, f)
 	o := h.options()
 	o.Sender = sender.Probes{
-		Panes:  func() (string, error) { return "100\x1ffeat/x\x1flead\x1fc1\x1f@1\x1f%1\n", nil },
+		Tmux:   &tmuxtest.Fake{Out: map[string]string{"list-panes": "100\x1ffeat/x\x1flead\x1fc1\x1f@1\x1f%1\n"}},
 		Parent: func(pid int) (int, bool) { return 1, true },
 		PID:    100,
 	}
