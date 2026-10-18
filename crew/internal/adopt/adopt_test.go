@@ -5,18 +5,21 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 // stub is the scripted world: which pids live, who parents whom, and what gh,
-// git and tmux answer. Every external call is logged with its argv, since which
-// calls the arm makes is part of its contract.
+// git and tmux answer. Every gh and git call is logged with its argv, since
+// which calls the arm makes is part of its contract; tmux's are on tx.
 type stub struct {
+	tx     *tmuxtest.Fake
 	calls  []string
 	ghOut  string
 	ghErr  error
@@ -33,6 +36,7 @@ type stub struct {
 }
 
 func (s *stub) options() Options {
+	s.tx = &tmuxtest.Fake{Out: map[string]string{"list-windows": s.wins, "display-message": s.self}}
 	return Options{
 		Probes: crews.Probes{
 			Alive:   func(pid int) bool { return s.alive[pid] },
@@ -50,14 +54,13 @@ func (s *stub) options() Options {
 			s.calls = append(s.calls, "gh "+strings.Join(args, " "))
 			return s.ghEdit
 		},
-		Worktrees:  func() string { s.calls = append(s.calls, "git worktree list --porcelain"); return s.wtOut },
-		Windows:    func() string { s.calls = append(s.calls, "tmux list-windows -a"); return s.wins },
-		SelfWindow: func(pane string) string { s.calls = append(s.calls, "tmux display-message "+pane); return s.self },
-		Args:       func(int) string { return s.args },
-		LookupEnv:  func(k string) string { return s.env[k] },
-		PID:        4242,
-		PPID:       4241,
-		Pwd:        "/repo",
+		Worktrees: func() string { s.calls = append(s.calls, "git worktree list --porcelain"); return s.wtOut },
+		Tmux:      s.tx,
+		Args:      func(int) string { return s.args },
+		LookupEnv: func(k string) string { return s.env[k] },
+		PID:       4242,
+		PPID:      4241,
+		Pwd:       "/repo",
 	}
 }
 
@@ -148,7 +151,7 @@ type result struct {
 func run(t *testing.T, s *stub, p bus.Paths, req Request) result {
 	t.Helper()
 	var out, errOut strings.Builder
-	code := Run(req, p, &out, &errOut, s.options())
+	code := Run(t.Context(), req, p, &out, &errOut, s.options())
 	return result{code, out.String(), errOut.String()}
 }
 
@@ -498,7 +501,7 @@ func TestOccupancyRules(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &stub{wins: tc.wins, self: tc.self, env: map[string]string{"TMUX_PANE": tc.pane}}
-			if got := s.options().occupied("/wt"); got != tc.want {
+			if got := s.options().occupied(t.Context(), "/wt"); got != tc.want {
 				t.Errorf("occupied = %v, want %v", got, tc.want)
 			}
 		})
@@ -508,15 +511,24 @@ func TestOccupancyRules(t *testing.T) {
 // The caller's own window is only asked for inside tmux, and it is asked before
 // the window list, as the helper runs them.
 func TestSelfWindowOnlyInsideTmux(t *testing.T) {
-	s := &stub{wins: "@1\tsage\t/wt"}
-	if !s.options().occupied("/wt") {
-		t.Fatal("expected an occupant")
-	}
-	if s.countCalls("display-message") != 0 {
-		t.Errorf("calls = %v, want no display-message without TMUX_PANE", s.calls)
-	}
-	if !s.called("tmux list-windows -a") {
-		t.Errorf("calls = %v", s.calls)
+	for _, tc := range []struct {
+		env  map[string]string
+		want []string
+	}{
+		{nil, []string{"list-windows"}},
+		{map[string]string{"TMUX_PANE": "%1"}, []string{"display-message", "list-windows"}},
+	} {
+		s := &stub{wins: "@1\tsage\t/wt", env: tc.env}
+		if !s.options().occupied(t.Context(), "/wt") {
+			t.Fatal("expected an occupant")
+		}
+		var got []string
+		for _, c := range s.tx.Calls() {
+			got = append(got, strings.Fields(c)[0])
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("env %v: tmux calls = %v, want %v", tc.env, got, tc.want)
+		}
 	}
 }
 
@@ -612,7 +624,7 @@ func TestClaimsReleaseAfterThePidFileIsWritten(t *testing.T) {
 		return nil
 	}
 	var out, errOut strings.Builder
-	Run(Request{ID: "c-dead", PID: "123"}, p, &out, &errOut, o)
+	Run(t.Context(), Request{ID: "c-dead", PID: "123"}, p, &out, &errOut, o)
 	if pidAtCall != "123" {
 		t.Errorf("pid file at the gh call = %q, want it already rewritten", pidAtCall)
 	}

@@ -70,7 +70,7 @@ func (o Options) daemon(ctx context.Context, paths bus.Paths, cdir string, c cal
 			return exitOK
 		}
 		now := o.clockSec()
-		roles := roleRows(o.Probes.RolePanes(), paths.Dir, c.crew)
+		roles := roleRows(o.rolePanes(ctx), paths.Dir, c.crew)
 		newSig := loopSig(busSize(paths), cdir, roles)
 		if newSig != sig || now-lastBuild >= rebuildBackstop {
 			// A failed pass keeps the last live count rather than reading as

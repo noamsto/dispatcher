@@ -1,6 +1,7 @@
 package rosterrender
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -65,7 +66,7 @@ func emptyModel() map[string]any {
 // pending dispatch survive — a session launched and not yet posting is live by
 // definition — and so the live count, the legend and the boxes speak of the same
 // rows.
-func model(paths bus.Paths, crew string, nowSec float64, roleRows []string, rp roster.Probes, live roster.Liveness) (map[string]any, error) {
+func model(ctx context.Context, paths bus.Paths, crew string, nowSec float64, roleRows []string, rp roster.Probes, live roster.Liveness) (map[string]any, error) {
 	events, err := bus.ReadEvents(paths.Log)
 	if errors.Is(err, bus.ErrNoLog) {
 		return emptyModel(), nil
@@ -78,7 +79,7 @@ func model(paths bus.Paths, crew string, nowSec float64, roleRows []string, rp r
 		docs[i] = ev.Doc
 	}
 
-	rows, err := roster.Fold(docs, crew, nowSec, rp)
+	rows, err := roster.Fold(ctx, docs, crew, nowSec, rp)
 	if err != nil {
 		return nil, err
 	}

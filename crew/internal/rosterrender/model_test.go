@@ -12,6 +12,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 func modelFixture(t *testing.T, events ...string) (bus.Paths, string) {
@@ -38,7 +39,7 @@ func modelFixture(t *testing.T, events ...string) (bus.Paths, string) {
 }
 
 var emptyRoster = roster.Probes{
-	Panes:     func() string { return "" },
+	Tmux:      &tmuxtest.Fake{},
 	Worktrees: func() (string, error) { return "", nil },
 }
 
@@ -112,7 +113,7 @@ func decodeOne(t *testing.T, text string) map[string]any {
 func TestModelWithoutABusIsTheArmsEmptyOne(t *testing.T) {
 	dir := t.TempDir()
 	p := bus.Paths{Common: dir, Dir: dir + "/crew", Log: dir + "/crew/events.jsonl"}
-	m, err := model(p, "c1", 1791360000, nil, emptyRoster, emptyLive)
+	m, err := model(t.Context(), p, "c1", 1791360000, nil, emptyRoster, emptyLive)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +165,7 @@ func TestModelCarriesTheDispatchedRowUntilTheBranchSpeaks(t *testing.T) {
 		`{"ts":1791360100000,"crew_id":"c1","kind":"dispatch","branch":"feat/2-b","session":"s2","worker_id":"worker:feat/2-b#s2","engine":"codex","model":"gpt-5","tier":"deep","title":"Bravo","name":"atlas","color":"blue","tmux":"colour32"}`,
 		`{"ts":1791360200000,"crew_id":"c1","from":"worker:feat/1-a#s1","to":"dispatcher:c1","kind":"status","body":{"state":"working","detail":"execute"}}`,
 	)
-	m, err := model(p, "c1", 1791360300, nil, emptyRoster, live([]string{"feat/1-a"}))
+	m, err := model(t.Context(), p, "c1", 1791360300, nil, emptyRoster, live([]string{"feat/1-a"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,8 +218,8 @@ func TestModelDrawsOnlyLiveRows(t *testing.T) {
 	p, _ := modelFixture(t, log...)
 	// feat/1-live has a window; feat/2-reap is finished with its worktree still
 	// standing; nothing else has either.
-	m, err := model(p, "c1", 1791361200, nil,
-		roster.Probes{Panes: func() string { return "" }, Worktrees: porcelain("feat/2-reap")},
+	m, err := model(t.Context(), p, "c1", 1791361200, nil,
+		roster.Probes{Tmux: &tmuxtest.Fake{}, Worktrees: porcelain("feat/2-reap")},
 		live([]string{"feat/1-live"}, "feat/2-reap"))
 	if err != nil {
 		t.Fatal(err)

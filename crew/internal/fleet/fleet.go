@@ -4,6 +4,7 @@ package fleet
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
 // Usage is the line every fleet grammar refusal prints.
@@ -27,16 +29,37 @@ const Usage = "crew: fleet [--all] [--crew ID] [--json]"
 
 // Options carry every outside read, so tests use temp dirs and stubs.
 type Options struct {
-	Env      func(string) string
-	Registry string
-	// Panes is read at most once and shared by every crew's fold.
-	Panes func() string
-	// Windows is the stdout of `tmux list-windows -a -F '#{@crew_branch}'`,
-	// or "" when there is no tmux server. Read at most once.
-	Windows   func() string
+	Env       func(string) string
+	Registry  string
+	Tmux      tmux.Client
 	Worktrees func(common string) (string, error)
 	Origin    func(common string) string
 	Now       func() time.Time
+}
+
+// onceClient runs each distinct argv once and replays its result, so every
+// crew's and repo's fold shares one pane list.
+type onceClient struct {
+	tmux.Client
+	mu   sync.Mutex
+	memo map[string]onceResult
+}
+
+type onceResult struct {
+	out string
+	err error
+}
+
+func (c *onceClient) Run(ctx context.Context, args ...string) (string, error) {
+	key := strings.Join(args, "\x00")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if r, ok := c.memo[key]; ok {
+		return r.out, r.err
+	}
+	out, err := c.Client.Run(ctx, args...)
+	c.memo[key] = onceResult{out, err}
+	return out, err
 }
 
 // Request is `crew fleet`'s flags: Crew limits the rows to one crew id.
@@ -48,21 +71,14 @@ type Request struct {
 
 // Run lists the rows of every discovered bus. A repo it cannot read is noted
 // on stderr and skipped, so one bad bus never blinds the machine view.
-func Run(req Request, stdout, stderr io.Writer, o Options) int {
+func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) int {
 	all, asJSON, onlyCrew := req.All, req.JSON, req.Crew
 
-	var panes *string
-	livePanes := func() string {
-		if panes == nil {
-			p := o.Panes()
-			panes = &p
-		}
-		return *panes
-	}
+	once := &onceClient{Client: o.Tmux, memo: map[string]onceResult{}}
 	var windows map[string]bool
 	windowBranches := func() map[string]bool {
 		if windows == nil {
-			windows = roster.WindowBranches(o.Windows())
+			windows = roster.Windows(ctx, o.Tmux)
 		}
 		return windows
 	}
@@ -94,8 +110,8 @@ func Run(req Request, stdout, stderr io.Writer, o Options) int {
 		}
 		worktrees := sync.OnceValues(func() (string, error) { return o.Worktrees(r.Common) })
 		live := roster.Liveness{Windows: windowBranches, Worktrees: worktrees}
-		repoRows, err := foldRepo(r.Common, events, docs, onlyCrew, nowSec, roster.Probes{
-			Panes:     livePanes,
+		repoRows, err := foldRepo(ctx, r.Common, events, docs, onlyCrew, nowSec, roster.Probes{
+			Tmux:      once,
 			Worktrees: worktrees,
 		})
 		if err != nil {
@@ -140,7 +156,7 @@ type crewRow struct {
 
 // foldRepo folds each of the repo's crews: the one asked for, else every crew
 // that has a worker status row, which is exactly what roster can produce rows for.
-func foldRepo(common string, events []bus.Event, docs []any, onlyCrew string, nowSec float64, p roster.Probes) ([]crewRow, error) {
+func foldRepo(ctx context.Context, common string, events []bus.Event, docs []any, onlyCrew string, nowSec float64, p roster.Probes) ([]crewRow, error) {
 	crews := []string{onlyCrew}
 	if onlyCrew == "" {
 		crews = crews[:0]
@@ -154,7 +170,7 @@ func foldRepo(common string, events []bus.Event, docs []any, onlyCrew string, no
 	}
 	var out []crewRow
 	for _, c := range crews {
-		folded, err := roster.Fold(docs, c, nowSec, p)
+		folded, err := roster.Fold(ctx, docs, c, nowSec, p)
 		if err != nil {
 			return nil, err
 		}

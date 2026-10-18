@@ -46,3 +46,13 @@ func (Exec) Run(ctx context.Context, args ...string) (string, error) {
 	err := cmd.Run()
 	return strings.TrimRight(out.String(), "\n"), err
 }
+
+// Output is c.Run for a read whose failure is no output, as `$(tmux … || true)`
+// blanked it, rather than whatever a failing tmux printed.
+func Output(ctx context.Context, c Client, args ...string) string {
+	out, err := c.Run(ctx, args...)
+	if err != nil {
+		return ""
+	}
+	return out
+}

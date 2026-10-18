@@ -48,6 +48,13 @@ func TestExecRun(t *testing.T) {
 			if got != tt.want || (err != nil) != tt.wantErr {
 				t.Fatalf("Run = %q, %v; want %q, err=%v", got, err, tt.want, tt.wantErr)
 			}
+			wantOut := tt.want
+			if tt.wantErr {
+				wantOut = ""
+			}
+			if out := Output(context.Background(), Exec{}, "list-panes"); out != wantOut {
+				t.Fatalf("Output = %q; want %q", out, wantOut)
+			}
 		})
 	}
 }

@@ -6,6 +6,7 @@
 package roster
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
 //go:embed roster_base.jq
@@ -34,19 +36,26 @@ type ExitError struct {
 
 func (e *ExitError) Error() string { return fmt.Sprintf("exit status %d: %s", e.Code, e.Stderr) }
 
-// Probes are the two external reads the arm makes, injected so a fold is a
-// pure function of the bus.
+// Probes are the external reads the arm makes, injected so a fold is a pure
+// function of the bus and its scripted tmux.
 type Probes struct {
-	// Panes is the stdout of `tmux list-panes -a -F '#{pane_current_command}
-	// #{pane_current_path}'`, or "" when tmux fails.
-	Panes func() string
+	// Tmux answers the pane list (`list-panes`) and, with Live, the window
+	// list. A tmux failure reads as no output.
+	Tmux tmux.Client
 	// Worktrees is the stdout of `git worktree list --porcelain`. A failure
 	// is an *ExitError: the arm dies with git's status.
 	Worktrees func() (string, error)
-	// LiveBranches, when set, is the branches with a tmux window on this host
-	// (`crew roster --live`); each row then gains `live`. Nil leaves the rows
-	// as the bus alone makes them.
-	LiveBranches func() map[string]bool
+	// Live (`crew roster --live`) gives each row `live`: whether its branch
+	// has a tmux window on this host. Unset leaves the rows as the bus alone
+	// makes them.
+	Live bool
+}
+
+// Windows is the set of branches stamped on a tmux window, empty when tmux
+// fails.
+func Windows(ctx context.Context, c tmux.Client) map[string]bool {
+	out := tmux.Output(ctx, c, "list-windows", "-a", "-F", "#{@crew_branch}")
+	return WindowBranches(out)
 }
 
 // CrewWindowBranches parses the stdout of
@@ -68,7 +77,7 @@ func CrewWindowBranches(out, crew string) map[string]bool {
 // age_s computed against nowSec (jq's `now`). A jq runtime error is returned
 // as an error (main maps it to the jq-failure exit status), a failing
 // worktree probe as its *ExitError.
-func Fold(events []any, crew string, nowSec float64, p Probes) ([]map[string]any, error) {
+func Fold(ctx context.Context, events []any, crew string, nowSec float64, p Probes) ([]map[string]any, error) {
 	base, err := jqrun.RunAny(baseProgram, events, nowSec, map[string]any{"crew": jsonval.ValidUTF8(crew)})
 	if err != nil {
 		return nil, err
@@ -76,7 +85,8 @@ func Fold(events []any, crew string, nowSec float64, p Probes) ([]map[string]any
 	rows, _ := base.([]any)
 	// $(...) drops trailing newlines, so the here-doc over $live is exactly
 	// these lines.
-	live := strings.Split(strings.TrimRight(p.Panes(), "\n"), "\n")
+	panes := tmux.Output(ctx, p.Tmux, "list-panes", "-a", "-F", "#{pane_current_command} #{pane_current_path}")
+	live := strings.Split(strings.TrimRight(panes, "\n"), "\n")
 	for _, row := range rows {
 		if err := resolveExited(row, live, p.Worktrees); err != nil {
 			return nil, err
@@ -95,8 +105,9 @@ func Fold(events []any, crew string, nowSec float64, p Probes) ([]map[string]any
 			folded = append(folded, row)
 		}
 	}
-	if p.LiveBranches != nil {
-		windows := p.LiveBranches()
+	if p.Live {
+		out := tmux.Output(ctx, p.Tmux, "list-windows", "-a", "-F", "#{@crew_branch}\t#{@crew_id}")
+		windows := CrewWindowBranches(out, crew)
 		for _, row := range folded {
 			name, _ := row["branch"].(string)
 			row["live"] = windows[name]

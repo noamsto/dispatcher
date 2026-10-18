@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/roster"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 var fixedNow = time.Unix(1700000100, 0)
@@ -77,8 +78,7 @@ func setup(t *testing.T) fixture {
 		opts: Options{
 			Env:       func(k string) string { return env[k] },
 			Registry:  registry,
-			Panes:     func() string { return "" },
-			Windows:   func() string { return "feat/a\nfeat/c\n" },
+			Tmux:      &tmuxtest.Fake{Out: map[string]string{"list-panes": "", "list-windows": "feat/a\nfeat/c\n"}},
 			Worktrees: func(string) (string, error) { return "", nil },
 			Origin: func(common string) string {
 				if common == alpha {
@@ -94,7 +94,7 @@ func setup(t *testing.T) fixture {
 func run(t *testing.T, f fixture, req Request) (stdout, stderr string, code int) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	code = Run(req, &out, &errb, f.opts)
+	code = Run(t.Context(), req, &out, &errb, f.opts)
 	return out.String(), errb.String(), code
 }
 
@@ -295,15 +295,6 @@ func TestControlRunesAreNeutralisedInTable(t *testing.T) {
 	}
 }
 
-func TestPanesReadOnce(t *testing.T) {
-	f := setup(t)
-	calls := 0
-	f.opts.Panes = func() string { calls++; return "" }
-	if _, _, code := run(t, f, Request{All: true}); code != 0 || calls > 1 {
-		t.Errorf("code %d, Panes called %d times", code, calls)
-	}
-}
-
 func TestAge(t *testing.T) {
 	tests := []struct {
 		v    any
@@ -356,7 +347,7 @@ func TestStaleRowsHiddenByDefault(t *testing.T) {
 
 func TestWorktreeVouchesOnlyWhileRowIsFresh(t *testing.T) {
 	f := setup(t)
-	f.opts.Windows = func() string { return "" }
+	f.opts.Tmux = &tmuxtest.Fake{}
 	f.opts.Worktrees = func(string) (string, error) {
 		return "worktree /w/a\nbranch refs/heads/feat/a\n\nworktree /w/c\nbranch refs/heads/feat/c\n", nil
 	}
@@ -369,19 +360,31 @@ func TestWorktreeVouchesOnlyWhileRowIsFresh(t *testing.T) {
 	}
 }
 
-func TestWindowsReadOnce(t *testing.T) {
+// Every crew's fold and the liveness check share one read of each tmux list.
+func TestTmuxReadOnce(t *testing.T) {
 	f := setup(t)
-	calls := 0
-	f.opts.Windows = func() string { calls++; return "" }
-	run(t, f, Request{})
-	if calls != 1 {
-		t.Errorf("Windows called %d times", calls)
+	tx := &tmuxtest.Fake{}
+	f.opts.Tmux = tx
+	if _, _, code := run(t, f, Request{}); code != 0 {
+		t.Fatalf("code %d", code)
+	}
+	var panes, windows int
+	for _, c := range tx.Calls() {
+		switch {
+		case strings.HasPrefix(c, "list-panes"):
+			panes++
+		case strings.HasPrefix(c, "list-windows"):
+			windows++
+		}
+	}
+	if panes != 1 || windows != 1 {
+		t.Errorf("list-panes %d times, list-windows %d times, want 1 each", panes, windows)
 	}
 }
 
 func TestWorktreeProbeFailureKeepsFreshRows(t *testing.T) {
 	f := setup(t)
-	f.opts.Windows = func() string { return "" }
+	f.opts.Tmux = &tmuxtest.Fake{}
 	f.opts.Worktrees = func(string) (string, error) { return "", fmt.Errorf("git: boom") }
 	out, errs, _ := run(t, f, Request{})
 	if !strings.Contains(out, "feat/a") || strings.Contains(errs, "stale") {
@@ -402,8 +405,7 @@ func TestNonFiniteAgeIsClampedInJSONAndDashInTable(t *testing.T) {
 	o := Options{
 		Env:       func(k string) string { return env[k] },
 		Registry:  registry,
-		Panes:     func() string { return "" },
-		Windows:   func() string { return "feat/x\n" },
+		Tmux:      &tmuxtest.Fake{Out: map[string]string{"list-windows": "feat/x\n"}},
 		Worktrees: func(string) (string, error) { return "", nil },
 		Origin:    func(string) string { return "" },
 		Now:       func() time.Time { return fixedNow },
