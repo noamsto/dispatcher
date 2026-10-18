@@ -2191,6 +2191,55 @@ assert_allow_within_each_awk() {
   allow_both $'git commit -F - <<\'EOF\' 2>&1\nenv\nEOF'
 }
 
+@test "secret-read-guard: #1143 denies an interpreter reading the environment" {
+  deny_both $'python3 -c \'import os; print(os.environ)\''
+  deny_both $'python3 - <<\'PY\'\nimport os; print(os.environ)\nPY'
+  deny_both $'python3 <<PY\nimport os; print(os.environ)\nPY'
+  deny_both $'python3 -c \'import os; print(os.environb)\''
+  deny_both $'python3 -c \'import os; print(os.getenv("GH_TOKEN"))\''
+  deny_both $'python3 -c \'import os; print(dict(os.environ))\''
+  deny_both $'python3 -c \'import os; print(os.environ.items())\''
+  deny_both $'python3 -c \'import os; print("X" in os.environ.items())\''
+  deny_both $'node -e \'console.log(process.env)\''
+  deny_both $'node <<\'JS\'\nconsole.log(process.env)\nJS'
+  deny_both $'deno eval \'console.log(process.env)\''
+  deny_both $'bun -e \'console.log(process.env.GH_TOKEN)\''
+  deny_both $'ruby -e \'p ENV["GH_TOKEN"]\''
+  deny_both $'ruby <<\'RB\'\np ENV["GH_TOKEN"]\nRB'
+  deny_both $'perl -e \'print %ENV\''
+  deny_both $'perl -e \'print $ENV{GH_TOKEN}\''
+  deny_both $'php -r \'print_r(getenv());\''
+  deny_both $'bash -c \'python3 -c "import os; print(os.environ)"\''
+  deny_both $'echo \'import os; print(os.environ)\' | python3'
+  deny_both $'/usr/bin/python3.12 -c \'import os; print(os.environ)\''
+  deny_both $'uv run python3 -c \'import os; print(os.environ)\''
+  deny_both $'python3 <<PY\nprint(1)\n$(env)\nPY'
+}
+
+@test "secret-read-guard: #1143 allows interpreter presence tests and python heredoc text" {
+  allow_both $'python3 -c \'import os; print(len(os.environ))\''
+  allow_both $'python3 -c \'import os; print(os.environ.get("X") is not None)\''
+  allow_both $'python3 -c \'import os; print(os.getenv("X") is None)\''
+  allow_both $'python3 -c \'import os; print("X" in os.environ)\''
+  allow_both $'python3 -c \'import os; print("X" not in os.environ)\''
+  allow_both $'python3 -c \'import os; os.environ["TZ"] = "UTC"\''
+  allow_both $'node -e \'console.log("X" in process.env)\''
+  allow_both $'python3 - <<\'PY\'\nimport collections\ndupes=collections.defaultdict(set)\nPY'
+  allow_both $'python3 -c \'dupes=collections.defaultdict(set)\''
+  allow_both $'python3 - <<\'EOF\'\nadd=\'\'\'\n- reviewer ran it in the worktree\'s direnv shell.\n- Never use `bash -x`, `set -x`, `env`, `printenv` to dump variables.\n\'\'\'\nprint(len(add))\nEOF'
+  allow_both $'rg \'os.environ\' src/'
+  allow_both $'git commit -m "python3 reads os.environ"'
+}
+
+@test "secret-read-guard: #1143 keeps denying shell dumpers outside an interpreter" {
+  deny_both $'bash <<\'EOF\'\nadd=\'\'\'\n- reviewer ran it in the worktree\'s direnv shell.\n- Never use `bash -x`, `set -x`, `env`, `printenv` to dump variables.\n\'\'\'\nEOF'
+  deny_both 'printenv'
+  deny_both $'bash <<\'EOF\'\nenv\nEOF'
+  deny_both 'declare -p'
+  deny_both $'fish -c \'set -S\''
+  deny_both 'tmux show-environment'
+}
+
 @test "secret-read-guard: #992 still denies heredoc bodies that reach a shell or are not heredocs" {
   deny_both $'cat <<EOF\n$(env)\nEOF'
   deny_both $'cat <<EOF\n`env`\nEOF'
