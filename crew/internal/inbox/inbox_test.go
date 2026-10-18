@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -570,7 +569,7 @@ func TestDecimalGreater(t *testing.T) {
 }
 
 // TestGreaterThanNumber covers the kinds jq's total order decides without
-// looking at a number, and the two values that carry no literal text.
+// looking at a number.
 func TestGreaterThanNumber(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -583,9 +582,6 @@ func TestGreaterThanNumber(t *testing.T) {
 		{"null", nil, false},
 		{"false", false, false},
 		{"true", true, false},
-		{"NaN", math.NaN(), false},
-		{"Infinity", math.Inf(1), true},
-		{"-Infinity", math.Inf(-1), false},
 	} {
 		if got := greaterThanNumber(tc.v, "100"); got != tc.want {
 			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)

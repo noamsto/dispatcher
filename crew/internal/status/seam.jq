@@ -7,9 +7,9 @@
 # runs through jqrun with `.` = the array of the log's lines, so
 # `reduce inputs as $line` is `reduce .[] as $line`.
 #
-# Patch: every `fromjson` is `_jqfromjson` (jqrun.WithJQFromJSON), jq's own
-# fromjson: gojq's accepts a lone high surrogate escape that jq refuses, and
-# a refused line or body must not count as a seam. Nothing else differs.
+# Patch: every `fromjson` is `_jqfromjson` (jqrun.WithJQFromJSON), fromjson
+# that also skips a leading byte order mark, as jq's does and gojq's does not.
+# Nothing else differs.
 reduce .[] as $line (
   {ok: false, rejected: false, pending: false};
   (try [$line | _jqfromjson] catch null) as $p

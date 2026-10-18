@@ -3,16 +3,17 @@
 package bus
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // ErrNotRepo means the directory is not inside a git repository.
@@ -113,47 +114,59 @@ func (s State) Terminal() bool {
 }
 
 // Event is one value of the log. A log line may be any JSON value, because jq
-// slurps a bare `5` or `null` too. Raw always holds the value as read, with
-// every field and the original key order, so it re-encodes byte-faithfully;
-// folds that must reproduce jq's type errors work from it. The typed fields are
-// conveniences for object events: a string field that is absent or not a string
-// reads as "", an absent TS or Body as null, and a non-object value leaves all
-// of them empty. Doc is Raw in gojq's form (json.Number literals, float64 for
-// NaN and ±Inf, []any, map[string]any), derived from Raw so the two cannot
-// disagree; it does not keep key order.
+// slurps a bare `5` or `null` too. Doc holds the value as read in gojq's form
+// (json.Number literals, []any, map[string]any); key order is not kept. The
+// typed fields are conveniences for object events: a string field that is absent
+// or not a string reads as "", and a non-object value leaves all of them empty.
 type Event struct {
-	TS      jsonv.Value
 	CrewID  string
 	Kind    Kind
 	From    string
 	To      string
 	Branch  string
 	Session string
-	Body    jsonv.Value
-	Raw     jsonv.Value
 	Doc     any
 }
 
-func newEvent(raw jsonv.Value) Event {
-	e := Event{Raw: raw, Doc: jsonv.ToAny(raw)}
-	if raw.Kind() != jsonv.KindObject {
+func newEvent(doc any) Event {
+	e := Event{Doc: doc}
+	obj, ok := doc.(map[string]any)
+	if !ok {
 		return e
 	}
-	e.TS, _ = raw.Get("ts")
-	e.Body, _ = raw.Get("body")
-	e.CrewID = stringField(raw, "crew_id")
-	e.Kind = Kind(stringField(raw, "kind"))
-	e.From = stringField(raw, "from")
-	e.To = stringField(raw, "to")
-	e.Branch = stringField(raw, "branch")
-	e.Session = stringField(raw, "session")
+	e.CrewID = stringField(obj, "crew_id")
+	e.Kind = Kind(stringField(obj, "kind"))
+	e.From = stringField(obj, "from")
+	e.To = stringField(obj, "to")
+	e.Branch = stringField(obj, "branch")
+	e.Session = stringField(obj, "session")
 	return e
 }
 
-func stringField(obj jsonv.Value, key string) string {
-	v, _ := obj.Get(key)
-	s, _ := v.AsString()
+func stringField(obj map[string]any, key string) string {
+	s, _ := obj[key].(string)
 	return s
+}
+
+// decodeValues reads every JSON value in data, in gojq's form, after a leading
+// UTF-8 BOM. On a syntax error or a torn tail it returns the values before it
+// alongside the error. NaN and Infinity are not JSON, so a value holding one is
+// a syntax error.
+func decodeValues(data []byte) ([]any, error) {
+	dec := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))))
+	dec.UseNumber()
+	var vs []any
+	for {
+		var v any
+		switch err := dec.Decode(&v); err {
+		case nil:
+			vs = append(vs, v)
+		case io.EOF:
+			return vs, nil
+		default:
+			return vs, err
+		}
+	}
 }
 
 // ReadEvents reads the whole log as `jq -s` does. A missing log, or one that is
@@ -176,22 +189,17 @@ func ReadEventsTolerant(path string) ([]Event, error) {
 	if err != nil || !st.Mode().IsRegular() {
 		return nil, ErrNoLog
 	}
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &OpenError{Path: path, Err: err}
 	}
-	defer func() { _ = f.Close() }()
-	vs, decErr := jsonv.DecodeStreamPrefix(f)
+	vs, decErr := decodeValues(data)
 	evs := make([]Event, len(vs))
 	for i, v := range vs {
 		evs[i] = newEvent(v)
 	}
 	if decErr != nil {
-		var syn *jsonv.SyntaxError
-		if errors.As(decErr, &syn) {
-			return evs, &DecodeError{Path: path, Err: decErr}
-		}
-		return nil, &OpenError{Path: path, Err: decErr}
+		return evs, &DecodeError{Path: path, Err: decErr}
 	}
 	return evs, nil
 }

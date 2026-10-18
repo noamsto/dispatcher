@@ -7,10 +7,8 @@ package sessions
 
 import (
 	_ "embed"
-	"encoding/json"
 
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
 //go:embed sessions.jq
@@ -25,11 +23,4 @@ func Fold(events []any, branch, crew string, nowSec float64) (any, error) {
 		"b":    branch,
 		"crew": crew,
 	})
-}
-
-// JSON is Fold's result as compact JSON for a caller that still holds jsonv
-// values. encoding/json refuses the non-finite float64s gojq computes from a
-// corrupt ts, so they are clamped first and print as jq prints them.
-func JSON(v any) ([]byte, error) {
-	return json.Marshal(jsonval.Clamp(v))
 }

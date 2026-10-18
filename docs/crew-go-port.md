@@ -23,12 +23,11 @@ output contract below), with each edit justified.
 
 - `crew/main.go`: argv dispatch.
 - `crew/internal/jqrun`: runs the original jq programs on gojq
-  (`github.com/itchyny/gojq`): jsonv values in, jsonv values out, `now` and
+  (`github.com/itchyny/gojq`): gojq-form `any` in, `any` out, `now` and
   `$vars` injected, type errors surfaced as exit 5. The only gojq caller.
-- `crew/internal/jsonv`: ordered JSON values with jq semantics — decode
-  (number-literal text kept, NaN/Infinity extensions), encode (compact/pretty,
-  `$JQ_COLORS`), and the two number-text accessors jqrun needs. The fold
-  comparators are gone (#861): gojq owns ordering and grouping now.
+- `crew/internal/jsonval`: helpers over gojq-form `any` — `Encode` (compact or
+  pretty, NaN to `null` and +-Inf clamped), `Clamp`, `ValidUTF8` and the
+  number-text accessors. Decoding is plain `encoding/json` with `UseNumber`.
 - `crew/internal/bus`: bus location, crew-id resolution, typed event reads, and
   the writer `hold` appends through: `Append` is `_bus_append` (create the
   directory, terminate a torn tail, `O_APPEND`), `FitLine`/`Shrink` are
@@ -47,7 +46,7 @@ output contract below), with each edit justified.
   diagram keeps — because the two views have to agree on who is alive while each
   reads its own probes.
 - `crew/internal/log`: the arm that runs no jq — `select(.crew_id==$crew)` is a
-  member test, so it filters and re-encodes through jsonv, keeping `jq -c`'s
+  member test, so it filters and re-encodes through `jsonval.Encode`, keeping `jq -c`'s
   torn-tail prefix via `bus.ReadEventsTolerant`.
 - `crew/internal/inbox`: same shape as `log` (member tests plus one numeric
   compare, no jq), and the only writer of the delivered marks on the Go side.
@@ -57,7 +56,7 @@ output contract below), with each edit justified.
 - `crew/internal/hold`: the arm of #882, and the first port that **writes**.
   Its four folds (`outstanding.jq`, `matured.jq`, `park.jq`, `render.jq`) are
   the arm's programs, run over the bus through jqrun; its two row builders are
-  pure Go over jsonv, because a row's `body` is a _string_ — key order inside it
+  pure Go over ordered structs, because a row's `body` is a _string_ — key order inside it
   is part of the value, so `jq -S` cannot excuse gojq's sorted keys and the
   write path has to be byte-exact. Arg parsing, validation order and the
   `_clock_now`/`_clock_now_f` pair are Go; `$CREW_CLOCK` reaches it through
@@ -436,14 +435,14 @@ pr_open` for an implement task: the ledger's form, the empty-detail rule, the
   The two seam folds are the arm's own jq (`seam.jq`, `deslop.jq`) on jqrun with
   two patches each: the arm ran `jq -R -n` and read the log with `inputs`, here `.`
   is the array of log lines and `inputs` is `.[]`; and every `fromjson` is
-  `_jqfromjson` (`jqrun.WithJQFromJSON`), jq 1.8.2's `fromjson` over the repo's
-  own decoder (`jsonv.ParseOne`), because gojq's accepts a lone high surrogate
-  escape (`"\ud83d"`) that jq refuses and refuses `-nan` that jq accepts. That
-  patch closes the gojq-vs-jq `fromjson` differences, so they are not listed as
-  not mirrored. `diff_test.go` pins it: it runs both programs on the real
+  `_jqfromjson` (`jqrun.WithJQFromJSON`), jq 1.8.2's `fromjson` over
+  `encoding/json` with `UseNumber` and a BOM trim, because jq's skips a leading
+  byte order mark and gojq's does not. jq's NaN spellings, lone-surrogate error
+  and nesting-depth limit are not mirrored (D5). `diff_test.go` pins it: it runs both programs on the real
   `jq -Rn` and on gojq over one corpus of line shapes (torn, non-object,
-  trailing-garbage, surrogate-escape and NaN/Infinity lines and bodies) and
-  compares.
+  trailing-garbage, BOM, lone-low-surrogate and valid-pair escape and
+  out-of-range number lines and bodies, and top-level NaN/Infinity-spelling
+  lines) and compares.
   The row's `ts` is real time and never `CREW_CLOCK`: the arm stamped with a bare
   `jq -n 'now*1000|floor'`. The dedupe read (`lastPosted`) is the arm's
   `jq -r … | tail -1` for the sender's last `state<TAB>pr_url`, so an identical
@@ -749,7 +748,7 @@ its `--help` reaches Go as `help stack`, as every ported subcommand's does since
 of the two that writes: one `stack_cut` row through `bus.Append`, the record of a parent
 oid a child is based on. Its reader is the same fold that reads the `dispatch` row
 `dispatch` appends when it creates the child — the newest of the two wins — and nothing
-else in the repo reads `stack_cut`, so the row is compatible in _value_ (jsonv parses it)
+else in the repo reads `stack_cut`, so the row is compatible in _value_ (`encoding/json` parses it)
 rather than in bytes. What is read verbatim is the other side: the oid `cut` prints and
 the refusal text, which the dispatcher quotes into a rebase directive.
 
@@ -893,9 +892,8 @@ guard's key tables, masking and baseline format therefore have one copy, and no 
 Idiomatic Go, behaviour not bytes (#821). **Exact:** exit codes, usage and
 refusal lines, and the text people or agents read (the tables, the one-line
 errors). **Value-equal only:** JSON — key order, indentation and colour are
-free, compare with `jq -S`; emit through `encoding/json` or typed structs where
-`docs/jsonv-removal.md`'s verdict for that file is replace or small helper,
-under that entry's conditions, and through `jsonv` elsewhere.
+free, compare with `jq -S`; emit through `encoding/json`, typed structs or
+`jsonval.Encode`.
 **Not mirrored, not documented:** incidental jq/bash quirks — the
 `$JQ_COLORS` warning count, TTY colouring, jq's own error wording, and the
 rewrites `$(...)`/`cut`/`awk` apply to strings.
@@ -987,9 +985,10 @@ acceptance ledger items`: no jq is left to fail, so the lines are unreachable;
     item is CI if the entry or its number or position fallback names CI), so it
     refuses at least as often as the arm.
 
-  gojq-vs-jq `fromjson` differences in the seam folds are not on this list: the
-  jq-compatible `_jqfromjson` patch closes them and the differential test in
-  `internal/status` pins that, rather than documenting them.
+  gojq-vs-jq `fromjson` differences in the seam folds are not all on this list:
+  `_jqfromjson` closes the BOM difference (the differential test in
+  `internal/status` pins it); the others (NaN spellings, lone high surrogates,
+  jq's nesting limit) are quirks D5 does not mirror.
 
 - Specific to `nudge`, and not mirrored: two places bash's own mechanics set the
   behaviour. The arm called `_unread_scan` in its own shell, so a scan that could

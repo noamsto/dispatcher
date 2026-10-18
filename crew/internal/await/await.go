@@ -3,8 +3,8 @@
 // `stall-watch --unread` read the same file through `_await_marks`.
 //
 // The fold is the arm's own jq, embedded and handed to jqrun (see await.jq): the
-// due test is jq's total-order `>` and the batch a stable `sort_by`, and jsonv's
-// fold comparators were deleted in #861 with gojq owning ordering.
+// due test is jq's total-order `>` and the batch a stable `sort_by`,
+// both owned by gojq.
 package await
 
 import (

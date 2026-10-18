@@ -7,11 +7,12 @@
 package bus
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
 // LineMax is `_LINE_MAX`: the byte cap one bus line may reach — a cap on the
@@ -103,17 +104,14 @@ func FitLine(build func(text string) string, full string) string {
 // text with newlines has each of its lines capped on its own, so its line count
 // survives and its total length is nothing like a single cut of the same width.
 func Shrink(text string, keep int) string {
-	if vs, err := jsonv.DecodeStream(strings.NewReader(text)); err == nil && len(vs) > 0 {
-		container := false
-		switch vs[len(vs)-1].Kind() {
-		case jsonv.KindObject, jsonv.KindArray:
-			container = true
-		case jsonv.KindNull, jsonv.KindFalse, jsonv.KindTrue, jsonv.KindNumber, jsonv.KindString:
-		}
-		if container {
+	if vs, err := decodeValues([]byte(text)); err == nil && len(vs) > 0 {
+		switch vs[len(vs)-1].(type) {
+		case map[string]any, []any:
 			out := make([]string, len(vs))
 			for i, v := range vs {
-				out[i] = string(jsonv.Append(nil, shrinkLeaves(v, keep), jsonv.Options{}))
+				var buf bytes.Buffer
+				_ = jsonval.Encode(&buf, shrinkLeaves(v, keep), false)
+				out[i] = strings.TrimSuffix(buf.String(), "\n")
 			}
 			return strings.Join(out, "\n")
 		}
@@ -138,29 +136,26 @@ func cutChars(text string, keep int) string {
 	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
 }
 
-// shrinkLeaves is jq's `walk(f)`: f applied to every value post-order, object key
-// order kept (jq rebuilds objects from keys_unsorted).
-func shrinkLeaves(v jsonv.Value, keep int) jsonv.Value {
-	switch v.Kind() {
-	case jsonv.KindArray:
-		out := make([]jsonv.Value, 0, v.Len())
-		for _, e := range v.Elems() {
-			out = append(out, shrinkLeaves(e, keep))
+// shrinkLeaves is jq's `walk(f)`: f applied to every value post-order. Object
+// key order is not kept.
+func shrinkLeaves(v any, keep int) any {
+	switch x := v.(type) {
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = shrinkLeaves(e, keep)
 		}
-		return jsonv.Array(out...)
-	case jsonv.KindObject:
-		ms := make([]jsonv.Member, 0, len(v.Members()))
-		for _, m := range v.Members() {
-			ms = append(ms, jsonv.Member{Key: m.Key, Val: shrinkLeaves(m.Val, keep)})
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, e := range x {
+			out[k] = shrinkLeaves(e, keep)
 		}
-		return jsonv.Object(ms...)
-	case jsonv.KindString:
-		s, _ := v.AsString()
-		r := []rune(s)
-		if len(r) > keep {
-			return jsonv.Str(string(r[:keep]) + elided)
+		return out
+	case string:
+		if r := []rune(x); len(r) > keep {
+			return string(r[:keep]) + elided
 		}
-	case jsonv.KindNull, jsonv.KindFalse, jsonv.KindTrue, jsonv.KindNumber:
 	}
 	return v
 }

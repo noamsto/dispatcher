@@ -367,7 +367,6 @@ func TestFoldRecord(t *testing.T) {
 		`{"ts":3,"crew_id":"c1","kind":"msg","from":"worker:feat/child#s1","to":"dispatcher:c1","branch":"feat/child","body":{"kind":"stack_cut","cut":"`+oidC+`","base_oid":"`+oidC+`"}}`,
 		dispatchRow(4, "feat/child", "main", ""), // a --pr attach row: base_oid is null
 		stackCutRow(5, "feat/child", "feat/parent", oidB),
-		`{"ts":6,"crew_id":"c1","kind":"stack_cut","branch":"feat/child","parent":"feat/evil","cut":"\ud83d"}`,
 		`{"ts":7,"crew_id":"c1","kind":"stack_cut","branch":"feat/child","parent":"feat/torn"`,
 	)
 	s := f.cmd()

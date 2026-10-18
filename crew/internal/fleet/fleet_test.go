@@ -106,7 +106,9 @@ func dataLines(out string) []string {
 func jsonRows(t *testing.T, out string) []map[string]any {
 	t.Helper()
 	var rows []map[string]any
-	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+	dec := json.NewDecoder(strings.NewReader(out))
+	dec.UseNumber()
+	if err := dec.Decode(&rows); err != nil {
 		t.Fatalf("not a JSON array: %v\n%s", err, out)
 	}
 	return rows
@@ -387,10 +389,10 @@ func TestWorktreeProbeFailureKeepsFreshRows(t *testing.T) {
 	}
 }
 
-func TestNonFiniteAgeIsNullInJSONAndDashInTable(t *testing.T) {
+func TestNonFiniteAgeIsClampedInJSONAndDashInTable(t *testing.T) {
 	root := t.TempDir()
 	nan := mkRepo(t, root, "nan", "",
-		`{"ts":NaN,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working"}}`)
+		`{"ts":1e400,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working"}}`)
 	registry := filepath.Join(root, "registry")
 	if err := os.WriteFile(registry, []byte(nan+"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -416,8 +418,8 @@ func TestNonFiniteAgeIsNullInJSONAndDashInTable(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("want 1 row, got:\n%s", out)
 	}
-	if v, ok := rows[0]["age_s"]; !ok || v != nil {
-		t.Errorf("age_s = %v (present %v), want null", v, ok)
+	if v, ok := rows[0]["age_s"]; !ok || v != json.Number("-1.7976931348623157e+308") {
+		t.Errorf("age_s = %v (present %v), want -MaxFloat64 literal", v, ok)
 	}
 
 	out, errs, code = run(t, f, Request{})

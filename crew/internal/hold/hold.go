@@ -165,8 +165,7 @@ func (f *folds) outstanding(crew string) (any, int) {
 // Outstanding is the `_hold_outstanding` fold over events the caller already
 // read, in gojq's form (`bus.Event.Doc`): the adds to `hold:<crew>` with no
 // matching release, one per `crew hold list --json` row. `roster-render` reads
-// it for the hexagons beside the workers; `JSON` hands the result to a caller
-// that still builds its jq inputs with jsonv.
+// it for the hexagons beside the workers.
 func Outstanding(events []any, crew string) (any, error) {
 	return jqrun.RunAny(outstandingProg, events, 0, holdVars(crew))
 }
@@ -556,10 +555,9 @@ func elems(v any) []any {
 	return nil
 }
 
-// JSON is a fold result as compact JSON for a caller that still builds its jq
-// inputs with jsonv. Every writer here encodes through it, with `<`, `>` and `&`
-// left raw as jq printed them: bus.FitLine measures the encoded line, so an
-// escaped `<` would move the shrink point by five bytes.
+// JSON is v as compact JSON. Every writer here encodes through it, with `<`, `>`
+// and `&` left raw as jq printed them: bus.FitLine measures the encoded line,
+// so an escaped `<` would move the shrink point by five bytes.
 func JSON(v any) ([]byte, error) {
 	var b strings.Builder
 	enc := json.NewEncoder(&b)

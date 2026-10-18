@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 )
 
@@ -121,7 +120,7 @@ func placeholders(host string, workers []remote.Worker, reason string) []map[str
 			"host":       host,
 			"state":      nil,
 			"live":       nil,
-			"ts":         jsonv.ToAny(w.TS),
+			"ts":         w.TS,
 			"host_error": reason,
 		}
 	}

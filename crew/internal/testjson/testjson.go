@@ -5,57 +5,60 @@
 package testjson
 
 import (
-	"sort"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
-// MustParse decodes exactly one JSON value (jq extensions included).
-func MustParse(t *testing.T, s string) jsonv.Value {
+// MustParse decodes exactly one JSON value, numbers as json.Number.
+func MustParse(t *testing.T, s string) any {
 	t.Helper()
-	vs, err := jsonv.DecodeStream(strings.NewReader(s))
-	if err != nil {
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
 		t.Fatalf("parse want: %v", err)
 	}
-	if len(vs) != 1 {
-		t.Fatalf("want exactly one value, got %d", len(vs))
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		t.Fatalf("want exactly one value, got trailing data in %q", s)
 	}
-	return vs[0]
+	return v
 }
 
-// Compact is v with every object's members sorted by key, compact-encoded.
-func Compact(v jsonv.Value) string {
-	return string(jsonv.Append(nil, sorted(v), jsonv.Options{}))
+// Compact is v compact-encoded with every object's members sorted by key and
+// every number reduced to its float64 value, an infinity clamped as
+// jsonval.Encode does: want fixtures carry jq's literal text, a gojq fold
+// re-formats numbers through float64, and the values are what must agree.
+func Compact(v any) string {
+	var buf bytes.Buffer
+	if err := jsonval.Encode(&buf, numbersAsFloats(v), false); err != nil {
+		return "encode error: " + err.Error()
+	}
+	return strings.TrimSuffix(buf.String(), "\n")
 }
 
-func sorted(v jsonv.Value) jsonv.Value {
-	switch v.Kind() {
-	case jsonv.KindNumber:
-		// jsonv preserves the input's number literal (jq 1.7+ semantics) and
-		// want fixtures carry jq's literal text; a gojq fold re-formats numbers
-		// through float64. Compare the values, not the literals.
-		f, _ := v.AsFloat()
-		return jsonv.Num(f)
-	case jsonv.KindNull, jsonv.KindFalse, jsonv.KindTrue, jsonv.KindString:
-		return v
-	case jsonv.KindArray:
-		es := v.Elems()
-		out := make([]jsonv.Value, len(es))
-		for i, e := range es {
-			out[i] = sorted(e)
+func numbersAsFloats(v any) any {
+	switch x := v.(type) {
+	case json.Number:
+		f, _ := x.Float64()
+		return f
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = numbersAsFloats(e)
 		}
-		return jsonv.Array(out...)
-	case jsonv.KindObject:
-		ms := v.Members()
-		out := make([]jsonv.Member, len(ms))
-		copy(out, ms)
-		sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
-		for i := range out {
-			out[i].Val = sorted(out[i].Val)
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, e := range x {
+			out[k] = numbersAsFloats(e)
 		}
-		return jsonv.Object(out...)
+		return out
 	}
 	return v
 }

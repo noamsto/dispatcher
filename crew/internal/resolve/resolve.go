@@ -19,12 +19,12 @@ import (
 	"io"
 	"os"
 	"strings"
-	"unicode/utf8"
 
 	_ "embed"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
 //go:embed resolve.jq
@@ -95,31 +95,12 @@ func Rows(path string) []any {
 	return rows
 }
 
-// validUTF8 replaces each invalid byte with U+FFFD, matching encoding/json's
-// per-byte repair of the rows the vars are compared against.
-func validUTF8(s string) string {
-	if utf8.ValidString(s) {
-		return s
-	}
-	var b strings.Builder
-	for i := 0; i < len(s); {
-		r, n := utf8.DecodeRuneInString(s[i:])
-		if r == utf8.RuneError && n == 1 {
-			b.WriteRune(utf8.RuneError)
-		} else {
-			b.WriteString(s[i : i+n])
-		}
-		i += n
-	}
-	return b.String()
-}
-
 // Resolve is `_resolve_target <target> <crew>`: one Row per branch the target
 // names, newest `dispatch` row per branch, in the fold's branch-sorted order —
 // the order the ambiguity list and `where`'s branch join are printed in. A fold
 // that fails on this bus is the arm's swallowed jq failure: no rows.
 func Resolve(rows []any, target, crew string) []Row {
-	out, err := jqrun.RunAny(program, rows, 0, map[string]any{"t": validUTF8(target), "c": validUTF8(crew)})
+	out, err := jqrun.RunAny(program, rows, 0, map[string]any{"t": jsonval.ValidUTF8(target), "c": jsonval.ValidUTF8(crew)})
 	arr, ok := out.([]any)
 	if err != nil || !ok {
 		return nil

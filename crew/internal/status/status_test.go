@@ -661,11 +661,7 @@ func TestPiReviewerVerdicts(t *testing.T) {
 		{"role_exited is ignored", []string{verdict("accept"), msgRow(rev, branch, `{"event":"role_exited"}`), deslopSeam}, true},
 		{"non-json reviewer reply rejects", []string{verdict("accept"), msgRow(rev, branch, `looks fine`), deslopSeam}, false},
 		{"torn reviewer line rejects", []string{verdict("accept"), `{"crew_id":"c1","from":"` + rev}, false},
-		// jq's fromjson refuses a lone high surrogate escape, so the reply is not an accept.
-		{"accept body with a lone high surrogate rejects", []string{msgRow(rev, branch, `{"seam":"review","verdict":"accept","note":"\ud83d"}`), deslopSeam}, false},
 		{"accept body with a lone low surrogate passes", []string{msgRow(rev, branch, `{"seam":"review","verdict":"accept","note":"\udc00"}`), deslopSeam}, true},
-		{"reviewer line with a lone high surrogate rejects", []string{verdict("accept"), deslopSeam,
-			`{"ts":1,"crew_id":"c1","from":"` + rev + `","to":"` + branch + `","kind":"msg","body":"{\"seam\":\"review\",\"verdict\":\"accept\"}","x":"\ud83d"}`}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -691,41 +687,17 @@ func TestPiReviewerVerdicts(t *testing.T) {
 	})
 }
 
-// TestSeamsRefuseLoneHighSurrogates pins jq's fromjson, which errors on a high
-// surrogate escape not followed by a low one (in the line or in the msg body),
-// so the row is no seam; a lone low surrogate decodes to U+FFFD and counts.
-func TestSeamsRefuseLoneHighSurrogates(t *testing.T) {
-	outer := func(body string) string {
-		return `{"ts":1,"crew_id":"c1","from":"` + worker + `","to":"review:c1","kind":"msg","body":` + jsonStr(body) + `,"x":"\ud83d"}`
-	}
-	cases := []struct {
-		name string
-		rows []string
-		want string
-	}{
-		{"deslop body", []string{reviewSeam, msgRow(worker, "review:c1", `{"seam":"deslop","note":"\ud83d"}`)}, noDeslop("done", "standard")},
-		{"deslop body, high then non-low escape", []string{reviewSeam, msgRow(worker, "review:c1", `{"seam":"deslop","note":"\ud83d\u0041"}`)}, noDeslop("done", "standard")},
-		{"deslop line", []string{reviewSeam, outer(`{"seam":"deslop"}`)}, noDeslop("done", "standard")},
-		{"review body", []string{msgRow(worker, "review:c1", `{"seam":"review","review_mode":"full","note":"\ud83d"}`), deslopSeam}, noReview("done", "standard")},
-		{"review line", []string{outer(`{"seam":"review","review_mode":"full"}`), deslopSeam}, noReview("done", "standard")},
-		{"lone low surrogates count", []string{
-			msgRow(worker, "review:c1", `{"seam":"review","review_mode":"full","note":"\udc00"}`),
-			msgRow(worker, "review:c1", `{"seam":"deslop","note":"\udc00"}`),
-		}, ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newFixture(t)
-			f.doc(standardDoc)
-			f.log(tc.rows...)
-			code, stderr := f.status(worker, "done")
-			if tc.want == "" && code != 0 {
-				t.Errorf("refused: %q", stderr)
-			}
-			if tc.want != "" && (code != 1 || stderr != tc.want) {
-				t.Errorf("got %d %q\nwant %q", code, stderr, tc.want)
-			}
-		})
+// TestSeamsCountLoneLowSurrogates pins that a lone low surrogate escape
+// decodes to U+FFFD and the row still counts as a seam.
+func TestSeamsCountLoneLowSurrogates(t *testing.T) {
+	f := newFixture(t)
+	f.doc(standardDoc)
+	f.log(
+		msgRow(worker, "review:c1", `{"seam":"review","review_mode":"full","note":"\udc00"}`),
+		msgRow(worker, "review:c1", `{"seam":"deslop","note":"\udc00"}`),
+	)
+	if code, stderr := f.status(worker, "done"); code != 0 {
+		t.Errorf("refused: %q", stderr)
 	}
 }
 

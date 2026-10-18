@@ -1,18 +1,13 @@
 package bus
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"testing"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -22,55 +17,15 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-func compact(t *testing.T, v jsonv.Value) string {
+// docJSON is v as compact JSON; map keys come out sorted, so it compares values
+// without depending on the order the log wrote them in.
+func docJSON(t *testing.T, v any) string {
 	t.Helper()
-	var b bytes.Buffer
-	if err := jsonv.Encode(&b, v, jsonv.Options{}); err != nil {
+	b, err := json.Marshal(v)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return b.String()
-}
-
-// docEqual is reflect.DeepEqual except that two NaN float64s are equal.
-func docEqual(a, b any) bool {
-	switch x := a.(type) {
-	case float64:
-		y, ok := b.(float64)
-		return ok && (x == y || (math.IsNaN(x) && math.IsNaN(y)))
-	case []any:
-		y, ok := b.([]any)
-		if !ok || len(x) != len(y) {
-			return false
-		}
-		for i := range x {
-			if !docEqual(x[i], y[i]) {
-				return false
-			}
-		}
-		return true
-	case map[string]any:
-		y, ok := b.(map[string]any)
-		if !ok || len(x) != len(y) {
-			return false
-		}
-		for k, xv := range x {
-			yv, ok := y[k]
-			if !ok || !docEqual(xv, yv) {
-				return false
-			}
-		}
-		return true
-	}
-	return reflect.DeepEqual(a, b)
-}
-
-func assertDoc(t *testing.T, evs []Event) {
-	t.Helper()
-	for i, e := range evs {
-		if want := jsonv.ToAny(e.Raw); !docEqual(e.Doc, want) {
-			t.Fatalf("evs[%d].Doc = %#v, want %#v", i, e.Doc, want)
-		}
-	}
+	return string(b)
 }
 
 func TestReadEventsAbsent(t *testing.T) {
@@ -150,10 +105,6 @@ func TestReadEventsDecodeError(t *testing.T) {
 			if !errors.As(err, &de) {
 				t.Fatalf("err = %v, want *DecodeError", err)
 			}
-			var se *jsonv.SyntaxError
-			if !errors.As(err, &se) {
-				t.Fatalf("DecodeError does not wrap *jsonv.SyntaxError: %v", err)
-			}
 			if de.Path != path {
 				t.Fatalf("Path = %q", de.Path)
 			}
@@ -195,42 +146,45 @@ func TestReadEventsFields(t *testing.T) {
 	if e.CrewID != "c1" || e.Kind != KindStatus || e.From != "w1" || e.To != "lead" || e.Branch != "feat/x" || e.Session != "s1" {
 		t.Fatalf("typed fields: %+v", e)
 	}
-	if got := compact(t, e.TS); got != "1700000000123" {
-		t.Fatalf("TS = %s", got)
+	doc, ok := e.Doc.(map[string]any)
+	if !ok {
+		t.Fatalf("Doc = %#v, want a map", e.Doc)
 	}
-	if got := compact(t, e.Body); got != `{"state":"working","detail":"hi"}` {
-		t.Fatalf("Body = %s", got)
+	if doc["ts"] != json.Number("1700000000123") {
+		t.Fatalf("ts = %#v", doc["ts"])
+	}
+	if got := docJSON(t, doc["body"]); got != `{"detail":"hi","state":"working"}` {
+		t.Fatalf("body = %s", got)
 	}
 
 	if evs[1].Kind != Kind("zzz-unknown") || evs[1].CrewID != "c2" {
 		t.Fatalf("unrecognised kind not kept: %+v", evs[1])
 	}
-	if !evs[1].TS.IsNull() || !evs[1].Body.IsNull() {
-		t.Fatalf("absent ts/body must be null: %+v", evs[1])
+	if doc := evs[1].Doc.(map[string]any); doc["ts"] != nil || doc["body"] != nil {
+		t.Fatalf("absent ts/body must be nil: %+v", doc)
 	}
 
 	odd := evs[2]
 	if odd.CrewID != "" || odd.Kind != "" || odd.From != "" || odd.To != "" || odd.Branch != "" || odd.Session != "" {
 		t.Fatalf("non-string fields must read as empty: %+v", odd)
 	}
-	if compact(t, odd.TS) != `"str"` || compact(t, odd.Body) != "3" {
-		t.Fatalf("TS/Body keep their raw value: %+v", odd)
+	if doc := odd.Doc.(map[string]any); doc["ts"] != "str" || doc["body"] != json.Number("3") {
+		t.Fatalf("Doc keeps the raw values: %+v", doc)
 	}
-	assertDoc(t, evs)
 }
 
-func TestReadEventsRawRoundTrip(t *testing.T) {
+// Doc is value-equal to the line, whatever its whitespace or key order.
+func TestReadEventsDocIsValueEqual(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.jsonl")
 	writeFile(t, path, `{ "ts" : 1700000000123 , "kind":"status",  "zz" : [ true , null, {"b":1,"a":2} ] , "s":"éé" }`)
 	evs, err := ReadEvents(path)
 	if err != nil || len(evs) != 1 {
 		t.Fatalf("evs=%v err=%v", evs, err)
 	}
-	want := `{"ts":1700000000123,"kind":"status","zz":[true,null,{"b":1,"a":2}],"s":"éé"}`
-	if got := compact(t, evs[0].Raw); got != want {
-		t.Fatalf("Raw = %s\nwant  %s", got, want)
+	want := `{"kind":"status","s":"éé","ts":1700000000123,"zz":[true,null,{"a":2,"b":1}]}`
+	if got := docJSON(t, evs[0].Doc); got != want {
+		t.Fatalf("Doc = %s\nwant  %s", got, want)
 	}
-	assertDoc(t, evs)
 }
 
 func TestReadEventsOrderAcrossCrews(t *testing.T) {
@@ -286,7 +240,6 @@ func TestReadEventsStreamShapes(t *testing.T) {
 					t.Fatalf("evs[%d].Kind = %q, want %q", i, evs[i].Kind, k)
 				}
 			}
-			assertDoc(t, evs)
 		})
 	}
 }
@@ -298,19 +251,18 @@ func TestReadEventsNonObjectValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantRaw := []string{"5", "null", `"s"`, "[1]", "true", `{"kind":"msg"}`}
-	if len(evs) != len(wantRaw) {
+	wantDoc := []string{"5", "null", `"s"`, "[1]", "true", `{"kind":"msg"}`}
+	if len(evs) != len(wantDoc) {
 		t.Fatalf("len = %d", len(evs))
 	}
-	for i, w := range wantRaw {
-		if got := compact(t, evs[i].Raw); got != w {
-			t.Fatalf("evs[%d].Raw = %s, want %s", i, got, w)
+	for i, w := range wantDoc {
+		if got := docJSON(t, evs[i].Doc); got != w {
+			t.Fatalf("evs[%d].Doc = %s, want %s", i, got, w)
 		}
-		if i < 5 && (evs[i].Kind != "" || evs[i].CrewID != "" || !evs[i].TS.IsNull() || !evs[i].Body.IsNull()) {
+		if i < 5 && (evs[i].Kind != "" || evs[i].CrewID != "") {
 			t.Fatalf("evs[%d] typed fields must stay empty: %+v", i, evs[i])
 		}
 	}
-	assertDoc(t, evs)
 }
 
 func TestReadEventsDoc(t *testing.T) {
@@ -320,7 +272,6 @@ func TestReadEventsDoc(t *testing.T) {
 	}{
 		{"fraction literal", `{"n":1.50}`, false},
 		{"big integer literal", `{"n":12345678901234567890123}`, false},
-		{"nan and infinity", `{"a":[NaN,Infinity,-Infinity]}`, false},
 		{"nested containers", `{"a":[1,{"b":[null,{"c":"x"}]}]}`, false},
 		{"bare null", "null", false},
 		{"bom", "\xef\xbb\xbf{\"kind\":\"msg\"}", false},
@@ -342,7 +293,6 @@ func TestReadEventsDoc(t *testing.T) {
 			if len(evs) != 1 {
 				t.Fatalf("len = %d, want 1", len(evs))
 			}
-			assertDoc(t, evs)
 		})
 	}
 
@@ -367,25 +317,6 @@ func TestReadEventsDoc(t *testing.T) {
 		body, ok := doc["body"].(map[string]any)
 		if !ok || body["n"] != json.Number("12345678901234567890123") {
 			t.Fatalf("body = %#v", doc["body"])
-		}
-	})
-	t.Run("nan and infinity are float64", func(t *testing.T) {
-		doc, ok := readOne(t, `{"a":[NaN,Infinity,-Infinity]}`).Doc.(map[string]any)
-		if !ok {
-			t.Fatal("Doc is not a map[string]any")
-		}
-		a, ok := doc["a"].([]any)
-		if !ok || len(a) != 3 {
-			t.Fatalf("a = %#v", doc["a"])
-		}
-		f := make([]float64, 3)
-		for i := range f {
-			if f[i], ok = a[i].(float64); !ok {
-				t.Fatalf("a[%d] = %#v, want float64", i, a[i])
-			}
-		}
-		if !math.IsNaN(f[0]) || !math.IsInf(f[1], 1) || !math.IsInf(f[2], -1) {
-			t.Fatalf("a = %v", f)
 		}
 	})
 	t.Run("bare null is nil", func(t *testing.T) {
@@ -735,9 +666,32 @@ func TestReadEventsTolerant(t *testing.T) {
 		if len(evs) != 1 || evs[0].CrewID != "a" {
 			t.Fatalf("prefix lost: %v", evs)
 		}
-		assertDoc(t, evs)
 		if strict, err2 := ReadEvents(path); strict != nil || err2 == nil {
 			t.Fatalf("ReadEvents must keep returning no events on a decode error: %v %v", strict, err2)
+		}
+	})
+	t.Run("a bad or torn row ends the read with the events before it", func(t *testing.T) {
+		const good = `{"kind":"msg","crew_id":"a"}` + "\n" + `{"kind":"nudge","crew_id":"b"}` + "\n"
+		for name, content := range map[string]string{
+			"NaN":       good + `{"ts":NaN}` + "\n" + `{"kind":"reap"}` + "\n",
+			"Infinity":  good + `{"ts":-Infinity}` + "\n",
+			"torn tail": good + `{"kind":"status","bo`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "events.jsonl")
+				writeFile(t, path, content)
+				evs, err := ReadEventsTolerant(path)
+				var de *DecodeError
+				if !errors.As(err, &de) || de.Path != path {
+					t.Fatalf("err = %v, want *DecodeError for %s", err, path)
+				}
+				if len(evs) != 2 || evs[0].CrewID != "a" || evs[1].CrewID != "b" {
+					t.Fatalf("events = %+v, want exactly the first two", evs)
+				}
+				if strict, err := ReadEvents(path); strict != nil || !errors.As(err, &de) {
+					t.Fatalf("ReadEvents = %v, %v; want nil and *DecodeError", strict, err)
+				}
+			})
 		}
 	})
 	t.Run("clean read agrees with ReadEvents", func(t *testing.T) {

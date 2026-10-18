@@ -10,6 +10,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Clamp returns a copy of v with every NaN replaced by nil and every ±Inf by
@@ -32,6 +33,12 @@ func Clamp(v any) any {
 			out[i] = Clamp(e)
 		}
 		return out
+	case []map[string]any:
+		out := make([]map[string]any, len(x))
+		for i, e := range x {
+			out[i] = Clamp(e).(map[string]any)
+		}
+		return out
 	case map[string]any:
 		out := make(map[string]any, len(x))
 		for k, e := range x {
@@ -40,6 +47,25 @@ func Clamp(v any) any {
 		return out
 	}
 	return v
+}
+
+// ValidUTF8 repairs s the way encoding/json repairs decoded strings: one
+// U+FFFD per invalid byte.
+func ValidUTF8(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && n == 1 {
+			b.WriteRune(utf8.RuneError)
+		} else {
+			b.WriteString(s[i : i+n])
+		}
+		i += n
+	}
+	return b.String()
 }
 
 // Text is jq's text for a computed double.
