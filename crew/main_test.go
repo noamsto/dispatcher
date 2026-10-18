@@ -1982,7 +1982,8 @@ func TestFlagSpellingsAreIdentical(t *testing.T) {
 	log := logRowC1 + "\n" + dispatch + "\n"
 	repo, _ := repoWithLog(t, &log, 0o644)
 	t.Setenv("CREW_ID", "c1")
-	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil)}
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil),
+		now: func() time.Time { return time.Unix(1000, 0) }}
 
 	// value flags: the spaced form, then the same words with the flag joined.
 	for _, tc := range []struct {
