@@ -86,6 +86,10 @@ func Init(common string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	aliases, err := aliasValues(common, stderr)
+	if err != nil {
+		return err
+	}
 	recs := append(union, RedirectMark, LegacyMark)
 	for _, rec := range LegacyRecords(common) {
 		if _, kind, _, _ := legacyFields(rec); kind == "file" {
@@ -96,7 +100,7 @@ func Init(common string, stderr io.Writer) error {
 	if err := WriteBaseline(file, recs); err != nil {
 		return err
 	}
-	noteKeys(stderr, file, recs)
+	noteKeys(stderr, file, file, recs, aliases)
 	return nil
 }
 
@@ -113,10 +117,13 @@ func migrate(common, file string, stderr io.Writer) error {
 	if redirectCovered && legacyCovered {
 		return nil
 	}
-	var add []string
+	var add, aliases []string
 	if !redirectCovered {
 		union, err := Union(common, stderr)
 		if err != nil {
+			return err
+		}
+		if aliases, err = aliasValues(common, stderr); err != nil {
 			return err
 		}
 		for _, rec := range union {
@@ -133,13 +140,14 @@ func migrate(common, file string, stderr io.Writer) error {
 	if err := WriteBaseline(file, all); err != nil {
 		return err
 	}
-	noteKeys(stderr, "redirect keys in "+file, add)
+	noteKeys(stderr, file, "redirect keys in "+file, add, aliases)
 	return nil
 }
 
-// noteKeys prints the records' keys, never their values: a credential.helper
-// value may carry a token.
-func noteKeys(stderr io.Writer, what string, recs []string) {
+// noteKeys prints the records' keys, then each redirect pair through
+// showRecorded. An exec value is never printed: a credential.helper value may
+// carry a token.
+func noteKeys(stderr io.Writer, file, what string, recs, aliases []string) {
 	var keys []string
 	seen := map[string]bool{}
 	for _, rec := range recs {
@@ -165,4 +173,41 @@ func noteKeys(stderr io.Writer, what string, recs []string) {
 		return
 	}
 	say(stderr, "git-config baseline: recorded %s: %s\n", what, strings.Join(keys, ", "))
+	shown := false
+	for _, rec := range recs {
+		if rec == RedirectMark || rec == LegacyMark || strings.HasPrefix(rec, legacyPrefix) {
+			continue
+		}
+		k, v := keyValue(rec)
+		if !IsRedirect(k, v) {
+			continue
+		}
+		say(stderr, "  %s\n", showRecorded(k, v, aliases))
+		shown = true
+	}
+	if shown {
+		say(stderr, "  human: check each value above is yours — a planted one stays trusted: restore it in its config file, delete %s, then run `crew git-baseline --accept` in your own terminal before any dispatch (a dispatch first re-records EVERYTHING present)\n", Quote(file))
+	}
+}
+
+// showRecorded is ShowPair, or the key and a pointer to read the value from
+// one's own terminal when ShowPair would print it whole while it may carry
+// userinfo or a query: the note reaches the dispatcher, not the human's
+// terminal.
+func showRecorded(k, v string, aliases []string) string {
+	kd, shown := ShowKey(k), ShowPair(k, v, aliases)
+	if !strings.ContainsAny(v, "@?") || shown != kd+"="+Quote(v) {
+		return shown
+	}
+	cmd := "git config --show-origin --get-all " + Quote(k)
+	// A URL-subsection key can carry userinfo ShowKey cannot mask either.
+	if match(urlSubsectionKeys, k, "") && strings.ContainsAny(k, "@?") {
+		sec, _, _ := strings.Cut(k, ".")
+		cmd = "git config --show-origin --get-regexp " + Quote("^"+sec+`\.`)
+	}
+	reason := "outside the mask grammar"
+	if globAny(k, "remote.*.url", "remote.*.pushurl") && Rewritten(v, aliases) {
+		reason = "an insteadOf alias rewrites it"
+	}
+	return kd + ": value withheld (" + reason + ") — check it in your own terminal, from each checkout or worktree that may set it: " + cmd
 }
