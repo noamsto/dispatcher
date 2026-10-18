@@ -14,8 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
-	"strconv"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
@@ -241,24 +239,8 @@ func greaterThanNumber(v any, since string) bool {
 		return true
 	case json.Number:
 		return decimalGreater(x.String(), since)
-	case float64:
-		// gojq's form for NaN and the infinities, which carry no literal text.
-		// NaN is equal to nothing; a --since too big for a double parses to
-		// +Inf, which is where jq's clamp lands too.
-		return x > parseSince(since)
 	}
 	return false
-}
-
-// parseSince is jq's `--argjson since <digits>`: the arm has already refused
-// anything but digits, so the only way out of range is past a double, and jq
-// reads that as infinite.
-func parseSince(since string) float64 {
-	f, err := strconv.ParseFloat(since, 64)
-	if err != nil || math.IsInf(f, 1) {
-		return math.Inf(1)
-	}
-	return f
 }
 
 // decimalGreater reports whether the number literal a is greater than the

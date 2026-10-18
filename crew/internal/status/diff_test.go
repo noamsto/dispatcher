@@ -69,8 +69,7 @@ var corpus = []string{
 	`[]`,
 	`{"a":1} {"b":2}`,
 	`{"crew_id":"c1","kind":"msg"} trailing`,
-	// Surrogate escapes: jq's fromjson errors on a high one not followed by a
-	// low one, and decodes a lone low one to U+FFFD.
+	// Surrogate escapes: a lone low one decodes to U+FFFD, a valid pair to one rune.
 	msgRow(worker, "review:c1", `{"seam":"deslop","note":"\udc00"}`),
 	msgRow(worker, "review:c1", `{"seam":"deslop","note":"\ud83d\ude00"}`),
 	msgRow(worker, "review:c1", `{"seam":"review","review_mode":"full","note":"\udc00"}`),
@@ -104,7 +103,7 @@ var corpus = []string{
 	msgRow(rev+"#sY#Z", branch, `{"seam":"review","verdict":"accept"}`),
 	msgRow(rev, otherSession, `{"seam":"review","verdict":"accept"}`),
 	msgRow(rev, otherSession, `{"seam":"review","verdict":"revise"}`),
-	// Revoking rows with NaN or a BOM, written raw, spaced and escaped.
+	// A revoking request row behind a BOM.
 	bomRequest,
 	// A dispatcher msg to the worker that merely names crew, dispatch and branch.
 	tornDispatchr,

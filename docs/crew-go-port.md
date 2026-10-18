@@ -440,8 +440,9 @@ pr_open` for an implement task: the ledger's form, the empty-detail rule, the
   byte order mark and gojq's does not. jq's NaN spellings, lone-surrogate error
   and nesting-depth limit are not mirrored (D5). `diff_test.go` pins it: it runs both programs on the real
   `jq -Rn` and on gojq over one corpus of line shapes (torn, non-object,
-  trailing-garbage, surrogate-escape and NaN/Infinity lines and bodies) and
-  compares.
+  trailing-garbage, BOM, lone-low-surrogate and valid-pair escape and
+  out-of-range number lines and bodies, and top-level NaN/Infinity-spelling
+  lines) and compares.
   The row's `ts` is real time and never `CREW_CLOCK`: the arm stamped with a bare
   `jq -n 'now*1000|floor'`. The dedupe read (`lastPosted`) is the arm's
   `jq -r … | tail -1` for the sender's last `state<TAB>pr_url`, so an identical
@@ -984,9 +985,10 @@ acceptance ledger items`: no jq is left to fail, so the lines are unreachable;
     item is CI if the entry or its number or position fallback names CI), so it
     refuses at least as often as the arm.
 
-  gojq-vs-jq `fromjson` differences in the seam folds are not on this list: the
-  jq-compatible `_jqfromjson` patch closes them and the differential test in
-  `internal/status` pins that, rather than documenting them.
+  gojq-vs-jq `fromjson` differences in the seam folds are not all on this list:
+  `_jqfromjson` closes the BOM difference (the differential test in
+  `internal/status` pins it); the others (NaN spellings, lone high surrogates,
+  jq's nesting limit) are quirks D5 does not mirror.
 
 - Specific to `nudge`, and not mirrored: two places bash's own mechanics set the
   behaviour. The arm called `_unread_scan` in its own shell, so a scan that could
