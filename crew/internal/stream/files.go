@@ -101,10 +101,10 @@ func decodeRow(text string) (any, error) {
 	return v, nil
 }
 
-// fieldText is the arm's `jq -r '.field'` on a decoded object: the string
+// scalarText is the arm's `jq -r '.field'` on a decoded object: the string
 // itself, a number's own text, and "" for null, an absent key or any other
 // type — `// empty` had the same shape.
-func fieldText(obj map[string]json.RawMessage, key string) string {
+func scalarText(obj map[string]json.RawMessage, key string) string {
 	raw, ok := obj[key]
 	if !ok {
 		return ""
@@ -130,7 +130,7 @@ func fieldText(obj map[string]json.RawMessage, key string) string {
 // digits-only `case`: the number a field reads as, and false for anything the
 // arm would have cleared.
 func digitsField(obj map[string]json.RawMessage, key string) (int64, bool) {
-	text := fieldText(obj, key)
+	text := scalarText(obj, key)
 	if !ascii.IsDigits(text) {
 		return 0, false
 	}

@@ -14,9 +14,7 @@
 package adopt
 
 import (
-	"bytes"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -309,9 +307,9 @@ func claimRows(paths bus.Paths, id string) []claim {
 		if len(cols) < 2 {
 			continue
 		}
-		c := claim{issue: fieldText(cols[0]), branch: fieldText(cols[1])}
+		c := claim{issue: jsonval.RawText(cols[0]), branch: jsonval.RawText(cols[1])}
 		for _, b := range cols[1:] {
-			c.branches = append(c.branches, fieldText(b))
+			c.branches = append(c.branches, jsonval.RawText(b))
 		}
 		adopted = append(adopted, c)
 	}
@@ -384,27 +382,6 @@ func hasLine(text, line string) bool {
 		}
 	}
 	return false
-}
-
-// fieldText is the text `@tsv` wrote for one fold field.
-func fieldText(v any) string {
-	switch v := v.(type) {
-	case string:
-		return v
-	case json.Number:
-		return v.String()
-	case bool:
-		return strconv.FormatBool(v)
-	case float64:
-		return jsonval.Text(v)
-	case []any, map[string]any:
-		var buf bytes.Buffer
-		if err := jsonval.Encode(&buf, v, false); err != nil {
-			return "null"
-		}
-		return strings.TrimSuffix(buf.String(), "\n")
-	}
-	return "null"
 }
 
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }

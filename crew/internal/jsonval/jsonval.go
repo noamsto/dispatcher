@@ -1,12 +1,15 @@
-// Package jsonval prints the values encoding/json refuses the way jq does: NaN
-// as null and ±Inf as ±MaxFloat64.
+// Package jsonval reads and prints decoded JSON values the way jq does,
+// including the ones encoding/json refuses: NaN as null and ±Inf as
+// ±MaxFloat64.
 package jsonval
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"math"
 	"strconv"
+	"strings"
 )
 
 // Clamp returns a copy of v with every NaN replaced by nil and every ±Inf by
@@ -61,4 +64,23 @@ func Encode(w io.Writer, v any, indent bool) error {
 		enc.SetIndent("", "  ")
 	}
 	return enc.Encode(Clamp(v))
+}
+
+// Truthy is jq's truthiness: only null and false are false.
+func Truthy(v any) bool { return v != nil && v != false }
+
+// RawText is what `jq -r` prints for v: a string as is, a computed double as
+// Text, anything else its compact JSON text.
+func RawText(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case float64:
+		return Text(x)
+	}
+	var buf bytes.Buffer
+	if err := Encode(&buf, v, false); err != nil {
+		return "null"
+	}
+	return strings.TrimSuffix(buf.String(), "\n")
 }

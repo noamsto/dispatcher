@@ -354,7 +354,7 @@ func firstStderrLine(r io.ReadCloser, first chan<- string) {
 // watchdog; a line that does not decode is reported and the cursor kept.
 func (r *relay) forward(text string) {
 	obj, err := decodeObject(text)
-	if err == nil && fieldText(obj, "relay") == "heartbeat" {
+	if err == nil && scalarText(obj, "relay") == "heartbeat" {
 		return
 	}
 	line, cursor, ok := r.label(text, obj, err)

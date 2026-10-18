@@ -7,7 +7,6 @@
 package rate
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -15,6 +14,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
 // burnRule is one burnClasses row. class/weight are the row's own values,
@@ -101,45 +102,20 @@ func burnWeight(rules []burnRule, model, effort string) (string, any, bool) {
 // entry falls through to `default`, which may itself be absent.
 func byEffortEntry(by map[string]json.RawMessage, effort string) json.RawMessage {
 	if raw, ok := by[effort]; ok {
-		if v, ok := parseOne(string(raw)); ok && isTruthy(v) {
+		if v, ok := parseOne(string(raw)); ok && jsonval.Truthy(v) {
 			return raw
 		}
 	}
 	return by["default"]
 }
 
-// jqText is jq's scalar rendering (`@tsv`'s own rule for the two columns
-// _burn_weight printed): strings unchanged, everything else its JSON text. The
-// arm reached only string, number and null — a class is a string and a weight a
-// number, and `@tsv` would have errored on anything else — so the boolean and
-// container arms exist for the switch, not for the data.
-func jqText(v any) string {
-	switch x := v.(type) {
-	case string:
-		return x
-	case nil:
-		return "null"
-	case bool:
-		return strconv.FormatBool(x)
-	case json.Number:
-		return x.String()
-	case float64:
-		return strconv.FormatFloat(x, 'g', -1, 64)
-	case []any, map[string]any:
-		var buf bytes.Buffer
-		_ = encode(&buf, x, false)
-		return strings.TrimSuffix(buf.String(), "\n")
-	}
-	return ""
-}
-
-// jqTextRaw is jqText of a raw JSON value; text that does not parse is "".
+// jqTextRaw is jsonval.RawText of a raw JSON value; text that does not parse is "".
 func jqTextRaw(raw json.RawMessage) string {
 	v, ok := parseOne(string(raw))
 	if !ok {
 		return ""
 	}
-	return jqText(v)
+	return jsonval.RawText(v)
 }
 
 // argjson is bash's `--argjson w "$text"`: the text is parsed as JSON, so the

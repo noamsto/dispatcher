@@ -44,6 +44,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 )
 
@@ -852,8 +853,8 @@ func (l *loop) printReap(path string) {
 		if line == "" {
 			continue
 		}
-		if v, err := decodeObject(line); err == nil && fieldText(v, "stream") == "error" {
-			key := digitsToN(fieldText(v, "rc") + ":" + fieldText(v, "detail"))
+		if v, err := decodeObject(line); err == nil && scalarText(v, "stream") == "error" {
+			key := digitsToN(scalarText(v, "rc") + ":" + scalarText(v, "detail"))
 			if !l.sup.repeat("reaperr", key, l.nowMS(), l.heartbeatMS()) {
 				continue
 			}
@@ -960,12 +961,8 @@ func wantsReap(batch string) bool {
 	if err != nil {
 		return false
 	}
-	return truthy(out)
+	return jsonval.Truthy(out)
 }
-
-// truthy is jq's truthiness over a gojq value: null and false are false, and
-// everything else — including 0 and "" — is true.
-func truthy(v any) bool { return v != nil && v != false }
 
 // reapLines is the arm's `split("\n") | map(select(length>0) | sub("^crew reap: ";""))`.
 // It starts from an empty slice so a set with nothing in it prints `[]`.

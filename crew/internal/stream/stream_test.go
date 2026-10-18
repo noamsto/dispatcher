@@ -369,11 +369,11 @@ func TestDigitsToN(t *testing.T) {
 
 func TestFieldTextAndDigits(t *testing.T) {
 	v := mustDecodeObject(t, `{"n":1700000000000,"s":"done","f":1.5,"z":null,"o":{},"neg":-1}`)
-	if got := fieldText(v, "s"); got != "done" {
-		t.Errorf("fieldText(s) = %q", got)
+	if got := scalarText(v, "s"); got != "done" {
+		t.Errorf("scalarText(s) = %q", got)
 	}
-	if got := fieldText(v, "n"); got != "1700000000000" {
-		t.Errorf("fieldText(n) = %q, want the digits the file holds", got)
+	if got := scalarText(v, "n"); got != "1700000000000" {
+		t.Errorf("scalarText(n) = %q, want the digits the file holds", got)
 	}
 	for _, k := range []string{"z", "o", "missing", "neg", "f"} {
 		if n, ok := digitsField(v, k); ok && k != "neg" && k != "f" {
@@ -381,17 +381,17 @@ func TestFieldTextAndDigits(t *testing.T) {
 		}
 	}
 	// `jq -r` prints a number's own text; only digits-only survives the case.
-	if got := fieldText(v, "f"); got != "1.5" {
-		t.Errorf("fieldText(f) = %q", got)
+	if got := scalarText(v, "f"); got != "1.5" {
+		t.Errorf("scalarText(f) = %q", got)
 	}
 	// A string keeps its escapes; a value of any other type reads as no text.
 	esc := mustDecodeObject(t, `{"s":"a\u003cb\u007fc","t":true,"arr":[1]}`)
-	if got := fieldText(esc, "s"); got != "a<b\u007fc" {
-		t.Errorf("fieldText(s) = %q, want the decoded string", got)
+	if got := scalarText(esc, "s"); got != "a<b\u007fc" {
+		t.Errorf("scalarText(s) = %q, want the decoded string", got)
 	}
 	for _, k := range []string{"t", "arr", "missing"} {
-		if got := fieldText(esc, k); got != "" {
-			t.Errorf("fieldText(%s) = %q, want absent", k, got)
+		if got := scalarText(esc, k); got != "" {
+			t.Errorf("scalarText(%s) = %q, want absent", k, got)
 		}
 	}
 }
