@@ -275,10 +275,10 @@ cursor_file() { printf '%s\n' "$CURDIR"/*; }
   n=${more#… }
   n=${n%% *}
   since=${more##* }
-  shown=$(grep -c '^{"ts":' <<<"$text")
+  shown=$(grep -c '^{.*"ts":' <<<"$text")
   [ $((shown + n)) -eq 20 ]
   # --since names the last row shown.
-  [ "$(grep '^{"ts":' <<<"$text" | tail -n 1 | jq -r .ts)" = "$since" ]
+  [ "$(grep '^{.*"ts":' <<<"$text" | tail -n 1 | jq -r .ts)" = "$since" ]
 
   jq -e --argjson ts "$last" '.["dispatcher:c1"] == $ts' "$(marks_file)"
   deliver
