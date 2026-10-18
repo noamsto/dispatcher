@@ -15,15 +15,13 @@
 package nudge
 
 import (
-	"bytes"
 	"context"
-	"fmt"
+	"encoding/json"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/frame"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
 )
@@ -77,8 +75,8 @@ func (r PaneRequest) key() string {
 type Deps struct {
 	Capture func(ctx context.Context, pane string, colored bool) (string, bool)
 	Tmux    func(ctx context.Context, args ...string) (string, bool)
-	Events  func() ([]jsonv.Value, error)
-	Append  func(row jsonv.Value) error
+	Events  func() ([]any, error)
+	Append  func(row any) error
 	Sleep   func(ctx context.Context, seconds string) error
 	Getenv  func(string) string
 	Clock   clock.Clock
@@ -214,21 +212,46 @@ func classify(ctx context.Context, d Deps, req PaneRequest) string {
 // nudgeRow is the arm's `kind:"nudge"` row. `ts` is jq's `now*1000|floor` — real time,
 // deliberately not `CREW_CLOCK` — and every other field is the caller's. Key order is
 // not part of the row's value (docs/crew-go-port.md's output contract).
-func nudgeRow(req PaneRequest, result, detail string, ts int64) jsonv.Value {
-	msgTS, _ := jsonv.ParseNumber(req.MsgTS)
-	return jsonv.Object(
-		jsonv.Member{Key: "ts", Val: jsonv.Num(float64(ts))},
-		jsonv.Member{Key: "crew_id", Val: jsonv.Str(req.Crew)},
-		jsonv.Member{Key: "kind", Val: jsonv.Str("nudge")},
-		jsonv.Member{Key: "from", Val: jsonv.Str(req.Actor)},
-		jsonv.Member{Key: "to", Val: jsonv.Str(req.Session)},
-		jsonv.Member{Key: "branch", Val: jsonv.Str(branchOf(req.Session))},
-		jsonv.Member{Key: "pane", Val: jsonv.Str(req.Pane)},
-		jsonv.Member{Key: "engine", Val: jsonv.Str(req.Engine)},
-		jsonv.Member{Key: "result", Val: jsonv.Str(result)},
-		jsonv.Member{Key: "detail", Val: jsonv.Str(detail)},
-		jsonv.Member{Key: "msg_ts", Val: msgTS},
-	)
+func nudgeRow(req PaneRequest, result, detail string, ts int64) nudgeRowDoc {
+	return nudgeRowDoc{
+		TS:     ts,
+		CrewID: req.Crew,
+		Kind:   "nudge",
+		From:   req.Actor,
+		To:     req.Session,
+		Branch: branchOf(req.Session),
+		Pane:   req.Pane,
+		Engine: req.Engine,
+		Result: result,
+		Detail: detail,
+		MsgTS:  json.Number(digitsLiteral(req.MsgTS)),
+	}
+}
+
+// nudgeRowDoc is the bus row nudgeRow builds. MsgTS is a number literal, not a string:
+// the bus orders rows by it.
+type nudgeRowDoc struct {
+	TS     int64       `json:"ts"`
+	CrewID string      `json:"crew_id"`
+	Kind   string      `json:"kind"`
+	From   string      `json:"from"`
+	To     string      `json:"to"`
+	Branch string      `json:"branch"`
+	Pane   string      `json:"pane"`
+	Engine string      `json:"engine"`
+	Result string      `json:"result"`
+	Detail string      `json:"detail"`
+	MsgTS  json.Number `json:"msg_ts"`
+}
+
+// digitsLiteral is what `jq --argjson` makes of a digit string: the value, so leading
+// zeros are gone and every other digit is kept exactly.
+func digitsLiteral(digits string) string {
+	trimmed := strings.TrimLeft(digits, "0")
+	if trimmed == "" {
+		return "0"
+	}
+	return trimmed
 }
 
 // allDigits is the arm's `case *[!0-9]*)` inverse: ASCII digits only, and not empty.
@@ -369,41 +392,29 @@ func anchorGate(ctx context.Context, d Deps, req PaneRequest) (string, bool) {
 		return "anchor: " + req.Pane + " is not running an engine (" + who + ")", false
 	}
 	last, err := foldNewest(d, branch, req.Crew)
-	if err != nil || last.IsNull() || textOf(last, "worker_id") != req.Session || isTrue(last, "terminal") {
+	if err != nil || last == nil || rowText(last, "worker_id") != req.Session || isTrue(last, "terminal") {
 		return "anchor: " + req.Session + " is not the live newest session on " + branch, false
 	}
 	return "", true
 }
 
-// foldNewest is the sessions fold's newest entry, Null when the branch has none — a
+// foldNewest is the sessions fold's newest entry, nil when the branch has none — a
 // missing log is the fold's own `[]`, so it reads as no session rather than a failure.
 // A log or fold that cannot be read is an error, which the anchor gate refuses around.
-func foldNewest(d Deps, branch, crew string) (jsonv.Value, error) {
+func foldNewest(d Deps, branch, crew string) (any, error) {
 	events, err := d.Events()
 	if err != nil {
-		return jsonv.Null(), err
+		return nil, err
 	}
-	docs := make([]any, len(events))
-	for i, ev := range events {
-		docs[i] = jsonv.ToAny(ev)
-	}
-	folded, err := sessions.Fold(docs, branch, crew, float64(d.Clock.RealMS())/1000)
+	folded, err := sessions.Fold(events, branch, crew, float64(d.Clock.RealMS())/1000)
 	if err != nil {
-		return jsonv.Null(), err
+		return nil, err
 	}
-	b, err := sessions.JSON(folded)
-	if err != nil {
-		return jsonv.Null(), err
+	out, ok := folded.([]any)
+	if !ok || len(out) == 0 {
+		return nil, nil
 	}
-	outs, err := jsonv.DecodeStream(bytes.NewReader(b))
-	if err != nil || len(outs) != 1 {
-		return jsonv.Null(), fmt.Errorf("fold result: %v", err)
-	}
-	out := outs[0]
-	if out.Kind() != jsonv.KindArray || out.Len() == 0 {
-		return jsonv.Null(), nil
-	}
-	return out.Elems()[out.Len()-1], nil
+	return out[len(out)-1], nil
 }
 
 // boxText is `_nudge_box_text`: the lead's input box contents, whitespace-free.
@@ -447,16 +458,8 @@ func field(row []string, i int) string {
 	return ""
 }
 
-func isTrue(v jsonv.Value, key string) bool {
-	x, _ := v.Get(key)
-	return x.Kind() == jsonv.KindTrue
-}
-
-func textOf(v jsonv.Value, key string) string {
-	x, _ := v.Get(key)
-	if x.Kind() == jsonv.KindString {
-		s, _ := x.AsString()
-		return s
-	}
-	return ""
+func isTrue(v any, key string) bool {
+	m, _ := v.(map[string]any)
+	b, _ := m[key].(bool)
+	return b
 }

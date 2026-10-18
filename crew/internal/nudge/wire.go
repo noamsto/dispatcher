@@ -7,6 +7,7 @@ package nudge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,7 +18,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 	"github.com/noamsto/dispatcher/crew/internal/unread"
 )
@@ -47,7 +47,7 @@ func PaneDeps(paths bus.Paths, stderr io.Writer, clk clock.Clock) Deps {
 			out, err := exec.CommandContext(ctx, "tmux", args...).Output()
 			return trimNewlines(string(out)), err == nil
 		},
-		Events: func() ([]jsonv.Value, error) {
+		Events: func() ([]any, error) {
 			events, err := bus.ReadEvents(paths.Log)
 			if errors.Is(err, bus.ErrNoLog) {
 				// `_sessions` answers `[]` when there is no log at all.
@@ -56,14 +56,18 @@ func PaneDeps(paths bus.Paths, stderr io.Writer, clk clock.Clock) Deps {
 			if err != nil {
 				return nil, err
 			}
-			rows := make([]jsonv.Value, len(events))
+			rows := make([]any, len(events))
 			for i, ev := range events {
-				rows[i] = ev.Raw
+				rows[i] = ev.Doc
 			}
 			return rows, nil
 		},
-		Append: func(row jsonv.Value) error {
-			return bus.Append(paths.Log, string(jsonv.Append(nil, row, jsonv.Options{})))
+		Append: func(row any) error {
+			b, err := json.Marshal(row)
+			if err != nil {
+				return err
+			}
+			return bus.Append(paths.Log, string(b))
 		},
 		Sleep:  func(ctx context.Context, seconds string) error { return clk.SleepCtx(ctx, seconds, stderr) },
 		Getenv: os.Getenv,

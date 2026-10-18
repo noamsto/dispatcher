@@ -19,7 +19,6 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
@@ -286,11 +285,11 @@ func (a *arm) checkSession(want string, stderr io.Writer) int {
 		say(stderr, "crew: nudge: %s: %v\n", a.paths.Log, err)
 		return exitType
 	}
-	if last.IsNull() {
+	if last == nil {
 		return refuse(stderr, "no session on "+a.branch+" — dispatch a worker before nudging one")
 	}
 	if isTrue(last, "terminal") {
-		return refuse(stderr, "newest session on "+a.branch+" is "+textOf(last, "state")+
+		return refuse(stderr, "newest session on "+a.branch+" is "+rowText(last, "state")+
 			" — a stopped session never reads its inbox; re-dispatch with the context baked in")
 	}
 	if isNull(last, "state") {
@@ -300,7 +299,7 @@ func (a *arm) checkSession(want string, stderr io.Writer) int {
 		return refuse(stderr, a.branch+
 			" has no session id on the bus — a branch-only address can never reach a live worker's inbox; re-dispatch")
 	}
-	a.sid = textOf(last, "worker_id")
+	a.sid = rowText(last, "worker_id")
 	if want != "" && want != a.sid {
 		return refuse(stderr, want+" is not the newest session on "+a.branch+" ("+a.sid+")")
 	}
@@ -458,25 +457,39 @@ func (a *arm) end(result string, rc int, detail, line string) int {
 // failure is returned rather than swallowed: a joiner must never be told an outcome no
 // row records.
 func (a *arm) waitRow(state, result, rc, detail string) error {
-	msgTS, _ := jsonv.ParseNumber(a.ts)
-	members := []jsonv.Member{
-		{Key: "ts", Val: jsonv.Num(float64(a.o.Deps.Clock.NowMS()))},
-		{Key: "crew_id", Val: jsonv.Str(a.crew)},
-		{Key: "kind", Val: jsonv.Str("nudge_wait")},
-		{Key: "from", Val: jsonv.Str("dispatcher:" + a.crew)},
-		{Key: "to", Val: jsonv.Str(a.sid)},
-		{Key: "branch", Val: jsonv.Str(a.branch)},
-		{Key: "pane", Val: jsonv.Str(a.pane)},
-		{Key: "msg_ts", Val: msgTS},
-		{Key: "state", Val: jsonv.Str(state)},
-		{Key: "result", Val: jsonv.Str(result)},
-		{Key: "detail", Val: jsonv.Str(detail)},
+	row := waitRowDoc{
+		TS:     a.o.Deps.Clock.NowMS(),
+		CrewID: a.crew,
+		Kind:   "nudge_wait",
+		From:   "dispatcher:" + a.crew,
+		To:     a.sid,
+		Branch: a.branch,
+		Pane:   a.pane,
+		MsgTS:  json.Number(digitsLiteral(a.ts)),
+		State:  state,
+		Result: result,
+		Detail: detail,
 	}
 	if rc != "" {
-		v, _ := jsonv.ParseNumber(rc)
-		members = append(members, jsonv.Member{Key: "rc", Val: v})
+		row.RC = json.Number(rc)
 	}
-	return a.o.Deps.Append(jsonv.Object(members...))
+	return a.o.Deps.Append(row)
+}
+
+// waitRowDoc is the `nudge_wait` bus row; RC is omitted until it is a number.
+type waitRowDoc struct {
+	TS     int64       `json:"ts"`
+	CrewID string      `json:"crew_id"`
+	Kind   string      `json:"kind"`
+	From   string      `json:"from"`
+	To     string      `json:"to"`
+	Branch string      `json:"branch"`
+	Pane   string      `json:"pane"`
+	MsgTS  json.Number `json:"msg_ts"`
+	State  string      `json:"state"`
+	Result string      `json:"result"`
+	Detail string      `json:"detail"`
+	RC     json.Number `json:"rc,omitempty"`
 }
 
 // fold runs one of the arm's two wait-loop programs over the log's tail. A missing row
@@ -551,9 +564,9 @@ func rowText(v any, key string) string {
 
 // PID is on Options because the arm's `$$` is the lock owner's text a joiner prints.
 
-func isNull(v jsonv.Value, key string) bool {
-	x, _ := v.Get(key)
-	return x.Kind() == jsonv.KindNull
+func isNull(v any, key string) bool {
+	m, _ := v.(map[string]any)
+	return m[key] == nil
 }
 
 func first(rows [][]string) []string {
