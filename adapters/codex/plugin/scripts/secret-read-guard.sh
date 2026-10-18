@@ -383,14 +383,18 @@ proc_environ_re="(^|[[:space:]\"'<=])/proc/[^[:space:]\"']*/environ"
 # path reads as written (`"$HOME/.venv/bin/python" -c` is `$HOME/.venv/bin/python
 # -c`) and a quoted space or metachar is `_`, so `git commit -m "python3 -c x"`
 # reads `python3_-c_x` and arms nothing. Armed by the interpreter word followed
-# by option words and a code flag (-c, -e, -E, -p, -r, --eval, --print, `eval`,
-# or `-` for stdin) or by a heredoc or here-string, or by a pipe into it. A `/`
+# by any words and a code flag (-c, -e, -E, -p, -r, --eval, --print, `eval`, or
+# `-` for stdin) or by a heredoc or here-string, or by a pipe into it. The code
+# flag may carry its code glued on (`-le'print…'` reads `-leprint_…`), and any
+# words, option arguments included (`python3 -X utf8 -c`), may precede it; a
+# `--cov`-style double-dash word does not arm. Over-arming only costs the
+# accepted co-occurrence false positive. A `/`
 # before it is fine (`/usr/bin/python3`, `uv run python3`); `-`, `.` or a name
 # char around it make it another word (`my-python`, `python3-config`). Plain
 # runs (`python3 -m pytest`, `node --version`) arm nothing. grep -E is a DFA,
 # so the optional-word loops stay linear.
 interp_word='(python[0-9.]*|pypy[0-9.]*|node|nodejs|deno|bun|tsx|ts-node|ruby|perl|php)'
-interp_code_re="(^|[^A-Za-z0-9_.-])${interp_word}(([[:space:]]+-[^[:space:]]*)*[[:space:]]+(-[A-Za-z]*[ceEpr]|--eval|--print|eval|-)([[:space:]]|\$)|([[:space:]]+[^[:space:];&|<>]+)*[[:space:]]*<<)"
+interp_code_re="(^|[^A-Za-z0-9_.-])${interp_word}([[:space:]]+[^[:space:];&|<>]+)*([[:space:]]+(-[A-Za-z]*[ceEpr]|--eval|--print)|[[:space:]]+(eval|-)([[:space:]]|\$)|[[:space:]]*<<)"
 interp_pipe_re="\\|([^;&|]*[^A-Za-z0-9_.-])?${interp_word}([^A-Za-z0-9_.-]|\$)"
 nl=$'\n'
 
@@ -974,8 +978,9 @@ END { print (NR ? ok : 0) }'
 # lookahead is not needed; the replacement keeps two spaces so a chained form
 # still finds its own leading space. Dumpers: os.environ/environb/getenv,
 # `environ.items(`, process.env, Deno.env, Bun.env, `from os import environ`, a
-# bare ENV word (`p ENV`, ENV.to_h, ENV[, `$ENV{X}`, %ENV; not a shell `ENV=x`
-# assignment), getenv(, $_ENV. Presence forms: len(os.environ), `"X" in os.environ` (also not in, and
+# ruby/perl-shaped ENV use (`p ENV`, `puts ENV`, ENV.to_h, ENV[, `$ENV{X}`,
+# %ENV; not prose or a Dockerfile `ENV PATH`, a shell `ENV=x` assignment),
+# getenv(, $_ENV. Presence forms: len(os.environ), `"X" in os.environ` (also not in, and
 # process.env) unless a name, `.`, `[` or `(` follows, `os.environ.get("X") is
 # [not] None` (also os.getenv), ruby `ENV.key?(` (also has_key?, include?,
 # member?), and a subscript assignment `os.environ["X"] =`
@@ -990,7 +995,7 @@ awk_interp_dump='
   gsub(/os\.(environb?\.get|getenv)\([[:space:]]*["\047][A-Za-z_][A-Za-z0-9_]*["\047][[:space:]]*\)[[:space:]]+is[[:space:]]+(not[[:space:]]+)?None/, "  ", t)
   gsub(/ENV\.(key|has_key|include|member)\?\(/, "  ", t)
   gsub(/os\.environ\[["\047][A-Za-z_][A-Za-z0-9_]*["\047]\][[:space:]]*=[^=]/, "  ", t)
-  if (t ~ /os\.(environb?|getenv)[^A-Za-z0-9_]|environb?\.items\(|process\.env[^A-Za-z0-9_]|[^A-Za-z0-9_]ENV[^A-Za-z0-9_=]|Deno\.env[^A-Za-z0-9_]|Bun\.env[^A-Za-z0-9_]|from[[:space:]]+os[[:space:]]+import[^;#]*environ|getenv\(|\$_ENV/) { hit = 1; exit }
+  if (t ~ /os\.(environb?|getenv)[^A-Za-z0-9_]|environb?\.items\(|process\.env[^A-Za-z0-9_]|[^A-Za-z0-9_]ENV[[{.;)}]|[^A-Za-z0-9_]ENV[[:space:]]+[;)}]|%ENV[^A-Za-z0-9_]|[^A-Za-z0-9_](p|pp|puts|print|inspect)[[:space:]]+ENV[^A-Za-z0-9_]|Deno\.env[^A-Za-z0-9_]|Bun\.env[^A-Za-z0-9_]|from[[:space:]]+os[[:space:]]+import[^;#]*environ|getenv\(|\$_ENV/) { hit = 1; exit }
 }
 END { print hit + 0 }'
 

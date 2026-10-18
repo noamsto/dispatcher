@@ -2221,6 +2221,11 @@ assert_allow_within_each_awk() {
   deny_both $'python3 -c \'from os import environ; print(environ)\''
   deny_both $'"$HOME/.venv/bin/python" -c \'import os; print(os.environ)\''
   deny_both $'tsx -e \'console.log(process.env)\''
+  deny_both $'perl -le\'print $ENV{HOME}\''
+  deny_both $'node -e"console.log(process.env)"'
+  deny_both $'python3 -c\'import os;print(os.environ)\''
+  deny_both $'python3 -W ignore -c \'import os; print(os.environ)\''
+  deny_both $'ruby -I lib -e \'p ENV\''
 }
 
 @test "secret-read-guard: #1143 allows interpreter presence tests and python heredoc text" {
@@ -2239,6 +2244,10 @@ assert_allow_within_each_awk() {
   allow_both $'rg -n \'os.environ\' src && python3 -m pytest'
   allow_both $'git commit -m \'use process.env\' && node --version'
   allow_both $'ruby -e \'p ENV.key?("X")\''
+  allow_both $'python3 - <<\'EOF\'\nopen("README.md","a").write("Set the token in your ENV before running.\\n")\nEOF'
+  allow_both $'python3 - <<\'EOF\'\ns = s.replace("ENV PATH", "ENV PATH2")\nEOF'
+  allow_both $'perl -pi -e \'s/old ENV docs/new ENV docs/\' README.md'
+  allow_both $'rg -n \'os.environ\' src && python3 -m pytest --cov'
 }
 
 @test "secret-read-guard: #1143 keeps denying shell dumpers outside an interpreter" {
