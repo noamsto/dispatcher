@@ -63,17 +63,14 @@ const (
 	exitFailure = 1
 )
 
-// Options is everything Run reads beyond the bus: whether $JQ_COLORS was invalid
-// (jq warns once per process it starts, and the arm starts one per step, so Go
-// prints the line once for the call rather than once per fold), how to resolve
-// the crew the arm defaults to (`_crew_id`), the clock, and $CREW_CLOCK — the
-// test-only virtual clock `_clock_now` reads seconds from.
+// Options is everything Run reads beyond the bus: how to resolve the crew the
+// arm defaults to (`_crew_id`), the clock, and $CREW_CLOCK — the test-only
+// virtual clock `_clock_now` reads seconds from.
 type Options struct {
-	JQColorsInvalid bool
-	CrewID          func() string
-	Now             func() time.Time
-	CrewClock       string
-	Sender          sender.Probes // the sender check's reads; zero checks nothing
+	CrewID    func() string
+	Now       func() time.Time
+	CrewClock string
+	Sender    sender.Probes // the sender check's reads; zero checks nothing
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
@@ -122,24 +119,15 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	}
 }
 
-// folds runs one of the arm's jq programs over a bus, warning about a bad
-// $JQ_COLORS the way the first jq of the call would and mapping a failure to the
+// folds runs one of the arm's jq programs over a bus, mapping a failure to the
 // arm's one stderr line and status.
 type folds struct {
 	paths  bus.Paths
 	stderr io.Writer
-	o      Options
-	warned bool
 }
 
-// call is one fold — the arm's one jq process, including its one $JQ_COLORS
-// warning, which the folds copy prints once per invocation rather than once per
-// step.
+// call is one fold — the arm's one jq process.
 func (f *folds) call(prog string, in []any, vars map[string]any) (any, int) {
-	if !f.warned && f.o.JQColorsInvalid {
-		f.warned = true
-		say(f.stderr, "Failed to set $JQ_COLORS\n")
-	}
 	// `jq -s` always hands the program an array; a nil slice would reach gojq as
 	// `null`, which every fold's `.[]` reads as a type error instead.
 	if in == nil {
@@ -197,7 +185,7 @@ func list(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int
 	if !ok {
 		return exitFailure
 	}
-	f := &folds{paths: paths, stderr: stderr, o: o}
+	f := &folds{paths: paths, stderr: stderr}
 	holds, code := f.outstanding(crew)
 	if code != 0 {
 		return code
@@ -215,7 +203,7 @@ func due(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	if !ok {
 		return exitFailure
 	}
-	f := &folds{paths: paths, stderr: stderr, o: o}
+	f := &folds{paths: paths, stderr: stderr}
 	holds, code := f.outstanding(crew)
 	if code != 0 {
 		return code
@@ -260,7 +248,7 @@ func park(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int
 	if !ok {
 		return exitFailure
 	}
-	f := &folds{paths: paths, stderr: stderr, o: o}
+	f := &folds{paths: paths, stderr: stderr}
 	holds, code := f.outstanding(crew)
 	if code != 0 {
 		return code
@@ -347,9 +335,6 @@ func add(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
 		say(stderr, "crew: hold add: %v\n", err)
 		return exitFailure
-	}
-	if o.JQColorsInvalid {
-		say(stderr, "Failed to set $JQ_COLORS\n")
 	}
 	// Milliseconds, not `crew new`'s seconds: the duplicate guard compares `id`
 	// against the ms `ts` fields dispatch writes, so copying `crew new` breaks
@@ -487,9 +472,6 @@ func release(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) 
 	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
 		say(stderr, "crew: hold release: %v\n", err)
 		return exitFailure
-	}
-	if o.JQColorsInvalid {
-		say(stderr, "Failed to set $JQ_COLORS\n")
 	}
 	// Always appended — the bus is append-only — so an unknown or already
 	// released id is a no-op by construction: the outstanding fold excludes any id

@@ -26,13 +26,11 @@ const header = "engine\tmodel\ttier\tshape\toutcome\tduration_s"
 // read maps through bus.JQFailure (2 unreadable, 5 corrupt) before the fold.
 const exitType = 5
 
-// Options is everything Run reads beyond the bus: whether $JQ_COLORS was
-// invalid (jq warns once, at startup, even for the raw-output fold), and the
-// clock the fold would freeze `now` to (it does not read `now`; the field
-// keeps the package deterministic in tests, as crews.Options does).
+// Options is everything Run reads beyond the bus: the clock the fold would
+// freeze `now` to (it does not read `now`; the field keeps the package
+// deterministic in tests, as crews.Options does).
 type Options struct {
-	JQColorsInvalid bool
-	Now             func() time.Time
+	Now func() time.Time
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
@@ -51,9 +49,6 @@ func Run(crew string, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		return 0
 	}
 	say(stdout, "%s\n", header)
-	if o.JQColorsInvalid {
-		say(stderr, "Failed to set $JQ_COLORS\n")
-	}
 	if err != nil {
 		msg, code := bus.JQFailure(err)
 		say(stderr, "crew: report: %s: %s\n", paths.Log, msg)

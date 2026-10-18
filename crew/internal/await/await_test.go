@@ -533,29 +533,6 @@ func TestFlushFailureLeavesMarksAlone(t *testing.T) {
 	}
 }
 
-// `_clock_now_ms` was the arm's one un-silenced jq, so a broken $JQ_COLORS
-// surfaced there — once for the call, and never under the virtual clock.
-func TestJQColorsWarning(t *testing.T) {
-	p := fixture(t)
-	_, stderr, code := runOpts(t, p, Options{JQColorsInvalid: true, Clock: clock.Clock{Now: func() time.Time { return now }}},
-		Request{Me: me, Timeout: "0"})
-	if code != 0 {
-		t.Fatalf("exit %d", code)
-	}
-	if got := strings.Count(stderr, "Failed to set $JQ_COLORS"); got != 1 {
-		t.Errorf("warnings = %d, stderr %q", got, stderr)
-	}
-
-	p2 := fixture(t)
-	_, stderr, code = runOpts(t, p2, Options{JQColorsInvalid: true, Clock: clockIn(t, 1800000000)}, Request{Me: me, Timeout: "7", Interval: "3"})
-	if code != 0 {
-		t.Fatalf("exit %d", code)
-	}
-	if strings.Contains(stderr, "JQ_COLORS") {
-		t.Errorf("CREW_CLOCK starts no jq: %q", stderr)
-	}
-}
-
 // With no virtual clock a bad interval is `sleep`'s own failure, and the arm's
 // `set -e` turned that into exit 1.
 func TestBadIntervalExits(t *testing.T) {

@@ -86,8 +86,6 @@ func TestRunMapsFoldErrorsToExitCodes(t *testing.T) {
 		log        *string
 		mode       os.FileMode
 		worktrees  error
-		colour     bool
-		jqColors   string
 		wantCode   int
 		wantStdout string
 		wantStderr string // exact; "" means the check is wantErrIn
@@ -99,9 +97,6 @@ func TestRunMapsFoldErrorsToExitCodes(t *testing.T) {
 		{name: "sessions garbage line is a decode error", args: []string{"sessions", "x"}, log: str("garbage\n"), mode: 0o644, wantCode: 5, wantErrIn: "crew: sessions: %s: "},
 		{name: "roster unreadable log", args: []string{"roster", "c1"}, log: str("{}\n"), mode: 0, wantCode: 2, wantErrIn: "crew: roster: %s: permission denied\n"},
 		{name: "sessions unreadable log still prints []", args: []string{"sessions", "x"}, log: str("{}\n"), mode: 0, wantCode: 2, wantStdout: "[]\n", wantErrIn: "crew: sessions: %s: permission denied\n"},
-		{name: "sessions unreadable log is coloured on a terminal", args: []string{"sessions", "x"}, log: str("{}\n"), mode: 0, colour: true, wantCode: 2, wantStdout: "\x1b[1;39m[]\x1b[0m\n", wantErrIn: "permission denied"},
-		{name: "sessions unreadable log honours JQ_COLORS", args: []string{"sessions", "x"}, log: str("{}\n"), mode: 0, colour: true, jqColors: "0;31:0;31:0;31:0;31:0;31:4;35", wantCode: 2, wantStdout: "\x1b[4;35m[]\x1b[0m\n", wantErrIn: "permission denied"},
-		{name: "sessions unreadable log warns about a bad JQ_COLORS first", args: []string{"sessions", "x"}, log: str("{}\n"), mode: 0, jqColors: "bad", wantCode: 2, wantStdout: "[]\n", wantErrIn: "Failed to set $JQ_COLORS\ncrew: sessions: %s: permission denied\n"},
 		{name: "roster exit error keeps its code and stderr", args: []string{"roster", "c1"}, log: str(exitedRow), mode: 0o644, worktrees: gitFailure, wantCode: 128, wantStderr: gitFailure.Stderr},
 		{name: "roster absent log", args: []string{"roster", "c1"}},
 		{name: "sessions absent log", args: []string{"sessions", "x"}, wantStdout: "[]\n"},
@@ -115,9 +110,7 @@ func TestRunMapsFoldErrorsToExitCodes(t *testing.T) {
 			}
 			repo, logPath := repoWithLog(t, tt.log, tt.mode)
 			e := env{
-				getwd:    func() (string, error) { return repo, nil },
-				jqColors: tt.jqColors,
-				color:    tt.colour,
+				getwd: func() (string, error) { return repo, nil },
 				probes: func(context.Context, string) roster.Probes {
 					return roster.Probes{
 						Panes: func() string { return "" },
@@ -184,22 +177,6 @@ func TestRunCrews(t *testing.T) {
 		code := run(context.Background(), []string{"crews", "--bogus=yes"}, &stdout, &stderr, e)
 		if code != 64 || stdout.Len() != 0 || stderr.String() != "crew: crews: unknown arg '--bogus'\n" {
 			t.Fatalf("code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
-		}
-	})
-
-	t.Run("bad JQ_COLORS warns once when the table runs", func(t *testing.T) {
-		log := `{"ts":1785951264000,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1"}` + "\n"
-		repo, _ := repoWithLog(t, &log, 0o644)
-		var stdout, stderr bytes.Buffer
-		e := env{getwd: func() (string, error) { return repo, nil }, jqColors: "bad"}
-		if code := run(context.Background(), []string{"crews"}, &stdout, &stderr, e); code != 0 {
-			t.Fatalf("code %d", code)
-		}
-		if stderr.String() != "Failed to set $JQ_COLORS\n" {
-			t.Fatalf("stderr %q", stderr.String())
-		}
-		if !strings.HasPrefix(stdout.String(), crewsHeader+"c1\t") || strings.Count(stdout.String(), "\n") != 2 {
-			t.Fatalf("stdout %q", stdout.String())
 		}
 	})
 
@@ -2511,4 +2488,21 @@ func sameRow(t *testing.T, got, want string) bool {
 		return v
 	}
 	return strings.HasSuffix(got, "\n") && strings.Count(got, "\n") == 1 && reflect.DeepEqual(decode(got), decode(want))
+}
+
+// A corrupt bus ts makes gojq compute NaN ts/age_s; the roster must print
+// them as null rather than fail to encode.
+func TestRosterClampsNonFiniteTimes(t *testing.T) {
+	log := `{"ts":NaN,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working"}}` + "\n"
+	repo, _ := repoWithLog(t, &log, 0o644)
+	// --live skips the remote merge, so it prints the fold's rows directly.
+	for _, args := range [][]string{{"c1"}, {"c1", "--live"}} {
+		out, errOut, code := runRoster(t, repo, args...)
+		if code != 0 || errOut != "" {
+			t.Fatalf("%v: code %d stderr %q stdout %q", args, code, errOut, out)
+		}
+		if !strings.Contains(out, `"ts": null`) || !strings.Contains(out, `"age_s": null`) {
+			t.Errorf("%v: stdout = %s, want ts and age_s null", args, out)
+		}
+	}
 }

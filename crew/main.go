@@ -30,7 +30,6 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/inbox"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/log"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
@@ -389,13 +388,11 @@ func stallRequest(p crewArgs) stall.Request {
 
 // env is everything run reads from the process, so tests can supply their own.
 type env struct {
-	getwd    func() (string, error)
-	jqColors string // $JQ_COLORS
-	color    bool   // stdout is a terminal and $NO_COLOR is unset
-	probes   func(ctx context.Context, cwd string) roster.Probes
-	procs    crews.Probes     // the pid probes crews reads
-	stdin    io.Reader        // remote-exec's request
-	now      func() time.Time // the fold's clock (jq's `now`); nil is the wall clock
+	getwd  func() (string, error)
+	probes func(ctx context.Context, cwd string) roster.Probes
+	procs  crews.Probes     // the pid probes crews reads
+	stdin  io.Reader        // remote-exec's request
+	now    func() time.Time // the fold's clock (jq's `now`); nil is the wall clock
 }
 
 func main() {
@@ -403,12 +400,10 @@ func main() {
 	// this process was invoked when its caller left it unset.
 	entry.EnsureSelf(entry.DefaultSelfProbes(), os.Args[0])
 	e := env{
-		getwd:    os.Getwd,
-		jqColors: os.Getenv("JQ_COLORS"),
-		color:    bus.IsTerminal(1) && os.Getenv("NO_COLOR") == "",
-		probes:   probes,
-		procs:    crews.DefaultProbes(),
-		stdin:    os.Stdin,
+		getwd:  os.Getwd,
+		probes: probes,
+		procs:  crews.DefaultProbes(),
+		stdin:  os.Stdin,
 	}
 	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, e))
 }
@@ -557,11 +552,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// --mine never reads it at all, so it stays off the shared fold path.
 	if sub == "crews" {
 		out := bufio.NewWriterSize(stdout, 64<<10)
-		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
 		code := crews.Run(parsed.typed.Crews.Mine, paths, out, stderr, crews.Options{
-			Probes:          e.procs,
-			JQColorsInvalid: !colorsOK,
-			Now:             time.Now,
+			Probes: e.procs,
+			Now:    time.Now,
 		})
 		return flush(out, stderr, code)
 	}
@@ -571,14 +564,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// so it owns its run rather than sharing log's fold call.
 	if sub == "inbox" {
 		out := bufio.NewWriterSize(stdout, 64<<10)
-		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
 		in := parsed.typed.Inbox
 		code := inbox.Run(inbox.Request{
 			Me: in.Agent, Crew: in.Crew, Since: str(in.Since), From: str(in.From), Undelivered: in.Undelivered,
 		}, paths, out, stderr, inbox.Options{
-			JQColorsInvalid: !colorsOK,
-			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
-			Flush:           out.Flush,
+			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			Flush:  out.Flush,
 		})
 		return flush(out, stderr, code)
 	}
@@ -589,12 +580,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "await" {
 		aw := parsed.typed.Await
 		out := bufio.NewWriterSize(stdout, 64<<10)
-		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
 		code := await.Run(await.Request{Me: aw.Agent, From: str(aw.From), Timeout: str(aw.Timeout), Interval: str(aw.Interval)}, paths, out, stderr, await.Options{
-			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
-			Flush:           out.Flush,
-			JQColorsInvalid: !colorsOK,
-			Clock:           clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
+			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			Flush:  out.Flush,
+			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 		})
 		return flush(out, stderr, code)
 	}
@@ -605,14 +594,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "watch" {
 		w := parsed.typed.Watch
 		out := bufio.NewWriterSize(stdout, 64<<10)
-		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
 		code := watch.Run(watch.Request{
 			Since: w.Since, States: str(w.States), Timeout: str(w.Timeout), Interval: str(w.Interval), Crew: str(w.Crew),
 		}, paths, out, stderr, watch.Options{
-			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
-			Flush:           out.Flush,
-			Now:             time.Now,
-			JQColorsInvalid: !colorsOK,
+			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			Flush:  out.Flush,
+			Now:    time.Now,
 		})
 		return flush(out, stderr, code)
 	}
@@ -683,13 +670,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// hold reads its own action and flags, prints either TSV or one JSON value,
 	// and appends to the bus itself, so it owns its run like inbox does.
 	if sub == "hold" {
-		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
 		return hold.Run(holdRequest(parsed), paths, stdout, stderr, hold.Options{
-			JQColorsInvalid: !colorsOK,
-			CrewID:          func() string { return bus.CrewID(ctx, cwd) },
-			Now:             time.Now,
-			CrewClock:       os.Getenv("CREW_CLOCK"),
-			Sender:          senderProbes(ctx, e.procs),
+			CrewID:    func() string { return bus.CrewID(ctx, cwd) },
+			Now:       time.Now,
+			CrewClock: os.Getenv("CREW_CLOCK"),
+			Sender:    senderProbes(ctx, e.procs),
 		})
 	}
 
@@ -875,15 +860,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			crew = bus.CrewID(ctx, cwd)
 		}
 		out := bufio.NewWriterSize(stdout, 64<<10)
-		_, colorsOK := jsonv.ParseJQColors(e.jqColors)
 		var code int
 		if sub == "log" {
-			opts := log.Options{JQColorsInvalid: !colorsOK}
-			code = log.Run(crew, paths, out, stderr, opts)
+			code = log.Run(crew, paths, out, stderr)
 		} else {
 			code = report.Run(crew, paths, out, stderr, report.Options{
-				JQColorsInvalid: !colorsOK,
-				Now:             time.Now,
+				Now: time.Now,
 			})
 		}
 		return flush(out, stderr, code)
@@ -908,42 +890,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		}
 		return flush(out, stderr, 0)
 	}
-	// From here jq would have started, so it warns about a bad $JQ_COLORS even
-	// when it then fails to open the log.
-	palette, valid := jsonv.ParseJQColors(e.jqColors)
-	if !valid {
-		say(stderr, "Failed to set $JQ_COLORS\n")
-	}
-	opts := jsonv.Options{Indent: pretty}
-	if e.color {
-		opts.Colors = &palette
-	}
 
 	var rosterRows []map[string]any
-	raw, code := fold(sub, events, err, paths.Log, stderr, func(evs []jsonv.Value) (jsonv.Value, error) {
+	v, code := fold(sub, events, err, paths.Log, stderr, func(docs []any) (any, error) {
 		now := time.Now()
 		if e.now != nil {
 			now = e.now()
 		}
 		nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
-		docs := make([]any, len(evs))
-		for i, ev := range evs {
-			docs[i] = jsonv.ToAny(ev)
-		}
 		if sub == "sessions" {
-			folded, err := sessions.Fold(docs, branch, crew, nowSec)
-			if err != nil {
-				return jsonv.Value{}, err
-			}
-			b, err := sessions.JSON(folded)
-			if err != nil {
-				return jsonv.Value{}, err
-			}
-			outs, err := jsonv.DecodeStream(bytes.NewReader(b))
-			if err != nil || len(outs) != 1 {
-				return jsonv.Value{}, fmt.Errorf("fold result: %v", err)
-			}
-			return outs[0], nil
+			return sessions.Fold(docs, branch, crew, nowSec)
 		}
 		p := e.probes(ctx, cwd)
 		if parsed.typed.Roster.Live {
@@ -953,15 +909,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			}
 		}
 		var err error
-		if rosterRows, err = roster.Fold(docs, crew, nowSec, p); err != nil {
-			return jsonv.Value{}, err
-		}
-		return rowsValue(rosterRows)
+		rosterRows, err = roster.Fold(docs, crew, nowSec, p)
+		return anyRows(rosterRows), err
 	})
 	if code == exitOpen && sub == "sessions" {
 		// jq slurps zero inputs when it cannot open the file, so the program
 		// runs on [] and prints its result before exiting 2.
-		raw = jsonv.Array()
+		v = []any{}
 	} else if code != 0 {
 		return code
 	}
@@ -972,35 +926,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		merged := roster.MergeRemote(ctx, rosterRows, events, crew, func(ctx context.Context, host string, argv []string, so, se io.Writer) int {
 			return remoteAs(ctx, e, cwd, crew)(host, argv, so, se)
 		})
-		var err error
-		if raw, err = rowsValue(merged); err != nil {
-			say(stderr, "crew: %v\n", err)
-			return exitFailure
-		}
+		v = anyRows(merged)
 	}
 
-	if err := jsonv.Encode(out, raw, opts); err != nil {
+	if err := jsonval.Encode(out, v, pretty); err != nil {
 		say(stderr, "crew: %v\n", err)
 		return exitFailure
 	}
-	say(out, "\n")
 	if sub == "sessions" && code == 0 {
 		say(out, "\n") // the arm's `printf '\n'` after jq -c
 	}
 	return flush(out, stderr, code)
-}
-
-// rowsValue is the roster rows as a jsonv array, clamped as the print clamps.
-func rowsValue(rows []map[string]any) (jsonv.Value, error) {
-	anys := make([]any, len(rows))
-	for i, r := range rows {
-		anys[i] = r
-	}
-	var b bytes.Buffer
-	if err := jsonval.Encode(&b, anys, false); err != nil {
-		return jsonv.Value{}, err
-	}
-	return jsonv.ParseOne(b.String())
 }
 
 // remoteAs runs a command on a remote host in this checkout's clone, as crew.
@@ -1077,9 +1013,6 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 		Origin: func(common string) string { return originOf(ctx, common) },
 		Now:    time.Now,
 	}
-	if palette, _ := jsonv.ParseJQColors(e.jqColors); e.color {
-		o.Colors = &palette
-	}
 	c := p.typed.Fleet.Table
 	return fleet.Run(fleet.Request{All: c.All, JSON: c.JSON, Crew: str(c.Crew)}, stdout, stderr, o)
 }
@@ -1132,15 +1065,15 @@ func rateRequest(c rateCmd) rate.Request {
 
 // fold runs the subcommand's fold over the read events, or maps the read or
 // fold error to its stderr line and exit status.
-func fold(sub string, events []bus.Event, readErr error, log string, stderr io.Writer, f func([]jsonv.Value) (jsonv.Value, error)) (jsonv.Value, int) {
-	var v jsonv.Value
+func fold(sub string, events []bus.Event, readErr error, log string, stderr io.Writer, f func([]any) (any, error)) (any, int) {
+	var v any
 	err := readErr
 	if err == nil {
-		raws := make([]jsonv.Value, len(events))
+		docs := make([]any, len(events))
 		for i, e := range events {
-			raws[i] = e.Raw
+			docs[i] = e.Doc
 		}
-		v, err = f(raws)
+		v, err = f(docs)
 	}
 	if err == nil {
 		return v, 0
@@ -1235,4 +1168,14 @@ func worktreeList(cmd *exec.Cmd) (string, error) {
 		return "", &roster.ExitError{Code: 127, Stderr: "git: command not found\n"}
 	}
 	return "", &roster.ExitError{Code: ee.ExitCode(), Stderr: stderr.String()}
+}
+
+// anyRows hands rows to jsonval.Encode as []any so Clamp walks them; a
+// []map[string]any would reach the encoder unclamped, NaN included.
+func anyRows(rows []map[string]any) []any {
+	out := make([]any, len(rows))
+	for i, r := range rows {
+		out[i] = r
+	}
+	return out
 }

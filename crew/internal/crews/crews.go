@@ -35,13 +35,11 @@ var finalProgram string
 // header is the arm's printf, matching the final pass's column order.
 const header = "crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive"
 
-// Options is everything Run reads beyond the bus: the process probes,
-// whether $JQ_COLORS was invalid (jq warns once where the arm's several jq
-// processes warned once each), and the clock.
+// Options is everything Run reads beyond the bus: the process probes and the
+// clock.
 type Options struct {
-	Probes          Probes
-	JQColorsInvalid bool
-	Now             func() time.Time
+	Probes Probes
+	Now    func() time.Time
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit
@@ -142,9 +140,6 @@ func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		}
 	}
 
-	if o.JQColorsInvalid {
-		say(stderr, "Failed to set $JQ_COLORS\n")
-	}
 	out, err := jqrun.RunAny(finalProgram, meta, nowSec, map[string]any{"stats": stats})
 	if err != nil {
 		// Reachable on a corrupt bus: a stats row whose last/first is null

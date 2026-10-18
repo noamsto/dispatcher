@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
@@ -305,14 +304,14 @@ func TestPanesReadOnce(t *testing.T) {
 
 func TestAge(t *testing.T) {
 	tests := []struct {
-		v    jsonv.Value
+		v    any
 		want string
 	}{
-		{jsonv.Num(5), "5s"}, {jsonv.Num(125), "2m"}, {jsonv.Num(3725), "1h2m"},
-		{jsonv.Num(90000), "1d1h"}, {jsonv.Null(), "-"},
+		{float64(5), "5s"}, {float64(125), "2m"}, {json.Number("3725"), "1h2m"},
+		{float64(90000), "1d1h"}, {nil, "-"}, {"x", "-"},
 	}
 	for _, tt := range tests {
-		if got := age(jsonv.Object(jsonv.Member{Key: "age_s", Val: tt.v})); got != tt.want {
+		if got := age(map[string]any{"age_s": tt.v}); got != tt.want {
 			t.Errorf("age = %q, want %q", got, tt.want)
 		}
 	}
@@ -385,5 +384,51 @@ func TestWorktreeProbeFailureKeepsFreshRows(t *testing.T) {
 	out, errs, _ := run(t, f, Request{})
 	if !strings.Contains(out, "feat/a") || strings.Contains(errs, "stale") {
 		t.Errorf("out %s\nerr %q", out, errs)
+	}
+}
+
+func TestNonFiniteAgeIsNullInJSONAndDashInTable(t *testing.T) {
+	root := t.TempDir()
+	nan := mkRepo(t, root, "nan", "",
+		`{"ts":NaN,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working"}}`)
+	registry := filepath.Join(root, "registry")
+	if err := os.WriteFile(registry, []byte(nan+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	empty := t.TempDir()
+	env := map[string]string{"HOME": empty, "CREW_SWEEP_ROOTS": empty}
+	o := Options{
+		Env:       func(k string) string { return env[k] },
+		Registry:  registry,
+		Panes:     func() string { return "" },
+		Windows:   func() string { return "feat/x\n" },
+		Worktrees: func(string) (string, error) { return "", nil },
+		Origin:    func(string) string { return "" },
+		Now:       func() time.Time { return fixedNow },
+	}
+	f := fixture{opts: o}
+
+	out, errs, code := run(t, f, Request{JSON: true})
+	if code != 0 {
+		t.Fatalf("--json exit %d, stderr %q", code, errs)
+	}
+	rows := jsonRows(t, out)
+	if len(rows) != 1 {
+		t.Fatalf("want 1 row, got:\n%s", out)
+	}
+	if v, ok := rows[0]["age_s"]; !ok || v != nil {
+		t.Errorf("age_s = %v (present %v), want null", v, ok)
+	}
+
+	out, errs, code = run(t, f, Request{})
+	if code != 0 {
+		t.Fatalf("table exit %d, stderr %q", code, errs)
+	}
+	data := dataLines(out)
+	if len(data) != 1 || !strings.Contains(data[0], " - ") {
+		t.Errorf("want one row with age -, got:\n%s", out)
+	}
+	if strings.Contains(out, "9223372036854775808") {
+		t.Errorf("table leaks the int64 overflow age:\n%s", out)
 	}
 }

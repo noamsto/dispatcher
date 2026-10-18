@@ -177,23 +177,6 @@ func TestTableRecycledPidIsNotAlive(t *testing.T) {
 	}
 }
 
-func TestTableJQColorsWarnsOnce(t *testing.T) {
-	p := fixture(t)
-	crewDir(t, p, "c1", "")
-	o := opts(nil, nil)
-	o.JQColorsInvalid = true
-	_, errB, _ := run(t, p, o)
-	if errB != "Failed to set $JQ_COLORS\n" {
-		t.Errorf("stderr %q", errB)
-	}
-	// Empty bus: the arm never started a jq, so no warning.
-	empty := fixture(t)
-	_, errB, _ = run(t, empty, o)
-	if errB != "" {
-		t.Errorf("empty bus warned: %q", errB)
-	}
-}
-
 func TestMineListsOnlyLiveAncestors(t *testing.T) {
 	p := fixture(t)
 	const ancestor, stranger = 4242, 9999
