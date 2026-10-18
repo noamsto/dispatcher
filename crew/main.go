@@ -862,7 +862,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		out := bufio.NewWriterSize(stdout, 64<<10)
 		var code int
 		if sub == "log" {
-			code = log.Run(crew, paths, out, stderr, log.Options{})
+			code = log.Run(crew, paths, out, stderr)
 		} else {
 			code = report.Run(crew, paths, out, stderr, report.Options{
 				Now: time.Now,

@@ -63,10 +63,10 @@ func norm(t *testing.T, line string) string {
 	return b.String()
 }
 
-func run(t *testing.T, p bus.Paths, crew string, o Options) (string, string, int) {
+func run(t *testing.T, p bus.Paths, crew string) (string, string, int) {
 	t.Helper()
 	var out, errB bytes.Buffer
-	code := Run(crew, p, &out, &errB, o)
+	code := Run(crew, p, &out, &errB)
 	return out.String(), errB.String(), code
 }
 
@@ -90,7 +90,7 @@ func TestFiltersOneCrew(t *testing.T) {
 	p := fixture(t)
 	writeLog(t, p, c1Row+"\n"+c2Row+"\n"+c1Msg+"\n"+c1UniRow+"\n")
 
-	stdout, stderr, code := run(t, p, "c1", Options{})
+	stdout, stderr, code := run(t, p, "c1")
 	if code != 0 || stderr != "" {
 		t.Fatalf("code %d stderr %q", code, stderr)
 	}
@@ -107,7 +107,7 @@ func TestNoMatchAndEmptyLog(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p := fixture(t)
 			writeLog(t, p, tc.body)
-			stdout, stderr, code := run(t, p, tc.crew, Options{})
+			stdout, stderr, code := run(t, p, tc.crew)
 			if stdout != "" || stderr != "" || code != 0 {
 				t.Fatalf("stdout %q stderr %q code %d", stdout, stderr, code)
 			}
@@ -118,7 +118,7 @@ func TestNoMatchAndEmptyLog(t *testing.T) {
 func TestAbsentLogIsSilent(t *testing.T) {
 	t.Run("no log at all", func(t *testing.T) {
 		p := fixture(t)
-		stdout, stderr, code := run(t, p, "c1", Options{})
+		stdout, stderr, code := run(t, p, "c1")
 		if stdout != "" || stderr != "" || code != 0 {
 			t.Fatalf("stdout %q stderr %q code %d", stdout, stderr, code)
 		}
@@ -129,7 +129,7 @@ func TestAbsentLogIsSilent(t *testing.T) {
 		if err := os.MkdirAll(p.Log, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		stdout, stderr, code := run(t, p, "c1", Options{})
+		stdout, stderr, code := run(t, p, "c1")
 		if stdout != "" || stderr != "" || code != 0 {
 			t.Fatalf("stdout %q stderr %q code %d", stdout, stderr, code)
 		}
@@ -140,7 +140,7 @@ func TestTornTailKeepsThePrefixAndExitsFive(t *testing.T) {
 	p := fixture(t)
 	writeLog(t, p, c1Row+"\n"+c2Row+"\n"+`{"crew_id":"c1","ts":3`+"\n")
 
-	stdout, stderr, code := run(t, p, "c1", Options{})
+	stdout, stderr, code := run(t, p, "c1")
 	if code != 5 {
 		t.Fatalf("code %d, want 5 (jq's status for a parse error)", code)
 	}
@@ -196,7 +196,7 @@ func TestNonObjectRowsFollowJqLastInputRule(t *testing.T) {
 			p := fixture(t)
 			writeLog(t, p, tc.body)
 
-			stdout, stderr, code := run(t, p, "c1", Options{})
+			stdout, stderr, code := run(t, p, "c1")
 			if code != tc.wantCode {
 				t.Fatalf("code %d, want %d (stderr %q)", code, tc.wantCode, stderr)
 			}
@@ -221,7 +221,7 @@ func TestNonStringCrewIDNeverMatches(t *testing.T) {
 	p := fixture(t)
 	writeLog(t, p, `{"crew_id":1}`+"\n"+`{"crew_id":{"a":1}}`+"\n")
 
-	stdout, stderr, code := run(t, p, "1", Options{})
+	stdout, stderr, code := run(t, p, "1")
 	if stdout != "" || stderr != "" || code != 0 {
 		t.Fatalf("stdout %q stderr %q code %d", stdout, stderr, code)
 	}
@@ -235,7 +235,7 @@ func TestEmptyCrewMatchesOnlyTheEmptyString(t *testing.T) {
 	const empty = `{"crew_id":"","kind":"msg"}`
 	writeLog(t, p, `{"crew_id":null,"x":1}`+"\n"+`{"crew_id":5}`+"\n"+`{"crew_id":[]}`+"\n"+`{"kind":"msg"}`+"\n"+empty+"\n")
 
-	stdout, stderr, code := run(t, p, "", Options{})
+	stdout, stderr, code := run(t, p, "")
 	if stderr != "" || code != 0 {
 		t.Fatalf("stderr %q code %d", stderr, code)
 	}
@@ -250,7 +250,7 @@ func TestUnreadableLogIsJqsExitTwo(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(p.Log, 0o600) })
 
-	stdout, stderr, code := run(t, p, "c1", Options{})
+	stdout, stderr, code := run(t, p, "c1")
 	if os.Geteuid() == 0 {
 		t.Skip("root reads the log anyway")
 	}
@@ -266,7 +266,7 @@ func TestNonFiniteNumbersPrintAsJqDoes(t *testing.T) {
 	p := fixture(t)
 	writeLog(t, p, `{"crew_id":"c1","n":NaN,"p":Infinity,"m":-Infinity}`+"\n")
 
-	stdout, stderr, code := run(t, p, "c1", Options{})
+	stdout, stderr, code := run(t, p, "c1")
 	if code != 0 || stderr != "" {
 		t.Fatalf("code %d stderr %q", code, stderr)
 	}

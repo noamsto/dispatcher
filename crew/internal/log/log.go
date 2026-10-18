@@ -23,10 +23,6 @@ import (
 // not parse: 5, the status jq gives a parse or type error.
 const exitType = 5
 
-// Options is everything Run reads beyond the bus. It has no fields today; the
-// type keeps Run's signature uniform with the other arms.
-type Options struct{}
-
 // say writes to a stream whose failure is reported elsewhere (the exit status,
 // or nowhere, for stderr) — main.go's helper, same reason.
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
@@ -34,7 +30,7 @@ func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format
 // Run is the arm: `jq -c --arg crew "$crew" 'select(.crew_id==$crew)' "$log"`.
 // A log that is not a regular file prints nothing and exits 0, as the arm's
 // `[ -f "$log" ]` does.
-func Run(crew string, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+func Run(crew string, paths bus.Paths, stdout, stderr io.Writer) int {
 	events, err := bus.ReadEventsTolerant(paths.Log)
 	if errors.Is(err, bus.ErrNoLog) {
 		return 0
