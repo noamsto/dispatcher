@@ -204,6 +204,7 @@ func planCases() []gateCase {
 		seamPass("plan: NaN dispatcher msg does not drop a resume", planDoc, with(resumeRow, nanDispatchr)...),
 		seamPass("plan: seam after a NaN dispatch", planDoc, with(nanDispatch, planSeam)...),
 		seamRefuse("plan: resume then NaN dispatch", planDoc, refused, with(resumeRow, nanDispatch)...),
+		seamRefuse("plan: resume padded past jq's nesting limit", planDoc, refused, reviewSeam, deslopSeam, paddedResume5k),
 
 		// plan exemptions
 		seamPass("plan: provided is exempt", standardDoc+"plan: provided\n", base...),

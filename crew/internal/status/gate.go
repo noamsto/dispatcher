@@ -94,12 +94,10 @@ func (g gate) check() string {
 }
 
 // logFile is the bus log as `jq -R` reads it: lines, a final unterminated one
-// included, never nil once the file exists. exists is `[ -f "$log" ]`; err is a
-// regular file that will not open.
+// included; nil lines = no log file; err = a regular file that will not read.
 type logFile struct {
-	exists bool
-	lines  []string
-	err    error
+	lines []string
+	err   error
 }
 
 func readLog(path string) logFile {
@@ -107,11 +105,13 @@ func readLog(path string) logFile {
 		return logFile{}
 	}
 	data, err := os.ReadFile(path)
-	lines := []string{}
-	if len(data) > 0 {
-		lines = strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	if err != nil {
+		return logFile{lines: []string{}, err: err}
 	}
-	return logFile{exists: true, lines: lines, err: err}
+	if len(data) == 0 {
+		return logFile{lines: []string{}}
+	}
+	return logFile{lines: strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")}
 }
 
 var spaceRe = regexp.MustCompile(`[ \t\n\v\f\r]+`)
