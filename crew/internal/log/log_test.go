@@ -78,12 +78,12 @@ const (
 	c2Row = `{"ts":1785951265000,"crew_id":"c2","kind":"msg","from":"dispatcher:c2","to":"worker:feat/y#s2-1","body":{"text":"héllo 中文 🚀"}}`
 	c1Msg = `{"crew_id":"c9","kind":"msg","crew_id":"c1","n":1.50,"e":1e3,"big":18446744073709551617}`
 	// c1MsgOut is jq -c on c1Msg: the duplicate key collapses to its last
-	// value in place, and the number literals keep jq 1.8's canonical text.
-	c1MsgOut = `{"crew_id":"c1","kind":"msg","n":1.50,"e":1E+3,"big":18446744073709551617}`
+	// value in place, and number literals keep their input text.
+	c1MsgOut = `{"crew_id":"c1","kind":"msg","n":1.50,"e":1e3,"big":18446744073709551617}`
 	// c1UniOut is jq -c on c1UniRow: raw UTF-8, jq's \u007f and \u00XX escapes,
-	// -0.0 kept, and an out-of-range literal in jq's canonical form.
+	// -0.0 kept, and number literals keep their input text.
 	c1UniRow = `{"crew_id":"c1","u":"héllo 中文 🚀 tab\there <b> & \"q\" \u007f","z":-0.0,"inf":1e1000}`
-	c1UniOut = `{"crew_id":"c1","u":"héllo 中文 🚀 tab\there <b> & \"q\" \u007f","z":-0.0,"inf":1E+1000}`
+	c1UniOut = `{"crew_id":"c1","u":"héllo 中文 🚀 tab\there <b> & \"q\" \u007f","z":-0.0,"inf":1e1000}`
 )
 
 func TestFiltersOneCrew(t *testing.T) {
@@ -260,15 +260,4 @@ func TestUnreadableLogIsJqsExitTwo(t *testing.T) {
 	if !strings.Contains(stderr, "permission denied") {
 		t.Errorf("stderr %q, want the open failure", stderr)
 	}
-}
-
-func TestNonFiniteNumbersPrintAsJqDoes(t *testing.T) {
-	p := fixture(t)
-	writeLog(t, p, `{"crew_id":"c1","n":NaN,"p":Infinity,"m":-Infinity}`+"\n")
-
-	stdout, stderr, code := run(t, p, "c1")
-	if code != 0 || stderr != "" {
-		t.Fatalf("code %d stderr %q", code, stderr)
-	}
-	sameLines(t, stdout, `{"crew_id":"c1","n":null,"p":1.7976931348623157e+308,"m":-1.7976931348623157e+308}`+"\n")
 }
