@@ -37,8 +37,8 @@ in a package named for its concern.
 | `crews.Options`, `where`/`nudge.Options`         |                                                          |                            |                   |                                    | Now               | Remote (ssh)                              |
 
 ¹ fields on `identity.Options`. ² `rate.Run` runs gh and git alike.
-Holding a `clock.Clock` value already: `await`, `hold`, `nudge`, `prwatch`,
-`reply`, `rosterrender.Options`, `stall.Options`.
+Holding a `clock.Clock` value already: `await`, `nudge`, `prwatch`,
+`reply`, `rosterrender.Options`, `stall.Options` (`hold` builds one from its `Now` and `CrewClock` fields).
 Not a seam field: `panestate.Publish(set func(option, value string), …)` takes
 the pane-option setter as a parameter; its callers pass a tmux closure.
 
@@ -106,7 +106,7 @@ and fake counts above (net Go lines, non-test + test).
 | 2   | proc    | crews, reap, sender, adopt, register, stall/probe, main                                                             | ~12 test files (`crews_test`, `register_test`, `adopt_test`, `reply_test`, `main_test`, …) | −60 to −120    |
 | 3   | git     | main, roster, fleet, adopt, nudge, status, rate, reap, bus, claimindex, gitguard, remote; `stream`'s `Origin` field | ~10 test files                                                                             | −60 to −120    |
 | 4   | gh      | reap, stack, adopt, rate                                                                                            | ~4 test files                                                                              | −30 to −60     |
-| 5   | clock   | 15 `Now` and 6 `Sleep`/`Timer` fields, 7 `clock.Clock` holders                                                      | most test files set `Now`                                                                  | −20 to −50     |
+| 5   | clock   | 15 `Now`, 5 `Sleep`/`Timer` fields and `Rediscover`, 6 `clock.Clock` holders                                        | most test files set `Now`                                                                  | −20 to −50     |
 | 6   | env     | 17 `Getenv`/`LookupEnv`/`Env`/`Setenv`/`Environ` fields                                                             | —                                                                                          | −10 to −30     |
 
 Each slice follows the tmux slice's shape: add the package and fake, convert
