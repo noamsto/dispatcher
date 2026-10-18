@@ -11,6 +11,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 )
 
 // encode is the arm's `jq -c`: one compact line, with `<`, `>` and `&` left raw
@@ -129,7 +131,7 @@ func fieldText(obj map[string]json.RawMessage, key string) string {
 // arm would have cleared.
 func digitsField(obj map[string]json.RawMessage, key string) (int64, bool) {
 	text := fieldText(obj, key)
-	if !isDigits(text) {
+	if !ascii.IsDigits(text) {
 		return 0, false
 	}
 	n, err := strconv.ParseInt(text, 10, 64)
@@ -192,20 +194,6 @@ func digitsToN(text string) string {
 		b.WriteByte(text[i])
 	}
 	return b.String()
-}
-
-// isDigits is the arm's `case … in ” | *[!0-9]*)` rejection: one digit or more,
-// digits only.
-func isDigits(text string) bool {
-	if text == "" {
-		return false
-	}
-	for i := 0; i < len(text); i++ {
-		if text[i] < '0' || text[i] > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 func orUnknown(text string) string {

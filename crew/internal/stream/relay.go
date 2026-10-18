@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
@@ -381,7 +382,7 @@ func (r *relay) label(text string, obj map[string]json.RawMessage, err error) (l
 		Cursor json.Number                  `json:"cursor"`
 		Events []map[string]json.RawMessage `json:"events"`
 	}
-	if json.Unmarshal([]byte(text), &b) != nil || !isDigits(b.Cursor.String()) || b.Events == nil {
+	if json.Unmarshal([]byte(text), &b) != nil || !ascii.IsDigits(b.Cursor.String()) || b.Events == nil {
 		return "", "", false
 	}
 	host := jsonString(r.host)
@@ -454,7 +455,7 @@ func (r *relay) reap() {
 }
 
 func (r *relay) readCursor() string {
-	if text := strings.TrimSpace(readFile(r.cursor)); isDigits(text) {
+	if text := strings.TrimSpace(readFile(r.cursor)); ascii.IsDigits(text) {
 		return text
 	}
 	return "0"

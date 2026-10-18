@@ -40,6 +40,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
@@ -389,7 +390,7 @@ func readTick(path string) tickState {
 // statusPID is the arm's `case "$lockpid" in ” | *[!0-9]* | 0)`: empty,
 // non-numeric and a literal 0 are all no holder at all.
 func statusPID(text string) string {
-	if !isDigits(text) || text == "0" {
+	if !ascii.IsDigits(text) || text == "0" {
 		return ""
 	}
 	return text
@@ -504,7 +505,7 @@ func splitStates(text string) []string {
 // which is also where a value past int64 lands, since bash's `test` cannot
 // judge it either.
 func positiveInt(text string) (int64, bool) {
-	if !isDigits(text) {
+	if !ascii.IsDigits(text) {
 		return 0, false
 	}
 	n, err := strconv.ParseInt(text, 10, 64)
@@ -515,7 +516,7 @@ func positiveInt(text string) (int64, bool) {
 }
 
 func isNonNegative(text string) bool {
-	if !isDigits(text) {
+	if !ascii.IsDigits(text) {
 		return false
 	}
 	_, err := strconv.ParseInt(text, 10, 64)

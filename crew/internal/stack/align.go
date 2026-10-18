@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
@@ -49,7 +50,7 @@ func (s *stackCmd) align(ctx context.Context, top string) error {
 	s.defaultBranch = def
 
 	ref := trimOne(top, "#")
-	if !isNumber(ref) && !wtgit.PlainBranchName(ctx, ref, s.o) {
+	if !ascii.IsDigits(ref) && !wtgit.PlainBranchName(ctx, ref, s.o) {
 		return s.refuse("crew: '%s' is not a plain branch name\n", top)
 	}
 	if err := s.safeName(def, "the default branch"); err != nil {
@@ -103,7 +104,7 @@ func (s *stackCmd) pr(ctx context.Context, ref string) (prInfo, error) {
 		return prInfo{}, s.refuse("crew: the PR for %s is from a fork; stacks are planned for same-repo branches only\n", ref)
 	}
 	n := g.Number.String()
-	if !isNumber(n) {
+	if !ascii.IsDigits(n) {
 		return prInfo{}, s.refuse("crew: the PR for %s has no usable number\n", ref)
 	}
 	// The row carries the number as a JSON number, as the arm's --argjson did.
@@ -122,7 +123,7 @@ func (s *stackCmd) pr(ctx context.Context, ref string) (prInfo, error) {
 	if err := s.safeName(base, "PR #"+n); err != nil {
 		return prInfo{}, err
 	}
-	if !isNumber(ref) && head != ref {
+	if !ascii.IsDigits(ref) && head != ref {
 		return prInfo{}, s.refuse("crew: the PR for %s has head %s, not %s\n", ref, head, ref)
 	}
 	return prInfo{n: n, num: nVal, head: head, base: base, state: state}, nil

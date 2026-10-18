@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
@@ -85,7 +86,7 @@ func NewRequest(crew, target string, wait *string) (r Request, ok bool) {
 	case wait == nil:
 	case *wait == "":
 		r.Wait = "1800"
-	case allDigits(*wait):
+	case ascii.IsDigits(*wait):
 		r.Wait = *wait
 	case target != "":
 		return r, false

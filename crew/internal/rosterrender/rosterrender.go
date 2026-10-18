@@ -3,6 +3,7 @@ package rosterrender
 import (
 	"context"
 	"fmt"
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
@@ -151,24 +152,11 @@ var paneIDRe = regexp.MustCompile(`\A%[0-9]+\z`)
 
 // panePIDMatches is the shape check on both the target and the pid read from it.
 func panePIDMatches(pane, pid string) bool {
-	return paneIDRe.MatchString(pane) && digitsOnly(pid)
+	return paneIDRe.MatchString(pane) && ascii.IsDigits(strings.TrimSpace(pid))
 }
 
 // pidOf is the numeric read the ancestry check takes.
 func pidOf(pid string) int {
 	n, _ := strconv.Atoi(strings.TrimSpace(pid))
 	return n
-}
-
-func digitsOnly(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
 }

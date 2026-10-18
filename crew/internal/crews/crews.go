@@ -19,6 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -220,7 +221,7 @@ func PidFileText(path string) (string, bool) {
 // pid_t, e.g. 4294967295 to -1), fails here exactly where bash's kill and ps
 // both fail on it.
 func validPid(s string) (int, bool) {
-	if s == "" || s == "0" || !isDigits(s) {
+	if s == "" || s == "0" || !ascii.IsDigits(s) {
 		return 0, false
 	}
 	n, err := strconv.Atoi(s)

@@ -686,16 +686,6 @@ func TestHelpers(t *testing.T) {
 	if !hasLine("feat/83\nfeat/84", "feat/84") {
 		t.Error("hasLine missed a whole line")
 	}
-	for _, bad := range []string{"", "0x1", "1a", "-1", "1.0", " 1"} {
-		if isNumber(bad) {
-			t.Errorf("isNumber(%q) = true", bad)
-		}
-	}
-	for _, good := range []string{"1", "007", "91"} {
-		if !isNumber(good) {
-			t.Errorf("isNumber(%q) = false", good)
-		}
-	}
 }
 
 func panePath(p bus.Paths, id string) string { return p.CrewDir(id) + "/pane" }

@@ -884,9 +884,6 @@ func TestDigitsLiteral(t *testing.T) {
 			t.Errorf("digitsLiteral(%q) = %q", in, got)
 		}
 	}
-	if isDigits("") || isDigits("1a") || isDigits("-1") || !isDigits("0") {
-		t.Error("isDigits disagrees with the arm's case pattern")
-	}
 }
 
 func TestOrNulAndElems(t *testing.T) {

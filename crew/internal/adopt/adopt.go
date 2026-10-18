@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
@@ -226,7 +227,7 @@ func (o Options) releaseClaims(paths bus.Paths, id string, stderr io.Writer) {
 		// `gh issue edit` takes a number, and the bus is caller-writable, so a
 		// malformed issue is reported and skipped rather than passed as an argv
 		// word. The well-formed rows beside it still release.
-		if !isNumber(c.issue) {
+		if !ascii.IsDigits(c.issue) {
 			say(stderr, "crew adopt: skipping a claim row whose issue is not a number (%s)\n", c.issue)
 			continue
 		}
@@ -376,19 +377,6 @@ func cutTab(s string) (field, rest string) {
 func isDir(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && st.IsDir()
-}
-
-// isNumber is the arm's `case "$cissue" in *[!0-9]*)`: digits, and not empty.
-func isNumber(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // hasLine is the arm's `grep -qxF` over the PR head refs: whole-line equality,

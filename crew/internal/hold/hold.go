@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
@@ -248,7 +249,7 @@ func park(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int
 		say(stderr, "crew: hold park <default> must be a positive integer number of seconds\n")
 		return exitFailure
 	}
-	if !isDigits(defStr) {
+	if !ascii.IsDigits(defStr) {
 		return badDefault()
 	}
 	def, err := strconv.ParseInt(defStr, 10, 64)
@@ -314,7 +315,7 @@ func add(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	// Shape only, never the floor — `refresh-budget.sh` alone owns the 85%/95%
 	// judgment. Seconds here, matching `resets_at`'s own unit; `id`/`ts` below are
 	// milliseconds, a different clock.
-	if !isDigits(fl.ResetsAt) {
+	if !ascii.IsDigits(fl.ResetsAt) {
 		say(stderr, "crew: hold add: --resets-at must be an integer epoch-seconds timestamp\n")
 		return exitFailure
 	}
@@ -562,20 +563,6 @@ func digitsLiteral(digits string) string {
 		return "0"
 	}
 	return trimmed
-}
-
-// isDigits is the arm's digit case (an empty value or any non-digit rejects),
-// inverted: a non-empty run of ASCII digits, which is all `--argjson` needs.
-func isDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // elems hands a program whose `.` is an array the array's elements: jqrun makes
