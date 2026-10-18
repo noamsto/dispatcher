@@ -29,14 +29,11 @@ import (
 // not index.
 const exitType = 5
 
-// Options is everything Run reads beyond the bus: whether $JQ_COLORS was
-// invalid (jq warns once at startup even with its stdout on a pipe, and the arm
-// had no colour to lose), how to resolve the crew the arm defaults to
-// (`_crew_id`), and how to put the buffered stdout on the wire.
+// Options is everything Run reads beyond the bus: how to resolve the crew the
+// arm defaults to (`_crew_id`), and how to put the buffered stdout on the wire.
 type Options struct {
-	JQColorsInvalid bool
-	CrewID          func() string
-	Flush           func() error
+	CrewID func() string
+	Flush  func() error
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
@@ -68,15 +65,11 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	if errors.Is(err, bus.ErrNoLog) {
 		return 0
 	}
-	// The integer check sits where the arm put it: after the log test, before
-	// jq starts, so a missing log exits 0 with neither line and a bad TS costs
-	// no $JQ_COLORS warning.
+	// The integer check sits where the arm put it: after the log test, so a
+	// missing log exits 0 with neither line.
 	if since != "" && !ascii.IsDigits(since) {
 		say(stderr, "crew: --since must be an integer ms timestamp\n")
 		return 1
-	}
-	if o.JQColorsInvalid {
-		say(stderr, "Failed to set $JQ_COLORS\n")
 	}
 	// A torn or corrupt tail keeps the events parsed before the break: `jq -c`
 	// had already printed them, and its parse error lands after the last line.

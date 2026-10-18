@@ -705,32 +705,28 @@ func TestDueMaturityBoundary(t *testing.T) {
 }
 
 // A missing log is the arm's `[ -f "$log" ] || printf '[]'`: an empty array,
-// exit 0, and no jq — so no $JQ_COLORS warning either.
+// exit 0.
 func TestAbsentLogReadsAsEmpty(t *testing.T) {
 	tr := setup(t)
 	// `due` exits 1 on an empty set, `list` 0; the header and the `[]` are the
-	// arm's, and the warning appears wherever the arm started a jq.
+	// arm's.
 	cases := []struct {
 		args   Request
 		stdout string
 		code   int
-		warns  int
 	}{
-		{Request{Action: "list"}, renderHeader + "\n", 0, 1},
-		{Request{Action: "list", JSON: true}, "[]\n", 0, 0},
-		{Request{Action: "due"}, renderHeader + "\n", 1, 1},
-		{Request{Action: "due", JSON: true}, "[]\n", 1, 1},
+		{Request{Action: "list"}, renderHeader + "\n", 0},
+		{Request{Action: "list", JSON: true}, "[]\n", 0},
+		{Request{Action: "due"}, renderHeader + "\n", 1},
+		{Request{Action: "due", JSON: true}, "[]\n", 1},
 	}
 	for _, tc := range cases {
-		out, err, code := tr.runOpts(t, Options{JQColorsInvalid: true}, tc.args)
+		out, _, code := tr.run(t, tc.args)
 		if out != tc.stdout {
 			t.Errorf("%v printed %q, want %q", tc.args, out, tc.stdout)
 		}
 		if code != tc.code {
 			t.Errorf("%v exited %d, want %d", tc.args, code, tc.code)
-		}
-		if got := strings.Count(err, "Failed to set $JQ_COLORS"); got != tc.warns {
-			t.Errorf("%v warned %d times, want %d (%q)", tc.args, got, tc.warns, err)
 		}
 	}
 }
@@ -845,38 +841,6 @@ func TestParkRejectsABadDefault(t *testing.T) {
 	}
 }
 
-// The arm forked one jq per step and jq warns once per process; Go runs each
-// fold once, so the line appears once per call — and not at all where the arm
-// started no jq either.
-func TestJQColorsWarningOnce(t *testing.T) {
-	cases := map[string]struct {
-		rows []string
-		req  Request
-		want int
-	}{
-		"list with a log":      {[]string{holdRowString()}, Request{Action: "list"}, 1},
-		"list without a log":   {nil, Request{Action: "list"}, 1},
-		"list --json with log": {[]string{holdRowString()}, Request{Action: "list", JSON: true}, 1},
-		"list --json no log":   {nil, Request{Action: "list", JSON: true}, 0},
-		"due":                  {nil, Request{Action: "due", JSON: true}, 1},
-		"park":                 {nil, Request{Action: "park", Default: "60"}, 1},
-		// A rejected `add` starts no jq in the arm either.
-		"add": {nil, Request{Action: "add", Add: AddRequest{Engine: "e"}}, 0},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			tr := setup(t)
-			if tc.rows != nil {
-				tr.write(t, tc.rows...)
-			}
-			_, err, _ := tr.runOpts(t, Options{JQColorsInvalid: true}, tc.req)
-			if got := strings.Count(err, "Failed to set $JQ_COLORS"); got != tc.want {
-				t.Errorf("%s warned %d times, want %d (%q)", name, got, tc.want, err)
-			}
-		})
-	}
-}
-
 func TestDigitsLiteral(t *testing.T) {
 	cases := map[string]string{"7": "7", "007": "7", "0": "0", "0000": "0", "1800000000": "1800000000"}
 	for in, want := range cases {
@@ -929,18 +893,6 @@ func holdRowBody(t *testing.T, crew, id, body string) string {
 		t.Fatal(err)
 	}
 	return string(outer)
-}
-
-func holdRowString() string {
-	body, _ := json.Marshal(map[string]any{
-		"id": "h1", "wait": map[string]any{"engine": "e", "window": "w", "resets_at": 9999999999},
-		"task": map[string]any{"ref": "r1", "branch": "b1", "title": "t-h1"},
-	})
-	row, _ := json.Marshal(map[string]any{
-		"ts": 1, "crew_id": "c1", "from": "dispatcher:c1", "to": "hold:c1",
-		"kind": "msg", "body": string(body),
-	})
-	return string(row)
 }
 
 func mustJSON(t *testing.T, v any) string {

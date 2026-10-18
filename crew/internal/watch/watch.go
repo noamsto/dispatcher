@@ -69,8 +69,6 @@ type Options struct {
 	// costs its own message and status 1, which is what killed the arm under
 	// `set -e`. Tests stub it so a poll loop does not wait.
 	Sleep func(interval string, stderr io.Writer) error
-	// JQColorsInvalid is $JQ_COLORS holding something jq could not parse.
-	JQColorsInvalid bool
 }
 
 // call is one parsed invocation. sinceText and timeoutText stay the caller's
@@ -133,19 +131,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	defer signal.Stop(sigs)
 
 	realMS := clock.Clock{Now: o.Now}.RealMS
-	// The arm's one jq whose stderr it did not throw away was
-	// `start=$(jq -nc 'now*1000|floor')`, so a bad $JQ_COLORS surfaced once for
-	// the call — await's rule, and hold's. The fold's jq never started a process.
-	warned := false
-	nowMS := func() int64 {
-		if !warned && o.JQColorsInvalid {
-			warned = true
-			say(stderr, "Failed to set $JQ_COLORS\n")
-		}
-		return realMS()
-	}
-
-	start := nowMS()
+	start := realMS()
 	// A stream-spawned inner watch names its owner in CREW_WATCH_PARENT. Once
 	// the owner is gone the watch is an orphan: it must not fold or advance the
 	// cursor, or it would swallow events a restarted lane should deliver. A
@@ -190,7 +176,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 			writeCursor(paths.Dir, filepath.Join(cdir, "cursor"), cursorText(out))
 			return 0
 		}
-		if now := nowMS(); now >= deadline {
+		if now := realMS(); now >= deadline {
 			say(stderr, "crew: watch park ended after %ss — no new events (cursor %s)\n",
 				c.timeoutText, c.sinceText)
 			return 0

@@ -118,7 +118,7 @@ func TestNoMatchAndEmptyLog(t *testing.T) {
 func TestAbsentLogIsSilent(t *testing.T) {
 	t.Run("no log at all", func(t *testing.T) {
 		p := fixture(t)
-		stdout, stderr, code := run(t, p, "c1", Options{JQColorsInvalid: true})
+		stdout, stderr, code := run(t, p, "c1", Options{})
 		if stdout != "" || stderr != "" || code != 0 {
 			t.Fatalf("stdout %q stderr %q code %d", stdout, stderr, code)
 		}
@@ -259,20 +259,6 @@ func TestUnreadableLogIsJqsExitTwo(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "permission denied") {
 		t.Errorf("stderr %q, want the open failure", stderr)
-	}
-}
-
-func TestJQColorsWarnsOnceWhenTheLogExists(t *testing.T) {
-	p := fixture(t)
-	writeLog(t, p, c1Row+"\n")
-
-	stdout, stderr, code := run(t, p, "c1", Options{JQColorsInvalid: true})
-	if code != 0 {
-		t.Fatalf("code %d", code)
-	}
-	sameLines(t, stdout, c1Row+"\n")
-	if stderr != "Failed to set $JQ_COLORS\n" {
-		t.Errorf("stderr %q, want one warning", stderr)
 	}
 }
 

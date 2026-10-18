@@ -307,7 +307,7 @@ func TestAbsentLogIsSilent(t *testing.T) {
 	t.Run("no log at all", func(t *testing.T) {
 		p := fixture(t)
 		var out, errB bytes.Buffer
-		code := Run(request(me, "c1"), p, &out, &errB, Options{JQColorsInvalid: true, CrewID: func() string { return "c1" }})
+		code := Run(request(me, "c1"), p, &out, &errB, Options{CrewID: func() string { return "c1" }})
 		if out.Len() != 0 || errB.String() != "" || code != 0 {
 			t.Fatalf("code %d stderr %q", code, errB.String())
 		}
@@ -453,32 +453,6 @@ func TestUnmergeableMsgsStillPrintAndWriteNothing(t *testing.T) {
 	}
 	if got := readMarks(t, p, "c1", me); got != "" {
 		t.Errorf("marks = %q", got)
-	}
-}
-
-// jq started inside `$(...)`, so it warned about a bad $JQ_COLORS but never
-// had a terminal to colourise.
-func TestJQColorsWarning(t *testing.T) {
-	p := fixture(t)
-	writeLog(t, p, msgRow+"\n")
-
-	var out, errB bytes.Buffer
-	code := Run(request(me, "c1"), p, &out, &errB, Options{JQColorsInvalid: true, CrewID: func() string { return "c1" }})
-	if code != 0 {
-		t.Fatalf("code %d", code)
-	}
-	if errB.String() != "Failed to set $JQ_COLORS\n" {
-		t.Errorf("stderr = %q", errB.String())
-	}
-	if canon(out.String()) != canon(msgRow+"\n") {
-		t.Errorf("stdout = %q, want the row uncoloured", out.String())
-	}
-
-	// The check that exits before jq starts prints no warning.
-	var out2, err2 bytes.Buffer
-	if code := Run(request(me, "c1", "--since", "x"), p, &out2, &err2, Options{JQColorsInvalid: true, CrewID: func() string { return "c1" }}); code != 1 ||
-		strings.Contains(err2.String(), "JQ_COLORS") {
-		t.Errorf("code %d stderr %q", code, err2.String())
 	}
 }
 

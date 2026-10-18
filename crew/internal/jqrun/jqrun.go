@@ -3,8 +3,7 @@
 //
 // The contract is value-equal JSON (#821), so gojq's alphabetical object keys
 // are fine; the bus still decodes with jsonv (it accepts jq's NaN extension,
-// which encoding/json rejects) and main.go still encodes with jsonv (canonical
-// pretty output and $JQ_COLORS).
+// which encoding/json rejects).
 //
 // Run and Compile take jsonv values; RunAny and CompileAny take gojq's own
 // form directly and are the shared core the jsonv entry points adapt.

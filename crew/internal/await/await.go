@@ -41,13 +41,11 @@ const (
 
 // Options is everything Run reads beyond the bus: how to resolve the crew the
 // arm defaults to (`_crew_id`), how to put the buffered stdout on the wire (the
-// marks are raised only once the rows are on it), the clock, and whether
-// $JQ_COLORS was invalid.
+// marks are raised only once the rows are on it), and the clock.
 type Options struct {
-	CrewID          func() string
-	Flush           func() error
-	Clock           clock.Clock
-	JQColorsInvalid bool
+	CrewID func() string
+	Flush  func() error
+	Clock  clock.Clock
 }
 
 // timeoutRe is the arm's `^[0-9]{1,9}$` — up to nine digits, so the value always
@@ -86,20 +84,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		c.timeout = maxTimeout
 	}
 
-	// `_clock_now_ms` is the arm's one jq whose stderr it did not throw away, so
-	// a bad $JQ_COLORS surfaced once for `start` and once per poll. Go prints it
-	// once for the call — the documented rule, and hold's — and under CREW_CLOCK
-	// that jq never starts at all.
-	warned := false
-	nowMS := func() int64 {
-		if !warned && o.JQColorsInvalid && o.Clock.CrewClock == "" {
-			warned = true
-			say(stderr, "Failed to set $JQ_COLORS\n")
-		}
-		return o.Clock.NowMS()
-	}
-
-	start := nowMS()
+	start := o.Clock.NowMS()
 	deadline := start + int64(c.timeout)*1000
 	// The marks are read once, before the loop: a mark another reader raises
 	// while this await polls does not shrink what this caller is owed.
@@ -123,7 +108,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 			marks.Record(paths.Dir, crew, c.me, rows)
 			return 0
 		}
-		now := nowMS()
+		now := o.Clock.NowMS()
 		if now >= deadline {
 			say(stderr, "crew: await ended after %ds — no reply to %s%s yet\n",
 				(now-start)/1000, c.me, fromNote(c.from))

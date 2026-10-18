@@ -6,9 +6,8 @@
 // The fold is the original jq program from adapters/core/crew.sh (retro.jq), run
 // through gojq, so it stays one shared source with the arm it replaces. It
 // renders three shapes from one run: the per-run TSV rows, the padded --report
-// table, and the --report --json object — pretty-printed, and plain: jq's
-// terminal colour and its broken-`$JQ_COLORS` warning are quirks of the process,
-// and this output is compared by value.
+// table, and the --report --json object, pretty-printed and never coloured, since
+// that output is compared by value.
 package retro
 
 import (

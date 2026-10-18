@@ -4,6 +4,7 @@ package fleet
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,7 +16,6 @@ import (
 	"unicode"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -36,8 +36,6 @@ type Options struct {
 	Worktrees func(common string) (string, error)
 	Origin    func(common string) string
 	Now       func() time.Time
-	// Colors, when set, colors the --json output.
-	Colors *jsonv.Palette
 }
 
 // Request is `crew fleet`'s flags: Crew limits the rows to one crew id.
@@ -71,7 +69,7 @@ func Run(req Request, stdout, stderr io.Writer, o Options) int {
 	hidden := 0
 	nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
 
-	var rows []jsonv.Value
+	rows := []map[string]any{}
 	for _, r := range repos.Discover(repos.Options{Registry: o.Registry, Env: o.Env, Stderr: stderr, Prefix: "crew: fleet"}) {
 		if r.Status != repos.StatusOK {
 			say(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, r.Status)
@@ -105,17 +103,17 @@ func Run(req Request, stdout, stderr io.Writer, o Options) int {
 		}
 		name := repos.Name(r.Common, o.Origin(r.Common))
 		for _, row := range repoRows {
-			row.Val.Set("repo", jsonv.Str(name))
-			row.Val.Set("crew_id", jsonv.Str(row.crew))
-			nonTerminal := slices.Contains(roster.LiveStates, str(row.Val, "state"))
+			row.Row["repo"] = name
+			row.Row["crew_id"] = row.crew
+			nonTerminal := slices.Contains(roster.LiveStates, str(row.Row, "state"))
 			stale := nonTerminal && live.Stale(row.Row)
-			row.Val.Set("stale", jsonv.Bool(stale))
+			row.Row["stale"] = stale
 			switch {
 			case !all && !nonTerminal:
 			case stale && !all && !asJSON:
 				hidden++
 			default:
-				rows = append(rows, row.Val)
+				rows = append(rows, row.Row)
 			}
 		}
 	}
@@ -124,13 +122,11 @@ func Run(req Request, stdout, stderr io.Writer, o Options) int {
 		say(stderr, "crew fleet: %d stale rows hidden (--all shows them)\n", hidden)
 	}
 	if asJSON {
-		opts := jsonv.Options{Indent: true, Colors: o.Colors}
 		var buf bytes.Buffer
-		if err := jsonv.Encode(&buf, jsonv.Array(rows...), opts); err != nil {
+		if err := jsonval.Encode(&buf, rows, true); err != nil {
 			say(stderr, "crew: fleet: %v\n", err)
 			return 1
 		}
-		buf.WriteByte('\n')
 		return write(stdout, stderr, buf.Bytes())
 	}
 	return write(stdout, stderr, table(rows))
@@ -138,7 +134,6 @@ func Run(req Request, stdout, stderr io.Writer, o Options) int {
 
 type crewRow struct {
 	Row  map[string]any
-	Val  jsonv.Value
 	crew string
 }
 
@@ -163,15 +158,7 @@ func foldRepo(common string, events []bus.Event, docs []any, onlyCrew string, no
 			return nil, err
 		}
 		for _, row := range folded {
-			var b bytes.Buffer
-			if err := jsonval.Encode(&b, row, false); err != nil {
-				return nil, err
-			}
-			val, err := jsonv.ParseOne(b.String())
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, crewRow{Row: row, Val: val, crew: c})
+			out = append(out, crewRow{Row: row, crew: c})
 		}
 	}
 	return out, nil
@@ -194,7 +181,7 @@ func write(stdout, stderr io.Writer, b []byte) int {
 	return 0
 }
 
-func table(rows []jsonv.Value) []byte {
+func table(rows []map[string]any) []byte {
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 	say(tw, "REPO\tCODENAME\tSTATE\tAGE\tENGINE\tCREW\tBRANCH\tTITLE\n")
@@ -210,9 +197,8 @@ func table(rows []jsonv.Value) []byte {
 // str is a row field as table text: "-" for null or anything but a string.
 // Workers write these fields, so control runes become "?" before they can
 // forge a row or drive the terminal.
-func str(row jsonv.Value, key string) string {
-	v, _ := row.Get(key)
-	if s, ok := v.AsString(); ok && s != "" {
+func str(row map[string]any, key string) string {
+	if s, ok := row[key].(string); ok && s != "" {
 		return strings.Map(func(r rune) rune {
 			if unicode.IsControl(r) {
 				return '?'
@@ -223,13 +209,20 @@ func str(row jsonv.Value, key string) string {
 	return "-"
 }
 
-func age(row jsonv.Value) string {
-	v, _ := row.Get("age_s")
-	f, ok := v.AsFloat()
-	if !ok {
+func age(row map[string]any) string {
+	var s int64
+	switch v := row["age_s"].(type) {
+	case float64:
+		s = int64(v)
+	case json.Number:
+		f, err := v.Float64()
+		if err != nil {
+			return "-"
+		}
+		s = int64(f)
+	default:
 		return "-"
 	}
-	s := int64(f)
 	switch {
 	case s < 60:
 		return fmt.Sprintf("%ds", s)

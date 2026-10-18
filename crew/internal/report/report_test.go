@@ -189,7 +189,7 @@ func TestHeaderOnlyCases(t *testing.T) {
 
 func TestAbsentLogPrintsNothing(t *testing.T) {
 	p := fixture(t)
-	stdout, stderr, code := run(t, p, "c1", Options{JQColorsInvalid: true})
+	stdout, stderr, code := run(t, p, "c1", Options{})
 	if stdout != "" || stderr != "" || code != 0 {
 		t.Fatalf("stdout %q stderr %q code %d", stdout, stderr, code)
 	}
@@ -258,23 +258,6 @@ func TestUnreadableLogKeepsItsHeader(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "permission denied") {
 		t.Errorf("stderr %q, want the open failure", stderr)
-	}
-}
-
-// The arm prints its header, then jq warns about $JQ_COLORS.
-func TestJQColorsWarnsAfterTheHeader(t *testing.T) {
-	p := fixture(t)
-	writeLog(t, p, `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","engine":"e","model":"m","tier":"t"}`+"\n")
-
-	stdout, stderr, code := run(t, p, "c1", Options{JQColorsInvalid: true})
-	if code != 0 {
-		t.Fatalf("code %d", code)
-	}
-	if want := wantHeader + "e\tm\tt\t" + dash + "\t" + dash + "\t" + dash + "\n"; stdout != want {
-		t.Errorf("stdout got %q, want %q", stdout, want)
-	}
-	if stderr != "Failed to set $JQ_COLORS\n" {
-		t.Errorf("stderr %q, want one warning", stderr)
 	}
 }
 

@@ -23,11 +23,9 @@ import (
 // not parse: 5, the status jq gives a parse or type error.
 const exitType = 5
 
-// Options is everything Run reads beyond the bus: whether $JQ_COLORS was
-// invalid (jq warns once, at startup, even when stdout is not a terminal).
-type Options struct {
-	JQColorsInvalid bool
-}
+// Options is everything Run reads beyond the bus. It has no fields today; the
+// type keeps Run's signature uniform with the other arms.
+type Options struct{}
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
 // or nowhere, for stderr) — main.go's helper, same reason.
@@ -40,11 +38,6 @@ func Run(crew string, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	events, err := bus.ReadEventsTolerant(paths.Log)
 	if errors.Is(err, bus.ErrNoLog) {
 		return 0
-	}
-	// jq has started by now, so a bad $JQ_COLORS warns even when it then fails
-	// to read the log.
-	if o.JQColorsInvalid {
-		say(stderr, "Failed to set $JQ_COLORS\n")
 	}
 	// A torn or corrupt tail keeps the events parsed before the break: `jq -c`
 	// had already printed them, and its parse error lands after the last line.

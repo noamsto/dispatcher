@@ -214,8 +214,7 @@ func TestUnreadableLogExitsTwo(t *testing.T) {
 
 func TestCorruptBusIsOurOwnLine(t *testing.T) {
 	// One `crew: retro: <log>: ...` line at exit 5, after the header the arm had
-	// already printed — and no $JQ_COLORS warning, mirrored or not.
-	t.Setenv("JQ_COLORS", "bad")
+	// already printed.
 	var out, errb bytes.Buffer
 	paths := fixture(t, "{not json\n")
 	code := Run(Request{}, paths, &out, &errb)
@@ -225,7 +224,7 @@ func TestCorruptBusIsOurOwnLine(t *testing.T) {
 	if out.String() != "branch\tengine\tmodel\ttier\toutcome\ttags\n" {
 		t.Errorf("stdout = %q", out.String())
 	}
-	if !strings.HasPrefix(errb.String(), "crew: retro: ") || strings.Contains(errb.String(), "JQ_COLORS") {
+	if !strings.HasPrefix(errb.String(), "crew: retro: ") {
 		t.Errorf("stderr = %q", errb.String())
 	}
 }
@@ -305,17 +304,13 @@ func TestControlCharactersAreStripped(t *testing.T) {
 }
 
 func TestJSONIsNeverColoured(t *testing.T) {
-	// jq paints a terminal's JSON; this port prints plain, because that output
-	// is compared by value.
-	for _, env := range []string{"", "0;32:1;33:0;36:1;35:0;34:1;32:1;35"} {
-		t.Setenv("JQ_COLORS", env)
-		out, _, code := run(t, oneRun, Request{Report: true, JSON: true})
-		if code != 0 {
-			t.Fatalf("exit %d", code)
-		}
-		if strings.Contains(out, "\x1b[") {
-			t.Errorf("JQ_COLORS=%q leaked colour: %q", env, out)
-		}
+	// This port prints plain, because that output is compared by value.
+	out, _, code := run(t, oneRun, Request{Report: true, JSON: true})
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("colour leaked: %q", out)
 	}
 }
 

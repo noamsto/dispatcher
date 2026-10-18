@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
@@ -305,14 +304,14 @@ func TestPanesReadOnce(t *testing.T) {
 
 func TestAge(t *testing.T) {
 	tests := []struct {
-		v    jsonv.Value
+		v    any
 		want string
 	}{
-		{jsonv.Num(5), "5s"}, {jsonv.Num(125), "2m"}, {jsonv.Num(3725), "1h2m"},
-		{jsonv.Num(90000), "1d1h"}, {jsonv.Null(), "-"},
+		{float64(5), "5s"}, {float64(125), "2m"}, {json.Number("3725"), "1h2m"},
+		{float64(90000), "1d1h"}, {nil, "-"}, {"x", "-"},
 	}
 	for _, tt := range tests {
-		if got := age(jsonv.Object(jsonv.Member{Key: "age_s", Val: tt.v})); got != tt.want {
+		if got := age(map[string]any{"age_s": tt.v}); got != tt.want {
 			t.Errorf("age = %q, want %q", got, tt.want)
 		}
 	}
