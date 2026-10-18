@@ -3,13 +3,14 @@
 // later `await` does not hand them back.
 //
 // The arm ran `jq -c 'select(...)'` inside `$(...)`, so this port prints the
-// rows it keeps through jsonv (the line is the source row, key order and
-// number literals included) and never starts a jq. Only the marks merge is jq,
+// rows it keeps through jsonval (value-equal to the source row, number
+// literals included) and never starts a jq. Only the marks merge is jq,
 // and it lives in internal/marks beside the helpers still writing the same
 // file.
 package inbox
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +20,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 )
 
@@ -96,26 +97,24 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		held = marks.Read(paths.Dir, crew, me)
 	}
 
-	opts := jsonv.Options{}
 	// `.crew_id` is jq's index: an object either carries the msg or does not,
 	// null indexes to null, and any other value is a type error — one stderr
 	// line each, and jq's exit status is the *last* input's outcome rather than
 	// a sticky flag (the rule internal/log documents).
 	failed := false
-	var selected []jsonv.Value
+	var selected []map[string]any
 	for _, ev := range events {
-		v := ev.Raw
-		switch v.Kind() {
-		case jsonv.KindObject:
+		switch v := ev.Doc.(type) {
+		case map[string]any:
 			failed = false
 			if !selects(v, crew, me, since, q.From) {
 				continue
 			}
 			selected = append(selected, v)
-		case jsonv.KindNull:
+		case nil:
 			failed = false
-		case jsonv.KindFalse, jsonv.KindTrue, jsonv.KindNumber, jsonv.KindString, jsonv.KindArray:
-			say(stderr, "crew: inbox: %s: cannot index %v with \"crew_id\"\n", paths.Log, v.Kind())
+		default:
+			say(stderr, "crew: inbox: %s: cannot index %s with \"crew_id\"\n", paths.Log, typeName(v))
 			failed = true
 		}
 	}
@@ -128,8 +127,7 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		}
 	}
 	for _, v := range printed {
-		_ = jsonv.Encode(stdout, v, opts)
-		say(stdout, "\n")
+		_ = jsonval.Encode(stdout, v, false)
 	}
 	// A session that has read its inbox has been handed these msgs, so a later
 	// await must not return them again (#290) — including the prefix of a bus
@@ -147,7 +145,7 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	if strings.HasPrefix(me, "worker:") && len(printed) > 0 {
 		recorded := make([]any, len(printed))
 		for i, v := range printed {
-			recorded[i] = jsonv.ToAny(v)
+			recorded[i] = v
 		}
 		if q.Undelivered {
 			marks.RecordHeld(paths.Dir, crew, me, recorded)
@@ -183,26 +181,20 @@ func isDigits(s string) bool {
 // member tests, `.from == $from` only runs with --from, and `.ts > $since` only
 // runs with --since. Every test is jq's `==`, so a non-string value matches
 // nothing — the empty crew of a caller with no id to default to included (#874).
-func selects(v jsonv.Value, crew, me, since, from string) bool {
+func selects(v map[string]any, crew, me, since, from string) bool {
 	if !member(v, "crew_id", crew) || !member(v, "kind", "msg") {
 		return false
 	}
 	if from != "" && !member(v, "from", from) {
 		return false
 	}
-	to, _ := v.Get("to")
-	s, ok := to.AsString()
-	if !ok || (s != me && s != "*") {
+	if to, ok := v["to"].(string); !ok || (to != me && to != "*") {
 		return false
 	}
 	if since == "" {
 		return true
 	}
-	ts, ok := v.Get("ts")
-	if !ok {
-		ts = jsonv.Null()
-	}
-	return greaterThanNumber(ts, since)
+	return greaterThanNumber(v["ts"], since)
 }
 
 // pastMarks keeps the msgs newer than this session's mark for their sender:
@@ -210,11 +202,13 @@ func selects(v jsonv.Value, crew, me, since, from string) bool {
 // left outranks a number ts as `_unread_scan` has it. A msg whose `from` is not
 // a string is dropped first — it has no mark to compare with, and record.jq
 // would fail the whole write over it.
-func pastMarks(rows []jsonv.Value, held any) ([]jsonv.Value, error) {
-	var named []jsonv.Value
+func pastMarks(rows []map[string]any, held any) ([]map[string]any, error) {
+	var named []map[string]any
+	input := []any{}
 	for _, v := range rows {
-		if f, ok := v.Get("from"); ok && f.Kind() == jsonv.KindString {
+		if _, ok := v["from"].(string); ok {
 			named = append(named, v)
+			input = append(input, v)
 		}
 	}
 	if len(named) == 0 {
@@ -224,13 +218,14 @@ func pastMarks(rows []jsonv.Value, held any) ([]jsonv.Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	keep, err := p.Run(jsonv.Array(named...))
+	keep, err := p.RunAny(input)
 	if err != nil {
 		return nil, err
 	}
-	var out []jsonv.Value
-	for i, k := range keep.Elems() {
-		if k.Truthy() {
+	flags, _ := keep.([]any)
+	var out []map[string]any
+	for i, k := range flags {
+		if k == true {
 			out = append(out, named[i])
 		}
 	}
@@ -239,34 +234,38 @@ func pastMarks(rows []jsonv.Value, held any) ([]jsonv.Value, error) {
 
 // member is jq's `.key == s`: an absent key indexes to null, and only a string
 // equals the argument.
-func member(v jsonv.Value, key, s string) bool {
-	x, ok := v.Get(key)
-	if !ok {
-		return false
+func member(v map[string]any, key, s string) bool {
+	t, ok := v[key].(string)
+	return ok && t == s
+}
+
+// typeName is jq's name for a value `.crew_id` cannot index.
+func typeName(v any) string {
+	switch v.(type) {
+	case bool:
+		return "boolean"
+	case json.Number, float64:
+		return "number"
+	case string:
+		return "string"
 	}
-	t, isStr := x.AsString()
-	return isStr && t == s
+	return "array"
 }
 
 // greaterThanNumber is jq's `.v > $since` for a $since that is a digit string,
-// i.e. a non-negative number: jsonv's Kind constants are jq's sort order, so
-// anything above KindNumber beats every number and anything below it loses.
-func greaterThanNumber(v jsonv.Value, since string) bool {
-	switch v.Kind() {
-	case jsonv.KindString, jsonv.KindArray, jsonv.KindObject:
+// i.e. a non-negative number: jq's sort order puts null and booleans below every
+// number and strings, arrays and objects above it.
+func greaterThanNumber(v any, since string) bool {
+	switch x := v.(type) {
+	case string, []any, map[string]any:
 		return true
-	case jsonv.KindNull, jsonv.KindFalse, jsonv.KindTrue:
-		return false
-	case jsonv.KindNumber:
-		if text := v.NumberText(); text != "" {
-			return decimalGreater(text, since)
-		}
-		// NaN and the infinities carry no literal text. jq parses an Infinity
-		// input as a clamped double and NaN as equal to nothing; a double
-		// compare answers both the same way, and a --since too big for one
-		// parses to +Inf, which is where jq's clamp lands too.
-		f, _ := v.AsFloat()
-		return f > parseSince(since)
+	case json.Number:
+		return decimalGreater(x.String(), since)
+	case float64:
+		// gojq's form for NaN and the infinities, which carry no literal text.
+		// NaN is equal to nothing; a --since too big for a double parses to
+		// +Inf, which is where jq's clamp lands too.
+		return x > parseSince(since)
 	}
 	return false
 }
@@ -291,7 +290,7 @@ func decimalGreater(a, b string) bool {
 	neg, digits, mag := decimal(a)
 	b = strings.TrimLeft(b, "0")
 	// Zero loses to every non-negative b, and so does a negative literal. A text
-	// decimal cannot read is zero: jsonv hands back only literals it parsed.
+	// decimal cannot read is zero.
 	if neg || digits == "" {
 		return false
 	}
@@ -349,7 +348,7 @@ func decimal(tok string) (neg bool, digits string, mag int64) {
 	return finish(sb.String(), point, 0, neg)
 }
 
-// expCap saturates an exponent's accumulation. jsonv only hands back literals
+// expCap saturates an exponent's accumulation. A literal the bus parsed stays
 // within decNumber's Emax, so a real one never reaches it; it keeps a
 // hand-edited `1e999999999999999999999` from overflowing an int64.
 const expCap = 1 << 40

@@ -487,7 +487,7 @@ func TestRunInbox(t *testing.T) {
 		if code := run(context.Background(), []string{"inbox", me, "c1"}, &stdout, &stderr, e); code != 0 {
 			t.Fatalf("code %d stderr %q", code, stderr.String())
 		}
-		if stdout.String() != msg+"\n" || stderr.Len() != 0 {
+		if !sameRow(t, stdout.String(), msg) || stderr.Len() != 0 {
 			t.Fatalf("stdout %q stderr %q", stdout.String(), stderr.String())
 		}
 		if got := marksFile(t, repo); got != "{\"dispatcher:c1\":1000}\n" {
@@ -505,7 +505,7 @@ func TestRunInbox(t *testing.T) {
 		if code := run(context.Background(), []string{"inbox", me}, &stdout, &stderr, e); code != 0 {
 			t.Fatalf("code %d stderr %q", code, stderr.String())
 		}
-		if stdout.String() != msg+"\n" {
+		if !sameRow(t, stdout.String(), msg) {
 			t.Fatalf("stdout %q", stdout.String())
 		}
 	})
@@ -2495,4 +2495,20 @@ func TestNudgeWaitBinding(t *testing.T) {
 			t.Errorf("crew %q = %+v, want %+v", tc.args, got, tc.want)
 		}
 	}
+}
+
+// sameRow reports whether got is one line holding the same JSON value as want:
+// inbox prints rows value-equal to the log, not in its key order.
+func sameRow(t *testing.T, got, want string) bool {
+	t.Helper()
+	decode := func(s string) any {
+		var v any
+		dec := json.NewDecoder(strings.NewReader(s))
+		dec.UseNumber()
+		if err := dec.Decode(&v); err != nil {
+			t.Fatalf("decode %q: %v", s, err)
+		}
+		return v
+	}
+	return strings.HasSuffix(got, "\n") && strings.Count(got, "\n") == 1 && reflect.DeepEqual(decode(got), decode(want))
 }
