@@ -11784,6 +11784,25 @@ _rw_settle() {
   _rw_poll "[ \"\$(_rw_count '^display-message')\" -ge $start ]"
 }
 
+# _rw_wait_clock <epoch-seconds> — wait until the virtual clock file reaches
+# <epoch-seconds>. _rw_settle counts display-message lines, which is only a
+# lower bound on the watcher's virtual time: in test-clock mode _rw_sleep never
+# sleeps for real, so the watcher packs many ticks (one clock second each) into
+# the real milliseconds a test spends between two log reads. A test asserting an
+# event has NOT fired yet must bound the clock the production deferral compares.
+_rw_wait_clock() {
+  local n cur
+  for n in $(seq 1 6000); do
+    cur=""
+    read -r cur <"$DISPATCH_ROLE_WATCH_CLOCK" 2>/dev/null || true
+    [ -n "$cur" ] && [ "$cur" -ge "$1" ] && return 0
+    sleep 0.002
+  done
+  echo "role-watch: virtual clock never reached $1 (now ${cur:-unset})" >&2
+  tail -5 "$STUB_LOG" >&2 2>/dev/null || true
+  return 1
+}
+
 # _rw_start <engine> [body] — run the watcher in the background, then post one
 # assignment to the role from the lead. $2 is a derived test payload, never a
 # real capture value; defaults to "go".
@@ -12630,9 +12649,16 @@ _rw_deferrals() { _rw_count '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*
   _spawn_role_fixture
   _rw_stub rw_frame_cursor_pull_idle
   touch "$STUB_DIR/pull"
-  RW_EXTRA="--defer-notice 2" _rw_launch cursor
+  RW_EXTRA="--defer-notice 3" _rw_launch cursor
+  _rw_poll "[ -s \"\$DISPATCH_ROLE_WATCH_CLOCK\" ]"
+  # A still-booting pull role gets 5x --defer-notice (15 clock seconds) before
+  # the deferral. Read the clock before queuing the assignment (the watcher's
+  # deferred_since is then at least base) and wait out well under the grace:
+  # the watcher spins on the virtual clock, so a display-message count like
+  # _rw_settle can advance far past its nominal ticks while the test appends.
+  base=$(cat "$DISPATCH_ROLE_WATCH_CLOCK")
   _rw_append "$(_rw_assign_row)"
-  _rw_settle 12
+  _rw_wait_clock $((base + 6))
   _rw_stop
   [ "$(_rw_count 'assignment_deferred')" -eq 0 ]
 }
