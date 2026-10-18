@@ -23,7 +23,7 @@ var (
 	nanDispatch        = `{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/x","n":NaN}`
 	nanDispatchEscaped = `{"ts":2,"crew_id":"c1","kind":"\u0064ispatch","branch":"feat\/x","n":NaN}`
 
-	// jq refuses nesting past 5000 objects; encoding/json allows 10000.
+	// jq refuses nesting past 5000 objects.
 	deepObjects    = strings.Repeat(`{"a":`, 6000) + "1" + strings.Repeat("}", 6000)
 	deepArrays     = strings.Repeat("[", 9999) + strings.Repeat("]", 9999)
 	paddedReview   = `{"ts":1,"crew_id":"c1","from":"` + worker + `","to":"review:c1","kind":"msg","body":` + jsonStr(`{"seam":"review","review_mode":"full"}`) + `,"pad":` + deepObjects + `}`
@@ -138,7 +138,7 @@ var corpus = []string{
 	msgRow(rev+"#sY#Z", branch, `{"seam":"review","verdict":"accept"}`),
 	msgRow(rev, otherSession, `{"seam":"review","verdict":"accept"}`),
 	msgRow(rev, otherSession, `{"seam":"review","verdict":"revise"}`),
-	// Revoking rows encoding/json would not decode (NaN, a BOM), raw, spaced and escaped.
+	// Revoking rows with NaN or a BOM, written raw, spaced and escaped.
 	nanReject,
 	nanRejectSpaced,
 	nanRejectEscaped,
@@ -193,7 +193,7 @@ func TestFoldsMatchJQ(t *testing.T) {
 		[]string{corpus[13], corpus[20], corpus[22], corpus[5]},
 		[]string{corpus[0], corpus[17], corpus[5]},
 		[]string{corpus[0], corpus[36], corpus[5]},
-		// Each revoking row only jq decodes, after a row that grants.
+		// Each revoking row after a row that grants.
 		[]string{accept, nanReject, deslopSeam},
 		[]string{accept, nanRejectSpaced, deslopSeam},
 		[]string{accept, nanRejectEscaped, deslopSeam},
