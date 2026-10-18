@@ -12350,14 +12350,8 @@ _rw_expect_exit() {
 @test "role-watch: a stamp that flips after the first Enter gets no retry Enter after a remux restore" {
   _spawn_role_fixture
   _rw_stub rw_frame_idle
-  {
-    printf '  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)\n'
-    printf '────────────────── reef ─\n'
-    printf '❯ Assignment: {"role":"reviewer","roster":"/abs/path/to/roster.json","question":"Review this diff. 1. first"}\n'
-    printf '  continuation of the wrapped assignment text 2. second\n'
-    printf '──────────────────\n'
-    printf '  -- INSERT -- ⏵⏵ auto mode on · ← for agents\n'
-  } >"$STUB_DIR/frame_after"
+  # The pasted text stays in the box after Enter: the held arm would retry.
+  rw_frame_idle | sed 's/^❯$/❯ Assignment: go/' >"$STUB_DIR/frame_after"
   touch "$STUB_DIR/flip"
   cat >"$STUB_DIR/hook" <<'EOF'
 #!/usr/bin/env bash
