@@ -3145,6 +3145,8 @@ _grid_live_lead() {
   wait_for_log '^--role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing$'
   wait_for_log '^--role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing$'
   wait_for_log '^CREW_ID=c1$'
+  [ "$(grep -c -e '--role-watch reviewer --pane %9 ' "$STUB_LOG")" -eq 1 ]
+  [ "$(grep -c -e '--role-watch plan-critic --pane %10 ' "$STUB_LOG")" -eq 1 ]
   grep -qF 'set-window-option -t @4 @crew_branch feat/7-a-thing' "$STUB_LOG"
   run ! grep -q 'send-keys -t %8' "$STUB_LOG"
   run ! grep -q 'kind":"resume"' "$TEST_REPO/.git/crew/events.jsonl"
@@ -3159,6 +3161,7 @@ crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
   cd "$WT"
   run run_resume --rearm-roles
   [ "$status" -eq 0 ]
+  sleep 0.3
   run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
 }
 
@@ -3175,7 +3178,7 @@ crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
 @test "resume --rearm-roles is exclusive with the launch flags and an extra prompt (#730)" {
   _grid_live_lead
   cd "$WT"
-  for args in "--fresh" "--print" "--agent pi" "--model m" "--effort high" "--mcp p" "continue"; do
+  for args in "--fresh" "--print" "--agent pi" "--model m" "--effort high" "--mcp p" "--ignore-map" "continue"; do
     # shellcheck disable=SC2086
     run run_resume --rearm-roles $args
     [ "$status" -eq 1 ]
@@ -3213,6 +3216,7 @@ _target_restored_fixture() {
   _target_restored_fixture
   run run_resume '#7' --print
   [ "$status" -eq 0 ]
+  sleep 0.3
   run ! grep -q -e '--role-watch' "$STUB_LOG"
 }
 

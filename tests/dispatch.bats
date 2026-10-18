@@ -12335,6 +12335,7 @@ _rw_expect_exit() {
   _rw_post 'worker:feat/9-x#s1-1'
   _rw_expect_exit
   run ! grep -qE '^(paste |load-buffer)' "$STUB_LOG"
+  [ "$(grep -c '^msg role:feat/9-x:reviewer worker:feat/9-x#s1-1 .*assignment_orphaned' "$STUB_LOG")" -eq 1 ]
 }
 
 @test "role-watch: a window re-stamped with another branch after a remux restore gets no paste" {

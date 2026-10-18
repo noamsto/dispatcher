@@ -34,7 +34,8 @@ engine session, and re-run only the gates this command names.
   --fresh             Start a new engine session instead of continuing the old one
   --print             Print the launch command instead of running it
   --rearm-roles       Re-arm the role panes of this worker's restored window and
-                      launch nothing (alone: no other flag, no extra prompt)
+                      launch nothing (no launch flag or extra prompt;
+                      --ignore-budget still applies)
   --ignore-budget     Spend past the quota stop (a human's spend decision)
   --ignore-map        Skip the tier-map model refusals (a human's model call)
   [extra prompt...]   Words appended to the carried task body for this run
@@ -721,7 +722,7 @@ if [ "${#positional[@]}" -gt 0 ]; then
 fi
 extra="${positional[*]}"
 
-if [ -n "$rearm_roles" ] && [ -n "$fresh$do_print$agent_flag$model_flag$effort_flag$mcp_flag_val$extra" ]; then
+if [ -n "$rearm_roles" ] && [ -n "$fresh$do_print$ignore_map$agent_flag$model_flag$effort_flag$mcp_flag_val$extra" ]; then
   usage
   exit 1
 fi

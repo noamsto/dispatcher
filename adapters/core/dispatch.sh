@@ -2492,10 +2492,13 @@ if [ "${1:-}" = "--role-watch" ]; then
     [ "$(tmux display-message -p -t "$watch_pane" '#{@crew_exited}' 2>/dev/null || true)" = 1 ]
   }
   _rw_stamped() {
-    local r w b
+    local r w b c
     IFS='|' read -r r w _ <<<"$(tmux display-message -p -t "$watch_pane" '#{@crew_role}|#{window_id}' 2>/dev/null || true)"
     b="$(tmux show-options -wqv -t "$w" @crew_branch 2>/dev/null || true)"
-    [ "$r" = "$role" ] && [ "$b" = "$watch_branch" ]
+    # Pane ids restart after a server kill, so another repo's grid with the
+    # same branch and role name could reuse this id.
+    c="$(tmux show-options -wqv -t "$w" @crew_id 2>/dev/null || true)"
+    [ "$r" = "$role" ] && [ "$b" = "$watch_branch" ] && [ "$c" = "$w_crew" ]
   }
   watch_set_state() {
     watch_exited && return 0
@@ -3039,6 +3042,21 @@ if [ "${1:-}" = "--role-watch" ]; then
     done
   }
 
+  # _rw_orphaned — the pane lost its role stamp with work still undelivered:
+  # tell the sender, the lead and the dispatcher (each once) before exiting.
+  _rw_orphaned() {
+    local note to sent=" "
+    [ "${#pending[@]}" -gt 0 ] || [ -n "$inflight" ] || return 0
+    note="$(jq -nc --arg r "$role" --arg p "$watch_pane" --arg b "$watch_branch" \
+      '{role:$r,event:"assignment_orphaned",pane:$p,detail:("watcher exited: pane " + $p + " is no longer stamped as " + $r + " on " + $b + "; re-send after re-arming (dispatch resume --rearm-roles)")}')"
+    for to in "$inflight_from" "${pending_from[0]:-}" "$lead_worker" "${w_crew:+dispatcher:$w_crew}"; do
+      [ -n "$to" ] || continue
+      case "$sent" in *" $to "*) continue ;; esac
+      sent="$sent$to "
+      crew msg "$role_id" "$to" "$note" 2>/dev/null || true
+    done
+  }
+
   # _rw_reject <sender> — the head assignment's body carries a C0 byte, so
   # tmux would read it as terminal input and it can never be typed. Tell its
   # sender and the lead once (deduplicated) that it was dropped, rather than
@@ -3240,7 +3258,7 @@ if [ "${1:-}" = "--role-watch" ]; then
       held)
         unknown_ticks=0
         if [ "$submit_tries" -lt "$submit_retries" ]; then
-          _rw_stamped || break
+          _rw_stamped || { _rw_orphaned; break; }
           tmux send-keys -t "$watch_pane" Enter 2>/dev/null || true
           submit_tries=$((submit_tries + 1))
           cooldown=$((1 << submit_tries))
@@ -3296,7 +3314,7 @@ if [ "${1:-}" = "--role-watch" ]; then
     elif [ "$cooldown" -gt 0 ]; then
       cooldown=$((cooldown - 1))
     elif ! watch_exited; then
-      _rw_stamped || break
+      _rw_stamped || { _rw_orphaned; break; }
       frame_e="$(tmux capture-pane -e -p -t "$watch_pane" 2>/dev/null || true)"
       frame="$(printf '%s' "$frame_e" | sed -E "$csi_sed" 2>/dev/null || true)"
       if ! _role_assignment_safe "${pending[0]}"; then
