@@ -378,6 +378,24 @@ shell_c_cap_post_re="(^|[[:space:]/(;&|)\`])${shell_c_cap_post}"
 # against each dequoted view, where a path split by quotes reads as written —
 # by grep -E, not `[[ =~ ]]`, which is quadratic on `=/proc/=/proc/…`.
 proc_environ_re="(^|[[:space:]\"'<=])/proc/[^[:space:]\"']*/environ"
+# Rule 2b's consumer: an interpreter taking inline code, judged on the dequoted
+# views (one per worklist text), where quote characters are gone so a quoted
+# path reads as written (`"$HOME/.venv/bin/python" -c` is `$HOME/.venv/bin/python
+# -c`) and a quoted space or metachar is `_`, so `git commit -m "python3 -c x"`
+# reads `python3_-c_x` and arms nothing. Armed by the interpreter word followed
+# by any words and a code flag (-c, -e, -E, -p, -r, --eval, --print, `eval`, or
+# `-` for stdin) or by a heredoc or here-string, or by a pipe into it. The code
+# flag may carry its code glued on (`-le'print…'` reads `-leprint_…`), and any
+# words, option arguments included (`python3 -X utf8 -c`), may precede it; a
+# `--cov`-style double-dash word does not arm. Over-arming only costs the
+# accepted co-occurrence false positive. A `/` before it is fine
+# (`/usr/bin/python3`, `uv run python3`); `-`, `.` or a name char around it
+# make it another word (`my-python`, `python3-config`). Plain
+# runs (`python3 -m pytest`, `node --version`) arm nothing. grep -E is a DFA,
+# so the optional-word loops stay linear.
+interp_word='(python[0-9.]*|pypy[0-9.]*|node|nodejs|deno|bun|tsx|ts-node|ruby|perl|php)'
+interp_code_re="(^|[^A-Za-z0-9_.-])${interp_word}([[:space:]]+[^[:space:];&|<>]+)*([[:space:]]+(-[A-Za-z]*[ceEpr]|--eval|--print)|[[:space:]]+(eval|-)([[:space:]]|\$)|[[:space:]]*<<)"
+interp_pipe_re="\\|([^;&|]*[^A-Za-z0-9_.-])?${interp_word}([^A-Za-z0-9_.-]|\$)"
 nl=$'\n'
 
 # Every awk pass below reads its text from a here-string and sees it one
@@ -901,12 +919,18 @@ END {
 # test, so a wrapped command is held to the set too; a wrapper outside LEAD
 # (builtin, env, stdbuf, timeout) or a lead option word fails closed. A word
 # holding `hooks/` ends the check too: a body written into a git hook runs on
-# the next commit.
+# the next commit. Interpreters with no backtick shell execution (python, pypy,
+# node, deno, bun, versioned names like python3.12 included) are sinks: their
+# body is not shell, so a shell-dumper word in it is text. ruby, perl and php are
+# not: their backticks, qx() and %x() run a shell, so their heredoc bodies keep
+# the shell-dumper scan. The sinks' own environment reads are judged by
+# awk_interp_dump, and a shell-out from their code (os.system) is a non-dumper
+# path (O4) — an accepted limit.
 # shellcheck disable=SC2016
 awk_sinks='
 BEGIN {
   ok = 1
-  n = split("cat tee printf echo gh git sponge tr wc head tail grep base64 diff cmp read cd ls mkdir rm mv cp touch chmod true : test [", a, " ")
+  n = split("cat tee printf echo gh git sponge tr wc head tail grep base64 diff cmp read cd ls mkdir rm mv cp touch chmod true : test [ python python3 pypy pypy3 node nodejs deno bun", a, " ")
   for (i = 1; i <= n; i++) SINK[a[i]] = 1
   n = split("commit tag notes apply am hash-object check-ignore check-attr mktag mktree", a, " ")
   for (i = 1; i <= n; i++) GITSUB[a[i]] = 1
@@ -935,7 +959,7 @@ function stage(g,    fo, nw, j, k, cw, as, sc) {
   cw = Wd[j]
   sub(/[<>].*/, "", cw)
   if (cw == "" || cw ~ /\$/ || cw ~ /\//) { ok = 0; return }
-  if (!(cw in SINK)) { ok = 0; return }
+  if (!(cw in SINK) && cw !~ /^(python|pypy)[0-9.]*$/) { ok = 0; return }
   if (cw == "git") {
     sc = Wd[j + 1]
     sub(/[<>].*/, "", sc)
@@ -945,6 +969,35 @@ function stage(g,    fo, nw, j, k, cw, as, sc) {
   if (cw == "gh" && Wd[j + 1] == "alias") ok = 0
 }
 END { print (NR ? ok : 0) }'
+
+# Rule 2b's dumper test, one pass per raw text (the command or an extracted
+# sub-body), line by line. Prints 1 when a line, padded with a space on each
+# side (so no `^`/`$` sits in an alternation), still holds an interpreter
+# environment read after the presence-test forms are deleted, else 0. The
+# deletions come first, each consuming the one char after the form so a
+# lookahead is not needed; the replacement keeps two spaces so a chained form
+# still finds its own leading space. Dumpers: os.environ/environb/getenv,
+# `environ.items(`, process.env, Deno.env, Bun.env, `from os import environ`, a
+# ruby/perl-shaped ENV use (`p ENV`, `puts ENV`, ENV.to_h, ENV[, `$ENV{X}`,
+# %ENV; not prose or a Dockerfile `ENV PATH`, a shell `ENV=x` assignment),
+# getenv(, $_ENV. Presence forms: len(os.environ), `"X" in os.environ` (also
+# not in, and process.env) unless a name, `.`, `[` or `(` follows,
+# `os.environ.get("X") is [not] None` (also os.getenv), ruby `ENV.key?(` (also
+# has_key?, include?, member?), and a subscript assignment `os.environ["X"] =`
+# (a write, not a print). Every pattern is anchored on a literal, with classes
+# disjoint from it, so the scan stays linear.
+# shellcheck disable=SC2016
+awk_interp_dump='
+{
+  t = " " $0 " "
+  gsub(/len\([[:space:]]*os\.environb?[[:space:]]*\)/, "  ", t)
+  gsub(/[[:space:]]in[[:space:]]+(os\.environb?|process\.env)[^A-Za-z0-9_.[(]/, "  ", t)
+  gsub(/os\.(environb?\.get|getenv)\([[:space:]]*["\047][A-Za-z_][A-Za-z0-9_]*["\047][[:space:]]*\)[[:space:]]+is[[:space:]]+(not[[:space:]]+)?None/, "  ", t)
+  gsub(/ENV\.(key|has_key|include|member)\?\(/, "  ", t)
+  gsub(/os\.environ\[["\047][A-Za-z_][A-Za-z0-9_]*["\047]\][[:space:]]*=[^=]/, "  ", t)
+  if (t ~ /os\.(environb?|getenv)[^A-Za-z0-9_]|environb?\.items\(|process\.env[^A-Za-z0-9_]|[^A-Za-z0-9_]ENV[[{.;)}]|[^A-Za-z0-9_]ENV[[:space:]]+[;)}]|%ENV[^A-Za-z0-9_]|[^A-Za-z0-9_](p|pp|puts|print|inspect)[[:space:]]+ENV[^A-Za-z0-9_]|Deno\.env[^A-Za-z0-9_]|Bun\.env[^A-Za-z0-9_]|from[[:space:]]+os[[:space:]]+import[^;#]*environ|getenv\(|\$_ENV/) { hit = 1; exit }
+}
+END { print hit + 0 }'
 
 # Anything in a text that can change what a sink name resolves to: command
 # lookup state. One linear pass over the B=1 view (heredoc bodies and quoted
@@ -1535,6 +1588,32 @@ shell)
   printf -v proc_views '%s\n' "$command" "${dequoted_views[@]}"
   if grep -qE "$proc_environ_re" <<<"$proc_views"; then
     deny "This reads a process's environment table directly, which prints every secret in scope into this transcript — same leak as env/printenv, just via /proc instead. To test presence: set -q NAME (fish), or branch on an -n test of the variable and echo only the words set or unset (bash/sh) — never the variable itself."
+  fi
+
+  # 2b. An interpreter reading the environment. The consumer is classified
+  #     first, on the dequoted views: it arms only on an interpreter taking
+  #     inline code (-c/-e/-r/eval/-, a heredoc or here-string, a pipe into
+  #     it), so `rg 'os.environ' src && python3 -m pytest` is not judged, and a
+  #     quoted interpreter path counts. Shell texts keep the command-position
+  #     rules above, while an interpreter's code is not shell words, so its
+  #     dumpers (awk_interp_dump) are matched anywhere in the raw texts, not
+  #     at command position. Co-occurrence is on purpose: prose that names
+  #     os.environ next to an interpreter run is denied too, an accepted
+  #     fail-closed cost like rule 3. Presence tests stay allowed, per the
+  #     guard's rule to name the one variable and test it without printing its
+  #     value.
+  printf -v interp_views '%s\n' "${dequoted_views[@]}"
+  if grep -qE -e "$interp_code_re" -e "$interp_pipe_re" <<<"$interp_views"; then
+    for text in "$command" ${subs[@]+"${subs[@]}"}; do
+      [[ $text == *environ* || $text == *getenv* || $text == *process.env* || $text == *ENV* || $text == *Deno.env* || $text == *Bun.env* ]] || continue
+      verdict=$(awk "$awk_interp_dump" <<<"$text") || {
+        echo "secret-read-guard: interpreter-environment check failed; guard NOT enforcing" >&2
+        exit 1
+      }
+      if [[ $verdict == 1 ]]; then
+        deny 'This interpreter code reads the environment (os.environ, os.getenv, process.env, Deno.env, Bun.env, ENV[…], %ENV, getenv), which prints live values into this transcript — the same leak as env/printenv, through an interpreter. To test presence, name the one variable and test it without printing its value: "NAME" in os.environ, os.environ.get("NAME") is not None, len(os.environ).'
+      fi
+    done
   fi
 
   # The wide masker adds to the base one and never replaces it; it runs last
