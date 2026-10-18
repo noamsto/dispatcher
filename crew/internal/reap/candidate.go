@@ -11,6 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/noamsto/dispatcher/crew/internal/filetest"
 	"github.com/noamsto/dispatcher/crew/internal/frame"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -505,7 +506,7 @@ func (r *run) consider(ctx context.Context, row latestRow) (bool, int) {
 	if code != 0 {
 		return false, code
 	}
-	if wt == "" || !isDir(wt) {
+	if wt == "" || !filetest.IsDir(wt) {
 		return false, 0
 	}
 	c.wtpath = wt

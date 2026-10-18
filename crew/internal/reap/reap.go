@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/filetest"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -209,11 +210,6 @@ func exitStatus(err error) int {
 	return 127
 }
 
-func isDir(p string) bool {
-	st, err := os.Stat(p)
-	return err == nil && st.IsDir()
-}
-
 // slugPrefix and originGitHubRepo are `_origin_github_repo`: `_origin_repo`'s
 // sed (`s#(git@|https://)([^/:]+)[/:]##; s#\.git$##`), only for a github.com
 // origin — the slug drops the host, and pr_urls are only ever github.com.
@@ -301,7 +297,7 @@ func (r *run) orphans(ctx context.Context) int {
 		if code != 0 {
 			return code
 		}
-		if wt != "" && isDir(wt) {
+		if wt != "" && filetest.IsDir(wt) {
 			continue
 		}
 		r.note("window " + wid + " is stamped " + branch + " but its worktree is gone — not killed")

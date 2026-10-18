@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/filetest"
 )
 
 // discardFx is a done worker on rb whose PR is MERGED, with one commit of its
@@ -109,7 +111,7 @@ func TestDiscardRefusals(t *testing.T) {
 		}
 		f.wantOut()
 		f.wantErr("crew reap: refusing --discard " + branch + " — " + why + "\n")
-		if !isDir(f.wt) {
+		if !filetest.IsDir(f.wt) {
 			t.Fatal("worktree removed")
 		}
 	}
@@ -181,7 +183,7 @@ func TestDiscardRefusesEmbeddedRepo(t *testing.T) {
 	}
 	f.wantErr("crew reap: refusing --discard feat/r — it holds an embedded git repository\n")
 	f.noScratch()
-	if !isDir(nested + "/.git") {
+	if !filetest.IsDir(nested + "/.git") {
 		t.Fatal("nested repo removed")
 	}
 }

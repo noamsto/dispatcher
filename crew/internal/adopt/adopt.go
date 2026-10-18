@@ -30,6 +30,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/filetest"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -130,7 +131,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	// A crew is known from the directory, or from the bus when a restart took
 	// the directory with it: the id still has to appear in the log to be
 	// adopted rather than invented.
-	if !isDir(cdir) && !loggedCrew(paths, id) {
+	if !filetest.IsDir(cdir) && !loggedCrew(paths, id) {
 		say(stderr, "crew: no crew '%s' in this repo — run 'crew crews' to list them, or 'crew new' to start one\n", id)
 		return exitFailure
 	}
@@ -253,7 +254,7 @@ func (o Options) releaseClaims(paths bus.Paths, id string, stderr io.Writer) {
 func (o Options) held(c claim, heads string) string {
 	for _, cb := range c.branches {
 		wt := roster.WorktreePath(o.Worktrees(), cb)
-		if wt != "" && isDir(wt) && o.occupied(wt) {
+		if wt != "" && filetest.IsDir(wt) && o.occupied(wt) {
 			return fmt.Sprintf("crew adopt: keeping #%s — a worker still occupies %s", c.issue, cb)
 		}
 		if hasLine(heads, cb) {
@@ -372,11 +373,6 @@ func cutTab(s string) (field, rest string) {
 		return field, ""
 	}
 	return field, strings.TrimLeft(rest, "\t")
-}
-
-func isDir(path string) bool {
-	st, err := os.Stat(path)
-	return err == nil && st.IsDir()
 }
 
 // hasLine is the arm's `grep -qxF` over the PR head refs: whole-line equality,

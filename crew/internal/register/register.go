@@ -15,6 +15,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/filetest"
 )
 
 const exitFailure = 1
@@ -106,7 +107,7 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 		say(stderr, "crew: crew '%s' still has a live dispatcher (pid %s) that is not this caller's parent or owner — left in place\n", crew, epid)
 		return 0
 	}
-	if isDir(cdir) {
+	if filetest.IsDir(cdir) {
 		logLine("deregister", "removed", "")
 	}
 	if err := os.RemoveAll(cdir); err != nil {
@@ -114,11 +115,6 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 		return exitFailure
 	}
 	return 0
-}
-
-func isDir(path string) bool {
-	st, err := os.Stat(path)
-	return err == nil && st.IsDir()
 }
 
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
