@@ -14,7 +14,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // armFixture is the CLI under test with its side effects faked: the bus log and the
@@ -180,7 +179,7 @@ func (f *armFixture) errOut() string {
 func (f *armFixture) rowsText() string {
 	var b strings.Builder
 	for _, r := range f.bus.appended {
-		b.WriteString(string(jsonv.Append(nil, r, jsonv.Options{})) + "\n")
+		b.WriteString(rowJSON(f.t, r) + "\n")
 	}
 	return b.String()
 }
@@ -387,7 +386,7 @@ func TestRunResolvesTarget(t *testing.T) {
 func TestRunSessionGate(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		rows   []jsonv.Value
+		rows   []any
 		target string
 		want   string
 	}{
@@ -492,7 +491,7 @@ func TestRunReportsPaneOutcome(t *testing.T) {
 	f = newArm(t)
 	f.pane.frames = acceptedFrames(t)
 	deps := newDeps(f.pane, f.bus, f.env)
-	deps.Append = func(jsonv.Value) error { return os.ErrPermission }
+	deps.Append = func(any) error { return os.ErrPermission }
 	if rc := f.runWith(deps, Request{Target: featX}); rc != 0 || !strings.Contains(f.out(), "nudge accepted: %9") {
 		t.Errorf("rc = %d, out = %q, want the accepted outcome at 0", rc, f.out())
 	}
@@ -502,7 +501,7 @@ func TestRunReportsPaneOutcome(t *testing.T) {
 	f = newArm(t)
 	f.pane.frames = []string{fixture(t, "meter.2s.1.2k.txt")}
 	deps = newDeps(f.pane, f.bus, f.env)
-	deps.Append = func(jsonv.Value) error { return os.ErrPermission }
+	deps.Append = func(any) error { return os.ErrPermission }
 	deps.Sleep = func(context.Context, string) error { return nil }
 	deps.Clock = f.clock()
 	if rc := f.runWith(deps, Request{Wait: "30", Target: idleReq}); rc != 1 ||

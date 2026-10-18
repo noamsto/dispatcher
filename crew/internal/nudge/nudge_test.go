@@ -2,6 +2,7 @@ package nudge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,7 +11,6 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/clock"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // fixture is one of the shared pane fixtures the frame package and the bats rows use, so
@@ -95,14 +95,14 @@ func (f *fakePane) run(_ context.Context, args ...string) (string, bool) {
 
 // fakeBus is the anchor's fold input and the rows the call appended.
 type fakeBus struct {
-	rows      []jsonv.Value
-	appended  []jsonv.Value
+	rows      []any
+	appended  []any
 	eventsErr error
 }
 
-func (b *fakeBus) events() ([]jsonv.Value, error) { return b.rows, b.eventsErr }
+func (b *fakeBus) events() ([]any, error) { return b.rows, b.eventsErr }
 
-func (b *fakeBus) append(row jsonv.Value) error {
+func (b *fakeBus) append(row any) error {
 	b.appended = append(b.appended, row)
 	return nil
 }
@@ -150,20 +150,16 @@ func project(rows string) string {
 // sessionRows is the raw bus a session's anchor check reads: a dispatch that opens
 // the session and its newest status. `Deps.Events` is the log, not the fold — the
 // fold is the code under test here.
-func sessionRows(t *testing.T, sid string, state string) []jsonv.Value {
+func sessionRows(t *testing.T, sid string, state string) []any {
 	t.Helper()
 	session := sid[strings.LastIndex(sid, "#")+1:]
 	return rows(t, fmt.Sprintf(`{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","session":%q}`, session),
 		fmt.Sprintf(`{"ts":2,"crew_id":"c1","kind":"status","from":%q,"body":{"state":%q}}`, sid, state))
 }
 
-func rows(t *testing.T, lines ...string) []jsonv.Value {
+func rows(t *testing.T, lines ...string) []any {
 	t.Helper()
-	vs, err := jsonv.DecodeStream(strings.NewReader(strings.Join(lines, "\n")))
-	if err != nil || len(vs) != len(lines) {
-		t.Fatalf("rows: %v", err)
-	}
-	return vs
+	return anyRows(t, lines...)
 }
 
 func req(engine string) PaneRequest {
@@ -443,7 +439,7 @@ func TestPaneAcceptedClaude(t *testing.T) {
 	if len(b.appended) != 1 {
 		t.Fatalf("%d rows appended, want 1", len(b.appended))
 	}
-	got := string(jsonv.Append(nil, b.appended[0], jsonv.Options{}))
+	got := rowJSON(t, b.appended[0])
 	for _, want := range []string{
 		`"crew_id":"c1"`, `"kind":"nudge"`, `"from":"dispatcher:c1"`, `"to":"worker:feat/x#s100-1"`,
 		`"branch":"feat/x"`, `"pane":"%9"`, `"engine":"claude"`, `"result":"accepted"`,
@@ -492,7 +488,7 @@ func TestPaneContinueLine(t *testing.T) {
 	if !found {
 		t.Errorf("no argv typing the continue line; tmux:\n%s", strings.Join(p.tmux, "\n"))
 	}
-	got := string(jsonv.Append(nil, b.appended[0], jsonv.Options{}))
+	got := rowJSON(t, b.appended[0])
 	for _, want := range []string{`"from":"watchdog"`, `"msg_ts":0`, `"result":"accepted"`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("row %s lacks %s", got, want)
@@ -628,7 +624,7 @@ func TestPaneAppendFailureStillReportsTheOutcome(t *testing.T) {
 	p := &fakePane{frames: acceptedFrames(t), windows: wins, panes: panes}
 	b := &fakeBus{rows: sessionRows(t, idleReq, "working")}
 	d := newDeps(p, b, nil)
-	d.Append = func(jsonv.Value) error { return errors.New("read-only bus") }
+	d.Append = func(any) error { return errors.New("read-only bus") }
 	var warned string
 	d.Warn = func(msg string) { warned = msg }
 	out, rc := Pane(context.Background(), req("claude"), d)
@@ -655,9 +651,34 @@ func TestNudgeRowStampIgnoresCrewClock(t *testing.T) {
 	if _, rc := Pane(context.Background(), req("claude"), d); rc != 0 {
 		t.Fatalf("want accepted")
 	}
-	ts, _ := b.appended[0].Get("ts")
-	n, _ := ts.AsFloat()
+	n := float64(b.appended[0].(nudgeRowDoc).TS)
 	if n < float64(time.Now().Add(-time.Hour).UnixMilli()) {
 		t.Errorf("row ts %v is not real time under CREW_CLOCK", n)
+	}
+}
+
+// rowJSON is an appended row as the bus line it becomes.
+func rowJSON(t *testing.T, row any) string {
+	t.Helper()
+	b, err := json.Marshal(row)
+	if err != nil {
+		t.Fatalf("marshal row: %v", err)
+	}
+	return string(b)
+}
+
+func TestDigitsLiteral(t *testing.T) {
+	for in, want := range map[string]string{"0": "0", "000": "0", "007": "7", "1700000000000": "1700000000000"} {
+		if got := digitsLiteral(in); got != want {
+			t.Errorf("digitsLiteral(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestNudgeRowLeadingZeroMsgTS(t *testing.T) {
+	r := req("claude")
+	r.MsgTS = "007"
+	if got := rowJSON(t, nudgeRow(r, "accepted", "", 1)); !strings.Contains(got, `"msg_ts":7`) {
+		t.Errorf("row %s lacks msg_ts 7", got)
 	}
 }
