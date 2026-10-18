@@ -113,7 +113,7 @@ func Run(req Request, stdout, stderr io.Writer, o Options) int {
 			case stale && !all && !asJSON:
 				hidden++
 			default:
-				rows = append(rows, row.Row)
+				rows = append(rows, jsonval.Clamp(row.Row).(map[string]any))
 			}
 		}
 	}

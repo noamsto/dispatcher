@@ -386,3 +386,49 @@ func TestWorktreeProbeFailureKeepsFreshRows(t *testing.T) {
 		t.Errorf("out %s\nerr %q", out, errs)
 	}
 }
+
+func TestNonFiniteAgeIsNullInJSONAndDashInTable(t *testing.T) {
+	root := t.TempDir()
+	nan := mkRepo(t, root, "nan", "",
+		`{"ts":NaN,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working"}}`)
+	registry := filepath.Join(root, "registry")
+	if err := os.WriteFile(registry, []byte(nan+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	empty := t.TempDir()
+	env := map[string]string{"HOME": empty, "CREW_SWEEP_ROOTS": empty}
+	o := Options{
+		Env:       func(k string) string { return env[k] },
+		Registry:  registry,
+		Panes:     func() string { return "" },
+		Windows:   func() string { return "feat/x\n" },
+		Worktrees: func(string) (string, error) { return "", nil },
+		Origin:    func(string) string { return "" },
+		Now:       func() time.Time { return fixedNow },
+	}
+	f := fixture{opts: o}
+
+	out, errs, code := run(t, f, Request{JSON: true})
+	if code != 0 {
+		t.Fatalf("--json exit %d, stderr %q", code, errs)
+	}
+	rows := jsonRows(t, out)
+	if len(rows) != 1 {
+		t.Fatalf("want 1 row, got:\n%s", out)
+	}
+	if v, ok := rows[0]["age_s"]; !ok || v != nil {
+		t.Errorf("age_s = %v (present %v), want null", v, ok)
+	}
+
+	out, errs, code = run(t, f, Request{})
+	if code != 0 {
+		t.Fatalf("table exit %d, stderr %q", code, errs)
+	}
+	data := dataLines(out)
+	if len(data) != 1 || !strings.Contains(data[0], " - ") {
+		t.Errorf("want one row with age -, got:\n%s", out)
+	}
+	if strings.Contains(out, "9223372036854775808") {
+		t.Errorf("table leaks the int64 overflow age:\n%s", out)
+	}
+}

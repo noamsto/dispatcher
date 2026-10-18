@@ -2489,3 +2489,17 @@ func sameRow(t *testing.T, got, want string) bool {
 	}
 	return strings.HasSuffix(got, "\n") && strings.Count(got, "\n") == 1 && reflect.DeepEqual(decode(got), decode(want))
 }
+
+// A corrupt bus ts makes gojq compute NaN ts/age_s; the roster must print
+// them as null rather than fail to encode.
+func TestRosterClampsNonFiniteTimes(t *testing.T) {
+	log := `{"ts":NaN,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working"}}` + "\n"
+	repo, _ := repoWithLog(t, &log, 0o644)
+	out, errOut, code := runRoster(t, repo, "c1")
+	if code != 0 || errOut != "" {
+		t.Fatalf("code %d stderr %q stdout %q", code, errOut, out)
+	}
+	if !strings.Contains(out, `"ts": null`) || !strings.Contains(out, `"age_s": null`) {
+		t.Errorf("stdout = %s, want ts and age_s null", out)
+	}
+}

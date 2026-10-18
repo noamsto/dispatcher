@@ -910,7 +910,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		}
 		var err error
 		rosterRows, err = roster.Fold(docs, crew, nowSec, p)
-		return rosterRows, err
+		return anyRows(rosterRows), err
 	})
 	if code == exitOpen && sub == "sessions" {
 		// jq slurps zero inputs when it cannot open the file, so the program
@@ -926,7 +926,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		merged := roster.MergeRemote(ctx, rosterRows, events, crew, func(ctx context.Context, host string, argv []string, so, se io.Writer) int {
 			return remoteAs(ctx, e, cwd, crew)(host, argv, so, se)
 		})
-		v = merged
+		v = anyRows(merged)
 	}
 
 	if err := jsonval.Encode(out, v, pretty); err != nil {
@@ -1168,4 +1168,14 @@ func worktreeList(cmd *exec.Cmd) (string, error) {
 		return "", &roster.ExitError{Code: 127, Stderr: "git: command not found\n"}
 	}
 	return "", &roster.ExitError{Code: ee.ExitCode(), Stderr: stderr.String()}
+}
+
+// anyRows hands rows to jsonval.Encode as []any so Clamp walks them; a
+// []map[string]any would reach the encoder unclamped, NaN included.
+func anyRows(rows []map[string]any) []any {
+	out := make([]any, len(rows))
+	for i, r := range rows {
+		out[i] = r
+	}
+	return out
 }
