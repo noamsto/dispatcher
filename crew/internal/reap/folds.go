@@ -2,11 +2,14 @@ package reap
 
 import (
 	_ "embed"
+	"encoding/json"
+	"errors"
+	"io"
+	"strconv"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // The arm's jq programs; each file's header documents its patches.
@@ -30,7 +33,7 @@ const claimMaskTTL = 3600
 // terminalStates is `reap_terminal_states`, the states a worker session ends
 // in, shared by the idle-release and candidate folds so they cannot drift
 // apart again (#68).
-var terminalStates = jsonv.Array(jsonv.Str("done"), jsonv.Str("failed"), jsonv.Str("exited"))
+var terminalStates = []any{"done", "failed", "exited"}
 
 // latestRow is one `_reap_latest` row. own, earlier and reaprow are the three
 // PR sources ("-" when absent): the latest session's pr_url, the newest of the
@@ -41,14 +44,14 @@ type latestRow struct {
 }
 
 // readRaws is one `jq -s` read of the bus.
-func readRaws(log string) ([]jsonv.Value, error) {
+func readRaws(log string) ([]any, error) {
 	events, err := bus.ReadEvents(log)
 	if err != nil {
 		return nil, err
 	}
-	raws := make([]jsonv.Value, len(events))
+	raws := make([]any, len(events))
 	for i, ev := range events {
-		raws[i] = ev.Raw
+		raws[i] = ev.Doc
 	}
 	return raws, nil
 }
@@ -64,10 +67,10 @@ func (r *run) latest(only string) ([]latestRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := jqrun.Run(latestProg, raws, r.nowSec(), map[string]jsonv.Value{
-		"only":      jsonv.Str(only),
+	out, err := jqrun.RunAny(latestProg, raws, r.nowSec(), map[string]any{
+		"only":      only,
 		"terminal":  terminalStates,
-		"claim_ttl": jsonv.Num(claimMaskTTL),
+		"claim_ttl": json.Number(strconv.Itoa(claimMaskTTL)),
 	})
 	if err != nil {
 		return nil, err
@@ -87,9 +90,8 @@ func (r *run) idleRows() [][]string {
 	if err != nil {
 		return nil
 	}
-	idle, _ := jsonv.ParseNumber(r.idle)
-	out, err := jqrun.Run(idleProg, raws, r.nowSec(), map[string]jsonv.Value{
-		"idle":     idle,
+	out, err := jqrun.RunAny(idleProg, raws, r.nowSec(), map[string]any{
+		"idle":     json.Number(r.idle),
 		"terminal": terminalStates,
 	})
 	if err != nil {
@@ -105,7 +107,7 @@ func (r *run) claimed(branch string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	out, err := jqrun.Run(claimedProg, raws, r.nowSec(), map[string]jsonv.Value{"b": jsonv.Str(branch)})
+	out, err := jqrun.RunAny(claimedProg, raws, r.nowSec(), map[string]any{"b": branch})
 	if err != nil {
 		return "", err
 	}
@@ -116,7 +118,7 @@ func (r *run) claimed(branch string) (string, error) {
 // but a clean `false` from the check, an unreadable bus or a ts that is not
 // JSON included.
 func (r *run) postedSince(branch, ts string) bool {
-	tsv, err := jsonv.ParseOne(ts)
+	tsv, err := parseOne(ts)
 	if err != nil {
 		return true
 	}
@@ -124,22 +126,36 @@ func (r *run) postedSince(branch, ts string) bool {
 	if err != nil {
 		return true
 	}
-	out, err := jqrun.Run(postedProg, raws, r.nowSec(), map[string]jsonv.Value{
-		"w":  jsonv.Str("worker:" + branch),
+	out, err := jqrun.RunAny(postedProg, raws, r.nowSec(), map[string]any{
+		"w":  "worker:" + branch,
 		"ts": tsv,
 	})
-	return err != nil || out.Kind() != jsonv.KindFalse
+	b, ok := out.(bool)
+	return err != nil || !ok || b
 }
 
 // prFromList is `jq -er` over gh's `pr list` text: the branch's own PR URL,
 // "-" for none, or false when the text or a PR in it is unusable (jq's parse
 // error, the program's error, or no output at all).
 func prFromList(prs string) (string, bool) {
-	vals, err := jsonv.DecodeStream(strings.NewReader(prs))
-	if err != nil || len(vals) == 0 {
+	dec := json.NewDecoder(strings.NewReader(prs))
+	dec.UseNumber()
+	var vals []any
+	for {
+		var v any
+		err := dec.Decode(&v)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", false
+		}
+		vals = append(vals, v)
+	}
+	if len(vals) == 0 {
 		return "", false
 	}
-	out, err := jqrun.Run(findPRProg, vals, 0, nil)
+	out, err := jqrun.RunAny(findPRProg, vals, 0, nil)
 	if err != nil {
 		return "", false
 	}
@@ -147,12 +163,14 @@ func prFromList(prs string) (string, bool) {
 }
 
 // cells reads a patched fold's rows: arrays of strings, by position.
-func cells(v jsonv.Value) [][]string {
+func cells(v any) [][]string {
 	var rows [][]string
-	for _, row := range v.Elems() {
+	arr, _ := v.([]any)
+	for _, row := range arr {
 		var c []string
-		for _, cell := range row.Elems() {
-			s, _ := cell.AsString()
+		cs, _ := row.([]any)
+		for _, cell := range cs {
+			s, _ := cell.(string)
 			c = append(c, s)
 		}
 		rows = append(rows, c)
@@ -162,10 +180,11 @@ func cells(v jsonv.Value) [][]string {
 
 // rawLines is `$(jq -r '.[]')` over an array of strings: one per line,
 // trailing newlines stripped.
-func rawLines(v jsonv.Value) string {
+func rawLines(v any) string {
 	var b strings.Builder
-	for _, e := range v.Elems() {
-		s, _ := e.AsString()
+	arr, _ := v.([]any)
+	for _, e := range arr {
+		s, _ := e.(string)
 		b.WriteString(s)
 		b.WriteByte('\n')
 	}

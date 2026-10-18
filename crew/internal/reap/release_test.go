@@ -2,11 +2,13 @@ package reap
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -14,7 +16,6 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/frame"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 const (
@@ -23,6 +24,23 @@ const (
 	statusTS = int64(1_700_000_000_000)
 	fakeNow  = int64(1_800_000_000)
 )
+
+// sameJSON fails unless got and want decode to equal JSON values.
+func sameJSON(t *testing.T, got, want string) {
+	t.Helper()
+	decode := func(s string) any {
+		dec := json.NewDecoder(strings.NewReader(s))
+		dec.UseNumber()
+		var v any
+		if err := dec.Decode(&v); err != nil {
+			t.Fatalf("decode %q: %v", s, err)
+		}
+		return v
+	}
+	if !reflect.DeepEqual(decode(got), decode(want)) {
+		t.Fatalf("json:\n got %s\nwant %s", got, want)
+	}
+}
 
 func git(t *testing.T, dir string, args ...string) {
 	t.Helper()
@@ -505,16 +523,9 @@ func TestReleaseWritesRowAndKills(t *testing.T) {
 	if path != r.log {
 		t.Fatalf("log %q", path)
 	}
-	got, err := jsonv.ParseOne(line)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, _ := jsonv.ParseOne(fmt.Sprintf(
+	sameJSON(t, line, fmt.Sprintf(
 		`{"ts":%d,"kind":"release","branch":"feat/x","session":"sess-1","state":"done","windows":["@5","@6"]}`,
 		fakeNow*1000+123))
-	if g, w := string(jsonv.Append(nil, got, jsonv.Options{})), string(jsonv.Append(nil, want, jsonv.Options{})); g != w {
-		t.Fatalf("row:\n got %s\nwant %s", g, w)
-	}
 	if strings.ContainsAny(line, "\n ") {
 		t.Fatalf("row is not compact: %q", line)
 	}
