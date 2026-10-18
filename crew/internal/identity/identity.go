@@ -3,16 +3,18 @@
 package identity
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
 // The pools are the three the bash library carried (`_names`/`_colors`/`_tmuxc`)
@@ -73,58 +75,53 @@ func CKsum(data []byte) uint32 {
 // Slot is the pool index a branch hashes to.
 func Slot(branch string) int { return int(CKsum([]byte(branch)) % poolSize) }
 
-// At is the pool identity {name, color, tmux} at slot.
-func At(slot int) jsonv.Value {
-	return jsonv.Object(
-		jsonv.Member{Key: "name", Val: jsonv.Str(names[slot])},
-		jsonv.Member{Key: "color", Val: jsonv.Str(colors[slot])},
-		jsonv.Member{Key: "tmux", Val: jsonv.Str(tmuxc[slot])},
-	)
+// Identity is a branch's codename, colour and tmux colour.
+type Identity struct {
+	Name  string `json:"name"`
+	Color any    `json:"color"` // passes through as any JSON value, gojq form
+	Tmux  string `json:"tmux"`
 }
 
-// Palette is the `_colors` pool as a value: the roster renderer's D2 program
-// looks a row's colour up in it to decide whether the branch box gets a stroke,
-// which is why the whole list travels rather than one slot.
-func Palette() jsonv.Value {
-	out := make([]jsonv.Value, len(colors))
-	for i, c := range colors {
-		out[i] = jsonv.Str(c)
-	}
-	return jsonv.Array(out...)
+// Value is the identity as the jq programs' input object.
+func (id Identity) Value() map[string]any {
+	return map[string]any{"name": id.Name, "color": id.Color, "tmux": id.Tmux}
 }
+
+// At is the pool identity {name, color, tmux} at slot.
+func At(slot int) Identity {
+	return Identity{Name: names[slot], Color: colors[slot], Tmux: tmuxc[slot]}
+}
+
+// Palette is the `_colors` pool: the roster renderer's D2 program looks a row's
+// colour up in it to decide whether the branch box gets a stroke, which is why
+// the whole list travels rather than one slot.
+func Palette() []string { return slices.Clone(colors[:]) }
 
 // Recorded is the identity of the last well-formed `dispatch` event for
 // branch, across every crew. Events that are not objects never match.
-func Recorded(events []jsonv.Value, branch string) (jsonv.Value, bool) {
-	want, _ := jsonv.Str(branch).AsString()
-	var last jsonv.Value
+func Recorded(events []any, branch string) (Identity, bool) {
+	var last Identity
 	found := false
 	for _, ev := range events {
-		if id, ok := recordedIn(ev, want); ok {
+		if id, ok := recordedIn(ev, branch); ok {
 			last, found = id, true
 		}
 	}
 	return last, found
 }
 
-func recordedIn(ev jsonv.Value, branch string) (jsonv.Value, bool) {
-	if ev.Kind() != jsonv.KindObject {
-		return jsonv.Value{}, false
+func recordedIn(ev any, branch string) (Identity, bool) {
+	doc, ok := ev.(map[string]any)
+	if !ok {
+		return Identity{}, false
 	}
-	if !stringMember(ev, "kind", func(s string) bool { return s == "dispatch" }) ||
-		!stringMember(ev, "branch", func(s string) bool { return s == branch }) ||
-		!stringMember(ev, "name", nameRe.MatchString) ||
-		!stringMember(ev, "tmux", tmuxRe.MatchString) {
-		return jsonv.Value{}, false
+	if !stringMember(doc, "kind", func(s string) bool { return s == "dispatch" }) ||
+		!stringMember(doc, "branch", func(s string) bool { return s == branch }) ||
+		!stringMember(doc, "name", nameRe.MatchString) ||
+		!stringMember(doc, "tmux", tmuxRe.MatchString) {
+		return Identity{}, false
 	}
-	name, _ := ev.Get("name")
-	color, _ := ev.Get("color")
-	tmux, _ := ev.Get("tmux")
-	return jsonv.Object(
-		jsonv.Member{Key: "name", Val: name},
-		jsonv.Member{Key: "color", Val: color},
-		jsonv.Member{Key: "tmux", Val: tmux},
-	), true
+	return Identity{Name: doc["name"].(string), Color: doc["color"], Tmux: doc["tmux"].(string)}, true
 }
 
 // RecordedAll folds every branch's recorded identity in a single pass: for
@@ -132,35 +129,34 @@ func recordedIn(ev jsonv.Value, branch string) (jsonv.Value, bool) {
 // same predicate Recorded reports per branch. The roster builds its identity
 // map from this so a fold is O(events + rows), not O(rows × events) (#821).
 // Only branches with a recorded identity appear as keys.
-func RecordedAll(events []jsonv.Value) map[string]jsonv.Value {
-	last := map[string]jsonv.Value{}
+func RecordedAll(events []any) map[string]Identity {
+	last := map[string]Identity{}
 	for _, ev := range events {
-		if ev.Kind() != jsonv.KindObject {
+		doc, ok := ev.(map[string]any)
+		if !ok {
 			continue
 		}
-		br, _ := ev.Get("branch")
-		branch, isStr := br.AsString()
+		branch, isStr := doc["branch"].(string)
 		if !isStr {
 			continue
 		}
-		if id, ok := recordedIn(ev, branch); ok {
+		if id, ok := recordedIn(doc, branch); ok {
 			last[branch] = id
 		}
 	}
 	return last
 }
 
-// stringMember reports whether ev[key] is a string satisfying ok.
-func stringMember(ev jsonv.Value, key string, ok func(string) bool) bool {
-	v, _ := ev.Get(key)
-	s, isStr := v.AsString()
+// stringMember reports whether doc[key] is a string satisfying ok.
+func stringMember(doc map[string]any, key string, ok func(string) bool) bool {
+	s, isStr := doc[key].(string)
 	return isStr && ok(s)
 }
 
 // For is the recorded identity of branch from a RecordedAll map, else its
 // pool identity. A branch that is empty or holds a space, tab or newline is
 // never looked up by the roster (the arm's `$(...)` word-split drops it).
-func For(recorded map[string]jsonv.Value, branch string) jsonv.Value {
+func For(recorded map[string]Identity, branch string) Identity {
 	if id, ok := recorded[branch]; ok {
 		return id
 	}
@@ -249,15 +245,14 @@ func Occupied(rows []bus.Event, crew string, p Probes, nowMS int64) []string {
 // live worker holds, falling back to the hash slot when all 32 are taken. A branch
 // always gets an identity. The avoid names are held elsewhere (another host's
 // workers) and count as live workers on the bus.
-func Assign(rows []bus.Event, branch, crew string, p Probes, avoid []string, nowMS int64) jsonv.Value {
+func Assign(rows []bus.Event, branch, crew string, p Probes, avoid []string, nowMS int64) Identity {
 	// The recorded name is gated by the bus alone: tmux names join only after it.
 	occ := occupied(rows, branch, crew, nowMS)
 	for _, name := range avoid {
 		occ[name] = true
 	}
-	if rec, ok := Recorded(rawValues(rows), branch); ok {
-		name, _ := rec.Get("name")
-		if held, _ := name.AsString(); !occ[held] {
+	if rec, ok := Recorded(docs(rows), branch); ok {
+		if !occ[rec.Name] {
 			return rec
 		}
 	}
@@ -285,25 +280,27 @@ func Assign(rows []bus.Event, branch, crew string, p Probes, avoid []string, now
 func occupied(rows []bus.Event, branch, crew string, nowMS int64) map[string]bool {
 	// The newest `worker:` status row per branch, keyed by the branch its id
 	// names: a finished worker frees the name it held.
-	status := map[string]bus.Event{}
+	status := map[string]map[string]any{}
 	// Each other branch's last dispatch row, in log order as the arm's
 	// `group_by(.branch) | map(last)` took it.
-	dispatch := map[string]bus.Event{}
+	dispatch := map[string]map[string]any{}
 	selfts, haveSelf := 0.0, false
 	for _, ev := range rows {
 		// The arm selected on `.crew_id == $crew`, a `--arg` string: jq's `==` is
 		// false against null or a number, so a row that recorded no crew_id belongs
 		// to no crew — not even the empty one `crew identity <branch>` resolves to
 		// outside a task doc, where ev.CrewID and the crew are both "".
-		stored, _ := ev.Raw.Get("crew_id")
-		cid, isStr := stored.AsString()
-		if !isStr || cid != crew {
+		doc, isObj := ev.Doc.(map[string]any)
+		if !isObj {
+			continue
+		}
+		if cid, isStr := doc["crew_id"].(string); !isStr || cid != crew {
 			continue
 		}
 		if ev.Kind == bus.KindStatus {
 			if wid, held := workerBranch(ev.From); held {
-				if cur, seen := status[wid]; !seen || atLeast(ev.TS, cur.TS) {
-					status[wid] = ev
+				if cur, seen := status[wid]; !seen || atLeast(doc["ts"], cur["ts"]) {
+					status[wid] = doc
 				}
 			}
 			continue
@@ -313,18 +310,17 @@ func occupied(rows []bus.Event, branch, crew string, nowMS int64) map[string]boo
 		}
 		// A branch that is not a string keys nothing: the arm's jq died on such a
 		// row, taking every occupancy with it.
-		key, _ := ev.Raw.Get("branch")
-		name, isStr := key.AsString()
+		name, isStr := doc["branch"].(string)
 		if !isStr {
 			continue
 		}
 		if name == branch {
-			if ts, ok := ev.TS.AsFloat(); ok && (!haveSelf || ts > selfts) {
+			if ts, ok := number(doc["ts"]); ok && (!haveSelf || ts > selfts) {
 				selfts, haveSelf = ts, true
 			}
 			continue
 		}
-		dispatch[name] = ev
+		dispatch[name] = doc
 	}
 	// The arm's `$selfts`, 1e18 when this branch was never dispatched here: every
 	// other branch is then older, so all of them hold their names.
@@ -333,21 +329,19 @@ func occupied(rows []bus.Event, branch, crew string, nowMS int64) map[string]boo
 		limit = selfts
 	}
 	occ := map[string]bool{}
-	for name, ev := range dispatch {
-		if ts, ok := ev.TS.AsFloat(); ok && ts > limit {
+	for name, doc := range dispatch {
+		ts, hasTS := number(doc["ts"])
+		if hasTS && ts > limit {
 			continue // dispatched after us: it yields, we hold
 		}
-		if st, ok := status[name].Body.Get("state"); ok {
-			if s, isStr := st.AsString(); isStr && bus.State(s).Terminal() {
-				continue
-			}
+		body, _ := status[name]["body"].(map[string]any)
+		if s, isStr := body["state"].(string); isStr && bus.State(s).Terminal() {
+			continue
 		}
-		if remote, _ := ev.Raw.Get("remote"); remote.Kind() == jsonv.KindTrue {
-			if ts, ok := ev.TS.AsFloat(); ok && nowMS-int64(ts) >= remoteHold.Milliseconds() {
-				continue
-			}
+		if remote, _ := doc["remote"].(bool); remote && hasTS && nowMS-int64(ts) >= remoteHold.Milliseconds() {
+			continue
 		}
-		if held, ok := heldName(ev, name); ok {
+		if held, ok := heldName(doc, name); ok {
 			occ[held] = true
 		}
 	}
@@ -358,20 +352,21 @@ func occupied(rows []bus.Event, branch, crew string, nowMS int64) map[string]boo
 // stamped, or the pool name the branch hashes to when it recorded none — jq's
 // `// ""`, which reads null, false and absent alike. ok is false for a name of any
 // other type: bash @tsv'd it into a token no pool holds, so it held nothing.
-func heldName(ev bus.Event, branch string) (string, bool) {
-	name, _ := ev.Raw.Get("name")
-	switch {
-	case name.Kind() == jsonv.KindString:
-		s, _ := name.AsString()
-		if s == "" {
+func heldName(doc map[string]any, branch string) (string, bool) {
+	switch name := doc["name"].(type) {
+	case string:
+		if name == "" {
 			return names[Slot(branch)], true
 		}
-		return s, true
-	case name.IsNull() || name.Kind() == jsonv.KindFalse: // jq's `// "": both are no name
+		return name, true
+	case nil: // jq's `// "": null, false and absent are no name
 		return names[Slot(branch)], true
-	default:
-		return "", false
+	case bool:
+		if !name {
+			return names[Slot(branch)], true
+		}
 	}
+	return "", false
 }
 
 // workerBranch is the fold's `ltrimstr("worker:") | sub("#[^#]*$";"")`: the branch
@@ -391,13 +386,26 @@ func workerBranch(from string) (string, bool) {
 // atLeast reports whether left's `ts` orders at or after right's, the tie broken
 // for the later row as jq's `max_by` breaks it. A `ts` that is not a number is
 // jq's null: below every number, so the newest real row wins.
-func atLeast(left, right jsonv.Value) bool {
-	lt, lok := left.AsFloat()
-	rt, rok := right.AsFloat()
+func atLeast(left, right any) bool {
+	lt, lok := number(left)
+	rt, rok := number(right)
 	if !rok {
 		return true
 	}
 	return lok && lt >= rt
+}
+
+// number reads a gojq-form value as a float. A literal out of float64 range
+// reads as ±Inf, as the jq programs read it.
+func number(v any) (float64, bool) {
+	switch x := v.(type) {
+	case json.Number:
+		f, _ := strconv.ParseFloat(string(x), 64)
+		return f, true
+	case float64:
+		return x, true
+	}
+	return 0, false
 }
 
 // windowNames is the arm's tmux read flattened to the codenames it lists. The arm
@@ -425,17 +433,20 @@ func busEvents(path string) []bus.Event {
 	return events
 }
 
-func rawValues(rows []bus.Event) []jsonv.Value {
-	out := make([]jsonv.Value, len(rows))
+func docs(rows []bus.Event) []any {
+	out := make([]any, len(rows))
 	for i, ev := range rows {
-		out[i] = ev.Raw
+		out[i] = ev.Doc
 	}
 	return out
 }
 
 // emit prints one identity as the arm's `jq -nc` did: compact, on one line.
-func emit(w io.Writer, v jsonv.Value) int {
-	say(w, "%s\n", jsonv.Append(nil, v, jsonv.Options{}))
+func emit(w io.Writer, id Identity) int {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	id.Color = jsonval.Clamp(id.Color)
+	_ = enc.Encode(id)
 	return 0
 }
 

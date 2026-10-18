@@ -31,6 +31,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/inbox"
 	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/log"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/piagentdir"
@@ -918,17 +919,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		opts.Colors = &palette
 	}
 
+	var rosterRows []map[string]any
 	raw, code := fold(sub, events, err, paths.Log, stderr, func(evs []jsonv.Value) (jsonv.Value, error) {
 		now := time.Now()
 		if e.now != nil {
 			now = e.now()
 		}
 		nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
+		docs := make([]any, len(evs))
+		for i, ev := range evs {
+			docs[i] = jsonv.ToAny(ev)
+		}
 		if sub == "sessions" {
-			docs := make([]any, len(evs))
-			for i, ev := range evs {
-				docs[i] = jsonv.ToAny(ev)
-			}
 			folded, err := sessions.Fold(docs, branch, crew, nowSec)
 			if err != nil {
 				return jsonv.Value{}, err
@@ -950,7 +952,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 				return roster.CrewWindowBranches(out, crew)
 			}
 		}
-		return roster.Fold(evs, crew, nowSec, p)
+		var err error
+		if rosterRows, err = roster.Fold(docs, crew, nowSec, p); err != nil {
+			return jsonv.Value{}, err
+		}
+		return rowsValue(rosterRows)
 	})
 	if code == exitOpen && sub == "sessions" {
 		// jq slurps zero inputs when it cannot open the file, so the program
@@ -963,9 +969,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// --live is the form a dispatcher routes to this host: it answers for this
 	// host alone, so hosts never ask each other.
 	if sub == "roster" && !parsed.typed.Roster.Live {
-		raw = roster.MergeRemote(ctx, raw, events, crew, func(ctx context.Context, host string, argv []string, so, se io.Writer) int {
+		merged := roster.MergeRemote(ctx, rosterRows, events, crew, func(ctx context.Context, host string, argv []string, so, se io.Writer) int {
 			return remoteAs(ctx, e, cwd, crew)(host, argv, so, se)
 		})
+		var err error
+		if raw, err = rowsValue(merged); err != nil {
+			say(stderr, "crew: %v\n", err)
+			return exitFailure
+		}
 	}
 
 	if err := jsonv.Encode(out, raw, opts); err != nil {
@@ -977,6 +988,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		say(out, "\n") // the arm's `printf '\n'` after jq -c
 	}
 	return flush(out, stderr, code)
+}
+
+// rowsValue is the roster rows as a jsonv array, clamped as the print clamps.
+func rowsValue(rows []map[string]any) (jsonv.Value, error) {
+	anys := make([]any, len(rows))
+	for i, r := range rows {
+		anys[i] = r
+	}
+	var b bytes.Buffer
+	if err := jsonval.Encode(&b, anys, false); err != nil {
+		return jsonv.Value{}, err
+	}
+	return jsonv.ParseOne(b.String())
 }
 
 // remoteAs runs a command on a remote host in this checkout's clone, as crew.

@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
@@ -73,15 +74,14 @@ var emptyLive = live(nil)
 
 // rowStates is the model's rows as `branch state`, sorted by branch the way the
 // model leaves them.
-func rowStates(t *testing.T, m jsonv.Value) []string {
+func rowStates(t *testing.T, m map[string]any) []string {
 	t.Helper()
-	rows, _ := m.Get("rows")
+	rows, _ := m["rows"].([]any)
 	var out []string
-	for _, r := range rows.Elems() {
-		br, _ := r.Get("branch")
-		st, _ := r.Get("state")
-		b, _ := br.AsString()
-		s, _ := st.AsString()
+	for _, r := range rows {
+		row, _ := r.(map[string]any)
+		b, _ := row["branch"].(string)
+		s, _ := row["state"].(string)
 		out = append(out, b+" "+s)
 	}
 	return out
@@ -90,21 +90,23 @@ func rowStates(t *testing.T, m jsonv.Value) []string {
 // TestModelWithoutABusIsTheArmsEmptyOne: a repo with no bus yet renders an empty
 // diagram rather than failing, and the arm said so with a literal.
 // compact is a model rendered the way a test reads it back: one line, no colour.
-func compact(v jsonv.Value) string {
+func compact(v any) string {
 	var b bytes.Buffer
-	if err := jsonv.Encode(&b, v, jsonv.Options{}); err != nil {
+	if err := jsonval.Encode(&b, v, false); err != nil {
 		panic(err)
 	}
 	return b.String()
 }
 
-func decodeOne(t *testing.T, text string) jsonv.Value {
+func decodeOne(t *testing.T, text string) map[string]any {
 	t.Helper()
-	vs, err := jsonv.DecodeStream(strings.NewReader(text))
-	if err != nil || len(vs) != 1 {
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.UseNumber()
+	var m map[string]any
+	if err := dec.Decode(&m); err != nil || m == nil {
 		t.Fatalf("decode %q: %v", text, err)
 	}
-	return vs[0]
+	return m
 }
 
 func TestModelWithoutABusIsTheArmsEmptyOne(t *testing.T) {
@@ -114,8 +116,9 @@ func TestModelWithoutABusIsTheArmsEmptyOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := compact(m); got != `{"rows":[],"holds":[],"roles":[]}` {
-		t.Errorf("model = %s", got)
+	// A map keeps no key order, so the arm's literal is compared by value.
+	if want := decodeOne(t, `{"rows":[],"holds":[],"roles":[]}`); !reflect.DeepEqual(m, want) {
+		t.Errorf("model = %s", compact(m))
 	}
 }
 
@@ -166,9 +169,9 @@ func TestModelCarriesTheDispatchedRowUntilTheBranchSpeaks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, _ := m.Get("rows")
-	if rows.Len() != 2 {
-		t.Fatalf("rows = %d", rows.Len())
+	rows, _ := m["rows"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d", len(rows))
 	}
 	byBranch := map[string]map[string]any{}
 	var out []map[string]any
@@ -255,8 +258,7 @@ func TestRoleEngineIsOnlyAKnownEngine(t *testing.T) {
 	}
 	engine := func() string {
 		list := roleList(rows, dir)
-		v, _ := list.Elems()[0].Get("engine")
-		got, _ := v.AsString()
+		got, _ := list[0].(map[string]any)["engine"].(string)
 		return got
 	}
 

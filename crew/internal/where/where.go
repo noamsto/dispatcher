@@ -346,7 +346,5 @@ func joinBranches(wins []window, sep string) string {
 // poolName is `_identity <branch> | jq -r .name`: the codename the pool gives
 // this branch, which is what `dispatch` stamped when it made the window.
 func poolName(branch string) string {
-	id, _ := identity.At(identity.Slot(branch)).Get("name")
-	name, _ := id.AsString()
-	return name
+	return identity.At(identity.Slot(branch)).Name
 }

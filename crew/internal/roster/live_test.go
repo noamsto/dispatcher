@@ -1,24 +1,25 @@
 package roster
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
-
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // row is a folded row as the diagram sees it: the three fields the liveness rule
 // reads, and nothing else.
-func row(t *testing.T, state, branch, ageS string) jsonv.Value {
+func row(t *testing.T, state, branch, ageS string) map[string]any {
 	t.Helper()
 	text := fmt.Sprintf(`{"state":%q,"branch":%q}`, state, branch)
 	if ageS != "" {
 		text = text[:len(text)-1] + fmt.Sprintf(`,"age_s":%s}`, ageS)
 	}
-	v, err := jsonv.ParseOne(text)
-	if err != nil {
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.UseNumber()
+	var v map[string]any
+	if err := dec.Decode(&v); err != nil {
 		t.Fatalf("row %q: %v", text, err)
 	}
 	return v

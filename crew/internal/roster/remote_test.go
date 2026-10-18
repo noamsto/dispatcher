@@ -2,7 +2,9 @@ package roster
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,7 +15,6 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
 )
 
@@ -36,6 +37,18 @@ func remoteDispatch(branch, name, host string) string {
 
 const localRows = `[{"branch":"feat/near","state":"working"}]`
 
+// rowsOf decodes a JSON array of objects the way a roster prints them.
+func rowsOf(t *testing.T, text string) []map[string]any {
+	t.Helper()
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.UseNumber()
+	var rows []map[string]any
+	if err := dec.Decode(&rows); err != nil {
+		t.Fatal(err)
+	}
+	return rows
+}
+
 // capture is a Remote whose host answers from a table.
 type captureCall struct {
 	host string
@@ -44,13 +57,13 @@ type captureCall struct {
 
 func TestMergeRemoteWithoutRemoteRowsChangesNothing(t *testing.T) {
 	events := busEvents(t, `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/near","name":"nova","host":"h1"}`)
-	local := testjson.MustParse(t, localRows)
+	local := rowsOf(t, localRows)
 	got := MergeRemote(context.Background(), local, events, "c1", func(context.Context, string, []string, io.Writer, io.Writer) int {
 		t.Fatal("asked a host with no remote rows")
 		return 0
 	})
-	if testjson.Compact(got) != testjson.Compact(testjson.MustParse(t, localRows)) {
-		t.Errorf("got %s", testjson.Compact(got))
+	if compact(t, got) != compact(t, rowsOf(t, localRows)) {
+		t.Errorf("got %s", compact(t, got))
 	}
 }
 
@@ -68,7 +81,7 @@ func TestMergeRemoteTagsAndKeepsOnlyThisHostsBranches(t *testing.T) {
 		mu    sync.Mutex
 		calls []captureCall
 	)
-	got := MergeRemote(context.Background(), testjson.MustParse(t, localRows), events, "c1",
+	got := MergeRemote(context.Background(), rowsOf(t, localRows), events, "c1",
 		func(ctx context.Context, host string, argv []string, stdout, _ io.Writer) int {
 			if _, ok := ctx.Deadline(); !ok {
 				t.Error("a remote roster has no deadline")
@@ -91,11 +104,11 @@ func TestMergeRemoteTagsAndKeepsOnlyThisHostsBranches(t *testing.T) {
 		`{"branch":"feat/big","state":"blocked","live":true,"host":"big"},` +
 		`{"branch":"feat/far","state":"working","live":true,"host":"mini"},` +
 		`{"branch":"feat/also","state":"done","live":false,"host":"mini"}]`
-	if testjson.Compact(got) != testjson.Compact(testjson.MustParse(t, want)) {
-		t.Errorf("got  %s\nwant %s", testjson.Compact(got), testjson.Compact(testjson.MustParse(t, want)))
+	if compact(t, got) != testjson.Compact(testjson.MustParse(t, want)) {
+		t.Errorf("got  %s\nwant %s", compact(t, got), testjson.Compact(testjson.MustParse(t, want)))
 	}
-	// Local rows come first and keep their key order and bytes.
-	if s := string(jsonv.Append(nil, got.Elems()[0], jsonv.Options{})); s != `{"branch":"feat/near","state":"working"}` {
+	// Local rows come first.
+	if s := compact(t, got[0]); s != testjson.Compact(testjson.MustParse(t, `{"branch":"feat/near","state":"working"}`)) {
 		t.Errorf("local row changed: %s", s)
 	}
 }
@@ -118,25 +131,26 @@ func TestMergeRemoteUnreachableHostGetsPlaceholders(t *testing.T) {
 		"not an array":   {rc: 0, stdout: `{"a":1}`, wantErr: "remote roster is not an array"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := MergeRemote(context.Background(), testjson.MustParse(t, localRows), events, "c1",
+			got := MergeRemote(context.Background(), rowsOf(t, localRows), events, "c1",
 				func(_ context.Context, _ string, _ []string, stdout, stderr io.Writer) int {
 					_, _ = io.WriteString(stdout, tc.stdout)
 					_, _ = io.WriteString(stderr, tc.stderr)
 					return tc.rc
 				})
-			rows := got.Elems()
+			rows := got
 			if len(rows) != 3 {
-				t.Fatalf("rows = %s, want the local row and one placeholder per remote branch", testjson.Compact(got))
+				t.Fatalf("rows = %s, want the local row and one placeholder per remote branch", compact(t, got))
 			}
 			for i, w := range []struct{ branch, name string }{{"feat/also", "sage"}, {"feat/far", "iris"}} {
 				row := rows[i+1]
-				errv, _ := row.Get("host_error")
-				msg, _ := errv.AsString()
+				msg, _ := row["host_error"].(string)
 				if tc.wantErr != "" && msg != tc.wantErr || msg == "" {
 					t.Errorf("host_error = %q, want %q", msg, tc.wantErr)
 				}
-				if s := string(jsonv.Append(nil, jsonv.Object(nonErr(row.Members())...), jsonv.Options{})); s !=
-					`{"branch":"`+w.branch+`","name":"`+w.name+`","host":"mini","state":null,"live":null,"ts":1}` {
+				bare := maps.Clone(row)
+				delete(bare, "host_error")
+				if s, want := compact(t, bare), testjson.Compact(testjson.MustParse(t,
+					`{"branch":"`+w.branch+`","name":"`+w.name+`","host":"mini","state":null,"live":null,"ts":1}`)); s != want {
 					t.Errorf("placeholder = %s", s)
 				}
 			}
@@ -144,19 +158,9 @@ func TestMergeRemoteUnreachableHostGetsPlaceholders(t *testing.T) {
 	}
 }
 
-func nonErr(ms []jsonv.Member) []jsonv.Member {
-	var out []jsonv.Member
-	for _, m := range ms {
-		if m.Key != "host_error" {
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
 func TestMergeRemoteBoundsEachHostBy30Seconds(t *testing.T) {
 	events := busEvents(t, remoteDispatch("feat/far", "iris", "mini"))
-	MergeRemote(context.Background(), testjson.MustParse(t, localRows), events, "c1",
+	MergeRemote(context.Background(), rowsOf(t, localRows), events, "c1",
 		func(ctx context.Context, _ string, _ []string, _, _ io.Writer) int {
 			deadline, ok := ctx.Deadline()
 			if left := time.Until(deadline); !ok || left > 30*time.Second || left < 29*time.Second {
@@ -173,10 +177,9 @@ func TestMergeRemotePlaceholderCarriesTheDispatchTS(t *testing.T) {
 		`{"ts":1700000000000,"crew_id":"c1","kind":"dispatch","branch":"feat/far","name":"iris","host":"mini","remote":true}`,
 		`{"ts":1700000005000,"crew_id":"c1","kind":"dispatch","branch":"feat/far","name":"iris","host":"mini","remote":true}`,
 	)
-	got := MergeRemote(context.Background(), testjson.MustParse(t, `[]`), events, "c1",
+	got := MergeRemote(context.Background(), rowsOf(t, `[]`), events, "c1",
 		func(context.Context, string, []string, io.Writer, io.Writer) int { return 255 })
-	ts, _ := got.Elems()[0].Get("ts")
-	if s := string(jsonv.Append(nil, ts, jsonv.Options{})); s != "1700000005000" {
+	if s := compact(t, got[0]["ts"]); s != "1700000005000" {
 		t.Errorf("ts = %s, want the newest dispatch row's 1700000005000", s)
 	}
 }
@@ -192,7 +195,7 @@ func TestMergeRemoteAsksHostsConcurrently(t *testing.T) {
 	arrived.Add(2)
 	all := make(chan struct{})
 	go func() { arrived.Wait(); close(all) }()
-	got := MergeRemote(context.Background(), testjson.MustParse(t, `[]`), events, "c1",
+	got := MergeRemote(context.Background(), rowsOf(t, `[]`), events, "c1",
 		func(_ context.Context, host string, _ []string, stdout, stderr io.Writer) int {
 			arrived.Done()
 			select {
@@ -205,7 +208,7 @@ func TestMergeRemoteAsksHostsConcurrently(t *testing.T) {
 			return 0
 		})
 	want := `[{"branch":"feat/big","state":"working","host":"big"},{"branch":"feat/far","state":"working","host":"mini"}]`
-	if testjson.Compact(got) != testjson.Compact(testjson.MustParse(t, want)) {
-		t.Errorf("got  %s\nwant %s", testjson.Compact(got), want)
+	if compact(t, got) != testjson.Compact(testjson.MustParse(t, want)) {
+		t.Errorf("got  %s\nwant %s", compact(t, got), want)
 	}
 }

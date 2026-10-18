@@ -1,6 +1,8 @@
 package identity
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,7 +17,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
 var longBranch = "feat/" + strings.Repeat("0123456789", 29) + "01234"
@@ -79,26 +81,38 @@ func TestSlotMatchesCksumBinary(t *testing.T) {
 }
 
 func TestAt(t *testing.T) {
-	got := string(jsonv.Append(nil, At(0), jsonv.Options{}))
+	got := compact(At(0))
 	if want := `{"name":"sage","color":"green","tmux":"colour28"}`; got != want {
 		t.Errorf("At(0) = %s, want %s", got, want)
 	}
-	got = string(jsonv.Append(nil, At(31), jsonv.Options{}))
+	got = compact(At(31))
 	if want := `{"name":"cobalt","color":"royalblue","tmux":"colour68"}`; got != want {
 		t.Errorf("At(31) = %s, want %s", got, want)
 	}
 }
 
-func events(t *testing.T, src string) []jsonv.Value {
+func events(t *testing.T, src string) []any {
 	t.Helper()
-	vs, err := jsonv.DecodeStream(strings.NewReader(src))
-	if err != nil {
-		t.Fatal(err)
+	dec := json.NewDecoder(strings.NewReader(src))
+	dec.UseNumber()
+	var vs []any
+	for dec.More() {
+		var v any
+		if err := dec.Decode(&v); err != nil {
+			t.Fatal(err)
+		}
+		vs = append(vs, v)
 	}
 	return vs
 }
 
-func compact(v jsonv.Value) string { return string(jsonv.Append(nil, v, jsonv.Options{})) }
+func compact(id Identity) string {
+	var b bytes.Buffer
+	if err := jsonval.Encode(&b, id, false); err != nil {
+		panic(err)
+	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
 
 // fallback is the pool identity the branch hashes to.
 func fallback(branch string) string { return compact(At(Slot(branch))) }

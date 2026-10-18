@@ -1,15 +1,17 @@
 package roster
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/drift"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
 )
 
@@ -526,13 +528,37 @@ var cases = []rosterCase{
 	},
 }
 
-func decodeEvents(t *testing.T, lines []string) []jsonv.Value {
+func decodeEvents(t *testing.T, lines []string) []any {
 	t.Helper()
-	events, err := jsonv.DecodeStream(strings.NewReader(strings.Join(lines, "\n")))
-	if err != nil {
+	evs := busEvents(t, lines...)
+	docs := make([]any, len(evs))
+	for i, ev := range evs {
+		docs[i] = ev.Doc
+	}
+	return docs
+}
+
+// anyRows is rows as []any, the form jsonval.Clamp walks.
+func anyRows(rows []map[string]any) []any {
+	out := make([]any, len(rows))
+	for i, r := range rows {
+		out[i] = r
+	}
+	return out
+}
+
+// compact encodes v and re-reads it through testjson, so two values compare
+// on their values, key order aside.
+func compact(t *testing.T, v any) string {
+	t.Helper()
+	if rows, ok := v.([]map[string]any); ok {
+		v = anyRows(rows)
+	}
+	var b bytes.Buffer
+	if err := jsonval.Encode(&b, v, false); err != nil {
 		t.Fatal(err)
 	}
-	return events
+	return testjson.Compact(testjson.MustParse(t, b.String()))
 }
 
 func TestFold(t *testing.T) {
@@ -575,7 +601,7 @@ func TestFold(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if s, want := testjson.Compact(got), testjson.Compact(testjson.MustParse(t, c.want)); s != want {
+				if s, want := compact(t, got), testjson.Compact(testjson.MustParse(t, c.want)); s != want {
 					t.Errorf("got\n %s\nwant\n %s", s, want)
 				}
 			}
@@ -618,21 +644,21 @@ func TestFoldLive(t *testing.T) {
 	if calls != 1 {
 		t.Errorf("LiveBranches called %d times, want 1", calls)
 	}
-	for i, row := range live.Elems() {
-		want := map[string]jsonv.Value{"feat/a": jsonv.Bool(true), "feat/b": jsonv.Bool(false)}
-		b, _ := row.Get("branch")
-		branch, _ := b.AsString()
-		got, ok := row.Get("live")
-		if !ok || testjson.Compact(got) != testjson.Compact(want[branch]) {
-			t.Errorf("%s: live = %s (present %t), want %s", branch, testjson.Compact(got), ok, testjson.Compact(want[branch]))
+	for i, row := range live {
+		want := map[string]bool{"feat/a": true, "feat/b": false}
+		branch, _ := row["branch"].(string)
+		got, ok := row["live"]
+		if !ok || got != want[branch] {
+			t.Errorf("%s: live = %v (present %t), want %t", branch, got, ok, want[branch])
 		}
-		if _, ok := plain.Elems()[i].Get("live"); ok {
+		if _, ok := plain[i]["live"]; ok {
 			t.Errorf("%s: a fold without LiveBranches carries live", branch)
 		}
 		// Everything but live is the plain row.
-		stripped := jsonv.Object(slices.DeleteFunc(slices.Clone(row.Members()), func(m jsonv.Member) bool { return m.Key == "live" })...)
-		if testjson.Compact(stripped) != testjson.Compact(plain.Elems()[i]) {
-			t.Errorf("%s: --live changed more than live:\n%s\n%s", branch, testjson.Compact(stripped), testjson.Compact(plain.Elems()[i]))
+		stripped := maps.Clone(row)
+		delete(stripped, "live")
+		if compact(t, stripped) != compact(t, plain[i]) {
+			t.Errorf("%s: --live changed more than live:\n%s\n%s", branch, compact(t, stripped), compact(t, plain[i]))
 		}
 	}
 }

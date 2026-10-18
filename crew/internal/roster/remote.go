@@ -3,6 +3,7 @@ package roster
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,7 +31,7 @@ type Capture func(ctx context.Context, host string, argv []string, stdout, stder
 // branch, `state` and `live` null, `ts` the dispatch row's and the reason in
 // `host_error`: it is never reported dead for having no local window. With no
 // remote worker the rows come back untouched.
-func MergeRemote(ctx context.Context, rows jsonv.Value, events []bus.Event, crew string, capture Capture) jsonv.Value {
+func MergeRemote(ctx context.Context, rows []map[string]any, events []bus.Event, crew string, capture Capture) []map[string]any {
 	workers := remote.RemoteWorkers(events, crew)
 	if len(workers) == 0 {
 		return rows
@@ -44,30 +45,33 @@ func MergeRemote(ctx context.Context, rows jsonv.Value, events []bus.Event, crew
 		byHost = append(byHost, workers[:n])
 		workers = workers[n:]
 	}
-	answers := make([][]jsonv.Value, len(byHost))
+	answers := make([][]map[string]any, len(byHost))
 	var wg sync.WaitGroup
 	for i, ws := range byHost {
 		wg.Go(func() { answers[i] = hostRows(ctx, ws[0].Host, ws, crew, capture) })
 	}
 	wg.Wait()
-	merged := slices.Clone(rows.Elems())
+	merged := slices.Clone(rows)
 	for _, a := range answers {
 		merged = append(merged, a...)
 	}
-	return jsonv.Array(merged...)
+	return merged
 }
 
-func hostRows(ctx context.Context, host string, workers []remote.Worker, crew string, capture Capture) []jsonv.Value {
+func hostRows(ctx context.Context, host string, workers []remote.Worker, crew string, capture Capture) []map[string]any {
 	reply, err := askHost(ctx, host, crew, capture)
 	if err != nil {
 		return placeholders(host, workers, err.Error())
 	}
-	var kept []jsonv.Value
-	for _, row := range reply {
-		b, _ := row.Get("branch")
-		branch, _ := b.AsString()
-		if slices.ContainsFunc(workers, func(w remote.Worker) bool { return w.Branch == branch }) && row.Kind() == jsonv.KindObject {
-			row.Set("host", jsonv.Str(host))
+	var kept []map[string]any
+	for _, r := range reply {
+		row, ok := r.(map[string]any)
+		if !ok {
+			continue
+		}
+		branch, _ := row["branch"].(string)
+		if slices.ContainsFunc(workers, func(w remote.Worker) bool { return w.Branch == branch }) {
+			row["host"] = host
 			kept = append(kept, row)
 		}
 	}
@@ -76,7 +80,7 @@ func hostRows(ctx context.Context, host string, workers []remote.Worker, crew st
 
 // askHost is the host's roster rows, or why it gave none: the first line of its
 // stderr when it failed, else its status.
-func askHost(ctx context.Context, host, crew string, capture Capture) ([]jsonv.Value, error) {
+func askHost(ctx context.Context, host, crew string, capture Capture) ([]any, error) {
 	ctx, cancel := context.WithTimeout(ctx, remoteTimeout)
 	defer cancel()
 	var stdout, stderr bytes.Buffer
@@ -86,28 +90,40 @@ func askHost(ctx context.Context, host, crew string, capture Capture) ([]jsonv.V
 		}
 		return nil, fmt.Errorf("exit status %d", rc)
 	}
-	vs, err := jsonv.DecodeStream(&stdout)
-	if err != nil {
-		return nil, fmt.Errorf("remote roster: %v", err)
+	dec := json.NewDecoder(&stdout)
+	dec.UseNumber()
+	var vs []any
+	for {
+		var v any
+		if err := dec.Decode(&v); err == io.EOF {
+			break
+		} else if err != nil {
+			return nil, fmt.Errorf("remote roster: %v", err)
+		}
+		vs = append(vs, v)
 	}
-	if len(vs) != 1 || vs[0].Kind() != jsonv.KindArray {
+	if len(vs) != 1 {
 		return nil, errors.New("remote roster is not an array")
 	}
-	return vs[0].Elems(), nil
+	rows, ok := vs[0].([]any)
+	if !ok {
+		return nil, errors.New("remote roster is not an array")
+	}
+	return rows, nil
 }
 
-func placeholders(host string, workers []remote.Worker, reason string) []jsonv.Value {
-	rows := make([]jsonv.Value, len(workers))
+func placeholders(host string, workers []remote.Worker, reason string) []map[string]any {
+	rows := make([]map[string]any, len(workers))
 	for i, w := range workers {
-		rows[i] = jsonv.Object(
-			jsonv.Member{Key: "branch", Val: jsonv.Str(w.Branch)},
-			jsonv.Member{Key: "name", Val: jsonv.Str(w.Name)},
-			jsonv.Member{Key: "host", Val: jsonv.Str(host)},
-			jsonv.Member{Key: "state", Val: jsonv.Null()},
-			jsonv.Member{Key: "live", Val: jsonv.Null()},
-			jsonv.Member{Key: "ts", Val: w.TS},
-			jsonv.Member{Key: "host_error", Val: jsonv.Str(reason)},
-		)
+		rows[i] = map[string]any{
+			"branch":     w.Branch,
+			"name":       w.Name,
+			"host":       host,
+			"state":      nil,
+			"live":       nil,
+			"ts":         jsonv.ToAny(w.TS),
+			"host_error": reason,
+		}
 	}
 	return rows
 }
