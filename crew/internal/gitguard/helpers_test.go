@@ -137,5 +137,5 @@ func sha8(s string) string {
 }
 
 func noteHint(file string) string {
-	return "  human: check each value above is yours — a planted one stays trusted: restore it in its config file, delete " + Quote(file) + ", then run `crew git-baseline --accept` in your own terminal\n"
+	return "  human: check each value above is yours — a planted one stays trusted: restore it in its config file, delete " + Quote(file) + ", then run `crew git-baseline --accept` in your own terminal before any dispatch (a dispatch first re-records EVERYTHING present)\n"
 }

@@ -188,7 +188,7 @@ func noteKeys(stderr io.Writer, file, what string, recs, aliases []string) {
 		shown = true
 	}
 	if shown {
-		say(stderr, "  human: check each value above is yours — a planted one stays trusted: restore it in its config file, delete %s, then run `crew git-baseline --accept` in your own terminal\n", Quote(file))
+		say(stderr, "  human: check each value above is yours — a planted one stays trusted: restore it in its config file, delete %s, then run `crew git-baseline --accept` in your own terminal before any dispatch (a dispatch first re-records EVERYTHING present)\n", Quote(file))
 	}
 }
 
@@ -206,5 +206,9 @@ func showRecorded(k, v string, aliases []string) string {
 		sec, _, _ := strings.Cut(k, ".")
 		cmd = "git config --show-origin --get-regexp " + Quote("^"+sec+`\.`)
 	}
-	return kd + ": value withheld (outside the mask grammar) — check it in your own terminal, from each checkout or worktree that may set it: " + cmd
+	reason := "outside the mask grammar"
+	if globAny(k, "remote.*.url", "remote.*.pushurl") && Rewritten(v, aliases) {
+		reason = "an insteadOf alias rewrites it"
+	}
+	return kd + ": value withheld (" + reason + ") — check it in your own terminal, from each checkout or worktree that may set it: " + cmd
 }

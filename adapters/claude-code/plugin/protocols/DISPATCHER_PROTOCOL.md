@@ -839,15 +839,19 @@ branch instead; the worktree carries over under `resume: true`.
   the redirect marker. Dispatch's baseline-recorded note, like a fresh
   baseline's, lists each recorded redirect pair under its keys, the value
   rendered as in `crew git-baseline` drift output — or withheld, with a
-  `git config --show-origin` pointer, when it carries userinfo or a query the
-  mask grammar cannot cover, since the note reaches the dispatcher, not the
-  human's terminal. Nothing independent of the worker-writable config anchors
-  origin's host and owner/repo (`gh` resolves the repo from `remote.origin.url`
-  itself; worktree records carry no repo), so the migration cannot refuse a
-  value replaced before it ran: relay the note to the human, who checks each
-  host/path. A value they did not set stays trusted until they restore it in
-  its config file, delete the baseline and run `crew git-baseline --accept` in
-  their own terminal (it lists every guarded pair and records them on a typed
+  `git config --show-origin` pointer, when it carries userinfo or a query and
+  is outside the mask grammar or rewritten by an `insteadOf` alias, since the
+  note reaches the dispatcher, not the human's terminal. Nothing independent
+  of the worker-writable config anchors origin's host or owner/repo (`gh`
+  resolves the repo from `remote.origin.url` itself; worktree records carry no
+  repo; the claim index's owner/repo slug was derived from that same config at
+  earlier dispatches, and only for clones with issue dispatches), so neither
+  the migration nor a fresh baseline refuses a value replaced before it ran:
+  whenever dispatch prints a baseline-recorded note, relay it to the human,
+  who checks each host/path. A value they did not set stays trusted until they
+  restore it in its config file, delete the baseline and run `crew
+  git-baseline --accept` in their own terminal before any dispatch (it lists
+  every guarded pair and records them on a typed
   `yes`; it refuses while legacy entries exist) — not a re-dispatch, which would
   re-record everything unreviewed. A legitimate change of origin's URL, a
   proxy, or a local `insteadOf` alias then refuses like any drift until the
@@ -864,9 +868,10 @@ branch instead; the worktree carries over under `resume: true`.
   reap --quiet` (how dispatch runs it) drops reap's own `keeping …` note,
   though the guard's refusal lines still reach stderr; the guard compares
   config, not the program; refusals name the key and its file, never the
-  value; dispatch's baseline-recorded note names exec keys and legacy entries
-  only and withholds a redirect value with userinfo or a query outside the
-  grammar below; refusals, that note and `crew git-baseline`
+  value; dispatch's baseline-recorded note gives exec keys and legacy entries
+  by name only (never their values) and withholds a redirect value with
+  userinfo or a query that the grammar below cannot mask or an alias rewrites;
+  refusals, that note and `crew git-baseline`
   (listing and `--accept` prompt) mask URL userinfo and query values in redirect-key values
   and in URL-subsection keys (`url.<base>.(push)insteadOf`, `http.<url>.*`,
   `credential.<url>.*`), showing host/path plus an 8-hex `sha256:` fingerprint
