@@ -9,6 +9,10 @@
 // regression. Known differences, each refusing more or unreachable unless noted:
 //   - Oniguruma's retry limit fails a pathological but well-formed ledger, which
 //     the arm then refuses; the parser here has no limit.
+//   - Oniguruma caps `\g<b>` call nesting at 20 levels: an evidence group (or,
+//     under `waived(dispatcher`, a group inside it) holding parens nested deeper
+//     than maxGroupDepth is no item, as in the arm. The count is the group's own
+//     height, so `pass(` + 19 inner pairs conforms and 20 does not.
 //   - an id run through `awk -v` that unescapes to invalid UTF-8 (`\xff`) is
 //     compared as U+FFFD runes, and awk's warning about an unknown escape is not
 //     printed.
@@ -436,7 +440,12 @@ type text struct {
 	idEnd []int // end of the [^\s;,()]+ run starting at i
 	wsEnd []int // end of the \s* run starting at i
 	stop  []int // first ')' or unmatched '(' at or after i, skipping balanced groups
+	depth []int // height of the group opening at each matched '(' (1 for a leaf)
 }
+
+// maxGroupDepth is how deep Oniguruma lets `\g<b>` nest: a group of height 21
+// fails to match.
+const maxGroupDepth = 20
 
 // scan reads d as jq's --arg does, except that invalid UTF-8 becomes one U+FFFD
 // per byte where jq folds a truncated sequence into one, which Check never lets
@@ -444,17 +453,22 @@ type text struct {
 func scan(d string) *text {
 	rs := []rune(d)
 	n := len(rs)
-	t := &text{rs: rs, close: make([]int, n), idEnd: make([]int, n+1), wsEnd: make([]int, n+1), stop: make([]int, n+1)}
-	var open []int
+	t := &text{rs: rs, close: make([]int, n), idEnd: make([]int, n+1), wsEnd: make([]int, n+1), stop: make([]int, n+1), depth: make([]int, n)}
+	var open, kids []int // kids[k]: tallest group closed directly inside open[k]
 	for i, r := range rs {
 		t.close[i] = -1
 		switch r {
 		case '(':
 			open = append(open, i)
+			kids = append(kids, 0)
 		case ')':
 			if len(open) > 0 {
-				t.close[open[len(open)-1]] = i
-				open = open[:len(open)-1]
+				o, h := open[len(open)-1], kids[len(kids)-1]+1
+				t.close[o], t.depth[o] = i, h
+				open, kids = open[:len(open)-1], kids[:len(kids)-1]
+				if len(kids) > 0 {
+					kids[len(kids)-1] = max(kids[len(kids)-1], h)
+				}
 			}
 		}
 	}
@@ -503,7 +517,7 @@ func (t *text) keyword(i int) (item, int, bool) {
 	rs, n := t.rs, len(t.rs)
 	if j, ok := t.fold(i, "pass"); ok && j < n && rs[j] == '(' {
 		// (?=\(\s*[^\s)]) then the balanced group.
-		if k := t.wsEnd[j+1]; k == n || rs[k] == ')' || t.close[j] < 0 {
+		if k := t.wsEnd[j+1]; k == n || rs[k] == ')' || t.close[j] < 0 || t.depth[j] > maxGroupDepth {
 			return item{}, 0, false
 		}
 		end := t.close[j] + 1
@@ -529,6 +543,9 @@ func (t *text) keyword(i int) (item, int, bool) {
 	it := item{kind: "waived"}
 	for p := k + 1; p < s; p++ {
 		if rs[p] == '(' {
+			if t.depth[p] > maxGroupDepth {
+				return item{}, 0, false
+			}
 			it.ev = evidence(rs[p : t.close[p]+1])
 			p = t.close[p]
 		}
