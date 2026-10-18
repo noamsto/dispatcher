@@ -1,38 +1,37 @@
 // Package report is `crew report`: the per-run dispatch table — engine, model,
 // tier, shape, outcome, duration — joining each `dispatch` row of a crew to the
-// `status` rows of the session it dispatched. The fold is the original jq
-// program from adapters/core/crew.sh (report.jq), run through gojq, so the
-// program stays one shared source with the arm it replaces.
+// `status` rows of the session it dispatched.
 package report
 
 import (
-	_ "embed"
 	"errors"
 	"fmt"
 	"io"
-	"time"
+	"math"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jqrun"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
-
-//go:embed report.jq
-var program string
 
 // header is the arm's printf, matching the fold's column order.
 const header = "engine\tmodel\ttier\tshape\toutcome\tduration_s"
 
-// jq's status for a fold that fails on a row it cannot use. A bus it cannot
+// The status for a fold that fails on a row it cannot use. A bus it cannot
 // read maps through bus.JQFailure (2 unreadable, 5 corrupt) before the fold.
 const exitType = 5
 
+const none = "—"
+
+// tsvEscape is @tsv's escaping of one column.
+var tsvEscape = strings.NewReplacer(`\`, `\\`, "\t", `\t`, "\n", `\n`, "\r", `\r`)
+
 // Options is everything Run reads beyond the bus: whether $JQ_COLORS was
-// invalid (jq warns once, at startup, even for the raw-output fold), and the
-// clock the fold would freeze `now` to (it does not read `now`; the field
-// keeps the package deterministic in tests, as crews.Options does).
+// invalid (jq warns once, at startup, even for the raw-output fold).
 type Options struct {
 	JQColorsInvalid bool
-	Now             func() time.Time
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
@@ -60,19 +59,115 @@ func Run(crew string, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		return code
 	}
 
-	docs := make([]any, len(events))
-	for i, ev := range events {
-		docs[i] = ev.Doc
-	}
-	now := o.Now()
-	nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
-	out, err := jqrun.RunAny(program, docs, nowSec, map[string]any{"crew": crew})
+	rows, err := fold(events, crew)
 	if err != nil {
 		say(stderr, "crew: report: %s: %v\n", paths.Log, err)
 		return exitType
 	}
-	if s, _ := out.(string); s != "" {
-		say(stdout, "%s\n", s)
+	for _, r := range rows {
+		say(stdout, "%s\n", r)
 	}
 	return 0
 }
+
+// fold renders one table row per dispatch of the crew. A dispatch joins every
+// status row whose sender, minus the "worker:" prefix and "#session" suffix, is
+// its branch.
+func fold(events []bus.Event, crew string) ([]string, error) {
+	var dispatches, statuses []bus.Event
+	for _, ev := range events {
+		if _, ok := ev.Doc.(map[string]any); !ok && ev.Doc != nil {
+			return nil, fmt.Errorf("cannot index %T with \"crew_id\"", ev.Doc)
+		}
+		if ev.CrewID != crew {
+			continue
+		}
+		if ev.Kind == bus.KindDispatch {
+			dispatches = append(dispatches, ev)
+		}
+		if ev.Kind == bus.KindStatus {
+			statuses = append(statuses, ev)
+		}
+	}
+
+	var rows []string
+	for _, d := range dispatches {
+		var mine []bus.Event
+		for _, st := range statuses {
+			if d.Branch != "" && sessionBranch(st.From) == d.Branch {
+				mine = append(mine, st)
+			}
+		}
+		// Stable, so file order breaks ties; a row with no ts sorts first.
+		sort.SliceStable(mine, func(i, j int) bool { return ts(mine[i]) < ts(mine[j]) })
+
+		var outcome any = none
+		start, last := math.Inf(-1), math.Inf(-1)
+		for i, st := range mine {
+			state, err := stateOf(st)
+			if err != nil {
+				return nil, err
+			}
+			if state == "working" && math.IsInf(start, -1) {
+				start = ts(st)
+			}
+			if i == len(mine)-1 {
+				last = ts(st)
+				if truthy(state) {
+					outcome = state
+				}
+			}
+		}
+		duration := none
+		if !math.IsInf(start, -1) && !math.IsInf(last, -1) {
+			duration = strconv.FormatFloat(math.Floor((last-start)/1000), 'f', -1, 64)
+		}
+		shape := doc(d)["shape"]
+		if !truthy(shape) {
+			shape = none
+		}
+
+		var cells []string
+		for _, c := range []any{doc(d)["engine"], doc(d)["model"], doc(d)["tier"], shape, outcome, duration} {
+			cells = append(cells, tsvEscape.Replace(jsonval.RawText(c)))
+		}
+		rows = append(rows, strings.Join(cells, "\t"))
+	}
+	return rows, nil
+}
+
+// sessionBranch is a sender's branch.
+func sessionBranch(from string) string {
+	from = strings.TrimPrefix(from, "worker:")
+	if i := strings.LastIndex(from, "#"); i >= 0 {
+		return from[:i]
+	}
+	return from
+}
+
+func doc(e bus.Event) map[string]any {
+	m, _ := e.Doc.(map[string]any)
+	return m
+}
+
+// stateOf is a status body's state; an absent or null body has none.
+func stateOf(e bus.Event) (any, error) {
+	switch b := doc(e)["body"].(type) {
+	case nil:
+		return nil, nil
+	case map[string]any:
+		return b["state"], nil
+	default:
+		return nil, fmt.Errorf("cannot index %T with \"state\"", b)
+	}
+}
+
+// ts is an event's timestamp; a row without a numeric one sorts first.
+func ts(e bus.Event) float64 {
+	if f, ok := e.TS.AsFloat(); ok {
+		return f
+	}
+	return math.Inf(-1)
+}
+
+func truthy(v any) bool { return v != nil && v != false }

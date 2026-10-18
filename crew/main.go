@@ -881,10 +881,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			opts := log.Options{JQColorsInvalid: !colorsOK}
 			code = log.Run(crew, paths, out, stderr, opts)
 		} else {
-			code = report.Run(crew, paths, out, stderr, report.Options{
-				JQColorsInvalid: !colorsOK,
-				Now:             time.Now,
-			})
+			code = report.Run(crew, paths, out, stderr, report.Options{JQColorsInvalid: !colorsOK})
 		}
 		return flush(out, stderr, code)
 	}

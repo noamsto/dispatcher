@@ -3,27 +3,18 @@
 // cross-run evidence, so the fold reads the whole bus with no crew filter —
 // which is also why a clean run prints nothing at all.
 //
-// The fold is the original jq program from adapters/core/crew.sh (retro.jq), run
-// through gojq, so it stays one shared source with the arm it replaces. It
-// renders three shapes from one run: the per-run TSV rows, the padded --report
-// table, and the --report --json object — pretty-printed, and plain: jq's
-// terminal colour and its broken-`$JQ_COLORS` warning are quirks of the process,
-// and this output is compared by value.
+// It renders three shapes from one fold: the per-run TSV rows, the padded
+// --report table, and the --report --json object, pretty-printed and plain.
 package retro
 
 import (
-	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jqrun"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
-
-//go:embed retro.jq
-var program string
 
 const (
 	// header is the arm's printf, printed before jq starts and only without --report.
@@ -71,35 +62,29 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer) int {
 		return code
 	}
 
-	docs := make([]any, len(events))
-	for i, ev := range events {
-		docs[i] = ev.Doc
+	for _, ev := range events {
+		if _, ok := ev.Doc.(map[string]any); !ok && ev.Doc != nil {
+			say(stderr, "crew: retro: %s: cannot index %T with \"kind\"\n", paths.Log, ev.Doc)
+			return exitType
+		}
 	}
-	out, err := jqrun.RunAny(program, docs, 0, map[string]any{
-		"want_report": report,
-		"want_json":   jsonOut,
-	})
-	if err != nil {
-		say(stderr, "crew: retro: %s: %v\n", paths.Log, err)
-		return exitType
-	}
+	rows := collect(events)
 
-	// --report --json is the arm's only non-string output, so the only shape jq
-	// pretty-prints. The other two are strings the fold already joined: `jq -r`
-	// printed them plus one newline, and the empty string — zero rows, never a
-	// row without its tabs — printed nothing.
 	if jsonOut {
-		enc := json.NewEncoder(stdout)
-		enc.SetEscapeHTML(false)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
+		if err := jsonval.Encode(stdout, reportJSON(rows), true); err != nil {
 			say(stderr, "crew: retro: %v\n", err)
 			return exitFailure
 		}
 		return 0
 	}
-	if s, _ := out.(string); s != "" {
-		say(stdout, "%s\n", s)
+	var out string
+	if report {
+		out = reportTable(rows)
+	} else {
+		out = bareRows(rows)
+	}
+	if out != "" {
+		say(stdout, "%s\n", out)
 	}
 	return 0
 }

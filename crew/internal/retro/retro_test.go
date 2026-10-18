@@ -230,14 +230,11 @@ func TestCorruptBusIsOurOwnLine(t *testing.T) {
 	}
 }
 
-func TestFoldTypeFailureExitsFive(t *testing.T) {
-	// A non-object row has no `.kind` to index, and a note whose engine column
-	// is an object has no place in a @tsv row. Both are the arm's exit 5, and
-	// unlike the arm Go prints no row it had already streamed (docs/crew-go-port.md).
-	out, errb, code := run(t, oneRun+`{"ts":3000,"crew_id":"c1","kind":"dispatch","branch":"feat/b","engine":{"nested":true},"model":"m","tier":"standard","title":"t"}`+
-		"\n"+`{"ts":3100,"crew_id":"c1","kind":"msg","from":"worker:feat/b#s1","to":"retro:c1","body":"{\"seam\":\"execute\",\"tag\":\"other\",\"detail\":\"d\"}"}`+"\n", Request{})
+func TestNonObjectRowExitsFive(t *testing.T) {
+	// A row that is not an object has no `.kind` to index: the whole fold fails.
+	out, errb, code := run(t, oneRun+"5\n", Request{})
 	if code != 5 {
-		t.Fatalf("a fold type error should exit 5, got %d (%s)", code, errb)
+		t.Fatalf("a non-object row should exit 5, got %d (%s)", code, errb)
 	}
 	if out != "branch\tengine\tmodel\ttier\toutcome\ttags\n" {
 		t.Errorf("stdout = %q", out)
@@ -322,4 +319,35 @@ func TestJSONIsNeverColoured(t *testing.T) {
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+func TestPlanRequiredWithoutVerdictIsFlagged(t *testing.T) {
+	dispatch := `{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/a","engine":"claude","model":"m","tier":"standard","plan":"required"}` + "\n"
+	snapshot := `{"ts":1100,"crew_id":"c1","kind":"msg","from":"worker:feat/a#s1","to":"metrics:c1","body":"{\"plan_critic_first_pass\":null,\"review_mode\":\"full\",\"notes\":[]}"}` + "\n"
+	seam := `{"ts":1050,"crew_id":"c1","kind":"msg","from":"worker:feat/a#s1","to":"review:c1","body":"{\"seam\":\"plan\",\"plan_critic_first_pass\":\"accept\"}"}` + "\n"
+	for _, tc := range []struct {
+		name, events, want string
+	}{
+		{"no verdict", dispatch + snapshot, "feat/a\tclaude\tm\tstandard\t—\tplan_required_unaudited\n"},
+		{"plan seam on the bus", dispatch + seam + snapshot, ""},
+		{"resumed", dispatch + `{"ts":1010,"crew_id":"c1","kind":"resume","branch":"feat/a"}` + "\n" + snapshot, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, _, _ := run(t, tc.events, Request{})
+			if want := "branch\tengine\tmodel\ttier\toutcome\ttags\n" + tc.want; out != want {
+				t.Errorf("stdout = %q, want %q", out, want)
+			}
+		})
+	}
+}
+
+func TestRedispatchWindowsNotes(t *testing.T) {
+	events := `{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/a","engine":"claude","model":"m","tier":"standard"}` + "\n" +
+		`{"ts":1100,"crew_id":"c1","kind":"msg","from":"worker:feat/a#s1","to":"retro:c1","body":"{\"seam\":\"execute\",\"tag\":\"other\",\"detail\":\"first\"}"}` + "\n" +
+		`{"ts":2000,"crew_id":"c1","kind":"dispatch","branch":"feat/a","engine":"pi","model":"m","tier":"standard"}` + "\n" +
+		`{"ts":2100,"crew_id":"c1","kind":"status","from":"worker:feat/a#s2","body":{"state":"done"}}` + "\n"
+	out, _, _ := run(t, events, Request{})
+	if want := "branch\tengine\tmodel\ttier\toutcome\ttags\nfeat/a\tclaude\tm\tstandard\t—\tother\n"; out != want {
+		t.Errorf("the second run must not inherit the first's note: %q", out)
+	}
 }

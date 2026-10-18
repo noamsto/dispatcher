@@ -1920,7 +1920,7 @@ func TestRunConvertedFlagSubcommands(t *testing.T) {
 		{name: "roster a crew", args: []string{"roster", "c9"}, stdout: "[]\n"},
 		{name: "retro json needs report", args: []string{"retro", "--json"}, code: exitFailure, stderr: retroUsage + "\n"},
 		{name: "retro report json equals", args: []string{"retro", "--report=true", "--json=true"},
-			stdout: "{\n  \"rows\": [],\n  \"tags\": [],\n  \"unknown\": []\n}\n"},
+			stdout: "{\n  \"tags\": [],\n  \"unknown\": [],\n  \"rows\": []\n}\n"},
 		{name: "rate json needs report", args: []string{"rate", "--json"}, code: exitFailure, stderr: rateUsage + "\n"},
 		{name: "rate root needs sweep-all", args: []string{"rate", "--root", "/x"}, code: exitFailure,
 			stderr: "crew: rate --root needs --sweep-all\n"},
