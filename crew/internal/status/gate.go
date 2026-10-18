@@ -10,8 +10,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
 )
 
-// jqUnreadable is jq's exit status for an input it cannot read: a log file that
-// will not open.
+// jqUnreadable is jq's exit status for a log file that will not open.
 const jqUnreadable = 2
 
 // gate is the arm's pr_open/done gate for a worker session.
@@ -29,12 +28,11 @@ type taskDoc struct {
 	plan, resume       string
 }
 
-// check returns the refusal line, or "" when the row may be posted. The review,
-// deslop and (for `plan: required`) plan seams are checked in that order. Seams
-// from any earlier session on this branch in this crew count (the resume case;
-// the plan seam only since the branch's latest dispatch), and a worker that
-// cannot review stops on an ungated state (blocked/failed), so refusing here
-// never strands one.
+// check returns the refusal line, or "" when the row may be posted. Seams are
+// checked review, deslop, then (`plan: required`) plan. Seams from any earlier
+// session on this branch in this crew count (the resume case; the plan seam
+// only since the latest dispatch). A worker that cannot review stops on an
+// ungated state (blocked/failed), so refusing here never strands one.
 func (g gate) check() string {
 	if g.state != "pr_open" && g.state != "done" || !strings.HasPrefix(g.from, "worker:") {
 		return ""
@@ -54,10 +52,7 @@ func (g gate) check() string {
 
 	log := readLog(g.paths.Log)
 	if g.state == "pr_open" {
-		in := ledger.Input{From: g.from, Crew: g.crew, Detail: g.detail, TaskDoc: doc.text, TaskDocErr: doc.unreadable}
-		if log.exists {
-			in.Log = log.lines
-		}
+		in := ledger.Input{From: g.from, Crew: g.crew, Detail: g.detail, TaskDoc: doc.text, TaskDocErr: doc.unreadable, Log: log.lines}
 		if line := ledger.Check(in); line != "" {
 			return line
 		}
@@ -112,13 +107,11 @@ func readLog(path string) logFile {
 		return logFile{}
 	}
 	data, err := os.ReadFile(path)
-	if err != nil {
-		return logFile{exists: true, lines: []string{}, err: err}
+	lines := []string{}
+	if len(data) > 0 {
+		lines = strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 	}
-	if len(data) == 0 {
-		return logFile{exists: true, lines: []string{}}
-	}
-	return logFile{exists: true, lines: strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")}
+	return logFile{exists: true, lines: lines, err: err}
 }
 
 var spaceRe = regexp.MustCompile(`[ \t\n\v\f\r]+`)

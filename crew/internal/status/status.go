@@ -5,9 +5,8 @@
 // is refused unless its task doc's acceptance ledger conforms (pr_open,
 // internal/ledger) and, for a standard or deep implement session, the log holds
 // the lead's review seam and deslop seam, plus a plan seam (or a resume of the
-// branch) when its task doc says `plan: required`. The seam folds are Go
-// (seam.go). Refusing less often than the arm is a regression: every gate fails
-// closed.
+// branch) when its task doc says `plan: required`. Refusing less often than the
+// arm is a regression: every gate fails closed.
 package status
 
 import (
@@ -59,8 +58,7 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-// say writes to a stream whose failure is reported elsewhere (the exit status,
-// or nowhere, for stderr) — main.go's helper, same reason.
+// say writes to a stream whose failure is reported elsewhere, as main.go's does.
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
 // begin is the arms' shared preamble: the crew id, then the bus dir the append
@@ -114,8 +112,8 @@ func encodeLine(v any) string {
 }
 
 // post fits the row to a bus line and appends it, the arm's `_fit_line` and
-// `_bus_append`. Callers take the row's ts once before build: FitLine reruns it
-// for every shrink pass, and a ts taken inside would move with the loop.
+// `_bus_append`. Callers take ts once before build: FitLine reruns it per shrink
+// pass, and a ts taken inside would move.
 func post(sub string, paths bus.Paths, stderr io.Writer, build func(text string) string, full string) int {
 	if err := bus.Append(paths.Log, bus.FitLine(build, full)); err != nil {
 		say(stderr, "crew: %s: %v\n", sub, err)
@@ -187,11 +185,10 @@ func RunStatus(req StatusRequest, paths bus.Paths, stderr io.Writer, o Options) 
 	return 0
 }
 
-// publishPane mirrors a worker's status onto its OWN lead pane; a role pane's
-// does not (CREW_ROLE_ID set, and its @crew_role is the role). The
-// @crew_role=lead check also keeps a dispatcher-process `crew status` from
-// painting the dispatcher's own pane. Best effort: it must never fail the
-// write that precedes it.
+// publishPane mirrors a worker's status onto its OWN lead pane, never a role
+// pane's (CREW_ROLE_ID set). The @crew_role=lead check also keeps a
+// dispatcher-process `crew status` off the dispatcher's pane. Best effort: it
+// must never fail the write that precedes it.
 func publishPane(o Options, state, detail string) {
 	pane := o.Getenv("TMUX_PANE")
 	if o.Getenv("CREW_ROLE_ID") != "" || pane == "" || o.Tmux == nil {

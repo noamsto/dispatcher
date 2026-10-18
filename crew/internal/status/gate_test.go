@@ -82,6 +82,9 @@ func reviewCases() []gateCase {
 			reviewSeam, msgRow(rev, branch, `looks fine`), deslopSeam),
 		seamPass("claude: NaN reviewer reject does not revoke", reviewDoc,
 			reviewSeam, deslopSeam, nanReject),
+		// jq refuses nesting past 5000 objects, so it never saw this seam.
+		seamRefuse("claude: seam padded past jq's nesting limit", reviewDoc, refused,
+			paddedReview, deslopSeam),
 
 		// review seam, engine pi: verdicts not pinned by TestPiReviewerVerdicts
 		seamRefuse("pi: revise to another branch voids an accept", piDoc(), refused,
@@ -143,6 +146,8 @@ func deslopCases() []gateCase {
 			reviewSeam, msgRow(worker, "review:c1", `{"seam":"deslop","note":"\ud83d"}`)),
 		seamPass("deslop: body with a lone low surrogate", standardDoc,
 			reviewSeam, msgRow(worker, "review:c1", `{"seam":"deslop","note":"\udc00"}`)),
+		seamRefuse("deslop: seam padded past jq's nesting limit", standardDoc, refused,
+			reviewSeam, paddedDeslop),
 		// jq's fromjson reads NaN, so jq grants here; Go's decoder refuses it.
 		seamRefuse("refuse-more: NaN deslop body", standardDoc, refused,
 			reviewSeam, msgRow(worker, "review:c1", `{"seam":"deslop","n":NaN}`)),
@@ -194,6 +199,9 @@ func planCases() []gateCase {
 		seamRefuse("plan: NaN dispatch after seam", planDoc, refused, with(planSeam, nanDispatch)...),
 		seamRefuse("plan: NaN dispatch with escaped kind and branch after seam", planDoc, refused,
 			with(planSeam, nanDispatchEscaped)...),
+		seamPass("plan: torn dispatcher msg naming crew, dispatch and branch does not reset", planDoc,
+			with(planSeam, tornDispatchr)...),
+		seamPass("plan: NaN dispatcher msg does not drop a resume", planDoc, with(resumeRow, nanDispatchr)...),
 		seamPass("plan: seam after a NaN dispatch", planDoc, with(nanDispatch, planSeam)...),
 		seamRefuse("plan: resume then NaN dispatch", planDoc, refused, with(resumeRow, nanDispatch)...),
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -20,6 +21,11 @@ var highEscape = regexp.MustCompile(`(\\+)u[dD][89abAB][0-9a-fA-F]{2}(\\u[dD][c-
 
 // fromJSON decodes s as exactly one JSON value; ok is false for anything else.
 func fromJSON(s string) (v any, ok bool) {
+	// jq refuses nesting past 5000 objects and encoding/json allows 10000.
+	// Depth never exceeds the bracket count; no crew writer emits that many.
+	if strings.Count(s, "{")+strings.Count(s, "[") >= 5000 {
+		return nil, false
+	}
 	dec := json.NewDecoder(strings.NewReader(s))
 	dec.UseNumber()
 	if err := dec.Decode(&v); err != nil {
@@ -65,19 +71,22 @@ func sessionless(v any) string {
 
 var stringLiteral = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
 
-// mentions reports s in line, raw or inside one of its decoded string
-// literals, so an escaped spelling (`\/`, `r`) still matches.
-func mentions(line, s string) bool {
-	if strings.Contains(line, s) {
-		return true
-	}
+// literals is every string literal in line, decoded, so an escaped spelling
+// (`\/`, `\u0072`) still matches.
+func literals(line string) []string {
+	var out []string
 	for _, lit := range stringLiteral.FindAllString(line, -1) {
 		var v string
-		if json.Unmarshal([]byte(lit), &v) == nil && strings.Contains(v, s) {
-			return true
+		if json.Unmarshal([]byte(lit), &v) == nil {
+			out = append(out, v)
 		}
 	}
-	return false
+	return out
+}
+
+// mentions reports s in line, raw or inside one of its decoded string literals.
+func mentions(line, s string) bool {
+	return strings.Contains(line, s) || slices.ContainsFunc(literals(line), func(v string) bool { return strings.Contains(v, s) })
 }
 
 func has(o map[string]any, key string) bool {
@@ -169,8 +178,11 @@ func foldPlan(lines []string, k seamKeys) bool {
 		p, decoded := fromJSON(line)
 		if !decoded {
 			// Fail closed: a dispatch row Go cannot decode (NaN, a BOM) may be
-			// one jq parses, and it carries crew, kind and branch as strings.
-			if mentions(line, k.crew) && mentions(line, "dispatch") && mentions(line, n) {
+			// one jq parses, and it carries crew, kind and branch as string
+			// values. Equal, not substring: jq ignored a msg that merely names
+			// them (dispatcher:<crew> to worker:<branch>#s...).
+			lits := literals(line)
+			if slices.Contains(lits, k.crew) && slices.Contains(lits, "dispatch") && slices.Contains(lits, n) {
 				seam, resumed = false, false
 			}
 			continue

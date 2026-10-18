@@ -96,6 +96,16 @@ var (
 	bomRequest         = "\ufeff" + msgRow(worker, rev, `{"seam":"review","request":true}`)
 	nanDispatch        = `{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/x","n":NaN}`
 	nanDispatchEscaped = `{"ts":2,"crew_id":"c1","kind":"\u0064ispatch","branch":"feat\/x","n":NaN}`
+
+	// jq refuses nesting past 5000 objects; encoding/json allows 10000.
+	deepObjects   = strings.Repeat(`{"a":`, 6000) + "1" + strings.Repeat("}", 6000)
+	deepArrays    = strings.Repeat("[", 9999) + strings.Repeat("]", 9999)
+	paddedReview  = `{"ts":1,"crew_id":"c1","from":"` + worker + `","to":"review:c1","kind":"msg","body":` + jsonStr(`{"seam":"review","review_mode":"full"}`) + `,"pad":` + deepObjects + `}`
+	paddedDeslop  = msgRow(worker, "review:c1", `{"seam":"deslop","pad":`+deepObjects+`}`)
+	paddedAccept  = `{"ts":1,"crew_id":"c1","from":"` + rev + `","to":"` + branch + `","kind":"msg","body":` + jsonStr(`{"seam":"review","verdict":"accept"}`) + `,"pad":` + deepObjects + `}`
+	paddedResume  = `{"ts":1,"crew_id":"c1","kind":"resume","branch":"feat/x","pad":` + deepObjects + `}`
+	tornDispatchr = `{"ts":1,"crew_id":"c1","from":"dispatcher:c1","to":"worker:feat/x#s1-1","kind":"msg","body":"x"`
+	nanDispatchr  = tornDispatchr + `,"n":NaN}`
 )
 
 // corpus is every shape of line the folds treat differently: the lead's seams,
@@ -209,6 +219,15 @@ var corpus = []string{
 	bomRequest,
 	nanDispatch,
 	nanDispatchEscaped,
+	// Nesting deeper than jq parses, in the line and in the body.
+	paddedReview,
+	paddedDeslop,
+	msgRow(worker, "review:c1", `{"seam":"deslop","pad":`+deepArrays+`}`),
+	paddedAccept,
+	paddedResume,
+	// A dispatcher msg to the worker that merely names crew, dispatch and branch.
+	tornDispatchr,
+	nanDispatchr,
 }
 
 // TestGatesNeverAcceptMoreThanJQ holds the Go folds to the hard rule: a gate
@@ -255,6 +274,10 @@ func TestGatesNeverAcceptMoreThanJQ(t *testing.T) {
 		[]string{planSeam, nanDispatchEscaped},
 		[]string{resumeRow, nanDispatch},
 		[]string{resumeRow, nanDispatchEscaped},
+		[]string{planSeam, tornDispatchr},
+		[]string{resumeRow, nanDispatchr},
+		[]string{deslopSeam, paddedReview},
+		[]string{paddedAccept, deslopSeam},
 	)
 
 	folds := []struct {
