@@ -3,7 +3,6 @@ package identity
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -18,6 +17,8 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 var longBranch = "feat/" + strings.Repeat("0123456789", 29) + "01234"
@@ -494,19 +495,18 @@ func TestAssign(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			p := Probes{}
+			var c tmux.Client
 			switch {
 			case tc.tmuxFails:
-				p.Windows = func() (string, error) { return "", errors.New("no server") }
+				c = &tmuxtest.Fake{}
 			case tc.windows != "":
-				wins := tc.windows
-				p.Windows = func() (string, error) { return wins, nil }
+				c = &tmuxtest.Fake{Out: map[string]string{"list-windows": tc.windows}}
 			}
 			ask := crew
 			if tc.emptyCrew {
 				ask = ""
 			}
-			got := compact(Assign(rows(t, tc.log), branch, ask, p, nil, 0))
+			got := compact(Assign(t.Context(), rows(t, tc.log), branch, ask, c, nil, 0))
 			want := tc.wantID
 			if want == "" {
 				want = pool(t, tc.wantName)
@@ -533,7 +533,7 @@ func TestRun(t *testing.T) {
 	run := func(t *testing.T, req Request, paths bus.Paths, crewID string) (string, string, int) {
 		t.Helper()
 		var out, errOut strings.Builder
-		code := Run(req, paths, &out, &errOut, Options{CrewID: func() string { return crewID }})
+		code := Run(t.Context(), req, paths, &out, &errOut, Options{CrewID: func() string { return crewID }})
 		return out.String(), errOut.String(), code
 	}
 
@@ -575,13 +575,13 @@ func TestAssignAvoidsTheListedNames(t *testing.T) {
 	recorded := `{"kind":"dispatch","crew_id":"c1","branch":"feat/x","name":"zed","tmux":"colour9","ts":100}`
 
 	t.Run("a recorded name on the list is re-picked", func(t *testing.T) {
-		got := compact(Assign(rows(t, recorded), branch, crew, Probes{}, []string{"zed"}, 0))
+		got := compact(Assign(t.Context(), rows(t, recorded), branch, crew, nil, []string{"zed"}, 0))
 		if got != pool(t, own) {
 			t.Errorf("Assign = %s, want %s", got, pool(t, own))
 		}
 	})
 	t.Run("a name off the list is untouched", func(t *testing.T) {
-		got := compact(Assign(rows(t, recorded), branch, crew, Probes{}, []string{"kelp"}, 0))
+		got := compact(Assign(t.Context(), rows(t, recorded), branch, crew, nil, []string{"kelp"}, 0))
 		if want := `{"name":"zed","color":null,"tmux":"colour9"}`; got != want {
 			t.Errorf("Assign = %s, want %s", got, want)
 		}
@@ -596,14 +596,14 @@ func TestAssignAvoidsTheListedNames(t *testing.T) {
 			{[]string{"kelp", own}, next},
 			{nil, own},
 		} {
-			if got := compact(Assign(rows(t, "\n"), branch, crew, Probes{}, tc.avoid, 0)); got != pool(t, tc.want) {
+			if got := compact(Assign(t.Context(), rows(t, "\n"), branch, crew, nil, tc.avoid, 0)); got != pool(t, tc.want) {
 				t.Errorf("Assign(avoid %v) = %s, want %s", tc.avoid, got, pool(t, tc.want))
 			}
 		}
 	})
 	t.Run("Run reads CREW_IDENTITY_AVOID through Getenv", func(t *testing.T) {
 		var out strings.Builder
-		code := Run(Request{Branch: branch}, bus.Paths{Log: filepath.Join(t.TempDir(), "absent.jsonl")}, &out, io.Discard, Options{
+		code := Run(t.Context(), Request{Branch: branch}, bus.Paths{Log: filepath.Join(t.TempDir(), "absent.jsonl")}, &out, io.Discard, Options{
 			CrewID: func() string { return crew },
 			Getenv: func(k string) string {
 				if k == "CREW_IDENTITY_AVOID" {
@@ -641,7 +641,7 @@ func TestRemoteRowsHoldTheirNameForADay(t *testing.T) {
 			fmt.Sprintf(`{"kind":"status","crew_id":"c1","from":"worker:%s","body":{"state":"done"},"ts":%d}`, rival, now), own},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := compact(Assign(rows(t, tc.log), branch, crew, Probes{}, nil, now))
+			got := compact(Assign(t.Context(), rows(t, tc.log), branch, crew, nil, nil, now))
 			if got != pool(t, tc.want) {
 				t.Errorf("Assign = %s, want %s", got, pool(t, tc.want))
 			}
@@ -650,8 +650,8 @@ func TestRemoteRowsHoldTheirNameForADay(t *testing.T) {
 }
 
 func TestWindowNamesIncludeBridgeStamps(t *testing.T) {
-	p := Probes{Windows: func() (string, error) { return "sage kelp\n \nmoss \n atlas\n", nil }}
-	if got, want := windowNames(p), []string{"sage", "kelp", "moss", "atlas"}; !slices.Equal(got, want) {
+	fake := &tmuxtest.Fake{Out: map[string]string{"list-windows": "sage kelp\n \nmoss \n atlas\n"}}
+	if got, want := windowNames(t.Context(), fake), []string{"sage", "kelp", "moss", "atlas"}; !slices.Equal(got, want) {
 		t.Errorf("windowNames = %v, want %v", got, want)
 	}
 }
@@ -668,13 +668,13 @@ func TestOccupied(t *testing.T) {
 		fmt.Sprintf(`{"kind":"dispatch","crew_id":"c1","branch":"feat/c","name":"mesa","tmux":"colour1","ts":%d,"remote":true}`, now-3000),
 		fmt.Sprintf(`{"kind":"dispatch","crew_id":"c2","branch":"feat/d","name":"other","tmux":"colour1","ts":%d}`, now-3000),
 	}, "\n")
-	p := Probes{Windows: func() (string, error) { return "atlas \n zed kelp\n", nil }}
+	fake := &tmuxtest.Fake{Out: map[string]string{"list-windows": "atlas \n zed kelp\n"}}
 
-	got := Occupied(rows(t, log), crew, p, now)
+	got := Occupied(t.Context(), rows(t, log), crew, fake, now)
 	if want := []string{"atlas", "kelp", "mesa", "zed"}; !slices.Equal(got, want) {
 		t.Errorf("Occupied = %v, want %v", got, want)
 	}
-	if got := Occupied(nil, crew, Probes{}, now); len(got) != 0 {
+	if got := Occupied(t.Context(), nil, crew, nil, now); len(got) != 0 {
 		t.Errorf("Occupied on an empty bus = %v", got)
 	}
 }
@@ -686,10 +686,10 @@ func TestRunOccupiedPrintsOneNamePerLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out strings.Builder
-	code := Run(Request{Occupied: true}, bus.Paths{Log: path}, &out, io.Discard, Options{
+	code := Run(t.Context(), Request{Occupied: true}, bus.Paths{Log: path}, &out, io.Discard, Options{
 		CrewID: func() string { return "c1" },
 		Now:    func() time.Time { return time.UnixMilli(200) },
-		Probes: Probes{Windows: func() (string, error) { return "atlas", nil }},
+		Tmux:   &tmuxtest.Fake{Out: map[string]string{"list-windows": "atlas"}},
 	})
 	if code != 0 || out.String() != "atlas\nzed\n" {
 		t.Errorf("Run = %d %q", code, out.String())

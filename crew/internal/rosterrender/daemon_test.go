@@ -15,6 +15,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 // loop is a daemon run driven by fakes: the clock is a file the fake sleep
@@ -55,11 +56,16 @@ func newLoop(t *testing.T) *loop {
 		Clock:  clock.Clock{Now: func() time.Time { return time.Unix(l.wallNow(), 0) }, CrewClock: clockFile},
 		Stderr: &bytes.Buffer{},
 		Probes: Probes{
-			RolePanes: func() string { return l.rolePanes() },
-			// The fixtures' one branch is stamped on a window, which is what keeps
-			// its row live: these tests are about the loop, not the liveness rule.
-			Windows: func() string { return "feat/1-a\n" },
-			PanePID: func(string) (string, bool) { return "", false },
+			Tmux: &tmuxtest.Fake{Func: func(args []string) (string, error) {
+				// The fixtures' one branch is on a window, keeping its row live.
+				if args[0] == "list-windows" {
+					return "feat/1-a", nil
+				}
+				if args[0] == "list-panes" && args[3] == rolePaneFormat {
+					return l.rolePanes(), nil
+				}
+				return "", tmuxtest.ErrNoServer
+			}},
 			AeyeHelp: func(context.Context) (string, error) {
 				return "", nil
 			},
@@ -75,11 +81,8 @@ func newLoop(t *testing.T) *loop {
 			Sleep: l.sleep,
 		},
 		Procs: crews.Probes{Parent: func(int) (int, bool) { return 0, false }},
-		// `crew roster`'s own two reads: no live panes, no worktrees.
-		Roster: roster.Probes{
-			Panes:     func() string { return "" },
-			Worktrees: func() (string, error) { return "", nil },
-		},
+		// `crew roster`'s own read: no worktrees.
+		Roster:    roster.Probes{Worktrees: func() (string, error) { return "", nil }},
 		RosterDir: filepath.Join(dir, "d2"),
 		PID:       os.Getpid(),
 	}

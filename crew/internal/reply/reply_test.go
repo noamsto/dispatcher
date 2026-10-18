@@ -14,6 +14,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 // now is the fixed clock every case runs on: 2023-11-14T22:13:20.5Z, so the
@@ -107,7 +108,7 @@ func (tr *tree) runReq(t *testing.T, o Options, req Request) (string, int) {
 		o.Probes = liveProbes(nil)
 	}
 	var errB bytes.Buffer
-	code := Run(req, tr.paths, &errB, o)
+	code := Run(t.Context(), req, tr.paths, &errB, o)
 	return errB.String(), code
 }
 
@@ -519,7 +520,7 @@ func envProbes(k, v string) sender.Probes {
 func panesProbes(line string) sender.Probes {
 	parents := map[int]int{300: 200, 200: 1}
 	return sender.Probes{
-		Panes:  func() (string, error) { return line, nil },
+		Tmux:   &tmuxtest.Fake{Out: map[string]string{"list-panes": line}},
 		Parent: func(pid int) (int, bool) { p, ok := parents[pid]; return p, ok },
 		PID:    300,
 	}
@@ -534,7 +535,7 @@ func TestWorkerAndRoleSessionsCannotPostAsDispatcher(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			tr := setup(t)
 			errs, code := tr.run(t, Options{Sender: p}, "worker:feat/x#s1-1", "go")
-			reason := sender.Check("dispatcher:c1", "c1", p)
+			reason := sender.Check(t.Context(), "dispatcher:c1", "c1", p)
 			if reason == "" {
 				t.Fatal("fixture does not trip the sender check")
 			}
@@ -624,7 +625,7 @@ func TestRefusedSenderNeverReachesRemote(t *testing.T) {
 		Sender: p,
 		Remote: func(string, string, []string) int { t.Fatal("a refused sender reached Remote"); return 0 },
 	}, "worker:feat/far", "go")
-	if want := "crew: reply: refusing sender 'dispatcher:c1' — " + sender.Check("dispatcher:c1", "c1", p) + "\n"; code != 1 || errs != want {
+	if want := "crew: reply: refusing sender 'dispatcher:c1' — " + sender.Check(t.Context(), "dispatcher:c1", "c1", p) + "\n"; code != 1 || errs != want {
 		t.Fatalf("code %d, stderr %q, want 1, %q", code, errs, want)
 	}
 	if got := tr.rawLog(t); got != before {

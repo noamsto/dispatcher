@@ -117,8 +117,8 @@ func TestMsgNeverPublishesPane(t *testing.T) {
 	f.env["TMUX_PANE"] = "%5"
 	f.role = "lead"
 	f.msg(worker, "dispatcher:c1", "hi")
-	if len(f.tmux) != 0 {
-		t.Errorf("tmux touched: %q", f.tmux)
+	if got := f.tm.Calls(); len(got) != 0 {
+		t.Errorf("tmux touched: %q", got)
 	}
 }
 
@@ -128,7 +128,7 @@ func TestMsgRefusesDispatcherFromWorkerOrRoleEnv(t *testing.T) {
 			f := newFixture(t)
 			f.env[key] = val
 			code, stderr := f.msg("dispatcher:c1", worker, "stop")
-			want := "crew: msg: refusing sender 'dispatcher:c1' — " + sender.Check("dispatcher:c1", crewID, sender.Probes{Getenv: f.opts().Getenv}) + "\n"
+			want := "crew: msg: refusing sender 'dispatcher:c1' — " + sender.Check(t.Context(), "dispatcher:c1", crewID, sender.Probes{Getenv: f.opts().Getenv}) + "\n"
 			if code != 1 || stderr != want {
 				t.Errorf("got %d %q", code, stderr)
 			}

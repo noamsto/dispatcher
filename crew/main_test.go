@@ -26,6 +26,8 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/stall"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
@@ -113,7 +115,7 @@ func TestRunMapsFoldErrorsToExitCodes(t *testing.T) {
 				getwd: func() (string, error) { return repo, nil },
 				probes: func(context.Context, string) roster.Probes {
 					return roster.Probes{
-						Panes: func() string { return "" },
+						Tmux: &tmuxtest.Fake{},
 						Worktrees: func() (string, error) {
 							if tt.worktrees != nil {
 								return "", tt.worktrees
@@ -672,7 +674,7 @@ func TestRemoteRunRefusesAWorker(t *testing.T) {
 			e := env{getwd: func() (string, error) { return repo, nil }, procs: crewsProbes(nil, nil)}
 			var stdout, stderr bytes.Buffer
 			code := run(context.Background(), args, &stdout, &stderr, e)
-			reason := sender.Check("dispatcher:c", "c", sender.Probes{Getenv: os.Getenv})
+			reason := sender.Check(t.Context(), "dispatcher:c", "c", sender.Probes{Getenv: os.Getenv})
 			if want := "crew: remote-run: " + reason + "\n"; reason == "" || code != exitRemoteUsage || stderr.String() != want {
 				t.Fatalf("code %d stderr %q, want %d and %q", code, stderr.String(), exitRemoteUsage, want)
 			}
@@ -690,8 +692,8 @@ func TestRemoteRunRefusesAWorker(t *testing.T) {
 func TestRemoteCallersRefuseAnAnchoredWorker(t *testing.T) {
 	const far = `{"ts":1700000002000,"crew_id":"c","kind":"dispatch","branch":"feat/x","name":"iris","host":"mini","remote":true}` + "\n"
 	pane := fmt.Sprintf("%d\x1ffeat/y\x1f\x1fc\x1f@1\x1f%%1\n", os.Getpid())
-	reason := sender.Check("dispatcher:c", "c", sender.Probes{
-		Panes:  func() (string, error) { return pane, nil },
+	reason := sender.Check(t.Context(), "dispatcher:c", "c", sender.Probes{
+		Tmux:   &tmuxtest.Fake{Out: map[string]string{"list-panes": pane}},
 		Parent: func(int) (int, bool) { return 0, false },
 		PID:    os.Getpid(),
 	})
@@ -861,7 +863,12 @@ const (
 
 func runRoster(t *testing.T, repo string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil)}
+	return runRosterTmux(t, repo, &tmuxtest.Fake{}, args...)
+}
+
+func runRosterTmux(t *testing.T, repo string, c tmux.Client, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: tmuxProbes(c), procs: crewsProbes(nil, nil)}
 	var out, errOut bytes.Buffer
 	code = run(context.Background(), append([]string{"roster"}, args...), &out, &errOut, e)
 	return out.String(), errOut.String(), code
@@ -920,12 +927,8 @@ func TestRosterLiveReadsThisCrewsWindows(t *testing.T) {
 	log := nearRow + `{"ts":1700000002000,"crew_id":"c1","kind":"dispatch","branch":"feat/gone","name":"sage"}` + "\n" +
 		`{"ts":1700000003000,"crew_id":"c1","kind":"status","from":"worker:feat/gone#s1-1","body":{"state":"working"}}` + "\n"
 	repo, _ := repoWithLog(t, &log, 0o644)
-	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\nprintf 'feat/near\\tc1\\nfeat/gone\\tc2\\n'\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	out, errOut, code := runRoster(t, repo, "c1", "--live")
+	windows := &tmuxtest.Fake{Out: map[string]string{"list-windows": "feat/near\tc1\nfeat/gone\tc2\n"}}
+	out, errOut, code := runRosterTmux(t, repo, windows, "c1", "--live")
 	var rows []map[string]any
 	if err := json.Unmarshal([]byte(out), &rows); err != nil || code != 0 || len(rows) != 2 {
 		t.Fatalf("code %d, err %v, stderr %q, rows %v", code, err, errOut, rows)
@@ -948,8 +951,8 @@ func TestRosterLiveDoesNotMergeRemoteWorkers(t *testing.T) {
 	log := nearRow + farRow
 	repo, _ := repoWithLog(t, &log, 0o644)
 	sent := remoteStubs(t, repo, `echo '[{"branch":"feat/far","state":"working","live":true}]'`)
-	stubTmux(t, "feat/near\tc1\n", "")
-	out, errOut, code := runRoster(t, repo, "c1", "--live")
+	windows := &tmuxtest.Fake{Out: map[string]string{"list-windows": "feat/near\tc1\n"}}
+	out, errOut, code := runRosterTmux(t, repo, windows, "c1", "--live")
 	var rows []map[string]any
 	if err := json.Unmarshal([]byte(out), &rows); err != nil || code != 0 || errOut != "" || len(rows) != 1 || rows[0]["branch"] != "feat/near" {
 		t.Fatalf("code %d, err %v, stderr %q, rows %v", code, err, errOut, rows)
@@ -964,11 +967,6 @@ func TestRosterLiveDoesNotMergeRemoteWorkers(t *testing.T) {
 func TestRosterLiveWithNoTmuxServerIsFalse(t *testing.T) {
 	log := nearRow
 	repo, _ := repoWithLog(t, &log, 0o644)
-	bin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte("#!/bin/sh\necho 'no server running' >&2\nexit 1\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	out, errOut, code := runRoster(t, repo, "c1", "--live")
 	var rows []map[string]any
 	if err := json.Unmarshal([]byte(out), &rows); err != nil || code != 0 || errOut != "" || len(rows) != 1 {
@@ -1246,9 +1244,14 @@ func TestRunEntryArmsSurviveAnUnreadableCwd(t *testing.T) {
 // noTouchProbes is the roster probe set for a run that must read neither tmux
 // nor a worktree list: the folds answer from the bus alone.
 func noTouchProbes() func(context.Context, string) roster.Probes {
+	return tmuxProbes(&tmuxtest.Fake{})
+}
+
+// tmuxProbes is noTouchProbes with a scripted tmux.
+func tmuxProbes(c tmux.Client) func(context.Context, string) roster.Probes {
 	return func(context.Context, string) roster.Probes {
 		return roster.Probes{
-			Panes:     func() string { return "" },
+			Tmux:      c,
 			Worktrees: func() (string, error) { return "", nil },
 		}
 	}
@@ -2398,7 +2401,7 @@ func TestStallWatchSenderCheckSurvivesTyping(t *testing.T) {
 						}
 						return ""
 					},
-					Panes:  func() (string, error) { return "100\x1ffeat/x\x1flead\x1fc1\x1f@1\x1f%1\n", nil },
+					Tmux:   &tmuxtest.Fake{Out: map[string]string{"list-panes": "100\x1ffeat/x\x1flead\x1fc1\x1f@1\x1f%1\n"}},
 					Parent: func(int) (int, bool) { return 1, true },
 					PID:    100,
 				},

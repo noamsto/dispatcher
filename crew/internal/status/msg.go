@@ -1,6 +1,7 @@
 package status
 
 import (
+	"context"
 	"io"
 	"strings"
 
@@ -11,14 +12,14 @@ import (
 type MsgRequest struct{ From, To, Body string }
 
 // RunMsg posts a message.
-func RunMsg(req MsgRequest, paths bus.Paths, stderr io.Writer, o Options) int {
+func RunMsg(ctx context.Context, req MsgRequest, paths bus.Paths, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
 	crew, ok := begin("msg", paths, stderr, o)
 	if !ok {
 		return exitFailure
 	}
 	from, to, body := req.From, req.To, req.Body
-	if refuseSender("msg", from, crew, o, stderr) {
+	if refuseSender(ctx, "msg", from, crew, o, stderr) {
 		return exitFailure
 	}
 

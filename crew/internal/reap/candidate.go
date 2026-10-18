@@ -281,7 +281,7 @@ func (r *run) idleEngines(ctx context.Context, c *candidate) ([]idleSample, bool
 				keep = p.cmd + " has no idle signature"
 				break
 			}
-			plain := r.p.Tmux(ctx, "capture-pane", "-p", "-t", p.pane)
+			plain := r.p.tmuxOut(ctx, "capture-pane", "-p", "-t", p.pane)
 			if plain == "" {
 				keep = "empty capture of " + p.pane
 				break
@@ -310,7 +310,7 @@ func (r *run) paneIdle(ctx context.Context, engine, pane, plain string) (string,
 		}
 		return why, ok
 	}
-	colored := r.p.Tmux(ctx, "capture-pane", "-e", "-p", "-t", pane)
+	colored := r.p.tmuxOut(ctx, "capture-pane", "-e", "-p", "-t", pane)
 	return frame.PaneIdleReason(plain, colored, false)
 }
 
@@ -465,7 +465,7 @@ func (r *run) killIdle(ctx context.Context, c *candidate, idle []idleSample) boo
 	}
 	resample := ""
 	for _, s := range idle {
-		plain := r.p.Tmux(ctx, "capture-pane", "-p", "-t", s.pane)
+		plain := r.p.tmuxOut(ctx, "capture-pane", "-p", "-t", s.pane)
 		if _, ok := r.paneIdle(ctx, s.engine, s.pane, plain); plain != s.frame || !ok {
 			resample = "pane changed between samples"
 			break
@@ -491,7 +491,7 @@ func (r *run) killIdle(ctx context.Context, c *candidate, idle []idleSample) boo
 			r.say("would kill window " + w + " (" + c.branch + " idle engine)")
 			continue
 		}
-		r.p.TmuxRun(ctx, "kill-window", "-t", w)
+		_, _ = r.p.Tmux.Run(ctx, "kill-window", "-t", w)
 		r.say("killed window " + w + " (" + c.branch + " idle engine)")
 	}
 	return true

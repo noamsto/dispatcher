@@ -19,10 +19,13 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
 // waitDelay bounds how long Wait lingers on a pipe a grandchild still holds
@@ -30,16 +33,13 @@ import (
 const waitDelay = 2 * time.Second
 
 // Probes are the loop's side effects. A nil-free struct so tests substitute
-// any field.
+// any field; the pane reads and writes go through Tmux.
 type Probes struct {
-	Sample        func(ctx context.Context) (text string, alive bool) // alive = rc 0
-	SampleColored func(ctx context.Context) string                    // failure = ""
-	PaneCmd       func(ctx context.Context) string
-	PaneModel     func(ctx context.Context) string
+	Env
+	Tmux          tmux.Client
 	Load          func(ctx context.Context) string // "<load1> <nproc>"
 	Top           func(ctx context.Context) string
 	RefreshBudget func(ctx context.Context)
-	SetPaneOption func(ctx context.Context, name, value string)
 	Sh            func(ctx context.Context, op string, args ...string) (out string, rc int)
 	BusRows       func(path string, sinceMS int64, maxLines int) ([]any, bool) // log tail, oldest first; ok=false if not a regular file
 }
@@ -147,60 +147,10 @@ func Default(e Env) Probes {
 		cores     string
 		coresOnce sync.Once
 	)
-	tmux := func(ctx context.Context, args ...string) (string, int) {
-		return run(ctx, nil, "tmux", args...)
-	}
-	// capture is `_pane_capture`: a failure yields "" with rc != 0.
-	capture := func(ctx context.Context, colored bool) (string, int) {
-		if colored {
-			if c := e.Getenv("CREW_STALL_COLOR_CMD"); c != "" {
-				return runSeam(ctx, c)
-			}
-		}
-		if c := e.Getenv("CREW_STALL_SAMPLE_CMD"); c != "" {
-			return runSeam(ctx, c)
-		}
-		if colored {
-			return tmux(ctx, "capture-pane", "-e", "-p", "-t", e.Pane)
-		}
-		return tmux(ctx, "capture-pane", "-p", "-t", e.Pane)
-	}
 
 	return Probes{
-		Sample: func(ctx context.Context) (string, bool) {
-			text, rc := capture(ctx, false)
-			return text, rc == 0
-		},
-		SampleColored: func(ctx context.Context) string {
-			text, rc := capture(ctx, true)
-			if rc != 0 {
-				return ""
-			}
-			return text
-		},
-		PaneCmd: func(ctx context.Context) string {
-			if c := e.Getenv("CREW_STALL_PROC_CMD"); c != "" {
-				text, _ := runSeam(ctx, c)
-				return text
-			}
-			rows, rc := tmux(ctx, "list-panes", "-a", "-F", "#{pane_id}\t#{pane_current_command}")
-			if rc != 0 {
-				return ""
-			}
-			for row := range strings.SplitSeq(rows, "\n") {
-				if id, cmd, _ := strings.Cut(row, "\t"); id == e.Pane {
-					return cmd
-				}
-			}
-			return ""
-		},
-		PaneModel: func(ctx context.Context) string {
-			text, rc := tmux(ctx, "show-options", "-pqv", "-t", e.Pane, "@crew_model")
-			if rc != 0 {
-				return ""
-			}
-			return text
-		},
+		Env:  e,
+		Tmux: tmux.Exec{},
 		Load: func(ctx context.Context) string {
 			if c := e.Getenv("CREW_STALL_LOAD_CMD"); c != "" {
 				text, _ := runSeam(ctx, c)
@@ -245,9 +195,6 @@ func Default(e Env) Probes {
 			}
 			run(ctx, nil, "env", "-u", "CREW_WORKER_ID", "-u", "CREW_ID", "timeout", "120", "refresh-budget")
 		},
-		SetPaneOption: func(ctx context.Context, name, value string) {
-			tmux(ctx, "set-option", "-p", "-t", e.Pane, name, value)
-		},
 		// The common dir, not this process's cwd: the worktree it started in
 		// may be reaped while the watchdog lives.
 		Sh: func(ctx context.Context, op string, args ...string) (string, int) {
@@ -261,6 +208,63 @@ func Default(e Env) Probes {
 		},
 		BusRows: BusRows,
 	}
+}
+
+// Capture is `_pane_capture`: the color or sample seam when set, else
+// capture-pane. A failed colored capture is "" and not ok.
+func Capture(ctx context.Context, t tmux.Client, getenv func(string) string, pane string, colored bool) (text string, ok bool) {
+	cmd := getenv("CREW_STALL_SAMPLE_CMD")
+	if c := getenv("CREW_STALL_COLOR_CMD"); colored && c != "" {
+		cmd = c
+	}
+	if cmd != "" {
+		var rc int
+		text, rc = runSeam(ctx, cmd)
+		ok = rc == 0
+	} else {
+		args := []string{"capture-pane", "-p", "-t", pane}
+		if colored {
+			args = slices.Insert(args, 1, "-e")
+		}
+		var err error
+		text, err = t.Run(ctx, args...)
+		ok = err == nil
+	}
+	if colored && !ok {
+		text = ""
+	}
+	return text, ok
+}
+
+func (p Probes) Sample(ctx context.Context) (string, bool) {
+	return Capture(ctx, p.Tmux, p.Getenv, p.Pane, false)
+}
+
+func (p Probes) SampleColored(ctx context.Context) string {
+	text, _ := Capture(ctx, p.Tmux, p.Getenv, p.Pane, true)
+	return text
+}
+
+func (p Probes) PaneCmd(ctx context.Context) string {
+	if c := p.Getenv("CREW_STALL_PROC_CMD"); c != "" {
+		text, _ := runSeam(ctx, c)
+		return text
+	}
+	rows := tmux.Output(ctx, p.Tmux, "list-panes", "-a", "-F", "#{pane_id}\t#{pane_current_command}")
+	for row := range strings.SplitSeq(rows, "\n") {
+		if id, cmd, _ := strings.Cut(row, "\t"); id == p.Pane {
+			return cmd
+		}
+	}
+	return ""
+}
+
+func (p Probes) PaneModel(ctx context.Context) string {
+	return tmux.Output(ctx, p.Tmux, "show-options", "-pqv", "-t", p.Pane, "@crew_model")
+}
+
+func (p Probes) SetPaneOption(ctx context.Context, name, value string) {
+	_, _ = p.Tmux.Run(ctx, "set-option", "-p", "-t", p.Pane, name, value)
 }
 
 // cwdTail is `_top_consumers`' sed -E 's#.*/([^/]+/[^/]+) #\1 #'. sed picks the

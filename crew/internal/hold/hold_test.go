@@ -88,7 +88,7 @@ func (tr *tree) runOpts(t *testing.T, o Options, req Request) (string, string, i
 		o.Now = func() time.Time { return now }
 	}
 	var out, err bytes.Buffer
-	code := Run(req, tr.paths, &out, &err, o)
+	code := Run(t.Context(), req, tr.paths, &out, &err, o)
 	return out.String(), err.String(), code
 }
 
@@ -922,7 +922,7 @@ func TestWorkerAndRoleSessionsCannotWriteHolds(t *testing.T) {
 			}
 			return ""
 		}}
-		reason := sender.Check("dispatcher:c1", "c1", p)
+		reason := sender.Check(t.Context(), "dispatcher:c1", "c1", p)
 		if reason == "" {
 			t.Fatalf("%s does not trip the sender check", env)
 		}

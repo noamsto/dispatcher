@@ -3,6 +3,7 @@
 package identity
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
 // The pools are the three the bash library carried (`_names`/`_colors`/`_tmuxc`)
@@ -164,27 +166,18 @@ func For(recorded map[string]Identity, branch string) Identity {
 	return At(Slot(branch))
 }
 
-// Probes is the arm's tmux read, injected so tests never touch a server.
-type Probes struct {
-	// Windows is `tmux list-windows -a -F '#{@crew_name} #{@bridge_crew_name}'`:
-	// every codename a live or mirror window already carries, whitespace-separated.
-	// It ran under `2>/dev/null || true`, so a failed read — or no probe at all —
-	// names nothing rather than refusing.
-	Windows func() (string, error)
-}
-
 // remoteHold is how long a `remote:true` dispatch row holds its codename. The
 // remote worker's terminal status never reaches this bus, so without a bound the
 // name would never free.
 const remoteHold = 24 * time.Hour
 
 // Options is everything Run reads beyond the bus: the crew the arm defaults to
-// (`_crew_id`), the tmux probe, the environment CREW_IDENTITY_AVOID comes from
+// (`_crew_id`), tmux, the environment CREW_IDENTITY_AVOID comes from
 // and the clock the remote hold is measured on. A nil Getenv reads no variable
 // and a nil Now is the wall clock.
 type Options struct {
 	CrewID func() string
-	Probes Probes
+	Tmux   tmux.Client // nil, like a failed read, names no window
 	Getenv func(string) string
 	Now    func() time.Time
 }
@@ -199,7 +192,7 @@ type Request struct {
 
 // Run is the `crew identity <branch> [crew]` arm: the `--hash` form, and the
 // identity a branch gets.
-func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	if req.Hash != "" {
 		return emit(stdout, At(Slot(req.Hash)))
 	}
@@ -212,12 +205,12 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		now = o.Now
 	}
 	if req.Occupied {
-		for _, name := range Occupied(busEvents(paths.Log), crew, o.Probes, now().UnixMilli()) {
+		for _, name := range Occupied(ctx, busEvents(paths.Log), crew, o.Tmux, now().UnixMilli()) {
 			say(stdout, "%s\n", name)
 		}
 		return 0
 	}
-	return emit(stdout, Assign(busEvents(paths.Log), req.Branch, crew, o.Probes, avoidList(o.Getenv), now().UnixMilli()))
+	return emit(stdout, Assign(ctx, busEvents(paths.Log), req.Branch, crew, o.Tmux, avoidList(o.Getenv), now().UnixMilli()))
 }
 
 // avoidList is CREW_IDENTITY_AVOID: the codenames a dispatching host already
@@ -232,9 +225,9 @@ func avoidList(getenv func(string) string) []string {
 // Occupied is every raw codename Assign would treat as taken for crew, sorted:
 // the bus's live dispatches (a just-dispatched worker with no status yet
 // included) and the names stamped on tmux windows, local and bridge.
-func Occupied(rows []bus.Event, crew string, p Probes, nowMS int64) []string {
+func Occupied(ctx context.Context, rows []bus.Event, crew string, c tmux.Client, nowMS int64) []string {
 	occ := occupied(rows, "", crew, nowMS)
-	for _, win := range windowNames(p) {
+	for _, win := range windowNames(ctx, c) {
 		occ[win] = true
 	}
 	return slices.Sorted(maps.Keys(occ))
@@ -246,7 +239,7 @@ func Occupied(rows []bus.Event, crew string, p Probes, nowMS int64) []string {
 // live worker holds, falling back to the hash slot when all 32 are taken. A branch
 // always gets an identity. The avoid names are held elsewhere (another host's
 // workers) and count as live workers on the bus.
-func Assign(rows []bus.Event, branch, crew string, p Probes, avoid []string, nowMS int64) Identity {
+func Assign(ctx context.Context, rows []bus.Event, branch, crew string, c tmux.Client, avoid []string, nowMS int64) Identity {
 	// The recorded name is gated by the bus alone: tmux names join only after it.
 	occ := occupied(rows, branch, crew, nowMS)
 	for _, name := range avoid {
@@ -257,7 +250,7 @@ func Assign(rows []bus.Event, branch, crew string, p Probes, avoid []string, now
 			return rec
 		}
 	}
-	for _, win := range windowNames(p) {
+	for _, win := range windowNames(ctx, c) {
 		occ[win] = true
 	}
 	base := Slot(branch)
@@ -409,14 +402,15 @@ func number(v any) (float64, bool) {
 	return 0, false
 }
 
-// windowNames is the arm's tmux read flattened to the codenames it lists. The arm
-// matched them as whitespace tokens after `tr '\n' ' '`, and a failed read — its
-// `2>/dev/null` — names nothing.
-func windowNames(p Probes) []string {
-	if p.Windows == nil {
+// windowNames is every codename a live or mirror window carries, from
+// `tmux list-windows -a -F '#{@crew_name} #{@bridge_crew_name}'`. The arm matched
+// them as whitespace tokens after `tr '\n' ' '`, and a failed read — its
+// `2>/dev/null || true` — names nothing rather than refusing.
+func windowNames(ctx context.Context, c tmux.Client) []string {
+	if c == nil {
 		return nil
 	}
-	out, err := p.Windows()
+	out, err := c.Run(ctx, "list-windows", "-a", "-F", "#{@crew_name} #{@bridge_crew_name}")
 	if err != nil {
 		return nil
 	}

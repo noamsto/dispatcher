@@ -4,9 +4,10 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
 // Probes are the side effects the loop cannot compute, injected so the daemon is
@@ -14,16 +15,10 @@ import (
 // nil field is a bug in Default, not a runtime case. The pid probes are not here:
 // they come in as crews.Probes, shared with `crews`, `stall` and `adopt`.
 type Probes struct {
-	// RolePanes is the stdout of `tmux list-panes -a -F` with rolePaneFormat. A
-	// tmux failure is the arm's `|| true`: no rows.
-	RolePanes func() string
-	// Windows is the stdout of `tmux list-windows -a -F '#{@crew_branch}'`, or ""
-	// when there is no tmux server: the branch stamps the liveness rule reads,
-	// exactly as `crew fleet` reads them.
-	Windows func() string
-	// PanePID is `tmux display-message -p -t <pane> '#{pane_pid}'`, ok=false when
-	// tmux fails or the pane is gone.
-	PanePID func(pane string) (string, bool)
+	// Tmux answers the role panes (`list-panes` with rolePaneFormat), the branch
+	// stamps the liveness rule reads (exactly as `crew fleet` reads them) and
+	// the pane pid probe.
+	Tmux tmux.Client
 	// AeyeHelp is `timeout 10 aeye --help`: stdout only, stderr dropped.
 	AeyeHelp func(ctx context.Context) (string, error)
 	// AeyePublish is `timeout 60 aeye publish-diagram <file> --pane <pane>
@@ -40,31 +35,11 @@ type Probes struct {
 	Sleep func(ctx context.Context, d time.Duration) error
 }
 
-// Default wires the real tmux and aeye reads. ctx is the command's, so a killed
-// worker never leaves a `timeout 60 aeye` behind it.
-func Default(ctx context.Context) Probes {
+// Default wires the real tmux and aeye reads. Each aeye call takes the ctx of
+// its caller, so a killed worker never leaves a `timeout 60 aeye` behind it.
+func Default() Probes {
 	return Probes{
-		RolePanes: func() string {
-			out, err := exec.CommandContext(ctx, "tmux", "list-panes", "-a", "-F", rolePaneFormat).Output()
-			if err != nil {
-				return ""
-			}
-			return string(out)
-		},
-		Windows: func() string {
-			out, err := exec.CommandContext(ctx, "tmux", "list-windows", "-a", "-F", "#{@crew_branch}").Output()
-			if err != nil {
-				return ""
-			}
-			return string(out)
-		},
-		PanePID: func(pane string) (string, bool) {
-			out, err := exec.CommandContext(ctx, "tmux", "display-message", "-p", "-t", pane, "#{pane_pid}").Output()
-			if err != nil {
-				return "", false
-			}
-			return strings.TrimRight(string(out), "\n"), true
-		},
+		Tmux: tmux.Exec{},
 		AeyeHelp: func(ctx context.Context) (string, error) {
 			out, err := exec.CommandContext(ctx, "timeout", "10", "aeye", "--help").Output()
 			return string(out), err
@@ -92,6 +67,12 @@ func Default(ctx context.Context) Probes {
 			}
 		},
 	}
+}
+
+// rolePanes is the stdout of `tmux list-panes -a -F` with rolePaneFormat. A
+// tmux failure is the arm's `|| true`: no rows.
+func (o Options) rolePanes(ctx context.Context) string {
+	return tmux.Output(ctx, o.Probes.Tmux, "list-panes", "-a", "-F", rolePaneFormat)
 }
 
 // SpawnDetached starts argv in its own session with its stdio off /dev/null, so

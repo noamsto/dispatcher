@@ -92,7 +92,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o 
 		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
-	if reason := sender.Watch(cfg.fromID, cfg.crew, cfg.pane, o.Sender); reason != "" {
+	if reason := sender.Watch(ctx, cfg.fromID, cfg.crew, cfg.pane, o.Sender); reason != "" {
 		_, _ = fmt.Fprintf(stderr, "crew: stall-watch: refusing sender '%s' on pane %s: %s\n", cfg.fromID, cfg.pane, reason)
 		return 1
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/drift"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 const localModelsScript = "../../../adapters/core/local-models.sh"
@@ -559,9 +560,10 @@ func TestFold(t *testing.T) {
 			case "-":
 				crew = ""
 			}
-			var panes, wts int
+			var wts int
+			tx := &tmuxtest.Fake{Out: map[string]string{"list-panes": c.panes}}
 			p := Probes{
-				Panes: func() string { panes++; return c.panes },
+				Tmux: tx,
 				Worktrees: func() (string, error) {
 					wts++
 					if c.wtErr != nil {
@@ -570,14 +572,14 @@ func TestFold(t *testing.T) {
 					return c.worktrees, nil
 				},
 			}
-			got, err := Fold(decodeEvents(t, c.events), crew, now, p)
+			got, err := Fold(t.Context(), decodeEvents(t, c.events), crew, now, p)
 			switch c.wantErr {
 			case "type":
 				if err == nil {
 					t.Fatalf("err = nil, want the jq runtime error")
 				}
-				if panes != 0 {
-					t.Errorf("Panes called %d times after a failed base, want 0", panes)
+				if n := len(tx.Calls()); n != 0 {
+					t.Errorf("tmux called %d times after a failed base, want 0", n)
 				}
 				return
 			case "exit":
@@ -593,8 +595,8 @@ func TestFold(t *testing.T) {
 					t.Errorf("got\n %s\nwant\n %s", s, want)
 				}
 			}
-			if panes != 1 {
-				t.Errorf("Panes called %d times, want 1", panes)
+			if calls := tx.Calls(); len(calls) != 1 {
+				t.Errorf("tmux calls = %q, want one list-panes", calls)
 			}
 			if wts != c.wantWT {
 				t.Errorf("Worktrees called %d times, want %d", wts, c.wantWT)
@@ -610,27 +612,19 @@ func TestFoldLive(t *testing.T) {
 		status(t0+1000, "worker:feat/a#s1-1", state("working")),
 		status(t0+2000, "worker:feat/b#s1-1", state("working")),
 	})
-	probes := func(liveBranches func() map[string]bool) Probes {
-		return Probes{
-			Panes:        func() string { return "" },
-			Worktrees:    func() (string, error) { return "", nil },
-			LiveBranches: liveBranches,
-		}
-	}
-	plain, err := Fold(events, "c1", now, probes(nil))
+	tx := &tmuxtest.Fake{Out: map[string]string{"list-panes": "", "list-windows": "feat/a\tc1\nfeat/b\tc2"}}
+	probes := Probes{Tmux: tx, Worktrees: func() (string, error) { return "", nil }}
+	plain, err := Fold(t.Context(), events, "c1", now, probes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var calls int
-	live, err := Fold(events, "c1", now, probes(func() map[string]bool {
-		calls++
-		return map[string]bool{"feat/a": true}
-	}))
+	probes.Live = true
+	live, err := Fold(t.Context(), events, "c1", now, probes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 {
-		t.Errorf("LiveBranches called %d times, want 1", calls)
+	if got := tx.Calls(); len(got) != 3 || !strings.HasPrefix(got[2], "list-windows") {
+		t.Errorf("tmux calls = %q, want list-panes twice then one list-windows", got)
 	}
 	for i, row := range live {
 		want := map[string]bool{"feat/a": true, "feat/b": false}
@@ -640,7 +634,7 @@ func TestFoldLive(t *testing.T) {
 			t.Errorf("%s: live = %v (present %t), want %t", branch, got, ok, want[branch])
 		}
 		if _, ok := plain[i]["live"]; ok {
-			t.Errorf("%s: a fold without LiveBranches carries live", branch)
+			t.Errorf("%s: a fold without Live carries live", branch)
 		}
 		// Everything but live is the plain row.
 		stripped := maps.Clone(row)

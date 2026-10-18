@@ -95,8 +95,8 @@ func Run(ctx context.Context, req Request, paths bus.Paths, o Options) int {
 	// The pane record is written before any lock, so a new dispatcher pane
 	// retargets a renderer that is already running. Anchor, never discover.
 	if c.pane != "" {
-		if panePID, ok := o.Probes.PanePID(c.pane); ok && panePIDMatches(c.pane, panePID) &&
-			o.Procs.IsAncestor(pidOf(panePID)) {
+		panePID, err := o.Probes.Tmux.Run(ctx, "display-message", "-p", "-t", c.pane, "#{pane_pid}")
+		if err == nil && panePIDMatches(c.pane, panePID) && o.Procs.IsAncestor(pidOf(panePID)) {
 			_ = put(filepath.Join(cdir, filePane), c.pane+"\n", o.Stderr)
 		} else {
 			say(o.Stderr,
@@ -124,7 +124,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, o Options) int {
 		return exitOK
 	case c.once:
 		// `_rr_pass` with no role argument lists them itself.
-		roles := roleRows(o.Probes.RolePanes(), paths.Dir, c.crew)
+		roles := roleRows(o.rolePanes(ctx), paths.Dir, c.crew)
 		if _, err := pass(ctx, o, paths, cdir, c.crew, c.noOpen, roles); err != nil {
 			say(o.Stderr, "crew: roster-render: %v\n", err)
 			return exitFailure

@@ -52,6 +52,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 	"github.com/noamsto/dispatcher/crew/internal/status"
 	"github.com/noamsto/dispatcher/crew/internal/stream"
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
 	"github.com/noamsto/dispatcher/crew/internal/watch"
 	"github.com/noamsto/dispatcher/crew/internal/where"
 )
@@ -654,9 +655,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			NoOpen: rr.NoOpen, Once: rr.Once, Detach: rr.Detach,
 		}
 		return rosterrender.Run(ctx, req, paths, rosterrender.Options{
-			Probes:    rosterrender.Default(ctx),
+			Probes:    rosterrender.Default(),
 			Procs:     e.procs,
-			Roster:    renderProbes(ctx, paths.Common),
+			Roster:    roster.Probes{Worktrees: commonWorktrees(ctx, paths.Common)},
 			Clock:     clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 			Stderr:    stderr,
 			RosterDir: os.Getenv("CREW_ROSTER_DIR"),
@@ -670,11 +671,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// hold reads its own action and flags, prints either TSV or one JSON value,
 	// and appends to the bus itself, so it owns its run like inbox does.
 	if sub == "hold" {
-		return hold.Run(holdRequest(parsed), paths, stdout, stderr, hold.Options{
+		return hold.Run(ctx, holdRequest(parsed), paths, stdout, stderr, hold.Options{
 			CrewID:    func() string { return bus.CrewID(ctx, cwd) },
 			Now:       time.Now,
 			CrewClock: os.Getenv("CREW_CLOCK"),
-			Sender:    senderProbes(ctx, e.procs),
+			Sender:    senderProbes(e.procs),
 		})
 	}
 
@@ -694,11 +695,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "reply" {
 		c := parsed.typed.Reply
 		crewID := func() string { return bus.CrewID(ctx, cwd) }
-		return reply.Run(reply.Request{Crew: str(c.Crew), To: c.To, Body: c.Body}, paths, stderr, reply.Options{
+		return reply.Run(ctx, reply.Request{Crew: str(c.Crew), To: c.To, Body: c.Body}, paths, stderr, reply.Options{
 			CrewID: crewID,
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 			Probes: e.procs,
-			Sender: senderProbes(ctx, e.procs),
+			Sender: senderProbes(e.procs),
 			Remote: func(host, crew string, argv []string) int {
 				return remoteAs(ctx, e, cwd, crew)(host, argv, stdout, stderr)
 			},
@@ -735,27 +736,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "where" {
 		w := parsed.typed.Where
 		crewID := func() string { return bus.CrewID(ctx, cwd) }
-		return where.Run(where.Request{Crew: str(w.Crew), Target: w.Target}, paths, stdout, stderr, where.Options{
+		return where.Run(ctx, where.Request{Crew: str(w.Crew), Target: w.Target}, paths, stdout, stderr, where.Options{
 			CrewID: crewID,
-			Probes: whereProbes(ctx),
+			Tmux:   tmux.Exec{},
 			Remote: func(host, crew string, argv []string, out io.Writer) int {
 				return remoteAs(ctx, e, cwd, crew)(host, argv, out, stderr)
 			},
 		})
 	}
-	// identity answers the codename a branch works under. Its one tmux read is
-	// best-effort, unlike whereProbes', which turns a failure into a refusal.
+	// identity answers the codename a branch works under.
 	if sub == "identity" {
 		id := parsed.typed.Identity
 		crew := id.Crew
 		if id.CrewFlag != nil {
 			crew = *id.CrewFlag
 		}
-		return identity.Run(identity.Request{Branch: id.Branch, Crew: crew, Hash: str(id.Hash), Occupied: id.Occupied}, paths, stdout, stderr, identity.Options{
+		return identity.Run(ctx, identity.Request{Branch: id.Branch, Crew: crew, Hash: str(id.Hash), Occupied: id.Occupied}, paths, stdout, stderr, identity.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
-			Probes: identity.Probes{Windows: func() (string, error) {
-				return tmuxOutput(ctx, "list-windows", "-a", "-F", "#{@crew_name} #{@bridge_crew_name}")
-			}},
+			Tmux:   tmux.Exec{},
 			Getenv: os.Getenv,
 		})
 	}
@@ -764,7 +762,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// `$PWD`, which crew.sh's exec leaves ours.
 	if sub == "adopt" {
 		c := parsed.typed.Adopt
-		return adopt.Run(adopt.Request{ID: c.ID, PID: c.PID, Force: c.Force}, paths, stdout, stderr, adopt.Options{
+		return adopt.Run(ctx, adopt.Request{ID: c.ID, PID: c.PID, Force: c.Force}, paths, stdout, stderr, adopt.Options{
 			Probes: e.procs,
 			Now:    time.Now,
 			PID:    os.Getpid(),
@@ -789,16 +787,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Toplevel: func() string { return bus.Toplevel(ctx, cwd) },
 			NowMS:    clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")}.RealMS,
 			Getenv:   os.Getenv,
-			Sender:   senderProbes(ctx, e.procs),
-		}
-		if _, err := exec.LookPath("tmux"); err == nil {
-			o.Tmux = func(args ...string) (string, error) { return tmuxOutput(ctx, args...) }
+			Sender:   senderProbes(e.procs),
+			Tmux:     tmux.Exec{},
 		}
 		if sub == "status" {
 			c := parsed.typed.Status
-			return status.RunStatus(status.StatusRequest{From: c.From, State: c.State, Detail: c.Detail, PR: c.PR, Restamp: c.Restamp}, paths, stderr, o)
+			return status.RunStatus(ctx, status.StatusRequest{From: c.From, State: c.State, Detail: c.Detail, PR: c.PR, Restamp: c.Restamp}, paths, stderr, o)
 		}
-		return status.RunMsg(status.MsgRequest{From: word(0), To: word(1), Body: word(2)}, paths, stderr, o)
+		return status.RunMsg(ctx, status.MsgRequest{From: word(0), To: word(1), Body: word(2)}, paths, stderr, o)
 	}
 
 	// register and deregister record the caller's own identity like adopt does.
@@ -827,7 +823,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			// worker can rewrite.
 			CrewID: func() string { return bus.CrewIDEnvFirst(ctx, cwd) },
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
-			Sender: senderProbes(ctx, e.procs),
+			Sender: senderProbes(e.procs),
 			NewProbes: func(pane string) probe.Probes {
 				return probe.Default(probe.Env{
 					Getenv: os.Getenv, Pane: pane, Dir: paths.Common, Stderr: stderr,
@@ -902,14 +898,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			return sessions.Fold(docs, branch, crew, nowSec)
 		}
 		p := e.probes(ctx, cwd)
-		if parsed.typed.Roster.Live {
-			p.LiveBranches = func() map[string]bool {
-				out, _ := tmuxOutput(ctx, "list-windows", "-a", "-F", "#{@crew_branch}\t#{@crew_id}")
-				return roster.CrewWindowBranches(out, crew)
-			}
-		}
+		p.Live = parsed.typed.Roster.Live
 		var err error
-		rosterRows, err = roster.Fold(docs, crew, nowSec, p)
+		rosterRows, err = roster.Fold(ctx, docs, crew, nowSec, p)
 		return rosterRows, err
 	})
 	if code == exitOpen && sub == "sessions" {
@@ -956,7 +947,7 @@ func remoteRun(ctx context.Context, e env, c remote.Call, stdout, stderr io.Writ
 			crew = v
 		}
 	}
-	if reason := sender.Check("dispatcher:"+crew, crew, senderProbes(ctx, e.procs)); reason != "" {
+	if reason := sender.Check(ctx, "dispatcher:"+crew, crew, senderProbes(e.procs)); reason != "" {
 		say(stderr, "crew: remote-run: %s\n", reason)
 		return exitRemoteUsage
 	}
@@ -1002,11 +993,7 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 		})
 	}
 	o := fleet.Options{
-		Panes: func() string { return probes(ctx, "").Panes() },
-		Windows: func() string {
-			out, _ := tmuxOutput(ctx, "list-windows", "-a", "-F", "#{@crew_branch}")
-			return out
-		},
+		Tmux: tmux.Exec{},
 		Worktrees: func(common string) (string, error) {
 			return worktreeList(exec.CommandContext(ctx, "git", "--git-dir="+common, "worktree", "list", "--porcelain"))
 		},
@@ -1014,7 +1001,7 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 		Now:    time.Now,
 	}
 	c := p.typed.Fleet.Table
-	return fleet.Run(fleet.Request{All: c.All, JSON: c.JSON, Crew: str(c.Crew)}, stdout, stderr, o)
+	return fleet.Run(ctx, fleet.Request{All: c.All, JSON: c.JSON, Crew: str(c.Crew)}, stdout, stderr, o)
 }
 
 // The Nix build sets these with -X: the pinned bash and the two libs
@@ -1091,49 +1078,15 @@ func fold(sub string, events []bus.Event, readErr error, log string, stderr io.W
 	return v, code
 }
 
-// whereProbes is the arm's two tmux reads, argv and all: a failed read is
-// `where`'s own refusal rather than "the target is gone".
-func whereProbes(ctx context.Context) where.Probes {
-	return where.Probes{
-		Windows: func() (string, error) {
-			return tmuxOutput(ctx, "list-windows", "-a", "-F",
-				"#{window_id}\t#{@crew_branch}\t#{@crew_dir}\t#{@crew_id}\t#{@crew_name}\t#{session_name}\t#{window_index}\t#{window_name}\t#{@bridge_crew_branch}\t#{@bridge_crew_id}")
-		},
-		Panes: func() (string, error) {
-			return tmuxOutput(ctx, "list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{@crew_role}\t#{pane_index}")
-		},
-	}
-}
-
-// tmuxOutput is `$(tmux args… 2>/dev/null)`: stdout, stderr dropped, and a
-// non-zero exit kept, because the two arms that read tmux refuse on it.
-func tmuxOutput(ctx context.Context, args ...string) (string, error) {
-	out, err := exec.CommandContext(ctx, "tmux", args...).Output()
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
-}
-
 // senderProbes are the real reads behind the sender check: the caller's env, its
-// pid ancestry, and every pane's stamps when tmux is on PATH.
-func senderProbes(ctx context.Context, procs crews.Probes) sender.Probes {
-	p := sender.Probes{Getenv: os.Getenv, Parent: procs.Parent, PID: os.Getpid()}
-	if _, err := exec.LookPath("tmux"); err == nil {
-		p.Panes = func() (string, error) { return tmuxOutput(ctx, "list-panes", "-a", "-F", sender.Format) }
-	}
-	return p
+// pid ancestry, and every pane's stamps.
+func senderProbes(procs crews.Probes) sender.Probes {
+	return sender.Probes{Getenv: os.Getenv, Tmux: tmux.Exec{}, Parent: procs.Parent, PID: os.Getpid()}
 }
 
 func probes(ctx context.Context, cwd string) roster.Probes {
 	return roster.Probes{
-		Panes: func() string {
-			out, err := exec.CommandContext(ctx, "tmux", "list-panes", "-a", "-F", "#{pane_current_command} #{pane_current_path}").Output()
-			if err != nil {
-				return ""
-			}
-			return string(out)
-		},
+		Tmux: tmux.Exec{},
 		Worktrees: func() (string, error) {
 			cmd := exec.CommandContext(ctx, "git", "worktree", "list", "--porcelain")
 			cmd.Dir = cwd
@@ -1142,16 +1095,15 @@ func probes(ctx context.Context, cwd string) roster.Probes {
 	}
 }
 
-// renderProbes is the renderer's row fold, anchored at the common dir rather
-// than at the caller's directory: `roster-render` moves out of the worktree it
-// was started in, because a reap can take that directory away while the daemon
-// lives, and a worktree list that dies with it says nothing about who is gone.
-func renderProbes(ctx context.Context, common string) roster.Probes {
-	p := probes(ctx, "")
-	p.Worktrees = func() (string, error) {
+// commonWorktrees is the renderer's worktree list, anchored at the common dir
+// rather than at the caller's directory: `roster-render` moves out of the
+// worktree it was started in, because a reap can take that directory away while
+// the daemon lives, and a worktree list that dies with it says nothing about who
+// is gone.
+func commonWorktrees(ctx context.Context, common string) func() (string, error) {
+	return func() (string, error) {
 		return worktreeList(exec.CommandContext(ctx, "git", "--git-dir="+common, "worktree", "list", "--porcelain"))
 	}
-	return p
 }
 
 // worktreeList runs a `git worktree list --porcelain` command, mapping a

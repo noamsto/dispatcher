@@ -2,7 +2,6 @@ package where
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +12,8 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 // tree is a bus without git: Run reads bus.Paths for the crew dir it anchors on
@@ -48,13 +49,13 @@ func (tr *tree) write(t *testing.T, rows ...string) {
 // "" is a repo with neither CREW_ID nor a WORKER_TASK.md crew_id.
 func (tr *tree) run(t *testing.T, wins, panes string, crewID func() string, args ...string) (out, errOut string, code int) {
 	t.Helper()
-	return tr.runProbes(t, okProbes(wins, panes), crewID, args...)
+	return tr.runTmux(t, okTmux(wins, panes), crewID, args...)
 }
 
-func (tr *tree) runProbes(t *testing.T, p Probes, crewID func() string, args ...string) (out, errOut string, code int) {
+func (tr *tree) runTmux(t *testing.T, c tmux.Client, crewID func() string, args ...string) (out, errOut string, code int) {
 	t.Helper()
 	var o, e bytes.Buffer
-	code = Run(request(args), tr.paths, &o, &e, Options{CrewID: crewID, Probes: p})
+	code = Run(t.Context(), request(args), tr.paths, &o, &e, Options{CrewID: crewID, Tmux: c})
 	return o.String(), e.String(), code
 }
 
@@ -69,11 +70,8 @@ func request(args []string) Request {
 	return r
 }
 
-func okProbes(wins, panes string) Probes {
-	return Probes{
-		Windows: func() (string, error) { return wins, nil },
-		Panes:   func() (string, error) { return panes, nil },
-	}
+func okTmux(wins, panes string) *tmuxtest.Fake {
+	return &tmuxtest.Fake{Out: map[string]string{"list-windows": wins, "list-panes": panes}}
 }
 
 // win is one `list-windows` line, in the arm's eight-field format: window id,
@@ -286,20 +284,13 @@ func TestResolverBackedRefusals(t *testing.T) {
 // broke, windows first.
 func TestTmuxFailure(t *testing.T) {
 	tr := setup(t)
-	boom := errors.New("no server running on /tmp/tmux-1000/default")
 
-	_, errOut, code := tr.runProbes(t, Probes{
-		Windows: func() (string, error) { return "", boom },
-		Panes:   func() (string, error) { return "", boom },
-	}, crewIs("c1"), "nova")
+	_, errOut, code := tr.runTmux(t, &tmuxtest.Fake{}, crewIs("c1"), "nova")
 	if code != exitFailure || errOut != "crew: where: cannot read tmux windows (is a tmux server running?)\n" {
 		t.Errorf("windows: code %d, err %q", code, errOut)
 	}
 
-	_, errOut, code = tr.runProbes(t, Probes{
-		Windows: func() (string, error) { return "", nil },
-		Panes:   func() (string, error) { return "", boom },
-	}, crewIs("c1"), "nova")
+	_, errOut, code = tr.runTmux(t, &tmuxtest.Fake{Out: map[string]string{"list-windows": ""}}, crewIs("c1"), "nova")
 	if code != exitFailure || errOut != "crew: where: cannot read tmux panes (is a tmux server running?)\n" {
 		t.Errorf("panes: code %d, err %q", code, errOut)
 	}
@@ -329,7 +320,7 @@ func (tr *tree) runRemote(t *testing.T, wins, panes string, remote func(string, 
 func (tr *tree) runRemoteAs(t *testing.T, crewID func() string, wins, panes string, remote func(string, string, []string, io.Writer) int, args ...string) (out, errOut string, code int) {
 	t.Helper()
 	var o, e bytes.Buffer
-	code = Run(request(args), tr.paths, &o, &e, Options{CrewID: crewID, Probes: okProbes(wins, panes), Remote: remote})
+	code = Run(t.Context(), request(args), tr.paths, &o, &e, Options{CrewID: crewID, Tmux: okTmux(wins, panes), Remote: remote})
 	return o.String(), e.String(), code
 }
 

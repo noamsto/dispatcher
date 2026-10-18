@@ -27,6 +27,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/panestate"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
 //go:embed seam.jq
@@ -42,13 +43,13 @@ const exitFailure = 1
 
 // Options is everything the arms read beyond the bus. Nil fields take the
 // production default (CrewID and Toplevel read the process's working
-// directory) except Tmux, where nil means no tmux on PATH.
+// directory) except Tmux, where nil publishes nothing to a pane.
 type Options struct {
 	CrewID   func() string                                                       // `_crew_id`
 	Toplevel func() string                                                       // `git rev-parse --show-toplevel`, "" outside a checkout
 	NowMS    func() int64                                                        // jq's `now*1000|floor`; real time, never CREW_CLOCK
 	Getenv   func(string) string                                                 // CREW_ROLE_ID, TMUX_PANE
-	Tmux     func(args ...string) (string, error)                                // stdout of `tmux args...`
+	Tmux     tmux.Client                                                         // nil: no tmux on PATH
 	Fold     func(prog string, lines []string, vars map[string]any) (any, error) // jqrun.RunAny by default; a test seam
 	Sender   sender.Probes                                                       // the sender check's reads; Getenv defaults to Options.Getenv
 }
@@ -100,8 +101,8 @@ func begin(sub string, paths bus.Paths, stderr io.Writer, o Options) (string, bo
 }
 
 // refuseSender prints the sender check's refusal; true when the row must not be written.
-func refuseSender(sub, from, crew string, o Options, stderr io.Writer) bool {
-	reason := sender.Check(from, crew, o.Sender)
+func refuseSender(ctx context.Context, sub, from, crew string, o Options, stderr io.Writer) bool {
+	reason := sender.Check(ctx, from, crew, o.Sender)
 	if reason == "" {
 		return false
 	}
@@ -152,7 +153,7 @@ type StatusRequest struct {
 }
 
 // RunStatus posts a worker's state.
-func RunStatus(req StatusRequest, paths bus.Paths, stderr io.Writer, o Options) int {
+func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
 	crew, ok := begin("status", paths, stderr, o)
 	if !ok {
@@ -160,7 +161,7 @@ func RunStatus(req StatusRequest, paths bus.Paths, stderr io.Writer, o Options) 
 	}
 
 	from, state, detail, pr, restamp := req.From, req.State, req.Detail, req.PR, req.Restamp
-	if refuseSender("status", from, crew, o, stderr) {
+	if refuseSender(ctx, "status", from, crew, o, stderr) {
 		return exitFailure
 	}
 
@@ -204,7 +205,7 @@ func RunStatus(req StatusRequest, paths bus.Paths, stderr io.Writer, o Options) 
 	if code != 0 {
 		return code
 	}
-	publishPane(o, state, detail)
+	publishPane(ctx, o, state, detail)
 	return 0
 }
 
@@ -212,17 +213,17 @@ func RunStatus(req StatusRequest, paths bus.Paths, stderr io.Writer, o Options) 
 // pane's (CREW_ROLE_ID set). The @crew_role=lead check also keeps a
 // dispatcher-process `crew status` off the dispatcher's pane. Best effort: it
 // must never fail the write that precedes it.
-func publishPane(o Options, state, detail string) {
+func publishPane(ctx context.Context, o Options, state, detail string) {
 	pane := o.Getenv("TMUX_PANE")
 	if o.Getenv("CREW_ROLE_ID") != "" || pane == "" || o.Tmux == nil {
 		return
 	}
-	role, err := o.Tmux("display-message", "-p", "-t", pane, "#{@crew_role}")
-	if err != nil || strings.TrimRight(role, "\n") != "lead" {
+	role, err := o.Tmux.Run(ctx, "display-message", "-p", "-t", pane, "#{@crew_role}")
+	if err != nil || role != "lead" {
 		return
 	}
 	panestate.Publish(func(option, value string) {
-		_, _ = o.Tmux("set-option", "-p", "-t", pane, option, value)
+		_, _ = o.Tmux.Run(ctx, "set-option", "-p", "-t", pane, option, value)
 	}, state, detail, "")
 }
 

@@ -48,7 +48,7 @@ func (r *run) discardBranch(ctx context.Context) int {
 	default:
 		return r.refuse("latest status is " + c.state)
 	}
-	r.live = r.p.Tmux(ctx, "list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}")
+	r.live = r.p.tmuxOut(ctx, "list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}")
 	for line := range strings.SplitSeq(r.live, "\n") {
 		f := fields(line, 4)
 		if f[2] != "" && paneIsEngineAt(f[2]+" "+f[3], wt) {

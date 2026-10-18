@@ -18,6 +18,7 @@
 package hold
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -101,10 +102,10 @@ type Request struct {
 // Run is the arm's `case "$holdsub"`. `--help` never reaches here: the crew.sh
 // preamble answers `crew hold --help` and `crew hold <action> --help` before the
 // delegation arm runs.
-func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	switch req.Action {
 	case "add":
-		return add(req, paths, stdout, stderr, o)
+		return add(ctx, req, paths, stdout, stderr, o)
 	case "list":
 		return list(req, paths, stdout, stderr, o)
 	case "due":
@@ -112,7 +113,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	case "park":
 		return park(req, paths, stdout, stderr, o)
 	case "release":
-		return release(req, paths, stdout, stderr, o)
+		return release(ctx, req, paths, stdout, stderr, o)
 	default:
 		say(stderr, "%s\n", Usage)
 		return exitFailure
@@ -279,7 +280,7 @@ func render(f *folds, stdout io.Writer, holds any) int {
 	return 0
 }
 
-func add(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	fl := req.Add
 	title := strings.Join(fl.Title, " ")
 
@@ -326,7 +327,7 @@ func add(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		_ = fh.Close()
 	}
 	crew, ok := resolveCrew(req.Crew, stderr, o)
-	if !ok || !mayPost("add", crew, stderr, o) {
+	if !ok || !mayPost(ctx, "add", crew, stderr, o) {
 		return exitFailure
 	}
 	// A `hold add` with no --spec would otherwise fail its append on a repo with
@@ -462,10 +463,10 @@ func addRow(crew, id, ts string, fl *AddRequest, specpath, title string) holdRow
 	}
 }
 
-func release(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+func release(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	hid := req.ID
 	crew, ok := resolveCrew(req.Crew, stderr, o)
-	if !ok || !mayPost("release", crew, stderr, o) {
+	if !ok || !mayPost(ctx, "release", crew, stderr, o) {
 		return exitFailure
 	}
 	if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
@@ -513,8 +514,8 @@ func resolveCrew(raw string, stderr io.Writer, o Options) (string, bool) {
 
 // mayPost runs the sender check for the dispatcher-authored rows `add` and
 // `release` write, printing the refusal under sub.
-func mayPost(sub, crew string, stderr io.Writer, o Options) bool {
-	reason := sender.Check("dispatcher:"+crew, crew, o.Sender)
+func mayPost(ctx context.Context, sub, crew string, stderr io.Writer, o Options) bool {
+	reason := sender.Check(ctx, "dispatcher:"+crew, crew, o.Sender)
 	if reason != "" {
 		say(stderr, "crew: hold %s: refusing sender 'dispatcher:%s' — %s\n", sub, crew, reason)
 	}

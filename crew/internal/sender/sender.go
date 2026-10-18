@@ -9,11 +9,14 @@
 package sender
 
 import (
+	"context"
 	"strconv"
 	"strings"
+
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
-// Format is the `tmux list-panes -a -F` format Probes.Panes runs; window options
+// Format is the `tmux list-panes -a -F` format Probes.Tmux runs; window options
 // resolve through it, so each line is the pane's pid, its window's stamps, and
 // the window and pane ids.
 const Format = "#{pane_pid}\x1f#{@crew_branch}\x1f#{@crew_role}\x1f#{@crew_id}\x1f#{window_id}\x1f#{pane_id}"
@@ -21,7 +24,7 @@ const Format = "#{pane_pid}\x1f#{@crew_branch}\x1f#{@crew_role}\x1f#{@crew_id}\x
 // Probes are the reads Check makes; the zero value checks nothing.
 type Probes struct {
 	Getenv func(string) string       // nil: no env
-	Panes  func() (string, error)    // tmux list-panes -a -F Format; nil: no tmux
+	Tmux   tmux.Client               // reads list-panes -a -F Format; nil: no tmux
 	Parent func(pid int) (int, bool) // the pid's parent, false when unknown; nil: no ancestry
 	PID    int                       // the caller's own pid
 }
@@ -33,11 +36,11 @@ type stamp struct {
 
 // Check returns "" when this caller may post a row from `from` into `crew`,
 // else the refusal reason (no "crew: <sub>:" prefix, no trailing newline).
-func Check(from, crew string, p Probes) string {
+func Check(ctx context.Context, from, crew string, p Probes) string {
 	if reason := p.envRefusal(from); reason != "" {
 		return reason
 	}
-	s, ok := p.anchor(p.rows())
+	s, ok := p.anchor(p.rows(ctx))
 	if !ok || s.branch == "" {
 		return ""
 	}
@@ -49,14 +52,14 @@ func Check(from, crew string, p Probes) string {
 // is anchored. The pane must be spelled as a pane id (%N), the form the lookup
 // matches. When tmux lists panes, the pane must exist: an id not yet allocated
 // could be created and stamped for another branch after the watchdog's grace.
-func Watch(from, crew, pane string, p Probes) string {
+func Watch(ctx context.Context, from, crew, pane string, p Probes) string {
 	if reason := p.envRefusal(from); reason != "" {
 		return reason
 	}
 	if !paneID(pane) {
 		return "pane " + pane + " is not a pane id (%N)"
 	}
-	rows := p.rows()
+	rows := p.rows(ctx)
 	a, anchored := p.anchor(rows)
 	anchored = anchored && a.branch != ""
 	if anchored {
@@ -138,11 +141,11 @@ func leadID(from, branch string) bool {
 }
 
 // rows parses one list-panes read; nil when there is no tmux or the read fails.
-func (p Probes) rows() []stamp {
-	if p.Panes == nil {
+func (p Probes) rows(ctx context.Context) []stamp {
+	if p.Tmux == nil {
 		return nil
 	}
-	out, err := p.Panes()
+	out, err := p.Tmux.Run(ctx, "list-panes", "-a", "-F", Format)
 	if err != nil {
 		return nil
 	}

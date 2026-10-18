@@ -14,6 +14,7 @@
 package adopt
 
 import (
+	"context"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -32,6 +33,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
 const usage = "crew: adopt [--force] <id> [pid]"
@@ -64,12 +66,11 @@ type Options struct {
 	// arm runs it. A failed git is the arm's empty `$(…)`: no worktree, not an
 	// error.
 	Worktrees func() string
-	// Windows and SelfWindow are the two tmux reads that decide whether a
-	// worktree is occupied. `_occupants` also reads the pane list, but those
-	// rows fill only the advisory `engine`/`panes` fields of the JSON it prints,
-	// and adopt asks just whether that array is empty.
-	Windows    func() string
-	SelfWindow func(pane string) string
+	// Tmux answers the two reads that decide whether a worktree is occupied:
+	// the window list and the caller's own window. `_occupants` also reads the
+	// pane list, but those rows fill only the advisory `engine`/`panes` fields
+	// of the JSON it prints, and adopt asks just whether that array is empty.
+	Tmux tmux.Client
 	// Args is `ps -o args= -p <pid>`: the caller's command line, which the log
 	// line names so a crew dir that changes owner can be traced (#432). A ps
 	// that cannot say is the arm's `$(ps … || true)`: no command line.
@@ -100,7 +101,7 @@ type Request struct {
 	Force bool
 }
 
-func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
 
 	id := req.ID
@@ -183,7 +184,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	// claimed and never released; one adopted from a live ancestor changes
 	// nothing about who owns the work, so it releases nothing.
 	if !live {
-		o.releaseClaims(paths, id, stderr)
+		o.releaseClaims(ctx, paths, id, stderr)
 	}
 
 	say(stdout, "%s\n", id)
@@ -206,7 +207,7 @@ func loggedCrew(paths bus.Paths, id string) bool {
 // releaseClaims is the arm's claim release: for each issue this crew claimed
 // while it was dispatched, drop the `dispatched` label unless the branch is
 // still occupied or heads an open PR.
-func (o Options) releaseClaims(paths bus.Paths, id string, stderr io.Writer) {
+func (o Options) releaseClaims(ctx context.Context, paths bus.Paths, id string, stderr io.Writer) {
 	claims := claimRows(paths, id)
 	if len(claims) == 0 {
 		return
@@ -230,7 +231,7 @@ func (o Options) releaseClaims(paths bus.Paths, id string, stderr io.Writer) {
 			say(stderr, "crew adopt: skipping a claim row whose issue is not a number (%s)\n", c.issue)
 			continue
 		}
-		if held := o.held(c, heads); held != "" {
+		if held := o.held(ctx, c, heads); held != "" {
 			say(stderr, "%s\n", held)
 			continue
 		}
@@ -249,10 +250,10 @@ func (o Options) releaseClaims(paths bus.Paths, id string, stderr io.Writer) {
 // the claim, or "" when the label can go. Every branch the issue was claimed on
 // is checked, not only this crew's: two crews working the same issue on two
 // branches must not have the label pulled out from under the live one.
-func (o Options) held(c claim, heads string) string {
+func (o Options) held(ctx context.Context, c claim, heads string) string {
 	for _, cb := range c.branches {
 		wt := roster.WorktreePath(o.Worktrees(), cb)
-		if wt != "" && filekind.IsDir(wt) && o.occupied(wt) {
+		if wt != "" && filekind.IsDir(wt) && o.occupied(ctx, wt) {
 			return fmt.Sprintf("crew adopt: keeping #%s — a worker still occupies %s", c.issue, cb)
 		}
 		if hasLine(heads, cb) {
@@ -265,12 +266,13 @@ func (o Options) held(c claim, heads string) string {
 // occupied is the arm's `[ "$(_occupants "$wt")" != '[]' ]`: a crewed window
 // that is neither the dispatcher's nor the caller's own, rooted at exactly this
 // path.
-func (o Options) occupied(wt string) bool {
+func (o Options) occupied(ctx context.Context, wt string) bool {
 	self := ""
 	if pane := o.LookupEnv("TMUX_PANE"); pane != "" {
-		self = o.SelfWindow(pane)
+		self = tmux.Output(ctx, o.Tmux, "display-message", "-p", "-t", pane, "#{window_id}")
 	}
-	for _, line := range strings.Split(o.Windows(), "\n") {
+	windows := tmux.Output(ctx, o.Tmux, "list-windows", "-a", "-F", "#{window_id}\t#{@crew_name}\t#{pane_current_path}")
+	for _, line := range strings.Split(windows, "\n") {
 		// `IFS=$'\t' read -r wid nm path`: tab is IFS whitespace, so runs of it
 		// collapse and the last field keeps whatever is left of the line.
 		wid, nm, path := read3(line)
@@ -336,11 +338,8 @@ func (o Options) withDefaults() Options {
 	if o.Worktrees == nil {
 		o.Worktrees = worktreeList
 	}
-	if o.Windows == nil {
-		o.Windows = windowList
-	}
-	if o.SelfWindow == nil {
-		o.SelfWindow = selfWindow
+	if o.Tmux == nil {
+		o.Tmux = tmux.Exec{}
 	}
 	if o.Args == nil {
 		o.Args = PsArgs

@@ -1,9 +1,10 @@
 package sender
 
 import (
-	"errors"
 	"strings"
 	"testing"
+
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 // pane is one `tmux list-panes -a -F Format` line.
@@ -27,7 +28,7 @@ type fixture struct {
 func (f fixture) probes() Probes {
 	p := Probes{
 		Getenv: func(k string) string { return f.env[k] },
-		Panes:  func() (string, error) { return f.panes, nil },
+		Tmux:   &tmuxtest.Fake{Out: map[string]string{"list-panes": f.panes}},
 		Parent: func(pid int) (int, bool) {
 			pp, ok := f.tree[pid]
 			return pp, ok
@@ -44,10 +45,10 @@ func (f fixture) probes() Probes {
 		p.PID = f.pid
 	}
 	if f.panesErr {
-		p.Panes = func() (string, error) { return "", errors.New("no server running") }
+		p.Tmux = &tmuxtest.Fake{}
 	}
 	if f.noPanes {
-		p.Panes = nil
+		p.Tmux = nil
 	}
 	if f.noParent {
 		p.Parent = nil
@@ -128,7 +129,7 @@ func TestCheck(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := Check(tc.from, tc.crew, tc.f.probes()); got != tc.want {
+			if got := Check(t.Context(), tc.from, tc.crew, tc.f.probes()); got != tc.want {
 				t.Errorf("Check(%q, %q) = %q, want %q", tc.from, tc.crew, got, tc.want)
 			}
 		})
@@ -136,7 +137,7 @@ func TestCheck(t *testing.T) {
 }
 
 func TestCheckZeroProbes(t *testing.T) {
-	if got := Check("dispatcher:c1", "c1", Probes{}); got != "" {
+	if got := Check(t.Context(), "dispatcher:c1", "c1", Probes{}); got != "" {
 		t.Errorf("Check with zero Probes = %q, want empty", got)
 	}
 }
@@ -190,12 +191,12 @@ func TestWatch(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := Watch(tc.from, tc.crew, tc.pane, tc.f.probes()); got != tc.want {
+			if got := Watch(t.Context(), tc.from, tc.crew, tc.pane, tc.f.probes()); got != tc.want {
 				t.Errorf("Watch(%q, %q, %q) = %q, want %q", tc.from, tc.crew, tc.pane, got, tc.want)
 			}
 		})
 	}
-	if got := Watch(idX, "c1", "%2", Probes{}); got != "" {
+	if got := Watch(t.Context(), idX, "c1", "%2", Probes{}); got != "" {
 		t.Errorf("Watch with zero Probes = %q, want empty", got)
 	}
 }

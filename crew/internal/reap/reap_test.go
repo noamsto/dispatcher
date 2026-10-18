@@ -17,6 +17,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
@@ -112,14 +113,13 @@ func (f *fx) ghCall(args []string) (string, error) {
 func (f *fx) opts() Options {
 	return Options{
 		Probes: Probes{
-			Tmux: func(_ context.Context, args ...string) string {
+			Tmux: &tmuxtest.Fake{Func: func(args []string) (string, error) {
 				key := strings.Join(args, " ")
 				f.record("tmux " + key)
-				return f.tmux[key]
-			},
-			TmuxRun: func(_ context.Context, args ...string) { f.record("tmux " + strings.Join(args, " ")) },
-			Gh:      func(_ context.Context, args ...string) (string, error) { return f.ghCall(args) },
-			GhAll:   func(_ context.Context, args ...string) (string, error) { return f.ghCall(args) },
+				return f.tmux[key], nil
+			}},
+			Gh:    func(_ context.Context, args ...string) (string, error) { return f.ghCall(args) },
+			GhAll: func(_ context.Context, args ...string) (string, error) { return f.ghCall(args) },
 			GhQuiet: func(_ context.Context, args ...string) error {
 				_, err := f.ghCall(args)
 				return err
@@ -132,10 +132,6 @@ func (f *fx) opts() Options {
 			Procs:     func(context.Context) string { return f.procs },
 			Ancestors: func() map[int]bool { return f.ancestors },
 			Kill:      func(pid int) { f.record(fmt.Sprintf("kill %d", pid)) },
-			Capture: func(_ context.Context, pane string, colored bool) string {
-				f.record(fmt.Sprintf("capture %s %v", pane, colored))
-				return "$ "
-			},
 			Sleep: func(time.Duration) {
 				f.mu.Lock()
 				defer f.mu.Unlock()
@@ -156,6 +152,7 @@ func (f *fx) opts() Options {
 				f.appended = append(f.appended, line)
 				return nil
 			},
+			Getenv: func(string) string { return "" },
 		},
 		Getenv: func(k string) string { return f.env[k] },
 		PID:    os.Getpid(),

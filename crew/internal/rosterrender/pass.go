@@ -15,10 +15,10 @@ import (
 // the fold re-reads it for every `exited` row, and `sync.OnceValues` memoizes the
 // failure with the result, so `resolveExited` and the liveness rule see one probe
 // outcome per pass.
-func (o Options) passProbes() (roster.Probes, roster.Liveness) {
+func (o Options) passProbes(ctx context.Context) (roster.Probes, roster.Liveness) {
 	wt := sync.OnceValues(o.Roster.Worktrees)
-	windows := sync.OnceValue(func() map[string]bool { return roster.WindowBranches(o.Probes.Windows()) })
-	return roster.Probes{Panes: o.Roster.Panes, Worktrees: wt},
+	windows := sync.OnceValue(func() map[string]bool { return roster.Windows(ctx, o.Probes.Tmux) })
+	return roster.Probes{Tmux: o.Probes.Tmux, Worktrees: wt},
 		roster.Liveness{Windows: windows, Worktrees: wt}
 }
 
@@ -30,8 +30,8 @@ func (o Options) passProbes() (roster.Probes, roster.Liveness) {
 // is written, so a malformed bus can never replace a good diagram. A refused
 // `put` is not: it stops the publish and still returns the count.
 func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, noOpen bool, roleRows []string) (int64, error) {
-	rp, rule := o.passProbes()
-	m, err := model(paths, crew, float64(o.wallSec()), roleRows, rp, rule)
+	rp, rule := o.passProbes(ctx)
+	m, err := model(ctx, paths, crew, float64(o.wallSec()), roleRows, rp, rule)
 	if err != nil {
 		return 0, err
 	}
