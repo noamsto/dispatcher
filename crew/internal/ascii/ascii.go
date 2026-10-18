@@ -2,7 +2,7 @@
 package ascii
 
 // IsDigits reports whether s is a non-empty run of ASCII digits: the shell's
-// `case "$s" in ”|*[!0-9]*)` test, inverted.
+// `case "$s" in ''|*[!0-9]*)` test, inverted.
 func IsDigits(s string) bool {
 	if s == "" {
 		return false
