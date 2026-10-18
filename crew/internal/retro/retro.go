@@ -8,6 +8,7 @@
 package retro
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -64,7 +65,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer) int {
 
 	for _, ev := range events {
 		if _, ok := ev.Doc.(map[string]any); !ok && ev.Doc != nil {
-			say(stderr, "crew: retro: %s: cannot index %T with \"kind\"\n", paths.Log, ev.Doc)
+			say(stderr, "crew: retro: %s: cannot index %s with \"kind\"\n", paths.Log, typeName(ev.Doc))
 			return exitType
 		}
 	}
@@ -87,4 +88,21 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer) int {
 		say(stdout, "%s\n", out)
 	}
 	return 0
+}
+
+// typeName is jq's name for a decoded value's type.
+func typeName(v any) string {
+	switch v.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "boolean"
+	case json.Number, float64:
+		return "number"
+	case string:
+		return "string"
+	case []any:
+		return "array"
+	}
+	return "object"
 }

@@ -239,7 +239,7 @@ func TestNonObjectRowExitsFive(t *testing.T) {
 	if out != "branch\tengine\tmodel\ttier\toutcome\ttags\n" {
 		t.Errorf("stdout = %q", out)
 	}
-	if !strings.HasPrefix(errb, "crew: retro: ") {
+	if !strings.HasSuffix(errb, ": cannot index number with \"kind\"\n") {
 		t.Errorf("stderr = %q", errb)
 	}
 }

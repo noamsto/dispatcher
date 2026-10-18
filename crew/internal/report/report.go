@@ -4,6 +4,7 @@
 package report
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -77,7 +78,7 @@ func fold(events []bus.Event, crew string) ([]string, error) {
 	var dispatches, statuses []bus.Event
 	for _, ev := range events {
 		if _, ok := ev.Doc.(map[string]any); !ok && ev.Doc != nil {
-			return nil, fmt.Errorf("cannot index %T with \"crew_id\"", ev.Doc)
+			return nil, fmt.Errorf("cannot index %s with \"crew_id\"", typeName(ev.Doc))
 		}
 		if ev.CrewID != crew {
 			continue
@@ -129,7 +130,11 @@ func fold(events []bus.Event, crew string) ([]string, error) {
 
 		var cells []string
 		for _, c := range []any{doc(d)["engine"], doc(d)["model"], doc(d)["tier"], shape, outcome, duration} {
-			cells = append(cells, tsvEscape.Replace(jsonval.RawText(c)))
+			cell := ""
+			if c != nil {
+				cell = jsonval.RawText(c)
+			}
+			cells = append(cells, tsvEscape.Replace(cell))
 		}
 		rows = append(rows, strings.Join(cells, "\t"))
 	}
@@ -158,7 +163,7 @@ func stateOf(e bus.Event) (any, error) {
 	case map[string]any:
 		return b["state"], nil
 	default:
-		return nil, fmt.Errorf("cannot index %T with \"state\"", b)
+		return nil, fmt.Errorf("cannot index %s with \"state\"", typeName(b))
 	}
 }
 
@@ -171,3 +176,20 @@ func ts(e bus.Event) float64 {
 }
 
 func truthy(v any) bool { return v != nil && v != false }
+
+// typeName is jq's name for a decoded value's type.
+func typeName(v any) string {
+	switch v.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "boolean"
+	case json.Number, float64:
+		return "number"
+	case string:
+		return "string"
+	case []any:
+		return "array"
+	}
+	return "object"
+}

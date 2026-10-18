@@ -111,7 +111,10 @@ func text(v any) string {
 func notesOf(objs []map[string]any) []note {
 	var out []note
 	for _, o := range objs {
-		n := note{jsonval.RawText(o["seam"]), clean(jsonval.RawText(o["tag"])), ""}
+		n := note{Tag: clean(jsonval.RawText(o["tag"]))}
+		if o["seam"] != nil {
+			n.Seam = jsonval.RawText(o["seam"])
+		}
 		if jsonval.Truthy(o["detail"]) {
 			n.Detail = jsonval.RawText(o["detail"])
 		}
