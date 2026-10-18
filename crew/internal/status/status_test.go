@@ -3,6 +3,7 @@ package status
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -11,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
@@ -25,7 +25,7 @@ const (
 	tsText = `1700000000500`
 )
 
-type foldFunc = func(prog string, rows []jsonv.Value, vars map[string]jsonv.Value) (jsonv.Value, error)
+type foldFunc = func(prog string, lines []string, vars map[string]any) (any, error)
 
 // fixture is a checkout with a bus: Toplevel and the bus paths are plain temp
 // dirs, so no git is involved.
@@ -176,7 +176,13 @@ func (f *fixture) wantNoRow() {
 	}
 }
 
-func jsonStr(s string) string { return string(jsonv.Append(nil, jsonv.Str(s), jsonv.Options{})) }
+func jsonStr(s string) string {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s)
+	return strings.TrimSuffix(b.String(), "\n")
+}
 
 func statusRow(from, body string) string {
 	return `{"ts":` + tsText + `,"crew_id":"c1","from":"` + from + `","to":"dispatcher:c1","kind":"status","body":` + body + `}`
@@ -752,11 +758,11 @@ func TestFoldErrors(t *testing.T) {
 			f := newFixture(t)
 			f.doc(c.doc)
 			f.log(reviewSeam, deslopSeam, planSeam)
-			f.fold = func(prog string, rows []jsonv.Value, vars map[string]jsonv.Value) (jsonv.Value, error) {
+			f.fold = func(prog string, lines []string, vars map[string]any) (any, error) {
 				if prog == c.failing {
-					return jsonv.Value{}, boom
+					return nil, boom
 				}
-				return Options{}.withDefaults().Fold(prog, rows, vars)
+				return Options{}.withDefaults().Fold(prog, lines, vars)
 			}
 			want := "crew: refusing pr_open for " + worker + " — could not read the crew log for the " + c.which + " seam (jq exit 5)\n"
 			if code, stderr := f.status(worker, "pr_open"); code != 1 || stderr != want {

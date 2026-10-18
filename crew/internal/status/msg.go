@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
 )
 
 // MsgRequest is `crew msg <from> <to> <body>`.
@@ -38,26 +37,14 @@ func RunMsg(req MsgRequest, paths bus.Paths, stderr io.Writer, o Options) int {
 		return exitFailure
 	}
 
-	ts := stamp(o)
+	ts := o.NowMS()
 	return post("msg", paths, stderr, func(b string) string {
-		return compact(jsonv.Object(
-			member("ts", ts),
-			member("crew_id", jsonv.Str(crew)),
-			member("from", jsonv.Str(from)),
-			member("to", jsonv.Str(to)),
-			member("kind", jsonv.Str("msg")),
-			member("body", jsonv.Str(b)),
-		))
+		return encodeLine(row[string]{TS: ts, CrewID: crew, From: from, To: to, Kind: bus.KindMsg, Body: b})
 	}, body)
 }
 
 // hasC0 is `_has_c0`: any byte `[[:cntrl:]]` matches under LC_ALL=C, the C0
 // range and DEL.
 func hasC0(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] < 0x20 || s[i] == 0x7f {
-			return true
-		}
-	}
-	return false
+	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
 }

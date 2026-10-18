@@ -1,12 +1,38 @@
 package status
 
 import (
+	"encoding/json"
 	"math/rand/v2"
 	"os/exec"
 	"strings"
 	"testing"
+)
 
-	"github.com/noamsto/dispatcher/crew/internal/jsonv"
+const otherSession = "worker:feat/x#sY#Z"
+
+var (
+	resumeRow   = `{"ts":1,"crew_id":"c1","kind":"resume","branch":"feat/x"}`
+	dispatchRow = `{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/x"}`
+
+	rejectBody         = jsonStr(`{"seam":"review","verdict":"reject"}`)
+	nanReject          = `{"ts":1,"crew_id":"c1","from":"` + rev + `","to":"` + branch + `","kind":"msg","body":` + rejectBody + `,"n":NaN}`
+	nanRejectSpaced    = `{"ts": 1, "crew_id": "c1", "from": "` + rev + `", "to": "` + branch + `", "kind": "msg", "body": ` + rejectBody + `, "n": NaN}`
+	nanRejectEscaped   = `{"ts":1,"crew_id":"c1","from":"role:feat\/x:reviewer","to":"` + branch + `","kind":"msg","body":` + rejectBody + `,"n":NaN}`
+	nanRejectUnicode   = `{"ts":1,"crew_id":"c1","from":"\u0072ole:feat/x:reviewer","to":"` + branch + `","kind":"msg","body":` + rejectBody + `,"n":NaN}`
+	bomRequest         = "\ufeff" + msgRow(worker, rev, `{"seam":"review","request":true}`)
+	nanDispatch        = `{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/x","n":NaN}`
+	nanDispatchEscaped = `{"ts":2,"crew_id":"c1","kind":"\u0064ispatch","branch":"feat\/x","n":NaN}`
+
+	// jq refuses nesting past 5000 objects.
+	deepObjects    = strings.Repeat(`{"a":`, 6000) + "1" + strings.Repeat("}", 6000)
+	deepArrays     = strings.Repeat("[", 9999) + strings.Repeat("]", 9999)
+	paddedReview   = `{"ts":1,"crew_id":"c1","from":"` + worker + `","to":"review:c1","kind":"msg","body":` + jsonStr(`{"seam":"review","review_mode":"full"}`) + `,"pad":` + deepObjects + `}`
+	paddedDeslop   = msgRow(worker, "review:c1", `{"seam":"deslop","pad":`+deepObjects+`}`)
+	paddedAccept   = `{"ts":1,"crew_id":"c1","from":"` + rev + `","to":"` + branch + `","kind":"msg","body":` + jsonStr(`{"seam":"review","verdict":"accept"}`) + `,"pad":` + deepObjects + `}`
+	paddedResume   = `{"ts":1,"crew_id":"c1","kind":"resume","branch":"feat/x","pad":` + deepObjects + `}`
+	paddedResume5k = `{"ts":1,"crew_id":"c1","kind":"resume","branch":"feat/x","pad":` + strings.Repeat(`{"a":`, 5000) + "1" + strings.Repeat("}", 5000) + `}`
+	tornDispatchr  = `{"ts":1,"crew_id":"c1","from":"dispatcher:c1","to":"worker:feat/x#s1-1","kind":"msg","body":"x"`
+	nanDispatchr   = tornDispatchr + `,"n":NaN}`
 )
 
 // corpus is every shape of line the folds treat differently: the lead's seams,
@@ -101,12 +127,40 @@ var corpus = []string{
 	msgRow(rev, branch, ``),
 	msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"accept"}`),
 	msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"maybe"}`),
-	`{"ts":1,"crew_id":"c1","kind":"resume","branch":"feat/x"}`,
-	`{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/x"}`,
+	resumeRow,
+	dispatchRow,
+	// A from or to whose last `#` is not a session suffix names another id.
+	msgRow(otherSession, "review:c1", `{"seam":"review","review_mode":"full"}`),
+	msgRow(otherSession, "review:c1", `{"seam":"deslop"}`),
+	msgRow(otherSession, "review:c1", `{"seam":"plan","plan_critic_first_pass":"accept"}`),
+	msgRow(otherSession, rev, `{"seam":"review","request":true}`),
+	msgRow(rev+"#sY#Z", branch, `{"seam":"review","verdict":"reject"}`),
+	msgRow(rev+"#sY#Z", branch, `{"seam":"review","verdict":"accept"}`),
+	msgRow(rev, otherSession, `{"seam":"review","verdict":"accept"}`),
+	msgRow(rev, otherSession, `{"seam":"review","verdict":"revise"}`),
+	// Revoking rows with NaN or a BOM, written raw, spaced and escaped.
+	nanReject,
+	nanRejectSpaced,
+	nanRejectEscaped,
+	nanRejectUnicode,
+	bomRequest,
+	nanDispatch,
+	nanDispatchEscaped,
+	// Nesting deeper than jq parses, in the line and in the body.
+	paddedReview,
+	paddedDeslop,
+	msgRow(worker, "review:c1", `{"seam":"deslop","pad":`+deepArrays+`}`),
+	paddedAccept,
+	paddedResume,
+	paddedResume5k,
+	// A dispatcher msg to the worker that merely names crew, dispatch and branch.
+	tornDispatchr,
+	nanDispatchr,
 }
 
-// TestFoldsMatchJQ runs seam.jq and deslop.jq under the real jq and under the
-// Go fold over the corpus, singly, in pairs, and in seeded random sequences.
+// TestFoldsMatchJQ runs seam.jq, deslop.jq and plan.jq under the real jq and
+// under the gate's Fold over the corpus, singly, in pairs, and in seeded random
+// sequences.
 func TestFoldsMatchJQ(t *testing.T) {
 	jq, err := exec.LookPath("jq")
 	if err != nil {
@@ -127,6 +181,7 @@ func TestFoldsMatchJQ(t *testing.T) {
 		seqs = append(seqs, seq)
 	}
 	// Named shapes the arm's comment documents.
+	accept := msgRow(rev, branch, `{"seam":"review","verdict":"accept"}`)
 	seqs = append(seqs,
 		[]string{corpus[0], corpus[5]},
 		[]string{corpus[13], corpus[5]},
@@ -138,6 +193,21 @@ func TestFoldsMatchJQ(t *testing.T) {
 		[]string{corpus[13], corpus[20], corpus[22], corpus[5]},
 		[]string{corpus[0], corpus[17], corpus[5]},
 		[]string{corpus[0], corpus[36], corpus[5]},
+		// Each revoking row after a row that grants.
+		[]string{accept, nanReject, deslopSeam},
+		[]string{accept, nanRejectSpaced, deslopSeam},
+		[]string{accept, nanRejectEscaped, deslopSeam},
+		[]string{accept, nanRejectUnicode, deslopSeam},
+		[]string{accept, bomRequest, deslopSeam},
+		[]string{reviewSeam, bomRequest, deslopSeam},
+		[]string{planSeam, nanDispatch},
+		[]string{planSeam, nanDispatchEscaped},
+		[]string{resumeRow, nanDispatch},
+		[]string{resumeRow, nanDispatchEscaped},
+		[]string{planSeam, tornDispatchr},
+		[]string{resumeRow, nanDispatchr},
+		[]string{deslopSeam, paddedReview},
+		[]string{paddedAccept, deslopSeam},
 	)
 
 	progs := []struct {
@@ -166,37 +236,30 @@ func TestFoldsMatchJQ(t *testing.T) {
 	}
 }
 
-func varsFor(engine string) map[string]jsonv.Value {
-	return map[string]jsonv.Value{
-		"c": jsonv.Str(crewID),
-		"b": jsonv.Str(branch),
-		"r": jsonv.Str(rev),
-		"e": jsonv.Str(engine),
-	}
+func varsFor(engine string) map[string]any {
+	return map[string]any{"c": crewID, "b": branch, "r": rev, "e": engine}
 }
 
 func runGo(prog, engine string, lines []string) string {
-	rows := make([]jsonv.Value, len(lines))
-	for i, l := range lines {
-		rows[i] = jsonv.Str(l)
-	}
-	v, err := Options{}.withDefaults().Fold(prog, rows, varsFor(engine))
+	v, err := Options{}.withDefaults().Fold(prog, lines, varsFor(engine))
 	if err != nil {
 		return "error"
 	}
-	return string(jsonv.Append(nil, v, jsonv.Options{}))
+	return encodeLine(v)
 }
 
 // runJQ is the arm's call with the lines handed over as one array, which is the
 // documented line patch to the programs: `$lines | <prog>`.
 func runJQ(t *testing.T, jq, prog, engine string, lines []string) string {
 	t.Helper()
-	arr := make([]jsonv.Value, len(lines))
-	for i, l := range lines {
-		arr[i] = jsonv.Str(l)
+	if lines == nil {
+		lines = []string{}
 	}
-	linesJSON := string(jsonv.Append(nil, jsonv.Array(arr...), jsonv.Options{}))
-	cmd := exec.Command(jq, "-nc", "--argjson", "lines", linesJSON,
+	linesJSON, err := json.Marshal(lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(jq, "-nc", "--argjson", "lines", string(linesJSON),
 		"--arg", "c", crewID, "--arg", "b", branch, "--arg", "r", rev, "--arg", "e", engine,
 		"$lines | "+unpatchFromJSON(prog))
 	out, err := cmd.Output()
@@ -226,18 +289,17 @@ func runJQOriginal(t *testing.T, jq, prog, engine string, lines []string) string
 }
 
 func TestPlanFold(t *testing.T) {
-	n := len(corpus)
-	planOK, planBad, resume, dispatch := corpus[n-4], corpus[n-3], corpus[n-2], corpus[n-1]
+	planBad := msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"maybe"}`)
 	for _, c := range []struct {
 		name string
 		seq  []string
 		want string
 	}{
-		{"plan seam", []string{planOK}, "1"},
-		{"resume", []string{resume}, "1"},
-		{"resume then dispatch", []string{resume, dispatch}, "0"},
-		{"seam then dispatch", []string{planOK, dispatch}, "0"},
-		{"dispatch then seam", []string{dispatch, planOK}, "1"},
+		{"plan seam", []string{planSeam}, "1"},
+		{"resume", []string{resumeRow}, "1"},
+		{"resume then dispatch", []string{resumeRow, dispatchRow}, "0"},
+		{"seam then dispatch", []string{planSeam, dispatchRow}, "0"},
+		{"dispatch then seam", []string{dispatchRow, planSeam}, "1"},
 		{"bad value", []string{planBad}, "0"},
 	} {
 		if got := runGo(planProg, "claude", c.seq); got != c.want {
