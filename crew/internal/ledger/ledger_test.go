@@ -549,6 +549,12 @@ func ledgerCorpus() []string {
 		d := ids[r.IntN(len(ids))] + "pass(" + evs[r.IntN(len(evs))] + bad[r.IntN(len(bad))] + tails[r.IntN(len(tails))]
 		corpus = append(corpus, d, d+seps[r.IntN(len(seps))])
 	}
+	// Oniguruma's \g<b> nesting cap: the boundary for both evidence forms.
+	for d := 17; d <= 22; d++ {
+		nest := strings.Repeat("(", d) + "x" + strings.Repeat(")", d)
+		corpus = append(corpus, "AC1 pass("+nest+")", "pass("+nest+") AC2 pass(ok)",
+			"AC1 waived(dispatcher: "+nest+")", "waived(dispatcher "+nest+" "+nest+")")
+	}
 	return corpus
 }
 
