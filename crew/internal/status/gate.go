@@ -1,6 +1,7 @@
 package status
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -10,8 +11,11 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
 )
 
-// jqUnreadable is jq's exit status for a log file that will not open.
-const jqUnreadable = 2
+// jq's statuses for a fold that cannot run: 2 unreadable input, 5 a runtime error.
+const (
+	jqUnreadable = 2
+	jqRuntime    = 5
+)
 
 // gate is the arm's pr_open/done gate for a worker session.
 type gate struct {
@@ -66,27 +70,36 @@ func (g gate) check() string {
 	if i := strings.LastIndex(b, "#s"); i >= 0 {
 		b = b[:i]
 	}
-	k := seamKeys{crew: g.crew, branch: b, reviewer: "role:" + strings.TrimPrefix(b, "worker:") + ":reviewer", pi: doc.engine == "pi"}
+	vars := map[string]any{"c": g.crew, "b": b, "r": "role:" + strings.TrimPrefix(b, "worker:") + ":reviewer", "e": doc.engine}
 	type seam struct {
-		name    string
-		found   func([]string, seamKeys) bool
-		refusal string
+		name, prog, refusal string
 	}
 	seams := []seam{
-		{"review", foldReview, fmt.Sprintf(`crew: refusing %s for %s session %s — no review seam on the bus for this branch; run the code review gate, ingest its verdict, then crew msg "$CREW_WORKER_ID" "review:%s" '{"seam":"review","review_mode":"full"}' (or downgraded) and retry; a review request or a pane that has not returned a verdict is not a review; a review that cannot run goes blocked/failed, never pr_open/done. On pi the reviewer pane's latest verdict decides: accept passes, revise needs your own review:%s seam after you fix it, a reject (or any reply that is not an exact accept/revise) blocks until the reviewer's next verdict, and a re-request (any msg from you to the reviewer except the {"final":true} release) cancels every earlier verdict and your own earlier seam until a new verdict arrives`,
+		{"review", seamProg, fmt.Sprintf(`crew: refusing %s for %s session %s — no review seam on the bus for this branch; run the code review gate, ingest its verdict, then crew msg "$CREW_WORKER_ID" "review:%s" '{"seam":"review","review_mode":"full"}' (or downgraded) and retry; a review request or a pane that has not returned a verdict is not a review; a review that cannot run goes blocked/failed, never pr_open/done. On pi the reviewer pane's latest verdict decides: accept passes, revise needs your own review:%s seam after you fix it, a reject (or any reply that is not an exact accept/revise) blocks until the reviewer's next verdict, and a re-request (any msg from you to the reviewer except the {"final":true} release) cancels every earlier verdict and your own earlier seam until a new verdict arrives`,
 			g.state, doc.tier, g.from, g.crew, g.crew)},
-		{"deslop", foldDeslop, fmt.Sprintf(`crew: refusing %s for %s session %s — no deslop seam on the bus for this branch; run the harness deslop skill (dispatcher:deslop on claude, $deslop on codex, deslop on cursor and pi) over the diff you are about to push, commit its cleanup, then crew msg "$CREW_WORKER_ID" "review:%s" '{"seam":"deslop"}' and retry. The seam records that the skill ran — never post it just to get past this gate`,
+		{"deslop", deslopProg, fmt.Sprintf(`crew: refusing %s for %s session %s — no deslop seam on the bus for this branch; run the harness deslop skill (dispatcher:deslop on claude, $deslop on codex, deslop on cursor and pi) over the diff you are about to push, commit its cleanup, then crew msg "$CREW_WORKER_ID" "review:%s" '{"seam":"deslop"}' and retry. The seam records that the skill ran — never post it just to get past this gate`,
 			g.state, doc.tier, g.from, g.crew)},
 	}
 	if doc.plan == "required" && doc.resume != "true" {
-		seams = append(seams, seam{"plan", foldPlan, fmt.Sprintf(`crew: refusing %s for %s session %s — plan: required but no plan seam on the bus for this branch; run the plan critic (spec-plan-critic, or the plan-critic role pane), ingest its first verdict, then crew msg "$CREW_WORKER_ID" "review:%s" '{"seam":"plan","plan_critic_first_pass":"accept"}' (or revise/reject: the critic's first verdict) and retry. A plan phase you skipped or could not run is reported, not papered over: post crew status blocked naming why and await the dispatcher (it can re-dispatch with plan: provided); never post the seam without a critic verdict`,
+		seams = append(seams, seam{"plan", planProg, fmt.Sprintf(`crew: refusing %s for %s session %s — plan: required but no plan seam on the bus for this branch; run the plan critic (spec-plan-critic, or the plan-critic role pane), ingest its first verdict, then crew msg "$CREW_WORKER_ID" "review:%s" '{"seam":"plan","plan_critic_first_pass":"accept"}' (or revise/reject: the critic's first verdict) and retry. A plan phase you skipped or could not run is reported, not papered over: post crew status blocked naming why and await the dispatcher (it can re-dispatch with plan: provided); never post the seam without a critic verdict`,
 			g.state, doc.tier, g.from, g.crew)})
 	}
+	unreadable := func(name string, code int) string {
+		return fmt.Sprintf("crew: refusing %s for %s — could not read the crew log for the %s seam (jq exit %d)", g.state, g.from, name, code)
+	}
 	if log.err != nil {
-		return fmt.Sprintf("crew: refusing %s for %s — could not read the crew log for the %s seam (jq exit %d)", g.state, g.from, seams[0].name, jqUnreadable)
+		return unreadable(seams[0].name, jqUnreadable)
+	}
+	if log.lines == nil {
+		return seams[0].refusal
 	}
 	for _, s := range seams {
-		if !s.found(log.lines, k) {
+		v, err := g.o.Fold(s.prog, log.lines, vars)
+		if err != nil {
+			return unreadable(s.name, jqRuntime)
+		}
+		// RunAny hands an integer output back as json.Number.
+		if v != json.Number("1") {
 			return s.refusal
 		}
 	}

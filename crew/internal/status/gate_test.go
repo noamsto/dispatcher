@@ -148,8 +148,7 @@ func deslopCases() []gateCase {
 			reviewSeam, msgRow(worker, "review:c1", `{"seam":"deslop","note":"\udc00"}`)),
 		seamRefuse("deslop: seam padded past jq's nesting limit", standardDoc, refused,
 			reviewSeam, paddedDeslop),
-		// jq's fromjson reads NaN, so jq grants here; Go's decoder refuses it.
-		seamRefuse("refuse-more: NaN deslop body", standardDoc, refused,
+		seamPass("deslop: NaN in the body", standardDoc,
 			reviewSeam, msgRow(worker, "review:c1", `{"seam":"deslop","n":NaN}`)),
 	}
 }

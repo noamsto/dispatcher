@@ -1,85 +1,11 @@
 package status
 
 import (
+	"encoding/json"
 	"math/rand/v2"
 	"os/exec"
 	"strings"
 	"testing"
-)
-
-// The status arm's original programs, run as the arm ran them: `jq -Rnr` over
-// the log, $c crew, $b branch session id, $r reviewer role id, $e engine.
-// Output 1 when the seam is there, else 0.
-const (
-	jqReview = `reduce inputs as $line (
-  {ok: false, rejected: false, pending: false};
-  (try [$line | fromjson] catch null) as $p
-  | if $p == null then
-      if $e == "pi" and ($line | test("\\S")) and ($line | contains("\"crew_id\":" + ($c | tojson)) and contains($r | tojson | .[1:-1]))
-      then .ok = false | .rejected = true
-      else . end
-    elif ($p[0] | type) != "object" then .
-    else
-      $p[0] as $m
-      | ($m.crew_id == $c and $m.kind == "msg") as $mine
-      | (if $mine then (($m.body | fromjson?) // null) else null end) as $o
-      | (($m.from // "") | tostring | sub("#s[^#]*$"; "")) as $f
-      | (($m.to // "") | tostring | sub("#s[^#]*$"; "")) as $t
-      | if $e == "pi" and $mine and ($o | type) != "object" then
-          if $f == $r then .ok = false | .rejected = true
-          elif $f == $b and $m.to == $r then .pending = true | .ok = false
-          else . end
-        elif ($o | type) != "object" then .
-        elif $e == "pi" and $f == $r and ($o | has("seam") or has("verdict"))
-             and (($o | has("tag") and (has("verdict") | not)) | not) then
-          if $o.seam == "review" and $o.verdict == "accept" then
-            if $t == $b then .pending = false | .ok = true | .rejected = false else . end
-          elif $o.seam == "review" and $o.verdict == "revise" then
-            if $t == $b then .pending = false | .ok = false | .rejected = false else .ok = false end
-          else .ok = false | .rejected = true end
-        elif $e == "pi" and $f == $r
-             and (($o | has("seam") or has("verdict")) | not)
-             and (($o | has("event") or has("tag")) | not) then
-          .ok = false | .rejected = true
-        elif $e == "pi" and $f == $b and $m.to == $r
-             and (($o | keys) == ["final"] and $o.final == true | not) then
-          .pending = true | .ok = false
-        elif $o.seam != "review" or ($o | has("tag")) then .
-        elif $f == $b and $m.to == ("review:" + $c)
-             and (($o | has("review_mode") | not) or ($o.review_mode | IN("full", "downgraded"))) then
-          if .rejected or .pending then . else .ok = true end
-        else . end
-    end
-) | if .ok then 1 else 0 end`
-
-	jqDeslop = `first(inputs
-  | (try fromjson catch null)
-  | select(type == "object" and .crew_id == $c and .kind == "msg"
-           and .to == ("review:" + $c)
-           and ((.from // "") | tostring | sub("#s[^#]*$"; "")) == $b)
-  | (.body | fromjson? // null)
-  | select(type == "object" and .seam == "deslop" and (has("tag") | not))
-  | 1) // 0`
-
-	jqPlan = `($b | ltrimstr("worker:")) as $n
-| reduce inputs as $line (
-  {seam: false, resumed: false};
-  (try [$line | fromjson] catch null) as $p
-  | if $p == null or ($p[0] | type) != "object" then .
-    else
-      $p[0] as $m
-      | if $m.crew_id != $c then .
-        elif $m.kind == "dispatch" and $m.branch == $n then .resumed = false | .seam = false
-        elif $m.kind == "resume" and $m.branch == $n then .resumed = true
-        elif $m.kind == "msg" and $m.to == ("review:" + $c)
-             and (($m.from // "") | tostring | sub("#s[^#]*$"; "")) == $b then
-          (($m.body | fromjson?) // null) as $o
-          | if ($o | type) == "object" and $o.seam == "plan" and ($o | has("tag") | not)
-               and ($o.plan_critic_first_pass | IN("accept", "revise", "reject"))
-            then .seam = true else . end
-        else . end
-    end
-) | if .seam or .resumed then 1 else 0 end`
 )
 
 const otherSession = "worker:feat/x#sY#Z"
@@ -212,7 +138,7 @@ var corpus = []string{
 	msgRow(rev+"#sY#Z", branch, `{"seam":"review","verdict":"accept"}`),
 	msgRow(rev, otherSession, `{"seam":"review","verdict":"accept"}`),
 	msgRow(rev, otherSession, `{"seam":"review","verdict":"revise"}`),
-	// Revoking rows only jq decodes (NaN, a BOM), raw, spaced and escaped.
+	// Revoking rows encoding/json would not decode (NaN, a BOM), raw, spaced and escaped.
 	nanReject,
 	nanRejectSpaced,
 	nanRejectEscaped,
@@ -232,10 +158,10 @@ var corpus = []string{
 	nanDispatchr,
 }
 
-// TestGatesNeverAcceptMoreThanJQ holds the Go folds to the hard rule: a gate
-// never accepts what the arm's jq programs refuse. Go may refuse more only
-// where it cannot decode a line, or a msg body, that jq parses.
-func TestGatesNeverAcceptMoreThanJQ(t *testing.T) {
+// TestFoldsMatchJQ runs seam.jq, deslop.jq and plan.jq under the real jq and
+// under the gate's Fold over the corpus, singly, in pairs, and in seeded random
+// sequences.
+func TestFoldsMatchJQ(t *testing.T) {
 	jq, err := exec.LookPath("jq")
 	if err != nil {
 		t.Skip("jq not on PATH")
@@ -247,12 +173,14 @@ func TestGatesNeverAcceptMoreThanJQ(t *testing.T) {
 	}
 	seqs = append(seqs, nil)
 	for range 150 {
-		seq := make([]string, 2+rng.IntN(5))
+		n := 2 + rng.IntN(5)
+		seq := make([]string, n)
 		for i := range seq {
 			seq[i] = corpus[rng.IntN(len(corpus))]
 		}
 		seqs = append(seqs, seq)
 	}
+	// Named shapes the arm's comment documents.
 	accept := msgRow(rev, branch, `{"seam":"review","verdict":"accept"}`)
 	seqs = append(seqs,
 		[]string{corpus[0], corpus[5]},
@@ -282,29 +210,25 @@ func TestGatesNeverAcceptMoreThanJQ(t *testing.T) {
 		[]string{paddedAccept, deslopSeam},
 	)
 
-	folds := []struct {
-		name    string
-		jq      string
-		fold    func([]string, seamKeys) bool
-		engines []string
+	progs := []struct {
+		name, prog string
+		engines    []string
 	}{
-		{"review", jqReview, foldReview, []string{"pi", "claude"}},
-		{"deslop", jqDeslop, foldDeslop, []string{"claude"}},
-		{"plan", jqPlan, foldPlan, []string{"claude"}},
+		{"seam", seamProg, []string{"pi", "claude"}},
+		{"deslop", deslopProg, []string{"claude"}},
+		{"plan", planProg, []string{"claude"}},
 	}
-	for _, f := range folds {
-		for _, engine := range f.engines {
-			t.Run(f.name+"/"+engine, func(t *testing.T) {
-				t.Parallel()
-				k := seamKeys{crew: crewID, branch: branch, reviewer: rev, pi: engine == "pi"}
+	for _, p := range progs {
+		for _, engine := range p.engines {
+			t.Run(p.name+"/"+engine, func(t *testing.T) {
 				for _, seq := range seqs {
-					want := runOracle(t, jq, f.jq, engine, seq)
-					got := f.fold(seq, k)
-					switch {
-					case got && !want:
-						t.Errorf("accepts what jq refuses: lines %q", seq)
-					case !got && want && !undecodable(seq):
-						t.Errorf("refuses what jq accepts with every line decodable: lines %q", seq)
+					want := runJQ(t, jq, p.prog, engine, seq)
+					got := runGo(p.prog, engine, seq)
+					if got != want {
+						t.Errorf("lines %q:\n jq %q\n go %q", seq, want, got)
+					}
+					if orig := runJQOriginal(t, jq, p.prog, engine, seq); orig != want {
+						t.Errorf("lines %q:\n patched jq %q\n original jq %q", seq, want, orig)
 					}
 				}
 			})
@@ -312,40 +236,74 @@ func TestGatesNeverAcceptMoreThanJQ(t *testing.T) {
 	}
 }
 
-// undecodable reports a line, or a msg body, that fromJSON refuses.
-func undecodable(lines []string) bool {
-	for _, l := range lines {
-		v, ok := fromJSON(l)
-		if !ok {
-			return true
-		}
-		m, _ := v.(map[string]any)
-		if s, isString := m["body"].(string); isString {
-			if _, ok := fromJSON(s); !ok {
-				return true
-			}
-		}
-	}
-	return false
+func varsFor(engine string) map[string]any {
+	return map[string]any{"c": crewID, "b": branch, "r": rev, "e": engine}
 }
 
-func runOracle(t *testing.T, jq, prog, engine string, lines []string) bool {
+func runGo(prog, engine string, lines []string) string {
+	v, err := Options{}.withDefaults().Fold(prog, lines, varsFor(engine))
+	if err != nil {
+		return "error"
+	}
+	return encodeLine(v)
+}
+
+// runJQ is the arm's call with the lines handed over as one array, which is the
+// documented line patch to the programs: `$lines | <prog>`.
+func runJQ(t *testing.T, jq, prog, engine string, lines []string) string {
 	t.Helper()
-	cmd := exec.Command(jq, "-Rnr", "--arg", "c", crewID, "--arg", "b", branch, "--arg", "r", rev, "--arg", "e", engine, prog)
+	if lines == nil {
+		lines = []string{}
+	}
+	linesJSON, err := json.Marshal(lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(jq, "-nc", "--argjson", "lines", string(linesJSON),
+		"--arg", "c", crewID, "--arg", "b", branch, "--arg", "r", rev, "--arg", "e", engine,
+		"$lines | "+unpatchFromJSON(prog))
+	out, err := cmd.Output()
+	if err != nil {
+		return "error"
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// unpatchFromJSON hands jq its own fromjson back, the one `_jqfromjson` copies.
+func unpatchFromJSON(prog string) string { return strings.ReplaceAll(prog, "_jqfromjson", "fromjson") }
+
+// runJQOriginal undoes the three patches and reads the lines the arm's way,
+// `jq -Rnr` over the log: the check that the patch changed only how lines arrive.
+func runJQOriginal(t *testing.T, jq, prog, engine string, lines []string) string {
+	t.Helper()
+	orig := strings.NewReplacer("reduce .[] as $line", "reduce inputs as $line", "first(.[]", "first(inputs").Replace(unpatchFromJSON(prog))
+	cmd := exec.Command(jq, "-Rnr", "--arg", "c", crewID, "--arg", "b", branch, "--arg", "r", rev, "--arg", "e", engine, orig)
 	if len(lines) > 0 {
 		cmd.Stdin = strings.NewReader(strings.Join(lines, "\n") + "\n")
 	}
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("jq on %q: %v", lines, err)
+		return "error"
 	}
-	switch got := strings.TrimSpace(string(out)); got {
-	case "1":
-		return true
-	case "0":
-		return false
-	default:
-		t.Fatalf("jq on %q printed %q", lines, got)
-		return false
+	return strings.TrimSpace(string(out))
+}
+
+func TestPlanFold(t *testing.T) {
+	planBad := msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"maybe"}`)
+	for _, c := range []struct {
+		name string
+		seq  []string
+		want string
+	}{
+		{"plan seam", []string{planSeam}, "1"},
+		{"resume", []string{resumeRow}, "1"},
+		{"resume then dispatch", []string{resumeRow, dispatchRow}, "0"},
+		{"seam then dispatch", []string{planSeam, dispatchRow}, "0"},
+		{"dispatch then seam", []string{dispatchRow, planSeam}, "1"},
+		{"bad value", []string{planBad}, "0"},
+	} {
+		if got := runGo(planProg, "claude", c.seq); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
 	}
 }
