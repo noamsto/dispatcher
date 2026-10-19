@@ -34,6 +34,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/log"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/piagentdir"
+	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/prwatch"
 	"github.com/noamsto/dispatcher/crew/internal/rate"
 	"github.com/noamsto/dispatcher/crew/internal/reap"
@@ -391,7 +392,7 @@ func stallRequest(p crewArgs) stall.Request {
 type env struct {
 	getwd  func() (string, error)
 	probes func(ctx context.Context, cwd string) roster.Probes
-	procs  crews.Probes     // the pid probes crews reads
+	proc   proc.Table       // the process table the pid reads go through
 	stdin  io.Reader        // remote-exec's request
 	now    func() time.Time // the fold's clock (jq's `now`); nil is the wall clock
 }
@@ -403,7 +404,7 @@ func main() {
 	e := env{
 		getwd:  os.Getwd,
 		probes: probes,
-		procs:  crews.DefaultProbes(),
+		proc:   proc.OS{},
 		stdin:  os.Stdin,
 	}
 	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, e))
@@ -554,8 +555,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "crews" {
 		out := bufio.NewWriterSize(stdout, 64<<10)
 		code := crews.Run(parsed.typed.Crews.Mine, paths, out, stderr, crews.Options{
-			Probes: e.procs,
-			Now:    time.Now,
+			Proc: e.proc,
+			Now:  time.Now,
 		})
 		return flush(out, stderr, code)
 	}
@@ -641,7 +642,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return stream.Run(streamRequest(parsed.typed.Stream.streamFlags, parsed.typed.Stream.ReapEvery), paths, stdout, stderr, stream.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Now:    time.Now,
-			Probes: e.procs,
+			Proc:   e.proc,
 		})
 	}
 
@@ -656,7 +657,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		}
 		return rosterrender.Run(ctx, req, paths, rosterrender.Options{
 			Probes:    rosterrender.Default(),
-			Procs:     e.procs,
+			Proc:      e.proc,
 			Roster:    roster.Probes{Worktrees: commonWorktrees(ctx, paths.Common)},
 			Clock:     clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 			Stderr:    stderr,
@@ -675,7 +676,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			CrewID:    func() string { return bus.CrewID(ctx, cwd) },
 			Now:       time.Now,
 			CrewClock: os.Getenv("CREW_CLOCK"),
-			Sender:    senderProbes(e.procs),
+			Sender:    senderProbes(e.proc),
 		})
 	}
 
@@ -698,8 +699,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return reply.Run(ctx, reply.Request{Crew: str(c.Crew), To: c.To, Body: c.Body}, paths, stderr, reply.Options{
 			CrewID: crewID,
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
-			Probes: e.procs,
-			Sender: senderProbes(e.procs),
+			Proc:   e.proc,
+			Sender: senderProbes(e.proc),
 			Remote: func(host, crew string, argv []string) int {
 				return remoteAs(ctx, e, cwd, crew)(host, argv, stdout, stderr)
 			},
@@ -763,11 +764,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "adopt" {
 		c := parsed.typed.Adopt
 		return adopt.Run(ctx, adopt.Request{ID: c.ID, PID: c.PID, Force: c.Force}, paths, stdout, stderr, adopt.Options{
-			Probes: e.procs,
-			Now:    time.Now,
-			PID:    os.Getpid(),
-			PPID:   os.Getppid(),
-			Pwd:    cwd,
+			Proc: e.proc,
+			Now:  time.Now,
+			PID:  os.Getpid(),
+			PPID: os.Getppid(),
+			Pwd:  cwd,
 		})
 	}
 
@@ -787,7 +788,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Toplevel: func() string { return bus.Toplevel(ctx, cwd) },
 			NowMS:    clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")}.RealMS,
 			Getenv:   os.Getenv,
-			Sender:   senderProbes(e.procs),
+			Sender:   senderProbes(e.proc),
 			Tmux:     tmux.Exec{},
 		}
 		if sub == "status" {
@@ -801,12 +802,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "register" || sub == "deregister" {
 		return register.Run(sub, parsed.typed.Register.PID, paths, stderr, register.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
-			Probes: e.procs,
+			Proc:   e.proc,
 			Now:    time.Now,
 			PID:    os.Getpid(),
 			PPID:   os.Getppid(),
 			Pwd:    cwd,
-			Args:   adopt.PsArgs,
 			Getenv: os.Getenv,
 		})
 	}
@@ -823,7 +823,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			// worker can rewrite.
 			CrewID: func() string { return bus.CrewIDEnvFirst(ctx, cwd) },
 			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
-			Sender: senderProbes(e.procs),
+			Sender: senderProbes(e.proc),
 			NewProbes: func(pane string) probe.Probes {
 				return probe.Default(probe.Env{
 					Getenv: os.Getenv, Pane: pane, Dir: paths.Common, Stderr: stderr,
@@ -947,7 +947,7 @@ func remoteRun(ctx context.Context, e env, c remote.Call, stdout, stderr io.Writ
 			crew = v
 		}
 	}
-	if reason := sender.Check(ctx, "dispatcher:"+crew, crew, senderProbes(e.procs)); reason != "" {
+	if reason := sender.Check(ctx, "dispatcher:"+crew, crew, senderProbes(e.proc)); reason != "" {
 		say(stderr, "crew: remote-run: %s\n", reason)
 		return exitRemoteUsage
 	}
@@ -988,7 +988,7 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 		s := p.typed.Fleet.Stream
 		req := stream.FleetRequest{Request: streamRequest(s.streamFlags, nil), Rediscover: str(s.Rediscover)}
 		return stream.RunFleet(req, stdout, stderr, stream.FleetOptions{
-			Options: stream.Options{Now: time.Now, Probes: e.procs},
+			Options: stream.Options{Now: time.Now, Proc: e.proc},
 			Origin:  func(common string) string { return originOf(ctx, common) },
 		})
 	}
@@ -1080,8 +1080,8 @@ func fold(sub string, events []bus.Event, readErr error, log string, stderr io.W
 
 // senderProbes are the real reads behind the sender check: the caller's env, its
 // pid ancestry, and every pane's stamps.
-func senderProbes(procs crews.Probes) sender.Probes {
-	return sender.Probes{Getenv: os.Getenv, Tmux: tmux.Exec{}, Parent: procs.Parent, PID: os.Getpid()}
+func senderProbes(t proc.Table) sender.Probes {
+	return sender.Probes{Getenv: os.Getenv, Tmux: tmux.Exec{}, Proc: t}
 }
 
 func probes(ctx context.Context, cwd string) roster.Probes {

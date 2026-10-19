@@ -24,6 +24,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
+	"github.com/noamsto/dispatcher/crew/internal/proc"
 )
 
 //go:embed crews_stats.jq
@@ -35,11 +36,11 @@ var finalProgram string
 // header is the arm's printf, matching the final pass's column order.
 const header = "crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive"
 
-// Options is everything Run reads beyond the bus: the process probes and the
+// Options is everything Run reads beyond the bus: the process table and the
 // clock.
 type Options struct {
-	Probes Probes
-	Now    func() time.Time
+	Proc proc.Table
+	Now  func() time.Time
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit
@@ -72,7 +73,7 @@ func mine(paths bus.Paths, stdout io.Writer, o Options) {
 		if !ok {
 			continue
 		}
-		if !o.Probes.RecordedLive(now, n, pidfile) || !o.Probes.IsAncestor(n) {
+		if !RecordedLive(o.Proc, now, n, pidfile) || !proc.IsAncestor(o.Proc, n) {
 			continue
 		}
 		say(stdout, "%s\n", id)
@@ -122,7 +123,7 @@ func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		var pidV, alive any
 		if pid != "" {
 			pidV = pid
-			if a := PidAlive(o.Probes, now, pidfile, pid); a != nil {
+			if a := PidAlive(o.Proc, now, pidfile, pid); a != nil {
 				alive = *a
 			}
 		}
@@ -181,12 +182,27 @@ func crewDirs(paths bus.Paths) []string {
 	return out
 }
 
+// RecordedLive is _recorded_pid_live: <pid> can still be the dispatcher
+// <pidfile> records — live and not a later-recycled pid (_pid_recycled): the
+// process now holding <pid> started after <pidfile> was last written (plus 2s
+// of slack for ps' second granularity). An unreadable timestamp, or a pidfile
+// that is not a regular file, says not-recycled, so a live process is never
+// judged dead.
+func RecordedLive(t proc.Table, now time.Time, pid int, pidfile string) bool {
+	if !t.Alive(pid) {
+		return false
+	}
+	elapsed, ok := t.Elapsed(pid)
+	st, err := os.Stat(pidfile)
+	return !ok || err != nil || !st.Mode().IsRegular() || now.Unix()-elapsed <= st.ModTime().Unix()+2
+}
+
 // PidAlive is the three-state liveness of the pid a crew's pidfile records,
 // read off the text `t` that file holds: nil for the empty text — no file, or an
 // empty one, which is *unknown* rather than dead, so an unregistered crew is
 // never dropped for it — false for `0` or any non-digit, and the probe's answer
 // for a positive integer. `crews` prints it and `reply` filters candidates on it.
-func PidAlive(p Probes, now time.Time, pidfile, t string) *bool {
+func PidAlive(tbl proc.Table, now time.Time, pidfile, t string) *bool {
 	if t == "" {
 		return nil
 	}
@@ -194,7 +210,7 @@ func PidAlive(p Probes, now time.Time, pidfile, t string) *bool {
 	if !ok {
 		return boolPtr(false)
 	}
-	return boolPtr(p.RecordedLive(now, n, pidfile))
+	return boolPtr(RecordedLive(tbl, now, n, pidfile))
 }
 
 func boolPtr(b bool) *bool { return &b }

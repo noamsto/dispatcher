@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
@@ -104,24 +104,12 @@ func (tr *tree) runReq(t *testing.T, o Options, req Request) (string, int) {
 	if o.Clock.Now == nil {
 		o.Clock.Now = func() time.Time { return now }
 	}
-	if o.Probes.Alive == nil {
-		o.Probes = liveProbes(nil)
+	if o.Proc == nil {
+		o.Proc = &proctest.Table{}
 	}
 	var errB bytes.Buffer
 	code := Run(t.Context(), req, tr.paths, &errB, o)
 	return errB.String(), code
-}
-
-// liveProbes is the arm's `kill -0` over a live set. Elapsed/Mtime stay
-// unreadable, so _pid_recycled fails closed to not-recycled and liveness is
-// exactly the set — the same reading crews_test drives.
-func liveProbes(live map[int]bool) crews.Probes {
-	return crews.Probes{
-		Alive:   func(pid int) bool { return live[pid] },
-		Elapsed: func(int) (int64, bool) { return 0, false },
-		Mtime:   func(string) (int64, bool) { return 0, false },
-		Parent:  func(int) (int, bool) { return 0, false },
-	}
 }
 
 func status(ts int64, crew, from, state string) string {
@@ -383,7 +371,7 @@ func TestCrossCrewLookup(t *testing.T) {
 			for id, pid := range c.crews {
 				fx.crewDir(t, id, pid)
 			}
-			errs, code := fx.run(t, Options{CrewID: func() string { return "" }, Probes: liveProbes(c.live)}, "worker:feat/x", "go")
+			errs, code := fx.run(t, Options{CrewID: func() string { return "" }, Proc: proctest.New(c.live, nil)}, "worker:feat/x", "go")
 			if c.refuse != "" {
 				if code != 1 || !strings.Contains(errs, c.refuse) {
 					t.Fatalf("code %d stderr %q, want 1 naming %q", code, errs, c.refuse)
@@ -409,7 +397,7 @@ func TestTwoLiveCrewsRefuseNamingBoth(t *testing.T) {
 		status(1785951000000, "c-a", "worker:feat/x#s1-1", "working"),
 		status(1785951100000, "c-b", "worker:feat/x#s2-2", "blocked"),
 	)
-	errs, code := tr.run(t, Options{CrewID: func() string { return "" }, Probes: liveProbes(map[int]bool{4321: true, 4322: true})}, "worker:feat/x", "go")
+	errs, code := tr.run(t, Options{CrewID: func() string { return "" }, Proc: proctest.New(map[int]bool{4321: true, 4322: true}, nil)}, "worker:feat/x", "go")
 	if code != 1 {
 		t.Fatalf("code %d, want 1 (%s)", code, errs)
 	}
@@ -425,7 +413,7 @@ func TestNoLiveSessionInAnyCrew(t *testing.T) {
 	tr := setup(t)
 	tr.crewDir(t, "c-a", "4321")
 	tr.write(t, status(1785951000000, "c-a", "worker:feat/x#s1-1", "failed"))
-	errs, code := tr.run(t, Options{CrewID: func() string { return "" }, Probes: liveProbes(map[int]bool{4321: true})}, "worker:feat/x", "go")
+	errs, code := tr.run(t, Options{CrewID: func() string { return "" }, Proc: proctest.New(map[int]bool{4321: true}, nil)}, "worker:feat/x", "go")
 	if code != 1 {
 		t.Fatalf("code %d, want 1 (%s)", code, errs)
 	}
@@ -515,14 +503,12 @@ func envProbes(k, v string) sender.Probes {
 	}}
 }
 
-// panesProbes is a caller (pid 300) under a pane (pid 200) whose window carries
-// the given stamps.
+// panesProbes is a caller under a pane (pid 200) whose window carries the
+// given stamps.
 func panesProbes(line string) sender.Probes {
-	parents := map[int]int{300: 200, 200: 1}
 	return sender.Probes{
-		Tmux:   &tmuxtest.Fake{Out: map[string]string{"list-panes": line}},
-		Parent: func(pid int) (int, bool) { p, ok := parents[pid]; return p, ok },
-		PID:    300,
+		Tmux: &tmuxtest.Fake{Out: map[string]string{"list-panes": line}},
+		Proc: proctest.New(nil, map[int]int{os.Getpid(): 200, 200: 1}),
 	}
 }
 

@@ -32,6 +32,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
+	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
@@ -50,9 +51,9 @@ var claimsProgram string
 // log line stamps, the commands the arm shells out to, and the process identity
 // the log line records.
 type Options struct {
-	// Probes are the pid reads: whether the recorded dispatcher is alive,
-	// whether it is this process's ancestor, and the owner-pid walk.
-	Probes crews.Probes
+	// Proc answers whether the recorded dispatcher is alive, whether it is
+	// this process's ancestor, the owner-pid walk and the parent's command line.
+	Proc proc.Table
 	// Now is the clock the pidfile.log line stamps.
 	Now func() time.Time
 	// Gh runs `gh <args…>` with stderr merged into stdout as the arm's
@@ -71,10 +72,6 @@ type Options struct {
 	// pane list, but those rows fill only the advisory `engine`/`panes` fields
 	// of the JSON it prints, and adopt asks just whether that array is empty.
 	Tmux tmux.Client
-	// Args is `ps -o args= -p <pid>`: the caller's command line, which the log
-	// line names so a crew dir that changes owner can be traced (#432). A ps
-	// that cannot say is the arm's `$(ps … || true)`: no command line.
-	Args func(pid int) string
 	// LookupEnv reads TMUX_PANE.
 	LookupEnv func(string) string
 	// PID, PPID and Pwd are `$$`, `$PPID` and `$PWD` of the arm. crew.sh execs
@@ -121,7 +118,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	// verbatim — the arm never checks it names a real process.
 	pidText := req.PID
 	if pidText == "" {
-		pidText = strconv.Itoa(o.Probes.OwnerPID(o.PPID))
+		pidText = strconv.Itoa(proc.OwnerPID(o.Proc, o.PPID))
 	}
 
 	cdir := paths.CrewDir(id)
@@ -137,7 +134,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 
 	epid, _ := crews.PidFileText(pidfile)
 	live := false
-	if a := crews.PidAlive(o.Probes, o.Now(), pidfile, epid); a != nil && *a {
+	if a := crews.PidAlive(o.Proc, o.Now(), pidfile, epid); a != nil && *a {
 		live = true
 	}
 
@@ -146,7 +143,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		// `dispatch` adopts the crew it just made on every retry. Liveness
 		// already proved the text is a positive integer, so the parse cannot fail.
 		n, _ := strconv.Atoi(epid)
-		if !o.Probes.IsAncestor(n) {
+		if !proc.IsAncestor(o.Proc, n) {
 			o.pidfileLog(paths, "adopt", "refused", id, epid, pidText)
 			say(stderr, "crew: crew '%s' still has a live dispatcher — 'crew new' starts your own; '--force' overrides if that process is a stale pid reuse\n", id)
 			return exitFailure
@@ -321,7 +318,7 @@ func claimRows(paths bus.Paths, id string) []claim {
 // pidfileLog is `_pidfile_log` for this run's caller identity.
 func (o Options) pidfileLog(paths bus.Paths, action, outcome, crew, oldPID, newPID string) {
 	crews.PidfileLog(paths, crews.Caller{
-		Now: o.Now(), PID: o.PID, PPID: o.PPID, Pwd: o.Pwd, By: o.Args(o.PPID),
+		Now: o.Now(), PID: o.PID, PPID: o.PPID, Pwd: o.Pwd, By: o.Proc.Args(o.PPID),
 	}, action, outcome, crew, oldPID, newPID)
 }
 
@@ -341,8 +338,8 @@ func (o Options) withDefaults() Options {
 	if o.Tmux == nil {
 		o.Tmux = tmux.Exec{}
 	}
-	if o.Args == nil {
-		o.Args = PsArgs
+	if o.Proc == nil {
+		o.Proc = proc.OS{}
 	}
 	if o.LookupEnv == nil {
 		o.LookupEnv = os.Getenv

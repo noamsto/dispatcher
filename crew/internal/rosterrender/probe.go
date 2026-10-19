@@ -13,7 +13,7 @@ import (
 // Probes are the side effects the loop cannot compute, injected so the daemon is
 // testable without a terminal, an aeye install, or a second build to hop into. A
 // nil field is a bug in Default, not a runtime case. The pid probes are not here:
-// they come in as crews.Probes, shared with `crews`, `stall` and `adopt`.
+// they come in as a proc.Table.
 type Probes struct {
 	// Tmux answers the role panes (`list-panes` with rolePaneFormat), the branch
 	// stamps the liveness rule reads (exactly as `crew fleet` reads them) and

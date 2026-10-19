@@ -15,6 +15,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
+	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
@@ -216,14 +217,13 @@ func TestLeftoverProcesses(t *testing.T) {
 	f := newFx(t)
 	f.bus(status("done", prURL, 0))
 	f.gh["pr view "+prURL+" --json state --jq .state"] = "MERGED"
-	f.procs = strings.Join([]string{
-		"101\t" + f.wt,
-		"102\t" + f.wt + "/sub (deleted)",
-		"103\t" + f.wt + "x",
-		"104\t" + f.wt,
-		"",
-	}, "\n")
-	f.ancestors = map[int]bool{104: true}
+	f.procs.Procs = map[int]proctest.Proc{
+		101:         {Cwd: f.wt},
+		102:         {Cwd: f.wt + "/sub (deleted)"},
+		103:         {Cwd: f.wt + "x"},
+		104:         {Cwd: f.wt},
+		os.Getpid(): {Parent: 104},
+	}
 	anchor, _ := wtgit.AnchorPath(f.wt)
 	f.reap(f.main, Request{DryRun: true})
 	f.wantOut(
@@ -232,13 +232,13 @@ func TestLeftoverProcesses(t *testing.T) {
 		"crew reap: would reap feat/r (MERGED) @ "+f.wt,
 		"crew reap: would prune record "+anchor,
 	)
-	if slices.ContainsFunc(f.calls, func(c string) bool { return strings.HasPrefix(c, "kill ") }) {
-		t.Fatalf("dry run signalled: %q", f.calls)
+	if k := f.procs.Killed(); len(k) != 0 {
+		t.Fatalf("dry run signalled: %v", k)
 	}
 
 	f.reap(f.main, Request{})
-	if !slices.Contains(f.calls, "kill 101") || !slices.Contains(f.calls, "kill 102") || slices.Contains(f.calls, "kill 103") || slices.Contains(f.calls, "kill 104") {
-		t.Fatalf("calls %q", f.calls)
+	if k := f.procs.Killed(); !slices.Equal(k, []int{101, 102}) {
+		t.Fatalf("killed %v, want 101 and 102", k)
 	}
 	if !strings.HasPrefix(f.stdout.String(), "crew reap: killed pid 101 (cwd "+f.wt+")\ncrew reap: killed pid 102 ") {
 		t.Fatalf("stdout %q", f.stdout.String())

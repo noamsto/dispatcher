@@ -14,6 +14,8 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
+	"github.com/noamsto/dispatcher/crew/internal/proc"
+	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
@@ -43,9 +45,8 @@ type fixture struct {
 	fold   foldFunc
 	crew   string
 
-	panes   string      // sender check: tmux list-panes output; "" leaves the anchor unreadable
-	parents map[int]int // sender check: pid -> parent pid
-	pid     int         // sender check: the caller's pid
+	panes string     // sender check: tmux list-panes output; "" leaves the anchor unreadable
+	proc  proc.Table // sender check: the caller's ancestry
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -84,11 +85,7 @@ func (f *fixture) opts() Options {
 	if f.panes != "" {
 		o.Sender = sender.Probes{
 			Tmux: &tmuxtest.Fake{Out: map[string]string{"list-panes": f.panes}},
-			Parent: func(pid int) (int, bool) {
-				ppid, ok := f.parents[pid]
-				return ppid, ok
-			},
-			PID: f.pid,
+			Proc: f.proc,
 		}
 	}
 	if !f.noTmux {
@@ -950,11 +947,10 @@ const (
 	rolePane = "200\x1ffeat/x\x1freviewer\x1fc1\x1f@1\x1f%1\n"
 )
 
-// anchored places the caller (pid 300) under the pane with pid 200.
+// anchored places the caller under the pane with pid 200.
 func (f *fixture) anchored(panes string) {
 	f.panes = panes
-	f.parents = map[int]int{300: 200, 200: 1}
-	f.pid = 300
+	f.proc = proctest.New(nil, map[int]int{os.Getpid(): 200, 200: 1})
 }
 
 func TestStatusRefusesSenderAnchorMismatch(t *testing.T) {

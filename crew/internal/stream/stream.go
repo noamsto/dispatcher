@@ -42,10 +42,10 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
+	"github.com/noamsto/dispatcher/crew/internal/proc"
 )
 
 //go:embed wants_reap.jq
@@ -82,8 +82,8 @@ type Options struct {
 	// Self is the crew script the loop re-enters for `watch`, `hold due` and
 	// `reap`. Empty resolves CREW_SELF, then the `crew` on PATH.
 	Self string
-	// Probes is `_pid_alive`, the read `--status` makes of a lock's pid.
-	Probes crews.Probes
+	// Proc is `_pid_alive`, the read `--status` makes of a lock's pid.
+	Proc proc.Table
 	// Timer is each wait's channel, so a caught signal wins the race with a
 	// coalesce or retry sleep. nil is time.After.
 	Timer func(d time.Duration) <-chan time.Time
@@ -98,8 +98,8 @@ func (o Options) withDefaults() Options {
 	if o.CrewID == nil {
 		o.CrewID = func() string { return "" }
 	}
-	if o.Probes.Alive == nil {
-		o.Probes = crews.DefaultProbes()
+	if o.Proc == nil {
+		o.Proc = proc.OS{}
 	}
 	if o.Timer == nil {
 		o.Timer = func(d time.Duration) <-chan time.Time { return time.After(d) }
@@ -316,7 +316,7 @@ func status(cdir, crew string, stdout io.Writer, o Options) int {
 // age.
 func laneState(cdir string, o Options) (state string, rc int, pid json.RawMessage, age *int64) {
 	holder := statusPID(lock.Holder(filepath.Join(cdir, "stream.lock.d")))
-	live := isSinglePositivePID(holder) && o.Probes.Alive(pidNumber(holder))
+	live := isSinglePositivePID(holder) && o.Proc.Alive(pidNumber(holder))
 
 	// The holder is reported whether or not it answers: `dead` still names the
 	// pid that is gone.

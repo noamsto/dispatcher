@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
+	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/stall"
@@ -30,17 +30,6 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
-
-// crewsProbes fakes the pid probes crews reads: liveness is the live set and
-// the ancestor walk follows the parents map.
-func crewsProbes(live map[int]bool, parents map[int]int) crews.Probes {
-	return crews.Probes{
-		Alive:   func(pid int) bool { return live[pid] },
-		Elapsed: func(int) (int64, bool) { return 0, false },
-		Mtime:   func(string) (int64, bool) { return 0, false },
-		Parent:  func(pid int) (int, bool) { n, ok := parents[pid]; return n, ok },
-	}
-}
 
 const exitedRow = `{"ts":1700000001000,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"exited"}}` + "\n"
 
@@ -208,7 +197,7 @@ func testCrewsMine(t *testing.T, spelling string) {
 	var stdout, stderr bytes.Buffer
 	e := env{
 		getwd: func() (string, error) { return repo, nil },
-		procs: crewsProbes(map[int]bool{4242: true, 9999: true}, map[int]int{os.Getpid(): 4242}),
+		proc:  proctest.New(map[int]bool{4242: true, 9999: true}, map[int]int{os.Getpid(): 4242}),
 	}
 	if code := run(context.Background(), []string{"crews", spelling}, &stdout, &stderr, e); code != 0 {
 		t.Fatalf("code %d", code)
@@ -671,7 +660,7 @@ func TestRemoteRunRefusesAWorker(t *testing.T) {
 			sent := remoteStubs(t, repo, "exit 0")
 			t.Setenv("CREW_ID", "c")
 			t.Setenv("CREW_WORKER_ID", "worker:feat/y#s1-1")
-			e := env{getwd: func() (string, error) { return repo, nil }, procs: crewsProbes(nil, nil)}
+			e := env{getwd: func() (string, error) { return repo, nil }, proc: proctest.New(nil, nil)}
 			var stdout, stderr bytes.Buffer
 			code := run(context.Background(), args, &stdout, &stderr, e)
 			reason := sender.Check(t.Context(), "dispatcher:c", "c", sender.Probes{Getenv: os.Getenv})
@@ -693,9 +682,8 @@ func TestRemoteCallersRefuseAnAnchoredWorker(t *testing.T) {
 	const far = `{"ts":1700000002000,"crew_id":"c","kind":"dispatch","branch":"feat/x","name":"iris","host":"mini","remote":true}` + "\n"
 	pane := fmt.Sprintf("%d\x1ffeat/y\x1f\x1fc\x1f@1\x1f%%1\n", os.Getpid())
 	reason := sender.Check(t.Context(), "dispatcher:c", "c", sender.Probes{
-		Tmux:   &tmuxtest.Fake{Out: map[string]string{"list-panes": pane}},
-		Parent: func(int) (int, bool) { return 0, false },
-		PID:    os.Getpid(),
+		Tmux: &tmuxtest.Fake{Out: map[string]string{"list-panes": pane}},
+		Proc: &proctest.Table{},
 	})
 	if reason == "" {
 		t.Fatal("the stamped pane does not anchor the sender check")
@@ -717,7 +705,7 @@ func TestRemoteCallersRefuseAnAnchoredWorker(t *testing.T) {
 			stubTmux(t, "", pane)
 			t.Setenv("CREW_ID", "c")
 			t.Chdir(repo)
-			e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil)}
+			e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), proc: proctest.New(nil, nil)}
 			var stdout, stderr bytes.Buffer
 			code := run(context.Background(), tc.args, &stdout, &stderr, e)
 			if _, err := os.Stat(sent); err == nil {
@@ -803,7 +791,7 @@ func TestRemoteCallersRefuseAForgedWorktree(t *testing.T) {
 					record(t, cwd, filepath.Join(repo, ".git", "crew"))
 				}
 				t.Chdir(cwd)
-				e := env{getwd: func() (string, error) { return cwd, nil }, procs: crewsProbes(nil, nil)}
+				e := env{getwd: func() (string, error) { return cwd, nil }, proc: proctest.New(nil, nil)}
 				var stdout, stderr bytes.Buffer
 				code := run(context.Background(), tc.args, &stdout, &stderr, e)
 				_, statErr := os.Stat(sent)
@@ -868,7 +856,7 @@ func runRoster(t *testing.T, repo string, args ...string) (stdout, stderr string
 
 func runRosterTmux(t *testing.T, repo string, c tmux.Client, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	e := env{getwd: func() (string, error) { return repo, nil }, probes: tmuxProbes(c), procs: crewsProbes(nil, nil)}
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: tmuxProbes(c), proc: proctest.New(nil, nil)}
 	var out, errOut bytes.Buffer
 	code = run(context.Background(), append([]string{"roster"}, args...), &out, &errOut, e)
 	return out.String(), errOut.String(), code
@@ -987,7 +975,7 @@ func TestReplyToARemoteWorkerGoesToItsHost(t *testing.T) {
 	t.Setenv("CREW_ID", "c1")
 	t.Setenv("CREW_WORKER_ID", "")
 	t.Setenv("CREW_ROLE_ID", "")
-	e := env{getwd: func() (string, error) { return repo, nil }, procs: crewsProbes(nil, nil)}
+	e := env{getwd: func() (string, error) { return repo, nil }, proc: proctest.New(nil, nil)}
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"reply", "worker:feat/far#s1-2", "go on"}, &stdout, &stderr, e); code != 0 {
 		t.Fatalf("code %d stderr %q", code, stderr.String())
@@ -1014,7 +1002,7 @@ func TestCrewlessReplyToARemoteWorkerGoesToItsHost(t *testing.T) {
 	sent := remoteStubs(t, repo, "exit 0")
 	t.Setenv("CREW_WORKER_ID", "")
 	t.Setenv("CREW_ROLE_ID", "")
-	e := env{getwd: func() (string, error) { return repo, nil }, procs: crewsProbes(nil, nil)}
+	e := env{getwd: func() (string, error) { return repo, nil }, proc: proctest.New(nil, nil)}
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"reply", "worker:feat/far", "x"}, &stdout, &stderr, e); code != 0 {
 		t.Fatalf("code %d stderr %q", code, stderr.String())
@@ -1053,7 +1041,7 @@ func TestWhereAndNudgeRouteARemoteWorker(t *testing.T) {
 	t.Chdir(repo) // nudge asks git whether its own checkout is a worker's
 	stubTmux(t, "", "")
 	sent := remoteStubs(t, repo, `echo 'iris — mini:2.1 "far" (lead pane)   jump: ! tmux switch-client -t %9'`)
-	e := env{getwd: func() (string, error) { return repo, nil }, procs: crewsProbes(nil, nil)}
+	e := env{getwd: func() (string, error) { return repo, nil }, proc: proctest.New(nil, nil)}
 
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"where", "iris"}, &stdout, &stderr, e); code != 0 {
@@ -1867,7 +1855,7 @@ func TestRunConvertedFlagSubcommands(t *testing.T) {
 	log := logRowC1 + "\n" + dispatch + "\n"
 	repo, _ := repoWithLog(t, &log, 0o644)
 	t.Setenv("CREW_ID", "c1")
-	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil)}
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), proc: proctest.New(nil, nil)}
 
 	for _, tc := range slices.Concat(refusalRows, preLocateRefusalRows) {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1939,7 +1927,7 @@ func TestRunRosterAndReportFallBackToTheAmbientCrew(t *testing.T) {
 	log := logRowC1 + "\n" + dispatch + "\n"
 	repo, _ := repoWithLog(t, &log, 0o644)
 	t.Setenv("CREW_ID", "c1")
-	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil)}
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), proc: proctest.New(nil, nil)}
 	for _, tc := range []struct {
 		args []string
 		want string // a row only c1's bus holds
@@ -1962,7 +1950,7 @@ func TestFlagSpellingsAreIdentical(t *testing.T) {
 	log := logRowC1 + "\n" + dispatch + "\n"
 	repo, _ := repoWithLog(t, &log, 0o644)
 	t.Setenv("CREW_ID", "c1")
-	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil),
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), proc: proctest.New(nil, nil),
 		now: func() time.Time { return time.Unix(1000, 0) }}
 
 	// value flags: the spaced form, then the same words with the flag joined.
@@ -2322,7 +2310,7 @@ func TestRunSenderCheckSurvivesTyping(t *testing.T) {
 	if err := os.Unsetenv("TMUX_PANE"); err != nil {
 		t.Fatal(err)
 	}
-	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), procs: crewsProbes(nil, nil)}
+	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), proc: proctest.New(nil, nil)}
 	resets := strconv.FormatInt(time.Now().Unix()+3600, 10)
 	add := func(crew ...string) []string {
 		return append(append([]string{"hold", "add"}, crew...),
@@ -2401,9 +2389,8 @@ func TestStallWatchSenderCheckSurvivesTyping(t *testing.T) {
 						}
 						return ""
 					},
-					Tmux:   &tmuxtest.Fake{Out: map[string]string{"list-panes": "100\x1ffeat/x\x1flead\x1fc1\x1f@1\x1f%1\n"}},
-					Parent: func(int) (int, bool) { return 1, true },
-					PID:    100,
+					Tmux: &tmuxtest.Fake{Out: map[string]string{"list-panes": fmt.Sprintf("%d\x1ffeat/x\x1flead\x1fc1\x1f@1\x1f%%1\n", os.Getpid())}},
+					Proc: &proctest.Table{},
 				},
 			})
 			want := "crew: stall-watch: refusing sender '" + tc.id + "' on pane %1: "
