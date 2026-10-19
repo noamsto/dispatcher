@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
@@ -174,12 +175,12 @@ const remoteHold = 24 * time.Hour
 // Options is everything Run reads beyond the bus: the crew the arm defaults to
 // (`_crew_id`), tmux, the environment CREW_IDENTITY_AVOID comes from
 // and the clock the remote hold is measured on. A nil Getenv reads no variable
-// and a nil Now is the wall clock.
+// and a nil Clock.Now is the wall clock.
 type Options struct {
 	CrewID func() string
 	Tmux   tmux.Client // nil, like a failed read, names no window
 	Getenv func(string) string
-	Now    func() time.Time
+	Clock  clock.Clock
 }
 
 // Request is the arm's validated arguments: Hash, when set, is the `--hash`
@@ -200,17 +201,16 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	if crew == "" && o.CrewID != nil {
 		crew = o.CrewID()
 	}
-	now := time.Now
-	if o.Now != nil {
-		now = o.Now
+	if o.Clock.Now == nil {
+		o.Clock.Now = time.Now
 	}
 	if req.Occupied {
-		for _, name := range Occupied(ctx, busEvents(paths.Log), crew, o.Tmux, now().UnixMilli()) {
+		for _, name := range Occupied(ctx, busEvents(paths.Log), crew, o.Tmux, o.Clock.Now().UnixMilli()) {
 			say(stdout, "%s\n", name)
 		}
 		return 0
 	}
-	return emit(stdout, Assign(ctx, busEvents(paths.Log), req.Branch, crew, o.Tmux, avoidList(o.Getenv), now().UnixMilli()))
+	return emit(stdout, Assign(ctx, busEvents(paths.Log), req.Branch, crew, o.Tmux, avoidList(o.Getenv), o.Clock.Now().UnixMilli()))
 }
 
 // avoidList is CREW_IDENTITY_AVOID: the codenames a dispatching host already

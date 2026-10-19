@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
@@ -44,7 +45,7 @@ type Probes struct {
 	// signals the leftovers.
 	Proc  proc.Table
 	Sleep func(d time.Duration)
-	Now   func() time.Time
+	Clock clock.Clock
 	// Append is `_bus_append`.
 	Append func(path, line string) error
 }
@@ -60,7 +61,7 @@ func DefaultProbes() Probes {
 		},
 		Proc:   proc.OS{},
 		Sleep:  time.Sleep,
-		Now:    time.Now,
+		Clock:  clock.Clock{Now: time.Now},
 		Append: bus.Append,
 		Getenv: os.Getenv,
 	}

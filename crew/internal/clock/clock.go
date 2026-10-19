@@ -29,6 +29,11 @@ type Clock struct {
 	CrewClock string
 }
 
+// FromEnv is the real clock and this process's $CREW_CLOCK.
+func FromEnv() Clock {
+	return Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")}
+}
+
 // Text is `_clock_now`: the seconds in the clock file, seeded from the real
 // clock when the file is missing or empty (the helper's `[ -s ] || date +%s >`),
 // and the real clock itself with no CREW_CLOCK.

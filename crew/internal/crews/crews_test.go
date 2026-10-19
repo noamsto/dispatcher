@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 )
 
@@ -68,7 +69,7 @@ func runWith(t *testing.T, mine bool, p bus.Paths, o Options) (string, string, i
 }
 
 func opts(live map[int]bool, parents map[int]int) Options {
-	return Options{Proc: proctest.New(live, parents), Now: fakeNow}
+	return Options{Proc: proctest.New(live, parents), Clock: clock.Clock{Now: fakeNow}}
 }
 
 func TestTableUnionSortAndAliveMatrix(t *testing.T) {
@@ -158,7 +159,7 @@ func TestTableRecycledPidIsNotAlive(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The process started 10s ago, after the file was written.
-	o := Options{Now: fakeNow, Proc: &proctest.Table{Procs: map[int]proctest.Proc{7777: {Elapsed: 10}}}}
+	o := Options{Clock: clock.Clock{Now: fakeNow}, Proc: &proctest.Table{Procs: map[int]proctest.Proc{7777: {Elapsed: 10}}}}
 	out, _, code := run(t, p, o)
 	if code != 0 {
 		t.Fatalf("code %d", code)

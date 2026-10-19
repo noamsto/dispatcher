@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/frame"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
@@ -168,7 +169,7 @@ func (r *rel) probes() Probes {
 			r.calls = append(r.calls, "sleep")
 			r.sleeps = append(r.sleeps, d)
 		},
-		Now: func() time.Time { return time.Unix(fakeNow, 123_000_000) },
+		Clock: clock.Clock{Now: func() time.Time { return time.Unix(fakeNow, 123_000_000) }},
 		Append: func(path, line string) error {
 			r.mu.Lock()
 			defer r.mu.Unlock()

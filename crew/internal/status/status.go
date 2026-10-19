@@ -49,7 +49,7 @@ type Options struct {
 	CrewID func() string                                                       // `_crew_id`
 	Git    git.Client                                                          // nil: the git on PATH
 	Dir    string                                                              // the directory the toplevel is read from (-C); "" is "."
-	NowMS  func() int64                                                        // jq's `now*1000|floor`; real time, never CREW_CLOCK
+	Clock  clock.Clock                                                         // RealMS is jq's `now*1000|floor`; real time, never CREW_CLOCK
 	Getenv func(string) string                                                 // CREW_ROLE_ID, TMUX_PANE
 	Tmux   tmux.Client                                                         // nil: no tmux on PATH
 	Fold   func(prog string, lines []string, vars map[string]any) (any, error) // jqrun.RunAny by default; a test seam
@@ -69,8 +69,8 @@ func (o Options) withDefaults() Options {
 	if o.Getenv == nil {
 		o.Getenv = os.Getenv
 	}
-	if o.NowMS == nil {
-		o.NowMS = clock.Clock{Now: time.Now}.RealMS
+	if o.Clock.Now == nil {
+		o.Clock.Now = time.Now
 	}
 	if o.Sender.Getenv == nil {
 		o.Sender.Getenv = o.Getenv
@@ -200,7 +200,7 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 		return exitFailure
 	}
 
-	ts := o.NowMS()
+	ts := o.Clock.RealMS()
 	code := post("status", paths, stderr, func(d string) string {
 		return encodeLine(row[statusBody]{
 			TS: ts, CrewID: crew, From: from, To: "dispatcher:" + crew, Kind: bus.KindStatus,

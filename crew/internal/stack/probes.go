@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/gh"
 )
 
@@ -17,9 +18,9 @@ type Probes struct {
 	Gh gh.Client
 	// Append is `_bus_append`.
 	Append func(path, line string) error
-	// Now stamps the row: the arm's `jq -n 'now*1000|floor'` is real time,
+	// Clock.Now stamps the row: the arm's `jq -n 'now*1000|floor'` is real time,
 	// never $CREW_CLOCK.
-	Now func() time.Time
+	Clock clock.Clock
 }
 
 // DefaultProbes is the production probe set.
@@ -27,7 +28,7 @@ func DefaultProbes() Probes {
 	return Probes{
 		Gh:     gh.Exec{},
 		Append: bus.Append,
-		Now:    time.Now,
+		Clock:  clock.Clock{Now: time.Now},
 	}
 }
 
@@ -46,8 +47,8 @@ func (p Probes) withDefaults() Probes {
 	if p.Append == nil {
 		p.Append = d.Append
 	}
-	if p.Now == nil {
-		p.Now = d.Now
+	if p.Clock.Now == nil {
+		p.Clock = d.Clock
 	}
 	return p
 }

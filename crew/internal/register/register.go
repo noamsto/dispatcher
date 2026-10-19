@@ -11,9 +11,9 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
@@ -28,8 +28,8 @@ type Options struct {
 	CrewID func() string
 	// Proc answers liveness, the owner-pid walk and the parent's command line.
 	Proc proc.Table
-	// Now is the clock the pidfile.log line stamps and the recycle check reads.
-	Now func() time.Time
+	// Clock.Now is the clock the pidfile.log line stamps and the recycle check reads.
+	Clock clock.Clock
 	// PID and PPID are `$$` and `$PPID`. PPID is the bash caller's parent only
 	// because crew.sh's delegation arm `exec`s this binary, so the process
 	// that ran crew.sh is the one whose parent this is.
@@ -58,11 +58,11 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 	pidfile := cdir + "/pid"
 	epid, _ := crews.PidFileText(pidfile)
 	live := func() bool {
-		a := crews.PidAlive(o.Proc, o.Now(), pidfile, epid)
+		a := crews.PidAlive(o.Proc, o.Clock.Now(), pidfile, epid)
 		return a != nil && *a
 	}
 	caller := func() crews.Caller {
-		return crews.Caller{Now: o.Now(), PID: o.PID, PPID: o.PPID, Pwd: o.Pwd, By: o.Proc.Args(o.PPID)}
+		return crews.Caller{Now: o.Clock.Now(), PID: o.PID, PPID: o.PPID, Pwd: o.Pwd, By: o.Proc.Args(o.PPID)}
 	}
 	logLine := func(action, outcome, newPID string) {
 		crews.PidfileLog(paths, caller(), action, outcome, crew, epid, newPID)

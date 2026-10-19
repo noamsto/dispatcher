@@ -42,6 +42,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
@@ -76,9 +77,9 @@ const (
 type Options struct {
 	// CrewID resolves the crew `--crew` defaults to (`_crew_id`).
 	CrewID func() string
-	// Now is the wall clock: the arm timed the cadence with `date +%s` and its
-	// line timestamps with jq's `now`.
-	Now func() time.Time
+	// Clock's Now is the wall clock: the arm timed the cadence with `date +%s`
+	// and its line timestamps with jq's `now`.
+	Clock clock.Clock
 	// Self is the crew script the loop re-enters for `watch`, `hold due` and
 	// `reap`. Empty resolves CREW_SELF, then the `crew` on PATH.
 	Self string
@@ -92,8 +93,8 @@ type Options struct {
 }
 
 func (o Options) withDefaults() Options {
-	if o.Now == nil {
-		o.Now = time.Now
+	if o.Clock.Now == nil {
+		o.Clock.Now = time.Now
 	}
 	if o.CrewID == nil {
 		o.CrewID = func() string { return "" }
@@ -175,8 +176,8 @@ func Run(r Request, paths bus.Paths, stdout, stderr io.Writer, opts Options) int
 		o:       o,
 		cdir:    cdir,
 		lockd:   lockd,
-		stdout:  &laneWriter{w: stdout, now: o.Now, last: o.Now()},
-		stderr:  &laneWriter{w: stderr, now: o.Now, last: o.Now()},
+		stdout:  &laneWriter{w: stdout, now: o.Clock.Now, last: o.Clock.Now()},
+		stderr:  &laneWriter{w: stderr, now: o.Clock.Now, last: o.Clock.Now()},
 		procs:   children{self: o.Self},
 		sup:     &suppress{key: map[string]string{}, ts: map[string]int64{}},
 		outf:    filepath.Join(cdir, "stream.out"),
@@ -590,7 +591,7 @@ func (l *loop) run(sigs chan os.Signal) int {
 	// the reap pairs are per-child, and the sweep takes the base names plus any
 	// orphan pair a previous child left behind.
 	sweepReaped(l.reapout, l.reaperr)
-	l.lastReap = l.o.Now().Unix()
+	l.lastReap = l.o.Clock.Now().Unix()
 	l.relays.start(time.Duration(l.c.interval) * time.Second)
 
 	for {
@@ -628,7 +629,7 @@ func (l *loop) run(sigs chan os.Signal) int {
 		// Cadence: every branch above may have consumed anywhere from --interval
 		// to --park+--retry seconds, so the elapsed check belongs here rather
 		// than pinned to one branch.
-		if l.c.reapEvery > 0 && l.o.Now().Unix()-l.lastReap >= l.c.reapEvery {
+		if l.c.reapEvery > 0 && l.o.Clock.Now().Unix()-l.lastReap >= l.c.reapEvery {
 			l.startReap()
 		}
 	}
@@ -780,7 +781,7 @@ func (l *loop) startReap() {
 		return
 	}
 	l.flushReap()
-	l.lastReap = l.o.Now().Unix()
+	l.lastReap = l.o.Clock.Now().Unix()
 	r, err := l.procs.startReap(l.cdir)
 	if err != nil {
 		return
@@ -1015,6 +1016,6 @@ func sweepReaped(out, errf string) {
 }
 
 func clockMS(o Options) int64 {
-	now := o.Now()
+	now := o.Clock.Now()
 	return now.UnixMilli()
 }

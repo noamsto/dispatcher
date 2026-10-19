@@ -61,9 +61,9 @@ const (
 type Options struct {
 	CrewID func() string
 	Flush  func() error
-	// Now is the real clock: the arm timed its deadline with jq's `now` and
-	// never read $CREW_CLOCK, which the suite exports for `await`'s sake.
-	Now func() time.Time
+	// Clock's Now is the real clock: the arm timed its deadline with jq's `now`
+	// and never read $CREW_CLOCK, which the suite exports for `await`'s sake.
+	Clock clock.Clock
 	// Sleep waits one interval. nil is clock.Clock.Sleep with no CREW_CLOCK —
 	// the real `sleep` with the same argv, so an interval coreutils rejects
 	// costs its own message and status 1, which is what killed the arm under
@@ -83,11 +83,12 @@ type call struct {
 
 // Run is the arm, flag for flag and refusal for refusal.
 func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	if o.Now == nil {
-		o.Now = time.Now
+	if o.Clock.Now == nil {
+		o.Clock.Now = time.Now
 	}
+	o.Clock.CrewClock = "" // this park never reads $CREW_CLOCK
 	if o.Sleep == nil {
-		o.Sleep = clock.Clock{Now: o.Now}.Sleep
+		o.Sleep = o.Clock.Sleep
 	}
 	// The arm's first statement, before it had read a flag: every later path
 	// writes under here.
@@ -130,7 +131,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer signal.Stop(sigs)
 
-	realMS := clock.Clock{Now: o.Now}.RealMS
+	realMS := o.Clock.RealMS
 	start := realMS()
 	// A stream-spawned inner watch names its owner in CREW_WATCH_PARENT. Once
 	// the owner is gone the watch is an orphan: it must not fold or advance the

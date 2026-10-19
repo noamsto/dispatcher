@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
@@ -688,7 +689,7 @@ func TestRunOccupiedPrintsOneNamePerLine(t *testing.T) {
 	var out strings.Builder
 	code := Run(t.Context(), Request{Occupied: true}, bus.Paths{Log: path}, &out, io.Discard, Options{
 		CrewID: func() string { return "c1" },
-		Now:    func() time.Time { return time.UnixMilli(200) },
+		Clock:  clock.Clock{Now: func() time.Time { return time.UnixMilli(200) }},
 		Tmux:   &tmuxtest.Fake{Out: map[string]string{"list-windows": "atlas"}},
 	})
 	if code != 0 || out.String() != "atlas\nzed\n" {

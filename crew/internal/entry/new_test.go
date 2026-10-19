@@ -6,11 +6,13 @@ import (
 	"regexp"
 	"testing"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 )
 
 func TestNewPrintsTimestampPid(t *testing.T) {
 	var stdout bytes.Buffer
-	if code := RunNew(&stdout, NewOptions{Now: func() time.Time { return time.Unix(1720800000, 0) }, PID: 4242}); code != 0 {
+	if code := RunNew(&stdout, NewOptions{Clock: clock.Clock{Now: func() time.Time { return time.Unix(1720800000, 0) }}, PID: 4242}); code != 0 {
 		t.Fatalf("code %d, want 0", code)
 	}
 	if stdout.String() != "1720800000-4242\n" {
@@ -24,7 +26,7 @@ func TestNewIsTheArmsShape(t *testing.T) {
 	re := regexp.MustCompile(`^[0-9]+-[0-9]+$`)
 	for _, now := range []time.Time{time.Unix(1720800000, 999), time.Unix(0, 0), time.Unix(4070908800, 0)} {
 		var stdout bytes.Buffer
-		if code := RunNew(&stdout, NewOptions{Now: func() time.Time { return now }, PID: os.Getpid()}); code != 0 {
+		if code := RunNew(&stdout, NewOptions{Clock: clock.Clock{Now: func() time.Time { return now }}, PID: os.Getpid()}); code != 0 {
 			t.Fatalf("code %d, want 0", code)
 		}
 		line := stdout.String()

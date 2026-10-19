@@ -8,7 +8,6 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
@@ -32,11 +31,12 @@ type RelayRequest struct {
 // A failed write ends it with 0: that is how a dropped ssh link stops the
 // remote process, and there is no one left to tell.
 func Relay(req RelayRequest, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
-	if o.Now == nil {
-		o.Now = time.Now
+	if o.Clock.Now == nil {
+		o.Clock.Now = time.Now
 	}
+	o.Clock.CrewClock = "" // this park never reads $CREW_CLOCK
 	if o.Sleep == nil {
-		o.Sleep = clock.Clock{Now: o.Now}.Sleep
+		o.Sleep = o.Clock.Sleep
 	}
 	c, msg := check(Request{
 		Since: req.Since, States: req.States, Timeout: "1", Interval: req.Interval, Crew: req.Crew,
@@ -52,8 +52,8 @@ func Relay(req RelayRequest, paths bus.Paths, stdout, stderr io.Writer, o Option
 	}
 	beat := time.Duration(parseIntSaturate(beatText)) * time.Second
 
-	realMS := clock.Clock{Now: o.Now}.RealMS
-	lastLine := o.Now()
+	realMS := o.Clock.RealMS
+	lastLine := o.Clock.Now()
 	for {
 		var line bytes.Buffer
 		if folded, ok := fold(paths.Log, c); ok {
@@ -63,7 +63,7 @@ func Relay(req RelayRequest, paths bus.Paths, stdout, stderr io.Writer, o Option
 				return 1
 			}
 			c.since = parseIntSaturate(cursorText(out))
-		} else if o.Now().Sub(lastLine) >= beat {
+		} else if o.Clock.Now().Sub(lastLine) >= beat {
 			b, _ := json.Marshal(struct {
 				Relay string `json:"relay"`
 				TS    int64  `json:"ts"`
@@ -78,7 +78,7 @@ func Relay(req RelayRequest, paths bus.Paths, stdout, stderr io.Writer, o Option
 			if o.Flush != nil && o.Flush() != nil {
 				return 0
 			}
-			lastLine = o.Now()
+			lastLine = o.Clock.Now()
 		}
 		if err := o.Sleep(c.interval, stderr); err != nil {
 			return childStatus(err)

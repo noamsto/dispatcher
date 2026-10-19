@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 )
 
 var errStop = errors.New("stop the poll")
@@ -26,7 +27,7 @@ func relayRun(t *testing.T, p bus.Paths, req RelayRequest, steps ...func()) (str
 	var out bytes.Buffer
 	code := Relay(req, p, &out, io.Discard, Options{
 		CrewID: func() string { return "c1" },
-		Now:    pk.Now,
+		Clock:  clock.Clock{Now: pk.Now},
 		Sleep: func(interval string, w io.Writer) error {
 			if n >= len(steps) {
 				return errStop
@@ -111,7 +112,7 @@ func TestRelayEndsOnAWriteError(t *testing.T) {
 	w := &epipeWriter{}
 	code := Relay(RelayRequest{Since: since("0")}, p, w, io.Discard, Options{
 		CrewID: func() string { return "c1" },
-		Now:    (&park{now: base}).Now,
+		Clock:  clock.Clock{Now: (&park{now: base}).Now},
 		Sleep:  func(string, io.Writer) error { t.Fatal("polled on after the pipe closed"); return nil },
 	})
 	if code != 0 || w.writes != 1 {

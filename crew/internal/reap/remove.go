@@ -232,7 +232,7 @@ func (r *run) wtIndexOutput(ctx context.Context, c *candidate, idx string, stder
 // and what the ratings records read.
 func (r *run) reapRow(c *candidate) string {
 	row := reapRowJSON{
-		TS:       r.p.Now().UnixMilli(),
+		TS:       r.p.Clock.Now().UnixMilli(),
 		Kind:     "reap",
 		Branch:   c.branch,
 		PR:       c.pr,
@@ -272,7 +272,7 @@ func (r *run) postReaped(c *candidate) {
 		detail = "PR #" + c.pr[strings.LastIndex(c.pr, "/")+1:] + " " + c.prState
 	}
 	_ = r.p.Append(r.paths.Log, rowLine(reapedRow{
-		TS:     r.p.Now().UnixMilli(),
+		TS:     r.p.Clock.Now().UnixMilli(),
 		CrewID: c.scrow,
 		From:   c.session,
 		To:     "dispatcher:" + c.scrow,
@@ -353,7 +353,7 @@ func (r *run) releaseLabels(ctx context.Context, c *candidate) {
 			r.note("could not remove the dispatched label from #" + issue + " (" + c.branch + ")")
 			continue
 		}
-		if err := claimindex.Release(ctx, r.p.Git, r.paths.Common, r.o.Getenv, issue, "", r.p.Now()); err != nil {
+		if err := claimindex.Release(ctx, r.p.Git, r.paths.Common, r.o.Getenv, issue, "", r.p.Clock.Now()); err != nil {
 			r.note("could not record the release of #" + issue + " in the claim index: " + err.Error())
 		}
 	}

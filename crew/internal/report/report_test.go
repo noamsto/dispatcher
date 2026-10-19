@@ -32,8 +32,8 @@ var fixedNow = func() time.Time { return time.Unix(1785951264, 0) }
 
 func run(t *testing.T, p bus.Paths, crew string, o Options) (string, string, int) {
 	t.Helper()
-	if o.Now == nil {
-		o.Now = fixedNow
+	if o.Clock.Now == nil {
+		o.Clock.Now = fixedNow
 	}
 	var out, errB bytes.Buffer
 	code := Run(crew, p, &out, &errB, o)

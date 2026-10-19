@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
@@ -1952,7 +1953,7 @@ func TestFlagSpellingsAreIdentical(t *testing.T) {
 	repo, _ := repoWithLog(t, &log, 0o644)
 	t.Setenv("CREW_ID", "c1")
 	e := env{getwd: func() (string, error) { return repo, nil }, probes: noTouchProbes(), proc: proctest.New(nil, nil),
-		now: func() time.Time { return time.Unix(1000, 0) }}
+		clock: clock.Clock{Now: func() time.Time { return time.Unix(1000, 0) }}}
 
 	// value flags: the spaced form, then the same words with the flag joined.
 	for _, tc := range []struct {

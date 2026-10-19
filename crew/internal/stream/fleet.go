@@ -149,8 +149,8 @@ func RunFleet(r FleetRequest, stdout, stderr io.Writer, opts FleetOptions) int {
 		o:          o,
 		lane:       lane,
 		lockd:      lockd,
-		out:        &laneWriter{w: stdout, now: o.Now, last: o.Now()},
-		stderr:     &laneWriter{w: stderr, now: o.Now, last: o.Now()},
+		out:        &laneWriter{w: stdout, now: o.Clock.Now, last: o.Clock.Now()},
+		stderr:     &laneWriter{w: stderr, now: o.Clock.Now, last: o.Clock.Now()},
 		rediscover: time.Duration(rediscover) * time.Second,
 		tick:       time.Duration(tick) * time.Second,
 		ticker:     &loop{c: tickCall, o: o.Options, cdir: lane},
@@ -201,7 +201,7 @@ func (b *busLoop) signal(s os.Signal) {
 func (f *fleet) run(sigs chan os.Signal) int {
 	for {
 		f.ticker.writeTick()
-		if now := f.o.Now(); !f.discovered || now.Sub(f.lastDiscover) >= f.rediscover {
+		if now := f.o.Clock.Now(); !f.discovered || now.Sub(f.lastDiscover) >= f.rediscover {
 			f.discovered, f.lastDiscover = true, now
 			f.discover()
 		}

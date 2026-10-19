@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
@@ -59,7 +60,7 @@ func TestHelperCrewWatch(t *testing.T) {
 		os.Exit(94)
 	}
 	os.Exit(watch.Run(watchRequest(args[1:]), paths, os.Stdout, os.Stderr, watch.Options{
-		Now:   time.Now,
+		Clock: clock.Clock{Now: time.Now},
 		Sleep: func(string, io.Writer) error { time.Sleep(50 * time.Millisecond); return nil },
 	}))
 }
@@ -639,7 +640,7 @@ func TestFleetNoDoubleDeliveryWithPerRepoStream(t *testing.T) {
 	for i := 0; !complete() && time.Now().Before(stop); i++ {
 		var out bytes.Buffer
 		rc := watch.Run(watchRequest([]string{"--crew", "c1", "--timeout", "1", "--interval", "1"}), paths, &out, io.Discard, watch.Options{
-			Now:   time.Now,
+			Clock: clock.Clock{Now: time.Now},
 			Sleep: func(string, io.Writer) error { time.Sleep(30 * time.Millisecond); return nil },
 		})
 		// Varied gaps between consumers, so the fleet's child wins the lock too

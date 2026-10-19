@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
@@ -62,7 +61,7 @@ func PaneDeps(paths bus.Paths, stderr io.Writer, clk clock.Clock) Deps {
 // the one helper it called back for, `_unread_scan`, moved in process to
 // `internal/unread` with #968.
 func Default(paths bus.Paths, stderr io.Writer, pid int, crewID func() string) Options {
-	clk := clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")}
+	clk := clock.FromEnv()
 	return Options{
 		Deps: PaneDeps(paths, stderr, clk),
 		Unread: func(_ context.Context, crew, branch, sid string) string {

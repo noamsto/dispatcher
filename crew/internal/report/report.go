@@ -10,9 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 )
 
@@ -30,7 +30,7 @@ const exitType = 5
 // freeze `now` to (it does not read `now`; the field keeps the package
 // deterministic in tests, as crews.Options does).
 type Options struct {
-	Now func() time.Time
+	Clock clock.Clock
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
@@ -59,7 +59,7 @@ func Run(crew string, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	for i, ev := range events {
 		docs[i] = ev.Doc
 	}
-	now := o.Now()
+	now := o.Clock.Now()
 	nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
 	out, err := jqrun.RunAny(program, docs, nowSec, map[string]any{"crew": crew})
 	if err != nil {
