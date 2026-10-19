@@ -51,25 +51,25 @@ type FleetOptions struct {
 	// Rediscover is the coordinator's tick. nil is Options.Timer; it is separate
 	// so a test can drive discovery without stalling the bus loops' waits.
 	Rediscover func(d time.Duration) <-chan time.Time
-	Env        func(string) string
+	Getenv     func(string) string
 	Registry   string
 }
 
 func (o FleetOptions) withDefaults() FleetOptions {
 	o.Options = o.Options.withDefaults()
-	if o.Env == nil {
-		o.Env = os.Getenv
+	if o.Getenv == nil {
+		o.Getenv = os.Getenv
 	}
 	if o.Discover == nil {
-		registry, env := o.Registry, o.Env
+		registry, env := o.Registry, o.Getenv
 		o.Discover = func(stderr io.Writer) []repos.Repo {
-			return repos.Discover(repos.Options{Registry: registry, Env: env, Stderr: stderr, Prefix: "crew: fleet stream"})
+			return repos.Discover(repos.Options{Registry: registry, Getenv: env, Stderr: stderr, Prefix: "crew: fleet stream"})
 		}
 	}
 	if o.LaneRoot == "" {
-		base := o.Env("XDG_STATE_HOME")
+		base := o.Getenv("XDG_STATE_HOME")
 		if base == "" {
-			base = o.Env("HOME") + "/.local/state"
+			base = o.Getenv("HOME") + "/.local/state"
 		}
 		o.LaneRoot = filepath.Join(base, "crew", "fleet-stream")
 	}

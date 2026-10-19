@@ -70,8 +70,8 @@ type Options struct {
 	// pane list, but those rows fill only the advisory `engine`/`panes` fields
 	// of the JSON it prints, and adopt asks just whether that array is empty.
 	Tmux tmux.Client
-	// LookupEnv reads TMUX_PANE.
-	LookupEnv func(string) string
+	// Getenv reads TMUX_PANE.
+	Getenv func(string) string
 	// PID, PPID and Pwd are `$$`, `$PPID` and `$PWD` of the arm. crew.sh execs
 	// this binary, so the Go process keeps the arm's pid and its parent is the
 	// caller's shell — the same three fields bash writes.
@@ -165,7 +165,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	// The pane travels with the pid: a stale pane file would keep naming the
 	// previous dispatcher's pane, and readers tolerate its absence.
 	panefile := cdir + "/pane"
-	if pane := o.LookupEnv("TMUX_PANE"); pane != "" {
+	if pane := o.Getenv("TMUX_PANE"); pane != "" {
 		if err := os.WriteFile(panefile, []byte(pane+"\n"), 0o644); err != nil {
 			say(stderr, "crew: adopt: %v\n", err)
 			return exitFailure
@@ -232,7 +232,7 @@ func (o Options) releaseClaims(ctx context.Context, paths bus.Paths, id string, 
 		}
 		if _, err := o.Gh.Run(ctx, "issue", "edit", c.issue, "--remove-label", "dispatched"); err == nil {
 			say(stderr, "crew adopt: released the dispatched label on #%s (%s)\n", c.issue, c.branch)
-			if err := claimindex.Release(ctx, o.Git, paths.Common, o.LookupEnv, c.issue, id, o.Clock.Now()); err != nil {
+			if err := claimindex.Release(ctx, o.Git, paths.Common, o.Getenv, c.issue, id, o.Clock.Now()); err != nil {
 				say(stderr, "crew adopt: could not record the release of #%s in the claim index: %v\n", c.issue, err)
 			}
 			continue
@@ -263,7 +263,7 @@ func (o Options) held(ctx context.Context, c claim, heads string) string {
 // path.
 func (o Options) occupied(ctx context.Context, wt string) bool {
 	self := ""
-	if pane := o.LookupEnv("TMUX_PANE"); pane != "" {
+	if pane := o.Getenv("TMUX_PANE"); pane != "" {
 		self = tmux.Output(ctx, o.Tmux, "display-message", "-p", "-t", pane, "#{window_id}")
 	}
 	windows := tmux.Output(ctx, o.Tmux, "list-windows", "-a", "-F", "#{window_id}\t#{@crew_name}\t#{pane_current_path}")
@@ -336,8 +336,8 @@ func (o Options) withDefaults() Options {
 	if o.Proc == nil {
 		o.Proc = proc.OS{}
 	}
-	if o.LookupEnv == nil {
-		o.LookupEnv = os.Getenv
+	if o.Getenv == nil {
+		o.Getenv = os.Getenv
 	}
 	if o.Pwd == "" {
 		o.Pwd, _ = os.Getwd()

@@ -30,7 +30,7 @@ const Usage = "crew: fleet [--all] [--crew ID] [--json]"
 
 // Options carry every outside read, so tests use temp dirs and stubs.
 type Options struct {
-	Env      func(string) string
+	Getenv   func(string) string
 	Registry string
 	Tmux     tmux.Client
 	Git      git.Client
@@ -71,7 +71,7 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 	nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
 
 	rows := []map[string]any{}
-	for _, r := range repos.Discover(repos.Options{Registry: o.Registry, Env: o.Env, Stderr: stderr, Prefix: "crew: fleet"}) {
+	for _, r := range repos.Discover(repos.Options{Registry: o.Registry, Getenv: o.Getenv, Stderr: stderr, Prefix: "crew: fleet"}) {
 		if r.Status != repos.StatusOK {
 			say(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, r.Status)
 			continue

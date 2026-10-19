@@ -116,7 +116,7 @@ func (f *fixture) runQuiet() (string, int) {
 func (f *fixture) options() Options {
 	return Options{
 		StorePath: f.store,
-		LookupEnv: func(key string) string {
+		Getenv: func(key string) string {
 			if key == "DISPATCH_CONFIG_BIN" {
 				return "dispatch-config"
 			}

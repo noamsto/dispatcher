@@ -115,7 +115,6 @@ func (f *armFixture) run(req Request) int {
 	return Run(context.Background(), req, f.paths, f.stdout, f.stderr, Options{
 		Deps:   deps,
 		CrewID: func() string { return f.crewID },
-		Getenv: env(f.env),
 		Git:    &gittest.Fake{Out: map[string]string{"rev-parse --show-toplevel": f.toplevel}},
 		Exists: func(path string) bool {
 			return f.workerTask && strings.HasSuffix(path, "/WORKER_TASK.md")
@@ -144,7 +143,7 @@ func (f *armFixture) clock() clock.Clock {
 func (f *armFixture) runWith(deps Deps, req Request) int {
 	f.t.Helper()
 	return Run(context.Background(), req, f.paths, f.stdout, f.stderr, Options{
-		Deps: deps, CrewID: func() string { return f.crewID }, Getenv: env(f.env),
+		Deps: deps, CrewID: func() string { return f.crewID },
 		Git:    &gittest.Fake{Out: map[string]string{"rev-parse --show-toplevel": f.toplevel}},
 		Exists: func(string) bool { return false },
 		Unread: func(context.Context, string, string, string) string {
@@ -703,7 +702,7 @@ func TestRunWaitRowFollowsCrewClock(t *testing.T) {
 		return nil
 	}
 	if rc := Run(context.Background(), Request{Wait: "30", Target: idleReq}, f.paths, f.stdout, f.stderr, Options{
-		Deps: deps, CrewID: func() string { return f.crewID }, Getenv: env(f.env),
+		Deps: deps, CrewID: func() string { return f.crewID },
 		Git:    &gittest.Fake{Out: map[string]string{"rev-parse --show-toplevel": ""}},
 		Exists: func(string) bool { return false },
 		Unread: func(context.Context, string, string, string) string {

@@ -50,10 +50,9 @@ type Options struct {
 	Git    git.Client                                                          // nil: the git on PATH
 	Dir    string                                                              // the directory the toplevel is read from (-C); "" is "."
 	Clock  clock.Clock                                                         // RealMS is jq's `now*1000|floor`; real time, never CREW_CLOCK
-	Getenv func(string) string                                                 // CREW_ROLE_ID, TMUX_PANE
 	Tmux   tmux.Client                                                         // nil: no tmux on PATH
 	Fold   func(prog string, lines []string, vars map[string]any) (any, error) // jqrun.RunAny by default; a test seam
-	Sender sender.Probes                                                       // the sender check's reads; Getenv defaults to Options.Getenv
+	Sender sender.Probes                                                       // the sender check's reads and CREW_ROLE_ID, TMUX_PANE; Getenv defaults to os.Getenv
 }
 
 func (o Options) withDefaults() Options {
@@ -66,14 +65,11 @@ func (o Options) withDefaults() Options {
 	if o.Dir == "" {
 		o.Dir = "."
 	}
-	if o.Getenv == nil {
-		o.Getenv = os.Getenv
-	}
 	if o.Clock.Now == nil {
 		o.Clock.Now = time.Now
 	}
 	if o.Sender.Getenv == nil {
-		o.Sender.Getenv = o.Getenv
+		o.Sender.Getenv = os.Getenv
 	}
 	if o.Fold == nil {
 		o.Fold = func(prog string, lines []string, vars map[string]any) (any, error) {
@@ -219,8 +215,8 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 // dispatcher-process `crew status` off the dispatcher's pane. Best effort: it
 // must never fail the write that precedes it.
 func publishPane(ctx context.Context, o Options, state, detail string) {
-	pane := o.Getenv("TMUX_PANE")
-	if o.Getenv("CREW_ROLE_ID") != "" || pane == "" || o.Tmux == nil {
+	pane := o.Sender.Getenv("TMUX_PANE")
+	if o.Sender.Getenv("CREW_ROLE_ID") != "" || pane == "" || o.Tmux == nil {
 		return
 	}
 	role, err := o.Tmux.Run(ctx, "display-message", "-p", "-t", pane, "#{@crew_role}")

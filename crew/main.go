@@ -525,7 +525,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		self, _ := os.Executable()
 		o := reap.Options{
 			Probes: reap.DefaultProbes(),
-			Getenv: os.Getenv,
 			PID:    os.Getpid(),
 			Self:   self,
 			RateRun: func(_ []string, p bus.Paths, c string, so, se io.Writer) int {
@@ -785,7 +784,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Dir:    cwd,
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Clock:  clock.FromEnv(),
-			Getenv: os.Getenv,
 			Sender: senderProbes(e.proc),
 			Tmux:   tmux.Exec{},
 		}

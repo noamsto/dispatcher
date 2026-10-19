@@ -38,7 +38,7 @@ func (o Options) stamp() string {
 // reap's status; only a store dir the sync sweep cannot create aborts, as the
 // arm's `set -e` did.
 func (r *run) autosweep() int {
-	mode := r.o.Getenv("CREW_RATE_AUTOSWEEP")
+	mode := r.p.Getenv("CREW_RATE_AUTOSWEEP")
 	if mode == "" {
 		mode = "1"
 	}
@@ -68,7 +68,7 @@ func (r *run) autosweep() int {
 // lock, is machine-global: the skip is cross-repo, and self-healing — the bus
 // is append-only, so the next reap for the skipped repo backfills it in full.
 func (r *run) sweepSync() int {
-	store := storeDir(r.o.Getenv)
+	store := storeDir(r.p.Getenv)
 	// Without it the lock cannot be taken, and the sweep would never run on
 	// exactly the machines that have never run `crew rate` by hand.
 	if err := os.MkdirAll(store, 0o777); err != nil {
@@ -90,7 +90,7 @@ func (r *run) sweepSync() int {
 // /dev/null and its output appended to autosweep.log, so a skipped or failed
 // sweep leaves a trace instead of vanishing. reap does not wait for it.
 func (r *run) sweepAsync() {
-	store := storeDir(r.o.Getenv)
+	store := storeDir(r.p.Getenv)
 	if err := os.MkdirAll(store, 0o777); err != nil {
 		_, _ = fmt.Fprintf(r.stderr, "crew reap: %v\n", err)
 		return
@@ -124,7 +124,7 @@ func (r *run) sweepAsync() {
 // without job control. Its status is never read.
 func RunAutosweep(paths bus.Paths, cwd string, o Options) int {
 	signal.Ignore(syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT)
-	store := storeDir(o.Getenv)
+	store := storeDir(o.Probes.Getenv)
 	if err := os.MkdirAll(store, 0o777); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "crew reap: %v\n", err)
 		return 1

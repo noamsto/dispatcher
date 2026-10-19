@@ -51,8 +51,8 @@ type Options struct {
 	// Git runs the arm's git queries, each as `git -C <dir> …`. The arm reads
 	// them inside `$(... 2>/dev/null || true)`, so a failure is empty output.
 	Git git.Client
-	// LookupEnv reads DISPATCH_CONFIG_BIN and the XDG variables (tests).
-	LookupEnv func(string) string
+	// Getenv reads DISPATCH_CONFIG_BIN and the XDG variables (tests).
+	Getenv func(string) string
 	// Clock.Now is the sweep's clock; the folds freeze jq's `now` from it.
 	Clock clock.Clock
 	// Gh runs the arm's gh calls, each `$(gh … 2>/dev/null)`; the call sites
@@ -75,8 +75,8 @@ func (o Options) withDefaults() Options {
 	if o.Gh == nil {
 		o.Gh = gh.Exec{}
 	}
-	if o.LookupEnv == nil {
-		o.LookupEnv = os.Getenv
+	if o.Getenv == nil {
+		o.Getenv = os.Getenv
 	}
 	if o.Run == nil {
 		o.Run = func(args ...string) (string, error) {
@@ -147,7 +147,7 @@ func Run(req Request, paths bus.Paths, cwd string, stdout, stderr io.Writer, o O
 // report renders the global store: no bus, and no network beyond the one local
 // git probe the scoped mode makes.
 func report(fl Request, cwd string, stdout, stderr io.Writer, o Options) int {
-	store := storePath(o.StorePath, o.LookupEnv)
+	store := storePath(o.StorePath, o.Getenv)
 	rows := []any{}
 	if data, err := os.ReadFile(store); err == nil {
 		if vals, err := decodeAll(bytes.NewReader(data)); err == nil && vals != nil {

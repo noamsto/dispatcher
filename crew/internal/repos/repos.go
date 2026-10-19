@@ -34,7 +34,7 @@ type Options struct {
 	// Roots are the raw --root values; empty falls back to $CREW_SWEEP_ROOTS,
 	// then $HOME.
 	Roots  []string
-	Env    func(string) string
+	Getenv func(string) string
 	Stderr io.Writer
 	// Prefix leads every stderr note, e.g. "crew: rate --sweep-all".
 	Prefix string
@@ -61,7 +61,7 @@ func RegistryPath(lookup func(string) string) string {
 // Discover returns every registry or walk candidate, byte-sorted and
 // deduplicated, each tagged with its status.
 func Discover(o Options) []Repo {
-	lookup := o.Env
+	lookup := o.Getenv
 	if lookup == nil {
 		lookup = os.Getenv
 	}

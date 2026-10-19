@@ -108,7 +108,7 @@ func (f *sweepAllFixture) options() Options {
 		StorePath: f.store,
 		// Registry and store under a temp XDG root: a test never reads or writes
 		// the developer's own.
-		LookupEnv: func(key string) string {
+		Getenv: func(key string) string {
 			if key == "XDG_DATA_HOME" {
 				return f.data
 			}
@@ -215,7 +215,7 @@ func TestSweepAllRoots(t *testing.T) {
 		{name: "HOME", home: f.root},
 	} {
 		o := f.options()
-		o.LookupEnv = func(key string) string {
+		o.Getenv = func(key string) string {
 			switch key {
 			case "XDG_DATA_HOME":
 				return t.TempDir()

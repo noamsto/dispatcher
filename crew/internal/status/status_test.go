@@ -80,17 +80,15 @@ func (f *fixture) opts() Options {
 		CrewID: func() string { return f.crew },
 		Git:    &gittest.Fake{Out: map[string]string{"-C . rev-parse --show-toplevel": f.top}},
 		Clock:  clock.Clock{Now: func() time.Time { return time.UnixMilli(1700000000500) }},
-		Getenv: func(k string) string { return f.env[k] },
 		Fold:   f.fold,
+		Sender: sender.Probes{Getenv: func(k string) string { return f.env[k] }},
 	}
 	if f.noTop {
 		o.Git = &gittest.Fake{Out: map[string]string{"-C . rev-parse --show-toplevel": ""}}
 	}
 	if f.panes != "" {
-		o.Sender = sender.Probes{
-			Tmux: &tmuxtest.Fake{Out: map[string]string{"list-panes": f.panes}},
-			Proc: f.proc,
-		}
+		o.Sender.Tmux = &tmuxtest.Fake{Out: map[string]string{"list-panes": f.panes}}
+		o.Sender.Proc = f.proc
 	}
 	if !f.noTmux {
 		o.Tmux = f.tm
@@ -971,7 +969,7 @@ func TestStatusRefusesDispatcherFromWorkerEnv(t *testing.T) {
 	f := newFixture(t)
 	f.env["CREW_WORKER_ID"] = worker
 	code, stderr := f.status("dispatcher:c1", "working")
-	want := "crew: status: refusing sender 'dispatcher:c1' — " + sender.Check(t.Context(), "dispatcher:c1", crewID, sender.Probes{Getenv: f.opts().Getenv}) + "\n"
+	want := "crew: status: refusing sender 'dispatcher:c1' — " + sender.Check(t.Context(), "dispatcher:c1", crewID, f.opts().Sender) + "\n"
 	if code != 1 || stderr != want {
 		t.Errorf("got %d %q", code, stderr)
 	}
