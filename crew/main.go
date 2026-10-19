@@ -391,9 +391,9 @@ func stallRequest(p crewArgs) stall.Request {
 type env struct {
 	getwd  func() (string, error)
 	probes func(ctx context.Context, cwd string) roster.Probes
-	proc   proc.Table       // the process table the pid reads go through
-	stdin  io.Reader        // remote-exec's request
-	now    func() time.Time // the fold's clock (jq's `now`); nil is the wall clock
+	proc   proc.Table  // the process table the pid reads go through
+	stdin  io.Reader   // remote-exec's request
+	clock  clock.Clock // the fold's clock (jq's `now`); nil Now is the wall clock
 }
 
 func main() {
@@ -477,7 +477,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	case "help":
 		return entry.RunHelp(parsed.typed.Help.Args, stdout, stderr)
 	case "new":
-		return entry.RunNew(stdout, entry.NewOptions{Now: time.Now, PID: os.Getpid()})
+		return entry.RunNew(stdout, entry.NewOptions{Clock: clock.FromEnv(), PID: os.Getpid()})
 	case "engine-cmd":
 		return entry.RunEngineCmd(parsed.typed.EngineCmd.Args, stderr)
 	case "dash":
@@ -554,8 +554,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "crews" {
 		out := bufio.NewWriterSize(stdout, 64<<10)
 		code := crews.Run(parsed.typed.Crews.Mine, paths, out, stderr, crews.Options{
-			Proc: e.proc,
-			Now:  time.Now,
+			Proc:  e.proc,
+			Clock: clock.FromEnv(),
 		})
 		return flush(out, stderr, code)
 	}
@@ -584,7 +584,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		code := await.Run(await.Request{Me: aw.Agent, From: str(aw.From), Timeout: str(aw.Timeout), Interval: str(aw.Interval)}, paths, out, stderr, await.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Flush:  out.Flush,
-			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
+			Clock:  clock.FromEnv(),
 		})
 		return flush(out, stderr, code)
 	}
@@ -600,7 +600,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		}, paths, out, stderr, watch.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Flush:  out.Flush,
-			Now:    time.Now,
+			Clock:  clock.FromEnv(),
 		})
 		return flush(out, stderr, code)
 	}
@@ -616,7 +616,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		}, paths, out, stderr, watch.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Flush:  out.Flush,
-			Now:    time.Now,
+			Clock:  clock.FromEnv(),
 		})
 	}
 
@@ -640,7 +640,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "stream" {
 		return stream.Run(streamRequest(parsed.typed.Stream.streamFlags, parsed.typed.Stream.ReapEvery), paths, stdout, stderr, stream.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
-			Now:    time.Now,
+			Clock:  clock.FromEnv(),
 			Proc:   e.proc,
 		})
 	}
@@ -658,7 +658,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Probes:    rosterrender.Default(),
 			Proc:      e.proc,
 			Git:       git.Exec{},
-			Clock:     clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
+			Clock:     clock.FromEnv(),
 			Stderr:    stderr,
 			RosterDir: os.Getenv("CREW_ROSTER_DIR"),
 			Self:      os.Getenv("CREW_SELF"),
@@ -672,10 +672,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// and appends to the bus itself, so it owns its run like inbox does.
 	if sub == "hold" {
 		return hold.Run(ctx, holdRequest(parsed), paths, stdout, stderr, hold.Options{
-			CrewID:    func() string { return bus.CrewID(ctx, cwd) },
-			Now:       time.Now,
-			CrewClock: os.Getenv("CREW_CLOCK"),
-			Sender:    senderProbes(e.proc),
+			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			Clock:  clock.FromEnv(),
+			Sender: senderProbes(e.proc),
 		})
 	}
 
@@ -697,7 +696,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		crewID := func() string { return bus.CrewID(ctx, cwd) }
 		return reply.Run(ctx, reply.Request{Crew: str(c.Crew), To: c.To, Body: c.Body}, paths, stderr, reply.Options{
 			CrewID: crewID,
-			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
+			Clock:  clock.FromEnv(),
 			Proc:   e.proc,
 			Sender: senderProbes(e.proc),
 			Remote: func(host, crew string, argv []string) int {
@@ -730,7 +729,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		c := parsed.typed.PRWatch
 		return prwatch.Run(ctx, prwatch.Request{PR: c.PR, Repo: c.Repo, Timeout: c.Timeout, Interval: c.Interval}, paths, stdout, stderr, prwatch.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
-			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
+			Clock:  clock.FromEnv(),
 		})
 	}
 	if sub == "where" {
@@ -763,11 +762,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "adopt" {
 		c := parsed.typed.Adopt
 		return adopt.Run(ctx, adopt.Request{ID: c.ID, PID: c.PID, Force: c.Force}, paths, stdout, stderr, adopt.Options{
-			Proc: e.proc,
-			Now:  time.Now,
-			PID:  os.Getpid(),
-			PPID: os.Getppid(),
-			Pwd:  cwd,
+			Proc:  e.proc,
+			Clock: clock.FromEnv(),
+			PID:   os.Getpid(),
+			PPID:  os.Getppid(),
+			Pwd:   cwd,
 		})
 	}
 
@@ -785,7 +784,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		o := status.Options{
 			Dir:    cwd,
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
-			NowMS:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")}.RealMS,
+			Clock:  clock.FromEnv(),
 			Getenv: os.Getenv,
 			Sender: senderProbes(e.proc),
 			Tmux:   tmux.Exec{},
@@ -802,7 +801,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return register.Run(sub, parsed.typed.Register.PID, paths, stderr, register.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Proc:   e.proc,
-			Now:    time.Now,
+			Clock:  clock.FromEnv(),
 			PID:    os.Getpid(),
 			PPID:   os.Getppid(),
 			Pwd:    cwd,
@@ -821,7 +820,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			// env, and its cwd is a worktree whose WORKER_TASK.md the watched
 			// worker can rewrite.
 			CrewID: func() string { return bus.CrewIDEnvFirst(ctx, cwd) },
-			Clock:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
+			Clock:  clock.FromEnv(),
 			Sender: senderProbes(e.proc),
 			NewProbes: func(pane string) probe.Probes {
 				return probe.Default(probe.Env{
@@ -860,7 +859,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			code = log.Run(crew, paths, out, stderr)
 		} else {
 			code = report.Run(crew, paths, out, stderr, report.Options{
-				Now: time.Now,
+				Clock: clock.FromEnv(),
 			})
 		}
 		return flush(out, stderr, code)
@@ -889,8 +888,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	var rosterRows []map[string]any
 	v, code := fold(sub, events, err, paths.Log, stderr, func(docs []any) (any, error) {
 		now := time.Now()
-		if e.now != nil {
-			now = e.now()
+		if e.clock.Now != nil {
+			now = e.clock.Now()
 		}
 		nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
 		if sub == "sessions" {
@@ -978,14 +977,14 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 		s := p.typed.Fleet.Stream
 		req := stream.FleetRequest{Request: streamRequest(s.streamFlags, nil), Rediscover: str(s.Rediscover)}
 		return stream.RunFleet(req, stdout, stderr, stream.FleetOptions{
-			Options: stream.Options{Now: time.Now, Proc: e.proc},
+			Options: stream.Options{Clock: clock.FromEnv(), Proc: e.proc},
 			Git:     git.Exec{},
 		})
 	}
 	o := fleet.Options{
-		Tmux: tmux.Exec{},
-		Git:  git.Exec{},
-		Now:  time.Now,
+		Tmux:  tmux.Exec{},
+		Git:   git.Exec{},
+		Clock: clock.FromEnv(),
 	}
 	c := p.typed.Fleet.Table
 	return fleet.Run(ctx, fleet.Request{All: c.All, JSON: c.JSON, Crew: str(c.Crew)}, stdout, stderr, o)

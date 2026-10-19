@@ -105,8 +105,8 @@ func runOpts(t *testing.T, p bus.Paths, o Options, req Request) (string, string,
 	if o.CrewID == nil {
 		o.CrewID = func() string { return "c1" }
 	}
-	if o.Now == nil {
-		o.Now = pk.Now
+	if o.Clock.Now == nil {
+		o.Clock.Now = pk.Now
 	}
 	if o.Sleep == nil {
 		o.Sleep = pk.Sleep

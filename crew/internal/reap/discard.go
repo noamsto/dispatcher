@@ -86,7 +86,7 @@ func (r *run) discardBranch(ctx context.Context) int {
 	if err != nil {
 		return r.refuse("git status failed")
 	}
-	patch := r.paths.Dir + "/artifacts/" + c.branch + "/discarded-" + r.p.Now().UTC().Format("20060102T150405Z") + ".patch"
+	patch := r.paths.Dir + "/artifacts/" + c.branch + "/discarded-" + r.p.Clock.Now().UTC().Format("20060102T150405Z") + ".patch"
 	if r.dry {
 		if preSt != "" {
 			r.say("would save uncommitted state to " + patch)

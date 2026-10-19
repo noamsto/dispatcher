@@ -57,7 +57,7 @@ func readRaws(log string) ([]any, error) {
 }
 
 func (r *run) nowSec() float64 {
-	return float64(r.p.Now().UnixNano()) / 1e9
+	return float64(r.p.Clock.Now().UnixNano()) / 1e9
 }
 
 // latest is `_reap_latest [branch]`. The error is the bus read's (map it

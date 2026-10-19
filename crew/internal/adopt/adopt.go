@@ -28,6 +28,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/gh"
@@ -56,8 +57,8 @@ type Options struct {
 	// Proc answers whether the recorded dispatcher is alive, whether it is
 	// this process's ancestor, the owner-pid walk and the parent's command line.
 	Proc proc.Table
-	// Now is the clock the pidfile.log line stamps.
-	Now func() time.Time
+	// Clock.Now is the clock the pidfile.log line stamps.
+	Clock clock.Clock
 	// Gh runs gh. Listing uses Combined, as the arm's `$(gh … 2>&1)`, because
 	// the text it captures is what its failure line prints.
 	Gh gh.Client
@@ -131,7 +132,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 
 	epid, _ := crews.PidFileText(pidfile)
 	live := false
-	if a := crews.PidAlive(o.Proc, o.Now(), pidfile, epid); a != nil && *a {
+	if a := crews.PidAlive(o.Proc, o.Clock.Now(), pidfile, epid); a != nil && *a {
 		live = true
 	}
 
@@ -231,7 +232,7 @@ func (o Options) releaseClaims(ctx context.Context, paths bus.Paths, id string, 
 		}
 		if _, err := o.Gh.Run(ctx, "issue", "edit", c.issue, "--remove-label", "dispatched"); err == nil {
 			say(stderr, "crew adopt: released the dispatched label on #%s (%s)\n", c.issue, c.branch)
-			if err := claimindex.Release(ctx, o.Git, paths.Common, o.LookupEnv, c.issue, id, o.Now()); err != nil {
+			if err := claimindex.Release(ctx, o.Git, paths.Common, o.LookupEnv, c.issue, id, o.Clock.Now()); err != nil {
 				say(stderr, "crew adopt: could not record the release of #%s in the claim index: %v\n", c.issue, err)
 			}
 			continue
@@ -315,13 +316,13 @@ func claimRows(paths bus.Paths, id string) []claim {
 // pidfileLog is `_pidfile_log` for this run's caller identity.
 func (o Options) pidfileLog(paths bus.Paths, action, outcome, crew, oldPID, newPID string) {
 	crews.PidfileLog(paths, crews.Caller{
-		Now: o.Now(), PID: o.PID, PPID: o.PPID, Pwd: o.Pwd, By: o.Proc.Args(o.PPID),
+		Now: o.Clock.Now(), PID: o.PID, PPID: o.PPID, Pwd: o.Pwd, By: o.Proc.Args(o.PPID),
 	}, action, outcome, crew, oldPID, newPID)
 }
 
 func (o Options) withDefaults() Options {
-	if o.Now == nil {
-		o.Now = time.Now
+	if o.Clock.Now == nil {
+		o.Clock.Now = time.Now
 	}
 	if o.Gh == nil {
 		o.Gh = gh.Exec{}

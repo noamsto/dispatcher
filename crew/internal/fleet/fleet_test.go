@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
@@ -99,7 +100,7 @@ func setup(t *testing.T) fixture {
 			Registry: registry,
 			Tmux:     &tmuxtest.Fake{Out: map[string]string{"list-panes": "", "list-windows": "feat/a\nfeat/c\n"}},
 			Git:      stubGit(alpha, nil),
-			Now:      func() time.Time { return fixedNow },
+			Clock:    clock.Clock{Now: func() time.Time { return fixedNow }},
 		},
 	}
 }
@@ -370,7 +371,7 @@ func TestWorktreeVouchesOnlyWhileRowIsFresh(t *testing.T) {
 	if out, _, _ := run(t, f, Request{}); !strings.Contains(out, "feat/a") || !strings.Contains(out, "feat/c") {
 		t.Errorf("fresh rows with a worktree hidden:\n%s", out)
 	}
-	f.opts.Now = func() time.Time { return fixedNow.Add(72 * time.Hour) }
+	f.opts.Clock.Now = func() time.Time { return fixedNow.Add(72 * time.Hour) }
 	if out, errs, _ := run(t, f, Request{}); strings.Contains(out, "feat/") || !strings.Contains(errs, "2 stale rows hidden") {
 		t.Errorf("old rows with a worktree shown:\n%s\n%q", out, errs)
 	}
@@ -412,7 +413,7 @@ func TestNonFiniteAgeIsClampedInJSONAndDashInTable(t *testing.T) {
 		Registry: registry,
 		Tmux:     &tmuxtest.Fake{Out: map[string]string{"list-windows": "feat/x\n"}},
 		Git:      stubGit("", nil),
-		Now:      func() time.Time { return fixedNow },
+		Clock:    clock.Clock{Now: func() time.Time { return fixedNow }},
 	}
 	f := fixture{opts: o}
 

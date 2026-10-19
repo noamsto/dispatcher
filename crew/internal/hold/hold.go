@@ -28,7 +28,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -68,10 +67,9 @@ const (
 // arm defaults to (`_crew_id`), the clock, and $CREW_CLOCK — the test-only
 // virtual clock `_clock_now` reads seconds from.
 type Options struct {
-	CrewID    func() string
-	Now       func() time.Time
-	CrewClock string
-	Sender    sender.Probes // the sender check's reads; zero checks nothing
+	CrewID func() string
+	Clock  clock.Clock
+	Sender sender.Probes // the sender check's reads; zero checks nothing
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
@@ -210,7 +208,7 @@ func due(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	}
 	// `--argjson now "$(_clock_now_f)"`: seconds, fractional unless the virtual
 	// clock is set. The compare is jq's, so a hold maturing this second is due.
-	matured, code := f.call(maturedProg, elems(holds), map[string]any{"now": o.clock().NowF()})
+	matured, code := f.call(maturedProg, elems(holds), map[string]any{"now": o.Clock.NowF()})
 	if code != 0 {
 		return code
 	}
@@ -255,7 +253,7 @@ func park(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int
 	}
 	out, code := f.call(parkProg, elems(holds), map[string]any{
 		"default": float64(def),
-		"now":     o.clock().NowF(),
+		"now":     o.Clock.NowF(),
 	})
 	if code != 0 {
 		return code
@@ -314,7 +312,7 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		say(stderr, "crew: hold add: --resets-at must be in the future\n")
 		return exitFailure
 	}
-	if resets <= o.clock().Seconds() {
+	if resets <= o.Clock.Seconds() {
 		say(stderr, "crew: hold add: --resets-at must be in the future\n")
 		return exitFailure
 	}
@@ -340,7 +338,7 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	// against the ms `ts` fields dispatch writes, so copying `crew new` breaks
 	// that comparison by 1000x. Real time even under CREW_CLOCK, because the arm
 	// minted these with `jq -nc 'now*1000|floor'`.
-	ts := strconv.FormatInt(o.clock().RealMS(), 10)
+	ts := strconv.FormatInt(o.Clock.RealMS(), 10)
 	id := ts + "-" + strconv.Itoa(os.Getpid())
 
 	specpath := ""
@@ -479,7 +477,7 @@ func release(ctx context.Context, req Request, paths bus.Paths, stdout, stderr i
 	body := encode(releaseBody{ID: hid, Released: true})
 	line := bus.FitLine(func(b string) string {
 		return encode(holdRow{
-			TS:     json.Number(strconv.FormatInt(o.clock().RealMS(), 10)),
+			TS:     json.Number(strconv.FormatInt(o.Clock.RealMS(), 10)),
 			CrewID: crew,
 			From:   "dispatcher:" + crew,
 			To:     "hold:" + crew,
@@ -520,12 +518,6 @@ func mayPost(ctx context.Context, sub, crew string, stderr io.Writer, o Options)
 		say(stderr, "crew: hold %s: refusing sender 'dispatcher:%s' — %s\n", sub, crew, reason)
 	}
 	return reason == ""
-}
-
-// clock is this call's view of the $CREW_CLOCK pair, shared with `crew await`
-// through internal/clock.
-func (o Options) clock() clock.Clock {
-	return clock.Clock{Now: o.Now, CrewClock: o.CrewClock}
 }
 
 // orNull is the arm's `(if $x == "" then null else $x end)`.

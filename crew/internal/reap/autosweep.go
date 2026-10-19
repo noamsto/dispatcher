@@ -27,7 +27,7 @@ func storeDir(getenv func(string) string) string {
 
 // stamp is `date -u +%Y-%m-%dT%H:%M:%SZ`.
 func (o Options) stamp() string {
-	return o.Probes.Now().UTC().Format("2006-01-02T15:04:05Z")
+	return o.Probes.Clock.Now().UTC().Format("2006-01-02T15:04:05Z")
 }
 
 // autosweep is the arm's ratings-sweep hook. CREW_RATE_AUTOSWEEP: unset/1 is a

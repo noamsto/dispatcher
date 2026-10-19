@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 )
 
@@ -36,7 +37,7 @@ func (w *world) options() Options {
 	return Options{
 		CrewID: func() string { return w.id },
 		Proc:   w.procs(),
-		Now:    func() time.Time { return time.Date(2026, 10, 10, 1, 2, 3, 0, time.UTC) },
+		Clock:  clock.Clock{Now: func() time.Time { return time.Date(2026, 10, 10, 1, 2, 3, 0, time.UTC) }},
 		PID:    4242,
 		PPID:   4241,
 		Pwd:    "/repo",

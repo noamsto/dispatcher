@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
@@ -209,7 +210,7 @@ func (f *fixture) stackRun(t *testing.T, req Request) (int, string, string) {
 	f.appended = nil
 	p := Probes{
 		Gh:     &ghtest.Fake{Func: f.gh},
-		Now:    func() time.Time { return f.now },
+		Clock:  clock.Clock{Now: func() time.Time { return f.now }},
 		Append: func(path, line string) error { f.appended = append(f.appended, line); return bus.Append(path, line) },
 	}
 	paths := bus.Paths{Common: f.common(), Dir: f.common() + "/crew", Log: f.log}
@@ -322,7 +323,7 @@ func (f *fixture) cmd() *stackCmd {
 		stdout:  f.stdout,
 		stderr:  f.stderr,
 		o:       wtgit.Opts{Stderr: io.Discard},
-		p:       Probes{Gh: &ghtest.Fake{Func: f.gh}, Now: func() time.Time { return f.now }, Append: bus.Append},
+		p:       Probes{Gh: &ghtest.Fake{Func: f.gh}, Clock: clock.Clock{Now: func() time.Time { return f.now }}, Append: bus.Append},
 		crew:    "c1",
 		fetched: map[string]string{},
 	}

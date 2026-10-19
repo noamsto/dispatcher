@@ -38,7 +38,7 @@ func RunMsg(ctx context.Context, req MsgRequest, paths bus.Paths, stderr io.Writ
 		return exitFailure
 	}
 
-	ts := o.NowMS()
+	ts := o.Clock.RealMS()
 	return post("msg", paths, stderr, func(b string) string {
 		return encodeLine(row[string]{TS: ts, CrewID: crew, From: from, To: to, Kind: bus.KindMsg, Body: b})
 	}, body)

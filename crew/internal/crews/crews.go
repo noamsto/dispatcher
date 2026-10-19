@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -39,8 +40,8 @@ const header = "crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive"
 // Options is everything Run reads beyond the bus: the process table and the
 // clock.
 type Options struct {
-	Proc proc.Table
-	Now  func() time.Time
+	Proc  proc.Table
+	Clock clock.Clock
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit
@@ -60,7 +61,7 @@ func Run(mineOnly bool, paths bus.Paths, stdout, stderr io.Writer, o Options) in
 // live ancestor of this process. Only pid files count, and the log is never
 // read.
 func mine(paths bus.Paths, stdout io.Writer, o Options) {
-	now := o.Now()
+	now := o.Clock.Now()
 	for _, id := range crewDirs(paths) {
 		pidfile := paths.Dir + "/crews/" + id + "/pid"
 		pid, ok := PidFileText(pidfile)
@@ -85,7 +86,7 @@ func mine(paths bus.Paths, stdout io.Writer, o Options) {
 // fails the command.
 func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	say(stdout, "%s\n", header)
-	now := o.Now()
+	now := o.Clock.Now()
 	nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
 
 	events, logErr := bus.ReadEventsTolerant(paths.Log)

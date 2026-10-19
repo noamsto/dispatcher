@@ -545,8 +545,8 @@ func fieldText(ev any, key string) string {
 // clockSeconds is jqrun's frozen `now`, at microsecond precision so a fold's
 // `now*1000|floor` lands where jq's millisecond stamps land.
 func clockSeconds(o Options) float64 {
-	if o.Now == nil {
-		return float64(time.Now().UnixMicro()) / 1e6
+	if o.Clock.Now == nil {
+		o.Clock.Now = time.Now
 	}
-	return float64(o.Now().UnixMicro()) / 1e6
+	return float64(o.Clock.Now().UnixMicro()) / 1e6
 }

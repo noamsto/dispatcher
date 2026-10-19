@@ -91,7 +91,7 @@ func ReleaseWindows(ctx context.Context, d Deps, branch, session, state string, 
 		return 0, nil
 	}
 	row := releaseRow{
-		TS:      d.P.Now().UnixMilli(),
+		TS:      d.P.Clock.Now().UnixMilli(),
 		Kind:    "release",
 		Branch:  branch,
 		Session: session,
@@ -116,7 +116,7 @@ type releaseRow struct {
 // tmux client, it saw output within the grace, or its claude transcript holds a
 // user turn newer than the status.
 func humanPresent(ctx context.Context, p Probes, windows []string, wtp string, tsMS, grace int64) (string, bool) {
-	now := p.Now().Unix()
+	now := p.Clock.Now().Unix()
 	rows := p.tmuxOut(ctx, "list-windows", "-a", "-F", "#{window_id}\t#{window_active}\t#{session_attached}\t#{window_activity}")
 	for row := range strings.SplitSeq(rows, "\n") {
 		f := strings.SplitN(row, "\t", 4)

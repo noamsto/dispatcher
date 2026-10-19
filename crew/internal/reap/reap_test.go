@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
@@ -140,7 +141,7 @@ func (f *fx) opts() Options {
 				defer f.mu.Unlock()
 				f.sleeps++
 			},
-			Now: func() time.Time { return time.Unix(nowUnix, 0) },
+			Clock: clock.Clock{Now: func() time.Time { return time.Unix(nowUnix, 0) }},
 			Append: func(path, line string) error {
 				f.mu.Lock()
 				defer f.mu.Unlock()

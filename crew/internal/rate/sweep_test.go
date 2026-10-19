@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
@@ -121,12 +122,12 @@ func (f *fixture) options() Options {
 			}
 			return ""
 		},
-		Now: func() time.Time {
+		Clock: clock.Clock{Now: func() time.Time {
 			if f.optionsNow != nil {
 				return f.optionsNow()
 			}
 			return time.Unix(1800000000, 0)
-		},
+		}},
 		Git: &gittest.Fake{Func: func(_ string, args []string) (string, error) {
 			f.calls = append(f.calls, "git "+strings.Join(args, " "))
 			out, ok := f.git(strings.Join(args[2:], " "))

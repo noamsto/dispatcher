@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
@@ -84,8 +85,8 @@ func (tr *tree) runOpts(t *testing.T, o Options, req Request) (string, string, i
 	if o.CrewID == nil {
 		o.CrewID = func() string { return "c1" }
 	}
-	if o.Now == nil {
-		o.Now = func() time.Time { return now }
+	if o.Clock.Now == nil {
+		o.Clock.Now = func() time.Time { return now }
 	}
 	var out, err bytes.Buffer
 	code := Run(t.Context(), req, tr.paths, &out, &err, o)
@@ -98,7 +99,7 @@ func (tr *tree) clock(t *testing.T, seconds string) Options {
 	if err := os.WriteFile(path, []byte(seconds+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return Options{CrewClock: path}
+	return Options{Clock: clock.Clock{CrewClock: path}}
 }
 
 func TestUnknownAction(t *testing.T) {
@@ -380,12 +381,12 @@ func TestDueAndParkUseRealTimeWithoutAVirtualClock(t *testing.T) {
 	real := func() time.Time { return time.Now() }
 	tr := setup(t)
 	tr.write(t, seedHold(t, "c1", "h1", fmt.Sprint(time.Now().Unix()-10)))
-	if _, _, code := tr.runOpts(t, Options{Now: real}, Request{Action: "due"}); code != 0 {
+	if _, _, code := tr.runOpts(t, Options{Clock: clock.Clock{Now: real}}, Request{Action: "due"}); code != 0 {
 		t.Errorf("a matured hold: due exited %d", code)
 	}
 	tr2 := setup(t)
 	tr2.write(t, seedHold(t, "c1", "h2", fmt.Sprint(time.Now().Unix()+30)))
-	out, _, _ := tr2.runOpts(t, Options{Now: real}, Request{Action: "park", Default: "1000"})
+	out, _, _ := tr2.runOpts(t, Options{Clock: clock.Clock{Now: real}}, Request{Action: "park", Default: "1000"})
 	if n, err := strconv.Atoi(strings.TrimSpace(out)); err != nil || n < 1 || n > 30 {
 		t.Errorf("park printed %q, want 1..30", out)
 	}

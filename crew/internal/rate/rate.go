@@ -22,9 +22,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
@@ -53,8 +53,8 @@ type Options struct {
 	Git git.Client
 	// LookupEnv reads DISPATCH_CONFIG_BIN and the XDG variables (tests).
 	LookupEnv func(string) string
-	// Now is the sweep's clock; the folds freeze jq's `now` from it.
-	Now func() time.Time
+	// Clock.Now is the sweep's clock; the folds freeze jq's `now` from it.
+	Clock clock.Clock
 	// Gh runs the arm's gh calls, each `$(gh … 2>/dev/null)`; the call sites
 	// also treat empty stdout as failure.
 	Gh gh.Client

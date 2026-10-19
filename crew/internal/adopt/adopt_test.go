@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
@@ -74,7 +75,7 @@ func (s *stub) options() Options {
 	s.tx = &tmuxtest.Fake{Out: map[string]string{"list-windows": s.wins, "display-message": s.self}}
 	return Options{
 		Proc:      s.procs(),
-		Now:       func() time.Time { return s.now },
+		Clock:     clock.Clock{Now: func() time.Time { return s.now }},
 		Gh:        &ghtest.Fake{Func: s.gh},
 		Git:       &gittest.Fake{Func: s.git},
 		Tmux:      s.tx,

@@ -122,7 +122,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, 
 		paths: paths, stdout: stdout, stderr: stderr, o: wtgit.Opts{Stderr: stderr},
 		p: o.Probes, crew: crew, fetched: map[string]string{},
 	}
-	if s.p.Gh == nil || s.p.Append == nil || s.p.Now == nil {
+	if s.p.Gh == nil || s.p.Append == nil || s.p.Clock.Now == nil {
 		s.p = s.p.withDefaults()
 	}
 	if top == "" {

@@ -14,10 +14,10 @@ import (
 	"strings"
 	"sync"
 	"text/tabwriter"
-	"time"
 	"unicode"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
@@ -34,7 +34,7 @@ type Options struct {
 	Registry string
 	Tmux     tmux.Client
 	Git      git.Client
-	Now      func() time.Time
+	Clock    clock.Clock
 }
 
 // onceTmux reads each argv once and shares it, a failed read as no output, so
@@ -66,7 +66,7 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 
 	once := onceTmux{o.Tmux, map[string]string{}}
 	windowBranches := func() map[string]bool { return roster.Windows(ctx, once) }
-	now := o.Now()
+	now := o.Clock.Now()
 	hidden := 0
 	nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
 

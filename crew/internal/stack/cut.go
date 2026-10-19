@@ -111,7 +111,7 @@ type cutRow struct {
 // value-equal, not byte-exact (docs/crew-go-port.md, "Output contract").
 func (s *stackCmd) recordRow(ctx context.Context, child, parent, tip string) error {
 	line, err := marshalRow(cutRow{
-		TS: s.p.Now().UnixMilli(), CrewID: s.crew, Kind: "stack_cut",
+		TS: s.p.Clock.Now().UnixMilli(), CrewID: s.crew, Kind: "stack_cut",
 		Branch: child, Parent: parent, Cut: tip,
 	})
 	if err != nil {

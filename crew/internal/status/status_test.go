@@ -11,8 +11,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
@@ -77,7 +79,7 @@ func (f *fixture) opts() Options {
 	o := Options{
 		CrewID: func() string { return f.crew },
 		Git:    &gittest.Fake{Out: map[string]string{"-C . rev-parse --show-toplevel": f.top}},
-		NowMS:  func() int64 { return 1700000000500 },
+		Clock:  clock.Clock{Now: func() time.Time { return time.UnixMilli(1700000000500) }},
 		Getenv: func(k string) string { return f.env[k] },
 		Fold:   f.fold,
 	}
