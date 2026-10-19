@@ -29,6 +29,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
@@ -46,7 +47,7 @@ const (
 type Options struct {
 	CrewID func() string
 	Clock  clock.Clock
-	Probes crews.Probes
+	Proc   proc.Table
 	Sender sender.Probes // the sender check's reads; zero checks nothing
 	// Remote runs argv on host as crew and returns its status. It is how a
 	// reply to a worker dispatched there reaches that host's bus; nil routes
@@ -217,7 +218,7 @@ func resolve(branch, crew string, events []bus.Event, paths bus.Paths, stderr io
 		pid, _ := crews.PidFileText(pidfile)
 		cands = append(cands, candidate{
 			row: newest, crew: c,
-			alive: crews.PidAlive(o.Probes, o.Clock.Now(), pidfile, pid),
+			alive: crews.PidAlive(o.Proc, o.Clock.Now(), pidfile, pid),
 		})
 	}
 	// Drop known-dead crews only while a not-known-dead candidate remains. If every

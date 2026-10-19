@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 )
 
 // fixture is a bus without git: crews reads bus.Paths, so a temp dir stands
@@ -45,17 +46,6 @@ func writeLog(t *testing.T, p bus.Paths, body string) {
 // fakeNow makes the arm's `now*1000` 1785951264000.
 var fakeNow = func() time.Time { return time.Unix(1785951264, 0) }
 
-func fakeProbes(live map[int]bool, parents map[int]int) Probes {
-	return Probes{
-		// Elapsed/Mtime unreadable: _pid_recycled fails closed to
-		// not-recycled, so liveness is exactly the live set.
-		Elapsed: func(int) (int64, bool) { return 0, false },
-		Mtime:   func(string) (int64, bool) { return 0, false },
-		Alive:   func(pid int) bool { return live[pid] },
-		Parent:  func(pid int) (int, bool) { n, ok := parents[pid]; return n, ok },
-	}
-}
-
 func status(ts int64, crew, from string) string {
 	return fmt.Sprintf(`{"ts":%d,"crew_id":"%s","kind":"status","from":"%s","body":{"state":"working"}}`, ts, crew, from)
 }
@@ -78,7 +68,7 @@ func runWith(t *testing.T, mine bool, p bus.Paths, o Options) (string, string, i
 }
 
 func opts(live map[int]bool, parents map[int]int) Options {
-	return Options{Probes: fakeProbes(live, parents), Now: fakeNow}
+	return Options{Proc: proctest.New(live, parents), Now: fakeNow}
 }
 
 func TestTableUnionSortAndAliveMatrix(t *testing.T) {
@@ -162,12 +152,13 @@ func TestTableEmptyBusAndNoCrewsDir(t *testing.T) {
 func TestTableRecycledPidIsNotAlive(t *testing.T) {
 	p := fixture(t)
 	crewDir(t, p, "c-rec", "7777\n")
-	o := Options{Now: fakeNow, Probes: Probes{
-		Alive:   func(int) bool { return true },
-		Elapsed: func(int) (int64, bool) { return 10, true },                  // started 10s ago
-		Mtime:   func(string) (int64, bool) { return 1785951264 - 100, true }, // file is 100s old
-		Parent:  func(int) (int, bool) { return 0, false },
-	}}
+	pidfile := p.Dir + "/crews/c-rec/pid"
+	old := time.Unix(1785951264-100, 0) // the file is 100s old
+	if err := os.Chtimes(pidfile, old, old); err != nil {
+		t.Fatal(err)
+	}
+	// The process started 10s ago, after the file was written.
+	o := Options{Now: fakeNow, Proc: &proctest.Table{Procs: map[int]proctest.Proc{7777: {Elapsed: 10}}}}
 	out, _, code := run(t, p, o)
 	if code != 0 {
 		t.Fatalf("code %d", code)
@@ -271,7 +262,7 @@ func TestTableNonStringCrewIDsDropped(t *testing.T) {
 
 func TestPidAliveRejectsOverRangePid(t *testing.T) {
 	for _, in := range []string{"4294967295", "9999999999"} {
-		got := PidAlive(Probes{}, time.Now(), "", in)
+		got := PidAlive(&proctest.Table{}, time.Now(), "", in)
 		if got == nil || *got {
 			t.Errorf("PidAlive(%q) = %v; want false", in, got)
 		}

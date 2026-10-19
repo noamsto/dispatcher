@@ -61,7 +61,7 @@ consumer. Fakes live in a `<concern>test` package imported only from tests.
 | tmux (done) | `tmux.Client{ Run(ctx, args...) (string, error) }` + `tmux.Output` (failure = "")                                                                                                                                                                                                                               | `tmux.Exec{}`                                                    | `tmuxtest.Fake{Out, Func}` + `Calls()`                         |
 | gh          | `gh.Client{ Run(ctx, args...) (string, error); Combined(ctx, args...) (string, error) }`; quiet = `Run` with the output dropped; `HaveGh` = `errors.Is(err, exec.ErrNotFound)`                                                                                                                                  | `gh.Exec{}`                                                      | `ghtest.Fake` (same shape as `tmuxtest`)                       |
 | git         | `git.Client{ Run(ctx, dir string, args...) (string, error) }` + funcs `Worktrees`, `Toplevel`, `Origin` over it; `wtgit` keeps the porcelain layer                                                                                                                                                              | `git.Exec{}`                                                     | `gittest.Fake` keyed by dir + argv                             |
-| proc        | `proc.Table{ Alive(pid) bool; Elapsed(pid) (int64, bool); Parent(pid) (int, bool); Comm(pid) (string, bool); Args(pid) string; Kill(pid) }`, plus `Procs`/`Ancestors` as funcs over `/proc`                                                                                                                     | `proc.OS{}` (from `crews.DefaultProbes`, `reap`, `adopt.PsArgs`) | `proctest.Table` (map pid → proc)                              |
+| proc        | `proc.Table{ Alive(pid) bool; Elapsed(pid) (int64, bool); Parent(pid) (int, bool); Comm(pid) (string, bool); Args(pid) string; Cwds(ctx) []Cwd; Kill(pid) }`, plus `IsAncestor`/`OwnerPID` as funcs over a `Table`                                                                                              | `proc.OS{}` (from `crews.DefaultProbes`, `reap`, `adopt.PsArgs`) | `proctest.Table{Procs}` (map pid → proc) + `Killed()`          |
 | clock       | packages take the existing `clock.Clock` value instead of bare `Now` funcs; its `Sleep`/`SleepCtx` already advance a `CrewClock` file instead of sleeping. The wall-clock `time.Duration` sleeps (`reap`, `rosterrender`, which must never follow `CREW_CLOCK`) and `stream`'s timers are decided in that slice | new `clock.FromEnv()` (what `main.go` builds by hand today)      | `clock.Clock{Now: fixed, CrewClock: tmpfile}` (no new package) |
 | env         | no interface: `Getenv func(string) string` is already the stdlib shape; rename `Env`/`LookupEnv` fields to `Getenv` and drop duplicates                                                                                                                                                                         | `os.Getenv`                                                      | a map's lookup                                                 |
 
@@ -95,6 +95,28 @@ their own group-kill runner), aeye, gtrash, `rosterrender`'s exec hop.
 - Lines (crew/, `wc -l` over `*.go`): non-test 27415 → 27404 (−11), test 44252 → 44242 (−10), with the new
   `tmux` and `tmuxtest` packages counted (`tmuxtest` is not a `_test.go` file).
 
+## The proc slice
+
+- `internal/proc`: `Table`, `OS`, and `IsAncestor`/`OwnerPID` over a `Table`
+  (they moved out of `crews`). `Cwds` replaces reap's `Procs`/`Ancestors` pair
+  (typed rows; `CREW_REAP_PROC_CMD` moved with it); reap's ancestor set became
+  `Ancestors`, so ancestry reads through `Parent` (`ps`) rather
+  than `/proc/<pid>/status`.
+- `internal/proc/proctest`: `Table{Procs map[int]Proc}` (a pid is alive when it
+  is a key), `New(live, parents)` and `Killed()`.
+- `crews.Probes` is gone: `crews.Options.Proc`, and `crews.RecordedLive`/
+  `PidAlive` take the `Table`. `Mtime` was a seam only to fake "unreadable"; the
+  recycle check stats the pidfile itself.
+- `sender.Probes.Proc` replaces `Parent` and `PID`: the caller's pid is
+  `os.Getpid()`, so tests key their ancestry on it. `adopt`/`register` lost
+  `Args` for `Proc.Args`; `reply`, `stream` and `rosterrender` hold a `Proc`.
+- Left as they are: `stall/probe.Load`/`Top` (host load and CPU, behind the
+  `CREW_STALL_*_CMD` bash seams, not the process table), `lock`'s holder probe,
+  and the `syscall.Kill` of `stream --force` (a TERM then a delivery poll) and
+  of the relay/stall process-group kills.
+- Lines (crew/, `wc -l` over `*.go`): non-test 27404 → 27403 (−1), test 44242 →
+  44223 (−19), with the new `proc` and `proctest` packages counted.
+
 ## Slice order
 
 One PR each, largest duplication first. Savings are estimates from the field
@@ -103,7 +125,7 @@ and fake counts above (net Go lines, non-test + test).
 | #   | concern | packages                                                                                                            | fakes replaced                                                                             | est. net lines |
 | --- | ------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------- |
 | 1   | tmux    | 14 + main                                                                                                           | 20 test files                                                                              | measured above |
-| 2   | proc    | crews, reap, sender, adopt, register, stall/probe, main                                                             | ~12 test files (`crews_test`, `register_test`, `adopt_test`, `reply_test`, `main_test`, …) | −60 to −120    |
+| 2   | proc    | crews, reap, sender, adopt, register, reply, stream, rosterrender, main                                             | ~12 test files (`crews_test`, `register_test`, `adopt_test`, `reply_test`, `main_test`, …) | measured above |
 | 3   | git     | main, roster, fleet, adopt, nudge, status, rate, reap, bus, claimindex, gitguard, remote; `stream`'s `Origin` field | ~10 test files                                                                             | −60 to −120    |
 | 4   | gh      | reap, stack, adopt, rate                                                                                            | ~4 test files                                                                              | −30 to −60     |
 | 5   | clock   | 15 `Now`, 5 `Sleep`/`Timer` fields and `Rediscover`, 6 `clock.Clock` holders                                        | most test files set `Now`                                                                  | −20 to −50     |

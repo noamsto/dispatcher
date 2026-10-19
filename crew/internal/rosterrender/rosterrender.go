@@ -6,8 +6,8 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
-	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/entry"
+	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"io"
 	"os"
@@ -27,8 +27,8 @@ const (
 type Options struct {
 	// Probes are the tmux, aeye and process-spawn reads.
 	Probes Probes
-	// Procs are the pid probes, shared with `crews`, `stall` and `adopt`.
-	Procs crews.Probes
+	// Proc answers whether the dispatcher pane is this process's ancestor.
+	Proc proc.Table
 	// Roster is the row fold's PR probe — the same one `crew roster` runs.
 	Roster roster.Probes
 	// Clock is `_clock_now_f`, which drives the render timers so the suite can
@@ -96,7 +96,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, o Options) int {
 	// retargets a renderer that is already running. Anchor, never discover.
 	if c.pane != "" {
 		panePID, err := o.Probes.Tmux.Run(ctx, "display-message", "-p", "-t", c.pane, "#{pane_pid}")
-		if err == nil && panePIDMatches(c.pane, panePID) && o.Procs.IsAncestor(pidOf(panePID)) {
+		if err == nil && panePIDMatches(c.pane, panePID) && proc.IsAncestor(o.Proc, pidOf(panePID)) {
 			_ = put(filepath.Join(cdir, filePane), c.pane+"\n", o.Stderr)
 		} else {
 			say(o.Stderr,

@@ -1,9 +1,12 @@
 package sender
 
 import (
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
@@ -12,8 +15,11 @@ func pane(pid, branch, role, crewID, win, id string) string {
 	return strings.Join([]string{pid, branch, role, crewID, win, id}, "\x1f") + "\n"
 }
 
-// tree is the caller's ancestry: 300 → 200 → 100 → 1.
-var tree = map[int]int{300: 200, 200: 100, 100: 1}
+// self is the caller's own pid, the foot of the fixtures' ancestry.
+var self = os.Getpid()
+
+// tree is the caller's ancestry: self → 200 → 100 → 1.
+var tree = map[int]int{self: 200, 200: 100, 100: 1}
 
 type fixture struct {
 	env      map[string]string
@@ -22,27 +28,17 @@ type fixture struct {
 	noPanes  bool
 	noParent bool
 	tree     map[int]int
-	pid      int
 }
 
 func (f fixture) probes() Probes {
+	parents := f.tree
+	if parents == nil {
+		parents = tree
+	}
 	p := Probes{
 		Getenv: func(k string) string { return f.env[k] },
 		Tmux:   &tmuxtest.Fake{Out: map[string]string{"list-panes": f.panes}},
-		Parent: func(pid int) (int, bool) {
-			pp, ok := f.tree[pid]
-			return pp, ok
-		},
-		PID: 300,
-	}
-	if f.tree == nil {
-		p.Parent = func(pid int) (int, bool) {
-			pp, ok := tree[pid]
-			return pp, ok
-		}
-	}
-	if f.pid != 0 {
-		p.PID = f.pid
+		Proc:   proctest.New(nil, parents),
 	}
 	if f.panesErr {
 		p.Tmux = &tmuxtest.Fake{}
@@ -51,7 +47,7 @@ func (f fixture) probes() Probes {
 		p.Tmux = nil
 	}
 	if f.noParent {
-		p.Parent = nil
+		p.Proc = nil
 	}
 	return p
 }
@@ -116,14 +112,14 @@ func TestCheck(t *testing.T) {
 		{"nearest pane refuses outer id", "worker:feat/x", "c1", fixture{panes: lead + pane("200", "feat/y", "lead", "c1", "@1", "%1")},
 			"this pane is stamped as the lead of feat/y, which posts only as worker:feat/y or worker:feat/y#s<session> ($CREW_WORKER_ID)"},
 		{"nearest unstamped pane hides outer stamp", "dispatcher:c1", "c1", fixture{panes: lead + pane("200", "", "", "", "@1", "%1")}, ""},
-		{"own pid is a pane", "worker:feat/x", "c1", fixture{panes: pane("300", "feat/x", "lead", "c1", "@1", "%1"), tree: map[int]int{}}, ""},
-		{"own pid pane refuses", "worker:feat/y", "c1", fixture{panes: pane("300", "feat/x", "lead", "c1", "@1", "%1"), tree: map[int]int{}}, leadX},
+		{"own pid is a pane", "worker:feat/x", "c1", fixture{panes: pane(strconv.Itoa(self), "feat/x", "lead", "c1", "@1", "%1"), tree: map[int]int{}}, ""},
+		{"own pid pane refuses", "worker:feat/y", "c1", fixture{panes: pane(strconv.Itoa(self), "feat/x", "lead", "c1", "@1", "%1"), tree: map[int]int{}}, leadX},
 
 		{"no pane in ancestry", "dispatcher:c1", "c1", fixture{panes: pane("999", "feat/x", "lead", "c1", "@1", "%1")}, ""},
 		{"panes error", "dispatcher:c1", "c1", fixture{panes: lead, panesErr: true}, ""},
 		{"nil panes", "dispatcher:c1", "c1", fixture{panes: lead, noPanes: true}, ""},
 		{"nil parent", "dispatcher:c1", "c1", fixture{panes: lead, noParent: true}, ""},
-		{"parent cycle terminates", "dispatcher:c1", "c1", fixture{panes: pane("999", "feat/x", "lead", "c1", "@1", "%1"), tree: map[int]int{300: 200, 200: 300}}, ""},
+		{"parent cycle terminates", "dispatcher:c1", "c1", fixture{panes: pane("999", "feat/x", "lead", "c1", "@1", "%1"), tree: map[int]int{self: 200, 200: self}}, ""},
 		{"malformed line skipped", "worker:feat/x", "c1", fixture{panes: "garbage\n" + pane("x", "feat/y", "lead", "c1", "@1", "%1") + pane("0", "feat/y", "lead", "c1", "@1", "%1") + "100\x1ffeat/y\n" + lead}, ""},
 		{"malformed line does not anchor", "dispatcher:c1", "c1", fixture{panes: "100\x1ffeat/y\x1flead\n"}, ""},
 	}

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 )
 
 type world struct {
@@ -19,21 +19,27 @@ type world struct {
 	env    map[string]string
 }
 
+// procs is the live set, the parent links, the command names and the
+// caller's parent's command line.
+func (w *world) procs() *proctest.Table {
+	t := proctest.New(w.alive, w.parent)
+	for pid, c := range w.comm {
+		t.Procs[pid] = proctest.Proc{Parent: t.Procs[pid].Parent, Comm: c}
+	}
+	ppid := t.Procs[4241]
+	ppid.Args = "claude --resume"
+	t.Procs[4241] = ppid
+	return t
+}
+
 func (w *world) options() Options {
 	return Options{
 		CrewID: func() string { return w.id },
-		Probes: crews.Probes{
-			Alive:   func(pid int) bool { return w.alive[pid] },
-			Elapsed: func(int) (int64, bool) { return 0, false },
-			Mtime:   func(string) (int64, bool) { return 0, false },
-			Parent:  func(pid int) (int, bool) { n, ok := w.parent[pid]; return n, ok },
-			Comm:    func(pid int) (string, bool) { c, ok := w.comm[pid]; return c, ok },
-		},
+		Proc:   w.procs(),
 		Now:    func() time.Time { return time.Date(2026, 10, 10, 1, 2, 3, 0, time.UTC) },
 		PID:    4242,
 		PPID:   4241,
 		Pwd:    "/repo",
-		Args:   func(int) string { return "claude --resume" },
 		Getenv: func(k string) string { return w.env[k] },
 	}
 }

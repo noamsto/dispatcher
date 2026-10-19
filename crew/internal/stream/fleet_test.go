@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/watch"
 )
@@ -579,9 +579,7 @@ func TestFleetNoDoubleDeliveryWithPerRepoStream(t *testing.T) {
 	perRepoAlive.Store(true)
 
 	l := startFleet(t, FleetOptions{
-		Options: Options{Self: watchStub(t), Probes: crews.Probes{
-			Alive: func(pid int) bool { return pid == 4242 && perRepoAlive.Load() },
-		}},
+		Options:  Options{Self: watchStub(t), Proc: aliveFunc{f: func(pid int) bool { return pid == 4242 && perRepoAlive.Load() }}},
 		Discover: okRepos(alpha),
 		Origin:   origins(nil),
 	}, fastRequest())
@@ -761,10 +759,18 @@ func TestFleetLaneHeartbeat(t *testing.T) {
 	}
 }
 
-func runFleetStatus(t *testing.T, root string, probes crews.Probes) (int, map[string]any) {
+// aliveFunc is a proc.Table that answers only Alive.
+type aliveFunc struct {
+	proc.Table
+	f func(int) bool
+}
+
+func (a aliveFunc) Alive(pid int) bool { return a.f(pid) }
+
+func runFleetStatus(t *testing.T, root string, tbl proc.Table) (int, map[string]any) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	rc := RunFleet(FleetRequest{Request: Request{Status: true, Crew: "c1"}}, &out, &errb, FleetOptions{LaneRoot: root, Options: Options{Probes: probes}})
+	rc := RunFleet(FleetRequest{Request: Request{Status: true, Crew: "c1"}}, &out, &errb, FleetOptions{LaneRoot: root, Options: Options{Proc: tbl}})
 	lines := decodeLinesT(t, out.String())
 	if len(lines) != 1 {
 		t.Fatalf("--status printed %q, stderr %q", out.String(), errb.String())
@@ -774,7 +780,7 @@ func runFleetStatus(t *testing.T, root string, probes crews.Probes) (int, map[st
 
 func TestFleetStatus(t *testing.T) {
 	root := t.TempDir()
-	if rc, line := runFleetStatus(t, root, crews.Probes{Alive: alive()}); rc != 2 || line["state"] != "dead" || line["crew"] != "c1" {
+	if rc, line := runFleetStatus(t, root, alive()); rc != 2 || line["state"] != "dead" || line["crew"] != "c1" {
 		t.Errorf("missing lane = (%d, %v), want (2, dead)", rc, line)
 	}
 
@@ -782,7 +788,7 @@ func TestFleetStatus(t *testing.T) {
 	lockd := mkdir(t, filepath.Join(lane, "stream.lock.d"))
 	writeFile(t, filepath.Join(lockd, "pid"), "4242\n")
 	writeFile(t, filepath.Join(lane, "stream.tick"), fmt.Sprintf(`{"pid":4242,"ts":%d,"park":300}`, time.Now().UnixMilli()))
-	if rc, line := runFleetStatus(t, root, crews.Probes{Alive: alive("4242")}); rc != 0 || line["state"] != "alive" || line["pid"] != float64(4242) {
+	if rc, line := runFleetStatus(t, root, alive("4242")); rc != 0 || line["state"] != "alive" || line["pid"] != float64(4242) {
 		t.Errorf("live lock + fresh tick = (%d, %v), want (0, alive)", rc, line)
 	}
 
@@ -796,7 +802,7 @@ func TestFleetStatus(t *testing.T) {
 	t.Cleanup(func() { _ = holder.Process.Kill() })
 	writeFile(t, filepath.Join(lockd, "pid"), fmt.Sprintf("%d\n", holder.Process.Pid))
 	writeFile(t, filepath.Join(lane, "stream.tick"), fmt.Sprintf(`{"pid":%d,"ts":1,"park":300}`, holder.Process.Pid))
-	if rc, line := runFleetStatus(t, root, crews.Probes{}); rc != 1 || line["state"] != "stale" {
+	if rc, line := runFleetStatus(t, root, nil); rc != 1 || line["state"] != "stale" {
 		t.Fatalf("stale lane = (%d, %v), want (1, stale)", rc, line)
 	}
 
@@ -819,7 +825,7 @@ func TestFleetStatus(t *testing.T) {
 	if got := strings.TrimSpace(readFile(filepath.Join(lockd, "pid"))); got != me {
 		t.Errorf("lock holder = %q, want this process %s", got, me)
 	}
-	if rc, line := runFleetStatus(t, root, crews.Probes{}); rc != 0 || line["state"] != "alive" {
+	if rc, line := runFleetStatus(t, root, nil); rc != 0 || line["state"] != "alive" {
 		t.Errorf("reclaimed lane = (%d, %v), want (0, alive)", rc, line)
 	}
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {

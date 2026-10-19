@@ -13,6 +13,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
+	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
@@ -139,23 +140,18 @@ func rmF(path string) {
 // killLeftovers signals every process whose cwd is in wt, this process and its
 // ancestors excepted. A dangling cwd still matches by string.
 func (r *run) killLeftovers(ctx context.Context, wt string) {
-	anc := r.p.Ancestors()
-	for line := range strings.SplitSeq(r.p.Procs(ctx), "\n") {
-		rpid, rcwd, _ := strings.Cut(strings.Trim(line, "\t"), "\t")
-		rcwd = strings.Trim(rcwd, "\t")
-		if rpid == "" {
+	anc := proc.Ancestors(r.p.Proc)
+	for _, c := range r.p.Proc.Cwds(ctx) {
+		if !strings.HasPrefix(c.Dir+"/", wt+"/") || c.PID == os.Getpid() || anc[c.PID] {
 			continue
 		}
-		pid, _ := strconv.Atoi(rpid)
-		if anc[pid] || !strings.HasPrefix(rcwd+"/", wt+"/") {
-			continue
-		}
+		pid := strconv.Itoa(c.PID)
 		if r.dry {
-			r.say("would kill pid " + rpid + " (cwd " + rcwd + ")")
+			r.say("would kill pid " + pid + " (cwd " + c.Dir + ")")
 			continue
 		}
-		r.p.Kill(pid)
-		r.say("killed pid " + rpid + " (cwd " + rcwd + ")")
+		r.p.Proc.Kill(c.PID)
+		r.say("killed pid " + pid + " (cwd " + c.Dir + ")")
 	}
 }
 

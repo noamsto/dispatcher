@@ -10,9 +10,11 @@ package sender
 
 import (
 	"context"
+	"os"
 	"strconv"
 	"strings"
 
+	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
@@ -23,10 +25,9 @@ const Format = "#{pane_pid}\x1f#{@crew_branch}\x1f#{@crew_role}\x1f#{@crew_id}\x
 
 // Probes are the reads Check makes; the zero value checks nothing.
 type Probes struct {
-	Getenv func(string) string       // nil: no env
-	Tmux   tmux.Client               // reads list-panes -a -F Format; nil: no tmux
-	Parent func(pid int) (int, bool) // the pid's parent, false when unknown; nil: no ancestry
-	PID    int                       // the caller's own pid
+	Getenv func(string) string // nil: no env
+	Tmux   tmux.Client         // reads list-panes -a -F Format; nil: no tmux
+	Proc   proc.Table          // walks the caller's ancestry; nil: no ancestry
 }
 
 type stamp struct {
@@ -167,19 +168,19 @@ func (p Probes) rows(ctx context.Context) []stamp {
 // anchor is the stamps of the nearest pane in rows whose pid is the caller or
 // one of its ancestors.
 func (p Probes) anchor(rows []stamp) (stamp, bool) {
-	if p.Parent == nil {
+	if p.Proc == nil {
 		return stamp{}, false
 	}
 	panes := map[int]stamp{}
 	for _, r := range rows {
 		panes[r.pid] = r
 	}
-	cur := p.PID
+	cur := os.Getpid()
 	for range 32 {
 		if s, ok := panes[cur]; ok {
 			return s, true
 		}
-		next, ok := p.Parent(cur)
+		next, ok := p.Proc.Parent(cur)
 		if !ok || next <= 0 {
 			break
 		}

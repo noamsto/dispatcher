@@ -1,9 +1,20 @@
-package crews
+package proc
 
 import (
 	"os"
+	"slices"
 	"testing"
 )
+
+// walkTable scripts the two reads an ancestor walk makes.
+type walkTable struct {
+	Table
+	parent func(int) (int, bool)
+	comm   func(int) (string, bool)
+}
+
+func (w walkTable) Parent(pid int) (int, bool)  { return w.parent(pid) }
+func (w walkTable) Comm(pid int) (string, bool) { return w.comm(pid) }
 
 // OwnerPID is `_owner_pid`: the caller's parent is the shell crew.sh ran under,
 // so the walk climbs past the shells to the first ancestor that is not one, and
@@ -50,11 +61,9 @@ func TestOwnerPID(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := Probes{
-				Parent: func(pid int) (int, bool) { n, ok := tc.parent[pid]; return n, ok },
-				Comm:   func(pid int) (string, bool) { c, ok := tc.comm[pid]; return c, ok },
-			}
-			if got := p.OwnerPID(ppid); got != tc.want {
+			p := walkTable{parent: func(pid int) (int, bool) { n, ok := tc.parent[pid]; return n, ok },
+				comm: func(pid int) (string, bool) { c, ok := tc.comm[pid]; return c, ok }}
+			if got := OwnerPID(p, ppid); got != tc.want {
 				t.Errorf("OwnerPID(%d) = %d, want %d", ppid, got, tc.want)
 			}
 		})
@@ -69,36 +78,16 @@ func TestOwnerPIDWalkIsBounded(t *testing.T) {
 	calls := 0
 	probe := func() {
 		calls++
-		if calls > 2*ownerDepth {
-			t.Fatalf("the walk made %d probes, want at most %d", calls, 2*ownerDepth)
+		if calls > 64 {
+			t.Fatalf("the walk made %d probes, want at most 64", calls)
 		}
 	}
-	p := Probes{
-		Comm:   func(int) (string, bool) { probe(); return "bash", true },
-		Parent: func(pid int) (int, bool) { probe(); return pid, true },
+	p := walkTable{
+		comm:   func(int) (string, bool) { probe(); return "bash", true },
+		parent: func(pid int) (int, bool) { probe(); return pid, true },
 	}
-	if got := p.OwnerPID(4241); got != 4241 {
+	if got := OwnerPID(p, 4241); got != 4241 {
 		t.Errorf("OwnerPID = %d, want the fallback parent", got)
-	}
-}
-
-// commName is the arm's `tr -d '[:space:]'` and `[ -n "$c" ]`: nothing left after
-// the whitespace is "no name", and the walk breaks there rather than recording a
-// pid ps could not read.
-func TestCommName(t *testing.T) {
-	cases := map[string]string{
-		"bash\n":         "bash",
-		"  node  \n":     "node",
-		"/usr/lib/exe\n": "/usr/lib/exe",
-		"\n":             "",
-		"   ":            "",
-		"":               "",
-	}
-	for in, want := range cases {
-		name, ok := commName(in)
-		if name != want || ok != (want != "") {
-			t.Errorf("commName(%q) = %q, %v; want %q, %v", in, name, ok, want, want != "")
-		}
 	}
 }
 
@@ -119,11 +108,52 @@ func TestShellName(t *testing.T) {
 	}
 }
 
-// psComm execs `ps`, so this needs a ps binary on PATH: the Nix check phase
+// OS.Comm execs `ps`, so this needs a ps binary on PATH: the Nix check phase
 // provides one through nativeCheckInputs.
-func TestPsCommNamesOwnProcess(t *testing.T) {
-	name, ok := psComm(os.Getpid())
+func TestCommNamesOwnProcess(t *testing.T) {
+	name, ok := OS{}.Comm(os.Getpid())
 	if !ok || name == "" {
-		t.Errorf("psComm(own pid) = %q, %v; want a name and true", name, ok)
+		t.Errorf("Comm(own pid) = %q, %v; want a name and true", name, ok)
+	}
+}
+
+func TestParseCwds(t *testing.T) {
+	got := parseCwds("12\t/a/b\n\nx\t/c\n\t34\t/d\t\n")
+	want := []Cwd{{12, "/a/b"}, {34, "/d"}}
+	if !slices.Equal(got, want) {
+		t.Errorf("parseCwds = %v, want %v", got, want)
+	}
+}
+
+func TestRepresentable(t *testing.T) {
+	for dir, want := range map[string]bool{
+		"/wt/feat-x":              true,
+		"":                        false,
+		"/wt/evil\n1\t/wt/feat-x": false,
+		"/wt/a\tb":                false,
+	} {
+		if got := representable(dir); got != want {
+			t.Errorf("representable(%q) = %v, want %v", dir, got, want)
+		}
+	}
+}
+
+func TestParseEtime(t *testing.T) {
+	for in, want := range map[string]int64{
+		"05":         5,
+		"01:05":      65,
+		"02:01:05":   7265,
+		"3-02:01:05": 3*86400 + 7265,
+		"-01:05":     65,
+		"1-00:00:00": 86400,
+	} {
+		if got, ok := parseEtime(in); !ok || got != want {
+			t.Errorf("parseEtime(%q) = %d, %v; want %d", in, got, ok, want)
+		}
+	}
+	for _, in := range []string{"", "1:2:3:4", "5-", "1-2-3", "ab", "1:", "12:3x"} {
+		if got, ok := parseEtime(in); ok {
+			t.Errorf("parseEtime(%q) = %d, true; want false", in, got)
+		}
 	}
 }

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
@@ -34,17 +34,24 @@ type stub struct {
 	now    time.Time
 }
 
+// procs is the live set, the parent links, the command names and the
+// caller's parent's command line.
+func (s *stub) procs() *proctest.Table {
+	t := proctest.New(s.alive, s.parent)
+	for pid, c := range s.comm {
+		t.Procs[pid] = proctest.Proc{Parent: t.Procs[pid].Parent, Comm: c}
+	}
+	ppid := t.Procs[4241]
+	ppid.Args = s.args
+	t.Procs[4241] = ppid
+	return t
+}
+
 func (s *stub) options() Options {
 	s.tx = &tmuxtest.Fake{Out: map[string]string{"list-windows": s.wins, "display-message": s.self}}
 	return Options{
-		Probes: crews.Probes{
-			Alive:   func(pid int) bool { return s.alive[pid] },
-			Elapsed: func(int) (int64, bool) { return 0, false },
-			Mtime:   func(string) (int64, bool) { return 0, false },
-			Parent:  func(pid int) (int, bool) { n, ok := s.parent[pid]; return n, ok },
-			Comm:    func(pid int) (string, bool) { c, ok := s.comm[pid]; return c, ok },
-		},
-		Now: func() time.Time { return s.now },
+		Proc: s.procs(),
+		Now:  func() time.Time { return s.now },
 		Gh: func(args ...string) (string, error) {
 			s.calls = append(s.calls, "gh "+strings.Join(args, " "))
 			return s.ghOut, s.ghErr
@@ -55,7 +62,6 @@ func (s *stub) options() Options {
 		},
 		Worktrees: func() string { s.calls = append(s.calls, "git worktree list --porcelain"); return s.wtOut },
 		Tmux:      s.tx,
-		Args:      func(int) string { return s.args },
 		LookupEnv: func(k string) string { return s.env[k] },
 		PID:       4242,
 		PPID:      4241,

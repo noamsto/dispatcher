@@ -15,7 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/proc"
+	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 )
 
 const (
@@ -44,7 +45,7 @@ exit 0
 // the process cwd in the repo, where adopt and reap run git.
 type crewsCLI struct {
 	*holdCLI
-	procs crews.Probes
+	proc  proc.Table
 	ghLog string
 }
 
@@ -78,7 +79,7 @@ func newCrewsCLI(t *testing.T) *crewsCLI {
 	stubs := t.TempDir()
 	c := &crewsCLI{
 		holdCLI: h,
-		procs:   crews.DefaultProbes(),
+		proc:    proc.OS{},
 		ghLog:   filepath.Join(stubs, "gh.log"),
 	}
 	t.Setenv("GH_LOG", c.ghLog)
@@ -91,7 +92,7 @@ func newCrewsCLI(t *testing.T) *crewsCLI {
 
 func (c *crewsCLI) run(args ...string) (string, string, int) {
 	c.t.Helper()
-	e := env{getwd: func() (string, error) { return c.repo, nil }, procs: c.procs}
+	e := env{getwd: func() (string, error) { return c.repo, nil }, proc: c.proc}
 	var stdout, stderr bytes.Buffer
 	code := run(context.Background(), args, &stdout, &stderr, e)
 	return stdout.String(), stderr.String(), code
@@ -783,17 +784,10 @@ func TestAdoptRegisterNoPidRecordOwner(t *testing.T) {
 	// owner walk must climb to it.
 	underEngine := func(c *crewsCLI) {
 		ppid := os.Getppid()
-		p := crewsProbes(nil, map[int]int{ppid: 777001})
-		p.Comm = func(pid int) (string, bool) {
-			switch pid {
-			case ppid:
-				return "bash", true
-			case 777001:
-				return "claude", true
-			}
-			return "", false
-		}
-		c.procs = p
+		c.proc = &proctest.Table{Procs: map[int]proctest.Proc{
+			ppid:   {Parent: 777001, Comm: "bash"},
+			777001: {Comm: "claude"},
+		}}
 	}
 
 	t.Run("adopt: with no pid records the non-shell ancestor, not the calling subshell", func(t *testing.T) {
@@ -940,14 +934,11 @@ func TestPidFileSurvivesForeignCallers(t *testing.T) {
 		ppidN := os.Getppid()
 		// The pid is an ancestor above the caller's parent, which the real
 		// process tree cannot supply in-process.
-		p := crewsProbes(map[int]bool{777002: true}, map[int]int{os.Getpid(): ppidN, ppidN: 777002})
-		p.Comm = func(pid int) (string, bool) {
-			if pid == ppidN {
-				return "go", true
-			}
-			return "", false
-		}
-		c.procs = p
+		c.proc = &proctest.Table{Procs: map[int]proctest.Proc{
+			777002:      {},
+			os.Getpid(): {Parent: ppidN},
+			ppidN:       {Parent: 777002, Comm: "go"},
+		}}
 		c.registerAs("c-mine", "777002")
 		c.mustRun("deregister")
 		eq(t, "pid file", c.pidOf("c-mine"), "777002")

@@ -16,6 +16,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
+	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
@@ -553,9 +554,8 @@ func TestRunRefusesForeignSender(t *testing.T) {
 	h := newHarness(t, f)
 	o := h.options()
 	o.Sender = sender.Probes{
-		Tmux:   &tmuxtest.Fake{Out: map[string]string{"list-panes": "100\x1ffeat/x\x1flead\x1fc1\x1f@1\x1f%1\n"}},
-		Parent: func(pid int) (int, bool) { return 1, true },
-		PID:    100,
+		Tmux: &tmuxtest.Fake{Out: map[string]string{"list-panes": fmt.Sprintf("%d\x1ffeat/x\x1flead\x1fc1\x1f@1\x1f%%1\n", os.Getpid())}},
+		Proc: &proctest.Table{},
 	}
 	code := Run(h.ctx, Request{Target: "worker:feat/y#s1-1", Pane: ptr("%1")}, h.paths, &h.stderr, o)
 	if code != 1 {

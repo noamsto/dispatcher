@@ -3,7 +3,6 @@ package adopt
 import (
 	"bytes"
 	"os/exec"
-	"strconv"
 )
 
 // The arm's three external commands, one function each, with the argv the bash
@@ -31,12 +30,6 @@ func worktreeList() string {
 		// The arm's `$(git … | awk …)`: no worktree, not an error.
 		return ""
 	}
-	return trimNewlines(string(out))
-}
-
-// PsArgs is `ps -o args= -p <pid>`.
-func PsArgs(pid int) string {
-	out, _ := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
 	return trimNewlines(string(out))
 }
 

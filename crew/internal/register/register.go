@@ -16,6 +16,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
+	"github.com/noamsto/dispatcher/crew/internal/proc"
 )
 
 const exitFailure = 1
@@ -25,8 +26,8 @@ type Options struct {
 	// CrewID is `_crew_id`: the cwd worktree's WORKER_TASK.md crew_id, then
 	// $CREW_ID. "" when neither names one.
 	CrewID func() string
-	// Probes are the pid reads: liveness and the owner-pid walk.
-	Probes crews.Probes
+	// Proc answers liveness, the owner-pid walk and the parent's command line.
+	Proc proc.Table
 	// Now is the clock the pidfile.log line stamps and the recycle check reads.
 	Now func() time.Time
 	// PID and PPID are `$$` and `$PPID`. PPID is the bash caller's parent only
@@ -35,8 +36,6 @@ type Options struct {
 	PID, PPID int
 	// Pwd is `$PWD`.
 	Pwd string
-	// Args is `ps -o args= -p <pid>`.
-	Args func(pid int) string
 	// Getenv reads TMUX_PANE.
 	Getenv func(string) string
 }
@@ -59,11 +58,11 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 	pidfile := cdir + "/pid"
 	epid, _ := crews.PidFileText(pidfile)
 	live := func() bool {
-		a := crews.PidAlive(o.Probes, o.Now(), pidfile, epid)
+		a := crews.PidAlive(o.Proc, o.Now(), pidfile, epid)
 		return a != nil && *a
 	}
 	caller := func() crews.Caller {
-		return crews.Caller{Now: o.Now(), PID: o.PID, PPID: o.PPID, Pwd: o.Pwd, By: o.Args(o.PPID)}
+		return crews.Caller{Now: o.Now(), PID: o.PID, PPID: o.PPID, Pwd: o.Pwd, By: o.Proc.Args(o.PPID)}
 	}
 	logLine := func(action, outcome, newPID string) {
 		crews.PidfileLog(paths, caller(), action, outcome, crew, epid, newPID)
@@ -71,7 +70,7 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 
 	if sub == "register" {
 		if pid == "" {
-			pid = strconv.Itoa(o.Probes.OwnerPID(o.PPID))
+			pid = strconv.Itoa(proc.OwnerPID(o.Proc, o.PPID))
 		}
 		if epid != pid && live() {
 			logLine("register", "refused", pid)
@@ -102,7 +101,7 @@ func Run(sub, pid string, paths bus.Paths, stderr io.Writer, o Options) int {
 	// Exit 0 on refusal: this is cleanup, and dispatcher.sh runs it from its
 	// exit path. The compares are string compares as in bash, and the owner walk
 	// only runs when the recorded pid is live and not already the parent.
-	if live() && epid != strconv.Itoa(o.PPID) && epid != strconv.Itoa(o.Probes.OwnerPID(o.PPID)) {
+	if live() && epid != strconv.Itoa(o.PPID) && epid != strconv.Itoa(proc.OwnerPID(o.Proc, o.PPID)) {
 		logLine("deregister", "refused", "")
 		say(stderr, "crew: crew '%s' still has a live dispatcher (pid %s) that is not this caller's parent or owner — left in place\n", crew, epid)
 		return 0

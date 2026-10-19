@@ -17,6 +17,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
+	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
@@ -41,8 +42,7 @@ type fx struct {
 	appendErr      error
 	// appendFail, when set, fails the append of the lines it returns an error for.
 	appendFail     func(line string) error
-	procs          string
-	ancestors      map[int]bool
+	procs          *proctest.Table
 	mu             sync.Mutex
 	calls          []string
 	ghCwd          []string
@@ -70,6 +70,7 @@ func newFx(t *testing.T) *fx {
 		gh:     map[string]string{},
 		ghFail: map[string]bool{},
 		tmux:   map[string]string{},
+		procs:  &proctest.Table{},
 	}
 	if err := os.Mkdir(f.main, 0o755); err != nil {
 		t.Fatal(err)
@@ -129,9 +130,7 @@ func (f *fx) opts() Options {
 				f.record("gtrash put " + p)
 				_ = os.RemoveAll(p)
 			},
-			Procs:     func(context.Context) string { return f.procs },
-			Ancestors: func() map[int]bool { return f.ancestors },
-			Kill:      func(pid int) { f.record(fmt.Sprintf("kill %d", pid)) },
+			Proc: f.procs,
 			Sleep: func(time.Duration) {
 				f.mu.Lock()
 				defer f.mu.Unlock()

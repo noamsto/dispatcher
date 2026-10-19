@@ -14,16 +14,17 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
-	"github.com/noamsto/dispatcher/crew/internal/crews"
+	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 )
 
 // alive is _pid_alive over just the pids a fixture names live.
-func alive(live ...string) func(int) bool {
-	set := map[string]bool{}
+func alive(live ...string) *proctest.Table {
+	t := &proctest.Table{Procs: map[int]proctest.Proc{}}
 	for _, p := range live {
-		set[p] = true
+		pid, _ := strconv.Atoi(p)
+		t.Procs[pid] = proctest.Proc{}
 	}
-	return func(pid int) bool { return set[fmt.Sprint(pid)] }
+	return t
 }
 
 func fixture(t *testing.T) bus.Paths {
@@ -62,7 +63,7 @@ func runStatus(t *testing.T, p bus.Paths, live ...string) (int, map[string]any) 
 	t.Helper()
 	var out, errb bytes.Buffer
 	rc := Run(Request{Status: true, Crew: "c1"}, p, &out, &errb,
-		Options{Probes: crews.Probes{Alive: alive(live...)}})
+		Options{Proc: alive(live...)})
 	var line map[string]any
 	if err := json.Unmarshal(out.Bytes(), &line); err != nil {
 		t.Fatalf("--status printed %q (%v), stderr %q", out.String(), err, errb.String())
