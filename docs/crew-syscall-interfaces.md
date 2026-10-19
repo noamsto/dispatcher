@@ -56,14 +56,14 @@ concern (`Tmux`, `Gh`, `Git`, `Proc`, `Clock`). The single-method interfaces are
 shared, not redeclared consumer-side: one declaration is shorter than one per
 consumer. Fakes live in a `<concern>test` package imported only from tests.
 
-| concern     | interface                                                                                                                                                                                                                                                                                                       | real                                                             | fake                                                           |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------- |
-| tmux (done) | `tmux.Client{ Run(ctx, args...) (string, error) }` + `tmux.Output` (failure = "")                                                                                                                                                                                                                               | `tmux.Exec{}`                                                    | `tmuxtest.Fake{Out, Func}` + `Calls()`                         |
-| gh          | `gh.Client{ Run(ctx, args...) (string, error); Combined(ctx, args...) (string, error) }`; quiet = `Run` with the output dropped; `HaveGh` = `gh.Installed` (`Run("--version")`, then `errors.Is(err, exec.ErrNotFound)`)                                                                                        | `gh.Exec{}`                                                      | `ghtest.Fake` (same shape as `tmuxtest`)                       |
-| git         | `git.Client{ Run(ctx, dir string, args...) (string, error) }` + funcs `Output`, `Worktrees`, `Toplevel`, `Origin` over it, plus `RepoSlug(url)`; a non-zero exit is a `*git.ExitError`; `wtgit` and `gitguard` keep their own runners                                                                           | `git.Exec{}`                                                     | `gittest.Fake` keyed by dir + argv                             |
-| proc        | `proc.Table{ Alive(pid) bool; Elapsed(pid) (int64, bool); Parent(pid) (int, bool); Comm(pid) (string, bool); Args(pid) string; Cwds(ctx) []Cwd; Kill(pid) }`, plus `IsAncestor`/`OwnerPID` as funcs over a `Table`                                                                                              | `proc.OS{}` (from `crews.DefaultProbes`, `reap`, `adopt.PsArgs`) | `proctest.Table{Procs}` (map pid → proc) + `Killed()`          |
-| clock       | packages take the existing `clock.Clock` value instead of bare `Now` funcs; its `Sleep`/`SleepCtx` already advance a `CrewClock` file instead of sleeping. The wall-clock `time.Duration` sleeps (`reap`, `rosterrender`, which must never follow `CREW_CLOCK`) and `stream`'s timers are decided in that slice | new `clock.FromEnv()` (what `main.go` builds by hand today)      | `clock.Clock{Now: fixed, CrewClock: tmpfile}` (no new package) |
-| env         | no interface: `Getenv func(string) string` is already the stdlib shape; rename `Env`/`LookupEnv` fields to `Getenv` and drop duplicates                                                                                                                                                                         | `os.Getenv`                                                      | a map's lookup                                                 |
+| concern     | interface                                                                                                                                                                                                                                                                         | real                                                             | fake                                                           |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------- |
+| tmux (done) | `tmux.Client{ Run(ctx, args...) (string, error) }` + `tmux.Output` (failure = "")                                                                                                                                                                                                 | `tmux.Exec{}`                                                    | `tmuxtest.Fake{Out, Func}` + `Calls()`                         |
+| gh          | `gh.Client{ Run(ctx, args...) (string, error); Combined(ctx, args...) (string, error) }`; quiet = `Run` with the output dropped; `HaveGh` = `gh.Installed` (`Run("--version")`, then `errors.Is(err, exec.ErrNotFound)`)                                                          | `gh.Exec{}`                                                      | `ghtest.Fake` (same shape as `tmuxtest`)                       |
+| git         | `git.Client{ Run(ctx, dir string, args...) (string, error) }` + funcs `Output`, `Worktrees`, `Toplevel`, `Origin` over it, plus `RepoSlug(url)`; a non-zero exit is a `*git.ExitError`; `wtgit` and `gitguard` keep their own runners                                             | `git.Exec{}`                                                     | `gittest.Fake` keyed by dir + argv                             |
+| proc        | `proc.Table{ Alive(pid) bool; Elapsed(pid) (int64, bool); Parent(pid) (int, bool); Comm(pid) (string, bool); Args(pid) string; Cwds(ctx) []Cwd; Kill(pid) }`, plus `IsAncestor`/`OwnerPID` as funcs over a `Table`                                                                | `proc.OS{}` (from `crews.DefaultProbes`, `reap`, `adopt.PsArgs`) | `proctest.Table{Procs}` (map pid → proc) + `Killed()`          |
+| clock       | packages take the existing `clock.Clock` value instead of bare `Now` funcs; its `Sleep`/`SleepCtx` already advance a `CrewClock` file instead of sleeping. Wall-clock waits (`reap`'s and `rosterrender`'s `time.Duration` sleeps, `stream`'s timers, `watch`'s poll) stay off it | new `clock.FromEnv()` (what `main.go` builds by hand today)      | `clock.Clock{Now: fixed, CrewClock: tmpfile}` (no new package) |
+| env         | no interface: `Getenv func(string) string` is already the stdlib shape; rename `Env`/`LookupEnv` fields to `Getenv` and drop duplicates                                                                                                                                           | `os.Getenv`                                                      | a map's lookup                                                 |
 
 Left as they are: bus reads/appends (in-repo, not a system call), `stall/probe.Sh`
 and the `CREW_STALL_*_CMD` seams (bash libs and test seams under `bash -c` with
@@ -170,6 +170,31 @@ their own group-kill runner), aeye, gtrash, `rosterrender`'s exec hop.
   (about 55, 45 and 50 lines). Growth: each replaced site was one to three
   lines, and four fixtures needed an adapter onto the fake's `Func`.
 
+## The clock slice
+
+- `clock.FromEnv()` is the real clock plus this process's `$CREW_CLOCK`;
+  `main.go` and `nudge.Default` build every `Clock` with it.
+- `adopt`, `crews`, `entry.NewOptions`, `fleet`, `identity`, `rate`,
+  `register`, `report`, `stack.Probes`, `stream`, `watch` and `reap.Probes`
+  hold one `Clock clock.Clock` instead of `Now`; `status.Options.NowMS` and
+  `hold.Options`' `Now`/`CrewClock` pair became `Clock` too, and `main`'s fold
+  `env.now` became `env.clock`. Only `clock.Clock.Now` is left as a bare
+  `Now` field.
+- Bus time (follows `CREW_CLOCK`): the `await`, `stall-watch` and `nudge`
+  waits (`Clock.Sleep`/`SleepCtx`), and the virtual `now` that `hold` and
+  `rosterrender`'s timers read. Wall clock (never follows it):
+  `reap.Probes.Sleep`, `rosterrender.Probes.Sleep`, `stream`'s `Timer` and
+  `Rediscover`, and the `watch`/`relay` poll, which clears `CrewClock` on
+  entry. These keep their seams; the clock gained no wall-clock method.
+- Kept: `nudge.Deps.Sleep` (a bus-time `SleepCtx` adapter) stays a field
+  because the arm tests act between waits through it (a lock released after
+  the Nth wait).
+- Lines (crew/, `wc -l` over `*.go`): non-test 27497 → 27499 (+2), test
+  44399 → 44416 (+17). Growth: each field swap is one line for one, and each
+  converted file gained a `clock` import; the removed plumbing (hold's
+  `clock()`, identity's nil-`Now` local, rate's two-branch `clockSeconds`)
+  did not cover it.
+
 ## Slice order
 
 One PR each, largest duplication first. Savings are estimates from the field
@@ -181,7 +206,7 @@ and fake counts above (net Go lines, non-test + test).
 | 2   | proc    | crews, reap, sender, adopt, register, reply, stream, rosterrender, main                                                              | ~12 test files (`crews_test`, `register_test`, `adopt_test`, `reply_test`, `main_test`, …) | measured above |
 | 3   | git     | main, roster, fleet, adopt, nudge, status, rate, reap, bus, claimindex, remote, rosterrender, stream (gitguard kept as an exception) | 19 test files                                                                              | measured above |
 | 4   | gh      | reap, stack, adopt, rate                                                                                                             | ~4 test files                                                                              | measured above |
-| 5   | clock   | 15 `Now`, 5 `Sleep`/`Timer` fields and `Rediscover`, 6 `clock.Clock` holders                                                         | most test files set `Now`                                                                  | −20 to −50     |
+| 5   | clock   | 15 `Now`, 5 `Sleep`/`Timer` fields and `Rediscover`, 6 `clock.Clock` holders                                                         | most test files set `Now`                                                                  | measured above |
 | 6   | env     | 17 `Getenv`/`LookupEnv`/`Env`/`Setenv`/`Environ` fields                                                                              | —                                                                                          | −10 to −30     |
 
 Each slice follows the tmux slice's shape: add the package and fake, convert
