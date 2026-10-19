@@ -43,7 +43,7 @@ func (g gate) check(ctx context.Context) string {
 	if g.state != "pr_open" && g.state != "done" || !strings.HasPrefix(g.from, "worker:") {
 		return ""
 	}
-	top := git.Toplevel(ctx, g.o.Git, "")
+	top := git.Output(ctx, g.o.Git, "", "-C", g.o.Dir, "rev-parse", "--show-toplevel")
 	if top == "" {
 		return ""
 	}

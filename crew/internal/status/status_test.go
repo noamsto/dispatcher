@@ -76,13 +76,13 @@ func newFixture(t *testing.T) *fixture {
 func (f *fixture) opts() Options {
 	o := Options{
 		CrewID: func() string { return f.crew },
-		Git:    &gittest.Fake{Out: map[string]string{"rev-parse --show-toplevel": f.top}},
+		Git:    &gittest.Fake{Out: map[string]string{"-C . rev-parse --show-toplevel": f.top}},
 		NowMS:  func() int64 { return 1700000000500 },
 		Getenv: func(k string) string { return f.env[k] },
 		Fold:   f.fold,
 	}
 	if f.noTop {
-		o.Git = &gittest.Fake{Out: map[string]string{"rev-parse --show-toplevel": ""}}
+		o.Git = &gittest.Fake{Out: map[string]string{"-C . rev-parse --show-toplevel": ""}}
 	}
 	if f.panes != "" {
 		o.Sender = sender.Probes{
@@ -974,4 +974,16 @@ func TestStatusRefusesDispatcherFromWorkerEnv(t *testing.T) {
 		t.Errorf("got %d %q", code, stderr)
 	}
 	f.wantNoRow()
+}
+
+// TestGateReadsToplevelFromDir pins the exact argv the gate reads the
+// toplevel with: `git -C <Dir> rev-parse --show-toplevel`.
+func TestGateReadsToplevelFromDir(t *testing.T) {
+	fake := &gittest.Fake{Out: map[string]string{}}
+	g := gate{state: "pr_open", from: "worker:x", o: Options{Git: fake, Dir: "/some/dir"}.withDefaults()}
+	g.check(context.Background())
+	calls := fake.Calls()
+	if len(calls) != 1 || calls[0] != "-C /some/dir rev-parse --show-toplevel" {
+		t.Errorf("Calls() = %q, want [-C /some/dir rev-parse --show-toplevel]", calls)
+	}
 }

@@ -48,6 +48,7 @@ const exitFailure = 1
 type Options struct {
 	CrewID func() string                                                       // `_crew_id`
 	Git    git.Client                                                          // nil: the git on PATH
+	Dir    string                                                              // the directory the toplevel is read from (-C); "" is "."
 	NowMS  func() int64                                                        // jq's `now*1000|floor`; real time, never CREW_CLOCK
 	Getenv func(string) string                                                 // CREW_ROLE_ID, TMUX_PANE
 	Tmux   tmux.Client                                                         // nil: no tmux on PATH
@@ -61,6 +62,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.Git == nil {
 		o.Git = git.Exec{}
+	}
+	if o.Dir == "" {
+		o.Dir = "."
 	}
 	if o.Getenv == nil {
 		o.Getenv = os.Getenv

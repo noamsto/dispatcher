@@ -783,6 +783,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			return ""
 		}
 		o := status.Options{
+			Dir:    cwd,
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			NowMS:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")}.RealMS,
 			Getenv: os.Getenv,
