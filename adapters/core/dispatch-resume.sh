@@ -1808,7 +1808,7 @@ else
   # Re-passing --append-system-prompt-file matters on a continue: it forces
   # --system-prompt-snapshot off, so the worker protocol is applied fresh rather
   # than replayed from the conversation's recorded prompt.
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id $(claude_lean_env)claude $cont --name $q_agent_name --model $q_model --effort $q_effort$claude_sid $mcp_arg $xreview_mcp --settings $(claude_worker_plugin_settings "$settings")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id $(claude_lean_env)claude $cont --name $q_agent_name --model $q_model --effort $q_effort$claude_sid $mcp_arg $xreview_mcp --settings $(claude_worker_plugin_settings "$settings")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
 fi
 write_launch_script launch_line "$launch_cmd"
 # dispatch's localModels slot count reads this off the lead pane.

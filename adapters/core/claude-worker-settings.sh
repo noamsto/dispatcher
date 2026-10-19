@@ -19,21 +19,35 @@ readonly CLAUDE_WORKER_DISABLED_PLUGINS=(
   'context-efficient-tools@xdg-claude'
 )
 
-# claude_worker_plugin_settings <settings-json> — shell-quote the worker-only
-# Claude settings JSON so callers can splice it into a constructed launch
-# command. Besides the disabled plugins it denies every tool of each MCP server
-# in workerDeniedMcpServers; the permissions key is omitted when none is set.
+# Claude's own "enabled by default" setting would hand a worker the owner's
+# browser, so this deny is hard-coded where a workerDeniedMcpServers override
+# cannot drop it.
+readonly CLAUDE_CHROME_MCP_SERVER='claude-in-chrome'
+
+# claude_worker_plugin_settings <settings-json> [chrome] — shell-quote the
+# worker-only Claude settings JSON so callers can splice it into a constructed
+# launch command. Besides the disabled plugins it denies every tool of each MCP
+# server in workerDeniedMcpServers plus Claude in Chrome; a non-empty second
+# argument is a --chrome lead, for which only the Claude in Chrome deny is
+# lifted. The permissions key is omitted when the deny list ends up empty.
 claude_worker_plugin_settings() {
   local plugins
   plugins="$(printf '%s\n' "${CLAUDE_WORKER_DISABLED_PLUGINS[@]}" | jq -R . | jq -sc 'map({(.): false}) | add')"
-  jq -cn --argjson plugins "$plugins" --argjson settings "$1" '
+  jq -cn --argjson plugins "$plugins" --argjson settings "$1" --arg chrome "${2:-}" --arg c "$CLAUDE_CHROME_MCP_SERVER" '
     {enabledPlugins: $plugins}
-    + (($settings.workerDeniedMcpServers // []) as $deny
+    + (((($settings.workerDeniedMcpServers // []) | map(select(. != $c)))
+        + (if $chrome == "" then [$c] else [] end)) as $deny
        | if ($deny | length) > 0 then {permissions: {deny: ($deny | map("mcp__\(.)__*"))}} else {} end)' |
     {
       read -r json
       printf '%q' "$json"
     }
+}
+
+# claude_chrome_flag [chrome] — print the launch flag, with a leading space, that
+# turns Claude in Chrome on for a --chrome lead and off for every other worker.
+claude_chrome_flag() {
+  if [[ -n "${1:-}" ]]; then printf ' --chrome'; else printf ' --no-chrome'; fi
 }
 
 # worker_browser_env <branch> <worktree> <config> — print an `env` prefix, with a

@@ -185,6 +185,7 @@ let
       repos."acme/widget" = "/r/widget";
     };
     workerDeniedMcpServers = ["my_browser"];
+    chrome = true;
     userSettings = "/home/u/cfg/settings.json";
   };
 
@@ -741,6 +742,8 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   run jq -e '(.options | index("workerDeniedMcpServers")) != null' "$EVAL"
   [ "$status" -eq 0 ]
+  run jq -e '(.options | index("chrome")) != null' "$EVAL"
+  [ "$status" -eq 0 ]
   run jq -e '(.options | index("agentBrowser")) != null' "$EVAL"
   [ "$status" -eq 0 ]
 }
@@ -836,6 +839,8 @@ worktree_git_lib_crew_go_row() { # bin
   run jq -e '.full.locked.localModels."lemonade/Plain" | has("input") | not' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.workerDeniedMcpServers == ["my_browser"]' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.dispatcherChrome == true' "$EVAL"
   [ "$status" -eq 0 ]
 
   # Lane profiles: set entries land in the locked layer, and a name-only entry

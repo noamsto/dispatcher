@@ -2332,7 +2332,7 @@ launch_role() {
     printf -v quoted_dir '%q' "$pi_agent_dir"
     cmd="${git_env}$(worker_browser_env "$branch" "$wt" "$agent_browser_worker_config")PI_CODING_AGENT_DIR=$quoted_dir pi --name $quoted_name --model $quoted_model --thinking $(_local_thinking "$settings" "$r_model" "$r_effort") --append-system-prompt $PROTOCOL_DIR/GRID_PROTOCOL.md --no-approve$(pi_skill_args "$wt") $quoted_prompt"
     ;;
-  claude) cmd="${git_env}$(worker_browser_env "$branch" "$wt" "$agent_browser_worker_config")$(claude_lean_env)claude --name $quoted_name --model $quoted_model --effort $r_effort --settings $(claude_worker_plugin_settings "$settings")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto $quoted_prompt" ;;
+  claude) cmd="${git_env}$(worker_browser_env "$branch" "$wt" "$agent_browser_worker_config")$(claude_lean_env)claude --name $quoted_name --model $quoted_model --effort $r_effort --settings $(claude_worker_plugin_settings "$settings")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/GRID_PROTOCOL.md --permission-mode auto$(claude_chrome_flag "") $quoted_prompt" ;;
   codex) cmd="${git_env}$(worker_browser_env "$branch" "$wt" "$agent_browser_worker_config")codex --profile worker -m $quoted_model -c model_reasoning_effort=$r_effort -c service_tier=default --dangerously-bypass-approvals-and-sandbox $quoted_first" ;;
   cursor) cmd="${git_env}$(worker_browser_env "$branch" "$wt" "$agent_browser_worker_config")CURSOR_CLI_INDEXED_GREP=0 cursor-agent --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $quoted_model $quoted_first" ;;
   esac
@@ -6304,7 +6304,7 @@ else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session claude "$lead_sid"
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")$(claude_lean_env)claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp --settings $(claude_worker_plugin_settings "$settings")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto $quoted_prompt"
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")$(claude_lean_env)claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp --settings $(claude_worker_plugin_settings "$settings")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "") $quoted_prompt"
 fi
 write_launch_script launch_line "$launch_cmd"
 # Role grid: split the task window into one pane per role. Each role pane parks

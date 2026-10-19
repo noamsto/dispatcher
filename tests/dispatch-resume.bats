@@ -1142,6 +1142,7 @@ EOF
   grep -q -- '--model sonnet' <(launch_log)
   grep -q -- '--effort medium' <(launch_log)
   grep -q -- "--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" <(launch_log)
+  grep -q -- '--permission-mode auto --no-chrome ' <(launch_log)
 }
 
 @test "claude resume disables the worker's unused plugins and denies the default browser MCP servers" {
@@ -1152,7 +1153,7 @@ EOF
   DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --continue' <(launch_log))"
-  printf -v settings '%q' '{"enabledPlugins":{"superpowers@superpowers-dev":false,"agent-smith@agent-smith":false,"frontend-design@claude-plugins-official":false,"refactoring-agent@xdg-claude":false,"commit-commands@claude-code-plugins":false,"resolved@resolved":false,"context-efficient-tools@xdg-claude":false},"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*"]}}'
+  printf -v settings '%q' '{"enabledPlugins":{"superpowers@superpowers-dev":false,"agent-smith@agent-smith":false,"frontend-design@claude-plugins-official":false,"refactoring-agent@xdg-claude":false,"commit-commands@claude-code-plugins":false,"resolved@resolved":false,"context-efficient-tools@xdg-claude":false},"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*","mcp__claude-in-chrome__*"]}}'
   [[ "$line" == *"--settings $settings --add-dir "* ]]
   [[ "$line" != *disableAllHooks* ]]
   [[ "$line" != *gopls-lsp* ]]

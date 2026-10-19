@@ -271,7 +271,7 @@ four `DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`,
 installs the Codex plugin and writes the Cursor rule, commands, skills and
 rosters when those engines are included in `engines`. The settings above
 (`profile`, `engines`, `grantRoots`, `fleetBudget`, `repoTrackers`, `orgTrackers`,
-`openrouter`, `localModels`, `laneProfiles`, `hosts`, `workerDeniedMcpServers`) are not exported as `DISPATCH_*`: they go into a locked settings
+`openrouter`, `localModels`, `laneProfiles`, `hosts`, `workerDeniedMcpServers`, `dispatcherChrome`) are not exported as `DISPATCH_*`: they go into a locked settings
 file baked into `dispatch-config` and every CLI that resolves through it
 (`dispatch`, `dispatch-resume`, `dispatcher`, `refresh-budget`), so no
 locked-layer path is exported to go stale. `userSettings` symlinks
@@ -308,9 +308,9 @@ Set `DISPATCH_CLAUDE_CONNECTORS=1` in the dispatching shell to opt out (it is ca
 Code has no per-launch way to disable individual plugins without also dropping
 the hooks and skills workers need, so plugins are left alone.
 
-Workers check UI with `agent-browser`, never an interactive browser MCP server:
-those drive the owner's authenticated browser or a shared, locked profile. Claude
-workers get `permissions.deny` rules for them from the worker-only settings
+Workers check UI with `agent-browser`, by default never an interactive browser
+MCP server: those drive the owner's authenticated browser or a shared, locked
+profile. Claude workers get `permissions.deny` rules for them from the worker-only settings
 layer, built from `workerDeniedMcpServers` (default `plugin_hm_playwright`,
 `plugin_hm_firefox-devtools`; `programs.dispatcher.workerDeniedMcpServers`
 replaces it, so list the defaults too to extend it; honoured from any settings
@@ -319,6 +319,21 @@ nix-config, which keeps browser servers out of them; codex's worker profile
 `shell_environment_policy` must pass `AGENT_BROWSER_SESSION` and
 `AGENT_BROWSER_CONFIG` through, else a codex worker silently uses the shared
 default session.
+
+The one carve-out is Claude in Chrome, for a task that needs the owner's
+signed-in browser (a logged-in web UI, a browser extension): `dispatch … --chrome`
+launches the claude lead with `--chrome` and lifts its `mcp__claude-in-chrome__*`
+deny for that lead only (playwright and firefox-devtools stay denied). It is
+claude-only and local-only (refused with `--host` and for codex, cursor and pi),
+role panes never get it, and only one `--chrome` worker may be live per machine
+(`dispatch` refuses a second and names the holder; a finished worker holds it
+until `crew reap` closes its window). `dispatch resume` keeps the recorded
+choice, `--chrome`/`--no-chrome` override it; a re-dispatch or a `crew hold`
+release needs `--chrome` again. Every other claude worker launch passes
+`--no-chrome` and denies `mcp__claude-in-chrome__*` regardless of
+`workerDeniedMcpServers`. For the dispatcher session itself,
+`programs.dispatcher.chrome` sets `dispatcherChrome` (default off), which adds
+`--chrome` to the claude `dispatcher` launch; off, no flag is passed.
 
 ### Settings
 
@@ -339,8 +354,9 @@ another file); a raw-source run or the flake's plain `packages` output honours
 it as the dev/test override it always was.
 `grantRoots` and `openrouter.keyFile` widen what a worker can read, so they
 are honoured only from the locked layer or the environment — a copy in the
-base or user layer is dropped with a warning. `workerDeniedMcpServers` lists the MCP servers denied to claude workers (see
-"Lean claude workers"). `fleetBudget` (default 8, 0
+base or user layer is dropped with a warning. `workerDeniedMcpServers` lists the MCP servers denied to claude workers and
+`dispatcherChrome` (default off) launches the claude dispatcher with `--chrome`;
+both are honoured from any layer (see "Lean claude workers"). `fleetBudget` (default 8, 0
 disables) is the machine-wide fan-out cap: `dispatch` refuses a new lead when
 the live leads on the host (trivial=1, standard=2, deep=3, from every
 dispatcher) plus its own would exceed it, or when the 1-minute load average is

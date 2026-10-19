@@ -16714,6 +16714,7 @@ setup_bundle_resume() {
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris ' <(launch_log))"
   [[ "$line" == *"ENABLE_CLAUDEAI_MCP_SERVERS=false claude --name iris "* ]]
+  [[ "$line" == *"--permission-mode auto --no-chrome "* ]]
 }
 
 @test "lean: a claude lead launch disables the worker's unused plugins and denies the default browser MCP servers" {
@@ -16722,7 +16723,7 @@ setup_bundle_resume() {
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris ' <(launch_log))"
-  printf -v settings '%q' '{"enabledPlugins":{"superpowers@superpowers-dev":false,"agent-smith@agent-smith":false,"frontend-design@claude-plugins-official":false,"refactoring-agent@xdg-claude":false,"commit-commands@claude-code-plugins":false,"resolved@resolved":false,"context-efficient-tools@xdg-claude":false},"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*"]}}'
+  printf -v settings '%q' '{"enabledPlugins":{"superpowers@superpowers-dev":false,"agent-smith@agent-smith":false,"frontend-design@claude-plugins-official":false,"refactoring-agent@xdg-claude":false,"commit-commands@claude-code-plugins":false,"resolved@resolved":false,"context-efficient-tools@xdg-claude":false},"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*","mcp__claude-in-chrome__*"]}}'
   [[ "$line" == *"--settings $settings --add-dir "* ]]
   [[ "$line" != *disableAllHooks* ]]
   [[ "$line" != *gopls-lsp* ]]
@@ -16736,12 +16737,12 @@ setup_bundle_resume() {
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris ' <(launch_log))"
-  printf -v deny '%q' '"permissions":{"deny":["mcp__my_browser__*"]}'
+  printf -v deny '%q' '"permissions":{"deny":["mcp__my_browser__*","mcp__claude-in-chrome__*"]}'
   [[ "$line" == *"$deny"* ]]
   [[ "$line" != *plugin_hm_playwright* ]]
 }
 
-@test "an empty workerDeniedMcpServers leaves no permissions key in the worker settings" {
+@test "an empty workerDeniedMcpServers still denies Claude in Chrome" {
   stub_launch_bins
   unset CLAUDE_WORKER_SETTINGS_LIB
   mkdir -p "$XDG_CONFIG_HOME/dispatcher"
@@ -16749,7 +16750,8 @@ setup_bundle_resume() {
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris ' <(launch_log))"
-  [[ "$line" != *permissions* ]]
+  printf -v deny '%q' '"permissions":{"deny":["mcp__claude-in-chrome__*"]}'
+  [[ "$line" == *"$deny"* ]]
   [[ "$line" == *"--settings "*enabledPlugins* ]]
 }
 
@@ -16844,7 +16846,7 @@ browser_env_prefix='env -u AGENT_BROWSER_AUTO_CONNECT -u AGENT_BROWSER_CDP -u AG
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
   [[ "$line" == *"ENABLE_CLAUDEAI_MCP_SERVERS=false claude --name iris-reviewer "* ]]
-  printf -v settings '%q' '{"enabledPlugins":{"superpowers@superpowers-dev":false,"agent-smith@agent-smith":false,"frontend-design@claude-plugins-official":false,"refactoring-agent@xdg-claude":false,"commit-commands@claude-code-plugins":false,"resolved@resolved":false,"context-efficient-tools@xdg-claude":false},"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*"]}}'
+  printf -v settings '%q' '{"enabledPlugins":{"superpowers@superpowers-dev":false,"agent-smith@agent-smith":false,"frontend-design@claude-plugins-official":false,"refactoring-agent@xdg-claude":false,"commit-commands@claude-code-plugins":false,"resolved@resolved":false,"context-efficient-tools@xdg-claude":false},"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*","mcp__claude-in-chrome__*"]}}'
   [[ "$line" == *"--settings $settings --add-dir "* ]]
   [[ "$line" != *disableAllHooks* ]]
   [[ "$line" != *gopls-lsp* ]]
