@@ -74,15 +74,15 @@ func (s *stub) gh(args []string) (string, error) {
 func (s *stub) options() Options {
 	s.tx = &tmuxtest.Fake{Out: map[string]string{"list-windows": s.wins, "display-message": s.self}}
 	return Options{
-		Proc:      s.procs(),
-		Clock:     clock.Clock{Now: func() time.Time { return s.now }},
-		Gh:        &ghtest.Fake{Func: s.gh},
-		Git:       &gittest.Fake{Func: s.git},
-		Tmux:      s.tx,
-		LookupEnv: func(k string) string { return s.env[k] },
-		PID:       4242,
-		PPID:      4241,
-		Pwd:       "/repo",
+		Proc:   s.procs(),
+		Clock:  clock.Clock{Now: func() time.Time { return s.now }},
+		Gh:     &ghtest.Fake{Func: s.gh},
+		Git:    &gittest.Fake{Func: s.git},
+		Tmux:   s.tx,
+		Getenv: func(k string) string { return s.env[k] },
+		PID:    4242,
+		PPID:   4241,
+		Pwd:    "/repo",
 	}
 }
 

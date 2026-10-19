@@ -24,7 +24,6 @@ import (
 // Options is what `crew reap` needs beyond its arguments and streams.
 type Options struct {
 	Probes Probes
-	Getenv func(string) string
 	// PID owns the reap and ratings-sweep locks.
 	PID int
 	// Self is this binary, run as `reap-autosweep` for the async ratings sweep.

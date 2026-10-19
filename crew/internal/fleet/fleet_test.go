@@ -96,7 +96,7 @@ func setup(t *testing.T) fixture {
 		alpha: alpha,
 		beta:  beta,
 		opts: Options{
-			Env:      func(k string) string { return env[k] },
+			Getenv:   func(k string) string { return env[k] },
 			Registry: registry,
 			Tmux:     &tmuxtest.Fake{Out: map[string]string{"list-panes": "", "list-windows": "feat/a\nfeat/c\n"}},
 			Git:      stubGit(alpha, nil),
@@ -409,7 +409,7 @@ func TestNonFiniteAgeIsClampedInJSONAndDashInTable(t *testing.T) {
 	empty := t.TempDir()
 	env := map[string]string{"HOME": empty, "CREW_SWEEP_ROOTS": empty}
 	o := Options{
-		Env:      func(k string) string { return env[k] },
+		Getenv:   func(k string) string { return env[k] },
 		Registry: registry,
 		Tmux:     &tmuxtest.Fake{Out: map[string]string{"list-windows": "feat/x\n"}},
 		Git:      stubGit("", nil),

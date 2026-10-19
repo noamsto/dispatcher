@@ -128,7 +128,7 @@ func TestMsgRefusesDispatcherFromWorkerOrRoleEnv(t *testing.T) {
 			f := newFixture(t)
 			f.env[key] = val
 			code, stderr := f.msg("dispatcher:c1", worker, "stop")
-			want := "crew: msg: refusing sender 'dispatcher:c1' — " + sender.Check(t.Context(), "dispatcher:c1", crewID, sender.Probes{Getenv: f.opts().Getenv}) + "\n"
+			want := "crew: msg: refusing sender 'dispatcher:c1' — " + sender.Check(t.Context(), "dispatcher:c1", crewID, f.opts().Sender) + "\n"
 			if code != 1 || stderr != want {
 				t.Errorf("got %d %q", code, stderr)
 			}

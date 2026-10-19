@@ -44,12 +44,11 @@ const exitType = 5
 // Options is everything Run reaches beyond the bus and tmux. Deps carries the pane's
 // side effects (and its clock), so a test drives the whole arm with fakes.
 type Options struct {
+	// Deps.Getenv is also the arm's environment: the two ids that mark a worker
+	// session, plus CREW_NUDGE_WAIT_INTERVAL.
 	Deps Deps
 	// CrewID is `_crew_id`: the checkout's WORKER_TASK.md crew_id, else $CREW_ID.
 	CrewID func() string
-	// Getenv is the environment: the two ids that mark a worker session, plus
-	// CREW_NUDGE_WAIT_INTERVAL.
-	Getenv func(string) string
 	// Git finds the checkout and Exists is the arm's `[ -f "$top/WORKER_TASK.md" ]`:
 	// a checkout with its own task file is a worker's, which is as much of a
 	// worker as an id in the environment is.
@@ -105,7 +104,7 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	// is a worker. Note this refusal prints without the `crew: nudge:` prefix and
 	// exits 2, unlike every other failure.
 	top := strings.TrimSpace(git.Toplevel(ctx, o.Git, ""))
-	if o.Getenv("CREW_WORKER_ID") != "" || o.Getenv("CREW_ROLE_ID") != "" ||
+	if o.Deps.Getenv("CREW_WORKER_ID") != "" || o.Deps.Getenv("CREW_ROLE_ID") != "" ||
 		(top != "" && o.Exists(filepath.Join(top, "WORKER_TASK.md"))) {
 		say(stderr, "crew: nudge is a dispatcher command\n")
 		return exitRefused
@@ -352,7 +351,7 @@ func (a *arm) unread() string {
 // first waiter's outcome only when it covers the caller's own msg.
 func (a *arm) wait(ctx context.Context, wait string) int {
 	waitSecs, _ := strconv.Atoi(wait)
-	interval := a.o.Getenv("CREW_NUDGE_WAIT_INTERVAL")
+	interval := a.o.Deps.Getenv("CREW_NUDGE_WAIT_INTERVAL")
 	if interval == "" {
 		interval = "15"
 	}

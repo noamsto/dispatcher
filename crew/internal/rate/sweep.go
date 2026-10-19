@@ -95,7 +95,7 @@ func runSweep(paths bus.Paths, cwd string, stderr io.Writer, o Options) int {
 		o:      o.withDefaults(),
 		pid:    strconv.Itoa(os.Getpid()),
 	}
-	s.store = storePath(s.o.StorePath, s.o.LookupEnv)
+	s.store = storePath(s.o.StorePath, s.o.Getenv)
 	s.lockd = filepath.Join(filepath.Dir(s.store), "ratings.lock.d")
 	if err != nil {
 		msg, code := bus.JQFailure(err)
@@ -202,7 +202,7 @@ func (s *sweep) costmap(raws []any) map[string]any {
 // settings resolves the burn table once, stderr dropped: the arm resolves it
 // before the fold so no per-model lookup forks the resolver again.
 func (s *sweep) settings() string {
-	bin := s.o.LookupEnv("DISPATCH_CONFIG_BIN")
+	bin := s.o.Getenv("DISPATCH_CONFIG_BIN")
 	if bin == "" {
 		bin = "dispatch-config"
 	}

@@ -353,7 +353,7 @@ func (r *run) releaseLabels(ctx context.Context, c *candidate) {
 			r.note("could not remove the dispatched label from #" + issue + " (" + c.branch + ")")
 			continue
 		}
-		if err := claimindex.Release(ctx, r.p.Git, r.paths.Common, r.o.Getenv, issue, "", r.p.Clock.Now()); err != nil {
+		if err := claimindex.Release(ctx, r.p.Git, r.paths.Common, r.p.Getenv, issue, "", r.p.Clock.Now()); err != nil {
 			r.note("could not record the release of #" + issue + " in the claim index: " + err.Error())
 		}
 	}

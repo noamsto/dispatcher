@@ -32,7 +32,7 @@ var runsProgram string
 func sweepAll(roots []string, stdout, stderr io.Writer, o Options) int {
 	found := repos.Discover(repos.Options{
 		Roots:  roots,
-		Env:    o.LookupEnv,
+		Getenv: o.Getenv,
 		Stderr: stderr,
 		Prefix: "crew: rate --sweep-all",
 	})
@@ -56,7 +56,7 @@ func sweepAll(roots []string, stdout, stderr io.Writer, o Options) int {
 			failed++
 			continue
 		}
-		say(stdout, "%s: swept, %d runs in store\n", slug, runsInStore(storePath(o.StorePath, o.LookupEnv), slug))
+		say(stdout, "%s: swept, %d runs in store\n", slug, runsInStore(storePath(o.StorePath, o.Getenv), slug))
 	}
 	if failed > 0 {
 		return exitFailure

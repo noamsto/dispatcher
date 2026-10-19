@@ -54,7 +54,7 @@ func TestWalkFindsNestedAndWorktreesIgnoresHiddenAndDeep(t *testing.T) {
 	deepOK := mkbus(t, filepath.Join(root, "d1", "d2", "d3"))
 	mkbus(t, filepath.Join(root, "e1", "e2", "e3", "e4"))
 
-	rs, errs := discover(t, Options{Roots: []string{root}, Registry: filepath.Join(root, "none"), Env: envOf(nil)})
+	rs, errs := discover(t, Options{Roots: []string{root}, Registry: filepath.Join(root, "none"), Getenv: envOf(nil)})
 	want := []string{w, a, deepOK, g}
 	if got := commons(rs); !reflect.DeepEqual(got, want) {
 		t.Fatalf("commons = %v, want %v", got, want)
@@ -78,7 +78,7 @@ func TestRegistryOutsideRootDedupedSorted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rs, _ := discover(t, Options{Roots: []string{root}, Registry: reg, Env: envOf(nil)})
+	rs, _ := discover(t, Options{Roots: []string{root}, Registry: reg, Getenv: envOf(nil)})
 	want := []string{a, z}
 	if strings.Compare(z, a) < 0 {
 		want = []string{z, a}
@@ -101,7 +101,7 @@ func TestStatusGoneAndNoBus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rs, _ := discover(t, Options{Roots: []string{t.TempDir()}, Registry: reg, Env: envOf(nil)})
+	rs, _ := discover(t, Options{Roots: []string{t.TempDir()}, Registry: reg, Getenv: envOf(nil)})
 	got := map[string]Status{}
 	for _, r := range rs {
 		got[r.Common] = r.Status
@@ -119,7 +119,7 @@ func TestNonDirRootWarnsAndNoneFoundNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	empty := t.TempDir()
-	rs, errs := discover(t, Options{Roots: []string{file + "\n" + empty}, Registry: filepath.Join(empty, "none"), Env: envOf(nil)})
+	rs, errs := discover(t, Options{Roots: []string{file + "\n" + empty}, Registry: filepath.Join(empty, "none"), Getenv: envOf(nil)})
 	if len(rs) != 0 {
 		t.Fatalf("rs = %v", rs)
 	}
@@ -151,7 +151,7 @@ func TestRootsResolution(t *testing.T) {
 		{"trailing colon", nil, map[string]string{"HOME": home, "CREW_SWEEP_ROOTS": r1 + ":"}, []string{a}},
 	}
 	for _, c := range cases {
-		rs, errs := discover(t, Options{Roots: c.roots, Registry: reg, Env: envOf(c.env)})
+		rs, errs := discover(t, Options{Roots: c.roots, Registry: reg, Getenv: envOf(c.env)})
 		got := commons(rs)
 		if len(c.want) > 1 && c.want[0] > c.want[1] {
 			c.want[0], c.want[1] = c.want[1], c.want[0]
@@ -174,7 +174,7 @@ func TestUnreadableDirDoesNotAbort(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 	b := mkbus(t, filepath.Join(root, "b"))
 
-	rs, _ := discover(t, Options{Roots: []string{root}, Registry: filepath.Join(root, "none"), Env: envOf(nil)})
+	rs, _ := discover(t, Options{Roots: []string{root}, Registry: filepath.Join(root, "none"), Getenv: envOf(nil)})
 	if got := commons(rs); !reflect.DeepEqual(got, []string{b}) {
 		t.Fatalf("commons = %v", got)
 	}
@@ -186,7 +186,7 @@ func TestSymlinksNotFollowed(t *testing.T) {
 	if err := os.Symlink(filepath.Join(elsewhere, "r"), filepath.Join(root, "link")); err != nil {
 		t.Fatal(err)
 	}
-	rs, _ := discover(t, Options{Roots: []string{root}, Registry: filepath.Join(root, "none"), Env: envOf(nil)})
+	rs, _ := discover(t, Options{Roots: []string{root}, Registry: filepath.Join(root, "none"), Getenv: envOf(nil)})
 	if len(rs) != 0 {
 		t.Fatalf("followed symlink: %v", rs)
 	}

@@ -77,7 +77,6 @@ func Default(paths bus.Paths, stderr io.Writer, pid int, crewID func() string) O
 			return err == nil && st.Mode().IsRegular()
 		},
 		CrewID: crewID,
-		Getenv: os.Getenv,
 		PID:    pid,
 	}
 }

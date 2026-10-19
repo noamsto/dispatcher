@@ -156,11 +156,10 @@ func (f *fx) opts() Options {
 				f.appended = append(f.appended, line)
 				return nil
 			},
-			Getenv: func(string) string { return "" },
+			Getenv: func(k string) string { return f.env[k] },
 		},
-		Getenv: func(k string) string { return f.env[k] },
-		PID:    os.Getpid(),
-		Self:   "/nonexistent/crew-go",
+		PID:  os.Getpid(),
+		Self: "/nonexistent/crew-go",
 		RateRun: func(_ []string, _ bus.Paths, cwd string, _, _ io.Writer) int {
 			f.record("rate")
 			f.rateCwd = append(f.rateCwd, cwd)
