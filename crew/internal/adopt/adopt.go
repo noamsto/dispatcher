@@ -30,6 +30,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
@@ -63,10 +64,9 @@ type Options struct {
 	// GhQuiet runs `gh <args…>` with both streams discarded as the arm's
 	// `gh … >/dev/null 2>&1` does: only the exit status is read.
 	GhQuiet func(args ...string) error
-	// Worktrees is `git worktree list --porcelain`, run once per branch as the
-	// arm runs it. A failed git is the arm's empty `$(…)`: no worktree, not an
-	// error.
-	Worktrees func() string
+	// Git runs `git worktree list --porcelain` once per branch as the arm does.
+	// A failed git is the arm's empty `$(…)`: no worktree, not an error.
+	Git git.Client
 	// Tmux answers the two reads that decide whether a worktree is occupied:
 	// the window list and the caller's own window. `_occupants` also reads the
 	// pane list, but those rows fill only the advisory `engine`/`panes` fields
@@ -234,7 +234,7 @@ func (o Options) releaseClaims(ctx context.Context, paths bus.Paths, id string, 
 		}
 		if err := o.GhQuiet("issue", "edit", c.issue, "--remove-label", "dispatched"); err == nil {
 			say(stderr, "crew adopt: released the dispatched label on #%s (%s)\n", c.issue, c.branch)
-			if err := claimindex.Release(paths.Common, o.LookupEnv, c.issue, id, o.Now()); err != nil {
+			if err := claimindex.Release(ctx, o.Git, paths.Common, o.LookupEnv, c.issue, id, o.Now()); err != nil {
 				say(stderr, "crew adopt: could not record the release of #%s in the claim index: %v\n", c.issue, err)
 			}
 			continue
@@ -249,7 +249,7 @@ func (o Options) releaseClaims(ctx context.Context, paths bus.Paths, id string, 
 // branches must not have the label pulled out from under the live one.
 func (o Options) held(ctx context.Context, c claim, heads string) string {
 	for _, cb := range c.branches {
-		wt := roster.WorktreePath(o.Worktrees(), cb)
+		wt := roster.WorktreePath(git.Output(ctx, o.Git, "", "worktree", "list", "--porcelain"), cb)
 		if wt != "" && filekind.IsDir(wt) && o.occupied(ctx, wt) {
 			return fmt.Sprintf("crew adopt: keeping #%s — a worker still occupies %s", c.issue, cb)
 		}
@@ -332,8 +332,8 @@ func (o Options) withDefaults() Options {
 	if o.GhQuiet == nil {
 		o.GhQuiet = ghQuiet
 	}
-	if o.Worktrees == nil {
-		o.Worktrees = worktreeList
+	if o.Git == nil {
+		o.Git = git.Exec{}
 	}
 	if o.Tmux == nil {
 		o.Tmux = tmux.Exec{}

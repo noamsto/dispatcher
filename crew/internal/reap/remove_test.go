@@ -40,7 +40,7 @@ func statusFor(branch, session, state, pr string, ageSec int64) string {
 func (f *fx) addWorktree(branch string) string {
 	f.t.Helper()
 	wt := filepath.Join(f.root, strings.ReplaceAll(branch, "/", "-"))
-	git(f.t, f.main, "worktree", "add", "-q", "-b", branch, wt)
+	runGit(f.t, f.main, "worktree", "add", "-q", "-b", branch, wt)
 	return wt
 }
 
@@ -198,7 +198,7 @@ func TestReapKeepsDirectoryAnchor(t *testing.T) {
 
 func TestIssueModeReap(t *testing.T) {
 	f := newFx(t)
-	git(t, f.main, "update-ref", "refs/remotes/origin/main", "HEAD")
+	runGit(t, f.main, "update-ref", "refs/remotes/origin/main", "HEAD")
 	f.bus(status("done", "", 0), `{"ts":1,"crew_id":"c1","kind":"claim-issue","branch":"`+rb+`","issue":5}`)
 	f.gh["pr list --head feat/r --state all --json url,state,headRefOid,isCrossRepository"] = "[]"
 	f.gh["issue view 5 --json state --jq .state"] = "CLOSED"

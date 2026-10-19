@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
@@ -75,10 +76,10 @@ func newFx(t *testing.T) *fx {
 	if err := os.Mkdir(f.main, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	git(t, f.main, "init", "-q", "-b", "main")
-	git(t, f.main, "commit", "-q", "--allow-empty", "-m", "init")
-	git(t, f.main, "remote", "add", "origin", "https://github.com/o/r.git")
-	git(t, f.main, "worktree", "add", "-q", "-b", rb, f.wt)
+	runGit(t, f.main, "init", "-q", "-b", "main")
+	runGit(t, f.main, "commit", "-q", "--allow-empty", "-m", "init")
+	runGit(t, f.main, "remote", "add", "origin", "https://github.com/o/r.git")
+	runGit(t, f.main, "worktree", "add", "-q", "-b", rb, f.wt)
 	common := filepath.Join(f.main, ".git")
 	var stderr bytes.Buffer
 	if err := gitguard.Init(common, &stderr); err != nil {
@@ -114,6 +115,7 @@ func (f *fx) ghCall(args []string) (string, error) {
 func (f *fx) opts() Options {
 	return Options{
 		Probes: Probes{
+			Git: git.Exec{},
 			Tmux: &tmuxtest.Fake{Func: func(args []string) (string, error) {
 				key := strings.Join(args, " ")
 				f.record("tmux " + key)

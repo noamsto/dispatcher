@@ -14,17 +14,18 @@ package rate
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 )
 
@@ -46,11 +47,9 @@ const (
 type Options struct {
 	// StorePath overrides the XDG ratings store location (tests).
 	StorePath string
-	// Git runs git in dir and returns stdout with trailing newlines gone,
-	// ignoring the exit status — the arm reads git inside `$(... 2>/dev/null
-	// || true)`, where a failed query is empty output, not an error. Tests
-	// replace it.
-	Git func(dir string, args ...string) string
+	// Git runs the arm's git queries, each as `git -C <dir> …`. The arm reads
+	// them inside `$(... 2>/dev/null || true)`, so a failure is empty output.
+	Git git.Client
 	// LookupEnv reads DISPATCH_CONFIG_BIN and the XDG variables (tests).
 	LookupEnv func(string) string
 	// Now is the sweep's clock; the folds freeze jq's `now` from it.
@@ -69,12 +68,7 @@ type Options struct {
 // withDefaults fills the seams a caller left nil.
 func (o Options) withDefaults() Options {
 	if o.Git == nil {
-		o.Git = func(dir string, args ...string) string {
-			cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-			cmd.Stderr = io.Discard
-			out, _ := cmd.Output()
-			return strings.TrimRight(string(out), "\n")
-		}
+		o.Git = git.Exec{}
 	}
 	if o.LookupEnv == nil {
 		o.LookupEnv = os.Getenv
@@ -168,7 +162,7 @@ func report(fl Request, cwd string, stdout, stderr io.Writer, o Options) int {
 
 	currentRepo := ""
 	if !fl.Pooled {
-		currentRepo = currentRepoScope(o.git(), cwd)
+		currentRepo = currentRepoScope(o.Git, cwd)
 	}
 	out, err := jqrun.RunAny(program, list, 0, map[string]any{
 		"want_json":    fl.JSON,
@@ -214,37 +208,14 @@ func storePath(override string, lookupEnv func(string) string) string {
 // currentRepoScope is the arm's fallback chain: the origin slug, else the
 // toplevel directory's basename, else "unknown-repo". Both git probes are
 // local-only, so scoped mode still touches no network.
-func currentRepoScope(git func(dir string, args ...string) string, cwd string) string {
-	if slug := originSlug(git(cwd, "config", "--get", "remote.origin.url")); slug != "" {
+func currentRepoScope(c git.Client, cwd string) string {
+	ctx := context.Background()
+	if slug := git.RepoSlug(git.Output(ctx, c, "", "-C", cwd, "config", "--get", "remote.origin.url")); slug != "" {
 		return slug
 	}
-	toplevel := git(cwd, "rev-parse", "--show-toplevel")
+	toplevel := git.Output(ctx, c, "", "-C", cwd, "rev-parse", "--show-toplevel")
 	if toplevel == "" {
 		toplevel = "unknown-repo"
 	}
 	return filepath.Base(toplevel)
-}
-
-// slugPrefix is the arm's _origin_repo sed, first expression: a scheme (or
-// the scp-style `git@`), the host and the separator. sed works on the whole
-// line, so an `ssh://git@host/…` URL still loses its `git@host/` piece.
-// regexp's leftmost match is the same one sed replaces.
-var slugPrefix = regexp.MustCompile(`(git@|https://)[^/:]+[/:]`)
-
-// originSlug applies _origin_repo's two sed rules to git's output: strip the
-// scheme+host prefix, then a trailing .git. sed works line by line, so the
-// rules map per line even though `git config --get` prints a single value.
-func originSlug(out string) string {
-	lines := strings.Split(out, "\n")
-	for i, line := range lines {
-		if loc := slugPrefix.FindStringIndex(line); loc != nil {
-			line = line[:loc[0]] + line[loc[1]:]
-		}
-		lines[i] = strings.TrimSuffix(line, ".git")
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (o Options) git() func(dir string, args ...string) string {
-	return o.Git
 }

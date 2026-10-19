@@ -428,7 +428,7 @@ func gitEnv(t *testing.T, ceiling string) {
 	t.Setenv("GIT_CEILING_DIRECTORIES", ceiling)
 }
 
-func git(t *testing.T, dir string, args ...string) {
+func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	full := append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"}, args...)
 	if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
@@ -449,10 +449,10 @@ func newRepo(t *testing.T) (main, linked string) {
 	if err := os.Mkdir(main, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	git(t, main, "init", "-q")
-	git(t, main, "commit", "-q", "--allow-empty", "-m", "init")
+	runGit(t, main, "init", "-q")
+	runGit(t, main, "commit", "-q", "--allow-empty", "-m", "init")
 	linked = filepath.Join(root, "linked")
-	git(t, main, "worktree", "add", "-q", "-b", "wt", linked)
+	runGit(t, main, "worktree", "add", "-q", "-b", "wt", linked)
 	return main, linked
 }
 

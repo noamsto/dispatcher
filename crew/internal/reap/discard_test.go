@@ -20,8 +20,8 @@ func discardFx(t *testing.T) *fx {
 	if err := os.WriteFile(f.wt+"/a.txt", []byte("one\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	git(t, f.wt, "add", "a.txt")
-	git(t, f.wt, "commit", "-q", "-m", "a")
+	runGit(t, f.wt, "add", "a.txt")
+	runGit(t, f.wt, "commit", "-q", "-m", "a")
 	f.bus(status("done", prURL, 0))
 	f.gh["pr view "+prURL+" --json state --jq .state"] = "MERGED"
 	return f
@@ -72,9 +72,9 @@ func TestDiscardSavesApplicablePatch(t *testing.T) {
 	wantJSON(t, reap[0], fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/r","pr":%q,"pr_state":"MERGED","worktree":%q,"discarded":%q}`, nowUnix*1000, prURL, f.wt, patch))
 	// --discard keeps the branch: the patch applies to its tip.
 	fresh := filepath.Join(f.root, "fresh")
-	git(t, f.main, "worktree", "add", "-q", fresh, rb)
-	git(t, fresh, "apply", "--check", patch)
-	git(t, fresh, "apply", patch)
+	runGit(t, f.main, "worktree", "add", "-q", fresh, rb)
+	runGit(t, fresh, "apply", "--check", patch)
+	runGit(t, fresh, "apply", patch)
 	if got, _ := os.ReadFile(fresh + "/a.txt"); string(got) != "one\ntwo\n" {
 		t.Fatalf("a.txt = %q", got)
 	}
@@ -176,8 +176,8 @@ func TestDiscardRefusesEmbeddedRepo(t *testing.T) {
 	if err := os.Mkdir(nested, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	git(t, nested, "init", "-q")
-	git(t, nested, "commit", "-q", "--allow-empty", "-m", "n")
+	runGit(t, nested, "init", "-q")
+	runGit(t, nested, "commit", "-q", "--allow-empty", "-m", "n")
 	if rc := f.reap(f.main, Request{Discard: rb}); rc != 1 {
 		t.Fatalf("rc=%d stdout=%q", rc, f.stdout.String())
 	}

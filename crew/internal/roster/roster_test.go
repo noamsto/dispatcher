@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/drift"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
@@ -47,7 +48,7 @@ type rosterCase struct {
 	events    []string
 	panes     string
 	worktrees string
-	wtErr     *ExitError
+	wtErr     *git.ExitError
 	want      string
 	wantErr   string // "type" or "exit"
 	wantWT    int
@@ -523,7 +524,7 @@ var cases = []rosterCase{
 		events:    []string{status(t0+1000, "worker:feat/x#s1-1", state("exited"))},
 		panes:     "claude /wt/x\n",
 		worktrees: "",
-		wtErr:     &ExitError{Code: 128, Stderr: "fatal: not a git repository\n"},
+		wtErr:     &git.ExitError{Code: 128, Stderr: "fatal: not a git repository\n"},
 		wantErr:   "exit",
 		wantWT:    1,
 	},
@@ -583,7 +584,7 @@ func TestFold(t *testing.T) {
 				}
 				return
 			case "exit":
-				var ee *ExitError
+				var ee *git.ExitError
 				if !errors.As(err, &ee) || ee != c.wtErr {
 					t.Fatalf("err = %v, want %v", err, c.wtErr)
 				}

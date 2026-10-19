@@ -28,6 +28,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
@@ -375,11 +376,11 @@ func originSlug(ctx context.Context, common string) (string, error) {
 
 // originURL is the configured remote.origin.url, "" when unset.
 func originURL(ctx context.Context, common string) string {
-	out, err := exec.CommandContext(ctx, "git", "--git-dir="+common, "config", "--get", "remote.origin.url").Output()
+	url, err := git.Origin(ctx, git.Exec{}, common)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(url)
 }
 
 // reportStatus maps a finished command to a shell-style status: its exit code,

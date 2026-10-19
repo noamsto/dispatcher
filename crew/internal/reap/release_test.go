@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/frame"
+	"github.com/noamsto/dispatcher/crew/internal/git"
+	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
@@ -43,7 +45,7 @@ func sameJSON(t *testing.T, got, want string) {
 	}
 }
 
-func git(t *testing.T, dir string, args ...string) {
+func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -100,10 +102,10 @@ func newRel(t *testing.T) *rel {
 	if err := os.Mkdir(main, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	git(t, main, "init", "-q", "-b", "main")
-	git(t, main, "commit", "-q", "--allow-empty", "-m", "init")
+	runGit(t, main, "init", "-q", "-b", "main")
+	runGit(t, main, "commit", "-q", "--allow-empty", "-m", "init")
 	wt := filepath.Join(root, "wt")
-	git(t, main, "worktree", "add", "-q", "-b", branch, wt)
+	runGit(t, main, "worktree", "add", "-q", "-b", branch, wt)
 
 	idle := idleFrame(t)
 	r := &rel{
@@ -158,6 +160,7 @@ func (r *rel) tmux(args []string) (string, error) {
 
 func (r *rel) probes() Probes {
 	return Probes{
+		Git:  git.Exec{},
 		Tmux: &tmuxtest.Fake{Func: r.tmux},
 		Sleep: func(d time.Duration) {
 			r.mu.Lock()
@@ -214,10 +217,16 @@ func (r *rel) wantKept(rc int, err error, note string) {
 
 func TestReleaseNoWorktreeDoesNothing(t *testing.T) {
 	r := newRel(t)
-	d := Deps{Common: r.common, Log: r.log, P: r.probes(), Say: func(string) {}, Note: func(string) {}}
+	g := &gittest.Fake{Out: map[string]string{"--git-dir=" + r.common + " worktree list --porcelain": ""}}
+	p := r.probes()
+	p.Git = g
+	d := Deps{Common: r.common, Log: r.log, P: p, Say: func(string) {}, Note: func(string) {}}
 	rc, err := ReleaseWindows(context.Background(), d, "feat/unknown", "s", "done", statusTS, 300, false)
 	if rc != 0 || err != nil || len(r.calls) != 0 {
 		t.Fatalf("rc=%d err=%v calls=%q", rc, err, r.calls)
+	}
+	if want := []string{"--git-dir=" + r.common + " worktree list --porcelain"}; !slices.Equal(g.Calls(), want) {
+		t.Errorf("git calls = %q, want %q", g.Calls(), want)
 	}
 }
 

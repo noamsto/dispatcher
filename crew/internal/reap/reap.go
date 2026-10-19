@@ -7,14 +7,13 @@ import (
 	"io"
 	"math"
 	"os"
-	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -79,7 +78,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, 
 	}
 	r.trusted = dir
 	// Resolved once, after the cwd is trusted: bus pr_urls are checked against it.
-	r.repo = originGitHubRepo(ctx)
+	r.repo = originGitHubRepo(ctx, r.p.Git)
 	if st, err := os.Stat(paths.Log); err != nil || !st.Mode().IsRegular() {
 		if r.discard != "" {
 			return r.refuse("latest status is none")
@@ -185,13 +184,19 @@ func (r *run) guardOK(err error) bool {
 // cwd. A failed git is the arm's `set -e` abort: its status comes back
 // non-zero.
 func (r *run) worktreePath(ctx context.Context, branch string) (string, int) {
-	cmd := exec.CommandContext(ctx, "git", "worktree", "list", "--porcelain")
-	cmd.Stderr = r.stderr
-	out, err := cmd.Output()
+	out, err := r.p.Git.Run(ctx, "", "worktree", "list", "--porcelain")
 	if err != nil {
+		r.gitStderr(err)
 		return "", shellStatus(err)
 	}
-	return roster.WorktreePath(string(out), branch), 0
+	return roster.WorktreePath(out, branch), 0
+}
+
+// gitStderr passes a failed git's captured stderr to the reap's.
+func (r *run) gitStderr(err error) {
+	if ge := (*git.ExitError)(nil); errors.As(err, &ge) {
+		_, _ = io.WriteString(r.stderr, ge.Stderr)
+	}
 }
 
 // shellStatus is the shell's `$?` for a finished command: 127 when it never
@@ -200,7 +205,7 @@ func shellStatus(err error) int {
 	if err == nil {
 		return 0
 	}
-	var ee *exec.ExitError
+	var ee interface{ ExitCode() int }
 	if errors.As(err, &ee) {
 		if code := ee.ExitCode(); code > 0 {
 			return code
@@ -210,25 +215,15 @@ func shellStatus(err error) int {
 	return 127
 }
 
-// slugPrefix and originGitHubRepo are `_origin_github_repo`: `_origin_repo`'s
-// sed (`s#(git@|https://)([^/:]+)[/:]##; s#\.git$##`), only for a github.com
-// origin — the slug drops the host, and pr_urls are only ever github.com.
-var slugPrefix = regexp.MustCompile(`(git@|https://)[^/:]+[/:]`)
-
-func originGitHubRepo(ctx context.Context) string {
-	out, _ := exec.CommandContext(ctx, "git", "config", "--get", "remote.origin.url").Output()
-	url := strings.TrimRight(string(out), "\n")
+// originGitHubRepo is `_origin_github_repo`: `_origin_repo` only for a
+// github.com origin — the slug drops the host, and pr_urls are only ever
+// github.com.
+func originGitHubRepo(ctx context.Context, g git.Client) string {
+	url, _ := g.Run(ctx, "", "config", "--get", "remote.origin.url")
 	if !strings.HasPrefix(url, "https://github.com/") && !strings.HasPrefix(url, "git@github.com:") {
 		return ""
 	}
-	lines := strings.Split(url, "\n")
-	for i, line := range lines {
-		if loc := slugPrefix.FindStringIndex(line); loc != nil {
-			line = line[:loc[0]] + line[loc[1]:]
-		}
-		lines[i] = strings.TrimSuffix(line, ".git")
-	}
-	return strings.Join(lines, "\n")
+	return git.RepoSlug(url)
 }
 
 // lockReap takes `reap.lock.d`: two reaps racing a removal on one tree strand

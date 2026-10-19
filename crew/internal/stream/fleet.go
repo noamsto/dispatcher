@@ -13,6 +13,7 @@ package stream
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 )
@@ -40,9 +42,9 @@ type FleetOptions struct {
 	// Discover lists the candidate buses, writing its own notes to stderr. nil
 	// is repos.Discover over Env and Registry.
 	Discover func(stderr io.Writer) []repos.Repo
-	// Origin is a git common dir's origin URL, which labels its repo. nil labels
+	// Git reads a git common dir's origin URL, which labels its repo. nil labels
 	// every repo by its directory.
-	Origin func(common string) string
+	Git git.Client
 	// LaneRoot holds one lane dir per crew. Empty is
 	// ${XDG_STATE_HOME:-$HOME/.local/state}/crew/fleet-stream.
 	LaneRoot string
@@ -63,9 +65,6 @@ func (o FleetOptions) withDefaults() FleetOptions {
 		o.Discover = func(stderr io.Writer) []repos.Repo {
 			return repos.Discover(repos.Options{Registry: registry, Env: env, Stderr: stderr, Prefix: "crew: fleet stream"})
 		}
-	}
-	if o.Origin == nil {
-		o.Origin = func(string) string { return "" }
 	}
 	if o.LaneRoot == "" {
 		base := o.Env("XDG_STATE_HOME")
@@ -320,7 +319,11 @@ func (f *fleet) join(common string) {
 		f.skip(common, strings.Join(strings.Fields(err.Error()), " "))
 		return
 	}
-	repo := repos.Name(common, f.o.Origin(common))
+	var origin string
+	if f.o.Git != nil {
+		origin, _ = git.Origin(context.Background(), f.o.Git, common)
+	}
+	repo := repos.Name(common, origin)
 	l := &loop{
 		c:       f.c,
 		o:       f.o.Options,

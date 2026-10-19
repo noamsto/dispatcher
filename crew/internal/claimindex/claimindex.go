@@ -9,16 +9,16 @@
 package claimindex
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 )
 
 var part = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -48,16 +48,12 @@ func Slug(url string) string {
 // its origin yields no slug. Like dispatch.sh it reads the configured URL, not
 // `git remote get-url`, which would apply insteadOf. An error means git could
 // not be asked; an unset origin is "".
-func Path(common string, getenv func(string) string) (string, error) {
-	out, err := exec.Command("git", "--git-dir="+common, "config", "--get", "remote.origin.url").Output()
+func Path(ctx context.Context, g git.Client, common string, getenv func(string) string) (string, error) {
+	out, err := git.Origin(ctx, g, common)
 	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) && ee.ExitCode() == 1 {
-			return "", nil
-		}
 		return "", err
 	}
-	slug := Slug(strings.TrimSpace(string(out)))
+	slug := Slug(strings.TrimSpace(out))
 	if slug == "" {
 		return "", nil
 	}
@@ -78,8 +74,8 @@ type release struct {
 
 // Release records that issue's claim was released, so claims older than now no
 // longer count as evidence. A repo with no slug has no index and is a no-op.
-func Release(common string, getenv func(string) string, issue, crewID string, now time.Time) error {
-	path, err := Path(common, getenv)
+func Release(ctx context.Context, g git.Client, common string, getenv func(string) string, issue, crewID string, now time.Time) error {
+	path, err := Path(ctx, g, common, getenv)
 	if err != nil || path == "" {
 		return err
 	}

@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git"
+	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
@@ -73,14 +75,14 @@ func newFixture(t *testing.T) *fixture {
 
 func (f *fixture) opts() Options {
 	o := Options{
-		CrewID:   func() string { return f.crew },
-		Toplevel: func() string { return f.top },
-		NowMS:    func() int64 { return 1700000000500 },
-		Getenv:   func(k string) string { return f.env[k] },
-		Fold:     f.fold,
+		CrewID: func() string { return f.crew },
+		Git:    &gittest.Fake{Out: map[string]string{"rev-parse --show-toplevel": f.top}},
+		NowMS:  func() int64 { return 1700000000500 },
+		Getenv: func(k string) string { return f.env[k] },
+		Fold:   f.fold,
 	}
 	if f.noTop {
-		o.Toplevel = func() string { return "" }
+		o.Git = &gittest.Fake{Out: map[string]string{"rev-parse --show-toplevel": ""}}
 	}
 	if f.panes != "" {
 		o.Sender = sender.Probes{
@@ -930,12 +932,12 @@ func TestZeroOptionsGateTheCheckout(t *testing.T) {
 	}
 	t.Setenv("CREW_ID", "zero-opts")
 	o := Options{}.withDefaults()
-	top := bus.Toplevel(context.Background(), ".")
+	top := git.Toplevel(context.Background(), git.Exec{}, ".")
 	if top == "" {
 		t.Skip("not run inside a git checkout")
 	}
-	if got := o.Toplevel(); got != top {
-		t.Errorf("Toplevel() = %q, want %q", got, top)
+	if got := git.Toplevel(context.Background(), o.Git, "."); got != top {
+		t.Errorf("Toplevel = %q, want %q", got, top)
 	}
 	if got, want := o.CrewID(), bus.CrewID(context.Background(), "."); got != want || got == "" {
 		t.Errorf("CrewID() = %q, want %q", got, want)

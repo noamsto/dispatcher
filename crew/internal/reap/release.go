@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/frame"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
@@ -45,8 +45,8 @@ type Deps struct {
 // re-checks on its next cycle, else 0. The error is only a failed release-row
 // write or its marshal.
 func ReleaseWindows(ctx context.Context, d Deps, branch, session, state string, tsMS, grace int64, dry bool) (int, error) {
-	porcelain, _ := exec.CommandContext(ctx, "git", "--git-dir="+d.Common, "worktree", "list", "--porcelain").Output()
-	wt := roster.WorktreePath(string(porcelain), branch)
+	porcelain, _ := git.Worktrees(ctx, d.P.Git, "", d.Common)
+	wt := roster.WorktreePath(porcelain, branch)
 	if wt == "" {
 		return 0, nil
 	}

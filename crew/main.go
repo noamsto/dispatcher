@@ -6,14 +6,12 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"slices"
 	"strings"
 	"time"
@@ -26,6 +24,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/entry"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
@@ -658,7 +657,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return rosterrender.Run(ctx, req, paths, rosterrender.Options{
 			Probes:    rosterrender.Default(),
 			Proc:      e.proc,
-			Roster:    roster.Probes{Worktrees: commonWorktrees(ctx, paths.Common)},
+			Git:       git.Exec{},
 			Clock:     clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")},
 			Stderr:    stderr,
 			RosterDir: os.Getenv("CREW_ROSTER_DIR"),
@@ -784,12 +783,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			return ""
 		}
 		o := status.Options{
-			CrewID:   func() string { return bus.CrewID(ctx, cwd) },
-			Toplevel: func() string { return bus.Toplevel(ctx, cwd) },
-			NowMS:    clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")}.RealMS,
-			Getenv:   os.Getenv,
-			Sender:   senderProbes(e.proc),
-			Tmux:     tmux.Exec{},
+			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			NowMS:  clock.Clock{Now: time.Now, CrewClock: os.Getenv("CREW_CLOCK")}.RealMS,
+			Getenv: os.Getenv,
+			Sender: senderProbes(e.proc),
+			Tmux:   tmux.Exec{},
 		}
 		if sub == "status" {
 			c := parsed.typed.Status
@@ -963,15 +961,6 @@ func remoteArgv(words []string) []string {
 	return words
 }
 
-// originOf is a git common dir's origin URL, or "" when it has none.
-func originOf(ctx context.Context, common string) string {
-	out, err := exec.CommandContext(ctx, "git", "--git-dir="+common, "config", "--get", "remote.origin.url").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSuffix(string(out), "\n")
-}
-
 // streamRequest is the typed stream call; an absent flag is "", the default.
 func streamRequest(f streamFlags, reapEvery *string) stream.Request {
 	return stream.Request{
@@ -989,16 +978,13 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 		req := stream.FleetRequest{Request: streamRequest(s.streamFlags, nil), Rediscover: str(s.Rediscover)}
 		return stream.RunFleet(req, stdout, stderr, stream.FleetOptions{
 			Options: stream.Options{Now: time.Now, Proc: e.proc},
-			Origin:  func(common string) string { return originOf(ctx, common) },
+			Git:     git.Exec{},
 		})
 	}
 	o := fleet.Options{
 		Tmux: tmux.Exec{},
-		Worktrees: func(common string) (string, error) {
-			return worktreeList(exec.CommandContext(ctx, "git", "--git-dir="+common, "worktree", "list", "--porcelain"))
-		},
-		Origin: func(common string) string { return originOf(ctx, common) },
-		Now:    time.Now,
+		Git:  git.Exec{},
+		Now:  time.Now,
 	}
 	c := p.typed.Fleet.Table
 	return fleet.Run(ctx, fleet.Request{All: c.All, JSON: c.JSON, Crew: str(c.Crew)}, stdout, stderr, o)
@@ -1065,7 +1051,7 @@ func fold(sub string, events []bus.Event, readErr error, log string, stderr io.W
 	if err == nil {
 		return v, 0
 	}
-	var exit *roster.ExitError
+	var exit *git.ExitError
 	if errors.As(err, &exit) {
 		say(stderr, "%s", exit.Stderr)
 		return v, exit.Code
@@ -1086,38 +1072,7 @@ func senderProbes(t proc.Table) sender.Probes {
 
 func probes(ctx context.Context, cwd string) roster.Probes {
 	return roster.Probes{
-		Tmux: tmux.Exec{},
-		Worktrees: func() (string, error) {
-			cmd := exec.CommandContext(ctx, "git", "worktree", "list", "--porcelain")
-			cmd.Dir = cwd
-			return worktreeList(cmd)
-		},
+		Tmux:      tmux.Exec{},
+		Worktrees: func() (string, error) { return git.Worktrees(ctx, git.Exec{}, cwd, "") },
 	}
-}
-
-// commonWorktrees is the renderer's worktree list, anchored at the common dir
-// rather than at the caller's directory: `roster-render` moves out of the
-// worktree it was started in, because a reap can take that directory away while
-// the daemon lives, and a worktree list that dies with it says nothing about who
-// is gone.
-func commonWorktrees(ctx context.Context, common string) func() (string, error) {
-	return func() (string, error) {
-		return worktreeList(exec.CommandContext(ctx, "git", "--git-dir="+common, "worktree", "list", "--porcelain"))
-	}
-}
-
-// worktreeList runs a `git worktree list --porcelain` command, mapping a
-// failure to the roster arm's death with git's status and stderr.
-func worktreeList(cmd *exec.Cmd) (string, error) {
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err == nil {
-		return string(out), nil
-	}
-	var ee *exec.ExitError
-	if !errors.As(err, &ee) {
-		return "", &roster.ExitError{Code: 127, Stderr: "git: command not found\n"}
-	}
-	return "", &roster.ExitError{Code: ee.ExitCode(), Stderr: stderr.String()}
 }

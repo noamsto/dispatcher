@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git"
+	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 )
 
 // fixture is an in-process sweep: a bus, a checkout whose git answers are
@@ -124,6 +126,14 @@ func (f *fixture) options() Options {
 			}
 			return time.Unix(1800000000, 0)
 		},
+		Git: &gittest.Fake{Func: func(_ string, args []string) (string, error) {
+			f.calls = append(f.calls, "git "+strings.Join(args, " "))
+			out, ok := f.git(strings.Join(args[2:], " "))
+			if !ok {
+				return out, &git.ExitError{Code: 1}
+			}
+			return out, nil
+		}},
 		Run: func(args ...string) (string, error) {
 			joined := strings.Join(args, " ")
 			f.calls = append(f.calls, joined)
@@ -139,20 +149,10 @@ func (f *fixture) options() Options {
 					return out, fmt.Errorf("gh exited 1")
 				}
 				return out, nil
-			case "git":
-				out, ok := f.git(strings.Join(args[3:], " "))
-				return out, boolErr(ok)
 			}
 			return "", fmt.Errorf("unexpected command %q", joined)
 		},
 	}
-}
-
-func boolErr(ok bool) error {
-	if ok {
-		return nil
-	}
-	return fmt.Errorf("exit status 1")
 }
 
 // defaultSettings is a two-rule burn table small enough to read.

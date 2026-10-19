@@ -18,6 +18,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
@@ -49,11 +50,11 @@ type Options struct {
 	// Getenv is the environment: the two ids that mark a worker session, plus
 	// CREW_NUDGE_WAIT_INTERVAL.
 	Getenv func(string) string
-	// Toplevel is `git rev-parse --show-toplevel` and Exists the arm's
-	// `[ -f "$top/WORKER_TASK.md" ]`: a checkout with its own task file is a worker's,
-	// which is as much of a worker as an id in the environment is.
-	Toplevel func(ctx context.Context) string
-	Exists   func(path string) bool
+	// Git finds the checkout and Exists is the arm's `[ -f "$top/WORKER_TASK.md" ]`:
+	// a checkout with its own task file is a worker's, which is as much of a
+	// worker as an id in the environment is.
+	Git    git.Client
+	Exists func(path string) bool
 	// Unread is the lead's unread-directive pair, `"<oldest> <newest>"`: the
 	// in-process `internal/unread` scan in dispatcher mode, the way the arm ran
 	// `_unread_scan <crew> <branch> worker:<branch> <sid> 0 dispatcher`. An
@@ -103,7 +104,7 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	// carries a worker or role id, or sits in a checkout with its own WORKER_TASK.md,
 	// is a worker. Note this refusal prints without the `crew: nudge:` prefix and
 	// exits 2, unlike every other failure.
-	top := o.Toplevel(ctx)
+	top := strings.TrimSpace(git.Toplevel(ctx, o.Git, ""))
 	if o.Getenv("CREW_WORKER_ID") != "" || o.Getenv("CREW_ROLE_ID") != "" ||
 		(top != "" && o.Exists(filepath.Join(top, "WORKER_TASK.md"))) {
 		say(stderr, "crew: nudge is a dispatcher command\n")

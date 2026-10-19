@@ -7,8 +7,8 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/entry"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
-	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"io"
 	"os"
 	"path/filepath"
@@ -29,8 +29,8 @@ type Options struct {
 	Probes Probes
 	// Proc answers whether the dispatcher pane is this process's ancestor.
 	Proc proc.Table
-	// Roster is the row fold's PR probe — the same one `crew roster` runs.
-	Roster roster.Probes
+	// Git reads the worktree list the row fold resolves `exited` rows from.
+	Git git.Client
 	// Clock is `_clock_now_f`, which drives the render timers so the suite can
 	// force a sweep or a rebuild. The poll interval deliberately stays off it, so
 	// a test can never sleep for hours, and `crew roster`'s ages stay on the wall

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
@@ -32,6 +33,8 @@ const ReleaseGrace = 300
 // substitute any field.
 type Probes struct {
 	Tmux tmux.Client
+	// Git runs the plain git reads; the guarded wtgit and gitguard calls stay apart.
+	Git git.Client
 	// Getenv reads the CREW_STALL_*_CMD capture seams.
 	Getenv func(string) string
 	// Gh is `gh …` with stderr dropped and trailing newlines stripped.
@@ -57,6 +60,7 @@ type Probes struct {
 func DefaultProbes() Probes {
 	return Probes{
 		Tmux: tmux.Exec{},
+		Git:  git.Exec{},
 		Gh: func(ctx context.Context, args ...string) (string, error) {
 			return output(ctx, "gh", args, false)
 		},
