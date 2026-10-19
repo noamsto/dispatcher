@@ -24,6 +24,7 @@ type world struct {
 	mentions string
 	closes   string
 	logErr   bool // the mention search fails
+	closeErr bool // the closing-keyword search fails
 	lsErr    bool
 	showErr  bool
 }
@@ -53,11 +54,14 @@ func (w world) git() *gittest.Fake {
 			}
 			return w.files[strings.TrimPrefix(args[1], "origin/main:")], nil
 		case "log":
-			if w.logErr && !strings.Contains(args[len(args)-1], "close") {
-				return "", fail
-			}
 			if strings.Contains(args[len(args)-1], "close") {
+				if w.closeErr {
+					return "", fail
+				}
 				return w.closes, nil
+			}
+			if w.logErr {
+				return "", fail
 			}
 			return w.mentions, nil
 		}
@@ -156,6 +160,14 @@ func TestLint(t *testing.T) {
 			name: "platform tool behind wrapper", spec: head + "- AC1: `nix develop -c xcodebuild -scheme X`\n", look: []string{"nix"},
 			want: []string{`warn runnable: AC1: "xcodebuild" is a macOS tool; this host is linux`},
 		},
+		{
+			name: "platform tool behind assignment wrapper", spec: head + "- AC1: `env FOO=1 xcodebuild build`\n", look: []string{"env"},
+			want: []string{`warn runnable: AC1: "xcodebuild" is a macOS tool; this host is linux`},
+		},
+		{
+			name: "platform tool in quoted sh -c", spec: head + "- AC1: `sh -c 'xcodebuild -scheme X'`\n", look: []string{"sh"},
+			want: []string{`warn runnable: AC1: "xcodebuild" is a macOS tool; this host is linux`},
+		},
 		{name: "platform tool as argument ignored", spec: head + "- `rg -l xcodebuild src/`\n", look: []string{"rg"}},
 		{name: "linux-capable tools not platform tools", spec: head + "- `swift build` `pod install` `fastlane test`\n", look: []string{"swift", "pod", "fastlane"}},
 		{name: "runnable quoted output not a command", spec: head + "- prints `warn premise: x` and `error structure: y`\n"},
@@ -201,13 +213,18 @@ func TestLint(t *testing.T) {
 			want: []string{"warn ci: cannot read workflows on origin/main: exit status 128: "},
 		},
 		{
+			name: "premise closing search fails", spec: head + "- one\n", req: Request{Issues: []string{"7"}},
+			w:    world{mentions: "a1 s", closeErr: true},
+			want: []string{"warn premise: #7 is already referenced on origin/main: a1 s (could not check closing keywords: exit status 128: )"},
+		},
+		{
 			name: "premise search fails", spec: head + "- one\n", req: Request{Issues: []string{"7"}}, w: world{logErr: true},
 			want: []string{"warn premise: cannot search origin/main for #7: exit status 128: "},
 		},
 		{
 			name: "tree unlistable warns once and skips ci commands", spec: head + "- see `a/b.go`\n- AC3: CI runs `nix flake check`\n",
 			w: world{lsErr: true, files: workflow}, look: []string{"nix"},
-			want: []string{"warn path: cannot list origin/main: exit status 128: "},
+			want: []string{"warn path: cannot list origin/main: exit status 128: ; path and CI command checks skipped"},
 		},
 		{
 			name: "ci command found via flake.nix", spec: head + "- AC3: CI runs `statix check`\n",

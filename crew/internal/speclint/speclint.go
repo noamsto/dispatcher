@@ -150,7 +150,7 @@ func Lint(ctx context.Context, spec []byte, req Request, cwd string, o Options) 
 		out = append(out, premise(ctx, o.Git, top, ref, req.Issues)...)
 		var err error
 		if files, err = tree(ctx, o.Git, top, ref); err != nil {
-			out = append(out, Finding{"warn", "path", fmt.Sprintf("cannot list %s: %s", ref, firstLine(err))})
+			out = append(out, Finding{"warn", "path", fmt.Sprintf("cannot list %s: %s; path and CI command checks skipped", ref, firstLine(err))})
 		} else {
 			out = append(out, paths(ref, files, lines)...)
 		}
@@ -277,8 +277,12 @@ func premise(ctx context.Context, g git.Client, top, ref string, issues []string
 			continue
 		}
 		closing := map[string]bool{}
-		for _, h := range strings.Fields(git.Output(ctx, g, top, "log", ref, "--format=%h", "-E", "-i",
-			"--grep="+closingPattern(n))) {
+		closeNote := ""
+		closed, err := g.Run(ctx, top, "log", ref, "--format=%h", "-E", "-i", "--grep="+closingPattern(n))
+		if err != nil {
+			closeNote = fmt.Sprintf(" (could not check closing keywords: %s)", firstLine(err))
+		}
+		for _, h := range strings.Fields(closed) {
 			closing[h] = true
 		}
 		rows := strings.Split(commits, "\n")
@@ -293,7 +297,7 @@ func premise(ctx context.Context, g git.Client, top, ref string, issues []string
 			}
 			shown = append(shown, row)
 		}
-		out = append(out, Finding{"warn", "premise", fmt.Sprintf("#%s is already referenced on %s: %s", n, ref, strings.Join(shown, "; "))})
+		out = append(out, Finding{"warn", "premise", fmt.Sprintf("#%s is already referenced on %s: %s%s", n, ref, strings.Join(shown, "; "), closeNote)})
 	}
 	return out
 }
@@ -405,12 +409,19 @@ func runnable(top string, items []item, o Options) []Finding {
 
 // foreignTool checks the command word only: tokens[0] and the word a `-c` or
 // `env` wrapper hands over to, so `rg xcodebuild src/` is not an xcodebuild run.
+// The wrapper's own NAME=value arguments (and env's flags) are skipped, and the
+// handed-over word may be quoted: `sh -c 'xcodebuild -scheme X'`.
 func foreignTool(tokens []string, goos string) (string, bool) {
-	cands := tokens[:1]
+	cands := []string{tokens[0]}
 	for i, t := range tokens[:len(tokens)-1] {
-		if t == "-c" || t == "env" {
-			cands = append(cands, tokens[i+1])
+		if t != "-c" && t != "env" {
+			continue
 		}
+		rest := tokens[i+1:]
+		for len(rest) > 1 && (envAssignRe.MatchString(rest[0]) || t == "env" && strings.HasPrefix(rest[0], "-")) {
+			rest = rest[1:]
+		}
+		cands = append(cands, strings.Trim(rest[0], `'"`))
 	}
 	for _, t := range cands {
 		if want, ok := platformTools[t]; ok && want != goos {
