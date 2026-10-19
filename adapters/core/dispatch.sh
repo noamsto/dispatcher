@@ -34,6 +34,7 @@ Task shape
 Engine and roles
   --agent E               claude (default) | codex | cursor | pi
   --mcp P                 MCP profile to launch the engine with
+  --chrome                Claude in Chrome for the claude lead (owner's browser; one per machine)
   --grid                  Role grid derived from the tier (critics, reviewer)
   --no-grid               No role grid (refused with --agent pi above trivial)
   --roles LIST            Grid as name[,name=<model>|name=<agent>:<model>[@effort]]
@@ -1131,6 +1132,36 @@ local_slot_cap() {
     echo "dispatch: ${target}local model '$id' has no free slot ($in_use/$max in use: $who) — wait for it to finish (a finished worker holds its slot until \`crew reap\` closes its window), pick a hosted pi model, or pass --ignore-budget" >&2
     exit 1
   done
+}
+
+# _chrome_holders — one `<name> (<branch>)` line per live lead pane holding
+# Claude in Chrome: @crew_chrome stamped 1, @crew_role empty or `lead`, and the
+# pane still running an engine (_is_engine_cmd). No tmux server yields no
+# lines, status 0. Fields are \x1f-separated, as in _local_holders.
+_chrome_holders() {
+  local flag cmd name lbranch role
+  { tmux list-panes -a -F '#{@crew_chrome}'$'\x1f''#{pane_current_command}'$'\x1f''#{@crew_name}'$'\x1f''#{@crew_branch}'$'\x1f''#{@crew_role}' 2>/dev/null || true; } |
+    while IFS=$'\x1f' read -r flag cmd name lbranch role; do
+      [ "$flag" = 1 ] || continue
+      [ -z "$role" ] || [ "$role" = lead ] || continue
+      _is_engine_cmd "$cmd" || continue
+      printf '%s (%s)\n' "${name:-?}" "${lbranch:-?}"
+    done
+  return 0
+}
+
+# chrome_gate — refuse a --chrome dispatch while another live lead holds the
+# machine's one Claude in Chrome browser. A check, not a lock, like
+# local_slot_cap; no --ignore-budget bypass, since this guards a collision in
+# the shared browser, not spend.
+chrome_gate() {
+  local holders=() who
+  mapfile -t holders < <(_chrome_holders)
+  [ "${#holders[@]}" -gt 0 ] || return 0
+  printf -v who '%s, ' "${holders[@]}"
+  who="${who%, }"
+  echo "dispatch: --chrome: Claude in Chrome is in use by $who — one --chrome worker per machine; wait for it to finish (a finished worker holds the browser until \`crew reap\` closes its window)" >&2
+  exit 1
 }
 
 # _fleet_leads — one `<weight>\x1f<name>\x1f<repo>\x1f<tier>`
@@ -3922,6 +3953,7 @@ _dispatch_remote() {
   [ -z "$base_flag" ] || refused=--base
   [ -z "$grid_status" ] || refused=--status
   [ -z "$grid_lazy" ] || refused=--lazy
+  [ -z "$chrome" ] || refused=--chrome
   # Env overrides of this run's gates or launch: the remote dispatch never sees
   # this environment, so it would silently run without them.
   for v in DISPATCH_PRECHECK DISPATCH_IGNORE_RUNG DISPATCH_SKIP_MODEL_CHECK DISPATCH_SHAPE DISPATCH_CLAUDE_CONNECTORS; do
@@ -4121,6 +4153,7 @@ owner_auth=""
 owner_auth_set=""
 kind=implement
 mcp_profile=""
+chrome=""
 grid_roles=""
 grid_flag=""
 grid_lazy=""
@@ -4186,6 +4219,10 @@ while [ $# -gt 0 ]; do
     ;;
   --grid)
     grid_flag=1
+    shift
+    ;;
+  --chrome)
+    chrome=1
     shift
     ;;
   --no-grid)
@@ -4728,6 +4765,14 @@ if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
   echo "dispatch: --mcp is claude-only; codex/cursor/pi base MCP comes from their own config" >&2
   exit 1
 fi
+if [ -n "$chrome" ] && [ "$agent" != claude ]; then
+  echo "dispatch: --chrome is claude-only (Claude in Chrome) — codex/cursor/pi workers check UI with agent-browser" >&2
+  exit 1
+fi
+if [ -n "$chrome" ] && [ -n "${DISPATCH_TMUX_SESSION:-}" ]; then
+  echo "dispatch: --chrome is local to this machine — the browser lives here, not on a remote host" >&2
+  exit 1
+fi
 
 # Lead budget gate. budget_stop owns the >=95% predicate and its cache rules
 # (fail open when stale/missing/silent; skip a window already past resets_at);
@@ -4931,6 +4976,7 @@ done
 for id in "${local_ids[@]}"; do
   local_probe_gate "$id"
 done
+[ -z "$chrome" ] || chrome_gate
 
 required_protocol_files=(WORKER_PROTOCOL.md EVIDENCE_REVIEW.md)
 [ "$agent" = claude ] && required_protocol_files+=(WORKER_PROTOCOL.claude.md)
@@ -5811,10 +5857,12 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --argjson owner_auth "$([ -n "$owner_auth" ] && echo true || echo false)" \
   --argjson also_closes "$(jq -nc '$ARGS.positional | map(tonumber? // .)' --args ${also_closes[@]+"${also_closes[@]}"})" \
   --argjson also_closes_explicit "$also_closes_explicit_empty" \
+  --argjson chrome "$([ -n "$chrome" ] && echo true || echo false)" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
    + if $base != "" then {base:$base, base_oid:(if $base_oid == "" then null else $base_oid end)} else {} end
-   + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end')
+   + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end
+   + if $chrome then {chrome:true} else {} end')
 _crew_append "$line"
 # A dispatcher on another host records the same row from this line.
 [ "${DISPATCH_EMIT_ROW:-}" != 1 ] || printf 'dispatch_row: %s\n' "$line"
@@ -5982,8 +6030,8 @@ task_dispatcher_pane="${TMUX_PANE:-}"
   printf 'tier: %s\nkind: %s\ndraft: %s\nengine: %s\nmodel: %s\neffort: %s\n' \
     "$tier" "$kind" "$draft" "$agent" "$model" "$effort"
   [ -n "${escalated_from:-}" ] && printf 'escalated_from: %s\n' "$escalated_from"
-  printf 'mcp: %s\nplan: %s\ntitle: %s\n%s\n' \
-    "$mcp_profile" "$plan_val" "$title" "$closes"
+  printf 'mcp: %s\nchrome: %s\nplan: %s\ntitle: %s\n%s\n' \
+    "$mcp_profile" "$([ -n "$chrome" ] && echo true || echo false)" "$plan_val" "$title" "$closes"
   for also_tok in ${also_closes[@]+"${also_closes[@]}"}; do
     printf 'Closes %s\n' "$(_also_closes_label "$also_tok")"
   done
@@ -6157,6 +6205,12 @@ tmux set-window-option -t "$win" @crew_branch "$branch"
 tmux set-window-option -t "$win" @crew_id "$crew_id"
 # The localModels slot count reads this, so it is stamped for every model.
 tmux set-option -p -t "$pane" @crew_model "$model" 2>/dev/null || true
+# The --chrome holder scan reads this.
+if [ -n "$chrome" ]; then
+  tmux set-option -p -t "$pane" @crew_chrome 1 2>/dev/null || true
+else
+  tmux set-option -p -u -t "$pane" @crew_chrome 2>/dev/null || true
+fi
 tmux set-window-option -t "$win" @crew_color "$agent_color"
 tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"
@@ -6304,7 +6358,7 @@ else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session claude "$lead_sid"
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")$(claude_lean_env)claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp --settings $(claude_worker_plugin_settings "$settings")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "") $quoted_prompt"
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")$(claude_lean_env)claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome") $quoted_prompt"
 fi
 write_launch_script launch_line "$launch_cmd"
 # Role grid: split the task window into one pane per role. Each role pane parks
