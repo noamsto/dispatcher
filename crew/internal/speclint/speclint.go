@@ -102,6 +102,7 @@ var (
 	listRe      = regexp.MustCompile(`^ {0,3}(?:[-*+]|[0-9]+[.)])\s+(.*)$`)
 	labelRe     = regexp.MustCompile(`^([A-Za-z]+[0-9][0-9-]*)[*_]*:`)
 	spanRe      = regexp.MustCompile("`([^`]+)`")
+	extRe       = regexp.MustCompile(`.\.[A-Za-z][A-Za-z0-9]*$`)
 	pathRe      = regexp.MustCompile(`^(\./)?([A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+)/?(:[0-9]+(-[0-9]+)?)?$`)
 	newRe       = regexp.MustCompile(`(?i)\b(new|create|creates|created|creating|add|adds|added|introduce|introduces|generate|generated|write|writes)\b`)
 	commandRe   = regexp.MustCompile(`^[A-Za-z0-9_.][A-Za-z0-9_./+-]*$`)
@@ -120,8 +121,7 @@ var builtins = map[string]bool{
 
 // platformTools maps a tool to the only GOOS it runs on.
 var platformTools = map[string]string{
-	"xcodebuild": "darwin", "xcrun": "darwin", "simctl": "darwin", "swift": "darwin",
-	"pod": "darwin", "fastlane": "darwin", "codesign": "darwin",
+	"xcodebuild": "darwin", "xcrun": "darwin", "simctl": "darwin", "codesign": "darwin",
 	"systemctl": "linux", "journalctl": "linux", "apt-get": "linux",
 }
 
@@ -143,17 +143,23 @@ func Lint(ctx context.Context, spec []byte, req Request, cwd string, o Options) 
 
 	top := git.Toplevel(ctx, o.Git, cwd)
 	ref := defaultRef(ctx, o.Git, top)
+	var files map[string]bool
 	if ref == "" {
 		out = append(out, Finding{"warn", "premise", "no origin default branch; premise, path and CI checks skipped"})
 	} else {
 		out = append(out, premise(ctx, o.Git, top, ref, req.Issues)...)
-		out = append(out, paths(ctx, o.Git, top, ref, lines)...)
+		var err error
+		if files, err = tree(ctx, o.Git, top, ref); err != nil {
+			out = append(out, Finding{"warn", "path", fmt.Sprintf("cannot list %s: %s", ref, firstLine(err))})
+		} else {
+			out = append(out, paths(ref, files, lines)...)
+		}
 	}
 	if !req.NoHostChecks {
 		out = append(out, runnable(top, items, o)...)
 	}
 	if ref != "" {
-		out = append(out, ci(ctx, o.Git, top, ref, items)...)
+		out = append(out, ci(ctx, o.Git, top, ref, files, items)...)
 	}
 	return out
 }
@@ -261,14 +267,18 @@ func defaultRef(ctx context.Context, g git.Client, top string) string {
 func premise(ctx context.Context, g git.Client, top, ref string, issues []string) []Finding {
 	var out []Finding
 	for _, n := range issues {
-		mention := "#" + n + "([^0-9]|$)"
-		commits := git.Output(ctx, g, top, "log", ref, "--format=%h %s", "-E", "-i", "--grep="+mention)
+		commits, err := g.Run(ctx, top, "log", ref, "--format=%h %s", "-E", "-i", "--grep="+mentionPattern(n))
+		if err != nil {
+			out = append(out, Finding{"warn", "premise", fmt.Sprintf("cannot search %s for #%s: %s", ref, n, firstLine(err))})
+			continue
+		}
+		commits = strings.TrimSpace(commits)
 		if commits == "" {
 			continue
 		}
 		closing := map[string]bool{}
 		for _, h := range strings.Fields(git.Output(ctx, g, top, "log", ref, "--format=%h", "-E", "-i",
-			"--grep=(close[sd]?|fix(e[sd])?|resolve[sd]?):? "+mention)) {
+			"--grep="+closingPattern(n))) {
 			closing[h] = true
 		}
 		rows := strings.Split(commits, "\n")
@@ -288,6 +298,18 @@ func premise(ctx context.Context, g git.Client, top, ref string, issues []string
 	return out
 }
 
+func mentionPattern(n string) string { return "#" + n + "([^0-9]|$)" }
+
+func closingPattern(n string) string {
+	return "(close[sd]?|fix(e[sd])?|resolve[sd]?):? " + mentionPattern(n)
+}
+
+// firstLine is err's message up to its first newline.
+func firstLine(err error) string {
+	l, _, _ := strings.Cut(err.Error(), "\n")
+	return l
+}
+
 // tree is every file on ref.
 func tree(ctx context.Context, g git.Client, top, ref string) (map[string]bool, error) {
 	out, err := g.Run(ctx, top, "ls-tree", "-r", "--full-tree", "--name-only", ref)
@@ -301,17 +323,26 @@ func tree(ctx context.Context, g git.Client, top, ref string) (map[string]bool, 
 	return files, nil
 }
 
-func paths(ctx context.Context, g git.Client, top, ref string, lines []line) []Finding {
-	files, err := tree(ctx, g, top, ref)
-	if err != nil {
-		return []Finding{{"warn", "path", fmt.Sprintf("cannot list %s: %v", ref, err)}}
+func paths(ref string, files map[string]bool, lines []line) []Finding {
+	// Specs often write package-relative paths, so a tracked file ending in
+	// "/"+p counts too.
+	tracked := func(p string) bool {
+		if files[p] {
+			return true
+		}
+		for f := range files {
+			if strings.HasSuffix(f, "/"+p) {
+				return true
+			}
+		}
+		return false
 	}
 	var out []Finding
 	seen := map[string]bool{}
 	for _, l := range lines {
 		for _, s := range l.span {
 			p, ok := pathCandidate(s)
-			if !ok || files[p] || seen[p] || newRe.MatchString(l.text) {
+			if !ok || seen[p] || newRe.MatchString(l.text) || tracked(p) {
 				continue
 			}
 			seen[p] = true
@@ -321,21 +352,23 @@ func paths(ctx context.Context, g git.Client, top, ref string, lines []line) []F
 	return out
 }
 
-// pathCandidate is span's repo path when it is file-like: dotless names such as
-// branches and directories are never judged.
+// pathCandidate is span's repo path when it is file-like: names without a
+// letter-led extension, such as branches, directories and model ids, are never
+// judged.
 func pathCandidate(span string) (string, bool) {
 	m := pathRe.FindStringSubmatch(span)
 	if m == nil || strings.HasSuffix(strings.TrimSuffix(span, m[3]), "/") {
 		return "", false
 	}
-	if base := path.Base(m[2]); strings.LastIndex(base, ".") <= 0 {
+	if base := path.Base(m[2]); !extRe.MatchString(base) {
 		return "", false
 	}
 	return m[2], true
 }
 
 // command is span's tokens after any NAME=value prefix, when span is
-// command-shaped: it holds whitespace and starts like a program name.
+// command-shaped: it holds whitespace and starts like a program name. Quoted
+// output such as `warn premise: x` has a `label:` in its first two words.
 func command(span string) ([]string, bool) {
 	f := strings.Fields(span)
 	if len(f) < 2 {
@@ -344,7 +377,7 @@ func command(span string) ([]string, bool) {
 	for len(f) > 0 && envAssignRe.MatchString(f[0]) {
 		f = f[1:]
 	}
-	if len(f) == 0 || !commandRe.MatchString(f[0]) {
+	if len(f) == 0 || !commandRe.MatchString(f[0]) || slices.ContainsFunc(f[:min(2, len(f))], func(w string) bool { return strings.HasSuffix(w, ":") }) {
 		return nil, false
 	}
 	return f, true
@@ -370,8 +403,16 @@ func runnable(top string, items []item, o Options) []Finding {
 	return out
 }
 
+// foreignTool checks the command word only: tokens[0] and the word a `-c` or
+// `env` wrapper hands over to, so `rg xcodebuild src/` is not an xcodebuild run.
 func foreignTool(tokens []string, goos string) (string, bool) {
-	for _, t := range tokens {
+	cands := tokens[:1]
+	for i, t := range tokens[:len(tokens)-1] {
+		if t == "-c" || t == "env" {
+			cands = append(cands, tokens[i+1])
+		}
+	}
+	for _, t := range cands {
 		if want, ok := platformTools[t]; ok && want != goos {
 			return t, true
 		}
@@ -400,9 +441,11 @@ func lookPath(dir, name string) bool {
 	return err == nil && st.Mode().IsRegular() && st.Mode()&0o111 != 0
 }
 
-func ci(ctx context.Context, g git.Client, top, ref string, items []item) []Finding {
+// ci judges CI claims; files is the ref's tree, nil when it could not be listed.
+func ci(ctx context.Context, g git.Client, top, ref string, files map[string]bool, items []item) []Finding {
 	var out []Finding
-	var corpus *string
+	var corpus string
+	loaded := false
 	for _, it := range items {
 		prose := spanRe.ReplaceAllString(it.text, "")
 		if !ciRe.MatchString(prose) {
@@ -420,20 +463,27 @@ func ci(ctx context.Context, g git.Client, top, ref string, items []item) []Find
 			}
 			continue
 		}
-		if corpus == nil {
-			c := workflowCorpus(ctx, g, top, ref)
-			corpus = &c
+		if files == nil {
+			continue
 		}
-		if *corpus == "" {
+		if !loaded {
+			loaded = true
+			c, err := workflowCorpus(ctx, g, top, ref, files)
+			if err != nil {
+				out = append(out, Finding{"warn", "ci", fmt.Sprintf("cannot read workflows on %s: %s", ref, firstLine(err))})
+			}
+			corpus = c
+		}
+		if corpus == "" {
 			continue
 		}
 		for _, c := range cmds {
 			for _, part := range splitRe.Split(c, -1) {
-				part = strings.TrimSpace(spaceRe.ReplaceAllString(part, " "))
-				if first, _, _ := strings.Cut(part, " "); part == "" || builtins[first] {
+				part = strings.TrimSpace(strings.Trim(strings.TrimSpace(spaceRe.ReplaceAllString(part, " ")), `'"`))
+				if first, _, _ := strings.Cut(part, " "); part == "" || builtins[first] || first == "gh" {
 					continue
 				}
-				if !strings.Contains(*corpus, part) {
+				if !strings.Contains(corpus, part) {
 					out = append(out, Finding{"warn", "ci", fmt.Sprintf("%s: %q is not run by .github/workflows on %s", it.label, part, ref)})
 				}
 			}
@@ -444,28 +494,32 @@ func ci(ctx context.Context, g git.Client, top, ref string, items []item) []Find
 
 // workflowCorpus is the whitespace-collapsed text of the workflows on ref, plus
 // the justfile and flake.nix when a workflow hands its commands to them; "" when
-// the ref has no workflows.
-func workflowCorpus(ctx context.Context, g git.Client, top, ref string) string {
-	files, err := tree(ctx, g, top, ref)
-	if err != nil {
-		return ""
-	}
+// the ref has no workflows. A workflow or helper that cannot be read is an error.
+func workflowCorpus(ctx context.Context, g git.Client, top, ref string, files map[string]bool) (string, error) {
 	var b strings.Builder
 	for f := range files {
 		if workflowRe.MatchString(f) {
-			b.WriteString(git.Output(ctx, g, top, "show", ref+":"+f))
+			text, err := g.Run(ctx, top, "show", ref+":"+f)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(text)
 			b.WriteByte('\n')
 		}
 	}
 	if b.Len() == 0 {
-		return ""
+		return "", nil
 	}
 	text := b.String()
 	for _, extra := range []struct{ file, trigger string }{{"justfile", "just "}, {"flake.nix", "nix flake check"}} {
 		if files[extra.file] && strings.Contains(text, extra.trigger) {
-			b.WriteString(git.Output(ctx, g, top, "show", ref+":"+extra.file))
+			text, err := g.Run(ctx, top, "show", ref+":"+extra.file)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(text)
 			b.WriteByte('\n')
 		}
 	}
-	return spaceRe.ReplaceAllString(b.String(), " ")
+	return spaceRe.ReplaceAllString(b.String(), " "), nil
 }

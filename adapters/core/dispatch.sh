@@ -3918,17 +3918,19 @@ _remote_dup_holder() {
 _spec_lint() {
   [ -n "${DISPATCH_SPEC:-}" ] || return 0
   local -a issue_args=()
-  local n out rc=0
+  local n out verdict rc=0
   for n in "${gh_issue:-}" ${also_closes[@]+"${also_closes[@]}"}; do
     case "$n" in '' | *[!0-9]*) continue ;; esac
     issue_args+=(--issue "$n")
   done
   out="$(crew spec-lint "$DISPATCH_SPEC" ${issue_args[@]+"${issue_args[@]}"} "$@" 2>&1)" || rc=$?
   # Exit 1 is lint errors only when the summary line says so.
-  if [ "$rc" = 1 ] && ! grep -q '^spec-lint: ' <<<"$out"; then rc=2; fi
-  case "$rc" in
-  0) ! grep -q '^warn ' <<<"$out" || printf '%s\n' "$out" >&2 ;;
-  1)
+  verdict=failed
+  [ "$rc" != 0 ] || verdict=ok
+  [ "$rc" != 1 ] || ! grep -q '^spec-lint: ' <<<"$out" || verdict=errors
+  case "$verdict" in
+  ok) ! grep -q '^warn ' <<<"$out" || printf '%s\n' "$out" >&2 ;;
+  errors)
     printf '%s\n' "$out" >&2
     [ "${DISPATCH_SKIP_SPEC_LINT:-}" = 1 ] || {
       echo "dispatch: DISPATCH_SPEC failed spec-lint — fix the errors above, or set DISPATCH_SKIP_SPEC_LINT=1 to dispatch anyway" >&2

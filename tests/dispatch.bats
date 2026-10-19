@@ -3876,7 +3876,7 @@ EOF
     DISPATCH_PROFILE=personal DISPATCH_SPEC="$BATS_TEST_TMPDIR/spec.md" \
     run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "lint me"
   [ "$status" -eq 0 ]
-  [[ "$stderr" == *"spec-lint could not run (exit 2); continuing"* ]]
+  [[ "$stderr" == *"spec-lint could not run (exit 1); continuing"* ]]
 }
 
 @test "spec-lint: no DISPATCH_SPEC means no spec-lint call" {

@@ -11,7 +11,7 @@ Findings print to stderr as "<level> <check>: <message>", then a count line.
 Exits 1 when any finding is an error, 0 otherwise (warnings only), and 2 for a
 bad argument or an unreadable file.
 
-  --issue          Issue number (N or #N) to look for on origin; repeatable
-  --no-host-checks Skip the check that commands exist on this host
+  --issue            Issue number (N or #N) to look for on origin; repeatable
+  --no-host-checks   Skip the runnable checks (PATH and platform tools), for a worker on another host
 
   crew spec-lint spec.md --issue 1188

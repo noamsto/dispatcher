@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -22,6 +23,9 @@ type world struct {
 	files    map[string]string
 	mentions string
 	closes   string
+	logErr   bool // the mention search fails
+	lsErr    bool
+	showErr  bool
 }
 
 func (w world) git() *gittest.Fake {
@@ -39,10 +43,19 @@ func (w world) git() *gittest.Fake {
 		case "symbolic-ref":
 			return "", fail
 		case "ls-tree":
+			if w.lsErr {
+				return "", fail
+			}
 			return strings.Join(w.tree, "\n"), nil
 		case "show":
+			if w.showErr {
+				return "", fail
+			}
 			return w.files[strings.TrimPrefix(args[1], "origin/main:")], nil
 		case "log":
+			if w.logErr && !strings.Contains(args[len(args)-1], "close") {
+				return "", fail
+			}
 			if strings.Contains(args[len(args)-1], "close") {
 				return w.closes, nil
 			}
@@ -104,6 +117,12 @@ func TestLint(t *testing.T) {
 			name: "path absent", spec: head + "- edit `crew/foo.go`\n", w: world{tree: []string{"crew/bar.go"}},
 			want: []string{`warn path: crew/foo.go is not on origin/main (say "new" on its line if the spec creates it)`},
 		},
+		{name: "path package-relative", spec: head + "- edit `status/status.go`\n", w: world{tree: []string{"crew/internal/status/status.go"}}},
+		{
+			name: "path suffix needs a segment boundary", spec: head + "- edit `tus/status.go`\n", w: world{tree: []string{"crew/internal/status/status.go"}},
+			want: []string{`warn path: tus/status.go is not on origin/main (say "new" on its line if the spec creates it)`},
+		},
+		{name: "path model id ignored", spec: head + "- use `openrouter/z-ai/glm-5.3-flash`\n"},
 		{name: "path present", spec: head + "- edit `crew/foo.go`\n", w: world{tree: []string{"crew/foo.go"}}},
 		{name: "path absent but new", spec: head + "- add `crew/foo.go`\n", w: world{tree: []string{"crew/bar.go"}}},
 		{name: "path dotless ignored", spec: head + "- on `origin/main` and `feat/x` in `crew/internal/git`\n"},
@@ -133,6 +152,13 @@ func TestLint(t *testing.T) {
 			name: "runnable relative script missing", spec: head + "- `scripts/x.sh --check`\n",
 			want: []string{`warn runnable: item 1: "scripts/x.sh" is not on PATH here`},
 		},
+		{
+			name: "platform tool behind wrapper", spec: head + "- AC1: `nix develop -c xcodebuild -scheme X`\n", look: []string{"nix"},
+			want: []string{`warn runnable: AC1: "xcodebuild" is a macOS tool; this host is linux`},
+		},
+		{name: "platform tool as argument ignored", spec: head + "- `rg -l xcodebuild src/`\n", look: []string{"rg"}},
+		{name: "linux-capable tools not platform tools", spec: head + "- `swift build` `pod install` `fastlane test`\n", look: []string{"swift", "pod", "fastlane"}},
+		{name: "runnable quoted output not a command", spec: head + "- prints `warn premise: x` and `error structure: y`\n"},
 		{name: "runnable builtin", spec: head + "- `cd crew && true`\n"},
 		{name: "runnable not command shaped", spec: head + "- `## Task` `--issue N` `<level> x` `single`\n"},
 		{name: "runnable no host checks", spec: head + "- `mytool x`\n", req: Request{NoHostChecks: true}},
@@ -162,6 +188,28 @@ func TestLint(t *testing.T) {
 			want: []string{`warn ci: AC3: "scripts/x.sh --y" is not run by .github/workflows on origin/main`},
 		},
 		{
+			name: "ci quoted shell part", spec: head + "- AC3: CI runs `nix develop -c sh -c 'cd crew && go vet ./...'`\n",
+			w: world{tree: wfTree, files: map[string]string{".github/workflows/ci.yml": "run: nix develop -c sh -c 'cd crew && go vet ./...'"}}, look: []string{"nix"},
+		},
+		{
+			name: "ci gh part skipped", spec: head + "- AC3: CI is green: `gh pr checks && nix flake check`\n",
+			w: world{tree: wfTree, files: workflow}, look: []string{"gh", "nix"},
+		},
+		{
+			name: "ci workflow unreadable", spec: head + "- AC3: CI runs `nix flake check` and `scripts/x.sh --y`\n",
+			w: world{tree: wfTree, files: workflow, showErr: true}, look: []string{"nix", "scripts/x.sh"},
+			want: []string{"warn ci: cannot read workflows on origin/main: exit status 128: "},
+		},
+		{
+			name: "premise search fails", spec: head + "- one\n", req: Request{Issues: []string{"7"}}, w: world{logErr: true},
+			want: []string{"warn premise: cannot search origin/main for #7: exit status 128: "},
+		},
+		{
+			name: "tree unlistable warns once and skips ci commands", spec: head + "- see `a/b.go`\n- AC3: CI runs `nix flake check`\n",
+			w: world{lsErr: true, files: workflow}, look: []string{"nix"},
+			want: []string{"warn path: cannot list origin/main: exit status 128: "},
+		},
+		{
 			name: "ci command found via flake.nix", spec: head + "- AC3: CI runs `statix check`\n",
 			w: world{tree: append([]string{"flake.nix"}, wfTree...), files: map[string]string{
 				".github/workflows/ci.yml": "run: nix flake check", "flake.nix": "statix  check",
@@ -185,6 +233,27 @@ func TestLint(t *testing.T) {
 				t.Errorf("findings:\n got %q\nwant %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestClosingPattern(t *testing.T) {
+	re := regexp.MustCompile("(?i)" + closingPattern("7"))
+	for _, s := range []string{"Closes #7", "fixes: #7", "Resolved #7", "fix #7."} {
+		if !re.MatchString(s) {
+			t.Errorf("%q not matched", s)
+		}
+	}
+	for _, s := range []string{"Closes #70", "see #7", "#7"} {
+		if re.MatchString(s) {
+			t.Errorf("%q matched", s)
+		}
+	}
+	g := world{mentions: "a1 s"}.git()
+	o := Options{Git: g, LookPath: lookIn(), GOOS: "linux"}
+	Lint(context.Background(), []byte(head+"- one\n"), Request{Issues: []string{"7"}}, "/repo", o)
+	want := "--grep=" + closingPattern("7")
+	if !slices.ContainsFunc(g.Calls(), func(c string) bool { return strings.HasSuffix(c, want) }) {
+		t.Errorf("calls %q lack %q", g.Calls(), want)
 	}
 }
 
