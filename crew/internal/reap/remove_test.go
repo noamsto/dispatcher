@@ -222,7 +222,7 @@ func TestLeftoverProcesses(t *testing.T) {
 		102:         {Cwd: f.wt + "/sub (deleted)"},
 		103:         {Cwd: f.wt + "x"},
 		104:         {Cwd: f.wt},
-		os.Getpid(): {Parent: 104},
+		os.Getpid(): {Parent: 104, Cwd: f.wt},
 	}
 	anchor, _ := wtgit.AnchorPath(f.wt)
 	f.reap(f.main, Request{DryRun: true})

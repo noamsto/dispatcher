@@ -100,7 +100,7 @@ their own group-kill runner), aeye, gtrash, `rosterrender`'s exec hop.
 - `internal/proc`: `Table`, `OS`, and `IsAncestor`/`OwnerPID` over a `Table`
   (they moved out of `crews`). `Cwds` replaces reap's `Procs`/`Ancestors` pair
   (typed rows; `CREW_REAP_PROC_CMD` moved with it); reap's ancestor set became
-  `IsAncestor` per candidate, so ancestry reads through `Parent` (`ps`) rather
+  `Ancestors`, so ancestry reads through `Parent` (`ps`) rather
   than `/proc/<pid>/status`.
 - `internal/proc/proctest`: `Table{Procs map[int]Proc}` (a pid is alive when it
   is a key), `New(live, parents)` and `Killed()`.
@@ -114,7 +114,7 @@ their own group-kill runner), aeye, gtrash, `rosterrender`'s exec hop.
   `CREW_STALL_*_CMD` bash seams, not the process table), `lock`'s holder probe,
   and the `syscall.Kill` of `stream --force` (a TERM then a delivery poll) and
   of the relay/stall process-group kills.
-- Lines (crew/, `wc -l` over `*.go`): non-test 27404 → 27401 (−3), test 44242 →
+- Lines (crew/, `wc -l` over `*.go`): non-test 27404 → 27403 (−1), test 44242 →
   44223 (−19), with the new `proc` and `proctest` packages counted.
 
 ## Slice order

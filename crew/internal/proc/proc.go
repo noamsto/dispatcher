@@ -33,23 +33,23 @@ type Cwd struct {
 // OS is the real process table.
 type OS struct{}
 
-// IsAncestor is _is_ancestor_pid: is <pid> one of this process's ancestors?
-// The walk is bounded (`while [ "$depth" -lt 32 ]`) so a parent chain that
-// cycles cannot spin it, as is OwnerPID's.
-func IsAncestor(t Table, pid int) bool {
-	cur := os.Getpid()
-	for depth := 0; depth < 32; depth++ {
+// Ancestors is this process's parent chain, excluding itself. The walk is
+// bounded (`while [ "$depth" -lt 32 ]`) so a chain that cycles cannot spin it.
+func Ancestors(t Table) map[int]bool {
+	set := map[int]bool{}
+	for cur, depth := os.Getpid(), 0; depth < 32; depth++ {
 		parent, ok := t.Parent(cur)
 		if !ok {
-			return false
+			break
 		}
-		if parent == pid {
-			return true
-		}
+		set[parent] = true
 		cur = parent
 	}
-	return false
+	return set
 }
+
+// IsAncestor is _is_ancestor_pid: is <pid> one of this process's ancestors?
+func IsAncestor(t Table, pid int) bool { return Ancestors(t)[pid] }
 
 // Alive is _pid_alive under any uid: a failed signal is not proof of
 // death — another uid's process answers EPERM, and the signal merely being

@@ -140,8 +140,9 @@ func rmF(path string) {
 // killLeftovers signals every process whose cwd is in wt, this process and its
 // ancestors excepted. A dangling cwd still matches by string.
 func (r *run) killLeftovers(ctx context.Context, wt string) {
+	anc := proc.Ancestors(r.p.Proc)
 	for _, c := range r.p.Proc.Cwds(ctx) {
-		if !strings.HasPrefix(c.Dir+"/", wt+"/") || c.PID == os.Getpid() || proc.IsAncestor(r.p.Proc, c.PID) {
+		if !strings.HasPrefix(c.Dir+"/", wt+"/") || c.PID == os.Getpid() || anc[c.PID] {
 			continue
 		}
 		pid := strconv.Itoa(c.PID)

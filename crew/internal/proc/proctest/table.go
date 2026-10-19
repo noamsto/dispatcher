@@ -27,8 +27,9 @@ type Table struct {
 	killed []int
 }
 
-// New is a Table of the live pids plus each parent link, which makes both ends
-// of the link processes too.
+// New is a Table of the live pids plus the child of each parent link; a parent
+// is alive only if it is listed in live. Any pid with a Comm or Args set by hand
+// is alive too.
 func New(live map[int]bool, parents map[int]int) *Table {
 	t := &Table{Procs: map[int]Proc{}}
 	for pid, ok := range live {
