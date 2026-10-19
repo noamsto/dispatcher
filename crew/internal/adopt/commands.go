@@ -5,7 +5,7 @@ import (
 	"os/exec"
 )
 
-// The arm's three external commands, one function each, with the argv the bash
+// The arm's two external commands, one function each, with the argv the bash
 // writes. `$(…)` strips the trailing newlines of what it captures, which is what
 // these return.
 
@@ -22,15 +22,6 @@ func ghCombined(args ...string) (string, error) {
 func ghQuiet(args ...string) error {
 	cmd := exec.Command("gh", args...)
 	return cmd.Run()
-}
-
-func worktreeList() string {
-	out, err := exec.Command("git", "worktree", "list", "--porcelain").Output()
-	if err != nil {
-		// The arm's `$(git … | awk …)`: no worktree, not an error.
-		return ""
-	}
-	return trimNewlines(string(out))
 }
 
 func trimNewlines(s string) string {

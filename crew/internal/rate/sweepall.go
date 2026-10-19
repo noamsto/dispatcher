@@ -5,12 +5,14 @@ package rate
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 )
@@ -43,12 +45,12 @@ func sweepAll(roots []string, stdout, stderr io.Writer, o Options) int {
 		// A repo's checkout is its common dir's parent, and the origin there folds
 		// to the slug the store keys that repo's rows by.
 		workdir := filepath.Dir(r.Common)
-		origin := o.Git(workdir, "config", "--get", "remote.origin.url")
+		origin := git.Output(context.Background(), o.Git, "", "-C", workdir, "config", "--get", "remote.origin.url")
 		if origin == "" {
 			say(stdout, "%s: skipped (no origin remote)\n", workdir)
 			continue
 		}
-		slug := originSlug(origin)
+		slug := git.RepoSlug(origin)
 		if rc := o.sweepRepo(busAt(r.Common), workdir, stderr); rc != 0 {
 			say(stdout, "%s: failed (rc=%d)\n", slug, rc)
 			failed++

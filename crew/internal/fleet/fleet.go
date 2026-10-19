@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -29,12 +30,11 @@ const Usage = "crew: fleet [--all] [--crew ID] [--json]"
 
 // Options carry every outside read, so tests use temp dirs and stubs.
 type Options struct {
-	Env       func(string) string
-	Registry  string
-	Tmux      tmux.Client
-	Worktrees func(common string) (string, error)
-	Origin    func(common string) string
-	Now       func() time.Time
+	Env      func(string) string
+	Registry string
+	Tmux     tmux.Client
+	Git      git.Client
+	Now      func() time.Time
 }
 
 // onceTmux reads each argv once and shares it, a failed read as no output, so
@@ -92,7 +92,7 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 		for i, e := range events {
 			docs[i] = e.Doc
 		}
-		worktrees := sync.OnceValues(func() (string, error) { return o.Worktrees(r.Common) })
+		worktrees := sync.OnceValues(func() (string, error) { return git.Worktrees(ctx, o.Git, "", r.Common) })
 		live := roster.Liveness{Windows: windowBranches, Worktrees: worktrees}
 		repoRows, err := foldRepo(ctx, r.Common, events, docs, onlyCrew, nowSec, roster.Probes{
 			Tmux:      once,
@@ -102,7 +102,8 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 			say(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, oneLine(err))
 			continue
 		}
-		name := repos.Name(r.Common, o.Origin(r.Common))
+		origin, _ := git.Origin(ctx, o.Git, r.Common)
+		name := repos.Name(r.Common, origin)
 		for _, row := range repoRows {
 			row.Row["repo"] = name
 			row.Row["crew_id"] = row.crew

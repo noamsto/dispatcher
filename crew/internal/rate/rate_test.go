@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 )
 
 // rowA is one swept, settled run of acme/widgets; rowB is another repo's row,
@@ -31,13 +32,11 @@ const (
 
 // fakeGit answers the two probes the arm makes; an empty return stands in for
 // git's empty output when the key or the repo is missing.
-func fakeGit(origin, toplevel string) func(string, ...string) string {
-	return func(_ string, args ...string) string {
-		if len(args) >= 2 && args[0] == "config" {
-			return origin
-		}
-		return toplevel
-	}
+func fakeGit(origin, toplevel string) *gittest.Fake {
+	return &gittest.Fake{Out: map[string]string{
+		"-C /repo config --get remote.origin.url": origin,
+		"-C /repo rev-parse --show-toplevel":      toplevel,
+	}}
 }
 
 // run points Run at a fresh store path; a nil store leaves the file unwritten,
@@ -224,26 +223,6 @@ func TestStoreFailuresFoldToEmpty(t *testing.T) {
 		}
 		if out != headerBare+"\n" {
 			t.Errorf("%s pooled: output = %q, want the header alone", name, out)
-		}
-	}
-}
-
-func TestOriginSlug(t *testing.T) {
-	cases := map[string]string{
-		"https://github.com/acme/widgets.git":       "acme/widgets",
-		"https://github.com/acme/widgets":           "acme/widgets",
-		"git@github.com:acme/widgets.git":           "acme/widgets",
-		"https://gitlab.example.com/group/proj.git": "group/proj",
-		"https://host/x/y":                          "x/y",
-		"":                                          "",
-		"/srv/git/local.git":                        "/srv/git/local",
-		// The sed is unanchored: inside an ssh:// URL it still finds the
-		// git@ host and strips it, leaving the scheme behind.
-		"ssh://git@github.com/acme/widgets.git": "ssh://acme/widgets",
-	}
-	for url, want := range cases {
-		if got := originSlug(url); got != want {
-			t.Errorf("originSlug(%q) = %q, want %q", url, got, want)
 		}
 	}
 }

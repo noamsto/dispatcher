@@ -12,12 +12,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 	"github.com/noamsto/dispatcher/crew/internal/unread"
@@ -73,13 +72,7 @@ func Default(paths bus.Paths, stderr io.Writer, pid int, crewID func() string) O
 			}, unread.Dispatcher)
 		},
 		Rows: func(maxLines int) ([]any, bool) { return probe.BusRows(paths.Log, 0, maxLines) },
-		Toplevel: func(ctx context.Context) string {
-			out, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
-			if err != nil {
-				return ""
-			}
-			return strings.TrimSpace(string(out))
-		},
+		Git:  git.Exec{},
 		Exists: func(path string) bool {
 			st, err := os.Stat(path)
 			return err == nil && st.Mode().IsRegular()

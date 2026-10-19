@@ -1,12 +1,16 @@
 package claimindex
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/git"
+	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 )
 
 func TestSlug(t *testing.T) {
@@ -40,7 +44,7 @@ func TestReleaseAppendsRowUnderSlug(t *testing.T) {
 		return ""
 	}
 	common := filepath.Join(repo, ".git")
-	if err := Release(common, getenv, "42", "c1", time.UnixMilli(1234)); err != nil {
+	if err := Release(context.Background(), git.Exec{}, common, getenv, "42", "c1", time.UnixMilli(1234)); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(data, "crew", "claims", "acme", "widgets.jsonl"))
@@ -60,11 +64,29 @@ func TestReleaseWithoutSlugIsNoop(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	data := t.TempDir()
-	err := Release(filepath.Join(repo, ".git"), func(string) string { return data }, "42", "c1", time.Now())
+	err := Release(context.Background(), git.Exec{}, filepath.Join(repo, ".git"), func(string) string { return data }, "42", "c1", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ents, _ := os.ReadDir(data); len(ents) != 0 {
 		t.Errorf("wrote %v with no origin", ents)
+	}
+}
+
+func TestPathAsksOriginOfCommonDir(t *testing.T) {
+	g := &gittest.Fake{Out: map[string]string{
+		"--git-dir=/c config --get remote.origin.url": "git@github.com:Acme/Widgets.git\n",
+	}}
+	got, err := Path(context.Background(), g, "/c", func(k string) string {
+		if k == "XDG_DATA_HOME" {
+			return "/d"
+		}
+		return ""
+	})
+	if err != nil || got != "/d/crew/claims/acme/widgets.jsonl" {
+		t.Fatalf("Path = %q, %v", got, err)
+	}
+	if calls := g.Calls(); len(calls) != 1 || calls[0] != "--git-dir=/c config --get remote.origin.url" {
+		t.Errorf("calls = %q", calls)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
@@ -21,8 +20,8 @@ func (r *run) discardBranch(ctx context.Context) int {
 		return r.refuse("needs gh")
 	}
 	// --branch also expands @{-N}, so the name must come back unchanged.
-	canon, err := exec.CommandContext(ctx, "git", "check-ref-format", "--branch", r.discard).Output()
-	if err != nil || strings.TrimRight(string(canon), "\n") != r.discard {
+	canon, err := r.p.Git.Run(ctx, "", "check-ref-format", "--branch", r.discard)
+	if err != nil || canon != r.discard {
 		return r.refuse("not a valid branch name")
 	}
 	c := &candidate{mode: "pr"}

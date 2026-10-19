@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
@@ -15,8 +16,8 @@ import (
 // the fold re-reads it for every `exited` row, and `sync.OnceValues` memoizes the
 // failure with the result, so `resolveExited` and the liveness rule see one probe
 // outcome per pass.
-func (o Options) passProbes(ctx context.Context) (roster.Probes, roster.Liveness) {
-	wt := sync.OnceValues(o.Roster.Worktrees)
+func (o Options) passProbes(ctx context.Context, common string) (roster.Probes, roster.Liveness) {
+	wt := sync.OnceValues(func() (string, error) { return git.Worktrees(ctx, o.Git, "", common) })
 	windows := sync.OnceValue(func() map[string]bool { return roster.Windows(ctx, o.Probes.Tmux) })
 	return roster.Probes{Tmux: o.Probes.Tmux, Worktrees: wt},
 		roster.Liveness{Windows: windows, Worktrees: wt}
@@ -30,7 +31,7 @@ func (o Options) passProbes(ctx context.Context) (roster.Probes, roster.Liveness
 // is written, so a malformed bus can never replace a good diagram. A refused
 // `put` is not: it stops the publish and still returns the count.
 func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, noOpen bool, roleRows []string) (int64, error) {
-	rp, rule := o.passProbes(ctx)
+	rp, rule := o.passProbes(ctx, paths.Common)
 	m, err := model(ctx, paths, crew, float64(o.wallSec()), roleRows, rp, rule)
 	if err != nil {
 		return 0, err

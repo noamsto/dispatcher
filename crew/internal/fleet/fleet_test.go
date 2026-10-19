@@ -7,15 +7,34 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/noamsto/dispatcher/crew/internal/roster"
+	"github.com/noamsto/dispatcher/crew/internal/git"
+	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 var fixedNow = time.Unix(1700000100, 0)
+
+// stubGit answers every repo's worktree list with wt (nil: empty) and gives
+// only alpha an origin url, the way an unset key exits 1.
+func stubGit(alpha string, wt func() (string, error)) *gittest.Fake {
+	return &gittest.Fake{Func: func(_ string, args []string) (string, error) {
+		if args[len(args)-1] == "--porcelain" {
+			if wt == nil {
+				return "", nil
+			}
+			return wt()
+		}
+		if args[0] == "--git-dir="+alpha {
+			return "https://github.com/acme/alpha.git", nil
+		}
+		return "", &git.ExitError{Code: 1}
+	}}
+}
 
 func worker(ts int64, crew, branch, state string) string {
 	return fmt.Sprintf(`{"ts":%d,"crew_id":%q,"kind":"status","from":"worker:%s#s1-1","to":"dispatcher:%s","body":{"state":%q}}`, ts*1000, crew, branch, crew, state)
@@ -76,17 +95,11 @@ func setup(t *testing.T) fixture {
 		alpha: alpha,
 		beta:  beta,
 		opts: Options{
-			Env:       func(k string) string { return env[k] },
-			Registry:  registry,
-			Tmux:      &tmuxtest.Fake{Out: map[string]string{"list-panes": "", "list-windows": "feat/a\nfeat/c\n"}},
-			Worktrees: func(string) (string, error) { return "", nil },
-			Origin: func(common string) string {
-				if common == alpha {
-					return "https://github.com/acme/alpha.git"
-				}
-				return ""
-			},
-			Now: func() time.Time { return fixedNow },
+			Env:      func(k string) string { return env[k] },
+			Registry: registry,
+			Tmux:     &tmuxtest.Fake{Out: map[string]string{"list-panes": "", "list-windows": "feat/a\nfeat/c\n"}},
+			Git:      stubGit(alpha, nil),
+			Now:      func() time.Time { return fixedNow },
 		},
 	}
 }
@@ -247,9 +260,9 @@ func TestWorktreesFailureNoteIsOneLine(t *testing.T) {
 	if err := os.WriteFile(f.opts.Registry, append(reg, []byte(repo+"\n")...), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	f.opts.Worktrees = func(string) (string, error) {
-		return "", &roster.ExitError{Code: 128, Stderr: "fatal: dubious ownership\n"}
-	}
+	f.opts.Git = stubGit(f.alpha, func() (string, error) {
+		return "", &git.ExitError{Code: 128, Stderr: "fatal: dubious ownership\n"}
+	})
 	_, errs, code := run(t, f, Request{})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
@@ -268,10 +281,13 @@ func TestWorktreesProbedOncePerRepo(t *testing.T) {
 	if err := os.WriteFile(f.opts.Registry, []byte(repo+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	calls := 0
-	f.opts.Worktrees = func(string) (string, error) { calls++; return "", nil }
-	if _, _, code := run(t, f, Request{All: true}); code != 0 || calls != 1 {
-		t.Errorf("code %d, Worktrees called %d times", code, calls)
+	g := stubGit(f.alpha, nil)
+	f.opts.Git = g
+	_, _, code := run(t, f, Request{All: true})
+	common := "--git-dir=" + repo
+	want := []string{common + " worktree list --porcelain", common + " config --get remote.origin.url"}
+	if got := g.Calls(); code != 0 || !slices.Equal(got, want) {
+		t.Errorf("code %d, git calls %q, want once each: %q", code, got, want)
 	}
 }
 
@@ -348,9 +364,9 @@ func TestStaleRowsHiddenByDefault(t *testing.T) {
 func TestWorktreeVouchesOnlyWhileRowIsFresh(t *testing.T) {
 	f := setup(t)
 	f.opts.Tmux = &tmuxtest.Fake{}
-	f.opts.Worktrees = func(string) (string, error) {
+	f.opts.Git = stubGit(f.alpha, func() (string, error) {
 		return "worktree /w/a\nbranch refs/heads/feat/a\n\nworktree /w/c\nbranch refs/heads/feat/c\n", nil
-	}
+	})
 	if out, _, _ := run(t, f, Request{}); !strings.Contains(out, "feat/a") || !strings.Contains(out, "feat/c") {
 		t.Errorf("fresh rows with a worktree hidden:\n%s", out)
 	}
@@ -374,7 +390,7 @@ func TestTmuxReadOnce(t *testing.T) {
 func TestWorktreeProbeFailureKeepsFreshRows(t *testing.T) {
 	f := setup(t)
 	f.opts.Tmux = &tmuxtest.Fake{}
-	f.opts.Worktrees = func(string) (string, error) { return "", fmt.Errorf("git: boom") }
+	f.opts.Git = stubGit(f.alpha, func() (string, error) { return "", fmt.Errorf("git: boom") })
 	out, errs, _ := run(t, f, Request{})
 	if !strings.Contains(out, "feat/a") || strings.Contains(errs, "stale") {
 		t.Errorf("out %s\nerr %q", out, errs)
@@ -392,12 +408,11 @@ func TestNonFiniteAgeIsClampedInJSONAndDashInTable(t *testing.T) {
 	empty := t.TempDir()
 	env := map[string]string{"HOME": empty, "CREW_SWEEP_ROOTS": empty}
 	o := Options{
-		Env:       func(k string) string { return env[k] },
-		Registry:  registry,
-		Tmux:      &tmuxtest.Fake{Out: map[string]string{"list-windows": "feat/x\n"}},
-		Worktrees: func(string) (string, error) { return "", nil },
-		Origin:    func(string) string { return "" },
-		Now:       func() time.Time { return fixedNow },
+		Env:      func(k string) string { return env[k] },
+		Registry: registry,
+		Tmux:     &tmuxtest.Fake{Out: map[string]string{"list-windows": "feat/x\n"}},
+		Git:      stubGit("", nil),
+		Now:      func() time.Time { return fixedNow },
 	}
 	f := fixture{opts: o}
 

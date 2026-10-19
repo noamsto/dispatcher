@@ -8,7 +8,6 @@ package roster
 import (
 	"context"
 	_ "embed"
-	"fmt"
 	"slices"
 	"strings"
 
@@ -28,14 +27,6 @@ var finalProgram string
 // "." and a trailing "-wrapped" are stripped.
 var EngineCommands = []string{"claude", "codex", "cursor-agent", "node", "pi"}
 
-// ExitError is a failed external command: its exit status and stderr.
-type ExitError struct {
-	Code   int
-	Stderr string
-}
-
-func (e *ExitError) Error() string { return fmt.Sprintf("exit status %d: %s", e.Code, e.Stderr) }
-
 // Probes are the external reads the arm makes, injected so a fold is a pure
 // function of the bus and its scripted tmux.
 type Probes struct {
@@ -43,7 +34,7 @@ type Probes struct {
 	// list. A tmux failure reads as no output.
 	Tmux tmux.Client
 	// Worktrees is the stdout of `git worktree list --porcelain`. A failure
-	// is an *ExitError: the arm dies with git's status.
+	// is a *git.ExitError: the arm dies with git's status.
 	Worktrees func() (string, error)
 	// Live (`crew roster --live`) gives each row `live`: whether its branch
 	// has a tmux window on this host. Unset leaves the rows as the bus alone
@@ -76,7 +67,7 @@ func CrewWindowBranches(out, crew string) map[string]bool {
 // Fold is `crew roster <crew>` once the log exists: one row per branch, with
 // age_s computed against nowSec (jq's `now`). A jq runtime error is returned
 // as an error (main maps it to the jq-failure exit status), a failing
-// worktree probe as its *ExitError.
+// worktree probe as its *git.ExitError.
 func Fold(ctx context.Context, events []any, crew string, nowSec float64, p Probes) ([]map[string]any, error) {
 	base, err := jqrun.RunAny(baseProgram, events, nowSec, map[string]any{"crew": jsonval.ValidUTF8(crew)})
 	if err != nil {

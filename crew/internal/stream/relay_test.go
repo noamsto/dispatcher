@@ -393,7 +393,7 @@ func TestFleetRelayLabelsRepoAndReapsPeriodically(t *testing.T) {
 	l := startFleet(t, FleetOptions{
 		Options:  Options{Self: self, relay: timing},
 		Discover: okRepos(alpha),
-		Origin:   origins(map[string]string{alpha: "git@github.com:o/alpha.git"}),
+		Git:      origin(alpha, "git@github.com:o/alpha.git"),
 	}, fastRequest())
 
 	waitFor(t, "the relayed batch", func() bool { return line(l.lines(), isRelayed) != nil })

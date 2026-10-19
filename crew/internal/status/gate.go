@@ -1,6 +1,7 @@
 package status
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
 )
 
@@ -37,11 +39,11 @@ type taskDoc struct {
 // session on this branch in this crew count (the resume case; the plan seam
 // only since the latest dispatch). A worker that cannot review stops on an
 // ungated state (blocked/failed), so refusing here never strands one.
-func (g gate) check() string {
+func (g gate) check(ctx context.Context) string {
 	if g.state != "pr_open" && g.state != "done" || !strings.HasPrefix(g.from, "worker:") {
 		return ""
 	}
-	top := g.o.Toplevel()
+	top := git.Output(ctx, g.o.Git, "", "-C", g.o.Dir, "rev-parse", "--show-toplevel")
 	if top == "" {
 		return ""
 	}

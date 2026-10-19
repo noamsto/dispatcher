@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git"
+	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/watch"
@@ -170,8 +172,9 @@ func okRepos(commons ...string) func(io.Writer) []repos.Repo {
 	}
 }
 
-func origins(urls map[string]string) func(string) string {
-	return func(common string) string { return urls[common] }
+// origin is a git whose one repo, common, has the origin url.
+func origin(common, url string) git.Client {
+	return &gittest.Fake{Out: map[string]string{"--git-dir=" + common + " config --get remote.origin.url": url}}
 }
 
 // fleetLane is one RunFleet in the background. Its coordinator ticks only when
@@ -366,7 +369,7 @@ func TestFleetDeliversFromEitherRepoOnceTagged(t *testing.T) {
 	l := startFleet(t, FleetOptions{
 		Options:  Options{Self: watchStub(t)},
 		Discover: okRepos(alpha, beta, gamma),
-		Origin:   origins(map[string]string{alpha: "https://github.com/acme/alpha.git"}),
+		Git:      origin(alpha, "https://github.com/acme/alpha.git"),
 	}, fastRequest())
 
 	appendRow(t, alpha, statusRow(2000, "c1", "worker:feat/a", "pr_open"))
@@ -410,7 +413,6 @@ func TestFleetReportsInnerWatchFailureOnStderr(t *testing.T) {
 	l := startFleet(t, FleetOptions{
 		Options:  Options{Self: scriptStub(t, "echo 'crew: another watch is already running for this crew (c1)' >&2; exit 1")},
 		Discover: okRepos(alpha),
-		Origin:   origins(nil),
 	}, fastRequest())
 
 	want := "crew: fleet stream: alpha: inner watch failed (rc 1): crew: another watch is already running for this crew (c1)"
@@ -429,7 +431,6 @@ func TestFleetJoinsRepoAtNextRediscovery(t *testing.T) {
 	l := startFleet(t, FleetOptions{
 		Options:  Options{Self: watchStub(t)},
 		Discover: okRepos(alpha, gamma),
-		Origin:   origins(nil),
 	}, rediscoverEachSecond())
 
 	// gamma's first c1 row lands after the first discovery passed it over.
@@ -473,7 +474,6 @@ func TestFleetSkipsGoneAndNoBus(t *testing.T) {
 				{Common: nobus, Status: repos.StatusNoBus},
 			}
 		},
-		Origin: origins(nil),
 	}, rediscoverEachSecond())
 
 	betaScratch := busScratch(filepath.Join(l.root, "c1"), beta)
@@ -520,7 +520,6 @@ func TestFleetRelativeSelfStillDelivers(t *testing.T) {
 			l := startFleet(t, FleetOptions{
 				Options:  Options{Self: tc.self(stub)},
 				Discover: okRepos(alpha),
-				Origin:   origins(nil),
 			}, fastRequest())
 
 			appendRow(t, alpha, statusRow(2000, "c1", "worker:feat/a", "pr_open"))
@@ -545,7 +544,6 @@ func TestFleetLeavesRepoDroppedFromDiscovery(t *testing.T) {
 			}
 			return okRepos(alpha)(nil)
 		},
-		Origin: origins(nil),
 	}, rediscoverEachSecond())
 
 	betaScratch := busScratch(filepath.Join(l.root, "c1"), beta)
@@ -581,7 +579,6 @@ func TestFleetNoDoubleDeliveryWithPerRepoStream(t *testing.T) {
 	l := startFleet(t, FleetOptions{
 		Options:  Options{Self: watchStub(t), Proc: aliveFunc{f: func(pid int) bool { return pid == 4242 && perRepoAlive.Load() }}},
 		Discover: okRepos(alpha),
-		Origin:   origins(nil),
 	}, fastRequest())
 
 	// (a) The per-repo stream is alive: the fleet never parks on this bus.
@@ -686,7 +683,7 @@ func TestFleetStopTagsDrainedBatch(t *testing.T) {
 	l := startFleet(t, FleetOptions{
 		Options:  Options{Self: scriptStub(t, "printf '%s\\n' '"+batch+"'; exec sleep 60")},
 		Discover: okRepos(alpha),
-		Origin:   origins(map[string]string{alpha: "git@github.com:acme/alpha.git"}),
+		Git:      origin(alpha, "git@github.com:acme/alpha.git"),
 	}, fastRequest())
 
 	outf := filepath.Join(busScratch(filepath.Join(l.root, "c1"), alpha), "stream.out")
@@ -714,7 +711,6 @@ func TestFleetKeepsCwdDotfiles(t *testing.T) {
 	l := startFleet(t, FleetOptions{
 		Options:  Options{Self: scriptStub(t, "exec sleep 60")},
 		Discover: okRepos(alpha),
-		Origin:   origins(nil),
 	}, fastRequest())
 	lane := filepath.Join(l.root, "c1")
 	waitFor(t, "alpha's bus loop", func() bool { _, err := os.Stat(busScratch(lane, alpha)); return err == nil })
@@ -902,7 +898,6 @@ func TestFleetLeavesRepoNoLongerListedOK(t *testing.T) {
 				{Common: beta, Status: betaStatus.Load().(repos.Status)},
 			}
 		},
-		Origin: origins(nil),
 	}, rediscoverEachSecond())
 
 	betaScratch := busScratch(filepath.Join(l.root, "c1"), beta)

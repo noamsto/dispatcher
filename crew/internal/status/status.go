@@ -23,6 +23,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/panestate"
@@ -42,24 +43,28 @@ var planProg string
 const exitFailure = 1
 
 // Options is everything the arms read beyond the bus. Nil fields take the
-// production default (CrewID and Toplevel read the process's working
+// production default (CrewID and Git read the process's working
 // directory) except Tmux, where nil publishes nothing to a pane.
 type Options struct {
-	CrewID   func() string                                                       // `_crew_id`
-	Toplevel func() string                                                       // `git rev-parse --show-toplevel`, "" outside a checkout
-	NowMS    func() int64                                                        // jq's `now*1000|floor`; real time, never CREW_CLOCK
-	Getenv   func(string) string                                                 // CREW_ROLE_ID, TMUX_PANE
-	Tmux     tmux.Client                                                         // nil: no tmux on PATH
-	Fold     func(prog string, lines []string, vars map[string]any) (any, error) // jqrun.RunAny by default; a test seam
-	Sender   sender.Probes                                                       // the sender check's reads; Getenv defaults to Options.Getenv
+	CrewID func() string                                                       // `_crew_id`
+	Git    git.Client                                                          // nil: the git on PATH
+	Dir    string                                                              // the directory the toplevel is read from (-C); "" is "."
+	NowMS  func() int64                                                        // jq's `now*1000|floor`; real time, never CREW_CLOCK
+	Getenv func(string) string                                                 // CREW_ROLE_ID, TMUX_PANE
+	Tmux   tmux.Client                                                         // nil: no tmux on PATH
+	Fold   func(prog string, lines []string, vars map[string]any) (any, error) // jqrun.RunAny by default; a test seam
+	Sender sender.Probes                                                       // the sender check's reads; Getenv defaults to Options.Getenv
 }
 
 func (o Options) withDefaults() Options {
 	if o.CrewID == nil {
 		o.CrewID = func() string { return bus.CrewID(context.Background(), ".") }
 	}
-	if o.Toplevel == nil {
-		o.Toplevel = func() string { return bus.Toplevel(context.Background(), ".") }
+	if o.Git == nil {
+		o.Git = git.Exec{}
+	}
+	if o.Dir == "" {
+		o.Dir = "."
 	}
 	if o.Getenv == nil {
 		o.Getenv = os.Getenv
@@ -190,7 +195,7 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 	}
 
 	g := gate{crew: crew, from: from, state: state, detail: detail, paths: paths, o: o}
-	if line := g.check(); line != "" {
+	if line := g.check(ctx); line != "" {
 		say(stderr, "%s\n", line)
 		return exitFailure
 	}

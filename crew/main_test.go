@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
@@ -70,7 +71,7 @@ func repoWithLog(t *testing.T, log *string, mode os.FileMode) (repo, logPath str
 
 func TestRunMapsFoldErrorsToExitCodes(t *testing.T) {
 	str := func(s string) *string { return &s }
-	gitFailure := &roster.ExitError{Code: 128, Stderr: "fatal: not a git repository\n"}
+	gitFailure := &git.ExitError{Code: 128, Stderr: "fatal: not a git repository\n"}
 	tests := []struct {
 		name       string
 		args       []string

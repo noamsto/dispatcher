@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
@@ -304,8 +303,10 @@ type reapedBody struct {
 // keeps it: its patch applies to that branch's tip.
 func (r *run) deleteBranch(ctx context.Context, c *candidate) {
 	ref := "refs/heads/" + c.branch
-	if r.discard != "" || c.mode != "pr" || c.prState != "MERGED" ||
-		exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", ref).Run() != nil {
+	if r.discard != "" || c.mode != "pr" || c.prState != "MERGED" {
+		return
+	}
+	if _, err := r.p.Git.Run(ctx, "", "show-ref", "--verify", "--quiet", ref); err != nil {
 		return
 	}
 	head, _ := r.p.Gh(ctx, "pr", "view", c.pr, "--json", "headRefOid", "--jq", ".headRefOid")
@@ -326,10 +327,11 @@ func (r *run) deleteBranch(ctx context.Context, c *candidate) {
 // revParse is `$(git rev-parse <ref>)` from the trusted cwd, git's stderr to
 // the reap's.
 func (r *run) revParse(ctx context.Context, ref string) string {
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", ref)
-	cmd.Stderr = r.stderr
-	out, _ := cmd.Output()
-	return strings.TrimRight(string(out), "\n")
+	out, err := r.p.Git.Run(ctx, "", "rev-parse", ref)
+	if err != nil {
+		r.gitStderr(err)
+	}
+	return out
 }
 
 // releaseLabels drops `dispatched` from the issues this branch closes.
@@ -351,7 +353,7 @@ func (r *run) releaseLabels(ctx context.Context, c *candidate) {
 			r.note("could not remove the dispatched label from #" + issue + " (" + c.branch + ")")
 			continue
 		}
-		if err := claimindex.Release(r.paths.Common, r.o.Getenv, issue, "", r.p.Now()); err != nil {
+		if err := claimindex.Release(ctx, r.p.Git, r.paths.Common, r.o.Getenv, issue, "", r.p.Now()); err != nil {
 			r.note("could not record the release of #" + issue + " in the claim index: " + err.Error())
 		}
 	}

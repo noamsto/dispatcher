@@ -13,8 +13,8 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
-	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
@@ -82,7 +82,7 @@ func newLoop(t *testing.T) *loop {
 		},
 		Proc: &proctest.Table{},
 		// `crew roster`'s own read: no worktrees.
-		Roster:    roster.Probes{Worktrees: func() (string, error) { return "", nil }},
+		Git:       &gittest.Fake{Func: func(string, []string) (string, error) { return "", nil }},
 		RosterDir: filepath.Join(dir, "d2"),
 		PID:       os.Getpid(),
 	}

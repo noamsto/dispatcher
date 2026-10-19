@@ -14,6 +14,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 )
 
 // armFixture is the CLI under test with its side effects faked: the bus log and the
@@ -112,10 +113,10 @@ func (f *armFixture) run(req Request) int {
 		}
 	}
 	return Run(context.Background(), req, f.paths, f.stdout, f.stderr, Options{
-		Deps:     deps,
-		CrewID:   func() string { return f.crewID },
-		Getenv:   env(f.env),
-		Toplevel: func(context.Context) string { return f.toplevel },
+		Deps:   deps,
+		CrewID: func() string { return f.crewID },
+		Getenv: env(f.env),
+		Git:    &gittest.Fake{Out: map[string]string{"rev-parse --show-toplevel": f.toplevel}},
 		Exists: func(path string) bool {
 			return f.workerTask && strings.HasSuffix(path, "/WORKER_TASK.md")
 		},
@@ -144,8 +145,8 @@ func (f *armFixture) runWith(deps Deps, req Request) int {
 	f.t.Helper()
 	return Run(context.Background(), req, f.paths, f.stdout, f.stderr, Options{
 		Deps: deps, CrewID: func() string { return f.crewID }, Getenv: env(f.env),
-		Toplevel: func(context.Context) string { return f.toplevel },
-		Exists:   func(string) bool { return false },
+		Git:    &gittest.Fake{Out: map[string]string{"rev-parse --show-toplevel": f.toplevel}},
+		Exists: func(string) bool { return false },
 		Unread: func(context.Context, string, string, string) string {
 			return f.unread
 		},
@@ -703,8 +704,8 @@ func TestRunWaitRowFollowsCrewClock(t *testing.T) {
 	}
 	if rc := Run(context.Background(), Request{Wait: "30", Target: idleReq}, f.paths, f.stdout, f.stderr, Options{
 		Deps: deps, CrewID: func() string { return f.crewID }, Getenv: env(f.env),
-		Toplevel: func(context.Context) string { return "" },
-		Exists:   func(string) bool { return false },
+		Git:    &gittest.Fake{Out: map[string]string{"rev-parse --show-toplevel": ""}},
+		Exists: func(string) bool { return false },
 		Unread: func(context.Context, string, string, string) string {
 			return f.unread
 		},

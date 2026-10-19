@@ -7,6 +7,7 @@ package rate
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
@@ -213,7 +215,7 @@ func (s *sweep) settings() string {
 // gh_repo alone gates the reconcile.
 func (s *sweep) repoScopes() (repo, ghRepo string) {
 	url := s.git("config", "--get", "remote.origin.url")
-	repo = originSlug(url)
+	repo = git.RepoSlug(url)
 	switch {
 	case strings.HasPrefix(url, "https://github.com/"), strings.HasPrefix(url, "git@github.com:"):
 		ghRepo = repo
@@ -516,14 +518,13 @@ func splitSlug(slug string) (owner, name string) {
 }
 
 func (s *sweep) git(args ...string) string {
-	out, _ := s.o.Run(append([]string{"git", "-C", s.cwd}, args...)...)
-	return out
+	return git.Output(context.Background(), s.o.Git, "", append([]string{"-C", s.cwd}, args...)...)
 }
 
 // gitOK is the one call the arm judges by exit status alone: `cat-file -e`
 // succeeds by printing nothing, so stdout says nothing about it.
 func (s *sweep) gitOK(args ...string) bool {
-	_, err := s.o.Run(append([]string{"git", "-C", s.cwd}, args...)...)
+	_, err := s.o.Git.Run(context.Background(), "", append([]string{"-C", s.cwd}, args...)...)
 	return err == nil
 }
 

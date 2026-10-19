@@ -11,9 +11,10 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
+
+	"github.com/noamsto/dispatcher/crew/internal/git"
 )
 
 // ErrNotRepo means the directory is not inside a git repository.
@@ -231,11 +232,7 @@ func Locate(ctx context.Context, cwd string) (Paths, error) {
 // gitOutput is `$(git -C cwd args... 2>/dev/null || true)`: stderr dropped,
 // failure and trailing newlines gone.
 func gitOutput(ctx context.Context, cwd string, args ...string) string {
-	out, err := exec.CommandContext(ctx, "git", append([]string{"-C", cwd}, args...)...).Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimRight(string(out), "\n")
+	return git.Output(ctx, git.Exec{}, "", append([]string{"-C", cwd}, args...)...)
 }
 
 // Toplevel is `git rev-parse --show-toplevel` from cwd, "" outside a checkout.

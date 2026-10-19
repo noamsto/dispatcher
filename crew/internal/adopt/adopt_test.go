@@ -1,6 +1,7 @@
 package adopt
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git"
+	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
@@ -47,6 +50,16 @@ func (s *stub) procs() *proctest.Table {
 	return t
 }
 
+// git answers the worktree list from the script; the claim index's own
+// `config` read runs against the real repo a test set up.
+func (s *stub) git(dir string, args []string) (string, error) {
+	if args[0] != "worktree" {
+		return git.Exec{}.Run(context.Background(), dir, args...)
+	}
+	s.calls = append(s.calls, "git "+strings.Join(args, " "))
+	return s.wtOut, nil
+}
+
 func (s *stub) options() Options {
 	s.tx = &tmuxtest.Fake{Out: map[string]string{"list-windows": s.wins, "display-message": s.self}}
 	return Options{
@@ -60,7 +73,7 @@ func (s *stub) options() Options {
 			s.calls = append(s.calls, "gh "+strings.Join(args, " "))
 			return s.ghEdit
 		},
-		Worktrees: func() string { s.calls = append(s.calls, "git worktree list --porcelain"); return s.wtOut },
+		Git:       &gittest.Fake{Func: s.git},
 		Tmux:      s.tx,
 		LookupEnv: func(k string) string { return s.env[k] },
 		PID:       4242,

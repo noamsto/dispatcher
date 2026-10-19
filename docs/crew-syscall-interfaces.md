@@ -60,7 +60,7 @@ consumer. Fakes live in a `<concern>test` package imported only from tests.
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------- |
 | tmux (done) | `tmux.Client{ Run(ctx, args...) (string, error) }` + `tmux.Output` (failure = "")                                                                                                                                                                                                                               | `tmux.Exec{}`                                                    | `tmuxtest.Fake{Out, Func}` + `Calls()`                         |
 | gh          | `gh.Client{ Run(ctx, args...) (string, error); Combined(ctx, args...) (string, error) }`; quiet = `Run` with the output dropped; `HaveGh` = `errors.Is(err, exec.ErrNotFound)`                                                                                                                                  | `gh.Exec{}`                                                      | `ghtest.Fake` (same shape as `tmuxtest`)                       |
-| git         | `git.Client{ Run(ctx, dir string, args...) (string, error) }` + funcs `Worktrees`, `Toplevel`, `Origin` over it; `wtgit` keeps the porcelain layer                                                                                                                                                              | `git.Exec{}`                                                     | `gittest.Fake` keyed by dir + argv                             |
+| git         | `git.Client{ Run(ctx, dir string, args...) (string, error) }` + funcs `Output`, `Worktrees`, `Toplevel`, `Origin` over it, plus `RepoSlug(url)`; a non-zero exit is a `*git.ExitError`; `wtgit` and `gitguard` keep their own runners                                                                           | `git.Exec{}`                                                     | `gittest.Fake` keyed by dir + argv                             |
 | proc        | `proc.Table{ Alive(pid) bool; Elapsed(pid) (int64, bool); Parent(pid) (int, bool); Comm(pid) (string, bool); Args(pid) string; Cwds(ctx) []Cwd; Kill(pid) }`, plus `IsAncestor`/`OwnerPID` as funcs over a `Table`                                                                                              | `proc.OS{}` (from `crews.DefaultProbes`, `reap`, `adopt.PsArgs`) | `proctest.Table{Procs}` (map pid → proc) + `Killed()`          |
 | clock       | packages take the existing `clock.Clock` value instead of bare `Now` funcs; its `Sleep`/`SleepCtx` already advance a `CrewClock` file instead of sleeping. The wall-clock `time.Duration` sleeps (`reap`, `rosterrender`, which must never follow `CREW_CLOCK`) and `stream`'s timers are decided in that slice | new `clock.FromEnv()` (what `main.go` builds by hand today)      | `clock.Clock{Now: fixed, CrewClock: tmpfile}` (no new package) |
 | env         | no interface: `Getenv func(string) string` is already the stdlib shape; rename `Env`/`LookupEnv` fields to `Getenv` and drop duplicates                                                                                                                                                                         | `os.Getenv`                                                      | a map's lookup                                                 |
@@ -117,19 +117,53 @@ their own group-kill runner), aeye, gtrash, `rosterrender`'s exec hop.
 - Lines (crew/, `wc -l` over `*.go`): non-test 27404 → 27403 (−1), test 44242 →
   44223 (−19), with the new `proc` and `proctest` packages counted.
 
+## The git slice
+
+- `internal/git`: `Client`, `Exec` (cmd.Dir = dir; stdout trailing-newline-trimmed
+  and kept on failure; a non-zero exit is `*ExitError{Code, Stderr}` with git's
+  stderr captured), and `Output`, `Worktrees`, `Toplevel`, `Origin` over a
+  `Client`. `RepoSlug` is the `_origin_repo` sed rate and reap each carried.
+  `git.ExitError` replaces `roster.ExitError`.
+- `internal/git/gittest`: `Fake`: `Func`, when set, answers every call; otherwise
+  `Out[key]` (argv, prefixed `<dir>: ` when dir is set), and an unmatched key
+  fails with exit 128; `Calls()` records the keys.
+- Every site passes the argv it passed before (`-C dir` stays in argv where it
+  was; `cmd.Dir` becomes dir). `rate`, `status`, `nudge`, `adopt`, `reap`,
+  `fleet`, `rosterrender` and `stream`'s fleet lane hold one `Git git.Client`;
+  `claimindex.Path`/`Release` take one; `bus` and `remote`, with no test seam,
+  call `git.Exec{}`. `main.go` lost `originOf`, `commonWorktrees`, `worktreeList`.
+- Kept: `roster.Probes.Worktrees` and `roster.Liveness.Worktrees`, the per-pass
+  memo of one `git.Worktrees` read (fleet and rosterrender share it between the
+  fold and the liveness rule); `bus.Toplevel` (`git -C cwd rev-parse`: `bus.CrewID` and reap's
+  autosweep log line).
+- Exceptions (still exec git themselves): `wtgit` (the anchored porcelain layer:
+  `--git-dir`, neutral `-c`, scrubbed env) and `gitguard`, which streams git's
+  stderr live to its caller and is called from the unchanged `wtgit`. No
+  converted site carried `-c` or env scrubbing; the anchored `--git-dir` sites
+  differ in coverage: claimindex, reap's release and fleet have exact-argv
+  tests; rosterrender, remote and stream's fleet lane pass `--git-dir` through
+  `git.Worktrees`/`git.Origin` without their own.
+- One output change: reap's `worktree list` and `rev-parse` streamed git's
+  stderr; they now write the captured stderr after a failed exit, so a warning
+  on a successful run is no longer forwarded.
+- Lines (crew/, `wc -l` over `*.go`): non-test 27403 → 27465 (+62), test
+  44223 → 44337 (+114), with the new `git` and `gittest` packages counted. The
+  rest of the diff is net negative; the new package (150 lines) and the AC2
+  exact-argv tests are the cost, since each replaced site was one to three lines.
+
 ## Slice order
 
 One PR each, largest duplication first. Savings are estimates from the field
 and fake counts above (net Go lines, non-test + test).
 
-| #   | concern | packages                                                                                                            | fakes replaced                                                                             | est. net lines |
-| --- | ------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------- |
-| 1   | tmux    | 14 + main                                                                                                           | 20 test files                                                                              | measured above |
-| 2   | proc    | crews, reap, sender, adopt, register, reply, stream, rosterrender, main                                             | ~12 test files (`crews_test`, `register_test`, `adopt_test`, `reply_test`, `main_test`, …) | measured above |
-| 3   | git     | main, roster, fleet, adopt, nudge, status, rate, reap, bus, claimindex, gitguard, remote; `stream`'s `Origin` field | ~10 test files                                                                             | −60 to −120    |
-| 4   | gh      | reap, stack, adopt, rate                                                                                            | ~4 test files                                                                              | −30 to −60     |
-| 5   | clock   | 15 `Now`, 5 `Sleep`/`Timer` fields and `Rediscover`, 6 `clock.Clock` holders                                        | most test files set `Now`                                                                  | −20 to −50     |
-| 6   | env     | 17 `Getenv`/`LookupEnv`/`Env`/`Setenv`/`Environ` fields                                                             | —                                                                                          | −10 to −30     |
+| #   | concern | packages                                                                                                                             | fakes replaced                                                                             | est. net lines |
+| --- | ------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ | -------------- |
+| 1   | tmux    | 14 + main                                                                                                                            | 20 test files                                                                              | measured above |
+| 2   | proc    | crews, reap, sender, adopt, register, reply, stream, rosterrender, main                                                              | ~12 test files (`crews_test`, `register_test`, `adopt_test`, `reply_test`, `main_test`, …) | measured above |
+| 3   | git     | main, roster, fleet, adopt, nudge, status, rate, reap, bus, claimindex, remote, rosterrender, stream (gitguard kept as an exception) | 19 test files                                                                              | measured above |
+| 4   | gh      | reap, stack, adopt, rate                                                                                                             | ~4 test files                                                                              | −30 to −60     |
+| 5   | clock   | 15 `Now`, 5 `Sleep`/`Timer` fields and `Rediscover`, 6 `clock.Clock` holders                                                         | most test files set `Now`                                                                  | −20 to −50     |
+| 6   | env     | 17 `Getenv`/`LookupEnv`/`Env`/`Setenv`/`Environ` fields                                                                              | —                                                                                          | −10 to −30     |
 
 Each slice follows the tmux slice's shape: add the package and fake, convert
 one dependency cluster per commit (consumers that share an entry point move

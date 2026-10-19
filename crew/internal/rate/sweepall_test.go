@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 )
 
 // dispatchRow is the one bus event a repo needs to be discoverable: the walk
@@ -112,7 +113,9 @@ func (f *sweepAllFixture) options() Options {
 			}
 			return ""
 		},
-		Git: func(dir string, _ ...string) string { return f.origins[dir] },
+		Git: &gittest.Fake{Func: func(_ string, args []string) (string, error) {
+			return f.origins[args[1]], nil
+		}},
 		SweepRepo: func(paths bus.Paths, workdir string, _ io.Writer) int {
 			f.swept = append(f.swept, workdir)
 			if want := filepath.Join(workdir, ".git"); paths.Common != want {
