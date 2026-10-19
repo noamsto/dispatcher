@@ -59,7 +59,7 @@ consumer. Fakes live in a `<concern>test` package imported only from tests.
 | concern     | interface                                                                                                                                                                                                                                                                                                       | real                                                             | fake                                                           |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------- |
 | tmux (done) | `tmux.Client{ Run(ctx, args...) (string, error) }` + `tmux.Output` (failure = "")                                                                                                                                                                                                                               | `tmux.Exec{}`                                                    | `tmuxtest.Fake{Out, Func}` + `Calls()`                         |
-| gh          | `gh.Client{ Run(ctx, args...) (string, error); Combined(ctx, args...) (string, error) }`; quiet = `Run` with the output dropped; `HaveGh` = `errors.Is(err, exec.ErrNotFound)`                                                                                                                                  | `gh.Exec{}`                                                      | `ghtest.Fake` (same shape as `tmuxtest`)                       |
+| gh          | `gh.Client{ Run(ctx, args...) (string, error); Combined(ctx, args...) (string, error) }`; quiet = `Run` with the output dropped; `HaveGh` = `gh.Installed` (`Run("--version")`, then `errors.Is(err, exec.ErrNotFound)`)                                                                                        | `gh.Exec{}`                                                      | `ghtest.Fake` (same shape as `tmuxtest`)                       |
 | git         | `git.Client{ Run(ctx, dir string, args...) (string, error) }` + funcs `Output`, `Worktrees`, `Toplevel`, `Origin` over it, plus `RepoSlug(url)`; a non-zero exit is a `*git.ExitError`; `wtgit` and `gitguard` keep their own runners                                                                           | `git.Exec{}`                                                     | `gittest.Fake` keyed by dir + argv                             |
 | proc        | `proc.Table{ Alive(pid) bool; Elapsed(pid) (int64, bool); Parent(pid) (int, bool); Comm(pid) (string, bool); Args(pid) string; Cwds(ctx) []Cwd; Kill(pid) }`, plus `IsAncestor`/`OwnerPID` as funcs over a `Table`                                                                                              | `proc.OS{}` (from `crews.DefaultProbes`, `reap`, `adopt.PsArgs`) | `proctest.Table{Procs}` (map pid → proc) + `Killed()`          |
 | clock       | packages take the existing `clock.Clock` value instead of bare `Now` funcs; its `Sleep`/`SleepCtx` already advance a `CrewClock` file instead of sleeping. The wall-clock `time.Duration` sleeps (`reap`, `rosterrender`, which must never follow `CREW_CLOCK`) and `stream`'s timers are decided in that slice | new `clock.FromEnv()` (what `main.go` builds by hand today)      | `clock.Clock{Now: fixed, CrewClock: tmpfile}` (no new package) |
@@ -151,6 +151,25 @@ their own group-kill runner), aeye, gtrash, `rosterrender`'s exec hop.
   rest of the diff is net negative; the new package (150 lines) and the AC2
   exact-argv tests are the cost, since each replaced site was one to three lines.
 
+## The gh slice
+
+- `internal/gh`: `Client` (`Run` drops stderr, `Combined` merges it; both
+  trim trailing newlines and keep the output on failure), `Exec`, `Missing`
+  and `Installed` (`Run("--version")`, not-found means no gh). `ghtest.Fake`:
+  `Func` answers every call, else `Out[argv]`, and an unmatched call errors;
+  `Calls()` records the argv.
+- `reap.Probes`, `stack.Probes`, `adopt.Options` and `rate.Options` hold one
+  `Gh gh.Client`; `Gh`/`GhAll`/`GhQuiet`/`HaveGh` and adopt's `ghCombined`/`ghQuiet`
+  are gone. Quiet calls are `Run` with the output dropped. `rate.Options.Run`
+  stays for the `dispatch-config` resolver only.
+- Exception: none; only `internal/gh` execs gh.
+- One observable change: reap's gh check is a `gh --version` call instead of a
+  PATH lookup, so a gh that is on PATH but unrunnable now counts as present.
+- Lines (crew/, `wc -l` over `*.go`): non-test 27465 → 27497 (+32), test
+  44337 → 44399 (+62), with the new `gh`, `ghtest` and `gh_test.go` counted
+  (about 55, 45 and 50 lines). Growth: each replaced site was one to three
+  lines, and four fixtures needed an adapter onto the fake's `Func`.
+
 ## Slice order
 
 One PR each, largest duplication first. Savings are estimates from the field
@@ -161,7 +180,7 @@ and fake counts above (net Go lines, non-test + test).
 | 1   | tmux    | 14 + main                                                                                                                            | 20 test files                                                                              | measured above |
 | 2   | proc    | crews, reap, sender, adopt, register, reply, stream, rosterrender, main                                                              | ~12 test files (`crews_test`, `register_test`, `adopt_test`, `reply_test`, `main_test`, …) | measured above |
 | 3   | git     | main, roster, fleet, adopt, nudge, status, rate, reap, bus, claimindex, remote, rosterrender, stream (gitguard kept as an exception) | 19 test files                                                                              | measured above |
-| 4   | gh      | reap, stack, adopt, rate                                                                                                             | ~4 test files                                                                              | −30 to −60     |
+| 4   | gh      | reap, stack, adopt, rate                                                                                                             | ~4 test files                                                                              | measured above |
 | 5   | clock   | 15 `Now`, 5 `Sleep`/`Timer` fields and `Rediscover`, 6 `clock.Clock` holders                                                         | most test files set `Now`                                                                  | −20 to −50     |
 | 6   | env     | 17 `Getenv`/`LookupEnv`/`Env`/`Setenv`/`Environ` fields                                                                              | —                                                                                          | −10 to −30     |
 

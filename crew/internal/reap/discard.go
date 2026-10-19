@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
+	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
@@ -16,7 +17,7 @@ import (
 // the state is saved as a patch before the shared removal tail runs. It
 // returns the process exit code.
 func (r *run) discardBranch(ctx context.Context) int {
-	if !r.p.HaveGh() {
+	if !gh.Installed(ctx, r.p.Gh) {
 		return r.refuse("needs gh")
 	}
 	// --branch also expands @{-N}, so the name must come back unchanged.
@@ -67,7 +68,7 @@ func (r *run) discardBranch(ctx context.Context) int {
 			return r.refuse(c.why)
 		}
 	} else {
-		c.prState, _ = r.p.Gh(ctx, "pr", "view", c.pr, "--json", "state", "--jq", ".state")
+		c.prState, _ = r.p.Gh.Run(ctx, "pr", "view", c.pr, "--json", "state", "--jq", ".state")
 		switch c.prState {
 		case "MERGED", "CLOSED":
 		case "":

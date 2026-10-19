@@ -309,7 +309,7 @@ func (r *run) deleteBranch(ctx context.Context, c *candidate) {
 	if _, err := r.p.Git.Run(ctx, "", "show-ref", "--verify", "--quiet", ref); err != nil {
 		return
 	}
-	head, _ := r.p.Gh(ctx, "pr", "view", c.pr, "--json", "headRefOid", "--jq", ".headRefOid")
+	head, _ := r.p.Gh.Run(ctx, "pr", "view", c.pr, "--json", "headRefOid", "--jq", ".headRefOid")
 	switch {
 	case head == "":
 		r.note("kept local branch " + c.branch + " — could not verify the merged PR head")
@@ -341,7 +341,7 @@ func (r *run) revParse(ctx context.Context, ref string) string {
 func (r *run) releaseLabels(ctx context.Context, c *candidate) {
 	closing := strings.Join(c.issues, " ")
 	if c.mode != "issue" {
-		out, err := r.p.GhAll(ctx, "pr", "view", c.pr, "--json", "closingIssuesReferences", "--jq", ".closingIssuesReferences[].number")
+		out, err := r.p.Gh.Combined(ctx, "pr", "view", c.pr, "--json", "closingIssuesReferences", "--jq", ".closingIssuesReferences[].number")
 		if err != nil {
 			r.note("could not resolve closing issues for PR " + c.pr + " (" + c.branch + "): " + out)
 			out = ""
@@ -349,7 +349,7 @@ func (r *run) releaseLabels(ctx context.Context, c *candidate) {
 		closing = out
 	}
 	for _, issue := range strings.Fields(closing) {
-		if r.p.GhQuiet(ctx, "issue", "edit", issue, "--remove-label", "dispatched") != nil {
+		if _, err := r.p.Gh.Run(ctx, "issue", "edit", issue, "--remove-label", "dispatched"); err != nil {
 			r.note("could not remove the dispatched label from #" + issue + " (" + c.branch + ")")
 			continue
 		}

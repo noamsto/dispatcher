@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
@@ -101,6 +103,12 @@ func (f *fx) record(s string) {
 
 func (f *fx) ghCall(args []string) (string, error) {
 	key := strings.Join(args, " ")
+	if key == "--version" {
+		if f.noGh {
+			return "", exec.ErrNotFound
+		}
+		return "", nil
+	}
 	cwd, _ := os.Getwd()
 	f.mu.Lock()
 	f.calls = append(f.calls, "gh "+key)
@@ -121,13 +129,7 @@ func (f *fx) opts() Options {
 				f.record("tmux " + key)
 				return f.tmux[key], nil
 			}},
-			Gh:    func(_ context.Context, args ...string) (string, error) { return f.ghCall(args) },
-			GhAll: func(_ context.Context, args ...string) (string, error) { return f.ghCall(args) },
-			GhQuiet: func(_ context.Context, args ...string) error {
-				_, err := f.ghCall(args)
-				return err
-			},
-			HaveGh: func() bool { return !f.noGh },
+			Gh: &ghtest.Fake{Func: f.ghCall},
 			Gtrash: func(_ context.Context, p string) {
 				f.record("gtrash put " + p)
 				_ = os.RemoveAll(p)

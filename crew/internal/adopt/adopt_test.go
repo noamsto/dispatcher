@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
@@ -60,19 +61,21 @@ func (s *stub) git(dir string, args []string) (string, error) {
 	return s.wtOut, nil
 }
 
+// gh answers the label edit with ghEdit and every other call with ghOut, ghErr.
+func (s *stub) gh(args []string) (string, error) {
+	s.calls = append(s.calls, "gh "+strings.Join(args, " "))
+	if args[0] == "issue" {
+		return "", s.ghEdit
+	}
+	return s.ghOut, s.ghErr
+}
+
 func (s *stub) options() Options {
 	s.tx = &tmuxtest.Fake{Out: map[string]string{"list-windows": s.wins, "display-message": s.self}}
 	return Options{
-		Proc: s.procs(),
-		Now:  func() time.Time { return s.now },
-		Gh: func(args ...string) (string, error) {
-			s.calls = append(s.calls, "gh "+strings.Join(args, " "))
-			return s.ghOut, s.ghErr
-		},
-		GhQuiet: func(args ...string) error {
-			s.calls = append(s.calls, "gh "+strings.Join(args, " "))
-			return s.ghEdit
-		},
+		Proc:      s.procs(),
+		Now:       func() time.Time { return s.now },
+		Gh:        &ghtest.Fake{Func: s.gh},
 		Git:       &gittest.Fake{Func: s.git},
 		Tmux:      s.tx,
 		LookupEnv: func(k string) string { return s.env[k] },
@@ -625,10 +628,10 @@ func TestClaimsReleaseAfterThePidFileIsWritten(t *testing.T) {
 	s := &stub{now: time.Unix(1700000000, 0)}
 	o := s.options()
 	pidAtCall := ""
-	o.GhQuiet = func(args ...string) error {
+	o.Gh = &ghtest.Fake{Func: func([]string) (string, error) {
 		pidAtCall = readPid(t, p, "c-dead")
-		return nil
-	}
+		return "", nil
+	}}
 	var out, errOut strings.Builder
 	Run(t.Context(), Request{ID: "c-dead", PID: "123"}, p, &out, &errOut, o)
 	if pidAtCall != "123" {
