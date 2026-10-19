@@ -16856,14 +16856,14 @@ browser_env_prefix='env -u AGENT_BROWSER_AUTO_CONNECT -u AGENT_BROWSER_CDP -u AG
 
 # chrome_holder_tmux wraps whatever tmux stub is in place (call it after the
 # stub it wraps) so the --chrome holder scan sees the $CHROME_PANES lines
-# (chrome flag, pane command, codename, branch, role; \x1f-separated).
+# (chrome flag, pane command, codename, branch, role, crew dir; \x1f-separated).
 chrome_holder_tmux() {
   mv "$STUB_DIR/tmux" "$STUB_DIR/tmux-inner"
   cat >"$STUB_DIR/tmux" <<'EOF'
 #!/usr/bin/env bash
 if [ "$1" = list-panes ] && [ "$2" = -a ] && [[ $* == *@crew_chrome* ]]; then
   printf '%s\n' "$*" >>"$STUB_LOG"
-  printf '%b\n' "${CHROME_PANES:-1\x1fclaude\x1fslate\x1ffeat/1-x\x1f}"
+  printf '%b\n' "${CHROME_PANES:-1\x1fclaude\x1fslate\x1ffeat/1-x\x1f\x1f/crews/a/crew}"
   exit 0
 fi
 exec "$STUB_DIR/tmux-inner" "$@"
@@ -16917,7 +16917,7 @@ EOF
   stub_launch_bins
   chrome_holder_tmux
   local panes
-  for panes in '1\x1fclaude\x1fslate\x1ffeat/1-x\x1freviewer' '1\x1fzsh\x1fslate\x1ffeat/1-x\x1f' '\x1fclaude\x1fslate\x1ffeat/1-x\x1f'; do
+  for panes in '1\x1fclaude\x1fslate\x1ffeat/1-x\x1freviewer\x1f/crews/a/crew' '1\x1fzsh\x1fslate\x1ffeat/1-x\x1f\x1f/crews/a/crew' '\x1fclaude\x1fslate\x1ffeat/1-x\x1f\x1f/crews/a/crew'; do
     : >"$STUB_LOG"
     CHROME_PANES="$panes" DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
     [ "$status" -eq 0 ] || return 1
@@ -17009,11 +17009,28 @@ EOF
   run ! grep -q send-keys "$STUB_LOG"
 }
 
-@test "chrome: resume's precheck forwarding --chrome is not held to the caller check" {
+# resume's precheck runs in the caller's environment, so these cover
+# `dispatch resume --chrome` from a worker or role pane.
+@test "chrome: a precheck --chrome is refused from a worker (CREW_WORKER_ID)" {
   stub_launch_bins
   CREW_WORKER_ID='worker:x#s1' DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"dispatcher-only"* ]]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --chrome is dispatcher-only"* ]]
+}
+
+@test "chrome: a precheck --chrome is refused from a role pane (CREW_ROLE_ID)" {
+  stub_launch_bins
+  CREW_ROLE_ID='role:x:reviewer' DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --chrome is dispatcher-only"* ]]
+}
+
+@test "chrome: a precheck --chrome is refused from a pane in a worker window" {
+  stub_launch_bins
+  worker_pane_tmux
+  TMUX_PANE=%5 DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --chrome is dispatcher-only"* ]]
 }
 
 @test "chrome: --chrome is refused when workerDeniedMcpServers lists claude-in-chrome" {
@@ -17052,11 +17069,35 @@ EOF
 @test "chrome: the holder gate skips the pane resume names as its own" {
   stub_launch_bins
   chrome_holder_tmux
-  DISPATCH_CHROME_SELF=feat/1-x DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  DISPATCH_CHROME_SELF=/crews/a/crew$'\x1f'feat/1-x DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
   [ "$status" -eq 0 ]
-  DISPATCH_CHROME_SELF=feat/2-y DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  DISPATCH_CHROME_SELF=/crews/a/crew$'\x1f'feat/2-y DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
   [ "$status" -eq 1 ]
   [[ "$output" == *"in use by slate (feat/1-x)"* ]]
+}
+
+@test "chrome: the holder gate matches its own pane's crew dir after resolving it" {
+  stub_launch_bins
+  chrome_holder_tmux
+  CHROME_PANES='1\x1fclaude\x1fslate\x1ffeat/1-x\x1f\x1f/crews/b/../a/crew' DISPATCH_CHROME_SELF=/crews/a/crew$'\x1f'feat/1-x DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 0 ]
+}
+
+@test "chrome: the holder gate does not skip the same branch in another crew dir" {
+  stub_launch_bins
+  chrome_holder_tmux
+  DISPATCH_CHROME_SELF=/crews/b/crew$'\x1f'feat/1-x DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"in use by slate (feat/1-x)"* ]]
+}
+
+@test "chrome: the holder gate honours DISPATCH_CHROME_SELF only in a precheck" {
+  stub_launch_bins
+  chrome_holder_tmux
+  DISPATCH_CHROME_SELF=/crews/a/crew$'\x1f'feat/1-x DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome 42 "chrome"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"in use by slate (feat/1-x)"* ]]
+  run ! grep -q send-keys "$STUB_LOG"
 }
 
 # ---- dispatch's crew-id abort ----

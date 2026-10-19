@@ -18,9 +18,8 @@ usage() {
 _resume_help() {
   cat <<'HELP'
 usage: dispatch resume [<target>] [--agent E] [--model M] [--effort E]
-                     [--mcp P] [--chrome | --no-chrome] [--fresh] [--print]
-                     [--rearm-roles] [--ignore-budget] [--ignore-map]
-                     [extra prompt...]
+                     [--mcp P] [--chrome] [--fresh] [--print] [--rearm-roles]
+                     [--ignore-budget] [--ignore-map] [extra prompt...]
 
 Relaunch the worker whose worktree you are standing in, continuing its own
 engine session, and re-run only the gates this command names.
@@ -32,8 +31,8 @@ engine session, and re-run only the gates this command names.
   --model M           Model for that engine (default: the task doc's)
   --effort E          low | medium | high | xhigh | max | ultra (default: the task doc's)
   --mcp P             MCP profile to launch the engine with
-  --chrome            Relaunch the claude lead with Claude in Chrome (default: the recorded choice)
-  --no-chrome         Relaunch without Claude in Chrome
+  --chrome            Relaunch the claude lead with Claude in Chrome (dispatcher-only;
+                      never carried from an earlier run)
   --fresh             Start a new engine session instead of continuing the old one
   --print             Print the launch command instead of running it
   --rearm-roles       Re-arm the role panes of this worker's restored window and
@@ -517,7 +516,7 @@ _remote_window() {
 _resume_remote() {
   local rc=0 ssh
   local -a rest=("${resume_args[@]:0:target_at}" "${resume_args[@]:target_at+1}")
-  [ "${chrome_flag_val:-}" != 1 ] || {
+  [ -z "$chrome" ] || {
     echo "dispatch resume: --chrome is local to this machine — $1 runs on $2" >&2
     exit 1
   }
@@ -625,7 +624,7 @@ agent_flag=""
 model_flag=""
 effort_flag=""
 mcp_flag_val=""
-chrome_flag_val=""
+chrome=""
 extra=""
 target=""
 positional=()
@@ -668,11 +667,7 @@ while [ $# -gt 0 ]; do
     shift 2
     ;;
   --chrome)
-    chrome_flag_val=1
-    shift
-    ;;
-  --no-chrome)
-    chrome_flag_val=0
+    chrome=1
     shift
     ;;
   --fresh)
@@ -738,7 +733,7 @@ if [ "${#positional[@]}" -gt 0 ]; then
 fi
 extra="${positional[*]}"
 
-if [ -n "$rearm_roles" ] && [ -n "$fresh$do_print$ignore_map$agent_flag$model_flag$effort_flag$mcp_flag_val$chrome_flag_val$extra" ]; then
+if [ -n "$rearm_roles" ] && [ -n "$fresh$do_print$ignore_map$agent_flag$model_flag$effort_flag$mcp_flag_val$chrome$extra" ]; then
   usage
   exit 1
 fi
@@ -1063,14 +1058,6 @@ _prior_failed_model() {
   ' "$events" 2>/dev/null || true
 }
 
-# _recorded_chrome <branch> <crew_dir> — prints 1 when the branch's newest
-# dispatch or resume row ran with Claude in Chrome. The header is
-# worker-writable, so the bus rows dispatch and resume write are the record.
-_recorded_chrome() {
-  jq -rn --arg b "$1" '[inputs | select((.kind == "dispatch" or .kind == "resume") and .branch == $b)]
-    | last | if .chrome == true then "1" else "" end' "$2/events.jsonl" 2>/dev/null || true
-}
-
 # _prior_failed_escalation_available <branch> <crew_dir> — returns 0 if:
 # 1. The branch's latest terminal worker status (failed/done/pr_open) is
 #    `failed`, AND that worker's session has a matching dispatch or resume
@@ -1107,27 +1094,6 @@ _prior_failed_escalation_available() {
   return 0
 }
 
-case "$chrome_flag_val" in
-1)
-  # Only an explicit --chrome is a fresh grant; carrying a recorded one forward
-  # stays open so the owner can resume from the worker's own pane.
-  if [ -n "${CREW_WORKER_ID:-}" ] || [ -n "${CREW_ROLE_ID:-}" ] ||
-    { [ -n "${TMUX_PANE:-}" ] && [ -n "$(tmux display-message -p -t "$TMUX_PANE" '#{@crew_branch}' 2>/dev/null)" ]; }; then
-    echo "dispatch resume: --chrome is dispatcher-only — a worker or role pane cannot grant a session the owner's browser" >&2
-    exit 1
-  fi
-  chrome=1
-  ;;
-0) chrome="" ;;
-*)
-  chrome="$(_recorded_chrome "$branch" "$crew_dir")"
-  if [ -n "$chrome" ] && [ "$agent" != claude ]; then
-    echo "dispatch resume: this worker was dispatched with --chrome, which is claude-only — pass --no-chrome to resume it on $agent" >&2
-    exit 1
-  fi
-  ;;
-esac
-
 precheck=(--effort "$effort" --agent "$agent" --crew-id "$crew_id")
 [ -n "$ignore_budget" ] && precheck+=(--ignore-budget)
 # dispatch's precheck owns the --chrome refusals and the holder gate.
@@ -1151,7 +1117,7 @@ else
   fi
 fi
 if [ -z "$rearm_roles" ]; then
-  DISPATCH_CHROME_SELF="$branch" DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck" || exit 1
+  DISPATCH_CHROME_SELF="$_crew_dir_real"$'\x1f'"$branch" DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck" || exit 1
 fi
 
 # _args_have <argv line> <token>... — true when every token appears in the line

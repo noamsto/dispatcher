@@ -327,9 +327,10 @@ deny for that lead only (playwright and firefox-devtools stay denied). It is
 claude-only and local-only (refused with `--host` and for codex, cursor and pi),
 role panes never get it, and only one `--chrome` worker may be live per machine
 (`dispatch` refuses a second and names the holder; a finished worker holds it
-until `crew reap` closes its window). `dispatch resume` keeps the recorded
-choice, `--chrome`/`--no-chrome` override it; a re-dispatch or a `crew hold`
-release needs `--chrome` again. Only the dispatcher may pass it: `dispatch`
+until `crew reap` closes its window). `dispatch resume` never carries
+`--chrome`: pass `--chrome` again on the resume (dispatcher-only, same
+refusals) to re-grant it; a re-dispatch or a `crew hold` release likewise
+needs `--chrome` again. Only the dispatcher may pass it: `dispatch`
 refuses `--chrome` from a worker or role pane, and refuses it outright when
 `workerDeniedMcpServers` lists `claude-in-chrome` (the owner's ban, which then
 stays denied for every launch). Every other claude worker launch passes
