@@ -38,6 +38,7 @@ EOF
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 [ "$1" != --role-watch ] || printf 'CREW_ID=%s\n' "$CREW_ID" >>"$STUB_LOG"
+[ -z "${DISPATCH_CHROME_SELF:-}" ] || printf 'DISPATCH_CHROME_SELF=%s\n' "$DISPATCH_CHROME_SELF" >>"$STUB_LOG"
 [ -n "${DISPATCH_PRECHECK:-}" ] || exit 0
 [ -z "${STUB_PRECHECK_FAIL:-}" ] || {
   echo "dispatch: --effort ultra is codex-only; claude tops out at max" >&2
@@ -1237,13 +1238,34 @@ _lead_pane() { sed -n 's/^set-option -p -t \([^ ]*\) @crew_model .*/\1/p' "$STUB
   run ! grep -q send-keys "$STUB_LOG"
 }
 
-@test "resume --rearm-roles is exclusive with --chrome and --no-chrome" {
+@test "claude resume of a recorded --chrome tells the precheck to skip its own holder pane" {
   setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _chrome_dispatch_row
   cd "$WT"
-  run run_resume --rearm-roles --chrome
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -qxF 'DISPATCH_CHROME_SELF=feat/7-a-thing' "$STUB_LOG"
+}
+
+@test "resume --chrome is refused from a worker (CREW_WORKER_ID)" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  CREW_WORKER_ID='worker:x#s1' run run_resume --chrome
   [ "$status" -eq 1 ]
-  run run_resume --rearm-roles --no-chrome
-  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch resume: --chrome is dispatcher-only"* ]]
+  run ! grep -q send-keys "$STUB_LOG"
+}
+
+@test "resume carries a recorded --chrome forward from a worker caller" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _chrome_dispatch_row
+  cd "$WT"
+  CREW_WORKER_ID='worker:x#s1' run run_resume
+  [ "$status" -eq 0 ]
+  grep -F 'claude --continue' <(launch_log) | grep -qF -- '--permission-mode auto --chrome '
 }
 
 @test "claude resume and pi resume carry the worktree's AGENT_BROWSER_SESSION" {
@@ -3275,7 +3297,7 @@ crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
 @test "resume --rearm-roles is exclusive with the launch flags and an extra prompt (#730)" {
   _grid_live_lead
   cd "$WT"
-  for args in "--fresh" "--print" "--agent pi" "--model m" "--effort high" "--mcp p" "--ignore-map" "continue"; do
+  for args in "--fresh" "--print" "--agent pi" "--model m" "--effort high" "--mcp p" "--chrome" "--no-chrome" "--ignore-map" "continue"; do
     # shellcheck disable=SC2086
     run run_resume --rearm-roles $args
     [ "$status" -eq 1 ]

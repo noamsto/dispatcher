@@ -1136,14 +1136,17 @@ local_slot_cap() {
 
 # _chrome_holders — one `<name> (<branch>)` line per live lead pane holding
 # Claude in Chrome: @crew_chrome stamped 1, @crew_role empty or `lead`, and the
-# pane still running an engine (_is_engine_cmd). No tmux server yields no
-# lines, status 0. Fields are \x1f-separated, as in _local_holders.
+# pane still running an engine (_is_engine_cmd). A pane on DISPATCH_CHROME_SELF's
+# branch is skipped: resume's own pane is judged by resume's live-lead guard.
+# No tmux server yields no lines, status 0. Fields are \x1f-separated, as in
+# _local_holders.
 _chrome_holders() {
-  local flag cmd name lbranch role
+  local flag cmd name lbranch role self="${DISPATCH_CHROME_SELF:-}"
   { tmux list-panes -a -F '#{@crew_chrome}'$'\x1f''#{pane_current_command}'$'\x1f''#{@crew_name}'$'\x1f''#{@crew_branch}'$'\x1f''#{@crew_role}' 2>/dev/null || true; } |
     while IFS=$'\x1f' read -r flag cmd name lbranch role; do
       [ "$flag" = 1 ] || continue
       [ -z "$role" ] || [ "$role" = lead ] || continue
+      [ -z "$self" ] || [ "$lbranch" != "$self" ] || continue
       _is_engine_cmd "$cmd" || continue
       printf '%s (%s)\n' "${name:-?}" "${lbranch:-?}"
     done
@@ -4767,6 +4770,17 @@ if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
 fi
 if [ -n "$chrome" ] && [ "$agent" != claude ]; then
   echo "dispatch: --chrome is claude-only (Claude in Chrome) — codex/cursor/pi workers check UI with agent-browser" >&2
+  exit 1
+fi
+# Resume's precheck forwards a recorded --chrome; resume checks its own caller.
+if [ -n "$chrome" ] && [ -z "${DISPATCH_PRECHECK:-}" ] &&
+  { [ -n "${CREW_WORKER_ID:-}" ] || [ -n "${CREW_ROLE_ID:-}" ] ||
+    { [ -n "${TMUX_PANE:-}" ] && [ -n "$(tmux display-message -p -t "$TMUX_PANE" '#{@crew_branch}' 2>/dev/null)" ]; }; }; then
+  echo "dispatch: --chrome is dispatcher-only — a worker or role pane cannot grant a session the owner's browser" >&2
+  exit 1
+fi
+if [ -n "$chrome" ] && jq -e --arg c "$CLAUDE_CHROME_MCP_SERVER" '(.workerDeniedMcpServers // []) | index($c)' <<<"$settings" >/dev/null; then
+  echo "dispatch: --chrome is refused — workerDeniedMcpServers lists $CLAUDE_CHROME_MCP_SERVER (the owner's ban)" >&2
   exit 1
 fi
 if [ -n "$chrome" ] && [ -n "${DISPATCH_TMUX_SESSION:-}" ]; then

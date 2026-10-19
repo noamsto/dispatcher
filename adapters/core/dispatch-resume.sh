@@ -1108,7 +1108,16 @@ _prior_failed_escalation_available() {
 }
 
 case "$chrome_flag_val" in
-1) chrome=1 ;;
+1)
+  # Only an explicit --chrome is a fresh grant; carrying a recorded one forward
+  # stays open so the owner can resume from the worker's own pane.
+  if [ -n "${CREW_WORKER_ID:-}" ] || [ -n "${CREW_ROLE_ID:-}" ] ||
+    { [ -n "${TMUX_PANE:-}" ] && [ -n "$(tmux display-message -p -t "$TMUX_PANE" '#{@crew_branch}' 2>/dev/null)" ]; }; then
+    echo "dispatch resume: --chrome is dispatcher-only — a worker or role pane cannot grant a session the owner's browser" >&2
+    exit 1
+  fi
+  chrome=1
+  ;;
 0) chrome="" ;;
 *)
   chrome="$(_recorded_chrome "$branch" "$crew_dir")"
@@ -1142,7 +1151,7 @@ else
   fi
 fi
 if [ -z "$rearm_roles" ]; then
-  DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck" || exit 1
+  DISPATCH_CHROME_SELF="$branch" DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck" || exit 1
 fi
 
 # _args_have <argv line> <token>... — true when every token appears in the line

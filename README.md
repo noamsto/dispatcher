@@ -329,7 +329,10 @@ role panes never get it, and only one `--chrome` worker may be live per machine
 (`dispatch` refuses a second and names the holder; a finished worker holds it
 until `crew reap` closes its window). `dispatch resume` keeps the recorded
 choice, `--chrome`/`--no-chrome` override it; a re-dispatch or a `crew hold`
-release needs `--chrome` again. Every other claude worker launch passes
+release needs `--chrome` again. Only the dispatcher may pass it: `dispatch`
+refuses `--chrome` from a worker or role pane, and refuses it outright when
+`workerDeniedMcpServers` lists `claude-in-chrome` (the owner's ban, which then
+stays denied for every launch). Every other claude worker launch passes
 `--no-chrome` and denies `mcp__claude-in-chrome__*` regardless of
 `workerDeniedMcpServers`. For the dispatcher session itself,
 `programs.dispatcher.chrome` sets `dispatcherChrome` (default off), which adds

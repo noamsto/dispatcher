@@ -28,15 +28,16 @@ readonly CLAUDE_CHROME_MCP_SERVER='claude-in-chrome'
 # worker-only Claude settings JSON so callers can splice it into a constructed
 # launch command. Besides the disabled plugins it denies every tool of each MCP
 # server in workerDeniedMcpServers plus Claude in Chrome; a non-empty second
-# argument is a --chrome lead, for which only the Claude in Chrome deny is
-# lifted. The permissions key is omitted when the deny list ends up empty.
+# argument is a --chrome lead, which skips only that added deny, so an owner's
+# explicit listing still denies it. The permissions key is omitted when the deny
+# list ends up empty.
 claude_worker_plugin_settings() {
   local plugins
   plugins="$(printf '%s\n' "${CLAUDE_WORKER_DISABLED_PLUGINS[@]}" | jq -R . | jq -sc 'map({(.): false}) | add')"
   jq -cn --argjson plugins "$plugins" --argjson settings "$1" --arg chrome "${2:-}" --arg c "$CLAUDE_CHROME_MCP_SERVER" '
     {enabledPlugins: $plugins}
-    + (((($settings.workerDeniedMcpServers // []) | map(select(. != $c)))
-        + (if $chrome == "" then [$c] else [] end)) as $deny
+    + ((($settings.workerDeniedMcpServers // [])
+        | if $chrome == "" and (index($c) | not) then . + [$c] else . end) as $deny
        | if ($deny | length) > 0 then {permissions: {deny: ($deny | map("mcp__\(.)__*"))}} else {} end)' |
     {
       read -r json
