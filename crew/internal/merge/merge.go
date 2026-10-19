@@ -4,7 +4,6 @@
 package merge
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -79,14 +78,6 @@ func (c check) result() (outcome string, pending bool) {
 	return strings.ToUpper(c.Conclusion), false
 }
 
-type baseRuns struct {
-	CheckRuns []struct {
-		Name       string `json:"name"`
-		Status     string `json:"status"`
-		Conclusion string `json:"conclusion"`
-	} `json:"check_runs"`
-}
-
 // redConclusions are the completed conclusions that make a base red; a
 // cancelled run is usually a superseded one.
 var redConclusions = map[string]bool{"failure": true, "timed_out": true, "startup_failure": true, "action_required": true}
@@ -153,17 +144,21 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		pass("head checks: none (--allow-no-ci)")
 	}
 
-	out, err = o.GH.Run(ctx, "api", "repos/{owner}/{repo}/commits/"+p.BaseRefName+"/check-runs?per_page=100")
+	out, err = o.GH.Run(ctx, "api", "--paginate", "repos/{owner}/{repo}/commits/"+p.BaseRefName+"/check-runs?per_page=100",
+		"--jq", `.check_runs[] | [.name, .status, .conclusion] | @tsv`)
 	if err != nil {
 		return refuse("could not read %s's check runs: %v", p.BaseRefName, err)
 	}
-	var base baseRuns
-	if err := json.Unmarshal([]byte(out), &base); err != nil {
-		return refuse("unreadable check runs of %s: %v", p.BaseRefName, err)
-	}
-	for _, r := range base.CheckRuns {
-		if strings.EqualFold(r.Status, "completed") && redConclusions[strings.ToLower(r.Conclusion)] {
-			return refuse("base %s is red (%s: %s); fix the base before merging", p.BaseRefName, r.Name, r.Conclusion)
+	for line := range strings.SplitSeq(out, "\n") {
+		if line == "" {
+			continue
+		}
+		f := strings.Split(line, "\t")
+		if len(f) != 3 {
+			return refuse("unreadable check runs of %s: %q", p.BaseRefName, line)
+		}
+		if strings.EqualFold(f[1], "completed") && redConclusions[strings.ToLower(f[2])] {
+			return refuse("base %s is red (%s: %s); fix the base before merging", p.BaseRefName, f[0], f[2])
 		}
 	}
 	pass("base %s: not red", p.BaseRefName)
@@ -198,12 +193,11 @@ func checkLedger(ctx context.Context, req Request, url string, paths bus.Paths, 
 		return refuse("could not read the bus: %v", err)
 	}
 	var lines []string
+	if len(data) > 0 {
+		lines = strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	}
 	var found *statusRow
-	sc := bufio.NewScanner(strings.NewReader(string(data)))
-	sc.Buffer(nil, 16<<20)
-	for sc.Scan() {
-		line := sc.Text()
-		lines = append(lines, line)
+	for _, line := range lines {
 		var r statusRow
 		if json.Unmarshal([]byte(line), &r) != nil || r.Kind != "status" || r.Body.State != "pr_open" || r.Body.PRURL != url {
 			continue
@@ -218,8 +212,17 @@ func checkLedger(ctx context.Context, req Request, url string, paths bus.Paths, 
 	}
 
 	in := ledger.Input{From: found.From, Crew: found.CrewID, Detail: found.Body.Detail, Log: lines}
-	if doc, ok := taskDoc(ctx, found.From, paths, o); ok {
-		in.TaskDoc = doc
+	doc, err := taskDoc(ctx, found.From, paths, o)
+	if err != nil {
+		return refuse("could not locate the task doc of %s: %v", found.From, err)
+	}
+	if doc.unreadable {
+		in.TaskDocErr = true
+	}
+	in.TaskDoc = doc.text
+	if doc.kind != "" && doc.kind != "implement" {
+		pass("ledger: skipped (kind %s)", doc.kind)
+		return 0
 	}
 	if msg := ledger.Check(in); msg != "" {
 		return refuse("the ledger of %s no longer validates: %s", found.From, msg)
@@ -228,16 +231,22 @@ func checkLedger(ctx context.Context, req Request, url string, paths bus.Paths, 
 	return 0
 }
 
+type doc struct {
+	text, kind string
+	unreadable bool
+}
+
 // taskDoc is the WORKER_TASK.md of the worker's branch when its worktree still
-// exists; without it only the ledger's form is checked.
-func taskDoc(ctx context.Context, from string, paths bus.Paths, o Options) (string, bool) {
+// exists; without it only the ledger's form is checked. A git that cannot list
+// worktrees is an error, so a weaker check is never taken silently.
+func taskDoc(ctx context.Context, from string, paths bus.Paths, o Options) (doc, error) {
 	branch := strings.TrimPrefix(from, "worker:")
 	if i := strings.LastIndex(branch, "#s"); i >= 0 {
 		branch = branch[:i]
 	}
 	list, err := git.Worktrees(ctx, o.Git, o.Dir, paths.Common)
 	if err != nil {
-		return "", false
+		return doc{}, err
 	}
 	var dir string
 	for _, rec := range strings.Split(list, "\n\n") {
@@ -257,13 +266,24 @@ func taskDoc(ctx context.Context, from string, paths bus.Paths, o Options) (stri
 		}
 	}
 	if dir == "" {
-		return "", false
+		return doc{}, nil
 	}
-	b, err := os.ReadFile(dir + "/WORKER_TASK.md")
+	path := dir + "/WORKER_TASK.md"
+	if st, err := os.Stat(path); err != nil || !st.Mode().IsRegular() {
+		return doc{}, nil
+	}
+	b, err := os.ReadFile(path)
 	if err != nil {
-		return "", false
+		return doc{unreadable: true}, nil
 	}
-	return string(b), true
+	d := doc{text: string(b)}
+	for line := range strings.SplitSeq(d.text, "\n") {
+		if v, ok := strings.CutPrefix(line, "kind:"); ok {
+			d.kind = strings.Join(strings.Fields(v), "")
+			break
+		}
+	}
+	return d, nil
 }
 
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }

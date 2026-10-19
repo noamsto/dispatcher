@@ -18,10 +18,10 @@ import (
 const (
 	prURL  = "https://github.com/o/r/pull/7"
 	viewIn = "pr view 7 --json state,isDraft,mergeable,headRefOid,baseRefName,url,statusCheckRollup"
-	runsIn = "api repos/{owner}/{repo}/commits/main/check-runs?per_page=100"
+	runsIn = "api --paginate repos/{owner}/{repo}/commits/main/check-runs?per_page=100 --jq .check_runs[] | [.name, .status, .conclusion] | @tsv"
 	mergeG = "pr merge 7 --squash --match-head-commit abc123"
 	okRoll = `[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"SUCCESS"}]`
-	okRuns = `{"check_runs":[{"name":"check","status":"completed","conclusion":"success"},{"name":"deploy","status":"in_progress","conclusion":null}]}`
+	okRuns = "check\tcompleted\tsuccess\ndeploy\tin_progress\t"
 	okRow  = `{"ts":1,"crew_id":"c1","from":"worker:feat/x#s1","to":"dispatcher:c1","kind":"status","body":{"state":"pr_open","detail":"AC1 pass(bats)","pr_url":"` + prURL + `"}}`
 )
 
@@ -53,7 +53,7 @@ func TestRun(t *testing.T) {
 		{name: "skipped and neutral pass", view: view("OPEN", "false", "MERGEABLE", `[{"name":"a","status":"COMPLETED","conclusion":"SKIPPED"},{"name":"b","status":"COMPLETED","conclusion":"NEUTRAL"}]`), runs: okRuns, log: okRow, merged: true, stdout: "merged"},
 		{name: "zero checks", view: view("OPEN", "false", "MERGEABLE", `[]`), runs: okRuns, log: okRow, code: 1, stderr: "--allow-no-ci"},
 		{name: "zero checks allowed", view: view("OPEN", "false", "MERGEABLE", `[]`), runs: okRuns, log: okRow, req: merge.Request{AllowNoCI: true}, merged: true, stdout: "merged"},
-		{name: "red base", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: `{"check_runs":[{"name":"deploy","status":"completed","conclusion":"failure"}]}`, log: okRow, code: 1, stderr: "base main is red (deploy: failure)"},
+		{name: "red base", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: "deploy\tcompleted\tfailure", log: okRow, code: 1, stderr: "base main is red (deploy: failure)"},
 		{name: "missing pr_open row", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, code: 1, stderr: "no pr_open ledger"},
 		{name: "missing row with --no-ledger", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, req: merge.Request{NoLedger: true}, merged: true, stdout: "merged"},
 		{name: "row of another crew", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow, req: merge.Request{Crew: "c2"}, code: 1, stderr: "no pr_open ledger"},
@@ -72,7 +72,7 @@ func TestRun(t *testing.T) {
 				}
 			}
 			g := &ghtest.Fake{Out: map[string]string{viewIn: tt.view, runsIn: tt.runs, mergeG: "merged"}}
-			git := &gittest.Fake{}
+			git := &gittest.Fake{Func: func(string, []string) (string, error) { return "", nil }}
 			req := tt.req
 			if req.PR == "" {
 				req.PR = "7"
@@ -127,5 +127,47 @@ func TestLedgerAgainstTaskDoc(t *testing.T) {
 	code := merge.Run(context.Background(), merge.Request{PR: "7"}, paths, &stdout, &stderr, merge.Options{GH: g, Git: gt, Dir: dir})
 	if code != 1 || !strings.Contains(stderr.String(), "CI item") {
 		t.Errorf("code %d stderr %q, want the CI-evidence refusal", code, stderr.String())
+	}
+}
+
+func TestTaskDocEdges(t *testing.T) {
+	dir := t.TempDir()
+	wt := filepath.Join(dir, "wt")
+	if err := os.Mkdir(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	paths := bus.Paths{Common: dir, Dir: dir, Log: filepath.Join(dir, "events.jsonl")}
+	if err := os.WriteFile(paths.Log, []byte(strings.Replace(okRow, "AC1 pass(bats)", "AC1 pending", 1)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := &ghtest.Fake{Out: map[string]string{viewIn: view("OPEN", "false", "MERGEABLE", okRoll), runsIn: okRuns, mergeG: "merged"}}
+	wtList := func(string, []string) (string, error) {
+		return "worktree " + wt + "\nHEAD x\nbranch refs/heads/feat/x\n", nil
+	}
+	run := func(gt *gittest.Fake) (int, string) {
+		var stdout, stderr bytes.Buffer
+		code := merge.Run(context.Background(), merge.Request{PR: "7"}, paths, &stdout, &stderr, merge.Options{GH: g, Git: gt, Dir: dir})
+		return code, stderr.String()
+	}
+
+	if code, msg := run(&gittest.Fake{}); code != 1 || !strings.Contains(msg, "could not locate the task doc") {
+		t.Errorf("git failure: code %d stderr %q", code, msg)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "WORKER_TASK.md"), []byte("kind: docs\n## Acceptance\n- AC1: x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, msg := run(&gittest.Fake{Func: wtList}); code != 0 {
+		t.Errorf("non-implement kind: code %d stderr %q, want the ledger skipped", code, msg)
+	}
+	if err := os.Chmod(filepath.Join(wt, "WORKER_TASK.md"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if os.Geteuid() != 0 {
+		if err := os.WriteFile(paths.Log, []byte(okRow+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if code, msg := run(&gittest.Fake{Func: wtList}); code != 1 || !strings.Contains(msg, "could not read the task doc's acceptance list") {
+			t.Errorf("unreadable doc: code %d stderr %q", code, msg)
+		}
 	}
 }
