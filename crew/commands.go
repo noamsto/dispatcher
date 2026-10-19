@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/alecthomas/kong"
@@ -17,6 +18,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/rate"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 	"github.com/noamsto/dispatcher/crew/internal/retro"
+	"github.com/noamsto/dispatcher/crew/internal/speclint"
 	"github.com/noamsto/dispatcher/crew/internal/stack"
 	"github.com/noamsto/dispatcher/crew/internal/where"
 )
@@ -281,6 +283,13 @@ type dispatchRowCmd struct {
 	Session *string `name:"session"`
 }
 
+// specLintCmd.Issue keeps each value whole; validate checks them as issue numbers.
+type specLintCmd struct {
+	Issue        []string `name:"issue" sep:"none"`
+	NoHostChecks bool     `name:"no-host-checks"`
+	File         string   `arg:"" optional:"" name:"file"`
+}
+
 type reapCmd struct {
 	Quiet   bool    `name:"quiet"`
 	DryRun  bool    `name:"dry-run"`
@@ -396,6 +405,7 @@ const (
 	gitBaselineUsage  = "usage: crew git-baseline [--accept]"
 	remoteRunUsage    = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] -- <argv>..."
 	dispatchRowUsage  = "usage: crew dispatch-row --session S [--crew ID]"
+	specLintUsage     = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
 )
 
 // wording is how one subcommand phrases the two grammar failures kong reports
@@ -516,6 +526,7 @@ var wordings = map[string]wording{
 		},
 		code: exitRemoteUsage,
 	},
+	"spec-lint": {all: specLintUsage, code: exitRemoteUsage},
 	"stream": {
 		unknownFlag: func(f string) string { return fmt.Sprintf("crew: stream: unknown arg '%s'", f) },
 		extra:       func(w string) string { return fmt.Sprintf("crew: stream: unknown arg '%s'", w) },
@@ -744,6 +755,11 @@ func validate(sub string, r *root) *refusal {
 		c := r.DispatchRow
 		if given(c.Crew) || c.Session == nil || *c.Session == "" {
 			return &refusal{dispatchRowUsage, exitRemoteUsage}
+		}
+	case "spec-lint":
+		c := r.SpecLint
+		if c.File == "" || slices.ContainsFunc(c.Issue, func(n string) bool { _, ok := speclint.ParseIssue(n); return !ok }) {
+			return &refusal{specLintUsage, exitRemoteUsage}
 		}
 	case "hold add":
 		c := r.Hold.Add

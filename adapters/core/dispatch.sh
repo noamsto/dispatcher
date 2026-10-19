@@ -67,6 +67,7 @@ Overrides
   --ignore-budget         Spend past the quota stop and the machine fan-out cap (a human's decision)
   --ignore-map            Skip the tier-map model refusals (a human's model call)
   DISPATCH_SPEC=FILE      Task body to inline into WORKER_TASK.md
+  DISPATCH_SKIP_SPEC_LINT=1  Dispatch despite `crew spec-lint` errors in DISPATCH_SPEC
   DISPATCH_IGNORE_RUNG=M  Lift the premium-rung refusal for model or effort M
   DISPATCH_SKIP_MODEL_CHECK=M  Launch M without checking the engine accepts it
 
@@ -3912,6 +3913,37 @@ _remote_dup_holder() {
     "$index")
 }
 
+# _spec_lint [crew spec-lint flags...] — lint $DISPATCH_SPEC before anything is
+# created; lint errors refuse the dispatch.
+_spec_lint() {
+  [ -n "${DISPATCH_SPEC:-}" ] || return 0
+  local -a issue_args=()
+  local n out rc=0
+  for n in "${gh_issue:-}" ${also_closes[@]+"${also_closes[@]}"}; do
+    case "$n" in '' | *[!0-9]*) continue ;; esac
+    issue_args+=(--issue "$n")
+  done
+  out="$(crew spec-lint "$DISPATCH_SPEC" ${issue_args[@]+"${issue_args[@]}"} "$@" 2>&1)" || rc=$?
+  # Exit 1 is lint errors only when the summary line says so.
+  if [ "$rc" = 1 ] && ! grep -q '^spec-lint: ' <<<"$out"; then rc=2; fi
+  case "$rc" in
+  0) ! grep -q '^warn ' <<<"$out" || printf '%s\n' "$out" >&2 ;;
+  1)
+    printf '%s\n' "$out" >&2
+    [ "${DISPATCH_SKIP_SPEC_LINT:-}" = 1 ] || {
+      echo "dispatch: DISPATCH_SPEC failed spec-lint — fix the errors above, or set DISPATCH_SKIP_SPEC_LINT=1 to dispatch anyway" >&2
+      exit 1
+    }
+    echo "dispatch: DISPATCH_SKIP_SPEC_LINT=1 — dispatching despite spec-lint errors" >&2
+    ;;
+  *)
+    printf '%s\n' "$out" >&2
+    echo "dispatch: spec-lint could not run (exit $rc); continuing" >&2
+    ;;
+  esac
+  return 0
+}
+
 # _dispatch_remote <title...> — `dispatch --host`: preflight, the local gates
 # that guard this machine's quota and claims, the remote dispatch, then the
 # local record of the row the remote confirms.
@@ -3942,6 +3974,8 @@ _dispatch_remote() {
     DISPATCH_SPEC="$PWD/$DISPATCH_SPEC"
   fi
   _wt_trusted_cwd "${crew_dir%/crew}" || exit 1
+  # The worker runs on the remote host, so its tools are not checked here.
+  _spec_lint --no-host-checks
 
   # The engine roster is the remote's; this call is also the preflight that
   # surfaces an unknown host, a missing clone mapping or a dead link.
@@ -5039,6 +5073,8 @@ if [ -n "${DISPATCH_SPEC:-}" ] && [[ $DISPATCH_SPEC != /* ]]; then
   DISPATCH_SPEC="$caller_pwd/$DISPATCH_SPEC"
 fi
 _wt_trusted_cwd "${crew_dir%/crew}" || exit 1
+# The remote half of a --host dispatch was already linted on the caller.
+[ -n "${DISPATCH_EMIT_ROW:-}" ] || _spec_lint
 mkdir -p "$crew_dir"
 
 # Entry guard (#557): refuse a drifted config now, before `gh issue create`

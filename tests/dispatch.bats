@@ -3667,6 +3667,10 @@ remote-run)
   esac
   ;;
 identity) printf 'iris\nbad name\n' ;;
+spec-lint)
+  [ -z "${STUB_SPEC_LINT_OUT:-}" ] || printf '%s\n' "$STUB_SPEC_LINT_OUT" >&2
+  exit "${STUB_SPEC_LINT_RC:-0}"
+  ;;
 esac
 exit 0
 EOF
@@ -3809,6 +3813,100 @@ EOF
     [ "$(realpath "$dir")" = "$(realpath "$TEST_REPO")" ] || return 1
   done <"$CREW_PWD_LOG"
   [ "$(wc -l <"$CREW_PWD_LOG")" -eq 2 ]
+}
+
+# A crew stub whose spec-lint answers STUB_SPEC_LINT_OUT on stderr and exits
+# STUB_SPEC_LINT_RC.
+_spec_lint_stub() {
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
+pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+spec-lint)
+  [ -z "${STUB_SPEC_LINT_OUT:-}" ] || printf '%s\n' "$STUB_SPEC_LINT_OUT" >&2
+  exit "${STUB_SPEC_LINT_RC:-0}"
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  printf 'Do the thing.\n' >"$BATS_TEST_TMPDIR/spec.md"
+}
+
+@test "spec-lint: errors refuse the dispatch with the findings, before any worktree or launch" {
+  stub_launch_bins
+  _spec_lint_stub
+  STUB_SPEC_LINT_RC=1 STUB_SPEC_LINT_OUT=$'error structure: no summary\nspec-lint: 1 error(s), 0 warning(s)' \
+    DISPATCH_SPEC="$BATS_TEST_TMPDIR/spec.md" run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "lint me"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"error structure: no summary"* ]]
+  [[ "$stderr" == *"DISPATCH_SPEC failed spec-lint"* ]]
+  [ ! -d "$TEST_REPO/.dispatch-wt/feat-42-lint-me" ]
+  run ! grep -qE '^(new-window|split-window)' "$STUB_LOG"
+}
+
+@test "spec-lint: DISPATCH_SKIP_SPEC_LINT=1 dispatches despite errors" {
+  stub_launch_bins
+  _spec_lint_stub
+  STUB_SPEC_LINT_RC=1 STUB_SPEC_LINT_OUT=$'error structure: no summary\nspec-lint: 1 error(s), 0 warning(s)' \
+    DISPATCH_SKIP_SPEC_LINT=1 DISPATCH_PROFILE=personal DISPATCH_SPEC="$BATS_TEST_TMPDIR/spec.md" \
+    run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "lint me"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatching despite spec-lint errors"* ]]
+  [ -f "$TEST_REPO/.dispatch-wt/feat-42-lint-me/WORKER_TASK.md" ]
+}
+
+@test "spec-lint: warnings are printed and the dispatch proceeds" {
+  stub_launch_bins
+  _spec_lint_stub
+  STUB_SPEC_LINT_RC=0 STUB_SPEC_LINT_OUT=$'warn path: crew/foo.go is not on origin/main\nspec-lint: 0 error(s), 1 warning(s)' \
+    DISPATCH_PROFILE=personal DISPATCH_SPEC="$BATS_TEST_TMPDIR/spec.md" \
+    run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "lint me"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"warn path: crew/foo.go is not on origin/main"* ]]
+  [ -f "$TEST_REPO/.dispatch-wt/feat-42-lint-me/WORKER_TASK.md" ]
+}
+
+@test "spec-lint: exit 1 without a summary line is a lint that could not run, not an error" {
+  stub_launch_bins
+  _spec_lint_stub
+  STUB_SPEC_LINT_RC=1 STUB_SPEC_LINT_OUT='crew: boom' \
+    DISPATCH_PROFILE=personal DISPATCH_SPEC="$BATS_TEST_TMPDIR/spec.md" \
+    run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "lint me"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"spec-lint could not run (exit 2); continuing"* ]]
+}
+
+@test "spec-lint: no DISPATCH_SPEC means no spec-lint call" {
+  stub_launch_bins
+  _spec_lint_stub
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "lint me"
+  [ "$status" -eq 0 ]
+  run ! grep -q '^spec-lint' "$STUB_LOG"
+}
+
+@test "spec-lint: the primary issue and --also-closes extras are passed as --issue" {
+  stub_launch_bins
+  _spec_lint_stub
+  stub_gh_multi
+  DISPATCH_PROFILE=personal DISPATCH_SPEC="$BATS_TEST_TMPDIR/spec.md" \
+    run run_dispatch standard sonnet --effort medium --crew-id c1 42 --also-closes 7 --also-closes 8 "lint me"
+  [ "$status" -eq 0 ]
+  grep -qE "^spec-lint $BATS_TEST_TMPDIR/spec.md --issue 42 --issue 7 --issue 8\$" "$STUB_LOG"
+}
+
+@test "spec-lint: dispatch --host refuses on lint errors before any remote-run" {
+  stub_launch_bins
+  _host_crew_stub
+  printf 'Do the thing.\n' >"$BATS_TEST_TMPDIR/spec.md"
+  STUB_SPEC_LINT_RC=1 STUB_SPEC_LINT_OUT=$'error structure: no summary\nspec-lint: 1 error(s), 0 warning(s)' \
+    DISPATCH_SPEC="$BATS_TEST_TMPDIR/spec.md" run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"DISPATCH_SPEC failed spec-lint"* ]]
+  grep -qF -- '--no-host-checks' "$STUB_LOG"
+  run ! grep -q '^remote-run' "$STUB_LOG"
 }
 
 # #947: these rows pin the PATH of the tmux *client* that opens a pane, so the

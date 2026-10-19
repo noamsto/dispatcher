@@ -49,6 +49,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/rosterrender"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/sessions"
+	"github.com/noamsto/dispatcher/crew/internal/speclint"
 	"github.com/noamsto/dispatcher/crew/internal/stack"
 	"github.com/noamsto/dispatcher/crew/internal/stall"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
@@ -126,7 +127,7 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 //     kong can neither print a screen nor end the process, so routeHelp and
 //     helpTexts still decide when help prints and what it says.
 
-// subcommands is every word crew admits: the thirty-eight the grammar types, then
+// subcommands is every word crew admits: the thirty-nine the grammar types, then
 // dash, which parses its own argv. It is the list the switch of #821 admitted,
 // and tests/crew.bats parses this literal to prove every subcommand has its own
 // row in the grouped help; TestAdmittedSubcommands pins it against that
@@ -139,7 +140,7 @@ var subcommands = []string{
 	"git-guard", "help", "hold", "msg", "nudge",
 	"pr-watch", "reap", "reap-autosweep",
 	"relay", "reply", "stall-watch", "status", "stream", "watch",
-	"remote-run", "remote-exec", "dispatch-row",
+	"remote-run", "remote-exec", "dispatch-row", "spec-lint",
 }
 
 // typedSubcommands are the subcommands whose argv root binds: every name but
@@ -154,7 +155,7 @@ var typedSubcommands = map[string]bool{
 	"nudge": true, "await": true, "watch": true, "relay": true, "stream": true,
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
 	"adopt": true, "merge": true, "pr-watch": true, "stall-watch": true, "help": true,
-	"remote-run": true, "remote-exec": true, "dispatch-row": true,
+	"remote-run": true, "remote-exec": true, "dispatch-row": true, "spec-lint": true,
 }
 
 // passthroughCmd is dash to kong: its name, then whatever words it wants, kept
@@ -217,6 +218,8 @@ type root struct {
 	RemoteRun   remoteRunCmd   `cmd:"" name:"remote-run" help:"Run a command in the clone on a remote host."`
 	RemoteExec  remoteExecCmd  `cmd:"" name:"remote-exec" help:"The ssh-side of remote-run: serve one request."`
 	DispatchRow dispatchRowCmd `cmd:"" name:"dispatch-row" help:"The dispatch row of one session."`
+
+	SpecLint specLintCmd `cmd:"" name:"spec-lint" help:"Lint a dispatcher task spec."`
 
 	GitGuard    gitGuardCmd    `cmd:"" name:"git-guard" help:"The git-config guard worktree-git.sh runs."`
 	GitBaseline gitBaselineCmd `cmd:"" name:"git-baseline" help:"List or accept the git-config baseline."`
@@ -634,6 +637,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		c := parsed.typed.DispatchRow
 		crew := cmp.Or(str(c.Crew), bus.CrewID(ctx, cwd))
 		return remote.DispatchRow(paths.Log, crew, str(c.Session), stdout, stderr)
+	}
+
+	// spec-lint reads a spec file and the repo's origin refs, never the bus.
+	if sub == "spec-lint" {
+		c := parsed.typed.SpecLint
+		issues := make([]string, len(c.Issue))
+		for i, n := range c.Issue {
+			issues[i], _ = speclint.ParseIssue(n)
+		}
+		return speclint.Run(ctx, speclint.Request{File: c.File, Issues: issues, NoHostChecks: c.NoHostChecks}, cwd, stderr, speclint.DefaultOptions())
 	}
 
 	// stream runs for as long as the lane lives and prints one protocol line at
