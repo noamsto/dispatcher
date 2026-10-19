@@ -1,0 +1,131 @@
+package merge_test
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
+	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
+	"github.com/noamsto/dispatcher/crew/internal/merge"
+)
+
+const (
+	prURL  = "https://github.com/o/r/pull/7"
+	viewIn = "pr view 7 --json state,isDraft,mergeable,headRefOid,baseRefName,url,statusCheckRollup"
+	runsIn = "api repos/{owner}/{repo}/commits/main/check-runs?per_page=100"
+	mergeG = "pr merge 7 --squash --match-head-commit abc123"
+	okRoll = `[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"SUCCESS"}]`
+	okRuns = `{"check_runs":[{"name":"check","status":"completed","conclusion":"success"},{"name":"deploy","status":"in_progress","conclusion":null}]}`
+	okRow  = `{"ts":1,"crew_id":"c1","from":"worker:feat/x#s1","to":"dispatcher:c1","kind":"status","body":{"state":"pr_open","detail":"AC1 pass(bats)","pr_url":"` + prURL + `"}}`
+)
+
+func view(state, draft, mergeable, roll string) string {
+	return fmt.Sprintf(`{"state":%q,"isDraft":%s,"mergeable":%q,"headRefOid":"abc123","baseRefName":"main","url":%q,"statusCheckRollup":%s}`, state, draft, mergeable, prURL, roll)
+}
+
+func TestRun(t *testing.T) {
+	tests := []struct {
+		name    string
+		view    string
+		runs    string
+		log     string
+		req     merge.Request
+		code    int
+		stderr  string
+		stdout  string
+		merged  bool
+		noMerge bool
+	}{
+		{name: "success", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow, stdout: "merged", merged: true},
+		{name: "draft", view: view("OPEN", "true", "MERGEABLE", okRoll), runs: okRuns, log: okRow, code: 1, stderr: "draft"},
+		{name: "closed", view: view("CLOSED", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow, code: 1, stderr: "closed, not OPEN"},
+		{name: "conflicting", view: view("OPEN", "false", "CONFLICTING", okRoll), runs: okRuns, log: okRow, code: 1, stderr: "conflicting"},
+		{name: "unknown mergeable", view: view("OPEN", "false", "UNKNOWN", okRoll), runs: okRuns, log: okRow, code: 1, stderr: "still computing mergeability; retry"},
+		{name: "pending head check", view: view("OPEN", "false", "MERGEABLE", `[{"__typename":"CheckRun","name":"check","status":"IN_PROGRESS","conclusion":""}]`), runs: okRuns, log: okRow, code: 1, stderr: "checks still running"},
+		{name: "failed head check", view: view("OPEN", "false", "MERGEABLE", `[{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"FAILURE"}]`), runs: okRuns, log: okRow, code: 1, stderr: "head check lint is failure"},
+		{name: "pending status context", view: view("OPEN", "false", "MERGEABLE", `[{"__typename":"StatusContext","context":"ci/x","state":"PENDING"}]`), runs: okRuns, log: okRow, code: 1, stderr: "checks still running"},
+		{name: "skipped and neutral pass", view: view("OPEN", "false", "MERGEABLE", `[{"name":"a","status":"COMPLETED","conclusion":"SKIPPED"},{"name":"b","status":"COMPLETED","conclusion":"NEUTRAL"}]`), runs: okRuns, log: okRow, merged: true, stdout: "merged"},
+		{name: "zero checks", view: view("OPEN", "false", "MERGEABLE", `[]`), runs: okRuns, log: okRow, code: 1, stderr: "--allow-no-ci"},
+		{name: "zero checks allowed", view: view("OPEN", "false", "MERGEABLE", `[]`), runs: okRuns, log: okRow, req: merge.Request{AllowNoCI: true}, merged: true, stdout: "merged"},
+		{name: "red base", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: `{"check_runs":[{"name":"deploy","status":"completed","conclusion":"failure"}]}`, log: okRow, code: 1, stderr: "base main is red (deploy: failure)"},
+		{name: "missing pr_open row", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, code: 1, stderr: "no pr_open ledger"},
+		{name: "missing row with --no-ledger", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, req: merge.Request{NoLedger: true}, merged: true, stdout: "merged"},
+		{name: "row of another crew", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow, req: merge.Request{Crew: "c2"}, code: 1, stderr: "no pr_open ledger"},
+		{name: "invalid ledger", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: strings.Replace(okRow, "AC1 pass(bats)", "AC1 pending", 1), code: 1, stderr: "no longer validates"},
+		{name: "newest row wins", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: strings.Replace(okRow, "AC1 pass(bats)", "AC1 pending", 1) + "\n" + okRow, merged: true, stdout: "merged"},
+		{name: "dry run", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow, req: merge.Request{DryRun: true}, stdout: "ok: all checks passed\n  pr: open, ready, mergeable\n  head check check: success\n  base main: not red\n  ledger: worker:feat/x#s1 validates\n", noMerge: true},
+		{name: "bad pr", req: merge.Request{PR: "x"}, code: 1, stderr: "usage: crew merge"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			paths := bus.Paths{Common: dir, Dir: dir, Log: filepath.Join(dir, "events.jsonl")}
+			if tt.log != "" {
+				if err := os.WriteFile(paths.Log, []byte(tt.log+"\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			g := &ghtest.Fake{Out: map[string]string{viewIn: tt.view, runsIn: tt.runs, mergeG: "merged"}}
+			git := &gittest.Fake{}
+			req := tt.req
+			if req.PR == "" {
+				req.PR = "7"
+			}
+			var stdout, stderr bytes.Buffer
+			code := merge.Run(context.Background(), req, paths, &stdout, &stderr, merge.Options{GH: g, Git: git, Dir: dir})
+			if code != tt.code {
+				t.Errorf("code = %d, want %d (stderr %q)", code, tt.code, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tt.stderr) || (tt.stderr == "" && stderr.Len() != 0) {
+				t.Errorf("stderr = %q, want it to contain %q", stderr.String(), tt.stderr)
+			}
+			if tt.stdout != "" && !strings.Contains(stdout.String(), tt.stdout) {
+				t.Errorf("stdout = %q, want %q", stdout.String(), tt.stdout)
+			}
+			var merged bool
+			for _, c := range g.Calls() {
+				if strings.HasPrefix(c, "pr merge") {
+					merged = true
+					if c != mergeG {
+						t.Errorf("merge argv = %q, want %q", c, mergeG)
+					}
+				}
+			}
+			if merged != tt.merged {
+				t.Errorf("merged = %v, want %v (calls %v)", merged, tt.merged, g.Calls())
+			}
+		})
+	}
+}
+
+func TestLedgerAgainstTaskDoc(t *testing.T) {
+	dir := t.TempDir()
+	wt := filepath.Join(dir, "wt")
+	if err := os.Mkdir(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// An acceptance list the ledger's CI item must satisfy: AC1 names CI.
+	doc := "## Acceptance\n\n- AC1: CI (`check` workflow) green on the PR head\n"
+	if err := os.WriteFile(filepath.Join(wt, "WORKER_TASK.md"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	paths := bus.Paths{Common: dir, Dir: dir, Log: filepath.Join(dir, "events.jsonl")}
+	if err := os.WriteFile(paths.Log, []byte(okRow+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := &ghtest.Fake{Out: map[string]string{viewIn: view("OPEN", "false", "MERGEABLE", okRoll), runsIn: okRuns, mergeG: "merged"}}
+	gt := &gittest.Fake{Func: func(string, []string) (string, error) {
+		return "worktree " + wt + "\nHEAD x\nbranch refs/heads/feat/x\n", nil
+	}}
+	var stdout, stderr bytes.Buffer
+	code := merge.Run(context.Background(), merge.Request{PR: "7"}, paths, &stdout, &stderr, merge.Options{GH: g, Git: gt, Dir: dir})
+	if code != 1 || !strings.Contains(stderr.String(), "CI item") {
+		t.Errorf("code %d stderr %q, want the CI-evidence refusal", code, stderr.String())
+	}
+}

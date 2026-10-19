@@ -12,6 +12,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
+	"github.com/noamsto/dispatcher/crew/internal/merge"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/rate"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
@@ -295,6 +296,14 @@ type prWatchCmd struct {
 	PR       string  `arg:"" optional:"" name:"pr"`
 }
 
+type mergeCmd struct {
+	DryRun    bool    `name:"dry-run"`
+	AllowNoCI bool    `name:"allow-no-ci"`
+	NoLedger  bool    `name:"no-ledger"`
+	Crew      *string `name:"crew"`
+	PR        string  `arg:"" optional:"" name:"pr"`
+}
+
 type stallWatchCmd struct {
 	Target        string  `arg:"" optional:"" name:"target"`
 	Pane          *string `name:"pane"`
@@ -538,6 +547,13 @@ var wordings = map[string]wording{
 		unknownFlag: func(f string) string { return fmt.Sprintf("pr-watch: unknown arg '%s'", f) },
 		extra:       func(w string) string { return fmt.Sprintf("pr-watch: unknown arg '%s'", w) },
 		code:        exitFailure,
+	},
+	"merge": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: merge: unknown flag '%s' (%s)", f, merge.Usage) },
+		extra: func(w string) string {
+			return fmt.Sprintf("crew: merge: unexpected argument '%s' (%s)", w, merge.Usage)
+		},
+		code: exitFailure,
 	},
 	"stall-watch": {
 		unknownFlag: func(f string) string { return fmt.Sprintf("crew: stall-watch: unknown arg '%s'", f) },
@@ -796,6 +812,11 @@ func validate(sub string, r *root) *refusal {
 			if given(f.v) {
 				return &refusal{fmt.Sprintf("crew: %s needs a value", f.name), exitUsage}
 			}
+		}
+	case "merge":
+		c := r.Merge
+		if c.PR == "" || given(c.Crew) {
+			return fail(merge.Usage)
 		}
 	case "stack":
 		c := r.Stack

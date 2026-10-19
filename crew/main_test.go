@@ -568,7 +568,7 @@ func TestRunBusSubsRefuseOutsideRepo(t *testing.T) {
 	e := env{getwd: func() (string, error) { return dir, nil }}
 	for _, sub := range []string{
 		"crews", "log", "report", "sessions", "roster", "identity", "inbox", "hold", "await", "watch",
-		"retro", "reply", "resolve-target", "pr-watch", "where", "stream", "roster-render", "adopt",
+		"retro", "reply", "resolve-target", "pr-watch", "merge", "where", "stream", "roster-render", "adopt",
 		"status", "msg", "register", "deregister", "rate", "git-baseline", "reap", "stack", "nudge", "stall-watch",
 		"remote-run", "dispatch-row",
 	} {
@@ -1261,11 +1261,12 @@ func TestAdmittedSubcommands(t *testing.T) {
 		"git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help",
 		"id", "new", "engine-cmd", "dash", "pi-agent-dir", "relay",
 		"remote-run", "remote-exec", "dispatch-row",
+		"merge", // added after that revision
 	}
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
-		"status", "msg", "reply", "hold", "nudge", "await", "watch", "relay", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "pr-watch", "stall-watch", "help",
+		"status", "msg", "reply", "hold", "nudge", "await", "watch", "relay", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "merge", "pr-watch", "stall-watch", "help",
 		"remote-run", "remote-exec", "dispatch-row"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
