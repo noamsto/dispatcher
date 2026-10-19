@@ -48,7 +48,7 @@ claude_worker_plugin_settings() {
 # claude_chrome_flag [chrome] — print the launch flag, with a leading space, that
 # turns Claude in Chrome on for a --chrome lead and off for every other worker.
 claude_chrome_flag() {
-  if [[ -n "${1:-}" ]]; then printf ' --chrome'; else printf ' --no-chrome'; fi
+  if [[ -n ${1:-} ]]; then printf ' --chrome'; else printf ' --no-chrome'; fi
 }
 
 # worker_browser_env <branch> <worktree> <config> — print an `env` prefix, with a
