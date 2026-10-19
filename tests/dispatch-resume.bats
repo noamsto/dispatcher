@@ -1159,6 +1159,93 @@ EOF
   [[ "$line" != *gopls-lsp* ]]
 }
 
+# Claude in Chrome: the header is worker-writable, so the bus rows dispatch and
+# resume write are the record a resume carries forward.
+_chrome_dispatch_row() {
+  mkdir -p "$TEST_REPO/.git/crew"
+  jq -nc '{ts: 1, crew_id: "c1", kind: "dispatch", branch: "feat/7-a-thing", name: "iris", session: "s1-99", chrome: true}' \
+    >>"$TEST_REPO/.git/crew/events.jsonl"
+}
+
+# _lead_pane — the pane the resume launched into, read off its @crew_model stamp.
+_lead_pane() { sed -n 's/^set-option -p -t \([^ ]*\) @crew_model .*/\1/p' "$STUB_LOG" | tail -1; }
+
+@test "claude resume relaunches with --chrome when the bus records it" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _chrome_dispatch_row
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" == *"--permission-mode auto --chrome "* ]]
+  [[ "$line" != *mcp__claude-in-chrome__* ]]
+  grep -- 'resume precheck$' "$STUB_LOG" | grep -qF -- ' --chrome '
+  grep -qx 'chrome: true' "$WT/WORKER_TASK.md"
+  [ "$(jq -r 'select(.kind == "resume") | .chrome' "$TEST_REPO/.git/crew/events.jsonl" | tail -1)" = true ]
+  pane="$(_lead_pane)"
+  [ -n "$pane" ]
+  grep -qxF -- "set-option -p -t $pane @crew_chrome 1" "$STUB_LOG"
+}
+
+@test "claude resume ignores a header-only chrome: true and rewrites it" {
+  setup_worker_wt 'chrome: true'
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" == *"--permission-mode auto --no-chrome "* ]]
+  [[ "$line" == *mcp__claude-in-chrome__* ]]
+  grep -qx 'chrome: false' "$WT/WORKER_TASK.md"
+  run ! grep -qx 'chrome: true' "$WT/WORKER_TASK.md"
+}
+
+@test "claude resume --no-chrome drops a recorded --chrome" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _chrome_dispatch_row
+  cd "$WT"
+  run run_resume --no-chrome
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" == *"--permission-mode auto --no-chrome "* ]]
+  [ "$(jq -r 'select(.kind == "resume") | has("chrome")' "$TEST_REPO/.git/crew/events.jsonl" | tail -1)" = false ]
+  pane="$(_lead_pane)"
+  [ -n "$pane" ]
+  grep -qxF -- "set-option -p -u -t $pane @crew_chrome" "$STUB_LOG"
+  run ! grep -qF '@crew_chrome 1' "$STUB_LOG"
+}
+
+@test "claude resume --chrome opts in with no recorded choice" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --chrome
+  [ "$status" -eq 0 ]
+  grep -F 'claude --continue' <(launch_log) | grep -qF -- '--permission-mode auto --chrome '
+}
+
+@test "resume refuses a recorded --chrome on a non-claude engine" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _chrome_dispatch_row
+  cd "$WT"
+  run run_resume --agent codex
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"pass --no-chrome"* ]]
+  run ! grep -q send-keys "$STUB_LOG"
+}
+
+@test "resume --rearm-roles is exclusive with --chrome and --no-chrome" {
+  setup_worker_wt
+  cd "$WT"
+  run run_resume --rearm-roles --chrome
+  [ "$status" -eq 1 ]
+  run run_resume --rearm-roles --no-chrome
+  [ "$status" -eq 1 ]
+}
+
 @test "claude resume and pi resume carry the worktree's AGENT_BROWSER_SESSION" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris
@@ -2749,6 +2836,15 @@ EOF
   [ "$status" -eq 0 ]
   grep -q '^remote-run --host mini .* -- dispatch resume feat/7-a-thing$' "$STUB_LOG"
   grep -qxF "remote-run from $(realpath -e "$TEST_REPO")" "$STUB_LOG"
+}
+
+@test "target: a --chrome resume of a remote row is refused before any remote call" {
+  _remote_resume_world
+  cd "$TEST_REPO"
+  TMUX_PANE=%3 run run_resume '#7' --chrome
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"local to this machine"* ]]
+  run ! grep -q 'remote-run' "$STUB_LOG"
 }
 
 @test "target: a worker worktree whose .git is a standalone repo cannot pick the host from its own bus (#633)" {

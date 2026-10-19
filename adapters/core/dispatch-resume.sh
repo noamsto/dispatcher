@@ -18,8 +18,9 @@ usage() {
 _resume_help() {
   cat <<'HELP'
 usage: dispatch resume [<target>] [--agent E] [--model M] [--effort E]
-                     [--mcp P] [--fresh] [--print] [--rearm-roles]
-                     [--ignore-budget] [--ignore-map] [extra prompt...]
+                     [--mcp P] [--chrome | --no-chrome] [--fresh] [--print]
+                     [--rearm-roles] [--ignore-budget] [--ignore-map]
+                     [extra prompt...]
 
 Relaunch the worker whose worktree you are standing in, continuing its own
 engine session, and re-run only the gates this command names.
@@ -31,6 +32,8 @@ engine session, and re-run only the gates this command names.
   --model M           Model for that engine (default: the task doc's)
   --effort E          low | medium | high | xhigh | max | ultra (default: the task doc's)
   --mcp P             MCP profile to launch the engine with
+  --chrome            Relaunch the claude lead with Claude in Chrome (default: the recorded choice)
+  --no-chrome         Relaunch without Claude in Chrome
   --fresh             Start a new engine session instead of continuing the old one
   --print             Print the launch command instead of running it
   --rearm-roles       Re-arm the role panes of this worker's restored window and
@@ -514,6 +517,10 @@ _remote_window() {
 _resume_remote() {
   local rc=0 ssh
   local -a rest=("${resume_args[@]:0:target_at}" "${resume_args[@]:target_at+1}")
+  [ "${chrome_flag_val:-}" != 1 ] || {
+    echo "dispatch resume: --chrome is local to this machine — $1 runs on $2" >&2
+    exit 1
+  }
   crew remote-run --host "$2" --env "CREW_ID=$3" --env "DISPATCH_TMUX_SESSION=crew-$3" -- \
     dispatch resume "$1" ${rest[@]+"${rest[@]}"} || rc=$?
   [ "$rc" -eq 0 ] || exit "$rc"
@@ -618,6 +625,7 @@ agent_flag=""
 model_flag=""
 effort_flag=""
 mcp_flag_val=""
+chrome_flag_val=""
 extra=""
 target=""
 positional=()
@@ -658,6 +666,14 @@ while [ $# -gt 0 ]; do
       exit 1
     }
     shift 2
+    ;;
+  --chrome)
+    chrome_flag_val=1
+    shift
+    ;;
+  --no-chrome)
+    chrome_flag_val=0
+    shift
     ;;
   --fresh)
     fresh=1
@@ -722,7 +738,7 @@ if [ "${#positional[@]}" -gt 0 ]; then
 fi
 extra="${positional[*]}"
 
-if [ -n "$rearm_roles" ] && [ -n "$fresh$do_print$ignore_map$agent_flag$model_flag$effort_flag$mcp_flag_val$extra" ]; then
+if [ -n "$rearm_roles" ] && [ -n "$fresh$do_print$ignore_map$agent_flag$model_flag$effort_flag$mcp_flag_val$chrome_flag_val$extra" ]; then
   usage
   exit 1
 fi
@@ -1047,6 +1063,14 @@ _prior_failed_model() {
   ' "$events" 2>/dev/null || true
 }
 
+# _recorded_chrome <branch> <crew_dir> — prints 1 when the branch's newest
+# dispatch or resume row ran with Claude in Chrome. The header is
+# worker-writable, so the bus rows dispatch and resume write are the record.
+_recorded_chrome() {
+  jq -rn --arg b "$1" '[inputs | select((.kind == "dispatch" or .kind == "resume") and .branch == $b)]
+    | last | if .chrome == true then "1" else "" end' "$2/events.jsonl" 2>/dev/null || true
+}
+
 # _prior_failed_escalation_available <branch> <crew_dir> — returns 0 if:
 # 1. The branch's latest terminal worker status (failed/done/pr_open) is
 #    `failed`, AND that worker's session has a matching dispatch or resume
@@ -1083,8 +1107,22 @@ _prior_failed_escalation_available() {
   return 0
 }
 
+case "$chrome_flag_val" in
+1) chrome=1 ;;
+0) chrome="" ;;
+*)
+  chrome="$(_recorded_chrome "$branch" "$crew_dir")"
+  if [ -n "$chrome" ] && [ "$agent" != claude ]; then
+    echo "dispatch resume: this worker was dispatched with --chrome, which is claude-only — pass --no-chrome to resume it on $agent" >&2
+    exit 1
+  fi
+  ;;
+esac
+
 precheck=(--effort "$effort" --agent "$agent" --crew-id "$crew_id")
 [ -n "$ignore_budget" ] && precheck+=(--ignore-budget)
+# dispatch's precheck owns the --chrome refusals and the holder gate.
+[ -z "$chrome" ] || precheck+=(--chrome)
 # The tier↔model pair was adjudicated when this worker was first dispatched;
 # only an explicit --model is a fresh choice that deserves re-gating.
 # Escalation: if a prior session failed and --model is one rung up, allow it.
@@ -1644,6 +1682,7 @@ _hdr_set() { # $1=field  $2=value
 _hdr_set worker_id "$worker_id"
 _hdr_set resume true
 _hdr_set protocol_dir "$PROTOCOL_DIR"
+_hdr_set chrome "$([ -n "$chrome" ] && echo true || echo false)"
 
 # Ensure WORKER_TASK.md is excluded from tracking across every worktree.
 exclude_file="${_crew_dir_real%/crew}/info/exclude"
@@ -1684,11 +1723,13 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" \
   --argjson continued "$([ -n "$fresh" ] && echo false || echo true)" \
   --arg engine_session "${lead_sid:-${lead_session#-}}" \
   --arg escalated_from "$escalated_from_event" \
+  --argjson chrome "$([ -n "$chrome" ] && echo true || echo false)" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"resume", branch:$branch,
      worker_id:$worker, prev_worker_id:$prev, engine:$engine, model:$model,
      session:$session, continued:$continued,
      engine_session:(if $engine_session == "" then null else $engine_session end)}
-   + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end')
+   + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
+   + if $chrome then {chrome:true} else {} end')
 _bus_append "$crew_dir/events.jsonl" "$line"
 
 # Clears a stale exited/failed/done roster row so the crew reads as live again.
@@ -1808,11 +1849,17 @@ else
   # Re-passing --append-system-prompt-file matters on a continue: it forces
   # --system-prompt-snapshot off, so the worker protocol is applied fresh rather
   # than replayed from the conversation's recorded prompt.
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id $(claude_lean_env)claude $cont --name $q_agent_name --model $q_model --effort $q_effort$claude_sid $mcp_arg $xreview_mcp --settings $(claude_worker_plugin_settings "$settings")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id $(claude_lean_env)claude $cont --name $q_agent_name --model $q_model --effort $q_effort$claude_sid $mcp_arg $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
 fi
 write_launch_script launch_line "$launch_cmd"
 # dispatch's localModels slot count reads this off the lead pane.
 tmux set-option -p -t "$pane" @crew_model "$model" 2>/dev/null || true
+# The --chrome holder scan reads this.
+if [ -n "$chrome" ]; then
+  tmux set-option -p -t "$pane" @crew_chrome 1 2>/dev/null || true
+else
+  tmux set-option -p -u -t "$pane" @crew_chrome 2>/dev/null || true
+fi
 # shellcheck disable=SC2154 # set by write_launch_script's nameref (_launch)
 tmux send-keys -t "$pane" "$launch_line" Enter
 
