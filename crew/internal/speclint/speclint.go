@@ -308,7 +308,6 @@ func closingPattern(n string) string {
 	return "(close[sd]?|fix(e[sd])?|resolve[sd]?):? " + mentionPattern(n)
 }
 
-// firstLine is err's message up to its first newline.
 func firstLine(err error) string {
 	l, _, _ := strings.Cut(err.Error(), "\n")
 	return l
