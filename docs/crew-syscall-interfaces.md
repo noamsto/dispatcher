@@ -56,14 +56,14 @@ concern (`Tmux`, `Gh`, `Git`, `Proc`, `Clock`). The single-method interfaces are
 shared, not redeclared consumer-side: one declaration is shorter than one per
 consumer. Fakes live in a `<concern>test` package imported only from tests.
 
-| concern     | interface                                                                                                                                                                                                                                                                         | real                                                             | fake                                                           |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------- |
-| tmux (done) | `tmux.Client{ Run(ctx, args...) (string, error) }` + `tmux.Output` (failure = "")                                                                                                                                                                                                 | `tmux.Exec{}`                                                    | `tmuxtest.Fake{Out, Func}` + `Calls()`                         |
-| gh          | `gh.Client{ Run(ctx, args...) (string, error); Combined(ctx, args...) (string, error) }`; quiet = `Run` with the output dropped; `HaveGh` = `gh.Installed` (`Run("--version")`, then `errors.Is(err, exec.ErrNotFound)`)                                                          | `gh.Exec{}`                                                      | `ghtest.Fake` (same shape as `tmuxtest`)                       |
-| git         | `git.Client{ Run(ctx, dir string, args...) (string, error) }` + funcs `Output`, `Worktrees`, `Toplevel`, `Origin` over it, plus `RepoSlug(url)`; a non-zero exit is a `*git.ExitError`; `wtgit` and `gitguard` keep their own runners                                             | `git.Exec{}`                                                     | `gittest.Fake` keyed by dir + argv                             |
-| proc        | `proc.Table{ Alive(pid) bool; Elapsed(pid) (int64, bool); Parent(pid) (int, bool); Comm(pid) (string, bool); Args(pid) string; Cwds(ctx) []Cwd; Kill(pid) }`, plus `IsAncestor`/`OwnerPID` as funcs over a `Table`                                                                | `proc.OS{}` (from `crews.DefaultProbes`, `reap`, `adopt.PsArgs`) | `proctest.Table{Procs}` (map pid → proc) + `Killed()`          |
-| clock       | packages take the existing `clock.Clock` value instead of bare `Now` funcs; its `Sleep`/`SleepCtx` already advance a `CrewClock` file instead of sleeping. Wall-clock waits (`reap`'s and `rosterrender`'s `time.Duration` sleeps, `stream`'s timers, `watch`'s poll) stay off it | new `clock.FromEnv()` (what `main.go` builds by hand today)      | `clock.Clock{Now: fixed, CrewClock: tmpfile}` (no new package) |
-| env         | no interface: `Getenv func(string) string` is already the stdlib shape; rename `Env`/`LookupEnv` fields to `Getenv` and drop duplicates                                                                                                                                           | `os.Getenv`                                                      | a map's lookup                                                 |
+| concern     | interface                                                                                                                                                                                                                                                                                                                               | real                                                             | fake                                                           |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------- |
+| tmux (done) | `tmux.Client{ Run(ctx, args...) (string, error) }` + `tmux.Output` (failure = "")                                                                                                                                                                                                                                                       | `tmux.Exec{}`                                                    | `tmuxtest.Fake{Out, Func}` + `Calls()`                         |
+| gh          | `gh.Client{ Run(ctx, args...) (string, error); Combined(ctx, args...) (string, error) }`; quiet = `Run` with the output dropped; `HaveGh` = `gh.Installed` (`Run("--version")`, then `errors.Is(err, exec.ErrNotFound)`)                                                                                                                | `gh.Exec{}`                                                      | `ghtest.Fake` (same shape as `tmuxtest`)                       |
+| git         | `git.Client{ Run(ctx, dir string, args...) (string, error) }` + funcs `Output`, `Worktrees`, `Toplevel`, `Origin` over it, plus `RepoSlug(url)`; a non-zero exit is a `*git.ExitError`; `wtgit` and `gitguard` keep their own runners                                                                                                   | `git.Exec{}`                                                     | `gittest.Fake` keyed by dir + argv                             |
+| proc        | `proc.Table{ Alive(pid) bool; Elapsed(pid) (int64, bool); Parent(pid) (int, bool); Comm(pid) (string, bool); Args(pid) string; Cwds(ctx) []Cwd; Kill(pid) }`, plus `IsAncestor`/`OwnerPID` as funcs over a `Table`                                                                                                                      | `proc.OS{}` (from `crews.DefaultProbes`, `reap`, `adopt.PsArgs`) | `proctest.Table{Procs}` (map pid → proc) + `Killed()`          |
+| clock       | packages take the existing `clock.Clock` value instead of bare `Now` funcs; its `Sleep`/`SleepCtx` already advance a `CrewClock` file instead of sleeping. wall-clock waits (`reap`'s and `rosterrender`'s `time.Duration` sleeps, `stream`'s timers, and `watch`'s poll, a `Clock` with `CrewClock` cleared) never follow `CREW_CLOCK` | `clock.FromEnv()`                                                | `clock.Clock{Now: fixed, CrewClock: tmpfile}` (no new package) |
+| env         | no interface: `Getenv func(string) string` is already the stdlib shape; rename `Env`/`LookupEnv` fields to `Getenv` and drop duplicates                                                                                                                                                                                                 | `os.Getenv`                                                      | a map's lookup                                                 |
 
 Left as they are: bus reads/appends (in-repo, not a system call), `stall/probe.Sh`
 and the `CREW_STALL_*_CMD` seams (bash libs and test seams under `bash -c` with
@@ -173,7 +173,9 @@ their own group-kill runner), aeye, gtrash, `rosterrender`'s exec hop.
 ## The clock slice
 
 - `clock.FromEnv()` is the real clock plus this process's `$CREW_CLOCK`;
-  `main.go` and `nudge.Default` build every `Clock` with it.
+  `main.go` and `nudge.Default` build their clocks with it, while
+  `reap.DefaultProbes` and `stack.DefaultProbes` keep a real-only
+  `clock.Clock{Now: time.Now}`.
 - `adopt`, `crews`, `entry.NewOptions`, `fleet`, `identity`, `rate`,
   `register`, `report`, `stack.Probes`, `stream`, `watch` and `reap.Probes`
   hold one `Clock clock.Clock` instead of `Now`; `status.Options.NowMS` and
@@ -184,8 +186,9 @@ their own group-kill runner), aeye, gtrash, `rosterrender`'s exec hop.
   waits (`Clock.Sleep`/`SleepCtx`), and the virtual `now` that `hold` and
   `rosterrender`'s timers read. Wall clock (never follows it):
   `reap.Probes.Sleep`, `rosterrender.Probes.Sleep`, `stream`'s `Timer` and
-  `Rediscover`, and the `watch`/`relay` poll, which clears `CrewClock` on
-  entry. These keep their seams; the clock gained no wall-clock method.
+  `Rediscover`, the `watch`/`relay` poll (which clears `CrewClock` on entry),
+  and `stream`'s relay tickers, retry and watchdog timers (no seam). The
+  seamed ones keep their seams; the clock gained no wall-clock method.
 - Kept: `nudge.Deps.Sleep` (a bus-time `SleepCtx` adapter) stays a field
   because the arm tests act between waits through it (a lock released after
   the Nth wait).
