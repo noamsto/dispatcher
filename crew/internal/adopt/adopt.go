@@ -30,6 +30,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
+	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
@@ -57,13 +58,9 @@ type Options struct {
 	Proc proc.Table
 	// Now is the clock the pidfile.log line stamps.
 	Now func() time.Time
-	// Gh runs `gh <args…>` with stderr merged into stdout as the arm's
-	// `$(gh … 2>&1)` does, because the text it captures is what its failure
-	// line prints.
-	Gh func(args ...string) (string, error)
-	// GhQuiet runs `gh <args…>` with both streams discarded as the arm's
-	// `gh … >/dev/null 2>&1` does: only the exit status is read.
-	GhQuiet func(args ...string) error
+	// Gh runs gh. Listing uses Combined, as the arm's `$(gh … 2>&1)`, because
+	// the text it captures is what its failure line prints.
+	Gh gh.Client
 	// Git runs `git worktree list --porcelain` once per branch as the arm does.
 	// A failed git is the arm's empty `$(…)`: no worktree, not an error.
 	Git git.Client
@@ -209,7 +206,7 @@ func (o Options) releaseClaims(ctx context.Context, paths bus.Paths, id string, 
 	if len(claims) == 0 {
 		return
 	}
-	heads, err := o.Gh("pr", "list", "--state", "open", "--limit", "500",
+	heads, err := o.Gh.Combined(ctx, "pr", "list", "--state", "open", "--limit", "500",
 		"--json", "headRefName", "--jq", ".[].headRefName")
 	if err != nil {
 		// The arm's `2>&1`: gh's own message is captured, not printed, so this
@@ -232,7 +229,7 @@ func (o Options) releaseClaims(ctx context.Context, paths bus.Paths, id string, 
 			say(stderr, "%s\n", held)
 			continue
 		}
-		if err := o.GhQuiet("issue", "edit", c.issue, "--remove-label", "dispatched"); err == nil {
+		if _, err := o.Gh.Run(ctx, "issue", "edit", c.issue, "--remove-label", "dispatched"); err == nil {
 			say(stderr, "crew adopt: released the dispatched label on #%s (%s)\n", c.issue, c.branch)
 			if err := claimindex.Release(ctx, o.Git, paths.Common, o.LookupEnv, c.issue, id, o.Now()); err != nil {
 				say(stderr, "crew adopt: could not record the release of #%s in the claim index: %v\n", c.issue, err)
@@ -327,10 +324,7 @@ func (o Options) withDefaults() Options {
 		o.Now = time.Now
 	}
 	if o.Gh == nil {
-		o.Gh = ghCombined
-	}
-	if o.GhQuiet == nil {
-		o.GhQuiet = ghQuiet
+		o.Gh = gh.Exec{}
 	}
 	if o.Git == nil {
 		o.Git = git.Exec{}

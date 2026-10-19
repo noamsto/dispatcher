@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 )
@@ -54,10 +55,11 @@ type Options struct {
 	LookupEnv func(string) string
 	// Now is the sweep's clock; the folds freeze jq's `now` from it.
 	Now func() time.Time
-	// Run executes one external command given as argv, capturing stdout and
-	// dropping stderr — every arm call is `$(cmd 2>/dev/null …)`. The error is
-	// its exit status: gh's call sites also treat empty stdout as failure,
-	// while `git cat-file -e` succeeds by printing nothing.
+	// Gh runs the arm's gh calls, each `$(gh … 2>/dev/null)`; the call sites
+	// also treat empty stdout as failure.
+	Gh gh.Client
+	// Run executes the dispatch-config resolver given as argv, capturing stdout
+	// and dropping stderr.
 	Run func(args ...string) (string, error)
 	// SweepRepo sweeps one discovered repo, given its bus and checkout. It
 	// defaults to the repo-keyed sweep; tests replace it to pin the --sweep-all
@@ -69,6 +71,9 @@ type Options struct {
 func (o Options) withDefaults() Options {
 	if o.Git == nil {
 		o.Git = git.Exec{}
+	}
+	if o.Gh == nil {
+		o.Gh = gh.Exec{}
 	}
 	if o.LookupEnv == nil {
 		o.LookupEnv = os.Getenv

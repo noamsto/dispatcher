@@ -1,12 +1,10 @@
 package stack
 
 import (
-	"context"
-	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/gh"
 )
 
 // Probes are the arm's side effects that are not git — every git call goes
@@ -16,7 +14,7 @@ type Probes struct {
 	// newlines stripped, the status as an error. The arm left the child's
 	// stderr on the terminal and never read it; this discards it, so a failed
 	// gh surfaces as the arm's own refusal line alone.
-	Gh func(ctx context.Context, args ...string) (string, error)
+	Gh gh.Client
 	// Append is `_bus_append`.
 	Append func(path, line string) error
 	// Now stamps the row: the arm's `jq -n 'now*1000|floor'` is real time,
@@ -27,10 +25,7 @@ type Probes struct {
 // DefaultProbes is the production probe set.
 func DefaultProbes() Probes {
 	return Probes{
-		Gh: func(ctx context.Context, args ...string) (string, error) {
-			out, err := exec.CommandContext(ctx, "gh", args...).Output()
-			return strings.TrimRight(string(out), "\n"), err
-		},
+		Gh:     gh.Exec{},
 		Append: bus.Append,
 		Now:    time.Now,
 	}

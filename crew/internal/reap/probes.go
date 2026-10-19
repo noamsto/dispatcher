@@ -10,14 +10,13 @@
 package reap
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
@@ -37,14 +36,8 @@ type Probes struct {
 	Git git.Client
 	// Getenv reads the CREW_STALL_*_CMD capture seams.
 	Getenv func(string) string
-	// Gh is `gh …` with stderr dropped and trailing newlines stripped.
-	Gh func(ctx context.Context, args ...string) (string, error)
-	// GhAll is `gh … 2>&1`, stdout and stderr combined.
-	GhAll func(ctx context.Context, args ...string) (string, error)
-	// GhQuiet is `gh … >/dev/null 2>&1`: only the status is read.
-	GhQuiet func(ctx context.Context, args ...string) error
-	// HaveGh is `command -v gh`.
-	HaveGh func() bool
+	// Gh runs gh: Run for the reads that drop stderr, Combined for `gh … 2>&1`.
+	Gh gh.Client
 	// Gtrash is `gtrash put <path>` with everything discarded.
 	Gtrash func(ctx context.Context, path string)
 	// Proc lists the processes by cwd, walks this process's ancestry and
@@ -61,19 +54,7 @@ func DefaultProbes() Probes {
 	return Probes{
 		Tmux: tmux.Exec{},
 		Git:  git.Exec{},
-		Gh: func(ctx context.Context, args ...string) (string, error) {
-			return output(ctx, "gh", args, false)
-		},
-		GhAll: func(ctx context.Context, args ...string) (string, error) {
-			return output(ctx, "gh", args, true)
-		},
-		GhQuiet: func(ctx context.Context, args ...string) error {
-			return exec.CommandContext(ctx, "gh", args...).Run()
-		},
-		HaveGh: func() bool {
-			_, err := exec.LookPath("gh")
-			return err == nil
-		},
+		Gh:   gh.Exec{},
 		Gtrash: func(ctx context.Context, path string) {
 			_ = exec.CommandContext(ctx, "gtrash", "put", path).Run()
 		},
@@ -89,18 +70,4 @@ func DefaultProbes() Probes {
 func (p Probes) tmuxOut(ctx context.Context, args ...string) string {
 	out, _ := p.Tmux.Run(ctx, args...)
 	return out
-}
-
-// output runs name and returns its stdout, trailing newlines stripped, with
-// stderr dropped or merged into the result. Output is returned alongside a
-// failure: `$(cmd || true)` keeps whatever the command printed.
-func output(ctx context.Context, name string, args []string, merge bool) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	if merge {
-		cmd.Stderr = &buf
-	}
-	err := cmd.Run()
-	return strings.TrimRight(buf.String(), "\n"), err
 }

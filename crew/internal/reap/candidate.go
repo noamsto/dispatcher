@@ -107,7 +107,7 @@ func (r *run) findPR(ctx context.Context, c *candidate) bool {
 		return true
 	}
 	c.prSrc = "fallback"
-	prs, err := r.p.Gh(ctx, "pr", "list", "--head", c.branch, "--state", "all", "--json", "url,state,headRefOid,isCrossRepository")
+	prs, err := r.p.Gh.Run(ctx, "pr", "list", "--head", c.branch, "--state", "all", "--json", "url,state,headRefOid,isCrossRepository")
 	if err != nil {
 		c.why = "could not list PRs for " + c.branch
 		return false
@@ -148,7 +148,7 @@ func (r *run) issueClosed(ctx context.Context, c *candidate) bool {
 			c.why = c.nopr + "; claim-issue row names a non-numeric issue"
 			return false
 		}
-		state, _ := r.p.Gh(ctx, "issue", "view", n, "--json", "state", "--jq", ".state")
+		state, _ := r.p.Gh.Run(ctx, "issue", "view", n, "--json", "state", "--jq", ".state")
 		if state == "" {
 			c.why = c.nopr + "; could not read issue #" + n
 			return false
@@ -173,7 +173,7 @@ func (r *run) keep(c *candidate, why string) {
 // not the latest session's own vouches only for a tip at or behind its head.
 // False has noted why the branch is kept.
 func (r *run) prGate(ctx context.Context, c *candidate) bool {
-	c.prState, _ = r.p.Gh(ctx, "pr", "view", c.pr, "--json", "state", "--jq", ".state")
+	c.prState, _ = r.p.Gh.Run(ctx, "pr", "view", c.pr, "--json", "state", "--jq", ".state")
 	switch c.prState {
 	case "MERGED", "CLOSED":
 	case "":
@@ -187,7 +187,7 @@ func (r *run) prGate(ctx context.Context, c *candidate) bool {
 	if c.prSrc == "own" {
 		return true
 	}
-	head, _ := r.p.Gh(ctx, "pr", "view", c.pr, "--json", "headRefOid", "--jq", ".headRefOid")
+	head, _ := r.p.Gh.Run(ctx, "pr", "view", c.pr, "--json", "headRefOid", "--jq", ".headRefOid")
 	if head == "" {
 		r.keep(c, "could not verify "+c.pr+"'s head"+c.ign())
 		return false

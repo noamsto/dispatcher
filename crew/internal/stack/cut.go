@@ -19,7 +19,7 @@ func (s *stackCmd) cut(ctx context.Context, record bool, child, oid string) erro
 	// another repo, so its cut is never recorded.
 	pr := trimOne(child, "#")
 	if ascii.IsDigits(pr) {
-		out, err := s.p.Gh(ctx, "pr", "view", pr, "--json", "headRefName,isCrossRepository")
+		out, err := s.p.Gh.Run(ctx, "pr", "view", pr, "--json", "headRefName,isCrossRepository")
 		if err != nil {
 			return s.refuse("crew: cannot read PR #%s\n", pr)
 		}

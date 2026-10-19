@@ -13,6 +13,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
+	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
@@ -102,7 +103,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, 
 	if code := r.idleRelease(ctx); code != 0 {
 		return code
 	}
-	if !r.p.HaveGh() {
+	if !gh.Installed(ctx, r.p.Gh) {
 		r.note("needs gh")
 		return 0
 	}

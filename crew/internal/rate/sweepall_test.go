@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 )
 
@@ -113,6 +114,7 @@ func (f *sweepAllFixture) options() Options {
 			}
 			return ""
 		},
+		Gh: &ghtest.Fake{},
 		Git: &gittest.Fake{Func: func(_ string, args []string) (string, error) {
 			return f.origins[args[1]], nil
 		}},

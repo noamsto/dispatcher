@@ -398,7 +398,7 @@ func (s *sweep) reverted(commit, mergedAt string) (bool, bool) {
 // failed on a non-zero exit OR empty stdout (`_gh_json` prints nothing on
 // failure, and every call site tests `-n "$out"`).
 func (s *sweep) gh(args ...string) (any, bool) {
-	out, err := s.o.Run(append([]string{"gh"}, args...)...)
+	out, err := s.o.Gh.Run(context.Background(), args...)
 	if err != nil || out == "" {
 		return nil, false
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 )
@@ -134,6 +135,14 @@ func (f *fixture) options() Options {
 			}
 			return out, nil
 		}},
+		Gh: &ghtest.Fake{Func: func(args []string) (string, error) {
+			f.calls = append(f.calls, "gh "+strings.Join(args, " "))
+			out, ok := f.gh(strings.Join(args, " "))
+			if !ok {
+				return out, fmt.Errorf("gh exited 1")
+			}
+			return out, nil
+		}},
 		Run: func(args ...string) (string, error) {
 			joined := strings.Join(args, " ")
 			f.calls = append(f.calls, joined)
@@ -143,12 +152,6 @@ func (f *fixture) options() Options {
 					return "", fmt.Errorf("dispatch-config: not found")
 				}
 				return f.config, nil
-			case "gh":
-				out, ok := f.gh(strings.Join(args[1:], " "))
-				if !ok {
-					return out, fmt.Errorf("gh exited 1")
-				}
-				return out, nil
 			}
 			return "", fmt.Errorf("unexpected command %q", joined)
 		},

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
@@ -207,7 +208,7 @@ func (f *fixture) stackRun(t *testing.T, req Request) (int, string, string) {
 	f.stderr.Reset()
 	f.appended = nil
 	p := Probes{
-		Gh:     f.gh,
+		Gh:     &ghtest.Fake{Func: f.gh},
 		Now:    func() time.Time { return f.now },
 		Append: func(path, line string) error { f.appended = append(f.appended, line); return bus.Append(path, line) },
 	}
@@ -219,7 +220,7 @@ func (f *fixture) stackRun(t *testing.T, req Request) (int, string, string) {
 
 // gh is the bats stub: `repo view` answers with the default branch, `pr view`
 // with the registered JSON, and anything else fails.
-func (f *fixture) gh(_ context.Context, args ...string) (string, error) {
+func (f *fixture) gh(args []string) (string, error) {
 	f.ghCalls = append(f.ghCalls, strings.Join(args, " "))
 	switch {
 	case strings.Join(args, " ") == "repo view --json defaultBranchRef --jq .defaultBranchRef.name":
@@ -321,7 +322,7 @@ func (f *fixture) cmd() *stackCmd {
 		stdout:  f.stdout,
 		stderr:  f.stderr,
 		o:       wtgit.Opts{Stderr: io.Discard},
-		p:       Probes{Gh: f.gh, Now: func() time.Time { return f.now }, Append: bus.Append},
+		p:       Probes{Gh: &ghtest.Fake{Func: f.gh}, Now: func() time.Time { return f.now }, Append: bus.Append},
 		crew:    "c1",
 		fetched: map[string]string{},
 	}

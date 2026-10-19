@@ -40,7 +40,7 @@ type layer struct {
 func (s *stackCmd) align(ctx context.Context, top string) error {
 	// gh output is worker-influenceable, so every name is validated before use
 	// and every oid comes from our own fetch, never from headRefOid.
-	def, err := s.p.Gh(ctx, "repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name")
+	def, err := s.p.Gh.Run(ctx, "repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name")
 	if err != nil {
 		return s.refuse("crew: cannot read the default branch\n")
 	}
@@ -88,7 +88,7 @@ func (s *stackCmd) align(ctx context.Context, top string) error {
 // a number that is not one, a head or base that is not a plain branch name and
 // a branch lookup that answered with someone else's branch are all fatal.
 func (s *stackCmd) pr(ctx context.Context, ref string) (prInfo, error) {
-	out, err := s.p.Gh(ctx, "pr", "view", ref, "--json",
+	out, err := s.p.Gh.Run(ctx, "pr", "view", ref, "--json",
 		"number,headRefName,headRefOid,baseRefName,state,mergedAt,isCrossRepository")
 	if err != nil {
 		return prInfo{}, s.refuse("crew: cannot read the PR for %s\n", ref)
