@@ -171,6 +171,25 @@ locked_settings() {
   jq -e '.workerDeniedMcpServers == ["my_browser"]' <<<"$output"
 }
 
+@test "dispatcherChrome defaults to false and takes a boolean from the user layer" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.dispatcherChrome == false' <<<"$output"
+  user_settings '{"dispatcherChrome":true}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.dispatcherChrome == true' <<<"$output"
+}
+
+@test "dispatcherChrome must be a boolean" {
+  for bad in '"yes"' '1'; do
+    user_settings "{\"dispatcherChrome\":$bad}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"dispatcherChrome must be a boolean"* ]]
+  done
+}
+
 @test "openrouter must be an object" {
   user_settings '{"openrouter":"x"}'
   run --separate-stderr "$CONFIG"

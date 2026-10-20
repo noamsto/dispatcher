@@ -3693,7 +3693,7 @@ EOF
   stub_launch_bins
   _host_crew_stub
   local flag
-  for flag in '--base main' '--add-dir /tmp' --status --lazy; do
+  for flag in '--base main' '--add-dir /tmp' --status --lazy --chrome; do
     : >"$STUB_LOG"
     # shellcheck disable=SC2086 # the flag and its value are two words
     run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 $flag 42 "t"
@@ -16853,6 +16853,7 @@ setup_bundle_resume() {
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris ' <(launch_log))"
   [[ "$line" == *"ENABLE_CLAUDEAI_MCP_SERVERS=false claude --name iris "* ]]
+  [[ "$line" == *"--permission-mode auto --no-chrome "* ]]
 }
 
 @test "lean: a claude lead launch disables the worker's unused plugins and denies the default browser MCP servers" {
@@ -16861,7 +16862,7 @@ setup_bundle_resume() {
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris ' <(launch_log))"
-  printf -v settings '%q' '{"enabledPlugins":{"superpowers@superpowers-dev":false,"agent-smith@agent-smith":false,"frontend-design@claude-plugins-official":false,"refactoring-agent@xdg-claude":false,"commit-commands@claude-code-plugins":false,"resolved@resolved":false,"context-efficient-tools@xdg-claude":false},"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*"]}}'
+  printf -v settings '%q' '{"enabledPlugins":{"superpowers@superpowers-dev":false,"agent-smith@agent-smith":false,"frontend-design@claude-plugins-official":false,"refactoring-agent@xdg-claude":false,"commit-commands@claude-code-plugins":false,"resolved@resolved":false,"context-efficient-tools@xdg-claude":false},"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*","mcp__claude-in-chrome__*"]}}'
   [[ "$line" == *"--settings $settings --add-dir "* ]]
   [[ "$line" != *disableAllHooks* ]]
   [[ "$line" != *gopls-lsp* ]]
@@ -16875,12 +16876,12 @@ setup_bundle_resume() {
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris ' <(launch_log))"
-  printf -v deny '%q' '"permissions":{"deny":["mcp__my_browser__*"]}'
+  printf -v deny '%q' '"permissions":{"deny":["mcp__my_browser__*","mcp__claude-in-chrome__*"]}'
   [[ "$line" == *"$deny"* ]]
   [[ "$line" != *plugin_hm_playwright* ]]
 }
 
-@test "an empty workerDeniedMcpServers leaves no permissions key in the worker settings" {
+@test "an empty workerDeniedMcpServers still denies Claude in Chrome" {
   stub_launch_bins
   unset CLAUDE_WORKER_SETTINGS_LIB
   mkdir -p "$XDG_CONFIG_HOME/dispatcher"
@@ -16888,7 +16889,8 @@ setup_bundle_resume() {
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lean"
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris ' <(launch_log))"
-  [[ "$line" != *permissions* ]]
+  printf -v deny '%q' '"permissions":{"deny":["mcp__claude-in-chrome__*"]}'
+  [[ "$line" == *"$deny"* ]]
   [[ "$line" == *"--settings "*enabledPlugins* ]]
 }
 
@@ -16983,10 +16985,258 @@ browser_env_prefix='env -u AGENT_BROWSER_AUTO_CONNECT -u AGENT_BROWSER_CDP -u AG
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
   [[ "$line" == *"ENABLE_CLAUDEAI_MCP_SERVERS=false claude --name iris-reviewer "* ]]
-  printf -v settings '%q' '{"enabledPlugins":{"superpowers@superpowers-dev":false,"agent-smith@agent-smith":false,"frontend-design@claude-plugins-official":false,"refactoring-agent@xdg-claude":false,"commit-commands@claude-code-plugins":false,"resolved@resolved":false,"context-efficient-tools@xdg-claude":false},"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*"]}}'
+  printf -v settings '%q' '{"enabledPlugins":{"superpowers@superpowers-dev":false,"agent-smith@agent-smith":false,"frontend-design@claude-plugins-official":false,"refactoring-agent@xdg-claude":false,"commit-commands@claude-code-plugins":false,"resolved@resolved":false,"context-efficient-tools@xdg-claude":false},"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*","mcp__claude-in-chrome__*"]}}'
   [[ "$line" == *"--settings $settings --add-dir "* ]]
   [[ "$line" != *disableAllHooks* ]]
   [[ "$line" != *gopls-lsp* ]]
+}
+
+# ── Claude in Chrome (--chrome) ──────────────────────────────────
+
+# chrome_holder_tmux wraps whatever tmux stub is in place (call it after the
+# stub it wraps) so the --chrome holder scan sees the $CHROME_PANES lines
+# (chrome flag, pane command, codename, branch, role, crew dir; \x1f-separated).
+chrome_holder_tmux() {
+  mv "$STUB_DIR/tmux" "$STUB_DIR/tmux-inner"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = list-panes ] && [ "$2" = -a ] && [[ $* == *@crew_chrome* ]]; then
+  printf '%s\n' "$*" >>"$STUB_LOG"
+  printf '%b\n' "${CHROME_PANES:-1\x1fclaude\x1fslate\x1ffeat/1-x\x1f\x1f/crews/a/crew}"
+  exit 0
+fi
+exec "$STUB_DIR/tmux-inner" "$@"
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "chrome: --chrome gives the claude lead Claude in Chrome and records it" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome 42 "chrome"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *"--permission-mode auto --chrome "* ]]
+  [[ "$line" != *"mcp__claude-in-chrome__"* ]]
+  [[ "$line" == *"mcp__plugin_hm_playwright__"* ]]
+  grep -qx 'chrome: true' "$TEST_REPO/.dispatch-wt/feat-42-chrome/WORKER_TASK.md"
+  jq -e 'select(.kind == "dispatch") | .chrome == true' "$TEST_REPO/.git/crew/events.jsonl"
+  grep -qxF -- 'set-option -p -t %1 @crew_chrome 1' "$STUB_LOG"
+}
+
+@test "chrome: without --chrome the lead launches --no-chrome and the pane stamp is cleared" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "chrome"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *"--permission-mode auto --no-chrome "* ]]
+  grep -qx 'chrome: false' "$TEST_REPO/.dispatch-wt/feat-42-chrome/WORKER_TASK.md"
+  jq -e 'select(.kind == "dispatch") | has("chrome") | not' "$TEST_REPO/.git/crew/events.jsonl"
+  grep -qxF -- 'set-option -p -u -t %1 @crew_chrome' "$STUB_LOG"
+}
+
+@test "chrome: --chrome is refused for codex, cursor and pi" {
+  local spec
+  for spec in codex:gpt-5.6-terra cursor:composer-2.5 pi:openrouter/deepseek/deepseek-v4-flash; do
+    DISPATCH_PROFILE=personal DISPATCH_ENGINES="claude codex cursor pi" DISPATCH_PRECHECK=1 \
+      run run_dispatch standard "${spec#*:}" --agent "${spec%%:*}" --effort medium --no-grid --crew-id c1 --chrome "t"
+    [ "$status" -eq 1 ] || return 1
+    [[ "$output" == *"--chrome is claude-only"* ]] || return 1
+  done
+}
+
+@test "chrome: a live --chrome lead on this machine refuses another --chrome dispatch" {
+  stub_launch_bins
+  chrome_holder_tmux
+  DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --chrome: Claude in Chrome is in use by slate (feat/1-x)"* ]]
+}
+
+@test "chrome: role panes, exited engines and unstamped panes do not hold the browser" {
+  stub_launch_bins
+  chrome_holder_tmux
+  local panes
+  for panes in '1\x1fclaude\x1fslate\x1ffeat/1-x\x1freviewer\x1f/crews/a/crew' '1\x1fzsh\x1fslate\x1ffeat/1-x\x1f\x1f/crews/a/crew' '\x1fclaude\x1fslate\x1ffeat/1-x\x1f\x1f/crews/a/crew'; do
+    : >"$STUB_LOG"
+    CHROME_PANES="$panes" DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+    [ "$status" -eq 0 ] || return 1
+    grep -q '@crew_chrome' "$STUB_LOG" || return 1
+  done
+}
+
+@test "chrome: a dispatch without --chrome does not consult the holder scan" {
+  stub_launch_bins
+  chrome_holder_tmux
+  DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  run ! grep -q '@crew_chrome' "$STUB_LOG"
+}
+
+@test "chrome: --chrome is refused in a remote-mode dispatch" {
+  stub_launch_bins
+  DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--chrome is local to this machine"* ]]
+}
+
+@test "chrome: an eager role pane never gets Claude in Chrome" {
+  stub_launch_bins
+  _grid_tmux_stub
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --roles spec-critic --effort high --crew-id c1 --chrome 42 "chrome grid"
+  [ "$status" -eq 0 ]
+  lead="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$lead" == *"--permission-mode auto --chrome "* ]]
+  role="$(grep -F 'claude --name iris-spec-critic ' <(launch_log))"
+  [[ "$role" == *GRID_PROTOCOL.md* ]]
+  [[ "$role" == *"--no-chrome"* ]]
+  [[ "$role" == *"mcp__claude-in-chrome__"* ]]
+  [[ "$role" != *" --chrome "* ]]
+}
+
+@test "chrome: a --spawn-role launch never gets Claude in Chrome" {
+  _spawn_role_fixture
+  printf 'chrome: true\n' >>WORKER_TASK.md
+  jq -nc '{ts: 1, crew_id: "c1", kind: "dispatch", branch: "feat/9-x", session: "s1-1", chrome: true}' \
+    >>"$common/crew/events.jsonl"
+  run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
+  [[ "$line" == *"--no-chrome"* ]]
+  [[ "$line" != *" --chrome "* ]]
+  [[ "$line" == *"mcp__claude-in-chrome__"* ]]
+}
+
+# worker_pane_tmux wraps the tmux stub in place (call it after the stub it
+# wraps) so the caller's pane reads as a worker window's: display-message
+# answers #{@crew_branch} with feat/9-x.
+worker_pane_tmux() {
+  mv "$STUB_DIR/tmux" "$STUB_DIR/tmux-inner"
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = display-message ] && [ "${*: -1}" = '#{@crew_branch}' ]; then
+  printf '%s\n' "$*" >>"$STUB_LOG"
+  printf '%s\n' feat/9-x
+  exit 0
+fi
+exec "$STUB_DIR/tmux-inner" "$@"
+EOF
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "chrome: --chrome is refused from a worker (CREW_WORKER_ID)" {
+  stub_launch_bins
+  CREW_WORKER_ID='worker:x#s1' DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome 42 "chrome"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --chrome is dispatcher-only"* ]]
+  run ! grep -q send-keys "$STUB_LOG"
+}
+
+@test "chrome: --chrome is refused from a role pane (CREW_ROLE_ID)" {
+  stub_launch_bins
+  CREW_ROLE_ID='role:x:reviewer' DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome 42 "chrome"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --chrome is dispatcher-only"* ]]
+  run ! grep -q send-keys "$STUB_LOG"
+}
+
+@test "chrome: --chrome is refused from a pane in a worker window" {
+  stub_launch_bins
+  worker_pane_tmux
+  TMUX_PANE=%5 DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome 42 "chrome"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --chrome is dispatcher-only"* ]]
+  run ! grep -q send-keys "$STUB_LOG"
+}
+
+# resume's precheck runs in the caller's environment, so these cover
+# `dispatch resume --chrome` from a worker or role pane.
+@test "chrome: a precheck --chrome is refused from a worker (CREW_WORKER_ID)" {
+  stub_launch_bins
+  CREW_WORKER_ID='worker:x#s1' DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --chrome is dispatcher-only"* ]]
+}
+
+@test "chrome: a precheck --chrome is refused from a role pane (CREW_ROLE_ID)" {
+  stub_launch_bins
+  CREW_ROLE_ID='role:x:reviewer' DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --chrome is dispatcher-only"* ]]
+}
+
+@test "chrome: a precheck --chrome is refused from a pane in a worker window" {
+  stub_launch_bins
+  worker_pane_tmux
+  TMUX_PANE=%5 DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --chrome is dispatcher-only"* ]]
+}
+
+@test "chrome: --chrome is refused when workerDeniedMcpServers lists claude-in-chrome" {
+  stub_launch_bins
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"workerDeniedMcpServers":["claude-in-chrome"]}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome 42 "chrome"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --chrome is refused — workerDeniedMcpServers lists claude-in-chrome (the owner's ban)"* ]]
+  run ! grep -q send-keys "$STUB_LOG"
+  DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"workerDeniedMcpServers lists claude-in-chrome"* ]]
+}
+
+@test "chrome: an owner-listed claude-in-chrome is denied once" {
+  stub_launch_bins
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"workerDeniedMcpServers":["claude-in-chrome"]}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "chrome"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  printf -v deny '%q' '"permissions":{"deny":["mcp__claude-in-chrome__*"]}'
+  [[ "$line" == *"$deny"* ]]
+}
+
+@test "chrome: an owner-listed claude-in-chrome stays denied for a --chrome lead's settings" {
+  # shellcheck source=/dev/null
+  . "$CLAUDE_WORKER_SETTINGS_LIB"
+  run claude_worker_plugin_settings '{"workerDeniedMcpServers":["x","claude-in-chrome"]}' 1
+  [ "$status" -eq 0 ]
+  printf -v deny '%q' '"permissions":{"deny":["mcp__x__*","mcp__claude-in-chrome__*"]}'
+  [[ "$output" == *"$deny"* ]]
+}
+
+@test "chrome: the holder gate skips the pane resume names as its own" {
+  stub_launch_bins
+  chrome_holder_tmux
+  DISPATCH_CHROME_SELF=/crews/a/crew$'\x1f'feat/1-x DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 0 ]
+  DISPATCH_CHROME_SELF=/crews/a/crew$'\x1f'feat/2-y DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"in use by slate (feat/1-x)"* ]]
+}
+
+@test "chrome: the holder gate matches its own pane's crew dir after resolving it" {
+  stub_launch_bins
+  chrome_holder_tmux
+  CHROME_PANES='1\x1fclaude\x1fslate\x1ffeat/1-x\x1f\x1f/crews/b/../a/crew' DISPATCH_CHROME_SELF=/crews/a/crew$'\x1f'feat/1-x DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 0 ]
+}
+
+@test "chrome: the holder gate does not skip the same branch in another crew dir" {
+  stub_launch_bins
+  chrome_holder_tmux
+  DISPATCH_CHROME_SELF=/crews/b/crew$'\x1f'feat/1-x DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"in use by slate (feat/1-x)"* ]]
+}
+
+@test "chrome: the holder gate honours DISPATCH_CHROME_SELF only in a precheck" {
+  stub_launch_bins
+  chrome_holder_tmux
+  DISPATCH_CHROME_SELF=/crews/a/crew$'\x1f'feat/1-x DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome 42 "chrome"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"in use by slate (feat/1-x)"* ]]
+  run ! grep -q send-keys "$STUB_LOG"
 }
 
 # ---- dispatch's crew-id abort ----

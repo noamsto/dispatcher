@@ -440,6 +440,9 @@ claude)
   set -- --name "$session_name" --append-system-prompt-file "$protocol" \
     --model "${model:-$(orch_default model)}" --effort "${effort:-$(orch_default effort)}"
   [ -n "$ac" ] && [ "$ac" != auto ] && set -- "$@" --autocompact "$ac"
+  # Claude in Chrome drives the owner's authenticated browser, so it is opt-in;
+  # off leaves Claude's own default alone.
+  [ "$(jq -r '.dispatcherChrome == true' <<<"$settings")" = true ] && set -- "$@" --chrome
   env PATH="$engine_env_path" claude "$@" ${task:+"$task"}
   ;;
 codex | cursor)

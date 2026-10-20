@@ -292,6 +292,25 @@ ROWS
   [ "$status" -eq 0 ]
 }
 
+@test "the claude dispatcher launch adds --chrome only when dispatcherChrome is on" {
+  CREW_ID=c1 run_launcher
+  run grep -c -- '--chrome' "$STUB_LOG"
+  [ "$output" = "0" ]
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"dispatcherChrome":true}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  CREW_ID=c1 run_launcher
+  run grep -F -- '--chrome' "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "a non-claude dispatcher ignores dispatcherChrome" {
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"dispatcherChrome":true}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  DISPATCH_PROFILE=work CREW_ID=c1 run_launcher --agent codex
+  run grep -c -- '--chrome' "$STUB_LOG"
+  [ "$output" = "0" ]
+}
+
 @test "codex gets the auto-compact window through -c" {
   DISPATCH_PROFILE=work CREW_ID=c1 run_launcher --agent codex
   run grep -F -- 'model_auto_compact_token_limit=300000' "$STUB_LOG"

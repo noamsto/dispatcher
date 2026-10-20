@@ -30,7 +30,8 @@ self: {
     // lib.optionalAttrs (cfg.localModels != null) {localModels = lockFields cfg.localModels;}
     // lib.optionalAttrs (cfg.laneProfiles != null) {laneProfiles = lockFields cfg.laneProfiles;}
     // lib.optionalAttrs (cfg.hosts != null) {inherit (cfg) hosts;}
-    // lib.optionalAttrs (cfg.workerDeniedMcpServers != null) {inherit (cfg) workerDeniedMcpServers;};
+    // lib.optionalAttrs (cfg.workerDeniedMcpServers != null) {inherit (cfg) workerDeniedMcpServers;}
+    // lib.optionalAttrs (cfg.chrome != null) {dispatcherChrome = cfg.chrome;};
   # Submodule defaults are emitted into the evalModules result, so an unset
   # `workerNotes`/`notes`/`reasoning` would reach the locked layer as JSON null
   # and dispatch-config would refuse it -- drop the unset fields per entry, the
@@ -416,6 +417,19 @@ in {
         covers `plugin_hm_playwright` and `plugin_hm_firefox-devtools`;
         include the defaults to extend it).
         Unset, the locked layer omits the key.
+      '';
+    };
+
+    chrome = lib.mkOption {
+      type = lib.types.nullOr lib.types.bool;
+      default = null;
+      example = true;
+      description = ''
+        Launch the claude `dispatcher` session with `--chrome` (Claude in
+        Chrome, the owner's authenticated browser). Set, it lands as
+        `dispatcherChrome` in the locked layer; unset, the key is omitted and
+        the base default (off) applies. Workers never inherit it: a claude
+        worker opts in per task with `dispatch --chrome`.
       '';
     };
 

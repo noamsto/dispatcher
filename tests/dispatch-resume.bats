@@ -38,7 +38,9 @@ EOF
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 [ "$1" != --role-watch ] || printf 'CREW_ID=%s\n' "$CREW_ID" >>"$STUB_LOG"
+[ -z "${DISPATCH_CHROME_SELF:-}" ] || printf 'DISPATCH_CHROME_SELF=%s\n' "$DISPATCH_CHROME_SELF" >>"$STUB_LOG"
 [ -n "${DISPATCH_PRECHECK:-}" ] || exit 0
+[ -z "${CREW_WORKER_ID:-}" ] || printf 'PRECHECK_CREW_WORKER_ID=%s\n' "$CREW_WORKER_ID" >>"$STUB_LOG"
 [ -z "${STUB_PRECHECK_FAIL:-}" ] || {
   echo "dispatch: --effort ultra is codex-only; claude tops out at max" >&2
   exit 1
@@ -1142,6 +1144,7 @@ EOF
   grep -q -- '--model sonnet' <(launch_log)
   grep -q -- '--effort medium' <(launch_log)
   grep -q -- "--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" <(launch_log)
+  grep -q -- '--permission-mode auto --no-chrome ' <(launch_log)
 }
 
 @test "claude resume disables the worker's unused plugins and denies the default browser MCP servers" {
@@ -1152,10 +1155,90 @@ EOF
   DISPATCH_SESSION_ID=s2-100 run run_resume
   [ "$status" -eq 0 ]
   line="$(grep -F 'claude --continue' <(launch_log))"
-  printf -v settings '%q' '{"enabledPlugins":{"superpowers@superpowers-dev":false,"agent-smith@agent-smith":false,"frontend-design@claude-plugins-official":false,"refactoring-agent@xdg-claude":false,"commit-commands@claude-code-plugins":false,"resolved@resolved":false,"context-efficient-tools@xdg-claude":false},"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*"]}}'
+  printf -v settings '%q' '{"enabledPlugins":{"superpowers@superpowers-dev":false,"agent-smith@agent-smith":false,"frontend-design@claude-plugins-official":false,"refactoring-agent@xdg-claude":false,"commit-commands@claude-code-plugins":false,"resolved@resolved":false,"context-efficient-tools@xdg-claude":false},"permissions":{"deny":["mcp__plugin_hm_playwright__*","mcp__plugin_hm_firefox-devtools__*","mcp__claude-in-chrome__*"]}}'
   [[ "$line" == *"--settings $settings --add-dir "* ]]
   [[ "$line" != *disableAllHooks* ]]
   [[ "$line" != *gopls-lsp* ]]
+}
+
+# A bus row recording a --chrome dispatch, which resume must not carry forward.
+_chrome_dispatch_row() {
+  mkdir -p "$TEST_REPO/.git/crew"
+  jq -nc '{ts: 1, crew_id: "c1", kind: "dispatch", branch: "feat/7-a-thing", name: "iris", session: "s1-99", chrome: true}' \
+    >>"$TEST_REPO/.git/crew/events.jsonl"
+}
+
+# _lead_pane — the pane the resume launched into, read off its @crew_model stamp.
+_lead_pane() { sed -n 's/^set-option -p -t \([^ ]*\) @crew_model .*/\1/p' "$STUB_LOG" | tail -1; }
+
+@test "claude resume does not carry a recorded --chrome forward" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  _chrome_dispatch_row
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" == *"--permission-mode auto --no-chrome "* ]]
+  [[ "$line" == *mcp__claude-in-chrome__* ]]
+  grep -q -- 'resume precheck$' "$STUB_LOG"
+  [ -z "$(grep -- 'resume precheck$' "$STUB_LOG" | grep -F -- ' --chrome ')" ]
+  grep -qx 'chrome: false' "$WT/WORKER_TASK.md"
+  [ "$(jq -r 'select(.kind == "resume") | has("chrome")' "$TEST_REPO/.git/crew/events.jsonl" | tail -1)" = false ]
+  pane="$(_lead_pane)"
+  [ -n "$pane" ]
+  grep -qxF -- "set-option -p -u -t $pane @crew_chrome" "$STUB_LOG"
+  run ! grep -qF '@crew_chrome 1' "$STUB_LOG"
+}
+
+@test "claude resume ignores a header-only chrome: true and rewrites it" {
+  setup_worker_wt 'chrome: true'
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" == *"--permission-mode auto --no-chrome "* ]]
+  [[ "$line" == *mcp__claude-in-chrome__* ]]
+  grep -qx 'chrome: false' "$WT/WORKER_TASK.md"
+  run ! grep -qx 'chrome: true' "$WT/WORKER_TASK.md"
+}
+
+@test "claude resume --chrome opts in" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --chrome
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" == *"--permission-mode auto --chrome "* ]]
+  [[ "$line" != *mcp__claude-in-chrome__* ]]
+  grep -- 'resume precheck$' "$STUB_LOG" | grep -qF -- ' --chrome '
+  grep -qx 'chrome: true' "$WT/WORKER_TASK.md"
+  [ "$(jq -r 'select(.kind == "resume") | .chrome' "$TEST_REPO/.git/crew/events.jsonl" | tail -1)" = true ]
+  pane="$(_lead_pane)"
+  [ -n "$pane" ]
+  grep -qxF -- "set-option -p -t $pane @crew_chrome 1" "$STUB_LOG"
+}
+
+@test "claude resume --chrome tells the precheck to skip its own holder pane by crew dir and branch" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --chrome
+  [ "$status" -eq 0 ]
+  grep -qxF "DISPATCH_CHROME_SELF=$(realpath -m -- "$TEST_REPO/.git/crew")"$'\x1f'"feat/7-a-thing" "$STUB_LOG"
+}
+
+# dispatch's precheck owns the dispatcher-only refusal (tests/dispatch.bats), so
+# resume must hand it --chrome in the caller's own environment.
+@test "resume --chrome from a worker runs the precheck with --chrome and the caller's CREW_WORKER_ID" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  CREW_WORKER_ID='worker:x#s1' run run_resume --chrome
+  grep -- 'resume precheck$' "$STUB_LOG" | grep -qF -- ' --chrome '
+  grep -qxF 'PRECHECK_CREW_WORKER_ID=worker:x#s1' "$STUB_LOG"
 }
 
 @test "claude resume and pi resume carry the worktree's AGENT_BROWSER_SESSION" {
@@ -2750,6 +2833,15 @@ EOF
   grep -qxF "remote-run from $(realpath -e "$TEST_REPO")" "$STUB_LOG"
 }
 
+@test "target: a --chrome resume of a remote row is refused before any remote call" {
+  _remote_resume_world
+  cd "$TEST_REPO"
+  TMUX_PANE=%3 run run_resume '#7' --chrome
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"local to this machine"* ]]
+  run ! grep -q 'remote-run' "$STUB_LOG"
+}
+
 @test "target: a worker worktree whose .git is a standalone repo cannot pick the host from its own bus (#633)" {
   setup_worker_wt
   _remote_resume_world
@@ -3178,7 +3270,7 @@ crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
 @test "resume --rearm-roles is exclusive with the launch flags and an extra prompt (#730)" {
   _grid_live_lead
   cd "$WT"
-  for args in "--fresh" "--print" "--agent pi" "--model m" "--effort high" "--mcp p" "--ignore-map" "continue"; do
+  for args in "--fresh" "--print" "--agent pi" "--model m" "--effort high" "--mcp p" "--chrome" "--ignore-map" "continue"; do
     # shellcheck disable=SC2086
     run run_resume --rearm-roles $args
     [ "$status" -eq 1 ]
