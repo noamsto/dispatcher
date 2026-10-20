@@ -84,8 +84,11 @@ type reportCmd struct {
 }
 
 type retroCmd struct {
-	Report bool `name:"report"`
-	JSON   bool `name:"json"`
+	Report bool    `name:"report"`
+	JSON   bool    `name:"json"`
+	Draft  bool    `name:"draft"`
+	All    bool    `name:"all"`
+	Crew   *string `name:"crew"`
 }
 
 // rateCmd.Root keeps every value whole (`sep:"none"`, so a comma stays in the

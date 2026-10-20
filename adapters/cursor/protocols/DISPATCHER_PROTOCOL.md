@@ -1288,7 +1288,9 @@ notes and roster, then write:
    have answered.
 3. Emit **one** `session_summary` whose detail states, per worker: codename, `{tier,
    engine, model}`, outcome, and the tags its notes carried — plus any tag appearing
-   on **≥2 workers**, the pattern only you can see.
+   on **≥2 workers**, the pattern only you can see. `crew retro --draft` prints that
+   summary for the crew, ready to post, so you check it and post it instead of
+   composing it.
 
 - **Every note must quote a specific observable** — a tag, a status detail, an
   outcome, a dispatch field. Never a general impression.

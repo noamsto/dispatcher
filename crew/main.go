@@ -407,6 +407,15 @@ type env struct {
 	clock  clock.Clock // the fold's clock (jq's `now`); nil Now is the wall clock
 }
 
+// nowSec is jq's `now`: the env clock when one is set, in fractional seconds.
+func (e env) nowSec() float64 {
+	now := time.Now()
+	if e.clock.Now != nil {
+		now = e.clock.Now()
+	}
+	return float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
+}
+
 func main() {
 	// The entry path crew.sh used to export for its children, derived from how
 	// this process was invoked when its caller left it unset.
@@ -699,9 +708,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 
 	// retro folds the whole bus with no crew filter, and prints the TSV rows, the
-	// padded report or one JSON object, so it owns its run like hold does.
+	// padded report or one JSON object, so it owns its run like hold does. --draft
+	// is the one crew-filtered shape, and it reads its codenames off the roster's
+	// own rows.
 	if sub == "retro" {
-		return retro.Run(retro.Request{Report: parsed.typed.Retro.Report, JSON: parsed.typed.Retro.JSON}, paths, stdout, stderr)
+		c := parsed.typed.Retro
+		return retro.Run(retro.Request{Report: c.Report, JSON: c.JSON, Draft: c.Draft, All: c.All, Crew: str(c.Crew)}, paths, stdout, stderr, retro.Options{
+			CrewID: func() string { return bus.CrewID(ctx, cwd) },
+			Roster: func(docs []any, crew string) []map[string]any {
+				rows, err := roster.Fold(ctx, docs, crew, e.nowSec(), e.probes(ctx, cwd))
+				if err != nil {
+					// The draft still prints, but the names lose the roster's suffix.
+					say(stderr, "crew: retro: roster: %v\n", err)
+					return nil
+				}
+				return rows
+			},
+		})
 	}
 
 	// rate's two repo-keyed modes: the sweep of this repo, and the store rollup.
@@ -914,11 +937,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 
 	var rosterRows []map[string]any
 	v, code := fold(sub, events, err, paths.Log, stderr, func(docs []any) (any, error) {
-		now := time.Now()
-		if e.clock.Now != nil {
-			now = e.clock.Now()
-		}
-		nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
+		nowSec := e.nowSec()
 		if sub == "sessions" {
 			return sessions.Fold(docs, branch, crew, nowSec)
 		}

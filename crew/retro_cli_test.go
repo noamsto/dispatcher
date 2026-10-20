@@ -1,13 +1,19 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/noamsto/dispatcher/crew/internal/roster"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 const retroHeader = "branch\tengine\tmodel\ttier\toutcome\ttags"
@@ -694,7 +700,7 @@ func TestRetroUnknownFlagAndPositionalAreTheSameError(t *testing.T) {
 
 func TestRetroMissingBusExitsZeroWithNoOutput(t *testing.T) {
 	h := newHoldCLI(t)
-	for _, args := range [][]string{{"retro"}, {"retro", "--report"}, {"retro", "--report", "--json"}} {
+	for _, args := range [][]string{{"retro"}, {"retro", "--report"}, {"retro", "--report", "--json"}, {"retro", "--draft", "--crew", "c1"}} {
 		out, errOut, code := h.run(args...)
 		if code != 0 || out != "" || errOut != "" {
 			t.Errorf("%v: code %d, stdout %q, stderr %q", args, code, out, errOut)
@@ -716,4 +722,282 @@ func anyStrings(t *testing.T, v any) []string {
 		}
 	}
 	return out
+}
+
+// --draft: one crew's session_summary note, printed ready to post.
+
+// The --draft refusals, one line each like retroUsage's.
+const (
+	retroDraftPair   = "crew: retro --draft takes no --report/--json"
+	retroDraftOnly   = "crew: retro --crew/--all need --draft"
+	retroDraftNoCrew = "crew: retro --draft needs --crew ID or CREW_ID"
+)
+
+// statusBody seeds a worker status whose body carries more than the state: the
+// pr_url a pr_open posts, or the source a reap or a watchdog posted a rewrite
+// under.
+func (b *busSeed) statusBody(from string, ts int, body map[string]any) {
+	b.t.Helper()
+	b.add(map[string]any{"ts": ts, "from": from, "to": "dispatcher:c1", "kind": "status", "body": body})
+}
+
+// wid is the worker id a branch's own rows are posted from.
+func wid(branch, session string) string { return "worker:" + branch + "#" + session }
+
+// draftDispatch seeds a dispatch row with the codename and the
+// {tier,engine,model} tuple --draft prints for that branch.
+func draftDispatch(b *busSeed, branch string, ts int, codename, tier, engine, model string) {
+	b.t.Helper()
+	b.dispatch(branch, ts, map[string]any{
+		"name": codename, "color": "grey", "tmux": "colour244",
+		"tier": tier, "engine": engine, "model": model,
+	})
+}
+
+// summaryNote is a session_summary note in the shape the dispatcher posts one.
+func summaryNote(detail string) string {
+	b, _ := json.Marshal(map[string]string{"seam": "dispatch", "tag": "session_summary", "detail": detail})
+	return string(b)
+}
+
+// draftRun runs `crew retro --draft args...` with the probes the roster fold
+// needs: the codename --draft prints is roster's, so that fold runs for real
+// against a faked tmux.
+func draftRun(t *testing.T, h *holdCLI, args ...string) (string, string, int) {
+	t.Helper()
+	e := env{getwd: func() (string, error) { return h.repo, nil }, probes: noTouchProbes()}
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), append([]string{"retro", "--draft"}, args...), &stdout, &stderr, e)
+	return stdout.String(), stderr.String(), code
+}
+
+// draftNote runs --draft and reads the one note back: its seam, tag, and the
+// segments of its detail.
+func draftNote(t *testing.T, h *holdCLI, args ...string) (string, string, []string) {
+	t.Helper()
+	out, errOut, code := draftRun(t, h, args...)
+	if code != 0 || errOut != "" {
+		t.Fatalf("retro --draft %v: code %d, stderr %q", args, code, errOut)
+	}
+	body := strings.TrimSuffix(out, "\n")
+	if strings.Contains(body, "\n") {
+		t.Fatalf("retro --draft %v printed %d lines, want one:\n%s", args, strings.Count(body, "\n")+1, body)
+	}
+	var n struct {
+		Seam   string `json:"seam"`
+		Tag    string `json:"tag"`
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal([]byte(body), &n); err != nil {
+		t.Fatalf("retro --draft %v is no JSON object: %v\n%s", args, err, body)
+	}
+	if n.Detail == "" {
+		return n.Seam, n.Tag, nil
+	}
+	return n.Seam, n.Tag, strings.Split(n.Detail, "; ")
+}
+
+func wantDetail(t *testing.T, parts, want []string) {
+	t.Helper()
+	if strings.Join(parts, "; ") != strings.Join(want, "; ") {
+		t.Errorf("detail =\n%v\nwant\n%v", parts, want)
+	}
+}
+
+// draftParts runs --draft and returns just the segments of its detail.
+func draftParts(t *testing.T, h *holdCLI, args ...string) []string {
+	t.Helper()
+	_, _, parts := draftNote(t, h, args...)
+	return parts
+}
+
+func TestRetroDraftPrintsOneCrewsSummary(t *testing.T) {
+	h, s := newRetroSeed(t)
+	draftDispatch(s, "feat/1186-scope-guard", 1000, "onyx", "standard", "pi", "lemonade/qwen")
+	s.statusBody(wid("feat/1186-scope-guard", "s1"), 1100, map[string]any{
+		"state": "pr_open", "pr_url": "https://github.com/noamsto/dispatcher/pull/1192"})
+	s.msg(wid("feat/1186-scope-guard", "s1"), "retro:c1", 1200, note("misrouted", "guard-relaxing edit"))
+	// A dispatcher note naming the branch by issue number lands on its line.
+	s.msg("dispatcher:c1", "retro:c1", 1300, note("spec_too_thin", "onyx #1186 {standard,pi,lemonade/qwen} blocked"))
+	// `other` is the catch-all, so it names no pattern on anyone's line.
+	s.msg("dispatcher:c1", "retro:c1", 1400, note("other", "and one more thing about #1186"))
+
+	draftDispatch(s, "feat/1190-other", 1500, "teal", "trivial", "claude", "sonnet")
+	s.status(wid("feat/1190-other", "s1"), 1600, "done")
+
+	seam, tag, parts := draftNote(t, h, "--crew", "c1")
+	if seam != "dispatch" || tag != "session_summary" {
+		t.Errorf("seam %q tag %q, want dispatch and session_summary", seam, tag)
+	}
+	wantDetail(t, parts, []string{
+		"onyx {standard,pi,lemonade/qwen} pr_open PR #1192 [misrouted,spec_too_thin]",
+		"teal {trivial,claude,sonnet} done",
+	})
+}
+
+func TestRetroDraftStartsAfterTheCrewsNewestSessionSummary(t *testing.T) {
+	h, s := newRetroSeed(t)
+	draftDispatch(s, "feat/1180-old", 1000, "teal", "standard", "claude", "sonnet")
+	s.status(wid("feat/1180-old", "s1"), 1050, "done")
+	s.msg("dispatcher:c1", "retro:c1", 1500, summaryNote("teal #1180 {standard,claude,sonnet} done"))
+	draftDispatch(s, "feat/1181-new", 2000, "birch", "standard", "claude", "opus")
+	s.status(wid("feat/1181-new", "s1"), 2050, "done")
+	// A summary a worker posted is not the dispatcher's: the boundary stays 1500.
+	s.msg(wid("feat/1181-new", "s1"), "retro:c1", 3000, summaryNote("self-reported"))
+
+	_, _, parts := draftNote(t, h, "--crew", "c1")
+	wantDetail(t, parts, []string{"birch {standard,claude,opus} done"})
+
+	_, _, all := draftNote(t, h, "--crew", "c1", "--all")
+	wantDetail(t, all, []string{
+		"teal {standard,claude,sonnet} done",
+		"birch {standard,claude,opus} done",
+	})
+}
+
+func TestRetroDraftOutcomeIsTheWorkersOwnLastRow(t *testing.T) {
+	h, s := newRetroSeed(t)
+	draftDispatch(s, "feat/1186-scope-guard", 1000, "onyx", "standard", "claude", "sonnet")
+	s.statusBody(wid("feat/1186-scope-guard", "s1"), 1100, map[string]any{
+		"state": "pr_open", "pr_url": "https://github.com/noamsto/dispatcher/pull/1192"})
+	// A watchdog's rewrite and a reap's row are not the worker's own last word,
+	// and a role pane's row is not the worker's at all.
+	s.statusBody(wid("feat/1186-scope-guard", "s1"), 1200, map[string]any{"state": "blocked", "source": "watchdog"})
+	s.statusBody(wid("feat/1186-scope-guard", "s1"), 1300, map[string]any{"state": "reaped", "source": "reap"})
+	s.statusBody("role:feat/1186-scope-guard:reviewer", 1350, map[string]any{"state": "done"})
+
+	draftDispatch(s, "feat/1187-only-reaped", 1400, "teal", "standard", "claude", "sonnet")
+	s.statusBody(wid("feat/1187-only-reaped", "s1"), 1500, map[string]any{"state": "reaped", "source": "reap"})
+
+	// A branch dispatched but never reporting still gets its line.
+	draftDispatch(s, "feat/1188-silent", 1600, "moss", "deep", "codex", "sol")
+
+	wantDetail(t, draftParts(t, h, "--crew", "c1"), []string{
+		"onyx {standard,claude,sonnet} pr_open PR #1192",
+		"teal {standard,claude,sonnet} —",
+		"moss {deep,codex,sol} —",
+	})
+}
+
+func TestRetroDraftNamesTheTagsTwoWorkersCarried(t *testing.T) {
+	h, s := newRetroSeed(t)
+	branches := map[string]string{"feat/1186-one": "onyx", "feat/1187-two": "teal", "feat/1188-three": "birch"}
+	for i, branch := range []string{"feat/1186-one", "feat/1187-two", "feat/1188-three"} {
+		ts := 1000 + i*100
+		draftDispatch(s, branch, ts, branches[branch], "standard", "claude", "sonnet")
+		s.status(wid(branch, "s1"), ts+10, "done")
+	}
+	own := func(branch, tag string, ts int) {
+		s.msg(wid(branch, "s1"), "retro:c1", ts, note(tag, "detail"))
+	}
+	own("feat/1186-one", "spec_too_thin", 1400)
+	own("feat/1187-two", "spec_too_thin", 1410)
+	// Twice on one worker is one worker, and so no pattern.
+	own("feat/1186-one", "gate_thrash", 1420)
+	own("feat/1186-one", "gate_thrash", 1430)
+	own("feat/1188-three", "misrouted", 1440)
+	// A note addressed to another crew's retro sink is no evidence here, even under
+	// the same branch name: it would tag onyx and fake a pattern.
+	s.msg(wid("feat/1186-one", "s1"), "retro:c2", 1450, note("misrouted", "another crew"))
+
+	_, _, parts := draftNote(t, h, "--crew", "c1")
+	wantDetail(t, parts, []string{
+		"onyx {standard,claude,sonnet} done [spec_too_thin,gate_thrash]",
+		"teal {standard,claude,sonnet} done [spec_too_thin]",
+		"birch {standard,claude,sonnet} done [misrouted]",
+		"tags on ≥2 workers: spec_too_thin",
+	})
+}
+
+func TestRetroDraftCodenameCarriesRostersCollisionSuffix(t *testing.T) {
+	h, s := newRetroSeed(t)
+	// Two branches hashed to one codename: `crew roster` prints each with its
+	// issue number, and --draft prints what the roster prints.
+	draftDispatch(s, "feat/1186-one", 1000, "onyx", "standard", "claude", "sonnet")
+	s.status(wid("feat/1186-one", "s1"), 1100, "done")
+	draftDispatch(s, "feat/1187-two", 1200, "onyx", "standard", "claude", "opus")
+	s.status(wid("feat/1187-two", "s1"), 1300, "pr_open")
+
+	wantDetail(t, draftParts(t, h, "--crew", "c1"), []string{
+		"onyx·1186 {standard,claude,sonnet} done",
+		"onyx·1187 {standard,claude,opus} pr_open",
+	})
+}
+
+func TestRetroDraftNothingInScopePrintsNothing(t *testing.T) {
+	h, s := newRetroSeed(t)
+	// Another crew's branch, and this crew's branch already written up.
+	s.raw(`{"ts":1000,"kind":"dispatch","crew_id":"c2","branch":"feat/1200-other",` +
+		`"tier":"deep","engine":"claude","model":"opus"}`)
+	draftDispatch(s, "feat/1180-old", 1100, "teal", "standard", "claude", "sonnet")
+	s.status(wid("feat/1180-old", "s1"), 1200, "done")
+	s.msg("dispatcher:c1", "retro:c1", 2000, summaryNote("teal #1180 done"))
+
+	for _, args := range [][]string{{"--crew", "c1"}, {"--crew", "c9"}} {
+		if out, errOut, code := draftRun(t, h, args...); out != "" || errOut != "" || code != 0 {
+			t.Errorf("retro --draft %v: code %d, stdout %q, stderr %q", args, code, out, errOut)
+		}
+	}
+}
+
+func TestRetroDraftCrewDefaultsToTheEnvironment(t *testing.T) {
+	h, s := newRetroSeed(t)
+	draftDispatch(s, "feat/1186-scope-guard", 1000, "onyx", "standard", "claude", "sonnet")
+	s.status(wid("feat/1186-scope-guard", "s1"), 1100, "done")
+
+	t.Setenv("CREW_ID", "c1")
+	wantDetail(t, draftParts(t, h), []string{"onyx {standard,claude,sonnet} done"})
+
+	// --crew wins over it, and a crew with no rows prints nothing.
+	if out, errOut, code := draftRun(t, h, "--crew", "c2"); out != "" || errOut != "" || code != 0 {
+		t.Errorf("--crew c2: code %d, stdout %q, stderr %q", code, out, errOut)
+	}
+}
+
+// TestRetroDraftSaysWhenTheRosterFoldFails pins the degraded path: with no roster
+// rows the draft still prints, naming each branch by the identity it read off its
+// own dispatch row, and says the roster failed.
+func TestRetroDraftSaysWhenTheRosterFoldFails(t *testing.T) {
+	h, s := newRetroSeed(t)
+	draftDispatch(s, "feat/1186-scope-guard", 1000, "onyx", "standard", "claude", "sonnet")
+	// An exited row is what makes the roster read `git worktree list`.
+	s.status(wid("feat/1186-scope-guard", "s1"), 1100, "exited")
+
+	e := env{getwd: func() (string, error) { return h.repo, nil }, probes: func(context.Context, string) roster.Probes {
+		return roster.Probes{
+			Tmux:      &tmuxtest.Fake{},
+			Worktrees: func() (string, error) { return "", errors.New("git worktree list failed") },
+		}
+	}}
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"retro", "--draft", "--crew", "c1"}, &stdout, &stderr, e); code != 0 {
+		t.Fatalf("code %d, stderr %q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "crew: retro: roster:") {
+		t.Errorf("stderr %q, want the roster failure named", stderr.String())
+	}
+	if want := `"detail":"onyx {standard,claude,sonnet} exited"`; !strings.Contains(stdout.String(), want) {
+		t.Errorf("stdout %q, want the summary on the identity name (%s)", stdout.String(), want)
+	}
+}
+
+func TestRetroDraftUsageErrors(t *testing.T) {
+	h := newHoldCLI(t)
+	for _, tc := range []struct {
+		args   []string
+		stderr string
+	}{
+		{[]string{"--draft", "--report"}, retroDraftPair},
+		{[]string{"--draft", "--json"}, retroDraftPair},
+		{[]string{"--draft", "--report", "--json"}, retroDraftPair},
+		{[]string{"--crew", "c1"}, retroDraftOnly},
+		{[]string{"--all"}, retroDraftOnly},
+		{[]string{"--draft", "--crew", "c1", "--report"}, retroDraftPair},
+		{[]string{"--draft"}, retroDraftNoCrew},
+	} {
+		out, errOut, code := h.run(append([]string{"retro"}, tc.args...)...)
+		if code != 1 || out != "" || errOut != tc.stderr+"\n" {
+			t.Errorf("retro %v: code %d, stdout %q, stderr %q, want 1 and %q", tc.args, code, out, errOut, tc.stderr)
+		}
+	}
 }

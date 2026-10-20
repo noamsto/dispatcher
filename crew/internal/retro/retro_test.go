@@ -38,7 +38,7 @@ const oneRun = `{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/a","e
 func run(t *testing.T, events string, req Request) (string, string, int) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	code := Run(req, fixture(t, events), &out, &errb)
+	code := Run(req, fixture(t, events), &out, &errb, Options{})
 	return out.String(), errb.String(), code
 }
 
@@ -203,7 +203,7 @@ func TestUnreadableLogExitsTwo(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(paths.Log, 0o644) })
 	var out, errb bytes.Buffer
-	code := Run(Request{}, paths, &out, &errb)
+	code := Run(Request{}, paths, &out, &errb, Options{})
 	if code != 2 {
 		t.Fatalf("an unreadable bus should exit 2, got %d (%s)", code, errb.String())
 	}
@@ -217,7 +217,7 @@ func TestCorruptBusIsOurOwnLine(t *testing.T) {
 	// already printed.
 	var out, errb bytes.Buffer
 	paths := fixture(t, "{not json\n")
-	code := Run(Request{}, paths, &out, &errb)
+	code := Run(Request{}, paths, &out, &errb, Options{})
 	if code != 5 {
 		t.Fatalf("exit %d", code)
 	}
