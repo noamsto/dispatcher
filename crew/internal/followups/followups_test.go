@@ -269,6 +269,22 @@ func TestThresholdRerunAfterPartialApply(t *testing.T) {
 	}
 }
 
+func TestThresholdRerunKeepsCommentTargetHit(t *testing.T) {
+	entries := `[{"title":"d1","body":"b1","dup_of":3},{"title":"t2","body":"b2","file":"` + fileA + `"}]`
+	w := &world{views: map[int]string{5: `{"state":"OPEN","title":"o","comments":[]}`, 3: `{"state":"OPEN","title":"x","comments":[]}`},
+		hits: map[string]string{fileA: hits3}, failOn: "issue create"}
+	r1 := run(t, w, entries, true)
+	if r1.code == 0 || len(r1.writes) != 2 || !strings.HasPrefix(r1.writes[1], "issue create --title redesign: "+fileA) {
+		t.Fatalf("run 1 code %d writes %q", r1.code, r1.writes)
+	}
+	w.failOn = ""
+	w.views[3] = fmt.Sprintf(`{"state":"OPEN","title":"x","comments":[{"body":%q}]}`, marker+"\n\nd1\n\nb1")
+	r2 := run(t, w, entries, true)
+	if len(r2.writes) == 0 || !strings.HasPrefix(r2.writes[0], "issue create --title redesign: "+fileA) {
+		t.Errorf("run 2 writes %q", r2.writes)
+	}
+}
+
 func TestSharedRedesignIssue(t *testing.T) {
 	entries := `[{"title":"first","body":"b1","file":"` + fileA + `"},{"title":"second","body":"b2","file":"` + fileA + `"}]`
 	w := &world{views: openOrigin(), hits: map[string]string{fileA: hits3}}

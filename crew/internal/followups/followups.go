@@ -91,6 +91,7 @@ type step struct {
 	act    action
 	target int
 	done   int
+	filed  bool
 }
 
 // redesign is one issue shared by every batch entry on a file.
@@ -296,7 +297,7 @@ func (r *run) filed(e entry) (n int, redesign bool) {
 // different action from the state its own first run changed.
 func (r *run) detectDone(s *step) error {
 	if n, red := r.filed(s.e); n != 0 {
-		s.done, s.target = n, n
+		s.done, s.target, s.filed = n, n, true
 		if red {
 			s.act = redesignIssue
 		}
@@ -324,9 +325,9 @@ func (r *run) detectDone(s *step) error {
 
 // resolve picks every entry's action. The threshold counts are one snapshot
 // per file, taken before any write, so an entry's own write cannot push a
-// sibling over mid-apply. Issues this batch already filed (every step's done
-// target) are left out of the hit set, so a re-run after a partial apply
-// counts the same prior hits as the first run.
+// sibling over mid-apply. The batch's own filed issues are not prior hits;
+// comment targets are, so a re-run after a partial apply counts the same
+// prior hits as the first run.
 func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, error) {
 	steps := make([]*step, len(entries))
 	for i, e := range entries {
@@ -337,7 +338,7 @@ func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, err
 	}
 	var own []int
 	for _, s := range steps {
-		if s.done != 0 {
+		if s.filed {
 			own = append(own, s.done)
 		}
 	}
