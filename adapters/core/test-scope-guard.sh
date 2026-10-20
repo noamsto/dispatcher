@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Pre-tool guard: stop a dispatched worker from spending wall time on a full
-# bats run — the whole suite, a directory, `bats-affected`, a glob over
-# `tests/*.bats` — when its task needs a handful of targeted files. CI runs
-# the full suite on every push (#841).
+# bats run — the whole suite, a directory, a glob over `tests/*.bats`, the
+# affected-tests selector alongside a bats run — when its task needs a handful
+# of targeted files. CI runs the full suite on every push (#841).
 #
 # Workers only: a session without CREW_WORKER_ID (a human at a prompt, a
 # dispatcher) exits before jq, the parse and the git call, so the hook costs a
@@ -69,10 +69,13 @@ command=$(jq -r '.[1]' <<<"$parsed")
 cwd=$(jq -r '.[2]' <<<"$parsed")
 cwd=${cwd:-$PWD}
 
-# Quote-aware split of the command line: one word per line, and an empty line
-# wherever a shell control operator (`; && || | ( )`) or a newline ends a
-# command. Quotes are stripped, never interpreted — the guard never evaluates
-# the command it is checking.
+# Quote-aware split of the command line: one word per line, an empty line
+# wherever a shell control operator (`; && || | ( )`) ends a command, and
+# $nl_mark wherever a newline ends one — a harder boundary, since the next line
+# is a separate command. Quotes are stripped, never interpreted — the guard
+# never evaluates the command it is checking.
+nl_mark=$'\001'
+
 split_words() { # <command>
   local s=$1 i=0 n=${#1} c d q w=''
   while ((i < n)); do
@@ -84,7 +87,7 @@ split_words() { # <command>
         w=''
       fi
       ;;
-    ';' | '|' | '&' | '(' | ')' | '`' | $'\n')
+    ';' | '|' | '&' | '(' | ')' | '`')
       # The empty line is what puts the next word in command position: without
       # it, a `bats tests/` on line 2 is still an argument of line 1's command.
       if [[ -n $w ]]; then
@@ -92,6 +95,13 @@ split_words() { # <command>
         w=''
       fi
       printf '\n'
+      ;;
+    $'\n')
+      if [[ -n $w ]]; then
+        printf '%s\n' "$w"
+        w=''
+      fi
+      printf '%s\n' "$nl_mark"
       ;;
     "'" | '"')
       q=$c
@@ -184,22 +194,40 @@ in_bats=0
 skip_val=0
 expect_duration=0
 skip_shell_flag=0
+after_wrapper=0
+selector=0
+bats_word=0
 
 while IFS= read -r w; do
+  if [[ $w == "$nl_mark" ]]; then
+    at_cmd=1
+    in_bats=0
+    after_wrapper=0
+    selector=0
+    bats_word=0
+    continue
+  fi
   if [[ -z $w ]]; then
     at_cmd=1
     in_bats=0
     continue
   fi
 
+  # The feed check below does not care which slot the runner sits in, so it is
+  # probed ahead of the command-position logic.
+  if [[ ${w##*/} == bats ]]; then bats_word=1; fi
+
   if ((at_cmd)); then
     # Past any `FOO=bar` prefixes and interpreter wrappers, so
-    # `bash scripts/bats-affected.sh` and `timeout 300 bats tests/` are seen.
+    # `bash -c 'bats tests/'` and `timeout 300 bats tests/` are seen.
     if [[ $w == *=* && $w != */* ]]; then continue; fi
     if ((skip_shell_flag)); then
       skip_shell_flag=0
       if [[ $w == -* ]]; then continue; fi
     fi
+    # An option belongs to the wrapper seen so far, not to the command slot, so
+    # `xargs -n3 bats` and `env -i bats tests/` name the run they are.
+    if ((after_wrapper)) && [[ $w == -* ]]; then continue; fi
     if ((expect_duration)) && [[ $w =~ ^[0-9]+(\.[0-9]+)?[smhd]?$ ]]; then
       expect_duration=0
       continue
@@ -210,17 +238,23 @@ while IFS= read -r w; do
       skip_shell_flag=1
       continue
       ;;
-    env | time | command | exec | nice | nohup | stdbuf | xargs | do | then) continue ;;
+    env | time | command | exec | nice | nohup | stdbuf | xargs | do | then)
+      after_wrapper=1
+      continue
+      ;;
     timeout)
       expect_duration=1
       continue
       ;;
     esac
     at_cmd=0
+    after_wrapper=0
     case ${w##*/} in
     *bats-affected*)
-      verdict=affected
-      break
+      # The selector prints .bats paths and runs nothing itself: allowed on its
+      # own. Alongside a bats run on the same line its list becomes the run, and
+      # on a full-suite fallback that list is the whole suite.
+      selector=1
       ;;
     bats)
       in_bats=1
@@ -289,6 +323,8 @@ while IFS= read -r w; do
   fi
 done < <(split_words "$command")
 
+if [[ -z $verdict ]] && ((selector && bats_word)); then verdict=piped; fi
+
 [[ -n $verdict ]] || exit 0
 
 # Per-task opt-out, read only once a run looks like a full one.
@@ -302,7 +338,7 @@ if [[ -n $toplevel && -f $toplevel/WORKER_TASK.md ]]; then
 fi
 
 case $verdict in
-affected) what='bats-affected runs the affected set' ;;
+piped) what='the selector and a bats run share one command line' ;;
 recursive) what='-r/--recursive walks a directory tree' ;;
 dir) what="a directory operand ($w) runs every .bats file under it" ;;
 glob) what="a glob operand ($w) expands to the whole suite" ;;
