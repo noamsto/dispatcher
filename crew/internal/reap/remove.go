@@ -335,7 +335,9 @@ var oidRe = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 // makes it a compare-and-delete: origin deletes only while the tip is still
 // the recorded dispatch oid, so a branch the worker pushed to stays. A worker
 // can forge the recorded oid, so only feat/ branches that are not origin's
-// default are touched, and only when no commit of the tip is unique to it.
+// default are touched, and only when the tip holds no commit absent from this
+// clone's other remote-tracking refs. That check is local: a worker that can
+// write those refs, or a stale unpruned one, can still satisfy it.
 func (r *run) deleteOriginBranch(ctx context.Context, c *candidate) {
 	if c.mode != "issue" || !strings.HasPrefix(c.branch, "feat/") {
 		return
@@ -348,8 +350,13 @@ func (r *run) deleteOriginBranch(ctx context.Context, c *candidate) {
 	if oid == "" {
 		return
 	}
-	if out, ok := r.commonOutput(ctx, "rev-list", oid, "--not", "--exclude=origin/"+c.branch, "--remotes"); !ok || out != "" {
-		r.note("kept origin branch " + c.branch + " — its tip holds commits no other remote branch has")
+	out, ok := r.commonOutput(ctx, "rev-list", oid, "--not", "--exclude=origin/"+c.branch, "--remotes")
+	if !ok {
+		r.note("kept origin branch " + c.branch + " — could not check its tip against other remote-tracking refs")
+		return
+	}
+	if out != "" {
+		r.note("kept origin branch " + c.branch + " — its tip holds commits no other remote-tracking ref has")
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -369,7 +376,7 @@ func (r *run) deleteOriginBranch(ctx context.Context, c *candidate) {
 	switch {
 	case err == nil:
 		r.note("deleted origin branch " + c.branch + " (still at its dispatch base)")
-	case strings.Contains(stderr.String(), "stale info") || strings.Contains(stderr.String(), "rejected"):
+	case strings.Contains(stderr.String(), "(stale info)"):
 		r.note("kept origin branch " + c.branch + " — origin moved past its dispatch base")
 	default:
 		r.say("could not delete origin branch " + c.branch + " (still at its dispatch base?) — delete it by hand once origin is reachable")

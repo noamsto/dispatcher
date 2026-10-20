@@ -355,7 +355,7 @@ func TestIssueModeReapKeepsForgedUniqueWork(t *testing.T) {
 	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
-	f.wantOut("crew reap: reaped feat/r (issue #5 CLOSED)", "crew reap: kept origin branch feat/r — its tip holds commits no other remote branch has")
+	f.wantOut("crew reap: reaped feat/r (issue #5 CLOSED)", "crew reap: kept origin branch feat/r — its tip holds commits no other remote-tracking ref has")
 	if got := gitOut(t, bare, "rev-parse", "refs/heads/"+rb); got != tip {
 		t.Fatalf("origin feat/r = %s, want %s", got, tip)
 	}
@@ -392,6 +392,29 @@ func TestIssueModeReapUnreachableOriginSaysSoUnderQuiet(t *testing.T) {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
 	f.wantOut("crew reap: reaped feat/r (issue #5 CLOSED)", "crew reap: could not delete origin branch feat/r (still at its dispatch base?) — delete it by hand once origin is reachable")
+}
+
+func TestIssueModeReapSaysSoWhenOriginRejectsDeletion(t *testing.T) {
+	f, bare := issueOriginFx(t, pushedRow)
+	runGit(t, f.main, "--git-dir="+bare, "config", "receive.denyDeletes", "true")
+	if rc := f.reap(f.main, Request{Quiet: true}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantOut("crew reap: reaped feat/r (issue #5 CLOSED)", "crew reap: could not delete origin branch feat/r (still at its dispatch base?) — delete it by hand once origin is reachable")
+	if !originHas(bare) {
+		t.Fatal("origin feat/r was deleted")
+	}
+}
+
+func TestIssueModeReapKeepsOriginWhenTipCheckFails(t *testing.T) {
+	f, bare := issueOriginFx(t, func(string) string { return pushedRow(strings.Repeat("a", 40)) })
+	if rc := f.reap(f.main, Request{}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantOut("crew reap: reaped feat/r (issue #5 CLOSED)", "crew reap: kept origin branch feat/r — could not check its tip against other remote-tracking refs")
+	if !originHas(bare) {
+		t.Fatal("origin feat/r was deleted")
+	}
 }
 
 func TestMergedPRReapLeavesOriginBranch(t *testing.T) {
