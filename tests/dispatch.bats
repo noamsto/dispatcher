@@ -264,7 +264,7 @@ setup_stale_pr_worktree() { # <branch>
   # rather than colliding with a second `remote add origin`.
   git -C "$TEST_REPO" push -q origin "$1:refs/heads/$1"
 
-  scratch="$(mktemp -d)"
+  scratch="$BATS_TEST_TMPDIR/pr-head-clone"
   git clone -q "$TEST_REPO/origin.git" "$scratch"
   git -C "$scratch" -c user.email=test@example.com -c user.name=test checkout -q "$1"
   git -C "$scratch" -c user.email=test@example.com -c user.name=test commit --allow-empty -qm "pr head advances"
@@ -313,7 +313,7 @@ setup_stale_default_branch() {
   export STALE_LOCAL_OID
   STALE_LOCAL_OID="$(git -C "$TEST_REPO" rev-parse main)"
 
-  scratch="$(mktemp -d)"
+  scratch="$BATS_TEST_TMPDIR/pr-head-clone"
   git clone -q "$TEST_REPO/origin.git" "$scratch"
   git -C "$scratch" -c user.email=test@example.com -c user.name=test checkout -q main
   git -C "$scratch" -c user.email=test@example.com -c user.name=test commit --allow-empty -qm "origin advances"
@@ -351,7 +351,7 @@ EOF
 # can assert the new worktree actually landed on it rather than on main.
 setup_stacked_base() { # <parent-branch>
   setup_stale_default_branch
-  scratch="$(mktemp -d)"
+  scratch="$BATS_TEST_TMPDIR/pr-head-clone"
   git clone -q "$TEST_REPO/origin.git" "$scratch"
   git -C "$scratch" -c user.email=test@example.com -c user.name=test checkout -q -b "$1" origin/main
   git -C "$scratch" -c user.email=test@example.com -c user.name=test commit --allow-empty -qm "parent work"
@@ -5740,6 +5740,41 @@ ROWS
   [ "$(git -C "$wt_path" rev-parse HEAD)" = "$STALE_NEW_OID" ]
   grep -q 'new-window' "$STUB_LOG"
   grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "--pr direnv allow runs against the post-reset PR head, not the stale tree" {
+  setup_stale_pr_worktree eng-1191-envrc
+  wt_path="$TEST_REPO/.worktrees/eng-1191-envrc"
+  scratch="$BATS_TEST_TMPDIR/pr-head-clone"
+  git clone -q "$TEST_REPO/origin.git" "$scratch"
+  git -C "$scratch" -c user.email=test@example.com -c user.name=test checkout -q eng-1191-envrc
+  echo 'use nix' >"$scratch/.envrc"
+  git -C "$scratch" add .envrc
+  git -C "$scratch" -c user.email=test@example.com -c user.name=test commit -qm "pr head adds envrc"
+  STALE_NEW_OID="$(git -C "$scratch" rev-parse HEAD)"
+  export STALE_NEW_OID
+  git -C "$scratch" push -q origin eng-1191-envrc
+  cat >"$STUB_DIR/direnv" <<'EOF'
+#!/usr/bin/env bash
+printf '%s %s %s\n' "$1" "$2" "$(git -C "$2" rev-parse HEAD)" >>"$STUB_LOG"
+EOF
+  chmod +x "$STUB_DIR/direnv"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 0 ]
+  grep -qx "allow $(wt_path_for eng-1191-envrc) $STALE_NEW_OID" "$STUB_LOG"
+}
+
+@test "--pr refusing to reset a dirty worktree leaves no direnv allow behind" {
+  setup_stale_pr_worktree eng-1191-dirty
+  wt_path="$TEST_REPO/.worktrees/eng-1191-dirty"
+  echo 'use nix' >"$wt_path/.envrc"
+  echo "local edit" >"$wt_path/dirty.txt"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to reset"* ]]
+  run ! grep -q '^allow ' "$STUB_LOG"
 }
 
 @test "--pr on a forged gitlink never runs its gitdir's config (#539)" {
