@@ -11,6 +11,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
+	"github.com/noamsto/dispatcher/crew/internal/followups"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/merge"
@@ -313,6 +314,15 @@ type mergeCmd struct {
 	PR        string  `arg:"" optional:"" name:"pr"`
 }
 
+type followupsCmd struct {
+	Entries *string `name:"entries"`
+	Apply   bool    `name:"apply"`
+	Draft   bool    `name:"draft"`
+	Crew    *string `name:"crew"`
+	Tracker *string `name:"tracker"`
+	PR      string  `arg:"" optional:"" name:"pr"`
+}
+
 type stallWatchCmd struct {
 	Target        string  `arg:"" optional:"" name:"target"`
 	Pane          *string `name:"pane"`
@@ -563,6 +573,15 @@ var wordings = map[string]wording{
 		unknownFlag: func(f string) string { return fmt.Sprintf("crew: merge: unknown flag '%s' (%s)", f, merge.Usage) },
 		extra: func(w string) string {
 			return fmt.Sprintf("crew: merge: unexpected argument '%s' (%s)", w, merge.Usage)
+		},
+		code: exitFailure,
+	},
+	"followups": {
+		unknownFlag: func(f string) string {
+			return fmt.Sprintf("crew: followups: unknown flag '%s' (%s)", f, followups.Usage)
+		},
+		extra: func(w string) string {
+			return fmt.Sprintf("crew: followups: unexpected argument '%s' (%s)", w, followups.Usage)
 		},
 		code: exitFailure,
 	},
@@ -833,6 +852,13 @@ func validate(sub string, r *root) *refusal {
 		c := r.Merge
 		if c.PR == "" || given(c.Crew) {
 			return fail(merge.Usage)
+		}
+	case "followups":
+		c := r.Followups
+		if c.PR == "" || given(c.Entries) || given(c.Crew) || given(c.Tracker) || (c.Entries == nil && !c.Draft) ||
+			(c.Draft && (c.Entries != nil || c.Apply || c.Tracker != nil)) || (!c.Draft && c.Crew != nil) ||
+			(c.Tracker != nil && *c.Tracker != "github" && *c.Tracker != "linear") {
+			return fail(followups.Usage)
 		}
 	case "stack":
 		c := r.Stack

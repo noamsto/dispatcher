@@ -570,7 +570,7 @@ func TestRunBusSubsRefuseOutsideRepo(t *testing.T) {
 		"crews", "log", "report", "sessions", "roster", "identity", "inbox", "hold", "await", "watch",
 		"retro", "reply", "resolve-target", "pr-watch", "merge", "where", "stream", "roster-render", "adopt",
 		"status", "msg", "register", "deregister", "rate", "git-baseline", "reap", "stack", "nudge", "stall-watch",
-		"remote-run", "dispatch-row", "spec-lint",
+		"remote-run", "dispatch-row", "spec-lint", "followups",
 	} {
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), []string{sub}, &stdout, &stderr, e)
@@ -1261,13 +1261,13 @@ func TestAdmittedSubcommands(t *testing.T) {
 		"git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help",
 		"id", "new", "engine-cmd", "dash", "pi-agent-dir", "relay",
 		"remote-run", "remote-exec", "dispatch-row", "spec-lint",
-		"merge", // added after that revision
+		"merge", "followups", // added after that revision
 	}
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
 		"status", "msg", "reply", "hold", "nudge", "await", "watch", "relay", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "merge", "pr-watch", "stall-watch", "help",
-		"remote-run", "remote-exec", "dispatch-row", "spec-lint"} {
+		"remote-run", "remote-exec", "dispatch-row", "spec-lint", "followups"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -1697,6 +1697,16 @@ var refusalRows = []struct {
 	{"spec-lint issue missing value", []string{"spec-lint", "f.md", "--issue"}, wantSpecLintUsage, 2},
 	{"spec-lint unknown flag", []string{"spec-lint", "f.md", "--bogus"}, wantSpecLintUsage, 2},
 	{"spec-lint extra positional", []string{"spec-lint", "f.md", "g.md"}, wantSpecLintUsage, 2},
+	{"followups no pr", []string{"followups", "--entries", "f.json"}, wantFollowupsUsage, 1},
+	{"followups no entries or draft", []string{"followups", "7"}, wantFollowupsUsage, 1},
+	{"followups draft with apply", []string{"followups", "7", "--draft", "--apply"}, wantFollowupsUsage, 1},
+	{"followups entries with crew", []string{"followups", "7", "--entries", "f", "--crew", "x"}, wantFollowupsUsage, 1},
+	{"followups bad tracker", []string{"followups", "7", "--entries", "f", "--tracker", "jira"}, wantFollowupsUsage, 1},
+	{"followups tracker missing value", []string{"followups", "7", "--entries", "f", "--tracker"}, wantFollowupsUsage, 1},
+	{"followups draft with tracker", []string{"followups", "7", "--draft", "--tracker", "linear"}, wantFollowupsUsage, 1},
+	{"followups entries missing value", []string{"followups", "7", "--entries"}, wantFollowupsUsage, 1},
+	{"followups unknown flag", []string{"followups", "7", "--bogus"}, "crew: followups: unknown flag '--bogus' (" + wantFollowupsUsage + ")", 1},
+	{"followups extra positional", []string{"followups", "7", "x"}, "crew: followups: unexpected argument 'x' (" + wantFollowupsUsage + ")", 1},
 	{"reap idle negative", []string{"reap", "--idle", "-5"}, "crew: --idle must be a non-negative integer number of seconds", 1},
 }
 
@@ -1775,6 +1785,7 @@ const (
 	wantRemoteRunUsage   = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] -- <argv>..."
 	wantDispatchRowUsage = "usage: crew dispatch-row --session S [--crew ID]"
 	wantSpecLintUsage    = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
+	wantFollowupsUsage   = "usage: crew followups <PR> (--entries FILE [--apply] [--tracker github|linear] | --draft [--crew ID])"
 	guardUsage           = "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …"
 )
 
