@@ -24,6 +24,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/entry"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
+	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
@@ -31,6 +32,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/inbox"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/log"
+	"github.com/noamsto/dispatcher/crew/internal/merge"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/piagentdir"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
@@ -133,7 +135,7 @@ var subcommands = []string{
 	"id", "new", "engine-cmd", "occupants",
 	"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 	"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
-	"adopt", "await", "dash", "git-baseline",
+	"adopt", "await", "dash", "git-baseline", "merge",
 	"git-guard", "help", "hold", "msg", "nudge",
 	"pr-watch", "reap", "reap-autosweep",
 	"relay", "reply", "stall-watch", "status", "stream", "watch",
@@ -151,7 +153,7 @@ var typedSubcommands = map[string]bool{
 	"status": true, "msg": true, "reply": true, "hold": true,
 	"nudge": true, "await": true, "watch": true, "relay": true, "stream": true,
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
-	"adopt": true, "pr-watch": true, "stall-watch": true, "help": true,
+	"adopt": true, "merge": true, "pr-watch": true, "stall-watch": true, "help": true,
 	"remote-run": true, "remote-exec": true, "dispatch-row": true,
 }
 
@@ -220,6 +222,8 @@ type root struct {
 	GitBaseline gitBaselineCmd `cmd:"" name:"git-baseline" help:"List or accept the git-config baseline."`
 
 	Adopt adoptCmd `cmd:"" name:"adopt" help:"Re-attach to a crew already on disk."`
+
+	Merge mergeCmd `cmd:"" name:"merge" help:"Merge a PR only when head, base and ledger are green."`
 
 	PRWatch prWatchCmd `cmd:"" name:"pr-watch" help:"Park on a PR and post its change event to the bus."`
 
@@ -730,6 +734,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Clock:  clock.FromEnv(),
 		})
+	}
+	if sub == "merge" {
+		c := parsed.typed.Merge
+		return merge.Run(ctx, merge.Request{PR: c.PR, DryRun: c.DryRun, AllowNoCI: c.AllowNoCI, NoLedger: c.NoLedger, Crew: str(c.Crew)}, paths, stdout, stderr, merge.Options{GH: gh.Exec{}, Git: git.Exec{}, Dir: cwd})
 	}
 	if sub == "where" {
 		w := parsed.typed.Where

@@ -52,6 +52,7 @@ Holds:
   hold            Park a queued dispatch on a quota window
 
 Maintenance:
+  merge           Merge a PR only when head, base and ledger are green
   reap            Reclaim the window and worktree of a landed PR
   git-baseline    List or accept the exec-capable git-config baseline
   stack           Read or record stacked cut points; plan a stack rebase
