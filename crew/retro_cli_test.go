@@ -771,8 +771,8 @@ func draftRun(t *testing.T, h *holdCLI, args ...string) (string, string, int) {
 	return stdout.String(), stderr.String(), code
 }
 
-// draftNote runs --draft and reads the note back: its seam, tag, and the
-// segments of its detail. One line, or the run is not the command's contract.
+// draftNote runs --draft and reads the one note back: its seam, tag, and the
+// segments of its detail.
 func draftNote(t *testing.T, h *holdCLI, args ...string) (string, string, []string) {
 	t.Helper()
 	out, errOut, code := draftRun(t, h, args...)
@@ -896,8 +896,8 @@ func TestRetroDraftNamesTheTagsTwoWorkersCarried(t *testing.T) {
 	own("feat/1186-one", "gate_thrash", 1420)
 	own("feat/1186-one", "gate_thrash", 1430)
 	own("feat/1188-three", "misrouted", 1440)
-	// A note addressed to another crew's retro sink is no evidence here, even
-	// when the branch name is the same: it would both tag onyx and fake a pattern.
+	// A note addressed to another crew's retro sink is no evidence here, even under
+	// the same branch name: it would tag onyx and fake a pattern.
 	s.msg(wid("feat/1186-one", "s1"), "retro:c2", 1450, note("misrouted", "another crew"))
 
 	_, _, parts := draftNote(t, h, "--crew", "c1")
@@ -954,10 +954,9 @@ func TestRetroDraftCrewDefaultsToTheEnvironment(t *testing.T) {
 	}
 }
 
-// TestRetroDraftSaysWhenTheRosterFoldFails pins the one degraded path: without
-// the roster's rows the draft still prints, naming each branch by the identity it
-// read off its own dispatch row — and says the roster failed, so the two
-// spellings are never mistaken for agreement.
+// TestRetroDraftSaysWhenTheRosterFoldFails pins the degraded path: with no roster
+// rows the draft still prints, naming each branch by the identity it read off its
+// own dispatch row, and says the roster failed.
 func TestRetroDraftSaysWhenTheRosterFoldFails(t *testing.T) {
 	h, s := newRetroSeed(t)
 	draftDispatch(s, "feat/1186-scope-guard", 1000, "onyx", "standard", "claude", "sonnet")

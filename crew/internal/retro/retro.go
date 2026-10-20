@@ -9,11 +9,9 @@
 // table, and the --report --json object, pretty-printed and never coloured, since
 // that output is compared by value.
 //
-// `--draft` is the one shape the fold never had: it reads one crew, not the whole
-// bus, and prints the session_summary note for it. It takes each branch's
-// codename off `crew roster`'s own rows rather than re-deriving them here, and
-// folds the rest in Go (draft.go) — there is no arm program to stay one source
-// with.
+// `--draft` is the one shape the fold never had: it reads one crew and prints the
+// session_summary note for it, folding in Go (draft.go) because there is no arm
+// program to share. Its codenames come off `crew roster`'s own rows.
 package retro
 
 import (
@@ -40,9 +38,7 @@ const (
 	exitFailure = 1
 )
 
-// The --draft refusals, each one line like Usage: the fold flag --draft has no
-// shape for, the crew filters the fold has no shape for, and the crew --draft
-// cannot name without.
+// The --draft refusals, one line each like Usage.
 const (
 	DraftUsage      = "crew: retro --draft takes no --report/--json"
 	CrewUsage       = "crew: retro --crew/--all need --draft"
@@ -84,9 +80,7 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-// refusal is why the line is a usage error, or "" when it runs. Like the arm's
-// `--json` test it is decided before the log is opened, so a bad argument costs
-// nothing but its own line.
+// refusal is why the line is a usage error, or "" when it runs.
 func (r Request) refusal() string {
 	switch {
 	case r.Draft && (r.Report || r.JSON):
@@ -128,8 +122,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		return 0
 	}
 	if req.Draft {
-		// The draft has no header to print first: a torn tail is the same
-		// failure the fold reports, before a line of output.
+		// No header precedes the draft, so a torn tail fails before any output.
 		if err != nil {
 			msg, code := bus.JQFailure(err)
 			say(stderr, "crew: retro: %s: %s\n", paths.Log, msg)

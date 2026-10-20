@@ -705,8 +705,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 
 	// retro folds the whole bus with no crew filter, and prints the TSV rows, the
 	// padded report or one JSON object, so it owns its run like hold does. --draft
-	// is the one crew-filtered shape, and it reads each branch's codename off the
-	// roster's own rows, so it takes the fold the roster sub runs.
+	// is the one crew-filtered shape, and it reads its codenames off the roster's
+	// own rows.
 	if sub == "retro" {
 		c := parsed.typed.Retro
 		return retro.Run(retro.Request{Report: c.Report, JSON: c.JSON, Draft: c.Draft, All: c.All, Crew: str(c.Crew)}, paths, stdout, stderr, retro.Options{
@@ -714,9 +714,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Roster: func(docs []any, crew string) []map[string]any {
 				rows, err := roster.Fold(ctx, docs, crew, e.nowSec(), e.probes(ctx, cwd))
 				if err != nil {
-					// The draft still prints, naming each branch by its identity alone.
-					// Say so: a summary that names a worker differently from
-					// `crew roster` should not read like the two agreed.
+					// The draft still prints, but the names lose the roster's suffix.
 					say(stderr, "crew: retro: roster: %v\n", err)
 					return nil
 				}

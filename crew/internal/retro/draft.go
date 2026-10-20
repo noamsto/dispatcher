@@ -14,8 +14,8 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 )
 
-// The draft is written in the shape the dispatcher's own session_summary notes
-// already have, so what it prints is a line the dispatcher has posted by hand:
+// The draft keeps the shape the dispatcher's own session_summary notes have, so
+// what it prints is a line the dispatcher already knows how to post:
 //
 //	crew msg "dispatcher:$CREW_ID" "retro:$CREW_ID" "$(crew retro --draft --all)"
 const (
@@ -24,8 +24,8 @@ const (
 	// patternPrefix names the detail's last part: the tags no single worker's
 	// line can show.
 	patternPrefix = "tags on ≥2 workers: "
-	// missing is what the fold prints for an engine, model or tier a row does
-	// not carry.
+	// missing is what the fold prints for an engine, model or tier a row does not
+	// carry.
 	missing = "—"
 )
 
@@ -51,8 +51,7 @@ type worker struct {
 	newest   float64 // newest dispatch row, which orders the lines
 }
 
-// line is one worker: the codename, the {tier,engine,model} tuple a summary has
-// always carried, what the worker ended as, and the tags its notes carried.
+// line is one worker's segment of the detail.
 func (w worker) line() string {
 	line := fmt.Sprintf("%s {%s,%s,%s} %s", w.codename, w.tier, w.engine, w.model, w.outcome)
 	if len(w.tags) > 0 {
@@ -69,15 +68,13 @@ func draft(crew string, all bool, events []bus.Event, o Options, stdout, stderr 
 		docs = append(docs, ev.Doc)
 	}
 
-	// codenames is each branch's name as `crew roster` prints it, so the summary
-	// names a worker the way the roster the dispatcher just read named it. A
-	// dispatched branch the roster never printed — no worker ever posted a status
-	// for it — falls back to the identity roster itself reads names off.
+	// codenames is each branch's name as `crew roster` prints it. A dispatched
+	// branch the roster never printed — no worker ever posted a status for it —
+	// falls back to the identity roster itself reads names off.
 	codenames := map[string]string{}
 	for _, row := range o.Roster(docs, crew) {
 		branch, _ := row["branch"].(string)
-		name, _ := row["name"].(string)
-		if branch != "" && name != "" {
+		if name, ok := row["name"].(string); ok && name != "" {
 			codenames[branch] = name
 		}
 	}
@@ -90,7 +87,7 @@ func draft(crew string, all bool, events []bus.Event, o Options, stdout, stderr 
 	recorded := identity.RecordedAll(docs)
 	var workers []worker
 	for _, w := range dispatched(events, crew) {
-		if !all && !(w.newest > boundary) {
+		if !all && w.newest <= boundary {
 			continue
 		}
 		id := identity.For(recorded, w.branch)
@@ -122,8 +119,7 @@ func draft(crew string, all bool, events []bus.Event, o Options, stdout, stderr 
 		parts = append(parts, patternPrefix+shared)
 	}
 
-	// One compact object, its own line: the same bytes the dispatcher hands to
-	// `crew msg`, and never HTML-escaped, because a model name is quoted back.
+	// Never HTML-escaped: a model name comes back out of the note verbatim.
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
@@ -136,9 +132,8 @@ func draft(crew string, all bool, events []bus.Event, o Options, stdout, stderr 
 }
 
 // summaryBoundary is the crew's newest session_summary note written by its own
-// dispatcher. Everything before it is already written up, so the draft starts
-// after it — and there is no flag that overrides that, because the dispatcher
-// posts one with the note it acts on.
+// dispatcher: everything before it is already written up, so the draft starts
+// after it.
 func summaryBoundary(events []bus.Event, crew string) float64 {
 	newest := math.Inf(-1)
 	for _, ev := range events {
@@ -183,9 +178,9 @@ func dispatched(events []bus.Event, crew string) []worker {
 	return out
 }
 
-// outcomeOf is the branch's own newest status. A row `crew reap` posted, or one
-// the watchdog posted, rewrites a state the worker never chose, so the summary
-// says what the worker last said itself. `PR #N` rides that same row's pr_url.
+// outcomeOf is the branch's own newest status, skipping the rows `crew reap` and
+// the watchdog post: they rewrite a state the worker never chose. `PR #N` rides
+// that same row's pr_url.
 func outcomeOf(events []bus.Event, branch string) string {
 	newest, found := math.Inf(-1), false
 	state, pr := missing, ""
@@ -205,10 +200,7 @@ func outcomeOf(events []bus.Event, branch string) string {
 			continue
 		}
 		newest, found = ts, true
-		state, _ = body["state"].(string)
-		if state == "" {
-			state = missing
-		}
+		state = field(body, "state")
 		pr = prOf(body)
 	}
 	if !found {
@@ -222,15 +214,15 @@ func outcomeOf(events []bus.Event, branch string) string {
 
 // workerTags are the distinct tags the branch's own retro notes carried, plus the
 // tag of a dispatcher note in the crew that names the branch — by codename or by
-// issue number, which is how a note the dispatcher wrote about a worker reaches
+// issue number — which is how a note the dispatcher wrote about a worker reaches
 // that worker's line. session_summary is the summary itself and other is the
-// catch-all, so neither is a pattern worth carrying.
+// catch-all, so neither names a pattern.
 func workerTags(events []bus.Event, crew string, w worker) []string {
 	var tags []string
 	seen := map[string]bool{}
 	for _, ev := range events {
-		// A note belongs to the crew whose retro sink it was addressed to, so a
-		// branch name shared with another crew never borrows that crew's notes.
+		// A note belongs to the crew whose retro sink it was addressed to, and a
+		// branch name can be shared between crews.
 		if ev.Kind != bus.KindMsg || ev.To != "retro:"+crew {
 			continue
 		}
@@ -273,16 +265,15 @@ func sharedTags(workers []worker) string {
 	return strings.Join(shared, ",")
 }
 
-// field is one dispatch-row field, or the em-dash the fold prints for an absent
-// one.
-func field(body map[string]any, key string) string {
-	if s, ok := body[key].(string); ok && s != "" {
+// field is one row's text field, or the em-dash the fold prints for an absent one.
+func field(fields map[string]any, key string) string {
+	if s, ok := fields[key].(string); ok && s != "" {
 		return s
 	}
 	return missing
 }
 
-// prOf is the pull a status row carried, in the one phrase the summary adds.
+// prOf is "PR #N" for the pull a status row carried, "" when it carried none.
 func prOf(body map[string]any) string {
 	url, _ := body["pr_url"].(string)
 	if m := pullRe.FindStringSubmatch(url); m != nil {
@@ -294,8 +285,7 @@ func prOf(body map[string]any) string {
 var pullRe = regexp.MustCompile(`/pull/([0-9]+)`)
 
 // issueOf is the issue number a branch is named for — the same capture roster
-// takes for a colliding codename's suffix. A branch with no number is named only
-// by its codename.
+// takes for a colliding codename's suffix.
 func issueOf(branch string) string {
 	if m := issueRe.FindStringSubmatch(branch); m != nil {
 		return m[1]
@@ -341,8 +331,7 @@ func mentions(detail, token string) bool {
 	return false
 }
 
-// isWordByte is an ASCII letter or digit, the neighbour that makes the "1186"
-// inside "11860" a different number. A codename's "·" is not one.
+// isWordByte is an ASCII letter or digit; a codename's "·" is not one.
 func isWordByte(b byte) bool {
 	return b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
 }
@@ -379,6 +368,7 @@ func rowOf(ev bus.Event) map[string]any {
 	return row
 }
 
+// docField is one top-level field of an event's row.
 func docField(ev bus.Event, key string) (any, bool) {
 	obj, ok := ev.Doc.(map[string]any)
 	if !ok {
