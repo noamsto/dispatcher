@@ -5806,30 +5806,6 @@ if [ "$agent" = claude ]; then
   fi
 fi
 
-# Pre-allow direnv for the worktree (#40). direnv's allow-list re-validates
-# *content* on every load, keyed by the realpath of the .envrc — so a fresh
-# worktree's byte-identical .envrc is unseen even though the main checkout's
-# copy is already allowed, but a genuinely different .envrc is (correctly)
-# blocked again. A --pr worktree is checked out to the PR's actual head,
-# which can be a fork (isCrossRepository, handled below) carrying
-# attacker-controlled .envrc content — auto-approving there would rubber-stamp
-# code an external PR author wrote, sight unseen, right before the worker's
-# devshell (and the operator's own shell, if direnv-hooked) sources it. Only
-# --pr is skipped: create/name/fetch-name all check out a branch from this
-# machine's own trusted origin, not a fork. A repo with no .envrc never used
-# direnv and has no devshell to lose, so there's nothing to allow — skip it.
-# Aborts the dispatch only when an .envrc is present and direnv actually
-# fails to allow it, so a devshell-less worker never gets scaffolded to fail
-# its gate in a confusing way much later.
-if [ -n "$pr_number" ]; then
-  echo "dispatch: --pr worktree — not auto-approving direnv; review $wt_path/.envrc and run \`direnv allow $wt_path\` by hand once you trust it" >&2
-elif [ ! -e "$wt_path/.envrc" ]; then
-  : # no .envrc — repo doesn't use direnv, nothing to allow
-elif ! direnv allow "$wt_path"; then
-  echo "dispatch: direnv allow failed for $wt_path — the worker's devshell will not load" >&2
-  exit 1
-fi
-
 # --pr: verify the attached worktree actually sits at the PR head. `wt switch`
 # attaches to an existing worktree without fetching or resetting it, so a
 # stale local branch would otherwise go unnoticed.
@@ -5857,6 +5833,33 @@ if [ -n "$pr_number" ]; then
       exit 1
     fi
   fi
+fi
+
+# Pre-allow direnv for the worktree (#40). direnv's allow-list re-validates
+# *content* on every load, keyed by the realpath of the .envrc — so a fresh
+# worktree's byte-identical .envrc is unseen even though the main checkout's
+# copy is already allowed, but a genuinely different .envrc is (correctly)
+# blocked again. A --pr worktree from a fork (isCrossRepository anything but
+# false, so a null or unresolved lookup fails closed) can carry
+# attacker-controlled .envrc content — auto-approving there would rubber-stamp
+# code an external PR author wrote, sight unseen, right before the worker's
+# devshell (and the operator's own shell, if direnv-hooked) sources it. A
+# same-repo PR head is a branch on this machine's own trusted origin, the same
+# as fetch-name, so it is allowed like create/name/fetch-name. A repo with no
+# .envrc never used direnv and has no devshell to lose, so there's nothing to
+# allow — skip it. Runs after the --pr head check so it approves the content
+# the worker will load (the PR head, post-reset), never a stale or unverified
+# tree.
+# Aborts the dispatch only when an .envrc is present and direnv actually
+# fails to allow it, so a devshell-less worker never gets scaffolded to fail
+# its gate in a confusing way much later.
+if [ -n "$pr_number" ] && [ "$cross" != false ]; then
+  echo "dispatch: --pr worktree from a fork or unresolved head repo — not auto-approving direnv; review $wt_path/.envrc and run \`direnv allow $wt_path\` by hand once you trust it" >&2
+elif [ ! -e "$wt_path/.envrc" ]; then
+  : # no .envrc — repo doesn't use direnv, nothing to allow
+elif ! direnv allow "$wt_path"; then
+  echo "dispatch: direnv allow failed for $wt_path — the worker's devshell will not load" >&2
+  exit 1
 fi
 
 # FleetView-style codename+color: the branch's recorded one, else a slot no live

@@ -177,7 +177,8 @@ pr\ view\ *)
     --arg state "${PR_STATE:-OPEN}" \
     --arg merge "${PR_MERGE_OID:-}" \
     --arg body "${PR_BODY:-}" \
-    '{headRefName:$head,headRefOid:$oid,baseRefName:$base,isCrossRepository:false,state:$state,mergeCommit:{oid:$merge},body:$body}'
+    --argjson cross "${PR_CROSS:-false}" \
+    '{headRefName:$head,headRefOid:$oid,baseRefName:$base,isCrossRepository:$cross,state:$state,mergeCommit:{oid:$merge},body:$body}'
   ;;
 esac
 exit 0
@@ -5744,6 +5745,42 @@ ROWS
   grep -q 'send-keys' "$STUB_LOG"
 }
 
+@test "--pr direnv allow runs against the post-reset PR head, not the stale tree" {
+  setup_stale_pr_worktree eng-1191-envrc
+  wt_path="$TEST_REPO/.worktrees/eng-1191-envrc"
+  scratch="$(mktemp -d)"
+  git clone -q "$TEST_REPO/origin.git" "$scratch"
+  git -C "$scratch" -c user.email=test@example.com -c user.name=test checkout -q eng-1191-envrc
+  echo 'use nix' >"$scratch/.envrc"
+  git -C "$scratch" add .envrc
+  git -C "$scratch" -c user.email=test@example.com -c user.name=test commit -qm "pr head adds envrc"
+  STALE_NEW_OID="$(git -C "$scratch" rev-parse HEAD)"
+  export STALE_NEW_OID
+  git -C "$scratch" push -q origin eng-1191-envrc
+  rm -rf "$scratch"
+  cat >"$STUB_DIR/direnv" <<'EOF'
+#!/usr/bin/env bash
+printf '%s %s %s\n' "$1" "$2" "$(git -C "$2" rev-parse HEAD)" >>"$STUB_LOG"
+EOF
+  chmod +x "$STUB_DIR/direnv"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 0 ]
+  grep -qx "allow $(wt_path_for eng-1191-envrc) $STALE_NEW_OID" "$STUB_LOG"
+}
+
+@test "--pr refusing to reset a dirty worktree leaves no direnv allow behind" {
+  setup_stale_pr_worktree eng-1191-dirty
+  wt_path="$TEST_REPO/.worktrees/eng-1191-dirty"
+  echo 'use nix' >"$wt_path/.envrc"
+  echo "local edit" >"$wt_path/dirty.txt"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to reset"* ]]
+  run ! grep -q '^allow ' "$STUB_LOG"
+}
+
 @test "--pr on a forged gitlink never runs its gitdir's config (#539)" {
   # #539: a worker's Edit/Write can rewrite the worktree's .git gitlink to
   # point at a gitdir it built, and plain `git -C wt_path` (discovery) would
@@ -7759,15 +7796,21 @@ wt_path_for() {
     awk -v b="refs/heads/$1" '/^worktree /{p=$2} $0=="branch "b{print p}'
 }
 
-# commit_envrc — track a real .envrc on the source branch so a worktree cut
-# from it (via `wt`'s `git worktree add -b ... HEAD`) actually has one; the
+# commit_envrc_local — track a real .envrc on the source branch so a worktree
+# cut from it (via `wt`'s `git worktree add -b ... HEAD`) actually has one; the
 # direnv-allow guard now skips entirely when .envrc is absent, so tests that
-# mean to exercise `direnv allow` itself need this. Pushed too: the default
-# create branches off origin's fetched tip, not local HEAD.
-commit_envrc() {
+# mean to exercise `direnv allow` itself need this. The --pr fixture has no
+# origin and branches the PR head off local HEAD, so it stops here.
+commit_envrc_local() {
   echo 'use nix' >"$TEST_REPO/.envrc"
   git -C "$TEST_REPO" add .envrc
   git -C "$TEST_REPO" commit -q -m envrc
+}
+
+# commit_envrc — commit_envrc_local, pushed too: the default create branches
+# off origin's fetched tip, not local HEAD.
+commit_envrc() {
+  commit_envrc_local
   git -C "$TEST_REPO" push -q origin main
 }
 
@@ -7848,9 +7891,31 @@ EOF
   grep -q 'send-keys' "$STUB_LOG"
 }
 
-@test "direnv: a --pr dispatch never auto-approves, warns instead, and still launches" {
+@test "direnv: a same-repo --pr dispatch auto-allows the PR worktree" {
+  commit_envrc_local
   stub_pr_bins eng-7691-foo
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  wt="$(wt_path_for eng-7691-foo)"
+  grep -qx "allow $wt" "$STUB_LOG"
+  [[ "$output" != *"not auto-approving direnv"* ]]
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "direnv: a cross-repo --pr dispatch never auto-approves, warns instead, and still launches" {
+  commit_envrc_local
+  stub_pr_bins eng-7691-foo
+  PR_CROSS=true DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not auto-approving direnv"* ]]
+  run ! grep -q '^allow ' "$STUB_LOG"
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "direnv: an unresolved isCrossRepository is treated as a fork" {
+  commit_envrc_local
+  stub_pr_bins eng-7691-foo
+  PR_CROSS=null DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Review PR 99"
   [ "$status" -eq 0 ]
   [[ "$output" == *"not auto-approving direnv"* ]]
   run ! grep -q '^allow ' "$STUB_LOG"
