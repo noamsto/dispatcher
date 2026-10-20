@@ -10,19 +10,22 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/merge"
+	"github.com/noamsto/dispatcher/crew/internal/reply"
 )
 
 const (
-	prURL  = "https://github.com/o/r/pull/7"
-	viewIn = "pr view 7 --json state,isDraft,mergeable,headRefOid,baseRefName,url,statusCheckRollup"
-	runsIn = "api --paginate repos/{owner}/{repo}/commits/main/check-runs?per_page=100 --jq .check_runs[] | [.name, .status, .conclusion] | @tsv"
-	mergeG = "pr merge 7 --squash --match-head-commit abc123"
-	okRoll = `[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"SUCCESS"}]`
-	okRuns = "check\tcompleted\tsuccess\ndeploy\tin_progress\t"
-	okRow  = `{"ts":1,"crew_id":"c1","from":"worker:feat/x#s1","to":"dispatcher:c1","kind":"status","body":{"state":"pr_open","detail":"AC1 pass(bats)","pr_url":"` + prURL + `"}}`
+	prURL     = "https://github.com/o/r/pull/7"
+	viewIn    = "pr view 7 --json state,isDraft,mergeable,headRefOid,baseRefName,url,statusCheckRollup"
+	runsIn    = "api --paginate repos/{owner}/{repo}/commits/main/check-runs?per_page=100 --jq .check_runs[] | [.name, .status, .conclusion] | @tsv"
+	mergeG    = "pr merge 7 --squash --match-head-commit abc123"
+	okRoll    = `[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"SUCCESS"}]`
+	okRuns    = "check\tcompleted\tsuccess\ndeploy\tin_progress\t"
+	laterDone = `{"ts":2,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"status","body":{"state":"done"}}`
+	okRow     = `{"ts":1,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"status","body":{"state":"pr_open","detail":"AC1 pass(bats)","pr_url":"` + prURL + `"}}`
 )
 
 func view(state, draft, mergeable, roll string) string {
@@ -41,8 +44,9 @@ func TestRun(t *testing.T) {
 		stdout  string
 		merged  bool
 		noMerge bool
+		msgs    int
 	}{
-		{name: "success", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow, stdout: "merged", merged: true},
+		{name: "success", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow, stdout: "released worker:feat/x#s1-1", merged: true, msgs: 1},
 		{name: "draft", view: view("OPEN", "true", "MERGEABLE", okRoll), runs: okRuns, log: okRow, code: 1, stderr: "draft"},
 		{name: "closed", view: view("CLOSED", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow, code: 1, stderr: "closed, not OPEN"},
 		{name: "conflicting", view: view("OPEN", "false", "CONFLICTING", okRoll), runs: okRuns, log: okRow, code: 1, stderr: "conflicting"},
@@ -59,7 +63,8 @@ func TestRun(t *testing.T) {
 		{name: "row of another crew", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow, req: merge.Request{Crew: "c2"}, code: 1, stderr: "no pr_open ledger"},
 		{name: "invalid ledger", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: strings.Replace(okRow, "AC1 pass(bats)", "AC1 pending", 1), code: 1, stderr: "no longer validates"},
 		{name: "newest row wins", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: strings.Replace(okRow, "AC1 pass(bats)", "AC1 pending", 1) + "\n" + okRow, merged: true, stdout: "merged"},
-		{name: "dry run", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow, req: merge.Request{DryRun: true}, stdout: "ok: all checks passed\n  pr: open, ready, mergeable\n  head check check: success\n  base main: not red\n  ledger: worker:feat/x#s1 validates\n", noMerge: true},
+		{name: "dry run", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow, req: merge.Request{DryRun: true}, stdout: "ok: all checks passed\n  pr: open, ready, mergeable\n  head check check: success\n  base main: not red\n  ledger: worker:feat/x#s1-1 validates\n", noMerge: true},
+		{name: "worker moved on to done", view: view("OPEN", "false", "MERGEABLE", okRoll), runs: okRuns, log: okRow + "\n" + laterDone, merged: true, stdout: "merged"},
 		{name: "bad pr", req: merge.Request{PR: "x"}, code: 1, stderr: "usage: crew merge"},
 	}
 	for _, tt := range tests {
@@ -78,7 +83,7 @@ func TestRun(t *testing.T) {
 				req.PR = "7"
 			}
 			var stdout, stderr bytes.Buffer
-			code := merge.Run(context.Background(), req, paths, &stdout, &stderr, merge.Options{GH: g, Git: git, Dir: dir})
+			code := merge.Run(context.Background(), req, paths, &stdout, &stderr, merge.Options{GH: g, Git: git, Dir: dir, Reply: reply.Options{Clock: clock.FromEnv()}})
 			if code != tt.code {
 				t.Errorf("code = %d, want %d (stderr %q)", code, tt.code, stderr.String())
 			}
@@ -124,7 +129,7 @@ func TestLedgerAgainstTaskDoc(t *testing.T) {
 		return "worktree " + wt + "\nHEAD x\nbranch refs/heads/feat/x\n", nil
 	}}
 	var stdout, stderr bytes.Buffer
-	code := merge.Run(context.Background(), merge.Request{PR: "7"}, paths, &stdout, &stderr, merge.Options{GH: g, Git: gt, Dir: dir})
+	code := merge.Run(context.Background(), merge.Request{PR: "7"}, paths, &stdout, &stderr, merge.Options{GH: g, Git: gt, Dir: dir, Reply: reply.Options{Clock: clock.FromEnv()}})
 	if code != 1 || !strings.Contains(stderr.String(), "CI item") {
 		t.Errorf("code %d stderr %q, want the CI-evidence refusal", code, stderr.String())
 	}
@@ -146,7 +151,7 @@ func TestTaskDocEdges(t *testing.T) {
 	}
 	run := func(gt *gittest.Fake) (int, string) {
 		var stdout, stderr bytes.Buffer
-		code := merge.Run(context.Background(), merge.Request{PR: "7"}, paths, &stdout, &stderr, merge.Options{GH: g, Git: gt, Dir: dir})
+		code := merge.Run(context.Background(), merge.Request{PR: "7"}, paths, &stdout, &stderr, merge.Options{GH: g, Git: gt, Dir: dir, Reply: reply.Options{Clock: clock.FromEnv()}})
 		return code, stderr.String()
 	}
 
@@ -169,5 +174,24 @@ func TestTaskDocEdges(t *testing.T) {
 		if code, msg := run(&gittest.Fake{Func: wtList}); code != 1 || !strings.Contains(msg, "could not read the task doc's acceptance list") {
 			t.Errorf("unreadable doc: code %d stderr %q", code, msg)
 		}
+	}
+}
+
+func TestReleaseFailureStillExitsZero(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "file")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	paths := bus.Paths{Common: dir, Dir: filepath.Join(blocker, "bus"), Log: filepath.Join(dir, "events.jsonl")}
+	if err := os.WriteFile(paths.Log, []byte(okRow+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := &ghtest.Fake{Out: map[string]string{viewIn: view("OPEN", "false", "MERGEABLE", okRoll), runsIn: okRuns, mergeG: "merged"}}
+	gt := &gittest.Fake{Func: func(string, []string) (string, error) { return "", nil }}
+	var stdout, stderr bytes.Buffer
+	code := merge.Run(context.Background(), merge.Request{PR: "7"}, paths, &stdout, &stderr, merge.Options{GH: g, Git: gt, Dir: dir, Reply: reply.Options{Clock: clock.FromEnv()}})
+	if code != 0 || !strings.Contains(stderr.String(), "PR merged, but could not release worker:feat/x#s1-1") {
+		t.Errorf("code %d stderr %q, want exit 0 with the release warning", code, stderr.String())
 	}
 }
