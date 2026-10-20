@@ -36,6 +36,7 @@ type world struct {
 	hits      map[string]string
 	failOn    string
 	candidate string
+	tracker   string
 }
 
 func openOrigin() map[int]string {
@@ -113,7 +114,7 @@ func run(t *testing.T, w *world, entries string, apply bool) result {
 	clk := clock.Clock{Now: func() time.Time { return time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC) }}
 	var stdout, stderr bytes.Buffer
 	paths := bus.Paths{Common: dir, Dir: dir, Log: filepath.Join(dir, "events.jsonl")}
-	code := followups.Run(context.Background(), followups.Request{PR: "7", Entries: path, Apply: apply}, paths, &stdout, &stderr, followups.Options{GH: g, Clock: clk})
+	code := followups.Run(context.Background(), followups.Request{PR: "7", Entries: path, Apply: apply, Tracker: w.tracker}, paths, &stdout, &stderr, followups.Options{GH: g, Clock: clk})
 	res := result{code: code, stdout: stdout.String(), stderr: stderr.String(), calls: g.Calls()}
 	for _, c := range res.calls {
 		if isWrite(c) {
@@ -247,6 +248,27 @@ func TestThresholdDriftRerun(t *testing.T) {
 	}
 }
 
+func TestThresholdRerunAfterPartialApply(t *testing.T) {
+	entries := `[{"title":"t1","body":"b1","file":"` + fileA + `"},{"title":"t2","body":"b2","file":"` + fileA + `"}]`
+	w := &world{views: openOrigin(), hits: map[string]string{fileA: hits2}, failOn: "issue create --title t2"}
+	r1 := run(t, w, entries, true)
+	if r1.code == 0 || len(r1.writes) != 2 || !strings.HasPrefix(r1.writes[0], "issue create --title t1 ") {
+		t.Fatalf("run 1 code %d writes %q", r1.code, r1.writes)
+	}
+	w.failOn = ""
+	w.hits = map[string]string{fileA: `[{"number":1},{"number":2},{"number":42}]`}
+	w.assigned = fmt.Sprintf(`[{"number":42,"title":"t1","body":%q}]`, marker+"\n\nb1")
+	r2 := run(t, w, entries, true)
+	if len(r2.writes) == 0 || !strings.HasPrefix(r2.writes[0], "issue create --title t2 ") {
+		t.Errorf("run 2 writes %q", r2.writes)
+	}
+	for _, c := range r2.writes {
+		if strings.Contains(c, "redesign") {
+			t.Errorf("redesign filed on re-run: %q", c)
+		}
+	}
+}
+
 func TestSharedRedesignIssue(t *testing.T) {
 	entries := `[{"title":"first","body":"b1","file":"` + fileA + `"},{"title":"second","body":"b2","file":"` + fileA + `"}]`
 	w := &world{views: openOrigin(), hits: map[string]string{fileA: hits3}}
@@ -341,6 +363,19 @@ func TestLinear(t *testing.T) {
 	}
 }
 
+func TestTrackerLinearForcesLinear(t *testing.T) {
+	entries := `[{"title":"t1","body":"b1"}]`
+	w := &world{prBody: "Closes #5\n", tracker: "linear"}
+	r := run(t, w, entries, true)
+	if r.code != 1 || !strings.Contains(r.stderr, "refusing --apply — Linear-tracked") || len(r.writes) != 0 {
+		t.Errorf("apply: code %d stderr %q writes %q", r.code, r.stderr, r.writes)
+	}
+	r = run(t, w, entries, false)
+	if r.code != 0 || !strings.Contains(r.stdout, "new ticket") {
+		t.Errorf("plan: code %d stdout %q", r.code, r.stdout)
+	}
+}
+
 func TestPlanModeWritesNothing(t *testing.T) {
 	w := &world{
 		views:     map[int]string{5: `{"state":"CLOSED","title":"o","comments":[]}`, 3: `{"state":"OPEN","title":"x","comments":[]}`},
@@ -416,6 +451,9 @@ func TestUsage(t *testing.T) {
 		{"neither mode", followups.Request{PR: "7"}},
 		{"both modes", followups.Request{PR: "7", Entries: "f", Draft: true}},
 		{"draft with apply", followups.Request{PR: "7", Draft: true, Apply: true}},
+		{"draft with tracker", followups.Request{PR: "7", Draft: true, Tracker: "linear"}},
+		{"entries with crew", followups.Request{PR: "7", Entries: "f", Crew: "x"}},
+		{"bad tracker", followups.Request{PR: "7", Entries: "f", Tracker: "jira"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

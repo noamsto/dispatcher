@@ -23,7 +23,7 @@ import (
 )
 
 // Usage is the one-line signature.
-const Usage = "usage: crew followups <PR> (--entries FILE [--apply] | --draft) [--crew ID]"
+const Usage = "usage: crew followups <PR> (--entries FILE [--apply] [--tracker github|linear] | --draft [--crew ID])"
 
 const (
 	exitFailure = 1
@@ -41,6 +41,8 @@ type Request struct {
 	Draft   bool
 	// Crew only filters --draft's bus rows.
 	Crew string
+	// Tracker "linear" forces the Linear path; "github" or empty detects it.
+	Tracker string
 }
 
 // Options is everything Run reads beyond the bus.
@@ -122,7 +124,7 @@ type ref struct {
 	ticket string
 }
 
-var closesRe = regexp.MustCompile(`(?i:\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?))\s*:?\s+(?:#(\d+)|([A-Z][A-Z0-9]*-\d+))`)
+var closesRe = regexp.MustCompile(`(?m)^\s*(?i:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:#(\d+)|([A-Z][A-Z0-9]*-\d+))`)
 
 func closesRef(body string) ref {
 	m := closesRe.FindStringSubmatch(body)
@@ -139,7 +141,8 @@ func closesRef(body string) ref {
 // Run is the command: read, plan, and with --apply write.
 func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	n, err := strconv.Atoi(req.PR)
-	if err != nil || n <= 0 || (req.Entries != "") == req.Draft || (req.Draft && req.Apply) {
+	if err != nil || n <= 0 || (req.Entries != "") == req.Draft || (req.Draft && (req.Apply || req.Tracker != "")) ||
+		(!req.Draft && req.Crew != "") || !slices.Contains([]string{"", "github", "linear"}, req.Tracker) {
 		say(stderr, "crew: followups: %s\n", Usage)
 		return exitFailure
 	}
@@ -173,7 +176,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	}
 
 	c := closesRef(p.Body)
-	if !repo.HasIssuesEnabled || c.ticket != "" {
+	if req.Tracker == "linear" || !repo.HasIssuesEnabled || c.ticket != "" {
 		if req.Apply {
 			return fail("refusing --apply — Linear-tracked; the batch needs one human approval, write it with the Linear tools")
 		}
@@ -321,13 +324,21 @@ func (r *run) detectDone(s *step) error {
 
 // resolve picks every entry's action. The threshold counts are one snapshot
 // per file, taken before any write, so an entry's own write cannot push a
-// sibling over mid-apply.
+// sibling over mid-apply. Issues this batch already filed (every step's done
+// target) are left out of the hit set, so a re-run after a partial apply
+// counts the same prior hits as the first run.
 func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, error) {
 	steps := make([]*step, len(entries))
 	for i, e := range entries {
 		steps[i] = &step{n: i + 1, e: e}
 		if err := r.detectDone(steps[i]); err != nil {
 			return nil, nil, err
+		}
+	}
+	var own []int
+	for _, s := range steps {
+		if s.done != 0 {
+			own = append(own, s.done)
 		}
 	}
 	since := now.UTC().AddDate(0, 0, -thresholdDays).Format("2006-01-02")
@@ -349,7 +360,7 @@ func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, err
 		}
 		var nums []int
 		for _, h := range hits {
-			if !slices.Contains(nums, h.Number) {
+			if !slices.Contains(nums, h.Number) && !slices.Contains(own, h.Number) {
 				nums = append(nums, h.Number)
 			}
 		}

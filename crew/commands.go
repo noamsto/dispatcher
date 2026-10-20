@@ -11,9 +11,9 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
+	"github.com/noamsto/dispatcher/crew/internal/followups"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
-	"github.com/noamsto/dispatcher/crew/internal/followups"
 	"github.com/noamsto/dispatcher/crew/internal/merge"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/rate"
@@ -319,6 +319,7 @@ type followupsCmd struct {
 	Apply   bool    `name:"apply"`
 	Draft   bool    `name:"draft"`
 	Crew    *string `name:"crew"`
+	Tracker *string `name:"tracker"`
 	PR      string  `arg:"" optional:"" name:"pr"`
 }
 
@@ -854,7 +855,9 @@ func validate(sub string, r *root) *refusal {
 		}
 	case "followups":
 		c := r.Followups
-		if c.PR == "" || given(c.Entries) || given(c.Crew) || (c.Entries == nil && !c.Draft) || (c.Draft && (c.Entries != nil || c.Apply)) {
+		if c.PR == "" || given(c.Entries) || given(c.Crew) || given(c.Tracker) || (c.Entries == nil && !c.Draft) ||
+			(c.Draft && (c.Entries != nil || c.Apply || c.Tracker != nil)) || (!c.Draft && c.Crew != nil) ||
+			(c.Tracker != nil && *c.Tracker != "github" && *c.Tracker != "linear") {
 			return fail(followups.Usage)
 		}
 	case "stack":

@@ -24,6 +24,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/entry"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
+	"github.com/noamsto/dispatcher/crew/internal/followups"
 	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
@@ -32,7 +33,6 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/inbox"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/log"
-	"github.com/noamsto/dispatcher/crew/internal/followups"
 	"github.com/noamsto/dispatcher/crew/internal/merge"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/piagentdir"
@@ -754,7 +754,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 	if sub == "followups" {
 		c := parsed.typed.Followups
-		return followups.Run(ctx, followups.Request{PR: c.PR, Entries: str(c.Entries), Apply: c.Apply, Draft: c.Draft, Crew: str(c.Crew)}, paths, stdout, stderr, followups.Options{GH: gh.Exec{}, Clock: clock.FromEnv()})
+		return followups.Run(ctx, followups.Request{PR: c.PR, Entries: str(c.Entries), Apply: c.Apply, Draft: c.Draft, Crew: str(c.Crew), Tracker: str(c.Tracker)}, paths, stdout, stderr, followups.Options{GH: gh.Exec{}, Clock: clock.FromEnv()})
 	}
 	if sub == "merge" {
 		c := parsed.typed.Merge

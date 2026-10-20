@@ -1700,6 +1700,10 @@ var refusalRows = []struct {
 	{"followups no pr", []string{"followups", "--entries", "f.json"}, wantFollowupsUsage, 1},
 	{"followups no entries or draft", []string{"followups", "7"}, wantFollowupsUsage, 1},
 	{"followups draft with apply", []string{"followups", "7", "--draft", "--apply"}, wantFollowupsUsage, 1},
+	{"followups entries with crew", []string{"followups", "7", "--entries", "f", "--crew", "x"}, wantFollowupsUsage, 1},
+	{"followups bad tracker", []string{"followups", "7", "--entries", "f", "--tracker", "jira"}, wantFollowupsUsage, 1},
+	{"followups tracker missing value", []string{"followups", "7", "--entries", "f", "--tracker"}, wantFollowupsUsage, 1},
+	{"followups draft with tracker", []string{"followups", "7", "--draft", "--tracker", "linear"}, wantFollowupsUsage, 1},
 	{"followups entries missing value", []string{"followups", "7", "--entries"}, wantFollowupsUsage, 1},
 	{"followups unknown flag", []string{"followups", "7", "--bogus"}, "crew: followups: unknown flag '--bogus' (" + wantFollowupsUsage + ")", 1},
 	{"followups extra positional", []string{"followups", "7", "x"}, "crew: followups: unexpected argument 'x' (" + wantFollowupsUsage + ")", 1},
@@ -1781,7 +1785,7 @@ const (
 	wantRemoteRunUsage   = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] -- <argv>..."
 	wantDispatchRowUsage = "usage: crew dispatch-row --session S [--crew ID]"
 	wantSpecLintUsage    = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
-	wantFollowupsUsage   = "usage: crew followups <PR> (--entries FILE [--apply] | --draft) [--crew ID]"
+	wantFollowupsUsage   = "usage: crew followups <PR> (--entries FILE [--apply] [--tracker github|linear] | --draft [--crew ID])"
 	guardUsage           = "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …"
 )
 
