@@ -4526,12 +4526,15 @@ TABLE
       _model_in_row pi "$tier" "$model" || failures+=("pi $p $tier $model: not in row")
     done <<'TABLE'
 deep|openrouter/deepseek/deepseek-v4.1-flash
+deep|openrouter/deepseek/deepseek-v4.1-flash-1017
 standard|openrouter/deepseek/deepseek-v4.1-flash
+standard|openrouter/deepseek/deepseek-v4.1-flash-1017
 standard|openrouter/deepseek/deepseek-v4-flash
 standard|openrouter/z-ai/glm-5.3-flash
 standard|openrouter/qwen/qwen3.8-flash
 trivial|openrouter/deepseek/deepseek-v4-flash
 trivial|openrouter/deepseek/deepseek-v4.1-flash
+trivial|openrouter/deepseek/deepseek-v4.1-flash-1017
 TABLE
   done
   if [ "${#failures[@]}" -gt 0 ]; then

@@ -127,27 +127,30 @@
       "deep": {
         "default": "openrouter/deepseek/deepseek-v4.1-flash",
         "models": [
-          "openrouter/deepseek/deepseek-v4.1-flash"
+          "openrouter/deepseek/deepseek-v4.1-flash",
+          "openrouter/deepseek/deepseek-v4.1-flash-1017"
         ],
-        "expected": "openrouter/deepseek/deepseek-v4.1-flash"
+        "expected": "openrouter/deepseek/deepseek-v4.1-flash or openrouter/deepseek/deepseek-v4.1-flash-1017"
       },
       "standard": {
         "default": "openrouter/deepseek/deepseek-v4.1-flash",
         "models": [
           "openrouter/deepseek/deepseek-v4.1-flash",
+          "openrouter/deepseek/deepseek-v4.1-flash-1017",
           "openrouter/deepseek/deepseek-v4-flash",
           "openrouter/z-ai/glm-5.3-flash",
           "openrouter/qwen/qwen3.8-flash"
         ],
-        "expected": "openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash"
+        "expected": "openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4.1-flash-1017, openrouter/deepseek/deepseek-v4-flash, openrouter/z-ai/glm-5.3-flash, or openrouter/qwen/qwen3.8-flash"
       },
       "trivial": {
-        "default": "openrouter/deepseek/deepseek-v4-flash",
+        "default": "openrouter/deepseek/deepseek-v4.1-flash",
         "models": [
-          "openrouter/deepseek/deepseek-v4-flash",
-          "openrouter/deepseek/deepseek-v4.1-flash"
+          "openrouter/deepseek/deepseek-v4.1-flash",
+          "openrouter/deepseek/deepseek-v4.1-flash-1017",
+          "openrouter/deepseek/deepseek-v4-flash"
         ],
-        "expected": "openrouter/deepseek/deepseek-v4-flash or openrouter/deepseek/deepseek-v4.1-flash"
+        "expected": "openrouter/deepseek/deepseek-v4.1-flash, openrouter/deepseek/deepseek-v4.1-flash-1017, or openrouter/deepseek/deepseek-v4-flash"
       }
     }
   },
