@@ -90,9 +90,10 @@ resolves to `{tier, engine, model}`. Weigh **claude**, **codex**, **cursor**, an
   count only dispatcher panes; the host's other consumers (chat bot,
   interactive pi) can hold the slot unseen. See
   `dispatch-orchestration.md` → "Local models". A local-lane worker holds up
-  to 30 minutes after `pr_open` for review; reply
-  `crew reply worker:<branch> "approved — post done"` once you approve, so it
-  frees its slot, or reply with the fix directive.
+  to 30 minutes after `pr_open` for review; `crew merge` replies
+  `approved — PR #<N> is merged; post done` itself, so it frees its slot. Reply
+  `crew reply worker:<branch> "approved — post done"` by hand only when you
+  merge some other way, or reply with the fix directive.
 - **Neutral fit → rotate, don't default.** When two-plus engines fit equally,
   pick the **least-recently-dispatched** one (skim recent `kind:"dispatch"`
   events: `crew log <crew> | jq 'select(.kind=="dispatch")|.engine'`, or the

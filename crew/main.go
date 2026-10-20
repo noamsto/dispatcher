@@ -750,7 +750,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 	if sub == "merge" {
 		c := parsed.typed.Merge
-		return merge.Run(ctx, merge.Request{PR: c.PR, DryRun: c.DryRun, AllowNoCI: c.AllowNoCI, NoLedger: c.NoLedger, Crew: str(c.Crew)}, paths, stdout, stderr, merge.Options{GH: gh.Exec{}, Git: git.Exec{}, Dir: cwd})
+		return merge.Run(ctx, merge.Request{PR: c.PR, DryRun: c.DryRun, AllowNoCI: c.AllowNoCI, NoLedger: c.NoLedger, Crew: str(c.Crew)}, paths, stdout, stderr, merge.Options{GH: gh.Exec{}, Git: git.Exec{}, Dir: cwd, Reply: reply.Options{Clock: clock.FromEnv(), Proc: e.proc, Sender: senderProbes(e.proc)}})
 	}
 	if sub == "where" {
 		w := parsed.typed.Where

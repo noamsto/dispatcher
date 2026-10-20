@@ -4,6 +4,7 @@
 package merge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
+	"github.com/noamsto/dispatcher/crew/internal/reply"
 )
 
 // Usage is the one-line signature.
@@ -29,6 +31,8 @@ type Options struct {
 	Git git.Client
 	// Dir is where git runs, so the worktree list resolves the same repo.
 	Dir string
+	// Reply posts the release to the merged PR's worker.
+	Reply reply.Options
 }
 
 // Request is the parsed command line.
@@ -105,6 +109,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		return exitFailure
 	}
 	var report []string
+	var opened *statusRow
 	pass := func(format string, args ...any) { report = append(report, fmt.Sprintf(format, args...)) }
 
 	out, err := o.GH.Run(ctx, "pr", "view", req.PR, "--json", "state,isDraft,mergeable,headRefOid,baseRefName,url,statusCheckRollup")
@@ -165,8 +170,11 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 
 	if req.NoLedger {
 		pass("ledger: skipped (--no-ledger)")
-	} else if code := checkLedger(ctx, req, p.URL, paths, o, refuse, pass); code != 0 {
-		return code
+	} else {
+		var code int
+		if opened, code = checkLedger(ctx, req, p.URL, paths, o, refuse, pass); code != 0 {
+			return code
+		}
 	}
 
 	if req.DryRun {
@@ -183,14 +191,46 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	if err != nil {
 		return refuse("gh pr merge failed: %v", err)
 	}
+	if opened != nil {
+		release(ctx, n, *opened, paths, stdout, stderr, o)
+	}
 	return 0
 }
 
-// checkLedger re-runs the pr_open gate on the newest pr_open row for this PR.
-func checkLedger(ctx context.Context, req Request, url string, paths bus.Paths, o Options, refuse func(string, ...any) int, pass func(string, ...any)) int {
+// release tells a worker still holding at pr_open that its PR merged, so it
+// posts done instead of holding its slot for the dispatcher. The merge already
+// happened, so a failed reply only warns.
+func release(ctx context.Context, n int, opened statusRow, paths bus.Paths, stdout, stderr io.Writer, o Options) {
+	data, err := os.ReadFile(paths.Log)
+	if err != nil {
+		say(stderr, "crew: merge: could not release %s: %v\n", opened.From, err)
+		return
+	}
+	var newest string
+	for line := range strings.SplitSeq(string(data), "\n") {
+		var r statusRow
+		if json.Unmarshal([]byte(line), &r) == nil && r.Kind == "status" && r.From == opened.From {
+			newest = r.Body.State
+		}
+	}
+	if newest != "pr_open" {
+		return
+	}
+	body := fmt.Sprintf("approved — PR #%d is merged; post done", n)
+	var rerr bytes.Buffer
+	if reply.Run(ctx, reply.Request{Crew: opened.CrewID, To: opened.From, Body: body}, paths, &rerr, o.Reply) != 0 {
+		say(stderr, "crew: merge: PR merged, but could not release %s: %s\n", opened.From, strings.TrimSpace(rerr.String()))
+		return
+	}
+	say(stdout, "released %s\n", opened.From)
+}
+
+// checkLedger re-runs the pr_open gate on the newest pr_open row for this PR
+// and returns that row.
+func checkLedger(ctx context.Context, req Request, url string, paths bus.Paths, o Options, refuse func(string, ...any) int, pass func(string, ...any)) (*statusRow, int) {
 	data, err := os.ReadFile(paths.Log)
 	if err != nil && !os.IsNotExist(err) {
-		return refuse("could not read the bus: %v", err)
+		return nil, refuse("could not read the bus: %v", err)
 	}
 	var lines []string
 	if len(data) > 0 {
@@ -208,13 +248,13 @@ func checkLedger(ctx context.Context, req Request, url string, paths bus.Paths, 
 		found = &r
 	}
 	if found == nil {
-		return refuse("no pr_open ledger on this bus for %s; check --crew, or pass --no-ledger for a PR no worker opened", url)
+		return nil, refuse("no pr_open ledger on this bus for %s; check --crew, or pass --no-ledger for a PR no worker opened", url)
 	}
 
 	in := ledger.Input{From: found.From, Crew: found.CrewID, Detail: found.Body.Detail, Log: lines}
 	doc, err := taskDoc(ctx, found.From, paths, o)
 	if err != nil {
-		return refuse("could not locate the task doc of %s: %v", found.From, err)
+		return nil, refuse("could not locate the task doc of %s: %v", found.From, err)
 	}
 	if doc.unreadable {
 		in.TaskDocErr = true
@@ -222,13 +262,13 @@ func checkLedger(ctx context.Context, req Request, url string, paths bus.Paths, 
 	in.TaskDoc = doc.text
 	if doc.kind != "" && doc.kind != "implement" {
 		pass("ledger: skipped (kind %s)", doc.kind)
-		return 0
+		return found, 0
 	}
 	if msg := ledger.Check(in); msg != "" {
-		return refuse("the ledger of %s no longer validates: %s", found.From, msg)
+		return nil, refuse("the ledger of %s no longer validates: %s", found.From, msg)
 	}
 	pass("ledger: %s validates", found.From)
-	return 0
+	return found, 0
 }
 
 type doc struct {
