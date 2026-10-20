@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
@@ -119,6 +121,7 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 	r.postReaped(c)
 	r.forget(c.branch)
 	r.deleteBranch(ctx, c)
+	r.deleteOriginBranch(ctx, c)
 	r.releaseLabels(ctx, c)
 	return true, 0
 }
@@ -322,6 +325,63 @@ func (r *run) deleteBranch(ctx context.Context, c *candidate) {
 			_ = cmd.Run()
 		}
 	}
+}
+
+var oidRe = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// deleteOriginBranch removes the origin branch dispatch pushed at its base, so
+// a finished no-PR crew stops reading as a claim on another machine. The lease
+// makes it a compare-and-delete: origin deletes only while the tip is still
+// the recorded dispatch oid, so a branch the worker pushed to stays.
+func (r *run) deleteOriginBranch(ctx context.Context, c *candidate) {
+	if c.mode != "issue" {
+		return
+	}
+	oid := r.pushedOID(c.branch)
+	if oid == "" {
+		return
+	}
+	if !r.guardOK(gitguard.Check(r.paths.Common, r.paths.Common, r.stderr)) {
+		r.note("kept origin branch " + c.branch + " — git config drift")
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	ref := "refs/heads/" + c.branch
+	cmd, err := wtgit.CommonCommand(ctx, r.paths.Common, wtgit.Opts{Stderr: io.Discard},
+		"-c", "hook.pre-push.enabled=false", "push", "-q", "--no-verify",
+		"--force-with-lease="+ref+":"+oid, "origin", ":"+ref)
+	if err == nil {
+		cmd.Env = append(cmd.Env, "GIT_TERMINAL_PROMPT=0")
+		err = cmd.Run()
+	}
+	if err != nil {
+		r.note("kept origin branch " + c.branch + " — origin moved or unreachable")
+		return
+	}
+	r.note("deleted origin branch " + c.branch + " (still at its dispatch base)")
+}
+
+// pushedOID is the oid the branch's newest create row recorded as pushed to
+// origin, "" when the row has none or it is not a full object id. Resume rows
+// never push, so they must not mask the create row.
+func (r *run) pushedOID(branch string) string {
+	raws, err := readRaws(r.paths.Log)
+	if err != nil {
+		return ""
+	}
+	oid := ""
+	for _, raw := range raws {
+		row, _ := raw.(map[string]any)
+		if row["kind"] != "dispatch" || row["branch"] != branch || row["resume"] == true {
+			continue
+		}
+		oid, _ = row["pushed_oid"].(string)
+	}
+	if !oidRe.MatchString(oid) {
+		return ""
+	}
+	return oid
 }
 
 // revParse is `$(git rev-parse <ref>)` from the trusted cwd, git's stderr to

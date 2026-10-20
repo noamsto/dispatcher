@@ -7534,6 +7534,107 @@ EOF
   grep -q 'new-window' "$STUB_LOG"
 }
 
+# origin_claim_shims — log every git call and every crew call to $STUB_LOG so the
+# push and the guard check before it can be ordered against the wt stub's lines.
+# A crew shim exits 1 for `git-guard check` once the post-switch hook has run
+# when ORIGIN_CLAIM_GUARD_FAIL is set.
+origin_claim_shims() {
+  local real_git
+  real_git="$(type -P git)"
+  printf '#!/bin/sh\nprintf "git %%s\\n" "$*" >>%q\nexec %q "$@"\n' "$STUB_LOG" "$real_git" >"$STUB_DIR/git"
+  cat >"$BATS_TEST_TMPDIR/crew-shim" <<'EOF'
+#!/bin/sh
+printf 'crew %s\n' "$*" >>"$STUB_LOG"
+if [ -n "${ORIGIN_CLAIM_GUARD_FAIL:-}" ] && [ "$1 $2" = "git-guard check" ] &&
+  grep -q 'hook post-switch' "$STUB_LOG"; then
+  echo "git-guard: refused by test" >&2
+  exit 1
+fi
+exec "$CREW_REAL" "$@"
+EOF
+  chmod +x "$STUB_DIR/git" "$BATS_TEST_TMPDIR/crew-shim"
+  export CREW_GO_BIN="$BATS_TEST_TMPDIR/crew-shim"
+}
+
+@test "origin-claim: a GitHub-issue create pushes the base oid to origin through the anchored argv" {
+  local oid push_ln push_line guard_ln post_ln
+  stub_launch_bins
+  stub_gh_claim "" ""
+  origin_claim_shims
+  printf '#!/bin/sh\ntouch %q\n' "$BATS_TEST_TMPDIR/hook-ran" >"$TEST_REPO/.git/hooks/pre-push"
+  chmod +x "$TEST_REPO/.git/hooks/pre-push"
+  oid="$(git -C "$TEST_REPO" rev-parse main)"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  [ "$(git --git-dir="$TEST_REPO/origin.git" rev-parse refs/heads/feat/42-title)" = "$oid" ]
+  push_ln="$(grep -n '^git .* push ' "$STUB_LOG" | head -1 | cut -d: -f1)"
+  [ -n "$push_ln" ]
+  push_line="$(sed -n "${push_ln}p" "$STUB_LOG")"
+  [[ "$push_line" == *"--git-dir="* ]]
+  [[ "$push_line" == *"core.hooksPath=/dev/null"* ]]
+  [[ "$push_line" == *"$oid:refs/heads/feat/42-title"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/hook-ran" ]
+  post_ln="$(grep -n 'hook post-switch' "$STUB_LOG" | head -1 | cut -d: -f1)"
+  guard_ln="$(head -n "$((push_ln - 1))" "$STUB_LOG" | grep -n '^crew ' | tail -1 | cut -d: -f1)"
+  [ "$(sed -n "${guard_ln}p" "$STUB_LOG")" = "crew git-guard check $TEST_REPO/.git $TEST_REPO/.git" ]
+  [ "$guard_ln" -gt "$post_ln" ]
+  [ "$(jq -r 'select(.kind=="dispatch") | .pushed_oid' "$TEST_REPO/.git/crew/events.jsonl")" = "$oid" ]
+}
+
+@test "origin-claim: a failed push warns and the dispatch proceeds" {
+  local other before
+  stub_launch_bins
+  stub_gh_claim "" ""
+  other="$(git -C "$TEST_REPO" commit-tree -m other 'main^{tree}')"
+  git -C "$TEST_REPO" push -q origin "$other:refs/heads/feat/42-title"
+  before="$(git --git-dir="$TEST_REPO/origin.git" rev-parse refs/heads/feat/42-title)"
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"could not push feat/42-title"* ]]
+  grep -q 'new-window' "$STUB_LOG"
+  [ "$(git --git-dir="$TEST_REPO/origin.git" rev-parse refs/heads/feat/42-title)" = "$before" ]
+  [ "$(jq -r 'select(.kind=="dispatch") | has("pushed_oid")' "$TEST_REPO/.git/crew/events.jsonl")" = false ]
+}
+
+@test "origin-claim: Linear and --pr dispatches do not push" {
+  stub_launch_bins
+  origin_claim_shims
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 ENG-12 "linear thing"
+  [ "$status" -eq 0 ]
+  [ -z "$(git --git-dir="$TEST_REPO/origin.git" for-each-ref 'refs/heads/eng-12-*')" ]
+  run ! grep -q '^git .* push ' "$STUB_LOG"
+  stub_pr_bins eng-7691-foo
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 0 ]
+  run ! grep -q '^git .* push ' "$STUB_LOG"
+}
+
+@test "origin-claim: a second clone sees the pushed branch and refuses the labelled issue" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  origin_claim_shims
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 0 ]
+  git clone -q "$TEST_REPO/origin.git" "$BATS_TEST_TMPDIR/clone"
+  cd "$BATS_TEST_TMPDIR/clone"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c2 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"already claimed"* ]]
+  [[ "$output" == *"origin branch feat/42-title"* ]]
+}
+
+@test "origin-claim: a guard refusal right before the push refuses the dispatch" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  origin_claim_shims
+  export ORIGIN_CLAIM_GUARD_FAIL=1
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -ne 0 ]
+  [ -z "$(git --git-dir="$TEST_REPO/origin.git" for-each-ref refs/heads/feat/42-title)" ]
+  run ! grep -q '^git .* push ' "$STUB_LOG"
+}
+
 # #320 — the issue argument is canonicalised once at parse time. Every derived
 # key (branch, ls-remote pattern, task doc, claim row, gh calls) must use the
 # one decimal form, or a dispatch of '042' never sees evidence recorded under
@@ -8486,6 +8587,7 @@ seed_reaped() { # <worker-id> — the status row `crew reap` writes
 reclaim_branch_a() { # drop slice A's worktree and local branch like reap
   git -C "$TEST_REPO" worktree remove --force "$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
   git -C "$TEST_REPO" branch -D feat/42-do-a-thing
+  git --git-dir="$TEST_REPO/origin.git" update-ref -d refs/heads/feat/42-do-a-thing
 }
 
 slice_a_worker() {
