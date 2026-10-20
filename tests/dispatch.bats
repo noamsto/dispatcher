@@ -264,7 +264,7 @@ setup_stale_pr_worktree() { # <branch>
   # rather than colliding with a second `remote add origin`.
   git -C "$TEST_REPO" push -q origin "$1:refs/heads/$1"
 
-  scratch="$BATS_TEST_TMPDIR/pr-head-clone"
+  scratch="$(mktemp -d)"
   git clone -q "$TEST_REPO/origin.git" "$scratch"
   git -C "$scratch" -c user.email=test@example.com -c user.name=test checkout -q "$1"
   git -C "$scratch" -c user.email=test@example.com -c user.name=test commit --allow-empty -qm "pr head advances"
@@ -313,7 +313,7 @@ setup_stale_default_branch() {
   export STALE_LOCAL_OID
   STALE_LOCAL_OID="$(git -C "$TEST_REPO" rev-parse main)"
 
-  scratch="$BATS_TEST_TMPDIR/pr-head-clone"
+  scratch="$(mktemp -d)"
   git clone -q "$TEST_REPO/origin.git" "$scratch"
   git -C "$scratch" -c user.email=test@example.com -c user.name=test checkout -q main
   git -C "$scratch" -c user.email=test@example.com -c user.name=test commit --allow-empty -qm "origin advances"
@@ -351,7 +351,7 @@ EOF
 # can assert the new worktree actually landed on it rather than on main.
 setup_stacked_base() { # <parent-branch>
   setup_stale_default_branch
-  scratch="$BATS_TEST_TMPDIR/pr-head-clone"
+  scratch="$(mktemp -d)"
   git clone -q "$TEST_REPO/origin.git" "$scratch"
   git -C "$scratch" -c user.email=test@example.com -c user.name=test checkout -q -b "$1" origin/main
   git -C "$scratch" -c user.email=test@example.com -c user.name=test commit --allow-empty -qm "parent work"
@@ -5745,7 +5745,7 @@ ROWS
 @test "--pr direnv allow runs against the post-reset PR head, not the stale tree" {
   setup_stale_pr_worktree eng-1191-envrc
   wt_path="$TEST_REPO/.worktrees/eng-1191-envrc"
-  scratch="$BATS_TEST_TMPDIR/pr-head-clone"
+  scratch="$(mktemp -d)"
   git clone -q "$TEST_REPO/origin.git" "$scratch"
   git -C "$scratch" -c user.email=test@example.com -c user.name=test checkout -q eng-1191-envrc
   echo 'use nix' >"$scratch/.envrc"
@@ -5754,6 +5754,7 @@ ROWS
   STALE_NEW_OID="$(git -C "$scratch" rev-parse HEAD)"
   export STALE_NEW_OID
   git -C "$scratch" push -q origin eng-1191-envrc
+  rm -rf "$scratch"
   cat >"$STUB_DIR/direnv" <<'EOF'
 #!/usr/bin/env bash
 printf '%s %s %s\n' "$1" "$2" "$(git -C "$2" rev-parse HEAD)" >>"$STUB_LOG"
