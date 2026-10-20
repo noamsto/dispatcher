@@ -96,6 +96,16 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
   done
 }
 
+@test "test-scope-guard: blocks the selector sharing a line with a bats run" {
+  for cmd in 'bats $(bash scripts/bats-affected.sh --base main)' 'bats `bash scripts/bats-affected.sh --base main`' \
+    'bash scripts/bats-affected.sh --base main | xargs bats' \
+    'bash scripts/bats-affected.sh --base main | xargs -n3 bats' \
+    'bash scripts/bats-affected.sh --base main | xargs -n 3 bats'; do
+    run run_guard <<<"$(pi_bash "$cmd")"
+    assert_block "$WHY"
+  done
+}
+
 @test "test-scope-guard: blocks a glob over the suite" {
   for cmd in 'bats tests/*.bats' 'bats tests/bats-*.bats --filter x'; do
     run run_guard <<<"$(pi_bash "$cmd")"
@@ -175,7 +185,8 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
 }
 
 @test "test-scope-guard: sees bats behind a wrapper" {
-  for cmd in 'timeout 300 bats tests/' 'bash -c bats tests/' 'env CREW=x bats tests/'; do
+  for cmd in 'timeout 300 bats tests/' 'bash -c bats tests/' 'env CREW=x bats tests/' \
+    'env -i bats tests/'; do
     run run_guard <<<"$(pi_bash "$cmd")"
     assert_block "$WHY"
   done
@@ -210,7 +221,8 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
     assert_block "$WHY"
   done
   for cmd in "$(printf 'bats tests/a.bats\nbats tests/b.bats')" \
-    "$(printf 'set -euo pipefail\nbats tests/crew.bats --filter reap')"; do
+    "$(printf 'set -euo pipefail\nbats tests/crew.bats --filter reap')" \
+    "$(printf 'bash scripts/bats-affected.sh --base main\nbats tests/a.bats tests/b.bats')"; do
     run run_guard <<<"$(pi_bash "$cmd")"
     assert_allow
   done
