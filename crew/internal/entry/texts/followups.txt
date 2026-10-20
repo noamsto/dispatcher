@@ -1,0 +1,20 @@
+usage: crew followups <PR> (--entries FILE [--apply] | --draft) [--crew ID]
+
+Plan the dispatcher's follow-up procedure for PR <PR> from a structured entries
+file: dedupe candidates, same-area comment or reopen on the origin issue, the
+30-day redesign threshold, new issues with --assignee @me, and superseded
+closes. Without --apply it only reads and prints the plan. --apply writes it and
+swaps the PR body's "## Follow-ups (untracked)" into "## Follow-ups" links,
+idempotently. A Linear-tracked PR refuses --apply.
+
+Entries are a JSON array:
+
+  [{"title","body","file","same_area","dup_of","supersedes"}]
+
+  <PR>          Pull request number
+  --entries     JSON file of follow-up entries
+  --apply       Write the plan instead of only printing it
+  --draft       Turn the worker's follow-ups msg into a skeleton entries file
+  --crew        With --draft, read the msg from this crew's rows only
+
+  crew followups 123 --entries f.json

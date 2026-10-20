@@ -32,6 +32,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/inbox"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/log"
+	"github.com/noamsto/dispatcher/crew/internal/followups"
 	"github.com/noamsto/dispatcher/crew/internal/merge"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/piagentdir"
@@ -127,7 +128,7 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 //     kong can neither print a screen nor end the process, so routeHelp and
 //     helpTexts still decide when help prints and what it says.
 
-// subcommands is every word crew admits: the thirty-nine the grammar types, then
+// subcommands is every word crew admits: the forty the grammar types, then
 // dash, which parses its own argv. It is the list the switch of #821 admitted,
 // and tests/crew.bats parses this literal to prove every subcommand has its own
 // row in the grouped help; TestAdmittedSubcommands pins it against that
@@ -140,7 +141,7 @@ var subcommands = []string{
 	"git-guard", "help", "hold", "msg", "nudge",
 	"pr-watch", "reap", "reap-autosweep",
 	"relay", "reply", "stall-watch", "status", "stream", "watch",
-	"remote-run", "remote-exec", "dispatch-row", "spec-lint",
+	"remote-run", "remote-exec", "dispatch-row", "spec-lint", "followups",
 }
 
 // typedSubcommands are the subcommands whose argv root binds: every name but
@@ -156,6 +157,7 @@ var typedSubcommands = map[string]bool{
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
 	"adopt": true, "merge": true, "pr-watch": true, "stall-watch": true, "help": true,
 	"remote-run": true, "remote-exec": true, "dispatch-row": true, "spec-lint": true,
+	"followups": true,
 }
 
 // passthroughCmd is dash to kong: its name, then whatever words it wants, kept
@@ -227,6 +229,8 @@ type root struct {
 	Adopt adoptCmd `cmd:"" name:"adopt" help:"Re-attach to a crew already on disk."`
 
 	Merge mergeCmd `cmd:"" name:"merge" help:"Merge a PR only when head, base and ledger are green."`
+
+	Followups followupsCmd `cmd:"" name:"followups" help:"Plan or apply a PR's follow-up batch."`
 
 	PRWatch prWatchCmd `cmd:"" name:"pr-watch" help:"Park on a PR and post its change event to the bus."`
 
@@ -747,6 +751,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Clock:  clock.FromEnv(),
 		})
+	}
+	if sub == "followups" {
+		c := parsed.typed.Followups
+		return followups.Run(ctx, followups.Request{PR: c.PR, Entries: str(c.Entries), Apply: c.Apply, Draft: c.Draft, Crew: str(c.Crew)}, paths, stdout, stderr, followups.Options{GH: gh.Exec{}, Clock: clock.FromEnv()})
 	}
 	if sub == "merge" {
 		c := parsed.typed.Merge
