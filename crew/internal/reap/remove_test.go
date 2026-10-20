@@ -214,14 +214,10 @@ func TestIssueModeReap(t *testing.T) {
 	}
 }
 
-// bareOrigin points origin at a fresh bare repo holding rb at HEAD and
-// returns it. remote.*.url is a guarded redirect key, so the baseline is
-// recorded again after the change.
-func (f *fx) bareOrigin() string {
+// setOriginURL repoints origin and records the guard baseline again.
+func (f *fx) setOriginURL(url string) {
 	f.t.Helper()
-	bare := filepath.Join(f.root, "origin.git")
-	runGit(f.t, f.root, "init", "-q", "--bare", bare)
-	runGit(f.t, f.main, "remote", "set-url", "origin", bare)
+	runGit(f.t, f.main, "remote", "set-url", "origin", url)
 	if err := os.Remove(gitguard.BaselinePath(f.paths.Common)); err != nil {
 		f.t.Fatal(err)
 	}
@@ -229,6 +225,16 @@ func (f *fx) bareOrigin() string {
 	if err := gitguard.Init(f.paths.Common, &stderr); err != nil {
 		f.t.Fatalf("gitguard.Init: %v\n%s", err, stderr.String())
 	}
+}
+
+// bareOrigin points origin at a fresh bare repo holding rb at HEAD and
+// returns it. remote.*.url is a guarded redirect key, so the baseline is
+// recorded again after the change.
+func (f *fx) bareOrigin() string {
+	f.t.Helper()
+	bare := filepath.Join(f.root, "origin.git")
+	runGit(f.t, f.root, "init", "-q", "--bare", bare)
+	f.setOriginURL(bare)
 	runGit(f.t, f.main, "push", "-q", "origin", "HEAD:refs/heads/"+rb)
 	return bare
 }
@@ -274,7 +280,7 @@ func TestIssueModeReapKeepsMovedOriginBranch(t *testing.T) {
 	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
-	f.wantOut("crew reap: reaped feat/r (issue #5 CLOSED)", "crew reap: kept origin branch feat/r — origin moved or unreachable")
+	f.wantOut("crew reap: reaped feat/r (issue #5 CLOSED)", "crew reap: kept origin branch feat/r — origin moved past its dispatch base")
 	if got := gitOut(t, bare, "rev-parse", "refs/heads/"+rb); got != moved {
 		t.Fatalf("origin feat/r = %s, want %s", got, moved)
 	}
@@ -324,6 +330,68 @@ func TestIssueModeReapIgnoresMalformedPushedOID(t *testing.T) {
 	if !originHas(bare) {
 		t.Fatal("origin feat/r was deleted")
 	}
+}
+
+func TestIssueModeReapNewestCreateRowWins(t *testing.T) {
+	f, bare := issueOriginFx(t, pushedRow)
+	f.bus(append(strings.Split(strings.TrimSpace(readFile(t, f.paths.Log)), "\n"),
+		`{"ts":3,"crew_id":"c1","kind":"dispatch","branch":"`+rb+`"}`)...)
+	if rc := f.reap(f.main, Request{}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantOut("crew reap: reaped feat/r (issue #5 CLOSED)")
+	if !originHas(bare) {
+		t.Fatal("origin feat/r was deleted")
+	}
+}
+
+func TestIssueModeReapKeepsForgedUniqueWork(t *testing.T) {
+	f, bare := issueOriginFx(t, pushedRow)
+	runGit(t, f.main, "commit", "-q", "--allow-empty", "-m", "unique")
+	runGit(t, f.main, "push", "-q", "origin", "HEAD:refs/heads/"+rb)
+	tip := gitOut(t, bare, "rev-parse", "refs/heads/"+rb)
+	runGit(t, f.main, "update-ref", "refs/remotes/origin/"+rb, tip)
+	f.bus(status("done", "", 0), `{"ts":1,"crew_id":"c1","kind":"claim-issue","branch":"`+rb+`","issue":5}`, pushedRow(tip))
+	if rc := f.reap(f.main, Request{}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantOut("crew reap: reaped feat/r (issue #5 CLOSED)", "crew reap: kept origin branch feat/r — its tip holds commits no other remote branch has")
+	if got := gitOut(t, bare, "rev-parse", "refs/heads/"+rb); got != tip {
+		t.Fatalf("origin feat/r = %s, want %s", got, tip)
+	}
+}
+
+func TestDeleteOriginBranchSkipsOriginDefault(t *testing.T) {
+	f, bare := issueOriginFx(t, pushedRow)
+	runGit(t, f.main, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+rb)
+	c := f.candidate()
+	c.mode = "issue"
+	f.run().deleteOriginBranch(context.Background(), c)
+	if f.stdout.Len() != 0 || !originHas(bare) {
+		t.Fatalf("stdout %q, origin has branch %v", f.stdout.String(), originHas(bare))
+	}
+}
+
+func TestDeleteOriginBranchSkipsNonFeatBranch(t *testing.T) {
+	f, bare := issueOriginFx(t, pushedRow)
+	runGit(t, f.main, "push", "-q", "origin", "HEAD:refs/heads/fix/r")
+	f.bus(pushedRow(gitOut(t, f.main, "rev-parse", "HEAD")), strings.Replace(pushedRow(gitOut(t, f.main, "rev-parse", "HEAD")), rb, "fix/r", 1))
+	c := f.candidate()
+	c.mode = "issue"
+	c.branch = "fix/r"
+	f.run().deleteOriginBranch(context.Background(), c)
+	if exec.Command("git", "-C", bare, "show-ref", "--verify", "--quiet", "refs/heads/fix/r").Run() != nil {
+		t.Fatal("origin fix/r was deleted")
+	}
+}
+
+func TestIssueModeReapUnreachableOriginSaysSoUnderQuiet(t *testing.T) {
+	f, _ := issueOriginFx(t, pushedRow)
+	f.setOriginURL(filepath.Join(f.root, "missing.git"))
+	if rc := f.reap(f.main, Request{Quiet: true}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantOut("crew reap: reaped feat/r (issue #5 CLOSED)", "crew reap: could not delete origin branch feat/r (still at its dispatch base?) — delete it by hand once origin is reachable")
 }
 
 func TestMergedPRReapLeavesOriginBranch(t *testing.T) {

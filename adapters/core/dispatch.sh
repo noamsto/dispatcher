@@ -358,7 +358,7 @@ _push_new_branch() {
   pid=$!
   _wait_bounded "$pid" "$bound" || rc=$?
   if [ "$rc" -ne 0 ]; then
-    echo "dispatch: warning: could not push $branch to origin — the claim on #${gh_issue:-${num:-}} is visible only on this machine until the worker pushes" >&2
+    echo "dispatch: warning: could not push $branch to origin (unreachable, or origin already holds it at another commit) — if unreachable, the claim on #${gh_issue:-${num:-}} is visible only on this machine until the worker pushes" >&2
     return 0
   fi
   pushed_oid="$oid"

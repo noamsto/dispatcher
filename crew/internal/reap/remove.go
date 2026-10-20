@@ -1,6 +1,7 @@
 package reap
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -332,34 +333,47 @@ var oidRe = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 // deleteOriginBranch removes the origin branch dispatch pushed at its base, so
 // a finished no-PR crew stops reading as a claim on another machine. The lease
 // makes it a compare-and-delete: origin deletes only while the tip is still
-// the recorded dispatch oid, so a branch the worker pushed to stays.
+// the recorded dispatch oid, so a branch the worker pushed to stays. A worker
+// can forge the recorded oid, so only feat/ branches that are not origin's
+// default are touched, and only when no commit of the tip is unique to it.
 func (r *run) deleteOriginBranch(ctx context.Context, c *candidate) {
-	if c.mode != "issue" {
+	if c.mode != "issue" || !strings.HasPrefix(c.branch, "feat/") {
+		return
+	}
+	if def, ok := r.commonOutput(ctx, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"); ok &&
+		strings.TrimPrefix(def, "refs/remotes/origin/") == c.branch {
 		return
 	}
 	oid := r.pushedOID(c.branch)
 	if oid == "" {
 		return
 	}
-	if !r.guardOK(gitguard.Check(r.paths.Common, r.paths.Common, r.stderr)) {
-		r.note("kept origin branch " + c.branch + " — git config drift")
+	if out, ok := r.commonOutput(ctx, "rev-list", oid, "--not", "--exclude=origin/"+c.branch, "--remotes"); !ok || out != "" {
+		r.note("kept origin branch " + c.branch + " — its tip holds commits no other remote branch has")
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	ref := "refs/heads/" + c.branch
-	cmd, err := wtgit.CommonCommand(ctx, r.paths.Common, wtgit.Opts{Stderr: io.Discard},
-		"-c", "hook.pre-push.enabled=false", "push", "-q", "--no-verify",
-		"--force-with-lease="+ref+":"+oid, "origin", ":"+ref)
+	var stderr bytes.Buffer
+	cmd, err := wtgit.CommonCommand(ctx, r.paths.Common, wtgit.Opts{Stderr: &stderr},
+		"-c", "hook.pre-push.enabled=false", "-c", "http.lowSpeedLimit=1", "-c", "http.lowSpeedTime=20",
+		"push", "-q", "--no-verify", "--force-with-lease="+ref+":"+oid, "origin", ":"+ref)
 	if err == nil {
 		cmd.Env = append(cmd.Env, "GIT_TERMINAL_PROMPT=0")
+		// The context kills git, but a transport child holding stderr would
+		// still block Run.
+		cmd.WaitDelay = 2 * time.Second
 		err = cmd.Run()
 	}
-	if err != nil {
-		r.note("kept origin branch " + c.branch + " — origin moved or unreachable")
-		return
+	switch {
+	case err == nil:
+		r.note("deleted origin branch " + c.branch + " (still at its dispatch base)")
+	case strings.Contains(stderr.String(), "stale info") || strings.Contains(stderr.String(), "rejected"):
+		r.note("kept origin branch " + c.branch + " — origin moved past its dispatch base")
+	default:
+		r.say("could not delete origin branch " + c.branch + " (still at its dispatch base?) — delete it by hand once origin is reachable")
 	}
-	r.note("deleted origin branch " + c.branch + " (still at its dispatch base)")
 }
 
 // pushedOID is the oid the branch's newest create row recorded as pushed to

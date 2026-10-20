@@ -7582,11 +7582,13 @@ EOF
 }
 
 @test "origin-claim: a failed push warns and the dispatch proceeds" {
-  local other before
+  local earlier before
   stub_launch_bins
   stub_gh_claim "" ""
-  other="$(git -C "$TEST_REPO" commit-tree -m other 'main^{tree}')"
-  git -C "$TEST_REPO" push -q origin "$other:refs/heads/feat/42-title"
+  earlier="$(git -C "$TEST_REPO" rev-parse main)"
+  git -C "$TEST_REPO" commit -q --allow-empty -m later
+  git -C "$TEST_REPO" push -q origin main
+  git -C "$TEST_REPO" push -q origin "$earlier:refs/heads/feat/42-title"
   before="$(git --git-dir="$TEST_REPO/origin.git" rev-parse refs/heads/feat/42-title)"
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
   [ "$status" -eq 0 ]
