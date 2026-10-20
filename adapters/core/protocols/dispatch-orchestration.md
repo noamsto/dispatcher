@@ -74,7 +74,7 @@ review depth.
 | ---------- | ------------------------------------ | ----------------------------------- | ------------------------------------ | --------------------- |
 | `deep`     | **opus** → **sonnet** / **haiku** (named-edit plan steps, never the lead) → escalated **opus**; escalate to **`claude-fable-5-1`** only as a last resort after opus @**`xhigh`** has failed on hard architecture/complex-bug work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`grok-4.7-medium`** → escalated **`grok-4.7-high`** | **`openrouter/deepseek/deepseek-v4.1-flash`** + spec-critic, plan-critic, reviewer panes |
 | `standard` | **sonnet** @**medium** / **haiku** @**medium** (fully specified, `--plan provided`) → **sonnet** / **haiku** (named-edit plan steps) → escalated **opus** @**medium**; opus stays admitted in the row as the one-rung escalation; security-adjacent work leads on **opus** @**medium** (Sonnet 5.5's safeguard fallback is Sonnet 5 with thinking disabled) | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`grok-4.7-medium`** → **`grok-4.7-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes; rotation alternatives **`openrouter/z-ai/glm-5.3-flash`**, **`openrouter/qwen/qwen3.8-flash`** |
-| `trivial`  | **haiku** @**low** → escalated **sonnet** @**low** → **opus** @**low**; a `trivial` task whose edit still needs reading to decide stays on **sonnet** — no delegation | **`gpt-5.6-luna`** — no delegation | **`grok-4.7-low`** — no delegation | **`openrouter/deepseek/deepseek-v4-flash`** — no grid; **`openrouter/deepseek/deepseek-v4.1-flash`** also accepted |
+| `trivial`  | **haiku** @**low** → escalated **sonnet** @**low** → **opus** @**low**; a `trivial` task whose edit still needs reading to decide stays on **sonnet** — no delegation | **`gpt-5.6-luna`** — no delegation | **`grok-4.7-low`** — no delegation | **`openrouter/deepseek/deepseek-v4.1-flash`** — no grid; **`openrouter/deepseek/deepseek-v4-flash`** and **`openrouter/deepseek/deepseek-v4.1-flash-1017`** also accepted |
 | local      | — | — | — | ids from the `localModels` setting (trivial/standard by default) — see "Local models" |
 
 On claude, haiku leads `trivial` at `low` and may lead a fully specified `standard` at `medium`; sonnet leads `standard` at `medium` otherwise, and an opus escalation on those rows runs at that same tier-typical effort, never deep's `high` by habit; raise either only on the signals in `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever". On sonnet the ceiling is `high`: `dispatch` refuses sonnet @`xhigh`/`max`, and the next step past sonnet@`high` is opus@`medium` (standard), never sonnet `xhigh`/`max`. When the budget pace gate refuses opus, the fallback is `sonnet` at the same effort — or `sonnet at high` when the refused effort was `xhigh`/`max` (sonnet's ceiling) — not opus at a lower effort. An opus launch at `low`/`medium` is *not* refused as a premium model rung — its burn class follows effort and it counts as standard (Burn classes) — while `high` and above still refuse.
@@ -87,8 +87,10 @@ On claude, haiku leads `trivial` at `low` and may lead a fully specified `standa
 and `max` for `deep`** — the lever that separates pi `standard` from `deep`
 now that both use `deepseek-v4.1-flash`. The DeepSeek Flash maps have holes, so
 the generic `trivial`→`low` / `standard`→`medium` rungs clamp up to `high` on
-their tier-typical models anyway (V4 Flash exposes `off`/`high`/`xhigh`; V4.1
-Flash exposes `off`/`low`/`high`/`max`, so deep's `max` is passed through directly).
+their tier-typical models anyway (V4.1 Flash exposes `off`/`low`/`high`/`max`,
+so deep's `max` is passed through directly, and its `-1017` snapshot exposes the
+same four, verified from that model's `thinkingLevelMap`; V4 Flash, admitted but
+never a default, exposes `off`/`high`/`xhigh`).
 Pi clamps `--thinking` per model through that model's `thinkingLevelMap` —
 generic logic, not DeepSeek-specific — so the rotation alternatives behave the
 same way: `openrouter/z-ai/glm-5.3-flash` exposes `low`/`high`/`max`, while
@@ -268,9 +270,15 @@ below):
   in-session Task roster — see "Cursor Task-spawn slugs".
 - **pi** — a provider-qualified id, and the ladder spans more than one
   OpenRouter family: `openrouter/deepseek/deepseek-v4.1-flash`,
+  `openrouter/deepseek/deepseek-v4.1-flash-1017`,
   `openrouter/deepseek/deepseek-v4-flash`,
   `openrouter/z-ai/glm-5.3-flash`, and `openrouter/qwen/qwen3.8-flash`. The
   shape and the concrete defaults were verified against `pi --list-models`.
+  The `-1017` id is the 2026-10-17 snapshot of V4.1 Flash, admitted on every
+  tier for trial and no tier's default: an undated OpenRouter slug is pinned to
+  one dated snapshot (`deepseek-v4.1-flash` → `-20260910`,
+  `deepseek-v4-flash` → `-20260423`), so a new release never arrives under a
+  slug a row already names.
 
 The Model gate enforces **dispatchability**, not tier-appropriateness. The Tier
 map gate below enforces **tier-appropriateness**; the map above stays the
@@ -464,9 +472,9 @@ everything the gate admits at that row.
 | cursor | `deep` | `kimi-k3-high` | `kimi-k3-high`, `grok-4.7-medium`, `grok-4.7-medium-fast`, `grok-4.7-high`, `grok-4.7-high-fast`, `cursor-grok-4.6-medium`, `cursor-grok-4.6-medium-fast`, `cursor-grok-4.6-high`, `cursor-grok-4.6-high-fast`, `composer-2.5`, `composer-2.5-fast`, plus ids matching the row's regex |
 | cursor | `standard` | `grok-4.7-medium` | `grok-4.7-medium`, `grok-4.7-medium-fast`, `grok-4.7-low`, `grok-4.7-low-fast`, `cursor-grok-4.6-medium`, `cursor-grok-4.6-medium-fast`, `cursor-grok-4.6-low`, `cursor-grok-4.6-low-fast`, `composer-2.5`, `composer-2.5-fast` |
 | cursor | `trivial` | `grok-4.7-low` | `grok-4.7-low`, `grok-4.7-low-fast`, `cursor-grok-4.6-low`, `cursor-grok-4.6-low-fast`, `composer-2.5`, `composer-2.5-fast` |
-| pi | `deep` | `openrouter/deepseek/deepseek-v4.1-flash` | `openrouter/deepseek/deepseek-v4.1-flash` |
-| pi | `standard` | `openrouter/deepseek/deepseek-v4.1-flash` | `openrouter/deepseek/deepseek-v4.1-flash`, `openrouter/deepseek/deepseek-v4-flash`, `openrouter/z-ai/glm-5.3-flash`, `openrouter/qwen/qwen3.8-flash` |
-| pi | `trivial` | `openrouter/deepseek/deepseek-v4-flash` | `openrouter/deepseek/deepseek-v4-flash`, `openrouter/deepseek/deepseek-v4.1-flash` |
+| pi | `deep` | `openrouter/deepseek/deepseek-v4.1-flash` | `openrouter/deepseek/deepseek-v4.1-flash`, `openrouter/deepseek/deepseek-v4.1-flash-1017` |
+| pi | `standard` | `openrouter/deepseek/deepseek-v4.1-flash` | `openrouter/deepseek/deepseek-v4.1-flash`, `openrouter/deepseek/deepseek-v4.1-flash-1017`, `openrouter/deepseek/deepseek-v4-flash`, `openrouter/z-ai/glm-5.3-flash`, `openrouter/qwen/qwen3.8-flash` |
+| pi | `trivial` | `openrouter/deepseek/deepseek-v4.1-flash` | `openrouter/deepseek/deepseek-v4.1-flash`, `openrouter/deepseek/deepseek-v4.1-flash-1017`, `openrouter/deepseek/deepseek-v4-flash` |
 
 <!-- END generated:tier-rows -->
 
