@@ -1,0 +1,17 @@
+usage: crew spec-lint <file> [--issue N]... [--no-host-checks]
+
+Lint a dispatcher task spec before a worker is created. It checks the spec has
+a summary and a list under "## Acceptance"; that each --issue is not already
+referenced on origin's default branch; that file paths the spec names exist
+there (or are said to be new); that Acceptance commands can run on this host;
+and that CI claims name a command the workflows run. It reads the origin refs
+already in the repo and never fetches.
+
+Findings print to stderr as "<level> <check>: <message>", then a count line.
+Exits 1 when any finding is an error, 0 otherwise (warnings only), and 2 for a
+bad argument or an unreadable file.
+
+  --issue            Issue number (N or #N) to look for on origin; repeatable
+  --no-host-checks   Skip the runnable checks (PATH and platform tools), for a worker on another host
+
+  crew spec-lint spec.md --issue 1188

@@ -56,4 +56,5 @@ Maintenance:
   reap            Reclaim the window and worktree of a landed PR
   git-baseline    List or accept the exec-capable git-config baseline
   stack           Read or record stacked cut points; plan a stack rebase
+  spec-lint       Lint a dispatcher task spec before dispatching it
   engine-cmd      Whether a tmux pane command is an engine

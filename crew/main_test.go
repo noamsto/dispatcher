@@ -570,7 +570,7 @@ func TestRunBusSubsRefuseOutsideRepo(t *testing.T) {
 		"crews", "log", "report", "sessions", "roster", "identity", "inbox", "hold", "await", "watch",
 		"retro", "reply", "resolve-target", "pr-watch", "merge", "where", "stream", "roster-render", "adopt",
 		"status", "msg", "register", "deregister", "rate", "git-baseline", "reap", "stack", "nudge", "stall-watch",
-		"remote-run", "dispatch-row",
+		"remote-run", "dispatch-row", "spec-lint",
 	} {
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), []string{sub}, &stdout, &stderr, e)
@@ -1260,14 +1260,14 @@ func TestAdmittedSubcommands(t *testing.T) {
 		"status", "msg", "register", "deregister", "fleet", "git-guard",
 		"git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help",
 		"id", "new", "engine-cmd", "dash", "pi-agent-dir", "relay",
-		"remote-run", "remote-exec", "dispatch-row",
+		"remote-run", "remote-exec", "dispatch-row", "spec-lint",
 		"merge", // added after that revision
 	}
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
 		"status", "msg", "reply", "hold", "nudge", "await", "watch", "relay", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "merge", "pr-watch", "stall-watch", "help",
-		"remote-run", "remote-exec", "dispatch-row"} {
+		"remote-run", "remote-exec", "dispatch-row", "spec-lint"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -1692,6 +1692,11 @@ var refusalRows = []struct {
 	{"dispatch-row crew missing value", []string{"dispatch-row", "--session", "s1-2", "--crew"}, wantDispatchRowUsage, 2},
 	{"dispatch-row unknown flag", []string{"dispatch-row", "--bogus"}, "crew: dispatch-row: unknown flag '--bogus' (" + wantDispatchRowUsage + ")", 2},
 	{"dispatch-row extra positional", []string{"dispatch-row", "x"}, "crew: dispatch-row: unexpected argument 'x' (" + wantDispatchRowUsage + ")", 2},
+	{"spec-lint no file", []string{"spec-lint"}, wantSpecLintUsage, 2},
+	{"spec-lint bad issue", []string{"spec-lint", "f.md", "--issue", "x1"}, wantSpecLintUsage, 2},
+	{"spec-lint issue missing value", []string{"spec-lint", "f.md", "--issue"}, wantSpecLintUsage, 2},
+	{"spec-lint unknown flag", []string{"spec-lint", "f.md", "--bogus"}, wantSpecLintUsage, 2},
+	{"spec-lint extra positional", []string{"spec-lint", "f.md", "g.md"}, wantSpecLintUsage, 2},
 	{"reap idle negative", []string{"reap", "--idle", "-5"}, "crew: --idle must be a non-negative integer number of seconds", 1},
 }
 
@@ -1769,6 +1774,7 @@ const (
 	baselineUsage        = "usage: crew git-baseline [--accept]"
 	wantRemoteRunUsage   = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] -- <argv>..."
 	wantDispatchRowUsage = "usage: crew dispatch-row --session S [--crew ID]"
+	wantSpecLintUsage    = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
 	guardUsage           = "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …"
 )
 

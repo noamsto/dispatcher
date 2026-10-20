@@ -338,7 +338,7 @@ dispatch_remote() { # <extra dispatch args...> — a standard dispatch to crew c
 
 @test "dispatch --host scaffolds a remote worker, relays its events, routes replies and rosters its liveness" {
   local spec="$BATS_TEST_TMPDIR/spec.md"
-  printf '## Remote spec\n\nBody line.\n' >"$spec"
+  printf 'Remote summary.\n\n## Remote spec\n\nBody line.\n\n## Acceptance\n\n- AC1: the worker lands.\n' >"$spec"
 
   # 1. Scaffold on the remote.
   TMUX_PANE=%0 DISPATCH_SPEC="$spec" run --separate-stderr dispatch_remote --host mini 42 "Remote title"
@@ -443,6 +443,8 @@ dispatch_remote() { # <extra dispatch args...> — a standard dispatch to crew c
     printf '%s\n' "\$(touch $mark)"
     printf '%s\n' "\`touch $mark\` && touch $mark"
     printf '%s\n' '## Not a heading?'
+    printf '%s\n' '## Acceptance'
+    printf '%s\n' '- AC1: delivered verbatim'
   } >"$spec"
 
   DISPATCH_SPEC="$spec" run --separate-stderr dispatch_remote --host mini 42 "$title"
