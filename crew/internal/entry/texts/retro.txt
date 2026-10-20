@@ -1,4 +1,5 @@
 usage: crew retro [--report [--json]]
+       crew retro --draft [--crew ID] [--all]
 
 Read-only rollup of the retro notes workers and the dispatcher post to the
 synthetic retro: and metrics: sinks.
@@ -6,7 +7,16 @@ synthetic retro: and metrics: sinks.
   (no flags)  One row per run: branch, engine, model, tier, outcome, tags
   --report    Aggregate rollup of tags across runs
   --json      Machine-readable; only with --report
+  --draft     Print one crew's session_summary note, ready to post: one segment
+              per worker — codename, {tier,engine,model}, outcome, tags — plus
+              any tag two or more of them carried
+  --crew      Crew for --draft; default this checkout's, else $CREW_ID
+  --all       --draft: every branch of the crew, not only the ones dispatched
+              after its newest session_summary note
 
-No crew filter and no positional: notes are cross-run evidence, like `rate`.
+The rollup takes no crew filter and no positional: notes are cross-run evidence,
+like `rate`. --draft reads the one crew it summarises, and takes neither
+--report nor --json.
 
   crew retro --report
+  crew retro --draft --all
