@@ -89,8 +89,8 @@ now that both use `deepseek-v4.1-flash`. The DeepSeek Flash maps have holes, so
 the generic `trivial`→`low` / `standard`→`medium` rungs clamp up to `high` on
 their tier-typical models anyway (V4.1 Flash exposes `off`/`low`/`high`/`max`,
 so deep's `max` is passed through directly, and its `-1017` snapshot exposes the
-same four — read from that model's `thinkingLevelMap` in pi's model store; V4
-Flash, still allowed but no longer a default, exposes `off`/`high`/`xhigh`).
+same four, verified from that model's `thinkingLevelMap`; V4 Flash, admitted but
+never a default, exposes `off`/`high`/`xhigh`).
 Pi clamps `--thinking` per model through that model's `thinkingLevelMap` —
 generic logic, not DeepSeek-specific — so the rotation alternatives behave the
 same way: `openrouter/z-ai/glm-5.3-flash` exposes `low`/`high`/`max`, while
