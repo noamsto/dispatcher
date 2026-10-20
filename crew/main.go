@@ -714,6 +714,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Roster: func(docs []any, crew string) []map[string]any {
 				rows, err := roster.Fold(ctx, docs, crew, e.nowSec(), e.probes(ctx, cwd))
 				if err != nil {
+					// The draft still prints, naming each branch by its identity alone.
+					// Say so: a summary that names a worker differently from
+					// `crew roster` should not read like the two agreed.
+					say(stderr, "crew: retro: roster: %v\n", err)
 					return nil
 				}
 				return rows

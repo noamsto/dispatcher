@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/noamsto/dispatcher/crew/internal/roster"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 const retroHeader = "branch\tengine\tmodel\ttier\toutcome\ttags"
@@ -892,6 +896,9 @@ func TestRetroDraftNamesTheTagsTwoWorkersCarried(t *testing.T) {
 	own("feat/1186-one", "gate_thrash", 1420)
 	own("feat/1186-one", "gate_thrash", 1430)
 	own("feat/1188-three", "misrouted", 1440)
+	// A note addressed to another crew's retro sink is no evidence here, even
+	// when the branch name is the same: it would both tag onyx and fake a pattern.
+	s.msg(wid("feat/1186-one", "s1"), "retro:c2", 1450, note("misrouted", "another crew"))
 
 	_, _, parts := draftNote(t, h, "--crew", "c1")
 	wantDetail(t, parts, []string{
@@ -944,6 +951,34 @@ func TestRetroDraftCrewDefaultsToTheEnvironment(t *testing.T) {
 	// --crew wins over it, and a crew with no rows prints nothing.
 	if out, errOut, code := draftRun(t, h, "--crew", "c2"); out != "" || errOut != "" || code != 0 {
 		t.Errorf("--crew c2: code %d, stdout %q, stderr %q", code, out, errOut)
+	}
+}
+
+// TestRetroDraftSaysWhenTheRosterFoldFails pins the one degraded path: without
+// the roster's rows the draft still prints, naming each branch by the identity it
+// read off its own dispatch row — and says the roster failed, so the two
+// spellings are never mistaken for agreement.
+func TestRetroDraftSaysWhenTheRosterFoldFails(t *testing.T) {
+	h, s := newRetroSeed(t)
+	draftDispatch(s, "feat/1186-scope-guard", 1000, "onyx", "standard", "claude", "sonnet")
+	// An exited row is what makes the roster read `git worktree list`.
+	s.status(wid("feat/1186-scope-guard", "s1"), 1100, "exited")
+
+	e := env{getwd: func() (string, error) { return h.repo, nil }, probes: func(context.Context, string) roster.Probes {
+		return roster.Probes{
+			Tmux:      &tmuxtest.Fake{},
+			Worktrees: func() (string, error) { return "", errors.New("git worktree list failed") },
+		}
+	}}
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"retro", "--draft", "--crew", "c1"}, &stdout, &stderr, e); code != 0 {
+		t.Fatalf("code %d, stderr %q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "crew: retro: roster:") {
+		t.Errorf("stderr %q, want the roster failure named", stderr.String())
+	}
+	if want := `"detail":"onyx {standard,claude,sonnet} exited"`; !strings.Contains(stdout.String(), want) {
+		t.Errorf("stdout %q, want the summary on the identity name (%s)", stdout.String(), want)
 	}
 }
 

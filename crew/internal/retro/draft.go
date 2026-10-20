@@ -142,7 +142,7 @@ func draft(crew string, all bool, events []bus.Event, o Options, stdout, stderr 
 func summaryBoundary(events []bus.Event, crew string) float64 {
 	newest := math.Inf(-1)
 	for _, ev := range events {
-		if ev.Kind != bus.KindMsg || ev.From != "dispatcher:"+crew || !strings.HasPrefix(ev.To, "retro:") {
+		if ev.Kind != bus.KindMsg || ev.From != "dispatcher:"+crew || ev.To != "retro:"+crew {
 			continue
 		}
 		if tag, _ := noteOf(ev)["tag"].(string); tag != summaryTag {
@@ -229,7 +229,9 @@ func workerTags(events []bus.Event, crew string, w worker) []string {
 	var tags []string
 	seen := map[string]bool{}
 	for _, ev := range events {
-		if ev.Kind != bus.KindMsg || !strings.HasPrefix(ev.To, "retro:") {
+		// A note belongs to the crew whose retro sink it was addressed to, so a
+		// branch name shared with another crew never borrows that crew's notes.
+		if ev.Kind != bus.KindMsg || ev.To != "retro:"+crew {
 			continue
 		}
 		body := noteOf(ev)
@@ -239,7 +241,7 @@ func workerTags(events []bus.Event, crew string, w worker) []string {
 		}
 		detail, _ := body["detail"].(string)
 		mine := workerBranch(ev.From) == w.branch
-		named := strings.HasPrefix(ev.From, "dispatcher:") && ev.CrewID == crew &&
+		named := strings.HasPrefix(ev.From, "dispatcher:") &&
 			(mentions(detail, w.name) || mentions(detail, w.issue))
 		if mine || named {
 			seen[tag] = true
