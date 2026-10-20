@@ -228,8 +228,7 @@ func (f *fx) setOriginURL(url string) {
 }
 
 // bareOrigin points origin at a fresh bare repo holding rb at HEAD and
-// returns it. remote.*.url is a guarded redirect key, so the baseline is
-// recorded again after the change.
+// returns it.
 func (f *fx) bareOrigin() string {
 	f.t.Helper()
 	bare := filepath.Join(f.root, "origin.git")
@@ -287,9 +286,9 @@ func TestIssueModeReapKeepsMovedOriginBranch(t *testing.T) {
 }
 
 func TestIssueModeReapDeletesAfterResume(t *testing.T) {
-	f, bare := issueOriginFx(t, pushedRow)
-	f.bus(append(strings.Split(strings.TrimSpace(readFile(t, f.paths.Log)), "\n"),
-		`{"ts":3,"crew_id":"c1","kind":"dispatch","branch":"`+rb+`","resume":true}`)...)
+	f, bare := issueOriginFx(t, func(oid string) string {
+		return pushedRow(oid) + "\n" + `{"ts":3,"crew_id":"c1","kind":"dispatch","branch":"` + rb + `","resume":true}`
+	})
 	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
@@ -297,15 +296,6 @@ func TestIssueModeReapDeletesAfterResume(t *testing.T) {
 	if originHas(bare) {
 		t.Fatal("origin feat/r still there")
 	}
-}
-
-func readFile(t *testing.T, p string) string {
-	t.Helper()
-	b, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(b)
 }
 
 func TestIssueModeReapNoPushedOID(t *testing.T) {
@@ -333,9 +323,9 @@ func TestIssueModeReapIgnoresMalformedPushedOID(t *testing.T) {
 }
 
 func TestIssueModeReapNewestCreateRowWins(t *testing.T) {
-	f, bare := issueOriginFx(t, pushedRow)
-	f.bus(append(strings.Split(strings.TrimSpace(readFile(t, f.paths.Log)), "\n"),
-		`{"ts":3,"crew_id":"c1","kind":"dispatch","branch":"`+rb+`"}`)...)
+	f, bare := issueOriginFx(t, func(oid string) string {
+		return pushedRow(oid) + "\n" + `{"ts":3,"crew_id":"c1","kind":"dispatch","branch":"` + rb + `"}`
+	})
 	if rc := f.reap(f.main, Request{}); rc != 0 {
 		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
 	}
