@@ -1,13 +1,16 @@
 package reap
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
@@ -119,6 +122,7 @@ func (r *run) remove(ctx context.Context, c *candidate) (removed bool, code int)
 	r.postReaped(c)
 	r.forget(c.branch)
 	r.deleteBranch(ctx, c)
+	r.deleteOriginBranch(ctx, c)
 	r.releaseLabels(ctx, c)
 	return true, 0
 }
@@ -322,6 +326,83 @@ func (r *run) deleteBranch(ctx context.Context, c *candidate) {
 			_ = cmd.Run()
 		}
 	}
+}
+
+var oidRe = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// deleteOriginBranch removes the origin branch dispatch pushed at its base, so
+// a finished no-PR crew stops reading as a claim on another machine. The lease
+// makes it a compare-and-delete: origin deletes only while the tip is still
+// the recorded dispatch oid, so a branch the worker pushed to stays. A worker
+// can forge the recorded oid, so only feat/ branches that are not origin's
+// default are touched, and only when the tip holds no commit absent from this
+// clone's other remote-tracking refs. That check is local: a worker that can
+// write those refs, or a stale unpruned one, can still satisfy it.
+func (r *run) deleteOriginBranch(ctx context.Context, c *candidate) {
+	if c.mode != "issue" || !strings.HasPrefix(c.branch, "feat/") {
+		return
+	}
+	if def, ok := r.commonOutput(ctx, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"); ok &&
+		strings.TrimPrefix(def, "refs/remotes/origin/") == c.branch {
+		return
+	}
+	oid := r.pushedOID(c.branch)
+	if oid == "" {
+		return
+	}
+	out, ok := r.commonOutput(ctx, "rev-list", oid, "--not", "--exclude=origin/"+c.branch, "--remotes")
+	if !ok {
+		r.note("kept origin branch " + c.branch + " — could not check its tip against other remote-tracking refs")
+		return
+	}
+	if out != "" {
+		r.note("kept origin branch " + c.branch + " — its tip holds commits no other remote-tracking ref has")
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	ref := "refs/heads/" + c.branch
+	var stderr bytes.Buffer
+	cmd, err := wtgit.CommonCommand(ctx, r.paths.Common, wtgit.Opts{Stderr: &stderr},
+		"-c", "hook.pre-push.enabled=false", "-c", "http.lowSpeedLimit=1", "-c", "http.lowSpeedTime=20",
+		"push", "-q", "--no-verify", "--force-with-lease="+ref+":"+oid, "origin", ":"+ref)
+	if err == nil {
+		cmd.Env = append(cmd.Env, "GIT_TERMINAL_PROMPT=0")
+		// The context kills git, but a transport child holding stderr would
+		// still block Run.
+		cmd.WaitDelay = 2 * time.Second
+		err = cmd.Run()
+	}
+	switch {
+	case err == nil:
+		r.note("deleted origin branch " + c.branch + " (still at its dispatch base)")
+	case strings.Contains(stderr.String(), "(stale info)"):
+		r.note("kept origin branch " + c.branch + " — origin moved past its dispatch base")
+	default:
+		r.say("could not delete origin branch " + c.branch + " (still at its dispatch base?) — delete it by hand once origin is reachable")
+	}
+}
+
+// pushedOID is the oid the branch's newest create row recorded as pushed to
+// origin, "" when the row has none or it is not a full object id. Resume rows
+// never push, so they must not mask the create row.
+func (r *run) pushedOID(branch string) string {
+	raws, err := readRaws(r.paths.Log)
+	if err != nil {
+		return ""
+	}
+	oid := ""
+	for _, raw := range raws {
+		row, _ := raw.(map[string]any)
+		if row["kind"] != "dispatch" || row["branch"] != branch || row["resume"] == true {
+			continue
+		}
+		oid, _ = row["pushed_oid"].(string)
+	}
+	if !oidRe.MatchString(oid) {
+		return ""
+	}
+	return oid
 }
 
 // revParse is `$(git rev-parse <ref>)` from the trusted cwd, git's stderr to

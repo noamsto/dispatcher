@@ -325,13 +325,52 @@ _branch_finished() {
   [ "$rc" -eq 1 ]
 }
 
+# Wait for background <pid> up to <bound> seconds by wall clock; kill it past
+# that. Returns its exit status, or 1 when killed.
+_wait_bounded() {
+  local pid="$1" bound="$2" waited=0 rc=0
+  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$bound" ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    return 1
+  fi
+  wait "$pid" || rc=$?
+  return "$rc"
+}
+
+# Push <oid> as the new branch <branch> to origin so a crew in another clone
+# sees the claim. Best-effort: warns and continues on failure; sets pushed_oid
+# on success. The empty lease refuses to overwrite a branch origin already holds.
+_push_new_branch() {
+  local branch="$1" oid="$2" bound pid rc=0
+  local -a argv
+  bound="${DISPATCH_CLAIM_LS_REMOTE_TIMEOUT_S:-20}"
+  _wt_cfg_guard "${crew_dir%/crew}" || exit 1
+  _wt_common_argv "${crew_dir%/crew}" argv
+  GIT_TERMINAL_PROMPT=0 \
+    "${argv[@]}" -c hook.pre-push.enabled=false -c http.lowSpeedLimit=1 -c "http.lowSpeedTime=$bound" \
+    push -q --no-verify --force-with-lease="refs/heads/$branch:" origin "$oid:refs/heads/$branch" 2>/dev/null &
+  pid=$!
+  _wait_bounded "$pid" "$bound" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "dispatch: warning: could not push $branch to origin (unreachable, or origin already holds it at another commit) — if unreachable, the claim on #${gh_issue:-${num:-}} is visible only on this machine until the worker pushes" >&2
+    return 0
+  fi
+  pushed_oid="$oid"
+}
+
 # Print one line naming the first sign that a `dispatched` claim on <issue> is
 # still live, or nothing when it is stale (#304). Always returns 0 and signals
 # only via stdout: the caller runs it under `set -e`, and every failure to look
 # is itself evidence — an unreachable origin or unreadable bus reads as live.
 # Local branches are the caller's business, not checked here.
 _claim_evidence() {
-  local issue="$1" out rc events="$crew_dir/events.jsonl" pid waited bound outf
+  local issue="$1" out rc events="$crew_dir/events.jsonl" bound outf
   local -a lsr
   # Bound the remote probe by wall clock (#321). Stock macOS ships no coreutils
   # `timeout`, so the old `timeout 20` guard simply vanished there and a stalled
@@ -356,21 +395,8 @@ _claim_evidence() {
   GIT_TERMINAL_PROMPT=0 \
     "${lsr[@]}" -c http.lowSpeedLimit=1 -c "http.lowSpeedTime=$bound" \
     ls-remote --heads origin "refs/heads/feat/$issue-*" >"$outf" 2>/dev/null &
-  pid=$!
-  waited=0
-  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$bound" ]; do
-    sleep 1
-    waited=$((waited + 1))
-  done
   rc=0
-  if kill -0 "$pid" 2>/dev/null; then
-    kill -TERM "$pid" 2>/dev/null || true
-    kill -KILL "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
-    rc=1
-  else
-    wait "$pid" || rc=$?
-  fi
+  _wait_bounded "$!" "$bound" || rc=$?
   out="$(cat "$outf")"
   rm -f "$outf"
   if [ "$rc" -ne 0 ]; then
@@ -5262,7 +5288,8 @@ if [ -n "$gh_issue" ]; then
       # The label alone is no proof of a live crew: an interrupted dispatch
       # strands it (#304). Refuse only on evidence, and fail closed when the
       # evidence cannot be read. Not a lock — two heals can still race, and a
-      # crew in another clone is invisible until it pushes a feat/N-* branch.
+      # create pushes the new branch, so a crew in another clone is visible
+      # unless that push failed.
       claim_evidence="$(_claim_evidence "$gh_issue")"
       if [ -n "$claim_evidence" ]; then
         echo "dispatch: issue #$gh_issue is already claimed (carries the 'dispatched' label; $claim_evidence) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
@@ -5568,6 +5595,7 @@ fi
 # post-checkout hook — a baselined driver whose program is a worktree-relative
 # path the tree rewrote must never run from it (#596).
 neutral_switch=
+pushed_oid=""
 case "$switch_mode" in
 create)
   # A bare 40-hex start point resolves a same-named ref before the object, and refs are shared with workers.
@@ -5609,6 +5637,7 @@ create)
     wt --config-set "$wt_post_switch" -C "$wt_path" hook post-switch -y --base="$create_base_oid" --base_worktree_path=
   fi
   echo "dispatch: created branch $branch from $create_base_label ($create_base_short)"
+  [ -n "$linear_id" ] || _push_new_branch "$branch" "$create_base_oid"
   # A reworded re-dispatch slugs to a different name, so it creates cleanly off the
   # default branch and silently strands the earlier branch's uncommitted work
   # (#73). Warn only — a second branch may be what the operator wants. Local
@@ -5915,11 +5944,13 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --argjson also_closes "$(jq -nc '$ARGS.positional | map(tonumber? // .)' --args ${also_closes[@]+"${also_closes[@]}"})" \
   --argjson also_closes_explicit "$also_closes_explicit_empty" \
   --argjson chrome "$([ -n "$chrome" ] && echo true || echo false)" \
+  --arg pushed_oid "$pushed_oid" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
    + if $base != "" then {base:$base, base_oid:(if $base_oid == "" then null else $base_oid end)} else {} end
    + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end
-   + if $chrome then {chrome:true} else {} end')
+   + if $chrome then {chrome:true} else {} end
+   + if $pushed_oid != "" then {pushed_oid:$pushed_oid} else {} end')
 _crew_append "$line"
 # A dispatcher on another host records the same row from this line.
 [ "${DISPATCH_EMIT_ROW:-}" != 1 ] || printf 'dispatch_row: %s\n' "$line"
