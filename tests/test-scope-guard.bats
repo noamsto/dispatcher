@@ -87,11 +87,12 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
   done
 }
 
-@test "test-scope-guard: blocks bats-affected, however it is invoked" {
+@test "test-scope-guard: allows the bats-affected selector, however it is invoked" {
   for cmd in 'bats-affected' 'bats-affected --base main' 'bash scripts/bats-affected.sh --base main' \
-    './scripts/bats-affected.sh' 'BATS_SHARD=1 bats-affected'; do
+    './scripts/bats-affected.sh' 'BATS_SHARD=1 bats-affected' \
+    'go build ./... && bash scripts/bats-affected.sh --base main'; do
     run run_guard <<<"$(pi_bash "$cmd")"
-    assert_block 'bats-affected'
+    assert_allow
   done
 }
 
@@ -167,7 +168,7 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
 }
 
 @test "test-scope-guard: checks every command in a compound line" {
-  for cmd in 'cd /tmp && bats tests/' 'go build ./... && bats-affected' 'bats tests/a.bats; bats tests/'; do
+  for cmd in 'cd /tmp && bats tests/' 'go build ./... && bats tests/' 'bats tests/a.bats; bats tests/'; do
     run run_guard <<<"$(pi_bash "$cmd")"
     assert_block "$WHY"
   done
@@ -203,7 +204,7 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
 }
 
 @test "test-scope-guard: a newline ends one command and starts the next" {
-  for cmd in "$(printf 'git status\nbats tests/')" "$(printf 'cd /tmp\nbats-affected')" \
+  for cmd in "$(printf 'git status\nbats tests/')" "$(printf 'cd /tmp\nbats tests/')" \
     "$(printf 'go build ./...\nbats -r tests 2>&1')"; do
     run run_guard <<<"$(pi_bash "$cmd")"
     assert_block "$WHY"

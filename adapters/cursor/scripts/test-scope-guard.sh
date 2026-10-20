@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Pre-tool guard: stop a dispatched worker from spending wall time on a full
-# bats run — the whole suite, a directory, `bats-affected`, a glob over
-# `tests/*.bats` — when its task needs a handful of targeted files. CI runs
-# the full suite on every push (#841).
+# bats run — the whole suite, a directory, a glob over `tests/*.bats` — when
+# its task needs a handful of targeted files. CI runs the full suite on every
+# push (#841).
 #
 # Workers only: a session without CREW_WORKER_ID (a human at a prompt, a
 # dispatcher) exits before jq, the parse and the git call, so the hook costs a
@@ -194,7 +194,7 @@ while IFS= read -r w; do
 
   if ((at_cmd)); then
     # Past any `FOO=bar` prefixes and interpreter wrappers, so
-    # `bash scripts/bats-affected.sh` and `timeout 300 bats tests/` are seen.
+    # `bash -c 'bats tests/'` and `timeout 300 bats tests/` are seen.
     if [[ $w == *=* && $w != */* ]]; then continue; fi
     if ((skip_shell_flag)); then
       skip_shell_flag=0
@@ -218,10 +218,6 @@ while IFS= read -r w; do
     esac
     at_cmd=0
     case ${w##*/} in
-    *bats-affected*)
-      verdict=affected
-      break
-      ;;
     bats)
       in_bats=1
       bats_files=0
@@ -302,7 +298,6 @@ if [[ -n $toplevel && -f $toplevel/WORKER_TASK.md ]]; then
 fi
 
 case $verdict in
-affected) what='bats-affected runs the affected set' ;;
 recursive) what='-r/--recursive walks a directory tree' ;;
 dir) what="a directory operand ($w) runs every .bats file under it" ;;
 glob) what="a glob operand ($w) expands to the whole suite" ;;
