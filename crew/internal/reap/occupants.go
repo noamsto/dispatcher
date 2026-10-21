@@ -50,24 +50,29 @@ func Occupants(ctx context.Context, p Probes, wtp, tmuxPane string) []Occupant {
 		if wid == "" || path != wtp || name == "" || name == "dispatcher" || wid == selfWin {
 			continue
 		}
-		o := Occupant{Window: wid, Name: name}
-		for prow := range strings.SplitSeq(panes, "\n") {
-			pf := strings.SplitN(prow, "\t", 3)
-			for len(pf) < 3 {
-				pf = append(pf, "")
-			}
-			if pf[0] != wid || !roster.IsEngineCmd(pf[2]) {
-				continue
-			}
-			if o.Pane == "" {
-				o.Pane, o.Command = pf[1], pf[2]
-			}
-			o.Panes = append(o.Panes, PaneCmd{Pane: pf[1], Command: pf[2]})
-		}
-		o.Engine = o.Pane != ""
-		out = append(out, o)
+		out = append(out, windowOccupant(panes, wid, name))
 	}
 	return out
+}
+
+// windowOccupant is one window's engine panes out of a `list-panes -a` row
+// blob, keyed on the window id: a caller that has the id but not a worktree
+// path — reap's orphan pass — collects the same panes Occupants collects by
+// path.
+func windowOccupant(panes, wid, name string) Occupant {
+	o := Occupant{Window: wid, Name: name}
+	for prow := range strings.SplitSeq(panes, "\n") {
+		pf := fields(prow, 3)
+		if pf[0] != wid || !roster.IsEngineCmd(pf[2]) {
+			continue
+		}
+		if o.Pane == "" {
+			o.Pane, o.Command = pf[1], pf[2]
+		}
+		o.Panes = append(o.Panes, PaneCmd{Pane: pf[1], Command: pf[2]})
+	}
+	o.Engine = o.Pane != ""
+	return o
 }
 
 // occupantJSON is one element of the array `crew occupants` prints.

@@ -369,9 +369,130 @@ func TestOrphanWindows(t *testing.T) {
 		t.Fatalf("rc=%d", rc)
 	}
 	f.wantOut(
-		"crew reap: window @9 is stamped feat/gone but its worktree is gone — not killed",
+		orphanNote,
 		"crew reap: nothing done to reap",
 	)
+}
+
+// mergedOrphan stamps @9 with a branch whose worktree is gone and whose PR on
+// GitHub is MERGED.
+func (f *fx) mergedOrphan() {
+	f.t.Helper()
+	f.bus()
+	f.tmux["list-windows -a -F #{window_id}\t#{@crew_branch}\t#{@crew_dir}"] = "@9\tfeat/gone\t" + f.paths.Dir
+	f.gh[orphanList] = `[{"url":"` + orphanURL + `","state":"MERGED","headRefOid":"abc","isCrossRepository":false}]`
+	f.gh["pr view "+orphanURL+" --json state --jq .state"] = "MERGED"
+}
+
+// wantKept is today's list-only note, and no kill.
+func (f *fx) wantKept() {
+	f.t.Helper()
+	f.wantOut(orphanNote, "crew reap: nothing done to reap")
+	if slices.Contains(f.calls, "tmux kill-window -t @9") {
+		f.t.Fatalf("the window was killed: %q", f.calls)
+	}
+}
+
+// The keep note an orphan window gets when nothing closes it, and the PR its
+// branch has on GitHub.
+const (
+	orphanNote = "crew reap: window @9 is stamped feat/gone but its worktree is gone — not killed"
+	orphanURL  = "https://github.com/o/r/pull/12"
+	orphanList = "pr list --head feat/gone --state all --json url,state,headRefOid,isCrossRepository"
+)
+
+func TestOrphanWindowMergedPRCloses(t *testing.T) {
+	f := newFx(t)
+	f.mergedOrphan()
+	if rc := f.reap(f.main, Request{}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantOut(
+		"crew reap: closed window @9 (feat/gone, PR #12 MERGED, worktree already gone)",
+		"crew reap: nothing done to reap",
+	)
+	if !slices.Contains(f.calls, "tmux kill-window -t @9") {
+		t.Fatalf("calls %q, want the window killed", f.calls)
+	}
+
+	// --quiet silences the close, like the other orphan notes.
+	if rc := f.reap(f.main, Request{Quiet: true}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantOut()
+}
+
+// An open PR, no PR at all and an unreadable state each keep today's note.
+func TestOrphanWindowKeptWithoutLandedPR(t *testing.T) {
+	f := newFx(t)
+	f.mergedOrphan()
+	f.gh[orphanList] = `[{"url":"` + orphanURL + `","state":"OPEN","isCrossRepository":false}]`
+	f.gh["pr view "+orphanURL+" --json state --jq .state"] = "OPEN"
+	if rc := f.reap(f.main, Request{}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantKept()
+
+	f.gh[orphanList] = "[]"
+	if rc := f.reap(f.main, Request{}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantKept()
+
+	delete(f.gh, "pr view "+orphanURL+" --json state --jq .state")
+	f.gh[orphanList] = `[{"url":"` + orphanURL + `","state":"MERGED","isCrossRepository":false}]`
+	if rc := f.reap(f.main, Request{}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantKept()
+}
+
+// A merged PR does not close a window a person is looking at.
+func TestOrphanWindowInUseKept(t *testing.T) {
+	f := newFx(t)
+	f.mergedOrphan()
+	f.tmux["list-windows -a -F #{window_id}\t#{window_active}\t#{session_attached}\t#{window_activity}"] =
+		fmt.Sprintf("@9\t1\t1\t%d", nowUnix-1000)
+	if rc := f.reap(f.main, Request{}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantKept()
+}
+
+// The window this reap runs in is never the one it kills; its neighbour goes.
+func TestOrphanWindowSelfWindowKept(t *testing.T) {
+	f := newFx(t)
+	f.mergedOrphan()
+	f.tmux["list-windows -a -F #{window_id}\t#{@crew_branch}\t#{@crew_dir}"] += "\n@5\tfeat/older\t" + f.paths.Dir
+	f.gh["pr list --head feat/older --state all --json url,state,headRefOid,isCrossRepository"] =
+		`[{"url":"https://github.com/o/r/pull/13","state":"CLOSED","isCrossRepository":false}]`
+	f.gh["pr view https://github.com/o/r/pull/13 --json state --jq .state"] = "CLOSED"
+	t.Setenv("TMUX_PANE", "%1")
+	f.tmux["display-message -p -t %1 #{window_id}"] = "@9"
+	if rc := f.reap(f.main, Request{}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantOut(
+		orphanNote,
+		"crew reap: closed window @5 (feat/older, PR #13 CLOSED, worktree already gone)",
+		"crew reap: nothing done to reap",
+	)
+}
+
+// --dry-run prints the close without making it.
+func TestOrphanWindowDryRun(t *testing.T) {
+	f := newFx(t)
+	f.mergedOrphan()
+	if rc := f.reap(f.main, Request{DryRun: true}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantOut(
+		"crew reap: would close window @9 (feat/gone, PR #12 MERGED, worktree already gone)",
+		"crew reap: nothing done to reap",
+	)
+	if slices.Contains(f.calls, "tmux kill-window -t @9") {
+		t.Fatalf("the dry run killed the window: %q", f.calls)
+	}
 }
 
 func TestCrossRepoPRIgnoredThenGitHubPR(t *testing.T) {

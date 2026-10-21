@@ -116,6 +116,18 @@ type releaseRow struct {
 // tmux client, it saw output within the grace, or its claude transcript holds a
 // user turn newer than the status.
 func humanPresent(ctx context.Context, p Probes, windows []string, wtp string, tsMS, grace int64) (string, bool) {
+	if why, ok := windowsInUse(ctx, p, windows, grace); ok {
+		return why, true
+	}
+	if newerUserTurn(transcriptDir(wtp), tsMS) {
+		return "the engine transcript has a user turn newer than the status", true
+	}
+	return "", false
+}
+
+// windowsInUse is humanPresent's tmux half, split out for the orphan pass,
+// which has no worktree to look a transcript up with.
+func windowsInUse(ctx context.Context, p Probes, windows []string, grace int64) (string, bool) {
 	now := p.Clock.Now().Unix()
 	rows := p.tmuxOut(ctx, "list-windows", "-a", "-F", "#{window_id}\t#{window_active}\t#{session_attached}\t#{window_activity}")
 	for row := range strings.SplitSeq(rows, "\n") {
@@ -133,9 +145,6 @@ func humanPresent(ctx context.Context, p Probes, windows []string, wtp string, t
 		if a, err := strconv.ParseInt(act, 10, 64); err == nil && now-a < grace {
 			return wid + " had activity within the grace", true
 		}
-	}
-	if newerUserTurn(transcriptDir(wtp), tsMS) {
-		return "the engine transcript has a user turn newer than the status", true
 	}
 	return "", false
 }
