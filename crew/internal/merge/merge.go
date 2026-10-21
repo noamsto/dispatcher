@@ -150,23 +150,39 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	}
 
 	out, err = o.GH.Run(ctx, "api", "--paginate", "repos/{owner}/{repo}/commits/"+p.BaseRefName+"/check-runs?per_page=100",
-		"--jq", `.check_runs[] | [.name, .status, .conclusion] | @tsv`)
+		"--jq", `.check_runs[] | [.name, .status, .conclusion, .details_url] | @tsv`)
 	if err != nil {
 		return refuse("could not read %s's check runs: %v", p.BaseRefName, err)
 	}
+	var ignored int
 	for line := range strings.SplitSeq(out, "\n") {
 		if line == "" {
 			continue
 		}
 		f := strings.Split(line, "\t")
-		if len(f) != 3 {
+		if len(f) != 4 {
 			return refuse("unreadable check runs of %s: %q", p.BaseRefName, line)
 		}
-		if strings.EqualFold(f[1], "completed") && redConclusions[strings.ToLower(f[2])] {
-			return refuse("base %s is red (%s: %s); fix the base before merging", p.BaseRefName, f[0], f[2])
+		if !strings.EqualFold(f[1], "completed") || !redConclusions[strings.ToLower(f[2])] {
+			continue
 		}
+		// Only `failure` is classified: a workflow file that fails to start never
+		// gets a runner either, and that base really is broken.
+		if strings.EqualFold(f[2], "failure") && neverStarted(ctx, o.GH, f[3]) {
+			ignored++
+			continue
+		}
+		return refuse("base %s is red (%s: %s); fix the base before merging", p.BaseRefName, f[0], f[2])
 	}
-	pass("base %s: not red", p.BaseRefName)
+	if ignored > 0 {
+		suffix := "s"
+		if ignored == 1 {
+			suffix = ""
+		}
+		pass("base %s: not red (%d check run%s never started — ignored)", p.BaseRefName, ignored, suffix)
+	} else {
+		pass("base %s: not red", p.BaseRefName)
+	}
 
 	if req.NoLedger {
 		pass("ledger: skipped (--no-ledger)")
@@ -195,6 +211,43 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		release(ctx, n, *opened, paths, stdout, stderr, o)
 	}
 	return 0
+}
+
+// neverStarted reports whether the Actions job behind a failed base check run
+// never reached a runner, which makes its failure no evidence about the base.
+// A check run that is not an Actions job, and any lookup that is not a clean
+// answer, counts as started: the base is cleared only on a real answer.
+func neverStarted(ctx context.Context, c gh.Client, detailsURL string) bool {
+	id := actionsJobID(detailsURL)
+	if id == "" {
+		return false
+	}
+	out, err := c.Run(ctx, "api", "repos/{owner}/{repo}/actions/jobs/"+id,
+		"--jq", `[.runner_name, (.steps | length)] | @tsv`)
+	if err != nil {
+		return false
+	}
+	// jq's @tsv leaves an empty first field for a null or empty runner_name.
+	f := strings.Split(strings.TrimRight(out, "\n"), "\t")
+	return len(f) == 2 && f[0] == "" && f[1] == "0"
+}
+
+// actionsJobID is the Actions job a check run belongs to, from its details_url
+// (…/actions/runs/<run>/job/<job>). A check run posted by another app points
+// elsewhere and reports "".
+func actionsJobID(detailsURL string) string {
+	i := strings.LastIndex(detailsURL, "/job/")
+	if i < 0 || !strings.Contains(detailsURL[:i], "/actions/runs/") {
+		return ""
+	}
+	id := detailsURL[i+len("/job/"):]
+	if j := strings.IndexByte(id, '/'); j >= 0 {
+		id = id[:j]
+	}
+	if id == "" || strings.ContainsFunc(id, func(r rune) bool { return r < '0' || r > '9' }) {
+		return ""
+	}
+	return id
 }
 
 // release tells a worker still holding at pr_open that its PR merged, so it
