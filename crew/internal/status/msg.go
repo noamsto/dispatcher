@@ -59,13 +59,13 @@ func hasC0(s string) bool {
 
 // reviewSeamRefusal is the plan gate's early check on a review seam (#1091): a
 // branch gated on `plan: required` cannot post one until it has its plan seam,
-// so a worker that skipped the plan phase learns it as it opens the review gate
-// instead of at pr_open, before its code is written. Only a review seam body
-// sent to review:<crew> by a worker session is checked: every other msg, and
-// every session the status gate exempts (a trivial or review-kind doc, a
-// resume, `plan: provided`), posts as before. The check is the status gate's
-// own — same task-doc condition, same plan.jq fold over the same bus log — and
-// it fails closed.
+// so a worker that skipped the plan phase meets it when it records its review
+// seam, before the push and before pr_open, instead of only after it has pushed
+// its way through both. Only a review seam body sent to review:<crew> by a
+// worker session is checked: every other msg, and every session the status gate
+// exempts (a trivial or review-kind doc, a resume, `plan: provided`), posts as
+// before. The check is the status gate's own — same task-doc condition, same
+// plan.jq fold over the same bus log — and it fails closed.
 func reviewSeamRefusal(ctx context.Context, from, to, body, crew string, paths bus.Paths, o Options) string {
 	if !strings.HasPrefix(from, "worker:") || to != "review:"+crew || !isReviewSeam(body) {
 		return ""
@@ -91,10 +91,12 @@ func reviewSeamRefusal(ctx context.Context, from, to, body, crew string, paths b
 
 // isReviewSeam reports whether a msg body is a review seam: a JSON object whose
 // "seam" is exactly "review", the shape seam.jq counts. Any other body — plain
-// text, an array, another seam — is an ordinary msg.
+// text, an array, another seam — is an ordinary msg. A leading byte order mark
+// is skipped here as it is by the fold's `_jqfromjson`, so the two gates read
+// the same body the same way.
 func isReviewSeam(body string) bool {
 	var v any
-	if json.Unmarshal([]byte(body), &v) != nil {
+	if json.Unmarshal([]byte(strings.TrimPrefix(body, "\ufeff")), &v) != nil {
 		return false
 	}
 	m, ok := v.(map[string]any)

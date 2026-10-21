@@ -185,6 +185,11 @@ func TestMsgReviewSeamPlanGate(t *testing.T) {
 			[]string{msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"accept","tag":"note"}`)}, 1},
 		{"required: plan seam to dispatcher", planDoc, "review:c1", review,
 			[]string{msgRow(worker, "dispatcher:c1", plan)}, 1},
+		// seam.jq reads a body through `_jqfromjson`, which skips a leading byte
+		// order mark: the same body is a review seam to both gates.
+		{"required: BOM-prefixed review seam", planDoc, "review:c1", "\ufeff" + review, nil, 1},
+		{"required: BOM-prefixed review seam, plan seam posted", planDoc, "review:c1", "\ufeff" + review,
+			[]string{planRow}, 0},
 
 		// AC2: a plan seam on an earlier session of the branch counts.
 		{"required: plan seam this session", planDoc, "review:c1", review, []string{planRow}, 0},
