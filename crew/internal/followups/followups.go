@@ -69,11 +69,13 @@ type issue struct {
 }
 
 type issueView struct {
-	State    string `json:"state"`
-	Title    string `json:"title"`
-	Body     string `json:"body"`
-	Comments []struct {
-		Body string `json:"body"`
+	State     string `json:"state"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"createdAt"`
+	Comments  []struct {
+		Body      string `json:"body"`
+		CreatedAt string `json:"createdAt"`
 	} `json:"comments"`
 }
 
@@ -254,7 +256,7 @@ func (r *run) view(n int) (*issueView, error) {
 		return v, nil
 	}
 	v := &issueView{}
-	if err := r.read(v, "issue", "view", strconv.Itoa(n), "--json", "state,title,comments,body"); err != nil {
+	if err := r.read(v, "issue", "view", strconv.Itoa(n), "--json", "state,title,comments,body,createdAt"); err != nil {
 		return nil, err
 	}
 	r.views[n] = v
@@ -348,27 +350,54 @@ func (r *run) written(steps []*step) []int {
 	return ns
 }
 
-// hitBeforeBatch is whether issue n matches the threshold search — its marker
-// term and its file term, each anywhere in the body or the comments — with the
-// comments this batch posted dropped. A hit that stops matching is this run's
-// own write, not a follow-up that was already there.
-func (r *run) hitBeforeBatch(n int, file string) (bool, error) {
+// hitBeforeBatch is whether issue n matched the threshold search before this
+// batch wrote anything: both of the search's clauses — the marker term and the
+// file term, each anywhere in the body or the comments — hold with the comments
+// this batch posted dropped, and the issue was inside the window without them.
+// A hit that only matches, or only looks recent, because of this run's own
+// comment is not a prior hit.
+//
+// The clauses are a local stand-in for GitHub search, which is case-insensitive
+// and tokenised: this errs toward counting an issue GitHub would not have
+// matched, and only ever drops one this batch demonstrably commented on. A
+// comment bumps the issue's updated, so recency comes from the timestamps that
+// predate this batch (its creation and any other batch's comments); an update
+// that was neither — a label or state change — reads as older than it was.
+// Unreadable timestamps keep the count as it was.
+func (r *run) hitBeforeBatch(n int, file string, since time.Time) (bool, error) {
 	v, err := r.view(n)
 	if err != nil {
 		return false, err
 	}
 	ours := false
-	hasMarker := strings.Contains(v.Body, markerNeedle)
-	hasFile := strings.Contains(v.Body, file)
+	hasMarker := containsFold(v.Body, markerNeedle)
+	hasFile := containsFold(v.Body, file)
+	prior := time.Time{}
+	if t, err := time.Parse(time.RFC3339, v.CreatedAt); err == nil {
+		prior = t
+	}
 	for _, c := range v.Comments {
 		if firstLine(c.Body) == r.marker {
 			ours = true
 			continue
 		}
-		hasMarker = hasMarker || strings.Contains(c.Body, markerNeedle)
-		hasFile = hasFile || strings.Contains(c.Body, file)
+		hasMarker = hasMarker || containsFold(c.Body, markerNeedle)
+		hasFile = hasFile || containsFold(c.Body, file)
+		if t, err := time.Parse(time.RFC3339, c.CreatedAt); err == nil && t.After(prior) {
+			prior = t
+		}
 	}
-	return !ours || (hasMarker && hasFile), nil
+	switch {
+	case !ours:
+		return true, nil
+	case !hasMarker || !hasFile:
+		return false, nil
+	}
+	return prior.IsZero() || !prior.Before(since), nil
+}
+
+func containsFold(s, sub string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
 }
 
 // resolve picks every entry's action. The threshold counts are one snapshot
@@ -392,7 +421,7 @@ func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, err
 		}
 	}
 	written := r.written(steps)
-	since := now.UTC().AddDate(0, 0, -thresholdDays).Format("2006-01-02")
+	since := now.UTC().AddDate(0, 0, -thresholdDays).Truncate(24 * time.Hour)
 	touched := map[string][]int{}
 	for _, s := range steps {
 		f := s.e.File
@@ -405,7 +434,7 @@ func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, err
 		var hits []struct {
 			Number int `json:"number"`
 		}
-		search := fmt.Sprintf("%q in:body,comments %q updated:>=%s", markerNeedle, f, since)
+		search := fmt.Sprintf("%q in:body,comments %q updated:>=%s", markerNeedle, f, since.Format("2006-01-02"))
 		if err := r.read(&hits, "issue", "list", "--state", "all", "--limit", "200", "--search", search, "--json", "number"); err != nil {
 			return nil, nil, err
 		}
@@ -415,7 +444,7 @@ func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, err
 				continue
 			}
 			if slices.Contains(written, h.Number) {
-				prior, err := r.hitBeforeBatch(h.Number, f)
+				prior, err := r.hitBeforeBatch(h.Number, f, since)
 				if err != nil {
 					return nil, nil, err
 				}

@@ -319,12 +319,19 @@ func TestThresholdRerunIgnoresOwnSameAreaComment(t *testing.T) {
 }
 
 func TestThresholdRerunKeepsPriorHitOrigin(t *testing.T) {
-	// The origin was a threshold hit before the batch ran, so it still counts
-	// on a re-run that finds this batch's own comment on it.
+	// The origin was a threshold hit before the batch ran — another batch's
+	// comment put both clauses on it inside the window — so it still counts on
+	// a re-run that finds this batch's own comment on it.
+	body := "the guard in " + fileA
 	prior := "Follow-up of #2 (PR #4)\n\nthe guard in " + fileA
+	view := func(comments ...string) string {
+		return fmt.Sprintf(`{"state":"OPEN","title":"o","body":%q,"createdAt":"2026-01-01T00:00:00Z","comments":[%s]}`,
+			body, strings.Join(comments, ","))
+	}
+	cmt := func(b, at string) string { return fmt.Sprintf(`{"body":%q,"createdAt":%q}`, b, at) }
 	entries := `[{"title":"s1","body":"b1","same_area":true},{"title":"t2","body":"b2","file":"` + fileA + `"}]`
 	w := &world{
-		views:  map[int]string{5: fmt.Sprintf(`{"state":"OPEN","title":"o","body":%q,"comments":[]}`, prior)},
+		views:  map[int]string{5: view(cmt(prior, "2026-10-01T00:00:00Z"))},
 		hits:   map[string]string{fileA: `[{"number":1},{"number":2},{"number":5}]`},
 		failOn: "issue create --title redesign",
 	}
@@ -333,9 +340,82 @@ func TestThresholdRerunKeepsPriorHitOrigin(t *testing.T) {
 		t.Fatalf("run 1 code %d writes %q", r1.code, r1.writes)
 	}
 	w.failOn = ""
-	w.views[5] = fmt.Sprintf(`{"state":"OPEN","title":"o","body":%q,"comments":[{"body":%q}]}`, prior, marker+"\n\ns1\n\nb1")
+	w.views[5] = view(cmt(prior, "2026-10-01T00:00:00Z"), cmt(marker+"\n\ns1\n\nb1", "2026-10-20T12:00:00Z"))
 	r2 := run(t, w, entries, true)
 	if len(r2.writes) == 0 || !strings.HasPrefix(r2.writes[0], "issue create --title redesign: "+fileA) {
+		t.Errorf("run 2 writes %q", r2.writes)
+	}
+}
+
+func TestThresholdRerunIgnoresStaleTargetBump(t *testing.T) {
+	// #5 already carried both clauses but sat outside the 30-day window, so run 1
+	// never saw it. The batch's comment bumped its updated timestamp into the
+	// results, which is not a hit that was there before the batch.
+	body := "Follow-up of #2 (PR #4)\n\nthe guard in " + fileA
+	entries := `[{"title":"s1","body":"b1","same_area":true},{"title":"t2","body":"b2","file":"` + fileA + `"}]`
+	w := &world{
+		views:  map[int]string{5: fmt.Sprintf(`{"state":"OPEN","title":"o","body":%q,"createdAt":"2026-01-01T00:00:00Z","comments":[]}`, body)},
+		hits:   map[string]string{fileA: hits2},
+		failOn: "issue create --title t2",
+	}
+	r1 := run(t, w, entries, true)
+	if r1.code == 0 || len(r1.writes) != 2 || !strings.HasPrefix(r1.writes[0], "issue comment 5 ") {
+		t.Fatalf("run 1 code %d writes %q", r1.code, r1.writes)
+	}
+	w.failOn = ""
+	w.views[5] = fmt.Sprintf(`{"state":"OPEN","title":"o","body":%q,"createdAt":"2026-01-01T00:00:00Z","comments":[{"body":%q,"createdAt":"2026-10-20T12:00:00Z"}]}`, body, marker+"\n\ns1\n\nb1")
+	w.hits = map[string]string{fileA: `[{"number":1},{"number":2},{"number":5}]`}
+	r2 := run(t, w, entries, true)
+	if len(r2.writes) == 0 || !strings.HasPrefix(r2.writes[0], "issue create --title t2 ") {
+		t.Errorf("run 2 writes %q", r2.writes)
+	}
+	for _, c := range r2.writes {
+		if strings.Contains(c, "redesign") {
+			t.Errorf("redesign filed on re-run: %q", c)
+		}
+	}
+}
+
+func TestThresholdRerunIgnoresOwnDupComment(t *testing.T) {
+	entries := `[{"title":"d1","body":"b1","dup_of":3},{"title":"t2","body":"b2","file":"` + fileA + `"}]`
+	w := &world{
+		views:  map[int]string{3: `{"state":"OPEN","title":"x","createdAt":"2026-01-01T00:00:00Z","comments":[]}`},
+		hits:   map[string]string{fileA: hits2},
+		failOn: "issue create --title t2",
+	}
+	r1 := run(t, w, entries, true)
+	if r1.code == 0 || len(r1.writes) != 2 || !strings.HasPrefix(r1.writes[0], "issue comment 3 ") {
+		t.Fatalf("run 1 code %d writes %q", r1.code, r1.writes)
+	}
+	w.failOn = ""
+	w.views[3] = fmt.Sprintf(`{"state":"OPEN","title":"x","createdAt":"2026-01-01T00:00:00Z","comments":[{"body":%q,"createdAt":"2026-10-20T12:00:00Z"}]}`, marker+"\n\nd1\n\nb1")
+	w.hits = map[string]string{fileA: `[{"number":1},{"number":2},{"number":3}]`}
+	r2 := run(t, w, entries, true)
+	if len(r2.writes) == 0 || !strings.HasPrefix(r2.writes[0], "issue create --title t2 ") {
+		t.Errorf("run 2 writes %q", r2.writes)
+	}
+}
+
+func TestThresholdRerunIgnoresOwnSupersedeComment(t *testing.T) {
+	// The close comment carries the marker too: an issue that names the file is
+	// not made into a hit by having been superseded by this batch.
+	entries := `[{"title":"n1","body":"b1","supersedes":[3]},{"title":"t2","body":"b2","file":"` + fileA + `"}]`
+	w := &world{
+		views:  map[int]string{3: fmt.Sprintf(`{"state":"OPEN","title":"old","body":"the guard in %s","createdAt":"2026-01-01T00:00:00Z","comments":[]}`, fileA)},
+		hits:   map[string]string{fileA: hits2},
+		failOn: "issue close 3",
+	}
+	r1 := run(t, w, entries, true)
+	if r1.code == 0 || len(r1.writes) != 2 || !strings.HasPrefix(r1.writes[1], "issue close 3 ") {
+		t.Fatalf("run 1 code %d writes %q", r1.code, r1.writes)
+	}
+	w.failOn = ""
+	w.assigned = fmt.Sprintf(`[{"number":42,"title":"n1","body":%q}]`, marker+"\n\nb1")
+	w.views[3] = fmt.Sprintf(`{"state":"CLOSED","title":"old","body":"the guard in %s","createdAt":"2026-01-01T00:00:00Z","comments":[{"body":%q,"createdAt":"2026-10-20T12:00:00Z"}]}`,
+		fileA, marker+"\n\nSuperseded by #42.")
+	w.hits = map[string]string{fileA: `[{"number":1},{"number":2},{"number":3}]`}
+	r2 := run(t, w, entries, true)
+	if len(r2.writes) == 0 || !strings.HasPrefix(r2.writes[0], "issue create --title t2 ") {
 		t.Errorf("run 2 writes %q", r2.writes)
 	}
 }
