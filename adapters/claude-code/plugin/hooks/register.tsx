@@ -8,13 +8,16 @@ import {
   parseCrewIds,
   parseRoster,
   profile,
+  repoName,
   sortRows,
+  spansRepos,
   truncate,
 } from './roster'
 
 const PANE = 'crew-roster'
 const REFRESH_MS = 12_000
 const DETAIL_MAX = 48
+const REPO_MAX = 24
 
 const view = atom(
   { plugin: 'dispatcher', key: 'roster' } as const,
@@ -37,9 +40,12 @@ async function fetchSection(
   previous: RosterSection[],
 ): Promise<RosterSection> {
   try {
-    const ran = await $.process.run(['crew', 'roster', crew], { timeoutMs: 10_000 })
+    const ran = await $.process.run(
+      ['crew', 'fleet', '--json', '--all', '--crew', crew],
+      { timeoutMs: 10_000 },
+    )
     if (ran.exitCode !== 0) {
-      throw new Error(ran.stderr.trim() || `crew roster exited ${ran.exitCode}`)
+      throw new Error(ran.stderr.trim() || `crew fleet exited ${ran.exitCode}`)
     }
     return { crew, rows: parseRoster(ran.stdout), error: null }
   } catch (err) {
@@ -189,41 +195,53 @@ export const register: Register = on => {
         {scanError && (
           <Text color="red">crew crews --mine failed: {scanError}</Text>
         )}
-        {sections.map(section => (
-          <Box key={section.crew} flexDirection="column">
-            <Text dimColor>crew {section.crew}</Text>
-            {section.error && (
-              <Text color="red">crew roster failed: {section.error}</Text>
-            )}
-            {!section.error && section.rows.length === 0 && (
-              <Text dimColor>No workers yet.</Text>
-            )}
-            {sortRows(section.rows).map(row => (
-              <Box key={row.name} flexDirection="column">
-                <Text>
-                  <Text color={row.color ?? undefined} bold>
-                    {row.name}
-                  </Text>{' '}
-                  {row.title ?? row.branch}
-                </Text>
-                <Text dimColor>
-                  {'  '}
-                  {profile(row)} ·{' '}
-                  <Text
-                    color={isWatchdog(row) ? 'yellow' : undefined}
-                    bold={isWatchdog(row)}
-                  >
-                    {isWatchdog(row) ? 'blocked (watchdog)' : row.state}
-                  </Text>
-                  {row.detail ? ` · ${truncate(row.detail, DETAIL_MAX)}` : ''} ·{' '}
-                  {ageLabel(row.age_s)}
-                  {row.pr_url ? ' · ' : ''}
-                  {row.pr_url && <Link href={row.pr_url} label="PR" />}
-                </Text>
-              </Box>
-            ))}
-          </Box>
-        ))}
+        {sections.map(section => {
+          // `crew fleet` answers for every repo bus on the machine, so a crew's
+          // rows can come from several checkouts at once. Name the repo on each
+          // row only then: with one repo the column says nothing.
+          const multiRepo = spansRepos(section.rows)
+          return (
+            <Box key={section.crew} flexDirection="column">
+              <Text dimColor>crew {section.crew}</Text>
+              {section.error && (
+                <Text color="red">crew fleet failed: {section.error}</Text>
+              )}
+              {!section.error && section.rows.length === 0 && (
+                <Text dimColor>No workers yet.</Text>
+              )}
+              {sortRows(section.rows).map(row => {
+                const repo = multiRepo ? repoName(row) : null
+                return (
+                  <Box key={row.name} flexDirection="column">
+                    <Text>
+                      <Text color={row.color ?? undefined} bold>
+                        {row.name}
+                      </Text>{' '}
+                      {row.title ?? row.branch}
+                      {repo && <Text dimColor> · {truncate(repo, REPO_MAX)}</Text>}
+                    </Text>
+                    <Text dimColor>
+                      {'  '}
+                      {profile(row)} ·{' '}
+                      <Text
+                        color={isWatchdog(row) ? 'yellow' : undefined}
+                        bold={isWatchdog(row)}
+                      >
+                        {isWatchdog(row) ? 'blocked (watchdog)' : row.state}
+                      </Text>
+                      {row.detail
+                        ? ` · ${truncate(row.detail, DETAIL_MAX)}`
+                        : ''} ·{' '}
+                      {ageLabel(row.age_s)}
+                      {row.pr_url ? ' · ' : ''}
+                      {row.pr_url && <Link href={row.pr_url} label="PR" />}
+                    </Text>
+                  </Box>
+                )
+              })}
+            </Box>
+          )
+        })}
       </Box>
     )
   })
