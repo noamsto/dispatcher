@@ -447,8 +447,8 @@ func TestOrphanWindowKeptWithoutLandedPR(t *testing.T) {
 	f.wantKept()
 }
 
-// A merged PR does not close a window a person is looking at.
-func TestOrphanWindowInUseKept(t *testing.T) {
+// A merged PR does not close the active window of an attached client.
+func TestOrphanWindowAttachedClientKept(t *testing.T) {
 	f := newFx(t)
 	f.mergedOrphan()
 	f.tmux["list-windows -a -F #{window_id}\t#{window_active}\t#{session_attached}\t#{window_activity}"] =
@@ -477,6 +477,30 @@ func TestOrphanWindowSelfWindowKept(t *testing.T) {
 		"crew reap: closed window @5 (feat/older, PR #13 CLOSED, worktree already gone)",
 		"crew reap: nothing done to reap",
 	)
+}
+
+// A merged PR does not close a window whose engine pane is not idle, nor one
+// that saw output within the grace.
+func TestOrphanWindowBusyPaneKept(t *testing.T) {
+	f := newFx(t)
+	f.mergedOrphan()
+	f.tmux["list-panes -a -F #{window_id}\t#{pane_id}\t#{pane_current_command}"] = "@9\t%2\tclaude"
+	f.tmux["capture-pane -p -t %2"] = "✢ Thinking… (3s)"
+	f.tmux["capture-pane -e -p -t %2"] = "✢ Thinking… (3s)"
+	if rc := f.reap(f.main, Request{}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantKept()
+
+	delete(f.tmux, "list-panes -a -F #{window_id}\t#{pane_id}\t#{pane_current_command}")
+	delete(f.tmux, "capture-pane -p -t %2")
+	delete(f.tmux, "capture-pane -e -p -t %2")
+	f.tmux["list-windows -a -F #{window_id}\t#{window_active}\t#{session_attached}\t#{window_activity}"] =
+		fmt.Sprintf("@9\t0\t0\t%d", nowUnix-10)
+	if rc := f.reap(f.main, Request{}); rc != 0 {
+		t.Fatalf("rc=%d stderr=%q", rc, f.stderr.String())
+	}
+	f.wantKept()
 }
 
 // --dry-run prints the close without making it.
