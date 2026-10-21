@@ -23,8 +23,8 @@
 #
 # A speed bump over the command string, not a sandbox: an operand assembled
 # from a variable (`bats $f`) is not classified, nor is a bats run buried in
-# another program's argument, nor one behind a long option that waits for a
-# separate value word (`timeout --signal KILL 300 bats tests/`).
+# another program's argument, nor one behind an option whose argument is
+# optional (`xargs --replace {} bats tests/`).
 #
 # Portable to macOS's bash 3.2 and BSD userland: no mapfile, no ${var,,}.
 
@@ -188,17 +188,24 @@ split_words() { # <command>
 # like `tests` or `failed` would otherwise read as one.
 bats_value_flags=' --code-quote-style --line-reference-format -f --filter --filter-status --filter-tags -F --formatter --gather-test-outputs-in -j --jobs --parallel-binary-name --report-formatter -o --output '
 
-# Each entry is `<wrapper>:<letter>` for a wrapper's short option whose value is
-# the NEXT word (`env -u FOO`, `xargs -n 3`), so the word after it is never the
-# command. Letters come from each wrapper's own --help (`time` here is GNU time,
-# whose `-f` and `-o` take a value); an option whose argument is optional
-# (`xargs -e`, `-i`, `-l`) is absent, because swallowing `bats` would hide the
-# run it guards, and so is a flag (`env -v` is --debug, `xargs -o` --open-tty).
-# Long options are absent on purpose: `--opt=value` is one word, and probing a
-# bare `--opt` would eat the word after `xargs --show-limits`.
+# Each entry is `<wrapper>:<option>` for a wrapper option whose value is the
+# NEXT word (`env -u FOO`, `xargs -n 3`), so the word after it is never the
+# command. Short options are one letter, long options are spelled without `--`
+# and match only the whole word, which is how `--opt=value` is left alone: it
+# carries its value already. Names come from each wrapper's own --help —
+# coreutils prints a mandatory argument as `--opt=ARG` — and an option whose
+# argument is optional (`xargs -e`, `-i`, `--replace`, printed `--opt[=ARG]`) is
+# absent from both tables: consuming a word the wrapper never asked for would
+# swallow the command itself.
 wrapper_value_table=' env:a env:C env:S env:u nice:n stdbuf:e stdbuf:i stdbuf:o \
   time:f time:o timeout:k timeout:s xargs:a xargs:d xargs:E xargs:I xargs:L \
   xargs:n xargs:P xargs:s '
+
+wrapper_value_longs=' env:argv0 env:chdir env:split-string env:unset nice:adjustment \
+  stdbuf:error stdbuf:input stdbuf:output time:format time:output \
+  timeout:kill-after timeout:signal xargs:arg-file xargs:delimiter \
+  xargs:max-args xargs:max-chars xargs:max-lines xargs:max-procs \
+  xargs:process-slot-var '
 
 verdict=''
 bats_files=0
@@ -253,19 +260,27 @@ while IFS= read -r w; do
       if [[ $w == -* ]]; then continue; fi
     fi
     # An option belongs to the wrapper seen so far, not to the command slot, so
-    # `xargs -n3 bats` and `env -i bats tests/` name the run they are. A short
-    # option whose last letter takes a value also takes the next word, so
-    # `env -u FOO bats tests/` and `nice -n 5 bats tests/` name it too.
+    # `xargs -n3 bats` and `env -i bats tests/` name the run they are. An option
+    # that waits for its value takes the next word too, so `env -u FOO bats
+    # tests/`, `nice -n 5 bats tests/` and `xargs --max-args 3 bats tests/` all
+    # name it.
     if [[ -n $wrapper && $w == -* ]]; then
-      if [[ $w != --* ]]; then
-        # Walk the cluster left to right, as getopt reads it: a value-taking
-        # letter consumes the NEXT word only when it is the word's last letter,
-        # so `xargs -d'\n'`, `env -uC` and `-n3` carry theirs inline. Quoted, the
-        # probe reads a `*`, `?` or `[` literally and matches no table row.
-        for ((ci = 1; ci < ${#w}; ci++)); do
+      if [[ $w == --* ]]; then
+        case $wrapper_value_longs in
+        *" ${wrapper}:${w#--} "*) wrapper_val=1 ;;
+        esac
+      else
+        # Read a cluster as getopt does: the first letter that takes a value
+        # owns the rest of the word, so it waits for the next word only when it
+        # is the word's last letter. Quoted, the probe reads a `*`, `?` or `[`
+        # literally and matches no table row.
+        rest=${w#-}
+        while [[ -n $rest ]]; do
+          c=${rest:0:1}
+          rest=${rest:1}
           case $wrapper_value_table in
-          *" ${wrapper}:${w:ci:1} "*)
-            if ((ci == ${#w} - 1)); then wrapper_val=1; fi
+          *" ${wrapper}:$c "*)
+            if [[ -z $rest ]]; then wrapper_val=1; fi
             break
             ;;
           esac

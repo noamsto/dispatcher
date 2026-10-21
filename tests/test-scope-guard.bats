@@ -190,7 +190,9 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
     'timeout -s KILL 300 bats tests/' 'timeout 300 -s KILL bats tests/' \
     'xargs -n 3 bats tests/' 'nice -n 5 bats tests/' 'stdbuf -o 0 bats tests/' \
     'env -C /tmp bats tests/' 'env -u FOO timeout 300 bats tests/' \
-    'time -f %s bats tests/'; do
+    'time -f %s bats tests/' 'timeout --signal KILL 300 bats tests/' \
+    'env --unset FOO bats tests/' 'xargs --max-args 3 bats tests/' \
+    'nice --adjustment 5 bats tests/' 'stdbuf --output 0 bats tests/'; do
     run run_guard <<<"$(pi_bash "$cmd")"
     assert_block "$WHY"
   done
@@ -206,7 +208,9 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
     'env --null bats tests/' 'xargs --show-limits bats tests/' 'env -u ; bats tests/' \
     "xargs -d'\\n' bats tests/" 'xargs -d\n bats tests/' 'xargs -dn bats tests/' \
     'xargs -Is bats tests/' 'env -uC bats tests/' 'env -uS bats tests/' \
-    'env -iuC bats tests/' 'env -u C bats tests/' 'timeout -sKILL 300 bats tests/'; do
+    'env -iuC bats tests/' 'env -u C bats tests/' 'timeout -sKILL 300 bats tests/' \
+    'xargs --replace bats tests/' 'env --split-string=VAR=1 bats tests/' \
+    'xargs --max-args=3 bats tests/'; do
     run run_guard <<<"$(pi_bash "$cmd")"
     assert_block "$WHY"
   done
@@ -215,7 +219,7 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
 @test "test-scope-guard: a targeted run behind an assignment or a wrapper value stays allowed" {
   for cmd in 'A=/x/y bats tests/test-scope-guard.bats' 'env -u FOO bats tests/a.bats --filter x' \
     'timeout -s KILL 300 bats tests/a.bats' 'xargs -n 3 bats tests/a.bats' \
-    'nice -n 5 bats tests/a.bats'; do
+    'timeout --signal KILL 300 bats tests/a.bats' 'nice -n 5 bats tests/a.bats'; do
     run run_guard <<<"$(pi_bash "$cmd")"
     assert_allow
   done
