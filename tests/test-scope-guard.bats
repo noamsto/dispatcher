@@ -186,10 +186,45 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
 
 @test "test-scope-guard: sees bats behind a wrapper" {
   for cmd in 'timeout 300 bats tests/' 'bash -c bats tests/' 'env CREW=x bats tests/' \
-    'env -i bats tests/'; do
+    'env -i bats tests/' 'A=/x/y bats tests/' 'env -u FOO bats tests/' \
+    'timeout -s KILL 300 bats tests/' 'timeout 300 -s KILL bats tests/' \
+    'xargs -n 3 bats tests/' 'nice -n 5 bats tests/' 'stdbuf -o 0 bats tests/' \
+    'env -C /tmp bats tests/' 'env -u FOO timeout 300 bats tests/' \
+    'time -f %s bats tests/'; do
     run run_guard <<<"$(pi_bash "$cmd")"
     assert_block "$WHY"
   done
+}
+
+# Skipping a wrapper's option value may only ever swallow a value: an option
+# that takes none, a long option, and a command boundary all stay out of it.
+@test "test-scope-guard: an option that takes no value never swallows the run" {
+  for cmd in 'xargs -n3 bats tests/' 'env -uFOO bats tests/' 'env -v bats tests/' \
+    'xargs -o bats tests/' 'env -0 bats tests/' 'env -* bats tests/' \
+    'env --null bats tests/' 'xargs --show-limits bats tests/' 'env -u ; bats tests/'; do
+    run run_guard <<<"$(pi_bash "$cmd")"
+    assert_block "$WHY"
+  done
+}
+
+@test "test-scope-guard: a targeted run behind an assignment or a wrapper value stays allowed" {
+  for cmd in 'A=/x/y bats tests/test-scope-guard.bats' 'env -u FOO bats tests/a.bats --filter x' \
+    'timeout -s KILL 300 bats tests/a.bats' 'xargs -n 3 bats tests/a.bats' \
+    'nice -n 5 bats tests/a.bats'; do
+    run run_guard <<<"$(pi_bash "$cmd")"
+    assert_allow
+  done
+  # `./x=y` is not an assignment — no valid NAME — so it is the program being
+  # run, and it runs no bats: the guard classifies nothing here.
+  run run_guard <<<"$(pi_bash './x=y bats tests/')"
+  assert_allow
+}
+
+@test "test-scope-guard: an option that swallows the runner leaves no run to classify" {
+  # GNU time takes `bats` as -f's format string and runs `tests/` instead, so
+  # there is no bats run behind this line even though a directory follows.
+  run run_guard <<<"$(pi_bash 'time -f bats tests/')"
+  assert_allow
 }
 
 @test "test-scope-guard: a flag is never mistaken for a test operand" {
