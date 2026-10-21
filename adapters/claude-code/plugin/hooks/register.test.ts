@@ -143,6 +143,31 @@ test('rows from two repos each carry their repo basename', async ($, on) => {
   expect(repos).toEqual([' · web-app', ' · dispatcher'])
 })
 
+test('two rows with the same codename from different repos both render', async ($, on) => {
+  mock.env(on, { CREW_ID: 'c1' })
+  stubEngine(on)
+  const clock = mock.clock(on)
+  on('process.run', async (_$, e) =>
+    e.argv[1] === 'crews'
+      ? ok('c1\n')
+      : ok(JSON.stringify([
+          { ...ROWS[0], name: 'crimson', repo: 'noamsto/one', branch: 'feat/a' },
+          { ...ROWS[0], name: 'crimson', repo: 'noamsto/two', branch: 'feat/b' },
+        ])),
+  )
+  await $.session.start(START)
+  await $.command.run(ROSTER)
+  await clock.settle()
+  const ui = await $.ui.mount({
+    plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
+    props: PANE, requestId: 'crew-roster',
+  })
+  const names = (await ui.findAll({ type: 'Text', text: /^crimson$/ })).map(x => x.text)
+  expect(names.length).toBe(2)
+  const repos = (await ui.findAll({ type: 'Text', text: /^ · (one|two)$/ })).map(x => x.text)
+  expect(repos).toEqual([' · one', ' · two'])
+})
+
 test('rows all from one repo show no repo column', async ($, on) => {
   mock.env(on, { CREW_ID: 'c1' })
   stubEngine(on)

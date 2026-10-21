@@ -211,8 +211,12 @@ export const register: Register = on => {
               )}
               {sortRows(section.rows).map(row => {
                 const repo = multiRepo ? repoName(row) : null
+                // A codename is unique on the bus that assigned it, so once a
+                // section spans repos two branches can share one; a branch is
+                // unique within its own bus, so the pair is the key.
+                const key = `${row.repo ?? ''}:${row.branch}`
                 return (
-                  <Box key={row.name} flexDirection="column">
+                  <Box key={key} flexDirection="column">
                     <Text>
                       <Text color={row.color ?? undefined} bold>
                         {row.name}
