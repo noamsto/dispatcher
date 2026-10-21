@@ -192,7 +192,8 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
     'env -C /tmp bats tests/' 'env -u FOO timeout 300 bats tests/' \
     'time -f %s bats tests/' 'timeout --signal KILL 300 bats tests/' \
     'env --unset FOO bats tests/' 'xargs --max-args 3 bats tests/' \
-    'nice --adjustment 5 bats tests/' 'stdbuf --output 0 bats tests/'; do
+    'nice --adjustment 5 bats tests/' 'stdbuf --output 0 bats tests/' \
+    'env -S VAR=1 bats tests/'; do
     run run_guard <<<"$(pi_bash "$cmd")"
     assert_block "$WHY"
   done
@@ -211,7 +212,8 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
     'env -iuC bats tests/' 'env -u C bats tests/' 'timeout -sKILL 300 bats tests/' \
     'xargs --replace bats tests/' 'env --split-string=VAR=1 bats tests/' \
     'xargs --max-args=3 bats tests/' 'xargs --max-lines bats tests/' \
-    'xargs -ln bats tests/' 'xargs -id bats tests/'; do
+    'xargs -ln bats tests/' 'xargs -id bats tests/' 'env -S bats tests/' \
+    'env --split-string bats tests/'; do
     run run_guard <<<"$(pi_bash "$cmd")"
     assert_block "$WHY"
   done

@@ -192,16 +192,18 @@ bats_value_flags=' --code-quote-style --line-reference-format -f --filter --filt
 # NEXT word (`env -u FOO`, `xargs -n 3`), so the word after it is never the
 # command. Short options are one letter, long options are spelled without `--`
 # and match only the whole word, which is how `--opt=value` is left alone: it
-# carries its value already. Names come from each wrapper's own --help —
-# coreutils prints a mandatory argument as `--opt=ARG` — and an option whose
-# argument is optional (`xargs -e`, `-i`, `--replace`, printed `--opt[=ARG]`) is
-# absent from both tables: consuming a word the wrapper never asked for would
-# swallow the command itself.
-wrapper_value_table=' env:a env:C env:S env:u nice:n stdbuf:e stdbuf:i stdbuf:o \
+# carries its value already. Two kinds of option stay out of both tables, and
+# both would swallow the command: one whose argument is optional (`xargs -e`,
+# `-i`, `--replace`, printed `--opt[=ARG]` in --help), which the wrapper may not
+# ask for at all; and one whose value is not a value. env's `-S`/`--split-string`
+# is the second kind — it splits its argument into the start of the command
+# line, so the word after `-S` IS the runner and `env -S bats tests/` runs the
+# suite — which is why it is absent even though `--help` shows `-S=S`.
+wrapper_value_table=' env:a env:C env:u nice:n stdbuf:e stdbuf:i stdbuf:o \
   time:f time:o timeout:k timeout:s xargs:a xargs:d xargs:E xargs:I xargs:L \
   xargs:n xargs:P xargs:s '
 
-wrapper_value_longs=' env:argv0 env:chdir env:split-string env:unset nice:adjustment \
+wrapper_value_longs=' env:argv0 env:chdir env:unset nice:adjustment \
   stdbuf:error stdbuf:input stdbuf:output time:format time:output \
   timeout:kill-after timeout:signal xargs:arg-file xargs:delimiter \
   xargs:max-args xargs:max-chars xargs:max-procs xargs:process-slot-var '
