@@ -11,6 +11,8 @@ export type RosterRow = {
   engine: string | null
   model: string | null
   pr_url: string | null
+  // The row's repo as `owner/name`; only `crew fleet` fills it.
+  repo?: string
 }
 
 export type RosterSection = {

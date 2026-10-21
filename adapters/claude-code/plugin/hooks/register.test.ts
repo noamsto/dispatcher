@@ -114,7 +114,85 @@ test('rows render: active first, watchdog distinct, detail truncated, PR linked'
   expect(await ui.find({ type: 'Link' })).toBeDefined()
 })
 
-test('a failing crew call shows an error line', async ($, on) => {
+test('rows from two repos each carry their repo basename', async ($, on) => {
+  mock.env(on, { CREW_ID: 'c1' })
+  stubEngine(on)
+  const clock = mock.clock(on)
+  const argv: string[][] = []
+  on('process.run', async (_$, e) => {
+    argv.push([...e.argv])
+    if (e.argv[1] === 'crews') return ok('c1\n')
+    return ok(
+      JSON.stringify([
+        { ...ROWS[2], repo: 'noamsto/web-app' },
+        { ...ROWS[0], repo: 'noamsto/dispatcher' },
+      ]),
+    )
+  })
+  await $.session.start(START)
+  await $.command.run(ROSTER)
+  await clock.settle()
+  expect(argv).toContainEqual(['crew', 'fleet', '--json', '--all', '--crew', 'c1'])
+  const ui = await $.ui.mount({
+    plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
+    props: PANE, requestId: 'crew-roster',
+  })
+  const names = (await ui.findAll({ type: 'Text', text: /^(teal|mauve)$/ })).map(x => x.text)
+  expect(names).toEqual(['teal', 'mauve'])
+  const repos = (await ui.findAll({ type: 'Text', text: /^ · (web-app|dispatcher)$/ })).map(x => x.text)
+  expect(repos).toEqual([' · web-app', ' · dispatcher'])
+})
+
+test('two rows with the same codename from different repos both render', async ($, on) => {
+  mock.env(on, { CREW_ID: 'c1' })
+  stubEngine(on)
+  const clock = mock.clock(on)
+  on('process.run', async (_$, e) =>
+    e.argv[1] === 'crews'
+      ? ok('c1\n')
+      : ok(JSON.stringify([
+          { ...ROWS[0], name: 'crimson', repo: 'noamsto/one', branch: 'feat/a' },
+          { ...ROWS[0], name: 'crimson', repo: 'noamsto/two', branch: 'feat/b' },
+        ])),
+  )
+  await $.session.start(START)
+  await $.command.run(ROSTER)
+  await clock.settle()
+  const ui = await $.ui.mount({
+    plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
+    props: PANE, requestId: 'crew-roster',
+  })
+  const names = (await ui.findAll({ type: 'Text', text: /^crimson$/ })).map(x => x.text)
+  expect(names.length).toBe(2)
+  const repos = (await ui.findAll({ type: 'Text', text: /^ · (one|two)$/ })).map(x => x.text)
+  expect(repos).toEqual([' · one', ' · two'])
+})
+
+test('rows all from one repo show no repo column', async ($, on) => {
+  mock.env(on, { CREW_ID: 'c1' })
+  stubEngine(on)
+  const clock = mock.clock(on)
+  on('process.run', async (_$, e) =>
+    e.argv[1] === 'crews'
+      ? ok('c1\n')
+      : ok(JSON.stringify([
+          { ...ROWS[2], repo: 'noamsto/dispatcher' },
+          { ...ROWS[0], repo: 'noamsto/dispatcher' },
+        ])),
+  )
+  await $.session.start(START)
+  await $.command.run(ROSTER)
+  await clock.settle()
+  const ui = await $.ui.mount({
+    plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
+    props: PANE, requestId: 'crew-roster',
+  })
+  const names = (await ui.findAll({ type: 'Text', text: /^(teal|mauve)$/ })).map(x => x.text)
+  expect(names).toEqual(['teal', 'mauve'])
+  expect((await ui.findAll({ text: /dispatcher|web-app/ })).length).toBe(0)
+})
+
+test('rows whose crew fleet call fails show an error line', async ($, on) => {
   mock.env(on, { CREW_ID: 'c1' })
   stubEngine(on)
   const clock = mock.clock(on)
@@ -126,7 +204,30 @@ test('a failing crew call shows an error line', async ($, on) => {
     plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
     props: PANE, requestId: 'crew-roster',
   })
-  expect(await ui.find({ text: /crew roster failed: boom/ })).toBeDefined()
+  expect(await ui.find({ text: /crew fleet failed: boom/ })).toBeDefined()
+})
+
+test('a crew fleet failure keeps the rows the section already had', async ($, on) => {
+  mock.env(on, { CREW_ID: 'c1' })
+  stubEngine(on)
+  const clock = mock.clock(on)
+  let failing = false
+  on('process.run', async (_$, e) => {
+    if (e.argv[1] === 'crews') return ok('c1\n')
+    if (failing) return done(1, '', 'fleet boom')
+    return ok(JSON.stringify([ROWS[2]]))
+  })
+  await $.session.start(START)
+  await $.command.run(ROSTER)
+  await clock.settle()
+  failing = true
+  await clock.advance(13_000)
+  const ui = await $.ui.mount({
+    plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
+    props: PANE, requestId: 'crew-roster',
+  })
+  expect(await ui.find({ text: /crew fleet failed: fleet boom/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^teal$/ })).toBeDefined()
 })
 
 test('the roster refreshes on the timer and treats empty output as no workers', async ($, on) => {
@@ -141,10 +242,10 @@ test('the roster refreshes on the timer and treats empty output as no workers', 
   await $.session.start(START)
   await $.command.run(ROSTER)
   await clock.advance(25_000)
-  // Every tick is one ownership scan plus one roster call per followed crew.
-  const rosters = argv.filter(call => call[1] === 'roster')
-  expect(rosters.length).toBe(3)
-  expect(rosters[0]).toEqual(['crew', 'roster', 'c1'])
+  // Every tick is one ownership scan plus one fleet call per followed crew.
+  const fleets = argv.filter(call => call[1] === 'fleet')
+  expect(fleets.length).toBe(3)
+  expect(fleets[0]).toEqual(['crew', 'fleet', '--json', '--all', '--crew', 'c1'])
   expect(
     argv.filter(call => call[1] === 'crews' && call[2] === '--mine').length,
   ).toBe(3)
@@ -163,14 +264,15 @@ test('the pane follows every crew this session owns, not only $CREW_ID', async (
   on('process.run', async (_$, e) => {
     argv.push([...e.argv])
     if (e.argv[2] === '--mine') return ok('A\nB\n')
-    return ok(JSON.stringify(e.argv[2] === 'A' ? [ROWS[0]] : [ROWS[2]]))
+    const crew = e.argv[e.argv.indexOf('--crew') + 1]
+    return ok(JSON.stringify(crew === 'A' ? [ROWS[0]] : [ROWS[2]]))
   })
   await $.session.start(START)
   await $.command.run(ROSTER)
   await clock.settle()
   expect(argv).toContainEqual(['crew', 'crews', '--mine'])
-  expect(argv).toContainEqual(['crew', 'roster', 'A'])
-  expect(argv).toContainEqual(['crew', 'roster', 'B'])
+  expect(argv).toContainEqual(['crew', 'fleet', '--json', '--all', '--crew', 'A'])
+  expect(argv).toContainEqual(['crew', 'fleet', '--json', '--all', '--crew', 'B'])
   const ui = await $.ui.mount({
     plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
     props: PANE, requestId: 'crew-roster',
@@ -221,7 +323,7 @@ test('/roster <crew-id> pins that one crew and stops scanning', async ($, on) =>
   // ownership scan never runs again while pinned.
   argv.length = 0
   await clock.advance(13_000)
-  expect(argv).toEqual([['crew', 'roster', 'C']])
+  expect(argv).toEqual([['crew', 'fleet', '--json', '--all', '--crew', 'C']])
   const ui = await $.ui.mount({
     plugin: 'dispatcher', surface: 'terminal', component: 'Pane',
     props: PANE, requestId: 'crew-roster',
