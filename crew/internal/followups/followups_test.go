@@ -270,15 +270,70 @@ func TestThresholdRerunAfterPartialApply(t *testing.T) {
 }
 
 func TestThresholdRerunKeepsCommentTargetHit(t *testing.T) {
+	// #3 is a dup_of target and a threshold hit. It was one before this batch
+	// ran: its own body carries both search clauses, so the marker comment the
+	// batch posts on it is not why it matches.
+	prior := "Follow-up of #2 (PR #4)\n\nthe guard in " + fileA
 	entries := `[{"title":"d1","body":"b1","dup_of":3},{"title":"t2","body":"b2","file":"` + fileA + `"}]`
-	w := &world{views: map[int]string{5: `{"state":"OPEN","title":"o","comments":[]}`, 3: `{"state":"OPEN","title":"x","comments":[]}`},
+	w := &world{views: map[int]string{5: `{"state":"OPEN","title":"o","comments":[]}`,
+		3: fmt.Sprintf(`{"state":"OPEN","title":"x","body":%q,"comments":[]}`, prior)},
 		hits: map[string]string{fileA: hits3}, failOn: "issue create"}
 	r1 := run(t, w, entries, true)
 	if r1.code == 0 || len(r1.writes) != 2 || !strings.HasPrefix(r1.writes[1], "issue create --title redesign: "+fileA) {
 		t.Fatalf("run 1 code %d writes %q", r1.code, r1.writes)
 	}
 	w.failOn = ""
-	w.views[3] = fmt.Sprintf(`{"state":"OPEN","title":"x","comments":[{"body":%q}]}`, marker+"\n\nd1\n\nb1")
+	w.views[3] = fmt.Sprintf(`{"state":"OPEN","title":"x","body":%q,"comments":[{"body":%q}]}`, prior, marker+"\n\nd1\n\nb1")
+	r2 := run(t, w, entries, true)
+	if len(r2.writes) == 0 || !strings.HasPrefix(r2.writes[0], "issue create --title redesign: "+fileA) {
+		t.Errorf("run 2 writes %q", r2.writes)
+	}
+}
+
+func TestThresholdRerunIgnoresOwnSameAreaComment(t *testing.T) {
+	entries := `[{"title":"s1","body":"b1","file":"` + fileA + `","same_area":true},{"title":"t2","body":"b2","file":"` + fileA + `"}]`
+	w := &world{views: openOrigin(), hits: map[string]string{fileA: hits2}, failOn: "issue create --title t2"}
+	r1 := run(t, w, entries, true)
+	if r1.code == 0 || len(r1.writes) != 2 || !strings.HasPrefix(r1.writes[0], "issue comment 5 ") {
+		t.Fatalf("run 1 code %d writes %q", r1.code, r1.writes)
+	}
+	// The comment run 1 posted on the origin now matches both search clauses:
+	// its first line is this batch's marker, its body names the file.
+	w.failOn = ""
+	w.views[5] = fmt.Sprintf(`{"state":"OPEN","title":"o","comments":[{"body":%q}]}`, marker+"\n\ns1\n\nb1")
+	w.hits = map[string]string{fileA: `[{"number":1},{"number":2},{"number":5}]`}
+
+	if r := run(t, w, entries, false); !strings.Contains(r.stdout, `entry 1 "s1": comment on origin #5 (already done: #5)`) ||
+		!strings.Contains(r.stdout, `entry 2 "t2": new issue`) {
+		t.Errorf("re-run plan:\n%s", r.stdout)
+	}
+	r2 := run(t, w, entries, true)
+	if len(r2.writes) == 0 || !strings.HasPrefix(r2.writes[0], "issue create --title t2 ") {
+		t.Errorf("run 2 writes %q", r2.writes)
+	}
+	for _, c := range r2.writes {
+		if strings.Contains(c, "redesign") {
+			t.Errorf("redesign filed on re-run: %q", c)
+		}
+	}
+}
+
+func TestThresholdRerunKeepsPriorHitOrigin(t *testing.T) {
+	// The origin was a threshold hit before the batch ran, so it still counts
+	// on a re-run that finds this batch's own comment on it.
+	prior := "Follow-up of #2 (PR #4)\n\nthe guard in " + fileA
+	entries := `[{"title":"s1","body":"b1","same_area":true},{"title":"t2","body":"b2","file":"` + fileA + `"}]`
+	w := &world{
+		views:  map[int]string{5: fmt.Sprintf(`{"state":"OPEN","title":"o","body":%q,"comments":[]}`, prior)},
+		hits:   map[string]string{fileA: `[{"number":1},{"number":2},{"number":5}]`},
+		failOn: "issue create --title redesign",
+	}
+	r1 := run(t, w, entries, true)
+	if r1.code == 0 || len(r1.writes) != 2 || !strings.HasPrefix(r1.writes[0], "issue comment 5 ") {
+		t.Fatalf("run 1 code %d writes %q", r1.code, r1.writes)
+	}
+	w.failOn = ""
+	w.views[5] = fmt.Sprintf(`{"state":"OPEN","title":"o","body":%q,"comments":[{"body":%q}]}`, prior, marker+"\n\ns1\n\nb1")
 	r2 := run(t, w, entries, true)
 	if len(r2.writes) == 0 || !strings.HasPrefix(r2.writes[0], "issue create --title redesign: "+fileA) {
 		t.Errorf("run 2 writes %q", r2.writes)
