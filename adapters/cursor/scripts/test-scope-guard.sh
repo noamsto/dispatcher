@@ -204,8 +204,14 @@ wrapper_value_table=' env:a env:C env:S env:u nice:n stdbuf:e stdbuf:i stdbuf:o 
 wrapper_value_longs=' env:argv0 env:chdir env:split-string env:unset nice:adjustment \
   stdbuf:error stdbuf:input stdbuf:output time:format time:output \
   timeout:kill-after timeout:signal xargs:arg-file xargs:delimiter \
-  xargs:max-args xargs:max-chars xargs:max-lines xargs:max-procs \
-  xargs:process-slot-var '
+  xargs:max-args xargs:max-chars xargs:max-procs xargs:process-slot-var '
+
+# Letters whose argument is optional: getopt gives them the rest of the word, so
+# nothing after one is another option and no word is ever owed (`xargs -ln bats
+# tests/` runs xargs with `-l` and `-n` is its value). `xargs --max-lines` is
+# absent from the long table for the same reason, whatever --help shows: it is
+# the long form of `-l`, and running it alone takes no argument.
+wrapper_stop_opts=' xargs:e xargs:i xargs:l '
 
 verdict=''
 bats_files=0
@@ -283,6 +289,9 @@ while IFS= read -r w; do
             if [[ -z $rest ]]; then wrapper_val=1; fi
             break
             ;;
+          esac
+          case $wrapper_stop_opts in
+          *" ${wrapper}:$c "*) break ;;
           esac
         done
       fi

@@ -210,7 +210,8 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
     'xargs -Is bats tests/' 'env -uC bats tests/' 'env -uS bats tests/' \
     'env -iuC bats tests/' 'env -u C bats tests/' 'timeout -sKILL 300 bats tests/' \
     'xargs --replace bats tests/' 'env --split-string=VAR=1 bats tests/' \
-    'xargs --max-args=3 bats tests/'; do
+    'xargs --max-args=3 bats tests/' 'xargs --max-lines bats tests/' \
+    'xargs -ln bats tests/' 'xargs -id bats tests/'; do
     run run_guard <<<"$(pi_bash "$cmd")"
     assert_block "$WHY"
   done
