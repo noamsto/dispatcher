@@ -31,6 +31,13 @@ const (
 	// mean the file needs a redesign, not another patch.
 	thresholdCount = 3
 	thresholdDays  = 30
+	// markerNeedle is the threshold search's term for a batch marker comment.
+	markerNeedle = "Follow-up of #"
+	// supersededNote is in the one comment this batch closes an issue with, so
+	// it marks a close that was this batch's doing.
+	supersededNote = "Superseded by #"
+	// reopenedReason is GitHub's stateReason once anything has reopened an issue.
+	reopenedReason = "REOPENED"
 )
 
 // Request is the parsed command line.
@@ -67,10 +74,15 @@ type issue struct {
 }
 
 type issueView struct {
-	State    string `json:"state"`
-	Title    string `json:"title"`
-	Comments []struct {
-		Body string `json:"body"`
+	State       string `json:"state"`
+	StateReason string `json:"stateReason"`
+	Title       string `json:"title"`
+	Body        string `json:"body"`
+	CreatedAt   string `json:"createdAt"`
+	ClosedAt    string `json:"closedAt"`
+	Comments    []struct {
+		Body      string `json:"body"`
+		CreatedAt string `json:"createdAt"`
 	} `json:"comments"`
 }
 
@@ -251,7 +263,7 @@ func (r *run) view(n int) (*issueView, error) {
 		return v, nil
 	}
 	v := &issueView{}
-	if err := r.read(v, "issue", "view", strconv.Itoa(n), "--json", "state,title,comments"); err != nil {
+	if err := r.read(v, "issue", "view", strconv.Itoa(n), "--json", "state,stateReason,title,comments,body,createdAt,closedAt"); err != nil {
 		return nil, err
 	}
 	r.views[n] = v
@@ -323,11 +335,98 @@ func (r *run) detectDone(s *step) error {
 	return nil
 }
 
+// written are the issues this batch posts marker comments on: the origin of a
+// same-area entry, a dup_of target, a supersede target. A threshold hit
+// outside this set cannot exist because of this batch's own write.
+func (r *run) written(steps []*step) []int {
+	var ns []int
+	add := func(n int) {
+		if n > 0 && !slices.Contains(ns, n) {
+			ns = append(ns, n)
+		}
+	}
+	for _, s := range steps {
+		if s.e.SameArea && r.closes {
+			add(r.origin)
+		}
+		add(s.e.DupOf)
+		for _, n := range s.e.Supersedes {
+			add(n)
+		}
+	}
+	return ns
+}
+
+// hitBeforeBatch is whether issue n matched the threshold search before this
+// batch wrote anything: both of the search's clauses — the marker term and the
+// file term, each anywhere in the body or the comments — hold without the
+// comments this batch posted, and the issue was inside the window without them.
+//
+// The clauses are a local stand-in for GitHub search, which is case-insensitive
+// and tokenised, so a disagreement counts an issue GitHub would not have
+// matched. Recency reads only the timestamps that predate this batch — the
+// issue's creation, and any close that was not this batch's supersede close —
+// because a comment or a state change bumps the issue's own updatedAt, which
+// then says nothing about the state before the write. When nothing is dated, or
+// this batch's own origin stands reopened (reopening clears closedAt), recency is
+// unknowable and the hit is kept. A window entered by a label, milestone or
+// assignee edit alone is the one update that reads as older than it was, dropping
+// a hit rather than inventing one.
+func (r *run) hitBeforeBatch(n int, file string, since time.Time) (bool, error) {
+	v, err := r.view(n)
+	if err != nil {
+		return false, err
+	}
+	ours, closedByUs := false, false
+	closeNote := r.marker + "\n\n" + supersededNote
+	hasMarker := containsFold(v.Body, markerNeedle)
+	hasFile := containsFold(v.Body, file)
+	prior := stamp(v.CreatedAt)
+	for _, c := range v.Comments {
+		if firstLine(c.Body) == r.marker {
+			ours = true
+			closedByUs = closedByUs || strings.HasPrefix(c.Body, closeNote)
+			continue
+		}
+		hasMarker = hasMarker || containsFold(c.Body, markerNeedle)
+		hasFile = hasFile || containsFold(c.Body, file)
+		if t := stamp(c.CreatedAt); t.After(prior) {
+			prior = t
+		}
+	}
+	if t := stamp(v.ClosedAt); !closedByUs && t.After(prior) {
+		prior = t
+	}
+	switch {
+	case !ours:
+		return true, nil
+	case !hasMarker || !hasFile:
+		return false, nil
+	case n == r.origin && v.StateReason == reopenedReason:
+		return true, nil
+	}
+	return prior.IsZero() || !prior.Before(since), nil
+}
+
+// stamp reads one of gh's RFC 3339 timestamps; the zero time means unreadable.
+func stamp(s string) time.Time {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+func containsFold(s, sub string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
+}
+
 // resolve picks every entry's action. The threshold counts are one snapshot
 // per file, taken before any write, so an entry's own write cannot push a
-// sibling over mid-apply. The batch's own filed issues are not prior hits;
-// comment targets are, so a re-run after a partial apply counts the same
-// prior hits as the first run.
+// sibling over mid-apply. Neither an issue the batch filed nor one the search
+// only returns because of the marker comment the batch posted there is a prior
+// hit; a comment target that was already a hit is, so a re-run after a partial
+// apply counts the same prior hits as the first run.
 func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, error) {
 	steps := make([]*step, len(entries))
 	for i, e := range entries {
@@ -342,7 +441,8 @@ func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, err
 			own = append(own, s.done)
 		}
 	}
-	since := now.UTC().AddDate(0, 0, -thresholdDays).Format("2006-01-02")
+	written := r.written(steps)
+	since := now.UTC().AddDate(0, 0, -thresholdDays).Truncate(24 * time.Hour)
 	touched := map[string][]int{}
 	for _, s := range steps {
 		f := s.e.File
@@ -355,15 +455,25 @@ func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, err
 		var hits []struct {
 			Number int `json:"number"`
 		}
-		search := fmt.Sprintf(`"Follow-up of #" in:body,comments %q updated:>=%s`, f, since)
+		search := fmt.Sprintf("%q in:body,comments %q updated:>=%s", markerNeedle, f, since.Format("2006-01-02"))
 		if err := r.read(&hits, "issue", "list", "--state", "all", "--limit", "200", "--search", search, "--json", "number"); err != nil {
 			return nil, nil, err
 		}
 		var nums []int
 		for _, h := range hits {
-			if !slices.Contains(nums, h.Number) && !slices.Contains(own, h.Number) {
-				nums = append(nums, h.Number)
+			if slices.Contains(nums, h.Number) || slices.Contains(own, h.Number) {
+				continue
 			}
+			if slices.Contains(written, h.Number) {
+				prior, err := r.hitBeforeBatch(h.Number, f, since)
+				if err != nil {
+					return nil, nil, err
+				}
+				if !prior {
+					continue
+				}
+			}
+			nums = append(nums, h.Number)
 		}
 		slices.Sort(nums)
 		touched[f] = nums
@@ -610,7 +720,7 @@ func (r *run) supersede(n, by int) (bool, error) {
 	if v.State == "CLOSED" {
 		return false, nil
 	}
-	comment := fmt.Sprintf("%s\n\nSuperseded by #%d.", r.marker, by)
+	comment := fmt.Sprintf("%s\n\n%s%d.", r.marker, supersededNote, by)
 	if _, err := r.gh.Run(r.ctx, "issue", "close", strconv.Itoa(n), "--comment", comment); err != nil {
 		return false, fmt.Errorf("gh issue close #%d failed: %v", n, err)
 	}
