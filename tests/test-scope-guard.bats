@@ -196,12 +196,17 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
   done
 }
 
-# Skipping a wrapper's option value may only ever swallow a value: an option
-# that takes none, a long option, and a command boundary all stay out of it.
-@test "test-scope-guard: an option that takes no value never swallows the run" {
+# Fence for the other direction: skipping an option's value may only ever
+# swallow a value, never the runner. An option that takes none, one that already
+# carries its value (`xargs -d'\n'`, `env -uC`), a long option, and a command
+# boundary all stay out of it.
+@test "test-scope-guard: a wrapper option never swallows the run" {
   for cmd in 'xargs -n3 bats tests/' 'env -uFOO bats tests/' 'env -v bats tests/' \
     'xargs -o bats tests/' 'env -0 bats tests/' 'env -* bats tests/' \
-    'env --null bats tests/' 'xargs --show-limits bats tests/' 'env -u ; bats tests/'; do
+    'env --null bats tests/' 'xargs --show-limits bats tests/' 'env -u ; bats tests/' \
+    "xargs -d'\\n' bats tests/" 'xargs -d\n bats tests/' 'xargs -dn bats tests/' \
+    'xargs -Is bats tests/' 'env -uC bats tests/' 'env -uS bats tests/' \
+    'env -iuC bats tests/' 'env -u C bats tests/' 'timeout -sKILL 300 bats tests/'; do
     run run_guard <<<"$(pi_bash "$cmd")"
     assert_block "$WHY"
   done

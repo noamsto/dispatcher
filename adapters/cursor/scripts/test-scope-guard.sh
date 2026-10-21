@@ -255,14 +255,22 @@ while IFS= read -r w; do
     # An option belongs to the wrapper seen so far, not to the command slot, so
     # `xargs -n3 bats` and `env -i bats tests/` name the run they are. A short
     # option whose last letter takes a value also takes the next word, so
-    # `env -u FOO bats tests/` and `nice -n 5 bats tests/` name it too; `-n3`
-    # carries its value inline and takes nothing. The probe reads the last letter
-    # literally: quoted, so `env -* bats tests/` matches no table row.
+    # `env -u FOO bats tests/` and `nice -n 5 bats tests/` name it too.
     if [[ -n $wrapper && $w == -* ]]; then
       if [[ $w != --* ]]; then
-        case $wrapper_value_table in
-        *" ${wrapper}:${w: -1} "*) wrapper_val=1 ;;
-        esac
+        # Walk the cluster left to right, as getopt reads it: a value-taking
+        # letter consumes the NEXT word only when it is the word's last letter.
+        # Anything after it is the value itself, so `xargs -d'\n'`, `env -uC`
+        # and `-n3` carry theirs inline. The probe reads the letter literally:
+        # quoted, so `env -* bats tests/` matches no table row.
+        for ((ci = 1; ci < ${#w}; ci++)); do
+          case $wrapper_value_table in
+          *" ${wrapper}:${w:ci:1} "*)
+            if ((ci == ${#w} - 1)); then wrapper_val=1; fi
+            break
+            ;;
+          esac
+        done
       fi
       continue
     fi
