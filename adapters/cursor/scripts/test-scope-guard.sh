@@ -190,15 +190,13 @@ bats_value_flags=' --code-quote-style --line-reference-format -f --filter --filt
 
 # Each entry is `<wrapper>:<option>` for a wrapper option whose value is the
 # NEXT word (`env -u FOO`, `xargs -n 3`), so the word after it is never the
-# command. Short options are one letter, long options are spelled without `--`
-# and match only the whole word, which is how `--opt=value` is left alone: it
-# carries its value already. Two kinds of option stay out of both tables, and
-# both would swallow the command: one whose argument is optional (`xargs -e`,
-# `-i`, `--replace`, printed `--opt[=ARG]` in --help), which the wrapper may not
-# ask for at all; and one whose value is not a value. env's `-S`/`--split-string`
-# is the second kind — it splits its argument into the start of the command
-# line, so the word after `-S` IS the runner and `env -S bats tests/` runs the
-# suite — which is why it is absent even though `--help` shows `-S=S`.
+# command. Short options are one letter; long options are spelled without `--`
+# and match the whole word, which is how `--opt=value` is left to carry its own
+# value. Two kinds of option stay out of both tables because both would swallow
+# the command: one whose argument is optional (`xargs -e`, `-i`, `--replace`,
+# shown `--opt[=ARG]` in --help), and one whose value is not a value — env's
+# `-S`/`--split-string` splits its argument into the start of the command line,
+# so `env -S bats tests/` runs bats and the word after `-S` must stay visible.
 wrapper_value_table=' env:a env:C env:u nice:n stdbuf:e stdbuf:i stdbuf:o \
   time:f time:o timeout:k timeout:s xargs:a xargs:d xargs:E xargs:I xargs:L \
   xargs:n xargs:P xargs:s '
@@ -209,10 +207,10 @@ wrapper_value_longs=' env:argv0 env:chdir env:unset nice:adjustment \
   xargs:max-args xargs:max-chars xargs:max-procs xargs:process-slot-var '
 
 # Letters whose argument is optional: getopt gives them the rest of the word, so
-# nothing after one is another option and no word is ever owed (`xargs -ln bats
-# tests/` runs xargs with `-l` and `-n` is its value). `xargs --max-lines` is
-# absent from the long table for the same reason, whatever --help shows: it is
-# the long form of `-l`, and running it alone takes no argument.
+# nothing after one is another option and no word is owed (`xargs -ln bats
+# tests/`). `xargs --max-lines` is out of the long table for the same reason even
+# though --help prints `--max-lines=N`: it is `-l`'s long form, and alone it
+# takes nothing.
 wrapper_stop_opts=' xargs:e xargs:i xargs:l '
 
 verdict=''
