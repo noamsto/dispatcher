@@ -23,8 +23,8 @@
 #
 # A speed bump over the command string, not a sandbox: an operand assembled
 # from a variable (`bats $f`) is not classified, nor is a bats run buried in
-# another program's argument, nor one behind a long option that takes its value
-# as a separate word (`timeout --signal KILL 300 bats tests/`).
+# another program's argument, nor one behind a long option that waits for a
+# separate value word (`timeout --signal KILL 300 bats tests/`).
 #
 # Portable to macOS's bash 3.2 and BSD userland: no mapfile, no ${var,,}.
 
@@ -259,10 +259,9 @@ while IFS= read -r w; do
     if [[ -n $wrapper && $w == -* ]]; then
       if [[ $w != --* ]]; then
         # Walk the cluster left to right, as getopt reads it: a value-taking
-        # letter consumes the NEXT word only when it is the word's last letter.
-        # Anything after it is the value itself, so `xargs -d'\n'`, `env -uC`
-        # and `-n3` carry theirs inline. The probe reads the letter literally:
-        # quoted, so `env -* bats tests/` matches no table row.
+        # letter consumes the NEXT word only when it is the word's last letter,
+        # so `xargs -d'\n'`, `env -uC` and `-n3` carry theirs inline. Quoted, the
+        # probe reads a `*`, `?` or `[` literally and matches no table row.
         for ((ci = 1; ci < ${#w}; ci++)); do
           case $wrapper_value_table in
           *" ${wrapper}:${w:ci:1} "*)
