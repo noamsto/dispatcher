@@ -359,22 +359,19 @@ func (r *run) written(steps []*step) []int {
 
 // hitBeforeBatch is whether issue n matched the threshold search before this
 // batch wrote anything: both of the search's clauses — the marker term and the
-// file term, each anywhere in the body or the comments — hold with the comments
-// this batch posted dropped, and the issue was inside the window without them.
-// A hit that only matches, or only looks recent, because of this run's own
-// comment is not a prior hit.
+// file term, each anywhere in the body or the comments — hold without the
+// comments this batch posted, and the issue was inside the window without them.
 //
 // The clauses are a local stand-in for GitHub search, which is case-insensitive
-// and tokenised: this errs toward counting an issue GitHub would not have
-// matched, and only ever drops one this batch demonstrably commented on.
-// Recency reads the timestamps that predate this batch — the issue's creation
-// and any close that was not this batch's supersede close — because a comment or
-// a state change bumps the issue's own updatedAt, which therefore says nothing
-// about the state before the write. Recency is unknowable, so the hit is kept,
-// when nothing is dated or when the issue stands reopened: reopening clears
-// closedAt and the close that put the issue in the window is then invisible. The
-// residual is a window entered by a label, milestone or assignee edit alone,
-// which reads as older than it was and drops the hit rather than inventing one.
+// and tokenised, so a disagreement counts an issue GitHub would not have
+// matched. Recency reads only the timestamps that predate this batch — the
+// issue's creation, and any close that was not this batch's supersede close —
+// because a comment or a state change bumps the issue's own updatedAt, which
+// then says nothing about the state before the write. When nothing is dated, or
+// the issue stands reopened (reopening clears closedAt), recency is unknowable
+// and the hit is kept. A window entered by a label, milestone or assignee edit
+// alone is the one update that reads as older than it was, dropping a hit rather
+// than inventing one.
 func (r *run) hitBeforeBatch(n int, file string, since time.Time) (bool, error) {
 	v, err := r.view(n)
 	if err != nil {
