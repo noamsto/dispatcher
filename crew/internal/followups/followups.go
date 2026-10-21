@@ -33,6 +33,11 @@ const (
 	thresholdDays  = 30
 	// markerNeedle is the threshold search's term for a batch marker comment.
 	markerNeedle = "Follow-up of #"
+	// supersededNote is in the one comment this batch closes an issue with, so
+	// it marks a close that was this batch's doing.
+	supersededNote = "Superseded by #"
+	// reopenedReason is GitHub's stateReason once anything has reopened an issue.
+	reopenedReason = "REOPENED"
 )
 
 // Request is the parsed command line.
@@ -69,11 +74,13 @@ type issue struct {
 }
 
 type issueView struct {
-	State     string `json:"state"`
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	CreatedAt string `json:"createdAt"`
-	Comments  []struct {
+	State       string `json:"state"`
+	StateReason string `json:"stateReason"`
+	Title       string `json:"title"`
+	Body        string `json:"body"`
+	CreatedAt   string `json:"createdAt"`
+	ClosedAt    string `json:"closedAt"`
+	Comments    []struct {
 		Body      string `json:"body"`
 		CreatedAt string `json:"createdAt"`
 	} `json:"comments"`
@@ -256,7 +263,7 @@ func (r *run) view(n int) (*issueView, error) {
 		return v, nil
 	}
 	v := &issueView{}
-	if err := r.read(v, "issue", "view", strconv.Itoa(n), "--json", "state,title,comments,body,createdAt"); err != nil {
+	if err := r.read(v, "issue", "view", strconv.Itoa(n), "--json", "state,stateReason,title,comments,body,createdAt,closedAt"); err != nil {
 		return nil, err
 	}
 	r.views[n] = v
@@ -359,41 +366,57 @@ func (r *run) written(steps []*step) []int {
 //
 // The clauses are a local stand-in for GitHub search, which is case-insensitive
 // and tokenised: this errs toward counting an issue GitHub would not have
-// matched, and only ever drops one this batch demonstrably commented on. A
-// comment bumps the issue's updated, so recency comes from the timestamps that
-// predate this batch (its creation and any other batch's comments); an update
-// that was neither — a label or state change — reads as older than it was.
-// Unreadable timestamps keep the count as it was.
+// matched, and only ever drops one this batch demonstrably commented on.
+// Recency reads the timestamps that predate this batch — the issue's creation
+// and any close that was not this batch's supersede close — because a comment or
+// a state change bumps the issue's own updatedAt, which therefore says nothing
+// about the state before the write. Recency is unknowable, so the hit is kept,
+// when nothing is dated or when the issue stands reopened: reopening clears
+// closedAt and the close that put the issue in the window is then invisible. The
+// residual is a window entered by a label, milestone or assignee edit alone,
+// which reads as older than it was and drops the hit rather than inventing one.
 func (r *run) hitBeforeBatch(n int, file string, since time.Time) (bool, error) {
 	v, err := r.view(n)
 	if err != nil {
 		return false, err
 	}
-	ours := false
+	ours, closedByUs := false, false
 	hasMarker := containsFold(v.Body, markerNeedle)
 	hasFile := containsFold(v.Body, file)
-	prior := time.Time{}
-	if t, err := time.Parse(time.RFC3339, v.CreatedAt); err == nil {
-		prior = t
-	}
+	prior := stamp(v.CreatedAt)
 	for _, c := range v.Comments {
 		if firstLine(c.Body) == r.marker {
 			ours = true
+			closedByUs = closedByUs || strings.Contains(c.Body, supersededNote)
 			continue
 		}
 		hasMarker = hasMarker || containsFold(c.Body, markerNeedle)
 		hasFile = hasFile || containsFold(c.Body, file)
-		if t, err := time.Parse(time.RFC3339, c.CreatedAt); err == nil && t.After(prior) {
+		if t := stamp(c.CreatedAt); t.After(prior) {
 			prior = t
 		}
+	}
+	if t := stamp(v.ClosedAt); !closedByUs && t.After(prior) {
+		prior = t
 	}
 	switch {
 	case !ours:
 		return true, nil
 	case !hasMarker || !hasFile:
 		return false, nil
+	case v.StateReason == reopenedReason:
+		return true, nil
 	}
 	return prior.IsZero() || !prior.Before(since), nil
+}
+
+// stamp reads one of gh's RFC 3339 timestamps; the zero time means unreadable.
+func stamp(s string) time.Time {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 func containsFold(s, sub string) bool {
@@ -699,7 +722,7 @@ func (r *run) supersede(n, by int) (bool, error) {
 	if v.State == "CLOSED" {
 		return false, nil
 	}
-	comment := fmt.Sprintf("%s\n\nSuperseded by #%d.", r.marker, by)
+	comment := fmt.Sprintf("%s\n\n%s%d.", r.marker, supersededNote, by)
 	if _, err := r.gh.Run(r.ctx, "issue", "close", strconv.Itoa(n), "--comment", comment); err != nil {
 		return false, fmt.Errorf("gh issue close #%d failed: %v", n, err)
 	}
