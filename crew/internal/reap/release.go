@@ -125,8 +125,8 @@ func humanPresent(ctx context.Context, p Probes, windows []string, wtp string, t
 	return "", false
 }
 
-// windowsInUse is humanPresent's tmux half, split out for the orphan pass,
-// which has no worktree to look a transcript up with.
+// windowsInUse is humanPresent's tmux half: why, and true, when one of windows
+// is the active window of an attached tmux client or saw output within the grace.
 func windowsInUse(ctx context.Context, p Probes, windows []string, grace int64) (string, bool) {
 	now := p.Clock.Now().Unix()
 	rows := p.tmuxOut(ctx, "list-windows", "-a", "-F", "#{window_id}\t#{window_active}\t#{session_attached}\t#{window_activity}")

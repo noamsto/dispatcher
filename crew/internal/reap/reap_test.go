@@ -393,8 +393,6 @@ func (f *fx) wantKept() {
 	}
 }
 
-// The keep note an orphan window gets when nothing closes it, and the PR its
-// branch has on GitHub.
 const (
 	orphanNote = "crew reap: window @9 is stamped feat/gone but its worktree is gone — not killed"
 	orphanURL  = "https://github.com/o/r/pull/12"

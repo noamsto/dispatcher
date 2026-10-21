@@ -275,11 +275,9 @@ func (r *run) idleRelease(ctx context.Context) int {
 }
 
 // orphans reports windows stamped for this bus whose worktree is gone. Once the
-// branch's PR has landed the window is closed too: `gh pr merge
-// --delete-branch` removes the worktree itself, and both kill paths key on the
-// worktree, so nothing else reaches such a window. A window with no PR, an open
-// PR, an unreadable PR state, one a person is using, or this reap's own window
-// keeps the list-only note.
+// branch's PR has landed the window is closed too: `gh pr merge --delete-branch`
+// removes the worktree itself, and both of reap's kill paths key on the
+// worktree, so nothing else would ever reach such a window.
 func (r *run) orphans(ctx context.Context) int {
 	self := r.selfWindow(ctx)
 	rows := r.p.tmuxOut(ctx, "list-windows", "-a", "-F", "#{window_id}\t#{@crew_branch}\t#{@crew_dir}")
@@ -297,10 +295,9 @@ func (r *run) orphans(ctx context.Context) int {
 			continue
 		}
 		num, state := r.orphanPR(ctx, branch)
-		keep := state == "" || wid == self
-		if !keep {
-			keep = r.orphanInUse(ctx, wid)
-		}
+		// orphanInUse sleeps a release gap per window, so it runs only once the
+		// cheap checks say the window is a candidate.
+		keep := state == "" || wid == self || r.orphanInUse(ctx, wid)
 		if keep {
 			r.note("window " + wid + " is stamped " + branch + " but its worktree is gone — not killed")
 			continue
@@ -316,9 +313,8 @@ func (r *run) orphans(ctx context.Context) int {
 	return 0
 }
 
-// selfWindow is the window this reap is running in, or "" outside tmux. It is
-// never killed: Occupants excludes it for the same reason — the fold would die
-// with it.
+// selfWindow is the window this reap is running in, or "" outside tmux. Killing
+// it would take the fold down with it, so it is never a target.
 func (r *run) selfWindow(ctx context.Context) string {
 	pane := os.Getenv("TMUX_PANE")
 	if pane == "" {
@@ -330,12 +326,10 @@ func (r *run) selfWindow(ctx context.Context) string {
 // orphanPR is the orphan pass's PR check: the branch's own PR, found the way
 // reclaim finds it (`findPR`, gh's `pr list --head`) and read the way `prGate`
 // reads it. Anything but MERGED or CLOSED comes back stateless, so the caller
-// keeps the window. There is no head-ancestor check: `prGate` needs one because
-// a PR vouches for a worktree, and here the PR is looked up under the branch
-// stamped on the window and only a window is destroyed. `findPR` takes gh's
-// first non-fork row, so a branch name reused for new work whose only PR is an
-// old merged one closes its window — the worktree is already gone and the branch
-// itself is left alone.
+// keeps the window. Unlike `prGate` it checks no head oid: that one guards a
+// worktree, and here only a window is destroyed. `findPR` takes gh's first
+// non-fork row, so a branch name reused for new work whose only PR is an old
+// merged one reads as landed.
 func (r *run) orphanPR(ctx context.Context, branch string) (num, state string) {
 	c := &candidate{latestRow: latestRow{branch: branch}, pr: "-"}
 	if !r.findPR(ctx, c) || !prURLInRepo(c.pr, r.repo) {
@@ -353,9 +347,9 @@ func (r *run) orphanPR(ctx context.Context, branch string) (num, state string) {
 
 // orphanInUse reports whether a person is evidently using a window that has no
 // worktree: the active window of an attached client, output within the grace, or
-// an engine pane that is not provably idle — the guards release applies, minus
-// its transcript check, which is keyed on the worktree path that is gone here.
-// The caller's note stays the generic one, so the why is not reported.
+// an engine pane that is not provably idle. `humanPresent`'s transcript check is
+// the one release guard missing: it is keyed on the worktree path, which is gone
+// here.
 func (r *run) orphanInUse(ctx context.Context, wid string) bool {
 	if _, ok := windowsInUse(ctx, r.p, []string{wid}, r.grace()); ok {
 		return true

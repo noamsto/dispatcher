@@ -55,10 +55,8 @@ func Occupants(ctx context.Context, p Probes, wtp, tmuxPane string) []Occupant {
 	return out
 }
 
-// windowOccupant is one window's engine panes out of a `list-panes -a` row
-// blob, keyed on the window id: a caller that has the id but not a worktree
-// path — reap's orphan pass — collects the same panes Occupants collects by
-// path.
+// windowOccupant is one window's engine panes out of a `list-panes -a` row blob,
+// keyed on the window id rather than on a worktree path.
 func windowOccupant(panes, wid, name string) Occupant {
 	o := Occupant{Window: wid, Name: name}
 	for prow := range strings.SplitSeq(panes, "\n") {
