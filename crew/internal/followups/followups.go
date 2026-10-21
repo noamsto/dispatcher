@@ -368,23 +368,24 @@ func (r *run) written(steps []*step) []int {
 // issue's creation, and any close that was not this batch's supersede close —
 // because a comment or a state change bumps the issue's own updatedAt, which
 // then says nothing about the state before the write. When nothing is dated, or
-// the issue stands reopened (reopening clears closedAt), recency is unknowable
-// and the hit is kept. A window entered by a label, milestone or assignee edit
-// alone is the one update that reads as older than it was, dropping a hit rather
-// than inventing one.
+// this batch's own origin stands reopened (reopening clears closedAt), recency is
+// unknowable and the hit is kept. A window entered by a label, milestone or
+// assignee edit alone is the one update that reads as older than it was, dropping
+// a hit rather than inventing one.
 func (r *run) hitBeforeBatch(n int, file string, since time.Time) (bool, error) {
 	v, err := r.view(n)
 	if err != nil {
 		return false, err
 	}
 	ours, closedByUs := false, false
+	closeNote := r.marker + "\n\n" + supersededNote
 	hasMarker := containsFold(v.Body, markerNeedle)
 	hasFile := containsFold(v.Body, file)
 	prior := stamp(v.CreatedAt)
 	for _, c := range v.Comments {
 		if firstLine(c.Body) == r.marker {
 			ours = true
-			closedByUs = closedByUs || strings.Contains(c.Body, supersededNote)
+			closedByUs = closedByUs || strings.HasPrefix(c.Body, closeNote)
 			continue
 		}
 		hasMarker = hasMarker || containsFold(c.Body, markerNeedle)
@@ -401,7 +402,7 @@ func (r *run) hitBeforeBatch(n int, file string, since time.Time) (bool, error) 
 		return true, nil
 	case !hasMarker || !hasFile:
 		return false, nil
-	case v.StateReason == reopenedReason:
+	case n == r.origin && v.StateReason == reopenedReason:
 		return true, nil
 	}
 	return prior.IsZero() || !prior.Before(since), nil

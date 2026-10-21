@@ -508,6 +508,39 @@ func TestThresholdRerunIgnoresOwnSupersedeBump(t *testing.T) {
 	}
 }
 
+func TestThresholdRerunKeepsClosedTargetWithSupersedeText(t *testing.T) {
+	// Only this batch's own close comment marks a close as ours: an entry body
+	// that happens to read like one leaves a real earlier close in place.
+	body := "Follow-up of #2 (PR #4)\n\nthe guard in " + fileA
+	view := fmt.Sprintf(`{"state":"CLOSED","stateReason":"COMPLETED","title":"x","body":%q,"createdAt":"2026-01-01T00:00:00Z","closedAt":"2026-10-10T00:00:00Z","comments":[{"body":%q,"createdAt":"2026-10-20T12:00:00Z"}]}`,
+		body, marker+"\n\nd1\n\nthe guard was Superseded by #9 in the log")
+	entries := `[{"title":"d1","body":"the guard was Superseded by #9 in the log","dup_of":3},{"title":"t2","body":"b2","file":"` + fileA + `"}]`
+	w := &world{views: map[int]string{3: view}, hits: map[string]string{fileA: `[{"number":1},{"number":2},{"number":3}]`}}
+	r := run(t, w, entries, true)
+	if len(r.writes) == 0 || !strings.HasPrefix(r.writes[0], "issue create --title redesign: "+fileA) {
+		t.Errorf("writes %q", r.writes)
+	}
+}
+
+func TestThresholdRerunIgnoresOtherReopenTarget(t *testing.T) {
+	// Only this batch's own reopen clears a close timestamp it cannot read back,
+	// so a target someone else reopened long ago is not kept on that ground.
+	body := "Follow-up of #2 (PR #4)\n\nthe guard in " + fileA
+	view := fmt.Sprintf(`{"state":"OPEN","stateReason":"REOPENED","title":"x","body":%q,"createdAt":"2026-01-01T00:00:00Z","closedAt":null,"comments":[{"body":%q,"createdAt":"2026-10-20T12:00:00Z"}]}`,
+		body, marker+"\n\nd1\n\nb1")
+	entries := `[{"title":"d1","body":"b1","dup_of":3},{"title":"t2","body":"b2","file":"` + fileA + `"}]`
+	w := &world{views: map[int]string{3: view}, hits: map[string]string{fileA: `[{"number":1},{"number":2},{"number":3}]`}}
+	r := run(t, w, entries, true)
+	if len(r.writes) == 0 || !strings.HasPrefix(r.writes[0], "issue create --title t2 ") {
+		t.Errorf("writes %q", r.writes)
+	}
+	for _, c := range r.writes {
+		if strings.Contains(c, "redesign") {
+			t.Errorf("redesign filed from a reopened target: %q", c)
+		}
+	}
+}
+
 func TestThresholdRerunKeepsUnreadableOrSameDayHit(t *testing.T) {
 	// The window is day-granular and an undated hit is kept: since is
 	// 2026-09-20T00:00Z for the test clock, so a prior hit earlier in that day
