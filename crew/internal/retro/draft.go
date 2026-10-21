@@ -180,10 +180,37 @@ func dispatched(events []bus.Event, crew string) []worker {
 
 // outcomeOf is the branch's own newest status, skipping the rows `crew reap` and
 // the watchdog post: they rewrite a state the worker never chose. `PR #N` rides
-// that same row's pr_url.
+// that same row's pr_url, and when the newest row carries none — a worker that
+// posts pr_open and then a bare done — it rides that same session's latest
+// pr_open row. A session id is worker id equality, so a resume never inherits
+// the PR its predecessor opened.
 func outcomeOf(events []bus.Event, branch string) string {
 	newest, found := math.Inf(-1), false
-	state, pr := missing, ""
+	state, pr, ses := missing, "", ""
+	// prOfSession is each session's latest pr_open row's PR; prTS is the ts
+	// those latests were read at.
+	prOfSession := map[string]string{}
+	prTS := map[string]float64{}
+	for _, ev := range events {
+		if ev.Kind != bus.KindStatus || workerBranch(ev.From) != branch {
+			continue
+		}
+		body := objOf(ev)
+		if s, _ := body["state"].(string); s != "pr_open" {
+			continue
+		}
+		if s, _ := body["source"].(string); s == "watchdog" {
+			continue
+		}
+		p := prOf(body)
+		if p == "" {
+			continue
+		}
+		s := sessionOf(ev.From)
+		if ts := tsOf(ev); ts >= prTS[s] {
+			prTS[s], prOfSession[s] = ts, p
+		}
+	}
 	for _, ev := range events {
 		if ev.Kind != bus.KindStatus || workerBranch(ev.From) != branch {
 			continue
@@ -202,14 +229,28 @@ func outcomeOf(events []bus.Event, branch string) string {
 		newest, found = ts, true
 		state = field(body, "state")
 		pr = prOf(body)
+		ses = sessionOf(ev.From)
 	}
 	if !found {
 		return missing
 	}
 	if pr == "" {
+		pr = prOfSession[ses]
+	}
+	if pr == "" {
 		return state
 	}
 	return state + " " + pr
+}
+
+// sessionOf is the session id of a worker id — `worker:<branch>#<session>` —
+// which a resume mints fresh. An id with no session suffix reads as the empty
+// session.
+func sessionOf(from string) string {
+	if i := strings.LastIndex(from, "#"); i >= 0 {
+		return from[i+1:]
+	}
+	return ""
 }
 
 // workerTags are the distinct tags the branch's own retro notes carried, plus the

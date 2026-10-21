@@ -924,6 +924,31 @@ func TestRetroDraftCodenameCarriesRostersCollisionSuffix(t *testing.T) {
 	})
 }
 
+func TestRetroDraftKeepsThePRWhenDoneFollowsPrOpen(t *testing.T) {
+	h, s := newRetroSeed(t)
+	draftDispatch(s, "feat/1186-scope-guard", 1000, "onyx", "standard", "claude", "sonnet")
+	s.statusBody(wid("feat/1186-scope-guard", "s1"), 1100, map[string]any{
+		"state": "pr_open", "pr_url": "https://github.com/noamsto/dispatcher/pull/1205"})
+	s.status(wid("feat/1186-scope-guard", "s1"), 1200, "done")
+
+	wantDetail(t, draftParts(t, h, "--crew", "c1"), []string{
+		"onyx {standard,claude,sonnet} done PR #1205",
+	})
+}
+
+func TestRetroDraftNeverBorrowsAnotherSessionsPR(t *testing.T) {
+	h, s := newRetroSeed(t)
+	draftDispatch(s, "feat/1197-retro-pr", 1000, "nova", "trivial", "pi", "lemonade/qwen")
+	// A resume mints a new session id, and its PR stays the earlier session's.
+	s.statusBody(wid("feat/1197-retro-pr", "s1"), 1100, map[string]any{
+		"state": "pr_open", "pr_url": "https://github.com/noamsto/dispatcher/pull/1205"})
+	s.status(wid("feat/1197-retro-pr", "s2"), 1200, "done")
+
+	wantDetail(t, draftParts(t, h, "--crew", "c1"), []string{
+		"nova {trivial,pi,lemonade/qwen} done",
+	})
+}
+
 func TestRetroDraftNothingInScopePrintsNothing(t *testing.T) {
 	h, s := newRetroSeed(t)
 	// Another crew's branch, and this crew's branch already written up.
