@@ -6331,6 +6331,11 @@ if [ "$plan_val" = provided ]; then
   if [ "$tier" != trivial ] && [ "$kind" != review ]; then
     plan_note="$plan_note Only planning is skipped: the fast deterministic gate and the code review gate still run before you push."
   fi
+elif [ "$tier" != trivial ] && [ "$kind" != review ] && [ "$switch_mode" != resume ]; then
+  # The plan seam is no longer only a pr_open requirement: `crew msg` refuses a
+  # branch's review seam while it has no plan seam, so a worker that skipped the
+  # plan phase now meets it at the review gate instead of after pushing.
+  plan_note=" The plan phase comes before any implementation: run the plan critic, then post the plan seam — until you do, the review seam is refused."
 fi
 
 # Same carrier, for a worker landing in a tree that already holds its spec, plan

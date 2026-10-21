@@ -1,6 +1,7 @@
 package status
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -150,4 +151,114 @@ func TestMsgStampedLeadPanePostsOnlyAsLead(t *testing.T) {
 		t.Fatalf("%d %q", code, stderr)
 	}
 	f.wantRow(msgWant(worker, "dispatcher:c1", "hi"))
+}
+
+// noPlanMsg is the review-seam refusal `crew msg` posts under `plan: required`
+// when the branch has no plan seam: the same hint the pr_open/done gate gives.
+const noPlanMsg = "crew: msg: refusing the review seam for standard session " + worker +
+	` — plan: required but no plan seam on the bus for this branch; run the plan critic (spec-plan-critic, or the plan-critic role pane), ingest its first verdict, then crew msg "$CREW_WORKER_ID" "review:c1" '{"seam":"plan","plan_critic_first_pass":"accept"}' (or revise/reject: the critic's first verdict) and retry. A plan phase you skipped or could not run is reported, not papered over: post crew status blocked naming why and await the dispatcher (it can re-dispatch with plan: provided); never post the seam without a critic verdict` + "\n"
+
+func TestMsgReviewSeamPlanGate(t *testing.T) {
+	const review = `{"seam":"review","review_mode":"full"}`
+	const deslop = `{"seam":"deslop"}`
+	const plan = `{"seam":"plan","plan_critic_first_pass":"accept"}`
+	planRow := msgRow(worker, "review:c1", plan)
+
+	cases := []struct {
+		name, doc, to, body string
+		rows                []string
+		code                int
+	}{
+		// AC1: plan: required with no plan seam refuses the review seam.
+		{"required: no seam", planDoc, "review:c1", review, nil, 1},
+		{"required: rows, none a plan seam", planDoc, "review:c1", review,
+			[]string{msgRow(worker, "review:c1", deslop), statusRow(worker, `{"state":"working"}`)}, 1},
+		{"required: plan seam for another branch", planDoc, "review:c1", review,
+			[]string{msgRow("worker:feat/y#s1-1", "review:c1", plan)}, 1},
+		{"required: plan seam for another crew", planDoc, "review:c1", review,
+			[]string{otherCrewMsg(worker, "review:c2", plan)}, 1},
+		{"required: plan seam before the latest dispatch", planDoc, "review:c1", review,
+			[]string{planRow, dispatchRow}, 1},
+		{"required: seam-shaped body that is not a plan seam", planDoc, "review:c1", review,
+			[]string{msgRow(worker, "review:c1", `{"seam":"plan"}`)}, 1},
+		{"required: tagged plan seam", planDoc, "review:c1", review,
+			[]string{msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"accept","tag":"note"}`)}, 1},
+		{"required: plan seam to dispatcher", planDoc, "review:c1", review,
+			[]string{msgRow(worker, "dispatcher:c1", plan)}, 1},
+
+		// AC2: a plan seam on an earlier session of the branch counts.
+		{"required: plan seam this session", planDoc, "review:c1", review, []string{planRow}, 0},
+		{"required: plan seam earlier session", planDoc, "review:c1", review,
+			[]string{msgRow("worker:feat/x#s0-9", "review:c1", plan)}, 0},
+		{"required: plan seam after this dispatch", planDoc, "review:c1", review,
+			[]string{dispatchRow, planRow}, 0},
+		{"required: resume of the branch", planDoc, "review:c1", review,
+			[]string{dispatchRow, resumeRow}, 0},
+		{"required: resume true in the doc", planDoc + "resume: true\n", "review:c1", review, nil, 0},
+
+		// AC3: everything else posts as before.
+		{"provided", standardDoc + "plan: provided\n", "review:c1", review, nil, 0},
+		{"plan absent", standardDoc, "review:c1", review, nil, 0},
+		{"required: deslop seam unaffected", planDoc, "review:c1", deslop, nil, 0},
+		{"required: plan seam unaffected", planDoc, "review:c1", plan, nil, 0},
+		{"required: plain msg unaffected", planDoc, "dispatcher:c1", "plan critic said accept", nil, 0},
+		{"required: body not JSON unaffected", planDoc, "review:c1", "review done", nil, 0},
+		{"required: body is an array unaffected", planDoc, "review:c1", `[1,2]`, nil, 0},
+		{"required: another seam unaffected", planDoc, "review:c1", `{"seam":"other"}`, nil, 0},
+		{"required: review seam to another recipient unaffected", planDoc, "review:c2", review, nil, 0},
+		{"required: trivial tier exempt", "tier: trivial\nkind: implement\nengine: claude\nplan: required\n", "review:c1", review, nil, 0},
+		{"required: review kind exempt", "tier: standard\nkind: review\nengine: claude\nplan: required\n", "review:c1", review, nil, 0},
+		{"required: no task doc", "", "review:c1", review, nil, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			if tc.doc != "" {
+				f.doc(tc.doc)
+			}
+			f.log(tc.rows...)
+			before := len(f.lines())
+
+			code, stderr := f.msg(worker, tc.to, tc.body)
+			want := ""
+			if tc.code != 0 {
+				want = noPlanMsg
+			}
+			if code != tc.code || stderr != want {
+				t.Errorf("got %d %q\nwant %d %q", code, stderr, tc.code, want)
+			}
+			if tc.code == 0 {
+				if tc.doc == "" {
+					f.wantRow(msgWant(worker, tc.to, tc.body))
+					return
+				}
+				got := f.lines()
+				if len(got) != before+1 {
+					t.Errorf("row not appended: %d rows, want %d", len(got), before+1)
+				}
+				return
+			}
+			if got := f.lines(); len(got) != before {
+				t.Errorf("refused call appended a row: %q", got[before:])
+			}
+		})
+	}
+}
+
+// TestMsgReviewSeamUnreadableLogFailsClosed pins that a crew log the fold cannot
+// read refuses the review seam rather than waving it through.
+func TestMsgReviewSeamUnreadableLogFailsClosed(t *testing.T) {
+	skipIfRoot(t)
+	f := newFixture(t)
+	f.doc(planDoc)
+	f.log(msgRow(worker, "review:c1", `{"seam":"plan","plan_critic_first_pass":"accept"}`))
+	if err := os.Chmod(f.paths.Log, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(f.paths.Log, 0o644) })
+
+	code, stderr := f.msg(worker, "review:c1", `{"seam":"review"}`)
+	if code != 1 || !strings.HasPrefix(stderr, "crew: msg: refusing the review seam for standard session "+worker+" — could not read the crew log for the plan seam") {
+		t.Fatalf("got %d %q", code, stderr)
+	}
 }
