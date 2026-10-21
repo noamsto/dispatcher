@@ -23,7 +23,8 @@
 #
 # A speed bump over the command string, not a sandbox: an operand assembled
 # from a variable (`bats $f`) is not classified, nor is a bats run buried in
-# another program's argument.
+# another program's argument, nor one behind an option whose argument is
+# optional (`xargs --replace {} bats tests/`).
 #
 # Portable to macOS's bash 3.2 and BSD userland: no mapfile, no ${var,,}.
 
@@ -187,6 +188,31 @@ split_words() { # <command>
 # like `tests` or `failed` would otherwise read as one.
 bats_value_flags=' --code-quote-style --line-reference-format -f --filter --filter-status --filter-tags -F --formatter --gather-test-outputs-in -j --jobs --parallel-binary-name --report-formatter -o --output '
 
+# Each entry is `<wrapper>:<option>` for a wrapper option whose value is the
+# NEXT word (`env -u FOO`, `xargs -n 3`), so the word after it is never the
+# command. Short options are one letter; long options are spelled without `--`
+# and match the whole word, which is how `--opt=value` is left to carry its own
+# value. Two kinds of option stay out of both tables because both would swallow
+# the command: one whose argument is optional (`xargs -e`, `-i`, `--replace`,
+# shown `--opt[=ARG]` in --help), and one whose value is not a value — env's
+# `-S`/`--split-string` splits its argument into the start of the command line,
+# so `env -S bats tests/` runs bats and the word after `-S` must stay visible.
+wrapper_value_table=' env:a env:C env:u nice:n stdbuf:e stdbuf:i stdbuf:o \
+  time:f time:o timeout:k timeout:s xargs:a xargs:d xargs:E xargs:I xargs:L \
+  xargs:n xargs:P xargs:s '
+
+wrapper_value_longs=' env:argv0 env:chdir env:unset nice:adjustment \
+  stdbuf:error stdbuf:input stdbuf:output time:format time:output \
+  timeout:kill-after timeout:signal xargs:arg-file xargs:delimiter \
+  xargs:max-args xargs:max-chars xargs:max-procs xargs:process-slot-var '
+
+# Letters whose argument is optional: getopt gives them the rest of the word, so
+# nothing after one is another option and no word is owed (`xargs -ln bats
+# tests/`). `xargs --max-lines` is out of the long table for the same reason even
+# though --help prints `--max-lines=N`: it is `-l`'s long form, and alone it
+# takes nothing.
+wrapper_stop_opts=' xargs:e xargs:i xargs:l '
+
 verdict=''
 bats_files=0
 at_cmd=1
@@ -194,7 +220,8 @@ in_bats=0
 skip_val=0
 expect_duration=0
 skip_shell_flag=0
-after_wrapper=0
+wrapper=''
+wrapper_val=0
 selector=0
 bats_word=0
 
@@ -202,14 +229,19 @@ while IFS= read -r w; do
   if [[ $w == "$nl_mark" ]]; then
     at_cmd=1
     in_bats=0
-    after_wrapper=0
+    wrapper=''
+    wrapper_val=0
     selector=0
     bats_word=0
     continue
   fi
   if [[ -z $w ]]; then
+    # A command boundary: the option value a wrapper was waiting for, if any,
+    # belongs to the command that just ended (`env -u ; bats tests/`).
     at_cmd=1
     in_bats=0
+    wrapper=''
+    wrapper_val=0
     continue
   fi
 
@@ -218,16 +250,53 @@ while IFS= read -r w; do
   if [[ ${w##*/} == bats ]]; then bats_word=1; fi
 
   if ((at_cmd)); then
+    # A wrapper option's value is never the command, whatever it looks like
+    # (`env -u A=/x bats tests/`).
+    if ((wrapper_val)); then
+      wrapper_val=0
+      continue
+    fi
     # Past any `FOO=bar` prefixes and interpreter wrappers, so
-    # `bash -c 'bats tests/'` and `timeout 300 bats tests/` are seen.
-    if [[ $w == *=* && $w != */* ]]; then continue; fi
+    # `bash -c 'bats tests/'` and `timeout 300 bats tests/` are seen. The NAME
+    # is what makes an assignment, so a value may hold a slash: `A=/x/y bats
+    # tests/` is the run it looks like, while `./x=y` is a path, not a prefix.
+    if [[ $w =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then continue; fi
     if ((skip_shell_flag)); then
       skip_shell_flag=0
       if [[ $w == -* ]]; then continue; fi
     fi
     # An option belongs to the wrapper seen so far, not to the command slot, so
-    # `xargs -n3 bats` and `env -i bats tests/` name the run they are.
-    if ((after_wrapper)) && [[ $w == -* ]]; then continue; fi
+    # `xargs -n3 bats` and `env -i bats tests/` name the run they are. An option
+    # that waits for its value takes the next word too, so `env -u FOO bats
+    # tests/`, `nice -n 5 bats tests/` and `xargs --max-args 3 bats tests/` all
+    # name it.
+    if [[ -n $wrapper && $w == -* ]]; then
+      if [[ $w == --* ]]; then
+        case $wrapper_value_longs in
+        *" ${wrapper}:${w#--} "*) wrapper_val=1 ;;
+        esac
+      else
+        # Read a cluster as getopt does: the first letter that takes a value
+        # owns the rest of the word, so it waits for the next word only when it
+        # is the word's last letter. Quoted, the probe reads a `*`, `?` or `[`
+        # literally and matches no table row.
+        rest=${w#-}
+        while [[ -n $rest ]]; do
+          c=${rest:0:1}
+          rest=${rest:1}
+          case $wrapper_value_table in
+          *" ${wrapper}:$c "*)
+            if [[ -z $rest ]]; then wrapper_val=1; fi
+            break
+            ;;
+          esac
+          case $wrapper_stop_opts in
+          *" ${wrapper}:$c "*) break ;;
+          esac
+        done
+      fi
+      continue
+    fi
     if ((expect_duration)) && [[ $w =~ ^[0-9]+(\.[0-9]+)?[smhd]?$ ]]; then
       expect_duration=0
       continue
@@ -239,16 +308,21 @@ while IFS= read -r w; do
       continue
       ;;
     env | time | command | exec | nice | nohup | stdbuf | xargs | do | then)
-      after_wrapper=1
+      wrapper=${w##*/}
       continue
       ;;
     timeout)
+      # A wrapper with a duration of its own: the option words are the wrapper's
+      # (`timeout -s KILL 300 bats tests/`) and the duration may come before or
+      # after them, so expect_duration outlives the option words below.
+      wrapper=timeout
       expect_duration=1
       continue
       ;;
     esac
     at_cmd=0
-    after_wrapper=0
+    wrapper=''
+    wrapper_val=0
     case ${w##*/} in
     *bats-affected*)
       # The selector prints .bats paths and runs nothing itself: allowed on its
