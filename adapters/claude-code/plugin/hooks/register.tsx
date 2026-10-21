@@ -196,9 +196,6 @@ export const register: Register = on => {
           <Text color="red">crew crews --mine failed: {scanError}</Text>
         )}
         {sections.map(section => {
-          // `crew fleet` answers for every repo bus on the machine, so a crew's
-          // rows can come from several checkouts at once. Name the repo on each
-          // row only then: with one repo the column says nothing.
           const multiRepo = spansRepos(section.rows)
           return (
             <Box key={section.crew} flexDirection="column">
@@ -211,9 +208,8 @@ export const register: Register = on => {
               )}
               {sortRows(section.rows).map(row => {
                 const repo = multiRepo ? repoName(row) : null
-                // A codename is unique on the bus that assigned it, so once a
-                // section spans repos two branches can share one; a branch is
-                // unique within its own bus, so the pair is the key.
+                // A codename is unique only on the bus that assigned it; a
+                // branch is unique within its own bus, so the pair is.
                 const key = `${row.repo ?? ''}:${row.branch}`
                 return (
                   <Box key={key} flexDirection="column">

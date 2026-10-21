@@ -41,14 +41,14 @@ export const parseRoster = (stdout: string): RosterRow[] => {
   }))
 }
 
-// The repo to name on a row, from `crew fleet`'s `owner/name` label. A bare
-// name (a repo with no parseable origin) has no slash and is its own basename.
+// The repo to name on a row: `crew fleet` labels rows `owner/name`, and a repo
+// with no parseable origin is its own basename.
 export const repoName = (row: RosterRow): string | null =>
   row.repo ? row.repo.slice(row.repo.lastIndexOf('/') + 1) || row.repo : null
 
-// Whether a section's rows come from more than one repo — the only case where
-// naming the repo on each row says anything. Distinct on the full `owner/name`,
-// so two owners of a same-named repo still count as two.
+// Whether a section spans repos — the only case where naming the repo on a row
+// says anything. Distinct on the full `owner/name`, so two owners of a
+// same-named repo still count as two.
 export const spansRepos = (rows: RosterRow[]): boolean =>
   new Set(rows.map(row => row.repo).filter((repo): repo is string => !!repo)).size > 1
 

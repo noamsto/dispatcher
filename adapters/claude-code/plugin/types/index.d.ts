@@ -11,8 +11,7 @@ export type RosterRow = {
   engine: string | null
   model: string | null
   pr_url: string | null
-  // The repo this row's bus came from, as `owner/name`. Only `crew fleet` fills
-  // it; a `crew roster` row has none.
+  // The row's repo as `owner/name`; only `crew fleet` fills it.
   repo?: string
 }
 
