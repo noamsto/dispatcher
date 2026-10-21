@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -260,10 +259,7 @@ func (r *run) lockReap() (code int, done bool) {
 // (#17). A release row that cannot be written aborts the reap, as the arm's
 // `set -e` did.
 func (r *run) idleRelease(ctx context.Context) int {
-	grace, err := strconv.ParseInt(r.idle, 10, 64)
-	if err != nil {
-		grace = math.MaxInt64
-	}
+	grace := r.grace()
 	d := Deps{Common: r.paths.Common, Log: r.paths.Log, Say: r.say, Note: r.note, P: r.p}
 	for _, row := range r.idleRows() {
 		if row[0] == "" {
@@ -278,9 +274,12 @@ func (r *run) idleRelease(ctx context.Context) int {
 	return 0
 }
 
-// orphans reports windows stamped for this bus whose worktree is gone —
-// report only: a human may be using one.
+// orphans reports windows stamped for this bus whose worktree is gone. Once the
+// branch's PR has landed the window is closed too: `gh pr merge --delete-branch`
+// removes the worktree itself, and both of reap's kill paths key on the
+// worktree, so nothing else would ever reach such a window.
 func (r *run) orphans(ctx context.Context) int {
+	self := r.selfWindow(ctx)
 	rows := r.p.tmuxOut(ctx, "list-windows", "-a", "-F", "#{window_id}\t#{@crew_branch}\t#{@crew_dir}")
 	for line := range strings.SplitSeq(rows, "\n") {
 		f := fields(line, 3)
@@ -295,7 +294,67 @@ func (r *run) orphans(ctx context.Context) int {
 		if wt != "" && filekind.IsDir(wt) {
 			continue
 		}
-		r.note("window " + wid + " is stamped " + branch + " but its worktree is gone — not killed")
+		num, state := r.orphanPR(ctx, branch)
+		// orphanInUse sleeps a release gap per window, so it runs only once the
+		// cheap checks say the window is a candidate.
+		keep := state == "" || wid == self || r.orphanInUse(ctx, wid)
+		if keep {
+			r.note("window " + wid + " is stamped " + branch + " but its worktree is gone — not killed")
+			continue
+		}
+		what := branch + ", PR #" + num + " " + state + ", worktree already gone"
+		if r.dry {
+			r.note("would close window " + wid + " (" + what + ")")
+			continue
+		}
+		_, _ = r.p.Tmux.Run(ctx, "kill-window", "-t", wid)
+		r.note("closed window " + wid + " (" + what + ")")
 	}
 	return 0
+}
+
+// selfWindow is the window this reap is running in, or "" outside tmux. Killing
+// it would take the fold down with it, so it is never a target.
+func (r *run) selfWindow(ctx context.Context) string {
+	pane := os.Getenv("TMUX_PANE")
+	if pane == "" {
+		return ""
+	}
+	return r.p.tmuxOut(ctx, "display-message", "-p", "-t", pane, "#{window_id}")
+}
+
+// orphanPR is the orphan pass's PR check: the branch's own PR, found the way
+// reclaim finds it (`findPR`, gh's `pr list --head`) and read the way `prGate`
+// reads it. Anything but MERGED or CLOSED comes back stateless, so the caller
+// keeps the window. Unlike `prGate` it checks no head oid: that one guards a
+// worktree, and here only a window is destroyed. `findPR` takes gh's first
+// non-fork row, so a branch name reused for new work whose only PR is an old
+// merged one reads as landed.
+func (r *run) orphanPR(ctx context.Context, branch string) (num, state string) {
+	c := &candidate{latestRow: latestRow{branch: branch}, pr: "-"}
+	if !r.findPR(ctx, c) || !prURLInRepo(c.pr, r.repo) {
+		return "", ""
+	}
+	state, _ = r.p.Gh.Run(ctx, "pr", "view", c.pr, "--json", "state", "--jq", ".state")
+	switch state {
+	case "MERGED", "CLOSED":
+	default:
+		return "", ""
+	}
+	// prURLInRepo has anchored the url on /pull/<digits>.
+	return c.pr[strings.LastIndex(c.pr, "/")+1:], state
+}
+
+// orphanInUse reports whether a person is evidently using a window that has no
+// worktree: the active window of an attached client, output within the grace, or
+// an engine pane that is not provably idle. `humanPresent`'s transcript check is
+// the one release guard missing: it is keyed on the worktree path, which is gone
+// here.
+func (r *run) orphanInUse(ctx context.Context, wid string) bool {
+	if _, ok := windowsInUse(ctx, r.p, []string{wid}, r.grace()); ok {
+		return true
+	}
+	panes := r.p.tmuxOut(ctx, "list-panes", "-a", "-F", "#{window_id}\t#{pane_id}\t#{pane_current_command}")
+	_, busy := framesBusy(ctx, r.p, []Occupant{windowOccupant(panes, wid, "")})
+	return busy
 }
