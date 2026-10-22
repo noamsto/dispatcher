@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -35,10 +36,11 @@ type armFixture struct {
 
 	// unread is the dispatcher-mode scan pair, "<oldest> <newest>".
 	unread string
-	// leadReads makes every scan after the first answer empty: the lead read the
-	// directive during the wait, which is how --wait stops without typing.
-	leadReads   bool
-	unreadScans int
+	// unreadSeq, when set, is what the scan answers call by call (the last entry
+	// repeats), the first call being the arm's own gate: a follow-up msg landing, or
+	// one being read, mid-wait.
+	unreadSeq   []string
+	unreadCalls int
 
 	// rows are the log lines the arm reads; toplevel/workerTask drive the
 	// dispatcher-only gate.
@@ -120,9 +122,13 @@ func (f *armFixture) run(req Request) int {
 			return f.workerTask && strings.HasSuffix(path, "/WORKER_TASK.md")
 		},
 		Unread: func(context.Context, string, string, string) string {
-			f.unreadScans++
-			if f.leadReads && f.unreadScans > 1 {
-				return ""
+			f.unreadCalls++
+			if n := len(f.unreadSeq); n > 0 {
+				i := f.unreadCalls - 1
+				if i >= n {
+					i = n - 1
+				}
+				return f.unreadSeq[i]
 			}
 			return f.unread
 		},
@@ -265,6 +271,10 @@ func TestRunUsage(t *testing.T) {
 			if !strings.Contains(f.errOut(), tc.want) {
 				t.Errorf("stderr = %q, want %q", f.errOut(), tc.want)
 			}
+			// A bad argument is refused without asking tmux anything, so nothing is typed.
+			if len(f.pane.tmux) != 0 {
+				t.Errorf("a usage refusal reached tmux: %q", f.pane.tmux)
+			}
 		})
 	}
 }
@@ -318,8 +328,26 @@ func TestRunResolvesTarget(t *testing.T) {
 	t.Run("another crew's window", func(t *testing.T) {
 		f := newArm(t)
 		f.pane.windows = "@7\tfeat/x\t" + f.paths.Dir + "\tc2\treef"
-		if rc := f.run(Request{Target: featX}); rc != 1 || !strings.Contains(f.errOut(), "no worker matches 'feat/x'") {
+		// The branch is on the bus, so the target resolves and the pane does not:
+		// a gone window is a different answer from "no worker matches".
+		if err := os.MkdirAll(filepath.Dir(f.paths.Log), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		line := `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","name":"reef","worker_id":"` + idleReq + `"}`
+		if err := bus.Append(f.paths.Log, line); err != nil {
+			t.Fatal(err)
+		}
+		if rc := f.run(Request{Target: "reef"}); rc != 1 ||
+			!strings.Contains(f.errOut(), "no live pane for 'reef' (branch feat/x) — its window is gone") {
 			t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
+		}
+		for _, c := range f.pane.tmux {
+			if strings.HasPrefix(c, "send-keys") {
+				t.Errorf("an unresolved target was nudged: %q", c)
+			}
+		}
+		if len(f.bus.appended) != 0 {
+			t.Errorf("an unresolved target records no row: %s", f.rowsText())
 		}
 	})
 
@@ -533,6 +561,40 @@ func TestRunWaitJoining(t *testing.T) {
 	if len(f.bus.appended) != 0 {
 		t.Errorf("a joiner records no row of its own: %s", f.rowsText())
 	}
+	for _, c := range f.pane.tmux {
+		if strings.HasPrefix(c, "send-keys") {
+			t.Errorf("a joiner that took an outcome typed: %q", c)
+		}
+	}
+}
+
+// The outcome a joiner reports has to cover its own directive: `joined.jq` reads only a
+// row posted after the joiner started and for a msg at least as new, so an older
+// directive's outcome never answers a newer one. With nothing to join onto, the joiner
+// waits for the lead itself and types.
+func TestRunWaitJoinerSkipsAnOlderMsgsOutcome(t *testing.T) {
+	f := newArm(t)
+	f.holdLock = strconv.Itoa(os.Getpid())
+	f.releasePath, f.releaseAfter = f.lockDir(), 1
+	// Resolved after the joiner started, but for msg_ts 1: an older directive.
+	f.rows = append(dispatchRows(t, "claude"), anyRows(t,
+		`{"ts":9999999999999,"crew_id":"c1","kind":"nudge_wait","state":"resolved","to":"`+idleReq+
+			`","result":"read","rc":0,"detail":"older msg","msg_ts":1}`)...)
+	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 0 {
+		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
+	}
+	if !strings.Contains(f.out(), "nudge joining: "+leadID) {
+		t.Errorf("out = %q, want the joining line first", f.out())
+	}
+	if strings.Contains(f.out(), "nudge joined") {
+		t.Errorf("out = %q, want the older msg's outcome refused", f.out())
+	}
+	if !strings.Contains(f.out(), "nudge accepted: "+leadID+" "+idleReq) {
+		t.Errorf("out = %q, want the joiner's own accepted nudge", f.out())
+	}
+	if got := keys(f.pane); !slices.Equal(got, typedArgv) {
+		t.Errorf("keys = %q, want %q", got, typedArgv)
+	}
 }
 
 func TestRunWaitJoinerTimesOut(t *testing.T) {
@@ -583,7 +645,7 @@ func TestRunWaitLeadReadIt(t *testing.T) {
 	f.rows = dispatchRows(t, "claude")
 	// The directive was there when the call started and is gone by the next look:
 	// the lead read it, so nothing is typed.
-	f.leadReads = true
+	f.unreadSeq = []string{idleTS + " " + idleTS, ""}
 	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 0 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 	}
@@ -612,6 +674,9 @@ func TestRunWaitParksThenTypes(t *testing.T) {
 	}
 	if !strings.Contains(f.out(), "nudge waiting: "+leadID+" "+idleReq+" — live turn; re-checking every 5s for up to 30s") {
 		t.Errorf("out = %q", f.out())
+	}
+	if got := keys(f.pane); !slices.Equal(got, typedArgv) {
+		t.Errorf("keys = %q, want %q", got, typedArgv)
 	}
 	if f.ticks("5") != 1 {
 		t.Errorf("slept %v, want one 5s tick", f.slept)
@@ -670,17 +735,146 @@ func TestRunWaitTimeout(t *testing.T) {
 	}
 }
 
+// A frame the wait must not sit through — a draft, a dialog, a permission prompt, a
+// freshly booted engine — refuses on the first look: no waiting row, no sleep, and only
+// the one capture that refused.
 func TestRunWaitRefusesNonLiveTurnImmediately(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		frame  string
+		reason string
+	}{
+		{"unsent draft", "nudge_draft.txt", "unsent input in the input box"},
+		{"option-select dialog", "prompt_select.txt", "dialog on screen (option-select or workspace trust)"},
+		{"permission dialog", "rw_permission.txt", "permission dialog on screen"},
+		{"no finished turn", "nudge_fresh.txt", "no finished-turn marker above the input box"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newArm(t)
+			f.pane.frames = []string{fixture(t, tc.frame)}
+			if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 2 {
+				t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
+			}
+			if f.errOut() != "refused — "+tc.reason {
+				t.Errorf("stderr = %q, want %q", f.errOut(), tc.reason)
+			}
+			if len(f.slept) != 0 {
+				t.Errorf("a dialog or draft must not be waited out, slept %v", f.slept)
+			}
+			if len(f.bus.appended) != 0 {
+				t.Errorf("a refusal before any waiting row records nothing: %s", f.rowsText())
+			}
+			if f.pane.captures != 1 {
+				t.Errorf("%d captures, want the single gate read that refused", f.pane.captures)
+			}
+		})
+	}
+}
+
+// A lead on an engine with no verifiable idle frame, and a lead with nothing to read,
+// both refuse on the arm's own gates: before the wait loop, before any sleep, with no
+// row saying a wait ever started.
+func TestRunWaitRefusesACodexLeadAndAMissingMsg(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		engine string
+		unread string
+		want   string
+	}{
+		{
+			name: "codex lead", engine: "codex", unread: idleTS + " " + idleTS,
+			want: "refused — no verified idle lead frame for codex",
+		},
+		{
+			name: "no unread msg", engine: "claude",
+			want: "no unread msg from dispatcher:c1 to " + idleReq,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newArm(t)
+			f.rows = dispatchRows(t, tc.engine)
+			f.unread = tc.unread
+			f.pane.frames = []string{fixture(t, "done_idle.txt")}
+			if rc := f.run(Request{Wait: "60", Target: idleReq}); rc != 2 ||
+				!strings.Contains(f.errOut(), tc.want) {
+				t.Errorf("rc = %d, stderr = %q, want %q", rc, f.errOut(), tc.want)
+			}
+			if len(f.slept) != 0 || len(f.bus.appended) != 0 {
+				t.Errorf("waited %v and recorded %d rows before refusing", f.slept, len(f.bus.appended))
+			}
+		})
+	}
+}
+
+// A follow-up msg landing mid-wait is not a new directive to chase and not a reason to
+// stop: the oldest unread is what the loop reads, and it is unchanged, so the call types
+// once and its row keeps pointing at the directive the call started for.
+func TestRunWaitStillTypesOnceForAFollowUpMsg(t *testing.T) {
 	f := newArm(t)
-	f.pane.frames = []string{fixture(t, "nudge_draft.txt")}
-	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 2 {
+	// Scan 1 is the arm's own gate; scan 2, inside the wait, sees a newer msg too.
+	f.unreadSeq = []string{
+		idleTS + " " + idleTS,
+		idleTS + " " + "1800000000000",
+	}
+	f.pane.frames = []string{
+		fixture(t, "meter.2s.1.2k.txt"),
+		fixture(t, "done_idle.txt"), fixture(t, "done_idle.txt"),
+		fixture(t, "nudge_typed.txt"), fixture(t, "meter.2s.1.2k.txt"),
+	}
+	f.env = map[string]string{"CREW_NUDGE_WAIT_INTERVAL": "5"}
+	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 0 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 	}
-	if len(f.slept) != 0 {
-		t.Errorf("a dialog or draft must not be waited out, slept %v", f.slept)
+	if got := keys(f.pane); !slices.Equal(got, typedArgv) {
+		t.Errorf("keys = %q, want the line typed once with one Enter", got)
 	}
-	if len(f.bus.appended) != 0 {
-		t.Errorf("a refusal before any waiting row records nothing: %s", f.rowsText())
+	// One nudge row, accepted, for the directive the call opened on — not the follow-up.
+	var nudges []string
+	for _, row := range f.bus.appended {
+		if s := rowJSON(f.t, row); strings.Contains(s, `"kind":"nudge"`) {
+			nudges = append(nudges, s)
+		}
+	}
+	if len(nudges) != 1 {
+		t.Fatalf("%d nudge rows, want 1:\n%s", len(nudges), f.rowsText())
+	}
+	for _, want := range []string{`"result":"accepted"`, `"msg_ts":1700000000000`} {
+		if !strings.Contains(nudges[0], want) {
+			t.Errorf("row %s lacks %s", nudges[0], want)
+		}
+	}
+}
+
+// A dialog raised during the wait ends it at once, exactly as it refuses on the first
+// look: waiting once, then a `refused` outcome, and no key ever sent.
+func TestRunWaitStopsOnADialogThatAppearsMidWait(t *testing.T) {
+	f := newArm(t)
+	f.pane.frames = []string{
+		fixture(t, "meter.2s.1.2k.txt"),
+		fixture(t, "prompt_select.txt"),
+	}
+	f.env = map[string]string{"CREW_NUDGE_WAIT_INTERVAL": "5"}
+	if rc := f.run(Request{Wait: "60", Target: idleReq}); rc != 2 {
+		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
+	}
+	if want := "refused — dialog on screen (option-select or workspace trust)"; f.errOut() != want {
+		t.Errorf("stderr = %q, want %q", f.errOut(), want)
+	}
+	for _, c := range f.pane.tmux {
+		if strings.HasPrefix(c, "send-keys") {
+			t.Errorf("a dialog got a keystroke: %q", c)
+		}
+	}
+	if len(f.bus.appended) != 2 {
+		t.Fatalf("%s, want a waiting row and a resolved refusal", f.rowsText())
+	}
+	if !strings.Contains(f.rowAt(0), `"state":"waiting"`) {
+		t.Errorf("first row = %s", f.rowAt(0))
+	}
+	for _, want := range []string{`"state":"resolved"`, `"result":"refused"`, `"rc":2`} {
+		if !strings.Contains(f.rowAt(1), want) {
+			t.Errorf("resolved row %s lacks %s", f.rowAt(1), want)
+		}
 	}
 }
 
@@ -737,6 +931,8 @@ func TestRunWaitParsesOnlyDigits(t *testing.T) {
 	}{
 		{"no value waits the default", Request{Wait: "1800", Target: idleReq}, "1800"},
 		{"value", Request{Wait: "7", Target: idleReq}, "7"},
+		// A zero budget is a budget: it spends itself on the first look.
+		{"zero", Request{Wait: "0", Target: idleReq}, "0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newArm(t)
