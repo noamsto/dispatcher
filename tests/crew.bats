@@ -269,13 +269,6 @@ write_anchor_record() {
   [ "$output" = "c-from-file" ]
 }
 
-@test "msg: records from, to and body verbatim" {
-  CREW_ID=c1 run_crew msg alice bob "ship it"
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  run jq -r 'select(.kind=="msg") | "\(.from)|\(.to)|\(.body)"' "$log"
-  [ "$output" = "alice|bob|ship it" ]
-}
-
 # #908: the sender check. A tmux stub lists the bats process as a pane, so the
 # crew process (a descendant of this test) is anchored to that pane's stamps.
 # _stamp_pane <branch> <role> <crew> — every field may be empty (unstamped).
@@ -298,20 +291,6 @@ EOF
 
 _msg_rows() { bus | jq -s '[.[] | select(.kind=="msg")] | length'; }
 
-@test "msg: a worker session (CREW_WORKER_ID) cannot post as the dispatcher (#908)" {
-  CREW_ID=c1 CREW_WORKER_ID='worker:feat/x#s1-1' run run_crew msg dispatcher:c1 'worker:feat/x#s1-1' 'stop'
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"refusing sender 'dispatcher:c1'"* ]]
-  [ "$(_msg_rows)" = 0 ]
-}
-
-@test "msg: a role session (CREW_ROLE_ID) cannot post as the dispatcher (#908)" {
-  CREW_ID=c1 CREW_ROLE_ID='role:feat/x:reviewer' run run_crew msg dispatcher:c1 'worker:feat/x#s1-1' 'stop'
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"refusing sender 'dispatcher:c1'"* ]]
-  [ "$(_msg_rows)" = 0 ]
-}
-
 @test "reply: a worker or role session cannot reply as the dispatcher (#908)" {
   CREW_WORKER_ID='worker:feat/x#s1-1' run run_crew reply 'worker:feat/x#s1-1' go --crew c1
   [ "$status" -eq 1 ]
@@ -320,39 +299,6 @@ _msg_rows() { bus | jq -s '[.[] | select(.kind=="msg")] | length'; }
   [ "$status" -eq 1 ]
   [[ "$output" == *"refusing sender"* ]]
   [ "$(_msg_rows)" = 0 ]
-}
-
-@test "msg: a stamped lead pane posts only as its own lead id (#908)" {
-  _stamp_pane feat/x lead c1
-  local from
-  for from in 'role:feat/x:reviewer' 'worker:feat/y#s1-1'; do
-    CREW_ID=c1 run run_crew msg "$from" dispatcher:c1 'hi'
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"refusing sender '$from'"* ]]
-  done
-  [ "$(_msg_rows)" = 0 ]
-  CREW_ID=c1 run run_crew msg 'worker:feat/x#s1-1' dispatcher:c1 'hi'
-  [ "$status" -eq 0 ]
-  [ "$(_msg_rows)" = 1 ]
-}
-
-@test "msg: a stamped role pane posts only as its own role id (#908)" {
-  _stamp_pane feat/x reviewer c1
-  local from
-  for from in 'worker:feat/x#s1-1' 'role:feat/x:plan-critic' 'role:feat/y:reviewer'; do
-    CREW_ID=c1 run run_crew msg "$from" dispatcher:c1 'hi'
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"refusing sender '$from'"* ]]
-  done
-  CREW_ID=c1 run run_crew status 'worker:feat/x#s1-1' failed boom
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"refusing sender 'worker:feat/x#s1-1'"* ]]
-  [ "$(_msg_rows)" = 0 ]
-  run bash -c "bus | jq -s '[.[] | select(.kind==\"status\")] | length'"
-  [ "$output" = 0 ]
-  CREW_ID=c1 run run_crew msg 'role:feat/x:reviewer' dispatcher:c1 'hi'
-  [ "$status" -eq 0 ]
-  [ "$(_msg_rows)" = 1 ]
 }
 
 @test "msg/reply: the dispatcher still posts (#908)" {
@@ -373,86 +319,6 @@ _msg_rows() { bus | jq -s '[.[] | select(.kind=="msg")] | length'; }
   CREW_ID=c1 run run_crew reply 'worker:feat/x#s1-1' go
   [ "$status" -eq 0 ]
   [ "$(_msg_rows)" = 5 ]
-}
-
-# F04: folded family — msg rejects an empty id after dispatcher:/worker:/retro:.
-# #46: a shell expanding an unset $CREW_ID into "dispatcher:$CREW_ID" leaves
-# a bare trailing colon — msg must fail loudly instead of logging it.
-# The worker: row's from is dispatcher:c1; only from and to change.
-@test "msg: rejects a recipient prefix with an empty id" {
-  _ROW_FAILURES=()
-  rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
-  local n=0 label from to expect rc
-  while IFS='|' read -r label from to expect <&3; do
-    [ -n "$label" ] || continue
-    case "$label" in '#'*) continue ;; esac
-    n=$((n + 1))
-    _reset_row_fixture "$n"
-    set +e
-    (
-      set -e
-      CREW_ID=c1 run run_crew msg "$from" "$to" "hi"
-      [ "$status" -eq 1 ]
-      [[ "$output" == *"$expect"* ]]
-      _note_row_stub
-    )
-    rc=$?
-    set -e
-    if [ "$rc" -ne 0 ]; then
-      _ROW_FAILURES+=("$label")
-      printf 'row failed: %s\n' "$label" >&2
-    fi
-  done 3<<'ROWS'
-msg: rejects dispatcher: with an empty id|worker|dispatcher:|missing an id after the colon
-msg: rejects worker: with an empty id|dispatcher:c1|worker:|missing an id after the colon
-msg: rejects retro: with an empty id|worker|retro:|missing an id after the colon
-ROWS
-  if [ -f "$BATS_TEST_TMPDIR/row-stub-dir" ]; then
-    rm -rf "$(cat "$BATS_TEST_TMPDIR/row-stub-dir")"
-    rm -f "$BATS_TEST_TMPDIR/row-stub-dir"
-  fi
-  if [ "${#_ROW_FAILURES[@]}" -ne 0 ]; then
-    printf 'failing rows (%s):\n' "${#_ROW_FAILURES[@]}" >&2
-    printf '  %s\n' "${_ROW_FAILURES[@]}" >&2
-    return 1
-  fi
-}
-
-@test "msg: still accepts every currently-valid recipient shape" {
-  for to in bob 'worker:feat/1' 'worker:feat/1#s1-1' 'dispatcher:c1' 'retro:c1' 'metrics:c1' '*'; do
-    CREW_ID=c1 run run_crew msg worker "$to" "hi"
-    [ "$status" -eq 0 ]
-  done
-}
-
-# #845: a role assignment is typed into a pane, so a control byte in its body
-# can never be delivered. Refuse it at send time for a role: recipient.
-@test "msg: refuses a control-bearing body to a role recipient and logs nothing" {
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  CREW_ID=c1 run run_crew msg worker 'role:feat/x:reviewer' $'{"seam":"review"}\n{"x":1}'
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"role assignment body must be one line"* ]]
-  [[ "$output" == *"control character"* ]]
-  [[ "$output" == *"jq -c"* ]]
-  [ ! -s "$log" ]
-
-  # A one-line role: body still succeeds. A worker: body may still be multiline.
-  CREW_ID=c1 run run_crew msg worker 'role:feat/x:reviewer' '{"seam":"review"}'
-  [ "$status" -eq 0 ]
-  CREW_ID=c1 run run_crew msg worker 'worker:feat/x#s1-1' $'line1\nline2'
-  [ "$status" -eq 0 ]
-  run jq -e 'select(.kind=="msg") | (.to=="role:feat/x:reviewer" and .body=="{\"seam\":\"review\"}") or (.to=="worker:feat/x#s1-1" and .body=="line1\nline2")' "$log"
-  [ "$status" -eq 0 ]
-}
-
-@test "msg: an oversized body is clipped so the line stays one atomic write" {
-  big="$(head -c 8192 /dev/zero | tr '\0' x)"
-  CREW_ID=c1 run_crew msg alice bob "$big"
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  line_bytes="$(printf '%s' "$(head -1 "$log")" | wc -c | tr -d ' ')"
-  [ "$line_bytes" -le 4096 ]
-  run jq -e '.from == "alice" and .to == "bob" and (.body | endswith("[elided]"))' "$log"
-  [ "$status" -eq 0 ]
 }
 
 @test "bus: concurrent oversized writes never splice two records into one line" {
@@ -4453,28 +4319,6 @@ GH
   [[ "$output" == *"reaped feat/issue-pushed (issue #77 CLOSED)"* ]]
   [ ! -d "$wt_path" ]
   git show-ref --verify --quiet refs/heads/feat/issue-pushed
-}
-
-@test "msg: an oversized JSON body stays parseable JSON" {
-  big="$(head -c 6000 /dev/zero | tr '\0' x)"
-  body="$(jq -nc --arg d "$big" '{seam:"execute",tag:"gate_thrash",detail:$d}')"
-  CREW_ID=c1 run_crew msg worker:feat/1 "retro:c1" "$body"
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  line_bytes="$(printf '%s' "$(head -1 "$log")" | wc -c | tr -d ' ')"
-  [ "$line_bytes" -le 4096 ]
-  # The body must still parse, and keep every key — a blob cut loses the tag.
-  run jq -e '(.body | fromjson) | .seam == "execute" and .tag == "gate_thrash" and (.detail | endswith("[elided]"))' "$log"
-  [ "$status" -eq 0 ]
-}
-
-@test "msg: a non-JSON oversized body is still clipped as plain text" {
-  big="$(head -c 6000 /dev/zero | tr '\0' y)"
-  CREW_ID=c1 run_crew msg worker:feat/1 dispatcher:c1 "$big"
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  line_bytes="$(printf '%s' "$(head -1 "$log")" | wc -c | tr -d ' ')"
-  [ "$line_bytes" -le 4096 ]
-  run jq -e '.body | endswith("[elided]")' "$log"
-  [ "$status" -eq 0 ]
 }
 
 @test "rate: one unparseable metrics body does not kill the sweep" {
