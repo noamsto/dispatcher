@@ -329,9 +329,8 @@ func TestAlignRebasedOntoRewrittenParentStaysUnknownAfterSquashMerge(t *testing.
 	}
 }
 
-// Merging the default branch into the child does not make the stale cut
-// trustworthy: after a squash-merge, containing origin/main is no proof the
-// child dropped the parent's commits.
+// Merging the default branch into the child does not make a stale cut
+// trustworthy: the layer stays unknown.
 func TestAlignMergingDefaultIntoChildDoesNotProveTheCut(t *testing.T) {
 	f := newFixture(t)
 	aOID, _ := f.alignStack(t)
