@@ -183,32 +183,48 @@ func TestMsgToDispatcherAndStarWake(t *testing.T) {
 			p := fixture(t)
 			row := msg(1785951264000, "worker:feat/x#s1-1", to)
 			writeLog(t, p, row)
-			_, stderr, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
+			stdout, stderr, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
 			if code != 0 || stderr != "" {
 				t.Fatalf("code %d stderr %q", code, stderr)
+			}
+			if stdout != want(t, 1785951264000, row) {
+				t.Errorf("stdout = %s, want %s", stdout, want(t, 1785951264000, row))
 			}
 		})
 	}
 }
 
 func TestStatesNarrowTheWakeSet(t *testing.T) {
-	p := fixture(t)
-	writeLog(t, p, status(1785951264000, "worker:feat/x#s1-1", "working", "", ""))
+	row := status(1785951264000, "worker:feat/x#s1-1", "working", "", "")
 
-	// `working` is not in the default set, so the park expires quietly.
-	_, stderr, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
-	if code != 0 || stderr != "crew: watch park ended after 1s — no new events (cursor 0)\n" {
-		t.Fatalf("code %d stderr %q", code, stderr)
+	// `working` is not in the default set, so the park expires quietly — with or
+	// without `--crew`, which picks the bus and not the wake set.
+	for _, tc := range []struct {
+		name string
+		req  Request
+	}{
+		{"default states", Request{Since: since("0"), Timeout: "1", Interval: "1"}},
+		{"--crew, default states", Request{Crew: "c1", Since: since("0"), Timeout: "1", Interval: "1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := fixture(t)
+			writeLog(t, p, row)
+			stdout, stderr, code, _ := run(t, p, tc.req)
+			if code != 0 || stdout != "" ||
+				stderr != "crew: watch park ended after 1s — no new events (cursor 0)\n" {
+				t.Fatalf("code %d stdout %q stderr %q", code, stdout, stderr)
+			}
+		})
 	}
 
 	p2 := fixture(t)
-	writeLog(t, p2, status(1785951264000, "worker:feat/x#s1-1", "working", "", ""))
+	writeLog(t, p2, row)
 	stdout, stderr, code, _ := run(t, p2, Request{States: "blocked,working", Since: since("0"), Timeout: "1"})
 	if code != 0 || stderr != "" {
 		t.Fatalf("code %d stderr %q", code, stderr)
 	}
-	if !strings.Contains(stdout, `"state":"working"`) {
-		t.Errorf("stdout = %s", stdout)
+	if stdout != want(t, 1785951264000, row) {
+		t.Errorf("stdout = %s, want %s", stdout, want(t, 1785951264000, row))
 	}
 }
 
@@ -246,15 +262,19 @@ func TestExitedWakesOnlyAsFirstTerminalState(t *testing.T) {
 		t.Run(tc.prev+" then exited", func(t *testing.T) {
 			p := fixture(t)
 			from := "worker:feat/x#s1-1"
-			writeLog(t, p,
-				status(1000, from, tc.prev, "", ""),
-				status(2000, from, "exited", "", ""))
+			exited := status(2000, from, "exited", "", "")
+			writeLog(t, p, status(1000, from, tc.prev, "", ""), exited)
 			stdout, _, code, _ := run(t, p, Request{Since: since("1000"), Timeout: "1", Interval: "1"})
 			if code != 0 {
 				t.Fatalf("code %d", code)
 			}
-			if got := strings.Contains(stdout, "exited"); got != tc.wakes {
-				t.Errorf("wakes = %v, want %v (%s)", got, tc.wakes, stdout)
+			// Exactly one event, the `exited`: the row at the cursor stays behind it.
+			quiet := ""
+			if tc.wakes {
+				quiet = want(t, 2000, exited)
+			}
+			if stdout != quiet {
+				t.Errorf("stdout = %q, want %q", stdout, quiet)
 			}
 		})
 	}
@@ -267,21 +287,25 @@ func TestBlockedRestampSuppression(t *testing.T) {
 		detail string
 		wakes  bool
 	}{
+		{"the cycle number alone normalises away", "need a waiver — awaited 300s, no reply (cycle 8 of 24)", false},
 		{"cycle and awaited noise normalise away", "need a waiver — awaited 302s, no reply (cycle 8 of 24)", false},
 		{"a changed question wakes", "different question (cycle 2 of 24)", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := fixture(t)
 			from := "worker:feat/x#s1-1"
-			writeLog(t, p,
-				status(1000, from, "blocked", first, ""),
-				status(2000, from, "blocked", tc.detail, ""))
+			second := status(2000, from, "blocked", tc.detail, "")
+			writeLog(t, p, status(1000, from, "blocked", first, ""), second)
 			stdout, _, code, _ := run(t, p, Request{Since: since("1000"), Timeout: "1", Interval: "1"})
 			if code != 0 {
 				t.Fatalf("code %d", code)
 			}
-			if got := strings.Contains(stdout, "blocked"); got != tc.wakes {
-				t.Errorf("wakes = %v, want %v (%s)", got, tc.wakes, stdout)
+			quiet := ""
+			if tc.wakes {
+				quiet = want(t, 2000, second)
+			}
+			if stdout != quiet {
+				t.Errorf("stdout = %q, want %q", stdout, quiet)
 			}
 		})
 	}
@@ -316,16 +340,85 @@ func TestBlockedAfterWorkingWakesWithSameDetail(t *testing.T) {
 	p := fixture(t)
 	from := "worker:feat/x#s1-1"
 	d := "need a waiver (cycle 7 of 24)"
+	restamp := status(3000, from, "blocked", d, "")
 	writeLog(t, p,
 		status(1000, from, "blocked", d, ""),
 		status(2000, from, "working", d, ""),
-		status(3000, from, "blocked", d, ""))
+		restamp)
 	stdout, _, code, _ := run(t, p, Request{Since: since("2000"), Timeout: "1", Interval: "1"})
 	if code != 0 {
 		t.Fatalf("code %d", code)
 	}
-	if !strings.Contains(stdout, `"state":"blocked"`) {
-		t.Errorf("stdout = %s", stdout)
+	if stdout != want(t, 3000, restamp) {
+		t.Errorf("stdout = %s, want %s", stdout, want(t, 3000, restamp))
+	}
+}
+
+// A first `blocked` has no earlier status for suppression to measure against.
+func TestFirstBlockedWakes(t *testing.T) {
+	p := fixture(t)
+	row := status(1000, "worker:feat/x#s1-1", "blocked", "need a waiver — awaited 300s, no reply (cycle 7 of 24)", "")
+	writeLog(t, p, row)
+	stdout, stderr, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
+	if code != 0 || stderr != "" {
+		t.Fatalf("code %d stderr %q", code, stderr)
+	}
+	if stdout != want(t, 1000, row) {
+		t.Errorf("stdout = %s, want %s", stdout, want(t, 1000, row))
+	}
+}
+
+// Suppression is keyed on the session, not on the detail: the same question
+// under another session id is another worker asking, so it wakes.
+func TestBlockedRestampOnAnotherSessionWakes(t *testing.T) {
+	const detail = "need a waiver — awaited 300s, no reply (cycle 7 of 24)"
+	p := fixture(t)
+	second := status(2000, "worker:feat/x#s2-2", "blocked", detail, "")
+	writeLog(t, p, status(1000, "worker:feat/x#s1-1", "blocked", detail, ""), second)
+	stdout, _, code, _ := run(t, p, Request{Since: since("1000"), Timeout: "1", Interval: "1"})
+	if code != 0 {
+		t.Fatalf("code %d", code)
+	}
+	if stdout != want(t, 2000, second) {
+		t.Errorf("stdout = %s, want %s", stdout, want(t, 2000, second))
+	}
+}
+
+// An object `detail` is not text, so `detail_text` reads it as "": the empty
+// re-stamp after it normalizes equal and stays quiet. The jq arm aborted in
+// gsub on this shape and dropped the whole batch, later `done` included.
+func TestObjectBlockedDetailDoesNotDropALaterDone(t *testing.T) {
+	p := fixture(t)
+	object := rawRow(1000, "c1", "worker:feat/x#s1-1", "dispatcher:c1", "status",
+		`{"state":"blocked","detail":{"k":true}}`)
+	done := status(3000, "worker:feat/x#s2-2", "done", "", "")
+	writeLog(t, p, object, status(2000, "worker:feat/x#s1-1", "blocked", "", ""), done)
+	stdout, _, code, _ := run(t, p, Request{Since: since("1000"), Timeout: "1", Interval: "1"})
+	if code != 0 {
+		t.Fatalf("code %d", code)
+	}
+	if stdout != want(t, 3000, done) {
+		t.Errorf("stdout = %s, want %s", stdout, want(t, 3000, done))
+	}
+}
+
+// Suppression is a read-side rule: the quiet re-stamp stays on the log for every
+// other reader, and a park that suppresses it rewrites nothing.
+func TestSuppressedRestampStaysOnTheLog(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p,
+		status(1000, "worker:feat/x#s1-1", "blocked", "need a waiver — awaited 300s, no reply (cycle 7 of 24)", ""),
+		status(2000, "worker:feat/x#s1-1", "blocked", "need a waiver — awaited 300s, no reply (cycle 8 of 24)", ""))
+	stdout, _, code, _ := run(t, p, Request{Since: since("1000"), Timeout: "1", Interval: "1"})
+	if code != 0 || stdout != "" {
+		t.Fatalf("code %d stdout %q", code, stdout)
+	}
+	data, err := os.ReadFile(p.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(data), `"state":"blocked"`); n != 2 {
+		t.Errorf("the log holds %d blocked rows, want both:\n%s", n, data)
 	}
 }
 
@@ -506,10 +599,9 @@ func TestNoCrewResolvesToRefusal(t *testing.T) {
 // --crew names a crew whose cursor and lock are its own, not the resolved one's.
 func TestCrewFlagOwnsCursorAndLock(t *testing.T) {
 	p := fixture(t)
-	writeLog(t, p,
-		status(1000, "worker:feat/x#s1-1", "done", "", ""),
-		statusIn("c9", 2000, "worker:feat/y#s1-1", "done", "", ""))
-	_, _, code, _ := run(t, p, Request{Crew: "c9", Since: since("0"), Timeout: "1", Interval: "1"})
+	row9 := statusIn("c9", 2000, "worker:feat/y#s1-1", "done", "", "")
+	writeLog(t, p, status(1000, "worker:feat/x#s1-1", "done", "", ""), row9)
+	stdout, _, code, _ := run(t, p, Request{Crew: "c9", Since: since("0"), Timeout: "1", Interval: "1"})
 	if code != 0 {
 		t.Fatalf("code %d", code)
 	}
@@ -518,6 +610,32 @@ func TestCrewFlagOwnsCursorAndLock(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(p.CrewDir("c1"), "cursor")); !os.IsNotExist(err) {
 		t.Error("the resolved crew's cursor moved instead of --crew's")
+	}
+	// The cursor the batch reports is the file's.
+	if stdout != want(t, 2000, row9) {
+		t.Errorf("stdout = %s, want %s", stdout, want(t, 2000, row9))
+	}
+	for _, crew := range []string{"c1", "c9"} {
+		if _, err := os.Stat(filepath.Join(p.CrewDir(crew), "watch.lock.d")); !os.IsNotExist(err) {
+			t.Errorf("%s kept the watch lock", crew)
+		}
+	}
+
+	// The lock it takes is the named crew's: a live holder under c9 refuses.
+	lockd := filepath.Join(p.CrewDir("c9"), "watch.lock.d")
+	if err := os.MkdirAll(lockd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	held := strconv.Itoa(os.Getppid()) + "\n"
+	if err := os.WriteFile(filepath.Join(lockd, "pid"), []byte(held), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, code, _ := run(t, p, Request{Crew: "c9", Since: since("0"), Timeout: "1", Interval: "1"})
+	if code != 1 || stderr != "crew: another watch is already running for this crew (c9)\n" {
+		t.Errorf("code %d stderr %q", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(p.CrewDir("c1"), "watch.lock.d")); !os.IsNotExist(err) {
+		t.Error("--crew took the resolved crew's lock")
 	}
 }
 
@@ -713,15 +831,18 @@ func TestUnreadRestampSuppressed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p := fixture(t)
 			from := "worker:feat/x#s1-1"
-			writeLog(t, p,
-				status(1000, from, "blocked", tc.first, ""),
-				status(2000, from, "blocked", tc.second, ""))
+			second := status(2000, from, "blocked", tc.second, "")
+			writeLog(t, p, status(1000, from, "blocked", tc.first, ""), second)
 			stdout, _, code, _ := run(t, p, Request{Since: since("1000"), Timeout: "1", Interval: "1"})
 			if code != 0 {
 				t.Fatalf("code %d", code)
 			}
-			if got := strings.Contains(stdout, "blocked"); got != tc.wakes {
-				t.Errorf("wakes = %v, want %v (%s)", got, tc.wakes, stdout)
+			quiet := ""
+			if tc.wakes {
+				quiet = want(t, 2000, second)
+			}
+			if stdout != quiet {
+				t.Errorf("stdout = %q, want %q", stdout, quiet)
 			}
 		})
 	}
