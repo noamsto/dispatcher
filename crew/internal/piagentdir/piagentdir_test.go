@@ -2,7 +2,10 @@ package piagentdir
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -93,6 +96,45 @@ func (f *fixture) ok(t *testing.T) {
 	if code != 0 || out != f.dir+"\n" || errOut != "" {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, out, errOut)
 	}
+}
+
+// snapshot lists a tree — path, mode, type and content hash per entry — so a
+// test can assert a seed wrote nothing outside the worker dir.
+func snapshot(t *testing.T, root string) string {
+	t.Helper()
+	var b strings.Builder
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&b, "%s %v %v\n", rel, fi.Mode().Perm(), fi.Mode().Type())
+		if fi.Mode().IsRegular() {
+			c, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(&b, "%x\n", sha256.Sum256(c))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
+
+func absent(t *testing.T, p string) bool {
+	t.Helper()
+	_, err := os.Lstat(p)
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 func mode(t *testing.T, p string) os.FileMode {
@@ -197,12 +239,21 @@ func TestWorkerDirRefusals(t *testing.T) {
 		if err := os.Symlink(f.ambient, f.dir); err != nil {
 			t.Fatal(err)
 		}
+		before := snapshot(t, f.ambient)
 		f.refused(t, "", "crew: "+f.dir+" is a symlink or not a directory — refusing to seed pi worker dir")
+		// Every write would have landed inside the ambient dir, and the chmod 700
+		// would have widened it.
+		if got := snapshot(t, f.ambient); got != before {
+			t.Errorf("ambient dir written through the worker symlink:\n%s\nwant\n%s", got, before)
+		}
 	})
 	t.Run("regular file", func(t *testing.T) {
 		f := newFixture(t)
 		write(t, f.dir, "x", 0o644)
 		f.refused(t, "", "crew: "+f.dir+" is a symlink or not a directory — refusing to seed pi worker dir")
+		if got := read(t, f.dir); got != "x" {
+			t.Errorf("the file was replaced: %q", got)
+		}
 	})
 	t.Run("worker dir inside ambient", func(t *testing.T) {
 		f := newFixture(t)
@@ -223,8 +274,12 @@ func TestWorkerDirRefusals(t *testing.T) {
 		if err := os.Symlink(f.dir, alias); err != nil {
 			t.Fatal(err)
 		}
+		seeded := snapshot(t, f.dir)
 		// Same real path: the dir-inside-ambient check fires first, as in bash.
 		f.refused(t, alias, "crew: "+f.dir+" resolves inside the ambient pi dir "+alias+" — refusing to seed pi worker dir")
+		if got := snapshot(t, f.dir); got != seeded {
+			t.Errorf("an aliased PI_CODING_AGENT_DIR rewrote the worker dir:\n%s\nwant\n%s", got, seeded)
+		}
 	})
 	t.Run("relative HOME", func(t *testing.T) {
 		root := t.TempDir()
@@ -328,6 +383,10 @@ func TestExtensions(t *testing.T) {
 		}
 		f.ok(t)
 		sameJSON(t, read(t, f.dir+"/settings.json"), `{"defaultProjectTrust":"never"}`)
+		// A dangling entry would make pi fail to load an extension that is not there.
+		if !absent(t, f.dir+"/bin/hookyard-bridge.ts") {
+			t.Error("worker bridge seeded without an ambient one")
+		}
 	})
 	t.Run("appended once, pi order kept, null extensions", func(t *testing.T) {
 		f := newFixture(t)
@@ -341,6 +400,15 @@ func TestExtensions(t *testing.T) {
 		f.ok(t)
 		sameJSON(t, read(t, f.dir+"/settings.json"),
 			fmt.Sprintf(`{"extensions":[%q],"defaultProjectTrust":"never"}`, bridge))
+	})
+	t.Run("pi-written settings survive, trust forced to never", func(t *testing.T) {
+		f := newFixture(t)
+		f.ok(t)
+		// pi writes its own keys here; only defaultProjectTrust is crew's.
+		write(t, f.dir+"/settings.json", `{"lastChangelogVersion":"9","defaultProjectTrust":"always"}`, 0o644)
+		f.ok(t)
+		sameJSON(t, read(t, f.dir+"/settings.json"),
+			fmt.Sprintf(`{"lastChangelogVersion":"9","defaultProjectTrust":"never","extensions":[%q]}`, f.dir+"/bin/hookyard-bridge.ts"))
 	})
 	t.Run("unusable settings reset to an object", func(t *testing.T) {
 		f := newFixture(t)
@@ -433,6 +501,21 @@ func TestAuthRefusals(t *testing.T) {
 		f.refused(t, ambient, "crew: "+ambient+"/auth.json is not a reachable regular file — refusing to seed pi credentials")
 		f.authKept(t)
 	})
+	t.Run("link into an unsearchable dir", func(t *testing.T) {
+		skipRoot(t)
+		f := newFixture(t)
+		f.seededThenGone(t)
+		locked := f.home + "/locked"
+		write(t, locked+"/auth.json", "{}", 0o600)
+		mustSymlink(t, locked+"/auth.json", f.ambient+"/auth.json")
+		if err := os.Chmod(locked, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		// Restored before any assertion: teardown's rm -rf cannot trip on it.
+		t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+		f.refused(t, "", notReachable(f))
+		f.authKept(t)
+	})
 	t.Run("dangling ambient dir symlink", func(t *testing.T) {
 		f := newFixture(t)
 		f.seededThenGone(t)
@@ -503,16 +586,35 @@ func TestAmbientPaths(t *testing.T) {
 }
 
 func TestSettingsClash(t *testing.T) {
-	f := newFixture(t)
-	f.setConfig(t, `{"localModels":{"Anthropic/m":{"baseUrl":"http://h","contextWindow":1}}}`)
-	code, out, errOut := f.run(t, "")
-	want := "crew: localModels provider 'Anthropic' has a stored pi credential in auth.json — rename the provider so the credential is never sent to a local endpoint\n"
-	if code != 1 || out != "" || errOut != want {
-		t.Fatalf("%d %q %q", code, out, errOut)
-	}
-	if strings.Contains(errOut, "oauth") {
-		t.Error("leaked credential")
-	}
+	const clash = " has a stored pi credential in auth.json — rename the provider so the credential is never sent to a local endpoint\n"
+	t.Run("oauth credential", func(t *testing.T) {
+		f := newFixture(t)
+		f.setConfig(t, `{"localModels":{"Anthropic/m":{"baseUrl":"http://h","contextWindow":1}}}`)
+		code, out, errOut := f.run(t, "")
+		if code != 1 || out != "" || errOut != "crew: localModels provider 'Anthropic'"+clash {
+			t.Fatalf("%d %q %q", code, out, errOut)
+		}
+		if strings.Contains(errOut, "oauth") {
+			t.Error("leaked credential")
+		}
+	})
+	t.Run("stored api_key", func(t *testing.T) {
+		f := newFixture(t)
+		write(t, f.ambient+"/auth.json", `{"openai":{"type":"api_key","key":"sk-test-fixture"}}`, 0o600)
+		f.setConfig(t, `{"localModels":{"OpenAI/gpt-oss-120b":{"baseUrl":"http://halo.test:13305/v1","contextWindow":4096}}}`)
+		code, out, errOut := f.run(t, "")
+		if code != 1 || out != "" || errOut != "crew: localModels provider 'OpenAI'"+clash {
+			t.Fatalf("%d %q %q", code, out, errOut)
+		}
+		if strings.Contains(errOut, "sk-test-fixture") {
+			t.Error("the stored credential reached stderr")
+		}
+		// pi prefers a stored credential over models.json's dummy apiKey, so the
+		// worker must never see the file at all.
+		if !absent(t, f.dir+"/models.json") {
+			t.Error("a clashing localModels provider still seeded models.json")
+		}
+	})
 }
 
 func TestDispatchConfigFailures(t *testing.T) {
@@ -521,6 +623,12 @@ func TestDispatchConfigFailures(t *testing.T) {
 	write(t, f.bin, "#!/bin/sh\nexit 3\n", 0o755)
 	if code, out, errOut := f.run(t, ""); code != 1 || out != "" || errOut != refusal {
 		t.Fatalf("%d %q %q", code, out, errOut)
+	}
+	// dispatch-config validates localModels on the merged tree, so an entry it
+	// rejects (a missing baseUrl, say) lands here: named in the refusal, and
+	// nothing seeded.
+	if !absent(t, f.dir+"/models.json") {
+		t.Error("unresolved settings still seeded models.json")
 	}
 	f.bin = f.home + "/missing"
 	if code, out, errOut := f.run(t, ""); code != 1 || out != "" || !strings.HasSuffix(errOut, refusal) {
@@ -561,6 +669,172 @@ func TestInputFieldPassthrough(t *testing.T) {
   "baseUrl":"http://h:1/v1","api":"openai-completions","apiKey":"p","models":[
     {"id":"plain","contextWindow":2000},
     {"id":"vision","contextWindow":1000,"input":["text","image"]}]}}}`)
+}
+
+func TestModelsJSONFromLocalModels(t *testing.T) {
+	f := newFixture(t)
+	f.setConfig(t, `{"localModels":{
+      "lemonade/Qwen3.8-Flash-Next-MTP":{"baseUrl":"http://halo.test:13305/v1","contextWindow":131072},
+      "lemonade/Alpha":{"baseUrl":"http://halo.test:13305/v1","contextWindow":4096}}}`)
+	f.ok(t)
+	sameJSON(t, read(t, f.dir+"/models.json"), `{"providers":{"lemonade":{
+      "baseUrl":"http://halo.test:13305/v1","api":"openai-completions","apiKey":"lemonade","models":[
+        {"id":"Alpha","contextWindow":4096},
+        {"id":"Qwen3.8-Flash-Next-MTP","contextWindow":131072}]}}}`)
+	// localModels is dispatcher-owned: dropping the entry has to stop the model
+	// being reachable, or a retired endpoint keeps a worker pointed at it.
+	f.setConfig(t, `{}`)
+	f.ok(t)
+	sameJSON(t, read(t, f.dir+"/models.json"), `{"providers":{}}`)
+}
+
+func TestMaxTokensOnlyWhenSet(t *testing.T) {
+	f := newFixture(t)
+	f.setConfig(t, `{"localModels":{
+      "lemonade/Big":{"baseUrl":"http://halo.test:13305/v1","contextWindow":131072,"maxTokens":65536},
+      "lemonade/Default":{"baseUrl":"http://halo.test:13305/v1","contextWindow":4096}}}`)
+	f.ok(t)
+	sameJSON(t, read(t, f.dir+"/models.json"), `{"providers":{"lemonade":{
+      "baseUrl":"http://halo.test:13305/v1","api":"openai-completions","apiKey":"lemonade","models":[
+        {"id":"Big","contextWindow":131072,"maxTokens":65536},
+        {"id":"Default","contextWindow":4096}]}}}`)
+	// An entry without the field comes out without the key: `"maxTokens":null`
+	// is what makes pi reject the model rather than default it.
+	if n := strings.Count(read(t, f.dir+"/models.json"), "maxTokens"); n != 1 {
+		t.Errorf("maxTokens appears %d times in %s", n, read(t, f.dir+"/models.json"))
+	}
+}
+
+func TestReasoningFieldsPassthrough(t *testing.T) {
+	f := newFixture(t)
+	f.setConfig(t, `{"localModels":{
+      "lemonade/R":{"baseUrl":"http://halo.test:13305/v1","contextWindow":4096,"reasoning":true,
+        "thinkingFormat":"qwen-chat-template","thinkingLevelMap":{"minimal":null},
+        "samplingParams":{"temperature":0.6},"samplingParamsByThinkingLevel":{"off":{"temperature":0.7}},
+        "effortThinking":{"low":"off"}},
+      "lemonade/P":{"baseUrl":"http://halo.test:13305/v1","contextWindow":2048}}}`)
+	f.ok(t)
+	// Only the fields pi reads: `thinkingFormat` under `compat`, and nothing else
+	// — effortThinking is a dispatcher-side mapping, never pi's.
+	sameJSON(t, read(t, f.dir+"/models.json"), `{"providers":{"lemonade":{
+      "baseUrl":"http://halo.test:13305/v1","api":"openai-completions","apiKey":"lemonade","models":[
+        {"id":"P","contextWindow":2048},
+        {"id":"R","contextWindow":4096,"reasoning":true,
+         "compat":{"thinkingFormat":"qwen-chat-template"},
+         "thinkingLevelMap":{"minimal":null},
+         "samplingParams":{"temperature":0.6},
+         "samplingParamsByThinkingLevel":{"off":{"temperature":0.7}}}]}}}`)
+}
+
+// The api_key-only filter used to drop everything else, leaving an oauth-only
+// machine with {} (#198). The link hands pi the file unparsed.
+func TestAuthLinkKeepsEveryEntry(t *testing.T) {
+	const sixEntries = `{
+  "opencode": {"type": "api_key", "key": "SECRET-FIXTURE-123"},
+  "openrouter": {"type": "api_key", "key": "$OPENROUTER_API_KEY", "env": {"X": "y"}},
+  "deepseek": {"type": "api_key", "key": "!echo x"},
+  "anthropic": {"type": "oauth", "access": "a", "refresh": "r", "expires": 1},
+  "a b": {"type": "api_key", "key": "bad-name"},
+  "lit": {"type": "api_key", "key": "sk-a$b"}
+}`
+	f := newFixture(t)
+	write(t, f.ambient+"/auth.json", sixEntries, 0o600)
+	f.ok(t)
+	if got, err := os.Readlink(f.dir + "/auth.json"); err != nil || got != f.ambient+"/auth.json" {
+		t.Fatalf("auth link %q %v", got, err)
+	}
+	sameJSON(t, read(t, f.dir+"/auth.json"), sixEntries)
+}
+
+func TestAuthRefreshWritesThrough(t *testing.T) {
+	f := newFixture(t)
+	const seeded = `{"anthropic":{"type":"oauth","access":"a"}}`
+	write(t, f.ambient+"/auth.json", seeded, 0o600)
+	f.ok(t)
+	// pi rewrites auth.json in place on a token refresh; through the link that
+	// must land in the ambient file, not strand a divergent copy in the shared
+	// worker dir.
+	refreshed := `{"anthropic":{"type":"oauth","access":"refreshed"}}`
+	if err := os.WriteFile(f.dir+"/auth.json", []byte(refreshed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.Readlink(f.dir + "/auth.json"); err != nil || got != f.ambient+"/auth.json" {
+		t.Fatalf("the refresh replaced the link: %q %v", got, err)
+	}
+	if got := read(t, f.ambient + "/auth.json"); got != refreshed {
+		t.Errorf("ambient auth.json is %q, want the refresh", got)
+	}
+}
+
+func TestAmbientDirUntouched(t *testing.T) {
+	f := newFixture(t)
+	write(t, f.ambient+"/settings.json", `{"defaultProjectTrust":"always"}`, 0o644)
+	write(t, f.ambient+"/trust.json", "{}", 0o644)
+	before := snapshot(t, f.ambient)
+	f.ok(t)
+	if got := snapshot(t, f.ambient); got != before {
+		t.Errorf("the seed wrote into the ambient pi dir:\n%s\nwant\n%s", got, before)
+	}
+	// trust.json is the user's per-project decision; seeding it would hand a
+	// worker the ambient trust the never above exists to withhold.
+	if !absent(t, f.dir+"/trust.json") {
+		t.Error("trust.json seeded in the worker dir")
+	}
+}
+
+func TestModelCatalog(t *testing.T) {
+	const catalog = `{"models":[{"id":"deepseek/deepseek-v4.1-flash"}]}`
+	t.Run("copied not linked", func(t *testing.T) {
+		f := newFixture(t)
+		write(t, f.ambient+"/models-store.json", catalog, 0o600)
+		f.ok(t)
+		p := f.dir + "/models-store.json"
+		// Every worker shares this dir; a link would aim N concurrent refreshes
+		// at the user's real catalog.
+		if fi, err := os.Lstat(p); err != nil || fi.Mode()&fs.ModeSymlink != 0 || !fi.Mode().IsRegular() {
+			t.Fatalf("catalog is not a regular copy: %v", err)
+		}
+		if read(t, p) != catalog || mode(t, p) != 0o644 {
+			t.Errorf("catalog %q mode %o", read(t, p), mode(t, p))
+		}
+	})
+	t.Run("re-seed repairs a corrupted copy", func(t *testing.T) {
+		f := newFixture(t)
+		write(t, f.ambient+"/models-store.json", catalog, 0o600)
+		f.ok(t)
+		write(t, f.dir+"/models-store.json", "torn{\n", 0o644)
+		f.ok(t)
+		sameJSON(t, read(t, f.dir+"/models-store.json"), catalog)
+	})
+	t.Run("no ambient catalog leaves none", func(t *testing.T) {
+		f := newFixture(t)
+		if err := os.Remove(f.ambient + "/models-store.json"); err != nil {
+			t.Fatal(err)
+		}
+		f.ok(t)
+		if !absent(t, f.dir+"/models-store.json") {
+			t.Error("a worker catalog seeded without an ambient one")
+		}
+	})
+}
+
+func TestRelativeAmbientAuthSymlinkResolves(t *testing.T) {
+	f := newFixture(t)
+	write(t, f.home+"/.pi/secrets/auth.json", `{"opencode":{"type":"api_key","key":"SECRET-FIXTURE-123"}}`, 0o600)
+	if err := os.Remove(f.ambient + "/auth.json"); err != nil {
+		t.Fatal(err)
+	}
+	mustSymlink(t, "../secrets/auth.json", f.ambient+"/auth.json")
+	f.ok(t)
+	if got, err := os.Readlink(f.dir + "/auth.json"); err != nil || got != f.ambient+"/auth.json" {
+		t.Fatalf("worker link %q %v", got, err)
+	}
+	// The worker link is absolute, so the ambient link's relative target resolves
+	// against the ambient dir — not the worker dir and not pi's cwd.
+	t.Chdir(t.TempDir())
+	if !strings.Contains(read(t, f.dir+"/auth.json"), "SECRET-FIXTURE-123") {
+		t.Error("the relative ambient auth.json link does not read through")
+	}
 }
 
 func TestMatchesBash(t *testing.T) {
