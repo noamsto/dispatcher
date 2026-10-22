@@ -3,8 +3,11 @@ package stack
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
 // cutStack is the bats `_stack_fixture`: a bare origin with feat/parent (on
@@ -181,8 +184,15 @@ func TestCutRecordOidTheChildReports(t *testing.T) {
 	if len(rows) != 1 || rows[0]["cut"] != old || rows[0]["parent"] != "feat/parent" {
 		t.Fatalf("rows = %v", rows)
 	}
+	// The recorded cut is what a later plain cut prints.
+	if _, out, _ := f.stackRun(t, Request{Child: "feat/child"}); out != old+"\n" {
+		t.Fatalf("cut after recording the child's oid printed %q, want %q", out, old)
+	}
 
-	// The parent's new tip is not in the child: refused, nothing written.
+	// The parent's new tip is not in the child: refused, nothing written. It is
+	// present locally, so the refusal is the ancestor check and not a missing
+	// object.
+	f.git(f.main, "cat-file", "-e", newTip+"^{commit}")
 	f.bus(dispatchRow(1, "feat/child", "feat/parent", old))
 	code, out, errOut = f.stackRun(t, Request{Record: true, Child: "feat/child", Oid: newTip})
 	if code != 1 || out != "" || !strings.Contains(errOut, "is not an ancestor of origin/feat/child") {
@@ -197,6 +207,41 @@ func TestCutRecordOidTheChildReports(t *testing.T) {
 	code, _, errOut = f.stackRun(t, Request{Record: true, Child: "feat/child", Oid: childHead})
 	if code != 1 || !strings.Contains(errOut, "own head, not a cut") {
 		t.Fatalf("record the child's head = %d, %q", code, errOut)
+	}
+	if n := len(f.busRows(t, "stack_cut")); n != 0 {
+		t.Fatalf("the own-head refusal wrote %d rows", n)
+	}
+}
+
+// TestCutForgedWorktreeCrewIDIsNotConsulted pins the crew-id half of #633: run
+// from a dispatched worker's own worktree, whose WORKER_TASK.md names another
+// crew, the cut is still read from the crew the launcher's anchor record points
+// at. The bus fold keys on the crew id, so a command that believed `evil` would
+// find no dispatch row and refuse instead of printing the recorded oid.
+func TestCutForgedWorktreeCrewIDIsNotConsulted(t *testing.T) {
+	f := newFixture(t)
+	parent := f.cutStack(t)
+
+	wt := filepath.Join(f.root, "wt-x")
+	f.git(f.main, "worktree", "add", "-q", "-b", "feat/wt-x", wt)
+	rec, err := wtgit.AnchorPath(wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(rec), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The record `dispatch` writes: the crew dir of the repo it launched against.
+	if err := os.WriteFile(rec, []byte("record\n"+f.common()+"/crew\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "WORKER_TASK.md"), []byte("crew_id: evil\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errOut := f.stackRunIn(t, wt, Request{Child: "feat/child"})
+	if code != 0 || out != parent+"\n" {
+		t.Fatalf("cut from a worktree with a forged task doc = %d, %q (%s); want %s", code, out, errOut, parent)
 	}
 }
 
