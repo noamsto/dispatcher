@@ -111,6 +111,58 @@ func TestAlignFastForwardedParent(t *testing.T) {
 	wantRow(t, out, "feat/a", map[string]string{"mode": `"none"`, "reason": `"bottom layer, based on main"`})
 }
 
+// A parent and its child both advanced: the child of the parent is the one layer
+// that may act, and the layer above it still waits for that push even though its
+// own parent moved out from under it.
+func TestAlignParentAndChildBothAdvanced(t *testing.T) {
+	f := newFixture(t)
+	aOID, bOID := f.alignStack(t)
+	f.advance("feat/a", "a-2")
+	f.advance("feat/b", "b-2")
+
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
+	if code != 0 {
+		t.Fatalf("align 3 = %d (%s)", code, errOut)
+	}
+	wantRow(t, out, "feat/b", map[string]string{
+		"mode": `"ff"`, "ready": "true", "cut": `"` + aOID + `"`,
+		"reason": `"origin/feat/a advanced"`,
+	})
+	wantRow(t, out, "feat/c", map[string]string{
+		"mode": `"onto"`, "ready": "false", "cut": `"` + bOID + `"`,
+		"directive": `"new base feat/b; recorded old head ` + bOID + `; run: git rebase --onto origin/feat/b ` + bOID + `"`,
+		"reason":    `"waits for feat/b push"`,
+	})
+	if n := countReady(out); n != 1 {
+		t.Errorf("ready rows = %d, want exactly 1", n)
+	}
+}
+
+// Only the middle layer advanced: it is already based on its parent, so it is
+// left alone and the top of the stack is the layer that gets the plan.
+func TestAlignOnlyTheMiddleLayerAdvanced(t *testing.T) {
+	f := newFixture(t)
+	_, bOID := f.alignStack(t)
+	f.advance("feat/b", "b-2")
+
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
+	if code != 0 {
+		t.Fatalf("align 3 = %d (%s)", code, errOut)
+	}
+	wantRow(t, out, "feat/b", map[string]string{
+		"mode": `"none"`, "ready": "false", "directive": "null",
+		"reason": `"already based on origin/feat/a"`,
+	})
+	wantRow(t, out, "feat/c", map[string]string{
+		"mode": `"ff"`, "ready": "true", "cut": `"` + bOID + `"`,
+		"directive": `"new base feat/b; recorded old head ` + bOID + `; run: git rebase origin/feat/b"`,
+		"reason":    `"origin/feat/b advanced"`,
+	})
+	if n := countReady(out); n != 1 {
+		t.Errorf("ready rows = %d, want exactly 1", n)
+	}
+}
+
 func TestAlignRewrittenParent(t *testing.T) {
 	f := newFixture(t)
 	aOID, _ := f.alignStack(t)
@@ -228,6 +280,82 @@ func TestAlignStaleCutIsUnknown(t *testing.T) {
 		"mode": `"unknown"`, "ready": "false", "directive": "null",
 		"reason": fmt.Sprintf(`"recorded cut %s is not in origin/feat/b — ask the child; never guess"`, aOID[:12]),
 	})
+	if n := countReady(out); n != 0 {
+		t.Errorf("ready rows = %d, want 0", n)
+	}
+}
+
+// The parent was rewritten and the child rebased onto it without a new cut
+// recorded; once the parent squash-merges, the stale cut says unknown, and the
+// plan never assumes the child is up to date.
+func TestAlignRebasedOntoRewrittenParentStaysUnknownAfterSquashMerge(t *testing.T) {
+	f := newFixture(t)
+	aOID, _ := f.alignStack(t)
+	f.rewrite("feat/a", "a-prime")
+	f.git(f.main, "checkout", "-q", "feat/b")
+	f.git(f.main, "rebase", "-q", "--onto", "feat/a", aOID)
+	f.push(f.main, "feat/b")
+	f.squashMergeA()
+	f.advance("main", "main-2")
+
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
+	if code != 0 {
+		t.Fatalf("align 3 = %d (%s)", code, errOut)
+	}
+	wantRow(t, out, "feat/b", map[string]string{
+		"mode": `"unknown"`, "ready": "false", "directive": "null",
+		"reason": fmt.Sprintf(`"recorded cut %s is not in origin/feat/b — ask the child; never guess"`, aOID[:12]),
+	})
+	if n := countReady(out); n != 0 {
+		t.Errorf("ready rows = %d, want 0", n)
+	}
+}
+
+// Merging the default branch into the child does not make the stale cut
+// trustworthy: after a squash-merge, containing origin/main is no proof the
+// child dropped the parent's commits.
+func TestAlignMergingDefaultIntoChildDoesNotProveTheCut(t *testing.T) {
+	f := newFixture(t)
+	aOID, _ := f.alignStack(t)
+	f.rewrite("feat/a", "a-prime")
+	f.git(f.main, "checkout", "-q", "feat/b")
+	f.git(f.main, "rebase", "-q", "--onto", "feat/a", aOID)
+	f.push(f.main, "feat/b")
+	f.squashMergeA()
+	f.advance("main", "main-2")
+	f.git(f.main, "checkout", "-q", "feat/b")
+	f.git(f.main, "merge", "-q", "--no-ff", "-m", "merge-main", "origin/main")
+	f.push(f.main, "feat/b")
+
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
+	if code != 0 {
+		t.Fatalf("align 3 = %d (%s)", code, errOut)
+	}
+	wantRow(t, out, "feat/b", map[string]string{
+		"mode": `"unknown"`, "ready": "false", "directive": "null",
+		"reason": fmt.Sprintf(`"recorded cut %s is not in origin/feat/b — ask the child; never guess"`, aOID[:12]),
+	})
+	if n := countReady(out); n != 0 {
+		t.Errorf("ready rows = %d, want 0", n)
+	}
+}
+
+// The same missing cut with the parent still open: the layer is unknown rather
+// than planned, and nothing above it is offered either.
+func TestAlignCutMissingFromAnUnmergedLayer(t *testing.T) {
+	f := newFixture(t)
+	aOID, _ := f.alignStack(t)
+	f.rewrite("feat/b", "b-x")
+
+	code, out, errOut := f.stackRun(t, Request{Top: "3"})
+	if code != 0 {
+		t.Fatalf("align 3 = %d (%s)", code, errOut)
+	}
+	wantRow(t, out, "feat/b", map[string]string{
+		"mode": `"unknown"`, "ready": "false", "directive": "null",
+		"reason": fmt.Sprintf(`"recorded cut %s is not in origin/feat/b — ask the child; never guess"`, aOID[:12]),
+	})
+	wantRow(t, out, "feat/c", map[string]string{"ready": "false"})
 	if n := countReady(out); n != 0 {
 		t.Errorf("ready rows = %d, want 0", n)
 	}
@@ -388,6 +516,17 @@ func TestAlignRefusesAParentThatDidNotLandOnDefault(t *testing.T) {
 	if code, _, errOut := f.stackRun(t, Request{Top: "3"}); code != 1 ||
 		!strings.Contains(errOut, "PR #2 for feat/b is CLOSED, not merged") {
 		t.Fatalf("closed parent: %d, %q", code, errOut)
+	}
+
+	// Reached the other way round: the top PR was retargeted onto main, so its
+	// parent comes from the record, and that merged PR landed on another branch.
+	f.addPR(1, "feat/a", "main", "MERGED")
+	f.addPR(2, "feat/b", "feat/x", "MERGED")
+	f.addPR(3, "feat/c", "main", "OPEN")
+	f.appendBus(`{"ts":9,"crew_id":"c1","kind":"dispatch","branch":"feat/c","base":"feat/b","base_oid":null}`)
+	code, out, errOut = f.stackRun(t, Request{Top: "3"})
+	if code != 1 || out != "" || !strings.Contains(errOut, "PR #2 for feat/b merged into feat/x, not main") {
+		t.Fatalf("recorded parent merged elsewhere: %d, %q, %q", code, out, errOut)
 	}
 }
 
