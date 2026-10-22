@@ -579,7 +579,9 @@ literal) that selects the subcommand, and an input kong does not select prints t
 grouped list to **stderr** and exits 1 — the script's `*)` arm, byte for byte
 (`scripts/help-parity.sh` covers the bare and unknown cases). There is no bash
 `case` left to add an arm to; a new subcommand is a name in that literal plus its
-help entry, and `tests/crew.bats`'s `_crew_cli_subs` reads the list from `main.go`.
+help entry, and `crew/help_cli_test.go`'s `TestGroupedListIsTheSubcommandList`
+compares the grouped list's rows against that literal, minus the three names the
+list never advertises.
 
 ### kong, the root parser (#862)
 
