@@ -243,8 +243,8 @@ func cleared(pid int, o Options) bool {
 // The stdout lines the arm built with `jq -nc '{…}'`, one struct per kind.
 // Field order is the arm's construction order, with `repo` — the label a fleet
 // bus loop adds — last. JSON is judged by value (#821), but the order stays:
-// a dispatcher parses these lines and `tests/crew.bats` greps them for
-// `"stream":"<kind>"`.
+// a dispatcher parses these lines, and the stream tests key their assertions on
+// `"stream":"<kind>"` for the same reason.
 type statusLine struct {
 	Stream string          `json:"stream"`
 	State  string          `json:"state"`
