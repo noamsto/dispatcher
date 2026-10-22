@@ -26,12 +26,26 @@ type loop struct {
 	paths bus.Paths
 	opts  Options
 
+	// crew is which crew this renderer draws; every fixture speaks of c1.
+	crew string
+
 	mu       sync.Mutex
 	hops     []hop
 	slept    int
 	panes    string
 	clockNow int64
 	exited   chan int
+
+	// The --once reads the bats fixtures drove through stub_bin: the branches
+	// stamped on a tmux window, the pane pid the ancestry check walks from, what
+	// `aeye --help` prints, and the aeye and spawn calls the run left behind.
+	windows    string
+	panePID    string
+	aeyeHelp   string
+	publishErr error
+	publishes  []string
+	spawns     [][]string
+	spawnEnv   []string
 }
 
 type hop struct {
@@ -46,7 +60,7 @@ func newLoop(t *testing.T) *loop {
 	if err := os.MkdirAll(p.Dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	l := &loop{t: t, paths: p, clockNow: 1_791_360_000, exited: make(chan int, 1)}
+	l := &loop{t: t, paths: p, crew: "c1", clockNow: 1_791_360_000, exited: make(chan int, 1), windows: "feat/1-a"}
 	clockFile := filepath.Join(dir, "clock")
 	if err := os.WriteFile(clockFile, []byte("1791360000\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -59,19 +73,27 @@ func newLoop(t *testing.T) *loop {
 			Tmux: &tmuxtest.Fake{Func: func(args []string) (string, error) {
 				// The fixtures' one branch is on a window, keeping its row live.
 				if args[0] == "list-windows" {
-					return "feat/1-a", nil
+					return l.windowBranches(), nil
 				}
 				if args[0] == "list-panes" && args[3] == rolePaneFormat {
 					return l.rolePanes(), nil
 				}
+				if args[0] == "display-message" {
+					return l.panePIDRead(), nil
+				}
 				return "", tmuxtest.ErrNoServer
 			}},
 			AeyeHelp: func(context.Context) (string, error) {
-				return "", nil
+				return l.aeyeHelpRead(), nil
 			},
-			AeyePublish:   func(context.Context, string, string, bool) error { return nil },
+			AeyePublish: func(_ context.Context, file, pane string, open bool) error {
+				return l.recordPublish(file, pane, open)
+			},
 			InstalledCrew: func(string) string { return "" },
-			SpawnDetached: func([]string, []string) error { return nil },
+			SpawnDetached: func(argv, env []string) error {
+				l.recordSpawn(argv, env)
+				return nil
+			},
 			Exec: func(path string, argv, env []string) error {
 				l.mu.Lock()
 				l.hops = append(l.hops, hop{path: path, argv: argv, env: env})
@@ -96,6 +118,94 @@ func (l *loop) rolePanes() string {
 	return l.panes
 }
 
+func (l *loop) windowBranches() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.windows
+}
+
+// panePIDRead is `tmux display-message -p -t <pane> '#{pane_pid}'`. An unset
+// panePID is a tmux with no such pane, which is how the arm reads a target it
+// cannot place.
+func (l *loop) panePIDRead() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.panePID
+}
+
+func (l *loop) aeyeHelpRead() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.aeyeHelp
+}
+
+// recordPublish logs the call the way the bats stub logged argv, so a test
+// compares the same line the fixture compared, and returns the publish's status.
+func (l *loop) recordPublish(file, pane string, open bool) error {
+	line := "aeye publish-diagram " + file + " --pane " + pane
+	if open {
+		line += " --open"
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.publishes = append(l.publishes, line)
+	return l.publishErr
+}
+
+func (l *loop) recordSpawn(argv, env []string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.spawns = append(l.spawns, argv)
+	l.spawnEnv = env
+}
+
+// publishLog is the stub log the fixtures asserted against: one aeye call per line.
+func (l *loop) publishLog() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.publishes) == 0 {
+		return ""
+	}
+	return strings.Join(l.publishes, "\n") + "\n"
+}
+
+// diagramPath is the file this crew's renderer owns, whether or not it exists yet.
+func (l *loop) diagramPath() string {
+	return target(l.paths.Common, l.crew, l.opts.RosterDir, l.opts.Clock.Now)
+}
+
+// diagram is $CREW_ROSTER_DIR's file for this crew, read back.
+func (l *loop) diagram() string {
+	l.t.Helper()
+	got, err := os.ReadFile(l.diagramPath())
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	return string(got)
+}
+
+// start is `crew roster-render --crew c1 …`: the whole run, flag check to diagram
+// on disk, with the caller's flags. Run moves the process to the bus's repo dir,
+// so the test's own cwd comes back when it is done.
+func (l *loop) start(req Request) (int, string) {
+	l.t.Helper()
+	// Best effort: the test that reaps the worktree it was launched from leaves this
+	// chdir with nothing to go back to, and restores the cwd itself.
+	if wd, err := os.Getwd(); err == nil {
+		l.t.Cleanup(func() { _ = os.Chdir(wd) })
+	}
+	req.Crew = l.crew
+	code := Run(context.Background(), req, l.paths, l.opts)
+	return code, l.opts.Stderr.(*bytes.Buffer).String()
+}
+
+// once is start with --once: one render, then the process is done.
+func (l *loop) once(req Request) (int, string) {
+	l.t.Helper()
+	req.Once = true
+	return l.start(req)
+}
+
 func (l *loop) tick(seconds int64) {
 	l.mu.Lock()
 	l.clockNow += seconds
@@ -111,6 +221,7 @@ func (l *loop) seed(t *testing.T, events ...string) {
 	if len(events) == 0 {
 		events = []string{`{"ts":1791360000000,"crew_id":"c1","kind":"dispatch","branch":"feat/1-a","session":"s1","worker_id":"worker:feat/1-a#s1","engine":"claude","model":"sonnet","tier":"standard","title":"Alpha","name":"sage","color":"green","tmux":"colour28"}`}
 	}
+	events = l.crewed(events)
 	f, err := os.Create(l.paths.Log)
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +283,17 @@ func (l *loop) hitCeiling() bool {
 	return l.slept >= ceiling
 }
 
-func (l *loop) cdir() string { return l.paths.CrewDir("c1") }
+func (l *loop) cdir() string { return l.paths.CrewDir(l.crew) }
+
+// moveToRepo points the loop at another bus — the two clones that share a
+// directory name, which is the one thing their renderers cannot tell apart.
+func (l *loop) moveToRepo(t *testing.T, common string) {
+	t.Helper()
+	l.paths = bus.Paths{Common: common, Dir: common + "/crew", Log: common + "/crew/events.jsonl"}
+	if err := os.MkdirAll(l.paths.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func (l *loop) lockOwner() string { return record(l.cdir(), "roster-render.lock.d/pid") }
 
@@ -220,10 +341,15 @@ func TestDaemonFollowsTheInstalledEntryNotItsOwnStart(t *testing.T) {
 	if err := l.opts.hop(realPath(self), true, nil); err != nil {
 		t.Errorf("a draining crew was upgraded: %v", err)
 	}
+	// And the hop hands the new build the daemon's own argv, --no-open included.
+	if err := l.opts.hop(realPath(self), false, []string{"--crew", "c1", "--interval", "1", "--quiet", "30", "--no-open"}); err != nil {
+		t.Fatalf("the entry moving again did not make the daemon re-exec: %v", err)
+	}
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if len(l.hops) != 1 {
-		t.Fatalf("hops = %d", len(l.hops))
+	if len(l.hops) != 2 {
+		t.Fatalf("hops = %d, want the two", len(l.hops))
 	}
 	got := l.hops[0]
 	if got.path != mustReal(t, newer) {
@@ -231,6 +357,48 @@ func TestDaemonFollowsTheInstalledEntryNotItsOwnStart(t *testing.T) {
 	}
 	if strings.Join(got.argv, " ") != mustReal(t, newer)+" roster-render" {
 		t.Errorf("argv = %v", got.argv)
+	}
+	// The build hop replaces the process rather than starting another one, which is
+	// how the daemon keeps the pid that owns the crew's lock.
+	if len(l.spawns) != 0 {
+		t.Errorf("the daemon started a child instead of exec'ing: %v", l.spawns)
+	}
+	want := mustReal(t, newer) + " roster-render --crew c1 --interval 1 --quiet 30 --no-open"
+	if argv := strings.Join(l.hops[1].argv, " "); argv != want {
+		t.Errorf("argv = %q, want %q", argv, want)
+	}
+}
+
+// TestTheBuildHopCarriesTheFlagsTheCrewWasGiven is the arm's `exec "$_rr_self"
+// roster-render "${rr_daemon_args[@]}": the new build is handed the argv the
+// running daemon was started with, --no-open included, so the renderer that comes
+// back after a deploy still leaves the operator's carousel alone. It drives Run
+// rather than calling hop directly, which is where those args are built.
+func TestTheBuildHopCarriesTheFlagsTheCrewWasGiven(t *testing.T) {
+	l := newLoop(t)
+	l.seed(t)
+	self := t.TempDir() + "/crew"
+	newer := t.TempDir() + "/crew-newer"
+	for _, p := range []string{self, newer} {
+		if err := os.WriteFile(p, []byte("#!/usr/bin/env bash\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l.opts.Self = self
+	l.opts.Probes.InstalledCrew = func(string) string { return mustReal(t, newer) }
+
+	// A live crew, so the loop is in no hurry to leave and hops on every pass.
+	if code, stderr := l.start(Request{Quiet: "5", NoOpen: true}); code != exitOK || !l.hitCeiling() {
+		t.Fatalf("exit=%d live=%v stderr=%s", code, l.hitCeiling(), stderr)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.hops) == 0 {
+		t.Fatal("a newer installed entry never made the daemon re-exec")
+	}
+	want := mustReal(t, newer) + " roster-render --crew c1 --interval 2 --quiet 5 --no-open"
+	if got := strings.Join(l.hops[0].argv, " "); got != want {
+		t.Errorf("the build it exec'd ran %q, want %q", got, want)
 	}
 }
 
@@ -347,6 +515,43 @@ func TestDaemonExitsAfterTheQuietWindow(t *testing.T) {
 		l.run("5")
 		if !l.hitCeiling() {
 			t.Errorf("a live crew retired itself after %d ticks", l.slept)
+		}
+	})
+	t.Run("a crew waiting on a hold outlasts it", func(t *testing.T) {
+		l := newLoop(t)
+		// Nothing is working, but someone is waiting: the holds count towards the
+		// live number, so the renderer that draws the wait stays up.
+		l.seed(t, holdEvent("h-1", 1791374400, "feat/5-e", "r-5", "claude", "codex", "Echo task"))
+		l.run("5")
+		if !l.hitCeiling() {
+			t.Errorf("a crew with an outstanding hold retired itself after %d ticks", l.slept)
+		}
+	})
+	t.Run("a draining crew is left to exit, not upgraded", func(t *testing.T) {
+		// The arm's `[[ -n $rr_idle_since ]] || _rr_swap_build`: a crew already
+		// draining into its window is on its way out, so the entry moving under it
+		// starts no new build — it exits on the window instead.
+		l := newLoop(t)
+		self := t.TempDir() + "/crew"
+		newer := t.TempDir() + "/crew-newer"
+		for _, p := range []string{self, newer} {
+			if err := os.WriteFile(p, []byte("#!/usr/bin/env bash\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		l.opts.Self = self
+		l.opts.Probes.InstalledCrew = func(string) string { return mustReal(t, newer) }
+
+		if code := l.run("5"); code != exitOK {
+			t.Errorf("code = %d", code)
+		}
+		if l.slept < 5 || l.slept > 8 {
+			t.Errorf("exited after %d ticks, want the 5s window and no more", l.slept)
+		}
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		if len(l.hops) != 0 {
+			t.Errorf("a draining crew started a new build: %d hops", len(l.hops))
 		}
 	})
 }
