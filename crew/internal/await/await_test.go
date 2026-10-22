@@ -166,9 +166,18 @@ func TestLastDueSenderWinsOldestFirst(t *testing.T) {
 	if stdout != want(t, a1, a2, a3) {
 		t.Errorf("stdout\n got %q\nwant %q", stdout, want(t, a1, a2, a3))
 	}
-	// The other sender's rows are neither printed nor marked delivered.
+	// The other sender's rows are neither printed nor marked: a later await still
+	// owes them.
 	if got := readMarks(t, p, me); got != `{"`+disp+`":500}` {
 		t.Errorf("marks = %s", got)
+	}
+
+	stdout, stderr, code := run(t, p, Request{Me: me, Timeout: "300", Interval: "1"})
+	if code != 0 || stdout != want(t, b1, b2) {
+		t.Fatalf("second await: code %d stdout %q stderr %q", code, stdout, stderr)
+	}
+	if got := readMarks(t, p, me); got != `{"`+disp+`":500,"`+role+`":400}` {
+		t.Errorf("marks after the second await = %s", got)
 	}
 }
 
@@ -176,17 +185,36 @@ func TestFromRestrictsTheSender(t *testing.T) {
 	p := fixture(t)
 	a1 := msg(100, disp, me, "a1")
 	b1 := msg(200, role, me, "b1")
-	writeLog(t, p, a1, b1)
+	b2 := msg(300, role, me, "b2")
+	writeLog(t, p, a1, b1, b2)
 
+	// The awaited sender's whole due backlog comes as one batch, oldest first
+	// (#466).
 	stdout, _, code := run(t, p, Request{Me: me, From: role, Timeout: "0"})
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	if stdout != want(t, b1) {
+	if stdout != want(t, b1, b2) {
 		t.Errorf("stdout = %q", stdout)
 	}
-	if got := readMarks(t, p, me); got != `{"`+role+`":200}` {
+	if got := readMarks(t, p, me); got != `{"`+role+`":300}` {
 		t.Errorf("marks = %s", got)
+	}
+
+	// A second await for the same sender has nothing left to hand out.
+	stdout, stderr, code := run(t, p, Request{Me: me, From: role, Timeout: "0"})
+	if code != 0 || stdout != "" {
+		t.Fatalf("second await: code %d stdout %q", code, stdout)
+	}
+	if !strings.HasSuffix(stderr, "no reply to "+me+" from "+role+" yet\n") {
+		t.Errorf("stderr = %q", stderr)
+	}
+
+	// The sender this await never waited for is neither returned nor consumed
+	// (#300).
+	stdout, stderr, code = run(t, p, Request{Me: me, Timeout: "300", Interval: "1"})
+	if code != 0 || stdout != want(t, a1) {
+		t.Fatalf("plain await: code %d stdout %q stderr %q", code, stdout, stderr)
 	}
 }
 
@@ -229,7 +257,8 @@ func TestUnparseableLinesAreSkipped(t *testing.T) {
 	if err := os.MkdirAll(p.Dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := first + "\n" + `{"ts":200,"crew_id":"c-to` + "\n" + `{"a":1} {"b":2}` + "\n\n" + "null\n" + last + "\n"
+	body := first + "\n" + `{"ts":200,"crew_id":"c-to` + "\n" + `{"a":1} {"b":2}` + "\n\n" + "null\n" + last + "\n" +
+		`{"ts":400,"crew_id":"c-to`
 	if err := os.WriteFile(p.Log, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -256,6 +285,15 @@ func TestEqualTsKeepsLogOrder(t *testing.T) {
 	}
 	if stdout != want(t, first, second) {
 		t.Errorf("stdout\n got %q\nwant %q", stdout, want(t, first, second))
+	}
+	if got := readMarks(t, p, me); got != `{"`+disp+`":100}` {
+		t.Errorf("marks = %s", got)
+	}
+
+	// The batch left nothing behind: a same-ts sibling is never re-handed.
+	stdout, stderr, code := run(t, p, Request{Me: me, Timeout: "0"})
+	if code != 0 || stdout != "" {
+		t.Fatalf("second await: code %d stdout %q stderr %q", code, stdout, stderr)
 	}
 }
 
@@ -427,15 +465,19 @@ func TestReplyLandsMidWait(t *testing.T) {
 		_ = os.WriteFile(p.Log, []byte(row+"\n"), 0o644)
 	}()
 
-	_, stderr, code := runOpts(t, p, Options{
+	stdout, stderr, code := runOpts(t, p, Options{
 		Clock: clock.Clock{Now: func() time.Time { return now }, CrewClock: path},
 	}, Request{Me: me, Timeout: "30", Interval: "1"})
 	<-posted
 	if code != 0 {
 		t.Fatalf("exit %d stderr %q", code, stderr)
 	}
-	if got, err := os.ReadFile(p.Log); err != nil || !strings.Contains(string(got), "late") {
-		t.Errorf("reply never posted: %q (%v)", got, err)
+	// Delivered, not merely posted: a timeout exits 0 too.
+	if stdout != want(t, row) {
+		t.Errorf("stdout\n got %q\nwant %q", stdout, want(t, row))
+	}
+	if note := "no reply to " + me + " yet"; strings.Contains(stderr, note) {
+		t.Errorf("stderr = %q, want no timeout note", stderr)
 	}
 }
 
@@ -530,6 +572,179 @@ func TestFlushFailureLeavesMarksAlone(t *testing.T) {
 	}
 	if readMarks(t, p, me) != "" {
 		t.Error("marks raised for rows that never reached the caller")
+	}
+}
+
+// The worker's own outbound rows are never candidates, so none of them is a
+// watermark: the reply can cross the question in flight (#385), a later outbound
+// to a third party cannot hide an earlier reply, and --from names the awaited
+// sender without turning the question to it into a cursor.
+func TestOutboundRowsAreNotCandidates(t *testing.T) {
+	const third = "worker:feat/y#s2-2"
+	const plan = "role:feat/x:plan-critic"
+	for _, tc := range []struct {
+		name  string
+		from  string
+		due   string
+		rows  []string
+		marks string
+	}{{
+		// The per-sender mark, not the newest outbound row, is the anchor.
+		name:  "a question that crossed the reply",
+		due:   msg(100, disp, me, "answer"),
+		rows:  []string{msg(100, disp, me, "answer"), msg(200, me, disp, "why?")},
+		marks: `{"` + disp + `":100}`,
+	}, {
+		// An outbound to someone else is no watermark either.
+		name:  "a later outbound to a third party",
+		due:   msg(200, disp, me, "answer"),
+		rows:  []string{msg(100, me, disp, "why?"), msg(200, disp, me, "answer"), msg(300, me, third, "unrelated")},
+		marks: `{"` + disp + `":200}`,
+	}, {
+		// #385 under --from: the restriction names the sender, not the cursor.
+		name:  "the question to the awaited sender",
+		from:  plan,
+		due:   msg(100, plan, me, "verdict"),
+		rows:  []string{msg(100, plan, me, "verdict"), msg(200, me, plan, "review diff")},
+		marks: `{"` + plan + `":100}`,
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := fixture(t)
+			writeLog(t, p, tc.rows...)
+			stdout, stderr, code := run(t, p, Request{Me: me, From: tc.from, Timeout: "0"})
+			if code != 0 {
+				t.Fatalf("exit %d stderr %q", code, stderr)
+			}
+			if stdout != want(t, tc.due) {
+				t.Errorf("stdout\n got %q\nwant %q", stdout, want(t, tc.due))
+			}
+			// Only the delivering sender is marked: an outbound target gets none.
+			if got := readMarks(t, p, me); got != tc.marks {
+				t.Errorf("marks = %s, want %s", got, tc.marks)
+			}
+		})
+	}
+}
+
+// #760: a second blocked episode. The first answer is delivered and marked; the
+// reply to the second question is already on the bus when the next await starts,
+// so it comes out at once instead of waiting for a third.
+func TestSecondEpisodeDeliversTheNewerReply(t *testing.T) {
+	p := fixture(t)
+	q1, a1 := msg(100, me, disp, "Q1"), msg(200, disp, me, "A1")
+	writeLog(t, p, q1, a1)
+	if stdout, _, code := run(t, p, Request{Me: me, Timeout: "0"}); code != 0 || stdout != want(t, a1) {
+		t.Fatalf("first episode: code %d stdout %q", code, stdout)
+	}
+
+	// A second question, and its answer, land before the next await starts.
+	q2, a2 := msg(300, me, disp, "Q2"), msg(400, disp, me, "A2")
+	writeLog(t, p, q1, a1, q2, a2)
+	stdout, stderr, code := run(t, p, Request{Me: me, Timeout: "300", Interval: "1"})
+	if code != 0 || stdout != want(t, a2) {
+		t.Fatalf("second episode: code %d stdout %q stderr %q", code, stdout, stderr)
+	}
+	if got := readMarks(t, p, me); got != `{"`+disp+`":400}` {
+		t.Errorf("marks after the second episode = %s", got)
+	}
+}
+
+// A delivered reply stays delivered across the traffic that follows it: a
+// question to the next critic is outbound, so it neither delivers nor re-opens
+// the mark, while that critic's own answer is due at once.
+func TestCriticTrafficDoesNotReopenADeliveredReply(t *testing.T) {
+	const spec = "role:feat/x:spec-critic"
+	const plan = "role:feat/x:plan-critic"
+	for _, tc := range []struct{ name, first, body, marks string }{
+		{name: "a critic verdict", first: spec, body: "spec verdict",
+			marks: `{"` + plan + `":400,"` + spec + `":200}`},
+		{name: "a dispatcher answer", first: disp, body: "answer",
+			marks: `{"` + disp + `":200,"` + plan + `":400}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := fixture(t)
+			ask, reply := msg(100, me, tc.first, "review"), msg(200, tc.first, me, tc.body)
+			writeLog(t, p, ask, reply)
+			if stdout, _, code := run(t, p, Request{Me: me, Timeout: "0"}); code != 0 || stdout != want(t, reply) {
+				t.Fatalf("first await: code %d stdout %q", code, stdout)
+			}
+
+			askPlan := msg(300, me, plan, "review plan")
+			writeLog(t, p, ask, reply, askPlan)
+			stdout, stderr, code := run(t, p, Request{Me: me, Timeout: "0"})
+			if code != 0 || stdout != "" {
+				t.Fatalf("await after the question to the next critic: code %d stdout %q", code, stdout)
+			}
+			if !strings.HasSuffix(stderr, "no reply to "+me+" yet\n") {
+				t.Errorf("stderr = %q", stderr)
+			}
+
+			// The next critic's answer is a new sender's row: due at once, and the
+			// first sender's mark rides through the merge.
+			planReply := msg(400, plan, me, "plan verdict")
+			writeLog(t, p, ask, reply, askPlan, planReply)
+			stdout, stderr, code = run(t, p, Request{Me: me, Timeout: "300", Interval: "1"})
+			if code != 0 || stdout != want(t, planReply) {
+				t.Fatalf("next critic: code %d stdout %q stderr %q", code, stdout, stderr)
+			}
+			if got := readMarks(t, p, me); got != tc.marks {
+				t.Errorf("marks = %s, want %s", got, tc.marks)
+			}
+		})
+	}
+}
+
+// A status row is not a msg: a watchdog-sourced blocked row is neither a reply
+// nor a watermark, so the reply that follows it still comes out, once. The
+// second row is addressed to this session, so the kind test is what excludes it.
+func TestStatusRowsAreNotReplies(t *testing.T) {
+	p := fixture(t)
+	blocked := `{"ts":100,"crew_id":"c1","kind":"status","from":"` + me + `","to":"dispatcher:c1",` +
+		`"body":{"state":"blocked","detail":"prompt: interactive prompt in pane %9","source":"watchdog"}}`
+	statusToMe := `{"ts":150,"crew_id":"c1","kind":"status","from":"` + disp + `","to":"` + me + `","body":{"state":"working"}}`
+	writeLog(t, p, blocked, statusToMe)
+	stdout, stderr, code := run(t, p, Request{Me: me, Timeout: "0"})
+	if code != 0 || stdout != "" {
+		t.Fatalf("code %d stdout %q", code, stdout)
+	}
+	if !strings.HasSuffix(stderr, "no reply to "+me+" yet\n") {
+		t.Errorf("stderr = %q", stderr)
+	}
+	if got := readMarks(t, p, me); got != "" {
+		t.Errorf("marks after a status-only bus = %s", got)
+	}
+
+	answer := msg(200, disp, me, "answer")
+	writeLog(t, p, blocked, statusToMe, answer)
+	stdout, stderr, code = run(t, p, Request{Me: me, Timeout: "300", Interval: "1"})
+	if code != 0 || stdout != want(t, answer) {
+		t.Fatalf("code %d stdout %q stderr %q", code, stdout, stderr)
+	}
+	if got := readMarks(t, p, me); got != `{"`+disp+`":200}` {
+		t.Errorf("marks = %s", got)
+	}
+}
+
+// Delivered state is keyed per session, so a resumed session (new id) starts
+// clean: another session's mark at the same ts never hides this one's reply.
+func TestMarksArePerSession(t *testing.T) {
+	const other = "worker:feat/x#s2-2"
+	p := fixture(t)
+	first, second := msg(100, disp, me, "answer"), msg(100, disp, other, "answer2")
+	writeLog(t, p, first, second)
+
+	if stdout, _, code := run(t, p, Request{Me: me, Timeout: "0"}); code != 0 || stdout != want(t, first) {
+		t.Fatalf("first session: code %d stdout %q", code, stdout)
+	}
+	stdout, stderr, code := run(t, p, Request{Me: other, Timeout: "300", Interval: "1"})
+	if code != 0 || stdout != want(t, second) {
+		t.Fatalf("resumed session: code %d stdout %q stderr %q", code, stdout, stderr)
+	}
+	if got := readMarks(t, p, other); got != `{"`+disp+`":100}` {
+		t.Errorf("the resumed session's marks = %s", got)
+	}
+	if got := readMarks(t, p, me); got != `{"`+disp+`":100}` {
+		t.Errorf("the first session's marks = %s", got)
 	}
 }
 
