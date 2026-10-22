@@ -601,11 +601,10 @@ func TestNoRemoteWorkersAsksNoHost(t *testing.T) {
 	}
 }
 
-// Two crews ask their hosts at once. A serial merge costs a machine-wide
-// `crew fleet` one host timeout per crew that ever dispatched remotely, and a
-// host that is down spends its whole remoteTimeout each time. Each call holds
-// until the other crew's call arrives, so asking one crew at a time shows up as
-// a call that waited alone rather than as a race against a sleep.
+// Two crews ask their hosts at once: each call holds until the other crew's
+// call arrives, so a serial merge — one host timeout per crew, a down host
+// spending its whole remoteTimeout each time — reads as a call that waited
+// alone.
 func TestCrewsAskTheirHostsTogether(t *testing.T) {
 	f := oneRepo(t,
 		worker(1700000010, "c1", "feat/a", "working"),

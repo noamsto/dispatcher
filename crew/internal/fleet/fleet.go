@@ -38,8 +38,7 @@ type Options struct {
 	Clock    clock.Clock
 	// Remote asks one host for the rows of the crew's remote workers, from dir:
 	// the checkout of the repo whose bus is being folded, since that checkout's
-	// origin is what names the clone the call lands in. nil (the default) asks
-	// no host, and every row stays a local one.
+	// origin is what names the clone the call lands in. nil asks no host.
 	Remote func(dir, crew string) roster.Capture
 }
 
@@ -100,10 +99,9 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 		}
 		worktrees := sync.OnceValues(func() (string, error) { return git.Worktrees(ctx, o.Git, "", r.Common) })
 		live := roster.Liveness{Windows: windowBranches, Worktrees: worktrees}
-		// A repo's checkout is its common dir's parent, the same derivation
-		// `rate --sweep-all` makes: the host's clone is resolved from that
-		// checkout's origin, so asking from the caller's cwd would send every
-		// host's answer through whichever repo happened to be open.
+		// A discovered repo's checkout is its common dir's parent, the same
+		// derivation `rate --sweep-all` makes, and it is that checkout's origin
+		// that names the clone a host call lands in.
 		var remote func(crew string) roster.Capture
 		if o.Remote != nil {
 			dir := filepath.Dir(r.Common)
@@ -122,10 +120,10 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 		for _, row := range repoRows {
 			row.Row["repo"] = name
 			row.Row["crew_id"] = row.crew
-			// A merged remote row answers for a window and a worktree on another
-			// host, so this host's liveness reads nothing about it: it is never
-			// stale here. A host that did not answer has no state either, and no
-			// state is not a terminal one, so --all never hides it.
+			// A remote row answers for a window and a worktree on another host,
+			// so this host's liveness reads nothing about it. A host that did not
+			// answer has no state either, and no state is not a terminal one, so
+			// --all never hides it.
 			_, remoteRow := row.Row["host"].(string)
 			_, unanswered := row.Row["host_error"]
 			nonTerminal := unanswered || slices.Contains(roster.LiveStates, str(row.Row, "state"))
@@ -161,18 +159,15 @@ type crewRow struct {
 }
 
 // foldRepo folds each of the repo's crews: the one asked for, else every crew
-// that has a worker status row, which is exactly what roster can produce rows for.
-// Each crew's rows are then merged with the rows of its remote workers, which is
-// what MergeRemote does for one crew — and what it declines to do, without
-// asking anyone, when the bus has no remote dispatch row. remote is nil when the
-// caller asks no host.
+// that has a worker status row, which is exactly what roster can produce rows
+// for, and then merges each crew's rows with its remote workers'. remote is nil
+// when the caller asks no host.
 //
 // Every fold runs before any host is asked: Fold reads the tmux probe's cache,
-// which is not synchronized, and a fold that fails skips the repo without
-// leaving a merge waiting on a host behind it. The merges then all start
-// together, because a plain `crew fleet` asking one crew at a time costs a host
-// timeout per crew that ever dispatched remotely, and a host that is down
-// spends its whole one.
+// which is not synchronized, and a fold that fails skips the repo with nobody
+// waiting on a host behind it. The merges start together because a host that is
+// down spends its whole timeout, and asking one crew at a time pays that per
+// crew.
 func foldRepo(ctx context.Context, common string, events []bus.Event, docs []any, onlyCrew string, nowSec float64, p roster.Probes, remote func(crew string) roster.Capture) ([]crewRow, error) {
 	crews := []string{onlyCrew}
 	if onlyCrew == "" {
@@ -193,10 +188,9 @@ func foldRepo(ctx context.Context, common string, events []bus.Event, docs []any
 		}
 		folded[i] = rows
 	}
-	rows := make([][]map[string]any, len(crews))
-	if remote == nil {
-		copy(rows, folded)
-	} else {
+	rows := folded
+	if remote != nil {
+		rows = make([][]map[string]any, len(crews))
 		var wg sync.WaitGroup
 		for i, c := range crews {
 			wg.Go(func() {
