@@ -99,7 +99,9 @@ func (f *fixture) ok(t *testing.T) {
 }
 
 // snapshot lists a tree — path, mode, type and content hash per entry — so a
-// test can assert a seed wrote nothing outside the worker dir.
+// test can assert a seed wrote nothing outside the worker dir. A link is also
+// its target and the bytes reached through it: the bats case hashed auth.json
+// with sha256sum, which followed the link.
 func snapshot(t *testing.T, root string) string {
 	t.Helper()
 	var b strings.Builder
@@ -116,7 +118,17 @@ func snapshot(t *testing.T, root string) string {
 			return err
 		}
 		fmt.Fprintf(&b, "%s %v %v\n", rel, fi.Mode().Perm(), fi.Mode().Type())
-		if fi.Mode().IsRegular() {
+		switch {
+		case fi.Mode()&fs.ModeSymlink != 0:
+			tgt, err := os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(&b, " -> %s\n", tgt)
+			if c, err := os.ReadFile(p); err == nil {
+				fmt.Fprintf(&b, "%x\n", sha256.Sum256(c))
+			}
+		case fi.Mode().IsRegular():
 			c, err := os.ReadFile(p)
 			if err != nil {
 				return err
@@ -129,6 +141,32 @@ func snapshot(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	return b.String()
+}
+
+// noCopiedSecret is the bats case's `grep -rF SECRET-FIXTURE-123 "$WORKER"`: no
+// regular file the seed wrote may hold a credential, only the link may reach
+// one. grep -r does not follow the links it walks, so neither does this.
+func noCopiedSecret(t *testing.T, root, secret string) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		c, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(c), secret) {
+			t.Errorf("%s holds a copied credential", p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func absent(t *testing.T, p string) bool {
@@ -511,7 +549,7 @@ func TestAuthRefusals(t *testing.T) {
 		if err := os.Chmod(locked, 0o000); err != nil {
 			t.Fatal(err)
 		}
-		// Restored before any assertion: teardown's rm -rf cannot trip on it.
+		// Cleanup runs LIFO, so the mode is restored before t.TempDir's rm -rf.
 		t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
 		f.refused(t, "", notReachable(f))
 		f.authKept(t)
@@ -744,6 +782,7 @@ func TestAuthLinkKeepsEveryEntry(t *testing.T) {
 		t.Fatalf("auth link %q %v", got, err)
 	}
 	sameJSON(t, read(t, f.dir+"/auth.json"), sixEntries)
+	noCopiedSecret(t, f.dir, "SECRET-FIXTURE-123")
 }
 
 func TestAuthRefreshWritesThrough(t *testing.T) {
