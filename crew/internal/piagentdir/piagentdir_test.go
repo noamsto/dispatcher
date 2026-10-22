@@ -99,9 +99,7 @@ func (f *fixture) ok(t *testing.T) {
 }
 
 // snapshot lists a tree — path, mode, type and content hash per entry — so a
-// test can assert a seed wrote nothing outside the worker dir. A link is also
-// its target and the bytes reached through it: the bats case hashed auth.json
-// with sha256sum, which followed the link.
+// test can assert a seed wrote nothing outside the worker dir.
 func snapshot(t *testing.T, root string) string {
 	t.Helper()
 	var b strings.Builder
@@ -279,8 +277,7 @@ func TestWorkerDirRefusals(t *testing.T) {
 		}
 		before := snapshot(t, f.ambient)
 		f.refused(t, "", "crew: "+f.dir+" is a symlink or not a directory — refusing to seed pi worker dir")
-		// Every write would have landed inside the ambient dir, and the chmod 700
-		// would have widened it.
+		// A seed that followed the symlink would write inside the user's ambient dir.
 		if got := snapshot(t, f.ambient); got != before {
 			t.Errorf("ambient dir written through the worker symlink:\n%s\nwant\n%s", got, before)
 		}
@@ -421,7 +418,8 @@ func TestExtensions(t *testing.T) {
 		}
 		f.ok(t)
 		sameJSON(t, read(t, f.dir+"/settings.json"), `{"defaultProjectTrust":"never"}`)
-		// A dangling entry would make pi fail to load an extension that is not there.
+		// No ambient bridge means hookyard is not installed; a worker file or a
+		// registered entry would dangle.
 		if !absent(t, f.dir+"/bin/hookyard-bridge.ts") {
 			t.Error("worker bridge seeded without an ambient one")
 		}
@@ -647,8 +645,8 @@ func TestSettingsClash(t *testing.T) {
 		if strings.Contains(errOut, "sk-test-fixture") {
 			t.Error("the stored credential reached stderr")
 		}
-		// pi prefers a stored credential over models.json's dummy apiKey, so the
-		// worker must never see the file at all.
+		// pi prefers a stored credential over models.json's dummy apiKey, so a
+		// clash has to leave no models.json behind.
 		if !absent(t, f.dir+"/models.json") {
 			t.Error("a clashing localModels provider still seeded models.json")
 		}
@@ -663,8 +661,7 @@ func TestDispatchConfigFailures(t *testing.T) {
 		t.Fatalf("%d %q %q", code, out, errOut)
 	}
 	// dispatch-config validates localModels on the merged tree, so an entry it
-	// rejects (a missing baseUrl, say) lands here: named in the refusal, and
-	// nothing seeded.
+	// rejects (a missing baseUrl, say) lands here with nothing seeded.
 	if !absent(t, f.dir+"/models.json") {
 		t.Error("unresolved settings still seeded models.json")
 	}
@@ -736,8 +733,7 @@ func TestMaxTokensOnlyWhenSet(t *testing.T) {
       "baseUrl":"http://halo.test:13305/v1","api":"openai-completions","apiKey":"lemonade","models":[
         {"id":"Big","contextWindow":131072,"maxTokens":65536},
         {"id":"Default","contextWindow":4096}]}}}`)
-	// An entry without the field comes out without the key: `"maxTokens":null`
-	// is what makes pi reject the model rather than default it.
+	// An entry without the field comes out without the key, not as JSON null.
 	if n := strings.Count(read(t, f.dir+"/models.json"), "maxTokens"); n != 1 {
 		t.Errorf("maxTokens appears %d times in %s", n, read(t, f.dir+"/models.json"))
 	}
@@ -752,8 +748,8 @@ func TestReasoningFieldsPassthrough(t *testing.T) {
         "effortThinking":{"low":"off"}},
       "lemonade/P":{"baseUrl":"http://halo.test:13305/v1","contextWindow":2048}}}`)
 	f.ok(t)
-	// Only the fields pi reads: `thinkingFormat` under `compat`, and nothing else
-	// — effortThinking is a dispatcher-side mapping, never pi's.
+	// Only the fields pi reads: `thinkingFormat` under `compat`, and nothing
+	// else — effortThinking is a dispatcher-side mapping.
 	sameJSON(t, read(t, f.dir+"/models.json"), `{"providers":{"lemonade":{
       "baseUrl":"http://halo.test:13305/v1","api":"openai-completions","apiKey":"lemonade","models":[
         {"id":"P","contextWindow":2048},
@@ -800,7 +796,7 @@ func TestAuthRefreshWritesThrough(t *testing.T) {
 	if got, err := os.Readlink(f.dir + "/auth.json"); err != nil || got != f.ambient+"/auth.json" {
 		t.Fatalf("the refresh replaced the link: %q %v", got, err)
 	}
-	if got := read(t, f.ambient + "/auth.json"); got != refreshed {
+	if got := read(t, f.ambient+"/auth.json"); got != refreshed {
 		t.Errorf("ambient auth.json is %q, want the refresh", got)
 	}
 }
@@ -814,8 +810,8 @@ func TestAmbientDirUntouched(t *testing.T) {
 	if got := snapshot(t, f.ambient); got != before {
 		t.Errorf("the seed wrote into the ambient pi dir:\n%s\nwant\n%s", got, before)
 	}
-	// trust.json is the user's per-project decision; seeding it would hand a
-	// worker the ambient trust the never above exists to withhold.
+	// trust.json is the user's own per-project decision; a seeded one would hand
+	// a worker ambient trust.
 	if !absent(t, f.dir+"/trust.json") {
 		t.Error("trust.json seeded in the worker dir")
 	}
