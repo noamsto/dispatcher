@@ -233,12 +233,12 @@ func TestCrewAnchorDisambiguatesASharedCodename(t *testing.T) {
 		t.Errorf("--crew c2: code %d, out %q", code, out)
 	}
 	// With no crew id nothing is filtered, so both windows are candidates and the
-	// codename really is ambiguous.
+	// codename is genuinely ambiguous.
 	if _, errOut, code := tr.run(t, wins, panes, crewIs(""), "nova"); code != exitFailure ||
 		errOut != "crew: where: ambiguous codename 'nova' — matches feat/1-a,feat/2-b; pass a branch or %pane\n" {
 		t.Errorf("no crew id: code %d, err %q", code, errOut)
 	}
-	// Its pane is named as another crew's, not reported as missing.
+	// The other crew's pane is named, not missing.
 	if _, errOut, code := tr.run(t, wins, panes, crewIs("c1"), "%304"); code != exitFailure ||
 		errOut != "crew: where: pane %304 is not a pane of this crew\n" {
 		t.Errorf("other crew's pane: code %d, err %q", code, errOut)

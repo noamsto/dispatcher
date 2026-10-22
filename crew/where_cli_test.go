@@ -15,7 +15,7 @@ func crewWin(dir, id, branch, crew, name, index, winName string) string {
 }
 
 // A bad argument is the arm's own refusal, and it is reached without asking tmux
-// anything: an accepted target reads its two lists, a refused one reads neither.
+// anything.
 func TestWhereRefusesBeforeReadingTmux(t *testing.T) {
 	repo, _ := repoWithLog(t, nil, 0)
 	dir := filepath.Join(repo, ".git", "crew")
