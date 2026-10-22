@@ -1,12 +1,11 @@
-// The harness the ported `stream:` bats cases run on: the crew entry the loop
+// The harness the ported `stream:` cases run on: the crew entry the loop
 // re-enters, one running lane in the background, and the two ways a test counts
 // the loop's iterations — a `watch` child that parks until the test steps it,
 // and the tick the loop rewrites at the top of every cycle.
 //
-// Nothing here changes what the loop does with its waits and its clock: the
-// entry is the seam the bash suite already used (`STREAM_CREW`), the timer is
-// `Options.Timer`, and the park is the real `crew watch` behind a helper process
-// when a case is about cursors and locks rather than about pass-through.
+// The seams are the loop's own: `Options.Self` for the entry, `Options.Timer`
+// and `Options.Clock` for its waits, and the real `crew watch` behind a helper
+// process for the cases about cursors and locks.
 package stream
 
 import (
@@ -116,7 +115,7 @@ func (s *stub) steps(n int) { s.write("steps", strconv.Itoa(n)+"\n") }
 // park releases the lane's current park and waits until the loop has begun the
 // next iteration: its tick rewritten at the top, and the following park's child
 // started. That is the loop's whole cycle, so a case that calls park n times
-// knows exactly n parks have completed — no sleeping, no racing the child.
+// knows exactly n parks have completed.
 func (l *lane) park() {
 	l.t.Helper()
 	l.stepN++
@@ -138,8 +137,7 @@ func parkedPrologue() string {
 
 // parkedWatch is a `watch` body that records its call number and parks until
 // the test raises the step gate to it, then exits rc. Every iteration of the
-// loop is then one step the test took, so "one line per three parks" is an
-// assertion rather than a race with a real --park.
+// loop is then one step the test took, so "one line per three parks" is a count.
 func parkedWatch(rc string) string { return parkedPrologue() + "exit " + rc }
 
 // parkedWatchFailing is a parked `watch` whose failure is the given body, run
@@ -203,8 +201,7 @@ func realWatch(t *testing.T, p bus.Paths) *stub {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := entryStub(t, map[string]string{"watch":
-		`printf '%s\n' "$$" > "$d/watch.pid"
+	s := entryStub(t, map[string]string{"watch": `printf '%s\n' "$$" > "$d/watch.pid"
   export ` + streamWatchEnv + `=1
   export ` + streamBusVar + `='` + p.Common + `'
   exec '` + bin + `' -test.run='^TestHelperStreamWatch$' -test.count=1 -test.timeout=60s -- "$@"`})
@@ -258,7 +255,7 @@ type laneOpts struct {
 	CrewID func() string
 }
 
-// startLane runs one stream with the bats harness's own defaults: --park,
+// startLane runs one stream with the defaults every case inherits: --park,
 // --interval, --coalesce and --retry of 1s, a --heartbeat nothing reaches, and
 // --reap-every 0 so no cadence reap runs unless the case asks for one.
 func startLane(t *testing.T, p bus.Paths, s *stub, r Request, o laneOpts) *lane {
@@ -305,8 +302,7 @@ func (l *lane) stop() {
 	l.rc = l.waitRC()
 }
 
-// signal is one signal to this process, which is how the bats suite signalled
-// the stream: Run catches it the way the arm's trap did.
+// signal is one signal to this process, where `Run` catches it.
 func (l *lane) signal(s os.Signal) {
 	l.t.Helper()
 	if err := syscall.Kill(os.Getpid(), s.(syscall.Signal)); err != nil {
@@ -391,7 +387,7 @@ func holdIDsOf(t *testing.T, v any) string {
 
 // parkUntil keeps releasing parks until cond holds, which is how a case waits
 // for something the loop only does at the top of an iteration — flushing a reap
-// child's pair, say — without the lane ever having to sit in a real --park.
+// child's pair, say.
 func (l *lane) parkUntil(what string, cond func() bool) {
 	l.t.Helper()
 	for i := 0; i < 8 && !cond(); i++ {
@@ -414,9 +410,8 @@ func tickTS(p bus.Paths) int64 {
 	return ts
 }
 
-// waitTickAfter is the bats suite's own proof that the loop is still turning:
-// it waits for the tick to move past ts, which only the top of an iteration
-// does.
+// waitTickAfter waits for the tick to move past ts, which only the top of an
+// iteration does — the proof the loop is still turning.
 func waitTickAfter(t *testing.T, p bus.Paths, ts int64) int64 {
 	t.Helper()
 	waitFor(t, "the tick to move past "+strconv.FormatInt(ts, 10), func() bool {
@@ -466,8 +461,7 @@ func reapPairs(p bus.Paths) []string {
 
 // fakeClock is the loop's clock with a handle on it: the reap cadence and the
 // error-suppression window are where the loop measures elapsed time, and a case
-// that wants one of them should not have to wait for it. Nothing here changes
-// what the loop does with the reading.
+// that wants one of them should not have to wait for it.
 type fakeClock struct {
 	off atomic.Int64
 }

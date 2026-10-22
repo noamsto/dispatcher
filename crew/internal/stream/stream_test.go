@@ -443,8 +443,8 @@ func TestSweepReapedRemovesPairs(t *testing.T) {
 // TestSignalReleasesEverything is the port's own contract, at the process
 // level: TERM stops the inner watch, drains what it printed, unlinks the temp
 // files and releases the lock — and leaves 0 behind, the status bash's handler
-// ended with. crew.bats drives the same three signals end to end; this is the
-// same claim without a bus.
+// ended with. TestStreamSignalsReleaseBothLocksAndTheNextStreamStarts drives the
+// same three signals against a live bus.
 func TestSignalReleasesEverything(t *testing.T) {
 	p := fixture(t)
 	script := filepath.Join(t.TempDir(), "crew-stub.sh")

@@ -2,8 +2,7 @@
 // watch's error suppression, and the matured-hold announcements. Each one drives
 // the loop park by park — the stub `watch` child does not return until the test
 // releases it, and `lane.park` waits for the iteration that follows — so "one
-// line per cause, not one per park" is a count rather than a race, and every
-// case finishes in well under a second.
+// line per cause, not one per park" is a count.
 package stream
 
 import (
@@ -27,8 +26,8 @@ func holdRowJSON(ids ...string) string {
 	return b.String()
 }
 
-// Three parks' worth of quiet is one heartbeat: the bats case's own --park 1
-// --heartbeat 3, where the count is of parks and not of seconds.
+// Three parks' worth of quiet is one heartbeat, at --park 1 --heartbeat 3: the
+// count is of parks, not of seconds.
 func TestStreamHeartbeatAfterQuietOfParks(t *testing.T) {
 	p := streamBus(t)
 	s := entryStub(t, map[string]string{"watch": parkedWatch("0")})
@@ -60,9 +59,9 @@ func TestStreamHeartbeatAfterQuietOfParks(t *testing.T) {
 }
 
 // The inner watch failing is one line per cause: the same failure on the next
-// park is silence, and a different cause earns its own line. The two faults are
-// the bats case's own — a live holder of the crew's watch lock, then a swapped-in
-// failure with a different rc and detail.
+// park is silence, and a different cause earns its own line. The two faults are a
+// live holder of the crew's watch lock, then a swapped-in failure with a
+// different rc and detail.
 func TestStreamInnerFailureIsOneLinePerCause(t *testing.T) {
 	p := streamBus(t)
 	s := entryStub(t, map[string]string{"watch": parkedWatchFailing(`

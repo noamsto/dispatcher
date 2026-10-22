@@ -1,7 +1,6 @@
 // The ported `stream:` lock and signal cases: who may hold the lane's lock,
 // what a caught signal leaves behind, and what the lane never writes to its own
-// stderr. The signals go to this process, which is where `Run` catches them the
-// way the arm's trap did.
+// stderr. The signals go to this process, which is where `Run` catches them.
 package stream
 
 import (
@@ -115,19 +114,18 @@ func TestStreamTermMidParkReleasesTheWatchAndLeavesTheCursor(t *testing.T) {
 		t.Error("the cursor advanced without a qualifying batch")
 	}
 
-	// The assertion that matters, and the one a lock check cannot see: an orphan
-	// would print a batch to a stdout nobody reads and still mv its cursor into
-	// place, and a watch can advance the cursor and release the lock on the same
-	// exit.
+	// An orphan would print a batch to a stdout nobody reads and still mv its
+	// cursor into place, and a watch can advance the cursor and release the lock
+	// on the same exit.
 	postRow(t, p, statusRow(time.Now().UnixMilli(), "c1", "worker:feat/x", "done"))
 	if !stayedFalse(1500*time.Millisecond, func() bool { return existsIn(p, "cursor") }) {
 		t.Error("an orphaned watch advanced the cursor after its stream had stopped")
 	}
 }
 
-// The signal contract, per signal: exit 0, the status the arm's single EXIT trap
-// ended with, and both lock dirs gone — a leaked watch.lock.d refuses every later
-// park of the crew, a leaked stream.lock.d every later stream.
+// The signal contract, per signal: exit 0, and both lock dirs gone — a leaked
+// watch.lock.d refuses every later park of the crew, a leaked stream.lock.d every
+// later stream.
 func TestStreamSignalsReleaseBothLocksAndTheNextStreamStarts(t *testing.T) {
 	for _, sig := range []os.Signal{syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP} {
 		t.Run(sig.String(), func(t *testing.T) {

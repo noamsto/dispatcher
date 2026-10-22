@@ -12,8 +12,7 @@ import (
 	"time"
 )
 
-// reapLineText is one `reap` line's `lines` array joined, for the "reaped feat/x"
-// assertions the bats suite made with a grep.
+// reapLineText is one `reap` line's `lines` array joined.
 func reapLineText(t *testing.T, line map[string]any) string {
 	t.Helper()
 	rows, _ := line["lines"].([]any)
@@ -26,11 +25,9 @@ func reapLineText(t *testing.T, line map[string]any) string {
 	return strings.Join(out, "\n")
 }
 
-// reapPinned pins the reap child's own invocation. The bats cases ran the real
-// entry, so the flags were exercised end to end: `--quiet` and `--no-wait` (a
-// reap that waits holds the lane), and no `--crew` — a lane reaps every crew's
-// workers, which is how the old case reclaimed a worker of crew c9 from a c1
-// lane. A stub that answers any reap argv leaves all three unpinned.
+// reapPinned pins the reap child's own invocation: `--quiet` and `--no-wait`, a
+// reap that waits would hold the lane, and no `--crew` — a lane reaps every
+// crew's workers, not only its own.
 func reapPinned(t *testing.T, s *stub) {
 	t.Helper()
 	const want = "reap --quiet --no-wait"

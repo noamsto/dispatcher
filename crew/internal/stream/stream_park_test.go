@@ -17,9 +17,7 @@ import (
 const passBatch = `{"cursor":1700000000000,"events":[{"ts":1700000000000,"crew_id":"c1","from":"worker:feat/x","to":"dispatcher:c1","kind":"status","body":{"state":"done"}}]}`
 
 // The stream's whole job on the batch path: the line `watch` printed, once, and
-// newline-terminated. The bats case compared it to `jq -c .` of itself to prove
-// it was not re-encoded; byte equality with the child's line is the same claim
-// with no second implementation in the way.
+// newline-terminated — byte for byte, not re-encoded.
 func TestStreamPassesBatchThroughVerbatim(t *testing.T) {
 	p := streamBus(t)
 	s := entryStub(t, map[string]string{"watch": printsThenPark(passBatch)})
