@@ -120,9 +120,15 @@ func Check(in Input) string {
 const missingHint = `every acceptance item needs <id> pass(<evidence>) or <id> waived(dispatcher); an item you cannot run is not a pass — block and ask the dispatcher to waive it.`
 
 // entryIDRe is an acceptance entry's id: the letters-then-digits run it starts
-// with, which is the token a worker names it by in the ledger (`AC1`) and the
-// name a refusal quotes. An entry without one leaves the doc uncheckable.
+// with, which is the token a worker names it by in the ledger (`AC1`). An entry
+// without one leaves the doc uncheckable.
 var entryIDRe = regexp.MustCompile(`^[A-Za-z]+[0-9]+`)
+
+// entryNameRe is that id plus any suffix run onto it (`AC5a`, `E2E`): the token
+// a refusal has to quote, since it is the one the worker can post back. The id
+// lookup stops at a suffix, so quoting the bare id would name an item that fails
+// the same gate again.
+var entryNameRe = regexp.MustCompile(`^[A-Za-z]+[0-9]+[A-Za-z0-9_]*`)
 
 // idRunRe splits a run id, the `AC1-3` spelling one item may stand in for a run
 // of consecutive ids, into its letters and the two numbers it spans. idNumRe
@@ -165,10 +171,11 @@ func missingEntries(entries, ids []string) []string {
 	names := make([]string, len(entries))
 	indexes := make(map[string][]int, len(entries))
 	for i, e := range entries {
-		names[i] = entryIDRe.FindString(strings.TrimLeft(e, "*_"))
-		if names[i] == "" {
+		text := strings.TrimLeft(e, "*_")
+		if !entryIDRe.MatchString(text) {
 			return nil
 		}
+		names[i] = entryNameRe.FindString(text)
 		indexes[e] = append(indexes[e], i)
 	}
 	covered := make([]bool, len(entries))

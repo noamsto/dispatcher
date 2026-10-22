@@ -246,6 +246,11 @@ var checkCases = []checkCase{
 	// or a suffixed id never invents an id no worker could post.
 	{name: "an entry with a suffixed id is covered by its spelling", detail: "AC5a pass(x); AC5b pass(y)", doc: "## Acceptance\n- AC5a unit tests\n- AC5b e2e\n"},
 	{name: "a prose entry starting with an id-shaped word is covered by it", detail: "E2E pass(x); AC1 pass(y)", doc: "## Acceptance\n- E2E suite green\n- AC1 unit tests\n"},
+	// A refusal quotes the whole token, the one the worker can post back: the bare
+	// id would fail the same gate again.
+	{name: "a refusal quotes a suffixed entry whole", detail: "AC5a pass(x)", doc: "## Acceptance\n- AC5a unit tests\n- AC5b e2e\n", want: missingLine("AC5b")},
+	{name: "a refusal quotes an id-shaped prose entry whole", detail: "AC1 pass(y)", doc: "## Acceptance\n- E2E suite green\n- AC1 unit tests\n", want: missingLine("E2E")},
+	{name: "a run id does not cover a suffixed entry", detail: "AC1-9 pass(x)", doc: "## Acceptance\n- AC5a unit tests\n", want: missingLine("AC5a")},
 	// The item loop's own refusals still come first.
 	{name: "a malformed item is refused before coverage", detail: "AC1 pending", doc: docThree, want: malform},
 }
