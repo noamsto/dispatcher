@@ -1,9 +1,4 @@
 case_id	source_file	source_line	family	test_name	tags
-crew-id-crew-id-resolves-from-worker-task-md-with-no-crew-id-in-the-environment-at-all	tests/crew-id.bats	16	crew-id	crew id: resolves from WORKER_TASK.md with no CREW_ID in the environment at all	fast
-crew-id-crew-id-the-task-document-wins-over-a-disagreeing-crew-id	tests/crew-id.bats	23	crew-id	crew id: the task document wins over a disagreeing CREW_ID	fast
-crew-id-crew-id-resolves-from-a-subdirectory-of-the-worktree	tests/crew-id.bats	30	crew-id	crew id: resolves from a subdirectory of the worktree	fast
-crew-id-crew-id-crew-id-still-resolves-when-no-worker-task-md-exists	tests/crew-id.bats	39	crew-id	crew id: CREW_ID still resolves when no WORKER_TASK.md exists	fast
-crew-id-crew-id-falls-back-to-crew-id-when-worker-task-md-has-no-crew-id-line	tests/crew-id.bats	45	crew-id	crew id: falls back to CREW_ID when WORKER_TASK.md has no crew_id: line	fast
 refresh-models-a-realistic-list-models-fixture-parses-into-the-expected-cache-shape	tests/refresh-models.bats	44	refresh-models	a realistic --list-models fixture parses into the expected cache shape	fork-heavy
 refresh-models-the-write-is-atomic-and-lands-at-the-cursor-models-cache-path	tests/refresh-models.bats	57	refresh-models	the write is atomic and lands at the cursor models cache path	fork-heavy
 refresh-models-a-stubbed-cursor-agent-failure-exits-nonzero-and-leaves-an-existing-cache-untouched	tests/refresh-models.bats	69	refresh-models	a stubbed cursor-agent failure exits nonzero and leaves an existing cache untouched	fork-heavy

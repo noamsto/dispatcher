@@ -61,7 +61,6 @@ them as relative.
 | public-leak-guard.bats         |    16 |     1.4 |  0.1% |
 | refresh-scores.bats            |     6 |     1.0 |  0.0% |
 | model-map-doc.bats             |     9 |     0.6 |  0.0% |
-| crew-id.bats                   |     5 |     0.3 |  0.0% |
 | smoke.bats                     |     3 |     0.2 |  0.0% |
 | refresh-models.bats            |     4 |     0.2 |  0.0% |
 
@@ -134,7 +133,6 @@ doc-pinning test was then triaged by hand (see the cut list).
 | ---------------------- | --------: | ----------: | --------: | --------: | -------: |
 | adapters.bats          |        69 |          74 |        47 |         0 |      190 |
 | crew.bats              |       520 |           1 |         0 |         0 |      521 |
-| crew-id.bats           |         5 |           0 |         0 |         0 |        5 |
 | dispatch.bats          |       776 |           1 |        14 |         1 |      792 |
 | dispatch-comment.bats  |        10 |           0 |         0 |         0 |       10 |
 | dispatch-config.bats   |        40 |           0 |         0 |         0 |       40 |
@@ -476,7 +474,6 @@ Blind spots:
 | adapters.bats          |   131 |       39 |         92 |            0.8462 |
 | bats-affected.bats     |    21 |       21 |          0 |            0.9048 |
 | crew.bats              |   539 |      539 |          0 |            0.8479 |
-| crew-id.bats           |     5 |        5 |          0 |            1.0000 |
 | dispatch.bats          |   800 |      780 |         20 |            0.8167 |
 | dispatch-comment.bats  |    10 |       10 |          0 |            1.0000 |
 | dispatch-config.bats   |    40 |       37 |          3 |            0.9189 |
