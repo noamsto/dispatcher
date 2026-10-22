@@ -26,6 +26,27 @@ func reapLineText(t *testing.T, line map[string]any) string {
 	return strings.Join(out, "\n")
 }
 
+// reapPinned pins the reap child's own invocation. The bats cases ran the real
+// entry, so the flags were exercised end to end: `--quiet` and `--no-wait` (a
+// reap that waits holds the lane), and no `--crew` — a lane reaps every crew's
+// workers, which is how the old case reclaimed a worker of crew c9 from a c1
+// lane. A stub that answers any reap argv leaves all three unpinned.
+func reapPinned(t *testing.T, s *stub) {
+	t.Helper()
+	const want = "reap --quiet --no-wait"
+	if got := s.calls("reap"); got == 0 {
+		t.Fatal("the stub logged no reap invocation")
+	}
+	for _, a := range s.argv() {
+		if !strings.HasPrefix(a, "reap") {
+			continue
+		}
+		if a != want {
+			t.Errorf("reap invoked as %q, want %q", a, want)
+		}
+	}
+}
+
 // A cadence reap reports what it reclaimed as a `reap` line of the lane's own
 // crew, and never as a batch: a batch is the bus, and nothing about a reap is an
 // event anyone's cursor should move past.
@@ -57,6 +78,7 @@ func TestStreamCadenceReapIsItsOwnLine(t *testing.T) {
 	if got := l.batches(); len(got) != 0 {
 		t.Errorf("the reap arrived as %v, want no batch line", got)
 	}
+	reapPinned(t, s)
 }
 
 // A terminal batch is worth a reap now, whatever the cadence says: the lane does
@@ -79,6 +101,7 @@ func TestStreamTerminalBatchTriggersReap(t *testing.T) {
 	if got := reapLineText(t, line); got != "reaped feat/x" {
 		t.Errorf("lines = %q", got)
 	}
+	reapPinned(t, s)
 }
 
 // --reap-every 0 is how the cadence reap — and the terminal-batch trigger that
