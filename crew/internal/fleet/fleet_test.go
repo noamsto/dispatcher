@@ -2,19 +2,23 @@ package fleet
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
+	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
@@ -439,5 +443,215 @@ func TestNonFiniteAgeIsClampedInJSONAndDashInTable(t *testing.T) {
 	}
 	if strings.Contains(out, "9223372036854775808") {
 		t.Errorf("table leaks the int64 overflow age:\n%s", out)
+	}
+}
+
+// remoteDispatch is a dispatch row for a worker that runs on another host:
+// MergeRemote is what asks that host for its row.
+func remoteDispatch(ts int64, crew, branch, name, host string) string {
+	return fmt.Sprintf(`{"ts":%d,"crew_id":%q,"kind":"dispatch","branch":%q,"name":%q,"host":%q,"remote":true,"engine":"claude","model":"sonnet","tier":"standard","title":"Title of %s"}`, ts*1000, crew, branch, name, host, branch)
+}
+
+// oneRepo is a fixture of a single origin-less repo whose bus holds lines.
+func oneRepo(t *testing.T, lines ...string) fixture {
+	t.Helper()
+	root := t.TempDir()
+	common := mkRepo(t, root, "alpha", "", lines...)
+	registry := filepath.Join(root, "registry")
+	if err := os.WriteFile(registry, []byte(common+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	empty := t.TempDir()
+	env := map[string]string{"HOME": empty, "CREW_SWEEP_ROOTS": empty}
+	return fixture{
+		alpha: common,
+		opts: Options{
+			Getenv:   func(k string) string { return env[k] },
+			Registry: registry,
+			Tmux:     &tmuxtest.Fake{Out: map[string]string{"list-panes": "", "list-windows": ""}},
+			Git:      stubGit("", nil),
+			Clock:    clock.Clock{Now: func() time.Time { return fixedNow }},
+		},
+	}
+}
+
+// remoteStub is an Options.Remote with a scripted host: rc 0 answers rows,
+// any other status fails, and every crew it was asked for is recorded as
+// "dir host argv". Hosts answer concurrently, hence the mutex.
+type remoteStub struct {
+	mu    sync.Mutex
+	calls []string
+	rows  string
+	rc    int
+}
+
+func (s *remoteStub) capture(dir, crew string) roster.Capture {
+	return func(_ context.Context, host string, argv []string, stdout, stderr io.Writer) int {
+		s.mu.Lock()
+		s.calls = append(s.calls, dir+" "+host+" "+strings.Join(argv, " "))
+		s.mu.Unlock()
+		if s.rc != 0 {
+			_, _ = io.WriteString(stderr, "ssh: Could not resolve hostname mini\n")
+			return s.rc
+		}
+		_, _ = io.WriteString(stdout, s.rows)
+		return 0
+	}
+}
+
+func (s *remoteStub) asked() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.calls)
+}
+
+// A remote worker's row comes from its own host, and is tagged with the repo
+// and crew the dispatch row lives in. It is never stale here: no local window
+// or worktree can vouch for a row that runs on another machine.
+func TestRemoteRowsMergeIntoTheirRepo(t *testing.T) {
+	f := oneRepo(t,
+		dispatch(1700000000, "c1", "feat/near", "sage"),
+		worker(1700000010, "c1", "feat/near", "working"),
+		remoteDispatch(1700000001, "c1", "feat/far", "iris", "mini"),
+	)
+	st := &remoteStub{rows: `[{"branch":"feat/far","name":"iris","state":"working","age_s":30,"live":true}]`}
+	f.opts.Remote = st.capture
+
+	out, errs, code := run(t, f, Request{Crew: "c1", JSON: true, All: true})
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	byBranch := map[string]map[string]any{}
+	for _, r := range jsonRows(t, out) {
+		byBranch[fmt.Sprint(r["branch"])] = r
+	}
+	far, ok := byBranch["feat/far"]
+	if !ok {
+		t.Fatalf("remote row missing, rows: %v", out)
+	}
+	if far["host"] != "mini" || far["crew_id"] != "c1" || far["repo"] != "alpha" {
+		t.Errorf("remote row = %v, want host mini, crew_id c1, repo alpha", far)
+	}
+	if far["stale"] != false {
+		t.Errorf("remote row stale = %v, want false", far["stale"])
+	}
+	if byBranch["feat/near"]["host"] != nil {
+		t.Errorf("local row carries a host: %v", byBranch["feat/near"])
+	}
+	// Asked from the repo's own checkout, for the host's live rows.
+	want := filepath.Dir(f.alpha) + " mini crew roster --live -- c1"
+	if got := st.asked(); !slices.Contains(got, want) {
+		t.Errorf("capture calls = %q, want one %q", got, want)
+	}
+}
+
+// A host that cannot answer leaves one placeholder per dispatched branch, with
+// the reason, and says nothing about the local rows. A placeholder has no
+// state, so it is never terminal and shows without --all.
+func TestUnreachableHostLeavesPlaceholderRows(t *testing.T) {
+	f := oneRepo(t,
+		dispatch(1700000000, "c1", "feat/near", "sage"),
+		worker(1700000010, "c1", "feat/near", "working"),
+		remoteDispatch(1700000001, "c1", "feat/far", "iris", "mini"),
+	)
+	st := &remoteStub{rc: 255}
+	f.opts.Remote = st.capture
+
+	out, _, code := run(t, f, Request{Crew: "c1", JSON: true})
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	byBranch := map[string]map[string]any{}
+	for _, r := range jsonRows(t, out) {
+		byBranch[fmt.Sprint(r["branch"])] = r
+	}
+	far, ok := byBranch["feat/far"]
+	if !ok {
+		t.Fatalf("placeholder row missing, rows: %v", out)
+	}
+	if err, _ := far["host_error"].(string); !strings.Contains(err, "Could not resolve hostname") {
+		t.Errorf("host_error = %v, want the host's reason", far["host_error"])
+	}
+	if far["host"] != "mini" || far["repo"] != "alpha" || far["state"] != nil || far["stale"] != false {
+		t.Errorf("placeholder row = %v", far)
+	}
+	near, ok := byBranch["feat/near"]
+	if !ok || near["state"] != "working" || near["host_error"] != nil || near["host"] != nil {
+		t.Errorf("local row changed: %v", near)
+	}
+}
+
+// A bus with no remote dispatch row asks no host: the merge stays free for the
+// local-only repo, which is every repo on a single-host machine.
+func TestNoRemoteWorkersAsksNoHost(t *testing.T) {
+	f := oneRepo(t,
+		dispatch(1700000000, "c1", "feat/near", "sage"),
+		worker(1700000010, "c1", "feat/near", "working"),
+	)
+	st := &remoteStub{rows: `[]`}
+	f.opts.Remote = st.capture
+
+	for _, req := range []Request{{JSON: true}, {Crew: "c1", All: true}} {
+		if _, errs, code := run(t, f, req); code != 0 {
+			t.Fatalf("exit %d, stderr %q", code, errs)
+		}
+	}
+	if got := st.asked(); len(got) != 0 {
+		t.Errorf("capture calls = %q, want none", got)
+	}
+}
+
+// Two crews ask their hosts at once: each call holds until the other crew's
+// call arrives, so a serial merge — one host timeout per crew, a down host
+// spending its whole remoteTimeout each time — reads as a call that waited
+// alone.
+func TestCrewsAskTheirHostsTogether(t *testing.T) {
+	f := oneRepo(t,
+		worker(1700000010, "c1", "feat/a", "working"),
+		remoteDispatch(1700000011, "c1", "feat/far-a", "iris", "mini"),
+		worker(1700000012, "c2", "feat/b", "working"),
+		remoteDispatch(1700000013, "c2", "feat/far-b", "sage", "other"),
+	)
+	branches := map[string]string{"c1": "feat/far-a", "c2": "feat/far-b"}
+	var mu sync.Mutex
+	arrived, alone := 0, false
+	together := make(chan struct{})
+	f.opts.Remote = func(_, crew string) roster.Capture {
+		return func(_ context.Context, _ string, _ []string, stdout, _ io.Writer) int {
+			mu.Lock()
+			arrived++
+			if arrived == 2 {
+				close(together)
+			}
+			mu.Unlock()
+			select {
+			case <-together:
+			case <-time.After(5 * time.Second):
+				mu.Lock()
+				alone = true
+				mu.Unlock()
+			}
+			_, _ = fmt.Fprintf(stdout, `[{"branch":%q,"name":"w","state":"working","live":true}]`, branches[crew])
+			return 0
+		}
+	}
+
+	out, _, code := run(t, f, Request{JSON: true})
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if alone {
+		t.Error("a crew's host was still being asked alone after the other answered")
+	}
+	seen := map[string]bool{}
+	for _, r := range jsonRows(t, out) {
+		seen[fmt.Sprint(r["branch"])] = true
+	}
+	for _, branch := range []string{"feat/far-a", "feat/far-b"} {
+		if !seen[branch] {
+			t.Errorf("row for %s missing: %v", branch, out)
+		}
 	}
 }

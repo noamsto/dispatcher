@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -35,6 +36,10 @@ type Options struct {
 	Tmux     tmux.Client
 	Git      git.Client
 	Clock    clock.Clock
+	// Remote asks one host for the rows of the crew's remote workers, from dir:
+	// the checkout of the repo whose bus is being folded, since that checkout's
+	// origin is what names the clone the call lands in. nil asks no host.
+	Remote func(dir, crew string) roster.Capture
 }
 
 // onceTmux reads each argv once and shares it, a failed read as no output, so
@@ -94,10 +99,18 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 		}
 		worktrees := sync.OnceValues(func() (string, error) { return git.Worktrees(ctx, o.Git, "", r.Common) })
 		live := roster.Liveness{Windows: windowBranches, Worktrees: worktrees}
+		// A discovered repo's checkout is its common dir's parent, the same
+		// derivation `rate --sweep-all` makes, and it is that checkout's origin
+		// that names the clone a host call lands in.
+		var remote func(crew string) roster.Capture
+		if o.Remote != nil {
+			dir := filepath.Dir(r.Common)
+			remote = func(crew string) roster.Capture { return o.Remote(dir, crew) }
+		}
 		repoRows, err := foldRepo(ctx, r.Common, events, docs, onlyCrew, nowSec, roster.Probes{
 			Tmux:      once,
 			Worktrees: worktrees,
-		})
+		}, remote)
 		if err != nil {
 			say(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, oneLine(err))
 			continue
@@ -107,8 +120,14 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 		for _, row := range repoRows {
 			row.Row["repo"] = name
 			row.Row["crew_id"] = row.crew
-			nonTerminal := slices.Contains(roster.LiveStates, str(row.Row, "state"))
-			stale := nonTerminal && live.Stale(row.Row)
+			// A remote row answers for a window and a worktree on another host,
+			// so this host's liveness reads nothing about it. A host that did not
+			// answer has no state either, and no state is not a terminal one, so
+			// --all never hides it.
+			_, remoteRow := row.Row["host"].(string)
+			_, unanswered := row.Row["host_error"]
+			nonTerminal := unanswered || slices.Contains(roster.LiveStates, str(row.Row, "state"))
+			stale := !remoteRow && nonTerminal && live.Stale(row.Row)
 			row.Row["stale"] = stale
 			switch {
 			case !all && !nonTerminal:
@@ -140,8 +159,16 @@ type crewRow struct {
 }
 
 // foldRepo folds each of the repo's crews: the one asked for, else every crew
-// that has a worker status row, which is exactly what roster can produce rows for.
-func foldRepo(ctx context.Context, common string, events []bus.Event, docs []any, onlyCrew string, nowSec float64, p roster.Probes) ([]crewRow, error) {
+// that has a worker status row, which is exactly what roster can produce rows
+// for, and then merges each crew's rows with its remote workers'. remote is nil
+// when the caller asks no host.
+//
+// Every fold runs before any host is asked: Fold reads the tmux probe's cache,
+// which is not synchronized, and a fold that fails skips the repo with nobody
+// waiting on a host behind it. The merges start together because a host that is
+// down spends its whole timeout, and asking one crew at a time pays that per
+// crew.
+func foldRepo(ctx context.Context, common string, events []bus.Event, docs []any, onlyCrew string, nowSec float64, p roster.Probes, remote func(crew string) roster.Capture) ([]crewRow, error) {
 	crews := []string{onlyCrew}
 	if onlyCrew == "" {
 		crews = crews[:0]
@@ -153,13 +180,28 @@ func foldRepo(ctx context.Context, common string, events []bus.Event, docs []any
 		slices.Sort(crews)
 		crews = slices.Compact(crews)
 	}
-	var out []crewRow
-	for _, c := range crews {
-		folded, err := roster.Fold(ctx, docs, c, nowSec, p)
+	folded := make([][]map[string]any, len(crews))
+	for i, c := range crews {
+		rows, err := roster.Fold(ctx, docs, c, nowSec, p)
 		if err != nil {
 			return nil, err
 		}
-		for _, row := range folded {
+		folded[i] = rows
+	}
+	rows := folded
+	if remote != nil {
+		rows = make([][]map[string]any, len(crews))
+		var wg sync.WaitGroup
+		for i, c := range crews {
+			wg.Go(func() {
+				rows[i] = roster.MergeRemote(ctx, folded[i], events, c, remote(c))
+			})
+		}
+		wg.Wait()
+	}
+	var out []crewRow
+	for i, c := range crews {
+		for _, row := range rows[i] {
 			out = append(out, crewRow{Row: row, crew: c})
 		}
 	}

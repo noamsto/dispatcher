@@ -1031,6 +1031,14 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 		Tmux:  tmux.Exec{},
 		Git:   git.Exec{},
 		Clock: clock.FromEnv(),
+		// A repo's remote workers answer for themselves, as they do for
+		// `crew roster`: through remote-run, which runs the sender check, from
+		// the checkout of the repo whose bus is being read.
+		Remote: func(dir, crew string) roster.Capture {
+			return func(ctx context.Context, host string, argv []string, stdout, stderr io.Writer) int {
+				return remoteAs(ctx, e, dir, crew)(host, argv, stdout, stderr)
+			}
+		},
 	}
 	c := p.typed.Fleet.Table
 	return fleet.Run(ctx, fleet.Request{All: c.All, JSON: c.JSON, Crew: str(c.Crew)}, stdout, stderr, o)
