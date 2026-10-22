@@ -83,7 +83,7 @@ func TestRunMapsFoldErrorsToExitCodes(t *testing.T) {
 		wantStdout string
 		wantStderr string // exact; "" means the check is wantErrIn
 		wantErrIn  string // substring, with the log path exactly once, and the
-						// text before it as stderr's prefix
+		// text before it as stderr's prefix
 	}{
 		{name: "roster number event is a type error", args: []string{"roster", "c1"}, log: str("5\n"), mode: 0o644, wantCode: 5, wantErrIn: "crew: roster: %s: "},
 		{name: "sessions number event is a type error", args: []string{"sessions", "x"}, log: str("5\n"), mode: 0o644, wantCode: 5, wantErrIn: "crew: sessions: %s: "},
@@ -137,9 +137,8 @@ func TestRunMapsFoldErrorsToExitCodes(t *testing.T) {
 				if !strings.Contains(stderr.String(), want) {
 					t.Errorf("stderr = %q, want it to contain %q", stderr.String(), want)
 				}
-				// The arm's own prefix, not just the text after it: an agent reads
-				// `crew: roster: ` as the subcommand that failed, and it is what
-				// crew.sh's arms printed first.
+				// The arm's prefix is part of the message: it names the
+				// subcommand that failed, before the path it failed on.
 				if head, _, _ := strings.Cut(tt.wantErrIn, "%s"); head != "" && !strings.HasPrefix(stderr.String(), head) {
 					t.Errorf("stderr = %q, want it to start with %q", stderr.String(), head)
 				}

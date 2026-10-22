@@ -20,8 +20,8 @@ import (
 )
 
 // rosterArm runs `roster` against a bus with the fold's clock frozen, so age_s
-// is exact. The fold itself is pinned by value in internal/roster; what lives
-// here is the arm's own half of the contract: how it prints and what it exits.
+// is exact. Fold behaviour is pinned by value in internal/roster; this file is
+// the arm's own half: how it prints and what it exits.
 func rosterArm(t *testing.T, rows string, args ...string) (string, string, int) {
 	t.Helper()
 	repo, _ := repoWithLog(t, &rows, 0o644)
@@ -36,8 +36,8 @@ func rosterArm(t *testing.T, rows string, args ...string) (string, string, int) 
 	return stdout.String(), stderr.String(), code
 }
 
-// gitRun is a git fixture call: a test repo, not this checkout, so it carries its
-// own identity rather than the committer's.
+// gitRun is a git fixture call, so it carries its own identity: the test repo
+// has no committer configured and must not borrow this checkout's.
 func gitRun(t *testing.T, repo string, args ...string) {
 	t.Helper()
 	full := append([]string{"-C", repo, "-c", "user.email=t@e", "-c", "user.name=t", "-c", "commit.gpgsign=false"}, args...)
@@ -46,12 +46,11 @@ func gitRun(t *testing.T, repo string, args ...string) {
 	}
 }
 
-// TestRosterCLIResolvesAnExitedRowThroughTheRealWorktreeList is the wiring the
-// fold's own tests stub out: internal/roster hands `resolveExited` a scripted
-// porcelain list, while the arm reads it with `git worktree list --porcelain`
-// taken from the repo it resolved and a pane list read by one exact tmux argv.
-// A wrong cwd or a changed `-F` format silently leaves every false `exited` a
-// real one, which no fold test would see.
+// TestRosterCLIResolvesAnExitedRowThroughTheRealWorktreeList covers the wiring
+// the fold's tests stub out: internal/roster hands `resolveExited` a scripted
+// porcelain list, while the arm reads a real `git worktree list --porcelain`
+// from the repo it resolved, plus a pane list read by one exact tmux argv. A
+// wrong cwd or a changed `-F` format silently leaves every false `exited` real.
 func TestRosterCLIResolvesAnExitedRowThroughTheRealWorktreeList(t *testing.T) {
 	rows := `{"ts":1700000001000,"crew_id":"c1","kind":"status","from":"worker:feat/roster-live#s1-1","to":"dispatcher:c1","body":{"state":"working"}}
 {"ts":1700000002000,"crew_id":"c1","kind":"status","from":"worker:feat/roster-live#s1-1","to":"dispatcher:c1","body":{"state":"exited"}}
@@ -74,8 +73,8 @@ func TestRosterCLIResolvesAnExitedRowThroughTheRealWorktreeList(t *testing.T) {
 		getwd: func() (string, error) { return repo, nil },
 		clock: clock.Clock{Now: func() time.Time { return time.Unix(1700000100, 0) }},
 		probes: func(ctx context.Context, cwd string) roster.Probes {
-			p := probes(ctx, cwd) // the arm's real set: `git worktree list` from this cwd
-			p.Tmux = tx           // only the pane list is scripted; no tmux server is this test's
+			p := probes(ctx, cwd)
+			p.Tmux = tx // scripted: no tmux server is this test's
 			return p
 		},
 		proc: proctest.New(nil, nil),
@@ -98,10 +97,8 @@ func TestRosterCLIResolvesAnExitedRowThroughTheRealWorktreeList(t *testing.T) {
 
 // TestRosterCLIStdoutIsThePrettyForm is `crew roster`'s stdout framing: the fold
 // printed in jq's pretty form, not compact like `crew sessions`. The bats case
-// ran `cmp "$f" <(jq . "$f")`, so the Go version pins the same fixed point —
-// stdout is byte for byte the indented encoding of its own value (#1044 asks
-// for value-equality over jq's exact spacing, so the rows are also compared by
-// value against the fold).
+// ran `cmp "$f" <(jq . "$f")`; the same fixed point holds here — stdout is byte
+// for byte the indented encoding of its own value, and its rows match by value.
 func TestRosterCLIStdoutIsThePrettyForm(t *testing.T) {
 	const rows = `{"ts":1700000001000,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","to":"dispatcher:c1","body":{"state":"working"}}
 {"ts":1700000002000,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","to":"dispatcher:c1","body":{"state":"done"}}
@@ -119,9 +116,8 @@ func TestRosterCLIStdoutIsThePrettyForm(t *testing.T) {
 	}
 
 	// The framing: jq pretty-prints an array of objects over many lines with a
-	// two-space indent and ends the file with one newline. Re-encoding the value
-	// the same way must give the bytes back — a compact arm, an extra blank line
-	// or a re-indented one all fail here.
+	// two-space indent, and ends the file with one newline. Re-encoding the value
+	// the same way must give those bytes back.
 	dec := json.NewDecoder(strings.NewReader(out))
 	dec.UseNumber()
 	var v any
@@ -140,10 +136,9 @@ func TestRosterCLIStdoutIsThePrettyForm(t *testing.T) {
 	}
 }
 
-// TestRosterCLIHelpIsTheRosterScreen pins the whole first line of the screen.
-// TestRunHelpRouting pins the routing and its prefix; the bats case asserted the
-// usage line exactly, and it is the line every caller of `crew roster --help`
-// reads. No repo: --help is routed before the bus is opened.
+// TestRosterCLIHelpIsTheRosterScreen pins the whole first line, where
+// TestRunHelpRouting pins only the routing and its prefix. No repo: --help is
+// routed before the bus is opened.
 func TestRosterCLIHelpIsTheRosterScreen(t *testing.T) {
 	noCwd := env{getwd: func() (string, error) { return "", errors.New("getwd: no such file") }}
 	var stdout, stderr bytes.Buffer
