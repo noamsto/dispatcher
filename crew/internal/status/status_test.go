@@ -283,8 +283,8 @@ func TestRowDetailAndPR(t *testing.T) {
 }
 
 // The documented set is the accepted set: a worker posting any of these six
-// states lands a row. `reaped` is the seventh state the refusal names and is
-// refused from a worker (TestReapedRefusedFromWorkerAndRole).
+// states lands a row. `reaped` is the seventh state the refusal names, and a
+// worker may not post it (TestReapedRefusedFromWorkerAndRole).
 func TestEveryDocumentedStateIsAccepted(t *testing.T) {
 	for _, state := range []string{"working", "blocked", "pr_open", "done", "failed", "exited"} {
 		t.Run(state, func(t *testing.T) {
@@ -297,10 +297,10 @@ func TestEveryDocumentedStateIsAccepted(t *testing.T) {
 	}
 }
 
-// TestLongDetailElided pins the cap the bats case measured with `wc -c`: one
-// line, at most bus.LineMax bytes, whose detail ends on the elision marker. The
-// quote row is the nonlinear case: a `"` costs two bytes once the line is
-// encoded, so a cut sized on the text's own length still overflows.
+// TestLongDetailElided posts a detail past the bus line cap: one line, at most
+// bus.LineMax bytes, whose detail ends on the elision marker. The quote row is
+// the nonlinear case — a `"` costs two bytes once the line is encoded, so a cut
+// sized on the text's own length still overflows.
 func TestLongDetailElided(t *testing.T) {
 	for _, unit := range []string{"x", "é", "✓", `"`} {
 		t.Run(unit, func(t *testing.T) {
