@@ -202,8 +202,16 @@ func (f *fixture) addCrossPR(number int, head, base string) {
 
 func numberFor(n int) string { return fmt.Sprintf("%d", n) }
 
-// stackRun runs the command and reports its exit code and both streams.
+// stackRun runs the command from the main checkout and reports its exit code and
+// both streams.
 func (f *fixture) stackRun(t *testing.T, req Request) (int, string, string) {
+	f.t.Helper()
+	return f.stackRunIn(t, f.main, req)
+}
+
+// stackRunIn runs the command from cwd, which for the trust cases is a worker
+// worktree rather than the main checkout.
+func (f *fixture) stackRunIn(t *testing.T, cwd string, req Request) (int, string, string) {
 	f.t.Helper()
 	f.stdout.Reset()
 	f.stderr.Reset()
@@ -214,7 +222,7 @@ func (f *fixture) stackRun(t *testing.T, req Request) (int, string, string) {
 		Append: func(path, line string) error { f.appended = append(f.appended, line); return bus.Append(path, line) },
 	}
 	paths := bus.Paths{Common: f.common(), Dir: f.common() + "/crew", Log: f.log}
-	code := Run(context.Background(), req, paths, f.main, f.stdout, f.stderr, Options{Probes: p})
+	code := Run(context.Background(), req, paths, cwd, f.stdout, f.stderr, Options{Probes: p})
 	_ = os.Chdir(f.main)
 	return code, f.stdout.String(), f.stderr.String()
 }
@@ -348,6 +356,10 @@ func TestOidFormat(t *testing.T) {
 	// read it: the format check is skipped and the parent tip path runs.
 	if _, _, errOut := f.stackRun(t, Request{Record: true, Child: "feat/child", Oid: ""}); !strings.Contains(errOut, "no recorded parent") {
 		t.Errorf("an empty oid argument: %s", errOut)
+	}
+	// Every run above refused before recording anything.
+	if n := len(f.busRows(t, "stack_cut")); n != 0 {
+		t.Errorf("a refused record wrote %d rows", n)
 	}
 }
 
