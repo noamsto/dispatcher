@@ -13,8 +13,6 @@ tests/bats-affected.bats	affected	!timing	3908
 tests/bats-affected.bats	affected git	!timing	1670
 tests/bats-shard.bats	*	!timing	53964
 tests/crew.bats	*	!timing	65735
-tests/crew.bats	await	!timing	67822
-tests/crew.bats	await --from	!timing	16341
 tests/crew.bats	blocked-cycle	!timing	9765
 tests/crew.bats	burn map conformance	!timing	19017
 tests/crew.bats	bus	!timing	17083
