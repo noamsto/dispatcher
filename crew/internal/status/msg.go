@@ -92,8 +92,10 @@ func reviewSeamRefusal(ctx context.Context, from, to, body, crew string, paths b
 // isReviewSeam reports whether a msg body is a review seam: a JSON object whose
 // "seam" is exactly "review", the shape seam.jq counts. Any other body — plain
 // text, an array, another seam — is an ordinary msg. A leading byte order mark
-// is skipped here as it is by the fold's `_jqfromjson`, so the two gates read
-// the same body the same way.
+// is skipped, as the fold's `_jqfromjson` skips it. One difference remains: a
+// body holding a number too large for float64 parses for `_jqfromjson`
+// (json.Number) and not for encoding/json, so that body counts as a seam only
+// for the pr_open gate — the gate that holds the invariant.
 func isReviewSeam(body string) bool {
 	var v any
 	if json.Unmarshal([]byte(strings.TrimPrefix(body, "\ufeff")), &v) != nil {
