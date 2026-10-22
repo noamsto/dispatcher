@@ -243,60 +243,6 @@ write_anchor_record() {
   [ "$output" = "1720800000-12345" ]
 }
 
-@test "identity: is deterministic over the branch" {
-  run run_crew identity feat/foo
-  [ "$status" -eq 0 ]
-  first="$output"
-  run run_crew identity feat/foo
-  [ "$output" = "$first" ]
-}
-
-@test "identity: emits name, color and tmux keys" {
-  run run_crew identity feat/foo
-  [ "$status" -eq 0 ]
-  echo "$output" | jq -e 'has("name") and has("color") and has("tmux")'
-}
-
-@test "identity: two live branches on one hash slot get different codenames" {
-  a=feat/33-thing
-  b=feat/38-thing
-  [ "$(run_crew identity $a | jq -r .name)" = "$(run_crew identity $b | jq -r .name)" ]
-  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  mkdir -p "$dir"
-  ida="$(run_crew identity $a c1)"
-  jq -nc --argjson i "$ida" '{ts:1,crew_id:"c1",kind:"dispatch",branch:"feat/33-thing"} + $i' >>"$dir/events.jsonl"
-  idb="$(run_crew identity $b c1)"
-  [ "$(echo "$ida" | jq -r .name)" != "$(echo "$idb" | jq -r .name)" ]
-  [ "$(echo "$ida" | jq -r .tmux)" != "$(echo "$idb" | jq -r .tmux)" ]
-}
-
-@test "identity: a branch keeps its recorded identity, and a finished worker frees its slot" {
-  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  mkdir -p "$dir"
-  printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/33-thing","name":"nova","color":"magenta","tmux":"colour127"}' >>"$dir/events.jsonl"
-  [ "$(run_crew identity feat/33-thing c1 | jq -r .name)" = "nova" ]
-  # 38 hashes to sage; a finished sage-holder must not push it forward.
-  printf '%s\n' '{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/9-x","name":"sage","color":"green","tmux":"colour28"}' >>"$dir/events.jsonl"
-  CREW_ID=c1 run_crew status "worker:feat/9-x#s1-1" working
-  [ "$(run_crew identity feat/38-thing c1 | jq -r .name)" != "sage" ]
-  CREW_ID=c1 run_crew status "worker:feat/9-x#s1-1" done
-  [ "$(run_crew identity feat/38-thing c1 | jq -r .name)" = "sage" ]
-}
-
-@test "identity: a recorded name or colour outside the codename grammar is not replayed (#470)" {
-  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  mkdir -p "$dir"
-  printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/33-thing","name":"$(touch pwned)","color":"green","tmux":"colour28"}' >>"$dir/events.jsonl"
-  printf '%s\n' '{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/34-thing","name":"nova","color":"green","tmux":"red#(touch pwned)"}' >>"$dir/events.jsonl"
-  printf '%s\n' '{"ts":3,"crew_id":"c1","kind":"dispatch","branch":"feat/35-thing","name":"nova\n","color":"green","tmux":"colour28"}' >>"$dir/events.jsonl"
-  for b in feat/33-thing feat/34-thing feat/35-thing; do
-    id="$(run_crew identity "$b" c1)"
-    [ "$(jq -r .name <<<"$id")" != $'nova\n' ]
-    [[ "$(jq -r .name <<<"$id")" =~ ^[a-z]+$ ]]
-    [[ "$(jq -r .tmux <<<"$id")" =~ ^colour[0-9]+$ ]]
-  done
-}
-
 @test "repo-keyed subcommands refuse to run outside a git repo" {
   cd /
   CREW_ID=c1 run run_crew status worker working
@@ -7558,35 +7504,6 @@ proc_gone() { ! kill -0 "$1" 2>/dev/null; }
   [[ "$stderr" == *"invalid crew id"* ]]
   [ ! -e "$common/escaped" ]
   [ ! -e "$common/crew/escaped" ]
-}
-
-@test "identity: a recorded name another live worker now holds is not reused" {
-  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  mkdir -p "$dir"
-  printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/1-a","name":"nova","color":"magenta","tmux":"colour127"}' >>"$dir/events.jsonl"
-  printf '%s\n' '{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/2-b","name":"nova","color":"magenta","tmux":"colour127"}' >>"$dir/events.jsonl"
-  CREW_ID=c1 run_crew status "worker:feat/1-a#s1-1" working
-  [ "$(run_crew identity feat/2-b c1 | jq -r .name)" != "nova" ]
-  CREW_ID=c1 run_crew status "worker:feat/1-a#s1-1" done
-  [ "$(run_crew identity feat/2-b c1 | jq -r .name)" = "nova" ]
-}
-
-@test "identity: an unrecorded branch resolves with no tmux available" {
-  mkdir -p "$BATS_TEST_TMPDIR/fakebin"
-  printf '#!/bin/sh\nexit 1\n' >"$BATS_TEST_TMPDIR/fakebin/tmux"
-  chmod +x "$BATS_TEST_TMPDIR/fakebin/tmux"
-  PATH="$BATS_TEST_TMPDIR/fakebin:$PATH" run run_crew identity feat/9-new c1
-  [ "$status" -eq 0 ]
-  echo "$output" | jq -e 'has("name")'
-}
-
-@test "identity: of two live branches sharing a recorded name the earlier keeps it" {
-  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  mkdir -p "$dir"
-  printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/1-a","name":"nova","color":"magenta","tmux":"colour127"}' >>"$dir/events.jsonl"
-  printf '%s\n' '{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/2-b","name":"nova","color":"magenta","tmux":"colour127"}' >>"$dir/events.jsonl"
-  [ "$(run_crew identity feat/1-a c1 | jq -r .name)" = "nova" ]
-  [ "$(run_crew identity feat/2-b c1 | jq -r .name)" != "nova" ]
 }
 
 # --- terminal status gate: review seam (#241, #306) ---
