@@ -16,8 +16,6 @@ export CREW_RATE_AUTOSWEEP=0
 # that read the subcommand list out of the switch.
 export CREW="${CREW_GO_BIN:?tests/setup_suite.bash did not build crew-go}"
 export CREW_GO_SRC="$BATS_TEST_DIRNAME/../crew/main.go"
-# The identity pools, for the roster-render palette test that enumerates them.
-export IDENTITY_SRC="$BATS_TEST_DIRNAME/../crew/internal/identity/identity.go"
 
 # Host-environment isolation: unset vars that leak from a running dispatcher or
 # tmux session when bats itself runs from inside one.  Plain `bats tests/`

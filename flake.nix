@@ -401,10 +401,11 @@
               # silently uses whatever yq leaks in from the user profile and
               # fails in CI.
               pkgs.yq-go
-              # d2: tests/crew.bats compiles every roster palette color with the
-              # real compiler, so a palette name d2 rejects (steel, rust, sky
-              # before the renderer's mapping) fails CI instead of silently
-              # skipping.
+              # d2: the rosterrender package's palette test
+              # (TestEveryPaletteColorCompilesThroughD2) compiles every roster
+              # palette color with the real compiler, so a palette name d2
+              # rejects (steel, rust, sky before the renderer's mapping) fails
+              # CI instead of silently skipping.
               pkgs.d2
               pkgs.git
               pkgs.tmux
