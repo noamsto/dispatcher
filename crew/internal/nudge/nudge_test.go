@@ -411,6 +411,70 @@ func acceptedFrames(t *testing.T) []string {
 	}
 }
 
+// typedArgv is the two keystrokes every accepted nudge must send and nothing else:
+// the constant line typed literally, then one Enter.
+var typedArgv = []string{
+	`send-keys -t %9 -l crew inbox "$CREW_WORKER_ID"`,
+	"send-keys -t %9 Enter",
+}
+
+// keys is the send-keys argv of a call, in order, ignoring the anchor gate's reads.
+func keys(p *fakePane) []string {
+	var out []string
+	for _, c := range p.tmux {
+		if strings.HasPrefix(c, "send-keys") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// A detached background shell is no reason to refuse a directive, which is what the
+// frame gate's skipBg is for: the same accepted nudge on a lead parked on a shell,
+// with the shell still on screen after the Enter.
+func TestPaneAcceptedClaudeBackgroundShell(t *testing.T) {
+	wins, panes := anchored()
+	bg := fixture(t, "bgwait_churned.txt")
+	p := &fakePane{frames: []string{
+		bg, bg,
+		fixture(t, "nudge_bgwait_typed.txt"),
+		bg,
+	}, windows: wins, panes: panes}
+	b := &fakeBus{rows: sessionRows(t, idleReq, "working")}
+	out, rc := Pane(context.Background(), req("claude"), newDeps(p, b, nil))
+	if rc != 0 || !strings.HasPrefix(out, "nudge accepted: %9 ") {
+		t.Fatalf("Pane = (%q, %d), want accepted on a background-shell frame", out, rc)
+	}
+	if got := keys(p); !slices.Equal(got, typedArgv) {
+		t.Errorf("keys = %q, want %q", got, typedArgv)
+	}
+	if got := rowJSON(t, b.appended[0]); !strings.Contains(got, `"result":"accepted"`) {
+		t.Errorf("row %s, want accepted", got)
+	}
+}
+
+// The frame gate runs again between the anchor gate and the keystroke, so a draft a
+// human started in that window stops the typing: the refusal is the draft's, and the
+// pane never got a key.
+func TestPaneRefusesADraftThatAppearsBeforeTyping(t *testing.T) {
+	wins, panes := anchored()
+	p := &fakePane{frames: []string{
+		fixture(t, "done_idle.txt"),
+		fixture(t, "nudge_draft.txt"),
+	}, windows: wins, panes: panes}
+	b := &fakeBus{rows: sessionRows(t, idleReq, "working")}
+	out, rc := Pane(context.Background(), req("claude"), newDeps(p, b, nil))
+	if rc != exitRefused || out != "unsent input in the input box" {
+		t.Errorf("Pane = (%q, %d), want the draft refusal", out, rc)
+	}
+	if got := keys(p); len(got) != 0 {
+		t.Errorf("the re-check typed anyway: %q", got)
+	}
+	if len(b.appended) != 0 {
+		t.Errorf("a refusal records no row: %d", len(b.appended))
+	}
+}
+
 func TestPaneAcceptedClaude(t *testing.T) {
 	wins, panes := anchored()
 	p := &fakePane{frames: acceptedFrames(t), windows: wins, panes: panes}
@@ -461,6 +525,13 @@ func TestPaneAcceptedPi(t *testing.T) {
 	out, rc := Pane(context.Background(), req("pi"), newDeps(p, b, nil))
 	if rc != 0 || !strings.HasPrefix(out, "nudge accepted: %9") {
 		t.Fatalf("Pane = (%q, %d), want accepted", out, rc)
+	}
+	if got := keys(p); !slices.Equal(got, typedArgv) {
+		t.Errorf("keys = %q, want %q", got, typedArgv)
+	}
+	if got := rowJSON(t, b.appended[0]); !strings.Contains(got, `"result":"accepted"`) ||
+		!strings.Contains(got, `"engine":"pi"`) {
+		t.Errorf("row %s, want accepted on pi", got)
 	}
 }
 
@@ -516,7 +587,7 @@ func TestPaneTypedButNotAccepted(t *testing.T) {
 		name   string
 		frames []string
 		enter  bool // enterFails
-		enters int  // Enters the call may send: never twice, none when unconfirmed
+		keys   []string
 		want   string
 		detail string
 	}{
@@ -526,7 +597,7 @@ func TestPaneTypedButNotAccepted(t *testing.T) {
 				fixture(t, "done_idle.txt"), fixture(t, "done_idle.txt"),
 				fixture(t, "nudge_typed.txt"), fixture(t, "nudge_typed.txt"),
 			},
-			enters: 1,
+			keys:   typedArgv,
 			want:   "held",
 			detail: "the line still sits in the input box after one Enter; not re-sent — a human must submit or clear it (crew where)",
 		},
@@ -536,7 +607,7 @@ func TestPaneTypedButNotAccepted(t *testing.T) {
 				fixture(t, "done_idle.txt"), fixture(t, "done_idle.txt"),
 				fixture(t, "done_idle.txt"), fixture(t, "done_idle.txt"),
 			},
-			enters: 0,
+			keys:   typedArgv[:1],
 			want:   "unconfirmed",
 			detail: "typed but not confirmed in the input box; no Enter sent — the text may be left as an unsent draft a human must clear (crew where), never re-typed",
 		},
@@ -546,7 +617,7 @@ func TestPaneTypedButNotAccepted(t *testing.T) {
 				fixture(t, "done_idle.txt"), fixture(t, "done_idle.txt"), fixture(t, "nudge_typed.txt"),
 			},
 			enter:  true,
-			enters: 1,
+			keys:   typedArgv,
 			want:   "unknown",
 			detail: "typed and confirmed, but the Enter failed; the line may sit in the input box (crew where), never re-typed",
 		},
@@ -555,7 +626,7 @@ func TestPaneTypedButNotAccepted(t *testing.T) {
 			// held line, so the pane is unverifiable.
 			name:   "unknown: neither a live turn nor the held line",
 			frames: []string{fixture(t, "done_idle.txt"), fixture(t, "done_idle.txt"), fixture(t, "nudge_typed.txt"), fixture(t, "nudge_draft.txt")},
-			enters: 1,
+			keys:   typedArgv,
 			want:   "unknown",
 			detail: "the pane after Enter is neither a live turn nor the held line; verify it (crew where), never re-typed",
 			//
@@ -571,16 +642,10 @@ func TestPaneTypedButNotAccepted(t *testing.T) {
 			if want := "nudge " + tc.want + ": %9 " + idleReq + " — " + tc.detail; out != want {
 				t.Errorf("out = %q, want %q", out, want)
 			}
-			// Every typed attempt records exactly one row, and the Enter is never
-			// repeated: at most one Enter call, none when unconfirmed.
-			enters := 0
-			for _, c := range p.tmux {
-				if strings.HasSuffix(c, " Enter") {
-					enters++
-				}
-			}
-			if enters != tc.enters {
-				t.Errorf("%d Enters, want %d", enters, tc.enters)
+			// Every typed attempt records exactly one row, and the keystrokes are the
+			// line and at most one Enter: none when unconfirmed, never a second one.
+			if got := keys(p); !slices.Equal(got, tc.keys) {
+				t.Errorf("keys = %q, want %q", got, tc.keys)
 			}
 			if len(b.appended) != 1 {
 				t.Errorf("%d rows, want 1", len(b.appended))
@@ -598,8 +663,15 @@ func TestPaneWrappedLineAccepted(t *testing.T) {
 		fixture(t, "nudge_typed_wrapped.txt"), fixture(t, "meter.2s.1.2k.txt"),
 	}, windows: wins, panes: panes}
 	b := &fakeBus{rows: sessionRows(t, idleReq, "working")}
-	if _, rc := Pane(context.Background(), req("claude"), newDeps(p, b, nil)); rc != 0 {
-		t.Fatalf("a wrapped line must still confirm, got rc %d", rc)
+	out, rc := Pane(context.Background(), req("claude"), newDeps(p, b, nil))
+	if rc != 0 {
+		t.Fatalf("a wrapped line must still confirm, got (%q, %d)", out, rc)
+	}
+	if got := keys(p); !slices.Equal(got, typedArgv) {
+		t.Errorf("keys = %q, want %q", got, typedArgv)
+	}
+	if got := rowJSON(t, b.appended[0]); !strings.Contains(got, `"result":"accepted"`) {
+		t.Errorf("row %s, want accepted", got)
 	}
 }
 
