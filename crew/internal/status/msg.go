@@ -2,13 +2,13 @@ package status
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 )
 
 // MsgRequest is `crew msg <from> <to> <body>`.
@@ -88,14 +88,11 @@ func reviewSeamRefusal(ctx context.Context, from, to, body, crew string, paths b
 }
 
 // isReviewSeam reports whether a msg body is a review seam: a JSON object whose
-// "seam" is exactly "review", the shape seam.jq counts. A leading byte order
-// mark is skipped, as the fold's `_jqfromjson` skips it. One body is read
-// differently by the two: a number too large for float64 parses for
-// `_jqfromjson` and not for encoding/json, and that one is caught by the
-// pr_open gate, which holds the invariant.
+// "seam" is exactly "review", the shape seam.jq counts. The body is parsed with
+// the fold's own FromJSON, so the two gates cannot read one differently.
 func isReviewSeam(body string) bool {
-	var v any
-	if json.Unmarshal([]byte(strings.TrimPrefix(body, "\ufeff")), &v) != nil {
+	v, err := jqrun.FromJSON(body)
+	if err != nil {
 		return false
 	}
 	m, ok := v.(map[string]any)

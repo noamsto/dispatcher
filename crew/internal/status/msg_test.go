@@ -190,6 +190,11 @@ func TestMsgReviewSeamPlanGate(t *testing.T) {
 		{"required: BOM-prefixed review seam", planDoc, "review:c1", "\ufeff" + review, nil, 1},
 		{"required: BOM-prefixed review seam, plan seam posted", planDoc, "review:c1", "\ufeff" + review,
 			[]string{planRow}, 0},
+		// And one parser: `_jqfromjson` keeps a number outside float64's range as
+		// a json.Number, where encoding/json would have rejected the body.
+		{"required: out-of-range number in the body", planDoc, "review:c1", `{"seam":"review","n":1e400}`, nil, 1},
+		{"required: out-of-range number, plan seam posted", planDoc, "review:c1", `{"seam":"review","n":1e400}`,
+			[]string{planRow}, 0},
 
 		// AC2: a plan seam on an earlier session of the branch counts.
 		{"required: plan seam this session", planDoc, "review:c1", review, []string{planRow}, 0},

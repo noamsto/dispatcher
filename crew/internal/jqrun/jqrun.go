@@ -22,28 +22,38 @@ import (
 // Option extends the jq language one RunAny compiles against.
 type Option struct{ compiler gojq.CompilerOption }
 
-// WithJQFromJSON defines `_jqfromjson`, fromjson over encoding/json with
-// json.Number literals: the string must hold exactly one JSON text, after an
-// optional leading byte order mark, which jq's fromjson skips and gojq's does
-// not. Invalid, empty or non-string input is an error, so `_jqfromjson?`
-// skips the line.
+// WithJQFromJSON defines `_jqfromjson` as FromJSON. Invalid, empty or
+// non-string input is an error, so `_jqfromjson?` skips the line.
 func WithJQFromJSON() Option {
 	return Option{gojq.WithFunction("_jqfromjson", 0, 0, func(v any, _ []any) any {
 		s, ok := v.(string)
 		if !ok {
 			return fmt.Errorf("%v cannot be parsed as JSON", v)
 		}
-		dec := json.NewDecoder(strings.NewReader(strings.TrimPrefix(s, "\xef\xbb\xbf")))
-		dec.UseNumber()
-		var out any
-		if err := dec.Decode(&out); err != nil {
-			return fmt.Errorf("%w (while parsing '%s')", err, s)
-		}
-		if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-			return fmt.Errorf("unexpected data after the JSON text (while parsing '%s')", s)
+		out, err := FromJSON(s)
+		if err != nil {
+			return err
 		}
 		return out
 	})}
+}
+
+// FromJSON decodes s as exactly one JSON text, with json.Number literals so a
+// number outside float64's range survives, and skips a leading byte order mark
+// as jq's fromjson does and gojq's does not. A Go caller classifying the same
+// text a fold reads has to call this: encoding/json's float64 path rejects
+// bodies a fold parses.
+func FromJSON(s string) (any, error) {
+	dec := json.NewDecoder(strings.NewReader(strings.TrimPrefix(s, "\xef\xbb\xbf")))
+	dec.UseNumber()
+	var out any
+	if err := dec.Decode(&out); err != nil {
+		return nil, fmt.Errorf("%w (while parsing '%s')", err, s)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("unexpected data after the JSON text (while parsing '%s')", s)
+	}
+	return out, nil
 }
 
 // RunAny executes prog like `jq -s -c prog`: input is the elements of the
