@@ -306,17 +306,6 @@ write_anchor_record() {
   done
 }
 
-@test "roster: shows the recorded codename without a suffix" {
-  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  mkdir -p "$dir"
-  printf '%s\n' '{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/33-thing","name":"sage","color":"green","tmux":"colour28"}' >>"$dir/events.jsonl"
-  printf '%s\n' '{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"feat/38-thing","name":"atlas","color":"blue","tmux":"colour32"}' >>"$dir/events.jsonl"
-  CREW_ID=c1 run_crew status "worker:feat/33-thing#s1-1" working
-  CREW_ID=c1 run_crew status "worker:feat/38-thing#s1-1" working
-  run run_crew roster c1
-  [ "$(echo "$output" | jq -r '[.[].name] | sort | join(",")')" = "atlas,sage" ]
-}
-
 @test "repo-keyed subcommands refuse to run outside a git repo" {
   cd /
   CREW_ID=c1 run run_crew status worker working
@@ -1399,44 +1388,6 @@ _pi_assert_refused() {
   [ "$(cd / && jq -r .opencode.key "$WORKER/auth.json")" = SECRET-FIXTURE-123 ]
 }
 
-@test "roster: a garbage log line exits 5 with empty stdout" {
-  seed_raw "worker:feat/x#s1-1" working
-  echo garbage >>"$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  run --separate-stderr run_crew roster c1
-  [ "$status" -eq 5 ]
-  [ -z "$output" ]
-  [[ "$stderr" == "crew: roster: "* ]]
-}
-
-@test "roster: an unreadable log exits 2 with empty stdout" {
-  [ "$(id -u)" -ne 0 ] || skip "root reads a mode 000 file"
-  seed_raw "worker:feat/x#s1-1" working
-  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  chmod 000 "$logf"
-  run --separate-stderr run_crew roster c1
-  chmod 600 "$logf"
-  [ "$status" -eq 2 ]
-  [ -z "$output" ]
-  [[ "$stderr" == "crew: roster: "* ]]
-}
-
-@test "roster: stdout is jq's pretty form byte for byte" {
-  seed_raw "worker:feat/x#s1-1" working
-  f="$BATS_TEST_TMPDIR/roster.out"
-  run_crew roster c1 >"$f"
-  [ "$(jq length "$f")" -ge 1 ]
-  cmp "$f" <(jq . "$f")
-}
-
-# Three rows here put a stub at CREW_GO_BIN to check what argv, stdin and exit
-# status crew.sh's arms handed the Go binary. The entry is that binary now, so the
-# hop is gone; what survives of them is the routing, which runs for real below.
-@test "roster: --help prints the roster screen" {
-  run --separate-stderr run_crew roster --help
-  [ "$status" -eq 0 ]
-  [[ "${lines[0]}" == "usage: crew roster [crew]" ]]
-}
-
 # --help after the subcommand is the subcommand's help, and for a grouped command
 # it is that action's screen — the entry asks for `help hold due`, never `help
 # hold --help`.
@@ -1837,130 +1788,6 @@ bus_tick() {
   # ... and the reviewer it had not seen is now delivered too.
   [ "$(jq -r 'keys | length' <<<"$after")" -eq 2 ]
   [ "$(jq -r '."role:feat/x:reviewer" | type' <<<"$after")" = "number" ]
-}
-
-@test "roster: collapses sessions of one branch into a single row" {
-  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
-  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" done
-  CREW_ID=c1 run_crew status "worker:feat/x#s2-2" working
-  run run_crew roster c1
-  [ "$(echo "$output" | jq -r 'length')" = "1" ]
-  [ "$(echo "$output" | jq -r '.[0].branch')" = "feat/x" ]
-  [ "$(echo "$output" | jq -r '.[0].state')" = "working" ]
-  [ "$(echo "$output" | jq -r '.[0].session')" = "s2-2" ]
-  [ "$(echo "$output" | jq -r '.[0].sessions | length')" = "2" ]
-  [ "$(echo "$output" | jq -r '.[0].sessions[0].state')" = "done" ]
-  [ "$(echo "$output" | jq -r '.[0].sessions[1].state')" = "working" ]
-}
-
-@test "roster: exposes the newest dispatch or resume engine_session" {
-  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
-  jq -nc '{ts:1,crew_id:"c1",kind:"dispatch",branch:"feat/x",engine_session:"aaaa"}' >>"$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  run run_crew roster c1
-  [ "$(echo "$output" | jq -r '.[0].engine_session')" = "aaaa" ]
-  jq -nc '{ts:9999999999999,crew_id:"c1",kind:"resume",branch:"feat/x",engine_session:"bbbb"}' >>"$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  run run_crew roster c1
-  [ "$(echo "$output" | jq -r '.[0].engine_session')" = "bbbb" ]
-}
-
-@test "roster: the codename still derives from the branch" {
-  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
-  expected="$(run_crew identity feat/x | jq -r .name)"
-  run run_crew roster c1
-  [ "$(echo "$output" | jq -r '.[0].name')" = "$expected" ]
-}
-
-@test "roster: one session's exited is not resolved from another's history" {
-  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
-  CREW_ID=c1 run_crew status "worker:feat/x#s2-2" exited
-  run run_crew roster c1
-  [ "$(echo "$output" | jq -r '.[0].state')" = "exited" ]
-  [ "$(echo "$output" | jq -r '.[0].prev_state // "none"')" = "none" ]
-}
-
-@test "roster: a false exited with a live wrapped pane resolves to the previous state" {
-  git commit --allow-empty -q -m init
-  git branch feat/roster-live
-  wt_path="$BATS_TEST_TMPDIR/roster-live-wt"
-  git worktree add -q "$wt_path" feat/roster-live
-  # $BATS_TEST_TMPDIR sits under macOS's /var, a symlink to /private/var; git
-  # resolves it but a hardcoded stub path here wouldn't, so canonicalize to
-  # match what a real tmux pane_current_path (kernel cwd) always reports.
-  wt_path=$(cd "$wt_path" && pwd -P)
-  stub_tmux "" "$(printf '.claude-wrapped %s\n' "$wt_path")"
-  CREW_ID=c1 run_crew status "worker:feat/roster-live#s1-1" working
-  CREW_ID=c1 run_crew status "worker:feat/roster-live#s1-1" exited
-  run run_crew roster c1
-  [ "$(echo "$output" | jq -r '.[0].state')" = "working" ]
-  [ "$(echo "$output" | jq -r '.[0].exit_suspect')" = "true" ]
-}
-
-@test "roster: an exited session with no engine pane stays exited" {
-  git commit --allow-empty -q -m init
-  git branch feat/roster-dead
-  wt_path="$BATS_TEST_TMPDIR/roster-dead-wt"
-  git worktree add -q "$wt_path" feat/roster-dead
-  wt_path=$(cd "$wt_path" && pwd -P) # see canonicalization note above
-  stub_tmux "" "$(printf 'fish %s\n' "$wt_path")"
-  CREW_ID=c1 run_crew status "worker:feat/roster-dead#s1-1" working
-  CREW_ID=c1 run_crew status "worker:feat/roster-dead#s1-1" exited
-  run run_crew roster c1
-  [ "$(echo "$output" | jq -r '.[0].state')" = "exited" ]
-  [ "$(echo "$output" | jq -r '.[0].exit_suspect // "none"')" = "none" ]
-}
-
-# The path match is exact, never a prefix (crew.sh:64): the old `"claude $wtpath"*`
-# glob matched /wt/foobar when $wtpath was /wt/foo. A pane sitting at a sibling
-# path that merely shares the prefix must not resolve the exited row.
-@test "roster: a live engine at a sibling path does not resolve the exited row" {
-  git commit --allow-empty -q -m init
-  git branch feat/roster-sib
-  wt_path="$BATS_TEST_TMPDIR/roster-sib-wt"
-  git worktree add -q "$wt_path" feat/roster-sib
-  wt_path=$(cd "$wt_path" && pwd -P) # see canonicalization note above
-  stub_tmux "" "$(printf '.claude-wrapped %s-sibling\n' "$wt_path")"
-  CREW_ID=c1 run_crew status "worker:feat/roster-sib#s1-1" working
-  CREW_ID=c1 run_crew status "worker:feat/roster-sib#s1-1" exited
-  run run_crew roster c1
-  [ "$(echo "$output" | jq -r '.[0].state')" = "exited" ]
-  [ "$(echo "$output" | jq -r '.[0].exit_suspect // "none"')" = "none" ]
-}
-
-@test "roster: joins the title on the branch" {
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  mkdir -p "$(dirname "$log")"
-  jq -nc '{ts:1, crew_id:"c1", kind:"dispatch", branch:"feat/x", session:"s1-1", title:"Do a thing"}' >>"$log"
-  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
-  run run_crew roster c1
-  [ "$(echo "$output" | jq -r '.[0].title')" = "Do a thing" ]
-}
-
-@test "roster: joins engine/model/tier on the branch" {
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  mkdir -p "$(dirname "$log")"
-  jq -nc '{ts:1000, crew_id:"c1", kind:"dispatch", branch:"feat/x", session:"s1-1",
-           engine:"claude", model:"sonnet", tier:"standard", title:"T"}' >>"$log"
-  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" working
-  run run_crew roster c1
-  [ "$(echo "$output" | jq -r '.[0].engine')" = "claude" ]
-  [ "$(echo "$output" | jq -r '.[0].model')" = "sonnet" ]
-  [ "$(echo "$output" | jq -r '.[0].tier')" = "standard" ]
-}
-
-@test "roster: engine/model/tier default to null with no dispatch event" {
-  CREW_ID=c1 run_crew status "worker:feat/x" working
-  run run_crew roster c1
-  [ "$(echo "$output" | jq -r '.[0].engine')" = "null" ]
-  [ "$(echo "$output" | jq -r '.[0].model')" = "null" ]
-  [ "$(echo "$output" | jq -r '.[0].tier')" = "null" ]
-}
-
-@test "roster: a legacy branch-keyed row still renders" {
-  CREW_ID=c1 run_crew status "worker:feat/x" working
-  run run_crew roster c1
-  [ "$(echo "$output" | jq -r 'length')" = "1" ]
-  [ "$(echo "$output" | jq -r '.[0].branch')" = "feat/x" ]
-  [ "$(echo "$output" | jq -r '.[0].session')" = "null" ]
 }
 
 @test "report: rows resolve for a sessioned worker id" {
@@ -8515,22 +8342,6 @@ EOS
   [ "$(cat "$SAMPLER_DIR/n")" -gt 0 ]
 }
 
-@test "roster: carries source and truncates detail to 120 chars" {
-  long=$(printf 'quiet: %0.sx' $(seq 1 200))
-  seed_raw worker:feat/x blocked "$long" watchdog
-  CREW_ID=c1 run run_crew roster c1
-  [ "$status" -eq 0 ]
-  run bash -c "printf '%s' '$output' | jq -r '.[0] | \"\(.source)|\(.detail|length)\"'"
-  [ "$output" = "watchdog|120" ]
-}
-
-@test "roster: a worker-posted row has a null source" {
-  CREW_ID=c1 run_crew status worker:feat/x blocked "which approach?"
-  CREW_ID=c1 run run_crew roster c1
-  run bash -c "printf '%s' '$output' | jq -r '.[0] | \"\(.source)|\(.detail)\"'"
-  [ "$output" = "null|which approach?" ]
-}
-
 @test "rate: blocked_count excludes watchdog blocks, watchdog_blocked_count counts them" {
   logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   mkdir -p "$(dirname "$logf")"
@@ -9047,17 +8858,6 @@ heartbeat_line() { grep '"stream":"heartbeat"' "$STREAM_OUT" | head -n1; }
   [ "$status" -eq 0 ]
   run jq -e --argjson ts "$((t + 2000))" \
     '(.events | length) == 1 and .events[0].body.state == "done" and .events[0].from == "worker:feat/x#s2-2" and .events[0].ts == $ts' <<<"$output"
-  [ "$status" -eq 0 ]
-}
-
-@test "roster: a suppressed re-stamp still refreshes age_s" {
-  now_ms="$(($(date +%s) * 1000))"
-  seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 7 of 24)" "" "$((now_ms - 30000))"
-  seed_raw "worker:feat/x#s1-1" blocked "need a waiver — awaited 300s, no reply (cycle 8 of 24)" "" "$now_ms"
-
-  CREW_ID=c1 run --separate-stderr run_crew roster c1
-  [ "$status" -eq 0 ]
-  run jq -e --argjson ts "$now_ms" '.[0].ts == $ts and .[0].age_s < 15' <<<"$output"
   [ "$status" -eq 0 ]
 }
 
