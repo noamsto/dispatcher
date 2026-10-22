@@ -36,7 +36,7 @@ tests/crew.bats	reply	!timing	2819
 tests/crew.bats	report	!timing	2355
 tests/crew.bats	resolve-target	!timing	1881
 tests/crew.bats	stall-watch	!timing	474937
-tests/crew.bats	status	!timing	37490
+tests/crew.bats	status	!timing	7497
 tests/crew.bats	stream	!timing	159537
 tests/crew.bats	stream --status	!timing	7906
 tests/crew.bats	watch	!timing	48846

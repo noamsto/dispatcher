@@ -282,12 +282,53 @@ func TestRowDetailAndPR(t *testing.T) {
 	f.wantRow(statusRow(worker, `{"state":"failed","detail":"boom","pr_url":"u"}`))
 }
 
+// The documented set is the accepted set: a worker posting any of these six
+// states lands a row. `reaped` is the seventh state the refusal names and is
+// refused from a worker (TestReapedRefusedFromWorkerAndRole).
+func TestEveryDocumentedStateIsAccepted(t *testing.T) {
+	for _, state := range []string{"working", "blocked", "pr_open", "done", "failed", "exited"} {
+		t.Run(state, func(t *testing.T) {
+			f := newFixture(t)
+			if code, stderr := f.status(worker, state); code != 0 || stderr != "" {
+				t.Fatalf("code %d, stderr %q", code, stderr)
+			}
+			f.wantRow(statusRow(worker, `{"state":"`+state+`"}`))
+		})
+	}
+}
+
+// TestLongDetailElided pins the cap the bats case measured with `wc -c`: one
+// line, at most bus.LineMax bytes, whose detail ends on the elision marker. The
+// quote row is the nonlinear case: a `"` costs two bytes once the line is
+// encoded, so a cut sized on the text's own length still overflows.
 func TestLongDetailElided(t *testing.T) {
-	f := newFixture(t)
-	f.status(worker, "working", strings.Repeat("é", 6000))
-	got := f.lines()
-	if len(got) != 1 || len(got[0]) > bus.LineMax || !strings.Contains(got[0], "…[elided]") {
-		t.Errorf("row not fitted: %d rows", len(got))
+	for _, unit := range []string{"x", "é", "✓", `"`} {
+		t.Run(unit, func(t *testing.T) {
+			f := newFixture(t)
+			if code, stderr := f.status(worker, "failed", strings.Repeat(unit, 6000)); code != 0 {
+				t.Fatalf("code %d, stderr %q", code, stderr)
+			}
+			got := f.lines()
+			if len(got) != 1 {
+				t.Fatalf("%d rows, want 1", len(got))
+			}
+			if n := len(got[0]); n > bus.LineMax {
+				t.Errorf("line is %d bytes, over the %d cap", n, bus.LineMax)
+			}
+			var row struct {
+				Body struct {
+					State  string `json:"state"`
+					Detail string `json:"detail"`
+				} `json:"body"`
+			}
+			if err := json.Unmarshal([]byte(got[0]), &row); err != nil {
+				t.Fatalf("the clipped line is not one JSON value: %v", err)
+			}
+			if row.Body.State != "failed" || !strings.HasSuffix(row.Body.Detail, "[elided]") {
+				t.Errorf("state %q, detail %d bytes, ends with elision: %v",
+					row.Body.State, len(row.Body.Detail), strings.HasSuffix(row.Body.Detail, "[elided]"))
+			}
+		})
 	}
 }
 
@@ -883,8 +924,9 @@ func TestPanePublish(t *testing.T) {
 		f.env["TMUX_PANE"] = "%5"
 		f.role = "lead"
 		f.status(worker, "working", strings.Repeat("x", 9000))
-		if got := f.tm.Calls()[2]; got != "set-option -p -t %5 @crew_detail "+strings.Repeat("x", 40) {
-			t.Errorf("detail call %q", got)
+		want := []string{display, set("@crew_state", "working"), set("@crew_detail", strings.Repeat("x", 40)), set("@crew_source", "")}
+		if got := f.tm.Calls(); !slices.Equal(got, want) {
+			t.Errorf("tmux calls %q, want %q", got, want)
 		}
 	})
 	skipped := []struct {
@@ -901,14 +943,16 @@ func TestPanePublish(t *testing.T) {
 		t.Run("skipped: "+tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			tc.prep(f)
-			if code, _ := f.status(worker, "working", "d"); code != 0 {
-				t.Fatal(code)
+			if code, stderr := f.status(worker, "working", "d"); code != 0 || stderr != "" {
+				t.Fatalf("code %d, stderr %q", code, stderr)
 			}
 			for _, c := range f.tm.Calls() {
 				if strings.HasPrefix(c, "set-option") {
 					t.Errorf("published: %q", c)
 				}
 			}
+			// Skipping the pane mirror never skips the bus write it follows.
+			f.wantRow(statusRow(worker, `{"state":"working","detail":"d"}`))
 		})
 	}
 	t.Run("not on a refusal or a dedupe", func(t *testing.T) {
