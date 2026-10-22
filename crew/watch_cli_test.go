@@ -32,9 +32,8 @@ func (w *watchCLI) taskDoc(text string) {
 	}
 }
 
-// watch is the argv of one park, and returns its stdout, stderr and status.
-// Every row these tests seed qualifies on the first fold, so the park returns
-// without sleeping.
+// watch runs one park and returns its stdout, stderr and status. Every row
+// these tests seed qualifies on the first fold, so no park sleeps.
 func (w *watchCLI) watch(args ...string) (string, string, int) {
 	w.t.Helper()
 	e := env{getwd: func() (string, error) { return w.repo, nil }}
@@ -43,8 +42,6 @@ func (w *watchCLI) watch(args ...string) (string, string, int) {
 	return stdout.String(), stderr.String(), code
 }
 
-// events decodes the batch and returns its events, so a test can name the crew
-// and the count the arm's `jq -e` pinned.
 func (w *watchCLI) events(t *testing.T, out string) []map[string]any {
 	t.Helper()
 	var batch struct {
@@ -72,10 +69,8 @@ func TestWatchCLIResolvesCrewFromFlagAlone(t *testing.T) {
 	}
 }
 
-// An explicit `--crew` beats the checkout's own crew, and dropping it is what
-// hands the WORKER_TASK.md crew back: each call delivers its own crew's rows
-// only, so which one resolved is visible in the batch rather than in a silence
-// the arm had to time out to prove.
+// An explicit `--crew` beats the checkout's own crew, and dropping it hands the
+// WORKER_TASK.md crew back: each call delivers only its own crew's rows.
 func TestWatchCLICrewFlagBeatsTaskDoc(t *testing.T) {
 	const (
 		c1Row = `{"ts":1785951264000,"crew_id":"c1","from":"worker:feat/x","to":"dispatcher:c1","kind":"status","body":{"state":"done"}}`

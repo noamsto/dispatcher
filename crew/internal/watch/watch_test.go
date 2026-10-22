@@ -197,8 +197,8 @@ func TestMsgToDispatcherAndStarWake(t *testing.T) {
 func TestStatesNarrowTheWakeSet(t *testing.T) {
 	row := status(1785951264000, "worker:feat/x#s1-1", "working", "", "")
 
-	// `working` is not in the default set, so the park expires quietly. `--crew`
-	// picks the bus and leaves the wake set alone, so it stays quiet there too.
+	// `working` is not in the default set, so the park expires quietly — with or
+	// without `--crew`, which picks the bus and not the wake set.
 	for _, tc := range []struct {
 		name string
 		req  Request
@@ -268,8 +268,7 @@ func TestExitedWakesOnlyAsFirstTerminalState(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("code %d", code)
 			}
-			// Exactly the `exited`, or nothing: a cursor that started admitting its
-			// own row would deliver the previous state too.
+			// Exactly one event, the `exited`: the row at the cursor stays behind it.
 			quiet := ""
 			if tc.wakes {
 				quiet = want(t, 2000, exited)
@@ -355,8 +354,7 @@ func TestBlockedAfterWorkingWakesWithSameDetail(t *testing.T) {
 	}
 }
 
-// A first `blocked` has no earlier status to be measured against, so nothing
-// suppresses it: with --since 0 the dispatcher gets exactly that one row.
+// A first `blocked` has no earlier status for suppression to measure against.
 func TestFirstBlockedWakes(t *testing.T) {
 	p := fixture(t)
 	row := status(1000, "worker:feat/x#s1-1", "blocked", "need a waiver — awaited 300s, no reply (cycle 7 of 24)", "")
@@ -370,7 +368,7 @@ func TestFirstBlockedWakes(t *testing.T) {
 	}
 }
 
-// The suppression is keyed on the session, not on the detail: the same question
+// Suppression is keyed on the session, not on the detail: the same question
 // under another session id is another worker asking, so it wakes.
 func TestBlockedRestampOnAnotherSessionWakes(t *testing.T) {
 	const detail = "need a waiver — awaited 300s, no reply (cycle 7 of 24)"
@@ -387,9 +385,8 @@ func TestBlockedRestampOnAnotherSessionWakes(t *testing.T) {
 }
 
 // An object `detail` is not text, so `detail_text` reads it as "": the empty
-// re-stamp after it normalizes equal and stays quiet, and the other session's
-// done still arrives. The arm's predicate aborted in gsub on the object and
-// dropped the whole batch.
+// re-stamp after it normalizes equal and stays quiet. The jq arm aborted in
+// gsub on this shape and dropped the whole batch, later `done` included.
 func TestObjectBlockedDetailDoesNotDropALaterDone(t *testing.T) {
 	p := fixture(t)
 	object := rawRow(1000, "c1", "worker:feat/x#s1-1", "dispatcher:c1", "status",
@@ -614,8 +611,7 @@ func TestCrewFlagOwnsCursorAndLock(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(p.CrewDir("c1"), "cursor")); !os.IsNotExist(err) {
 		t.Error("the resolved crew's cursor moved instead of --crew's")
 	}
-	// The batch's cursor is the file's, and the lock the park held is gone from
-	// both crews.
+	// The cursor the batch reports is the file's.
 	if stdout != want(t, 2000, row9) {
 		t.Errorf("stdout = %s, want %s", stdout, want(t, 2000, row9))
 	}
@@ -625,8 +621,7 @@ func TestCrewFlagOwnsCursorAndLock(t *testing.T) {
 		}
 	}
 
-	// The lock it takes is the named crew's: a live holder under c9 refuses with
-	// c9 in the message, and c1's dir stays untouched.
+	// The lock it takes is the named crew's: a live holder under c9 refuses.
 	lockd := filepath.Join(p.CrewDir("c9"), "watch.lock.d")
 	if err := os.MkdirAll(lockd, 0o755); err != nil {
 		t.Fatal(err)
