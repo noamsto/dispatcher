@@ -125,9 +125,7 @@ const missingHint = `every acceptance item needs <id> pass(<evidence>) or <id> w
 var entryIDRe = regexp.MustCompile(`^[A-Za-z]+[0-9]+`)
 
 // entryNameRe is that id plus any suffix run onto it (`AC5a`, `E2E`): the token
-// a refusal has to quote, since it is the one the worker can post back. The id
-// lookup stops at a suffix, so quoting the bare id would name an item that fails
-// the same gate again.
+// a worker has to post, so it is the one a refusal quotes.
 var entryNameRe = regexp.MustCompile(`^[A-Za-z]+[0-9]+[A-Za-z0-9_]*`)
 
 // idRunRe splits a run id, the `AC1-3` spelling one item may stand in for a run
@@ -162,11 +160,10 @@ func spanned(run []string, name string) bool {
 }
 
 // missingEntries are the doc entries no item names, in doc order with the doc's
-// own spelling. An item names an entry through entriesFor, the lookup the CI
-// rule already uses for the same question — by id, by the number in the id, or,
-// for an id-less item, by its position — plus the run id that lookup does not
-// know. A doc with an entry that carries no id has no id a worker could name it
-// by, so nothing counts as missing.
+// own spelling. An item names an entry through entriesFor, the same lookup the
+// CI rule uses — by id, by the number in the id, or, for an id-less item, by its
+// position — plus the run id that lookup does not know. A doc with an entry that
+// carries no id has no id a worker could name it by, so nothing is missing.
 func missingEntries(entries, ids []string) []string {
 	names := make([]string, len(entries))
 	indexes := make(map[string][]int, len(entries))

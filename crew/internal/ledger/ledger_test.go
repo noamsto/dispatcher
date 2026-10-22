@@ -222,8 +222,7 @@ var checkCases = []checkCase{
 	{name: "a positional ledger covers entries by position", detail: "pass(a); pass(b); pass(c)", doc: docThree},
 	{name: "a short positional ledger omits the last id", detail: "pass(a); pass(b)", doc: docThree, want: missingLine("AC3")},
 	{name: "an id-less item covers only its own position", detail: "pass(a); AC2 pass(b)", doc: docThree, want: missingLine("AC3")},
-	// With no id in an entry there is no token a worker could name it by, so
-	// coverage cannot be demanded of the ledger.
+	// With no id in an entry there is no token a worker could name it by.
 	{name: "a doc with id-less entries accepts a partial ledger", detail: "AC1 pass(x)", doc: docFree},
 	{name: "one id-less entry skips coverage for the whole doc", detail: "AC2 pass(y)", doc: "## Acceptance\n- AC1 unit tests\n- and the build is green\n- AC3 docs\n"},
 	{name: "a waived entry counts as covered", detail: "AC1 pass(x); AC2 waived(dispatcher); AC3 pass(z)", doc: docThree, log: []string{reply("waive AC2")}},
@@ -242,12 +241,11 @@ var checkCases = []checkCase{
 	{name: "numeric ids still have to cover every entry", detail: "1 pass(a); 2 pass(b)", doc: docThree, want: missingLine("AC3")},
 	{name: "a dashed AC-number covers its entry", detail: "AC1 pass(x); AC-02 pass(y); AC3 pass(z)", doc: docThree},
 	{name: "a zero-padded AC-number covers its entry", detail: "AC1 pass(x); AC02 pass(y); AC3 pass(z)", doc: docThree},
-	// An entry's own text is what its item names, so an id-shaped prefix in prose
-	// or a suffixed id never invents an id no worker could post.
+	// An entry's own text is what its item names, so neither a suffixed id nor an
+	// id-shaped word opening prose invents an id no worker can post.
 	{name: "an entry with a suffixed id is covered by its spelling", detail: "AC5a pass(x); AC5b pass(y)", doc: "## Acceptance\n- AC5a unit tests\n- AC5b e2e\n"},
 	{name: "a prose entry starting with an id-shaped word is covered by it", detail: "E2E pass(x); AC1 pass(y)", doc: "## Acceptance\n- E2E suite green\n- AC1 unit tests\n"},
-	// A refusal quotes the whole token, the one the worker can post back: the bare
-	// id would fail the same gate again.
+	// A refusal quotes the whole token, the one a worker can post back.
 	{name: "a refusal quotes a suffixed entry whole", detail: "AC5a pass(x)", doc: "## Acceptance\n- AC5a unit tests\n- AC5b e2e\n", want: missingLine("AC5b")},
 	{name: "a refusal quotes an id-shaped prose entry whole", detail: "AC1 pass(y)", doc: "## Acceptance\n- E2E suite green\n- AC1 unit tests\n", want: missingLine("E2E")},
 	{name: "a run id does not cover a suffixed entry", detail: "AC1-9 pass(x)", doc: "## Acceptance\n- AC5a unit tests\n", want: missingLine("AC5a")},
