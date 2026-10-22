@@ -54,13 +54,15 @@ func TestStreamCadenceReapIsItsOwnLine(t *testing.T) {
 		"watch": parkedWatch("0"),
 		"reap":  `printf 'crew reap: reaped feat/x\n'`,
 	})
-	l := startLane(t, p, s, Request{ReapEvery: "1"}, laneOpts{Clock: clockNow(clk)})
+	// An interval no park can outlast on its own: only the advanced clock below
+	// can fire the cadence.
+	l := startLane(t, p, s, Request{ReapEvery: "600"}, laneOpts{Clock: clockNow(clk)})
 
 	l.park()
 	if got := s.calls("reap"); got != 0 {
-		t.Fatalf("the cadence fired after %d parks, want --reap-every 1 to need a second", got)
+		t.Fatalf("the cadence fired with %d parks and 600s unadvanced", got)
 	}
-	clk.advance(2 * time.Second)
+	clk.advance(601 * time.Second)
 	l.parkUntil("the reap child", func() bool { return s.calls("reap") >= 1 })
 	l.parkUntil("the reap line", func() bool { return len(l.ofKind("reap")) >= 1 })
 
@@ -68,7 +70,7 @@ func TestStreamCadenceReapIsItsOwnLine(t *testing.T) {
 	if line["stream"] != "reap" || line["crew"] != "c1" {
 		t.Errorf("line = %v, want a reap line for this lane's crew", line)
 	}
-	// The arm's `sub("^crew reap: ";"")`, once per line.
+	// One `crew reap: ` prefix stripped, per line.
 	if got := reapLineText(t, line); got != "reaped feat/x" {
 		t.Errorf("lines = %q, want the `crew reap: ` prefix stripped", got)
 	}
