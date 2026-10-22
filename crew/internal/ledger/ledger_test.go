@@ -33,6 +33,15 @@ const (
 
 	docList = "tier: standard\nkind: implement\n\n## Acceptance\n\n- AC1 bats green\n- AC2 CI green on the PR head\n- AC3 docs updated\n\n## Out of scope\n- AC4 CI everything\n"
 	docNone = "tier: standard\nkind: implement\n\nDo the thing.\n"
+
+	// docThree has three ids and no CI entry, so a complete ledger is three passes.
+	docThree = "## Acceptance\n\n- AC1 unit tests\n- AC2 build green\n- AC3 docs updated\n"
+	// docFree's entries carry no id a worker could name.
+	docFree = "## Acceptance\n\n- unit tests pass\n- the build is green\n- docs updated\n"
+	// docBold spells its ids bold, the way a dispatched task doc does.
+	docBold = "## Acceptance\n\n- **AC1** unit tests\n- **AC2** build green\n"
+	// docFour ends with a CI entry, the shape that gets omitted most.
+	docFour = "## Acceptance\n\n- AC1 vitest\n- AC2 e2e\n- AC3 docs\n- AC4 CI green on the PR\n"
 )
 
 func ciLine(id string) string {
@@ -41,6 +50,17 @@ func ciLine(id string) string {
 
 func waiverLine(id string) string {
 	return prefix + "waived(dispatcher) needs a dispatcher waiver on the bus: a crew reply to this session (" + from + ") that names the item ('" + id + `') in a waive phrase, e.g. "waive ` + id + `"; a negation ("will not waive") does not count (a reply sent to an earlier session does not carry over). Block and ask the dispatcher to waive the item; do not write the waiver yourself.`
+}
+
+// missingLine is the refusal of a ledger that leaves acceptance ids out, naming
+// them in the doc's order and spelling.
+func missingLine(ids ...string) string {
+	q := make([]string, len(ids))
+	for i, id := range ids {
+		q[i] = "'" + id + "'"
+	}
+	return prefix + "acceptance item(s) " + strings.Join(q, ", ") +
+		` missing from the ledger: every acceptance item needs <id> pass(<evidence>) or <id> waived(dispatcher); an item you cannot run is not a pass — block and ask the dispatcher to waive it.`
 }
 
 // row is one bus line as `crew reply` writes it, with a string body.
@@ -93,7 +113,9 @@ var checkCases = []checkCase{
 	{name: "malformed without a list", detail: "AC1 pending", doc: docNone, want: noList},
 	{name: "whitespace-only detail with a list", detail: " \t\n", doc: docList, want: mustLed},
 	{name: "empty detail without a list", detail: "", doc: docNone, want: ""},
-	{name: "NBSP is \\s to the grammar but not [[:space:]] to the blank test", detail: " ", doc: docList, want: ""},
+	// NBSP is \s to the grammar but not [[:space:]] to the blank test, so the
+	// blank rule lets it through; the coverage rule is what refuses it now.
+	{name: "NBSP is \\s to the grammar but not [[:space:]] to the blank test", detail: "\u00a0", doc: docList, want: missingLine("AC1", "AC2", "AC3")},
 	{name: "bold acceptance spelling is a list", detail: "", doc: "**Acceptance criteria**\n- AC1 x\n", want: mustLed},
 	{name: "line-start Acceptance: is a list", detail: "", doc: "  ACCEPTANCE: below\n", want: mustLed},
 	{name: "a mid-sentence mention is not a list", detail: "", doc: "see the acceptance notes\n", want: ""},
@@ -105,13 +127,13 @@ var checkCases = []checkCase{
 	{name: "unreadable doc, conforming detail", detail: "AC1 pass(x)", docErr: true, want: readFail},
 
 	// accepted forms
-	{name: "plain pass", detail: "AC1 pass(bats 12/12)", doc: docList},
-	{name: "nested evidence and a CI run id", detail: "AC1 pass(a (b) c); AC2 pass(run id 1234567)", doc: docList},
-	{name: "trailing colon on the id", detail: "AC1: pass(x)", doc: docList},
-	{name: "CI item with an actions/runs URL", detail: "AC2 pass(CI https://github.com/o/r/actions/runs/123)", doc: docList},
-	{name: "CI item with a run id", detail: "AC2 pass(CI run id 1234567)", doc: docList},
-	{name: "multi-char fold", detail: "AC1 paß(x)", doc: docList},
-	{name: "upper case keyword", detail: "AC1 PASS(x)", doc: docList},
+	{name: "plain pass", detail: "AC1 pass(bats 12/12); AC2 pass(run id 1234567); AC3 pass(x)", doc: docList},
+	{name: "nested evidence and a CI run id", detail: "AC1 pass(a (b) c); AC2 pass(run id 1234567); AC3 pass(x)", doc: docList},
+	{name: "trailing colon on the id", detail: "AC1: pass(x); AC2 pass(run id 1234567); AC3 pass(x)", doc: docList},
+	{name: "CI item with an actions/runs URL", detail: "AC1 pass(x); AC2 pass(CI https://github.com/o/r/actions/runs/123); AC3 pass(x)", doc: docList},
+	{name: "CI item with a run id", detail: "AC1 pass(x); AC2 pass(CI run id 1234567); AC3 pass(x)", doc: docList},
+	{name: "multi-char fold", detail: "AC1 paß(x); AC2 pass(run id 1234567); AC3 pass(x)", doc: docList},
+	{name: "upper case keyword", detail: "AC1 PASS(x); AC2 pass(run id 1234567); AC3 pass(x)", doc: docList},
 
 	// refused forms
 	{name: "pending", detail: "AC1 pending", doc: docList, want: malform},
@@ -126,14 +148,14 @@ var checkCases = []checkCase{
 	{name: "entry by ac-number", detail: "ac-02 pass(local)", doc: docList, want: ciLine("ac-02")},
 	{name: "entry by position", detail: "pass(a); pass(b)", doc: docList, want: ciLine("?")},
 	{name: "unknown non-numeric id has no entry", detail: "foo pass(a)", doc: "## Acceptance\n- CI\n", want: ""},
-	{name: "Non-CI is not CI", detail: "AC1 pass(Non-CI check)", doc: docList},
-	{name: "fenced code is not the list", detail: "1 pass(x)", doc: "## Acceptance\n```\n- CI fenced\n```\n- AC1 docs\n"},
-	{name: "list ends at the next heading", detail: "AC4 pass(x)", doc: docList},
-	{name: "list ends at bold out of scope", detail: "AC2 pass(x)", doc: "**Acceptance:**\n- AC1 docs\n**Out of scope**\n- AC2 CI\n"},
+	{name: "Non-CI is not CI", detail: "AC1 pass(Non-CI check); AC2 pass(run id 1234567); AC3 pass(x)", doc: docList},
+	{name: "fenced code is not the list", detail: "1 pass(x); AC1 pass(x)", doc: "## Acceptance\n```\n- CI fenced\n```\n- AC1 docs\n"},
+	{name: "list ends at the next heading", detail: "AC1 pass(x); AC2 pass(run id 1234567); AC3 pass(x); AC4 pass(x)", doc: docList},
+	{name: "list ends at bold out of scope", detail: "AC1 pass(x); AC2 pass(x)", doc: "**Acceptance:**\n- AC1 docs\n**Out of scope**\n- AC2 CI\n"},
 	{name: "indented items are not entries", detail: "1 pass(x)", doc: "## Acceptance\n  - CI\n"},
 	{name: "numbered entries", detail: "AC2 pass(x)", doc: "### Acceptance\n1. AC1 docs\n2) AC2 CI run\n", want: ciLine("AC2")},
 	{name: "bold id prefix", detail: "AC1 pass(x)", doc: "## Acceptance\n- **AC1** CI green\n", want: ciLine("AC1")},
-	{name: "id lookup needs a token boundary", detail: "AC1 pass(x)", doc: "## Acceptance\n- AC10 CI\n- AC1 docs\n"},
+	{name: "id lookup needs a token boundary", detail: "AC1 pass(x); AC10 pass(actions/runs/1234567)", doc: "## Acceptance\n- AC10 CI\n- AC1 docs\n"},
 	{name: "id lookup is case-insensitive", detail: "ac1 pass(x)", doc: "## Acceptance\n- AC2 docs\n- AC1 CI\n", want: ciLine("ac1")},
 	{name: "awk -v unescapes the id", detail: `AC\061 pass(local)`, doc: "## Acceptance\n- AC2 docs\n- AC1 CI\n", want: ciLine(`AC\061`)},
 	// glibc's [:alnum:] (bash's =~, gawk) takes Other_Alphabetic marks: U+093E, U+0345.
@@ -142,8 +164,8 @@ var checkCases = []checkCase{
 	{name: "a mark glibc 2.42 calls alnum is no boundary before run", detail: "AC1 pass(CI \u0363run 1234567)", doc: docList, want: ciLine("AC1")},
 	{name: "letter is no boundary before run", detail: "AC1 pass(CI xrun 1234567)", doc: docList, want: ciLine("AC1")},
 	{name: "accented letter is no boundary before run", detail: "AC1 pass(CI \u00e9run 1234567)", doc: docList, want: ciLine("AC1")},
-	{name: "Other_Alphabetic mark is no boundary before CI", detail: "AC1 pass(\u093eCI green)", doc: docList},
-	{name: "Other_Alphabetic mark is no boundary before CI, U+0345", detail: "AC1 pass(\u0345CI green)", doc: docList},
+	{name: "Other_Alphabetic mark is no boundary before CI", detail: "AC1 pass(\u093eCI green); AC2 pass(run id 1234567); AC3 pass(x)", doc: docList},
+	{name: "Other_Alphabetic mark is no boundary before CI, U+0345", detail: "AC1 pass(\u0345CI green); AC2 pass(run id 1234567); AC3 pass(x)", doc: docList},
 	{name: "Other_Alphabetic mark after the id blocks the id lookup", detail: "AC1 pass(local)", doc: "## Acceptance\n- CI gate green\n- AC1\u093e local\n", want: ciLine("AC1")},
 	{name: "Other_Alphabetic mark U+0345 after the id blocks the id lookup", detail: "AC1 pass(local)", doc: "## Acceptance\n- CI gate green\n- AC1\u0345 local\n", want: ciLine("AC1")},
 	{name: "letter after the id blocks the id lookup", detail: "AC1 pass(local)", doc: "## Acceptance\n- CI gate green\n- AC1\u00e9 local\n", want: ciLine("AC1")},
@@ -158,37 +180,64 @@ var checkCases = []checkCase{
 	{name: "first failing item wins", detail: "AC2 pass(local); AC3 waived(dispatcher)", doc: docList, want: ciLine("AC2")},
 
 	// waivers
-	{name: "waiver to this session", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{reply("waive AC3")}},
+	{name: "waiver to this session", detail: "AC1 pass(x); AC2 pass(run id 1234567); AC3 waived(dispatcher)", doc: docList, log: []string{reply("waive AC3")}},
 	{name: "negated waiver", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{reply("I will not waive AC3")}, want: waiverLine("AC3")},
 	{name: "curly negation", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{reply("won’t waive AC3")}, want: waiverLine("AC3")},
 	{name: "another item's waiver", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{reply("waive AC4")}, want: waiverLine("AC3")},
 	{name: "earlier session's reply", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{row(crew, "dispatcher:"+crew, "worker:feat/x#s1", "waive AC3")}, want: waiverLine("AC3")},
 	{name: "another sender", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{row(crew, "worker:x", from, "waive AC3")}, want: waiverLine("AC3")},
 	{name: "another crew", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{row("c2", "dispatcher:c2", from, "waive AC3")}, want: waiverLine("AC3")},
-	{name: "but splits clauses", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{reply("will not waive AC2 but waive AC3")}},
+	{name: "but splits clauses", detail: "AC1 pass(x); AC2 pass(run id 1234567); AC3 waived(dispatcher)", doc: docList, log: []string{reply("will not waive AC2 but waive AC3")}},
 	{name: "unicode letter is no word boundary", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{reply("éwaive AC3")}, want: waiverLine("AC3")},
-	{name: "a sentence end splits off the period", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{reply("Waived AC3.")}},
+	{name: "a sentence end splits off the period", detail: "AC1 pass(x); AC2 pass(run id 1234567); AC3 waived(dispatcher)", doc: docList, log: []string{reply("Waived AC3.")}},
 	{name: "id needs a token boundary", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{reply("waive AC3x")}, want: waiverLine("AC3")},
-	{name: "object body is its JSON text", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":{"note":"waive AC3"}}`}},
+	{name: "object body is its JSON text", detail: "AC1 pass(x); AC2 pass(run id 1234567); AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":{"note":"waive AC3"}}`}},
 	{name: "duplicate nested key takes the last value", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":{"x":"waive AC3","x":""}}`}, want: waiverLine("AC3")},
-	{name: "duplicate nested key last value waives", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":{"x":"not","x":"waive AC3"}}`}},
+	{name: "duplicate nested key last value waives", detail: "AC1 pass(x); AC2 pass(run id 1234567); AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":{"x":"not","x":"waive AC3"}}`}},
 	{name: "number literal prints as jq does", detail: "AC1E2 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":["waive",1e2]}`}, want: waiverLine("AC1E2")},
 	{name: "lone high surrogate refuses the row", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":"\ud800 waive AC3"}`}, want: waiverLine("AC3")},
-	{name: "paired surrogate is fine", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":"\ud83d\ude00 waive AC3"}`}},
+	{name: "paired surrogate is fine", detail: "AC1 pass(x); AC2 pass(run id 1234567); AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":"\ud83d\ude00 waive AC3"}`}},
 	{name: "nesting past jq limit refuses the row", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{`{"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"` + from + `","body":` + strings.Repeat("[", 9999) + `"waive AC3"` + strings.Repeat("]", 9999) + `}`}, want: waiverLine("AC3")},
-	{name: "a leading BOM is skipped", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{"\xef\xbb\xbf" + reply("waive AC3")}},
+	{name: "a leading BOM is skipped", detail: "AC1 pass(x); AC2 pass(run id 1234567); AC3 waived(dispatcher)", doc: docList, log: []string{"\xef\xbb\xbf" + reply("waive AC3")}},
 	{name: "invalid UTF-8 in a bus line never waives", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{strings.Replace(reply("waive AC3"), "waive AC3", "waive\xff AC3", 1)}, want: waiverLine("AC3")},
 	{name: "invalid UTF-8 in the detail's id is malformed", detail: "AC\xe2\x82b waived(dispatcher)", doc: docList, log: []string{reply("waive AC��b")}, want: malform},
 	// jq folds the truncated lead byte and the ")" into one U+FFFD, so it calls this malformed.
 	{name: "invalid UTF-8 swallowing a paren is malformed", detail: "AC1 pass(ok\xf0)", doc: docList, want: malform},
 	{name: "invalid UTF-8 swallowing a paren, no list", detail: "AC1 pass(ok\xf0)", doc: docNone, want: noList},
-	{name: "the same line repaired waives", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{reply("waive\ufffd AC3")}},
+	{name: "the same line repaired waives", detail: "AC1 pass(x); AC2 pass(run id 1234567); AC3 waived(dispatcher)", doc: docList, log: []string{reply("waive\ufffd AC3")}},
 	{name: "waived without an id", detail: "waived(dispatcher)", doc: docList, want: noID},
 	{name: "colon-only id strips to empty", detail: ": waived(dispatcher)", doc: docList, want: noID},
-	{name: "trailing colon id", detail: "AC3: waived(dispatcher)", doc: docList, log: []string{reply("waive ac3")}},
+	{name: "trailing colon id", detail: "AC1 pass(x); AC2 pass(run id 1234567); AC3: waived(dispatcher)", doc: docList, log: []string{reply("waive ac3")}},
 	{name: "no log", detail: "AC3 waived(dispatcher)", doc: docList, want: waiverLine("AC3")},
-	{name: "unparsable lines skipped", detail: "AC3 waived(dispatcher)", doc: docList, log: []string{"not json", "{", "1 2", reply("waive AC3"), ""}},
+	{name: "unparsable lines skipped", detail: "AC1 pass(x); AC2 pass(run id 1234567); AC3 waived(dispatcher)", doc: docList, log: []string{"not json", "{", "1 2", reply("waive AC3"), ""}},
 	{name: "waiver for a later item", detail: "AC1 pass(x); AC3 waived(dispatcher)", doc: docList, want: waiverLine("AC3")},
+
+	// coverage: an item for every entry of the doc's list
+	{name: "a ledger that omits the last entry is refused", detail: "AC1 pass(x); AC2 pass(y)", doc: docThree, want: missingLine("AC3")},
+	{name: "a ledger that omits entries names each one, in doc order", detail: "AC2 pass(y)", doc: docThree, want: missingLine("AC1", "AC3")},
+	{name: "a ledger that names every entry passes", detail: "AC1 pass(x); AC2 pass(y); AC3 pass(z)", doc: docThree},
+	{name: "coverage ignores id case", detail: "ac1 pass(x); Ac2 pass(y); AC3 pass(z)", doc: docThree},
+	{name: "a bold entry's id is covered without its markers", detail: "AC1 pass(x)", doc: docBold, want: missingLine("AC2")},
+	{name: "a bold entry is covered by its id", detail: "AC1 pass(x); AC2 pass(y)", doc: docBold},
+	{name: "a positional ledger covers entries by position", detail: "pass(a); pass(b); pass(c)", doc: docThree},
+	{name: "a short positional ledger omits the last id", detail: "pass(a); pass(b)", doc: docThree, want: missingLine("AC3")},
+	{name: "an id-less item covers only its own position", detail: "pass(a); AC2 pass(b)", doc: docThree, want: missingLine("AC3")},
+	// With no id in an entry there is no token a worker could name it by, so
+	// coverage cannot be demanded of the ledger.
+	{name: "a doc with id-less entries accepts a partial ledger", detail: "AC1 pass(x)", doc: docFree},
+	{name: "one id-less entry skips coverage for the whole doc", detail: "AC2 pass(y)", doc: "## Acceptance\n- AC1 unit tests\n- and the build is green\n- AC3 docs\n"},
+	{name: "a waived entry counts as covered", detail: "AC1 pass(x); AC2 waived(dispatcher); AC3 pass(z)", doc: docThree, log: []string{reply("waive AC2")}},
+	{name: "a waived entry counts as covered only with its waiver", detail: "AC1 pass(x); AC2 waived(dispatcher); AC3 pass(z)", doc: docThree, want: waiverLine("AC2")},
+	// A run id, the `AC1-3 pass(…)` spelling the protocol allows, covers every
+	// id it spans.
+	{name: "a run id covers the ids it spans", detail: "AC1-3 pass(vitest); AC4 pass(run id 1234567)", doc: docFour},
+	{name: "a run id covers case-insensitively", detail: "ac1-2 pass(x); AC3 pass(y)", doc: docThree},
+	{name: "a run id does not cover an id past its end", detail: "AC1-3 pass(vitest)", doc: docFour, want: missingLine("AC4")},
+	{name: "a run id does not cover another letters' ids", detail: "AC1 pass(x); AC1-1 pass(y)", doc: "## Acceptance\n- AC1 vitest\n- R1 e2e\n", want: missingLine("R1")},
+	{name: "a reversed run id covers nothing", detail: "AC3-1 pass(x); AC2 pass(y)", doc: docThree, want: missingLine("AC1", "AC3")},
+	{name: "a run id is not an id-less item's position", detail: "AC2-3 pass(x); pass(y)", doc: docThree, want: missingLine("AC1")},
+	// The item loop's own refusals still come first.
+	{name: "a malformed item is refused before coverage", detail: "AC1 pending", doc: docThree, want: malform},
 }
 
 func TestCheck(t *testing.T) {
