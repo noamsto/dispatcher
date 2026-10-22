@@ -120,6 +120,19 @@ func dispatch(ts int64, crew, branch, session string) string {
 	return fmt.Sprintf(`{"ts":%d,"crew_id":"%s","kind":"dispatch","branch":%q,"session":%q,"body":{}}`, ts, crew, branch, session)
 }
 
+// resume is dispatch-resume.sh's row: like a dispatch row, it opens a session.
+func resume(ts int64, crew, branch, session string) string {
+	return fmt.Sprintf(`{"ts":%d,"crew_id":"%s","kind":"resume","branch":%q,"session":%q,"worker_id":%q}`,
+		ts, crew, branch, session, "worker:"+branch+"#"+session)
+}
+
+// watchdog is a session-less status row carrying the watchers' source, which
+// `crew status` cannot write.
+func watchdog(ts int64, crew, from, state, detail string) string {
+	return fmt.Sprintf(`{"ts":%d,"crew_id":"%s","kind":"status","from":%q,"to":"dispatcher:%s","body":{"state":%q,"detail":%q,"source":"watchdog"}}`,
+		ts, crew, from, crew, state, detail)
+}
+
 // row is the appended line with everything but the body spelled out.
 func row(crew, to, body string) string {
 	return fmt.Sprintf(`{"ts":%s,"crew_id":%q,"from":"dispatcher:%s","to":%q,"kind":"msg","body":%q}`, tsText, crew, crew, to, body)
@@ -167,12 +180,28 @@ func TestSessionlessRowJoinsTheSessionBeforeIt(t *testing.T) {
 	tr := setup(t)
 	tr.write(t,
 		status(1785951000000, "c1", "worker:feat/x#s1-1", "working"),
-		status(1785951100000, "c1", "worker:feat/x", "blocked"),
+		watchdog(1785951100000, "c1", "worker:feat/x", "blocked", "prompt: interactive prompt in pane %186"),
 	)
 	if _, code := tr.run(t, Options{}, "worker:feat/x", "ship it"); code != 0 {
 		t.Fatalf("code %d, want 0", code)
 	}
 	tr.wantRow(t, row("c1", "worker:feat/x#s1-1", "ship it"))
+}
+
+// A session-less watchdog row joins the session the resume row opened, so a
+// branch-only reply reaches the resumed worker (#173's resume shape).
+func TestSessionlessRowAfterAResumeRowReachesTheResumedSession(t *testing.T) {
+	tr := setup(t)
+	tr.write(t,
+		dispatch(1785951000000, "c1", "feat/x", "s1-1"),
+		status(1785951100000, "c1", "worker:feat/x#s1-1", "working"),
+		resume(1785951200000, "c1", "feat/x", "s2-2"),
+		watchdog(1785951300000, "c1", "worker:feat/x", "blocked", "prompt: interactive prompt in pane %9"),
+	)
+	if _, code := tr.run(t, Options{}, "worker:feat/x", "resume-directive"); code != 0 {
+		t.Fatalf("code %d, want 0", code)
+	}
+	tr.wantRow(t, row("c1", "worker:feat/x#s2-2", "resume-directive"))
 }
 
 func TestRefusals(t *testing.T) {
@@ -185,6 +214,13 @@ func TestRefusals(t *testing.T) {
 			branch: "feat/x",
 			rows:   []string{status(1785951000000, "c1", "worker:feat/x#s1-1", "done")},
 			line:   "crew: newest session on feat/x is done — a stopped session never reads its inbox; re-dispatch with the context baked in",
+		},
+		{
+			// The reaper's own row: `reaped` is terminal.
+			name:   "newest reaped",
+			branch: "feat/x",
+			rows:   []string{`{"ts":1785951000000,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"status","body":{"state":"reaped","detail":"PR #8 MERGED","source":"reap"}}`},
+			line:   "crew: newest session on feat/x is reaped — a stopped session never reads its inbox; re-dispatch with the context baked in",
 		},
 		{
 			name:   "no session on branch",
@@ -208,6 +244,17 @@ func TestRefusals(t *testing.T) {
 				status(1785951100000, "c1", "worker:feat/x", "working"),
 			},
 			line: "crew: feat/x has no session id on the bus — a branch-only address can never reach a live worker's inbox; re-dispatch",
+		},
+		{
+			// Ties break the other way: in the same millisecond the finished
+			// session is still the newest entry, so the refusal names its state.
+			name:   "session-less row in the same millisecond as a finished session",
+			branch: "feat/x",
+			rows: []string{
+				status(1785951000000, "c1", "worker:feat/x#s1-1", "done"),
+				status(1785951000000, "c1", "worker:feat/x", "working"),
+			},
+			line: "crew: newest session on feat/x is done — a stopped session never reads its inbox; re-dispatch with the context baked in",
 		},
 		{
 			// A watchdog `failed` while the session is still live joins it, and the
@@ -348,6 +395,23 @@ func TestCrossCrewLookup(t *testing.T) {
 			},
 			crews:  map[string]string{"c-a": "4321", "c-b": "4322"},
 			refuse: "has live sessions in crews: c-a, c-b",
+		},
+		{
+			// No pid file is unknown liveness, not dead, so both crews stay
+			// candidates and the refusal names them.
+			name: "no pid registered in either crew refuses naming both",
+			rows: []string{
+				status(1785951000000, "c1", "worker:feat/x#s1-1", "working"),
+				status(1785951100000, "c2", "worker:feat/x#s2-2", "working"),
+			},
+			refuse: "has live sessions in crews: c1, c2 — pass --crew <id>",
+		},
+		{
+			// A terminal newest is no candidate, so a crew whose only session
+			// finished is named in the refusal, never picked (#302).
+			name:   "only a terminal session in any crew",
+			rows:   []string{status(1785951000000, "c1", "worker:feat/x#s1-1", "done")},
+			refuse: "CREW_ID not set and no live session on feat/x in any crew",
 		},
 		{
 			name:   "no crew has a live session",

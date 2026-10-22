@@ -32,7 +32,7 @@ tests/crew.bats	pr_open/done	!timing	2461
 tests/crew.bats	rate	!timing	15905
 tests/crew.bats	reap	!timing	429530
 tests/crew.bats	register	!timing	5043
-tests/crew.bats	reply	!timing	62032
+tests/crew.bats	reply	!timing	2819
 tests/crew.bats	report	!timing	2355
 tests/crew.bats	resolve-target	!timing	1881
 tests/crew.bats	stall-watch	!timing	474937
