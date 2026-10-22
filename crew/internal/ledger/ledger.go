@@ -1,6 +1,7 @@
 // Package ledger is the acceptance-ledger gate of `crew status <from> pr_open`
 // for an implement task (adapters/core/crew.sh's status arm): the ledger's form,
-// the empty-detail rule, the CI-evidence rule and the dispatcher-waiver rule.
+// the empty-detail rule, the CI-evidence rule, the dispatcher-waiver rule and
+// the coverage rule (every entry of the doc's list named in the ledger).
 //
 // The arm's form test and item scan are Oniguruma regexes with recursion
 // (`\g<b>`) and look-ahead, which neither RE2 nor gojq can run, so the grammar
@@ -78,6 +79,7 @@ func Check(in Input) string {
 	}
 	entries := acceptItems(in.TaskDoc)
 	idx := 0
+	var ids []string
 	for _, it := range items(in.Detail) {
 		// The arm reads jq's `id<US>kind<US>ev` lines back with IFS=$'\x1f', so a
 		// US inside the id shifts the fields.
@@ -87,6 +89,7 @@ func Check(in Input) string {
 		}
 		iid = strings.TrimSuffix(iid, ":")
 		idx++
+		ids = append(ids, iid)
 		if ikind == "pass" {
 			isCI := ciRe.MatchString(iev) || slices.ContainsFunc(entriesFor(entries, iid, idx), ciRe.MatchString)
 			if isCI && !runRe.MatchString(iev) {
@@ -102,7 +105,98 @@ func Check(in Input) string {
 		}
 		return refuse("waived(dispatcher) needs a dispatcher waiver on the bus: a crew reply to this session (" + in.From + ") that names the item ('" + iid + `') in a waive phrase, e.g. "waive ` + iid + `"; a negation ("will not waive") does not count (a reply sent to an earlier session does not carry over). Block and ask the dispatcher to waive the item; do not write the waiver yourself.`)
 	}
+	if hasList {
+		if missing := missingEntries(entries, ids); len(missing) > 0 {
+			q := make([]string, len(missing))
+			for i, id := range missing {
+				q[i] = "'" + id + "'"
+			}
+			return refuse("acceptance item(s) " + strings.Join(q, ", ") + " missing from the ledger: " + missingHint)
+		}
+	}
 	return ""
+}
+
+const missingHint = `every acceptance item needs <id> pass(<evidence>) or <id> waived(dispatcher); an item you cannot run is not a pass — block and ask the dispatcher to waive it.`
+
+// entryIDRe is an acceptance entry's id: the letters-then-digits run it starts
+// with, which is the token a worker names it by in the ledger (`AC1`). An entry
+// without one leaves the doc uncheckable.
+var entryIDRe = regexp.MustCompile(`^[A-Za-z]+[0-9]+`)
+
+// entryNameRe is that id plus any suffix run onto it (`AC5a`, `E2E`): the token
+// a worker has to post, so it is the one a refusal quotes.
+var entryNameRe = regexp.MustCompile(`^[A-Za-z]+[0-9]+[A-Za-z0-9_]*`)
+
+// idRunRe splits a run id, the `AC1-3` spelling one item may stand in for a run
+// of consecutive ids, into its letters and the two numbers it spans. idNumRe
+// splits an acceptance id the same way.
+var (
+	idRunRe = regexp.MustCompile(`^([A-Za-z]+)([0-9]+)-([0-9]+)$`)
+	idNumRe = regexp.MustCompile(`^([A-Za-z]+)([0-9]+)$`)
+)
+
+// spanned reports whether a run id names an entry id: the run's letters,
+// ignoring case, and a number the run covers. A reversed or overflowing run
+// names nothing.
+func spanned(run []string, name string) bool {
+	num := idNumRe.FindStringSubmatch(name)
+	if num == nil || asciiLower(run[1]) != asciiLower(num[1]) {
+		return false
+	}
+	lo, err := strconv.Atoi(run[2])
+	if err != nil {
+		return false
+	}
+	hi, err := strconv.Atoi(run[3])
+	if err != nil {
+		return false
+	}
+	at, err := strconv.Atoi(num[2])
+	if err != nil {
+		return false
+	}
+	return lo <= at && at <= hi
+}
+
+// missingEntries are the doc entries no item names, in doc order with the doc's
+// own spelling. An item names an entry through entriesFor, the same lookup the
+// CI rule uses — by id, by the number in the id, or, for an id-less item, by its
+// position — plus the run id that lookup does not know. A doc with an entry that
+// carries no id has no id a worker could name it by, so nothing is missing.
+func missingEntries(entries, ids []string) []string {
+	names := make([]string, len(entries))
+	indexes := make(map[string][]int, len(entries))
+	for i, e := range entries {
+		text := strings.TrimLeft(e, "*_")
+		if !entryIDRe.MatchString(text) {
+			return nil
+		}
+		names[i] = entryNameRe.FindString(text)
+		indexes[e] = append(indexes[e], i)
+	}
+	covered := make([]bool, len(entries))
+	for j, id := range ids {
+		for _, e := range entriesFor(entries, id, j+1) {
+			for _, i := range indexes[e] {
+				covered[i] = true
+			}
+		}
+		if run := idRunRe.FindStringSubmatch(awkUnescape(id)); run != nil {
+			for i, name := range names {
+				if spanned(run, name) {
+					covered[i] = true
+				}
+			}
+		}
+	}
+	var missing []string
+	for i, name := range names {
+		if !covered[i] {
+			missing = append(missing, name)
+		}
+	}
+	return missing
 }
 
 func orDefault(s, def string) string {
