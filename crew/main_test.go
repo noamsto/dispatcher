@@ -82,7 +82,8 @@ func TestRunMapsFoldErrorsToExitCodes(t *testing.T) {
 		wantCode   int
 		wantStdout string
 		wantStderr string // exact; "" means the check is wantErrIn
-		wantErrIn  string // substring, with the log path exactly once
+		wantErrIn  string // substring, with the log path exactly once, and the
+						// text before it as stderr's prefix
 	}{
 		{name: "roster number event is a type error", args: []string{"roster", "c1"}, log: str("5\n"), mode: 0o644, wantCode: 5, wantErrIn: "crew: roster: %s: "},
 		{name: "sessions number event is a type error", args: []string{"sessions", "x"}, log: str("5\n"), mode: 0o644, wantCode: 5, wantErrIn: "crew: sessions: %s: "},
