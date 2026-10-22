@@ -89,7 +89,7 @@ func Check(in Input) string {
 		}
 		iid = strings.TrimSuffix(iid, ":")
 		idx++
-		ids = append(ids, awkUnescape(iid))
+		ids = append(ids, iid)
 		if ikind == "pass" {
 			isCI := ciRe.MatchString(iev) || slices.ContainsFunc(entriesFor(entries, iid, idx), ciRe.MatchString)
 			if isCI && !runRe.MatchString(iev) {
@@ -120,27 +120,23 @@ func Check(in Input) string {
 const missingHint = `every acceptance item needs <id> pass(<evidence>) or <id> waived(dispatcher); an item you cannot run is not a pass — block and ask the dispatcher to waive it.`
 
 // entryIDRe is an acceptance entry's id: the letters-then-digits run it starts
-// with, which is the token its worker names it by in the ledger (`AC1`).
+// with, which is the token a worker names it by in the ledger (`AC1`) and the
+// name a refusal quotes. An entry without one leaves the doc uncheckable.
 var entryIDRe = regexp.MustCompile(`^[A-Za-z]+[0-9]+`)
 
-// idRunRe and idNumRe split an id into the letters and the number the `AC1-3`
-// spelling, which one item may stand in for a run of consecutive ids, compares.
+// idRunRe splits a run id, the `AC1-3` spelling one item may stand in for a run
+// of consecutive ids, into its letters and the two numbers it spans. idNumRe
+// splits an acceptance id the same way.
 var (
 	idRunRe = regexp.MustCompile(`^([A-Za-z]+)([0-9]+)-([0-9]+)$`)
 	idNumRe = regexp.MustCompile(`^([A-Za-z]+)([0-9]+)$`)
 )
 
-// covers reports whether a ledger item names an acceptance id: the same token
-// ignoring case, or a `AC1-3` run of the same letters spanning the id's number.
-func covers(item, entry string) bool {
-	if asciiLower(item) == asciiLower(entry) {
-		return true
-	}
-	run := idRunRe.FindStringSubmatch(item)
-	if run == nil {
-		return false
-	}
-	num := idNumRe.FindStringSubmatch(entry)
+// spanned reports whether a run id names an entry id: the run's letters,
+// ignoring case, and a number the run covers. A reversed or overflowing run
+// names nothing.
+func spanned(run []string, name string) bool {
+	num := idNumRe.FindStringSubmatch(name)
 	if num == nil || asciiLower(run[1]) != asciiLower(num[1]) {
 		return false
 	}
@@ -159,29 +155,40 @@ func covers(item, entry string) bool {
 	return lo <= at && at <= hi
 }
 
-// missingEntries are the doc entries the ledger leaves out, in doc order with
-// the doc's own spelling. An item covers an entry whose id it names, ignoring
-// case, or — when it carries no id — the entry at its own 1-based position, the
-// way entriesFor maps an id-less item. A doc with an entry that carries no id
-// has no id a worker could name, so nothing counts as missing.
+// missingEntries are the doc entries no item names, in doc order with the doc's
+// own spelling. An item names an entry through entriesFor, the lookup the CI
+// rule already uses for the same question — by id, by the number in the id, or,
+// for an id-less item, by its position — plus the run id that lookup does not
+// know. A doc with an entry that carries no id has no id a worker could name it
+// by, so nothing counts as missing.
 func missingEntries(entries, ids []string) []string {
 	names := make([]string, len(entries))
+	indexes := make(map[string][]int, len(entries))
 	for i, e := range entries {
 		names[i] = entryIDRe.FindString(strings.TrimLeft(e, "*_"))
 		if names[i] == "" {
 			return nil
 		}
+		indexes[e] = append(indexes[e], i)
+	}
+	covered := make([]bool, len(entries))
+	for j, id := range ids {
+		for _, e := range entriesFor(entries, id, j+1) {
+			for _, i := range indexes[e] {
+				covered[i] = true
+			}
+		}
+		if run := idRunRe.FindStringSubmatch(awkUnescape(id)); run != nil {
+			for i, name := range names {
+				if spanned(run, name) {
+					covered[i] = true
+				}
+			}
+		}
 	}
 	var missing []string
 	for i, name := range names {
-		covered := false
-		for j, id := range ids {
-			if id == "" && j == i || covers(id, name) {
-				covered = true
-				break
-			}
-		}
-		if !covered {
+		if !covered[i] {
 			missing = append(missing, name)
 		}
 	}

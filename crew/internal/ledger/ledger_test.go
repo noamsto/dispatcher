@@ -236,6 +236,16 @@ var checkCases = []checkCase{
 	{name: "a run id does not cover another letters' ids", detail: "AC1 pass(x); AC1-1 pass(y)", doc: "## Acceptance\n- AC1 vitest\n- R1 e2e\n", want: missingLine("R1")},
 	{name: "a reversed run id covers nothing", detail: "AC3-1 pass(x); AC2 pass(y)", doc: docThree, want: missingLine("AC1", "AC3")},
 	{name: "a run id is not an id-less item's position", detail: "AC2-3 pass(x); pass(y)", doc: docThree, want: missingLine("AC1")},
+	// The id spellings the CI lookup already maps to an entry cover it too, so
+	// coverage and that lookup never name different entries.
+	{name: "numeric ids cover the entry each number names", detail: "1 pass(a); 2 pass(b); 3 pass(c)", doc: docThree},
+	{name: "numeric ids still have to cover every entry", detail: "1 pass(a); 2 pass(b)", doc: docThree, want: missingLine("AC3")},
+	{name: "a dashed AC-number covers its entry", detail: "AC1 pass(x); AC-02 pass(y); AC3 pass(z)", doc: docThree},
+	{name: "a zero-padded AC-number covers its entry", detail: "AC1 pass(x); AC02 pass(y); AC3 pass(z)", doc: docThree},
+	// An entry's own text is what its item names, so an id-shaped prefix in prose
+	// or a suffixed id never invents an id no worker could post.
+	{name: "an entry with a suffixed id is covered by its spelling", detail: "AC5a pass(x); AC5b pass(y)", doc: "## Acceptance\n- AC5a unit tests\n- AC5b e2e\n"},
+	{name: "a prose entry starting with an id-shaped word is covered by it", detail: "E2E pass(x); AC1 pass(y)", doc: "## Acceptance\n- E2E suite green\n- AC1 unit tests\n"},
 	// The item loop's own refusals still come first.
 	{name: "a malformed item is refused before coverage", detail: "AC1 pending", doc: docThree, want: malform},
 }
