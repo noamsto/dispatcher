@@ -10,9 +10,9 @@ export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
 export CREW_RATE_AUTOSWEEP=0
 
 # The crew under test — exported, as the two above it are, because it is what
-# every bats file reads. CREW is the entrypoint the suite built
-# (tests/setup_suite.bash compiles it), so run it directly: `bash "$CREW"`
-# would hand a binary to bash and get 126.
+# every bats file reads. CREW is the entrypoint the suite built (tests/
+# setup_suite.bash compiles it), so run it directly: `bash "$CREW"` would hand a
+# binary to bash and get 126.
 export CREW="${CREW_GO_BIN:?tests/setup_suite.bash did not build crew-go}"
 
 # Host-environment isolation: unset vars that leak from a running dispatcher or

@@ -12,11 +12,6 @@ import (
 	"testing"
 )
 
-// These are the help screens and the engine-cmd verdict as the binary answers
-// them: the grouped list's rows against the subcommand list it is built from,
-// every subcommand's own --help with nothing around it, `hold`'s per-action
-// screens, and the two positions where --help stops being a request.
-
 // helpRow is one subcommand row of the grouped list: two spaces, the name,
 // padding, its purpose. Group headers sit at column 0, so they never count as a
 // row, and a name printed twice reads as two rows.
@@ -66,12 +61,10 @@ var noCwdEnv = env{getwd: func() (string, error) {
 	return "", errors.New("getwd: no such file or directory")
 }}
 
-// TestGroupedListIsTheSubcommandList is the invariant behind `help: --help, -h
-// and help each print every subcommand exactly once` and the rows half of
-// `help: bare crew and an unknown subcommand print the list to stderr and fail`:
-// one row per admitted subcommand, and the five spellings that print the list
-// differ only in where it goes and what they exit with. A command that gains an
-// arm and no row fails here, which is the point.
+// TestGroupedListIsTheSubcommandList is the invariant the `help: --help, -h and
+// help each print every subcommand exactly once` case pinned: one row per
+// admitted subcommand, in every spelling that prints the list. A command that
+// gains an arm and no row fails here, which is the point.
 func TestGroupedListIsTheSubcommandList(t *testing.T) {
 	want := listedSubs()
 	if len(want) == 0 {
@@ -118,10 +111,9 @@ func TestGroupedListIsTheSubcommandList(t *testing.T) {
 }
 
 // TestEverySubcommandAnswersHelpOutsideARepo is `help: every subcommand answers
-// --help with no repo and no crew id`: from a directory no git repo owns, with
-// no crew id in the environment and no tmux to read, every subcommand prints
-// its own synopsis and exits 0. The help preamble runs before the repo, crew-id
-// and bus reads, which is what this pins.
+// --help with no repo and no crew id`: the help preamble runs before the repo,
+// crew-id and bus reads, so from a directory no git repo owns with no crew id in
+// the environment every subcommand still prints its own synopsis and exits 0.
 func TestEverySubcommandAnswersHelpOutsideARepo(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GIT_CEILING_DIRECTORIES", dir)
@@ -152,13 +144,12 @@ func TestEverySubcommandAnswersHelpOutsideARepo(t *testing.T) {
 
 // TestHoldActionHelpScreens is `help: crew hold <action> --help prints that
 // action's synopsis` and `help: hold due --help prints that action's screen,
-// not the flag's`: after an action, --help is that action's screen, the bare
-// screen is the one that has to name every action, and an unknown action is
-// refused rather than routed to a screen.
+// not the flag's`: after an action, --help is that action's screen, and the bare
+// screen is the one that has to name every action.
 func TestHoldActionHelpScreens(t *testing.T) {
 	actions := []string{"add", "list", "due", "park", "release"}
 
-	// `crew hold due --help`, the screen the bats case compared bytes of.
+	// `crew hold due --help`: the synopsis line the bats case compared bytes of.
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"hold", "due", "--help"}, &stdout, &stderr, noCwdEnv); code != 0 {
 		t.Fatalf("hold due --help exited %d (stderr %q)", code, stderr.String())
@@ -200,8 +191,7 @@ func TestHoldActionHelpScreens(t *testing.T) {
 		}
 	}
 
-	// An action with no screen refuses one line; the --help that asked for it
-	// never reaches hold's arm.
+	// An action with no screen is the help routing's own refusal, one line.
 	stdout.Reset()
 	stderr.Reset()
 	if code := run(context.Background(), []string{"hold", "bogus", "--help"}, &stdout, &stderr, noCwdEnv); code != exitFailure {
@@ -212,10 +202,10 @@ func TestHoldActionHelpScreens(t *testing.T) {
 	}
 }
 
-// TestHelpDetailIsNoRequestAndSeparatorKeepsItLiteral is the other half of the
-// routing: only the first position means help, so a `--help` that is detail
-// text still reads as the parser's own rejection — and the documented escape
-// posts that same word to the bus verbatim.
+// TestHelpDetailIsNoRequestAndSeparatorKeepsItLiteral is the other position
+// rule: only the first argument means help, so a `--help` that is detail text
+// still reaches the parser's own rejection — and the `--` escape posts that same
+// word to the bus verbatim.
 func TestHelpDetailIsNoRequestAndSeparatorKeepsItLiteral(t *testing.T) {
 	repo, logPath := repoWithLog(t, nil, 0)
 	t.Setenv("CREW_ID", "c1")
@@ -239,7 +229,7 @@ func TestHelpDetailIsNoRequestAndSeparatorKeepsItLiteral(t *testing.T) {
 	if stderr.String() != refusal {
 		t.Errorf("stderr %q, want %q", stderr.String(), refusal)
 	}
-	// The status screen's own purpose line: its absence says no screen printed.
+	// One line of the status screen: absent here, so no screen printed.
 	if strings.Contains(stderr.String(), "Post or update a session's state") {
 		t.Errorf("the refusal printed the status screen: %q", stderr.String())
 	}
