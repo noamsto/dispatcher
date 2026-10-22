@@ -27,15 +27,22 @@ var helpRow = regexp.MustCompile(`^  ([a-z][a-z0-9-]+) +[^ ].*$`)
 // and `reap-autosweep` are callable but deliberately undocumented.
 var unlistedSubs = []string{"help", "git-guard", "reap-autosweep"}
 
-// listedSubs is every subcommand the grouped list has to carry, sorted: the
-// `subcommands` literal the router admits, minus the three it never advertises.
-func listedSubs() []string {
+// admittedSubs is every word the router admits, in the order main.go's literal
+// lists them, a duplicate left where it is.
+func admittedSubs() []string {
 	got := make([]string, 0, len(subcommands))
 	for _, name := range subcommands {
 		if !slices.Contains(unlistedSubs, name) {
 			got = append(got, name)
 		}
 	}
+	return got
+}
+
+// listedSubs is admittedSubs sorted and deduplicated: what the grouped list has
+// to carry, one row each.
+func listedSubs() []string {
+	got := admittedSubs()
 	slices.Sort(got)
 	return slices.Compact(got)
 }
@@ -70,8 +77,8 @@ func TestGroupedListIsTheSubcommandList(t *testing.T) {
 	if len(want) == 0 {
 		t.Fatal("subcommands admits nothing")
 	}
-	if len(want) != len(slices.Compact(slices.Clone(want))) {
-		t.Fatalf("subcommands lists a name twice: %v", want)
+	if admitted := admittedSubs(); len(want) != len(admitted) {
+		t.Fatalf("subcommands lists a name twice: %v", admitted)
 	}
 
 	for _, tc := range []struct {
