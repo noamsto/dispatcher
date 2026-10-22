@@ -603,8 +603,9 @@ func TestNoRemoteWorkersAsksNoHost(t *testing.T) {
 
 // Two crews ask their hosts at once. A serial merge costs a machine-wide
 // `crew fleet` one host timeout per crew that ever dispatched remotely, and a
-// host that is down spends its whole remoteTimeout each time, so what the test
-// reads is how many calls were in flight at once.
+// host that is down spends its whole remoteTimeout each time. Each call holds
+// until the other crew's call arrives, so asking one crew at a time shows up as
+// a call that waited alone rather than as a race against a sleep.
 func TestCrewsAskTheirHostsTogether(t *testing.T) {
 	f := oneRepo(t,
 		worker(1700000010, "c1", "feat/a", "working"),
@@ -614,19 +615,23 @@ func TestCrewsAskTheirHostsTogether(t *testing.T) {
 	)
 	branches := map[string]string{"c1": "feat/far-a", "c2": "feat/far-b"}
 	var mu sync.Mutex
-	inFlight, peak := 0, 0
+	arrived, alone := 0, false
+	together := make(chan struct{})
 	f.opts.Remote = func(_, crew string) roster.Capture {
 		return func(_ context.Context, _ string, _ []string, stdout, _ io.Writer) int {
 			mu.Lock()
-			inFlight++
-			if inFlight > peak {
-				peak = inFlight
+			arrived++
+			if arrived == 2 {
+				close(together)
 			}
 			mu.Unlock()
-			time.Sleep(20 * time.Millisecond) // hold the call so an overlap is visible
-			mu.Lock()
-			inFlight--
-			mu.Unlock()
+			select {
+			case <-together:
+			case <-time.After(5 * time.Second):
+				mu.Lock()
+				alone = true
+				mu.Unlock()
+			}
 			_, _ = fmt.Fprintf(stdout, `[{"branch":%q,"name":"w","state":"working","live":true}]`, branches[crew])
 			return 0
 		}
@@ -636,8 +641,10 @@ func TestCrewsAskTheirHostsTogether(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	if peak < 2 {
-		t.Errorf("peak concurrent host calls = %d, want both crews asking at once", peak)
+	mu.Lock()
+	defer mu.Unlock()
+	if alone {
+		t.Error("a crew's host was still being asked alone after the other answered")
 	}
 	seen := map[string]bool{}
 	for _, r := range jsonRows(t, out) {

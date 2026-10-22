@@ -167,10 +167,12 @@ type crewRow struct {
 // asking anyone, when the bus has no remote dispatch row. remote is nil when the
 // caller asks no host.
 //
-// The folds run one crew after another and their merges all at once: Fold reads
-// the tmux probe's cache, which is not synchronized, while a merge only waits on
-// hosts. Serial merges would cost a plain `crew fleet` one host timeout per crew
-// that ever dispatched remotely, and a host that is down spends its whole one.
+// Every fold runs before any host is asked: Fold reads the tmux probe's cache,
+// which is not synchronized, and a fold that fails skips the repo without
+// leaving a merge waiting on a host behind it. The merges then all start
+// together, because a plain `crew fleet` asking one crew at a time costs a host
+// timeout per crew that ever dispatched remotely, and a host that is down
+// spends its whole one.
 func foldRepo(ctx context.Context, common string, events []bus.Event, docs []any, onlyCrew string, nowSec float64, p roster.Probes, remote func(crew string) roster.Capture) ([]crewRow, error) {
 	crews := []string{onlyCrew}
 	if onlyCrew == "" {
@@ -183,30 +185,30 @@ func foldRepo(ctx context.Context, common string, events []bus.Event, docs []any
 		slices.Sort(crews)
 		crews = slices.Compact(crews)
 	}
-	merged := make([]struct {
-		crew string
-		rows []map[string]any
-	}, len(crews))
-	var wg sync.WaitGroup
+	folded := make([][]map[string]any, len(crews))
 	for i, c := range crews {
-		folded, err := roster.Fold(ctx, docs, c, nowSec, p)
+		rows, err := roster.Fold(ctx, docs, c, nowSec, p)
 		if err != nil {
 			return nil, err
 		}
-		merged[i].crew = c
-		if remote == nil {
-			merged[i].rows = folded
-			continue
-		}
-		wg.Go(func() {
-			merged[i].rows = roster.MergeRemote(ctx, folded, events, c, remote(c))
-		})
+		folded[i] = rows
 	}
-	wg.Wait()
+	rows := make([][]map[string]any, len(crews))
+	if remote == nil {
+		copy(rows, folded)
+	} else {
+		var wg sync.WaitGroup
+		for i, c := range crews {
+			wg.Go(func() {
+				rows[i] = roster.MergeRemote(ctx, folded[i], events, c, remote(c))
+			})
+		}
+		wg.Wait()
+	}
 	var out []crewRow
-	for _, m := range merged {
-		for _, row := range m.rows {
-			out = append(out, crewRow{Row: row, crew: m.crew})
+	for i, c := range crews {
+		for _, row := range rows[i] {
+			out = append(out, crewRow{Row: row, crew: c})
 		}
 	}
 	return out, nil
