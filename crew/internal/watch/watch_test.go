@@ -262,15 +262,20 @@ func TestExitedWakesOnlyAsFirstTerminalState(t *testing.T) {
 		t.Run(tc.prev+" then exited", func(t *testing.T) {
 			p := fixture(t)
 			from := "worker:feat/x#s1-1"
-			writeLog(t, p,
-				status(1000, from, tc.prev, "", ""),
-				status(2000, from, "exited", "", ""))
+			exited := status(2000, from, "exited", "", "")
+			writeLog(t, p, status(1000, from, tc.prev, "", ""), exited)
 			stdout, _, code, _ := run(t, p, Request{Since: since("1000"), Timeout: "1", Interval: "1"})
 			if code != 0 {
 				t.Fatalf("code %d", code)
 			}
-			if got := strings.Contains(stdout, "exited"); got != tc.wakes {
-				t.Errorf("wakes = %v, want %v (%s)", got, tc.wakes, stdout)
+			// Exactly the `exited`, or nothing: a cursor that started admitting its
+			// own row would deliver the previous state too.
+			quiet := ""
+			if tc.wakes {
+				quiet = want(t, 2000, exited)
+			}
+			if stdout != quiet {
+				t.Errorf("stdout = %q, want %q", stdout, quiet)
 			}
 		})
 	}
