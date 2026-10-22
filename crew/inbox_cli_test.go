@@ -30,6 +30,9 @@ func TestRunInboxAFailedPrintExitsOneAndWritesNoMarks(t *testing.T) {
 	if code := run(context.Background(), []string{"inbox", me, "c1"}, errWriter{}, &stderr, e); code != exitFailure {
 		t.Fatalf("code %d, want %d", code, exitFailure)
 	}
+	if want := "crew: no space left on device\n"; stderr.String() != want {
+		t.Fatalf("stderr = %q, want the flush failure %q", stderr.String(), want)
+	}
 	// The msgs stay undelivered: the next read hands them out again.
 	if _, err := os.Stat(filepath.Join(repo, ".git", "crew", "await")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("await dir = %v, want it never created", err)
