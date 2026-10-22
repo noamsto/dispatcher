@@ -38,11 +38,10 @@ func WithJQFromJSON() Option {
 	})}
 }
 
-// FromJSON decodes s as exactly one JSON text, with json.Number literals so a
-// number outside float64's range survives, and skips a leading byte order mark
-// as jq's fromjson does and gojq's does not. A Go caller classifying the same
-// text a fold reads has to call this: encoding/json's float64 path rejects
-// bodies a fold parses.
+// FromJSON decodes s as exactly one JSON text with json.Number literals,
+// skipping a leading byte order mark as jq's fromjson does. A Go caller
+// classifying text a fold also reads must call it: encoding/json's float64 path
+// rejects bodies a fold parses.
 func FromJSON(s string) (any, error) {
 	dec := json.NewDecoder(strings.NewReader(strings.TrimPrefix(s, "\xef\xbb\xbf")))
 	dec.UseNumber()
