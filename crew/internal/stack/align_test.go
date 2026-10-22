@@ -91,8 +91,11 @@ func TestAlignFastForwardedParent(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("align feat/c = %d (%s)", code, errOut)
 	}
+	if n := len(rows(t, out)); n != 3 {
+		t.Fatalf("rows = %d, want 3:\n%s", n, out)
+	}
 	wantRow(t, out, "feat/b", map[string]string{
-		"pr": "2", "branch": `"feat/b"`, "parent": `"feat/a"`, "cut": `"` + aOID + `"`,
+		"pr": "2", "branch": `"feat/b"`, "parent": `"feat/a"`, "parent_pr": "null", "cut": `"` + aOID + `"`,
 		"mode":      `"ff"`,
 		"ready":     "true",
 		"directive": `"new base feat/a; recorded old head ` + aOID + `; run: git rebase origin/feat/a"`,
@@ -221,6 +224,9 @@ func TestAlignRetargetedOntoDefaultBranch(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("align 3 = %d (%s)", code, errOut)
 	}
+	if n := len(rows(t, out)); n != 2 {
+		t.Fatalf("rows = %d, want the two above the merged parent:\n%s", n, out)
+	}
 	wantRow(t, out, "feat/b", map[string]string{
 		// The walk keeps the recorded parent as the layer's parent and names its
 		// merged PR, even though the PR itself is retargeted onto main.
@@ -230,9 +236,18 @@ func TestAlignRetargetedOntoDefaultBranch(t *testing.T) {
 	})
 	// A newer `--pr` re-dispatch row that recorded main does not hide the retarget.
 	f.appendBus(`{"ts":9,"crew_id":"c1","kind":"dispatch","branch":"feat/b","base":"main","base_oid":null}`)
-	if _, out, _ := f.stackRun(t, Request{Top: "3"}); !strings.Contains(out, "parent PR #1 squash-merged") {
-		t.Fatalf("a newer attach row hid the recorded parent:\n%s", out)
+	code, out, errOut = f.stackRun(t, Request{Top: "3"})
+	if code != 0 {
+		t.Fatalf("after the attach row: align 3 = %d (%s)", code, errOut)
 	}
+	if n := len(rows(t, out)); n != 2 {
+		t.Fatalf("after the attach row: rows = %d:\n%s", n, out)
+	}
+	wantRow(t, out, "feat/b", map[string]string{
+		"parent_pr": "1", "mode": `"onto"`, "ready": "true",
+		"directive": `"new base main; recorded old head ` + aOID +
+			`; parent PR #1 squash-merged; run: git rebase --onto origin/main ` + aOID + `"`,
+	})
 }
 
 func TestAlignRetargetedWhileParentUnmerged(t *testing.T) {
@@ -245,6 +260,9 @@ func TestAlignRetargetedWhileParentUnmerged(t *testing.T) {
 		code, out, errOut := f.stackRun(t, Request{Top: "3"})
 		if code != 0 {
 			t.Fatalf("state %s: align 3 = %d (%s)", state, code, errOut)
+		}
+		if n := len(rows(t, out)); n != 2 {
+			t.Fatalf("state %s: rows = %d, want the two above the retargeted layer:\n%s", state, n, out)
 		}
 		wantRow(t, out, "feat/b", map[string]string{
 			"parent": `"main"`, "parent_pr": "null", "mode": `"unknown"`, "ready": "false",
@@ -462,22 +480,22 @@ func TestAlignRefusesAForkACycleAndABadTop(t *testing.T) {
 
 	// A closed top PR has no stack to align.
 	f.addPR(3, "feat/c", "feat/b", "CLOSED")
-	if code, _, errOut := f.stackRun(t, Request{Top: "3"}); code != 1 ||
+	if code, out, errOut := f.stackRun(t, Request{Top: "3"}); code != 1 || out != "" ||
 		!strings.Contains(errOut, "PR #3 is CLOSED, not OPEN") {
-		t.Fatalf("closed top: %d, %q", code, errOut)
+		t.Fatalf("closed top: %d, %q, %q", code, out, errOut)
 	}
 	f.addPR(3, "feat/c", "feat/b", "OPEN")
 
 	// A branch ref whose PR has another head is refused, not planned.
 	f.prs["feat/other"] = pr{number: 3, head: "feat/c", base: "feat/b", state: "OPEN"}
-	if code, _, errOut := f.stackRun(t, Request{Top: "feat/other"}); code != 1 ||
+	if code, out, errOut := f.stackRun(t, Request{Top: "feat/other"}); code != 1 || out != "" ||
 		!strings.Contains(errOut, "the PR for feat/other has head feat/c, not feat/other") {
-		t.Fatalf("branch ref mismatch: %d, %q", code, errOut)
+		t.Fatalf("branch ref mismatch: %d, %q, %q", code, out, errOut)
 	}
-	// A ref that is not a plain branch name never reaches gh.
-	if code, _, errOut := f.stackRun(t, Request{Top: "+refs/heads/x:refs/remotes/origin/main"}); code != 1 ||
+	// A ref that is not a plain branch name never reaches gh, and prints no plan.
+	if code, out, errOut := f.stackRun(t, Request{Top: "+refs/heads/x:refs/remotes/origin/main"}); code != 1 || out != "" ||
 		!strings.Contains(errOut, "is not a plain branch name") {
-		t.Fatalf("unsafe top ref: %d, %q", code, errOut)
+		t.Fatalf("unsafe top ref: %d, %q, %q", code, out, errOut)
 	}
 }
 
@@ -513,9 +531,9 @@ func TestAlignRefusesAParentThatDidNotLandOnDefault(t *testing.T) {
 		t.Fatalf("merged into another branch: %d, %q, %q", code, out, errOut)
 	}
 	f.addPR(2, "feat/b", "feat/a", "CLOSED")
-	if code, _, errOut := f.stackRun(t, Request{Top: "3"}); code != 1 ||
+	if code, out, errOut := f.stackRun(t, Request{Top: "3"}); code != 1 || out != "" ||
 		!strings.Contains(errOut, "PR #2 for feat/b is CLOSED, not merged") {
-		t.Fatalf("closed parent: %d, %q", code, errOut)
+		t.Fatalf("closed parent: %d, %q, %q", code, out, errOut)
 	}
 
 	// Reached the other way round: the top PR was retargeted onto main, so its
