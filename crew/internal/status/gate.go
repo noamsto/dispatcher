@@ -20,8 +20,8 @@ const (
 	jqRuntime    = 5
 )
 
-// errLogUnreadable is foldSeam's report that the bus log would not read. Every
-// caller treats it as a gate that cannot run, which is a refusal.
+// errLogUnreadable is foldSeam's report that the bus log would not read; its
+// callers refuse quoting jq's unreadable-input status, not its runtime one.
 var errLogUnreadable = errors.New("crew log unreadable")
 
 // planHint is the body of both plan-seam refusals: the pr_open/done gate's and
@@ -122,9 +122,7 @@ func foldSeam(o Options, prog string, log logFile, vars map[string]any) (bool, e
 
 // planGated reports whether a session reading this task doc is gated on a plan
 // seam: a standard or deep implement session whose doc says `plan: required`
-// and that is not a resume of the branch. The pr_open/done gate and `crew msg`'s
-// review-seam refusal share the condition, so a worker cannot pass one and skip
-// the other.
+// and that is not a resume of the branch.
 func planGated(doc taskDoc) bool {
 	if doc.kind != "" && doc.kind != "implement" {
 		return false

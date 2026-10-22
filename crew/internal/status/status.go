@@ -11,9 +11,8 @@
 // closed.
 //
 // `msg` gates one body: a review seam from a branch that has no plan seam is
-// refused, so a worker that skipped the plan phase meets it at the review gate
-// instead of at pr_open. It runs the same check as `status` — same task-doc
-// condition, same plan.jq fold over the same log.
+// refused, so the miss surfaces at the review gate instead of at pr_open. It
+// runs `status`'s own check — same task-doc condition, same plan.jq fold.
 package status
 
 import (
