@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
+	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/testjson"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
@@ -31,6 +34,66 @@ func rosterArm(t *testing.T, rows string, args ...string) (string, string, int) 
 	var stdout, stderr bytes.Buffer
 	code := run(context.Background(), append([]string{"roster"}, args...), &stdout, &stderr, e)
 	return stdout.String(), stderr.String(), code
+}
+
+// gitRun is a git fixture call: a test repo, not this checkout, so it carries its
+// own identity rather than the committer's.
+func gitRun(t *testing.T, repo string, args ...string) {
+	t.Helper()
+	full := append([]string{"-C", repo, "-c", "user.email=t@e", "-c", "user.name=t", "-c", "commit.gpgsign=false"}, args...)
+	if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// TestRosterCLIResolvesAnExitedRowThroughTheRealWorktreeList is the wiring the
+// fold's own tests stub out: internal/roster hands `resolveExited` a scripted
+// porcelain list, while the arm reads it with `git worktree list --porcelain`
+// taken from the repo it resolved and a pane list read by one exact tmux argv.
+// A wrong cwd or a changed `-F` format silently leaves every false `exited` a
+// real one, which no fold test would see.
+func TestRosterCLIResolvesAnExitedRowThroughTheRealWorktreeList(t *testing.T) {
+	rows := `{"ts":1700000001000,"crew_id":"c1","kind":"status","from":"worker:feat/roster-live#s1-1","to":"dispatcher:c1","body":{"state":"working"}}
+{"ts":1700000002000,"crew_id":"c1","kind":"status","from":"worker:feat/roster-live#s1-1","to":"dispatcher:c1","body":{"state":"exited"}}
+`
+	repo, _ := repoWithLog(t, &rows, 0o644)
+	gitRun(t, repo, "commit", "--allow-empty", "-qm", "init")
+	gitRun(t, repo, "branch", "feat/roster-live")
+	wt := filepath.Join(repo, ".wt", "roster-live")
+	gitRun(t, repo, "worktree", "add", "-q", wt, "feat/roster-live")
+	// A real tmux reports a kernel cwd; git resolves symlinks the same way, and
+	// the pane's path must equal the worktree's exactly.
+	wt, err := filepath.EvalSymlinks(wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const panesArgv = "list-panes -a -F #{pane_current_command} #{pane_current_path}"
+	tx := &tmuxtest.Fake{Out: map[string]string{panesArgv: ".claude-wrapped " + wt + "\n"}}
+	e := env{
+		getwd: func() (string, error) { return repo, nil },
+		clock: clock.Clock{Now: func() time.Time { return time.Unix(1700000100, 0) }},
+		probes: func(ctx context.Context, cwd string) roster.Probes {
+			p := probes(ctx, cwd) // the arm's real set: `git worktree list` from this cwd
+			p.Tmux = tx           // only the pane list is scripted; no tmux server is this test's
+			return p
+		},
+		proc: proctest.New(nil, nil),
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"roster", "c1"}, &stdout, &stderr, e); code != 0 {
+		t.Fatalf("code %d, stderr %q", code, stderr.String())
+	}
+	var outRows []map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &outRows); err != nil || len(outRows) != 1 {
+		t.Fatalf("rows: %v\n%s", err, stdout.String())
+	}
+	if outRows[0]["state"] != "working" || outRows[0]["exit_suspect"] != true {
+		t.Errorf("row = state %v exit_suspect %v, want working/true: %s", outRows[0]["state"], outRows[0]["exit_suspect"], stdout.String())
+	}
+	if calls := tx.Calls(); len(calls) != 1 || calls[0] != panesArgv {
+		t.Errorf("tmux calls = %q, want the one pane list read by %q", calls, panesArgv)
+	}
 }
 
 // TestRosterCLIStdoutIsThePrettyForm is `crew roster`'s stdout framing: the fold

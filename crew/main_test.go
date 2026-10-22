@@ -136,6 +136,12 @@ func TestRunMapsFoldErrorsToExitCodes(t *testing.T) {
 				if !strings.Contains(stderr.String(), want) {
 					t.Errorf("stderr = %q, want it to contain %q", stderr.String(), want)
 				}
+				// The arm's own prefix, not just the text after it: an agent reads
+				// `crew: roster: ` as the subcommand that failed, and it is what
+				// crew.sh's arms printed first.
+				if head, _, _ := strings.Cut(tt.wantErrIn, "%s"); head != "" && !strings.HasPrefix(stderr.String(), head) {
+					t.Errorf("stderr = %q, want it to start with %q", stderr.String(), head)
+				}
 				if n := strings.Count(stderr.String(), logPath); n > 1 {
 					t.Errorf("stderr names the log %d times, want at most once: %q", n, stderr.String())
 				}
