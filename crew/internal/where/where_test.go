@@ -99,7 +99,9 @@ func TestLeadPaneLine(t *testing.T) {
 	panes := paneLine("@624", "%204", "lead", "1") + "\n" + paneLine("@624", "%205", "plan-critic", "2")
 	want := `nova — sess:3.1 "win-name" (lead pane)   jump: ! tmux switch-client -t %204` + "\n"
 
-	for _, target := range []string{"nova", "feat/618-x"} {
+	// A codename, a branch and the lead pane's own %id are three addresses for
+	// the same pane, so they print one line.
+	for _, target := range []string{"nova", "feat/618-x", "%204"} {
 		out, errOut, code := tr.run(t, wins, panes, crewIs("c1"), target)
 		if code != 0 || out != want || errOut != "" {
 			t.Errorf("%q: code %d, out %q, err %q", target, code, out, errOut)
@@ -195,7 +197,48 @@ func TestCrewAnchor(t *testing.T) {
 		out != `iris — sess:4.1 "win-b" (lead pane)   jump: ! tmux switch-client -t %304`+"\n" {
 		t.Errorf("--crew c2: code %d, out %q", code, out)
 	}
+	// Re-anchored on c2, c1's codename is a target nothing here dispatched.
+	if _, errOut, code := tr.run(t, wins, panes, crewIs("c1"), "--crew", "c2", "nova"); code != exitFailure ||
+		errOut != "crew: where: no worker matches 'nova'\n" {
+		t.Errorf("--crew c2, other crew's codename: code %d, err %q", code, errOut)
+	}
 	// A pane of another crew's window is named, not missing.
+	if _, errOut, code := tr.run(t, wins, panes, crewIs("c1"), "%304"); code != exitFailure ||
+		errOut != "crew: where: pane %304 is not a pane of this crew\n" {
+		t.Errorf("other crew's pane: code %d, err %q", code, errOut)
+	}
+}
+
+// A codename two crews both dispatched is disambiguated by the anchor: with a
+// crew id the other crew's window never enters the codename scan, so the target
+// resolves instead of refusing as ambiguous.
+func TestCrewAnchorDisambiguatesASharedCodename(t *testing.T) {
+	tr := setup(t)
+	wins := winLine(tr.paths.Dir, "@624", "feat/1-a", "c1", "nova", "sess", "3", "win-a") + "\n" +
+		winLine(tr.paths.Dir, "@625", "feat/2-b", "c2", "nova", "sess", "4", "win-b")
+	panes := paneLine("@624", "%204", "lead", "1") + "\n" + paneLine("@625", "%304", "lead", "1")
+
+	for _, tc := range []struct{ crew, want string }{
+		{"c1", `nova — sess:3.1 "win-a" (lead pane)   jump: ! tmux switch-client -t %204` + "\n"},
+		{"c2", `nova — sess:4.1 "win-b" (lead pane)   jump: ! tmux switch-client -t %304` + "\n"},
+	} {
+		out, errOut, code := tr.run(t, wins, panes, crewIs(tc.crew), "nova")
+		if code != 0 || out != tc.want || errOut != "" {
+			t.Errorf("crew %s: code %d, out %q, err %q, want %q", tc.crew, code, out, errOut, tc.want)
+		}
+	}
+	// `--crew` reaches the other crew's window the way the default does.
+	if out, _, code := tr.run(t, wins, panes, crewIs("c1"), "--crew", "c2", "nova"); code != 0 ||
+		out != `nova — sess:4.1 "win-b" (lead pane)   jump: ! tmux switch-client -t %304`+"\n" {
+		t.Errorf("--crew c2: code %d, out %q", code, out)
+	}
+	// With no crew id nothing is filtered, so both windows are candidates and the
+	// codename is genuinely ambiguous.
+	if _, errOut, code := tr.run(t, wins, panes, crewIs(""), "nova"); code != exitFailure ||
+		errOut != "crew: where: ambiguous codename 'nova' — matches feat/1-a,feat/2-b; pass a branch or %pane\n" {
+		t.Errorf("no crew id: code %d, err %q", code, errOut)
+	}
+	// The other crew's pane is named, not missing.
 	if _, errOut, code := tr.run(t, wins, panes, crewIs("c1"), "%304"); code != exitFailure ||
 		errOut != "crew: where: pane %304 is not a pane of this crew\n" {
 		t.Errorf("other crew's pane: code %d, err %q", code, errOut)
@@ -277,6 +320,39 @@ func TestResolverBackedRefusals(t *testing.T) {
 	if _, errOut, code := tr.run(t, wins, panes, crewIs("c1"), "feat/9-gone"); code != exitFailure ||
 		!strings.Contains(errOut, "its window is gone") {
 		t.Errorf("torn tail: code %d, err %q", code, errOut)
+	}
+}
+
+// A codename the bus knows from one dispatch row is the gone window behind it,
+// named with its branch: the row list's shape chooses between this refusal, the
+// ambiguous one, and "no worker matches".
+func TestGoneCodenameNamesItsBranch(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, dispatch(1, "c1", "feat/9-gone", "sage"))
+	wins := winLine(tr.paths.Dir, "@624", "feat/1-a", "c1", "nova", "sess", "3", "win-a")
+	panes := paneLine("@624", "%204", "lead", "1")
+
+	for _, target := range []string{"sage", "feat/9-gone"} {
+		_, errOut, code := tr.run(t, wins, panes, crewIs("c1"), target)
+		want := fmt.Sprintf("crew: where: no live pane for '%s' (branch feat/9-gone) — its window is gone\n", target)
+		if code != exitFailure || errOut != want {
+			t.Errorf("%q: code %d, err %q, want %q", target, code, errOut, want)
+		}
+	}
+}
+
+// The bus is unauthenticated and every read of it is tolerant, so a log the fold
+// cannot use is the target being unknown: exit 1 and its own line, never a fold
+// failure's status with an empty stdout.
+func TestCorruptBusIsNoWorkerMatches(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, `{"ts":1,"crew_id":"c1","kind":"dispatch","broken`)
+	wins := winLine(tr.paths.Dir, "@624", "feat/1-a", "c1", "nova", "sess", "3", "win-a")
+	panes := paneLine("@624", "%204", "lead", "1")
+
+	out, errOut, code := tr.run(t, wins, panes, crewIs("c1"), "sage")
+	if code != exitFailure || out != "" || errOut != "crew: where: no worker matches 'sage'\n" {
+		t.Errorf("code %d, out %q, err %q", code, out, errOut)
 	}
 }
 

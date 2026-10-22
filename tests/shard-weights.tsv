@@ -45,7 +45,6 @@ tests/crew.bats	stream	!timing	159537
 tests/crew.bats	stream --status	!timing	7906
 tests/crew.bats	watch	!timing	48846
 tests/crew.bats	watch and stream	!timing	2343
-tests/crew.bats	where	!timing	13669
 tests/dispatch-comment.bats	*	!timing	44295
 tests/dispatch-config.bats	*	!timing	50123
 tests/dispatch-config.bats	no user, locked or env layer	!timing	457
