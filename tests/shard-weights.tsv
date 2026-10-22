@@ -22,7 +22,6 @@ tests/crew.bats	done/pr_open	!timing	2225
 tests/crew.bats	engine-cmd	!timing	12864
 tests/crew.bats	git-baseline shows an exec value verbatim	!timing	3701
 tests/crew.bats	id	!timing	1604
-tests/crew.bats	identity	!timing	17891
 tests/crew.bats	msg	!timing	14895
 tests/crew.bats	pr_open	!timing	240454
 tests/crew.bats	pr_open/done	!timing	2461
