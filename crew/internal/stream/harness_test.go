@@ -1,0 +1,482 @@
+// The harness the ported `stream:` bats cases run on: the crew entry the loop
+// re-enters, one running lane in the background, and the two ways a test counts
+// the loop's iterations — a `watch` child that parks until the test steps it,
+// and the tick the loop rewrites at the top of every cycle.
+//
+// Nothing here changes what the loop does with its waits and its clock: the
+// entry is the seam the bash suite already used (`STREAM_CREW`), the timer is
+// `Options.Timer`, and the park is the real `crew watch` behind a helper process
+// when a case is about cursors and locks rather than about pass-through.
+package stream
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/proc"
+	"github.com/noamsto/dispatcher/crew/internal/watch"
+)
+
+// stub is one crew entry the stream re-enters, with the dir its bodies share.
+type stub struct {
+	t      *testing.T
+	Script string
+	Dir    string
+}
+
+// entryStub writes the entry a stream re-enters, one bash body per subcommand.
+// Each body sees $d, the stub's dir, and every invocation is logged to
+// $d/argv.log, which is how a case asserts what the inner `crew watch` was
+// re-entered with. A subcommand with no body answers the way the real one does
+// with nothing to report: `watch` exits 0 printing nothing, `hold due` prints
+// `[]` and exits 1, `reap` says nothing.
+func entryStub(t *testing.T, bodies map[string]string) *stub {
+	t.Helper()
+	dir := t.TempDir()
+	of := func(name, none string) string {
+		if body, ok := bodies[name]; ok {
+			return body
+		}
+		return none
+	}
+	script := filepath.Join(t.TempDir(), "crew-stub.sh")
+	writeFile(t, script, bashShebang()+fmt.Sprintf(`d='%s'
+printf '%%s\n' "$*" >> "$d/argv.log"
+case "${1:-}" in
+  watch) %s ;;
+  hold) %s ;;
+  reap) %s ;;
+  *) exit 0 ;;
+esac
+`, dir,
+		of("watch", "exit 0"),
+		// `hold due` only: the stream's hold pre-check is the sole `hold` call.
+		`if [ "${2:-}" = due ]; then `+of("hold due", "printf '[]\\n'; exit 1")+`
+  fi
+  exit 0`,
+		of("reap", "exit 0")))
+	chmodExecutable(t, script)
+	return &stub{t: t, Script: script, Dir: dir}
+}
+
+// path is a file in the stub's dir.
+func (s *stub) path(name string) string { return filepath.Join(s.Dir, name) }
+
+func (s *stub) write(name, text string) {
+	s.t.Helper()
+	writeFile(s.t, s.path(name), text)
+}
+
+// has is the stub's own file there — a marker a child leaves behind when it is
+// done, which is how a case proves a late write happened at all.
+func (s *stub) has(name string) bool {
+	_, err := os.Stat(s.path(name))
+	return err == nil
+}
+
+func (s *stub) read(name string) string {
+	s.t.Helper()
+	return readFile(s.path(name))
+}
+
+// argv is every invocation the stub saw, in order.
+func (s *stub) argv() []string {
+	text := strings.TrimSpace(readFile(s.path("argv.log")))
+	if text == "" {
+		return nil
+	}
+	return strings.Split(text, "\n")
+}
+
+// calls is how many times the stub saw one subcommand.
+func (s *stub) calls(sub string) int {
+	n := 0
+	for _, a := range s.argv() {
+		if a == sub || strings.HasPrefix(a, sub+" ") {
+			n++
+		}
+	}
+	return n
+}
+
+// steps raises the gate parkedWatch waits on to n, releasing that many parks.
+func (s *stub) steps(n int) { s.write("steps", strconv.Itoa(n)+"\n") }
+
+// park releases the lane's current park and waits until the loop has begun the
+// next iteration: its tick rewritten at the top, and the following park's child
+// started. That is the loop's whole cycle, so a case that calls park n times
+// knows exactly n parks have completed — no sleeping, no racing the child.
+func (l *lane) park() {
+	l.t.Helper()
+	l.stepN++
+	tick := tickTS(l.paths)
+	l.stub.steps(l.stepN)
+	waitFor(l.t, fmt.Sprintf("the iteration after park %d", l.stepN), func() bool {
+		return tickTS(l.paths) > tick && l.stub.calls("watch") >= l.stepN+1
+	})
+}
+
+// parkedPrologue is the call counter and the step gate every parked `watch`
+// body opens with.
+func parkedPrologue() string {
+	return `n=$(( $(cat "$d/calls" 2>/dev/null || echo 0) + 1 ))
+  printf '%s\n' "$n" > "$d/calls"
+  while [ "$(cat "$d/steps" 2>/dev/null || echo 0)" -lt "$n" ]; do sleep 0.02; done
+  `
+}
+
+// parkedWatch is a `watch` body that records its call number and parks until
+// the test raises the step gate to it, then exits rc. Every iteration of the
+// loop is then one step the test took, so "one line per three parks" is an
+// assertion rather than a race with a real --park.
+func parkedWatch(rc string) string { return parkedPrologue() + "exit " + rc }
+
+// parkedWatchFailing is a parked `watch` whose failure is the given body, run
+// once the test releases the park; the body is expected to exit.
+func parkedWatchFailing(body string) string { return parkedPrologue() + body + "\n  exit 1" }
+
+// printsThenPark is a `watch` body that prints one line and parks, standing in
+// for a park that expired with a batch on it.
+func printsThenPark(line string) string {
+	return parkedPrologue() + "printf '%s\\n' '" + line + "'\n  exit 0"
+}
+
+// printsOnceThenPark prints its line on the first call only: the batch a lane
+// delivers once, then nothing but parks.
+func printsOnceThenPark(line string) string {
+	return parkedPrologue() + `if [ "$n" = 1 ]; then printf '%s\n' '` + line + `'; fi
+  exit 0`
+}
+
+const (
+	streamWatchEnv = "CREW_STREAM_TEST_WATCH_HELPER"
+	streamBusVar   = "CREW_STREAM_TEST_BUS"
+)
+
+// TestHelperStreamWatch is the real `crew watch` a ported case parks on: the
+// stub execs this test binary with the watch argv after `--`, on the bus the
+// test named in the environment. Cursor seeding, watch.lock.d and the signal
+// handlers are the real ones, which is what the cursor and lock cases assert.
+func TestHelperStreamWatch(t *testing.T) {
+	if os.Getenv(streamWatchEnv) != "1" {
+		t.Skip("helper process for the stream tests")
+	}
+	args := os.Args
+	for i, a := range args {
+		if a == "--" {
+			args = args[i+1:]
+			break
+		}
+	}
+	dir := os.Getenv(streamBusVar)
+	if dir == "" {
+		fmt.Fprintln(os.Stderr, "helper: no bus named")
+		os.Exit(93)
+	}
+	paths := bus.Paths{Common: dir, Dir: dir + "/crew", Log: dir + "/crew/events.jsonl"}
+	if len(args) == 0 || args[0] != "watch" {
+		fmt.Fprintf(os.Stderr, "helper: unexpected argv %q\n", args)
+		os.Exit(94)
+	}
+	os.Exit(watch.Run(watchRequest(args[1:]), paths, os.Stdout, os.Stderr, watch.Options{
+		Clock: clock.Clock{Now: time.Now},
+		Sleep: func(string, io.Writer) error { time.Sleep(50 * time.Millisecond); return nil },
+	}))
+}
+
+// realWatch is the entry whose `watch` is the real one, on the bus at p. The
+// pid the stub records is the watch's own: the exec keeps it.
+func realWatch(t *testing.T, p bus.Paths) *stub {
+	t.Helper()
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := entryStub(t, map[string]string{"watch":
+		`printf '%s\n' "$$" > "$d/watch.pid"
+  export ` + streamWatchEnv + `=1
+  export ` + streamBusVar + `='` + p.Common + `'
+  exec '` + bin + `' -test.run='^TestHelperStreamWatch$' -test.count=1 -test.timeout=60s -- "$@"`})
+	return s
+}
+
+// streamBus is a bus dir with nothing on it yet.
+func streamBus(t *testing.T) bus.Paths {
+	t.Helper()
+	p := fixture(t)
+	if err := os.MkdirAll(p.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func postRow(t *testing.T, p bus.Paths, row string) {
+	t.Helper()
+	if err := bus.Append(p.Log, row); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// statusDetailRow is a status row with a detail, which is what a blocked
+// restamp is judged on.
+func statusDetailRow(ts int64, crew, from, state, detail string) string {
+	return fmt.Sprintf(`{"ts":%d,"crew_id":%q,"from":%q,"to":"dispatcher:%s","kind":"status","body":{"state":%q,"detail":%q}}`,
+		ts, crew, from, crew, state, detail)
+}
+
+// lane is one `crew stream` in the background, stopped by TERM like the lane a
+// dispatcher ends.
+type lane struct {
+	t       *testing.T
+	paths   bus.Paths
+	stub    *stub
+	out     *lockedWriter
+	errb    *lockedWriter
+	done    chan int
+	stepN   int
+	stopped bool
+	rc      int
+}
+
+// laneOpts are the Options a case overrides; every zero value is the harness
+// default (an instant timer and the wall clock).
+type laneOpts struct {
+	Timer  func(time.Duration) <-chan time.Time
+	Clock  clock.Clock
+	Proc   proc.Table
+	CrewID func() string
+}
+
+// startLane runs one stream with the bats harness's own defaults: --park,
+// --interval, --coalesce and --retry of 1s, a --heartbeat nothing reaches, and
+// --reap-every 0 so no cadence reap runs unless the case asks for one.
+func startLane(t *testing.T, p bus.Paths, s *stub, r Request, o laneOpts) *lane {
+	t.Helper()
+	l := &lane{t: t, paths: p, stub: s, out: &lockedWriter{}, errb: &lockedWriter{}, done: make(chan int, 1)}
+	r.Crew = "c1"
+	for _, f := range []struct {
+		name string
+		dst  *string
+		def  string
+	}{{"park", &r.Park, "1"}, {"interval", &r.Interval, "1"}, {"coalesce", &r.Coalesce, "1"},
+		{"retry", &r.Retry, "1"}, {"heartbeat", &r.Heartbeat, "3600"}, {"reap-every", &r.ReapEvery, "0"}} {
+		if *f.dst == "" {
+			*f.dst = f.def
+		}
+	}
+	timer := o.Timer
+	if timer == nil {
+		timer = func(time.Duration) <-chan time.Time { return ready() }
+	}
+	// The tick the loop writes at the top of its first iteration is both proof
+	// it is running and the instant its cadence clock was taken: a case that
+	// advances a fake clock has to do it after this point, or the start instant
+	// it measures against is the advanced one.
+	before := tickTS(p)
+	go func() {
+		l.done <- Run(r, p, l.out, l.errb, Options{
+			Self: s.Script, Timer: timer, Clock: o.Clock, Proc: o.Proc, CrewID: o.CrewID,
+		})
+	}()
+	t.Cleanup(l.stop)
+	waitFor(t, "the lane's first iteration", func() bool { return tickTS(p) > before })
+	return l
+}
+
+// stop ends the lane with TERM and returns its exit status.
+func (l *lane) stop() {
+	l.t.Helper()
+	if l.stopped {
+		return
+	}
+	l.stopped = true
+	l.signal(syscall.SIGTERM)
+	l.rc = l.waitRC()
+}
+
+// signal is one signal to this process, which is how the bats suite signalled
+// the stream: Run catches it the way the arm's trap did.
+func (l *lane) signal(s os.Signal) {
+	l.t.Helper()
+	if err := syscall.Kill(os.Getpid(), s.(syscall.Signal)); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
+// waitRC waits for Run to return. The lane is over once it has: a later stop
+// must not signal this process again with no handler left to catch it.
+func (l *lane) waitRC() int {
+	l.t.Helper()
+	l.stopped = true
+	select {
+	case l.rc = <-l.done:
+		return l.rc
+	case <-time.After(20 * time.Second):
+		l.t.Fatal("the stream did not stop")
+	}
+	return -1
+}
+
+func (l *lane) lines() []map[string]any { return decodeLinesT(l.t, l.out.str()) }
+
+// ofKind is every output line of one stream kind, in order.
+func (l *lane) ofKind(kind string) []map[string]any {
+	var out []map[string]any
+	for _, v := range l.lines() {
+		if v["stream"] == kind {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// batches is every pass-through batch line: a line with a cursor and no stream
+// tag.
+func (l *lane) batches() []map[string]any {
+	var out []map[string]any
+	for _, v := range l.lines() {
+		if _, tagged := v["stream"]; !tagged {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func (l *lane) raw() string { return l.out.str() }
+
+// waitLines waits for n output lines in all.
+func (l *lane) waitLines(n int) {
+	l.t.Helper()
+	waitFor(l.t, fmt.Sprintf("%d stream lines (have %d: %s)", n, len(l.lines()), l.raw()),
+		func() bool { return len(l.lines()) >= n })
+}
+
+// waitKind waits for n lines of one kind.
+func (l *lane) waitKind(kind string, n int) {
+	l.t.Helper()
+	waitFor(l.t, fmt.Sprintf("%d %s lines (have %d: %s)", n, kind, len(l.ofKind(kind)), l.raw()),
+		func() bool { return len(l.ofKind(kind)) >= n })
+}
+
+// holdIDsOf is a hold_due line's matured set, as the ids it announces.
+func holdIDsOf(t *testing.T, v any) string {
+	t.Helper()
+	rows, ok := v.([]any)
+	if !ok {
+		t.Fatalf("holds = %#v, want an array", v)
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		m, ok := row.(map[string]any)
+		if !ok {
+			t.Fatalf("hold row = %#v", row)
+		}
+		id, _ := m["id"].(string)
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return strings.Join(ids, ",")
+}
+
+// parkUntil keeps releasing parks until cond holds, which is how a case waits
+// for something the loop only does at the top of an iteration — flushing a reap
+// child's pair, say — without the lane ever having to sit in a real --park.
+func (l *lane) parkUntil(what string, cond func() bool) {
+	l.t.Helper()
+	for i := 0; i < 8 && !cond(); i++ {
+		l.park()
+	}
+	waitFor(l.t, what, cond)
+}
+
+// tickTS is the tick the loop rewrote at the top of its last iteration; 0 for
+// no tick yet.
+func tickTS(p bus.Paths) int64 {
+	v, err := decodeObject(readFile(filepath.Join(p.CrewDir("c1"), "stream.tick")))
+	if err != nil {
+		return 0
+	}
+	ts, ok := digitsField(v, "ts")
+	if !ok {
+		return 0
+	}
+	return ts
+}
+
+// waitTickAfter is the bats suite's own proof that the loop is still turning:
+// it waits for the tick to move past ts, which only the top of an iteration
+// does.
+func waitTickAfter(t *testing.T, p bus.Paths, ts int64) int64 {
+	t.Helper()
+	waitFor(t, "the tick to move past "+strconv.FormatInt(ts, 10), func() bool {
+		now := tickTS(p)
+		return now > ts
+	})
+	return tickTS(p)
+}
+
+// turnParks waits for n further iterations, each proven by the tick it rewrote
+// at its top. Called after the step that releases a park, it is how a case says
+// "the loop turned twice and said nothing".
+func turnParks(t *testing.T, p bus.Paths, n int) {
+	t.Helper()
+	tick := tickTS(p)
+	for i := 0; i < n; i++ {
+		tick = waitTickAfter(t, p, tick)
+	}
+}
+
+// cdirFile is a path in the crew's state dir.
+func cdirFile(p bus.Paths, name string) string {
+	return filepath.Join(p.CrewDir("c1"), name)
+}
+
+// seedFile writes a file in the crew's state dir, which the stream has not
+// necessarily created yet.
+func seedFile(t *testing.T, p bus.Paths, name, text string) {
+	t.Helper()
+	if err := os.MkdirAll(p.CrewDir("c1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, cdirFile(p, name), text)
+}
+
+// existsIn is the file there, if it is.
+func existsIn(p bus.Paths, name string) bool {
+	_, err := os.Stat(cdirFile(p, name))
+	return err == nil
+}
+
+// reapPairs is the per-child reap output files still in the crew's dir.
+func reapPairs(p bus.Paths) []string {
+	matches, _ := filepath.Glob(cdirFile(p, "stream.reap.out") + ".*")
+	return matches
+}
+
+// fakeClock is the loop's clock with a handle on it: the reap cadence and the
+// error-suppression window are where the loop measures elapsed time, and a case
+// that wants one of them should not have to wait for it. Nothing here changes
+// what the loop does with the reading.
+type fakeClock struct {
+	off atomic.Int64
+}
+
+func (c *fakeClock) Now() time.Time {
+	return time.Now().Add(time.Duration(c.off.Load()) * time.Millisecond)
+}
+
+func (c *fakeClock) advance(d time.Duration) { c.off.Add(int64(d / time.Millisecond)) }
+
+// clockNow is a fake clock as the loop wants one.
+func clockNow(c *fakeClock) clock.Clock { return clock.Clock{Now: c.Now} }
