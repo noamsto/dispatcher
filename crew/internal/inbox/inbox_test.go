@@ -132,9 +132,8 @@ func TestSelectsOnlyThisAgentMsgs(t *testing.T) {
 		}
 	})
 
-	// The metrics sink is nobody else's inbox: the row addressed to `metrics:c1`
-	// is not delivered to the dispatcher's read either, which still gets its own
-	// question and the broadcast.
+	// The metrics sink is nobody else's inbox: reading as the dispatcher does not
+	// take the row addressed to `metrics:c1`.
 	t.Run("a metrics-addressed row is not the dispatcher's", func(t *testing.T) {
 		p := fixture(t)
 		writeLog(t, p, log)
@@ -355,9 +354,8 @@ func TestAbsentLogIsSilent(t *testing.T) {
 	})
 }
 
-// A torn trailing line costs the parse but not the msgs above it, and the marks
-// they raised — the arm recorded whatever jq had printed before it failed. The
-// straggler fold (`--since`) reads the same prefix.
+// A torn trailing line costs the parse but not the msgs above it, or the marks
+// they raised. The straggler fold (`--since`) reads the same prefix.
 func TestTornTailKeepsThePrefixAndExitsFive(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -437,8 +435,8 @@ func TestRecordsMarksForAWorker(t *testing.T) {
 	if got := readMarks(t, p, "c1", me); compactJSON(got) != want {
 		t.Errorf("marks = %s, want %s", got, want)
 	}
-	// One file for the session, at marks.Path's path: every reader of what inbox
-	// leaves (`await`, `nudge`, `stall-watch --unread`) globs await/ for it.
+	// One file for the session, at marks.Path's path: `await`, `nudge` and
+	// `stall-watch --unread` all glob await/ for it.
 	files, err := filepath.Glob(p.Dir + "/await/*")
 	if err != nil || len(files) != 1 || files[0] != marks.Path(p.Dir, "c1", me) {
 		t.Errorf("await/ holds %v (%v), want only %s", files, err, marks.Path(p.Dir, "c1", me))
@@ -452,10 +450,9 @@ func TestRecordsMarksForAWorker(t *testing.T) {
 	}
 }
 
-// The other direction: a mark `await` raised is a ceiling, not a value to
-// replace. `--since` ignores marks and prints the older msgs again, and the
-// merge leaves that sender's mark where await left it while adding the sender
-// it had not seen.
+// A mark `await` raised is a ceiling, not a value to replace: the merge leaves
+// that sender's mark where await left it while adding the sender it had not
+// seen. `--since` ignores marks, so the older msgs print again.
 func TestMarksAwaitWroteSurviveTheMerge(t *testing.T) {
 	const (
 		answer  = `{"ts":1785951264000,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"worker:feat/x#s1-1","body":"answer"}`
@@ -463,9 +460,9 @@ func TestMarksAwaitWroteSurviveTheMerge(t *testing.T) {
 	)
 	p := fixture(t)
 	writeLog(t, p, answer+"\n"+verdict+"\n")
-	// What `await` left after handing out a newer reply from the same sender: a
-	// ceiling the merge must not lower. marks.TestRecord pins the rule itself;
-	// this is the composition, inbox's Go merge over the file await wrote.
+	// A ceiling above the row about to print: what `await` left after handing out
+	// a newer reply from the same sender. marks.TestRecord pins the rule itself;
+	// this is inbox's Go merge over the file await wrote.
 	seedMarks(t, p, "c1", me, `{"dispatcher:c1":1785951264001}`)
 
 	stdout, stderr, code := run(t, p, me, "c1", "--since", "0")
@@ -476,7 +473,6 @@ func TestMarksAwaitWroteSurviveTheMerge(t *testing.T) {
 	if want := answer + "\n" + verdict + "\n"; canon(stdout) != canon(want) {
 		t.Errorf("stdout\n got %q\nwant %q", stdout, want)
 	}
-	// The mark await left is unchanged, and the new sender joins it.
 	want := `{"dispatcher:c1":1785951264001,"role:feat/x:reviewer":1785951270000}`
 	if got := readMarks(t, p, "c1", me); compactJSON(got) != want {
 		t.Errorf("marks = %s, want %s", got, want)
