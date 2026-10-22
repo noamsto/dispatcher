@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -35,6 +36,11 @@ type Options struct {
 	Tmux     tmux.Client
 	Git      git.Client
 	Clock    clock.Clock
+	// Remote asks one host for the rows of the crew's remote workers, from dir:
+	// the checkout of the repo whose bus is being folded, since that checkout's
+	// origin is what names the clone the call lands in. nil (the default) asks
+	// no host, and every row stays a local one.
+	Remote func(dir, crew string) roster.Capture
 }
 
 // onceTmux reads each argv once and shares it, a failed read as no output, so
@@ -94,10 +100,19 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 		}
 		worktrees := sync.OnceValues(func() (string, error) { return git.Worktrees(ctx, o.Git, "", r.Common) })
 		live := roster.Liveness{Windows: windowBranches, Worktrees: worktrees}
+		// A repo's checkout is its common dir's parent, the same derivation
+		// `rate --sweep-all` makes: the host's clone is resolved from that
+		// checkout's origin, so asking from the caller's cwd would send every
+		// host's answer through whichever repo happened to be open.
+		var remote func(crew string) roster.Capture
+		if o.Remote != nil {
+			dir := filepath.Dir(r.Common)
+			remote = func(crew string) roster.Capture { return o.Remote(dir, crew) }
+		}
 		repoRows, err := foldRepo(ctx, r.Common, events, docs, onlyCrew, nowSec, roster.Probes{
 			Tmux:      once,
 			Worktrees: worktrees,
-		})
+		}, remote)
 		if err != nil {
 			say(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, oneLine(err))
 			continue
@@ -107,8 +122,14 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 		for _, row := range repoRows {
 			row.Row["repo"] = name
 			row.Row["crew_id"] = row.crew
-			nonTerminal := slices.Contains(roster.LiveStates, str(row.Row, "state"))
-			stale := nonTerminal && live.Stale(row.Row)
+			// A merged remote row answers for a window and a worktree on another
+			// host, so this host's liveness reads nothing about it: it is never
+			// stale here. A host that did not answer has no state either, and no
+			// state is not a terminal one, so --all never hides it.
+			_, remoteRow := row.Row["host"].(string)
+			_, unanswered := row.Row["host_error"]
+			nonTerminal := unanswered || slices.Contains(roster.LiveStates, str(row.Row, "state"))
+			stale := !remoteRow && nonTerminal && live.Stale(row.Row)
 			row.Row["stale"] = stale
 			switch {
 			case !all && !nonTerminal:
@@ -141,7 +162,11 @@ type crewRow struct {
 
 // foldRepo folds each of the repo's crews: the one asked for, else every crew
 // that has a worker status row, which is exactly what roster can produce rows for.
-func foldRepo(ctx context.Context, common string, events []bus.Event, docs []any, onlyCrew string, nowSec float64, p roster.Probes) ([]crewRow, error) {
+// Each crew's rows are then merged with the rows of its remote workers, which is
+// what MergeRemote does for one crew — and what it declines to do, without
+// asking anyone, when the bus has no remote dispatch row. remote is nil when the
+// caller asks no host.
+func foldRepo(ctx context.Context, common string, events []bus.Event, docs []any, onlyCrew string, nowSec float64, p roster.Probes, remote func(crew string) roster.Capture) ([]crewRow, error) {
 	crews := []string{onlyCrew}
 	if onlyCrew == "" {
 		crews = crews[:0]
@@ -158,6 +183,9 @@ func foldRepo(ctx context.Context, common string, events []bus.Event, docs []any
 		folded, err := roster.Fold(ctx, docs, c, nowSec, p)
 		if err != nil {
 			return nil, err
+		}
+		if remote != nil {
+			folded = roster.MergeRemote(ctx, folded, events, c, remote(c))
 		}
 		for _, row := range folded {
 			out = append(out, crewRow{Row: row, crew: c})
