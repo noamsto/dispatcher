@@ -57,6 +57,47 @@ func TestOccupantsFiltersAndShape(t *testing.T) {
 	}
 }
 
+// TestOccupantsRows is the stdout for each window shape the bats suite carried:
+// one row per pane command an engine reports, a finished agent that dropped to a
+// shell, windows none of which belong to the path, and the caller's own window.
+func TestOccupantsRows(t *testing.T) {
+	engineRow := func(cmd string) string {
+		return `[{"window":"@1","name":"sage","pane":"%1","command":"` + cmd +
+			`","engine":true,"panes":[{"pane":"%1","command":"` + cmd + `"}]}]`
+	}
+	tests := []struct {
+		name        string
+		wins, panes string
+		selfWin     string // display-message's answer: the window the caller is in
+		want        string
+	}{
+		{".claude-wrapped", "@1\tsage\t/wt/a", "@1\t%1\t.claude-wrapped", "", engineRow(".claude-wrapped")},
+		{"node", "@1\tsage\t/wt/a", "@1\t%1\tnode", "", engineRow("node")},
+		{"codex", "@1\tsage\t/wt/a", "@1\t%1\tcodex", "", engineRow("codex")},
+		{"pi", "@1\tsage\t/wt/a", "@1\t%1\tpi", "", engineRow("pi")},
+		{"a shell prompt is still an occupant", "@23\tsage\t/wt/a", "@23\t%33\tfish", "",
+			`[{"window":"@23","name":"sage","pane":null,"command":"","engine":false,"panes":[]}]`},
+		{"other paths, unnamed windows, the dispatcher", "@1\tsage\t/wt/b\n@2\t\t/wt/a\n@3\tdispatcher\t/wt/a",
+			"@1\t%1\tclaude\n@3\t%3\tclaude", "", "[]"},
+		{"the caller's own window", "@23\tsage\t/wt/a", "@23\t%33\tclaude", "@23", "[]"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// crew asks which window it is in only when it is in a pane at all.
+			tmuxPane := ""
+			if tc.selfWin != "" {
+				tmuxPane = "%33"
+			}
+			p := Probes{Tmux: occTmux(tc.selfWin, tc.wins, tc.panes)}
+			var out, errb bytes.Buffer
+			rc := RunOccupants(context.Background(), []string{"/wt/a"}, &out, &errb, p, tmuxPane)
+			if rc != 0 || errb.Len() != 0 || out.String() != tc.want+"\n" {
+				t.Fatalf("rc %d stdout %q stderr %q, want 0 and %q", rc, out.String(), errb.String(), tc.want+"\n")
+			}
+		})
+	}
+}
+
 func TestOccupantsNoTmuxPaneSkipsSelfLookup(t *testing.T) {
 	tm := occTmux("@1", "@1\tw\t/x", "")
 	got := Occupants(context.Background(), Probes{Tmux: tm}, "/x", "")
