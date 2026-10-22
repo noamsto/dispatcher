@@ -111,20 +111,41 @@ const (
 	statusRow  = `{"ts":1785951267000,"crew_id":"c1","kind":"status","from":"worker:feat/x#s1-1","body":{"state":"working"}}`
 	otherCrew  = `{"ts":1785951268000,"crew_id":"c2","kind":"msg","from":"dispatcher:c2","to":"worker:feat/x#s1-1","body":{"text":"other crew"}}`
 	metricsRow = `{"ts":1785951269000,"crew_id":"c1","kind":"msg","from":"worker:feat/x#s1-1","to":"metrics:c1","body":{"tier":"deep"}}`
-	me         = "worker:feat/x#s1-1"
+	// The session's own question: an outbound row is nobody's reply to read.
+	asked = `{"ts":1785951269500,"crew_id":"c1","kind":"msg","from":"worker:feat/x#s1-1","to":"dispatcher:c1","body":{"text":"go"}}`
+	me    = "worker:feat/x#s1-1"
 )
 
 func TestSelectsOnlyThisAgentMsgs(t *testing.T) {
-	p := fixture(t)
-	writeLog(t, p, strings.Join([]string{msgRow, broadcast, otherTo, statusRow, otherCrew, metricsRow}, "\n")+"\n")
+	log := strings.Join([]string{msgRow, broadcast, otherTo, statusRow, otherCrew, metricsRow, asked}, "\n") + "\n"
 
-	stdout, stderr, code := run(t, p, me, "c1")
-	if code != 0 || stderr != "" {
-		t.Fatalf("code %d stderr %q", code, stderr)
-	}
-	if want := msgRow + "\n" + broadcast + "\n"; canon(stdout) != canon(want) {
-		t.Errorf("stdout\n got %q\nwant %q", stdout, want)
-	}
+	t.Run("this agent's msgs only", func(t *testing.T) {
+		p := fixture(t)
+		writeLog(t, p, log)
+
+		stdout, stderr, code := run(t, p, me, "c1")
+		if code != 0 || stderr != "" {
+			t.Fatalf("code %d stderr %q", code, stderr)
+		}
+		if want := msgRow + "\n" + broadcast + "\n"; canon(stdout) != canon(want) {
+			t.Errorf("stdout\n got %q\nwant %q", stdout, want)
+		}
+	})
+
+	// The metrics sink is nobody else's inbox: reading as the dispatcher does not
+	// take the row addressed to `metrics:c1`.
+	t.Run("a metrics-addressed row is not the dispatcher's", func(t *testing.T) {
+		p := fixture(t)
+		writeLog(t, p, log)
+
+		stdout, stderr, code := run(t, p, "dispatcher:c1", "c1")
+		if code != 0 || stderr != "" {
+			t.Fatalf("code %d stderr %q", code, stderr)
+		}
+		if want := broadcast + "\n" + asked + "\n"; canon(stdout) != canon(want) {
+			t.Errorf("stdout\n got %q\nwant %q", stdout, want)
+		}
+	})
 }
 
 // The printed row is value-equal to what `jq -c 'select(...)'` prints for the
@@ -333,24 +354,34 @@ func TestAbsentLogIsSilent(t *testing.T) {
 	})
 }
 
-// A torn trailing line costs the parse but not the msgs above it, and the marks
-// they raised — the arm recorded whatever jq had printed before it failed.
+// A torn trailing line costs the parse but not the msgs above it, or the marks
+// they raised. The straggler fold (`--since`) reads the same prefix.
 func TestTornTailKeepsThePrefixAndExitsFive(t *testing.T) {
-	p := fixture(t)
-	writeLog(t, p, msgRow+"\n"+`{"ts":1785951265000,"crew_id":"c1","kind":"msg","from":"a","to":"me`+"\n")
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"plain read", nil},
+		{"the straggler fold", []string{"--since", "0"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := fixture(t)
+			writeLog(t, p, msgRow+"\n"+`{"ts":1785951265000,"crew_id":"c1","kind":"msg","from":"a","to":"me`+"\n")
 
-	stdout, stderr, code := run(t, p, me, "c1")
-	if code != 5 {
-		t.Fatalf("code %d, want 5", code)
-	}
-	if canon(stdout) != canon(msgRow+"\n") {
-		t.Errorf("stdout = %q", stdout)
-	}
-	if !strings.Contains(stderr, "crew: inbox: "+p.Log+":") {
-		t.Errorf("stderr = %q", stderr)
-	}
-	if got := readMarks(t, p, "c1", me); !strings.Contains(got, `"dispatcher:c1":1785951264000`) {
-		t.Errorf("marks = %q", got)
+			stdout, stderr, code := run(t, p, append([]string{me, "c1"}, tc.args...)...)
+			if code != 5 {
+				t.Fatalf("code %d, want 5", code)
+			}
+			if canon(stdout) != canon(msgRow+"\n") {
+				t.Errorf("stdout = %q", stdout)
+			}
+			if !strings.Contains(stderr, "crew: inbox: "+p.Log+":") {
+				t.Errorf("stderr = %q", stderr)
+			}
+			if got := readMarks(t, p, "c1", me); !strings.Contains(got, `"dispatcher:c1":1785951264000`) {
+				t.Errorf("marks = %q", got)
+			}
+		})
 	}
 }
 
@@ -394,7 +425,7 @@ func TestNonObjectRowsFollowTheLastInput(t *testing.T) {
 // The marks are the point of the arm: reading a msg is what makes it delivered.
 func TestRecordsMarksForAWorker(t *testing.T) {
 	p := fixture(t)
-	writeLog(t, p, strings.Join([]string{msgRow, broadcast, otherTo, statusRow}, "\n")+"\n")
+	writeLog(t, p, strings.Join([]string{asked, msgRow, broadcast, otherTo, statusRow}, "\n")+"\n")
 
 	_, stderr, code := run(t, p, me, "c1")
 	if code != 0 || stderr != "" {
@@ -404,12 +435,47 @@ func TestRecordsMarksForAWorker(t *testing.T) {
 	if got := readMarks(t, p, "c1", me); compactJSON(got) != want {
 		t.Errorf("marks = %s, want %s", got, want)
 	}
+	// One file for the session, at marks.Path's path: `await`, `nudge` and
+	// `stall-watch --unread` all glob await/ for it.
+	files, err := filepath.Glob(p.Dir + "/await/*")
+	if err != nil || len(files) != 1 || files[0] != marks.Path(p.Dir, "c1", me) {
+		t.Errorf("await/ holds %v (%v), want only %s", files, err, marks.Path(p.Dir, "c1", me))
+	}
 	// Only the printed msgs, and only for the session that read them.
 	if got := readMarks(t, p, "c1", "worker:feat/x#s2-2"); got != "" {
 		t.Errorf("other session's marks = %q", got)
 	}
 	if got := readMarks(t, p, "c2", me); got != "" {
 		t.Errorf("other crew's marks = %q", got)
+	}
+}
+
+// A mark `await` raised is a ceiling, not a value to replace: the merge leaves
+// that sender's mark where await left it while adding the sender it had not
+// seen. `--since` ignores marks, so the older msgs print again.
+func TestMarksAwaitWroteSurviveTheMerge(t *testing.T) {
+	const (
+		answer  = `{"ts":1785951264000,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"worker:feat/x#s1-1","body":"answer"}`
+		verdict = `{"ts":1785951270000,"crew_id":"c1","kind":"msg","from":"role:feat/x:reviewer","to":"worker:feat/x#s1-1","body":"verdict"}`
+	)
+	p := fixture(t)
+	writeLog(t, p, answer+"\n"+verdict+"\n")
+	// A ceiling above the row about to print: what `await` left after handing out
+	// a newer reply from the same sender. marks.TestRecord pins the rule itself;
+	// this is inbox's Go merge over the file await wrote.
+	seedMarks(t, p, "c1", me, `{"dispatcher:c1":1785951264001}`)
+
+	stdout, stderr, code := run(t, p, me, "c1", "--since", "0")
+	if code != 0 || stderr != "" {
+		t.Fatalf("code %d stderr %q", code, stderr)
+	}
+	// --since ignores the marks: both rows print again.
+	if want := answer + "\n" + verdict + "\n"; canon(stdout) != canon(want) {
+		t.Errorf("stdout\n got %q\nwant %q", stdout, want)
+	}
+	want := `{"dispatcher:c1":1785951264001,"role:feat/x:reviewer":1785951270000}`
+	if got := readMarks(t, p, "c1", me); compactJSON(got) != want {
+		t.Errorf("marks = %s, want %s", got, want)
 	}
 }
 

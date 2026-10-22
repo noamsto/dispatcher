@@ -621,13 +621,6 @@ ROWS
   [ ! -e "$cdir" ]
 }
 
-@test "inbox: does not deliver a metrics-addressed message to the dispatcher" {
-  CREW_ID=c1 run_crew msg worker "metrics:c1" '{"tier":"deep"}'
-  CREW_ID=c1 run run_crew inbox "dispatcher:c1"
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"deep"* ]]
-}
-
 @test "rate: projects replanned booleans and legacy null while retaining rework count" {
   log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
   mkdir -p "$(dirname "$log")"
@@ -1172,18 +1165,6 @@ _pi_assert_refused() {
   [[ "$output" == *"quota window has already reset"* ]]
 }
 
-# Bounded wait until the wall-clock ms passes the newest bus row, so the next
-# row sorts strictly after it.
-bus_tick() {
-  local blog last i=0
-  blog="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  last=$(jq -s 'map(.ts) | max // 0' "$blog")
-  while [ "$(jq -nc 'now*1000|floor')" -le "$last" ] && [ "$i" -lt 400 ]; do
-    sleep 0.005
-    i=$((i + 1))
-  done
-}
-
 # #186: the WORKER_PROTOCOL "Report to the bus" blocked→await loop keeps a
 # blocked worker inside `crew await` in bounded cycles, so a dispatcher reply
 # is delivered in-band instead of stranding the worker. These tests pin the
@@ -1269,86 +1250,6 @@ bus_tick() {
   [ "$output" = "1" ]
   run jq -sr '[.[] | select(.kind=="status" and .body.state=="failed")][0].body.detail' "$log"
   [ "$output" = "blocked, no dispatcher reply" ]
-}
-
-# A torn trailing line (hard-kill crash mode) must not blind the straggler fold:
-# inbox still prints the msgs it could parse, as it did before it recorded marks.
-@test "inbox: a torn log line does not hide the msgs above it" {
-  id="worker:feat/x#s1-1"
-  CREW_ID=c1 run_crew reply "$id" "answer"
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  printf '{"ts":1785951264000,"crew_id":"c-to' >>"$log"
-  CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1 --since 0
-  [[ "$output" == *'"body":"answer"'* ]]
-}
-
-@test "inbox: a branch-only worker id exits non-zero" {
-  run run_crew inbox "worker:feat/x" c1
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"no session suffix"* ]]
-}
-
-# The arm printed with `printf` under `set -e`: a write that fails (a full
-# device, a reader that left the pipe) ended it before `_await_record`, so the
-# msgs stay undelivered and the next read hands them out again.
-@test "inbox: a print that fails records no marks" {
-  [ -w /dev/full ] || skip "/dev/full unavailable"
-  id="worker:feat/x#s1-1"
-  CREW_ID=c1 run_crew reply "$id" "answer"
-  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  run bash -c "CREW_ID=c1 '$CREW' inbox '$id' c1 >/dev/full"
-  [ "$status" -eq 1 ]
-  [ ! -e "$dir/await" ]
-}
-
-# `crew inbox` is Go, and so is every reader of what it writes (`await`, `nudge`,
-# `stall-watch --unread`). What this guard still proves is the contract those
-# readers depend on: the file inbox leaves lands at marks.Path's formula for the
-# crew+session, holds one key per sender, and nothing else. The path formula
-# itself is pinned by marks.TestPath / TestPathMatchesShell, the record program by
-# marks.TestRecord / TestRecordMatchesJq.
-@test "inbox: the marks file is marks.Path's path, one key per answered sender" {
-  id="worker:feat/x#s1-1"
-  CREW_ID=c1 run_crew msg "$id" dispatcher:c1 "go"
-  bus_tick
-  CREW_ID=c1 run_crew msg dispatcher:c1 "$id" "answer"
-  bus_tick
-  CREW_ID=c1 run_crew msg role:feat/x:reviewer "$id" "verdict"
-  CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1
-  [ "$status" -eq 0 ]
-  [ "${#lines[@]}" -eq 2 ]
-
-  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  files=("$dir"/await/*)
-  [ "${#files[@]}" -eq 1 ]
-  [ "${files[0]}" = "$(marks_path "$dir" c1 "$id")" ]
-  [ "$(jq -r 'keys | length' "${files[0]}")" = "2" ]
-  jq -e 'has("dispatcher:c1") and has("role:feat/x:reviewer")' "${files[0]}" >/dev/null
-}
-
-# The other direction: a mark `await` raised is a ceiling, not a value to
-# replace. --since ignores marks and prints older msgs again, and the merge must
-# leave that sender's mark where await left it while adding the new sender.
-@test "inbox: marks await wrote survive a Go merge instead of being replaced" {
-  id="worker:feat/x#s1-1"
-  CREW_ID=c1 run_crew msg "$id" dispatcher:c1 "Q1"
-  bus_tick
-  CREW_ID=c1 run_crew reply "$id" "answer"
-  CREW_ID=c1 run --separate-stderr run_crew await "$id" --timeout 0
-  [[ "$output" == *'"body":"answer"'* ]]
-  log_dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew"
-  before="$(jq -Sc . "$log_dir"/await/*)"
-
-  bus_tick
-  CREW_ID=c1 run_crew msg role:feat/x:reviewer "$id" "verdict"
-  CREW_ID=c1 run --separate-stderr run_crew inbox "$id" c1 --since 0
-  after="$(jq -Sc . "$log_dir"/await/*)"
-  # Every sender `await` had recorded keeps its mark...
-  sender="$(jq -r 'keys[0]' <<<"$before")"
-  [ "$(jq -r --arg k "$sender" '.[$k]' <<<"$after")" = "$(jq -r --arg k "$sender" '.[$k]' <<<"$before")" ]
-  # ... and the reviewer it had not seen is now delivered too.
-  [ "$(jq -r 'keys | length' <<<"$after")" -eq 2 ]
-  [ "$(jq -r '."role:feat/x:reviewer" | type' <<<"$after")" = "number" ]
 }
 
 @test "report: rows resolve for a sessioned worker id" {
