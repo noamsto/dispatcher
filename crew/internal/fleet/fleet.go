@@ -166,6 +166,11 @@ type crewRow struct {
 // what MergeRemote does for one crew — and what it declines to do, without
 // asking anyone, when the bus has no remote dispatch row. remote is nil when the
 // caller asks no host.
+//
+// The folds run one crew after another and their merges all at once: Fold reads
+// the tmux probe's cache, which is not synchronized, while a merge only waits on
+// hosts. Serial merges would cost a plain `crew fleet` one host timeout per crew
+// that ever dispatched remotely, and a host that is down spends its whole one.
 func foldRepo(ctx context.Context, common string, events []bus.Event, docs []any, onlyCrew string, nowSec float64, p roster.Probes, remote func(crew string) roster.Capture) ([]crewRow, error) {
 	crews := []string{onlyCrew}
 	if onlyCrew == "" {
@@ -178,17 +183,30 @@ func foldRepo(ctx context.Context, common string, events []bus.Event, docs []any
 		slices.Sort(crews)
 		crews = slices.Compact(crews)
 	}
-	var out []crewRow
-	for _, c := range crews {
+	merged := make([]struct {
+		crew string
+		rows []map[string]any
+	}, len(crews))
+	var wg sync.WaitGroup
+	for i, c := range crews {
 		folded, err := roster.Fold(ctx, docs, c, nowSec, p)
 		if err != nil {
 			return nil, err
 		}
-		if remote != nil {
-			folded = roster.MergeRemote(ctx, folded, events, c, remote(c))
+		merged[i].crew = c
+		if remote == nil {
+			merged[i].rows = folded
+			continue
 		}
-		for _, row := range folded {
-			out = append(out, crewRow{Row: row, crew: c})
+		wg.Go(func() {
+			merged[i].rows = roster.MergeRemote(ctx, folded, events, c, remote(c))
+		})
+	}
+	wg.Wait()
+	var out []crewRow
+	for _, m := range merged {
+		for _, row := range m.rows {
+			out = append(out, crewRow{Row: row, crew: m.crew})
 		}
 	}
 	return out, nil

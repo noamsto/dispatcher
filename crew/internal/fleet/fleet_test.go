@@ -600,3 +600,52 @@ func TestNoRemoteWorkersAsksNoHost(t *testing.T) {
 		t.Errorf("capture calls = %q, want none", got)
 	}
 }
+
+// Two crews ask their hosts at once. A serial merge costs a machine-wide
+// `crew fleet` one host timeout per crew that ever dispatched remotely, and a
+// host that is down spends its whole remoteTimeout each time, so what the test
+// reads is how many calls were in flight at once.
+func TestCrewsAskTheirHostsTogether(t *testing.T) {
+	f := oneRepo(t,
+		worker(1700000010, "c1", "feat/a", "working"),
+		remoteDispatch(1700000011, "c1", "feat/far-a", "iris", "mini"),
+		worker(1700000012, "c2", "feat/b", "working"),
+		remoteDispatch(1700000013, "c2", "feat/far-b", "sage", "other"),
+	)
+	branches := map[string]string{"c1": "feat/far-a", "c2": "feat/far-b"}
+	var mu sync.Mutex
+	inFlight, peak := 0, 0
+	f.opts.Remote = func(_, crew string) roster.Capture {
+		return func(_ context.Context, _ string, _ []string, stdout, _ io.Writer) int {
+			mu.Lock()
+			inFlight++
+			if inFlight > peak {
+				peak = inFlight
+			}
+			mu.Unlock()
+			time.Sleep(20 * time.Millisecond) // hold the call so an overlap is visible
+			mu.Lock()
+			inFlight--
+			mu.Unlock()
+			_, _ = fmt.Fprintf(stdout, `[{"branch":%q,"name":"w","state":"working","live":true}]`, branches[crew])
+			return 0
+		}
+	}
+
+	out, _, code := run(t, f, Request{JSON: true})
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if peak < 2 {
+		t.Errorf("peak concurrent host calls = %d, want both crews asking at once", peak)
+	}
+	seen := map[string]bool{}
+	for _, r := range jsonRows(t, out) {
+		seen[fmt.Sprint(r["branch"])] = true
+	}
+	for _, branch := range []string{"feat/far-a", "feat/far-b"} {
+		if !seen[branch] {
+			t.Errorf("row for %s missing: %v", branch, out)
+		}
+	}
+}
