@@ -209,6 +209,42 @@ func TestCrewAnchor(t *testing.T) {
 	}
 }
 
+// A codename two crews both dispatched is disambiguated by the anchor: with a
+// crew id the other crew's window never enters the codename scan, so the target
+// resolves instead of refusing as ambiguous.
+func TestCrewAnchorDisambiguatesASharedCodename(t *testing.T) {
+	tr := setup(t)
+	wins := winLine(tr.paths.Dir, "@624", "feat/1-a", "c1", "nova", "sess", "3", "win-a") + "\n" +
+		winLine(tr.paths.Dir, "@625", "feat/2-b", "c2", "nova", "sess", "4", "win-b")
+	panes := paneLine("@624", "%204", "lead", "1") + "\n" + paneLine("@625", "%304", "lead", "1")
+
+	for _, tc := range []struct{ crew, want string }{
+		{"c1", `nova — sess:3.1 "win-a" (lead pane)   jump: ! tmux switch-client -t %204` + "\n"},
+		{"c2", `nova — sess:4.1 "win-b" (lead pane)   jump: ! tmux switch-client -t %304` + "\n"},
+	} {
+		out, errOut, code := tr.run(t, wins, panes, crewIs(tc.crew), "nova")
+		if code != 0 || out != tc.want || errOut != "" {
+			t.Errorf("crew %s: code %d, out %q, err %q, want %q", tc.crew, code, out, errOut, tc.want)
+		}
+	}
+	// `--crew` reaches the other crew's window the way the default does.
+	if out, _, code := tr.run(t, wins, panes, crewIs("c1"), "--crew", "c2", "nova"); code != 0 ||
+		out != `nova — sess:4.1 "win-b" (lead pane)   jump: ! tmux switch-client -t %304`+"\n" {
+		t.Errorf("--crew c2: code %d, out %q", code, out)
+	}
+	// With no crew id nothing is filtered, so both windows are candidates and the
+	// codename really is ambiguous.
+	if _, errOut, code := tr.run(t, wins, panes, crewIs(""), "nova"); code != exitFailure ||
+		errOut != "crew: where: ambiguous codename 'nova' — matches feat/1-a,feat/2-b; pass a branch or %pane\n" {
+		t.Errorf("no crew id: code %d, err %q", code, errOut)
+	}
+	// Its pane is named as another crew's, not reported as missing.
+	if _, errOut, code := tr.run(t, wins, panes, crewIs("c1"), "%304"); code != exitFailure ||
+		errOut != "crew: where: pane %304 is not a pane of this crew\n" {
+		t.Errorf("other crew's pane: code %d, err %q", code, errOut)
+	}
+}
+
 // A window of another repo, or one with no branch, is not this crew's: the arm
 // anchored on the crew dir and a non-empty branch.
 func TestAnchorExcludesOtherRepos(t *testing.T) {

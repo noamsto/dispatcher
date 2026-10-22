@@ -3,50 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-// stubTmuxLogged puts a tmux on PATH that answers `crew where`'s two reads from
-// files and appends every call's argv to a log. The log is the point: after a
-// refused argument it is still empty, which is the proof that the flag loop ran
-// ahead of both reads.
-func stubTmuxLogged(t *testing.T, windows, panes string) (calls func() string, reset func()) {
-	t.Helper()
-	bin := t.TempDir()
-	log := filepath.Join(bin, "calls.log")
-	for name, body := range map[string]string{"wins.txt": windows, "panes.txt": panes} {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	script := `#!/bin/sh
-printf '%s\n' "$*" >> "$STUB_TMUX_LOG"
-case "$1" in
-list-windows) cat "$STUB_TMUX_DIR/wins.txt" ;;
-list-panes) cat "$STUB_TMUX_DIR/panes.txt" ;;
-esac
-exit 0
-`
-	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("STUB_TMUX_DIR", bin)
-	t.Setenv("STUB_TMUX_LOG", log)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	calls = func() string {
-		data, err := os.ReadFile(log)
-		if err != nil {
-			return ""
-		}
-		return string(data)
-	}
-	reset = func() { _ = os.Remove(log) }
-	return calls, reset
-}
 
 // crewWin is one `list-windows` line: window id, branch, crew dir, crew id,
 // codename, session, window index, window name.
