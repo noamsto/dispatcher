@@ -13,12 +13,11 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 )
 
-// These are the `crew msg` cases crew.bats used to run through run_crew: the
-// words the caller passed, the sender gate (#908), the recipient shapes, and the
-// clip that keeps a bus line one atomic write.
+// `crew msg` at the argv boundary: the words the caller passed, the sender gate
+// (#908), the recipient shapes, and the clip that keeps a bus line one atomic
+// write.
 
-// runCrew drives one argv through the real entrypoint, the way the bats cases
-// ran the binary.
+// runCrew drives one argv through the same run() the binary does.
 func runCrew(t *testing.T, repo string, argv ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	e := env{getwd: func() (string, error) { return repo, nil }, proc: proctest.New(nil, nil)}
@@ -38,7 +37,7 @@ func unanchoredBus(t *testing.T) (repo, logPath string) {
 	return repo, logPath
 }
 
-// logHasNoRows is the bats `[ ! -s "$log" ]`: a refused write logged nothing.
+// logHasNoRows reports a log that holds no row at all, its absence included.
 func logHasNoRows(t *testing.T, path string) bool {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -48,9 +47,9 @@ func logHasNoRows(t *testing.T, path string) bool {
 	return len(data) == 0
 }
 
-// The recipient shapes a caller may address: a bare name, a branch-only worker
-// id, a session id, the dispatcher, the two synthetic sinks and the broadcast.
-func TestCLIMsgAcceptsEveryValidRecipientShape(t *testing.T) {
+// A caller may address a bare name, a worker id with or without its session, the
+// dispatcher, the two sink ids and the broadcast.
+func TestMsgAcceptsEveryValidRecipientShape(t *testing.T) {
 	repo, logPath := unanchoredBus(t)
 	wants := []string{"bob", "worker:feat/1", "worker:feat/1#s1-1", "dispatcher:c1", "retro:c1", "metrics:c1", "*"}
 	for _, to := range wants {
@@ -72,7 +71,7 @@ func TestCLIMsgAcceptsEveryValidRecipientShape(t *testing.T) {
 
 // #46/F04: a shell that expanded an unset $CREW_ID into `dispatcher:$CREW_ID`
 // must fail loudly, not log a row nobody reads.
-func TestCLIMsgRejectsRecipientPrefixWithEmptyID(t *testing.T) {
+func TestMsgRejectsRecipientPrefixWithEmptyID(t *testing.T) {
 	repo, logPath := unanchoredBus(t)
 	for _, tc := range []struct{ name, from, to string }{
 		{"dispatcher:", "worker", "dispatcher:"},
@@ -92,7 +91,7 @@ func TestCLIMsgRejectsRecipientPrefixWithEmptyID(t *testing.T) {
 
 // #1044: a retro body over the cap loses its detail, not its shape — the line
 // stays one atomic write and the body still parses with every key.
-func TestCLIMsgOversizedJSONBodyStaysParseable(t *testing.T) {
+func TestMsgOversizedJSONBodyStaysParseable(t *testing.T) {
 	repo, logPath := unanchoredBus(t)
 	detail := strings.Repeat("x", 6000)
 	body := `{"seam":"execute","tag":"gate_thrash","detail":"` + detail + `"}`
@@ -128,7 +127,7 @@ func TestCLIMsgOversizedJSONBodyStaysParseable(t *testing.T) {
 
 // #908: the pane's stamp, not the caller's argv, names the id a stamped role pane
 // posts as — `crew msg` and `crew status` refuse the others alike.
-func TestCLIMsgStampedRolePanePostsOnlyAsItsRoleID(t *testing.T) {
+func TestMsgStampedRolePanePostsOnlyAsItsRoleID(t *testing.T) {
 	repo, logPath := repoWithLog(t, nil, 0)
 	t.Setenv("CREW_ID", "c1")
 	unsetenv(t, "CREW_WORKER_ID", "CREW_ROLE_ID")
