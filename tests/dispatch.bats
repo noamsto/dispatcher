@@ -6118,6 +6118,22 @@ EOF
   [[ "$launch" == *"Push when pre-push passes; open a PR"* ]]
 }
 
+@test "plan: required puts the plan phase before the review seam, plan: provided does not (#1091)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "required plan"
+  [ "$status" -eq 0 ]
+  launch="$(grep 'send-keys' <(launch_log) | tail -1)"
+  [[ "$launch" == *"run the plan critic, then post the plan seam"* ]]
+  [[ "$launch" == *"the review seam is refused"* ]]
+  [[ "$launch" != *"plan of record"* ]]
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --plan provided --crew-id c1 43 "provided plan"
+  [ "$status" -eq 0 ]
+  launch="$(grep 'send-keys' <(launch_log) | tail -1)"
+  [[ "$launch" == *"plan of record"* ]]
+  [[ "$launch" != *"the review seam is refused"* ]]
+}
+
 @test "session: stamps worker_id, exports CREW_WORKER_ID and prints the id" {
   stub_launch_bins
   DISPATCH_SESSION_ID=s7-7 DISPATCH_PROFILE=personal run run_dispatch \

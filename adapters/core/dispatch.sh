@@ -6331,6 +6331,10 @@ if [ "$plan_val" = provided ]; then
   if [ "$tier" != trivial ] && [ "$kind" != review ]; then
     plan_note="$plan_note Only planning is skipped: the fast deterministic gate and the code review gate still run before you push."
   fi
+elif [ "$tier" != trivial ] && [ "$kind" != review ] && [ "$switch_mode" != resume ]; then
+  # None of these runs a plan phase, so the sentence would promise a step that
+  # never happens.
+  plan_note=" The plan phase comes before any implementation: run the plan critic, then post the plan seam — until you do, the review seam is refused."
 fi
 
 # Same carrier, for a worker landing in a tree that already holds its spec, plan

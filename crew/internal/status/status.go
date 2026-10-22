@@ -9,6 +9,10 @@
 // programs (the arm's own seam.jq and deslop.jq, plus plan.jq), run through
 // jqrun. Refusing less often than the arm is a regression: every gate fails
 // closed.
+//
+// `msg` gates one body: a review seam from a branch that has no plan seam is
+// refused, so the miss surfaces at the review gate instead of at pr_open. It
+// runs `status`'s own check — same task-doc condition, same plan.jq fold.
 package status
 
 import (
