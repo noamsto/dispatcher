@@ -5,7 +5,6 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 readonly manifest=tests/harness/manifest.tsv
 readonly files=(
-  tests/crew-id.bats
   tests/refresh-models.bats
   tests/pr-watch.bats
   tests/dispatch.bats
@@ -54,10 +53,7 @@ generate() {
     }
 
     FNR == 1 {
-      if (FILENAME == "tests/crew-id.bats") {
-        family = "crew-id"
-        sample_tag = "fast"
-      } else if (FILENAME == "tests/refresh-models.bats") {
+      if (FILENAME == "tests/refresh-models.bats") {
         family = "refresh-models"
         sample_tag = "fork-heavy"
       } else if (FILENAME == "tests/pr-watch.bats") {

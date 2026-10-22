@@ -35,30 +35,6 @@ def output(result):
     return result.stdout + result.stderr
 
 
-def crew_id(h, case_id):
-    task = h.repo / "WORKER_TASK.md"
-    if "no-worker-task-md" in case_id:
-        result = h.crew("id", env={"CREW_ID": "c-from-env"})
-        expect("cid-env-status", result.returncode == 0)
-        expect("cid-env-stdout", result.stdout.strip() == "c-from-env")
-    elif "has-no-crew-id-line" in case_id:
-        task.write_text("title: some task\n")
-        result = h.crew("id", env={"CREW_ID": "c-from-env"})
-        expect("cid-taskdoc-missing-status", result.returncode == 0)
-        expect("cid-taskdoc-missing-stdout", result.stdout.strip() == "c-from-env")
-    else:
-        task.write_text("crew_id: c-from-taskdoc\n")
-        cwd = h.repo
-        env = {"CREW_ID": "c-from-env"} if "wins-over" in case_id else {}
-        if "subdirectory" in case_id:
-            cwd = h.repo / "a/b/c"
-            cwd.mkdir(parents=True)
-        result = h.crew("id", cwd=cwd, env=env)
-        prefix = "cid-taskdoc-wins" if "wins-over" in case_id else "cid-subdir" if "subdirectory" in case_id else "cid-taskdoc-unset"
-        expect(f"{prefix}-status", result.returncode == 0)
-        expect(f"{prefix}-stdout", result.stdout.strip() == "c-from-taskdoc")
-
-
 MODELS = """Available models
 
 auto - Auto (default)
@@ -329,9 +305,7 @@ def install_pr_watch_stub(h):
 @pytest.mark.parametrize("case_id", manifest_ids(), ids=manifest_ids())
 def test_manifest_case(harness, case_id):
     before = len(seen_assertions)
-    if case_id.startswith("crew-id-"):
-        crew_id(harness, case_id)
-    elif case_id.startswith("refresh-models-"):
+    if case_id.startswith("refresh-models-"):
         refresh_models(harness, case_id)
     elif case_id.startswith("role-watch-"):
         role_watch(harness, case_id)

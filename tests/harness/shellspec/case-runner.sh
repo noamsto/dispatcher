@@ -232,43 +232,6 @@ seed() {
   check_contains "$prefix-seed-timeout-stderr" "$CAPTURE_STDERR" 'park ended after 1s'
 }
 
-run_crew_id_cases() {
-  setup_repo
-  case "$CASE_ID" in
-  crew-id-crew-id-resolves-from-worker-task-md-with-no-crew-id-in-the-environment-at-all)
-    printf 'crew_id: c-from-taskdoc\n' >WORKER_TASK.md
-    capture env -u CREW_ID "$CREW" id
-    check_eq cid-taskdoc-unset-status "$CAPTURE_STATUS" 0
-    check_eq cid-taskdoc-unset-stdout "$CAPTURE_STDOUT" c-from-taskdoc
-    ;;
-  crew-id-crew-id-the-task-document-wins-over-a-disagreeing-crew-id)
-    printf 'crew_id: c-from-taskdoc\n' >WORKER_TASK.md
-    capture env CREW_ID=c-from-env "$CREW" id
-    check_eq cid-taskdoc-wins-status "$CAPTURE_STATUS" 0
-    check_eq cid-taskdoc-wins-stdout "$CAPTURE_STDOUT" c-from-taskdoc
-    ;;
-  crew-id-crew-id-resolves-from-a-subdirectory-of-the-worktree)
-    printf 'crew_id: c-from-taskdoc\n' >WORKER_TASK.md
-    mkdir -p a/b/c
-    cd a/b/c || return 1
-    capture env -u CREW_ID "$CREW" id
-    check_eq cid-subdir-status "$CAPTURE_STATUS" 0
-    check_eq cid-subdir-stdout "$CAPTURE_STDOUT" c-from-taskdoc
-    ;;
-  crew-id-crew-id-crew-id-still-resolves-when-no-worker-task-md-exists)
-    capture env CREW_ID=c-from-env "$CREW" id
-    check_eq cid-env-status "$CAPTURE_STATUS" 0
-    check_eq cid-env-stdout "$CAPTURE_STDOUT" c-from-env
-    ;;
-  crew-id-crew-id-falls-back-to-crew-id-when-worker-task-md-has-no-crew-id-line)
-    printf 'title: some task\n' >WORKER_TASK.md
-    capture env CREW_ID=c-from-env "$CREW" id
-    check_eq cid-taskdoc-missing-status "$CAPTURE_STATUS" 0
-    check_eq cid-taskdoc-missing-stdout "$CAPTURE_STDOUT" c-from-env
-    ;;
-  esac
-}
-
 run_refresh_models_cases() {
   local cache before after local_path='' dir
   setup_refresh_models
@@ -928,7 +891,6 @@ if ! awk -F '\t' -v case_id="$CASE_ID" 'NR > 1 && $1 == case_id { found = 1 } EN
 fi
 
 case "$CASE_ID" in
-crew-id-*) run_crew_id_cases ;;
 refresh-models-*) run_refresh_models_cases ;;
 pr-watch-*) run_pr_watch_cases ;;
 role-watch-*) run_role_watch_cases ;;

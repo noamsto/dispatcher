@@ -15,9 +15,8 @@ setup() {
   mkdir -p "$REPO/scripts" "$REPO/tests/harness"
   cp "$BATS_TEST_DIRNAME/../scripts/harness-manifest.sh" "$REPO/scripts/harness-manifest.sh"
 
-  printf '#!/usr/bin/env bats\n\n@test "alpha one" {\n  true\n}\n' >"$REPO/tests/crew-id.bats"
+  printf '#!/usr/bin/env bats\n\n@test "alpha one" {\n  true\n}\n' >"$REPO/tests/refresh-models.bats"
   printf '#!/usr/bin/env bats\n\n@test "beta one" {\n  true\n}\n' >"$REPO/tests/pr-watch.bats"
-  : >"$REPO/tests/refresh-models.bats"
   : >"$REPO/tests/dispatch.bats"
 
   bash "$REPO/scripts/harness-manifest.sh"
@@ -53,7 +52,8 @@ setup() {
   [ "$status" -eq 1 ]
   [[ $output == *'+pr-watch-gamma'* ]]
 
-  printf '#!/usr/bin/env bats\n' >"$REPO/tests/crew-id.bats"
+  printf '#!/usr/bin/env bats\n' >"$REPO/tests/refresh-models.bats"
   manifest --check
   [ "$status" -eq 1 ]
+  [[ $output == *'-refresh-models-alpha-one'* ]]
 }

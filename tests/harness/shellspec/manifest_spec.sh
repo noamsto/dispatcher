@@ -1,40 +1,6 @@
 # shellcheck shell=bash
 
 Describe 'canonical harness manifest'
-It 'crew-id-crew-id-resolves-from-worker-task-md-with-no-crew-id-in-the-environment-at-all'
-When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "crew-id-crew-id-resolves-from-worker-task-md-with-no-crew-id-in-the-environment-at-all"
-The status should be success
-The output should be blank
-The stderr should be blank
-End
-
-It 'crew-id-crew-id-the-task-document-wins-over-a-disagreeing-crew-id'
-When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "crew-id-crew-id-the-task-document-wins-over-a-disagreeing-crew-id"
-The status should be success
-The output should be blank
-The stderr should be blank
-End
-
-It 'crew-id-crew-id-resolves-from-a-subdirectory-of-the-worktree'
-When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "crew-id-crew-id-resolves-from-a-subdirectory-of-the-worktree"
-The status should be success
-The output should be blank
-The stderr should be blank
-End
-
-It 'crew-id-crew-id-crew-id-still-resolves-when-no-worker-task-md-exists'
-When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "crew-id-crew-id-crew-id-still-resolves-when-no-worker-task-md-exists"
-The status should be success
-The output should be blank
-The stderr should be blank
-End
-
-It 'crew-id-crew-id-falls-back-to-crew-id-when-worker-task-md-has-no-crew-id-line'
-When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "crew-id-crew-id-falls-back-to-crew-id-when-worker-task-md-has-no-crew-id-line"
-The status should be success
-The output should be blank
-The stderr should be blank
-End
 
 It 'refresh-models-a-realistic-list-models-fixture-parses-into-the-expected-cache-shape'
 When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "refresh-models-a-realistic-list-models-fixture-parses-into-the-expected-cache-shape"

@@ -348,8 +348,8 @@ done
 if [[ $name == bats-timing-shard-1 ]]; then
   mkdir -p "$dir/$name"
   printf '%s\n' \
-    '<testsuites><testsuite name="crew-id.bats" failures="0" errors="0">' \
-    '<testcase name="crew id: resolves from WORKER_TASK.md with no CREW_ID in the environment at all" time="0.1"/>' \
+    '<testsuites><testsuite name="bats-shard.bats" failures="0" errors="0">' \
+    '<testcase name="weights --run rejects an incomplete JUnit artifact inventory" time="0.1"/>' \
     '</testsuite></testsuites>' >"$dir/$name/report.xml"
 fi
 GH

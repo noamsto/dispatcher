@@ -21,7 +21,7 @@ setup() {
   cp "$BATS_TEST_DIRNAME/../scripts/harness-inventory.sh" "$REPO/scripts/harness-inventory.sh"
 
   printf 'case_id\tsource_file\tsource_line\tfamily\ttest_name\ttags\n' >"$HARNESS/manifest.tsv"
-  manifest_row demo-alpha tests/crew-id.bats 3 'alpha one'
+  manifest_row demo-alpha tests/refresh-models.bats 3 'alpha one'
   manifest_row demo-beta tests/pr-watch.bats 3 'beta one'
 
   printf 'case_id\tsetup\tteardown\tsourced_functions\tpublic_subprocesses\tstubs\tenvironment_isolation\tstdout_boundary\tstderr_boundary\tstatus_boundary\tside_effect_boundary\n' >"$HARNESS/boundaries.tsv"
@@ -29,14 +29,13 @@ setup() {
   boundary_row demo-beta
 
   # Two cases; the second repeats an expression, so one key holds two lines.
-  printf '#!/usr/bin/env bats\n\n@test "alpha one" {\n  [ "$status" -eq 0 ]\n  [ "$output" = "ok" ]\n}\n' >"$REPO/tests/crew-id.bats"
+  printf '#!/usr/bin/env bats\n\n@test "alpha one" {\n  [ "$status" -eq 0 ]\n  [ "$output" = "ok" ]\n}\n' >"$REPO/tests/refresh-models.bats"
   printf '#!/usr/bin/env bats\n\n@test "beta one" {\n  [ "$status" -eq 0 ]\n  [ "$output" = "ok" ]\n  [ "$status" -eq 0 ]\n}\n' >"$REPO/tests/pr-watch.bats"
-  : >"$REPO/tests/refresh-models.bats"
   : >"$REPO/tests/dispatch.bats"
 
   printf 'case_id\tassert_id\tsource_file\tsource_line\tkind\texpression\n' >"$HARNESS/assertions.tsv"
-  assertion_row demo-alpha alpha-status tests/crew-id.bats 4 status '[ "$status" -eq 0 ]'
-  assertion_row demo-alpha alpha-stdout tests/crew-id.bats 5 stdout '[ "$output" = "ok" ]'
+  assertion_row demo-alpha alpha-status tests/refresh-models.bats 4 status '[ "$status" -eq 0 ]'
+  assertion_row demo-alpha alpha-stdout tests/refresh-models.bats 5 stdout '[ "$output" = "ok" ]'
   assertion_row demo-beta beta-status tests/pr-watch.bats 4 status '[ "$status" -eq 0 ]'
   assertion_row demo-beta beta-stdout tests/pr-watch.bats 5 stdout '[ "$output" = "ok" ]'
   assertion_row demo-beta beta-status-again tests/pr-watch.bats 6 status '[ "$status" -eq 0 ]'

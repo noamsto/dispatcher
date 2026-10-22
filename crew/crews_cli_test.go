@@ -461,14 +461,71 @@ func TestCrewID(t *testing.T) {
 		contains(t, "stderr", errOut, "crew crews", "crew adopt", "crew new")
 	})
 
-	t.Run("resolves from WORKER_TASK.md when CREW_ID is unset", func(t *testing.T) {
-		c := newCrewsCLI(t)
-		if err := os.WriteFile(filepath.Join(c.repo, "WORKER_TASK.md"), []byte("crew_id: 1785381776-999\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		c.as("")
-		eq(t, "stdout", c.mustRun("id"), "1785381776-999\n")
-	})
+	// The ordering #54 pinned: the task document first, CREW_ID only as a
+	// fallback. An empty env row leaves the key unset rather than empty, and
+	// each row runs the real getwd from its own directory, so a subdirectory
+	// row is a real one.
+	for _, tc := range []struct {
+		name string
+		task string // WORKER_TASK.md body; "" leaves the file absent
+		env  string // CREW_ID; "" leaves it unset
+		sub  string // directory to run from, relative to the repo root
+		want string
+	}{
+		{
+			name: "resolves from WORKER_TASK.md with no CREW_ID in the environment at all",
+			task: "crew_id: c-from-taskdoc\n",
+			want: "c-from-taskdoc\n",
+		},
+		{
+			name: "the task document wins over a disagreeing CREW_ID",
+			task: "crew_id: c-from-taskdoc\n",
+			env:  "c-from-env",
+			want: "c-from-taskdoc\n",
+		},
+		{
+			name: "resolves from a subdirectory of the worktree",
+			task: "crew_id: c-from-taskdoc\n",
+			sub:  "a/b/c",
+			want: "c-from-taskdoc\n",
+		},
+		{
+			name: "CREW_ID still resolves when no WORKER_TASK.md exists",
+			env:  "c-from-env",
+			want: "c-from-env\n",
+		},
+		{
+			name: "falls back to CREW_ID when WORKER_TASK.md has no crew_id: line",
+			task: "title: some task\n",
+			env:  "c-from-env",
+			want: "c-from-env\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newCrewsCLI(t)
+			if tc.task != "" {
+				if err := os.WriteFile(filepath.Join(c.repo, "WORKER_TASK.md"), []byte(tc.task), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			c.as(tc.env)
+			cwd := c.repo
+			if tc.sub != "" {
+				cwd = filepath.Join(c.repo, filepath.FromSlash(tc.sub))
+				if err := os.MkdirAll(cwd, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Chdir(cwd)
+			e := env{getwd: os.Getwd, proc: c.proc}
+			var stdout, stderr bytes.Buffer
+			if code := run(context.Background(), []string{"id"}, &stdout, &stderr, e); code != 0 {
+				t.Fatalf("id: code %d, stderr %q", code, stderr.String())
+			}
+			eq(t, "stdout", stdout.String(), tc.want)
+			eq(t, "stderr", stderr.String(), "")
+		})
+	}
 }
 
 var crewNewOut = regexp.MustCompile(`^[0-9]+-[0-9]+\n$`)

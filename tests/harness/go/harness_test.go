@@ -154,8 +154,8 @@ func checkRegistryParity(t *testing.T, cases []testCase) {
 		}
 		wantAssertions[fields[0]][fields[1]] = true
 	}
-	if len(cases) != 37 || len(wantCases) != 37 {
-		t.Fatalf("registry has %d cases and manifest has %d; want 37 each", len(cases), len(wantCases))
+	if len(cases) != 32 || len(wantCases) != 32 {
+		t.Fatalf("registry has %d cases and manifest has %d; want 32 each", len(cases), len(wantCases))
 	}
 	seenCases := make(map[string]bool)
 	for _, tc := range cases {
@@ -297,32 +297,6 @@ func (f *repoFixture) withEnv(values map[string]string, unset ...string) []strin
 		all[name] = value
 	}
 	return cleanEnv(all, unset...)
-}
-
-func crewCase(task string, crewID string, cwd func(*repoFixture) string, statusID, stdoutID string) func(*caseTest) {
-	return func(t *caseTest) {
-		f := newRepoFixture(t)
-		if task != "" {
-			if err := os.WriteFile(filepath.Join(f.dir, "WORKER_TASK.md"), []byte(task), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
-		dir := f.dir
-		if cwd != nil {
-			dir = cwd(f)
-		}
-		env := f.env
-		if crewID != "" {
-			env = f.withEnv(map[string]string{"CREW_ID": crewID})
-		}
-		result := runCommand(dir, env, crewEntry(), "id")
-		t.check(statusID, result.status == 0, "status=%d stderr=%q", result.status, result.stderr)
-		want := "c-from-taskdoc"
-		if task == "" || !strings.Contains(task, "crew_id:") {
-			want = crewID
-		}
-		t.check(stdoutID, result.stdout == want, "stdout=%q want=%q", result.stdout, want)
-	}
 }
 
 func refreshFixture(t *caseTest) *repoFixture {
@@ -725,17 +699,7 @@ func eventRow(t *caseTest, path string) string {
 func ids(values ...string) []string { return values }
 
 func manifestCases() []testCase {
-	nested := func(f *repoFixture) string {
-		dir := filepath.Join(f.dir, "a/b/c")
-		_ = os.MkdirAll(dir, 0o755)
-		return dir
-	}
 	return []testCase{
-		{"crew-id-crew-id-resolves-from-worker-task-md-with-no-crew-id-in-the-environment-at-all", ids("cid-taskdoc-unset-status", "cid-taskdoc-unset-stdout"), crewCase("crew_id: c-from-taskdoc\n", "", nil, "cid-taskdoc-unset-status", "cid-taskdoc-unset-stdout")},
-		{"crew-id-crew-id-the-task-document-wins-over-a-disagreeing-crew-id", ids("cid-taskdoc-wins-status", "cid-taskdoc-wins-stdout"), crewCase("crew_id: c-from-taskdoc\n", "c-from-env", nil, "cid-taskdoc-wins-status", "cid-taskdoc-wins-stdout")},
-		{"crew-id-crew-id-resolves-from-a-subdirectory-of-the-worktree", ids("cid-subdir-status", "cid-subdir-stdout"), crewCase("crew_id: c-from-taskdoc\n", "", nested, "cid-subdir-status", "cid-subdir-stdout")},
-		{"crew-id-crew-id-crew-id-still-resolves-when-no-worker-task-md-exists", ids("cid-env-status", "cid-env-stdout"), crewCase("", "c-from-env", nil, "cid-env-status", "cid-env-stdout")},
-		{"crew-id-crew-id-falls-back-to-crew-id-when-worker-task-md-has-no-crew-id-line", ids("cid-taskdoc-missing-status", "cid-taskdoc-missing-stdout"), crewCase("title: some task\n", "c-from-env", nil, "cid-taskdoc-missing-status", "cid-taskdoc-missing-stdout")},
 		{"refresh-models-a-realistic-list-models-fixture-parses-into-the-expected-cache-shape", ids("rm-shape-script-status", "rm-shape-high-slug", "rm-shape-medium-fast-slug", "rm-shape-low-fast-slug", "rm-shape-excludes-auto", "rm-shape-epoch-type"), refreshShape},
 		{"refresh-models-the-write-is-atomic-and-lands-at-the-cursor-models-cache-path", ids("rm-atomic-script-status", "rm-atomic-cache-exists", "rm-atomic-no-temp-file", "rm-atomic-model-count"), refreshAtomic},
 		{"refresh-models-a-stubbed-cursor-agent-failure-exits-nonzero-and-leaves-an-existing-cache-untouched", ids("rm-stub-failure-status", "rm-stub-failure-cache-unchanged"), refreshFailure},
