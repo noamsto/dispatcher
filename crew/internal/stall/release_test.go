@@ -14,11 +14,19 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 )
 
+// frameText is a frame fixture: the shared corpus in the frame package, or a
+// stall-local one under this package's testdata (the frames no frame-package
+// predicate is consulted for). Byte-exact either way; the detector decisions
+// depend on the exact pane text.
 func frameText(t *testing.T, name string) string {
 	t.Helper()
 	data, err := os.ReadFile("../frame/testdata/frames/" + name)
 	if err != nil {
-		t.Fatal(err)
+		alt, altErr := os.ReadFile("testdata/" + name)
+		if altErr != nil {
+			t.Fatalf("no frame fixture %q: %v", name, err)
+		}
+		data = alt
 	}
 	return strings.TrimRight(string(data), "\n")
 }

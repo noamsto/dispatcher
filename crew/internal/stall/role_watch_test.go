@@ -18,6 +18,10 @@ const (
 	rolePrompt = roleID + "|blocked|watchdog|prompt: interactive prompt in pane %9 — " +
 		"worker is waiting on input nobody can give"
 	roleClear = roleID + "|working|watchdog|prompt: cleared"
+	// A role's tool-permission dialog is reported to its own dispatcher, under
+	// the role id and never under a worker id.
+	rolePermission = roleID + "|blocked|watchdog|prompt: permission — Bash command: " +
+		"bats --filter grant tests/dispatch-resume.bats 2>&1 | tail -30 — pane %9"
 )
 
 func TestRoleWatchRows(t *testing.T) {
@@ -45,6 +49,12 @@ func TestRoleWatchRows(t *testing.T) {
 			frames:  []string{"prompt_trust.txt", "prompt_trust.txt", "idle_box.txt"},
 			maxLife: "6",
 			want:    []string{rolePrompt, roleClear},
+		},
+		{
+			name:    "posts a permission prompt under the role id",
+			frames:  []string{"permission_subagent.txt"},
+			maxLife: "4",
+			want:    []string{rolePermission},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
