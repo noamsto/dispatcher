@@ -587,6 +587,23 @@ func TestRefusals(t *testing.T) {
 	}
 }
 
+// `../escaped` would land beside the bus dir and `../../escaped` above it; the
+// refusal happens before either becomes a path. `TestRefusals` pins the line.
+func TestTraversalCrewWritesNothingOutsideTheBusDir(t *testing.T) {
+	p := fixture(t)
+	for _, crew := range []string{"../escaped", "../../escaped"} {
+		_, _, code, _ := run(t, p, Request{Crew: crew, Timeout: "1", Interval: "1"})
+		if code != 1 {
+			t.Fatalf("--crew %s: code %d, want 1", crew, code)
+		}
+		for _, dir := range []string{p.Common, p.Dir} {
+			if _, err := os.Stat(filepath.Join(dir, "escaped")); !os.IsNotExist(err) {
+				t.Errorf("%s/escaped exists after --crew %s (stat err %v)", dir, crew, err)
+			}
+		}
+	}
+}
+
 // With no --crew and no `_crew_id`, the arm's refusal is the unset one.
 func TestNoCrewResolvesToRefusal(t *testing.T) {
 	p := fixture(t)

@@ -197,6 +197,23 @@ func TestRefusals(t *testing.T) {
 	}
 }
 
+// `../escaped` would land beside the bus dir and `../../escaped` above it; the
+// refusal happens before either becomes a path. `TestRefusals` pins the line.
+func TestTraversalCrewWritesNothingOutsideTheBusDir(t *testing.T) {
+	p := fixture(t)
+	for _, crew := range []string{"../escaped", "../../escaped"} {
+		var out, errb bytes.Buffer
+		if rc := Run(Request{Crew: crew, Park: "1", Interval: "1"}, p, &out, &errb, Options{}); rc != exitUsage {
+			t.Fatalf("--crew %s: exit %d, want %d (%s)", crew, rc, exitUsage, errb.String())
+		}
+		for _, dir := range []string{p.Common, p.Dir} {
+			if _, err := os.Stat(filepath.Join(dir, "escaped")); !os.IsNotExist(err) {
+				t.Errorf("%s/escaped exists after --crew %s (stat err %v)", dir, crew, err)
+			}
+		}
+	}
+}
+
 // --force signals one holder and nothing else: the arm's `case` guard plus the
 // range a pid can be, since the kernel sees only the low 32 bits of the holder
 // text — 4294967295 is kill(-1), every process this user may signal.

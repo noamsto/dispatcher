@@ -332,6 +332,22 @@ func TestLongDetailElided(t *testing.T) {
 	}
 }
 
+// A refused --restamp appends nothing: the row already posted stays the log's
+// last word, byte for byte.
+func TestRefusedRestampWritesNothing(t *testing.T) {
+	f := newFixture(t)
+	if code, stderr := f.statusReq(StatusRequest{From: worker, State: "blocked", Detail: "why", Restamp: true}); code != 0 || stderr != "" {
+		t.Fatalf("blocked --restamp: code %d, stderr %q", code, stderr)
+	}
+	before := f.rawLog()
+	if code, _ := f.statusReq(StatusRequest{From: worker, State: "working", Restamp: true}); code != 1 {
+		t.Fatalf("working --restamp: code %d, want 1", code)
+	}
+	if got := f.rawLog(); got != before {
+		t.Errorf("the refused --restamp changed the log:\n got %s\nwant %s", got, before)
+	}
+}
+
 func TestReapedRefusedFromWorkerAndRole(t *testing.T) {
 	for _, from := range []string{worker, "role:feat/x:rev"} {
 		f := newFixture(t)

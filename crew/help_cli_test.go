@@ -281,6 +281,7 @@ func statusDetail(t *testing.T, logPath string) string {
 		t.Fatal(err)
 	}
 	detail := ""
+	rows := 0
 	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
 		var row struct {
 			Kind string `json:"kind"`
@@ -292,8 +293,12 @@ func statusDetail(t *testing.T, logPath string) string {
 			t.Fatalf("bus row %q: %v", line, err)
 		}
 		if row.Kind == "status" {
+			rows++
 			detail = row.Body.Detail
 		}
+	}
+	if rows != 1 {
+		t.Fatalf("the bus holds %d status rows, want the one the separator posted", rows)
 	}
 	return detail
 }
