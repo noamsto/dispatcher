@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // holdRowJSON is what `crew hold due --json` answers with: the matured rows the
@@ -187,13 +188,21 @@ func TestStreamHoldSetChangeReannounces(t *testing.T) {
 
 // A hold_due line is news, but it is not *quiet* news: the heartbeat counter
 // keeps counting parks beside it.
+//
+// The lane runs on a stepped clock here rather than the wall clock. --heartbeat
+// is both the quiet threshold, counted in parks, and the window a still-matured
+// hold re-announces on, counted in seconds — and three parks take however long
+// the machine takes. Stepping the clock keeps that window shut, so the count
+// below is about the matured set and not about the load (#1295).
 func TestStreamHoldDueDoesNotResetQuiet(t *testing.T) {
 	p := streamBus(t)
 	s := entryStub(t, map[string]string{
 		"watch":    parkedWatch("0"),
 		"hold due": `printf '%s\n' '` + holdRowJSON("h1") + `'; exit 0`,
 	})
-	l := startLane(t, p, s, Request{Heartbeat: "3"}, laneOpts{})
+	const heartbeatSecs = 3 // parks to a heartbeat, and the re-announce window in seconds
+	clk := newStepClock()
+	l := startLane(t, p, s, Request{Heartbeat: fmt.Sprint(heartbeatSecs)}, laneOpts{Clock: clockStep(clk)})
 
 	l.waitKind("hold_due", 1)
 	l.park()
@@ -201,9 +210,17 @@ func TestStreamHoldDueDoesNotResetQuiet(t *testing.T) {
 	l.park()
 	l.waitKind("heartbeat", 1)
 
+	// The window this case holds open is heartbeatSecs of lane time: 3000 reads of
+	// a clock that moves a millisecond per read, against the twenty-odd the case
+	// spends. Should that margin ever go, the count below turns load-sensitive and
+	// this is the failure that says so.
+	if spent := clk.laneTime(); spent >= heartbeatSecs*time.Second {
+		t.Fatalf("the case spent %v of lane time, the --heartbeat window it holds open", spent)
+	}
+
 	hb := l.ofKind("heartbeat")[0]
-	if quiet, ok := hb["quiet_s"].(float64); !ok || int64(quiet) != 3 {
-		t.Errorf("heartbeat = %v, want quiet_s 3 with hold_due firing alongside", hb)
+	if quiet, ok := hb["quiet_s"].(float64); !ok || int64(quiet) != heartbeatSecs {
+		t.Errorf("heartbeat = %v, want quiet_s %d with hold_due firing alongside", hb, heartbeatSecs)
 	}
 	if got := len(l.ofKind("hold_due")); got != 1 {
 		t.Errorf("hold_due lines = %d, want the one announcement", got)
