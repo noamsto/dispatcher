@@ -282,6 +282,28 @@ func TestRowDetailAndPR(t *testing.T) {
 	f.wantRow(statusRow(worker, `{"state":"failed","detail":"boom","pr_url":"u"}`))
 }
 
+// TestAcceptanceLedgerRidesInTheStatusDetail pins that the acceptance ledger a
+// worker posts becomes the status row's detail byte for byte, with the
+// dispatcher's waiver on the bus behind it.
+func TestAcceptanceLedgerRidesInTheStatusDetail(t *testing.T) {
+	const ledgerText = "AC1 pass(bats) AC2 waived(dispatcher)"
+	f := newFixture(t)
+	f.doc("tier: trivial\nkind: implement\nengine: claude\n")
+	f.log(msgRow("dispatcher:c1", worker, "waive AC1 AC2 AC3"))
+	if code, stderr := f.status(worker, "pr_open", ledgerText, "https://example.com/pr/1"); code != 0 || stderr != "" {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+	got := f.lines()
+	if len(got) != 2 {
+		t.Fatalf("%d rows, want the waiver msg and the status row: %q", len(got), got)
+	}
+	if g, w := testjson.Compact(testjson.MustParse(t, got[1])),
+		testjson.Compact(testjson.MustParse(t, statusRow(worker,
+			`{"state":"pr_open","detail":"`+ledgerText+`","pr_url":"https://example.com/pr/1"}`))); g != w {
+		t.Errorf("row:\n got  %s\n want %s", g, w)
+	}
+}
+
 // The documented set is the accepted set: a worker posting any of these six
 // states lands a row. `reaped` is the seventh state the refusal names, and a
 // worker may not post it (TestReapedRefusedFromWorkerAndRole).
