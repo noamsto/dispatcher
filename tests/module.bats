@@ -197,6 +197,20 @@ let
 
   minimalCfg = {enable = true;};
 
+  # #1304: the mcpServers catalog, and dispatcherMcp naming its entries.
+  mcpCfg = {
+    enable = true;
+    mcpServers.grafana = {
+      url = "https://mcp.grafana.example/mcp";
+      headers.Authorization = "Bearer \${GRAFANA_TOKEN}";
+    };
+    mcpServers.plain = {
+      url = "https://plain.example/mcp";
+      description = "Plain";
+    };
+    dispatcherMcp."noamsto/toddl" = ["sentry" "posthog" "grafana"];
+  };
+
   cursorlessCfg = {
     enable = true;
     engines = ["claude" "pi"];
@@ -251,6 +265,30 @@ in {
     };
   }).assertions);
   goodHostAsserts = builtins.filter (a: !a.assertion) (eval fullCfg).assertions;
+  mcp = mkResult mcpCfg;
+  goodMcpAsserts = builtins.filter (a: !a.assertion) (eval mcpCfg).assertions;
+  # A catalog name or header dispatch-config would refuse at runtime trips an
+  # HM assertion naming it; a non-https url is a type error.
+  badMcpAsserts = map (a: a.message) (builtins.filter (a: !a.assertion) (eval {
+    enable = true;
+    mcpServers = {
+      analytics = {url = "https://a.example/mcp";};
+      ok = {
+        url = "https://ok.example/mcp";
+        headers = {
+          Authorization = "Bearer sk-live-abc123";
+          X-Org = "\${ORG}";
+          X-Key = "!pass show key";
+        };
+      };
+    };
+  }).assertions);
+  badMcpUrlRejected =
+    !(builtins.tryEval (builtins.deepSeq (eval {
+        enable = true;
+        mcpServers.a = {url = "http://a.example/mcp";};
+      }).programs.dispatcher.mcpServers
+      true)).success;
   # An ssh value starting with `-` would be read as an ssh option, and a
   # relative or control-character repo path is refused by dispatch-config:
   # the option types refuse them at eval time.
@@ -813,6 +851,24 @@ worktree_git_lib_crew_go_row() { # bin
     run jq -e --arg p "$pkg" '(.full.packageNames | index($p)) != null' "$EVAL"
     [ "$status" -eq 0 ]
   done
+}
+
+@test "1304: mcpServers lands in the locked layer and dispatcherMcp names its entries" {
+  run jq -e '.mcp.locked.mcpServers == {"grafana": {"url": "https://mcp.grafana.example/mcp", "headers": {"Authorization": "Bearer ${GRAFANA_TOKEN}"}}, "plain": {"url": "https://plain.example/mcp", "description": "Plain"}}' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.mcp.locked.dispatcherMcp == {"noamsto/toddl": ["sentry", "posthog", "grafana"]}' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.goodMcpAsserts == [] and (.full.locked | has("mcpServers") | not)' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '(.badMcpAsserts | length) == 1 and (.badMcpAsserts[0] | contains("analytics, ok.headers.Authorization -- "))' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.badMcpUrlRejected == true' "$EVAL"
+  [ "$status" -eq 0 ]
+  # The locked file passes dispatch-config.
+  jq '.mcp.locked' "$EVAL" >"$BATS_TEST_TMPDIR/locked.json"
+  DISPATCH_LOCKED_SETTINGS="$BATS_TEST_TMPDIR/locked.json" run bash "$BATS_TEST_DIRNAME/../adapters/core/dispatch-config.sh"
+  [ "$status" -eq 0 ]
+  jq -e '.mcpServers | keys == ["elevenlabs", "grafana", "plain", "posthog", "sentry"]' <<<"$output"
 }
 
 @test "the locked settings layer carries the routing options, only when set" {

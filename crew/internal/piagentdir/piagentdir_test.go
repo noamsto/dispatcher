@@ -892,3 +892,47 @@ func TestMatchesBash(t *testing.T) {
 		t.Fatalf("models.jq drifted from local-models.sh\nembedded:\n%s\nbash:\n%s", got, want)
 	}
 }
+
+// #1304: mcp-auth.json is linked when the owner has one, and nothing is
+// seeded (or refused) when there is none.
+func TestMCPAuth(t *testing.T) {
+	f := newFixture(t)
+	f.ok(t)
+	if _, err := os.Lstat(f.dir + "/mcp-auth.json"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("mcp-auth.json seeded with no ambient file: %v", err)
+	}
+
+	// A worker's own sign-in left a regular file; the ambient file replaces it.
+	write(t, f.dir+"/mcp-auth.json", `{"worker":1}`, 0o600)
+	f.ok(t)
+	if read(t, f.dir+"/mcp-auth.json") != `{"worker":1}` {
+		t.Error("worker-local mcp-auth.json touched with no ambient file")
+	}
+	write(t, f.ambient+"/mcp-auth.json", `{"sentry|https://mcp.sentry.dev/mcp":{}}`, 0o600)
+	f.ok(t)
+	if got, err := os.Readlink(f.dir + "/mcp-auth.json"); err != nil || got != f.ambient+"/mcp-auth.json" {
+		t.Fatalf("mcp-auth link %q %v", got, err)
+	}
+	// Writes through the link land in the owner's file.
+	if err := os.WriteFile(f.dir+"/mcp-auth.json", []byte(`{"refreshed":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, f.ambient+"/mcp-auth.json") != `{"refreshed":1}` {
+		t.Error("write through the link missed the ambient file")
+	}
+
+	// The owner removes the file: the link is left dangling, the seed succeeds.
+	if err := os.Remove(f.ambient + "/mcp-auth.json"); err != nil {
+		t.Fatal(err)
+	}
+	f.ok(t)
+	if got, err := os.Readlink(f.dir + "/mcp-auth.json"); err != nil || got != f.ambient+"/mcp-auth.json" {
+		t.Errorf("dangling mcp-auth link %q %v", got, err)
+	}
+
+	// Not a regular file (a dir): skipped, not refused.
+	if err := os.Mkdir(f.ambient+"/mcp-auth.json", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f.ok(t)
+}

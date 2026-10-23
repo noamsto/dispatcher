@@ -33,7 +33,8 @@ Task shape
 
 Engine and roles
   --agent E               claude (default) | codex | cursor | pi
-  --mcp P                 MCP profile to launch the engine with
+  --mcp LIST              MCP for the lead: analytics (claude) or mcpServers names,
+                          comma-separated or repeated (none: no catalog server)
   --chrome                Claude in Chrome for the claude lead (owner's browser; one per machine)
   --grid                  Role grid derived from the tier (critics, reviewer)
   --no-grid               No role grid (refused with --agent pi above trivial)
@@ -4279,11 +4280,11 @@ while [ $# -gt 0 ]; do
     shift 2
     ;;
   --mcp)
-    mcp_profile="${2:-}"
-    [ -n "$mcp_profile" ] || {
-      echo "dispatch: --mcp needs a profile (analytics)" >&2
+    [ -n "${2:-}" ] || {
+      echo "dispatch: --mcp needs a profile (analytics or an mcpServers name)" >&2
       exit 1
     }
+    mcp_profile="${mcp_profile:+$mcp_profile,}$2"
     shift 2
     ;;
   --roles)
@@ -4838,9 +4839,11 @@ if { [ "$agent" = claude ] || [ "$agent" = pi ]; } && [ "$effort" = ultra ]; the
   exit 1
 fi
 refuse_claude_sonnet_cap "$agent" "$model" "$effort"
-if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
-  echo "dispatch: --mcp is claude-only; codex/cursor/pi base MCP comes from their own config" >&2
-  exit 1
+# --mcp (#1304): analytics stays claude-only; catalog names load on claude, pi
+# and codex, never cursor. Normalized here, before the worktree exists, into
+# the one comma list the task header records for `dispatch resume`.
+if [ -n "$mcp_profile" ]; then
+  mcp_profile="$(mcp_worker_optins dispatch "$settings" "$agent" "$mcp_profile")" || exit 1
 fi
 if [ -n "$chrome" ] && [ "$agent" != claude ]; then
   echo "dispatch: --chrome is claude-only (Claude in Chrome) — codex/cursor/pi workers check UI with agent-browser" >&2
@@ -5071,22 +5074,19 @@ required_protocol_files=(WORKER_PROTOCOL.md EVIDENCE_REVIEW.md)
 _require_protocol_files "$PROTOCOL_DIR" "${required_protocol_files[@]}"
 _check_protocol_rev "$PROTOCOL_DIR" dispatch
 
-# Map an additive --mcp profile to its generated config (claude-only).
+# Map an additive --mcp analytics to its generated config (claude-only), and
+# the catalog names to the engine's own per-launch flags (lead only: role panes
+# never get them).
 mcp_flag=""
-if [ -n "$mcp_profile" ]; then
-  case "$mcp_profile" in
-  analytics) mcp_file="$HOME/.config/claude-code/mcp-posthog.json" ;;
-  *)
-    echo "dispatch: unknown --mcp profile '$mcp_profile' (valid: analytics)" >&2
-    exit 1
-    ;;
-  esac
+if [[ ,$mcp_profile, == *,analytics,* ]]; then
+  mcp_file="$HOME/.config/claude-code/mcp-posthog.json"
   [ -f "$mcp_file" ] || {
-    echo "dispatch: --mcp $mcp_profile config not found at $mcp_file" >&2
+    echo "dispatch: --mcp analytics config not found at $mcp_file" >&2
     exit 1
   }
   mcp_flag="--mcp-config $mcp_file"
 fi
+mcp_args="$(mcp_worker_launch_args dispatch "$settings" "$agent" "$mcp_profile")" || exit 1
 
 title="$*"
 [ -n "$title" ] || {
@@ -6427,7 +6427,7 @@ if [ "$agent" = codex ]; then
   # codex and cursor cannot pre-assign a session id, so there is none to verify:
   # the record names the engine with `-`, replacing any earlier lead's record.
   _record_lead_session "$agent" -
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox $quoted_prompt"
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")codex --profile worker -m $model -c model_reasoning_effort=$effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort$mcp_args --dangerously-bypass-approvals-and-sandbox $quoted_prompt"
 elif [ "$agent" = cursor ]; then
   # cursor-agent has no reasoning-effort flag — effort is encoded in the model
   # id ($model, e.g. claude-opus-5-high); composer-2.5 has no effort variants.
@@ -6454,12 +6454,12 @@ elif [ "$agent" = pi ]; then
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session pi "$lead_sid"
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")PI_CODING_AGENT_DIR=$quoted_dir pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort") --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") $quoted_prompt"
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")PI_CODING_AGENT_DIR=$quoted_dir pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort") --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path")$mcp_args $quoted_prompt"
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session claude "$lead_sid"
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")$(claude_lean_env)claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome") $quoted_prompt"
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")$(claude_lean_env)claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag$mcp_args $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome") $quoted_prompt"
 fi
 write_launch_script launch_line "$launch_cmd"
 # Role grid: split the task window into one pane per role. Each role pane parks

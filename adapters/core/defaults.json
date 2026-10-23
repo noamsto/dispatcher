@@ -384,5 +384,10 @@
   "workerDeniedMcpServers": ["plugin_hm_playwright", "plugin_hm_firefox-devtools"],
   "dispatcherChrome": false,
   "dispatcherMcp": {},
+  "mcpServers": {
+    "sentry": {"url": "https://mcp.sentry.dev/mcp", "description": "Sentry issues, events and releases"},
+    "posthog": {"url": "https://mcp.posthog.com/mcp", "description": "PostHog product analytics, insights and feature flags"},
+    "elevenlabs": {"url": "https://api.elevenlabs.io/v1/mcp", "description": "ElevenLabs voices, speech and agents"}
+  },
   "fleetBudget": 8
 }

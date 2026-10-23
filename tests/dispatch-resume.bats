@@ -1121,6 +1121,41 @@ EOF
   [[ "$output" == *"claude-only"* ]]
 }
 
+@test "1304: resume carries the task doc's catalog mcp line to a pi or claude lead" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' -e 's/^mcp: $/mcp: sentry/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'pi --continue' <(launch_log))"
+  [[ "$line" =~ \ -e\ ([^ ]+) ]]
+  ext="${BASH_REMATCH[1]}"
+  [[ "$ext" == "$XDG_CACHE_HOME/dispatcher/mcp/"* ]]
+  sed -n 's/^const servers = \(.*\);$/\1/p' "$ext" | jq -e 'keys == ["sentry"]'
+  # A claude lead gets the same server through --mcp-config.
+  sed -i -e 's/^engine: pi/engine: claude/' -e 's|^model: .*|model: sonnet|' "$WT/WORKER_TASK.md"
+  : >"$STUB_LOG"
+  run run_resume
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --continue' <(launch_log))"
+  [[ "$line" =~ --mcp-config\ ([^ ]+) ]]
+  jq -e '.mcpServers | keys == ["sentry"]' "${BASH_REMATCH[1]}"
+}
+
+@test "1304: resume refuses an unknown or cursor catalog mcp line" {
+  setup_worker_wt
+  sed -i -e 's/^mcp: $/mcp: nosuch/' "$WT/WORKER_TASK.md"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unknown --mcp profile 'nosuch'"* ]]
+  sed -i -e 's/^engine: claude/engine: cursor/' -e 's/^mcp: nosuch/mcp: sentry/' "$WT/WORKER_TASK.md"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--mcp sentry is unsupported for cursor"* ]]
+}
+
 @test "resume: profile from the settings file enables the work deep-claude codex MCP" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris

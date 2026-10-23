@@ -520,6 +520,29 @@ engine_path() {
 # the launcher still calls after the launch resolve as before.
 engine_env_path="$(engine_path)"
 
+# Per-project MCP (#1277, #1304): dispatcherMcp's owner/repo entry for this
+# repo, else its org's, else none. claudeai and analytics are claude-only words
+# the other engines ignore; every other word names an mcpServers catalog entry
+# (dispatch-config refused unknown names), rendered below into the engine's own
+# per-launch mechanism.
+slug="$(_origin_slug)"
+optins=""
+if [ -n "$slug" ]; then
+  optins="$(jq -r --arg r "$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')" '
+    .dispatcherMcp // {} | (.[$r] // .[$r | split("/")[0]] // []) | join(" ")' <<<"$settings")"
+fi
+catalog_names=()
+for optin in $optins; do
+  case "$optin" in
+  claudeai | analytics) ;;
+  *) catalog_names+=("$optin") ;;
+  esac
+done
+catalog=""
+if [ "${#catalog_names[@]}" -gt 0 ]; then
+  catalog="$(mcp_catalog_pick "dispatcher: dispatcherMcp for $slug" "$settings" "${catalog_names[@]}")" || exit 1
+fi
+
 case "$agent" in
 claude)
   # Pinned, not inherited: /model and /effort persist across sessions, so an
@@ -541,18 +564,12 @@ claude)
 
   # Launch profile (#1277, docs/dispatcher-context-floor.md "profile-rec"): the
   # tools the protocol never names are disallowed, and MCP is opt-in per
-  # project through dispatcherMcp — the repo's owner/repo entry, else its org's,
-  # else none. claudeai restores every claude.ai connector: they load all or
-  # none (one env switch, and --strict-mcp-config drops them all), so that
-  # opt-in skips strict MCP and the switch. A generated --mcp profile is added
-  # as one more --mcp-config. Variadic flags take one --flag=value word each,
+  # project through dispatcherMcp (looked up above). claudeai restores every
+  # claude.ai connector: they load all or none (one env switch, and
+  # --strict-mcp-config drops them all), so that opt-in skips strict MCP and the
+  # switch. A generated --mcp profile, and the selected catalog servers, are
+  # each one more --mcp-config. Variadic flags take one --flag=value word each,
   # so a trailing task is never read as a tool name or a config.
-  slug="$(_origin_slug)"
-  optins=""
-  if [ -n "$slug" ]; then
-    optins="$(jq -r --arg r "$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')" '
-      .dispatcherMcp // {} | (.[$r] // .[$r | split("/")[0]] // []) | join(" ")' <<<"$settings")"
-  fi
   # env takes -u before any NAME=value.
   launch_env=(PATH="$engine_env_path")
   mcp_configs=()
@@ -570,6 +587,10 @@ claude)
       ;;
     esac
   done
+  if [ -n "$catalog" ]; then
+    mcp_file="$(mcp_render_claude dispatcher "$catalog")" || exit 1
+    mcp_configs+=("--mcp-config=$mcp_file")
+  fi
   if [ "$claudeai" = 1 ]; then
     # An inherited switch (a claude worker exports it as false) would undo the
     # opt-in.
@@ -599,17 +620,27 @@ codex | cursor)
     # the unattended dispatcher at 2.5x cost.
     ac_flag=()
     [ -n "$ac" ] && [ "$ac" != auto ] && ac_flag=(-c "model_auto_compact_token_limit=$ac")
+    # Catalog servers: one -c override per TOML key.
+    mcp_flags=()
+    if [ -n "$catalog" ]; then
+      mcp_lines="$(mcp_codex_args dispatcher "$catalog")" || exit 1
+      while IFS= read -r line; do mcp_flags+=(-c "$line"); done <<<"$mcp_lines"
+    fi
     env PATH="$engine_env_path" codex --profile worker \
       -m "${model:-$(orch_default model)}" \
       -c "model_reasoning_effort=\"${effort:-$(orch_default effort)}\"" \
       -c 'service_tier="default"' \
-      "${ac_flag[@]}" \
+      "${ac_flag[@]}" "${mcp_flags[@]}" \
       --dangerously-bypass-approvals-and-sandbox "$prompt"
   else
     # kimi-k3-high: third-family model, strong agentic tool use. --effort is
     # accepted-and-ignored (cursor encodes effort in the model id).
     [ -n "$effort" ] && echo "dispatcher: --effort is ignored for cursor (effort lives in the model id)" >&2
     [ -n "$ac" ] && [ "$ac" != auto ] && echo "dispatcher: --autocompact is ignored for cursor (no compaction knob)" >&2
+    # cursor reads MCP only from ~/.cursor/mcp.json or the repo's
+    # .cursor/mcp.json and has no per-launch MCP flag, so a catalog opt-in
+    # cannot be honoured without writing shared or repo-tracked config.
+    [ -z "$catalog" ] || echo "dispatcher: cursor has no per-launch MCP config; dispatcherMcp servers for $slug (${catalog_names[*]}) are not loaded — add them to ~/.cursor/mcp.json yourself" >&2
     env PATH="$engine_env_path" cursor-agent --model "${model:-$(orch_default model)}" \
       --force --trust --approve-mcps --disable-indexing --disable-codebase-ref "$prompt"
   fi
@@ -628,6 +659,12 @@ pi)
     --thinking "${effort:-$(orch_default effort)}" \
     --no-approve \
     --append-system-prompt "$protocol"
+  # pi has no --mcp-config: catalog servers come from a generated extension
+  # that registers exactly them for this launch.
+  if [ -n "$catalog" ]; then
+    mcp_file="$(mcp_render_pi dispatcher "$catalog")" || exit 1
+    set -- "$@" -e "$mcp_file"
+  fi
   [ -n "$task" ] && set -- "$@" "$task"
   env PATH="$engine_env_path" pi "$@"
   ;;
