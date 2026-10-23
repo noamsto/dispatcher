@@ -21,7 +21,6 @@ tests/crew.bats	pr_open	!timing	240454
 tests/crew.bats	pr_open/done	!timing	2461
 tests/crew.bats	reap	!timing	429530
 tests/crew.bats	reply	!timing	2819
-tests/crew.bats	resolve-target	!timing	1881
 tests/crew.bats	stall-watch	!timing	474937
 tests/crew.bats	watch	!timing	48846
 tests/dispatch-comment.bats	*	!timing	44295

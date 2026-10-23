@@ -1521,6 +1521,7 @@ var refusalRows = []struct {
 	{"resolve-target unknown flag", []string{"resolve-target", "--bogus", "sage"}, "crew: resolve-target: unknown flag '--bogus'", 1},
 	{"resolve-target extra positional", []string{"resolve-target", "sage", "again"}, "crew: resolve-target: one target only", 1},
 	{"resolve-target missing value", []string{"resolve-target", "sage", "--crew"}, "crew: resolve-target: --crew needs an id", 1},
+	{"resolve-target missing value with no target", []string{"resolve-target", "--crew"}, "crew: resolve-target: --crew needs an id", 1},
 	{"resolve-target empty value", []string{"resolve-target", "--crew", "", "sage"}, "crew: resolve-target: --crew needs an id", 1},
 	{"resolve-target no target", []string{"resolve-target"}, "usage: crew resolve-target <target> [--crew ID]", 1},
 
