@@ -142,6 +142,35 @@ func TestEverySubcommandAnswersHelpOutsideARepo(t *testing.T) {
 	}
 }
 
+// TestFleetStreamScreenIsTheFleetScreen is `fleet stream: --help and -h print the
+// fleet help, outside any git repo`. The lane is fleet's second mode, so the
+// screen that answers it is the fleet one, and that screen is the only place its
+// contract is written down: the synopsis an agent needs to start a lane, and the
+// parked-watch conflict it has to recognize when a lane holds a repo's watch.
+func TestFleetStreamScreenIsTheFleetScreen(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", dir)
+	e := env{getwd: func() (string, error) { return dir, nil }, probes: noTouchProbes()}
+
+	for _, flag := range []string{"--help", "-h"} {
+		var stdout, stderr bytes.Buffer
+		if code := run(context.Background(), []string{"fleet", "stream", flag}, &stdout, &stderr, e); code != 0 {
+			t.Fatalf("`crew fleet stream %s` outside any repo: code %d (stderr %q)", flag, code, stderr.String())
+		}
+		for _, want := range []string{
+			"usage: crew fleet stream --crew ID",
+			"another watch is already running",
+		} {
+			if !strings.Contains(stdout.String(), want) {
+				t.Errorf("`crew fleet stream %s` screen lacks %q:\n%s", flag, want, stdout.String())
+			}
+		}
+		if stderr.Len() != 0 {
+			t.Errorf("`crew fleet stream %s` wrote %q to stderr", flag, stderr.String())
+		}
+	}
+}
+
 // TestHoldActionHelpScreens is `help: crew hold <action> --help prints that
 // action's synopsis` and `help: hold due --help prints that action's screen,
 // not the flag's`: after an action, --help is that action's screen, and the bare
