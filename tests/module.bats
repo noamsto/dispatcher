@@ -501,8 +501,8 @@ placeholder_two_row() { # token
   grep -q '^_budget_windows() {' "$lib"
 }
 
-# F57: @worktreeGitLib@ (#539), @grantCheckLib@ (#536) and @localModelsLib@ are
-# substituted in each consumer. An unsubstituted token is not a readable path, so the source
+# F57: @worktreeGitLib@ (#539), @grantCheckLib@ (#536), @localModelsLib@ and
+# @openrouterKeyLib@ are substituted in each consumer. An unsubstituted token is not a readable path, so the source
 # would abort under set -e. Read-only greps; no per-row reset. A row lists only the
 # consumers that source that lib: `crew` left both rows with #821, since the entry
 # is the Go binary and sources no shared lib (it left worktree-git earlier, in
@@ -517,8 +517,9 @@ placeholder_two_row() { # token
 worktree-git|@worktreeGitLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume|$OUT_PERMISSION_CHECK/bin/permission-check
 grant-check|@grantCheckLib@|$OUT_DISPATCH/bin/dispatch|$OUT_DISPATCH_RESUME/bin/dispatch-resume|$OUT_PERMISSION_CHECK/bin/permission-check
 local-models|@localModelsLib@|$OUT_DISPATCH/bin/dispatch|$OUT_REFRESH_BUDGET/bin/refresh-budget
+openrouter-key|@openrouterKeyLib@|$OUT_REFRESH_BUDGET/bin/refresh-budget|$OUT_REFRESH_SCORES/bin/refresh-scores
 ROWS
-  finish_rows 3
+  finish_rows 4
 }
 
 placeholder_three_row() { # token bin… (empty trailing bins are skipped)

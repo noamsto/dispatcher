@@ -33,6 +33,8 @@ export GRANT_CHECK_LIB="$BATS_TEST_DIRNAME/../adapters/core/grant-check.sh"
 export WORKTREE_GIT_LIB="$BATS_TEST_DIRNAME/../adapters/core/worktree-git.sh"
 # And for the shared localModels lane lib.
 export LOCAL_MODELS_LIB="$BATS_TEST_DIRNAME/../adapters/core/local-models.sh"
+# And for the shared OpenRouter key resolver lib.
+export OPENROUTER_KEY_LIB="$BATS_TEST_DIRNAME/../adapters/core/openrouter-key.sh"
 # And for the shared quota-predicate lib.
 export BUDGET_GATE_LIB="$BATS_TEST_DIRNAME/../adapters/core/budget-gate.sh"
 # The host's ~/.config/dispatcher/settings.json must never reach a test.

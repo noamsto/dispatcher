@@ -6,8 +6,10 @@
 # dispatcher LLM reads it at judge time (see DISPATCHER_PROTOCOL.md); refresh
 # by hand or cron — no daemon. Primary source is LMArena's official Hugging
 # Face dataset via the datasets-server JSON API (no auth); OpenRouter's
-# benchmarks API (Artificial Analysis indices) is layered on when
-# OPENROUTER_API_KEY is set, skipped otherwise.
+# benchmarks API (Artificial Analysis indices) is layered on when an OpenRouter
+# key resolves — DISPATCH_OPENROUTER_KEY_FILE, else OPENROUTER_API_KEY, else
+# pi's own OpenRouter login, the way refresh-budget resolves it — skipped
+# otherwise.
 set -euo pipefail
 
 HF_BASE="https://datasets-server.huggingface.co/filter"
@@ -20,6 +22,9 @@ OUT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
 OUT="$OUT_DIR/model-scores.json"
 
 warn() { printf 'refresh-scores: %s\n' "$*" >&2; }
+
+# shellcheck source=/dev/null
+. "${OPENROUTER_KEY_LIB:-@openrouterKeyLib@}"
 
 # fetch_board <config> <category> — print {"published","models"} with the top
 # $TOP_N rows by rating; return 1 when the board can't be fetched at all.
@@ -48,13 +53,13 @@ fetch_board() {
      }' <<<"$acc"
 }
 
-# fetch_openrouter — Artificial Analysis indices via OpenRouter; needs
-# $OPENROUTER_API_KEY. Prints {"as_of","models"} sorted by agentic index.
+# fetch_openrouter <key> — Artificial Analysis indices via OpenRouter. The
+# key goes to curl through -K - on stdin, never on argv (the process list is
+# world-readable). Prints {"as_of","models"} sorted by agentic index.
 fetch_openrouter() {
-  local resp
-  if ! resp=$(curl -sf --max-time 30 \
-    -H "Authorization: Bearer $OPENROUTER_API_KEY" \
-    "$OR_BASE?source=artificial-analysis&max_results=100"); then
+  local key=$1 resp
+  if ! resp=$(curl -sf --max-time 30 -K - "$OR_BASE?source=artificial-analysis&max_results=100" \
+    <<<"header = \"Authorization: Bearer $key\""); then
     return 1
   fi
   jq --argjson n "$TOP_N" \
@@ -88,15 +93,17 @@ main() {
     exit 1
   fi
 
-  if [[ -n ${OPENROUTER_API_KEY:-} ]]; then
-    if openrouter=$(fetch_openrouter); then
+  local or_key=""
+  _or_key
+  if [[ -n $or_key ]]; then
+    if openrouter=$(fetch_openrouter "$or_key"); then
       :
     else
       warn "openrouter fetch failed; omitting"
       openrouter='null'
     fi
   else
-    warn "OPENROUTER_API_KEY unset; skipping openrouter benchmarks"
+    warn "no OpenRouter key configured; skipping openrouter benchmarks"
   fi
 
   mkdir -p "$OUT_DIR"
