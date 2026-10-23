@@ -95,9 +95,11 @@ func TestAppendKeepsEveryLineParseable(t *testing.T) {
 // The bats "bus: concurrent ..." cases, ported: a splice is invisible to a
 // line count alone — every append contributes exactly one newline either way —
 // so these race real concurrent writers and assert one parseable record per
-// line, each starting with exactly one {"ts".
+// row, each starting with exactly one {"ts". Blank rows are tolerated: the
+// torn-tail guard can land in a concurrent writer's page window and prefix a
+// newline, the one blank line Append's own doc accepts and ReadEvents skips.
 func TestAppendConcurrentNeverSplices(t *testing.T) {
-	const writers, perWriter = 8, 5
+	const writers, perWriter = 8, 25
 	buildRow := func(w int, body string) string {
 		q, _ := json.Marshal(body)
 		return fmt.Sprintf(`{"ts":1700000000000,"crew_id":"c1","kind":"status","from":"worker:b%d","body":{"state":"working","detail":%s}}`, w, q)
@@ -123,9 +125,14 @@ func TestAppendConcurrentNeverSplices(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+		var got []string
+		for _, l := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
+			if l != "" {
+				got = append(got, l)
+			}
+		}
 		if len(got) != writers*perWriter {
-			t.Fatalf("%d lines, want %d", len(got), writers*perWriter)
+			t.Fatalf("%d records, want %d:\n%s", len(got), writers*perWriter, data)
 		}
 		starts := 0
 		for i, line := range got {
