@@ -73,15 +73,11 @@ esac
 
 // The sweep every stub registers for its test: stop and wait for every process a stub
 // started, so none of them is writing into the temp dirs while `t.TempDir` removes
-// them. How long each class is given before the sweep gives up and says so.
-//
-// Two classes reach past the lane. The parked `watch` body renames its counter in with
-// a forked `mv` (parkedPrologue), and the loop waits only for the stub itself
+// them. Two classes reach past the lane. The parked `watch` body renames its counter in
+// with a forked `mv` (parkedPrologue), and the loop waits only for the stub itself
 // (`child.stop`), so the rename can still be in flight when `Run` returns. And a
-// `crew reap` child is never awaited and never signalled at all (see children.go), so
-// it outlives its lane by design — while its first act is appending to the argv log in
-// the stub's dir. Either write landing during `RemoveAll` is the
-// `unlinkat …/002: directory not empty` of #1285.
+// `crew reap` child is never awaited and never signalled (see children.go): it outlives
+// its lane by design, and its first act is appending to the argv log in the stub's dir.
 const (
 	settleGrace = 5 * time.Second  // a forked command gets this long to finish on its own
 	settleKill  = 10 * time.Second // then it is stopped with force
@@ -100,8 +96,7 @@ type stubProc struct {
 // t.TempDir (fixture's) and runs cleanups last-in-first-out, so a sweep registered
 // here — after that, and before any startLane registers its stop, since a lane always
 // needs a stub first — runs after every lane has stopped and before the dirs go away.
-// Registering it per stub instead would put the second stub's sweep before the first
-// lane's stop, and stop a body of a lane that is still running.
+// Per stub, the second stub's sweep would land before the first lane's stop.
 var settleRoots sync.Map
 
 func settleOnce(t *testing.T, root string) {
@@ -117,20 +112,17 @@ func settleOnce(t *testing.T, root string) {
 
 // settleStubs stops every process still running that belongs to root and waits for it:
 // a stub body with SIGTERM, since it may be parked on a step gate nobody will raise
-// again, and a command a body forked by waiting, since killing a rename mid-flight is
-// the wrong answer to a process that finishes in microseconds. It returns once nothing
-// is left; a process that outlives the bound is reported, never ignored.
+// again, and a command a body forked by waiting, since a rename in flight has to
+// finish. It returns once nothing is left; a process past the bound is reported.
 func settleStubs(t *testing.T, root string) {
 	t.Helper()
 	started := time.Now()
 	forked := map[int]time.Time{}
-	for quiet := 0; ; {
+	quiet := 0
+	for {
 		// A few clean scans, so a child forked but not yet exec'd — invisible to argv
 		// matching for microseconds — cannot slip past the last one.
-		live, err := scanStubs(root)
-		if err != nil {
-			t.Fatalf("cannot see the stubs of %s to settle them: %v", root, err)
-		}
+		live := liveStubs(t, root)
 		if len(live) == 0 {
 			if quiet++; quiet >= 3 {
 				return
@@ -157,7 +149,11 @@ func settleStubs(t *testing.T, root string) {
 		if time.Since(started) > settleBound {
 			var who []string
 			for _, p := range liveStubs(t, root) {
-				who = append(who, fmt.Sprintf("\tpid %d%s %s", p.pid, bodyWord(p.body), p.argv))
+				kind := "forked"
+				if p.body {
+					kind = "stub"
+				}
+				who = append(who, fmt.Sprintf("\tpid %d (%s) %s", p.pid, kind, p.argv))
 			}
 			t.Fatalf("stubs of %s were still running %s after the lane stopped:\n%s",
 				root, settleBound, strings.Join(who, "\n"))
@@ -166,33 +162,17 @@ func settleStubs(t *testing.T, root string) {
 	}
 }
 
-func bodyWord(body bool) string {
-	if body {
-		return " (stub)"
-	}
-	return ""
-}
-
-// liveStubs is scanStubs, with a sweep that cannot see /proc reported rather than
-// mistaken for an empty process table.
-func liveStubs(t *testing.T, root string) []stubProc {
-	t.Helper()
-	live, err := scanStubs(root)
-	if err != nil {
-		t.Fatalf("cannot see the stubs of %s: %v", root, err)
-	}
-	return live
-}
-
-// scanStubs is every process still running whose argv names a path under root: the
+// liveStubs is every process still running whose argv names a path under root: the
 // stub bodies, and the commands they forked. Containment rather than whole-token
 // matching, because a `bash -c` writer carries its paths inside one script element.
 // A writer that names no path under root — a relative path after a cd, a path compiled
 // in — is outside what the sweep can see; no body in this package writes that way.
-func scanStubs(root string) ([]stubProc, error) {
+// An unreadable /proc is reported, never mistaken for an empty process table.
+func liveStubs(t *testing.T, root string) []stubProc {
+	t.Helper()
 	ents, err := os.ReadDir("/proc")
 	if err != nil {
-		return nil, err
+		t.Fatalf("cannot see the stubs of %s: %v", root, err)
 	}
 	var out []stubProc
 	for _, e := range ents {
@@ -207,7 +187,7 @@ func scanStubs(root string) ([]stubProc, error) {
 		argv := strings.FieldsFunc(string(raw), func(r rune) bool { return r == 0 })
 		out = append(out, stubProc{pid: pid, argv: strings.Join(argv, " "), body: isStubBody(argv, root)})
 	}
-	return out, nil
+	return out
 }
 
 // isStubBody reports whether argv names an executable regular file under root — the

@@ -250,11 +250,10 @@ func TestStreamOutlivedReapChildCannotClobberTheNextLane(t *testing.T) {
 	}
 }
 
-// A lane's stop waits for the stub the loop is holding, but it never waits for a
-// `crew reap` child, and never signals it: that outlives the lane by design, and its
-// first act is appending to the argv log in the stub's own temp dir. The sweep the
-// harness registers per test stops it and waits, so nothing is writing there when
-// testing removes the dirs (#1285).
+// A lane's stop waits for the stub the loop is holding, never for a `crew reap` child:
+// that outlives the lane by design, and its first act is appending to the argv log in
+// the stub's own temp dir. The sweep stops it and waits, so nothing is writing there
+// when testing removes the dirs (#1285).
 func TestStreamCleanupSettlesTheStubThatOutlivedIt(t *testing.T) {
 	p := streamBus(t)
 	release := t.TempDir() + "/release"
@@ -284,10 +283,8 @@ func TestStreamCleanupSettlesTheStubThatOutlivedIt(t *testing.T) {
 	}
 }
 
-// The writer that raced the removal in #1285 is not a stub but a command one forked —
-// the `mv -f "$d/calls.tmp.$$" "$d/calls"` of the parked body's prologue, which nobody
-// waits for once the stub it came from is gone. The sweep waits for that class rather
-// than signalling it: a rename in flight must finish, not die.
+// The writer that raced the removal in #1285 was no stub but a command one forked, and
+// nobody waits for those. The sweep waits for that class instead of signalling it.
 func TestStreamCleanupWaitsForAForkedWriter(t *testing.T) {
 	p := streamBus(t)
 	s := entryStub(t, map[string]string{
