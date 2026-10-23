@@ -375,6 +375,9 @@ func TestRunHelpRouting(t *testing.T) {
 		{"help hold action", []string{"help", "hold", "list"}, "usage: crew hold list"},
 		{"fleet --help", []string{"fleet", "--help"}, "usage: crew fleet"},
 		{"fleet stream --help", []string{"fleet", "stream", "--help"}, "usage: crew fleet"},
+		// The lane's screen answers the short spelling too, at a sub-subcommand
+		// position: `isHelpFlag` is what routes it, not kong.
+		{"fleet stream -h", []string{"fleet", "stream", "-h"}, "usage: crew fleet"},
 		{"pi-agent-dir --help", []string{"pi-agent-dir", "--help"}, "usage: crew pi-agent-dir"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
