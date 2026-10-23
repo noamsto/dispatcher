@@ -7,6 +7,7 @@
 package stream
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -246,5 +247,85 @@ func TestStreamOutlivedReapChildCannotClobberTheNextLane(t *testing.T) {
 	}
 	if got := b.raw(); strings.Contains(got, "reaped feat/a") {
 		t.Errorf("B surfaced A's outlived reap: %s", got)
+	}
+}
+
+// A lane's stop waits for the stub the loop is holding, never for a `crew reap` child:
+// that outlives the lane by design, and its first act is appending to the argv log in
+// the stub's own temp dir. The sweep stops it and waits, so nothing is writing there
+// when testing removes the dirs (#1285).
+func TestStreamCleanupSettlesTheStubThatOutlivedIt(t *testing.T) {
+	p := streamBus(t)
+	release := t.TempDir() + "/release"
+	s := entryStub(t, map[string]string{
+		"watch": parkedWatch("0"),
+		"reap":  `while [ ! -e '` + release + `' ]; do sleep 0.02; done`,
+	})
+	clk := &fakeClock{}
+	l := startLane(t, p, s, Request{ReapEvery: "1"}, laneOpts{Clock: clockNow(clk)})
+	clk.advance(2 * time.Second)
+	l.parkUntil("the reap child", func() bool { return s.calls("reap") >= 1 })
+	l.stop()
+
+	// The parked watch body leaves a `cat steps` of its own behind beside the reap
+	// child, so the claim is about the reap process, not about everything running.
+	root := filepath.Dir(s.Dir)
+	live := liveStubs(t, root)
+	var reap *stubProc
+	for i := range live {
+		if strings.Contains(live[i].argv, filepath.Base(s.Script)+" reap") {
+			reap = &live[i]
+		}
+	}
+	if reap == nil {
+		t.Fatalf("no reap stub of %s is running, want the child the loop left behind: %v", root, live)
+	}
+	if !reap.body {
+		t.Errorf("the reap stub reads as a forked command: pid %d %s", reap.pid, reap.argv)
+	}
+	settleStubs(t, root)
+	if got := liveStubs(t, root); len(got) > 0 {
+		t.Errorf("%v survived the sweep", got)
+	}
+}
+
+// The writer that raced the removal in #1285 was no stub but a command one forked, and
+// nobody waits for those. The sweep waits for that class instead of signalling it.
+func TestStreamCleanupWaitsForAForkedWriter(t *testing.T) {
+	p := streamBus(t)
+	s := entryStub(t, map[string]string{
+		"watch": parkedPrologue() +
+			`bash -c "while [ ! -e \"$d/gate\" ]; do sleep 0.02; done; sleep 0.3; : > \"$d/late\"" & exit 0`,
+	})
+	l := startLane(t, p, s, Request{}, laneOpts{})
+	l.park()
+	l.stop()
+
+	root := filepath.Dir(s.Dir)
+	live := liveStubs(t, root)
+	var writer *stubProc
+	for i := range live {
+		if strings.Contains(live[i].argv, "/late") {
+			writer = &live[i]
+		}
+	}
+	if writer == nil {
+		t.Fatalf("nothing of %s is running, want the writer the watch body forked: %v", root, live)
+	}
+	if writer.body {
+		t.Errorf("the forked writer reads as a stub body: pid %d %s", writer.pid, writer.argv)
+	}
+	if s.has("late") {
+		t.Fatal("the writer wrote before the test released its gate")
+	}
+
+	s.write("gate", "x")
+	settleStubs(t, root)
+
+	if !s.has("late") {
+		t.Error("the sweep stopped the forked writer instead of waiting for it to write")
+	}
+	if got := liveStubs(t, root); len(got) > 0 {
+		t.Errorf("%v survived the sweep", got)
 	}
 }

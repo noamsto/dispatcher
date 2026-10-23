@@ -12,10 +12,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -43,6 +45,7 @@ type stub struct {
 func entryStub(t *testing.T, bodies map[string]string) *stub {
 	t.Helper()
 	dir := t.TempDir()
+	settleOnce(t, filepath.Dir(dir))
 	of := func(name, none string) string {
 		if body, ok := bodies[name]; ok {
 			return body
@@ -67,6 +70,149 @@ esac
 		of("reap", "exit 0")))
 	chmodExecutable(t, script)
 	return &stub{t: t, Script: script, Dir: dir}
+}
+
+// The sweep every stub registers for its test: stop and wait for every process a stub
+// started, so none of them is writing into the temp dirs while `t.TempDir` removes
+// them. Two classes reach past the lane. The parked `watch` body renames its counter in
+// with a forked `mv` (parkedPrologue), and the loop waits only for the stub itself
+// (`child.stop`), so the rename can still be in flight when `Run` returns. And a
+// `crew reap` child is never awaited and never signalled (see children.go): it outlives
+// its lane by design, and its first act is appending to the argv log in the stub's dir.
+const (
+	settleGrace = 5 * time.Second  // a forked command gets this long to finish on its own
+	settleKill  = 10 * time.Second // then it is stopped with force
+	settleBound = 20 * time.Second // past this, the sweep reports what it could not stop
+)
+
+// stubProc is one process of a test's own that is still running.
+type stubProc struct {
+	pid  int
+	argv string
+	body bool // argv names an executable regular file under the temp root: a stub body
+}
+
+// settleOnce registers the sweep once per test, from the first stub of that temp root.
+// testing registers the one RemoveAll of the whole temp root on the test's first
+// t.TempDir (fixture's) and runs cleanups last-in-first-out, so a sweep registered
+// here — after that, and before any lane registers its stop, since a lane is always
+// built on a stub — runs after every lane has stopped and before the dirs go away.
+// Per stub, the second stub's sweep would land before the first lane's stop.
+var settleRoots sync.Map
+
+func settleOnce(t *testing.T, root string) {
+	t.Helper()
+	if _, loaded := settleRoots.LoadOrStore(root, struct{}{}); loaded {
+		return
+	}
+	t.Cleanup(func() {
+		defer settleRoots.Delete(root)
+		settleStubs(t, root)
+	})
+}
+
+// settleStubs stops every process still running that belongs to root and waits for it:
+// a stub body with SIGTERM, since it may be parked on a step gate nobody will raise
+// again, and a command a body forked by waiting, since a rename in flight has to
+// finish. It returns once nothing is left; a process past the bound is reported.
+func settleStubs(t *testing.T, root string) {
+	t.Helper()
+	started := time.Now()
+	forked := map[int]time.Time{}
+	quiet := 0
+	for {
+		// A few clean scans, so a child forked but not yet exec'd — invisible to argv
+		// matching for microseconds — cannot slip past the last one.
+		live := liveStubs(t, root)
+		if len(live) == 0 {
+			if quiet++; quiet >= 3 {
+				return
+			}
+		} else {
+			quiet = 0
+			for _, p := range live {
+				if p.body {
+					_ = syscall.Kill(p.pid, syscall.SIGTERM)
+					continue
+				}
+				// A forked command is waited for, each on a clock of its own.
+				first, seen := forked[p.pid]
+				switch {
+				case !seen:
+					forked[p.pid] = time.Now()
+				case time.Since(started) > settleKill:
+					_ = syscall.Kill(p.pid, syscall.SIGKILL)
+				case time.Since(first) > settleGrace:
+					_ = syscall.Kill(p.pid, syscall.SIGTERM)
+				}
+			}
+		}
+		if time.Since(started) > settleBound {
+			var who []string
+			for _, p := range liveStubs(t, root) {
+				kind := "forked"
+				if p.body {
+					kind = "stub"
+				}
+				who = append(who, fmt.Sprintf("\tpid %d (%s) %s", p.pid, kind, p.argv))
+			}
+			t.Fatalf("stubs of %s were still running %s after the lane stopped:\n%s",
+				root, settleBound, strings.Join(who, "\n"))
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// liveStubs is every process still running whose command line names a path under root:
+// the stub bodies, and the commands they forked. Containment rather than whole-token
+// matching, because a `bash -c` writer carries its paths inside one script element.
+// A writer that names no path under root — a relative path after a cd, a path compiled
+// in — is outside what the sweep can see; no body in this package writes that way.
+//
+// `ps` rather than /proc because the suite runs on darwin too, which has no /proc. A
+// failed `ps` is fatal: an empty table would settle nothing and read as clean.
+func liveStubs(t *testing.T, root string) []stubProc {
+	t.Helper()
+	out, err := exec.Command("ps", "-A", "-ww", "-o", "pid=,args=").Output()
+	if err != nil {
+		t.Fatalf("cannot see the stubs of %s: %v", root, err)
+	}
+	var live []stubProc
+	for _, line := range strings.Split(string(out), "\n") {
+		pidStr, args, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
+		pid, err := strconv.Atoi(pidStr)
+		if err != nil || !strings.Contains(args, root+string(filepath.Separator)) {
+			continue
+		}
+		argv := strings.Fields(args)
+		live = append(live, stubProc{pid: pid, argv: strings.Join(argv, " "), body: isStubBody(argv, root)})
+	}
+	return live
+}
+
+// isStubBody reports whether argv names an executable regular file under root — the
+// stub script, which is what a running body is made of. Not argv[0]: the stubs are
+// shebang scripts, so the kernel runs `<bash> <script> <args…>` and the script is the
+// second element. A directory carries its x bit too and is no executable, so the state
+// dir and the bus dir never mark a body, and neither does a path quoted inside a
+// `bash -c` script.
+func isStubBody(argv []string, root string) bool {
+	for _, tok := range argv {
+		if !strings.HasPrefix(tok, root+string(filepath.Separator)) {
+			continue
+		}
+		fi, err := os.Stat(tok)
+		if err != nil {
+			continue
+		}
+		if m := fi.Mode(); m.IsRegular() && m&0o111 != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // path is a file in the stub's dir.
