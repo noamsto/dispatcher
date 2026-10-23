@@ -134,7 +134,7 @@ U6.3	one-liner	role panes post only as role:<branch>:<role>	post only as	crew/in
 U6.4	kept	a role whose engine exits before release posts blocked under its id and messages the lead; a reap is silent	posts a `blocked` status under that id	adapters/core/dispatch.sh	tests/dispatch.bats::grid: a role pane whose engine exits immediately posts a blocked status naming the role
 U7.1	design-doc	pane scraping is truthful only for an engine that streams; claude has the full frame set	Pane scraping only tells the truth
 U7.2	one-liner	codex and cursor get liveness coverage (stalled:/quiet:), not prompt coverage	get liveness coverage, not prompt coverage	crew/internal/stall/frame_detectors.go	tests/crew.bats::stall-watch: codex leaves an uncaptured Claude prompt frame to startup silence	behaviour pin; codex has since gained one verified prompt frame (Hooks need review), hence "mostly"
-U7.3	one-liner	cursor's monthly usage-limit frame gets quota: (D1b, two samples)	monthly-limit `quota:`	crew/internal/stall/frame_detectors.go	tests/crew.bats::stall-watch: D1b posts blocked/quota: on cursor's monthly usage-limit frame
+U7.3	one-liner	cursor's monthly usage-limit frame gets quota: (D1b, two samples)	monthly-limit `quota:`	crew/internal/stall/frame_detectors.go	crew/internal/stall/frame_detectors_test.go::TestD1bQuotaRefusal
 U7.4	kept	handle whichever prefix arrives the same way	Handle whichever prefix arrives
 U8.1	design-doc	--owner-auth turns dispatcher-written text into a worker's user turn	turns dispatcher-written text into a worker's user turn
 U8.2	kept	nothing verifies a quote is real; verbatim-only is an honor rule	Verbatim-only is an honor rule
