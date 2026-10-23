@@ -14,10 +14,13 @@ import (
 // reaches.
 
 func TestD2MeterWatchRows(t *testing.T) {
-	// The ported cases held --idle 2, so the episode posts on the second tick
-	// with a static token count.
-	const stalled25 = "|blocked|watchdog|turn-stall: token count static at 25.0k for 2s while the pane clock advanced"
-	const stalled28 = "|blocked|watchdog|turn-stall: token count static at 28.0k for 2s while the pane clock advanced"
+	// At --idle 2 the episode posts on the second tick with a static token count.
+	const (
+		stalled25 = leadID + "|blocked|watchdog|" +
+			"turn-stall: token count static at 25.0k for 2s while the pane clock advanced"
+		stalled28 = leadID + "|blocked|watchdog|" +
+			"turn-stall: token count static at 28.0k for 2s while the pane clock advanced"
+	)
 	for _, tc := range []struct {
 		name    string
 		texts   []string
@@ -26,11 +29,11 @@ func TestD2MeterWatchRows(t *testing.T) {
 	}{
 		{
 			// The clock advances, the token count does not.
-			name:    "the minute meter posts turn-stall:",
-			texts:   meterTicks(t, "meter.5m_29s.25.0k.txt", "5m 29s",
+			name: "the minute meter posts turn-stall:",
+			texts: meterTicks(t, "meter.5m_29s.25.0k.txt", "5m 29s",
 				"5m 29s", "5m 44s", "5m 59s", "6m 14s", "6m 29s", "6m 44s"),
 			maxLife: "5",
-			want:    []string{leadID + stalled25},
+			want:    []string{stalled25},
 		},
 		{
 			// A byte-static capture is not evidence however long it is held: the
@@ -45,7 +48,7 @@ func TestD2MeterWatchRows(t *testing.T) {
 			name:    "the hours meter advances and posts turn-stall:",
 			texts:   meterTicks(t, "meter_hours.1h_20m.txt", "1h 20m", "1h 20m", "1h 21m", "1h 22m", "1h 22m"),
 			maxLife: "5",
-			want:    []string{leadID + stalled28},
+			want:    []string{stalled28},
 		},
 		{
 			// #31's transcription: the same pane with `Considering… 1h 20m - 28.0k

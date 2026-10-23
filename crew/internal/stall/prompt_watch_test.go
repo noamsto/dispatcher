@@ -17,8 +17,7 @@ import (
 const (
 	leadID = "worker:feat/x"
 
-	// The generic prompt row, with the pane spelled out the way the ported cases
-	// had it.
+	// The generic prompt row: the detail names the pane, so the row spells %9.
 	promptRow = leadID + "|blocked|watchdog|prompt: interactive prompt in pane %9 — " +
 		"worker is waiting on input nobody can give"
 	// permission_subagent.txt's own detail: the relay row and the request line.
@@ -68,8 +67,7 @@ func TestPromptWatchRows(t *testing.T) {
 		},
 		{
 			// #435: this frame's footer is `Esc to cancel · Tab to amend`, which
-			// the plain prompt signature does not carry, so nothing posted and
-			// the worker waited silently.
+			// the plain prompt signature does not carry.
 			name:    "the real tool-permission frame posts its own detail",
 			frame:   "permission_subagent.txt",
 			maxLife: "4",
@@ -139,8 +137,8 @@ func TestPromptWatchRows(t *testing.T) {
 	}
 }
 
-// cappedDetail checks a posted permission detail against the contract the ported
-// case asserted: one line, no escape or control character left, the pane suffix
+// cappedDetail checks a posted permission detail against the permission detail
+// contract: one line, no escape or control character left, the pane suffix
 // intact, 160 characters all told. The bus is read raw as well, because `_post`
 // JSON-encodes a surviving ESC as \u001b and a raw-ESC grep over the row would
 // be a tautology.

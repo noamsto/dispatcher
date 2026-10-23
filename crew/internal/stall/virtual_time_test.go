@@ -9,9 +9,8 @@ import (
 // The CREW_CLOCK case: a watch configured for ten real minutes runs its whole
 // life on the virtual clock, so the harness never sleeps, and the detail from
 // two virtual minutes in still rides the bus. The host load read is scripted
-// empty here, which is what the ported case's `CREW_STALL_LOAD_CMD` pin did: D4
-// must not answer during the 300s window while the rest of the run is being
-// walked.
+// empty (the bats case pinned the same through CREW_STALL_LOAD_CMD): D4 must
+// not answer during its 300s window while the rest of the run is walked.
 
 func TestTenMinuteWatchOnVirtualTime(t *testing.T) {
 	req := Request{

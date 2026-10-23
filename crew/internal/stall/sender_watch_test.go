@@ -18,8 +18,8 @@ import (
 // refusals across every argv spelling are the root package's
 // TestStallWatchSenderCheckSurvivesTyping, and the rules themselves are the
 // sender package's tables (TestCheck, TestWatch). A refusal costs no probes, no
-// samples and no bus row, and keeps the exit code and stderr the ported cases
-// pinned; a pane watching itself still posts.
+// samples and no bus row, and keeps the exact exit code and stderr; a pane
+// watching itself still posts.
 
 // roleX is the reason a pane stamped as a role prints when asked to speak as any
 // other id.
@@ -43,7 +43,7 @@ func anchoredAs(branch, role string, panes ...string) sender.Probes {
 func TestRunRefusesAnchorMismatch(t *testing.T) {
 	for _, tc := range []struct {
 		name, branch, role, target, pane, reason string
-		panes                                     []string
+		panes                                    []string
 	}{
 		{
 			name:   "a stamped lead cannot target a pane outside its window",

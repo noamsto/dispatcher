@@ -45,7 +45,7 @@ type watchScript struct {
 	// anchor is what the #908 sender check sees; zero checks nothing, which is
 	// how every other run here reaches the loop.
 	anchor sender.Probes
-	req      Request
+	req    Request
 }
 
 // watchRun runs the watch to its exit and returns its harness with every
