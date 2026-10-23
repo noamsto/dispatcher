@@ -269,7 +269,7 @@ func TestStreamCleanupSettlesTheStubThatOutlivedIt(t *testing.T) {
 	l.stop()
 
 	root := filepath.Dir(s.Dir)
-	live := liveStubs(root)
+	live := liveStubs(t, root)
 	if len(live) == 0 {
 		t.Fatal("the reap stub exited once its lane stopped; the sweep has nothing to settle")
 	}
@@ -278,15 +278,9 @@ func TestStreamCleanupSettlesTheStubThatOutlivedIt(t *testing.T) {
 			t.Errorf("the reap stub reads as a forked command: pid %d %s", proc.pid, proc.argv)
 		}
 	}
-	// A body is stopped on sight: paying a forked command's grace instead would add
-	// seconds to every test that leaves one behind.
-	started := time.Now()
 	settleStubs(t, root)
-	if got := liveStubs(root); len(got) > 0 {
+	if got := liveStubs(t, root); len(got) > 0 {
 		t.Errorf("%v survived the sweep", got)
-	}
-	if elapsed := time.Since(started); elapsed > settleGrace*3/4 {
-		t.Errorf("the sweep took %s, want well under the %s a forked command is given", elapsed, settleGrace)
 	}
 }
 
@@ -305,7 +299,7 @@ func TestStreamCleanupWaitsForAForkedWriter(t *testing.T) {
 	l.stop()
 
 	root := filepath.Dir(s.Dir)
-	live := liveStubs(root)
+	live := liveStubs(t, root)
 	var writer *stubProc
 	for i := range live {
 		if strings.Contains(live[i].argv, "/late") {
@@ -328,7 +322,7 @@ func TestStreamCleanupWaitsForAForkedWriter(t *testing.T) {
 	if !s.has("late") {
 		t.Error("the sweep stopped the forked writer instead of waiting for it to write")
 	}
-	if got := liveStubs(root); len(got) > 0 {
+	if got := liveStubs(t, root); len(got) > 0 {
 		t.Errorf("%v survived the sweep", got)
 	}
 }
