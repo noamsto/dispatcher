@@ -383,5 +383,6 @@
   "rosterDiagram": {"autoOpen": true},
   "workerDeniedMcpServers": ["plugin_hm_playwright", "plugin_hm_firefox-devtools"],
   "dispatcherChrome": false,
+  "dispatcherMcp": {},
   "fleetBudget": 8
 }

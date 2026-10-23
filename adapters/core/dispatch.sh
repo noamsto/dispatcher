@@ -1350,12 +1350,13 @@ _tracker_slug_from_path() {
   return 0
 }
 
-# Configured origin, not `git remote get-url`: that applies insteadOf and
-# would hide a GitHub slug behind a rewritten local path. https userinfo is
-# discarded and never printed.
-_resolve_tracker() {
-  local url="" rest="" slug="" org="" want="" val="" which
-  local host="" path="" want_cmp=""
+# _origin_slug — owner/repo of the configured origin when it is a GitHub URL,
+# else nothing. Configured origin, not `git remote get-url`: that applies
+# insteadOf and would hide a GitHub slug behind a rewritten local path. https
+# userinfo is discarded and never printed. dispatcher.sh carries a copy
+# (tests/adapters.bats pins them together).
+_origin_slug() {
+  local url="" rest="" host="" path=""
   url="$(git config --get remote.origin.url 2>/dev/null || true)"
   case "$url" in
   https://*)
@@ -1392,8 +1393,16 @@ _resolve_tracker() {
   *) path="" ;;
   esac
   if [ -n "$path" ]; then
-    slug="$(_tracker_slug_from_path "$path")"
+    _tracker_slug_from_path "$path"
   fi
+  return 0
+}
+
+# _resolve_tracker — the tracker stamp for the origin repo: its repoTrackers
+# entry, then its org's orgTrackers entry, then github.
+_resolve_tracker() {
+  local slug="" org="" want="" val="" which want_cmp=""
+  slug="$(_origin_slug)"
   if [ -n "$slug" ]; then
     org="${slug%%/*}"
     for which in repo org; do

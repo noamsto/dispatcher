@@ -101,6 +101,18 @@ teardown() {
   done
 }
 
+@test "dispatcher's origin-slug helper copies match dispatch.sh's" {
+  # The dispatcher launcher resolves the origin repo for its per-project
+  # dispatcherMcp lookup (#1277) exactly as dispatch resolves it for the
+  # tracker stamp; both are standalone builds, so each carries a copy.
+  for fn in _github_ssh_host _tracker_slug_from_path _origin_slug; do
+    canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch.sh")"
+    [ -n "$canonical" ]
+    found="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatcher.sh")"
+    [ "$found" = "$canonical" ]
+  done
+}
+
 @test "dispatch-resume's _remote_window and _pane_client copies match dispatch.sh's" {
   # A routed resume mirrors the remote window the way dispatch --host does, and
   # opens its own window through the same scrubbed client; both are standalone

@@ -5,7 +5,7 @@ setup() {
   CONFIG="$BATS_TEST_DIRNAME/../adapters/core/dispatch-config.sh"
   DEFAULTS="$BATS_TEST_DIRNAME/../adapters/core/defaults.json"
   unset DISPATCH_ENGINES DISPATCH_GRANT_ROOTS DISPATCH_OPENROUTER_MONTHLY_USD DISPATCH_OPENROUTER_KEY_FILE
-  unset DISPATCH_PROFILE DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS DISPATCH_ROSTER_AUTO_OPEN
+  unset DISPATCH_PROFILE DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS DISPATCH_ROSTER_AUTO_OPEN DISPATCH_DISPATCHER_MCP
   export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/config"
   USER_FILE="$XDG_CONFIG_HOME/dispatcher/settings.json"
   LOCKED_FILE="$BATS_TEST_TMPDIR/locked.json"
@@ -188,6 +188,41 @@ locked_settings() {
     [ "$status" -eq 1 ]
     [[ "$stderr" == *"dispatcherChrome must be a boolean"* ]]
   done
+}
+
+@test "dispatcherMcp defaults to empty and merges per lowercased key across layers" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.dispatcherMcp == {}' <<<"$output"
+  user_settings '{"dispatcherMcp":{"Factify-Inc":["claudeai"],"noamsto/dispatcher":["analytics"]}}'
+  locked_settings '{"dispatcherMcp":{"factify-inc":["analytics"]}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.dispatcherMcp == {"factify-inc":["analytics"],"noamsto/dispatcher":["analytics"]}' <<<"$output"
+}
+
+@test "DISPATCH_DISPATCHER_MCP parses key=list pairs, an empty list included" {
+  user_settings '{"dispatcherMcp":{"factify-inc":["claudeai"]}}'
+  DISPATCH_DISPATCHER_MCP=$'Factify-Inc/Mono=claudeai,,analytics\n factify-inc= a/b=x a/b=analytics' run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.dispatcherMcp == {"factify-inc/mono":["claudeai","analytics"],"factify-inc":[],"a/b":["analytics"]}' <<<"$output"
+  DISPATCH_DISPATCHER_MCP='A/B=claudeai' run --separate-stderr "$CONFIG" --show-origin
+  [ "$status" -eq 0 ]
+  jq -e '.dispatcherMcp["a/b"] == {"value":["claudeai"],"origin":"env"} and .dispatcherMcp["factify-inc"].origin == "user"' <<<"$output"
+}
+
+@test "dispatcherMcp refuses an unknown opt-in, a non-array, a bad key and a bare env entry" {
+  local bad
+  for bad in '{"a/b":["sentry"]}' '{"a/b":"claudeai"}' '{"a b":["claudeai"]}' '{"a/b/c":[]}' '["claudeai"]'; do
+    user_settings "{\"dispatcherMcp\":$bad}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"dispatcherMcp must be an object keyed owner/repo or org"* ]]
+  done
+  rm -f "$USER_FILE"
+  DISPATCH_DISPATCHER_MCP='factify-inc' run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatcherMcp must be an object keyed owner/repo or org"* ]]
 }
 
 @test "openrouter must be an object" {
