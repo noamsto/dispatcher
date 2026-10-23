@@ -7,6 +7,7 @@ package stream
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -189,11 +190,10 @@ func TestStreamHoldSetChangeReannounces(t *testing.T) {
 // A hold_due line is news, but it is not *quiet* news: the heartbeat counter
 // keeps counting parks beside it.
 //
-// The lane runs on a stepped clock here rather than the wall clock. --heartbeat
-// is both the quiet threshold, counted in parks, and the window a still-matured
-// hold re-announces on, counted in seconds — and three parks take however long
-// the machine takes. Stepping the clock keeps that window shut, so the count
-// below is about the matured set and not about the load (#1295).
+// The lane runs on a stepped clock: --heartbeat is the quiet threshold in parks
+// and, at once, the window a still-matured hold re-announces on in seconds, and
+// three parks take however long the machine takes. A clock the case steps keeps
+// that window shut, so the count is about the matured set and not the load (#1295).
 func TestStreamHoldDueDoesNotResetQuiet(t *testing.T) {
 	p := streamBus(t)
 	s := entryStub(t, map[string]string{
@@ -202,7 +202,7 @@ func TestStreamHoldDueDoesNotResetQuiet(t *testing.T) {
 	})
 	const heartbeatSecs = 3 // parks to a heartbeat, and the re-announce window in seconds
 	clk := newStepClock()
-	l := startLane(t, p, s, Request{Heartbeat: fmt.Sprint(heartbeatSecs)}, laneOpts{Clock: clockStep(clk)})
+	l := startLane(t, p, s, Request{Heartbeat: strconv.Itoa(heartbeatSecs)}, laneOpts{Clock: clockStep(clk)})
 
 	l.waitKind("hold_due", 1)
 	l.park()
@@ -210,10 +210,10 @@ func TestStreamHoldDueDoesNotResetQuiet(t *testing.T) {
 	l.park()
 	l.waitKind("heartbeat", 1)
 
-	// The window this case holds open is heartbeatSecs of lane time: 3000 reads of
-	// a clock that moves a millisecond per read, against the twenty-odd the case
-	// spends. Should that margin ever go, the count below turns load-sensitive and
-	// this is the failure that says so.
+	// The window held open is heartbeatSecs of lane time: 3000 reads of a clock
+	// that moves a millisecond per read, against the twenty-odd the case spends.
+	// If that margin ever goes, the count below turns load-sensitive and this
+	// fails first, naming the window.
 	if spent := clk.laneTime(); spent >= heartbeatSecs*time.Second {
 		t.Fatalf("the case spent %v of lane time, the --heartbeat window it holds open", spent)
 	}

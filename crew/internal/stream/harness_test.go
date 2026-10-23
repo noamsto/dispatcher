@@ -629,14 +629,10 @@ func (c *fakeClock) advance(d time.Duration) { c.off.Add(int64(d / time.Millisec
 func clockNow(c *fakeClock) clock.Clock { return clock.Clock{Now: c.Now} }
 
 // stepClock is a lane clock that advances a millisecond per read instead of with
-// the wall clock. The tick `lane.park` waits on moves on every iteration, so no
-// park can stall, and a --heartbeat window closes only once the loop has read
-// its clock heartbeat*1000 times — a case that parks a few times never gets
-// there, however the machine is scheduled.
-//
-// `fakeClock` is the other half: it is the wall clock plus an offset, and an
-// offset cancels in `now - ts`, so it can pull a window towards a case (what the
-// cadence and suppression cases want) but can never hold one open.
+// the wall clock: the tick `lane.park` waits on moves on every iteration, and a
+// --heartbeat window closes only once the loop has read its clock
+// heartbeat*1000 times. `fakeClock` offsets the wall clock, and an offset cancels
+// in `now - ts`, so it can pull a window towards a case but never hold one open.
 type stepClock struct {
 	base  time.Time
 	reads atomic.Int64
@@ -649,7 +645,7 @@ func (c *stepClock) Now() time.Time {
 }
 
 // laneTime is how far the loop's clock has come: the window a --heartbeat case
-// holds open, counted in reads rather than in seconds.
+// holds open, in reads rather than in seconds.
 func (c *stepClock) laneTime() time.Duration {
 	return time.Duration(c.reads.Load()) * time.Millisecond
 }
