@@ -267,15 +267,21 @@ func TestStreamCleanupSettlesTheStubThatOutlivedIt(t *testing.T) {
 	l.parkUntil("the reap child", func() bool { return s.calls("reap") >= 1 })
 	l.stop()
 
+	// The parked watch body leaves a `cat steps` of its own behind beside the reap
+	// child, so the claim is about the reap process, not about everything running.
 	root := filepath.Dir(s.Dir)
 	live := liveStubs(t, root)
-	if len(live) == 0 {
-		t.Fatal("the reap stub exited once its lane stopped; the sweep has nothing to settle")
-	}
-	for _, proc := range live {
-		if !proc.body {
-			t.Errorf("the reap stub reads as a forked command: pid %d %s", proc.pid, proc.argv)
+	var reap *stubProc
+	for i := range live {
+		if strings.Contains(live[i].argv, filepath.Base(s.Script)+" reap") {
+			reap = &live[i]
 		}
+	}
+	if reap == nil {
+		t.Fatalf("no reap stub of %s is running, want the child the loop left behind: %v", root, live)
+	}
+	if !reap.body {
+		t.Errorf("the reap stub reads as a forked command: pid %d %s", reap.pid, reap.argv)
 	}
 	settleStubs(t, root)
 	if got := liveStubs(t, root); len(got) > 0 {

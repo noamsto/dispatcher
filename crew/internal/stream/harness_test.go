@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -162,39 +163,42 @@ func settleStubs(t *testing.T, root string) {
 	}
 }
 
-// liveStubs is every process still running whose argv names a path under root: the
-// stub bodies, and the commands they forked. Containment rather than whole-token
+// liveStubs is every process still running whose command line names a path under root:
+// the stub bodies, and the commands they forked. Containment rather than whole-token
 // matching, because a `bash -c` writer carries its paths inside one script element.
 // A writer that names no path under root — a relative path after a cd, a path compiled
 // in — is outside what the sweep can see; no body in this package writes that way.
-// An unreadable /proc is reported, never mistaken for an empty process table.
+//
+// `ps` rather than /proc because the suite runs on darwin too, which has no /proc. A
+// failed `ps` is fatal: an empty table would settle nothing and read as clean.
 func liveStubs(t *testing.T, root string) []stubProc {
 	t.Helper()
-	ents, err := os.ReadDir("/proc")
+	out, err := exec.Command("ps", "-A", "-ww", "-o", "pid=,args=").Output()
 	if err != nil {
 		t.Fatalf("cannot see the stubs of %s: %v", root, err)
 	}
-	var out []stubProc
-	for _, e := range ents {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil {
+	var live []stubProc
+	for _, line := range strings.Split(string(out), "\n") {
+		pidStr, args, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
-		if err != nil || !strings.Contains(string(raw), root+string(filepath.Separator)) {
+		pid, err := strconv.Atoi(pidStr)
+		if err != nil || !strings.Contains(args, root+string(filepath.Separator)) {
 			continue
 		}
-		argv := strings.FieldsFunc(string(raw), func(r rune) bool { return r == 0 })
-		out = append(out, stubProc{pid: pid, argv: strings.Join(argv, " "), body: isStubBody(argv, root)})
+		argv := strings.Fields(args)
+		live = append(live, stubProc{pid: pid, argv: strings.Join(argv, " "), body: isStubBody(argv, root)})
 	}
-	return out
+	return live
 }
 
 // isStubBody reports whether argv names an executable regular file under root — the
 // stub script, which is what a running body is made of. Not argv[0]: the stubs are
 // shebang scripts, so the kernel runs `<bash> <script> <args…>` and the script is the
 // second element. A directory carries its x bit too and is no executable, so the state
-// dir and the bus dir never mark a body.
+// dir and the bus dir never mark a body, and neither does a path quoted inside a
+// `bash -c` script.
 func isStubBody(argv []string, root string) bool {
 	for _, tok := range argv {
 		if !strings.HasPrefix(tok, root+string(filepath.Separator)) {
