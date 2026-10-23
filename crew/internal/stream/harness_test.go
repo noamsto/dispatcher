@@ -95,8 +95,8 @@ type stubProc struct {
 // settleOnce registers the sweep once per test, from the first stub of that temp root.
 // testing registers the one RemoveAll of the whole temp root on the test's first
 // t.TempDir (fixture's) and runs cleanups last-in-first-out, so a sweep registered
-// here — after that, and before any startLane registers its stop, since a lane always
-// needs a stub first — runs after every lane has stopped and before the dirs go away.
+// here — after that, and before any lane registers its stop, since a lane is always
+// built on a stub — runs after every lane has stopped and before the dirs go away.
 // Per stub, the second stub's sweep would land before the first lane's stop.
 var settleRoots sync.Map
 

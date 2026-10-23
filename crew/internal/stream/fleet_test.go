@@ -102,6 +102,7 @@ func watchStub(t *testing.T) string {
 		t.Fatal(err)
 	}
 	script := filepath.Join(t.TempDir(), "crew-stub.sh")
+	settleOnce(t, filepath.Dir(script))
 	writeFile(t, script, bashShebang()+"export "+helperEnv+"=1\nexec '"+bin+"' -test.run='^TestHelperCrewWatch$' -- \"$@\"\n")
 	chmodExecutable(t, script)
 	return script
@@ -131,6 +132,7 @@ func chmodExecutable(t *testing.T, path string) {
 func scriptStub(t *testing.T, body string) string {
 	t.Helper()
 	script := filepath.Join(t.TempDir(), "crew-stub.sh")
+	settleOnce(t, filepath.Dir(script))
 	writeFile(t, script, bashShebang()+"case \"${1:-}\" in\n  watch) "+body+" ;;\n  *) exit 0 ;;\nesac\n")
 	chmodExecutable(t, script)
 	return script

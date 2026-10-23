@@ -23,6 +23,7 @@ import (
 func relayStub(t *testing.T) (script, dir string) {
 	t.Helper()
 	dir = t.TempDir()
+	settleOnce(t, filepath.Dir(dir))
 	script = filepath.Join(t.TempDir(), "crew-stub.sh")
 	writeFile(t, script, bashShebang()+`d='`+dir+`'
 case "${1:-}" in

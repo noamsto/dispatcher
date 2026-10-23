@@ -465,6 +465,7 @@ func TestSweepReapedRemovesPairs(t *testing.T) {
 func TestSignalReleasesEverything(t *testing.T) {
 	p := fixture(t)
 	script := filepath.Join(t.TempDir(), "crew-stub.sh")
+	settleOnce(t, filepath.Dir(script))
 	batch := `{"cursor":1,"events":[{"ts":1,"crew_id":"c1","from":"worker:feat/x","to":"dispatcher:c1","kind":"status","body":{"state":"done"}}]}`
 	if err := os.WriteFile(script, []byte(
 		bashShebang()+"case \"${1:-}\" in\n"+
