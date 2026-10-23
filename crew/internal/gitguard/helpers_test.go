@@ -75,6 +75,15 @@ func (r repo) init(t *testing.T) {
 	}
 }
 
+// reseed re-records the baseline from the current config the way a dispatch's
+// entry guard does (the bats fixture's seed_git_baseline): Init never
+// overwrites, so the file goes first.
+func (r repo) reseed(t *testing.T) {
+	t.Helper()
+	_ = os.Remove(r.baseline())
+	r.init(t)
+}
+
 func capture(fn func(io.Writer) error) (string, error) {
 	var b bytes.Buffer
 	err := fn(&b)
@@ -124,6 +133,42 @@ func shimGit(t *testing.T, fail string) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+}
+
+// shimPlantGit puts a `git` on PATH that records <repo>'s core.fsmonitor as
+// /evil<n> after every `config --list`, n counting the listings it has served
+// into <count>. It models a key planted between listings: --accept may only
+// record pairs it displayed, so a value planted after the last listing must
+// never reach the baseline.
+func shimPlantGit(t *testing.T, repo, count string) {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"real=" + shellQuote(real) + "\n" +
+		"\"$real\" \"$@\"; rc=$?\n" +
+		"case \" $* \" in *\" config --list \"*)\n" +
+		"  n=$(( $(cat " + shellQuote(count) + " 2>/dev/null || echo 0) + 1 ))\n" +
+		"  echo \"$n\" >" + shellQuote(count) + "\n" +
+		"  \"$real\" -C " + shellQuote(repo) + " config core.fsmonitor \"/evil$n\" ;;\n" +
+		"esac\nexit $rc\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// predatesNote is what an unmarked (#678) baseline prints before the pairs it
+// now guards.
+func predatesNote(file string) string {
+	return "git-config baseline " + file + " predates redirect-key coverage — the next dispatch records the redirect keys present then, or --accept does\n"
 }
 
 func clearHint(file string) string {

