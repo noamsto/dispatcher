@@ -38,9 +38,8 @@ const (
 	reviewDoc = standardDoc
 	acceptDoc = "tier: trivial\nkind: implement\n\n## Acceptance\n- AC1 do it\n"
 	ciDoc     = "tier: trivial\nkind: implement\n\n## Acceptance\n- AC1 CI green\n"
-	// deepGateDoc is the deep sibling of reviewDoc, and deepReviewDoc the
-	// kind: review sibling: the ported status-gate cases name both tiers and
-	// both kinds, and the tier and kind lines decide which gate runs.
+	// deepGateDoc and deepReviewDoc are the deep and kind: review siblings of
+	// reviewDoc: the tier and kind lines decide which gate runs.
 	deepGateDoc       = "tier: deep\nkind: implement\nengine: claude\n"
 	deepReviewDoc     = "tier: deep\nkind: review\nengine: claude\n"
 	standardReviewDoc = "tier: standard\nkind: review\nengine: claude\n"
@@ -49,9 +48,8 @@ const (
 	resumed = "worker:feat/x#s2-2"
 )
 
-// openPass and openRefuse are the pr_open verb of a decision the done rows
-// above assert: the folded families of tests/crew.bats' status-gate section
-// posted pr_open, and the refusal names the state, so the verb is asserted too.
+// openPass and openRefuse are the pr_open siblings of seamPass and seamRefuse:
+// a refusal names the state, so a decision is pinned on both verbs.
 func openPass(name, doc string, rows ...string) gateCase {
 	return gateCase{name: name, doc: doc, rows: rows, state: "pr_open"}
 }
@@ -97,8 +95,8 @@ func reviewCases() []gateCase {
 			msgRow(worker, "review:c1", `{"seam":"review","review_mode":"full","tag":"note"}`), deslopSeam),
 		seamRefuse("claude: to dispatcher", reviewDoc, refused,
 			msgRow(worker, "dispatcher:c1", reviewBody), deslopSeam),
-		// a review seam addressed away from review: — the synthetic sinks a worker
-		// posts to for everything else — and a tagged retro note.
+		// a review seam addressed away from review:, the synthetic sinks included,
+		// and a tagged retro note.
 		seamRefuse("claude: to metrics", reviewDoc, refused,
 			msgRow(worker, "metrics:c1", reviewBody), deslopSeam),
 		seamRefuse("claude: a tagged retro note to retro:", reviewDoc, refused,
@@ -140,8 +138,7 @@ func reviewCases() []gateCase {
 			piVerdict(branch, "accept"), msgRow(branch, rev, `{"final":false}`), deslopSeam),
 		seamRefuse("pi: BOM re-request after accept", piDoc(), refused,
 			piVerdict(branch, "accept"), bomRequest, deslopSeam),
-		// the pr_open verb of the ported folded families: no seam at all, and a
-		// full or downgraded seam posting silently on either gated tier.
+		// the pr_open verb of each seam decision, on both gated tiers
 		openRefuse("pr_open: standard with no review seam is refused and not written", standardDoc,
 			noReview("pr_open", "standard")),
 		openRefuse("pr_open: deep with no review seam is refused and not written", deepGateDoc,
@@ -149,8 +146,8 @@ func reviewCases() []gateCase {
 		openPass("pr_open: a full review seam posts silently", standardDoc, reviewSeam, deslopSeam),
 		openPass("pr_open: a downgraded review seam counts like a full one", standardDoc,
 			msgRow(worker, "review:c1", `{"seam":"review","review_mode":"downgraded"}`), deslopSeam),
-		// review_mode values that are not a review: false is a JSON literal, and
-		// none and unavailable are the metrics record's own words.
+		// review_mode values that are not a review, including the words the metrics
+		// record itself uses for a run that was never gated on review.
 		seamRefuse("claude: review_mode false", reviewDoc, refused,
 			msgRow(worker, "review:c1", `{"seam":"review","review_mode":false}`), deslopSeam),
 		openRefuse("pr_open: review_mode none does not count", standardDoc, noReview("pr_open", "standard"),
@@ -462,8 +459,8 @@ func deslopCases() []gateCase {
 			reviewSeam, msgRow(otherSession, "review:c1", deslopBody)),
 		seamRefuse("deslop: body not JSON", standardDoc, refused,
 			reviewSeam, msgRow(worker, "review:c1", `deslop`)),
-		// the ported folded families, on the pr_open verb and on deep, and the
-		// synthetic metrics sink next to review:c2.
+		// the pr_open verb and the deep tier of the same two refusals, and the
+		// metrics sink next to review:c2.
 		openRefuse("pr_open: standard with a review seam but no deslop seam is refused", standardDoc,
 			noDeslop("pr_open", "standard"), reviewSeam),
 		openRefuse("pr_open: deep with a review seam but no deslop seam is refused", deepGateDoc,

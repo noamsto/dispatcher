@@ -282,9 +282,9 @@ func TestRowDetailAndPR(t *testing.T) {
 	f.wantRow(statusRow(worker, `{"state":"failed","detail":"boom","pr_url":"u"}`))
 }
 
-// TestAcceptanceLedgerRidesInTheStatusDetail is the ported bats case of the same
-// name: the acceptance ledger a worker posts becomes the status row's detail
-// byte for byte, with the dispatcher's waiver on the bus behind it.
+// TestAcceptanceLedgerRidesInTheStatusDetail pins that the acceptance ledger a
+// worker posts becomes the status row's detail byte for byte, with the
+// dispatcher's waiver on the bus behind it.
 func TestAcceptanceLedgerRidesInTheStatusDetail(t *testing.T) {
 	const ledgerText = "AC1 pass(bats) AC2 waived(dispatcher)"
 	f := newFixture(t)
