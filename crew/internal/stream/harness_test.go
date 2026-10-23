@@ -127,11 +127,18 @@ func (l *lane) park() {
 }
 
 // parkedPrologue is the call counter and the step gate every parked `watch`
-// body opens with.
+// body opens with. Both state files are rewritten while sibling stubs poll
+// them, so every write lands through a rename — and the gate keeps sleeping
+// on a read that is not a number, where `[ -lt ]` would error out the loop
+// and release the park early.
 func parkedPrologue() string {
 	return `n=$(( $(cat "$d/calls" 2>/dev/null || echo 0) + 1 ))
-  printf '%s\n' "$n" > "$d/calls"
-  while [ "$(cat "$d/steps" 2>/dev/null || echo 0)" -lt "$n" ]; do sleep 0.02; done
+  printf '%s\n' "$n" > "$d/calls.tmp.$$" && mv -f "$d/calls.tmp.$$" "$d/calls"
+  while :; do s=$(cat "$d/steps" 2>/dev/null || echo 0)
+    case "$s" in ''|*[!0-9]*) s=0 ;; esac
+    [ "$s" -ge "$n" ] && break
+    sleep 0.02
+  done
   `
 }
 

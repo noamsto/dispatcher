@@ -556,9 +556,27 @@ func ready() <-chan time.Time {
 	return c
 }
 
+// writeFile writes a fixture atomically: parked stubs poll some of these
+// files while a test rewrites them, and a truncate-then-write lets a poll
+// land between the two and read an empty file.
 func writeFile(t *testing.T, path, text string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".fixture-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op once the rename moved it
+	if _, err := tmp.WriteString(text); err != nil {
+		_ = tmp.Close()
+		t.Fatal(err)
+	}
+	if err := tmp.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
 		t.Fatal(err)
 	}
 }
