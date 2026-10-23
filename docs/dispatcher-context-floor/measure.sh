@@ -37,9 +37,9 @@ noncore=(CronCreate CronDelete CronList DesignSync EnterWorktree ExitWorktree Li
   PushNotification RemoteTrigger ReportFindings ScheduleWakeup SendMessage WebSearch Workflow
   ListMcpResourcesTool ReadMcpResourceTool ReadMcpResourceDirTool
   Artifact ArtifactComments ArtifactData SendFeedback EndConversation EnterPlanMode ExitPlanMode)
-# The recommended profile keeps the non-core tools dispatcher sessions were
-# seen calling in the 7-day fleet (Artifact family, WebSearch, PushNotification;
-# fleet-tools.py counts them).
+# The recommended profile keeps the non-core tools dispatcher sessions call
+# often in the 7-day fleet (Artifact family, WebSearch, PushNotification;
+# fleet-tools.py counts them) and drops RemoteTrigger and SendMessage (rare).
 noncore_rec=(CronCreate CronDelete CronList DesignSync EnterWorktree ExitWorktree ListAgents LSP NotebookEdit
   RemoteTrigger ReportFindings ScheduleWakeup SendMessage Workflow
   ListMcpResourcesTool ReadMcpResourceTool ReadMcpResourceDirTool

@@ -37,6 +37,9 @@ disp = [s for s in sessions if s["class"] == "dispatcher"]
 
 calls = collections.Counter()
 for s in disp:
+    # A tool_use block repeats across transcript lines; count each id once, as
+    # context-budget.py's parse_file does.
+    seen = set()
     with open(s["path"], encoding="utf-8", errors="replace") as f:
         for line in f:
             if '"tool_use"' not in line:
@@ -47,6 +50,10 @@ for s in disp:
                 continue
             for b in (o.get("message") or {}).get("content") or []:
                 if isinstance(b, dict) and b.get("type") == "tool_use":
+                    tid = b.get("id")
+                    if tid in seen:
+                        continue
+                    seen.add(tid)
                     n = b.get("name", "")
                     calls["__".join(n.split("__")[:2]) if n.startswith("mcp__") else n] += 1
 
