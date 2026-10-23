@@ -26,7 +26,7 @@ func TestStatusRepoKeyedRefusalOutsideRepo(t *testing.T) {
 }
 
 // With CREW_ID unset the status arm resolves the crew through bus.CrewID, so
-// the row it appends carries the WORKER_TASK.md crew_id, not an empty one.
+// the row it appends carries the WORKER_TASK.md crew_id.
 func TestStatusRowCrewIDFromTaskDoc(t *testing.T) {
 	for _, k := range []string{"CREW_WORKER_ID", "CREW_ROLE_ID", "CREW_CLOCK"} {
 		t.Setenv(k, "")
@@ -34,7 +34,7 @@ func TestStatusRowCrewIDFromTaskDoc(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	repo, logPath := repoWithLog(t, nil, 0) // CREW_ID unset, as after `CREW_ID=`
+	repo, logPath := repoWithLog(t, nil, 0) // CREW_ID unset
 	if err := os.WriteFile(filepath.Join(repo, "WORKER_TASK.md"), []byte("crew_id: c-from-file\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

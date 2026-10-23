@@ -137,7 +137,7 @@ func TestAppendConcurrentNeverSplices(t *testing.T) {
 		starts := 0
 		for i, line := range got {
 			if err := json.Unmarshal([]byte(line), new(any)); err != nil {
-				t.Fatalf("line %d does not parse: %v\n%s", i+1, err, line)
+				t.Fatalf("record %d does not parse: %v\n%s", i+1, err, line)
 			}
 			starts += strings.Count(line, `{"ts"`)
 		}
@@ -162,10 +162,9 @@ func TestAppendConcurrentNeverSplices(t *testing.T) {
 		})
 	})
 
-	// The reply case at the exact boundary: its 4002 x's landed the finished
-	// line one byte over the cap — the fit loop measures without the newline
-	// Append adds, sees LineMax, and never engages, while the write itself
-	// crosses 4096 + 1.
+	// The line-at-the-cap case: the finished row is exactly LineMax, the
+	// boundary where the fit loop — which measures without the newline Append
+	// adds — never engages while the write itself crosses 4096 + 1.
 	t.Run("line at the cap", func(t *testing.T) {
 		race(t, func() []string {
 			lines := make([]string, writers)
