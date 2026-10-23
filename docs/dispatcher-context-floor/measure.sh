@@ -16,6 +16,8 @@
 #   MODEL   default opus; EFFORT default high (dispatcher orchestratorDefaults).
 #   CHUNK   file to prepend to the prompt for the `chunk` variant.
 #   LABEL   label stored with a `chunk` run.
+#   INTERACTIVE  1 runs the variant as an interactive session in a detached
+#           tmux window instead of `claude -p` (see run_interactive).
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
