@@ -35,7 +35,7 @@ case "${1:-}" in
     case "${2:-}" in
       relay)
         n=$(( $(cat "$d/relay.n" 2>/dev/null || echo 0) + 1 ))
-        echo "$n" > "$d/relay.n"
+        echo "$n" > "$d/relay.n.tmp.$$" && mv -f "$d/relay.n.tmp.$$" "$d/relay.n"
         echo "$$" > "$d/relay.$n.pid"
         f="$d/relay.$n"; [ -f "$f" ] || f="$d/relay.default"
         . "$f" ;;
