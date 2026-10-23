@@ -18,8 +18,6 @@ setup() {
   # await, the hold paths and stall-watch run on a virtual clock: their waits
   # advance this file instead of sleeping.
   export CREW_CLOCK="$BATS_TEST_TMPDIR/clock"
-  # Table-driven rows restore this before each row's stubs.
-  _ROW_BASE_PATH="$PATH"
   # The real refresh-budget probes live accounts, which no test may do.
   export CREW_BUDGET_REFRESH_CMD=:
 }
@@ -35,35 +33,6 @@ teardown() {
     chmod -R u+w "$RESTORE_WRITE" 2>/dev/null || true
   fi
   teardown_repo
-}
-
-# Table-driven rows share one bats test, so each row re-seeds the fixture
-# setup() built. stub_bin/stub_tmux memoize STUB_DIR (helpers.bash), and
-# teardown_repo only removes the last $TEST_REPO.
-_reset_row_fixture() { # <id>
-  local id="$1" stub log stub_path
-  stub="$BATS_TEST_TMPDIR/row-stub-dir"
-  if [ -f "$stub" ]; then
-    stub_path="$(cat "$stub")"
-    rm -rf "$stub_path"
-    rm -f "$stub"
-  fi
-  if [ -n "${STUB_DIR:-}" ] && [ -d "$STUB_DIR" ]; then
-    rm -rf "$STUB_DIR"
-  fi
-  export PATH="$_ROW_BASE_PATH"
-  unset STUB_DIR STUB_LOG
-  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data-$id"
-  assert_isolated_xdg_data_home
-  log="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  rm -f "$log"
-  rm -f "$TEST_REPO/WORKER_TASK.md"
-}
-
-_note_row_stub() {
-  if [ -n "${STUB_DIR:-}" ]; then
-    printf '%s\n' "$STUB_DIR" >"$BATS_TEST_TMPDIR/row-stub-dir"
-  fi
 }
 
 # Real tmux pane_current_path is kernel-canonical (pwd -P); git worktree paths
