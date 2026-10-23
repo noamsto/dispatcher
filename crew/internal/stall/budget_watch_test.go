@@ -1,11 +1,7 @@
 package stall
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"io"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,40 +14,6 @@ import (
 // D8 whole-watch tests: what a watch run writes to the bus. The detector-level
 // halves — the episode and its gating, the refresh stamp and lock, the detail
 // rendering — are in budget_test.go and probe_detectors_test.go.
-
-// budgetRows is every status row on the bus as from|state|source|detail.
-func budgetRows(t *testing.T, h *harness) []string {
-	t.Helper()
-	data, err := os.ReadFile(h.paths.Log)
-	if err != nil {
-		return nil
-	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	var rows []string
-	for {
-		var v any
-		if err := dec.Decode(&v); err == io.EOF {
-			break
-		} else if err != nil {
-			t.Fatal(err)
-		}
-		row, _ := v.(map[string]any)
-		if k, _ := row["kind"].(string); k != "status" {
-			continue
-		}
-		body, _ := row["body"].(map[string]any)
-		from, _ := row["from"].(string)
-		st, _ := body["state"].(string)
-		dt, _ := body["detail"].(string)
-		src, ok := body["source"].(string)
-		if !ok {
-			src = "null"
-		}
-		rows = append(rows, strings.Join([]string{from, st, src, dt}, "|"))
-	}
-	return rows
-}
 
 // budgetWatch is the bats section's budget_watch: a whole watch over a scripted
 // budget verdict, on a static pane with the virtual clock and --max-life as the
@@ -88,7 +50,7 @@ func budgetWatch(t *testing.T, h *harness, req Request, refresh func()) []string
 	if code := Run(h.ctx, req, h.paths, &h.stderr, o); code != 0 {
 		t.Fatalf("exit %d: %s", code, h.stderr.String())
 	}
-	return budgetRows(t, h)
+	return statusRows(t, h)
 }
 
 // d8Window is one line of the windows predicate for a window that used that

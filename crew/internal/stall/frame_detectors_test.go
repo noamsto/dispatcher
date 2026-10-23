@@ -225,6 +225,18 @@ func TestD1Prompt(t *testing.T) {
 			frame: static(perm),
 			want:  map[int64][]string{15: {"blocked|" + subagentPermission}},
 		}},
+		// A real, answerable prompt with the quota phrase painted further up the
+		// same screen stays a prompt: the worker can still answer it.
+		{"the quota phrase far up-screen is prompt:, not quota:", fdScript{
+			end:   60,
+			frame: static(fixture(t, "prompt_trust_distant.txt")),
+			want:  map[int64][]string{15: {promptDetail}},
+		}},
+		{"session-limit anchors far up-screen are prompt:, not quota:", fdScript{
+			end:   60,
+			frame: static(fixture(t, "prompt_trust_distant_session_limit.txt")),
+			want:  map[int64][]string{15: {promptDetail}},
+		}},
 		{"prompt flips to quota: clear both prefixes and re-arm", fdScript{
 			end: 75,
 			frame: func(at int64) string {
@@ -363,6 +375,9 @@ func TestD1bQuotaRefusal(t *testing.T) {
 		}},
 		{"each engine enables only its own frame", fdScript{engine: "cursor", end: 60, frame: static(session)}},
 		{"claude ignores the cursor frame", fdScript{end: 60, frame: static(cursor)}},
+		{"cursor monthly text far up-screen is not quota:", fdScript{
+			engine: "cursor", end: 60, frame: static(fixture(t, "cursor_monthly_limit_distant.txt")),
+		}},
 		{"codex has neither", fdScript{engine: "codex", end: 60, frame: static(session)}},
 		{"hits reset by a gap sample", fdScript{
 			end: 75,
