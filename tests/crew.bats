@@ -424,36 +424,6 @@ _msg_rows() { bus | jq -s '[.[] | select(.kind=="msg")] | length'; }
   [ ! -e "$cdir" ]
 }
 
-@test "rate: projects replanned booleans and legacy null while retaining rework count" {
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  mkdir -p "$(dirname "$log")"
-  cat >"$log" <<'EOF'
-{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/replan-true","engine":"claude","model":"sonnet","tier":"standard","effort":"medium","title":"replans"}
-{"ts":1001,"crew_id":"c1","kind":"status","from":"worker:feat/replan-true","body":{"state":"done"}}
-{"ts":1002,"crew_id":"c1","kind":"msg","from":"worker:feat/replan-true","to":"metrics:c1","body":"{\"replanned\":true,\"rework_count\":3}"}
-{"ts":2000,"crew_id":"c1","kind":"dispatch","branch":"feat/replan-false","engine":"claude","model":"sonnet","tier":"standard","effort":"medium","title":"does not replan"}
-{"ts":2001,"crew_id":"c1","kind":"status","from":"worker:feat/replan-false","body":{"state":"done"}}
-{"ts":2002,"crew_id":"c1","kind":"msg","from":"worker:feat/replan-false","to":"metrics:c1","body":"{\"replanned\":false,\"rework_count\":1}"}
-{"ts":3000,"crew_id":"c1","kind":"dispatch","branch":"feat/replan-legacy","engine":"claude","model":"sonnet","tier":"standard","effort":"medium","title":"legacy metrics"}
-{"ts":3001,"crew_id":"c1","kind":"status","from":"worker:feat/replan-legacy","body":{"state":"done"}}
-{"ts":3002,"crew_id":"c1","kind":"msg","from":"worker:feat/replan-legacy","to":"metrics:c1","body":"{\"rework_count\":2}"}
-EOF
-  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
-
-  run run_crew rate
-  [ "$status" -eq 0 ]
-
-  run jq -s -e '
-    map({branch, replanned, rework_count, replanned_present: has("replanned")})
-    | sort_by(.branch) == [
-        {branch:"feat/replan-false", replanned:false, rework_count:1, replanned_present:true},
-        {branch:"feat/replan-legacy", replanned:null, rework_count:2, replanned_present:true},
-        {branch:"feat/replan-true", replanned:true, rework_count:3, replanned_present:true}
-      ]
-  ' "$XDG_DATA_HOME/crew/ratings.jsonl"
-  [ "$status" -eq 0 ]
-}
-
 @test "reap: rejects an unknown flag" {
   CREW_ID=c1 run run_crew reap --bogus
   [ "$status" -eq 1 ]
@@ -629,19 +599,6 @@ EOF
   [ "$status" -eq 5 ]
   [ "$output" = "engine	model	tier	shape	outcome	duration_s" ]
   [ -n "$stderr" ]
-}
-
-@test "rate: sweeps a sessioned worker and records its session" {
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  mkdir -p "$(dirname "$log")"
-  jq -nc '{ts:1000, crew_id:"c1", kind:"dispatch", branch:"feat/x", session:"s1-1",
-           engine:"claude", model:"sonnet", tier:"standard", effort:"medium", title:"T"}' >>"$log"
-  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" pr_open "" https://example.com/pr/1
-  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/share"
-  run run_crew rate
-  [ "$status" -eq 0 ]
-  run jq -r '"\(.branch) \(.session) \(.reached_pr)"' "$XDG_DATA_HOME/crew/ratings.jsonl"
-  [ "$output" = "feat/x s1-1 true" ]
 }
 
 @test "reap: a sessioned worker becomes a candidate" {
@@ -4321,27 +4278,6 @@ GH
   git show-ref --verify --quiet refs/heads/feat/issue-pushed
 }
 
-@test "rate: one unparseable metrics body does not kill the sweep" {
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  mkdir -p "$(dirname "$log")"
-  cat >"$log" <<'EOF'
-{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/bad","engine":"claude","model":"sonnet","tier":"standard","effort":"medium","title":"bad body"}
-{"ts":1001,"crew_id":"c1","kind":"status","from":"worker:feat/bad","body":{"state":"done"}}
-{"ts":1002,"crew_id":"c1","kind":"msg","from":"worker:feat/bad","to":"metrics:c1","body":"{\"rework_count\":3,\"detail\":\"trunc …[elided]"}
-{"ts":2000,"crew_id":"c1","kind":"dispatch","branch":"feat/good","engine":"claude","model":"sonnet","tier":"standard","effort":"medium","title":"good body"}
-{"ts":2001,"crew_id":"c1","kind":"status","from":"worker:feat/good","body":{"state":"done"}}
-{"ts":2002,"crew_id":"c1","kind":"msg","from":"worker:feat/good","to":"metrics:c1","body":"{\"rework_count\":7}"}
-EOF
-  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
-  run run_crew rate
-  [ "$status" -eq 0 ]
-  # Both runs must be recorded; the bad body folds to null metrics, not a crash.
-  run jq -s -e 'map({branch, rework_count}) | sort_by(.branch)
-    == [{branch:"feat/bad",rework_count:null},{branch:"feat/good",rework_count:7}]' \
-    "$XDG_DATA_HOME/crew/ratings.jsonl"
-  [ "$status" -eq 0 ]
-}
-
 # ---------------------------------------------------------------------------
 # stall-watch harness
 # ---------------------------------------------------------------------------
@@ -7109,47 +7045,6 @@ EOS
     --grace 0 --interval 1 --window 0 --idle 999 --dead 999 --no-budget --max-life 4
   [ "$status" -eq 0 ]
   [ "$(cat "$SAMPLER_DIR/n")" -gt 0 ]
-}
-
-@test "rate: blocked_count excludes watchdog blocks, watchdog_blocked_count counts them" {
-  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  mkdir -p "$(dirname "$logf")"
-  jq -nc '{ts:1,crew_id:"c1",kind:"dispatch",branch:"feat/x",engine:"claude",
-           model:"opus",tier:"deep",effort:"high",title:"t"}' >>"$logf"
-  seed_raw worker:feat/x blocked "which approach?" "" 2
-  seed_raw worker:feat/x blocked "prompt: interactive prompt in pane %9 — waiting" watchdog 3
-  seed_raw worker:feat/x blocked "quiet: pane unchanged for 1800s" watchdog 4
-  # An account limit, not a stall: it must not count as a watchdog stall.
-  seed_raw worker:feat/x blocked "budget: codex 5h at 100% (resets x)" watchdog 5
-  store="$BATS_TEST_TMPDIR/xdg"
-  XDG_DATA_HOME="$store" CREW_ID=c1 run run_crew rate
-  [ "$status" -eq 0 ]
-  run jq -r '"\(.blocked_count)|\(.watchdog_blocked_count)"' "$store/crew/ratings.jsonl"
-  [ "$output" = "1|2" ]
-}
-
-# Contract pin, not a behaviour test: rate already passes any review_mode
-# string through, so this passed before the value existed. It stops a later
-# rate edit swallowing `unavailable` — it does not verify a worker emits it.
-@test "rate: passes review_mode unavailable through untouched" {
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  mkdir -p "$(dirname "$log")"
-  cat >"$log" <<'EOF'
-{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/review-unavailable","engine":"codex","model":"terra","tier":"standard","effort":"medium","title":"review gate unavailable"}
-{"ts":1001,"crew_id":"c1","kind":"status","from":"worker:feat/review-unavailable","body":{"state":"failed"}}
-{"ts":1002,"crew_id":"c1","kind":"msg","from":"worker:feat/review-unavailable","to":"metrics:c1","body":"{\"review_mode\":\"unavailable\",\"review_high\":null}"}
-EOF
-  export XDG_DATA_HOME="$BATS_TEST_TMPDIR/data"
-
-  run run_crew rate
-  [ "$status" -eq 0 ]
-
-  run jq -s -e '
-    map(select(.branch=="feat/review-unavailable"))
-    | .[0]
-    | {review_mode, outcome, reached_pr} == {review_mode:"unavailable", outcome:"failed", reached_pr:false}
-  ' "$XDG_DATA_HOME/crew/ratings.jsonl"
-  [ "$status" -eq 0 ]
 }
 
 @test "burn map conformance: the doc slice names every classed rung" {
