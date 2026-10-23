@@ -164,7 +164,7 @@ cache() {
 @test "the key reaches curl on stdin, never in argv" {
   OPENROUTER_API_KEY=sk-or-v1-TESTSENTINELKEY run bash "$SCRIPT"
   [ "$status" -eq 0 ]
-  ! grep -q 'sk-or-v1-TESTSENTINELKEY' "$STUB_LOG"
+  run ! grep -q 'sk-or-v1-TESTSENTINELKEY' "$STUB_LOG"
   grep -q 'Authorization: Bearer sk-or-v1-TESTSENTINELKEY' "$STUB_STDIN_LOG"
 }
 
