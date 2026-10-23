@@ -7,6 +7,7 @@
 package stream
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -246,5 +247,88 @@ func TestStreamOutlivedReapChildCannotClobberTheNextLane(t *testing.T) {
 	}
 	if got := b.raw(); strings.Contains(got, "reaped feat/a") {
 		t.Errorf("B surfaced A's outlived reap: %s", got)
+	}
+}
+
+// A lane's stop waits for the stub the loop is holding, but it never waits for a
+// `crew reap` child, and never signals it: that outlives the lane by design, and its
+// first act is appending to the argv log in the stub's own temp dir. The sweep the
+// harness registers per test stops it and waits, so nothing is writing there when
+// testing removes the dirs (#1285).
+func TestStreamCleanupSettlesTheStubThatOutlivedIt(t *testing.T) {
+	p := streamBus(t)
+	release := t.TempDir() + "/release"
+	s := entryStub(t, map[string]string{
+		"watch": parkedWatch("0"),
+		"reap":  `while [ ! -e '` + release + `' ]; do sleep 0.02; done`,
+	})
+	clk := &fakeClock{}
+	l := startLane(t, p, s, Request{ReapEvery: "1"}, laneOpts{Clock: clockNow(clk)})
+	clk.advance(2 * time.Second)
+	l.parkUntil("the reap child", func() bool { return s.calls("reap") >= 1 })
+	l.stop()
+
+	root := filepath.Dir(s.Dir)
+	live := liveStubs(root)
+	if len(live) == 0 {
+		t.Fatal("the reap stub exited once its lane stopped; the sweep has nothing to settle")
+	}
+	for _, proc := range live {
+		if !proc.body {
+			t.Errorf("the reap stub reads as a forked command: pid %d %s", proc.pid, proc.argv)
+		}
+	}
+	// A body is stopped on sight: paying a forked command's grace instead would add
+	// seconds to every test that leaves one behind.
+	started := time.Now()
+	settleStubs(t, root)
+	if got := liveStubs(root); len(got) > 0 {
+		t.Errorf("%v survived the sweep", got)
+	}
+	if elapsed := time.Since(started); elapsed > settleGrace*3/4 {
+		t.Errorf("the sweep took %s, want well under the %s a forked command is given", elapsed, settleGrace)
+	}
+}
+
+// The writer that raced the removal in #1285 is not a stub but a command one forked —
+// the `mv -f "$d/calls.tmp.$$" "$d/calls"` of the parked body's prologue, which nobody
+// waits for once the stub it came from is gone. The sweep waits for that class rather
+// than signalling it: a rename in flight must finish, not die.
+func TestStreamCleanupWaitsForAForkedWriter(t *testing.T) {
+	p := streamBus(t)
+	s := entryStub(t, map[string]string{
+		"watch": parkedPrologue() +
+			`bash -c "while [ ! -e \"$d/gate\" ]; do sleep 0.02; done; sleep 0.3; : > \"$d/late\"" & exit 0`,
+	})
+	l := startLane(t, p, s, Request{}, laneOpts{})
+	l.park()
+	l.stop()
+
+	root := filepath.Dir(s.Dir)
+	live := liveStubs(root)
+	var writer *stubProc
+	for i := range live {
+		if strings.Contains(live[i].argv, "/late") {
+			writer = &live[i]
+		}
+	}
+	if writer == nil {
+		t.Fatalf("nothing of %s is running, want the writer the watch body forked: %v", root, live)
+	}
+	if writer.body {
+		t.Errorf("the forked writer reads as a stub body: pid %d %s", writer.pid, writer.argv)
+	}
+	if s.has("late") {
+		t.Fatal("the writer wrote before the test released its gate")
+	}
+
+	s.write("gate", "x")
+	settleStubs(t, root)
+
+	if !s.has("late") {
+		t.Error("the sweep stopped the forked writer instead of waiting for it to write")
+	}
+	if got := liveStubs(root); len(got) > 0 {
+		t.Errorf("%v survived the sweep", got)
 	}
 }

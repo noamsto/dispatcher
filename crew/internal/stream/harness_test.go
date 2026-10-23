@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -43,6 +44,7 @@ type stub struct {
 func entryStub(t *testing.T, bodies map[string]string) *stub {
 	t.Helper()
 	dir := t.TempDir()
+	settleOnce(t, filepath.Dir(dir))
 	of := func(name, none string) string {
 		if body, ok := bodies[name]; ok {
 			return body
@@ -67,6 +69,154 @@ esac
 		of("reap", "exit 0")))
 	chmodExecutable(t, script)
 	return &stub{t: t, Script: script, Dir: dir}
+}
+
+// The sweep every stub registers for its test: stop and wait for every process the
+// stubs started, so none of them is writing into the temp dirs while `t.TempDir`
+// removes them.
+//
+// Two classes reach past the lane. The parked `watch` body renames its counter in with
+// a forked `mv` (parkedPrologue), and the loop waits only for the stub itself
+// (`child.stop`), so the rename can still be in flight when `Run` returns. And a
+// `crew reap` child is never awaited and never signalled at all (see children.go), so
+// it outlives its lane by design — while its first act is appending to the argv log in
+// the stub's dir. Either write landing during `RemoveAll` is the
+// `unlinkat …/002: directory not empty` of #1285.
+const (
+	settleGrace = 2 * time.Second  // a forked command gets this long to finish on its own
+	settleKill  = 4 * time.Second  // then it is stopped with force
+	settleBound = 10 * time.Second // past this, the sweep reports what it could not stop
+)
+
+// stubProc is one process of a test's own that is still running.
+type stubProc struct {
+	pid  int
+	argv string
+	body bool // argv names an executable regular file under the temp root: a stub body
+}
+
+// settleOnce registers the sweep once per test, from the first stub of that temp root.
+// testing registers the one RemoveAll of the whole temp root on the test's first
+// t.TempDir (fixture's) and runs cleanups last-in-first-out, so a sweep registered
+// here — after that, and before any startLane registers its stop, since a lane always
+// needs a stub first — runs after every lane has stopped and before the dirs go away.
+// Registering it per stub instead would put the second stub's sweep before the first
+// lane's stop, and stop a body of a lane that is still running.
+var settleRoots sync.Map
+
+func settleOnce(t *testing.T, root string) {
+	t.Helper()
+	if _, loaded := settleRoots.LoadOrStore(root, struct{}{}); loaded {
+		return
+	}
+	t.Cleanup(func() {
+		defer settleRoots.Delete(root)
+		settleStubs(t, root)
+	})
+}
+
+// settleStubs stops every process still running that belongs to root and waits for it:
+// a stub body with SIGTERM, since it may be parked on a step gate nobody will raise
+// again, and a command a body forked by waiting, since killing a rename mid-flight is
+// the wrong answer to a process that finishes in microseconds. It returns once nothing
+// is left; a process that outlives the bound is reported, never ignored.
+func settleStubs(t *testing.T, root string) {
+	t.Helper()
+	started := time.Now()
+	forked := map[int]time.Time{}
+	for quiet := 0; ; {
+		// A few clean scans, so a child forked but not yet exec'd — invisible to argv
+		// matching for microseconds — cannot slip past the last one.
+		live := liveStubs(root)
+		if len(live) == 0 {
+			if quiet++; quiet >= 3 {
+				return
+			}
+		} else {
+			quiet = 0
+			for _, p := range live {
+				seen, forkedLong := forked[p.pid], false
+				if !p.body {
+					if forked[p.pid].IsZero() {
+						forked[p.pid] = time.Now()
+					} else {
+						forkedLong = time.Since(seen) > settleGrace
+					}
+				}
+				switch {
+				case p.body:
+					_ = syscall.Kill(p.pid, syscall.SIGTERM)
+				case time.Since(started) > settleKill:
+					_ = syscall.Kill(p.pid, syscall.SIGKILL)
+				case forkedLong:
+					_ = syscall.Kill(p.pid, syscall.SIGTERM)
+				}
+			}
+		}
+		if time.Since(started) > settleBound {
+			var who []string
+			for _, p := range liveStubs(root) {
+				who = append(who, fmt.Sprintf("\tpid %d%s %s", p.pid, bodyWord(p.body), p.argv))
+			}
+			t.Fatalf("stubs of %s were still running %s after the lane stopped:\n%s",
+				root, settleBound, strings.Join(who, "\n"))
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func bodyWord(body bool) string {
+	if body {
+		return " (stub)"
+	}
+	return ""
+}
+
+// liveStubs is every process still running whose argv names a path under root: the
+// stub bodies, and the commands they forked. Containment rather than whole-token
+// matching, because a `bash -c` writer carries its paths inside one script element.
+// A writer that names no path under root — a relative path after a cd, a path compiled
+// in — is outside what the sweep can see; no body in this package writes that way.
+func liveStubs(root string) []stubProc {
+	ents, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil
+	}
+	var out []stubProc
+	for _, e := range ents {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
+		if err != nil || !strings.Contains(string(raw), root+string(filepath.Separator)) {
+			continue
+		}
+		argv := strings.FieldsFunc(string(raw), func(r rune) bool { return r == 0 })
+		out = append(out, stubProc{pid: pid, argv: strings.Join(argv, " "), body: isStubBody(argv, root)})
+	}
+	return out
+}
+
+// isStubBody reports whether argv names an executable regular file under root — the
+// stub script, which is what a running body is made of. Not argv[0]: the stubs are
+// shebang scripts, so the kernel runs `<bash> <script> <args…>` and the script is the
+// second element. A directory carries its x bit too and is no executable, so the state
+// dir and the bus dir never mark a body.
+func isStubBody(argv []string, root string) bool {
+	for _, tok := range argv {
+		if !strings.HasPrefix(tok, root+string(filepath.Separator)) {
+			continue
+		}
+		fi, err := os.Stat(tok)
+		if err != nil {
+			continue
+		}
+		if m := fi.Mode(); m.IsRegular() && m&0o111 != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // path is a file in the stub's dir.
