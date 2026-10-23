@@ -14,7 +14,7 @@ import (
 
 const (
 	roleID = "role:feat/x:reviewer"
-	// The rows the bats cases read off the bus, %9 and all.
+	// The rows as the bus carries them, pane %9 spelled out.
 	rolePrompt = roleID + "|blocked|watchdog|prompt: interactive prompt in pane %9 — " +
 		"worker is waiting on input nobody can give"
 	roleClear = roleID + "|working|watchdog|prompt: cleared"

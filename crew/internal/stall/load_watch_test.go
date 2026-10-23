@@ -20,8 +20,8 @@ const (
 	loadedBare = "blocked|load: 1m load 99.9 on 32 cores for 2s"
 )
 
-// loadSampler is the bats stall_load_sampler: these lines, one per read, the
-// last one forever.
+// loadSampler answers each D4 read with these lines, one per read, the last
+// one forever.
 func loadSampler(lines ...string) func(int) string {
 	return func(read int) string { return lines[min(read-1, len(lines)-1)] }
 }
@@ -32,7 +32,7 @@ func TestLoadWatchRows(t *testing.T) {
 		load func(int) string
 		top  string
 		// noEngine is the watch a dispatcher launches without --engine; every
-		// other case runs as codex, the engine the bats cases used.
+		// other case runs as codex.
 		noEngine bool
 		idle     string
 		maxLife  string

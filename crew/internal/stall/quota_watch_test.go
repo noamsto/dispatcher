@@ -43,22 +43,23 @@ func TestQuotaSessionDetailSurvivesRosterCut(t *testing.T) {
 		frames: []string{"session_limit_refusal.txt"},
 		req:    Request{MaxLife: ptr("3")},
 	})
-	wantRows(t, h, sessionDetail)
-	detail := strings.TrimPrefix(pdRows(t, h)[0], "blocked|")
-	if r := []rune(detail); len(r) > 120 {
-		detail = string(r[:120])
-	} else {
-		t.Fatalf("detail is %d codepoints, want one the roster cuts", len(r))
+	rows := pdRows(t, h)
+	if len(rows) != 1 || rows[0] != sessionDetail {
+		t.Fatalf("rows %q, want the one session-limit row", rows)
 	}
-	if !strings.Contains(detail, "do not re-dispatch") {
-		t.Errorf("the first 120 codepoints drop the guidance: %q", detail)
+	cut := []rune(strings.TrimPrefix(rows[0], "blocked|"))
+	if len(cut) <= 120 {
+		t.Fatalf("detail is %d codepoints; the roster would not cut it", len(cut))
+	}
+	if got := string(cut[:120]); !strings.Contains(got, "do not re-dispatch") {
+		t.Errorf("the first 120 codepoints drop the guidance: %q", got)
 	}
 }
 
 // A quota: episode is exempt from every escalation path: the frozen frame is
 // byte-identical, so it satisfies D3 as well, and quiet: must neither supersede
 // it nor launder it into a failed — even with the pane's engine gone and --dead
-// long past. (The GONE sample that ended the bats runs is TestPaneGoneQuorum.)
+// long past. (The pane-vanished exit is TestPaneGoneQuorum.)
 func TestQuotaWatchNeverEscalates(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
