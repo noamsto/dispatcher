@@ -15,8 +15,9 @@
 //   - `watch.lock.d` is held for the whole park through the same internal/lock
 //     protocol `crew stream` takes. It stops and retries by sending TERM, and
 //     watch releases the lock itself (a deferred release, where the bash arm had
-//     an EXIT trap); a watch killed before it releases leaves its record behind
-//     until the next watch replaces it.
+//     an EXIT trap) armed before the acquire, so no TERM can land between the
+//     record's publish and the release; a SIGKILLed watch leaves its record
+//     behind until the next watch replaces it.
 package watch
 
 import (
@@ -81,6 +82,11 @@ type call struct {
 	since, timeout                                     int64
 }
 
+// Test seam: the signal-window regression parks the child here, right after the
+// record is published, so a TERM lands on the lock before the loop is reached.
+// The test replaces it; production never does.
+var afterLockAcquire = func() {}
+
 // Run is the arm, flag for flag and refusal for refusal.
 func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	if o.Clock.Now == nil {
@@ -105,12 +111,24 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		return 1
 	}
 
+	// `stream` stops and retries by sending TERM to this process while it is
+	// parked, and bash ran its EXIT trap for TERM, INT and HUP alike. Go's
+	// default would die holding the lock, so the signals are caught and acted
+	// on at the loop boundary — where bash acted on them, once the command in
+	// flight (the `sleep`) had returned. The arm precedes the acquire
+	// deliberately: with no handler armed yet, a TERM landing between the two
+	// dies by default and the release below never runs (#1294).
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	defer signal.Stop(sigs)
+
 	wlock := filepath.Join(cdir, "watch.lock.d")
 	if !lock.Acquire(wlock, strconv.Itoa(os.Getpid())) {
 		say(stderr, "crew: another watch is already running for this crew (%s)\n", c.crew)
 		return 1
 	}
 	defer lock.Release(wlock)
+	afterLockAcquire()
 
 	// Without --since the cursor self-seeds from the crew's file, so a stale
 	// caller cursor cannot re-deliver. A file that is missing, empty or not all
@@ -121,15 +139,6 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		c.sinceText = seedCursor(filepath.Join(cdir, "cursor"))
 		c.since = parseIntSaturate(c.sinceText)
 	}
-
-	// `stream` stops and retries by sending TERM to this process while it is
-	// parked, and bash ran its EXIT trap for TERM, INT and HUP alike. Go's
-	// default would die holding the lock, so the signals are caught and acted
-	// on at the loop boundary — where bash acted on them, once the command in
-	// flight (the `sleep`) had returned.
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
-	defer signal.Stop(sigs)
 
 	realMS := o.Clock.RealMS
 	start := realMS()

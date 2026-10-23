@@ -131,15 +131,16 @@ func RunFleet(r FleetRequest, stdout, stderr io.Writer, opts FleetOptions) int {
 		say(stderr, "crew: %v\n", err)
 		return 1
 	}
+	// As in Run: the arm precedes the acquire, so no TERM can land between the
+	// lock's publish and the cleanup that releases it (#1294).
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	defer signal.Stop(sigs)
+
 	lockd := filepath.Join(lane, "stream.lock.d")
 	if !acquire(lockd, c, o.Options, stderr) {
 		return 1
 	}
-
-	// As in Run: signals are caught only once the lock is held.
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
-	defer signal.Stop(sigs)
 
 	tick := min(c.park, rediscover)
 	tickCall := c
