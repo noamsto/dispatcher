@@ -441,7 +441,7 @@ every rule in those passages its destination (kept, one-liner with its
 enforcing code path and pinning test, or moved), checked by
 `tests/adapters.bats`. The protocol measured by the same append delta
 (`chunk` minus `bare-prompt` in `runs.jsonl`, label `protocol-after-1281`) went
-from 63,133 to 46,402 real tokens, a drop of 16,731.
+from 63,133 to 46,572 real tokens (protocol md5 `41106547`), a drop of 16,561.
 
 **Answer.** Of 63.1k protocol tokens, 20.0k are always needed. 24.6k are
 playbooks for named triggers and 18.6k explain enforcement whose only
