@@ -2,9 +2,11 @@ package bus
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 )
@@ -88,6 +90,93 @@ func TestAppendKeepsEveryLineParseable(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The bats "bus: concurrent ..." cases, ported: a splice is invisible to a
+// line count alone — every append contributes exactly one newline either way —
+// so these race real concurrent writers and assert one parseable record per
+// row, each starting with exactly one {"ts". Blank rows are tolerated: the
+// torn-tail guard can land in a concurrent writer's page window and prefix a
+// newline, the one blank line Append's own doc accepts and ReadEvents skips.
+func TestAppendConcurrentNeverSplices(t *testing.T) {
+	const writers, perWriter = 8, 25
+	buildRow := func(w int, body string) string {
+		q, _ := json.Marshal(body)
+		return fmt.Sprintf(`{"ts":1700000000000,"crew_id":"c1","kind":"status","from":"worker:b%d","body":{"state":"working","detail":%s}}`, w, q)
+	}
+	race := func(t *testing.T, linesOf func() []string) {
+		path := filepath.Join(t.TempDir(), "events.jsonl")
+		lines := linesOf()
+		var wg sync.WaitGroup
+		for _, line := range lines {
+			wg.Add(1)
+			go func(line string) {
+				defer wg.Done()
+				for range perWriter {
+					if err := Append(path, line); err != nil {
+						t.Errorf("append: %v", err)
+						return
+					}
+				}
+			}(line)
+		}
+		wg.Wait()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, l := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
+			if l != "" {
+				got = append(got, l)
+			}
+		}
+		if len(got) != writers*perWriter {
+			t.Fatalf("%d records, want %d:\n%s", len(got), writers*perWriter, data)
+		}
+		starts := 0
+		for i, line := range got {
+			if err := json.Unmarshal([]byte(line), new(any)); err != nil {
+				t.Fatalf("record %d does not parse: %v\n%s", i+1, err, line)
+			}
+			starts += strings.Count(line, `{"ts"`)
+		}
+		if starts != writers*perWriter {
+			t.Errorf("%d record starts, want %d: a splice merged two records", starts, writers*perWriter)
+		}
+	}
+
+	// The oversized case: an 8192-x detail, shrunk by FitLine to the cap, so
+	// every finished line lands at the 4 KiB boundary a splitting write would
+	// break apart under concurrency.
+	t.Run("oversized", func(t *testing.T) {
+		race(t, func() []string {
+			lines := make([]string, writers)
+			for w := range lines {
+				lines[w] = FitLine(func(text string) string { return buildRow(w, text) }, strings.Repeat("x", 8192))
+				if len(lines[w]) > LineMax {
+					t.Fatalf("FitLine left %d bytes, over the cap", len(lines[w]))
+				}
+			}
+			return lines
+		})
+	})
+
+	// The line-at-the-cap case: the finished row is exactly LineMax, the
+	// boundary where the fit loop — which measures without the newline Append
+	// adds — never engages while the write itself crosses 4096 + 1.
+	t.Run("line at the cap", func(t *testing.T) {
+		race(t, func() []string {
+			lines := make([]string, writers)
+			for w := range lines {
+				lines[w] = buildRow(w, strings.Repeat("x", LineMax-len(buildRow(w, ""))))
+				if len(lines[w]) != LineMax {
+					t.Fatalf("the line is %d bytes, want exactly the %d-byte cap", len(lines[w]), LineMax)
+				}
+			}
+			return lines
+		})
+	})
 }
 
 func TestShrinkCutsCharactersNotBytes(t *testing.T) {

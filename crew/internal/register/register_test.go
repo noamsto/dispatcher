@@ -182,6 +182,23 @@ func TestRegisterOK(t *testing.T) {
 	}
 }
 
+// The pid a crew records claims no exclusivity over it: the same pid may run
+// two dispatchers, one per crew, and each crew directory stands on its own.
+func TestRegisterNonExclusiveAcrossCrews(t *testing.T) {
+	p := testPaths(t)
+	for _, crew := range []string{"c1", "c2"} {
+		w := newWorld(crew)
+		if code, stderr := run("register", "888", p, w); code != 0 || stderr != "" {
+			t.Fatalf("%s: code=%d stderr=%q", crew, code, stderr)
+		}
+	}
+	for _, crew := range []string{"c1", "c2"} {
+		if got := readFile(t, p.CrewDir(crew)+"/pid"); got != "888\n" {
+			t.Errorf("%s pid file = %q", crew, got)
+		}
+	}
+}
+
 func TestRegisterDefaultsToOwnerPID(t *testing.T) {
 	p := testPaths(t)
 	w := newWorld("c1")
