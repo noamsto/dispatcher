@@ -38,7 +38,8 @@ noncore=(CronCreate CronDelete CronList DesignSync EnterWorktree ExitWorktree Li
   ListMcpResourcesTool ReadMcpResourceTool ReadMcpResourceDirTool
   Artifact ArtifactComments ArtifactData SendFeedback EndConversation EnterPlanMode ExitPlanMode)
 # The recommended profile keeps the non-core tools dispatcher sessions were
-# seen calling in the 7-day fleet (Artifact family, WebSearch, PushNotification).
+# seen calling in the 7-day fleet (Artifact family, WebSearch, PushNotification;
+# fleet-tools.py counts them).
 noncore_rec=(CronCreate CronDelete CronList DesignSync EnterWorktree ExitWorktree ListAgents LSP NotebookEdit
   RemoteTrigger ReportFindings ScheduleWakeup SendMessage Workflow
   ListMcpResourcesTool ReadMcpResourceTool ReadMcpResourceDirTool
@@ -92,8 +93,8 @@ wrapper_exec() {
     printf '%s\n' "${layers[@]}" '{"disableAllHooks":true}'
   } |
     jq -s 'reduce .[] as $l ({}; . * $l)' >"$settings_file"
-  "$bin" --settings "$settings_file" "${plugin_args[@]}" "${rest[@]}"
-  local rc=$?
+  local rc=0
+  "$bin" --settings "$settings_file" "${plugin_args[@]}" "${rest[@]}" || rc=$?
   rm -f "$settings_file"
   return "$rc"
 }
