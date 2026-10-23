@@ -23,7 +23,6 @@ tests/crew.bats	git-baseline shows an exec value verbatim	!timing	3701
 tests/crew.bats	id	!timing	1604
 tests/crew.bats	pr_open	!timing	240454
 tests/crew.bats	pr_open/done	!timing	2461
-tests/crew.bats	rate	!timing	15905
 tests/crew.bats	reap	!timing	429530
 tests/crew.bats	register	!timing	5043
 tests/crew.bats	reply	!timing	2819
