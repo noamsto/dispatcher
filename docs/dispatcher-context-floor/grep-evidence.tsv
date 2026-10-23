@@ -1,0 +1,60 @@
+kind	name	removed	protocol_hits	lines
+tool	CronCreate	yes	0	-
+tool	CronDelete	yes	0	-
+tool	CronList	yes	0	-
+tool	DesignSync	yes	0	-
+tool	EnterWorktree	yes	0	-
+tool	ExitWorktree	yes	0	-
+tool	ListAgents	yes	0	-
+tool	LSP	yes	0	-
+tool	NotebookEdit	yes	0	-
+tool	RemoteTrigger	yes	0	-
+tool	ReportFindings	yes	0	-
+tool	ScheduleWakeup	yes	0	-
+tool	SendMessage	yes	0	-
+tool	Workflow	yes	0	-
+tool	ListMcpResourcesTool	yes	0	-
+tool	ReadMcpResourceTool	yes	0	-
+tool	ReadMcpResourceDirTool	yes	0	-
+tool	SendFeedback	yes	0	-
+tool	EndConversation	yes	0	-
+tool	EnterPlanMode	yes	0	-
+tool	ExitPlanMode	yes	0	-
+tool	Artifact	profile only (kept by profile-rec)	0	-
+tool	ArtifactComments	profile only (kept by profile-rec)	0	-
+tool	ArtifactData	profile only (kept by profile-rec)	0	-
+tool	WebSearch	profile only (kept by profile-rec)	0	-
+tool	PushNotification	profile only (kept by profile-rec)	0	-
+tool	Bash	no	3	633,659,1198
+tool	Read	no	8	5,9,473,484,1064,1279,1556,1626
+tool	Write	no	4	633,664,1051,1056
+tool	Edit	no	3	632,633,664
+tool	Monitor	no	6	1088,1099,1116,1191,1192,1263
+tool	TaskStop	no	0	-
+tool	Agent	no	0	-
+tool	AskUserQuestion	no	1	1054
+tool	WebFetch	no	0	-
+tool	Skill	no	0	-
+tool	ToolSearch	no	0	-
+mcp	context7	yes	0	-
+mcp	playwright	yes	0	-
+mcp	firefox-devtools	yes	0	-
+mcp	claude.ai Claude Docs	yes	0	-
+mcp	claude.ai ElevenLabs	yes	0	-
+mcp	claude.ai Google Calendar	yes	0	-
+mcp	claude.ai Google Drive	yes	0	-
+mcp	claude.ai Gmail	yes	0	-
+mcp	claude.ai PostHog	yes	1	1044
+mcp	claude.ai Cloudflare	yes	0	-
+mcp	claude.ai Sentry	yes	0	-
+mcp	claude.ai (any connector)	yes	0	-
+mcp	mcp__ (any MCP tool name)	n/a	1	1045
+plugin	superpowers	yes	1	1368
+plugin	agent-smith	yes	0	-
+plugin	frontend-design	yes	0	-
+plugin	refactoring-agent	yes	0	-
+plugin	commit-commands	yes	0	-
+plugin	resolved	yes	18	410,442,470,491,492,495,505,558
+plugin	context-efficient-tools	yes	0	-
+skill	skill (the word)	n/a	1	631
+skill	dispatcher: plugin skills (deslop, spec-plan-critic, agent-browser)	n/a	0	-

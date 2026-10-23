@@ -57,6 +57,16 @@ cache, which cuts the cost of a restart to 0.7-1.4M and the break-even to 9-18
 turns at Q4's R = 10k (Q4's assumption: 29). Both #700 and #701 are worth pursuing; see
 [Relaunch cache cost, measured](#relaunch-cache-cost-measured).
 
+**Dispatcher floor re-measured (2026-10-23, #1271).** The dispatcher's turn-1
+floor is now 125.7k interactive (fleet median 127.9k), and
+`DISPATCHER_PROTOCOL.md` is 63.1k of it (48.4k here). The protocol splits into
+32% always-needed text, 39% rare-path playbooks and 29% explanations of
+mechanisms the code enforces. A measured launch profile cuts 23.0k. The
+sequenced plan (launch profile, class (c) one-liners under #739, `dispatcher:*`
+skills with output-carried pointers instead of #703's phase files, a
+`triage-reader` persona) is in
+[Dispatcher context floor, re-measured](dispatcher-context-floor.md).
+
 **No prototype in this PR.** The top items need harness behavior or
 dispatcher-protocol changes across both adapter copies, and row 4 rewrites
 `WORKER_PROTOCOL.md` in both adapter copies plus the launch carrier in

@@ -1,0 +1,120 @@
+dispatcher sessions: 16 (window: 7 days)
+
+tool calls by name
+   5553  Bash
+    295  Monitor
+    274  Write
+    234  Read
+    137  AskUserQuestion
+    125  ToolSearch
+     78  Artifact
+     67  mcp__claude_ai_Cloudflare_Developer_Platform
+     64  mcp__claude_ai_PostHog
+     57  mcp__claude_ai_Sentry
+     32  Edit
+     20  Agent
+     13  TaskStop
+     10  WebFetch
+      7  mcp__claude_ai_Gmail
+      7  WebSearch
+      5  SendUserFile
+      3  PushNotification
+      3  Skill
+      3  RemoteTrigger
+      2  ArtifactComments
+      1  ArtifactData
+      1  SendMessage
+      1  ReadNotifications
+
+tool-result carry by class (context-budget.py `tools`, dispatcher sessions;
+the 'worker-lead' labels below mean dispatcher; shares are relative only)
+transcripts=1633 sessions(with turns)=1595 bus_logs=7 cwds=524 (resolved 496) bus_engine_sessions=863
+ratio=2.7 chars/token   worker-leads=16   worker-lead integral=1,616,824,950
+
+class                    count      chars     tokens     carry_cost  share%  tok_med  tok_p90
+-----------------------  -----  ---------  ---------  -------------  ------  -------  -------
+bash:gh                  1,565  3,029,240  1,121,941  1,599,250,596    34.9      197    2,084
+bash:search                890  1,272,080    471,141    648,913,926    14.2      289    1,255
+bash:crew                1,535    996,467    369,062    619,622,155    13.5      100      508
+bash:git                   599  1,044,405    386,817    592,673,063    12.9      299    1,470
+other:mcp                  195    522,511    193,523    381,023,439     8.3      336    2,005
+bash:cat                   443    623,474    230,916    308,195,789     6.7      215    1,310
+other:Artifact              78    254,463     94,246    164,700,440     3.6      673      675
+bash:other                 282    107,770     39,915     65,267,171     1.4       35      350
+other:AskUserQuestion      137     58,053     21,501     37,946,106     0.8      135      249
+bash:bats                  177    283,359    104,948     29,073,844     0.6      203    1,555
+edit                       305     59,917     22,191     24,524,969     0.5       75       79
+other:WebSearch              7     20,924      7,750     20,935,207     0.5      953    1,621
+other:Monitor              295     89,913     33,301     17,648,157     0.4      112      112
+read:other                 227     46,737     17,310     12,965,804     0.3        0        0
+other:WebFetch              10     10,537      3,903     10,611,950     0.2      429      623
+other:unknown                8     13,061      4,837     10,506,370     0.2      312    1,251
+other:RemoteTrigger          3     27,102     10,038     10,261,110     0.2    1,442    6,498
+agent                       20     20,970      7,767      7,061,747     0.2      388      390
+read:md                      7     25,766      9,543      5,946,601     0.1    1,029    2,432
+bash:shellcheck             16     11,064      4,098      5,229,092     0.1      135      389
+bash:nix-other              25      7,688      2,847      2,040,216     0.0       89      232
+other:TaskStop              13      6,528      2,418      1,403,878     0.0      191      365
+other:SendUserFile           5      1,141        423        951,429     0.0       71      112
+other:SendMessage            1        297        110        398,310     0.0      110      110
+other:ArtifactComments       2        192         71        248,427     0.0       36       36
+bash:go-test                 7      6,577      2,436        235,777     0.0       21      963
+bash:flake-check             6        773        286         77,284     0.0       18      114
+skill                        3        102         38         50,318     0.0       12       14
+other:ReadNotifications      1         24          9         31,049     0.0        9        9
+other:PushNotification       3        225         83          4,778     0.0       28       28
+other:ArtifactData           1         43         16            159     0.0       16       16
+other:ToolSearch           125          0          0              0     0.0        0        0
+TOTAL                    6,991  8,541,403  3,163,483  4,577,799,161   100.0        -        -
+
+gate hygiene (cap each result at 2000 chars):
+class                  carry  capped_carry      saving  saving_%integral
+----------------  ----------  ------------  ----------  ----------------
+bash:bats         29,073,844    16,571,033  12,502,811              0.77
+bash:flake-check      77,284        77,284           0              0.00
+bash:go-test         235,777        98,114     137,663              0.01
+bash:shellcheck    5,229,092     3,749,848   1,479,244              0.09
+bash:nix-other     2,040,216     2,040,216           0              0.00
+GATE TOTAL        36,656,213    22,536,495  14,119,719              0.87
+
+all tool-result carry cost = 283.1% of worker-lead context integral (image results: 215)
+
+assistant-side content that stays in context (tool_use inputs, assistant text):
+class                       count      chars   tokens   carry_cost  share%  tok_med  tok_p90
+--------------------------  -----  ---------  -------  -----------  ------  -------  -------
+assistant:text              2,303  1,203,265  445,654  545,594,031    20.5       67      563
+in:edit                       305    960,143  355,609  436,673,469    16.4    1,136    1,921
+in:bash:crew                1,535    639,837  236,977  419,330,426    15.8      116      234
+in:bash:gh                  1,566    776,981  287,771  396,459,297    14.9      123      323
+in:bash:search                890    362,343  134,201  200,691,713     7.6      110      222
+in:bash:git                   599    307,802  114,001  183,307,327     6.9      125      264
+in:bash:cat                   443    244,074   90,398  142,088,489     5.3       92      273
+in:other:AskUserQuestion      137    127,191   47,108   81,687,571     3.1      301      586
+in:bash:other                 282    106,440   39,422   69,091,450     2.6       96      206
+in:other:mcp                  195     76,560   28,356   46,175,164     1.7       87      316
+in:other:Artifact              78     59,914   22,190   39,846,759     1.5      259      614
+in:bash:shellcheck             16     25,243    9,349   19,900,348     0.7      419    1,426
+in:read:other                 227     29,113   10,783   17,847,537     0.7       50       54
+in:agent                       20     43,028   15,936   16,932,571     0.6      788    1,025
+in:bash:bats                  177    124,610   46,152   11,387,093     0.4      162      333
+in:bash:nix-other              25     52,113   19,301   10,519,697     0.4      489    1,869
+in:other:Monitor              295     45,482   16,845    8,595,040     0.3       54       68
+in:other:ToolSearch           125      8,331    3,086    4,164,576     0.2       17       41
+in:other:WebFetch              10      2,669      989    2,162,099     0.1      101      114
+in:other:SendMessage            1      1,067      395    1,430,966     0.1      395      395
+in:other:SendUserFile           5      1,661      615    1,390,307     0.1      117      157
+in:bash:flake-check             6     11,491    4,256    1,026,777     0.0      291    1,658
+in:other:WebSearch              7        813      301      895,973     0.0       39       62
+in:other:ArtifactComments       2        156       58      201,847     0.0       29       29
+in:read:md                      7        775      287      178,790     0.0       39       47
+in:bash:go-test                 7      5,005    1,854      167,242     0.0      219      426
+in:other:RemoteTrigger          3        160       59       60,583     0.0       26       26
+in:other:TaskStop              13        290      107       56,683     0.0        9        9
+in:skill                        3         90       33       44,033     0.0       10       12
+in:other:PushNotification       3        525      194       11,148     0.0       65       66
+in:other:ReadNotifications      1          2        1        2,587     0.0        1        1
+in:other:ArtifactData           1        101       37          374     0.0       37       37
+
+thinking blocks (reported separately; whether prior thinking stays in context is UNCERTAIN): count=4,579 chars=79,774 tokens=29,546 carry_cost=48,332,564
+
+growth composition (carry cost as % of worker-lead integral): tool results 283.1% / tool inputs 130.6% / assistant text 33.7% / thinking 3.0% (uncertain) / floor (first-turn ctx x turns) 62.9%
