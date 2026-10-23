@@ -400,19 +400,16 @@ func TestAddTerminatesATornTail(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("add: code %d, stderr %q", code, errOut)
 	}
-	data, err := os.ReadFile(tr.paths.Log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n := strings.Count(string(data), "\n"); n != 2 {
-		t.Fatalf("the log holds %d lines, want 2:\n%s", n, data)
+	rows := tr.rows(t)
+	if len(rows) != 2 {
+		t.Fatalf("the log holds %d lines, want 2:\n%v", len(rows), rows)
 	}
 	var row struct {
 		Kind    string `json:"kind"`
 		To      string `json:"to"`
 		BodyStr string `json:"body"`
 	}
-	if err := json.Unmarshal([]byte(tr.rows(t)[1]), &row); err != nil {
+	if err := json.Unmarshal([]byte(rows[1]), &row); err != nil {
 		t.Fatal(err)
 	}
 	var body struct {

@@ -197,9 +197,8 @@ func TestRefusals(t *testing.T) {
 	}
 }
 
-// The traversal id is refused before it becomes a path: `TestRefusals` pins the
-// line and the 64, and this is the write half — nothing lands above the bus dir
-// (`../../escaped`) nor beside it (`../escaped`).
+// `../escaped` would land beside the bus dir and `../../escaped` above it; the
+// refusal happens before either becomes a path. `TestRefusals` pins the line.
 func TestTraversalCrewWritesNothingOutsideTheBusDir(t *testing.T) {
 	p := fixture(t)
 	for _, crew := range []string{"../escaped", "../../escaped"} {
