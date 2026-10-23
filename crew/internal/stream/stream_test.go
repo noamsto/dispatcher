@@ -464,8 +464,9 @@ func TestSweepReapedRemovesPairs(t *testing.T) {
 // same three signals against a live bus.
 func TestSignalReleasesEverything(t *testing.T) {
 	p := fixture(t)
-	script := filepath.Join(t.TempDir(), "crew-stub.sh")
-	settleOnce(t, filepath.Dir(script))
+	dir := t.TempDir()
+	settleOnce(t, filepath.Dir(dir))
+	script := filepath.Join(dir, "crew-stub.sh")
 	batch := `{"cursor":1,"events":[{"ts":1,"crew_id":"c1","from":"worker:feat/x","to":"dispatcher:c1","kind":"status","body":{"state":"done"}}]}`
 	if err := os.WriteFile(script, []byte(
 		bashShebang()+"case \"${1:-}\" in\n"+

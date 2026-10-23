@@ -101,8 +101,9 @@ func watchStub(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := filepath.Join(t.TempDir(), "crew-stub.sh")
-	settleOnce(t, filepath.Dir(script))
+	dir := t.TempDir()
+	settleOnce(t, filepath.Dir(dir))
+	script := filepath.Join(dir, "crew-stub.sh")
 	writeFile(t, script, bashShebang()+"export "+helperEnv+"=1\nexec '"+bin+"' -test.run='^TestHelperCrewWatch$' -- \"$@\"\n")
 	chmodExecutable(t, script)
 	return script
@@ -131,8 +132,9 @@ func chmodExecutable(t *testing.T, path string) {
 // scriptStub is a crew script whose `watch` runs body.
 func scriptStub(t *testing.T, body string) string {
 	t.Helper()
-	script := filepath.Join(t.TempDir(), "crew-stub.sh")
-	settleOnce(t, filepath.Dir(script))
+	dir := t.TempDir()
+	settleOnce(t, filepath.Dir(dir))
+	script := filepath.Join(dir, "crew-stub.sh")
 	writeFile(t, script, bashShebang()+"case \"${1:-}\" in\n  watch) "+body+" ;;\n  *) exit 0 ;;\nesac\n")
 	chmodExecutable(t, script)
 	return script
