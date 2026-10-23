@@ -8,6 +8,8 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,6 +18,8 @@ import (
 	"testing"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/noamsto/dispatcher/crew/internal/drift"
 )
 
 const (
@@ -42,6 +46,25 @@ const (
 	docBold = "## Acceptance\n\n- **AC1** unit tests\n- **AC2** build green\n"
 	// docFour ends with a CI entry, the shape that gets omitted most.
 	docFour = "## Acceptance\n\n- AC1 vitest\n- AC2 e2e\n- AC3 docs\n- AC4 CI green on the PR\n"
+
+	// docCiFree's entries carry no id, so items reach them only by number and
+	// position; docBoldCI names its entries with a bold id; docNumCI numbers
+	// its entries and indents a sub-bullet that is not an entry.
+	docCiFree = "## Acceptance\n- CI green on the PR head\n- Non-CI items behave as before\n"
+	docBoldCI = "## Acceptance\n- AC2 Tests pass\n- **AC1** CI passes\n"
+	docFree1  = "**Acceptance:**\n- CI green on the PR head\n"
+	docNumCI  = "## Acceptance\n1. Tests pass\n   - covers x\n2. CI green\n"
+	docFence  = "## Acceptance\n\n```\n# x\n- fenced item\n```\n- tests pass\n- CI green\n"
+	docScope  = "**Acceptance:**\n- tests pass\n\n**Out of scope:**\n- CI green\n"
+	// The heading and marker spellings that are lists, and the two look-alikes
+	// that are not.
+	docH3        = "### Acceptance criteria\n- AC1\n"
+	docBoldCo    = "**Acceptance:**\n- AC1\n"
+	docH3Bold    = "### **Acceptance criteria**\n- AC1\n"
+	docMarker    = "**Acceptance criteria**\n- AC1\n"
+	docColon     = "acceptance: AC1 pass(x)\n"
+	docMid       = "tier: trivial\n\nSee the acceptance list in the issue for the details.\nacceptance is mentioned here in passing.\n"
+	docLookalike = "### **Accepted**\n- one\n"
 )
 
 func ciLine(id string) string {
@@ -80,6 +103,10 @@ func row(c, sender, to, body string) string {
 }
 
 func reply(body string) string { return row(crew, "dispatcher:"+crew, from, body) }
+
+// waiverAll names every id the truth-table items carry, the way a dispatcher
+// waive reply must.
+var waiverAll = []string{reply("waive AC1 AC2 AC3")}
 
 // jsonStr is s as a JSON string literal, DEL and non-ASCII raw.
 func jsonStr(s string) string {
@@ -251,6 +278,105 @@ var checkCases = []checkCase{
 	{name: "a run id does not cover a suffixed entry", detail: "AC1-9 pass(x)", doc: "## Acceptance\n- AC5a unit tests\n", want: missingLine("AC5a")},
 	// The item loop's own refusals still come first.
 	{name: "a malformed item is refused before coverage", detail: "AC1 pending", doc: docThree, want: malform},
+
+	// The refused truth table, against a doc with no acceptance list: every
+	// row is refused with the no-list hint naming the ledger grammar.
+	{name: "truth: skipped with a note", detail: "AC1 pass(bats); AC2 skipped (not run: no simulator)", doc: docNone, want: noList},
+	{name: "truth: parenthesized state word", detail: "AC2 (pending on device)", doc: docNone, want: noList},
+	{name: "truth: deferred", detail: "AC3 deferred (not done yet)", doc: docNone, want: noList},
+	{name: "truth: a whole ledger in parens", detail: "(AC2 pending)", doc: docNone, want: noList},
+	{name: "truth: pending with evidence", detail: "AC2 pending(sim)", doc: docNone, want: noList},
+	{name: "truth: pass then pending", detail: "AC1 pass(bats); AC2 pending(sim)", doc: docNone, want: noList},
+	{name: "truth: NOT DONE", detail: "AC3 NOT DONE", doc: docNone, want: noList},
+	{name: "truth: not run", detail: "AC4 not run", doc: docNone, want: noList},
+	{name: "truth: waived after pending", detail: "AC1 pending(sim); AC2 waived(dispatcher)", doc: docNone, want: noList},
+	{name: "truth: items glued by a space past the semicolon", detail: "AC1 pass(x) AC2 pending", doc: docNone, want: noList},
+	{name: "truth: an unbalanced paren", detail: "AC1 pass(x AC2 pending(sim)", doc: docNone, want: noList},
+	{name: "truth: a note after waived", detail: "AC2 waived(dispatcher) not run on CI", doc: docNone, want: noList},
+	{name: "truth: pending between two passes", detail: "AC1 pass(x) AC2 pending AC3 pass(y)", doc: docNone, want: noList},
+	{name: "truth: a semicolon-led pending", detail: "AC1 pass(x); AC2 pending; AC3 pass(y)", doc: docNone, want: noList},
+	{name: "truth: blank parens", detail: "AC2 pass()", doc: docNone, want: noList},
+	{name: "truth: waived(self)", detail: "AC2 waived(self)", doc: docNone, want: noList},
+	{name: "truth: waived(low risk)", detail: "AC2 waived(low risk)", doc: docNone, want: noList},
+	{name: "truth: n/a", detail: "AC2 n/a(no ui)", doc: docNone, want: noList},
+	{name: "truth: partial", detail: "A7b partial(flag yes, viewer unit-only)", doc: docNone, want: noList},
+	{name: "truth: free text pointing at the PR", detail: "acceptance ledger: all pass, see PR body/comment", doc: docNone, want: noList},
+	{name: "truth: an extra closing paren", detail: "AC1 pass(x)) AC2 pending", doc: docNone, want: noList},
+	{name: "truth: a trailing id with no item", detail: "AC1 pass(x); AC2", doc: docNone, want: noList},
+	{name: "truth: passed is not pass", detail: "AC1 passed (no pending migrations)", doc: docNone, want: noList},
+	{name: "truth: a parenthesized note after waived", detail: "AC2 waived(dispatcher) (not run on CI)", doc: docNone, want: noList},
+
+	// The accepted truth table, same doc: every row is a ledger the gate
+	// writes.
+	{name: "truth accepted: pass and waived", detail: "AC1 pass(bats) AC2 waived(dispatcher)", doc: docNone, log: waiverAll},
+	{name: "truth accepted: the word pending inside evidence", detail: "AC5 pass(bats: pending ledger refused)", doc: docNone},
+	{name: "truth accepted: PASS is the keyword, ci is not CI", detail: "PASS(ci pending)", doc: docNone},
+	{name: "truth accepted: run twice is no run id", detail: "AC1 pass(nix build (x86) not run twice)", doc: docNone},
+	{name: "truth accepted: pending deep inside nested evidence", detail: "AC1 pass(bats: 3 pending sub-tests skipped (see log (details))); AC2 pass(nix build)", doc: docNone},
+	{name: "truth accepted: a waived item's note", detail: "AC2 waived(dispatcher: not run on CI)", doc: docNone, log: waiverAll},
+	{name: "truth accepted: a whitespace-only detail without a list", detail: "   ", doc: docNone},
+	{name: "truth accepted: the protocol-shaped ledger", detail: "AC1 pass(bats); AC2 pass(nix build); AC3 waived(dispatcher)", doc: docNone, log: waiverAll},
+	{name: "truth accepted: a trailing semicolon", detail: "AC1 pass(bats); AC2 pass(nix build); AC3 waived(dispatcher);", doc: docNone, log: waiverAll},
+	{name: "truth accepted: a run id and a comma", detail: "AC1-3 pass(vitest), AC4 pass(test+emu log)", doc: docNone},
+	{name: "truth accepted: a colon after the id", detail: "AC1: pass(bats)", doc: docNone},
+	{name: "truth accepted: WAIVED(Dispatcher)", detail: "AC2 WAIVED(Dispatcher)", doc: docNone, log: waiverAll},
+
+	// A CI item needs a run id; the doc's own CI entry reaches id-less items.
+	{name: "CI: bats-affected is no CI evidence", detail: "AC1 pass(bats-affected)", doc: docCiFree, want: ciLine("AC1")},
+	{name: "CI: a local stand-in names itself", detail: "AC1 pass(local stand-in: shellcheck and bats-affected)", doc: docCiFree, want: ciLine("AC1")},
+	{name: "CI: a pre-push hook is no CI evidence", detail: "AC1 pass(pre-push hook: trim-trailing-whitespace passed)", doc: docCiFree, want: ciLine("AC1")},
+	{name: "CI: green with a test count is no run id", detail: "AC2 pass(CI green, 12 tests)", doc: docCiFree, want: ciLine("AC2")},
+	{name: "CI: the first CI item refuses first", detail: "AC1 pass(bats); AC2 pass(bats)", doc: docCiFree, want: ciLine("AC1")},
+	{name: "CI accepted: an actions/runs URL", detail: "AC1 pass(https://github.com/o/r/actions/runs/123456789)", doc: docCiFree},
+	{name: "CI accepted: CI run <id>", detail: "AC1 pass(CI run 123456789); AC2 pass(bats)", doc: docCiFree},
+	{name: "CI accepted: run id <id>", detail: "AC1 pass(run id 9876543)", doc: docCiFree},
+	{name: "CI accepted: the non-CI entry passes on bats", detail: "AC2 pass(bats)", doc: docCiFree},
+	{name: "CI accepted: a waived CI entry", detail: "AC2 waived(dispatcher: not run on CI)", doc: docCiFree, log: waiverAll},
+	{name: "CI found by explicit id: a bold entry is CI", detail: "AC1 pass(bats)", doc: docBoldCI, want: ciLine("AC1")},
+	{name: "CI found by explicit id: the run id settles it", detail: "AC2 pass(bats); AC1 pass(actions/runs/42)", doc: docBoldCI},
+
+	// Waiver messages on the bus.
+	{name: "waiver: a reply that never waives", detail: "AC1 waived(dispatcher)", doc: docNone, log: []string{reply("carry on")}, want: waiverLine("AC1")},
+	{name: "waiver: will not waive", detail: "AC1 waived(dispatcher)", doc: docNone, log: []string{reply("will not waive AC1")}, want: waiverLine("AC1")},
+	{name: "waiver: I don't waive", detail: "AC1 waived(dispatcher)", doc: docNone, log: []string{reply("I don't waive AC1")}, want: waiverLine("AC1")},
+	{name: "waiver: not waiving", detail: "AC1 waived(dispatcher)", doc: docNone, log: []string{reply("not waiving AC1")}, want: waiverLine("AC1")},
+	{name: "waiver: waive AC1 but not AC2 refuses AC2 alone", detail: "AC1 waived(dispatcher); AC2 waived(dispatcher)", doc: docNone, log: []string{reply("waive AC1 but not AC2")}, want: waiverLine("AC2")},
+	{name: "waiver: two replies cover three items", detail: "AC1 waived(dispatcher); AC2 waived(dispatcher); AC3 waived(dispatcher)", doc: docNone, log: []string{reply("waive AC1 but not AC2"), reply("waive AC2 and AC3")}},
+	{name: "waiver: a note inside the parens still waives", detail: "AC1 waived(dispatcher: draft CI pending)", doc: docNone, log: []string{reply("waive AC1")}},
+	{name: "waiver: a dotted id covers only that id", detail: "AC2 waived(dispatcher)", doc: docNone, log: []string{reply("waive AC2.1")}, want: waiverLine("AC2")},
+	{name: "waiver: the dotted id posts as itself", detail: "AC2.1 waived(dispatcher)", doc: docNone, log: []string{reply("waive AC2.1")}},
+
+	// How the ## Acceptance list is parsed.
+	{name: "fenced lines are not entries: the CI item stays second", detail: "2 pass(bats)", doc: docFence, want: ciLine("2")},
+	{name: "fenced lines are not entries: the first item is not CI", detail: "1 pass(bats)", doc: docFence},
+	{name: "a bold Out of scope ends the list", detail: "2 pass(bats)", doc: docScope},
+	{name: "an id-less entry is reached by a bare id", detail: "AC1 pass(bats)", doc: docFree1, want: ciLine("AC1")},
+	{name: "a positional item hits the id-less CI entry", detail: "pass(CI green)", doc: docFree1, want: ciLine("?")},
+	{name: "dry-run 20261006 is no run id", detail: "AC1 pass(CI dry-run 20261006 local)", doc: docFree1, want: ciLine("AC1")},
+	{name: "AC0 names no entry", detail: "AC0 pass(bats)", doc: docFree1},
+	{name: "a numbered CI entry is found by number", detail: "2 pass(bats)", doc: docNumCI, want: ciLine("2")},
+	{name: "a numbered CI entry is found by AC-number", detail: "AC02 pass(bats)", doc: docNumCI, want: ciLine("AC02")},
+	{name: "a positional ledger hits the numbered CI entry", detail: "pass(bats); pass(bats)", doc: docNumCI, want: ciLine("?")},
+	{name: "a newline inside evidence cannot hide CI", detail: "AC2 pass(local\nCI green)", doc: docNumCI, want: ciLine("AC2")},
+	{name: "a numbered CI entry settles with a run id", detail: "AC1 pass(bats); AC2 pass(CI run_id=1234567)", doc: docNumCI},
+
+	// Known accepted gap: a single-token state word with no parens reads as
+	// the id of the next item.
+	{name: "a lone state word reads as the next item's id (known gap)", detail: "AC1 pass(x) pending pass(y)", doc: docNone},
+
+	// The empty detail against a list, and the heading and marker spellings.
+	{name: "empty detail with a list", detail: "", doc: docList, want: mustLed},
+	{name: "a ### heading keeps the ledger hint", detail: "PR opened", doc: docH3, want: malform},
+	{name: "a ### heading refuses an empty detail", detail: "", doc: docH3, want: mustLed},
+	{name: "a bold **Acceptance:** heading keeps the ledger hint", detail: "PR opened", doc: docBoldCo, want: malform},
+	{name: "a bold **Acceptance:** heading refuses an empty detail", detail: "", doc: docBoldCo, want: mustLed},
+	{name: "an inline-bold ### heading is detected", detail: "PR opened", doc: docH3Bold, want: malform},
+	{name: "an inline-bold ### heading refuses an empty detail", detail: "", doc: docH3Bold, want: mustLed},
+	{name: "a bold **Acceptance criteria** marker keeps the ledger hint", detail: "PR opened", doc: docMarker, want: malform},
+	{name: "a line-start Acceptance: is detected case-insensitively", detail: "PR opened", doc: docColon, want: malform},
+	{name: "mid-sentence mentions are not a list", detail: "PR opened", doc: docMid, want: noList},
+	{name: "mid-sentence mentions leave the empty detail correct", detail: "", doc: docMid},
+	{name: "a heading whose bold word only resembles Acceptance is not a list", detail: "", doc: docLookalike},
 }
 
 func TestCheck(t *testing.T) {
@@ -261,6 +387,36 @@ func TestCheck(t *testing.T) {
 				t.Errorf("Check(%q)\n got %q\nwant %q", tc.detail, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestProtocolExampleLedgersPass reads the protocol's own example ledgers from
+// the repo doc and checks every one passes the gate, waiver in hand; the
+// protocol must never show `pr_open "" ` with a trailing space as an example.
+func TestProtocolExampleLedgersPass(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "adapters", "core", "protocols", "WORKER_PROTOCOL.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		drift.Missing(t, path, err)
+	}
+	doc := string(data)
+	// grep -oE 'pr_open "[^"<][^"]*"': the quote guard skips `pr_open ""` and
+	// the `<acceptance ledger>` placeholder.
+	examples := regexp.MustCompile(`pr_open "([^"<][^"]*)"`).FindAllStringSubmatch(doc, -1)
+	if len(examples) < 1 {
+		t.Fatal("WORKER_PROTOCOL.md carries no concrete pr_open example")
+	}
+	// A task doc whose list holds the single entry the examples name.
+	acceptDoc := "tier: trivial\nkind: implement\nengine: claude\ncrew_id: c1\n\n## Acceptance\n- AC1\n"
+	for _, m := range examples {
+		detail := m[1]
+		in := Input{From: from, Crew: crew, Detail: detail, TaskDoc: acceptDoc, Log: waiverAll}
+		if got := Check(in); got != "" {
+			t.Errorf("the protocol's example ledger %q was refused: %s", detail, got)
+		}
+	}
+	if strings.Contains(doc, `pr_open "" `) {
+		t.Error(`WORKER_PROTOCOL.md shows a pr_open "" example with a trailing space`)
 	}
 }
 

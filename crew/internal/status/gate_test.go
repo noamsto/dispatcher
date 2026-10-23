@@ -244,6 +244,107 @@ func ledgerCases() []gateCase {
 	}
 }
 
+// ledgerTruthCases pins the ledger gate's decisions: every ledger the grammar
+// refuses exits 1 with the ledger hint and writes no status row, and every
+// ledger it accepts is written with an empty stderr. The doc has no acceptance
+// list, so no seam gates apply and only the ledger decides.
+func ledgerTruthCases() []gateCase {
+	const noListDoc = "tier: trivial\nkind: implement\nengine: claude\n"
+	const deepDoc = "tier: deep\nkind: implement\nengine: claude\n"
+	const hint = "every acceptance ledger item"
+	waived := msgRow("dispatcher:c1", worker, "waive AC1 AC2 AC3")
+	refuse := func(name, detail string) gateCase {
+		return gateCase{name: name, doc: noListDoc, state: "pr_open", detail: detail, code: 1, ledger: hint}
+	}
+	pass := func(name, detail string, rows ...string) gateCase {
+		return gateCase{name: name, doc: noListDoc, rows: rows, state: "pr_open", detail: detail}
+	}
+	cases := []gateCase{
+		// the refused truth table
+		refuse("truth: skipped with a note", "AC1 pass(bats); AC2 skipped (not run: no simulator)"),
+		refuse("truth: parenthesized state word", "AC2 (pending on device)"),
+		refuse("truth: deferred", "AC3 deferred (not done yet)"),
+		refuse("truth: a whole ledger in parens", "(AC2 pending)"),
+		refuse("truth: pending with evidence", "AC2 pending(sim)"),
+		refuse("truth: pass then pending", "AC1 pass(bats); AC2 pending(sim)"),
+		refuse("truth: NOT DONE", "AC3 NOT DONE"),
+		refuse("truth: not run", "AC4 not run"),
+		refuse("truth: waived after pending", "AC1 pending(sim); AC2 waived(dispatcher)"),
+		refuse("truth: items glued by a space", "AC1 pass(x) AC2 pending"),
+		refuse("truth: an unbalanced paren", "AC1 pass(x AC2 pending(sim)"),
+		refuse("truth: a note after waived", "AC2 waived(dispatcher) not run on CI"),
+		refuse("truth: pending between two passes", "AC1 pass(x) AC2 pending AC3 pass(y)"),
+		refuse("truth: a semicolon-led pending", "AC1 pass(x); AC2 pending; AC3 pass(y)"),
+		refuse("truth: blank parens", "AC2 pass()"),
+		refuse("truth: waived(self)", "AC2 waived(self)"),
+		refuse("truth: waived(low risk)", "AC2 waived(low risk)"),
+		refuse("truth: n/a", "AC2 n/a(no ui)"),
+		refuse("truth: partial", "A7b partial(flag yes, viewer unit-only)"),
+		refuse("truth: free text pointing at the PR", "acceptance ledger: all pass, see PR body/comment"),
+		refuse("truth: an extra closing paren", "AC1 pass(x)) AC2 pending"),
+		refuse("truth: a trailing id with no item", "AC1 pass(x); AC2"),
+		refuse("truth: passed is not pass", "AC1 passed (no pending migrations)"),
+		refuse("truth: a parenthesized note after waived", "AC2 waived(dispatcher) (not run on CI)"),
+
+		// the accepted truth table
+		pass("truth accepted: pass and waived", "AC1 pass(bats) AC2 waived(dispatcher)", waived),
+		pass("truth accepted: the word pending inside evidence", "AC5 pass(bats: pending ledger refused)"),
+		pass("truth accepted: PASS is the keyword", "PASS(ci pending)"),
+		pass("truth accepted: run twice is no run id", "AC1 pass(nix build (x86) not run twice)"),
+		pass("truth accepted: pending deep inside nested evidence", "AC1 pass(bats: 3 pending sub-tests skipped (see log (details))); AC2 pass(nix build)"),
+		pass("truth accepted: a waived item's note", "AC2 waived(dispatcher: not run on CI)", waived),
+		pass("truth accepted: empty detail without a list", ""),
+		pass("truth accepted: whitespace-only detail", "   "),
+		pass("truth accepted: the protocol-shaped ledger", "AC1 pass(bats); AC2 pass(nix build); AC3 waived(dispatcher)", waived),
+		pass("truth accepted: a trailing semicolon", "AC1 pass(bats); AC2 pass(nix build); AC3 waived(dispatcher);", waived),
+		pass("truth accepted: a run id and a comma", "AC1-3 pass(vitest), AC4 pass(test+emu log)"),
+		pass("truth accepted: a colon after the id", "AC1: pass(bats)"),
+		pass("truth accepted: WAIVED(Dispatcher)", "AC2 WAIVED(Dispatcher)", waived),
+	}
+	// the ledger is checked before the review seam, on every gated tier
+	return append(cases,
+		gateCase{name: "known gap: a lone state word reads as the next id and writes", doc: noListDoc,
+			state: "pr_open", detail: "AC1 pass(x) pending pass(y)"},
+		gateCase{name: "mid-sentence mentions leave the empty detail written", doc: "tier: trivial\nkind: implement\nengine: claude\n\nSee the acceptance list in the issue for the details.\nacceptance is mentioned here in passing.\n",
+			state: "pr_open", detail: ""},
+		gateCase{name: "a heading that only resembles Acceptance leaves the empty detail written", doc: "tier: trivial\nkind: implement\nengine: claude\n\n### **Accepted**\n- one\n",
+			state: "pr_open", detail: ""},
+		gateCase{name: "deep: the ledger fires before the seams", doc: deepDoc, state: "pr_open",
+			detail: "AC2 pending(sim)", code: 1, ledger: hint},
+		gateCase{name: "deep: ledger and seams pass", doc: deepDoc, rows: []string{reviewSeam, deslopSeam},
+			state: "pr_open", detail: "AC1 pass(bats)"},
+	)
+}
+
+// TestLedgerSkippedForDoneReviewKindAndRole: done calls, a kind: review task
+// doc and role callers are never ledger-checked, and each of the five calls
+// writes its row.
+func TestLedgerSkippedForDoneReviewKindAndRole(t *testing.T) {
+	f := newFixture(t)
+	f.doc("tier: trivial\nkind: implement\nengine: claude\n")
+	for _, args := range [][]string{
+		{"worker:feat/x#s1-1", "done", "AC2 pending(sim)", "https://example.com/pr/1"},
+		{"worker:feat/x#s2-2", "done", "follow-ups: #312 (upstream fix pending)"},
+		{"role:feat/x:reviewer", "pr_open", "AC2 pending", "https://example.com/pr/1"},
+	} {
+		if code, stderr := f.status(args...); code != 0 || stderr != "" {
+			t.Fatalf("status %v: %d %q", args, code, stderr)
+		}
+	}
+	f.doc("tier: trivial\nkind: review\nengine: claude\n")
+	for _, args := range [][]string{
+		{"worker:feat/x#s3-3", "pr_open", "2 findings pending", "https://example.com/pr/1"},
+		{"worker:feat/x#s3-3", "done", "2 findings pending author reply", "https://example.com/pr/1"},
+	} {
+		if code, stderr := f.status(args...); code != 0 || stderr != "" {
+			t.Fatalf("status %v: %d %q", args, code, stderr)
+		}
+	}
+	if got := f.lines(); len(got) != 5 {
+		t.Errorf("%d rows, want 5: %q", len(got), got)
+	}
+}
+
 func TestGateCases(t *testing.T) {
 	groups := []struct {
 		name  string
@@ -253,6 +354,7 @@ func TestGateCases(t *testing.T) {
 		{"deslop", deslopCases()},
 		{"plan", planCases()},
 		{"ledger", ledgerCases()},
+		{"truth", ledgerTruthCases()},
 	}
 	for _, g := range groups {
 		for _, tc := range g.cases {

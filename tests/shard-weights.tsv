@@ -16,8 +16,7 @@ tests/crew.bats	*	!timing	65735
 tests/crew.bats	burn map conformance	!timing	19017
 tests/crew.bats	done	!timing	10684
 tests/crew.bats	done/failed	!timing	2400
-tests/crew.bats	done/pr_open	!timing	2225
-tests/crew.bats	pr_open	!timing	240454
+tests/crew.bats	pr_open	!timing	153000
 tests/crew.bats	pr_open/done	!timing	2461
 tests/crew.bats	reap	!timing	429530
 tests/crew.bats	reply	!timing	2819
