@@ -15,10 +15,9 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 )
 
-// The D8 cases the bats section's budget_watch / budget_rows pair pinned: what a
-// whole watch writes to the bus. The detector-level halves — the episode and its
-// gating, the refresh stamp and lock, the detail rendering — are in
-// budget_test.go and probe_detectors_test.go; these run the watch.
+// D8 whole-watch tests: what a watch run writes to the bus. The detector-level
+// halves — the episode and its gating, the refresh stamp and lock, the detail
+// rendering — are in budget_test.go and probe_detectors_test.go.
 
 // budgetRows is every status row on the bus as from|state|source|detail.
 func budgetRows(t *testing.T, h *harness) []string {
@@ -94,8 +93,7 @@ func budgetWatch(t *testing.T, h *harness, req Request, refresh func()) []string
 
 // d8Window is one line of the windows predicate for a window that used that
 // percent and resets that far from the clock seed: name, used_pct, resets_at,
-// iso, the way budget-gate.sh prints it. d8ISO is the iso it printed, so a case
-// names its reset once.
+// iso, the way budget-gate.sh prints it. d8ISO is the iso for that reset.
 func d8Window(h *harness, name string, used int, off int64) string {
 	line := name + "\t" + strconv.Itoa(used) + "\t\t"
 	if off == 0 {
@@ -118,8 +116,7 @@ func TestBudgetWatchRows(t *testing.T) {
 		name string
 		req  Request
 		// cache and stamp are the watcher's budget cache and its last refresh
-		// attempt; %d is replaced, by the seed for the cache and by a recent
-		// epoch for the stamp.
+		// attempt; %d is the clock seed for the cache, seed-30 for the stamp.
 		cache, stamp string
 		// win/used and lim answer the two predicates, with resets_at resetOff
 		// from the clock. model is the pane's model, local what the local-model
@@ -161,17 +158,15 @@ func TestBudgetWatchRows(t *testing.T) {
 			want: []string{"role:feat/x:reviewer|blocked|watchdog|budget: codex 5h at 100% (resets %s, in 1d 3h)"},
 		},
 		{
-			// The predicates are asked about the role's own engine, and a clear
-			// answer for it leaves the bus empty.
 			name: "role mode stays silent when its own engine has room",
 			req:  Request{Target: "role:feat/x:reviewer", Engine: ptr("codex")},
 			wrc:  1, lrc: 1,
 			want: nil,
 		},
 		{
-			// A stamp read as decimal is this recent, so it holds the refresh
-			// back and the watch posts what the cache says. TestBudgetLastTry
-			// pins the parse itself.
+			// A stamp of seed-30 read as decimal is recent enough to hold the
+			// refresh back; the watch posts what the cache says. The parse itself
+			// is TestBudgetLastTry's.
 			name:  "a zero-padded stamp is read as decimal",
 			req:   Request{BudgetRefresh: ptr("900")},
 			stamp: "0%d",
@@ -228,13 +223,9 @@ func TestBudgetWatchRows(t *testing.T) {
 				refreshed = true
 			})
 			want := make([]string, 0, len(tc.want))
-			if tc.resetOff != 0 {
-				iso := d8ISO(h, tc.resetOff)
-				for _, x := range tc.want {
-					want = append(want, strings.Replace(x, "%s", iso, 1))
-				}
-			} else {
-				want = append(want, tc.want...)
+			iso := d8ISO(h, tc.resetOff)
+			for _, x := range tc.want {
+				want = append(want, strings.Replace(x, "%s", iso, 1))
 			}
 			if !slices.Equal(rows, want) {
 				t.Errorf("rows\n got %q\nwant %q", rows, want)
@@ -245,7 +236,8 @@ func TestBudgetWatchRows(t *testing.T) {
 			if tc.stamp != "" && refreshes != 0 {
 				t.Errorf("refreshes %d, want the recent stamp to hold the refresh back", refreshes)
 			}
-			// Every predicate is asked about the watch's own engine.
+			// Every predicate — "budget windows <file> <engine> <now>" — is asked
+			// about the watch's own engine.
 			engine := "claude"
 			if tc.req.Engine != nil {
 				engine = *tc.req.Engine
