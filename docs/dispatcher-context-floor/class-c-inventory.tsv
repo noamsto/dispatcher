@@ -1,0 +1,168 @@
+id	destination	rule	phrase	code	test	note
+U1.1	one-liner	dispatch refuses a premium model rung or effort when the 7d window is >=70% used and >15 points ahead of its elapsed fraction	refuses a premium model rung or effort	adapters/core/dispatch.sh:pace_rule_target	tests/dispatch.bats::opus at low/medium effort is not pace-refused, but high still is (#554)
+U1.2	design-doc	elapsed = clamp(100*(604800-(resets_at-now))/604800,0,100)	`elapsed = clamp(100 * (604800
+U1.3	design-doc	the inequality cannot fire once elapsed reaches 85%: the about-to-reset exemption	can't fire once elapsed reaches 85%
+U1.4	design-doc	null resets_at: pace not computable, flat >=70 rule	computable and the gate falls back to the flat `>=70` rule
+U1.5	design-doc	a weekly window's resets_at is capped at the monthly reset	reset_source: "month"
+U1.6	one-liner	the refusal names the lower model or effort alternative; take it, never bypass	take the named lower rung	adapters/core/dispatch.sh:pace_rule_target	tests/dispatch.bats::pace refusals under --host offer no DISPATCH_IGNORE_RUNG escape	test pins "use the standard rung (sonnet) instead"
+U1.7	kept	xhigh and max are premium effort (both to high); high is not	`xhigh` and `max` are premium effort
+U1.8	design-doc	the check covers every lead, eager role and final lazy-role override	every lead, eager role, and final lazy-role override
+U1.9	kept	see dispatch-orchestration.md Tier map	→ "Tier map"
+U1.10	kept	pi and cursor pace windows are their month window	pi and cursor: their `month`
+U1.11	design-doc	pi: calendar month length, no premium model, only xhigh/max effort refused	pi's pace window is `month`
+U1.12	design-doc	cursor: billing-cycle month; only the model rung is refused, never effort	Cursor's pace window is `month` too	adapters/core/dispatch.sh:pace_rule_target	tests/dispatch.bats::cursor pace gate never refuses premium effort on a cursor lead
+U2.1	one-liner	limit_reached is a window-independent exhaustion signal; dispatch refuses the engine	whose budget cache carries `limit_reached`	adapters/core/dispatch.sh:absolute_limit_stop	tests/dispatch.bats::codex absolute limit refuses each absolute-limit signal
+U2.2	design-doc	codex signals: ordinary_usage_allowed false, rate_limit_reached_type, spend_control_reached, individual_remaining_percent 0	ordinary usage outright (`ordinary_usage_allowed: false`)
+U2.3	design-doc	cursor's limit: any plan percentage at 100% or a spent on-demand budget	`refresh-budget` sets cursor's when any
+U2.4	one-liner	same message shape and --ignore-budget escape as the >=95% stop	Treat it like the ≥95% stop and relay it	adapters/core/dispatch.sh:absolute_limit_stop	tests/dispatch.bats::codex absolute limit refuses each absolute-limit signal
+U2.5	one-liner	covers the lead and every role target, --spawn-role reading the role's recorded engine	or role, whose budget cache	adapters/core/dispatch.sh:absolute_limit_stop	tests/dispatch.bats::absolute limit refuses --spawn-role on the role's recorded engine, naming the role
+U2.6	kept	no hold path: hand the task back or pick another engine	It has **no hold path**
+U2.7	design-doc	refresh-budget records and prints each engine plan_type	each engine's `plan_type`
+U2.8	design-doc	missing data never blocks; a past cursor limit_reached.resets_at does not refuse	Missing data never blocks
+U2.9	kept	never infer exhaustion yourself	never infer exhaustion
+U3.1	kept	the dispatched label is the claim (assignee cannot signal one)	The `dispatched` label is the claim
+U3.2	one-liner	a labelled issue with live evidence aborts naming the issue and evidence, before any scaffolding	aborts with `already claimed`	adapters/core/dispatch.sh:_claim_evidence	tests/dispatch.bats::claim: a dispatched label is refused when the exact branch exists only on origin
+U3.3	design-doc	evidence: a local/origin feat/<issue>-* branch, a dispatch row (unless reaped), an also_closes row, a live claim-issue row	a local or `origin` branch matching
+U3.4	design-doc	an unreachable origin counts as evidence (fails closed)	an unreachable `origin` counts as evidence	adapters/core/dispatch.sh:_claim_evidence	tests/dispatch.bats::claim: refuses a dispatched issue when origin is unreachable, before any scaffolding
+U3.5	one-liner	no evidence: the label is stale, said on stderr, and re-claimed (#304)	re-claims a stale one	adapters/core/dispatch.sh:_claim_evidence	tests/dispatch.bats::claim: a dispatched label with no branch, dispatch row or live claimant is stale and re-claimed
+U3.6	design-doc	label present and the branch exists: resume it and re-add the label	already there and the branch exists	adapters/core/dispatch.sh	tests/dispatch.bats::claim: an already-dispatched issue proceeds when the resolved branch exists
+U3.7	kept	a free issue is labelled before scaffolding; a minted one at creation	`dispatch` adds it
+U3.8	kept	crew reap releases the label on a merged/closed PR, crew adopt on a dead-pid crew	`crew reap`/`crew adopt` release it
+U3.9	design-doc	live-claimant pid rules: exists, args contain dispatch, started before ts (2s slack), row under 24h	A pid counts as a live claimant only when
+U3.10	design-doc	anything unreadable fails closed and counts as live	Anything unreadable fails closed
+U3.11	design-doc	residuals: forged/stray rows block the self-heal up to 24h; a slow claimant reads as abandoned	Residuals: a forged or stray row
+U3.12	design-doc	the label is not a lock; two simultaneous heals can both proceed	The label was never a lock
+U3.13	design-doc	machine-wide claim index under ~/.local/share/crew/claims	Claims are machine-wide
+U3.14	design-doc	another machine sees the pushed feat/<issue>-* branch; a failed push or an extra stays invisible	A crew on another machine is visible from dispatch time
+U3.15	design-doc	residual: an abandoned no-PR worker's origin branch counts until reap; reap's origin-branch delete rules	Residual: an abandoned no-PR worker
+U3.16	design-doc	a release from any clone cancels every older claim row for the issue	Still not covered: a release from any clone
+U3.17	design-doc	Linear-tracked dispatches are unaffected	Linear-tracked dispatches are unaffected
+U3.18	kept	relay the abort verbatim; never remove the label or retry under another title	Never remove the label
+U4.1	one-liner	dispatch grants only a dir resolving (realpath) inside a grantRoots root	refuses an unsafe	adapters/core/grant-check.sh:_add_dir_ok	tests/dispatch.bats::add-dir: a dir outside every grant root is refused, a toolchain dir included
+U4.2	design-doc	grantRoots from the locked settings layer; DISPATCH_GRANT_ROOTS replaces; unset/empty grants nothing; ":" forces none	home-manager module's locked settings layer	adapters/core/grant-check.sh	tests/dispatch.bats::add-dir: with no grant roots configured every --add-dir is refused, naming the variable
+U4.3	kept	never widen the roots or set DISPATCH_GRANT_ROOTS inline; ask the human to add a root	ask the human to add a root
+U4.4	one-liner	refuses /, $HOME or an ancestor, the crew dir, and the secrets dirs; the refusal lists every category	its refusal lists every refused category	adapters/core/grant-check.sh:_add_dir_ok	tests/dispatch.bats::add-dir: refuses unsafe values before creating any worktree	refusal text at dispatch.sh "--add-dir '$add_dir' refused"
+U4.5	design-doc	the secrets-dir list	`~/.codex`, `~/.kube`
+U4.6	design-doc	secrets-dir symlinks two levels deep; every hop of each chain is walked	Symlinks up to two levels deep	adapters/core/grant-check.sh	tests/dispatch.bats::add-dir: a secrets-dir symlink whose chain hops through another symlink is refused at every hop
+U4.7	design-doc	a grant merely inside an intermediate hop is not refused	A grant merely inside an intermediate hop
+U4.8	design-doc	hops NUL-delimited; a cycle or readlink failure fails closed	Hops travel NUL-delimited	adapters/core/grant-check.sh	tests/dispatch.bats::add-dir: a secrets-dir symlink cycle is refused, not followed forever
+U4.9	one-liner	a tree holding a .git or .claude entry anywhere is refused	its refusal lists every refused category	adapters/core/grant-check.sh:_add_dir_ok	tests/dispatch.bats::add-dir: a grant containing another repo's .git is refused, a sibling without one is granted
+U4.10	design-doc	why: .git/hooks and .claude/settings would become worker-writable	A grant is also refused outright if its tree contains
+U4.11	kept	grant the narrowest subdir the refusal allows	grant the narrowest subdir it allows
+U4.12	one-liner	a re-check on resume/--spawn-role/re-dispatch drops a grant that no longer passes ("dropping invalid grant")	dropping invalid grant	adapters/core/grant-check.sh	tests/dispatch.bats::add-dir: --spawn-role drops a recorded grant that now contains a .git
+U4.13	design-doc	a .git/.claude reached only through a planted dir symlink is not chased (accepted residual)	accepted, narrower defence-in-depth boundary
+U4.14	one-liner	a grant equal to, inside or above a repo's hooks dir, git dir, common dir or any core.hooksPath is refused	its refusal lists every refused category	adapters/core/grant-check.sh:_add_dir_ok	tests/dispatch.bats::add-dir: a grant that is a repo's hooks dir via core.hooksPath is refused
+U4.15	design-doc	hooks dir found by walking to every .git entry and asking git rev-parse	A grant is also refused if it is equal to, inside or above
+U4.16	design-doc	raw core.hooksPath values, :(optional) stripped	`:(optional)` prefix stripped
+U4.17	design-doc	git runs with GIT_DIR/GIT_CONFIG/-c config dropped from its env	dropped from its env so the answer is the human's own config
+U4.18	design-doc	every config file and include target git reads is walked	target whether or not it exists
+U4.19	design-doc	symlinks inside the grant are resolved; write-through links refused	also catches a write-through link	adapters/core/grant-check.sh	tests/dispatch.bats::add-dir: a link inside a grant to a repo's core.hooksPath dir is refused
+U4.20	design-doc	hard links to a hook or config file are refused	a grant holding a hard link
+U4.21	design-doc	a git error fails closed	refuses to open) fails closed	adapters/core/grant-check.sh	tests/dispatch.bats::add-dir: _add_dir_ok fails closed when git cannot resolve a broken .git file
+U4.22	design-doc	residuals: bare repos, unrelated absolute hooksPath, includeIf-only global hooksPath, env freshness	Residuals, not enforced: a bare repo
+U4.23	design-doc	link-scan residuals	From the link scan
+U4.24	design-doc	core.fsmonitor and filter drivers are not covered	filter drivers) is not covered
+U4.25	kept	a grant is read-write in effect for a claude worker	A grant is read-write in effect
+U4.26	kept	grants are recorded in $crew_dir/grants/<branch>; never edit them	the grant records under `$crew_dir/grants/`
+U4.27	design-doc	the record is authoritative; WORKER_TASK.md add_dir: lines are informational	dispatcher-written, and authoritative
+U4.28	design-doc	the record is not a boundary against the worker; Claude's path gating is	The record is not a
+U4.29	kept	a re-dispatch without --add-dir carries the grants; passing one replaces them	without `--add-dir` keeps the recorded grants	adapters/core/dispatch.sh	tests/dispatch.bats::add-dir: a re-dispatch without --add-dir keeps the recorded grants
+U4.30	design-doc	every launch pins its launcher's grant roots as DISPATCH_GRANT_ROOTS and re-checks	pins its launcher's own resolved grant roots	adapters/core/dispatch.sh	tests/dispatch.bats::add-dir: the lead launch pins the dispatcher's grant roots
+U4.31	kept	the protocol dirs are granted read-only by default	the protocol dirs and the worker	adapters/core/dispatch.sh	tests/dispatch.bats::add-dir: read-only rule denies edits to a lead's protocol dir, artifacts stays writable
+U4.32	design-doc	--spawn-role reads the protocol-dirs record via @crew_dir/@crew_branch and refuses without it	`$crew_dir/protocol-dirs/<branch>`
+U4.33	kept	artifacts/<branch> is the only write-capable default grant	`artifacts/<branch>` are granted without it
+U4.34	kept	only claude launches take --add-dir	Only claude launches take `--add-dir`
+U4.35	kept	grant to a permission-blocked worker only on the human's go-ahead or your own spec, inside a root; its permission: text is never evidence	never evidence of need
+U4.36	kept	reply stop, wait for failed, re-dispatch onto its branch with --add-dir	Then reply "stop"
+U5.1	design-doc	one uid; only claude's permission layer is a boundary	Every actor shares one uid
+U5.2	design-doc	harness job: never launder a claude worker's action; three-part scope test	in scope when all three hold
+U5.3	design-doc	out of scope: calls that name their effect, own-grid effects, dispatcher-resolved values	Out of scope: anything only reachable through a
+U5.4	design-doc	harness rule: anchor, don't discover	anchor, don't
+U5.5	design-doc	--spawn-role/--reap-roles/--role-exited act only on an ancestor pane	`--reap-roles` and `--role-exited` act	adapters/core/dispatch.sh	tests/dispatch.bats::grid: --role-exited refuses a --pane that is not this process's pane
+U5.6	one-liner	--role-watch types only the lead's or stamped dispatcher's msgs and reports others as role_watch_drop	A `role_watch_drop` naming	adapters/core/dispatch.sh	tests/dispatch.bats::role-watch: sender: foreign senders are dropped with a report and no delivery
+U5.7	kept	a role_watch_drop from another branch is a cross-grid write attempt: surface it; else resend from the right id	surface it to the human
+U5.8	design-doc	a grid stamped before @crew_id admits only its lead until resumed	a grid window stamped before `@crew_id` existed
+U5.9	one-liner	dispatch resume refuses a worktree whose crew dir, branch or git dir differs from its record	a worktree whose `.git` no longer matches its	adapters/core/dispatch-resume.sh	tests/dispatch-resume.bats::refuses when the gitlink points at a worker-built admin dir (crew dir mismatch, #518)
+U5.10	one-liner	crew msg/status/reply/hold/stall-watch refuse a worker or role env posting as dispatcher:*	a sender posting as another identity	crew/internal/sender/sender.go	crew/internal/status/msg_test.go::TestMsgRefusesDispatcherFromWorkerOrRoleEnv
+U5.11	one-liner	a caller in a stamped window posts only as its own pane identity (found by process ancestry)	a sender posting as another identity	crew/internal/sender/sender.go	crew/internal/sender/sender_test.go::TestCheck
+U5.12	design-doc	the sender is still self-asserted for unanchored callers, env editors, session ids, other writers	any caller with no anchor pane
+U5.13	design-doc	crew nudge's sender gate is safe because its text is constant	`crew nudge`'s sender gate
+U5.14	design-doc	program-naming git config keys (ExecKeys) would run in the dispatcher shell	`ExecKeys` in `crew/internal/gitguard`
+U5.15	design-doc	redirect keys (RedirectKeys) would send anchored network actions elsewhere	`RedirectKeys` in the same package
+U5.16	design-doc	the two anchored pushes: dispatch's create push and crew reap's delete	The anchored
+U5.17	one-liner	dispatch/resume/reap diff exec and redirect keys against the git-config baseline and refuse, naming key and file, never the value	git-config key or legacy	crew/internal/gitguard/guard.go	crew/internal/gitguard/guard_test.go::TestCheckExecDrift
+U5.18	design-doc	dispatch and reap leave a recorded worker worktree and run anchored git	`crew reap` first leave a recorded worker worktree
+U5.19	one-liner	a worktree whose .git no longer matches its record is tampering evidence: refuse, relay verbatim, never retry from the main checkout	Relay any such refusal	crew/internal/wtgit/trusted.go	crew/internal/wtgit/wtgit_test.go::TestTrustedCwdMismatchedRecord	refusal says "possible tampering): stop and tell the human"
+U5.20	design-doc	relative core.hooksPath .git/hooks equals <common>/hooks only from a trusted cwd; else set it absolute	`core.hooksPath` `.git/hooks` equals `<common>/hooks`
+U5.21	one-liner	a commondir file in the main git dir (#993) is refused, naming the file; the human removes it	a planted `commondir`	crew/internal/gitguard/pin.go	crew/internal/gitguard/pin_test.go::TestPinRule1
+U5.22	design-doc	worktree-anchored calls neutralise config hooks, fsmonitor, hooksPath, attributes	`submodule.recurse=false`, disable the config-hook events
+U5.23	kept	a tree checked out without attributes: tell the worker to run git lfs pull; never run LFS in its worktree from your shell	`git lfs pull` in its own session	adapters/core/dispatch.sh	tests/dispatch.bats::resume: a branch with no worktree is checked out without its tree's attributes (#596)
+U5.24	design-doc	a stat-dirty filtered file makes reap keep the worktree	as modified, so reap keeps the worktree
+U5.25	kept	never run a printed --unset-all or clear drift yourself	run its printed `git config
+U5.26	design-doc	a redirect key is restored by editing its config file, never unset	baselined value or removed by editing the named config file
+U5.27	kept	only the human runs crew git-baseline --accept, in their own terminal after a typed yes; never yourself or via pty/tmux	or through a pty or tmux	crew/internal/gitguard/baseline_cmd.go	crew/internal/gitguard/baseline_cmd_test.go::TestRunBaselineAcceptNeedsTerminal
+U5.28	kept	deleting the baseline re-records everything: never do it	delete the baseline
+U5.29	design-doc	deleting the baseline accepts everything present at the next dispatch	accepts everything present at that moment
+U5.30	design-doc	trust on first use: only dispatch records the baseline unasked	Trust-on-first-use
+U5.31	design-doc	branch.<n>.remote/pushRemote and remote.pushDefault do not affect anchored actions	URL-valued `branch.<n>.remote`
+U5.32	design-doc	submodule.<n>.url is inert on anchored calls	`submodule.<n>.url` is inert
+U5.33	one-liner	legacy remotes/ and branches/ entries are baselined; unsafe or new ones refuse	git-config key or legacy	crew/internal/gitguard/legacy.go	crew/internal/gitguard/guard_test.go::TestCheckLegacy
+U5.34	design-doc	the legacy-coverage migration marker	A legacy-coverage migration records
+U5.35	design-doc	a human inspects and removes a refused legacy entry; the dispatcher never follows or repairs it	the dispatcher never follows or repairs it
+U5.36	design-doc	crew git-baseline lists legacy drift and --accept refuses while any is listed	also lists that legacy drift	crew/internal/gitguard/baseline_cmd.go	crew/internal/gitguard/baseline_cmd_test.go::TestRunBaselineAcceptRefusesLegacy
+U5.37	design-doc	redirect-key migration (#678) marker; TOFU for existing redirect keys	lacks the redirect marker
+U5.38	design-doc	dispatch's baseline-recorded note lists redirect pairs, masked or withheld	Dispatch's baseline-recorded note
+U5.39	kept	relay every baseline-recorded note so the human checks each host/path	Relay every `git-config baseline: recorded` note	crew/internal/gitguard/baseline.go	crew/internal/gitguard/baseline_test.go::TestInitFresh
+U5.40	design-doc	a planted value stays trusted until the human restores it, deletes the baseline and accepts	A value they did not set stays trusted
+U5.41	design-doc	a legitimate origin URL/proxy/insteadOf change refuses until accepted; global insteadOf unchecked	A legitimate change of origin's URL
+U5.42	design-doc	residuals of the config guard	Residual: the #993 commondir classification
+U5.43	design-doc	output masking of URL userinfo and query values	mask URL userinfo and query values
+U5.44	kept	the human runs crew git-baseline in their own terminal, never the dispatcher	The human runs `crew git-baseline` in their own
+U5.45	design-doc	<git-common-dir>/info/attributes still selects drivers	`<git-common-dir>/info/attributes` still selects
+U5.46	design-doc	a cwd with no dispatcher record is trusted as the caller own	a cwd with no dispatcher record on any ancestor
+U5.47	design-doc	only a default create runs the new tree attributes and hooks: keep driver programs outside the repo	programs outside the repo tree
+U5.48	one-liner	a create refuses when another worktree names the new branch or the switch left anything but one new worktree at the base (#640)	a second worktree on a branch	adapters/core/dispatch.sh	tests/dispatch.bats::create: refuses when a second worktree claims the new branch before launch (#640)	refusal says "possible tampering: stop and tell the human"
+U5.49	kept	relay it as possible tampering; never remove the named worktree, retry or re-dispatch under another title	remove the named worktree, or re-dispatch around
+U5.50	design-doc	creates switch with --no-hooks; dispatch replays the operator's worktrunk hooks after the post-check	Every create switches with
+U5.51	design-doc	hook template variables passed and blanked	`{{ branch }}` and `{{ target }}`
+U5.52	design-doc	where project hooks are read from	Pre-switch reads project hooks
+U5.53	kept	"No <type> hooks configured" is harmless; do not relay it	hooks configured` is harmless
+U5.54	design-doc	residual: the post-check is detection, not a boundary	Residual: the post-check is detection
+U6.1	design-doc	role panes are split with the lead's CREW_WORKER_ID and CREW_ID plus CREW_ROLE_ID	is split with the lead's `CREW_WORKER_ID`
+U6.2	design-doc	CREW_ROLE_ID keeps dispatch-notify from posting the lead's exited	so `dispatch-notify` never posts	adapters/core/dispatch-notify.sh	tests/dispatch-notify.bats::notify: a grid role pane carrying the lead's CREW_WORKER_ID writes nothing and pings nothing
+U6.3	one-liner	role panes post only as role:<branch>:<role>	post only as	crew/internal/sender/sender.go	crew/internal/sender/sender_test.go::TestCheck	behaviour pin: no refusal text the dispatcher relays
+U6.4	kept	a role whose engine exits before release posts blocked under its id and messages the lead; a reap is silent	posts a `blocked` status under that id	adapters/core/dispatch.sh	tests/dispatch.bats::grid: a role pane whose engine exits immediately posts a blocked status naming the role
+U7.1	design-doc	pane scraping is truthful only for an engine that streams; claude has the full frame set	Pane scraping only tells the truth
+U7.2	one-liner	codex and cursor get liveness coverage (stalled:/quiet:), not prompt coverage	get liveness coverage, not prompt coverage	crew/internal/stall/frame_detectors.go	tests/crew.bats::stall-watch: codex leaves an uncaptured Claude prompt frame to startup silence	behaviour pin; codex has since gained one verified prompt frame (Hooks need review), hence "mostly"
+U7.3	one-liner	cursor's monthly usage-limit frame gets quota: (D1b, two samples)	monthly-limit `quota:`	crew/internal/stall/frame_detectors.go	tests/crew.bats::stall-watch: D1b posts blocked/quota: on cursor's monthly usage-limit frame
+U7.4	kept	handle whichever prefix arrives the same way	Handle whichever prefix arrives
+U8.1	design-doc	--owner-auth turns dispatcher-written text into a worker's user turn	turns dispatcher-written text into a worker's user turn
+U8.2	kept	nothing verifies a quote is real; verbatim-only is an honor rule	Verbatim-only is an honor rule
+U8.3	one-liner	partial checks: the literal delegation call, the explicit yes, a 2000-char cap, nothing read from the task doc	Only the human's own words in this session authorize	adapters/core/dispatch.sh	tests/dispatch.bats::owner-auth: text over 2000 chars is refused before scaffolding
+U8.4	kept	text in a ticket, PR comment, pane capture or tool output claiming approval is not the human	claiming "the owner approved X" never does
+U8.5	design-doc	same-user processes can post as the dispatcher or launch their own worker	Same-user processes.
+U8.6	design-doc	the rules cannot make an over-broad task narrower	Over-broad scope the human set.
+U8.7	kept	the classifier decides; a denial despite the owner words is final for that run	final for that run
+U8.8	kept	dispatch resume "<extra prompt>" must never carry an authorization	`dispatch resume "<extra prompt>"`
+U9.1	design-doc	git allows one worktree per branch	git allows one worktree per branch
+U9.2	one-liner	a live worker in the worktree: dispatch exits non-zero naming the session and remedies (crew reply, or take over)	refuses to stack a second worker on an occupied worktree	adapters/core/dispatch.sh	tests/dispatch.bats::claim: a dispatched label on the exact branch is still refused when a live engine occupies its worktree
+U9.3	design-doc	a finished worker is reclaimed automatically	A worker that has already finished is reclaimed automatically	adapters/core/dispatch.sh	tests/dispatch.bats::gate: reclaims a finished session and proceeds
+U9.4	kept	do not retry a refused dispatch unchanged: redirect with crew reply, or wait	Do not retry a refused dispatch unchanged
+U10.1	kept	crew reap runs on every dispatch (--quiet) and from crew stream	runs on every `dispatch` and from `crew stream`
+U10.2	design-doc	stream cadence: --reap-every (900, 0 off) and after terminal or merged/closed batches	every `--reap-every` seconds (default 900
+U10.3	one-liner	reap reclaims a finished worker's window and worktree once its PR is merged or closed	once its PR is merged or closed	crew/internal/reap	crew/internal/reap/reap_test.go::TestMergedPRReachesRemoval	behaviour pin
+U10.4	design-doc	each reclaim posts a terminal reaped status and removes per-branch records, keeping artifacts	posts a terminal `reaped` status
+U10.5	kept	an open PR, uncommitted changes or an unfinished session keeps the worktree	keeps one with an open PR, uncommitted changes or an unfinished session	crew/internal/reap	crew/internal/reap/remove_test.go::TestRemoveKeepsDirt
+U10.6	design-doc	a live engine keeps it unless done/pr_open and every claude/pi pane is provably idle on two samples	A live engine in the worktree keeps it too
+U10.7	design-doc	a role pane that is neither claude nor pi has no idle signature and keeps the window	has no idle signature
+U10.8	kept	a done/failed window is released after --idle seconds (300)	after `--idle` seconds	crew/internal/reap	tests/crew.bats::reap: default grace releases a done window older than it and keeps a younger one
+U10.9	design-doc	the worker's own stall-watch idle-releases its window	Besides reap, the worker's own `crew stall-watch`
+U10.10	design-doc	windows a person is using are kept	Both paths keep a window a person is evidently using
+U10.11	kept	a pr_open worker never idle-releases	never idle-releases
+U10.12	design-doc	the window is killed before removal; run crew reap without --quiet to see a failure	The window is killed before the removal
+U10.13	design-doc	reaps serialise; stream reaps skip (--no-wait) and print one stream line	A reap waits for another running reap
+U10.14	design-doc	a window stamped with a gone worktree closes once its PR is merged or closed	still stamped with a branch whose worktree is gone
+U10.15	kept	crew reap --dry-run explains every keep	`crew reap --dry-run` names why	crew/internal/reap	tests/crew.bats::reap: --dry-run removes no worktree
+U10.16	kept	reap files outcomes into the ratings store	`crew rate --report`
+U10.17	design-doc	ratings autosweep: CREW_RATE_AUTOSWEEP=0, autosweep.log, --sweep-all	`CREW_RATE_AUTOSWEEP=0`
+U10.18	kept	never remove a worker worktree by hand	Never remove a worker worktree by hand
