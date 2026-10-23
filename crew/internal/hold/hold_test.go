@@ -317,22 +317,21 @@ func TestAddPrintsOnlyTheMintedID(t *testing.T) {
 	}
 }
 
-// `list` folds adds minus releases; an add after a release of another id stays.
+// `list` folds adds minus releases; an add after a release of another id stays,
+// and one body that is not JSON costs its own row and nothing else.
 func TestListFoldsAddsMinusReleases(t *testing.T) {
 	tr := setup(t)
-	tr.write(t, seedHold(t, "c1", "h1", future), seedHold(t, "c1", "h2", future))
+	tr.write(t,
+		seedHold(t, "c1", "h1", future),
+		seedHold(t, "c1", "h2", future),
+		`{"ts":9,"crew_id":"c1","from":"d","to":"hold:c1","kind":"msg","body":"not json"}`,
+	)
 	if _, err, code := tr.run(t, Request{Action: "release", ID: "h1"}); code != 0 {
 		t.Fatalf("release: %d %s", code, err)
 	}
 	out, _, code := tr.run(t, Request{Action: "list", JSON: true})
-	var held []struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal([]byte(out), &held); err != nil || code != 0 {
-		t.Fatalf("code %d, %q (%v)", code, out, err)
-	}
-	if len(held) != 1 || held[0].ID != "h2" {
-		t.Errorf("outstanding %v, want only h2", held)
+	if ids := strings.Join(idsOf(t, out), ","); code != 0 || ids != "h2" {
+		t.Errorf("outstanding %q (code %d), want only h2", ids, code)
 	}
 }
 
@@ -364,15 +363,66 @@ func TestDueJSONReportsOnlyTheMaturedHold(t *testing.T) {
 	}
 }
 
-// Another crew's holds are invisible to list and due, and due exits 1 for it.
+// Holds are scoped to their crew: each crew's `list` and `due` read their own
+// queue, and one crew's matured hold never matures in another's `due`.
 func TestHoldsAreInvisibleToAnotherCrew(t *testing.T) {
 	tr := setup(t)
-	tr.write(t, seedHold(t, "c1", "h1", "1500000000"))
-	for action, wantCode := range map[string]int{"list": 0, "due": 1} {
-		out, _, code := tr.run(t, Request{Action: action, JSON: true, Crew: "c2"})
-		if code != wantCode || out != "[]\n" {
-			t.Errorf("%s: code %d, stdout %q", action, code, out)
+	tr.write(t, seedHold(t, "c1", "h1", "1500000000"), seedHold(t, "c2", "other", "9999999999"))
+	for _, tc := range []struct {
+		action, crew, want string
+		code               int
+	}{
+		{"list", "c1", "h1", 0},
+		{"due", "c1", "h1", 0},
+		{"list", "c2", "other", 0},
+		// c2's own hold is not matured, and c1's matured one is not c2's.
+		{"due", "c2", "", 1},
+	} {
+		out, err, code := tr.run(t, Request{Action: tc.action, JSON: true, Crew: tc.crew})
+		if ids := strings.Join(idsOf(t, out), ","); code != tc.code || ids != tc.want {
+			t.Errorf("%s --crew %s: code %d ids %q, want %d %q (%s)", tc.action, tc.crew, code, ids, tc.code, tc.want, err)
 		}
+	}
+}
+
+// The bus writer's torn-tail rule reaches the hold arm: a log whose last byte is
+// not a newline gets one, so the fragment stays one record and the hold the next.
+func TestAddTerminatesATornTail(t *testing.T) {
+	tr := setup(t)
+	if err := os.MkdirAll(tr.paths.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	torn := `{"crew_id":"c1","kind":"status","to":"worker:feat/x","body":{"state":"working"}`
+	if err := os.WriteFile(tr.paths.Log, []byte(torn), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, code := tr.run(t, fullAdd(nil))
+	if code != 0 {
+		t.Fatalf("add: code %d, stderr %q", code, errOut)
+	}
+	data, err := os.ReadFile(tr.paths.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(data), "\n"); n != 2 {
+		t.Fatalf("the log holds %d lines, want 2:\n%s", n, data)
+	}
+	var row struct {
+		Kind    string `json:"kind"`
+		To      string `json:"to"`
+		BodyStr string `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(tr.rows(t)[1]), &row); err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(row.BodyStr), &body); err != nil {
+		t.Fatalf("the hold body no longer parses: %v", err)
+	}
+	if id := strings.TrimSpace(out); row.Kind != "msg" || row.To != "hold:c1" || body.ID != id {
+		t.Errorf("tail row: kind %q to %q id %q, want msg hold:c1 %q", row.Kind, row.To, body.ID, id)
 	}
 }
 
@@ -904,6 +954,22 @@ func mustJSON(t *testing.T, v any) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// idsOf are the ids one of the arm's --json arrays prints, in its order.
+func idsOf(t *testing.T, s string) []string {
+	t.Helper()
+	var held []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(s), &held); err != nil {
+		t.Fatalf("not a JSON array (%v): %q", err, s)
+	}
+	ids := make([]string, len(held))
+	for i, h := range held {
+		ids[i] = h.ID
+	}
+	return ids
 }
 
 func jsonLen(t *testing.T, s string) int {

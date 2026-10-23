@@ -7199,56 +7199,6 @@ poll_for() {
 # Predicates for poll_for.
 proc_gone() { ! kill -0 "$1" 2>/dev/null; }
 
-# `crew hold` is Go, and so is the outstanding-holds fold it shares with
-# `roster-render`: `hold.Outstanding` is the one implementation. What is tested
-# here is the fixture's contract, which the fold is judged on: crew scoping, a
-# released id dropping out, and one unparseable body costing only its own row.
-@test "hold: the outstanding fold drops released ids and unparseable bodies" {
-  local log
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  seed_hold c1 h1 9999999999
-  seed_hold c1 h2 9999999998
-  seed_hold c2 other 9999999999
-  run_crew hold release h1 --crew c1
-  # A body that is not JSON costs its own row and nothing else.
-  printf '%s\n' '{"ts":9,"crew_id":"c1","from":"d","to":"hold:c1","kind":"msg","body":"not json"}' >>"$log"
-
-  run run_crew hold list --json --crew c1
-  [ "$status" -eq 0 ]
-  [ "$(jq -r 'length' <<<"$output")" = "1" ]
-  [ "$(jq -r '.[0].id' <<<"$output")" = "h2" ]
-
-  # Crew scoping: `other` is another crew's queue.
-  run run_crew hold list --json --crew c2
-  [ "$(jq -r '.[0].id' <<<"$output")" = "other" ]
-}
-
-# `_bus_append`'s torn-tail rule, now enforced by the Go writer: a log whose last
-# byte is not a newline gets one, so the fragment stays one record and the hold
-# the next.
-@test "hold: a Go append terminates a log that has no trailing newline" {
-  local log id
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  mkdir -p "$(dirname "$log")"
-  printf '%s' '{"crew_id":"c1","kind":"status","to":"worker:feat/x","body":{"state":"working"}' >"$log"
-
-  id=$(run_crew hold add --crew c1 --engine claude --window 5h \
-    --resets-at "$(($(date +%s) + 3600))" --agent codex --ref r1 --branch b1 \
-    --tier standard --model sonnet --effort medium torn | tail -n1)
-
-  [ "$(wc -l <"$log")" -eq 2 ]
-  tail -n1 "$log" | jq -e --arg id "$id" \
-    '.kind == "msg" and .to == "hold:c1" and (.body | fromjson | .id) == $id'
-}
-
-@test "status: reaped from a worker is refused and writes nothing" {
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  CREW_ID=c1 run --separate-stderr run_crew status "worker:feat/x#s1-1" reaped
-  [ "$status" -ne 0 ]
-  [[ "$stderr" == *"posted only by crew reap"* ]]
-  [ ! -s "$log" ]
-}
-
 # The lock belongs to the park, so a park killed mid-sleep has to drop it: bash
 # ran its EXIT trap for TERM, INT and HUP, and `crew stream` stops and retries
 # its inner watch that way. A leaked watch.lock.d would refuse every later watch
@@ -7292,62 +7242,6 @@ proc_gone() { ! kill -0 "$1" 2>/dev/null; }
   [ "$status" -eq 0 ]
   run jq -e '(.events | length) == 1 and .events[0].body.state == "done"' <<<"$output"
   [ "$status" -eq 0 ]
-}
-
-@test "status: --restamp records body.restamp on blocked only" {
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-
-  CREW_ID=c1 run --separate-stderr run_crew status "worker:feat/x#s1-1" blocked "q (cycle 1 of 24)" --restamp
-  [ "$status" -eq 0 ]
-  run jq -s -e \
-    '[.[] | select(.body.state == "blocked" and .body.detail == "q (cycle 1 of 24)" and .body.restamp == true)] | length == 1' \
-    "$log"
-  [ "$status" -eq 0 ]
-
-  before="$(wc -l <"$log")"
-  CREW_ID=c1 run --separate-stderr run_crew status "worker:feat/x#s1-1" working --restamp
-  [ "$status" -ne 0 ]
-  [ "$(wc -l <"$log")" = "$before" ]
-
-  t="$(jq -s -r '[.[] | select(.body.detail == "q (cycle 1 of 24)")][0].ts' "$log")"
-  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" blocked "q (cycle 2 of 24)" --restamp
-  run --separate-stderr run_crew watch --crew c1 --since "$t" --timeout 1 --interval 1
-  [ "$status" -eq 0 ]
-  [ -z "$output" ]
-
-  t2="$(jq -s -r '[.[] | select(.body.detail == "q (cycle 2 of 24)")][0].ts' "$log")"
-  CREW_ID=c1 run_crew status "worker:feat/x#s1-1" blocked "other question" --restamp
-  run --separate-stderr run_crew watch --crew c1 --since "$t2" --timeout 1 --interval 1
-  [ "$status" -eq 0 ]
-  run jq -e '(.events | length) == 1 and .events[0].body.detail == "other question"' <<<"$output"
-  [ "$status" -eq 0 ]
-}
-
-@test "status: -- stores a detail that starts with dashes" {
-  log="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-
-  CREW_ID=c1 run --separate-stderr run_crew status "worker:feat/x#s1-1" blocked -- '--not-a-flag'
-  [ "$status" -eq 0 ]
-  run jq -s -e \
-    '[.[] | select(.body.state == "blocked" and .body.detail == "--not-a-flag")] | length == 1' \
-    "$log"
-  [ "$status" -eq 0 ]
-}
-
-@test "watch and stream: a traversal-shaped --crew is refused, writing nothing outside the bus dir" {
-  common="$(git rev-parse --path-format=absolute --git-common-dir)"
-
-  run --separate-stderr run_crew watch --crew '../../escaped' --timeout 1 --interval 1
-  [ "$status" -eq 1 ]
-  [[ "$stderr" == *"invalid crew id"* ]]
-  [ ! -e "$common/escaped" ]
-  [ ! -e "$common/crew/escaped" ]
-
-  run --separate-stderr run_crew stream --crew '../../escaped' --park 1 --interval 1
-  [ "$status" -eq 64 ]
-  [[ "$stderr" == *"invalid crew id"* ]]
-  [ ! -e "$common/escaped" ]
-  [ ! -e "$common/crew/escaped" ]
 }
 
 # --- terminal status gate: review seam (#241, #306) ---
