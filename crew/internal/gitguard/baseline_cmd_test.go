@@ -134,8 +134,7 @@ func TestRunBaselineLegacy(t *testing.T) {
 	if err := os.MkdirAll(r.common+"/branches/d", 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// #993: a legacy entry is listed and exits 1; the exact stdout never says
-	// "no drift", and --accept is named as the thing that cannot record it.
+	// #993: the exact stdout is what proves a legacy listing never says "no drift".
 	runBaseline(r.main, false, "", false).want(t, 1,
 		"legacy file entry "+Quote(r.common+"/remotes/foo")+": new or changed from the baseline"+legacyTail+
 			"legacy symlink entry "+Quote(r.common+"/remotes/link")+": unsafe"+legacyTail+
@@ -232,8 +231,8 @@ func TestRunBaselinePinRefuses(t *testing.T) {
 		t.Fatal(err)
 	}
 	runBaseline(r.main, false, "", false).want(t, 1, "", redirectLine(r.common))
-	// #993: --accept refuses on the pin too — no prompt, and the baseline the
-	// real repo recorded stays byte-identical.
+	// #993: --accept refuses on the pin too, leaving the recorded baseline
+	// byte-identical.
 	runBaseline(r.main, true, "yes\n", true).want(t, 1, "", redirectLine(r.common))
 	if got := readFile(t, r.baseline()); got != before {
 		t.Fatalf("baseline changed: %q, want %q", got, before)
@@ -323,10 +322,10 @@ func TestRunBaselineAcceptWithoutBaseline(t *testing.T) {
 // a fingerprint, keeping the host visible.
 func TestRunBaselineVerbatimAndMaskedValues(t *testing.T) {
 	const (
-		tokenURL  = "https://x-access-token:FAKETOKEN0686@github.com/o/r.git"
-		proxyURL  = "http://u:fakepass0686@proxy.example:3128"
-		proxyRaw  = "u:fakepass0686@proxy.example:3128"
-		redirectK = "url.https://x:FAKETOKEN0686@evil.example/.insteadof"
+		tokenURL    = "https://x-access-token:FAKETOKEN0686@github.com/o/r.git"
+		proxyURL    = "http://u:fakepass0686@proxy.example:3128"
+		proxyRaw    = "u:fakepass0686@proxy.example:3128"
+		redirectSub = "https://x:FAKETOKEN0686@evil.example/"
 	)
 	for _, tc := range []struct {
 		name    string
@@ -365,17 +364,19 @@ func TestRunBaselineVerbatimAndMaskedValues(t *testing.T) {
 			hosts: []string{"attacker.example"},
 		},
 		{
-			name:  "bracketed ssh userinfo host stays verbatim",
-			seed:  func(t *testing.T, r repo) { r.config(t, "remote.origin.url", "https://github.com/o/r.git") },
-			drift: func(t *testing.T, r repo) { r.config(t, "remote.origin.url", "ssh://[evil.example]:22@github.com/o/r.git") },
+			name: "bracketed ssh userinfo host stays verbatim",
+			seed: func(t *testing.T, r repo) { r.config(t, "remote.origin.url", "https://github.com/o/r.git") },
+			drift: func(t *testing.T, r repo) {
+				r.config(t, "remote.origin.url", "ssh://[evil.example]:22@github.com/o/r.git")
+			},
 			want: func(r repo) string {
 				return driftLine("remote.origin.url="+Quote("ssh://[evil.example]:22@github.com/o/r.git"), "main checkout", r.common+"/config")
 			},
 			hosts: []string{"evil.example"},
 		},
 		{
-			name:  "scp-style remote url stays raw",
-			seed:  func(t *testing.T, r repo) { r.config(t, "remote.origin.url", "https://github.com/o/r.git") },
+			name: "scp-style remote url stays raw",
+			seed: func(t *testing.T, r repo) { r.config(t, "remote.origin.url", "https://github.com/o/r.git") },
 			drift: func(t *testing.T, r repo) {
 				r.config(t, "remote.origin.url", "attacker.example:x@github.com:o/r.git")
 			},
@@ -399,14 +400,14 @@ func TestRunBaselineVerbatimAndMaskedValues(t *testing.T) {
 				r.config(t, "remote.origin.url", tokenURL)
 				r.config(t, "http.proxy", proxyURL)
 				r.config(t, "http.https://p.example/.proxy", proxyRaw)
-				r.config(t, redirectK, "https://github.com/")
+				r.config(t, "url."+redirectSub+".insteadof", "https://github.com/")
 			},
 			want: func(r repo) string {
 				origin := r.common + "/config"
-				return driftLine("remote.origin.url="+fingerprinted("https://***@github.com/o/r.git", tokenURL), "main checkout", origin)+
-					driftLine("http.proxy="+fingerprinted("http://***@proxy.example:3128", proxyURL), "main checkout", origin)+
-					driftLine("http.https://p.example/.proxy="+fingerprinted("***@proxy.example:3128", proxyRaw), "main checkout", origin)+
-					driftLine("url."+fingerprinted("https://***@evil.example/", "https://x:FAKETOKEN0686@evil.example/")+
+				return driftLine("remote.origin.url="+fingerprinted("https://***@github.com/o/r.git", tokenURL), "main checkout", origin) +
+					driftLine("http.proxy="+fingerprinted("http://***@proxy.example:3128", proxyURL), "main checkout", origin) +
+					driftLine("http.https://p.example/.proxy="+fingerprinted("***@proxy.example:3128", proxyRaw), "main checkout", origin) +
+					driftLine("url."+fingerprinted("https://***@evil.example/", redirectSub)+
 						".insteadof=https://github.com/", "main checkout", origin)
 			},
 			hosts:   []string{"github.com", "proxy.example", "evil.example"},
@@ -482,14 +483,13 @@ func TestRunBaselineWorktreeAliasUnmasksMainRemote(t *testing.T) {
 // it, and a url it rewrites must print whole before it is ever accepted.
 func TestRunBaselineBaselinedAliasRewrites(t *testing.T) {
 	const url = "https://evil.invalid:x@trusted.invalid/o/r.git"
-	const alias = "url.git@.insteadof=https://"
 	r := newRepo(t)
 	r.init(t)
 	origin := r.common + "/config"
 	accepted := "git-config baseline " + r.baseline() + ": accepted\n"
+	alias := driftLine("url.git@.insteadof=https://", "main checkout", origin)
 	r.config(t, "url.git@.insteadof", "https://")
-	runBaseline(r.main, true, "yes\n", true).want(t, 0,
-		driftLine(alias, "main checkout", origin)+prompt(r.baseline())+accepted, "")
+	runBaseline(r.main, true, "yes\n", true).want(t, 0, alias+prompt(r.baseline())+accepted, "")
 	r.config(t, "--unset", "url.git@.insteadof")
 	r.config(t, "remote.origin.url", url)
 	// The alias is gone from the config; the baselined alias still rewrites.
@@ -531,12 +531,8 @@ func TestRunBaselinePredatesNoteListsRedirectPair(t *testing.T) {
 	r := newRepo(t)
 	writeFile(t, r.baseline(), "")
 	r.config(t, "remote.origin.url", "https://x.example/r.git")
-	got := runBaseline(r.main, false, "", false)
-	got.want(t, 1, predatesNote(r.baseline())+
+	runBaseline(r.main, false, "", false).want(t, 1, predatesNote(r.baseline())+
 		driftLine("remote.origin.url=https://x.example/r.git", "main checkout", r.common+"/config"), "")
-	if strings.Contains(got.stdout, "no drift") {
-		t.Fatalf("an unmarked baseline said no drift:\n%s", got.stdout)
-	}
 }
 
 // #678: --accept records the redirect marker, so the note never comes back.
@@ -599,12 +595,11 @@ func TestRunBaselineAcceptWritesOnlyShownPairs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The shim planted once per listing; only the value the run displayed —
-	// the one the second listing saw — may be recorded.
+	// The shim plants once per listing: only a value this run displayed may be
+	// recorded.
 	var planted int
 	for _, rec := range recs {
 		if k, v, ok := strings.Cut(rec, "\n"); ok && k == "core.fsmonitor" {
-			t.Logf("recorded core.fsmonitor=%s", v)
 			if !strings.Contains(got.stdout, "core.fsmonitor="+v) {
 				t.Fatalf("recorded a pair it never displayed: %q\n%s", rec, got.stdout)
 			}
