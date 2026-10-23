@@ -2315,6 +2315,63 @@ $hits"
   done
 }
 
+# #1281: every rule in the class (c) passages the protocol collapsed into
+# one-line rules has a row: kept or one-liner rows still read in the protocol,
+# moved rows read in the design doc, and every cited code path and pinning test
+# exists. A row whose phrase stops matching means a rule was dropped or reworded
+# without updating the inventory.
+@test "the class (c) rule inventory accounts for every rule, with real code and tests (#1281)" {
+  local inv="$ROOT/docs/dispatcher-context-floor/class-c-inventory.tsv"
+  local protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  local design="$ROOT/docs/dispatcher-enforcement.md"
+  local line id dest rule phrase code test note file path sym tf title bad=0 n=0 u
+  local -A seen=() units=() oneliners=()
+  while IFS= read -r line; do
+    # Tabs are IFS whitespace, so `read` would merge empty columns; split on
+    # a non-whitespace separator instead.
+    IFS=$'\x1f' read -r id dest rule phrase code test note <<<"${line//$'\t'/$'\x1f'}"
+    n=$((n + 1))
+    [ -z "${seen[$id]:-}" ] || { echo "$id: duplicate id"; bad=1; }
+    seen[$id]=1
+    u="${id%%.*}"
+    units[$u]=1
+    case "$dest" in
+      kept | one-liner) file="$protocol" ;;
+      design-doc) file="$design" ;;
+      *) echo "$id: unknown destination '$dest'"; bad=1; continue ;;
+    esac
+    [ -n "$rule" ] && [ -n "$phrase" ] || { echo "$id: empty rule or phrase"; bad=1; }
+    grep -qF -- "$phrase" "$file" || { echo "$id: phrase not in ${file#"$ROOT"/}: $phrase"; bad=1; }
+    if [ "$dest" = one-liner ]; then
+      oneliners[$u]=1
+      [ -n "$code" ] && [ -n "$test" ] || { echo "$id: a one-liner row needs a code path and a pinning test"; bad=1; }
+    fi
+    if [ -n "$code" ]; then
+      path="${code%%:*}" sym=""
+      [[ $code != *:* ]] || sym="${code#*:}"
+      if [ ! -e "$ROOT/$path" ]; then
+        echo "$id: no such code path $path"; bad=1
+      elif [ -n "$sym" ] && ! grep -qF -- "$sym" "$ROOT/$path"; then
+        echo "$id: $sym not in $path"; bad=1
+      fi
+    fi
+    if [ -n "$test" ]; then
+      tf="${test%%::*}" title="${test#*::}"
+      case "$tf" in
+        *.bats) grep -qxF -- "@test \"$title\" {" "$ROOT/$tf" 2>/dev/null ;;
+        *_test.go) grep -qE "^func $title\(" "$ROOT/$tf" 2>/dev/null ;;
+        *) false ;;
+      esac || { echo "$id: no test '$title' in $tf"; bad=1; }
+    fi
+  done < <(tail -n +2 "$inv")
+  for u in U1 U2 U3 U4 U5 U6 U7 U8 U9 U10; do
+    [ -n "${units[$u]:-}" ] || { echo "$u: no rows"; bad=1; }
+    [ -n "${oneliners[$u]:-}" ] || { echo "$u: no one-liner row"; bad=1; }
+  done
+  [ "$n" -gt 0 ]
+  [ "$bad" -eq 0 ]
+}
+
 # --- #176: review-worker completion peeks (P1/P2) and APPROVE decided once ---
 
 # --- #239: workers fix small findings and file issues for the rest ---

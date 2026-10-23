@@ -433,6 +433,16 @@ Several refusal messages already carry the rule themselves; the `--add-dir`
 refusal at `dispatch.sh` line 5180, for example, lists every refused category.
 For those units the protocol text duplicates the tool output.
 
+**Done in #1281.** The ten units now carry their one-line rules plus the
+class (a) rules embedded in them. The removed explanations are in
+[`dispatcher-enforcement.md`](dispatcher-enforcement.md), and
+[`class-c-inventory.tsv`](dispatcher-context-floor/class-c-inventory.tsv) gives
+every rule in those passages its destination (kept, one-liner with its
+enforcing code path and pinning test, or moved), checked by
+`tests/adapters.bats`. The protocol measured by the same append delta
+(`chunk` minus `bare-prompt` in `runs.jsonl`, label `protocol-after-1281`) went
+from 63,133 to 46,572 real tokens (protocol md5 `41106547`), a drop of 16,561.
+
 **Answer.** Of 63.1k protocol tokens, 20.0k are always needed. 24.6k are
 playbooks for named triggers and 18.6k explain enforcement whose only
 dispatcher action fits in ten lines. The biggest pieces are the Trust boundary
