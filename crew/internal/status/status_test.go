@@ -448,6 +448,13 @@ func noDeslop(state, tier string) string {
 	return "crew: refusing " + state + " for " + tier + noDeslopTail
 }
 
+// noReviewFor is the review-seam refusal for a caller other than the fixture's
+// worker: the line names the session, and the resumed and JSON-escaped branch
+// cases post as another id.
+func noReviewFor(state, tier, from string) string {
+	return strings.ReplaceAll(noReview(state, tier), "session worker:feat/x#s1-1 ", "session "+from+" ")
+}
+
 func TestGatesSkipped(t *testing.T) {
 	cases := []struct {
 		name  string

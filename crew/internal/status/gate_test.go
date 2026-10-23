@@ -1,9 +1,12 @@
 package status
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
 )
 
@@ -19,6 +22,15 @@ type gateCase struct {
 	code      int
 	stderr    string
 	ledger    string
+	from      string // the status caller; empty is the fixture's worker
+}
+
+// caller is the session id the case posts its status as.
+func (c gateCase) caller() string {
+	if c.from != "" {
+		return c.from
+	}
+	return worker
 }
 
 const (
@@ -100,6 +112,243 @@ func reviewCases() []gateCase {
 			piVerdict(branch, "accept"), msgRow(branch, rev, `{"final":false}`), deslopSeam),
 		seamRefuse("pi: BOM re-request after accept", piDoc(), refused,
 			piVerdict(branch, "accept"), bomRequest, deslopSeam),
+	}
+}
+
+// piCases ports the pi reviewer-verdict cases of tests/crew.bats' terminal
+// status gate section (#241, #306, #391, #392): each row is one `crew status
+// <worker> pr_open ""` over a seeded bus, asserted with its exact exit code and
+// refusal, and with the status row written or absent. The engine line decides
+// whether a pane verdict counts as a seam, so a row seeds the tier and engine
+// it needs.
+func piCases() []gateCase {
+	// verdict is a reviewer-pane verdict msg as the pi grid posts it.
+	verdict := func(to, v string) string {
+		return msgRow(rev, to, `{"role":"reviewer","seam":"review","verdict":"`+v+`"}`)
+	}
+	// request is the lead's review re-request: any msg to the reviewer that is
+	// not the bare {"final":true} release, whether or not it carries seam keys.
+	request := msgRow(worker, rev, `{"seam":"review","artifact":"/a/review.diff","question":"Review this diff."}`)
+	const (
+		deepPiDoc = "tier: deep\nkind: implement\nengine: pi\n"
+		resumed   = "worker:feat/x#s2-2"
+		escaped   = `worker:feat/a"b#s1-1`
+	)
+	refuse := func(name string, rows ...string) gateCase {
+		return gateCase{name: name, doc: piDoc(), rows: rows, state: "pr_open", code: 1, stderr: noReview("pr_open", "standard")}
+	}
+	allow := func(name string, rows ...string) gateCase {
+		return gateCase{name: name, doc: piDoc(), rows: rows, state: "pr_open"}
+	}
+	// deepPi gates the resumed session, so its refusal names that id.
+	deepPi := func(name string, code int, rows ...string) gateCase {
+		want := ""
+		if code != 0 {
+			want = noReviewFor("pr_open", "deep", resumed)
+		}
+		return gateCase{name: name, doc: deepPiDoc, rows: rows, state: "pr_open", from: resumed, code: code, stderr: want}
+	}
+	refuseClaude := func(name string, rows ...string) gateCase {
+		return gateCase{name: name, doc: standardDoc, rows: rows, state: "pr_open", code: 1, stderr: noReview("pr_open", "standard")}
+	}
+	allowClaude := func(name string, rows ...string) gateCase {
+		return gateCase{name: name, doc: standardDoc, rows: rows, state: "pr_open"}
+	}
+	// The crash-splice fixtures, byte-exact: a hard kill mid-append leaves a line
+	// with no newline, so the next record splices onto it and one unparsable line
+	// carries a whole valid record (#391). The reader's fail-closed content
+	// heuristic has to unescape both ids to see the reject inside it.
+	const (
+		splicedReject = `torn{"ts":1700000000500,"crew_id":"c1","from":"role:feat/x:reviewer",` +
+			`"to":"worker:feat/x#s1-1","kind":"msg","body":"{\"role\":\"reviewer\",\"seam\":\"review\",\"verdict\":\"reject\"}"}`
+		splicedRequest = `torn{"ts":1700000000500,"crew_id":"c1","from":"worker:feat/x#s1-1",` +
+			`"to":"role:feat/x:reviewer","kind":"msg","body":"{\"seam\":\"review\",\"artifact\":\"/a/review.diff\",\"question\":\"Review this diff.\"}"}`
+		escapedAccept = `{"ts":1,"crew_id":"c1","from":"role:feat/a\"b:reviewer","to":"worker:feat/a\"b#s1-1",` +
+			`"kind":"msg","body":"{\"seam\":\"review\",\"verdict\":\"accept\"}"}`
+		escapedSplicedReject = `torn{"ts":1700000000500,"crew_id":"c1","from":"role:feat/a\"b:reviewer",` +
+			`"to":"worker:feat/a\"b#s1-1","kind":"msg","body":"{\"seam\":\"review\",\"verdict\":\"reject\"}"}`
+		// An unrelated record spliced onto a torn line: the spliced row names this
+		// crew but never the reviewer, and the second torn line names the reviewer
+		// but another crew, so neither reads as a verdict.
+		splicedUnrelated = `torn{"ts":1,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"msg","body":"{\"note\":\"x\"}"}`
+		tornOtherCrew    = `torn{{"ts":1,"crew_id":"other","from":"role:feat/x:reviewer","to":"worker:feat/x","kind":"msg","body":"{}"}`
+	)
+
+	// The rows are named after the bats case each replaces. A comment over two or
+	// more rows marks one folded bats family.
+	return []gateCase{
+		allow("accept alone counts as a review seam", verdict(worker, "accept"), deslopSeam),
+
+		// a pi lone verdict that is not an accept to this worker is refused
+		refuse("lone revise to this worker is refused", verdict(worker, "revise")),
+		refuse("lone reject to this worker is refused", verdict(worker, "reject")),
+		refuse("lone accept addressed to the dispatcher is refused", verdict("dispatcher:c1", "accept")),
+		refuse("lone accept addressed to another branch's worker is refused", verdict("worker:feat/other#s1-1", "accept")),
+
+		refuse("reject is not cleared by the lead's own review seam", verdict(worker, "reject"), reviewSeam),
+		allow("reject is cleared by a later accept", verdict(worker, "reject"), verdict(worker, "accept"), deslopSeam),
+		allow("reject then revise then the lead's own review seam is allowed",
+			verdict(worker, "reject"), verdict(worker, "revise"), reviewSeam, deslopSeam),
+		allow("revise then the lead's own review seam is allowed", verdict(worker, "revise"), reviewSeam, deslopSeam),
+		allow("revise then a later accept is allowed", verdict(worker, "revise"), verdict(worker, "accept"), deslopSeam),
+
+		// a pi accept then a non-accept verdict is refused
+		refuse("accept followed by a later reject is refused", verdict(worker, "accept"), verdict(worker, "reject")),
+		refuse("accept then a reject addressed to the dispatcher is refused", verdict(worker, "accept"), verdict("dispatcher:c1", "reject")),
+		refuse("accept then a wrong-case Reject verdict is refused", verdict(worker, "accept"), verdict(worker, "Reject")),
+
+		refuse("accept is voided when the review is re-requested", verdict(worker, "accept"), request),
+		allow("accept after the review was re-requested is allowed",
+			verdict(worker, "accept"), request, verdict(worker, "accept"), deslopSeam),
+		refuse("re-requested review is not satisfied by the lead's own review seam",
+			verdict(worker, "accept"), request, reviewSeam),
+		refuse("re-request answered by an elided or invalid verdict is refused",
+			verdict(worker, "accept"), request, msgRow(rev, worker, `{"role":"reviewer","seam":"review"}`), verdict(worker, "maybe")),
+
+		// a resumed session inherits the latest pi verdict, accept or reject
+		deepPi("resumed session inherits an accept verdict", 0, verdict(worker, "accept"), deslopSeam),
+		deepPi("resumed session inherits a later reject verdict", 1, verdict(worker, "accept"), verdict(worker, "reject")),
+
+		// a torn trailing line does not change the pi verdict outcome
+		allow("torn trailing line after an accept changes nothing", verdict(worker, "accept"), deslopSeam, `torn{`),
+		refuse("torn trailing line after a reject changes nothing", verdict(worker, "reject"), `torn{`),
+
+		refuse("reject then a revise addressed to the dispatcher stays refused",
+			verdict(worker, "reject"), verdict("dispatcher:c1", "revise"), reviewSeam),
+
+		// a pi accept then one non-verdict message is refused
+		refuse("accept then an unparseable lead assignment to the reviewer is refused",
+			verdict(worker, "accept"), msgRow(worker, rev, `not json`)),
+		refuse("accept then a markdown-fenced reviewer reject is refused",
+			verdict(worker, "accept"), msgRow(rev, worker, "```json {\"seam\":\"review\",\"verdict\":\"reject\"} ```")),
+		refuse("accept then a reviewer msg whose body is a JSON array is refused",
+			verdict(worker, "accept"), msgRow(rev, worker, `[{"seam":"review","verdict":"reject"}]`)),
+		refuse("accept then a reject carrying a tag key is refused",
+			verdict(worker, "accept"), msgRow(rev, worker, `{"role":"reviewer","seam":"review","verdict":"reject","tag":"x"}`)),
+		refuse("accept then a final release that also carries a question is refused",
+			verdict(worker, "accept"), msgRow(worker, rev, `{"final":true,"question":"re-review please"}`)),
+
+		// a pi accept survives two non-cancelling bus objects
+		allow("accept survives role_exited and final objects on the bus",
+			verdict(worker, "accept"), msgRow(rev, worker, `{"event":"role_exited"}`),
+			msgRow(worker, "dispatcher:c1", `{"final":true}`), deslopSeam),
+		allow("accept survives a lead release that carries only final",
+			verdict(worker, "accept"), msgRow(worker, rev, `{"final":true}`),
+			msgRow(worker, "role:feat/other:reviewer", `{"question":"another branch"}`), deslopSeam),
+
+		// a cancelling message after a pi accept is refused until a fresh accept
+		refuse("accept then a reviewer object with neither seam nor verdict is refused",
+			verdict(worker, "accept"), msgRow(rev, worker, `{"decision":"reject"}`)),
+		allow("a reviewer object with neither seam nor verdict is cleared by a fresh accept",
+			verdict(worker, "accept"), msgRow(rev, worker, `{"decision":"reject"}`), verdict(worker, "accept"), deslopSeam),
+		refuse("accept then a lead question to the reviewer is refused",
+			verdict(worker, "accept"), msgRow(worker, rev, `{"question":"look again please"}`)),
+		allow("a lead question to the reviewer is cleared by a fresh accept",
+			verdict(worker, "accept"), msgRow(worker, rev, `{"question":"look again please"}`), verdict(worker, "accept"), deslopSeam),
+
+		// one message that is not a pi review seam is refused
+		refuse("a reviewer object with neither seam nor verdict alone is refused", msgRow(rev, worker, `{"decision":"accept"}`)),
+		refuse("a reviewer retro-style note is not a review seam", msgRow(rev, worker, `{"seam":"review","tag":"other","detail":"x"}`)),
+
+		// a pi accept survives one non-cancelling message
+		allow("accept survives a reviewer role_exited event with no seam or verdict",
+			verdict(worker, "accept"), msgRow(rev, worker, `{"role":"reviewer","event":"role_exited","pane":"%3","detail":"engine exited before a verdict"}`), deslopSeam),
+		allow("accept survives a reviewer tag-only note with no seam",
+			verdict(worker, "accept"), msgRow(rev, worker, `{"tag":"other","detail":"x"}`), deslopSeam),
+		allow("a lead final release to the reviewer does not cancel an accept",
+			verdict(worker, "accept"), msgRow(worker, rev, `{"final":true}`), deslopSeam),
+		allow("accept survives a reviewer retro-style note",
+			verdict(worker, "accept"), msgRow(rev, worker, `{"seam":"review","tag":"other","detail":"x"}`), deslopSeam),
+
+		allow("accept then a mis-addressed accept still stands",
+			verdict(worker, "accept"), verdict("dispatcher:c1", "accept"), deslopSeam),
+		allow("accept survives a numeric-from object line from another crew",
+			verdict(worker, "accept"), `{"ts":1,"crew_id":"other","from":7,"to":8,"kind":"msg","body":"{}"}`, deslopSeam),
+		refuse("reject then a new assignment then the lead's own seam is refused",
+			verdict(worker, "reject"), request, reviewSeam),
+
+		// a pi lead seam with review_mode false or null is refused
+		refuse("lead seam with review_mode false is refused", msgRow(worker, "review:c1", `{"seam":"review","review_mode":false}`)),
+		refuse("lead seam with review_mode null is refused", msgRow(worker, "review:c1", `{"seam":"review","review_mode":null}`)),
+
+		allowClaude("off pi a re-assignment does not cancel the lead's own seam", request, reviewSeam, deslopSeam),
+
+		// a later lead-to-reviewer message cancels the lead seam
+		refuse("assignment with an elided artifact still cancels the lead's seam",
+			reviewSeam, msgRow(worker, rev, `{"artifact":"…[elided]"}`)),
+		refuse("lead question to the reviewer cancels the lead's own review seam",
+			reviewSeam, msgRow(worker, rev, `{"question":"look again please"}`)),
+
+		allow("scalar JSON lines in the log are tolerated", verdict(worker, "accept"), `42`, `"x"`, `null`, deslopSeam),
+
+		// a pi accept then a record spliced onto a torn line: only a torn line that
+		// still reads as this crew's reviewer cancels the accept.
+		refuse("accept then a reject spliced onto a torn line is refused", verdict(worker, "accept"), splicedReject),
+		allow("a fresh accept after a spliced reject is allowed",
+			verdict(worker, "accept"), splicedReject, verdict(worker, "accept"), deslopSeam),
+		refuse("accept then a torn line cut inside a reviewer reply is refused",
+			verdict(worker, "accept"), `{"ts":1,"crew_id":"c1","from":"role:feat/x:reviewer","to":"wor`),
+		refuse("accept then a lead assignment spliced onto a torn line is refused",
+			verdict(worker, "accept"), splicedRequest),
+		allow("accept survives an unrelated record spliced onto a torn line",
+			verdict(worker, "accept"), splicedUnrelated, tornOtherCrew, deslopSeam),
+
+		// the branch name carries a quote, so the heuristic compares escaped ids
+		gateCase{name: "torn-line reject is detected for a JSON-escaped reviewer id",
+			doc: piDoc(), rows: []string{escapedAccept, escapedSplicedReject}, state: "pr_open",
+			from: escaped, code: 1, stderr: noReviewFor("pr_open", "standard", escaped)},
+
+		// off pi a pane verdict is no seam at all, and the lead's own seam stands
+		refuseClaude("off pi a pane reject alone is refused", verdict(worker, "reject")),
+		refuseClaude("off pi a pane reject then a pane accept is refused",
+			verdict(worker, "reject"), verdict(worker, "accept")),
+		allowClaude("off pi the lead's own review seam is allowed even after a pane reject",
+			verdict(worker, "reject"), reviewSeam, deslopSeam),
+	}
+}
+
+// TestGatePiOversizedReviewerReply pins that an elided reviewer reply is no
+// verdict: the reply is long enough that the writer truncates the line, so the
+// row on the bus carries no verdict, and a reviewer reply that is not a verdict
+// cancels the earlier accept. The reply goes through RunMsg because the writer's
+// elision is what the case is about.
+func TestGatePiOversizedReviewerReply(t *testing.T) {
+	findings := make([]string, 400)
+	for i := range findings {
+		findings[i] = `"finding number ` + fmt.Sprint(i) + ` with some text"`
+	}
+	big := `{"role":"reviewer","seam":"review","verdict":"accept","findings":[` + strings.Join(findings, ",") + `]}`
+
+	f := newFixture(t)
+	f.doc(piDoc())
+	f.log(msgRow(rev, worker, `{"role":"reviewer","seam":"review","verdict":"accept","findings":[],"evidence":"x"}`))
+	if code, stderr := f.msg(rev, worker, big); code != 0 || stderr != "" {
+		t.Fatalf("msg: %d %q", code, stderr)
+	}
+
+	// The written row parses, but its body no longer reads as a verdict: the
+	// elision cut the JSON mid-array.
+	lines := f.lines()
+	if len(lines) != 2 {
+		t.Fatalf("%d rows, want 2: %q", len(lines), lines)
+	}
+	var row struct {
+		Body string `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &row); err != nil {
+		t.Fatalf("the elided row does not parse: %v\n%s", err, lines[1])
+	}
+	if v, err := jqrun.FromJSON(row.Body); err == nil {
+		if o, ok := v.(map[string]any); ok && (o["verdict"] == "accept" || o["seam"] == "review") {
+			t.Errorf("the elided body still reads as a verdict: %v", o)
+		}
+	}
+
+	if code, stderr := f.status(worker, "pr_open"); code != 1 || stderr != noReview("pr_open", "standard") {
+		t.Errorf("got %d %q, want the review-seam refusal", code, stderr)
+	}
+	if got := f.lines(); len(got) != 2 {
+		t.Errorf("the refusal wrote a row: %q", got[2:])
 	}
 }
 
@@ -351,6 +600,7 @@ func TestGateCases(t *testing.T) {
 		cases []gateCase
 	}{
 		{"review", reviewCases()},
+		{"pi", piCases()},
 		{"deslop", deslopCases()},
 		{"plan", planCases()},
 		{"ledger", ledgerCases()},
@@ -366,7 +616,7 @@ func TestGateCases(t *testing.T) {
 
 				want := tc.stderr
 				if tc.ledger != "" {
-					in := ledger.Input{From: worker, Crew: crewID, Detail: tc.detail, TaskDoc: tc.doc}
+					in := ledger.Input{From: tc.caller(), Crew: crewID, Detail: tc.detail, TaskDoc: tc.doc}
 					if len(tc.rows) > 0 {
 						in.Log = tc.rows
 					}
@@ -377,7 +627,7 @@ func TestGateCases(t *testing.T) {
 					want = line + "\n"
 				}
 
-				code, stderr := f.status(worker, tc.state, tc.detail)
+				code, stderr := f.status(tc.caller(), tc.state, tc.detail)
 				if code != tc.code || stderr != want {
 					t.Errorf("got %d %q\nwant %d %q", code, stderr, tc.code, want)
 				}
