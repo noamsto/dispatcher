@@ -23,6 +23,7 @@ type gateCase struct {
 	stderr    string
 	ledger    string
 	from      string // the status caller; empty is the fixture's worker
+	noDoc     bool   // write no WORKER_TASK.md, the case where no gate applies
 }
 
 // caller is the session id the case posts its status as.
@@ -37,7 +38,27 @@ const (
 	reviewDoc = standardDoc
 	acceptDoc = "tier: trivial\nkind: implement\n\n## Acceptance\n- AC1 do it\n"
 	ciDoc     = "tier: trivial\nkind: implement\n\n## Acceptance\n- AC1 CI green\n"
+	// deepGateDoc is the deep sibling of reviewDoc, and deepReviewDoc the
+	// kind: review sibling: the ported status-gate cases name both tiers and
+	// both kinds, and the tier and kind lines decide which gate runs.
+	deepGateDoc       = "tier: deep\nkind: implement\nengine: claude\n"
+	deepReviewDoc     = "tier: deep\nkind: review\nengine: claude\n"
+	standardReviewDoc = "tier: standard\nkind: review\nengine: claude\n"
+	// resumed is the session a branch's next dispatch posts its status as, the
+	// branch's seams having been posted by the earlier one.
+	resumed = "worker:feat/x#s2-2"
 )
+
+// openPass and openRefuse are the pr_open verb of a decision the done rows
+// above assert: the folded families of tests/crew.bats' status-gate section
+// posted pr_open, and the refusal names the state, so the verb is asserted too.
+func openPass(name, doc string, rows ...string) gateCase {
+	return gateCase{name: name, doc: doc, rows: rows, state: "pr_open"}
+}
+
+func openRefuse(name, doc, want string, rows ...string) gateCase {
+	return gateCase{name: name, doc: doc, rows: rows, state: "pr_open", code: 1, stderr: want}
+}
 
 // seamPass is a done call the gate lets through.
 func seamPass(name, doc string, rows ...string) gateCase {
@@ -76,6 +97,12 @@ func reviewCases() []gateCase {
 			msgRow(worker, "review:c1", `{"seam":"review","review_mode":"full","tag":"note"}`), deslopSeam),
 		seamRefuse("claude: to dispatcher", reviewDoc, refused,
 			msgRow(worker, "dispatcher:c1", reviewBody), deslopSeam),
+		// a review seam addressed away from review: — the synthetic sinks a worker
+		// posts to for everything else — and a tagged retro note.
+		seamRefuse("claude: to metrics", reviewDoc, refused,
+			msgRow(worker, "metrics:c1", reviewBody), deslopSeam),
+		seamRefuse("claude: a tagged retro note to retro:", reviewDoc, refused,
+			msgRow(worker, "retro:c1", `{"seam":"review","tag":"other","detail":"x"}`), deslopSeam),
 		seamRefuse("claude: other crew", reviewDoc, refused,
 			otherCrewMsg(worker, "review:c2", reviewBody), deslopSeam),
 		seamRefuse("claude: other branch", reviewDoc, refused,
@@ -104,6 +131,7 @@ func reviewCases() []gateCase {
 			msgRow(rev+"#sY#Z", branch, `{"seam":"review","verdict":"accept"}`), deslopSeam),
 		seamRefuse("pi: reviewer verdict accept without seam", piDoc(), refused,
 			msgRow(rev, branch, `{"verdict":"accept"}`), deslopSeam),
+
 		seamPass("pi: tag with verdict accept still grants", piDoc(),
 			msgRow(rev, branch, `{"seam":"review","tag":"note","verdict":"accept"}`), deslopSeam),
 		seamRefuse("pi: re-request with extra final key voids", piDoc(), refused,
@@ -112,6 +140,39 @@ func reviewCases() []gateCase {
 			piVerdict(branch, "accept"), msgRow(branch, rev, `{"final":false}`), deslopSeam),
 		seamRefuse("pi: BOM re-request after accept", piDoc(), refused,
 			piVerdict(branch, "accept"), bomRequest, deslopSeam),
+		// the pr_open verb of the ported folded families: no seam at all, and a
+		// full or downgraded seam posting silently on either gated tier.
+		openRefuse("pr_open: standard with no review seam is refused and not written", standardDoc,
+			noReview("pr_open", "standard")),
+		openRefuse("pr_open: deep with no review seam is refused and not written", deepGateDoc,
+			noReview("pr_open", "deep")),
+		openPass("pr_open: a full review seam posts silently", standardDoc, reviewSeam, deslopSeam),
+		openPass("pr_open: a downgraded review seam counts like a full one", standardDoc,
+			msgRow(worker, "review:c1", `{"seam":"review","review_mode":"downgraded"}`), deslopSeam),
+		// review_mode values that are not a review: false is a JSON literal, and
+		// none and unavailable are the metrics record's own words.
+		seamRefuse("claude: review_mode false", reviewDoc, refused,
+			msgRow(worker, "review:c1", `{"seam":"review","review_mode":false}`), deslopSeam),
+		openRefuse("pr_open: review_mode none does not count", standardDoc, noReview("pr_open", "standard"),
+			msgRow(worker, "review:c1", `{"seam":"review","review_mode":"none"}`), deslopSeam),
+		openRefuse("pr_open: review_mode unavailable does not count", standardDoc, noReview("pr_open", "standard"),
+			msgRow(worker, "review:c1", `{"seam":"review","review_mode":"unavailable"}`), deslopSeam),
+		// a resumed session inherits the branch's seams: the caller is the branch's
+		// next session, the seams the earlier one's, on either verb.
+		{name: "pr_open: a resumed session inherits the branch's earlier review seam", doc: deepGateDoc,
+			rows:  []string{msgRow(worker, "review:c1", `{"seam":"review"}`), deslopSeam},
+			state: "pr_open", from: resumed},
+		{name: "done: a resumed session inherits the branch's earlier review seam", doc: deepGateDoc,
+			rows:  []string{msgRow(worker, "review:c1", `{"seam":"review"}`), deslopSeam},
+			state: "done", from: resumed},
+		// who the gate does not name: a kind: review session of either tier, a role
+		// caller, a failed worker, and a checkout with no task doc at all.
+		{name: "kind review: deep needs no review or deslop seam", doc: deepReviewDoc, state: "pr_open"},
+		{name: "kind review: standard needs no review seam", doc: standardReviewDoc, state: "done",
+			detail: "reviewed PR 9 — https://x"},
+		{name: "a role caller is not gated", doc: standardDoc, state: "done", from: rev},
+		{name: "a failed worker is not gated", doc: standardDoc, state: "failed", detail: "tests red"},
+		{name: "no task doc applies no gate", state: "pr_open", detail: "AC1 pending(sim)", noDoc: true},
 	}
 }
 
@@ -131,7 +192,6 @@ func piCases() []gateCase {
 	request := msgRow(worker, rev, `{"seam":"review","artifact":"/a/review.diff","question":"Review this diff."}`)
 	const (
 		deepPiDoc = "tier: deep\nkind: implement\nengine: pi\n"
-		resumed   = "worker:feat/x#s2-2"
 		escaped   = `worker:feat/a"b#s1-1`
 	)
 	refuse := func(name string, rows ...string) gateCase {
@@ -271,6 +331,30 @@ func piCases() []gateCase {
 		refuse("lead seam with review_mode false is refused", msgRow(worker, "review:c1", `{"seam":"review","review_mode":false}`)),
 		refuse("lead seam with review_mode null is refused", msgRow(worker, "review:c1", `{"seam":"review","review_mode":null}`)),
 
+		// what the pi grid must not mistake for a verdict: the lead's own review
+		// assignment, a reviewer msg with no verdict, a verdict posted under the
+		// worker id or another branch's reviewer, and a verdict under another crew.
+		refuse("the grid reviewer assignment alone is not a review seam",
+			msgRow(worker, rev, `{"seam":"review","artifact":"/a/review.diff","roster":"/a/roster.json","question":"Review this diff."}`)),
+		refuse("a reviewer msg without a verdict is not a review seam",
+			msgRow(rev, worker, `{"role":"reviewer","event":"role_exited","pane":"%3"}`),
+			msgRow(rev, worker, `{"seam":"review","verdict":"maybe"}`),
+			msgRow(rev, worker, `{"seam":"plan","verdict":"accept"}`)),
+		refuse("a verdict forged under the worker id or another branch's reviewer does not count",
+			msgRow(worker, rev, `{"seam":"review","verdict":"accept"}`),
+			msgRow("role:feat/other:reviewer", worker, `{"seam":"review","verdict":"accept"}`)),
+		refuse("a reviewer verdict posted under a different crew does not count",
+			otherCrewMsg(rev, worker, `{"seam":"review","verdict":"accept"}`)),
+		// the deslop seam is still owed next to a pi verdict
+		{
+			name: "a pi reviewer accept without a deslop seam is refused", doc: piDoc(),
+			rows: []string{verdict(worker, "accept")}, state: "pr_open",
+			code: 1, stderr: noDeslop("pr_open", "standard"),
+		},
+		// and the lead's own seam counts on pi, on the done verb too
+		{name: "the lead's own review seam counts for pi at done", doc: piDoc(),
+			rows: []string{reviewSeam, deslopSeam}, state: "done"},
+
 		allowClaude("off pi a re-assignment does not cancel the lead's own seam", request, reviewSeam, deslopSeam),
 
 		// a later lead-to-reviewer message cancels the lead seam
@@ -299,6 +383,7 @@ func piCases() []gateCase {
 			from: escaped, code: 1, stderr: noReviewFor("pr_open", "standard", escaped)},
 
 		// off pi a pane verdict is no seam at all, and the lead's own seam stands
+		refuseClaude("off pi a pane accept is no seam", verdict(worker, "accept")),
 		refuseClaude("off pi a pane reject alone is refused", verdict(worker, "reject")),
 		refuseClaude("off pi a pane reject then a pane accept is refused",
 			verdict(worker, "reject"), verdict(worker, "accept")),
@@ -362,6 +447,8 @@ func deslopCases() []gateCase {
 			reviewSeam, msgRow("worker:feat/x#s0-9", "review:c1", deslopBody)),
 		seamPass("deslop: found after unrelated and torn lines", standardDoc,
 			reviewSeam, `{"crew_id":"c1","from":"`+worker, statusRow(worker, `{"state":"working"}`), deslopSeam),
+		seamPass("deslop: a non-JSON log line does not break the check", standardDoc,
+			reviewSeam, `garbage`, deslopSeam),
 		seamRefuse("deslop: no row", standardDoc, refused, reviewSeam),
 		seamRefuse("deslop: tag", standardDoc, refused,
 			reviewSeam, msgRow(worker, "review:c1", `{"seam":"deslop","tag":"note"}`)),
@@ -375,6 +462,19 @@ func deslopCases() []gateCase {
 			reviewSeam, msgRow(otherSession, "review:c1", deslopBody)),
 		seamRefuse("deslop: body not JSON", standardDoc, refused,
 			reviewSeam, msgRow(worker, "review:c1", `deslop`)),
+		// the ported folded families, on the pr_open verb and on deep, and the
+		// synthetic metrics sink next to review:c2.
+		openRefuse("pr_open: standard with a review seam but no deslop seam is refused", standardDoc,
+			noDeslop("pr_open", "standard"), reviewSeam),
+		openRefuse("pr_open: deep with a review seam but no deslop seam is refused", deepGateDoc,
+			noDeslop("pr_open", "deep"), reviewSeam),
+		seamRefuse("deslop: to metrics", standardDoc, refused,
+			reviewSeam, msgRow(worker, "metrics:c1", deslopBody)),
+		// a resumed session inherits both of the branch's seams, on either verb.
+		{name: "pr_open: a resumed session inherits the branch's earlier review and deslop seams",
+			doc: deepGateDoc, rows: []string{reviewSeam, deslopSeam}, state: "pr_open", from: resumed},
+		{name: "done: a resumed session inherits the branch's earlier review and deslop seams",
+			doc: deepGateDoc, rows: []string{reviewSeam, deslopSeam}, state: "done", from: resumed},
 		seamRefuse("deslop: other seam", standardDoc, refused,
 			reviewSeam, msgRow(worker, "review:c1", `{"seam":"review"}`)),
 		seamPass("deslop: body with a lone low surrogate", standardDoc,
@@ -610,7 +710,9 @@ func TestGateCases(t *testing.T) {
 		for _, tc := range g.cases {
 			t.Run(g.name+"/"+tc.name, func(t *testing.T) {
 				f := newFixture(t)
-				f.doc(tc.doc)
+				if !tc.noDoc {
+					f.doc(tc.doc)
+				}
 				f.log(tc.rows...)
 				before := len(f.lines())
 
