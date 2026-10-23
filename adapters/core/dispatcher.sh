@@ -553,7 +553,7 @@ claude)
     optins="$(jq -r --arg r "$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')" '
       .dispatcherMcp // {} | (.[$r] // .[$r | split("/")[0]] // []) | join(" ")' <<<"$settings")"
   fi
-  # env options go before its assignments.
+  # env takes -u before any NAME=value.
   launch_env=(PATH="$engine_env_path")
   mcp_configs=()
   claudeai=0
