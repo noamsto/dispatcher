@@ -508,12 +508,12 @@ Each engine gets exactly the selected servers through its own per-launch
 mechanism, from files written `0600` under
 `${XDG_CACHE_HOME:-~/.cache}/dispatcher/mcp` (never a repo worktree):
 
-| engine | mechanism                                                                                       | headers                                                                                                  |
-| ------ | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| claude | one generated `--mcp-config`                                                                    | `${NAME}` expanded by claude; `!command` refused                                                         |
-| pi     | a generated extension passed with `-e` that calls `pi.registerMcpServer` (`--no-approve` stays) | both forms, resolved by pi                                                                               |
-| codex  | `-c mcp_servers.<name>.url=…` per server                                                        | `${NAME}` → `env_http_headers`, `Authorization: Bearer ${NAME}` → `bearer_token_env_var`; others refused |
-| cursor | unsupported: `cursor-agent` reads only `~/.cursor/mcp.json` or the repo's `.cursor/mcp.json`    | the launch warns and loads none                                                                          |
+| engine | mechanism                                                                                                                                                                                             | headers                                                                                                  |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| claude | one generated `--mcp-config`                                                                                                                                                                          | `${NAME}` expanded by claude; `!command` refused                                                         |
+| pi     | a generated extension passed with `-e` that calls `pi.registerMcpServer` (`--no-approve` stays)                                                                                                       | both forms, resolved by pi                                                                               |
+| codex  | `-c mcp_servers.<name>.url=…` per server                                                                                                                                                              | `${NAME}` → `env_http_headers`, `Authorization: Bearer ${NAME}` → `bearer_token_env_var`; others refused |
+| cursor | unsupported: `cursor-agent` reads `~/.cursor/mcp.json` (every cursor session, workers included) or the repo's `.cursor/mcp.json`; `--plugin-dir` may load a plugin dir's `mcp.json` but is unverified | the launch warns and loads none                                                                          |
 
 The default catalog servers use OAuth: sign in once from a session that has
 them loaded (its `/mcp`, or the engine's own MCP login). pi stores the tokens in `<agent dir>/mcp-auth.json` keyed by

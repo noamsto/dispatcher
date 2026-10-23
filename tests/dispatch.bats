@@ -9828,6 +9828,15 @@ ROWS
   grep -qx 'mcp: sentry,posthog' "$doc"
 }
 
+@test "1304: a multi-line --mcp list is refused, never cut to its first line" {
+  stub_launch_bins
+  _mcp_dispatch claude sonnet --no-grid --mcp $'sentry\nposthog'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--mcp takes comma-separated names"* ]]
+  run grep -c 'new-window' "$STUB_LOG"
+  [ "$output" = 0 ]
+}
+
 @test "1304: --mcp refuses claudeai, an unknown name, cursor and analytics off claude before launch" {
   stub_launch_bins
   local row agent model mcp want
@@ -9843,6 +9852,7 @@ claudeai|claude|sonnet|claudeai|unknown --mcp profile 'claudeai' (valid: analyti
 unknown|pi|openrouter/deepseek/deepseek-v4-flash|sentry,nosuch|unknown --mcp profile 'nosuch'
 cursor|cursor|composer-2.5|sentry|--mcp sentry is unsupported for cursor
 analytics-pi|pi|openrouter/deepseek/deepseek-v4-flash|analytics|--mcp analytics is claude-only
+spaced|claude|sonnet|sentry, posthog|--mcp takes comma-separated names
 ROWS
 }
 

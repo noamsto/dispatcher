@@ -601,7 +601,7 @@ _ext_servers() { sed -n 's/^const servers = \(.*\);$/\1/p' "$1"; }
 @test "1304: a cursor dispatcher warns that catalog servers are unsupported and launches" {
   _catalog_launch cursor
   [ "$status" -eq 0 ]
-  [[ "$stderr" == *"cursor has no per-launch MCP config; dispatcherMcp servers for noamsto/toddl (sentry posthog) are not loaded"* ]]
+  [[ "$stderr" == *"cursor has no verified per-launch MCP config; dispatcherMcp servers for noamsto/toddl (sentry posthog) are not loaded"* ]]
   grep -qx 'ARG --approve-mcps' "$STUB_LOG"
   [ ! -e "$XDG_CACHE_HOME/dispatcher/mcp" ]
 }

@@ -281,6 +281,11 @@ in {
           X-Key = "!pass show key";
         };
       };
+      # A trailing newline dispatch-config refuses as a control character.
+      nl = {
+        url = "https://nl.example/mcp";
+        headers.X-Key = "!pass show key\n";
+      };
     };
   }).assertions);
   badMcpUrlRejected =
@@ -289,6 +294,23 @@ in {
         mcpServers.a = {url = "http://a.example/mcp";};
       }).programs.dispatcher.mcpServers
       true)).success;
+  badMcpDescriptionRejected = builtins.length (builtins.filter (x: !x.success) [
+    (builtins.tryEval (builtins.deepSeq (eval {
+        enable = true;
+        mcpServers.a = {url = "https://a.example/mcp"; description = "two\nlines";};
+      }).programs.dispatcher.mcpServers
+      true))
+    (builtins.tryEval (builtins.deepSeq (eval {
+        enable = true;
+        mcpServers.a = {url = "https://a.example/mcp"; description = nixlib.strings.replicate 201 "x";};
+      }).programs.dispatcher.mcpServers
+      true))
+    (builtins.tryEval (builtins.deepSeq (eval {
+        enable = true;
+        mcpServers.a = {url = "https://a.example/mcp"; description = "fine";};
+      }).programs.dispatcher.mcpServers
+      true))
+  ]);
   # An ssh value starting with `-` would be read as an ssh option, and a
   # relative or control-character repo path is refused by dispatch-config:
   # the option types refuse them at eval time.
@@ -860,9 +882,9 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   run jq -e '.goodMcpAsserts == [] and (.full.locked | has("mcpServers") | not)' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '(.badMcpAsserts | length) == 1 and (.badMcpAsserts[0] | contains("analytics, ok.headers.Authorization -- "))' "$EVAL"
+  run jq -e '(.badMcpAsserts | length) == 1 and (.badMcpAsserts[0] | contains("analytics, nl.headers.X-Key, ok.headers.Authorization -- "))' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '.badMcpUrlRejected == true' "$EVAL"
+  run jq -e '.badMcpUrlRejected == true and .badMcpDescriptionRejected == 2' "$EVAL"
   [ "$status" -eq 0 ]
   # The locked file passes dispatch-config.
   jq '.mcp.locked' "$EVAL" >"$BATS_TEST_TMPDIR/locked.json"

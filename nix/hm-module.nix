@@ -57,7 +57,7 @@ self: {
         == null
         || (builtins.match "([A-Za-z]+ )?[$][{][A-Za-z_][A-Za-z0-9_]*[}]" cfg.mcpServers.${n}.headers.${h}
           == null
-          && builtins.match "![^[:space:]].*" cfg.mcpServers.${n}.headers.${h} == null))
+          && builtins.match "![^[:space:]][^[:cntrl:]]*" cfg.mcpServers.${n}.headers.${h} == null))
       (builtins.attrNames (lib.optionalAttrs (cfg.mcpServers.${n}.headers != null) cfg.mcpServers.${n}.headers))))
     (builtins.attrNames cfg.mcpServers));
   badHostNames =
@@ -470,8 +470,8 @@ in {
         - an `mcpServers` catalog name (see `mcpServers`): that remote server,
           as a generated `--mcp-config` file on claude, a generated `-e`
           extension on pi, `-c mcp_servers.<name>.*` overrides on codex.
-          cursor has no per-launch MCP config, so its launch warns and loads
-          none.
+          cursor has no verified per-launch MCP config, so its launch warns
+          and loads none.
         An unknown name fails `dispatch-config`, and so the launch. Workers
         never inherit these; a worker opts in per dispatch with
         `dispatch --mcp <name>`. Set, it lands as `dispatcherMcp` in the
@@ -484,13 +484,13 @@ in {
       type = lib.types.nullOr (lib.types.attrsOf (lib.types.submodule {
         options = {
           url = lib.mkOption {
-            type = lib.types.strMatching "https://[^[:space:]\"'\\\\]+";
+            type = lib.types.strMatching "https://[^[:space:][:cntrl:]\"'\\\\]+";
             description = "The server's streamable-HTTP endpoint (https only).";
           };
           description = lib.mkOption {
-            type = lib.types.nullOr lib.types.str;
+            type = lib.types.nullOr (lib.types.strMatching "[^[:cntrl:]]{0,200}");
             default = null;
-            description = "One line on what the server offers (pi lists it in the system prompt).";
+            description = "One line (at most 200 characters) on what the server offers; pi lists it in the system prompt.";
           };
           headers = lib.mkOption {
             type = lib.types.nullOr (lib.types.attrsOf lib.types.str);
@@ -516,8 +516,8 @@ in {
         The named catalog of remote MCP servers that `dispatcherMcp` and
         `dispatch --mcp` pick from. The base default (adapters/core/defaults.json)
         ships `sentry`, `posthog` and `elevenlabs` (all OAuth: sign in once from
-        the session, e.g. pi's `/mcp`); entries here add servers or refine a
-        default field by field. Names are letters, digits, `_` and `-`
+        the session, e.g. pi's `/mcp`); entries here add servers or override
+        a default (an override restates its `url`). Names are letters, digits, `_` and `-`
         (`claudeai` and `analytics` are reserved). Set, it lands as
         `mcpServers` in the locked layer; unset, the locked layer omits the
         key.

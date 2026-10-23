@@ -190,6 +190,12 @@ mcp_codex_args() {
 mcp_worker_optins() {
   local label="$1" settings="$2" agent="$3" w valid
   local -a words=() out=()
+  # One line of names and commas only: read -a stops at a newline, so anything
+  # else would silently drop the names after it.
+  [[ $4 =~ ^[A-Za-z0-9_,-]*$ ]] || {
+    echo "$label: --mcp takes comma-separated names (letters, digits, \"_\", \"-\"), got: ${4@Q}" >&2
+    return 1
+  }
   IFS=, read -ra words <<<"$4"
   for w in "${words[@]}"; do
     [ -n "$w" ] || continue
@@ -206,7 +212,7 @@ mcp_worker_optins() {
       echo "$label: unknown --mcp profile '$w' (valid: $valid)" >&2
       return 1
     elif [ "$agent" = cursor ]; then
-      echo "$label: --mcp $w is unsupported for cursor: cursor-agent has no per-launch MCP config" >&2
+      echo "$label: --mcp $w is unsupported for cursor: cursor-agent has no verified per-launch MCP config" >&2
       return 1
     fi
   done

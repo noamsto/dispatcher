@@ -637,10 +637,11 @@ codex | cursor)
     # accepted-and-ignored (cursor encodes effort in the model id).
     [ -n "$effort" ] && echo "dispatcher: --effort is ignored for cursor (effort lives in the model id)" >&2
     [ -n "$ac" ] && [ "$ac" != auto ] && echo "dispatcher: --autocompact is ignored for cursor (no compaction knob)" >&2
-    # cursor reads MCP only from ~/.cursor/mcp.json or the repo's
-    # .cursor/mcp.json and has no per-launch MCP flag, so a catalog opt-in
-    # cannot be honoured without writing shared or repo-tracked config.
-    [ -z "$catalog" ] || echo "dispatcher: cursor has no per-launch MCP config; dispatcherMcp servers for $slug (${catalog_names[*]}) are not loaded — add them to ~/.cursor/mcp.json yourself" >&2
+    # cursor's MCP config is ~/.cursor/mcp.json (every cursor session, workers
+    # included) or the repo's .cursor/mcp.json, so neither is a per-launch
+    # path. --plugin-dir may load a plugin dir's mcp.json, but that is
+    # unverified, so catalog opt-ins stay unsupported here.
+    [ -z "$catalog" ] || echo "dispatcher: cursor has no verified per-launch MCP config; dispatcherMcp servers for $slug (${catalog_names[*]}) are not loaded" >&2
     env PATH="$engine_env_path" cursor-agent --model "${model:-$(orch_default model)}" \
       --force --trust --approve-mcps --disable-indexing --disable-codebase-ref "$prompt"
   fi
