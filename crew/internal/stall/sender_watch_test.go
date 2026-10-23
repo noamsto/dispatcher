@@ -12,18 +12,18 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
-// The #908 sender check at the watchdog's own door. Which stamps allow which id
-// is the sender package's tables (TestCheck, TestWatch); these are the wiring:
-// a refusal costs no probes, no samples and no bus row, and keeps the exit code
-// and the stderr the ported cases pinned; a pane watching itself still posts.
+// The #908 sender check at the watchdog's own door, for the two refusals that
+// depend on the *anchor* rather than on how argv spells the id: the target
+// pane's window, and the caller's own role stamp. The branch and role-id
+// refusals across every argv spelling are the root package's
+// TestStallWatchSenderCheckSurvivesTyping, and the rules themselves are the
+// sender package's tables (TestCheck, TestWatch). A refusal costs no probes, no
+// samples and no bus row, and keeps the exit code and stderr the ported cases
+// pinned; a pane watching itself still posts.
 
-// leadX and roleX are the reasons the sender package prints for a pane stamped
-// as a lead, and as a role, asked to speak as another id.
-const (
-	leadX = "this pane is stamped as the lead of feat/x, which posts only as worker:feat/x " +
-		"or worker:feat/x#s<session> ($CREW_WORKER_ID)"
-	roleX = "this pane is stamped as role:feat/x:reviewer, the only id it posts as"
-)
+// roleX is the reason a pane stamped as a role prints when asked to speak as any
+// other id.
+const roleX = "this pane is stamped as role:feat/x:reviewer, the only id it posts as"
 
 // paneRow is one `list-panes -a -F` line: pid, branch, role, crew, window, pane.
 func paneRow(pid int, branch, role, crew, window, pane string) string {
@@ -40,21 +40,11 @@ func anchoredAs(branch, role string, panes ...string) sender.Probes {
 	}
 }
 
-func TestRunRefusesForeignSenders(t *testing.T) {
+func TestRunRefusesAnchorMismatch(t *testing.T) {
 	for _, tc := range []struct {
 		name, branch, role, target, pane, reason string
 		panes                                     []string
 	}{
-		{
-			name:   "a stamped lead cannot watch as another branch",
-			branch: "feat/x", role: "lead", target: "worker:feat/y#s1-1", pane: "%1",
-			reason: leadX,
-		},
-		{
-			name:   "a stamped lead cannot watch a role pane as itself",
-			branch: "feat/x", role: "lead", target: "role:feat/y:reviewer", pane: "%1",
-			reason: leadX,
-		},
 		{
 			name:   "a stamped lead cannot target a pane outside its window",
 			branch: "feat/x", role: "lead", target: "worker:feat/x#s1-1", pane: "%2",
