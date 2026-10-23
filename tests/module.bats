@@ -186,6 +186,7 @@ let
     };
     workerDeniedMcpServers = ["my_browser"];
     chrome = true;
+    dispatcherMcp = {"factify-inc" = ["claudeai"]; "factify-inc/mono" = ["claudeai" "analytics"];};
     userSettings = "/home/u/cfg/settings.json";
   };
 
@@ -841,6 +842,8 @@ worktree_git_lib_crew_go_row() { # bin
   run jq -e '.full.locked.workerDeniedMcpServers == ["my_browser"]' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.dispatcherChrome == true' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.dispatcherMcp == {"factify-inc": ["claudeai"], "factify-inc/mono": ["claudeai", "analytics"]}' "$EVAL"
   [ "$status" -eq 0 ]
 
   # Lane profiles: set entries land in the locked layer, and a name-only entry

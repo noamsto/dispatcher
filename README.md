@@ -271,7 +271,7 @@ four `DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`,
 installs the Codex plugin and writes the Cursor rule, commands, skills and
 rosters when those engines are included in `engines`. The settings above
 (`profile`, `engines`, `grantRoots`, `fleetBudget`, `repoTrackers`, `orgTrackers`,
-`openrouter`, `localModels`, `laneProfiles`, `hosts`, `workerDeniedMcpServers`, `dispatcherChrome`) are not exported as `DISPATCH_*`: they go into a locked settings
+`openrouter`, `localModels`, `laneProfiles`, `hosts`, `workerDeniedMcpServers`, `dispatcherChrome`, `dispatcherMcp`) are not exported as `DISPATCH_*`: they go into a locked settings
 file baked into `dispatch-config` and every CLI that resolves through it
 (`dispatch`, `dispatch-resume`, `dispatcher`, `refresh-budget`), so no
 locked-layer path is exported to go stale. `userSettings` symlinks
@@ -339,6 +339,31 @@ stays denied for every launch). Every other claude worker launch passes
 `programs.dispatcher.chrome` sets `dispatcherChrome` (default off), which adds
 `--chrome` to the claude `dispatcher` launch; off, no flag is passed.
 
+### Lean claude dispatcher
+
+The claude `dispatcher` session launches with the measured `profile-rec`
+profile from [`docs/dispatcher-context-floor.md`](docs/dispatcher-context-floor.md)
+(about 23k fewer turn-1 tokens): `--strict-mcp-config` with an empty MCP
+config, `ENABLE_CLAUDEAI_MCP_SERVERS=false`, `--disallowedTools` for the 21
+built-in tools the protocol never names (cron, worktree, plan-mode, Workflow,
+RemoteTrigger, SendMessage, MCP-resource and similar), and the worker plugin
+layer (the disabled plugins and `permissions.deny` rules of "Lean claude
+workers"). Artifact, WebSearch, PushNotification, AskUserQuestion, Monitor,
+skills and the Agent tool stay. Codex, cursor and pi dispatcher launches are
+unchanged.
+
+A project that triages through connectors opts back in with `dispatcherMcp`
+(see "Settings"). claude.ai connectors load all or none: the only switch is
+`ENABLE_CLAUDEAI_MCP_SERVERS`, `--strict-mcp-config` drops every connector
+regardless of it, and `--mcp-config` cannot name one. So `claudeai` turns them
+all back on, and because it skips `--strict-mcp-config`, user- and
+project-scope MCP servers (`~/.claude.json`, `.mcp.json`) and plugin servers
+return with them (`workerDeniedMcpServers` and Claude in Chrome stay denied).
+`analytics` keeps strict MCP and adds only its generated config. With
+`dispatcherChrome` on, strict MCP stays: Claude in Chrome is not an MCP-config
+server and survives it, so only the plugin layer's Claude in Chrome deny is
+lifted.
+
 ### Settings
 
 `dispatch-config` resolves the module's settings as one JSON tree from four
@@ -350,7 +375,7 @@ home-manager install bakes its generated JSON file directly into the binary;
 a plain checkout or `nix run .#dispatch-config` instead honours the file
 named by `$DISPATCH_LOCKED_SETTINGS`, optional), and **env** (`DISPATCH_PROFILE`,
 `DISPATCH_ENGINES`, `DISPATCH_GRANT_ROOTS`, `DISPATCH_REPO_TRACKERS`,
-`DISPATCH_ORG_TRACKERS`, `DISPATCH_OPENROUTER_MONTHLY_USD`,
+`DISPATCH_ORG_TRACKERS`, `DISPATCH_DISPATCHER_MCP`, `DISPATCH_OPENROUTER_MONTHLY_USD`,
 `DISPATCH_OPENROUTER_KEY_FILE`, `DISPATCH_FLEET_BUDGET`) — all per-launch overrides, never exported by
 the module. `dispatch-config --show-origin` shows which layer set each value.
 A baked build ignores `$DISPATCH_LOCKED_SETTINGS` (a stderr notice if it names
@@ -360,7 +385,7 @@ it as the dev/test override it always was.
 are honoured only from the locked layer or the environment — a copy in the
 base or user layer is dropped with a warning. `workerDeniedMcpServers` lists the MCP servers denied to claude workers and
 `dispatcherChrome` (default off) launches the claude dispatcher with `--chrome`;
-both are honoured from any layer (see "Lean claude workers"). `fleetBudget` (default 8, 0
+both, and `dispatcherMcp` (below), are honoured from any layer (see "Lean claude workers"). `fleetBudget` (default 8, 0
 disables) is the machine-wide fan-out cap: `dispatch` refuses a new lead when
 the live leads on the host (trivial=1, standard=2, deep=3, from every
 dispatcher) plus its own would exceed it, or when the 1-minute load average is
@@ -430,6 +455,18 @@ env) entry for any other repo or org still applies. Without a rebuild, set
 `DISPATCH_REPO_TRACKERS` / `DISPATCH_ORG_TRACKERS` as whitespace-separated
 `key=value` pairs (`factify-inc/mono=linear:ENG factify-inc=linear:ENG`); a
 repeated key is last-wins, and an empty var contributes nothing.
+
+`dispatcherMcp` (default `{}`) is the per-project MCP opt-in for the claude
+dispatcher's lean launch profile (see "Lean claude dispatcher"), keyed the same
+way: `{"owner/repo" | "org": ["claudeai" | "analytics", …]}`, case insensitive,
+merged per key across layers. The `owner/repo` entry wins, then the origin
+org's, then none; an empty list keeps one repo lean under an opted-in org.
+`claudeai` restores every claude.ai connector (Sentry, PostHog, Cloudflare,
+Gmail, …) and `analytics` adds the generated `--mcp analytics` config. Without
+a rebuild, set `DISPATCH_DISPATCHER_MCP` the tracker way, with a
+comma-separated list as each value
+(`factify-inc=claudeai factify-inc/mono=claudeai,analytics noamsto/dispatcher=`).
+`programs.dispatcher.dispatcherMcp` pins entries in the locked layer.
 
 `dispatch --add-dir` grants a dir only when it resolves inside a `grantRoots`
 entry; unset or empty (the default) refuses every `--add-dir`. This is

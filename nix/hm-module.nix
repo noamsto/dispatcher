@@ -31,7 +31,8 @@ self: {
     // lib.optionalAttrs (cfg.laneProfiles != null) {laneProfiles = lockFields cfg.laneProfiles;}
     // lib.optionalAttrs (cfg.hosts != null) {inherit (cfg) hosts;}
     // lib.optionalAttrs (cfg.workerDeniedMcpServers != null) {inherit (cfg) workerDeniedMcpServers;}
-    // lib.optionalAttrs (cfg.chrome != null) {dispatcherChrome = cfg.chrome;};
+    // lib.optionalAttrs (cfg.chrome != null) {dispatcherChrome = cfg.chrome;}
+    // lib.optionalAttrs (cfg.dispatcherMcp != null) {inherit (cfg) dispatcherMcp;};
   # Submodule defaults are emitted into the evalModules result, so an unset
   # `workerNotes`/`notes`/`reasoning` would reach the locked layer as JSON null
   # and dispatch-config would refuse it -- drop the unset fields per entry, the
@@ -430,6 +431,27 @@ in {
         `dispatcherChrome` in the locked layer; unset, the key is omitted and
         the base default (off) applies. Workers never inherit it: a claude
         worker opts in per task with `dispatch --chrome`.
+      '';
+    };
+
+    dispatcherMcp = lib.mkOption {
+      type = lib.types.nullOr (lib.types.attrsOf (lib.types.listOf (lib.types.enum ["claudeai" "analytics"])));
+      default = null;
+      example = {
+        "factify-inc" = ["claudeai"];
+        "factify-inc/mono" = ["claudeai" "analytics"];
+      };
+      description = ''
+        MCP the claude `dispatcher` session restores per project. Its default
+        launch is lean: no claude.ai connectors and no MCP servers. Keys are
+        `owner/repo` or an org login, case-insensitive; the repo entry wins
+        over its org's, and an empty list keeps a repo lean under an opted-in
+        org. `claudeai` restores every claude.ai connector (they load all or
+        none; it also skips `--strict-mcp-config`, so user- and project-scope
+        MCP servers return too); `analytics` adds the generated `--mcp
+        analytics` config. Set, it lands as `dispatcherMcp` in the locked
+        layer and merges per key with the user settings file's; unset, the
+        locked layer omits the key.
       '';
     };
 

@@ -18,7 +18,9 @@
 #            DISPATCH_FLEET_BUDGET (integer),
 #            DISPATCH_REPO_TRACKERS/DISPATCH_ORG_TRACKERS (whitespace-separated
 #            key=value pairs, split at the first "="; a repeated key is
-#            last-wins), DISPATCH_ROSTER_AUTO_OPEN (0/false/no/off, any case,
+#            last-wins), DISPATCH_DISPATCHER_MCP (the same pairs, each value
+#            a comma-separated opt-in list: key=claudeai,analytics; key= is an
+#            empty list), DISPATCH_ROSTER_AUTO_OPEN (0/false/no/off, any case,
 #            is false; any other value is true); an empty var contributes
 #            nothing.
 #
@@ -32,6 +34,10 @@
 # (interactive browsers); it is validated on the merged tree and has no env var.
 # dispatcherChrome (boolean) launches the claude dispatcher session with
 # --chrome; it is honoured from every layer and has no env var.
+# dispatcherMcp maps an owner/repo or org key to the MCP opt-ins (claudeai:
+# every claude.ai connector; analytics: the generated --mcp profile) that the
+# claude dispatcher launch restores for that repo; the default launch has none.
+# It is honoured from every layer: it widens only the dispatcher's own tools.
 #
 # laneProfiles maps an engine or "<engine>/<model>" glob to a lane profile (its
 # name, and optionally inline notes text) that `dispatch` applies to the task
@@ -42,9 +48,9 @@
 # merged tree and has no env var. Unlike grantRoots it is allowed from the user
 # layer: an entry only chooses where work is sent and grants the worker nothing.
 #
-# Tracker map keys (repoTrackers/orgTrackers) are lowercased within each layer
-# before the merge, so a later layer's entry for the same key (any case)
-# collapses and wins.
+# Tracker map keys (repoTrackers/orgTrackers) and dispatcherMcp keys are
+# lowercased within each layer before the merge, so a later layer's entry for
+# the same key (any case) collapses and wins.
 #
 # --show-origin prints the same tree with every leaf replaced by
 # {"value": …, "origin": "base|user|locked|env"}.
@@ -262,6 +268,12 @@ env_layer=$(jq -cn '
   def trackers:
     [splits("\\s+")] | map(select(. != ""))
     | reduce .[] as $e ({}; ($e | capture("^(?<k>[^=]*)=(?<v>.*)$") // {k: $e, v: $e}) as $kv | . + {($kv.k | ascii_downcase): $kv.v});
+  # A bare key keeps its string value, so the array check below refuses it.
+  def mcp_optins:
+    [splits("\\s+")] | map(select(. != ""))
+    | reduce .[] as $e ({}; ($e | capture("^(?<k>[^=]*)=(?<v>.*)$") // null) as $kv
+        | if $kv then . + {($kv.k | ascii_downcase): ($kv.v | split(",") | map(select(. != "")))}
+          else . + {($e | ascii_downcase): $e} end);
   {}
   | from_env_nonempty("DISPATCH_ENGINES"; ["engines"]; [splits("\\s+")] | map(select(. != "")))
   | from_env("DISPATCH_GRANT_ROOTS"; ["grantRoots"]; split(":") | map(select(. != "")))
@@ -271,6 +283,7 @@ env_layer=$(jq -cn '
   | from_env("DISPATCH_FLEET_BUDGET"; ["fleetBudget"]; tonumber? // .)
   | from_env_nonempty("DISPATCH_REPO_TRACKERS"; ["repoTrackers"]; trackers)
   | from_env_nonempty("DISPATCH_ORG_TRACKERS"; ["orgTrackers"]; trackers)
+  | from_env_nonempty("DISPATCH_DISPATCHER_MCP"; ["dispatcherMcp"]; mcp_optins)
   | from_env("DISPATCH_ROSTER_AUTO_OPEN"; ["rosterDiagram", "autoOpen"]; test("^(0|false|no|off)$"; "i") | not)')
 
 printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_origin "$show_origin" "$jq_defs"'
@@ -356,7 +369,7 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
     else {value: ., origin: ($layers | to_entries | map(select(.value | holds($p)) | .key) | last)}
     end;
   def lower_trackers:
-    reduce ("repoTrackers", "orgTrackers") as $k
+    reduce ("repoTrackers", "orgTrackers", "dispatcherMcp") as $k
       (.; if (.[$k] | type) == "object" then .[$k] |= with_entries(.key |= ascii_downcase) else . end);
   [inputs | lower_trackers] as [$base, $user, $locked, $env]
   | $base * $user * $locked * $env
@@ -371,6 +384,10 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["orgTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | need(["workerDeniedMcpServers"]; "an array of MCP server names (letters, digits, \"_\", \"-\")"; string_array and all(.[]; test("^[A-Za-z0-9_-]+$")))
   | need(["dispatcherChrome"]; "a boolean"; type == "boolean")
+  | need(["dispatcherMcp"]; "an object keyed owner/repo or org, each an array of claudeai or analytics";
+      type == "object"
+      and all(keys[]; test("^[a-z0-9][a-z0-9._-]*(/[a-z0-9._-]+)?$"))
+      and all(.[]; type == "array" and all(.[]; IN("claudeai", "analytics"))))
   | if has("localModels") then (first(local_model_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
   | if has("laneProfiles") then (first(lane_profile_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
   | if has("hosts") then (first(host_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end

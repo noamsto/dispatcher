@@ -6,7 +6,10 @@ setup() {
   stub_bin tmux
   stub_bin crew
   export DISPATCHER_PROTOCOL_DIR=/opt/protocols
-  unset TMUX CREW_ID
+  # The launcher sources the worker-settings lib; copied-out launchers
+  # (_store_launcher) have no sibling file and an unsubstituted placeholder.
+  export CLAUDE_WORKER_SETTINGS_LIB="$BATS_TEST_DIRNAME/../adapters/core/claude-worker-settings.sh"
+  unset TMUX CREW_ID DISPATCH_DISPATCHER_MCP
 }
 
 teardown() {
@@ -309,6 +312,167 @@ ROWS
   DISPATCH_PROFILE=work CREW_ID=c1 run_launcher --agent codex
   run grep -c -- '--chrome' "$STUB_LOG"
   [ "$output" = "0" ]
+}
+
+# #1277: the claude dispatcher's launch profile. The stub logs one argv word
+# per line plus the connector switch, so a row can match whole words.
+_argv_claude_stub() {
+  cat >"$STUB_DIR/claude" <<'EOF'
+#!/usr/bin/env bash
+printf 'ENABLE_CLAUDEAI_MCP_SERVERS=%s\n' "${ENABLE_CLAUDEAI_MCP_SERVERS-UNSET}" >>"$STUB_LOG"
+printf 'ARG %s\n' "$@" >>"$STUB_LOG"
+EOF
+  chmod +x "$STUB_DIR/claude"
+}
+
+_dispatcher_settings() { # json
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '%s\n' "$1" >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+}
+
+_profile_launch() { # [launcher args...]
+  _argv_claude_stub
+  : >"$STUB_LOG"
+  CREW_ID=c1 run run_launcher "$@"
+  [ "$status" -eq 0 ]
+}
+
+_lean_disallowed='ARG --disallowedTools=CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,LSP,NotebookEdit,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow,ListMcpResourcesTool,ReadMcpResourceTool,ReadMcpResourceDirTool,SendFeedback,EndConversation,EnterPlanMode,ExitPlanMode'
+
+_assert_lean_mcp() {
+  grep -qx 'ENABLE_CLAUDEAI_MCP_SERVERS=false' "$STUB_LOG"
+  grep -qx 'ARG --strict-mcp-config' "$STUB_LOG"
+  grep -qxF 'ARG --mcp-config={"mcpServers":{}}' "$STUB_LOG"
+  [ "$(grep -c '^ARG --mcp-config=' "$STUB_LOG")" = 1 ]
+}
+
+_settings_word() { sed -n '/^ARG --settings$/{n;s/^ARG //;p;}' "$STUB_LOG"; }
+
+@test "1277: the default claude dispatcher launch applies the lean profile" {
+  _profile_launch
+  _assert_lean_mcp
+  grep -qxF -- "$_lean_disallowed" "$STUB_LOG"
+  # Tools the dispatcher uses stay available.
+  local keep
+  for keep in Artifact ArtifactComments ArtifactData WebSearch PushNotification AskUserQuestion Monitor Skill Task Agent; do
+    run grep -E "^ARG --disallowedTools=(.*,)?$keep(,|$)" "$STUB_LOG"
+    [ "$status" -eq 1 ]
+  done
+  # The worker plugin layer, from claude-worker-settings.sh, with its
+  # claude-in-chrome and workerDeniedMcpServers denies.
+  run _settings_word
+  [ "$status" -eq 0 ]
+  jq -e '.enabledPlugins["superpowers@superpowers-dev"] == false' <<<"$output"
+  jq -e '.permissions.deny | index("mcp__claude-in-chrome__*") and index("mcp__plugin_hm_playwright__*")' <<<"$output"
+  [ "$(grep -c '^ARG --chrome$' "$STUB_LOG")" = 0 ]
+}
+
+@test "1277: a task stays the last argv word, outside the variadic flags" {
+  _profile_launch fix the flaky test
+  [ "$(grep '^ARG ' "$STUB_LOG" | tail -n 1)" = 'ARG fix the flaky test' ]
+  # Each variadic list is one --flag=value word, never a bare flag a later
+  # word could join.
+  [ "$(grep -cx 'ARG --disallowedTools' "$STUB_LOG")" = 0 ]
+  [ "$(grep -cx 'ARG --mcp-config' "$STUB_LOG")" = 0 ]
+}
+
+@test "1277: an unmatched repo stays lean while other repos opt in" {
+  git remote add origin git@github.com:noamsto/tmux-og.git
+  _dispatcher_settings '{"dispatcherMcp":{"noamsto/dispatcher":["claudeai","analytics"],"factify-inc":["claudeai"]}}'
+  _profile_launch
+  _assert_lean_mcp
+}
+
+_profile_optin_row() { # url settings env
+  git remote remove origin 2>/dev/null || true
+  git remote add origin "$1"
+  rm -f "$XDG_CONFIG_HOME/dispatcher/settings.json"
+  [ -z "$2" ] || _dispatcher_settings "$2"
+  DISPATCH_DISPATCHER_MCP="$3" _profile_launch
+  grep -qx 'ENABLE_CLAUDEAI_MCP_SERVERS=UNSET' "$STUB_LOG"
+  [ "$(grep -c -- '--strict-mcp-config\|--mcp-config' "$STUB_LOG")" = 0 ]
+  # The rest of the profile stays.
+  grep -qxF -- "$_lean_disallowed" "$STUB_LOG"
+  grep -qx 'ARG --settings' "$STUB_LOG"
+}
+
+@test "1277: a repo matched by dispatcherMcp gets its connectors back" {
+  begin_rows
+  local row url settings env_var
+  while IFS='|' read -r row url settings env_var; do
+    [ -n "$row" ] || continue
+    keep_row "$row" _profile_optin_row "$url" "$settings" "$env_var"
+  done <<'ROWS'
+repo-claudeai|git@github.com:Noamsto/Dispatcher.git|{"dispatcherMcp":{"noamsto/dispatcher":["claudeai"]}}|
+org-claudeai|https://github.com/factify-inc/mono|{"dispatcherMcp":{"factify-inc":["claudeai"]}}|
+env-claudeai|ssh://git@github.com/factify-inc/mono.git||factify-inc/MONO=claudeai
+ROWS
+  finish_rows 3
+}
+
+@test "1277: an analytics opt-in adds its generated config under strict MCP" {
+  export HOME="$BATS_TEST_TMPDIR/home"
+  git remote add origin git@github.com:factify-inc/mono.git
+  _dispatcher_settings '{"dispatcherMcp":{"factify-inc":["claudeai"],"factify-inc/mono":["analytics"]}}'
+  # Missing config: refused, naming the file.
+  CREW_ID=c1 run run_launcher
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"config is missing at $HOME/.config/claude-code/mcp-posthog.json"* ]]
+  mkdir -p "$HOME/.config/claude-code"
+  printf '{"mcpServers":{}}\n' >"$HOME/.config/claude-code/mcp-posthog.json"
+  _profile_launch
+  grep -qx 'ENABLE_CLAUDEAI_MCP_SERVERS=false' "$STUB_LOG"
+  grep -qx 'ARG --strict-mcp-config' "$STUB_LOG"
+  grep -qxF "ARG --mcp-config=$HOME/.config/claude-code/mcp-posthog.json" "$STUB_LOG"
+  [ "$(grep -c '^ARG --mcp-config=' "$STUB_LOG")" = 1 ]
+}
+
+@test "1277: claudeai plus analytics restores both" {
+  export HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME/.config/claude-code"
+  printf '{"mcpServers":{}}\n' >"$HOME/.config/claude-code/mcp-posthog.json"
+  git remote add origin git@github.com:factify-inc/mono.git
+  _dispatcher_settings '{"dispatcherMcp":{"factify-inc/mono":["claudeai","analytics"]}}'
+  _profile_launch
+  grep -qx 'ENABLE_CLAUDEAI_MCP_SERVERS=UNSET' "$STUB_LOG"
+  [ "$(grep -c -- '--strict-mcp-config' "$STUB_LOG")" = 0 ]
+  grep -qxF "ARG --mcp-config=$HOME/.config/claude-code/mcp-posthog.json" "$STUB_LOG"
+}
+
+@test "1277: an empty repo entry keeps a repo lean under an opted-in org" {
+  git remote add origin git@github.com:factify-inc/mono.git
+  _dispatcher_settings '{"dispatcherMcp":{"factify-inc":["claudeai"],"factify-inc/mono":[]}}'
+  _profile_launch
+  _assert_lean_mcp
+  _dispatcher_settings '{"dispatcherMcp":{"factify-inc":["claudeai"]}}'
+  DISPATCH_DISPATCHER_MCP='factify-inc/mono=' _profile_launch
+  _assert_lean_mcp
+}
+
+@test "1277: dispatcherChrome keeps strict MCP and lifts only the chrome deny" {
+  _dispatcher_settings '{"dispatcherChrome":true}'
+  _profile_launch
+  grep -qx 'ARG --chrome' "$STUB_LOG"
+  _assert_lean_mcp
+  run _settings_word
+  jq -e '.permissions.deny | (index("mcp__claude-in-chrome__*") | not) and index("mcp__plugin_hm_playwright__*")' <<<"$output"
+}
+
+@test "1277: codex, cursor and pi dispatcher launches carry no profile flags" {
+  _dispatcher_settings '{"dispatcherMcp":{"factify-inc":["claudeai"]}}'
+  git remote add origin git@github.com:factify-inc/mono.git
+  local agent marker
+  while read -r agent marker; do
+    : >"$STUB_LOG"
+    DISPATCH_PROFILE=work CREW_ID=c1 run run_launcher --agent "$agent"
+    [ "$status" -eq 0 ]
+    grep -qF -- "$marker" "$STUB_LOG"
+    [ "$(grep -c -- '--strict-mcp-config\|--mcp-config\|--disallowedTools\|--settings\|enabledPlugins' "$STUB_LOG")" = 0 ]
+  done <<'AGENTS'
+codex --profile worker
+cursor --disable-indexing
+pi --thinking
+AGENTS
 }
 
 @test "codex gets the auto-compact window through -c" {

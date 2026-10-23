@@ -145,6 +145,95 @@ esac
 settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"
 [ -n "${DISPATCH_ENGINES:-}" ] || DISPATCH_ENGINES="$(jq -r '.engines // [] | join(" ")' <<<"$settings")"
 
+# Worker-only Claude settings (disabled plugins, denied MCP servers), shared
+# with dispatch and dispatch-resume: the claude dispatcher launch profile below
+# reuses the same --settings layer. Same lookup as dispatch.sh.
+claude_worker_settings_lib="${CLAUDE_WORKER_SETTINGS_LIB:-@claudeWorkerSettingsLib@}"
+# replaceStrings rewrites the token on both sides of an equality check, so a
+# string compare against the placeholder always matches after bake.
+if [ ! -f "$claude_worker_settings_lib" ]; then
+  claude_worker_settings_lib="$(dirname -- "${BASH_SOURCE[0]}")/claude-worker-settings.sh"
+fi
+# shellcheck source=/dev/null
+. "$claude_worker_settings_lib"
+
+# The origin's owner/repo, for the per-project dispatcherMcp lookup. Copied
+# from dispatch.sh (standalone build); tests/adapters.bats pins the copies.
+# ssh Host aliases are written github.com-<name>. Anything else (a lookalike
+# host, an extra @, a slash) is not GitHub.
+_github_ssh_host() {
+  local host
+  host="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  [ "$host" = github.com ] && return 0
+  [[ $host =~ ^github\.com-[^@/]+$ ]]
+}
+
+# owner/repo from a GitHub path. A trailing slash may sit before or after
+# `.git` (`repo/.git`, `repo.git/`, `repo/`). Empty when it is not one slug.
+_tracker_slug_from_path() {
+  local path="$1"
+  while [[ $path == */ ]]; do
+    path="${path%/}"
+  done
+  if [[ $path == *.git ]]; then
+    path="${path%.git}"
+    while [[ $path == */ ]]; do
+      path="${path%/}"
+    done
+  fi
+  if [[ $path =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
+    printf '%s\n' "$path"
+  fi
+  return 0
+}
+
+# _origin_slug — owner/repo of the configured origin when it is a GitHub URL,
+# else nothing. Configured origin, not `git remote get-url`: that applies
+# insteadOf and would hide a GitHub slug behind a rewritten local path. https
+# userinfo is discarded and never printed.
+_origin_slug() {
+  local url="" rest="" host="" path=""
+  url="$(git config --get remote.origin.url 2>/dev/null || true)"
+  case "$url" in
+  https://*)
+    rest="${url#https://}"
+    rest="${rest##*@}"
+    host="${rest%%/*}"
+    host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+    if [ "$host" = github.com ] && [ "$rest" != "$host" ]; then
+      path="${rest#*/}"
+    fi
+    ;;
+  ssh://git@*/*)
+    rest="${url#ssh://git@}"
+    host="${rest%%/*}"
+    if _github_ssh_host "$host"; then
+      path="${rest#*/}"
+    fi
+    ;;
+  git://*/*)
+    rest="${url#git://}"
+    host="${rest%%/*}"
+    host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+    if [ "$host" = github.com ]; then
+      path="${rest#*/}"
+    fi
+    ;;
+  git@*:*)
+    rest="${url#git@}"
+    host="${rest%%:*}"
+    if _github_ssh_host "$host"; then
+      path="${rest#*:}"
+    fi
+    ;;
+  *) path="" ;;
+  esac
+  if [ -n "$path" ]; then
+    _tracker_slug_from_path "$path"
+  fi
+  return 0
+}
+
 # Orchestrator model/effort defaults are data (defaults.json →
 # "orchestratorDefaults"), so a ladder bump edits defaults.json and not this
 # launcher. --model/--effort still override per launch.
@@ -441,9 +530,56 @@ claude)
     --model "${model:-$(orch_default model)}" --effort "${effort:-$(orch_default effort)}"
   [ -n "$ac" ] && [ "$ac" != auto ] && set -- "$@" --autocompact "$ac"
   # Claude in Chrome drives the owner's authenticated browser, so it is opt-in;
-  # off leaves Claude's own default alone.
-  [ "$(jq -r '.dispatcherChrome == true' <<<"$settings")" = true ] && set -- "$@" --chrome
-  env PATH="$engine_env_path" claude "$@" ${task:+"$task"}
+  # off leaves Claude's own default alone. --strict-mcp-config below keeps it
+  # (it is not an MCP-config server); only the plugin layer's deny is lifted.
+  chrome=""
+  if [ "$(jq -r '.dispatcherChrome == true' <<<"$settings")" = true ]; then
+    chrome=1
+    set -- "$@" --chrome
+  fi
+
+  # Launch profile (#1277, docs/dispatcher-context-floor.md "profile-rec"): the
+  # tools the protocol never names are disallowed, and MCP is opt-in per
+  # project through dispatcherMcp — the repo's owner/repo entry, else its org's,
+  # else none. claudeai restores every claude.ai connector: they load all or
+  # none (one env switch, and --strict-mcp-config drops them all), so that
+  # opt-in skips strict MCP and the switch. A generated --mcp profile is added
+  # as one more --mcp-config. Variadic flags take one --flag=value word each,
+  # so a trailing task is never read as a tool name or a config.
+  slug="$(_origin_slug)"
+  optins=""
+  if [ -n "$slug" ]; then
+    optins="$(jq -r --arg r "$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')" '
+      .dispatcherMcp // {} | (.[$r] // .[$r | split("/")[0]] // []) | join(" ")' <<<"$settings")"
+  fi
+  launch_env=()
+  mcp_configs=()
+  claudeai=0
+  for optin in $optins; do
+    case "$optin" in
+    claudeai) claudeai=1 ;;
+    analytics)
+      mcp_file="$HOME/.config/claude-code/mcp-posthog.json"
+      [ -f "$mcp_file" ] || {
+        echo "dispatcher: dispatcherMcp opts $slug into $optin, but its config is missing at $mcp_file" >&2
+        exit 1
+      }
+      mcp_configs+=("--mcp-config=$mcp_file")
+      ;;
+    esac
+  done
+  if [ "$claudeai" = 0 ]; then
+    launch_env+=(ENABLE_CLAUDEAI_MCP_SERVERS=false)
+    [ "${#mcp_configs[@]}" -gt 0 ] || mcp_configs=('--mcp-config={"mcpServers":{}}')
+    set -- "$@" --strict-mcp-config
+  fi
+  set -- "$@" "${mcp_configs[@]}" \
+    --disallowedTools=CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,LSP,NotebookEdit,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow,ListMcpResourcesTool,ReadMcpResourceTool,ReadMcpResourceDirTool,SendFeedback,EndConversation,EnterPlanMode,ExitPlanMode
+  # The worker plugin layer, printed shell-quoted for dispatch's launch scripts.
+  plugin_layer=""
+  eval "plugin_layer=$(claude_worker_plugin_settings "$settings" "$chrome")"
+  set -- "$@" --settings "$plugin_layer"
+  env PATH="$engine_env_path" "${launch_env[@]}" claude "$@" ${task:+"$task"}
   ;;
 codex | cursor)
   # Neither CLI has --append-system-prompt-file — inject the protocol as the
