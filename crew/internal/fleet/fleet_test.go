@@ -360,9 +360,7 @@ func TestStaleRowsHiddenByDefault(t *testing.T) {
 	stale := map[string]any{}
 	for _, r := range jsonRows(t, out) {
 		stale[r["branch"].(string)] = r["stale"]
-		// The repo label is what makes a machine-wide listing usable, and a
-		// hidden-by-default row still needs it: `--json` is where a stale row is
-		// read from.
+		// --json is where a stale row gets read, so it keeps its repo label.
 		if repo, _ := r["repo"].(string); repo == "" {
 			t.Errorf("row %v carries no repo label", r)
 		}

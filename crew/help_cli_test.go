@@ -147,8 +147,6 @@ func TestEverySubcommandAnswersHelpOutsideARepo(t *testing.T) {
 // screen that answers it is the fleet one, and that screen is the only place its
 // contract is written down: the synopsis an agent needs to start a lane, and the
 // parked-watch conflict it has to recognize when a lane holds a repo's watch.
-// The routing table pins that both spellings exit 0 with that screen; the rows
-// above cannot see what is on it.
 func TestFleetStreamScreenIsTheFleetScreen(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GIT_CEILING_DIRECTORIES", dir)
