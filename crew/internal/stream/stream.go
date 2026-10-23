@@ -161,15 +161,18 @@ func Run(r Request, paths bus.Paths, stdout, stderr io.Writer, opts Options) int
 		return status(cdir, c.crew, stdout, o)
 	}
 
+	// Armed before the acquire, as in the inner watch: a TERM landing between
+	// the two with no handler armed yet would die before the cleanup could
+	// release stream.lock.d. A signal caught mid-acquire is queued and stops
+	// the loop at its first turn.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	defer signal.Stop(sigs)
+
 	lockd := filepath.Join(cdir, "stream.lock.d")
 	if !acquire(lockd, c, o, stderr) {
 		return 1
 	}
-
-	// Only now, with the lock held, is a signal caught: the cleanup releases it.
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
-	defer signal.Stop(sigs)
 
 	l := &loop{
 		c:       c,
