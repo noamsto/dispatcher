@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/stall/probe"
 )
 
@@ -26,6 +27,10 @@ import (
 type watchScript struct {
 	// frames are the pane's captures by fixture name; empty is one idle box.
 	frames []string
+	// texts are pane captures given as text instead of by name, for a run that
+	// rewrites one line of a fixture per sample (D2's meter clock). It wins over
+	// frames.
+	texts []string
 	// load answers each D4 read, 1-based; nil is the empty read of a host
 	// whose load cannot be parsed.
 	load func(read int) string
@@ -37,7 +42,10 @@ type watchScript struct {
 	// noEngine leaves --engine off, the way a watchdog launched without one
 	// runs.
 	noEngine bool
-	req      Request
+	// anchor is what the #908 sender check sees; zero checks nothing, which is
+	// how every other run here reaches the loop.
+	anchor sender.Probes
+	req    Request
 }
 
 // watchRun runs the watch to its exit and returns its harness with every
@@ -45,13 +53,16 @@ type watchScript struct {
 func watchRun(t *testing.T, s watchScript) (*harness, []string) {
 	t.Helper()
 	f := newFake()
-	frames := s.frames
-	if len(frames) == 0 {
-		frames = []string{"idle_box.txt"}
-	}
-	texts := make([]string, len(frames))
-	for i, name := range frames {
-		texts[i] = frameText(t, name)
+	texts := s.texts
+	if len(texts) == 0 {
+		frames := s.frames
+		if len(frames) == 0 {
+			frames = []string{"idle_box.txt"}
+		}
+		texts = make([]string, len(frames))
+		for i, name := range frames {
+			texts[i] = frameText(t, name)
+		}
 	}
 	f.sample = func(n int) (string, bool) { return texts[min(n, len(texts)-1)], true }
 	f.paneCmd = s.paneCmd
@@ -81,6 +92,7 @@ func watchRun(t *testing.T, s watchScript) (*harness, []string) {
 
 	h := newHarness(t, f)
 	o := h.options()
+	o.Sender = s.anchor
 	if s.load != nil || s.top != "" {
 		newProbes := o.NewProbes
 		reads := 0
