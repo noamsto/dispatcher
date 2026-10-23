@@ -994,8 +994,7 @@ _settings_load
 
 # mcp is the one gate the precheck below cannot make: passing --mcp there would
 # have dispatch resolve and validate the config files too, which this script
-# must do anyway to build the launch flags. analytics stays claude-only; the
-# catalog names (#1304) load on claude, pi and codex, never cursor.
+# must do anyway to build the launch flags.
 if [ -n "$mcp_profile" ]; then
   mcp_profile="$(mcp_worker_optins "dispatch resume" "$settings" "$agent" "$mcp_profile")" || exit 1
 fi

@@ -4839,9 +4839,8 @@ if { [ "$agent" = claude ] || [ "$agent" = pi ]; } && [ "$effort" = ultra ]; the
   exit 1
 fi
 refuse_claude_sonnet_cap "$agent" "$model" "$effort"
-# --mcp (#1304): analytics stays claude-only; catalog names load on claude, pi
-# and codex, never cursor. Normalized here, before the worktree exists, into
-# the one comma list the task header records for `dispatch resume`.
+# Normalized before the worktree exists into the one comma list the task
+# header records for `dispatch resume`.
 if [ -n "$mcp_profile" ]; then
   mcp_profile="$(mcp_worker_optins dispatch "$settings" "$agent" "$mcp_profile")" || exit 1
 fi
