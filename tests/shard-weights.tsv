@@ -16,7 +16,7 @@ tests/crew.bats	*	!timing	65735
 tests/crew.bats	burn map conformance	!timing	19017
 tests/crew.bats	reap	!timing	429530
 tests/crew.bats	reply	!timing	2819
-tests/crew.bats	stall-watch	!timing	463295
+tests/crew.bats	stall-watch	!timing	350563
 tests/crew.bats	watch	!timing	48846
 tests/dispatch-comment.bats	*	!timing	44295
 tests/dispatch-config.bats	*	!timing	50123
