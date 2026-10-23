@@ -126,8 +126,8 @@
               (builtins.readFile ./adapters/core/worktree-git.sh));
           sub =
             builtins.replaceStrings
-            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@" "@publicLeakGuard@" "@worktreeGitLib@" "@grantCheckLib@" "@claudeWorkerSettingsLib@" "@localModelsLib@" "@budgetGateLib@" "@laneProfilesDir@" "@agentBrowserWorkerConfig@"]
-            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}" "${worktreeGitLib}" "${./adapters/core/grant-check.sh}" "${./adapters/core/claude-worker-settings.sh}" "${./adapters/core/local-models.sh}" "${./adapters/core/budget-gate.sh}" "${./adapters/core/lane-profiles}" "${./adapters/core/agent-browser-worker.json}"];
+            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@" "@publicLeakGuard@" "@worktreeGitLib@" "@grantCheckLib@" "@claudeWorkerSettingsLib@" "@localModelsLib@" "@budgetGateLib@" "@openrouterKeyLib@" "@laneProfilesDir@" "@agentBrowserWorkerConfig@"]
+            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}" "${worktreeGitLib}" "${./adapters/core/grant-check.sh}" "${./adapters/core/claude-worker-settings.sh}" "${./adapters/core/local-models.sh}" "${./adapters/core/budget-gate.sh}" "${./adapters/core/openrouter-key.sh}" "${./adapters/core/lane-profiles}" "${./adapters/core/agent-browser-worker.json}"];
           # The settings resolver (#560), with defaults.json baked in as its base
           # layer. withConfig bakes its path into the consumers as the default for
           # their env-overridable DISPATCH_CONFIG_BIN, the WORKTREE_GIT_LIB idiom.
@@ -255,7 +255,7 @@
           refresh-scores = pkgs.writeShellApplication {
             name = "refresh-scores";
             runtimeInputs = with pkgs; [curl jq coreutils];
-            text = builtins.readFile ./adapters/core/refresh-scores.sh;
+            text = sub (builtins.readFile ./adapters/core/refresh-scores.sh);
           };
 
           refresh-budget = pkgs.writeShellApplication {

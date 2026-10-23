@@ -1,14 +1,31 @@
+bats_require_minimum_version 1.5.0 # `run --separate-stderr`
+
 setup() {
   load helpers
   SCRIPT="$BATS_TEST_DIRNAME/../adapters/core/refresh-scores.sh"
   STUB_DIR="$(mktemp -d)"
   STUB_LOG="$STUB_DIR/calls.log"
+  STUB_STDIN_LOG="$STUB_DIR/stdin.log"
   FIXTURE_DIR="$(mktemp -d)"
-  export STUB_DIR STUB_LOG FIXTURE_DIR
-  unset OPENROUTER_API_KEY
+  export STUB_DIR STUB_LOG STUB_STDIN_LOG FIXTURE_DIR
+  # Throwaway HOME + no pi overrides: the host's real pi OpenRouter login
+  # must never resolve in these tests, and no dispatch env may leak in.
+  export HOME="$(mktemp -d)"
+  unset OPENROUTER_API_KEY DISPATCH_OPENROUTER_KEY_FILE PI_CODING_AGENT_DIR
   write_fixtures
   write_curl_shim
+  write_pi_shim
   export PATH="$STUB_DIR:$PATH"
+}
+
+# write_pi_shim — a fail-closed `pi`: every call exits 1, so a host pi can
+# never supply a real key (or get prompted) from these tests.
+write_pi_shim() {
+  cat >"$STUB_DIR/pi" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "$STUB_DIR/pi"
 }
 
 write_fixtures() {
@@ -45,8 +62,9 @@ EOF
 EOF
 }
 
-# The script's last curl argument is always the URL; the full argv is logged so
-# tests can assert on headers too.
+# The script's last curl argument is always the URL; the full argv is logged
+# so tests can assert on it, and the OpenRouter call's stdin is recorded
+# separately — the key must arrive there, never in argv.
 write_curl_shim() {
   cat >"$STUB_DIR/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -66,7 +84,12 @@ case "$url" in
   *config=text*overall*) cat "$FIXTURE_DIR/text_overall.json" ;;
   *config=webdev*) cat "$FIXTURE_DIR/webdev.json" ;;
   *config=agent*) cat "$FIXTURE_DIR/agent.json" ;;
-  *openrouter.ai*) cat "$FIXTURE_DIR/openrouter.json" ;;
+  *openrouter.ai*)
+    # Consumed, never logged to $STUB_LOG: proves the key arrives on stdin
+    # (-K -) and lets tests grep for it there only.
+    cat >>"$STUB_STDIN_LOG"
+    cat "$FIXTURE_DIR/openrouter.json"
+    ;;
   *) exit 22 ;;
 esac
 EOF
@@ -119,12 +142,46 @@ cache() {
 }
 
 @test "includes openrouter benchmarks, sorted by agentic index, when keyed" {
-  OPENROUTER_API_KEY=test-key run bash "$SCRIPT"
+  OPENROUTER_API_KEY=sk-or-v1-TESTSENTINELKEY run bash "$SCRIPT"
   [ "$status" -eq 0 ]
   run jq -c '.openrouter.models | map(.model)' "$XDG_DATA_HOME/crew/model-scores.json"
   [ "$output" = '["a/high","b/low"]' ]
-  run grep -c 'Authorization: Bearer test-key' "$STUB_LOG"
+  run grep -c 'Authorization: Bearer sk-or-v1-TESTSENTINELKEY' "$STUB_STDIN_LOG"
   [ "$output" = "1" ]
+}
+
+@test "resolves the key from pi's auth.json when OPENROUTER_API_KEY is unset" {
+  mkdir -p "$HOME/pi-agent"
+  printf '%s\n' '{"openrouter":{"type":"api_key","key":"sk-or-v1-TESTSENTINELPI"}}' >"$HOME/pi-agent/auth.json"
+  PI_CODING_AGENT_DIR="$HOME/pi-agent" run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"skipping openrouter"* ]]
+  run jq -c '.openrouter.models | map(.model)' "$XDG_DATA_HOME/crew/model-scores.json"
+  [ "$output" = '["a/high","b/low"]' ]
+  grep -q 'Authorization: Bearer sk-or-v1-TESTSENTINELPI' "$STUB_STDIN_LOG"
+}
+
+@test "the key reaches curl on stdin, never in argv" {
+  OPENROUTER_API_KEY=sk-or-v1-TESTSENTINELKEY run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  run ! grep -q 'sk-or-v1-TESTSENTINELKEY' "$STUB_LOG"
+  grep -q 'Authorization: Bearer sk-or-v1-TESTSENTINELKEY' "$STUB_STDIN_LOG"
+}
+
+@test "the key never appears in stdout or stderr" {
+  OPENROUTER_API_KEY=sk-or-v1-TESTSENTINELKEY run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"sk-or-v1-TESTSENTINELKEY"* ]]
+  [[ "$stderr" != *"sk-or-v1-TESTSENTINELKEY"* ]]
+}
+
+@test "an unreadable DISPATCH_OPENROUTER_KEY_FILE skips with a warning, no fallback" {
+  OPENROUTER_API_KEY=sk-or-v1-TESTSENTINELKEY \
+    DISPATCH_OPENROUTER_KEY_FILE="$STUB_DIR/nope" run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"skipping openrouter"* ]]
+  run jq 'has("openrouter")' "$XDG_DATA_HOME/crew/model-scores.json"
+  [ "$output" = "false" ]
 }
 
 @test "exits 1 and keeps the old cache when every fetch fails" {
