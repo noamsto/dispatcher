@@ -3607,15 +3607,6 @@ seed_raw() {
             + (if $src!="" then {source:$src} else {} end))}' >>"$logf"
 }
 
-# seed_msg <from> <to> <age_s> — append a msg event dated <age_s> seconds ago.
-seed_msg() {
-  local logf
-  logf="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
-  mkdir -p "$(dirname "$logf")"
-  jq -nc --arg f "$1" --arg t "$2" --argjson ts "$((($(date +%s) - $3) * 1000))" \
-    '{ts:$ts, crew_id:"c1", from:$f, to:$t, kind:"msg", body:"{\"verdict\":\"accept\"}"}' >>"$logf"
-}
-
 # seed_start <dispatch|resume> <session> <ts_ms> — a session-start row on feat/x,
 # shaped like dispatch.sh's and dispatch-resume.sh's, which `crew` cannot write.
 seed_start() {

@@ -14,13 +14,12 @@ import (
 )
 
 // D6 whole-watch tests: what a watch run writes to the bus, and how often it
-// types, over a real bus and the real in-process unread scan. These are the
-// stall-watch D6 cases ported from tests/crew.bats (#1292); the detector-level
-// half — the episode's state machine over a scripted scan — is in
-// probe_detectors_test.go.
+// types, over a real bus and the real in-process unread scan. The
+// detector-level half — the episode's state machine over a scripted scan — is
+// in probe_detectors_test.go.
 
-// d6Lead is the bats block's lead: a sessioned worker id, so the scan reads its
-// session's delivered marks.
+// d6Lead is a sessioned worker id, so the scan reads that session's delivered
+// marks.
 const d6Lead = "worker:feat/x#s1-1"
 
 // d6Msg is a msg row to the lead, age seconds before the clock seed.
@@ -53,11 +52,9 @@ func d6Deliver(t *testing.T, h *harness, sid string, rows ...string) {
 	}
 }
 
-// d6Nudge scripts the D6 type per call (1-based). The bats block scripted this
-// through frame files and the real nudge against a tmux stub; here the nudge's
-// verdict is a stub, because what it types and every refusal, held and
-// unconfirmed wording is pinned in internal/nudge (nudge_test.go). rc 0 is
-// accepted, 2 refused, 3 typed but not accepted.
+// d6Nudge scripts the D6 type per call (1-based): rc 0 accepted, 2 refused,
+// 3 typed but not accepted. What the type actually types, and every refusal,
+// held and unconfirmed wording, is internal/nudge's contract.
 type d6Nudge func(call int) (string, int)
 
 func (f d6Nudge) at(call int) (string, int) {
@@ -67,15 +64,13 @@ func (f d6Nudge) at(call int) (string, int) {
 	return f(call)
 }
 
-// d6Run is one whole watch of the bats block's d6_watch: the lead on %9,
-// --unread 10, the virtual clock and --max-life as the only bound, so no test
-// sleeps in real time. Options.Unread is left nil on purpose: Run then wires
-// internal/unread against the harness's bus, so every row below comes off the
-// same scan the arm runs — which is what these bats cases were testing, and
-// what the detector-level tests script away.
+// d6Run is one whole watch: the lead on %9, --unread 10, the virtual clock and
+// --max-life as the only bound, so no test sleeps in real time. Options.Unread
+// is left nil on purpose: Run then wires internal/unread against the harness's
+// bus, so every row comes off the same scan the arm runs.
 type d6Run struct {
 	req   Request
-	frame string // the pane's static frame; done_idle.txt is the bats' idle box
+	frame string // the pane's static frame; done_idle.txt is an idle box
 	state string // the lead's own status body; empty is `working`
 	// roleAge/dispAge seed an undelivered role verdict / dispatcher directive
 	// that many seconds before the clock seed; 0 seeds nothing.
@@ -84,8 +79,7 @@ type d6Run struct {
 	leadSays         bool // the lead msgged the dispatcher, which answers nothing
 	nudgedBefore     bool // another nudge already covered the newest directive
 	// delivered is the lead having read its inbox before the watch started;
-	// deliverAt is the sample (1-based) where it reads it mid-run, where the
-	// bats block wrapped CREW_STALL_SAMPLE_CMD around a `crew inbox`. deliver
+	// deliverAt is the sample (1-based) where it reads it mid-run. deliverFrom
 	// picks what that read handed out: "role", "disp" or both.
 	delivered   bool
 	deliverAt   int
@@ -93,7 +87,9 @@ type d6Run struct {
 	nudge       d6Nudge
 }
 
-func d6WatchRun(t *testing.T, tc d6Run) (*harness, *fake, []string) {
+// d6WatchRun runs the watch and returns its harness, every watchdog row the run
+// wrote, and the nudge requests it made.
+func d6WatchRun(t *testing.T, tc d6Run) (*harness, []string, []nudge.PaneRequest) {
 	t.Helper()
 	def := func(p **string, v string) {
 		if *p == nil {
@@ -123,14 +119,13 @@ func d6WatchRun(t *testing.T, tc d6Run) (*harness, *fake, []string) {
 
 	f := newFake()
 	f.sample = sampling(frameText(t, tc.frame))
-	// D8 stays quiet, the way it does on a machine with no budget windows: both
-	// predicates answer clear. The bats block ran the real budget-gate, which
-	// had nothing to say about a test crew with no cache.
+	// D8 quiet, the way it is on a machine with no budget windows: both
+	// predicates answer clear.
 	f.sh = budgetSh("", 1, "", 1)
-	calls := 0
+	var types []nudge.PaneRequest
 	f.nudge = func(_ context.Context, req nudge.PaneRequest) (string, int) {
-		calls++
-		return tc.nudge.at(calls)
+		types = append(types, req)
+		return tc.nudge.at(len(types))
 	}
 	h := newHarness(t, f)
 
@@ -191,18 +186,7 @@ func d6WatchRun(t *testing.T, tc d6Run) (*harness, *fake, []string) {
 	if code := Run(h.ctx, tc.req, h.paths, &h.stderr, o); code != 0 {
 		t.Fatalf("exit %d: %s", code, h.stderr.String())
 	}
-	return h, f, pdRows(t, h)
-}
-
-// nudgeCalls is the types the watch made, as the argv each nudge call carries.
-func nudgeCalls(f *fake) []string {
-	var out []string
-	for _, c := range f.shCalls {
-		if strings.HasPrefix(c, "nudge ") {
-			out = append(out, c)
-		}
-	}
-	return out
+	return h, pdRows(t, h), types
 }
 
 const (
@@ -213,7 +197,7 @@ const (
 func d6DispAt(age int64) string { return fmt.Sprintf(d6Disp, age) }
 
 // The verdict side of D6: the oldest undelivered msg of the two kinds, posted
-// once with its exact detail, and every silence the bats block pinned.
+// once with its exact detail, and every silence that keeps it off the bus.
 func TestUnreadWatchVerdict(t *testing.T) {
 	cases := []struct {
 		name string
@@ -270,7 +254,7 @@ func TestUnreadWatchVerdict(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, rows := d6WatchRun(t, tc.d6Run)
+			_, rows, _ := d6WatchRun(t, tc.d6Run)
 			if !slices.Equal(rows, tc.want) {
 				t.Fatalf("rows %q, want %q", rows, tc.want)
 			}
@@ -294,7 +278,7 @@ func TestUnreadWatchClearsOnDelivery(t *testing.T) {
 			} else {
 				disp = 30
 			}
-			_, _, rows := d6WatchRun(t, d6Run{
+			_, rows, _ := d6WatchRun(t, d6Run{
 				roleAge: int64(role), dispAge: int64(disp),
 				deliverFrom: tc.deliver, deliverAt: 3,
 				req: Request{NoNudge: true, MaxLife: ptr("9")},
@@ -310,7 +294,7 @@ func TestUnreadWatchClearsOnDelivery(t *testing.T) {
 // Two kinds, one episode: delivering only the verdict clears the stale label,
 // and the directive still open re-opens the episode under its own wording.
 func TestUnreadWatchRelabelsOnPartialDelivery(t *testing.T) {
-	_, _, rows := d6WatchRun(t, d6Run{
+	_, rows, _ := d6WatchRun(t, d6Run{
 		roleAge: 40, dispAge: 30, deliverFrom: "role", deliverAt: 3,
 		req: Request{NoNudge: true, MaxLife: ptr("13")},
 	})
@@ -327,17 +311,16 @@ func TestUnreadWatchRelabelsOnPartialDelivery(t *testing.T) {
 // The nudge side of D6 over a whole run: one type per directive, what it does
 // to that tick's verdict, and the refusals that keep the watch silent.
 func TestUnreadWatchAutoNudge(t *testing.T) {
-	// The nudge package's own mid-turn refusal (nudge.go's frame gate); stall
-	// only reads rc 2 here, and retries on the next tick because it typed
-	// nothing.
-	const busy = "live turn or no idle input box"
+	// nudge.go's frame-gate refusal: rc 2 tells stall nothing was typed, so the
+	// next tick may call again.
+	const liveTurn = "live turn or no idle input box"
 	accepted := func(int) (string, int) { return "nudge accepted: %9 " + d6Lead, 0 }
 	heldNudge := func(int) (string, int) {
 		return "nudge held: %9 " + d6Lead + " — the line still sits in the input box after one Enter", 3
 	}
 	unconfirmed := func(call int) (string, int) {
 		if call == 1 {
-			return busy, 2
+			return liveTurn, 2
 		}
 		return "nudge unconfirmed: %9 " + d6Lead + " — typed but not confirmed in the input box", 3
 	}
@@ -346,7 +329,8 @@ func TestUnreadWatchAutoNudge(t *testing.T) {
 		name string
 		d6Run
 		wantRows []string
-		// wantCalls is how many times the watch typed over the run.
+		// wantCalls is how many nudge calls the watch made over the run; a
+		// refusal is a call that typed nothing.
 		wantCalls int
 	}{
 		{
@@ -373,7 +357,7 @@ func TestUnreadWatchAutoNudge(t *testing.T) {
 		},
 		{
 			name:      "does not nudge a lead mid-turn and posts as before",
-			d6Run:     d6Run{dispAge: 30, req: Request{MaxLife: ptr("3")}, nudge: func(int) (string, int) { return busy, 2 }},
+			d6Run:     d6Run{dispAge: 30, req: Request{MaxLife: ptr("3")}, nudge: func(int) (string, int) { return liveTurn, 2 }},
 			wantRows:  []string{d6DispAt(30)},
 			wantCalls: 1,
 		},
@@ -417,25 +401,23 @@ func TestUnreadWatchAutoNudge(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h, f, rows := d6WatchRun(t, tc.d6Run)
+			h, rows, types := d6WatchRun(t, tc.d6Run)
 			if !slices.Equal(rows, tc.wantRows) {
 				t.Fatalf("rows %q, want %q", rows, tc.wantRows)
 			}
-			// Every type points at the newest undelivered directive's ts.
-			want := "nudge %9 claude " + d6Lead + " c1 " + strconv.FormatInt((h.seed-30)*1000, 10)
-			calls := nudgeCalls(f)
-			if tc.wantCalls == 0 {
-				if len(calls) != 0 {
-					t.Fatalf("nudge calls %q, want none", calls)
-				}
-				return
+			// A type is the watchdog's own — the row it appends must not read
+			// as a directive the lead was handed — and it points at the newest
+			// undelivered directive's ts.
+			want := nudge.PaneRequest{
+				Pane: "%9", Engine: "claude", Session: d6Lead, Crew: "c1",
+				Actor: "watchdog", MsgTS: strconv.FormatInt((h.seed-30)*1000, 10),
 			}
-			if len(calls) != tc.wantCalls {
-				t.Fatalf("nudge calls %q, want %d", calls, tc.wantCalls)
+			if len(types) != tc.wantCalls {
+				t.Fatalf("types %+v, want %d", types, tc.wantCalls)
 			}
-			for i, c := range calls {
-				if c != want {
-					t.Errorf("call %d = %q, want %q", i, c, want)
+			for i, req := range types {
+				if req != want {
+					t.Errorf("type %d = %+v, want %+v", i, req, want)
 				}
 			}
 		})
