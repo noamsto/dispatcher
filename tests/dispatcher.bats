@@ -9,7 +9,7 @@ setup() {
   # The launcher sources the worker-settings lib; copied-out launchers
   # (_store_launcher) have no sibling file and an unsubstituted placeholder.
   export CLAUDE_WORKER_SETTINGS_LIB="$BATS_TEST_DIRNAME/../adapters/core/claude-worker-settings.sh"
-  unset TMUX CREW_ID DISPATCH_DISPATCHER_MCP
+  unset TMUX CREW_ID DISPATCH_DISPATCHER_MCP ENABLE_CLAUDEAI_MCP_SERVERS
 }
 
 teardown() {
@@ -388,7 +388,8 @@ _profile_optin_row() { # url settings env
   git remote add origin "$1"
   rm -f "$XDG_CONFIG_HOME/dispatcher/settings.json"
   [ -z "$2" ] || _dispatcher_settings "$2"
-  DISPATCH_DISPATCHER_MCP="$3" _profile_launch
+  # A claude worker's env carries the switch as false; the opt-in clears it.
+  ENABLE_CLAUDEAI_MCP_SERVERS=false DISPATCH_DISPATCHER_MCP="$3" _profile_launch
   grep -qx 'ENABLE_CLAUDEAI_MCP_SERVERS=UNSET' "$STUB_LOG"
   [ "$(grep -c -- '--strict-mcp-config\|--mcp-config' "$STUB_LOG")" = 0 ]
   # The rest of the profile stays.
@@ -433,7 +434,7 @@ ROWS
   printf '{"mcpServers":{}}\n' >"$HOME/.config/claude-code/mcp-posthog.json"
   git remote add origin git@github.com:factify-inc/mono.git
   _dispatcher_settings '{"dispatcherMcp":{"factify-inc/mono":["claudeai","analytics"]}}'
-  _profile_launch
+  ENABLE_CLAUDEAI_MCP_SERVERS=false _profile_launch
   grep -qx 'ENABLE_CLAUDEAI_MCP_SERVERS=UNSET' "$STUB_LOG"
   [ "$(grep -c -- '--strict-mcp-config' "$STUB_LOG")" = 0 ]
   grep -qxF "ARG --mcp-config=$HOME/.config/claude-code/mcp-posthog.json" "$STUB_LOG"

@@ -529,9 +529,10 @@ claude)
   set -- --name "$session_name" --append-system-prompt-file "$protocol" \
     --model "${model:-$(orch_default model)}" --effort "${effort:-$(orch_default effort)}"
   [ -n "$ac" ] && [ "$ac" != auto ] && set -- "$@" --autocompact "$ac"
-  # Claude in Chrome drives the owner's authenticated browser, so it is opt-in;
-  # off leaves Claude's own default alone. --strict-mcp-config below keeps it
-  # (it is not an MCP-config server); only the plugin layer's deny is lifted.
+  # Claude in Chrome drives the owner's authenticated browser, so it is opt-in:
+  # off passes no --chrome and the plugin layer below denies its tools even
+  # where Claude's own default enables it. On, --strict-mcp-config keeps it (it
+  # is not an MCP-config server) and only the plugin layer's deny is lifted.
   chrome=""
   if [ "$(jq -r '.dispatcherChrome == true' <<<"$settings")" = true ]; then
     chrome=1
@@ -552,7 +553,8 @@ claude)
     optins="$(jq -r --arg r "$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')" '
       .dispatcherMcp // {} | (.[$r] // .[$r | split("/")[0]] // []) | join(" ")' <<<"$settings")"
   fi
-  launch_env=()
+  # env options go before its assignments.
+  launch_env=(PATH="$engine_env_path")
   mcp_configs=()
   claudeai=0
   for optin in $optins; do
@@ -568,7 +570,11 @@ claude)
       ;;
     esac
   done
-  if [ "$claudeai" = 0 ]; then
+  if [ "$claudeai" = 1 ]; then
+    # An inherited switch (a claude worker exports it as false) would undo the
+    # opt-in.
+    launch_env=(-u ENABLE_CLAUDEAI_MCP_SERVERS "${launch_env[@]}")
+  else
     launch_env+=(ENABLE_CLAUDEAI_MCP_SERVERS=false)
     [ "${#mcp_configs[@]}" -gt 0 ] || mcp_configs=('--mcp-config={"mcpServers":{}}')
     set -- "$@" --strict-mcp-config
@@ -579,7 +585,7 @@ claude)
   plugin_layer=""
   eval "plugin_layer=$(claude_worker_plugin_settings "$settings" "$chrome")"
   set -- "$@" --settings "$plugin_layer"
-  env PATH="$engine_env_path" "${launch_env[@]}" claude "$@" ${task:+"$task"}
+  env "${launch_env[@]}" claude "$@" ${task:+"$task"}
   ;;
 codex | cursor)
   # Neither CLI has --append-system-prompt-file — inject the protocol as the

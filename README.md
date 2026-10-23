@@ -337,7 +337,9 @@ stays denied for every launch). Every other claude worker launch passes
 `--no-chrome` and denies `mcp__claude-in-chrome__*` regardless of
 `workerDeniedMcpServers`. For the dispatcher session itself,
 `programs.dispatcher.chrome` sets `dispatcherChrome` (default off), which adds
-`--chrome` to the claude `dispatcher` launch; off, no flag is passed.
+`--chrome` to the claude `dispatcher` launch; off, no flag is passed and the
+lean profile below denies `mcp__claude-in-chrome__*`, even where Claude's own
+default would enable it.
 
 ### Lean claude dispatcher
 
