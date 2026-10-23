@@ -23,8 +23,8 @@ Protocol rule now:
 
 > - **≥70% on the `7d` window, pace-aware** (pi and cursor: their `month`
 >   window): `dispatch` refuses a premium model rung or effort and names the
->   lower alternative. Relay the refusal and take the named lower rung; never
->   bypass it. `xhigh` and `max` are premium effort, `high` is not. See
+>   lower alternative. Relay the refusal and take the named lower rung; bypass
+>   it only through the overrides in the next bullet. `xhigh` and `max` are premium effort, `high` is not. See
 >   `dispatch-orchestration.md` → "Tier map".
 
 Removed text (lines 261–287):
@@ -115,7 +115,7 @@ Protocol rule now:
 > grant the narrowest subdir it allows, never widen the grant roots or set
 > `DISPATCH_GRANT_ROOTS` inline (ask the human to add a root), and never edit
 > the grant records under `$crew_dir/grants/`. A grant is read-write in effect.
-> Only claude launches take `--add-dir`; the protocol dirs and the worker's own
+> Only claude launches take `--add-dir`; the protocol dirs (read-only) and the worker's own
 > `artifacts/<branch>` are granted without it. A same-branch re-dispatch
 > without `--add-dir` keeps the recorded grants; passing one replaces them. A
 > `dispatch: dropping invalid grant` line means a recorded grant no longer

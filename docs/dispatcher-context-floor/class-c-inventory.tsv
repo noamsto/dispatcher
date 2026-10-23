@@ -4,7 +4,7 @@ U1.2	design-doc	elapsed = clamp(100*(604800-(resets_at-now))/604800,0,100)	`elap
 U1.3	design-doc	the inequality cannot fire once elapsed reaches 85%: the about-to-reset exemption	can't fire once elapsed reaches 85%
 U1.4	design-doc	null resets_at: pace not computable, flat >=70 rule	computable and the gate falls back to the flat `>=70` rule
 U1.5	design-doc	a weekly window's resets_at is capped at the monthly reset	reset_source: "month"
-U1.6	one-liner	the refusal names the lower model or effort alternative; take it, never bypass	take the named lower rung	adapters/core/dispatch.sh:pace_rule_target	tests/dispatch.bats::pace refusals under --host offer no DISPATCH_IGNORE_RUNG escape	test pins "use the standard rung (sonnet) instead"
+U1.6	one-liner	the refusal names the lower model or effort alternative; take it, or bypass only through the overrides bullet (DISPATCH_IGNORE_RUNG, --ignore-budget)	take the named lower rung	adapters/core/dispatch.sh:pace_rule_target	tests/dispatch.bats::pace refusals under --host offer no DISPATCH_IGNORE_RUNG escape	test pins "use the standard rung (sonnet) instead"
 U1.7	kept	xhigh and max are premium effort (both to high); high is not	`xhigh` and `max` are premium effort
 U1.8	design-doc	the check covers every lead, eager role and final lazy-role override	every lead, eager role, and final lazy-role override
 U1.9	kept	see dispatch-orchestration.md Tier map	→ "Tier map"
@@ -68,7 +68,7 @@ U4.27	design-doc	the record is authoritative; WORKER_TASK.md add_dir: lines are 
 U4.28	design-doc	the record is not a boundary against the worker; Claude's path gating is	The record is not a
 U4.29	kept	a re-dispatch without --add-dir carries the grants; passing one replaces them	without `--add-dir` keeps the recorded grants	adapters/core/dispatch.sh	tests/dispatch.bats::add-dir: a re-dispatch without --add-dir keeps the recorded grants
 U4.30	design-doc	every launch pins its launcher's grant roots as DISPATCH_GRANT_ROOTS and re-checks	pins its launcher's own resolved grant roots	adapters/core/dispatch.sh	tests/dispatch.bats::add-dir: the lead launch pins the dispatcher's grant roots
-U4.31	kept	the protocol dirs are granted read-only by default	the protocol dirs and the worker	adapters/core/dispatch.sh	tests/dispatch.bats::add-dir: read-only rule denies edits to a lead's protocol dir, artifacts stays writable
+U4.31	kept	the protocol dirs are granted read-only by default	the protocol dirs (read-only)	adapters/core/dispatch.sh	tests/dispatch.bats::add-dir: read-only rule denies edits to a lead's protocol dir, artifacts stays writable
 U4.32	design-doc	--spawn-role reads the protocol-dirs record via @crew_dir/@crew_branch and refuses without it	`$crew_dir/protocol-dirs/<branch>`
 U4.33	kept	artifacts/<branch> is the only write-capable default grant	`artifacts/<branch>` are granted without it
 U4.34	kept	only claude launches take --add-dir	Only claude launches take `--add-dir`

@@ -260,8 +260,8 @@ warns which step) — is unknown, not free.
   what fits before the reset, not to the roster budget.
 - **≥70% on the `7d` window, pace-aware** (pi and cursor: their `month`
   window): `dispatch` refuses a premium model rung or effort and names the
-  lower alternative. Relay the refusal and take the named lower rung; never
-  bypass it. `xhigh` and `max` are premium effort, `high` is not. See
+  lower alternative. Relay the refusal and take the named lower rung; bypass
+  it only through the overrides in the next bullet. `xhigh` and `max` are premium effort, `high` is not. See
   `dispatch-orchestration.md` → "Tier map".
 - **Two overrides, different blast radii.** `DISPATCH_IGNORE_RUNG=<the exact
   model id or effort>` bypasses only its matching refusal for that launch target,
@@ -410,9 +410,10 @@ worker keeps its crew and posts a `resume` row to the bus; if you are live it
 also messages you, so a worker you had written off as `failed` will tell you it
 is back. Resume trusts the worktree only as far as the record `dispatch` wrote
 for it (see **Trust boundary** below): a worktree whose crew dir, branch or git
-dir no longer matches that record — or one with no record, i.e. dispatched
-before resume anchoring existed — is refused. Re-dispatch such a task onto its
-branch instead; the worktree carries over under `resume: true`.
+dir no longer matches that record is refused as possible tampering: relay it.
+One with no record, i.e. dispatched before resume anchoring existed, is refused
+too: re-dispatch such a task onto its branch instead; the worktree carries over
+under `resume: true`.
 A window tmux-remux restored for that same worktree is not a live worker: a
 target proceeds when at least one pane carries the branch stamp, every such pane
 sits in the recorded worktree, and no lead pane among them runs an engine; with
@@ -447,7 +448,7 @@ role panes (watchers, stall-watch, window stamps) and launches nothing.
   grant the narrowest subdir it allows, never widen the grant roots or set
   `DISPATCH_GRANT_ROOTS` inline (ask the human to add a root), and never edit
   the grant records under `$crew_dir/grants/`. A grant is read-write in effect.
-  Only claude launches take `--add-dir`; the protocol dirs and the worker's own
+  Only claude launches take `--add-dir`; the protocol dirs (read-only) and the worker's own
   `artifacts/<branch>` are granted without it. A same-branch re-dispatch
   without `--add-dir` keeps the recorded grants; passing one replaces them. A
   `dispatch: dropping invalid grant` line means a recorded grant no longer
