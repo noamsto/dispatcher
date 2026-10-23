@@ -6,16 +6,11 @@ import (
 	"testing"
 )
 
-// TestResolveTargetThroughRun is the bats case that named one branch per target
-// shape, run through run() instead of the shell wrapper. internal/resolve covers
-// the fold; what only the CLI can pin is everything between argv and exit code:
-// a `#9` target reaches the arm as a positional and not a flag, the row goes to
-// stdout while every refusal goes to stderr, the columns stay the bytes `@tsv`
-// wrote (an empty host column, a fifth `1` only for a `remote:true` row), and the
-// arm's three exit codes are 0, 1 and 2.
+// TestResolveTargetThroughRun drives the arm through run(): a `#9` target
+// reaches it as a positional and not a flag, the row goes to stdout while every
+// refusal goes to stderr, the columns stay the bytes `@tsv` wrote, and the exit
+// codes are 0, 1 and 2. internal/resolve covers the fold itself.
 func TestResolveTargetThroughRun(t *testing.T) {
-	// The bats fixture's four dispatch rows, verbatim: one with a host, one with
-	// `also_closes` and no host, one bare, one `remote:true`.
 	log := `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/9-gone","name":"sage","host":"h1"}` + "\n" +
 		`{"ts":2,"crew_id":"c1","kind":"dispatch","branch":"eng-12-thing","name":"nova","also_closes":["ENG-13"]}` + "\n" +
 		`{"ts":3,"crew_id":"c1","kind":"dispatch","branch":"fix/10-b","name":"nova"}` + "\n" +

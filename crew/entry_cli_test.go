@@ -18,17 +18,13 @@ import (
 // staleGoBinChild marks the child as the entry invocation the test re-executes.
 const staleGoBinChild = "CREW_STALE_GO_BIN_CHILD"
 
-// TestEntryIgnoresAStaleCrewGoBin is the bats case that pointed CREW_GO_BIN —
-// the launcher's pointer to this binary, which an old harness left in the
-// environment of every `crew` call — at a stub recording its argv, and ran
-// `crew id`: exit 1, the refusal on stderr, and no argv file, because nothing
-// that dispatches a subcommand reads that variable. A stale value cannot hijack
-// the dispatch.
-//
-// The child is this binary through main's own entry path — EnsureSelf, then
-// run("id"), the arm that needs neither a repo nor a crew id, so the refusal is
-// the success case. entry's TestIDRefusalIsTheArmsLine pins the refusal's bytes;
-// only its prefix and its arm are checked here.
+// TestEntryIgnoresAStaleCrewGoBin points CREW_GO_BIN — the launcher's pointer to
+// this binary, which an old harness left in the environment of every `crew`
+// call — at a stub recording its argv, and runs `crew id`: the stub never runs,
+// so a stale value cannot hijack the dispatch. The child is main's own entry
+// path (EnsureSelf, then run("id")), and its arm needs neither a repo nor a crew
+// id, so the refusal is the success case. TestIDRefusalIsTheArmsLine pins the
+// refusal's bytes; only its prefix and its arm are checked here.
 func TestEntryIgnoresAStaleCrewGoBin(t *testing.T) {
 	if os.Getenv(staleGoBinChild) != "" {
 		entry.EnsureSelf(entry.DefaultSelfProbes(), os.Args[0])
@@ -40,7 +36,7 @@ func TestEntryIgnoresAStaleCrewGoBin(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A repo with no WORKER_TASK.md, as the bats case's cwd was: the crew id can
-	// only come from the empty CREW_ID it is handed, so the arm must refuse.
+	// only come from the empty CREW_ID the child is handed, so the arm must refuse.
 	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
 		t.Skipf("git init: %v\n%s", err, out)
 	}
@@ -80,7 +76,7 @@ func TestEntryIgnoresAStaleCrewGoBin(t *testing.T) {
 		!strings.Contains(line, "no crew id") {
 		t.Errorf("stderr first line = %q, want the entry's own refusal", line)
 	}
-	if _, err := os.Stat(argvPath); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("CREW_GO_BIN was run (argv %v, stat %v), want it never read", argvPath, err)
+	if argv, err := os.ReadFile(argvPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("CREW_GO_BIN was run (argv %q, err %v), want it never read", argv, err)
 	}
 }
