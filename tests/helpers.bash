@@ -39,6 +39,9 @@ export OPENROUTER_KEY_LIB="$BATS_TEST_DIRNAME/../adapters/core/openrouter-key.sh
 export BUDGET_GATE_LIB="$BATS_TEST_DIRNAME/../adapters/core/budget-gate.sh"
 # The host's ~/.config/dispatcher/settings.json must never reach a test.
 export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/config"
+# Generated launch files (the mcpServers catalog renders) must land neither in
+# the developer's cache nor in a test repo that a test points HOME at.
+export XDG_CACHE_HOME="$BATS_TEST_TMPDIR/cache"
 # A host's locked settings would override what each test sets up.
 unset DISPATCH_LOCKED_SETTINGS
 # Isolate tmux: point the socket dir at a private per-test directory so no

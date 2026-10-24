@@ -1,3 +1,5 @@
+bats_require_minimum_version 1.5.0 # `run --separate-stderr`
+
 setup() {
   load helpers
   LAUNCHER="$BATS_TEST_DIRNAME/../adapters/core/dispatcher.sh"
@@ -474,6 +476,134 @@ codex --profile worker
 cursor --disable-indexing
 pi --thinking
 AGENTS
+}
+
+# #1304: the mcpServers catalog. dispatcherMcp names catalog entries, and each
+# engine gets exactly those servers through its own per-launch mechanism.
+_argv_stub() { # engine-binary
+  cat >"$STUB_DIR/$1" <<'STUB'
+#!/usr/bin/env bash
+printf 'ARG %s\n' "$@" >>"$STUB_LOG"
+STUB
+  chmod +x "$STUB_DIR/$1"
+}
+
+_catalog_launch() { # agent [settings-json]
+  local bin=$1
+  [ "$1" != cursor ] || bin=cursor-agent
+  git remote remove origin 2>/dev/null || true
+  git remote add origin git@github.com:noamsto/toddl.git
+  local settings='{"dispatcherMcp":{"noamsto/toddl":["sentry","posthog"]}}'
+  [ $# -lt 2 ] || settings=$2
+  _dispatcher_settings "$settings"
+  _argv_stub "$bin"
+  : >"$STUB_LOG"
+  DISPATCH_PROFILE=work CREW_ID=c1 run --separate-stderr run_launcher --agent "$1"
+}
+
+# The word after a flag word in the argv log.
+_arg_after() { sed -n "/^ARG $1\$/{n;s/^ARG //;p;}" "$STUB_LOG"; }
+
+# A generated file is private and lives under the cache dir, never the repo.
+_assert_private_cache_file() {
+  [[ "$1" == "$XDG_CACHE_HOME/dispatcher/mcp/"* ]]
+  [ "$(stat -c %a "$1")" = 600 ]
+  [ "$(stat -c %a "${1%/*}")" = 700 ]
+  [ -z "$(git -C "$TEST_REPO" status --porcelain)" ]
+}
+
+_ext_servers() { sed -n 's/^const servers = \(.*\);$/\1/p' "$1"; }
+
+@test "1304: a pi dispatcher loads exactly the opted-in catalog servers through -e" {
+  _catalog_launch pi
+  [ "$status" -eq 0 ]
+  grep -qx 'ARG --no-approve' "$STUB_LOG"
+  [ "$(grep -cx 'ARG -e' "$STUB_LOG")" = 1 ]
+  ext="$(_arg_after -e)"
+  _assert_private_cache_file "$ext"
+  grep -qF 'pi.registerMcpServer(name, config)' "$ext"
+  servers="$(_ext_servers "$ext")"
+  jq -e 'keys_unsorted == ["sentry", "posthog"]' <<<"$servers"
+  jq -e '.sentry == {"url": "https://mcp.sentry.dev/mcp", "description": "Sentry issues, events and releases"}' <<<"$servers"
+  jq -e '.posthog.url == "https://mcp.posthog.com/mcp"' <<<"$servers"
+  # No opt-in: no extension.
+  _catalog_launch pi '{}'
+  [ "$status" -eq 0 ]
+  [ "$(grep -cx 'ARG -e' "$STUB_LOG")" = 0 ]
+}
+
+@test "1304: a claude dispatcher gets one --mcp-config holding exactly the catalog servers" {
+  _catalog_launch claude
+  [ "$status" -eq 0 ]
+  grep -qx 'ARG --strict-mcp-config' "$STUB_LOG"
+  [ "$(grep -c '^ARG --mcp-config=' "$STUB_LOG")" = 1 ]
+  cfg="$(sed -n 's/^ARG --mcp-config=//p' "$STUB_LOG")"
+  _assert_private_cache_file "$cfg"
+  jq -e '.mcpServers | keys_unsorted == ["sentry", "posthog"]' "$cfg"
+  jq -e '.mcpServers.sentry == {"type": "http", "url": "https://mcp.sentry.dev/mcp"}' "$cfg"
+  grep -qxF -- "$_lean_disallowed" "$STUB_LOG"
+}
+
+@test "1304: claudeai and analytics compose with catalog servers on claude" {
+  export HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME/.config/claude-code"
+  printf '{"mcpServers":{}}\n' >"$HOME/.config/claude-code/mcp-posthog.json"
+  _catalog_launch claude '{"dispatcherMcp":{"noamsto/toddl":["claudeai","analytics","sentry"]}}'
+  [ "$status" -eq 0 ]
+  [ "$(grep -c -- '--strict-mcp-config' "$STUB_LOG")" = 0 ]
+  grep -qxF "ARG --mcp-config=$HOME/.config/claude-code/mcp-posthog.json" "$STUB_LOG"
+  [ "$(grep -c '^ARG --mcp-config=' "$STUB_LOG")" = 2 ]
+  cfg="$(sed -n 's/^ARG --mcp-config=//p' "$STUB_LOG" | grep -vF mcp-posthog.json)"
+  jq -e '.mcpServers | keys == ["sentry"]' "$cfg"
+}
+
+@test "1304: a codex dispatcher gets one -c override per catalog server" {
+  _catalog_launch codex
+  [ "$status" -eq 0 ]
+  run _arg_after -c
+  [[ "$output" == *'mcp_servers.sentry.url="https://mcp.sentry.dev/mcp"'* ]]
+  [[ "$output" == *'mcp_servers.posthog.url="https://mcp.posthog.com/mcp"'* ]]
+  [ "$(grep -c '^mcp_servers\.' <<<"$output")" = 2 ]
+  # Env-reference headers map onto codex's env header keys.
+  _catalog_launch codex '{"dispatcherMcp":{"noamsto/toddl":["grafana"]},"mcpServers":{"grafana":{"url":"https://g.example/mcp","headers":{"Authorization":"Bearer ${GRAFANA_TOKEN}","X-Org":"${GRAFANA_ORG}"}}}}'
+  [ "$status" -eq 0 ]
+  run _arg_after -c
+  [[ "$output" == *'mcp_servers.grafana.bearer_token_env_var="GRAFANA_TOKEN"'* ]]
+  [[ "$output" == *'mcp_servers.grafana.env_http_headers.X-Org="GRAFANA_ORG"'* ]]
+  [ "$(grep -c '^mcp_servers\.' <<<"$output")" = 3 ]
+}
+
+@test "1304: a !command header renders for pi and is refused where the engine cannot run it" {
+  local settings='{"dispatcherMcp":{"noamsto/toddl":["grafana"]},"mcpServers":{"grafana":{"url":"https://g.example/mcp","headers":{"X-Key":"!pass show grafana"}}}}'
+  _catalog_launch pi "$settings"
+  [ "$status" -eq 0 ]
+  ext="$(_arg_after -e)"
+  _ext_servers "$ext" | jq -e '.grafana.headers["X-Key"] == "!pass show grafana"'
+  local agent
+  for agent in claude codex; do
+    _catalog_launch "$agent" "$settings"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"mcpServers.grafana.headers.X-Key"* ]]
+    [ "$(grep -c '^ARG ' "$STUB_LOG")" = 0 ]
+  done
+}
+
+@test "1304: an unknown dispatcherMcp name fails the launch, naming the key and the valid names" {
+  local agent
+  for agent in claude pi; do
+    _catalog_launch "$agent" '{"dispatcherMcp":{"noamsto/toddl":["sentry","nosuch"]}}'
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *'"noamsto/toddl" names unknown "nosuch" (valid: claudeai, analytics, elevenlabs, posthog, sentry)'* ]]
+    [ "$(grep -c '^ARG ' "$STUB_LOG")" = 0 ]
+  done
+}
+
+@test "1304: a cursor dispatcher warns that catalog servers are unsupported and launches" {
+  _catalog_launch cursor
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"cursor has no verified per-launch MCP config; dispatcherMcp servers for noamsto/toddl (sentry posthog) are not loaded"* ]]
+  grep -qx 'ARG --approve-mcps' "$STUB_LOG"
+  [ ! -e "$XDG_CACHE_HOME/dispatcher/mcp" ]
 }
 
 @test "codex gets the auto-compact window through -c" {

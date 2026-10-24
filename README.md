@@ -271,7 +271,7 @@ four `DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`,
 installs the Codex plugin and writes the Cursor rule, commands, skills and
 rosters when those engines are included in `engines`. The settings above
 (`profile`, `engines`, `grantRoots`, `fleetBudget`, `repoTrackers`, `orgTrackers`,
-`openrouter`, `localModels`, `laneProfiles`, `hosts`, `workerDeniedMcpServers`, `dispatcherChrome`, `dispatcherMcp`) are not exported as `DISPATCH_*`: they go into a locked settings
+`openrouter`, `localModels`, `laneProfiles`, `hosts`, `workerDeniedMcpServers`, `dispatcherChrome`, `dispatcherMcp`, `mcpServers`) are not exported as `DISPATCH_*`: they go into a locked settings
 file baked into `dispatch-config` and every CLI that resolves through it
 (`dispatch`, `dispatch-resume`, `dispatcher`, `refresh-budget`), so no
 locked-layer path is exported to go stale. `userSettings` symlinks
@@ -351,8 +351,8 @@ built-in tools the protocol never names (cron, worktree, plan-mode, Workflow,
 RemoteTrigger, SendMessage, MCP-resource and similar), and the worker plugin
 layer (the disabled plugins and `permissions.deny` rules of "Lean claude
 workers"). Artifact, WebSearch, PushNotification, AskUserQuestion, Monitor,
-skills and the Agent tool stay. Codex, cursor and pi dispatcher launches are
-unchanged.
+skills and the Agent tool stay. Codex, cursor and pi dispatcher launches keep
+their own profiles and add only the `dispatcherMcp` catalog servers below.
 
 A project that triages through connectors opts back in with `dispatcherMcp`
 (see "Settings"). claude.ai connectors load all or none: the only switch is
@@ -361,7 +361,9 @@ regardless of it, and `--mcp-config` cannot name one. So `claudeai` turns them
 all back on, and because it skips `--strict-mcp-config`, user- and
 project-scope MCP servers (`~/.claude.json`, `.mcp.json`) and plugin servers
 return with them (`workerDeniedMcpServers` and Claude in Chrome stay denied).
-`analytics` keeps strict MCP and adds only its generated config. With
+`analytics` keeps strict MCP and adds only its generated config, and a catalog
+name (`sentry`, …) adds one generated `--mcp-config` holding the selected
+servers. With
 `dispatcherChrome` on, strict MCP stays: Claude in Chrome is not an MCP-config
 server and survives it, so only the plugin layer's Claude in Chrome deny is
 lifted.
@@ -458,17 +460,73 @@ env) entry for any other repo or org still applies. Without a rebuild, set
 `key=value` pairs (`factify-inc/mono=linear:ENG factify-inc=linear:ENG`); a
 repeated key is last-wins, and an empty var contributes nothing.
 
-`dispatcherMcp` (default `{}`) is the per-project MCP opt-in for the claude
-dispatcher's lean launch profile (see "Lean claude dispatcher"), keyed the same
-way: `{"owner/repo" | "org": ["claudeai" | "analytics", …]}`, case insensitive,
-merged per key across layers. The `owner/repo` entry wins, then the origin
-org's, then none; an empty list keeps one repo lean under an opted-in org.
-`claudeai` restores every claude.ai connector (Sentry, PostHog, Cloudflare,
-Gmail, …) and `analytics` adds the generated `--mcp analytics` config. Without
-a rebuild, set `DISPATCH_DISPATCHER_MCP` the tracker way, with a
-comma-separated list as each value
-(`factify-inc=claudeai factify-inc/mono=claudeai,analytics noamsto/dispatcher=`).
-`programs.dispatcher.dispatcherMcp` pins entries in the locked layer.
+`dispatcherMcp` (default `{}`) is the per-project MCP opt-in for the
+dispatcher session (see "Lean claude dispatcher"), keyed the same way:
+`{"owner/repo" | "org": ["claudeai" | "analytics" | <mcpServers name>, …]}`,
+case insensitive, merged per key across layers. The `owner/repo` entry wins,
+then the origin org's, then none; an empty list keeps one repo lean under an
+opted-in org. `claudeai` restores every claude.ai connector (Sentry, PostHog,
+Cloudflare, Gmail, …) and `analytics` adds the generated `--mcp analytics`
+config; both are claude-only and ignored by the other engines. Without a
+rebuild, set `DISPATCH_DISPATCHER_MCP` the tracker way, with a comma-separated
+list as each value
+(`factify-inc=claudeai factify-inc/mono=claudeai,analytics noamsto/toddl=sentry,posthog noamsto/dispatcher=`).
+`programs.dispatcher.dispatcherMcp` pins entries in the locked layer. An
+unknown name fails `dispatch-config`, naming the key and the valid names, so
+the dispatcher launch fails with it.
+
+`mcpServers` is the named catalog of remote (streamable-HTTP) MCP servers that
+`dispatcherMcp` and `dispatch --mcp` pick from, merged per entry and field
+across layers:
+
+```json
+{
+  "mcpServers": {
+    "cloudflare-observability": {
+      "url": "https://observability.mcp.cloudflare.com/mcp",
+      "description": "Cloudflare Workers logs and analytics"
+    },
+    "grafana": {
+      "url": "https://mcp.grafana.example/mcp",
+      "headers": { "Authorization": "Bearer ${GRAFANA_TOKEN}" }
+    }
+  },
+  "dispatcherMcp": { "noamsto/toddl": ["sentry", "posthog"] }
+}
+```
+
+The base default ships `sentry` (`https://mcp.sentry.dev/mcp`), `posthog`
+(`https://mcp.posthog.com/mcp`) and `elevenlabs`
+(`https://api.elevenlabs.io/v1/mcp`). An entry holds only `url` (https),
+`description` and `headers`; a name is letters, digits, `_` and `-` (not
+`claudeai` or `analytics`, and not two names that differ only in `-`/`_`). A
+header value is never a literal: only an env reference (`${NAME}`, optionally
+after one scheme word such as `Bearer `) or a `!command`, so no secret sits in
+settings. `programs.dispatcher.mcpServers` pins entries in the locked layer.
+
+Each engine gets exactly the selected servers through its own per-launch
+mechanism, from files written `0600` under
+`${XDG_CACHE_HOME:-~/.cache}/dispatcher/mcp` (never a repo worktree):
+
+| engine | mechanism                                                                                                                                                                                             | headers                                                                                                  |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| claude | one generated `--mcp-config`                                                                                                                                                                          | `${NAME}` expanded by claude; `!command` refused                                                         |
+| pi     | a generated extension passed with `-e` that calls `pi.registerMcpServer` (`--no-approve` stays)                                                                                                       | both forms, resolved by pi                                                                               |
+| codex  | `-c mcp_servers.<name>.url=…` per server                                                                                                                                                              | `${NAME}` → `env_http_headers`, `Authorization: Bearer ${NAME}` → `bearer_token_env_var`; others refused |
+| cursor | unsupported: `cursor-agent` reads `~/.cursor/mcp.json` (every cursor session, workers included) or the repo's `.cursor/mcp.json`; `--plugin-dir` may load a plugin dir's `mcp.json` but is unverified | the launch warns and loads none                                                                          |
+
+The default catalog servers use OAuth: sign in once from a session that has
+them loaded (its `/mcp`, or the engine's own MCP login). pi stores the tokens in `<agent dir>/mcp-auth.json` keyed by
+server name and URL; `crew pi-agent-dir` links the worker dir's
+`mcp-auth.json` to the owner's, as it does `auth.json`, so a pi worker that
+opts in reuses the dispatcher's sign-in.
+
+Workers never inherit `dispatcherMcp`. A worker gets catalog servers only
+when the dispatch names them: `dispatch --mcp sentry,posthog` (comma-separated
+or repeated) loads exactly those on a claude, pi or codex lead — never its
+role panes — and records them on the task doc's `mcp:` line, which
+`dispatch resume` carries. `--mcp analytics` stays claude-only, `claudeai` is
+dispatcher-only, and cursor refuses catalog names.
 
 `dispatch --add-dir` grants a dir only when it resolves inside a `grantRoots`
 entry; unset or empty (the default) refuses every `--add-dir`. This is

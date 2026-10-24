@@ -9742,6 +9742,120 @@ EOF
   grep -qx 'mcp: analytics' "$doc"
 }
 
+# #1304: no catalog server reaches a worker unless the dispatch opts in with
+# --mcp; an opted-in lead gets exactly the named servers, role panes none.
+_mcp_dispatch() { # agent model [dispatch args...]
+  local agent=$1 model=$2
+  shift 2
+  : >"$STUB_LOG"
+  DISPATCH_PROFILE=personal run run_dispatch standard "$model" --agent "$agent" --effort high --crew-id c1 "$@" "${MCP_ISSUE:-42}" "mcp catalog"
+}
+
+_mcp_line() { # needle — the one launch line holding it
+  grep -F -- "$1" <(launch_log)
+}
+
+# The path after a flag word in a launch line.
+_mcp_path_after() { # line flag
+  [[ "$1" =~ (^|\ )$2\ ([^ ]+) ]] && printf '%s' "${BASH_REMATCH[2]}"
+}
+
+_mcp_assert_cache_file() {
+  [[ "$1" == "$XDG_CACHE_HOME/dispatcher/mcp/"* ]]
+  [ "$(stat -c %a "$1")" = 600 ]
+}
+
+@test "1304: a worker dispatched without --mcp gets no catalog server on any engine" {
+  stub_launch_bins
+  local row agent model needle issue=41
+  while read -r row agent model needle; do
+    [ -n "$row" ] || continue
+    issue=$((issue + 1))
+    MCP_ISSUE=$issue _mcp_dispatch "$agent" "$model"
+    [ "$status" -eq 0 ] || { echo "row $row: $output" >&2; return 1; }
+    [ -n "$(_mcp_line "$needle")" ]
+    # Lead and role panes alike.
+    run grep -cE -- '/dispatcher/mcp/|mcp_servers| -e /' <(grep -F -- " $agent " <(launch_log))
+    [ "$output" = 0 ] || { echo "row $row: catalog flag in a launch" >&2; return 1; }
+  done <<'ROWS'
+claude claude sonnet claude --name iris --model
+pi pi openrouter/deepseek/deepseek-v4-flash pi --name iris --model
+codex codex gpt-5.6-terra codex --profile worker
+ROWS
+  [ ! -e "$XDG_CACHE_HOME/dispatcher/mcp" ] || [ -z "$(ls -A "$XDG_CACHE_HOME/dispatcher/mcp")" ]
+}
+
+@test "1304: --mcp sentry gives a claude lead exactly that server, its role panes none" {
+  stub_launch_bins
+  _mcp_dispatch claude sonnet --mcp sentry --roles reviewer=claude:sonnet
+  [ "$status" -eq 0 ]
+  line="$(_mcp_line 'claude --name iris --model')"
+  cfg="$(_mcp_path_after "$line" --mcp-config)"
+  _mcp_assert_cache_file "$cfg"
+  jq -e '.mcpServers == {"sentry": {"type": "http", "url": "https://mcp.sentry.dev/mcp"}}' "$cfg"
+  [ "$(grep -o -- '--mcp-config' <<<"$line" | wc -l)" = 1 ]
+  # The worker-only settings layer still applies (workerDeniedMcpServers).
+  [[ "$line" == *"--settings "*"mcp__plugin_hm_playwright__"* ]]
+  role="$(_mcp_line 'claude --name iris-reviewer')"
+  [[ "$role" != *"/dispatcher/mcp/"* ]]
+  doc="$(find "$TEST_REPO/.dispatch-wt" -name WORKER_TASK.md | head -1)"
+  grep -qx 'mcp: sentry' "$doc"
+}
+
+@test "1304: --mcp sentry gives a pi lead an -e extension registering exactly that server" {
+  stub_launch_bins
+  _mcp_dispatch pi openrouter/deepseek/deepseek-v4-flash --mcp sentry
+  [ "$status" -eq 0 ]
+  line="$(_mcp_line 'pi --name iris --model')"
+  [[ "$line" == *"--no-approve"* ]]
+  ext="$(_mcp_path_after "$line" -e)"
+  _mcp_assert_cache_file "$ext"
+  sed -n 's/^const servers = \(.*\);$/\1/p' "$ext" | jq -e 'keys == ["sentry"] and .sentry.url == "https://mcp.sentry.dev/mcp"'
+  # The personal pi grid's role panes get no extension.
+  [ "$(grep -cF -- "$ext" <(launch_log))" = 1 ]
+  [ "$(grep -cF -- ' pi --name iris-' <(launch_log))" -ge 1 ]
+}
+
+@test "1304: --mcp takes comma-separated and repeated names, deduplicated, for a codex lead" {
+  stub_launch_bins
+  _mcp_dispatch codex gpt-5.6-terra --no-grid --mcp sentry,posthog --mcp sentry
+  [ "$status" -eq 0 ]
+  line="$(_mcp_line 'codex --profile worker')"
+  [[ "$line" == *'-c mcp_servers.sentry.url=\"https://mcp.sentry.dev/mcp\"'* ]]
+  [[ "$line" == *'-c mcp_servers.posthog.url=\"https://mcp.posthog.com/mcp\"'* ]]
+  [ "$(grep -o 'mcp_servers\.' <<<"$line" | wc -l)" = 2 ]
+  doc="$(find "$TEST_REPO/.dispatch-wt" -name WORKER_TASK.md | head -1)"
+  grep -qx 'mcp: sentry,posthog' "$doc"
+}
+
+@test "1304: a multi-line --mcp list is refused, never cut to its first line" {
+  stub_launch_bins
+  _mcp_dispatch claude sonnet --no-grid --mcp $'sentry\nposthog'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--mcp takes comma-separated names"* ]]
+  run grep -c 'new-window' "$STUB_LOG"
+  [ "$output" = 0 ]
+}
+
+@test "1304: --mcp refuses claudeai, an unknown name, cursor and analytics off claude before launch" {
+  stub_launch_bins
+  local row agent model mcp want
+  while IFS='|' read -r row agent model mcp want; do
+    [ -n "$row" ] || continue
+    _mcp_dispatch "$agent" "$model" --no-grid --mcp "$mcp"
+    [ "$status" -eq 1 ] || { echo "row $row: $output" >&2; return 1; }
+    [[ "$output" == *"$want"* ]] || { echo "row $row: $output" >&2; return 1; }
+    run grep -c 'new-window' "$STUB_LOG"
+    [ "$output" = 0 ] || { echo "row $row launched" >&2; return 1; }
+  done <<'ROWS'
+claudeai|claude|sonnet|claudeai|unknown --mcp profile 'claudeai' (valid: analytics, elevenlabs, posthog, sentry)
+unknown|pi|openrouter/deepseek/deepseek-v4-flash|sentry,nosuch|unknown --mcp profile 'nosuch'
+cursor|cursor|composer-2.5|sentry|--mcp sentry is unsupported for cursor
+analytics-pi|pi|openrouter/deepseek/deepseek-v4-flash|analytics|--mcp analytics is claude-only
+spaced|claude|sonnet|sentry, posthog|--mcp takes comma-separated names
+ROWS
+}
+
 @test "stamps an empty mcp line when no profile was given" {
   stub_launch_bins
   run run_dispatch standard sonnet --effort medium --crew-id c1 42 "add a flag"

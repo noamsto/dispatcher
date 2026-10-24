@@ -213,7 +213,7 @@ locked_settings() {
 
 @test "dispatcherMcp refuses an unknown opt-in, a non-array, a bad key and a bare env entry" {
   local bad
-  for bad in '{"a/b":["sentry"]}' '{"a/b":"claudeai"}' '{"a b":["claudeai"]}' '{"a/b/c":[]}' '["claudeai"]'; do
+  for bad in '{"a/b":["nosuch"]}' '{"a/b":"claudeai"}' '{"a b":["claudeai"]}' '{"a/b/c":[]}' '["claudeai"]'; do
     user_settings "{\"dispatcherMcp\":$bad}"
     run --separate-stderr "$CONFIG"
     [ "$status" -eq 1 ]
@@ -223,6 +223,74 @@ locked_settings() {
   DISPATCH_DISPATCHER_MCP='factify-inc' run --separate-stderr "$CONFIG"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"dispatcherMcp must be an object keyed owner/repo or org"* ]]
+}
+
+# #1304: the mcpServers catalog. dispatcherMcp names a catalog entry the same
+# way it names claudeai or analytics.
+@test "mcpServers ships a default catalog that dispatcherMcp can name" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.mcpServers | keys == ["elevenlabs", "posthog", "sentry"]' <<<"$output"
+  jq -e '.mcpServers.sentry == {"url": "https://mcp.sentry.dev/mcp", "description": "Sentry issues, events and releases"}' <<<"$output"
+  user_settings '{"dispatcherMcp":{"noamsto/toddl":["sentry","posthog"],"factify-inc":["claudeai","analytics","grafana"]},"mcpServers":{"grafana":{"url":"https://mcp.grafana.example/mcp","headers":{"Authorization":"Bearer ${GRAFANA_TOKEN}","X-Org":"${GRAFANA_ORG}","X-Key":"!pass show grafana"}}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.dispatcherMcp["noamsto/toddl"] == ["sentry", "posthog"]' <<<"$output"
+  jq -e '.mcpServers | keys == ["elevenlabs", "grafana", "posthog", "sentry"]' <<<"$output"
+  jq -e '.mcpServers.grafana.headers.Authorization == "Bearer ${GRAFANA_TOKEN}"' <<<"$output"
+  # A later layer refines one field of a default entry.
+  locked_settings '{"mcpServers":{"sentry":{"url":"https://sentry.example/mcp"}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.mcpServers.sentry == {"url": "https://sentry.example/mcp", "description": "Sentry issues, events and releases"}' <<<"$output"
+  DISPATCH_DISPATCHER_MCP='A/B=sentry,claudeai' run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.dispatcherMcp["a/b"] == ["sentry", "claudeai"]' <<<"$output"
+}
+
+@test "dispatcherMcp refuses an unknown catalog name, naming the key and the valid names" {
+  user_settings '{"dispatcherMcp":{"noamsto/toddl":["sentry","nosuch"]}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *'"noamsto/toddl" names unknown "nosuch" (valid: claudeai, analytics, elevenlabs, posthog, sentry)'* ]]
+  rm -f "$USER_FILE"
+  DISPATCH_DISPATCHER_MCP='a/b=sentry,linear' run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *'"a/b" names unknown "linear"'* ]]
+}
+
+@test "mcpServers refuses an invalid entry or a literal header value" {
+  local row bad want
+  begin_rows
+  while IFS='|' read -r row bad want; do
+    [ -n "$row" ] || continue
+    keep_row "$row" mcp_server_refused_row "$bad" "$want"
+  done <<'ROWS'
+not-object|"x"|mcpServers must be an object
+bad-name|{"a b":{"url":"https://a.example/mcp"}}|mcpServers.a b must be a name of letters
+reserved|{"claudeai":{"url":"https://a.example/mcp"}}|mcpServers.claudeai must be a name other than claudeai or analytics
+dash-underscore|{"my-x":{"url":"https://a.example/mcp"},"my_x":{"url":"https://b.example/mcp"}}|mcpServers.my_x must be a name distinct from "my-x"
+entry-not-object|{"a":"https://a.example/mcp"}|mcpServers.a must be an object
+no-url|{"a":{"description":"x"}}|mcpServers.a.url must be an https URL
+http-url|{"a":{"url":"http://a.example/mcp"}}|mcpServers.a.url must be an https URL
+quote-url|{"a":{"url":"https://a.example/\"x"}}|mcpServers.a.url must be an https URL
+stdio|{"a":{"url":"https://a.example/mcp","command":"npx"}}|mcpServers.a.command must be one of url, description, headers
+control-description|{"a":{"url":"https://a.example/mcp","description":"x\ny"}}|mcpServers.a.description must be a string
+headers-not-object|{"a":{"url":"https://a.example/mcp","headers":["x"]}}|mcpServers.a.headers must be an object
+bad-header-name|{"a":{"url":"https://a.example/mcp","headers":{"X Key":"${K}"}}}|mcpServers.a.headers.X Key must be a header name
+literal-bearer|{"a":{"url":"https://a.example/mcp","headers":{"Authorization":"Bearer sk-live-abc123"}}}|mcpServers.a.headers.Authorization must be an env reference
+literal-key|{"a":{"url":"https://a.example/mcp","headers":{"X-Api-Key":"abc123"}}}|mcpServers.a.headers.X-Api-Key must be an env reference
+env-with-literal|{"a":{"url":"https://a.example/mcp","headers":{"X-Api-Key":"sk-${K}"}}}|mcpServers.a.headers.X-Api-Key must be an env reference
+bare-bang|{"a":{"url":"https://a.example/mcp","headers":{"X-Api-Key":"!"}}}|mcpServers.a.headers.X-Api-Key must be an env reference
+ROWS
+  finish_rows 16
+}
+
+mcp_server_refused_row() { # catalog-json want
+  user_settings "{\"mcpServers\":$1}"
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"$2"* ]]
 }
 
 @test "openrouter must be an object" {

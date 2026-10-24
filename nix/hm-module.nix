@@ -32,7 +32,8 @@ self: {
     // lib.optionalAttrs (cfg.hosts != null) {inherit (cfg) hosts;}
     // lib.optionalAttrs (cfg.workerDeniedMcpServers != null) {inherit (cfg) workerDeniedMcpServers;}
     // lib.optionalAttrs (cfg.chrome != null) {dispatcherChrome = cfg.chrome;}
-    // lib.optionalAttrs (cfg.dispatcherMcp != null) {inherit (cfg) dispatcherMcp;};
+    // lib.optionalAttrs (cfg.dispatcherMcp != null) {inherit (cfg) dispatcherMcp;}
+    // lib.optionalAttrs (cfg.mcpServers != null) {mcpServers = lockFields cfg.mcpServers;};
   # Submodule defaults are emitted into the evalModules result, so an unset
   # `workerNotes`/`notes`/`reasoning` would reach the locked layer as JSON null
   # and dispatch-config would refuse it -- drop the unset fields per entry, the
@@ -45,6 +46,20 @@ self: {
   badLocalModelKeys =
     lib.optionals (cfg.localModels != null)
     (lib.filter (k: !localModelKeyValid k) (builtins.attrNames cfg.localModels));
+  # dispatch-config's mcpServers name and header rules, so a bad entry fails the
+  # build instead of every dispatch.
+  badMcpServers =
+    lib.optionals (cfg.mcpServers != null)
+    (lib.concatMap (n:
+      lib.optional (builtins.match "[A-Za-z0-9_-]+" n == null || lib.elem n ["claudeai" "analytics"]) n
+      ++ map (h: "${n}.headers.${h}") (lib.filter (h:
+        builtins.match "[A-Za-z0-9-]+" h
+        == null
+        || (builtins.match "([A-Za-z]+ )?[$][{][A-Za-z_][A-Za-z0-9_]*[}]" cfg.mcpServers.${n}.headers.${h}
+          == null
+          && builtins.match "![^[:space:]][^[:cntrl:]]*" cfg.mcpServers.${n}.headers.${h} == null))
+      (builtins.attrNames (lib.optionalAttrs (cfg.mcpServers.${n}.headers != null) cfg.mcpServers.${n}.headers))))
+    (builtins.attrNames cfg.mcpServers));
   badHostNames =
     lib.optionals (cfg.hosts != null)
     (lib.filter (h: builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*" h == null) (builtins.attrNames cfg.hosts));
@@ -435,23 +450,77 @@ in {
     };
 
     dispatcherMcp = lib.mkOption {
-      type = lib.types.nullOr (lib.types.attrsOf (lib.types.listOf (lib.types.enum ["claudeai" "analytics"])));
+      type = lib.types.nullOr (lib.types.attrsOf (lib.types.listOf (lib.types.strMatching "[A-Za-z0-9_-]+")));
       default = null;
       example = {
         "factify-inc" = ["claudeai"];
         "factify-inc/mono" = ["claudeai" "analytics"];
+        "noamsto/toddl" = ["sentry" "posthog"];
       };
       description = ''
-        MCP the claude `dispatcher` session restores per project. Its default
-        launch is lean: no claude.ai connectors and no MCP servers. Keys are
-        `owner/repo` or an org login, case-insensitive; the repo entry wins
-        over its org's, and an empty list keeps a repo lean under an opted-in
-        org. `claudeai` restores every claude.ai connector (they load all or
-        none; it also skips `--strict-mcp-config`, so user- and project-scope
-        MCP servers return too); `analytics` adds the generated `--mcp
-        analytics` config. Set, it lands as `dispatcherMcp` in the locked
-        layer and merges per key with the user settings file's; unset, the
-        locked layer omits the key.
+        MCP the `dispatcher` session loads per project, on every engine. Its
+        default launch is lean: no claude.ai connectors and no MCP servers.
+        Keys are `owner/repo` or an org login, case-insensitive; the repo
+        entry wins over its org's, and an empty list keeps a repo lean under
+        an opted-in org. Each value is a list of:
+        - `claudeai` (claude only): every claude.ai connector (they load all
+          or none; it also skips `--strict-mcp-config`, so user- and
+          project-scope MCP servers return too);
+        - `analytics` (claude only): the generated `--mcp analytics` config;
+        - an `mcpServers` catalog name (see `mcpServers`): that remote server,
+          as a generated `--mcp-config` file on claude, a generated `-e`
+          extension on pi, `-c mcp_servers.<name>.*` overrides on codex.
+          cursor has no verified per-launch MCP config, so its launch warns
+          and loads none.
+        An unknown name fails `dispatch-config`, and so the launch. Workers
+        never inherit these; a worker opts in per dispatch with
+        `dispatch --mcp <name>`. Set, it lands as `dispatcherMcp` in the
+        locked layer and merges per key with the user settings file's; unset,
+        the locked layer omits the key.
+      '';
+    };
+
+    mcpServers = lib.mkOption {
+      type = lib.types.nullOr (lib.types.attrsOf (lib.types.submodule {
+        options = {
+          url = lib.mkOption {
+            type = lib.types.strMatching "https://[^[:space:][:cntrl:]\"'\\\\]+";
+            description = "The server's streamable-HTTP endpoint (https only).";
+          };
+          description = lib.mkOption {
+            type = lib.types.nullOr (lib.types.strMatching "[^[:cntrl:]]{0,200}");
+            default = null;
+            description = "One line (at most 200 characters) on what the server offers; pi lists it in the system prompt.";
+          };
+          headers = lib.mkOption {
+            type = lib.types.nullOr (lib.types.attrsOf lib.types.str);
+            default = null;
+            example = {Authorization = "Bearer \${GRAFANA_TOKEN}";};
+            description = ''
+              Request headers. A value is only an env reference
+              (`''${NAME}`, optionally after one scheme word such as
+              `Bearer `) or a `!command` (pi only), never a literal secret.
+              Omit for OAuth servers.
+            '';
+          };
+        };
+      }));
+      default = null;
+      example = {
+        grafana = {
+          url = "https://mcp.grafana.example/mcp";
+          description = "Grafana dashboards and alerts";
+        };
+      };
+      description = ''
+        The named catalog of remote MCP servers that `dispatcherMcp` and
+        `dispatch --mcp` pick from. The base default (adapters/core/defaults.json)
+        ships `sentry`, `posthog` and `elevenlabs` (all OAuth: sign in once from
+        the session, e.g. pi's `/mcp`); entries here add servers or override
+        a default (an override restates its `url`). Names are letters, digits, `_` and `-`
+        (`claudeai` and `analytics` are reserved). Set, it lands as
+        `mcpServers` in the locked layer; unset, the locked layer omits the
+        key.
       '';
     };
 
@@ -537,6 +606,10 @@ in {
       {
         assertion = badLocalModelKeys == [];
         message = "programs.dispatcher.localModels: invalid id(s) ${lib.concatStringsSep ", " badLocalModelKeys} -- keys are <provider>/<model> (letters, digits, \".\", \"_\", \"-\", \"/\"; provider not openrouter); dispatch-config would refuse them at runtime, taking every dispatch down.";
+      }
+      {
+        assertion = badMcpServers == [];
+        message = "programs.dispatcher.mcpServers: invalid name(s) or header(s) ${lib.concatStringsSep ", " badMcpServers} -- names are letters, digits, \"_\", \"-\" (not claudeai or analytics); a header value is an env reference (\"\${NAME}\" or \"Bearer \${NAME}\") or a \"!command\", never a literal; dispatch-config would refuse them at runtime, taking every dispatch down.";
       }
       {
         assertion = badHostNames == [];

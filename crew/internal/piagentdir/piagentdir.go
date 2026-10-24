@@ -4,7 +4,8 @@
 //
 // auth.json is linked, not copied or filtered: pi writes it in place, so an
 // oauth token refresh must land in the ambient file rather than strand a
-// divergent copy in this shared dir. models-store.json is copied instead — it
+// divergent copy in this shared dir; mcp-auth.json, when the owner has one, is
+// linked the same way. models-store.json is copied instead — it
 // is a cache pi rewrites, and every worker shares this dir, so a link would aim
 // N concurrent writers at the user's real catalog. models.json is generated
 // from the dispatcher's localModels on every seed, with a dummy apiKey. This is
@@ -137,6 +138,9 @@ func seed(stderr io.Writer, o Options) (string, error) {
 		return "", err
 	}
 	if err := seedAuth(dir, ambient); err != nil {
+		return "", err
+	}
+	if err := seedMCPAuth(dir, ambient); err != nil {
 		return "", err
 	}
 
@@ -297,6 +301,25 @@ func seedAuth(dir, ambient string) error {
 		return refuse("crew: %s is unreadable or not a JSON object — refusing to seed pi credentials", auth)
 	}
 	return linkIfChanged(dir+"/auth.json", auth)
+}
+
+// seedMCPAuth links mcp-auth.json, pi's MCP OAuth store, for the same reason
+// auth.json is linked: pi rewrites it in place, so a worker's token refresh
+// lands in the owner's file, and pi keys each token by server name and URL,
+// which the shared mcpServers catalog keeps identical between the dispatcher
+// and its workers. The link grants no server — a worker connects only to what
+// its launch registers (`dispatch --mcp`). MCP is optional, so unlike
+// auth.json nothing is refused: no ambient regular file seeds nothing and
+// leaves the worker dir as it is (a link whose target the owner removed then
+// dangles, and pi recreates the target through it on the next sign-in). Once
+// the ambient file exists, the link replaces a worker-local file left by a
+// sign-in from a worker, dropping its tokens — sign in from the dispatcher.
+func seedMCPAuth(dir, ambient string) error {
+	auth := ambient + "/mcp-auth.json"
+	if !filekind.IsRegular(auth) {
+		return nil
+	}
+	return linkIfChanged(dir+"/mcp-auth.json", auth)
 }
 
 func seedModels(stderr io.Writer, dir, bin string) error {

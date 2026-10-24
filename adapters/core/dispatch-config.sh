@@ -35,9 +35,14 @@
 # dispatcherChrome (boolean) launches the claude dispatcher session with
 # --chrome; it is honoured from every layer and has no env var.
 # dispatcherMcp maps an owner/repo or org key to the MCP opt-ins (claudeai:
-# every claude.ai connector; analytics: the generated --mcp profile) that the
-# claude dispatcher launch restores for that repo; the default launch has none.
-# It is honoured from every layer: it widens only the dispatcher's own tools.
+# every claude.ai connector; analytics: the generated --mcp profile; or any
+# mcpServers name) that the dispatcher launch restores for that repo; the
+# default launch has none. It is honoured from every layer: it widens only the
+# dispatcher's own tools.
+# mcpServers is the named catalog of remote MCP servers ({url, description?,
+# headers?}) that dispatcherMcp and `dispatch --mcp` pick from; a header value
+# is only an env reference or a !command, never a literal. It is validated on
+# the merged tree and has no env var; its names are case-sensitive.
 #
 # laneProfiles maps an engine or "<engine>/<model>" glob to a lane profile (its
 # name, and optionally inline notes text) that `dispatch` applies to the task
@@ -363,6 +368,35 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
               | select(($r | test("\\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\\z") | not) or ($d | type != "string" or (startswith("/") | not) or test("[\\x00-\\x1f\\x7f]"))))
           end
       end;
+  # One [path, what] per violation in .mcpServers, entries in key order. Every
+  # field reaches a launch argv or a generated config, so the patterns are
+  # anchored with \A/\z, and a header value is never a literal: only an env
+  # reference (optionally after one scheme word) or a !command, so no secret
+  # can sit in settings.
+  def mcp_server_violations:
+    .mcpServers as $all
+    | if ($all | type) != "object" then [["mcpServers"], "an object"]
+      else
+        (($all | to_entries[]) as {key: $k, value: $v}
+          | ["mcpServers", $k] as $p
+          | if ($k | test("\\A[A-Za-z0-9_-]+\\z") | not) then [$p, "a name of letters, digits, \"_\" or \"-\""]
+            elif ($k | IN("claudeai", "analytics")) then [$p, "a name other than claudeai or analytics (reserved dispatcherMcp opt-ins)"]
+            elif ($v | type) != "object" then [$p, "an object"]
+            else
+              ($v | keys[] | select(IN("url", "description", "headers") | not) | [$p + [.], "one of url, description, headers"]),
+              ($v.url | select(type != "string" or (test("\\Ahttps://[^\\s\"\\x27\\\\\\x00-\\x1f\\x7f]+\\z") | not)) | [$p + ["url"], "an https URL without whitespace, quotes or backslashes"]),
+              ($v | select(has("description") and ((.description | type != "string") or (.description | test("[\\x00-\\x1f\\x7f]")) or (.description | length > 200))) | [$p + ["description"], "a string of at most 200 characters without control characters"]),
+              ($v | select(has("headers") and (.headers | type != "object")) | [$p + ["headers"], "an object"]),
+              (($v.headers | if type == "object" then to_entries[] else empty end) as {key: $h, value: $hv}
+                | if ($h | test("\\A[A-Za-z0-9-]+\\z") | not) then [$p + ["headers", $h], "a header name of letters, digits and \"-\""]
+                  elif ($hv | type == "string" and (test("\\A([A-Za-z]+ )?\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}\\z") or (test("\\A!\\S") and (test("[\\x00-\\x1f\\x7f]") | not)))) then empty
+                  else [$p + ["headers", $h], "an env reference (\"${NAME}\", optionally after one scheme word such as \"Bearer \") or a \"!command\", never a literal value"]
+                  end)
+            end),
+        # pi counts names that differ only in "-" and "_" as one server.
+        ($all | keys | group_by(gsub("-"; "_"))[] | select(length > 1)
+          | [["mcpServers", .[1]], "a name distinct from \"\(.[0])\" once \"-\" and \"_\" count as the same"])
+      end;
   def tag($layers; $p):
     if type == "object" and length > 0
     then with_entries(.key as $k | .value |= tag($layers; $p + [$k]))
@@ -384,10 +418,16 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["orgTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | need(["workerDeniedMcpServers"]; "an array of MCP server names (letters, digits, \"_\", \"-\")"; string_array and all(.[]; test("^[A-Za-z0-9_-]+$")))
   | need(["dispatcherChrome"]; "a boolean"; type == "boolean")
-  | need(["dispatcherMcp"]; "an object keyed owner/repo or org, each an array of claudeai or analytics";
+  | need(["dispatcherMcp"]; "an object keyed owner/repo or org, each an array of claudeai, analytics or an mcpServers name";
       type == "object"
       and all(keys[]; test("^[a-z0-9][a-z0-9._-]*(/[a-z0-9._-]+)?$"))
-      and all(.[]; type == "array" and all(.[]; IN("claudeai", "analytics"))))
+      and all(.[]; type == "array" and all(.[]; type == "string")))
+  | if has("mcpServers") then (first(mcp_server_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
+  | if has("dispatcherMcp") then
+      (["claudeai", "analytics"] + (.mcpServers // {} | keys)) as $valid
+      | (first(.dispatcherMcp | to_entries[] | .key as $k | .value[] | select(IN($valid[]) | not) | [$k, .]) // null) as $bad
+      | if $bad then "dispatch-config: dispatcherMcp must be an object keyed owner/repo or org, each an array of claudeai, analytics or an mcpServers name: \"\($bad[0])\" names unknown \"\($bad[1])\" (valid: \($valid | join(", "))) (merged settings)\n" | halt_error(1) else . end
+    else . end
   | if has("localModels") then (first(local_model_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
   | if has("laneProfiles") then (first(lane_profile_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
   | if has("hosts") then (first(host_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end

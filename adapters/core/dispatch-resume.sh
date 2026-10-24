@@ -30,7 +30,8 @@ engine session, and re-run only the gates this command names.
   --agent E           Engine to relaunch on: claude | codex | cursor | pi
   --model M           Model for that engine (default: the task doc's)
   --effort E          low | medium | high | xhigh | max | ultra (default: the task doc's)
-  --mcp P             MCP profile to launch the engine with
+  --mcp LIST          MCP for the lead: analytics (claude) or mcpServers names,
+                      comma-separated (default: the task doc's mcp: line)
   --chrome            Relaunch the claude lead with Claude in Chrome (dispatcher-only;
                       never carried from an earlier run)
   --fresh             Start a new engine session instead of continuing the old one
@@ -991,31 +992,25 @@ _require_protocol_files "$PROTOCOL_DIR" "${required_protocol_files[@]}"
 _check_protocol_rev "$PROTOCOL_DIR" "dispatch resume"
 _settings_load
 
-# mcp is claude-only, and this is the one gate the precheck below cannot make:
-# passing --mcp there would have dispatch resolve and validate the config file
-# too, which Task 6 must do anyway to build the launch flag.
-if [ "$agent" != claude ] && [ -n "$mcp_profile" ]; then
-  echo "dispatch resume: mcp is claude-only; codex/cursor/pi base MCP comes from their own profile" >&2
-  exit 1
+# mcp is the one gate the precheck below cannot make: passing --mcp there would
+# have dispatch resolve and validate the config files too, which this script
+# must do anyway to build the launch flags.
+if [ -n "$mcp_profile" ]; then
+  mcp_profile="$(mcp_worker_optins "dispatch resume" "$settings" "$agent" "$mcp_profile")" || exit 1
 fi
 
 profile="$(jq -r '.profile // "personal"' <<<"$settings")"
 
 mcp_arg=""
-if [ -n "$mcp_profile" ]; then
-  case "$mcp_profile" in
-  analytics) mcp_file="$HOME/.config/claude-code/mcp-posthog.json" ;;
-  *)
-    echo "dispatch resume: unknown mcp profile '$mcp_profile' (valid: analytics)" >&2
-    exit 1
-    ;;
-  esac
+if [[ ,$mcp_profile, == *,analytics,* ]]; then
+  mcp_file="$HOME/.config/claude-code/mcp-posthog.json"
   [ -f "$mcp_file" ] || {
-    echo "dispatch resume: mcp $mcp_profile config not found at $mcp_file" >&2
+    echo "dispatch resume: mcp analytics config not found at $mcp_file" >&2
     exit 1
   }
   mcp_arg="--mcp-config $mcp_file"
 fi
+mcp_args="$(mcp_worker_launch_args "dispatch resume" "$settings" "$agent" "$mcp_profile")" || exit 1
 
 xreview_mcp=""
 if [ "$profile" = work ] && [ "$agent" = claude ] && [ "$tier" = deep ]; then
@@ -1808,7 +1803,7 @@ printf -v q_effort '%q' "$effort"
 
 if [ "$agent" = codex ]; then
   cont="$lead_cont"
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id codex $cont --profile worker -m $q_model -c model_reasoning_effort=$q_effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id codex $cont --profile worker -m $q_model -c model_reasoning_effort=$q_effort -c service_tier=default -c agents.enabled=true -c agents.max_concurrent_threads_per_session=3 -c agents.default_subagent_reasoning_effort=$codex_subagent_effort$mcp_args --dangerously-bypass-approvals-and-sandbox 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
 elif [ "$agent" = cursor ]; then
   cont="$lead_cont"
   launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id CURSOR_CLI_INDEXED_GREP=0 cursor-agent $cont --force --trust --approve-mcps --disable-indexing --disable-codebase-ref --model $q_model 'Read $PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
@@ -1816,7 +1811,7 @@ elif [ "$agent" = pi ]; then
   cont="$lead_cont"
   pi_sid=""
   [ -z "$lead_sid" ] || pi_sid=" --session-id $lead_sid"
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $q_agent_name --model $q_model --thinking $q_effort$pi_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $q_agent_name --model $q_model --thinking $q_effort$pi_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path")$mcp_args 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
 else
   cont="$lead_cont"
   claude_sid=""
@@ -1824,7 +1819,7 @@ else
   # Re-passing --append-system-prompt-file matters on a continue: it forces
   # --system-prompt-snapshot off, so the worker protocol is applied fresh rather
   # than replayed from the conversation's recorded prompt.
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id $(claude_lean_env)claude $cont --name $q_agent_name --model $q_model --effort $q_effort$claude_sid $mcp_arg $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id $(claude_lean_env)claude $cont --name $q_agent_name --model $q_model --effort $q_effort$claude_sid $mcp_arg$mcp_args $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome") 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${grid_note}${protocol_note}'"
 fi
 write_launch_script launch_line "$launch_cmd"
 # dispatch's localModels slot count reads this off the lead pane.
