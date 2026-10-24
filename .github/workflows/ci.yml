@@ -10,7 +10,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
+      # The post phase of this step is the cache upload, and it inherits the
+      # continue-on-error below: a stalled push stays a failed step, never a
+      # failed job.
       - uses: cachix/cachix-action@v17
+        continue-on-error: true
         with:
           name: dispatcher
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -54,6 +58,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: cachix/cachix-action@v17
+        continue-on-error: true
         with:
           name: dispatcher
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -70,6 +75,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: cachix/cachix-action@v17
+        continue-on-error: true
         with:
           name: dispatcher
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -144,6 +150,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: cachix/cachix-action@v17
+        continue-on-error: true
         with:
           name: dispatcher
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -156,6 +163,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: cachix/cachix-action@v17
+        continue-on-error: true
         with:
           name: dispatcher
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -172,6 +180,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: cachix/cachix-action@v17
+        continue-on-error: true
         with:
           name: dispatcher
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
