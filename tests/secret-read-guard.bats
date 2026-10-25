@@ -936,7 +936,7 @@ run_guard_bare() {
 # exist. A new possibly-empty array needs the guarded idiom
 # ${arr[@]+"${arr[@]}"}; a new array that is never empty by construction is
 # added to `never_empty` below.
-@test "secret-read-guard: code stays within bash 3.2 (no mapfile, negative subscripts or bare expansion of possibly-empty arrays)" {
+@test "secret-read-guard: avoids mapfile, negative subscripts and bare arr[@] expansion of possibly-empty arrays (bash 3.2)" {
   local never_empty='views|readings|search_spaces|dequoted_views|wide_spaces|raw_spaces'
   local code found report=''
   code=$(grep -n '' "$GUARD" | grep -Ev '^[0-9]+:[[:space:]]*#')
@@ -948,7 +948,7 @@ run_guard_bare() {
   [ -z "$found" ] || report+=$'negative array subscript (absent in bash 3.2):\n'"$found"$'\n'
 
   found=$(printf '%s\n' "$code" \
-    | sed -E 's/\$\{([A-Za-z_]+)\[@\]\+"\$\{\1\[@\]\}"\}//g' \
+    | sed 's/\${\([A-Za-z_][A-Za-z_]*\)\[@\]+"\${\1\[@\]}"}//g' \
     | sed -E "s/\"\\$\\{($never_empty)\\[@\\]\\}\"//g" \
     | grep -E '"\$\{[A-Za-z_]+\[@\]\}"' || true)
   [ -z "$found" ] || report+=$'bare "${arr[@]}" on an array not known to be non-empty:\n'"$found"$'\n'
