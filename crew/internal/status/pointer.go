@@ -28,9 +28,6 @@ func phaseSuffix(engine string) string {
 }
 
 // pointToPhase tells a lead posting a stage heartbeat which phase file to read.
-// It prints only for a posted working row whose detail opens with a known stage
-// (trailing punctuation allowed) and whose non-review task doc names both
-// protocol_dir and engine; the file must exist.
 func pointToPhase(ctx context.Context, o Options, state, detail string, stderr io.Writer) {
 	if state != "working" {
 		return

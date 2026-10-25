@@ -2811,7 +2811,7 @@ _has() { # file text...
   [ -z "$(compgen -G "$protocols/.WORKER_*.tmp" || true)" ]
 }
 
-# ── Phase-file structural consistency (#703) ──────────────────
+# ── Phase-file structural consistency ─────────────────────────
 
 # The stems of the core's "Phase files" table, one per line.
 _phase_stems() {

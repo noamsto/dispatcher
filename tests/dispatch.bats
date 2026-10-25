@@ -17653,7 +17653,7 @@ _run_dispatch_no_crew_id() {
   [[ "$output" != *'$PPID'* ]]
 }
 
-# ── Every phase file is readable by the lead (#703) ───────────
+# ── Every phase file is readable by the lead ──────────────────
 
 # The stems of the core's "Phase files" table, one per line.
 _phase_stems() {
