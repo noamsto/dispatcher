@@ -249,8 +249,12 @@ commands_reach_row() { # path template containing $ROOT and $n
     for source in "$ROOT"/adapters/core/protocols/*.md; do
       # claude-code ships the claude render; the sync test covers it.
       [ "$adapter/$(basename "$source")" != claude-code/plugin/WORKER_PROTOCOL.md ] || continue
+      [ "$adapter/$(basename "$source")" != claude-code/plugin/DISPATCHER_PROTOCOL.md ] || continue
       # only a claude lead reads the render, so codex and cursor do not ship it.
       [ "$adapter" = claude-code/plugin ] || [ "$(basename "$source")" != WORKER_PROTOCOL.claude.md ] || continue
+      # the dispatcher renders: codex and cursor ship neither, claude-code only the claude one.
+      [ "$adapter" = claude-code/plugin ] || [ "$(basename "$source")" != DISPATCHER_PROTOCOL.claude.md ] || continue
+      [ "$(basename "$source")" != DISPATCHER_PROTOCOL.pi.md ] || continue
       cmp "$source" "$ROOT/adapters/$adapter/protocols/$(basename "$source")"
     done
   done
@@ -432,11 +436,14 @@ guard_ships_row() { # script basename
   for source in "$ROOT"/adapters/core/protocols/*.md; do
     name="$(basename "$source")"
     # claude-code ships the claude render; the sync test covers it.
-    if [ "$name" != WORKER_PROTOCOL.md ]; then
+    # (the dispatcher's pi render is not shipped to claude-code at all)
+    if [ "$name" != WORKER_PROTOCOL.md ] && [ "$name" != DISPATCHER_PROTOCOL.md ] && [ "$name" != DISPATCHER_PROTOCOL.pi.md ]; then
       run cmp -s "$source" "$ROOT/adapters/claude-code/plugin/protocols/$name"
       [ "$status" -eq 0 ]
     fi
     [ "$name" != WORKER_PROTOCOL.claude.md ] || continue
+    [ "$name" != DISPATCHER_PROTOCOL.claude.md ] || continue
+    [ "$name" != DISPATCHER_PROTOCOL.pi.md ] || continue
     run cmp -s "$source" "$ROOT/adapters/codex/plugin/protocols/$name"
     [ "$status" -eq 0 ]
   done
@@ -2603,6 +2610,65 @@ _render_fixture() {
   done
 }
 
+@test "dispatcher protocol renders are in sync with core and the claude plugin copy" {
+  local core="$ROOT/adapters/core/protocols" plugin="$ROOT/adapters/claude-code/plugin/protocols"
+  bash "$ROOT/scripts/render-engine.sh" claude "$core/DISPATCHER_PROTOCOL.md" >"$BATS_TEST_TMPDIR/claude.md"
+  cmp "$BATS_TEST_TMPDIR/claude.md" "$core/DISPATCHER_PROTOCOL.claude.md"
+  cmp "$BATS_TEST_TMPDIR/claude.md" "$plugin/DISPATCHER_PROTOCOL.md"
+  cmp "$core/DISPATCHER_PROTOCOL.claude.md" "$plugin/DISPATCHER_PROTOCOL.claude.md"
+  bash "$ROOT/scripts/render-engine.sh" pi "$core/DISPATCHER_PROTOCOL.md" >"$BATS_TEST_TMPDIR/pi.md"
+  cmp "$BATS_TEST_TMPDIR/pi.md" "$core/DISPATCHER_PROTOCOL.pi.md"
+  [ ! -e "$plugin/DISPATCHER_PROTOCOL.pi.md" ]
+}
+
+# _lacks and _has name the offending text instead of failing on a bare grep.
+_lacks() { # file text...
+  local f=$1 t
+  shift
+  for t in "$@"; do
+    if grep -qF -- "$t" "$f"; then
+      echo "unexpected in ${f##*/}: $t"
+      return 1
+    fi
+  done
+}
+
+_has() { # file text...
+  local f=$1 t
+  shift
+  for t in "$@"; do
+    grep -qF -- "$t" "$f" || { echo "missing from ${f##*/}: $t"; return 1; }
+  done
+}
+
+@test "the claude dispatcher render keeps its own lane and drops the other engines' lanes" {
+  local f="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.claude.md"
+  _lacks "$f" '<!-- only:' '<!-- /only -->' \
+    '**cursor — background park.**' '**codex / pi — blocking park.**' 'INV-1'
+  _has "$f" '**claude — streaming monitor.**'
+  # The only cursor-lane mention is the no-Monitor pointer to the core file.
+  [ "$(grep -cF 'cursor lane' "$f")" -eq 1 ]
+  grep -F 'cursor lane' "$f" | grep -qF '$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md'
+}
+
+@test "the pi dispatcher render keeps its own lane and drops the other engines' lanes" {
+  local f="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.pi.md"
+  _lacks "$f" '<!-- only:' '<!-- /only -->' \
+    '**claude — streaming monitor.**' '**cursor — background park.**' 'INV-1' 'arm-token' '3300'
+  # The park-lane --host rule is shared text, so a render must still carry it.
+  _has "$f" '**codex / pi — blocking park.**' \
+    'park-lane dispatchers (cursor, codex, pi) never dispatch `--host`'
+}
+
+@test "codex and cursor ship the core dispatcher protocol and neither render" {
+  local core="$ROOT/adapters/core/protocols" dir
+  for dir in "$ROOT/adapters/codex/plugin/protocols" "$ROOT/adapters/cursor/protocols"; do
+    cmp "$core/DISPATCHER_PROTOCOL.md" "$dir/DISPATCHER_PROTOCOL.md"
+    [ ! -e "$dir/DISPATCHER_PROTOCOL.claude.md" ]
+    [ ! -e "$dir/DISPATCHER_PROTOCOL.pi.md" ]
+  done
+}
+
 @test "gen-adapters leaves the claude render intact and no tmp file when rendering fails" {
   # The claude render is written to a dotted tmp inside the hashed protocols tree
   # then moved into place. A direct redirect would truncate the committed render
@@ -2617,6 +2683,29 @@ _render_fixture() {
   run bash -c "cd '$work' && ./scripts/gen-adapters.sh"
   [ "$status" -ne 0 ]
   cmp "$work/before.md" "$protocols/WORKER_PROTOCOL.claude.md"
+  [ ! -e "$protocols/.WORKER_PROTOCOL.claude.md.tmp" ]
+  [ ! -e "$protocols/.DISPATCHER_PROTOCOL.claude.md.tmp" ]
+  [ ! -e "$protocols/.DISPATCHER_PROTOCOL.pi.md.tmp" ]
+}
+
+@test "gen-adapters leaves the dispatcher renders intact and no tmp file when the dispatcher protocol is malformed" {
+  work="$BATS_TEST_TMPDIR/atomic-dispatcher"
+  mkdir -p "$work"
+  cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
+  protocols="$work/adapters/core/protocols"
+  cp "$protocols/DISPATCHER_PROTOCOL.claude.md" "$work/before-claude.md"
+  cp "$protocols/DISPATCHER_PROTOCOL.pi.md" "$work/before-pi.md"
+  # An only: block opened on the first line fails every render, and it fails
+  # after the engine has already streamed output, so a render written in place
+  # would no longer match the old one.
+  { printf '<!-- only:pi -->\n'; cat "$protocols/DISPATCHER_PROTOCOL.md"; } >"$work/mangled.md"
+  cp "$work/mangled.md" "$protocols/DISPATCHER_PROTOCOL.md"
+  run bash -c "cd '$work' && ./scripts/gen-adapters.sh"
+  [ "$status" -ne 0 ]
+  cmp "$work/before-claude.md" "$protocols/DISPATCHER_PROTOCOL.claude.md"
+  cmp "$work/before-pi.md" "$protocols/DISPATCHER_PROTOCOL.pi.md"
+  [ ! -e "$protocols/.DISPATCHER_PROTOCOL.claude.md.tmp" ]
+  [ ! -e "$protocols/.DISPATCHER_PROTOCOL.pi.md.tmp" ]
   [ ! -e "$protocols/.WORKER_PROTOCOL.claude.md.tmp" ]
 }
 

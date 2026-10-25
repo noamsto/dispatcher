@@ -1,5 +1,12 @@
 bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 
+# The launcher picks DISPATCHER_PROTOCOL.<engine>.md for claude and pi and the
+# core file for codex and cursor, and refuses when the chosen file is missing.
+_protocol_fixture() { # dir content
+  mkdir -p "$1"
+  printf '%s\n' "$2" | tee "$1/DISPATCHER_PROTOCOL.md" "$1/DISPATCHER_PROTOCOL.claude.md" "$1/DISPATCHER_PROTOCOL.pi.md" >/dev/null
+}
+
 setup() {
   load helpers
   LAUNCHER="$BATS_TEST_DIRNAME/../adapters/core/dispatcher.sh"
@@ -7,7 +14,8 @@ setup() {
   setup_repo
   stub_bin tmux
   stub_bin crew
-  export DISPATCHER_PROTOCOL_DIR=/opt/protocols
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_TMPDIR/protocols"
+  _protocol_fixture "$DISPATCHER_PROTOCOL_DIR" core
   # The launcher sources the worker-settings lib; copied-out launchers
   # (_store_launcher) have no sibling file and an unsubstituted placeholder.
   export CLAUDE_WORKER_SETTINGS_LIB="$BATS_TEST_DIRNAME/../adapters/core/claude-worker-settings.sh"
@@ -128,8 +136,7 @@ protocol_dir_kept_row() { # kind relpath content
     checkout) export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/$2" ;;
     *) printf 'bad kind %s\n' "$1" >&2; return 1 ;;
   esac
-  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  printf '%s\n' "$3" >"$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md"
+  _protocol_fixture "$DISPATCHER_PROTOCOL_DIR" "$3"
   CREW_ID=c1 run bash -euo pipefail "$BATS_TEST_TMPDIR/launcher-store.sh"
   [ "$status" -eq 0 ]
   [[ "$output" != *"ignoring stale"* ]]
@@ -144,8 +151,8 @@ protocol_dir_kept_row() { # kind relpath content
   while IFS='|' read -r row needle; do
     [ -n "$row" ] || continue
     keep_row "$row" launcher_log_row "$needle"
-  done <<'ROWS'
-protocol-file|--append-system-prompt-file /opt/protocols/DISPATCHER_PROTOCOL.md
+  done <<ROWS
+protocol-file|--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.claude.md
 model-pin|--model opus --effort high
 ROWS
   finish_rows 2
@@ -216,14 +223,44 @@ ROWS
 
 @test "injects the protocol as a first prompt for codex" {
   DISPATCH_PROFILE=work CREW_ID=c1 run_launcher --agent codex
-  run grep -F -- 'Read /opt/protocols/DISPATCHER_PROTOCOL.md' "$STUB_LOG"
+  run grep -F -- "Read $DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md" "$STUB_LOG"
   [ "$status" -eq 0 ]
 }
 
 @test "bakes the protocol into pi via --append-system-prompt" {
   CREW_ID=c1 run_launcher --agent pi
-  run grep -F -- '--append-system-prompt /opt/protocols/DISPATCHER_PROTOCOL.md' "$STUB_LOG"
+  run grep -F -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.pi.md" "$STUB_LOG"
   [ "$status" -eq 0 ]
+}
+
+@test "claude and pi refuse, launch nothing and register nothing when their render is missing" {
+  local engine render
+  for engine in claude pi; do
+    render="$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.$engine.md"
+    : >"$STUB_LOG"
+    rm "$render"
+    CREW_ID=c1 run --separate-stderr run_launcher --agent "$engine"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"dispatcher: missing protocol file $render"* ]]
+    [[ "$stderr" == *"gen-adapters.sh"* ]]
+    # The engine stub logs every call it gets, as do the crew and tmux stubs.
+    [ ! -s "$STUB_LOG" ]
+    # The other engines' files are still there: only the missing render refuses.
+    [ -f "$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md" ]
+    printf 'core\n' >"$render"
+  done
+}
+
+@test "codex and cursor launch from the core file without any render" {
+  local engine
+  rm "$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.pi.md"
+  for engine in codex cursor; do
+    : >"$STUB_LOG"
+    CREW_ID=c1 run run_launcher --agent "$engine"
+    [ "$status" -eq 0 ]
+    run grep -F -- "$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md" "$STUB_LOG"
+    [ "$status" -eq 0 ]
+  done
 }
 
 @test "pi is not work-profile gated as an orchestrator" {
@@ -694,8 +731,7 @@ EOF
 _store_launcher() {
   STORE="$TEST_REPO/store"
   BAKED_PROTOCOLS="$STORE/h-new-protocols"
-  mkdir -p "$BAKED_PROTOCOLS"
-  printf 'new\n' >"$BAKED_PROTOCOLS/DISPATCHER_PROTOCOL.md"
+  _protocol_fixture "$BAKED_PROTOCOLS" new
   sed "s|@protocolDir@|$BAKED_PROTOCOLS|" "$LAUNCHER" >"$BATS_TEST_TMPDIR/launcher-store.sh"
   cat >"$STUB_DIR/claude" <<'EOF'
 #!/usr/bin/env bash
@@ -708,13 +744,12 @@ EOF
 @test "a stale store-path DISPATCHER_PROTOCOL_DIR is ignored and the launched session sees the baked dir" {
   _store_launcher
   export DISPATCHER_PROTOCOL_DIR="$STORE/h-old-source/adapters/core/protocols"
-  mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  printf 'old\n' >"$DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.md"
+  _protocol_fixture "$DISPATCHER_PROTOCOL_DIR" old
   CREW_ID=c1 run bash -euo pipefail "$BATS_TEST_TMPDIR/launcher-store.sh"
   [ "$status" -eq 0 ]
   [[ "$output" == *"dispatcher: ignoring stale DISPATCHER_PROTOCOL_DIR"* ]]
   grep -qx "claude env DISPATCHER_PROTOCOL_DIR=$BAKED_PROTOCOLS" "$STUB_LOG"
-  grep -qF -- "--append-system-prompt-file $BAKED_PROTOCOLS/DISPATCHER_PROTOCOL.md" "$STUB_LOG"
+  grep -qF -- "--append-system-prompt-file $BAKED_PROTOCOLS/DISPATCHER_PROTOCOL.claude.md" "$STUB_LOG"
 }
 
 # F54: a store path whose content matches the bake, and a checkout path
@@ -752,8 +787,8 @@ _store_launcher_dirs() {
   BAKED_SKILLS="$STORE/h-new-skills"
   BAKED_REVIEWERS="$STORE/h-new-reviewers"
   BAKED_CRITICS="$STORE/h-new-critics"
-  mkdir -p "$BAKED_PROTOCOLS" "$BAKED_SKILLS" "$BAKED_REVIEWERS" "$BAKED_CRITICS"
-  printf 'new\n' >"$BAKED_PROTOCOLS/DISPATCHER_PROTOCOL.md"
+  mkdir -p "$BAKED_SKILLS" "$BAKED_REVIEWERS" "$BAKED_CRITICS"
+  _protocol_fixture "$BAKED_PROTOCOLS" new
   sed -e "s|@protocolDir@|$BAKED_PROTOCOLS|" \
     -e "s|@skillsDir@|$BAKED_SKILLS|" \
     -e "s|@reviewersDir@|$BAKED_REVIEWERS|" \
@@ -802,7 +837,7 @@ _store_launcher_dirs() {
   unset DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
   CREW_ID=c1 run bash -euo pipefail "$LAUNCHER"
   [ "$status" -eq 0 ]
-  grep -qx 'claude env /opt/protocols UNSET UNSET UNSET' "$STUB_LOG"
+  grep -qx "claude env $DISPATCHER_PROTOCOL_DIR UNSET UNSET UNSET" "$STUB_LOG"
 }
 
 @test "a user-layer engine roster applies when the env roster is unset" {
