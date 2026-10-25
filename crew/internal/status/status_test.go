@@ -1113,6 +1113,18 @@ func TestStatusWorkingPrintsPhasePointer(t *testing.T) {
 		}
 	}
 
+	t.Run("stage word with trailing colon", func(t *testing.T) {
+		f := newFixture(t)
+		dir := t.TempDir()
+		f.doc(phaseDoc(dir, "claude"))
+		phaseFile(t, dir, "WORKER_EXECUTE.claude.md")
+		code, stderr := f.status(worker, "working", "execute: tests")
+		if want := "crew: read " + dir + "/WORKER_EXECUTE.claude.md before this stage\n"; code != 0 || stderr != want {
+			t.Errorf("got %d %q, want 0 %q", code, stderr, want)
+		}
+		f.wantRow(statusRow(worker, `{"state":"working","detail":"execute: tests"}`))
+	})
+
 	t.Run("first word decides", func(t *testing.T) {
 		f := newFixture(t)
 		dir := t.TempDir()
@@ -1127,25 +1139,27 @@ func TestStatusWorkingPrintsPhasePointer(t *testing.T) {
 }
 
 func TestStatusNoPhasePointer(t *testing.T) {
+	implement := func(d string) string { return phaseDoc(d, "claude") }
 	tests := []struct {
-		name    string
-		doc     func(dir string) string // nil: no task doc
-		file    string                  // created in dir; "" none
-		state   string
-		detail  string
-		restamp bool
-		wantErr string // stderr when not empty (a refusal)
-		wantRow bool
+		name   string
+		doc    func(dir string) string // nil: no task doc
+		file   string                  // created in dir; "" none
+		state  string
+		detail string
 	}{
-		{"file absent", func(d string) string { return phaseDoc(d, "claude") }, "", "working", "plan", false, "", true},
-		{"no task doc", nil, "WORKER_PLAN.claude.md", "working", "plan", false, "", true},
-		{"no protocol_dir", func(string) string { return "tier: standard\nkind: implement\nengine: claude\n" }, "WORKER_PLAN.claude.md", "working", "plan", false, "", true},
-		{"no engine", func(d string) string { return "tier: standard\nprotocol_dir: " + d + "\n" }, "WORKER_PLAN.md", "working", "plan", false, "", true},
-		{"blocked", func(d string) string { return phaseDoc(d, "claude") }, "WORKER_PLAN.claude.md", "blocked", "plan", false, "", true},
-		{"unknown first word", func(d string) string { return phaseDoc(d, "claude") }, "WORKER_PLAN.claude.md", "working", "planning", false, "", true},
-		{"case-sensitive", func(d string) string { return phaseDoc(d, "claude") }, "WORKER_PLAN.claude.md", "working", "Plan", false, "", true},
-		{"empty detail", func(d string) string { return phaseDoc(d, "claude") }, "WORKER_PLAN.claude.md", "working", "", false, "", true},
-		{"restamp", func(d string) string { return phaseDoc(d, "claude") }, "WORKER_PLAN.claude.md", "working", "plan", true, "crew: --restamp is only valid with blocked\n", false},
+		{"file absent", implement, "", "working", "plan"},
+		{"no task doc", nil, "WORKER_PLAN.claude.md", "working", "plan"},
+		// Unarrangeable: without the protocolDir guard the path is
+		// "/WORKER_PLAN.claude.md", which the test cannot create.
+		{"no protocol_dir", func(string) string { return "tier: standard\nkind: implement\nengine: claude\n" }, "WORKER_PLAN.claude.md", "working", "plan"},
+		{"no engine", func(d string) string { return "tier: standard\nprotocol_dir: " + d + "\n" }, "WORKER_PLAN.md", "working", "plan"},
+		{"review worker", func(d string) string {
+			return "tier: standard\nkind: review\nengine: claude\nprotocol_dir: " + d + "\n"
+		}, "WORKER_PLAN.claude.md", "working", "plan"},
+		{"blocked", implement, "WORKER_PLAN.claude.md", "blocked", "plan"},
+		{"unknown first word", implement, "WORKER_PLAN.claude.md", "working", "planning"},
+		{"case-sensitive", implement, "WORKER_PLAN.claude.md", "working", "Plan"},
+		{"empty detail", implement, "WORKER_PLAN.claude.md", "working", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1157,13 +1171,15 @@ func TestStatusNoPhasePointer(t *testing.T) {
 			if tt.file != "" {
 				phaseFile(t, dir, tt.file)
 			}
-			_, stderr := f.statusReq(StatusRequest{From: worker, State: tt.state, Detail: tt.detail, Restamp: tt.restamp})
-			if stderr != tt.wantErr || strings.Contains(stderr, "crew: read") {
-				t.Errorf("stderr %q, want %q", stderr, tt.wantErr)
+			code, stderr := f.status(worker, tt.state, tt.detail)
+			if code != 0 || stderr != "" {
+				t.Errorf("got %d %q, want 0 with no stderr", code, stderr)
 			}
-			if !tt.wantRow {
-				f.wantNoRow()
+			body := `{"state":` + jsonStr(tt.state)
+			if tt.detail != "" {
+				body += `,"detail":` + jsonStr(tt.detail)
 			}
+			f.wantRow(statusRow(worker, body+"}"))
 		})
 	}
 

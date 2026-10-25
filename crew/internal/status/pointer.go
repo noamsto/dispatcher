@@ -27,23 +27,24 @@ func phaseSuffix(engine string) string {
 	return ".md"
 }
 
-// pointToPhase tells a lead re-stamping a stage which phase file to read. It
-// prints only for a posted working row whose detail opens with a known stage and
-// whose task doc names both protocol_dir and engine; the file must exist.
-func pointToPhase(ctx context.Context, o Options, state, detail string, restamp bool, stderr io.Writer) {
-	if state != "working" || restamp {
+// pointToPhase tells a lead posting a stage heartbeat which phase file to read.
+// It prints only for a posted working row whose detail opens with a known stage
+// (trailing punctuation allowed) and whose non-review task doc names both
+// protocol_dir and engine; the file must exist.
+func pointToPhase(ctx context.Context, o Options, state, detail string, stderr io.Writer) {
+	if state != "working" {
 		return
 	}
 	words := strings.Fields(detail)
 	if len(words) == 0 {
 		return
 	}
-	stem, ok := phaseStems[words[0]]
+	stem, ok := phaseStems[strings.TrimRight(words[0], ":;,.")]
 	if !ok {
 		return
 	}
 	doc, ok := o.taskDoc(ctx)
-	if !ok || doc.protocolDir == "" || doc.engine == "" {
+	if !ok || doc.kind == "review" || doc.protocolDir == "" || doc.engine == "" {
 		return
 	}
 	path := doc.protocolDir + "/" + stem + phaseSuffix(doc.engine)

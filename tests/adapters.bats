@@ -2838,6 +2838,29 @@ _phase_stems() {
   done
 }
 
+@test "every worker phase render in the core protocols has its source" {
+  renders=0
+  for render in "$ROOT"/adapters/core/protocols/WORKER_*.claude.md "$ROOT"/adapters/core/protocols/WORKER_*.pi.md; do
+    [ -e "$render" ] || continue
+    renders=$((renders + 1))
+    source="${render%.claude.md}"
+    [ "$source" != "$render" ] || source="${render%.pi.md}"
+    [ -f "$source.md" ] || { echo "$(basename "$render") has no source" >&2; return 1; }
+  done
+  [ "$renders" -gt 0 ]
+}
+
+@test "the crew phaseStems keys are the core's stage list" {
+  core="$(sed -n 's/.*one of `\([a-z|]*\)`.*/\1/p' "$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md" | head -1 | tr '|' '\n' | LC_ALL=C sort)"
+  keys="$(sed -n '/^var phaseStems/,/^}/s/^[[:space:]]*"\([a-z]*\)":.*/\1/p' "$ROOT/crew/internal/status/pointer.go" | LC_ALL=C sort)"
+  [ -n "$core" ]
+  [ "$keys" = "$core" ] || {
+    echo "phaseStems keys: $keys" >&2
+    echo "core stages: $core" >&2
+    return 1
+  }
+}
+
 @test "every crew phaseStems value is a stem in the Phase files table" {
   stems="$(_phase_stems)"
   values="$(sed -n '/^var phaseStems/,/^}/s/.*"\(WORKER_[A-Z]*\)",$/\1/p' "$ROOT/crew/internal/status/pointer.go")"

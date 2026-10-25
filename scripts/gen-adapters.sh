@@ -52,6 +52,13 @@ for f in "$protocols"/WORKER_*.md; do
     mv "$tmp" "$protocols/$stem.$engine.md"
   done
 done
+# A render whose source is gone (a renamed phase file) would otherwise ship stale.
+for r in "$protocols"/WORKER_*.claude.md "$protocols"/WORKER_*.pi.md; do
+  [ -e "$r" ] || continue
+  base="${r%.claude.md}"
+  [ "$base" != "$r" ] || base="${r%.pi.md}"
+  [ -e "$base.md" ] || rm -f "$r"
+done
 dtmp_claude="$protocols/.DISPATCHER_PROTOCOL.claude.md.tmp"
 dtmp_pi="$protocols/.DISPATCHER_PROTOCOL.pi.md.tmp"
 bash "$root/scripts/render-engine.sh" claude "$protocols/DISPATCHER_PROTOCOL.md" >"$dtmp_claude" || exit 1
