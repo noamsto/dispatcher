@@ -24,8 +24,10 @@ var waitingStates = []string{"done", "failed", "exited"}
 const staleAfter = 48 * time.Hour
 
 // Liveness carries the two outside reads the rules make, injected so a test
-// needs no tmux server and no git. Both are required, and each is read at most
-// once by the caller.
+// needs no tmux server and no git. Both are required. A rule reads a probe at
+// most once per call, except `Drawn` on a finished row: it consults the worktree
+// probe itself and then again through `Stale`, so pass a memoized function
+// (`sync.OnceValues`).
 type Liveness struct {
 	// Windows is the set of branches stamped on a tmux window.
 	Windows func() map[string]bool
@@ -65,10 +67,6 @@ func (l Liveness) Stale(row map[string]any) bool {
 // its worktree still stands for `crew reap` to take and the row is not stale, and
 // any other row only while it is not stale. A `reaped` row is already history, and
 // a row with no branch or no state is not a worker row at all. Neither is drawn.
-//
-// So a finished row outlives its tmux window only while it is younger than
-// staleAfter; past that, only a window stamped with its branch keeps it drawn. A
-// window never revives a finished row whose worktree is already gone.
 //
 // "Any other row" includes a state this build does not know. Staleness governs
 // that too, so a state `crew status` learns tomorrow cannot make a worker vanish.
