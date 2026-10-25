@@ -930,6 +930,57 @@ run_guard_bare() {
   [ -z "$output" ]
 }
 
+# The guard must run under macOS's bash 3.2, where a bare "${arr[@]}" on an
+# empty array is an "unbound variable" error under `set -u` (exit 1, which every
+# engine treats as fail-open), and mapfile/readarray/negative subscripts do not
+# exist. A new possibly-empty array needs the guarded idiom
+# ${arr[@]+"${arr[@]}"}; a new array that is never empty by construction is
+# added to `never_empty` below.
+@test "secret-read-guard: code stays within bash 3.2 (no mapfile, negative subscripts or bare expansion of possibly-empty arrays)" {
+  local never_empty='views|readings|search_spaces|dequoted_views|wide_spaces|raw_spaces'
+  local code found report=''
+  code=$(grep -n '' "$GUARD" | grep -Ev '^[0-9]+:[[:space:]]*#')
+
+  found=$(printf '%s\n' "$code" | grep -Ew 'mapfile|readarray' || true)
+  [ -z "$found" ] || report+=$'mapfile/readarray (absent in bash 3.2):\n'"$found"$'\n'
+
+  found=$(printf '%s\n' "$code" | grep -E '\$\{[A-Za-z_]+\[-' || true)
+  [ -z "$found" ] || report+=$'negative array subscript (absent in bash 3.2):\n'"$found"$'\n'
+
+  found=$(printf '%s\n' "$code" \
+    | sed -E 's/\$\{([A-Za-z_]+)\[@\]\+"\$\{\1\[@\]\}"\}//g' \
+    | sed -E "s/\"\\$\\{($never_empty)\\[@\\]\\}\"//g" \
+    | grep -E '"\$\{[A-Za-z_]+\[@\]\}"' || true)
+  [ -z "$found" ] || report+=$'bare "${arr[@]}" on an array not known to be non-empty:\n'"$found"$'\n'
+
+  [ -z "$report" ] || { printf '%s' "$report" >&2; false; }
+}
+
+# Replay the WHOLE file under macOS tools on a Mac:
+#   d=$(mktemp -d); for t in grep awk sed; do ln -s /usr/bin/$t "$d/$t"; done; ln -s /bin/bash "$d/bash"; PATH="$d:$PATH" bats tests/secret-read-guard.bats
+# bats test_tags=macos
+@test "secret-read-guard: behaves the same under macOS bash 3.2 and BSD grep/awk/sed" {
+  [ -x /bin/bash ] && [ "$(/bin/bash -c 'echo "${BASH_VERSINFO[0]}"')" = 3 ] || skip "no /bin/bash 3.x"
+  local t
+  for t in grep awk sed; do [ -x "/usr/bin/$t" ] || skip "no /usr/bin/$t"; done
+  mkdir "$BATS_TEST_TMPDIR/macos"
+  for t in grep awk sed; do ln -s "/usr/bin/$t" "$BATS_TEST_TMPDIR/macos/$t"; done
+  ln -s /bin/bash "$BATS_TEST_TMPDIR/macos/bash"
+  PATH="$BATS_TEST_TMPDIR/macos:$PATH"
+
+  local denied
+  for denied in 'cat .env' 'bash -c env' 'printenv GITHUB_TOKEN'; do
+    run --separate-stderr run_guard <<<"$(claude_bash "$denied")"
+    assert_deny_claude
+  done
+  local allowed
+  for allowed in 'git status' 'grep -c KEY .env'; do
+    run --separate-stderr run_guard <<<"$(claude_bash "$allowed")"
+    assert_allow
+    [ -z "$stderr" ]
+  done
+}
+
 # ---------------------------------------------------------------------------
 # Grep glob branch
 # ---------------------------------------------------------------------------

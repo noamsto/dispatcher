@@ -43,13 +43,15 @@
 # proceeds.
 #
 # Runtime: runs standalone as `bash adapters/core/secret-read-guard.sh` with the
-# hook JSON on stdin, inside or outside a dispatcher session. Needs bash >= 4
-# (arrays, `[[ =~ ]]`, `${s:i}`, mapfile), jq, any POSIX awk (gawk, mawk, nawk/BWK
-# and BusyBox are all exercised by the tests), grep -E and coreutils
-# mktemp/cat/rm; it exports LC_ALL=C itself. PATH is required (command lookup);
-# TMPDIR is optional (mktemp, default /tmp); no dispatcher variable (CREW_*) is
-# read. There is no internal time budget: a hook timeout is an allow, so every
-# pass is linear in command length — that is the guarantee.
+# hook JSON on stdin, inside or outside a dispatcher session. Needs bash >= 3.2
+# (macOS's /bin/bash: arrays, `[[ =~ ]]`, `${s:i}`), so no mapfile, no negative
+# subscripts and no bare expansion of a possibly-empty array under set -u. Also
+# needs jq, any POSIX awk (gawk, mawk, nawk/BWK and BusyBox are all exercised by
+# the tests), grep -E and coreutils mktemp/cat/rm; it exports LC_ALL=C itself.
+# PATH is required (command lookup); TMPDIR is optional (mktemp, default /tmp);
+# no dispatcher variable (CREW_*) is read. There is no internal time budget: a
+# hook timeout is an allow, so every pass is linear in command length — that is
+# the guarantee.
 
 set -euo pipefail
 
@@ -1479,11 +1481,11 @@ shell)
     done
     dq_starts=()
     if ((${#ends[@]})); then
-      # Captured before mapfile: inside `<<<"$(…)"` a failed pass escapes
+      # Captured before the read loop: inside `<<<"$(…)"` a failed pass escapes
       # errexit and reads as one empty start — an allow. Bare errexit on the
       # assignment would exit silently, so a failure empties idx instead.
       idx=$(dequote_index "$cur" "${ends[*]}" "$cur_t") || idx=
-      mapfile -t dq_starts <<<"$idx"
+      while IFS= read -r dq_line; do dq_starts+=("$dq_line"); done <<<"$idx"
       if [[ -z $idx ]] || ((${#dq_starts[@]} != ${#ends[@]})); then
         echo "secret-read-guard: index map failed; guard NOT enforcing" >&2
         exit 1
@@ -1525,7 +1527,7 @@ shell)
           sub_fish+=(0)
         fi
         worklist+=("$sub")
-        worklist_fish+=("${sub_fish[-1]}")
+        worklist_fish+=("${sub_fish[${#sub_fish[@]} - 1]}")
         worklist_t+=("$sub_text")
         worklist_lookup+=("$((cur_lookup | sub_lookup))")
       done
@@ -1637,8 +1639,8 @@ shell)
   raw_spaces+=("${dequoted_views[@]}")
   missed=()
   for pass in narrow wide; do
-    if [[ $pass == narrow ]]; then spaces=("${raw_spaces[@]}"); else spaces=("${missed[@]}"); fi
-    for space in "${spaces[@]}"; do
+    if [[ $pass == narrow ]]; then spaces=("${raw_spaces[@]}"); else spaces=(${missed[@]+"${missed[@]}"}); fi
+    for space in ${spaces[@]+"${spaces[@]}"}; do
       verdict=$(credential_read "$space" "$pass") || {
         echo "secret-read-guard: credential-read check failed; guard NOT enforcing" >&2
         exit 1
