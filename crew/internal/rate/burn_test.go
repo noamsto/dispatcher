@@ -36,7 +36,7 @@ func TestBurnTableOracle(t *testing.T) {
 		weight               float64
 	}{
 		{"opus", "low", "standard", 2},
-		{"opus", "medium", "standard", 2},
+		{"opus", "medium", "premium", 4},
 		{"opus", "high", "premium", 4},
 		{"opus", "xhigh", "premium", 6},
 		{"opus", "max", "premium", 8},

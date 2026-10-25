@@ -158,13 +158,15 @@ refuse_claude_sonnet_cap() {
   exit 1
 }
 
-# pace_rule_target <agent> <model> <effort> — refuse one premium launch target
+# pace_rule_target <agent> <model> <effort> [lead] — refuse one premium launch target
 # when its fresh pace window (7d, or pi's/cursor's month) is materially ahead of pace.
 # The DISPATCH_IGNORE_RUNG escape is omitted on --host, which refuses that
 # variable: on the local side remote_host is set, and on the remote side the
 # launch carries DISPATCH_TMUX_SESSION instead.
+# A `lead` target with pace_escalation set skips only the model-rung refusal;
+# effort refusals and budget_stop stay armed.
 pace_rule_target() {
-  local target_agent="$1" target_model="$2" target_effort="$3" model_downgrade="" model_downgrade_label="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause escape
+  local target_agent="$1" target_model="$2" target_effort="$3" target_role="${4:-}" model_downgrade="" model_downgrade_label="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause escape
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
   model_downgrade="$(_pace_downgrade "$target_agent" "$target_model")"
   # Only shed a rung when the downgrade burns less (defaults.json
@@ -211,6 +213,8 @@ pace_rule_target() {
   if [ -n "$model_downgrade" ]; then
     if [ "${DISPATCH_IGNORE_RUNG:-}" = "$target_model" ]; then
       echo "dispatch: rung refusal skipped (DISPATCH_IGNORE_RUNG) — '$target_model' on --agent $target_agent at $win ${used_pct}%${pace_notice}" >&2
+    elif [ "$target_role" = lead ] && [ -n "${pace_escalation:-}" ]; then
+      echo "dispatch: rung refusal skipped (escalation) — '$target_model' on --agent $target_agent is one rung up from a failed run, at $win ${used_pct}%${pace_notice}" >&2
     else
       # sonnet's ceiling is `high` (the cap above), so name the effort too.
       model_downgrade_label="$model_downgrade"
@@ -4793,6 +4797,8 @@ fi
 # DISPATCH_SKIP_MODEL_CHECK does not cover this gate (it is
 # about shape/cache staleness, not tier); --ignore-map does. A local id's
 # entry lists its tiers; it has no modelMap row and no escalation rung.
+# Set only by the proven-escalation paths below; never inherited from the environment.
+pace_escalation=""
 if [ -n "$local_entry" ]; then
   if [ -z "$ignore_map" ] && ! jq -e --arg t "$tier" '.tiers | index($t)' <<<"$local_entry" >/dev/null; then
     echo "dispatch: local model '$model' is not allowed at $tier — its localModels entry allows $(jq -r '.tiers | join(", ")' <<<"$local_entry"); pass --ignore-map (the human's model decision). See dispatch-orchestration.md \"Local models\"." >&2
@@ -4811,6 +4817,7 @@ elif [ -z "$ignore_map" ]; then
         if [ -n "$escalation_baseline" ] && _prior_failed_escalation_available "$_escalation_branch" "$_escalation_crew_dir"; then
           tier_ok=1
           escalated_from="$escalation_baseline"
+          pace_escalation=1
         fi
       fi
     fi
@@ -4828,7 +4835,11 @@ if [ -z "$local_entry" ] && [ "${escalated_from:-}" = "" ] && [ -z "$ignore_map"
   failed_model="$(_prior_failed_model "$_escalation_branch" "$_escalation_crew_dir" "$tier")"
   if [ -n "$failed_model" ]; then
     record_from="$(_escalation_hop "$agent" "$tier" "$failed_model" "$model" inRow)"
-    [ -z "$record_from" ] || escalated_from="$record_from (record only)"
+    if [ -n "$record_from" ]; then
+      escalated_from="$record_from (record only)"
+      # The pace exemption also needs the one-shot and anti-spoof check.
+      _prior_failed_escalation_available "$_escalation_branch" "$_escalation_crew_dir" && pace_escalation=1
+    fi
   fi
 fi
 
@@ -5026,7 +5037,7 @@ fi
 
 # All launch targets are resolved now. Validate the lead and every eager role
 # before any pane is created; lazy roles validate their final override later.
-[ -n "$local_entry" ] || pace_rule_target "$agent" "$model" "$effort"
+[ -n "$local_entry" ] || pace_rule_target "$agent" "$model" "$effort" lead
 if [ -z "$grid_lazy" ]; then
   for i in "${!role_names[@]}"; do
     if [ "${role_agents[$i]}" = pi ] && _local_id "${role_models[$i]}"; then continue; fi
