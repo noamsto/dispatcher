@@ -41,6 +41,7 @@ type taskDoc struct {
 	unreadable         bool
 	tier, kind, engine string
 	plan, resume       string
+	protocolDir        string
 }
 
 // check returns the refusal line, or "" when the row may be posted. Seams are
@@ -186,7 +187,7 @@ func readLog(path string) logFile {
 
 var spaceRe = regexp.MustCompile(`[ \t\n\v\f\r]+`)
 
-// readTaskDoc is the doc plus its five header fields, each the first line
+// readTaskDoc is the doc plus its six header fields, each the first line
 // anywhere that starts `field:` (`sed -n 's/^f:[[:space:]]*//p' | head -1 |
 // tr -d '[:space:]'`): sed strips leading glibc spaces, multibyte ones
 // included, then tr deletes every ASCII one. An unreadable doc leaves every
@@ -207,5 +208,6 @@ func readTaskDoc(path string) taskDoc {
 	}
 	d.tier, d.kind, d.engine = field("tier"), field("kind"), field("engine")
 	d.plan, d.resume = field("plan"), field("resume")
+	d.protocolDir = field("protocol_dir")
 	return d
 }
