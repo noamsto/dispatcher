@@ -4,8 +4,9 @@ One row per live branch across every crew bus on the machine, from any
 directory (no git repo needed). Buses come from the repo registry plus a walk of
 $CREW_SWEEP_ROOTS (colon-separated; default $HOME). Rows are the roster's, with
 a repo column; by default only working, blocked and pr_open branches show. A
-crew whose remote dispatch (`dispatch --host`) is under 24 hours old and not
-reaped is listed even when none of its workers has a local status row.
+crew whose newest remote dispatch (`dispatch --host`) is under 24 hours old and
+whose branch is not reaped is listed even when none of its workers has a local
+status row.
 
   --all       Every branch, whatever its state
   --crew ID   Only this crew id
