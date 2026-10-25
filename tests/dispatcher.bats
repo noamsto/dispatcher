@@ -243,6 +243,7 @@ ROWS
     [ "$status" -eq 1 ]
     [[ "$stderr" == *"dispatcher: missing protocol file $render"* ]]
     [[ "$stderr" == *"gen-adapters.sh"* ]]
+    [[ "$stderr" == *"DISPATCHER_PROTOCOL_DIR"* ]]
     # The engine stub logs every call it gets, as do the crew and tmux stubs.
     [ ! -s "$STUB_LOG" ]
     # The other engines' files are still there: only the missing render refuses.

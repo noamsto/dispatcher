@@ -148,7 +148,7 @@ claude | pi) protocol="$PROTOCOL_DIR/DISPATCHER_PROTOCOL.$agent.md" ;;
 *) protocol="$PROTOCOL_DIR/DISPATCHER_PROTOCOL.md" ;;
 esac
 if [ ! -f "$protocol" ]; then
-  echo "dispatcher: missing protocol file $protocol; run scripts/gen-adapters.sh" >&2
+  echo "dispatcher: missing protocol file $protocol${DISPATCHER_PROTOCOL_DIR:+ (DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR)}; regenerate with scripts/gen-adapters.sh or point DISPATCHER_PROTOCOL_DIR at a dir that has it" >&2
   exit 1
 fi
 

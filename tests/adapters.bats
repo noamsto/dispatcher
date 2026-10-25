@@ -2684,8 +2684,6 @@ _has() { # file text...
   [ "$status" -ne 0 ]
   cmp "$work/before.md" "$protocols/WORKER_PROTOCOL.claude.md"
   [ ! -e "$protocols/.WORKER_PROTOCOL.claude.md.tmp" ]
-  [ ! -e "$protocols/.DISPATCHER_PROTOCOL.claude.md.tmp" ]
-  [ ! -e "$protocols/.DISPATCHER_PROTOCOL.pi.md.tmp" ]
 }
 
 @test "gen-adapters leaves the dispatcher renders intact and no tmp file when the dispatcher protocol is malformed" {
@@ -2695,9 +2693,8 @@ _has() { # file text...
   protocols="$work/adapters/core/protocols"
   cp "$protocols/DISPATCHER_PROTOCOL.claude.md" "$work/before-claude.md"
   cp "$protocols/DISPATCHER_PROTOCOL.pi.md" "$work/before-pi.md"
-  # An only: block opened on the first line fails every render, and it fails
-  # after the engine has already streamed output, so a render written in place
-  # would no longer match the old one.
+  # An only: block opened on the first line fails every dispatcher render with no
+  # output; the claude render fails first, so this covers the claude render only.
   { printf '<!-- only:pi -->\n'; cat "$protocols/DISPATCHER_PROTOCOL.md"; } >"$work/mangled.md"
   cp "$work/mangled.md" "$protocols/DISPATCHER_PROTOCOL.md"
   run bash -c "cd '$work' && ./scripts/gen-adapters.sh"
@@ -2707,6 +2704,22 @@ _has() { # file text...
   [ ! -e "$protocols/.DISPATCHER_PROTOCOL.claude.md.tmp" ]
   [ ! -e "$protocols/.DISPATCHER_PROTOCOL.pi.md.tmp" ]
   [ ! -e "$protocols/.WORKER_PROTOCOL.claude.md.tmp" ]
+}
+
+@test "gen-adapters leaves the pi dispatcher render intact and no tmp file when only the pi render fails" {
+  work="$BATS_TEST_TMPDIR/atomic-pi"
+  mkdir -p "$work"
+  cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
+  protocols="$work/adapters/core/protocols"
+  cp "$protocols/DISPATCHER_PROTOCOL.pi.md" "$work/before-pi.md"
+  # Streams partial output then fails, so a render written in place would be
+  # truncated; claude renders are delegated to the real script.
+  printf '#!/usr/bin/env bash\n[ "$1" = pi ] && { echo partial; exit 1; }\nexec bash %q "$@"\n' \
+    "$ROOT/scripts/render-engine.sh" >"$work/scripts/render-engine.sh"
+  run bash -c "cd '$work' && ./scripts/gen-adapters.sh"
+  [ "$status" -ne 0 ]
+  cmp "$work/before-pi.md" "$protocols/DISPATCHER_PROTOCOL.pi.md"
+  [ ! -e "$protocols/.DISPATCHER_PROTOCOL.pi.md.tmp" ]
 }
 
 @test "gen-adapters removes the claude render tmp file when interrupted mid-render" {
