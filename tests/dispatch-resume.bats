@@ -50,7 +50,8 @@ EOF
   chmod +x "$STUB_DIR/dispatch"
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,WORKER_PROTOCOL.claude.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR"/{EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
   # Stands in for the store path flake.nix bakes as @skillsDir@ (#225).
   export DISPATCHER_SKILLS_DIR="$TEST_REPO/harness-skills"
   mkdir -p "$DISPATCHER_SKILLS_DIR/spec-plan-critic"
@@ -477,7 +478,9 @@ _assert_refused_before_discovery() {
   if [ -f "$STUB_LOG" ]; then run grep -q 'new-window' "$STUB_LOG"; [ "$status" -ne 0 ]; fi
 
   # Only a claude lead appends the claude render, so only it requires that file.
+  # The phase sources a codex lead reads exist; no render does.
   touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL,WORKER_GRID,WORKER_REBASE,WORKER_PLAN,WORKER_EXECUTE,WORKER_REVIEW,WORKER_SHIP}.md
   run run_resume
   [ "$status" -eq 1 ]
   [[ "$output" == *"WORKER_PROTOCOL.claude.md"* ]]
@@ -490,6 +493,35 @@ _assert_refused_before_discovery() {
   grep -q 'send-keys' "$STUB_LOG"
 }
 
+@test "a pi resume aborts before scaffolding when WORKER_PROTOCOL.pi.md is missing" {
+  setup_worker_wt
+  cd "$WT"
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-pi-render"
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  rm "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"WORKER_PROTOCOL.pi.md"* ]]
+  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+  if [ -f "$STUB_LOG" ]; then run grep -q 'send-keys' "$STUB_LOG"; [ "$status" -ne 0 ]; fi
+}
+
+@test "a claude resume aborts before scaffolding when a phase render is missing" {
+  setup_worker_wt
+  cd "$WT"
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-phase-render"
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  rm "$DISPATCHER_PROTOCOL_DIR/WORKER_REVIEW.claude.md"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"WORKER_REVIEW.claude.md"* ]]
+  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+  if [ -f "$STUB_LOG" ]; then run grep -q 'send-keys' "$STUB_LOG"; [ "$status" -ne 0 ]; fi
+}
+
 @test "refuses a protocol dir whose content hashes to a different revision than the script marker" {
   setup_worker_wt
   cd "$WT"
@@ -498,7 +530,8 @@ _assert_refused_before_discovery() {
   sed 's/@protocolRev@/0123456789abcdef/' "$RESUME" >"$BATS_TEST_TMPDIR/resume-subst.sh"
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-mismatch"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev_dir="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
   run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-subst.sh"
   [ "$status" -eq 1 ]
@@ -516,7 +549,8 @@ _assert_refused_before_discovery() {
   sed 's/@protocolRev@/0123456789abcdef/' "$RESUME" >"$BATS_TEST_TMPDIR/resume-subst.sh"
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-matching"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
   sed "s/@protocolRev@/$rev/" "$RESUME" >"$BATS_TEST_TMPDIR/resume-subst.sh"
   run bash -euo pipefail "$BATS_TEST_TMPDIR/resume-subst.sh"
@@ -547,8 +581,10 @@ _store_resume() {
 _store_protocols() { # <dir> <content>
   local f
   mkdir -p "$1"
-  for f in WORKER_PROTOCOL.md WORKER_PROTOCOL.claude.md EVIDENCE_REVIEW.md GRID_PROTOCOL.md REVIEW_TASK.md; do
-    printf '%s %s\n' "$2" "$f" >"$1/$f"
+  touch_worker_protocols "$1"
+  touch "$1"/{EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+  for f in "$1"/*.md; do
+    printf '%s %s\n' "$2" "${f##*/}" >"$f"
   done
 }
 
@@ -687,7 +723,8 @@ EOF
   cd "$WT"
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-rev"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   run run_resume
   [ "$status" -eq 0 ]
   [[ "$output" == *"unsubstituted protocol revision"* ]]
@@ -726,7 +763,8 @@ EOF
   sed 's/@protocolRev@/0123456789abcdef/' "$RESUME" >"$BATS_TEST_TMPDIR/resume-subst.sh"
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-mismatch"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev_dir="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
   n=0
   while IFS='|' read -r eng model effort profile _bin _marker; do
@@ -761,7 +799,7 @@ EOF
     DISPATCH_PROFILE="$profile" run run_resume
     [ "$status" -eq 0 ]
     case "$eng" in
-    pi) grep -q -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" <(launch_log) ;;
+    pi) grep -q -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md" <(launch_log) ;;
     *) grep -q -- "Read $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md" <(launch_log) ;;
     esac
     grep -q -- "live in $DISPATCHER_PROTOCOL_DIR" <(launch_log)
@@ -815,7 +853,7 @@ _assert_resume_bound() {
 
 # dispatch-resume.sh is a standalone build, so it carries its own copies.
 @test "shell_quote and write_launch_script are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _settings_env_names _settings_env_json _record_protocol_dirs launch_dir_args claude_lean_env _ensure_roster_render _recorded_pid_live _pid_alive _file_mtime_s _pid_recycled _ps_elapsed_s; do
+  for fn in shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _settings_env_names _settings_env_json _record_protocol_dirs launch_dir_args claude_lean_env _worker_protocol_files _ensure_roster_render _recorded_pid_live _pid_alive _file_mtime_s _pid_recycled _ps_elapsed_s; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
     b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
     [ -n "$a" ]
@@ -1597,9 +1635,10 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   run grep -c -- '--continue' <(launch_log)
   [ "$output" = 0 ]
   grep -q 'Read SPEC.md and PLAN.md' <(launch_log)
-  grep -q -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" <(launch_log)
+  grep -q -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md" <(launch_log)
   grep -q -- '--no-approve' <(launch_log)
   grep -q 'role panes (plan-critic,reviewer) may still be parked' <(launch_log)
+  grep -qF -- "Follow $DISPATCHER_PROTOCOL_DIR/WORKER_GRID.pi.md Grid mode and address them through the crew bus." <(launch_log)
   [ "$(jq -r .defaultProjectTrust "$HOME/.pi/dispatcher-worker/settings.json")" = never ]
   [ "$(jq -r 'select(.kind == "resume") | .continued' "$(bus_log)" | tail -1)" = false ]
   sid="$(grep -oE -- "--session-id $UUID_RE" <(launch_log) | head -1 | cut -d' ' -f2)"
@@ -1627,7 +1666,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   run run_resume
   [ "$status" -eq 0 ]
   grep -q 'REVIEW_TASK.md Role-grid path' <(launch_log)
-  run grep -c 'WORKER_PROTOCOL.md Grid mode' <(launch_log)
+  run grep -c 'WORKER_GRID.*Grid mode' <(launch_log)
   [ "$output" = 0 ]
 }
 
@@ -1915,6 +1954,7 @@ record_lead_for() {
   run run_resume
   [ "$status" -eq 0 ]
   grep -q "claude --resume $LEAD_ID --name iris" <(launch_log)
+  grep -qF -- "Follow $DISPATCHER_PROTOCOL_DIR/WORKER_GRID.claude.md Grid mode and address them through the crew bus." <(launch_log)
   run grep -c -- '--continue' <(launch_log)
   [ "$output" = 0 ]
   run grep -c -- '--session-id' <(launch_log)
@@ -1922,6 +1962,16 @@ record_lead_for() {
   [ "$(jq -r 'select(.kind == "resume") | .continued' "$(bus_log)" | tail -1)" = true ]
   [ "$(cat "$(lead_rec)")" = "claude $LEAD_ID" ]
   [ "$(jq -r 'select(.kind == "resume") | .engine_session' "$(bus_log)" | tail -1)" = "$LEAD_ID" ]
+}
+
+@test "a codex resume names the unrendered WORKER_GRID.md for its role grid" {
+  setup_worker_wt 'roles: reviewer'
+  sed -i -e "s/^engine: .*/engine: codex/" -e "s|^model: .*|model: gpt-5.6-terra|" -e "s/^effort: .*/effort: medium/" "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_PROFILE=work run run_resume
+  [ "$status" -eq 0 ]
+  grep -qF -- "Follow $DISPATCHER_PROTOCOL_DIR/WORKER_GRID.md Grid mode and address them through the crew bus." <(launch_log)
 }
 
 @test "pi resume attaches to the recorded lead session by id" {

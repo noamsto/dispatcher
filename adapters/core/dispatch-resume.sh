@@ -424,6 +424,20 @@ launch_dir_args() {
   fi
 }
 
+# _worker_protocol_files <agent> — the worker protocol files a lead of <agent>
+# reads: the core and every phase file, as the claude or pi render, or the
+# sources for codex and cursor.
+_worker_protocol_files() {
+  local stem suffix=
+  case $1 in
+  claude) suffix=.claude ;;
+  pi) suffix=.pi ;;
+  esac
+  for stem in WORKER_PROTOCOL WORKER_GRID WORKER_REBASE WORKER_PLAN WORKER_EXECUTE WORKER_REVIEW WORKER_SHIP; do
+    printf '%s\n' "$stem$suffix.md"
+  done
+}
+
 # _require_protocol_files <dir> <file...> — abort before any scaffolding if
 # a required protocol file is missing from $PROTOCOL_DIR. $DISPATCHER_PROTOCOL_DIR
 # can point at a stale checkout (#177); this stops the launch instead of
@@ -986,8 +1000,7 @@ _escalation_hop() {
   fi
 }
 
-required_protocol_files=(WORKER_PROTOCOL.md EVIDENCE_REVIEW.md)
-[ "$agent" = claude ] && required_protocol_files+=(WORKER_PROTOCOL.claude.md)
+mapfile -t required_protocol_files < <({ printf '%s\n' WORKER_PROTOCOL.md EVIDENCE_REVIEW.md; _worker_protocol_files "$agent"; } | awk '!seen[$0]++')
 _require_protocol_files "$PROTOCOL_DIR" "${required_protocol_files[@]}"
 _check_protocol_rev "$PROTOCOL_DIR" "dispatch resume"
 _settings_load
@@ -1751,7 +1764,8 @@ grid_note=""
 if [ -n "$grid_roles" ] && [ "$kind" = review ]; then
   grid_note=" You lead a review role grid: role panes ($grid_roles) may still be parked in this window. Follow REVIEW_TASK.md Role-grid path and address them through the crew bus."
 elif [ -n "$grid_roles" ]; then
-  grid_note=" You lead a role grid: role panes ($grid_roles) may still be parked in this window. Follow WORKER_PROTOCOL.md Grid mode and address them through the crew bus."
+  grid_file=$(_worker_protocol_files "$agent" | sed -n '/^WORKER_GRID/p')
+  grid_note=" You lead a role grid: role panes ($grid_roles) may still be parked in this window. Follow $PROTOCOL_DIR/$grid_file Grid mode and address them through the crew bus."
 fi
 
 # Execute subagents never read WORKER_PROTOCOL.md. Codex/cursor/pi workers must
@@ -1811,7 +1825,7 @@ elif [ "$agent" = pi ]; then
   cont="$lead_cont"
   pi_sid=""
   [ -z "$lead_sid" ] || pi_sid=" --session-id $lead_sid"
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $q_agent_name --model $q_model --thinking $q_effort$pi_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path")$mcp_args 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $q_agent_name --model $q_model --thinking $q_effort$pi_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve$(pi_skill_args "$wt_path")$mcp_args 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
 else
   cont="$lead_cont"
   claude_sid=""

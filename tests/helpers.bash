@@ -252,6 +252,17 @@ _protocol_dir_rev() { # <dir>
   printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16
 }
 
+# touch_worker_protocols <dir> — the core worker protocol and every phase file,
+# as the source and the claude and pi renders: all a lead launch of any engine
+# requires from the worker protocol set.
+touch_worker_protocols() {
+  local dir="$1" stem
+  mkdir -p "$dir"
+  for stem in WORKER_PROTOCOL WORKER_GRID WORKER_REBASE WORKER_PLAN WORKER_EXECUTE WORKER_REVIEW WORKER_SHIP; do
+    touch "$dir/$stem.md" "$dir/$stem.claude.md" "$dir/$stem.pi.md"
+  done
+}
+
 # Valid standard-tier launch tuples for the protocol-dir coverage tests in
 # dispatch.bats and dispatch-resume.bats. One line per engine:
 #   agent|model|effort|profile|bin|marker

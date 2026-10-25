@@ -1693,6 +1693,20 @@ _pace_burn_weight() {
   printf ''
 }
 
+# _worker_protocol_files <agent> — the worker protocol files a lead of <agent>
+# reads: the core and every phase file, as the claude or pi render, or the
+# sources for codex and cursor.
+_worker_protocol_files() {
+  local stem suffix=
+  case $1 in
+  claude) suffix=.claude ;;
+  pi) suffix=.pi ;;
+  esac
+  for stem in WORKER_PROTOCOL WORKER_GRID WORKER_REBASE WORKER_PLAN WORKER_EXECUTE WORKER_REVIEW WORKER_SHIP; do
+    printf '%s\n' "$stem$suffix.md"
+  done
+}
+
 # _require_protocol_files <dir> <file...> — abort before any scaffolding if
 # a required protocol file is missing from $PROTOCOL_DIR. $DISPATCHER_PROTOCOL_DIR
 # can point at a stale checkout (#177); this stops the launch instead of
@@ -4915,7 +4929,7 @@ fi
 # reviewer, since pi has no native review batch). Every other engine now also
 # defaults to a grid on deep, but only for the critic phases — claude/codex/
 # cursor already run a full native review-gate batch, so the default carries
-# no reviewer role for them (see WORKER_PROTOCOL.md "Grid mode"). Roles
+# no reviewer role for them (see WORKER_GRID.md "Grid mode"). Roles
 # inherit the lead's own agent/model below when --roles doesn't say
 # otherwise, so this never requires a second engine. A review-kind worker has
 # no spec/plan phase, so it gets no critic grid; only a pi review worker above
@@ -5078,8 +5092,7 @@ for id in "${local_ids[@]}"; do
 done
 [ -z "$chrome" ] || chrome_gate
 
-required_protocol_files=(WORKER_PROTOCOL.md EVIDENCE_REVIEW.md)
-[ "$agent" = claude ] && required_protocol_files+=(WORKER_PROTOCOL.claude.md)
+mapfile -t required_protocol_files < <({ printf '%s\n' WORKER_PROTOCOL.md EVIDENCE_REVIEW.md; _worker_protocol_files "$agent"; } | awk '!seen[$0]++')
 [ -n "$roles_stamp" ] && required_protocol_files+=(GRID_PROTOCOL.md)
 _require_protocol_files "$PROTOCOL_DIR" "${required_protocol_files[@]}"
 _check_protocol_rev "$PROTOCOL_DIR" dispatch
@@ -6405,13 +6418,14 @@ esac
 
 # Grid mode: tell the lead it has role panes, and that delegation is
 # pane-scoped — only a phase with a pane skips the in-process path. The
-# native code-review gate always runs regardless (WORKER_PROTOCOL.md →
+# native code-review gate always runs regardless (WORKER_GRID.md →
 # "Grid mode").
 grid_note=""
 if [ -n "$roles_stamp" ] && [ "$kind" = review ]; then
   grid_note=" You lead a review role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow REVIEW_TASK.md 'Role-grid path' — on pi the reviewer and refuter panes are your reviewer batch and refuters; on any other engine they are an additive second opinion next to your native batch."
 elif [ -n "$roles_stamp" ]; then
-  grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane; your engine-native code-review gate still runs as usual (a reviewer pane is additive, except on pi where it is the gate)."
+  grid_file=$(_worker_protocol_files "$agent" | sed -n '/^WORKER_GRID/p')
+  grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow $PROTOCOL_DIR/$grid_file ('Grid mode') — delegate to the bus only the phases that have a pane; your engine-native code-review gate still runs as usual (a reviewer pane is additive, except on pi where it is the gate)."
 fi
 
 # WORKER_PROTOCOL.md reaches pi/claude leads as a system prompt, so its
@@ -6464,7 +6478,7 @@ elif [ "$agent" = pi ]; then
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session pi "$lead_sid"
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")PI_CODING_AGENT_DIR=$quoted_dir pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort") --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.md --no-approve$(pi_skill_args "$wt_path")$mcp_args $quoted_prompt"
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")PI_CODING_AGENT_DIR=$quoted_dir pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort") --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve$(pi_skill_args "$wt_path")$mcp_args $quoted_prompt"
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
