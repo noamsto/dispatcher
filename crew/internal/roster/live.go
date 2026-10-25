@@ -14,12 +14,13 @@ import (
 var LiveStates = []string{"working", "blocked", "pr_open"}
 
 // waitingStates are the finished states a live view keeps while the branch's
-// worktree still stands: the worker said done, failed or exited, and only
-// `crew reap` has anything left to take away.
+// worktree still stands and the row is still fresh: the worker said done, failed
+// or exited, and only `crew reap` has anything left to take away.
 var waitingStates = []string{"done", "failed", "exited"}
 
-// staleAfter is how old a non-terminal row may be and still count as live when
-// only its worktree vouches for it.
+// staleAfter is how old a row may be and still count as live when only its
+// worktree vouches for it: a non-terminal row loses that backing past it, and
+// so does a finished row no tmux window carries.
 const staleAfter = 48 * time.Hour
 
 // Liveness carries the two outside reads the rules make, injected so a test
@@ -61,9 +62,13 @@ func (l Liveness) Stale(row map[string]any) bool {
 }
 
 // Drawn reports whether a row belongs in a live view: a finished row only while
-// its worktree still stands for `crew reap` to take, and any other row only while
-// it is not stale. A `reaped` row is already history, and a row with no branch or
-// no state is not a worker row at all. Neither is drawn.
+// its worktree still stands for `crew reap` to take and the row is not stale, and
+// any other row only while it is not stale. A `reaped` row is already history, and
+// a row with no branch or no state is not a worker row at all. Neither is drawn.
+//
+// So a finished row outlives its tmux window only while it is younger than
+// staleAfter; past that, only a window stamped with its branch keeps it drawn. A
+// window never revives a finished row whose worktree is already gone.
 //
 // "Any other row" includes a state this build does not know. Staleness governs
 // that too, so a state `crew status` learns tomorrow cannot make a worker vanish.
@@ -75,7 +80,7 @@ func (l Liveness) Drawn(row map[string]any) bool {
 	case state == "reaped":
 		return false
 	case slices.Contains(waitingStates, state):
-		return !l.worktreeGone(row)
+		return !l.worktreeGone(row) && !l.Stale(row)
 	default:
 		return !l.Stale(row)
 	}

@@ -579,10 +579,13 @@ func TestAFinishedBranchIsDrawnUntilItsWorktreeIsReaped(t *testing.T) {
 	l := newLoop(t)
 	utc(t)
 	l.seed(t,
-		dispatchEvent("feat/1-a", 1791360000000, "sage", "green", "colour28", "Alpha task", "standard", "claude", "sonnet"),
-		statusEvent("worker:feat/1-a#s1", 1791360600000, "done", "", "", ""),
+		dispatchEvent("feat/1-a", l.wallNow()*1000-1200000, "sage", "green", "colour28", "Alpha task", "standard", "claude", "sonnet"),
+		// Minutes before the pinned wall clock: the row is younger than staleAfter,
+		// so the worktree is its only evidence of life.
+		statusEvent("worker:feat/1-a#s1", l.wallNow()*1000-600000, "done", "", "", ""),
 	)
-	// No window: the worktree is the only thing keeping this row drawn.
+	// No window and no age to spare: the worktree is the only thing keeping this
+	// row drawn.
 	l.windows = ""
 	l.worktrees(t, "feat/1-a")
 
@@ -601,6 +604,37 @@ func TestAFinishedBranchIsDrawnUntilItsWorktreeIsReaped(t *testing.T) {
 		t.Errorf("the row outlived its worktree:\n%s", text)
 	}
 }
+
+// TestAFinishedRowPastStaleAfterIsNotDrawn is the other half of the rule: a
+// finished row whose window is long gone and whose last word is past staleAfter
+// stops being drawn even though its worktree still waits for `crew reap`, and the
+// legend counts only what was drawn.
+func TestAFinishedRowPastStaleAfterIsNotDrawn(t *testing.T) {
+	l := newLoop(t)
+	utc(t)
+	old := l.wallNow()*1000 - staleAfterMs - 1000
+	l.seed(t,
+		dispatchEvent("feat/1-a", old, "sage", "green", "colour28", "Alpha task", "standard", "claude", "sonnet"),
+		statusEvent("worker:feat/1-a#s1", old, "done", "", "", ""),
+	)
+	// No window; the worktree alone still stands, and it is not enough.
+	l.windows = ""
+	l.worktrees(t, "feat/1-a")
+
+	if code, stderr := l.once(Request{}); code != exitOK {
+		t.Fatalf("code = %d, stderr %q", code, stderr)
+	}
+	text := l.diagram()
+	if strings.Contains(text, "sage") {
+		t.Errorf("a finished row past staleAfter outlived its window:\n%s", text)
+	}
+	if !strings.Contains(text, `legend: "0 active · 0 blocked · 0 done"`) {
+		t.Errorf("the legend counted a row the cut dropped:\n%s", text)
+	}
+}
+
+// staleAfterMs is the roster rule's bound in the bus's millisecond stamps.
+const staleAfterMs = 48 * 60 * 60 * 1000
 
 // TestUnchangedBusWritesNothingIsTheCmpGateEndToEnd: a rewrite, even of identical
 // bytes, would move the mtime off the epoch the fixture left there, and a one-word
