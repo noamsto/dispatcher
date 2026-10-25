@@ -37,12 +37,20 @@ ccs="$root/adapters/claude-code/plugin/skills"
 # directory is copied into each plugin tree below.
 bash "$root/scripts/gen-model-map-doc.sh"
 
-# The claude lead appends this render; codex, cursor and pi read the core file.
-# The tmp file sits inside the rev-hashed protocol dir, so every exit path removes it.
+# The claude lead appends the worker render; codex, cursor and pi read the core
+# file. The claude and pi dispatchers launch from their own renders; codex and
+# cursor dispatchers read the core file. The tmp files sit inside the rev-hashed
+# protocol dir, so every exit path removes them.
 tmp="$protocols/.WORKER_PROTOCOL.claude.md.tmp"
-trap 'rm -f "$tmp"' EXIT
+dtmp_claude="$protocols/.DISPATCHER_PROTOCOL.claude.md.tmp"
+dtmp_pi="$protocols/.DISPATCHER_PROTOCOL.pi.md.tmp"
+trap 'rm -f "$tmp" "$dtmp_claude" "$dtmp_pi"' EXIT
 bash "$root/scripts/render-engine.sh" claude "$protocols/WORKER_PROTOCOL.md" >"$tmp" || exit 1
 mv "$tmp" "$protocols/WORKER_PROTOCOL.claude.md"
+bash "$root/scripts/render-engine.sh" claude "$protocols/DISPATCHER_PROTOCOL.md" >"$dtmp_claude" || exit 1
+mv "$dtmp_claude" "$protocols/DISPATCHER_PROTOCOL.claude.md"
+bash "$root/scripts/render-engine.sh" pi "$protocols/DISPATCHER_PROTOCOL.md" >"$dtmp_pi" || exit 1
+mv "$dtmp_pi" "$protocols/DISPATCHER_PROTOCOL.pi.md"
 
 # The protocol revision marker (#184, #193) is no longer a committed file:
 # the content hash of adapters/core/protocols (sorted `name:sha256;` entries,
@@ -135,8 +143,13 @@ done
 
 # The claude plugin's local fallback is claude-only; codex keeps the core copy.
 cp "$protocols/WORKER_PROTOCOL.claude.md" "$root/adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md"
-# Only a claude lead reads the render; codex and cursor never launch one.
-rm "$root/adapters/codex/plugin/protocols/WORKER_PROTOCOL.claude.md"
+cp "$protocols/DISPATCHER_PROTOCOL.claude.md" "$root/adapters/claude-code/plugin/protocols/DISPATCHER_PROTOCOL.md"
+# Only a claude lead or dispatcher reads the claude render, and the pi render is
+# for pi dispatchers launched from the core dir; codex and cursor launch neither.
+rm "$root/adapters/claude-code/plugin/protocols/DISPATCHER_PROTOCOL.pi.md"
+rm "$root/adapters/codex/plugin/protocols/WORKER_PROTOCOL.claude.md" \
+  "$root/adapters/codex/plugin/protocols/DISPATCHER_PROTOCOL.claude.md" \
+  "$root/adapters/codex/plugin/protocols/DISPATCHER_PROTOCOL.pi.md"
 
 # codex reads a critic the way it reads a reviewer — body into a subagent
 # prompt. claude is not in this loop: its copy IS the agents/ registry below.
@@ -171,7 +184,9 @@ for r in "$reviewers" "$critics" "$protocols"; do
   rm -rf "$root/adapters/cursor/$(basename "$r")"
   cp -r "$r" "$root/adapters/cursor/$(basename "$r")"
 done
-rm "$root/adapters/cursor/protocols/WORKER_PROTOCOL.claude.md"
+rm "$root/adapters/cursor/protocols/WORKER_PROTOCOL.claude.md" \
+  "$root/adapters/cursor/protocols/DISPATCHER_PROTOCOL.claude.md" \
+  "$root/adapters/cursor/protocols/DISPATCHER_PROTOCOL.pi.md"
 
 # The two claude-only frontmatter keys live here rather than in the shared
 # body: a body codex and cursor paste into a prompt must not name a model

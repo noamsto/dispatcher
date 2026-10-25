@@ -811,6 +811,11 @@ drops every `<!-- only:... -->` … `<!-- /only -->` block whose list omits clau
 After editing `WORKER_PROTOCOL.md`, regenerate so a claude lead sees the change;
 pi, codex and cursor leads read the core file.
 
+Claude and pi dispatchers likewise launch from the generated renders
+`DISPATCHER_PROTOCOL.claude.md` and `DISPATCHER_PROTOCOL.pi.md`, so rerun
+`./scripts/gen-adapters.sh` after editing `DISPATCHER_PROTOCOL.md`; codex and
+cursor dispatchers read the core file.
+
 ### The version-skew guard (#184, #193)
 
 `dispatch` and `dispatch-resume` refuse to launch when the resolved protocol

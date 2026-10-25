@@ -653,8 +653,9 @@ launch. pi and cursor have no per-launch compaction knob: pi's trigger is
 auth/packages/hookyard), while the only existing pi agent-dir seeder is the
 shared worker dir — so pi is left at its engine default.
 
-Claude and pi bake `DISPATCHER_PROTOCOL.md` as a system prompt; codex/cursor
-inject it as the first prompt. The judging rubric
+Claude and pi bake their render (`DISPATCHER_PROTOCOL.claude.md` / `.pi.md`,
+rendered from `DISPATCHER_PROTOCOL.md`) as a system prompt; codex/cursor inject
+`DISPATCHER_PROTOCOL.md` as the first prompt. The judging rubric
 is identical across engines; the crew-watch park primitive is not — see
 `DISPATCHER_PROTOCOL.md` → "Read the bus".
 

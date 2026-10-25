@@ -22,7 +22,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
-proto="$repo/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+proto="$repo/adapters/core/protocols/DISPATCHER_PROTOCOL.claude.md"
 out="$here/runs.jsonl"
 MAIN="${MAIN:-$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir | sed 's|/\.git$||')}"
 MODEL="${MODEL:-opus}"
