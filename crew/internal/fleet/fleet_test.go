@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
@@ -657,5 +658,71 @@ func TestCrewsAskTheirHostsTogether(t *testing.T) {
 		if !seen[branch] {
 			t.Errorf("row for %s missing: %v", branch, out)
 		}
+	}
+}
+
+// A remote dispatch younger than the claims-index window folds its crew in
+// with no local status row, and its host is asked for the worker.
+func TestRecentRemoteOnlyCrewIsListed(t *testing.T) {
+	f := oneRepo(t, remoteDispatch(fixedNow.Unix()-3600, "c7", "feat/far", "iris", "mini"))
+	st := &remoteStub{rows: `[{"branch":"feat/far","name":"iris","state":"working","age_s":30,"live":true}]`}
+	f.opts.Remote = st.capture
+
+	out, errs, code := run(t, f, Request{JSON: true})
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, errs)
+	}
+	rows := jsonRows(t, out)
+	if len(rows) != 1 || rows[0]["branch"] != "feat/far" || rows[0]["host"] != "mini" {
+		t.Errorf("rows = %v, want feat/far on mini", out)
+	}
+}
+
+// A remote dispatch past the window is not folded, so no host is asked about
+// a crew that finished long ago.
+func TestRemoteDispatchPastTheWindowAsksNoHost(t *testing.T) {
+	f := oneRepo(t, remoteDispatch(fixedNow.Unix()-25*3600, "c7", "feat/far", "iris", "mini"))
+	st := &remoteStub{rows: `[]`}
+	f.opts.Remote = st.capture
+
+	out, errs, code := run(t, f, Request{JSON: true, All: true})
+	if code != 0 || len(jsonRows(t, out)) != 0 {
+		t.Errorf("code %d, rows:\n%s\nstderr %q", code, out, errs)
+	}
+	if got := st.asked(); len(got) != 0 {
+		t.Errorf("capture calls = %q, want none", got)
+	}
+}
+
+func TestRecentRemoteCrews(t *testing.T) {
+	now := float64(fixedNow.Unix())
+	dispatchAt := func(ts float64, crew, branch, host string) bus.Event {
+		doc := map[string]any{"ts": json.Number(fmt.Sprint(int64(ts) * 1000)), "remote": true}
+		if host != "" {
+			doc["host"] = host
+		}
+		return bus.Event{CrewID: crew, Kind: bus.KindDispatch, Branch: branch, Doc: doc}
+	}
+	reapedAt := func(crew, branch string) bus.Event {
+		return bus.Event{CrewID: crew, Kind: bus.KindStatus, From: "worker:" + branch + "#s1-1", Doc: map[string]any{"body": map[string]any{"state": "reaped"}}}
+	}
+	tests := []struct {
+		name   string
+		events []bus.Event
+		want   []string
+	}{
+		{"recent remote dispatch", []bus.Event{dispatchAt(now-3600, "c1", "feat/a", "mini")}, []string{"c1"}},
+		{"past the window", []bus.Event{dispatchAt(now-25*3600, "c1", "feat/a", "mini")}, nil},
+		{"branch reaped", []bus.Event{dispatchAt(now-3600, "c1", "feat/a", "mini"), reapedAt("c1", "feat/a")}, nil},
+		{"other branch reaped", []bus.Event{dispatchAt(now-3600, "c1", "feat/a", "mini"), reapedAt("c1", "feat/b")}, []string{"c1"}},
+		{"local dispatch", []bus.Event{dispatchAt(now-3600, "c1", "feat/a", "")}, nil},
+		{"newest dispatch is old", []bus.Event{dispatchAt(now-3600, "c1", "feat/a", "mini"), dispatchAt(now-25*3600, "c1", "feat/a", "mini")}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := recentRemoteCrews(tt.events, now); !slices.Equal(got, tt.want) {
+				t.Errorf("crews = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

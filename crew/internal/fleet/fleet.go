@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
@@ -177,6 +178,7 @@ func foldRepo(ctx context.Context, common string, events []bus.Event, docs []any
 				crews = append(crews, e.CrewID)
 			}
 		}
+		crews = append(crews, recentRemoteCrews(events, nowSec)...)
 		slices.Sort(crews)
 		crews = slices.Compact(crews)
 	}
@@ -206,6 +208,56 @@ func foldRepo(ctx context.Context, common string, events []bus.Event, docs []any
 		}
 	}
 	return out, nil
+}
+
+// recentRemoteCrews are the crews whose newest remote dispatch row is younger
+// than claimindex.StaleAfter and whose branch has no reaped row. A remote
+// worker's status lands on its host's bus, so such a crew can have no status
+// row here for foldRepo to find.
+func recentRemoteCrews(events []bus.Event, nowSec float64) []string {
+	type remoteDispatch struct {
+		branch string
+		ts     float64
+	}
+	type crewBranch struct{ crew, branch string }
+	newest := map[string]remoteDispatch{}
+	reaped := map[crewBranch]bool{}
+	for _, e := range events {
+		doc, ok := e.Doc.(map[string]any)
+		if !ok || e.CrewID == "" {
+			continue
+		}
+		if e.Kind == bus.KindDispatch {
+			if host, _ := doc["host"].(string); host == "" || doc["remote"] != true {
+				continue
+			}
+			ms, _ := doc["ts"].(json.Number)
+			ts, _ := ms.Float64()
+			newest[e.CrewID] = remoteDispatch{branch: e.Branch, ts: ts}
+		}
+		if e.Kind == bus.KindStatus {
+			body, _ := doc["body"].(map[string]any)
+			if body["state"] == "reaped" && strings.HasPrefix(e.From, "worker:") {
+				reaped[crewBranch{e.CrewID, workerBranch(e.From)}] = true
+			}
+		}
+	}
+	var crews []string
+	for crew, d := range newest {
+		if nowSec-d.ts/1000 < claimindex.StaleAfter.Seconds() && !reaped[crewBranch{crew, d.branch}] {
+			crews = append(crews, crew)
+		}
+	}
+	return crews
+}
+
+// workerBranch is the branch in a worker's from, `worker:<branch>#<session>`.
+func workerBranch(from string) string {
+	b := strings.TrimPrefix(from, "worker:")
+	if i := strings.LastIndex(b, "#"); i >= 0 {
+		b = b[:i]
+	}
+	return b
 }
 
 // oneLine flattens an error to one line: git's stderr ends in a newline and
