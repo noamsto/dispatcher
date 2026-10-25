@@ -188,7 +188,7 @@ resolved correctness findings against the current head as well. When API access
 or pagination is incomplete, report incomplete review state, not comments-clean.
 
 Batch verified in-scope fixes, test, then push and reply with commit and proof.
-Workers' follow-ups go to the dispatcher, which files them (`WORKER_PROTOCOL.md`
+Workers' follow-ups go to the dispatcher, which files them (`WORKER_SHIP.md`
 "Deferred findings"; workers hold no approval to create issues); other callers (direct commands, PR
 shepherds) still honor the user's approval rules before creating follow-up
 tickets or issues.
