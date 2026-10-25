@@ -17652,3 +17652,38 @@ _run_dispatch_no_crew_id() {
   [[ "$output" == *'crew adopt <id>'* ]]
   [[ "$output" != *'$PPID'* ]]
 }
+
+# ── Every phase file is readable by the lead (#703) ───────────
+
+# The stems of the core's "Phase files" table, one per line.
+_phase_stems() {
+  sed -n '/^## Phase files/,/^## /s/^| `\(WORKER_[A-Z]*\)` .*/\1/p' "$BATS_TEST_DIRNAME/../adapters/core/protocols/WORKER_PROTOCOL.md"
+}
+
+@test "the real protocol dir carries every phase file a claude lead's --add-dir grants" {
+  stub_launch_bins
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "real claude protocols"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *"--add-dir $DISPATCHER_PROTOCOL_DIR "* ]]
+  [ -n "$(_phase_stems)" ]
+  for stem in $(_phase_stems); do
+    [ -f "$DISPATCHER_PROTOCOL_DIR/$stem.claude.md" ] || { echo "missing $stem.claude.md in $DISPATCHER_PROTOCOL_DIR" >&2; return 1; }
+  done
+  [ -f "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" ]
+}
+
+@test "the real protocol dir carries every phase file a pi lead reads" {
+  stub_launch_bins
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "real pi protocols"
+  [ "$status" -eq 0 ]
+  line="$(grep -F -- "pi --name iris --model" <(launch_log))"
+  [[ "$line" == *"--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md"* ]]
+  [ -n "$(_phase_stems)" ]
+  for stem in $(_phase_stems); do
+    [ -f "$DISPATCHER_PROTOCOL_DIR/$stem.pi.md" ] || { echo "missing $stem.pi.md in $DISPATCHER_PROTOCOL_DIR" >&2; return 1; }
+  done
+  [ -f "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md" ]
+}

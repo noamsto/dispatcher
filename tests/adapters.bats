@@ -2810,3 +2810,57 @@ _has() { # file text...
   [ ! -e "$protocols/.WORKER_PROTOCOL.claude.md.tmp" ]
   [ -z "$(compgen -G "$protocols/.WORKER_*.tmp" || true)" ]
 }
+
+# ── Phase-file structural consistency (#703) ──────────────────
+
+# The stems of the core's "Phase files" table, one per line.
+_phase_stems() {
+  sed -n '/^## Phase files/,/^## /s/^| `\(WORKER_[A-Z]*\)` .*/\1/p' "$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+}
+
+@test "every stem in the core's Phase files table has a source and both renders" {
+  [ -n "$(_phase_stems)" ]
+  for stem in $(_phase_stems); do
+    for suffix in .md .claude.md .pi.md; do
+      [ -f "$ROOT/adapters/core/protocols/$stem$suffix" ] || { echo "missing $stem$suffix" >&2; return 1; }
+    done
+  done
+}
+
+@test "every worker phase source is named in the core's Phase files table" {
+  stems="$(_phase_stems)"
+  for source in "$ROOT"/adapters/core/protocols/WORKER_*.md; do
+    name="$(basename "$source" .md)"
+    case "$name" in
+    WORKER_PROTOCOL | *.claude | *.pi) continue ;;
+    esac
+    grep -qx "$name" <<<"$stems" || { echo "$name is not in the Phase files table" >&2; return 1; }
+  done
+}
+
+@test "every crew phaseStems value is a stem in the Phase files table" {
+  stems="$(_phase_stems)"
+  values="$(sed -n '/^var phaseStems/,/^}/s/.*"\(WORKER_[A-Z]*\)",$/\1/p' "$ROOT/crew/internal/status/pointer.go")"
+  [ -n "$values" ]
+  while IFS= read -r value; do
+    grep -qx "$value" <<<"$stems" || { echo "phaseStems value $value is not in the Phase files table" >&2; return 1; }
+  done <<<"$values"
+}
+
+@test "dispatch's _worker_protocol_files lists exactly the Phase files table stems" {
+  listed="$(sed -n '/^_worker_protocol_files() {/,/^}/s/.*for stem in \(.*\); do$/\1/p' "$ROOT/adapters/core/dispatch.sh" | tr ' ' '\n' | grep -vx WORKER_PROTOCOL | LC_ALL=C sort)"
+  [ -n "$listed" ]
+  [ "$listed" = "$(_phase_stems | LC_ALL=C sort)" ] || {
+    echo "dispatch lists: $listed" >&2
+    echo "table has: $(_phase_stems | LC_ALL=C sort)" >&2
+    return 1
+  }
+}
+
+@test "the core protocol and both its renders mention every phase stem" {
+  for file in WORKER_PROTOCOL.md WORKER_PROTOCOL.claude.md WORKER_PROTOCOL.pi.md; do
+    for stem in $(_phase_stems); do
+      grep -qF "$stem" "$ROOT/adapters/core/protocols/$file" || { echo "$file does not mention $stem" >&2; return 1; }
+    done
+  done
+}
