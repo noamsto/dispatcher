@@ -65,7 +65,6 @@ for _n in PROTOCOL SKILLS REVIEWERS CRITICS; do
     unset "DISPATCHER_${_n}_DIR"
   fi
 done
-protocol="$PROTOCOL_DIR/DISPATCHER_PROTOCOL.md"
 
 agent=claude
 model=""
@@ -139,6 +138,17 @@ claude | codex | cursor | pi) ;;
   exit 1
   ;;
 esac
+
+# Checked before the crew is minted: pi's --append-system-prompt takes text or a
+# file, so a missing render path would be appended as literal text.
+case "$agent" in
+claude | pi) protocol="$PROTOCOL_DIR/DISPATCHER_PROTOCOL.$agent.md" ;;
+*) protocol="$PROTOCOL_DIR/DISPATCHER_PROTOCOL.md" ;;
+esac
+if [ ! -f "$protocol" ]; then
+  echo "dispatcher: missing protocol file $protocol${DISPATCHER_PROTOCOL_DIR:+ (DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR)}; regenerate with scripts/gen-adapters.sh or point DISPATCHER_PROTOCOL_DIR at a dir that has it" >&2
+  exit 1
+fi
 
 # DISPATCH_ENGINES may come from the settings resolver (dispatch-config) when
 # unset in the environment — see dispatch-config.sh for the layer order.
