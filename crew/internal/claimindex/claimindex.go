@@ -23,6 +23,11 @@ import (
 
 var part = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
+// StaleAfter is the claims-index aging rule, dispatch.sh's _CLAIM_STALE_MS: a
+// worker on another host never writes its `reaped` row to this bus, so after a
+// day its claim and its remote dispatch row stop counting as live.
+const StaleAfter = 24 * time.Hour
+
 // Slug is the lowercased `owner/repo` of an origin URL: its last two path
 // segments, so https, ssh and scp forms of one repo agree. Empty when the URL
 // does not end in two safe segments.
