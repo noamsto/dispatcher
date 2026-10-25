@@ -408,8 +408,10 @@ output contract below), with each edit justified.
   the hopping one's re-acquire refuses, so it exits quietly.
   What reaches the renderer is the fold cut to `roster.Liveness` (#999): a running
   row that is not stale, and a finished row only while its worktree still waits
-  for `crew reap` to take it — a crew that lives for days was stacking its whole
-  history beside the one or two workers that were running. The cut runs on the
+  for `crew reap` to take it and either a tmux window carries its branch or the
+  row is younger than 48 h — a crew that lives for days was stacking its whole
+  history beside the one or two workers that were running, and a worker that
+  never opened a PR left its worktree behind for good. The cut runs on the
   folded rows before the model merges the pending dispatches, so a session
   launched and not yet posting stays drawn as `dispatched`, and the live count,
   the legend and the boxes all speak of the same rows. Fold and rule share one
