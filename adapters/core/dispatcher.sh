@@ -139,10 +139,8 @@ claude | codex | cursor | pi) ;;
   ;;
 esac
 
-# claude and pi launch from a generated per-engine render; codex and cursor
-# read the core file. Checked before the crew is minted or registered: pi's
-# --append-system-prompt takes text or a file, so a missing path would be
-# appended as literal text.
+# Checked before the crew is minted: pi's --append-system-prompt takes text or a
+# file, so a missing render path would be appended as literal text.
 case "$agent" in
 claude | pi) protocol="$PROTOCOL_DIR/DISPATCHER_PROTOCOL.$agent.md" ;;
 *) protocol="$PROTOCOL_DIR/DISPATCHER_PROTOCOL.md" ;;

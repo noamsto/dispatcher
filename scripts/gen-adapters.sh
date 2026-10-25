@@ -38,9 +38,8 @@ ccs="$root/adapters/claude-code/plugin/skills"
 bash "$root/scripts/gen-model-map-doc.sh"
 
 # The claude lead appends the worker render; codex, cursor and pi read the core
-# file. The claude and pi dispatchers launch from their own renders; codex and
-# cursor dispatchers read the core file. The tmp files sit inside the rev-hashed
-# protocol dir, so every exit path removes them.
+# file. Claude and pi dispatchers launch from their own renders. The tmp files sit
+# inside the rev-hashed protocol dir, so every exit path removes them.
 tmp="$protocols/.WORKER_PROTOCOL.claude.md.tmp"
 dtmp_claude="$protocols/.DISPATCHER_PROTOCOL.claude.md.tmp"
 dtmp_pi="$protocols/.DISPATCHER_PROTOCOL.pi.md.tmp"
@@ -144,8 +143,7 @@ done
 # The claude plugin's local fallback is claude-only; codex keeps the core copy.
 cp "$protocols/WORKER_PROTOCOL.claude.md" "$root/adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md"
 cp "$protocols/DISPATCHER_PROTOCOL.claude.md" "$root/adapters/claude-code/plugin/protocols/DISPATCHER_PROTOCOL.md"
-# Only a claude lead or dispatcher reads the claude render, and the pi render is
-# for pi dispatchers launched from the core dir; codex and cursor launch neither.
+# pi dispatchers launch from the core dir; codex and cursor read no render.
 rm "$root/adapters/claude-code/plugin/protocols/DISPATCHER_PROTOCOL.pi.md"
 rm "$root/adapters/codex/plugin/protocols/WORKER_PROTOCOL.claude.md" \
   "$root/adapters/codex/plugin/protocols/DISPATCHER_PROTOCOL.claude.md" \
