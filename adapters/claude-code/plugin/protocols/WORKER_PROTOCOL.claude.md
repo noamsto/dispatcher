@@ -47,14 +47,16 @@ Six phase files beside this one hold the stage rules and bind like this file. Re
 | `WORKER_REBASE` | rebase directives | a dispatcher directive to rebase or retarget |
 | `WORKER_PLAN` | Plan of record, Orchestration consult, Cross-engine one-shots | standard/deep: before the plan phase (every `plan:` value); deep: before the consult; any diverse-engine reviewer or other one-shot |
 | `WORKER_EXECUTE` | Fast deterministic gate, plan-shaped recovery and gate rework, Deliberate load | before execute and the gate, every tier incl. trivial |
-| `WORKER_REVIEW` | Code review gate | before the code-review gate |
-| `WORKER_SHIP` | PR body, Deferred findings, Acceptance ledger, rules 4–5, tracked-scaffolding check, When done PR flow | before `/deslop` + push, every tier |
+| `WORKER_REVIEW` | Code review gate, unavailable-gate path | before the code-review gate; any critic or reviewer you cannot spawn |
+| `WORKER_SHIP` | PR body, Deferred findings, Acceptance ledger, rules 4–5, tracked-scaffolding check, When done PR flow | at code-review reconcile (Deferred findings); before `/deslop` + push, every tier |
 
 Path: `<protocol_dir>/<stem>.claude.md`.
 
+A phase file named anywhere (by stem or as `WORKER_<X>.md`, in sibling docs too) means its Path.
+
 After a compaction or summary in your context, on a resume, and before acting on a directive that re-enters a stage, re-read the current stage's phase file (and `WORKER_GRID` if `roles:` is stamped) before your next action.
 
-`crew status "$CREW_WORKER_ID" working <stage>`, `<stage>` one of `spec|plan|execute|gate|review|ship`, prints `crew: read <path> before this stage`: read it first.
+`crew status "$CREW_WORKER_ID" working <stage>`, `<stage>` one of `spec|plan|execute|gate|review|ship`, prints `crew: read <path> before this stage`: read it first (`kind: implement`; a `kind: review` worker follows `REVIEW_TASK.md`).
 
 ## Base ref (stacked work)
 

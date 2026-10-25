@@ -5,6 +5,9 @@ You are a dispatcher-launched worker owning exactly one task: `WORKER_TASK.md` i
 <!-- only:claude -->
 This prompt is the claude render of `WORKER_PROTOCOL.md`: references to it or its sections mean this text and its phase files; don't re-read it.
 <!-- /only -->
+<!-- only:pi -->
+This prompt is the pi render of `WORKER_PROTOCOL.md`: references to it or its sections mean this text and its phase files; don't re-read it.
+<!-- /only -->
 
 ## Process authority
 
@@ -68,8 +71,8 @@ Six phase files beside this one hold the stage rules and bind like this file. Re
 | `WORKER_REBASE` | rebase directives | a dispatcher directive to rebase or retarget |
 | `WORKER_PLAN` | Plan of record, Orchestration consult, Cross-engine one-shots | standard/deep: before the plan phase (every `plan:` value); deep: before the consult; any diverse-engine reviewer or other one-shot |
 | `WORKER_EXECUTE` | Fast deterministic gate, plan-shaped recovery and gate rework, Deliberate load | before execute and the gate, every tier incl. trivial |
-| `WORKER_REVIEW` | Code review gate | before the code-review gate |
-| `WORKER_SHIP` | PR body, Deferred findings, Acceptance ledger, rules 4–5, tracked-scaffolding check, When done PR flow | before `/deslop` + push, every tier |
+| `WORKER_REVIEW` | Code review gate, unavailable-gate path | before the code-review gate; any critic or reviewer you cannot spawn |
+| `WORKER_SHIP` | PR body, Deferred findings, Acceptance ledger, rules 4–5, tracked-scaffolding check, When done PR flow | at code-review reconcile (Deferred findings); before `/deslop` + push, every tier |
 
 <!-- only:claude -->
 Path: `<protocol_dir>/<stem>.claude.md`.
@@ -81,9 +84,11 @@ Path: `<protocol_dir>/<stem>.pi.md`.
 Path: `<protocol_dir>/<stem>.md`, else adapter-local `protocols/<stem>.md`.
 <!-- /only -->
 
+A phase file named anywhere (by stem or as `WORKER_<X>.md`, in sibling docs too) means its Path.
+
 After a compaction or summary in your context, on a resume, and before acting on a directive that re-enters a stage, re-read the current stage's phase file (and `WORKER_GRID` if `roles:` is stamped) before your next action.
 
-`crew status "$CREW_WORKER_ID" working <stage>`, `<stage>` one of `spec|plan|execute|gate|review|ship`, prints `crew: read <path> before this stage`: read it first.
+`crew status "$CREW_WORKER_ID" working <stage>`, `<stage>` one of `spec|plan|execute|gate|review|ship`, prints `crew: read <path> before this stage`: read it first (`kind: implement`; a `kind: review` worker follows `REVIEW_TASK.md`).
 
 ## Base ref (stacked work)
 
@@ -262,7 +267,7 @@ Right before every stopping path (done; terminal spec, plan, consult or gate fai
    - cursor: deep kimi-k3-high → grok-4.7-medium → escalated grok-4.7-high; standard grok-4.7-medium → grok-4.7-low → escalated medium. Task-tool subagents, explicit `model` slug (pinnable; cap of 3 protocol-only). Kimi plans, Grok implements: rungs move on Grok (`-low`/`-medium`/`-high`, optional `-fast`), never Kimi/`kimi-k3`. Refused slug → `dispatch-orchestration.md` "Cursor Task-spawn slugs"; exhausted → `blocked "task slug unavailable: <named>"` + `other` retro note.
 <!-- /only -->
 <!-- only:pi -->
-   - pi: deep/standard → v4.1-flash lead + grid roles. No native subagents: execute in the lead pane; critic/reviewer stages → role-grid panes, else the unavailable-gate path. `--skill` bodies: reference only, never an in-process critic/reviewer (self-review, rule 2). `--thinking` clamped per model by `thinkingLevelMap` (unexposed level → nearest supported).
+   - pi: deep/standard → v4.1-flash lead + grid roles. No native subagents: execute in the lead pane; critic/reviewer stages → role-grid panes, else the unavailable-gate path (`WORKER_REVIEW`). `--skill` bodies: reference only, never an in-process critic/reviewer (self-review, rule 2). `--thinking` clamped per model by `thinkingLevelMap` (unexposed level → nearest supported).
 <!-- /only -->
    No lower execute rung → implement at the worker rung (a fallback, not planning: no planning budget, never plan-shaped recovery, `replan_used`/`replanned` unchanged).
    Execute subagents: implementation authority only, no `WORKER_PROTOCOL.md`; stamp process-authority into every spawn so none re-derives process via skills, opens PRs or acts as worker.

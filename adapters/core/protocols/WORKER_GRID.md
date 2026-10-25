@@ -69,8 +69,8 @@ Missed release: panes idle until their watchers time out (`status failed`, detai
 
 A role whose engine exits before your release posts `role_exited` to you (step 3) and a `blocked` status under `role:<branch>:<role>` for the dispatcher; treat it as died: respawn once (`dispatch --spawn-role <role>`; an exited pane is not "already running") or fall back.
 
-Died role (pane gone): fall back to that phase's normal path (native subagent / `spec-plan-critic` workflow / code-review batch) if the engine can spawn a fresh context, else the unavailable-gate path (blocked to the dispatcher).
+Died role (pane gone): fall back to that phase's normal path (native subagent / `spec-plan-critic` workflow / code-review batch) if the engine can spawn a fresh context, else the unavailable-gate path (`WORKER_REVIEW`; blocked to the dispatcher).
 <!-- only:pi -->
-pi cannot: take the unavailable-gate path (Code review gate), never review in the lead context.
+pi cannot: take the unavailable-gate path (`WORKER_REVIEW` Code review gate), never review in the lead context.
 <!-- /only -->
 After the pipeline you may also run `dispatch --reap-roles` (kills all role panes in your window, lazy or not), never instead of the per-role release.
