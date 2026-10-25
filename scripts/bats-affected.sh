@@ -93,7 +93,7 @@ map_file() {
   adapters/core/test-scope-guard.sh) add adapters test-scope-guard ;;
   adapters/core/reviewers/resolve-roster.sh) add "${prompt_set[@]}" ;;
   adapters/core/commands/*.md) add adapters dispatch ;;
-  adapters/core/protocols/WORKER_PROTOCOL.md) add "${prompt_set[@]}" crew ;;
+  adapters/core/protocols/WORKER_*.md) add "${prompt_set[@]}" crew ;;
   adapters/core/protocols/dispatch-orchestration.md) add "${prompt_set[@]}" crew model-map-doc ;;
   adapters/core/protocols/*.md | adapters/core/critics/*.md | adapters/core/reviewers/*.md | adapters/core/skills/*/SKILL.md) add "${prompt_set[@]}" ;;
   adapters/claude-code/* | adapters/codex/* | adapters/cursor/*) add adapters module ;;

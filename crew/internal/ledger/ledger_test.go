@@ -390,33 +390,48 @@ func TestCheck(t *testing.T) {
 	}
 }
 
-// TestProtocolExampleLedgersPass reads the protocol's own example ledgers from
-// the repo doc and checks every one passes the gate, waiver in hand; the
-// protocol must never show `pr_open "" ` with a trailing space as an example.
+// TestProtocolExampleLedgersPass reads the example ledgers from every worker
+// protocol source (the core and its phase files) and checks every one passes
+// the gate, waiver in hand; no file may show `pr_open "" ` with a trailing
+// space as an example.
 func TestProtocolExampleLedgersPass(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "adapters", "core", "protocols", "WORKER_PROTOCOL.md")
-	data, err := os.ReadFile(path)
+	pattern := filepath.Join("..", "..", "..", "adapters", "core", "protocols", "WORKER_*.md")
+	paths, err := filepath.Glob(pattern)
 	if err != nil {
-		drift.Missing(t, path, err)
+		t.Fatal(err)
 	}
-	doc := string(data)
+	paths = slices.DeleteFunc(paths, func(p string) bool {
+		return strings.HasSuffix(p, ".claude.md") || strings.HasSuffix(p, ".pi.md")
+	})
+	if len(paths) == 0 {
+		drift.Missing(t, pattern, os.ErrNotExist)
+	}
 	// grep -oE 'pr_open "[^"<][^"]*"': the quote guard skips `pr_open ""` and
 	// the `<acceptance ledger>` placeholder.
-	examples := regexp.MustCompile(`pr_open "([^"<][^"]*)"`).FindAllStringSubmatch(doc, -1)
-	if len(examples) < 1 {
-		t.Fatal("WORKER_PROTOCOL.md carries no concrete pr_open example")
-	}
+	example := regexp.MustCompile(`pr_open "([^"<][^"]*)"`)
 	// A task doc whose list holds the single entry the examples name.
 	acceptDoc := "tier: trivial\nkind: implement\nengine: claude\ncrew_id: c1\n\n## Acceptance\n- AC1\n"
-	for _, m := range examples {
-		detail := m[1]
-		in := Input{From: from, Crew: crew, Detail: detail, TaskDoc: acceptDoc, Log: waiverAll}
-		if got := Check(in); got != "" {
-			t.Errorf("the protocol's example ledger %q was refused: %s", detail, got)
+	found := 0
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc := string(data)
+		for _, m := range example.FindAllStringSubmatch(doc, -1) {
+			found++
+			detail := m[1]
+			in := Input{From: from, Crew: crew, Detail: detail, TaskDoc: acceptDoc, Log: waiverAll}
+			if got := Check(in); got != "" {
+				t.Errorf("%s: the protocol's example ledger %q was refused: %s", filepath.Base(path), detail, got)
+			}
+		}
+		if strings.Contains(doc, `pr_open "" `) {
+			t.Errorf(`%s shows a pr_open "" example with a trailing space`, filepath.Base(path))
 		}
 	}
-	if strings.Contains(doc, `pr_open "" `) {
-		t.Error(`WORKER_PROTOCOL.md shows a pr_open "" example with a trailing space`)
+	if found < 1 {
+		t.Fatal("no worker protocol file carries a concrete pr_open example")
 	}
 }
 
