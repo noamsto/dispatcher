@@ -37,7 +37,7 @@ Engine and roles
                           comma-separated or repeated (none: no catalog server)
   --chrome                Claude in Chrome for the claude lead (owner's browser; one per machine)
   --grid                  Role grid derived from the tier (critics, reviewer)
-  --no-grid               No role grid (refused with --agent pi above trivial)
+  --no-grid               No role grid (suppresses the deep critics default)
   --roles LIST            Grid as name[,name=<model>|name=<agent>:<model>[@effort]]
   --lazy                  Stamp the grid but start no pane; spawn each on demand
   --status                Add a crew-status pane beside the grid
@@ -1488,6 +1488,8 @@ _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" dispatch
 # tmux server's environment.
 _resolve_dir REVIEWERS_DIR DISPATCHER_REVIEWERS_DIR "@reviewersDir@" dispatch
 _resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" dispatch
+# The pinned `subagent` extension and generated agent roster pi leads load.
+_resolve_dir PI_DIR DISPATCHER_PI_DIR "@piDir@" dispatch
 
 # #947, duplicated from dispatch-resume.sh (adapters/core has no shared library;
 # each launcher bakes standalone): @launcherRuntimePath@, substituted by flake.nix's
@@ -2130,10 +2132,10 @@ write_launch_script() {
   if [ "${3:-}" = exit ]; then
     _file="$(mktemp "$_dir/exit.XXXXXX")"
     # shellcheck disable=SC2016 # the literal "$0" is the generated script's own, expanded when IT runs, not now
-    printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env -u DISPATCHER_PROTOCOL_DIR -u DISPATCHER_SKILLS_DIR -u DISPATCHER_REVIEWERS_DIR -u DISPATCHER_CRITICS_DIR %s\n' "$2" >"$_file"
+    printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env -u DISPATCHER_PROTOCOL_DIR -u DISPATCHER_SKILLS_DIR -u DISPATCHER_REVIEWERS_DIR -u DISPATCHER_CRITICS_DIR -u DISPATCHER_PI_DIR %s\n' "$2" >"$_file"
   else
     local _dirs="" _unset="" _n _v
-    for _n in PROTOCOL SKILLS REVIEWERS CRITICS; do
+    for _n in PROTOCOL SKILLS REVIEWERS CRITICS PI; do
       _v="${_n}_DIR"
       _v="${!_v:-}"
       if [[ $_v == /* ]]; then
@@ -4920,39 +4922,28 @@ if [ -n "$no_grid" ]; then
     echo "dispatch: --no-grid conflicts with --grid/--roles" >&2
     exit 1
   fi
-  if [ "$agent" = pi ] && [ "$tier" != trivial ]; then
-    echo "dispatch: --no-grid cannot be used with --agent pi on standard/deep — pi has no native subagents and needs the grid for fresh critic/reviewer contexts" >&2
-    exit 1
-  fi
 fi
-# pi keeps its existing standard+deep default (critics AND its review-gate
-# reviewer, since pi has no native review batch). Every other engine now also
-# defaults to a grid on deep, but only for the critic phases — claude/codex/
-# cursor already run a full native review-gate batch, so the default carries
-# no reviewer role for them (see WORKER_GRID.md "Grid mode"). Roles
-# inherit the lead's own agent/model below when --roles doesn't say
-# otherwise, so this never requires a second engine. A review-kind worker has
-# no spec/plan phase, so it gets no critic grid; only a pi review worker above
-# trivial defaults to `reviewer,refuter` panes, since pi has no native subagents
-# to fan out the reviewer batch and the per-finding refuters REVIEW_TASK.md
-# requires (an explicit --grid derives the same pair on any engine, additive
-# there). A non-pi deep dispatch whose plan is already provided gets no default
+# Every engine runs a native review-gate batch, so the default grid is critics
+# only: a deep dispatch gets spec-critic,plan-critic panes (see WORKER_GRID.md
+# "Grid mode") and no reviewer role. Roles inherit the lead's own agent/model
+# below when --roles doesn't say otherwise, so this never requires a second
+# engine. A review-kind worker has no spec/plan phase, so it gets no default
+# grid (an explicit --grid derives `reviewer,refuter`, additive next to the
+# native batch). A deep dispatch whose plan is already provided gets no default
 # grid either, since that leaves no critic role to default to.
-grid_default_non_pi=""
+grid_default_critics=""
 if [ -z "$grid_roles" ] && [ -z "$grid_flag" ] && [ -z "$no_grid" ]; then
-  if [ "$agent" = pi ] && [ "$tier" != trivial ]; then
-    grid_flag=1
-  elif [ "$kind" = review ]; then
+  if [ "$kind" = review ]; then
     : # no spec/plan phase, so no critic grid
   elif [ "$tier" = deep ] && [ "$plan_val" != provided ]; then
     grid_flag=1
-    grid_default_non_pi=1
+    grid_default_critics=1
   fi
 fi
 if [ -z "$grid_roles" ] && [ -n "$grid_flag" ]; then
   if [ "$kind" = review ]; then
     [ "$tier" = trivial ] || grid_roles="reviewer,refuter"
-  elif [ -n "$grid_default_non_pi" ]; then
+  elif [ -n "$grid_default_critics" ]; then
     grid_roles="spec-critic,plan-critic"
   else
     case "$tier" in
@@ -6422,10 +6413,10 @@ esac
 # "Grid mode").
 grid_note=""
 if [ -n "$roles_stamp" ] && [ "$kind" = review ]; then
-  grid_note=" You lead a review role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow REVIEW_TASK.md 'Role-grid path' — on pi the reviewer and refuter panes are your reviewer batch and refuters; on any other engine they are an additive second opinion next to your native batch."
+  grid_note=" You lead a review role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow REVIEW_TASK.md 'Role-grid path' — the reviewer and refuter panes are an additive second opinion next to your native reviewer batch."
 elif [ -n "$roles_stamp" ]; then
   grid_file=$(_worker_protocol_files "$agent" | sed -n '/^WORKER_GRID/p')
-  grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow $PROTOCOL_DIR/$grid_file ('Grid mode') — delegate to the bus only the phases that have a pane; your engine-native code-review gate still runs as usual (a reviewer pane is additive, except on pi where it is the gate)."
+  grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow $PROTOCOL_DIR/$grid_file ('Grid mode') — delegate to the bus only the phases that have a pane; your engine-native code-review gate still runs as usual (a reviewer pane is additive; on pi its reject still vetoes)."
 fi
 
 # WORKER_PROTOCOL.md reaches pi/claude leads as a system prompt, so its
@@ -6478,7 +6469,21 @@ elif [ "$agent" = pi ]; then
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session pi "$lead_sid"
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")PI_CODING_AGENT_DIR=$quoted_dir pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort") --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve$(pi_skill_args "$wt_path")$mcp_args $quoted_prompt"
+  pi_subagent_ext="$PI_DIR/extensions/subagent/index.ts"
+  if [ ! -f "$pi_subagent_ext" ]; then
+    echo "dispatch: pi subagent extension missing: $pi_subagent_ext — set DISPATCHER_PI_DIR to an adapters/pi checkout or rebuild" >&2
+    exit 1
+  fi
+  pi_pinned=$(awk -F'\t' '$1 == "version" { print $2; exit }' "$PI_DIR/extensions/subagent/contract.txt" 2>/dev/null || true)
+  pi_timeout=$(command -v timeout || command -v gtimeout || true)
+  if [ -n "$pi_pinned" ] && [ -n "$pi_timeout" ]; then
+    pi_have=$("$pi_timeout" 5 pi --version 2>/dev/null | tail -1 || true)
+    if [[ $pi_have =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $pi_have != "$pi_pinned" ]]; then
+      echo "dispatch: warning: installed pi $pi_have differs from the pinned subagent extension contract $pi_pinned — run: bash scripts/pi-subagent-contract.sh --installed" >&2
+    fi
+  fi
+  printf -v q_pi_ext '%q' "$pi_subagent_ext"
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")PI_CODING_AGENT_DIR=$quoted_dir pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort") --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve -e $q_pi_ext$(pi_skill_args "$wt_path")$mcp_args $quoted_prompt"
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"

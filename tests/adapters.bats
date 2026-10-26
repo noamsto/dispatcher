@@ -2887,3 +2887,110 @@ _phase_stems() {
     done
   done
 }
+
+@test "pi subagent contract: the pinned copy matches its contract" {
+  run bash "$ROOT/scripts/pi-subagent-contract.sh" --pinned
+  [ "$status" -eq 0 ]
+  [[ "$output" == ok:* ]]
+}
+
+@test "pi subagent contract: a drifted spawn line fails and is named" {
+  cp "$ROOT"/adapters/pi/extensions/subagent/{index,agents}.ts "$BATS_TEST_TMPDIR/"
+  sed -i.bak 's/"--no-session"/"--session"/' "$BATS_TEST_TMPDIR/index.ts"
+  run bash "$ROOT/scripts/pi-subagent-contract.sh" --pinned "$BATS_TEST_TMPDIR"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'missing in index.ts: const args: string[] = ["--mode", "json", "-p", "--no-session"];'* ]]
+}
+
+@test "pi subagent contract: the installed pi matches the upstream contract" {
+  run bash "$ROOT/scripts/pi-subagent-contract.sh" --installed
+  [ "$status" -ne 2 ] || skip "no installed pi to check: $output"
+  [ "$status" -eq 0 ]
+}
+
+@test "pi subagent contract: the pinned spawn sets CREW_SUBAGENT and keeps extensions" {
+  index="$ROOT/adapters/pi/extensions/subagent/index.ts"
+  grep -qF 'CREW_SUBAGENT: "1"' "$index"
+  run grep -F -- '--no-extensions' "$index"
+  [ "$status" -eq 1 ]
+}
+
+# ── pi agent roster ───────────────────────────────────────────
+
+@test "pi agent roster: one agent per harness reviewer and critic plus the fixed agents" {
+  expected="$({
+    for file in "$ROOT"/adapters/core/reviewers/*.md "$ROOT"/adapters/core/critics/*.md; do
+      basename "$file" .md
+    done
+    printf '%s\n' repo-reviewer refuter test-runner execute-light execute execute-escalated
+  } | LC_ALL=C sort)"
+  actual="$(for file in "$ROOT"/adapters/pi/agents/*.md; do basename "$file" .md; done | LC_ALL=C sort)"
+  [ "$actual" = "$expected" ] || {
+    echo "expected:" >&2
+    printf '%s\n' "$expected" >&2
+    echo "actual:" >&2
+    printf '%s\n' "$actual" >&2
+    return 1
+  }
+}
+
+@test "pi agent roster: frontmatter names, descriptions and pinned models" {
+  deep="$(jq -r .modelMap.pi.deep.default "$ROOT/adapters/core/defaults.json")"
+  [ -n "$deep" ]
+  for file in "$ROOT"/adapters/pi/agents/*.md; do
+    name="$(basename "$file" .md)"
+    [ "$(yq --front-matter=extract '.name' "$file")" = "$name" ] || { echo "$name: name is not its basename" >&2; return 1; }
+    [ "$(yq --front-matter=extract '.description | type' "$file")" = '!!str' ] || { echo "$name: description is not a string" >&2; return 1; }
+    [ -n "$(yq --front-matter=extract '.description' "$file")" ] || { echo "$name: description is empty" >&2; return 1; }
+
+    model="$(yq --front-matter=extract '.model' "$file")"
+    case "$model" in
+    "$deep":*) ;;
+    *) echo "$name: model $model is not pinned to $deep" >&2; return 1 ;;
+    esac
+    case "$name" in
+    execute-light) suffix=low ;;
+    execute | test-runner) suffix=high ;;
+    *) suffix=max ;;
+    esac
+    case "$model" in
+    *":$suffix") ;;
+    *) echo "$name: model $model does not end :$suffix" >&2; return 1 ;;
+    esac
+
+    if [[ $name == execute* ]]; then
+      [ "$(yq --front-matter=extract 'has("tools")' "$file")" = false ] || { echo "$name: has a tools key" >&2; return 1; }
+    else
+      [ "$(yq --front-matter=extract '.tools' "$file")" = 'read, grep, find, ls, bash' ] || { echo "$name: tools is not read, grep, find, ls, bash" >&2; return 1; }
+    fi
+  done
+}
+
+@test "pi agent roster: every agent carries the secret rule and an authority stamp" {
+  for file in "$ROOT"/adapters/pi/agents/*.md; do
+    name="$(basename "$file" .md)"
+    if [[ $name == execute* ]]; then
+      stamp='implementation authority only'
+      other='review authority only'
+    else
+      stamp='review authority only'
+      other='implementation authority only'
+    fi
+    grep -q 'Never print a secret' "$file" || { echo "$name: no secret rule" >&2; return 1; }
+    grep -qF "$stamp" "$file" || { echo "$name: no '$stamp'" >&2; return 1; }
+    ! grep -qF "$other" "$file" || { echo "$name: has '$other'" >&2; return 1; }
+  done
+}
+
+# ── Stale pi wording ──────────────────────────────────────────
+
+@test "stale pi wording: no doc says pi lacks native subagents" {
+  files=("$ROOT"/adapters/core/protocols/*.pi.md
+    "$ROOT"/adapters/core/protocols/REVIEW_TASK.md
+    "$ROOT"/adapters/core/protocols/dispatch-orchestration.md
+    "$ROOT"/adapters/core/protocols/DISPATCHER_PROTOCOL*.md
+    "$ROOT"/adapters/core/skills/spec-plan-critic/SKILL.md
+    "$ROOT"/README.md)
+  run grep -n -i -E 'no native subagents|pane is the review gate|pane \*\*is\*\* the review|no native batch|no native review batch' "${files[@]}"
+  [ "$status" -eq 1 ] || { printf '%s\n' "$output" >&2; false; }
+}

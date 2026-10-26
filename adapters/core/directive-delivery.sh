@@ -13,8 +13,8 @@
 #
 # Leads only: a session without a sessioned CREW_WORKER_ID (a human, a
 # dispatcher, a branch-only id) or with CREW_ROLE_ID (a grid role pane inherits
-# the lead's CREW_WORKER_ID, but its tool calls are not the lead's) never
-# reaches the bus.
+# the lead's CREW_WORKER_ID, but its tool calls are not the lead's) or
+# CREW_SUBAGENT (a pi `subagent` child, likewise) never reaches the bus.
 #
 # Only `dispatcher:<own crew>` is delivered. A role verdict, another worker's
 # msg or another crew's dispatcher stays unread for `crew await`, so the
@@ -55,6 +55,9 @@ set -u
 
 [[ ${CREW_WORKER_ID:-} == worker:*'#s'* ]] || exit 0
 [[ -z ${CREW_ROLE_ID:-} ]] || exit 0
+# A pi lead's `subagent` child inherits CREW_WORKER_ID (the dispatcher's pinned
+# subagent extension stamps CREW_SUBAGENT=1 on its spawn); its tool calls are not the lead's.
+[[ -z ${CREW_SUBAGENT:-} ]] || exit 0
 
 command -v jq >/dev/null || exit 0
 command -v crew >/dev/null || exit 0

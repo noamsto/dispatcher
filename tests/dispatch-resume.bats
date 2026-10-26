@@ -567,15 +567,17 @@ _store_resume() {
   BAKED_SKILLS="$STORE/h-new-skills"
   BAKED_REVIEWERS="$STORE/h-new-reviewers"
   BAKED_CRITICS="$STORE/h-new-critics"
+  BAKED_PI="$STORE/h-new-pi"
   BAKED_HINT="$STORE/h-new-cross-repo-hint.sh"
-  mkdir -p "$BAKED_REVIEWERS" "$BAKED_CRITICS"
+  mkdir -p "$BAKED_REVIEWERS" "$BAKED_CRITICS" "$BAKED_PI/extensions/subagent"
+  touch "$BAKED_PI/extensions/subagent/index.ts"
   cp "$CROSS_REPO_HINT_LIB" "$BAKED_HINT"
   printf 'new\n' >"$BAKED_REVIEWERS/r.md"
   printf 'new\n' >"$BAKED_CRITICS/c.md"
   _store_protocols "$BAKED_PROTOCOLS" new
   mkdir -p "$BAKED_SKILLS"
-  sed "s|@protocolDir@|$BAKED_PROTOCOLS|; s|@protocolRev@|$(_protocol_dir_rev "$BAKED_PROTOCOLS")|; s|@skillsDir@|$BAKED_SKILLS|; s|@reviewersDir@|$BAKED_REVIEWERS|; s|@criticsDir@|$BAKED_CRITICS|; s|@crossRepoHintLib@|$BAKED_HINT|" "$RESUME" >"$BATS_TEST_TMPDIR/resume-store.sh"
-  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR CROSS_REPO_HINT_LIB
+  sed "s|@protocolDir@|$BAKED_PROTOCOLS|; s|@protocolRev@|$(_protocol_dir_rev "$BAKED_PROTOCOLS")|; s|@skillsDir@|$BAKED_SKILLS|; s|@reviewersDir@|$BAKED_REVIEWERS|; s|@criticsDir@|$BAKED_CRITICS|; s|@piDir@|$BAKED_PI|; s|@crossRepoHintLib@|$BAKED_HINT|" "$RESUME" >"$BATS_TEST_TMPDIR/resume-store.sh"
+  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR DISPATCHER_PI_DIR CROSS_REPO_HINT_LIB
 }
 
 _store_protocols() { # <dir> <content>
@@ -637,7 +639,7 @@ _store_protocols() { # <dir> <content>
   [ "$status" -eq 0 ]
   [[ "$output" == *"dispatch resume: ignoring stale DISPATCHER_REVIEWERS_DIR"* ]]
   [[ "$output" == *"dispatch resume: ignoring stale DISPATCHER_CRITICS_DIR"* ]]
-  grep -qF -- "DISPATCHER_PROTOCOL_DIR=$BAKED_PROTOCOLS DISPATCHER_SKILLS_DIR=$BAKED_SKILLS DISPATCHER_REVIEWERS_DIR=$BAKED_REVIEWERS DISPATCHER_CRITICS_DIR=$BAKED_CRITICS DISPATCH_GRANT_ROOTS=: GIT_EDITOR=true" <(launch_log)
+  grep -qF -- "DISPATCHER_PROTOCOL_DIR=$BAKED_PROTOCOLS DISPATCHER_SKILLS_DIR=$BAKED_SKILLS DISPATCHER_REVIEWERS_DIR=$BAKED_REVIEWERS DISPATCHER_CRITICS_DIR=$BAKED_CRITICS DISPATCHER_PI_DIR=$BAKED_PI DISPATCH_GRANT_ROOTS=: GIT_EDITOR=true" <(launch_log)
   run grep -qF -- "h-old-source" <(launch_log)
   [ "$status" -ne 0 ]
 }
@@ -1167,9 +1169,8 @@ EOF
   run run_resume
   [ "$status" -eq 0 ]
   line="$(grep -F 'pi --continue' <(launch_log))"
-  [[ "$line" =~ \ -e\ ([^ ]+) ]]
+  [[ "$line" =~ \ -e\ ($XDG_CACHE_HOME/dispatcher/mcp/[^ ]+) ]]
   ext="${BASH_REMATCH[1]}"
-  [[ "$ext" == "$XDG_CACHE_HOME/dispatcher/mcp/"* ]]
   sed -n 's/^const servers = \(.*\);$/\1/p' "$ext" | jq -e 'keys == ["sentry"]'
   # A claude lead gets the same server through --mcp-config.
   sed -i -e 's/^engine: pi/engine: claude/' -e 's|^model: .*|model: sonnet|' "$WT/WORKER_TASK.md"
@@ -1637,6 +1638,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   grep -q 'Read SPEC.md and PLAN.md' <(launch_log)
   grep -q -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md" <(launch_log)
   grep -q -- '--no-approve' <(launch_log)
+  [ "$(grep -cF -- " --no-approve -e $DISPATCHER_PI_DIR/extensions/subagent/index.ts" <(launch_log))" -eq 1 ]
   grep -q 'role panes (plan-critic,reviewer) may still be parked' <(launch_log)
   grep -qF -- "Follow $DISPATCHER_PROTOCOL_DIR/WORKER_GRID.pi.md Grid mode and address them through the crew bus." <(launch_log)
   [ "$(jq -r .defaultProjectTrust "$HOME/.pi/dispatcher-worker/settings.json")" = never ]
@@ -1653,6 +1655,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   run run_resume
   [ "$status" -eq 0 ]
   grep -q "PI_CODING_AGENT_DIR=$HOME/.pi/dispatcher-worker pi --continue" <(launch_log)
+  [ "$(grep -cF -- " --no-approve -e $DISPATCHER_PI_DIR/extensions/subagent/index.ts" <(launch_log))" -eq 1 ]
   run grep -c -- '--session-id' <(launch_log)
   [ "$output" = 0 ]
   [ ! -e "$(lead_rec)" ]
@@ -1679,7 +1682,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  grep -q -- "--no-approve --skill $WT/.agents/skills --skill $DISPATCHER_SKILLS_DIR " <(launch_log)
+  grep -q -- "--no-approve -e $DISPATCHER_PI_DIR/extensions/subagent/index.ts --skill $WT/.agents/skills --skill $DISPATCHER_SKILLS_DIR " <(launch_log)
 }
 
 @test "pi resume passes only the harness skills when the worktree has none" {
@@ -1689,7 +1692,7 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  grep -q -- "--no-approve --skill $DISPATCHER_SKILLS_DIR " <(launch_log)
+  grep -q -- "--no-approve -e $DISPATCHER_PI_DIR/extensions/subagent/index.ts --skill $DISPATCHER_SKILLS_DIR " <(launch_log)
   [ "$(grep -cF -- '--skill' <(launch_log))" -eq 1 ]
 }
 

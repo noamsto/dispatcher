@@ -22,6 +22,8 @@ export CREW="${CREW_GO_BIN:?tests/setup_suite.bash did not build crew-go}"
 unset DISPATCH_ENGINES TMUX TMUX_PANE
 unset CREW_ID CREW_WORKER_ID CREW_ROLE_ID
 unset DISPATCHER_CRITICS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_SKILLS_DIR
+# The repo copy of the pinned pi subagent extension and agent roster pi leads load.
+export DISPATCHER_PI_DIR="$BATS_TEST_DIRNAME/../adapters/pi"
 unset DISPATCH_PROFILE DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_GRANT_ROOTS
 unset DISPATCH_SPEC DISPATCH_SHAPE DISPATCH_DRAFT_PR DISPATCH_CLAUDE_CONNECTORS
 # Raw-source consumers carry the unsubstituted @dispatchConfig@; point them at
