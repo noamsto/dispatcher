@@ -55,12 +55,12 @@ represented as `engines.pi` (month-to-date spend vs an optional monthly
 target, not a quota window) — a pi run on the Flash rungs is roughly $0.5–2
 per Flash run, which is what makes pi the cheap lane to shed claude burn
 onto. Subscription rungs group into three classes:
-**premium** — opus at `high`+
+**premium** — opus at `medium`+
 (fable ≈2–4× opus per task), `gpt-5.6-sol`, `grok-4.7-high`; **standard** — opus at
-`low`/`medium`, sonnet, `gpt-5.6-terra`, `grok-4.7-medium`; **cheap** — haiku,
+`low`, sonnet, `gpt-5.6-terra`, `grok-4.7-medium`; **cheap** — haiku,
 `gpt-5.6-luna`, `grok-4.7-low`, `composer-2.5*` (free). Effort multiplies burn
 within a rung (`xhigh`/`max`; codex `ultra` most); opus's class follows effort
-(`low`/`medium` → standard, `high` → premium, `xhigh`/`max` → premium and
+(`low` → standard, `medium`+ → premium, `xhigh`/`max` → premium and
 heavier). **Cursor `-fast` doubles the
 token rate on top of that** ($2/M in + $6/M out standard against $4/M + $12/M
 fast on Grok 4.7 and 4.6; 4.5 charges 3× on output), so it lifts a rung a whole class:
@@ -77,7 +77,7 @@ review depth.
 | `trivial`  | **haiku** @**low** → escalated **sonnet** @**low** → **opus** @**low**; a `trivial` task whose edit still needs reading to decide stays on **sonnet** — no delegation | **`gpt-5.6-luna`** — no delegation | **`grok-4.7-low`** — no delegation | **`openrouter/deepseek/deepseek-v4.1-flash`** — no grid; **`openrouter/deepseek/deepseek-v4-flash`** and **`openrouter/deepseek/deepseek-v4.1-flash-1017`** also accepted |
 | local      | — | — | — | ids from the `localModels` setting (trivial/standard by default) — see "Local models" |
 
-On claude, haiku leads `trivial` at `low` and may lead a fully specified `standard` at `medium`; sonnet leads `standard` at `medium` otherwise, and an opus escalation on those rows runs at that same tier-typical effort, never deep's `high` by habit; raise either only on the signals in `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever". On sonnet the ceiling is `high`: `dispatch` refuses sonnet @`xhigh`/`max`, and the next step past sonnet@`high` is opus@`medium` (standard), never sonnet `xhigh`/`max`. When the budget pace gate refuses opus, the fallback is `sonnet` at the same effort — or `sonnet at high` when the refused effort was `xhigh`/`max` (sonnet's ceiling) — not opus at a lower effort. An opus launch at `low`/`medium` is *not* refused as a premium model rung — its burn class follows effort and it counts as standard (Burn classes) — while `high` and above still refuse.
+On claude, haiku leads `trivial` at `low` and may lead a fully specified `standard` at `medium`; sonnet leads `standard` at `medium` otherwise, and an opus escalation on those rows runs at that same tier-typical effort, never deep's `high` by habit; raise either only on the signals in `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever". On sonnet the ceiling is `high`: `dispatch` refuses sonnet @`xhigh`/`max`, and the next step past sonnet@`high` is opus@`medium` (standard), never sonnet `xhigh`/`max`. When the budget pace gate refuses opus, the fallback is `sonnet` at the same effort — or `sonnet at high` when the refused effort was `xhigh`/`max` (sonnet's ceiling) — not opus at a lower effort. An opus launch at `low` is *not* refused as a premium model rung — its burn class follows effort and it counts as standard (Burn classes) — while `medium` and above still refuse. The one-rung opus escalation after a failed sonnet run is exempt from the model refusal; effort refusals and the 95% stop still apply.
 
 **Haiku on claude.** Haiku 5.5 (`claude-haiku-5-5`, alias `haiku`; verified: the alias resolves to it and it accepts `low` through `max` effort, default `medium`) leads the `trivial` tier by default at `low`: `trivial` runs no critics and a failed haiku run costs one rerun, so the cheap rung is the default; a `trivial` task whose edit still needs reading code to decide leads on sonnet instead. It may also lead claude `standard` at `medium` when the work is bounded and fully specified — dispatched `--plan provided` with root cause or mechanism, an explicit file list, a named approach, and acceptance criteria all present — and not security-adjacent, UI, or genuinely underspecified. Otherwise sonnet leads `standard` at `medium`. A failed haiku run escalates to sonnet in-row (`haiku → sonnet`) on both rows, then to opus. Haiku never leads `deep`. On claude `standard`/`deep`, an execute subagent runs `model: haiku` for a plan step whose files and edit are named (Agent `model: haiku`), and `model: sonnet` for a step that needs judgment; security or UI steps never use haiku. Haiku has no effort ceiling to enforce — it accepts every level, so the gate refuses none — so do not raise effort to compensate for a task that needs judgment; escalate the model instead.
 
@@ -545,9 +545,9 @@ The table is the configured model→downgrade mapping; opus's effort-aware
 exception lives in `pace_rule_target`, not in the mapping. Claude `standard`
 leads on `sonnet` (or a fully specified `haiku`), and `trivial` on `haiku`, so
 the ≥70% pace gate only touches those rows
-when `opus` is used as the escalation, and refuses it only at `high`+ — the
-tier-typical `low`/`medium` opus burns at the standard class and is admitted
-(Burn classes, above). Where it does refuse, the downgrade target is the same:
+when `opus` is used as the escalation, and refuses it at `medium`+ — the
+tier-typical `low` opus burns at the standard class and is admitted, and the
+escalation is exempt (Burn classes, above). Where it does refuse, the downgrade target is the same:
 `sonnet`.
 
 ### Cursor Task-spawn slugs

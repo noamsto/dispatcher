@@ -4633,20 +4633,21 @@ TABLE
   [[ "$output" == *"sonnet"* ]]
 }
 
-# Opus's burn class follows effort (#554): low/medium burn at the standard
-# class, so the pace gate must not refuse them as a premium model rung, while
-# high+ still refuses. Pinned against a live pace window (>15 points ahead).
-@test "opus at low/medium effort is not pace-refused, but high still is (#554)" {
+# Opus's burn class follows effort (#554, #627): low burns at the standard
+# class, so the pace gate must not refuse it as a premium model rung, while
+# medium+ is premium and refuses. Pinned against a live pace window (>15 points ahead).
+@test "opus at low effort is not pace-refused, but medium and high are (#554, #627)" {
   stub_launch_bins
-  budget_json_at claude 77 345600
-  run run_dispatch standard opus --agent claude --effort medium --crew-id c1 42 "opus medium not refused"
-  [ "$status" -eq 0 ]
-  grep -q 'send-keys' "$STUB_LOG"
-
   budget_json_at claude 77 345600
   run run_dispatch standard opus --agent claude --effort low --crew-id c1 42 "opus low not refused"
   [ "$status" -eq 0 ]
   grep -q 'send-keys' "$STUB_LOG"
+
+  budget_json_at claude 77 345600
+  run run_dispatch standard opus --agent claude --effort medium --crew-id c1 42 "opus medium refused"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the premium rung"* ]]
+  [[ "$output" == *"sonnet"* ]]
 
   budget_json_at claude 77 345600
   run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "opus high refused"
@@ -4694,8 +4695,8 @@ TABLE
       if [ "$expected" = ALLOW ]; then [ "$status" -eq 0 ]; else [ "$status" -eq 1 ]; fi
     done
   done <<'TABLE'
-claude|opus|ALLOW,ALLOW,MODEL,MODEL,MODEL
-claude|claude-opus-5|ALLOW,ALLOW,MODEL,MODEL,MODEL
+claude|opus|ALLOW,MODEL,MODEL,MODEL,MODEL
+claude|claude-opus-5|ALLOW,MODEL,MODEL,MODEL,MODEL
 claude|fable|MODEL,MODEL,MODEL,MODEL,MODEL
 claude|claude-fable-5-1|MODEL,MODEL,MODEL,MODEL,MODEL
 claude|sonnet|ALLOW,ALLOW,ALLOW,EFFORT,EFFORT
@@ -15094,6 +15095,49 @@ _escalation_seed_spoof() {
   [ "$status" -eq 0 ]
   wt_path="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
   grep -qx 'escalated_from: haiku (record only)' "$wt_path/WORKER_TASK.md"
+}
+
+@test "escalation: opus at medium after a failed sonnet clears the pace model refusal (#627)" {
+  stub_launch_bins
+  budget_json_at claude 77 345600
+  _escalation_seed "feat/42-do-a-thing" sonnet standard
+  run run_dispatch standard opus --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"rung refusal skipped (escalation)"* ]]
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-do-a-thing"
+  grep -qx 'escalated_from: sonnet (record only)' "$wt_path/WORKER_TASK.md"
+  grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "escalation: a second opus at medium after an exempt launch is pace-refused again (#627)" {
+  stub_launch_bins
+  budget_json_at claude 77 345600
+  _escalation_seed "feat/42-do-a-thing" sonnet standard
+  _esc_dispatch "feat/42-do-a-thing" s-exempt opus standard 300 claude
+  run run_dispatch standard opus --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the premium rung"* ]]
+  [[ "$output" != *"rung refusal skipped (escalation)"* ]]
+}
+
+@test "escalation: the pace exemption leaves xhigh, role panes and the 95% stop armed (#627)" {
+  stub_launch_bins
+  _escalation_seed "feat/42-do-a-thing" sonnet standard
+
+  budget_json_at claude 77 345600
+  run run_dispatch standard opus --effort xhigh --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the premium effort (xhigh) is refused"* ]]
+
+  budget_json_at claude 77 345600
+  run run_dispatch standard opus --effort medium --roles "reviewer=claude:opus@medium" --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the premium rung (opus) is refused"* ]]
+
+  budget_json_at claude 96 345600
+  run run_dispatch standard opus --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"quota exhausted"* ]]
 }
 
 @test "escalation: two-rung jump refuses" {

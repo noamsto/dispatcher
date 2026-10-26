@@ -352,7 +352,7 @@
       "match": "*opus*",
       "byEffort": {
         "low": {"class": "standard", "weight": 2},
-        "medium": {"class": "standard", "weight": 2},
+        "medium": {"class": "premium", "weight": 4},
         "xhigh": {"class": "premium", "weight": 6},
         "max": {"class": "premium", "weight": 8},
         "default": {"class": "premium", "weight": 4}
