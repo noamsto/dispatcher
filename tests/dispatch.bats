@@ -17559,6 +17559,16 @@ chrome_holder_bus() {
   [ "$status" -eq 0 ]
 }
 
+@test "chrome: a non-object bus line does not pin the browser" {
+  stub_launch_bins
+  chrome_holder_tmux
+  chrome_holder_bus working
+  printf '"junk"\n' >>"$BATS_TEST_TMPDIR/crews/a/crew/events.jsonl"
+  printf '{"kind":"status","from":"worker:feat/1-x#s1-1","ts":2,"body":{"state":"done"}}\n' >>"$BATS_TEST_TMPDIR/crews/a/crew/events.jsonl"
+  DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 0 ]
+}
+
 @test "chrome: a holder whose newest status is failed does not hold the browser" {
   stub_launch_bins
   chrome_holder_tmux

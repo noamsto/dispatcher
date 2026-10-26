@@ -1173,7 +1173,7 @@ local_slot_cap() {
 # new lead posts any status. Unreadable file: no output.
 _chrome_released() {
   [ -r "$1" ] || return 0
-  jq -nrR 'reduce (inputs | fromjson?) as $r ({};
+  jq -nrR 'reduce (inputs | fromjson? | objects) as $r ({};
       if $r.kind == "status" and (($r.from // "") | startswith("worker:")) then
         .[$r.from | ltrimstr("worker:") | sub("#[^#]*$"; "")] = ((($r.body? // {}) | (.state? // "")) | IN("done", "failed"))
       elif ($r.kind == "dispatch" or $r.kind == "resume") and ($r.branch? | type) == "string" then
