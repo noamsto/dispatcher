@@ -4140,7 +4140,12 @@ _dispatch_remote() {
       echo "dispatch: --host: not passing codename '$tok' to the remote (not [A-Za-z0-9-]+)" >&2
     fi
   done <<<"$occupied"
-  run_env=(--env "CREW_ID=$crew_id" --env "DISPATCH_TMUX_SESSION=crew-$crew_id" --env "DISPATCH_ORIGIN_HOST=$(_short_host)" --env DISPATCH_EMIT_ROW=1 --env "DISPATCH_SESSION_ID=$session")
+  run_env=(--env "CREW_ID=$crew_id" --env "DISPATCH_TMUX_SESSION=crew-$crew_id" --env DISPATCH_EMIT_ROW=1 --env "DISPATCH_SESSION_ID=$session")
+  # A cosmetic stamp must not fail the dispatch: a local name the remote would refuse is omitted.
+  origin_host="$(_short_host)"
+  if [[ $origin_host =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
+    run_env=("${run_env[@]:0:4}" --env "DISPATCH_ORIGIN_HOST=$origin_host" "${run_env[@]:4}")
+  fi
   [ "${#avoid[@]}" -eq 0 ] || run_env+=(--env "CREW_IDENTITY_AVOID=$(
     IFS=,
     echo "${avoid[*]}"
