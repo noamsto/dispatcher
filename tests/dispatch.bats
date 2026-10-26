@@ -3745,6 +3745,8 @@ EOF
 @test "dispatch --host --chrome is refused for a host without hosts.<h>.chrome" {
   stub_launch_bins
   _host_crew_stub
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"hosts":{"mini":{"ssh":"mini"}}}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
   run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 --chrome 42 "t"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"hosts.mini.chrome"* ]]
@@ -17572,6 +17574,20 @@ chrome_holder_bus() {
   DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
   [ "$status" -eq 1 ]
   [[ "$output" == *"in use by slate (feat/1-x)"* ]]
+}
+
+@test "chrome: a re-dispatch onto a finished branch holds the browser before its first status" {
+  stub_launch_bins
+  chrome_holder_tmux
+  local kind
+  for kind in dispatch resume; do
+    rm -rf "$BATS_TEST_TMPDIR/crews"
+    chrome_holder_bus done
+    printf '{"kind":"%s","branch":"feat/1-x","ts":9}\n' "$kind" >>"$BATS_TEST_TMPDIR/crews/a/crew/events.jsonl"
+    DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+    [ "$status" -eq 1 ] || return 1
+    [[ "$output" == *"in use by slate (feat/1-x)"* ]] || return 1
+  done
 }
 
 @test "chrome: a holder whose newest status is exited or reaped still holds the browser" {

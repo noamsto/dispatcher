@@ -2923,7 +2923,7 @@ EOF
   cd "$TEST_REPO"
   TMUX_PANE=%3 run run_resume '#7' --chrome
   [ "$status" -eq 1 ]
-  [[ "$output" == *"local to this machine"* ]]
+  [[ "$output" == *"not carried to a remote resume"* ]]
   run ! grep -q 'remote-run' "$STUB_LOG"
 }
 

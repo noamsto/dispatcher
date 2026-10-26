@@ -1167,17 +1167,33 @@ local_slot_cap() {
   done
 }
 
+# _chrome_released <events.jsonl> — the branches whose last row among worker
+# status rows, dispatch rows and resume rows (file order) is a worker status of
+# done or failed, one per line. A re-dispatch writes its dispatch row before the
+# new lead posts any status. Unreadable file: no output.
+_chrome_released() {
+  [ -r "$1" ] || return 0
+  jq -nrR 'reduce (inputs | fromjson?) as $r ({};
+      if $r.kind == "status" and (($r.from // "") | startswith("worker:")) then
+        .[$r.from | ltrimstr("worker:") | sub("#[^#]*$"; "")] = ((($r.body? // {}) | (.state? // "")) | IN("done", "failed"))
+      elif ($r.kind == "dispatch" or $r.kind == "resume") and ($r.branch? | type) == "string" then
+        .[$r.branch] = false
+      else . end)
+    | to_entries[] | select(.value) | .key' "$1" 2>/dev/null || true
+}
+
 # _chrome_holders — one `<name> (<branch>)` line per live lead pane holding
 # Claude in Chrome: @crew_chrome stamped 1, @crew_role empty or `lead`, and the
 # pane still running an engine (_is_engine_cmd). Under DISPATCH_PRECHECK, the
 # pane whose crew dir and branch both match DISPATCH_CHROME_SELF
 # (`<realpath crew dir>\x1f<branch>`) is skipped: resume's own pane is judged by
 # resume's live-lead guard, and a branch name alone could match another repo's.
-# A pane whose branch's newest worker status in its crew bus is done or failed
-# is skipped: the lead said it finished. exited is not counted (the SessionEnd
-# backstop also fires for subagents, a false read with a live engine), nor is
-# reaped with a live engine. No tmux server yields no lines, status 0. Fields
-# are \x1f-separated, as in _local_holders.
+# A pane whose branch's done or failed worker status in its crew bus is newer
+# than the branch's latest dispatch or resume row is skipped: the lead said it
+# finished, and no re-dispatch has since claimed the branch. exited is not
+# counted (the SessionEnd backstop also fires for subagents, a false read with a
+# live engine), nor is reaped with a live engine. No tmux server yields no
+# lines, status 0. Fields are \x1f-separated, as in _local_holders.
 _chrome_holders() {
   local flag cmd name lbranch role ldir self="" finished
   local -A finished_by_dir=()
@@ -1190,7 +1206,7 @@ _chrome_holders() {
       _is_engine_cmd "$cmd" || continue
       if [ -n "$ldir" ]; then
         if [ -z "${finished_by_dir[$ldir]+x}" ]; then
-          finished_by_dir[$ldir]="$(_fleet_finished "$ldir/events.jsonl" 'done|failed')"
+          finished_by_dir[$ldir]="$(_chrome_released "$ldir/events.jsonl")"
         fi
         finished="${finished_by_dir[$ldir]}"
         case $'\n'"$finished"$'\n' in *$'\n'"$lbranch"$'\n'*) continue ;; esac
@@ -1265,14 +1281,13 @@ _fleet_leads() {
   return 0
 }
 
-# _fleet_finished <events.jsonl> [<states regex>] — the branches whose newest
-# worker status row (in file order) matches the states (default
-# done|failed|exited|reaped), one per line.
+# _fleet_finished <events.jsonl> — the branches whose newest worker status row
+# (in file order) is done, failed, exited or reaped, one per line.
 _fleet_finished() {
   [ -r "$1" ] || return 0
   jq -r 'select(.kind == "status" and ((.from // "") | startswith("worker:")))
     | "\(.from | ltrimstr("worker:") | sub("#[^#]*$"; ""))\t\((.body? // {}) | (.state? // ""))"' "$1" 2>/dev/null |
-    awk -F'\t' -v states="${2:-done|failed|exited|reaped}" '{ s[$1] = $2 } END { for (b in s) if (s[b] ~ "^(" states ")$") print b }' || true
+    awk -F'\t' '{ s[$1] = $2 } END { for (b in s) if (s[b] ~ /^(done|failed|exited|reaped)$/) print b }' || true
 }
 
 # _fleet_owned <branch>... — non-empty when a lead pane (engine alive or not)
@@ -4095,14 +4110,15 @@ _dispatch_remote() {
   _settings_load
   # The remote runs its own claude-only check, ban and holder scan against its
   # machine; these guard what it cannot see (the caller's pane), the opt-in and
-  # this machine's ban.
+  # this machine's ban. An unknown host passes the opt-in so the --engines
+  # preflight below reports it.
   if [ -n "$chrome" ]; then
     if [ "$agent" != claude ]; then
       echo "dispatch: --chrome is claude-only (Claude in Chrome) — codex/cursor/pi workers check UI with agent-browser" >&2
       exit 1
     fi
     _refuse_chrome_from_worker
-    jq -e --arg h "$remote_host" '.hosts[$h].chrome == true' <<<"$settings" >/dev/null || {
+    jq -e --arg h "$remote_host" '.hosts[$h] == null or .hosts[$h].chrome == true' <<<"$settings" >/dev/null || {
       echo "dispatch: --host $remote_host --chrome: host $remote_host does not run the owner's browser — set hosts.$remote_host.chrome = true for a host that does" >&2
       exit 1
     }

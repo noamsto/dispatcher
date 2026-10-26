@@ -424,6 +424,15 @@ dispatch_remote() { # <extra dispatch args...> — a standard dispatch to crew c
   assert_nothing_recorded_locally
 }
 
+@test "dispatch --host --chrome with an unknown host reports the unknown host, before any ssh" {
+  run --separate-stderr dispatch_remote --host nowhere --chrome 42 "t"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"unknown host 'nowhere'"* ]]
+  [[ "$stderr" != *"hosts.nowhere.chrome"* ]]
+  [ ! -e "$SSH_LOG" ]
+  assert_nothing_recorded_locally
+}
+
 @test "dispatch --host --chrome runs the remote's own ban" {
   jq '. + {workerDeniedMcpServers: ["claude-in-chrome"]}' "$RHOME/config/dispatcher/settings.json" >"$BATS_TEST_TMPDIR/rs.json"
   cp "$BATS_TEST_TMPDIR/rs.json" "$RHOME/config/dispatcher/settings.json"
