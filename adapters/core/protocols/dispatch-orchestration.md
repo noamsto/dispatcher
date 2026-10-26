@@ -651,7 +651,10 @@ launch. pi and cursor have no per-launch compaction knob: pi's trigger is
 `compaction.reserveTokens` in its agent `settings.json`, and `PI_CODING_AGENT_DIR`
 *replaces* the ambient config dir (so a launch-scoped settings dir would re-seed
 auth/packages/hookyard), while the only existing pi agent-dir seeder is the
-shared worker dir — so pi is left at its engine default.
+shared worker dir — so pi is left at its engine default. The cap only bounds
+the peak; a claude or pi dispatcher also hands off to a fresh session at batch
+boundaries (`dispatcher --fresh`, `DISPATCHER_PROTOCOL.md` → "Hand off to a
+fresh session"), which keeps it near its floor.
 
 Claude and pi bake their render (`DISPATCHER_PROTOCOL.claude.md` / `.pi.md`,
 rendered from `DISPATCHER_PROTOCOL.md`) as a system prompt; codex/cursor inject
