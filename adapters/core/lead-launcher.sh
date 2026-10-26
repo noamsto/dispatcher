@@ -175,6 +175,7 @@ if [ "${1:-}" = --fresh ]; then
   if [[ $(ps -o args= -p "$launcher_pid" 2>/dev/null) != *lead-launcher* ]] || [ -z "$launcher_comm" ]; then
     _refuse "CREW_LEAD_LAUNCHER_PID=$launcher_pid is an ancestor but not a lead-launcher"
   fi
+  [ ! -L "$note" ] || _refuse "handoff note $note is a symlink — write a regular file"
   if [ ! -f "$note" ] || [ ! -s "$note" ]; then
     _refuse "handoff note $note is not a non-empty regular file — write it first"
   fi
@@ -277,7 +278,8 @@ while :; do
   : >"$since"
   # At 1s mtime granularity the previous session's note can tie the new stamp,
   # and a tie passes; dated far back, it is strictly older than any stamp.
-  [ ! -e "$note" ] || touch -t 200001010000 -- "$note"
+  # -h back-dates a planted symlink itself, never its target.
+  if [ -e "$note" ] || [ -L "$note" ]; then touch -h -t 200001010000 -- "$note"; fi
   env PATH="$engine_env_path" "${engine_cmd[@]}" --session-id "$sid" "$prompt" || rc=$?
 
   [ -f "$marker" ] || break

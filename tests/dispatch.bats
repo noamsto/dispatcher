@@ -17995,6 +17995,18 @@ _fs_not_armed() {
   [ "$(cat "$crew/leads/feat/42-seams-wiring")" = "claude $sid" ]
 }
 
+@test "fresh-seams: a --plan provided lead's first prompt names the review seam only" {
+  stub_launch_bins
+  _fs_launcher
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --fresh-seams --plan provided --crew-id c1 42 "seams provided"
+  [ "$status" -eq 0 ]
+  line="$(grep -F -- 'lead-launcher' <(launch_log))"
+  first="${line#* --prompt }"
+  first="${first%% --execute-prompt *}"
+  [[ "$first" == *"--fresh review (= $FS_LAUNCHER --fresh review)"* ]]
+  [[ "$first" != *"--fresh execute"* ]]
+}
+
 @test "fresh-seams: the setting arms without a flag, --no-fresh-seams overrides it, default is off" {
   stub_launch_bins
   _fs_launcher

@@ -231,6 +231,28 @@ $(_inner_body 'CREW_SUBAGENT=1 bash "$LAUNCHER" --fresh execute')"
   _refused "predates this session"
 }
 
+@test "lead-launcher: inner --fresh refuses a symlinked note" {
+  _engine_stub claude
+  _body 1 'printf "seen: 42\n" >"$STUB_DIR/real-note"
+ln -s "$STUB_DIR/real-note" "$CREW_LEAD_NOTE"
+'"$(_inner_body 'bash "$LAUNCHER" --fresh execute')"
+  run run_lead
+  _refused "is a symlink"
+}
+
+@test "lead-launcher: the outer back-dates a planted note symlink, never its target" {
+  _engine_stub claude
+  printf 'user file\n' >"$STUB_DIR/target"
+  touch -t 202001010000 "$STUB_DIR/target"
+  cp -p "$STUB_DIR/target" "$STUB_DIR/target.ref"
+  ln -s "$STUB_DIR/target" "$NOTE"
+  run --separate-stderr run_lead
+  [ "$status" -eq 0 ]
+  [ -z "$(find "$STUB_DIR/target" -prune -newer "$STUB_DIR/target.ref")" ]
+  [ -z "$(find "$STUB_DIR/target.ref" -prune -newer "$STUB_DIR/target")" ]
+  [ -L "$NOTE" ]
+}
+
 @test "lead-launcher: the previous seam's note is refused at the review seam; a rewritten one passes" {
   _engine_stub claude
   _body 1 "$(_seam_body execute)"

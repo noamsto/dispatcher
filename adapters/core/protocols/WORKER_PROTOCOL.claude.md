@@ -140,14 +140,14 @@ claude/pi only: dispatch never arms codex/cursor, and `dispatch resume` rewrites
 
 At two seams you end this session and a fresh one continues as the same lead (pane, worker id, crew, role panes unchanged) from files. Lead only, never from a subagent or mid-stage; each seam once, in order:
 
-- Execute seam: plan phase over (plan accepted, or revision cap reached with escalations recorded in the note), post-plan peek clean, before execute. `plan: provided` and legacy (no `plan:` field) runs have no execute seam: review seam only.
+- Execute seam: plan phase over (plan accepted, or revision cap reached with `escalations[]` returned, carried in the handoff note), post-plan peek clean, before execute. `plan: provided` and legacy (no `plan:` field) runs have no execute seam: review seam only.
 - Review seam: after the fast deterministic gate is green, before the first code-review batch; commit the work first (the fresh session reads it from git), then relaunch. Later review→fix rounds stay in the relaunched session.
 
 1. Write `<crew_dir>/artifacts/<branch>/handoff.md`: stage, seen-cursor, `replanned`, `replan_used`, `rework_count`, `plan_critic_first_pass`, `consulted`, `consult_engine`, retro notes so far, base ref, PR-body carry-overs (escalations, assumptions), role panes released or parked, and the tacit reasons the next session can't re-derive from files.
    The launcher refuses a note not modified since this session started: write it in this session, before launching.
 2. Run `"$CREW_LEAD_LAUNCHER" --fresh <execute|review>` (the absolute path the launcher exports; `lead-launcher` is not on `PATH`) as the last command of its call; success ends this session within seconds.
 
-A refusal (`lead-launcher: <why> — not relaunching; continue in this session`) or failure never blocks: continue here and write an `other` retro note. An auto-mode classifier denial of that command is no permission block: don't retry or block→await, continue in this session and write the `other` retro note.
+A refusal (`lead-launcher: <why> — not relaunching; continue in this session`) or failure never blocks: continue here and write an `other` retro note. An auto-mode classifier denial of that command is no permission block: don't retry or block→await, continue in this session, skip any later seam's relaunch (no further `$CREW_LEAD_LAUNCHER` attempt), and write the `other` retro note.
 
 Agent-tool subagents share your env, `CREW_LEAD_*` included: put "never run `$CREW_LEAD_LAUNCHER` or `lead-launcher`" in every execute and review subagent brief, beside rule 7's secret line.
 
