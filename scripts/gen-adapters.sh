@@ -37,15 +37,30 @@ ccs="$root/adapters/claude-code/plugin/skills"
 # directory is copied into each plugin tree below.
 bash "$root/scripts/gen-model-map-doc.sh"
 
-# The claude lead appends the worker render; codex, cursor and pi read the core
-# file. Claude and pi dispatchers launch from their own renders. The tmp files sit
-# inside the rev-hashed protocol dir, so every exit path removes them.
-tmp="$protocols/.WORKER_PROTOCOL.claude.md.tmp"
+# The claude and pi leads read renders of every worker protocol file; codex and
+# cursor read the sources. Claude and pi dispatchers launch from their own renders.
+# The tmp files sit inside the rev-hashed protocol dir, so every exit path removes them.
+trap 'rm -f "$protocols"/.WORKER_*.tmp "$protocols"/.DISPATCHER_*.tmp' EXIT
+worker_stems=()
+for f in "$protocols"/WORKER_*.md; do
+  case "$f" in *.claude.md | *.pi.md) continue ;; esac
+  stem="$(basename "$f" .md)"
+  worker_stems+=("$stem")
+  for engine in claude pi; do
+    tmp="$protocols/.$stem.$engine.md.tmp"
+    bash "$root/scripts/render-engine.sh" "$engine" "$f" >"$tmp" || exit 1
+    mv "$tmp" "$protocols/$stem.$engine.md"
+  done
+done
+# A render whose source is gone (a renamed phase file) would otherwise ship stale.
+for r in "$protocols"/WORKER_*.claude.md "$protocols"/WORKER_*.pi.md; do
+  [ -e "$r" ] || continue
+  base="${r%.claude.md}"
+  [ "$base" != "$r" ] || base="${r%.pi.md}"
+  [ -e "$base.md" ] || rm -f "$r"
+done
 dtmp_claude="$protocols/.DISPATCHER_PROTOCOL.claude.md.tmp"
 dtmp_pi="$protocols/.DISPATCHER_PROTOCOL.pi.md.tmp"
-trap 'rm -f "$tmp" "$dtmp_claude" "$dtmp_pi"' EXIT
-bash "$root/scripts/render-engine.sh" claude "$protocols/WORKER_PROTOCOL.md" >"$tmp" || exit 1
-mv "$tmp" "$protocols/WORKER_PROTOCOL.claude.md"
 bash "$root/scripts/render-engine.sh" claude "$protocols/DISPATCHER_PROTOCOL.md" >"$dtmp_claude" || exit 1
 mv "$dtmp_claude" "$protocols/DISPATCHER_PROTOCOL.claude.md"
 bash "$root/scripts/render-engine.sh" pi "$protocols/DISPATCHER_PROTOCOL.md" >"$dtmp_pi" || exit 1
@@ -141,13 +156,14 @@ for d in "$root/adapters/claude-code/plugin" "$root/adapters/codex/plugin"; do
 done
 
 # The claude plugin's local fallback is claude-only; codex keeps the core copy.
-cp "$protocols/WORKER_PROTOCOL.claude.md" "$root/adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md"
+for stem in "${worker_stems[@]}"; do
+  cp "$protocols/$stem.claude.md" "$root/adapters/claude-code/plugin/protocols/$stem.md"
+done
 cp "$protocols/DISPATCHER_PROTOCOL.claude.md" "$root/adapters/claude-code/plugin/protocols/DISPATCHER_PROTOCOL.md"
-# pi dispatchers launch from the core dir; codex and cursor read no render.
-rm "$root/adapters/claude-code/plugin/protocols/DISPATCHER_PROTOCOL.pi.md"
-rm "$root/adapters/codex/plugin/protocols/WORKER_PROTOCOL.claude.md" \
-  "$root/adapters/codex/plugin/protocols/DISPATCHER_PROTOCOL.claude.md" \
-  "$root/adapters/codex/plugin/protocols/DISPATCHER_PROTOCOL.pi.md"
+# Only a claude lead reads the claude render and only a pi lead the pi render;
+# codex and cursor never launch one.
+rm -f "$root/adapters/claude-code/plugin/protocols/"*.pi.md
+rm -f "$root/adapters/codex/plugin/protocols/"*.claude.md "$root/adapters/codex/plugin/protocols/"*.pi.md
 
 # codex reads a critic the way it reads a reviewer — body into a subagent
 # prompt. claude is not in this loop: its copy IS the agents/ registry below.
@@ -182,9 +198,7 @@ for r in "$reviewers" "$critics" "$protocols"; do
   rm -rf "$root/adapters/cursor/$(basename "$r")"
   cp -r "$r" "$root/adapters/cursor/$(basename "$r")"
 done
-rm "$root/adapters/cursor/protocols/WORKER_PROTOCOL.claude.md" \
-  "$root/adapters/cursor/protocols/DISPATCHER_PROTOCOL.claude.md" \
-  "$root/adapters/cursor/protocols/DISPATCHER_PROTOCOL.pi.md"
+rm -f "$root/adapters/cursor/protocols/"*.claude.md "$root/adapters/cursor/protocols/"*.pi.md
 
 # The two claude-only frontmatter keys live here rather than in the shared
 # body: a body codex and cursor paste into a prompt must not name a model

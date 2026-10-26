@@ -51,7 +51,8 @@ setup() {
   # What a real (unstubbed) dispatch.sh run needs, on either side.
   export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_TMPDIR/protocols"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,WORKER_PROTOCOL.claude.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR"/{EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
   export DISPATCHER_SKILLS_DIR="$BATS_TEST_TMPDIR/harness-skills"
   mkdir -p "$DISPATCHER_SKILLS_DIR/spec-plan-critic"
   printf -- '---\nname: spec-plan-critic\ndescription: seeded\n---\n' \

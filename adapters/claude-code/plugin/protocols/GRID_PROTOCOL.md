@@ -137,7 +137,7 @@ watcher sets you idle and wakes you on the next assignment; with pull delivery,
 await again. Stop only if the lead said `final`.
 If the lead never sends `final`, your pane idles until the lead's terminal
 status ages past reap's idle threshold and reap kills the window (see
-`WORKER_PROTOCOL.md` "Grid mode (role panes)") — the watcher's idle timeout
+`WORKER_GRID.md` "Grid mode (role panes)") — the watcher's idle timeout
 may post a `status failed` with detail `no assignment` first; that row is
 `role:`-prefixed, so it never folds into `crew rate`/`crew retro` outcome
 classification and is never recorded as a worker failure (#194).

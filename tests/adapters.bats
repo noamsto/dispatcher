@@ -247,14 +247,14 @@ commands_reach_row() { # path template containing $ROOT and $n
 @test "every adapter ships the complete shared protocol references" {
   for adapter in claude-code/plugin codex/plugin cursor; do
     for source in "$ROOT"/adapters/core/protocols/*.md; do
+      case "$(basename "$source")" in
+      # only a claude lead reads the claude render, so codex and cursor do not ship it.
+      WORKER_*.claude.md | DISPATCHER_PROTOCOL.claude.md) [ "$adapter" = claude-code/plugin ] || continue ;;
+      # no tree ships the pi render; the sync test covers its absence.
+      WORKER_*.pi.md | DISPATCHER_PROTOCOL.pi.md) continue ;;
       # claude-code ships the claude render; the sync test covers it.
-      [ "$adapter/$(basename "$source")" != claude-code/plugin/WORKER_PROTOCOL.md ] || continue
-      [ "$adapter/$(basename "$source")" != claude-code/plugin/DISPATCHER_PROTOCOL.md ] || continue
-      # only a claude lead reads the render, so codex and cursor do not ship it.
-      [ "$adapter" = claude-code/plugin ] || [ "$(basename "$source")" != WORKER_PROTOCOL.claude.md ] || continue
-      # the dispatcher renders: codex and cursor ship neither, claude-code only the claude one.
-      [ "$adapter" = claude-code/plugin ] || [ "$(basename "$source")" != DISPATCHER_PROTOCOL.claude.md ] || continue
-      [ "$(basename "$source")" != DISPATCHER_PROTOCOL.pi.md ] || continue
+      WORKER_*.md | DISPATCHER_PROTOCOL.md) [ "$adapter" != claude-code/plugin ] || continue ;;
+      esac
       cmp "$source" "$ROOT/adapters/$adapter/protocols/$(basename "$source")"
     done
   done
@@ -435,15 +435,20 @@ guard_ships_row() { # script basename
 @test "every canonical protocol exactly matches both shipped protocol trees" {
   for source in "$ROOT"/adapters/core/protocols/*.md; do
     name="$(basename "$source")"
-    # claude-code ships the claude render; the sync test covers it.
-    # (the dispatcher's pi render is not shipped to claude-code at all)
-    if [ "$name" != WORKER_PROTOCOL.md ] && [ "$name" != DISPATCHER_PROTOCOL.md ] && [ "$name" != DISPATCHER_PROTOCOL.pi.md ]; then
+    is_source=0
+    case "$name" in
+    # no tree ships a pi render; the sync tests cover its absence.
+    WORKER_*.pi.md | DISPATCHER_PROTOCOL.pi.md) continue ;;
+    WORKER_*.claude.md | DISPATCHER_PROTOCOL.claude.md) ;;
+    WORKER_*.md | DISPATCHER_PROTOCOL.md) is_source=1 ;;
+    esac
+    # claude-code ships the claude render in place of a source; the sync tests cover it.
+    if [ "$is_source" -eq 0 ]; then
       run cmp -s "$source" "$ROOT/adapters/claude-code/plugin/protocols/$name"
       [ "$status" -eq 0 ]
     fi
-    [ "$name" != WORKER_PROTOCOL.claude.md ] || continue
-    [ "$name" != DISPATCHER_PROTOCOL.claude.md ] || continue
-    [ "$name" != DISPATCHER_PROTOCOL.pi.md ] || continue
+    # only a claude lead reads the claude render; codex does not ship it.
+    case "$name" in WORKER_*.claude.md | DISPATCHER_PROTOCOL.claude.md) continue ;; esac
     run cmp -s "$source" "$ROOT/adapters/codex/plugin/protocols/$name"
     [ "$status" -eq 0 ]
   done
@@ -2438,18 +2443,18 @@ $hits"
   done <<'TABLE'
 adapters/core/protocols/DISPATCHER_PROTOCOL.md|**Owner authorization.**
 adapters/core/protocols/DISPATCHER_PROTOCOL.md|**Permission blocks.**
-adapters/core/protocols/WORKER_PROTOCOL.md|**Run the affected tests at every gate; CI runs the full suite.**
+adapters/core/protocols/WORKER_EXECUTE.md|**Run the affected tests at every gate; CI runs the full suite.**
 adapters/core/protocols/WORKER_PROTOCOL.md|## Resuming a killed run
-adapters/core/protocols/WORKER_PROTOCOL.md|"seam":"deslop"
-adapters/core/protocols/WORKER_PROTOCOL.md|dispatcher:deslop
+adapters/core/protocols/WORKER_SHIP.md|"seam":"deslop"
+adapters/core/protocols/WORKER_SHIP.md|dispatcher:deslop
 adapters/core/protocols/WORKER_PROTOCOL.md|## Retro notes (all tiers)
 adapters/core/protocols/DISPATCHER_PROTOCOL.md|**Retro synthesis — claude
-adapters/core/protocols/WORKER_PROTOCOL.md|## Code review gate (standard/deep)
-adapters/core/protocols/WORKER_PROTOCOL.md|## Cross-engine one-shots (consult and diverse reviewer)
+adapters/core/protocols/WORKER_REVIEW.md|## Code review gate (standard/deep)
+adapters/core/protocols/WORKER_PLAN.md|## Cross-engine one-shots (consult and diverse reviewer)
 adapters/cursor/rules/dispatcher.mdc|$DISPATCHER_CRITICS_DIR
 adapters/cursor/rules/dispatcher.mdc|"Code review gate"
-adapters/core/protocols/WORKER_PROTOCOL.md|**The reviewers themselves ship with the harness.**
-adapters/core/protocols/WORKER_PROTOCOL.md|reviewer-roster --base
+adapters/core/protocols/WORKER_REVIEW.md|**The reviewers themselves ship with the harness.**
+adapters/core/protocols/WORKER_REVIEW.md|reviewer-roster --base
 adapters/core/protocols/WORKER_PROTOCOL.md|## Gating verdicts are awaited (all engines)
 adapters/core/skills/spec-plan-critic/SKILL.md|**The critics themselves ship with the harness.**
 adapters/core/skills/spec-plan-critic/SKILL.md|$DISPATCHER_CRITICS_DIR
@@ -2457,8 +2462,9 @@ adapters/core/protocols/WORKER_PROTOCOL.md|**Critics are independent, on every e
 adapters/core/protocols/WORKER_PROTOCOL.md|$DISPATCHER_CRITICS_DIR
 adapters/core/protocols/DISPATCHER_PROTOCOL.md|**claude — streaming monitor.**
 adapters/core/protocols/DISPATCHER_PROTOCOL.md|**codex / pi — blocking park.**
-adapters/core/protocols/WORKER_PROTOCOL.md|## Deferred findings (standard/deep)
+adapters/core/protocols/WORKER_SHIP.md|## Deferred findings (standard/deep)
 adapters/core/protocols/dispatch-orchestration.md|### Cursor Task-spawn slugs
+adapters/core/protocols/WORKER_PROTOCOL.md|re-read the current stage's phase file
 TABLE
   [ "$missing" -eq 0 ]
 }
@@ -2567,47 +2573,115 @@ _render_fixture() {
   [ "$output" = "$expected" ]
 }
 
-@test "claude worker protocol render is in sync with core and the claude plugin copy" {
-  local core="$ROOT/adapters/core/protocols"
-  bash "$ROOT/scripts/render-engine.sh" claude "$core/WORKER_PROTOCOL.md" >"$BATS_TEST_TMPDIR/render.md"
-  cmp "$BATS_TEST_TMPDIR/render.md" "$core/WORKER_PROTOCOL.claude.md"
-  cmp "$BATS_TEST_TMPDIR/render.md" "$ROOT/adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md"
-  [ -f "$ROOT/adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.claude.md" ]
-  [ ! -e "$ROOT/adapters/codex/plugin/protocols/WORKER_PROTOCOL.claude.md" ]
-  [ ! -e "$ROOT/adapters/cursor/protocols/WORKER_PROTOCOL.claude.md" ]
+# Every worker protocol source: WORKER_*.md that is not itself a render.
+_worker_sources() {
+  local f
+  for f in "$ROOT"/adapters/core/protocols/WORKER_*.md; do
+    case "$f" in *.claude.md | *.pi.md) continue ;; esac
+    basename "$f" .md
+  done
+}
+
+@test "worker protocol renders are in sync with core and the shipped protocol trees" {
+  local core="$ROOT/adapters/core/protocols" s ran=0
+  while IFS= read -r s; do
+    ran=$((ran + 1))
+    bash "$ROOT/scripts/render-engine.sh" claude "$core/$s.md" >"$BATS_TEST_TMPDIR/render.md"
+    cmp "$BATS_TEST_TMPDIR/render.md" "$core/$s.claude.md"
+    cmp "$BATS_TEST_TMPDIR/render.md" "$ROOT/adapters/claude-code/plugin/protocols/$s.md"
+    bash "$ROOT/scripts/render-engine.sh" pi "$core/$s.md" >"$BATS_TEST_TMPDIR/render.md"
+    cmp "$BATS_TEST_TMPDIR/render.md" "$core/$s.pi.md"
+    [ -f "$ROOT/adapters/claude-code/plugin/protocols/$s.claude.md" ]
+    [ ! -e "$ROOT/adapters/codex/plugin/protocols/$s.claude.md" ]
+    [ ! -e "$ROOT/adapters/cursor/protocols/$s.claude.md" ]
+    [ ! -e "$ROOT/adapters/codex/plugin/protocols/$s.pi.md" ]
+    [ ! -e "$ROOT/adapters/cursor/protocols/$s.pi.md" ]
+  done < <(_worker_sources)
+  [ "$ran" -ge 1 ]
+  local stray
+  stray=$(compgen -G "$ROOT/adapters/claude-code/plugin/protocols/*.pi.md" || true)
+  [ -z "$stray" ] || { echo "pi render in claude tree: $stray"; return 1; }
+  stray=$(compgen -G "$ROOT/adapters/codex/plugin/protocols/*.claude.md" || true)
+  stray+=$(compgen -G "$ROOT/adapters/codex/plugin/protocols/*.pi.md" || true)
+  stray+=$(compgen -G "$ROOT/adapters/cursor/protocols/*.claude.md" || true)
+  stray+=$(compgen -G "$ROOT/adapters/cursor/protocols/*.pi.md" || true)
+  [ -z "$stray" ] || { echo "render in codex/cursor tree: $stray"; return 1; }
+}
+
+@test "worker renders carry no other engine's block content" {
+  local core="$ROOT/adapters/core/protocols" s e line blocks pi_blocks=0
+  local excl="$BATS_TEST_TMPDIR/excl" incl="$BATS_TEST_TMPDIR/incl"
+  while IFS= read -r s; do
+    for e in claude pi; do
+      [ -f "$core/$s.$e.md" ]
+      blocks=$(awk -v e="$e" -v excl="$excl" -v incl="$incl" '
+        BEGIN { printf "" >excl; printf "" >incl }
+        /^<!-- only:.*-->$/ {
+          list = $0; sub(/^<!-- only:/, "", list); sub(/ -->$/, "", list)
+          n = split(list, a, ","); keep = 0
+          for (i = 1; i <= n; i++) if (a[i] == e) keep = 1
+          inblock = 1; if (!keep) blocks++
+          next
+        }
+        /^<!-- \/only -->$/ { inblock = 0; next }
+        { if (inblock && !keep) print >excl; else print >incl }
+        END { print blocks + 0 }' "$core/$s.md")
+      if [ "$s" = WORKER_PROTOCOL ] && [ "$e" = pi ]; then
+        pi_blocks=$blocks
+      fi
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        if grep -qxF -- "$line" "$core/$s.$e.md"; then
+          echo "$s.$e.md carries another engine's line: $line"
+          return 1
+        fi
+      done < <(grep -vxFf "$incl" "$excl" || true)
+    done
+  done < <(_worker_sources)
+  [ "$pi_blocks" -ge 1 ]
 }
 
 @test "engine-only blocks reach codex and cursor copies but not the claude render" {
-  local core="$ROOT/adapters/core/protocols" a
+  local core="$ROOT/adapters/core/protocols" s a marker
   grep -E '^<!-- only:' "$core/WORKER_PROTOCOL.md" | grep -qv 'only:[^>]*claude'
-  for a in "$core/WORKER_PROTOCOL.claude.md" "$ROOT/adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md"; do
-    if grep -qE '^(<!-- only:|<!-- /only -->)' "$a"; then
-      echo "marker left in $a"
-      return 1
-    fi
-  done
-  local marker
-  while IFS= read -r marker; do
-    grep -qxF -- "$marker" "$ROOT/adapters/codex/plugin/protocols/WORKER_PROTOCOL.md"
-    grep -qxF -- "$marker" "$ROOT/adapters/cursor/protocols/WORKER_PROTOCOL.md"
-  done < <(grep -E '^<!-- only:' "$core/WORKER_PROTOCOL.md")
-  local anchor
-  for anchor in \
-    '**Run the affected tests at every gate; CI runs the full suite.**' \
-    '## Resuming a killed run' \
-    '"seam":"deslop"' \
-    'dispatcher:deslop' \
-    '## Retro notes (all tiers)' \
-    '## Code review gate (standard/deep)' \
-    '## Cross-engine one-shots (consult and diverse reviewer)' \
-    '**The reviewers themselves ship with the harness.**' \
-    'reviewer-roster --base' \
-    '## Gating verdicts are awaited (all engines)' \
-    '**Critics are independent, on every engine.**' \
-    '$DISPATCHER_CRITICS_DIR' \
-    '## Deferred findings (standard/deep)'; do
-    grep -qF -- "$anchor" "$core/WORKER_PROTOCOL.claude.md" || { echo "missing anchor: $anchor"; return 1; }
-  done
+  while IFS= read -r s; do
+    for a in "$core/$s.claude.md" "$core/$s.pi.md" "$ROOT/adapters/claude-code/plugin/protocols/$s.md"; do
+      if grep -qE '^(<!-- only:|<!-- /only -->)' "$a"; then
+        echo "marker left in $a"
+        return 1
+      fi
+    done
+    while IFS= read -r marker; do
+      grep -qxF -- "$marker" "$ROOT/adapters/codex/plugin/protocols/$s.md"
+      grep -qxF -- "$marker" "$ROOT/adapters/cursor/protocols/$s.md"
+    done < <(grep -E '^<!-- only:' "$core/$s.md" || true)
+  done < <(_worker_sources)
+  local stem anchor e
+  while IFS='|' read -r stem anchor; do
+    for e in claude pi; do
+      grep -qF -- "$anchor" "$core/$stem.$e.md" || { echo "missing anchor in $stem.$e.md: $anchor"; return 1; }
+    done
+  done <<'ANCHORS'
+WORKER_EXECUTE|**Run the affected tests at every gate; CI runs the full suite.**
+WORKER_PROTOCOL|## Resuming a killed run
+WORKER_SHIP|"seam":"deslop"
+WORKER_PROTOCOL|## Retro notes (all tiers)
+WORKER_REVIEW|## Code review gate (standard/deep)
+WORKER_PLAN|## Cross-engine one-shots (consult and diverse reviewer)
+WORKER_REVIEW|**The reviewers themselves ship with the harness.**
+WORKER_REVIEW|reviewer-roster --base
+WORKER_PROTOCOL|## Gating verdicts are awaited (all engines)
+WORKER_PROTOCOL|**Critics are independent, on every engine.**
+WORKER_PROTOCOL|$DISPATCHER_CRITICS_DIR
+WORKER_SHIP|## Deferred findings (standard/deep)
+WORKER_PROTOCOL|re-read the current stage's phase file
+ANCHORS
+  # dispatcher:deslop is claude-only: the claude render keeps it, the pi render drops it.
+  grep -qF -- 'dispatcher:deslop' "$core/WORKER_SHIP.claude.md"
+  if grep -qF -- 'dispatcher:deslop' "$core/WORKER_SHIP.pi.md"; then
+    echo "claude-only anchor in WORKER_SHIP.pi.md: dispatcher:deslop"
+    return 1
+  fi
 }
 
 @test "dispatcher protocol renders are in sync with core and the claude plugin copy" {
@@ -2678,12 +2752,15 @@ _has() { # file text...
   cp -r "$ROOT/adapters" "$ROOT/scripts" "$work/"
   protocols="$work/adapters/core/protocols"
   cp "$protocols/WORKER_PROTOCOL.claude.md" "$work/before.md"
+  cp "$protocols/WORKER_PROTOCOL.pi.md" "$work/before.pi.md"
   # An unclosed only: block makes render-engine.sh fail.
   printf '<!-- only:pi -->\n' >>"$protocols/WORKER_PROTOCOL.md"
   run bash -c "cd '$work' && ./scripts/gen-adapters.sh"
   [ "$status" -ne 0 ]
   cmp "$work/before.md" "$protocols/WORKER_PROTOCOL.claude.md"
+  cmp "$work/before.pi.md" "$protocols/WORKER_PROTOCOL.pi.md"
   [ ! -e "$protocols/.WORKER_PROTOCOL.claude.md.tmp" ]
+  [ -z "$(compgen -G "$protocols/.WORKER_*.tmp" || true)" ]
 }
 
 @test "gen-adapters leaves the dispatcher renders intact and no tmp file when the dispatcher protocol is malformed" {
@@ -2731,4 +2808,82 @@ _has() { # file text...
   run bash -c "cd '$work' && ./scripts/gen-adapters.sh"
   [ "$status" -ne 0 ]
   [ ! -e "$protocols/.WORKER_PROTOCOL.claude.md.tmp" ]
+  [ -z "$(compgen -G "$protocols/.WORKER_*.tmp" || true)" ]
+}
+
+# ── Phase-file structural consistency ─────────────────────────
+
+# The stems of the core's "Phase files" table, one per line.
+_phase_stems() {
+  sed -n '/^## Phase files/,/^## /s/^| `\(WORKER_[A-Z]*\)` .*/\1/p' "$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md"
+}
+
+@test "every stem in the core's Phase files table has a source and both renders" {
+  [ -n "$(_phase_stems)" ]
+  for stem in $(_phase_stems); do
+    for suffix in .md .claude.md .pi.md; do
+      [ -f "$ROOT/adapters/core/protocols/$stem$suffix" ] || { echo "missing $stem$suffix" >&2; return 1; }
+    done
+  done
+}
+
+@test "every worker phase source is named in the core's Phase files table" {
+  stems="$(_phase_stems)"
+  for source in "$ROOT"/adapters/core/protocols/WORKER_*.md; do
+    name="$(basename "$source" .md)"
+    case "$name" in
+    WORKER_PROTOCOL | *.claude | *.pi) continue ;;
+    esac
+    grep -qx "$name" <<<"$stems" || { echo "$name is not in the Phase files table" >&2; return 1; }
+  done
+}
+
+@test "every worker phase render in the core protocols has its source" {
+  renders=0
+  for render in "$ROOT"/adapters/core/protocols/WORKER_*.claude.md "$ROOT"/adapters/core/protocols/WORKER_*.pi.md; do
+    [ -e "$render" ] || continue
+    renders=$((renders + 1))
+    source="${render%.claude.md}"
+    [ "$source" != "$render" ] || source="${render%.pi.md}"
+    [ -f "$source.md" ] || { echo "$(basename "$render") has no source" >&2; return 1; }
+  done
+  [ "$renders" -gt 0 ]
+}
+
+@test "the crew phaseStems keys are the core's stage list" {
+  core="$(sed -n 's/.*one of `\([a-z|]*\)`.*/\1/p' "$ROOT/adapters/core/protocols/WORKER_PROTOCOL.md" | head -1 | tr '|' '\n' | LC_ALL=C sort)"
+  keys="$(sed -n '/^var phaseStems/,/^}/s/^[[:space:]]*"\([a-z]*\)":.*/\1/p' "$ROOT/crew/internal/status/pointer.go" | LC_ALL=C sort)"
+  [ -n "$core" ]
+  [ "$keys" = "$core" ] || {
+    echo "phaseStems keys: $keys" >&2
+    echo "core stages: $core" >&2
+    return 1
+  }
+}
+
+@test "every crew phaseStems value is a stem in the Phase files table" {
+  stems="$(_phase_stems)"
+  values="$(sed -n '/^var phaseStems/,/^}/s/.*"\(WORKER_[A-Z]*\)",$/\1/p' "$ROOT/crew/internal/status/pointer.go")"
+  [ -n "$values" ]
+  while IFS= read -r value; do
+    grep -qx "$value" <<<"$stems" || { echo "phaseStems value $value is not in the Phase files table" >&2; return 1; }
+  done <<<"$values"
+}
+
+@test "dispatch's _worker_protocol_files lists exactly the Phase files table stems" {
+  listed="$(sed -n '/^_worker_protocol_files() {/,/^}/s/.*for stem in \(.*\); do$/\1/p' "$ROOT/adapters/core/dispatch.sh" | tr ' ' '\n' | grep -vx WORKER_PROTOCOL | LC_ALL=C sort)"
+  [ -n "$listed" ]
+  [ "$listed" = "$(_phase_stems | LC_ALL=C sort)" ] || {
+    echo "dispatch lists: $listed" >&2
+    echo "table has: $(_phase_stems | LC_ALL=C sort)" >&2
+    return 1
+  }
+}
+
+@test "the core protocol and both its renders mention every phase stem" {
+  for file in WORKER_PROTOCOL.md WORKER_PROTOCOL.claude.md WORKER_PROTOCOL.pi.md; do
+    for stem in $(_phase_stems); do
+      grep -qF "$stem" "$ROOT/adapters/core/protocols/$file" || { echo "$file does not mention $stem" >&2; return 1; }
+    done
+  done
 }

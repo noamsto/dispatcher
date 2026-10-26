@@ -211,6 +211,7 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 		return code
 	}
 	publishPane(ctx, o, state, detail)
+	pointToPhase(ctx, o, state, detail, stderr)
 	return 0
 }
 

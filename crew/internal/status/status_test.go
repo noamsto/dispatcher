@@ -1076,3 +1076,122 @@ func TestGateReadsToplevelFromDir(t *testing.T) {
 		t.Errorf("Calls() = %q, want [-C /some/dir rev-parse --show-toplevel]", calls)
 	}
 }
+
+// phaseDoc is a task doc header naming the protocol dir and engine, and
+// phaseFile creates a phase file in it.
+func phaseDoc(dir, engine string) string {
+	return "tier: standard\nkind: implement\nengine: " + engine + "\nprotocol_dir: " + dir + "\n"
+}
+
+func phaseFile(t *testing.T, dir, name string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("phase\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStatusWorkingPrintsPhasePointer(t *testing.T) {
+	stems := map[string]string{
+		"spec": "WORKER_PLAN", "plan": "WORKER_PLAN",
+		"execute": "WORKER_EXECUTE", "gate": "WORKER_EXECUTE",
+		"review": "WORKER_REVIEW", "ship": "WORKER_SHIP",
+	}
+	suffixes := map[string]string{"claude": ".claude.md", "pi": ".pi.md", "codex": ".md"}
+	for engine, suffix := range suffixes {
+		for stage, stem := range stems {
+			t.Run(engine+"/"+stage, func(t *testing.T) {
+				f := newFixture(t)
+				dir := t.TempDir()
+				f.doc(phaseDoc(dir, engine))
+				phaseFile(t, dir, stem+suffix)
+				code, stderr := f.status(worker, "working", stage)
+				if want := "crew: read " + dir + "/" + stem + suffix + " before this stage\n"; code != 0 || stderr != want {
+					t.Errorf("got %d %q, want 0 %q", code, stderr, want)
+				}
+				f.wantRow(statusRow(worker, `{"state":"working","detail":`+jsonStr(stage)+`}`))
+			})
+		}
+	}
+
+	t.Run("stage word with trailing colon", func(t *testing.T) {
+		f := newFixture(t)
+		dir := t.TempDir()
+		f.doc(phaseDoc(dir, "claude"))
+		phaseFile(t, dir, "WORKER_EXECUTE.claude.md")
+		code, stderr := f.status(worker, "working", "execute: tests")
+		if want := "crew: read " + dir + "/WORKER_EXECUTE.claude.md before this stage\n"; code != 0 || stderr != want {
+			t.Errorf("got %d %q, want 0 %q", code, stderr, want)
+		}
+		f.wantRow(statusRow(worker, `{"state":"working","detail":"execute: tests"}`))
+	})
+
+	t.Run("first word decides", func(t *testing.T) {
+		f := newFixture(t)
+		dir := t.TempDir()
+		f.doc(phaseDoc(dir, "claude"))
+		phaseFile(t, dir, "WORKER_REVIEW.claude.md")
+		code, stderr := f.status(worker, "working", "review fixes")
+		if want := "crew: read " + dir + "/WORKER_REVIEW.claude.md before this stage\n"; code != 0 || stderr != want {
+			t.Errorf("got %d %q, want 0 %q", code, stderr, want)
+		}
+		f.wantRow(statusRow(worker, `{"state":"working","detail":"review fixes"}`))
+	})
+}
+
+func TestStatusNoPhasePointer(t *testing.T) {
+	implement := func(d string) string { return phaseDoc(d, "claude") }
+	tests := []struct {
+		name   string
+		doc    func(dir string) string // nil: no task doc
+		file   string                  // created in dir; "" none
+		state  string
+		detail string
+	}{
+		{"file absent", implement, "", "working", "plan"},
+		{"no task doc", nil, "WORKER_PLAN.claude.md", "working", "plan"},
+		// Unarrangeable: without the protocolDir guard the path is
+		// "/WORKER_PLAN.claude.md", which the test cannot create.
+		{"no protocol_dir", func(string) string { return "tier: standard\nkind: implement\nengine: claude\n" }, "WORKER_PLAN.claude.md", "working", "plan"},
+		{"no engine", func(d string) string { return "tier: standard\nprotocol_dir: " + d + "\n" }, "WORKER_PLAN.md", "working", "plan"},
+		{"review worker", func(d string) string {
+			return "tier: standard\nkind: review\nengine: claude\nprotocol_dir: " + d + "\n"
+		}, "WORKER_PLAN.claude.md", "working", "plan"},
+		{"blocked", implement, "WORKER_PLAN.claude.md", "blocked", "plan"},
+		{"unknown first word", implement, "WORKER_PLAN.claude.md", "working", "planning"},
+		{"case-sensitive", implement, "WORKER_PLAN.claude.md", "working", "Plan"},
+		{"empty detail", implement, "WORKER_PLAN.claude.md", "working", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			dir := t.TempDir()
+			if tt.doc != nil {
+				f.doc(tt.doc(dir))
+			}
+			if tt.file != "" {
+				phaseFile(t, dir, tt.file)
+			}
+			code, stderr := f.status(worker, tt.state, tt.detail)
+			if code != 0 || stderr != "" {
+				t.Errorf("got %d %q, want 0 with no stderr", code, stderr)
+			}
+			body := `{"state":` + jsonStr(tt.state)
+			if tt.detail != "" {
+				body += `,"detail":` + jsonStr(tt.detail)
+			}
+			f.wantRow(statusRow(worker, body+"}"))
+		})
+	}
+
+	t.Run("directory in place of the file", func(t *testing.T) {
+		f := newFixture(t)
+		dir := t.TempDir()
+		f.doc(phaseDoc(dir, "claude"))
+		if err := os.Mkdir(filepath.Join(dir, "WORKER_PLAN.claude.md"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if code, stderr := f.status(worker, "working", "plan"); code != 0 || stderr != "" {
+			t.Errorf("got %d %q", code, stderr)
+		}
+	})
+}

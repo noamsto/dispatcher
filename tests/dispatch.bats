@@ -39,7 +39,8 @@ EOF
   # for availability).
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,WORKER_PROTOCOL.claude.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR"/{EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
   # Stands in for the store path flake.nix bakes as @skillsDir@; pi launches
   # pass it with --skill (#225).
   export DISPATCHER_SKILLS_DIR="$TEST_REPO/harness-skills"
@@ -802,7 +803,7 @@ EOF
   worker_dir="$HOME/.pi/dispatcher-worker"
   lead_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris --model" <(launch_log))
   [[ "$lead_line" == *"--no-approve"* ]]
-  [[ "$lead_line" == *"--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md"* ]]
+  [[ "$lead_line" == *"--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md"* ]]
   [[ "$lead_line" == *"--thinking high"* ]]
   # No project skills in this worktree, so the harness dir is the only --skill.
   [[ "$lead_line" == *"--no-approve --skill $DISPATCHER_SKILLS_DIR "* ]]
@@ -860,9 +861,9 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "skill pass-through"
   [ "$status" -eq 0 ]
 
-  # The lead carries WORKER_PROTOCOL.md; each grid role pane gets its own
+  # The lead carries WORKER_PROTOCOL.pi.md; each grid role pane gets its own
   # --skill too, but this asserts the worker launch specifically.
-  lead_line=$(grep -F -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" <(launch_log))
+  lead_line=$(grep -F -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md" <(launch_log))
   [[ "$lead_line" == *"--no-approve --skill $TEST_REPO/.dispatch-wt/"*"/.agents/skills --skill $DISPATCHER_SKILLS_DIR "* ]]
 
   # The role pane goes through launch_role, whose worktree arrives as an
@@ -1675,7 +1676,7 @@ EOF
   [ "${#argv[@]}" -eq 16 ]
 
   # The exact contiguous span the bug splits, apostrophes intact.
-  [[ "${argv[15]}" == *"Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane"* ]]
+  [[ "${argv[15]}" == *"Follow $DISPATCHER_PROTOCOL_DIR/WORKER_GRID.md ('Grid mode') — delegate to the bus only the phases that have a pane"* ]]
 }
 
 # #216/#217/#230: dispatch.sh's shell_quote helper is the one thing standing
@@ -1777,7 +1778,7 @@ EOF
   _replay_lead_launch claude "claude --name iris --model"
   last=$((${#argv[@]} - 1))
   [[ "${argv[last]}" == "Read WORKER_TASK.md and run it end-to-end."* ]]
-  [[ "${argv[last]}" == *"Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane"* ]]
+  [[ "${argv[last]}" == *"Follow $DISPATCHER_PROTOCOL_DIR/WORKER_GRID.claude.md ('Grid mode') — delegate to the bus only the phases that have a pane"* ]]
   [[ "${argv[last]}" == *"(a reviewer pane is additive, except on pi where it is the gate)."* ]]
   # No fragment of the prompt leaked into an earlier argument.
   for ((i = 0; i < last; i++)); do
@@ -1793,7 +1794,7 @@ EOF
   _replay_lead_launch cursor-agent "--model 'kimi-k3-high' 'Read"
   last=$((${#argv[@]} - 1))
   [[ "${argv[last]}" == "Read $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md and WORKER_TASK.md, then run the task end-to-end."* ]]
-  [[ "${argv[last]}" == *"Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane"* ]]
+  [[ "${argv[last]}" == *"Follow $DISPATCHER_PROTOCOL_DIR/WORKER_GRID.md ('Grid mode') — delegate to the bus only the phases that have a pane"* ]]
   for ((i = 0; i < last; i++)); do
     [[ "${argv[i]}" != *"Grid mode"* && "${argv[i]}" != "Read "* ]]
   done
@@ -1808,7 +1809,7 @@ EOF
   _replay_lead_launch pi "pi --name iris --model"
   last=$((${#argv[@]} - 1))
   [[ "${argv[last]}" == "Read WORKER_TASK.md and run it end-to-end."* ]]
-  [[ "${argv[last]}" == *"Follow WORKER_PROTOCOL.md 'Grid mode' — delegate to the bus only the phases that have a pane"* ]]
+  [[ "${argv[last]}" == *"Follow $DISPATCHER_PROTOCOL_DIR/WORKER_GRID.pi.md ('Grid mode') — delegate to the bus only the phases that have a pane"* ]]
   for ((i = 0; i < last; i++)); do
     [[ "${argv[i]}" != *"Grid mode"* && "${argv[i]}" != "Read "* ]]
   done
@@ -1888,7 +1889,8 @@ EOF
   if [ -f "$STUB_LOG" ]; then run ! grep -q 'new-window' "$STUB_LOG"; fi
 
   # Only a claude lead appends the claude render, so only it requires that file.
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md"
+  # The phase sources a codex lead reads exist; no render does.
+  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL,WORKER_GRID,WORKER_REBASE,WORKER_PLAN,WORKER_EXECUTE,WORKER_REVIEW,WORKER_SHIP}.md
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "no claude render"
   [ "$status" -ne 0 ]
   [[ "$output" == *"WORKER_PROTOCOL.claude.md"* ]]
@@ -1899,11 +1901,40 @@ EOF
   grep -q 'new-window' "$STUB_LOG"
 }
 
+@test "a pi dispatch aborts before scaffolding when WORKER_PROTOCOL.pi.md is missing" {
+  stub_launch_bins
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-pi-render"
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR"/{EVIDENCE_REVIEW.md,GRID_PROTOCOL.md}
+  rm "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "no pi render"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"WORKER_PROTOCOL.pi.md"* ]]
+  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'new-window' "$STUB_LOG"; fi
+}
+
+@test "a claude dispatch aborts before scaffolding when a phase render is missing" {
+  stub_launch_bins
+  export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-phase-render"
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  rm "$DISPATCHER_PROTOCOL_DIR/WORKER_REVIEW.claude.md"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "no phase render"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"WORKER_REVIEW.claude.md"* ]]
+  [[ "$output" == *"$DISPATCHER_PROTOCOL_DIR"* ]]
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
+  if [ -f "$STUB_LOG" ]; then run ! grep -q 'new-window' "$STUB_LOG"; fi
+}
+
 @test "deep dispatch aborts before scaffolding when GRID_PROTOCOL.md is missing from the protocol dir" {
   stub_launch_bins
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-grid"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "deep grid missing protocol file"
   [ "$status" -ne 0 ]
   [[ "$output" == *"GRID_PROTOCOL.md"* ]]
@@ -1917,7 +1948,8 @@ EOF
   _substituted_dispatch
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-mismatch"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev_dir="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
   DISPATCH_PROFILE=work run run_subst_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "rev mismatch"
   [ "$status" -ne 0 ]
@@ -1934,7 +1966,8 @@ EOF
   _substituted_dispatch
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-rev"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   DISPATCH_PROFILE=work run run_subst_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "stale protocols"
   [ "$status" -ne 0 ]
   [[ "$output" == *"protocol directory version mismatch"* ]]
@@ -1947,7 +1980,8 @@ EOF
   stub_launch_bins
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-matching"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
   _substituted_dispatch "$rev"
   DISPATCH_PROFILE=work run run_subst_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "rev match"
@@ -1960,7 +1994,8 @@ EOF
   stub_launch_bins
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-no-rev"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "checkout dev loop"
   [ "$status" -eq 0 ]
   [[ "$output" == *"unsubstituted protocol revision"* ]]
@@ -1994,8 +2029,10 @@ _store_dispatch() {
 _store_protocols() { # <dir> <content>
   local f
   mkdir -p "$1"
-  for f in WORKER_PROTOCOL.md WORKER_PROTOCOL.claude.md EVIDENCE_REVIEW.md GRID_PROTOCOL.md REVIEW_TASK.md; do
-    printf '%s %s\n' "$2" "$f" >"$1/$f"
+  touch_worker_protocols "$1"
+  touch "$1"/{EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+  for f in "$1"/*.md; do
+    printf '%s %s\n' "$2" "${f##*/}" >"$f"
   done
 }
 
@@ -2138,7 +2175,7 @@ _store_protocols() { # <dir> <content>
   DISPATCH_PROFILE=personal run run_store_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "stale skills export"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ignoring stale DISPATCHER_SKILLS_DIR"* ]]
-  lead_line=$(grep -F -- "--append-system-prompt $BAKED_PROTOCOLS/WORKER_PROTOCOL.md" <(launch_log))
+  lead_line=$(grep -F -- "--append-system-prompt $BAKED_PROTOCOLS/WORKER_PROTOCOL.pi.md" <(launch_log))
   [[ "$lead_line" == *"--no-approve --skill $BAKED_SKILLS "* ]]
   [[ "$lead_line" != *"h-old-source"* ]]
 }
@@ -2188,7 +2225,8 @@ EOF
   _substituted_dispatch
   export DISPATCHER_PROTOCOL_DIR="$TEST_REPO/protocols-mismatch"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.md" "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR/EVIDENCE_REVIEW.md"
   rev_dir="$(_protocol_dir_rev "$DISPATCHER_PROTOCOL_DIR")"
   n=0
   while IFS='|' read -r eng model effort profile _bin _marker; do
@@ -14388,7 +14426,8 @@ _assert_bound_send_keys() {
   done
   export DISPATCHER_PROTOCOL_DIR="$long_dir"
   mkdir -p "$DISPATCHER_PROTOCOL_DIR"
-  touch "$DISPATCHER_PROTOCOL_DIR"/{WORKER_PROTOCOL.md,WORKER_PROTOCOL.claude.md,EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
+  touch_worker_protocols "$DISPATCHER_PROTOCOL_DIR"
+  touch "$DISPATCHER_PROTOCOL_DIR"/{EVIDENCE_REVIEW.md,GRID_PROTOCOL.md,REVIEW_TASK.md}
 
   crew_launch_dir="$(git -C "$TEST_REPO" rev-parse --path-format=absolute --git-common-dir)/crew/launch"
   n=0
@@ -14409,7 +14448,9 @@ _assert_bound_send_keys() {
     [ "$eng" = pi ] || no_grid=(--no-grid)
     DISPATCH_PROFILE="$profile" run run_dispatch standard "$model" --agent "$eng" --effort "$effort" "${no_grid[@]}" --crew-id c1 "1$n" "$eng bound"
     [ "$status" -eq 0 ]
-    _assert_bound_send_keys "$crew_launch_dir" WORKER_PROTOCOL.md
+    marker=WORKER_PROTOCOL.md
+    [ "$eng" != pi ] || marker=WORKER_PROTOCOL.pi.md
+    _assert_bound_send_keys "$crew_launch_dir" "$marker"
     n=$((n + 1))
   done < <(protocol_engine_specs codex cursor pi)
 
@@ -17610,4 +17651,39 @@ _run_dispatch_no_crew_id() {
   _run_dispatch_no_crew_id
   [[ "$output" == *'crew adopt <id>'* ]]
   [[ "$output" != *'$PPID'* ]]
+}
+
+# ── Every phase file is readable by the lead ──────────────────
+
+# The stems of the core's "Phase files" table, one per line.
+_phase_stems() {
+  sed -n '/^## Phase files/,/^## /s/^| `\(WORKER_[A-Z]*\)` .*/\1/p' "$BATS_TEST_DIRNAME/../adapters/core/protocols/WORKER_PROTOCOL.md"
+}
+
+@test "the real protocol dir carries every phase file a claude lead's --add-dir grants" {
+  stub_launch_bins
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "real claude protocols"
+  [ "$status" -eq 0 ]
+  line="$(grep -F 'claude --name iris ' <(launch_log))"
+  [[ "$line" == *"--add-dir $DISPATCHER_PROTOCOL_DIR "* ]]
+  [ -n "$(_phase_stems)" ]
+  for stem in $(_phase_stems); do
+    [ -f "$DISPATCHER_PROTOCOL_DIR/$stem.claude.md" ] || { echo "missing $stem.claude.md in $DISPATCHER_PROTOCOL_DIR" >&2; return 1; }
+  done
+  [ -f "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.claude.md" ]
+}
+
+@test "the real protocol dir carries every phase file a pi lead reads" {
+  stub_launch_bins
+  export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "real pi protocols"
+  [ "$status" -eq 0 ]
+  line="$(grep -F -- "pi --name iris --model" <(launch_log))"
+  [[ "$line" == *"--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md"* ]]
+  [ -n "$(_phase_stems)" ]
+  for stem in $(_phase_stems); do
+    [ -f "$DISPATCHER_PROTOCOL_DIR/$stem.pi.md" ] || { echo "missing $stem.pi.md in $DISPATCHER_PROTOCOL_DIR" >&2; return 1; }
+  done
+  [ -f "$DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md" ]
 }

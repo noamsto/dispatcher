@@ -804,12 +804,13 @@ Edit a protocol, dispatch again, and the change is live — no rebuild. The same
 variable is what the slash command and the Cursor rule resolve at read time,
 which is why the module exports it rather than only baking it into the binaries.
 
-Claude worker leads append `WORKER_PROTOCOL.claude.md`, not `WORKER_PROTOCOL.md`:
-`./scripts/gen-adapters.sh` renders it with `scripts/render-engine.sh`, which
-drops every `<!-- only:... -->` … `<!-- /only -->` block whose list omits claude
+Claude and pi worker leads append the `.claude.md` / `.pi.md` render of
+`WORKER_PROTOCOL.md`, not the core file; the phase files `WORKER_<PHASE>.md`
+sit beside it with their own renders. `scripts/render-engine.sh` drops every
+`<!-- only:... -->` … `<!-- /only -->` block whose list omits the engine
 (e.g. `only:codex,cursor,pi`, `only:pi`): text only other engines' leads need.
-After editing `WORKER_PROTOCOL.md`, regenerate so a claude lead sees the change;
-pi, codex and cursor leads read the core file.
+After editing any `WORKER_*.md` source, run `./scripts/gen-adapters.sh` to
+regenerate all renders; codex and cursor leads read the core files.
 
 Claude and pi dispatchers likewise launch from the generated renders
 `DISPATCHER_PROTOCOL.claude.md` and `DISPATCHER_PROTOCOL.pi.md`, so rerun

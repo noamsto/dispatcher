@@ -44,7 +44,7 @@ The rows the Tier map gate enforces are data in `adapters/core/defaults.json`;
 the tables under "Tier map" are generated from it and the first model in each
 cell below is checked against it.
 Orchestrator (dispatcher-session) defaults live in "Orchestrator engines" below;
-consult-roster versions live in `WORKER_PROTOCOL.md` → "Orchestration consult".
+consult-roster versions live in `WORKER_PLAN.md` → "Orchestration consult".
 Bump the matching table when a new model ships. The `refresh-scores` cache
 (`~/.local/share/crew/model-scores.json`) is the external signal for when a
 rung needs that bump — see `DISPATCHER_PROTOCOL.md` → "External standings".
@@ -162,7 +162,7 @@ Cursor has no CLI concurrency cap; the cap of 3 is protocol-only.
 The role grid is now the **default on `deep`, on every engine** — not only
 pi's. For **claude/codex/cursor** the default grid is **critics only**
 (`spec-critic,plan-critic`, no `reviewer`): those engines already run a full
-native reviewer-roster batch at the code-review gate (`WORKER_PROTOCOL.md` →
+native reviewer-roster batch at the code-review gate (`WORKER_REVIEW.md` →
 "Code review gate"), and a default grid must not silently replace it — the
 grid gives them fresh out-of-process contexts for the spec/plan critics only.
 **Pi** has no native subagents at all — its `reviewer` pane **is** the review
@@ -192,7 +192,7 @@ get a fresh critic/reviewer context. `--no-grid` combined with `--grid` or
 `--lazy` records whichever topology resolves — explicit or the engine/tier
 default above — without creating any panes; the lead materializes each role
 with `dispatch --spawn-role <role>` at its seam and may `dispatch
---reap-roles` when done (see `WORKER_PROTOCOL.md` → "Grid mode"). It needs no
+--reap-roles` when done (see `WORKER_GRID.md` → "Grid mode"). It needs no
 `--grid`/`--roles` of its own when a default already resolves one (non-pi
 `deep`, pi standard/deep) — adding `--grid` there would change the topology
 itself (adding `reviewer` on non-pi deep), not just make it lazy. **The
@@ -203,7 +203,7 @@ review gate, so a lazy pi grid nobody spawns ships with no review at all.
 `--lazy` is a deliberate per-dispatch opt-in (see `DISPATCHER_PROTOCOL.md` →
 "Lazy grid"), never a default.
 
-**Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung; a same-or-higher Grok substitute for a refused next rung is not a skipped rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `grok-4.7-low → grok-4.7-medium → grok-4.7-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. A cursor Task-slug refusal takes the substitution rule in “Cursor Task-spawn slugs” first. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_PROTOCOL.md` → “Bounded plan-shaped recovery”.
+**Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung; a same-or-higher Grok substitute for a refused next rung is not a skipped rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `grok-4.7-low → grok-4.7-medium → grok-4.7-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. A cursor Task-slug refusal takes the substitution rule in “Cursor Task-spawn slugs” first. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_EXECUTE.md` → “Bounded plan-shaped recovery”.
 
 Pi has no fresh recovery-planner role in the current topology, so a
 plan-shaped recovery on pi is an unavailable-planning block. The dispatcher
@@ -212,7 +212,7 @@ must supply a replacement; the lead cannot count self-replanning as independent.
 **Shape-tag vocabulary.** The outcome log's `shape` field is a closed set:
 `mechanical`, `ui`, `ambiguous`, `security`, `wide`.
 
-**Orchestration consult (worker-side, deep).** Decomposition help from a top-tier consultant — **opus** (neutral-fit default), **fable** (architecture-heavy decompositions), **gpt-5.6-sol**, or **grok-4.7-high** — is decided **in the worker's worktree** at the plan seam (whether *and* which), not by the dispatcher — the dispatcher's only lever is tiering the task `deep` (its existing "architectural / wide-blast" signal). Every consultant is reachable from any lead engine as a read-only shell one-shot gated on `dispatch --engines --in-budget` (the machine-local roster minus engines at ≥95% or a limit); the Agent-tool (fable) and codex-MCP (gpt-5.6-sol) forms stay claude-lead conveniences. See `WORKER_PROTOCOL.md` → "Orchestration consult" and "Cross-engine one-shots". Every deep worker emits an outcome-metrics record to the bus at finish:
+**Orchestration consult (worker-side, deep).** Decomposition help from a top-tier consultant — **opus** (neutral-fit default), **fable** (architecture-heavy decompositions), **gpt-5.6-sol**, or **grok-4.7-high** — is decided **in the worker's worktree** at the plan seam (whether *and* which), not by the dispatcher — the dispatcher's only lever is tiering the task `deep` (its existing "architectural / wide-blast" signal). Every consultant is reachable from any lead engine as a read-only shell one-shot gated on `dispatch --engines --in-budget` (the machine-local roster minus engines at ≥95% or a limit); the Agent-tool (fable) and codex-MCP (gpt-5.6-sol) forms stay claude-lead conveniences. See `WORKER_PLAN.md` → "Orchestration consult" and "Cross-engine one-shots". Every deep worker emits an outcome-metrics record to the bus at finish:
 `crew msg worker:<branch> metrics:<crew_id> '{"consulted":…,"consult_engine":…,"plan_critic_first_pass":…,"rework_count":…,"replanned":…,"review_high":…}'`.
 It rides `crew msg` (no `crew.sh` change) and never wakes the dispatcher. Consulted vs non-consulted deep workers are the A/B for whether the consult lever pays — `consult_engine` splits it by consultant — the counterfactual #86's oracle gate needs. Read it offline: `crew log <crew> | jq 'select(.to|startswith("metrics:"))'`.
 
@@ -661,7 +661,7 @@ is identical across engines; the crew-watch park primitive is not — see
 
 ## Three orthogonal levers
 
-- **Tier = pipeline depth (who reviews).** Driven by risk/ambiguity/blast-radius, not size. A one-line security change is still `standard`/`deep`. Pipeline depth also flexes **down** when the target repo self-reviews: a repo with an active automated PR-review gauntlet permits a light internal pass except for cross-component correctness risk, which promotes one reviewer per `EVIDENCE_REVIEW.md` (see `WORKER_PROTOCOL.md` → Code review gate, "Repo-aware scaling"). Targeted re-review after behavioral fixes still applies. Tier sets *planning* depth regardless — review scaling does not rewrite the spec or plan.
+- **Tier = pipeline depth (who reviews).** Driven by risk/ambiguity/blast-radius, not size. A one-line security change is still `standard`/`deep`. Pipeline depth also flexes **down** when the target repo self-reviews: a repo with an active automated PR-review gauntlet permits a light internal pass except for cross-component correctness risk, which promotes one reviewer per `EVIDENCE_REVIEW.md` (see `WORKER_REVIEW.md` → Code review gate, "Repo-aware scaling"). Targeted re-review after behavioral fixes still applies. Tier sets *planning* depth regardless — review scaling does not rewrite the spec or plan.
 - **Engine = who implements.** First run `dispatch --engines`; judge only its output per task (claude ⇄ codex ⇄ cursor ⇄ pi) — no default, and **on neutral fit rotate to the least-recently-dispatched engine** rather than drifting back to claude (see `DISPATCHER_PROTOCOL.md` engine lever). Every engine automatically gets critic panes on `deep`; pi supplies an independent OpenRouter family (DeepSeek, with Moonshot/Z.ai/Qwen alternatives) and, having no native subagents at all, additionally defaults to the grid on `standard` and keeps a `reviewer` pane as its review gate (the other three engines review natively). The other routing preferences remain in `DISPATCHER_PROTOCOL.md`.
 - **Model/effort = how strong / how hard it thinks.** All engines pick the tier-appropriate model from the model map. Claude, codex, and pi have explicit effort knobs; cursor folds effort into the model id. Effort is judged separately from model strength — see `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever" for the raise/hold signals.
 
