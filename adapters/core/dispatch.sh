@@ -5243,10 +5243,8 @@ if [ -n "${DISPATCH_PRECHECK:-}" ]; then
   exit 0
 fi
 
-# #700: relaunch the lead fresh at the execute and review seams. Requested by
-# flag or setting; armed only for a run that has those seams and a launcher to
-# loop it. An owner authorization lives in the launch prompt alone, so a run
-# carrying one never gets a second, lead-triggered session.
+# An owner authorization lives in the launch prompt alone, so a run carrying one
+# never gets a second, lead-triggered session.
 fresh_seams=false
 if _fresh_seams_requested; then
   fresh_launcher="$(command -v lead-launcher || true)"
@@ -6590,8 +6588,7 @@ _fresh_seams_prefix() {
   _fs_out="$_ql --engine $agent --crew-dir $_qd --branch $_qb --note $_qn --sid $_qs --prompt $_qp --execute-prompt $_qe --review-prompt $_qr -- "
 }
 
-# An armed lead's launcher supplies the session id and the prompt on every run;
-# an unarmed one carries them in its own command line, as it always has.
+# An armed lead's launcher supplies the session id and the prompt on every run.
 fresh_prefix=""
 lead_sid_args=" --session-id $lead_sid"
 lead_prompt_arg=""
