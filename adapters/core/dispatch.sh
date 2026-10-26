@@ -4936,7 +4936,7 @@ if [ -n "$chrome" ] && jq -e --arg c "$CLAUDE_CHROME_MCP_SERVER" '(.workerDenied
 fi
 # DISPATCH_TMUX_SESSION with DISPATCH_EMIT_ROW=1 is the --host launch's own env,
 # delivered only through crew remote-exec's allowlist; DISPATCH_TMUX_SESSION
-# alone stays local-only. The worker refusal above runs first.
+# alone stays local-only.
 if [ -n "$chrome" ] && [ -n "${DISPATCH_TMUX_SESSION:-}" ] && [ "${DISPATCH_EMIT_ROW:-}" != 1 ]; then
   echo "dispatch: --chrome is local to this machine — the browser lives here, not on a remote host" >&2
   exit 1
