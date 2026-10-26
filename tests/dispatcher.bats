@@ -1341,6 +1341,7 @@ _mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 _no_markers() { ! compgen -G "$HANDOFF/*.restart" >/dev/null; }
 
 _handoff_setup() {
+  umask 077
   stub_crew_handoff
   export LAUNCHER HANDOFF_NOTE_SRC="$BATS_TEST_TMPDIR/note.md"
   HANDOFF="$(_handoff_dir)"
@@ -1605,6 +1606,42 @@ echo "$rc" >"$STUB_DIR/inner.rc"'
   [[ "$output" == *"rc=1"* ]]
   _no_markers
   [ ! -e "$HANDOFF/c1.md" ]
+}
+
+@test "701: an inner --fresh refuses an engine pid whose args name the dispatcher" {
+  _handoff_setup
+  printf 'queue\n' >"$HANDOFF_NOTE_SRC"
+  export DISPATCHER_HANDOFF_DIR=$HANDOFF DISPATCHER_HANDOFF_CREW=c1 CREW_ID=c1
+  # A bash copy named like an engine: comm is not bash, and its -c text carries
+  # "dispatcher" the way `--name "dispatcher · …"` does.
+  cp "$(command -v bash)" "$STUB_DIR/fakeengine"
+  run "$STUB_DIR/fakeengine" -c '# dispatcher
+DISPATCHER_LAUNCHER_PID=$$ bash -euo pipefail "$LAUNCHER" --fresh --note "$HANDOFF_NOTE_SRC"; echo "rc=$?"'
+  [[ "$output" == *"is an ancestor but not a dispatcher launcher"* ]]
+  [[ "$output" == *"rc=1"* ]]
+  _no_markers
+  [ ! -e "$HANDOFF/c1.md" ]
+}
+
+@test "701: an inner --fresh accepts a launcher whose comm is its script name" {
+  _handoff_setup
+  printf 'queue\n' >"$HANDOFF_NOTE_SRC"
+  export DISPATCHER_HANDOFF_DIR=$HANDOFF DISPATCHER_HANDOFF_CREW=c1 CREW_ID=c1
+  # Linux names a shebang script's process after the script, not bash.
+  printf '#!%s\nDISPATCHER_LAUNCHER_PID=$$ bash -euo pipefail "$LAUNCHER" --fresh --note "$HANDOFF_NOTE_SRC"\n' "$(command -v bash)" >"$STUB_DIR/dispatcher"
+  chmod +x "$STUB_DIR/dispatcher"
+  run "$STUB_DIR/dispatcher"
+  [[ "$output" != *"not a dispatcher launcher"* ]]
+}
+
+@test "701: --fresh refuses a note that is group- or world-readable" {
+  printf 'queue\n' >"$BATS_TEST_TMPDIR/open.md"
+  chmod 644 "$BATS_TEST_TMPDIR/open.md"
+  _fresh_refusal_row 1 "is mode 644" --fresh --note "$BATS_TEST_TMPDIR/open.md"
+  [[ "$output" == *"mktemp"* && "$output" == *"chmod 600"* ]]
+  chmod 600 "$BATS_TEST_TMPDIR/open.md"
+  run run_launcher --fresh --note "$BATS_TEST_TMPDIR/open.md"
+  [[ "$output" != *"is mode"* ]]
 }
 
 @test "701: codex and cursor launch without the handoff pair, even when inherited" {

@@ -185,6 +185,11 @@ if [ -n "$note_src" ]; then
     echo "dispatcher: --note $note_src is over 65536 bytes" >&2
     exit 1
   fi
+  note_mode=$(stat -L -c %a "$note_src" 2>/dev/null || stat -L -f %Lp "$note_src")
+  if (((8#$note_mode) & 8#077)); then
+    echo "dispatcher: --note $note_src is mode $note_mode, readable beyond you — it quotes the human; recreate it with mktemp (mode 0600) or run chmod 600 on it" >&2
+    exit 1
+  fi
 fi
 
 # _child_on_chain <pid> — the pid on this process's ancestor chain whose parent
@@ -254,7 +259,13 @@ if [ "$fresh" = 1 ] && [ -n "${DISPATCHER_LAUNCHER_PID:-}" ]; then
     echo "dispatcher: DISPATCHER_LAUNCHER_PID=$DISPATCHER_LAUNCHER_PID is not an ancestor of this process — run --fresh from that dispatcher's own shell, or unset it for a manual handoff" >&2
     exit 1
   }
-  if [[ $(ps -o args= -p "$DISPATCHER_LAUNCHER_PID" 2>/dev/null) != *dispatcher* ]]; then
+  # The engine runs as `--name "dispatcher · …"`, so its args match too: only
+  # the launcher is one, whose comm is bash (macOS) or its script name (Linux).
+  launcher_comm=$(ps -o comm= -p "$DISPATCHER_LAUNCHER_PID" 2>/dev/null) || launcher_comm=""
+  launcher_comm=${launcher_comm##*/}
+  launcher_comm=${launcher_comm#-}
+  case "$launcher_comm" in bash | dispatcher) ;; *) launcher_comm="" ;; esac
+  if [[ $(ps -o args= -p "$DISPATCHER_LAUNCHER_PID" 2>/dev/null) != *dispatcher* ]] || [ -z "$launcher_comm" ]; then
     echo "dispatcher: DISPATCHER_LAUNCHER_PID=$DISPATCHER_LAUNCHER_PID is an ancestor but not a dispatcher launcher — not handing off" >&2
     exit 1
   fi

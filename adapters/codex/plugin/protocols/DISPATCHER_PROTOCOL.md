@@ -466,10 +466,12 @@ On claude and pi (`dispatcher --fresh` refuses codex and cursor), swap yourself 
 - Per-worker disposition (what you already did with each live or finished worker) and your triage reasoning.
 - Open stacked layers and `pr-watch` arms; anything else in flight.
 
-Never put in it secrets, what the bus holds, or the human's private data beyond what they typed for the task. Write `<file>` under `umask 077` (mode 0600): it quotes the human, and it stays behind after the launcher copies it into the crew dir.
+Never put in it secrets, what the bus holds, or the human's private data beyond what they typed for the task. Create the note with `mktemp` and fill it in the same shell call that runs `--fresh`, so it is mode 0600: it quotes the human and stays behind after the launcher copies it into the crew dir. `--fresh` refuses a group- or world-readable note.
 
 ```bash
-dispatcher --fresh --note <file>
+f=$(mktemp) && cat >"$f" <<'EOF' && dispatcher --fresh --note "$f"
+<note>
+EOF
 ```
 
 It stores the note in the crew dir, ends this session, and relaunches the same engine, model and effort in this pane with a handoff prompt. A non-zero exit means nothing happened and you are still the dispatcher. Outside a launcher session (an in-session promotion), tell the human to run `CREW_ID=<id> dispatcher --fresh [--note <file>]` once this session is gone.
