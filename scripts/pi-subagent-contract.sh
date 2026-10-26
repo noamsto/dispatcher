@@ -23,21 +23,21 @@ mode=""
 dir=""
 while (($#)); do
   case "$1" in
-    --pinned | --installed) mode="${1#--}" ;;
-    --upstream)
-      mode=upstream
-      dir="${2:?--upstream needs a directory}"
-      shift
-      ;;
-    --contract)
-      contract="${2:?--contract needs a file}"
-      shift
-      ;;
-    -*)
-      echo "unknown option: $1" >&2
-      exit 2
-      ;;
-    *) dir="$1" ;;
+  --pinned | --installed) mode="${1#--}" ;;
+  --upstream)
+    mode=upstream
+    dir="${2:?--upstream needs a directory}"
+    shift
+    ;;
+  --contract)
+    contract="${2:?--contract needs a file}"
+    shift
+    ;;
+  -*)
+    echo "unknown option: $1" >&2
+    exit 2
+    ;;
+  *) dir="$1" ;;
   esac
   shift
 done
