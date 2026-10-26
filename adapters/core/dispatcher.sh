@@ -73,6 +73,9 @@ autocompact=""
 task=""
 # --new: mint a crew of this launcher's own even when this repo already has one.
 new_crew=0
+# --fresh: hand this crew off to a new session; --note: the handoff note file.
+fresh=0
+note_src=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -117,6 +120,18 @@ while [ $# -gt 0 ]; do
     new_crew=1
     shift
     ;;
+  --fresh)
+    fresh=1
+    shift
+    ;;
+  --note)
+    note_src="${2:-}"
+    [ -n "$note_src" ] || {
+      echo "dispatcher: --note needs a value (a file holding the handoff note)" >&2
+      exit 1
+    }
+    shift 2
+    ;;
   *)
     task="${task:+$task }$1"
     shift
@@ -138,6 +153,104 @@ claude | codex | cursor | pi) ;;
   exit 1
   ;;
 esac
+
+if [ -n "$note_src" ] && [ "$fresh" = 0 ]; then
+  echo "dispatcher: --note only goes with --fresh" >&2
+  exit 2
+fi
+if [ "$fresh" = 1 ]; then
+  if [ "$new_crew" = 1 ]; then
+    echo "dispatcher: --fresh hands off an existing crew and cannot be combined with --new" >&2
+    exit 2
+  fi
+  if [ -n "$task" ]; then
+    echo "dispatcher: --fresh takes no task words — put the queue in the handoff note" >&2
+    exit 2
+  fi
+  case "$agent" in
+  codex | cursor)
+    # Both carry the protocol as their first prompt, so a relaunch would have
+    # to rebuild it.
+    echo "dispatcher: --fresh is claude and pi only" >&2
+    exit 2
+    ;;
+  esac
+fi
+if [ -n "$note_src" ]; then
+  if [ ! -f "$note_src" ] || [ ! -r "$note_src" ] || [ ! -s "$note_src" ]; then
+    echo "dispatcher: --note $note_src is not a readable, non-empty file" >&2
+    exit 1
+  fi
+  if [ "$(wc -c <"$note_src")" -gt 65536 ]; then
+    echo "dispatcher: --note $note_src is over 65536 bytes" >&2
+    exit 1
+  fi
+fi
+
+# _child_on_chain <pid> — the pid on this process's ancestor chain whose parent
+# is <pid>, i.e. <pid>'s direct child above us. Same bounds as _pane_for_pid.
+_child_on_chain() {
+  local target=$1 pid=$$ ppid hop=0
+  while [ -n "$pid" ] && [ "$pid" != 0 ] && [ "$pid" != 1 ] && [ "$hop" -lt 64 ]; do
+    ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -cd '0-9') || return 1
+    [ -n "$ppid" ] || return 1
+    if [ "$ppid" = "$target" ]; then
+      printf '%s' "$pid"
+      return 0
+    fi
+    pid=$ppid
+    hop=$((hop + 1))
+  done
+  return 1
+}
+
+# _store_note <dir> <crew> <src> — copy <src> to <dir>/<crew>.md through a temp
+# file, so a reader never sees a half-written note.
+_store_note() {
+  local dir=$1 crew=$2 src=$3 tmp
+  mkdir -p -- "$dir"
+  chmod 700 "$dir"
+  tmp=$(mktemp "$dir/.note.XXXXXX")
+  cp -- "$src" "$tmp"
+  chmod 600 "$tmp"
+  mv -f -- "$tmp" "$dir/$crew.md"
+}
+
+# Inner handoff: this call runs inside a launcher's engine session. It must not
+# re-attach, stamp, mint or register: the crew stays registered to the outer
+# launcher, which relaunches the engine once it exits and finds the marker.
+if [ "$fresh" = 1 ] && [ -n "${DISPATCHER_LAUNCHER_PID:-}" ]; then
+  handoff_dir=${DISPATCHER_HANDOFF_DIR:-}
+  if [ -z "${CREW_ID:-}" ] || [[ $handoff_dir != /* ]]; then
+    echo "dispatcher: --fresh under DISPATCHER_LAUNCHER_PID needs CREW_ID and an absolute DISPATCHER_HANDOFF_DIR" >&2
+    exit 1
+  fi
+  engine_pid=$(_child_on_chain "$DISPATCHER_LAUNCHER_PID") || {
+    echo "dispatcher: DISPATCHER_LAUNCHER_PID=$DISPATCHER_LAUNCHER_PID is not an ancestor of this process — run --fresh from that dispatcher's own shell, or unset it for a manual handoff" >&2
+    exit 1
+  }
+  note="$handoff_dir/$CREW_ID.md"
+  if [ -n "$note_src" ]; then
+    _store_note "$handoff_dir" "$CREW_ID" "$note_src"
+  elif [ ! -s "$note" ]; then
+    echo "dispatcher: no handoff note for crew $CREW_ID: pass --note <file>" >&2
+    exit 1
+  fi
+  marker="$handoff_dir/$CREW_ID.restart"
+  marker_tmp=$(mktemp "$handoff_dir/.restart.XXXXXX")
+  printf '%s %s\n' "$DISPATCHER_LAUNCHER_PID" "$(date +%s)" >"$marker_tmp"
+  mv -f -- "$marker_tmp" "$marker"
+  echo "dispatcher: handing crew $CREW_ID off to a fresh session (note: $note); this session ends now" >&2
+  # The engine may already be gone; the poll below reads that as success.
+  kill -TERM "$engine_pid" 2>/dev/null || true
+  for _ in $(seq 20); do
+    sleep 0.5
+    kill -0 "$engine_pid" 2>/dev/null || exit 0
+  done
+  rm -f -- "$marker"
+  echo "dispatcher: handoff failed — engine pid $engine_pid still runs 10s after SIGTERM; marker removed, this session continues" >&2
+  exit 1
+fi
 
 # Checked before the crew is minted: pi's --append-system-prompt takes text or a
 # file, so a missing render path would be appended as literal text.
