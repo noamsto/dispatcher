@@ -92,6 +92,15 @@ var cases = []rosterCase{
 		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":"bbbb","sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
 	},
 	{
+		name: "engine_session from a newer relaunch event",
+		events: []string{
+			status(t0+1000, "worker:feat/x#s1-1", state("working")),
+			`{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","engine_session":"aaaa"}`,
+			`{"ts":9999999999999,"crew_id":"c1","kind":"relaunch","branch":"feat/x","engine_session":"cccc"}`,
+		},
+		want: `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":"cccc","sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,
+	},
+	{
 		name:   "codename derives from the branch hash",
 		events: []string{status(t0+1000, "worker:feat/x#s1-1", state("working"))},
 		want:   `[{"from":"worker:feat/x#s1-1","branch":"feat/x","session":"s1-1","state":"working","detail":null,"source":null,"ts":1700000001000,"pr_url":null,"age_s":99,"title":null,"engine":null,"model":null,"tier":null,"engine_session":null,"sessions":[{"session":"s1-1","state":"working","age_s":99}],"name":"lagoon","color":"darkcyan","tmux":"colour31"}]`,

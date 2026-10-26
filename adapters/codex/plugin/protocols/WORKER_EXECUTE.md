@@ -13,7 +13,7 @@ After `execute`, before any model reviewer sees the diff: cheap deterministic ch
 - Loop to green here, cheaply: fix (subagent, rule 1), re-run; uncapped, independent of the review→fix loop (cap 2).
 - Real test over synthetic demo: given a runnable behavior surface, write here a regression test pinning the acceptance criteria, esp. a reported edge input (`page > totalPages`), extending an existing test of that path (row/assertion) first. Manual/visual demos (throwaway Storybook story, screenshot walk-through) are never primary proof: only a fallback with no test surface, or a supplement when a reviewer must see rendered output.
 - No runnable build/test surface (docs/protocol-only diff): say so, fall through to the review gate, invent no command.
-- Green and committed, `fresh_seams: true` → the review-seam relaunch ("Fresh seam relaunch") before the code-review gate.
+- Green, `fresh_seams: true` → commit the work (the fresh session reads it from git), then the review-seam relaunch ("Fresh seam relaunch") before the code-review gate.
 
 ### Bounded plan-shaped recovery
 

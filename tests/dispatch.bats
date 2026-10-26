@@ -17947,8 +17947,12 @@ _phase_stems() {
 
 # --- fresh-seams (#700): the opt-in lead relaunch at the execute and review seams ---
 
+# Outside STUB_DIR, so _replay_lead_launch_env can take it off the engine's PATH.
 _fs_launcher() {
-  ln -sf "$BATS_TEST_DIRNAME/../adapters/core/lead-launcher.sh" "$STUB_DIR/lead-launcher"
+  FS_LAUNCHER="$BATS_TEST_TMPDIR/fs-bin/lead-launcher"
+  mkdir -p "${FS_LAUNCHER%/*}"
+  ln -sf "$BATS_TEST_DIRNAME/../adapters/core/lead-launcher.sh" "$FS_LAUNCHER"
+  export PATH="${FS_LAUNCHER%/*}:$PATH"
 }
 
 _fs_crew_dir() { printf '%s/crew' "$(git rev-parse --path-format=absolute --git-common-dir)"; }
@@ -17987,7 +17991,7 @@ _fs_not_armed() {
   [[ "$line" == *" -- claude --name iris --model sonnet --effort medium "* ]]
   [[ "$line" != *"--session-id"* ]]
   [[ "$line" == *" --execute-prompt "*" --review-prompt "* ]]
-  [[ "$line" == *"$STUB_DIR/lead-launcher --fresh"* ]]
+  [[ "$line" == *"\"\$CREW_LEAD_LAUNCHER\" --fresh execute (= $FS_LAUNCHER --fresh execute)"* ]]
   [ "$(cat "$crew/leads/feat/42-seams-wiring")" = "claude $sid" ]
 }
 
@@ -18073,8 +18077,9 @@ _fs_not_armed() {
 
 # _replay_lead_launch_env <marker> — run the lead's typed launch line the way tmux
 # would: the new-window's -e CREW_WORKER_ID/CREW_ID, and nothing inherited from
-# this shell, are the environment. Keeps the engine stub the test installed, and
-# leaves the two values in fs_worker/fs_crew.
+# this shell, are the environment, and no lead-launcher resolves on PATH, as on
+# a real engine's. Keeps the engine stub the test installed, and leaves the two
+# values in fs_worker/fs_crew.
 _replay_lead_launch_env() {
   local marker="$1" hit lineno launch cmd nw
   nw="$(grep '^new-window' "$STUB_LOG")"
@@ -18091,6 +18096,7 @@ _replay_lead_launch_env() {
   (
     unset CREW_WORKER_ID CREW_ID
     export CREW_WORKER_ID="$fs_worker" CREW_ID="$fs_crew"
+    PATH="$(path_without_real lead-launcher)"
     bash -c "$cmd" </dev/null
   )
 }
@@ -18104,7 +18110,8 @@ n=$(($(cat "$STUB_DIR/launches" 2>/dev/null || echo 0) + 1))
 echo "$n" >"$STUB_DIR/launches"
 printf 'ARG %s\n' "$@" >"$STUB_DIR/argv.$n"
 printf '%s' "${@: -1}" >"$STUB_DIR/last.$n"
-printf 'CREW_WORKER_ID=%s\nCREW_ID=%s\n' "${CREW_WORKER_ID-UNSET}" "${CREW_ID-UNSET}" >"$STUB_DIR/env.$n"
+printf 'CREW_WORKER_ID=%s\nCREW_ID=%s\nCREW_LEAD_LAUNCHER=%s\nRESOLVED=%s\n' "${CREW_WORKER_ID-UNSET}" "${CREW_ID-UNSET}" \
+  "${CREW_LEAD_LAUNCHER-UNSET}" "$(command -v lead-launcher || echo NONE)" >"$STUB_DIR/env.$n"
 case "$n" in
 1) stage=execute ;;
 2) stage=review ;;
@@ -18112,7 +18119,7 @@ case "$n" in
 esac
 mkdir -p "${CREW_LEAD_NOTE%/*}"
 printf 'seen: 42\n' >"$CREW_LEAD_NOTE"
-lead-launcher --fresh "$stage"
+"$CREW_LEAD_LAUNCHER" --fresh "$stage"
 EOF
   chmod +x "$STUB_DIR/$1"
 }
@@ -18132,6 +18139,10 @@ _fs_assert_three_launches() {
   for n in 1 2 3; do
     [ "$(_fs_launch_env "$n" CREW_WORKER_ID)" = "$fs_worker" ]
     [ "$(_fs_launch_env "$n" CREW_ID)" = "$fs_crew" ]
+    # The route a real lead has: the exported absolute path, not a PATH lookup.
+    [ "$(_fs_launch_env "$n" CREW_LEAD_LAUNCHER)" = "$FS_LAUNCHER" ]
+    [[ "$FS_LAUNCHER" == /* ]]
+    [ "$(_fs_launch_env "$n" RESOLVED)" = NONE ]
   done
   s1="$(_fs_sid 1)" s2="$(_fs_sid 2)" s3="$(_fs_sid 3)"
   [ "$(_fs_row .engine_session | tr -d '"')" = "$s1" ]
@@ -18145,7 +18156,7 @@ _fs_assert_three_launches() {
   [ "$(cat "$crew/leads/$fs_branch")" = "$engine $s3" ]
 
   p1="$(cat "$STUB_DIR/last.1")" p2="$(cat "$STUB_DIR/last.2")" p3="$(cat "$STUB_DIR/last.3")"
-  [[ "$p1" == *"$STUB_DIR/lead-launcher --fresh"* && "$p1" == *"$note"* ]]
+  [[ "$p1" == *"\"\$CREW_LEAD_LAUNCHER\" --fresh execute (= $FS_LAUNCHER --fresh execute)"* && "$p1" == *"$note"* ]]
   for p in "$p2" "$p3"; do
     [[ "$p" == *"Do not re-run the spec or plan phases"* ]]
     [[ "$p" == *"$note"* ]]
@@ -18153,7 +18164,7 @@ _fs_assert_three_launches() {
     [[ "$p" == *"live in $DISPATCHER_PROTOCOL_DIR"* ]]
   done
   [[ "$p2" == *"relaunched fresh at the execute seam"* && "$p2" == *"$DISPATCHER_PROTOCOL_DIR/WORKER_EXECUTE.$suffix.md"* ]]
-  [[ "$p2" == *"$STUB_DIR/lead-launcher --fresh review"* ]]
+  [[ "$p2" == *"\"\$CREW_LEAD_LAUNCHER\" --fresh review (= $FS_LAUNCHER --fresh review)"* ]]
   [[ "$p3" == *"relaunched fresh at the review seam"* && "$p3" == *"$DISPATCHER_PROTOCOL_DIR/WORKER_REVIEW.$suffix.md"* ]]
   [[ "$p3" != *"--fresh review"* ]]
 
@@ -18178,8 +18189,18 @@ _fs_assert_three_launches() {
   [[ "$role_lines" != *"lead-launcher"* && "$role_lines" != *"--session-id"* ]]
 
   _fs_engine_stub claude
+  claims="$(cat "$XDG_DATA_HOME"/crew/claims/*/*)"
+  bus="$(jq -c 'select(.kind != "relaunch")' "$(_fs_crew_dir)/events.jsonl")"
+  [[ "$claims" == *'"kind":"claim-issue","issue":"42"'* && "$bus" == *'"kind":"claim-issue","issue":"42"'* ]]
+  cp "$STUB_LOG" "$BATS_TEST_TMPDIR/stub.log.before"
   _replay_lead_launch_env "--engine claude"
   _fs_assert_three_launches claude claude
+  # The relaunches keep the claim and the one pane: no claim or release row, and
+  # no tmux, gh or crew call.
+  [ "$(cat "$XDG_DATA_HOME"/crew/claims/*/*)" = "$claims" ]
+  [ "$(jq -c 'select(.kind != "relaunch")' "$(_fs_crew_dir)/events.jsonl")" = "$bus" ]
+  cmp "$BATS_TEST_TMPDIR/stub.log.before" "$STUB_LOG"
+  [ "$(grep -c '^new-window' "$STUB_LOG")" -eq 1 ]
   [[ "$(cat "$STUB_DIR/last.2")" == *"You lead a role grid"* ]]
   [[ "$(cat "$STUB_DIR/last.2")" != *"Process authority"* ]]
 }

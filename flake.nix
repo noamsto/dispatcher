@@ -219,7 +219,8 @@
             # direnv: pre-allows the freshly scaffolded worktree's .envrc (#40).
             # curl, gnugrep, betterleaks: the public-leak guard a mint runs its
             # issue body through.
-            # lead-launcher: the lead's launch script runs it by name (#700).
+            # lead-launcher: resolved by `command -v` into the lead's launch line as
+            # a store path; the HM module doesn't install it, so it stays here (#700).
             rt = (with pkgs; [gh git jq gnused coreutils findutils diffutils tmux direnv curl gnugrep betterleaks procps]) ++ [crew dispatch-resume lead-launcher];
           in
             pkgs.writeShellApplication {
@@ -254,7 +255,7 @@
             };
 
           lead-launcher = let
-            rt = (with pkgs; [coreutils jq procps gnugrep findutils]) ++ [crew];
+            rt = (with pkgs; [coreutils jq procps findutils]) ++ [crew];
           in
             pkgs.writeShellApplication {
               name = "lead-launcher";

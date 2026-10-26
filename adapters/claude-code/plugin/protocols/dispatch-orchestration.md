@@ -660,7 +660,7 @@ A worker lead's context only grows: by execute or review it re-reads about twice
 
 - Armed only for engine claude or pi, `kind: implement`, tier standard or deep, no `--owner-auth`, no `--host`; otherwise `dispatch: --fresh-seams not armed — <reason>` on stderr and today's launch. `--owner-auth` is never armed: the authorization lives only in the launch prompt, and a lead-triggered second session would be a new authorization path. `--host` is local-only. Armed adds `fresh_seams: true` to the task header and the `dispatch` bus event.
 - `dispatch resume` runs without the launcher and rewrites the header to `fresh_seams: false`: a resumed run keeps one session.
-- Offline read, `crew rate` doesn't carry it: `crew log <crew> | jq 'select(.kind=="dispatch" and .fresh_seams)'` for armed runs; each relaunch is a `kind:"relaunch"` row (`stage`, `engine_session`), joined to `metrics:` msgs and `dispatch` rows on `worker_id`; `scripts/context-budget.py` reads `relaunch` rows' `engine_session` to attribute post-seam transcripts to their run.
+- Offline read, `crew rate` doesn't carry it: `crew log <crew> | jq 'select(.kind=="dispatch" and .fresh_seams)'` for armed runs; each relaunch is a `kind:"relaunch"` row (`stage`, `engine_session`), joined to `metrics:` msgs and `dispatch` rows on `worker_id`; `scripts/context-budget.py` reads `relaunch` rows' `engine_session` only to classify post-seam sessions as worker-lead sessions; its `growth` view still counts each session as its own run.
 
 ## Three orthogonal levers
 

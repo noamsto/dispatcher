@@ -645,6 +645,14 @@ worktree_git_lib_crew_go_row() { # bin
   done
 }
 
+# dispatch writes lead-launcher's resolved store path into the lead's launch
+# line, so it must be on dispatch's own PATH.
+@test "dispatch's preamble carries lead-launcher" {
+  local preamble
+  preamble="$(sed -n 's|^export PATH="\([^"]*\):\$PATH"$|\1|p' "$OUT_DISPATCH/bin/dispatch")"
+  [[ ":$preamble:" == *":$OUT_LEAD_LAUNCHER/bin:"* ]]
+}
+
 # The default `local` notes ship as a repo file, baked into dispatch as a store
 # directory (#842) — an unsubstituted token is not a readable path, and a store
 # path without the file would silently drop the lane's notes.

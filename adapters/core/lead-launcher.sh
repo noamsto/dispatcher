@@ -7,8 +7,9 @@
 #   lead-launcher --engine <claude|pi> --crew-dir <dir> --branch <branch> \
 #     --note <file> --sid <uuid> --prompt <text> \
 #     --execute-prompt <text> --review-prompt <text> -- <engine> <args…>
-# Inner mode (run by the lead from its shell tool, after writing the note):
-#   lead-launcher --fresh <execute|review>
+# Inner mode (run by the lead from its shell tool, after writing the note; the
+# outer mode exports its own absolute path, since the engine's PATH lacks it):
+#   "$CREW_LEAD_LAUNCHER" --fresh <execute|review>
 set -euo pipefail
 
 # #936: @launcherRuntimePath@, substituted by flake.nix's launcherPath, is this
@@ -140,7 +141,7 @@ _refuse() {
 
 if [ "${1:-}" = --fresh ]; then
   if [ "$#" -ne 2 ]; then
-    echo "lead-launcher: usage: lead-launcher --fresh <execute|review>" >&2
+    echo "lead-launcher: usage: \"\$CREW_LEAD_LAUNCHER\" --fresh <execute|review>" >&2
     exit 2
   fi
   stage=$2
@@ -158,8 +159,9 @@ if [ "${1:-}" = --fresh ]; then
   fi
   marker=${CREW_LEAD_RESTART:-}
   note=${CREW_LEAD_NOTE:-}
-  if [[ $marker != /* || $note != /* ]]; then
-    _refuse "CREW_LEAD_RESTART and CREW_LEAD_NOTE must be absolute paths"
+  since=${CREW_LEAD_SINCE:-}
+  if [[ $marker != /* || $note != /* || $since != /* ]]; then
+    _refuse "CREW_LEAD_RESTART, CREW_LEAD_NOTE and CREW_LEAD_SINCE must be absolute paths"
   fi
   engine_pid=$(_child_on_chain "$launcher_pid") ||
     _refuse "CREW_LEAD_LAUNCHER_PID=$launcher_pid is not an ancestor of this process"
@@ -176,9 +178,12 @@ if [ "${1:-}" = --fresh ]; then
   if [ ! -f "$note" ] || [ ! -s "$note" ]; then
     _refuse "handoff note $note is not a non-empty regular file — write it first"
   fi
-  # A note left from the execute seam must not pass for the review seam's.
-  if [ -z "$(find "$note" -prune -mmin -15 2>/dev/null)" ]; then
-    _refuse "handoff note $note was not modified in the last 15 minutes — rewrite it for this seam"
+  [ -f "$since" ] || _refuse "session stamp $since is missing: this session does not run under a lead-launcher"
+  # A note from an earlier session (the previous seam's, or a past run's) is
+  # strictly older than this session's stamp; one written in the stamp's own
+  # mtime tick ties it and passes.
+  if [ -n "$(find "$since" -prune -newer "$note" 2>/dev/null)" ]; then
+    _refuse "handoff note $note predates this session — rewrite it for this seam"
   fi
   marker_tmp=$(mktemp "$(dirname "$marker")/.restart.XXXXXX")
   printf '%s %s\n' "$(date +%s)" "$stage" >"$marker_tmp"
@@ -249,12 +254,17 @@ fi
 # the launcher still calls after the launch resolve as before.
 engine_env_path="$(engine_path)"
 
+self=$0
+[[ $self == /* ]] || self="$PWD/$self"
 marker="$crew_dir/launch/lead.$$.restart"
+since="$crew_dir/launch/lead.$$.since"
 mkdir -p "$crew_dir/launch"
 # A recycled pid could inherit a dead launcher's marker.
-rm -f -- "$marker"
+rm -f -- "$marker" "$since"
+trap 'rm -f -- "$since"' EXIT
 seams=""
-export CREW_LEAD_LAUNCHER_PID=$$ CREW_LEAD_RESTART="$marker" CREW_LEAD_NOTE="$note" CREW_LEAD_SEAMS="$seams"
+export CREW_LEAD_LAUNCHER="$self" CREW_LEAD_LAUNCHER_PID=$$ CREW_LEAD_RESTART="$marker" \
+  CREW_LEAD_NOTE="$note" CREW_LEAD_SINCE="$since" CREW_LEAD_SEAMS="$seams"
 
 # Its own process group makes the engine the tty's foreground job, so
 # #{pane_current_command} names the engine, not this bash: every pane-liveness
@@ -264,6 +274,10 @@ set -m
 # whole body, and only the engine's own exit may be tolerated.
 while :; do
   rc=0
+  : >"$since"
+  # At 1s mtime granularity the previous session's note can tie the new stamp,
+  # and a tie passes; dated far back, it is strictly older than any stamp.
+  [ ! -e "$note" ] || touch -t 200001010000 -- "$note"
   env PATH="$engine_env_path" "${engine_cmd[@]}" --session-id "$sid" "$prompt" || rc=$?
 
   [ -f "$marker" ] || break

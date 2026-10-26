@@ -20,7 +20,7 @@ setup() {
   EXEC_PROMPT='relaunched fresh at the execute seam'
   REVIEW_PROMPT='relaunched fresh at the review seam'
   export LAUNCHER CREW_WORKER_ID='worker:feat/7-a-thing#s1' CREW_ID=c1
-  unset CREW_LEAD_LAUNCHER_PID CREW_LEAD_RESTART CREW_LEAD_NOTE CREW_LEAD_SEAMS CREW_SUBAGENT
+  unset CREW_LEAD_LAUNCHER CREW_LEAD_LAUNCHER_PID CREW_LEAD_RESTART CREW_LEAD_NOTE CREW_LEAD_SINCE CREW_LEAD_SEAMS CREW_SUBAGENT
 }
 
 teardown() {
@@ -47,8 +47,8 @@ n=$(($(cat "$STUB_DIR/launches" 2>/dev/null || echo 0) + 1))
 echo "$n" >"$STUB_DIR/launches"
 printf 'ARG %s\n' "$@" >"$STUB_DIR/argv.$n"
 printf '%s' "${@: -1}" >"$STUB_DIR/last.$n"
-printf 'CREW_WORKER_ID=%s\nCREW_ID=%s\nCREW_LEAD_SEAMS=%s\nPATH=%s\n' \
-  "${CREW_WORKER_ID-UNSET}" "${CREW_ID-UNSET}" "${CREW_LEAD_SEAMS-UNSET}" "${PATH-UNSET}" >"$STUB_DIR/env.$n"
+printf 'CREW_WORKER_ID=%s\nCREW_ID=%s\nCREW_LEAD_SEAMS=%s\nCREW_LEAD_LAUNCHER=%s\nPATH=%s\n' \
+  "${CREW_WORKER_ID-UNSET}" "${CREW_ID-UNSET}" "${CREW_LEAD_SEAMS-UNSET}" "${CREW_LEAD_LAUNCHER-UNSET}" "${PATH-UNSET}" >"$STUB_DIR/env.$n"
 [ -f "$STUB_DIR/body.$n" ] || exit 0
 . "$STUB_DIR/body.$n"
 EOF
@@ -60,7 +60,7 @@ _body() { printf '%s\n' "$2" >"$STUB_DIR/body.$1"; }
 # The session writes its note and triggers from inside itself, so the chain is
 # launcher → engine stub → inner launcher, walked with the real ps.
 _write_note='printf "seen: 42\n" >"$CREW_LEAD_NOTE"'
-_seam_body() { printf '%s\nbash "$LAUNCHER" --fresh %s\n' "$_write_note" "$1"; }
+_seam_body() { printf '%s\n"$CREW_LEAD_LAUNCHER" --fresh %s\n' "$_write_note" "$1"; }
 
 # _inner_body <call> — run <call> (an inner --fresh) and keep its exit and stderr.
 _inner_body() {
@@ -78,6 +78,8 @@ _env_of() { sed -n "s/^$2=//p" "$STUB_DIR/env.$1"; }
 _mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 
 _no_markers() { ! compgen -G "$CREW_DIR/launch/*.restart" >/dev/null; }
+
+_no_stamps() { ! compgen -G "$CREW_DIR/launch/*.since" >/dev/null; }
 
 _relaunch_rows() { grep -h '"kind":"relaunch"' "$CREW_DIR/events.jsonl" 2>/dev/null || true; }
 
@@ -156,6 +158,7 @@ _refused() {
   [ "$(_env_of 3 CREW_WORKER_ID)" = "$CREW_WORKER_ID" ]
   [ "$(_relaunch_rows | jq -r .stage | paste -sd, -)" = execute,review ]
   _no_markers
+  _no_stamps
 }
 
 @test "lead-launcher: a pi lead is relaunched with --session-id before the prompt, its extension kept" {
@@ -220,15 +223,73 @@ $(_inner_body 'CREW_SUBAGENT=1 bash "$LAUNCHER" --fresh execute')"
   _refused "not a non-empty regular file"
 }
 
-@test "lead-launcher: inner --fresh refuses a note older than 15 minutes" {
+@test "lead-launcher: inner --fresh refuses a note left from a past run" {
+  printf 'seen: 41\n' >"$NOTE"
   _engine_stub claude
-  OLD_STAMP=$(date -v-20M +%Y%m%d%H%M 2>/dev/null || date -d '-20 min' +%Y%m%d%H%M)
-  export OLD_STAMP
-  _body 1 "$_write_note"'
-touch -t "$OLD_STAMP" "$CREW_LEAD_NOTE"
-'"$(_inner_body 'bash "$LAUNCHER" --fresh execute')"
+  _body 1 "$(_inner_body 'bash "$LAUNCHER" --fresh execute')"
   run run_lead
-  _refused "not modified in the last 15 minutes"
+  _refused "predates this session"
+}
+
+@test "lead-launcher: the previous seam's note is refused at the review seam; a rewritten one passes" {
+  _engine_stub claude
+  _body 1 "$(_seam_body execute)"
+  _body 2 "$(_inner_body '"$CREW_LEAD_LAUNCHER" --fresh review')"
+  run --separate-stderr run_lead
+  [ "$status" -eq 0 ]
+  [ "$(_launches)" = 2 ]
+  [ "$(cat "$STUB_DIR/inner.rc")" = 1 ]
+  [[ "$(cat "$STUB_DIR/inner.err")" == *"handoff note $NOTE predates this session — rewrite it for this seam"* ]]
+  [ "$(_relaunch_rows | jq -r .stage)" = execute ]
+  _no_markers
+
+  rm -f "$STUB_DIR/launches" "$CREW_DIR/events.jsonl"
+  _body 2 "$(_seam_body review)"
+  run --separate-stderr run_lead
+  [ "$status" -eq 0 ]
+  [ "$(_launches)" = 3 ]
+  [ "$(_relaunch_rows | jq -r .stage | paste -sd, -)" = execute,review ]
+}
+
+@test "lead-launcher: a note with its session stamp's own mtime passes" {
+  _engine_stub claude
+  # A write in the stamp's tick, as 1s mtime granularity leaves one.
+  _body 1 "$_write_note"'
+touch -r "$CREW_LEAD_SINCE" "$CREW_LEAD_NOTE"
+"$CREW_LEAD_LAUNCHER" --fresh execute'
+  run --separate-stderr run_lead
+  [ "$status" -eq 0 ]
+  [ "$(_launches)" = 2 ]
+  [ "$(_relaunch_rows | jq -r .stage)" = execute ]
+}
+
+@test "lead-launcher: the previous seam's note is refused even when dated after the next stamp" {
+  _engine_stub claude
+  # A day ahead: no stamp the relaunch writes is newer, as at a tie or with skew.
+  FUTURE=$(date -v+1d +%Y%m%d%H%M 2>/dev/null || date -d '+1 day' +%Y%m%d%H%M)
+  export FUTURE
+  _body 1 "$_write_note"'
+touch -t "$FUTURE" "$CREW_LEAD_NOTE"
+"$CREW_LEAD_LAUNCHER" --fresh execute'
+  _body 2 "$(_inner_body '"$CREW_LEAD_LAUNCHER" --fresh review')"
+  run --separate-stderr run_lead
+  [ "$status" -eq 0 ]
+  [ "$(_launches)" = 2 ]
+  [ "$(_relaunch_rows | jq -r .stage)" = execute ]
+  [ "$(cat "$STUB_DIR/inner.rc")" = 1 ]
+  [[ "$(cat "$STUB_DIR/inner.err")" == *"predates this session"* ]]
+}
+
+@test "lead-launcher: CREW_LEAD_LAUNCHER is the launcher's own absolute path, symlink kept; the stamp is removed on exit" {
+  _engine_stub claude
+  ln -s "$LAUNCHER" "$BATS_TEST_TMPDIR/lead-launcher"
+  LAUNCHER=lead-launcher
+  cd "$BATS_TEST_TMPDIR"
+  run --separate-stderr run_lead
+  [ "$status" -eq 0 ]
+  [ "$(_env_of 1 CREW_LEAD_LAUNCHER)" = "$PWD/lead-launcher" ]
+  [ -L "$(_env_of 1 CREW_LEAD_LAUNCHER)" ]
+  _no_stamps
 }
 
 @test "lead-launcher: inner --fresh whose launcher pid is no ancestor refuses and kills nothing" {
@@ -236,6 +297,7 @@ touch -t "$OLD_STAMP" "$CREW_LEAD_NOTE"
   sleep 30 &
   live_pid=$!
   CREW_LEAD_LAUNCHER_PID=$live_pid CREW_LEAD_RESTART="$CREW_DIR/launch/lead.$live_pid.restart" CREW_LEAD_NOTE=$NOTE \
+    CREW_LEAD_SINCE="$CREW_DIR/launch/lead.$live_pid.since" \
     run bash "$LAUNCHER" --fresh execute
   [ "$status" -eq 1 ]
   [[ "$output" == *"CREW_LEAD_LAUNCHER_PID=$live_pid is not an ancestor"* ]]
@@ -252,18 +314,31 @@ touch -t "$OLD_STAMP" "$CREW_LEAD_NOTE"
   _no_markers
 }
 
-@test "lead-launcher: inner --fresh refuses a relative restart path or note" {
+@test "lead-launcher: inner --fresh refuses a relative restart path, note or stamp" {
   printf 'seen: 42\n' >"$NOTE"
   CREW_LEAD_LAUNCHER_PID=$$ CREW_LEAD_RESTART=lead.restart CREW_LEAD_NOTE=$NOTE \
-    run bash "$LAUNCHER" --fresh execute
+    CREW_LEAD_SINCE="$CREW_DIR/launch/lead.x.since" run bash "$LAUNCHER" --fresh execute
   [ "$status" -eq 1 ]
   [[ "$output" == *"absolute"* ]]
+  CREW_LEAD_LAUNCHER_PID=$$ CREW_LEAD_RESTART="$CREW_DIR/launch/lead.x.restart" CREW_LEAD_NOTE=$NOTE \
+    CREW_LEAD_SINCE=lead.since run bash "$LAUNCHER" --fresh execute
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"CREW_LEAD_SINCE must be absolute paths"* ]]
   _no_markers
+}
+
+@test "lead-launcher: inner --fresh refuses when the session stamp is gone" {
+  _engine_stub claude
+  _body 1 "$_write_note"'
+rm "$CREW_LEAD_SINCE"
+'"$(_inner_body '"$CREW_LEAD_LAUNCHER" --fresh execute')"
+  run run_lead
+  _refused "session stamp"
 }
 
 @test "lead-launcher: inner --fresh refuses an ancestor that is not a lead-launcher" {
   printf 'seen: 42\n' >"$NOTE"
-  export CREW_LEAD_NOTE=$NOTE CREW_LEAD_RESTART="$CREW_DIR/launch/lead.x.restart"
+  export CREW_LEAD_NOTE=$NOTE CREW_LEAD_RESTART="$CREW_DIR/launch/lead.x.restart" CREW_LEAD_SINCE="$CREW_DIR/launch/lead.x.since"
   # The target is this bash, whose args are its script text, with no
   # "lead-launcher". Its child is the inner call itself, so a pass would TERM it.
   run bash -c 'CREW_LEAD_LAUNCHER_PID=$$ bash "$LAUNCHER" --fresh execute; echo "rc=$?"'
@@ -274,7 +349,7 @@ touch -t "$OLD_STAMP" "$CREW_LEAD_NOTE"
 
 @test "lead-launcher: inner --fresh refuses an engine pid whose args name the launcher" {
   printf 'seen: 42\n' >"$NOTE"
-  export CREW_LEAD_NOTE=$NOTE CREW_LEAD_RESTART="$CREW_DIR/launch/lead.x.restart"
+  export CREW_LEAD_NOTE=$NOTE CREW_LEAD_RESTART="$CREW_DIR/launch/lead.x.restart" CREW_LEAD_SINCE="$CREW_DIR/launch/lead.x.since"
   # A bash copy named like an engine: comm is not bash, and its -c text carries
   # "lead-launcher" the way the lead's prompt does.
   cp "$(command -v bash)" "$STUB_DIR/fakeengine"
