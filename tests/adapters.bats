@@ -2462,6 +2462,7 @@ adapters/core/protocols/WORKER_PROTOCOL.md|**Critics are independent, on every e
 adapters/core/protocols/WORKER_PROTOCOL.md|$DISPATCHER_CRITICS_DIR
 adapters/core/protocols/DISPATCHER_PROTOCOL.md|**claude — streaming monitor.**
 adapters/core/protocols/DISPATCHER_PROTOCOL.md|**codex / pi — blocking park.**
+adapters/core/protocols/DISPATCHER_PROTOCOL.md|## Hand off to a fresh session
 adapters/core/protocols/WORKER_SHIP.md|## Deferred findings (standard/deep)
 adapters/core/protocols/dispatch-orchestration.md|### Cursor Task-spawn slugs
 adapters/core/protocols/WORKER_PROTOCOL.md|re-read the current stage's phase file

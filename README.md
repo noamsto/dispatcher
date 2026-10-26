@@ -711,6 +711,7 @@ dispatcher                       # promote this shell into an orchestrator
 dispatcher --agent codex         # …running on a different engine
 dispatcher "fix the flaky test"  # …with a first task
 dispatcher --new                 # …minting a second crew on purpose
+dispatcher --fresh --note <file> # …handing this crew off to a fresh session
 ```
 
 A bare `dispatcher` in a repo that already has a live one switches your client to
@@ -718,6 +719,12 @@ its pane instead of starting a second; task words there are refused with the pan
 named, so re-send them. With only dead crews it launches against the most
 recently active one. `--new` mints regardless, and refuses to run alongside an
 exported `CREW_ID`.
+
+A claude or pi dispatcher runs `--fresh` itself at a batch boundary: the
+launcher relaunches the engine in the same pane with the note, so context starts
+small again. With no launcher left, `CREW_ID=<id> dispatcher --fresh` restarts the
+crew from its stored note. See `DISPATCHER_PROTOCOL.md` → "Hand off to a fresh
+session".
 
 From inside a dispatcher session:
 
