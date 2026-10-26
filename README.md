@@ -197,8 +197,9 @@ resolves them through `DISPATCHER_REVIEWERS_DIR` / `DISPATCHER_CRITICS_DIR`
 (or the copy its adapter ships) and hands the matched body to whatever spawn
 its engine has: a named agent on claude, an inline role brief on codex and
 cursor, a `subagent` agent on pi, or a role-grid pane — every engine by default on
-`deep`, but for critics only (the code-review gate always spawns the native
-named-agent/inline-brief mechanism, never a grid pane). A critic sits at the tier's escalate rung — it has to out-think the
+`deep`, but for critics only (the code-review gate always runs the native
+batch — named agent, inline brief, or pi's `subagent` — never a grid pane in
+its place; on pi an explicit reviewer pane's reject still vetoes). A critic sits at the tier's escalate rung — it has to out-think the
 draft it gates. Nothing about either gate depends on agent definitions that
 live outside the repo. A target repo can extend or override the reviewer
 roster with `.dispatcher/reviewers/*.md`, read from the merge-base with

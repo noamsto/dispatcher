@@ -2899,7 +2899,24 @@ _phase_stems() {
   sed -i.bak 's/"--no-session"/"--session"/' "$BATS_TEST_TMPDIR/index.ts"
   run bash "$ROOT/scripts/pi-subagent-contract.sh" --pinned "$BATS_TEST_TMPDIR"
   [ "$status" -eq 1 ]
-  [[ "$output" == *'missing in index.ts: const args: string[] = ["--mode", "json", "-p", "--no-session"];'* ]]
+  [[ "$output" == *'missing in index.ts: const args: string[] = ["--mode", "json", "-p", "--no-session", "--no-approve"];'* ]]
+}
+
+@test "pi subagent contract: an unlisted spawn argument fails and is named" {
+  cp "$ROOT"/adapters/pi/extensions/subagent/{index,agents}.ts "$BATS_TEST_TMPDIR/"
+  printf '\targs.push("--foo");\n' >>"$BATS_TEST_TMPDIR/index.ts"
+  run bash "$ROOT/scripts/pi-subagent-contract.sh" --pinned "$BATS_TEST_TMPDIR"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'unlisted in index.ts: args.push("--foo");'* ]]
+}
+
+@test "pi subagent contract: --installed exits 2 when the pi on PATH names no store binary" {
+  mkdir "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\necho pi\n' >"$BATS_TEST_TMPDIR/bin/pi"
+  chmod +x "$BATS_TEST_TMPDIR/bin/pi"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" run bash "$ROOT/scripts/pi-subagent-contract.sh" --installed
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"cannot find the real pi binary"* ]]
 }
 
 @test "pi subagent contract: the installed pi matches the upstream contract" {
@@ -2935,7 +2952,7 @@ _phase_stems() {
 }
 
 @test "pi agent roster: frontmatter names, descriptions and pinned models" {
-  deep="$(jq -r .modelMap.pi.deep.default "$ROOT/adapters/core/defaults.json")"
+  deep="$(jq -er .modelMap.pi.deep.default "$ROOT/adapters/core/defaults.json")"
   [ -n "$deep" ]
   for file in "$ROOT"/adapters/pi/agents/*.md; do
     name="$(basename "$file" .md)"
@@ -3002,6 +3019,19 @@ _phase_stems() {
     if [[ $name != execute* ]]; then
       grep -qF 'Never execute the code under review' "$file" || { echo "$name: no execute ban" >&2; return 1; }
     fi
+  done
+}
+
+@test "pi agent roster: only reviewer agents carry the findings-list contract" {
+  for file in "$ROOT"/adapters/pi/agents/*.md; do
+    name="$(basename "$file" .md)"
+    [[ $name != execute* && $name != test-runner ]] || continue
+    case "$name" in
+    plan-critic | spec-critic | refuter)
+      ! grep -qF 'Report findings as a list' "$file" || { echo "$name: has the findings-list contract" >&2; return 1; } ;;
+    *)
+      grep -qF 'Report findings as a list' "$file" || { echo "$name: no findings-list contract" >&2; return 1; } ;;
+    esac
   done
 }
 

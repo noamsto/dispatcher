@@ -1402,11 +1402,12 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   grep -qxF -- 'set-window-option -t @4 @crew_id c1' "$STUB_LOG"
   grep -qxF -- 'set-option -p -t %8 @crew_model sonnet' "$STUB_LOG"
   mapfile -t lines <"$rec"
-  [ "${#lines[@]}" -eq 6 ]
+  [ "${#lines[@]}" -eq 7 ]
   [ "${lines[0]}" = "$DISPATCHER_PROTOCOL_DIR" ]
   [ "${lines[1]}" = "$DISPATCHER_SKILLS_DIR" ]
   [ "${lines[4]}" = "$(realpath "$WT")" ]
   jq -e --arg xdg "${XDG_CONFIG_HOME:-$HOME/.config}" 'type == "object" and .XDG_CONFIG_HOME == $xdg' <<<"${lines[5]}"
+  [ "${lines[6]}" = "$DISPATCHER_PI_DIR" ]
 }
 
 @test "resume on a new window stamps it for --spawn-role" {
@@ -1683,6 +1684,20 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   run run_resume
   [ "$status" -eq 0 ]
   grep -q -- "--no-approve -e $DISPATCHER_PI_DIR/extensions/subagent/index.ts --skill $WT/.agents/skills --skill $DISPATCHER_SKILLS_DIR " <(launch_log)
+}
+
+@test "pi resume refuses when the subagent extension is missing, before any window is created" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: pi/' -e 's|^model: sonnet|model: openrouter/deepseek/deepseek-v4-flash|' "$WT/WORKER_TASK.md"
+  stub_tmux_no_pane
+  mkdir -p "$BATS_TEST_TMPDIR/empty-pi"
+  export DISPATCHER_PI_DIR="$BATS_TEST_TMPDIR/empty-pi"
+  cd "$WT"
+  run run_resume
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"pi subagent extension missing: $BATS_TEST_TMPDIR/empty-pi/extensions/subagent/index.ts"* ]]
+  run grep -c -- 'new-window' "$STUB_LOG"
+  [ "$status" -ne 0 ]
 }
 
 @test "pi resume passes only the harness skills when the worktree has none" {

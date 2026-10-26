@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # pi-subagent-contract.sh — check that a pi subagent extension still has the
 # child-spawn contract the dispatcher relies on (argv shape, JSON event mode,
-# agents dir, agent frontmatter fields).
+# agents dir, agent frontmatter fields). Spawn-argument and child-env lines in
+# index.ts that the contract does not list also fail, as drift.
 #
 # adapters/pi/extensions/subagent/contract.txt lists one source line per row.
 # A row passes when its literal equals a whole, whitespace-trimmed line of the
@@ -59,7 +60,7 @@ if [ "$mode" = installed ]; then
     exit 2
   }
   if grep -Iq . "$pi_bin"; then
-    real="$(grep -Eo '/nix/store/[^ "'"'"']*/bin/pi' "$pi_bin" | head -n 1)"
+    real="$(grep -Eo '/nix/store/[^ "'"'"']*/bin/pi' "$pi_bin" | head -n 1 || true)"
   else
     real="$(realpath "$pi_bin")"
   fi
@@ -90,6 +91,8 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 failed=0
+listed="$tmp/listed"
+: >"$listed"
 while IFS=$'\t' read -r file row_scope literal; do
   case "$file" in "" | "#"* | version) continue ;; esac
   [ "$row_scope" = both ] || [ "$row_scope" = "$scope" ] || continue
@@ -100,11 +103,22 @@ while IFS=$'\t' read -r file row_scope literal; do
       sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$dir/$file" >"$trimmed"
     fi
   fi
+  [ "$file" != index.ts ] || printf '%s\n' "$literal" >>"$listed"
   if ! grep -Fxq -- "$literal" "$trimmed"; then
     echo "missing in $file: $literal"
     failed=1
   fi
 done <"$contract"
+
+# A spawn argument or child-env line the contract does not list is drift too.
+if [ -r "$dir/index.ts" ]; then
+  while IFS= read -r line; do
+    grep -Fxq -- "$line" "$listed" && continue
+    echo "unlisted in index.ts: $line"
+    failed=1
+  done < <(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$dir/index.ts" |
+    grep -E '^(if \(.*\) )?args\.push\(|^env:' || true)
+fi
 
 [ -z "$notice" ] || echo "$notice" >&2
 if [ "$failed" -ne 0 ]; then

@@ -232,7 +232,7 @@ done
 # including the secret rule lifted from the worker protocol.
 pi_src="$root/adapters/pi/src"
 pi_agents="$root/adapters/pi/agents"
-pi_model="$(jq -r '.modelMap.pi.deep.default' "$root/adapters/core/defaults.json")"
+pi_model="$(jq -er '.modelMap.pi.deep.default' "$root/adapters/core/defaults.json")"
 pi_light="$pi_model:low"
 pi_exec="$pi_model:high"
 pi_esc="$pi_model:max"
@@ -283,12 +283,14 @@ _pi_agent() {
 
 mkdir -p "$pi_agents"
 pi_written=()
-for f in "$reviewers"/*.md "$critics"/*.md; do
-  [ "$(basename "$f")" != README.md ] || continue
-  _pi_agent "$(basename "$f" .md)" "$(_desc "$f")" "$pi_tools_readonly" "$pi_esc" review "$f"
+for dir_stamp in "$reviewers:review" "$critics:critic"; do
+  for f in "${dir_stamp%:*}"/*.md; do
+    [ "$(basename "$f")" != README.md ] || continue
+    _pi_agent "$(basename "$f" .md)" "$(_desc "$f")" "$pi_tools_readonly" "$pi_esc" "${dir_stamp##*:}" "$f"
+  done
 done
 _pi_agent repo-reviewer "Run a repo-local reviewer brief passed in the task text." "$pi_tools_readonly" "$pi_esc" review "$pi_src/repo-reviewer.md"
-_pi_agent refuter "Adversarially verify one review finding; default refuted." "$pi_tools_readonly" "$pi_esc" review "$pi_src/refuter.md"
+_pi_agent refuter "Adversarially verify one review finding; default refuted." "$pi_tools_readonly" "$pi_esc" critic "$pi_src/refuter.md"
 _pi_agent test-runner "Run the named acceptance and behavior tests and report pass/fail." "$pi_tools_test" "$pi_exec" test "$pi_src/test-runner.md"
 _pi_agent execute-light "Execute one plan step whose files and edit are named (cheap rung)." "" "$pi_light" execute
 _pi_agent execute "Execute one judgment plan step (default rung)." "" "$pi_exec" execute

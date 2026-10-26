@@ -358,8 +358,9 @@ with thinking off, every other rung with it on.
 
 - **Gate.** `dispatch --agent pi --model <id>` admits a local id only at the
   entry's `tiers`; `--ignore-map` overrides. Every other id is gated as before.
-  pi's OpenRouter budget gates skip a local target — it costs no OpenRouter
-  spend.
+  pi's OpenRouter budget gates skip a local target: the lead costs no
+  OpenRouter spend, but its standard/deep `subagent` agents run on hosted
+  `deepseek-v4.1-flash` and do.
 - **Probe.** Before scaffolding, `dispatch` fetches `<baseUrl>/models` (5s) and
   refuses when the endpoint is `unreachable`, `returned an HTTP error` (4xx/5xx,
   e.g. a wrong `baseUrl` path), or `did not list '<model>'`.

@@ -865,6 +865,30 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+# _stub_pi_version <version> — a pi whose `--version` prints <version>.
+_stub_pi_version() {
+  printf '#!/usr/bin/env bash\n[ "$1" = --version ] && echo "%s"\nexit 0\n' "$1" >"$STUB_DIR/pi"
+  chmod +x "$STUB_DIR/pi"
+}
+
+@test "dispatch warns when the installed pi differs from the pinned subagent contract" {
+  stub_launch_bins
+  _stub_pi_version 9.9.9
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi version drift"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"installed pi 9.9.9 differs from the pinned subagent extension contract"* ]]
+}
+
+@test "dispatch does not warn when the installed pi matches the pinned subagent contract" {
+  stub_launch_bins
+  pinned="$(awk -F'\t' '$1 == "version" { print $2; exit }' "$DISPATCHER_PI_DIR/extensions/subagent/contract.txt")"
+  [ -n "$pinned" ]
+  _stub_pi_version "$pinned"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi version match"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"differs"* ]]
+}
+
 @test "pi worker launch passes the worktree's project skills and the harness skills with --skill" {
   stub_launch_bins
   # Seed a project skill into the worktree the wt stub creates. dispatch looks
@@ -10158,7 +10182,7 @@ EOF
 # _write_dirs_record <protocol> <skills> <reviewers> <critics> [patch-json] — the
 # protocol-dirs record dispatch writes for feat/9-x, bound to this worktree.
 # Line 6 is the settings record, mirroring the recorder from the fixture's env;
-# [patch-json] overrides keys (a role runs from this record, never the caller's env).
+# line 7 is the pi adapter dir; [patch-json] overrides settings keys (a role runs from this record, never the caller's env).
 _write_dirs_record() {
   local engines settings patch="${5:-}"
   [ -n "$patch" ] || patch='{}'
@@ -10175,7 +10199,7 @@ _write_dirs_record() {
      DISPATCH_ORG_TRACKERS: e("DISPATCH_ORG_TRACKERS"), PI_CODING_AGENT_DIR: $pi,
      DISPATCH_CONFIG_BIN: e("DISPATCH_CONFIG_BIN"), LOCAL_MODELS_LIB: e("LOCAL_MODELS_LIB")} + $patch')"
   mkdir -p "$common/crew/protocol-dirs/feat"
-  printf '%s\n' "$1" "$2" "$3" "$4" "$(realpath "$PWD")" "$settings" >"$common/crew/protocol-dirs/feat/9-x"
+  printf '%s\n' "$1" "$2" "$3" "$4" "$(realpath "$PWD")" "$settings" "${DISPATCHER_PI_DIR:-}" >"$common/crew/protocol-dirs/feat/9-x"
 }
 
 # _record_grant_roots <roots> — rewrite the record with the dispatcher's resolved
@@ -10677,7 +10701,8 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [ "${lines[2]}" = "" ]
   [ "${lines[3]}" = "" ]
   [ "${lines[4]}" = "$(realpath "$TEST_REPO/.dispatch-wt/feat-42-dirs-record")" ]
-  [ "${#lines[@]}" -eq 6 ]
+  [ "${lines[6]}" = "$DISPATCHER_PI_DIR" ]
+  [ "${#lines[@]}" -eq 7 ]
   expected_engines="$("$DISPATCH_CONFIG_BIN" | jq -r '.engines // [] | join(" ")')"
   jq -e --arg xdg "$XDG_CONFIG_HOME" --arg pi "$HOME/.pi/agent" --arg engines "$expected_engines" \
     --arg bin "$DISPATCH_CONFIG_BIN" 'type == "object"
@@ -14864,6 +14889,26 @@ EOF
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
   [[ "$line" == *"--add-dir $BATS_TEST_TMPDIR/rec-critics "* ]]
   [[ "$line" != *"env-critics"* ]]
+}
+
+@test "spawn-role: record — the recorded pi dir wins over the worker's env" {
+  _spawn_role_fixture
+  mkdir -p "$BATS_TEST_TMPDIR/rec-pi" "$BATS_TEST_TMPDIR/env-pi"
+  sed -i "7s|.*|$BATS_TEST_TMPDIR/rec-pi|" "$common/crew/protocol-dirs/feat/9-x"
+  DISPATCHER_PI_DIR="$BATS_TEST_TMPDIR/env-pi" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  launch="$(launch_log)"
+  [[ "$launch" == *"DISPATCHER_PI_DIR=$BATS_TEST_TMPDIR/rec-pi "* ]]
+  [[ "$launch" != *"env-pi"* ]]
+}
+
+@test "spawn-role: record — a record without a pi dir line ignores the worker's env" {
+  _spawn_role_fixture
+  mkdir -p "$BATS_TEST_TMPDIR/env-pi"
+  sed -i 6q "$common/crew/protocol-dirs/feat/9-x"
+  DISPATCHER_PI_DIR="$BATS_TEST_TMPDIR/env-pi" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  [[ "$(launch_log)" != *"env-pi"* ]]
 }
 
 @test "spawn-role: record — the recorded protocol dir drives the role's system prompt" {

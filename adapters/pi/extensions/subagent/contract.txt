@@ -1,16 +1,20 @@
 # Child-spawn contract the dispatcher relies on in pi's subagent extension: one row per source line.
 # Check with scripts/pi-subagent-contract.sh --pinned | --installed; rows: file<TAB>scope<TAB>literal (scope: both|pinned|upstream).
 version	1.4.0
-index.ts	both	const args: string[] = ["--mode", "json", "-p", "--no-session"];
+index.ts	upstream	const args: string[] = ["--mode", "json", "-p", "--no-session"];
+index.ts	pinned	const args: string[] = ["--mode", "json", "-p", "--no-session", "--no-approve"];
 index.ts	both	if (model) args.push("--model", model);
 index.ts	both	args.push("--thinking", dispatchDefaults.thinkingLevel);
 index.ts	both	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 index.ts	both	args.push("--append-system-prompt", tmpPromptPath);
 index.ts	both	args.push(`Task: ${task}`);
 index.ts	both	return { command: process.execPath, args };
+index.ts	both	return { command: process.execPath, args: [currentScript, ...args] };
 index.ts	both	if (event.type === "message_end" && event.message) {
 index.ts	pinned	env: { ...process.env, CREW_SUBAGENT: "1" },
 agents.ts	both	model: typeof frontmatter.model === "string" ? frontmatter.model : undefined,
 agents.ts	both	tools: parseToolList(frontmatter.tools),
+agents.ts	both	if (typeof frontmatter.name !== "string" || typeof frontmatter.description !== "string") {
+agents.ts	both	systemPrompt: body,
 agents.ts	upstream	const userDir = path.join(getAgentDir(), "agents");
 agents.ts	pinned	const userDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "agents");

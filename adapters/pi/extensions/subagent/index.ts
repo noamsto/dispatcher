@@ -1,7 +1,7 @@
 // Pinned from pi 1.4.0 examples/extensions/subagent. Dispatcher patches (each marked
 // `dispatcher patch:` in the code): agents dir relative to this file, no project-scope
-// agents, CREW_SUBAGENT=1 in the child env. To re-pin: copy the new upstream index.ts and
-// agents.ts, re-apply the `dispatcher patch:` hunks, then run
+// agents, --no-approve and CREW_SUBAGENT=1 for the child, fixed-roster tool text. To re-pin:
+// copy the new upstream index.ts and agents.ts, re-apply the `dispatcher patch:` hunks, then run
 // `bash scripts/pi-subagent-contract.sh --installed`.
 /**
  * Subagent Tool - Delegate tasks to specialized agents
@@ -25,10 +25,8 @@ import type { AgentToolResult, ThinkingLevel } from "@earendil-works/pi-agent-co
 import type { Message } from "@earendil-works/pi-ai";
 import { StringEnum } from "@earendil-works/pi-ai";
 import {
-	CONFIG_DIR_NAME,
 	type ExtensionAPI,
 	formatReadLineRange,
-	getAgentDir,
 	getMarkdownTheme,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
@@ -300,7 +298,8 @@ async function runSingleAgent(
 		};
 	}
 
-	const args: string[] = ["--mode", "json", "-p", "--no-session"];
+	// dispatcher patch: like every dispatcher pi launch, ignore project-local .pi files
+	const args: string[] = ["--mode", "json", "-p", "--no-session", "--no-approve"];
 	const inheritsDispatchConfig = !agent.model;
 	const model = agent.model ?? dispatchDefaults.model;
 	if (model) args.push("--model", model);
@@ -480,8 +479,8 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
-			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
-			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
+			// dispatcher patch: the roster is fixed, so the upstream agent-scope text would mislead
+			"Agents are the dispatcher's shipped roster; agentScope is ignored.",
 		].join(" "),
 		parameters: SubagentParams,
 

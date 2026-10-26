@@ -2249,9 +2249,10 @@ _settings_env_json() {
 }
 
 # _record_protocol_dirs <worktree> — record the resolved protocol dirs, the
-# worktree they belong to, and the settings env (_settings_env_json), for
-# --spawn-role (#496, #733): dispatcher-written, outside every prompt-free
-# write grant a worker holds.
+# worktree they belong to, the settings env (_settings_env_json), and the pi
+# adapter dir (last, so older records keep their indices), for --spawn-role
+# (#496, #733): dispatcher-written, outside every prompt-free write grant a
+# worker holds.
 _record_protocol_dirs() {
   local rec="$crew_dir/protocol-dirs/$branch" n v tmp
   local -a lines=()
@@ -2261,6 +2262,9 @@ _record_protocol_dirs() {
     lines+=("$v")
   done
   lines+=("$(realpath -e -- "$1")" "$(_settings_env_json)")
+  v="$PI_DIR"
+  [[ $v == /* ]] || v=""
+  lines+=("$v")
   (
     umask 077
     mkdir -p "$(dirname "$rec")"
@@ -3578,11 +3582,12 @@ if [ "${1:-}" = "--spawn-role" ]; then
     fi
   done < <(_settings_env_names)
   _settings_load
-  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
+  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR DISPATCHER_PI_DIR
   DISPATCHER_PROTOCOL_DIR="${rec_lines[0]:-}" _resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@" dispatch
   DISPATCHER_SKILLS_DIR="${rec_lines[1]:-}" _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" dispatch
   DISPATCHER_REVIEWERS_DIR="${rec_lines[2]:-}" _resolve_dir REVIEWERS_DIR DISPATCHER_REVIEWERS_DIR "@reviewersDir@" dispatch
   DISPATCHER_CRITICS_DIR="${rec_lines[3]:-}" _resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" dispatch
+  DISPATCHER_PI_DIR="${rec_lines[6]:-}" _resolve_dir PI_DIR DISPATCHER_PI_DIR "@piDir@" dispatch
   _require_protocol_files "$PROTOCOL_DIR" WORKER_PROTOCOL.md EVIDENCE_REVIEW.md GRID_PROTOCOL.md
   _check_protocol_rev "$PROTOCOL_DIR" dispatch
   roles_file="$crew_dir/artifacts/$branch/roles.json"
