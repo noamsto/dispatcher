@@ -9859,8 +9859,9 @@ _mcp_assert_cache_file() {
     MCP_ISSUE=$issue _mcp_dispatch "$agent" "$model"
     [ "$status" -eq 0 ] || { echo "row $row: $output" >&2; return 1; }
     [ -n "$(_mcp_line "$needle")" ]
-    # Lead and role panes alike.
-    run grep -cE -- '/dispatcher/mcp/|mcp_servers| -e /' <(grep -F -- " $agent " <(launch_log))
+    # Lead and role panes alike. A pi lead's pinned subagent -e is a plain path,
+    # so the catalog is matched by its cache dir alone.
+    run grep -cE -- '/dispatcher/mcp/|mcp_servers' <(grep -F -- " $agent " <(launch_log))
     [ "$output" = 0 ] || { echo "row $row: catalog flag in a launch" >&2; return 1; }
   done <<'ROWS'
 claude claude sonnet claude --name iris --model
