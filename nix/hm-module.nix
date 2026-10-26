@@ -29,7 +29,7 @@ self: {
     // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;}
     // lib.optionalAttrs (cfg.localModels != null) {localModels = lockFields cfg.localModels;}
     // lib.optionalAttrs (cfg.laneProfiles != null) {laneProfiles = lockFields cfg.laneProfiles;}
-    // lib.optionalAttrs (cfg.hosts != null) {inherit (cfg) hosts;}
+    // lib.optionalAttrs (cfg.hosts != null) {hosts = lockFields cfg.hosts;}
     // lib.optionalAttrs (cfg.workerDeniedMcpServers != null) {inherit (cfg) workerDeniedMcpServers;}
     // lib.optionalAttrs (cfg.chrome != null) {dispatcherChrome = cfg.chrome;}
     // lib.optionalAttrs (cfg.dispatcherMcp != null) {inherit (cfg) dispatcherMcp;}
@@ -361,6 +361,12 @@ in {
             type = lib.types.strMatching "[A-Za-z0-9_][A-Za-z0-9._@%+-]*";
             example = "noam@mini.local";
             description = "The ssh destination `crew remote-run` connects to: a user@host or an `~/.ssh/config` alias (use one for ports or jump hosts). Letters, digits and `._@%+-`, not starting with `-`.";
+          };
+          chrome = lib.mkOption {
+            type = lib.types.nullOr lib.types.bool;
+            default = null;
+            example = true;
+            description = "The host runs the owner's browser with Claude in Chrome, so `dispatch --host <name> --chrome` may send a Claude-in-Chrome worker there. Unset, `--chrome` to this host is refused.";
           };
           repos = lib.mkOption {
             type = lib.types.attrsOf (lib.types.strMatching "/[^[:cntrl:]]*");

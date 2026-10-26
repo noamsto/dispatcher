@@ -532,7 +532,7 @@ _resume_remote() {
   local rc=0 ssh
   local -a rest=("${resume_args[@]:0:target_at}" "${resume_args[@]:target_at+1}")
   [ -z "$chrome" ] || {
-    echo "dispatch resume: --chrome is local to this machine — $1 runs on $2" >&2
+    echo "dispatch resume: --chrome is not carried to a remote resume — $1 runs on $2; re-dispatch it with dispatch --host $2 --chrome" >&2
     exit 1
   }
   crew remote-run --host "$2" --env "CREW_ID=$3" --env "DISPATCH_TMUX_SESSION=crew-$3" -- \

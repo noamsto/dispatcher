@@ -184,6 +184,10 @@ let
       ssh = "me@mini";
       repos."acme/widget" = "/r/widget";
     };
+    hosts.desk = {
+      ssh = "me@desk";
+      chrome = true;
+    };
     workerDeniedMcpServers = ["my_browser"];
     chrome = true;
     dispatcherMcp = {"factify-inc" = ["claudeai"]; "factify-inc/mono" = ["claudeai" "analytics"];};
@@ -945,7 +949,7 @@ worktree_git_lib_crew_go_row() { # bin
 @test "the hosts option lands in the locked layer, only when set" {
   run jq -e '(.options | index("hosts")) != null' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '.full.locked.hosts == {"mini": {"ssh": "me@mini", "repos": {"acme/widget": "/r/widget"}}}' "$EVAL"
+  run jq -e '.full.locked.hosts == {"mini": {"ssh": "me@mini", "repos": {"acme/widget": "/r/widget"}}, "desk": {"ssh": "me@desk", "chrome": true, "repos": {}}}' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.hosts.mini.ssh == "me@mini"' "$EVAL"
   [ "$status" -eq 0 ]
