@@ -141,7 +141,7 @@ _refuse() {
 
 if [ "${1:-}" = --fresh ]; then
   if [ "$#" -ne 2 ]; then
-    echo "lead-launcher: usage: \"\$CREW_LEAD_LAUNCHER\" --fresh <execute|review>" >&2
+    echo 'lead-launcher: usage: lead-launcher --fresh <execute|review>' >&2
     exit 2
   fi
   stage=$2
