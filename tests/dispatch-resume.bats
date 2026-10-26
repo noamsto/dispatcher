@@ -1419,6 +1419,27 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   grep -qxF -- 'set-window-option -t %99 @crew_id c1' "$STUB_LOG"
 }
 
+@test "resume restamps @crew_dispatcher_host from the task header, border included" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  sed -i 's/^crew_id: c1$/&\ndispatcher_host: halo/' "$WT/WORKER_TASK.md"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -qxF -- 'set-window-option -t @4 @crew_dispatcher_host halo' "$STUB_LOG"
+  grep -qF '#{?#{@crew_dispatcher_host}, · ⇄ #{@crew_dispatcher_host},}' "$STUB_LOG"
+}
+
+@test "resume leaves @crew_dispatcher_host unset when the header has none" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -qxF -- 'set-window-option -u -t @4 @crew_dispatcher_host' "$STUB_LOG"
+  run ! grep -qE '@crew_dispatcher_host [^ ]' "$STUB_LOG"
+}
+
 @test "resume refuses a symlinked protocol-dirs record before launching" {
   setup_worker_wt
   stub_tmux_with_pane_at_wt '@4' '%8' iris

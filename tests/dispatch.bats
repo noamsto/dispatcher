@@ -3641,6 +3641,46 @@ EOF
   [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ]
 }
 
+@test "DISPATCH_ORIGIN_HOST differing from this host stamps the header, window option and border" {
+  stub_launch_bins
+  _remote_mode_tmux
+  local_short="$(uname -n)"
+  local_short="${local_short%%.*}"
+  origin="origin-$local_short"
+  DISPATCH_ORIGIN_HOST="$origin" run run_dispatch standard sonnet --effort medium --crew-id c1 42 "owned elsewhere"
+  [ "$status" -eq 0 ]
+  grep -qx "dispatcher_host: $origin" "$TEST_REPO/.dispatch-wt/feat-42-owned-elsewhere/WORKER_TASK.md"
+  grep -qE "^set-window-option -t .* @crew_dispatcher_host $origin\$" "$STUB_LOG"
+  grep -qF '#{?#{@crew_dispatcher_host}, · ⇄ #{@crew_dispatcher_host},}' "$STUB_LOG"
+}
+
+@test "DISPATCH_ORIGIN_HOST unset or equal to this host leaves @crew_dispatcher_host unset" {
+  stub_launch_bins
+  _remote_mode_tmux
+  local_short="$(uname -n)"
+  local_short="${local_short%%.*}"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "own worker"
+  [ "$status" -eq 0 ]
+  run ! grep -q '^dispatcher_host:' "$TEST_REPO/.dispatch-wt/feat-42-own-worker/WORKER_TASK.md"
+  run ! grep -qE '@crew_dispatcher_host [^ ]' "$STUB_LOG"
+  : >"$STUB_LOG"
+  DISPATCH_ORIGIN_HOST="$local_short" run run_dispatch standard sonnet --effort medium --crew-id c2 43 "same host"
+  [ "$status" -eq 0 ]
+  run ! grep -q '^dispatcher_host:' "$TEST_REPO/.dispatch-wt/feat-43-same-host/WORKER_TASK.md"
+  run ! grep -qE '@crew_dispatcher_host [^ ]' "$STUB_LOG"
+}
+
+@test "an invalid DISPATCH_ORIGIN_HOST is refused before any scaffolding" {
+  stub_launch_bins
+  _remote_mode_tmux
+  for bad in 'a b' 'a;b' '-halo'; do
+    DISPATCH_ORIGIN_HOST="$bad" run run_dispatch standard sonnet --effort medium --crew-id c1 42 "t"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"DISPATCH_ORIGIN_HOST must be a plain short hostname"* ]]
+    [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ]
+  done
+}
+
 @test "remote mode: the tmux client that may start the crew server carries no CREW_ or DISPATCH_ var" {
   stub_launch_bins
   # _remote_mode_tmux, also logging which CREW_/DISPATCH_ vars a window-opening
@@ -3724,7 +3764,9 @@ EOF
   [[ "$stderr" == *"dispatch: --host mini: remote dispatch failed (exit 3)"* ]]
   [[ "$stderr" == *"not passing codename 'bad name'"* ]]
   call="$(grep -- '-- dispatch standard' "$STUB_LOG")"
-  [[ "$call" == "remote-run --host mini --env CREW_ID=c1 --env DISPATCH_TMUX_SESSION=crew-c1 --env DISPATCH_EMIT_ROW=1 --env DISPATCH_SESSION_ID=s"*" --env CREW_IDENTITY_AVOID=iris -- dispatch standard sonnet --effort medium --draft 42 --crew-id c1 -- --dash title" ]]
+  local_short="$(uname -n)"
+  local_short="${local_short%%.*}"
+  [[ "$call" == "remote-run --host mini --env CREW_ID=c1 --env DISPATCH_TMUX_SESSION=crew-c1 --env DISPATCH_ORIGIN_HOST=$local_short --env DISPATCH_EMIT_ROW=1 --env DISPATCH_SESSION_ID=s"*" --env CREW_IDENTITY_AVOID=iris -- dispatch standard sonnet --effort medium --draft 42 --crew-id c1 -- --dash title" ]]
   [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ]
 }
 

@@ -397,6 +397,27 @@ dispatch_remote() { # <extra dispatch args...> — a standard dispatch to crew c
   stop_stream
 }
 
+@test "dispatch --host names the local host as the owning dispatcher on the remote worker" {
+  # Only the local side sees FAKE_UNAME_N (the remote env is built from a whitelist).
+  cat >"$STUB_DIR/uname" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = -n ] && [ -n "\${FAKE_UNAME_N:-}" ]; then
+  printf '%s\n' "\$FAKE_UNAME_N"
+else
+  PATH="\${PATH#$STUB_DIR:}" exec uname "\$@"
+fi
+EOF
+  chmod +x "$STUB_DIR/uname"
+  FAKE_UNAME_N=owner-box.example.org run --separate-stderr dispatch_remote --host mini 42 "Owned title"
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  wt="$(remote_wt "$(local_dispatch_rows | jq -r .branch)")"
+  grep -qx 'dispatcher_host: owner-box' "$wt/WORKER_TASK.md"
+  remote_tmux list-windows -t =crew-c1 -F '#{@crew_dispatcher_host}' | grep -qxF owner-box
+}
+
 @test "dispatch --host carries DISPATCH_DRAFT_PR=1 to the remote worker" {
   DISPATCH_DRAFT_PR=1 run --separate-stderr dispatch_remote --host mini 42 "Draft title"
   [ "$status" -eq 0 ] || {
