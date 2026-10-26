@@ -3732,7 +3732,7 @@ EOF
   stub_launch_bins
   _host_crew_stub
   local flag
-  for flag in '--base main' '--add-dir /tmp' --status --lazy --chrome; do
+  for flag in '--base main' '--add-dir /tmp' --status --lazy; do
     : >"$STUB_LOG"
     # shellcheck disable=SC2086 # the flag and its value are two words
     run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 $flag 42 "t"
@@ -3740,6 +3740,59 @@ EOF
     [[ "$stderr" == *"--host cannot combine with ${flag%% *}"* ]] || return 1
     run ! grep -q '^remote-run' "$STUB_LOG"
   done
+}
+
+@test "dispatch --host --chrome is refused for a host without hosts.<h>.chrome" {
+  stub_launch_bins
+  _host_crew_stub
+  run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 --chrome 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"hosts.mini.chrome"* ]]
+  run ! grep -q '^remote-run' "$STUB_LOG"
+}
+
+@test "dispatch --host --chrome forwards --chrome to a host with hosts.<h>.chrome" {
+  stub_launch_bins
+  _host_crew_stub
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"hosts":{"mini":{"ssh":"mini","chrome":true}}}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 --chrome 42 "t"
+  [ "$status" -eq 3 ]
+  call="$(grep -- '-- dispatch standard' "$STUB_LOG")"
+  [[ "$call" == *" --chrome "* ]]
+}
+
+@test "dispatch --host --chrome is refused from a worker" {
+  stub_launch_bins
+  _host_crew_stub
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"hosts":{"mini":{"ssh":"mini","chrome":true}}}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  CREW_WORKER_ID=worker:feat/1-x#s1-1 run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 --chrome 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatcher-only"* ]]
+  run ! grep -q '^remote-run' "$STUB_LOG"
+}
+
+@test "dispatch --host --chrome is refused for a non-claude agent" {
+  stub_launch_bins
+  _host_crew_stub
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"hosts":{"mini":{"ssh":"mini","chrome":true}}}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run --separate-stderr run_dispatch standard gpt-5.4 --agent codex --host mini --effort medium --crew-id c1 --chrome 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"claude-only"* ]]
+  run ! grep -q '^remote-run' "$STUB_LOG"
+}
+
+@test "dispatch --host --chrome is refused while workerDeniedMcpServers bans Claude in Chrome here" {
+  stub_launch_bins
+  _host_crew_stub
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '{"hosts":{"mini":{"ssh":"mini","chrome":true}},"workerDeniedMcpServers":["claude-in-chrome"]}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 --chrome 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"workerDeniedMcpServers"* ]]
+  run ! grep -q '^remote-run' "$STUB_LOG"
 }
 
 @test "dispatch --host refuses an env override the remote dispatch would not see" {
@@ -17464,6 +17517,92 @@ EOF
   DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
   [ "$status" -eq 1 ]
   [[ "$output" == *"--chrome is local to this machine"* ]]
+}
+
+@test "chrome: --chrome is accepted in a --host remote dispatch" {
+  stub_launch_bins
+  chrome_holder_tmux
+  CHROME_PANES='\x1fclaude\x1fslate\x1ffeat/1-x\x1f\x1f/crews/a/crew' DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_EMIT_ROW=1 DISPATCH_PRECHECK=1 \
+    run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 0 ]
+  grep -q '@crew_chrome' "$STUB_LOG"
+}
+
+@test "chrome: the worker refusal still wins in a --host remote dispatch" {
+  stub_launch_bins
+  CREW_WORKER_ID='worker:x#s1-1' DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_EMIT_ROW=1 DISPATCH_PRECHECK=1 \
+    run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --chrome is dispatcher-only"* ]]
+}
+
+# chrome_holder_bus <status-state>... — a crew dir whose bus carries one
+# worker status row per state for the holder branch, and CHROME_PANES pointing
+# the holding pane at it. No argument leaves the events file missing.
+chrome_holder_bus() {
+  local dir="$BATS_TEST_TMPDIR/crews/a/crew" state n=0
+  mkdir -p "$dir"
+  for state in "$@"; do
+    n=$((n + 1))
+    printf '{"kind":"status","from":"worker:feat/1-x#s1-1","ts":%d,"body":{"state":"%s"}}\n' "$n" "$state" >>"$dir/events.jsonl"
+  done
+  export CHROME_PANES="1\\x1fclaude\\x1fslate\\x1ffeat/1-x\\x1f\\x1f$dir"
+}
+
+@test "chrome: a holder whose newest status is done does not hold the browser" {
+  stub_launch_bins
+  chrome_holder_tmux
+  chrome_holder_bus working done
+  DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 0 ]
+}
+
+@test "chrome: a holder whose newest status is failed does not hold the browser" {
+  stub_launch_bins
+  chrome_holder_tmux
+  chrome_holder_bus working failed
+  DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 0 ]
+}
+
+@test "chrome: a holder that resumed working after done still holds the browser" {
+  stub_launch_bins
+  chrome_holder_tmux
+  chrome_holder_bus done working
+  DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"in use by slate (feat/1-x)"* ]]
+}
+
+@test "chrome: a holder whose newest status is exited or reaped still holds the browser" {
+  stub_launch_bins
+  chrome_holder_tmux
+  local state
+  for state in exited reaped; do
+    rm -rf "$BATS_TEST_TMPDIR/crews"
+    chrome_holder_bus working "$state"
+    DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+    [ "$status" -eq 1 ] || return 1
+    [[ "$output" == *"in use by slate (feat/1-x)"* ]] || return 1
+  done
+}
+
+@test "chrome: a holder with no bus events file still holds the browser" {
+  stub_launch_bins
+  chrome_holder_tmux
+  chrome_holder_bus
+  DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"in use by slate (feat/1-x)"* ]]
+}
+
+@test "chrome: a finished holder's window is never closed" {
+  stub_launch_bins
+  chrome_holder_tmux
+  chrome_holder_bus working done
+  DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [ "$status" -eq 0 ]
+  run ! grep -q kill-window "$STUB_LOG"
 }
 
 @test "chrome: an eager role pane never gets Claude in Chrome" {

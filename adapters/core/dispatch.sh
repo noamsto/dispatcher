@@ -35,7 +35,8 @@ Engine and roles
   --agent E               claude (default) | codex | cursor | pi
   --mcp LIST              MCP for the lead: analytics (claude) or mcpServers names,
                           comma-separated or repeated (none: no catalog server)
-  --chrome                Claude in Chrome for the claude lead (owner's browser; one per machine)
+  --chrome                Claude in Chrome for the claude lead (owner's browser; one per
+                          machine; with --host, only to a hosts.NAME.chrome host)
   --grid                  Role grid derived from the tier (critics, reviewer)
   --no-grid               No role grid (refused with --agent pi above trivial)
   --roles LIST            Grid as name[,name=<model>|name=<agent>:<model>[@effort]]
@@ -1172,10 +1173,14 @@ local_slot_cap() {
 # pane whose crew dir and branch both match DISPATCH_CHROME_SELF
 # (`<realpath crew dir>\x1f<branch>`) is skipped: resume's own pane is judged by
 # resume's live-lead guard, and a branch name alone could match another repo's.
-# No tmux server yields no lines, status 0. Fields are \x1f-separated, as in
-# _local_holders.
+# A pane whose branch's newest worker status in its crew bus is done or failed
+# is skipped: the lead said it finished. exited is not counted (the SessionEnd
+# backstop also fires for subagents, a false read with a live engine), nor is
+# reaped with a live engine. No tmux server yields no lines, status 0. Fields
+# are \x1f-separated, as in _local_holders.
 _chrome_holders() {
-  local flag cmd name lbranch role ldir self=""
+  local flag cmd name lbranch role ldir self="" finished
+  local -A finished_by_dir=()
   [ -z "${DISPATCH_PRECHECK:-}" ] || self="${DISPATCH_CHROME_SELF:-}"
   { tmux list-panes -a -F '#{@crew_chrome}'$'\x1f''#{pane_current_command}'$'\x1f''#{@crew_name}'$'\x1f''#{@crew_branch}'$'\x1f''#{@crew_role}'$'\x1f''#{@crew_dir}' 2>/dev/null || true; } |
     while IFS=$'\x1f' read -r flag cmd name lbranch role ldir; do
@@ -1183,9 +1188,25 @@ _chrome_holders() {
       [ -z "$role" ] || [ "$role" = lead ] || continue
       [ -z "$self" ] || [ -z "$ldir" ] || [ "$(realpath -m -- "$ldir")"$'\x1f'"$lbranch" != "$self" ] || continue
       _is_engine_cmd "$cmd" || continue
+      if [ -n "$ldir" ]; then
+        if [ -z "${finished_by_dir[$ldir]+x}" ]; then
+          finished_by_dir[$ldir]="$(_fleet_finished "$ldir/events.jsonl" 'done|failed')"
+        fi
+        finished="${finished_by_dir[$ldir]}"
+        case $'\n'"$finished"$'\n' in *$'\n'"$lbranch"$'\n'*) continue ;; esac
+      fi
       printf '%s (%s)\n' "${name:-?}" "${lbranch:-?}"
     done
   return 0
+}
+
+# _refuse_chrome_from_worker — exit 1 when a worker or role pane asks for --chrome.
+_refuse_chrome_from_worker() {
+  if [ -n "${CREW_WORKER_ID:-}" ] || [ -n "${CREW_ROLE_ID:-}" ] ||
+    { [ -n "${TMUX_PANE:-}" ] && [ -n "$(tmux display-message -p -t "$TMUX_PANE" '#{@crew_branch}' 2>/dev/null)" ]; }; then
+    echo "dispatch: --chrome is dispatcher-only — a worker or role pane cannot grant a session the owner's browser" >&2
+    exit 1
+  fi
 }
 
 # chrome_gate — refuse a --chrome dispatch while another live lead holds the
@@ -1198,7 +1219,7 @@ chrome_gate() {
   [ "${#holders[@]}" -gt 0 ] || return 0
   printf -v who '%s, ' "${holders[@]}"
   who="${who%, }"
-  echo "dispatch: --chrome: Claude in Chrome is in use by $who — one --chrome worker per machine; wait for it to finish (a finished worker holds the browser until \`crew reap\` closes its window)" >&2
+  echo "dispatch: --chrome: Claude in Chrome is in use by $who — one --chrome worker per machine; wait for it to finish (a lead that posted done or failed releases it)" >&2
   exit 1
 }
 
@@ -1244,13 +1265,14 @@ _fleet_leads() {
   return 0
 }
 
-# _fleet_finished <events.jsonl> — the branches whose newest worker status row
-# (in file order) is done, failed, exited or reaped, one per line.
+# _fleet_finished <events.jsonl> [<states regex>] — the branches whose newest
+# worker status row (in file order) matches the states (default
+# done|failed|exited|reaped), one per line.
 _fleet_finished() {
   [ -r "$1" ] || return 0
   jq -r 'select(.kind == "status" and ((.from // "") | startswith("worker:")))
     | "\(.from | ltrimstr("worker:") | sub("#[^#]*$"; ""))\t\((.body? // {}) | (.state? // ""))"' "$1" 2>/dev/null |
-    awk -F'\t' '{ s[$1] = $2 } END { for (b in s) if (s[b] ~ /^(done|failed|exited|reaped)$/) print b }' || true
+    awk -F'\t' -v states="${2:-done|failed|exited|reaped}" '{ s[$1] = $2 } END { for (b in s) if (s[b] ~ "^(" states ")$") print b }' || true
 }
 
 # _fleet_owned <branch>... — non-empty when a lead pane (engine alive or not)
@@ -4047,7 +4069,6 @@ _dispatch_remote() {
   [ -z "$base_flag" ] || refused=--base
   [ -z "$grid_status" ] || refused=--status
   [ -z "$grid_lazy" ] || refused=--lazy
-  [ -z "$chrome" ] || refused=--chrome
   # Env overrides of this run's gates or launch: the remote dispatch never sees
   # this environment, so it would silently run without them.
   for v in DISPATCH_PRECHECK DISPATCH_IGNORE_RUNG DISPATCH_SKIP_MODEL_CHECK DISPATCH_SHAPE DISPATCH_CLAUDE_CONNECTORS; do
@@ -4071,6 +4092,26 @@ _dispatch_remote() {
   # The worker runs on the remote host, so its tools are not checked here.
   _spec_lint --no-host-checks
 
+  _settings_load
+  # The remote runs its own claude-only check, ban and holder scan against its
+  # machine; these guard what it cannot see (the caller's pane), the opt-in and
+  # this machine's ban.
+  if [ -n "$chrome" ]; then
+    if [ "$agent" != claude ]; then
+      echo "dispatch: --chrome is claude-only (Claude in Chrome) — codex/cursor/pi workers check UI with agent-browser" >&2
+      exit 1
+    fi
+    _refuse_chrome_from_worker
+    jq -e --arg h "$remote_host" '.hosts[$h].chrome == true' <<<"$settings" >/dev/null || {
+      echo "dispatch: --host $remote_host --chrome: host $remote_host does not run the owner's browser — set hosts.$remote_host.chrome = true for a host that does" >&2
+      exit 1
+    }
+    if jq -e --arg c "$CLAUDE_CHROME_MCP_SERVER" '(.workerDeniedMcpServers // []) | index($c)' <<<"$settings" >/dev/null; then
+      echo "dispatch: --chrome is refused — workerDeniedMcpServers lists $CLAUDE_CHROME_MCP_SERVER (the owner's ban)" >&2
+      exit 1
+    fi
+  fi
+
   # The engine roster is the remote's; this call is also the preflight that
   # surfaces an unknown host, a missing clone mapping or a dead link.
   engines="$(crew remote-run --host "$remote_host" --env "CREW_ID=$crew_id" -- dispatch --engines)" || exit $?
@@ -4083,7 +4124,6 @@ _dispatch_remote() {
   # here for the lead and for every role on claude (a role naming no engine runs
   # on the lead's). The fan-out budget and load gate are per host: the remote
   # dispatch runs its own.
-  _settings_load
   if [ "$agent" = claude ]; then
     pace_rule_target claude "$model" "$effort"
     budget_stop claude
@@ -4873,17 +4913,15 @@ if [ -n "$chrome" ] && [ "$agent" != claude ]; then
   echo "dispatch: --chrome is claude-only (Claude in Chrome) — codex/cursor/pi workers check UI with agent-browser" >&2
   exit 1
 fi
-if [ -n "$chrome" ] &&
-  { [ -n "${CREW_WORKER_ID:-}" ] || [ -n "${CREW_ROLE_ID:-}" ] ||
-    { [ -n "${TMUX_PANE:-}" ] && [ -n "$(tmux display-message -p -t "$TMUX_PANE" '#{@crew_branch}' 2>/dev/null)" ]; }; }; then
-  echo "dispatch: --chrome is dispatcher-only — a worker or role pane cannot grant a session the owner's browser" >&2
-  exit 1
-fi
+[ -z "$chrome" ] || _refuse_chrome_from_worker
 if [ -n "$chrome" ] && jq -e --arg c "$CLAUDE_CHROME_MCP_SERVER" '(.workerDeniedMcpServers // []) | index($c)' <<<"$settings" >/dev/null; then
   echo "dispatch: --chrome is refused — workerDeniedMcpServers lists $CLAUDE_CHROME_MCP_SERVER (the owner's ban)" >&2
   exit 1
 fi
-if [ -n "$chrome" ] && [ -n "${DISPATCH_TMUX_SESSION:-}" ]; then
+# DISPATCH_TMUX_SESSION with DISPATCH_EMIT_ROW=1 is the --host launch's own env,
+# delivered only through crew remote-exec's allowlist; DISPATCH_TMUX_SESSION
+# alone stays local-only. The worker refusal above runs first.
+if [ -n "$chrome" ] && [ -n "${DISPATCH_TMUX_SESSION:-}" ] && [ "${DISPATCH_EMIT_ROW:-}" != 1 ]; then
   echo "dispatch: --chrome is local to this machine — the browser lives here, not on a remote host" >&2
   exit 1
 fi

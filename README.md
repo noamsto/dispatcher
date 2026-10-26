@@ -324,10 +324,11 @@ The one carve-out is Claude in Chrome, for a task that needs the owner's
 signed-in browser (a logged-in web UI, a browser extension): `dispatch … --chrome`
 launches the claude lead with `--chrome` and lifts its `mcp__claude-in-chrome__*`
 deny for that lead only (playwright and firefox-devtools stay denied). It is
-claude-only and local-only (refused with `--host` and for codex, cursor and pi),
-role panes never get it, and only one `--chrome` worker may be live per machine
-(`dispatch` refuses a second and names the holder; a finished worker holds it
-until `crew reap` closes its window). `dispatch resume` never carries
+claude-only (refused for codex, cursor and pi) and goes to a `--host` only
+when that host's settings entry has `chrome = true` (the remote then runs its
+own ban and holder scan), role panes never get it, and only one `--chrome`
+worker may be live per machine (`dispatch` refuses a second and names the
+holder; a lead that posted `done` or `failed` releases it). `dispatch resume` never carries
 `--chrome`: pass `--chrome` again on the resume (dispatcher-only, same
 refusals) to re-grant it; a re-dispatch or a `crew hold` release likewise
 needs `--chrome` again. Only the dispatcher may pass it: `dispatch`

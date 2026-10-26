@@ -349,3 +349,52 @@ func TestRunRefusesBeforeSSH(t *testing.T) {
 		t.Fatal("ssh ran despite a refusal")
 	}
 }
+
+const chromeRefusal = "crew: remote-run: --chrome is dispatcher-only — a worker or role pane cannot grant a session the owner's browser\n"
+
+func TestRunChromeTripwire(t *testing.T) {
+	repo := cloneOf(t, "git@github.com:acme/widget.git")
+	t.Setenv("DISPATCH_CONFIG_BIN", configBin(t, mini))
+	chrome := []string{"dispatch", "standard", "opus", "--effort", "medium", "--chrome", "--", "t"}
+	title := []string{"dispatch", "standard", "opus", "--", "fix the", "--chrome", "flag"}
+	for _, tc := range []struct {
+		name, worker, role, pane, branch string
+		argv                             []string
+		refused                          bool
+	}{
+		{name: "worker", worker: "worker:feat/x#s1-1", argv: chrome, refused: true},
+		{name: "role", role: "role:reviewer", argv: chrome, refused: true},
+		{name: "pane", pane: "%1", branch: "feat/1-x", argv: chrome, refused: true},
+		{name: "dispatcher", argv: chrome},
+		{name: "pane without branch", pane: "%1", argv: chrome},
+		{name: "title only", worker: "worker:feat/x#s1-1", argv: title},
+		{name: "not dispatch", worker: "worker:feat/x#s1-1", argv: []string{"crew", "reply", "--chrome"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CREW_WORKER_ID", tc.worker)
+			t.Setenv("CREW_ROLE_ID", tc.role)
+			t.Setenv("TMUX_PANE", tc.pane)
+			old := paneBranch
+			paneBranch = func(_ context.Context, pane string) string {
+				if pane != "%1" {
+					t.Errorf("pane = %q", pane)
+				}
+				return tc.branch
+			}
+			t.Cleanup(func() { paneBranch = old })
+			shim := sshShim(t, "0")
+			var stderr bytes.Buffer
+			rc := Run(context.Background(), Call{Host: "mini", Cwd: repo, Argv: tc.argv}, io.Discard, &stderr)
+			_, sshErr := os.Stat(filepath.Join(shim, "argv"))
+			if tc.refused {
+				if rc != 2 || stderr.String() != chromeRefusal || sshErr == nil {
+					t.Fatalf("rc = %d, stderr %q, ssh ran %v", rc, stderr.String(), sshErr == nil)
+				}
+				return
+			}
+			if rc != 0 || sshErr != nil {
+				t.Fatalf("rc = %d, stderr %q, ssh err %v", rc, stderr.String(), sshErr)
+			}
+		})
+	}
+}
