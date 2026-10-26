@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # pi-subagent-contract.sh — check that a pi subagent extension still has the
 # child-spawn contract the dispatcher relies on (argv shape, JSON event mode,
-# agents dir, agent frontmatter fields). Spawn-argument and child-env lines in
-# index.ts that the contract does not list also fail, as drift.
+# agents dir, agent frontmatter fields). Unlisted index.ts lines that mutate or
+# reassign args, set spawn options (env, shell, stdio, detached) or return a
+# getPiInvocation command also fail, as drift.
 #
 # adapters/pi/extensions/subagent/contract.txt lists one source line per row.
 # A row passes when its literal equals a whole, whitespace-trimmed line of the
@@ -110,14 +111,14 @@ while IFS=$'\t' read -r file row_scope literal; do
   fi
 done <"$contract"
 
-# A spawn argument or child-env line the contract does not list is drift too.
+# A spawn argument, spawn option or invocation line the contract does not list is drift too.
 if [ -r "$dir/index.ts" ]; then
   while IFS= read -r line; do
     grep -Fxq -- "$line" "$listed" && continue
     echo "unlisted in index.ts: $line"
     failed=1
   done < <(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$dir/index.ts" |
-    grep -E '^(if \(.*\) )?args\.push\(|^env:' || true)
+    grep -E '(^|[^A-Za-z0-9_.])args\.(push|unshift|splice)\(|(^|[^A-Za-z0-9_.])args = |^(env|shell|stdio|detached):|^return \{ command:' || true)
 fi
 
 [ -z "$notice" ] || echo "$notice" >&2

@@ -2910,6 +2910,15 @@ _phase_stems() {
   [[ "$output" == *'unlisted in index.ts: args.push("--foo");'* ]]
 }
 
+@test "pi subagent contract: an unlisted args.unshift or spawn option fails and is named" {
+  cp "$ROOT"/adapters/pi/extensions/subagent/{index,agents}.ts "$BATS_TEST_TMPDIR/"
+  printf '\targs.unshift("--foo");\n\tshell: true,\n' >>"$BATS_TEST_TMPDIR/index.ts"
+  run bash "$ROOT/scripts/pi-subagent-contract.sh" --pinned "$BATS_TEST_TMPDIR"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'unlisted in index.ts: args.unshift("--foo");'* ]]
+  [[ "$output" == *'unlisted in index.ts: shell: true,'* ]]
+}
+
 @test "pi subagent contract: --installed exits 2 when the pi on PATH names no store binary" {
   mkdir "$BATS_TEST_TMPDIR/bin"
   printf '#!/bin/sh\necho pi\n' >"$BATS_TEST_TMPDIR/bin/pi"

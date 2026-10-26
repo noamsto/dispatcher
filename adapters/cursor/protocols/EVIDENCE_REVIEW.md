@@ -153,7 +153,7 @@ On pi the fresh assessment is a `subagent` call to `general-reviewer` (or the
 matched language reviewer for the recurring family); those agents run at the
 escalate rung (`deepseek-v4.1-flash:max`). Its task asks for the contract,
 consumer-map and regression inspection and a bounded replacement approach
-instead of a findings list. The `assess` pane path
+instead of a findings list, and states that reply format explicitly. The `assess` pane path
 applies only with an explicit `reviewer` pane: read its `roles.json` entry
 against the deep escalate rung (`claude:opus`, `codex:gpt-5.6-sol`,
 `cursor:grok-4.7-high`, or pi `deepseek-v4.1-flash` at `max`); at or above it,

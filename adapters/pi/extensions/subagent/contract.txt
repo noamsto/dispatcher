@@ -10,6 +10,9 @@ index.ts	both	args.push("--append-system-prompt", tmpPromptPath);
 index.ts	both	args.push(`Task: ${task}`);
 index.ts	both	return { command: process.execPath, args };
 index.ts	both	return { command: process.execPath, args: [currentScript, ...args] };
+index.ts	both	return { command: "pi", args };
+index.ts	both	shell: false,
+index.ts	both	stdio: ["ignore", "pipe", "pipe"],
 index.ts	both	if (event.type === "message_end" && event.message) {
 index.ts	pinned	env: { ...process.env, CREW_SUBAGENT: "1" },
 agents.ts	both	model: typeof frontmatter.model === "string" ? frontmatter.model : undefined,
