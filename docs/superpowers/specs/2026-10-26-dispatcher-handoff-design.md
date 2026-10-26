@@ -35,25 +35,29 @@ Scope: claude and pi dispatchers. codex and cursor must not break.
 - **Who writes it:** the outgoing dispatcher writes the note to any file it can
   write, then runs `dispatcher --fresh --note <file>` from its own shell tool.
 - **How the restart happens:** the launcher that started the session exports
-  `DISPATCHER_LAUNCHER_PID=$$` and `DISPATCHER_HANDOFF_DIR` into the engine's
-  environment. The inner `dispatcher --fresh` call verifies that pid is its own
-  ancestor (so it runs inside that launcher's session; a promoted session, a
-  worker or any other process fails the check), copies the note into place
-  atomically, writes a restart marker holding the launcher pid, and sends
-  SIGTERM to the launcher's direct child on its own ancestor chain: the engine
-  (the launch execs it; probed: claude exits 143 and pi exits 0 on SIGTERM). It
-  then waits up to 10 s; an engine still alive means the handoff failed: the
-  inner call deletes the marker and tells the session so (exit 1). The
+  `DISPATCHER_LAUNCHER_PID=$$`, `DISPATCHER_HANDOFF_DIR` and
+  `DISPATCHER_HANDOFF_CREW` into the engine's environment. The inner
+  `dispatcher --fresh` call refuses a `CREW_ID` other than
+  `DISPATCHER_HANDOFF_CREW` and a launcher pid that is not an integer above 1,
+  verifies that pid is its own ancestor whose args name `dispatcher` (so it
+  runs inside that launcher's session; a promoted session, a worker or any
+  other process fails the check), copies the note into place atomically,
+  writes a restart marker `<crew_id>.<launcher pid>.restart` holding the epoch,
+  and sends SIGTERM to the launcher's direct child on its own ancestor chain:
+  the engine (the launch execs it; probed: claude exits 143 and pi exits 0 on
+  SIGTERM). An engine still alive after 10 s gets SIGKILL, marker kept; only
+  one that survives that too fails the handoff: the inner call deletes the
+  marker and tells the session so (exit 1). The
   inner call branches out right after argument parsing: it never runs the
   re-attach pass, the tmux stamps, `crew new` or `crew register`, so the crew
   stays registered to the outer launcher's pid. The outer launcher now runs the
-  engine in a loop: when the engine exits and a marker naming this launcher
-  was written within the last 120 s, it consumes the marker and relaunches the
+  engine in a loop: when the engine exits and its own marker (named with its
+  pid, so two launchers on one crew never touch each other's) was written
+  within the last 120 s, it consumes the marker and relaunches the
   same engine, model, effort and flags with a handoff first prompt; the
-  original task words are not repeated (the first session handled them). A
-  marker that is older, or names another pid, is deleted and the launcher
-  exits as today (an engine that ignored SIGTERM and was quit by hand later
-  must not relaunch). Same launcher pid, so the crew registration, tmux window
+  original task words are not repeated (the first session handled them). An
+  own marker that is older is deleted and the launcher exits as today (an
+  engine quit by hand long after a handoff must not relaunch). Same launcher pid, so the crew registration, tmux window
   stamps and pane stay put.
 - **Engines:** `--fresh` is claude and pi only. codex and cursor carry the
   protocol itself as their first prompt, so a relaunch would need to rebuild
@@ -73,8 +77,8 @@ Scope: claude and pi dispatchers. codex and cursor must not break.
 - **Manual path:** with no live launcher ancestor (old session gone, promoted
   session, crash), the human runs `CREW_ID=<id> dispatcher --fresh` (optionally
   `--note <file>`); it launches in place with the same handoff prompt. It
-  refuses without a stored note or crew, and when the crew's dispatcher is live
-  in another pane. After a crash the stored note may be an old handoff's: the
+  refuses without a stored note or crew, for a crew id `crew crews` does not
+  list, and when the crew's dispatcher is live in another pane. After a crash the stored note may be an old handoff's: the
   prompt and terminal print give its age, and the protocol has the session
   confirm the queue and standing instructions with the human when the note is
   older than a day.
@@ -137,8 +141,9 @@ typed for the task.
 
 ## Startup steps (protocol text and first prompt)
 
-1. Re-arm the lane now: claude `crew stream --status`, `--force` when `alive` or
-   `stale` (the previous session armed it), arm when `dead`; pi parks as usual.
+1. Re-arm the lane: claude now, `crew stream --status`, `--force` when `alive`
+   or `stale` (the previous session armed it), arm when `dead`; pi parks only
+   after step 5, since its park blocks the turn.
 2. `crew roster` and `crew inbox dispatcher:<c>`: act on every `blocked` worker
    now (reply to its question, or verify a watchdog block); its wake was spent.
 3. Read the note.

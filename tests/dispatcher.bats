@@ -20,6 +20,7 @@ setup() {
   # (_store_launcher) have no sibling file and an unsubstituted placeholder.
   export CLAUDE_WORKER_SETTINGS_LIB="$BATS_TEST_DIRNAME/../adapters/core/claude-worker-settings.sh"
   unset TMUX CREW_ID DISPATCH_DISPATCHER_MCP ENABLE_CLAUDEAI_MCP_SERVERS
+  unset DISPATCHER_LAUNCHER_PID DISPATCHER_HANDOFF_DIR DISPATCHER_HANDOFF_CREW
 }
 
 teardown() {
@@ -1270,7 +1271,8 @@ _pidfile_log_path() {
 # `register <pid>` records the pid, and `crews` answers crew c1 alive under that
 # pid once one is recorded, dead before. `roster` answers one blocked, one
 # working and one done worker, and `inbox dispatcher:*` holds one question from
-# the blocked worker.
+# the blocked worker. HANDOFF_ROSTER=fail makes `roster` exit 3;
+# HANDOFF_INBOX=torn prints the question then exits 5, =fail exits 5 bare.
 stub_crew_handoff() {
   export HANDOFF_QUESTION='rebase feat/12-x onto main, or merge it?'
   cat >"$STUB_DIR/crew" <<'EOF'
@@ -1288,12 +1290,15 @@ crews)
   fi
   ;;
 roster)
+  [ "${HANDOFF_ROSTER:-}" != fail ] || exit 3
   printf '%s\n' '[{"name":"fern","branch":"feat/12-x","state":"blocked"},{"name":"oak","branch":"feat/13-y","state":"working"},{"name":"ash","branch":"feat/14-z","state":"done"}]'
   ;;
 inbox)
+  [ "${HANDOFF_INBOX:-}" != fail ] || exit 5
   case "$2" in
   dispatcher:*) printf '{"from":"worker:feat/12-x#s1","to":"%s","body":"%s"}\n' "$2" "$HANDOFF_QUESTION" ;;
   esac
+  [ "${HANDOFF_INBOX:-}" != torn ] || exit 5
   ;;
 esac
 exit 0
@@ -1333,6 +1338,8 @@ _handoff_dir() {
 
 _mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 
+_no_markers() { ! compgen -G "$HANDOFF/*.restart" >/dev/null; }
+
 _handoff_setup() {
   stub_crew_handoff
   export LAUNCHER HANDOFF_NOTE_SRC="$BATS_TEST_TMPDIR/note.md"
@@ -1350,7 +1357,7 @@ _handoff_setup() {
   [ "$(_launches)" = 2 ]
   prompt=$(cat "$STUB_DIR/last.2")
   [[ "$prompt" == *'"Hand off to a fresh session"'* ]]
-  [[ "$prompt" == *"re-arm your bus lane"* ]]
+  [[ "$prompt" == *"re-arm your bus lane"* && "$prompt" != *"only after step 5"* ]]
   [[ "$prompt" == *"blocked at launch: fern (feat/12-x)"* ]]
   [[ "$prompt" == *"$HANDOFF/c1.md"* ]]
   [[ "$prompt" == *"1 done"* ]]
@@ -1361,7 +1368,7 @@ _handoff_setup() {
   [ "$output" = 1 ]
   run grep -cx deregister "$STUB_LOG"
   [ "$output" = 1 ]
-  [ ! -e "$HANDOFF/c1.restart" ]
+  _no_markers
 }
 
 @test "701: a pi session that runs --fresh is relaunched with the prompt last" {
@@ -1373,29 +1380,32 @@ _handoff_setup() {
   prompt=$(cat "$STUB_DIR/last.2")
   [[ "$prompt" == "Handoff: "* ]]
   [[ "$prompt" == *'"Hand off to a fresh session"'* && "$prompt" == *"$HANDOFF/c1.md"* ]]
-  [ ! -e "$HANDOFF/c1.restart" ]
+  # pi's park blocks its turn, so it parks after the blocked workers are answered.
+  [[ "$prompt" == *"re-arm your bus lane only after step 5"* ]]
+  _no_markers
 }
 
-@test "701: a marker naming another launcher is stale: one launch, marker deleted" {
+@test "701: a fresh marker for another launcher is left alone: one launch" {
   _handoff_setup
   _engine_stub claude
   mkdir -p "$HANDOFF"
-  printf '1 %s\n' "$(date +%s)" >"$HANDOFF/c1.restart"
+  # No launcher runs as pid 1, so this is never this launcher's marker.
+  date +%s >"$HANDOFF/c1.1.restart"
   CREW_ID=c1 run run_launcher
   [ "$status" -eq 0 ]
   [ "$(_launches)" = 1 ]
-  [ ! -e "$HANDOFF/c1.restart" ]
+  [ -e "$HANDOFF/c1.1.restart" ]
 }
 
-@test "701: a marker 300s old is stale: one launch, marker deleted" {
+@test "701: an own marker 300s old is stale: one launch, marker deleted" {
   _handoff_setup
   # Written by the session itself, since only it knows the launcher's pid.
   _engine_stub claude 'mkdir -p "$DISPATCHER_HANDOFF_DIR"
-printf "%s %s\n" "$DISPATCHER_LAUNCHER_PID" "$(($(date +%s) - 300))" >"$DISPATCHER_HANDOFF_DIR/$CREW_ID.restart"'
+echo "$(($(date +%s) - 300))" >"$DISPATCHER_HANDOFF_DIR/$CREW_ID.$DISPATCHER_LAUNCHER_PID.restart"'
   CREW_ID=c1 run run_launcher
   [ "$status" -eq 0 ]
   [ "$(_launches)" = 1 ]
-  [ ! -e "$HANDOFF/c1.restart" ]
+  _no_markers
 }
 
 @test "701: a manual --fresh launches once with the stored note" {
@@ -1452,6 +1462,45 @@ printf "%s %s\n" "$DISPATCHER_LAUNCHER_PID" "$(($(date +%s) - 300))" >"$DISPATCH
   [ "$output" = 0 ]
 }
 
+@test "701: a manual --fresh refuses a crew id that 'crew crews' does not list" {
+  _handoff_setup
+  _engine_stub claude
+  mkdir -p "$HANDOFF"
+  printf 'queue: #12\n' >"$HANDOFF/c9.md"
+  CREW_ID=c9 run run_launcher --fresh
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"crew c9 is not in 'crew crews'"* ]]
+  [ "$(_launches)" = 0 ]
+  run grep -c '^register ' "$STUB_LOG"
+  [ "$output" = 0 ]
+}
+
+@test "701: a roster read that fails says so in the prompt" {
+  _handoff_setup
+  _engine_stub claude
+  mkdir -p "$HANDOFF"
+  printf 'queue\n' >"$HANDOFF/c1.md"
+  HANDOFF_ROSTER=fail CREW_ID=c1 run run_launcher --fresh
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$STUB_DIR/last.1")" == *"crew roster failed at launch"* ]]
+}
+
+@test "701: an inbox read that fails keeps its rows, and says so when it has none" {
+  _handoff_setup
+  _engine_stub claude
+  mkdir -p "$HANDOFF"
+  printf 'queue\n' >"$HANDOFF/c1.md"
+  HANDOFF_INBOX=torn CREW_ID=c1 run --separate-stderr run_launcher --fresh
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"blocked: fern (feat/12-x) asks: $HANDOFF_QUESTION"* ]]
+  # The first launch registered c1 alive; the second needs it dead again.
+  rm "$STUB_DIR/registered.pid"
+  HANDOFF_INBOX=fail CREW_ID=c1 run --separate-stderr run_launcher --fresh
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"blocked: fern (feat/12-x) asks: (inbox read failed — run crew inbox dispatcher:c1)"* ]]
+  [[ "$stderr" != *"no question on the bus"* ]]
+}
+
 # Every refusal fires before the first stub call, so an empty log means nothing
 # launched, minted or registered.
 _fresh_refusal_row() { # want-status message args...
@@ -1484,36 +1533,78 @@ _fresh_refusal_row() { # want-status message args...
   printf 'queue\n' >"$HANDOFF_NOTE_SRC"
   sleep 30 &
   live_pid=$!
-  DISPATCHER_LAUNCHER_PID=$live_pid DISPATCHER_HANDOFF_DIR=$HANDOFF CREW_ID=c1 \
+  DISPATCHER_LAUNCHER_PID=$live_pid DISPATCHER_HANDOFF_DIR=$HANDOFF DISPATCHER_HANDOFF_CREW=c1 CREW_ID=c1 \
     run run_launcher --fresh --note "$HANDOFF_NOTE_SRC"
   [ "$status" -eq 1 ]
   [[ "$output" == *"DISPATCHER_LAUNCHER_PID=$live_pid is not an ancestor"* ]]
   kill -0 "$live_pid"
-  [ ! -e "$HANDOFF/c1.restart" ]
+  _no_markers
   [ ! -e "$HANDOFF/c1.md" ]
   kill "$live_pid"
   wait "$live_pid" || true
   live_pid=""
 }
 
-@test "701: an engine that ignores SIGTERM fails the handoff after ~10s and drops the marker" {
+@test "701: an engine that ignores SIGTERM is killed after ~10s and relaunched" {
   _handoff_setup
+  # The subshell outlives the KILLed engine to record the inner call's exit, and
+  # holds run's stdout open until it has.
   _engine_stub claude 'trap "" TERM
 printf "queue\n" >"$HANDOFF_NOTE_SRC"
-rc=0
-bash -euo pipefail "$LAUNCHER" --fresh --note "$HANDOFF_NOTE_SRC" 2>"$STUB_DIR/inner.err" || rc=$?
-echo "$rc" >"$STUB_DIR/inner.rc"
-ls "$DISPATCHER_HANDOFF_DIR" >"$STUB_DIR/handoff.ls"'
+(
+  rc=0
+  bash -euo pipefail "$LAUNCHER" --fresh --note "$HANDOFF_NOTE_SRC" 2>"$STUB_DIR/inner.err" || rc=$?
+  echo "$rc" >"$STUB_DIR/inner.rc"
+)'
   start=$SECONDS
   CREW_ID=c1 run run_launcher
   elapsed=$((SECONDS - start))
   [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_DIR/inner.rc")" = 0 ]
+  [[ "$(cat "$STUB_DIR/inner.err")" != *"handoff failed"* ]]
+  [ "$elapsed" -ge 9 ] && [ "$elapsed" -lt 20 ]
+  [ "$(_launches)" = 2 ]
+  [[ "$(cat "$STUB_DIR/last.2")" == "Handoff: "* ]]
+  _no_markers
+}
+
+@test "701: an inner --fresh for another crew refuses and ends nothing" {
+  _handoff_setup
+  _engine_stub claude 'printf "queue\n" >"$HANDOFF_NOTE_SRC"
+rc=0
+CREW_ID=c2 bash -euo pipefail "$LAUNCHER" --fresh --note "$HANDOFF_NOTE_SRC" 2>"$STUB_DIR/inner.err" || rc=$?
+echo "$rc" >"$STUB_DIR/inner.rc"'
+  CREW_ID=c1 run run_launcher
+  [ "$status" -eq 0 ]
   [ "$(cat "$STUB_DIR/inner.rc")" = 1 ]
-  [[ "$(cat "$STUB_DIR/inner.err")" == *"handoff failed"* ]]
-  [ "$elapsed" -ge 9 ] && [ "$elapsed" -lt 30 ]
-  if grep -qx c1.restart "$STUB_DIR/handoff.ls"; then return 1; fi
+  [[ "$(cat "$STUB_DIR/inner.err")" == *"CREW_ID=c2 is not the crew this session's launcher runs"* ]]
   [ "$(_launches)" = 1 ]
-  [ ! -e "$HANDOFF/c1.restart" ]
+  _no_markers
+  [ ! -e "$HANDOFF/c2.md" ]
+}
+
+@test "701: an inner --fresh refuses launcher pid 1 before walking the chain" {
+  _handoff_setup
+  printf 'queue\n' >"$HANDOFF_NOTE_SRC"
+  DISPATCHER_LAUNCHER_PID=1 DISPATCHER_HANDOFF_DIR=$HANDOFF DISPATCHER_HANDOFF_CREW=c1 CREW_ID=c1 \
+    run run_launcher --fresh --note "$HANDOFF_NOTE_SRC"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"DISPATCHER_LAUNCHER_PID=1 is not a launcher pid"* ]]
+  _no_markers
+  [ ! -e "$HANDOFF/c1.md" ]
+}
+
+@test "701: an inner --fresh refuses an ancestor that is not a dispatcher launcher" {
+  _handoff_setup
+  printf 'queue\n' >"$HANDOFF_NOTE_SRC"
+  export DISPATCHER_HANDOFF_DIR=$HANDOFF DISPATCHER_HANDOFF_CREW=c1 CREW_ID=c1
+  # The target is this bash, whose args are its script text, with no lowercase
+  # "dispatcher". Its child is the launcher itself, so a pass would TERM it (143).
+  run bash -c 'DISPATCHER_LAUNCHER_PID=$$ bash -euo pipefail "$LAUNCHER" --fresh --note "$HANDOFF_NOTE_SRC"; echo "rc=$?"'
+  [[ "$output" == *"is an ancestor but not a dispatcher launcher"* ]]
+  [[ "$output" == *"rc=1"* ]]
+  _no_markers
+  [ ! -e "$HANDOFF/c1.md" ]
 }
 
 @test "701: codex and cursor launch without the handoff pair, even when inherited" {
@@ -1522,20 +1613,20 @@ ls "$DISPATCHER_HANDOFF_DIR" >"$STUB_DIR/handoff.ls"'
   for bin in claude codex cursor-agent; do
     cat >"$STUB_DIR/$bin" <<EOF
 #!/usr/bin/env bash
-printf '$bin LPID=%s HDIR=%s\n' "\${DISPATCHER_LAUNCHER_PID-UNSET}" "\${DISPATCHER_HANDOFF_DIR-UNSET}" >>"\$STUB_LOG"
+printf '$bin LPID=%s HDIR=%s HCREW=%s\n' "\${DISPATCHER_LAUNCHER_PID-UNSET}" "\${DISPATCHER_HANDOFF_DIR-UNSET}" "\${DISPATCHER_HANDOFF_CREW-UNSET}" >>"\$STUB_LOG"
 EOF
     chmod +x "$STUB_DIR/$bin"
   done
-  export DISPATCHER_LAUNCHER_PID=4242 DISPATCHER_HANDOFF_DIR=/tmp/inherited
+  export DISPATCHER_LAUNCHER_PID=4242 DISPATCHER_HANDOFF_DIR=/tmp/inherited DISPATCHER_HANDOFF_CREW=c9
   CREW_ID=c1 run_launcher --agent codex
   CREW_ID=c1 run_launcher --agent cursor
-  grep -qx 'codex LPID=UNSET HDIR=UNSET' "$STUB_LOG"
-  grep -qx 'cursor-agent LPID=UNSET HDIR=UNSET' "$STUB_LOG"
+  grep -qx 'codex LPID=UNSET HDIR=UNSET HCREW=UNSET' "$STUB_LOG"
+  grep -qx 'cursor-agent LPID=UNSET HDIR=UNSET HCREW=UNSET' "$STUB_LOG"
   # Control: claude gets this launcher's own pair in place of the inherited one.
   : >"$STUB_LOG"
   rm -f "$STUB_DIR/registered.pid"
   CREW_ID=c1 run_launcher
-  grep -qx "claude LPID=$(cat "$STUB_DIR/registered.pid") HDIR=$HANDOFF" "$STUB_LOG"
+  grep -qx "claude LPID=$(cat "$STUB_DIR/registered.pid") HDIR=$HANDOFF HCREW=c1" "$STUB_LOG"
 }
 
 @test "701: the section the handoff prompt cites exists in the protocol and both renders" {
