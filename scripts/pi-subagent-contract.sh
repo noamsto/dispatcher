@@ -111,7 +111,6 @@ while IFS=$'\t' read -r file row_scope literal; do
   fi
 done <"$contract"
 
-# A spawn argument, spawn option or invocation line the contract does not list is drift too.
 if [ -r "$dir/index.ts" ]; then
   while IFS= read -r line; do
     grep -Fxq -- "$line" "$listed" && continue

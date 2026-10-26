@@ -4946,13 +4946,8 @@ if [ -n "$no_grid" ]; then
   fi
 fi
 # Every engine runs a native review-gate batch, so the default grid is critics
-# only: a deep dispatch gets spec-critic,plan-critic panes (see WORKER_GRID.md
-# "Grid mode") and no reviewer role. Roles inherit the lead's own agent/model
-# below when --roles doesn't say otherwise, so this never requires a second
-# engine. A review-kind worker has no spec/plan phase, so it gets no default
-# grid (an explicit --grid derives `reviewer,refuter`, additive next to the
-# native batch). A deep dispatch whose plan is already provided gets no default
-# grid either, since that leaves no critic role to default to.
+# only. Roles inherit the lead's own agent/model below when --roles doesn't say
+# otherwise, so this never requires a second engine.
 grid_default_critics=""
 if [ -z "$grid_roles" ] && [ -z "$grid_flag" ] && [ -z "$no_grid" ]; then
   if [ "$kind" = review ]; then
