@@ -32,7 +32,7 @@ Map the changed files to the reviewers that match them (the language reviewers, 
 
 **Never route the review through a meta-agent** — a coordinator agent asked to "review this PR" falls back to weak inline review and misses real findings. You are the coordinator.
 
-On pi the batch is the `subagent` tool in parallel mode, at most 3 tasks per call: each matched reviewer as the agent of that name (a new repo entry as `repo-reviewer`), each refuter as the `refuter` agent. The task text carries the brief, the requirements and the diff command; `WORKER_REVIEW.md` "Code review gate" has the full contract.
+On pi the batch is the `subagent` tool in parallel mode, at most 3 tasks per call: each matched reviewer as the agent of that name (a new repo entry as `repo-reviewer`), each refuter as the `refuter` agent. The task text carries the brief, the requirements and the absolute path of the diff file you wrote (`git diff … > <crew_dir>/artifacts/<branch>/review.diff`); the agents are read-only (no bash); `WORKER_REVIEW.md` "Code review gate" has the full contract.
 
 | tier | fan-out |
 | --- | --- |

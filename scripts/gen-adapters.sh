@@ -236,7 +236,9 @@ pi_model="$(jq -r '.modelMap.pi.deep.default' "$root/adapters/core/defaults.json
 pi_light="$pi_model:low"
 pi_exec="$pi_model:high"
 pi_esc="$pi_model:max"
-pi_tools="read, grep, find, ls, bash"
+# Reviewers get no bash: they must not be able to run the code under review.
+pi_tools_readonly="read, grep, find, ls"
+pi_tools_test="read, grep, find, ls, bash"
 
 rule7_head="$(awk 'index($0, "7. **Never print a secret") == 1 { sub(/^7\. /, ""); print; exit }' "$protocols/WORKER_PROTOCOL.md")"
 if [ -z "$rule7_head" ]; then
@@ -283,11 +285,11 @@ mkdir -p "$pi_agents"
 pi_written=()
 for f in "$reviewers"/*.md "$critics"/*.md; do
   [ "$(basename "$f")" != README.md ] || continue
-  _pi_agent "$(basename "$f" .md)" "$(_desc "$f")" "$pi_tools" "$pi_esc" review "$f"
+  _pi_agent "$(basename "$f" .md)" "$(_desc "$f")" "$pi_tools_readonly" "$pi_esc" review "$f"
 done
-_pi_agent repo-reviewer "Run a repo-local reviewer brief passed in the task text." "$pi_tools" "$pi_esc" review "$pi_src/repo-reviewer.md"
-_pi_agent refuter "Adversarially verify one review finding; default refuted." "$pi_tools" "$pi_esc" review "$pi_src/refuter.md"
-_pi_agent test-runner "Run the named acceptance and behavior tests and report pass/fail." "$pi_tools" "$pi_exec" review "$pi_src/test-runner.md"
+_pi_agent repo-reviewer "Run a repo-local reviewer brief passed in the task text." "$pi_tools_readonly" "$pi_esc" review "$pi_src/repo-reviewer.md"
+_pi_agent refuter "Adversarially verify one review finding; default refuted." "$pi_tools_readonly" "$pi_esc" review "$pi_src/refuter.md"
+_pi_agent test-runner "Run the named acceptance and behavior tests and report pass/fail." "$pi_tools_test" "$pi_exec" test "$pi_src/test-runner.md"
 _pi_agent execute-light "Execute one plan step whose files and edit are named (cheap rung)." "" "$pi_light" execute
 _pi_agent execute "Execute one judgment plan step (default rung)." "" "$pi_exec" execute
 _pi_agent execute-escalated "Execute one plan step tagged high-risk (escalated rung)." "" "$pi_esc" execute

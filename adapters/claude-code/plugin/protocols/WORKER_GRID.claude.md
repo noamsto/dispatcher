@@ -8,7 +8,7 @@ Phase file of `WORKER_PROTOCOL.md`: it binds like the core. References to "this 
 
 Delegate only phases with a role pane in your window; the pane's presence, not your tier alone, skips the in-process path. A `spec-critic`/`plan-critic` pane replaces the `spec-plan-critic` workflow.
 On claude it also replaces the critic subagent.
-On this engine the native roster batch ("Code review gate") always runs, grid or not; a `reviewer` pane (explicit `--roles`) only adds a cross-engine second opinion.
+The native roster batch ("Code review gate") always runs, grid or not; a `reviewer` pane (explicit `--roles`) only adds a cross-engine second opinion.
 
 The seam, per critic/review phase with a pane:
 

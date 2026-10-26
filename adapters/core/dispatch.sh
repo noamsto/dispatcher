@@ -4615,6 +4615,23 @@ local_entry=""
 
 check_engine "$agent" "--agent $agent"
 
+# Refuse before anything is scaffolded, so a refused pi lead leaves no worktree or window.
+if [ "$agent" = pi ]; then
+  pi_subagent_ext="$PI_DIR/extensions/subagent/index.ts"
+  if [ ! -f "$pi_subagent_ext" ]; then
+    echo "dispatch: pi subagent extension missing: $pi_subagent_ext — set DISPATCHER_PI_DIR to an adapters/pi checkout or rebuild" >&2
+    exit 1
+  fi
+  pi_pinned=$(awk -F'\t' '$1 == "version" { print $2; exit }' "$PI_DIR/extensions/subagent/contract.txt" 2>/dev/null || true)
+  pi_timeout=$(command -v timeout || command -v gtimeout || true)
+  if [ -n "$pi_pinned" ] && [ -n "$pi_timeout" ]; then
+    pi_have=$("$pi_timeout" 5 pi --version 2>/dev/null | tail -1 || true)
+    if [[ $pi_have =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $pi_have != "$pi_pinned" ]]; then
+      echo "dispatch: warning: installed pi $pi_have differs from the pinned subagent extension contract $pi_pinned — run: bash scripts/pi-subagent-contract.sh --installed" >&2
+    fi
+  fi
+fi
+
 # Model gate. Reject a slug the chosen engine cannot run before anything is
 # scaffolded — otherwise a wrong id surfaces as a 400 in a tmux pane the
 # worktree, window and issue already paid for. Shape, not a model list: this
@@ -6469,19 +6486,6 @@ elif [ "$agent" = pi ]; then
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session pi "$lead_sid"
-  pi_subagent_ext="$PI_DIR/extensions/subagent/index.ts"
-  if [ ! -f "$pi_subagent_ext" ]; then
-    echo "dispatch: pi subagent extension missing: $pi_subagent_ext — set DISPATCHER_PI_DIR to an adapters/pi checkout or rebuild" >&2
-    exit 1
-  fi
-  pi_pinned=$(awk -F'\t' '$1 == "version" { print $2; exit }' "$PI_DIR/extensions/subagent/contract.txt" 2>/dev/null || true)
-  pi_timeout=$(command -v timeout || command -v gtimeout || true)
-  if [ -n "$pi_pinned" ] && [ -n "$pi_timeout" ]; then
-    pi_have=$("$pi_timeout" 5 pi --version 2>/dev/null | tail -1 || true)
-    if [[ $pi_have =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $pi_have != "$pi_pinned" ]]; then
-      echo "dispatch: warning: installed pi $pi_have differs from the pinned subagent extension contract $pi_pinned — run: bash scripts/pi-subagent-contract.sh --installed" >&2
-    fi
-  fi
   printf -v q_pi_ext '%q' "$pi_subagent_ext"
   launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")PI_CODING_AGENT_DIR=$quoted_dir pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort") --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve -e $q_pi_ext$(pi_skill_args "$wt_path")$mcp_args $quoted_prompt"
 else

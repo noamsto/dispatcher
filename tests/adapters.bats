@@ -2961,8 +2961,28 @@ _phase_stems() {
     if [[ $name == execute* ]]; then
       [ "$(yq --front-matter=extract 'has("tools")' "$file")" = false ] || { echo "$name: has a tools key" >&2; return 1; }
     else
-      [ "$(yq --front-matter=extract '.tools' "$file")" = 'read, grep, find, ls, bash' ] || { echo "$name: tools is not read, grep, find, ls, bash" >&2; return 1; }
+      if [ "$name" = test-runner ]; then
+        want='read, grep, find, ls, bash'
+      else
+        want='read, grep, find, ls'
+      fi
+      [ "$(yq --front-matter=extract '.tools' "$file")" = "$want" ] || { echo "$name: tools is not $want" >&2; return 1; }
     fi
+  done
+}
+
+@test "pi agent roster: reviewer, critic and refuter agents are read-only" {
+  for file in "$ROOT"/adapters/pi/agents/*.md; do
+    name="$(basename "$file" .md)"
+    [[ $name != execute* && $name != test-runner ]] || continue
+    tools="$(yq --front-matter=extract '.tools' "$file")"
+    IFS=',' read -ra list <<<"$tools"
+    for tool in "${list[@]}"; do
+      tool="${tool//[[:space:]]/}"
+      case "$tool" in
+      bash | write | edit) echo "$name: has the $tool tool" >&2; return 1 ;;
+      esac
+    done
   done
 }
 
@@ -2979,6 +2999,9 @@ _phase_stems() {
     grep -q 'Never print a secret' "$file" || { echo "$name: no secret rule" >&2; return 1; }
     grep -qF "$stamp" "$file" || { echo "$name: no '$stamp'" >&2; return 1; }
     ! grep -qF "$other" "$file" || { echo "$name: has '$other'" >&2; return 1; }
+    if [[ $name != execute* ]]; then
+      grep -qF 'Never execute the code under review' "$file" || { echo "$name: no execute ban" >&2; return 1; }
+    fi
   done
 }
 

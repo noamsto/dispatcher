@@ -857,6 +857,10 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi missing extension"
   [ "$status" -ne 0 ]
   [[ "$output" == *"$BATS_TEST_TMPDIR/empty-pi/extensions/subagent/index.ts"* ]]
+  run grep -c -- 'switch' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+  run grep -c -- 'new-window' "$STUB_LOG"
+  [ "$status" -ne 0 ]
   run grep -c -- 'send-keys' "$STUB_LOG"
   [ "$status" -ne 0 ]
 }
@@ -2136,7 +2140,7 @@ _store_protocols() { # <dir> <content>
   cmp "$BATS_TEST_TMPDIR/resolve-dispatch" "$BATS_TEST_TMPDIR/resolve-resolve-roster"
 }
 
-@test "stale store-path reviewers/critics dirs are ignored and the launch env carries all four resolved dirs" {
+@test "stale store-path reviewers/critics dirs are ignored and the launch env carries all five resolved dirs" {
   stub_launch_bins
   _store_dispatch
   export DISPATCHER_PROTOCOL_DIR="$STORE/h-old-source/adapters/core/protocols"
@@ -2150,7 +2154,7 @@ _store_protocols() { # <dir> <content>
   [ "$status" -eq 0 ]
   [[ "$output" == *"ignoring stale DISPATCHER_REVIEWERS_DIR"* ]]
   [[ "$output" == *"ignoring stale DISPATCHER_CRITICS_DIR"* ]]
-  grep -qF -- "DISPATCHER_PROTOCOL_DIR=$BAKED_PROTOCOLS DISPATCHER_SKILLS_DIR=$BAKED_SKILLS DISPATCHER_REVIEWERS_DIR=$BAKED_REVIEWERS DISPATCHER_CRITICS_DIR=$BAKED_CRITICS DISPATCH_GRANT_ROOTS=: GIT_EDITOR=true" <(launch_log)
+  grep -qF -- "DISPATCHER_PROTOCOL_DIR=$BAKED_PROTOCOLS DISPATCHER_SKILLS_DIR=$BAKED_SKILLS DISPATCHER_REVIEWERS_DIR=$BAKED_REVIEWERS DISPATCHER_CRITICS_DIR=$BAKED_CRITICS DISPATCHER_PI_DIR=$BAKED_PI DISPATCH_GRANT_ROOTS=: GIT_EDITOR=true" <(launch_log)
   run ! grep -qF -- "h-old-source" <(launch_log)
 }
 
@@ -3324,7 +3328,7 @@ fleet_nproc() {
 @test "local lane: launch gives bare roles the hosted rung and stamps @crew_model" {
   stub_launch_bins
   local_lane_fixture
-  run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "local launch"
+  run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --grid --crew-id c1 42 "local launch"
   [ "$status" -eq 0 ]
   grep -F -- "pi --name iris --model $LOCAL_ID " <(launch_log)
   grep -F -- 'pi --name iris-plan-critic --model openrouter/deepseek/deepseek-v4.1-flash ' <(launch_log)
