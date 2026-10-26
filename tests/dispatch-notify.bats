@@ -167,6 +167,27 @@ stub_tmux() {
   tail -1 "$LOG" | jq -e '.from == "worker:feat/x#s1-1" and .body.state == "exited"'
 }
 
+@test "notify: a SessionEnd during a seam relaunch (CREW_LEAD_RESTART marker present) posts nothing" {
+  task_doc
+  seed_status working
+  touch "$BATS_TEST_TMPDIR/restart"
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' CREW_LEAD_RESTART="$BATS_TEST_TMPDIR/restart" run run_notify
+  [ "$status" -eq 0 ]
+
+  run ! grep -q '"state":"exited"' "$LOG"
+}
+
+@test "notify: a stale CREW_LEAD_RESTART marker (file absent) still posts exited" {
+  task_doc
+  seed_status working
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' CREW_LEAD_RESTART="$BATS_TEST_TMPDIR/restart" run run_notify
+  [ "$status" -eq 0 ]
+
+  tail -1 "$LOG" | jq -e '.from == "worker:feat/x#s1-1" and .body.state == "exited"'
+}
+
 @test "notify: the dispatched worker's SessionEnd still pings the dispatcher pane" {
   stub_tmux
   task_doc %9

@@ -57,6 +57,10 @@ cwd="$(jq -r 'if (.cwd // "") != "" then .cwd else (.workspace_roots[0] // empty
 # is not the lead ending.
 [[ -z ${CREW_SUBAGENT:-} ]] || exit 0
 
+# The launcher's restart marker exists only while a seam relaunch ends this session,
+# so this end is a relaunch, not a death. A marker whose file is gone does not count.
+[[ -z ${CREW_LEAD_RESTART:-} || ! -f $CREW_LEAD_RESTART ]] || exit 0
+
 # _is_engine_cmd — this standalone build's copy of the engine table; the lib
 # dispatch.sh sources (local-models.sh) carries the other one, and the
 # byte-compare in tests/adapters.bats is what keeps the two in sync.

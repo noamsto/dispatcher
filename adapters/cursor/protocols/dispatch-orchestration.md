@@ -654,6 +654,14 @@ rendered from `DISPATCHER_PROTOCOL.md`) as a system prompt; codex/cursor inject
 is identical across engines; the crew-watch park primitive is not — see
 `DISPATCHER_PROTOCOL.md` → "Read the bus".
 
+## Fresh seam relaunch (worker lead)
+
+A worker lead's context only grows: by execute or review it re-reads about twice its floor every turn. With `freshSeams` (boolean, default `false`; the owner's trial switch, off ends it) or `dispatch --fresh-seams` / `--no-fresh-seams` for one dispatch, a claude or pi lead runs under `lead-launcher` and ends its session at the execute and review seams. The launcher restarts the same engine in the same pane with a new session id and a seam prompt, so worker id, crew, claim and role panes carry over; the lead resumes from `handoff.md`, `SPEC.md`, `PLAN.md` and git (`WORKER_PROTOCOL.md` → "Fresh seam relaunch").
+
+- Armed only for engine claude or pi, `kind: implement`, tier standard or deep, no `--owner-auth`, no `--host`; otherwise `dispatch: --fresh-seams not armed — <reason>` on stderr and today's launch. `--owner-auth` is never armed: the authorization lives only in the launch prompt, and a lead-triggered second session would be a new authorization path. `--host` is local-only. Armed adds `fresh_seams: true` to the task header and the `dispatch` bus event.
+- `dispatch resume` runs without the launcher and rewrites the header to `fresh_seams: false`: a resumed run keeps one session.
+- Offline read, `crew rate` doesn't carry it: `crew log <crew> | jq 'select(.kind=="dispatch" and .fresh_seams)'` for armed runs; each relaunch is a `kind:"relaunch"` row (`stage`, `engine_session`), joined to `metrics:` msgs and `dispatch` rows on `worker_id`; `scripts/context-budget.py` reads `relaunch` rows' `engine_session` to attribute post-seam transcripts to their run.
+
 ## Three orthogonal levers
 
 - **Tier = pipeline depth (who reviews).** Driven by risk/ambiguity/blast-radius, not size. A one-line security change is still `standard`/`deep`. Pipeline depth also flexes **down** when the target repo self-reviews: a repo with an active automated PR-review gauntlet permits a light internal pass except for cross-component correctness risk, which promotes one reviewer per `EVIDENCE_REVIEW.md` (see `WORKER_REVIEW.md` → Code review gate, "Repo-aware scaling"). Targeted re-review after behavioral fixes still applies. Tier sets *planning* depth regardless — review scaling does not rewrite the spec or plan.

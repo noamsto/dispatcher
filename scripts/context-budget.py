@@ -229,7 +229,7 @@ def main_git_dir(cwd):
 
 
 def bus_engine_sessions(sessions):
-    """engine_session ids of bus `dispatch` events; returns (set, n_logs, n_cwds, n_cwds_resolved)."""
+    """engine_session ids of bus `dispatch` and `relaunch` events; returns (set, n_logs, n_cwds, n_cwds_resolved)."""
     cwds = {c for s in sessions for c in s["cwds"]}
     gits = set()
     resolved = 0
@@ -247,13 +247,13 @@ def bus_engine_sessions(sessions):
         logs += 1
         with open(ev, "r", encoding="utf-8", errors="replace") as fh:
             for line in fh:
-                if '"dispatch"' not in line:
+                if '"dispatch"' not in line and '"relaunch"' not in line:
                     continue
                 try:
                     e = json.loads(line)
                 except ValueError:
                     continue
-                if e.get("kind") == "dispatch" and e.get("engine_session"):
+                if e.get("kind") in ("dispatch", "relaunch") and e.get("engine_session"):
                     ids.add(str(e["engine_session"]))
     return ids, logs, len(cwds), resolved
 

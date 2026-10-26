@@ -190,6 +190,25 @@ locked_settings() {
   done
 }
 
+@test "freshSeams defaults to false and takes a boolean from the user layer" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.freshSeams == false' <<<"$output"
+  user_settings '{"freshSeams":true}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.freshSeams == true' <<<"$output"
+}
+
+@test "freshSeams must be a boolean" {
+  for bad in '"yes"' '1'; do
+    user_settings "{\"freshSeams\":$bad}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"freshSeams must be a boolean"* ]]
+  done
+}
+
 @test "dispatcherMcp defaults to empty and merges per lowercased key across layers" {
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]

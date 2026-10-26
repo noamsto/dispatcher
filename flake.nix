@@ -219,7 +219,8 @@
             # direnv: pre-allows the freshly scaffolded worktree's .envrc (#40).
             # curl, gnugrep, betterleaks: the public-leak guard a mint runs its
             # issue body through.
-            rt = (with pkgs; [gh git jq gnused coreutils findutils diffutils tmux direnv curl gnugrep betterleaks procps]) ++ [crew dispatch-resume];
+            # lead-launcher: the lead's launch script runs it by name (#700).
+            rt = (with pkgs; [gh git jq gnused coreutils findutils diffutils tmux direnv curl gnugrep betterleaks procps]) ++ [crew dispatch-resume lead-launcher];
           in
             pkgs.writeShellApplication {
               name = "dispatch";
@@ -250,6 +251,15 @@
               name = "dispatcher";
               runtimeInputs = rt;
               text = launcherPath rt (withConfig (sub (builtins.readFile ./adapters/core/dispatcher.sh)));
+            };
+
+          lead-launcher = let
+            rt = (with pkgs; [coreutils jq procps gnugrep findutils]) ++ [crew];
+          in
+            pkgs.writeShellApplication {
+              name = "lead-launcher";
+              runtimeInputs = rt;
+              text = launcherPath rt (builtins.readFile ./adapters/core/lead-launcher.sh);
             };
 
           refresh-scores = pkgs.writeShellApplication {
@@ -290,7 +300,7 @@
 
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew crew-dash dispatch dispatch-resume dispatch-config dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check];
+            paths = [crew crew-dash dispatch dispatch-resume dispatch-config dispatcher lead-launcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check];
           };
         };
       in {
