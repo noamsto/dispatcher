@@ -10,19 +10,14 @@ Delegate only phases with a role pane in your window; the pane's presence, not y
 <!-- only:claude -->
 On claude it also replaces the critic subagent.
 <!-- /only -->
-<!-- only:claude,codex,cursor -->
-On this engine the native roster batch ("Code review gate") always runs, grid or not; a `reviewer` pane (explicit `--roles`) only adds a cross-engine second opinion.
-<!-- /only -->
+The native roster batch ("Code review gate") always runs, grid or not; a `reviewer` pane (explicit `--roles`) only adds a cross-engine second opinion.
 <!-- only:pi -->
-pi has no native batch, so the `reviewer` pane is the review gate.
+On pi an explicit pane's `reject` still vetoes (crew's seam gate).
 <!-- /only -->
 
 The seam, per critic/review phase with a pane:
 
 Lazy grid: before step 1, role not running → `dispatch --spawn-role <role>`. `--agent`/`--model` override the `roles.json` spec, `--effort` the task doc's `effort:`; both are written back (a later bare respawn keeps them, no re-dispatch). Failed spawn (missing `roles.json`, role not in this grid, not in tmux) → the died-pane fallback below.
-<!-- only:pi -->
-On pi this also launches the review promotion in `EVIDENCE_REVIEW.md`.
-<!-- /only -->
 
 1. Write `<seam>.md` (`spec`, `plan` or `review`) into the artifacts dir `<art>` = `<crew_dir>/artifacts/<branch>` (`<crew_dir>` from `WORKER_TASK.md`; create it; bare file names below live there). `refute` (`GRID_PROTOCOL.md`) carries its finding inline; `assess` uses `assess.md`. Review: `git diff "$base_ref"...HEAD > <crew_dir>/artifacts/<branch>/review.diff`, then the resolved roster: `rm -f <art>/roster.json <art>/roster.json.tmp` → `reviewer-roster --base "$base" > <art>/roster.json.tmp` (off PATH: `bash $DISPATCHER_REVIEWERS_DIR/resolve-roster.sh`, adapter-local `reviewers/resolve-roster.sh`) → exit 0 only: `mv` to `roster.json`, name its absolute path in the assignment as `"roster":"<abs path>"`. Resolver missing or non-zero: remove `roster.json.tmp`, no `roster.json`, put `"roster_skipped":"repo-local discovery skipped: <reason>"` in the assignment. The pane reads only the roster its assignment names.
 2. Assign the role pane (absolute artifact path, verdict wanted). `crew msg` takes `<from> <to> <body>`; your from is `$CREW_WORKER_ID`:
@@ -41,7 +36,7 @@ On pi this also launches the review promotion in `EVIDENCE_REVIEW.md`.
    ```
    Reply: verdict JSON (`verdict`, `findings`, `evidence`); an await prints every due msg from the role, one per line, oldest first: handle earlier lines first, the newest is the verdict. A review-seam reply must carry `"seam":"review"` and a `verdict`.
 <!-- only:pi -->
-   On pi, `crew status`'s review gate reads it; a reject blocks `pr_open` until the reviewer's next verdict.
+   On pi, with an explicit `reviewer` pane, `crew status`'s review gate reads it; a reject blocks `pr_open` until the reviewer's next verdict.
 <!-- /only -->
    A re-request (any lead → reviewer msg but the final release) cancels every earlier verdict and your own earlier seam until a fresh one arrives; no push in between.
    `--from` limits the wait to that role (other roles' and stale replies neither release nor get consumed) and also returns the role's `role_exited` msg and the watcher's assignment events (same id); a line with `event`, not `verdict`, is never a verdict. Never hand-roll a poll loop over `events.jsonl` or the bus log.
@@ -70,7 +65,4 @@ Missed release: panes idle until their watchers time out (`status failed`, detai
 A role whose engine exits before your release posts `role_exited` to you (step 3) and a `blocked` status under `role:<branch>:<role>` for the dispatcher; treat it as died: respawn once (`dispatch --spawn-role <role>`; an exited pane is not "already running") or fall back.
 
 Died role (pane gone): fall back to that phase's normal path (native subagent / `spec-plan-critic` workflow / code-review batch) if the engine can spawn a fresh context, else the unavailable-gate path (`WORKER_REVIEW`; blocked to the dispatcher).
-<!-- only:pi -->
-pi cannot: take the unavailable-gate path (`WORKER_REVIEW` Code review gate), never review in the lead context.
-<!-- /only -->
 After the pipeline you may also run `dispatch --reap-roles` (kills all role panes in your window, lazy or not), never instead of the per-role release.

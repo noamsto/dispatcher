@@ -148,10 +148,10 @@ actually express:
 | Packaging                 |   plugin    |       plugin        | loose files¹ | loose files⁴ |
 | Slash commands            |     ✅      | ❌ ships as skills² |      ✅      |      ❌      |
 | Skills                    |     ✅      |         ✅          |      ✅      |     ✅⁵      |
-| Native subagents          |     ✅      |         ✅³         |     ✅³      |      ❌      |
+| Native subagents          |     ✅      |         ✅³         |     ✅³      |     ✅⁴      |
 | Hooks                     |     ✅      |         ✅          |      ✅      |     ✅⁶      |
-| Worker: spec/plan critics |     ✅      |         ✅          |      ✅      | ✅ via grid  |
-| Worker: code-review gate  |     ✅      |         ✅          |      ✅      | ✅ via grid  |
+| Worker: spec/plan critics |     ✅      |         ✅          |      ✅      |      ✅      |
+| Worker: code-review gate  |     ✅      |         ✅          |      ✅      |      ✅      |
 
 ¹ Cursor has no plugin format yet, so rules and commands are written directly
 into `~/.cursor/`. A `.mdc` rule without `alwaysApply: true` is silently ignored.
@@ -159,14 +159,14 @@ into `~/.cursor/`. A `.mdc` rule without `alwaysApply: true` is silently ignored
 skills — so each command ships as a skill, invoked `$autopilot` or via `/skills`.
 ³ Codex has native ad-hoc subagents but no declarable plugin agents; Cursor has
 both, but not every model in its routing table exposes them.
-⁴ pi has no dispatcher adapter or native subagents. It runs the shared protocols
-directly; `--grid` supplies separate critic and reviewer processes where the tier
-requires fresh contexts — on pi that's `standard` and `deep` both, since its
-`reviewer` pane doubles as its code-review gate, having no native batch of its
-own. The other three engines already run a native reviewer batch, so their
-`deep` default grid is critics-only (`spec-critic,plan-critic`, no
-`reviewer`) — a fresh out-of-process context for spec/plan review, not a
-substitute for the native code-review batch. `--no-grid` opts back out.
+⁴ pi has no dispatcher adapter. It runs the shared protocols directly and gets
+native subagents from the dispatcher's pinned `subagent` extension
+(`adapters/pi/extensions/subagent`, contract-checked by
+`scripts/pi-subagent-contract.sh`) and the generated agent roster
+(`adapters/pi/agents`). The role grid is optional there, as on the other
+engines: `deep` defaults to critics-only (`spec-critic,plan-critic`) for fresh
+out-of-process spec/plan review, never a substitute for the native code-review
+batch. `--no-grid` opts back out.
 ⁵ pi has no plugin tree, so the harness skills reach it by path: `dispatch`
 passes `--skill $DISPATCHER_SKILLS_DIR` (the `adapters/core/skills` source
 itself, not a generated copy) alongside the worktree's own project skills. The
@@ -196,10 +196,10 @@ spec and plan critics that gate a plan before any of it is written. A worker
 resolves them through `DISPATCHER_REVIEWERS_DIR` / `DISPATCHER_CRITICS_DIR`
 (or the copy its adapter ships) and hands the matched body to whatever spawn
 its engine has: a named agent on claude, an inline role brief on codex and
-cursor, or a role-grid pane — pi always, for both critics and reviewers; the
-other three by default on `deep`, but for critics only (their code-review
-gate always spawns the native named-agent/inline-brief mechanism, never a
-grid pane). A critic sits at the tier's escalate rung — it has to out-think the
+cursor, a `subagent` agent on pi, or a role-grid pane — every engine by default on
+`deep`, but for critics only (the code-review gate always runs the native
+batch — named agent, inline brief, or pi's `subagent` — never a grid pane in
+its place; on pi an explicit reviewer pane's reject still vetoes). A critic sits at the tier's escalate rung — it has to out-think the
 draft it gates. Nothing about either gate depends on agent definitions that
 live outside the repo. A target repo can extend or override the reviewer
 roster with `.dispatcher/reviewers/*.md`, read from the merge-base with
@@ -736,13 +736,12 @@ dispatch --crew-id <id> trivial haiku --effort low --plan provided "rename the f
 dispatch --crew-id <id> standard openrouter/deepseek/deepseek-v4.1-flash --effort high --agent pi --grid "harden the parser"
 ```
 
-`--grid` in the pi example is redundant, not required: pi grids on `standard`
-and `deep` unconditionally, with `reviewer` included both times since pi has no
-native review batch of its own. Every `deep` dispatch on the other three
-engines also grids by default, but critics-only (`spec-critic,plan-critic`) —
-their native code-review batch is unaffected. Either way each role lands on the
-lead's own engine/model unless `--roles` says otherwise. Pass `--no-grid` to
-opt a non-pi `deep` dispatch back out; it's refused for pi standard/deep.
+`--grid` in the pi example adds the full tier-derived panes (`plan-critic,reviewer`)
+on top of pi's native subagents; without it a pi `standard` dispatch has no
+grid. Every `deep` dispatch on any engine grids by default, but critics-only
+(`spec-critic,plan-critic`) — the native code-review batch is unaffected. Each
+role lands on the lead's own engine/model unless `--roles` says otherwise. Pass
+`--no-grid` to opt a `deep` dispatch back out, on any engine.
 
 Resuming a worker, from inside its own worktree — reads the engine, model,
 effort and crew back from `WORKER_TASK.md` and resumes the lead's own recorded

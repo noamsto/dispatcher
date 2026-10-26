@@ -788,8 +788,8 @@ EOF
 }
 
 @test "the pi worker launch and its role panes use the worker agent dir with --no-approve" {
-  # Personal pi standard auto-enables the plan-critic,reviewer grid, which is
-  # what gives the role-pane assertions below real launches to check.
+  # --grid gives the role-pane assertions below real launches to check; a pi
+  # standard dispatch has no default grid.
   stub_launch_bins
   mkdir -p "$HOME/.pi/agent"
   printf '{"opencode":{"type":"api_key","key":"SECRET-DISPATCH-FIXTURE"}}\n' >"$HOME/.pi/agent/auth.json"
@@ -797,7 +797,7 @@ EOF
   before_auth=$(sha256sum "$HOME/.pi/agent/auth.json")
   before_settings=$(sha256sum "$HOME/.pi/agent/settings.json")
 
-  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "worker agent dir trust test"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --grid --crew-id c1 42 "worker agent dir trust test"
   [ "$status" -eq 0 ]
 
   worker_dir="$HOME/.pi/dispatcher-worker"
@@ -806,7 +806,7 @@ EOF
   [[ "$lead_line" == *"--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md"* ]]
   [[ "$lead_line" == *"--thinking high"* ]]
   # No project skills in this worktree, so the harness dir is the only --skill.
-  [[ "$lead_line" == *"--no-approve --skill $DISPATCHER_SKILLS_DIR "* ]]
+  [[ "$lead_line" == *"--no-approve -e $DISPATCHER_PI_DIR/extensions/subagent/index.ts --skill $DISPATCHER_SKILLS_DIR "* ]]
 
   plan_critic_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris-plan-critic" <(launch_log))
   reviewer_line=$(grep -F -- "PI_CODING_AGENT_DIR=$worker_dir pi --name iris-reviewer" <(launch_log))
@@ -826,6 +826,67 @@ EOF
 
   run grep -rF SECRET-DISPATCH-FIXTURE "$worker_dir"
   [ "$status" -ne 0 ]
+}
+
+@test "a pi standard implement worker has no default grid" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi standard no grid"
+  [ "$status" -eq 0 ]
+  run grep -q '^roles:' "$TEST_REPO/.dispatch-wt/feat-42-pi-standard-no-grid/WORKER_TASK.md"
+  [ "$status" -ne 0 ]
+}
+
+@test "only the pi lead launch loads the subagent extension, never a role pane" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --grid --crew-id c1 42 "pi subagent extension"
+  [ "$status" -eq 0 ]
+
+  ext="$DISPATCHER_PI_DIR/extensions/subagent/index.ts"
+  [ "$(grep -cF -- " -e $ext" <(launch_log))" -eq 1 ]
+  lead_line=$(grep -F -- " pi --name iris --model" <(launch_log))
+  [[ "$lead_line" == *"--no-approve -e $ext "* ]]
+  role_lines=$(grep -F -- " pi --name iris-" <(launch_log))
+  [ -n "$role_lines" ]
+  [[ "$role_lines" != *"$ext"* ]]
+}
+
+@test "dispatch refuses a pi lead when the subagent extension is missing" {
+  stub_launch_bins
+  mkdir -p "$BATS_TEST_TMPDIR/empty-pi"
+  export DISPATCHER_PI_DIR="$BATS_TEST_TMPDIR/empty-pi"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi missing extension"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$BATS_TEST_TMPDIR/empty-pi/extensions/subagent/index.ts"* ]]
+  run grep -c -- 'switch' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+  run grep -c -- 'new-window' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+  run grep -c -- 'send-keys' "$STUB_LOG"
+  [ "$status" -ne 0 ]
+}
+
+# _stub_pi_version <version> — a pi whose `--version` prints <version>.
+_stub_pi_version() {
+  printf '#!/usr/bin/env bash\n[ "$1" = --version ] && echo "%s"\nexit 0\n' "$1" >"$STUB_DIR/pi"
+  chmod +x "$STUB_DIR/pi"
+}
+
+@test "dispatch warns when the installed pi differs from the pinned subagent contract" {
+  stub_launch_bins
+  _stub_pi_version 9.9.9
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi version drift"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"installed pi 9.9.9 differs from the pinned subagent extension contract"* ]]
+}
+
+@test "dispatch does not warn when the installed pi matches the pinned subagent contract" {
+  stub_launch_bins
+  pinned="$(awk -F'\t' '$1 == "version" { print $2; exit }' "$DISPATCHER_PI_DIR/extensions/subagent/contract.txt")"
+  [ -n "$pinned" ]
+  _stub_pi_version "$pinned"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi version match"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"differs"* ]]
 }
 
 @test "pi worker launch passes the worktree's project skills and the harness skills with --skill" {
@@ -858,13 +919,13 @@ EOF
 
   mkdir -p "$HOME/.pi/agent"
   printf '{"opencode":{"type":"api_key","key":"x"}}\n' >"$HOME/.pi/agent/auth.json"
-  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "skill pass-through"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --grid --crew-id c1 42 "skill pass-through"
   [ "$status" -eq 0 ]
 
   # The lead carries WORKER_PROTOCOL.pi.md; each grid role pane gets its own
   # --skill too, but this asserts the worker launch specifically.
   lead_line=$(grep -F -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md" <(launch_log))
-  [[ "$lead_line" == *"--no-approve --skill $TEST_REPO/.dispatch-wt/"*"/.agents/skills --skill $DISPATCHER_SKILLS_DIR "* ]]
+  [[ "$lead_line" == *"--no-approve -e $DISPATCHER_PI_DIR/extensions/subagent/index.ts --skill $TEST_REPO/.dispatch-wt/"*"/.agents/skills --skill $DISPATCHER_SKILLS_DIR "* ]]
 
   # The role pane goes through launch_role, whose worktree arrives as an
   # argument — assert the grid path passes it through.
@@ -1779,7 +1840,7 @@ EOF
   last=$((${#argv[@]} - 1))
   [[ "${argv[last]}" == "Read WORKER_TASK.md and run it end-to-end."* ]]
   [[ "${argv[last]}" == *"Follow $DISPATCHER_PROTOCOL_DIR/WORKER_GRID.claude.md ('Grid mode') — delegate to the bus only the phases that have a pane"* ]]
-  [[ "${argv[last]}" == *"(a reviewer pane is additive, except on pi where it is the gate)."* ]]
+  [[ "${argv[last]}" == *"(a reviewer pane is additive; on pi its reject still vetoes)."* ]]
   # No fragment of the prompt leaked into an earlier argument.
   for ((i = 0; i < last; i++)); do
     [[ "${argv[i]}" != *"Grid mode"* && "${argv[i]}" != "Read "* ]]
@@ -1802,7 +1863,7 @@ EOF
 
 @test "grid_note's apostrophes survive into the pi lead's argv as one prompt argument" {
   stub_launch_bins
-  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi grid apostrophe repro"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --grid --crew-id c1 42 "pi grid apostrophe repro"
   [ "$status" -eq 0 ]
 
   # The lead is the one pi launch without a role suffix on --name.
@@ -1840,9 +1901,9 @@ EOF
   [ "$status" -eq 0 ]
 }
 
-@test "pi standard and deep workers get the required grid by default" {
+@test "pi standard and deep workers have no engine-specific default grid" {
   run grep -F -- '[ "$agent" = pi ] && [ "$tier" != trivial ]' "$DISPATCH"
-  [ "$status" -eq 0 ]
+  [ "$status" -ne 0 ]
 }
 
 @test "deep dispatches on every engine default to the grid too" {
@@ -2013,16 +2074,18 @@ _store_dispatch() {
   BAKED_SKILLS="$STORE/h-new-skills"
   BAKED_REVIEWERS="$STORE/h-new-reviewers"
   BAKED_CRITICS="$STORE/h-new-critics"
+  BAKED_PI="$STORE/h-new-pi"
   BAKED_HINT="$STORE/h-new-cross-repo-hint.sh"
-  mkdir -p "$BAKED_REVIEWERS" "$BAKED_CRITICS"
+  mkdir -p "$BAKED_REVIEWERS" "$BAKED_CRITICS" "$BAKED_PI/extensions/subagent"
+  touch "$BAKED_PI/extensions/subagent/index.ts"
   cp "$CROSS_REPO_HINT_LIB" "$BAKED_HINT"
   printf 'new\n' >"$BAKED_REVIEWERS/r.md"
   printf 'new\n' >"$BAKED_CRITICS/c.md"
   _store_protocols "$BAKED_PROTOCOLS" new
   mkdir -p "$BAKED_SKILLS/spec-plan-critic"
   printf -- '---\nname: spec-plan-critic\ndescription: baked\n---\n' >"$BAKED_SKILLS/spec-plan-critic/SKILL.md"
-  sed "s|@protocolDir@|$BAKED_PROTOCOLS|; s|@protocolRev@|$(_protocol_dir_rev "$BAKED_PROTOCOLS")|; s|@skillsDir@|$BAKED_SKILLS|; s|@reviewersDir@|$BAKED_REVIEWERS|; s|@criticsDir@|$BAKED_CRITICS|; s|@crossRepoHintLib@|$BAKED_HINT|" "$DISPATCH" >"$BATS_TEST_TMPDIR/dispatch-store.sh"
-  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR CROSS_REPO_HINT_LIB
+  sed "s|@protocolDir@|$BAKED_PROTOCOLS|; s|@protocolRev@|$(_protocol_dir_rev "$BAKED_PROTOCOLS")|; s|@skillsDir@|$BAKED_SKILLS|; s|@reviewersDir@|$BAKED_REVIEWERS|; s|@criticsDir@|$BAKED_CRITICS|; s|@piDir@|$BAKED_PI|; s|@crossRepoHintLib@|$BAKED_HINT|" "$DISPATCH" >"$BATS_TEST_TMPDIR/dispatch-store.sh"
+  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR DISPATCHER_PI_DIR CROSS_REPO_HINT_LIB
   run_store_dispatch() { bash -euo pipefail "$BATS_TEST_TMPDIR/dispatch-store.sh" "$@"; }
 }
 
@@ -2101,7 +2164,7 @@ _store_protocols() { # <dir> <content>
   cmp "$BATS_TEST_TMPDIR/resolve-dispatch" "$BATS_TEST_TMPDIR/resolve-resolve-roster"
 }
 
-@test "stale store-path reviewers/critics dirs are ignored and the launch env carries all four resolved dirs" {
+@test "stale store-path reviewers/critics dirs are ignored and the launch env carries all five resolved dirs" {
   stub_launch_bins
   _store_dispatch
   export DISPATCHER_PROTOCOL_DIR="$STORE/h-old-source/adapters/core/protocols"
@@ -2115,7 +2178,7 @@ _store_protocols() { # <dir> <content>
   [ "$status" -eq 0 ]
   [[ "$output" == *"ignoring stale DISPATCHER_REVIEWERS_DIR"* ]]
   [[ "$output" == *"ignoring stale DISPATCHER_CRITICS_DIR"* ]]
-  grep -qF -- "DISPATCHER_PROTOCOL_DIR=$BAKED_PROTOCOLS DISPATCHER_SKILLS_DIR=$BAKED_SKILLS DISPATCHER_REVIEWERS_DIR=$BAKED_REVIEWERS DISPATCHER_CRITICS_DIR=$BAKED_CRITICS DISPATCH_GRANT_ROOTS=: GIT_EDITOR=true" <(launch_log)
+  grep -qF -- "DISPATCHER_PROTOCOL_DIR=$BAKED_PROTOCOLS DISPATCHER_SKILLS_DIR=$BAKED_SKILLS DISPATCHER_REVIEWERS_DIR=$BAKED_REVIEWERS DISPATCHER_CRITICS_DIR=$BAKED_CRITICS DISPATCHER_PI_DIR=$BAKED_PI DISPATCH_GRANT_ROOTS=: GIT_EDITOR=true" <(launch_log)
   run ! grep -qF -- "h-old-source" <(launch_log)
 }
 
@@ -2176,7 +2239,7 @@ _store_protocols() { # <dir> <content>
   [ "$status" -eq 0 ]
   [[ "$output" == *"ignoring stale DISPATCHER_SKILLS_DIR"* ]]
   lead_line=$(grep -F -- "--append-system-prompt $BAKED_PROTOCOLS/WORKER_PROTOCOL.pi.md" <(launch_log))
-  [[ "$lead_line" == *"--no-approve --skill $BAKED_SKILLS "* ]]
+  [[ "$lead_line" == *"--no-approve -e $BAKED_PI/extensions/subagent/index.ts --skill $BAKED_SKILLS "* ]]
   [[ "$lead_line" != *"h-old-source"* ]]
 }
 
@@ -2264,12 +2327,12 @@ EOF
   [ "$n" -eq 2 ]
 }
 
-@test "pi still defaults to the full spec-critic,plan-critic,reviewer grid on deep" {
+@test "pi deep defaults to the critics-only spec-critic,plan-critic grid like every other engine" {
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch deep openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --crew-id c1 42 "pi deep full grid default"
   [ "$status" -eq 0 ]
   task="$TEST_REPO/.dispatch-wt/feat-42-pi-deep-full-grid-default/WORKER_TASK.md"
-  grep -Fx 'roles: spec-critic,plan-critic,reviewer' "$task"
+  grep -Fx 'roles: spec-critic,plan-critic' "$task"
 }
 
 @test "single-engine fallback: personal-profile deep claude grids critics-only, entirely on claude, no refusal" {
@@ -2313,22 +2376,24 @@ EOF
   [ "$status" -ne 0 ]
 }
 
-@test "pi review workers above trivial default to a reviewer,refuter grid" {
+@test "pi review workers above trivial get no default grid" {
   stub_pr_bins review-pi-std
   export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
   DISPATCH_PROFILE=work run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --pr 99 --review --crew-id c1 "pi review grid"
   [ "$status" -eq 0 ]
-  grep -Fx 'roles: reviewer,refuter' "$TEST_REPO/.worktrees/review-pi-std/WORKER_TASK.md"
+  run grep -q '^roles:' "$TEST_REPO/.worktrees/review-pi-std/WORKER_TASK.md"
+  [ "$status" -ne 0 ]
   run grep -F -- 'Role-grid path' <(launch_log)
-  [ "$status" -eq 0 ]
+  [ "$status" -ne 0 ]
 }
 
-@test "pi deep review workers get the same reviewer,refuter grid" {
+@test "pi deep review workers get no default grid either" {
   stub_pr_bins review-pi-deep
   export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
   DISPATCH_PROFILE=work run run_dispatch deep openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort max --pr 99 --review --crew-id c1 "pi deep review grid"
   [ "$status" -eq 0 ]
-  grep -Fx 'roles: reviewer,refuter' "$TEST_REPO/.worktrees/review-pi-deep/WORKER_TASK.md"
+  run grep -q '^roles:' "$TEST_REPO/.worktrees/review-pi-deep/WORKER_TASK.md"
+  [ "$status" -ne 0 ]
 }
 
 @test "pi trivial review workers stay ungridded (REVIEW_TASK reviews trivial inline)" {
@@ -2340,15 +2405,16 @@ EOF
   [ "$status" -ne 0 ]
 }
 
-@test "--no-grid stays refused for a pi review worker above trivial" {
+@test "--no-grid is accepted for a pi review worker above trivial" {
   stub_pr_bins review-pi-nogrid
   export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
   DISPATCH_PROFILE=work run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --pr 99 --review --no-grid --crew-id c1 "pi review no grid"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"--no-grid cannot be used with --agent pi"* ]]
+  [ "$status" -eq 0 ]
+  run grep -q '^roles:' "$TEST_REPO/.worktrees/review-pi-nogrid/WORKER_TASK.md"
+  [ "$status" -ne 0 ]
 }
 
-@test "explicit --roles wins over the pi review default grid" {
+@test "explicit --roles sets the grid of a pi review worker" {
   stub_pr_bins review-pi-roles
   export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_DIRNAME/../adapters/core/protocols"
   DISPATCH_PROFILE=work run run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort high --pr 99 --review --roles reviewer@max,refuter --crew-id c1 "pi review roles"
@@ -2375,12 +2441,13 @@ EOF
   [ "$status" -ne 0 ]
 }
 
-@test "pi deep with --plan provided still grids (reviewer is its review gate)" {
+@test "pi deep with --plan provided gets no default grid" {
   stub_launch_bins
   DISPATCH_PROFILE=work run run_dispatch deep openrouter/deepseek/deepseek-v4.1-flash --agent pi --plan provided --effort high --crew-id c1 42 "pi plan provided still grids"
   [ "$status" -eq 0 ]
   task="$TEST_REPO/.dispatch-wt/feat-42-pi-plan-provided-still-grids/WORKER_TASK.md"
-  grep -Fx 'roles: spec-critic,plan-critic,reviewer' "$task"
+  run grep -q '^roles:' "$task"
+  [ "$status" -ne 0 ]
 }
 
 @test "explicit --grid keeps the full topology on non-pi deep regardless of --plan provided" {
@@ -2452,14 +2519,17 @@ ROWS
   [ "$status" -ne 0 ]
 }
 
-@test "--no-grid is refused for pi standard and deep" {
-  run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --no-grid --effort high --crew-id c1 "no grid pi standard"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"--no-grid cannot be used with --agent pi"* ]]
+@test "--no-grid is accepted for pi standard and deep, with no roles stamped" {
+  stub_launch_bins
+  run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --no-grid --effort high --crew-id c1 42 "no grid pi standard"
+  [ "$status" -eq 0 ]
+  run grep -q '^roles:' "$TEST_REPO/.dispatch-wt/feat-42-no-grid-pi-standard/WORKER_TASK.md"
+  [ "$status" -ne 0 ]
 
-  run run_dispatch deep openrouter/deepseek/deepseek-v4.1-flash --agent pi --no-grid --effort high --crew-id c1 "no grid pi deep"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"--no-grid cannot be used with --agent pi"* ]]
+  run run_dispatch deep openrouter/deepseek/deepseek-v4.1-flash --agent pi --no-grid --effort high --crew-id c1 43 "no grid pi deep"
+  [ "$status" -eq 0 ]
+  run grep -q '^roles:' "$TEST_REPO/.dispatch-wt/feat-43-no-grid-pi-deep/WORKER_TASK.md"
+  [ "$status" -ne 0 ]
 }
 
 @test "--no-grid conflicts with --grid and with --roles" {
@@ -3266,7 +3336,7 @@ fleet_nproc() {
   [ "$status" -eq 0 ]
   [[ "$output" != *"quota exhausted"* ]]
 
-  DISPATCH_PRECHECK=1 run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
+  DISPATCH_PRECHECK=1 run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --grid --crew-id c1 "t"
   [ "$status" -eq 1 ]
   [[ "$output" == *"role 'plan-critic' (pi) quota exhausted"* ]]
 }
@@ -3282,7 +3352,7 @@ fleet_nproc() {
 @test "local lane: launch gives bare roles the hosted rung and stamps @crew_model" {
   stub_launch_bins
   local_lane_fixture
-  run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 42 "local launch"
+  run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --grid --crew-id c1 42 "local launch"
   [ "$status" -eq 0 ]
   grep -F -- "pi --name iris --model $LOCAL_ID " <(launch_log)
   grep -F -- 'pi --name iris-plan-critic --model openrouter/deepseek/deepseek-v4.1-flash ' <(launch_log)
@@ -9868,8 +9938,9 @@ _mcp_assert_cache_file() {
     MCP_ISSUE=$issue _mcp_dispatch "$agent" "$model"
     [ "$status" -eq 0 ] || { echo "row $row: $output" >&2; return 1; }
     [ -n "$(_mcp_line "$needle")" ]
-    # Lead and role panes alike.
-    run grep -cE -- '/dispatcher/mcp/|mcp_servers| -e /' <(grep -F -- " $agent " <(launch_log))
+    # Lead and role panes alike. A pi lead's pinned subagent -e is a plain path,
+    # so the catalog is matched by its cache dir alone.
+    run grep -cE -- '/dispatcher/mcp/|mcp_servers' <(grep -F -- " $agent " <(launch_log))
     [ "$output" = 0 ] || { echo "row $row: catalog flag in a launch" >&2; return 1; }
   done <<'ROWS'
 claude claude sonnet claude --name iris --model
@@ -9898,14 +9969,16 @@ ROWS
 
 @test "1304: --mcp sentry gives a pi lead an -e extension registering exactly that server" {
   stub_launch_bins
-  _mcp_dispatch pi openrouter/deepseek/deepseek-v4-flash --mcp sentry
+  _mcp_dispatch pi openrouter/deepseek/deepseek-v4-flash --grid --mcp sentry
   [ "$status" -eq 0 ]
   line="$(_mcp_line 'pi --name iris --model')"
   [[ "$line" == *"--no-approve"* ]]
-  ext="$(_mcp_path_after "$line" -e)"
+  # The subagent extension is the other -e; the catalog one lives in the cache.
+  [[ "$line" =~ \ -e\ ($XDG_CACHE_HOME/dispatcher/mcp/[^ ]+) ]]
+  ext="${BASH_REMATCH[1]}"
   _mcp_assert_cache_file "$ext"
   sed -n 's/^const servers = \(.*\);$/\1/p' "$ext" | jq -e 'keys == ["sentry"] and .sentry.url == "https://mcp.sentry.dev/mcp"'
-  # The personal pi grid's role panes get no extension.
+  # The --grid role panes get no extension.
   [ "$(grep -cF -- "$ext" <(launch_log))" = 1 ]
   [ "$(grep -cF -- ' pi --name iris-' <(launch_log))" -ge 1 ]
 }
@@ -10164,7 +10237,7 @@ EOF
 # _write_dirs_record <protocol> <skills> <reviewers> <critics> [patch-json] — the
 # protocol-dirs record dispatch writes for feat/9-x, bound to this worktree.
 # Line 6 is the settings record, mirroring the recorder from the fixture's env;
-# [patch-json] overrides keys (a role runs from this record, never the caller's env).
+# line 7 is the pi adapter dir; [patch-json] overrides settings keys (a role runs from this record, never the caller's env).
 _write_dirs_record() {
   local engines settings patch="${5:-}"
   [ -n "$patch" ] || patch='{}'
@@ -10181,7 +10254,7 @@ _write_dirs_record() {
      DISPATCH_ORG_TRACKERS: e("DISPATCH_ORG_TRACKERS"), PI_CODING_AGENT_DIR: $pi,
      DISPATCH_CONFIG_BIN: e("DISPATCH_CONFIG_BIN"), LOCAL_MODELS_LIB: e("LOCAL_MODELS_LIB")} + $patch')"
   mkdir -p "$common/crew/protocol-dirs/feat"
-  printf '%s\n' "$1" "$2" "$3" "$4" "$(realpath "$PWD")" "$settings" >"$common/crew/protocol-dirs/feat/9-x"
+  printf '%s\n' "$1" "$2" "$3" "$4" "$(realpath "$PWD")" "$settings" "${DISPATCHER_PI_DIR:-}" >"$common/crew/protocol-dirs/feat/9-x"
 }
 
 # _record_grant_roots <roots> — rewrite the record with the dispatcher's resolved
@@ -10683,7 +10756,8 @@ _ro_rule() { printf -v r ' %q' "Edit(/$1/**)"; }
   [ "${lines[2]}" = "" ]
   [ "${lines[3]}" = "" ]
   [ "${lines[4]}" = "$(realpath "$TEST_REPO/.dispatch-wt/feat-42-dirs-record")" ]
-  [ "${#lines[@]}" -eq 6 ]
+  [ "${lines[6]}" = "$DISPATCHER_PI_DIR" ]
+  [ "${#lines[@]}" -eq 7 ]
   expected_engines="$("$DISPATCH_CONFIG_BIN" | jq -r '.engines // [] | join(" ")')"
   jq -e --arg xdg "$XDG_CONFIG_HOME" --arg pi "$HOME/.pi/agent" --arg engines "$expected_engines" \
     --arg bin "$DISPATCH_CONFIG_BIN" 'type == "object"
@@ -10921,7 +10995,7 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
   stub_launch_bins
   mkdir -p "$HOME/.pi/agent"
   printf '{"opencode":{"type":"api_key","key":"x"}}\n' >"$HOME/.pi/agent/auth.json"
-  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 42 "pi lead"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --grid --crew-id c1 42 "pi lead"
   [ "$status" -eq 0 ]
   rec="$TEST_REPO/.git/crew/leads/feat/42-pi-lead"
   [[ "$(cat "$rec")" =~ ^pi\ ($_lead_uuid_re)$ ]]
@@ -14497,10 +14571,8 @@ _assert_bound_send_keys() {
 
   while IFS='|' read -r eng model effort profile _bin _marker; do
     : >"$STUB_LOG"
-    # pi refuses --no-grid outright, so only codex/cursor take it; pi grids
-    # by default instead, which still exercises the role-pane shape.
-    no_grid=()
-    [ "$eng" = pi ] || no_grid=(--no-grid)
+    # Every engine takes --no-grid; a pi standard dispatch has no default grid.
+    no_grid=(--no-grid)
     DISPATCH_PROFILE="$profile" run run_dispatch standard "$model" --agent "$eng" --effort "$effort" "${no_grid[@]}" --crew-id c1 "1$n" "$eng bound"
     [ "$status" -eq 0 ]
     marker=WORKER_PROTOCOL.md
@@ -14872,6 +14944,26 @@ EOF
   line="$(grep -F 'claude --name iris-reviewer ' <(launch_log))"
   [[ "$line" == *"--add-dir $BATS_TEST_TMPDIR/rec-critics "* ]]
   [[ "$line" != *"env-critics"* ]]
+}
+
+@test "spawn-role: record — the recorded pi dir wins over the worker's env" {
+  _spawn_role_fixture
+  mkdir -p "$BATS_TEST_TMPDIR/rec-pi" "$BATS_TEST_TMPDIR/env-pi"
+  sed -i "7s|.*|$BATS_TEST_TMPDIR/rec-pi|" "$common/crew/protocol-dirs/feat/9-x"
+  DISPATCHER_PI_DIR="$BATS_TEST_TMPDIR/env-pi" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  launch="$(launch_log)"
+  [[ "$launch" == *"DISPATCHER_PI_DIR=$BATS_TEST_TMPDIR/rec-pi "* ]]
+  [[ "$launch" != *"env-pi"* ]]
+}
+
+@test "spawn-role: record — a record without a pi dir line ignores the worker's env" {
+  _spawn_role_fixture
+  mkdir -p "$BATS_TEST_TMPDIR/env-pi"
+  sed -i 6q "$common/crew/protocol-dirs/feat/9-x"
+  DISPATCHER_PI_DIR="$BATS_TEST_TMPDIR/env-pi" run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  [[ "$(launch_log)" != *"env-pi"* ]]
 }
 
 @test "spawn-role: record — the recorded protocol dir drives the role's system prompt" {

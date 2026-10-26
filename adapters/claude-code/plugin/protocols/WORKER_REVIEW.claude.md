@@ -20,7 +20,7 @@ Fast deterministic gate green → before `/deslop` + push, get an independent re
 - Dispatch the review as a single parallel batch (one message, concurrent subagents). Roles are identical on every engine; the engine sets only spawn mechanism and rung:
   - claude: Agent tool, one subagent per matched entry, resolved brief as prompt. Native agent preferred, only for a harness identity (entry `name` when `source` is `harness`, or `override.of` when set) matched by name or that harness entry's `aliases:`, spawned with the resolved brief; a new repo entry always runs as a general subagent. Rung: `model: opus` (Agent override) on every batch subagent, whatever the lead model; effort as-is.
 
-  Claude, codex and cursor always run the native batch, even in grid mode; a reviewer role pane there (explicit `--roles`) is only an additive second opinion, never satisfying the gate alone.
+  Every engine always runs the native batch, even in grid mode; a reviewer role pane (explicit `--roles`) is only an additive second opinion, never satisfying the gate alone.
 
   - Language reviewer: one per matched roster entry, with the single risk promotion from EVIDENCE_REVIEW.md when triggered. Plan phase skipped (plan of record) → have it add an approach-sanity check against the task doc: right fix, not merely faithful.
   - Targeted test-runner: a subagent runs the acceptance-criteria / behavior-specific tests, reports pass/fail.

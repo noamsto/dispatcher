@@ -226,4 +226,80 @@ for d in "$skills"/*/; do
   cp "$d/SKILL.md" "$cus/$name/SKILL.md"
 done
 
+# pi has no plugin registry: its lead spawns children through the pinned
+# `subagent` extension, which discovers adapters/pi/agents/*.md. A child gets only
+# its task text plus the agent body, so each body carries the full contract,
+# including the secret rule lifted from the worker protocol.
+pi_src="$root/adapters/pi/src"
+pi_agents="$root/adapters/pi/agents"
+pi_model="$(jq -er '.modelMap.pi.deep.default' "$root/adapters/core/defaults.json")"
+pi_light="$pi_model:low"
+pi_exec="$pi_model:high"
+pi_esc="$pi_model:max"
+# Reviewers get no bash: they must not be able to run the code under review.
+pi_tools_readonly="read, grep, find, ls"
+pi_tools_test="read, grep, find, ls, bash"
+
+rule7_head="$(awk 'index($0, "7. **Never print a secret") == 1 { sub(/^7\. /, ""); print; exit }' "$protocols/WORKER_PROTOCOL.md")"
+if [ -z "$rule7_head" ]; then
+  echo "gen-adapters: rule 7 (Never print a secret) not found in WORKER_PROTOCOL.md" >&2
+  exit 1
+fi
+rule7="$rule7_head
+If a secret value surfaces, stop and tell the lead without repeating it."
+
+# Print a stamp with its {{RULE7}} line replaced by the rule text.
+_stamp() {
+  while IFS= read -r line; do
+    if [ "$line" = "{{RULE7}}" ]; then
+      printf '%s\n' "$rule7"
+    else
+      printf '%s\n' "$line"
+    fi
+  done <"$1"
+}
+
+# _pi_agent <name> <description> <tools|""> <model> <stamp> [body-file]
+# An empty tools value omits the key, which gives the child every built-in.
+_pi_agent() {
+  local name="$1" description="$2" tools="$3" model="$4" stamp="$5" body="${6:-}"
+  local tmp="$pi_agents/.$name.md.tmp"
+  {
+    printf -- '---\n'
+    jq -n --arg name "$name" --arg description "$description" --arg tools "$tools" --arg model "$model" \
+      '{name: $name, description: $description}
+       + (if $tools == "" then {} else {tools: $tools} end)
+       + {model: $model}' | yq -P -
+    printf -- '---\n'
+    _stamp "$pi_src/$stamp-stamp.md"
+    if [ -n "$body" ]; then
+      printf '\n'
+      _body "$body"
+    fi
+  } >"$tmp"
+  mv "$tmp" "$pi_agents/$name.md"
+  pi_written+=("$name.md")
+}
+
+mkdir -p "$pi_agents"
+pi_written=()
+for dir_stamp in "$reviewers:review" "$critics:critic"; do
+  for f in "${dir_stamp%:*}"/*.md; do
+    [ "$(basename "$f")" != README.md ] || continue
+    _pi_agent "$(basename "$f" .md)" "$(_desc "$f")" "$pi_tools_readonly" "$pi_esc" "${dir_stamp##*:}" "$f"
+  done
+done
+_pi_agent repo-reviewer "Run a repo-local reviewer brief passed in the task text." "$pi_tools_readonly" "$pi_esc" review "$pi_src/repo-reviewer.md"
+_pi_agent refuter "Adversarially verify one review finding; default refuted." "$pi_tools_readonly" "$pi_esc" critic "$pi_src/refuter.md"
+_pi_agent test-runner "Run the named acceptance and behavior tests and report pass/fail." "$pi_tools_test" "$pi_exec" test "$pi_src/test-runner.md"
+_pi_agent execute-light "Execute one plan step whose files and edit are named (cheap rung)." "" "$pi_light" execute
+_pi_agent execute "Execute one judgment plan step (default rung)." "" "$pi_exec" execute
+_pi_agent execute-escalated "Execute one plan step tagged high-risk (escalated rung)." "" "$pi_esc" execute
+
+# An agent whose source is gone (a renamed reviewer) would otherwise ship stale.
+for a in "$pi_agents"/*.md; do
+  [ -e "$a" ] || continue
+  case " ${pi_written[*]} " in *" $(basename "$a") "*) ;; *) rm -f "$a" ;; esac
+done
+
 echo "adapters regenerated"

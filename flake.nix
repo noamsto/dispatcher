@@ -126,8 +126,8 @@
               (builtins.readFile ./adapters/core/worktree-git.sh));
           sub =
             builtins.replaceStrings
-            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@" "@publicLeakGuard@" "@worktreeGitLib@" "@grantCheckLib@" "@claudeWorkerSettingsLib@" "@localModelsLib@" "@budgetGateLib@" "@openrouterKeyLib@" "@laneProfilesDir@" "@agentBrowserWorkerConfig@"]
-            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}" "${worktreeGitLib}" "${./adapters/core/grant-check.sh}" "${./adapters/core/claude-worker-settings.sh}" "${./adapters/core/local-models.sh}" "${./adapters/core/budget-gate.sh}" "${./adapters/core/openrouter-key.sh}" "${./adapters/core/lane-profiles}" "${./adapters/core/agent-browser-worker.json}"];
+            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@" "@publicLeakGuard@" "@worktreeGitLib@" "@grantCheckLib@" "@claudeWorkerSettingsLib@" "@localModelsLib@" "@budgetGateLib@" "@openrouterKeyLib@" "@laneProfilesDir@" "@agentBrowserWorkerConfig@" "@piDir@"]
+            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}" "${worktreeGitLib}" "${./adapters/core/grant-check.sh}" "${./adapters/core/claude-worker-settings.sh}" "${./adapters/core/local-models.sh}" "${./adapters/core/budget-gate.sh}" "${./adapters/core/openrouter-key.sh}" "${./adapters/core/lane-profiles}" "${./adapters/core/agent-browser-worker.json}" "${./adapters/pi}"];
           # The settings resolver (#560), with defaults.json baked in as its base
           # layer. withConfig bakes its path into the consumers as the default for
           # their env-overridable DISPATCH_CONFIG_BIN, the WORKTREE_GIT_LIB idiom.
@@ -369,6 +369,10 @@
           # of gen-adapters.sh (#560) — mirrors the tier-map conformance test's
           # role for dispatch.sh, but for the generated doc regions.
           model-map-doc = pkgs.runCommand "model-map-doc" {nativeBuildInputs = with pkgs; [bash jq gawk diffutils coreutils gnused];} "bash ${./scripts/gen-model-map-doc.sh} --check ${./adapters/core/defaults.json} ${./adapters/core/protocols/dispatch-orchestration.md} && touch $out";
+
+          # The pi subagent extension's child-spawn contract: fails when our pinned
+          # copy drifts from the argv/event/agent-dir lines the dispatcher relies on.
+          pi-subagent-contract = pkgs.runCommand "pi-subagent-contract" {nativeBuildInputs = with pkgs; [bash coreutils gnugrep gnused gawk];} "bash ${./scripts/pi-subagent-contract.sh} --pinned ${./adapters/pi/extensions/subagent} --contract ${./adapters/pi/extensions/subagent/contract.txt} && touch $out";
 
           # `nix flake check` only evaluates packages, not builds them — these
           # make it build, which runs buildGoModule's `go test ./...` (doCheck).

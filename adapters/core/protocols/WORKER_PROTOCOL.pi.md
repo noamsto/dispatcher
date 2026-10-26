@@ -102,8 +102,7 @@ Never run `gh stack init|add|modify|sync|unstack|merge|rebase|link`. Task wants 
 `kind:` picks the pipeline; `tier:` only sizes it.
 
 - `kind: implement` (or absent, legacy doc): the rest of this document.
-- `kind: review`: the Review Task contract `dispatch --review` appended replaces all code-change steps (spec, plan, execute, fast deterministic gate, code `/deslop`, push, PR). End at `done` with your posted review, never `pr_open`; emit the contract's tally, not the When done metrics. `roles:` stamped → its Role-grid path replaces the reviewer batch and refuter agents, using "Grid mode" steps 1–3 and 5 (step 4 and the review-seam / `pr_open` gate fold are `kind: implement`-only). Kind-neutral rules bind: startup drain, checkpoint-peek per seam, block→await, bus contract.
-  pi: a review worker above trivial defaults to `roles: reviewer,refuter`.
+- `kind: review`: the Review Task contract `dispatch --review` appended replaces all code-change steps (spec, plan, execute, fast deterministic gate, code `/deslop`, push, PR). End at `done` with your posted review, never `pr_open`; emit the contract's tally, not the When done metrics. `roles:` stamped → its Role-grid path adds the panes next to the reviewer batch and refuter agents (additive), using "Grid mode" steps 1–3 and 5 (step 4 and the review-seam / `pr_open` gate fold are `kind: implement`-only). Kind-neutral rules bind: startup drain, checkpoint-peek per seam, block→await, bus contract.
 
 ## Pipeline by tier
 
@@ -211,10 +210,10 @@ Right before every stopping path (done; terminal spec, plan, consult or gate fai
 ## Rules
 
 1. **Delegate execution — plan one rung above, implement one rung below.** You spec, plan, reconcile, judge and orchestrate; never hand-write the implementation. Trivial: no delegation. standard/deep: one fresh subagent per plan step (only that step, its files, gate commands), ≤ 3 concurrent; review each result before dependent steps (independent ones concurrently). Escalate a step only if the plan tags it high-risk (`implement: opus` or equivalent; schema `spec-plan-critic`). Ladder worker → execute → escalated (versions: `dispatch-orchestration.md`):
-   - pi: deep/standard → v4.1-flash lead + grid roles. No native subagents: execute in the lead pane; critic/reviewer stages → role-grid panes, else the unavailable-gate path (`WORKER_REVIEW`). `--skill` bodies: reference only, never an in-process critic/reviewer (self-review, rule 2). `--thinking` clamped per model by `thinkingLevelMap` (unexposed level → nearest supported).
+   - pi: deep/standard → v4.1-flash lead → `execute` (`:high`, judgment step) / `execute-light` (`:low`, named-edit step) → `execute-escalated` (`:max`, plan-tagged high-risk step), each a `subagent` tool call (dispatch loads the dispatcher's pinned `subagent` extension with its generated agent roster, models fixed per agent; the tool lists the available agents). Cap 3 concurrent is protocol-only (the tool allows 4): at most 3 tasks per parallel call. `--skill` bodies: reference only, never an in-process critic or reviewer (self-review, rule 2). `--thinking` clamped per model by `thinkingLevelMap` (unexposed level → nearest supported).
    No lower execute rung → implement at the worker rung (a fallback, not planning: no planning budget, never plan-shaped recovery, `replan_used`/`replanned` unchanged).
    Execute subagents: implementation authority only, no `WORKER_PROTOCOL.md`; stamp process-authority into every spawn so none re-derives process via skills, opens PRs or acts as worker.
-2. **Critics are independent, on every engine.** Never self-review; fresh contexts: the workflow (claude/codex/cursor) or stamped critic role panes (grid mode). Critics ship with the harness: `$DISPATCHER_CRITICS_DIR/*.md` (unset → adapter-local `critics/`).
+2. **Critics are independent, on every engine.** Never self-review; fresh contexts: the workflow (claude/codex/cursor), pi's `subagent` calls to the `spec-critic` / `plan-critic` agents, or stamped critic role panes (grid mode). Critics ship with the harness: `$DISPATCHER_CRITICS_DIR/*.md` (unset → adapter-local `critics/`).
    Same brief, any spawn mechanism. Ingest verdicts per receiving-code-review.
 3. **Revision cap is 2**, workflow-enforced. Returned `escalations[]` → verbatim in the PR body under "## Escalated"; never proceed as if clean.
 4. **Push through the gate.** (detail: `WORKER_SHIP`)

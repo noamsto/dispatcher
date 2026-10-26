@@ -74,6 +74,11 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
   done
 }
 
+@test "test-scope-guard: a pi subagent child (CREW_SUBAGENT) is still blocked" {
+  CREW_SUBAGENT=1 run run_guard <<<"$(pi_bash 'bats tests/')"
+  assert_block "$WHY"
+}
+
 @test "test-scope-guard: blocks a directory whose name has a dot" {
   mkdir -p "$REPO/tests.v2"
   run run_guard <<<"$(pi_bash 'bats tests.v2')"

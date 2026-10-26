@@ -48,4 +48,3 @@ Any lead reaches other engines' models as stateless, read-only shell one-shots, 
 - Diverse reviewer: first available in `dispatch --engines --in-budget` of a different family from the lead; a reply citing no changed file is a failed one-shot: drop it.
   - pi lead → claude (`--model opus`), else codex.
 - A `--roles reviewer=<other-engine>` pane is explicit opt-in, never a default on non-claude deep leads: one-shots are stateless, bounded, need no extra tmux pane per deep worker, and work for `kind: review` workers (no grid).
-- On pi the reviewer pane is the review gate, so a default one would silently become the gate, not an additive second opinion.
