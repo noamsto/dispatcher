@@ -4,7 +4,7 @@ Phase file of `WORKER_PROTOCOL.md`, binding like the core; "this protocol" and i
 
 ## Code review gate (standard/deep)
 
-Fast deterministic gate green → before `/deslop` + push, get an independent review of your diff and await it ("Gating verdicts are awaited"). Binds on every engine.
+Fast deterministic gate green → before `/deslop` + push, get an independent review of your diff and await it ("Gating verdicts are awaited"). Binds on every engine. A lead relaunched at the review seam enters here; later review→fix rounds stay in this session.
 
 - **Repo-aware scaling.** Check the target repo's config and recent PRs for automated review. Active gauntlet → fast gate, targeted test-runner, one light language pass, no diverse reviewer; else full tier-strength review. Either way cross-component correctness gets the stronger targeted review (`EVIDENCE_REVIEW.md`), required targeted re-review and the security trigger stay, and bots are no proof the current head was reviewed. Record the mode as `review_mode` in the metrics record ("When done"):
   - `full`: tier-strength or risk-promoted. `downgraded`: gauntlet repo, light, no risk promotion. `unavailable`: gate reached, a required review capability unspawnable (the unavailable-gate path below). `none`: no reviewer was due: trivial tier, or the run never reached the gate (spec/plan/consult failure, fast gate never green, stop or blocked timeout in execute); `review_high: 0`.
@@ -30,11 +30,12 @@ Fast deterministic gate green → before `/deslop` + push, get an independent re
   - cursor: Task-tool subagent, explicit model slug, resolved brief inline. Rung: the tier's execute slug (deep → `grok-4.7-medium`, standard → `grok-4.7-low`). A refusal walks the substitution list in `dispatch-orchestration.md` → "Cursor Task-spawn slugs" (same-or-higher burn class, logged, never lighter). Adapter-local `reviewers/` sits beside `commands/`.
 <!-- /only -->
 <!-- only:pi -->
-  - pi: the task's reviewer role-grid pane, resolved roster (`roster.json`) beside the review artifact; no native batch, so this pane is the review gate. Rung: the role model `dispatch` stamped; risk promotion is a pane at the promoted rung (EVIDENCE_REVIEW.md "Pi").
+  - pi: `subagent` tool, parallel mode, at most 3 tasks per call (split a larger batch into consecutive calls): a harness identity runs as the agent of that name, a new repo entry as `repo-reviewer`; the task text carries the resolved brief verbatim, the task requirements and evidence packet, and the diff as a file: write `git diff "$base_ref"...HEAD > <crew_dir>/artifacts/<branch>/review.diff` and name its absolute path in the task (never inline it: a child's task is one argv string). Reviewer, critic and refuter agents have read-only tools (no bash), so they cannot run the code under review; `test-runner` keeps bash for the named tests only. Targeted test-runner: `test-runner`. Rung: every reviewer agent is pinned to pi's escalate rung (`deepseek-v4.1-flash:max`) whatever model leads, which also meets EVIDENCE_REVIEW's risk promotion.
 <!-- /only -->
 
-<!-- only:claude,codex,cursor -->
-  Claude, codex and cursor always run the native batch, even in grid mode; a reviewer role pane there (explicit `--roles`) is only an additive second opinion, never satisfying the gate alone.
+  Every engine always runs the native batch, even in grid mode; a reviewer role pane (explicit `--roles`) is only an additive second opinion, never satisfying the gate alone.
+<!-- only:pi -->
+  On pi an explicit `reviewer` pane's `reject` still vetoes (crew's seam gate).
 <!-- /only -->
 
   - Language reviewer: one per matched roster entry, with the single risk promotion from EVIDENCE_REVIEW.md when triggered. Plan phase skipped (plan of record) → have it add an approach-sanity check against the task doc: right fix, not merely faithful.
@@ -46,9 +47,6 @@ Fast deterministic gate green → before `/deslop` + push, get an independent re
   - Security reviewer (conditional, both tiers): `security-reviewer`, the one roster entry with no globs:; its when: is the trigger. Include it only if the diff touches an auth, crypto, input-parsing, SQL or network path; in doubt, include.
 - Fresh context is the spawn contract, not a style note. Reviewer gets: task requirements and proposed changes from the task doc, the diff (or command computing it), its role brief, the factual evidence packet (EVIDENCE_REVIEW.md). Never: plan rationale, spec, your implementation narrative, execute-stage transcripts (it would rubber-stamp your blind spots). Review authority only (mirror of rule 1): no fixing, committing, pushing, opening PRs or acting as the worker. Never review your own work in your own context (rule 2), even as a fallback; no fresh context → the unavailable-gate path. Never strip or paraphrase a repo-local brief's untrusted-content markers or the harness contract after them.
 - **The unavailable-gate path** (the one definition). A review capability you cannot spawn (delegation disabled, spawn refused, subagent dying before reporting, risk-promoted model unavailable though lighter reviewers run) is terminal, not a downgrade.
-<!-- only:pi -->
-  So is a pi critic with no fallback.
-<!-- /only -->
   Completed reviewers' findings stay in the ledger but don't cover it. Retry once (a grid pane's one respawn is the retry); still failing → do not advance (no plan or execute without its critic; no push, PR or `none` without review):
 
   ```
@@ -66,10 +64,10 @@ Fast deterministic gate green → before `/deslop` + push, get an independent re
 - Cap the review→fix loop at 2; the recurrence assessment grants no extra rounds. Unresolved findings: full ledger in the Agent ledger block (EVIDENCE_REVIEW.md), plus a visible `## Review notes` line while open, deferred or refuted ("PR body contract"). Pending correctness evidence or review blocks completion; non-blocking leftovers follow "Deferred findings" (`WORKER_SHIP`).
 - Record the review seam. After the last reconcile and reading the verdict(s), post one marker so `crew status … pr_open` finds it: `crew msg "$CREW_WORKER_ID" "review:$(crew id)" '{"seam":"review","review_mode":"<full|downgraded>"}'`. Grid mode's review assignment (lead → `role:<branch>:reviewer`) is never a seam.
 <!-- only:pi -->
-  Read the bus in order; the pane's latest verdict (msg from `role:<branch>:reviewer` with `"seam":"review"` and `verdict` `accept`/`revise`/`reject`) decides. accept passes; revise passes once you fixed the findings and posted your own `review:<crew>` seam; reject blocks `pr_open` and `done` until the reviewer's next verdict (block→await; never push past it). Anything but a readable exact `accept`/`revise` counts as `reject` (unrecognised verdict, oversized reply with elided verdict, non-JSON-object body, unparsable log line naming this crew and the reviewer); keep the reply small.
+  With an explicit `reviewer` pane, read the bus in order; the pane's latest verdict (msg from `role:<branch>:reviewer` with `"seam":"review"` and `verdict` `accept`/`revise`/`reject`) decides. accept passes; revise passes once you fixed the findings and posted your own `review:<crew>` seam; reject blocks `pr_open` and `done` until the reviewer's next verdict (block→await; never push past it). Anything but a readable exact `accept`/`revise` counts as `reject` (unrecognised verdict, oversized reply with elided verdict, non-JSON-object body, unparsable log line naming this crew and the reviewer); keep the reply small. Without an explicit pane your own `review:<crew>` seam is the only one, as on every engine.
 <!-- /only -->
   A re-request (any lead → reviewer msg except the bare `{"final":true}` release, even malformed or with neither `seam` nor `artifact`) cancels every earlier verdict and your own earlier review seam until a fresh verdict arrives; don't push in between. A reviewer msg with a `tag` and no `verdict` is not a verdict. Order is bound, not the head sha: post-review `/deslop` commits are fine; re-request review after a behavioural fix (EVIDENCE_REVIEW). A resumed session inherits the bus; the `engine:` stamp in `WORKER_TASK.md` is authoritative at check time and re-stamped on resume, so a pi → claude resume fails closed to the native seam.
   `crew status` refuses `pr_open` and `done` on a standard/deep `kind: implement` session until this branch has a seam; seams from any earlier session on the branch count (no override on resume). A seam counts only if sent to `review:<crew>` with `review_mode` absent, `full`, or `downgraded`. A retro note never does.
 <!-- only:pi -->
-  The reviewer pane's verdict also counts.
+  An explicit `reviewer` pane's verdict also counts.
 <!-- /only -->

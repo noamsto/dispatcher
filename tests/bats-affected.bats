@@ -51,6 +51,16 @@ suite_count() { find "$REPO_ROOT/tests" -maxdepth 1 -name '*.bats' | wc -l; }
   [[ "$output" != *tests/remote-host.bats* ]]
 }
 
+@test "affected: a pi adapter source selects adapters, dispatch and dispatch-resume and no full suite" {
+  affected --files adapters/pi/agents/execute.md
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 3 ]
+  [[ "$output" == *tests/adapters.bats* ]]
+  [[ "$output" == *tests/dispatch.bats* ]]
+  [[ "$output" == *tests/dispatch-resume.bats* ]]
+  [ -z "$stderr" ]
+}
+
 @test "affected: tests/helpers.bash selects the full suite and says why on stderr" {
   affected --files tests/helpers.bash
   [ "$status" -eq 0 ]

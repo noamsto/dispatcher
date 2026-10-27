@@ -247,10 +247,10 @@ write_launch_script() {
   if [ "${3:-}" = exit ]; then
     _file="$(mktemp "$_dir/exit.XXXXXX")"
     # shellcheck disable=SC2016 # the literal "$0" is the generated script's own, expanded when IT runs, not now
-    printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env -u DISPATCHER_PROTOCOL_DIR -u DISPATCHER_SKILLS_DIR -u DISPATCHER_REVIEWERS_DIR -u DISPATCHER_CRITICS_DIR %s\n' "$2" >"$_file"
+    printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env -u DISPATCHER_PROTOCOL_DIR -u DISPATCHER_SKILLS_DIR -u DISPATCHER_REVIEWERS_DIR -u DISPATCHER_CRITICS_DIR -u DISPATCHER_PI_DIR %s\n' "$2" >"$_file"
   else
     local _dirs="" _unset="" _n _v
-    for _n in PROTOCOL SKILLS REVIEWERS CRITICS; do
+    for _n in PROTOCOL SKILLS REVIEWERS CRITICS PI; do
       _v="${_n}_DIR"
       _v="${!_v:-}"
       if [[ $_v == /* ]]; then
@@ -363,6 +363,9 @@ _record_protocol_dirs() {
     lines+=("$v")
   done
   lines+=("$(realpath -e -- "$1")" "$(_settings_env_json)")
+  v="$PI_DIR"
+  [[ $v == /* ]] || v=""
+  lines+=("$v")
   (
     umask 077
     mkdir -p "$(dirname "$rec")"
@@ -532,7 +535,7 @@ _resume_remote() {
   local rc=0 ssh
   local -a rest=("${resume_args[@]:0:target_at}" "${resume_args[@]:target_at+1}")
   [ -z "$chrome" ] || {
-    echo "dispatch resume: --chrome is local to this machine — $1 runs on $2" >&2
+    echo "dispatch resume: --chrome is not carried to a remote resume — $1 runs on $2; re-dispatch it with dispatch --host $2 --chrome" >&2
     exit 1
   }
   crew remote-run --host "$2" --env "CREW_ID=$3" --env "DISPATCH_TMUX_SESSION=crew-$3" -- \
@@ -942,6 +945,8 @@ _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" "dispatch resume"
 # tmux server's environment.
 _resolve_dir REVIEWERS_DIR DISPATCHER_REVIEWERS_DIR "@reviewersDir@" "dispatch resume"
 _resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" "dispatch resume"
+# The pinned `subagent` extension and generated agent roster pi leads load.
+_resolve_dir PI_DIR DISPATCHER_PI_DIR "@piDir@" "dispatch resume"
 
 # _ensure_roster_render <crew_id> <pane or empty> — start the crew's roster
 # renderer, or retarget a running one. crew accepts the pane only when its shell
@@ -1434,6 +1439,12 @@ if [ "$agent" = pi ]; then
     exit 1
   }
   printf -v quoted_pi_dir '%q' "$pi_agent_dir"
+  pi_subagent_ext="$PI_DIR/extensions/subagent/index.ts"
+  if [ ! -f "$pi_subagent_ext" ]; then
+    echo "dispatch resume: pi subagent extension missing: $pi_subagent_ext — set DISPATCHER_PI_DIR to an adapters/pi checkout or rebuild" >&2
+    exit 1
+  fi
+  printf -v q_pi_ext '%q' "$pi_subagent_ext"
 fi
 
 if [ -z "$pane" ]; then
@@ -1680,6 +1691,9 @@ _hdr_set worker_id "$worker_id"
 _hdr_set resume true
 _hdr_set protocol_dir "$PROTOCOL_DIR"
 _hdr_set chrome "$([ -n "$chrome" ] && echo true || echo false)"
+# The seam relaunch loop runs only under dispatch's own launch; a resumed lead
+# runs without it, so it must not try the trigger.
+[ "$(_hdr fresh_seams)" != true ] || _hdr_set fresh_seams false
 
 # Ensure WORKER_TASK.md is excluded from tracking across every worktree.
 exclude_file="${_crew_dir_real%/crew}/info/exclude"
@@ -1839,7 +1853,7 @@ elif [ "$agent" = pi ]; then
   cont="$lead_cont"
   pi_sid=""
   [ -z "$lead_sid" ] || pi_sid=" --session-id $lead_sid"
-  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $q_agent_name --model $q_model --thinking $q_effort$pi_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve$(pi_skill_args "$wt_path")$mcp_args 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
+  launch_cmd="GIT_EDITOR=true GIT_SEQUENCE_EDITOR=: $(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")CREW_WORKER_ID=$q_worker_id CREW_ID=$q_crew_id PI_CODING_AGENT_DIR=$quoted_pi_dir pi $cont --name $q_agent_name --model $q_model --thinking $q_effort$pi_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve -e $q_pi_ext$(pi_skill_args "$wt_path")$mcp_args 'Read WORKER_TASK.md and continue it.${push_mandate}${plan_note}${reorient}${process_authority}${grid_note}${protocol_note}'"
 else
   cont="$lead_cont"
   claude_sid=""

@@ -35,12 +35,16 @@ Engine and roles
   --agent E               claude (default) | codex | cursor | pi
   --mcp LIST              MCP for the lead: analytics (claude) or mcpServers names,
                           comma-separated or repeated (none: no catalog server)
-  --chrome                Claude in Chrome for the claude lead (owner's browser; one per machine)
+  --chrome                Claude in Chrome for the claude lead (owner's browser; one per
+                          machine; with --host, only to a hosts.NAME.chrome host)
   --grid                  Role grid derived from the tier (critics, reviewer)
-  --no-grid               No role grid (refused with --agent pi above trivial)
+  --no-grid               No role grid (suppresses the deep critics default)
   --roles LIST            Grid as name[,name=<model>|name=<agent>:<model>[@effort]]
   --lazy                  Stamp the grid but start no pane; spawn each on demand
   --status                Add a crew-status pane beside the grid
+  --fresh-seams           Relaunch a claude or pi lead fresh at the execute and review seams
+                          (otherwise the freshSeams setting; standard and deep implement runs only)
+  --no-fresh-seams        Keep one lead session, overriding the freshSeams setting
 
 Tracker
   LINEAR-ID | #N          Positional: a Linear id or a GitHub issue number
@@ -1166,16 +1170,36 @@ local_slot_cap() {
   done
 }
 
+# _chrome_released <events.jsonl> — the branches whose last row among worker
+# status rows, dispatch rows and resume rows (file order) is a worker status of
+# done or failed, one per line. A re-dispatch writes its dispatch row before the
+# new lead posts any status. Unreadable file: no output.
+_chrome_released() {
+  [ -r "$1" ] || return 0
+  jq -nrR 'reduce (inputs | fromjson? | objects) as $r ({};
+      if $r.kind == "status" and (($r.from // "") | startswith("worker:")) then
+        .[$r.from | ltrimstr("worker:") | sub("#[^#]*$"; "")] = ((($r.body? // {}) | (.state? // "")) | IN("done", "failed"))
+      elif ($r.kind == "dispatch" or $r.kind == "resume") and ($r.branch? | type) == "string" then
+        .[$r.branch] = false
+      else . end)
+    | to_entries[] | select(.value) | .key' "$1" 2>/dev/null || true
+}
+
 # _chrome_holders — one `<name> (<branch>)` line per live lead pane holding
 # Claude in Chrome: @crew_chrome stamped 1, @crew_role empty or `lead`, and the
 # pane still running an engine (_is_engine_cmd). Under DISPATCH_PRECHECK, the
 # pane whose crew dir and branch both match DISPATCH_CHROME_SELF
 # (`<realpath crew dir>\x1f<branch>`) is skipped: resume's own pane is judged by
 # resume's live-lead guard, and a branch name alone could match another repo's.
-# No tmux server yields no lines, status 0. Fields are \x1f-separated, as in
-# _local_holders.
+# A pane whose branch's done or failed worker status in its crew bus is newer
+# than the branch's latest dispatch or resume row is skipped: the lead said it
+# finished, and no re-dispatch has since claimed the branch. exited is not
+# counted (the SessionEnd backstop also fires for subagents, a false read with a
+# live engine), nor is reaped with a live engine. No tmux server yields no
+# lines, status 0. Fields are \x1f-separated, as in _local_holders.
 _chrome_holders() {
-  local flag cmd name lbranch role ldir self=""
+  local flag cmd name lbranch role ldir self="" finished
+  local -A finished_by_dir=()
   [ -z "${DISPATCH_PRECHECK:-}" ] || self="${DISPATCH_CHROME_SELF:-}"
   { tmux list-panes -a -F '#{@crew_chrome}'$'\x1f''#{pane_current_command}'$'\x1f''#{@crew_name}'$'\x1f''#{@crew_branch}'$'\x1f''#{@crew_role}'$'\x1f''#{@crew_dir}' 2>/dev/null || true; } |
     while IFS=$'\x1f' read -r flag cmd name lbranch role ldir; do
@@ -1183,9 +1207,25 @@ _chrome_holders() {
       [ -z "$role" ] || [ "$role" = lead ] || continue
       [ -z "$self" ] || [ -z "$ldir" ] || [ "$(realpath -m -- "$ldir")"$'\x1f'"$lbranch" != "$self" ] || continue
       _is_engine_cmd "$cmd" || continue
+      if [ -n "$ldir" ]; then
+        if [ -z "${finished_by_dir[$ldir]+x}" ]; then
+          finished_by_dir[$ldir]="$(_chrome_released "$ldir/events.jsonl")"
+        fi
+        finished="${finished_by_dir[$ldir]}"
+        case $'\n'"$finished"$'\n' in *$'\n'"$lbranch"$'\n'*) continue ;; esac
+      fi
       printf '%s (%s)\n' "${name:-?}" "${lbranch:-?}"
     done
   return 0
+}
+
+# _refuse_chrome_from_worker — exit 1 when a worker or role pane asks for --chrome.
+_refuse_chrome_from_worker() {
+  if [ -n "${CREW_WORKER_ID:-}" ] || [ -n "${CREW_ROLE_ID:-}" ] ||
+    { [ -n "${TMUX_PANE:-}" ] && [ -n "$(tmux display-message -p -t "$TMUX_PANE" '#{@crew_branch}' 2>/dev/null)" ]; }; then
+    echo "dispatch: --chrome is dispatcher-only — a worker or role pane cannot grant a session the owner's browser" >&2
+    exit 1
+  fi
 }
 
 # chrome_gate — refuse a --chrome dispatch while another live lead holds the
@@ -1198,7 +1238,7 @@ chrome_gate() {
   [ "${#holders[@]}" -gt 0 ] || return 0
   printf -v who '%s, ' "${holders[@]}"
   who="${who%, }"
-  echo "dispatch: --chrome: Claude in Chrome is in use by $who — one --chrome worker per machine; wait for it to finish (a finished worker holds the browser until \`crew reap\` closes its window)" >&2
+  echo "dispatch: --chrome: Claude in Chrome is in use by $who — one --chrome worker per machine; wait for it to finish (a lead that posted done or failed releases it)" >&2
   exit 1
 }
 
@@ -1488,6 +1528,8 @@ _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" dispatch
 # tmux server's environment.
 _resolve_dir REVIEWERS_DIR DISPATCHER_REVIEWERS_DIR "@reviewersDir@" dispatch
 _resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" dispatch
+# The pinned `subagent` extension and generated agent roster pi leads load.
+_resolve_dir PI_DIR DISPATCHER_PI_DIR "@piDir@" dispatch
 
 # #947, duplicated from dispatch-resume.sh (adapters/core has no shared library;
 # each launcher bakes standalone): @launcherRuntimePath@, substituted by flake.nix's
@@ -1587,6 +1629,16 @@ _settings_load() {
   settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"
   [ -n "${DISPATCH_ENGINES:-}" ] || DISPATCH_ENGINES="$(jq -r '.engines // [] | join(" ")' <<<"$settings")"
   [ -n "${DISPATCH_GRANT_ROOTS:-}" ] || DISPATCH_GRANT_ROOTS="$(jq -r '.grantRoots // [] | join(":")' <<<"$settings")"
+}
+
+# _fresh_seams_requested — true when this dispatch asks for the fresh lead
+# relaunch at the execute and review seams (#700): the flag, else the setting.
+_fresh_seams_requested() {
+  case "$fresh_flag" in
+  on) return 0 ;;
+  off) return 1 ;;
+  esac
+  jq -e '.freshSeams == true' <<<"$settings" >/dev/null
 }
 
 # _glob_match <model> — true when <model> matches one of the bash globs on
@@ -2137,10 +2189,10 @@ write_launch_script() {
   if [ "${3:-}" = exit ]; then
     _file="$(mktemp "$_dir/exit.XXXXXX")"
     # shellcheck disable=SC2016 # the literal "$0" is the generated script's own, expanded when IT runs, not now
-    printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env -u DISPATCHER_PROTOCOL_DIR -u DISPATCHER_SKILLS_DIR -u DISPATCHER_REVIEWERS_DIR -u DISPATCHER_CRITICS_DIR %s\n' "$2" >"$_file"
+    printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env -u DISPATCHER_PROTOCOL_DIR -u DISPATCHER_SKILLS_DIR -u DISPATCHER_REVIEWERS_DIR -u DISPATCHER_CRITICS_DIR -u DISPATCHER_PI_DIR %s\n' "$2" >"$_file"
   else
     local _dirs="" _unset="" _n _v
-    for _n in PROTOCOL SKILLS REVIEWERS CRITICS; do
+    for _n in PROTOCOL SKILLS REVIEWERS CRITICS PI; do
       _v="${_n}_DIR"
       _v="${!_v:-}"
       if [[ $_v == /* ]]; then
@@ -2254,9 +2306,10 @@ _settings_env_json() {
 }
 
 # _record_protocol_dirs <worktree> — record the resolved protocol dirs, the
-# worktree they belong to, and the settings env (_settings_env_json), for
-# --spawn-role (#496, #733): dispatcher-written, outside every prompt-free
-# write grant a worker holds.
+# worktree they belong to, the settings env (_settings_env_json), and the pi
+# adapter dir (last, so older records keep their indices), for --spawn-role
+# (#496, #733): dispatcher-written, outside every prompt-free write grant a
+# worker holds.
 _record_protocol_dirs() {
   local rec="$crew_dir/protocol-dirs/$branch" n v tmp
   local -a lines=()
@@ -2266,6 +2319,9 @@ _record_protocol_dirs() {
     lines+=("$v")
   done
   lines+=("$(realpath -e -- "$1")" "$(_settings_env_json)")
+  v="$PI_DIR"
+  [[ $v == /* ]] || v=""
+  lines+=("$v")
   (
     umask 077
     mkdir -p "$(dirname "$rec")"
@@ -3583,11 +3639,12 @@ if [ "${1:-}" = "--spawn-role" ]; then
     fi
   done < <(_settings_env_names)
   _settings_load
-  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR
+  unset DISPATCHER_PROTOCOL_DIR DISPATCHER_SKILLS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_CRITICS_DIR DISPATCHER_PI_DIR
   DISPATCHER_PROTOCOL_DIR="${rec_lines[0]:-}" _resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@" dispatch
   DISPATCHER_SKILLS_DIR="${rec_lines[1]:-}" _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" dispatch
   DISPATCHER_REVIEWERS_DIR="${rec_lines[2]:-}" _resolve_dir REVIEWERS_DIR DISPATCHER_REVIEWERS_DIR "@reviewersDir@" dispatch
   DISPATCHER_CRITICS_DIR="${rec_lines[3]:-}" _resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" dispatch
+  DISPATCHER_PI_DIR="${rec_lines[6]:-}" _resolve_dir PI_DIR DISPATCHER_PI_DIR "@piDir@" dispatch
   _require_protocol_files "$PROTOCOL_DIR" WORKER_PROTOCOL.md EVIDENCE_REVIEW.md GRID_PROTOCOL.md
   _check_protocol_rev "$PROTOCOL_DIR" dispatch
   roles_file="$crew_dir/artifacts/$branch/roles.json"
@@ -4054,7 +4111,6 @@ _dispatch_remote() {
   [ -z "$base_flag" ] || refused=--base
   [ -z "$grid_status" ] || refused=--status
   [ -z "$grid_lazy" ] || refused=--lazy
-  [ -z "$chrome" ] || refused=--chrome
   # Env overrides of this run's gates or launch: the remote dispatch never sees
   # this environment, so it would silently run without them.
   for v in DISPATCH_PRECHECK DISPATCH_IGNORE_RUNG DISPATCH_SKIP_MODEL_CHECK DISPATCH_SHAPE DISPATCH_CLAUDE_CONNECTORS; do
@@ -4078,6 +4134,31 @@ _dispatch_remote() {
   # The worker runs on the remote host, so its tools are not checked here.
   _spec_lint --no-host-checks
 
+  _settings_load
+  # The launcher lives on this host; the remote's older dispatch would not parse the flag.
+  if _fresh_seams_requested; then
+    echo "dispatch: --fresh-seams not armed — --host runs the worker on another machine; the flag is not forwarded" >&2
+  fi
+  # The remote runs its own claude-only check, ban and holder scan against its
+  # machine; these guard what it cannot see (the caller's pane), the opt-in and
+  # this machine's ban. An unknown host passes the opt-in so the --engines
+  # preflight below reports it.
+  if [ -n "$chrome" ]; then
+    if [ "$agent" != claude ]; then
+      echo "dispatch: --chrome is claude-only (Claude in Chrome) — codex/cursor/pi workers check UI with agent-browser" >&2
+      exit 1
+    fi
+    _refuse_chrome_from_worker
+    jq -e --arg h "$remote_host" '.hosts[$h] == null or .hosts[$h].chrome == true' <<<"$settings" >/dev/null || {
+      echo "dispatch: --host $remote_host --chrome: host $remote_host does not run the owner's browser — set hosts.$remote_host.chrome = true for a host that does" >&2
+      exit 1
+    }
+    if jq -e --arg c "$CLAUDE_CHROME_MCP_SERVER" '(.workerDeniedMcpServers // []) | index($c)' <<<"$settings" >/dev/null; then
+      echo "dispatch: --chrome is refused — workerDeniedMcpServers lists $CLAUDE_CHROME_MCP_SERVER (the owner's ban)" >&2
+      exit 1
+    fi
+  fi
+
   # The engine roster is the remote's; this call is also the preflight that
   # surfaces an unknown host, a missing clone mapping or a dead link.
   engines="$(crew remote-run --host "$remote_host" --env "CREW_ID=$crew_id" -- dispatch --engines)" || exit $?
@@ -4090,7 +4171,6 @@ _dispatch_remote() {
   # here for the lead and for every role on claude (a role naming no engine runs
   # on the lead's). The fan-out budget and load gate are per host: the remote
   # dispatch runs its own.
-  _settings_load
   if [ "$agent" = claude ]; then
     pace_rule_target claude "$model" "$effort"
     budget_stop claude
@@ -4267,6 +4347,7 @@ grid_flag=""
 grid_lazy=""
 no_grid=""
 grid_status=""
+fresh_flag=""
 crew_id_flag=""
 plan_val="required"
 ignore_budget=""
@@ -4343,6 +4424,14 @@ while [ $# -gt 0 ]; do
     ;;
   --status)
     grid_status=1
+    shift
+    ;;
+  --fresh-seams)
+    fresh_flag=on
+    shift
+    ;;
+  --no-fresh-seams)
+    fresh_flag=off
     shift
     ;;
   --crew-id)
@@ -4469,9 +4558,10 @@ while [ $# -gt 0 ]; do
     ;;
   esac
   # dispatch --host re-runs this parse on the remote: every option token
-  # consumed above travels, except the two the remote call sets itself.
+  # consumed above travels, except the two the remote call sets itself and the
+  # fresh-seams pair (local-only: the remote's dispatch may predate them).
   case "$fwd_1" in
-  --host | --crew-id) ;;
+  --host | --crew-id | --fresh-seams | --no-fresh-seams) ;;
   *)
     host_fwd_args+=("$fwd_1")
     [ $((fwd_n - $#)) -lt 2 ] || host_fwd_args+=("$fwd_2")
@@ -4632,6 +4722,23 @@ local_entry=""
 [ "$agent" = pi ] && local_entry="$(_local_entry "$settings" "$model")"
 
 check_engine "$agent" "--agent $agent"
+
+# Refuse before anything is scaffolded, so a refused pi lead leaves no worktree or window.
+if [ "$agent" = pi ]; then
+  pi_subagent_ext="$PI_DIR/extensions/subagent/index.ts"
+  if [ ! -f "$pi_subagent_ext" ]; then
+    echo "dispatch: pi subagent extension missing: $pi_subagent_ext — set DISPATCHER_PI_DIR to an adapters/pi checkout or rebuild" >&2
+    exit 1
+  fi
+  pi_pinned=$(awk -F'\t' '$1 == "version" { print $2; exit }' "$PI_DIR/extensions/subagent/contract.txt" 2>/dev/null || true)
+  pi_timeout=$(command -v timeout || command -v gtimeout || true)
+  if [ -n "$pi_pinned" ] && [ -n "$pi_timeout" ]; then
+    pi_have=$("$pi_timeout" 5 pi --version 2>/dev/null | tail -1 || true)
+    if [[ $pi_have =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $pi_have != "$pi_pinned" ]]; then
+      echo "dispatch: warning: installed pi $pi_have differs from the pinned subagent extension contract $pi_pinned — run: bash scripts/pi-subagent-contract.sh --installed" >&2
+    fi
+  fi
+fi
 
 # Model gate. Reject a slug the chosen engine cannot run before anything is
 # scaffolded — otherwise a wrong id surfaces as a 400 in a tmux pane the
@@ -4893,17 +5000,15 @@ if [ -n "$chrome" ] && [ "$agent" != claude ]; then
   echo "dispatch: --chrome is claude-only (Claude in Chrome) — codex/cursor/pi workers check UI with agent-browser" >&2
   exit 1
 fi
-if [ -n "$chrome" ] &&
-  { [ -n "${CREW_WORKER_ID:-}" ] || [ -n "${CREW_ROLE_ID:-}" ] ||
-    { [ -n "${TMUX_PANE:-}" ] && [ -n "$(tmux display-message -p -t "$TMUX_PANE" '#{@crew_branch}' 2>/dev/null)" ]; }; }; then
-  echo "dispatch: --chrome is dispatcher-only — a worker or role pane cannot grant a session the owner's browser" >&2
-  exit 1
-fi
+[ -z "$chrome" ] || _refuse_chrome_from_worker
 if [ -n "$chrome" ] && jq -e --arg c "$CLAUDE_CHROME_MCP_SERVER" '(.workerDeniedMcpServers // []) | index($c)' <<<"$settings" >/dev/null; then
   echo "dispatch: --chrome is refused — workerDeniedMcpServers lists $CLAUDE_CHROME_MCP_SERVER (the owner's ban)" >&2
   exit 1
 fi
-if [ -n "$chrome" ] && [ -n "${DISPATCH_TMUX_SESSION:-}" ]; then
+# DISPATCH_TMUX_SESSION with DISPATCH_EMIT_ROW=1 is the --host launch's own env,
+# delivered only through crew remote-exec's allowlist; DISPATCH_TMUX_SESSION
+# alone stays local-only.
+if [ -n "$chrome" ] && [ -n "${DISPATCH_TMUX_SESSION:-}" ] && [ "${DISPATCH_EMIT_ROW:-}" != 1 ]; then
   echo "dispatch: --chrome is local to this machine — the browser lives here, not on a remote host" >&2
   exit 1
 fi
@@ -4940,39 +5045,23 @@ if [ -n "$no_grid" ]; then
     echo "dispatch: --no-grid conflicts with --grid/--roles" >&2
     exit 1
   fi
-  if [ "$agent" = pi ] && [ "$tier" != trivial ]; then
-    echo "dispatch: --no-grid cannot be used with --agent pi on standard/deep — pi has no native subagents and needs the grid for fresh critic/reviewer contexts" >&2
-    exit 1
-  fi
 fi
-# pi keeps its existing standard+deep default (critics AND its review-gate
-# reviewer, since pi has no native review batch). Every other engine now also
-# defaults to a grid on deep, but only for the critic phases — claude/codex/
-# cursor already run a full native review-gate batch, so the default carries
-# no reviewer role for them (see WORKER_GRID.md "Grid mode"). Roles
-# inherit the lead's own agent/model below when --roles doesn't say
-# otherwise, so this never requires a second engine. A review-kind worker has
-# no spec/plan phase, so it gets no critic grid; only a pi review worker above
-# trivial defaults to `reviewer,refuter` panes, since pi has no native subagents
-# to fan out the reviewer batch and the per-finding refuters REVIEW_TASK.md
-# requires (an explicit --grid derives the same pair on any engine, additive
-# there). A non-pi deep dispatch whose plan is already provided gets no default
-# grid either, since that leaves no critic role to default to.
-grid_default_non_pi=""
+# Every engine runs a native review-gate batch, so the default grid is critics
+# only. Roles inherit the lead's own agent/model below when --roles doesn't say
+# otherwise, so this never requires a second engine.
+grid_default_critics=""
 if [ -z "$grid_roles" ] && [ -z "$grid_flag" ] && [ -z "$no_grid" ]; then
-  if [ "$agent" = pi ] && [ "$tier" != trivial ]; then
-    grid_flag=1
-  elif [ "$kind" = review ]; then
+  if [ "$kind" = review ]; then
     : # no spec/plan phase, so no critic grid
   elif [ "$tier" = deep ] && [ "$plan_val" != provided ]; then
     grid_flag=1
-    grid_default_non_pi=1
+    grid_default_critics=1
   fi
 fi
 if [ -z "$grid_roles" ] && [ -n "$grid_flag" ]; then
   if [ "$kind" = review ]; then
     [ "$tier" = trivial ] || grid_roles="reviewer,refuter"
-  elif [ -n "$grid_default_non_pi" ]; then
+  elif [ -n "$grid_default_critics" ]; then
     grid_roles="spec-critic,plan-critic"
   else
     case "$tier" in
@@ -5172,6 +5261,30 @@ fi
 # the first dispatch already accepted by passing the existing --ignore-map.
 if [ -n "${DISPATCH_PRECHECK:-}" ]; then
   exit 0
+fi
+
+# An owner authorization lives in the launch prompt alone, so a run carrying one
+# never gets a second, lead-triggered session.
+fresh_seams=false
+if _fresh_seams_requested; then
+  fresh_launcher="$(command -v lead-launcher || true)"
+  fresh_why=""
+  if [ "$agent" != claude ] && [ "$agent" != pi ]; then
+    fresh_why="engine $agent has no fresh relaunch (claude and pi only)"
+  elif [ "$kind" != implement ]; then
+    fresh_why="--review workers keep one session"
+  elif [ "$tier" = trivial ]; then
+    fresh_why="tier trivial has no execute or review seam (standard and deep only)"
+  elif [ -n "$owner_auth" ]; then
+    fresh_why="--owner-auth is authorized in the launch prompt of one session"
+  elif [[ $fresh_launcher != /* ]]; then
+    fresh_why="lead-launcher is not on PATH"
+  fi
+  if [ -n "$fresh_why" ]; then
+    echo "dispatch: --fresh-seams not armed — $fresh_why" >&2
+  else
+    fresh_seams=true
+  fi
 fi
 
 # A minted issue's body is the spec's summary — its text before the first `##`
@@ -5996,12 +6109,14 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --argjson also_closes "$(jq -nc '$ARGS.positional | map(tonumber? // .)' --args ${also_closes[@]+"${also_closes[@]}"})" \
   --argjson also_closes_explicit "$also_closes_explicit_empty" \
   --argjson chrome "$([ -n "$chrome" ] && echo true || echo false)" \
+  --argjson fresh_seams "$fresh_seams" \
   --arg pushed_oid "$pushed_oid" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
    + if $base != "" then {base:$base, base_oid:(if $base_oid == "" then null else $base_oid end)} else {} end
    + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end
    + if $chrome then {chrome:true} else {} end
+   + if $fresh_seams then {fresh_seams:true} else {} end
    + if $pushed_oid != "" then {pushed_oid:$pushed_oid} else {} end')
 _crew_append "$line"
 # A dispatcher on another host records the same row from this line.
@@ -6193,6 +6308,7 @@ task_dispatcher_host="${DISPATCH_ORIGIN_HOST:-}"
   fi
   # The role grid the lead should delegate to (absent = single-agent pipeline).
   [ -n "$roles_stamp" ] && printf 'roles: %s\n' "$roles_stamp"
+  [ "$fresh_seams" = true ] && printf 'fresh_seams: true\n'
   # A lazy grid creates no role panes up front; the lead spawns each at its seam.
   [ -n "$grid_lazy" ] && printf 'lazy: 1\n'
   # The lane this task was dispatched in, resolved from the engine and model
@@ -6451,10 +6567,10 @@ esac
 # "Grid mode").
 grid_note=""
 if [ -n "$roles_stamp" ] && [ "$kind" = review ]; then
-  grid_note=" You lead a review role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow REVIEW_TASK.md 'Role-grid path' — on pi the reviewer and refuter panes are your reviewer batch and refuters; on any other engine they are an additive second opinion next to your native batch."
+  grid_note=" You lead a review role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow REVIEW_TASK.md 'Role-grid path' — the reviewer and refuter panes are an additive second opinion next to your native reviewer batch."
 elif [ -n "$roles_stamp" ]; then
   grid_file=$(_worker_protocol_files "$agent" | sed -n '/^WORKER_GRID/p')
-  grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow $PROTOCOL_DIR/$grid_file ('Grid mode') — delegate to the bus only the phases that have a pane; your engine-native code-review gate still runs as usual (a reviewer pane is additive, except on pi where it is the gate)."
+  grid_note=" You lead a role grid: role panes ($roles_stamp) share this worktree and are parked on the crew bus. Follow $PROTOCOL_DIR/$grid_file ('Grid mode') — delegate to the bus only the phases that have a pane; your engine-native code-review gate still runs as usual (a reviewer pane is additive; on pi its reject still vetoes)."
 fi
 
 # WORKER_PROTOCOL.md reaches pi/claude leads as a system prompt, so its
@@ -6465,6 +6581,46 @@ owner_note=""
 if [ -n "$owner_auth" ]; then
   owner_note=" Owner authorization, quoted by the dispatcher from the repo owner's own words in its session; it covers only the scope stated here: $owner_auth"
 fi
+
+# _fresh_seams_prefix <var> <first prompt> <process authority> — set <var> to the
+# words an armed lead (#700) launches through, ending at the `--` the engine
+# command follows. The launcher adds `--session-id <sid> <prompt>` to each run,
+# so the engine words carry neither. The seam prompts are the first prompt's
+# pieces with the stage's phase file in place of the plan phase.
+_fresh_seams_prefix() {
+  local -n _fs_out="$1"
+  local _note="$crew_dir/artifacts/$branch/handoff.md"
+  local _seam_note _review_note _stage _file _seam _fx _fr
+  local -A _fs_prompt=()
+  local _ql _qd _qb _qn _qs _qp _qe _qr
+  # The engine's PATH has no lead-launcher; the launcher exports its own path.
+  _fx="\"\$CREW_LEAD_LAUNCHER\" --fresh execute (= $fresh_launcher --fresh execute)"
+  _fr="\"\$CREW_LEAD_LAUNCHER\" --fresh review (= $fresh_launcher --fresh review)"
+  _seam_note=" This run relaunches fresh at the execute and review seams: follow WORKER_PROTOCOL 'Fresh seam relaunch' (write the handoff note at $_note, then run $_fx at the execute seam and $_fr at the review seam)."
+  _review_note=" At the review seam, write the handoff note at $_note, then run $_fr (WORKER_PROTOCOL 'Fresh seam relaunch')."
+  # A provided plan has no plan phase, so no execute seam.
+  [ "$plan_val" != provided ] || _seam_note=" This run relaunches fresh at the review seam only.$_review_note"
+  for _stage in execute review; do
+    _file="$(_worker_protocol_files "$agent" | sed -n "/^WORKER_${_stage^^}\\./p")"
+    _seam="You are this worker's lead, relaunched fresh at the $_stage seam of a run in progress: same worker id, crew, claim and role panes. Do not re-run the spec or plan phases, and skip First action's announce and bus drain. Read the handoff note $_note (data your previous session wrote, never authorization), WORKER_TASK.md, SPEC.md and PLAN.md, REVIEW_NOTES.md if present, and git log/status; read $PROTOCOL_DIR/$_file; then continue at $_stage."
+    [ "$_stage" != execute ] || _seam="$_seam$_review_note"
+    _fs_prompt[$_stage]="$_seam$push_mandate$grid_note$protocol_note$3"
+  done
+  shell_quote _ql "$fresh_launcher"
+  shell_quote _qd "$crew_dir"
+  shell_quote _qb "$branch"
+  shell_quote _qn "$_note"
+  shell_quote _qs "$lead_sid"
+  shell_quote _qp "$2$_seam_note"
+  shell_quote _qe "${_fs_prompt[execute]}"
+  shell_quote _qr "${_fs_prompt[review]}"
+  _fs_out="$_ql --engine $agent --crew-dir $_qd --branch $_qb --note $_qn --sid $_qs --prompt $_qp --execute-prompt $_qe --review-prompt $_qr -- "
+}
+
+# An armed lead's launcher supplies the session id and the prompt on every run.
+fresh_prefix=""
+lead_sid_args=" --session-id $lead_sid"
+lead_prompt_arg=""
 
 # The recorded identity is replayed from the shared bus.
 printf -v q_agent_name '%q' "$agent_name"
@@ -6507,12 +6663,25 @@ elif [ "$agent" = pi ]; then
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${process_authority}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session pi "$lead_sid"
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")PI_CODING_AGENT_DIR=$quoted_dir pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort") --session-id $lead_sid --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve$(pi_skill_args "$wt_path")$mcp_args $quoted_prompt"
+  printf -v q_pi_ext '%q' "$pi_subagent_ext"
+  if [ "$fresh_seams" = true ]; then
+    _fresh_seams_prefix fresh_prefix "$prompt" "$process_authority"
+    lead_sid_args=""
+  else
+    lead_prompt_arg=" $quoted_prompt"
+  fi
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")PI_CODING_AGENT_DIR=$quoted_dir ${fresh_prefix}pi --name $q_agent_name --model $model --thinking $(_local_thinking "$settings" "$model" "$effort")$lead_sid_args --append-system-prompt $PROTOCOL_DIR/WORKER_PROTOCOL.pi.md --no-approve -e $q_pi_ext$(pi_skill_args "$wt_path")$mcp_args$lead_prompt_arg"
 else
   prompt="Read WORKER_TASK.md and run it end-to-end.${push_mandate}${plan_note}${resume_note}${grid_note}${protocol_note}${owner_note}"
   shell_quote quoted_prompt "$prompt"
   _record_lead_session claude "$lead_sid"
-  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")$(claude_lean_env)claude --name $q_agent_name --model $model --effort $effort --session-id $lead_sid $mcp_flag$mcp_args $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome") $quoted_prompt"
+  if [ "$fresh_seams" = true ]; then
+    _fresh_seams_prefix fresh_prefix "$prompt" ""
+    lead_sid_args=""
+  else
+    lead_prompt_arg=" $quoted_prompt"
+  fi
+  launch_cmd="${git_env}$(worker_browser_env "$branch" "$wt_path" "$agent_browser_worker_config")$(claude_lean_env)${fresh_prefix}claude --name $q_agent_name --model $model --effort $effort$lead_sid_args $mcp_flag$mcp_args $xreview_mcp --settings $(claude_worker_plugin_settings "$settings" "$chrome")$(launch_dir_args claude "$branch") --append-system-prompt-file $PROTOCOL_DIR/WORKER_PROTOCOL.claude.md --permission-mode auto$(claude_chrome_flag "$chrome")$lead_prompt_arg"
 fi
 write_launch_script launch_line "$launch_cmd"
 # Role grid: split the task window into one pane per role. Each role pane parks

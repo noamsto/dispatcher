@@ -20,6 +20,7 @@ setup() {
   # (_store_launcher) have no sibling file and an unsubstituted placeholder.
   export CLAUDE_WORKER_SETTINGS_LIB="$BATS_TEST_DIRNAME/../adapters/core/claude-worker-settings.sh"
   unset TMUX CREW_ID DISPATCH_DISPATCHER_MCP ENABLE_CLAUDEAI_MCP_SERVERS
+  unset DISPATCHER_LAUNCHER_PID DISPATCHER_HANDOFF_DIR DISPATCHER_HANDOFF_CREW
 }
 
 teardown() {
@@ -920,12 +921,12 @@ EOF
 }
 
 # engine_path is duplicated per launcher for the same reason; one test diffs the
-# three so a fix in one file cannot silently miss the others.
-@test "engine_path is byte-identical across the three launchers" {
+# four so a fix in one file cannot silently miss the others.
+@test "engine_path is byte-identical across the four launchers" {
   local a b f
   a="$(sed -n '/^engine_path() {/,/^}/p' "$BATS_TEST_DIRNAME/../adapters/core/dispatcher.sh")"
   [ -n "$a" ]
-  for f in dispatch dispatch-resume; do
+  for f in dispatch dispatch-resume lead-launcher; do
     b="$(sed -n '/^engine_path() {/,/^}/p' "$BATS_TEST_DIRNAME/../adapters/core/$f.sh")"
     [ -n "$b" ]
     [ "$a" = "$b" ]
@@ -1262,4 +1263,430 @@ _pidfile_log_path() {
   run cat "$(_pidfile_log_path)"
   [[ "$output" == *"register ok crew=$id"* ]]
   [[ "$output" == *"deregister removed crew=$id"* ]]
+}
+
+# ---- #701: hand a crew off to a fresh dispatcher session ----
+
+# stub_crew_handoff — a `crew` stub for the handoff paths. Every call is logged;
+# `register <pid>` records the pid, and `crews` answers crew c1 alive under that
+# pid once one is recorded, dead before. `roster` answers one blocked, one
+# working and one done worker, and `inbox dispatcher:*` holds one question from
+# the blocked worker. HANDOFF_ROSTER=fail makes `roster` exit 3;
+# HANDOFF_INBOX=torn prints the question then exits 5, =fail exits 5 bare.
+stub_crew_handoff() {
+  export HANDOFF_QUESTION='rebase feat/12-x onto main, or merge it?'
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+new) echo c-minted ;;
+register) printf '%s\n' "$2" >"$STUB_DIR/registered.pid" ;;
+crews)
+  printf 'crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\n'
+  if [ -s "$STUB_DIR/registered.pid" ]; then
+    printf 'c1\t5\t5\t3\t%s\tyes\n' "$(cat "$STUB_DIR/registered.pid")"
+  else
+    printf 'c1\t5\t5\t3\t998\tno\n'
+  fi
+  ;;
+roster)
+  [ "${HANDOFF_ROSTER:-}" != fail ] || exit 3
+  printf '%s\n' '[{"name":"fern","branch":"feat/12-x","state":"blocked"},{"name":"oak","branch":"feat/13-y","state":"working"},{"name":"ash","branch":"feat/14-z","state":"done"}]'
+  ;;
+inbox)
+  [ "${HANDOFF_INBOX:-}" != fail ] || exit 5
+  case "$2" in
+  dispatcher:*) printf '{"from":"worker:feat/12-x#s1","to":"%s","body":"%s"}\n' "$2" "$HANDOFF_QUESTION" ;;
+  esac
+  [ "${HANDOFF_INBOX:-}" != torn ] || exit 5
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+}
+
+# _engine_stub <bin> [first-launch body] — an engine stub that counts its
+# launches in $STUB_DIR/launches and keeps each launch's argv (argv.N, one
+# `ARG` line per word) and last word (last.N). Only the first launch runs the
+# body; every later one exits 0, so a wrong relaunch shows as a count.
+_engine_stub() {
+  {
+    cat <<'EOF'
+#!/usr/bin/env bash
+n=$(($(cat "$STUB_DIR/launches" 2>/dev/null || echo 0) + 1))
+echo "$n" >"$STUB_DIR/launches"
+printf 'ARG %s\n' "$@" >"$STUB_DIR/argv.$n"
+printf '%s' "${@: -1}" >"$STUB_DIR/last.$n"
+[ "$n" = 1 ] || exit 0
+EOF
+    printf '%s\n' "${2:-}"
+  } >"$STUB_DIR/$1"
+  chmod +x "$STUB_DIR/$1"
+}
+
+# The first session writes a note and hands off from inside itself, so the real
+# chain is launcher → engine stub → inner launcher, walked with the real ps.
+_handoff_body='printf "queue: #12 then #13\n" >"$HANDOFF_NOTE_SRC"
+bash -euo pipefail "$LAUNCHER" --fresh --note "$HANDOFF_NOTE_SRC"'
+
+_launches() { cat "$STUB_DIR/launches" 2>/dev/null || echo 0; }
+
+_handoff_dir() {
+  echo "$(git rev-parse --path-format=absolute --git-common-dir)/crew/handoff"
+}
+
+_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
+
+_no_markers() { ! compgen -G "$HANDOFF/*.restart" >/dev/null; }
+
+_handoff_setup() {
+  umask 077
+  stub_crew_handoff
+  export LAUNCHER HANDOFF_NOTE_SRC="$BATS_TEST_TMPDIR/note.md"
+  HANDOFF="$(_handoff_dir)"
+}
+
+@test "701: a session that runs --fresh is relaunched with the handoff prompt" {
+  _handoff_setup
+  _engine_stub claude "$_handoff_body"
+  CREW_ID=c1 run --separate-stderr run_launcher
+  [ "$status" -eq 0 ]
+  cmp "$HANDOFF_NOTE_SRC" "$HANDOFF/c1.md"
+  [ "$(_mode "$HANDOFF/c1.md")" = 600 ]
+  [ "$(_mode "$HANDOFF")" = 700 ]
+  [ "$(_launches)" = 2 ]
+  prompt=$(cat "$STUB_DIR/last.2")
+  [[ "$prompt" == *'"Hand off to a fresh session"'* ]]
+  [[ "$prompt" == *"re-arm your bus lane"* && "$prompt" != *"only after step 5"* ]]
+  [[ "$prompt" == *"blocked at launch: fern (feat/12-x)"* ]]
+  [[ "$prompt" == *"$HANDOFF/c1.md"* ]]
+  [[ "$prompt" == *"1 done"* ]]
+  # Worker-written inbox bodies reach the human, never the prompt.
+  if grep -qF -- "$HANDOFF_QUESTION" "$STUB_DIR"/argv.*; then return 1; fi
+  [[ "$stderr" == *"blocked: fern (feat/12-x) asks: $HANDOFF_QUESTION"* ]]
+  run grep -cx 'register [0-9][0-9]*' "$STUB_LOG"
+  [ "$output" = 1 ]
+  run grep -cx deregister "$STUB_LOG"
+  [ "$output" = 1 ]
+  _no_markers
+}
+
+@test "701: a pi session that runs --fresh is relaunched with the prompt last" {
+  _handoff_setup
+  _engine_stub pi "$_handoff_body"
+  CREW_ID=c1 run --separate-stderr run_launcher --agent pi
+  [ "$status" -eq 0 ]
+  [ "$(_launches)" = 2 ]
+  prompt=$(cat "$STUB_DIR/last.2")
+  [[ "$prompt" == "Handoff: "* ]]
+  [[ "$prompt" == *'"Hand off to a fresh session"'* && "$prompt" == *"$HANDOFF/c1.md"* ]]
+  # pi's park blocks its turn, so it parks after the blocked workers are answered.
+  [[ "$prompt" == *"re-arm your bus lane only after step 5"* ]]
+  _no_markers
+}
+
+@test "701: a fresh marker for another launcher is left alone: one launch" {
+  _handoff_setup
+  _engine_stub claude
+  mkdir -p "$HANDOFF"
+  # No launcher runs as pid 1, so this is never this launcher's marker.
+  date +%s >"$HANDOFF/c1.1.restart"
+  CREW_ID=c1 run run_launcher
+  [ "$status" -eq 0 ]
+  [ "$(_launches)" = 1 ]
+  [ -e "$HANDOFF/c1.1.restart" ]
+}
+
+@test "701: an own marker 300s old is stale: one launch, marker deleted" {
+  _handoff_setup
+  # Written by the session itself, since only it knows the launcher's pid.
+  _engine_stub claude 'mkdir -p "$DISPATCHER_HANDOFF_DIR"
+echo "$(($(date +%s) - 300))" >"$DISPATCHER_HANDOFF_DIR/$CREW_ID.$DISPATCHER_LAUNCHER_PID.restart"'
+  CREW_ID=c1 run run_launcher
+  [ "$status" -eq 0 ]
+  [ "$(_launches)" = 1 ]
+  _no_markers
+}
+
+@test "701: a manual --fresh launches once with the stored note" {
+  _handoff_setup
+  _engine_stub claude
+  mkdir -p "$HANDOFF"
+  printf 'queue: #12\n' >"$HANDOFF/c1.md"
+  CREW_ID=c1 run --separate-stderr run_launcher --fresh
+  [ "$status" -eq 0 ]
+  [ "$(_launches)" = 1 ]
+  prompt=$(cat "$STUB_DIR/last.1")
+  [[ "$prompt" == *'"Hand off to a fresh session"'* ]]
+  [[ "$prompt" == *"blocked at launch: fern (feat/12-x)"* && "$prompt" == *"$HANDOFF/c1.md"* ]]
+  [[ "$stderr" == *"blocked: fern (feat/12-x) asks: $HANDOFF_QUESTION"* ]]
+  run grep -cx 'register [0-9][0-9]*' "$STUB_LOG"
+  [ "$output" = 1 ]
+}
+
+@test "701: a manual --fresh --note stores the note before the launch" {
+  _handoff_setup
+  _engine_stub claude 'cp "$DISPATCHER_HANDOFF_DIR/$CREW_ID.md" "$STUB_DIR/note-at-launch"'
+  printf 'queue: #13\n' >"$HANDOFF_NOTE_SRC"
+  CREW_ID=c1 run run_launcher --fresh --note "$HANDOFF_NOTE_SRC"
+  [ "$status" -eq 0 ]
+  [ "$(_launches)" = 1 ]
+  cmp "$HANDOFF_NOTE_SRC" "$HANDOFF/c1.md"
+  cmp "$HANDOFF_NOTE_SRC" "$STUB_DIR/note-at-launch"
+  [ "$(_mode "$HANDOFF/c1.md")" = 600 ]
+  [[ "$(cat "$STUB_DIR/last.1")" == *"$HANDOFF/c1.md"* ]]
+}
+
+@test "701: a manual --fresh with no note refuses, naming the path" {
+  _handoff_setup
+  _engine_stub claude
+  CREW_ID=c1 run run_launcher --fresh
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no handoff note for crew c1"* && "$output" == *"$HANDOFF/c1.md"* ]]
+  [ "$(_launches)" = 0 ]
+  run grep -c '^register ' "$STUB_LOG"
+  [ "$output" = 0 ]
+}
+
+@test "701: a manual --fresh refuses while the crew's dispatcher is alive" {
+  _handoff_setup
+  _engine_stub claude
+  mkdir -p "$HANDOFF"
+  printf 'queue: #12\n' >"$HANDOFF/c1.md"
+  echo 4321 >"$STUB_DIR/registered.pid"
+  CREW_ID=c1 run run_launcher --fresh
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"crew c1's dispatcher (pid 4321) is still live"* ]]
+  [ "$(_launches)" = 0 ]
+  run grep -c '^register ' "$STUB_LOG"
+  [ "$output" = 0 ]
+}
+
+@test "701: a manual --fresh refuses a crew id that 'crew crews' does not list" {
+  _handoff_setup
+  _engine_stub claude
+  mkdir -p "$HANDOFF"
+  printf 'queue: #12\n' >"$HANDOFF/c9.md"
+  CREW_ID=c9 run run_launcher --fresh
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"crew c9 is not in 'crew crews'"* ]]
+  [ "$(_launches)" = 0 ]
+  run grep -c '^register ' "$STUB_LOG"
+  [ "$output" = 0 ]
+}
+
+@test "701: a roster read that fails says so in the prompt" {
+  _handoff_setup
+  _engine_stub claude
+  mkdir -p "$HANDOFF"
+  printf 'queue\n' >"$HANDOFF/c1.md"
+  HANDOFF_ROSTER=fail CREW_ID=c1 run run_launcher --fresh
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$STUB_DIR/last.1")" == *"crew roster failed at launch"* ]]
+}
+
+@test "701: an inbox read that fails keeps its rows, and says so when it has none" {
+  _handoff_setup
+  _engine_stub claude
+  mkdir -p "$HANDOFF"
+  printf 'queue\n' >"$HANDOFF/c1.md"
+  HANDOFF_INBOX=torn CREW_ID=c1 run --separate-stderr run_launcher --fresh
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"blocked: fern (feat/12-x) asks: $HANDOFF_QUESTION"* ]]
+  # The first launch registered c1 alive; the second needs it dead again.
+  rm "$STUB_DIR/registered.pid"
+  HANDOFF_INBOX=fail CREW_ID=c1 run --separate-stderr run_launcher --fresh
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"blocked: fern (feat/12-x) asks: (inbox read failed — run crew inbox dispatcher:c1)"* ]]
+  [[ "$stderr" != *"no question on the bus"* ]]
+}
+
+# Every refusal fires before the first stub call, so an empty log means nothing
+# launched, minted or registered.
+_fresh_refusal_row() { # want-status message args...
+  local want=$1 msg=$2
+  shift 2
+  : >"$STUB_LOG"
+  run run_launcher "$@"
+  [ "$status" -eq "$want" ]
+  [[ "$output" == *"$msg"* ]]
+  [ ! -s "$STUB_LOG" ]
+}
+
+@test "701: --fresh refuses bad combinations and notes, launching nothing" {
+  : >"$BATS_TEST_TMPDIR/empty.md"
+  head -c 65537 /dev/zero | tr '\0' x >"$BATS_TEST_TMPDIR/big.md"
+  printf 'queue\n' >"$BATS_TEST_TMPDIR/ok.md"
+  begin_rows
+  keep_row new _fresh_refusal_row 2 "cannot be combined with --new" --fresh --new
+  keep_row task _fresh_refusal_row 2 "--fresh takes no task words" --fresh fix the test
+  keep_row codex _fresh_refusal_row 2 "--fresh is claude and pi only" --fresh --agent codex
+  keep_row cursor _fresh_refusal_row 2 "--fresh is claude and pi only" --fresh --agent cursor
+  keep_row note-alone _fresh_refusal_row 2 "--note only goes with --fresh" --note "$BATS_TEST_TMPDIR/ok.md"
+  keep_row empty-note _fresh_refusal_row 1 "is not a readable, non-empty file" --fresh --note "$BATS_TEST_TMPDIR/empty.md"
+  keep_row big-note _fresh_refusal_row 1 "is over 65536 bytes" --fresh --note "$BATS_TEST_TMPDIR/big.md"
+  finish_rows 7
+}
+
+@test "701: an inner --fresh whose launcher pid is no ancestor refuses and kills nothing" {
+  _handoff_setup
+  printf 'queue\n' >"$HANDOFF_NOTE_SRC"
+  sleep 30 &
+  live_pid=$!
+  DISPATCHER_LAUNCHER_PID=$live_pid DISPATCHER_HANDOFF_DIR=$HANDOFF DISPATCHER_HANDOFF_CREW=c1 CREW_ID=c1 \
+    run run_launcher --fresh --note "$HANDOFF_NOTE_SRC"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"DISPATCHER_LAUNCHER_PID=$live_pid is not an ancestor"* ]]
+  kill -0 "$live_pid"
+  _no_markers
+  [ ! -e "$HANDOFF/c1.md" ]
+  kill "$live_pid"
+  wait "$live_pid" || true
+  live_pid=""
+}
+
+@test "701: an engine that ignores SIGTERM is killed after ~10s and relaunched" {
+  _handoff_setup
+  # The subshell outlives the KILLed engine to record the inner call's exit, and
+  # holds run's stdout open until it has.
+  _engine_stub claude 'trap "" TERM
+printf "queue\n" >"$HANDOFF_NOTE_SRC"
+(
+  rc=0
+  bash -euo pipefail "$LAUNCHER" --fresh --note "$HANDOFF_NOTE_SRC" 2>"$STUB_DIR/inner.err" || rc=$?
+  echo "$rc" >"$STUB_DIR/inner.rc"
+)'
+  start=$SECONDS
+  CREW_ID=c1 run run_launcher
+  elapsed=$((SECONDS - start))
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_DIR/inner.rc")" = 0 ]
+  [[ "$(cat "$STUB_DIR/inner.err")" != *"handoff failed"* ]]
+  [ "$elapsed" -ge 9 ] && [ "$elapsed" -lt 20 ]
+  [ "$(_launches)" = 2 ]
+  [[ "$(cat "$STUB_DIR/last.2")" == "Handoff: "* ]]
+  _no_markers
+}
+
+@test "701: an inner --fresh for another crew refuses and ends nothing" {
+  _handoff_setup
+  _engine_stub claude 'printf "queue\n" >"$HANDOFF_NOTE_SRC"
+rc=0
+CREW_ID=c2 bash -euo pipefail "$LAUNCHER" --fresh --note "$HANDOFF_NOTE_SRC" 2>"$STUB_DIR/inner.err" || rc=$?
+echo "$rc" >"$STUB_DIR/inner.rc"'
+  CREW_ID=c1 run run_launcher
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_DIR/inner.rc")" = 1 ]
+  [[ "$(cat "$STUB_DIR/inner.err")" == *"CREW_ID=c2 is not the crew this session's launcher runs"* ]]
+  [ "$(_launches)" = 1 ]
+  _no_markers
+  [ ! -e "$HANDOFF/c2.md" ]
+}
+
+@test "701: an inner --fresh refuses launcher pid 1 before walking the chain" {
+  _handoff_setup
+  printf 'queue\n' >"$HANDOFF_NOTE_SRC"
+  DISPATCHER_LAUNCHER_PID=1 DISPATCHER_HANDOFF_DIR=$HANDOFF DISPATCHER_HANDOFF_CREW=c1 CREW_ID=c1 \
+    run run_launcher --fresh --note "$HANDOFF_NOTE_SRC"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"DISPATCHER_LAUNCHER_PID=1 is not a launcher pid"* ]]
+  _no_markers
+  [ ! -e "$HANDOFF/c1.md" ]
+}
+
+@test "701: an inner --fresh refuses an ancestor that is not a dispatcher launcher" {
+  _handoff_setup
+  printf 'queue\n' >"$HANDOFF_NOTE_SRC"
+  export DISPATCHER_HANDOFF_DIR=$HANDOFF DISPATCHER_HANDOFF_CREW=c1 CREW_ID=c1
+  # The target is this bash, whose args are its script text, with no lowercase
+  # "dispatcher". Its child is the launcher itself, so a pass would TERM it (143).
+  run bash -c 'DISPATCHER_LAUNCHER_PID=$$ bash -euo pipefail "$LAUNCHER" --fresh --note "$HANDOFF_NOTE_SRC"; echo "rc=$?"'
+  [[ "$output" == *"is an ancestor but not a dispatcher launcher"* ]]
+  [[ "$output" == *"rc=1"* ]]
+  _no_markers
+  [ ! -e "$HANDOFF/c1.md" ]
+}
+
+@test "701: an inner --fresh refuses an engine pid whose args name the dispatcher" {
+  _handoff_setup
+  printf 'queue\n' >"$HANDOFF_NOTE_SRC"
+  export DISPATCHER_HANDOFF_DIR=$HANDOFF DISPATCHER_HANDOFF_CREW=c1 CREW_ID=c1
+  # A bash copy named like an engine: comm is not bash, and its -c text carries
+  # "dispatcher" the way `--name "dispatcher · …"` does.
+  cp "$(command -v bash)" "$STUB_DIR/fakeengine"
+  run "$STUB_DIR/fakeengine" -c '# dispatcher
+DISPATCHER_LAUNCHER_PID=$$ bash -euo pipefail "$LAUNCHER" --fresh --note "$HANDOFF_NOTE_SRC"; echo "rc=$?"'
+  [[ "$output" == *"is an ancestor but not a dispatcher launcher"* ]]
+  [[ "$output" == *"rc=1"* ]]
+  _no_markers
+  [ ! -e "$HANDOFF/c1.md" ]
+}
+
+@test "701: an inner --fresh accepts a launcher whose comm is its script name" {
+  _handoff_setup
+  printf 'queue\n' >"$HANDOFF_NOTE_SRC"
+  export DISPATCHER_HANDOFF_DIR=$HANDOFF DISPATCHER_HANDOFF_CREW=c1 CREW_ID=c1
+  # Linux names a shebang script's process after the script, not bash.
+  printf '#!%s\nDISPATCHER_LAUNCHER_PID=$$ bash -euo pipefail "$LAUNCHER" --fresh --note "$HANDOFF_NOTE_SRC"\n' "$(command -v bash)" >"$STUB_DIR/dispatcher"
+  chmod +x "$STUB_DIR/dispatcher"
+  run "$STUB_DIR/dispatcher"
+  [[ "$output" != *"not a dispatcher launcher"* ]]
+}
+
+@test "701: --fresh refuses a note that is group- or world-readable" {
+  printf 'queue\n' >"$BATS_TEST_TMPDIR/open.md"
+  chmod 644 "$BATS_TEST_TMPDIR/open.md"
+  _fresh_refusal_row 1 "is mode 644" --fresh --note "$BATS_TEST_TMPDIR/open.md"
+  [[ "$output" == *"mktemp"* && "$output" == *"chmod 600"* ]]
+  chmod 600 "$BATS_TEST_TMPDIR/open.md"
+  run run_launcher --fresh --note "$BATS_TEST_TMPDIR/open.md"
+  [[ "$output" != *"is mode"* ]]
+}
+
+@test "701: codex and cursor launch without the handoff pair, even when inherited" {
+  _handoff_setup
+  local bin
+  for bin in claude codex cursor-agent; do
+    cat >"$STUB_DIR/$bin" <<EOF
+#!/usr/bin/env bash
+printf '$bin LPID=%s HDIR=%s HCREW=%s\n' "\${DISPATCHER_LAUNCHER_PID-UNSET}" "\${DISPATCHER_HANDOFF_DIR-UNSET}" "\${DISPATCHER_HANDOFF_CREW-UNSET}" >>"\$STUB_LOG"
+EOF
+    chmod +x "$STUB_DIR/$bin"
+  done
+  export DISPATCHER_LAUNCHER_PID=4242 DISPATCHER_HANDOFF_DIR=/tmp/inherited DISPATCHER_HANDOFF_CREW=c9
+  CREW_ID=c1 run_launcher --agent codex
+  CREW_ID=c1 run_launcher --agent cursor
+  grep -qx 'codex LPID=UNSET HDIR=UNSET HCREW=UNSET' "$STUB_LOG"
+  grep -qx 'cursor-agent LPID=UNSET HDIR=UNSET HCREW=UNSET' "$STUB_LOG"
+  # Control: claude gets this launcher's own pair in place of the inherited one.
+  : >"$STUB_LOG"
+  rm -f "$STUB_DIR/registered.pid"
+  CREW_ID=c1 run_launcher
+  grep -qx "claude LPID=$(cat "$STUB_DIR/registered.pid") HDIR=$HANDOFF HCREW=c1" "$STUB_LOG"
+}
+
+@test "701: the section the handoff prompt cites exists in the protocol and both renders" {
+  _handoff_setup
+  _engine_stub claude
+  mkdir -p "$HANDOFF"
+  printf 'queue\n' >"$HANDOFF/c1.md"
+  CREW_ID=c1 run run_launcher --fresh
+  [ "$status" -eq 0 ]
+  prompt=$(cat "$STUB_DIR/last.1")
+  [[ "$prompt" =~ DISPATCHER_PROTOCOL\.md\ \"([^\"]+)\"\ →\ \"([^\"]+)\" ]]
+  section=${BASH_REMATCH[1]}
+  para=${BASH_REMATCH[2]}
+  [ "$section" = "Hand off to a fresh session" ]
+  local f
+  for f in DISPATCHER_PROTOCOL.md DISPATCHER_PROTOCOL.claude.md DISPATCHER_PROTOCOL.pi.md; do
+    awk -v h="## $section" -v p="**$para**" '
+      $0 == h { s = 1; next }
+      s && /^## / { s = 0 }
+      s && index($0, p) == 1 { found = 1 }
+      END { exit !found }' "$BATS_TEST_DIRNAME/../adapters/core/protocols/$f" || {
+      echo "$f has no '$para' paragraph under '## $section'" >&2
+      return 1
+    }
+  done
 }

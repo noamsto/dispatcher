@@ -69,7 +69,7 @@ teardown() {
   # any of them.
   canonical="$(grep -h '^_bus_append() {' "$ROOT/adapters/core/dispatch.sh")"
   [ -n "$canonical" ]
-  for f in dispatch-notify.sh dispatch-resume.sh; do
+  for f in dispatch-notify.sh dispatch-resume.sh lead-launcher.sh; do
     found="$(grep -h '^_bus_append() {' "$ROOT/adapters/core/$f")"
     [ "$found" = "$canonical" ]
   done
@@ -2462,6 +2462,7 @@ adapters/core/protocols/WORKER_PROTOCOL.md|**Critics are independent, on every e
 adapters/core/protocols/WORKER_PROTOCOL.md|$DISPATCHER_CRITICS_DIR
 adapters/core/protocols/DISPATCHER_PROTOCOL.md|**claude — streaming monitor.**
 adapters/core/protocols/DISPATCHER_PROTOCOL.md|**codex / pi — blocking park.**
+adapters/core/protocols/DISPATCHER_PROTOCOL.md|## Hand off to a fresh session
 adapters/core/protocols/WORKER_SHIP.md|## Deferred findings (standard/deep)
 adapters/core/protocols/dispatch-orchestration.md|### Cursor Task-spawn slugs
 adapters/core/protocols/WORKER_PROTOCOL.md|re-read the current stage's phase file
@@ -2886,4 +2887,173 @@ _phase_stems() {
       grep -qF "$stem" "$ROOT/adapters/core/protocols/$file" || { echo "$file does not mention $stem" >&2; return 1; }
     done
   done
+}
+
+@test "pi subagent contract: the pinned copy matches its contract" {
+  run bash "$ROOT/scripts/pi-subagent-contract.sh" --pinned
+  [ "$status" -eq 0 ]
+  [[ "$output" == ok:* ]]
+}
+
+@test "pi subagent contract: a drifted spawn line fails and is named" {
+  cp "$ROOT"/adapters/pi/extensions/subagent/{index,agents}.ts "$BATS_TEST_TMPDIR/"
+  sed -i.bak 's/"--no-session"/"--session"/' "$BATS_TEST_TMPDIR/index.ts"
+  run bash "$ROOT/scripts/pi-subagent-contract.sh" --pinned "$BATS_TEST_TMPDIR"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'missing in index.ts: const args: string[] = ["--mode", "json", "-p", "--no-session", "--no-approve"];'* ]]
+}
+
+@test "pi subagent contract: an unlisted spawn argument fails and is named" {
+  cp "$ROOT"/adapters/pi/extensions/subagent/{index,agents}.ts "$BATS_TEST_TMPDIR/"
+  printf '\targs.push("--foo");\n' >>"$BATS_TEST_TMPDIR/index.ts"
+  run bash "$ROOT/scripts/pi-subagent-contract.sh" --pinned "$BATS_TEST_TMPDIR"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'unlisted in index.ts: args.push("--foo");'* ]]
+}
+
+@test "pi subagent contract: an unlisted args.unshift or spawn option fails and is named" {
+  cp "$ROOT"/adapters/pi/extensions/subagent/{index,agents}.ts "$BATS_TEST_TMPDIR/"
+  printf '\targs.unshift("--foo");\n\tshell: true,\n' >>"$BATS_TEST_TMPDIR/index.ts"
+  run bash "$ROOT/scripts/pi-subagent-contract.sh" --pinned "$BATS_TEST_TMPDIR"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'unlisted in index.ts: args.unshift("--foo");'* ]]
+  [[ "$output" == *'unlisted in index.ts: shell: true,'* ]]
+}
+
+@test "pi subagent contract: --installed exits 2 when the pi on PATH names no store binary" {
+  mkdir "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\necho pi\n' >"$BATS_TEST_TMPDIR/bin/pi"
+  chmod +x "$BATS_TEST_TMPDIR/bin/pi"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" run bash "$ROOT/scripts/pi-subagent-contract.sh" --installed
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"cannot find the real pi binary"* ]]
+}
+
+@test "pi subagent contract: the installed pi matches the upstream contract" {
+  run bash "$ROOT/scripts/pi-subagent-contract.sh" --installed
+  [ "$status" -ne 2 ] || skip "no installed pi to check: $output"
+  [ "$status" -eq 0 ]
+}
+
+@test "pi subagent contract: the pinned spawn sets CREW_SUBAGENT and keeps extensions" {
+  index="$ROOT/adapters/pi/extensions/subagent/index.ts"
+  grep -qF 'CREW_SUBAGENT: "1"' "$index"
+  run grep -F -- '--no-extensions' "$index"
+  [ "$status" -eq 1 ]
+}
+
+# ── pi agent roster ───────────────────────────────────────────
+
+@test "pi agent roster: one agent per harness reviewer and critic plus the fixed agents" {
+  expected="$({
+    for file in "$ROOT"/adapters/core/reviewers/*.md "$ROOT"/adapters/core/critics/*.md; do
+      basename "$file" .md
+    done
+    printf '%s\n' repo-reviewer refuter test-runner execute-light execute execute-escalated
+  } | LC_ALL=C sort)"
+  actual="$(for file in "$ROOT"/adapters/pi/agents/*.md; do basename "$file" .md; done | LC_ALL=C sort)"
+  [ "$actual" = "$expected" ] || {
+    echo "expected:" >&2
+    printf '%s\n' "$expected" >&2
+    echo "actual:" >&2
+    printf '%s\n' "$actual" >&2
+    return 1
+  }
+}
+
+@test "pi agent roster: frontmatter names, descriptions and pinned models" {
+  deep="$(jq -er .modelMap.pi.deep.default "$ROOT/adapters/core/defaults.json")"
+  [ -n "$deep" ]
+  for file in "$ROOT"/adapters/pi/agents/*.md; do
+    name="$(basename "$file" .md)"
+    [ "$(yq --front-matter=extract '.name' "$file")" = "$name" ] || { echo "$name: name is not its basename" >&2; return 1; }
+    [ "$(yq --front-matter=extract '.description | type' "$file")" = '!!str' ] || { echo "$name: description is not a string" >&2; return 1; }
+    [ -n "$(yq --front-matter=extract '.description' "$file")" ] || { echo "$name: description is empty" >&2; return 1; }
+
+    model="$(yq --front-matter=extract '.model' "$file")"
+    case "$model" in
+    "$deep":*) ;;
+    *) echo "$name: model $model is not pinned to $deep" >&2; return 1 ;;
+    esac
+    case "$name" in
+    execute-light) suffix=low ;;
+    execute | test-runner) suffix=high ;;
+    *) suffix=max ;;
+    esac
+    case "$model" in
+    *":$suffix") ;;
+    *) echo "$name: model $model does not end :$suffix" >&2; return 1 ;;
+    esac
+
+    if [[ $name == execute* ]]; then
+      [ "$(yq --front-matter=extract 'has("tools")' "$file")" = false ] || { echo "$name: has a tools key" >&2; return 1; }
+    else
+      if [ "$name" = test-runner ]; then
+        want='read, grep, find, ls, bash'
+      else
+        want='read, grep, find, ls'
+      fi
+      [ "$(yq --front-matter=extract '.tools' "$file")" = "$want" ] || { echo "$name: tools is not $want" >&2; return 1; }
+    fi
+  done
+}
+
+@test "pi agent roster: reviewer, critic and refuter agents are read-only" {
+  for file in "$ROOT"/adapters/pi/agents/*.md; do
+    name="$(basename "$file" .md)"
+    [[ $name != execute* && $name != test-runner ]] || continue
+    tools="$(yq --front-matter=extract '.tools' "$file")"
+    IFS=',' read -ra list <<<"$tools"
+    for tool in "${list[@]}"; do
+      tool="${tool//[[:space:]]/}"
+      case "$tool" in
+      bash | write | edit) echo "$name: has the $tool tool" >&2; return 1 ;;
+      esac
+    done
+  done
+}
+
+@test "pi agent roster: every agent carries the secret rule and an authority stamp" {
+  for file in "$ROOT"/adapters/pi/agents/*.md; do
+    name="$(basename "$file" .md)"
+    if [[ $name == execute* ]]; then
+      stamp='implementation authority only'
+      other='review authority only'
+    else
+      stamp='review authority only'
+      other='implementation authority only'
+    fi
+    grep -q 'Never print a secret' "$file" || { echo "$name: no secret rule" >&2; return 1; }
+    grep -qF "$stamp" "$file" || { echo "$name: no '$stamp'" >&2; return 1; }
+    ! grep -qF "$other" "$file" || { echo "$name: has '$other'" >&2; return 1; }
+    if [[ $name != execute* ]]; then
+      grep -qF 'Never execute the code under review' "$file" || { echo "$name: no execute ban" >&2; return 1; }
+    fi
+  done
+}
+
+@test "pi agent roster: only reviewer agents carry the findings-list contract" {
+  for file in "$ROOT"/adapters/pi/agents/*.md; do
+    name="$(basename "$file" .md)"
+    [[ $name != execute* && $name != test-runner ]] || continue
+    case "$name" in
+    plan-critic | spec-critic | refuter)
+      ! grep -qF 'Report findings as a list' "$file" || { echo "$name: has the findings-list contract" >&2; return 1; } ;;
+    *)
+      grep -qF 'Report findings as a list' "$file" || { echo "$name: no findings-list contract" >&2; return 1; } ;;
+    esac
+  done
+}
+
+# ── Stale pi wording ──────────────────────────────────────────
+
+@test "stale pi wording: no doc says pi lacks native subagents" {
+  files=("$ROOT"/adapters/core/protocols/*.pi.md
+    "$ROOT"/adapters/core/protocols/REVIEW_TASK.md
+    "$ROOT"/adapters/core/protocols/dispatch-orchestration.md
+    "$ROOT"/adapters/core/protocols/DISPATCHER_PROTOCOL*.md
+    "$ROOT"/adapters/core/skills/spec-plan-critic/SKILL.md
+    "$ROOT"/README.md)
+  run grep -n -i -E 'no native subagents|pane is the review gate|pane \*\*is\*\* the review|no native batch|no native review batch' "${files[@]}"
+  [ "$status" -eq 1 ] || { printf '%s\n' "$output" >&2; false; }
 }

@@ -128,6 +128,20 @@ stub_tmux() {
   run ! grep -q display-message "$STUB_LOG"
 }
 
+@test "notify: a pi subagent child (CREW_SUBAGENT) carrying the lead's CREW_WORKER_ID writes nothing and pings nothing" {
+  stub_tmux
+  task_doc %9
+  seed_status working
+  before="$BATS_TEST_TMPDIR/events.before"
+  cp "$LOG" "$before"
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' CREW_SUBAGENT=1 run run_notify
+  [ "$status" -eq 0 ]
+
+  cmp -s "$LOG" "$before"
+  run ! grep -q display-message "$STUB_LOG"
+}
+
 @test "notify: roster still reports the live session after a session-less SessionEnd" {
   stub_tmux
   task_doc %9
@@ -148,6 +162,27 @@ stub_tmux() {
   seed_status working
 
   CREW_WORKER_ID='worker:feat/x#s1-1' run run_notify
+  [ "$status" -eq 0 ]
+
+  tail -1 "$LOG" | jq -e '.from == "worker:feat/x#s1-1" and .body.state == "exited"'
+}
+
+@test "notify: a SessionEnd during a seam relaunch (CREW_LEAD_RESTART marker present) posts nothing" {
+  task_doc
+  seed_status working
+  touch "$BATS_TEST_TMPDIR/restart"
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' CREW_LEAD_RESTART="$BATS_TEST_TMPDIR/restart" run run_notify
+  [ "$status" -eq 0 ]
+
+  run ! grep -q '"state":"exited"' "$LOG"
+}
+
+@test "notify: a stale CREW_LEAD_RESTART marker (file absent) still posts exited" {
+  task_doc
+  seed_status working
+
+  CREW_WORKER_ID='worker:feat/x#s1-1' CREW_LEAD_RESTART="$BATS_TEST_TMPDIR/restart" run run_notify
   [ "$status" -eq 0 ]
 
   tail -1 "$LOG" | jq -e '.from == "worker:feat/x#s1-1" and .body.state == "exited"'

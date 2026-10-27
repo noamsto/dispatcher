@@ -13,6 +13,7 @@ After `execute`, before any model reviewer sees the diff: cheap deterministic ch
 - Loop to green here, cheaply: fix (subagent, rule 1), re-run; uncapped, independent of the review→fix loop (cap 2).
 - Real test over synthetic demo: given a runnable behavior surface, write here a regression test pinning the acceptance criteria, esp. a reported edge input (`page > totalPages`), extending an existing test of that path (row/assertion) first. Manual/visual demos (throwaway Storybook story, screenshot walk-through) are never primary proof: only a fallback with no test surface, or a supplement when a reviewer must see rendered output.
 - No runnable build/test surface (docs/protocol-only diff): say so, fall through to the review gate, invent no command.
+- Green, `fresh_seams: true` → commit the work (the fresh session reads it from git), then the review-seam relaunch ("Fresh seam relaunch") before the code-review gate.
 
 ### Bounded plan-shaped recovery
 
@@ -51,7 +52,7 @@ Three amendments: one fresh planning-only context strictly above `WORKER_TASK.md
 - Cursor: Task model override `grok-4.7-low → grok-4.7-medium → grok-4.7-high`. High, Kimi, Composer, cross-vendor/unknown ids, unavailable Task launches block. Task-slug refusal: `dispatch-orchestration.md` → "Cursor Task-spawn slugs" substitution first (Grok-family slugs strictly above the authoritative tuple); exhausted → `rung_blocked`. A same-or-higher Grok substitute for the refused next rung is the same rung, not a skip or second planner.
 <!-- /only -->
 <!-- only:pi -->
-- Pi: no fresh planning context outside the task's fixed critic/reviewer roles: block, ask the dispatcher for a replacement; never self-replan as if independent.
+- Pi: no supported strictly-higher planning rung yet (an effort-ladder planning subagent is not wired): block, ask the dispatcher for a replacement; never self-replan as if independent.
 <!-- /only -->
 
 Viable replacement: covers all three ledger rows, names allowed files/components, gives finite ordered implementation steps + deterministic validation commands, leaves nothing to improvise at execute. Refusal, timeout, failed extraction/critic, unavailable launch or non-viable output blocks (no fallback to original plan or a second planner) → `rung_blocked` retro note naming rung and reason.

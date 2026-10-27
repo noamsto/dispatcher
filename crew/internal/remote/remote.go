@@ -30,6 +30,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
+	"github.com/noamsto/dispatcher/crew/internal/tmux"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
 )
 
@@ -319,7 +320,38 @@ func Run(ctx context.Context, c Call, stdout, stderr io.Writer) int {
 	return rc
 }
 
+// paneBranch is the @crew_branch of a tmux pane; a test seam.
+var paneBranch = func(ctx context.Context, pane string) string {
+	return tmux.Output(ctx, tmux.Exec{}, "display-message", "-p", "-t", pane, "#{@crew_branch}")
+}
+
+// chromeFromWorker reports a dispatch --chrome call made from a worker or role
+// pane. A tripwire on the sanctioned path, not authentication (the env can be
+// unset): it mirrors dispatch's local refusal, which the remote cannot repeat
+// because it cannot see the caller's env. The scan stops at the first `--` so a
+// title is never read as a flag; a `--` that is itself a flag value is not handled.
+func chromeFromWorker(ctx context.Context, argv []string) bool {
+	if len(argv) == 0 || argv[0] != "dispatch" {
+		return false
+	}
+	end := slices.Index(argv, "--")
+	if end < 0 {
+		end = len(argv)
+	}
+	if !slices.Contains(argv[:end], "--chrome") {
+		return false
+	}
+	if os.Getenv("CREW_WORKER_ID") != "" || os.Getenv("CREW_ROLE_ID") != "" {
+		return true
+	}
+	pane := os.Getenv("TMUX_PANE")
+	return pane != "" && paneBranch(ctx, pane) != ""
+}
+
 func prepare(ctx context.Context, c Call, stderr io.Writer) (Target, []byte, error) {
+	if chromeFromWorker(ctx, c.Argv) {
+		return Target{}, nil, errors.New("crew: remote-run: --chrome is dispatcher-only — a worker or role pane cannot grant a session the owner's browser")
+	}
 	hosts, err := Load(ctx, ConfigBin(), stderr)
 	if err != nil {
 		return Target{}, nil, err

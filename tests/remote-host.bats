@@ -65,6 +65,7 @@ setup() {
   local settings
   settings="$(jq -nc --arg r "$REMOTE_CLONE" '{hosts: {
     mini: {ssh: "mini", repos: {"acme/widget": $r}},
+    chromebox: {ssh: "mini", chrome: true, repos: {"acme/widget": $r}},
     broken: {ssh: "fail-broken", repos: {"acme/widget": $r}},
     bare: {ssh: "mini", repos: {}}}}')"
   mkdir -p "$XDG_CONFIG_HOME/dispatcher" "$RHOME/config/dispatcher"
@@ -425,6 +426,41 @@ EOF
     false
   }
   grep -qx 'draft: true' "$(remote_wt "$(local_dispatch_rows | jq -r .branch)")/WORKER_TASK.md"
+}
+
+@test "dispatch --host --chrome reaches a host with hosts.<h>.chrome" {
+  run --separate-stderr dispatch_remote --host chromebox --chrome 42 "t"
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  grep -qx 'chrome: true' "$(remote_wt "$(local_dispatch_rows | jq -r .branch)")/WORKER_TASK.md"
+}
+
+@test "dispatch --host --chrome is refused for a host without hosts.<h>.chrome, before any ssh" {
+  run --separate-stderr dispatch_remote --host mini --chrome 42 "t"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"hosts.mini.chrome"* ]]
+  [ ! -e "$SSH_LOG" ]
+  assert_nothing_recorded_locally
+}
+
+@test "dispatch --host --chrome with an unknown host reports the unknown host, before any ssh" {
+  run --separate-stderr dispatch_remote --host nowhere --chrome 42 "t"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"unknown host 'nowhere'"* ]]
+  [[ "$stderr" != *"hosts.nowhere.chrome"* ]]
+  [ ! -e "$SSH_LOG" ]
+  assert_nothing_recorded_locally
+}
+
+@test "dispatch --host --chrome runs the remote's own ban" {
+  jq '. + {workerDeniedMcpServers: ["claude-in-chrome"]}' "$RHOME/config/dispatcher/settings.json" >"$BATS_TEST_TMPDIR/rs.json"
+  cp "$BATS_TEST_TMPDIR/rs.json" "$RHOME/config/dispatcher/settings.json"
+  run --separate-stderr dispatch_remote --host chromebox --chrome 42 "t"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"workerDeniedMcpServers lists claude-in-chrome"* ]]
+  assert_nothing_recorded_locally
 }
 
 @test "dispatch --host with an unknown host is refused before any ssh or local write" {

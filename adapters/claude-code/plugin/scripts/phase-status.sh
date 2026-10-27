@@ -17,7 +17,8 @@
 #
 # Workers only, and leads only: a session without CREW_WORKER_ID (a human at a
 # prompt, a dispatcher) exits before jq and the git call, and a grid role pane
-# inherits the lead's CREW_WORKER_ID while its own tool calls are not the lead's.
+# inherits the lead's CREW_WORKER_ID while its own tool calls are not the lead's,
+# and neither are a pi `subagent` child's (CREW_SUBAGENT).
 #
 # Posts `crew status "$CREW_WORKER_ID" working "<phase> (auto)"` only when the
 # phase CHANGED (a loop of `bats` calls posts once). `(auto)` marks the source in
@@ -51,6 +52,9 @@ set -euo pipefail
 # Workers only, ahead of everything else.
 [[ -n ${CREW_WORKER_ID:-} ]] || exit 0
 [[ -z ${CREW_ROLE_ID:-} ]] || exit 0
+# A pi lead's `subagent` child inherits CREW_WORKER_ID (the dispatcher's pinned
+# subagent extension stamps CREW_SUBAGENT=1 on its spawn); its tool calls are not the lead's.
+[[ -z ${CREW_SUBAGENT:-} ]] || exit 0
 
 command -v jq >/dev/null || exit 0
 command -v crew >/dev/null || exit 0

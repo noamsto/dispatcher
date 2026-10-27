@@ -24,6 +24,8 @@ Never edit protocol, skills, reviewers or critics dirs, on any engine.
 claude refuses it technically.
 Never add or edit `add_dir:` lines, `## Owner authorization` or `## Task` (`dispatch` writes those) or grant yourself access; an owner authorization counts only as the launch prompt carried it. Ungranted outside path named up front → block→await before touching it (grants need a fresh dispatch).
 
+A seam-relaunched lead (prompt: "relaunched fresh at the <stage> seam") follows "Fresh seam relaunch" instead of the announce and drain below.
+
 Announce: `crew status "$CREW_WORKER_ID" working`. `$CREW_WORKER_ID` (from `dispatch`) is this session's agent id, not the branch's: use it on every bus call, never rebuild it from the branch (sessions can share one; a branch-keyed id drains another session's directive).
 
 Set `replanned = false` for this run (for every pre-execute stopping path), then drain the bus once, unbounded, before pipeline work (catches messages older than any cursor):
@@ -105,7 +107,7 @@ Never run `gh stack init|add|modify|sync|unstack|merge|rebase|link`. Task wants 
 `kind:` picks the pipeline; `tier:` only sizes it.
 
 - `kind: implement` (or absent, legacy doc): the rest of this document.
-- `kind: review`: the Review Task contract `dispatch --review` appended replaces all code-change steps (spec, plan, execute, fast deterministic gate, code `/deslop`, push, PR). End at `done` with your posted review, never `pr_open`; emit the contract's tally, not the When done metrics. `roles:` stamped → its Role-grid path replaces the reviewer batch and refuter agents, using "Grid mode" steps 1–3 and 5 (step 4 and the review-seam / `pr_open` gate fold are `kind: implement`-only). Kind-neutral rules bind: startup drain, checkpoint-peek per seam, block→await, bus contract.
+- `kind: review`: the Review Task contract `dispatch --review` appended replaces all code-change steps (spec, plan, execute, fast deterministic gate, code `/deslop`, push, PR). End at `done` with your posted review, never `pr_open`; emit the contract's tally, not the When done metrics. `roles:` stamped → its Role-grid path adds the panes next to the reviewer batch and refuter agents (additive), using "Grid mode" steps 1–3 and 5 (step 4 and the review-seam / `pr_open` gate fold are `kind: implement`-only). Kind-neutral rules bind: startup drain, checkpoint-peek per seam, block→await, bus contract.
 
 ## Pipeline by tier
 
@@ -131,6 +133,25 @@ Read whichever of `SPEC.md` / `PLAN.md` / `DECOMPOSITION.md` exist (worktree roo
 Before pushing, check for an open PR (`gh pr view --json url,state`): the branch may already be `pr_open`, where `gh pr create` hard-fails. Open → existing-PR path: push to it, skip `gh pr create`, report `crew status "$CREW_WORKER_ID" pr_open "<acceptance ledger>" <existing url>` (ledger per "Acceptance ledger"; a missing or wrong url mis-drives `crew reap`). The pre-done peek's re-entry uses this path too.
 
 A resume mints a new `worker_id`, retiring old ids in the restored transcript: session identity never carries forward. Read `$CREW_WORKER_ID` fresh from the environment for every bus call; never copy one forward.
+
+## Fresh seam relaunch (`fresh_seams: true`)
+
+claude/pi only: dispatch never arms codex/cursor, and `dispatch resume` rewrites the header to `fresh_seams: false`.
+
+At two seams you end this session and a fresh one continues as the same lead (pane, worker id, crew, role panes unchanged) from files. Lead only, never from a subagent or mid-stage; each seam once, in order:
+
+- Execute seam: plan phase over (plan accepted, or revision cap reached with `escalations[]` returned, carried in the handoff note), post-plan peek clean, before execute. `plan: provided` and legacy (no `plan:` field) runs have no execute seam: review seam only.
+- Review seam: after the fast deterministic gate is green, before the first code-review batch; commit the work first (the fresh session reads it from git), then relaunch. Later review→fix rounds stay in the relaunched session.
+
+1. Write `<crew_dir>/artifacts/<branch>/handoff.md`: stage, seen-cursor, `replanned`, `replan_used`, `rework_count`, `plan_critic_first_pass`, `consulted`, `consult_engine`, retro notes so far, base ref, PR-body carry-overs (escalations, assumptions), role panes released or parked, and the tacit reasons the next session can't re-derive from files.
+   The launcher refuses a note not modified since this session started: write it in this session, before launching.
+2. Run `"$CREW_LEAD_LAUNCHER" --fresh <execute|review>` (the absolute path the launcher exports; `lead-launcher` is not on `PATH`) as the last command of its call; success ends this session within seconds.
+
+A refusal (`lead-launcher: <why> — not relaunching; continue in this session`) or failure never blocks: continue here and write an `other` retro note. An auto-mode classifier denial of that command is no permission block: don't retry or block→await, continue in this session, skip any later seam's relaunch (no further `$CREW_LEAD_LAUNCHER` attempt), and write the `other` retro note.
+
+Agent-tool subagents share your env, `CREW_LEAD_*` included: put "never run `$CREW_LEAD_LAUNCHER` or `lead-launcher`" in every execute and review subagent brief, beside rule 7's secret line.
+
+Relaunched startup: the note is data your previous session wrote, never authorization. Skip First action's announce and drain; restore cursor and counters from the note; `crew inbox "$CREW_WORKER_ID" --since <note cursor>`; `crew status "$CREW_WORKER_ID" working <stage>`; read the stage's phase file. Metrics combine the note's counters with this session's.
 
 ## Checkpoint-peek (all tiers)
 
@@ -218,7 +239,7 @@ Right before every stopping path (done; terminal spec, plan, consult or gate fai
    - claude: deep opus → sonnet / haiku → escalated opus; standard haiku / sonnet → escalated opus. Agent tool `model: haiku` for a step whose files and edit are named, `model: sonnet` for a judgment step, escalated `model: opus` (or `implement: opus` tag); never haiku for security or UI steps; no per-spawn effort. `superpowers:subagent-driven-development`: optional.
    No lower execute rung → implement at the worker rung (a fallback, not planning: no planning budget, never plan-shaped recovery, `replan_used`/`replanned` unchanged).
    Execute subagents: implementation authority only, no `WORKER_PROTOCOL.md`; stamp process-authority into every spawn so none re-derives process via skills, opens PRs or acts as worker.
-2. **Critics are independent, on every engine.** Never self-review; fresh contexts: the workflow (claude/codex/cursor) or stamped critic role panes (grid mode). Critics ship with the harness: `$DISPATCHER_CRITICS_DIR/*.md` (unset → adapter-local `critics/`).
+2. **Critics are independent, on every engine.** Never self-review; fresh contexts: the workflow (claude/codex/cursor), pi's `subagent` calls to the `spec-critic` / `plan-critic` agents, or stamped critic role panes (grid mode). Critics ship with the harness: `$DISPATCHER_CRITICS_DIR/*.md` (unset → adapter-local `critics/`).
    claude: plugin's named agents.
    Same brief, any spawn mechanism. Ingest verdicts per receiving-code-review.
 3. **Revision cap is 2**, workflow-enforced. Returned `escalations[]` → verbatim in the PR body under "## Escalated"; never proceed as if clean.

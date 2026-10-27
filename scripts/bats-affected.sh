@@ -81,6 +81,7 @@ map_file() {
   adapters/core/directive-delivery.sh) add adapters crew directive-delivery ;;
   adapters/core/dispatch-notify.sh) add adapters dispatch-notify dispatch ;;
   adapters/core/dispatcher.sh) add adapters dispatch dispatcher module ;;
+  adapters/core/lead-launcher.sh) add adapters dispatch dispatch-resume dispatcher lead-launcher module ;;
   adapters/core/openrouter-key.sh) add adapters dispatch module refresh-budget refresh-scores ;;
   adapters/core/permission-check.sh) add adapters dispatch-resume dispatch module permission-check remote-host ;;
   adapters/core/phase-status.sh) add adapters phase-status ;;
@@ -97,7 +98,9 @@ map_file() {
   adapters/core/protocols/dispatch-orchestration.md) add "${prompt_set[@]}" crew model-map-doc ;;
   adapters/core/protocols/*.md | adapters/core/critics/*.md | adapters/core/reviewers/*.md | adapters/core/skills/*/SKILL.md) add "${prompt_set[@]}" ;;
   adapters/claude-code/* | adapters/codex/* | adapters/cursor/*) add adapters module ;;
+  adapters/pi/*) add adapters dispatch dispatch-resume ;;
   scripts/cache-report.sh | scripts/gen-adapters.sh | scripts/render-engine.sh) add adapters ;;
+  scripts/pi-subagent-contract.sh) add adapters ;;
   scripts/gen-model-map-doc.sh) add adapters model-map-doc ;;
   README.md) add adapters dispatch permission-check ;;
   hookyard.json) add adapters crew directive-delivery phase-status public-leak-guard secret-read-guard test-scope-guard ;;

@@ -190,6 +190,25 @@ locked_settings() {
   done
 }
 
+@test "freshSeams defaults to false and takes a boolean from the user layer" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.freshSeams == false' <<<"$output"
+  user_settings '{"freshSeams":true}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.freshSeams == true' <<<"$output"
+}
+
+@test "freshSeams must be a boolean" {
+  for bad in '"yes"' '1'; do
+    user_settings "{\"freshSeams\":$bad}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"freshSeams must be a boolean"* ]]
+  done
+}
+
 @test "dispatcherMcp defaults to empty and merges per lowercased key across layers" {
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
@@ -814,6 +833,13 @@ laneprofiles_refuse_row() { # json fragment
   jq -e '.hosts == {"mini":{"ssh":"me@mini","repos":{"acme/widget":"/r/widget"}}}' <<<"$output"
 }
 
+@test "hosts chrome from the user layer reaches the merged output" {
+  user_settings '{"hosts":{"mini":{"ssh":"me@mini","chrome":true,"repos":{"acme/widget":"/r/widget"}}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.hosts == {"mini":{"ssh":"me@mini","chrome":true,"repos":{"acme/widget":"/r/widget"}}}' <<<"$output"
+}
+
 @test "malformed hosts is refused, naming the path" {
   begin_rows
   local json fragment
@@ -832,10 +858,12 @@ laneprofiles_refuse_row() { # json fragment
 {"hosts":{"mini":{"ssh":"me@mini","repos":{"acme/widget":"/r/wid\u007fget"}}}}|mini.repos.acme/widget
 {"hosts":{"mini":{"ssh":"me@mini","repos":["/r"]}}}|mini.repos
 {"hosts":{"mini":{"ssh":"me@mini","port":22}}}|mini.port
+{"hosts":{"mini":{"ssh":"me@mini","chrome":"yes"}}}|mini.chrome
+{"hosts":{"mini":{"ssh":"me@mini","chrome":1}}}|mini.chrome
 {"hosts":{"mini":"me@mini"}}|mini
 {"hosts":[]}|hosts
 EOF
-  finish_rows 13
+  finish_rows 15
 }
 
 # The module's strMatching "/[^[:cntrl:]]*" is byte-based: a C1 code point is

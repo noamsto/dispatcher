@@ -4,7 +4,7 @@ Phase file of `WORKER_PROTOCOL.md`, binding like the core; "this protocol" and i
 
 ## Code review gate (standard/deep)
 
-Fast deterministic gate green → before `/deslop` + push, get an independent review of your diff and await it ("Gating verdicts are awaited"). Binds on every engine.
+Fast deterministic gate green → before `/deslop` + push, get an independent review of your diff and await it ("Gating verdicts are awaited"). Binds on every engine. A lead relaunched at the review seam enters here; later review→fix rounds stay in this session.
 
 - **Repo-aware scaling.** Check the target repo's config and recent PRs for automated review. Active gauntlet → fast gate, targeted test-runner, one light language pass, no diverse reviewer; else full tier-strength review. Either way cross-component correctness gets the stronger targeted review (`EVIDENCE_REVIEW.md`), required targeted re-review and the security trigger stay, and bots are no proof the current head was reviewed. Record the mode as `review_mode` in the metrics record ("When done"):
   - `full`: tier-strength or risk-promoted. `downgraded`: gauntlet repo, light, no risk promotion. `unavailable`: gate reached, a required review capability unspawnable (the unavailable-gate path below). `none`: no reviewer was due: trivial tier, or the run never reached the gate (spec/plan/consult failure, fast gate never green, stop or blocked timeout in execute); `review_high: 0`.
@@ -20,7 +20,7 @@ Fast deterministic gate green → before `/deslop` + push, get an independent re
 - Dispatch the review as a single parallel batch (one message, concurrent subagents). Roles are identical on every engine; the engine sets only spawn mechanism and rung:
   - claude: Agent tool, one subagent per matched entry, resolved brief as prompt. Native agent preferred, only for a harness identity (entry `name` when `source` is `harness`, or `override.of` when set) matched by name or that harness entry's `aliases:`, spawned with the resolved brief; a new repo entry always runs as a general subagent. Rung: `model: opus` (Agent override) on every batch subagent, whatever the lead model; effort as-is.
 
-  Claude, codex and cursor always run the native batch, even in grid mode; a reviewer role pane there (explicit `--roles`) is only an additive second opinion, never satisfying the gate alone.
+  Every engine always runs the native batch, even in grid mode; a reviewer role pane (explicit `--roles`) is only an additive second opinion, never satisfying the gate alone.
 
   - Language reviewer: one per matched roster entry, with the single risk promotion from EVIDENCE_REVIEW.md when triggered. Plan phase skipped (plan of record) → have it add an approach-sanity check against the task doc: right fix, not merely faithful.
   - Targeted test-runner: a subagent runs the acceptance-criteria / behavior-specific tests, reports pass/fail.

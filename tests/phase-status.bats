@@ -174,6 +174,12 @@ assert_post_order() { # details, one per line
   assert_no_posts
 }
 
+@test "phase-status: a pi subagent child (CREW_SUBAGENT) posts nothing" {
+  CREW_SUBAGENT=1 run_handler <<<"$(post_bash 'bats tests/a.bats')"
+  CREW_SUBAGENT=1 run_handler <<<"$(pre_bash "crew await '$CREW_WORKER_ID' --from 'role:feat/839-x:plan-critic'")"
+  assert_no_posts
+}
+
 @test "phase-status: a session that cannot name itself posts nothing" {
   run bash -eu -c 'unset CREW_WORKER_ID; bash -euo pipefail "$0"' "$HANDLER" <<<"$(post_bash 'bats tests/a.bats')"
   CREW_WORKER_ID= run_handler <<<"$(post_bash 'bats tests/a.bats')"

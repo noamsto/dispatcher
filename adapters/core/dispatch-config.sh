@@ -34,6 +34,9 @@
 # (interactive browsers); it is validated on the merged tree and has no env var.
 # dispatcherChrome (boolean) launches the claude dispatcher session with
 # --chrome; it is honoured from every layer and has no env var.
+# freshSeams (boolean, default false) arms dispatch's fresh lead relaunch at
+# the execute and review seams for eligible claude/pi standard/deep implement
+# workers; dispatch --fresh-seams/--no-fresh-seams override it per dispatch.
 # dispatcherMcp maps an owner/repo or org key to the MCP opt-ins (claudeai:
 # every claude.ai connector; analytics: the generated --mcp profile; or any
 # mcpServers name) that the dispatcher launch restores for that repo; the
@@ -49,7 +52,8 @@
 # doc; like localModels it is validated on the merged tree and has no env var.
 #
 # hosts maps a host name to an ssh destination and the remote clone path of each
-# owner/repo, for `crew remote-run`; like localModels it is validated on the
+# owner/repo, for `crew remote-run`, plus an optional chrome flag marking the
+# host that runs the owner's browser; like localModels it is validated on the
 # merged tree and has no env var. Unlike grantRoots it is allowed from the user
 # layer: an entry only chooses where work is sent and grants the worker nothing.
 #
@@ -360,8 +364,9 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
           then [$p, "a name of letters, digits, \".\", \"_\" or \"-\" starting with a letter or digit"]
           elif ($v | type) != "object" then [$p, "an object"]
           else
-            ($v | keys[] | select(IN("ssh", "repos") | not) | [$p + [.], "one of ssh, repos"]),
+            ($v | keys[] | select(IN("ssh", "repos", "chrome") | not) | [$p + [.], "one of ssh, repos, chrome"]),
             ($v | select((.ssh | type != "string") or ((.ssh | test("\\A[A-Za-z0-9_][A-Za-z0-9._@%+-]*\\z")) | not)) | [$p + ["ssh"], "an ssh destination of letters, digits and \"._@%+-\" not starting with \"-\" (use an ~/.ssh/config alias for options)"]),
+            ($v | select(has("chrome") and ((.chrome | type) != "boolean")) | [$p + ["chrome"], "a boolean"]),
             ($v | select(has("repos") and ((.repos | type) != "object")) | [$p + ["repos"], "an object"]),
             (($v.repos | if type == "object" then to_entries[] else empty end) as {key: $r, value: $d}
               | [$p + ["repos", $r], "an owner/repo key mapped to an absolute path without control characters"]
@@ -418,6 +423,7 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["orgTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | need(["workerDeniedMcpServers"]; "an array of MCP server names (letters, digits, \"_\", \"-\")"; string_array and all(.[]; test("^[A-Za-z0-9_-]+$")))
   | need(["dispatcherChrome"]; "a boolean"; type == "boolean")
+  | need(["freshSeams"]; "a boolean"; type == "boolean")
   | need(["dispatcherMcp"]; "an object keyed owner/repo or org, each an array of claudeai, analytics or an mcpServers name";
       type == "object"
       and all(keys[]; test("^[a-z0-9][a-z0-9._-]*(/[a-z0-9._-]+)?$"))

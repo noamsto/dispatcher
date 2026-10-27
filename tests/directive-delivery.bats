@@ -160,6 +160,19 @@ cursor_file() { printf '%s\n' "$CURDIR"/*; }
   [ "$(grep -cF '"body":"stop now"' <<<"$(ctx)")" -eq 1 ]
 }
 
+@test "delivery: a pi subagent child (CREW_SUBAGENT) stays silent and consumes nothing" {
+  CREW_WORKER_ID= CREW_ROLE_ID= crew msg dispatcher:c1 "$ID" 'stop now'
+
+  CREW_SUBAGENT=1 deliver
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ ! -e "$(marks_file)" ]
+
+  # Nothing was consumed: the lead itself still gets it.
+  deliver
+  [ "$(grep -cF '"body":"stop now"' <<<"$(ctx)")" -eq 1 ]
+}
+
 @test "delivery: a body cannot close the advisory early or start a second one" {
   zwsp=$(printf '\xe2\x80\x8b')
   CREW_WORKER_ID= CREW_ROLE_ID= crew msg dispatcher:c1 "$ID" \

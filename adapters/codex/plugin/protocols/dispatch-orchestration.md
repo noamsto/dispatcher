@@ -70,10 +70,10 @@ a deliberate "I need this turn now" override, never the cheap lane. When the bud
 class before walking down a tier — burn only sets model strength, tier sets
 review depth.
 
-| Tier       | claude (worker → execute → escalate) | codex (worker → execute → escalate) | cursor (worker → execute → escalate) | pi (lead + role grid) |
-| ---------- | ------------------------------------ | ----------------------------------- | ------------------------------------ | --------------------- |
-| `deep`     | **opus** → **sonnet** / **haiku** (named-edit plan steps, never the lead) → escalated **opus**; escalate to **`claude-fable-5-1`** only as a last resort after opus @**`xhigh`** has failed on hard architecture/complex-bug work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`grok-4.7-medium`** → escalated **`grok-4.7-high`** | **`openrouter/deepseek/deepseek-v4.1-flash`** + spec-critic, plan-critic, reviewer panes |
-| `standard` | **sonnet** @**medium** / **haiku** @**medium** (fully specified, `--plan provided`) → **sonnet** / **haiku** (named-edit plan steps) → escalated **opus** @**medium**; opus stays admitted in the row as the one-rung escalation; security-adjacent work leads on **opus** @**medium** (Sonnet 5.5's safeguard fallback is Sonnet 5 with thinking disabled); UI and underspecified work lead on **sonnet** like any other standard task | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`grok-4.7-medium`** → **`grok-4.7-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** + plan-critic, reviewer panes; rotation alternatives **`openrouter/z-ai/glm-5.3-flash`**, **`openrouter/qwen/qwen3.8-flash`** |
+| Tier       | claude (worker → execute → escalate) | codex (worker → execute → escalate) | cursor (worker → execute → escalate) | pi (worker → execute → escalate) |
+| ---------- | ------------------------------------ | ----------------------------------- | ------------------------------------ | -------------------------------- |
+| `deep`     | **opus** → **sonnet** / **haiku** (named-edit plan steps, never the lead) → escalated **opus**; escalate to **`claude-fable-5-1`** only as a last resort after opus @**`xhigh`** has failed on hard architecture/complex-bug work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`grok-4.7-medium`** → escalated **`grok-4.7-high`** | **`openrouter/deepseek/deepseek-v4.1-flash`** @max → `execute` `:high` / `execute-light` `:low` → `execute-escalated` `:max`; default grid `spec-critic,plan-critic` |
+| `standard` | **sonnet** @**medium** / **haiku** @**medium** (fully specified, `--plan provided`) → **sonnet** / **haiku** (named-edit plan steps) → escalated **opus** @**medium**; opus stays admitted in the row as the one-rung escalation; security-adjacent work leads on **opus** @**medium** (Sonnet 5.5's safeguard fallback is Sonnet 5 with thinking disabled); UI and underspecified work lead on **sonnet** like any other standard task | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`grok-4.7-medium`** → **`grok-4.7-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** → `execute` `:high` / `execute-light` `:low` → `execute-escalated` `:max`; no default grid; rotation alternatives **`openrouter/z-ai/glm-5.3-flash`**, **`openrouter/qwen/qwen3.8-flash`** |
 | `trivial`  | **haiku** @**low** → escalated **sonnet** @**low** → **opus** @**low**; no delegation | **`gpt-5.6-luna`** — no delegation | **`grok-4.7-low`** — no delegation | **`openrouter/deepseek/deepseek-v4.1-flash`** — no grid; **`openrouter/deepseek/deepseek-v4-flash`** and **`openrouter/deepseek/deepseek-v4.1-flash-1017`** also accepted |
 | local      | — | — | — | ids from the `localModels` setting (trivial/standard by default) — see "Local models" |
 
@@ -81,7 +81,7 @@ On claude, haiku leads `trivial` at `low` and may lead a fully specified `standa
 
 **Haiku on claude.** Haiku 5.5 (`claude-haiku-5-5`, alias `haiku`; verified: the alias resolves to it and it accepts `low` through `max` effort, default `medium`) leads the `trivial` tier by default at `low`: `trivial` runs no critics and a failed haiku run costs one rerun, so the cheap rung is the default. It may also lead claude `standard` at `medium` when the work is bounded and fully specified — dispatched `--plan provided` with root cause or mechanism, an explicit file list, a named approach, and acceptance criteria all present — and not security-adjacent, UI, or genuinely underspecified. Otherwise sonnet leads `standard` at `medium`. A small change to a condition, guard or error path is never `trivial`: it takes this same `standard` row, haiku when fully specified and `--plan provided`, else sonnet. A failed haiku run escalates to sonnet in-row (`haiku → sonnet`) on both rows, then to opus. Haiku never leads `deep`. On claude `standard`/`deep`, an execute subagent runs `model: haiku` for a plan step whose files and edit are named (Agent `model: haiku`), and `model: sonnet` for a step that needs judgment; security or UI steps never use haiku. Haiku has no effort ceiling to enforce — it accepts every level, so the gate refuses none — so do not raise effort to compensate for a task that needs judgment; escalate the model instead.
 
-**Every `deep` row also grids by default** — claude, codex, and cursor each pick up `spec-critic,plan-critic` panes (critics only; their native code-review batch is unchanged), all on the lead's own engine and model unless `--roles` says otherwise. Pi's `deep` cell keeps its full `spec-critic,plan-critic,reviewer` grid — its `reviewer` pane is the review gate, having no native batch of its own — and only pi grids on `standard` too.
+**Every `deep` row also grids by default** — claude, codex, and cursor each pick up `spec-critic,plan-critic` panes (critics only; their native code-review batch is unchanged), all on the lead's own engine and model unless `--roles` says otherwise. Pi's `deep` cell does the same; its execute and review stages run as native `subagent` agents (the pinned extension and generated roster in `adapters/pi`).
 
 **Pi effort.** Pi's tier-typical effort is **`high` for `trivial`, `high` for `standard`,
 and `max` for `deep`** — the lever that separates pi `standard` from `deep`
@@ -96,10 +96,9 @@ generic logic, not DeepSeek-specific — so the rotation alternatives behave the
 same way: `openrouter/z-ai/glm-5.3-flash` exposes `low`/`high`/`max`, while
 `openrouter/qwen/qwen3.8-flash` carries no map and supports through `high`.
 Pi deep has no higher pi model rung: after a failed deep pi worker, the
-dispatcher re-dispatches on another engine by judgement. The same holds for
-`EVIDENCE_REVIEW.md`'s reviewer promotion, which on pi is a `reviewer` pane at
-`max` effort on a model whose thinking map exposes `max`, or on another
-engine's escalate rung (`--roles reviewer=<agent>:<model>@<effort>`). None of this needs new clamp
+dispatcher re-dispatches on another engine by judgement. `EVIDENCE_REVIEW.md`'s
+reviewer promotion is already met on pi: every pi reviewer agent runs at pi's
+escalate rung (`deepseek-v4.1-flash` `:max`). None of this needs new clamp
 machinery — every id launches with the standard ladder.
 
 Codex model ids carry a **variant suffix** — the 5.6 family ships as
@@ -152,61 +151,53 @@ against `--agent` before scaffolding — see **Model gate** below.
 **Worker-session model vs execute-subagent model.** The first model in each map
 cell is the **worker session** — it does spec / plan / reconcile / judging. The
 second is the **default execute subagent**; the third is the escalated execute
-rung for plan-tagged high-risk steps. Claude, Codex, and Cursor follow this split
+rung for plan-tagged high-risk steps. Claude, Codex, Cursor, and pi (via its `subagent` agents) follow this split
 on standard/deep (trivial does not delegate). See `WORKER_PROTOCOL.md` rule 1 (and
 the fast deterministic gate + parallel review gate it describes). `dispatch.sh`
 sets codex `agents.*` guardrails and a process-authority spawn clause only —
 never model slugs for execute subagents (those stay in this table / rule 1).
 Cursor has no CLI concurrency cap; the cap of 3 is protocol-only.
 
-The role grid is now the **default on `deep`, on every engine** — not only
-pi's. For **claude/codex/cursor** the default grid is **critics only**
-(`spec-critic,plan-critic`, no `reviewer`): those engines already run a full
-native reviewer-roster batch at the code-review gate (`WORKER_REVIEW.md` →
-"Code review gate"), and a default grid must not silently replace it — the
-grid gives them fresh out-of-process contexts for the spec/plan critics only.
-**Pi** has no native subagents at all — its `reviewer` pane **is** the review
-gate, so pi's default is unchanged: `standard` → `plan-critic,reviewer`,
-`deep` → `spec-critic,plan-critic,reviewer`. With no `--roles` given, every
-role pane inherits the lead's own agent and model (the **single-engine
-fallback**): a claude-only host still gets its critic panes, all on claude,
-and dispatch never refuses or reaches for an engine the caller didn't ask
-for. A `--review` worker has no spec/plan phase to critique, so it gets no
-critic grid: non-pi review workers get none at all (native batch and refuters),
-while a pi review worker above `trivial` defaults to `reviewer,refuter` panes —
-pi cannot fan out the reviewer batch and per-finding refuters
-`REVIEW_TASK.md` requires, and its `--no-grid` refusal covers it too. A non-pi
-`deep` dispatch under `--plan provided` also gets no default grid (nothing left
-for spec/plan critics to check). `--roles` opts into deliberate
-cross-engine review, including adding a `reviewer` pane on a non-pi lead —
-that pane is **additive**, a second opinion alongside the native batch, never
-a replacement (`reviewer=codex:gpt-5.6-sol`). `--grid`, passed explicitly,
-keeps its original meaning regardless of engine or `--plan`: the full
-tier-derived topology (`standard` → `plan-critic,reviewer`, `deep` →
-`spec-critic,plan-critic,reviewer`; on a `--review` worker `reviewer,refuter`
-for both) — only the *default* trigger is critics-only for non-pi. `--no-grid` opts back out of the default on any
-non-pi engine, and is refused for pi standard/deep — pi has no other way to
-get a fresh critic/reviewer context. `--no-grid` combined with `--grid` or
-`--roles` is a usage error.
+The role grid is now the **default on `deep`, on every engine**. The default
+grid is **critics only** (`spec-critic,plan-critic`, no `reviewer`): every
+engine runs a full native reviewer-roster batch at the code-review gate
+(`WORKER_REVIEW.md` → "Code review gate"; on pi the generated `subagent`
+roster), and a default grid must not silently replace it — the grid gives the
+lead fresh out-of-process contexts for the spec/plan critics only. With no
+`--roles` given, every role pane inherits the lead's own agent and model (the
+**single-engine fallback**): a claude-only host still gets its critic panes,
+all on claude, and dispatch never refuses or reaches for an engine the caller
+didn't ask for. A `--review` worker has no spec/plan phase to critique, so it
+gets no critic grid: native batch and refuters. A `deep` dispatch under
+`--plan provided` also gets no default grid (nothing left for spec/plan
+critics to check). `--roles` opts into deliberate cross-engine review,
+including adding a `reviewer` pane — that pane is **additive**, a second
+opinion alongside the native batch, never a replacement
+(`reviewer=codex:gpt-5.6-sol`); on pi crew's seam gate still lets that pane's
+`reject` veto. `--grid`, passed explicitly, keeps its original meaning
+regardless of engine or `--plan`: the full tier-derived topology (`standard`
+→ `plan-critic,reviewer`, `deep` → `spec-critic,plan-critic,reviewer`; on a
+`--review` worker `reviewer,refuter` for both) — only the *default* trigger is
+critics-only. `--no-grid` opts back out of the default on any engine.
+`--no-grid` combined with `--grid` or `--roles` is a usage error.
 
 `--lazy` records whichever topology resolves — explicit or the engine/tier
 default above — without creating any panes; the lead materializes each role
 with `dispatch --spawn-role <role>` at its seam and may `dispatch
 --reap-roles` when done (see `WORKER_GRID.md` → "Grid mode"). It needs no
-`--grid`/`--roles` of its own when a default already resolves one (non-pi
-`deep`, pi standard/deep) — adding `--grid` there would change the topology
-itself (adding `reviewer` on non-pi deep), not just make it lazy. **The
-default topology stays eager**: both non-pi deep default roles are used by
-any task that reaches its plan seam, so laziness only defers a one-time
-startup-read cost, not a permanent saving; pi's `reviewer` pane is its only
-review gate, so a lazy pi grid nobody spawns ships with no review at all.
+`--grid`/`--roles` of its own when a default already resolves one (`deep`) —
+adding `--grid` there would change the topology itself (adding `reviewer`), not
+just make it lazy. **The default topology stays eager**: both deep default
+roles are used by any task that reaches its plan seam, so laziness only defers
+a one-time startup-read cost, not a permanent saving.
 `--lazy` is a deliberate per-dispatch opt-in (see `DISPATCHER_PROTOCOL.md` →
 "Lazy grid"), never a default.
 
 **Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung; a same-or-higher Grok substitute for a refused next rung is not a skipped rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `grok-4.7-low → grok-4.7-medium → grok-4.7-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. A cursor Task-slug refusal takes the substitution rule in “Cursor Task-spawn slugs” first. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_EXECUTE.md` → “Bounded plan-shaped recovery”.
 
-Pi has no fresh recovery-planner role in the current topology, so a
-plan-shaped recovery on pi is an unavailable-planning block. The dispatcher
+Pi has no supported strictly-higher planning rung yet (an effort-ladder
+planning subagent is not wired), so a plan-shaped recovery on pi is an
+unavailable-planning block. The dispatcher
 must supply a replacement; the lead cannot count self-replanning as independent.
 
 **Shape-tag vocabulary.** The outcome log's `shape` field is a closed set:
@@ -367,8 +358,9 @@ with thinking off, every other rung with it on.
 
 - **Gate.** `dispatch --agent pi --model <id>` admits a local id only at the
   entry's `tiers`; `--ignore-map` overrides. Every other id is gated as before.
-  pi's OpenRouter budget gates skip a local target — it costs no OpenRouter
-  spend.
+  pi's OpenRouter budget gates skip a local target: the lead costs no
+  OpenRouter spend, but its standard/deep `subagent` agents run on hosted
+  `deepseek-v4.1-flash` and do.
 - **Probe.** Before scaffolding, `dispatch` fetches `<baseUrl>/models` (5s) and
   refuses when the endpoint is `unreachable`, `returned an HTTP error` (4xx/5xx,
   e.g. a wrong `baseUrl` path), or `did not list '<model>'`.
@@ -651,7 +643,10 @@ launch. pi and cursor have no per-launch compaction knob: pi's trigger is
 `compaction.reserveTokens` in its agent `settings.json`, and `PI_CODING_AGENT_DIR`
 *replaces* the ambient config dir (so a launch-scoped settings dir would re-seed
 auth/packages/hookyard), while the only existing pi agent-dir seeder is the
-shared worker dir — so pi is left at its engine default.
+shared worker dir — so pi is left at its engine default. The cap only bounds
+the peak; a claude or pi dispatcher also hands off to a fresh session at batch
+boundaries (`dispatcher --fresh`, `DISPATCHER_PROTOCOL.md` → "Hand off to a
+fresh session"), which keeps it near its floor.
 
 Claude and pi bake their render (`DISPATCHER_PROTOCOL.claude.md` / `.pi.md`,
 rendered from `DISPATCHER_PROTOCOL.md`) as a system prompt; codex/cursor inject
@@ -659,10 +654,18 @@ rendered from `DISPATCHER_PROTOCOL.md`) as a system prompt; codex/cursor inject
 is identical across engines; the crew-watch park primitive is not — see
 `DISPATCHER_PROTOCOL.md` → "Read the bus".
 
+## Fresh seam relaunch (worker lead)
+
+A worker lead's context only grows: by execute or review it re-reads about twice its floor every turn. With `freshSeams` (boolean, default `false`; the owner's trial switch, off ends it) or `dispatch --fresh-seams` / `--no-fresh-seams` for one dispatch, a claude or pi lead runs under `lead-launcher` and ends its session at the execute and review seams. The launcher restarts the same engine in the same pane with a new session id and a seam prompt, so worker id, crew, claim and role panes carry over; the lead resumes from `handoff.md`, `SPEC.md`, `PLAN.md` and git (`WORKER_PROTOCOL.md` → "Fresh seam relaunch").
+
+- Armed only for engine claude or pi, `kind: implement`, tier standard or deep, no `--owner-auth`, no `--host`; otherwise `dispatch: --fresh-seams not armed — <reason>` on stderr and today's launch. `--owner-auth` is never armed: the authorization lives only in the launch prompt, and a lead-triggered second session would be a new authorization path. `--host` is local-only. Armed adds `fresh_seams: true` to the task header and the `dispatch` bus event.
+- `dispatch resume` runs without the launcher and rewrites the header to `fresh_seams: false`: a resumed run keeps one session.
+- Offline read, `crew rate` doesn't carry it: `crew log <crew> | jq 'select(.kind=="dispatch" and .fresh_seams)'` for armed runs; each relaunch is a `kind:"relaunch"` row (`stage`, `engine_session`), joined to `metrics:` msgs and `dispatch` rows on `worker_id`; `scripts/context-budget.py` reads `relaunch` rows' `engine_session` only to classify post-seam sessions as worker-lead sessions; its `growth` view still counts each session as its own run.
+
 ## Three orthogonal levers
 
 - **Tier = pipeline depth (who reviews).** Driven by risk/ambiguity/blast-radius, not size. A one-line security change is still `standard`/`deep`. Pipeline depth also flexes **down** when the target repo self-reviews: a repo with an active automated PR-review gauntlet permits a light internal pass except for cross-component correctness risk, which promotes one reviewer per `EVIDENCE_REVIEW.md` (see `WORKER_REVIEW.md` → Code review gate, "Repo-aware scaling"). Targeted re-review after behavioral fixes still applies. Tier sets *planning* depth regardless — review scaling does not rewrite the spec or plan.
-- **Engine = who implements.** First run `dispatch --engines`; judge only its output per task (claude ⇄ codex ⇄ cursor ⇄ pi) — no default, and **on neutral fit rotate to the least-recently-dispatched engine** rather than drifting back to claude (see `DISPATCHER_PROTOCOL.md` engine lever). Every engine automatically gets critic panes on `deep`; pi supplies an independent OpenRouter family (DeepSeek, with Moonshot/Z.ai/Qwen alternatives) and, having no native subagents at all, additionally defaults to the grid on `standard` and keeps a `reviewer` pane as its review gate (the other three engines review natively). The other routing preferences remain in `DISPATCHER_PROTOCOL.md`.
+- **Engine = who implements.** First run `dispatch --engines`; judge only its output per task (claude ⇄ codex ⇄ cursor ⇄ pi) — no default, and **on neutral fit rotate to the least-recently-dispatched engine** rather than drifting back to claude (see `DISPATCHER_PROTOCOL.md` engine lever). Every engine automatically gets critic panes on `deep`; pi supplies an independent OpenRouter family (DeepSeek, with Moonshot/Z.ai/Qwen alternatives) and, like the others, executes and reviews through native subagents. The other routing preferences remain in `DISPATCHER_PROTOCOL.md`.
 - **Model/effort = how strong / how hard it thinks.** All engines pick the tier-appropriate model from the model map. Claude, codex, and pi have explicit effort knobs; cursor folds effort into the model id. Effort is judged separately from model strength — see `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever" for the raise/hold signals.
 
 ## MCP is no longer a routing factor
@@ -672,7 +675,7 @@ Configured engines defer MCP tool schemas, so the base stack is ~free until a to
 - **Claude** — deferred by default via tool-search (haiku is the one eager exception).
 - **Codex** — schemas deferred (baked-in `always_defer_mcp_tools`; measured ~0 token cost), and the base stack is provisioned from the same `mcp-servers.nix` source via the nix-generated `--profile worker`.
 - **Cursor** — base stack comes from the single shared `~/.cursor/mcp.json` (same `mcp-servers.nix` source); there's no per-invocation MCP-config flag, so there's no separate worker profile. The dispatch launch passes `--approve-mcps` for unattended auto-approval. Codebase **indexing is disabled** (`--disable-indexing --disable-codebase-ref`, `CURSOR_CLI_INDEXED_GREP=0`) for parity with claude/codex (read + grep, no semantic index) and to skip a merkle index build over a large monorepo — not as a stall fix. The worker runs **cursor's interactive TUI** (a bare prompt argument, no `-p`), like the claude and codex launches: it repaints as it works, so the pane stays a truthful liveness signal for the stall watchdog and legible to a human. Headless `-p` is wrong for a worker — `--output-format text` prints only the final message, so a running worker reads as a wedge (the real #103), and `stream-json` only cures that by relaying events through a formatter. `-p` is still right for one-shot consults, where stdout is the product.
-- **Interactive browser MCP servers are excluded from workers by default**, since they drive the owner's authenticated browser or a shared, locked profile. Claude: the worker-only settings layer denies them (`workerDeniedMcpServers`, default `plugin_hm_playwright`, `plugin_hm_firefox-devtools`). The one carve-out: a claude lead dispatched with `--chrome` gets Claude in Chrome (launched with `--chrome`, its `mcp__claude-in-chrome__*` deny lifted for that launch only; playwright/firefox-devtools stay denied; one live per machine; never role panes, `--host` or non-claude engines; dispatcher-only, refused from a worker or role pane; refused outright when `workerDeniedMcpServers` lists `claude-in-chrome`). Every other claude worker launch passes `--no-chrome` and denies `mcp__claude-in-chrome__*` regardless of `workerDeniedMcpServers`. `dispatcherChrome` (`programs.dispatcher.chrome`, default off) adds `--chrome` to the claude `dispatcher` launch. Codex/cursor: the owner's generated worker MCP configs omit them (codex's worker profile `shell_environment_policy` must pass both `AGENT_BROWSER_SESSION` and `AGENT_BROWSER_CONFIG`). Browser checks use `agent-browser` in the per-worktree `AGENT_BROWSER_SESSION` (branch slug plus a worktree hash) that `dispatch` and `dispatch resume` export on every launch, with `AGENT_BROWSER_CONFIG` pointing at a dispatcher-owned empty config so no repo or user agent-browser config applies; launches strip inherited `AGENT_BROWSER_*` variables that could redirect the browser (profile, CDP, auto-connect, …) (role panes share their lead's session), so parallel workers never share cookies, storage or tabs.
+- **Interactive browser MCP servers are excluded from workers by default**, since they drive the owner's authenticated browser or a shared, locked profile. Claude: the worker-only settings layer denies them (`workerDeniedMcpServers`, default `plugin_hm_playwright`, `plugin_hm_firefox-devtools`). The one carve-out: a claude lead dispatched with `--chrome` gets Claude in Chrome (launched with `--chrome`, its `mcp__claude-in-chrome__*` deny lifted for that launch only; playwright/firefox-devtools stay denied; one live per machine; never role panes or non-claude engines; `--host` only to a host with `hosts.<h>.chrome`; dispatcher-only, refused from a worker or role pane; refused outright when `workerDeniedMcpServers` lists `claude-in-chrome`). Every other claude worker launch passes `--no-chrome` and denies `mcp__claude-in-chrome__*` regardless of `workerDeniedMcpServers`. `dispatcherChrome` (`programs.dispatcher.chrome`, default off) adds `--chrome` to the claude `dispatcher` launch. Codex/cursor: the owner's generated worker MCP configs omit them (codex's worker profile `shell_environment_policy` must pass both `AGENT_BROWSER_SESSION` and `AGENT_BROWSER_CONFIG`). Browser checks use `agent-browser` in the per-worktree `AGENT_BROWSER_SESSION` (branch slug plus a worktree hash) that `dispatch` and `dispatch resume` export on every launch, with `AGENT_BROWSER_CONFIG` pointing at a dispatcher-owned empty config so no repo or user agent-browser config applies; launches strip inherited `AGENT_BROWSER_*` variables that could redirect the browser (profile, CDP, auto-connect, …) (role panes share their lead's session), so parallel workers never share cookies, storage or tabs.
 - **Pi** — uses its own global provider/tool configuration; a worker's seeded
   agent dir has no `mcp.json`, so it starts with no MCP server.
 
