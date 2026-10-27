@@ -169,6 +169,9 @@ func TestBuildRequestRefusesEnv(t *testing.T) {
 		"DISPATCH_TMUX_SESSION=other",
 		"DISPATCH_TMUX_SESSION=crew-a b",
 		"DISPATCH_EMIT_ROW=2",
+		"DISPATCH_ORIGIN_HOST=a b",
+		"DISPATCH_ORIGIN_HOST=a;b",
+		"DISPATCH_ORIGIN_HOST=-halo",
 		"DISPATCH_SESSION_ID=s1",
 		"DISPATCH_SESSION_ID=s1-2\n",
 		"CREW_IDENTITY_AVOID=a,,b",
@@ -181,7 +184,7 @@ func TestBuildRequestRefusesEnv(t *testing.T) {
 	}
 	ok := []string{
 		"CREW_ID=c_1-x", "DISPATCH_TMUX_SESSION=crew-c_1", "DISPATCH_EMIT_ROW=1",
-		"DISPATCH_SESSION_ID=s170-42", "CREW_IDENTITY_AVOID=ada,bo-b",
+		"DISPATCH_SESSION_ID=s170-42", "CREW_IDENTITY_AVOID=ada,bo-b", "DISPATCH_ORIGIN_HOST=halo",
 	}
 	if _, err := BuildRequest("/r", "a/b", []string{"dispatch"}, ok, nil); err != nil {
 		t.Fatalf("valid env refused: %v", err)

@@ -854,6 +854,9 @@ effort="${effort_flag:-$(_hdr effort)}"
 mcp_profile="${mcp_flag_val:-$(_hdr mcp)}"
 tier="$(_hdr tier)"
 crew_id="$(_hdr crew_id)"
+# Stamped at dispatch only when the owning dispatcher is on another host.
+dispatcher_host="$(_hdr dispatcher_host)"
+[[ -z $dispatcher_host || $dispatcher_host =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || dispatcher_host=""
 agent_name="$(_hdr agent_name)"
 prev_worker_id="$(_hdr worker_id)"
 grid_roles="$(_hdr roles)"
@@ -1150,6 +1153,15 @@ _args_have() {
 # the sender anchors on the pane's @crew_role and the window's stamps. The
 # watchers find the bus through git, so they rely on resume's cwd being the
 # worktree.
+# _stamp_dispatcher_host <window> — @crew_dispatcher_host from the task header.
+_stamp_dispatcher_host() {
+  if [ -n "$dispatcher_host" ]; then
+    tmux set-window-option -t "$1" @crew_dispatcher_host "$dispatcher_host"
+  else
+    tmux set-window-option -u -t "$1" @crew_dispatcher_host 2>/dev/null || true
+  fi
+}
+
 _rearm_role_panes() {
   local role_re='^[A-Za-z0-9][A-Za-z0-9._-]*$'
   local bad p role exited cmd path r_agent delivery line snapshot="" have_ps="" watched stalled
@@ -1260,6 +1272,7 @@ if [ -n "$rearm_roles" ]; then
   tmux set-window-option -t "$win" @crew_dir "$crew_dir"
   tmux set-window-option -t "$win" @crew_branch "$branch"
   tmux set-window-option -t "$win" @crew_id "$crew_id"
+  _stamp_dispatcher_host "$win"
   _rearm_role_panes
   if [ "$rearmed" -gt 0 ]; then
     echo "dispatch resume: re-armed $rearmed role pane(s) in window $win; lead not relaunched"
@@ -1506,7 +1519,7 @@ state_glyph() {
 
 # grid_lead_format — the lead pane's state-at-a-glance border.
 grid_lead_format() {
-  printf ' %s #[bold]#{@crew_name}#[nobold] lead · #{@crew_state}#{?#{==:#{@crew_source},watchdog}, (watchdog),}#{?#{@crew_detail}, · #{@crew_detail},} ' "$(state_glyph '#{@crew_color}')"
+  printf ' %s #[bold]#{@crew_name}#[nobold] lead · #{@crew_state}#{?#{==:#{@crew_source},watchdog}, (watchdog),}#{?#{@crew_detail}, · #{@crew_detail},}#{?#{@crew_dispatcher_host}, · ⇄ #{@crew_dispatcher_host},} ' "$(state_glyph '#{@crew_color}')"
 }
 
 # Identity surfaces. Re-stamped on both paths: a hand-made window carries none,
@@ -1519,6 +1532,7 @@ tmux set-window-option -t "$win" @crew_name "$agent_name"
 tmux set-window-option -t "$win" @crew_dir "$crew_dir"
 tmux set-window-option -t "$win" @crew_branch "$branch"
 tmux set-window-option -t "$win" @crew_id "$crew_id"
+_stamp_dispatcher_host "$win"
 tmux set-window-option -t "$win" @crew_color "$agent_color"
 tmux set-window-option -t "$win" pane-border-style "bg=#{@thm_bg},fg=$agent_color"
 tmux set-window-option -t "$win" pane-active-border-style "bg=#{@thm_bg},fg=$agent_color,bold"
@@ -1528,7 +1542,7 @@ if [ -n "$grid_roles" ] || [ "$(tmux show-option -wqv -t "$win" @crew_grid 2>/de
   tmux set-option -p -t "$pane" @crew_role lead 2>/dev/null || true
   tmux set-window-option -t "$win" pane-border-format "$(grid_lead_format)"
 else
-  tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold] "
+  tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold]#{?#{@crew_dispatcher_host}, · ⇄ #{@crew_dispatcher_host},} "
 fi
 
 kind="$(_hdr kind)"

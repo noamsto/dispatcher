@@ -446,6 +446,14 @@ entry only chooses where work is sent and grants the worker nothing. It merges
 per host across layers; `dispatch-config` refuses a malformed entry, naming the
 bad key. `programs.dispatcher.hosts` pins entries in the locked layer.
 
+A worker owned by a dispatcher on another machine is marked: `dispatch --host`
+passes `DISPATCH_ORIGIN_HOST=<local short host>` to the remote run, and an ad-hoc
+launch on the worker's host may set the same env (a plain hostname token, else
+refused; never guessed from `SSH_CONNECTION`). When it differs from the worker's
+own short host, `dispatch` stamps `dispatcher_host: <h>` in `WORKER_TASK.md`,
+sets the window option `@crew_dispatcher_host`, and adds ` · ⇄ <h>` to the lead's
+pane border; `dispatch resume` restamps it from the header.
+
 `repoTrackers` and `orgTrackers` say where a repo's work is tracked, as
 settings-tree keys (`{"owner/repo": "github" | "linear:TEAM"}`, case
 insensitive) rather than env vars. `dispatch` stamps that on every fresh task

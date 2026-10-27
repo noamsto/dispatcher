@@ -1885,8 +1885,15 @@ state_glyph() {
 # the bare codename (it is the occupancy join key); the marker, glyph, state and
 # phase are painted only here. A watchdog `blocked` renders `blocked (watchdog)`
 # so it is distinct from a worker's own blocked (a live question).
+# _short_host — this machine's host name without its domain.
+_short_host() {
+  local h
+  h="$(uname -n)"
+  printf '%s' "${h%%.*}"
+}
+
 grid_lead_format() {
-  printf ' %s #[bold]#{@crew_name}#[nobold] lead · #{@crew_state}#{?#{==:#{@crew_source},watchdog}, (watchdog),}#{?#{@crew_detail}, · #{@crew_detail},} ' "$(state_glyph '#{@crew_color}')"
+  printf ' %s #[bold]#{@crew_name}#[nobold] lead · #{@crew_state}#{?#{==:#{@crew_source},watchdog}, (watchdog),}#{?#{@crew_detail}, · #{@crew_detail},}#{?#{@crew_dispatcher_host}, · ⇄ #{@crew_dispatcher_host},} ' "$(state_glyph '#{@crew_color}')"
 }
 
 # publish_grid_window <window> — the grid-hint contract's window half: @crew_grid
@@ -4214,6 +4221,11 @@ _dispatch_remote() {
     fi
   done <<<"$occupied"
   run_env=(--env "CREW_ID=$crew_id" --env "DISPATCH_TMUX_SESSION=crew-$crew_id" --env DISPATCH_EMIT_ROW=1 --env "DISPATCH_SESSION_ID=$session")
+  # A cosmetic stamp must not fail the dispatch: a local name the remote would refuse is omitted.
+  origin_host="$(_short_host)"
+  if [[ $origin_host =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
+    run_env=("${run_env[@]:0:4}" --env "DISPATCH_ORIGIN_HOST=$origin_host" "${run_env[@]:4}")
+  fi
   [ "${#avoid[@]}" -eq 0 ] || run_env+=(--env "CREW_IDENTITY_AVOID=$(
     IFS=,
     echo "${avoid[*]}"
@@ -4679,6 +4691,14 @@ crew_id="${crew_id_flag:-${CREW_ID:-}}"
 # the crew's own session. The value becomes a tmux target, so its shape is fixed.
 if [ -n "${DISPATCH_TMUX_SESSION:-}" ] && [[ ! $DISPATCH_TMUX_SESSION =~ ^crew-[A-Za-z0-9_-]+$ ]]; then
   echo "dispatch: DISPATCH_TMUX_SESSION must match ^crew-[A-Za-z0-9_-]+\$ (got '$DISPATCH_TMUX_SESSION')" >&2
+  exit 1
+fi
+
+# The owning dispatcher's host, named by the caller (dispatch --host passes it,
+# an ad-hoc launch sets it). Never guessed from SSH_CONNECTION. It becomes a
+# window option and a header line, so its shape is fixed.
+if [ -n "${DISPATCH_ORIGIN_HOST:-}" ] && [[ ! $DISPATCH_ORIGIN_HOST =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
+  echo "dispatch: DISPATCH_ORIGIN_HOST must be a plain short hostname ^[A-Za-z0-9][A-Za-z0-9_-]*\$ (got '$DISPATCH_ORIGIN_HOST')" >&2
   exit 1
 fi
 
@@ -6261,6 +6281,9 @@ _resolve_lane_profile
 # empty, so dispatch-notify skips its ping.
 task_dispatcher_pane="${TMUX_PANE:-}"
 [ -z "${DISPATCH_TMUX_SESSION:-}" ] || task_dispatcher_pane=""
+# Set only when the owning dispatcher runs on another machine.
+task_dispatcher_host="${DISPATCH_ORIGIN_HOST:-}"
+[ "$task_dispatcher_host" != "$(_short_host)" ] || task_dispatcher_host=""
 {
   printf 'tier: %s\nkind: %s\ndraft: %s\nengine: %s\nmodel: %s\neffort: %s\n' \
     "$tier" "$kind" "$draft" "$agent" "$model" "$effort"
@@ -6273,6 +6296,7 @@ task_dispatcher_pane="${TMUX_PANE:-}"
   [ -n "$tracker_stamp" ] && printf 'tracker: %s\n' "$tracker_stamp"
   printf 'dispatcher_pane: %s\ncrew_dir: %s\ncrew_id: %s\nagent_name: %s\nworker_id: %s\nprotocol_dir: %s\n' \
     "$task_dispatcher_pane" "$crew_dir" "$crew_id" "$agent_name" "$worker_id" "$PROTOCOL_DIR"
+  [ -z "$task_dispatcher_host" ] || printf 'dispatcher_host: %s\n' "$task_dispatcher_host"
   if [ -n "$base_ref" ]; then
     printf 'base: %s\n' "$base_ref"
   fi
@@ -6439,6 +6463,11 @@ tmux set-window-option -t "$win" @crew_name "$agent_name"
 tmux set-window-option -t "$win" @crew_dir "$crew_dir"
 tmux set-window-option -t "$win" @crew_branch "$branch"
 tmux set-window-option -t "$win" @crew_id "$crew_id"
+if [ -n "$task_dispatcher_host" ]; then
+  tmux set-window-option -t "$win" @crew_dispatcher_host "$task_dispatcher_host"
+else
+  tmux set-window-option -u -t "$win" @crew_dispatcher_host 2>/dev/null || true
+fi
 # The localModels slot count reads this, so it is stamped for every model.
 tmux set-option -p -t "$pane" @crew_model "$model" 2>/dev/null || true
 # The --chrome holder scan reads this.
@@ -6459,7 +6488,7 @@ if [ "${#role_names[@]}" -gt 0 ]; then
   tmux set-option -p -t "$pane" @crew_detail "" 2>/dev/null || true
   tmux set-option -p -t "$pane" @crew_source "" 2>/dev/null || true
 else
-  tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold] "
+  tmux set-window-option -t "$win" pane-border-format " #[bold]#{@crew_name}#[nobold]#{?#{@crew_dispatcher_host}, · ⇄ #{@crew_dispatcher_host},} "
 fi
 
 # Deep claude workers get the read-only codex MCP for cross-model review

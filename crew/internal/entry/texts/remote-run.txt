@@ -14,7 +14,7 @@ ssh's own status (255: the ssh itself failed).
 
   --host       Host name, as in the settings
   --env        KEY=VALUE for the remote command; only CREW_ID, DISPATCH_TMUX_SESSION,
-               DISPATCH_EMIT_ROW, DISPATCH_SESSION_ID and CREW_IDENTITY_AVOID
+               DISPATCH_ORIGIN_HOST, DISPATCH_EMIT_ROW, DISPATCH_SESSION_ID and CREW_IDENTITY_AVOID
   --spec-file  A file whose text reaches the remote command as $DISPATCH_SPEC
 
   crew remote-run --host mini --env CREW_ID="$id" -- crew where lime
