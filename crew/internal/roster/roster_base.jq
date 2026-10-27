@@ -11,7 +11,7 @@
       (map(select(.crew_id==$crew and .kind=="dispatch"))
         | map({key:.branch, value:{title:(.title // null), engine:(.engine // null), model:(.model // null), tier:(.tier // null)}}) | from_entries) as $dispatch
       |
-      (map(select(.crew_id==$crew and (.kind=="dispatch" or .kind=="resume")))
+      (map(select(.crew_id==$crew and (.kind=="dispatch" or .kind=="resume" or .kind=="relaunch")))
         | group_by(.branch)
         | map({key:.[0].branch, value:(sort_by(.ts) | last | .engine_session // null)}) | from_entries) as $esess
       | map(select(.crew_id==$crew and .kind=="status"

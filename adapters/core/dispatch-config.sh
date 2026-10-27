@@ -34,6 +34,9 @@
 # (interactive browsers); it is validated on the merged tree and has no env var.
 # dispatcherChrome (boolean) launches the claude dispatcher session with
 # --chrome; it is honoured from every layer and has no env var.
+# freshSeams (boolean, default false) arms dispatch's fresh lead relaunch at
+# the execute and review seams for eligible claude/pi standard/deep implement
+# workers; dispatch --fresh-seams/--no-fresh-seams override it per dispatch.
 # dispatcherMcp maps an owner/repo or org key to the MCP opt-ins (claudeai:
 # every claude.ai connector; analytics: the generated --mcp profile; or any
 # mcpServers name) that the dispatcher launch restores for that repo; the
@@ -420,6 +423,7 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["orgTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | need(["workerDeniedMcpServers"]; "an array of MCP server names (letters, digits, \"_\", \"-\")"; string_array and all(.[]; test("^[A-Za-z0-9_-]+$")))
   | need(["dispatcherChrome"]; "a boolean"; type == "boolean")
+  | need(["freshSeams"]; "a boolean"; type == "boolean")
   | need(["dispatcherMcp"]; "an object keyed owner/repo or org, each an array of claudeai, analytics or an mcpServers name";
       type == "object"
       and all(keys[]; test("^[a-z0-9][a-z0-9._-]*(/[a-z0-9._-]+)?$"))

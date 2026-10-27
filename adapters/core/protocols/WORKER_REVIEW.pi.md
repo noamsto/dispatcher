@@ -4,7 +4,7 @@ Phase file of `WORKER_PROTOCOL.md`, binding like the core; "this protocol" and i
 
 ## Code review gate (standard/deep)
 
-Fast deterministic gate green → before `/deslop` + push, get an independent review of your diff and await it ("Gating verdicts are awaited"). Binds on every engine.
+Fast deterministic gate green → before `/deslop` + push, get an independent review of your diff and await it ("Gating verdicts are awaited"). Binds on every engine. A lead relaunched at the review seam enters here; later review→fix rounds stay in this session.
 
 - **Repo-aware scaling.** Check the target repo's config and recent PRs for automated review. Active gauntlet → fast gate, targeted test-runner, one light language pass, no diverse reviewer; else full tier-strength review. Either way cross-component correctness gets the stronger targeted review (`EVIDENCE_REVIEW.md`), required targeted re-review and the security trigger stay, and bots are no proof the current head was reviewed. Record the mode as `review_mode` in the metrics record ("When done"):
   - `full`: tier-strength or risk-promoted. `downgraded`: gauntlet repo, light, no risk promotion. `unavailable`: gate reached, a required review capability unspawnable (the unavailable-gate path below). `none`: no reviewer was due: trivial tier, or the run never reached the gate (spec/plan/consult failure, fast gate never green, stop or blocked timeout in execute); `review_high: 0`.

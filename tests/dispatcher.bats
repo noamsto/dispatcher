@@ -921,12 +921,12 @@ EOF
 }
 
 # engine_path is duplicated per launcher for the same reason; one test diffs the
-# three so a fix in one file cannot silently miss the others.
-@test "engine_path is byte-identical across the three launchers" {
+# four so a fix in one file cannot silently miss the others.
+@test "engine_path is byte-identical across the four launchers" {
   local a b f
   a="$(sed -n '/^engine_path() {/,/^}/p' "$BATS_TEST_DIRNAME/../adapters/core/dispatcher.sh")"
   [ -n "$a" ]
-  for f in dispatch dispatch-resume; do
+  for f in dispatch dispatch-resume lead-launcher; do
     b="$(sed -n '/^engine_path() {/,/^}/p' "$BATS_TEST_DIRNAME/../adapters/core/$f.sh")"
     [ -n "$b" ]
     [ "$a" = "$b" ]

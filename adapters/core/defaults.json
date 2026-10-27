@@ -383,6 +383,7 @@
   "rosterDiagram": {"autoOpen": true},
   "workerDeniedMcpServers": ["plugin_hm_playwright", "plugin_hm_firefox-devtools"],
   "dispatcherChrome": false,
+  "freshSeams": false,
   "dispatcherMcp": {},
   "mcpServers": {
     "sentry": {"url": "https://mcp.sentry.dev/mcp", "description": "Sentry issues, events and releases"},

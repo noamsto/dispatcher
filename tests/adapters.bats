@@ -69,7 +69,7 @@ teardown() {
   # any of them.
   canonical="$(grep -h '^_bus_append() {' "$ROOT/adapters/core/dispatch.sh")"
   [ -n "$canonical" ]
-  for f in dispatch-notify.sh dispatch-resume.sh; do
+  for f in dispatch-notify.sh dispatch-resume.sh lead-launcher.sh; do
     found="$(grep -h '^_bus_append() {' "$ROOT/adapters/core/$f")"
     [ "$found" = "$canonical" ]
   done

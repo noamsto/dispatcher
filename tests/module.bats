@@ -25,7 +25,7 @@ setup_file() {
   nix build --no-link --print-out-paths \
     "$root#crew" "$root#dispatch" "$root#dispatch-resume" "$root#dispatcher" \
     "$root#refresh-scores" "$root#refresh-budget" "$root#refresh-models" "$root#pr-watch" \
-    "$root#reviewer-roster" "$root#permission-check" "$root#crew-dash" \
+    "$root#reviewer-roster" "$root#permission-check" "$root#crew-dash" "$root#lead-launcher" \
     >"$BATS_FILE_TMPDIR/out-paths"
 
   # The module's own eval, through a real `lib.evalModules` (not a bare call
@@ -422,6 +422,7 @@ setup() {
     read -r OUT_REVIEWER_ROSTER
     read -r OUT_PERMISSION_CHECK
     read -r OUT_CREW_DASH
+    read -r OUT_LEAD_LAUNCHER
   } <"$BATS_FILE_TMPDIR/out-paths"
   {
     read -r OUT_MINIMAL_DISPATCH_CONFIG
@@ -436,7 +437,7 @@ setup() {
   # before any test runs. This just proves every out path came back.
   for out in "$OUT_CREW" "$OUT_DISPATCH" "$OUT_DISPATCH_RESUME" "$OUT_DISPATCHER" \
     "$OUT_REFRESH_SCORES" "$OUT_REFRESH_BUDGET" "$OUT_REFRESH_MODELS" "$OUT_PR_WATCH" \
-    "$OUT_REVIEWER_ROSTER" "$OUT_PERMISSION_CHECK" "$OUT_CREW_DASH" \
+    "$OUT_REVIEWER_ROSTER" "$OUT_PERMISSION_CHECK" "$OUT_CREW_DASH" "$OUT_LEAD_LAUNCHER" \
     "$OUT_MINIMAL_DISPATCH_CONFIG" "$OUT_MINIMAL_DISPATCH" \
     "$OUT_CODEX_DISPATCH_CONFIG" "$OUT_CODEX_DISPATCH"; do
     [ -n "$out" ]
@@ -633,7 +634,7 @@ worktree_git_lib_crew_go_row() { # bin
 # is what makes adding a runtimeInput without baking it (or the reverse) go red.
 @test "the launcher-runtime placeholder is substituted and matches each preamble" {
   local out preamble baked
-  for out in "$OUT_DISPATCHER/bin/dispatcher" "$OUT_DISPATCH_RESUME/bin/dispatch-resume" "$OUT_DISPATCH/bin/dispatch"; do
+  for out in "$OUT_DISPATCHER/bin/dispatcher" "$OUT_DISPATCH_RESUME/bin/dispatch-resume" "$OUT_DISPATCH/bin/dispatch" "$OUT_LEAD_LAUNCHER/bin/lead-launcher"; do
     run grep -c '@launcherRuntimePath@' "$out"
     [ "$output" = "0" ]
     preamble="$(sed -n 's|^export PATH="\([^"]*\):\$PATH"$|\1|p' "$out")"
@@ -642,6 +643,14 @@ worktree_git_lib_crew_go_row() { # bin
     [ -n "$baked" ]
     [ "$baked" = "$preamble" ]
   done
+}
+
+# dispatch writes lead-launcher's resolved store path into the lead's launch
+# line, so it must be on dispatch's own PATH.
+@test "dispatch's preamble carries lead-launcher" {
+  local preamble
+  preamble="$(sed -n 's|^export PATH="\([^"]*\):\$PATH"$|\1|p' "$OUT_DISPATCH/bin/dispatch")"
+  [[ ":$preamble:" == *":$OUT_LEAD_LAUNCHER/bin:"* ]]
 }
 
 # The default `local` notes ship as a repo file, baked into dispatch as a store

@@ -905,12 +905,14 @@ _assert_resume_bound() {
 
 # The lead-session helpers are duplicated for the same reason; one test diffs
 # them so a fix in one file cannot silently miss the other.
-@test "_uuid and the lead-record writers are byte-identical between dispatch.sh and dispatch-resume.sh" {
+@test "_uuid and the lead-record writers are byte-identical across dispatch.sh, dispatch-resume.sh and lead-launcher.sh" {
   for fn in _uuid _lead_record_safe _record_lead_session; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
-    b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
     [ -n "$a" ]
-    [ "$a" = "$b" ]
+    for f in dispatch-resume lead-launcher; do
+      b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/$f.sh")"
+      [ "$a" = "$b" ]
+    done
   done
 }
 
@@ -2450,6 +2452,27 @@ record_lead_for() {
   [ "$status" -eq 0 ]
   [ "$(printf '%s\n' "$output" | wc -l)" = 2 ]
   grep -qx 'resume: false' "$WT/WORKER_TASK.md"
+}
+
+@test "fresh_seams: true reads false after a resume, which runs outside the relaunch loop" {
+  setup_worker_wt 'fresh_seams: true'
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  grep -qx 'fresh_seams: false' "$WT/WORKER_TASK.md"
+  run grep -c '^fresh_seams: ' "$WT/WORKER_TASK.md"
+  [ "$output" = 1 ]
+}
+
+@test "fresh_seams: a task doc without the field gains no fresh_seams line on resume" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  run grep -c '^fresh_seams: ' "$WT/WORKER_TASK.md"
+  [ "$output" = 0 ]
 }
 
 @test "runs solo when the crew has no registered dispatcher" {

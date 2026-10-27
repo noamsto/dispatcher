@@ -1677,6 +1677,9 @@ _hdr_set worker_id "$worker_id"
 _hdr_set resume true
 _hdr_set protocol_dir "$PROTOCOL_DIR"
 _hdr_set chrome "$([ -n "$chrome" ] && echo true || echo false)"
+# The seam relaunch loop runs only under dispatch's own launch; a resumed lead
+# runs without it, so it must not try the trigger.
+[ "$(_hdr fresh_seams)" != true ] || _hdr_set fresh_seams false
 
 # Ensure WORKER_TASK.md is excluded from tracking across every worktree.
 exclude_file="${_crew_dir_real%/crew}/info/exclude"
