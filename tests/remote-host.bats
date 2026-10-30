@@ -199,6 +199,10 @@ exec 3>&-
 if [ -n "\${TMUX_PANE:-}" ] && [ "\${1:-}" = display-message ]; then
   case "\$*" in *'#{session_name}'*) echo main; exit 0 ;; esac
 fi
+if [ "\${1:-}" = show ] && [ "\${3:-}" = @remote_open_bin ]; then
+  echo "\${STUB_REMOTE_OPEN_BIN:-}"
+  exit 0
+fi
 exec "$REAL_TMUX" -f "$TMUX_CONF" "\$@"
 EOF
 
@@ -426,6 +430,60 @@ EOF
     false
   }
   grep -qx 'draft: true' "$(remote_wt "$(local_dispatch_rows | jq -r .branch)")/WORKER_TASK.md"
+}
+
+# The mirror launcher is resolved from PATH, then `og remote open`, then the
+# @remote_open_bin tmux option; the dispatch itself succeeds either way.
+# without_og — drop the PATH dirs holding a real `og`, so only stubs resolve.
+without_og() {
+  local d p=""
+  local IFS=:
+  for d in $PATH; do
+    [ -x "$d/og" ] && [ "$d" != "$STUB_DIR" ] || p="${p:+$p:}$d"
+  done
+  PATH="$p"
+  write_remote_env
+}
+
+mirror_dispatch() {
+  TMUX_PANE=%0 run --separate-stderr dispatch_remote --host mini 42 "Remote title"
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+}
+
+@test "dispatch --host mirrors via og-remote-open on PATH before og remote open" {
+  printf '#!/usr/bin/env bash\necho "og $*" >>"$OG_LOG"\n' >"$STUB_DIR/og"
+  chmod +x "$STUB_DIR/og"
+  mirror_dispatch
+  grep -qxF 'mini crew-c1 --into main' "$OG_LOG"
+  ! grep -q '^og ' "$OG_LOG"
+}
+
+@test "dispatch --host mirrors via og remote open when og-remote-open is not on PATH" {
+  rm "$STUB_DIR/og-remote-open"
+  printf '#!/usr/bin/env bash\necho "og $*" >>"$OG_LOG"\n' >"$STUB_DIR/og"
+  chmod +x "$STUB_DIR/og"
+  mirror_dispatch
+  grep -qxF 'og remote open mini crew-c1 --into main' "$OG_LOG"
+}
+
+@test "dispatch --host mirrors via the @remote_open_bin executable as the last resort" {
+  rm "$STUB_DIR/og-remote-open"
+  without_og
+  printf '#!/usr/bin/env bash\necho "opt $*" >>"$OG_LOG"\n' >"$BATS_TEST_TMPDIR/opt-launcher"
+  chmod +x "$BATS_TEST_TMPDIR/opt-launcher"
+  STUB_REMOTE_OPEN_BIN="$BATS_TEST_TMPDIR/opt-launcher" mirror_dispatch
+  grep -qxF 'opt mini crew-c1 --into main' "$OG_LOG"
+}
+
+@test "dispatch --host names every launcher source when none resolves, and still succeeds" {
+  rm "$STUB_DIR/og-remote-open"
+  without_og
+  STUB_REMOTE_OPEN_BIN="$BATS_TEST_TMPDIR/not-executable" mirror_dispatch
+  [ ! -e "$OG_LOG" ]
+  grep -qF 'remote window not mirrored (no og-remote-open launcher (PATH, og remote open, @remote_open_bin))' <<<"$stderr"
 }
 
 @test "dispatch --host --chrome reaches a host with hosts.<h>.chrome" {

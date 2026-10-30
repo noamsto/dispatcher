@@ -509,19 +509,32 @@ _check_protocol_rev() {
 # tmux session, else say how to attach. og-remote-open is idempotent, so every
 # dispatch and resume runs it. Never fails: the remote worker exists either way.
 _remote_window() {
-  local into reason
+  local into bin reason=""
+  local -a launcher=()
   if [ -z "${TMUX_PANE:-}" ]; then
     reason="not inside tmux"
-  elif ! command -v og-remote-open >/dev/null 2>&1; then
-    reason="og-remote-open not on PATH"
   else
+    # tmux-og keeps its launcher off PATH: og-remote-open, else `og remote
+    # open`, else the executable the @remote_open_bin tmux option names.
+    if command -v og-remote-open >/dev/null 2>&1; then
+      launcher=(og-remote-open)
+    elif command -v og >/dev/null 2>&1; then
+      launcher=(og remote open)
+    else
+      bin="$(tmux show -gv @remote_open_bin 2>/dev/null || true)"
+      if [ -n "$bin" ] && [ -f "$bin" ] && [ -x "$bin" ]; then launcher=("$bin"); fi
+    fi
+  fi
+  if [ -z "$reason" ] && [ "${#launcher[@]}" -eq 0 ]; then
+    reason="no og-remote-open launcher (PATH, og remote open, @remote_open_bin)"
+  elif [ -z "$reason" ]; then
     into="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)"
     if [ -z "$into" ]; then
       reason="no tmux session for $TMUX_PANE"
-    elif og-remote-open "$1" "crew-$2" --into "$into" >&2; then
+    elif "${launcher[@]}" "$1" "crew-$2" --into "$into" >&2; then
       return 0
     else
-      reason="og-remote-open failed"
+      reason="${launcher[*]} failed"
     fi
   fi
   echo "dispatch: remote window not mirrored ($reason); attach with: ssh -t $1 tmux attach -t crew-$2" >&2
