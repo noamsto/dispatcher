@@ -3,6 +3,7 @@ package wtgit
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,13 @@ func originRepo(t *testing.T) (repo, string) {
 	// The baseline is re-recorded now that the remote exists: remote.origin.url
 	// is a pair the guard reads, and Init records a baseline once.
 	if err := os.Remove(gitguard.BaselinePath(r.common)); err != nil {
+		t.Fatal(err)
+	}
+	marker, err := gitguard.ArmedPath(r.common)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer

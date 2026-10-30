@@ -109,6 +109,8 @@ seed_git_baseline() {
   local common
   common="$(git -C "${1:-$TEST_REPO}" rev-parse --path-format=absolute --git-common-dir)"
   rm -f "$common/crew/git-config-baseline"
+  # an armed repo refuses to re-record a deleted baseline
+  rm -rf "$XDG_DATA_HOME/crew/git-baseline-armed"
   # shellcheck source=/dev/null
   (. "$WORKTREE_GIT_LIB" && _wt_cfg_baseline_init "$common") 2>/dev/null
 }

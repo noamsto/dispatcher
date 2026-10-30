@@ -23,6 +23,10 @@ func Check(common, gitdir string, stderr io.Writer) error {
 func check(common, gitdir, dir string, stderr io.Writer) error {
 	file := BaselinePath(common)
 	if fi, err := os.Stat(file); err != nil || !fi.Mode().IsRegular() {
+		if armed, _ := isArmed(common); armed {
+			say(stderr, "refusing git: no git-config baseline at %s, but this repo had one — a dispatch never re-records it: run `crew git-baseline --accept` from your own terminal\n", file)
+			return ErrRefused
+		}
 		say(stderr, "refusing git: no git-config baseline at %s — the next dispatch records it, or run `crew git-baseline --accept` from your own terminal\n", file)
 		return ErrRefused
 	}
@@ -120,5 +124,5 @@ func reportDrift(gitdir, dir, file string, drift []string, bad map[string]bool, 
 			say(stderr, "refusing git: %s is not in the git-config baseline %s\n", kd, file)
 		}
 	}
-	say(stderr, "  to clear it: list drift with `crew git-baseline`, remove any key you did not set (git config --unset-all), then accept the rest from your own terminal: `crew git-baseline --accept` (deleting %s instead re-records EVERYTHING present at the next dispatch)\n", Quote(file))
+	say(stderr, "  to clear it: list drift with `crew git-baseline`, remove any key you did not set (git config --unset-all), then accept the rest from your own terminal: `crew git-baseline --accept`\n")
 }

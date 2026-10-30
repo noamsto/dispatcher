@@ -57,6 +57,10 @@ func RunBaseline(accept bool, cwd string, o BaselineOptions, stdout, stderr io.W
 			return 1
 		}
 	case !accept:
+		if armed, _ := isArmed(common); armed {
+			say(stderr, "git-config baseline %s: missing, but this repo had one — a dispatch refuses until you run `crew git-baseline --accept` from your own terminal\n", file)
+			return 1
+		}
 		say(stderr, "git-config baseline %s: none yet — the next dispatch records it, or run `crew git-baseline --accept` from your own terminal\n", file)
 		return 1
 	}
@@ -165,6 +169,10 @@ func RunBaseline(accept bool, cwd string, o BaselineOptions, stdout, stderr io.W
 	}
 
 	if err := os.MkdirAll(common+"/crew", 0o777); err != nil {
+		say(stderr, "crew: %v\n", err)
+		return 1
+	}
+	if err := arm(common); err != nil {
 		say(stderr, "crew: %v\n", err)
 		return 1
 	}

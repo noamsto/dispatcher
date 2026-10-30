@@ -483,9 +483,17 @@ rm -rq --cached . && git reset -q --hard` to re-smudge it all — in its own
     after a typed `yes`. The tty + `yes` check is a procedural gate against
     accidental or agent-initiated accepts, not an unbypassable boundary — never
     run `--accept` yourself or drive it through a pty/tmux. Deleting
-    `<git-common-dir>/crew/git-config-baseline` is the fallback; the next
-    dispatch re-records it and **accepts everything present at that moment**.
-    Trust-on-first-use: only a `dispatch` records the baseline unasked, as the
+    `<git-common-dir>/crew/git-config-baseline` is no fallback: every dispatch
+    that records or finds the baseline, and every `crew git-baseline
+    --accept`, arms a marker under
+    `${XDG_DATA_HOME:-~/.local/share}/crew/git-baseline-armed/<sha256 of the
+    common dir's realpath>`; with the marker present a missing baseline makes
+    dispatch refuse instead of re-recording; only `crew git-baseline --accept` in the human's
+    own terminal writes a fresh one. Until the marker exists the next dispatch
+    re-records it and **accepts everything present at that moment**.
+    Trust-on-first-use: only a `dispatch` records the baseline unasked, and
+    only for a repo never recorded (an existing baseline arms at the next
+    dispatch), as the
     union over the main checkout and every linked worktree's context — resume
     and reap never do, and `crew git-baseline` writes only on the human's
     `--accept`. URL-valued `branch.<n>.remote`, `branch.<n>.pushRemote` and
@@ -511,8 +519,8 @@ legacy`) only when those directories are empty; it refuses instead of
     baseline), and `--accept` refuses while any is listed: removal is the only remedy
     `crew git-baseline` offers — `--accept` never records a legacy entry (its content,
     possibly a credential, is never shown, so there is nothing for the human to
-    accept) — and deleting the baseline would re-record any legacy file present, so
-    remove the entry first. Migration:
+    accept) — and a baseline that is deleted before it was armed would re-record any
+    legacy file present, so remove the entry first. Migration:
     a baseline recorded before redirect keys were covered
     (#678) lacks the redirect marker (`#covers redirect`); until it is written
     the guard checks
@@ -535,8 +543,8 @@ legacy`) only when those directories are empty; it refuses instead of
     restore it in its config file, delete the baseline and run `crew
 git-baseline --accept` in their own terminal before any dispatch (it lists
     every guarded pair and records them on a typed
-    `yes`; it refuses while legacy entries exist) — not a re-dispatch, which would
-    re-record everything unreviewed. A legitimate change of origin's URL, a
+    `yes`; it refuses while legacy entries exist) — not a re-dispatch, which
+    refuses (the note means the baseline is armed). A legitimate change of origin's URL, a
     proxy, or a local `insteadOf` alias then refuses like any drift until the
     human accepts it (global-scope `insteadOf` aliases are unchecked, as all global config).
     Residual: the #993 commondir classification of the cwd's git dir walks to the

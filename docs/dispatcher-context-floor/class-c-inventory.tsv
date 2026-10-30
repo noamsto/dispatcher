@@ -101,8 +101,8 @@ U5.24	design-doc	a stat-dirty filtered file makes reap keep the worktree	as modi
 U5.25	kept	never run a printed --unset-all or clear drift yourself	run its printed `git config
 U5.26	design-doc	a redirect key is restored by editing its config file, never unset	baselined value or removed by editing the named config file
 U5.27	kept	only the human runs crew git-baseline --accept, in their own terminal after a typed yes; never yourself or via pty/tmux	or through a pty or tmux	crew/internal/gitguard/baseline_cmd.go	crew/internal/gitguard/baseline_cmd_test.go::TestRunBaselineAcceptNeedsTerminal
-U5.28	kept	deleting the baseline re-records everything: never do it	delete the baseline
-U5.29	design-doc	deleting the baseline accepts everything present at the next dispatch	accepts everything present at that moment
+U5.28	kept	deleting the baseline makes the next dispatch refuse once armed (before that it re-records everything): never do it	delete the baseline
+U5.29	design-doc	deleting an unarmed baseline accepts everything present at the next dispatch; an armed one refuses until the human runs --accept	accepts everything present at that moment
 U5.30	design-doc	trust on first use: only dispatch records the baseline unasked	Trust-on-first-use
 U5.31	design-doc	branch.<n>.remote/pushRemote and remote.pushDefault do not affect anchored actions	URL-valued `branch.<n>.remote`
 U5.32	design-doc	submodule.<n>.url is inert on anchored calls	`submodule.<n>.url` is inert
