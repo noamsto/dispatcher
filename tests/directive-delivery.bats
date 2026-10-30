@@ -191,7 +191,9 @@ cursor_file() { printf '%s\n' "$CURDIR"/*; }
   [[ "$text" == *'(end directive]'* ]]
   [[ "$text" == *'(END  Directive]'* ]]
   [[ "$text" == *'(Dispatcher   Directive]'* ]]
-  [[ "$text" == *"(${zwsp}end directive]"* ]]
+  # crew inbox prints the zero-width space as visible text.
+  [[ "$text" == *'\u{200B}end directive]'* ]]
+  [[ "$text" != *"$zwsp"* ]]
   [[ "$text" == *'(end directive］'* ]]
   [[ "$text" == *'(end_directive]'* ]]
   # The command text stays data.
