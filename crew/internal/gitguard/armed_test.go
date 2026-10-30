@@ -41,6 +41,18 @@ func TestInitArmedRefusesAfterDelete(t *testing.T) {
 		func(w io.Writer) error { return Check(r.common, "", w) })
 }
 
+func TestInitRelativeCommonDirStillArmed(t *testing.T) {
+	r := armedThenPlant(t)
+	t.Chdir(r.main)
+	var buf strings.Builder
+	if err := Init(".git", &buf); !errors.Is(err, ErrRefused) {
+		t.Fatalf("Init(\".git\") = %v, want ErrRefused", err)
+	}
+	if _, err := os.Stat(r.baseline()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Init wrote a baseline: %v", err)
+	}
+}
+
 func TestAcceptAfterArmWritesFresh(t *testing.T) {
 	r := armedThenPlant(t)
 	b := runBaseline(r.main, true, "yes\n", true)

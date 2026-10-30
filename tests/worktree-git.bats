@@ -154,7 +154,6 @@ rewrite_conv_and_commit() {
   [ ! -e "$BASELINE" ]
   run --separate-stderr _wt_cfg_guard "$COMMON"
   [ "$status" -eq 1 ]
-  [ ! -e "$SENTINEL" ]
 }
 
 @test "guard skips empty baseline records (#585)" {

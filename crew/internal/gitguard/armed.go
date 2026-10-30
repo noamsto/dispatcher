@@ -20,6 +20,9 @@ func armedKey(common string) (real, path string, err error) {
 	if real, err = filepath.EvalSymlinks(common); err != nil {
 		return "", "", err
 	}
+	if real, err = filepath.Abs(real); err != nil {
+		return "", "", err
+	}
 	dir := os.Getenv("XDG_DATA_HOME")
 	if dir == "" {
 		dir = filepath.Join(os.Getenv("HOME"), ".local/share")

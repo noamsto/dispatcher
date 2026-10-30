@@ -88,7 +88,8 @@ func Init(common string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	// Union runs the linked-admin pins, whose refusal names a planted commondir and must win over the armed refusal.
+	// Union runs the linked-admin pins, whose refusal names a planted commondir
+	// and must win over the armed refusal.
 	armed, err := isArmed(common)
 	if armed {
 		if err != nil {
