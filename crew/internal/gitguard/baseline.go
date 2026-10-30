@@ -61,7 +61,8 @@ func WriteBaseline(path string, recs []string) (err error) {
 
 // Init records common's baseline once, trust on first use: it never
 // overwrites one, and only adds a coverage class an older baseline lacks —
-// never exec-class pairs, which would launder drift.
+// never exec-class pairs, which would launder drift. Once common is armed, a
+// missing baseline refuses: only `crew git-baseline --accept` writes a new one.
 func Init(common string, stderr io.Writer) error {
 	if err := pinMain(common, stderr); err != nil {
 		return err
