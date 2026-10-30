@@ -192,8 +192,8 @@ split_words() { # <command>
 
 # Wrapper options whose value is the NEXT word, so it is never the command
 # (`env -u TMUX tmux`, `sudo -u me tmux`). Entries are `<wrapper>:<letter>`.
-wrapper_value_table=' env:a exec:a env:C env:u nice:n timeout:k timeout:s
-  sudo:C sudo:g sudo:h sudo:p sudo:r sudo:t sudo:T sudo:U sudo:u '
+wrapper_value_table=' env:a exec:a env:C env:u nice:n timeout:k timeout:s '
+wrapper_value_table+='sudo:C sudo:g sudo:h sudo:p sudo:r sudo:t sudo:T sudo:U sudo:u '
 
 # tmux global options that take a value.
 tmux_value_letters=LSfcT
