@@ -49,5 +49,16 @@
   {"name": "zwj-run-emoji", "in": "\ud83d\ude00\u200d\u200d\ud83d\ude00", "escaped": "\ud83d\ude00\\u{200D}\\u{200D}\ud83d\ude00", "dropped": "\ud83d\ude00\ud83d\ude00"},
   {"name": "zwj-at-end", "in": "\ud83d\ude00\u200d", "escaped": "\ud83d\ude00\\u{200D}", "dropped": "\ud83d\ude00"},
   {"name": "digit-selector-no-keycap", "in": "1\ufe0f", "escaped": "1\\u{FE0F}", "dropped": "1"},
-  {"name": "keycap-digit", "in": "1\ufe0f\u20e3", "escaped": "1\ufe0f\u20e3", "dropped": "1\ufe0f\u20e3"}
+  {"name": "keycap-digit", "in": "1\ufe0f\u20e3", "escaped": "1\ufe0f\u20e3", "dropped": "1\ufe0f\u20e3"},
+  {"name": "a-17B4-b", "in": "a\u17b4b", "escaped": "a\\u{17B4}b", "dropped": "ab"},
+  {"name": "a-17B5-b", "in": "a\u17b5b", "escaped": "a\\u{17B5}b", "dropped": "ab"},
+  {"name": "a-180B-b", "in": "a\u180bb", "escaped": "a\\u{180B}b", "dropped": "ab"},
+  {"name": "a-180D-b", "in": "a\u180db", "escaped": "a\\u{180D}b", "dropped": "ab"},
+  {"name": "a-180F-b", "in": "a\u180fb", "escaped": "a\\u{180F}b", "dropped": "ab"},
+  {"name": "a-FFF0-b", "in": "a\ufff0b", "escaped": "a\\u{FFF0}b", "dropped": "ab"},
+  {"name": "a-FFF8-b", "in": "a\ufff8b", "escaped": "a\\u{FFF8}b", "dropped": "ab"},
+  {"name": "a-E0080-b", "in": "a\udb40\udc80b", "escaped": "a\\u{E0080}b", "dropped": "ab"},
+  {"name": "a-E00FF-b", "in": "a\udb40\udcffb", "escaped": "a\\u{E00FF}b", "dropped": "ab"},
+  {"name": "a-E01F0-b", "in": "a\udb40\uddf0b", "escaped": "a\\u{E01F0}b", "dropped": "ab"},
+  {"name": "a-E0FFF-b", "in": "a\udb43\udfffb", "escaped": "a\\u{E0FFF}b", "dropped": "ab"}
 ]

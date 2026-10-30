@@ -26,7 +26,6 @@ func TestCleanText(t *testing.T) {
 		{"emoji", "🚀 ok", "🚀 ok"},
 		{"hair space kept", "a\u200ab", "a\u200ab"},
 		{"hyphen kept", "a\u2010b", "a\u2010b"},
-		{"after tag block kept", "a\U000e0080b", "a\U000e0080b"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

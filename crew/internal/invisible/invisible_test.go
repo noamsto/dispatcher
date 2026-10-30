@@ -54,7 +54,7 @@ func TestEscape(t *testing.T) {
 }
 
 func TestEscapeLeavesControlsAndPlainText(t *testing.T) {
-	for _, s := range []string{"hello", "a\tb", "a\nb", "\u200a", "\u2010", "\U000e0080", "\u061b", "\U0001f680"} {
+	for _, s := range []string{"hello", "a\tb", "a\nb", "\u200a", "\u2010", "\u061b", "\U0001f680"} {
 		if got := Escape(s); got != s {
 			t.Errorf("Escape(%q) = %q, want unchanged", s, got)
 		}
