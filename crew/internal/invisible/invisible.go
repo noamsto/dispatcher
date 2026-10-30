@@ -92,7 +92,7 @@ func hidden(rs []rune, i int) bool {
 			return true
 		}
 		prev := rs[i-1]
-		return !emojiBase(prev) && !(prev == vs16 && selectorKept(rs, i-1))
+		return !emojiBase(prev) && (prev != vs16 || !selectorKept(rs, i-1))
 	}
 	return false
 }
