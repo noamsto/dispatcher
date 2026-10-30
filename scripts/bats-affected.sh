@@ -92,6 +92,7 @@ map_file() {
   adapters/core/refresh-scores.sh) add adapters dispatch module refresh-scores ;;
   adapters/core/secret-read-guard.sh) add adapters dispatch secret-read-guard ;;
   adapters/core/test-scope-guard.sh) add adapters test-scope-guard ;;
+  adapters/core/tmux-server-guard.sh) add adapters tmux-server-guard ;;
   adapters/core/reviewers/resolve-roster.sh) add "${prompt_set[@]}" ;;
   adapters/core/commands/*.md) add adapters dispatch ;;
   adapters/core/protocols/WORKER_*.md) add "${prompt_set[@]}" crew ;;
@@ -103,7 +104,7 @@ map_file() {
   scripts/pi-subagent-contract.sh) add adapters ;;
   scripts/gen-model-map-doc.sh) add adapters model-map-doc ;;
   README.md) add adapters dispatch permission-check ;;
-  hookyard.json) add adapters crew directive-delivery phase-status public-leak-guard secret-read-guard test-scope-guard ;;
+  hookyard.json) add adapters crew directive-delivery phase-status public-leak-guard secret-read-guard test-scope-guard tmux-server-guard ;;
   crew/*) add "${crew_set[@]}" remote-host ;;
   dash/*) add module ;;
   docs/* | spikes/* | EVIDENCE-*.txt | LICENSE | .gitignore | .envrc | WORKER_TASK.md) ;;

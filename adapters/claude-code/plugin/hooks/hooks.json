@@ -27,6 +27,15 @@
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/test-scope-guard.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/tmux-server-guard.sh"
+          }
+        ]
       }
     ],
     "SessionEnd": [

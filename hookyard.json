@@ -32,6 +32,14 @@
       "timeout_ms": 4000
     },
     {
+      "id": "tmux-server-guard",
+      "exec": "adapters/core/tmux-server-guard.sh",
+      "events": ["pre_tool"],
+      "engines": ["pi"],
+      "match": ["Bash"],
+      "timeout_ms": 4000
+    },
+    {
       "id": "phase-status",
       "exec": "adapters/core/phase-status.sh",
       "events": ["post_tool"],

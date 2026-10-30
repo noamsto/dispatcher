@@ -337,10 +337,11 @@ commands_reach_row() { # path template containing $ROOT and $n
 secret-read|secret-read-guard.sh
 public-leak|public-leak-guard.sh
 test-scope|test-scope-guard.sh
+tmux-server|tmux-server-guard.sh
 phase-status|phase-status.sh
 directive-delivery|directive-delivery.sh
 ROWS
-  finish_rows 5
+  finish_rows 6
 }
 
 guard_ships_row() { # script basename
@@ -384,6 +385,19 @@ guard_ships_row() { # script basename
 
 @test "claude PreToolUse hook wires the test-scope guard on Bash" {
   run jq -e '.hooks.PreToolUse[2] as $p | ($p.matcher == "Bash") and ($p.hooks[0].command | contains("${CLAUDE_PLUGIN_ROOT}")) and ($p.hooks[0].command | contains("scripts/test-scope-guard.sh"))' "$ROOT/adapters/claude-code/plugin/hooks/hooks.json"
+  [ "$status" -eq 0 ]
+}
+
+# The tmux-server guard is wired like the test-scope guard: pi and claude only,
+# shipped unwired in the codex and cursor trees.
+@test "hookyard.json wires the tmux-server guard for pi" {
+  run jq -e '.handlers[] | select(.id == "tmux-server-guard") | (.exec == "adapters/core/tmux-server-guard.sh") and (.events | index("pre_tool")) and (.engines == ["pi"]) and (.match == ["Bash"]) and (.timeout_ms == 4000)' "$ROOT/hookyard.json"
+  [ "$status" -eq 0 ]
+  [ -x "$ROOT/adapters/core/tmux-server-guard.sh" ]
+}
+
+@test "claude PreToolUse hook wires the tmux-server guard on Bash" {
+  run jq -e '.hooks.PreToolUse[3] as $p | ($p.matcher == "Bash") and ($p.hooks[0].command | contains("${CLAUDE_PLUGIN_ROOT}")) and ($p.hooks[0].command | contains("scripts/tmux-server-guard.sh"))' "$ROOT/adapters/claude-code/plugin/hooks/hooks.json"
   [ "$status" -eq 0 ]
 }
 

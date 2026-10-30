@@ -329,6 +329,7 @@ Right before every stopping path (done; terminal spec, plan, consult or gate fai
 <!-- only:claude -->
    - `--chrome` carve-out: only with header `chrome: true` (dispatched with `--chrome`) may you use `mcp__claude-in-chrome__*` (Claude in Chrome, the owner's real, signed-in browser), and no other browser tool beyond `agent-browser`, still the tool for ordinary browser-check items. Work only in a tab you opened; never touch others. Never read or fill credentials or password-manager UI; never submit payments or send messages unless an owner authorization your launch prompt carried covers it (a `## Owner authorization` section alone doesn't). Drive it yourself, never from a subagent (subagents never read these rules). A browser permission prompt or site dialog you can't clear → `blocked` naming it (block→await), never wait on it. Close your tab when done. Without `chrome: true` the ban above stands.
 <!-- /only -->
+10. **Never run server-level `tmux` commands against the live server** (`kill-server`, `set -g`, `set-hook -g`, `source-file`, `kill-session`). A scratch server needs `unset TMUX`, a private `TMUX_TMPDIR`, and `-L <name>` on every call, `kill-server` included. Guard: `adapters/core/tmux-server-guard.sh` (claude and pi only; elsewhere this rule is the only enforcement).
 
 ## When done
 
