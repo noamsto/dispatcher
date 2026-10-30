@@ -43,6 +43,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
@@ -702,7 +703,7 @@ func (l *loop) afterWatch(rc int, sigs chan os.Signal) os.Signal {
 	}
 	// The inner watch failed. Its own stderr stays in the file, or it would put
 	// prose next to the JSON event stream.
-	detail := firstLine(l.errf)
+	detail := invisible.Escape(firstLine(l.errf))
 	ts := l.nowMS()
 	if l.sup.repeat("watch", fmt.Sprintf("%d:%s", rc, digitsToN(detail)), ts, l.heartbeatMS()) {
 		l.emit(errorLine{
@@ -735,7 +736,7 @@ func (l *loop) afterWatch(rc int, sigs chan os.Signal) os.Signal {
 func (l *loop) holdDue() {
 	out, rc := l.procs.run([]string{"hold", "due", "--crew", l.c.crew, "--json"}, l.holderr)
 	if rc > holdDueNone {
-		detail := firstLine(l.holderr)
+		detail := invisible.Escape(firstLine(l.holderr))
 		ts := l.nowMS()
 		if l.sup.repeat("holderr", fmt.Sprintf("%d:%s", rc, digitsToN(detail)), ts, l.heartbeatMS()) {
 			l.emit(errorLine{
@@ -821,7 +822,7 @@ func (l *loop) writeReapLines(r *reapRun) {
 			Stream: "error",
 			Crew:   l.c.crew,
 			RC:     int64(r.code),
-			Detail: "reap: " + firstLine(r.errf),
+			Detail: "reap: " + invisible.Escape(firstLine(r.errf)),
 			TS:     r.ts,
 		})
 	}
@@ -976,7 +977,7 @@ func reapLines(out string) []string {
 		if line == "" {
 			continue
 		}
-		lines = append(lines, strings.TrimPrefix(line, "crew reap: "))
+		lines = append(lines, invisible.Escape(strings.TrimPrefix(line, "crew reap: ")))
 	}
 	return lines
 }

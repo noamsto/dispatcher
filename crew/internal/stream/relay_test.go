@@ -305,6 +305,29 @@ func TestRelayDoneBatchTriggersRemoteReap(t *testing.T) {
 	}
 }
 
+func TestRelayReapEscapesInvisibleRunes(t *testing.T) {
+	p := relayBus(t)
+	self, dir := relayStub(t)
+	writeFile(t, filepath.Join(dir, "relay.1"), printThenSleep(doneBatch))
+	writeFile(t, filepath.Join(dir, "reap"), "echo 'crew reap: x\U000E0041y a\uFE00'\necho 'boom \U000E0041 a\uFE00' >&2\nexit 1\n")
+	s := startStream(t, p, self, Request{ReapEvery: "3600"}, fastRelay())
+
+	waitFor(t, "the reap and error lines", func() bool {
+		return line(s.lines(), isStream("reap")) != nil && line(s.lines(), isStream("error")) != nil
+	})
+	if out := s.out.str(); invisible.Has(out) {
+		t.Errorf("stdout carries a raw invisible rune: %q", out)
+	}
+	if got := reapLineText(t, line(s.lines(), isStream("reap"))); !strings.Contains(got, `\u{E0041}`) || !strings.Contains(got, `a\u{FE00}`) {
+		t.Errorf("reap lines = %q, want the runes escaped", got)
+	}
+	e := line(s.lines(), isStream("error"))
+	d, _ := e["detail"].(string)
+	if e["host"] != "mini" || !strings.Contains(d, `\u{E0041}`) || !strings.Contains(d, `a\u{FE00}`) {
+		t.Errorf("error = %v, want host and escaped detail", e)
+	}
+}
+
 func TestRelayReapEveryZeroReapsNothing(t *testing.T) {
 	p := relayBus(t)
 	self, dir := relayStub(t)
@@ -487,7 +510,7 @@ func TestRelayEscapesInvisibleRunesFromOlderRemotes(t *testing.T) {
 
 	waitFor(t, "the relayed batch", func() bool { return line(s.lines(), isRelayed) != nil })
 	out := s.out.str()
-	if strings.ContainsFunc(out, invisible.Is) {
+	if invisible.Has(out) {
 		t.Errorf("stdout carries a raw invisible rune: %q", out)
 	}
 	b := line(s.lines(), isRelayed)

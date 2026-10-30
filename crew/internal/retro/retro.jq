@@ -7,8 +7,8 @@
 # `join("\n")` and `--report --json` emits one object. The Go caller adds the one
 # trailing newline, and prints nothing for the empty string, which is only ever
 # zero rows: a @tsv row always carries its five tabs. The plan-seam evidence
-# rule for plan_required_unaudited is new since the Go port, not in the bash
-# original.
+# rule for plan_required_unaudited and `clean`'s Go-defined `_invisible_drop`
+# are new since the Go port, not in the bash original.
 
     # unique_by would sort, and both the tag list on a row and the note order
     # within a run are read in first-appearance order.
@@ -34,12 +34,12 @@
     # Tags and details are agent-authored free text, and a gate_thrash detail
     # quotes arbitrary source and command output. Tab/newline/CR become a space
     # so a padded row keeps its columns; the rest go, because a raw ESC
-    # repaints the table — one note can erase or forge the row above it — and
-    # the bidi overrides let a string misrepresent itself in place; models read
-    # tag and zero-width characters that terminals hide.
+    # repaints the table — one note can erase or forge the row above it. The
+    # invisible set lives in Go's internal/invisible, emoji-safe.
     def clean:
       gsub("[\t\n\r]"; " ")
-      | gsub("[\\x00-\\x1f\\x7f\\x{0080}-\\x{009f}\\x{061c}\\x{180e}\\x{200b}-\\x{200f}\\x{202a}-\\x{202e}\\x{2060}-\\x{2064}\\x{2066}-\\x{2069}\\x{feff}\\x{e0000}-\\x{e007f}]"; "");
+      | gsub("[\\x00-\\x1f\\x7f\\x{0080}-\\x{009f}]"; "")
+      | _invisible_drop;
     def sample: clean | if length > 60 then (.[0:60] + "…") else . end;
     def pad_row($cells; $widths; $left):
       # A right-aligned column pads before its value, so only a left-aligned

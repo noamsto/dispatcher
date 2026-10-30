@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 )
 
 // reapLineText is one `reap` line's `lines` array joined.
@@ -196,6 +198,33 @@ func TestStreamFailingReapIsOneErrorLine(t *testing.T) {
 	d, _ := line["detail"].(string)
 	if !strings.HasPrefix(d, "reap: ") || !strings.Contains(d, "possible tampering") {
 		t.Errorf("detail = %q, want the child's stderr attributed to the reap", d)
+	}
+}
+
+// A reap child's text is worker-influenced: the invisible runes in it reach
+// the `reap` line and the `error` detail escaped, never raw.
+func TestStreamReapEscapesInvisibleRunes(t *testing.T) {
+	p := streamBus(t)
+	clk := &fakeClock{}
+	s := entryStub(t, map[string]string{
+		"watch": parkedWatch("0"),
+		"reap": "echo 'crew reap: x\U000E0041y a\uFE00'\n" +
+			"echo 'boom \U000E0041 a\uFE00' >&2\nexit 1",
+	})
+	l := startLane(t, p, s, Request{ReapEvery: "1", Heartbeat: "3600"}, laneOpts{Clock: clockNow(clk)})
+
+	clk.advance(2 * time.Second)
+	l.parkUntil("the failing reap", func() bool { return len(l.ofKind("error")) >= 1 && len(l.ofKind("reap")) >= 1 })
+
+	if out := l.raw(); invisible.Has(out) {
+		t.Errorf("stdout carries a raw invisible rune: %q", out)
+	}
+	if got := reapLineText(t, l.ofKind("reap")[0]); !strings.Contains(got, `\u{E0041}`) || !strings.Contains(got, `a\u{FE00}`) {
+		t.Errorf("reap lines = %q, want the runes escaped", got)
+	}
+	d, _ := l.ofKind("error")[0]["detail"].(string)
+	if !strings.Contains(d, `\u{E0041}`) || !strings.Contains(d, `a\u{FE00}`) {
+		t.Errorf("detail = %q, want the runes escaped", d)
 	}
 }
 

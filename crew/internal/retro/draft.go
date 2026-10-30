@@ -12,6 +12,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 )
 
 // The draft keeps the shape the dispatcher's own session_summary notes have, so
@@ -123,7 +124,7 @@ func draft(crew string, all bool, events []bus.Event, o Options, stdout, stderr 
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
-	if err := enc.Encode(note{Seam: summarySeam, Tag: summaryTag, Detail: strings.Join(parts, "; ")}); err != nil {
+	if err := enc.Encode(note{Seam: summarySeam, Tag: summaryTag, Detail: invisible.Escape(strings.Join(parts, "; "))}); err != nil {
 		say(stderr, "crew: retro: %v\n", err)
 		return exitFailure
 	}

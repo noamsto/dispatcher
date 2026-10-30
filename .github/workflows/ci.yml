@@ -28,7 +28,7 @@ jobs:
       # names those guards so the log shows them running; the flake build runs
       # the same tests unrequired, because its sandbox holds only ./crew.
       - name: go test (crew, drift guards required)
-        run: nix develop -c sh -c 'cd crew && CREW_DRIFT_REQUIRED=1 go test ./... && CREW_DRIFT_REQUIRED=1 go test -count=1 -v -run "TestDriftAgainstBash|TestRowsMatchBash|TestGoldenOracle|TestPoolsAreGolden|TestEngineCommandsMatchLocalModels|TestBurnTableOracle|TestSweepCostIsWeightTimesWallClock|TestShReal" ./internal/frame ./internal/identity ./internal/roster ./internal/stall ./internal/stall/probe ./internal/rate'
+        run: nix develop -c sh -c 'cd crew && CREW_DRIFT_REQUIRED=1 go test ./... && CREW_DRIFT_REQUIRED=1 go test -count=1 -v -run "TestDriftAgainstBash|TestRowsMatchBash|TestGoldenOracle|TestPoolsAreGolden|TestEngineCommandsMatchLocalModels|TestBurnTableOracle|TestSweepCostIsWeightTimesWallClock|TestShReal|TestDashFixtureMatches" ./internal/frame ./internal/identity ./internal/roster ./internal/stall ./internal/stall/probe ./internal/rate ./internal/invisible'
       - name: adapters are in sync
         run: |
           nix develop -c ./scripts/gen-adapters.sh

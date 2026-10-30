@@ -195,7 +195,7 @@ type root struct {
 	Crews      crewsCmd      `cmd:"" name:"crews" help:"This repo's crews."`
 	Register   registerCmd   `cmd:"" name:"register" help:"Claim this crew directory."`
 	Deregister deregisterCmd `cmd:"" name:"deregister" help:"Release this crew directory."`
-	Log        logCmd        `cmd:"" name:"log" help:"The crew's bus rows."`
+	Log        logCmd        `cmd:"" name:"log" help:"The crew's bus rows, invisible code points escaped (the bus log stays raw)."`
 	Sessions   sessionsCmd   `cmd:"" name:"sessions" help:"A branch's sessions."`
 	Inbox      inboxCmd      `cmd:"" name:"inbox" help:"Msgs addressed to one agent."`
 
@@ -965,7 +965,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		v = merged
 	}
 
-	if sub == "roster" {
+	if sub == "roster" || sub == "sessions" {
 		v = invisible.Value(v)
 	}
 	if err := jsonval.Encode(out, v, pretty); err != nil {

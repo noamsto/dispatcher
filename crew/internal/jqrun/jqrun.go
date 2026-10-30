@@ -38,6 +38,19 @@ func WithJQFromJSON() Option {
 	})}
 }
 
+// WithStringFunc defines the 0-arity jq function name as f applied to string
+// input, for a transform Go owns rather than a jq regex. Non-string input is an
+// error.
+func WithStringFunc(name string, f func(string) string) Option {
+	return Option{gojq.WithFunction(name, 0, 0, func(v any, _ []any) any {
+		s, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("%s cannot be applied to %v", name, v)
+		}
+		return f(s)
+	})}
+}
+
 // FromJSON decodes s as exactly one JSON text with json.Number literals,
 // skipping a leading byte order mark as jq's fromjson does. A Go caller
 // classifying text a fold also reads must call it: encoding/json's float64 path
