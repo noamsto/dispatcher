@@ -67,7 +67,7 @@ func TestCheckCwdOwnConfigWorktreeDrift(t *testing.T) {
 	run(t, wt, "config", "--worktree", "core.pager", "less")
 	cfg := Quote(admin + "/config.worktree")
 	wantRefusal(t, "refusing git: core.pager (from "+cfg+") is not in the git-config baseline "+r.baseline()+"\n"+
-		"  remove it: git config --file "+cfg+" --unset-all core.pager\n"+clearHint(r.baseline()),
+		"  remove it: git config --file "+cfg+" --unset-all core.pager\n"+clearHint(),
 		func(w io.Writer) error { return CheckCwd(r.common, wt, w) })
 }
 
@@ -86,7 +86,7 @@ func TestCheckCwdUnresolvableOwn(t *testing.T) {
 	}
 	// The common check runs first and, refusing, hides git's error as bash did.
 	mustDo(t, os.Remove(r.baseline()))
-	wantRefusal(t, "refusing git: no git-config baseline at "+r.baseline()+" — the next dispatch records it, or run `crew git-baseline --accept` from your own terminal\n",
+	wantRefusal(t, "refusing git: no git-config baseline at "+r.baseline()+", but this repo had one — a dispatch never re-records it: run `crew git-baseline --accept` from your own terminal\n",
 		func(w io.Writer) error { return CheckCwd(r.common, outside, w) })
 }
 

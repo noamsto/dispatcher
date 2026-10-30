@@ -221,6 +221,13 @@ func (f *fx) setOriginURL(url string) {
 	if err := os.Remove(gitguard.BaselinePath(f.paths.Common)); err != nil {
 		f.t.Fatal(err)
 	}
+	marker, err := gitguard.ArmedPath(f.paths.Common)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.Remove(marker); err != nil && !errors.Is(err, os.ErrNotExist) {
+		f.t.Fatal(err)
+	}
 	var stderr strings.Builder
 	if err := gitguard.Init(f.paths.Common, &stderr); err != nil {
 		f.t.Fatalf("gitguard.Init: %v\n%s", err, stderr.String())

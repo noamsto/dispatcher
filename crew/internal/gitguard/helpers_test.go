@@ -20,6 +20,7 @@ func gitEnv(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", root)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	return root
@@ -77,10 +78,14 @@ func (r repo) init(t *testing.T) {
 
 // reseed re-records the baseline from the current config the way a dispatch's
 // entry guard does (the bats fixture's seed_git_baseline): Init never
-// overwrites, so the file goes first.
+// overwrites, and an armed repo refuses a missing baseline, so the file and
+// its marker go first.
 func (r repo) reseed(t *testing.T) {
 	t.Helper()
 	_ = os.Remove(r.baseline())
+	if p, err := ArmedPath(r.common); err == nil {
+		_ = os.Remove(p)
+	}
 	r.init(t)
 }
 
@@ -171,8 +176,8 @@ func predatesNote(file string) string {
 	return "git-config baseline " + file + " predates redirect-key coverage — the next dispatch records the redirect keys present then, or --accept does\n"
 }
 
-func clearHint(file string) string {
-	return "  to clear it: list drift with `crew git-baseline`, remove any key you did not set (git config --unset-all), then accept the rest from your own terminal: `crew git-baseline --accept` (deleting " + Quote(file) + " instead re-records EVERYTHING present at the next dispatch)\n"
+func clearHint() string {
+	return "  to clear it: list drift with `crew git-baseline`, remove any key you did not set (git config --unset-all), then accept the rest from your own terminal: `crew git-baseline --accept`\n"
 }
 
 // sha8 is the 8-hex fingerprint the baseline note prints after a masked value.
@@ -182,5 +187,5 @@ func sha8(s string) string {
 }
 
 func noteHint(file string) string {
-	return "  human: check each value above is yours — a planted one stays trusted: restore it in its config file, delete " + Quote(file) + ", then run `crew git-baseline --accept` in your own terminal before any dispatch (a dispatch first re-records EVERYTHING present)\n"
+	return "  human: check each value above is yours — a planted one stays trusted: restore it in its config file, then rebuild the baseline from your own terminal before any dispatch: move " + Quote(file) + " aside and run `crew git-baseline --accept` (dispatch refuses until you do)\n"
 }

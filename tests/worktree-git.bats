@@ -137,23 +137,24 @@ rewrite_conv_and_commit() {
   [[ $stderr == *"--unset-all filter.x.clean"* ]]
   [[ $stderr == *"list drift with \`crew git-baseline\`"* ]]
   [[ $stderr == *"crew git-baseline --accept"* ]]
-  [[ $stderr == *"deleting $BASELINE instead"* ]]
+  [[ $stderr != *"deleting $BASELINE instead"* ]]
   [[ $stderr != *planted-value* ]]
 }
 
-@test "deleting the baseline is the recovery: the next dispatch re-records and the guard passes (#557)" {
+@test "deleting an armed baseline does not re-record: init refuses and the guard keeps refusing (#1334)" {
   _wt_cfg_baseline_init "$COMMON"
-  git config filter.x.clean cat
-  run --separate-stderr _wt_cfg_guard "$COMMON"
-  [ "$status" -eq 1 ]
-  [[ $stderr == *"deleting $BASELINE instead"* ]]
+  git config core.fsmonitor "$HIT"
   rm "$BASELINE"
   run --separate-stderr _wt_cfg_guard "$COMMON"
   [ "$status" -eq 1 ]
-  [[ $stderr == *"no git-config baseline at $BASELINE — the next dispatch records it"* ]]
-  _wt_cfg_baseline_init "$COMMON"
-  grep -q filter.x.clean "$BASELINE"
-  _wt_cfg_guard "$COMMON"
+  [[ $stderr == *"but this repo had one"* ]]
+  run --separate-stderr _wt_cfg_baseline_init "$COMMON"
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"crew git-baseline --accept"* ]]
+  [ ! -e "$BASELINE" ]
+  run --separate-stderr _wt_cfg_guard "$COMMON"
+  [ "$status" -eq 1 ]
+  [ ! -e "$SENTINEL" ]
 }
 
 @test "guard skips empty baseline records (#585)" {
@@ -242,6 +243,7 @@ hookspath_abs() { printf '%s/hooks' "$(git -C "${1:-.}" rev-parse --path-format=
     [[ $stderr == *core.hookspath* ]]
   done
   rm -f "$BASELINE"
+  rm -rf "$XDG_DATA_HOME/crew/git-baseline-armed"
   git config core.hooksPath "$(realpath "$TEST_REPO")/.husky"
   _wt_cfg_baseline_init "$COMMON"
   git config core.hooksPath .husky

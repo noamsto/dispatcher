@@ -69,17 +69,15 @@ func Init(common string, stderr io.Writer) error {
 	file := BaselinePath(common)
 	fi, err := os.Lstat(file)
 	switch {
-	case err == nil && fi.Mode()&fs.ModeSymlink != 0:
-		return nil
 	case err == nil:
+		if err := arm(common); err != nil {
+			return err
+		}
 		if !fi.Mode().IsRegular() {
 			return nil
 		}
 		return migrate(common, file, stderr)
 	case !errors.Is(err, fs.ErrNotExist):
-		return err
-	}
-	if err := os.MkdirAll(common+"/crew", 0o777); err != nil {
 		return err
 	}
 	union, err := Union(common, stderr)
@@ -90,6 +88,19 @@ func Init(common string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Union runs the linked-admin pins, whose refusal names a planted commondir and must win over the armed refusal.
+	armed, err := isArmed(common)
+	if armed {
+		if err != nil {
+			return err
+		}
+		marker, _ := ArmedPath(common)
+		say(stderr, "refusing git-config baseline: %s is missing, but this repo had one (armed at %s) — a dispatch never re-records it: inspect the git config, then run `crew git-baseline --accept` from your own terminal\n", file, marker)
+		return ErrRefused
+	}
+	if err := os.MkdirAll(common+"/crew", 0o777); err != nil {
+		return err
+	}
 	recs := append(union, RedirectMark, LegacyMark)
 	for _, rec := range LegacyRecords(common) {
 		if _, kind, _, _ := legacyFields(rec); kind == "file" {
@@ -97,6 +108,9 @@ func Init(common string, stderr io.Writer) error {
 		}
 	}
 	recs = sortUnique(recs)
+	if err := arm(common); err != nil {
+		return err
+	}
 	if err := WriteBaseline(file, recs); err != nil {
 		return err
 	}
@@ -186,7 +200,7 @@ func noteKeys(stderr io.Writer, file, what string, recs, aliases []string) {
 		shown = true
 	}
 	if shown {
-		say(stderr, "  human: check each value above is yours — a planted one stays trusted: restore it in its config file, delete %s, then run `crew git-baseline --accept` in your own terminal before any dispatch (a dispatch first re-records EVERYTHING present)\n", Quote(file))
+		say(stderr, "  human: check each value above is yours — a planted one stays trusted: restore it in its config file, then rebuild the baseline from your own terminal before any dispatch: move %s aside and run `crew git-baseline --accept` (dispatch refuses until you do)\n", Quote(file))
 	}
 }
 

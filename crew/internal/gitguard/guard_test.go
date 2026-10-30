@@ -32,7 +32,7 @@ func TestCheckExecDrift(t *testing.T) {
 	r.config(t, "core.pager", "less")
 	cfg := Quote(r.common + "/config")
 	wantRefusal(t, "refusing git: core.pager (from "+cfg+") is not in the git-config baseline "+r.baseline()+"\n"+
-		"  remove it: git config --file "+cfg+" --unset-all core.pager\n"+clearHint(r.baseline()), checkRepo(r))
+		"  remove it: git config --file "+cfg+" --unset-all core.pager\n"+clearHint(), checkRepo(r))
 }
 
 func TestCheckRedirectDriftHintsEdit(t *testing.T) {
@@ -42,7 +42,7 @@ func TestCheckRedirectDriftHintsEdit(t *testing.T) {
 	r.config(t, "remote.origin.url", "https://example.com/b.git")
 	cfg := Quote(r.common + "/config")
 	wantRefusal(t, "refusing git: remote.origin.url (from "+cfg+") is not in the git-config baseline "+r.baseline()+"\n"+
-		"  restore the baselined value or remove it: edit "+cfg+"\n"+clearHint(r.baseline()), checkRepo(r))
+		"  restore the baselined value or remove it: edit "+cfg+"\n"+clearHint(), checkRepo(r))
 }
 
 func TestCheckMaskedKeyHintsEdit(t *testing.T) {
@@ -53,7 +53,7 @@ func TestCheckMaskedKeyHintsEdit(t *testing.T) {
 	cfg := Quote(r.common + "/config")
 	kd := ShowKey("credential.https://u:tok@example.com.helper")
 	wantRefusal(t, "refusing git: "+kd+" (from "+cfg+") is not in the git-config baseline "+r.baseline()+"\n"+
-		"  restore the baselined value or remove it: edit "+cfg+"\n"+clearHint(r.baseline()), checkRepo(r))
+		"  restore the baselined value or remove it: edit "+cfg+"\n"+clearHint(), checkRepo(r))
 }
 
 func TestCheckIncludeOrigin(t *testing.T) {
@@ -66,7 +66,7 @@ func TestCheckIncludeOrigin(t *testing.T) {
 	wantRefusal(t, "refusing git: core.pager (from "+Quote(inc)+") is not in the git-config baseline "+r.baseline()+"\n"+
 		"  remove it: git config --file "+Quote(inc)+" --unset-all core.pager\n"+
 		"refusing git: include.path (from "+cfg+") is not in the git-config baseline "+r.baseline()+"\n"+
-		"  remove it: git config --file "+cfg+" --unset-all include.path\n"+clearHint(r.baseline()), checkRepo(r))
+		"  remove it: git config --file "+cfg+" --unset-all include.path\n"+clearHint(), checkRepo(r))
 }
 
 func TestCheckUnknownOrigin(t *testing.T) {
@@ -74,7 +74,7 @@ func TestCheckUnknownOrigin(t *testing.T) {
 	r.init(t)
 	r.config(t, "core.pager", "less")
 	shimGit(t, "--show-origin")
-	wantRefusal(t, "refusing git: core.pager is not in the git-config baseline "+r.baseline()+"\n"+clearHint(r.baseline()), checkRepo(r))
+	wantRefusal(t, "refusing git: core.pager is not in the git-config baseline "+r.baseline()+"\n"+clearHint(), checkRepo(r))
 }
 
 func TestCheckValuelessKey(t *testing.T) {
@@ -88,7 +88,7 @@ func TestCheckValuelessKey(t *testing.T) {
 	_ = f.Close()
 	cfg := Quote(r.common + "/config")
 	wantRefusal(t, "refusing git: core.fsmonitor (from "+cfg+") is not in the git-config baseline "+r.baseline()+"\n"+
-		"  remove it: git config --file "+cfg+" --unset-all core.fsmonitor\n"+clearHint(r.baseline()), checkRepo(r))
+		"  remove it: git config --file "+cfg+" --unset-all core.fsmonitor\n"+clearHint(), checkRepo(r))
 }
 
 func TestCheckSkipsEmptyRecords(t *testing.T) {
@@ -106,7 +106,7 @@ func TestCheckPre678SkipsRedirectDrift(t *testing.T) {
 	r.config(t, "core.pager", "less")
 	cfg := Quote(r.common + "/config")
 	wantRefusal(t, "refusing git: core.pager (from "+cfg+") is not in the git-config baseline "+r.baseline()+"\n"+
-		"  remove it: git config --file "+cfg+" --unset-all core.pager\n"+clearHint(r.baseline()), checkRepo(r))
+		"  remove it: git config --file "+cfg+" --unset-all core.pager\n"+clearHint(), checkRepo(r))
 }
 
 func TestCheckCannotList(t *testing.T) {
