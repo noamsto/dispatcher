@@ -335,3 +335,40 @@ func TestPeerMsgAnnouncedOnceWhenSeenWontWrite(t *testing.T) {
 		t.Errorf("error lines = %v, want the one seen write failure", errs)
 	}
 }
+
+// A stored body that somehow holds a hidden code point (Admit refuses one) is
+// still printed escaped.
+func TestPeerMsgEscapesInvisible(t *testing.T) {
+	_, halo := peerPair(t)
+	store := peer.StoreFor(halo.paths)
+	if err := os.MkdirAll(store.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"peer":"mbp","seq":1,"row":{"ts":5,"crew_id":"c1","kind":"msg","from":"dispatcher:c1\u200b","to":"peer:halo","body":"a\u200bb"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(store.Dir, "mbp.jsonl"), []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	l := peerLane(t, halo, peerHooks{hosts: noPeers, wake: 20 * time.Millisecond})
+	l.waitKind("peer_msg", 1)
+	got := l.ofKind("peer_msg")[0]
+	if got["body"] != `a\u{200B}b` || got["from"] != `dispatcher:c1\u{200B}` {
+		t.Errorf("peer_msg = %v", got)
+	}
+}
+
+func TestPeerErrorDetailEscapesInvisible(t *testing.T) {
+	mbp, _ := peerPair(t)
+	l := peerLane(t, mbp, peerHooks{
+		hosts: mbp.settings,
+		transport: func(context.Context, string, []byte) ([]byte, error) {
+			return nil, errors.New("exit 1: evil\u202etxt")
+		},
+		every: 50 * time.Millisecond,
+		self:  mbp.name,
+	})
+	l.waitKind("error", 1)
+	if d := l.ofKind("error")[0]["detail"]; d != `peer halo: exit 1: evil\u{202E}txt` {
+		t.Errorf("detail = %q", d)
+	}
+}

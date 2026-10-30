@@ -16,6 +16,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 )
 
 // maxSkew is how far past now a row's ts may be: a far-future ts would make a
@@ -173,10 +174,12 @@ func isControl(r rune) bool {
 	return r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f)
 }
 
+// hasControl also counts the invisible format characters (bidi controls,
+// zero-width, tags) a terminal hides but a model reads.
 func hasControl(v any, body bool) bool {
 	switch x := v.(type) {
 	case string:
-		return strings.IndexFunc(x, func(r rune) bool {
+		return invisible.Has(x) || strings.IndexFunc(x, func(r rune) bool {
 			return isControl(r) && (!body || r != '\n' && r != '\t')
 		}) >= 0
 	case []any:
@@ -282,9 +285,12 @@ func exportRow(line []byte, seq int64, toHost string, now time.Time) (json.RawMe
 		if !ok || now.Sub(time.UnixMilli(ts)) > claimindex.StaleAfter {
 			return nil, false
 		}
+		if title, ok := obj["title"].(string); ok && kind == "dispatch" {
+			obj["title"] = invisible.Drop(title)
+		}
 	case "msg":
 		if body, ok := obj["body"].(string); ok {
-			obj["body"] = stripControl(body)
+			obj["body"] = invisible.Drop(stripControl(body))
 		}
 	default:
 		return nil, false
@@ -327,7 +333,8 @@ func fitTitle(fields []field, obj map[string]any, row []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	obj["title"] = string(runes[:max(keep-1, 0)])
+	// A cut inside an emoji sequence can leave a trailing joiner, now hidden.
+	obj["title"] = invisible.Drop(string(runes[:max(keep-1, 0)]))
 	return project(fields, obj)
 }
 

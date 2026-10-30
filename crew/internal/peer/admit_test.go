@@ -9,7 +9,12 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 )
+
+// family is a ZWJ emoji sequence: its joiners build the emoji, so they are not hidden.
+const family = "\U0001F468\u200D\U0001F469\u200D\U0001F467"
 
 var testNow = time.UnixMilli(1_790_000_000_000)
 
@@ -112,6 +117,27 @@ func TestExportStripsBodyControl(t *testing.T) {
 	}
 }
 
+func TestExportDropsInvisibleFromBodyAndTitle(t *testing.T) {
+	p := newBus(t)
+	writeLines(t, p.Log,
+		msgLine("a\u200bb "+family),
+		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"feat/42-x","title":"Do\u200b x"}`, ms(0)),
+		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"claim-issue","issue":"43","branch":"feat/43-\u200bx"}`, ms(0)),
+	)
+	rows, _, _, err := Export(p.Log, 0, "halo", testNow)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("Export = %s, %v; want the msg and the dispatch, not the claim-issue", rowsText(rows), err)
+	}
+	var msg struct{ Body string }
+	if err := json.Unmarshal(rows[0].Row, &msg); err != nil || msg.Body != "ab "+family {
+		t.Errorf("body = %q, %v; want %q", msg.Body, err, "ab "+family)
+	}
+	var dispatch struct{ Title string }
+	if err := json.Unmarshal(rows[1].Row, &dispatch); err != nil || dispatch.Title != "Do x" {
+		t.Errorf("title = %q, %v; want %q", dispatch.Title, err, "Do x")
+	}
+}
+
 func TestExportSkipsOversizeRow(t *testing.T) {
 	p := newBus(t)
 	ends := writeLines(t, p.Log,
@@ -144,6 +170,25 @@ func TestExportShortensALongTitle(t *testing.T) {
 	}
 	if row.Branch != "feat/42-x" || row.Title == "" || !utf8.ValidString(row.Title) || !strings.HasPrefix(long, row.Title) {
 		t.Errorf("row = %+v; want feat/42-x with a shortened whole-rune title", row)
+	}
+}
+
+// A title cut inside a ZWJ sequence must not leave a trailing joiner, which
+// Admit would refuse, costing the peer the claim.
+func TestExportShortensAnEmojiTitle(t *testing.T) {
+	long := strings.Repeat(family, MaxRow/len(family)+1)
+	for pad := range len(family) {
+		p := newBus(t)
+		writeLines(t, p.Log, fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"feat/42-%s","title":%q}`,
+			ms(0), strings.Repeat("x", pad), long))
+		rows, _, _, err := Export(p.Log, 0, "halo", testNow)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("pad %d: Export = %s, %v; want the row", pad, rowsText(rows), err)
+		}
+		var row struct{ Title string }
+		if err := json.Unmarshal(rows[0].Row, &row); err != nil || row.Title == "" || invisible.Has(row.Title) {
+			t.Errorf("pad %d: title %q, %v", pad, row.Title, err)
+		}
 	}
 }
 
@@ -226,6 +271,10 @@ func TestAdmit(t *testing.T) {
 		{name: "bell in body", row: `{"ts":1,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"peer:halo","body":"a\u0007"}`, reason: "control"},
 		{name: "newline in branch", row: `{"ts":1,"kind":"reap","branch":"feat/x\ny"}`, reason: "control"},
 		{name: "DEL in also_closes", row: `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","also_closes":["4\u007f"]}`, reason: "control"},
+		{name: "zero-width in branch", row: `{"ts":1,"crew_id":"c1","kind":"claim-issue","issue":"42","branch":"feat/42-\u200bx"}`, reason: "control"},
+		{name: "bidi override in body", row: `{"ts":1,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"peer:halo","body":"a\u202eb"}`, reason: "control"},
+		{name: "tag in title", row: `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","title":"a\udb40\udc41"}`, reason: "control"},
+		{name: "zero-width in also_closes", row: `{"ts":1,"crew_id":"c1","kind":"dispatch","branch":"feat/x","also_closes":["4\u200b"]}`, reason: "control"},
 		// malformed
 		{name: "ts a string", row: `{"ts":"1","kind":"reap","branch":"feat/x"}`, reason: "malformed"},
 		{name: "ts a float", row: `{"ts":1.5,"kind":"reap","branch":"feat/x"}`, reason: "malformed"},
@@ -249,6 +298,11 @@ func TestAdmit(t *testing.T) {
 			name: "msg with newline and tab",
 			row:  `{"ts":5,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"peer:halo","body":"a\nb\tc","extra":1}`,
 			want: `{"ts":5,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"peer:halo","body":"a\nb\tc"}`,
+		},
+		{
+			name: "msg with a ZWJ emoji",
+			row:  `{"ts":5,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"peer:halo","body":"hi ` + family + `"}`,
+			want: `{"ts":5,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"peer:halo","body":"hi ` + family + `"}`,
 		},
 		{
 			name: "claim-issue as dispatch.sh writes it",

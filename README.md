@@ -462,7 +462,10 @@ only if that name is a `peer` host in its settings. On macOS that is often
 Only dispatcher rows cross, never worker rows. A message body has its control
 characters other than newline and tab removed before it is sent; any other row
 with a control character, or over the size caps, is dropped and reported as a
-stream `error` line. Each side pins the other's bus id on first contact and
+stream `error` line. Invisible format characters (bidi controls, zero-width,
+tag characters) are treated the same way: removed from an outgoing message body
+or dispatch title, and a received row carrying one is dropped and reported;
+emoji sequences keep their joiners. Each side pins the other's bus id on first contact and
 refuses a different one; remove `peers/<host>.state` to re-pin after a
 deliberate change. To message a peer, a dispatcher runs
 `crew msg "dispatcher:$CREW_ID" peer:<host> "…"` (no other sender is accepted).

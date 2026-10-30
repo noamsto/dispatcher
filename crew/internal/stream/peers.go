@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/peer"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 )
@@ -239,8 +240,8 @@ func (pl *peerLink) announce(host string) {
 			Stream: "peer_msg",
 			Crew:   pl.crew,
 			Peer:   m.Peer,
-			From:   m.From,
-			Body:   m.Body,
+			From:   invisible.Escape(m.From),
+			Body:   invisible.Escape(m.Body),
 			TS:     m.TS,
 		}))
 	}
@@ -257,7 +258,7 @@ func (pl *peerLink) announce(host string) {
 // kind of failure is suppressed on its own, so a round that both drops rows
 // and has its rows refused does not alternate the two lines.
 func (pl *peerLink) report(host, kind, detail string) {
-	detail = "peer " + host + ": " + detail
+	detail = "peer " + host + ": " + invisible.Escape(detail)
 	ts := pl.now()
 	pl.supMu.Lock()
 	fresh := pl.sup.repeat(host+" "+kind, digitsToN(detail), ts, pl.heartbeatMS)
