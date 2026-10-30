@@ -18,6 +18,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
@@ -119,7 +120,7 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		}
 	}
 	for _, v := range printed {
-		_ = jsonval.Encode(stdout, v, false)
+		_ = jsonval.Encode(stdout, invisible.Value(v), false)
 	}
 	// A session that has read its inbox has been handed these msgs, so a later
 	// await must not return them again (#290) — including the prefix of a bus

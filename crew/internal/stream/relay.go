@@ -25,6 +25,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 )
@@ -379,21 +380,23 @@ func (r *relay) label(text string, obj map[string]json.RawMessage, err error) (l
 		return "", "", false
 	}
 	var b struct {
-		Cursor json.Number                  `json:"cursor"`
-		Events []map[string]json.RawMessage `json:"events"`
+		Cursor json.Number      `json:"cursor"`
+		Events []map[string]any `json:"events"`
 	}
-	if json.Unmarshal([]byte(text), &b) != nil || !ascii.IsDigits(b.Cursor.String()) || b.Events == nil {
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.UseNumber()
+	if dec.Decode(&b) != nil || !ascii.IsDigits(b.Cursor.String()) || b.Events == nil {
 		return "", "", false
 	}
-	host := jsonString(r.host)
 	for _, e := range b.Events {
 		if e == nil {
 			return "", "", false
 		}
-		e["host"] = host
+		e["host"] = r.host
 	}
-	obj["events"] = json.RawMessage(encode(b.Events))
-	obj["host"] = host
+	// An older remote crew prints its events unescaped.
+	obj["events"] = json.RawMessage(encode(invisible.Value(b.Events)))
+	obj["host"] = jsonString(r.host)
 	delete(obj, "stream")
 	delete(obj, "repo")
 	if r.rs.repo != "" {

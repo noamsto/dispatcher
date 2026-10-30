@@ -303,6 +303,52 @@ func TestControlCharactersAreStripped(t *testing.T) {
 	}
 }
 
+func TestCleanStripsInvisibleFormatCharacters(t *testing.T) {
+	// Zero-width, bidi-mark, word-joiner, BOM and tag characters render as
+	// nothing in a terminal but are read by models, so `clean` must drop them.
+	rows := []struct {
+		name string
+		cp   string
+		want string
+	}{
+		{"arabic letter mark", "\u061c", "ab"},
+		{"mongolian vowel separator", "\u180e", "ab"},
+		{"zero width space", "\u200b", "ab"},
+		{"right-to-left mark", "\u200f", "ab"},
+		{"word joiner", "\u2060", "ab"},
+		{"invisible plus", "\u2064", "ab"},
+		{"byte order mark", "\ufeff", "ab"},
+		{"tag null", "\U000e0000", "ab"},
+		{"tag latin A", "\U000e0041", "ab"},
+		{"cancel tag", "\U000e007f", "ab"},
+		{"accented text", "", "caf\u00e9"},
+		{"cjk text", "", "\u65e5\u672c\u8a9e"},
+		{"emoji", "", "\U0001f680"},
+	}
+	for _, r := range rows {
+		t.Run(r.name, func(t *testing.T) {
+			detail := "a" + r.cp + "b"
+			if r.cp == "" {
+				detail = r.want
+			}
+			body := `{"seam":"execute","tag":"other","detail":` + jsonString(detail) + `}`
+			events := `{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/a","engine":"claude","model":"m","tier":"standard","title":"t"}` + "\n" +
+				`{"ts":1100,"crew_id":"c1","kind":"msg","from":"worker:feat/a#s1","to":"retro:c1","body":` + jsonString(body) + `}` + "\n" +
+				`{"ts":1200,"crew_id":"c1","kind":"status","from":"worker:feat/a#s1","to":"dispatcher:c1","body":{"state":"done"}}` + "\n"
+			out, _, code := run(t, events, Request{Report: true})
+			if code != 0 {
+				t.Fatalf("exit %d", code)
+			}
+			if r.cp != "" && strings.Contains(out, r.cp) {
+				t.Errorf("invisible character survived: %q", out)
+			}
+			if !strings.Contains(out, r.want) {
+				t.Errorf("want %q in output: %q", r.want, out)
+			}
+		})
+	}
+}
+
 func TestJSONIsNeverColoured(t *testing.T) {
 	// This port prints plain, because that output is compared by value.
 	out, _, code := run(t, oneRun, Request{Report: true, JSON: true})

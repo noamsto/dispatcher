@@ -35,10 +35,11 @@
     # quotes arbitrary source and command output. Tab/newline/CR become a space
     # so a padded row keeps its columns; the rest go, because a raw ESC
     # repaints the table — one note can erase or forge the row above it — and
-    # the bidi overrides let a string misrepresent itself in place.
+    # the bidi overrides let a string misrepresent itself in place; models read
+    # tag and zero-width characters that terminals hide.
     def clean:
       gsub("[\t\n\r]"; " ")
-      | gsub("[\\x00-\\x1f\\x7f\\x{0080}-\\x{009f}\\x{202a}-\\x{202e}\\x{2066}-\\x{2069}]"; "");
+      | gsub("[\\x00-\\x1f\\x7f\\x{0080}-\\x{009f}\\x{061c}\\x{180e}\\x{200b}-\\x{200f}\\x{202a}-\\x{202e}\\x{2060}-\\x{2064}\\x{2066}-\\x{2069}\\x{feff}\\x{e0000}-\\x{e007f}]"; "");
     def sample: clean | if length > 60 then (.[0:60] + "…") else . end;
     def pad_row($cells; $widths; $left):
       # A right-aligned column pads before its value, so only a left-aligned

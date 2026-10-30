@@ -39,6 +39,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
@@ -167,7 +168,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		}
 		if folded, ok := fold(paths.Log, c); ok {
 			out := jsonval.Clamp(folded).(map[string]any)
-			if err := jsonval.Encode(stdout, out, false); err != nil {
+			if err := jsonval.Encode(stdout, invisible.Value(out), false); err != nil {
 				say(stderr, "crew: %v\n", err)
 				return 1
 			}
