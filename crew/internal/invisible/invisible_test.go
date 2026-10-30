@@ -2,44 +2,58 @@ package invisible
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 )
 
+type fixtureCase struct {
+	Name    string `json:"name"`
+	In      string `json:"in"`
+	Escaped string `json:"escaped"`
+	Dropped string `json:"dropped"`
+}
+
+func loadCases(t *testing.T) []fixtureCase {
+	t.Helper()
+	data, err := os.ReadFile("testdata/cases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []fixtureCase
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	return cases
+}
+
 func TestEscape(t *testing.T) {
-	for _, tc := range []struct{ in, want string }{
-		{"\u061c", `\u{061C}`},
-		{"\u180e", `\u{180E}`},
-		{"\u200b", `\u{200B}`},
-		{"\u200f", `\u{200F}`},
-		{"\u202a", `\u{202A}`},
-		{"\u202e", `\u{202E}`},
-		{"\u2060", `\u{2060}`},
-		{"\u2064", `\u{2064}`},
-		{"\u2066", `\u{2066}`},
-		{"\u2069", `\u{2069}`},
-		{"\ufeff", `\u{FEFF}`},
-		{"\U000e0000", `\u{E0000}`},
-		{"\U000e0041", `\u{E0041}`},
-		{"\U000e007f", `\u{E007F}`},
-		{"hi\U000e0041x\u200by", `hi\u{E0041}x\u{200B}y`},
-		{"hello", "hello"},
-		{"café", "café"},
-		{"日本語", "日本語"},
-		{"🚀", "🚀"},
-		{"a\tb", "a\tb"},
-		{"\u200a", "\u200a"},
-		{"\u2010", "\u2010"},
-		{"\u2065", "\u2065"},
-		{"\U000e0080", "\U000e0080"},
-		{"\u061b", "\u061b"},
-	} {
-		if got := Escape(tc.in); got != tc.want {
-			t.Errorf("Escape(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-		if got := Escape(Escape(tc.in)); got != Escape(tc.in) {
-			t.Errorf("Escape not idempotent for %q: %q", tc.in, got)
+	for _, tc := range loadCases(t) {
+		t.Run(tc.Name, func(t *testing.T) {
+			if got := Escape(tc.In); got != tc.Escaped {
+				t.Errorf("Escape(%q) = %q, want %q", tc.In, got, tc.Escaped)
+			}
+			if got := Drop(tc.In); got != tc.Dropped {
+				t.Errorf("Drop(%q) = %q, want %q", tc.In, got, tc.Dropped)
+			}
+			if got := Escape(Escape(tc.In)); got != Escape(tc.In) {
+				t.Errorf("Escape not idempotent for %q: %q", tc.In, got)
+			}
+			if got := Drop(Drop(tc.In)); got != Drop(tc.In) {
+				t.Errorf("Drop not idempotent for %q: %q", tc.In, got)
+			}
+			if got, want := Has(tc.In), tc.Escaped != tc.In; got != want {
+				t.Errorf("Has(%q) = %v, want %v", tc.In, got, want)
+			}
+		})
+	}
+}
+
+func TestEscapeLeavesControlsAndPlainText(t *testing.T) {
+	for _, s := range []string{"hello", "a\tb", "a\nb", "\u200a", "\u2010", "\U000e0080", "\u061b", "\U0001f680"} {
+		if got := Escape(s); got != s {
+			t.Errorf("Escape(%q) = %q, want unchanged", s, got)
 		}
 	}
 }

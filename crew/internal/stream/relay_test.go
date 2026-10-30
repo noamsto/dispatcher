@@ -487,7 +487,7 @@ func TestRelayEscapesInvisibleRunesFromOlderRemotes(t *testing.T) {
 
 	waitFor(t, "the relayed batch", func() bool { return line(s.lines(), isRelayed) != nil })
 	out := s.out.str()
-	if strings.ContainsFunc(out, invisible.Is) {
+	if invisible.Has(out) {
 		t.Errorf("stdout carries a raw invisible rune: %q", out)
 	}
 	b := line(s.lines(), isRelayed)
