@@ -57,6 +57,8 @@ func TestClaims(t *testing.T) {
 		{"claim-issue for another issue", []string{claimRow(`"43"`, "feat/43-x", time.Minute)}, ""},
 		{"dispatch row from the future", []string{dispatchRow("feat/42-x", -time.Hour, "")}, ""},
 		{"claim-issue from the future", []string{claimRow(`"42"`, "feat/42-x", -time.Hour)}, ""},
+		{"dispatch row a minute ahead", []string{dispatchRow("feat/42-x", -time.Minute, "")}, "peer halo dispatch row for feat/42-x"},
+		{"claim-issue a minute ahead", []string{claimRow(`"42"`, "feat/42-x", -time.Minute)}, "peer halo claim on #42 (feat/42-x)"},
 		{"msg mentioning the branch", []string{`{"ts":1,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"peer:mbp","body":"feat/42-x"}`}, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
