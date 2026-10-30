@@ -14,7 +14,7 @@ tests/bats-affected.bats	affected git	!timing	1670
 tests/bats-shard.bats	*	!timing	53964
 tests/crew.bats	*	!timing	65735
 tests/crew.bats	burn map conformance	!timing	19017
-tests/crew.bats	reap	!timing	429530
+tests/crew.bats	reap	!timing	211640
 tests/crew.bats	reply	!timing	2819
 tests/crew.bats	stall-watch	!timing	182144
 tests/crew.bats	watch	!timing	48846
