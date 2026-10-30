@@ -3649,7 +3649,7 @@ exit 0
 EOF
   chmod +x "$STUB_DIR/tmux"
 
-  run run_dispatch standard sonnet --effort medium --crew-id c1 42 "sized worker"
+  TMUX_PANE=%1 run run_dispatch standard sonnet --effort medium --crew-id c1 42 "sized worker"
   [ "$status" -eq 0 ]
   grep -q 'new-window -d -c .* -n feat-42-sized-worker .* -P' "$STUB_LOG"
   grep -q 'resize-window -t %1 -x 200 -y 50' "$STUB_LOG"
@@ -3700,6 +3700,47 @@ EOF
   [[ "$output" != *"dispatch_row:"* ]]
   grep -qE '^new-window -d -t =crew-c1: -c .* -n feat-42-remote-worker .* -P' "$STUB_LOG"
   run ! grep -qE '^new-session|^resize-window' "$STUB_LOG"
+}
+
+@test "outside tmux: the worker window goes in a per-crew session, created on demand" {
+  stub_launch_bins
+  _remote_mode_tmux
+  unset TMUX TMUX_PANE DISPATCH_TMUX_SESSION
+  run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "local worker"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"tmux attach -t crew-c1"* ]]
+  grep -qE '^new-session -d -s crew-c1 -c .* -n feat-42-local-worker .* -P' "$STUB_LOG"
+  run ! grep -qE '^new-window' "$STUB_LOG"
+  [[ "$output" != *"dispatch_row:"* ]]
+}
+
+@test "outside tmux: a second dispatch reuses the crew session" {
+  stub_launch_bins
+  _remote_mode_tmux
+  unset TMUX TMUX_PANE DISPATCH_TMUX_SESSION
+  STUB_HAS_SESSION=1 run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "local worker"
+  [ "$status" -eq 0 ]
+  grep -qE '^new-window -d -t =crew-c1: -c .* -n feat-42-local-worker .* -P' "$STUB_LOG"
+  run ! grep -qE '^new-session' "$STUB_LOG"
+}
+
+@test "outside tmux: --chrome is not refused by the remote-only check" {
+  stub_launch_bins
+  chrome_holder_tmux
+  unset TMUX TMUX_PANE DISPATCH_TMUX_SESSION
+  DISPATCH_PRECHECK=1 run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 --chrome "t"
+  [[ "$output" != *"--chrome is local to this machine"* ]]
+}
+
+@test "inside tmux: the worker window is not placed in a crew session" {
+  stub_launch_bins
+  _remote_mode_tmux
+  unset DISPATCH_TMUX_SESSION
+  TMUX_PANE=%7 run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "local worker"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *"outside tmux"* ]]
+  grep -qE '^new-window -d -c ' "$STUB_LOG"
+  run ! grep -qE '^new-session' "$STUB_LOG"
 }
 
 @test "remote mode: a DISPATCH_TMUX_SESSION outside crew-<id> is refused before any scaffolding" {
