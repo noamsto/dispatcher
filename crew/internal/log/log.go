@@ -6,7 +6,8 @@
 // value-equal to `jq -c` (keys sorted, number literals kept as json.Number
 // text), and it keeps `jq -c`'s torn-tail behaviour through
 // bus.ReadEventsTolerant (the well-formed prefix goes out, the parse error
-// after it decides the exit status).
+// after it decides the exit status). Invisible code points are escaped in what
+// it prints; the stored log stays raw, and there is deliberately no raw flag.
 package log
 
 import (
@@ -16,6 +17,7 @@ import (
 	"io"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
@@ -55,7 +57,7 @@ func Run(crew string, paths bus.Paths, stdout, stderr io.Writer) int {
 			// jq compares values: a non-string crew_id matches no crew, the empty
 			// crew of a caller with no id to default to included.
 			if id, ok := doc["crew_id"].(string); ok && id == crew {
-				_ = jsonval.Encode(stdout, doc, false)
+				_ = jsonval.Encode(stdout, invisible.Value(doc), false)
 			}
 			failed = false
 		case nil:

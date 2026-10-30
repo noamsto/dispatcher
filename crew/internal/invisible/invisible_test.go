@@ -1,11 +1,14 @@
 package invisible
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/noamsto/dispatcher/crew/internal/drift"
 )
 
 type fixtureCase struct {
@@ -104,5 +107,21 @@ func TestValueEscapesInvalidJSONLikeText(t *testing.T) {
 	in := "{not json" + "\u200B"
 	if got, want := Value(in), `{not json\u{200B}`; got != want {
 		t.Errorf("Value(%q) = %q, want %q", in, got, want)
+	}
+}
+
+func TestDashFixtureMatches(t *testing.T) {
+	const path = "../../../dash/internal/invisible/testdata/cases.json"
+	dash, err := os.ReadFile(path)
+	if err != nil {
+		drift.Missing(t, path, err)
+		return
+	}
+	crew, err := os.ReadFile("testdata/cases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(dash, crew) {
+		t.Error("dash/internal/invisible/testdata/cases.json differs from crew's fixture; copy it over")
 	}
 }

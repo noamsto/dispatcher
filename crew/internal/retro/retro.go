@@ -22,6 +22,7 @@ import (
 	"io"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 )
 
@@ -146,7 +147,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	out, err := jqrun.RunAny(program, docs, 0, map[string]any{
 		"want_report": report,
 		"want_json":   jsonOut,
-	})
+	}, jqrun.WithStringFunc("_invisible_drop", invisible.Drop))
 	if err != nil {
 		say(stderr, "crew: retro: %s: %v\n", paths.Log, err)
 		return exitType
@@ -160,14 +161,14 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		enc := json.NewEncoder(stdout)
 		enc.SetEscapeHTML(false)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
+		if err := enc.Encode(invisible.Value(out)); err != nil {
 			say(stderr, "crew: retro: %v\n", err)
 			return exitFailure
 		}
 		return 0
 	}
 	if s, _ := out.(string); s != "" {
-		say(stdout, "%s\n", s)
+		say(stdout, "%s\n", invisible.Escape(s))
 	}
 	return 0
 }

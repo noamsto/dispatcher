@@ -17,8 +17,9 @@ import (
 const (
 	tagA      = "\U000E0041"
 	zwsp      = "\u200B"
-	rawText   = "hi" + tagA + "x" + zwsp + "y"
-	escText   = `hi\u{E0041}x\u{200B}y`
+	vs1       = "\uFE00"
+	rawText   = "hi" + tagA + "x" + zwsp + "y a" + vs1
+	escText   = `hi\u{E0041}x\u{200B}y a\u{FE00}`
 	invWorker = "worker:feat/x#s1-1"
 )
 
@@ -54,7 +55,7 @@ func requireStoredRaw(t *testing.T, logPath, before string) {
 	if after != before {
 		t.Errorf("the read changed the bus log:\nbefore %q\nafter  %q", before, after)
 	}
-	if !strings.Contains(after, tagA) || !strings.Contains(after, zwsp) {
+	if !strings.Contains(after, tagA) || !strings.Contains(after, zwsp) || !strings.Contains(after, vs1) {
 		t.Errorf("the stored rows lost the raw code points: %q", after)
 	}
 }
@@ -64,7 +65,7 @@ func requireEscaped(t *testing.T, stdout string, got any) {
 	if got != escText {
 		t.Errorf("value = %q, want %q", got, escText)
 	}
-	if strings.Contains(stdout, tagA) || strings.Contains(stdout, zwsp) {
+	if strings.Contains(stdout, tagA) || strings.Contains(stdout, zwsp) || strings.Contains(stdout, vs1) {
 		t.Errorf("stdout carries a raw invisible code point: %q", stdout)
 	}
 }
@@ -166,5 +167,83 @@ func TestInvisibleRelayEscapesEvents(t *testing.T) {
 	if !sawMsg || !sawStatus {
 		t.Errorf("batch %q: want a msg and a status event", out.got.String())
 	}
+	requireStoredRaw(t, logPath, before)
+}
+
+func TestInvisibleAwaitEscapesBody(t *testing.T) {
+	repo, logPath := invisibleBus(t)
+	before := readLog(t, logPath)
+	stdout, stderr, code := runCrew(t, repo, "await", invWorker, "--timeout", "1")
+	if code != 0 || stderr != "" {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+	var row map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &row); err != nil {
+		t.Fatalf("stdout %q: %v", stdout, err)
+	}
+	requireEscaped(t, stdout, row["body"])
+	requireStoredRaw(t, logPath, before)
+}
+
+func TestInvisibleLogEscapesRows(t *testing.T) {
+	repo, logPath := invisibleBus(t)
+	before := readLog(t, logPath)
+	stdout, stderr, code := runCrew(t, repo, "log", "c1")
+	if code != 0 || stderr != "" {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+	var sawMsg, sawStatus bool
+	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
+		var row map[string]any
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			t.Fatalf("row %q: %v", line, err)
+		}
+		switch row["kind"] {
+		case "msg":
+			sawMsg = true
+			requireEscaped(t, stdout, row["body"])
+		case "status":
+			sawStatus = true
+			body, _ := row["body"].(map[string]any)
+			requireEscaped(t, stdout, body["detail"])
+		}
+	}
+	if !sawMsg || !sawStatus {
+		t.Errorf("stdout %q: want a msg and a status row", stdout)
+	}
+	requireStoredRaw(t, logPath, before)
+}
+
+func TestInvisibleSessionsEscapesState(t *testing.T) {
+	repo, logPath := invisibleBus(t)
+	// The CLI refuses an unknown state, so a hand-written row stands in for
+	// whatever a foreign writer could append.
+	row, err := json.Marshal(map[string]any{
+		"ts": time.Now().Add(time.Hour).UnixMilli(), "crew_id": "c1", "from": invWorker,
+		"to": "dispatcher:c1", "kind": "status", "body": map[string]any{"state": rawText},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(append(row, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before := readLog(t, logPath)
+	stdout, stderr, code := runCrew(t, repo, "sessions", "feat/x", "--crew", "c1")
+	if code != 0 || stderr != "" {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &rows); err != nil || len(rows) != 1 {
+		t.Fatalf("stdout %q: %v", stdout, err)
+	}
+	requireEscaped(t, stdout, rows[0]["state"])
 	requireStoredRaw(t, logPath, before)
 }

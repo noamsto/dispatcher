@@ -20,6 +20,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 )
@@ -95,7 +96,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 			enc := json.NewEncoder(stdout)
 			enc.SetEscapeHTML(false)
 			for _, r := range rows {
-				_ = enc.Encode(r)
+				_ = enc.Encode(invisible.Value(r))
 			}
 			// Flush before recording: a mark raised for rows nobody received
 			// makes the next await skip them for good (inbox took the same

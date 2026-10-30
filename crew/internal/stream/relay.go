@@ -411,6 +411,7 @@ func (r *relay) report(kind string, rc int64, detail string) {
 }
 
 func (r *relay) reportWith(sup *suppress, kind string, rc int64, detail string) {
+	detail = invisible.Escape(detail)
 	ts := r.rs.now()
 	if !sup.repeat(kind, fmt.Sprintf("%d:%s", rc, digitsToN(detail)), ts, r.rs.heartbeatMS) {
 		return

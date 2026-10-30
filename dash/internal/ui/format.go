@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/noamsto/dispatcher/dash/internal/invisible"
 )
 
 // format.go ports the small set of the once renderer's shared jq-derived
@@ -120,23 +122,20 @@ func isoUTC(epoch int64) string {
 	return time.Unix(epoch, 0).UTC().Format("2006-01-02T15:04:05Z")
 }
 
-// cleanText ports once/format.go's jq `clean`: tab/newline/CR become a
-// space, other C0/C1 controls and invisible format characters (zero-width,
-// bidi marks, tag block; models read tag characters terminals hide) are dropped.
+// cleanText ports once/format.go's jq `clean`: tab/newline/CR become a space,
+// other C0/C1 controls are dropped, and invisible format characters go through
+// internal/invisible (emoji-safe; models read what terminals hide).
 func cleanText(s string) string {
 	var b strings.Builder
 	for _, r := range s {
 		switch {
 		case r == '\t' || r == '\n' || r == '\r':
 			b.WriteRune(' ')
-		case r <= 0x1f || r == 0x7f || (r >= 0x80 && r <= 0x9f) ||
-			r == 0x061c || r == 0x180e || (r >= 0x200b && r <= 0x200f) ||
-			(r >= 0x202a && r <= 0x202e) || (r >= 0x2060 && r <= 0x2064) ||
-			(r >= 0x2066 && r <= 0x2069) || r == 0xfeff || (r >= 0xe0000 && r <= 0xe007f):
+		case r <= 0x1f || r == 0x7f || (r >= 0x80 && r <= 0x9f):
 			// dropped
 		default:
 			b.WriteRune(r)
 		}
 	}
-	return b.String()
+	return invisible.Drop(b.String())
 }

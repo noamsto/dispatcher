@@ -1,7 +1,8 @@
 # The `retro` fold from adapters/core/crew.sh (before the #887 Go port), run
 # through gojq by internal/jqrun. The slurped event array is `.` and the two
 # flags arrive as $want_report/$want_json — the arm passed them with `--argjson`.
-# One patch, no others: bare mode's `jq -r` printed one @tsv row per line and
+# Two patches, no others: `_invisible_drop` is defined in Go through
+# jqrun.WithStringFunc, and bare mode's `jq -r` printed one @tsv row per line and
 # jqrun wants exactly one value, so those rows are collected and joined — the
 # report.jq patch, same reason — while `--report` already ended in a
 # `join("\n")` and `--report --json` emits one object. The Go caller adds the one
@@ -34,12 +35,12 @@
     # Tags and details are agent-authored free text, and a gate_thrash detail
     # quotes arbitrary source and command output. Tab/newline/CR become a space
     # so a padded row keeps its columns; the rest go, because a raw ESC
-    # repaints the table — one note can erase or forge the row above it — and
-    # the bidi overrides let a string misrepresent itself in place; models read
-    # tag and zero-width characters that terminals hide.
+    # repaints the table — one note can erase or forge the row above it. The
+    # invisible set lives in Go's internal/invisible, emoji-safe.
     def clean:
       gsub("[\t\n\r]"; " ")
-      | gsub("[\\x00-\\x1f\\x7f\\x{0080}-\\x{009f}\\x{061c}\\x{180e}\\x{200b}-\\x{200f}\\x{202a}-\\x{202e}\\x{2060}-\\x{2064}\\x{2066}-\\x{2069}\\x{feff}\\x{e0000}-\\x{e007f}]"; "");
+      | gsub("[\\x00-\\x1f\\x7f\\x{0080}-\\x{009f}]"; "")
+      | _invisible_drop;
     def sample: clean | if length > 60 then (.[0:60] + "…") else . end;
     def pad_row($cells; $widths; $left):
       # A right-aligned column pads before its value, so only a left-aligned
