@@ -5343,6 +5343,13 @@ fi
 _wt_trusted_cwd "${crew_dir%/crew}" || exit 1
 # The remote half of a --host dispatch was already linted on the caller.
 [ -n "${DISPATCH_EMIT_ROW:-}" ] || _spec_lint
+# A dispatch started over ssh on macOS cannot read the login keychain where gh
+# keeps its token; refuse before the first gh call (a numeric --base's
+# `gh pr view`, then the claim's label read).
+if [ "${DISPATCH_EMIT_ROW:-}" = 1 ] && ! gh auth status --hostname github.com >/dev/null 2>&1; then
+  echo "dispatch: gh is not authenticated for github.com on $(_short_host) — on macOS a dispatch started over ssh cannot read the login keychain where gh keeps its token; either run 'gh auth login -h github.com --insecure-storage' there, or start its tmux server from the GUI login session (dispatch --host then runs inside it); 'gh auth status' there shows the cause" >&2
+  exit 1
+fi
 mkdir -p "$crew_dir"
 
 # Entry guard (#557): refuse a drifted config now, before `gh issue create`

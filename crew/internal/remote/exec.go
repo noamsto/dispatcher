@@ -12,8 +12,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -37,11 +40,15 @@ var requestKeys = []string{"v", "repo", "slug", "argv", "env", "spec"}
 type ServeOptions struct {
 	LookPath func(string) (string, error) // `dispatch` and `permission-check`
 	Self     func() (string, error)       // this crew binary, for `crew …`
+	// ViaTmux runs `dispatch` through the running tmux server, so it gets that
+	// server's login session: on macOS a bare ssh session cannot read the
+	// login keychain.
+	ViaTmux bool
 }
 
 // DefaultServeOptions resolves programs on PATH and `crew` as this executable.
 func DefaultServeOptions() ServeOptions {
-	return ServeOptions{LookPath: exec.LookPath, Self: os.Executable}
+	return ServeOptions{LookPath: exec.LookPath, Self: os.Executable, ViaTmux: runtime.GOOS == "darwin"}
 }
 
 // Serve is `crew remote-exec`: it reads one request from stdin, checks it, and
@@ -87,6 +94,11 @@ func Serve(stdin io.Reader, stdout, stderr io.Writer, o ServeOptions) int {
 	}
 
 	if req.Argv[0] == "dispatch" {
+		if o.ViaTmux {
+			if rc, ok := runInTmux(cmd, scratch, o, stdout, stderr); ok {
+				return rc
+			}
+		}
 		return runDetached(cmd, scratch, stdout, stderr)
 	}
 	cmd.Stdout = stdout
@@ -218,6 +230,9 @@ func command(argv []string, o ServeOptions) (*exec.Cmd, error) {
 	return exec.Command(path, argv[1:]...), nil
 }
 
+// shellSafe reports whether s needs no quoting in either POSIX sh or fish.
+var shellSafe = regexp.MustCompile(`^[A-Za-z0-9/._-]+$`).MatchString
+
 // newScratch sweeps root's entries older than scratchTTL, then makes this
 // request's own `<pid>-<rand>` dir under it.
 func newScratch(root string) (string, error) {
@@ -287,6 +302,118 @@ func runDetached(cmd *exec.Cmd, scratch string, stdout, stderr io.Writer) int {
 	copyOut(stdout, outPath)
 	copyOut(stderr, errPath)
 	return reportStatus(runErr, stderr, "crew: remote-exec: dispatch")
+}
+
+var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// runInTmux runs a dispatch as a job of the running tmux server, which keeps
+// it alive past a dropped link much as runDetached does. ok is false only when
+// the job could not be started, before anything in scratch that runDetached
+// creates exists, so the caller can fall back to it.
+func runInTmux(cmd *exec.Cmd, scratch string, o ServeOptions, stdout, stderr io.Writer) (int, bool) {
+	fallback := func(reason string) (int, bool) {
+		_, _ = fmt.Fprintf(stderr, "crew: remote-exec: not running dispatch in the tmux server (%s); running it in this ssh session\n", reason)
+		return 0, false
+	}
+	tmux, err := o.LookPath("tmux")
+	if err != nil {
+		return fallback(err.Error())
+	}
+	// tmux 3.2+ hands run-shell's command to the server's default-shell, which
+	// may be fish, so the command must parse alike in both: no quoting at all.
+	if !shellSafe(scratch) {
+		return fallback(fmt.Sprintf("scratch path %q needs quoting", scratch))
+	}
+	envPath, reason := safeLookPath("env")
+	if reason != "" {
+		return fallback(reason)
+	}
+	shPath, reason := safeLookPath("sh")
+	if reason != "" {
+		return fallback(reason)
+	}
+	channel := "crew-remote-exec-" + filepath.Base(scratch)
+	outPath, errPath, statusPath := scratch+"/stdout", scratch+"/stderr", scratch+"/status"
+	// Everything that can kill a shell (an export of a readonly variable, a
+	// failed cd) runs in the subshell, so the outer one always records the
+	// status and signals. The outer one has no PATH: builtins and absolute
+	// paths only, plus the variables that pick the socket, so its wait-for
+	// signals the server run-shell reached.
+	var outer, inner strings.Builder
+	for _, kv := range cmd.Env {
+		k, v, _ := strings.Cut(kv, "=")
+		if !envKeyRe.MatchString(k) {
+			continue
+		}
+		fmt.Fprintf(&inner, "export %s=%s\n", k, shQuote(v))
+		if k == "TMUX" || k == "TMUX_TMPDIR" {
+			fmt.Fprintf(&outer, "export %s=%s\n", k, shQuote(v))
+		}
+	}
+	var b strings.Builder
+	b.WriteString("umask 077\n")
+	b.WriteString(outer.String())
+	b.WriteString("( umask 077\n")
+	b.WriteString(inner.String())
+	fmt.Fprintf(&b, "cd %s && exec %s", shQuote(cmd.Dir), shQuote(cmd.Path))
+	for _, a := range cmd.Args[1:] {
+		b.WriteByte(' ')
+		b.WriteString(shQuote(a))
+	}
+	fmt.Fprintf(&b, " ) </dev/null >%s 2>%s\n", shQuote(outPath), shQuote(errPath))
+	fmt.Fprintf(&b, "printf '%%s\\n' \"$?\" >%s\n", shQuote(statusPath))
+	fmt.Fprintf(&b, "exec %s wait-for -S %s\n", shQuote(tmux), shQuote(channel))
+	if err := writePrivate(scratch+"/run", []byte(b.String())); err != nil {
+		return fallback(err.Error())
+	}
+
+	// Never run-shell without -b: a keychain dialog would wedge the server's
+	// command queue until it is answered.
+	var runErr bytes.Buffer
+	start := exec.Command(tmux, "run-shell", "-b", "exec "+envPath+" -i "+shPath+" "+scratch+"/run >/dev/null 2>&1")
+	start.Env = cmd.Env
+	start.Stderr = &runErr
+	if err := start.Run(); err != nil {
+		reason := strings.TrimSpace(runErr.String())
+		if reason == "" {
+			reason = err.Error()
+		}
+		return fallback("tmux run-shell: " + reason)
+	}
+	// A channel signalled before anyone waits stays woken, so a fast job
+	// cannot slip past this.
+	wait := exec.Command(tmux, "wait-for", channel)
+	wait.Env = cmd.Env
+	_ = wait.Run()
+
+	copyOut(stdout, outPath)
+	copyOut(stderr, errPath)
+	data, err := os.ReadFile(statusPath)
+	if err == nil {
+		if rc, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+			return rc, true
+		}
+	}
+	_, _ = fmt.Fprintln(stderr, "crew: remote-exec: dispatch: the tmux job ended without an exit status")
+	return 1, true
+}
+
+// safeLookPath resolves name on PATH to a path run-shell can take unquoted,
+// or says why it cannot.
+func safeLookPath(name string) (string, string) {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return "", err.Error()
+	}
+	if !shellSafe(path) {
+		return "", fmt.Sprintf("%s path %q needs quoting", name, path)
+	}
+	return path, ""
+}
+
+// shQuote single-quotes s for POSIX sh.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // copyOut relays a finished child's output file; a hung-up reader is no

@@ -3702,6 +3702,28 @@ EOF
   run ! grep -qE '^new-session|^resize-window' "$STUB_LOG"
 }
 
+@test "remote mode: a failing gh auth status refuses before any label read" {
+  stub_launch_bins
+  _remote_mode_tmux
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >>"$STUB_LOG"
+case "$*" in
+  "auth status"*) exit 1 ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_EMIT_ROW=1 \
+    run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "remote worker"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"keychain"* ]]
+  [[ "$stderr" == *"gh auth login -h github.com --insecure-storage"* ]]
+  [[ "$stderr" == *"GUI login session"* ]]
+  grep -q '^auth status' "$STUB_LOG"
+  run ! grep -qE '^(issue|label)' "$STUB_LOG"
+}
+
 @test "outside tmux: the worker window goes in a per-crew session, created on demand" {
   stub_launch_bins
   _remote_mode_tmux
