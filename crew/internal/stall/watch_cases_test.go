@@ -88,9 +88,6 @@ func TestWatchRunEpisodes(t *testing.T) {
 			gone: func(n int) bool { return n >= 6 },
 			req:  Request{Idle: ptr("2"), Dead: ptr("2"), MaxLife: ptr("15")},
 		}, nil},
-		// Go's matching is not locale-bound: the bash C-5 hazard (a byte-wise
-		// bracket never matching ◯) has no analogue, and the row stays to pin the
-		// veto over a byte-static pane.
 		{"the subagent-row veto holds over a byte-static pane", watchScript{
 			texts: []string{subbatch("26m 57s", "3m 29s"), subbatch("27m 12s", "3m 45s"), subbatch("27m 27s", "4m 0s")},
 			req:   Request{Idle: ptr("3"), MaxLife: ptr("4")},
@@ -271,7 +268,7 @@ func TestWatchRunIdentity(t *testing.T) {
 			frames: trust,
 			bus: seeded(leadID, 0, `{"state":"blocked","source":"watchdog","detail":"prompt: interactive prompt in pane %9 — `+
 				`worker is waiting on input nobody can give"}`),
-		}, mine(leadID)}, // the seeded row is the episode; no second one follows
+		}, mine(leadID)}
 		{"C-3: a previous run's terminal state does not mute a new watchdog", watchScript{
 			frames: trust,
 			bus: func(h *harness) []string {
