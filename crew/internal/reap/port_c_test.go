@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
 	"github.com/noamsto/dispatcher/crew/internal/gitguard"
 	"github.com/noamsto/dispatcher/crew/internal/wtgit"
@@ -201,7 +202,8 @@ func TestPortCKeepsRecordedCurrentWorktree(t *testing.T) {
 }
 
 // #633: from inside a worker worktree whose .git was swapped, reap refuses
-// before running any git there.
+// before running any git there. The CLI derives its bus paths from the swapped
+// `.git`, so the refusal is TrustedCwd's record mismatch, not PinCwd's.
 func TestPortCRefusesFromSwappedWorkerWorktree(t *testing.T) {
 	f := newFx(t)
 	cand, here := portCCandAndHere(f)
@@ -209,12 +211,19 @@ func TestPortCRefusesFromSwappedWorkerWorktree(t *testing.T) {
 	sentinel := filepath.Join(f.root, "SENTINEL")
 	portCSwapGit(t, here, portCHookFake(f, "633-fake", "feat/633-cand", sentinel))
 	f.bus(statusFor("feat/633-cand", "s1", "done", prURL, 0))
+	real := f.paths
+	paths, err := bus.Locate(context.Background(), here)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.paths = paths
 
 	if rc := portCReap(f, here, Request{Quiet: true}, nil); rc != 1 {
 		t.Fatalf("rc=%d, want 1; stderr=%q", rc, f.stderr.String())
 	}
-	want := "refusing git: " + f.paths.Common + " is not the git dir " + here + " resolves to (" + here +
-		"/.git) — the common dir changed since it was read\n"
+	want := "refusing git: " + gitguard.Quote(here) + " is inside the worker worktree " + gitguard.Quote(here) +
+		", whose git resolves to " + gitguard.Quote(here+"/.git") + ", not the recorded " + gitguard.Quote(real.Common) +
+		" — its .git no longer matches its dispatcher record (possible tampering): stop and tell the human\n"
 	f.wantErr(want)
 	if portCExists(sentinel) || !portCExists(cand) || len(f.calls) != 0 {
 		t.Fatalf("sentinel=%v cand=%v calls=%q", portCExists(sentinel), portCExists(cand), f.calls)

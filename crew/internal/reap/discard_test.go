@@ -1,11 +1,13 @@
 package reap
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -49,6 +51,10 @@ func TestDiscardSavesApplicablePatch(t *testing.T) {
 	if err := os.WriteFile(f.wt+"/PLAN.md", []byte("plan\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(f.wt+"/staged.txt", []byte("staged\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, f.wt, "add", "staged.txt")
 	patch := f.patchPath()
 
 	if rc := f.reap(f.main, Request{Discard: rb, DryRun: true}); rc != 0 {
@@ -77,6 +83,11 @@ func TestDiscardSavesApplicablePatch(t *testing.T) {
 	runGit(t, fresh, "apply", patch)
 	if got, _ := os.ReadFile(fresh + "/a.txt"); string(got) != "one\ntwo\n" {
 		t.Fatalf("a.txt = %q", got)
+	}
+	for name, want := range map[string]string{"PLAN.md": "plan\n", "staged.txt": "staged\n"} {
+		if got, _ := os.ReadFile(fresh + "/" + name); string(got) != want {
+			t.Fatalf("%s = %q", name, got)
+		}
 	}
 	if got, _ := os.ReadFile(fresh + "/new.bin"); string(got) != "\x00\x01\x02x" {
 		t.Fatalf("new.bin = %q", got)
@@ -114,6 +125,7 @@ func TestDiscardRefusals(t *testing.T) {
 		if !filekind.IsDir(f.wt) {
 			t.Fatal("worktree removed")
 		}
+		portFNoPatch(f)
 	}
 	refused("not a valid branch name", "feat/..bad")
 	refused("not a valid branch name", "@{-1}")
@@ -183,26 +195,42 @@ func TestDiscardRefusesEmbeddedRepo(t *testing.T) {
 	}
 	f.wantErr("crew reap: refusing --discard feat/r — it holds an embedded git repository\n")
 	f.noScratch()
+	portFNoPatch(f)
 	if !filekind.IsDir(nested + "/.git") {
 		t.Fatal("nested repo removed")
 	}
 }
 
-// A fatal signal mid-save runs the cleaner, which removes the registered
-// scratch dir the way discardBranch registers it.
+// A TERM mid-save runs the cleaner through notify's signal wiring: the child
+// registers a scratch dir, signals itself and must exit 128+SIGTERM with the
+// dir gone.
 func TestDiscardScratchRemovedOnSignal(t *testing.T) {
-	f := newFx(t)
-	r := f.run()
-	tmp, err := os.MkdirTemp(f.paths.Dir, "discard.")
+	if dir := os.Getenv("CREW_REAP_SIGNAL_CHILD"); dir != "" {
+		c := &cleaner{}
+		stop := c.notify()
+		defer stop()
+		c.setTmp(dir)
+		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+		time.Sleep(10 * time.Second)
+		os.Exit(1)
+	}
+	tmp, err := os.MkdirTemp(t.TempDir(), "discard.")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(tmp+"/index", []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r.clean.setTmp(tmp)
-	r.clean.cleanup()
-	f.noScratch()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestDiscardScratchRemovedOnSignal$")
+	cmd.Env = append(os.Environ(), "CREW_REAP_SIGNAL_CHILD="+tmp)
+	err = cmd.Run()
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != 128+int(syscall.SIGTERM) {
+		t.Fatalf("child exit = %v, want 143", err)
+	}
+	if _, err := os.Lstat(tmp); !os.IsNotExist(err) {
+		t.Fatalf("scratch dir left: %v", err)
+	}
 }
 
 // The removal re-check refuses a tree that changed after the save.
