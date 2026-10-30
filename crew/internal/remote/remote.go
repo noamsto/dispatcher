@@ -98,19 +98,20 @@ func ConfigBin() string {
 }
 
 // Load runs dispatch-config and returns its `hosts`, re-validated with the
-// same patterns dispatch-config applies. Its stderr goes to stderr.
+// same patterns dispatch-config applies. Its stderr goes to stderr. Errors
+// carry no command prefix: each caller adds its own.
 func Load(ctx context.Context, bin string, stderr io.Writer) (map[string]Host, error) {
 	cmd := exec.CommandContext(ctx, bin)
 	cmd.Stderr = stderr
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("crew: remote-run: could not resolve the dispatcher settings (%s: %v)", bin, err)
+		return nil, fmt.Errorf("could not resolve the dispatcher settings (%s: %w)", bin, err)
 	}
 	var settings struct {
 		Hosts map[string]Host `json:"hosts"`
 	}
 	if err := json.Unmarshal(out, &settings); err != nil {
-		return nil, fmt.Errorf("crew: remote-run: settings hosts: %v", err)
+		return nil, fmt.Errorf("settings hosts: %v", err)
 	}
 	for name, h := range settings.Hosts {
 		if err := validHost(name, h); err != nil {
@@ -122,17 +123,17 @@ func Load(ctx context.Context, bin string, stderr io.Writer) (map[string]Host, e
 
 func validHost(name string, h Host) error {
 	if !HostNameRe.MatchString(name) {
-		return fmt.Errorf("crew: remote-run: settings hosts: invalid host name %q", name)
+		return fmt.Errorf("settings hosts: invalid host name %q", name)
 	}
 	if !SSHRe.MatchString(h.SSH) {
-		return fmt.Errorf("crew: remote-run: settings hosts.%s.ssh: invalid ssh destination %q", name, h.SSH)
+		return fmt.Errorf("settings hosts.%s.ssh: invalid ssh destination %q", name, h.SSH)
 	}
 	for key, path := range h.Repos {
 		if !RepoKeyRe.MatchString(key) {
-			return fmt.Errorf("crew: remote-run: settings hosts.%s.repos: invalid key %q (want owner/repo)", name, key)
+			return fmt.Errorf("settings hosts.%s.repos: invalid key %q (want owner/repo)", name, key)
 		}
 		if !RepoPathRe.MatchString(path) {
-			return fmt.Errorf("crew: remote-run: settings hosts.%s.repos.%s: %q is not an absolute path without control characters", name, key, path)
+			return fmt.Errorf("settings hosts.%s.repos.%s: %q is not an absolute path without control characters", name, key, path)
 		}
 	}
 	return nil
@@ -356,7 +357,7 @@ func prepare(ctx context.Context, c Call, stderr io.Writer) (Target, []byte, err
 	}
 	hosts, err := Load(ctx, ConfigBin(), stderr)
 	if err != nil {
-		return Target{}, nil, err
+		return Target{}, nil, fmt.Errorf("crew: remote-run: %w", err)
 	}
 	if _, err := lookupHost(hosts, c.Host); err != nil {
 		return Target{}, nil, err

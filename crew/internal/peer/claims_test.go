@@ -55,6 +55,8 @@ func TestClaims(t *testing.T) {
 		{"claim-issue past the TTL", []string{claimRow(`"42"`, "feat/42-x", 20*time.Minute)}, ""},
 		{"claim-issue then reap", []string{claimRow(`"42"`, "feat/42-x", time.Minute), reapRow("feat/42-x")}, ""},
 		{"claim-issue for another issue", []string{claimRow(`"43"`, "feat/43-x", time.Minute)}, ""},
+		{"dispatch row from the future", []string{dispatchRow("feat/42-x", -time.Hour, "")}, ""},
+		{"claim-issue from the future", []string{claimRow(`"42"`, "feat/42-x", -time.Hour)}, ""},
 		{"msg mentioning the branch", []string{`{"ts":1,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"peer:mbp","body":"feat/42-x"}`}, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -65,6 +67,23 @@ func TestClaims(t *testing.T) {
 				t.Errorf("Claims = %q, %v; want %q", got, err, c.want)
 			}
 		})
+	}
+}
+
+// TestClaimsOrdersByFileNotSeq has the peer's log reset and re-pinned between a
+// reap and a new dispatch: the new row's seq is lower, but it is later in the
+// file, so the reap does not cancel it.
+func TestClaimsOrdersByFileNotSeq(t *testing.T) {
+	s := StoreFor(newBus(t))
+	if err := s.Append("halo", []Entry{
+		{Seq: 900, Row: []byte(reapRow("feat/42-x"))},
+		{Seq: 100, Row: []byte(dispatchRow("feat/42-x", 0, ""))},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Claims(s, "42", testNow)
+	if err != nil || got != "peer halo dispatch row for feat/42-x" {
+		t.Errorf("Claims = %q, %v; want the live dispatch row", got, err)
 	}
 }
 

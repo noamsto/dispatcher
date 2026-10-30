@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -244,13 +245,43 @@ func TestPeerSyncErrorReportedOncePerHeartbeat(t *testing.T) {
 	}
 }
 
-func TestPeerSettingsErrorIsSilent(t *testing.T) {
+func TestPeerSettingsErrorIsReported(t *testing.T) {
 	mbp, _ := peerPair(t)
 	var calls atomic.Int64
 	l := peerLane(t, mbp, peerHooks{
 		hosts: func() (map[string]remote.Host, error) {
 			calls.Add(1)
-			return nil, errors.New("dispatch-config exploded")
+			return nil, errors.New("settings hosts: invalid host name \"-x\"")
+		},
+		transport: func(context.Context, string, []byte) ([]byte, error) {
+			t.Error("dialed with no settings")
+			return nil, errors.New("unreachable")
+		},
+		every: 50 * time.Millisecond,
+	})
+	waitFor(t, "three settings reads", func() bool { return calls.Load() >= 3 })
+	errs := l.ofKind("error")
+	if len(errs) != 1 || errs[0]["host"] != "settings" || errs[0]["detail"] != `peer settings: settings hosts: invalid host name "-x"` {
+		t.Errorf("error lines = %v, want one settings line within the heartbeat", errs)
+	}
+}
+
+// Without dispatch-config there are no peer settings to read: a host that
+// never set up peers sees no new lines.
+func TestPeerSettingsWithoutConfigBinIsSilent(t *testing.T) {
+	path := os.Getenv("PATH")
+	t.Setenv("PATH", t.TempDir())
+	_, err := remote.Load(t.Context(), "dispatch-config", io.Discard)
+	if err == nil {
+		t.Fatal("Load found a dispatch-config")
+	}
+	t.Setenv("PATH", path)
+	mbp, _ := peerPair(t)
+	var calls atomic.Int64
+	l := peerLane(t, mbp, peerHooks{
+		hosts: func() (map[string]remote.Host, error) {
+			calls.Add(1)
+			return nil, err
 		},
 		transport: func(context.Context, string, []byte) ([]byte, error) {
 			t.Error("dialed with no settings")
@@ -264,5 +295,43 @@ func TestPeerSettingsErrorIsSilent(t *testing.T) {
 	}
 	if text := l.errb.str(); text != "" {
 		t.Errorf("stderr %q", text)
+	}
+}
+
+func TestPeerSyncErrorNamesTheHostOnce(t *testing.T) {
+	mbp, _ := peerPair(t)
+	l := peerLane(t, mbp, peerHooks{
+		hosts: mbp.settings,
+		transport: func(context.Context, string, []byte) ([]byte, error) {
+			return []byte("nope"), nil
+		},
+		every: 50 * time.Millisecond,
+		self:  mbp.name,
+	})
+	l.waitKind("error", 1)
+	if d, _ := l.ofKind("error")[0]["detail"].(string); !strings.HasPrefix(d, "peer halo: response: invalid JSON") {
+		t.Errorf("detail = %q", d)
+	}
+}
+
+// TestPeerMsgAnnouncedOnceWhenSeenWontWrite has a directory where halo.seen
+// goes, so every WriteSeen fails: the msg is still announced only once.
+func TestPeerMsgAnnouncedOnceWhenSeenWontWrite(t *testing.T) {
+	mbp, halo := peerPair(t)
+	mbp.msg(t, "halo", "once")
+	syncTo(t, mbp, halo)
+	store := peer.StoreFor(halo.paths)
+	if err := os.Mkdir(filepath.Join(store.Dir, "mbp.seen"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	l := peerLane(t, halo, peerHooks{hosts: noPeers, wake: 20 * time.Millisecond})
+	l.waitKind("peer_msg", 1)
+	time.Sleep(200 * time.Millisecond)
+	if msgs := l.ofKind("peer_msg"); len(msgs) != 1 {
+		t.Errorf("peer_msg lines = %v, want one", msgs)
+	}
+	if errs := l.ofKind("error"); len(errs) != 1 || errs[0]["host"] != "mbp" {
+		t.Errorf("error lines = %v, want the one seen write failure", errs)
 	}
 }

@@ -173,10 +173,11 @@ func Sync(ctx context.Context, o SyncOptions) (Result, error) {
 	}
 	var resp Response
 	if err := decodeOne(out, &resp); err != nil {
-		return Result{}, fmt.Errorf("peer %s: %w", o.Name, err)
+		return Result{}, fmt.Errorf("response: %w", err)
 	}
+	// The peer's host text is not echoed: it would reach the stream's error line.
 	if resp.Host != o.Name {
-		return Result{}, fmt.Errorf("peer %s answered as %q", o.Name, resp.Host)
+		return Result{}, errors.New("answered as another host")
 	}
 
 	unlock, ok := store.Lock(o.Name)
@@ -202,7 +203,22 @@ func Sync(ctx context.Context, o SyncOptions) (Result, error) {
 	if err := store.WriteState(o.Name, st); err != nil {
 		return Result{}, err
 	}
-	return Result{Stored: len(kept), Dropped: dropped, RemoteDropped: resp.Dropped}, nil
+	return Result{Stored: len(kept), Dropped: dropped, RemoteDropped: knownReasons(resp.Dropped)}, nil
+}
+
+// knownReasons keeps the peer's drop counts under the reasons Admit gives and
+// folds every other key, which is peer text, into "other".
+func knownReasons(counts map[string]int) map[string]int {
+	out := map[string]int{}
+	for r, n := range counts {
+		switch r {
+		case reasonMalformed, reasonOversize, reasonWorker, reasonIdentity, reasonControl:
+		default:
+			r = "other"
+		}
+		out[r] += n
+	}
+	return out
 }
 
 func lockedState(store Store, host string) (State, error) {
@@ -322,9 +338,9 @@ func SSHTransport(ctx context.Context, dest string, request []byte) ([]byte, err
 	cmd := exec.CommandContext(ctx, "ssh", remote.SSHArgv(dest)...)
 	cmd.Stdin = bytes.NewReader(request)
 	out := &cappedBuffer{max: MaxResponse}
-	var errb bytes.Buffer
+	errb := &headBuffer{max: stderrKeep}
 	cmd.Stdout = out
-	cmd.Stderr = &errb
+	cmd.Stderr = errb
 	err := cmd.Run()
 	if out.over {
 		return nil, errors.New("ssh: response over 1 MiB")
@@ -334,13 +350,34 @@ func SSHTransport(ctx context.Context, dest string, request []byte) ([]byte, err
 	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
-		line, _, _ := strings.Cut(strings.TrimSpace(errb.String()), "\n")
-		return nil, fmt.Errorf("ssh: exit %d: %s", ee.ExitCode(), line)
+		line, _, _ := strings.Cut(strings.TrimSpace(errb.buf.String()), "\n")
+		return nil, fmt.Errorf("ssh: exit %d: %s", ee.ExitCode(), capText(stripControl(line), stderrLineMax))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("ssh: %w", err)
 	}
 	return out.buf.Bytes(), nil
+}
+
+// The ssh stderr kept, and the most of its first line an error quotes: the
+// peer writes it, and it reaches the stream's error line.
+const (
+	stderrKeep    = 4096
+	stderrLineMax = 200
+)
+
+// headBuffer keeps the first max bytes and discards the rest without failing,
+// so a chatty stderr neither fills memory nor fails the call.
+type headBuffer struct {
+	buf bytes.Buffer
+	max int
+}
+
+func (b *headBuffer) Write(p []byte) (int, error) {
+	if room := b.max - b.buf.Len(); room > 0 {
+		b.buf.Write(p[:min(room, len(p))])
+	}
+	return len(p), nil
 }
 
 // cappedBuffer fails the write that would take it past max, which ends ssh's

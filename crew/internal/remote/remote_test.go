@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -121,6 +122,26 @@ func TestLoadConfigFails(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "boom") {
 		t.Fatalf("dispatch-config stderr not passed through: %q", stderr.String())
+	}
+}
+
+func TestLoadWithoutConfigBinIsNotFound(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	_, err := Load(context.Background(), "dispatch-config", io.Discard)
+	if !errors.Is(err, exec.ErrNotFound) || !strings.HasPrefix(err.Error(), "could not resolve the dispatcher settings (dispatch-config: ") {
+		t.Fatalf("err = %v, want exec.ErrNotFound without a command prefix", err)
+	}
+}
+
+func TestRunSettingsFailure(t *testing.T) {
+	repo := cloneOf(t, "https://github.com/acme/widget")
+	bin := filepath.Join(t.TempDir(), "dispatch-config")
+	writeScript(t, bin, "exit 3\n")
+	t.Setenv("DISPATCH_CONFIG_BIN", bin)
+	var stderr bytes.Buffer
+	Run(context.Background(), Call{Host: "mini", Cwd: repo, Argv: []string{"crew", "where", "x"}}, io.Discard, &stderr)
+	if want := "crew: remote-run: could not resolve the dispatcher settings (" + bin + ": exit status 3)\n"; stderr.String() != want {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
 	}
 }
 

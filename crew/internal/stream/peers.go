@@ -6,9 +6,11 @@ package stream
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -53,6 +55,10 @@ type peerLink struct {
 	supMu sync.Mutex
 	sup   *suppress
 
+	// seen, the wake goroutine's own, is each host's announced offset as this
+	// link knows it, so a failing WriteSeen does not re-announce every tick.
+	seen map[string]int64
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	stop   chan struct{}
@@ -85,6 +91,7 @@ func newPeerLink(l *loop, paths bus.Paths) *peerLink {
 		now:         l.nowMS,
 		hooks:       h,
 		sup:         &suppress{key: map[string]string{}, ts: map[string]int64{}},
+		seen:        map[string]int64{},
 		ctx:         ctx,
 		cancel:      cancel,
 		stop:        make(chan struct{}),
@@ -121,15 +128,20 @@ func (pl *peerLink) every(d time.Duration, f func()) {
 }
 
 // syncAll is one round with each peer host that maps this clone. A clone with
-// no origin slug, or settings that will not load, is silent: a dispatcher
-// without peers sees no new lines.
+// no origin slug, or no dispatch-config to read settings from, is silent: a
+// dispatcher without peers sees no new lines. Settings that will not load are
+// reported, as they silently end the link and let peer claims age out.
 func (pl *peerLink) syncAll() {
 	slug := remote.CloneSlug(pl.ctx, pl.paths.Common)
 	if slug == "" {
 		return
 	}
 	hosts, err := pl.hooks.hosts()
+	if errors.Is(err, exec.ErrNotFound) {
+		return
+	}
 	if err != nil {
+		pl.report("settings", "load", err.Error())
 		return
 	}
 	names := make([]string, 0, len(hosts))
@@ -199,11 +211,15 @@ func (pl *peerLink) wake() {
 			continue
 		}
 		info, err := e.Info()
-		if err != nil || info.Size() <= pl.store.Seen(host) {
+		if err != nil || info.Size() <= pl.seenOf(host) {
 			continue
 		}
 		pl.announce(host)
 	}
+}
+
+func (pl *peerLink) seenOf(host string) int64 {
+	return max(pl.store.Seen(host), pl.seen[host])
 }
 
 func (pl *peerLink) announce(host string) {
@@ -212,7 +228,7 @@ func (pl *peerLink) announce(host string) {
 		return
 	}
 	defer unlock()
-	seen := pl.store.Seen(host)
+	seen := pl.seenOf(host)
 	msgs, next, err := peer.Messages(pl.store, host, seen)
 	if err != nil {
 		pl.report(host, "wake", err.Error())
@@ -231,6 +247,7 @@ func (pl *peerLink) announce(host string) {
 	if next == seen {
 		return
 	}
+	pl.seen[host] = next
 	if err := pl.store.WriteSeen(host, next); err != nil {
 		pl.report(host, "wake", err.Error())
 	}

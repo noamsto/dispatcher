@@ -9365,6 +9365,26 @@ EOF
   assert_claim_refused "peer rows unreadable"
 }
 
+@test "peer claims: the real crew peer-claims refuses through the gate (#1204)" {
+  stub_launch_bins
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "${1:-}" in
+identity) printf '%s\n' '{"name":"sage","color":"green","tmux":"colour28"}' ;;
+peer-claims) exec "$CREW_REAL" "$@" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  mkdir -p "$TEST_REPO/.git/crew/peers"
+  printf '{"peer":"halo","seq":100,"row":{"ts":%s,"crew_id":"cP","kind":"dispatch","branch":"feat/42-do-a-thing"}}\n' \
+    "$(($(date +%s) * 1000))" >"$TEST_REPO/.git/crew/peers/halo.jsonl"
+  stub_gh_claim dispatched ""
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  assert_claim_refused "peer halo dispatch row for feat/42-do-a-thing"
+}
+
 @test "claim index: a dispatch row over 24h old from another clone does not block" {
   stub_launch_bins
   old_ms=$(( ($(date +%s) - 90000) * 1000 ))

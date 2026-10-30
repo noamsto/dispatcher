@@ -18,6 +18,10 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/claimindex"
 )
 
+// maxSkew is how far past now a row's ts may be: a far-future ts would make a
+// claim that never expires.
+const maxSkew = 5 * time.Minute
+
 // Drop reasons, the keys of a drop count.
 const (
 	reasonMalformed = "malformed"
@@ -59,7 +63,7 @@ var allowlist = map[string][]field{
 // it returns the row projected onto its kind's allowlist, or nil and the drop
 // reason. self is the receiving host's name, the only `to` a msg may carry.
 // The seq ≤ hwm dedupe is the caller's.
-func Admit(e Entry, self string, _ time.Time) (json.RawMessage, string) {
+func Admit(e Entry, self string, now time.Time) (json.RawMessage, string) {
 	if len(e.Row) > MaxRow {
 		return nil, reasonOversize
 	}
@@ -85,6 +89,9 @@ func Admit(e Entry, self string, _ time.Time) (json.RawMessage, string) {
 		if v, ok := obj[f.name]; ok && !f.typ.valid(v) {
 			return nil, reasonMalformed
 		}
+	}
+	if ts, ok := intValue(obj["ts"]); ok && time.UnixMilli(ts).Sub(now) > maxSkew {
+		return nil, reasonMalformed
 	}
 	if !identity(kind, obj, self) {
 		return nil, reasonIdentity

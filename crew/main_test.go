@@ -616,6 +616,24 @@ func TestPeerClaimsPrintsAPeersLiveClaim(t *testing.T) {
 	}
 }
 
+// The peer-sync refusal is the sync's one stderr line: no remote-run prefix,
+// and none of dispatch-config's own stderr ahead of it.
+func TestPeerSyncSettingsFailure(t *testing.T) {
+	repo, _ := repoWithLog(t, nil, 0o644)
+	bin := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho boom >&2\nexit 3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DISPATCH_CONFIG_BIN", bin)
+	payload := `{"v":1,"host":"mbp","id":"` + strings.Repeat("a", 32) + `","rows":[]}`
+	e := env{getwd: func() (string, error) { return repo, nil }, stdin: strings.NewReader(payload)}
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"peer-sync"}, &stdout, &stderr, e)
+	if want := "crew: peer-sync: could not resolve the dispatcher settings (" + bin + ": exit status 3)\n"; code != 1 || stdout.Len() != 0 || stderr.String() != want {
+		t.Errorf("code %d stdout %q stderr %q, want 1 and %q", code, stdout.String(), stderr.String(), want)
+	}
+}
+
 // sshd starts `crew remote-exec` in the remote user's $HOME, which is no git
 // repo: it answers with its own refusal, before the working directory or the
 // repo is read.

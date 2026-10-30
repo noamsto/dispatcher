@@ -656,11 +656,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return remote.DispatchRow(paths.Log, crew, str(c.Session), stdout, stderr)
 	}
 	// peer-sync runs inside the clone remote-exec put it in, so the repo-located
-	// paths are the clone's.
+	// paths are the clone's. The dialer quotes only stderr's first line, so
+	// dispatch-config's own stderr must not come ahead of the refusal.
 	if sub == "peer-sync" {
 		return peer.Serve(e.stdin, stdout, stderr, peer.ServeOptions{
 			Paths: paths,
-			Hosts: func() (map[string]remote.Host, error) { return remote.Load(ctx, remote.ConfigBin(), stderr) },
+			Hosts: func() (map[string]remote.Host, error) { return remote.Load(ctx, remote.ConfigBin(), io.Discard) },
 		})
 	}
 	if sub == "peer-claims" {

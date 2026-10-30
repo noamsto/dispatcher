@@ -37,20 +37,20 @@ type peerRow struct {
 	Body       string            `json:"body"`
 }
 
-func decodeStored(line []byte) (storedLine, peerRow, bool) {
+func decodeStored(line []byte) (peerRow, bool) {
 	var sl storedLine
 	var row peerRow
 	if json.Unmarshal(line, &sl) != nil || json.Unmarshal(sl.Row, &row) != nil {
-		return sl, row, false
+		return row, false
 	}
-	return sl, row, true
+	return row, true
 }
 
 // Messages reads the peer messages in host's store file after offset from
 // (complete lines only); next is the end of the last complete line.
 func Messages(s Store, host string, from int64) (msgs []Msg, next int64, err error) {
 	next, err = eachLine(s.path(host, ".jsonl"), from, func(line []byte, _ int64) bool {
-		if _, row, ok := decodeStored(line); ok && row.Kind == "msg" {
+		if row, ok := decodeStored(line); ok && row.Kind == "msg" {
 			msgs = append(msgs, Msg{Peer: host, From: row.From, Body: row.Body, TS: row.TS})
 		}
 		return true
@@ -93,37 +93,44 @@ func Claims(s Store, issue string, now time.Time) (string, error) {
 }
 
 type candidate struct {
-	seq      int64
+	line     int
 	branch   string
 	evidence string
 }
 
 // hostClaim judges one host's store file. Candidates are judged after the whole
-// file is read, so a reap row later in the file cancels an earlier claim.
+// file is read, so a reap row later in the file cancels an earlier claim. File
+// order, not seq: a seq is the peer's log offset, which restarts after the
+// peer's log is reset and re-pinned.
 func hostClaim(host string, data []byte, issue string, now time.Time) string {
-	reaped := map[string]int64{}
+	reaped := map[string]int{}
 	var cands []candidate
+	n := 0
 	for line := range bytes.Lines(data) {
-		sl, row, ok := decodeStored(bytes.TrimSuffix(line, []byte("\n")))
+		n++
+		row, ok := decodeStored(bytes.TrimSuffix(line, []byte("\n")))
 		if !ok {
 			continue
 		}
+		// A future ts is never live: a row stored before Admit refused one would
+		// never expire.
 		age := now.Sub(time.UnixMilli(row.TS))
+		live := func(ttl time.Duration) bool { return age >= 0 && age <= ttl }
 		switch row.Kind {
 		case "reap":
-			reaped[row.Branch] = max(reaped[row.Branch], sl.Seq)
+			reaped[row.Branch] = n
 		case "dispatch":
-			if age <= claimindex.StaleAfter && (strings.HasPrefix(row.Branch, "feat/"+issue+"-") || slices.ContainsFunc(row.AlsoCloses, func(r json.RawMessage) bool { return issueText(r) == issue })) {
-				cands = append(cands, candidate{sl.Seq, row.Branch, "peer " + host + " dispatch row for " + capBranch(row.Branch)})
+			if live(claimindex.StaleAfter) && (strings.HasPrefix(row.Branch, "feat/"+issue+"-") || slices.ContainsFunc(row.AlsoCloses, func(r json.RawMessage) bool { return issueText(r) == issue })) {
+				cands = append(cands, candidate{n, row.Branch, "peer " + host + " dispatch row for " + capText(row.Branch, evidenceBranchMax)})
 			}
 		case "claim-issue":
-			if age <= ClaimTTL && issueText(row.Issue) == issue {
-				cands = append(cands, candidate{sl.Seq, row.Branch, "peer " + host + " claim on #" + issue + " (" + capBranch(row.Branch) + ")"})
+			if live(ClaimTTL) && issueText(row.Issue) == issue {
+				cands = append(cands, candidate{n, row.Branch, "peer " + host + " claim on #" + issue + " (" + capText(row.Branch, evidenceBranchMax) + ")"})
 			}
 		}
 	}
 	for _, c := range cands {
-		if reaped[c.branch] <= c.seq {
+		if reaped[c.branch] < c.line {
 			return c.evidence
 		}
 	}
@@ -140,13 +147,14 @@ func issueText(raw json.RawMessage) string {
 	return string(raw)
 }
 
-func capBranch(b string) string {
-	if len(b) <= evidenceBranchMax {
-		return b
+// capText is s cut to at most n bytes, whole runes only.
+func capText(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
-	cut := evidenceBranchMax
-	for cut > 0 && !utf8.RuneStart(b[cut]) {
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
-	return b[:cut]
+	return s[:cut]
 }

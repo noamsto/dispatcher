@@ -586,7 +586,7 @@ _claim_index_evidence() {
 # the peer store; a store it cannot read fails closed, like the bus and index.
 _peer_claim_evidence() {
   local out
-  out="$(crew peer-claims "$1" 2>/dev/null)" || {
+  out="$(crew peer-claims "$1")" || {
     echo "peer rows unreadable"
     return 0
   }

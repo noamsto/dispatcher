@@ -282,6 +282,22 @@ func TestAdmit(t *testing.T) {
 	}
 }
 
+func TestAdmitRefusesAFarFutureTS(t *testing.T) {
+	for _, c := range []struct {
+		ahead  time.Duration
+		reason string
+	}{
+		{maxSkew, ""},
+		{maxSkew + time.Millisecond, "malformed"},
+		{100 * 365 * 24 * time.Hour, "malformed"},
+	} {
+		row := fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"claim-issue","issue":"42","branch":"feat/42-x"}`, ms(-c.ahead))
+		if _, reason := Admit(Entry{Seq: 10, Row: json.RawMessage(row)}, "halo", testNow); reason != c.reason {
+			t.Errorf("ts %s ahead: reason = %q, want %q", c.ahead, reason, c.reason)
+		}
+	}
+}
+
 func TestAdmitRefusesANonPositiveSeq(t *testing.T) {
 	if _, reason := Admit(Entry{Seq: 0, Row: json.RawMessage(`{"ts":1,"kind":"reap","branch":"feat/x"}`)}, "halo", testNow); reason != "malformed" {
 		t.Errorf("reason = %q, want malformed", reason)

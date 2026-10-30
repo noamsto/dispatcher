@@ -283,6 +283,19 @@ func TestSyncDropsRowsAndReports(t *testing.T) {
 	}
 }
 
+func TestSyncFoldsUnknownRemoteDropReasons(t *testing.T) {
+	mbp, halo := pair(t)
+	junk := strings.Repeat("\x1b", 10<<10)
+	resp := Response{V: 1, Host: "halo", ID: halo.busID(t), Dropped: map[string]int{junk: 3, "zz": 1, "control": 2}}
+	res, err := syncTo(mbp, halo, answer(t, resp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]int{"other": 4, "control": 2}; !reflect.DeepEqual(res.RemoteDropped, want) {
+		t.Errorf("RemoteDropped = %.200v, want %v", res.RemoteDropped, want)
+	}
+}
+
 func TestServeDropsRowsAndReports(t *testing.T) {
 	mbp, halo := pair(t)
 	req := Request{V: 1, Host: "mbp", ID: mbp.busID(t), Cursor: 400, Rows: []Entry{
@@ -389,11 +402,12 @@ func TestServeRefusesANonPeerHost(t *testing.T) {
 func TestSyncRefusesAnotherResponseHost(t *testing.T) {
 	mbp, halo := pair(t)
 	seq := writeLines(t, halo.paths.Log, busDispatch("c2", "feat/7-y"))[0]
-	resp := Response{V: 1, Host: "mini", ID: halo.busID(t), Cursor: seq,
+	host := "mini" + strings.Repeat("\x1b", 10<<10)
+	resp := Response{V: 1, Host: host, ID: halo.busID(t), Cursor: seq,
 		Rows: []Entry{{Seq: seq, Row: json.RawMessage(busDispatch("c2", "feat/7-y"))}}}
 	_, err := syncTo(mbp, halo, answer(t, resp))
-	if err == nil || !strings.Contains(err.Error(), "mini") {
-		t.Fatalf("Sync err = %v, want a host mismatch", err)
+	if err == nil || err.Error() != "answered as another host" {
+		t.Fatalf("Sync err = %.200q, want a host mismatch that does not echo the peer's host", err)
 	}
 	if readFile(t, mbp.peerFile("halo")) != "" || mbp.state(t, "halo") != (State{}) {
 		t.Error("a response from the wrong host was stored")
@@ -612,6 +626,22 @@ cat
 		_, err := SSHTransport(context.Background(), "me@halo", nil)
 		if err == nil || err.Error() != "ssh: exit 255: connection refused" {
 			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("huge stderr line", func(t *testing.T) {
+		sshOnPath(t, `cat >/dev/null
+printf 'refused\033[31m\007 ' >&2
+head -c 1048576 /dev/zero | tr '\0' x >&2
+exit 255
+`)
+		_, err := SSHTransport(context.Background(), "me@halo", nil)
+		if err == nil {
+			t.Fatal("SSHTransport succeeded")
+		}
+		const prefix = "ssh: exit 255: "
+		msg := err.Error()
+		if !strings.HasPrefix(msg, prefix+"refused[31m xxx") || len(msg) > len(prefix)+stderrLineMax || strings.ContainsFunc(msg, isControl) {
+			t.Fatalf("err = %.300q (%d bytes), want the first line without control characters, capped", msg, len(msg))
 		}
 	})
 	t.Run("oversize", func(t *testing.T) {
