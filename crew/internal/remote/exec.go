@@ -67,7 +67,12 @@ func Serve(stdin io.Reader, stdout, stderr io.Writer, o ServeOptions) int {
 		_, _ = fmt.Fprintf(stderr, "crew: remote-exec: %v\n", err)
 		return 1
 	}
-	defer func() { _ = os.RemoveAll(scratch) }()
+	keep := false
+	defer func() {
+		if !keep {
+			_ = os.RemoveAll(scratch)
+		}
+	}()
 
 	cmd, err := command(req.Argv, o)
 	if err != nil {
@@ -95,7 +100,9 @@ func Serve(stdin io.Reader, stdout, stderr io.Writer, o ServeOptions) int {
 
 	if req.Argv[0] == "dispatch" {
 		if o.ViaTmux {
-			if rc, ok := runInTmux(cmd, scratch, o, stdout, stderr); ok {
+			rc, ok, k := runInTmux(cmd, scratch, o, stdout, stderr)
+			if ok {
+				keep = k
 				return rc
 			}
 		}
@@ -230,9 +237,6 @@ func command(argv []string, o ServeOptions) (*exec.Cmd, error) {
 	return exec.Command(path, argv[1:]...), nil
 }
 
-// shellSafe reports whether s needs no quoting in either POSIX sh or fish.
-var shellSafe = regexp.MustCompile(`^[A-Za-z0-9/._-]+$`).MatchString
-
 // newScratch sweeps root's entries older than scratchTTL, then makes this
 // request's own `<pid>-<rand>` dir under it.
 func newScratch(root string) (string, error) {
@@ -306,23 +310,29 @@ func runDetached(cmd *exec.Cmd, scratch string, stdout, stderr io.Writer) int {
 
 var envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+// tmuxStartTimeout bounds the wait for a tmux job to start; tmuxPoll is how
+// often runInTmux looks for its progress files.
+var (
+	tmuxStartTimeout = 10 * time.Second
+	tmuxPoll         = 100 * time.Millisecond
+)
+
 // runInTmux runs a dispatch as a job of the running tmux server, which keeps
 // it alive past a dropped link much as runDetached does. ok is false only when
 // the job could not be started, before anything in scratch that runDetached
-// creates exists, so the caller can fall back to it.
-func runInTmux(cmd *exec.Cmd, scratch string, o ServeOptions, stdout, stderr io.Writer) (int, bool) {
-	fallback := func(reason string) (int, bool) {
+// creates exists, so the caller can fall back to it. keep is true when the job
+// may still be running, so scratch must outlive this process.
+func runInTmux(cmd *exec.Cmd, scratch string, o ServeOptions, stdout, stderr io.Writer) (rc int, ok, keep bool) {
+	fallback := func(reason string) (int, bool, bool) {
 		_, _ = fmt.Fprintf(stderr, "crew: remote-exec: not running dispatch in the tmux server (%s); running it in this ssh session\n", reason)
-		return 0, false
+		return 0, false, false
 	}
 	tmux, err := o.LookPath("tmux")
 	if err != nil {
 		return fallback(err.Error())
 	}
-	// tmux 3.2+ hands run-shell's command to the server's default-shell, which
-	// may be fish, so the command must parse alike in both: no quoting at all.
-	if !shellSafe(scratch) {
-		return fallback(fmt.Sprintf("scratch path %q needs quoting", scratch))
+	if !runShellSafe(scratch) {
+		return fallback(fmt.Sprintf("scratch path %q cannot be quoted for run-shell", scratch))
 	}
 	envPath, reason := safeLookPath("env")
 	if reason != "" {
@@ -332,29 +342,30 @@ func runInTmux(cmd *exec.Cmd, scratch string, o ServeOptions, stdout, stderr io.
 	if reason != "" {
 		return fallback(reason)
 	}
-	channel := "crew-remote-exec-" + filepath.Base(scratch)
+	rmPath, reason := safeLookPath("rm")
+	if reason != "" {
+		return fallback(reason)
+	}
+	runPath, startedPath := scratch+"/run", scratch+"/started"
 	outPath, errPath, statusPath := scratch+"/stdout", scratch+"/stderr", scratch+"/status"
+	old := syscall.Umask(0)
+	syscall.Umask(old)
+
 	// Everything that can kill a shell (an export of a readonly variable, a
 	// failed cd) runs in the subshell, so the outer one always records the
-	// status and signals. The outer one has no PATH: builtins and absolute
-	// paths only, plus the variables that pick the socket, so its wait-for
-	// signals the server run-shell reached.
-	var outer, inner strings.Builder
-	for _, kv := range cmd.Env {
-		k, v, _ := strings.Cut(kv, "=")
-		if !envKeyRe.MatchString(k) {
-			continue
-		}
-		fmt.Fprintf(&inner, "export %s=%s\n", k, shQuote(v))
-		if k == "TMUX" || k == "TMUX_TMPDIR" {
-			fmt.Fprintf(&outer, "export %s=%s\n", k, shQuote(v))
-		}
-	}
+	// status. The outer one has no PATH: builtins and absolute paths only. It
+	// unlinks the script first, as that holds the whole environment.
 	var b strings.Builder
 	b.WriteString("umask 077\n")
-	b.WriteString(outer.String())
-	b.WriteString("( umask 077\n")
-	b.WriteString(inner.String())
+	fmt.Fprintf(&b, "%s -f %s\n", shQuote(rmPath), shQuote(runPath))
+	fmt.Fprintf(&b, "printf '%%s\\n' \"$$\" >%s\n", shQuote(startedPath))
+	fmt.Fprintf(&b, "( umask %04o\n", old)
+	for _, kv := range cmd.Env {
+		k, v, _ := strings.Cut(kv, "=")
+		if envKeyRe.MatchString(k) {
+			fmt.Fprintf(&b, "export %s=%s\n", k, shQuote(v))
+		}
+	}
 	fmt.Fprintf(&b, "cd %s && exec %s", shQuote(cmd.Dir), shQuote(cmd.Path))
 	for _, a := range cmd.Args[1:] {
 		b.WriteByte(' ')
@@ -362,53 +373,85 @@ func runInTmux(cmd *exec.Cmd, scratch string, o ServeOptions, stdout, stderr io.
 	}
 	fmt.Fprintf(&b, " ) </dev/null >%s 2>%s\n", shQuote(outPath), shQuote(errPath))
 	fmt.Fprintf(&b, "printf '%%s\\n' \"$?\" >%s\n", shQuote(statusPath))
-	fmt.Fprintf(&b, "exec %s wait-for -S %s\n", shQuote(tmux), shQuote(channel))
-	if err := writePrivate(scratch+"/run", []byte(b.String())); err != nil {
+	// A non-zero exit would have tmux print "returned N" into a pane.
+	b.WriteString("exit 0\n")
+	if err := writePrivate(runPath, []byte(b.String())); err != nil {
 		return fallback(err.Error())
 	}
 
 	// Never run-shell without -b: a keychain dialog would wedge the server's
 	// command queue until it is answered.
 	var runErr bytes.Buffer
-	start := exec.Command(tmux, "run-shell", "-b", "exec "+envPath+" -i "+shPath+" "+scratch+"/run >/dev/null 2>&1")
+	start := exec.Command(tmux, "run-shell", "-b",
+		fmt.Sprintf(`exec "%s" -i "%s" "%s" >/dev/null 2>&1`, envPath, shPath, runPath))
 	start.Env = cmd.Env
 	start.Stderr = &runErr
 	if err := start.Run(); err != nil {
+		_ = os.Remove(runPath)
 		reason := strings.TrimSpace(runErr.String())
 		if reason == "" {
 			reason = err.Error()
 		}
 		return fallback("tmux run-shell: " + reason)
 	}
-	// A channel signalled before anyone waits stays woken, so a fast job
-	// cannot slip past this.
-	wait := exec.Command(tmux, "wait-for", channel)
-	wait.Env = cmd.Env
-	_ = wait.Run()
 
-	copyOut(stdout, outPath)
-	copyOut(stderr, errPath)
-	data, err := os.ReadFile(statusPath)
-	if err == nil {
-		if rc, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
-			return rc, true
+	pid, started := readInt(startedPath)
+	for deadline := time.Now().Add(tmuxStartTimeout); !started; pid, started = readInt(startedPath) {
+		if time.Now().After(deadline) {
+			_ = os.Remove(runPath)
+			_, _ = fmt.Fprintln(stderr, "crew: remote-exec: dispatch: the tmux job never started (check the tmux server's default-shell); if it starts late, recover with dispatch --host … --recover")
+			return 255, true, true
 		}
+		time.Sleep(tmuxPoll)
 	}
-	_, _ = fmt.Fprintln(stderr, "crew: remote-exec: dispatch: the tmux job ended without an exit status")
-	return 1, true
+	for {
+		// Checked before the status, so a job that wrote it and then exited
+		// is never taken for one that died without it.
+		gone := errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
+		if rc, ok := readInt(statusPath); ok {
+			copyOut(stdout, outPath)
+			copyOut(stderr, errPath)
+			return rc, true, false
+		}
+		if gone {
+			_, _ = fmt.Fprintln(stderr, "crew: remote-exec: dispatch: the tmux job ended without an exit status; the dispatch may still be running — recover it")
+			return 255, true, true
+		}
+		time.Sleep(tmuxPoll)
+	}
 }
 
-// safeLookPath resolves name on PATH to a path run-shell can take unquoted,
-// or says why it cannot.
+// readInt reads the integer a job wrote to path, false while it has not.
+func readInt(path string) (int, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	rc, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	return rc, err == nil
+}
+
+// safeLookPath resolves name on PATH to a path run-shell can take, or says
+// why it cannot.
 func safeLookPath(name string) (string, string) {
 	path, err := exec.LookPath(name)
 	if err != nil {
 		return "", err.Error()
 	}
-	if !shellSafe(path) {
-		return "", fmt.Sprintf("%s path %q needs quoting", name, path)
+	if !runShellSafe(path) {
+		return "", fmt.Sprintf("%s path %q cannot be quoted for run-shell", name, path)
 	}
 	return path, ""
+}
+
+// runShellSafe reports whether s may go double-quoted into a run-shell
+// command: tmux expands #{} formats in it and may hand it to the server's
+// default-shell (fish, say) rather than sh, and both shells read a
+// double-quoted string alike unless it holds one of these.
+func runShellSafe(s string) bool {
+	return !strings.ContainsFunc(s, func(r rune) bool {
+		return strings.ContainsRune("$\"\\`#", r) || r < 0x20 || r == 0x7f
+	})
 }
 
 // shQuote single-quotes s for POSIX sh.
