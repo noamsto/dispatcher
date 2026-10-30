@@ -268,7 +268,7 @@ func TestWatchRunIdentity(t *testing.T) {
 			frames: trust,
 			bus: seeded(leadID, 0, `{"state":"blocked","source":"watchdog","detail":"prompt: interactive prompt in pane %9 — `+
 				`worker is waiting on input nobody can give"}`),
-		}, mine(leadID)}
+		}, mine(leadID)},
 		{"C-3: a previous run's terminal state does not mute a new watchdog", watchScript{
 			frames: trust,
 			bus: func(h *harness) []string {
