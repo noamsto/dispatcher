@@ -299,8 +299,10 @@ func portCGitWrapper(t *testing.T, wt, fake, saved, marker, discovered string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := fmt.Sprintf(`#!/usr/bin/env bash
-if [ ! -e %[2]q ] && [ "${!#}" = %[1]q ]; then
+	script := fmt.Sprintf(`#!/bin/sh
+last=
+for arg in "$@"; do last=$arg; done
+if [ ! -e %[2]q ] && [ "$last" = %[1]q ]; then
   prev=
   for arg in "$@"; do
     if [ "$prev" = worktree ] && [ "$arg" = remove ]; then

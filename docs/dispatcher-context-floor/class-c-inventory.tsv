@@ -155,14 +155,14 @@ U10.4	design-doc	each reclaim posts a terminal reaped status and removes per-bra
 U10.5	kept	an open PR, uncommitted changes or an unfinished session keeps the worktree	keeps one with an open PR, uncommitted changes or an unfinished session	crew/internal/reap	crew/internal/reap/remove_test.go::TestRemoveKeepsDirt
 U10.6	design-doc	a live engine keeps it unless done/pr_open and every claude/pi pane is provably idle on two samples	A live engine in the worktree keeps it too
 U10.7	design-doc	a role pane that is neither claude nor pi has no idle signature and keeps the window	has no idle signature
-U10.8	kept	a done/failed window is released after --idle seconds (300)	after `--idle` seconds	crew/internal/reap	tests/crew.bats::reap: default grace releases a done window older than it and keeps a younger one
+U10.8	kept	a done/failed window is released after --idle seconds (300)	after `--idle` seconds	crew/internal/reap	crew/internal/reap/port_a_test.go::TestPortADefaultGrace
 U10.9	design-doc	the worker's own stall-watch idle-releases its window	Besides reap, the worker's own `crew stall-watch`
 U10.10	design-doc	windows a person is using are kept	Both paths keep a window a person is evidently using
 U10.11	kept	a pr_open worker never idle-releases	never idle-releases
 U10.12	design-doc	the window is killed before removal; run crew reap without --quiet to see a failure	The window is killed before the removal
 U10.13	design-doc	reaps serialise; stream reaps skip (--no-wait) and print one stream line	A reap waits for another running reap
 U10.14	design-doc	a window stamped with a gone worktree closes once its PR is merged or closed	still stamped with a branch whose worktree is gone
-U10.15	kept	crew reap --dry-run explains every keep	`crew reap --dry-run` names why	crew/internal/reap	tests/crew.bats::reap: --dry-run removes no worktree
+U10.15	kept	crew reap --dry-run explains every keep	`crew reap --dry-run` names why	crew/internal/reap	crew/internal/reap/port_a_test.go::TestPortADryRunKeepsWorktree
 U10.16	kept	reap files outcomes into the ratings store	`crew rate --report`
 U10.17	design-doc	ratings autosweep: CREW_RATE_AUTOSWEEP=0, autosweep.log, --sweep-all	`CREW_RATE_AUTOSWEEP=0`
 U10.18	kept	never remove a worker worktree by hand	Never remove a worker worktree by hand
