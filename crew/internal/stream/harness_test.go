@@ -26,6 +26,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
+	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/watch"
 )
 
@@ -406,6 +407,7 @@ type laneOpts struct {
 	Clock  clock.Clock
 	Proc   proc.Table
 	CrewID func() string
+	peer   peerHooks
 }
 
 // startLane runs one stream with the defaults every case inherits: --park,
@@ -429,6 +431,11 @@ func startLane(t *testing.T, p bus.Paths, s *stub, r Request, o laneOpts) *lane 
 	if timer == nil {
 		timer = func(time.Duration) <-chan time.Time { return ready() }
 	}
+	// No lane reads the owner's settings or execs dispatch-config unless its
+	// case names the peer hosts.
+	if o.peer.hosts == nil {
+		o.peer.hosts = func() (map[string]remote.Host, error) { return map[string]remote.Host{}, nil }
+	}
 	// The tick the loop writes at the top of its first iteration is both proof
 	// it is running and the instant its cadence clock was taken: a case that
 	// advances a fake clock has to do it after this point, or the start instant
@@ -436,7 +443,7 @@ func startLane(t *testing.T, p bus.Paths, s *stub, r Request, o laneOpts) *lane 
 	before := tickTS(p)
 	go func() {
 		l.done <- Run(r, p, l.out, l.errb, Options{
-			Self: s.Script, Timer: timer, Clock: o.Clock, Proc: o.Proc, CrewID: o.CrewID,
+			Self: s.Script, Timer: timer, Clock: o.Clock, Proc: o.Proc, CrewID: o.CrewID, peer: o.peer,
 		})
 	}()
 	t.Cleanup(l.stop)
