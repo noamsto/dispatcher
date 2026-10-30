@@ -518,6 +518,24 @@ func TestD2MeterFields(t *testing.T) {
 	}
 }
 
+// climb is a fixture sampled over a run with its token string rewritten per
+// tick; "-" swaps in a clean, sentinel-free frame that still carries a meter
+// (a clearing sample).
+func climb(t *testing.T, name, from string, toks ...string) func(int64) string {
+	t.Helper()
+	text := fixture(t, name)
+	if !strings.Contains(text, from) {
+		t.Fatalf("%s carries no %q", name, from)
+	}
+	return func(at int64) string {
+		tok := toks[min(int(at/15), len(toks)-1)]
+		if tok == "-" {
+			return fmt.Sprintf("a clean reply %d\n↑50k ↓21.5k", at)
+		}
+		return strings.ReplaceAll(text, from, tok)
+	}
+}
+
 func TestD7Runaway(t *testing.T) {
 	const posted = "blocked|runaway: leaked model sentinel in pane %%1 for %d samples while output tokens grew by %d — " +
 		"the turn is degenerate; verify the pane, then kill and re-dispatch (the worktree usually survives)"
@@ -585,6 +603,29 @@ func TestD7Runaway(t *testing.T) {
 			frame: func(at int64) string {
 				return strings.ReplaceAll(fixture(t, "claude_toolsent.10.0k.txt"), "10.0k", strconv.FormatInt(10+at, 10)+".0k")
 			},
+		}},
+		{"pi: the incident fixture posts, a busy frame clears", fdScript{
+			engine: "pi", req: req, end: 60,
+			frame: climb(t, "pi_runaway.19.0k.txt", "19.0k", "19.0k", "19.8k", "20.5k", "21.2k", "-"),
+			want:  map[int64][]string{30: {fmt.Sprintf(posted, 3, 1500)}, 60: {"working|runaway: cleared"}},
+		}},
+		{"pi: sentinel and static tokens stay silent", fdScript{
+			engine: "pi", req: req, end: 60, frame: climb(t, "pi_runaway.19.0k.txt", "19.0k", "19.0k", "19.0k", "19.0k", "19.0k", "19.0k"),
+		}},
+		{"pi: a busy frame stays silent however fast tokens climb", fdScript{
+			engine: "pi", req: req, end: 60, frame: climb(t, "pi_busy.19.0k.txt", "19.0k", "19.0k", "25.0k", "31.0k", "37.0k", "37.0k"),
+		}},
+		{"pi: sentinels inside tool output stay silent", fdScript{
+			engine: "pi", req: req, end: 60, frame: climb(t, "pi_toolsent.19.0k.txt", "19.0k", "19.0k", "21.0k", "23.0k", "25.0k", "25.0k"),
+		}},
+		{"claude: a long legitimate answer stays silent", fdScript{
+			req: req, end: 60, frame: climb(t, "claude_long.10.0k.txt", "10.0k", "10.0k", "13.0k", "16.0k", "19.0k", "19.0k"),
+		}},
+		{"claude: stale sentinels in input rows, tool headers and blank-split tool output stay silent", fdScript{
+			req: req, end: 60, frame: climb(t, "claude_stale.10.0k.txt", "10.0k", "10.0k", "12.0k", "14.0k", "16.0k", "16.0k"),
+		}},
+		{"claude: a sentinel frame with no token meter neither posts nor ends the watch", fdScript{
+			req: req, end: 60, frame: static("⏺ done <|im_end|>"),
 		}},
 		{"a worker blocked in await suppresses and resets", fdScript{
 			engine: "pi", req: req, end: 60, frame: pi("1.0k", "1.3k", "1.6k", "1.9k", "2.2k"),
