@@ -1,15 +1,14 @@
 # The `retro` fold from adapters/core/crew.sh (before the #887 Go port), run
 # through gojq by internal/jqrun. The slurped event array is `.` and the two
 # flags arrive as $want_report/$want_json — the arm passed them with `--argjson`.
-# Two patches, no others: `_invisible_drop` is defined in Go through
-# jqrun.WithStringFunc, and bare mode's `jq -r` printed one @tsv row per line and
+# One patch, no others: bare mode's `jq -r` printed one @tsv row per line and
 # jqrun wants exactly one value, so those rows are collected and joined — the
 # report.jq patch, same reason — while `--report` already ended in a
 # `join("\n")` and `--report --json` emits one object. The Go caller adds the one
 # trailing newline, and prints nothing for the empty string, which is only ever
 # zero rows: a @tsv row always carries its five tabs. The plan-seam evidence
-# rule for plan_required_unaudited is new since the Go port, not in the bash
-# original.
+# rule for plan_required_unaudited and `clean`'s Go-defined `_invisible_drop`
+# are new since the Go port, not in the bash original.
 
     # unique_by would sort, and both the tag list on a row and the note order
     # within a run are read in first-appearance order.

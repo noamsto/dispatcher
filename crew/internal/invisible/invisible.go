@@ -3,10 +3,9 @@
 // them as `\u{XXXX}` text and the display cleaners drop them. The policy is
 // emoji-safe: zero-width joiners and variation selectors survive where they
 // build an emoji (a joiner between emoji, a selector after an emoji base or
-// before a keycap) and are hidden anywhere else. Every other listed code point
-// (bidi controls, tags, soft hyphen, fillers, invisible operators, other
-// Default_Ignorable code points) is always
-// hidden.
+// before a keycap) and are hidden anywhere else. Every other Default_Ignorable
+// code point (bidi controls, tags, soft hyphen, fillers, invisible operators)
+// and the interlinear annotation marks are always hidden.
 package invisible
 
 import (

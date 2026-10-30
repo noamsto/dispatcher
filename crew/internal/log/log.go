@@ -7,7 +7,7 @@
 // text), and it keeps `jq -c`'s torn-tail behaviour through
 // bus.ReadEventsTolerant (the well-formed prefix goes out, the parse error
 // after it decides the exit status). Invisible code points are escaped in what
-// it prints; the stored log stays raw, and there is deliberately no raw flag.
+// it prints; the stored log stays raw.
 package log
 
 import (
