@@ -519,10 +519,14 @@ func TestD2MeterFields(t *testing.T) {
 }
 
 // climb is a fixture sampled over a run with its token string rewritten per
-// tick, "-" leaving the sentinel with no meter at all.
+// tick; "-" swaps in a clean, sentinel-free frame that still carries a meter
+// (a clearing sample).
 func climb(t *testing.T, name, from string, toks ...string) func(int64) string {
 	t.Helper()
 	text := fixture(t, name)
+	if !strings.Contains(text, from) {
+		t.Fatalf("%s carries no %q", name, from)
+	}
 	return func(at int64) string {
 		tok := toks[min(int(at/15), len(toks)-1)]
 		if tok == "-" {

@@ -566,7 +566,7 @@ rw_frame_idle() {
 EOF
 }
 
-# fx_subbatch shape above a bordered idle box: a live turn keeps the box drawn.
+# A sub-agent batch summary above a bordered idle box: a live turn keeps the box drawn.
 rw_frame_live() {
   cat <<'EOF'
   ⎿  Done (15 tool uses · 77.2k tokens · 5m 53s)

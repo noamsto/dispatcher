@@ -150,7 +150,7 @@ func TestWatchRunEpisodes(t *testing.T) {
 				meter("5m 29s", "5m 29s", "5m 29s")...),
 			gone: func(n int) bool { return n >= 6 },
 			req:  Request{Idle: ptr("2"), Dead: ptr("3"), MaxLife: ptr("15")},
-		// The static meter then re-arms quiet:; no failed: row follows the clearance.
+			// The static meter then re-arms quiet:; no failed: row follows the clearance.
 		}, []string{leadID + "|blocked|quiet: pane unchanged for …", leadID + "|working|quiet: cleared",
 			leadID + "|blocked|quiet: pane unchanged for …"}},
 		{"a prompt: episode never escalates (C-1)", watchScript{
@@ -302,8 +302,8 @@ func TestWatchRunIdentity(t *testing.T) {
 }
 
 func TestWatchRunSurvivesTwoSampleFailures(t *testing.T) {
-	// The prompt confirms on samples 4+5 and posts; the triple of failures at the
-	// end ends the run long before --max-life 30.
+	// The prompt's hit on sample 0 survives the failed pair, so it confirms on
+	// sample 3 and posts; the triple at 6-8 ends the run long before --max-life 30.
 	gone := map[int]bool{1: true, 2: true, 6: true, 7: true, 8: true}
 	h, rows := watchRun(t, watchScript{
 		frames: repeat("prompt_trust.txt", 9),

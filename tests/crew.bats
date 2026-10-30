@@ -15,7 +15,7 @@ setup() {
   # No engine process by default, so quiet:->dead: escalation stays
   # deterministic regardless of what runs on the host tmux server.
   export CREW_STALL_PROC_CMD='printf ""'
-  # await, the hold paths and stall-watch run on a virtual clock: their waits
+  # await and the hold paths run on a virtual clock: their waits
   # advance this file instead of sleeping.
   export CREW_CLOCK="$BATS_TEST_TMPDIR/clock"
   # The real refresh-budget probes live accounts, which no test may do.
