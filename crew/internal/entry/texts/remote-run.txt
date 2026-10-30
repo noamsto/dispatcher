@@ -5,7 +5,7 @@ output. The host, its ssh destination and the clone's path come from the setting
 `hosts` key (hosts.H.ssh, hosts.H.repos); nothing else names them. The command
 is sent as one JSON request to `crew remote-exec` on the other side, which runs
 only an allowlisted argv: dispatch, permission-check, or crew reply, nudge,
-where, roster, relay, reap and dispatch-row.
+where, roster, relay, reap, dispatch-row and peer-sync.
 
 Exits 2, before any ssh, for an unknown host, a clone that is not mapped, a bad
 --env, or a caller that is not this crew's dispatcher (the sender check runs here,

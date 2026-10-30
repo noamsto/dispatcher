@@ -36,6 +36,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/log"
 	"github.com/noamsto/dispatcher/crew/internal/merge"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
+	"github.com/noamsto/dispatcher/crew/internal/peer"
 	"github.com/noamsto/dispatcher/crew/internal/piagentdir"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/prwatch"
@@ -142,7 +143,7 @@ var subcommands = []string{
 	"git-guard", "help", "hold", "msg", "nudge",
 	"pr-watch", "reap", "reap-autosweep",
 	"relay", "reply", "stall-watch", "status", "stream", "watch",
-	"remote-run", "remote-exec", "dispatch-row", "spec-lint", "followups",
+	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "spec-lint", "followups",
 }
 
 // typedSubcommands are the subcommands whose argv root binds: every name but
@@ -157,7 +158,7 @@ var typedSubcommands = map[string]bool{
 	"nudge": true, "await": true, "watch": true, "relay": true, "stream": true,
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
 	"adopt": true, "merge": true, "pr-watch": true, "stall-watch": true, "help": true,
-	"remote-run": true, "remote-exec": true, "dispatch-row": true, "spec-lint": true,
+	"remote-run": true, "remote-exec": true, "dispatch-row": true, "peer-sync": true, "peer-claims": true, "spec-lint": true,
 	"followups": true,
 }
 
@@ -221,6 +222,8 @@ type root struct {
 	RemoteRun   remoteRunCmd   `cmd:"" name:"remote-run" help:"Run a command in the clone on a remote host."`
 	RemoteExec  remoteExecCmd  `cmd:"" name:"remote-exec" help:"The ssh-side of remote-run: serve one request."`
 	DispatchRow dispatchRowCmd `cmd:"" name:"dispatch-row" help:"The dispatch row of one session."`
+	PeerSync    peerSyncCmd    `cmd:"" name:"peer-sync" help:"The ssh side of a peer sync: one exchange on stdin."`
+	PeerClaims  peerClaimsCmd  `cmd:"" name:"peer-claims" help:"Print a peer host's live claim on an issue."`
 
 	SpecLint specLintCmd `cmd:"" name:"spec-lint" help:"Lint a dispatcher task spec."`
 
@@ -651,6 +654,25 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		c := parsed.typed.DispatchRow
 		crew := cmp.Or(str(c.Crew), bus.CrewID(ctx, cwd))
 		return remote.DispatchRow(paths.Log, crew, str(c.Session), stdout, stderr)
+	}
+	// peer-sync runs inside the clone remote-exec put it in, so the repo-located
+	// paths are the clone's.
+	if sub == "peer-sync" {
+		return peer.Serve(e.stdin, stdout, stderr, peer.ServeOptions{
+			Paths: paths,
+			Hosts: func() (map[string]remote.Host, error) { return remote.Load(ctx, remote.ConfigBin(), stderr) },
+		})
+	}
+	if sub == "peer-claims" {
+		line, err := peer.Claims(peer.StoreFor(paths), parsed.typed.PeerClaims.Issue, time.Now())
+		if err != nil {
+			say(stderr, "crew: peer-claims: %v\n", err)
+			return exitFailure
+		}
+		if line != "" {
+			say(stdout, "%s\n", line)
+		}
+		return 0
 	}
 
 	// spec-lint reads a spec file and the repo's origin refs, never the bus.

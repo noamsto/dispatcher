@@ -1,0 +1,8 @@
+usage: crew peer-sync
+
+The ssh side of a peer sync. Reads one JSON exchange on stdin from a peer host's
+`crew stream`, stores the rows it admits under <common>/crew/peers/<host>.jsonl,
+and prints this clone's own rows as one JSON line. It runs in the clone
+`crew remote-exec` put it in. Exits 1 on a refusal, 2 on a malformed payload.
+
+  crew peer-sync < exchange.json

@@ -578,7 +578,7 @@ func TestRunBusSubsRefuseOutsideRepo(t *testing.T) {
 		"crews", "log", "report", "sessions", "roster", "identity", "inbox", "hold", "await", "watch",
 		"retro", "reply", "resolve-target", "pr-watch", "merge", "where", "stream", "roster-render", "adopt",
 		"status", "msg", "register", "deregister", "rate", "git-baseline", "reap", "stack", "nudge", "stall-watch",
-		"remote-run", "dispatch-row", "spec-lint", "followups",
+		"remote-run", "dispatch-row", "peer-sync", "peer-claims", "spec-lint", "followups",
 	} {
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), []string{sub}, &stdout, &stderr, e)
@@ -592,6 +592,26 @@ func TestRunBusSubsRefuseOutsideRepo(t *testing.T) {
 		code := run(context.Background(), tc.args, &stdout, &stderr, e)
 		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "crew: not in a git repo\n" {
 			t.Errorf("%s: code %d stdout %q stderr %q", tc.name, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
+func TestPeerClaimsPrintsAPeersLiveClaim(t *testing.T) {
+	repo, logPath := repoWithLog(t, nil, 0o644)
+	dir := filepath.Join(filepath.Dir(logPath), "peers")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	row := fmt.Sprintf(`{"peer":"halo","seq":100,"row":{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"feat/42-x"}}`+"\n", time.Now().UnixMilli())
+	if err := os.WriteFile(filepath.Join(dir, "halo.jsonl"), []byte(row), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := env{getwd: func() (string, error) { return repo, nil }}
+	for issue, want := range map[string]string{"42": "peer halo dispatch row for feat/42-x\n", "43": ""} {
+		var stdout, stderr bytes.Buffer
+		code := run(context.Background(), []string{"peer-claims", issue}, &stdout, &stderr, e)
+		if code != 0 || stdout.String() != want || stderr.Len() != 0 {
+			t.Errorf("issue %s: code %d stdout %q stderr %q, want 0 and %q", issue, code, stdout.String(), stderr.String(), want)
 		}
 	}
 }
@@ -1303,13 +1323,13 @@ func TestAdmittedSubcommands(t *testing.T) {
 		"git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help",
 		"id", "new", "engine-cmd", "dash", "pi-agent-dir", "relay",
 		"remote-run", "remote-exec", "dispatch-row", "spec-lint",
-		"merge", "followups", // added after that revision
+		"merge", "followups", "peer-sync", "peer-claims", // added after that revision
 	}
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
 		"status", "msg", "reply", "hold", "nudge", "await", "watch", "relay", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "merge", "pr-watch", "stall-watch", "help",
-		"remote-run", "remote-exec", "dispatch-row", "spec-lint", "followups"} {
+		"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "spec-lint", "followups"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -1735,6 +1755,10 @@ var refusalRows = []struct {
 	{"dispatch-row crew missing value", []string{"dispatch-row", "--session", "s1-2", "--crew"}, wantDispatchRowUsage, 2},
 	{"dispatch-row unknown flag", []string{"dispatch-row", "--bogus"}, "crew: dispatch-row: unknown flag '--bogus' (" + wantDispatchRowUsage + ")", 2},
 	{"dispatch-row extra positional", []string{"dispatch-row", "x"}, "crew: dispatch-row: unexpected argument 'x' (" + wantDispatchRowUsage + ")", 2},
+	{"peer-claims no issue", []string{"peer-claims"}, wantPeerClaimsUsage, 2},
+	{"peer-claims bad issue", []string{"peer-claims", "4x"}, wantPeerClaimsUsage, 2},
+	{"peer-claims extra positional", []string{"peer-claims", "4", "5"}, "crew: peer-claims: unexpected argument '5' (" + wantPeerClaimsUsage + ")", 2},
+	{"peer-sync extra positional", []string{"peer-sync", "x"}, "crew: peer-sync: takes no arguments (got 'x')", 2},
 	{"spec-lint no file", []string{"spec-lint"}, wantSpecLintUsage, 2},
 	{"spec-lint bad issue", []string{"spec-lint", "f.md", "--issue", "x1"}, wantSpecLintUsage, 2},
 	{"spec-lint issue missing value", []string{"spec-lint", "f.md", "--issue"}, wantSpecLintUsage, 2},
@@ -1827,6 +1851,7 @@ const (
 	baselineUsage        = "usage: crew git-baseline [--accept]"
 	wantRemoteRunUsage   = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] -- <argv>..."
 	wantDispatchRowUsage = "usage: crew dispatch-row --session S [--crew ID]"
+	wantPeerClaimsUsage  = "usage: crew peer-claims <issue>"
 	wantSpecLintUsage    = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
 	wantFollowupsUsage   = "usage: crew followups <PR> (--entries FILE [--apply] [--tracker github|linear] | --draft [--crew ID])"
 	guardUsage           = "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …"

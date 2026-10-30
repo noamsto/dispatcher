@@ -3,7 +3,9 @@ usage: crew msg <from> <to> <body>
 Post a message from one agent to another on the crew bus.
 
   <from>   Sender id, e.g. "$CREW_WORKER_ID"
-  <to>     Recipient: dispatcher:<crew>, worker:<branch>#s…, role:<branch>:<role>
+  <to>     Recipient: dispatcher:<crew>, worker:<branch>#s…, role:<branch>:<role>,
+           peer:<host> (dispatcher only; a `peer = true` settings host, delivered
+           at the next peer sync)
   <body>   One argument, so its quoting survives
 
 A recipient left as a bare prefix (`dispatcher:` from an id that expanded to
