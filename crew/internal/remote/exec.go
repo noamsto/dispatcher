@@ -31,7 +31,7 @@ const scratchTTL = 24 * time.Hour
 // requestKeys are the exact top-level keys a request may carry. encoding/json
 // matches field names case-insensitively, so DisallowUnknownFields alone would
 // let `"Repo"` through.
-var requestKeys = []string{"v", "repo", "slug", "argv", "env", "spec"}
+var requestKeys = []string{"v", "repo", "slug", "argv", "env", "spec", "stdin"}
 
 // ServeOptions is how remote-exec finds the programs it runs.
 type ServeOptions struct {
@@ -89,6 +89,9 @@ func Serve(stdin io.Reader, stdout, stderr io.Writer, o ServeOptions) int {
 	if req.Argv[0] == "dispatch" {
 		return runDetached(cmd, scratch, stdout, stderr)
 	}
+	if req.Stdin != nil {
+		cmd.Stdin = strings.NewReader(*req.Stdin)
+	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	return reportStatus(cmd.Run(), stderr, "crew: remote-exec: "+req.Argv[0])
@@ -107,6 +110,9 @@ func admit(ctx context.Context, stdin io.Reader) (Request, string, error) {
 	}
 	if !allowedArgv(req.Argv) {
 		return Request{}, "", fmt.Errorf("argv not allowed: %q", req.Argv[:min(len(req.Argv), 2)])
+	}
+	if req.Stdin != nil && !slices.Equal(req.Argv, []string{"crew", "peer-sync"}) {
+		return Request{}, "", errors.New("stdin is only allowed with crew peer-sync")
 	}
 	for k, v := range req.Env {
 		if err := CheckEnv(k, v); err != nil {
@@ -159,6 +165,9 @@ func hasNUL(req Request) bool {
 	}
 	if req.Spec != nil {
 		strs = append(strs, *req.Spec)
+	}
+	if req.Stdin != nil {
+		strs = append(strs, *req.Stdin)
 	}
 	return slices.ContainsFunc(strs, func(s string) bool { return strings.ContainsRune(s, 0) })
 }

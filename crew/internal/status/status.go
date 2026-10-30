@@ -31,6 +31,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/panestate"
+	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
@@ -57,6 +58,8 @@ type Options struct {
 	Tmux   tmux.Client                                                         // nil: no tmux on PATH
 	Fold   func(prog string, lines []string, vars map[string]any) (any, error) // jqrun.RunAny by default; a test seam
 	Sender sender.Probes                                                       // the sender check's reads and CREW_ROLE_ID, TMUX_PANE; Getenv defaults to os.Getenv
+
+	PeerHosts func() (map[string]remote.Host, error) // the settings hosts; read only for a peer: recipient
 }
 
 func (o Options) withDefaults() Options {
@@ -74,6 +77,11 @@ func (o Options) withDefaults() Options {
 	}
 	if o.Sender.Getenv == nil {
 		o.Sender.Getenv = os.Getenv
+	}
+	if o.PeerHosts == nil {
+		o.PeerHosts = func() (map[string]remote.Host, error) {
+			return remote.Load(context.Background(), remote.ConfigBin(), io.Discard)
+		}
 	}
 	if o.Fold == nil {
 		o.Fold = func(prog string, lines []string, vars map[string]any) (any, error) {

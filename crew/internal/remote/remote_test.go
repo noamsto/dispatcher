@@ -77,6 +77,16 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+func TestLoadPeer(t *testing.T) {
+	hosts, err := Load(context.Background(), configBin(t, `{"hosts":{"mini":{"ssh":"me@mini","peer":true,"repos":{}}}}`), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hosts["mini"].Peer {
+		t.Fatalf("hosts = %#v, want mini.peer true", hosts)
+	}
+}
+
 func TestLoadNoHosts(t *testing.T) {
 	hosts, err := Load(context.Background(), configBin(t, `{"engines":["claude"]}`), io.Discard)
 	if err != nil || len(hosts) != 0 {

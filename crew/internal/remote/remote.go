@@ -59,7 +59,7 @@ var EnvAllow = map[string]*regexp.Regexp{
 }
 
 // CrewSubcommands are the `crew` subcommands a request may run.
-var CrewSubcommands = []string{"reply", "nudge", "where", "roster", "relay", "reap", "dispatch-row"}
+var CrewSubcommands = []string{"reply", "nudge", "where", "roster", "relay", "reap", "dispatch-row", "peer-sync"}
 
 const exitUsage = 2
 
@@ -67,6 +67,7 @@ const exitUsage = 2
 type Host struct {
 	SSH   string            `json:"ssh"`
 	Repos map[string]string `json:"repos"`
+	Peer  bool              `json:"peer"`
 }
 
 // Target is where a call lands: the ssh destination and the remote clone.
@@ -78,12 +79,13 @@ type Target struct {
 // Request is the JSON object remote-run writes to ssh's stdin and remote-exec
 // reads. Field order is the wire order.
 type Request struct {
-	V    int               `json:"v"`
-	Repo string            `json:"repo"`
-	Slug string            `json:"slug"`
-	Argv []string          `json:"argv"`
-	Env  map[string]string `json:"env"`
-	Spec *string           `json:"spec,omitempty"`
+	V     int               `json:"v"`
+	Repo  string            `json:"repo"`
+	Slug  string            `json:"slug"`
+	Argv  []string          `json:"argv"`
+	Env   map[string]string `json:"env"`
+	Spec  *string           `json:"spec,omitempty"`
+	Stdin *string           `json:"stdin,omitempty"`
 }
 
 // ConfigBin is the dispatch-config command: $DISPATCH_CONFIG_BIN, else
@@ -396,13 +398,16 @@ func prepare(ctx context.Context, c Call, stderr io.Writer) (Target, []byte, err
 	return target, req, err
 }
 
-// originSlug is the owner/repo of the checkout whose common dir is common,
-// derived the way the claims index derives it.
+// CloneSlug is the owner/repo of the checkout whose common dir is common,
+// derived the way the claims index derives it; "" when its origin has none.
+func CloneSlug(ctx context.Context, common string) string {
+	return claimindex.Slug(originURL(ctx, common))
+}
+
 func originSlug(ctx context.Context, common string) (string, error) {
-	url := originURL(ctx, common)
-	slug := claimindex.Slug(url)
+	slug := CloneSlug(ctx, common)
 	if slug == "" {
-		return "", fmt.Errorf("crew: remote-run: no owner/repo in this checkout's origin (%q)", url)
+		return "", fmt.Errorf("crew: remote-run: no owner/repo in this checkout's origin (%q)", originURL(ctx, common))
 	}
 	return slug, nil
 }

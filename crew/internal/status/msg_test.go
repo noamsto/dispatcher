@@ -1,11 +1,15 @@
 package status
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/peer"
+	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
@@ -270,5 +274,81 @@ func TestMsgReviewSeamUnreadableLogFailsClosed(t *testing.T) {
 	code, stderr := f.msg(worker, "review:c1", `{"seam":"review"}`)
 	if code != 1 || !strings.HasPrefix(stderr, "crew: msg: refusing the review seam for standard session "+worker+" — could not read the crew log for the plan seam") {
 		t.Fatalf("got %d %q", code, stderr)
+	}
+}
+
+// peerMsg runs `crew msg` with PeerHosts stubbed; calls counts its invocations.
+func (f *fixture) peerMsg(hosts func() (map[string]remote.Host, error), from, to, body string) (code int, stderr string, calls int) {
+	o := f.opts()
+	o.PeerHosts = func() (map[string]remote.Host, error) {
+		calls++
+		return hosts()
+	}
+	var buf bytes.Buffer
+	code = RunMsg(f.t.Context(), MsgRequest{From: from, To: to, Body: body}, f.paths, &buf, o)
+	return code, buf.String(), calls
+}
+
+func peerHosts() (map[string]remote.Host, error) {
+	return map[string]remote.Host{"halo": {Peer: true}, "mini": {}}, nil
+}
+
+func TestMsgToPeerPostsAnOrdinaryRow(t *testing.T) {
+	f := newFixture(t)
+	code, stderr, calls := f.peerMsg(peerHosts, "dispatcher:c1", "peer:halo", "hello")
+	if code != 0 || stderr != "" || calls != 1 {
+		t.Fatalf("got %d %q, %d settings reads", code, stderr, calls)
+	}
+	f.wantRow(msgWant("dispatcher:c1", "peer:halo", "hello"))
+}
+
+func TestMsgToPeerRefusals(t *testing.T) {
+	const dispatcher = "dispatcher:c1"
+	cases := []struct {
+		name, from, to, body string
+		hosts                func() (map[string]remote.Host, error)
+		want                 string
+	}{
+		{"worker sender", worker, "peer:halo", "x", peerHosts, "only a dispatcher can message a peer"},
+		{"role sender", rev, "peer:halo", "x", peerHosts, "only a dispatcher can message a peer"},
+		{"another crew's dispatcher", "dispatcher:c2", "peer:halo", "x", peerHosts, "only a dispatcher can message a peer"},
+		{"not a peer host", dispatcher, "peer:mini", "x", peerHosts, "settings hosts.mini.peer"},
+		{"unknown host", dispatcher, "peer:nope", "x", peerHosts, "settings hosts.nope.peer"},
+		{"bad host name", dispatcher, "peer:bad/name", "x", peerHosts, "invalid host name"},
+		{"host starts with a dash", dispatcher, "peer:-halo", "x", peerHosts, "invalid host name"},
+		{"settings error", dispatcher, "peer:halo", "x",
+			func() (map[string]remote.Host, error) { return nil, errors.New("dispatch-config exploded") },
+			"dispatch-config exploded"},
+		{"body over MaxBody", dispatcher, "peer:halo", strings.Repeat("x", peer.MaxBody+1), peerHosts, "body is"},
+		// Each control byte encodes as six characters, so a body under MaxBody
+		// still overflows the bus line and would be elided in transit.
+		{"encoded row over LineMax", dispatcher, "peer:halo", strings.Repeat("\x01", 3400), peerHosts, "bus line"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			code, stderr, _ := f.peerMsg(tc.hosts, tc.from, tc.to, tc.body)
+			if code != 1 || !strings.HasPrefix(stderr, "crew: msg: ") || strings.Count(stderr, "\n") != 1 || !strings.Contains(stderr, tc.want) {
+				t.Errorf("got %d %q, want a one-line refusal containing %q", code, stderr, tc.want)
+			}
+			f.wantNoRow()
+		})
+	}
+}
+
+func TestMsgToPeerAtMaxBodyPosts(t *testing.T) {
+	f := newFixture(t)
+	body := strings.Repeat("<", peer.MaxBody)
+	if code, stderr, _ := f.peerMsg(peerHosts, "dispatcher:c1", "peer:halo", body); code != 0 || stderr != "" {
+		t.Fatalf("got %d %q", code, stderr)
+	}
+	f.wantRow(msgWant("dispatcher:c1", "peer:halo", body))
+}
+
+func TestMsgSettingsReadOnlyForPeerRecipients(t *testing.T) {
+	f := newFixture(t)
+	code, _, calls := f.peerMsg(peerHosts, "dispatcher:c1", "dispatcher:c1", "hi")
+	if code != 0 || calls != 0 {
+		t.Errorf("got %d, %d settings reads", code, calls)
 	}
 }

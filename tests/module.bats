@@ -187,6 +187,7 @@ let
     hosts.desk = {
       ssh = "me@desk";
       chrome = true;
+      peer = true;
     };
     workerDeniedMcpServers = ["my_browser"];
     chrome = true;
@@ -958,7 +959,7 @@ worktree_git_lib_crew_go_row() { # bin
 @test "the hosts option lands in the locked layer, only when set" {
   run jq -e '(.options | index("hosts")) != null' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '.full.locked.hosts == {"mini": {"ssh": "me@mini", "repos": {"acme/widget": "/r/widget"}}, "desk": {"ssh": "me@desk", "chrome": true, "repos": {}}}' "$EVAL"
+  run jq -e '.full.locked.hosts == {"mini": {"ssh": "me@mini", "repos": {"acme/widget": "/r/widget"}}, "desk": {"ssh": "me@desk", "chrome": true, "peer": true, "repos": {}}}' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.hosts.mini.ssh == "me@mini"' "$EVAL"
   [ "$status" -eq 0 ]

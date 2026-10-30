@@ -840,6 +840,13 @@ laneprofiles_refuse_row() { # json fragment
   jq -e '.hosts == {"mini":{"ssh":"me@mini","chrome":true,"repos":{"acme/widget":"/r/widget"}}}' <<<"$output"
 }
 
+@test "hosts peer from the user layer reaches the merged output" {
+  user_settings '{"hosts":{"mini":{"ssh":"me@mini","peer":true,"repos":{"acme/widget":"/r/widget"}}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.hosts == {"mini":{"ssh":"me@mini","peer":true,"repos":{"acme/widget":"/r/widget"}}}' <<<"$output"
+}
+
 @test "malformed hosts is refused, naming the path" {
   begin_rows
   local json fragment
@@ -860,10 +867,12 @@ laneprofiles_refuse_row() { # json fragment
 {"hosts":{"mini":{"ssh":"me@mini","port":22}}}|mini.port
 {"hosts":{"mini":{"ssh":"me@mini","chrome":"yes"}}}|mini.chrome
 {"hosts":{"mini":{"ssh":"me@mini","chrome":1}}}|mini.chrome
+{"hosts":{"mini":{"ssh":"me@mini","peer":"yes"}}}|mini.peer
+{"hosts":{"mini":{"ssh":"me@mini","peer":1}}}|mini.peer
 {"hosts":{"mini":"me@mini"}}|mini
 {"hosts":[]}|hosts
 EOF
-  finish_rows 15
+  finish_rows 17
 }
 
 # The module's strMatching "/[^[:cntrl:]]*" is byte-based: a C1 code point is

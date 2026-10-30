@@ -2,6 +2,7 @@ package remote
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -302,5 +303,67 @@ func TestServeDetachedDispatchSurvivesCaller(t *testing.T) {
 			t.Fatal("the detached dispatch died with its caller")
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func TestAdmitPeerSyncStdin(t *testing.T) {
+	e := newServeEnv(t)
+	req := func(argv []string, stdin *string) string {
+		m := map[string]any{"v": 1, "repo": e.repo, "slug": "acme/widget", "argv": argv, "env": map[string]string{}}
+		if stdin != nil {
+			m["stdin"] = *stdin
+		}
+		data, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	payload, nul := `{"v":1}`, "a\x00b"
+	for _, tc := range []struct {
+		name  string
+		argv  []string
+		stdin *string
+		want  string
+	}{
+		{"peer-sync with stdin", []string{"crew", "peer-sync"}, &payload, ""},
+		{"peer-sync without stdin", []string{"crew", "peer-sync"}, nil, ""},
+		{"stdin with reply", []string{"crew", "reply"}, &payload, "stdin is only allowed with crew peer-sync"},
+		{"stdin with peer-sync args", []string{"crew", "peer-sync", "x"}, &payload, "stdin is only allowed with crew peer-sync"},
+		{"peer-syncx", []string{"crew", "peer-syncx"}, nil, "argv not allowed"},
+		{"bogus", []string{"crew", "bogus"}, nil, "argv not allowed"},
+		{"stdin nul", []string{"crew", "peer-sync"}, &nul, "NUL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := admit(context.Background(), strings.NewReader(req(tc.argv, tc.stdin)))
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestServePeerSyncStdinReachesChild(t *testing.T) {
+	e := newServeEnv(t)
+	cat := filepath.Join(t.TempDir(), "crew")
+	writeScript(t, cat, "cat\n")
+	payload := "{\"v\":1,\"rows\":[]}\nsecond line"
+	data, err := json.Marshal(map[string]any{"v": 1, "repo": e.repo, "slug": "acme/widget", "argv": []string{"crew", "peer-sync"}, "env": map[string]string{}, "stdin": payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	o := ServeOptions{Self: func() (string, error) { return cat, nil }}
+	if rc := Serve(bytes.NewReader(data), &stdout, &stderr, o); rc != 0 {
+		t.Fatalf("rc %d, stderr %q", rc, stderr.String())
+	}
+	if stdout.String() != payload {
+		t.Fatalf("child stdin = %q, want %q", stdout.String(), payload)
 	}
 }
