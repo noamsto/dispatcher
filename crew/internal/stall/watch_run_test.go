@@ -46,6 +46,11 @@ type watchScript struct {
 	// how every other run here reaches the loop.
 	anchor sender.Probes
 	req    Request
+	// bus seeds the log before the run starts, with rows built from the
+	// harness's clock seed.
+	bus func(h *harness) []string
+	// gone reports samples (0-based) on which the pane has vanished.
+	gone func(n int) bool
 }
 
 // watchRun runs the watch to its exit and returns its harness with every
@@ -64,7 +69,9 @@ func watchRun(t *testing.T, s watchScript) (*harness, []string) {
 			texts[i] = frameText(t, name)
 		}
 	}
-	f.sample = func(n int) (string, bool) { return texts[min(n, len(texts)-1)], true }
+	f.sample = func(n int) (string, bool) {
+		return texts[min(n, len(texts)-1)], s.gone == nil || !s.gone(n)
+	}
 	f.paneCmd = s.paneCmd
 	// D8 quiet, the way it is on a machine with no exhausted window.
 	f.sh = budgetSh("", 1, "", 1)
@@ -91,6 +98,9 @@ func watchRun(t *testing.T, s watchScript) (*harness, []string) {
 	def(&req.MaxLife, "6")
 
 	h := newHarness(t, f)
+	if s.bus != nil {
+		h.writeRows(s.bus(h)...)
+	}
 	o := h.options()
 	o.Sender = s.anchor
 	if s.load != nil || s.top != "" {
