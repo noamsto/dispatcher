@@ -121,14 +121,18 @@ func isoUTC(epoch int64) string {
 }
 
 // cleanText ports once/format.go's jq `clean`: tab/newline/CR become a
-// space, other C0/C1 controls and bidi overrides are dropped.
+// space, other C0/C1 controls and invisible format characters (zero-width,
+// bidi marks, tag block; models read tag characters terminals hide) are dropped.
 func cleanText(s string) string {
 	var b strings.Builder
 	for _, r := range s {
 		switch {
 		case r == '\t' || r == '\n' || r == '\r':
 			b.WriteRune(' ')
-		case r <= 0x1f || r == 0x7f || (r >= 0x80 && r <= 0x9f) || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069):
+		case r <= 0x1f || r == 0x7f || (r >= 0x80 && r <= 0x9f) ||
+			r == 0x061c || r == 0x180e || (r >= 0x200b && r <= 0x200f) ||
+			(r >= 0x202a && r <= 0x202e) || (r >= 0x2060 && r <= 0x2064) ||
+			(r >= 0x2066 && r <= 0x2069) || r == 0xfeff || (r >= 0xe0000 && r <= 0xe007f):
 			// dropped
 		default:
 			b.WriteRune(r)

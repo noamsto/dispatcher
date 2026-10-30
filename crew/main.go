@@ -31,6 +31,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/inbox"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/log"
 	"github.com/noamsto/dispatcher/crew/internal/merge"
@@ -964,6 +965,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		v = merged
 	}
 
+	if sub == "roster" {
+		v = invisible.Value(v)
+	}
 	if err := jsonval.Encode(out, v, pretty); err != nil {
 		say(stderr, "crew: %v\n", err)
 		return exitFailure

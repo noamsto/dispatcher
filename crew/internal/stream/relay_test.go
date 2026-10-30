@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 )
@@ -474,5 +475,29 @@ func TestRelaySyncSkipsAnUnchangedLog(t *testing.T) {
 	rs.sync()
 	if rs.hosts["mini"] == nil || rs.hosts["maxi"] == nil {
 		t.Errorf("hosts = %v, want mini and maxi", rs.hosts)
+	}
+}
+
+func TestRelayEscapesInvisibleRunesFromOlderRemotes(t *testing.T) {
+	p := relayBus(t)
+	self, dir := relayStub(t)
+	batch := `{"cursor":12345678901234567890,"events":[{"ts":7,"crew_id":"c1","from":"worker:feat/r","to":"dispatcher:c1","kind":"msg","body":"hi` + "\U000E0041" + `x","detail":"y` + "\u200B" + `"}]}`
+	writeFile(t, filepath.Join(dir, "relay.1"), printThenSleep(batch))
+	s := startStream(t, p, self, Request{}, fastRelay())
+
+	waitFor(t, "the relayed batch", func() bool { return line(s.lines(), isRelayed) != nil })
+	out := s.out.str()
+	if strings.ContainsFunc(out, invisible.Is) {
+		t.Errorf("stdout carries a raw invisible rune: %q", out)
+	}
+	b := line(s.lines(), isRelayed)
+	ev, _ := b["events"].([]any)[0].(map[string]any)
+	if ev["body"] != `hi\u{E0041}x` || ev["detail"] != `y\u{200B}` {
+		t.Errorf("event = %v, want the runes escaped", ev)
+	}
+	for _, want := range []string{`"ts":7`, `"cursor":12345678901234567890`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout lacks %s: %q", want, out)
+		}
 	}
 }
