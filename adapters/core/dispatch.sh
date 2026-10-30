@@ -6404,19 +6404,27 @@ fi
 # which only dispatch knows.
 client_width=""
 client_height=""
-if [ -n "${DISPATCH_TMUX_SESSION:-}" ]; then
+# Outside tmux (e.g. `ssh host dispatch`) a bare new-window lands in whichever
+# session was used last, so use the crew's own session. A local variable, not
+# DISPATCH_TMUX_SESSION, which other checks read as "this is a --host launch".
+target_session="${DISPATCH_TMUX_SESSION:-}"
+if [ -z "$target_session" ] && [ -z "${TMUX:-}" ] && [ -z "${TMUX_PANE:-}" ]; then
+  target_session="crew-$crew_id"
+  echo "dispatch: outside tmux — worker window goes in session $target_session (attach: tmux attach -t $target_session)" >&2
+fi
+if [ -n "$target_session" ]; then
   # Remote mode: the window goes in the crew's own session, which is created
   # with it when absent, so no placeholder shell window gets mirrored. There is
   # no client to size from; the mirror resizes.
   win_args=(-c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -P -F '#{window_id} #{pane_id}')
-  if tmux has-session -t "=$DISPATCH_TMUX_SESSION" 2>/dev/null; then
-    win_ids="$(_pane_client new-window -d -t "=$DISPATCH_TMUX_SESSION:" "${win_args[@]}")"
-  elif win_ids="$(_pane_client new-session -d -s "$DISPATCH_TMUX_SESSION" "${win_args[@]}" 2>/dev/null)"; then
+  if tmux has-session -t "=$target_session" 2>/dev/null; then
+    win_ids="$(_pane_client new-window -d -t "=$target_session:" "${win_args[@]}")"
+  elif win_ids="$(_pane_client new-session -d -s "$target_session" "${win_args[@]}" 2>/dev/null)"; then
     # new-session -e sets the session environment, which later windows inherit.
-    tmux set-environment -t "=$DISPATCH_TMUX_SESSION" -u CREW_WORKER_ID
+    tmux set-environment -t "=$target_session" -u CREW_WORKER_ID
   else
     # A racing dispatch created the session first.
-    win_ids="$(_pane_client new-window -d -t "=$DISPATCH_TMUX_SESSION:" "${win_args[@]}")"
+    win_ids="$(_pane_client new-window -d -t "=$target_session:" "${win_args[@]}")"
   fi
   read -r win pane <<<"$win_ids"
 else
