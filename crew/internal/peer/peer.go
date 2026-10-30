@@ -32,9 +32,9 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 )
 
-// MaxRow and MaxBody are below the spec's 8 KiB / 4000 so a stored line, the
-// row inside its `{"peer","seq","row"}` wrapper, stays within bus.LineMax: the
-// cap every bus line has and the size one O_APPEND write keeps whole.
+// MaxRow and MaxBody keep a stored line, the row inside its
+// `{"peer","seq","row"}` wrapper, within bus.LineMax: the cap every bus line
+// has and the size one O_APPEND write keeps whole.
 const (
 	MaxRow      = 3900
 	MaxBody     = 3500
