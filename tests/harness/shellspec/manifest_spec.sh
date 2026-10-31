@@ -30,6 +30,48 @@ The output should be blank
 The stderr should be blank
 End
 
+It 'refresh-models-the-catalog-holds-all-four-engines-in-the-section-5-shape'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "refresh-models-the-catalog-holds-all-four-engines-in-the-section-5-shape"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
+It 'refresh-models-a-failing-pi-probe-keeps-pi-s-previous-snapshot-and-refreshes-the-rest'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "refresh-models-a-failing-pi-probe-keeps-pi-s-previous-snapshot-and-refreshes-the-rest"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
+It 'refresh-models-ids-with-control-bytes-or-outside-the-shape-regex-are-dropped'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "refresh-models-ids-with-control-bytes-or-outside-the-shape-regex-are-dropped"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
+It 'refresh-models-an-engine-list-past-128-kib-is-capped-at-2000-models-and-still-written-with-the-other-engines'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "refresh-models-an-engine-list-past-128-kib-is-capped-at-2000-models-and-still-written-with-the-other-engines"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
+It 'refresh-models-the-cursor-cache-is-unchanged-by-the-catalog-and-the-openrouter-fetch-goes-through-the-stub'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "refresh-models-the-cursor-cache-is-unchanged-by-the-catalog-and-the-openrouter-fetch-goes-through-the-stub"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
+It 'refresh-models-cursor-failing-while-another-engine-refreshes-still-exits-zero-and-warns'
+When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "refresh-models-cursor-failing-while-another-engine-refreshes-still-exits-zero-and-warns"
+The status should be success
+The output should be blank
+The stderr should be blank
+End
+
 It 'pr-watch-the-first-park-seeds-the-cursor-and-reports-nothing'
 When run script "$SHELLSPEC_PROJECT_ROOT/case-runner.sh" "pr-watch-the-first-park-seeds-the-cursor-and-reports-nothing"
 The status should be success

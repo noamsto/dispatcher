@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 )
 
 type testCase struct {
@@ -154,8 +155,8 @@ func checkRegistryParity(t *testing.T, cases []testCase) {
 		}
 		wantAssertions[fields[0]][fields[1]] = true
 	}
-	if len(cases) != 32 || len(wantCases) != 32 {
-		t.Fatalf("registry has %d cases and manifest has %d; want 32 each", len(cases), len(wantCases))
+	if len(cases) != 38 || len(wantCases) != 38 {
+		t.Fatalf("registry has %d cases and manifest has %d; want 38 each", len(cases), len(wantCases))
 	}
 	seenCases := make(map[string]bool)
 	for _, tc := range cases {
@@ -299,8 +300,35 @@ func (f *repoFixture) withEnv(values map[string]string, unset ...string) []strin
 	return cleanEnv(all, unset...)
 }
 
+// refreshFixture restricts PATH to the tools the script needs plus the stub
+// dir, so a real claude/pi/codex/curl on the host never leaks into a run.
 func refreshFixture(t *caseTest) *repoFixture {
 	f := newRepoFixture(t)
+	base := filepath.Dir(f.dir)
+	tools, home := filepath.Join(base, "tools"), filepath.Join(base, "home")
+	for _, dir := range []string{tools, home} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range strings.Fields("bash jq grep sed head date mkdir mv cat find env chmod tr") {
+		src, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(src, filepath.Join(tools, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.env = f.withEnv(map[string]string{
+		"HOME": home,
+		"PATH": f.stubDir + string(os.PathListSeparator) + tools,
+	})
+	for _, name := range []string{"claude", "codex", "pi"} {
+		if err := os.Remove(filepath.Join(f.stubDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	f.stub("cursor-agent", `printf '%s\n' "$*" >>"$STUB_LOG"
 if [[ -n "${SHIM_CURSOR_FAIL:-}" ]]; then exit 1; fi
 cat <<'MODELS'
@@ -316,6 +344,15 @@ claude-opus-5-high - Claude Opus 5 1M
 Tip: use --model <id>
 MODELS`)
 	return f
+}
+
+func envValue(env []string, name string) string {
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, name+"="); ok {
+			return value
+		}
+	}
+	return ""
 }
 
 func runRefresh(f *repoFixture, env []string) commandResult {
@@ -392,7 +429,7 @@ func refreshFailure(t *caseTest) {
 func refreshAbsent(t *caseTest) {
 	f := refreshFixture(t)
 	before := seedCache(t, f)
-	parts := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))
+	parts := strings.Split(envValue(f.env, "PATH"), string(os.PathListSeparator))
 	kept := parts[:0]
 	for _, dir := range parts {
 		if _, err := os.Stat(filepath.Join(dir, "cursor-agent")); err != nil {
@@ -403,6 +440,183 @@ func refreshAbsent(t *caseTest) {
 	after, _ := os.ReadFile(cachePath(f))
 	t.check("rm-absent-status", r.status != 0, "status=%d", r.status)
 	t.check("rm-absent-cache-unchanged", bytes.Equal(before, after), "cache changed")
+}
+
+func writeOtherEngineShims(t *caseTest, f *repoFixture) {
+	t.Helper()
+	writeExecutable(t.T, filepath.Join(f.stubDir, "claude"), "#!/usr/bin/env bash\necho \"Usage: claude [options]\"\n")
+	writeExecutable(t.T, filepath.Join(f.stubDir, "codex"), "#!/usr/bin/env bash\nexit 0\n")
+	writeExecutable(t.T, filepath.Join(f.stubDir, "pi"), `#!/usr/bin/env bash
+[[ -n "${SHIM_PI_FAIL:-}" ]] && exit 1
+printf 'provider    model    context  max-out\n'
+printf 'openrouter  deepseek/deepseek-v4.1-flash  1M  64K\n'
+printf 'anthropic   claude-haiku-4-5  200K  64K\n'
+[[ -n "${SHIM_PI_EXTRA:-}" ]] && printf '%b\n' "$SHIM_PI_EXTRA"
+if [[ -n "${SHIM_PI_MANY:-}" ]]; then
+  for ((i = 0; i < 2100; i++)); do
+    printf 'p  vendor/a-fairly-long-model-name-for-size-padding-padding-padding-%d  1M  64K\n' "$i"
+  done
+fi
+exit 0
+`)
+	writeExecutable(t.T, filepath.Join(f.stubDir, "curl"), `#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+filler=$(head -c 200000 /dev/zero | tr '\0' 'a')
+echo '{"data":[{"id":"deepseek/deepseek-v4.1-flash","created":1789000000,"pricing":{"prompt":"0.0000001","completion":"0.0000004"}},{"id":"filler","description":"'"$filler"'"}]}'
+`)
+	codexDir := filepath.Join(envValue(f.env, "HOME"), ".codex")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cache := `{"models":[{"slug":"gpt-5.6-sol"},{"slug":"gpt-5.5"}]}` + "\n"
+	if err := os.WriteFile(filepath.Join(codexDir, "models_cache.json"), []byte(cache), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func catalogPath(f *repoFixture) string { return filepath.Join(f.data, "crew/model-catalog.json") }
+
+func engineSection(cat map[string]any, engine string) map[string]any {
+	section, _ := cat[engine].(map[string]any)
+	return section
+}
+
+func engineModels(cat map[string]any, engine string) []map[string]any {
+	var out []map[string]any
+	list, _ := engineSection(cat, engine)["models"].([]any)
+	for _, m := range list {
+		out = append(out, m.(map[string]any))
+	}
+	return out
+}
+
+func modelIDs(cat map[string]any, engine string) []string {
+	var ids []string
+	for _, m := range engineModels(cat, engine) {
+		ids = append(ids, m["id"].(string))
+	}
+	return ids
+}
+
+func findModel(cat map[string]any, engine, id string) map[string]any {
+	for _, m := range engineModels(cat, engine) {
+		if m["id"] == id {
+			return m
+		}
+	}
+	return nil
+}
+
+func refreshCatalog(t *caseTest) {
+	f := refreshFixture(t)
+	writeOtherEngineShims(t, f)
+	r := runRefresh(f, f.env)
+	t.check("rm-catalog-1", r.status == 0, "status=%d stderr=%q", r.status, r.stderr)
+	cat := readJSON(t, catalogPath(f))
+	t.check("rm-catalog-2", engineSection(cat, "claude")["source"] == "aliases", "claude=%v", cat["claude"])
+	claudeIDs := strings.Join(modelIDs(cat, "claude"), ",")
+	t.check("rm-catalog-3", claudeIDs == "fable,haiku,opus,sonnet", "claude ids=%s", claudeIDs)
+	t.check("rm-catalog-4", engineSection(cat, "codex")["source"] == "codex models_cache.json", "codex=%v", cat["codex"])
+	codexIDs := modelIDs(cat, "codex")
+	t.check("rm-catalog-5", len(codexIDs) > 0 && codexIDs[0] == "gpt-5.5", "codex ids=%v", codexIDs)
+	t.check("rm-catalog-6", engineSection(cat, "cursor")["source"] == "cursor-agent --list-models", "cursor=%v", cat["cursor"])
+	t.check("rm-catalog-7", findModel(cat, "cursor", "cursor-grok-4.6-high") != nil, "cursor ids=%v", modelIDs(cat, "cursor"))
+	t.check("rm-catalog-8", engineSection(cat, "pi")["source"] == "pi --list-models; openrouter /api/v1/models", "pi=%v", cat["pi"])
+	flash := findModel(cat, "pi", "openrouter/deepseek/deepseek-v4.1-flash")
+	price, _ := flash["price"].(map[string]any)
+	t.check("rm-catalog-9", flash != nil && flash["created"] == float64(1789000000) && price["in"] == 0.0000001 && price["out"] == 0.0000004, "flash=%v", flash)
+	haiku := findModel(cat, "pi", "anthropic/claude-haiku-4-5")
+	t.check("rm-catalog-11", reflect.DeepEqual(haiku, map[string]any{"id": "anthropic/claude-haiku-4-5"}), "haiku=%v", haiku)
+	epochsNumeric := true
+	for _, section := range cat {
+		fields, _ := section.(map[string]any)
+		_, isNumber := fields["fetched_epoch"].(float64)
+		epochsNumeric = epochsNumeric && isNumber
+	}
+	t.check("rm-catalog-12", epochsNumeric, "catalog=%v", cat)
+}
+
+func refreshPiFail(t *caseTest) {
+	f := refreshFixture(t)
+	writeOtherEngineShims(t, f)
+	if err := os.MkdirAll(filepath.Dir(catalogPath(f)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seed := `{"pi":{"fetched_epoch":1,"source":"old","models":[{"id":"old/pi-model"}]}}` + "\n"
+	if err := os.WriteFile(catalogPath(f), []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := runRefresh(f, f.withEnv(map[string]string{"SHIM_PI_FAIL": "1"}))
+	t.check("rm-pi-fail-1", r.status == 0, "status=%d stderr=%q", r.status, r.stderr)
+	t.check("rm-pi-fail-2", strings.Contains(r.stdout+"\n"+r.stderr, "pi --list-models failed"), "stdout=%q stderr=%q", r.stdout, r.stderr)
+	cat := readJSON(t, catalogPath(f))
+	oldPi := map[string]any{"fetched_epoch": float64(1), "source": "old", "models": []any{map[string]any{"id": "old/pi-model"}}}
+	t.check("rm-pi-fail-3", reflect.DeepEqual(cat["pi"], oldPi), "pi=%v", cat["pi"])
+	t.check("rm-pi-fail-4", engineSection(cat, "cursor")["source"] == "cursor-agent --list-models", "cursor=%v", cat["cursor"])
+	t.check("rm-pi-fail-5", engineSection(cat, "claude")["source"] == "aliases", "claude=%v", cat["claude"])
+}
+
+func refreshIDsDrop(t *caseTest) {
+	f := refreshFixture(t)
+	writeOtherEngineShims(t, f)
+	extra := `bad  evil\x1b[31mid  1M\nbad  has$dollar  1M\nbad  spa<ce  1M\nok  good.id:1@x  1M`
+	r := runRefresh(f, f.withEnv(map[string]string{"SHIM_PI_EXTRA": extra}))
+	t.check("rm-ids-drop-1", r.status == 0, "status=%d stderr=%q", r.status, r.stderr)
+	cat := readJSON(t, catalogPath(f))
+	ids := strings.Join(modelIDs(cat, "pi"), "\n")
+	t.check("rm-ids-drop-2", strings.Contains(ids, "ok/good.id:1@x"), "ids=%q", ids)
+	t.check("rm-ids-drop-3", !strings.Contains(ids, "evil"), "ids=%q", ids)
+	t.check("rm-ids-drop-4", !strings.Contains(ids, "dollar"), "ids=%q", ids)
+	t.check("rm-ids-drop-5", !strings.Contains(ids, "spa<ce"), "ids=%q", ids)
+	control := 0
+	for engine := range cat {
+		for _, id := range modelIDs(cat, engine) {
+			if strings.ContainsFunc(id, unicode.IsControl) {
+				control++
+			}
+		}
+	}
+	t.check("rm-ids-drop-6", control == 0, "ids with control bytes=%d", control)
+}
+
+func refreshCap(t *caseTest) {
+	f := refreshFixture(t)
+	writeOtherEngineShims(t, f)
+	r := runRefresh(f, f.withEnv(map[string]string{"SHIM_PI_MANY": "1"}))
+	t.check("rm-cap-1", r.status == 0, "status=%d stderr=%q", r.status, r.stderr)
+	t.check("rm-cap-2", strings.Contains(r.stdout+"\n"+r.stderr, "pi: dropped"), "stdout=%q stderr=%q", r.stdout, r.stderr)
+	cat := readJSON(t, catalogPath(f))
+	t.check("rm-cap-3", len(engineModels(cat, "pi")) == 2000, "pi models=%d", len(engineModels(cat, "pi")))
+	t.check("rm-cap-4", engineSection(cat, "claude")["source"] == "aliases", "claude=%v", cat["claude"])
+}
+
+func refreshCacheCompat(t *caseTest) {
+	f := refreshFixture(t)
+	writeOtherEngineShims(t, f)
+	r := runRefresh(f, f.env)
+	t.check("rm-cache-compat-1", r.status == 0, "status=%d stderr=%q", r.status, r.stderr)
+	cache := readJSON(t, cachePath(f))
+	delete(cache, "fetched_at")
+	delete(cache, "fetched_epoch")
+	var models []any
+	for _, slug := range []string{"gpt-5.3-codex-low", "cursor-grok-4.6-high", "cursor-grok-4.6-medium-fast", "cursor-grok-4.6-low-fast", "claude-opus-5-high"} {
+		models = append(models, map[string]any{"slug": slug})
+	}
+	t.check("rm-cache-compat-2", reflect.DeepEqual(cache, map[string]any{"models": models}), "cache=%v", cache)
+	log, _ := os.ReadFile(f.stubLog)
+	if !strings.Contains(string(log), "openrouter.ai/api/v1/models") {
+		t.Errorf("openrouter fetch did not reach the curl stub")
+	}
+}
+
+func refreshCursorFail(t *caseTest) {
+	f := refreshFixture(t)
+	writeOtherEngineShims(t, f)
+	r := runRefresh(f, f.withEnv(map[string]string{"SHIM_CURSOR_FAIL": "1"}))
+	t.check("rm-cursor-fail-1", r.status == 0, "status=%d stderr=%q", r.status, r.stderr)
+	t.check("rm-cursor-fail-2", strings.Contains(r.stdout+"\n"+r.stderr, "cursor-agent --list-models failed"), "stdout=%q stderr=%q", r.stdout, r.stderr)
+	_, hasCursor := readJSON(t, catalogPath(f))["cursor"]
+	t.check("rm-cursor-fail-3", !hasCursor, "catalog has cursor")
 }
 
 type prFixture struct {
@@ -704,6 +918,12 @@ func manifestCases() []testCase {
 		{"refresh-models-the-write-is-atomic-and-lands-at-the-cursor-models-cache-path", ids("rm-atomic-script-status", "rm-atomic-cache-exists", "rm-atomic-no-temp-file", "rm-atomic-model-count"), refreshAtomic},
 		{"refresh-models-a-stubbed-cursor-agent-failure-exits-nonzero-and-leaves-an-existing-cache-untouched", ids("rm-stub-failure-status", "rm-stub-failure-cache-unchanged"), refreshFailure},
 		{"refresh-models-cursor-agent-absent-from-path-exits-nonzero-and-leaves-an-existing-cache-untouched", ids("rm-absent-status", "rm-absent-cache-unchanged"), refreshAbsent},
+		{"refresh-models-the-catalog-holds-all-four-engines-in-the-section-5-shape", ids("rm-catalog-1", "rm-catalog-2", "rm-catalog-3", "rm-catalog-4", "rm-catalog-5", "rm-catalog-6", "rm-catalog-7", "rm-catalog-8", "rm-catalog-9", "rm-catalog-11", "rm-catalog-12"), refreshCatalog},
+		{"refresh-models-a-failing-pi-probe-keeps-pi-s-previous-snapshot-and-refreshes-the-rest", ids("rm-pi-fail-1", "rm-pi-fail-2", "rm-pi-fail-3", "rm-pi-fail-4", "rm-pi-fail-5"), refreshPiFail},
+		{"refresh-models-ids-with-control-bytes-or-outside-the-shape-regex-are-dropped", ids("rm-ids-drop-1", "rm-ids-drop-2", "rm-ids-drop-3", "rm-ids-drop-4", "rm-ids-drop-5", "rm-ids-drop-6"), refreshIDsDrop},
+		{"refresh-models-an-engine-list-past-128-kib-is-capped-at-2000-models-and-still-written-with-the-other-engines", ids("rm-cap-1", "rm-cap-2", "rm-cap-3", "rm-cap-4"), refreshCap},
+		{"refresh-models-the-cursor-cache-is-unchanged-by-the-catalog-and-the-openrouter-fetch-goes-through-the-stub", ids("rm-cache-compat-1", "rm-cache-compat-2"), refreshCacheCompat},
+		{"refresh-models-cursor-failing-while-another-engine-refreshes-still-exits-zero-and-warns", ids("rm-cursor-fail-1", "rm-cursor-fail-2", "rm-cursor-fail-3"), refreshCursorFail},
 		{"pr-watch-the-first-park-seeds-the-cursor-and-reports-nothing", ids("pw-seed-status", "pw-seed-empty-stdout", "pw-seed-timeout-stderr", "pw-first-cursor-exists"), prCase("first")},
 		{"pr-watch-fires-on-a-head-sha-move", ids("pw-head-seed-status", "pw-head-seed-empty-stdout", "pw-head-seed-timeout-stderr", "pw-head-status", "pw-head-event-shape", "pw-head-state-transition"), prCase("head")},
 		{"pr-watch-fires-on-a-new-review-thread-reply", ids("pw-thread-seed-status", "pw-thread-seed-empty-stdout", "pw-thread-seed-timeout-stderr", "pw-thread-status", "pw-thread-change-set", "pw-thread-count"), prCase("thread")},

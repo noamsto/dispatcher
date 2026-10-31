@@ -1,8 +1,14 @@
 case_id	source_file	source_line	family	test_name	tags
-refresh-models-a-realistic-list-models-fixture-parses-into-the-expected-cache-shape	tests/refresh-models.bats	44	refresh-models	a realistic --list-models fixture parses into the expected cache shape	fork-heavy
-refresh-models-the-write-is-atomic-and-lands-at-the-cursor-models-cache-path	tests/refresh-models.bats	57	refresh-models	the write is atomic and lands at the cursor models cache path	fork-heavy
-refresh-models-a-stubbed-cursor-agent-failure-exits-nonzero-and-leaves-an-existing-cache-untouched	tests/refresh-models.bats	69	refresh-models	a stubbed cursor-agent failure exits nonzero and leaves an existing cache untouched	fork-heavy
-refresh-models-cursor-agent-absent-from-path-exits-nonzero-and-leaves-an-existing-cache-untouched	tests/refresh-models.bats	80	refresh-models	cursor-agent absent from PATH exits nonzero and leaves an existing cache untouched	fork-heavy
+refresh-models-a-realistic-list-models-fixture-parses-into-the-expected-cache-shape	tests/refresh-models.bats	50	refresh-models	a realistic --list-models fixture parses into the expected cache shape	fork-heavy
+refresh-models-the-write-is-atomic-and-lands-at-the-cursor-models-cache-path	tests/refresh-models.bats	63	refresh-models	the write is atomic and lands at the cursor models cache path	fork-heavy
+refresh-models-a-stubbed-cursor-agent-failure-exits-nonzero-and-leaves-an-existing-cache-untouched	tests/refresh-models.bats	75	refresh-models	a stubbed cursor-agent failure exits nonzero and leaves an existing cache untouched	fork-heavy
+refresh-models-cursor-agent-absent-from-path-exits-nonzero-and-leaves-an-existing-cache-untouched	tests/refresh-models.bats	86	refresh-models	cursor-agent absent from PATH exits nonzero and leaves an existing cache untouched	fork-heavy
+refresh-models-the-catalog-holds-all-four-engines-in-the-section-5-shape	tests/refresh-models.bats	137	refresh-models	the catalog holds all four engines in the section 5 shape	fork-heavy
+refresh-models-a-failing-pi-probe-keeps-pi-s-previous-snapshot-and-refreshes-the-rest	tests/refresh-models.bats	154	refresh-models	a failing pi probe keeps pi's previous snapshot and refreshes the rest	fork-heavy
+refresh-models-ids-with-control-bytes-or-outside-the-shape-regex-are-dropped	tests/refresh-models.bats	168	refresh-models	ids with control bytes or outside the shape regex are dropped	fork-heavy
+refresh-models-an-engine-list-past-128-kib-is-capped-at-2000-models-and-still-written-with-the-other-engines	tests/refresh-models.bats	181	refresh-models	an engine list past 128 KiB is capped at 2000 models and still written with the other engines	fork-heavy
+refresh-models-the-cursor-cache-is-unchanged-by-the-catalog-and-the-openrouter-fetch-goes-through-the-stub	tests/refresh-models.bats	191	refresh-models	the cursor cache is unchanged by the catalog and the openrouter fetch goes through the stub	fork-heavy
+refresh-models-cursor-failing-while-another-engine-refreshes-still-exits-zero-and-warns	tests/refresh-models.bats	201	refresh-models	cursor failing while another engine refreshes still exits zero and warns	fork-heavy
 pr-watch-the-first-park-seeds-the-cursor-and-reports-nothing	tests/pr-watch.bats	62	pr-watch	the first park seeds the cursor and reports nothing	slow
 pr-watch-fires-on-a-head-sha-move	tests/pr-watch.bats	67	pr-watch	fires on a head SHA move	slow
 pr-watch-fires-on-a-new-review-thread-reply	tests/pr-watch.bats	76	pr-watch	fires on a new review-thread reply	slow
@@ -26,8 +32,8 @@ pr-watch-crew-pr-watch-posts-the-event-to-the-crew-s-dispatcher	tests/pr-watch.b
 pr-watch-crew-pr-watch-posts-nothing-when-the-park-times-out	tests/pr-watch.bats	250	pr-watch	crew pr-watch posts nothing when the park times out	slow
 pr-watch-crew-pr-watch-exits-with-the-child-s-status-and-posts-nothing	tests/pr-watch.bats	264	pr-watch	crew pr-watch exits with the child's status and posts nothing	slow
 pr-watch-default-clock-a-1s-park-really-waits	tests/pr-watch.bats	281	pr-watch	default clock: a 1s park really waits	slow
-role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once	tests/dispatch.bats	11522	role-watch	role-watch: a permission dialog receives no keys until it clears, then the assignment lands once	slow
-role-watch-role-watch-option-select-quota-live-turn-and-unrecognised-claude-frames-defer	tests/dispatch.bats	11537	role-watch	role-watch: option-select, quota, live-turn and unrecognised claude frames defer	slow
-role-watch-role-watch-an-idle-claude-input-box-receives-the-assignment	tests/dispatch.bats	11572	role-watch	role-watch: an idle claude input box receives the assignment	slow
-role-watch-role-watch-queued-assignments-go-out-one-per-tick-in-order	tests/dispatch.bats	11929	role-watch	role-watch: queued assignments go out one per tick, in order	slow
-role-watch-role-watch-a-dialog-raised-after-the-text-is-typed-is-never-confirmed	tests/dispatch.bats	11944	role-watch	role-watch: a dialog raised after the text is typed is never confirmed	slow
+role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once	tests/dispatch.bats	12687	role-watch	role-watch: a permission dialog receives no keys until it clears, then the assignment lands once	slow
+role-watch-role-watch-option-select-quota-live-turn-and-unrecognised-claude-frames-defer	tests/dispatch.bats	12702	role-watch	role-watch: option-select, quota, live-turn and unrecognised claude frames defer	slow
+role-watch-role-watch-an-idle-claude-input-box-receives-the-assignment	tests/dispatch.bats	12737	role-watch	role-watch: an idle claude input box receives the assignment	slow
+role-watch-role-watch-queued-assignments-go-out-one-per-tick-in-order	tests/dispatch.bats	13094	role-watch	role-watch: queued assignments go out one per tick, in order	slow
+role-watch-role-watch-a-dialog-raised-after-the-text-is-typed-is-never-confirmed	tests/dispatch.bats	13109	role-watch	role-watch: a dialog raised after the text is typed is never confirmed	slow
