@@ -155,8 +155,8 @@ func TestClassPromoteThenRevert(t *testing.T) {
 	if code, out, errs := crewRun(t, e, "class", "revert", "codex", "standard"); code != 0 {
 		t.Fatalf("revert: %d %q %q", code, out, errs)
 	}
-	if got := classDefault(t, statePath, "codex", "standard"); got != "gpt-5.6-terra" {
-		t.Fatalf("default after revert = %q", got)
+	if got := classDefault(t, statePath, "codex", "standard"); got != "" {
+		t.Fatalf("default after revert = %q, want none (follows the seed default)", got)
 	}
 	msgs, decisions = busKinds(t, logPath)
 	if len(msgs) != 2 || len(decisions) != 2 {

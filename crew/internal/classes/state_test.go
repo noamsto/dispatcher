@@ -181,8 +181,8 @@ func TestLoadDropsBadEntries(t *testing.T) {
 			State{"pi": {"standard": {Default: "a"}}},
 		},
 		{
-			"missing default",
-			`{"pi":{"standard":{"default":"a"},"premium":{}}}`,
+			"non-string default",
+			`{"pi":{"standard":{"default":"a"},"premium":{"default":5}}}`,
 			State{"pi": {"standard": {Default: "a"}}},
 		},
 		{
