@@ -44,7 +44,7 @@
       | ($st | map(select(.body.state=="done" or .body.state=="failed")) | sort_by(.ts) | (.[-1] // null)) as $term
       | (if $term != null then ($term.ts - $t0) else null end) as $wall
       | (($d.shape // null) | if . == "" then null else . end) as $shape
-      | ($costmap[($d.model // "") + "\t" + ($d.effort // "")] // null) as $cw
+      | ($costmap[($d.engine // "") + "\t" + ($d.model // "") + "\t" + ($d.effort // "")] // null) as $cw
       | (null) as $pr_state
       # Split rather than replace. `blocked_count` feeds an append-only,
       # cross-run ratings store whose rows are compared against rows written

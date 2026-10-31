@@ -112,6 +112,43 @@ func TestStatsDerived(t *testing.T) {
 	}
 }
 
+func TestFloorCostedRunsPassFullyCostedRequirement(t *testing.T) {
+	var rows []any
+	for range 3 {
+		rows = append(rows, map[string]any{
+			"engine": "claude", "model": "fable-6", "tier": "standard",
+			"owns_pr": true, "pr_state": "MERGED", "cost_proxy": float64(4 * 900000),
+		})
+	}
+	s := Collect(rows)[Key{"claude", "standard", "fable-6"}]
+	if b, ok := s.BurnPerMergedHours(); !ok || b != 1 {
+		t.Fatalf("BurnPerMergedHours = %v, %v; want 1, true", b, ok)
+	}
+}
+
+func TestFloorClass(t *testing.T) {
+	raw := []byte(`{"classes":{"claude":{"cheap":["haiku*"],"standard":["x*"],"premium":["x-*",{"glob":"big?"}]}}}`)
+	for _, tc := range []struct {
+		engine, model, class string
+		weight               int
+	}{
+		{"claude", "x-1", "premium", 4},
+		{"claude", "xy", "standard", 2},
+		{"claude", "haiku-9", "cheap", 1},
+		{"claude", "big1", "premium", 4},
+		{"claude", "other", "", 0},
+		{"codex", "x-1", "", 0},
+	} {
+		class, w, ok := FloorClass(raw, tc.engine, tc.model)
+		if class != tc.class || w != tc.weight || ok != (tc.class != "") {
+			t.Errorf("FloorClass(%s, %s) = %q, %d, %v", tc.engine, tc.model, class, w, ok)
+		}
+	}
+	if _, _, ok := FloorClass([]byte(`nope`), "claude", "x"); ok {
+		t.Error("malformed settings must not match")
+	}
+}
+
 func TestCollectAcceptsFloat64(t *testing.T) {
 	rows := []any{map[string]any{
 		"engine": "claude", "model": "opus", "tier": "standard",
