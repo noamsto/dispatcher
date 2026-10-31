@@ -65,6 +65,10 @@ let
         type = lib.types.str;
         default = "/home/test";
       };
+      home.username = lib.mkOption {
+        type = lib.types.str;
+        default = "test";
+      };
       home.sessionVariables = lib.mkOption {
         type = lib.types.attrsOf lib.types.str;
         default = {};
@@ -942,7 +946,7 @@ worktree_git_lib_crew_go_row() { # bin
   run jq -e '.full.systemdUser.services["dispatcher-refresh"].Service.Type == "oneshot"' "$EVAL"
   [ "$status" -eq 0 ]
   # refresh-models needs cursor-agent, which lives outside the store.
-  run jq -e '.full.systemdUser.services["dispatcher-refresh"].Service.Environment == ["PATH=/home/test/.local/bin:/home/test/.nix-profile/bin:/run/current-system/sw/bin:/usr/bin:/bin"]' "$EVAL"
+  run jq -e '.full.systemdUser.services["dispatcher-refresh"].Service.Environment == ["PATH=/home/test/.local/bin:/home/test/.nix-profile/bin:/etc/profiles/per-user/test/bin:/run/current-system/sw/bin:/usr/bin:/bin"]' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.systemdUser.services["dispatcher-refresh"].Service.ExecStart | length == 2 and (.[0] | test("^-/nix/store/[^/]+-refresh-models/bin/refresh-models$")) and (.[1] | test("^-/nix/store/[^/]+-refresh-scores/bin/refresh-scores$"))' "$EVAL"
   [ "$status" -eq 0 ]
@@ -955,7 +959,7 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   run jq -e '.darwin.launchdAgents["dispatcher-refresh"] | .enable == true and .config.RunAtLoad == false and .config.StartCalendarInterval == [{"Hour": 0, "Minute": 0}]' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '.darwin.launchdAgents["dispatcher-refresh"].config | .EnvironmentVariables.PATH == "/home/test/.local/bin:/home/test/.nix-profile/bin:/run/current-system/sw/bin:/usr/bin:/bin" and .StandardErrorPath == "/home/test/Library/Logs/dispatcher-refresh.log" and .StandardOutPath == .StandardErrorPath' "$EVAL"
+  run jq -e '.darwin.launchdAgents["dispatcher-refresh"].config | .EnvironmentVariables.PATH == "/home/test/.local/bin:/home/test/.nix-profile/bin:/etc/profiles/per-user/test/bin:/run/current-system/sw/bin:/usr/bin:/bin" and .StandardErrorPath == "/home/test/Library/Logs/dispatcher-refresh.log" and .StandardOutPath == .StandardErrorPath' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.darwin.launchdAgents["dispatcher-refresh"].config.ProgramArguments | length == 3 and .[0] == "/bin/sh" and .[1] == "-c" and (.[2] | test("^/nix/store/[^/]+-refresh-models/bin/refresh-models; /nix/store/[^/]+-refresh-scores/bin/refresh-scores$"))' "$EVAL"
   [ "$status" -eq 0 ]
