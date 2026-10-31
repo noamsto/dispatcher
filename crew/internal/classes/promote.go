@@ -150,9 +150,6 @@ func Evaluate(rows []any, env Env) ([]Verdict, []string, error) {
 		return nil, nil, err
 	}
 	st, usable, warnings := Load(StatePath(env.Getenv))
-	if !usable {
-		st = SeedState(s)
-	}
 	r := env.resolver(s)
 	results := map[string]map[string]Result{}
 	resolveAll := func(statePath string) error {
@@ -172,10 +169,12 @@ func Evaluate(rows []any, env Env) ([]Verdict, []string, error) {
 		}
 		return nil
 	}
-	if usable {
+	// An absent file is the seed to model-resolve. A file Load warned about is
+	// never handed to it (a FIFO would block it): an empty copy stands in.
+	if usable || len(warnings) == 0 {
 		err = resolveAll(StatePath(env.Getenv))
 	} else {
-		err = withStateFile(st, resolveAll)
+		err = withStateFile(State{}, resolveAll)
 	}
 	if err != nil {
 		return nil, dedupe(warnings), err
@@ -381,7 +380,7 @@ func dedupe(ss []string) []string {
 }
 
 // withStateFile hands fn a private file holding st, for resolving against a
-// state that is not on disk (a seed, or the state a change is about to write).
+// state that is not on disk (the state a change is about to write).
 func withStateFile(st State, fn func(path string) error) error {
 	dir, err := os.MkdirTemp("", "crew-class-")
 	if err != nil {
@@ -541,8 +540,8 @@ func command(engine, class string, env Env, stderr io.Writer, mutate func(*txn) 
 	return 0
 }
 
-// txn is what a mutation sees under the lock: the state as it is on disk (or
-// seeded), with entry pointing at the engine/class being changed.
+// txn is what a mutation sees under the lock: the state as it is on disk (empty
+// when absent), with entry pointing at the engine/class being changed.
 type txn struct {
 	tiers    []string
 	resolver Resolver
@@ -596,12 +595,17 @@ func apply(engine, class string, env Env, stderr io.Writer, prefix string, mutat
 		return unusable(warnings, statePath)
 	}
 	if !usable {
-		st = SeedState(s)
+		// Only the changed entry is persisted: a recorded default would pin that
+		// class against later edits to its settings default.
+		st = State{}
 	}
 	if st[engine] == nil {
 		st[engine] = map[string]Entry{}
 	}
 	entry := st[engine][class]
+	if entry.Default == "" {
+		entry.Default = SeedState(s)[engine][class].Default
+	}
 	now := env.Now()
 	tx := &txn{tiers: tiers, resolver: env.resolver(s), state: st, entry: &entry, now: now}
 	body, err := mutate(tx)

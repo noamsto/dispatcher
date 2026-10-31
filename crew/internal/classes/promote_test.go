@@ -316,12 +316,8 @@ func TestCheckNeverPromotesCrossClass(t *testing.T) {
 
 func TestCheckExactlyOnceUnderTheLock(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, nil)
-	s, err := f.env.settings()
-	if err != nil {
-		t.Fatal(err)
-	}
-	promoted := SeedState(s)
-	e := promoted["codex"]["standard"]
+	promoted := State{"codex": {}}
+	var e Entry
 	e.Default = "gpt-5.7-terra"
 	e.Push(Change{From: "gpt-5.6-terra", To: "gpt-5.7-terra", TS: fixedNow.UnixMilli(), By: "auto", Why: "another sweep"})
 	promoted["codex"]["standard"] = e
@@ -690,23 +686,45 @@ func TestLockBusy(t *testing.T) {
 	}
 }
 
-func TestPromoteSeedsState(t *testing.T) {
+func TestPromoteWritesOnlyTheChangedEntry(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, nil)
 	if got := Promote("codex", "standard", "gpt-5.7-terra", f.env, &bytes.Buffer{}); got != 0 {
 		t.Fatalf("Promote = %d, want 0", got)
 	}
 	st := f.state()
-	for _, tc := range []struct{ engine, class, want string }{
-		{"codex", "standard", "gpt-5.7-terra"},
-		{"codex", "cheap", "gpt-5.6-luna"},
-		{"codex", "premium", "gpt-5.6-sol"},
-		{"claude", "cheap", "haiku"},
-		{"claude", "premium", "opus"},
-		{"pi", "standard", "openrouter/deepseek/deepseek-v4.1-flash"},
-	} {
-		if got := st[tc.engine][tc.class].Default; got != tc.want {
-			t.Errorf("%s %s default = %q, want %q", tc.engine, tc.class, got, tc.want)
-		}
+	if len(st) != 1 || len(st["codex"]) != 1 {
+		t.Fatalf("state = %+v, want only codex.standard", st)
+	}
+	e := st["codex"]["standard"]
+	if e.Default != "gpt-5.7-terra" || len(e.History) != 1 || e.History[0].From != "gpt-5.6-terra" || e.History[0].To != "gpt-5.7-terra" {
+		t.Errorf("codex standard = %+v, want gpt-5.7-terra from gpt-5.6-terra", e)
+	}
+}
+
+func TestPromoteLeavesOtherClassesFollowingSettings(t *testing.T) {
+	f := newPromoteFixture(t, catalogJSON, nil)
+	if got := Promote("codex", "standard", "gpt-5.7-terra", f.env, &bytes.Buffer{}); got != 0 {
+		t.Fatalf("Promote = %d, want 0", got)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(readDefaults(t), &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["modelMap"].(map[string]any)["codex"].(map[string]any)["deep"].(map[string]any)["default"] = "gpt-5.7-sol"
+	edited, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := ParseSettings(edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := f.env.resolver(s).Resolve("codex", "deep", f.statePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Default != "gpt-5.7-sol" || len(res.Warnings) != 0 {
+		t.Errorf("deep resolves %q (warnings %v), want the edited seed gpt-5.7-sol", res.Default, res.Warnings)
 	}
 }
 
