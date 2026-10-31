@@ -19,6 +19,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
+	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
@@ -724,5 +725,81 @@ func TestRecentRemoteCrews(t *testing.T) {
 				t.Errorf("crews = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func writePeerStore(t *testing.T, common, link string) {
+	t.Helper()
+	dir := filepath.Join(common, "crew", "peers")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const snap = `{"synced":1700000099000,"rows":[` +
+		`{"crew_id":"c1","branch":"feat/p","name":"otter","state":"working","ts":1700000090000},` +
+		`{"crew_id":"c9","branch":"feat/q","name":"finch","state":"working","ts":1700000090000}]}`
+	for name, body := range map[string]string{"halo.link": link, "halo.roster": snap} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestFleetPeerRows(t *testing.T) {
+	f := setup(t)
+	loads := 0
+	f.opts.PeerHosts = func() (map[string]remote.Host, error) {
+		loads++
+		return map[string]remote.Host{"halo": {Peer: true}}, nil
+	}
+	writePeerStore(t, f.alpha, `{"ok":1700000098000,"err":0,"detail":""}`)
+	writePeerStore(t, f.beta, `{"ok":1700000000000,"err":1700000098000,"detail":"ssh: refused"}`)
+
+	out, _, code := run(t, f, Request{JSON: true})
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	var peers []map[string]any
+	for _, r := range jsonRows(t, out) {
+		if r["peer"] == true {
+			peers = append(peers, r)
+		}
+	}
+	if len(peers) != 4 {
+		t.Fatalf("%d peer rows, want 4: %v", len(peers), peers)
+	}
+	for _, r := range peers {
+		if r["host"] != "halo" || r["stale"] != false || r["repo"] == nil || r["crew_id"] == nil {
+			t.Errorf("peer row = %v", r)
+		}
+	}
+	if loads != 1 {
+		t.Errorf("settings loaded %d times, want 1", loads)
+	}
+
+	out, _, _ = run(t, f, Request{})
+	var alphaLine, betaLine string
+	for _, l := range dataLines(out) {
+		switch {
+		case strings.HasPrefix(l, "acme/alpha") && strings.Contains(l, "otter@halo"):
+			alphaLine = l
+		case strings.HasPrefix(l, "beta") && strings.Contains(l, "otter@halo"):
+			betaLine = l
+		}
+	}
+	if !strings.Contains(alphaLine, "working") {
+		t.Errorf("healthy peer line %q", alphaLine)
+	}
+	if !strings.Contains(betaLine, "last sync failed: ssh: refused") || strings.Contains(betaLine, "working") {
+		t.Errorf("failed link should show peer_error in STATE: %q", betaLine)
+	}
+
+	out, _, _ = run(t, f, Request{JSON: true, Crew: "c9"})
+	for _, r := range jsonRows(t, out) {
+		if r["peer"] == true && r["crew_id"] != "c9" {
+			t.Errorf("--crew c9 kept %v", r)
+		}
+	}
+	if !strings.Contains(out, `"finch"`) || strings.Contains(out, `"otter"`) {
+		t.Errorf("--crew c9 peer rows wrong:\n%s", out)
 	}
 }

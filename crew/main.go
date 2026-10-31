@@ -409,14 +409,21 @@ type env struct {
 	proc   proc.Table  // the process table the pid reads go through
 	stdin  io.Reader   // remote-exec's request
 	clock  clock.Clock // the fold's clock (jq's `now`); nil Now is the wall clock
+	// peerHosts is the settings loader behind every peer read; nil reads no peer.
+	peerHosts func() (map[string]remote.Host, error)
+}
+
+// now is the env clock when one is set, else the wall clock.
+func (e env) now() time.Time {
+	if e.clock.Now != nil {
+		return e.clock.Now()
+	}
+	return time.Now()
 }
 
 // nowSec is jq's `now`: the env clock when one is set, in fractional seconds.
 func (e env) nowSec() float64 {
-	now := time.Now()
-	if e.clock.Now != nil {
-		now = e.clock.Now()
-	}
+	now := e.now()
 	return float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
 }
 
@@ -429,6 +436,9 @@ func main() {
 		probes: probes,
 		proc:   proc.OS{},
 		stdin:  os.Stdin,
+		peerHosts: func() (map[string]remote.Host, error) {
+			return remote.Load(context.Background(), remote.ConfigBin(), io.Discard)
+		},
 	}
 	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, e))
 }
@@ -857,11 +867,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			return ""
 		}
 		o := status.Options{
-			Dir:    cwd,
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
-			Clock:  clock.FromEnv(),
-			Sender: senderProbes(e.proc),
-			Tmux:   tmux.Exec{},
+			Dir:       cwd,
+			CrewID:    func() string { return bus.CrewID(ctx, cwd) },
+			Clock:     clock.FromEnv(),
+			Sender:    senderProbes(e.proc),
+			Tmux:      tmux.Exec{},
+			PeerHosts: e.peerHosts,
 		}
 		if sub == "status" {
 			c := parsed.typed.Status
@@ -985,7 +996,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		merged := roster.MergeRemote(ctx, rosterRows, events, crew, func(ctx context.Context, host string, argv []string, so, se io.Writer) int {
 			return remoteAs(ctx, e, cwd, crew)(host, argv, so, se)
 		})
-		v = merged
+		peerRows, err := peer.RosterRows(peer.StoreFor(paths), e.peerHosts, e.now())
+		if err != nil {
+			say(stderr, "crew: roster: peer settings: %v\n", err)
+		}
+		v = append(merged, peerRows...) // after the merge, so a host never relays its peers
 	}
 
 	if sub == "roster" || sub == "sessions" {
@@ -1055,9 +1070,10 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 		})
 	}
 	o := fleet.Options{
-		Tmux:  tmux.Exec{},
-		Git:   git.Exec{},
-		Clock: clock.FromEnv(),
+		Tmux:      tmux.Exec{},
+		Git:       git.Exec{},
+		Clock:     clock.FromEnv(),
+		PeerHosts: e.peerHosts,
 		// A repo's remote workers answer for themselves, as they do for
 		// `crew roster`: through remote-run, which runs the sender check, from
 		// the checkout of the repo whose bus is being read.

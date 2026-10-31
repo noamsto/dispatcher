@@ -22,6 +22,8 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
+	"github.com/noamsto/dispatcher/crew/internal/peer"
+	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
@@ -41,6 +43,9 @@ type Options struct {
 	// the checkout of the repo whose bus is being folded, since that checkout's
 	// origin is what names the clone the call lands in. nil asks no host.
 	Remote func(dir, crew string) roster.Capture
+	// PeerHosts loads the settings hosts, once per run, for the peer rows of
+	// each repo's peer store. nil shows no peer rows.
+	PeerHosts func() (map[string]remote.Host, error)
 }
 
 // onceTmux reads each argv once and shares it, a failed read as no output, so
@@ -75,6 +80,11 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 	now := o.Clock.Now()
 	hidden := 0
 	nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
+
+	var peerHosts func() (map[string]remote.Host, error)
+	if o.PeerHosts != nil {
+		peerHosts = sync.OnceValues(o.PeerHosts)
+	}
 
 	rows := []map[string]any{}
 	for _, r := range repos.Discover(repos.Options{Registry: o.Registry, Getenv: o.Getenv, Stderr: stderr, Prefix: "crew: fleet"}) {
@@ -118,6 +128,17 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 		}
 		origin, _ := git.Origin(ctx, o.Git, r.Common)
 		name := repos.Name(r.Common, origin)
+		peerRows, err := peer.RosterRows(peer.StoreFor(bus.Paths{Common: r.Common, Dir: r.Common + "/crew"}), peerHosts, now)
+		if err != nil {
+			say(stderr, "crew: fleet: %s: peer rows skipped (%s)\n", r.Common, oneLine(err))
+		}
+		for _, p := range peerRows {
+			id, _ := p["crew_id"].(string)
+			if onlyCrew != "" && id != onlyCrew {
+				continue
+			}
+			repoRows = append(repoRows, crewRow{Row: p, crew: id})
+		}
 		for _, row := range repoRows {
 			row.Row["repo"] = name
 			row.Row["crew_id"] = row.crew
@@ -127,8 +148,10 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 			// --all never hides it.
 			_, remoteRow := row.Row["host"].(string)
 			_, unanswered := row.Row["host_error"]
-			nonTerminal := unanswered || slices.Contains(roster.LiveStates, str(row.Row, "state"))
-			stale := !remoteRow && nonTerminal && live.Stale(row.Row)
+			_, peerErr := row.Row["peer_error"]
+			isPeer := row.Row["peer"] == true
+			nonTerminal := unanswered || peerErr || slices.Contains(roster.LiveStates, str(row.Row, "state"))
+			stale := !remoteRow && !isPeer && nonTerminal && live.Stale(row.Row)
 			row.Row["stale"] = stale
 			switch {
 			case !all && !nonTerminal:
@@ -283,8 +306,15 @@ func table(rows []map[string]any) []byte {
 	say(tw, "REPO\tCODENAME\tSTATE\tAGE\tENGINE\tCREW\tBRANCH\tTITLE\n")
 	for _, r := range rows {
 		engine := strings.Join([]string{str(r, "engine"), str(r, "model"), str(r, "tier")}, "/")
+		name, state := str(r, "name"), str(r, "state")
+		if r["peer"] == true {
+			name += "@" + str(r, "host")
+			if _, ok := r["peer_error"]; ok {
+				state = str(r, "peer_error")
+			}
+		}
 		say(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			str(r, "repo"), str(r, "name"), str(r, "state"), age(r), engine, str(r, "crew_id"), str(r, "branch"), str(r, "title"))
+			str(r, "repo"), name, state, age(r), engine, str(r, "crew_id"), str(r, "branch"), str(r, "title"))
 	}
 	_ = tw.Flush()
 	return buf.Bytes()
