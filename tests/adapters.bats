@@ -2332,7 +2332,7 @@ $hits"
 }
 
 @test "the release predicate matches the gate's own, verbatim" {
-  protocol="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  protocol="$ROOT/adapters/core/skills/budget-holds/SKILL.md"
   for statement in \
     'no window of `wait.engine`' \
     '`budget-gate.sh` `_budget_windows`'; do
@@ -2455,14 +2455,14 @@ $hits"
       missing=1
     }
   done <<'TABLE'
-adapters/core/protocols/DISPATCHER_PROTOCOL.md|**Owner authorization.**
-adapters/core/protocols/DISPATCHER_PROTOCOL.md|**Permission blocks.**
+adapters/core/skills/owner-auth/SKILL.md|**Owner authorization.**
+adapters/core/skills/blocked-replies/SKILL.md|**Permission blocks.**
 adapters/core/protocols/WORKER_EXECUTE.md|**Run the affected tests at every gate; CI runs the full suite.**
 adapters/core/protocols/WORKER_PROTOCOL.md|## Resuming a killed run
 adapters/core/protocols/WORKER_SHIP.md|"seam":"deslop"
 adapters/core/protocols/WORKER_SHIP.md|dispatcher:deslop
 adapters/core/protocols/WORKER_PROTOCOL.md|## Retro notes (all tiers)
-adapters/core/protocols/DISPATCHER_PROTOCOL.md|**Retro synthesis — claude
+adapters/core/skills/retro/SKILL.md|**Retro synthesis — claude
 adapters/core/protocols/WORKER_REVIEW.md|## Code review gate (standard/deep)
 adapters/core/protocols/WORKER_PLAN.md|## Cross-engine one-shots (consult and diverse reviewer)
 adapters/cursor/rules/dispatcher.mdc|$DISPATCHER_CRITICS_DIR
@@ -3070,4 +3070,109 @@ _phase_stems() {
     "$ROOT"/README.md)
   run grep -n -i -E 'no native subagents|pane is the review gate|pane \*\*is\*\* the review|no native batch|no native review batch' "${files[@]}"
   [ "$status" -eq 1 ] || { printf '%s\n' "$output" >&2; false; }
+}
+
+# #1278: every class (b) unit in classes.tsv moved into a skill (or, for the
+# per-engine park lanes, stays in the core), the moved text is gone from the
+# core, and the core index names the skill.
+@test "every class (b) section lives in a skill and has a core index line (#1278)" {
+  local rows="$ROOT/docs/dispatcher-context-floor/classes.tsv"
+  local proto="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  local skill anchor unit f name bad=0
+  while IFS=$'\t' read -r skill anchor unit; do
+    [ -n "$skill" ] && [ -n "$anchor" ] || {
+      echo "$unit: class b row without skill/anchor"
+      bad=1
+      continue
+    }
+    case "$skill" in
+      dispatcher:*)
+        name="${skill#dispatcher:}"
+        f="$ROOT/adapters/core/skills/$name/SKILL.md"
+        ;;
+      render) f="$proto" ;;
+      *)
+        echo "$unit: unknown destination $skill"
+        bad=1
+        continue
+        ;;
+    esac
+    [ -f "$f" ] || {
+      echo "$unit: no ${f#"$ROOT"/}"
+      bad=1
+      continue
+    }
+    grep -qF -- "$anchor" "$f" || {
+      echo "$unit: anchor not in ${f#"$ROOT"/}: $anchor"
+      bad=1
+    }
+    if [ "$skill" != render ]; then
+      if grep -qF -- "$anchor" "$proto"; then
+        echo "$unit: anchor still in the core: $anchor"
+        bad=1
+      fi
+      grep -qF -- "\`$name\`" "$proto" || {
+        echo "$unit: the core index does not name $skill"
+        bad=1
+      }
+    fi
+  done < <(awk -F'\t' '$5=="b" {print $7"\t"$8"\t"$4}' "$rows")
+  [ "$bad" -eq 0 ]
+}
+
+# #1278: a `dispatcher:<x>` named by any output has a skill, and every playbook
+# skill is reachable — named by an output or by the core index.
+@test "every dispatcher:<skill> an output names exists, and every playbook skill is named (#1278)" {
+  local proto="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  local name d bad=0
+  local names
+  names="$(grep -hoE 'dispatcher:[a-z0-9-]+' \
+    "$ROOT/crew/internal/playbook/playbook.go" \
+    "$ROOT/crew/internal/stream/stream.go" \
+    "$ROOT/crew/internal/stack/cut.go" \
+    "$ROOT/crew/internal/stack/align.go" \
+    "$ROOT/crew/internal/stack/stack.go" \
+    "$ROOT/adapters/core/dispatch.sh" \
+    "$ROOT/adapters/core/refresh-budget.sh" 2>/dev/null | sed 's/^dispatcher://' | sort -u)"
+  for name in $names; do
+    [ -f "$ROOT/adapters/core/skills/$name/SKILL.md" ] || {
+      echo "no skill for dispatcher:$name"
+      bad=1
+    }
+  done
+  for d in "$ROOT"/adapters/core/skills/*/; do
+    name="$(basename "$d")"
+    case "$name" in deslop | spec-plan-critic) continue ;; esac
+    grep -rqF -- "dispatcher:$name" \
+      "$proto" "$ROOT/crew/internal" \
+      "$ROOT/adapters/core/dispatch.sh" "$ROOT/adapters/core/refresh-budget.sh" ||
+      grep -qF -- "\`$name\`" "$proto" || {
+        echo "skill $name is named by no output and no index line"
+        bad=1
+      }
+  done
+  [ "$bad" -eq 0 ]
+}
+
+# #1278: the human-initiated flags have no output before them, so their index
+# line is the only pointer.
+@test "the core index names the human-initiated flags (#1278)" {
+  local proto="$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+  local pair flag skill bad=0
+  for pair in \
+    '--base:stacked' \
+    '--host:remote-host' \
+    '--pr:review-pr' \
+    '--review:review-pr' \
+    '--owner-auth:owner-auth' \
+    '--chrome:chrome' \
+    '--lazy:grid-lazy'; do
+    flag="${pair%%:*}"
+    skill="${pair##*:}"
+    if ! grep -F -- "- \`$skill\` — " "$proto" | grep -qF -- "$flag"; then
+      echo "the index line for $skill does not name $flag"
+      bad=1
+    fi
+  done
+  [ "$bad" -eq 0 ]
 }

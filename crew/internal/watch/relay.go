@@ -10,6 +10,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
+	"github.com/noamsto/dispatcher/crew/internal/playbook"
 )
 
 const defaultHeartbeat = "30"
@@ -58,6 +59,7 @@ func Relay(req RelayRequest, paths bus.Paths, stdout, stderr io.Writer, o Option
 	for {
 		var line bytes.Buffer
 		if folded, ok := fold(paths.Log, c); ok {
+			playbook.Annotate(folded)
 			out := jsonval.Clamp(folded).(map[string]any)
 			if err := jsonval.Encode(&line, invisible.Value(out), false); err != nil {
 				say(stderr, "crew: %v\n", err)

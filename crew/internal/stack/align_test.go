@@ -391,7 +391,7 @@ func TestAlignNoRecordedCut(t *testing.T) {
 	wantRow(t, out, "feat/b", map[string]string{
 		"mode": `"unknown"`, "ready": "false", "cut": "null", "directive": "null",
 		"reason": `"no recorded cut for feat/b — ask the child for the parent oid it is based on ` +
-			`(DISPATCHER_PROTOCOL.md → Rebase coordination); never guess"`,
+			`(-> skill dispatcher:stacked); never guess"`,
 	})
 	wantRow(t, out, "feat/c", map[string]string{"mode": `"onto"`, "ready": "false", "reason": `"waits for feat/b push"`})
 	if n := countReady(out); n != 0 {

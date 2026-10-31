@@ -2914,6 +2914,7 @@ cursor_month_json() { # <pct> <elapsed_s> <remaining_s>
   run run_dispatch standard sonnet --effort medium --crew-id c1 "title"
   [ "$status" -eq 1 ]
   [[ "$output" == *"dispatch: claude quota exhausted (7d at 97%) — pick another engine, wait for the reset, or pass --ignore-budget"* ]]
+  [[ "$output" == *"-> skill dispatcher:budget-holds"* ]]
 }
 
 # #549: the >=95% stop must apply to a role's engine, not only the lead's.
@@ -2944,6 +2945,7 @@ cursor_month_json() { # <pct> <elapsed_s> <remaining_s>
   [ "$status" -eq 1 ]
   [[ "$output" == *"role 'reviewer' (codex) quota exhausted (absolute limit: ordinary use not allowed)"* ]]
   [[ "$output" == *"--ignore-budget"* ]]
+  [[ "$output" == *"-> skill dispatcher:budget-holds"* ]]
   run ! grep -q 'split-window' "$STUB_LOG"
 }
 
@@ -7776,6 +7778,7 @@ EOF
   [[ "$output" == *"#42"* ]]
   [[ "$output" == *"already claimed"* ]]
   [[ "$output" == *"origin unreachable"* ]]
+  [[ "$output" == *"-> skill dispatcher:resume"* ]]
   run ! grep -q '^reap' "$STUB_LOG"
   run ! grep -q 'new-window' "$STUB_LOG"
   run ! grep -q 'switch' "$STUB_LOG"
@@ -11232,6 +11235,7 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
     DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$v" --crew-id c1 42 "unsafe dir"
     [ "$status" -eq 1 ]
     [[ "$output" == *"dispatch: --add-dir '$v' refused"* ]]
+    [[ "$output" == *"-> skill dispatcher:grants"* ]]
   done
   run ! grep -q '^switch' "$STUB_LOG"
   [ ! -e "$TEST_REPO/.dispatch-wt" ]

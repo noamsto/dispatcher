@@ -256,9 +256,9 @@ budget_stop() {
   IFS=$'\t' read -r key pct _ resets_iso <<<"${gate%%$'\n'*}"
   exhausted="$key at $pct%${resets_iso:+, resets $resets_iso}"
   if [ -n "$role_label" ]; then
-    echo "dispatch: role '$role_label' ($engine) quota exhausted ($exhausted) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+    echo "dispatch: role '$role_label' ($engine) quota exhausted ($exhausted) — pick another engine, wait for the reset, or pass --ignore-budget -> skill dispatcher:budget-holds" >&2
   else
-    echo "dispatch: $engine quota exhausted ($exhausted) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+    echo "dispatch: $engine quota exhausted ($exhausted) — pick another engine, wait for the reset, or pass --ignore-budget -> skill dispatcher:budget-holds" >&2
   fi
   exit 1
 }
@@ -275,9 +275,9 @@ absolute_limit_stop() {
   gate=$(_budget_limit "$budget_file" "$engine" "$(date +%s)") || return 0
   IFS=$'\t' read -r abs_limit _ <<<"$gate"
   if [ -n "$role_label" ]; then
-    echo "dispatch: role '$role_label' ($engine) quota exhausted (absolute limit: $abs_limit) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+    echo "dispatch: role '$role_label' ($engine) quota exhausted (absolute limit: $abs_limit) — pick another engine, wait for the reset, or pass --ignore-budget -> skill dispatcher:budget-holds" >&2
   else
-    echo "dispatch: $engine quota exhausted (absolute limit: $abs_limit) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+    echo "dispatch: $engine quota exhausted (absolute limit: $abs_limit) — pick another engine, wait for the reset, or pass --ignore-budget -> skill dispatcher:budget-holds" >&2
   fi
   exit 1
 }
@@ -868,7 +868,7 @@ _claim_check_extra() {
   claim_had_label+=(1)
   existing="$(git for-each-ref --format='%(refname:short)' "refs/heads/feat/$n-*" 2>/dev/null | head -1)"
   if [ -n "$existing" ]; then
-    echo "dispatch: issue #$n is already claimed (carries the 'dispatched' label; local branch $existing) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
+    echo "dispatch: issue #$n is already claimed (carries the 'dispatched' label; local branch $existing) — another crew is on it. If that crew is gone, remove the label by hand and retry. -> skill dispatcher:resume" >&2
     exit 1
   fi
   if git show-ref --verify --quiet "refs/heads/$branch" &&
@@ -879,7 +879,7 @@ _claim_check_extra() {
   fi
   evidence="$(_claim_evidence "$n")"
   if [ -n "$evidence" ]; then
-    echo "dispatch: issue #$n is already claimed (carries the 'dispatched' label; $evidence) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
+    echo "dispatch: issue #$n is already claimed (carries the 'dispatched' label; $evidence) — another crew is on it. If that crew is gone, remove the label by hand and retry. -> skill dispatcher:resume" >&2
     exit 1
   fi
   claim_notes+=("dispatch: issue #$n carries a stale 'dispatched' claim (no branch, remote branch or dispatch row for feat/$n-*) — re-claiming.")
@@ -5355,7 +5355,7 @@ for add_dir in "${add_dir_flags[@]}"; do
   canonical_dir="$(_add_dir_ok "$add_dir")" || {
     roots_now=none
     [ -z "${DISPATCH_GRANT_ROOTS//:/}" ] || roots_now="$DISPATCH_GRANT_ROOTS"
-    echo "dispatch: --add-dir '$add_dir' refused — must be an existing absolute directory inside a configured grant root (programs.dispatcher.grantRoots / DISPATCH_GRANT_ROOTS, now: $roots_now) — ask the human to add a root, never set it inline; not /, \$HOME or an ancestor of it, not inside or above the crew dir, not a secrets/credentials dir, not a dir containing a .git or .claude entry, not inside or above a containing repo's git hooks dir (core.hooksPath or the default) or git dir, not holding a repo's git config file or a symlink into or over its hooks/git dir" >&2
+    echo "dispatch: --add-dir '$add_dir' refused — must be an existing absolute directory inside a configured grant root (programs.dispatcher.grantRoots / DISPATCH_GRANT_ROOTS, now: $roots_now) — ask the human to add a root, never set it inline; not /, \$HOME or an ancestor of it, not inside or above the crew dir, not a secrets/credentials dir, not a dir containing a .git or .claude entry, not inside or above a containing repo's git hooks dir (core.hooksPath or the default) or git dir, not holding a repo's git config file or a symlink into or over its hooks/git dir -> skill dispatcher:grants" >&2
     exit 1
   }
   add_dirs+=("$canonical_dir")
@@ -5460,7 +5460,7 @@ if [ -n "$gh_issue" ]; then
     else
       existing_branch="$(git for-each-ref --format='%(refname:short)' "refs/heads/feat/$gh_issue-*" 2>/dev/null | head -1)"
       if [ -n "$existing_branch" ] && [ "$existing_branch" != "$branch" ]; then
-        echo "dispatch: issue #$gh_issue is already claimed — the title resolves to branch '$branch', but '$existing_branch' already exists (title mismatch?). Use the exact original title, or pass a different issue number." >&2
+        echo "dispatch: issue #$gh_issue is already claimed — the title resolves to branch '$branch', but '$existing_branch' already exists (title mismatch?). Use the exact original title, or pass a different issue number. -> skill dispatcher:resume" >&2
         exit 1
       fi
       # The label alone is no proof of a live crew: an interrupted dispatch
@@ -5470,7 +5470,7 @@ if [ -n "$gh_issue" ]; then
       # unless that push failed.
       claim_evidence="$(_claim_evidence "$gh_issue")"
       if [ -n "$claim_evidence" ]; then
-        echo "dispatch: issue #$gh_issue is already claimed (carries the 'dispatched' label; $claim_evidence) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
+        echo "dispatch: issue #$gh_issue is already claimed (carries the 'dispatched' label; $claim_evidence) — another crew is on it. If that crew is gone, remove the label by hand and retry. -> skill dispatcher:resume" >&2
         exit 1
       fi
       claim_notes+=("dispatch: issue #$gh_issue carries a stale 'dispatched' claim (no branch, remote branch or dispatch row for feat/$gh_issue-*) — re-claiming.")
