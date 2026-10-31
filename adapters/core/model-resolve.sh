@@ -183,7 +183,8 @@ jq -nR --arg e "$engine" --arg t "$tier" \
   # Default: honour the recorded incumbent only inside the row class.
   | (($sobj | type) == "object" and ($sobj | has($e)) and ($sobj[$e] | type) == "object" and ($sobj[$e] | has($class))) as $has_rec
   | (if $has_rec then $sobj[$e][$class] | (if type == "object" then .default else null end) else null end) as $rec
-  | (if $has_rec and ($rec | type) != "string"
+  | ($has_rec and ($sobj[$e][$class] | type) == "object" and ($sobj[$e][$class] | has("default") | not)) as $veto_only
+  | (if $has_rec and ($veto_only | not) and ($rec | type) != "string"
      then ["model-resolve: \($e | clean) \($t | clean): recorded \($class | clean) default is not a string; using seed default \($seed_default | clean)"] else [] end) as $w_rec_type
   | (($rec | type) == "string"
      and ($rec | shape_ok($e))

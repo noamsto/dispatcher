@@ -133,6 +133,7 @@ func TestLoadUnusable(t *testing.T) {
 		{"oversize", big, true},
 		{"array", write("array.json", []byte(`[]`)), true},
 		{"garbage", write("garbage.json", []byte(`garbage`)), true},
+		{"null", write("null.json", []byte(`null`)), true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -171,8 +172,18 @@ func TestLoadDropsBadEntries(t *testing.T) {
 			State{"pi": {"standard": {Default: "a"}}},
 		},
 		{
+			"null engine",
+			`{"claude":null,"pi":{"standard":{"default":"a"}}}`,
+			State{"pi": {"standard": {Default: "a"}}},
+		},
+		{
 			"class entry not an object",
 			`{"pi":{"standard":{"default":"a"},"premium":"x"}}`,
+			State{"pi": {"standard": {Default: "a"}}},
+		},
+		{
+			"null class entry",
+			`{"pi":{"standard":{"default":"a"},"premium":null}}`,
 			State{"pi": {"standard": {Default: "a"}}},
 		},
 		{
@@ -181,8 +192,8 @@ func TestLoadDropsBadEntries(t *testing.T) {
 			State{"pi": {"standard": {Default: "a"}}},
 		},
 		{
-			"missing default",
-			`{"pi":{"standard":{"default":"a"},"premium":{}}}`,
+			"null default",
+			`{"pi":{"standard":{"default":"a"},"premium":{"default":null}}}`,
 			State{"pi": {"standard": {Default: "a"}}},
 		},
 		{
@@ -223,6 +234,47 @@ func TestLoadDropsBadEntries(t *testing.T) {
 				t.Errorf("state = %+v, want %+v", st, tc.want)
 			}
 		})
+	}
+}
+
+func TestLoadVetoOnlyEntry(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.json")
+	if err := os.WriteFile(p, []byte(`{"pi":{"standard":{"vetoed":["x"]}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, usable, warns := Load(p)
+	want := State{"pi": {"standard": {Vetoed: []string{"x"}}}}
+	if !usable || len(warns) != 0 || !reflect.DeepEqual(st, want) {
+		t.Errorf("Load = %+v, usable %v, warnings %v; want %+v, usable, none", st, usable, warns, want)
+	}
+}
+
+func TestLoadKeysAreExact(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.json")
+	body := `{"pi":{"standard":{"DEFAULT":"x","Vetoed":["y"],"History":[{"from":"a","to":"b"}]},` +
+		`"premium":{"default":"p","history":[{"FROM":"a","to":"b"},{"from":"a","To":"b"}]}}}`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, usable, warns := Load(p)
+	if !usable {
+		t.Fatalf("usable = false, warnings %v", warns)
+	}
+	if want := (State{"pi": {"standard": {}, "premium": {Default: "p"}}}); !reflect.DeepEqual(st, want) {
+		t.Errorf("state = %+v, want %+v", st, want)
+	}
+	if len(warns) != 2 {
+		t.Errorf("warnings = %v, want the two dropped history items", warns)
+	}
+	if err := Save(p, st); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), `"x"`) {
+		t.Errorf("saved %s, wrote the DEFAULT value as a default", out)
 	}
 }
 

@@ -408,6 +408,41 @@ func TestPartlyDroppedStateRefusesWrites(t *testing.T) {
 	}
 }
 
+func TestNullClassEntryRefusesWrites(t *testing.T) {
+	f := newPromoteFixture(t, catalogJSON, nil)
+	const pruned = `{"codex":{"standard":null}}`
+	f.writeState(pruned)
+	var stderr bytes.Buffer
+	if got := Promote("codex", "standard", "gpt-5.7-terra", f.env, &stderr); got != 1 {
+		t.Errorf("Promote = %d, want 1", got)
+	}
+	if !strings.HasPrefix(stderr.String(), "crew: class: class-state is unusable (") {
+		t.Errorf("Promote stderr = %q, want the refusal", stderr.String())
+	}
+	if s := f.stateBytes(); s != pruned {
+		t.Errorf("state rewritten to %q", s)
+	}
+}
+
+func TestNullFileOrEngineRefusesWrites(t *testing.T) {
+	for _, pruned := range []string{`null`, `{"codex":null}`} {
+		t.Run(pruned, func(t *testing.T) {
+			f := newPromoteFixture(t, catalogJSON, nil)
+			f.writeState(pruned)
+			var stderr bytes.Buffer
+			if got := Promote("codex", "standard", "gpt-5.7-terra", f.env, &stderr); got != 1 {
+				t.Errorf("Promote = %d, want 1", got)
+			}
+			if !strings.HasPrefix(stderr.String(), "crew: class: class-state is unusable (") {
+				t.Errorf("Promote stderr = %q, want the refusal", stderr.String())
+			}
+			if s := f.stateBytes(); s != pruned {
+				t.Errorf("state rewritten to %q", s)
+			}
+		})
+	}
+}
+
 func TestUnusableStateAutoOffProposesNothing(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, func(doc map[string]any) {
 		doc["classes"].(map[string]any)["codex"].(map[string]any)["autoPromote"] = false
@@ -545,8 +580,31 @@ func TestRevert(t *testing.T) {
 		t.Fatalf("Revert = %d, want 0; stderr %q", got, stderr.String())
 	}
 	e := f.state()["codex"]["standard"]
-	if e.Default != "gpt-5.6-terra" || len(e.History) != 0 || !reflect.DeepEqual(e.Vetoed, []string{"gpt-5.7-terra"}) {
-		t.Errorf("entry = %+v, want default gpt-5.6-terra, no history, gpt-5.7-terra vetoed", e)
+	if e.Default != "" || len(e.History) != 0 || !reflect.DeepEqual(e.Vetoed, []string{"gpt-5.7-terra"}) {
+		t.Errorf("entry = %+v, want no default, no history, gpt-5.7-terra vetoed", e)
+	}
+	var onDisk map[string]map[string]map[string]any
+	if err := json.Unmarshal([]byte(f.stateBytes()), &onDisk); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := onDisk["codex"]["standard"]["default"]; has {
+		t.Errorf("state file = %s, want a veto-only entry", f.stateBytes())
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(readDefaults(t), &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["modelMap"].(map[string]any)["codex"].(map[string]any)["standard"].(map[string]any)["default"] = "gpt-5.6-luna"
+	moved, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Resolver{Bash: "bash", Script: resolveScript, Settings: moved, Catalog: CatalogPath(f.env.Getenv)}.Resolve("codex", "standard", f.statePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Default != "gpt-5.6-luna" || len(res.Warnings) != 0 {
+		t.Errorf("after the seed moved: default %q, warnings %q; want gpt-5.6-luna and none", res.Default, res.Warnings)
 	}
 	logged := f.busRows()
 	msgs, decisions := rowsOfKind(logged, "msg"), rowsOfKind(logged, "decision")
@@ -572,6 +630,26 @@ func TestRevert(t *testing.T) {
 	stderr.Reset()
 	if got := Revert("codex", "standard", f.env, &stderr); got != 1 || !strings.Contains(stderr.String(), "no previous default") {
 		t.Errorf("second Revert = %d, stderr %q; want 1 and 'no previous default'", got, stderr.String())
+	}
+}
+
+func TestRevertToEarlierPromotionKeepsDefault(t *testing.T) {
+	f := newPromoteFixture(t, catalogJSON, nil)
+	f.writeState(`{"codex":{"standard":{"default":"gpt-5.8-terra","history":[{"from":"gpt-5.6-terra","to":"gpt-5.7-terra","ts":1,"by":"auto"},{"from":"gpt-5.7-terra","to":"gpt-5.8-terra","ts":2,"by":"auto"}]}}}`)
+	var stderr bytes.Buffer
+	if got := Revert("codex", "standard", f.env, &stderr); got != 0 {
+		t.Fatalf("Revert = %d, want 0; stderr %q", got, stderr.String())
+	}
+	e := f.state()["codex"]["standard"]
+	if e.Default != "gpt-5.7-terra" || len(e.History) != 1 || !reflect.DeepEqual(e.Vetoed, []string{"gpt-5.8-terra"}) {
+		t.Errorf("entry = %+v, want default gpt-5.7-terra, one history item, gpt-5.8-terra vetoed", e)
+	}
+	var onDisk map[string]map[string]map[string]any
+	if err := json.Unmarshal([]byte(f.stateBytes()), &onDisk); err != nil {
+		t.Fatal(err)
+	}
+	if onDisk["codex"]["standard"]["default"] != "gpt-5.7-terra" {
+		t.Errorf("state file = %s, want the recorded default", f.stateBytes())
 	}
 }
 

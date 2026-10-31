@@ -7,6 +7,7 @@
 package classes
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,10 +42,11 @@ type Change struct {
 	Why  string `json:"why,omitempty"`
 }
 
-// Entry is one engine/class: the default model plus how it got there. Vetoed
-// holds ids the owner rejected, so auto-promotion does not pick them again.
+// Entry is one engine/class: the default model plus how it got there. An empty
+// Default follows the seed default. Vetoed holds ids the owner rejected, so
+// auto-promotion does not pick them again.
 type Entry struct {
-	Default string   `json:"default"`
+	Default string   `json:"default,omitempty"`
 	History []Change `json:"history,omitempty"`
 	Vetoed  []string `json:"vetoed,omitempty"`
 }
@@ -121,6 +123,10 @@ func Load(path string) (st State, usable bool, warnings []string) {
 		return nil, false, warnings
 	}
 	var engines map[string]json.RawMessage
+	if !isObject(data) {
+		warn("%s is not a JSON object", path)
+		return nil, false, warnings
+	}
 	if err := json.Unmarshal(data, &engines); err != nil {
 		warn("%s is not a JSON object: %v", path, err)
 		return nil, false, warnings
@@ -128,6 +134,10 @@ func Load(path string) (st State, usable bool, warnings []string) {
 	st = State{}
 	for engine, raw := range engines {
 		var classes map[string]json.RawMessage
+		if !isObject(raw) {
+			warn("dropped engine %q: not an object", engine)
+			continue
+		}
 		if err := json.Unmarshal(raw, &classes); err != nil {
 			warn("dropped engine %q: not an object", engine)
 			continue
@@ -148,28 +158,70 @@ func Load(path string) (st State, usable bool, warnings []string) {
 	return st, true, warnings
 }
 
-// parseEntry decodes one class entry, dropping malformed history and vetoed
-// items individually. It reports false when the entry has no usable default.
-func parseEntry(raw json.RawMessage, warn func(string, ...any)) (Entry, bool) {
-	var fields struct {
-		Default *string           `json:"default"`
-		History []json.RawMessage `json:"history"`
-		Vetoed  []json.RawMessage `json:"vetoed"`
+// isObject reports whether raw is a JSON object. Unmarshal accepts null into a
+// map, which model-resolve's jq treats as a non-object.
+func isObject(raw []byte) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && trimmed[0] == '{'
+}
+
+// parseChange decodes one history item with exact keys.
+func parseChange(raw json.RawMessage) (Change, bool) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return Change{}, false
 	}
-	if err := json.Unmarshal(raw, &fields); err != nil || fields.Default == nil {
+	var c Change
+	for key, dst := range map[string]any{"from": &c.From, "to": &c.To, "ts": &c.TS, "by": &c.By, "why": &c.Why} {
+		if v, ok := fields[key]; ok {
+			if err := json.Unmarshal(v, dst); err != nil {
+				return Change{}, false
+			}
+		}
+	}
+	return c, c.From != "" && c.To != ""
+}
+
+// parseEntry decodes one class entry, dropping malformed history and vetoed
+// items individually. It reports false when a default is present but not a
+// string; an entry with no default follows the seed default.
+func parseEntry(raw json.RawMessage, warn func(string, ...any)) (Entry, bool) {
+	if !isObject(raw) {
+		warn("dropped entry: not an object")
+		return Entry{}, false
+	}
+	// A map decode matches keys exactly, as jq does; a struct decode would
+	// match "DEFAULT" to default case-insensitively.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
 		warn("dropped entry: no string default")
 		return Entry{}, false
 	}
-	e := Entry{Default: *fields.Default}
-	for _, item := range fields.History {
-		var c Change
-		if err := json.Unmarshal(item, &c); err != nil || c.From == "" || c.To == "" {
+	var e Entry
+	if def, ok := fields["default"]; ok {
+		if err := json.Unmarshal(def, &e.Default); err != nil || string(def) == "null" {
+			warn("dropped entry: no string default")
+			return Entry{}, false
+		}
+	}
+	var history, vetoed []json.RawMessage
+	if err := json.Unmarshal(fields["history"], &history); fields["history"] != nil && err != nil {
+		warn("dropped entry: history is not an array")
+		return Entry{}, false
+	}
+	if err := json.Unmarshal(fields["vetoed"], &vetoed); fields["vetoed"] != nil && err != nil {
+		warn("dropped entry: vetoed is not an array")
+		return Entry{}, false
+	}
+	for _, item := range history {
+		c, ok := parseChange(item)
+		if !ok {
 			warn("dropped history item: needs string from and to")
 			continue
 		}
 		e.History = append(e.History, c)
 	}
-	for _, item := range fields.Vetoed {
+	for _, item := range vetoed {
 		var id string
 		if err := json.Unmarshal(item, &id); err != nil {
 			warn("dropped vetoed item: not a string")
