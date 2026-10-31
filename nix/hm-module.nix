@@ -53,6 +53,65 @@ self: {
   badLocalModelKeys =
     lib.optionals (cfg.localModels != null)
     (lib.filter (k: !localModelKeyValid k) (builtins.attrNames cfg.localModels));
+  # dispatch-config's iso_epoch: an ISO-8601 date or datetime to epoch seconds,
+  # null for a malformed or impossible one (2026-02-30, 2026-13-01). Days come
+  # from Howard Hinnant's days_from_civil.
+  isoEpoch = s: let
+    m = builtins.match "([0-9]{4})-([0-9]{2})-([0-9]{2})(T([0-9]{2}):([0-9]{2})(:([0-9]{2})([.][0-9]+)?)?(Z|([+-])([0-9]{2}):([0-9]{2}))?)?" s;
+    n = i: let
+      v = builtins.elemAt m i;
+    in
+      if v == null
+      then 0
+      else lib.toIntBase10 v;
+    y = n 0;
+    mo = n 1;
+    d = n 2;
+    h = n 4;
+    mi = n 5;
+    sec = n 7;
+    oh = n 11;
+    om = n 12;
+    leap = lib.mod y 4 == 0 && (lib.mod y 100 != 0 || lib.mod y 400 == 0);
+    monthDays =
+      if mo == 2 && leap
+      then 29
+      else if mo == 2
+      then 28
+      else if lib.elem mo [4 6 9 11]
+      then 30
+      else 31;
+    yy =
+      if mo <= 2
+      then y - 1
+      else y;
+    marchMonth =
+      if mo > 2
+      then mo - 3
+      else mo + 9;
+    era = yy / 400;
+    yoe = yy - era * 400;
+    doy = (153 * marchMonth + 2) / 5 + d - 1;
+    days = era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+    sign =
+      if builtins.elemAt m 10 == "-"
+      then -1
+      else 1;
+    off = (oh * 3600 + om * 60) * sign;
+  in
+    if m == null || mo < 1 || mo > 12 || d < 1 || d > monthDays || h > 23 || mi > 59 || sec > 59 || oh > 23 || om > 59
+    then null
+    else days * 86400 + h * 3600 + mi * 60 + sec - off;
+  # dispatch-config drops an anthropicCredits grant whose dates do not parse
+  # or whose asOf is not before expires, so such a grant fails the build.
+  badAnthropicCredits = lib.optionals (cfg.anthropicCredits != null) (let
+    a = cfg.anthropicCredits;
+    e = isoEpoch a.expires;
+    s = isoEpoch a.asOf;
+  in
+    lib.optional (e == null) "expires ${a.expires} is not a real date or datetime"
+    ++ lib.optional (s == null) "asOf ${a.asOf} is not a real date or datetime"
+    ++ lib.optional (e != null && s != null && s >= e) "asOf ${a.asOf} is not before expires ${a.expires}");
   # dispatch-config's mcpServers name and header rules, so a bad entry fails the
   # build instead of every dispatch.
   badMcpServers =
@@ -482,9 +541,11 @@ in {
         as_of}` in the locked settings layer; `refresh-budget` then estimates
         the remainder from pi's own session spend since `asOf`, and `dispatch`
         admits the direct `anthropic/claude-*` class patterns on pi only while
-        credit remains and before `expires`. Spend outside pi is unseen, so
-        update `asOf` and `balanceUsd` after checking the Console. Unset, the
-        key is left out and the user settings file governs alone.
+        credit remains and before `expires`. The estimate counts only the
+        spend this host's pi recorded, so set it on one host (a `dispatch
+        --host` launch never admits the credit patterns). Spend outside pi is
+        unseen, so update `asOf` and `balanceUsd` after checking the Console.
+        Unset, the key is left out and the user settings file governs alone.
       '';
     };
 
@@ -698,6 +759,10 @@ in {
       {
         assertion = badLocalModelKeys == [];
         message = "programs.dispatcher.localModels: invalid id(s) ${lib.concatStringsSep ", " badLocalModelKeys} -- keys are <provider>/<model> (letters, digits, \".\", \"_\", \"-\", \"/\"; provider not openrouter or anthropic); dispatch-config would refuse them at runtime, taking every dispatch down.";
+      }
+      {
+        assertion = badAnthropicCredits == [];
+        message = "programs.dispatcher.anthropicCredits: ${lib.concatStringsSep "; " badAnthropicCredits} -- dispatch-config would drop the grant at runtime, so pi's direct anthropic/* ids would never be admitted.";
       }
       {
         assertion = badMcpServers == [];

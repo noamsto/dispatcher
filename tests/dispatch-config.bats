@@ -132,14 +132,31 @@ null|must be an object
 ROWS
 }
 
-@test "anthropicCredits: each layer is validated on its own, so a bad locked grant leaves the user one" {
+@test "anthropicCredits: a locked grant, valid or not, owns the key, so a bad one leaves no grant" {
   user_settings '{"anthropicCredits":{"balance_usd":50,"expires":"2026-11-17","as_of":"2026-10-25"}}'
   locked_settings '{"anthropicCredits":{"balance_usd":-1,"expires":"2026-11-17","as_of":"2026-10-25"}}'
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
-  jq -e '.anthropicCredits.balance_usd == 50' <<<"$output"
+  jq -e 'has("anthropicCredits") | not' <<<"$output"
   [[ "$stderr" == *"ignoring anthropicCredits from $LOCKED_FILE (locked layer): balance_usd must be a positive number"* ]]
   [[ "$stderr" != *"$USER_FILE"* ]]
+  # The review repro: a larger, later user grant never stands in for a locked
+  # grant whose as_of is not before its expires.
+  user_settings '{"anthropicCredits":{"balance_usd":10000,"expires":"2030-01-01","as_of":"2026-10-01"}}'
+  locked_settings '{"anthropicCredits":{"balance_usd":50,"expires":"2026-11-17","as_of":"2026-11-17"}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e 'has("anthropicCredits") | not' <<<"$output"
+  [[ "$stderr" == *"(locked layer): as_of must be before expires"* ]]
+  locked_settings '{"anthropicCredits":null}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e 'has("anthropicCredits") | not' <<<"$output"
+  # A locked layer without the key leaves the user grant.
+  locked_settings '{"profile":"work"}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.anthropicCredits.balance_usd == 10000' <<<"$output"
   locked_settings '{"anthropicCredits":{"balance_usd":75,"expires":"2026-12-01","as_of":"2026-10-30"}}'
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]

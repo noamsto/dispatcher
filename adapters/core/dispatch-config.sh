@@ -60,7 +60,9 @@
 # anthropicCredits ({balance_usd, expires, as_of}) records the prepaid Anthropic
 # credit pi's direct anthropic/* models draw on, for refresh-budget's estimate.
 # Each file layer must carry the whole grant; a malformed one is dropped from
-# its layer with a warning, never fatal. It has no env var.
+# its layer with a warning, never fatal, and a locked layer holding the key at
+# all drops it from the lower layers. It has no env var. The estimate counts
+# only the spend this host's pi recorded, so set the grant on one host.
 #
 # laneProfiles maps an engine or "<engine>/<model>" glob to a lane profile (its
 # name, and optionally inline notes text) that `dispatch` applies to the task
@@ -249,7 +251,8 @@ check_model_shapes() {
 # (YYYY-MM-DDTHH:MM[:SS[.frac]], zone Z or +-HH:MM, none = UTC) to epoch
 # seconds, else null. jq's mktime ignores a zone, so the offset is applied by
 # hand; a date the calendar lacks (2026-02-30) fails the gmtime round trip.
-# refresh-budget.sh carries a byte-identical copy (tests/refresh-budget.bats).
+# refresh-budget.sh and dispatch.sh carry byte-identical copies
+# (tests/refresh-budget.bats).
 # shellcheck disable=SC2016 # jq program text, not shell
 iso_epoch_def='def iso_epoch:
   (if type == "string" then (capture("\\A(?<y>[0-9]{4})-(?<mo>[0-9]{2})-(?<d>[0-9]{2})(T(?<h>[0-9]{2}):(?<mi>[0-9]{2})(:(?<s>[0-9]{2})(\\.[0-9]+)?)?(?<z>Z|[+-][0-9]{2}:[0-9]{2})?)?\\z") // null) else null end) as $c
@@ -270,6 +273,8 @@ iso_epoch_def='def iso_epoch:
 # and <layer>. Each layer must carry the whole grant ({balance_usd, expires,
 # as_of}, as_of before expires), so the merge never pairs one layer's balance
 # with another's as_of. Never fatal: a bad grant only loses its admission.
+# A locked layer holding the key at all owns the grant: the caller drops it
+# from the lower layers first, so a bad locked grant means no grant.
 check_anthropic_credits() {
   local reason
   reason=$(jq -r "$iso_epoch_def"'
@@ -342,6 +347,10 @@ if [[ -n $locked_file ]]; then
   locked=$(layer "$locked_file")
   check_no_blank_engines "$locked" "$locked_file"
   check_model_shapes "$locked" "$locked_file" locked
+  if jq -e 'has("anthropicCredits")' <<<"$locked" >/dev/null; then
+    base=$(jq -c 'del(.anthropicCredits)' <<<"$base")
+    user=$(jq -c 'del(.anthropicCredits)' <<<"$user")
+  fi
   locked=$(check_anthropic_credits "$locked" "$locked_file" locked)
 fi
 

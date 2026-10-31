@@ -18623,11 +18623,17 @@ STUB
 # Anthropic credit. anthropic_budget <remaining_usd> <used_pct> <elapsed_s>
 # <left_s> [<fetched_offset_s>] [or] writes a fresh cache whose pi entry holds
 # refresh-budget's credit estimate (grant starts <elapsed_s> ago, expires in
-# <left_s>); `or` adds a green OpenRouter month window beside it.
+# <left_s>); `or` adds a green OpenRouter month window beside it. It also
+# writes the matching anthropicCredits grant into the user settings, which
+# dispatch checks the estimate against.
 anthropic_budget() {
-  local now
+  local now f="$XDG_CONFIG_HOME/dispatcher/settings.json"
   now="$(date +%s)"
-  mkdir -p "$XDG_DATA_HOME/crew"
+  mkdir -p "$XDG_DATA_HOME/crew" "${f%/*}"
+  [ -e "$f" ] || echo '{}' >"$f"
+  jq -c --argjson s "$((now - $3))" --argjson r "$((now + $4))" \
+    '.anthropicCredits = {balance_usd: 200, as_of: ($s | todateiso8601), expires: ($r | todateiso8601)}' "$f" >"$f.tmp"
+  mv "$f.tmp" "$f"
   jq -n --argjson rem "$1" --argjson pct "$2" --argjson s "$((now - $3))" --argjson r "$((now + $4))" \
     --argjson f "$((now + ${5:-0}))" --arg or "${6:-}" --argjson now "$now" '
     {fetched_epoch: $f, engines: {claude: null, codex: null, cursor: null, pi: (
@@ -18671,6 +18677,48 @@ anthropic_budget 180 10 1000000 1000000 1000|there is no fresh engine-budget.jso
 anthropic_budget 180 10 1000000 1000000 -7300|there is no fresh engine-budget.json
 rm -f "$XDG_DATA_HOME/crew/engine-budget.json"|there is no fresh engine-budget.json
 ROWS
+}
+
+@test "model classes P4b: the remote side of a --host dispatch never admits the anthropic credit patterns" {
+  opus=anthropic/claude-opus-5-5
+  class_catalog pi "$opus" anthropic/claude-sonnet-5-5
+  anthropic_budget 180 10 1000000 1000000
+  DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_EMIT_ROW=1 DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"model '$opus' matches a pi class pattern that needs Anthropic credit, and this is a dispatch --host launch, which never admits it"* ]]
+  [[ "$stderr" == *"model '$opus' is not deep's row for --agent pi"* ]]
+  DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_EMIT_ROW=1 DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 0 ] || { echo "$stderr"; false; }
+}
+
+@test "model classes P4b: the credit estimate counts only while it matches the settings grant" {
+  opus=anthropic/claude-opus-5-5
+  class_catalog pi "$opus" anthropic/claude-sonnet-5-5
+  local f="$XDG_CONFIG_HOME/dispatcher/settings.json" edit why
+  while IFS='|' read -r edit why; do
+    anthropic_budget 180 10 1000000 1000000
+    jq -c "$edit" "$f" >"$f.tmp" && mv "$f.tmp" "$f"
+    DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+    [ "$status" -eq 1 ] || { echo "$edit: status $status"; false; }
+    [[ "$stderr" == *"needs Anthropic credit, and "*"$why"* ]] || { echo "$edit: $stderr"; false; }
+  done <<'ROWS'
+del(.anthropicCredits)|the settings hold no anthropicCredits grant, so engine-budget.json's credit estimate (engines.pi.anthropic) is not trusted
+.anthropicCredits.balance_usd = 100|engine-budget.json's Anthropic credit (engines.pi.anthropic balance_usd, starts_at, resets_at) does not match the anthropicCredits grant in the settings
+.anthropicCredits.expires = "2099-01-01"|does not match the anthropicCredits grant
+.anthropicCredits.as_of = "2020-01-01"|does not match the anthropicCredits grant
+ROWS
+  # A forged cache extending the expiry or the balance is refused the same way.
+  anthropic_budget 180 10 1000000 1000000
+  local cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  jq '.engines.pi.anthropic.resets_at += 86400' "$cache" >"$cache.tmp" && mv "$cache.tmp" "$cache"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"does not match the anthropicCredits grant"* ]]
+  anthropic_budget 180 10 1000000 1000000
+  jq '.engines.pi.anthropic.balance_usd = 10000 | .engines.pi.anthropic.remaining_usd = 9990' "$cache" >"$cache.tmp" && mv "$cache.tmp" "$cache"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"does not match the anthropicCredits grant"* ]]
 }
 
 @test "model classes P4b: a spent anthropic credit never stops or paces OpenRouter pi work (AC3)" {

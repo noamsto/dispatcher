@@ -646,7 +646,10 @@ session records: the `anthropic`-provider spend since `asOf` in both the worker
 and the interactive pi agent dirs. `dispatch` admits the direct
 `anthropic/claude-*` class patterns on pi only while that estimate is above 0
 and before `expires`, paces direct opus against the grant period, and the
-`refresh-budget` summary shows what is left. Spend outside pi is unseen, so
+`refresh-budget` summary shows what is left. The estimate counts only the
+spend this host's pi recorded, so set the grant on one host; a `dispatch
+--host` launch never admits the credit patterns, and a set but invalid locked
+grant means no grant, never the user file's. Spend outside pi is unseen, so
 update `asOf` and `balanceUsd` after checking the Anthropic Console.
 
 Claude workers also get the protocol, skills, reviewers and critics dirs

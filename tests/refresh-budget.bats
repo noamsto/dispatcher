@@ -2301,10 +2301,12 @@ EOF
   jq -e '.engines.pi == null' "$XDG_DATA_HOME/crew/engine-budget.json"
 }
 
-@test "anthropic credit: dispatch-config and refresh-budget carry the same iso_epoch" {
-  local a b
+@test "anthropic credit: dispatch-config, dispatch and refresh-budget carry the same iso_epoch" {
+  local a b c
   a="$(sed -n "/^iso_epoch_def='/,/^    end;'\$/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-config.sh")"
   b="$(sed -n "/^iso_epoch_def='/,/^    end;'\$/p" "$SCRIPT")"
+  c="$(sed -n "/^iso_epoch_def='/,/^    end;'\$/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
   [ -n "$a" ]
   [ "$a" = "$b" ]
+  [ "$a" = "$c" ]
 }

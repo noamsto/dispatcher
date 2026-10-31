@@ -69,7 +69,9 @@
 # written before as_of is skipped. It sits beside engines.pi.windows, never in
 # it, so no quota gate reads it as a window; with no OpenRouter key engines.pi
 # holds it alone, which budget-gate.sh still reads as unknown. Spend pi did not
-# record is unseen.
+# record is unseen, and so is another host's: the estimate counts only the
+# spend this host's pi recorded, so set the grant on one host (a dispatch
+# --host launch never admits the credit patterns).
 set -euo pipefail
 
 OUT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
@@ -83,7 +85,8 @@ warn() { printf 'refresh-budget: %s\n' "$*" >&2; }
 # iso_epoch: an ISO-8601 date (YYYY-MM-DD, 00:00 UTC) or datetime
 # (YYYY-MM-DDTHH:MM[:SS[.frac]], zone Z or +-HH:MM, none = UTC) to epoch
 # seconds, else null. Byte-identical to dispatch-config.sh's copy, which
-# validates anthropicCredits (tests/refresh-budget.bats pins the two).
+# validates anthropicCredits, and dispatch.sh's, which checks the estimate
+# against the grant (tests/refresh-budget.bats pins the three).
 # shellcheck disable=SC2016 # jq program text, not shell
 iso_epoch_def='def iso_epoch:
   (if type == "string" then (capture("\\A(?<y>[0-9]{4})-(?<mo>[0-9]{2})-(?<d>[0-9]{2})(T(?<h>[0-9]{2}):(?<mi>[0-9]{2})(:(?<s>[0-9]{2})(\\.[0-9]+)?)?(?<z>Z|[+-][0-9]{2}:[0-9]{2})?)?\\z") // null) else null end) as $c
