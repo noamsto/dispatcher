@@ -18619,6 +18619,175 @@ STUB
   [[ "$stderr" == *"dispatch: warning: model-resolve: pi "* ]]
 }
 
+# Model classes P4b (#1384): pi's direct anthropic/* ids draw on prepaid
+# Anthropic credit. anthropic_budget <remaining_usd> <used_pct> <elapsed_s>
+# <left_s> [<fetched_offset_s>] [or] writes a fresh cache whose pi entry holds
+# refresh-budget's credit estimate (grant starts <elapsed_s> ago, expires in
+# <left_s>); `or` adds a green OpenRouter month window beside it. It also
+# writes the matching anthropicCredits grant into the user settings, which
+# dispatch checks the estimate against.
+anthropic_budget() {
+  local now f="$XDG_CONFIG_HOME/dispatcher/settings.json"
+  now="$(date +%s)"
+  mkdir -p "$XDG_DATA_HOME/crew" "${f%/*}"
+  [ -e "$f" ] || echo '{}' >"$f"
+  jq -c --argjson s "$((now - $3))" --argjson r "$((now + $4))" \
+    '.anthropicCredits = {balance_usd: 200, as_of: ($s | todateiso8601), expires: ($r | todateiso8601)}' "$f" >"$f.tmp"
+  mv "$f.tmp" "$f"
+  jq -n --argjson rem "$1" --argjson pct "$2" --argjson s "$((now - $3))" --argjson r "$((now + $4))" \
+    --argjson f "$((now + ${5:-0}))" --arg or "${6:-}" --argjson now "$now" '
+    {fetched_epoch: $f, engines: {claude: null, codex: null, cursor: null, pi: (
+      (if $or == "or" then {source: "openrouter_key", target_usd: 50,
+         windows: {month: {used_pct: 10, starts_at: ($now - 777600), resets_at: ($now + 1814400)}}} else {} end)
+      + {anthropic: {balance_usd: 200, spent_usd: (200 - $rem), remaining_usd: $rem, used_pct: $pct,
+                     starts_at: $s, resets_at: $r, expired: ($r <= $now)}})}}' >"$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+@test "model classes P4b: direct anthropic opus passes the pi deep gate only while the credit lasts (AC2)" {
+  opus=anthropic/claude-opus-5-5
+  class_catalog pi "$opus" anthropic/claude-sonnet-5-5
+  # 10% used, half the grant period gone: behind pace.
+  anthropic_budget 180 10 1000000 1000000
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *"is not deep's row"* ]]
+  # pi standard admits only the standard class: direct sonnet, not opus.
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard anthropic/claude-sonnet-5-5 --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard "$opus" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"is not standard's row"* ]]
+  # Each refused case keeps the credit window behind pace, so the pace gate
+  # never masks the admission refusal or its --ignore-map escape.
+  local setup why
+  while IFS='|' read -r setup why; do
+    eval "$setup"
+    DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+    [ "$status" -eq 1 ] || { echo "$setup: status $status"; false; }
+    [[ "$stderr" == *"model '$opus' matches a pi class pattern that needs Anthropic credit, and $why"* ]] || { echo "$setup: $stderr"; false; }
+    [[ "$stderr" == *"model '$opus' is not deep's row for --agent pi"*"or pass --ignore-map"* ]]
+    DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --ignore-map --crew-id c1 "t"
+    [ "$status" -eq 0 ] || { echo "$setup --ignore-map: $stderr"; false; }
+  done <<'ROWS'
+anthropic_budget 0 100 2000000 100000|the recorded Anthropic credit is spent ($0 of $200 left
+anthropic_budget -3 101.5 2000000 100000|the recorded Anthropic credit is spent ($0 of $200 left
+anthropic_budget 50 75 2000000 -100|the recorded Anthropic credit expired at
+pi_target_budget 50|engine-budget.json records no Anthropic credit (engines.pi.anthropic
+anthropic_budget 180 10 1000000 1000000 1000|there is no fresh engine-budget.json (missing, unparsable, over 2h old or future-dated
+anthropic_budget 180 10 1000000 1000000 -7300|there is no fresh engine-budget.json
+rm -f "$XDG_DATA_HOME/crew/engine-budget.json"|there is no fresh engine-budget.json
+ROWS
+}
+
+@test "model classes P4b: the remote side of a --host dispatch never admits the anthropic credit patterns" {
+  opus=anthropic/claude-opus-5-5
+  class_catalog pi "$opus" anthropic/claude-sonnet-5-5
+  anthropic_budget 180 10 1000000 1000000
+  DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_EMIT_ROW=1 DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"model '$opus' matches a pi class pattern that needs Anthropic credit, and this is a dispatch --host launch, which never admits it"* ]]
+  [[ "$stderr" == *"model '$opus' is not deep's row for --agent pi"* ]]
+  DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_EMIT_ROW=1 DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 0 ] || { echo "$stderr"; false; }
+}
+
+@test "model classes P4b: the credit estimate counts only while it matches the settings grant" {
+  opus=anthropic/claude-opus-5-5
+  class_catalog pi "$opus" anthropic/claude-sonnet-5-5
+  local f="$XDG_CONFIG_HOME/dispatcher/settings.json" edit why
+  while IFS='|' read -r edit why; do
+    anthropic_budget 180 10 1000000 1000000
+    jq -c "$edit" "$f" >"$f.tmp" && mv "$f.tmp" "$f"
+    DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+    [ "$status" -eq 1 ] || { echo "$edit: status $status"; false; }
+    [[ "$stderr" == *"needs Anthropic credit, and "*"$why"* ]] || { echo "$edit: $stderr"; false; }
+  done <<'ROWS'
+del(.anthropicCredits)|the settings hold no anthropicCredits grant, so engine-budget.json's credit estimate (engines.pi.anthropic) is not trusted
+.anthropicCredits.balance_usd = 100|engine-budget.json's Anthropic credit (engines.pi.anthropic balance_usd, starts_at, resets_at) does not match the anthropicCredits grant in the settings
+.anthropicCredits.expires = "2099-01-01"|does not match the anthropicCredits grant
+.anthropicCredits.as_of = "2020-01-01"|does not match the anthropicCredits grant
+ROWS
+  # A forged cache extending the expiry or the balance is refused the same way.
+  anthropic_budget 180 10 1000000 1000000
+  local cache="$XDG_DATA_HOME/crew/engine-budget.json"
+  jq '.engines.pi.anthropic.resets_at += 86400' "$cache" >"$cache.tmp" && mv "$cache.tmp" "$cache"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"does not match the anthropicCredits grant"* ]]
+  anthropic_budget 180 10 1000000 1000000
+  jq '.engines.pi.anthropic.balance_usd = 10000 | .engines.pi.anthropic.remaining_usd = 9990' "$cache" >"$cache.tmp" && mv "$cache.tmp" "$cache"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"does not match the anthropicCredits grant"* ]]
+}
+
+@test "model classes P4b: a spent anthropic credit never stops or paces OpenRouter pi work (AC3)" {
+  local or
+  for or in or ""; do
+    # 100% used with 5% of the grant period gone: far past the 95% stop and
+    # the pace margin, were the credit a window.
+    anthropic_budget 0 100 100000 1900000 0 "$or"
+    DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard openrouter/deepseek/deepseek-v4.1-flash --agent pi --effort max --crew-id c1 "t"
+    [ "$status" -eq 0 ] || { echo "or='$or': $stderr"; false; }
+    [[ "$stderr" != *"quota exhausted"* && "$stderr" != *"refused"* && "$stderr" != *"anthropic credit"* ]]
+    DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep openrouter/anthropic/claude-opus-5-5 --agent pi --effort high --ignore-map --crew-id c1 "t"
+    [ "$status" -eq 0 ]
+    [[ "$stderr" != *"refused"* ]]
+  done
+}
+
+@test "model classes P4b: direct opus is pace-refused on the credit window down to direct sonnet, which never is (AC4)" {
+  opus=anthropic/claude-opus-5-5 sonnet=anthropic/claude-sonnet-5-5
+  class_catalog pi "$opus" "$sonnet"
+  # 80% used, 30% of a 30-day grant period gone: 50 points ahead of pace.
+  anthropic_budget 40 80 777600 1814400
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: pi anthropic credit is at 80% and 50 points ahead of pace — the premium rung ($opus) is refused; use the standard rung ($sonnet) instead, set DISPATCH_IGNORE_RUNG=$opus to override just this refusal"* ]]
+  # Even at low effort: the credit is dollars, so opus@low's sonnet-equal burn
+  # weight does not lift the refusal.
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort low --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung ($opus) is refused; use the standard rung ($sonnet) instead"* ]]
+  DISPATCH_IGNORE_RUNG="$opus" DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"rung refusal skipped (DISPATCH_IGNORE_RUNG) — '$opus' on --agent pi at anthropic credit 80% (50 ahead of pace)"* ]]
+  # No effort rung on the credit window: direct sonnet runs at any effort,
+  # and a lifted direct opus is not refused again at max.
+  local t e
+  for t in deep standard; do
+    for e in high xhigh max; do
+      DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch "$t" "$sonnet" --agent pi --effort "$e" --crew-id c1 "t"
+      [ "$status" -eq 0 ] || { echo "$t $e: $stderr"; false; }
+      [[ "$stderr" != *"refused"* ]]
+    done
+  done
+  DISPATCH_IGNORE_RUNG="$opus" DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort max --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  # At pace (75% used, 70% gone): allowed.
+  anthropic_budget 50 75 1814400 777600
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+}
+
+@test "model classes P4b: --models marks the anthropic_credits conditionals met only while the credit lasts" {
+  class_catalog pi anthropic/claude-opus-5-5 anthropic/claude-sonnet-5-5
+  DISPATCH_ENGINES="pi" run --separate-stderr run_dispatch --models --json
+  [ "$status" -eq 0 ]
+  jq -e '.engines.pi.tiers | (.deep.conditional | map(select(.requires == "anthropic_credits")) | sort_by(.id))
+      == [{"id": "anthropic/claude-opus-5-5", "requires": "anthropic_credits", "met": false},
+          {"id": "anthropic/claude-sonnet-5-5", "requires": "anthropic_credits", "met": false}]
+    and .standard.conditional == [{"id": "anthropic/claude-sonnet-5-5", "requires": "anthropic_credits", "met": false}]
+    and (.deep.models | index("anthropic/claude-opus-5-5") == null)' <<<"$output"
+  DISPATCH_ENGINES="pi" run --separate-stderr run_dispatch --models
+  [[ "$output" == *"[needs anthropic_credits: anthropic/claude-sonnet-5-5]"* ]]
+  anthropic_budget 180 10 1000000 1000000
+  DISPATCH_ENGINES="pi" run --separate-stderr run_dispatch --models --json
+  jq -e '.engines.pi.tiers | (.deep.conditional | all(.met)) and (.standard.conditional | all(.met))
+    and (.deep.models | index("anthropic/claude-opus-5-5") != null)
+    and (.trivial.models | index("anthropic/claude-sonnet-5-5") != null)' <<<"$output"
+}
+
 @test "model classes: --models with no cache keeps today's rows and adds only the class fields" {
   DISPATCH_ENGINES="pi" run --separate-stderr run_dispatch --models --json
   [ "$status" -eq 0 ]
@@ -18707,7 +18876,8 @@ STUB
   DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort low --ignore-map --crew-id c1 "t"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"the premium rung ($opus) is refused"* ]]
-  # At pace: allowed. A direct anthropic/* id has no entry.
+  # At pace: allowed. A direct anthropic/* id paces on pi's Anthropic credit
+  # (P4b), never the OpenRouter month, and this cache records none.
   pi_budget_json 75 1814400 777600
   DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --ignore-map --crew-id c1 "t"
   [ "$status" -eq 0 ]

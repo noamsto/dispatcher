@@ -464,7 +464,19 @@ lists it and it matches a pattern of a class the row admits
 `--ignore-map`. A pattern with `requires: "pi_month_target"` (pi premium,
 `openrouter/anthropic/claude-opus-*`) also needs a pi monthly target
 (`engines.pi.target_usd` in `engine-budget.json`, at most 2h old, refreshed by
-`refresh-budget`). pi premium (OpenRouter opus) is admitted only at `deep`,
+`refresh-budget`). A pattern with `requires: "anthropic_credits"` (pi's direct
+`anthropic/claude-opus-*` premium and `anthropic/claude-sonnet-*` standard)
+needs pi's Anthropic credit instead: `engines.pi.anthropic` (`refresh-budget`'s
+estimate from pi's session spend since `anthropicCredits.as_of`, same 2h and
+future-dated guards, and its `balance_usd`, `starts_at` and `resets_at` must
+match the current `anthropicCredits` grant) with `remaining_usd` above 0 and
+`resets_at` in the future; the refusal names why (no fresh cache, no grant
+recorded, a grant mismatch, spent, expired). The remote side of a `--host`
+launch never admits them: that host's cache counts only its own pi spend.
+A spent or expired credit refuses only the direct ids; it never sets
+`limit_reached` or stops OpenRouter pi work. pi's
+OpenRouter stops (≥95% month, `limit_reached`) still refuse every pi launch,
+direct ids included. pi premium (either opus) is admitted only at `deep`,
 where `admits` includes premium. The catalog itself has no age check. With no
 catalog only the rows below apply.
 
@@ -534,9 +546,12 @@ to a lazy role after its persisted values and CLI overrides resolve. Premium
 effort is `xhigh` and `max` (both downgrade to `high`); `high` is not
 premium. Model refusal is checked before effort refusal, so a target that
 is premium on both dimensions needs a matching escape for each (or
-`--ignore-budget`). pi's one premium model rung is its OpenRouter opus
-pattern, shed to pi's standard default; a direct-provider `anthropic/*` id has
-none. While pi's
+`--ignore-budget`). pi's OpenRouter opus pattern sheds to pi's standard
+default on the `month` window. A direct `anthropic/*` id paces on pi's
+Anthropic credit instead (`engines.pi.anthropic`, `L` = `resets_at -
+starts_at`, i.e. `expires` minus `as_of`), never the month: direct opus sheds to `anthropic/claude-sonnet-5-5`
+at any effort (the credit is dollars, so no burn-weight lift), and direct ids
+have no effort rung, so direct sonnet is never refused. While pi's
 `month` window is ahead of pace, both `max` and `xhigh` are refused at once,
 so a refused pi dispatch lands directly on `high` — which matters because
 `deepseek-v4.1-flash`, pi's tier-typical `standard`/`deep` model, exposes no
@@ -576,6 +591,7 @@ forms; `outOfRow` stays exact ids, since it widens what the tier gate admits.
 | cursor | `@premium:grok-*-high` | `grok-4.7-medium` |
 | cursor | `@premium:cursor-grok-*-high` | `cursor-grok-4.6-medium` |
 | pi | `openrouter/anthropic/claude-opus-*` | `@standard` |
+| pi | `anthropic/claude-opus-*` | `anthropic/claude-sonnet-5-5` |
 
 <!-- END generated:pace-downgrades -->
 

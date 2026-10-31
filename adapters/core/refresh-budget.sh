@@ -55,6 +55,23 @@
 #     comes from DISPATCH_OPENROUTER_MONTHLY_USD, else a positive key `limit`
 #     whose limit_reset is "monthly" (target_source key_limit). No key -> engines.pi is
 #     null (informational, never blocking).
+#
+# anthropicCredits ({balance_usd, expires, as_of} in the settings) adds
+# engines.pi.anthropic = {balance_usd, spent_usd, remaining_usd, used_pct,
+# starts_at, resets_at, expired}: the prepaid Anthropic credit pi's direct
+# anthropic/* models draw on, estimated from pi's own session records (no API
+# returns the balance). spent_usd sums message.usage.cost.total over message
+# lines whose provider is exactly "anthropic" (openrouter lines naming an
+# anthropic/ model bill OpenRouter) with a timestamp at or after as_of, in
+# <dir>/sessions/*/*.jsonl of the worker agent dir (~/.pi/dispatcher-worker,
+# what `crew pi-agent-dir` prints) and the interactive one
+# (PI_CODING_AGENT_DIR, else ~/.pi/agent), each scanned once; a file last
+# written before as_of is skipped. It sits beside engines.pi.windows, never in
+# it, so no quota gate reads it as a window; with no OpenRouter key engines.pi
+# holds it alone, which budget-gate.sh still reads as unknown. Spend pi did not
+# record is unseen, and so is another host's: the estimate counts only the
+# spend this host's pi recorded, so set the grant on one host (a dispatch
+# --host launch never admits the credit patterns).
 set -euo pipefail
 
 OUT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/crew"
@@ -64,6 +81,26 @@ CREDENTIALS="$HOME/.claude/.credentials.json"
 STALE_AFTER_S=7200
 
 warn() { printf 'refresh-budget: %s\n' "$*" >&2; }
+
+# iso_epoch: an ISO-8601 date (YYYY-MM-DD, 00:00 UTC) or datetime
+# (YYYY-MM-DDTHH:MM[:SS[.frac]], zone Z or +-HH:MM, none = UTC) to epoch
+# seconds, else null. Byte-identical to dispatch-config.sh's copy, which
+# validates anthropicCredits, and dispatch.sh's, which checks the estimate
+# against the grant (tests/refresh-budget.bats pins the three).
+# shellcheck disable=SC2016 # jq program text, not shell
+iso_epoch_def='def iso_epoch:
+  (if type == "string" then (capture("\\A(?<y>[0-9]{4})-(?<mo>[0-9]{2})-(?<d>[0-9]{2})(T(?<h>[0-9]{2}):(?<mi>[0-9]{2})(:(?<s>[0-9]{2})(\\.[0-9]+)?)?(?<z>Z|[+-][0-9]{2}:[0-9]{2})?)?\\z") // null) else null end) as $c
+  | if $c == null then null
+    else ([$c.y, $c.mo, $c.d, $c.h // "0", $c.mi // "0", $c.s // "0"] | map(tonumber)) as [$y, $mo, $d, $h, $mi, $s]
+      | (if ($c.z // "Z") == "Z" then 0
+         else ($c.z[1:3] | tonumber) as $oh | ($c.z[4:6] | tonumber) as $om
+           | if $oh > 23 or $om > 59 then null else ($oh * 3600 + $om * 60) * (if $c.z[0:1] == "-" then -1 else 1 end) end
+         end) as $off
+      | if $mo < 1 or $mo > 12 or $d < 1 or $h > 23 or $mi > 59 or $s > 59 or $off == null then null
+        else ([$y, $mo - 1, $d, $h, $mi, $s, 0, 0] | mktime) as $t
+          | if ($t | gmtime | .[0:3] | map(floor)) != [$y, $mo - 1, $d] then null else $t - $off end
+        end
+    end;'
 
 # shellcheck source=/dev/null
 . "${OPENROUTER_KEY_LIB:-@openrouterKeyLib@}"
@@ -112,6 +149,17 @@ JQ_DEFS='
     | if $x < 0 then 0 elif $x > 100 then 100 else $x end;
   def usd: (. * 100 | round) as $c
     | "\($c / 100 | floor).\(($c % 100) | tostring | if length == 1 then "0" + . else . end)";
+  # bare: an engine entry with no reading of its own, null or holding only
+  # pi'"'"'s anthropic credit estimate; every quota reader treats it as unknown.
+  def bare: . == null or (type == "object" and has("anthropic") and del(.anthropic) == {});
+  # credit_elapsed / credit_line: the pi anthropic credit summary, one string
+  # text and json both print.
+  def credit_elapsed($a): ((elapsed_pct($a.resets_at; $a.resets_at - $a.starts_at) * 10 | round) / 10);
+  def credit_line($a):
+    "pi: anthropic credit $\(if $a.remaining_usd > 0 then $a.remaining_usd else 0 end | usd) of $\($a.balance_usd | usd) left (\($a.used_pct)% used, "
+    + (if $a.resets_at > $now
+       then "\(credit_elapsed($a))% of grant period elapsed, expires \($a.resets_at | todateiso8601), in \(($a.resets_at - $now) | reltime))"
+       else "expired \($a.resets_at | todateiso8601))" end);
   # >=95% is a hold candidate; each engine gets exactly one gating window
   # (precedence: no usable deadline, then no nominal length, then latest
   # resets_at) and every sibling >=95% window on that engine defers to it.
@@ -139,7 +187,7 @@ JQ_DEFS='
   # a window is at or above the 85% floor — a lower window still carries
   # ahead (json wants it unconditionally) but never advice.
   def window_rows:
-    .engines | to_entries[] | select(.value != null) | .key as $e |
+    .engines | to_entries[] | select(.value | bare | not) | .key as $e |
     .value.windows as $windows |
     (gating($windows)) as $gate |
     $windows | to_entries[] |
@@ -607,8 +655,8 @@ report() {
     done || true
 
   jq -r --argjson now "$now" "$JQ_DEFS"'
-    .engines | to_entries[] | .key as $e |
-    if .value == null then "\($e): unknown"
+    (.engines | to_entries[] | .key as $e |
+    if .value | bare then "\($e): unknown"
     elif .value.source == "openrouter_key" then
       .value as $v |
       (if $v.projected_month_end_usd != null then "projected $\($v.projected_month_end_usd | usd) at month end" else "too early to project" end) as $proj |
@@ -634,7 +682,8 @@ report() {
          else "" end)
       ] | join(", ")) end) + (if .value.credits_cover then " [credits cover]" else "" end) +
       (if (.value.limit_reached.reason | type) == "string" then " [limit reached: \(.value.limit_reached.reason)]" else "" end)
-    end
+    end),
+    (.engines.pi.anthropic | objects | credit_line(.))
   ' "$OUT"
 }
 
@@ -652,7 +701,7 @@ report_json() {
       engines: (.engines | to_entries | map(
         .key as $e |
         .value = (
-          if .value == null then null
+          if .value | bare then null
           else
             .value as $v |
             {
@@ -678,7 +727,79 @@ report_json() {
         )
       ) | from_entries)
     }
+    + ((.engines.pi.anthropic | objects | {anthropic_credit: {
+        balance_usd, spent_usd, remaining_usd, used_pct,
+        elapsed_pct: credit_elapsed(.), starts_at, resets_at,
+        resets_in_s: (if .resets_at > $now then .resets_at - $now else null end),
+        expired: (.resets_at <= $now), summary: credit_line(.)}}) // {})
   ' "$OUT"
+}
+
+# anthropic_credit <grant> — print the engines.pi.anthropic object for the
+# settings' anthropicCredits grant (see the header); return 1, with a warning,
+# when its dates do not parse or the session scan fails, so no estimate is
+# written and dispatch's admission check refuses (fail closed).
+anthropic_credit() {
+  local grant="$1" epochs as_of expires worker ambient d real spent
+  local -a dirs=()
+  # shellcheck disable=SC2016 # jq program text, not shell
+  epochs=$(jq -r "$iso_epoch_def"' [(.as_of | iso_epoch), (.expires | iso_epoch)]
+    | if all(. != null) and .[0] < .[1] then @tsv else empty end' <<<"$grant" 2>/dev/null) || epochs=""
+  if [[ -z $epochs ]]; then
+    warn "anthropic credit unknown — anthropicCredits.as_of/expires do not parse"
+    return 1
+  fi
+  IFS=$'\t' read -r as_of expires <<<"$epochs"
+  # The interactive dir resolves like crew pi-agent-dir's ambient dir: an unset,
+  # relative or worker-dir PI_CODING_AGENT_DIR (a worker's own env) means
+  # ~/.pi/agent. The same real dir is scanned once.
+  worker="$HOME/.pi/dispatcher-worker"
+  ambient="${PI_CODING_AGENT_DIR:-}"
+  # shellcheck disable=SC2088 # a literal ~/ prefix, expanded by hand
+  [[ $ambient != "~/"* ]] || ambient="$HOME/${ambient#\~/}"
+  ambient="${ambient%/}"
+  [[ $ambient == /* && $ambient != "$worker" ]] || ambient="$HOME/.pi/agent"
+  for d in "$worker" "$ambient"; do
+    real=$(realpath -e -- "$d/sessions" 2>/dev/null) || continue
+    [[ -d $real ]] || continue
+    [[ ${#dirs[@]} -eq 0 || ${dirs[0]} != "$real" ]] || continue
+    dirs+=("$real")
+  done
+  # grep is a cheap prefilter (whitespace-tolerant, though pi writes compact
+  # JSONL); jq decides. Paths are absolute, though the session dirs' names
+  # start with "--". A grep batch with no match exits 1, which is fine; a find
+  # or read error fails the scan, since an undercount would overstate what is
+  # left (fail open).
+  # shellcheck disable=SC2016 # jq program text, not shell
+  if ! spent=$(
+    (
+      rc=0
+      for d in "${dirs[@]}"; do
+        find "$d" -type f -name '*.jsonl' -newermt "@$((as_of - 1))" -print0 || rc=1
+      done
+      exit "$rc"
+    ) | xargs -0 -r "$BASH" -c 'grep -h -E -e "$0" -- "$@"; [ "$?" -le 1 ]' '"provider"[[:space:]]*:[[:space:]]*"anthropic"' |
+      jq -nR --argjson asof "$as_of" "$iso_epoch_def"'
+      reduce (inputs | fromjson? | objects
+        | select(.type == "message" and (.message | type) == "object" and .message.provider == "anthropic")
+        | select((.timestamp | iso_epoch) as $t | $t != null and $t >= $asof)
+        | (try .message.usage.cost.total catch null) | numbers) as $c (0; . + $c)'
+  ) || [[ ! $spent =~ ^-?[0-9] ]]; then
+    warn "anthropic credit unknown — scanning pi session records failed"
+    return 1
+  fi
+  # shellcheck disable=SC2016 # jq program text, not shell
+  jq -n --argjson g "$grant" --argjson spent "$spent" --argjson s "$as_of" --argjson e "$expires" --argjson now "$(date +%s)" '
+    def r6: (. * 1000000 | round) / 1000000;
+    {
+      balance_usd: $g.balance_usd,
+      spent_usd: ($spent | r6),
+      remaining_usd: ($g.balance_usd - $spent | r6),
+      used_pct: ((100 * $spent / $g.balance_usd * 10 | round) / 10),
+      starts_at: $s,
+      resets_at: $e,
+      expired: ($now >= $e)
+    }'
 }
 
 main() {
@@ -724,6 +845,11 @@ main() {
     warn "pi spend unknown — DISPATCH_OPENROUTER_KEY_FILE ($DISPATCH_OPENROUTER_KEY_FILE) is unreadable or empty"
   else
     warn "pi spend unknown — OpenRouter /api/v1/key call failed"
+  fi
+  local credits credit
+  credits=$(jq -c '.anthropicCredits | objects' <<<"$settings")
+  if [[ -n $credits ]] && credit=$(anthropic_credit "$credits"); then
+    pi=$(jq -c --argjson a "$credit" '(. // {}) + {anthropic: $a}' <<<"$pi")
   fi
 
   mkdir -p "$OUT_DIR"

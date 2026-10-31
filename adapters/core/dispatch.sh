@@ -174,13 +174,17 @@ refuse_claude_sonnet_cap() {
 # refusal), and with a model catalog each id's own class (_model_class) replaces
 # the premium/standard default. Until a positional @class exists the typed id is
 # the resolved one, so DISPATCH_IGNORE_RUNG compares against that one id.
+# A direct anthropic/* id on pi bills pi's prepaid Anthropic credit, not
+# OpenRouter: its pace window is engines.pi.anthropic (paced from as_of to
+# expires), never the OpenRouter month, and it has no effort rung, so direct
+# sonnet is never pace-refused.
 pace_rule_target() {
   local target_agent="$1" target_model="$2" target_effort="$3" target_role="${4:-}" model_downgrade="" model_downgrade_label="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause escape
   local down_to model_rung target_class=premium down_class=standard c
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
   # The window test runs first, so a target on a green budget never pays for the
   # rung lookup (an @class item runs model-resolve).
-  rung_pct=$(jq -r --arg e "$target_agent" --argjson now "$(date +%s)" '
+  rung_pct=$(jq -r --arg e "$target_agent" --arg m "$target_model" --argjson now "$(date +%s)" '
     def elapsed_pct($w; $len): (100 * ($len - ($w.resets_at - $now)) / $len) as $x
       | if $x < 0 then 0 elif $x > 100 then 100 else $x end;
     def rule($w; $win):
@@ -191,6 +195,8 @@ pace_rule_target() {
         | if $ahead > 15 then "\($win)|\($w.used_pct)|\($ahead | round)" else empty end
       end;
     if (.fetched_epoch + 7200) < $now or .fetched_epoch > ($now + 300) then empty
+    elif $e == "pi" and ($m | startswith("anthropic/")) then
+      (.engines.pi.anthropic | objects | rule(.; "anthropic credit"))
     elif .engines[$e] == null then empty
     elif .engines[$e].windows["7d"] != null then rule(.engines[$e].windows["7d"]; "7d")
     elif .engines[$e].windows.month != null then rule(.engines[$e].windows.month; "month")
@@ -206,7 +212,9 @@ pace_rule_target() {
   # Only shed a rung when a literal downgrade burns less (defaults.json
   # `burnClasses`): opus at low/medium matches sonnet's weight. A class target
   # resolves through the untrusted class-state file, so it never lifts the refusal.
-  if [ -n "$model_downgrade" ] && [[ $down_to != @* ]]; then
+  # Nor does a direct anthropic/* id on pi: it spends dollars of credit, where
+  # opus costs more than sonnet at any effort, not subscription quota.
+  if [ -n "$model_downgrade" ] && [[ $down_to != @* ]] && ! [[ $target_agent == pi && $target_model == anthropic/* ]]; then
     model_weight="$(_pace_burn_weight "$target_model" "$target_effort")"
     downgrade_weight="$(_pace_burn_weight "$model_downgrade" "$target_effort")"
     # Numeric, not `[ -le ]`: burnClasses weights are JSON numbers, and a
@@ -219,7 +227,7 @@ pace_rule_target() {
   fi
   # cursor's --effort is accepted and ignored, so there is no effort to shed.
   case "$target_effort" in
-  max | xhigh) [ "$target_agent" = cursor ] || effort_downgrade="high" ;;
+  max | xhigh) [ "$target_agent" = cursor ] || [[ $target_agent == pi && $target_model == anthropic/* ]] || effort_downgrade="high" ;;
   esac
   [ -n "$model_rung$effort_downgrade" ] || return 0
   win="${rung_pct%%|*}" rung_pct="${rung_pct#*|}"
@@ -1755,6 +1763,59 @@ _pi_month_target() {
   _budget_query "$budget_file" pi "$(date +%s)" '$en.target_usd | numbers | select(. > 0)' >/dev/null
 }
 
+# iso_epoch: an ISO-8601 date (YYYY-MM-DD, 00:00 UTC) or datetime to epoch
+# seconds, else null. Byte-identical to dispatch-config.sh's and
+# refresh-budget.sh's copies (tests/refresh-budget.bats pins the three), so
+# _anthropic_credits derives the grant's epochs as refresh-budget does.
+# shellcheck disable=SC2016 # jq program text, not shell
+iso_epoch_def='def iso_epoch:
+  (if type == "string" then (capture("\\A(?<y>[0-9]{4})-(?<mo>[0-9]{2})-(?<d>[0-9]{2})(T(?<h>[0-9]{2}):(?<mi>[0-9]{2})(:(?<s>[0-9]{2})(\\.[0-9]+)?)?(?<z>Z|[+-][0-9]{2}:[0-9]{2})?)?\\z") // null) else null end) as $c
+  | if $c == null then null
+    else ([$c.y, $c.mo, $c.d, $c.h // "0", $c.mi // "0", $c.s // "0"] | map(tonumber)) as [$y, $mo, $d, $h, $mi, $s]
+      | (if ($c.z // "Z") == "Z" then 0
+         else ($c.z[1:3] | tonumber) as $oh | ($c.z[4:6] | tonumber) as $om
+           | if $oh > 23 or $om > 59 then null else ($oh * 3600 + $om * 60) * (if $c.z[0:1] == "-" then -1 else 1 end) end
+         end) as $off
+      | if $mo < 1 or $mo > 12 or $d < 1 or $h > 23 or $mi > 59 or $s > 59 or $off == null then null
+        else ([$y, $mo - 1, $d, $h, $mi, $s, 0, 0] | mktime) as $t
+          | if ($t | gmtime | .[0:3] | map(floor)) != [$y, $mo - 1, $d] then null else $t - $off end
+        end
+    end;'
+
+# _anthropic_credits — print `ok` when a fresh engine-budget.json shows pi's
+# Anthropic credit (refresh-budget's engines.pi.anthropic) unspent and
+# unexpired: what a `requires: "anthropic_credits"` class pattern needs. Else
+# print `<state><TAB><why>`, state one of host (the remote side of a --host
+# launch: that host's cache counts only its own pi spend, so hosts sharing a
+# grant could overspend it together), stale (missing, unparsable, over 2h old
+# or more than 300 s in the future, as _budget_query), none (no cache entry,
+# or no anthropicCredits grant in the settings), mismatch (the entry's
+# balance_usd, starts_at or resets_at is not what refresh-budget derives from
+# the current grant, so a hand-edited cache cannot extend the credit), expired
+# or spent. Its own query, since _budget_query reads an anthropic-only pi
+# entry as unknown.
+_anthropic_credits() {
+  local out
+  if [ -n "${DISPATCH_TMUX_SESSION:-}" ]; then
+    printf 'host\t%s\n' "this is a dispatch --host launch, which never admits it: a host's engine-budget.json counts only that host's pi spend, so hosts sharing one grant could overspend it together (dispatch from the host that holds the grant, without --host)"
+    return
+  fi
+  # shellcheck disable=SC2016 # jq program text, not shell
+  out="$(jq -r --argjson now "$(date +%s)" --argjson g "$(jq -c '.anthropicCredits // null' <<<"${settings:-null}")" "$iso_epoch_def"'
+    def usd: (. * 100 | round) / 100 | tostring;
+    if (.fetched_epoch | type) != "number" or .fetched_epoch < $now - 7200 or .fetched_epoch > $now + 300 then empty
+    else .engines.pi.anthropic as $a
+      | if ($a | type) != "object" then "none\tengine-budget.json records no Anthropic credit (engines.pi.anthropic; set anthropicCredits {balance_usd, expires, as_of} and run refresh-budget, whose warnings say if it could not estimate the credit)"
+        elif ($g | type) != "object" then "none\tthe settings hold no anthropicCredits grant, so engine-budget.json'"'"'s credit estimate (engines.pi.anthropic) is not trusted; set anthropicCredits {balance_usd, expires, as_of} and run refresh-budget"
+        elif $a.balance_usd != $g.balance_usd or $a.starts_at != ($g.as_of | iso_epoch) or $a.resets_at != ($g.expires | iso_epoch) then "mismatch\tengine-budget.json'"'"'s Anthropic credit (engines.pi.anthropic balance_usd, starts_at, resets_at) does not match the anthropicCredits grant in the settings; run refresh-budget"
+        elif ($a.resets_at | type) != "number" or $a.resets_at <= $now then "expired\tthe recorded Anthropic credit expired\(if ($a.resets_at | type) == "number" then " at \($a.resets_at | todateiso8601)" else "" end) (engines.pi.anthropic)"
+        elif ($a.remaining_usd | type) != "number" or $a.remaining_usd <= 0 then "spent\tthe recorded Anthropic credit is spent ($\([0, $a.remaining_usd] | max | usd) of $\(if ($a.balance_usd | type) == "number" then $a.balance_usd | usd else "?" end) left, engines.pi.anthropic; update anthropicCredits after checking the Anthropic Console)"
+        else "ok" end
+    end' "$budget_file" 2>/dev/null)" || out=""
+  [ -n "$out" ] || out="stale"$'\t'"there is no fresh engine-budget.json (missing, unparsable, over 2h old or future-dated; run refresh-budget)"
+  printf '%s\n' "$out"
+}
+
 # _model_class_admitted <agent> <tier> <model> — true when the catalog admits
 # <model> on the row through a class pattern (docs/model-classes.md §5): it is
 # in model-resolve's admitted set, or a conditional candidate whose requirement
@@ -1776,6 +1837,11 @@ _model_class_admitted() {
   pi_month_target)
     _pi_month_target && return 0
     echo "dispatch: model '$3' matches a $1 class pattern that needs a pi monthly target, and engine-budget.json has none (engines.pi.target_usd; run refresh-budget with DISPATCH_OPENROUTER_MONTHLY_USD or a monthly key limit set)" >&2
+    ;;
+  anthropic_credits)
+    req="$(_anthropic_credits)"
+    [ "$req" != ok ] || return 0
+    echo "dispatch: model '$3' matches a $1 class pattern that needs Anthropic credit, and ${req#*$'\t'}" >&2
     ;;
   *) echo "dispatch: model '$3' matches a $1 class pattern gated on an unknown requirement '$req'" >&2 ;;
   esac
@@ -4051,7 +4117,7 @@ if [ "${1:-}" = --models ]; then
   done
   # model-resolve per row, only when a cache exists: with neither file it
   # returns the seed row, which the jq below already prints.
-  resolved='{}' pitarget=false
+  resolved='{}' pitarget=false anthcredit=false
   if [ -e "$model_catalog" ] || [ -e "$model_class_state" ]; then
     for e in "${roster[@]}"; do
       for t in trivial standard deep; do
@@ -4060,10 +4126,11 @@ if [ "${1:-}" = --models ]; then
       done
     done
     ! _pi_month_target || pitarget=true
+    [ "$(_anthropic_credits)" != ok ] || anthcredit=true
   fi
   # A localModels id is admitted by its entry alone (the gate checks it before
   # modelMap), whose tiers default as in local-models.sh's _local_entry.
-  map="$(jq --argjson res "$resolved" --argjson pitarget "$pitarget" --args '
+  map="$(jq --argjson res "$resolved" --argjson pitarget "$pitarget" --argjson anthcredit "$anthcredit" --args '
     def uniq: reduce .[] as $m ([]; if index([$m]) then . else . + [$m] end);
     . as $s
     | ($s.localModels // {} | map_values((.tiers // ["trivial", "standard"]))) as $local
@@ -4072,7 +4139,7 @@ if [ "${1:-}" = --models ]; then
         ($s.modelMap[$e][$t] // {}) as $row
         | ($res[$e][$t] // {}) as $r
         | ($s.classes[$e].tiers[$t] // {}) as $ct
-        | (($r.conditional // []) | map(. + {met: (.requires == "pi_month_target" and $pitarget)})) as $cond
+        | (($r.conditional // []) | map(. + {met: ((.requires == "pi_month_target" and $pitarget) or (.requires == "anthropic_credits" and $anthcredit))})) as $cond
         | {class: ($ct.class // null),
            admits: ($ct.admits // (if $ct.class then [$ct.class] else [] end)),
            default: ($r.default // $row.default // null),

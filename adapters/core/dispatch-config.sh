@@ -49,13 +49,20 @@
 #
 # classes maps each engine to ordered cheap|standard|premium glob lists (a pattern
 # is a glob string or {glob, requires}, where requires names a condition the
-# resolver reports: only pi_month_target) plus tiers.<tier>.{class, admits}. An
-# engine row may also set autoPromote, a boolean: false makes trial promotion
-# propose-only for that engine. It is validated on the merged tree and has no
+# resolver reports: pi_month_target or anthropic_credits) plus
+# tiers.<tier>.{class, admits}. An engine row may also set autoPromote, a
+# boolean: false makes trial promotion propose-only for that engine. It is validated on the merged tree and has no
 # env var. Every modelMap engine and tier row needs a classes row with a class.
 # A missing admits is filled with [class] (fail closed) with a warning, and a
 # pattern overlapping another class's pattern warns: an id matching both takes
 # the more expensive class.
+#
+# anthropicCredits ({balance_usd, expires, as_of}) records the prepaid Anthropic
+# credit pi's direct anthropic/* models draw on, for refresh-budget's estimate.
+# Each file layer must carry the whole grant; a malformed one is dropped from
+# its layer with a warning, never fatal, and a locked layer holding the key at
+# all drops it from the lower layers. It has no env var. The estimate counts
+# only the spend this host's pi recorded, so set the grant on one host.
 #
 # laneProfiles maps an engine or "<engine>/<model>" glob to a lane profile (its
 # name, and optionally inline notes text) that `dispatch` applies to the task
@@ -240,6 +247,55 @@ check_model_shapes() {
   done <<<"$violations"
 }
 
+# iso_epoch: an ISO-8601 date (YYYY-MM-DD, 00:00 UTC) or datetime
+# (YYYY-MM-DDTHH:MM[:SS[.frac]], zone Z or +-HH:MM, none = UTC) to epoch
+# seconds, else null. jq's mktime ignores a zone, so the offset is applied by
+# hand; a date the calendar lacks (2026-02-30) fails the gmtime round trip.
+# refresh-budget.sh and dispatch.sh carry byte-identical copies
+# (tests/refresh-budget.bats).
+# shellcheck disable=SC2016 # jq program text, not shell
+iso_epoch_def='def iso_epoch:
+  (if type == "string" then (capture("\\A(?<y>[0-9]{4})-(?<mo>[0-9]{2})-(?<d>[0-9]{2})(T(?<h>[0-9]{2}):(?<mi>[0-9]{2})(:(?<s>[0-9]{2})(\\.[0-9]+)?)?(?<z>Z|[+-][0-9]{2}:[0-9]{2})?)?\\z") // null) else null end) as $c
+  | if $c == null then null
+    else ([$c.y, $c.mo, $c.d, $c.h // "0", $c.mi // "0", $c.s // "0"] | map(tonumber)) as [$y, $mo, $d, $h, $mi, $s]
+      | (if ($c.z // "Z") == "Z" then 0
+         else ($c.z[1:3] | tonumber) as $oh | ($c.z[4:6] | tonumber) as $om
+           | if $oh > 23 or $om > 59 then null else ($oh * 3600 + $om * 60) * (if $c.z[0:1] == "-" then -1 else 1 end) end
+         end) as $off
+      | if $mo < 1 or $mo > 12 or $d < 1 or $h > 23 or $mi > 59 or $s > 59 or $off == null then null
+        else ([$y, $mo - 1, $d, $h, $mi, $s, 0, 0] | mktime) as $t
+          | if ($t | gmtime | .[0:3] | map(floor)) != [$y, $mo - 1, $d] then null else $t - $off end
+        end
+    end;'
+
+# check_anthropic_credits <json> <file> <layer> — print the layer, with a
+# malformed anthropicCredits dropped and one warning on stderr naming <file>
+# and <layer>. Each layer must carry the whole grant ({balance_usd, expires,
+# as_of}, as_of before expires), so the merge never pairs one layer's balance
+# with another's as_of. Never fatal: a bad grant only loses its admission.
+# A locked layer holding the key at all owns the grant: the caller drops it
+# from the lower layers first, so a bad locked grant means no grant.
+check_anthropic_credits() {
+  local reason
+  reason=$(jq -r "$iso_epoch_def"'
+    if has("anthropicCredits") | not then empty
+    else .anthropicCredits as $a
+      | if ($a | type) != "object" then "must be an object {balance_usd, expires, as_of}"
+        elif ($a | keys) != ["as_of", "balance_usd", "expires"] then "must have exactly the keys balance_usd, expires and as_of"
+        elif ($a.balance_usd | type) != "number" or $a.balance_usd <= 0 then "balance_usd must be a positive number"
+        elif ($a.expires | iso_epoch) == null then "expires must be an ISO-8601 date or datetime"
+        elif ($a.as_of | iso_epoch) == null then "as_of must be an ISO-8601 date or datetime"
+        elif ($a.as_of | iso_epoch) >= ($a.expires | iso_epoch) then "as_of must be before expires"
+        else empty end
+    end' <<<"$1")
+  if [ -z "$reason" ]; then
+    printf '%s\n' "$1"
+    return
+  fi
+  echo "dispatch-config: ignoring anthropicCredits from $2 ($3 layer): $reason" >&2
+  jq -c 'del(.anthropicCredits)' <<<"$1"
+}
+
 # strip <json> <path> — drop the keys only the locked and env layers may set.
 strip() {
   local key
@@ -273,6 +329,7 @@ fi
 
 base=$(layer "$base_file")
 check_model_shapes "$base" "$base_file" base
+base=$(check_anthropic_credits "$base" "$base_file" base)
 base=$(strip "$base" "$base_file")
 
 user='{}'
@@ -280,6 +337,7 @@ if [[ -e $user_file ]]; then
   user=$(layer "$user_file")
   check_no_blank_engines "$user" "$user_file"
   check_model_shapes "$user" "$user_file" user
+  user=$(check_anthropic_credits "$user" "$user_file" user)
   user=$(strip "$user" "$user_file")
 fi
 
@@ -289,6 +347,11 @@ if [[ -n $locked_file ]]; then
   locked=$(layer "$locked_file")
   check_no_blank_engines "$locked" "$locked_file"
   check_model_shapes "$locked" "$locked_file" locked
+  if jq -e 'has("anthropicCredits")' <<<"$locked" >/dev/null; then
+    base=$(jq -c 'del(.anthropicCredits)' <<<"$base")
+    user=$(jq -c 'del(.anthropicCredits)' <<<"$user")
+  fi
+  locked=$(check_anthropic_credits "$locked" "$locked_file" locked)
 fi
 
 env_layer=$(jq -cn '
@@ -347,13 +410,13 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
                   else
                     (($list | to_entries[]) as {key: $i, value: $x}
                       | $p + [$i] as $pp
-                      | if ($x | type) == "string" or (($x | type) == "object" and ($x | keys) == ["glob", "requires"] and ($x.glob | type) == "string" and $x.requires == "pi_month_target")
+                      | if ($x | type) == "string" or (($x | type) == "object" and ($x | keys) == ["glob", "requires"] and ($x.glob | type) == "string" and ($x.requires | IN("pi_month_target", "anthropic_credits")))
                         then ($x | pat) as $g
                           | if ($g | test("\\A[A-Za-z0-9._/*?-]+\\z") | not) then [$pp, "a glob of letters, digits, \".\", \"_\", \"/\", \"-\", \"*\" and \"?\""]
                             elif $e == "pi" and ($g | test("\\A[a-z0-9][a-z0-9._-]*/") | not) then [$pp, "a pi pattern with a literal provider (e.g. openrouter/...)"]
                             else empty
                             end
-                        else [$pp, "a glob string or {glob, requires: \"pi_month_target\"}"]
+                        else [$pp, "a glob string or {glob, requires: \"pi_month_target\" or \"anthropic_credits\"}"]
                         end)
                   end),
               (select($v | has("tiers"))

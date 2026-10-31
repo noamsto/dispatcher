@@ -2133,3 +2133,180 @@ codex_weekly_cap() {
   run jq -r '.engines.codex.windows[0].reset_source' <<<"$output"
   [ "$output" = "month" ]
 }
+
+# P4b (#1384): the pi anthropic credit window. credit_fixture writes pi
+# sessions in both agent dirs with anthropic and openrouter lines on both sides
+# of as_of (2026-10-01), plus a malformed line and a file last written before
+# as_of whose after-as_of line must stay unread; anthropic lines at or after
+# as_of sum to 3.75. credit_grant writes the user settings grant.
+credit_grant() {
+  local grant='{"anthropicCredits":{"balance_usd":200,"expires":"2026-12-01","as_of":"2026-10-01"}}'
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '%s\n' "${1:-$grant}" >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+}
+
+credit_fixture() {
+  local w="$HOME/.pi/dispatcher-worker/sessions/--home-u-git-a--" a="$HOME/.pi/agent/sessions/--home-u-git-b--"
+  mkdir -p "$w" "$a"
+  cat >"$w/2026-10-05_one.jsonl" <<'J'
+{"type":"session","id":"one"}
+{"type":"message","timestamp":"2026-09-30T23:59:59.900Z","message":{"role":"assistant","provider":"anthropic","model":"claude-opus-5-5","usage":{"cost":{"total":100}}}}
+{"type":"message","timestamp":"2026-10-01T00:00:00.000Z","message":{"role":"assistant","provider":"anthropic","model":"claude-opus-5-5","usage":{"cost":{"total":1.25}}}}
+{"type":"message","timestamp":"2026-10-02T00:00:00.000Z","message":{"role":"assistant","provider":"openrouter","model":"anthropic/claude-opus-5-5","usage":{"cost":{"total":50}}}}
+{"type":"message","timestamp":"2026-10-02T00:00:01.000Z","message":{"role":"user","provider":"anthropic","content":"no usage"}}
+{"type":"message","message":{"provider":"anthropic","usage":{"cost":{"total":7
+J
+  touch -d 2026-10-20T00:00:00Z "$w/2026-10-05_one.jsonl"
+  # No trailing newline on the anthropic line: grep restores it, so it is not
+  # glued to another file's first line.
+  printf '%s' '{"type":"message","timestamp":"2026-10-03T12:00:00.000Z","message":{"role":"assistant","provider":"anthropic","model":"claude-sonnet-5-5","usage":{"cost":{"total":2.5}}}}' >"$a/2026-10-03_two.jsonl"
+  touch -d 2026-10-25T00:00:00Z "$a/2026-10-03_two.jsonl"
+  printf '%s\n' '{"type":"message","timestamp":"2026-10-10T00:00:00.000Z","message":{"role":"assistant","provider":"anthropic","model":"claude-opus-5-5","usage":{"cost":{"total":1000}}}}' >"$a/2026-09-01_old.jsonl"
+  touch -d 2026-09-15T00:00:00Z "$a/2026-09-01_old.jsonl"
+}
+
+# 2026-10-31T00:00:00Z: 30 of the grant's 61 days elapsed.
+CREDIT_NOW=1793404800
+
+@test "anthropic credit: spend is pi's anthropic lines at or after as_of across both agent dirs (AC1)" {
+  credit_fixture
+  credit_grant
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  jq -e '.engines.pi == {anthropic: {balance_usd: 200, spent_usd: 3.75, remaining_usd: 196.25, used_pct: 1.9,
+    starts_at: 1790812800, resets_at: 1796083200, expired: false}}' "$XDG_DATA_HOME/crew/engine-budget.json"
+  # No OpenRouter key: the OpenRouter side stays unknown, then the credit line.
+  [[ "$output" == *$'pi: unknown\npi: anthropic credit $196.25 of $200.00 left (1.9% used, 49.2% of grant period elapsed, expires 2026-12-01T00:00:00Z, in 31d 0h)'* ]]
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT" --report --json
+  [ "$status" -eq 0 ]
+  jq -e '.engines.pi == null
+    and .anthropic_credit == {balance_usd: 200, spent_usd: 3.75, remaining_usd: 196.25, used_pct: 1.9, elapsed_pct: 49.2,
+      starts_at: 1790812800, resets_at: 1796083200, resets_in_s: 2678400, expired: false,
+      summary: "pi: anthropic credit $196.25 of $200.00 left (1.9% used, 49.2% of grant period elapsed, expires 2026-12-01T00:00:00Z, in 31d 0h)"}' <<<"$output"
+}
+
+@test "anthropic credit: with an OpenRouter key the entry sits beside the openrouter fields, outside windows" {
+  credit_fixture
+  credit_grant
+  or_key_fixture 12
+  SHIM_NOW=$CREDIT_NOW OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  jq -e '.engines.pi | .source == "openrouter_key" and .spend_usd == 12 and .windows == {}
+    and .anthropic.spent_usd == 3.75' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [[ "$output" == *$'pi: openrouter $12.00 month-to-date'*$'\npi: anthropic credit $196.25 of $200.00 left'* ]]
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT" --report --json
+  jq -e '.engines.pi.source == "openrouter_key" and .engines.pi.windows == [] and .anthropic_credit.remaining_usd == 196.25' <<<"$output"
+}
+
+@test "anthropic credit: unset leaves the cache and the output exactly as before (AC1)" {
+  credit_fixture
+  or_key_fixture 12
+  SHIM_NOW=$CREDIT_NOW OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  local with_sessions="$output" with_err="$stderr" cache_with
+  cache_with="$(jq -S 'del(.fetched_at, .fetched_epoch)' "$XDG_DATA_HOME/crew/engine-budget.json")"
+  jq -e '.engines.pi | has("anthropic") | not' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [[ "$output" != *anthropic* ]]
+  rm -rf "$HOME/.pi"
+  SHIM_NOW=$CREDIT_NOW OPENROUTER_API_KEY=sk-or-v1-SENTINELKEY123 run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [ "${output//$XDG_DATA_HOME/}" = "${with_sessions//$XDG_DATA_HOME/}" ]
+  [ "$stderr" = "$with_err" ]
+  [ "$(jq -S 'del(.fetched_at, .fetched_epoch)' "$XDG_DATA_HOME/crew/engine-budget.json")" = "$cache_with" ]
+  run --separate-stderr bash "$SCRIPT" --report --json
+  [ "$status" -eq 0 ]
+  jq -e 'has("anthropic_credit") | not' <<<"$output"
+}
+
+@test "anthropic credit: the same real dir reached twice is scanned once; a worker-dir or relative PI_CODING_AGENT_DIR means ~/.pi/agent" {
+  credit_fixture
+  credit_grant
+  ln -s "$HOME/.pi/dispatcher-worker" "$HOME/.pi/link"
+  local dir want
+  while IFS='|' read -r dir want; do
+    PI_CODING_AGENT_DIR="$dir" SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+    [ "$status" -eq 0 ]
+    jq -e --argjson w "$want" '.engines.pi.anthropic.spent_usd == $w' "$XDG_DATA_HOME/crew/engine-budget.json" ||
+      { echo "PI_CODING_AGENT_DIR=$dir: want $want, got $(jq .engines.pi.anthropic.spent_usd "$XDG_DATA_HOME/crew/engine-budget.json")"; false; }
+  done <<ROWS
+$HOME/.pi/link|1.25
+$HOME/.pi/link/|1.25
+$HOME/.pi/dispatcher-worker|3.75
+rel/agent|3.75
+$HOME/.pi/agent|3.75
+ROWS
+}
+
+@test "anthropic credit: no session records is zero spend, not unknown" {
+  credit_grant
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  jq -e '.engines.pi.anthropic | .spent_usd == 0 and .remaining_usd == 200 and .used_pct == 0' "$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+@test "anthropic credit: a spent and expired grant reports both, clamping what is left at zero" {
+  credit_fixture
+  credit_grant '{"anthropicCredits":{"balance_usd":3,"expires":"2026-12-01","as_of":"2026-10-01"}}'
+  SHIM_NOW=1796083200 run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  jq -e '.engines.pi.anthropic | .remaining_usd == -0.75 and .used_pct == 125 and .expired == true' "$XDG_DATA_HOME/crew/engine-budget.json"
+  [[ "$output" == *'pi: anthropic credit $0.00 of $3.00 left (125% used, expired 2026-12-01T00:00:00Z)'* ]]
+}
+
+@test "anthropic credit: a failed session sum writes no estimate, with a warning" {
+  credit_fixture
+  credit_grant
+  # A jq that fails only on the session sum (its -nR call); every other call
+  # runs the real one.
+  local real_jq
+  real_jq="$(command -v jq)"
+  cat >"$STUB_DIR/jq" <<EOF
+#!/usr/bin/env bash
+[ "\$1" = -nR ] && exit 5
+exec "$real_jq" "\$@"
+EOF
+  chmod +x "$STUB_DIR/jq"
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"anthropic credit unknown"*"scanning pi session records failed"* ]]
+  "$real_jq" -e '.engines.pi == null' "$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+@test "anthropic credit: a spaced provider key is still counted" {
+  credit_grant
+  local w="$HOME/.pi/dispatcher-worker/sessions/--home-u-git-c--"
+  mkdir -p "$w"
+  printf '%s\n' '{"type": "message", "timestamp": "2026-10-04T00:00:00Z", "message": {"provider": "anthropic", "usage": {"cost": {"total": 0.5}}}}' >"$w/s.jsonl"
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  jq -e '.engines.pi.anthropic.spent_usd == 0.5' "$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+@test "anthropic credit: an unreadable session file or dir fails the scan rather than undercount" {
+  [ "$(id -u)" -ne 0 ] || skip "root reads a mode-000 file"
+  credit_fixture
+  credit_grant
+  local f="$HOME/.pi/agent/sessions/--home-u-git-b--/2026-10-03_two.jsonl" d="$HOME/.pi/dispatcher-worker/sessions/--home-u-git-a--"
+  chmod 000 "$f"
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  chmod 644 "$f"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"anthropic credit unknown"*"scanning pi session records failed"* ]]
+  jq -e '.engines.pi == null' "$XDG_DATA_HOME/crew/engine-budget.json"
+  chmod 000 "$d"
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  chmod 755 "$d"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"scanning pi session records failed"* ]]
+  jq -e '.engines.pi == null' "$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+@test "anthropic credit: dispatch-config, dispatch and refresh-budget carry the same iso_epoch" {
+  local a b c
+  a="$(sed -n "/^iso_epoch_def='/,/^    end;'\$/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-config.sh")"
+  b="$(sed -n "/^iso_epoch_def='/,/^    end;'\$/p" "$SCRIPT")"
+  c="$(sed -n "/^iso_epoch_def='/,/^    end;'\$/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
+  [ -n "$a" ]
+  [ "$a" = "$b" ]
+  [ "$a" = "$c" ]
+}

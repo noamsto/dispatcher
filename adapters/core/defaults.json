@@ -189,9 +189,13 @@
       "standard": [
         "openrouter/deepseek/deepseek-v*-flash",
         "openrouter/z-ai/glm-*-flash",
-        "openrouter/qwen/qwen*-flash"
+        "openrouter/qwen/qwen*-flash",
+        {"glob": "anthropic/claude-sonnet-*", "requires": "anthropic_credits"}
       ],
-      "premium": [{"glob": "openrouter/anthropic/claude-opus-*", "requires": "pi_month_target"}],
+      "premium": [
+        {"glob": "openrouter/anthropic/claude-opus-*", "requires": "pi_month_target"},
+        {"glob": "anthropic/claude-opus-*", "requires": "anthropic_credits"}
+      ],
       "tiers": {
         "deep": {"class": "standard", "admits": ["standard", "premium"]},
         "standard": {"class": "standard", "admits": ["standard"]},
@@ -415,6 +419,12 @@
           "openrouter/anthropic/claude-opus-*"
         ],
         "to": "@standard"
+      },
+      {
+        "models": [
+          "anthropic/claude-opus-*"
+        ],
+        "to": "anthropic/claude-sonnet-5-5"
       }
     ]
   },

@@ -176,6 +176,11 @@ let
       monthlyTarget = 50;
       keyFile = "/run/agenix/openrouter";
     };
+    anthropicCredits = {
+      balanceUsd = 200;
+      expires = "2026-11-17";
+      asOf = "2026-10-25T09:00:00Z";
+    };
     localModels."lemonade/Qwen3.8-Flash-Next-MTP" = {
       baseUrl = "http://halo:13305/v1";
       contextWindow = 131072;
@@ -290,6 +295,7 @@ in {
     localModels = {
       "no-slash" = {baseUrl = "http://h/v1"; contextWindow = 1;};
       "OpenRouter/m" = {baseUrl = "http://h/v1"; contextWindow = 1;};
+      "Anthropic/m" = {baseUrl = "http://h/v1"; contextWindow = 1;};
       "ok/model" = {baseUrl = "http://h/v1"; contextWindow = 1;};
     };
   }).assertions);
@@ -374,6 +380,19 @@ in {
       }).programs.dispatcher.hosts
       true))
   ]);
+  # An anthropicCredits grant dispatch-config would drop -- an impossible
+  # date, or asOf not before expires -- trips the module's assertion.
+  badCreditAsserts = map (c: map (a: a.message) (builtins.filter (a: !a.assertion) (eval {
+      enable = true;
+      anthropicCredits = {balanceUsd = 50;} // c;
+    }).assertions)) [
+    {expires = "2026-02-30"; asOf = "2026-01-25";}
+    {expires = "2026-13-01"; asOf = "2026-01-25";}
+    {expires = "2026-11-17"; asOf = "2026-10-25T24:00Z";}
+    {expires = "2026-11-17"; asOf = "2026-11-17";}
+    {expires = "2026-11-17T01:00+02:00"; asOf = "2026-11-17T00:00Z";}
+    {expires = "2028-02-29"; asOf = "2028-02-28T22:59:59.5-01:00";}
+  ];
   goodLocalModelAsserts = builtins.filter (a: !a.assertion) (eval fullCfg).assertions;
   # An `input` list dispatch-config would refuse -- empty, missing "text", or
   # repeating a value -- trips the module's assertion naming the id instead of
@@ -879,8 +898,20 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
 }
 
+@test "the module rejects an anthropicCredits grant with an impossible date or asOf not before expires" {
+  run jq -e '.badCreditAsserts | length == 6 and all(.[0:5][]; length == 1) and .[5] == []' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.badCreditAsserts | (.[0][0] | contains("expires 2026-02-30 is not a real date"))
+    and (.[1][0] | contains("expires 2026-13-01 is not a real date"))
+    and (.[2][0] | contains("asOf 2026-10-25T24:00Z is not a real date"))
+    and (.[3][0] | contains("asOf 2026-11-17 is not before expires 2026-11-17"))
+    and (.[4][0] | contains("is not before expires 2026-11-17T01:00+02:00"))
+    and (.[0][0] | startswith("programs.dispatcher.anthropicCredits: "))' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
 @test "the module declares an assertion that rejects bad localModels keys" {
-  run jq -e '(.badLocalModelAsserts | length) == 1 and (.badLocalModelAsserts[0] | contains("no-slash") and contains("OpenRouter/m") and (contains("ok/model") | not))' "$EVAL"
+  run jq -e '(.badLocalModelAsserts | length) == 1 and (.badLocalModelAsserts[0] | contains("no-slash") and contains("OpenRouter/m") and contains("Anthropic/m") and (contains("ok/model") | not))' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.goodLocalModelAsserts == []' "$EVAL"
   [ "$status" -eq 0 ]
@@ -1005,6 +1036,10 @@ worktree_git_lib_crew_go_row() { # bin
   run jq -e '.full.locked.openrouter.keyFile == "/run/agenix/openrouter"' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.openrouter.monthlyUsd == 50' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.anthropicCredits == {"balance_usd": 200, "expires": "2026-11-17", "as_of": "2026-10-25T09:00:00Z"}' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '(.options | index("anthropicCredits")) != null' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.localModels == {"lemonade/Qwen3.8-Flash-Next-MTP": {"baseUrl": "http://halo:13305/v1", "contextWindow": 131072, "maxConcurrent": 1, "tiers": ["trivial", "standard"], "workerNotes": "- Run only targeted bats files."}, "lemonade/Reasoner": {"baseUrl": "http://halo:13305/v1", "contextWindow": 4096, "maxConcurrent": 1, "maxTokens": 32768, "input": ["text", "image"], "tiers": ["trivial", "standard"], "reasoning": true, "thinkingFormat": "qwen-chat-template", "effortThinking": {"low": "off"}}, "lemonade/Plain": {"baseUrl": "http://halo:13305/v1", "contextWindow": 8192, "maxConcurrent": 1, "tiers": ["trivial", "standard"]}}' "$EVAL"
   [ "$status" -eq 0 ]
