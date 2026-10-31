@@ -59,7 +59,9 @@ refused like an off-row model, naming the class; `--ignore-map` still resolves
 it and skips only that check. A class with no default on the engine (pi has no
 premium row, though pi `deep` admits premium ids: name the id) is refused,
 naming why. `DISPATCH_IGNORE_RUNG` and `DISPATCH_SKIP_MODEL_CHECK` take the
-resolved id, never the sigil.
+resolved id, never the sigil. `dispatch resume --model @class` resolves once
+and hands its precheck that id, with the sigil in `DISPATCH_CLASS_SIGIL` for
+class admission and refusal text only, so the checked id is the launched one.
 
 <!-- BEGIN generated:model-classes from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->
 
@@ -534,7 +536,8 @@ pi's standard class default exposes no `xhigh` rung to land on in between.
 Cursor is the reverse: it has a premium model rung (Grok `-high`) but no
 effort knob — `--effort` is
 accepted-and-ignored — so its effort is never refused, only the model rung;
-its `-fast` and `kimi-*` ids have no entry and stay unrefused.
+its premium `-high-fast` ids are paced like their `-high` forms, to the
+same downgrade; `kimi-*` ids have no entry and stay unrefused.
 
 A table item is a glob, or `@<class>`: an id the model catalog lists under
 that class (the most expensive class whose patterns match it), and
@@ -562,10 +565,10 @@ forms; `outOfRow` stays exact ids, since it widens what the tier gate admits.
 | claude | `opus`, `claude-opus-*`, `fable`, `claude-fable-*` | `sonnet` |
 | codex | `gpt-5.6-sol` | `gpt-5.6-terra` |
 | codex | `@premium` | `@standard` |
-| cursor | `grok-4.7-high`, `grok-4.7-high[*` | `grok-4.7-medium` |
-| cursor | `cursor-grok-4.6-high`, `cursor-grok-4.6-high[*` | `cursor-grok-4.6-medium` |
-| cursor | `@premium:grok-*-high` | `grok-4.7-medium` |
-| cursor | `@premium:cursor-grok-*-high` | `cursor-grok-4.6-medium` |
+| cursor | `grok-4.7-high`, `grok-4.7-high[*`, `grok-4.7-high-fast`, `grok-4.7-high-fast[*` | `grok-4.7-medium` |
+| cursor | `cursor-grok-4.6-high`, `cursor-grok-4.6-high[*`, `cursor-grok-4.6-high-fast`, `cursor-grok-4.6-high-fast[*` | `cursor-grok-4.6-medium` |
+| cursor | `@premium:grok-*-high`, `@premium:grok-*-high-fast` | `grok-4.7-medium` |
+| cursor | `@premium:cursor-grok-*-high`, `@premium:cursor-grok-*-high-fast` | `cursor-grok-4.6-medium` |
 | pi | `openrouter/anthropic/claude-opus-*` | `@standard` |
 | pi | `anthropic/claude-opus-*` | `anthropic/claude-sonnet-5-5` |
 

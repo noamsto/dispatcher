@@ -57,7 +57,8 @@ Remote host
   --host NAME             Run the worker on settings host NAME (hosts.NAME), followed from here
                           (refused with --add-dir, --base, --status, --lazy, and the env overrides
                           DISPATCH_PRECHECK, DISPATCH_IGNORE_RUNG, DISPATCH_SKIP_MODEL_CHECK,
-                          DISPATCH_SHAPE, DISPATCH_CLAUDE_CONNECTORS; DISPATCH_DRAFT_PR=1 travels as --draft)
+                          DISPATCH_SHAPE, DISPATCH_CLAUDE_CONNECTORS, DISPATCH_CLASS_SIGIL;
+                          DISPATCH_DRAFT_PR=1 travels as --draft)
 
 Base and PR
   --base REF              Branch to base the worktree on, for a stacked layer
@@ -4437,7 +4438,7 @@ _dispatch_remote() {
   [ -z "$grid_lazy" ] || refused=--lazy
   # Env overrides of this run's gates or launch: the remote dispatch never sees
   # this environment, so it would silently run without them.
-  for v in DISPATCH_PRECHECK DISPATCH_IGNORE_RUNG DISPATCH_SKIP_MODEL_CHECK DISPATCH_SHAPE DISPATCH_CLAUDE_CONNECTORS; do
+  for v in DISPATCH_PRECHECK DISPATCH_IGNORE_RUNG DISPATCH_SKIP_MODEL_CHECK DISPATCH_SHAPE DISPATCH_CLAUDE_CONNECTORS DISPATCH_CLASS_SIGIL; do
     [ -z "${!v:-}" ] || refused=$v
   done
   [ -z "$refused" ] || {
@@ -5060,11 +5061,23 @@ profile="$(jq -r '.profile // "personal"' <<<"$settings")"
 # A positional @class names that class's default (_class_sigil), resolved before
 # every gate: the gates, the task doc, the dispatch row and the launch all see
 # the resolved id. model_sigil keeps the typed form for the refusals.
+# DISPATCH_CLASS_SIGIL carries the sigil from a caller that already resolved
+# it (dispatch resume's precheck) beside the resolved id, so the id it checks
+# is the one it launches and only admission and refusal text see the class.
 model_sigil=""
 if [[ $model == @* ]]; then
   model_sigil="$model"
   model="$(_class_sigil "$agent" "$tier" "$model_sigil")" || exit 1
+elif [ -n "${DISPATCH_CLASS_SIGIL:-}" ]; then
+  case "$DISPATCH_CLASS_SIGIL" in
+  @cheap | @standard | @premium) model_sigil="$DISPATCH_CLASS_SIGIL" ;;
+  *)
+    echo "dispatch: DISPATCH_CLASS_SIGIL must be @cheap, @standard or @premium, not '$DISPATCH_CLASS_SIGIL'" >&2
+    exit 1
+    ;;
+  esac
 fi
+unset DISPATCH_CLASS_SIGIL
 local_entry=""
 [ "$agent" = pi ] && local_entry="$(_local_entry "$settings" "$model")"
 

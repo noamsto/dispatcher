@@ -246,7 +246,7 @@ Admission and default selection are separate outputs. A model can be admitted an
 **Recommendation.**
 
 - The model-rung trigger is unchanged. A `paceDowngrades` entry matches the resolved ID, by glob or by class, and the downgrade burns less (today's weight compare).
-- Cursor `-fast` variants with no entry, such as `grok-4.7-high-fast` (burn w8, `adapters/core/defaults.json:373`), stay unrefused as today. Refusing them is a separate owner call, kept out of P4.
+- Cursor `-fast` variants with no entry, such as `grok-4.7-high-fast` (burn w8), stay unrefused as today. Refusing them is a separate owner call, kept out of P4. (Superseded in P7's #1392 review: the premium `-high-fast` rungs are paced like their `-high` forms, since a class-state promotion could otherwise point `@premium` at the most expensive rung unpaced.)
 - Refusal text names engine, class, the typed alias or ID, and the resolved ID. Typed and resolved differ only under D6's sigil, e.g. "premium rung (codex premium: @premium → gpt-5.6-sol)". Claude has no catalog (D8), so its resolved ID equals the typed alias (`opus`). The downgrade is named as class plus resolved ID.
 - `DISPATCH_IGNORE_RUNG` stays exact-match. It matches the typed alias/ID or the resolved ID, never a class name or `@class` sigil. Under D6 a sigil resolves before the gate, so the escape names the resolved ID.
 - Pi gets one `paceDowngrades` entry for the OpenRouter opus pattern (D10). P4b adds one for direct `anthropic/claude-opus-*`, to `anthropic/claude-sonnet-5-5`, paced on the `anthropic` credit window instead of the month; the same window gates their admission (D10). Direct IDs get no effort rung, so direct sonnet is never pace-refused.

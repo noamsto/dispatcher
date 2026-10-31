@@ -49,7 +49,7 @@ Three amendments: one fresh planning-only context strictly above `WORKER_TASK.md
 - Codex: same model, effort `low → medium → high → xhigh → max`; at max, one class step cheap → standard → premium (`-luna → -terra → -sol`) keeping max. Never ultra. Premium/max, legacy/unknown families, outside-table tuples, unavailable native planning launches block.
 <!-- /only -->
 <!-- only:cursor -->
-- Cursor: Task model override along Grok's cheap → standard → premium rungs (`-low → -medium → -high`; current slugs: `dispatch --models`). Premium, Kimi, Composer, cross-vendor/unknown ids, unavailable Task launches block. Task-slug refusal: `dispatch-orchestration.md` → "Cursor Task-spawn slugs" substitution first (Grok-family slugs strictly above the authoritative tuple); exhausted → `rung_blocked`. A same-or-higher Grok substitute for the refused next rung is the same rung, not a skip or second planner.
+- Cursor: Task model override along Grok's cheap → standard → premium rungs (`-low → -medium → -high`; current slugs: `dispatch --models`; Grok premium: the `grok-*-high` id in the `deep` row's models). Premium, Kimi, Composer, cross-vendor/unknown ids, unavailable Task launches block. Task-slug refusal: `dispatch-orchestration.md` → "Cursor Task-spawn slugs" substitution first (Grok-family slugs strictly above the authoritative tuple); exhausted → `rung_blocked`. A same-or-higher Grok substitute for the refused next rung is the same rung, not a skip or second planner.
 <!-- /only -->
 <!-- only:pi -->
 - Pi: no supported strictly-higher planning rung yet (an effort-ladder planning subagent is not wired): block, ask the dispatcher for a replacement; never self-replan as if independent.

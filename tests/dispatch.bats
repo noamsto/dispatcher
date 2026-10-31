@@ -4040,7 +4040,7 @@ EOF
   stub_launch_bins
   _host_crew_stub
   local var
-  for var in DISPATCH_IGNORE_RUNG=opus DISPATCH_SKIP_MODEL_CHECK=sonnet DISPATCH_SHAPE=solo DISPATCH_CLAUDE_CONNECTORS=1 DISPATCH_PRECHECK=1; do
+  for var in DISPATCH_IGNORE_RUNG=opus DISPATCH_SKIP_MODEL_CHECK=sonnet DISPATCH_SHAPE=solo DISPATCH_CLAUDE_CONNECTORS=1 DISPATCH_PRECHECK=1 DISPATCH_CLASS_SIGIL=@premium; do
     : >"$STUB_LOG"
     run --separate-stderr env "$var" bash -euo pipefail "$DISPATCH" standard sonnet --host mini --effort medium --crew-id c1 42 "t"
     [ "$status" -eq 1 ] || return 1
@@ -18903,21 +18903,40 @@ STUB
   [[ "$stderr" != *"premium rung"* ]]
 }
 
-@test "model classes P4: cursor class entries keep each family's target and never refuse -fast or kimi" {
-  class_catalog cursor grok-4.8-high grok-4.8-high-fast kimi-k4-high cursor-grok-4.7-high
+@test "model classes P4: cursor class entries keep each family's target, refuse -fast like its base and never kimi" {
+  class_catalog cursor grok-4.8-high grok-4.8-high-fast kimi-k4-high cursor-grok-4.7-high cursor-grok-4.7-high-fast
   cursor_month_json 80 432000 2160000
-  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep grok-4.8-high --agent cursor --effort high --crew-id c1 "t"
-  [ "$status" -eq 1 ]
-  [[ "$stderr" == *"the premium rung (grok-4.8-high) is refused; use the standard rung (grok-4.7-medium) instead"* ]]
-  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep cursor-grok-4.7-high --agent cursor --effort high --ignore-map --crew-id c1 "t"
-  [ "$status" -eq 1 ]
-  [[ "$stderr" == *"the premium rung (cursor-grok-4.7-high) is refused; use the standard rung (cursor-grok-4.6-medium) instead"* ]]
   local m
-  for m in grok-4.8-high-fast kimi-k4-high; do
+  for m in grok-4.8-high grok-4.8-high-fast; do
     DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$m" --agent cursor --effort high --ignore-map --crew-id c1 "t"
-    [ "$status" -eq 0 ]
-    [[ "$stderr" != *"premium rung"* ]]
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"the premium rung ($m) is refused; use the standard rung (grok-4.7-medium) instead"* ]]
   done
+  for m in cursor-grok-4.7-high cursor-grok-4.7-high-fast; do
+    DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$m" --agent cursor --effort high --ignore-map --crew-id c1 "t"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"the premium rung ($m) is refused; use the standard rung (cursor-grok-4.6-medium) instead"* ]]
+  done
+  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep kimi-k4-high --agent cursor --effort high --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *"premium rung"* ]]
+}
+
+@test "cursor pace gate: a typed or class-state-promoted grok -high-fast premium rung is refused like grok -high (#1392 review)" {
+  cursor_month_json 80 432000 2160000
+  # Typed, with no catalog: the exact list catches it.
+  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep grok-4.7-high-fast --agent cursor --effort high --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung (grok-4.7-high-fast) is refused; use the standard rung (grok-4.7-medium) instead"* ]]
+  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep cursor-grok-4.6-high-fast --agent cursor --effort high --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung (cursor-grok-4.6-high-fast) is refused; use the standard rung (cursor-grok-4.6-medium) instead"* ]]
+  # A forged class-state promotes it to cursor's @premium default.
+  class_catalog cursor kimi-k3-high grok-4.7-high grok-4.7-high-fast
+  printf '%s\n' '{"cursor":{"premium":{"default":"grok-4.7-high-fast"}}}' >"$XDG_DATA_HOME/crew/model-class-state.json"
+  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep @premium --agent cursor --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung (cursor premium: @premium → grok-4.7-high-fast) is refused; use the standard rung"*"grok-4.7-medium"*"instead"* ]]
 }
 
 @test "model classes P4: pi's OpenRouter opus rung is refused at a tripped month pace, down to pi's standard default" {
@@ -19097,6 +19116,32 @@ _p4_hop() {
   DISPATCH_IGNORE_RUNG=gpt-5.6-sol DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep @premium --agent codex --effort high --crew-id c1 "t"
   [ "$status" -eq 0 ]
   [[ "$stderr" == *"rung refusal skipped (DISPATCH_IGNORE_RUNG) — 'gpt-5.6-sol'"* ]]
+}
+
+@test "class sigil: DISPATCH_CLASS_SIGIL beside a resolved id gates that id and only names the class" {
+  # A resolver that would now answer another default: the precheck never
+  # re-resolves, so the id it gates is the positional one (#1392 review).
+  printf '#!/usr/bin/env bash\nout=$("$BASH" %q "$@") || exit\njq -c '"'"'.default = "gpt-5.7-sol"'"'"' <<<"$out"\n' "$MODEL_RESOLVE_BIN" >"$BATS_TEST_TMPDIR/resolve-moved"
+  chmod +x "$BATS_TEST_TMPDIR/resolve-moved"
+  export MODEL_RESOLVE_BIN="$BATS_TEST_TMPDIR/resolve-moved"
+  codex_budget_json 80 "$(date +%s)"
+  DISPATCH_CLASS_SIGIL=@premium DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep gpt-5.6-sol --agent codex --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung (codex premium: @premium → gpt-5.6-sol) is refused"* ]]
+  [[ "$stderr" != *"gpt-5.7-sol"* ]]
+  # Class admission still applies to the carried sigil.
+  DISPATCH_CLASS_SIGIL=@premium DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: class @premium (gpt-5.6-terra) is not standard's row for --agent codex — standard admits @cheap, @standard"* ]]
+  DISPATCH_CLASS_SIGIL=@standard DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  # Only the three literal sigils are taken.
+  local v
+  for v in premium @frontier '@premium '; do
+    DISPATCH_CLASS_SIGIL="$v" DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard gpt-5.6-terra --agent codex --effort medium --crew-id c1 "t"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"DISPATCH_CLASS_SIGIL must be @cheap, @standard or @premium"* ]]
+  done
 }
 
 @test "class sigil: --roles takes @class with or without an engine and an effort suffix, and roles.json records the resolved id" {

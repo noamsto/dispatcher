@@ -1105,9 +1105,11 @@ _require_protocol_files "$PROTOCOL_DIR" "${required_protocol_files[@]}"
 _check_protocol_rev "$PROTOCOL_DIR" "dispatch resume"
 _settings_load
 
-# --model @class (D6) resolves as dispatch's positional sigil does. The launch,
-# the resume row and the escalation check see the resolved id; the precheck gets
-# the sigil, so dispatch's own class admission and refusal text apply.
+# --model @class (D6) resolves as dispatch's positional sigil does, once. The
+# launch, the resume row, the escalation check and the precheck all see that
+# resolved id; the precheck gets the sigil only through DISPATCH_CLASS_SIGIL,
+# for dispatch's class admission and refusal text, so a class-state write
+# between the two can never make the checked id differ from the launched one.
 model_sigil=""
 if [[ -n $model_flag && $model == @* ]]; then
   model_sigil="$model"
@@ -1235,7 +1237,7 @@ else
   fi
 fi
 if [ -z "$rearm_roles" ]; then
-  DISPATCH_CHROME_SELF="$_crew_dir_real"$'\x1f'"$branch" DISPATCH_PRECHECK=1 dispatch "$tier" "${model_sigil:-$model}" "${precheck[@]}" "resume precheck" || exit 1
+  DISPATCH_CHROME_SELF="$_crew_dir_real"$'\x1f'"$branch" DISPATCH_CLASS_SIGIL="$model_sigil" DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck" || exit 1
 fi
 
 # _args_have <argv line> <token>... — true when every token appears in the line

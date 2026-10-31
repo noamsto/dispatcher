@@ -27,7 +27,7 @@ Unless resuming (check Resuming a killed run first), decide once before the plan
    | codex premium (`codex`) | codex one-shot; claude lead: read-only codex MCP injected into claude deep work-profile workers | non-claude-family decomposition, diverse from the opus planner |
    | cursor Grok premium (`cursor`) | cursor one-shot | third-family perspective |
 
-   A class names the engine's current class default (`dispatch --models`; claude premium is `opus`).
+   Claude premium is `opus`; codex premium = `.engines.codex.tiers.deep.default` (`dispatch --models --json`); cursor Grok premium is not cursor's premium default (kimi): take the `grok-*-high` id from `.engines.cursor.tiers.deep.models`.
 
    Commands, gate: Cross-engine one-shots. `consult_engine` names the family (`opus`|`fable`|`codex`|`cursor`). Every mechanism's ask: read `WORKER_TASK.md` and the relevant code, produce the `DECOMPOSITION.md` body: `components` (each a stable id + one-line + `boundaries` may/must-not-touch + `risk` tag), `ordering` (dependency order, `∥` = parallel-safe), `interfaces` (contracts stable across the split). One-shot: that ask is the prompt, the reply is the body. The Agent-tool form writes the file at the worktree root; else you do, from the reply. A decomposition, not the plan or a plan-mode plan: no plan-schema step tags; names no author or consulting engine (plan-critic reads it author-less; rule 2).
 3. Fallback, a should, not a blocker: refusal, timeout or engine unavailable (gate) → drop the consult for the plain plan path (`spec-plan-critic` plan schema), byte-identical to a non-consulted deep worker; a failed codex/cursor pick may first retry once with `opus` (`fable` if architecture-heavy) if `claude` passes that gate. Never fail the worker on a missing consult (like the diverse-engine reviewer, "Code review gate"). Retro note `consult_failed`: consultant, reason.
@@ -47,10 +47,10 @@ Any lead reaches other engines' models as stateless, read-only shell one-shots, 
   | engine | one-shot |
   | ------ | -------- |
   | claude | `env -u CREW_WORKER_ID -u CREW_ID timeout 540 claude -p --model <fable\|opus> --tools "Read,Grep,Glob" --no-session-persistence --no-chrome '<prompt>'` |
-  | codex | `env -u CREW_WORKER_ID -u CREW_ID timeout 540 codex exec -m gpt-5.6-sol -s read-only --ephemeral '<prompt>'`; stdin is appended as a `<stdin>` block |
-  | cursor | `env -u CREW_WORKER_ID -u CREW_ID timeout 540 cursor-agent -p --mode ask --trust --model grok-4.7-high '<prompt>'`; `--mode ask` keeps it read-only; never add `--force` (not read-only) |
+  | codex | `env -u CREW_WORKER_ID -u CREW_ID timeout 540 codex exec -m <codex-premium-id> -s read-only --ephemeral '<prompt>'`; stdin is appended as a `<stdin>` block |
+  | cursor | `env -u CREW_WORKER_ID -u CREW_ID timeout 540 cursor-agent -p --mode ask --trust --model <cursor-grok-high-id> '<prompt>'`; `--mode ask` keeps it read-only; never add `--force` (not read-only) |
 
-  The codex and cursor `-m`/`--model` ids are each engine's premium class (cursor: its Grok `-high`) when this was written. A one-shot takes no `@class`, so read the current id first and use it: `dispatch --models --json | jq -r '.engines.codex.tiers.deep.default'`, and for cursor `dispatch --models --json | jq -r 'first(.engines.cursor.tiers.deep.models[] | select(test("^grok-[0-9.]+-high$")))'` (the non-fast Grok `-high`).
+  The codex and cursor `-m`/`--model` ids are each engine's premium class (cursor: its Grok `-high`, not its premium default). A one-shot takes no `@class`, so resolve both first: `dispatch --models --json | jq -r '.engines.codex.tiers.deep.default'`, and for cursor the newest catalogued non-fast Grok `-high`: `dispatch --models --json | jq -r '[.engines.cursor.tiers.deep.models[] | select(test("^grok-[0-9.]+-high$"))] | max_by(ltrimstr("grok-") | rtrimstr("-high") | split(".") | map(tonumber)) // empty'`.
 
 - Diverse reviewer: first available in `dispatch --engines --in-budget` of a different family from the lead; a reply citing no changed file is a failed one-shot: drop it.
 <!-- only:claude -->
