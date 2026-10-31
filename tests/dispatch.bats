@@ -4099,6 +4099,25 @@ EOF
   grep -q -- '-- dispatch deep opus --agent claude --effort high --ignore-budget 42' "$STUB_LOG"
 }
 
+@test "dispatch --host resolves a claude @class for the local pace gate and forwards the sigil" {
+  stub_launch_bins
+  _host_crew_stub
+  budget_json 75 "$(date +%s)"
+  run --separate-stderr run_dispatch deep @premium --agent claude --host mini --effort high --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung (claude premium: @premium → opus) is refused"* ]]
+  run ! grep -q -- '-- dispatch deep' "$STUB_LOG"
+  # A role's sigil, with an effort suffix after it, gets the same gate.
+  run --separate-stderr run_dispatch deep @standard --agent claude --host mini --effort high --roles 'reviewer=claude:@premium@high' --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung (claude premium: @premium → opus) is refused"* ]]
+  run ! grep -q -- '-- dispatch deep' "$STUB_LOG"
+  # The remote resolves the sigil against its own caches.
+  run --separate-stderr run_dispatch deep @premium --agent claude --host mini --effort high --ignore-budget --crew-id c1 42 "t"
+  [ "$status" -eq 3 ]
+  grep -q -- '-- dispatch deep @premium --agent claude --effort high --ignore-budget 42' "$STUB_LOG"
+}
+
 @test "dispatch --host runs the claude quota stop for a role on claude under a non-claude lead" {
   stub_launch_bins
   _host_crew_stub
