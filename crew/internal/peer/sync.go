@@ -316,7 +316,8 @@ func (r *Response) header() (int, string) { return r.V, r.ID }
 func decodeOne(data []byte, msg wire) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	if err := dec.Decode(msg); err != nil {
-		return fmt.Errorf("invalid JSON: %v", err)
+		// The decoder's text can embed a whole literal from the peer.
+		return errors.New("not a valid peer-sync object")
 	}
 	if _, err := dec.Token(); err != io.EOF {
 		return errors.New("must be exactly one JSON object")

@@ -194,6 +194,24 @@ func TestAppendCompactsStaleRowsOverCap(t *testing.T) {
 	}
 }
 
+func TestAppendCompactsFarFutureRowsOverCap(t *testing.T) {
+	s := StoreFor(newBus(t))
+	future := `{"ts":9223372036854775807,"kind":"msg","from":"a","body":"future"}`
+	ends := storeLines(t, s, "halo", peerMsg("live1", 0), future, peerMsg("live2", 0))
+	shortMaxStore(t, ends[2])
+	err := s.Append("halo", []Entry{{Seq: 9, Row: []byte(peerMsg("new", 0))}}, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs, _, err := Messages(s, "halo", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 3 || msgs[0].Body != "live1" || msgs[1].Body != "live2" || msgs[2].Body != "new" {
+		t.Errorf("msgs = %+v, want live1, live2, new", msgs)
+	}
+}
+
 func TestAppendRefusesWhenLiveRowsFillCap(t *testing.T) {
 	s := StoreFor(newBus(t))
 	ends := storeLines(t, s, "halo", peerMsg("live1", 0), peerMsg("live2", 0))

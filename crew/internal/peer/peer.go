@@ -289,10 +289,10 @@ func (s Store) Append(host string, es []Entry, now time.Time) error {
 	return nil
 }
 
-// compact rewrites host's store file to the rows within keepFor of now and
-// returns its new size. The seen offset moves to the same place in the kept
-// rows before the rename: a crash between leaves it behind, which only
-// announces again, never skips.
+// compact rewrites host's store file to the rows within keepFor of now and no
+// more than maxSkew ahead, and returns its new size. The seen offset moves to
+// the same place in the kept rows before the rename: a crash between leaves it
+// behind, which only announces again, never skips.
 func (s Store) compact(host string, now time.Time) (int64, error) {
 	path := s.path(host, ".jsonl")
 	f, err := os.CreateTemp(s.Dir, host+".jsonl.tmp.*")
@@ -310,7 +310,11 @@ func (s Store) compact(host string, now time.Time) (int64, error) {
 	var werr error
 	_, err = eachLine(path, 0, func(line []byte, end int64) bool {
 		row, ok := decodeStored(line)
-		if !ok || now.Sub(time.UnixMilli(row.TS)) > keepFor {
+		if !ok {
+			return true
+		}
+		t := time.UnixMilli(row.TS)
+		if now.Sub(t) > keepFor || t.After(now.Add(maxSkew)) {
 			return true
 		}
 		if _, werr = w.Write(append(line, '\n')); werr != nil {

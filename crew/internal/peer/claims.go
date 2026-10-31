@@ -116,8 +116,10 @@ func hostClaim(host, path, issue string, now time.Time) (string, error) {
 		// A ts up to maxSkew ahead still counts, so a peer clock running a little
 		// fast cannot hide its claim; further ahead never counts, since a row
 		// stored before Admit refused one would never expire.
-		age := now.Sub(time.UnixMilli(row.TS))
-		live := func(ttl time.Duration) bool { return age >= -maxSkew && age <= ttl }
+		t := time.UnixMilli(row.TS)
+		live := func(ttl time.Duration) bool {
+			return !t.After(now.Add(maxSkew)) && !t.Before(now.Add(-ttl))
+		}
 		switch row.Kind {
 		case "reap":
 			reaped[row.Branch] = n

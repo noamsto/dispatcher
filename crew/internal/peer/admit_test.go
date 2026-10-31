@@ -3,6 +3,7 @@ package peer
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -340,17 +341,23 @@ func TestAdmit(t *testing.T) {
 
 func TestAdmitRefusesAFarFutureTS(t *testing.T) {
 	for _, c := range []struct {
-		ahead  time.Duration
+		name   string
+		ts     int64
 		reason string
 	}{
-		{maxSkew, ""},
-		{maxSkew + time.Millisecond, "malformed"},
-		{100 * 365 * 24 * time.Hour, "malformed"},
+		{"a minute ahead", testNow.Add(time.Minute).UnixMilli(), ""},
+		{"at maxSkew", testNow.Add(maxSkew).UnixMilli(), ""},
+		{"past maxSkew", testNow.Add(maxSkew + time.Millisecond).UnixMilli(), "malformed"},
+		{"an hour ahead", testNow.Add(time.Hour).UnixMilli(), "malformed"},
+		{"a century ahead", testNow.Add(100 * 365 * 24 * time.Hour).UnixMilli(), "malformed"},
+		{"MaxInt64", math.MaxInt64, "malformed"},
 	} {
-		row := fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"claim-issue","issue":"42","branch":"feat/42-x"}`, ms(-c.ahead))
-		if _, reason := Admit(Entry{Seq: 10, Row: json.RawMessage(row)}, "halo", testNow); reason != c.reason {
-			t.Errorf("ts %s ahead: reason = %q, want %q", c.ahead, reason, c.reason)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			row := fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"claim-issue","issue":"42","branch":"feat/42-x"}`, c.ts)
+			if _, reason := Admit(Entry{Seq: 10, Row: json.RawMessage(row)}, "halo", testNow); reason != c.reason {
+				t.Errorf("reason = %q, want %q", reason, c.reason)
+			}
+		})
 	}
 }
 
