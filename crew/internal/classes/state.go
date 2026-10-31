@@ -86,7 +86,7 @@ func Load(path string) (st State, usable bool, warnings []string) {
 		warn("%v", err)
 		return nil, false, warnings
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	fi, err := f.Stat()
 	if err != nil {
 		warn("%v", err)
@@ -183,8 +183,8 @@ func Save(path string, st State) (err error) {
 	}
 	defer func() {
 		if err != nil {
-			tmp.Close()
-			os.Remove(tmp.Name())
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
 		}
 	}()
 	if _, err = tmp.Write(append(data, '\n')); err != nil {

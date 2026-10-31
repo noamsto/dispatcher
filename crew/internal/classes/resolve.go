@@ -69,7 +69,7 @@ func (r Resolver) ValidDefault(engine, tier, class, id string) (bool, []string, 
 	if err != nil {
 		return false, nil, err
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 	state, err := json.Marshal(map[string]any{engine: map[string]any{class: map[string]string{"default": id}}})
 	if err != nil {
 		return false, nil, err
