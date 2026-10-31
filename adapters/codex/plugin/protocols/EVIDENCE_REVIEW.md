@@ -70,9 +70,11 @@ report blocked to the user/team lead instead of inventing a crew identity.
 
 **Pi.** The promotion is met by the native batch: every pi reviewer agent
 (`reviewer` entries, `repo-reviewer`, `refuter`) is pinned to pi's escalate rung
-(its standard class default at `:max`) whatever model leads, so no extra step is needed.
+(its seed standard default, pinned in the generated agent roster, at `:max`)
+whatever model leads, so no extra step is needed.
 An explicit `--roles reviewer=<agent>:<model>@<effort>` pane at another engine's
-escalate rung (`claude:opus`, `codex:@premium`, cursor's Grok premium) stays
+escalate rung (`claude:opus`, `codex:@premium`, cursor's Grok premium: a
+`grok-*-high` id from `dispatch --models`, since `cursor:@premium` is kimi) stays
 an optional additive second opinion; cursor has no `--effort`: omit it there.
 
 Commit in-scope implementation and test changes before review so the reviewed
@@ -151,12 +153,12 @@ shepherd reports to its user/team lead. Green CI does not waive this stop.
 
 On pi the fresh assessment is a `subagent` call to `general-reviewer` (or the
 matched language reviewer for the recurring family); those agents run at the
-escalate rung (pi's standard class default at `:max`). Its task asks for the contract,
+escalate rung (pi's seed standard default at `:max`). Its task asks for the contract,
 consumer-map and regression inspection and a bounded replacement approach
 instead of a findings list, and states that reply format explicitly. The `assess` pane path
 applies only with an explicit `reviewer` pane: read its `roles.json` entry
 against the deep escalate rung (`claude:opus`, codex premium, cursor's Grok
-premium, or pi's standard default at `max`; current ids: `dispatch --models`); at or above it,
+premium, or pi's seed standard default at `max`; current ids: `dispatch --models`); at or above it,
 `tmux kill-pane` and a bare `dispatch --spawn-role reviewer` keep it; below it,
 respawn with `--agent <a> --model <m> --effort <e>` instead. A rung that cannot
 launch takes the review-unavailable path. Write the contract,

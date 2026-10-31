@@ -125,8 +125,8 @@ on `high` on the DeepSeek Flash defaults, deep's `max` passes through, and a
 model with no map supports through `high`. Pi deep has no higher pi model
 rung: after a failed deep pi worker, the dispatcher re-dispatches on another
 engine by judgement. `EVIDENCE_REVIEW.md`'s reviewer promotion is already met
-on pi: every pi reviewer agent runs at pi's escalate rung (the standard class
-default at `:max`). None of this needs new clamp machinery — every id launches
+on pi: every pi reviewer agent runs at pi's escalate rung (the seed standard
+default, pinned in the generated agent roster, at `:max`). None of this needs new clamp machinery — every id launches
 with the standard ladder.
 
 Codex model ids carry a **variant suffix**, which is the class: `-sol`
