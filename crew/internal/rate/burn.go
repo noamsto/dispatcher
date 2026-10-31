@@ -2,8 +2,9 @@
 // data (`burnClasses`, resolved through dispatch-config), each rule a shell
 // glob matched in order, first match wins; opus is the one rule whose class
 // follows effort through `byEffort`, with a `default` for an effort the map
-// does not name. An unclassed model prices as nothing, which the run fold
-// reads as a null cost class.
+// does not name. A model no rule matches prices as nothing here; the sweep's
+// costmap then falls back to its selection-class floor (classes.FloorClass),
+// and only a model with no class pattern reads as a null cost class.
 package rate
 
 import (

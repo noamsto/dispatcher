@@ -449,7 +449,7 @@ func TestSweepCostIsWeightTimesWallClock(t *testing.T) {
 
 func TestSweepUnclassedModelTakesItsClassFloor(t *testing.T) {
 	const settings = `{"burnClasses":[{"match":"*sonnet*","class":"standard","weight":2}],
-		"classes":{"claude":{"cheap":["haiku*"],"standard":[{"glob":"sonnet*"}],"premium":["fable-*","?pus*"]}}}`
+		"classes":{"claude":{"cheap":["haiku*"],"standard":[{"glob":"sonnet*"},"opus*"],"premium":["fable-*","?pus*"]}}}`
 	for _, tc := range []struct {
 		name, engine, model string
 		class, proxy        any
