@@ -50,6 +50,7 @@ let
   # as ({ inherit data; }) rather than pull in home-manager as a dependency.
   extLib = nixlib.extend (_: _: {hm.dag.entryAfter = _: data: {inherit data;};});
   pkgs = nixpkgs.legacyPackages.${builtins.currentSystem};
+  darwinPkgs = nixpkgs.legacyPackages.aarch64-darwin;
 
   # Declares just enough of the home-manager option surface for the module
   # to write into for real: home.packages/sessionVariables/file/activation,
@@ -59,6 +60,14 @@ let
       home.packages = lib.mkOption {
         type = lib.types.listOf lib.types.package;
         default = [];
+      };
+      home.homeDirectory = lib.mkOption {
+        type = lib.types.str;
+        default = "/home/test";
+      };
+      home.username = lib.mkOption {
+        type = lib.types.str;
+        default = "test";
       };
       home.sessionVariables = lib.mkOption {
         type = lib.types.attrsOf lib.types.str;
@@ -76,6 +85,14 @@ let
         type = lib.types.attrsOf lib.types.raw;
         default = {};
       };
+      systemd.user = lib.mkOption {
+        type = lib.types.attrsOf lib.types.raw;
+        default = {};
+      };
+      launchd.agents = lib.mkOption {
+        type = lib.types.attrsOf lib.types.raw;
+        default = {};
+      };
       lib = lib.mkOption {
         type = lib.types.attrsOf lib.types.raw;
         default = {};
@@ -88,17 +105,18 @@ let
     config.lib.file.mkOutOfStoreSymlink = p: "out-of-store:" + p;
   };
 
-  eval = cfg:
+  evalOn = evalPkgs: cfg:
     (extLib.evalModules {
       modules = [
         stub
         self.homeManagerModules.default
         {
-          _module.args.pkgs = pkgs;
+          _module.args.pkgs = evalPkgs;
           programs.dispatcher = cfg;
         }
       ];
     }).config;
+  eval = evalOn pkgs;
 
   optionNames = builtins.attrNames
     (extLib.evalModules {
@@ -126,6 +144,8 @@ let
       activationNames = builtins.attrNames r.home.activation;
       packageNames = map (p: p.name) r.home.packages;
       xdgConfigFile = r.xdg.configFile;
+      systemdUser = r.systemd.user;
+      launchdAgents = r.launchd.agents;
       locked = builtins.fromJSON (builtins.readFile r.programs.dispatcher.lockedSettingsFile);
       claudePluginDir = r.programs.dispatcher.claudePluginDir;
       codexPlugin = builtins.replaceStrings ["\n"] [" "] (r.home.activation.dispatcherCodexPlugin.data or "");
@@ -201,6 +221,10 @@ let
   };
 
   minimalCfg = {enable = true;};
+  refreshOffCfg = {
+    enable = true;
+    refresh.enable = false;
+  };
 
   # #1304: the mcpServers catalog, and dispatcherMcp naming its entries.
   mcpCfg = {
@@ -248,6 +272,15 @@ in {
   agentBrowserPath = (eval fullCfg).programs.dispatcher.agentBrowser.executablePath;
   cursorless = mkResult cursorlessCfg;
   float = mkResult floatCfg;
+  refreshOff = mkResult refreshOffCfg;
+  # The launchd agent is picked by hostPlatform, so the Darwin eval takes its
+  # package set rather than the host's.
+  darwin = let
+    d = evalOn darwinPkgs {enable = true;};
+  in {
+    launchdAgents = d.launchd.agents;
+    systemdUser = d.systemd.user;
+  };
   codexOnly = mkResult codexOnlyCfg // mkDrvs codexOnlyCfg;
   # A malformed or openrouter-provider localModels key must trip an HM
   # assertion (its message names the keys), not wait for dispatch-config to
@@ -903,6 +936,38 @@ worktree_git_lib_crew_go_row() { # bin
     run jq -e --arg p "$pkg" '(.full.packageNames | index($p)) != null' "$EVAL"
     [ "$status" -eq 0 ]
   done
+}
+
+@test "the refresh timer runs both cache refreshes daily on Linux, and nothing on Darwin" {
+  run jq -e '.full.systemdUser.timers["dispatcher-refresh"].Timer == {"OnCalendar": "daily", "Persistent": true, "RandomizedDelaySec": "1h"}' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.systemdUser.timers["dispatcher-refresh"].Install.WantedBy == ["timers.target"]' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.systemdUser.services["dispatcher-refresh"].Service.Type == "oneshot"' "$EVAL"
+  [ "$status" -eq 0 ]
+  # refresh-models needs cursor-agent, which lives outside the store.
+  run jq -e '.full.systemdUser.services["dispatcher-refresh"].Service.Environment == ["PATH=/home/test/.local/bin:/home/test/.nix-profile/bin:/etc/profiles/per-user/test/bin:/run/current-system/sw/bin:/usr/bin:/bin"]' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.systemdUser.services["dispatcher-refresh"].Service.ExecStart | length == 2 and (.[0] | test("^-/nix/store/[^/]+-refresh-models/bin/refresh-models$")) and (.[1] | test("^-/nix/store/[^/]+-refresh-scores/bin/refresh-scores$"))' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.launchdAgents == {}' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "the refresh agent is a launchd job on Darwin, with both commands in one run" {
+  run jq -e '.darwin.systemdUser == {}' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.darwin.launchdAgents["dispatcher-refresh"] | .enable == true and .config.RunAtLoad == false and .config.StartCalendarInterval == [{"Hour": 0, "Minute": 0}]' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.darwin.launchdAgents["dispatcher-refresh"].config | .EnvironmentVariables.PATH == "/home/test/.local/bin:/home/test/.nix-profile/bin:/etc/profiles/per-user/test/bin:/run/current-system/sw/bin:/usr/bin:/bin" and .StandardErrorPath == "/home/test/Library/Logs/dispatcher-refresh.log" and .StandardOutPath == .StandardErrorPath' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.darwin.launchdAgents["dispatcher-refresh"].config.ProgramArguments | length == 3 and .[0] == "/bin/sh" and .[1] == "-c" and (.[2] | test("^/nix/store/[^/]+-refresh-models/bin/refresh-models; /nix/store/[^/]+-refresh-scores/bin/refresh-scores$"))' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "refresh.enable = false schedules neither unit" {
+  run jq -e '.refreshOff.systemdUser == {} and .refreshOff.launchdAgents == {}' "$EVAL"
+  [ "$status" -eq 0 ]
 }
 
 @test "1304: mcpServers lands in the locked layer and dispatcherMcp names its entries" {
