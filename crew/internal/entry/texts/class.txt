@@ -1,0 +1,18 @@
+usage: crew class revert <engine> <class>
+       crew class promote <engine> <class> <id>
+
+Change a model class's default by hand. A class (cheap, standard, premium) has
+a default model per engine, recorded with its history in
+${XDG_DATA_HOME:-$HOME/.local/share}/crew/model-class-state.json.
+
+  revert   Restore the previous default from the class-state history and veto
+           the reverted model, so auto-promotion never picks it again
+  promote  Set <id> as the class default after the class-match check
+           (model-resolve), and clear its veto
+
+Both post a message to the dispatcher and a decision row on this bus. They are
+refused when CREW_WORKER_ID is set, and need a crew id: run them from the
+dispatcher pane or set CREW_ID. Exits 1 on any refusal.
+
+  crew class promote codex standard gpt-5.7-terra
+  crew class revert codex standard

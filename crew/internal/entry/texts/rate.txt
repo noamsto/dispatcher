@@ -11,4 +11,10 @@ Sweep a repo's bus into the global ratings store, or render that store.
               for the caller's own, so it runs outside a repo
   --root      Repo root to sweep; repeatable, only with --sweep-all
 
+A default sweep, and reap's autosweep, ends with the model-class promotion
+check (the D5 guardrails): a trial model that beats its class default may
+become the default. `classes.<engine>.autoPromote: false` makes it
+propose-only. --sweep-all never runs the check. The text --report ends with a
+`Class trials` section, pooled across repos; --json is unchanged.
+
   crew rate --report --json

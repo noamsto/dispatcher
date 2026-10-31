@@ -112,8 +112,9 @@
             src = ./crew;
             vendorHash = "sha256-56E2cjtgQ49ypGTEE6Fo51fVMvAKQyHlSZYPnBzRmog=";
             # stall-watch sources the two libs dispatch.sh shares, under the
-            # pinned bash (the interpreter writeShellApplication gives crew).
-            ldflags = ["-s" "-w" "-X main.bashBin=${pkgs.bash}/bin/bash" "-X main.budgetGateLib=${./adapters/core/budget-gate.sh}" "-X main.localModelsLib=${./adapters/core/local-models.sh}"];
+            # pinned bash (the interpreter writeShellApplication gives crew);
+            # `crew class` and the rate sweep run model-resolve under it too.
+            ldflags = ["-s" "-w" "-X main.bashBin=${pkgs.bash}/bin/bash" "-X main.budgetGateLib=${./adapters/core/budget-gate.sh}" "-X main.localModelsLib=${./adapters/core/local-models.sh}" "-X main.modelResolveScript=${./adapters/core/model-resolve.sh}"];
             nativeCheckInputs = [pkgs.git pkgs.ps];
             postInstall = "mv $out/bin/crew $out/bin/crew-go";
           };
