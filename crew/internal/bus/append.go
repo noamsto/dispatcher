@@ -71,7 +71,7 @@ func lastByte(path string, size int64) (byte, bool) {
 // 3/4 step so every pass strictly shrinks and the loop terminates.
 //
 // n is bytes (`wc -c`) and keep characters (`${#full}`): the two differ exactly
-// where the text is not ASCII, which is what the guard in crew.bats pins.
+// where the text is not ASCII, which the FitLine tests in append_test.go pin.
 func FitLine(build func(text string) string, full string) string {
 	line := build(full)
 	keep := utf8.RuneCountInString(full)

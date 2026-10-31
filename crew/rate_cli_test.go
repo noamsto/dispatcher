@@ -81,7 +81,7 @@ func TestMetricsAddressedMessageDoesNotWakeTheWatch(t *testing.T) {
 	}
 }
 
-// The five `rate:` cases of tests/crew.bats, ported (#1257): each drives
+// The five `rate:` cases of the bats suite, ported: each drives
 // `crew rate` and reads back the ratings rows it appended.
 
 // rateRows reads the ratings store: one object per line, one per swept run.

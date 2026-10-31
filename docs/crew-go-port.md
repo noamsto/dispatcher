@@ -65,8 +65,8 @@ output contract below), with each edit justified.
   path, `_await_marks`' read and `_await_record`'s atomic merge, the two jq
   programs embedded verbatim. Its readers are Go too now: the unread scan of
   `stall-watch` and `nudge` moved to `internal/unread` (#968), so the name and
-  the content are the contract only against the crew.bats guards that still
-  replay the bash helpers.
+  the content are the contract only against the bash helpers the old bats guards
+  replayed.
 - `crew/internal/unread`: the unread scan of #290, `_unread_scan`, ported in
   process (#968) — `stall-watch`'s D6 runs it every 4th tick and `crew nudge`
   per call, both through this one package instead of the `--sh unread`
@@ -253,8 +253,8 @@ output contract below), with each edit justified.
 
   The drift guard runs the extracted `_frame_classifier` and `_pane_idle_reason`
   in bash under an explicit `LC_ALL=C.UTF-8` and asserts that every predicate,
-  for every engine, agrees with Go over `testdata/frames` (the crew.bats
-  fixtures, a frame per engine, multibyte and NBSP edge frames). It skips when
+  for every engine, agrees with Go over `testdata/frames` (the frames the
+  bats suite pinned, a frame per engine, multibyte and NBSP edge frames). It skips when
   dispatch.sh is absent, as in the Nix sandbox. Since #821 the block it extracts
   is dispatch.sh's `--role-watch` one, the only bash copy that ships; the
   predicates with no bash copy (`_is_quota_prompt`, `_is_quota_session_limit`,
@@ -1076,8 +1076,8 @@ The `_identity*` helpers lost their last caller with the `identity` arm (#981) a
 are gone; `crew/internal/identity` is now the only picker of a codename. Its three
 pools are the only copy of the palette: `identity_test.go`'s `TestPoolsAreGolden`
 freezes all three against the lists the bash arrays held, which is what keeps a slot
-from being reordered under a recorded identity, and crew.bats's `_rr_palette`
-enumerates the Go array to compile every palette stroke through d2.
+from being reordered under a recorded identity, and the old bats `_rr_palette`
+enumerated the Go array to compile every palette stroke through d2.
 
 `_sessions` and `_resolve_target` lost their last caller with the `nudge` arm and
 are gone, and their drift guards went with them: `crew sessions` and
@@ -1105,7 +1105,7 @@ pair: its park runs on `internal/clock`'s real half only, because the arm's
 `jq -nc 'now*1000|floor'` and its `sleep` never consulted the clock file.
 
 `_lock_acquire`, `_lock_release` and `_lock_publish_pid` are gone with `reap` (#997), and
-so are the crew.bats rows that `eval`ed them; `internal/lock` holds a `flock(2)` and reads
+so were the bats rows that `eval`ed them; `internal/lock` holds a `flock(2)` and reads
 a `*.d` only as the record it publishes (or, for an old build's, as the old format), and its
 tests cover the old-format holders those rows planted.
 Which lock paths either language takes, from `grep -rn 'lock\.d\|refresh\.d\|nudge-wait'`

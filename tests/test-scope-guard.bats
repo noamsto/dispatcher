@@ -56,7 +56,7 @@ assert_block() { # <substring of the reason>
 WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the full suite'
 
 @test "test-scope-guard: allows a targeted file with a filter" {
-  run run_guard <<<"$(pi_bash 'bats tests/crew.bats --filter reap')"
+  run run_guard <<<"$(pi_bash 'bats tests/dispatch.bats --filter reap')"
   assert_allow
 }
 
@@ -175,7 +175,7 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
 
 @test "test-scope-guard: only inspects commands that actually run bats" {
   for cmd in 'echo bats tests/' 'grep -rn "bats tests/" docs' 'git log --oneline tests/' \
-    'cat tests/crew.bats' 'bats tests/crew.bats | tail -3' 'bats $SUITE' \
+    'cat tests/dispatch.bats' 'bats tests/dispatch.bats | tail -3' 'bats $SUITE' \
     'bats tests/bats-affected.bats --filter x'; do
     run run_guard <<<"$(pi_bash "$cmd")"
     assert_allow
@@ -253,9 +253,9 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
 }
 
 @test "test-scope-guard: a redirection or a comment is not a test operand" {
-  for cmd in 'bats tests/crew.bats 2>&1' 'bats tests/crew.bats 2>/dev/null' \
-    'bats tests/crew.bats > /tmp/log' 'bats tests/crew.bats </dev/null' \
-    'bats tests/crew.bats # a note' 'bats tests/crew.bats 2>&1 | tail -3' \
+  for cmd in 'bats tests/dispatch.bats 2>&1' 'bats tests/dispatch.bats 2>/dev/null' \
+    'bats tests/dispatch.bats > /tmp/log' 'bats tests/dispatch.bats </dev/null' \
+    'bats tests/dispatch.bats # a note' 'bats tests/dispatch.bats 2>&1 | tail -3' \
     'bats tests/a.bats tests/b.bats 2>&1' 'bats tests/a.bats --filter reap >>out.log'; do
     run run_guard <<<"$(pi_bash "$cmd")"
     assert_allow
@@ -273,7 +273,7 @@ WHY='run targeted files (bats tests/<file>.bats --filter <pattern>); CI runs the
     assert_block "$WHY"
   done
   for cmd in "$(printf 'bats tests/a.bats\nbats tests/b.bats')" \
-    "$(printf 'set -euo pipefail\nbats tests/crew.bats --filter reap')" \
+    "$(printf 'set -euo pipefail\nbats tests/dispatch.bats --filter reap')" \
     "$(printf 'bash scripts/bats-affected.sh --base main\nbats tests/a.bats tests/b.bats')"; do
     run run_guard <<<"$(pi_bash "$cmd")"
     assert_allow

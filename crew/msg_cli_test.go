@@ -163,3 +163,48 @@ func TestMsgStampedRolePanePostsOnlyAsItsRoleID(t *testing.T) {
 		t.Errorf("row = %+v, want %s to dispatcher:c1", row, self)
 	}
 }
+
+// #908: the dispatcher posts as dispatcher:<crew> however it names its crew, and
+// an anchored dispatcher pane that is stamped as nothing still posts.
+func TestDispatcherStillPostsAsItsCrew(t *testing.T) {
+	repo, logPath := repoWithLog(t, nil, 0)
+	const to = "worker:feat/x#s1-1"
+	t.Setenv("CREW_ID", "c1")
+	unsetenv(t, "CREW_WORKER_ID", "CREW_ROLE_ID")
+
+	for _, argv := range [][]string{
+		{"msg", "dispatcher:c1", to, "go"},
+		{"reply", to, "go"},
+	} {
+		if _, stderr, code := runCrew(t, repo, argv...); code != 0 || stderr != "" {
+			t.Fatalf("%v: code %d, stderr %q", argv, code, stderr)
+		}
+	}
+	unsetenv(t, "CREW_ID")
+	if _, stderr, code := runCrew(t, repo, "reply", to, "go", "--crew", "c1"); code != 0 || stderr != "" {
+		t.Fatalf("reply --crew: code %d, stderr %q", code, stderr)
+	}
+	if n := len(busLines(t, logPath)); n != 3 {
+		t.Fatalf("%d rows, want 3", n)
+	}
+
+	stubTmux(t, "", fmt.Sprintf("%d\x1f\x1f\x1f\x1f@1\x1f%%1\n", os.Getpid()))
+	t.Setenv("CREW_ID", "c1")
+	for _, argv := range [][]string{
+		{"msg", "dispatcher:c1", to, "go"},
+		{"reply", to, "go"},
+	} {
+		if _, stderr, code := runCrew(t, repo, argv...); code != 0 || stderr != "" {
+			t.Fatalf("anchored %v: code %d, stderr %q", argv, code, stderr)
+		}
+	}
+	lines := busLines(t, logPath)
+	if len(lines) != 5 {
+		t.Fatalf("%d rows, want 5", len(lines))
+	}
+	for _, line := range lines {
+		if row := decodeMsgRow(t, line); row.From != "dispatcher:c1" {
+			t.Errorf("row from %q, want dispatcher:c1", row.From)
+		}
+	}
+}

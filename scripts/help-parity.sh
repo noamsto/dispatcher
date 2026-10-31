@@ -96,8 +96,8 @@ record() {
 }
 
 # The subcommands are the rows of the pre-change top-level help, so the list is
-# the old contract and not the new one's own opinion (same rows crew.bats
-# compares against the script's arms).
+# the old contract and not the new one's own opinion (same rows as the old
+# script's arms).
 subs=$(bash -euo pipefail "$old_sh" --help | sed -nE 's/^  ([a-z][a-z0-9-]+) +[^ ].*$/\1/p' | sort -u)
 [ -n "$subs" ] || {
   echo "no subcommand rows in $base's top-level help" >&2

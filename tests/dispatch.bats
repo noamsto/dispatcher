@@ -5062,6 +5062,25 @@ TABLE
   if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
 }
 
+@test "burn map conformance: the doc slice names every classed rung" {
+  # Copied from the Model map/Burn classes table, so it makes drift loud
+  # rather than impossible. kimi-k3* is deliberately excluded: the burn doc
+  # does not class it and _burn_weight falls it through to "" on purpose. The
+  # cursor rungs listed are the non-fast defaults; `-fast` is a price
+  # multiplier crew/internal/rate/burn_test.go pins.
+  doc="$BATS_TEST_DIRNAME/../adapters/core/protocols/dispatch-orchestration.md"
+  doc_slice="$(sed -n '/^## Model map/,/^### Tier map/p' "$doc")"
+  for token in opus sonnet haiku fable composer-2.5 \
+    gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol \
+    grok-4.7-low grok-4.7-medium grok-4.7-high \
+    claude-fable-5; do
+    grep -qF "$token" <<<"$doc_slice" || {
+      printf 'token %s missing from the Model map/Burn classes doc slice\n' "$token" >&2
+      return 1
+    }
+  done
+}
+
 @test "tier map conformance: dispatch.sh matches the documented rule" {
   # Copied from the Model map/Burn classes table, so it makes drift loud
   # rather than impossible — same tolerance as :747's precedent test.
@@ -11786,7 +11805,7 @@ EOF
 }
 
 # ---- --role-watch delivery gate (#445) ---------------------------------------
-# Frames are pinned from tests/crew.bats (real captures unless noted); each
+# Frames are real captures unless noted; each
 # helper prints its frame so a test can swap it into the tmux stub mid-run.
 
 # Real Codex CLI 0.157.0 capture, 2026-09-27T15:11:09+03:00: idle_empty.
