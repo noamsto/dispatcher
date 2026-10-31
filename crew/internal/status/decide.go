@@ -31,7 +31,7 @@ func RunDecide(ctx context.Context, text string, paths bus.Paths, stderr io.Writ
 		return exitFailure
 	}
 	row := peer.DecisionRow(ts, crew, text)
-	if reason := peer.ExportDrop(row, time.UnixMilli(ts)); reason != "" {
+	if reason := peer.ExportDrop(row, "peer", time.UnixMilli(ts)); reason != "" {
 		say(stderr, "crew: decide: peers would drop this row as %s (the encoded row is %d bytes; the peer row limit is %d)\n", reason, len(row), peer.MaxRow)
 		return exitFailure
 	}

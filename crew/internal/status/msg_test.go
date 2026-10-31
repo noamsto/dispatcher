@@ -323,6 +323,9 @@ func TestMsgToPeerRefusals(t *testing.T) {
 		// Each control byte encodes as six characters, so a body under MaxBody
 		// still overflows the bus line and would be elided in transit.
 		{"encoded row over LineMax", dispatcher, "peer:halo", strings.Repeat("\x01", 3400), peerHosts, "bus line"},
+		// Each quote encodes as two bytes: under MaxBody, yet over the peer row
+		// limit, so the peer would drop it as oversize.
+		{"row over the peer row limit", dispatcher, "peer:halo", strings.Repeat(`"`, 1950), peerHosts, "as oversize"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
