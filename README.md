@@ -489,7 +489,7 @@ that it is compacted to rows still inside the window, and if still full,
 further rows are refused with an error line until older ones age out. Re-pinning
 can replay the peer's earlier messages as new `peer_msg` lines (check `ts`); the
 peer's `events.jsonl` is assumed append-only, so if it is truncated or replaced,
-its new rows are skipped until its offsets pass the last row stored here.
+its new rows are skipped until it grows past the old size.
 
 A worker owned by a dispatcher on another machine is marked: `dispatch --host`
 passes `DISPATCH_ORIGIN_HOST=<local short host>` to the remote run, and an ad-hoc

@@ -427,3 +427,26 @@ func TestPeerErrorDetailEscapesInvisible(t *testing.T) {
 		t.Errorf("detail = %q", d)
 	}
 }
+
+func TestSeenOfDropsEntryForAnotherFile(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) os.FileInfo {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info
+	}
+	other, file := write("a", "x"), write("b", "x")
+	pl := &peerLink{store: peer.Store{Dir: dir}, seen: map[string]seenAt{"h": {off: 1, file: other}}}
+	if got := pl.seenOf("h", file); got != 0 {
+		t.Errorf("seenOf = %d, want the store's 0", got)
+	}
+	if _, ok := pl.seen["h"]; ok {
+		t.Error("stale entry kept")
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 )
 
@@ -170,7 +171,12 @@ func Sync(ctx context.Context, o SyncOptions) (Result, error) {
 		if !errors.As(err, &ex) {
 			return Result{}, err
 		}
-		_ = store.replace(store.path(o.Name, ".log"), ex.Stderr)
+		// The error line points at this file, so terminal escapes and bidi text
+		// in it would fire when it is read.
+		clean := invisible.Drop(stripControl(string(ex.Stderr)))
+		if err := store.replace(store.path(o.Name, ".log"), []byte(clean)); err != nil {
+			return Result{}, fmt.Errorf("ssh: exit %d (peer stderr not saved: %v)", ex.Code, err)
+		}
 		return Result{}, fmt.Errorf("ssh: exit %d (peer stderr in peers/%s.log)", ex.Code, o.Name)
 	}
 	if len(out) > MaxResponse {

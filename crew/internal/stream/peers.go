@@ -229,9 +229,16 @@ func (pl *peerLink) wake() {
 
 func (pl *peerLink) seenOf(host string, file os.FileInfo) int64 {
 	n := pl.store.Seen(host)
-	if m, ok := pl.seen[host]; ok && os.SameFile(m.file, file) {
+	m, ok := pl.seen[host]
+	if !ok {
+		return n
+	}
+	if os.SameFile(m.file, file) && m.off <= file.Size() {
 		return max(n, m.off)
 	}
+	// SameFile compares dev+inode, which the kernel reuses once a file is
+	// freed, so a stale entry must not survive to match a later file.
+	delete(pl.seen, host)
 	return n
 }
 
