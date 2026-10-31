@@ -72,6 +72,15 @@ func TestClaims(t *testing.T) {
 	}
 }
 
+func TestClaimsIgnoresAFarFutureRow(t *testing.T) {
+	s := StoreFor(newBus(t))
+	storeLines(t, s, "halo", `{"ts":9223372036854775807,"crew_id":"c1","kind":"dispatch","branch":"feat/42-x"}`)
+	got, err := Claims(s, "42", testNow)
+	if err != nil || got != "" {
+		t.Errorf("Claims = %q, %v; want none", got, err)
+	}
+}
+
 // TestClaimsOrdersByFileNotSeq has the peer's log reset and re-pinned between a
 // reap and a new dispatch: the new row's seq is lower, but it is later in the
 // file, so the reap does not cancel it.

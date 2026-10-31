@@ -329,8 +329,25 @@ func TestPeerSyncErrorNamesTheHostOnce(t *testing.T) {
 		self:  mbp.name,
 	})
 	l.waitKind("error", 1)
-	if d, _ := l.ofKind("error")[0]["detail"].(string); !strings.HasPrefix(d, "peer halo: response: invalid JSON") {
+	if d, _ := l.ofKind("error")[0]["detail"].(string); !strings.HasPrefix(d, "peer halo: response: not a valid peer-sync object") {
 		t.Errorf("detail = %q", d)
+	}
+}
+
+func TestPeerSyncErrorDoesNotEchoAHugeLiteral(t *testing.T) {
+	mbp, _ := peerPair(t)
+	out := `{"v":1,"host":"halo","id":"` + strings.Repeat("ab", 16) + `","ack":1` + strings.Repeat("0", 100000) + `}`
+	l := peerLane(t, mbp, peerHooks{
+		hosts: mbp.settings,
+		transport: func(context.Context, string, []byte) ([]byte, error) {
+			return []byte(out), nil
+		},
+		every: 50 * time.Millisecond,
+		self:  mbp.name,
+	})
+	l.waitKind("error", 1)
+	if d, _ := l.ofKind("error")[0]["detail"].(string); len(d) >= 300 {
+		t.Errorf("detail is %d bytes, want under 300", len(d))
 	}
 }
 

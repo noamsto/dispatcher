@@ -525,6 +525,19 @@ func TestSyncRefusesABadResponse(t *testing.T) {
 	}
 }
 
+func TestSyncErrorDoesNotEchoAHugeLiteral(t *testing.T) {
+	mbp, halo := pair(t)
+	out := `{"v":1,"host":"halo","id":"` + halo.busID(t) + `","ack":1` + strings.Repeat("0", 100000) + `}`
+	tr := func(context.Context, string, []byte) ([]byte, error) { return []byte(out), nil }
+	_, err := syncTo(mbp, halo, tr)
+	if err == nil {
+		t.Fatal("Sync accepted an overflowing ack")
+	}
+	if n := len(err.Error()); n >= 300 {
+		t.Errorf("Sync error is %d bytes, want under 300", n)
+	}
+}
+
 // TestSyncPinRace has halo dial mbp while mbp's own sync to halo is on the
 // wire, so mbp's halo.state is pinned (and halo's rows stored) between Sync's
 // two state reads: Sync must judge and dedupe against the re-read state.
@@ -669,6 +682,18 @@ func TestServeRefusesMalformedPayload(t *testing.T) {
 				t.Errorf("stdout %q, stderr %q", out.String(), errb.String())
 			}
 		})
+	}
+}
+
+func TestServeErrorDoesNotEchoAHugeLiteral(t *testing.T) {
+	_, halo := pair(t)
+	payload := `{"v":1,"host":"mbp","id":"` + strings.Repeat("ab", 16) + `","since":1` + strings.Repeat("0", 100000) + `}`
+	var out, errb bytes.Buffer
+	if rc := Serve(strings.NewReader(payload), &out, &errb, halo.serveOptions()); rc != 2 {
+		t.Fatalf("Serve = %d, want 2", rc)
+	}
+	if errb.Len() >= 300 {
+		t.Errorf("stderr is %d bytes, want under 300", errb.Len())
 	}
 }
 
