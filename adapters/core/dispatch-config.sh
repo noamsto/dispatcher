@@ -49,11 +49,13 @@
 #
 # classes maps each engine to ordered cheap|standard|premium glob lists (a pattern
 # is a glob string or {glob, requires}, where requires names a condition the
-# resolver reports: only pi_month_target) plus tiers.<tier>.{class, admits}; it
-# is validated on the merged tree and has no env var. Every modelMap engine and
-# tier row needs a classes row with a class. A missing admits is filled with
-# [class] (fail closed) with a warning, and a pattern overlapping another
-# class's pattern warns: an id matching both takes the more expensive class.
+# resolver reports: only pi_month_target) plus tiers.<tier>.{class, admits}. An
+# engine row may also set autoPromote, a boolean: false makes trial promotion
+# propose-only for that engine. It is validated on the merged tree and has no
+# env var. Every modelMap engine and tier row needs a classes row with a class.
+# A missing admits is filled with [class] (fail closed) with a warning, and a
+# pattern overlapping another class's pattern warns: an id matching both takes
+# the more expensive class.
 #
 # laneProfiles maps an engine or "<engine>/<model>" glob to a lane profile (its
 # name, and optionally inline notes text) that `dispatch` applies to the task

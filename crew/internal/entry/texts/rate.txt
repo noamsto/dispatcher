@@ -3,8 +3,9 @@ usage: crew rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...]
 Sweep a repo's bus into the global ratings store, or render that store.
 
   (no flags)  Sweep this repo's bus into the ratings store
-  --report    Render the per-(engine, model, tier) rollup instead; reads only the
-              global store — no bus, no network
+  --report    Render the per-(engine, model, tier) rollup instead; reads the
+              global store, plus the class-state file and model catalog for the
+              text Class trials section — no bus, no network
   --pooled    Pool the tiers into one row per engine and model
   --json      Machine-readable report
   --sweep-all Walk every repo instead of this one — the one command with no use
