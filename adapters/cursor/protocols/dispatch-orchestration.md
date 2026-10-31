@@ -534,18 +534,30 @@ to a lazy role after its persisted values and CLI overrides resolve. Premium
 effort is `xhigh` and `max` (both downgrade to `high`); `high` is not
 premium. Model refusal is checked before effort refusal, so a target that
 is premium on both dimensions needs a matching escape for each (or
-`--ignore-budget`). pi has no premium model rung in the table below, so only
-effort is ever refused for it, a class-admitted pi opus included. While pi's
+`--ignore-budget`). pi's one premium model rung is its OpenRouter opus
+pattern, shed to pi's standard default; a direct-provider `anthropic/*` id has
+none. While pi's
 `month` window is ahead of pace, both `max` and `xhigh` are refused at once,
 so a refused pi dispatch lands directly on `high` — which matters because
 `deepseek-v4.1-flash`, pi's tier-typical `standard`/`deep` model, exposes no
 `xhigh` rung to land on in between. Cursor is the reverse: it has a premium
 model rung (`grok-4.7-high`) but no effort knob — `--effort` is
-accepted-and-ignored — so its effort is never refused, only the model rung,
-and only for IDs listed in the table below. Class-admitted premium codex and
-cursor IDs outside the `paceDowngrades` table (for example a new `gpt-*-sol`
-or `grok-*-high`) are not pace-refused until P4 makes `paceDowngrades`
-class-aware.
+accepted-and-ignored — so its effort is never refused, only the model rung;
+its `-fast` and `kimi-*` ids have no entry and stay unrefused.
+
+A table item is a glob, or `@<class>`: an id the model catalog lists under
+that class (the most expensive class whose patterns match it), and
+`@<class>:<glob>` one that also matches the glob. With no catalog only the
+globs match. A `@<class>` target is that class's resolved default (`dispatch
+--models`). The downgrade applies only when its `burnClasses` weight is lower;
+an unweighted target never lifts the refusal. The refusal names the engine,
+the target's class and id, and the downgrade's class and resolved id (`codex
+7d is at 77% … — the premium rung (gpt-5.7-sol) is refused; use the standard
+rung (gpt-5.6-terra) instead`); `DISPATCH_IGNORE_RUNG` takes that exact id,
+never a class name or `@<class>`. A bracketed id of a new cursor family
+(`grok-4.8-high[effort=high]`) is never catalogued, so it stays unrefused.
+`escalation`'s `failed`, `inRow` and `outOfRow` items take the same
+`@<class>[:<glob>]` forms.
 
 <!-- BEGIN generated:pace-downgrades from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->
 
@@ -553,9 +565,12 @@ class-aware.
 | --- | --- | --- |
 | claude | `opus`, `claude-opus-*`, `fable`, `claude-fable-*` | `sonnet` |
 | codex | `gpt-5.6-sol` | `gpt-5.6-terra` |
+| codex | `@premium` | `@standard` |
 | cursor | `grok-4.7-high`, `grok-4.7-high[*` | `grok-4.7-medium` |
 | cursor | `cursor-grok-4.6-high`, `cursor-grok-4.6-high[*` | `cursor-grok-4.6-medium` |
-| pi | — (effort only: `max`/`xhigh`→`high`) | — |
+| cursor | `@premium:grok-*-high` | `@standard` |
+| cursor | `@premium:cursor-grok-*-high` | `cursor-grok-4.6-medium` |
+| pi | `openrouter/anthropic/claude-opus-*` | `@standard` |
 
 <!-- END generated:pace-downgrades -->
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # model-resolve — resolve one engine/tier row against a model catalog snapshot.
 #
-# Usage: model-resolve <engine> <tier> <catalog-file> <class-state-file>
+# Usage: model-resolve <engine> <tier> <catalog-file> <class-state-file> [<id>]
 #   stdin         dispatch-config's merged settings JSON (.modelMap seed and
 #                 .classes patterns)
 #   catalog-file  model-catalog.json: {"<engine>": {"fetched_epoch", "source",
@@ -14,7 +14,10 @@
 # then newest), regex (the seed row's), conditional ({id, requires} candidates
 # whose only matching patterns carry a "requires" gate), default, trial (the
 # newest non-dated catalog match of the row's class that sorts before the
-# default, or null) and warnings (strings prefixed "model-resolve: ").
+# default, or null) and warnings (strings prefixed "model-resolve: "). With
+# <id>, also class_of: the most expensive class whose patterns match <id> when
+# the engine's catalog snapshot lists it shape-clean (whatever the row admits,
+# gated patterns included), else null. dispatch's ladder @class items read it.
 #
 # A missing catalog or state file is not an error. A catalog or state file that
 # is not a regular file, is over its size cap (4 MiB, 64 KiB) or is not one JSON
@@ -31,11 +34,12 @@
 # unknown engine/tier row.
 set -euo pipefail
 
-[ "$#" -eq 4 ] || {
-  echo "usage: model-resolve <engine> <tier> <catalog-file> <class-state-file>" >&2
+[ "$#" -eq 4 ] || [ "$#" -eq 5 ] || {
+  echo "usage: model-resolve <engine> <tier> <catalog-file> <class-state-file> [<id>]" >&2
   exit 2
 }
-engine=$1 tier=$2
+engine=$1 tier=$2 query=${5-} hasq=false
+[ "$#" -eq 4 ] || hasq=true
 
 # bounded_copy <file> <bytes> — print at most <bytes> of <file>, opened and
 # checked to be a regular file in a child killed after 1 s, so a FIFO (whose
@@ -90,7 +94,7 @@ rc=0
 jq -nR --arg e "$engine" --arg t "$tier" \
   --arg catmode "$cat_mode" --rawfile catraw <(capped_read "$cat_fd") --argjson catcap "$cat_cap" \
   --arg statemode "$state_mode" --rawfile stateraw <(capped_read "$state_fd") --argjson statecap "$state_cap" \
-  --argjson sw "$sw" '
+  --argjson sw "$sw" --arg q "$query" --argjson hasq "$hasq" '
   def clean: gsub("[[:cntrl:]\\p{Cf}]"; "");
   def glob_re:
     "\\A" + (explode | map(
@@ -216,7 +220,8 @@ jq -nR --arg e "$engine" --arg t "$tier" \
       default: $default,
       trial: (if $head == null or ($dkey != null and (if $head.dated and $dkey.dated then $head.key < $dkey.key else $head.short < $dkey.short end | not)) then null else $head.id end),
       warnings: ($sw + $w_catbig + $w_statebig + $w_cat + $w_state + $w_snap + $w_many + $w_rec_type + $w_rec + $dd.w | map(clean))
-    }' || rc=$?
+    }
+  + (if $hasq then {class_of: (if ($catalog_ids | index([$q])) != null and ($q | shape_ok($e)) then class_of($q) else null end)} else {} end)' || rc=$?
 
 [ -z "$cat_fd" ] || exec {cat_fd}<&-
 [ -z "$state_fd" ] || exec {state_fd}<&-

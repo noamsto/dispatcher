@@ -402,3 +402,41 @@ field() { jq -c "$1" <<<"$output"; }
   [ "$(field .admitted | jq length)" -eq 2 ]
   [ "$(field .warnings)" = '["model-resolve: no timeout command to bound the open of catalog; ignoring it"]' ]
 }
+
+# P4 (#1381): a 5th <id> argument adds class_of, the class of <id> when the
+# engine's catalog lists it shape-clean; the pace and escalation ladders' @class
+# items read it.
+@test "model-resolve: class_of names a catalogued id's class, gated patterns included" {
+  catalog pi openrouter/anthropic/claude-opus-5-5 openrouter/z-ai/glm-5.4-flash
+  run --separate-stderr "$RESOLVE" pi standard "$CATALOG" "$NONE" openrouter/anthropic/claude-opus-5-5 <"$SETTINGS"
+  [ "$status" -eq 0 ]
+  [ "$(field .class_of)" = '"premium"' ]
+  run --separate-stderr "$RESOLVE" pi deep "$CATALOG" "$NONE" openrouter/z-ai/glm-5.4-flash <"$SETTINGS"
+  [ "$(field .class_of)" = '"standard"' ]
+}
+
+@test "model-resolve: class_of is null for an id the catalog does not list, lists shape-invalid, or a garbled catalog" {
+  catalog claude claude-opus-9-high claude-opus-5-0
+  local id
+  for id in claude-opus-6-0 claude-opus-9-high; do
+    run --separate-stderr "$RESOLVE" claude deep "$CATALOG" "$NONE" "$id" <"$SETTINGS"
+    [ "$status" -eq 0 ]
+    [ "$(field .class_of)" = null ]
+  done
+  run --separate-stderr "$RESOLVE" claude deep "$NONE" "$NONE" claude-opus-5-0 <"$SETTINGS"
+  [ "$(field .class_of)" = null ]
+  printf '{"claude": ' >"$CATALOG"
+  run --separate-stderr "$RESOLVE" claude deep "$CATALOG" "$NONE" claude-opus-5-0 <"$SETTINGS"
+  [ "$status" -eq 0 ]
+  [ "$(field .class_of)" = null ]
+  [ "$(field '.warnings | length')" -eq 1 ]
+}
+
+@test "model-resolve: class_of takes the most expensive overlapping class; four arguments print no class_of" {
+  jq '.classes.claude.standard += ["claude-*-x"]' "$SETTINGS" >"$BATS_TEST_TMPDIR/s2.json"
+  catalog claude claude-opus-x
+  run --separate-stderr "$RESOLVE" claude standard "$CATALOG" "$NONE" claude-opus-x <"$BATS_TEST_TMPDIR/s2.json"
+  [ "$(field .class_of)" = '"premium"' ]
+  resolve claude standard
+  [ "$(field 'has("class_of")')" = false ]
+}

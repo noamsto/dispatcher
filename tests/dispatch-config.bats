@@ -434,6 +434,31 @@ ROWS
   [[ "$stderr" == *"escalation.claude.deep[0].failed must be an array of strings"* ]]
 }
 
+# P4 (#1381): a ladder item may name a class (@cheap|@standard|@premium,
+# optionally :<glob>), a paceDowngrades target a bare class; anything else
+# after @ is refused at load instead of silently matching nothing.
+@test "ladder class items are validated: a bad class or a qualified target is refused" {
+  begin_rows
+  local row json fragment
+  while IFS='|' read -r row json fragment; do
+    [ -n "$row" ] || continue
+    keep_row "$row" shape_refuse_row "$json" "$fragment"
+  done <<'ROWS'
+pace-class-typo|{"paceDowngrades":{"codex":[{"models":["gpt-5.6-sol","@premum"],"to":"gpt-5.6-terra"}]}}|@USER_FILE@ (user layer): paceDowngrades.codex[0].models[1] must be a glob, @cheap, @standard, @premium or @<class>:<glob>
+pace-empty-glob|{"paceDowngrades":{"codex":[{"models":["@premium:"],"to":"gpt-5.6-terra"}]}}|paceDowngrades.codex[0].models[0] must be a glob, @cheap, @standard, @premium or @<class>:<glob>
+pace-to-glob|{"paceDowngrades":{"codex":[{"models":["@premium"],"to":"@standard:gpt-*"}]}}|paceDowngrades.codex[0].to must be a model id, @cheap, @standard or @premium
+esc-inrow|{"escalation":{"claude":{"deep":[{"failed":["sonnet"],"baseline":"sonnet","inRow":["@frontier"]}]}}}|escalation.claude.deep[0].inRow[0] must be a glob, @cheap, @standard, @premium or @<class>:<glob>
+esc-failed|{"escalation":{"claude":{"deep":[{"failed":["@"],"baseline":"sonnet","inRow":["opus"]}]}}}|escalation.claude.deep[0].failed[0] must be a glob, @cheap, @standard, @premium or @<class>:<glob>
+esc-outofrow|{"escalation":{"codex":{"standard":[{"failed":["gpt-5.6-terra"],"baseline":"terra","outOfRow":["@Premium"]}]}}}|escalation.codex.standard[0].outOfRow[0] must be a glob, @cheap, @standard, @premium or @<class>:<glob>
+ROWS
+  finish_rows 6
+
+  user_settings '{"paceDowngrades":{"codex":[{"models":["@premium","@premium:gpt-*-sol"],"to":"@standard"}]},"escalation":{"claude":{"deep":[{"failed":["@standard"],"baseline":"sonnet","inRow":["@premium","@premium:claude-opus-*"]}]}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.paceDowngrades.codex[0].to == "@standard" and .escalation.claude.deep[0].inRow == ["@premium", "@premium:claude-opus-*"]' <<<"$output"
+}
+
 @test "a malformed burnClasses table is refused, naming the layer and the path" {
   user_settings '{"burnClasses":{"claude":{"model":"opus"}}}'
   run --separate-stderr "$CONFIG"

@@ -140,3 +140,14 @@ EOF
     [ "$a" = "$b" ]
   done
 }
+
+# P4 (#1381): _escalation_hop's @class items go through _model_class and
+# _ladder_item, so dispatch-resume.sh carries byte-identical copies of those too.
+@test "model map: the ladder class helpers are byte-identical between dispatch.sh and dispatch-resume.sh" {
+  for fn in _model_class _ladder_item; do
+    a="$(sed -n "/^${fn}() {/,/^}/p" "$DISPATCH")"
+    b="$(sed -n "/^${fn}() {/,/^}/p" "$RESUME")"
+    [ -n "$a" ]
+    [ "$a" = "$b" ]
+  done
+}

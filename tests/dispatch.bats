@@ -18647,3 +18647,148 @@ STUB
   [[ "$output$stderr" != *$'\a'* ]]
   [[ "$output" != *$'\u202e'* ]]
 }
+
+# Model classes P4 (#1381): paceDowngrades and escalation items may name a
+# class (@premium, @premium:<glob>) matched against the catalog, and a
+# paceDowngrades target may be a class (@standard) resolved to its default.
+@test "model classes P4: a catalogued premium codex id is pace-refused by class; only its exact id lifts it" {
+  class_catalog codex gpt-5.7-sol
+  budget_json_at codex 77 345600
+  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep gpt-5.7-sol --agent codex --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"codex 7d is at 77% and 34 points ahead of pace — the premium rung (gpt-5.7-sol) is refused; use the standard rung (gpt-5.6-terra) instead, set DISPATCH_IGNORE_RUNG=gpt-5.7-sol"* ]]
+  local v
+  for v in premium @premium gpt-5.6-sol; do
+    DISPATCH_IGNORE_RUNG=$v DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep gpt-5.7-sol --agent codex --effort high --crew-id c1 "t"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"the premium rung (gpt-5.7-sol) is refused"* ]]
+  done
+  DISPATCH_IGNORE_RUNG=gpt-5.7-sol DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep gpt-5.7-sol --agent codex --effort high --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"rung refusal skipped (DISPATCH_IGNORE_RUNG) — 'gpt-5.7-sol' on --agent codex"* ]]
+}
+
+@test "model classes P4: with no catalog an uncatalogued premium codex id is not pace-refused, as before" {
+  budget_json_at codex 77 345600
+  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep gpt-5.7-sol --agent codex --effort high --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *"premium rung"* ]]
+  # A catalog listing another id: still unrefused.
+  class_catalog codex gpt-5.8-sol
+  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep gpt-5.7-sol --agent codex --effort high --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *"premium rung"* ]]
+}
+
+@test "model classes P4: cursor class entries keep each family's target and never refuse -fast or kimi" {
+  class_catalog cursor grok-4.8-high grok-4.8-high-fast kimi-k4-high cursor-grok-4.7-high
+  cursor_month_json 80 432000 2160000
+  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep grok-4.8-high --agent cursor --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung (grok-4.8-high) is refused; use the standard rung (grok-4.7-medium) instead"* ]]
+  DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep cursor-grok-4.7-high --agent cursor --effort high --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung (cursor-grok-4.7-high) is refused; use the standard rung (cursor-grok-4.6-medium) instead"* ]]
+  local m
+  for m in grok-4.8-high-fast kimi-k4-high; do
+    DISPATCH_PROFILE=work DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$m" --agent cursor --effort high --ignore-map --crew-id c1 "t"
+    [ "$status" -eq 0 ]
+    [[ "$stderr" != *"premium rung"* ]]
+  done
+}
+
+@test "model classes P4: pi's OpenRouter opus rung is refused at a tripped month pace, down to pi's standard default" {
+  opus=openrouter/anthropic/claude-opus-5-5
+  pi_budget_json 80 777600 1814400
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"pi month is at 80% and 50 points ahead of pace — the premium rung ($opus) is refused; use the standard rung (openrouter/deepseek/deepseek-v4.1-flash) instead, set DISPATCH_IGNORE_RUNG=$opus"* ]]
+  # Even at low effort: the standard default carries no burn weight to compare.
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort low --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung ($opus) is refused"* ]]
+  # At pace: allowed. A direct anthropic/* id has no entry.
+  pi_budget_json 75 1814400 777600
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  pi_budget_json 80 777600 1814400
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep anthropic/claude-opus-5-5 --agent pi --effort high --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *"premium rung"* ]]
+}
+
+@test "model classes P4: an unresolvable class target keeps the refusal and names the class" {
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  jq -n '{paceDowngrades: {pi: [{models: ["openrouter/anthropic/claude-opus-*"], to: "@premium"}]}}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  pi_budget_json 80 777600 1814400
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep openrouter/anthropic/claude-opus-5-5 --agent pi --effort high --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"use the premium rung (@premium, unresolved) instead"* ]]
+  [[ "$stderr" == *"dispatch: warning: paceDowngrades target @premium names no pi model"* ]]
+}
+
+@test "model classes P4: a future-dated budget cache drives neither the pace gate nor the claude-blind warning" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  local now
+  now="$(date +%s)"
+  jq -n --argjson now "$now" '{fetched_epoch: ($now + 3600), engines: {claude: {source: "t", windows: {"7d": {used_pct: 80, resets_at: ($now + 345600)}}}}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep opus --agent claude --effort high --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *"premium rung"* ]]
+  # The same cache dated now refuses: the bound, not the window, decides.
+  jq --argjson now "$now" '.fetched_epoch = $now' "$XDG_DATA_HOME/crew/engine-budget.json" >"$BATS_TEST_TMPDIR/b.json"
+  mv "$BATS_TEST_TMPDIR/b.json" "$XDG_DATA_HOME/crew/engine-budget.json"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep opus --agent claude --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung (opus) is refused"* ]]
+
+  jq -n --argjson now "$now" '{fetched_epoch: ($now + 3600), engines: {codex: null}}' >"$XDG_DATA_HOME/crew/engine-budget.json"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep opus --agent claude --effort high --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *"budget gate blind"* ]]
+  jq -n --argjson now "$now" '{fetched_epoch: $now, engines: {codex: null}}' >"$XDG_DATA_HOME/crew/engine-budget.json"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep opus --agent claude --effort high --crew-id c1 "t"
+  [[ "$stderr" == *"budget gate blind: claude quota unknown"* ]]
+}
+
+# _p4_hop <script> <args…> — _escalation_hop from <script> (dispatch.sh or the
+# dispatch-resume.sh copy), against the merged settings and the test caches.
+_p4_hop() {
+  local script=$1 fn
+  shift
+  (
+    for fn in _settings_load _glob_match _exact_match _model_class _ladder_item _escalation_hop; do
+      eval "$(sed -n "/^${fn}() {/,/^}/p" "$script")"
+    done
+    model_catalog="$XDG_DATA_HOME/crew/model-catalog.json"
+    model_class_state="$XDG_DATA_HOME/crew/model-class-state.json"
+    _settings_load
+    _escalation_hop "$@"
+  )
+}
+
+@test "model classes P4: escalation class items match catalogued ids, in dispatch and dispatch resume alike" {
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  jq -n '{escalation: {codex: {standard: [{failed: ["gpt-5.6-terra"], baseline: "terra", outOfRow: ["@premium"]}],
+    deep: [{failed: ["@standard"], baseline: "terra", inRow: ["@premium:gpt-*-sol"]}]}}}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  local script
+  for script in "$DISPATCH" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh"; do
+    rm -f "$XDG_DATA_HOME/crew/model-catalog.json"
+    [ -z "$(_p4_hop "$script" codex standard gpt-5.6-terra gpt-5.7-sol outOfRow)" ]
+    class_catalog codex gpt-5.7-sol gpt-5.7-terra gpt-5.7-luna
+    [ "$(_p4_hop "$script" codex standard gpt-5.6-terra gpt-5.7-sol outOfRow)" = terra ]
+    [ -z "$(_p4_hop "$script" codex standard gpt-5.6-terra gpt-5.7-luna outOfRow)" ]
+    [ "$(_p4_hop "$script" codex deep gpt-5.7-terra gpt-5.7-sol inRow)" = terra ]
+    [ -z "$(_p4_hop "$script" codex deep gpt-5.7-luna gpt-5.7-sol inRow)" ]
+  done
+}
+
+@test "model classes P4: --models never lists an @class escalation item as a model" {
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  jq -n '{escalation: {codex: {standard: [{failed: ["gpt-5.6-terra"], baseline: "terra", outOfRow: ["@premium", "gpt-5.6-sol"]}]}}}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  stub_bin codex
+  DISPATCH_ENGINES="codex" run --separate-stderr run_dispatch --models --json
+  [ "$status" -eq 0 ]
+  jq -e '.engines.codex.tiers.standard.models | (index("gpt-5.6-sol") != null) and (map(select(startswith("@"))) == [])' <<<"$output"
+}
