@@ -103,6 +103,27 @@ func TestReportLinesWarnings(t *testing.T) {
 	}
 }
 
+func TestReportLinesUnusableState(t *testing.T) {
+	for _, autoOff := range []bool{false, true} {
+		f := newPromoteFixture(t, catalogJSON, func(doc map[string]any) {
+			doc["classes"].(map[string]any)["codex"].(map[string]any)["autoPromote"] = !autoOff
+		})
+		f.writeState(`{"codex":{"standard":{"default":"gpt-5.6-terra","vetoed":["gpt-5.7-terra"]}}`)
+		lines := ReportLines(ac1Rows(), f.env)
+		if lines[0] != "Class trials (pooled across repos):" {
+			t.Errorf("header = %q", lines[0])
+		}
+		if !strings.HasPrefix(lines[1], "  class-state is unusable (") ||
+			!strings.HasSuffix(lines[1], "): candidates are judged without its defaults and vetoes; fix or remove "+f.statePath()) {
+			t.Errorf("line after the header = %q", lines[1])
+		}
+		line := reportLine(t, lines)
+		if !strings.HasSuffix(line, "— not judged: class-state unusable") {
+			t.Errorf("autoOff %v: line = %q", autoOff, line)
+		}
+	}
+}
+
 func TestReportLinesNone(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, nil)
 	lines := ReportLines(nil, f.env)

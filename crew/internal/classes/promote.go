@@ -403,6 +403,14 @@ func Check(rows []any, env Env, stderr io.Writer) int {
 	if WorkerRefusal(env.Getenv) != "" {
 		return 0
 	}
+	statePath := StatePath(env.Getenv)
+	if _, _, loaded := Load(statePath); len(loaded) > 0 {
+		for _, w := range loaded {
+			say(stderr, "crew rate: %s\n", w)
+		}
+		say(stderr, "crew rate: class check skipped: %v\n", unusable(loaded, statePath))
+		return 0
+	}
 	verdicts, warnings, err := Evaluate(rows, env)
 	for _, w := range warnings {
 		say(stderr, "crew rate: %s\n", w)
@@ -544,6 +552,11 @@ type txn struct {
 	now      time.Time
 }
 
+// unusable is the refusal to change a state file Load had to complain about.
+func unusable(warnings []string, path string) error {
+	return fmt.Errorf("%w (%s); fix or remove %s", errUnusable, strings.TrimPrefix(warnings[0], warnPrefix), path)
+}
+
 // apply is the single write path. Under the state lock it re-reads the state,
 // lets mutate change one entry and say what changed, then saves and announces
 // the change on the bus and as a decision. The announcement is mandatory, so
@@ -580,12 +593,11 @@ func apply(engine, class string, env Env, stderr io.Writer, prefix string, mutat
 
 	statePath := StatePath(env.Getenv)
 	st, usable, warnings := Load(statePath)
-	switch {
-	case usable:
-	case len(warnings) > 0:
-		// Seeding over a file that exists would erase its history and vetoes.
-		return fmt.Errorf("%w (%s); fix or remove %s", errUnusable, strings.TrimPrefix(warnings[0], warnPrefix), statePath)
-	default:
+	if len(warnings) > 0 {
+		// Saving what Load kept would erase the history and vetoes it dropped.
+		return unusable(warnings, statePath)
+	}
+	if !usable {
 		st = SeedState(s)
 	}
 	if st[engine] == nil {

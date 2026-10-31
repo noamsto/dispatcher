@@ -74,8 +74,10 @@ func CatalogPath(getenv func(string) string) string {
 // Load reads the state file. The file is untrusted: a missing file is silently
 // not usable, a file that is not a bounded regular JSON object is not usable
 // with one warning, and a malformed engine, class, history or vetoed item is
-// dropped alone with a warning so the rest survives. So unusable without a
-// warning means absent, the one case a writer may seed over.
+// dropped alone with a warning so the rest survives. A writer must refuse on
+// any warning, usable or not: saving the survivors would erase what was
+// dropped. Unusable without a warning means absent, the one case it may seed
+// over.
 func Load(path string) (st State, usable bool, warnings []string) {
 	warn := func(format string, args ...any) {
 		warnings = append(warnings, warnPrefix+fmt.Sprintf(format, args...))

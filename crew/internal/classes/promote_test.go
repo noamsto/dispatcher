@@ -384,6 +384,51 @@ func TestUnusableStateRefusesWrites(t *testing.T) {
 	}
 }
 
+func TestPartlyDroppedStateRefusesWrites(t *testing.T) {
+	f := newPromoteFixture(t, catalogJSON, nil)
+	const pruned = `{"codex":{"standard":{"default":null,"vetoed":["gpt-5.7-terra"],"history":[{"from":"a","to":"b"}]}}}`
+	f.writeState(pruned)
+	var stderr bytes.Buffer
+	if got := Check(ac1Rows(), f.env, &stderr); got != 0 {
+		t.Errorf("Check = %d, want 0", got)
+	}
+	refusal := "class-state is unusable ("
+	tail := "); fix or remove " + f.statePath() + "\n"
+	if n := strings.Count(stderr.String(), refusal); n != 1 || !strings.Contains(stderr.String(), tail) {
+		t.Errorf("Check stderr = %q, want the refusal once, ending %q", stderr.String(), tail)
+	}
+	stderr.Reset()
+	if got := Promote("codex", "standard", "gpt-5.7-terra", f.env, &stderr); got != 1 {
+		t.Errorf("Promote = %d, want 1", got)
+	}
+	if !strings.HasPrefix(stderr.String(), "crew: class: "+refusal) {
+		t.Errorf("Promote stderr = %q, want the refusal", stderr.String())
+	}
+	if s := f.stateBytes(); s != pruned {
+		t.Errorf("state rewritten to %q", s)
+	}
+	if rows := f.busRows(); len(rows) != 0 {
+		t.Errorf("bus rows: %v", rows)
+	}
+}
+
+func TestUnusableStateAutoOffProposesNothing(t *testing.T) {
+	f := newPromoteFixture(t, catalogJSON, func(doc map[string]any) {
+		doc["classes"].(map[string]any)["codex"].(map[string]any)["autoPromote"] = false
+	})
+	f.writeState(`{"codex":{"standard":{"default":"gpt-5.6-terra","vetoed":["gpt-5.7-terra"]}}`)
+	var stderr bytes.Buffer
+	if got := Check(ac1Rows(), f.env, &stderr); got != 0 {
+		t.Errorf("Check = %d, want 0", got)
+	}
+	if strings.Contains(stderr.String(), "auto-promotion is off") {
+		t.Errorf("stderr = %q, want no propose line", stderr.String())
+	}
+	if n := strings.Count(stderr.String(), "crew rate: class check skipped: class-state is unusable ("); n != 1 {
+		t.Errorf("stderr = %q, want the skip line once", stderr.String())
+	}
+}
+
 func TestCandidatesCapped(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, nil)
 	long := strings.Repeat("j", 250)

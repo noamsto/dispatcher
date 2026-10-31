@@ -16,9 +16,16 @@ func ReportLines(rows []any, env Env) []string {
 		return []string{"Class trials: unavailable (" + err.Error() + ")"}
 	}
 	var body []string
+	statePath := StatePath(env.withDefaults().Getenv)
+	_, _, loaded := Load(statePath)
+	unjudged := len(loaded) > 0
+	if unjudged {
+		body = append(body, fmt.Sprintf("  class-state is unusable (%s): candidates are judged without its defaults and vetoes; fix or remove %s",
+			strings.TrimPrefix(loaded[0], warnPrefix), statePath))
+	}
 	for _, v := range verdicts {
 		for _, c := range v.Candidates {
-			body = append(body, candidateLine(c, v.AutoOff))
+			body = append(body, candidateLine(c, v.AutoOff, unjudged))
 		}
 		if v.Blocked != "" {
 			body = append(body, fmt.Sprintf("  %s %s: not promoted: %s", cleanID(v.Engine), cleanID(v.Class), v.Blocked))
@@ -37,12 +44,14 @@ func ReportLines(rows []any, env Env) []string {
 	return out
 }
 
-func candidateLine(c Candidate, autoOff bool) string {
+func candidateLine(c Candidate, autoOff, unjudged bool) string {
 	engine, class, model := cleanID(c.Engine), cleanID(c.Class), cleanID(c.Model)
 	status := "eligible"
 	switch {
 	case len(c.Reasons) > 0:
 		status = strings.Join(c.Reasons, "; ")
+	case unjudged:
+		status = "not judged: class-state unusable"
 	case autoOff:
 		status += " (auto-promotion off)"
 	}
