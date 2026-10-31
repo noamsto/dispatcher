@@ -3702,6 +3702,90 @@ EOF
   run ! grep -qE '^new-session|^resize-window' "$STUB_LOG"
 }
 
+@test "remote mode: a failing gh auth status refuses before any label read" {
+  stub_launch_bins
+  _remote_mode_tmux
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >>"$STUB_LOG"
+case "$*" in
+  "auth status"*)
+    echo "X Failed to log in to github.com account octo (keyring)" >&2
+    echo "  - The token in GH_TOKEN is invalid." >&2
+    echo "  - Token: gho_s3cr3tvalue" >&2
+    exit 1
+    ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_EMIT_ROW=1 \
+    run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "remote worker"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"keychain"* ]]
+  [[ "$stderr" == *"gh auth login -h github.com --insecure-storage"* ]]
+  [[ "$stderr" == *"GUI login session"* ]]
+  [[ "$stderr" == *"Failed to log in to github.com account octo"* ]]
+  [[ "$stderr" == *"The token in GH_TOKEN is invalid."* ]]
+  [[ "$stderr" != *"gho_s3cr3tvalue"* ]]
+  [[ "$stderr" != *"Token:"* ]]
+  grep -qx 'auth status --active --hostname github.com' "$STUB_LOG"
+  run ! grep -qx 'auth status --hostname github.com' "$STUB_LOG"
+  run ! grep -qE '^(issue|label)' "$STUB_LOG"
+}
+
+@test "remote mode: a gh without --active falls back to plain gh auth status" {
+  stub_launch_bins
+  _remote_mode_tmux
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >>"$STUB_LOG"
+case "$*" in
+  "auth status --active"*)
+    echo "unknown flag: --active" >&2
+    exit 1
+    ;;
+  "repo view"*) echo "${STUB_DEFAULT_BRANCH:-main}" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  TMUX_PANE=%7 DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_EMIT_ROW=1 \
+    run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "remote worker"
+  [ "$status" -eq 0 ]
+  grep -qx 'auth status --active --hostname github.com' "$STUB_LOG"
+  grep -qx 'auth status --hostname github.com' "$STUB_LOG"
+  [[ "$stderr" != *"keychain"* ]]
+}
+
+@test "remote mode: a gh without --active whose plain auth status fails still refuses" {
+  stub_launch_bins
+  _remote_mode_tmux
+  cat >"$STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >>"$STUB_LOG"
+case "$*" in
+  "auth status --active"*)
+    echo "unknown flag: --active" >&2
+    exit 1
+    ;;
+  "auth status"*)
+    echo "X Failed to log in to github.com account octo (keyring)" >&2
+    exit 1
+    ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+  DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_EMIT_ROW=1 \
+    run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "remote worker"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"keychain"* ]]
+  [[ "$stderr" == *"Failed to log in to github.com account octo"* ]]
+  grep -qx 'auth status --hostname github.com' "$STUB_LOG"
+  run ! grep -qE '^(issue|label)' "$STUB_LOG"
+}
+
 @test "outside tmux: the worker window goes in a per-crew session, created on demand" {
   stub_launch_bins
   _remote_mode_tmux
