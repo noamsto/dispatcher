@@ -3490,3 +3490,41 @@ _target_restored_fixture() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"is still alive"* ]]
 }
+
+# Model classes P7 (#1391): --model @class resolves like dispatch's positional
+# sigil. The launch and the resume row get the resolved id; the precheck gets
+# the sigil, so dispatch's own class admission applies.
+@test "resume --model @standard resolves to the class default; a header sigil and an unknown class are refused" {
+  setup_worker_wt
+  sed -i 's/^model: sonnet/model: haiku/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --model @standard
+  [ "$status" -eq 0 ]
+  grep -q -- '--name iris --model sonnet --effort medium' <(launch_log)
+  grep 'resume precheck' "$STUB_LOG" | grep -q -- 'standard @standard '
+  [ "$(jq -r 'select(.kind == "resume") | .model' "$(bus_log)")" = sonnet ]
+  : >"$STUB_LOG"
+  run run_resume --model @frontier
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unknown model class '@frontier'"* ]]
+  run ! grep -q 'resume precheck' "$STUB_LOG"
+  sed -i 's/^model: haiku/model: @premium/' "$WT/WORKER_TASK.md"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to launch: model '@premium' is not a plain word"* ]]
+}
+
+@test "resume escalation: --model @premium after a failed standard terra escalates on the resolved id" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-terra/' "$WT/WORKER_TASK.md"
+  _resume_esc_seed s1-99 200 codex gpt-5.6-terra standard
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_resume --model @premium
+  [ "$status" -eq 0 ]
+  _precheck_ignores_map
+  grep 'resume precheck' "$STUB_LOG" | grep -q -- 'standard @premium '
+  grep -qx 'model: gpt-5.6-sol' "$WT/WORKER_TASK.md"
+  grep -qx 'escalated_from: terra' "$WT/WORKER_TASK.md"
+}

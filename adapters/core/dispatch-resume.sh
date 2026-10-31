@@ -28,7 +28,8 @@ engine session, and re-run only the gates this command names.
                       '#N' or N, a Linear id, a branch, a codename, or
                       worker:<branch>#<session>
   --agent E           Engine to relaunch on: claude | codex | cursor | pi
-  --model M           Model for that engine (default: the task doc's)
+  --model M           Model for that engine (default: the task doc's); @cheap, @standard
+                      or @premium resolves to that class's default, as in dispatch
   --effort E          low | medium | high | xhigh | max | ultra (default: the task doc's)
   --mcp LIST          MCP for the lead: analytics (claude) or mcpServers names,
                       comma-separated (default: the task doc's mcp: line)
@@ -906,7 +907,9 @@ esac
 _require_safe crew_id "$crew_id" "$_id_re"
 [ -z "$agent_name" ] || _require_safe agent_name "$agent_name" "$_id_re"
 [ -z "$grid_roles" ] || _require_safe roles "$grid_roles" "$_roles_re"
-_require_safe model "$model" "$_model_re"
+# An explicit --model @class resolves once the settings load, below; the header
+# is worker-writable, so a sigil read from it is refused here like any odd value.
+[[ -n $model_flag && $model == @* ]] || _require_safe model "$model" "$_model_re"
 _require_safe effort "$effort" "$_effort_re"
 
 # _resolve_dir <OUT_VAR> <ENV_VAR> <baked> <label> — resolve a DISPATCHER_*_DIR
@@ -976,8 +979,8 @@ _ensure_roster_render() {
   CREW_ID="$1" crew roster-render --crew "$1" ${flags[@]+"${flags[@]}"} --detach >/dev/null 2>&1 || true
 }
 
-# _settings_load, _glob_match, _exact_match, _model_class, _class_item and
-# _escalation_hop: duplicated from dispatch.sh (standalone build),
+# _settings_load, _glob_match, _exact_match, _model_class, _class_item,
+# _class_sigil and _escalation_hop: duplicated from dispatch.sh (standalone build),
 # parity-tested. See dispatch.sh for their contracts: the settings come from
 # dispatch-config, the escalation rules from defaults.json, an @class item's
 # class from model-resolve over the same catalog and class-state caches.
@@ -1028,6 +1031,42 @@ _class_item() {
   [ -z "$g" ] || [[ $1 == $g ]]
 }
 
+# _class_sigil <agent> <tier> <@class> — the model id a positional or role
+# @cheap, @standard or @premium names (docs/model-classes.md D6): model-resolve's
+# default for <tier>'s row when that row's class is <class>, else for <agent>'s
+# first row of that class in trivial, standard, deep order. The catalog and
+# class-state caches feed it; with neither it is the seed default (claude, which
+# has no catalog, gets its alias: D8). Admission is not checked here: the tier
+# gate does that. Prints the id, or says why on stderr and fails: an unknown
+# class, no tier row taking its default from the class (pi has none for
+# premium, though deep admits premium ids), or a resolver that fails.
+_class_sigil() {
+  local c="${3#@}" t out
+  case "$c" in
+  cheap | standard | premium) ;;
+  *)
+    echo "dispatch: unknown model class '$3' — a class sigil is @cheap, @standard or @premium" >&2
+    return 1
+    ;;
+  esac
+  t="$(jq -r --arg a "$1" --arg t "$2" --arg c "$c" '. as $s | ($s.classes[$a].tiers // {}) as $r
+    | first(($t, "trivial", "standard", "deep") | select(($r[.].class? == $c) and (($s.modelMap[$a][.]? | type) == "object"))) // empty' <<<"$settings" 2>/dev/null)" || t=""
+  if [ -z "$t" ]; then
+    echo "dispatch: $3 names no $1 model — no $1 tier row takes its default from class $c (classes.$1.tiers), so the class has no default; name a model id instead (dispatch --models lists them)" >&2
+    return 1
+  fi
+  out="$("$BASH" "${MODEL_RESOLVE_BIN:-@modelResolve@}" "$1" "$t" "$model_catalog" "$model_class_state" <<<"$settings")" || out=""
+  out="$(jq -ces 'if length == 1 and (.[0] | type) == "object" then .[0] else empty end
+    | walk(if type == "string" then gsub("[[:cntrl:]\\p{Cf}]"; "") else . end)' <<<"$out" 2>/dev/null)" || out=""
+  jq -r '.warnings[]? | strings | "dispatch: warning: " + .' <<<"$out" >&2 2>/dev/null || true
+  out="$(jq -r '.default | strings' <<<"$out" 2>/dev/null)" || out=""
+  if [ -z "$out" ]; then
+    echo "dispatch: $3 names no $1 model — model-resolve gave no default for the $1 $t row" >&2
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
 _escalation_hop() {
   local rule="" i glob baseline item c3="" c4="" k3="" k4=""
   while IFS=$'\t' read -r i glob; do
@@ -1065,6 +1104,16 @@ mapfile -t required_protocol_files < <({ printf '%s\n' WORKER_PROTOCOL.md EVIDEN
 _require_protocol_files "$PROTOCOL_DIR" "${required_protocol_files[@]}"
 _check_protocol_rev "$PROTOCOL_DIR" "dispatch resume"
 _settings_load
+
+# --model @class (D6) resolves as dispatch's positional sigil does. The launch,
+# the resume row and the escalation check see the resolved id; the precheck gets
+# the sigil, so dispatch's own class admission and refusal text apply.
+model_sigil=""
+if [[ -n $model_flag && $model == @* ]]; then
+  model_sigil="$model"
+  model="$(_class_sigil "$agent" "$tier" "$model_sigil")" || exit 1
+  _require_safe model "$model" "$_model_re"
+fi
 
 # mcp is the one gate the precheck below cannot make: passing --mcp there would
 # have dispatch resolve and validate the config files too, which this script
@@ -1186,7 +1235,7 @@ else
   fi
 fi
 if [ -z "$rearm_roles" ]; then
-  DISPATCH_CHROME_SELF="$_crew_dir_real"$'\x1f'"$branch" DISPATCH_PRECHECK=1 dispatch "$tier" "$model" "${precheck[@]}" "resume precheck" || exit 1
+  DISPATCH_CHROME_SELF="$_crew_dir_real"$'\x1f'"$branch" DISPATCH_PRECHECK=1 dispatch "$tier" "${model_sigil:-$model}" "${precheck[@]}" "resume precheck" || exit 1
 fi
 
 # _args_have <argv line> <token>... — true when every token appears in the line

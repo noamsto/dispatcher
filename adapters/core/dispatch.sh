@@ -27,7 +27,8 @@ come before the title; put -- before a title that starts with a dash.
 
 Task shape
   tier                    Positional: trivial | standard | deep — sets review rigor
-  model                   Positional: the model id or alias the engine runs
+  model                   Positional: the model id or alias the engine runs, or @cheap,
+                          @standard or @premium: that class's current default (dispatch --models)
   --effort E              low | medium | high | xhigh | max | ultra (required)
   --plan provided|required   Task doc is the plan of record (default: required)
 
@@ -39,7 +40,7 @@ Engine and roles
                           machine; with --host, only to a hosts.NAME.chrome host)
   --grid                  Role grid derived from the tier (critics, reviewer)
   --no-grid               No role grid (suppresses the deep critics default)
-  --roles LIST            Grid as name[,name=<model>|name=<agent>:<model>[@effort]]
+  --roles LIST            Grid as name[,name=<model>|name=<agent>:<model>[@effort]]; a model may be @class
   --lazy                  Stamp the grid but start no pane; spawn each on demand
   --status                Add a crew-status pane beside the grid
   --fresh-seams           Relaunch a claude or pi lead fresh at the execute and review seams
@@ -92,6 +93,7 @@ Internal (called by workers and the harness, not by hand)
 Examples
   dispatch standard sonnet --effort high --agent claude 42 "fix the roster age column"
   dispatch deep opus --effort max --grid --also-closes 43 ENG-12 "rework the claim lock"
+  dispatch deep @premium --agent codex --effort high 44 "split the settings resolver"
 HELP
 }
 
@@ -162,7 +164,7 @@ refuse_claude_sonnet_cap() {
   exit 1
 }
 
-# pace_rule_target <agent> <model> <effort> [lead] — refuse one premium launch target
+# pace_rule_target <agent> <model> <effort> [lead] [<@class>] — refuse one premium launch target
 # when its fresh pace window (7d, or pi's/cursor's month) is materially ahead of pace.
 # The DISPATCH_IGNORE_RUNG escape is omitted on --host, which refuses that
 # variable: on the local side remote_host is set, and on the remote side the
@@ -172,15 +174,17 @@ refuse_claude_sonnet_cap() {
 # The refusal names the target's class and the downgrade as class plus resolved
 # id: a `to: "@<class>"` resolves through _class_default (unresolved keeps the
 # refusal), and with a model catalog each id's own class (_model_class) replaces
-# the premium/standard default. Until a positional @class exists the typed id is
-# the resolved one, so DISPATCH_IGNORE_RUNG compares against that one id.
+# the premium/standard default. <@class> is the sigil <model> was resolved from
+# (_class_sigil): the refusal then names it and the class it typed, as
+# "premium rung (codex premium: @premium → gpt-5.6-sol)". DISPATCH_IGNORE_RUNG
+# still compares against the resolved id only, never the sigil (D2).
 # A direct anthropic/* id on pi bills pi's prepaid Anthropic credit, not
 # OpenRouter: its pace window is engines.pi.anthropic (paced from as_of to
 # expires), never the OpenRouter month, and it has no effort rung, so direct
 # sonnet is never pace-refused.
 pace_rule_target() {
-  local target_agent="$1" target_model="$2" target_effort="$3" target_role="${4:-}" model_downgrade="" model_downgrade_label="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause escape
-  local down_to model_rung target_class=premium down_class=standard c
+  local target_agent="$1" target_model="$2" target_effort="$3" target_role="${4:-}" target_sigil="${5:-}" model_downgrade="" model_downgrade_label="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause escape
+  local down_to model_rung model_rung_label target_class=premium down_class=standard c
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
   # The window test runs first, so a target on a green budget never pays for the
   # rung lookup (an @class item runs model-resolve).
@@ -250,6 +254,11 @@ pace_rule_target() {
           [ -z "$c" ] || down_class="$c"
         fi
       fi
+      model_rung_label="$target_model"
+      if [ -n "$target_sigil" ]; then
+        target_class="${target_sigil#@}"
+        model_rung_label="$target_agent $target_class: $target_sigil → $target_model"
+      fi
       # sonnet's ceiling is `high` (the cap above), so name the effort too.
       model_downgrade_label="$model_downgrade"
       if [ -z "$model_downgrade" ]; then
@@ -260,7 +269,7 @@ pace_rule_target() {
       fi
       escape=""
       [ -n "${remote_host:-}" ] || [ -n "${DISPATCH_TMUX_SESSION:-}" ] || escape="set DISPATCH_IGNORE_RUNG=$target_model to override just this refusal, "
-      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the $target_class rung ($target_model) is refused; use the $down_class rung ($model_downgrade_label) instead, ${escape}or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
+      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the $target_class rung ($model_rung_label) is refused; use the $down_class rung ($model_downgrade_label) instead, ${escape}or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
       exit 1
     fi
   fi
@@ -1950,6 +1959,42 @@ _class_default() {
     jq -r '.default | strings' <<<"$out"
     return 0
   done
+}
+
+# _class_sigil <agent> <tier> <@class> — the model id a positional or role
+# @cheap, @standard or @premium names (docs/model-classes.md D6): model-resolve's
+# default for <tier>'s row when that row's class is <class>, else for <agent>'s
+# first row of that class in trivial, standard, deep order. The catalog and
+# class-state caches feed it; with neither it is the seed default (claude, which
+# has no catalog, gets its alias: D8). Admission is not checked here: the tier
+# gate does that. Prints the id, or says why on stderr and fails: an unknown
+# class, no tier row taking its default from the class (pi has none for
+# premium, though deep admits premium ids), or a resolver that fails.
+_class_sigil() {
+  local c="${3#@}" t out
+  case "$c" in
+  cheap | standard | premium) ;;
+  *)
+    echo "dispatch: unknown model class '$3' — a class sigil is @cheap, @standard or @premium" >&2
+    return 1
+    ;;
+  esac
+  t="$(jq -r --arg a "$1" --arg t "$2" --arg c "$c" '. as $s | ($s.classes[$a].tiers // {}) as $r
+    | first(($t, "trivial", "standard", "deep") | select(($r[.].class? == $c) and (($s.modelMap[$a][.]? | type) == "object"))) // empty' <<<"$settings" 2>/dev/null)" || t=""
+  if [ -z "$t" ]; then
+    echo "dispatch: $3 names no $1 model — no $1 tier row takes its default from class $c (classes.$1.tiers), so the class has no default; name a model id instead (dispatch --models lists them)" >&2
+    return 1
+  fi
+  out="$("$BASH" "${MODEL_RESOLVE_BIN:-@modelResolve@}" "$1" "$t" "$model_catalog" "$model_class_state" <<<"$settings")" || out=""
+  out="$(jq -ces 'if length == 1 and (.[0] | type) == "object" then .[0] else empty end
+    | walk(if type == "string" then gsub("[[:cntrl:]\\p{Cf}]"; "") else . end)' <<<"$out" 2>/dev/null)" || out=""
+  jq -r '.warnings[]? | strings | "dispatch: warning: " + .' <<<"$out" >&2 2>/dev/null || true
+  out="$(jq -r '.default | strings' <<<"$out" 2>/dev/null)" || out=""
+  if [ -z "$out" ]; then
+    echo "dispatch: $3 names no $1 model — model-resolve gave no default for the $1 $t row" >&2
+    return 1
+  fi
+  printf '%s\n' "$out"
 }
 
 # _pace_burn_weight <model> <effort> — the burn weight defaults.json's
@@ -4384,7 +4429,7 @@ _spec_lint() {
 # that guard this machine's quota and claims, the remote dispatch, then the
 # local record of the row the remote confirms.
 _dispatch_remote() {
-  local refused="" engines out row rc=0 wid occupied tok n holder v spec rest role_agent role_model role_effort
+  local refused="" engines out row rc=0 wid occupied tok n holder v spec rest role_agent role_model role_effort sigil lead_model
   local -a avoid=() run_env=() role_specs=()
   [ "${#add_dir_flags[@]}" -eq 0 ] || refused=--add-dir
   [ -z "$base_flag" ] || refused=--base
@@ -4450,16 +4495,26 @@ _dispatch_remote() {
   # here for the lead and for every role on claude (a role naming no engine runs
   # on the lead's). The fan-out budget and load gate are per host: the remote
   # dispatch runs its own.
+  # The remote resolves a @class sigil against its own caches; claude has no
+  # catalog (D8), so its sigils resolve the same here for these gates.
   if [ "$agent" = claude ]; then
-    pace_rule_target claude "$model" "$effort"
+    sigil=""
+    lead_model="$model"
+    if [[ $model == @* ]]; then
+      sigil="$model"
+      lead_model="$(_class_sigil claude "$tier" "$sigil")" || exit 1
+    fi
+    pace_rule_target claude "$lead_model" "$effort" "" "$sigil"
     budget_stop claude
     absolute_limit_stop claude
   fi
   [ -z "$grid_roles" ] || IFS=',' read -r -a role_specs <<<"$grid_roles"
   for spec in ${role_specs[@]+"${role_specs[@]}"}; do
     role_effort="$effort"
-    [[ $spec != *@* ]] || role_effort="${spec##*@}"
-    spec="${spec%@*}"
+    if [[ $spec == *@* ]] && [[ ${spec%@*} != *[=:] ]]; then
+      role_effort="${spec##*@}"
+      spec="${spec%@*}"
+    fi
     rest=""
     [[ $spec != *=* ]] || rest="${spec#*=}"
     role_agent="$agent" role_model="${rest:-$model}"
@@ -4470,7 +4525,12 @@ _dispatch_remote() {
       ;;
     esac
     [ "$role_agent" = claude ] || continue
-    pace_rule_target claude "$role_model" "$role_effort"
+    sigil=""
+    if [[ $role_model == @* ]]; then
+      sigil="$role_model"
+      role_model="$(_class_sigil claude "$tier" "$sigil")" || exit 1
+    fi
+    pace_rule_target claude "$role_model" "$role_effort" "" "$sigil"
     budget_stop claude "${spec%%=*}"
     absolute_limit_stop claude "${spec%%=*}"
   done
@@ -4997,6 +5057,14 @@ _settings_load
 profile="$(jq -r '.profile // "personal"' <<<"$settings")"
 # A configured localModels id: its entry, not modelMap, admits it, and its
 # endpoint's slots, not OpenRouter quota, are its budget.
+# A positional @class names that class's default (_class_sigil), resolved before
+# every gate: the gates, the task doc, the dispatch row and the launch all see
+# the resolved id. model_sigil keeps the typed form for the refusals.
+model_sigil=""
+if [[ $model == @* ]]; then
+  model_sigil="$model"
+  model="$(_class_sigil "$agent" "$tier" "$model_sigil")" || exit 1
+fi
 local_entry=""
 [ "$agent" = pi ] && local_entry="$(_local_entry "$settings" "$model")"
 
@@ -5227,7 +5295,17 @@ if [ -n "$local_entry" ]; then
   fi
 elif [ -z "$ignore_map" ]; then
   tier_ok=0
-  _model_in_row "$agent" "$tier" "$model" && tier_ok=1
+  # A sigil's class must be one the row admits: then its resolved id needs no
+  # seed or catalog match to be refused, and only a proven escalation lifts it.
+  class_admitted=1 tier_admits=""
+  if [ -n "$model_sigil" ]; then
+    tier_admits="$(jq -r --arg a "$agent" --arg t "$tier" '.classes[$a].tiers[$t] // {} | (.admits // [.class // empty]) | map("@" + .) | join(", ")' <<<"$settings")"
+    case ", $tier_admits, " in
+    *", $model_sigil, "*) ;;
+    *) class_admitted="" ;;
+    esac
+  fi
+  if [ -n "$class_admitted" ] && _model_in_row "$agent" "$tier" "$model"; then tier_ok=1; fi
   if [ "$tier_ok" = 0 ]; then
     # Escalation: if the model is not in the tier's row but IS the one-rung-up
     # target from the failed model, AND a prior worker ended failed, allow it.
@@ -5244,12 +5322,16 @@ elif [ -z "$ignore_map" ]; then
     fi
     # A catalogued class match: after escalation, so a proven escalation
     # target keeps its escalated_from stamp.
-    if [ "$tier_ok" = 0 ] && _model_class_admitted "$agent" "$tier" "$model"; then
+    if [ "$tier_ok" = 0 ] && [ -n "$class_admitted" ] && _model_class_admitted "$agent" "$tier" "$model"; then
       tier_ok=1
     fi
     if [ "$tier_ok" = 0 ]; then
       tier_expected="$(_row_expected "$agent" "$tier")"
-      echo "dispatch: model '$model' is not $tier's row for --agent $agent — expected $tier_expected, or pass --ignore-map (the human's model decision). See dispatch-orchestration.md \"Tier map\"." >&2
+      refused="model '$model'" tier_expected="expected $tier_expected"
+      if [ -n "$model_sigil" ]; then
+        refused="class $model_sigil ($model)" tier_expected="$tier admits ${tier_admits:-no class}; $tier_expected"
+      fi
+      echo "dispatch: $refused is not $tier's row for --agent $agent — $tier_expected, or pass --ignore-map (the human's model decision). See dispatch-orchestration.md \"Tier map\"." >&2
       exit 1
     fi
   fi
@@ -5325,6 +5407,7 @@ role_names=()
 role_agents=()
 role_models=()
 role_efforts=()
+role_sigils=()
 if [ -n "$no_grid" ]; then
   if [ -n "$grid_flag" ] || [ -n "$grid_roles" ]; then
     echo "dispatch: --no-grid conflicts with --grid/--roles" >&2
@@ -5366,10 +5449,11 @@ if [ -n "$grid_roles" ]; then
     role_effort="$effort"
     role_spec="$spec"
     role_effort_explicit=""
-    if [[ $role_spec == *"@"* ]]; then
+    # An @ right after `=` or `agent:` starts a class sigil, not the effort suffix.
+    if [[ $role_spec == *"@"* ]] && [[ ${role_spec%@*} != *[=:] ]]; then
       role_spec_prefix="${role_spec%@*}"
       role_effort="${role_spec##*@}"
-      if [ -z "$role_spec_prefix" ] || [ -z "$role_effort" ] || [[ $role_spec_prefix == *"@"* ]]; then
+      if [ -z "$role_spec_prefix" ] || [ -z "$role_effort" ] || [[ ${role_spec_prefix//[=:]@/} == *"@"* ]]; then
         echo "dispatch: invalid role effort suffix in '$spec' (use role[=model|agent:model][@effort])" >&2
         exit 1
       fi
@@ -5414,6 +5498,11 @@ if [ -n "$grid_roles" ]; then
       *) role_model="$rest" ;;
       esac
     fi
+    role_sigil=""
+    if [[ $role_model == @* ]]; then
+      role_sigil="$role_model"
+      role_model="$(_class_sigil "$role_agent" "$tier" "$role_sigil")" || exit 1
+    fi
     if ! valid_role_model "$role_agent" "$role_model"; then
       echo "dispatch: invalid model '$role_model' for role '$role'" >&2
       exit 1
@@ -5432,6 +5521,7 @@ if [ -n "$grid_roles" ]; then
     role_agents+=("$role_agent")
     role_models+=("$role_model")
     role_efforts+=("$role_effort")
+    role_sigils+=("$role_sigil")
   done
 fi
 roles_stamp=""
@@ -5445,11 +5535,11 @@ fi
 
 # All launch targets are resolved now. Validate the lead and every eager role
 # before any pane is created; lazy roles validate their final override later.
-[ -n "$local_entry" ] || pace_rule_target "$agent" "$model" "$effort" lead
+[ -n "$local_entry" ] || pace_rule_target "$agent" "$model" "$effort" lead "$model_sigil"
 if [ -z "$grid_lazy" ]; then
   for i in "${!role_names[@]}"; do
     if [ "${role_agents[$i]}" = pi ] && _local_id "${role_models[$i]}"; then continue; fi
-    pace_rule_target "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}"
+    pace_rule_target "${role_agents[$i]}" "${role_models[$i]}" "${role_efforts[$i]}" "" "${role_sigils[$i]}"
     budget_stop "${role_agents[$i]}" "${role_names[$i]}"
     absolute_limit_stop "${role_agents[$i]}" "${role_names[$i]}"
   done

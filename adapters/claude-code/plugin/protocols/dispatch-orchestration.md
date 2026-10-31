@@ -25,7 +25,7 @@ flowchart TD
     CURSOR --> CU["cursor · tier → model map"]
     PI --> PM["pi · tier → model map"]
 
-    OPUS --> D[["dispatch &lt;tier&gt; &lt;model&gt; [--agent claude|codex|cursor|pi] [id] &lt;title&gt;"]]
+    OPUS --> D[["dispatch &lt;tier&gt; &lt;model|@class&gt; [--agent claude|codex|cursor|pi] [id] &lt;title&gt;"]]
     HAIKU --> D
     SONNET --> D
     GH --> D
@@ -37,76 +37,105 @@ flowchart TD
 
 ## Model map (single source of truth)
 
-The dispatcher picks the tier-appropriate model for the chosen engine from this
-table. This table is the only place concrete **worker** model versions appear —
-prose elsewhere says "the tier-appropriate model from the model map".
-The rows the Tier map gate enforces are data in `adapters/core/defaults.json`;
-the tables under "Tier map" are generated from it and the first model in each
-cell below is checked against it.
-Orchestrator (dispatcher-session) defaults live in "Orchestrator engines" below;
-consult-roster versions live in `WORKER_PLAN.md` → "Orchestration consult".
-Bump the matching table when a new model ships. The `refresh-scores` cache
-(`~/.local/share/crew/model-scores.json`) is the external signal for when a
-rung needs that bump — see `DISPATCHER_PROTOCOL.md` → "External standings".
+The dispatcher picks the tier-appropriate model for the chosen engine by
+**class**: `cheap`, `standard` or `premium`, the burn classes' names. Each
+engine's classes, the tiers whose default they supply, the tiers that admit
+them, their patterns and their seed defaults are data in
+`adapters/core/defaults.json` (`classes`, `modelMap`); the table below is
+generated from it. Model versions appear only in generated tables and in rules
+about one model (the recorded cursor Task roster, the direct-anthropic credit
+lane); prose names classes. A class means the engine's current class default: the seed default
+below, or one a promotion recorded (`DISPATCHER_PROTOCOL.md` → "Model-class
+promotions"); `dispatch --models` prints the live one.
+
+**The `@class` sigil.** Pass a class as the model: `dispatch deep @premium
+--agent codex`, `dispatch resume --model @standard`, `--roles
+reviewer=codex:@premium`, or `crew hold add --model @premium` (resolved at
+release). It resolves before every gate to the class default of that tier's
+row, or of the engine's first row of that class: claude, with no catalog, gets
+its alias (`@premium` → `opus`). The task doc, the dispatch row and
+`roles.json` record the resolved id. A class the tier does not admit is
+refused like an off-row model, naming the class; `--ignore-map` still resolves
+it and skips only that check. A class with no default on the engine (pi has no
+premium row, though pi `deep` admits premium ids: name the id) is refused,
+naming why. `DISPATCH_IGNORE_RUNG` and `DISPATCH_SKIP_MODEL_CHECK` take the
+resolved id, never the sigil.
+
+<!-- BEGIN generated:model-classes from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->
+
+| engine | class | default on | admitted on | patterns | seed default |
+| --- | --- | --- | --- | --- | --- |
+| claude | `@cheap` | `trivial` | `trivial`, `standard` | `haiku`, `claude-haiku-*` | `haiku` |
+| claude | `@standard` | `standard` | `trivial`, `standard`, `deep` | `sonnet`, `claude-sonnet-*` | `sonnet` |
+| claude | `@premium` | `deep` | `trivial`, `standard`, `deep` | `opus`, `claude-opus-*` | `opus` |
+| codex | `@cheap` | `trivial` | `trivial`, `standard` | `gpt-*-luna` | `gpt-5.6-luna` |
+| codex | `@standard` | `standard` | `standard`, `deep` | `gpt-*-terra` | `gpt-5.6-terra` |
+| codex | `@premium` | `deep` | `deep` | `gpt-*-sol` | `gpt-5.6-sol` |
+| cursor | `@cheap` | `trivial` | `trivial`, `standard` | `grok-*-low`, `grok-*-low-fast`, `cursor-grok-*-low`, `cursor-grok-*-low-fast` | `grok-4.7-low` |
+| cursor | `@standard` | `standard` | `standard`, `deep` | `grok-*-medium`, `grok-*-medium-fast`, `cursor-grok-*-medium`, `cursor-grok-*-medium-fast` | `grok-4.7-medium` |
+| cursor | `@premium` | `deep` | `deep` | `kimi-*-high`, `grok-*-high`, `grok-*-high-fast`, `cursor-grok-*-high`, `cursor-grok-*-high-fast` | `kimi-k3-high` |
+| pi | `@standard` | `trivial`, `standard`, `deep` | `trivial`, `standard`, `deep` | `openrouter/deepseek/deepseek-v*-flash`, `openrouter/z-ai/glm-*-flash`, `openrouter/qwen/qwen*-flash`, `anthropic/claude-sonnet-*` (needs anthropic_credits) | `openrouter/deepseek/deepseek-v4.1-flash` |
+| pi | `@premium` | — | `deep` | `openrouter/anthropic/claude-opus-*` (needs pi_month_target), `anthropic/claude-opus-*` (needs anthropic_credits) | — |
+
+<!-- END generated:model-classes -->
+
+Orchestrator (dispatcher-session) defaults live in "Orchestrator engines"
+below. A newer catalogued match of a class pattern needs no map edit: the
+catalog (`refresh-models`) admits it as a trial, and promotion makes it the
+class default. The `refresh-scores` cache flags a rung a newer model has
+overtaken — see `DISPATCHER_PROTOCOL.md` → "External standings".
 
 **Burn classes.** Claude, Codex, and Cursor are subscriptions, so their cost is
 quota burn. Pi/OpenRouter is usage-priced; once a key is configured it's
 represented as `engines.pi` (month-to-date spend vs an optional monthly
-target, not a quota window) — a pi run on the Flash rungs is roughly $0.5–2
-per Flash run, which is what makes pi the cheap lane to shed claude burn
-onto. Subscription rungs group into three classes:
-**premium** — opus at `medium`+
-(fable ≈2–4× opus per task), `gpt-5.6-sol`, `grok-4.7-high`; **standard** — opus at
-`low`, sonnet, `gpt-5.6-terra`, `grok-4.7-medium`; **cheap** — haiku,
-`gpt-5.6-luna`, `grok-4.7-low`, `composer-2.5*` (free). Effort multiplies burn
-within a rung (`xhigh`/`max`; codex `ultra` most); opus's class follows effort
-(`low` → standard, `medium`+ → premium, `xhigh`/`max` → premium and
-heavier). **Cursor `-fast` doubles the
-token rate on top of that** ($2/M in + $6/M out standard against $4/M + $12/M
-fast on Grok 4.7 and 4.6; 4.5 charges 3× on output), so it lifts a rung a whole class:
-`-medium-fast` burns like premium `-high`, and `-low-fast` like standard. It is
-a deliberate "I need this turn now" override, never the cheap lane. When the budget tightens
-(`DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever"), walk down a burn
-class before walking down a tier — burn only sets model strength, tier sets
-review depth.
+target, not a quota window) — a pi run on its standard class is roughly
+$0.5–2, which is what makes pi the cheap lane to shed claude burn onto. A
+subscription model burns at its selection class (weights: `burnClasses` in
+`defaults.json`, else the class floor: cheap 1, standard 2, premium 4), with
+four exceptions: opus's class follows effort (`low` → standard, `medium`+ →
+premium, `xhigh`/`max` heavier); fable burns ≈2–4× opus per task; composer is
+free; and **cursor `-fast` doubles the token rate**, lifting a rung a whole
+class (`-medium-fast` burns like premium `-high`, `-low-fast` like standard) —
+a deliberate "I need this turn now" override, never the cheap lane. Effort
+multiplies burn within a rung (`xhigh`/`max`; codex `ultra` most). When the
+budget tightens (`DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever"), walk
+down a burn class before walking down a tier — burn only sets model strength,
+tier sets review depth.
 
 | Tier       | claude (worker → execute → escalate) | codex (worker → execute → escalate) | cursor (worker → execute → escalate) | pi (worker → execute → escalate) |
 | ---------- | ------------------------------------ | ----------------------------------- | ------------------------------------ | -------------------------------- |
-| `deep`     | **opus** → **sonnet** / **haiku** (named-edit plan steps, never the lead) → escalated **opus**; escalate to **`claude-fable-5-1`** only as a last resort after opus @**`xhigh`** has failed on hard architecture/complex-bug work | **`gpt-5.6-sol`** → **terra** → escalated **sol** | **`kimi-k3-high`** → **`grok-4.7-medium`** → escalated **`grok-4.7-high`** | **`openrouter/deepseek/deepseek-v4.1-flash`** @max → `execute` `:high` / `execute-light` `:low` → `execute-escalated` `:max`; default grid `spec-critic,plan-critic` |
-| `standard` | **sonnet** @**medium** / **haiku** @**medium** (fully specified, `--plan provided`) → **sonnet** / **haiku** (named-edit plan steps) → escalated **opus** @**medium**; opus stays admitted in the row as the one-rung escalation; security-adjacent work leads on **opus** @**medium** (Sonnet 5.5's safeguard fallback is Sonnet 5 with thinking disabled); UI and underspecified work lead on **sonnet** like any other standard task | **`gpt-5.6-terra`** → **luna** → escalated **terra** | **`grok-4.7-medium`** → **`grok-4.7-low`** → escalated **medium** | **`openrouter/deepseek/deepseek-v4.1-flash`** → `execute` `:high` / `execute-light` `:low` → `execute-escalated` `:max`; no default grid; rotation alternatives **`openrouter/z-ai/glm-5.3-flash`**, **`openrouter/qwen/qwen3.8-flash`** |
-| `trivial`  | **haiku** @**low** → escalated **sonnet** @**low** → **opus** @**low**; no delegation | **`gpt-5.6-luna`** — no delegation | **`grok-4.7-low`** — no delegation | **`openrouter/deepseek/deepseek-v4.1-flash`** — no grid; **`openrouter/deepseek/deepseek-v4-flash`** and **`openrouter/deepseek/deepseek-v4.1-flash-1017`** also accepted |
+| `deep`     | **@premium** → @standard / @cheap (named-edit plan steps, never the lead) → escalated @premium; escalate to **fable** only as a last resort after @premium @**`xhigh`** has failed on hard architecture/complex-bug work | **@premium** → @standard → escalated @premium | **@premium** (kimi) → @standard (Grok) → escalated Grok @premium | **@standard** @max → `execute` `:high` / `execute-light` `:low` → `execute-escalated` `:max`; default grid `spec-critic,plan-critic` |
+| `standard` | **@standard** @**medium** / @cheap @**medium** (fully specified, `--plan provided`) → @standard / @cheap (named-edit plan steps) → escalated @premium @**medium**; @premium stays admitted in the row as the one-rung escalation; security-adjacent work leads on @premium @**medium** (Sonnet 5.5's safeguard fallback is Sonnet 5 with thinking disabled); UI and underspecified work lead on @standard like any other standard task | **@standard** → @cheap → escalated @standard | **@standard** → @cheap → escalated @standard | **@standard** → `execute` `:high` / `execute-light` `:low` → `execute-escalated` `:max`; no default grid; the other standard families (glm, qwen) rotate in |
+| `trivial`  | **@cheap** @**low** → escalated @standard @**low** → @premium @**low**; no delegation | **@cheap** — no delegation | **@cheap** — no delegation | **@standard** — no grid |
 | local      | — | — | — | ids from the `localModels` setting (trivial/standard by default) — see "Local models" |
 
-On claude, haiku leads `trivial` at `low` and may lead a fully specified `standard` at `medium`; sonnet leads `standard` at `medium` otherwise, and an opus escalation on those rows runs at that same tier-typical effort, never deep's `high` by habit; raise either only on the signals in `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever". On sonnet the ceiling is `high`: `dispatch` refuses sonnet @`xhigh`/`max`, and the next step past sonnet@`high` is opus@`medium` (standard), never sonnet `xhigh`/`max`. When the budget pace gate refuses opus, the fallback is `sonnet` at the same effort — or `sonnet at high` when the refused effort was `xhigh`/`max` (sonnet's ceiling) — not opus at a lower effort. An opus launch at `low` is *not* refused as a premium model rung — its burn class follows effort and it counts as standard (Burn classes) — while `medium` and above still refuse. The one-rung opus escalation after a failed sonnet run is exempt from the model refusal; effort refusals and the 95% stop still apply.
+On claude the classes are its aliases (`@cheap` haiku, `@standard` sonnet, `@premium` opus). Haiku leads `trivial` at `low` and may lead a fully specified `standard` at `medium`; sonnet leads `standard` at `medium` otherwise, and an opus escalation on those rows runs at that same tier-typical effort, never deep's `high` by habit; raise either only on the signals in `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever". On sonnet the ceiling is `high`: `dispatch` refuses sonnet @`xhigh`/`max`, and the next step past sonnet@`high` is opus@`medium` (standard), never sonnet `xhigh`/`max`. When the budget pace gate refuses opus, the fallback is `sonnet` at the same effort — or `sonnet at high` when the refused effort was `xhigh`/`max` (sonnet's ceiling) — not opus at a lower effort. An opus launch at `low` is *not* refused as a premium model rung — its burn class follows effort and it counts as standard (Burn classes, above) — while `medium` and above still refuse. The one-rung opus escalation after a failed sonnet run is exempt from the model refusal; effort refusals and the 95% stop still apply.
 
-**Haiku on claude.** Haiku 5.5 (`claude-haiku-5-5`, alias `haiku`; verified: the alias resolves to it and it accepts `low` through `max` effort, default `medium`) leads the `trivial` tier by default at `low`: `trivial` runs no critics and a failed haiku run costs one rerun, so the cheap rung is the default. It may also lead claude `standard` at `medium` when the work is bounded and fully specified — dispatched `--plan provided` with root cause or mechanism, an explicit file list, a named approach, and acceptance criteria all present — and not security-adjacent, UI, or genuinely underspecified. Otherwise sonnet leads `standard` at `medium`. A small change to a condition, guard or error path is never `trivial`: it takes this same `standard` row, haiku when fully specified and `--plan provided`, else sonnet. A failed haiku run escalates to sonnet in-row (`haiku → sonnet`) on both rows, then to opus. Haiku never leads `deep`. On claude `standard`/`deep`, an execute subagent runs `model: haiku` for a plan step whose files and edit are named (Agent `model: haiku`), and `model: sonnet` for a step that needs judgment; security or UI steps never use haiku. Haiku has no effort ceiling to enforce — it accepts every level, so the gate refuses none — so do not raise effort to compensate for a task that needs judgment; escalate the model instead.
+**Haiku on claude.** Haiku (alias `haiku`; accepts `low` through `max` effort, default `medium`) leads the `trivial` tier by default at `low`: `trivial` runs no critics and a failed haiku run costs one rerun, so the cheap rung is the default. It may also lead claude `standard` at `medium` when the work is bounded and fully specified — dispatched `--plan provided` with root cause or mechanism, an explicit file list, a named approach, and acceptance criteria all present — and not security-adjacent, UI, or genuinely underspecified. Otherwise sonnet leads `standard` at `medium`. A small change to a condition, guard or error path is never `trivial`: it takes this same `standard` row, haiku when fully specified and `--plan provided`, else sonnet. A failed haiku run escalates to sonnet in-row (`haiku → sonnet`) on both rows, then to opus. Haiku never leads `deep`. On claude `standard`/`deep`, an execute subagent runs `model: haiku` for a plan step whose files and edit are named (Agent `model: haiku`), and `model: sonnet` for a step that needs judgment; security or UI steps never use haiku. Haiku has no effort ceiling to enforce — it accepts every level, so the gate refuses none — so do not raise effort to compensate for a task that needs judgment; escalate the model instead.
 
 **Every `deep` row also grids by default** — claude, codex, and cursor each pick up `spec-critic,plan-critic` panes (critics only; their native code-review batch is unchanged), all on the lead's own engine and model unless `--roles` says otherwise. Pi's `deep` cell does the same; its execute and review stages run as native `subagent` agents (the pinned extension and generated roster in `adapters/pi`).
 
-**Pi effort.** Pi's tier-typical effort is **`high` for `trivial`, `high` for `standard`,
-and `max` for `deep`** — the lever that separates pi `standard` from `deep`
-now that both use `deepseek-v4.1-flash`. The DeepSeek Flash maps have holes, so
-the generic `trivial`→`low` / `standard`→`medium` rungs clamp up to `high` on
-their tier-typical models anyway (V4.1 Flash exposes `off`/`low`/`high`/`max`,
-so deep's `max` is passed through directly, and its `-1017` snapshot exposes the
-same four, verified from that model's `thinkingLevelMap`; V4 Flash, admitted but
-never a default, exposes `off`/`high`/`xhigh`).
-Pi clamps `--thinking` per model through that model's `thinkingLevelMap` —
-generic logic, not DeepSeek-specific — so the rotation alternatives behave the
-same way: `openrouter/z-ai/glm-5.3-flash` exposes `low`/`high`/`max`, while
-`openrouter/qwen/qwen3.8-flash` carries no map and supports through `high`.
-Pi deep has no higher pi model rung: after a failed deep pi worker, the
-dispatcher re-dispatches on another engine by judgement. `EVIDENCE_REVIEW.md`'s
-reviewer promotion is already met on pi: every pi reviewer agent runs at pi's
-escalate rung (`deepseek-v4.1-flash` `:max`). None of this needs new clamp
-machinery — every id launches with the standard ladder.
+**Pi effort.** Pi's tier-typical effort is **`high` for `trivial`, `high` for
+`standard`, and `max` for `deep`** — the lever that separates pi `standard`
+from `deep`, since every pi row defaults to the same standard-class model. Pi
+clamps `--thinking` per model through that model's `thinkingLevelMap` —
+generic, not DeepSeek-specific: a level the model does not expose clamps to a
+supported one, so the generic `trivial`→`low` / `standard`→`medium` rungs land
+on `high` on the DeepSeek Flash defaults, deep's `max` passes through, and a
+model with no map supports through `high`. Pi deep has no higher pi model
+rung: after a failed deep pi worker, the dispatcher re-dispatches on another
+engine by judgement. `EVIDENCE_REVIEW.md`'s reviewer promotion is already met
+on pi: every pi reviewer agent runs at pi's escalate rung (the standard class
+default at `:max`). None of this needs new clamp machinery — every id launches
+with the standard ladder.
 
-Codex model ids carry a **variant suffix** — the 5.6 family ships as
-`-sol` (frontier) / `-terra` (balanced everyday) / `-luna` (fast + affordable),
-and there is **no bare `gpt-5.6`** — dispatching one dies on a 400, "model is not
-supported when using Codex with a ChatGPT account". Authoritative list for this
-account is `jq -r '.models[].slug' ~/.codex/models_cache.json` (also `gpt-5.5`,
-`gpt-5.4`, `gpt-5.4-mini` — previous generations, no longer a rung here).
+Codex model ids carry a **variant suffix**, which is the class: `-sol`
+premium (frontier), `-terra` standard (balanced everyday), `-luna` cheap (fast
++ affordable). A variant family has **no bare generation id** — dispatching one
+dies on a 400, "model is not supported when using Codex with a ChatGPT
+account". Authoritative list for this account is `jq -r '.models[].slug'
+~/.codex/models_cache.json`; the older bare generations it also lists stay
+admitted through the seed row, no longer a rung.
 
 Codex's tier-typical rung (deep→high, standard→medium, trivial→low) is the
 starting point, independent of which gpt model is chosen — not an automatic
@@ -115,8 +144,8 @@ default: `--effort` is a required flag `dispatch` refuses to scaffold without
 on the raise/hold signals in `DISPATCHER_PROTOCOL.md` → "Effort is a sixth
 lever". Above `xhigh` the ladder continues with `max` (both engines) and
 codex-only `ultra`
-(maximum reasoning with automatic task delegation) — `ultra` exists on `-sol` /
-`-terra` only, `-luna` caps at `max`. Session effort `ultra` is itself an
+(maximum reasoning with automatic task delegation) — `ultra` exists on premium
+and standard only, cheap caps at `max`. Session effort `ultra` is itself an
 orchestration layer: `dispatch` still enables `agents.*` but pins
 `agents.default_subagent_reasoning_effort` one rung below the session (floor
 `low`, **never** `ultra` — an ultra subagent would nest automatic delegation).
@@ -129,26 +158,25 @@ persists locally and would otherwise leak into unattended runs, burning ChatGPT
 credits at 2.5x for latency nobody is watching.
 Cursor has **no reasoning-effort flag** — effort is baked into the model id
 suffix and `dispatch`'s `--effort` is accepted-and-ignored for cursor. Grok
-exposes both an effort suffix (`-low`/`-medium`/`-high`/`-xhigh`) and a speed
-suffix (`-fast`), so the dispatcher expresses effort by _picking the id_. The
-rows above name the **non-fast** slug on every tier: `-fast` is a paid speed
-tier at ~2× the token rate, not a cheaper high-throughput one, so reach for it
-only when a turn's latency actually matters and say why. cursor `deep`
-uses **`kimi-k3-high`** as the worker (plans) and Grok as the execute ladder
-(implements) — escalate to `grok-4.7-high`, not back to Kimi (a launch id; in-session Task spawns resolve through "Cursor Task-spawn slugs"). Grok 4.7 ids
-drop the `cursor-` prefix 4.6 carried (`grok-4.7-medium`, not
-`cursor-grok-4.7-medium`); the gate still accepts `cursor-grok-4.6-*` so a
-pinned 4.6 run keeps dispatching. **Grok 4.7 is the
-default cursor distinct-implementer** — a genuinely non-Claude perspective, which
-is the point of reaching for cursor. `--model` is open across cursor's whole
-multi-vendor id space (the gate checks id _shape_, not membership of this
-table), so a cursor worker can still front **`composer-2.5`** /
-**`composer-2.5-fast`** (no effort variants) as an alternative on every tier,
-or — on `deep` only, per the Tier map gate below — an effort-suffixed
-`claude-opus-5-*` / `gpt-5.6-sol-*`. `dispatch` validates the model slot
+exposes both an effort suffix (`-low`/`-medium`/`-high`/`-xhigh`), which is its
+class, and a speed suffix (`-fast`), so the dispatcher expresses effort by
+_picking the class_. The class defaults are the **non-fast** slugs: `-fast` is
+a paid speed tier at ~2× the token rate, not a cheaper high-throughput one, so
+reach for it only when a turn's latency actually matters and say why. cursor
+`deep` uses kimi (its premium default) as the worker (plans) and Grok as the
+execute ladder (implements) — escalate to Grok `-high`, not back to Kimi (a
+launch id; in-session Task spawns resolve through "Cursor Task-spawn slugs").
+The patterns take the older `cursor-grok-*` ids too, so a pinned older run
+keeps dispatching. **Grok is the default cursor distinct-implementer** — a
+genuinely non-Claude perspective, which is the point of reaching for cursor.
+`--model` is open across cursor's whole multi-vendor id space (the gate checks
+id _shape_ and the seed row, not this table), so a cursor worker can still
+front **composer** (no effort variants) as an alternative on every tier, or —
+on `deep` only, per the Tier map gate below — an effort-suffixed cross-vendor
+`claude-*` / `gpt-*` id. `dispatch` validates the model slot
 against `--agent` before scaffolding — see **Model gate** below.
 
-**Worker-session model vs execute-subagent model.** The first model in each map
+**Worker-session model vs execute-subagent model.** The first class in each map
 cell is the **worker session** — it does spec / plan / reconcile / judging. The
 second is the **default execute subagent**; the third is the escalated execute
 rung for plan-tagged high-risk steps. Claude, Codex, Cursor, and pi (via its `subagent` agents) follow this split
@@ -173,7 +201,7 @@ gets no critic grid: native batch and refuters. A `deep` dispatch under
 critics to check). `--roles` opts into deliberate cross-engine review,
 including adding a `reviewer` pane — that pane is **additive**, a second
 opinion alongside the native batch, never a replacement
-(`reviewer=codex:gpt-5.6-sol`); on pi crew's seam gate still lets that pane's
+(`reviewer=codex:@premium`); on pi crew's seam gate still lets that pane's
 `reject` veto. `--grid`, passed explicitly, keeps its original meaning
 regardless of engine or `--plan`: the full tier-derived topology (`standard`
 → `plan-critic,reviewer`, `deep` → `spec-critic,plan-critic,reviewer`; on a
@@ -193,7 +221,7 @@ a one-time startup-read cost, not a permanent saving.
 `--lazy` is a deliberate per-dispatch opt-in (see skill `dispatcher:grid-lazy`),
 never a default.
 
-**Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung; a same-or-higher Grok substitute for a refused next rung is not a skipped rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `grok-4.7-low → grok-4.7-medium → grok-4.7-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. A cursor Task-slug refusal takes the substitution rule in “Cursor Task-spawn slugs” first. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_EXECUTE.md` → “Bounded plan-shaped recovery”.
+**Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung; a same-or-higher Grok substitute for a refused next rung is not a skipped rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max class `-luna → -terra → -sol` (cheap → standard → premium); never ultra. Cursor ascends Grok's classes `-low → -medium → -high`. Claude fable/ineligible opus/unknown ids, codex premium/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. A cursor Task-slug refusal takes the substitution rule in “Cursor Task-spawn slugs” first. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_EXECUTE.md` → “Bounded plan-shaped recovery”.
 
 Pi has no supported strictly-higher planning rung yet (an effort-ladder
 planning subagent is not wired), so a plan-shaped recovery on pi is an
@@ -203,7 +231,7 @@ must supply a replacement; the lead cannot count self-replanning as independent.
 **Shape-tag vocabulary.** The outcome log's `shape` field is a closed set:
 `mechanical`, `ui`, `ambiguous`, `security`, `wide`.
 
-**Orchestration consult (worker-side, deep).** Decomposition help from a top-tier consultant — **opus** (neutral-fit default), **fable** (architecture-heavy decompositions), **gpt-5.6-sol**, or **grok-4.7-high** — is decided **in the worker's worktree** at the plan seam (whether *and* which), not by the dispatcher — the dispatcher's only lever is tiering the task `deep` (its existing "architectural / wide-blast" signal). Every consultant is reachable from any lead engine as a read-only shell one-shot gated on `dispatch --engines --in-budget` (the machine-local roster minus engines at ≥95% or a limit); the Agent-tool (fable) and codex-MCP (gpt-5.6-sol) forms stay claude-lead conveniences. See `WORKER_PLAN.md` → "Orchestration consult" and "Cross-engine one-shots". Every deep worker emits an outcome-metrics record to the bus at finish:
+**Orchestration consult (worker-side, deep).** Decomposition help from a top-tier consultant — claude's premium **opus** (neutral-fit default) or **fable** (architecture-heavy decompositions), codex's premium, or cursor's Grok premium — is decided **in the worker's worktree** at the plan seam (whether *and* which), not by the dispatcher — the dispatcher's only lever is tiering the task `deep` (its existing "architectural / wide-blast" signal). Every consultant is reachable from any lead engine as a read-only shell one-shot gated on `dispatch --engines --in-budget` (the machine-local roster minus engines at ≥95% or a limit); the Agent-tool (fable) and codex-MCP (codex premium) forms stay claude-lead conveniences. See `WORKER_PLAN.md` → "Orchestration consult" and "Cross-engine one-shots". Every deep worker emits an outcome-metrics record to the bus at finish:
 `crew msg worker:<branch> metrics:<crew_id> '{"consulted":…,"consult_engine":…,"plan_critic_first_pass":…,"rework_count":…,"replanned":…,"review_high":…}'`.
 It rides `crew msg` (no `crew.sh` change) and never wakes the dispatcher. Consulted vs non-consulted deep workers are the A/B for whether the consult lever pays — `consult_engine` splits it by consultant — the counterfactual #86's oracle gate needs. Read it offline: `crew log <crew> | jq 'select(.to|startswith("metrics:"))'`.
 
@@ -214,78 +242,51 @@ Read `replanned` together with `rework_count`: it distinguishes ordinary mechani
 `dispatch` validates `<model>` against `--agent` **before** it scaffolds
 anything — no issue, no branch, no worktree, no window. It checks per-engine id
 _shape_, not membership of the table above, so a model bump needs no
-`dispatch.sh` edit — true for this gate; the Tier map gate below reads its
-rows from `adapters/core/defaults.json`, so a ladder bump is an edit to the
-row's `models` and its refusal text `expected` in `defaults.json` (plus
-`escalation` / `paceDowngrades` when a rung moves), followed by a rebuild,
-with `scripts/gen-adapters.sh` regenerating the tables (see "Tier map"
-below):
+`dispatch.sh` edit; a seed bump is an edit to the row's `default`, `models`
+and refusal text `expected` in `adapters/core/defaults.json` (plus
+`escalation` / `paceDowngrades` when a rung moves), a rebuild, and
+`scripts/gen-adapters.sh` to regenerate the tables:
 
 - **claude** — an alias (`opus`, `sonnet`, `haiku`, `fable`) or a full
-  `claude-*` id. An effort suffix is rejected: `claude-opus-5-high` is a
+  `claude-*` id. An effort suffix is rejected: `claude-opus-<n>-high` is a
   _cursor_ id, and claude takes intensity through `--effort`.
 - **codex** — `gpt-<gen>-<variant>`, variant mandatory, which is what rejects a
-  bare `gpt-5.6`; `gpt-5.5` / `gpt-5.4` pass as legacy bare generations. When
+  bare variant-family generation; the older bare generations pass. When
   `$HOME/.codex/models_cache.json` is readable and holds a non-empty `.models`
   array, the slug must also appear in it — an absent or unusable cache is
   skipped, never fatal.
 - **cursor** — an open multi-vendor id space, so shape is the floor: claude CLI
   aliases are rejected, and a `claude-*` / `gpt-*` id must carry an effort
-  suffix (`gpt-5.6-sol-high`) or name one in a bracket block
-  (`claude-opus-5[context=1m,effort=high,fast=false]`). The bracket rule is a
+  suffix (`gpt-<gen>-sol-high`) or name one in a bracket block
+  (`claude-opus-<n>[context=1m,effort=high,fast=false]`). The bracket rule is a
   conservative guess — `cursor-agent` calls the pairs "overrides", so a block
-  that omits `effort=` may well be legitimate and still get rejected. That is
-  what the override below is for.
-  On top of shape, a **cached existence check** (#95) mirrors codex's: when
-  `${XDG_DATA_HOME:-~/.local/share}/crew/cursor-models-cache.json` is readable,
-  its `fetched_epoch` is within 24h, and it holds a non-empty `.models` array,
-  a **non-bracketed** id must also appear in it — an absent, stale, or
-  unusable cache is skipped, never fatal (same "degrade, never fail closed"
-  posture as codex's). The 24h bound is deliberately far looser than the
-  budget gate's 2h (below): a model catalog moves at the cadence of new
-  releases (days-to-weeks), not quota's hour-to-hour churn, and a tight bound
-  would leave this check degraded almost all the time between manual
-  refreshes. **Bracketed ids are exempt from membership checking entirely** —
-  a cell like `claude-opus-5[context=1m,effort=high,fast=false]` has a
-  pre-bracket base (`claude-opus-5`) that is not itself an invocable slug
-  (cursor resolves the real, effort-suffixed slug from the bracket's
-  `effort=` param), so checking the base against the catalog would reject a
-  legitimate dispatch rather than catch a bad one. The cache is built by the
-  `refresh-models` CLI (`cursor-agent --list-models`, no JSON mode — parsed and
-  cached; refresh by hand or at dispatcher session start, no daemon, same as
-  `refresh-scores`/`refresh-budget`). It is **inert until run once**: nothing
-  auto-populates the cache, so on a machine that has never run
-  `refresh-models` this check is always degraded and only the shape floor
-  applies — "fail fast on a dead id" starts working the first time a human (or
-  the dispatcher session) runs it, not out of the box. It does not probe the
-  in-session Task roster — see "Cursor Task-spawn slugs".
-- **pi** — a provider-qualified id, and the ladder spans more than one
-  OpenRouter family: `openrouter/deepseek/deepseek-v4.1-flash`,
-  `openrouter/deepseek/deepseek-v4.1-flash-1017`,
-  `openrouter/deepseek/deepseek-v4-flash`,
-  `openrouter/z-ai/glm-5.3-flash`, and `openrouter/qwen/qwen3.8-flash`. The
-  shape and the concrete defaults were verified against `pi --list-models`.
-  The `-1017` id is the 2026-10-17 snapshot of V4.1 Flash, admitted on every
-  tier for trial and no tier's default: an undated OpenRouter slug is pinned to
-  one dated snapshot (`deepseek-v4.1-flash` → `-20260910`,
-  `deepseek-v4-flash` → `-20260423`), so a new release never arrives under a
-  slug a row already names.
+  that omits `effort=` may be legitimate and still get rejected; the override
+  below is for that. On top of shape, a **cached existence check** (#95)
+  mirrors codex's: when `${XDG_DATA_HOME:-~/.local/share}/crew/cursor-models-cache.json`
+  is readable, at most 24h old (a catalog moves at the cadence of releases, not
+  quota's hourly churn) and holds a non-empty `.models` array, a
+  **non-bracketed** id must also appear in it; an absent, stale or unusable
+  cache is skipped, never fatal. **Bracketed ids are exempt**: their
+  pre-bracket base is not itself an invocable slug (cursor resolves the
+  effort-suffixed slug from `effort=`). `refresh-models` builds the cache
+  (`cursor-agent --list-models`; by hand or at dispatcher session start, no
+  daemon); until it has run once only the shape floor applies. It does not
+  probe the in-session Task roster — see "Cursor Task-spawn slugs".
+- **pi** — a provider-qualified id (`<provider>/<model>`), verified against
+  `pi --list-models`. A dated snapshot (`…-1017`) is admitted for trial and is
+  never a default: an undated OpenRouter slug is pinned to one dated snapshot,
+  so a new release never arrives under a slug a row already names.
 
-The Model gate enforces **dispatchability**, not tier-appropriateness. The Tier
-map gate below enforces **tier-appropriateness**; the map above stays the
-source of truth for both.
+The Model gate enforces **dispatchability**, not tier-appropriateness; the Tier
+map gate below enforces **tier-appropriateness**.
 
 **Override.** `DISPATCH_SKIP_MODEL_CHECK=<the exact model id>` skips the gate for
 that one id and warns on stderr. Truthiness is exact string equality with the
-model, not "is set" — exporting it for a session still gates every _other_
-model. Reaching for it means **the map above is stale**: update the map in the
-same session. The map is a protocol file, hot-reloadable through
-`DISPATCHER_PROTOCOL_DIR`, so the doc fix lands immediately; the `dispatch.sh`
-grammar follows on the next rebuild. This skip var covers the Model gate
-(shape) only — it does not bypass the Tier map gate below. A genuinely new
-model that is also a new tier's row additionally needs `--ignore-map` until
-its row in `adapters/core/defaults.json` is updated and rebuilt
-(`scripts/gen-adapters.sh` regenerates the tables), unless the model catalog
+resolved model, not "is set" — exporting it for a session still gates every
+_other_ model, and a `@class` sigil never matches. Reaching for it means a
+cache or the seed is stale: run `refresh-models`, or update the row in
+`adapters/core/defaults.json` and rebuild. It covers the Model gate (shape)
+only: a new model off its row also needs `--ignore-map` unless the catalog
 already admits it by class (Tier map, below).
 
 **Machine-readable view.** `dispatch --models [--json]` prints the tier map
@@ -368,8 +369,8 @@ with thinking off, every other rung with it on.
 - **Gate.** `dispatch --agent pi --model <id>` admits a local id only at the
   entry's `tiers`; `--ignore-map` overrides. Every other id is gated as before.
   pi's OpenRouter budget gates skip a local target: the lead costs no
-  OpenRouter spend, but its standard/deep `subagent` agents run on hosted
-  `deepseek-v4.1-flash` and do.
+  OpenRouter spend, but its standard/deep `subagent` agents run on pi's hosted
+  standard class default and do.
 - **Probe.** Before scaffolding, `dispatch` fetches `<baseUrl>/models` (5s) and
   refuses when the endpoint is `unreachable`, `returned an HTTP error` (4xx/5xx,
   e.g. a wrong `baseUrl` path), or `did not list '<model>'`.
@@ -441,20 +442,16 @@ after a compaction.
 
 `dispatch` layers a second check on top of the Model gate above: once a model
 clears dispatchability (shape), it must also be tier-appropriate for the
-`(tier, engine)` pair. A model is accepted from the seed row when it is that tier's **worker** or
-**execute** cell from the Model map above, **or** that tier's **escalate**
-cell when the escalate cell is not burn-stronger (Burn classes, above) than
-the worker cell — no current row's escalate is burn-stronger than its worker,
-so every escalate cell is admitted. On top of the map, a small set of named exceptions apply: claude also accepts a full `claude-<alias>-*`
-id for any alias already accepted at that tier, plus `fable`/`claude-fable-*`
-on `deep` specifically (the map's own deep-cell prose escalation, above);
-codex also accepts the three legacy bare generations (`gpt-5.5`, `gpt-5.4`,
-`gpt-5.4-mini`) on every tier; cursor also accepts `composer-2.5` /
-`composer-2.5-fast` on every tier, plus an effort-suffixed or bracketed
-cross-vendor `claude-*`/`gpt-*` id (the shape the Model gate's cursor arm
-already recognizes) on `deep` only. Pi accepts its tier's Model-map worker plus
-the rotation alternatives named there, on every profile — see the generated
-table below for the per-tier lists.
+`(tier, engine)` pair. A model is accepted from the seed row
+(`modelMap.<engine>.<tier>.models` and `regex` in `defaults.json`): the
+tier's worker and execute classes from the Model map above, and its escalate
+class unless that is burn-stronger (Burn classes, above) than the worker —
+none is today. The seed row also names a few extras: claude's full
+`claude-<alias>-*` ids for each alias it accepts, plus fable on `deep` (the
+deep cell's last-resort escalation); codex's older bare generations on every
+tier; cursor's composer on every tier, plus an effort-suffixed or bracketed
+cross-vendor `claude-*`/`gpt-*` id (the Model gate's cursor shape) on `deep`
+only; pi's dated snapshot. `dispatch --models` prints each row.
 
 **Class admission.** A model off its row is also admitted when
 `${XDG_DATA_HOME:-~/.local/share}/crew/model-catalog.json` (`refresh-models`)
@@ -478,34 +475,13 @@ A spent or expired credit refuses only the direct ids; it never sets
 OpenRouter stops (≥95% month, `limit_reached`) still refuse every pi launch,
 direct ids included. pi premium (either opus) is admitted only at `deep`,
 where `admits` includes premium. The catalog itself has no age check. With no
-catalog only the rows below apply.
-
-The table below is generated from `adapters/core/defaults.json`: for each
-engine × tier it lists the map's `default` (typical launch) model and
-the seed row; `dispatch --models` prints the live admitted set, class
-admissions included.
-
-<!-- BEGIN generated:tier-rows from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->
-
-| engine | tier | typical launch model | the gate admits |
-| --- | --- | --- | --- |
-| claude | `deep` | `opus` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*`, `fable`, `claude-fable-*` |
-| claude | `standard` | `sonnet` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*`, `haiku`, `claude-haiku-*` |
-| claude | `trivial` | `haiku` | `opus`, `claude-opus-*`, `sonnet`, `claude-sonnet-*`, `haiku`, `claude-haiku-*` |
-| codex | `deep` | `gpt-5.6-sol` | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` |
-| codex | `standard` | `gpt-5.6-terra` | `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` |
-| codex | `trivial` | `gpt-5.6-luna` | `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini` |
-| cursor | `deep` | `kimi-k3-high` | `kimi-k3-high`, `grok-4.7-medium`, `grok-4.7-medium-fast`, `grok-4.7-high`, `grok-4.7-high-fast`, `cursor-grok-4.6-medium`, `cursor-grok-4.6-medium-fast`, `cursor-grok-4.6-high`, `cursor-grok-4.6-high-fast`, `composer-2.5`, `composer-2.5-fast`, plus ids matching the row's regex |
-| cursor | `standard` | `grok-4.7-medium` | `grok-4.7-medium`, `grok-4.7-medium-fast`, `grok-4.7-low`, `grok-4.7-low-fast`, `cursor-grok-4.6-medium`, `cursor-grok-4.6-medium-fast`, `cursor-grok-4.6-low`, `cursor-grok-4.6-low-fast`, `composer-2.5`, `composer-2.5-fast` |
-| cursor | `trivial` | `grok-4.7-low` | `grok-4.7-low`, `grok-4.7-low-fast`, `cursor-grok-4.6-low`, `cursor-grok-4.6-low-fast`, `composer-2.5`, `composer-2.5-fast` |
-| pi | `deep` | `openrouter/deepseek/deepseek-v4.1-flash` | `openrouter/deepseek/deepseek-v4.1-flash`, `openrouter/deepseek/deepseek-v4.1-flash-1017` |
-| pi | `standard` | `openrouter/deepseek/deepseek-v4.1-flash` | `openrouter/deepseek/deepseek-v4.1-flash`, `openrouter/deepseek/deepseek-v4.1-flash-1017`, `openrouter/deepseek/deepseek-v4-flash`, `openrouter/z-ai/glm-5.3-flash`, `openrouter/qwen/qwen3.8-flash` |
-| pi | `trivial` | `openrouter/deepseek/deepseek-v4.1-flash` | `openrouter/deepseek/deepseek-v4.1-flash`, `openrouter/deepseek/deepseek-v4.1-flash-1017`, `openrouter/deepseek/deepseek-v4-flash` |
-
-<!-- END generated:tier-rows -->
+catalog only the seed rows apply.
 
 Reject with the tier, the model given, the row's expected model(s) (its
-`expected` text in `adapters/core/defaults.json`), and `--ignore-map`.
+`expected` text in `adapters/core/defaults.json`), and `--ignore-map`; for a
+`@class` sigil, the class, its resolved id and the classes the row admits
+(`class @premium (<id>) is not standard's row for --agent codex — standard
+admits @cheap, @standard; expected …`).
 
 **Override.** `--ignore-map` skips this gate for the dispatched model and is
 **silent when set** — mirroring `--ignore-budget` exactly, not
@@ -554,9 +530,9 @@ at any effort (the credit is dollars, so no burn-weight lift), and direct ids
 have no effort rung, so direct sonnet is never refused. While pi's
 `month` window is ahead of pace, both `max` and `xhigh` are refused at once,
 so a refused pi dispatch lands directly on `high` — which matters because
-`deepseek-v4.1-flash`, pi's tier-typical `standard`/`deep` model, exposes no
-`xhigh` rung to land on in between. Cursor is the reverse: it has a premium
-model rung (`grok-4.7-high`) but no effort knob — `--effort` is
+pi's standard class default exposes no `xhigh` rung to land on in between.
+Cursor is the reverse: it has a premium model rung (Grok `-high`) but no
+effort knob — `--effort` is
 accepted-and-ignored — so its effort is never refused, only the model rung;
 its `-fast` and `kimi-*` ids have no entry and stay unrefused.
 
@@ -571,11 +547,11 @@ since its default comes from the class-state file. An unresolved `@<class>`
 still refuses, with `(@standard, unresolved)`: pick a model from `dispatch
 --models` or use the `DISPATCH_IGNORE_RUNG` escape. The refusal names the
 engine, the refused rung's class and id, and the downgrade's class and
-resolved id (`codex
-7d is at 77% … — the premium rung (gpt-5.7-sol) is refused; use the standard
-rung (gpt-5.6-terra) instead`); `DISPATCH_IGNORE_RUNG` takes that exact id,
+resolved id; a `@class` launch names the sigil too (`codex 7d is at 77% … —
+the premium rung (codex premium: @premium → <id>) is refused; use the standard
+rung (<id>) instead`). `DISPATCH_IGNORE_RUNG` takes that exact resolved id,
 never a class name or `@<class>`. A bracketed id of a new cursor family
-(`grok-4.8-high[effort=high]`) is never catalogued, so it stays unrefused.
+(`grok-<next>-high[effort=high]`) is never catalogued, so it stays unrefused.
 `escalation`'s `failed` and `inRow` items take the same `@<class>[:<glob>]`
 forms; `outOfRow` stays exact ids, since it widens what the tier gate admits.
 
@@ -678,14 +654,15 @@ holds.
 The dispatcher itself can run on any engine in the machine-local
 `dispatch --engines` roster — `dispatcher --agent claude|codex|cursor|pi`.
 Orchestrator defaults — sourced from `orchestratorDefaults` in
-`adapters/core/defaults.json`; bump that when a model ships:
+`adapters/core/defaults.json`, each a pinned id equal to the seed default of
+the class below (`dispatcher` takes no `@class`); bump it when a model ships:
 
 | engine | model | effort | auto-compact window |
 | ------ | ----- | ------ | ------------------- |
-| claude | **opus** | **high** — not xhigh, for the same bounded-wait reason as codex | **300000** via `--autocompact` |
-| codex | **gpt-5.6-sol** | **high** — not xhigh: blocked workers wait on a bounded ~2h in-band window | **300000** via `-c model_auto_compact_token_limit` |
-| cursor | **kimi-k3-high** | fixed in the model id (no knob; `--model` overrides: composer-2.5, grok-4.7-*) | none — no knob |
-| pi | **`openrouter/deepseek/deepseek-v4.1-flash`** | **high** through `--thinking` | none — no per-launch knob |
+| claude | **premium** (opus) | **high** — not xhigh, for the same bounded-wait reason as codex | **300000** via `--autocompact` |
+| codex | **premium** | **high** — not xhigh: blocked workers wait on a bounded ~2h in-band window | **300000** via `-c model_auto_compact_token_limit` |
+| cursor | **premium** (kimi) | fixed in the model id (no knob; `--model` overrides: composer, Grok) | none — no knob |
+| pi | **standard** | **high** through `--thinking` | none — no per-launch knob |
 
 All four rows are pinned in `adapters/core/defaults.json` →
 `orchestratorDefaults`, claude included — `dispatcher.sh` only reads them via
@@ -728,7 +705,7 @@ A worker lead's context only grows: by execute or review it re-reads about twice
 
 - **Tier = pipeline depth (who reviews).** Driven by risk/ambiguity/blast-radius, not size. A one-line security change is still `standard`/`deep`. Pipeline depth also flexes **down** when the target repo self-reviews: a repo with an active automated PR-review gauntlet permits a light internal pass except for cross-component correctness risk, which promotes one reviewer per `EVIDENCE_REVIEW.md` (see `WORKER_REVIEW.md` → Code review gate, "Repo-aware scaling"). Targeted re-review after behavioral fixes still applies. Tier sets *planning* depth regardless — review scaling does not rewrite the spec or plan.
 - **Engine = who implements.** First run `dispatch --engines`; judge only its output per task (claude ⇄ codex ⇄ cursor ⇄ pi) — no default, and **on neutral fit rotate to the least-recently-dispatched engine** rather than drifting back to claude (see `DISPATCHER_PROTOCOL.md` engine lever). Every engine automatically gets critic panes on `deep`; pi supplies an independent OpenRouter family (DeepSeek, with Moonshot/Z.ai/Qwen alternatives) and, like the others, executes and reviews through native subagents. The other routing preferences remain in `DISPATCHER_PROTOCOL.md`.
-- **Model/effort = how strong / how hard it thinks.** All engines pick the tier-appropriate model from the model map. Claude, codex, and pi have explicit effort knobs; cursor folds effort into the model id. Effort is judged separately from model strength — see `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever" for the raise/hold signals.
+- **Model/effort = how strong / how hard it thinks.** All engines pick the tier's class from the model map. Claude, codex, and pi have explicit effort knobs; cursor folds effort into the model id. Effort is judged separately from model strength — see `DISPATCHER_PROTOCOL.md` → "Effort is a sixth lever" for the raise/hold signals.
 
 ## MCP is no longer a routing factor
 
