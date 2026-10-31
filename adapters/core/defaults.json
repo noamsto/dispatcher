@@ -154,6 +154,51 @@
       }
     }
   },
+  "classes": {
+    "claude": {
+      "cheap": ["haiku", "claude-haiku-*"],
+      "standard": ["sonnet", "claude-sonnet-*"],
+      "premium": ["opus", "claude-opus-*"],
+      "tiers": {
+        "deep": {"class": "premium", "admits": ["standard", "premium"]},
+        "standard": {"class": "standard", "admits": ["cheap", "standard", "premium"]},
+        "trivial": {"class": "cheap", "admits": ["cheap", "standard", "premium"]}
+      }
+    },
+    "codex": {
+      "cheap": ["gpt-*-luna"],
+      "standard": ["gpt-*-terra"],
+      "premium": ["gpt-*-sol"],
+      "tiers": {
+        "deep": {"class": "premium", "admits": ["standard", "premium"]},
+        "standard": {"class": "standard", "admits": ["cheap", "standard"]},
+        "trivial": {"class": "cheap", "admits": ["cheap"]}
+      }
+    },
+    "cursor": {
+      "cheap": ["grok-*-low", "grok-*-low-fast", "cursor-grok-*-low", "cursor-grok-*-low-fast"],
+      "standard": ["grok-*-medium", "grok-*-medium-fast", "cursor-grok-*-medium", "cursor-grok-*-medium-fast"],
+      "premium": ["kimi-*-high", "grok-*-high", "grok-*-high-fast", "cursor-grok-*-high", "cursor-grok-*-high-fast"],
+      "tiers": {
+        "deep": {"class": "premium", "admits": ["standard", "premium"]},
+        "standard": {"class": "standard", "admits": ["cheap", "standard"]},
+        "trivial": {"class": "cheap", "admits": ["cheap"]}
+      }
+    },
+    "pi": {
+      "standard": [
+        "openrouter/deepseek/deepseek-v*-flash",
+        "openrouter/z-ai/glm-*-flash",
+        "openrouter/qwen/qwen*-flash"
+      ],
+      "premium": [{"glob": "openrouter/anthropic/claude-opus-*", "requires": "pi_month_target"}],
+      "tiers": {
+        "deep": {"class": "standard", "admits": ["standard", "premium"]},
+        "standard": {"class": "standard", "admits": ["standard"]},
+        "trivial": {"class": "standard", "admits": ["standard"]}
+      }
+    }
+  },
   "escalation": {
     "claude": {
       "deep": [

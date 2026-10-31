@@ -956,3 +956,77 @@ hosts_refuse_row() { # json fragment
   [ "$status" -eq 2 ]
   [[ "$stderr" == *usage:* ]]
 }
+
+@test "shipped defaults carry a classes row with class and admits for every modelMap tier, silently" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  jq -e '.classes as $c | .modelMap | to_entries | length > 0 and all(.[]; .key as $e | .value | keys | all(.[]; . as $t | $c[$e].tiers[$t] as $r | ($r.class | IN("cheap", "standard", "premium")) and ($r.admits | type == "array" and index($r.class) != null)))' <<<"$output"
+}
+
+@test "a pattern overlapping another class warns and still resolves" {
+  user_settings '{"classes":{"claude":{"cheap":["haiku","claude-*"]}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *'dispatch-config: classes.claude: pattern "claude-*" (cheap) overlaps "claude-sonnet-*" (standard); an id matching both takes standard'* ]]
+  [[ "$stderr" == *'pattern "claude-*" (cheap) overlaps "claude-opus-*" (premium)'* ]]
+}
+
+@test "intersecting globs warn even when neither is a literal of the other" {
+  user_settings '{"classes":{"codex":{"cheap":["gpt-5*"]}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *'pattern "gpt-5*" (cheap) overlaps "gpt-*-sol" (premium)'* ]]
+  [[ "$stderr" == *'pattern "gpt-5*" (cheap) overlaps "gpt-*-terra" (standard)'* ]]
+}
+
+@test "many-star globs in different classes resolve fast, and disjoint ones do not warn" {
+  user_settings '{"classes":{"claude":{"cheap":["claude-*-*-*-*-*-*-*-a"],"premium":["claude-*-*-*-*-*-*-*-b"]}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *'pattern "claude-*-*-*-*-*-*-*-a" (cheap) overlaps "claude-*-*-*-*-*-*-*-b"'* ]]
+}
+
+@test "a classes row missing admits resolves to [class] with a warning" {
+  user_settings '{"modelMap":{"local":{"deep":{"default":"x","models":["x"]}}},"classes":{"local":{"standard":["x"],"tiers":{"deep":{"class":"standard"}}}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.classes.local.tiers.deep.admits == ["standard"]' <<<"$output"
+  [[ "$stderr" == *"classes.local.tiers.deep.admits is missing"* ]]
+}
+
+@test "a modelMap row with no classes row is refused" {
+  user_settings '{"modelMap":{"local":{"deep":{"default":"x","models":["x"]}}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"classes.local.tiers.deep must be an object with class and admits"* ]]
+}
+
+@test "malformed classes are refused, naming the path" {
+  begin_rows
+  local row json fragment
+  while IFS='|' read -r row json fragment; do
+    [ -n "$row" ] || continue
+    keep_row "$row" shape_refuse_row "$json" "$fragment"
+  done <<'ROWS'
+bad-class|{"classes":{"claude":{"tiers":{"deep":{"class":"huge"}}}}}|classes.claude.tiers.deep.class must be one of cheap, standard or premium
+admits-lacks-class|{"classes":{"claude":{"tiers":{"deep":{"admits":["standard"]}}}}}|classes.claude.tiers.deep.admits must be a non-empty array
+admits-unknown|{"classes":{"claude":{"tiers":{"deep":{"admits":["premium","free"]}}}}}|classes.claude.tiers.deep.admits must be a non-empty array
+pattern-type|{"classes":{"claude":{"cheap":[7]}}}|classes.claude.cheap.0 must be a glob string or {glob, requires
+requires-value|{"classes":{"claude":{"cheap":[{"glob":"x","requires":"other"}]}}}|classes.claude.cheap.0 must be a glob string or {glob, requires
+pi-glob-provider|{"classes":{"pi":{"standard":["*/foo"]}}}|classes.pi.standard.0 must be a pi pattern with a literal provider
+ROWS
+  finish_rows 6
+}
+
+@test "a classes.pi provider is reserved against localModels" {
+  local lm='"localModels":{"anthropic/foo":{"baseUrl":"http://h:1/v1","contextWindow":8192}}'
+  user_settings "{$lm}"
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+
+  user_settings "{$lm,\"classes\":{\"pi\":{\"premium\":[\"anthropic/claude-opus-*\"]}}}"
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"anthropic is reserved"* ]]
+}

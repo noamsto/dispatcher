@@ -47,6 +47,14 @@
 # is only an env reference or a !command, never a literal. It is validated on
 # the merged tree and has no env var; its names are case-sensitive.
 #
+# classes maps each engine to ordered cheap|standard|premium glob lists (a pattern
+# is a glob string or {glob, requires}, where requires names a condition the
+# resolver reports: only pi_month_target) plus tiers.<tier>.{class, admits}; it
+# is validated on the merged tree and has no env var. Every modelMap engine and
+# tier row needs a classes row with a class. A missing admits is filled with
+# [class] (fail closed) with a warning, and a pattern overlapping another
+# class's pattern warns: an id matching both takes the more expensive class.
+#
 # laneProfiles maps an engine or "<engine>/<model>" glob to a lane profile (its
 # name, and optionally inline notes text) that `dispatch` applies to the task
 # doc; like localModels it is validated on the merged tree and has no env var.
@@ -303,9 +311,85 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   def need($p; $what; ok):
     if holds($p) and (getpath($p) | ok | not) then die($p; $what) else . end;
   def pos_int: type == "number" and . == floor and . > 0;
+  def pat: if type == "object" then .glob else . end;
+  # One [path, what] per violation in .classes, then one per modelMap engine and
+  # tier row that has no valid classes row. Lookups are guarded so a malformed
+  # sibling reports itself instead of erroring jq.
+  def class_violations:
+    .classes as $c
+    | .modelMap as $mm
+    | if ($c | type) != "object" then [["classes"], "an object"]
+      else
+        (($c | to_entries[]) as {key: $e, value: $v}
+          | if ($v | type) != "object" then [["classes", $e], "an object"]
+            else
+              ($v | keys[] | select(IN("cheap", "standard", "premium", "tiers") | not) | [["classes", $e, .], "one of cheap, standard, premium, tiers"]),
+              (("cheap", "standard", "premium") as $cl
+                | select($v | has($cl))
+                | ["classes", $e, $cl] as $p
+                | $v[$cl] as $list
+                | if ($list | type) != "array" then [$p, "an array of patterns"]
+                  else
+                    (($list | to_entries[]) as {key: $i, value: $x}
+                      | $p + [$i] as $pp
+                      | if ($x | type) == "string" or (($x | type) == "object" and ($x | keys) == ["glob", "requires"] and ($x.glob | type) == "string" and $x.requires == "pi_month_target")
+                        then ($x | pat) as $g
+                          | if ($g | test("\\A[A-Za-z0-9._/*?-]+\\z") | not) then [$pp, "a glob of letters, digits, \".\", \"_\", \"/\", \"-\", \"*\" and \"?\""]
+                            elif $e == "pi" and ($g | test("\\A[a-z0-9][a-z0-9._-]*/") | not) then [$pp, "a pi pattern with a literal provider (e.g. openrouter/...)"]
+                            else empty
+                            end
+                        else [$pp, "a glob string or {glob, requires: \"pi_month_target\"}"]
+                        end)
+                  end),
+              (select($v | has("tiers"))
+                | $v.tiers as $t
+                | if ($t | type) != "object" then [["classes", $e, "tiers"], "an object"]
+                  else
+                    (($t | to_entries[]) as {key: $k, value: $r}
+                      | ["classes", $e, "tiers", $k] as $tp
+                      | if ($k | IN("trivial", "standard", "deep") | not) then [$tp, "one of trivial, standard, deep"]
+                        elif ($r | type) != "object" then [$tp, "an object"]
+                        else
+                          ($r | select((.class | IN("cheap", "standard", "premium")) | not) | [$tp + ["class"], "one of cheap, standard or premium"]),
+                          ($r | select(has("admits") and ((.admits | type == "array" and length > 0 and ((unique | length) == length) and all(.[]; IN("cheap", "standard", "premium")) and index($r.class) != null) | not)) | [$tp + ["admits"], "a non-empty array of distinct cheap, standard or premium values including its class"])
+                        end)
+                  end)
+            end),
+        (($mm | if type == "object" then to_entries[] else empty end) as {key: $e, value: $ev}
+          | ($ev | if type == "object" then keys[] else empty end) as $t
+          | (try $c[$e].tiers[$t] catch null) as $row
+          | select(($row | type) != "object" or (($row.class | IN("cheap", "standard", "premium")) | not))
+          | [["classes", $e, "tiers", $t], "an object with class and admits (every modelMap row needs one)"])
+      end;
+  # Newline-terminated stderr lines for a valid .classes tree.
+  # Whether two globs (arrays of single-char strings) match a common string.
+  def globs_meet($a; $b):
+    ($a | length) as $m | ($b | length) as $n
+    | reduce range($m; -1; -1) as $i (null;
+        . as $next
+        | reduce range($n; -1; -1) as $j ([];
+            . as $row
+            | .[$j] = (
+                if $i == $m and $j == $n then true
+                elif $i == $m then $b[$j] == "*" and $row[$j + 1]
+                elif $j == $n then $a[$i] == "*" and $next[$j]
+                elif $a[$i] == "*" or $b[$j] == "*" then $next[$j] or $row[$j + 1]
+                else ($a[$i] == $b[$j] or $a[$i] == "?" or $b[$j] == "?") and $next[$j + 1] end)))
+    | .[0];
+  def class_warnings:
+    ["cheap", "standard", "premium"] as $order
+    | ((.classes | to_entries[]) as {key: $e, value: $v}
+        | [$order | to_entries[] | .key as $r | .value as $cl | ($v[$cl] | arrays | .[] | pat | strings | {cl: $cl, r: $r, g: .})] as $pats
+        | ($pats[] as $a | $pats[] as $b
+            | select($a.r < $b.r and globs_meet($a.g | gsub("\\*+"; "*") | split(""); $b.g | gsub("\\*+"; "*") | split("")))
+            | "dispatch-config: classes.\($e): pattern \"\($a.g)\" (\($a.cl)) overlaps \"\($b.g)\" (\($b.cl)); an id matching both takes \($b.cl)\n")),
+      ((.classes | to_entries[]) as {key: $e, value: $v}
+        | ($v.tiers | objects | to_entries[])
+        | select(.value | has("admits") | not)
+        | "dispatch-config: classes.\($e).tiers.\(.key).admits is missing; admitting only its class \(.value.class)\n");
   # One [path, what] per violation in .localModels, entries in key order.
   def local_model_violations:
-    (["openrouter"] + [.modelMap.pi[]?.models[]? | split("/")[0]] | map(ascii_downcase)) as $reserved
+    (["openrouter"] + [.modelMap.pi[]?.models[]? | split("/")[0]] + [.classes | objects | .pi | objects | (.cheap, .standard, .premium) | arrays | .[] | pat | strings | split("/")[0]] | map(ascii_downcase)) as $reserved
     | .localModels as $all
     | if ($all | type) != "object" then [["localModels"], "an object"]
       else
@@ -437,6 +521,9 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
       | (first(.dispatcherMcp | to_entries[] | .key as $k | .value[] | select(IN($valid[]) | not) | [$k, .]) // null) as $bad
       | if $bad then "dispatch-config: dispatcherMcp must be an object keyed owner/repo or org, each an array of claudeai, analytics or an mcpServers name: \"\($bad[0])\" names unknown \"\($bad[1])\" (valid: \($valid | join(", "))) (merged settings)\n" | halt_error(1) else . end
     else . end
+  | (first(class_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end
+  | ([class_warnings] | map(stderr)) as $w
+  | .classes |= map_values(if (.tiers | type) == "object" then .tiers |= map_values(.admits //= [.class]) else . end)
   | if has("localModels") then (first(local_model_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
   | if has("laneProfiles") then (first(lane_profile_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
   | if has("hosts") then (first(host_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
