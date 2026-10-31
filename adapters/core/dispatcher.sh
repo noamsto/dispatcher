@@ -956,9 +956,8 @@ while :; do
       --thinking "${effort:-$(orch_default effort)}" \
       --no-approve \
       --append-system-prompt "$protocol"
-    # --no-approve drops project-local resources, so the harness skills (which now
-    # hold the rare-path playbooks the protocol points at) must be passed explicitly.
-    # A raw-script run leaves @skillsDir@ unsubstituted, so guard on the directory.
+    # --no-approve drops project-local resources; a raw-script run leaves
+    # @skillsDir@ unsubstituted, so guard on the directory.
     if [ -d "$SKILLS_DIR" ]; then
       set -- "$@" --skill "$SKILLS_DIR"
     fi
