@@ -84,3 +84,17 @@ func (r Resolver) ValidDefault(engine, tier, class, id string) (bool, []string, 
 	}
 	return res.Default == id, res.Warnings, nil
 }
+
+// SeedDefault is the engine/tier row's default when no class state overrides it.
+func (r Resolver) SeedDefault(engine, tier string) (string, error) {
+	dir, err := os.MkdirTemp("", "crew-class-")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	res, err := r.Resolve(engine, tier, filepath.Join(dir, "absent.json"))
+	if err != nil {
+		return "", err
+	}
+	return res.Default, nil
+}

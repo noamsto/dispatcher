@@ -7,6 +7,7 @@
 package classes
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,10 +42,11 @@ type Change struct {
 	Why  string `json:"why,omitempty"`
 }
 
-// Entry is one engine/class: the default model plus how it got there. Vetoed
-// holds ids the owner rejected, so auto-promotion does not pick them again.
+// Entry is one engine/class: the default model plus how it got there. An empty
+// Default follows the seed default. Vetoed holds ids the owner rejected, so
+// auto-promotion does not pick them again.
 type Entry struct {
-	Default string   `json:"default"`
+	Default string   `json:"default,omitempty"`
 	History []Change `json:"history,omitempty"`
 	Vetoed  []string `json:"vetoed,omitempty"`
 }
@@ -149,18 +151,29 @@ func Load(path string) (st State, usable bool, warnings []string) {
 }
 
 // parseEntry decodes one class entry, dropping malformed history and vetoed
-// items individually. It reports false when the entry has no usable default.
+// items individually. It reports false when a default is present but not a
+// string; an entry with no default follows the seed default.
 func parseEntry(raw json.RawMessage, warn func(string, ...any)) (Entry, bool) {
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || trimmed[0] != '{' {
+		warn("dropped entry: not an object")
+		return Entry{}, false
+	}
 	var fields struct {
-		Default *string           `json:"default"`
+		Default json.RawMessage   `json:"default"`
 		History []json.RawMessage `json:"history"`
 		Vetoed  []json.RawMessage `json:"vetoed"`
 	}
-	if err := json.Unmarshal(raw, &fields); err != nil || fields.Default == nil {
+	if err := json.Unmarshal(raw, &fields); err != nil {
 		warn("dropped entry: no string default")
 		return Entry{}, false
 	}
-	e := Entry{Default: *fields.Default}
+	var e Entry
+	if fields.Default != nil {
+		if err := json.Unmarshal(fields.Default, &e.Default); err != nil || string(fields.Default) == "null" {
+			warn("dropped entry: no string default")
+			return Entry{}, false
+		}
+	}
 	for _, item := range fields.History {
 		var c Change
 		if err := json.Unmarshal(item, &c); err != nil || c.From == "" || c.To == "" {

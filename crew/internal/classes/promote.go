@@ -507,6 +507,7 @@ func Revert(engine, class string, env Env, stderr io.Writer) int {
 			return "", errors.New("no previous default")
 		}
 		last := tx.entry.History[n-1]
+		seed := true
 		for _, tier := range tx.tiers {
 			ok, _, err := tx.resolver.ValidDefault(engine, tier, class, last.From)
 			if err != nil {
@@ -515,9 +516,17 @@ func Revert(engine, class string, env Env, stderr io.Writer) int {
 			if !ok {
 				return "", fmt.Errorf("previous default %s is not valid for class %s", cleanID(last.From), cleanID(class))
 			}
+			d, err := tx.resolver.SeedDefault(engine, tier)
+			if err != nil {
+				return "", err
+			}
+			seed = seed && d == last.From
 		}
 		tx.entry.History = tx.entry.History[:n-1]
 		tx.entry.Default = last.From
+		if seed {
+			tx.entry.Default = "" // follow the seed default; keep only the veto
+		}
 		if !tx.entry.IsVetoed(last.To) {
 			tx.entry.Vetoed = append(tx.entry.Vetoed, last.To)
 		}

@@ -186,6 +186,27 @@ field() { jq -c "$1" <<<"$output"; }
   [ "$(field '.warnings | length')" -eq 1 ]
 }
 
+@test "model-resolve: a veto-only class entry resolves to the seed default with no warning" {
+  state '{"pi":{"standard":{"vetoed":["openrouter/deepseek/deepseek-v4.1-flash-1017"]}}}'
+  resolve pi standard
+  [ "$(field .default)" = "\"$PI_DEEPSEEK\"" ]
+  [ "$(field .warnings)" = '[]' ]
+}
+
+@test "model-resolve: a class entry whose default key is not a string still warns" {
+  state '{"pi":{"standard":{"default":5}}}'
+  resolve pi standard
+  [ "$(field .default)" = "\"$PI_DEEPSEEK\"" ]
+  [ "$(field '.warnings | length')" -eq 1 ]
+  [[ "$(field '.warnings[0]')" == *"not a string"* ]]
+
+  state '{"pi":{"standard":{"default":null}}}'
+  resolve pi standard
+  [ "$(field .default)" = "\"$PI_DEEPSEEK\"" ]
+  [ "$(field '.warnings | length')" -eq 1 ]
+  [[ "$(field '.warnings[0]')" == *"not a string"* ]]
+}
+
 @test "model-resolve: a garbled catalog resolves to the seed with a warning" {
   printf '{"pi": ' >"$BATS_TEST_TMPDIR/catalog.json"
   CATALOG="$BATS_TEST_TMPDIR/catalog.json"
