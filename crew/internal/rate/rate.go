@@ -65,6 +65,12 @@ type Options struct {
 	// defaults to the repo-keyed sweep; tests replace it to pin the --sweep-all
 	// loop's lines and exit status without a store, gh or a lock.
 	SweepRepo func(paths bus.Paths, workdir string, stderr io.Writer) int
+	// ClassCheck runs after a successful default-mode sweep with the deduped
+	// store rows; nil skips it. --sweep-all never calls it: it sweeps other
+	// repos' buses, where a promotion announcement could go unseen.
+	ClassCheck func(rows []any, stderr io.Writer)
+	// ClassReport returns the lines appended to the text --report; nil adds none.
+	ClassReport func(rows []any) []string
 }
 
 // withDefaults fills the seams a caller left nil.
@@ -141,7 +147,11 @@ func Run(req Request, paths bus.Paths, cwd string, stdout, stderr io.Writer, o O
 	if req.Report {
 		return report(req, cwd, stdout, stderr, o)
 	}
-	return runSweep(paths, cwd, stderr, o)
+	code := runSweep(paths, cwd, stderr, o)
+	if code == 0 && o.ClassCheck != nil {
+		o.ClassCheck(foldStore(storePath(o.StorePath, o.Getenv)), stderr)
+	}
+	return code
 }
 
 // report renders the global store: no bus, and no network beyond the one local
@@ -190,6 +200,11 @@ func report(fl Request, cwd string, stdout, stderr io.Writer, o Options) int {
 		return 0
 	}
 	s, _ := out.(string)
+	if o.ClassReport != nil {
+		if lines := o.ClassReport(list); len(lines) > 0 {
+			s += "\n\n" + strings.Join(lines, "\n")
+		}
+	}
 	say(stdout, "%s\n", s)
 	return 0
 }
