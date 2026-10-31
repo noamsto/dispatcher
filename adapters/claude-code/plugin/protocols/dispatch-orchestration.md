@@ -285,24 +285,33 @@ grammar follows on the next rebuild. This skip var covers the Model gate
 (shape) only — it does not bypass the Tier map gate below. A genuinely new
 model that is also a new tier's row additionally needs `--ignore-map` until
 its row in `adapters/core/defaults.json` is updated and rebuilt
-(`scripts/gen-adapters.sh` regenerates the tables).
+(`scripts/gen-adapters.sh` regenerates the tables), unless the model catalog
+already admits it by class (Tier map, below).
 
 **Machine-readable view.** `dispatch --models [--json]` prints the tier map
 the gate enforces, read from the resolved settings (`defaults.json` plus
-overrides, and pi `localModels`), so tools such as a web dashboard need no hand-kept copy. It is
-read-only and fast: no lock, budget probe or crew write. It covers the engines
+overrides, and pi `localModels`) and the model, class-state and budget caches,
+so tools such as a web dashboard need no hand-kept copy. It is
+read-only and fast: no lock, live probe or crew write. It covers the engines
 `dispatch --engines` lists. Without `--json` it prints a table. The JSON shape:
 
 ```json
-{"engines": {"<engine>": {"tiers": {"trivial": {"default": "<model>", "models": ["..."], "regex": ["..."]}, "standard": {...}, "deep": {...}}, "models": ["<union, map order>"]}}}
+{"engines": {"<engine>": {"tiers": {"trivial": {"class": "<class>", "admits": ["..."], "default": "<model>", "trial": "<model>", "models": ["..."], "regex": ["..."], "conditional": [{"id": "...", "requires": "pi_month_target", "met": false}]}, "standard": {...}, "deep": {...}}, "models": ["<union, map order>"], "warnings": ["..."]}}}
 ```
 
 `default` is the model the protocol leads with for that tier (`null` if the
 row has none). `models` is everything the gate accepts on that row, escalation
-rungs (`outOfRow`) included, plus, for pi, each `localModels` id whose `tiers`
-admit it; entries can be bash globs (`claude-opus-*`), not only literal ids.
-`regex` lists the EREs the gate also accepts (`[]` when none). The engine-level
-`models` is the order-preserving union of its tiers.
+rungs (`outOfRow`) and catalog class admissions included, plus, for pi, each
+`localModels` id whose `tiers` admit it; entries can be bash globs
+(`claude-opus-*`), not only literal ids. `regex` lists the EREs the gate also
+accepts (`[]` when none). `class` and `admits` come from `classes` in
+`defaults.json`; `trial` is the newest undated, unconditional catalogued match of the row's
+class that sorts before the default (`null` when none); dated, preview, exp and
+beta IDs are never trials. A trial is dispatchable when named, as an A/B
+candidate; `conditional` lists catalogued
+matches of a gated pattern, `met` when the gate admits them now. The
+engine-level `models` is the order-preserving union of its tiers; `warnings`
+are the resolver's (on stderr in the table).
 
 ### Local models
 
@@ -432,7 +441,7 @@ after a compaction.
 
 `dispatch` layers a second check on top of the Model gate above: once a model
 clears dispatchability (shape), it must also be tier-appropriate for the
-`(tier, engine)` pair. A model is accepted iff it is that tier's **worker** or
+`(tier, engine)` pair. A model is accepted from the seed row when it is that tier's **worker** or
 **execute** cell from the Model map above, **or** that tier's **escalate**
 cell when the escalate cell is not burn-stronger (Burn classes, above) than
 the worker cell — no current row's escalate is burn-stronger than its worker,
@@ -447,9 +456,22 @@ already recognizes) on `deep` only. Pi accepts its tier's Model-map worker plus
 the rotation alternatives named there, on every profile — see the generated
 table below for the per-tier lists.
 
+**Class admission.** A model off its row is also admitted when
+`${XDG_DATA_HOME:-~/.local/share}/crew/model-catalog.json` (`refresh-models`)
+lists it and it matches a pattern of a class the row admits
+(`classes.<engine>.tiers.<tier>.admits` in `defaults.json`;
+`docs/model-classes.md` §5), so a new catalogued model needs no
+`--ignore-map`. A pattern with `requires: "pi_month_target"` (pi premium,
+`openrouter/anthropic/claude-opus-*`) also needs a pi monthly target
+(`engines.pi.target_usd` in `engine-budget.json`, at most 2h old, refreshed by
+`refresh-budget`). pi premium (OpenRouter opus) is admitted only at `deep`,
+where `admits` includes premium. The catalog itself has no age check. With no
+catalog only the rows below apply.
+
 The table below is generated from `adapters/core/defaults.json`: for each
 engine × tier it lists the map's `default` (typical launch) model and
-everything the gate admits at that row.
+the seed row; `dispatch --models` prints the live admitted set, class
+admissions included.
 
 <!-- BEGIN generated:tier-rows from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->
 
@@ -512,14 +534,18 @@ to a lazy role after its persisted values and CLI overrides resolve. Premium
 effort is `xhigh` and `max` (both downgrade to `high`); `high` is not
 premium. Model refusal is checked before effort refusal, so a target that
 is premium on both dimensions needs a matching escape for each (or
-`--ignore-budget`). pi has no premium model rung — every pi model is a Flash
-rung in one burn class — so only effort is ever refused for it. While pi's
+`--ignore-budget`). pi has no premium model rung in the table below, so only
+effort is ever refused for it, a class-admitted pi opus included. While pi's
 `month` window is ahead of pace, both `max` and `xhigh` are refused at once,
 so a refused pi dispatch lands directly on `high` — which matters because
 `deepseek-v4.1-flash`, pi's tier-typical `standard`/`deep` model, exposes no
 `xhigh` rung to land on in between. Cursor is the reverse: it has a premium
 model rung (`grok-4.7-high`) but no effort knob — `--effort` is
-accepted-and-ignored — so its effort is never refused, only the model rung.
+accepted-and-ignored — so its effort is never refused, only the model rung,
+and only for IDs listed in the table below. Class-admitted premium codex and
+cursor IDs outside the `paceDowngrades` table (for example a new `gpt-*-sol`
+or `grok-*-high`) are not pace-refused until P4 makes `paceDowngrades`
+class-aware.
 
 <!-- BEGIN generated:pace-downgrades from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->
 

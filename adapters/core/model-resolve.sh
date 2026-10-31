@@ -19,12 +19,16 @@
 # A missing catalog or state file is not an error. A catalog or state file that
 # is not a regular file, is over its size cap (4 MiB, 64 KiB) or is not one JSON
 # object is ignored with a warning, as is a catalog entry of more than 5000
-# models. With no catalog snapshot the seed row is the admitted set; the catalog
-# and class-state are separate inputs, so a recorded default that passes the
-# class-match check is still honoured.
+# models. The open itself is bounded (1 s, coreutils timeout), so a FIFO swapped
+# in after the regular-file check is rejected the same way and never blocks;
+# with no timeout command a present file is rejected. With no catalog snapshot
+# the seed row is the admitted set; the catalog and class-state are separate
+# inputs, so a recorded default that passes the class-match check is still
+# honoured. dispatch's tier gate and `dispatch --models` call this.
 #
-# Pure: reads only stdin and the two named files. No clock, network, environment
-# lookup or score. Exit 2 on a usage error, 1 on an unknown engine/tier row.
+# Pure: reads only stdin and the two named files. No clock, network or score;
+# PATH only supplies the timeout command. Exit 2 on a usage error, 1 on an
+# unknown engine/tier row.
 set -euo pipefail
 
 [ "$#" -eq 4 ] || {
@@ -33,29 +37,48 @@ set -euo pipefail
 }
 engine=$1 tier=$2
 
-# open_capped <file> <label> — sets mode (absent|read|bad) and fd. The file is
-# opened once and every later read goes through that fd, so a swap after the
-# checks cannot change what jq sees. A rejected file records a warning.
+# bounded_copy <file> <bytes> — print at most <bytes> of <file>, opened and
+# checked to be a regular file in a child killed after 1 s, so a FIFO (whose
+# open blocks until a writer appears) fails instead of hanging. Non-zero when
+# the open fails, the file is not regular, the bound fires or there is no
+# timeout command.
+bounded_copy() {
+  local to
+  to=$(command -v timeout || command -v gtimeout) || return 1
+  # shellcheck disable=SC2016 # the child expands its own positional args
+  "$to" 1 "$BASH" -c 'exec <"$1" || exit 3; [ -f /dev/stdin ] || exit 4; exec head -c "$2"' _ "$1" "$2" 2>/dev/null
+}
+
+# open_capped <file> <label> <cap> — sets mode (absent|read|bad) and fd. One
+# past the cap is copied into a private file, which jq then reads through fd,
+# so a swap of <file> after the checks cannot change what jq sees. A rejected
+# file records a warning.
 shell_warnings=()
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
 open_capped() {
   mode=read fd=
   if [ ! -e "$1" ]; then
     mode=absent
-  elif [ ! -f "$1" ] || ! { exec {fd}<"$1"; } 2>/dev/null || [ ! -f "/dev/fd/$fd" ]; then
+  elif ! command -v timeout >/dev/null && ! command -v gtimeout >/dev/null; then
+    mode=bad
+    shell_warnings+=("model-resolve: no timeout command to bound the open of $2; ignoring it")
+  elif [ ! -f "$1" ] || ! bounded_copy "$1" $(($3 + 1)) >"$tmpdir/$2" || ! { exec {fd}<"$tmpdir/$2"; } 2>/dev/null; then
     mode=bad fd=
     shell_warnings+=("model-resolve: $2 is not a readable regular file; ignoring it")
   fi
 }
 cat_cap=4194304 state_cap=65536
-open_capped "$3" catalog
+open_capped "$3" catalog "$cat_cap"
 cat_mode=$mode cat_fd=$fd
-open_capped "$4" class-state
+open_capped "$4" class-state "$state_cap"
 state_mode=$mode state_fd=$fd
 
-# capped_read <fd> <cap> — one byte past the cap is enough for jq to see the
-# file is too large. No fd (an absent or rejected file) reads as empty.
+# capped_read <fd> — the copy already stops one byte past the cap, which is
+# enough for jq to see the file is too large. No fd (an absent or rejected
+# file) reads as empty.
 capped_read() {
-  [ -z "$1" ] || head -c $(($2 + 1)) <&"$1"
+  [ -z "$1" ] || cat <&"$1"
 }
 
 sw='[]'
@@ -65,8 +88,8 @@ fi
 
 rc=0
 jq -nR --arg e "$engine" --arg t "$tier" \
-  --arg catmode "$cat_mode" --rawfile catraw <(capped_read "$cat_fd" "$cat_cap") --argjson catcap "$cat_cap" \
-  --arg statemode "$state_mode" --rawfile stateraw <(capped_read "$state_fd" "$state_cap") --argjson statecap "$state_cap" \
+  --arg catmode "$cat_mode" --rawfile catraw <(capped_read "$cat_fd") --argjson catcap "$cat_cap" \
+  --arg statemode "$state_mode" --rawfile stateraw <(capped_read "$state_fd") --argjson statecap "$state_cap" \
   --argjson sw "$sw" '
   def clean: gsub("[[:cntrl:]\\p{Cf}]"; "");
   def glob_re:

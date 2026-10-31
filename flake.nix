@@ -127,8 +127,8 @@
               (builtins.readFile ./adapters/core/worktree-git.sh));
           sub =
             builtins.replaceStrings
-            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@" "@publicLeakGuard@" "@worktreeGitLib@" "@grantCheckLib@" "@claudeWorkerSettingsLib@" "@localModelsLib@" "@budgetGateLib@" "@openrouterKeyLib@" "@laneProfilesDir@" "@agentBrowserWorkerConfig@" "@piDir@"]
-            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}" "${worktreeGitLib}" "${./adapters/core/grant-check.sh}" "${./adapters/core/claude-worker-settings.sh}" "${./adapters/core/local-models.sh}" "${./adapters/core/budget-gate.sh}" "${./adapters/core/openrouter-key.sh}" "${./adapters/core/lane-profiles}" "${./adapters/core/agent-browser-worker.json}" "${./adapters/pi}"];
+            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@" "@publicLeakGuard@" "@worktreeGitLib@" "@grantCheckLib@" "@claudeWorkerSettingsLib@" "@localModelsLib@" "@budgetGateLib@" "@openrouterKeyLib@" "@laneProfilesDir@" "@agentBrowserWorkerConfig@" "@piDir@" "@modelResolve@"]
+            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}" "${worktreeGitLib}" "${./adapters/core/grant-check.sh}" "${./adapters/core/claude-worker-settings.sh}" "${./adapters/core/local-models.sh}" "${./adapters/core/budget-gate.sh}" "${./adapters/core/openrouter-key.sh}" "${./adapters/core/lane-profiles}" "${./adapters/core/agent-browser-worker.json}" "${./adapters/pi}" "${./adapters/core/model-resolve.sh}"];
           # The settings resolver (#560), with defaults.json baked in as its base
           # layer. withConfig bakes its path into the consumers as the default for
           # their env-overridable DISPATCH_CONFIG_BIN, the WORKTREE_GIT_LIB idiom.

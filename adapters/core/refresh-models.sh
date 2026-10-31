@@ -5,7 +5,8 @@
 # Writes ${XDG_DATA_HOME:-~/.local/share}/crew/cursor-models-cache.json (the
 # dispatcher reads it when judging which cursor-agent model to dispatch to, see
 # DISPATCHER_PROTOCOL.md) and model-catalog.json, the per-engine catalog
-# (docs/model-classes.md §5) that nothing reads yet. Refresh by hand or cron —
+# (docs/model-classes.md §5) that dispatch's tier
+# gate reads through model-resolve. Refresh by hand or cron —
 # no daemon. An engine whose probe fails keeps its previous catalog snapshot.
 #
 # `cursor-agent --list-models` is the only cursor source (no JSON mode): it

@@ -39,6 +39,8 @@ export LOCAL_MODELS_LIB="$BATS_TEST_DIRNAME/../adapters/core/local-models.sh"
 export OPENROUTER_KEY_LIB="$BATS_TEST_DIRNAME/../adapters/core/openrouter-key.sh"
 # And for the shared quota-predicate lib.
 export BUDGET_GATE_LIB="$BATS_TEST_DIRNAME/../adapters/core/budget-gate.sh"
+# And for the model-class resolver dispatch's tier gate runs.
+export MODEL_RESOLVE_BIN="$BATS_TEST_DIRNAME/../adapters/core/model-resolve.sh"
 # The host's ~/.config/dispatcher/settings.json must never reach a test.
 export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/config"
 # Generated launch files (the mcpServers catalog renders) must land neither in
