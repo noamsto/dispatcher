@@ -118,6 +118,21 @@ self: {
   claudePluginDir = withAgentBrowserSkill "claude" ccPlugin "skills";
   piSkillsDir = withAgentBrowserSkill "pi" "${self}/adapters/core/skills" ".";
   pkgsFor = self.legacyPackages.${pkgs.stdenv.hostPlatform.system}.mkPackagesWith lockedFile piSkillsDir;
+  refreshCommands = [
+    "${pkgsFor.refresh-models}/bin/refresh-models"
+    "${pkgsFor.refresh-scores}/bin/refresh-scores"
+  ];
+  # refresh-models finds cursor-agent on PATH, and neither scheduler's default
+  # PATH reaches the user-installed copy.
+  refreshPath = lib.concatStringsSep ":" [
+    "${config.home.homeDirectory}/.local/bin"
+    "${config.home.homeDirectory}/.nix-profile/bin"
+    "/etc/profiles/per-user/${config.home.username}/bin"
+    "/run/current-system/sw/bin"
+    "/usr/bin"
+    "/bin"
+  ];
+  refreshLog = "${config.home.homeDirectory}/Library/Logs/dispatcher-refresh.log";
 in {
   options.programs.dispatcher = {
     enable = lib.mkEnableOption "the dispatcher agent fan-out harness";
@@ -427,6 +442,29 @@ in {
           `pi auth print-api-key --provider openrouter`, pi 0.83+,
           timeout-bounded). A set keyFile is exclusive:
           pi's login is never consulted.
+        '';
+      };
+    };
+
+    refresh = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Run `refresh-models` and `refresh-scores` once a day without a
+          dispatcher session, so the model and score caches do not go stale
+          between sessions: a systemd user timer on Linux, a launchd agent on
+          Darwin. Set false to schedule nothing.
+        '';
+      };
+
+      interval = lib.mkOption {
+        type = lib.types.str;
+        default = "daily";
+        example = "*-*-* 06:00:00";
+        description = ''
+          systemd `OnCalendar` value for the Linux timer. The Darwin agent
+          always runs once a day, at midnight.
         '';
       };
     };
@@ -754,6 +792,48 @@ in {
             }
             ${lib.concatMapStrings (name: "run ln -sfn \"${self}/adapters/cursor/skills/${name}\" \"$skills_dir/${name}\"\n") (builtins.attrNames (lib.filterAttrs (_: t: t == "directory") (builtins.readDir "${self}/adapters/cursor/skills")))}'';
         };
+    };
+
+    # Each command may fail alone (cursor-agent missing must not skip scores),
+    # so systemd's `-` prefix and the `;` in the launchd shell both run the
+    # second one regardless.
+    systemd.user = lib.optionalAttrs (cfg.refresh.enable && pkgs.stdenv.hostPlatform.isLinux) {
+      services.dispatcher-refresh = {
+        Unit.Description = "Refresh the dispatcher model and score caches";
+        Service = {
+          Type = "oneshot";
+          Environment = ["PATH=${refreshPath}"];
+          ExecStart = map (command: "-${command}") refreshCommands;
+        };
+      };
+      timers.dispatcher-refresh = {
+        Unit.Description = "Daily refresh of the dispatcher model and score caches";
+        Timer = {
+          OnCalendar = cfg.refresh.interval;
+          Persistent = true;
+          RandomizedDelaySec = "1h";
+        };
+        Install.WantedBy = ["timers.target"];
+      };
+    };
+
+    launchd.agents = lib.optionalAttrs (cfg.refresh.enable && pkgs.stdenv.hostPlatform.isDarwin) {
+      dispatcher-refresh = {
+        enable = true;
+        config = {
+          ProgramArguments = ["/bin/sh" "-c" (lib.concatStringsSep "; " refreshCommands)];
+          EnvironmentVariables.PATH = refreshPath;
+          StandardOutPath = refreshLog;
+          StandardErrorPath = refreshLog;
+          StartCalendarInterval = [
+            {
+              Hour = 0;
+              Minute = 0;
+            }
+          ];
+          RunAtLoad = false;
+        };
+      };
     };
 
     xdg.configFile = lib.optionalAttrs (cfg.userSettings != null) {
