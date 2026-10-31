@@ -10,7 +10,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 )
 
-// These are the bus-driven `identity:` cases tests/crew.bats used to drive by
+// These are the bus-driven `identity:` cases the bats suite used to drive by
 // shelling out to `crew identity` (#1044). Each runs the arm itself — Run over a
 // real bus log — and pins the stdout and exit code the case compared with jq.
 // The cases that assert nothing but the subcommand's own contract (its keys, its
