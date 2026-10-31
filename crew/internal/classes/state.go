@@ -7,6 +7,7 @@
 package classes
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -153,6 +154,10 @@ func Load(path string) (st State, usable bool, warnings []string) {
 // items individually. It reports false when a default is present but not a
 // string; an entry with no default follows the seed default.
 func parseEntry(raw json.RawMessage, warn func(string, ...any)) (Entry, bool) {
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || trimmed[0] != '{' {
+		warn("dropped entry: not an object")
+		return Entry{}, false
+	}
 	var fields struct {
 		Default json.RawMessage   `json:"default"`
 		History []json.RawMessage `json:"history"`
