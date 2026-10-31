@@ -88,7 +88,7 @@ jq -nR --arg e "$engine" --arg t "$tier" \
       else false end);
   def ver: split("/") | last | [scan("[0-9]+") | tonumber] | . as $v | [range(0; 8) | -($v[.] // -1)];
   def pglob: if type == "string" then . else .glob end;
-  def rank_of: ["cheap", "standard", "premium"] | index(.);
+  def rank_of: . as $c | ["cheap", "standard", "premium"] | index($c);
   def undated: (test("-([0-9]{4}|[0-9]{8})\\z") or test("(\\A|[-./_])(preview|exp|beta)([-./_]|\\z)")) | not;
 
   [inputs]

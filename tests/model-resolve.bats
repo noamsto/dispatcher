@@ -256,6 +256,21 @@ field() { jq -c "$1" <<<"$output"; }
   done
 }
 
+@test "model-resolve: a recorded default of a more expensive class is refused when the row class overlaps it" {
+  jq '.classes.claude.standard = ["sonnet", "claude-*"]' "$SETTINGS" >"$SETTINGS.new" && mv "$SETTINGS.new" "$SETTINGS"
+  state '{"claude":{"standard":{"default":"claude-opus-4-7"}}}'
+  resolve claude standard
+  [ "$status" -eq 0 ]
+  [ "$(field .default)" = '"sonnet"' ]
+  [ "$(field '.warnings | length')" -eq 1 ]
+  [[ "$(field '.warnings[0]')" == *"claude-opus-4-7"* ]]
+  state '{"claude":{"standard":{"default":"claude-sonnet-5-0"}}}'
+  resolve claude standard
+  [ "$status" -eq 0 ]
+  [ "$(field .default)" = '"claude-sonnet-5-0"' ]
+  [ "$(field .warnings)" = '[]' ]
+}
+
 @test "model-resolve: control characters in a recorded id never reach a warning" {
   state "$(jq -nc '{pi: {standard: {default: "x\u001b[31mred\u202e"}}}')"
   resolve pi standard
