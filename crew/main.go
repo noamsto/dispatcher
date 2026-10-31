@@ -20,6 +20,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/adopt"
 	"github.com/noamsto/dispatcher/crew/internal/await"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/classes"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/crews"
 	"github.com/noamsto/dispatcher/crew/internal/entry"
@@ -109,6 +110,10 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 		if arg(args, 1) == "stream" && isHelpFlag(arg(args, 2)) {
 			return entry.RunHelp([]string{"fleet"}, stdout, stderr), true
 		}
+	case "class":
+		if isHelpFlag(arg(args, 2)) {
+			return entry.RunHelp([]string{"class"}, stdout, stderr), true
+		}
 	}
 	if isHelpFlag(arg(args, 1)) {
 		return entry.RunHelp([]string{sub}, stdout, stderr), true
@@ -143,7 +148,7 @@ var subcommands = []string{
 	"git-guard", "help", "hold", "msg", "nudge",
 	"pr-watch", "reap", "reap-autosweep",
 	"relay", "reply", "stall-watch", "status", "stream", "watch",
-	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups",
+	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class",
 }
 
 // typedSubcommands are the subcommands whose argv root binds: every name but
@@ -159,7 +164,7 @@ var typedSubcommands = map[string]bool{
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
 	"adopt": true, "merge": true, "pr-watch": true, "stall-watch": true, "help": true,
 	"remote-run": true, "remote-exec": true, "dispatch-row": true, "peer-sync": true, "peer-claims": true, "decide": true, "decisions": true, "spec-lint": true,
-	"followups": true,
+	"followups": true, "class": true,
 }
 
 // passthroughCmd is dash to kong: its name, then whatever words it wants, kept
@@ -226,6 +231,7 @@ type root struct {
 	PeerClaims  peerClaimsCmd  `cmd:"" name:"peer-claims" help:"Print a peer host's live claim on an issue."`
 	Decide      decideCmd      `cmd:"" name:"decide" help:"Announce a dispatcher decision to the peer hosts."`
 	Decisions   decisionsCmd   `cmd:"" name:"decisions" help:"List the decisions announced here and by peer hosts."`
+	Class       classCmd       `cmd:"" name:"class" help:"Revert or promote a model class default."`
 
 	SpecLint specLintCmd `cmd:"" name:"spec-lint" help:"Lint a dispatcher task spec."`
 
@@ -480,6 +486,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			}
 			return rate.Run(rateRequest(parsed.typed.Rate), bus.Paths{}, "", stdout, stderr, rate.Options{})
 		}
+	case "class":
+		// A worker is refused before anything is located or read.
+		if line := classes.WorkerRefusal(os.Getenv); line != "" {
+			say(stderr, "%s\n", line)
+			return exitFailure
+		}
 	}
 
 	// remote-exec is what sshd starts in the remote user's $HOME, so it runs
@@ -564,7 +576,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			PID:    os.Getpid(),
 			Self:   self,
 			RateRun: func(_ []string, p bus.Paths, c string, so, se io.Writer) int {
-				return rate.Run(rate.Request{}, p, c, so, se, rate.Options{})
+				return rate.Run(rate.Request{}, p, c, so, se, rate.Options{
+					ClassCheck: func(rows []any, w io.Writer) { classes.Check(rows, classEnv(ctx, c, p), w) },
+				})
 			},
 		}
 		if sub == "reap-autosweep" {
@@ -698,6 +712,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			PeerHosts: e.peerHosts,
 		})
 	}
+	if sub == "class" {
+		ce := classEnv(ctx, cwd, paths)
+		if strings.Fields(parsed.cmd)[1] == "revert" {
+			c := parsed.typed.Class.Revert
+			return classes.Revert(c.Engine, c.Class, ce, stderr)
+		}
+		c := parsed.typed.Class.Promote
+		return classes.Promote(c.Engine, c.Class, c.ID, ce, stderr)
+	}
 	if sub == "decisions" {
 		c := parsed.typed.Decisions
 		now := e.now()
@@ -787,7 +810,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 
 	// rate's two repo-keyed modes: the sweep of this repo, and the store rollup.
 	if sub == "rate" {
-		return rate.Run(rateRequest(parsed.typed.Rate), paths, cwd, stdout, stderr, rate.Options{})
+		return rate.Run(rateRequest(parsed.typed.Rate), paths, cwd, stdout, stderr, rate.Options{
+			ClassCheck: func(rows []any, w io.Writer) { classes.Check(rows, classEnv(ctx, cwd, paths), w) },
+			ClassReport: func(rows []any) []string {
+				return classes.ReportLines(rows, classEnv(ctx, cwd, paths))
+			},
+		})
 	}
 
 	// reply resolves its target against the bus, then appends one row itself, so
@@ -1125,7 +1153,21 @@ var (
 	bashBin        = "bash"
 	budgetGateLib  string
 	localModelsLib string
+	// modelResolveScript is model-resolve.sh, baked by flake.nix; the class
+	// check and `crew class` run it. MODEL_RESOLVE_SCRIPT overrides it.
+	modelResolveScript string
 )
+
+// classEnv is the production classes.Env: the baked resolver, this crew's id
+// and bus. Getenv, Settings and Now take the classes defaults.
+func classEnv(ctx context.Context, cwd string, paths bus.Paths) classes.Env {
+	return classes.Env{
+		Bash:   bashBin,
+		Script: cmp.Or(os.Getenv("MODEL_RESOLVE_SCRIPT"), modelResolveScript),
+		CrewID: bus.CrewID(ctx, cwd),
+		Paths:  paths,
+	}
+}
 
 // budgetFile is `${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json`.
 func budgetFile() string {

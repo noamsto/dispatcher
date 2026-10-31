@@ -1040,8 +1040,17 @@ admits-unknown|{"classes":{"claude":{"tiers":{"deep":{"admits":["premium","free"
 pattern-type|{"classes":{"claude":{"cheap":[7]}}}|classes.claude.cheap.0 must be a glob string or {glob, requires
 requires-value|{"classes":{"claude":{"cheap":[{"glob":"x","requires":"other"}]}}}|classes.claude.cheap.0 must be a glob string or {glob, requires
 pi-glob-provider|{"classes":{"pi":{"standard":["*/foo"]}}}|classes.pi.standard.0 must be a pi pattern with a literal provider
+autopromote-type|{"classes":{"codex":{"autoPromote":"no"}}}|classes.codex.autoPromote must be a boolean
 ROWS
-  finish_rows 6
+  finish_rows 7
+}
+
+@test "classes.<engine>.autoPromote false resolves silently" {
+  user_settings '{"classes":{"codex":{"autoPromote":false}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  jq -e '.classes.codex.autoPromote == false' <<<"$output"
 }
 
 @test "a classes.pi provider is reserved against localModels" {

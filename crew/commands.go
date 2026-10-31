@@ -300,6 +300,22 @@ type decideCmd struct {
 	Text string `arg:"" optional:"" name:"text"`
 }
 
+type classCmd struct {
+	Revert  classRevertCmd  `cmd:"" name:"revert" help:"Restore a class's previous default and veto the reverted model."`
+	Promote classPromoteCmd `cmd:"" name:"promote" help:"Set a class's default by hand."`
+}
+
+type classRevertCmd struct {
+	Engine string `arg:"" name:"engine"`
+	Class  string `arg:"" name:"class"`
+}
+
+type classPromoteCmd struct {
+	Engine string `arg:"" name:"engine"`
+	Class  string `arg:"" name:"class"`
+	ID     string `arg:"" name:"id"`
+}
+
 type decisionsCmd struct {
 	JSON  bool    `name:"json"`
 	Since *string `name:"since"`
@@ -440,6 +456,7 @@ const (
 	peerClaimsUsage   = "usage: crew peer-claims <issue>"
 	decideUsage       = `usage: crew decide "<text>"`
 	decisionsUsage    = "usage: crew decisions [--json] [--since <ms|duration> | --all]"
+	classUsage        = "usage: crew class revert <engine> <class> | crew class promote <engine> <class> <id>"
 	specLintUsage     = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
 )
 
@@ -515,7 +532,8 @@ var wordings = map[string]wording{
 		extra: func(w string) string { return fmt.Sprintf("crew: reply: unexpected argument '%s'", w) },
 		code:  exitFailure,
 	},
-	"hold": {all: hold.Usage, code: exitFailure},
+	"hold":  {all: hold.Usage, code: exitFailure},
+	"class": {all: classUsage, code: exitFailure},
 	"hold add": {
 		unknownFlag: func(f string) string { return fmt.Sprintf("crew: hold add: unknown arg '%s'", f) },
 		extra:       func(w string) string { return fmt.Sprintf("crew: hold add: unknown arg '%s'", w) },
