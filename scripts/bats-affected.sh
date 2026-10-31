@@ -51,7 +51,7 @@ add() {
 # Sets shared by several rows.
 dispatch_set=(adapters dispatch-comment dispatch-resume dispatch model-map module)
 prompt_set=(adapters dispatch-comment dispatch-resume dispatch dispatcher model-map module permission-check)
-crew_set=(adapters crew directive-delivery dispatch-comment dispatch-notify dispatch-resume dispatch dispatcher model-map module pr-watch)
+crew_set=(adapters directive-delivery dispatch-comment dispatch-notify dispatch-resume dispatch dispatcher model-map module pr-watch)
 
 map_file() {
   local f="$1"
@@ -78,7 +78,7 @@ map_file() {
   adapters/core/budget-gate.sh) add "${crew_set[@]}" ;;
   adapters/core/claude-worker-settings.sh | adapters/core/cross-repo-hint.sh) add "${dispatch_set[@]}" ;;
   adapters/core/dispatch-resume.sh | adapters/core/dispatch.sh) add "${dispatch_set[@]}" remote-host ;;
-  adapters/core/directive-delivery.sh) add adapters crew directive-delivery ;;
+  adapters/core/directive-delivery.sh) add adapters directive-delivery ;;
   adapters/core/dispatch-notify.sh) add adapters dispatch-notify dispatch ;;
   adapters/core/dispatcher.sh) add adapters dispatch dispatcher module ;;
   adapters/core/lead-launcher.sh) add adapters dispatch dispatch-resume dispatcher lead-launcher module ;;
@@ -95,8 +95,8 @@ map_file() {
   adapters/core/tmux-server-guard.sh) add adapters tmux-server-guard ;;
   adapters/core/reviewers/resolve-roster.sh) add "${prompt_set[@]}" ;;
   adapters/core/commands/*.md) add adapters dispatch ;;
-  adapters/core/protocols/WORKER_*.md) add "${prompt_set[@]}" crew ;;
-  adapters/core/protocols/dispatch-orchestration.md) add "${prompt_set[@]}" crew model-map-doc ;;
+  adapters/core/protocols/WORKER_*.md) add "${prompt_set[@]}" ;;
+  adapters/core/protocols/dispatch-orchestration.md) add "${prompt_set[@]}" model-map-doc ;;
   adapters/core/protocols/*.md | adapters/core/critics/*.md | adapters/core/reviewers/*.md | adapters/core/skills/*/SKILL.md) add "${prompt_set[@]}" ;;
   adapters/claude-code/* | adapters/codex/* | adapters/cursor/*) add adapters module ;;
   adapters/pi/*) add adapters dispatch dispatch-resume ;;
@@ -104,7 +104,7 @@ map_file() {
   scripts/pi-subagent-contract.sh) add adapters ;;
   scripts/gen-model-map-doc.sh) add adapters model-map-doc ;;
   README.md) add adapters dispatch permission-check ;;
-  hookyard.json) add adapters crew directive-delivery phase-status public-leak-guard secret-read-guard test-scope-guard tmux-server-guard ;;
+  hookyard.json) add adapters directive-delivery phase-status public-leak-guard secret-read-guard test-scope-guard tmux-server-guard ;;
   crew/*) add "${crew_set[@]}" remote-host ;;
   dash/*) add module ;;
   docs/* | spikes/* | EVIDENCE-*.txt | LICENSE | .gitignore | .envrc | WORKER_TASK.md) ;;

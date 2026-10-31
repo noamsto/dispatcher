@@ -310,8 +310,8 @@ shard() {
   out=$(
     printf '%s\n' \
       $'tests/a.bats\tok\t4\tno colon here' \
-      $'tests/crew.bats\tok\t10\tstall-watch: a' \
-      $'tests/crew.bats\tok\t5\tstall-watch: b' \
+      $'tests/dispatch.bats\tok\t10\tstall-watch: a' \
+      $'tests/dispatch.bats\tok\t5\tstall-watch: b' \
       $'tests/module.bats\tok\t99\tmod' \
       $'tests/secret-read-guard.bats[timing]\tok\t7\tsecret: slow' \
       | "$WEIGHTS_SCRIPT"
@@ -320,7 +320,7 @@ shard() {
     printf '%s\n' \
       $'file\tfamily\tfilter\tweight_ms' \
       $'tests/a.bats\t*\t!timing\t4' \
-      $'tests/crew.bats\tstall-watch\t!timing\t15' \
+      $'tests/dispatch.bats\tstall-watch\t!timing\t15' \
       $'tests/secret-read-guard.bats\tsecret\ttiming\t7'
   )" ]
 

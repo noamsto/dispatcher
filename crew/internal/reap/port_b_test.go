@@ -389,6 +389,7 @@ func TestPortBTrackedModificationKeeps(t *testing.T) {
 	f.portBOK(Request{})
 	f.wantOut("crew reap: keeping feat/r — uncommitted changes", "crew reap: nothing reclaimed")
 	f.portBWantPresent(f.wt)
+	portFNoPatch(f)
 }
 
 func TestPortBUntrackedNonScaffoldKeeps(t *testing.T) {

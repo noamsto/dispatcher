@@ -173,7 +173,7 @@ func reviewCases() []gateCase {
 	}
 }
 
-// piCases ports the pi reviewer-verdict cases of tests/crew.bats' terminal
+// piCases ports the pi reviewer-verdict cases of the bats suite's terminal
 // status gate section (#241, #306, #391, #392): each row is one `crew status
 // <worker> pr_open ""` over a seeded bus, asserted with its exact exit code and
 // refusal, and with the status row written or absent. The engine line decides

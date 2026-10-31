@@ -12,11 +12,6 @@ tests/adapters.bats	worker Base ref	!timing	195
 tests/bats-affected.bats	affected	!timing	3908
 tests/bats-affected.bats	affected git	!timing	1670
 tests/bats-shard.bats	*	!timing	53964
-tests/crew.bats	*	!timing	65735
-tests/crew.bats	burn map conformance	!timing	19017
-tests/crew.bats	reap	!timing	211640
-tests/crew.bats	reply	!timing	2819
-tests/crew.bats	watch	!timing	48846
 tests/dispatch-comment.bats	*	!timing	44295
 tests/dispatch-config.bats	*	!timing	50123
 tests/dispatch-config.bats	no user, locked or env layer	!timing	457
@@ -35,6 +30,7 @@ tests/dispatch-resume.bats	resume preserves a stacked base	!timing	5236
 tests/dispatch-resume.bats	stamps resume	!timing	6387
 tests/dispatch-resume.bats	target	!timing	30181
 tests/dispatch.bats	*	!timing	1161039
+tests/dispatch.bats	burn map conformance	!timing	19017
 tests/dispatch.bats	--base	!timing	26050
 tests/dispatch.bats	--base branches from the fetched parent ref and stamps base	!timing	4549
 tests/dispatch.bats	--pr	!timing	8286

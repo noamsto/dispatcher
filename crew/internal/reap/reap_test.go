@@ -643,6 +643,9 @@ func TestIdleEngineWindow(t *testing.T) {
 	anchor, _ := wtgit.AnchorPath(f.wt)
 	f.wantOut("crew reap: would kill window @5 (feat/r idle engine)",
 		"crew reap: would reap feat/r (MERGED) @ "+f.wt, "crew reap: would prune record "+anchor)
+	if f.killed() {
+		t.Fatalf("dry run killed a window: %q", f.calls)
+	}
 
 	// A branch that posted after the status keeps everything.
 	f.bus(status("done", prURL, 5), fmt.Sprintf(`{"ts":%d,"from":"worker:%s#s2","kind":"msg"}`, nowUnix*1000, rb))
@@ -677,10 +680,12 @@ func TestIdlePiEngineWindow(t *testing.T) {
 	anchor, _ := wtgit.AnchorPath(f.wt)
 	f.wantOut("crew reap: would kill window @5 (feat/r idle engine)",
 		"crew reap: would reap feat/r (MERGED) @ "+f.wt, "crew reap: would prune record "+anchor)
+	f.noKill()
 
 	f.tmux["capture-pane -p -t %5"] = working
 	f.reap(f.main, Request{DryRun: true})
 	f.wantOut("crew reap: keeping feat/r — an engine is still running there (pi frame: live turn or no idle input box)")
+	f.noKill()
 
 	f.tmux["capture-pane -p -t %5"] = draft
 	f.reap(f.main, Request{DryRun: true})

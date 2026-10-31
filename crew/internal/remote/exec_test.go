@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -28,7 +30,8 @@ func fakeBin(t *testing.T) string {
 if [ -n "${FAKE_MARKER:-}" ]; then : > "$FAKE_MARKER.started"; sleep 2; echo late; : > "$FAKE_MARKER"; exit 0; fi
 printf '%s\0' ` + argv0 + ` "$@" > "$d/argv"
 pwd -P > "$d/pwd"
-if [ -n "${DISPATCH_SPEC:-}" ]; then cp -p "$DISPATCH_SPEC" "$d/spec"; printf '%s' "$DISPATCH_SPEC" > "$d/spec-path"; fi
+umask > "$d/umask"
+if [ -n "${DISPATCH_SPEC:-}" ]; then cp -p "$DISPATCH_SPEC" "$d/spec"; printf '%s' "$DISPATCH_SPEC" > "$d/spec-path"; ls "$(dirname "$DISPATCH_SPEC")" > "$d/scratch-ls"; fi
 env | grep -E '^(CREW_ID|DISPATCH_TMUX_SESSION|DISPATCH_EMIT_ROW|DISPATCH_SESSION_ID|CREW_IDENTITY_AVOID|CREW_WORKER_ID)=' | sort > "$d/env"
 echo child-out
 echo child-err >&2
@@ -71,8 +74,13 @@ func (e serveEnv) request(t *testing.T, argv []string, env map[string]string, sp
 
 func (e serveEnv) serve(t *testing.T, stdin string) (int, string, string) {
 	t.Helper()
+	return e.serveWith(t, stdin, binOptions(e.bin))
+}
+
+func (e serveEnv) serveWith(t *testing.T, stdin string, o ServeOptions) (int, string, string) {
+	t.Helper()
 	var stdout, stderr bytes.Buffer
-	rc := Serve(strings.NewReader(stdin), &stdout, &stderr, binOptions(e.bin))
+	rc := Serve(strings.NewReader(stdin), &stdout, &stderr, o)
 	return rc, stdout.String(), stderr.String()
 }
 
@@ -365,5 +373,252 @@ func TestServePeerSyncStdinReachesChild(t *testing.T) {
 	}
 	if stdout.String() != payload {
 		t.Fatalf("child stdin = %q, want %q", stdout.String(), payload)
+	}
+}
+
+// fakeTmux puts a `tmux` in e.bin that logs each call to $REMOTE_TEST_DUMP/tmux
+// (argv NUL-separated, calls separated by \x1e). `run-shell -b CMD` runs CMD
+// synchronously unless onRunShell says otherwise.
+func (e serveEnv) fakeTmux(t *testing.T, onRunShell string) {
+	t.Helper()
+	if onRunShell == "" {
+		onRunShell = `sh -c "$3"; exit 0`
+	}
+	writeScript(t, filepath.Join(e.bin, "tmux"), `{ printf '%s\0' "$@"; printf '\036'; } >> "$REMOTE_TEST_DUMP/tmux"
+if [ "$1" = run-shell ]; then `+onRunShell+`; fi
+exit 0
+`)
+}
+
+func (e serveEnv) tmuxCalls(t *testing.T) [][]string {
+	t.Helper()
+	var calls [][]string
+	for rec := range strings.SplitSeq(e.dumped(t, "tmux"), "\x1e") {
+		if rec != "" {
+			calls = append(calls, strings.Split(strings.TrimSuffix(rec, "\x00"), "\x00"))
+		}
+	}
+	return calls
+}
+
+// scratchDirs lists the scratch dirs remote-exec left in e's clone.
+func (e serveEnv) scratchDirs(t *testing.T) []string {
+	t.Helper()
+	dirs, err := filepath.Glob(filepath.Join(e.repo, ".git", "crew", "remote-exec", "*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dirs
+}
+
+func viaTmuxOptions(e serveEnv) ServeOptions {
+	o := binOptions(e.bin)
+	o.ViaTmux = true
+	return o
+}
+
+func TestServeDispatchViaTmux(t *testing.T) {
+	e := newServeEnv(t)
+	e.fakeTmux(t, "")
+	t.Setenv("FAKE_RC", "3")
+	defer syscall.Umask(syscall.Umask(0o027))
+	env := map[string]string{"CREW_ID": "c1", "DISPATCH_TMUX_SESSION": "crew-c1", "DISPATCH_EMIT_ROW": "1"}
+	spec := "s"
+	rc, stdout, stderr := e.serveWith(t, e.request(t, []string{"dispatch", "--title", "it's"}, env, &spec), viaTmuxOptions(e))
+	if rc != 3 || !strings.Contains(stdout, "child-out") || !strings.Contains(stderr, "child-err") {
+		t.Fatalf("rc %d, stdout %q, stderr %q", rc, stdout, stderr)
+	}
+	if got := e.dumped(t, "argv"); got != "dispatch\x00--title\x00it's\x00" {
+		t.Fatalf("argv = %q", got)
+	}
+	calls := e.tmuxCalls(t)
+	if len(calls) != 1 || len(calls[0]) != 3 || calls[0][0] != "run-shell" || calls[0][1] != "-b" {
+		t.Fatalf("tmux calls %q, want one run-shell -b", calls)
+	}
+	if log := e.dumped(t, "tmux"); strings.Contains(log, "CREW_ID=") {
+		t.Fatalf("an env value reached a tmux argv: %q", log)
+	}
+	if got := e.dumped(t, "env"); !strings.Contains(got, "CREW_ID=c1\n") {
+		t.Fatalf("child env = %q", got)
+	}
+	if got := strings.TrimSpace(e.dumped(t, "umask")); got != "0027" {
+		t.Fatalf("child umask = %s, want the caller's 0027", got)
+	}
+	if got := strings.Fields(e.dumped(t, "scratch-ls")); slices.Contains(got, "run") || !slices.Contains(got, "started") {
+		t.Fatalf("scratch while the child ran = %q, want started and no run script", got)
+	}
+	repo, err := filepath.EvalSymlinks(e.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(e.dumped(t, "pwd")); got != repo {
+		t.Fatalf("child cwd = %q, want %q", got, repo)
+	}
+	if dirs := e.scratchDirs(t); len(dirs) != 0 {
+		t.Fatalf("scratch left behind: %q", dirs)
+	}
+}
+
+func TestServeDispatchViaTmuxSpacedPath(t *testing.T) {
+	e := newServeEnv(t)
+	e.fakeTmux(t, "")
+	spaced := filepath.Join(filepath.Dir(e.repo), "my repo")
+	if err := os.Rename(e.repo, spaced); err != nil {
+		t.Fatal(err)
+	}
+	e.repo = spaced
+	rc, stdout, stderr := e.serveWith(t, e.request(t, []string{"dispatch"}, nil, nil), viaTmuxOptions(e))
+	if rc != 0 || stdout != "child-out\n" || stderr != "child-err\n" {
+		t.Fatalf("rc %d, stdout %q, stderr %q", rc, stdout, stderr)
+	}
+	if got := strings.TrimSpace(e.dumped(t, "pwd")); got != spaced {
+		t.Fatalf("child cwd = %q, want %q", got, spaced)
+	}
+}
+
+func TestRunShellSafe(t *testing.T) {
+	for _, s := range []string{"/a b/c", "/x/y-1.2_3", "/it's/(x);&|<>*?~{}"} {
+		if !runShellSafe(s) {
+			t.Errorf("runShellSafe(%q) = false", s)
+		}
+	}
+	for _, s := range []string{"/a$b", `/a"b`, `/a\b`, "/a`b", "/a#{b}", "/a\nb", "/a\x7fb"} {
+		if runShellSafe(s) {
+			t.Errorf("runShellSafe(%q) = true", s)
+		}
+	}
+}
+
+func setTmuxStartTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := tmuxStartTimeout
+	tmuxStartTimeout = d
+	t.Cleanup(func() { tmuxStartTimeout = old })
+}
+
+func TestServeDispatchViaTmuxNeverStarts(t *testing.T) {
+	e := newServeEnv(t)
+	e.fakeTmux(t, "exit 0")
+	setTmuxStartTimeout(t, 300*time.Millisecond)
+	rc, _, stderr := e.serveWith(t, e.request(t, []string{"dispatch"}, nil, nil), viaTmuxOptions(e))
+	if rc != 255 || !strings.Contains(stderr, "never started") || e.childRan() {
+		t.Fatalf("rc %d, child ran %v, stderr %q", rc, e.childRan(), stderr)
+	}
+	dirs := e.scratchDirs(t)
+	if len(dirs) != 1 {
+		t.Fatalf("scratch dirs %q, want the one kept for a late start", dirs)
+	}
+	if _, err := os.Stat(filepath.Join(dirs[0], "run")); !os.IsNotExist(err) {
+		t.Fatalf("the run script holding the environment is still there (%v)", err)
+	}
+}
+
+// TestServeDispatchViaTmuxDiesWithoutStatus: the job records a pid that is
+// gone and never writes a status, as when the server dies mid-dispatch.
+func TestServeDispatchViaTmuxDiesWithoutStatus(t *testing.T) {
+	e := newServeEnv(t)
+	e.fakeTmux(t, `run=${3%'" >/dev/null 2>&1'}; run=${run##*'"'}
+true & pid=$!; wait
+printf '%s\n' "$pid" > "${run%/run}/started"; exit 0`)
+	rc, _, stderr := e.serveWith(t, e.request(t, []string{"dispatch"}, nil, nil), viaTmuxOptions(e))
+	if rc != 255 || !strings.Contains(stderr, "may still be running") {
+		t.Fatalf("rc %d, stderr %q", rc, stderr)
+	}
+	if dirs := e.scratchDirs(t); len(dirs) != 1 {
+		t.Fatalf("scratch dirs %q, want the one a live dispatch may still use", dirs)
+	}
+}
+
+// TestServeDispatchViaTmuxReadonlyEnv: bash as /bin/sh exits on exporting a
+// readonly variable such as PPID; that must not cost the exit status. dash
+// exports it fine and the child runs.
+func TestServeDispatchViaTmuxReadonlyEnv(t *testing.T) {
+	e := newServeEnv(t)
+	e.fakeTmux(t, "")
+	t.Setenv("PPID", "1")
+	rc, _, stderr := e.serveWith(t, e.request(t, []string{"dispatch"}, nil, nil), viaTmuxOptions(e))
+	if strings.Contains(stderr, "without an exit status") {
+		t.Fatalf("rc %d, stderr %q", rc, stderr)
+	}
+	if e.childRan() {
+		if rc != 0 {
+			t.Fatalf("child ran: rc %d, stderr %q", rc, stderr)
+		}
+		return
+	}
+	if rc == 0 || !strings.Contains(stderr, "readonly") {
+		t.Fatalf("child did not run: rc %d, stderr %q", rc, stderr)
+	}
+}
+
+func TestServeDispatchViaTmuxNoServer(t *testing.T) {
+	e := newServeEnv(t)
+	e.fakeTmux(t, `echo 'no server running on /tmp/tmux-1/default' >&2; exit 1`)
+	rc, _, stderr := e.serveWith(t, e.request(t, []string{"dispatch"}, nil, nil), viaTmuxOptions(e))
+	if rc != 0 || !e.childRan() {
+		t.Fatalf("rc %d, child ran %v, stderr %q", rc, e.childRan(), stderr)
+	}
+	if !strings.Contains(stderr, "running it in this ssh session") || !strings.Contains(stderr, "no server running") {
+		t.Fatalf("stderr %q", stderr)
+	}
+}
+
+func TestServeDispatchViaRealTmux(t *testing.T) {
+	tmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("no tmux")
+	}
+	e := newServeEnv(t)
+	if !runShellSafe(e.repo) {
+		t.Skipf("the test repo path %q has characters the tmux route refuses", e.repo)
+	}
+	dir, err := os.MkdirTemp("", "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMUX_TMPDIR", dir)
+	// $TMUX would point the client at the server this test runs in.
+	t.Setenv("TMUX", "")
+	if out, err := exec.Command(tmux, "-f", "/dev/null", "new-session", "-d", "-s", "t", "sleep 60").CombinedOutput(); err != nil {
+		t.Fatalf("tmux new-session: %v: %s", err, out)
+	}
+	t.Cleanup(func() {
+		sock := filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()), "default")
+		_ = exec.Command(tmux, "-S", sock, "kill-server").Run()
+		_ = os.RemoveAll(dir)
+	})
+	t.Setenv("FAKE_RC", "3")
+	o := binOptions(e.bin)
+	o.LookPath = func(name string) (string, error) {
+		if name == "tmux" {
+			return tmux, nil
+		}
+		return exec.LookPath(filepath.Join(e.bin, name))
+	}
+	o.ViaTmux = true
+	spec := "s"
+	req := e.request(t, []string{"dispatch"}, map[string]string{"CREW_ID": "c1"}, &spec)
+	var rc int
+	var stdout, stderr string
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var o1, o2 bytes.Buffer
+		rc = Serve(strings.NewReader(req), &o1, &o2, o)
+		stdout, stderr = o1.String(), o2.String()
+	}()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("remote-exec never returned")
+	}
+	if rc != 3 || !strings.Contains(stdout, "child-out") || !strings.Contains(stderr, "child-err") {
+		t.Fatalf("rc %d, stdout %q, stderr %q", rc, stdout, stderr)
+	}
+	if strings.Contains(stderr, "ssh session") {
+		t.Fatalf("fell back to the ssh session: %q", stderr)
+	}
+	if got := strings.Fields(e.dumped(t, "scratch-ls")); slices.Contains(got, "run") {
+		t.Fatalf("scratch while the child ran = %q, want no run script", got)
 	}
 }

@@ -24,19 +24,19 @@ suite_count() { find "$REPO_ROOT/tests" -maxdepth 1 -name '*.bats' | wc -l; }
   [ -z "$stderr" ]
 }
 
-@test "affected: budget-gate.sh selects its 11 files and not unrelated suites" {
+@test "affected: budget-gate.sh selects its 10 files and not unrelated suites" {
   affected --files adapters/core/budget-gate.sh
   [ "$status" -eq 0 ]
-  [ "${#lines[@]}" -eq 11 ]
-  [[ "$output" == *tests/crew.bats* ]]
+  [ "${#lines[@]}" -eq 10 ]
+  [[ "$output" == *tests/dispatch.bats* ]]
   [[ "$output" != *tests/secret-read-guard.bats* ]]
 }
 
-@test "affected: crew/ Go sources select the crew set's 11 files and remote-host" {
+@test "affected: crew/ Go sources select the crew set's 10 files and remote-host" {
   affected --files crew/main.go
   [ "$status" -eq 0 ]
-  [ "${#lines[@]}" -eq 12 ]
-  [[ "$output" == *tests/crew.bats* ]]
+  [ "${#lines[@]}" -eq 11 ]
+  [[ "$output" == *tests/dispatch.bats* ]]
   [[ "$output" == *tests/remote-host.bats* ]]
   [[ "$output" != *tests/secret-read-guard.bats* ]]
 }
@@ -87,8 +87,8 @@ suite_count() { find "$REPO_ROOT/tests" -maxdepth 1 -name '*.bats' | wc -l; }
 }
 
 @test "affected: a changed bats file selects only itself" {
-  affected --files tests/crew.bats
-  [ "$output" = "tests/crew.bats" ]
+  affected --files tests/dispatch.bats
+  [ "$output" = "tests/dispatch.bats" ]
   [ -z "$stderr" ]
 }
 

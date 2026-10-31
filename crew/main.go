@@ -132,7 +132,7 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 
 // subcommands is every word crew admits: the forty the grammar types, then
 // dash, which parses its own argv. It is the list the switch of #821 admitted,
-// and tests/crew.bats parses this literal to prove every subcommand has its own
+// and crew/help_cli_test.go reads this literal to prove every subcommand has its own
 // row in the grouped help; TestAdmittedSubcommands pins it against that
 // revision and against what the grammar really admits.
 var subcommands = []string{

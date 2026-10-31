@@ -19,6 +19,13 @@ func (f *fx) killed() bool {
 	return slices.ContainsFunc(f.calls, func(c string) bool { return strings.HasPrefix(c, "tmux kill-window") })
 }
 
+func (f *fx) noKill() {
+	f.t.Helper()
+	if f.killed() {
+		f.t.Fatalf("a window was killed: %q", f.calls)
+	}
+}
+
 // stubOccupied makes the rb worktree's window @23 occupied by a pane running cmd.
 func (f *fx) stubOccupied(cmd string) {
 	f.tmux["list-windows -a -F #{window_id}\t#{@crew_name}\t#{pane_current_path}"] = "@23\tsage\t" + f.wt

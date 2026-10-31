@@ -646,6 +646,22 @@ worktree_git_lib_crew_go_row() { # bin
   done
 }
 
+# A pinned gh would shadow the profile's newer gh, which reads the oauth_token
+# entry the pinned one ignores. gh is a trailing fallback instead: nothing
+# ahead of the ambient PATH names a gh store dir, and one still sits behind it.
+@test "gh is a trailing PATH fallback in every wrapper that ships it" {
+  local out preamble
+  for out in "$OUT_PR_WATCH/bin/pr-watch" "$OUT_DISPATCH/bin/dispatch" "$OUT_DISPATCH_RESUME/bin/dispatch-resume"; do
+    preamble="$(sed -n 's|^export PATH="\([^"]*\):\$PATH"$|\1|p' "$out")"
+    [ -n "$preamble" ]
+    [[ "$preamble" != *-gh-* ]]
+    grep -qE '^export PATH="\$PATH:/nix/store/[^"]*-gh-[^"/]*/bin"$' "$out"
+  done
+  # makeWrapper: --prefix lines read PATH='<dir>'$PATH, --suffix lines PATH=$PATH'<dir>'.
+  run ! grep -qE "^ *PATH='[^']*-gh-[^']*'[$]PATH" "$OUT_CREW/bin/crew"
+  grep -qE "^ *PATH=[$]PATH'/nix/store/[^']*-gh-[^'/]*/bin'$" "$OUT_CREW/bin/crew"
+}
+
 # dispatch writes lead-launcher's resolved store path into the lead's launch
 # line, so it must be on dispatch's own PATH.
 @test "dispatch's preamble carries lead-launcher" {

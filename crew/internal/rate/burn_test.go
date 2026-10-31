@@ -25,7 +25,7 @@ func defaultRules(t *testing.T) []burnRule {
 
 // TestBurnTableOracle crosses every classed model with every effort the
 // dispatcher can pass and asserts the class and weight the bash helper's
-// `case` produced. It replaces the crew.bats row that sed-extracted
+// `case` produced. It replaces the bats row that sed-extracted
 // `_burn_weight`; the table moved to Go with the sweep, and so did the oracle.
 func TestBurnTableOracle(t *testing.T) {
 	rules := defaultRules(t)

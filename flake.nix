@@ -149,6 +149,11 @@
           # from a checkout never gets the substitution and leaves PATH alone.
           launcherPath = runtimeInputs:
             builtins.replaceStrings ["@launcherRuntimePath@"] [(pkgs.lib.makeBinPath runtimeInputs)];
+          # gh trails PATH instead of leading it: the pinned gh ignores the
+          # oauth_token entry newer gh writes to hosts.yml, so a leading one would
+          # shadow the profile's gh. Trailing, the profile's gh wins and this one
+          # still resolves when the profile has none.
+          ghFallback = "export PATH=\"$PATH:${pkgs.lib.makeBinPath [pkgs.gh]}\"\n";
         in rec {
           dispatch-config = dispatchConfig;
           crew-go = crewGo;
@@ -158,17 +163,17 @@
           # wraps it to post the event.
           pr-watch = pkgs.writeShellApplication {
             name = "pr-watch";
-            runtimeInputs = with pkgs; [gh git jq gnused gnugrep coreutils];
-            text = builtins.readFile ./adapters/core/pr-watch.sh;
+            runtimeInputs = with pkgs; [git jq gnused gnugrep coreutils];
+            text = ghFallback + builtins.readFile ./adapters/core/pr-watch.sh;
           };
 
           # The `crew` command: the Go binary behind a PATH wrapper. The tools the
           # writeShellApplication preamble used to prepend for crew.sh are prefixed
           # here instead, so every subcommand still finds its helper:
-          #   gh + gtrash for `reap` (PR state, and trashing a finished worker's
-          #   task doc); crew-dash for `dash`; dispatch-config (#606) so `crew rate`
-          #   resolves the burn table with no DISPATCH_CONFIG_BIN; refresh-budget so
-          #   stall-watch's budget: detector reads a fresh cache; pr-watch for
+          #   gtrash for `reap` (trashing a finished worker's task doc; gh, for PR
+          #   state, is suffixed so the profile's gh wins); crew-dash for `dash`;
+          #   dispatch-config (#606) so `crew rate` resolves the burn table with no
+          #   DISPATCH_CONFIG_BIN; refresh-budget so stall-watch's budget: detector reads a fresh cache; pr-watch for
           #   `crew pr-watch`, which shells out to it.
           #
           # --inherit-argv0 is not cosmetic: the wrapper must hand the binary its
@@ -181,13 +186,14 @@
           # crew never references the protocols and sources no shared lib: the two
           # libs stall-watch needs are baked into crewGo's ldflags.
           crew = let
-            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gh gtrash procps]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
+            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gtrash procps]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
           in
             pkgs.runCommand "crew" {nativeBuildInputs = [pkgs.makeWrapper];} ''
               mkdir -p $out/bin
               makeWrapper ${crewGo}/bin/crew-go $out/bin/crew \
                 --inherit-argv0 \
-                --prefix PATH : ${pkgs.lib.makeBinPath runtimeInputs}
+                --prefix PATH : ${pkgs.lib.makeBinPath runtimeInputs} \
+                --suffix PATH : ${pkgs.lib.makeBinPath [pkgs.gh]}
             '';
 
           # crew is deliberately NOT a runtime input of crew-dash: crew lists
@@ -221,12 +227,12 @@
             # issue body through.
             # lead-launcher: resolved by `command -v` into the lead's launch line as
             # a store path; the HM module doesn't install it, so it stays here (#700).
-            rt = (with pkgs; [gh git jq gnused coreutils findutils diffutils tmux direnv curl gnugrep betterleaks procps]) ++ [crew dispatch-resume lead-launcher];
+            rt = (with pkgs; [git jq gnused coreutils findutils diffutils tmux direnv curl gnugrep betterleaks procps]) ++ [crew dispatch-resume lead-launcher];
           in
             pkgs.writeShellApplication {
               name = "dispatch";
               runtimeInputs = rt;
-              text = launcherPath rt (withConfig (sub (builtins.readFile ./adapters/core/dispatch.sh)));
+              text = ghFallback + launcherPath rt (withConfig (sub (builtins.readFile ./adapters/core/dispatch.sh)));
             };
 
           # `dispatch` is deliberately NOT in runtimeInputs: the dispatch
@@ -237,12 +243,12 @@
           # itself uses for `wt`.
           dispatch-resume = let
             # One list, read twice: the preamble's runtimeInputs and the bake.
-            rt = (with pkgs; [gh git jq gnused gnugrep coreutils findutils diffutils tmux procps]) ++ [crew];
+            rt = (with pkgs; [git jq gnused gnugrep coreutils findutils diffutils tmux procps]) ++ [crew];
           in
             pkgs.writeShellApplication {
               name = "dispatch-resume";
               runtimeInputs = rt;
-              text = launcherPath rt (withConfig (sub (builtins.readFile ./adapters/core/dispatch-resume.sh)));
+              text = ghFallback + launcherPath rt (withConfig (sub (builtins.readFile ./adapters/core/dispatch-resume.sh)));
             };
 
           dispatcher = let

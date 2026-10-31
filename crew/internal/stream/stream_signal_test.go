@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 )
 
@@ -226,4 +228,88 @@ func stayedFalse(d time.Duration, cond func() bool) bool {
 		time.Sleep(25 * time.Millisecond)
 	}
 	return true
+}
+
+const laneKillBusEnv = "CREW_STREAM_TEST_LANE_BUS"
+
+// TestHelperHardKillLane is the lane the hard-kill test SIGKILLs: the real Run
+// over the bus it names, parked on its real inner watch.
+func TestHelperHardKillLane(t *testing.T) {
+	common := os.Getenv(laneKillBusEnv)
+	if common == "" {
+		t.Skip("helper process for the stream hard-kill test")
+	}
+	p := bus.Paths{Common: common, Dir: common + "/crew", Log: common + "/crew/events.jsonl"}
+	s := realWatch(t, p)
+	os.Exit(Run(Request{Crew: "c1", Park: "30", Interval: "1"}, p, os.Stdout, os.Stderr, Options{Self: s.Script}))
+}
+
+// A hard-killed lane leaves its inner watch parked and orphaned. The orphan
+// exits without folding the status posted after the kill, so the lane that
+// restarts delivers that status exactly once.
+func TestStreamHardKilledLaneOrphanDoesNotSwallowTheNextStatus(t *testing.T) {
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := streamBus(t)
+	// The child's own temp dirs (realWatch's stub) go under this test's dir, so
+	// the cleanup below removes them even though the child is killed.
+	lane := exec.Command(bin, "-test.run=^TestHelperHardKillLane$", "-test.count=1")
+	lane.Env = append(os.Environ(), laneKillBusEnv+"="+p.Common, "TMPDIR="+t.TempDir())
+	if err := lane.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// Whatever fails before the kill below must not leave the lane respawning.
+	t.Cleanup(func() {
+		_ = lane.Process.Kill()
+		_ = lane.Wait()
+	})
+	waitFor(t, "both locks", func() bool {
+		return existsIn(p, "stream.lock.d") && existsIn(p, "watch.lock.d")
+	})
+	orphanPID, err := strconv.Atoi(lock.Holder(cdirFile(p, "watch.lock.d")))
+	if err != nil {
+		t.Fatalf("watch.lock.d names %q: %v", lock.Holder(cdirFile(p, "watch.lock.d")), err)
+	}
+	t.Cleanup(func() {
+		// Only while the lock still names the orphan: a pid the test never
+		// saw exit may since have been reused by an unrelated process.
+		if lock.Holder(cdirFile(p, "watch.lock.d")) == strconv.Itoa(orphanPID) {
+			_ = syscall.Kill(orphanPID, syscall.SIGKILL)
+		}
+	})
+
+	if err := lane.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = lane.Wait()
+	postRow(t, p, statusRow(time.Now().UnixMilli(), "c1", "worker:feat/x", "done"))
+	waitFor(t, "the orphan to release watch.lock.d", func() bool {
+		return !existsIn(p, "watch.lock.d")
+	})
+	if existsIn(p, "cursor") {
+		t.Error("the orphan folded the status and moved the cursor")
+	}
+
+	nextStub := realWatch(t, p)
+	next := startLane(t, p, nextStub, Request{Park: "10", Interval: "1"}, laneOpts{Timer: time.After})
+	waitFor(t, "the restarted lane's status", func() bool {
+		return strings.Contains(next.raw(), `"state":"done"`)
+	})
+	// A duplicate comes from the next watch one coalesce later, so wait until
+	// that watch holds the lock and has had its first pass before counting.
+	waitFor(t, "the restarted lane's next watch", func() bool {
+		return nextStub.calls("watch") >= 2 &&
+			lock.Holder(cdirFile(p, "watch.lock.d")) == strings.TrimSpace(nextStub.read("watch.pid"))
+	})
+	if !stayedFalse(300*time.Millisecond, func() bool {
+		return strings.Count(next.raw(), `"state":"done"`) > 1
+	}) {
+		t.Errorf("the restarted lane delivered the status more than once: %s", next.raw())
+	}
+	next.signal(syscall.SIGTERM)
+	if rc := next.waitRC(); rc != 0 {
+		t.Errorf("exit = %d, want 0", rc)
+	}
 }
