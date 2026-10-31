@@ -62,8 +62,9 @@ var allowlist = map[string][]field{
 		{"worker_id", textField}, {"host", textField}, {"remote", boolField}, {"title", textField}, {"name", textField},
 		{"also_closes", closesField},
 	},
-	"reap": {{"ts", intField}, {"kind", textField}, {"branch", textField}},
-	"msg":  {{"ts", intField}, {"crew_id", textField}, {"kind", textField}, {"from", textField}, {"to", textField}, {"body", textField}},
+	"reap":     {{"ts", intField}, {"kind", textField}, {"branch", textField}},
+	"msg":      {{"ts", intField}, {"crew_id", textField}, {"kind", textField}, {"from", textField}, {"to", textField}, {"body", textField}},
+	"decision": {{"ts", intField}, {"crew_id", textField}, {"kind", textField}, {"from", textField}, {"body", textField}},
 }
 
 // Admit is the reader-side check every peer row passes before it is stored:
@@ -112,11 +113,11 @@ func Admit(e Entry, self string, now time.Time) (json.RawMessage, string) {
 		return nil, reasonIdentity
 	}
 	for _, f := range fields {
-		if hasControl(obj[f.name], kind == "msg" && f.name == "body") {
+		if hasControl(obj[f.name], f.name == "body" && freeText(kind)) {
 			return nil, reasonControl
 		}
 	}
-	if body, _ := obj["body"].(string); kind == "msg" && len(body) > MaxBody {
+	if body, _ := obj["body"].(string); freeText(kind) && len(body) > MaxBody {
 		return nil, reasonOversize
 	}
 	row, err := project(fields, obj)
@@ -130,11 +131,15 @@ func Admit(e Entry, self string, now time.Time) (json.RawMessage, string) {
 	return row, ""
 }
 
+// freeText reports whether kind carries a free-text body.
+func freeText(kind string) bool { return kind == "msg" || kind == "decision" }
+
 // identity is the per-row identity rule: dispatch.sh writes claim-issue,
-// dispatch and reap rows without a `from` (crew status and crew msg always set
-// one), and a msg must come from its crew's dispatcher to this host.
+// dispatch and reap rows without a `from` (crew status, crew msg and crew
+// decide always set one), a msg must come from its crew's dispatcher to this
+// host, and a decision from its crew's dispatcher.
 func identity(kind string, obj map[string]any, self string) bool {
-	if _, ok := obj["from"]; ok && kind != "msg" {
+	if _, ok := obj["from"]; ok && !freeText(kind) {
 		return false
 	}
 	if kind == "reap" {
@@ -144,7 +149,10 @@ func identity(kind string, obj map[string]any, self string) bool {
 	if !bus.ValidCrewID(crew) {
 		return false
 	}
-	return kind != "msg" || obj["from"] == "dispatcher:"+crew && obj["to"] == "peer:"+self
+	if !freeText(kind) {
+		return true
+	}
+	return obj["from"] == "dispatcher:"+crew && (kind != "msg" || obj["to"] == "peer:"+self)
 }
 
 func (t fieldType) valid(v any) bool {
@@ -292,17 +300,21 @@ func exportRow(line []byte, seq int64, toHost string, now time.Time) (json.RawMe
 	if !ok {
 		return nil, false
 	}
+	ts, ok := intValue(obj["ts"])
+	if !ok {
+		return nil, false
+	}
+	if t := time.UnixMilli(ts); now.Sub(t) > keepFor || t.After(now.Add(maxSkew)) {
+		return nil, false
+	}
 	kind, _ := obj["kind"].(string)
 	switch kind {
-	case "claim-issue", "dispatch", "reap":
-		ts, ok := intValue(obj["ts"])
-		if !ok || now.Sub(time.UnixMilli(ts)) > claimindex.StaleAfter {
-			return nil, false
-		}
-		if title, ok := obj["title"].(string); ok && kind == "dispatch" {
+	case "claim-issue", "reap":
+	case "dispatch":
+		if title, ok := obj["title"].(string); ok {
 			obj["title"] = invisible.Drop(title)
 		}
-	case "msg":
+	case "msg", "decision":
 		if body, ok := obj["body"].(string); ok {
 			obj["body"] = invisible.Drop(stripControl(body))
 		}

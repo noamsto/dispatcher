@@ -242,6 +242,26 @@ func TestExportSinceBeyondSizeReadsFromStart(t *testing.T) {
 	}
 }
 
+func TestExportSkipsFutureRowsOfEveryKind(t *testing.T) {
+	p := newBus(t)
+	future := testNow.Add(maxSkew + time.Second).UnixMilli()
+	inRange := ms(time.Minute)
+	ends := writeLines(t, p.Log,
+		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"claim-issue","issue":"42","branch":"feat/42-x"}`, future),
+		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"feat/42-x"}`, future),
+		fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/42-x"}`, future),
+		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"peer:halo","body":"future"}`, future),
+		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"peer:halo","body":"old"}`, ms(25*time.Hour)),
+		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"peer:halo","body":"ok"}`, inRange),
+	)
+	rows, _, _, err := Export(p.Log, 0, "halo", testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Entry{{ends[5], json.RawMessage(fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"peer:halo","body":"ok"}`, inRange))}}
+	assertRows(t, rows, want)
+}
+
 func TestAdmit(t *testing.T) {
 	// The fixtures' placeholder ts values stand for a current row.
 	current := strings.NewReplacer(`"ts":1,`, fmt.Sprintf(`"ts":%d,`, ms(0)), `"ts":5`, fmt.Sprintf(`"ts":%d`, ms(0)))
@@ -337,6 +357,52 @@ func TestAdmit(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAdmitDecision(t *testing.T) {
+	row := func(from, body string) string {
+		b, _ := json.Marshal(body)
+		return fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"decision","from":%q,"body":%s}`, ms(0), from, b)
+	}
+	for _, c := range []struct {
+		name, row, reason string
+		want              bool
+	}{
+		{name: "dispatcher", row: row("dispatcher:c1", "use sqlite"), want: true},
+		{name: "newline in body", row: row("dispatcher:c1", "a\nb"), want: true},
+		{name: "worker sender", row: row("worker:x", "use sqlite"), reason: "worker"},
+		{name: "role sender", row: row("role:b:r", "use sqlite"), reason: "worker"},
+		{name: "another crew", row: row("dispatcher:other", "use sqlite"), reason: "identity"},
+		{name: "no from", row: fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"decision","body":"x"}`, ms(0)), reason: "identity"},
+		{name: "escape in body", row: row("dispatcher:c1", "a\x1bb"), reason: "control"},
+		{name: "bidi override in body", row: row("dispatcher:c1", "a‮b"), reason: "control"},
+		{name: "zero-width in body", row: row("dispatcher:c1", "a​b"), reason: "control"},
+		{name: "body over MaxBody", row: row("dispatcher:c1", strings.Repeat("b", MaxBody+1)), reason: "oversize"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, reason := Admit(Entry{Seq: 10, Row: json.RawMessage(c.row)}, "halo", testNow)
+			if reason != c.reason || (got != nil) != c.want {
+				t.Fatalf("Admit = %s, %q; want admitted %v, reason %q", got, reason, c.want, c.reason)
+			}
+			if c.want && !strings.HasPrefix(string(got), fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"decision","from":"dispatcher:c1","body":`, ms(0))) {
+				t.Errorf("projection = %s, not in allowlist order", got)
+			}
+		})
+	}
+}
+
+func TestExportDecision(t *testing.T) {
+	p := newBus(t)
+	line := func(from, body string) string {
+		b, _ := json.Marshal(body)
+		return fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"decision","from":%q,"body":%s}`, ms(0), from, b)
+	}
+	ends := writeLines(t, p.Log, line("dispatcher:c1", "use\x07 sql​ite"), line("worker:x", "no"))
+	rows, _, _, err := Export(p.Log, 0, "halo", testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRows(t, rows, []Entry{{ends[0], json.RawMessage(line("dispatcher:c1", "use sqlite"))}})
 }
 
 func TestAdmitRefusesAFarFutureTS(t *testing.T) {
