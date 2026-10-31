@@ -59,6 +59,9 @@ open_capped() {
   mode=read fd=
   if [ ! -e "$1" ]; then
     mode=absent
+  elif ! command -v timeout >/dev/null && ! command -v gtimeout >/dev/null; then
+    mode=bad
+    shell_warnings+=("model-resolve: no timeout command to bound the open of $2; ignoring it")
   elif [ ! -f "$1" ] || ! bounded_copy "$1" $(($3 + 1)) >"$tmpdir/$2" || ! { exec {fd}<"$tmpdir/$2"; } 2>/dev/null; then
     mode=bad fd=
     shell_warnings+=("model-resolve: $2 is not a readable regular file; ignoring it")

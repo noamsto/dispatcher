@@ -18522,11 +18522,14 @@ pi_target_budget() {
   DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard "$opus" --agent pi --effort high --crew-id c1 "t"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"is not standard's row"* ]]
-  pi_target_budget null
-  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
-  [ "$status" -eq 1 ]
-  [[ "$stderr" == *"needs a pi monthly target"*"engines.pi.target_usd"* ]]
-  [[ "$stderr" == *"model '$opus' is not deep's row for --agent pi"* ]]
+  local t
+  for t in null 0; do
+    pi_target_budget "$t"
+    DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"needs a pi monthly target"*"engines.pi.target_usd"* ]]
+    [[ "$stderr" == *"model '$opus' is not deep's row for --agent pi"* ]]
+  done
   rm "$XDG_DATA_HOME/crew/engine-budget.json"
   DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
   [ "$status" -eq 1 ]
@@ -18551,13 +18554,45 @@ pi_target_budget() {
   [[ "$stderr" != *"model-resolve"* ]]
 }
 
-@test "model classes: a failing resolver falls back to the seed row with a warning" {
+@test "model classes: a failing or silent resolver falls back to the seed row with a warning" {
   class_catalog pi openrouter/z-ai/glm-5.4-flash
   printf '#!/usr/bin/env bash\nexit 3\n' >"$BATS_TEST_TMPDIR/resolve-fail"
-  MODEL_RESOLVE_BIN="$BATS_TEST_TMPDIR/resolve-fail" DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch trivial openrouter/z-ai/glm-5.4-flash --agent pi --effort high --crew-id c1 "t"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$BATS_TEST_TMPDIR/resolve-silent"
+  local stub
+  for stub in resolve-fail resolve-silent; do
+    export MODEL_RESOLVE_BIN="$BATS_TEST_TMPDIR/$stub"
+    DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch trivial openrouter/z-ai/glm-5.4-flash --agent pi --effort high --crew-id c1 "t"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"model-resolve failed for pi trivial"* ]]
+    [[ "$stderr" == *"is not trivial's row"* ]]
+    DISPATCH_ENGINES="pi" run --separate-stderr run_dispatch --models --json
+    [ "$status" -eq 0 ]
+    jq -e '.engines.pi.tiers.trivial.default == "openrouter/deepseek/deepseek-v4.1-flash"
+      and (.engines.pi.warnings | index("model-resolve failed for pi trivial; showing the seed row") != null)' <<<"$output"
+  done
+}
+
+@test "model classes: a conditional candidate with an unknown requirement is refused" {
+  class_catalog pi openrouter/z-ai/glm-5.4-flash
+  cat >"$BATS_TEST_TMPDIR/resolve-req" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+printf '%s\n' '{"admitted":[],"regex":[],"conditional":[{"id":"openrouter/z-ai/glm-5.4-flash","requires":"nope"}],"default":"x","trial":null,"warnings":[]}'
+STUB
+  pi_target_budget 50
+  MODEL_RESOLVE_BIN="$BATS_TEST_TMPDIR/resolve-req" DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch trivial openrouter/z-ai/glm-5.4-flash --agent pi --effort high --crew-id c1 "t"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"model-resolve failed for pi trivial"* ]]
+  [[ "$stderr" == *"gated on an unknown requirement 'nope'"* ]]
   [[ "$stderr" == *"is not trivial's row"* ]]
+}
+
+@test "model classes: a class-state file with no catalog never changes a gate decision" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  printf '%s\n' '{"pi":{"standard":{"default":"openrouter/z-ai/glm-5.4-flash"}}}' >"$XDG_DATA_HOME/crew/model-class-state.json"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch trivial openrouter/z-ai/glm-5.4-flash --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"is not trivial's row"* ]]
+  [[ "$stderr" != *"model-resolve"* ]]
 }
 
 @test "model classes: --models shows each tier's class, trial, catalog admissions, conditionals and warnings" {

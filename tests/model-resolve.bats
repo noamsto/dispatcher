@@ -389,3 +389,16 @@ field() { jq -c "$1" <<<"$output"; }
   [ "$status" -eq 0 ]
   [ "$output" = 0123456789 ]
 }
+
+@test "model-resolve: with no timeout command a present file is ignored with its own warning" {
+  catalog pi openrouter/z-ai/glm-5.4-flash
+  local bin="$BATS_TEST_TMPDIR/bin" tool
+  mkdir "$bin"
+  for tool in jq head mktemp rm cat; do
+    ln -s "$(command -v "$tool")" "$bin/$tool"
+  done
+  PATH="$bin" run --separate-stderr "$BASH" "$RESOLVE" pi standard "$CATALOG" "$NONE" <"$SETTINGS"
+  [ "$status" -eq 0 ]
+  [ "$(field .admitted | jq length)" -eq 2 ]
+  [ "$(field .warnings)" = '["model-resolve: no timeout command to bound the open of catalog; ignoring it"]' ]
+}

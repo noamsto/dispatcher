@@ -1713,19 +1713,21 @@ model_class_state="${XDG_DATA_HOME:-$HOME/.local/share}/crew/model-class-state.j
 
 # _model_resolve <agent> <tier> — model-resolve's JSON for the row, every string
 # control-stripped again (it lands on a terminal). Non-zero when the resolver
-# fails.
+# fails or prints anything but one JSON object.
 _model_resolve() {
   local out
   out="$("$BASH" "${MODEL_RESOLVE_BIN:-@modelResolve@}" "$1" "$2" "$model_catalog" "$model_class_state" <<<"$settings")" || return 1
-  jq -c 'walk(if type == "string" then gsub("[[:cntrl:]\\p{Cf}]"; "") else . end)' <<<"$out"
+  jq -ces 'if length == 1 and (.[0] | type) == "object" then .[0] else empty end
+    | walk(if type == "string" then gsub("[[:cntrl:]\\p{Cf}]"; "") else . end)' <<<"$out" 2>/dev/null
 }
 
 # _pi_month_target — true when a fresh engine-budget.json gives pi a monthly
-# target (engines.pi.target_usd a number): what a `requires: "pi_month_target"`
-# class pattern needs. A missing, stale or unparsable cache is no target.
+# target (engines.pi.target_usd a positive number): what a `requires:
+# "pi_month_target"` class pattern needs. A missing, stale or unparsable cache
+# is no target.
 _pi_month_target() {
   # shellcheck disable=SC2016 # jq program text, not shell
-  _budget_query "$budget_file" pi "$(date +%s)" '$en.target_usd | numbers' >/dev/null
+  _budget_query "$budget_file" pi "$(date +%s)" '$en.target_usd | numbers | select(. > 0)' >/dev/null
 }
 
 # _model_class_admitted <agent> <tier> <model> — true when the catalog admits
