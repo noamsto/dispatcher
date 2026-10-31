@@ -416,9 +416,10 @@ func TestSweepCostIsWeightTimesWallClock(t *testing.T) {
 		engine, model, tier, effort string
 		want                        want
 	}{
-		// opus at high keeps the premium class; kimi-k3-high stays unclassed.
+		// opus at high keeps the premium class; kimi-k3-high has no burnClasses
+		// glob and takes the premium class floor (4).
 		{"opus high", "claude", "opus", "deep", "high", want{"premium", float64(2400000)}},
-		{"kimi-k3-high", "cursor", "kimi-k3-high", "deep", "high", want{nil, nil}},
+		{"kimi-k3-high", "cursor", "kimi-k3-high", "deep", "high", want{"premium", float64(2400000)}},
 		// Opus's proxy follows its effort (#554): the table is keyed by model
 		// and effort, so opus@low prices at half of opus@high on one clock.
 		{"opus low", "claude", "opus", "standard", "low", want{"standard", float64(1200000)}},
@@ -441,6 +442,33 @@ func TestSweepCostIsWeightTimesWallClock(t *testing.T) {
 			row := f.only()
 			if row["cost_class"] != tc.want.class || row["cost_proxy"] != tc.want.proxy {
 				t.Errorf("cost_class/cost_proxy = %v/%v, want %v/%v", row["cost_class"], row["cost_proxy"], tc.want.class, tc.want.proxy)
+			}
+		})
+	}
+}
+
+func TestSweepUnclassedModelTakesItsClassFloor(t *testing.T) {
+	const settings = `{"burnClasses":[{"match":"*sonnet*","class":"standard","weight":2}],
+		"classes":{"claude":{"cheap":["haiku*"],"standard":[{"glob":"sonnet*"},"opus*"],"premium":["fable-*","?pus*"]}}}`
+	for _, tc := range []struct {
+		name, engine, model string
+		class, proxy        any
+	}{
+		{"premium class pattern", "claude", "fable-6", "premium", float64(4 * 600)},
+		{"the most expensive matching class wins", "claude", "opus-9", "premium", float64(4 * 600)},
+		{"burnClasses wins over the class floor", "claude", "sonnet-7", "standard", float64(2 * 600)},
+		{"no class pattern stays uncosted", "claude", "mystery-1", nil, nil},
+		{"another engine's patterns do not apply", "codex", "fable-6", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSweepFixture(t)
+			f.config = settings
+			f.dispatchAs("floor", 1000, tc.engine, tc.model, "standard", "medium")
+			f.status("worker:floor", 1600, "done")
+			f.sweep()
+			row := f.only()
+			if row["cost_class"] != tc.class || row["cost_proxy"] != tc.proxy {
+				t.Errorf("cost_class/cost_proxy = %v/%v, want %v/%v", row["cost_class"], row["cost_proxy"], tc.class, tc.proxy)
 			}
 		})
 	}

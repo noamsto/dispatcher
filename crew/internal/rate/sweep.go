@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/classes"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
@@ -167,8 +168,9 @@ func (s *sweep) foldRecords(raws []any, repo string) (any, int) {
 	return records, 0
 }
 
-// costmap prices every distinct model+effort pair of the dispatch rows, keyed
-// "model\teffort" because opus prices per effort (its class follows effort).
+// costmap prices every distinct engine+model+effort of the dispatch rows, keyed
+// "engine\tmodel\teffort" because opus prices per effort (its class follows
+// effort). A model no burnClasses glob matches takes its selection-class floor.
 func (s *sweep) costmap(raws []any) map[string]any {
 	settings := s.settings()
 	if settings == "" {
@@ -187,12 +189,15 @@ func (s *sweep) costmap(raws []any) map[string]any {
 		if model == "" {
 			continue
 		}
-		key := model + "\t" + fieldText(ev, "effort")
+		engine, effort := fieldText(ev, "engine"), fieldText(ev, "effort")
+		key := engine + "\t" + model + "\t" + effort
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		if class, weight, ok := burnWeight(rules, model, strings.SplitN(key, "\t", 2)[1]); ok {
+		if class, weight, ok := burnWeight(rules, model, effort); ok {
+			out[key] = []any{class, weight}
+		} else if class, weight, ok := classes.FloorClass([]byte(settings), engine, model); ok {
 			out[key] = []any{class, weight}
 		}
 	}
