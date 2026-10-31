@@ -505,7 +505,7 @@ authorization to the auto-mode classifier and a dispatcher agent can't pass
 it; `--ignore-budget` still bypasses both this gate and the ≥95% stop, and
 remains the human's spend decision. Codex and cursor carry a sibling: the
 window-independent absolute-limit stop from `limit_reached` (#201, #629), lead
-only, described in skill `dispatcher:budget-holds`.
+only, described in `DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever".
 
 The same rule applies independently to every lead and eager role target, and
 to a lazy role after its persisted values and CLI overrides resolve. Premium

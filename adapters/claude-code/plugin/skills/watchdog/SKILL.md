@@ -1,6 +1,6 @@
 ---
 name: watchdog
-description: Use when a watchdog detail prefix or prompt dialog arrives, to verify then act
+description: Use when a watchdog detail prefix, a prompt dialog or a role-pane watch arrives, to verify then act
 ---
 
 # watchdog

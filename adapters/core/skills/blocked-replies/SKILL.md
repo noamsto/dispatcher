@@ -1,6 +1,6 @@
 ---
 name: blocked-replies
-description: Use when a worker blocks on acceptance or permission, to answer a waiver or a permission block
+description: Use when a worker blocks on acceptance or permission or a pr_open ledger awaits checking, to answer a waiver or send a gappy ledger back
 ---
 
 # blocked-replies
