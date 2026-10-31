@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -52,12 +53,56 @@ def prepare_cursor(h):
     h.stub("cursor-agent", 'printf \'%s\\n\' "$*" >>"$STUB_LOG"\n[[ -z "${SHIM_CURSOR_FAIL:-}" ]] || exit 1\ncat <<\'EOF\'\n' + MODELS + "EOF\n")
     h.env["HOME"] = str(h.tmp_path / "home")
     Path(h.env["HOME"]).mkdir()
+    # Only the tools the script needs, so a real claude/pi/codex/curl on the
+    # host never leaks into a run; engine stubs are added per case.
+    tools = h.tmp_path / "tools"
+    tools.mkdir()
+    for tool in "bash jq grep sed head date mkdir mv cat find env chmod tr".split():
+        (tools / tool).symlink_to(shutil.which(tool))
+    h.env["PATH"] = f"{h.stubs}:{tools}"
+    for name in ("claude", "codex", "pi"):
+        (h.stubs / name).unlink()
+
+
+PI_STUB = """[[ -n "${SHIM_PI_FAIL:-}" ]] && exit 1
+printf 'provider    model    context  max-out\\n'
+printf 'openrouter  deepseek/deepseek-v4.1-flash  1M  64K\\n'
+printf 'anthropic   claude-haiku-4-5  200K  64K\\n'
+[[ -n "${SHIM_PI_EXTRA:-}" ]] && printf '%b\\n' "$SHIM_PI_EXTRA"
+if [[ -n "${SHIM_PI_MANY:-}" ]]; then
+  for ((i = 0; i < 2100; i++)); do
+    printf 'p  vendor/a-fairly-long-model-name-for-size-padding-padding-padding-%d  1M  64K\\n' "$i"
+  done
+fi
+exit 0
+"""
+
+CURL_STUB = """printf '%s\\n' "$*" >>"$STUB_LOG"
+filler=$(head -c 200000 /dev/zero | tr '\\0' 'a')
+echo '{"data":[{"id":"deepseek/deepseek-v4.1-flash","created":1789000000,"pricing":{"prompt":"0.0000001","completion":"0.0000004"}},{"id":"filler","description":"'"$filler"'"}]}'
+"""
+
+
+def refresh_catalog(h, env, before=None):
+    h.stub("claude", 'echo "Usage: claude [options]"\n')
+    h.stub("codex", "exit 0\n")
+    h.stub("pi", PI_STUB)
+    h.stub("curl", CURL_STUB)
+    codex = Path(h.env["HOME"]) / ".codex"
+    codex.mkdir()
+    (codex / "models_cache.json").write_text('{"models":[{"slug":"gpt-5.6-sol"},{"slug":"gpt-5.5"}]}\n')
+    data = Path(h.env["XDG_DATA_HOME"]) / "crew"
+    if before:
+        data.mkdir(parents=True)
+        (data / "model-catalog.json").write_text(before)
+    result = h.run("adapters/core/refresh-models.sh", env=env)
+    return result, data / "cursor-models-cache.json", json.loads((data / "model-catalog.json").read_text())
 
 
 def refresh_models(h, case_id):
     prepare_cursor(h)
     cache = Path(h.env["XDG_DATA_HOME"]) / "crew/cursor-models-cache.json"
-    if "failure" in case_id or "absent" in case_id:
+    if "stubbed-cursor-agent-failure" in case_id or "cursor-agent-absent" in case_id:
         cache.parent.mkdir(parents=True)
         stale = '{"fetched_at":"stale","fetched_epoch":1,"models":[{"slug":"stale-model"}]}\n'
         cache.write_text(stale)
@@ -69,6 +114,69 @@ def refresh_models(h, case_id):
         prefix = "rm-absent" if "absent" in case_id else "rm-stub-failure"
         expect(f"{prefix}-status", result.returncode != 0)
         expect(f"{prefix}-cache-unchanged", cache.read_text() == stale)
+        return
+
+    if "catalog-holds-all-four-engines" in case_id:
+        result, _, cat = refresh_catalog(h, {})
+        pi = {m["id"]: m for m in cat["pi"]["models"]}
+        flash = pi["openrouter/deepseek/deepseek-v4.1-flash"]
+        expect("rm-catalog-1", result.returncode == 0)
+        expect("rm-catalog-2", cat["claude"]["source"] == "aliases")
+        expect("rm-catalog-3", ",".join(m["id"] for m in cat["claude"]["models"]) == "fable,haiku,opus,sonnet")
+        expect("rm-catalog-4", cat["codex"]["source"] == "codex models_cache.json")
+        expect("rm-catalog-5", cat["codex"]["models"][0]["id"] == "gpt-5.5")
+        expect("rm-catalog-6", cat["cursor"]["source"] == "cursor-agent --list-models")
+        expect("rm-catalog-7", "cursor-grok-4.6-high" in [m["id"] for m in cat["cursor"]["models"]])
+        expect("rm-catalog-8", cat["pi"]["source"] == "pi --list-models; openrouter /api/v1/models")
+        expect("rm-catalog-9", (flash["created"], flash["price"]["in"] == 0.0000001, flash["price"]["out"] == 0.0000004) == (1789000000, True, True))
+        expect("rm-catalog-11", pi["anthropic/claude-haiku-4-5"] == {"id": "anthropic/claude-haiku-4-5"})
+        expect("rm-catalog-12", all(isinstance(engine["fetched_epoch"], (int, float)) for engine in cat.values()))
+        return
+
+    if "failing-pi-probe" in case_id:
+        old = '{"pi":{"fetched_epoch":1,"source":"old","models":[{"id":"old/pi-model"}]}}\n'
+        result, _, cat = refresh_catalog(h, {"SHIM_PI_FAIL": "1"}, old)
+        expect("rm-pi-fail-1", result.returncode == 0)
+        expect("rm-pi-fail-2", "pi --list-models failed" in output(result))
+        expect("rm-pi-fail-3", cat["pi"] == {"fetched_epoch": 1, "source": "old", "models": [{"id": "old/pi-model"}]})
+        expect("rm-pi-fail-4", cat["cursor"]["source"] == "cursor-agent --list-models")
+        expect("rm-pi-fail-5", cat["claude"]["source"] == "aliases")
+        return
+
+    if "ids-with-control-bytes" in case_id:
+        extra = r"bad  evil\x1b[31mid  1M\nbad  has$dollar  1M\nbad  spa<ce  1M\nok  good.id:1@x  1M"
+        result, _, cat = refresh_catalog(h, {"SHIM_PI_EXTRA": extra})
+        ids = "\n".join(m["id"] for m in cat["pi"]["models"])
+        expect("rm-ids-drop-1", result.returncode == 0)
+        expect("rm-ids-drop-2", "ok/good.id:1@x" in ids)
+        expect("rm-ids-drop-3", "evil" not in ids)
+        expect("rm-ids-drop-4", "dollar" not in ids)
+        expect("rm-ids-drop-5", "spa<ce" not in ids)
+        expect("rm-ids-drop-6", not [m for e in cat.values() for m in e["models"] if re.search(r"[\x00-\x1f\x7f]", m["id"])])
+        return
+
+    if "engine-list-past-128-kib" in case_id:
+        result, _, cat = refresh_catalog(h, {"SHIM_PI_MANY": "1"})
+        expect("rm-cap-1", result.returncode == 0)
+        expect("rm-cap-2", "pi: dropped" in output(result))
+        expect("rm-cap-3", len(cat["pi"]["models"]) == 2000)
+        expect("rm-cap-4", cat["claude"]["source"] == "aliases")
+        return
+
+    if "cursor-cache-is-unchanged" in case_id:
+        result, cache, _ = refresh_catalog(h, {})
+        data = json.loads(cache.read_text())
+        slugs = ["gpt-5.3-codex-low", "cursor-grok-4.6-high", "cursor-grok-4.6-medium-fast", "cursor-grok-4.6-low-fast", "claude-opus-5-high"]
+        expect("rm-cache-compat-1", result.returncode == 0)
+        expect("rm-cache-compat-2", data["models"] == [{"slug": slug} for slug in slugs] and set(data) == {"fetched_at", "fetched_epoch", "models"})
+        assert "openrouter.ai/api/v1/models" in (h.stubs / "calls.log").read_text(), "openrouter fetch did not reach the curl stub"
+        return
+
+    if "cursor-failing-while-another-engine" in case_id:
+        result, _, cat = refresh_catalog(h, {"SHIM_CURSOR_FAIL": "1"})
+        expect("rm-cursor-fail-1", result.returncode == 0)
+        expect("rm-cursor-fail-2", "cursor-agent --list-models failed" in output(result))
+        expect("rm-cursor-fail-3", "cursor" not in cat)
         return
 
     result = h.run("adapters/core/refresh-models.sh")

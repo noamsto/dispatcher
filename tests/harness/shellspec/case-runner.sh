@@ -167,9 +167,15 @@ setup_repo() {
 setup_refresh_models() {
   STUB_DIR="$CASE_TMP/stubs"
   STUB_LOG="$STUB_DIR/calls.log"
-  mkdir -p "$STUB_DIR" "$CASE_TMP/data" "$CASE_TMP/home"
+  local tools="$CASE_TMP/tools" tool
+  mkdir -p "$STUB_DIR" "$CASE_TMP/data" "$CASE_TMP/home" "$tools"
+  # Only the tools the script needs, so a real claude/pi/codex/curl on the host
+  # never leaks into a run; engine stubs are added per case.
+  for tool in bash jq grep sed head date mkdir mv cat find env chmod tr; do
+    ln -s "$(command -v "$tool")" "$tools/$tool"
+  done
   export STUB_DIR STUB_LOG HOME="$CASE_TMP/home" XDG_DATA_HOME="$CASE_TMP/data"
-  export PATH="$STUB_DIR:$PATH"
+  RM_PATH="$STUB_DIR:$tools"
   cat >"$STUB_DIR/cursor-agent" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
@@ -190,6 +196,34 @@ Tip: use --model <id>
 MODELS
 EOF
   chmod +x "$STUB_DIR/cursor-agent"
+}
+
+write_other_engine_shims() {
+  printf '#!/usr/bin/env bash\necho "Usage: claude [options]"\n' >"$STUB_DIR/claude"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$STUB_DIR/codex"
+  cat >"$STUB_DIR/pi" <<'EOF'
+#!/usr/bin/env bash
+[[ -n "${SHIM_PI_FAIL:-}" ]] && exit 1
+printf 'provider    model    context  max-out\n'
+printf 'openrouter  deepseek/deepseek-v4.1-flash  1M  64K\n'
+printf 'anthropic   claude-haiku-4-5  200K  64K\n'
+[[ -n "${SHIM_PI_EXTRA:-}" ]] && printf '%b\n' "$SHIM_PI_EXTRA"
+if [[ -n "${SHIM_PI_MANY:-}" ]]; then
+  for ((i = 0; i < 2100; i++)); do
+    printf 'p  vendor/a-fairly-long-model-name-for-size-padding-padding-padding-%d  1M  64K\n' "$i"
+  done
+fi
+exit 0
+EOF
+  cat >"$STUB_DIR/curl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+filler=$(head -c 200000 /dev/zero | tr '\0' 'a')
+echo '{"data":[{"id":"deepseek/deepseek-v4.1-flash","created":1789000000,"pricing":{"prompt":"0.0000001","completion":"0.0000004"}},{"id":"filler","description":"'"$filler"'"}]}'
+EOF
+  chmod +x "$STUB_DIR/claude" "$STUB_DIR/codex" "$STUB_DIR/pi" "$STUB_DIR/curl"
+  mkdir -p "$HOME/.codex"
+  printf '%s\n' '{"models":[{"slug":"gpt-5.6-sol"},{"slug":"gpt-5.5"}]}' >"$HOME/.codex/models_cache.json"
 }
 
 setup_pr_watch() {
@@ -233,12 +267,13 @@ seed() {
 }
 
 run_refresh_models_cases() {
-  local cache before after local_path='' dir
+  local cache catalog ids before after local_path='' dir
   setup_refresh_models
   cache="$XDG_DATA_HOME/crew/cursor-models-cache.json"
+  catalog="$XDG_DATA_HOME/crew/model-catalog.json"
   case "$CASE_ID" in
   refresh-models-a-realistic-list-models-fixture-parses-into-the-expected-cache-shape)
-    capture bash "$REFRESH_MODELS"
+    capture env PATH="$RM_PATH" bash "$REFRESH_MODELS"
     check_eq rm-shape-script-status "$CAPTURE_STATUS" 0
     capture jq '[.models[]?|.slug?|strings]' "$cache"
     check_contains rm-shape-high-slug "$CAPTURE_STDOUT" cursor-grok-4.6-high
@@ -249,7 +284,7 @@ run_refresh_models_cases() {
     check_eq rm-shape-epoch-type "$CAPTURE_STDOUT" '"number"'
     ;;
   refresh-models-the-write-is-atomic-and-lands-at-the-cursor-models-cache-path)
-    capture bash "$REFRESH_MODELS"
+    capture env PATH="$RM_PATH" bash "$REFRESH_MODELS"
     check_eq rm-atomic-script-status "$CAPTURE_STATUS" 0
     check_file rm-atomic-cache-exists "$cache"
     capture find "$XDG_DATA_HOME/crew" -maxdepth 1 -name '*.tmp.*'
@@ -261,7 +296,7 @@ run_refresh_models_cases() {
     mkdir -p "$(dirname "$cache")"
     printf '%s\n' '{"fetched_at":"stale","fetched_epoch":1,"models":[{"slug":"stale-model"}]}' >"$cache"
     before=$(<"$cache")
-    capture env SHIM_CURSOR_FAIL=1 bash "$REFRESH_MODELS"
+    capture env PATH="$RM_PATH" SHIM_CURSOR_FAIL=1 bash "$REFRESH_MODELS"
     check_ne rm-stub-failure-status "$CAPTURE_STATUS" 0
     after=$(<"$cache")
     check_eq rm-stub-failure-cache-unchanged "$after" "$before"
@@ -270,7 +305,7 @@ run_refresh_models_cases() {
     mkdir -p "$(dirname "$cache")"
     printf '%s\n' '{"fetched_at":"stale","fetched_epoch":1,"models":[{"slug":"stale-model"}]}' >"$cache"
     before=$(<"$cache")
-    IFS=: read -r -a dirs <<<"$PATH"
+    IFS=: read -r -a dirs <<<"$RM_PATH"
     for dir in "${dirs[@]}"; do
       [[ -x $dir/cursor-agent ]] && continue
       local_path+="${local_path:+:}$dir"
@@ -279,6 +314,67 @@ run_refresh_models_cases() {
     check_ne rm-absent-status "$CAPTURE_STATUS" 0
     after=$(<"$cache")
     check_eq rm-absent-cache-unchanged "$after" "$before"
+    ;;
+  refresh-models-the-catalog-holds-all-four-engines-in-the-section-5-shape)
+    write_other_engine_shims
+    capture env PATH="$RM_PATH" bash "$REFRESH_MODELS"
+    check_eq rm-catalog-1 "$CAPTURE_STATUS" 0
+    check_eq rm-catalog-2 "$(jq -r '.claude.source' "$catalog")" aliases
+    check_eq rm-catalog-3 "$(jq -r '.claude.models | map(.id) | join(",")' "$catalog")" fable,haiku,opus,sonnet
+    check_eq rm-catalog-4 "$(jq -r '.codex.source' "$catalog")" 'codex models_cache.json'
+    check_eq rm-catalog-5 "$(jq -r '.codex.models[0].id' "$catalog")" gpt-5.5
+    check_eq rm-catalog-6 "$(jq -r '.cursor.source' "$catalog")" 'cursor-agent --list-models'
+    check_eq rm-catalog-7 "$(jq -r '.cursor.models | map(.id) | index("cursor-grok-4.6-high") != null' "$catalog")" true
+    check_eq rm-catalog-8 "$(jq -r '.pi.source' "$catalog")" 'pi --list-models; openrouter /api/v1/models'
+    check_eq rm-catalog-9 "$(jq -r '.pi.models[] | select(.id == "openrouter/deepseek/deepseek-v4.1-flash") | [.created, .price.in == 0.0000001, .price.out == 0.0000004] | join(",")' "$catalog")" 1789000000,true,true
+    check_eq rm-catalog-11 "$(jq -c '.pi.models[] | select(.id == "anthropic/claude-haiku-4-5")' "$catalog")" '{"id":"anthropic/claude-haiku-4-5"}'
+    check_eq rm-catalog-12 "$(jq -r '[.[] | .fetched_epoch | type] | unique | join(",")' "$catalog")" number
+    ;;
+  refresh-models-a-failing-pi-probe-keeps-pi-s-previous-snapshot-and-refreshes-the-rest)
+    write_other_engine_shims
+    mkdir -p "$(dirname "$catalog")"
+    printf '%s\n' '{"pi":{"fetched_epoch":1,"source":"old","models":[{"id":"old/pi-model"}]}}' >"$catalog"
+    capture env PATH="$RM_PATH" SHIM_PI_FAIL=1 bash "$REFRESH_MODELS"
+    check_eq rm-pi-fail-1 "$CAPTURE_STATUS" 0
+    check_contains rm-pi-fail-2 "$CAPTURE_MERGED" 'pi --list-models failed'
+    check_eq rm-pi-fail-3 "$(jq -c '.pi' "$catalog")" '{"fetched_epoch":1,"source":"old","models":[{"id":"old/pi-model"}]}'
+    check_eq rm-pi-fail-4 "$(jq -r '.cursor.source' "$catalog")" 'cursor-agent --list-models'
+    check_eq rm-pi-fail-5 "$(jq -r '.claude.source' "$catalog")" aliases
+    ;;
+  refresh-models-ids-with-control-bytes-or-outside-the-shape-regex-are-dropped)
+    write_other_engine_shims
+    # shellcheck disable=SC2016 # the stub's printf %b expands the escapes, not this shell
+    capture env PATH="$RM_PATH" SHIM_PI_EXTRA='bad  evil\x1b[31mid  1M\nbad  has$dollar  1M\nbad  spa<ce  1M\nok  good.id:1@x  1M' bash "$REFRESH_MODELS"
+    check_eq rm-ids-drop-1 "$CAPTURE_STATUS" 0
+    ids=$(jq -r '.pi.models | map(.id) | join("\n")' "$catalog")
+    check_contains rm-ids-drop-2 "$ids" 'ok/good.id:1@x'
+    check_not_contains rm-ids-drop-3 "$ids" evil
+    check_not_contains rm-ids-drop-4 "$ids" dollar
+    check_not_contains rm-ids-drop-5 "$ids" 'spa<ce'
+    check_eq rm-ids-drop-6 "$(jq -r '[.[].models[].id | select(test("[[:cntrl:]]"))] | length' "$catalog")" 0
+    ;;
+  refresh-models-an-engine-list-past-128-kib-is-capped-at-2000-models-and-still-written-with-the-other-engines)
+    write_other_engine_shims
+    capture env PATH="$RM_PATH" SHIM_PI_MANY=1 bash "$REFRESH_MODELS"
+    check_eq rm-cap-1 "$CAPTURE_STATUS" 0
+    check_contains rm-cap-2 "$CAPTURE_MERGED" 'pi: dropped'
+    check_eq rm-cap-3 "$(jq -r '.pi.models | length' "$catalog")" 2000
+    check_eq rm-cap-4 "$(jq -r '.claude.source' "$catalog")" aliases
+    ;;
+  refresh-models-the-cursor-cache-is-unchanged-by-the-catalog-and-the-openrouter-fetch-goes-through-the-stub)
+    write_other_engine_shims
+    capture env PATH="$RM_PATH" bash "$REFRESH_MODELS"
+    check_eq rm-cache-compat-1 "$CAPTURE_STATUS" 0
+    check_eq rm-cache-compat-2 "$(jq -c 'del(.fetched_at, .fetched_epoch)' "$cache")" \
+      '{"models":[{"slug":"gpt-5.3-codex-low"},{"slug":"cursor-grok-4.6-high"},{"slug":"cursor-grok-4.6-medium-fast"},{"slug":"cursor-grok-4.6-low-fast"},{"slug":"claude-opus-5-high"}]}'
+    expect_present 'openrouter fetch did not reach the curl stub' grep -q 'openrouter.ai/api/v1/models' "$STUB_LOG"
+    ;;
+  refresh-models-cursor-failing-while-another-engine-refreshes-still-exits-zero-and-warns)
+    write_other_engine_shims
+    capture env PATH="$RM_PATH" SHIM_CURSOR_FAIL=1 bash "$REFRESH_MODELS"
+    check_eq rm-cursor-fail-1 "$CAPTURE_STATUS" 0
+    check_contains rm-cursor-fail-2 "$CAPTURE_MERGED" 'cursor-agent --list-models failed'
+    check_eq rm-cursor-fail-3 "$(jq -r 'has("cursor")' "$catalog")" false
     ;;
   esac
 }
