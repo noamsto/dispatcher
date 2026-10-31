@@ -576,6 +576,7 @@ forms; `outOfRow` stays exact ids, since it widens what the tier gate admits.
 | cursor | `@premium:grok-*-high` | `grok-4.7-medium` |
 | cursor | `@premium:cursor-grok-*-high` | `cursor-grok-4.6-medium` |
 | pi | `openrouter/anthropic/claude-opus-*` | `@standard` |
+| pi | `anthropic/claude-opus-*` | `anthropic/claude-sonnet-5-5` |
 
 <!-- END generated:pace-downgrades -->
 
