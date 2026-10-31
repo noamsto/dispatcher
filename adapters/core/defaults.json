@@ -176,9 +176,9 @@
       }
     },
     "cursor": {
-      "cheap": ["grok-*-low*", "cursor-grok-*-low*", "composer-*"],
-      "standard": ["grok-*-medium*", "cursor-grok-*-medium*"],
-      "premium": ["kimi-*-high", "grok-*-high*", "cursor-grok-*-high*"],
+      "cheap": ["grok-*-low", "grok-*-low-fast", "cursor-grok-*-low", "cursor-grok-*-low-fast"],
+      "standard": ["grok-*-medium", "grok-*-medium-fast", "cursor-grok-*-medium", "cursor-grok-*-medium-fast"],
+      "premium": ["kimi-*-high", "grok-*-high", "grok-*-high-fast", "cursor-grok-*-high", "cursor-grok-*-high-fast"],
       "tiers": {
         "deep": {"class": "premium", "admits": ["standard", "premium"]},
         "standard": {"class": "standard", "admits": ["cheap", "standard"]},

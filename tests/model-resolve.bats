@@ -96,7 +96,8 @@ field() { jq -c "$1" <<<"$output"; }
 }
 
 @test "model-resolve: claude orders by version before created" {
-  catalog claude '{"id":"claude-opus-4-1","created":999}' '{"id":"claude-opus-5-0","created":1}'
+  catalog claude '{"id":"claude-opus-4-0"}' '{"id":"claude-opus-4-1","created":999}' '{"id":"claude-opus-5-0","created":1}'
+  state '{"claude":{"premium":{"default":"claude-opus-4-0"}}}'
   resolve claude deep
   [ "$(field .trial)" = '"claude-opus-5-0"' ]
 }
@@ -111,6 +112,19 @@ field() { jq -c "$1" <<<"$output"; }
   [ "$(field .trial)" = '"openrouter/deepseek/deepseek-v4.2-flash"' ]
   [ "$(field .default)" = "\"$PI_DEEPSEEK\"" ]
   [ "$(field .warnings)" = '[]' ]
+}
+
+@test "model-resolve: a trial must be newer than the default" {
+  catalog pi openrouter/deepseek/deepseek-v3-flash
+  resolve pi standard
+  [ "$(field .trial)" = null ]
+  [[ "$(field .admitted)" == *deepseek-v3-flash* ]]
+}
+
+@test "model-resolve: an alias default outranks a versioned id of a later pattern, so there is no trial" {
+  catalog claude claude-opus-5-0
+  resolve claude deep
+  [ "$(field .trial)" = null ]
 }
 
 @test "model-resolve: an incumbent missing from the catalog is kept when the seed lists it" {
@@ -166,6 +180,24 @@ field() { jq -c "$1" <<<"$output"; }
   [ "$(field '.warnings | length')" -eq 1 ]
 }
 
+@test "model-resolve: with no catalog a recorded default that passes the class check is honoured" {
+  state '{"claude":{"standard":{"default":"claude-sonnet-5-0"}}}'
+  resolve claude standard
+  [ "$status" -eq 0 ]
+  [ "$(field .default)" = '"claude-sonnet-5-0"' ]
+  [ "$(field .warnings)" = '[]' ]
+}
+
+@test "model-resolve: a catalog entry of more than 5000 models resolves to the seed with a warning" {
+  CATALOG="$BATS_TEST_TMPDIR/catalog.json"
+  jq -nc '{pi: {models: [range(0; 5001) | {id: "openrouter/deepseek/deepseek-v\(. + 5)-flash"}]}}' >"$CATALOG"
+  resolve pi standard
+  [ "$status" -eq 0 ]
+  [ "$(field .admitted | jq length)" -eq 2 ]
+  [ "$(field .trial)" = null ]
+  [ "$(field .warnings)" = '["model-resolve: catalog entry for engine pi has more than 5000 models; ignoring it"]' ]
+}
+
 @test "model-resolve: an oversized catalog resolves to the seed with a warning" {
   CATALOG="$BATS_TEST_TMPDIR/catalog.json"
   {
@@ -176,6 +208,7 @@ field() { jq -c "$1" <<<"$output"; }
   resolve pi standard
   [ "$status" -eq 0 ]
   [ "$(field .admitted | jq length)" -eq 2 ]
+  [ "$(field .default)" = "\"$PI_DEEPSEEK\"" ]
   [ "$(field .trial)" = null ]
   [ "$(field '.warnings | length')" -eq 1 ]
 }
@@ -207,23 +240,26 @@ field() { jq -c "$1" <<<"$output"; }
 }
 
 @test "model-resolve: control characters in a recorded id never reach a warning" {
-  state "$(jq -nc '{pi: {standard: {default: "x\u001b[31mred"}}}')"
+  state "$(jq -nc '{pi: {standard: {default: "x\u001b[31mred\u202e"}}}')"
   resolve pi standard
   [ "$(field '.warnings | length')" -eq 1 ]
   ! grep -q $'\x1b' <<<"$output"
+  [[ "$(field '.warnings[0]')" != *$'\u202e'* ]]
 }
 
 @test "model-resolve: dated and preview ids are admitted but never the trial head" {
-  catalog claude claude-opus-9-9-20261017 claude-opus-9-9-preview claude-opus-6-0 claude-opus-9-8-1017
+  catalog claude claude-opus-4-0 claude-opus-9-9-20261017 claude-opus-9-9-preview claude-opus-6-0 claude-opus-9-8-1017
+  state '{"claude":{"premium":{"default":"claude-opus-4-0"}}}'
   resolve claude deep
   [ "$(field .trial)" = '"claude-opus-6-0"' ]
   [ "$(field '.admitted | index("claude-opus-9-9-20261017") != null and index("claude-opus-9-9-preview") != null')" = true ]
 }
 
 @test "model-resolve: ids that fail the engine shape check are never candidates" {
-  catalog claude claude-opus-9-high 'claude-opus-9;x' '{"id":7}' '"junk"' claude-opus-5-0
+  catalog claude claude-opus-9-high 'claude-opus-9;x' '{"id":7}' '"junk"' claude-opus-5-0 claude-opus-4-0
+  state '{"claude":{"premium":{"default":"claude-opus-4-0"}}}'
   resolve claude deep
-  [ "$(field .admitted)" = '["opus","claude-opus-5-0"]' ]
+  [ "$(field .admitted)" = '["opus","claude-opus-5-0","claude-opus-4-0"]' ]
   [ "$(field .trial)" = '"claude-opus-5-0"' ]
 }
 
@@ -240,10 +276,11 @@ field() { jq -c "$1" <<<"$output"; }
 
 @test "model-resolve: with no catalog, admitted and default are every shipped row's seed" {
   settings="$("$DISPATCH_CONFIG_BIN")"
-  jq -e '.classes | type == "object"' <<<"$settings" >/dev/null || skip "defaults.json has no classes yet"
   printf '%s\n' "$settings" >"$SETTINGS"
   mismatches=()
+  rows=0
   while IFS=$'\t' read -r e t; do
+    rows=$((rows + 1))
     resolve "$e" "$t"
     if [ "$status" -ne 0 ]; then
       mismatches+=("$e $t: exit $status: $stderr")
@@ -253,6 +290,8 @@ field() { jq -c "$1" <<<"$output"; }
     got="$(jq -c '[.admitted, .default]' <<<"$output")"
     [ "$got" = "$want" ] || mismatches+=("$e $t: want $want, got $got")
   done < <(jq -r '.modelMap | to_entries[] | .key as $e | .value | keys[] | [$e, .] | @tsv' "$SETTINGS")
+  [ "$rows" -gt 0 ]
+  [ "$rows" -eq "$(jq '[.modelMap[] | keys[]] | length' "$SETTINGS")" ]
   [ "${#mismatches[@]}" -eq 0 ] && return 0
   printf '%s\n' "${#mismatches[@]} mismatches:" "${mismatches[@]}" >&2
   return 1
@@ -262,6 +301,12 @@ field() { jq -c "$1" <<<"$output"; }
   run --separate-stderr "$RESOLVE" pi standard
   [ "$status" -eq 2 ]
   [[ "$stderr" == usage:* ]]
+}
+
+@test "model-resolve: stdin that is not one settings object is a usage error" {
+  run --separate-stderr "$RESOLVE" pi standard "$NONE" "$NONE" </dev/null
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == "model-resolve: stdin must be one settings JSON object"* ]]
 }
 
 @test "model-resolve: an unknown engine or tier is an error" {

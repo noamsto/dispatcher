@@ -312,10 +312,6 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
     if holds($p) and (getpath($p) | ok | not) then die($p; $what) else . end;
   def pos_int: type == "number" and . == floor and . > 0;
   def pat: if type == "object" then .glob else . end;
-  # An anchored Oniguruma regex for a glob; \A/\z because "$" also matches before
-  # a trailing newline.
-  def glob_re:
-    "\\A" + (split("") | map(if . == "*" then ".*" elif . == "?" then "." elif test("\\A[A-Za-z0-9_]\\z") then . else "\\" + . end) | join("")) + "\\z";
   # One [path, what] per violation in .classes, then one per modelMap engine and
   # tier row that has no valid classes row. Lookups are guarded so a malformed
   # sibling reports itself instead of erroring jq.
@@ -366,12 +362,20 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
           | [["classes", $e, "tiers", $t], "an object with class and admits (every modelMap row needs one)"])
       end;
   # Newline-terminated stderr lines for a valid .classes tree.
+  # Whether two globs (arrays of single-char strings) match a common string.
+  def globs_meet($a; $b):
+    if ($a | length) == 0 and ($b | length) == 0 then true
+    elif ($a | length) == 0 then $b | all(. == "*")
+    elif ($b | length) == 0 then $a | all(. == "*")
+    elif $a[0] == "*" then globs_meet($a[1:]; $b) or globs_meet($a; $b[1:])
+    elif $b[0] == "*" then globs_meet($a; $b[1:]) or globs_meet($a[1:]; $b)
+    else ($a[0] == $b[0] or $a[0] == "?" or $b[0] == "?") and globs_meet($a[1:]; $b[1:]) end;
   def class_warnings:
     ["cheap", "standard", "premium"] as $order
     | ((.classes | to_entries[]) as {key: $e, value: $v}
         | [$order | to_entries[] | .key as $r | .value as $cl | ($v[$cl] | arrays | .[] | pat | strings | {cl: $cl, r: $r, g: .})] as $pats
         | ($pats[] as $a | $pats[] as $b
-            | select($a.r < $b.r and (($a.g | test($b.g | glob_re)) or ($b.g | test($a.g | glob_re))))
+            | select($a.r < $b.r and globs_meet($a.g | split(""); $b.g | split("")))
             | "dispatch-config: classes.\($e): pattern \"\($a.g)\" (\($a.cl)) overlaps \"\($b.g)\" (\($b.cl)); an id matching both takes \($b.cl)\n")),
       ((.classes | to_entries[]) as {key: $e, value: $v}
         | ($v.tiers | objects | to_entries[])

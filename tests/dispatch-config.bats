@@ -972,6 +972,14 @@ hosts_refuse_row() { # json fragment
   [[ "$stderr" == *'pattern "claude-*" (cheap) overlaps "claude-opus-*" (premium)'* ]]
 }
 
+@test "intersecting globs warn even when neither is a literal of the other" {
+  user_settings '{"classes":{"codex":{"cheap":["gpt-5*"]}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *'pattern "gpt-5*" (cheap) overlaps "gpt-*-sol" (premium)'* ]]
+  [[ "$stderr" == *'pattern "gpt-5*" (cheap) overlaps "gpt-*-terra" (standard)'* ]]
+}
+
 @test "a classes row missing admits resolves to [class] with a warning" {
   user_settings '{"modelMap":{"local":{"deep":{"default":"x","models":["x"]}}},"classes":{"local":{"standard":["x"],"tiers":{"deep":{"class":"standard"}}}}}'
   run --separate-stderr "$CONFIG"

@@ -13,12 +13,15 @@
 # candidates the seed does not match, ordered by admitted class, pattern rank,
 # then newest), regex (the seed row's), conditional ({id, requires} candidates
 # whose only matching patterns carry a "requires" gate), default, trial (the
-# newest non-dated catalog match of the row's class that is not the default, or
-# null) and warnings (strings prefixed "model-resolve: ").
+# newest non-dated catalog match of the row's class that sorts before the
+# default, or null) and warnings (strings prefixed "model-resolve: ").
 #
 # A missing catalog or state file is not an error. A catalog or state file that
 # is not a regular file, is over its size cap (4 MiB, 64 KiB) or is not one JSON
-# object is ignored with a warning: the seed row and default apply.
+# object is ignored with a warning, as is a catalog entry of more than 5000
+# models. With no catalog snapshot the seed row is the admitted set; the catalog
+# and class-state are separate inputs, so a recorded default that passes the
+# class-match check is still honoured.
 #
 # Pure: reads only stdin and the two named files. No clock, network, environment
 # lookup or score. Exit 2 on a usage error, 1 on an unknown engine/tier row.
@@ -30,37 +33,42 @@ set -euo pipefail
 }
 engine=$1 tier=$2
 
-# read_mode <file> <max-bytes> <label> — sets mode (absent|read|bad) and file
-# (what jq should read), and records a warning for a file it rejects.
+# open_capped <file> <label> — sets mode (absent|read|bad) and fd. The file is
+# opened once and every later read goes through that fd, so a swap after the
+# checks cannot change what jq sees. A rejected file records a warning.
 shell_warnings=()
-read_mode() {
-  mode=read file=$1
+open_capped() {
+  mode=read fd=
   if [ ! -e "$1" ]; then
     mode=absent
-  elif [ ! -f "$1" ] || [ ! -r "$1" ]; then
-    mode=bad
-    shell_warnings+=("model-resolve: $3 is not a readable regular file; ignoring it")
-  elif [ "$(wc -c <"$1")" -gt "$2" ]; then
-    mode=bad
-    shell_warnings+=("model-resolve: $3 is larger than $2 bytes; ignoring it")
+  elif [ ! -f "$1" ] || ! { exec {fd}<"$1"; } 2>/dev/null || [ ! -f "/dev/fd/$fd" ]; then
+    mode=bad fd=
+    shell_warnings+=("model-resolve: $2 is not a readable regular file; ignoring it")
   fi
-  [ "$mode" = read ] || file=/dev/null
 }
-read_mode "$3" 4194304 catalog
-cat_mode=$mode cat_file=$file
-read_mode "$4" 65536 class-state
-state_mode=$mode state_file=$file
+cat_cap=4194304 state_cap=65536
+open_capped "$3" catalog
+cat_mode=$mode cat_fd=$fd
+open_capped "$4" class-state
+state_mode=$mode state_fd=$fd
+
+# capped_read <fd> <cap> — one byte past the cap is enough for jq to see the
+# file is too large. No fd (an absent or rejected file) reads as empty.
+capped_read() {
+  [ -z "$1" ] || head -c $(($2 + 1)) <&"$1"
+}
 
 sw='[]'
 if [ "${#shell_warnings[@]}" -gt 0 ]; then
   sw=$(printf '%s\n' "${shell_warnings[@]}" | jq -R . | jq -sc .)
 fi
 
-jq --arg e "$engine" --arg t "$tier" \
-  --arg catmode "$cat_mode" --rawfile catraw "$cat_file" \
-  --arg statemode "$state_mode" --rawfile stateraw "$state_file" \
+rc=0
+jq -n --arg e "$engine" --arg t "$tier" \
+  --arg catmode "$cat_mode" --rawfile catraw <(capped_read "$cat_fd" "$cat_cap") --argjson catcap "$cat_cap" \
+  --arg statemode "$state_mode" --rawfile stateraw <(capped_read "$state_fd" "$state_cap") --argjson statecap "$state_cap" \
   --argjson sw "$sw" '
-  def clean: gsub("[[:cntrl:]]"; "");
+  def clean: gsub("[[:cntrl:]\\p{Cf}]"; "");
   def glob_re:
     "\\A" + (explode | map(
       if . == 42 then ".*" elif . == 63 then "."
@@ -83,7 +91,9 @@ jq --arg e "$engine" --arg t "$tier" \
   def rank_of: ["cheap", "standard", "premium"] | index(.);
   def undated: (test("-([0-9]{4}|[0-9]{8})\\z") or test("(\\A|[-./_])(preview|exp|beta)([-./_]|\\z)")) | not;
 
-  . as $s
+  [inputs]
+  | if length != 1 or (.[0] | type) != "object" then "model-resolve: stdin must be one settings JSON object\n" | halt_error(2) else .[0] end
+  | . as $s
   | ($s.modelMap[$e][$t]?) as $row
   | ($s.classes[$e].tiers[$t]?) as $tier
   | if ($row | type) != "object" or ($tier | type) != "object"
@@ -95,20 +105,31 @@ jq --arg e "$engine" --arg t "$tier" \
   | $row.default as $seed_default
   | ($row.regex // []) as $regex
   | def pats($c): ($cl[$c] // []) | map(select(type == "string" or (type == "object" and (.glob | type) == "string")));
-    def matches($id; $p): $id | test($p | pglob | glob_re);
+    ([["cheap", "standard", "premium"][] | {key: ., value: (pats(.) | to_entries | map(. + {re: (.value | pglob | glob_re)}))}] | from_entries) as $cp
+  | ($row.models | map(glob_re)) as $seedre
+  | def cmatches($id; $c): ($cp[$c] // []) | map(select(.re as $r | $id | test($r)));
     def class_of($id):
-      ["premium", "standard", "cheap"] | map(select(. as $c | pats($c) | any(matches($id; .)))) | first // null;
+      ["premium", "standard", "cheap"] | map(select(. as $c | cmatches($id; $c) | length > 0)) | first // null;
     def seedm($id):
-      ($row.models | any(.[]; matches($id; .))) or ($regex | any(.[]; . as $r | try ($id | test($r)) catch false));
+      ($seedre | any(.[]; . as $r | $id | test($r))) or ($regex | any(.[]; . as $r | try ($id | test($r)) catch false));
 
-    ($catraw | if $catmode == "read" then (try fromjson catch null) else null end) as $cobj
-  | ($stateraw | if $statemode == "read" then (try fromjson catch null) else null end) as $sobj
-  | (if $catmode == "read" and ($cobj | type) != "object" then ["model-resolve: catalog is not one JSON object; ignoring it"] else [] end) as $w_cat
-  | (if $statemode == "read" and ($sobj | type) != "object" then ["model-resolve: class-state is not one JSON object; ignoring it"] else [] end) as $w_state
+    (($catraw | utf8bytelength) > $catcap) as $cat_big
+  | (($stateraw | utf8bytelength) > $statecap) as $state_big
+  | (if $cat_big then ["model-resolve: catalog is larger than \($catcap) bytes; ignoring it"] else [] end) as $w_catbig
+  | (if $state_big then ["model-resolve: class-state is larger than \($statecap) bytes; ignoring it"] else [] end) as $w_statebig
+  | ($catmode == "read" and ($cat_big | not)) as $cat_read
+  | ($statemode == "read" and ($state_big | not)) as $state_read
+  | ($catraw | if $cat_read then (try fromjson catch null) else null end) as $cobj
+  | ($stateraw | if $state_read then (try fromjson catch null) else null end) as $sobj
+  | (if $cat_read and ($cobj | type) != "object" then ["model-resolve: catalog is not one JSON object; ignoring it"] else [] end) as $w_cat
+  | (if $state_read and ($sobj | type) != "object" then ["model-resolve: class-state is not one JSON object; ignoring it"] else [] end) as $w_state
   | (if ($cobj | type) == "object" and ($cobj | has($e)) then $cobj[$e] else null end) as $snap
   | (if ($cobj | type) == "object" and ($cobj | has($e)) and (($snap | type) != "object" or ($snap.models | type) != "array")
      then ["model-resolve: catalog entry for engine \($e | clean) has no models array; ignoring it"] else [] end) as $w_snap
-  | (if ($snap | type) == "object" and ($snap.models | type) == "array" then $snap.models else null end) as $models
+  | (if ($snap | type) == "object" and ($snap.models | type) == "array" then $snap.models else null end) as $models0
+  | (if ($models0 | length) > 5000
+     then ["model-resolve: catalog entry for engine \($e | clean) has more than 5000 models; ignoring it"] else [] end) as $w_many
+  | (if ($w_many | length) > 0 then null else $models0 end) as $models
   | (($models // []) | map(select(type == "object" and (.id | type) == "string"))) as $entries
   | ($entries | map(.id)) as $catalog_ids
 
@@ -119,7 +140,7 @@ jq --arg e "$engine" --arg t "$tier" \
      | .out
      | map(.id as $id | class_of($id) as $k
          | select($k != null and ($admits | index($k)) != null)
-         | (pats($k) | to_entries | map(select(matches($id; .value)))) as $m
+         | cmatches($id; $k) as $m
          | (if (.created | type) == "number" then [0, -.created] else [1, 0] end) as $ck
          | ($id | ver) as $v
          | {id: $id, cls: $k, rank: $m[0].key,
@@ -136,7 +157,7 @@ jq --arg e "$engine" --arg t "$tier" \
      then ["model-resolve: \($e | clean) \($t | clean): recorded \($class | clean) default is not a string; using seed default \($seed_default | clean)"] else [] end) as $w_rec_type
   | (($rec | type) == "string"
      and ($rec | shape_ok($e))
-     and ($rec == $seed_default or (pats($class) | any(matches($rec; .))))
+     and ($rec == $seed_default or (cmatches($rec; $class) | length > 0))
      and (class_of($rec) as $k | $k == null or ($k | rank_of) <= ($class | rank_of))
      and (seedm($rec) or ($uncond | any(.id == $rec)))) as $rec_ok
   | (if ($rec | type) == "string" and ($rec_ok | not)
@@ -149,13 +170,26 @@ jq --arg e "$engine" --arg t "$tier" \
      else {d: $d0, w: []} end) as $dd
   | $dd.d as $default
 
-  # Trial: newest non-dated match of the row class, never the default.
-  | ($uncond | map(select(.cls == $class and (.id | undated))) | sort_by(.key) | first | .id) as $head
+  # Trial: the newest non-dated match of the row class, only if it sorts before
+  # the default. A default outside the candidates is keyed as a candidate would be.
+  | ($uncond | map(select(.cls == $class))) as $rowc
+  | ($rowc | map(select(.id | undated)) | sort_by(.key) | first) as $head
+  | (if ($rowc | any(.id == $default))
+     then ($rowc | map(select(.id == $default)) | first | .key)
+     else cmatches($default; $class) as $dm
+       | if ($dm | length) > 0
+         then [($admits | index($class)), $dm[0].key] + (if $e == "pi" then [[1, 0], ($default | ver), $default] else [($default | ver), [1, 0], $default] end)
+         else null end
+     end) as $dkey
   | {
       admitted: ($row.models + ($uncond | map(select(seedm(.id) | not)) | sort_by(.key) | map(.id))),
       regex: $regex,
       conditional: ($cands | map(select(.cond and (seedm(.id) | not))) | sort_by(.key) | map({id, requires})),
       default: $default,
-      trial: (if $head == $default then null else $head end),
-      warnings: ($sw + $w_cat + $w_state + $w_snap + $w_rec_type + $w_rec + $dd.w | map(clean))
-    }'
+      trial: (if $head == null or ($dkey != null and ($head.key < $dkey | not)) then null else $head.id end),
+      warnings: ($sw + $w_catbig + $w_statebig + $w_cat + $w_state + $w_snap + $w_many + $w_rec_type + $w_rec + $dd.w | map(clean))
+    }' || rc=$?
+
+[ -z "$cat_fd" ] || exec {cat_fd}<&-
+[ -z "$state_fd" ] || exec {state_fd}<&-
+exit "$rc"
