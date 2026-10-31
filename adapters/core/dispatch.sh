@@ -5054,8 +5054,8 @@ fi
 # "Tier map". The rows live in defaults.json's modelMap, read through the
 # settings resolver; a tier without a row admits nothing (fail closed). Off
 # the row, a model the catalog lists under a class the row admits passes too
-# (_model_class_admitted). DISPATCH_SKIP_MODEL_CHECK does not cover this gate (it is
-# about shape/cache staleness, not tier); --ignore-map does. A local id's
+# (_model_class_admitted). DISPATCH_SKIP_MODEL_CHECK does not cover this gate
+# (it is about shape/cache staleness, not tier); --ignore-map does. A local id's
 # entry lists its tiers; it has no modelMap row and no escalation rung.
 # Set only by the proven-escalation paths below; never inherited from the environment.
 pace_escalation=""

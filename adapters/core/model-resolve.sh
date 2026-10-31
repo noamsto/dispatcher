@@ -21,13 +21,14 @@
 # object is ignored with a warning, as is a catalog entry of more than 5000
 # models. The open itself is bounded (3 s, coreutils timeout), so a FIFO swapped
 # in after the regular-file check is rejected the same way and never blocks;
-# with no timeout command a present file is rejected. dispatch's tier gate and
-# `dispatch --models` call this. With no catalog snapshot the seed row is the admitted set; the catalog
-# and class-state are separate inputs, so a recorded default that passes the
-# class-match check is still honoured.
+# with no timeout command a present file is rejected. With no catalog snapshot
+# the seed row is the admitted set; the catalog and class-state are separate
+# inputs, so a recorded default that passes the class-match check is still
+# honoured. dispatch's tier gate and `dispatch --models` call this.
 #
-# Pure: reads only stdin and the two named files. No clock, network, environment
-# lookup or score. Exit 2 on a usage error, 1 on an unknown engine/tier row.
+# Pure: reads only stdin and the two named files. No clock, network or score;
+# PATH only supplies the timeout command. Exit 2 on a usage error, 1 on an
+# unknown engine/tier row.
 set -euo pipefail
 
 [ "$#" -eq 4 ] || {
