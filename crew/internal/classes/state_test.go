@@ -83,63 +83,6 @@ func TestSettingsParse(t *testing.T) {
 	}
 }
 
-func TestSeedState(t *testing.T) {
-	s, err := ParseSettings(readDefaults(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	st := SeedState(s)
-	for _, w := range []struct{ engine, class, want string }{
-		{"claude", "cheap", "haiku"},
-		{"claude", "standard", "sonnet"},
-		{"claude", "premium", "opus"},
-		{"pi", "standard", "openrouter/deepseek/deepseek-v4.1-flash"},
-	} {
-		if got := st[w.engine][w.class].Default; got != w.want {
-			t.Errorf("seed %s/%s = %q, want %q", w.engine, w.class, got, w.want)
-		}
-	}
-}
-
-func TestSeedStateOmitsUnseedable(t *testing.T) {
-	tests := []struct {
-		name string
-		raw  string
-	}{
-		{"disagreeing tiers", `{
-		  "modelMap": {"pi": {
-		    "trivial": {"default": "other/model"},
-		    "standard": {"default": "a/model"},
-		    "deep": {"default": "a/model"}}},
-		  "classes": {"pi": {"tiers": {
-		    "trivial": {"class": "standard"},
-		    "standard": {"class": "standard"},
-		    "deep": {"class": "standard"}}}}
-		}`},
-		{"empty default", `{
-		  "modelMap": {"pi": {"standard": {"default": ""}}},
-		  "classes": {"pi": {"tiers": {"standard": {"class": "standard"}}}}
-		}`},
-		{"tier without model row", `{
-		  "modelMap": {"pi": {"standard": {"default": "a/model"}}},
-		  "classes": {"pi": {"tiers": {
-		    "standard": {"class": "standard"},
-		    "deep": {"class": "standard"}}}}
-		}`},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			s, err := ParseSettings([]byte(tc.raw))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := SeedState(s); len(got["pi"]) != 0 {
-				t.Errorf("pi seeded: %v", got)
-			}
-		})
-	}
-}
-
 func TestStatePaths(t *testing.T) {
 	tests := []struct {
 		name string

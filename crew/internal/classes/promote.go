@@ -603,9 +603,6 @@ func apply(engine, class string, env Env, stderr io.Writer, prefix string, mutat
 		st[engine] = map[string]Entry{}
 	}
 	entry := st[engine][class]
-	if entry.Default == "" {
-		entry.Default = SeedState(s)[engine][class].Default
-	}
 	now := env.Now()
 	tx := &txn{tiers: tiers, resolver: env.resolver(s), state: st, entry: &entry, now: now}
 	body, err := mutate(tx)

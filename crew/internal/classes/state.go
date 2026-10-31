@@ -76,8 +76,8 @@ func CatalogPath(getenv func(string) string) string {
 // with one warning, and a malformed engine, class, history or vetoed item is
 // dropped alone with a warning so the rest survives. A writer must refuse on
 // any warning, usable or not: saving the survivors would erase what was
-// dropped. Unusable without a warning means absent, the one case a writer may
-// start from an empty state over.
+// dropped. Unusable without a warning means absent: a writer starts from an
+// empty state.
 func Load(path string) (st State, usable bool, warnings []string) {
 	warn := func(format string, args ...any) {
 		warnings = append(warnings, warnPrefix+fmt.Sprintf(format, args...))
@@ -216,46 +216,6 @@ func Save(path string, st State) (err error) {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
-}
-
-// SeedState builds the state model-resolve falls back to from settings, never
-// written whole: a recorded default would pin its class against later settings
-// edits. A class's default is the
-// modelMap default of the tiers mapped to it, recorded only when every such tier
-// agrees on one non-empty model. A class whose tiers disagree has no single
-// default to seed, so it is left out and model-resolve falls back to the tier
-// rows.
-func SeedState(s Settings) State {
-	st := State{}
-	for _, engine := range s.Engines() {
-		classes := map[string]bool{}
-		for _, tc := range s.Classes[engine].Tiers {
-			classes[tc.Class] = true
-		}
-		for class := range classes {
-			def, ok := seedDefault(s, engine, class)
-			if !ok {
-				continue
-			}
-			if st[engine] == nil {
-				st[engine] = map[string]Entry{}
-			}
-			st[engine][class] = Entry{Default: def}
-		}
-	}
-	return st
-}
-
-func seedDefault(s Settings, engine, class string) (string, bool) {
-	var def string
-	for _, tier := range s.TiersOf(engine, class) {
-		d := s.ModelMap[engine][tier].Default
-		if d == "" || (def != "" && d != def) {
-			return "", false
-		}
-		def = d
-	}
-	return def, def != ""
 }
 
 // Push records a change, keeping the last HistoryKeep. The model switched to is

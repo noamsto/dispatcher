@@ -14,14 +14,8 @@ var tierOrder = []string{"trivial", "standard", "deep"}
 // reads. Raw is kept verbatim because model-resolve takes the whole document on
 // stdin and applies its own checks to it.
 type Settings struct {
-	Raw      []byte                     // the merged settings JSON, fed to model-resolve on stdin
-	ModelMap map[string]map[string]Seed // engine → tier → seed row
-	Classes  map[string]EngineClasses   // engine → class config
-}
-
-// Seed is a modelMap row; only the default seeds a class.
-type Seed struct {
-	Default string `json:"default"`
+	Raw     []byte                   // the merged settings JSON, fed to model-resolve on stdin
+	Classes map[string]EngineClasses // engine → class config
 }
 
 // EngineClasses is classes.<engine>. The cheap/standard/premium match lists are
@@ -41,13 +35,12 @@ type TierClass struct {
 // document is not an object of the expected shape.
 func ParseSettings(raw []byte) (Settings, error) {
 	var doc struct {
-		ModelMap map[string]map[string]Seed `json:"modelMap"`
-		Classes  map[string]EngineClasses   `json:"classes"`
+		Classes map[string]EngineClasses `json:"classes"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return Settings{}, fmt.Errorf("parse settings: %w", err)
 	}
-	return Settings{Raw: raw, ModelMap: doc.ModelMap, Classes: doc.Classes}, nil
+	return Settings{Raw: raw, Classes: doc.Classes}, nil
 }
 
 // TiersOf lists the tiers that take their model from class, in trivial,
