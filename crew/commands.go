@@ -287,6 +287,13 @@ type dispatchRowCmd struct {
 	Session *string `name:"session"`
 }
 
+// peerSyncCmd takes no argv: its exchange is the JSON on stdin.
+type peerSyncCmd struct{}
+
+type peerClaimsCmd struct {
+	Issue string `arg:"" optional:"" name:"issue"`
+}
+
 // specLintCmd.Issue keeps each value whole; validate checks them as issue numbers.
 type specLintCmd struct {
 	Issue        []string `name:"issue" sep:"none"`
@@ -418,6 +425,7 @@ const (
 	gitBaselineUsage  = "usage: crew git-baseline [--accept]"
 	remoteRunUsage    = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] -- <argv>..."
 	dispatchRowUsage  = "usage: crew dispatch-row --session S [--crew ID]"
+	peerClaimsUsage   = "usage: crew peer-claims <issue>"
 	specLintUsage     = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
 )
 
@@ -536,6 +544,20 @@ var wordings = map[string]wording{
 		},
 		extra: func(w string) string {
 			return fmt.Sprintf("crew: dispatch-row: unexpected argument '%s' (%s)", w, dispatchRowUsage)
+		},
+		code: exitRemoteUsage,
+	},
+	"peer-sync": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: peer-sync: unknown flag '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: peer-sync: takes no arguments (got '%s')", w) },
+		code:        exitRemoteUsage,
+	},
+	"peer-claims": {
+		unknownFlag: func(f string) string {
+			return fmt.Sprintf("crew: peer-claims: unknown flag '%s' (%s)", f, peerClaimsUsage)
+		},
+		extra: func(w string) string {
+			return fmt.Sprintf("crew: peer-claims: unexpected argument '%s' (%s)", w, peerClaimsUsage)
 		},
 		code: exitRemoteUsage,
 	},
@@ -777,6 +799,10 @@ func validate(sub string, r *root) *refusal {
 		c := r.DispatchRow
 		if given(c.Crew) || c.Session == nil || *c.Session == "" {
 			return &refusal{dispatchRowUsage, exitRemoteUsage}
+		}
+	case "peer-claims":
+		if n := r.PeerClaims.Issue; n == "" || strings.Trim(n, "0123456789") != "" {
+			return &refusal{peerClaimsUsage, exitRemoteUsage}
 		}
 	case "spec-lint":
 		c := r.SpecLint

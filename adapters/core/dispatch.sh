@@ -418,7 +418,7 @@ _claim_evidence() {
     return 0
   fi
   if [ ! -f "$events" ]; then
-    _claim_index_evidence "$issue"
+    _claim_offhost_evidence "$issue"
     return 0
   fi
   # `fromjson? | objects` skips torn and non-object lines instead of failing
@@ -470,7 +470,7 @@ _claim_evidence() {
       return 0
     fi
   done <<<"$pids"
-  _claim_index_evidence "$issue"
+  _claim_offhost_evidence "$issue"
   return 0
 }
 
@@ -579,6 +579,31 @@ _claim_index_evidence() {
       return 0
     fi
   done <<<"$rows"
+}
+
+# _peer_claim_evidence <issue> — one line when a peer host's synced rows show a
+# live claim on <issue>, else nothing. `crew peer-claims` decides liveness from
+# the peer store; a store it cannot read fails closed, like the bus and index.
+_peer_claim_evidence() {
+  local out
+  out="$(crew peer-claims "$1")" || {
+    echo "peer rows unreadable"
+    return 0
+  }
+  [ -z "$out" ] || echo "${out%%$'\n'*}"
+}
+
+# _claim_offhost_evidence <issue> — one line from another clone's claim index,
+# else from a peer host's synced rows, else nothing; the claim sources that live
+# outside this clone's own bus.
+_claim_offhost_evidence() {
+  local out
+  out="$(_claim_index_evidence "$1")"
+  if [ -n "$out" ]; then
+    echo "$out"
+    return 0
+  fi
+  _peer_claim_evidence "$1"
 }
 
 # A claim row older than this with no branch, remote branch or dispatch row is

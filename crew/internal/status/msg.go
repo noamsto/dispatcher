@@ -9,6 +9,8 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
+	"github.com/noamsto/dispatcher/crew/internal/peer"
+	"github.com/noamsto/dispatcher/crew/internal/remote"
 )
 
 // MsgRequest is `crew msg <from> <to> <body>`.
@@ -22,6 +24,7 @@ func RunMsg(ctx context.Context, req MsgRequest, paths bus.Paths, stderr io.Writ
 		return exitFailure
 	}
 	from, to, body := req.From, req.To, req.Body
+	ts := o.Clock.RealMS()
 	if refuseSender(ctx, "msg", from, crew, o, stderr) {
 		return exitFailure
 	}
@@ -40,15 +43,47 @@ func RunMsg(ctx context.Context, req MsgRequest, paths bus.Paths, stderr io.Writ
 		say(stderr, "crew: msg: refusing to send to '%s': a role assignment body must be one line, but this one contains a control character (newline/tab/…); re-send it as compact JSON, e.g. jq -c\n", to)
 		return exitFailure
 	}
+	if host, isPeer := strings.CutPrefix(to, "peer:"); isPeer {
+		if reason := peerRefusal(from, host, body, crew, ts, o); reason != "" {
+			say(stderr, "crew: msg: refusing to send to '%s': %s\n", to, reason)
+			return exitFailure
+		}
+	}
 	if line := reviewSeamRefusal(ctx, from, to, body, crew, paths, o); line != "" {
 		say(stderr, "%s\n", line)
 		return exitFailure
 	}
 
-	ts := o.Clock.RealMS()
 	return post("msg", paths, stderr, func(b string) string {
 		return encodeLine(row[string]{TS: ts, CrewID: crew, From: from, To: to, Kind: bus.KindMsg, Body: b})
 	}, body)
+}
+
+// peerRefusal is why a msg to peer:<host> cannot ride the peer sync, "" when it
+// can. The row is an ordinary bus row that the next sync exports, so every
+// refusal is at send time: a row that never leaves this host, or that the
+// receiver would drop or find elided, must not look sent.
+func peerRefusal(from, host, body, crew string, ts int64, o Options) string {
+	if from != "dispatcher:"+crew {
+		return "only a dispatcher can message a peer, a worker's rows never leave this host"
+	}
+	if !remote.HostNameRe.MatchString(host) {
+		return fmt.Sprintf("invalid host name %q", host)
+	}
+	hosts, err := o.PeerHosts()
+	if err != nil {
+		return err.Error()
+	}
+	if !hosts[host].Peer {
+		return fmt.Sprintf("%q is not a peer host (settings hosts.%s.peer)", host, host)
+	}
+	if len(body) > peer.MaxBody {
+		return fmt.Sprintf("body is %d bytes, over the %d-byte peer limit", len(body), peer.MaxBody)
+	}
+	if line := encodeLine(row[string]{TS: ts, CrewID: crew, From: from, To: "peer:" + host, Kind: bus.KindMsg, Body: body}); len(line) > bus.LineMax {
+		return fmt.Sprintf("the encoded row is %d bytes, over the %d-byte bus line, so the body would be elided", len(line), bus.LineMax)
+	}
+	return ""
 }
 
 // hasC0 is `_has_c0`: any byte `[[:cntrl:]]` matches under LC_ALL=C, the C0

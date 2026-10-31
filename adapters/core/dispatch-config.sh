@@ -53,9 +53,11 @@
 #
 # hosts maps a host name to an ssh destination and the remote clone path of each
 # owner/repo, for `crew remote-run`, plus an optional chrome flag marking the
-# host that runs the owner's browser; like localModels it is validated on the
-# merged tree and has no env var. Unlike grantRoots it is allowed from the user
-# layer: an entry only chooses where work is sent and grants the worker nothing.
+# host that runs the owner's browser, and an optional peer flag marking a peer
+# dispatcher host for `crew stream`'s peer sync (its name must equal that
+# host's short hostname); like localModels it is validated on the merged tree
+# and has no env var. Unlike grantRoots it is allowed from the user layer: an
+# entry only chooses where work is sent and grants the worker nothing.
 #
 # Tracker map keys (repoTrackers/orgTrackers) and dispatcherMcp keys are
 # lowercased within each layer before the merge, so a later layer's entry for
@@ -364,9 +366,10 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
           then [$p, "a name of letters, digits, \".\", \"_\" or \"-\" starting with a letter or digit"]
           elif ($v | type) != "object" then [$p, "an object"]
           else
-            ($v | keys[] | select(IN("ssh", "repos", "chrome") | not) | [$p + [.], "one of ssh, repos, chrome"]),
+            ($v | keys[] | select(IN("ssh", "repos", "chrome", "peer") | not) | [$p + [.], "one of ssh, repos, chrome, peer"]),
             ($v | select((.ssh | type != "string") or ((.ssh | test("\\A[A-Za-z0-9_][A-Za-z0-9._@%+-]*\\z")) | not)) | [$p + ["ssh"], "an ssh destination of letters, digits and \"._@%+-\" not starting with \"-\" (use an ~/.ssh/config alias for options)"]),
             ($v | select(has("chrome") and ((.chrome | type) != "boolean")) | [$p + ["chrome"], "a boolean"]),
+            ($v | select(has("peer") and ((.peer | type) != "boolean")) | [$p + ["peer"], "a boolean"]),
             ($v | select(has("repos") and ((.repos | type) != "object")) | [$p + ["repos"], "an object"]),
             (($v.repos | if type == "object" then to_entries[] else empty end) as {key: $r, value: $d}
               | [$p + ["repos", $r], "an owner/repo key mapped to an absolute path without control characters"]

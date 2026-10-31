@@ -1,0 +1,9 @@
+usage: crew peer-claims <issue>
+
+Print the live claim a peer host holds on issue (digits only) as one line, as
+dispatch's claim gate reads it: a fresh dispatch row on feat/<issue>-*, or a
+fresh claim-issue row, with no later reap of its branch. Prints nothing and
+exits 0 when no peer holds one; exits 1 when a peer store file is unreadable, and
+2 for a missing or non-numeric issue.
+
+  crew peer-claims 42

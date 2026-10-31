@@ -91,6 +91,8 @@ type Options struct {
 	Timer func(d time.Duration) <-chan time.Time
 	// relay is the relay sources' timing; zero is the production defaults.
 	relay relayTiming
+	// peer is the peer link's seams; zero fields are the production defaults.
+	peer peerHooks
 }
 
 func (o Options) withDefaults() Options {
@@ -191,6 +193,7 @@ func Run(r Request, paths bus.Paths, stdout, stderr io.Writer, opts Options) int
 		reaperr: filepath.Join(cdir, "stream.reap.err"),
 	}
 	l.relays = newRelays(l, paths.Log, cdir)
+	l.peers = newPeerLink(l, paths)
 	return l.run(sigs)
 }
 
@@ -587,6 +590,8 @@ type loop struct {
 	child    *child
 	reap     *reapRun
 	relays   *relays
+	// peers is nil in a fleet bus loop: only the repo stream links peers.
+	peers *peerLink
 }
 
 func (l *loop) run(sigs chan os.Signal) int {
@@ -597,6 +602,9 @@ func (l *loop) run(sigs chan os.Signal) int {
 	sweepReaped(l.reapout, l.reaperr)
 	l.lastReap = l.o.Clock.Now().Unix()
 	l.relays.start(time.Duration(l.c.interval) * time.Second)
+	if l.peers != nil {
+		l.peers.start()
+	}
 
 	for {
 		if pending(sigs) {
@@ -874,6 +882,9 @@ func (l *loop) printReap(path string) {
 // leave the way its closing `exit 0` did.
 func (l *loop) cleanup() {
 	l.relays.shutdown()
+	if l.peers != nil {
+		l.peers.shutdown()
+	}
 	// TERM (not KILL): the inner watch's own handler releases watch.lock.d, and
 	// it is normally parked in `sleep`, so the wait is what bounds this —
 	// draining without it reads stream.out empty or partial for a batch whose

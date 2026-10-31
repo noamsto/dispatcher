@@ -368,6 +368,12 @@ in {
             example = true;
             description = "The host runs the owner's browser with Claude in Chrome, so `dispatch --host <name> --chrome` may send a Claude-in-Chrome worker there. Unset, `--chrome` to this host is refused.";
           };
+          peer = lib.mkOption {
+            type = lib.types.nullOr lib.types.bool;
+            default = null;
+            example = true;
+            description = "Marks a peer dispatcher host for `crew stream`'s peer sync. The settings name must equal that host's short hostname (`uname -n` up to the first dot; on macOS often like `Noams-MacBook-Pro`).";
+          };
           repos = lib.mkOption {
             type = lib.types.attrsOf (lib.types.strMatching "/[^[:cntrl:]]*");
             default = {};
