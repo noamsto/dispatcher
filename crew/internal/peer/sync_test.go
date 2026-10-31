@@ -1093,8 +1093,8 @@ func TestDecisionRoundTrip(t *testing.T) {
 		on   *side
 		want Decision
 	}{
-		{"halo reads mbp's", halo, Decision{TS: ms(time.Minute), Origin: "mbp", CrewID: "c1", Body: "mbp decides: use sqlite"}},
-		{"mbp reads halo's", mbp, Decision{TS: ms(2 * time.Minute), Origin: "halo", CrewID: "c2", Body: "halo decides: ship friday"}},
+		{"halo reads mbp's", halo, Decision{TS: ms(time.Minute), Origin: "peer:mbp", Peer: true, CrewID: "c1", Body: "mbp decides: use sqlite"}},
+		{"mbp reads halo's", mbp, Decision{TS: ms(2 * time.Minute), Origin: "peer:halo", Peer: true, CrewID: "c2", Body: "halo decides: ship friday"}},
 	} {
 		got, err := Decisions(c.on.paths, 0)
 		if err != nil || !slices.Contains(got, c.want) {
@@ -1130,5 +1130,75 @@ func TestSyncDropsBadPeerDecisions(t *testing.T) {
 	}
 	if got, err := Decisions(mbp.paths, 0); err != nil || len(got) != 0 {
 		t.Errorf("Decisions = %+v, %v; want none", got, err)
+	}
+}
+
+// A peer's epoch strings are stored and echoed back, so anything that is not
+// the 32 hex chars our own epochs are counts as unknown.
+func TestServeIgnoresMalformedPeerEpochs(t *testing.T) {
+	_, halo := pair(t)
+	for name, bad := range map[string]string{
+		"oversize":  strings.Repeat("a", 400<<10),
+		"uppercase": strings.Repeat("A", 32),
+		"long":      strings.Repeat("a", 33),
+	} {
+		t.Run(name, func(t *testing.T) {
+			payload, err := json.Marshal(Request{V: 1, Host: "mbp", ID: strings.Repeat("ab", 16),
+				Epoch: bad, SinceEpoch: bad})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out, errb bytes.Buffer
+			if rc := Serve(bytes.NewReader(payload), &out, &errb, halo.serveOptions()); rc != 0 {
+				t.Fatalf("Serve = %d: %.200s", rc, errb.String())
+			}
+			var resp Response
+			if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if resp.AckEpoch != "" {
+				t.Errorf("ack_epoch = %.40q, want unknown", resp.AckEpoch)
+			}
+			if st := halo.state(t, "mbp"); st.Epoch != "" || st.AckEpoch != "" {
+				t.Errorf("state kept a bad epoch: %.40q %.40q", st.Epoch, st.AckEpoch)
+			}
+			if size := len(readFile(t, filepath.Join(StoreFor(halo.paths).Dir, "mbp.state"))); size > 1<<10 {
+				t.Errorf("mbp.state is %d bytes", size)
+			}
+		})
+	}
+}
+
+func TestSyncIgnoresMalformedPeerEpochs(t *testing.T) {
+	for name, bad := range map[string]string{
+		"oversize":  strings.Repeat("a", 400<<10),
+		"uppercase": strings.Repeat("A", 32),
+		"long":      strings.Repeat("a", 33),
+	} {
+		t.Run(name, func(t *testing.T) {
+			mbp, halo := pair(t)
+			mustSync(t, mbp, halo, serveOn(t, halo))
+			resp := Response{V: 1, Host: "halo", ID: halo.busID(t), Epoch: bad, AckEpoch: bad,
+				Rows: []Entry{}, Dropped: map[string]int{}}
+			mustSync(t, mbp, halo, answer(t, resp))
+			if st := mbp.state(t, "halo"); st.Epoch != "" || st.AckEpoch != "" {
+				t.Errorf("state kept a bad epoch: %.40q %.40q", st.Epoch, st.AckEpoch)
+			}
+			var req Request
+			tr := func(_ context.Context, _ string, request []byte) ([]byte, error) {
+				var rr remote.Request
+				if err := json.Unmarshal(request, &rr); err != nil {
+					return nil, err
+				}
+				if err := json.Unmarshal([]byte(*rr.Stdin), &req); err != nil {
+					return nil, err
+				}
+				return json.Marshal(Response{V: 1, Host: "halo", ID: halo.busID(t), Rows: []Entry{}, Dropped: map[string]int{}})
+			}
+			mustSync(t, mbp, halo, tr)
+			if req.SinceEpoch != "" {
+				t.Errorf("request echoed since_epoch %.40q", req.SinceEpoch)
+			}
+		})
 	}
 }

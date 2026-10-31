@@ -293,3 +293,36 @@ func orNull(s string) any {
 	}
 	return s
 }
+
+// DropLocal removes peer rows that name a local crew id or a local worker
+// branch: a peer's snapshot is another host's data, so a row that collides
+// with a local one is a forgery or a mix-up, and never stands in for it.
+// Rows with no crew_id or branch (an unreachable peer's placeholder) stay.
+func DropLocal(rows []map[string]any, events []bus.Event) (kept []map[string]any, dropped int) {
+	crews := map[string]bool{}
+	branches := map[string]bool{}
+	for _, e := range events {
+		if e.CrewID != "" {
+			crews[e.CrewID] = true
+		}
+		if e.Branch != "" {
+			branches[e.Branch] = true
+		}
+		if b, ok := strings.CutPrefix(e.From, "worker:"); ok {
+			b, _, _ = strings.Cut(b, "#")
+			if b != "" {
+				branches[b] = true
+			}
+		}
+	}
+	for _, r := range rows {
+		id, _ := r["crew_id"].(string)
+		br, _ := r["branch"].(string)
+		if (id != "" && crews[id]) || (br != "" && branches[br]) {
+			dropped++
+			continue
+		}
+		kept = append(kept, r)
+	}
+	return kept, dropped
+}

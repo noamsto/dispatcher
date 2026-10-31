@@ -12,6 +12,9 @@ status row.
   --crew ID   Only this crew id
   --json      A JSON array of roster rows plus repo and crew_id
 
+Peer hosts' rows come tagged `peer: true` and `host`; one naming a local crew id
+or worker branch is dropped (counted on stderr), as in `crew roster --peers`.
+
 Repos that are unreadable or gone are noted on stderr and skipped.
 
   crew fleet --json | jq -r '.[] | [.repo, .branch, .state] | @tsv'

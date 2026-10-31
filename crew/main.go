@@ -700,8 +700,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	}
 	if sub == "decisions" {
 		c := parsed.typed.Decisions
-		since, _ := parseSince(c.Since, time.Now())
-		return printDecisions(paths, since, c.JSON, stdout, stderr)
+		now := e.now()
+		since := now.Add(-decisionsWindow).UnixMilli()
+		if c.All {
+			since = 0
+		} else if c.Since != nil {
+			since, _ = parseSince(c.Since, now)
+		}
+		return printDecisions(paths, since, c.All, c.JSON, stdout, stderr)
 	}
 
 	// spec-lint reads a spec file and the repo's origin refs, never the bus.
@@ -1014,11 +1020,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		merged := roster.MergeRemote(ctx, rosterRows, events, crew, func(ctx context.Context, host string, argv []string, so, se io.Writer) int {
 			return remoteAs(ctx, e, cwd, crew)(host, argv, so, se)
 		})
+		v = merged
+	}
+	if sub == "roster" && parsed.typed.Roster.Peers {
 		peerRows, err := peer.RosterRows(peer.StoreFor(paths), e.peerHosts, e.now())
 		if err != nil {
 			say(stderr, "crew: roster: peer settings: %v\n", err)
 		}
-		v = append(merged, peerRows...) // after the merge, so a host never relays its peers
+		peerRows, dropped := peer.DropLocal(peerRows, events)
+		if dropped > 0 {
+			say(stderr, "crew: roster: %d peer rows dropped (a local crew id or branch)\n", dropped)
+		}
+		v = append(v.([]map[string]any), peerRows...) // after the merge, so a host never relays its peers
 	}
 
 	if sub == "roster" || sub == "sessions" {

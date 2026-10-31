@@ -1878,7 +1878,7 @@ const (
 	wantDispatchRowUsage = "usage: crew dispatch-row --session S [--crew ID]"
 	wantPeerClaimsUsage  = "usage: crew peer-claims <issue>"
 	wantDecideUsage      = `usage: crew decide "<text>"`
-	wantDecisionsUsage   = "usage: crew decisions [--json] [--since <ms|duration>]"
+	wantDecisionsUsage   = "usage: crew decisions [--json] [--since <ms|duration> | --all]"
 	wantSpecLintUsage    = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
 	wantFollowupsUsage   = "usage: crew followups <PR> (--entries FILE [--apply] [--tracker github|linear] | --draft [--crew ID])"
 	guardUsage           = "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …"

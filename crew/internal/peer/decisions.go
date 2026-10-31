@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -31,12 +32,37 @@ func DecisionRow(ts int64, crew, body string) string {
 }
 
 // Decision is one announced decision: Origin is "local" for this host's log,
-// else the peer host that sent it.
+// else "peer:<host>" for the peer that sent it, with Peer set.
 type Decision struct {
 	TS     int64
 	Origin string
 	CrewID string
 	Body   string
+	Peer   bool
+}
+
+// CapPerOrigin keeps the newest n decisions of each origin, in their input
+// order, and counts what it dropped per origin. ds must be oldest first.
+func CapPerOrigin(ds []Decision, n int) (kept []Decision, older map[string]int) {
+	seen := map[string]int{}
+	for i := len(ds) - 1; i >= 0; i-- {
+		seen[ds[i].Origin]++
+	}
+	older = map[string]int{}
+	for o, total := range seen {
+		if total > n {
+			older[o] = total - n
+		}
+	}
+	skip := maps.Clone(older)
+	for _, d := range ds {
+		if skip[d.Origin] > 0 {
+			skip[d.Origin]--
+			continue
+		}
+		kept = append(kept, d)
+	}
+	return kept, older
 }
 
 type decisionRow struct {
@@ -48,7 +74,7 @@ type decisionRow struct {
 }
 
 // Decisions is every decision at ts >= since: the local log's dispatcher
-// decisions plus those in each peer store file, oldest first (stable: local
+// decisions plus those in each peer store file (origin "peer:<host>"), oldest first (stable: local
 // before peers on a tie, then file order). A peer reset re-delivers rows
 // already stored, so a repeat of (origin, ts, crew_id, body) is dropped.
 // Admission has already checked peer rows; the local log is held to the same
@@ -56,8 +82,8 @@ type decisionRow struct {
 func Decisions(p bus.Paths, since int64) ([]Decision, error) {
 	var out []Decision
 	seen := map[Decision]bool{}
-	add := func(origin string, r decisionRow) {
-		d := Decision{TS: r.TS, Origin: origin, CrewID: r.CrewID, Body: r.Body}
+	add := func(origin string, isPeer bool, r decisionRow) {
+		d := Decision{TS: r.TS, Origin: origin, CrewID: r.CrewID, Body: r.Body, Peer: isPeer}
 		if r.Kind != "decision" || r.TS < since || seen[d] {
 			return
 		}
@@ -67,7 +93,7 @@ func Decisions(p bus.Paths, since int64) ([]Decision, error) {
 	if _, err := eachLine(p.Log, 0, func(line []byte, _ int64) bool {
 		var r decisionRow
 		if json.Unmarshal(line, &r) == nil && bus.ValidCrewID(r.CrewID) && r.From == "dispatcher:"+r.CrewID {
-			add("local", r)
+			add("local", false, r)
 		}
 		return true
 	}); err != nil {
@@ -87,7 +113,7 @@ func Decisions(p bus.Paths, since int64) ([]Decision, error) {
 			var sl storedLine
 			var r decisionRow
 			if json.Unmarshal(line, &sl) == nil && json.Unmarshal(sl.Row, &r) == nil {
-				add(host, r)
+				add("peer:"+host, true, r)
 			}
 			return true
 		}); err != nil {

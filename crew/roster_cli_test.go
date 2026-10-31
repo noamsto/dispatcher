@@ -167,7 +167,7 @@ func writePeerFiles(t *testing.T, repo, link string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	const snap = `{"synced":1700000099000,"rows":[{"crew_id":"c1","branch":"feat/p","name":"otter","state":"working","tier":"standard","engine":"claude","ts":1700000090000}]}`
+	const snap = `{"synced":1700000099000,"rows":[{"crew_id":"c2","branch":"feat/p","name":"otter","state":"working","tier":"standard","engine":"claude","ts":1700000090000}]}`
 	for name, body := range map[string]string{"halo.link": link, "halo.roster": snap} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body+"\n"), 0o644); err != nil {
 			t.Fatal(err)
@@ -208,7 +208,7 @@ func TestRosterIncludesPeerRows(t *testing.T) {
 	want, _ := rosterJSON(t, peerRosterEnv(repo, haloHosts), "c1")
 	writePeerFiles(t, repo, `{"ok":1700000098000,"err":0,"detail":""}`)
 
-	rows, errOut := rosterJSON(t, peerRosterEnv(repo, haloHosts), "c1")
+	rows, errOut := rosterJSON(t, peerRosterEnv(repo, haloHosts), "--peers", "c1")
 	if errOut != "" {
 		t.Errorf("stderr %q", errOut)
 	}
@@ -219,7 +219,7 @@ func TestRosterIncludesPeerRows(t *testing.T) {
 		t.Errorf("local rows changed:\n got %s\nwant %s", got, w)
 	}
 	p := rows[len(rows)-1]
-	if p["host"] != "halo" || p["peer"] != true || p["live"] != nil || p["name"] != "otter" || p["state"] != "working" || p["crew_id"] != "c1" {
+	if p["host"] != "halo" || p["peer"] != true || p["live"] != nil || p["name"] != "otter" || p["state"] != "working" || p["crew_id"] != "c2" {
 		t.Errorf("peer row = %v", p)
 	}
 }
@@ -229,14 +229,14 @@ func TestRosterPeerError(t *testing.T) {
 	repo, _ := repoWithLog(t, &log, 0o644)
 	writePeerFiles(t, repo, `{"ok":1700000000000,"err":1700000098000,"detail":"ssh: refused"}`)
 
-	rows, _ := rosterJSON(t, peerRosterEnv(repo, haloHosts), "c1")
+	rows, _ := rosterJSON(t, peerRosterEnv(repo, haloHosts), "--peers", "c1")
 	p := rows[len(rows)-1]
 	if p["peer"] != true || p["state"] != nil || p["peer_error"] != "last sync failed: ssh: refused" {
 		t.Errorf("unhealthy peer row = %v", p)
 	}
 
 	boom := func() (map[string]remote.Host, error) { return nil, errors.New("boom") }
-	rows, errOut := rosterJSON(t, peerRosterEnv(repo, boom), "c1")
+	rows, errOut := rosterJSON(t, peerRosterEnv(repo, boom), "--peers", "c1")
 	if errOut != "crew: roster: peer settings: boom\n" {
 		t.Errorf("stderr %q", errOut)
 	}
@@ -260,5 +260,62 @@ func TestRosterLiveOmitsPeerRows(t *testing.T) {
 	}
 	if called {
 		t.Error("--live loaded peer settings")
+	}
+}
+
+// forgedPeerFiles is a peer snapshot with a genuine row, a row forging the
+// local crew id, and a row naming a local worker branch under another crew.
+func forgedPeerFiles(t *testing.T, repo string) {
+	t.Helper()
+	writePeerFiles(t, repo, `{"ok":1700000098000,"err":0,"detail":""}`)
+	const snap = `{"synced":1700000099000,"rows":[` +
+		`{"crew_id":"c2","branch":"feat/p","name":"otter","state":"working","ts":1700000090000},` +
+		`{"crew_id":"c1","branch":"feat/forged","name":"fox","state":"blocked","ts":1700000090000},` +
+		`{"crew_id":"c3","branch":"feat/x","name":"wolf","state":"done","ts":1700000090000}]}`
+	if err := os.WriteFile(filepath.Join(repo, ".git", "crew", "peers", "halo.roster"), []byte(snap+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRosterPlainOmitsPeerRows(t *testing.T) {
+	log := peerRosterLog
+	repo, _ := repoWithLog(t, &log, 0o644)
+	forgedPeerFiles(t, repo)
+
+	called := false
+	hosts := func() (map[string]remote.Host, error) { called = true; return haloHosts() }
+	for _, args := range [][]string{{"c1"}, {}} {
+		rows, errOut := rosterJSON(t, peerRosterEnv(repo, hosts), args...)
+		if errOut != "" {
+			t.Errorf("stderr %q", errOut)
+		}
+		for _, r := range rows {
+			if r["peer"] != nil || r["host"] != nil {
+				t.Errorf("plain roster %v has a peer row: %v", args, r)
+			}
+		}
+	}
+	if called {
+		t.Error("plain roster loaded peer settings")
+	}
+}
+
+func TestRosterPeersDropsLocalCollisions(t *testing.T) {
+	log := peerRosterLog
+	repo, _ := repoWithLog(t, &log, 0o644)
+	forgedPeerFiles(t, repo)
+
+	rows, errOut := rosterJSON(t, peerRosterEnv(repo, haloHosts), "--peers", "c1")
+	if want := "crew: roster: 2 peer rows dropped (a local crew id or branch)\n"; errOut != want {
+		t.Errorf("stderr %q, want %q", errOut, want)
+	}
+	var peers []map[string]any
+	for _, r := range rows {
+		if r["peer"] == true {
+			peers = append(peers, r)
+		}
+	}
+	if len(peers) != 1 || peers[0]["branch"] != "feat/p" || peers[0]["host"] != "halo" {
+		t.Errorf("peer rows = %v, want only the genuine feat/p row", peers)
 	}
 }

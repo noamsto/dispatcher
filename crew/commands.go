@@ -76,8 +76,9 @@ type inboxCmd struct {
 }
 
 type rosterCmd struct {
-	Live bool   `name:"live"`
-	Crew string `arg:"" optional:"" name:"crew"`
+	Live  bool   `name:"live"`
+	Peers bool   `name:"peers"`
+	Crew  string `arg:"" optional:"" name:"crew"`
 }
 
 type reportCmd struct {
@@ -302,6 +303,7 @@ type decideCmd struct {
 type decisionsCmd struct {
 	JSON  bool    `name:"json"`
 	Since *string `name:"since"`
+	All   bool    `name:"all"`
 }
 
 // specLintCmd.Issue keeps each value whole; validate checks them as issue numbers.
@@ -437,7 +439,7 @@ const (
 	dispatchRowUsage  = "usage: crew dispatch-row --session S [--crew ID]"
 	peerClaimsUsage   = "usage: crew peer-claims <issue>"
 	decideUsage       = `usage: crew decide "<text>"`
-	decisionsUsage    = "usage: crew decisions [--json] [--since <ms|duration>]"
+	decisionsUsage    = "usage: crew decisions [--json] [--since <ms|duration> | --all]"
 	specLintUsage     = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
 )
 
@@ -833,7 +835,7 @@ func validate(sub string, r *root) *refusal {
 		}
 	case "decisions":
 		c := r.Decisions
-		if _, ok := parseSince(c.Since, time.Now()); !ok {
+		if _, ok := parseSince(c.Since, time.Now()); !ok || (c.All && c.Since != nil) {
 			return &refusal{decisionsUsage, exitRemoteUsage}
 		}
 	case "spec-lint":

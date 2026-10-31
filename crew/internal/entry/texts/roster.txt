@@ -12,5 +12,9 @@ state and live, and the reason in `host_error`.
   --live  Add `live` to each row: whether a tmux window on this host carries the
           branch for this crew. Answers for this host alone: remote workers are
           neither queried nor appended
+  --peers Append read-only rows from the peer hosts' last snapshots, each tagged
+          `peer: true` and `host`, whatever --live says. They are another host's
+          data: never act on them as local workers. A row naming a local crew id
+          or a local worker branch is dropped, with a count on stderr
 
   crew roster | jq -r '.[] | [.branch, .state, .name] | @tsv'

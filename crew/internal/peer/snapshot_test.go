@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 )
 
@@ -297,5 +298,27 @@ func TestRosterRowsSettings(t *testing.T) {
 	counted := func() (map[string]remote.Host, error) { calls++; return haloPeer, nil }
 	if _, err := RosterRows(s, counted, testNow); err != nil || calls != 1 {
 		t.Errorf("settings loaded %d times, %v; want once", calls, err)
+	}
+}
+
+func TestDropLocal(t *testing.T) {
+	events := []bus.Event{
+		{CrewID: "c1", Branch: "feat/a"},
+		{CrewID: "c1", From: "worker:feat/w#s1-1"},
+		{From: "dispatcher:c1"},
+	}
+	rows := []map[string]any{
+		{"crew_id": "c1", "branch": "feat/other"},
+		{"crew_id": "c2", "branch": "feat/a"},
+		{"crew_id": "c2", "branch": "feat/w"},
+		{"crew_id": "c2", "branch": "feat/ok"},
+		{"branch": nil, "peer_error": "no sync yet"},
+	}
+	kept, dropped := DropLocal(rows, events)
+	if dropped != 3 {
+		t.Errorf("dropped %d, want 3", dropped)
+	}
+	if len(kept) != 2 || kept[0]["branch"] != "feat/ok" || kept[1]["peer_error"] != "no sync yet" {
+		t.Errorf("kept %v", kept)
 	}
 }

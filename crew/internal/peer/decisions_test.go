@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,7 +27,7 @@ func TestDecisionsMergesLocalAndPeer(t *testing.T) {
 	}
 	want := []Decision{
 		{TS: ms(3 * time.Hour), Origin: "local", CrewID: "c1", Body: "local old"},
-		{TS: ms(2 * time.Hour), Origin: "halo", CrewID: "c9", Body: "halo mid"},
+		{TS: ms(2 * time.Hour), Origin: "peer:halo", Peer: true, CrewID: "c9", Body: "halo mid"},
 		{TS: ms(time.Hour), Origin: "local", CrewID: "c1", Body: "local new"},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -66,7 +67,7 @@ func TestDecisionsDedupesAReDeliveredPeerRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Origin != "halo" || got[1].Origin != "mbp" {
+	if len(got) != 2 || got[0].Origin != "peer:halo" || got[1].Origin != "peer:mbp" {
 		t.Errorf("got %+v, want one row per origin", got)
 	}
 }
@@ -87,7 +88,31 @@ func TestDecisionsMissingFilesAndOddStoreNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err = Decisions(p, 0)
-	if err != nil || len(got) != 1 || got[0].Origin != "halo" {
+	if err != nil || len(got) != 1 || got[0].Origin != "peer:halo" {
 		t.Errorf("got %+v, %v", got, err)
+	}
+}
+
+func TestCapPerOriginKeepsTheNewestOfEach(t *testing.T) {
+	var ds []Decision
+	for i := range 5 {
+		ds = append(ds, Decision{TS: int64(i), Origin: "local"})
+		if i%2 == 0 {
+			ds = append(ds, Decision{TS: int64(i), Origin: "peer:halo", Peer: true})
+		}
+	}
+	kept, older := CapPerOrigin(ds, 2)
+	var got []string
+	for _, d := range kept {
+		got = append(got, fmt.Sprintf("%s@%d", d.Origin, d.TS))
+	}
+	if wantKept := []string{"peer:halo@2", "local@3", "local@4", "peer:halo@4"}; !reflect.DeepEqual(got, wantKept) {
+		t.Errorf("kept = %v", got)
+	}
+	if want := map[string]int{"local": 3, "peer:halo": 1}; !reflect.DeepEqual(older, want) {
+		t.Errorf("older = %v, want %v", older, want)
+	}
+	if kept, older := CapPerOrigin(ds, 10); len(kept) != len(ds) || len(older) != 0 {
+		t.Errorf("under the cap: %d kept, %v older", len(kept), older)
 	}
 }

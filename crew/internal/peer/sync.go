@@ -401,10 +401,30 @@ func admitRows(es []Entry, hwm, cursor int64, self string, now time.Time) ([]Ent
 }
 
 // wire is a peer-sync message: its version and its sender's bus id.
-type wire interface{ header() (v int, id string) }
+type wire interface {
+	header() (v int, id string)
+	dropBadEpochs()
+}
 
 func (r *Request) header() (int, string)  { return r.V, r.ID }
 func (r *Response) header() (int, string) { return r.V, r.ID }
+
+func (r *Request) dropBadEpochs() {
+	r.Epoch, r.SinceEpoch = goodEpoch(r.Epoch), goodEpoch(r.SinceEpoch)
+}
+func (r *Response) dropBadEpochs() {
+	r.Epoch, r.AckEpoch = goodEpoch(r.Epoch), goodEpoch(r.AckEpoch)
+}
+
+// goodEpoch is e if it has the shape of our own epochs, else "" (unknown).
+// Epochs are stored and echoed back, so an arbitrary peer string must not
+// reach either.
+func goodEpoch(e string) string {
+	if busIDRe.MatchString(e) {
+		return e
+	}
+	return ""
+}
 
 // decodeOne decodes data as exactly one JSON object of version 1 carrying a
 // bus id.
@@ -424,6 +444,7 @@ func decodeOne(data []byte, msg wire) error {
 	if !busIDRe.MatchString(id) {
 		return errors.New("id is not a bus id")
 	}
+	msg.dropBadEpochs()
 	return nil
 }
 

@@ -132,6 +132,10 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 		if err != nil {
 			say(stderr, "crew: fleet: %s: peer rows skipped (%s)\n", r.Common, oneLine(err))
 		}
+		peerRows, dropped := peer.DropLocal(peerRows, events)
+		if dropped > 0 {
+			say(stderr, "crew: fleet: %s: %d peer rows dropped (a local crew id or branch)\n", r.Common, dropped)
+		}
 		for _, p := range peerRows {
 			id, _ := p["crew_id"].(string)
 			if onlyCrew != "" && id != onlyCrew {
