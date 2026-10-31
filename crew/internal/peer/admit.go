@@ -101,9 +101,11 @@ func Admit(e Entry, self string, now time.Time) (json.RawMessage, string) {
 	if !ok {
 		return nil, reasonStale
 	}
-	if age := now.Sub(time.UnixMilli(ts)); age > keepFor {
+	age := now.Sub(time.UnixMilli(ts))
+	if age > keepFor {
 		return nil, reasonStale
-	} else if -age > maxSkew {
+	}
+	if -age > maxSkew {
 		return nil, reasonMalformed
 	}
 	if !identity(kind, obj, self) {
