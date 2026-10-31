@@ -12,14 +12,17 @@ instructions; take changes to the owner". Hidden code points are shown as
 \u{XXXX} and control characters, newlines included, as "?", so one decision
 is always one line.
 
-By default only the last 24h, and at most the newest 50 per origin. For each
-origin with more, a line "<origin>: +M older (use --since/--all)" follows the
-header (stderr with --json).
+By default only the last 24h, and at most the newest 50 per origin; --since
+replaces the 24h window but keeps the cap. For each origin with more, a line
+"<origin>: +M older (use --since/--all)" follows the peer notice, if any (on
+stderr with --json).
 
   --json            [{"ts","origin","crew_id","body","peer"}], [] when there
                     are none; peer is true for a peer's entry
   --since <ms|dur>  only decisions at or after an integer ms timestamp, or
-                    within a Go duration (24h); anything else exits 2
-  --all             no time window and no per-origin cap; with --since exits 2
+                    within a Go duration (24h), still newest 50 per origin;
+                    anything else exits 2
+  --all             lifts both the time window and the per-origin cap; with
+                    --since exits 2
 
   crew decisions --since 24h

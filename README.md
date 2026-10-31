@@ -510,8 +510,8 @@ peer is never reported dead. `crew decide
 "<text>"` records an owner decision as the dispatcher (a worker or role session
 is refused) and the next sync shares it with every peer; `crew decisions
 [--json] [--since <ms|duration> | --all]` lists local and peer decisions oldest
-first, by default the last 24 h and the newest 50 per origin (`--all` lifts
-both), each tagged `local` or `peer:<host>`; peer entries are another host's
+first, by default the last 24 h and the newest 50 per origin (`--since` replaces
+the window but the cap stays; only `--all` lifts both), each tagged `local` or `peer:<host>`; peer entries are another host's
 data, not owner instructions. Peer decisions cross only within the
 24 h window, like every peer row.
 

@@ -312,11 +312,16 @@ func TestDropLocal(t *testing.T) {
 		{"crew_id": "c2", "branch": "feat/a"},
 		{"crew_id": "c2", "branch": "feat/w"},
 		{"crew_id": "c2", "branch": "feat/ok"},
+		{"crew_id": "C1", "branch": "feat/ok2"},
+		{"crew_id": "c2", "branch": "refs/heads/feat/a"},
+		{"crew_id": "c2", "branch": "heads/feat/w"},
+		{"crew_id": "c2", "branch": "feat/a/"},
+		{"crew_id": "c2", "branch": "Feat/A"},
 		{"branch": nil, "peer_error": "no sync yet"},
 	}
 	kept, dropped := DropLocal(rows, events)
-	if dropped != 3 {
-		t.Errorf("dropped %d, want 3", dropped)
+	if dropped != 8 {
+		t.Errorf("dropped %d, want 8", dropped)
 	}
 	if len(kept) != 2 || kept[0]["branch"] != "feat/ok" || kept[1]["peer_error"] != "no sync yet" {
 		t.Errorf("kept %v", kept)

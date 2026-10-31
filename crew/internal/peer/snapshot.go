@@ -294,6 +294,15 @@ func orNull(s string) any {
 	return s
 }
 
+// localKey folds case, a refs/heads/ or heads/ prefix and trailing slashes, so
+// a peer cannot dodge DropLocal by respelling a local id or branch.
+func localKey(s string) string {
+	s = strings.ToLower(s)
+	s = strings.TrimPrefix(s, "refs/heads/")
+	s = strings.TrimPrefix(s, "heads/")
+	return strings.TrimRight(s, "/")
+}
+
 // DropLocal removes peer rows that name a local crew id or a local worker
 // branch: a peer's snapshot is another host's data, so a row that collides
 // with a local one is a forgery or a mix-up, and never stands in for it.
@@ -303,22 +312,22 @@ func DropLocal(rows []map[string]any, events []bus.Event) (kept []map[string]any
 	branches := map[string]bool{}
 	for _, e := range events {
 		if e.CrewID != "" {
-			crews[e.CrewID] = true
+			crews[localKey(e.CrewID)] = true
 		}
 		if e.Branch != "" {
-			branches[e.Branch] = true
+			branches[localKey(e.Branch)] = true
 		}
 		if b, ok := strings.CutPrefix(e.From, "worker:"); ok {
 			b, _, _ = strings.Cut(b, "#")
 			if b != "" {
-				branches[b] = true
+				branches[localKey(b)] = true
 			}
 		}
 	}
 	for _, r := range rows {
 		id, _ := r["crew_id"].(string)
 		br, _ := r["branch"].(string)
-		if (id != "" && crews[id]) || (br != "" && branches[br]) {
+		if (id != "" && crews[localKey(id)]) || (br != "" && branches[localKey(br)]) {
 			dropped++
 			continue
 		}
