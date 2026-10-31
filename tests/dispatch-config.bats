@@ -980,6 +980,13 @@ hosts_refuse_row() { # json fragment
   [[ "$stderr" == *'pattern "gpt-5*" (cheap) overlaps "gpt-*-terra" (standard)'* ]]
 }
 
+@test "many-star globs in different classes resolve fast, and disjoint ones do not warn" {
+  user_settings '{"classes":{"claude":{"cheap":["claude-*-*-*-*-*-*-*-a"],"premium":["claude-*-*-*-*-*-*-*-b"]}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *'pattern "claude-*-*-*-*-*-*-*-a" (cheap) overlaps "claude-*-*-*-*-*-*-*-b"'* ]]
+}
+
 @test "a classes row missing admits resolves to [class] with a warning" {
   user_settings '{"modelMap":{"local":{"deep":{"default":"x","models":["x"]}}},"classes":{"local":{"standard":["x"],"tiers":{"deep":{"class":"standard"}}}}}'
   run --separate-stderr "$CONFIG"

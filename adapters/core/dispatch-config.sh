@@ -364,18 +364,24 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   # Newline-terminated stderr lines for a valid .classes tree.
   # Whether two globs (arrays of single-char strings) match a common string.
   def globs_meet($a; $b):
-    if ($a | length) == 0 and ($b | length) == 0 then true
-    elif ($a | length) == 0 then $b | all(. == "*")
-    elif ($b | length) == 0 then $a | all(. == "*")
-    elif $a[0] == "*" then globs_meet($a[1:]; $b) or globs_meet($a; $b[1:])
-    elif $b[0] == "*" then globs_meet($a; $b[1:]) or globs_meet($a[1:]; $b)
-    else ($a[0] == $b[0] or $a[0] == "?" or $b[0] == "?") and globs_meet($a[1:]; $b[1:]) end;
+    ($a | length) as $m | ($b | length) as $n
+    | reduce range($m; -1; -1) as $i (null;
+        . as $next
+        | reduce range($n; -1; -1) as $j ([];
+            . as $row
+            | .[$j] = (
+                if $i == $m and $j == $n then true
+                elif $i == $m then $b[$j] == "*" and $row[$j + 1]
+                elif $j == $n then $a[$i] == "*" and $next[$j]
+                elif $a[$i] == "*" or $b[$j] == "*" then $next[$j] or $row[$j + 1]
+                else ($a[$i] == $b[$j] or $a[$i] == "?" or $b[$j] == "?") and $next[$j + 1] end)))
+    | .[0];
   def class_warnings:
     ["cheap", "standard", "premium"] as $order
     | ((.classes | to_entries[]) as {key: $e, value: $v}
         | [$order | to_entries[] | .key as $r | .value as $cl | ($v[$cl] | arrays | .[] | pat | strings | {cl: $cl, r: $r, g: .})] as $pats
         | ($pats[] as $a | $pats[] as $b
-            | select($a.r < $b.r and globs_meet($a.g | split(""); $b.g | split("")))
+            | select($a.r < $b.r and globs_meet($a.g | gsub("\\*+"; "*") | split(""); $b.g | gsub("\\*+"; "*") | split("")))
             | "dispatch-config: classes.\($e): pattern \"\($a.g)\" (\($a.cl)) overlaps \"\($b.g)\" (\($b.cl)); an id matching both takes \($b.cl)\n")),
       ((.classes | to_entries[]) as {key: $e, value: $v}
         | ($v.tiers | objects | to_entries[])

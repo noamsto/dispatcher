@@ -64,7 +64,7 @@ if [ "${#shell_warnings[@]}" -gt 0 ]; then
 fi
 
 rc=0
-jq -n --arg e "$engine" --arg t "$tier" \
+jq -nR --arg e "$engine" --arg t "$tier" \
   --arg catmode "$cat_mode" --rawfile catraw <(capped_read "$cat_fd" "$cat_cap") --argjson catcap "$cat_cap" \
   --arg statemode "$state_mode" --rawfile stateraw <(capped_read "$state_fd" "$state_cap") --argjson statecap "$state_cap" \
   --argjson sw "$sw" '
@@ -92,7 +92,9 @@ jq -n --arg e "$engine" --arg t "$tier" \
   def undated: (test("-([0-9]{4}|[0-9]{8})\\z") or test("(\\A|[-./_])(preview|exp|beta)([-./_]|\\z)")) | not;
 
   [inputs]
-  | if length != 1 or (.[0] | type) != "object" then "model-resolve: stdin must be one settings JSON object\n" | halt_error(2) else .[0] end
+  | join("\n")
+  | (try fromjson catch null)
+  | if type != "object" then "model-resolve: stdin must be one settings JSON object\n" | halt_error(2) else . end
   | . as $s
   | ($s.modelMap[$e][$t]?) as $row
   | ($s.classes[$e].tiers[$t]?) as $tier
@@ -143,7 +145,8 @@ jq -n --arg e "$engine" --arg t "$tier" \
          | cmatches($id; $k) as $m
          | (if (.created | type) == "number" then [0, -.created] else [1, 0] end) as $ck
          | ($id | ver) as $v
-         | {id: $id, cls: $k, rank: $m[0].key,
+         | {id: $id, cls: $k, rank: $m[0].key, dated: (.created | type) == "number",
+            short: [($admits | index($k)), $m[0].key, $v, $id],
             cond: ($m | all(.value | type == "object")),
             requires: (first($m[] | select(.value | type == "object") | .value.requires) // null),
             key: [($admits | index($k)), $m[0].key] + (if $e == "pi" then [$ck, $v, $id] else [$v, $ck, $id] end)})
@@ -172,13 +175,15 @@ jq -n --arg e "$engine" --arg t "$tier" \
 
   # Trial: the newest non-dated match of the row class, only if it sorts before
   # the default. A default outside the candidates is keyed as a candidate would be.
+  # created only breaks ties when both sides carry it; otherwise only the
+  # version does, so a missing created cannot hide a newer version.
   | ($uncond | map(select(.cls == $class))) as $rowc
   | ($rowc | map(select(.id | undated)) | sort_by(.key) | first) as $head
   | (if ($rowc | any(.id == $default))
-     then ($rowc | map(select(.id == $default)) | first | .key)
+     then ($rowc | map(select(.id == $default)) | first | {key, short, dated})
      else cmatches($default; $class) as $dm
        | if ($dm | length) > 0
-         then [($admits | index($class)), $dm[0].key] + (if $e == "pi" then [[1, 0], ($default | ver), $default] else [($default | ver), [1, 0], $default] end)
+         then [($admits | index($class)), $dm[0].key, ($default | ver), $default] | {short: ., dated: false}
          else null end
      end) as $dkey
   | {
@@ -186,7 +191,7 @@ jq -n --arg e "$engine" --arg t "$tier" \
       regex: $regex,
       conditional: ($cands | map(select(.cond and (seedm(.id) | not))) | sort_by(.key) | map({id, requires})),
       default: $default,
-      trial: (if $head == null or ($dkey != null and ($head.key < $dkey | not)) then null else $head.id end),
+      trial: (if $head == null or ($dkey != null and (if $head.dated and $dkey.dated then $head.key < $dkey.key else $head.short < $dkey.short end | not)) then null else $head.id end),
       warnings: ($sw + $w_catbig + $w_statebig + $w_cat + $w_state + $w_snap + $w_many + $w_rec_type + $w_rec + $dd.w | map(clean))
     }' || rc=$?
 

@@ -95,6 +95,23 @@ field() { jq -c "$1" <<<"$output"; }
   [ "$(field .trial)" = '"openrouter/deepseek/deepseek-v4.2-flash"' ]
 }
 
+@test "model-resolve: a catalog created never makes an older version a trial over the default" {
+  catalog pi '{"id":"openrouter/deepseek/deepseek-v4-flash","created":100}'
+  resolve pi standard
+  [ "$status" -eq 0 ]
+  [ "$(field .trial)" = null ]
+
+  catalog pi "$PI_DEEPSEEK" '{"id":"openrouter/deepseek/deepseek-v4-flash","created":100}'
+  resolve pi standard
+  [ "$(field .trial)" = null ]
+}
+
+@test "model-resolve: when head and default both carry created, the newer created is the trial" {
+  catalog pi '{"id":"'"$PI_DEEPSEEK"'","created":50}' '{"id":"openrouter/deepseek/deepseek-v4-flash","created":100}'
+  resolve pi standard
+  [ "$(field .trial)" = '"openrouter/deepseek/deepseek-v4-flash"' ]
+}
+
 @test "model-resolve: claude orders by version before created" {
   catalog claude '{"id":"claude-opus-4-0"}' '{"id":"claude-opus-4-1","created":999}' '{"id":"claude-opus-5-0","created":1}'
   state '{"claude":{"premium":{"default":"claude-opus-4-0"}}}'
@@ -307,6 +324,15 @@ field() { jq -c "$1" <<<"$output"; }
   run --separate-stderr "$RESOLVE" pi standard "$NONE" "$NONE" </dev/null
   [ "$status" -eq 2 ]
   [[ "$stderr" == "model-resolve: stdin must be one settings JSON object"* ]]
+}
+
+@test "model-resolve: malformed or multi-document stdin is a usage error" {
+  local doc
+  for doc in '{' '{}{}' '[]'; do
+    run --separate-stderr "$RESOLVE" pi standard "$NONE" "$NONE" <<<"$doc"
+    [ "$status" -eq 2 ]
+    [[ "$stderr" == "model-resolve: stdin must be one settings JSON object"* ]]
+  done
 }
 
 @test "model-resolve: an unknown engine or tier is an error" {
