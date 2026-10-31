@@ -538,6 +538,14 @@ core index for the human-initiated paths. Keep #703's phase files for the
 worker protocol, where seams exist. A slim skill set is also why the launch
 profile keeps skills on.
 
+**Done in #1278.** The class (b) playbooks now live in 15 `dispatcher:*` skills
+under `adapters/core/skills/` (one per trigger), the core protocol keeps a
+one-line index per skill, and the outputs that fire each path carry the pointer
+(a `playbook` field on `crew watch`/`crew stream` events, `-> skill
+dispatcher:<x>` on the listed refusals). `classes.tsv` gained `skill` and
+`anchor` columns so the split is checked, not just described; the class (b)
+units' historic line ranges are unchanged.
+
 ## Q5 - Sub-agent personas for heavy reads
 
 **Does agent frontmatter support per-agent MCP servers? Yes.** Claude Code's

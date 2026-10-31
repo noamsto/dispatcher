@@ -135,6 +135,9 @@ func TestStreamMaturedHoldAnnouncesOnce(t *testing.T) {
 	if got := holdIDsOf(t, line["holds"]); got != "h1" {
 		t.Errorf("holds = %v, want the one matured id", line["holds"])
 	}
+	if line["playbook"] != "dispatcher:budget-holds" {
+		t.Errorf("playbook = %v, want dispatcher:budget-holds", line["playbook"])
+	}
 }
 
 // An unmatured hold — `hold due`'s own "nothing matured", exit 1 with no rows —

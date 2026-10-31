@@ -1,7 +1,7 @@
 // Package stack is `crew stack cut`, the recorded cut point of a stacked child,
 // and `crew stack align`, the read-only plan for rebasing a whole stack from its
 // top PR down to the default branch (#984, #989;
-// DISPATCHER_PROTOCOL.md → "Rebase coordination").
+// the dispatcher:stacked skill).
 //
 // The trust rule is why the command is more than a `git rev-parse` away: only
 // the dispatcher-written kinds are consulted (a dispatch row with a base_oid,

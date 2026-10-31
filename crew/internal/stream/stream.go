@@ -269,22 +269,24 @@ type heartbeatLine struct {
 }
 
 type errorLine struct {
-	Stream string `json:"stream"`
-	Crew   string `json:"crew"`
-	Host   string `json:"host,omitempty"`
-	RC     int64  `json:"rc"`
-	Detail string `json:"detail"`
-	TS     int64  `json:"ts"`
-	Repo   string `json:"repo,omitempty"`
+	Stream   string `json:"stream"`
+	Crew     string `json:"crew"`
+	Host     string `json:"host,omitempty"`
+	RC       int64  `json:"rc"`
+	Detail   string `json:"detail"`
+	TS       int64  `json:"ts"`
+	Repo     string `json:"repo,omitempty"`
+	Playbook string `json:"playbook,omitempty"`
 }
 
 // holdDueLine carries `crew hold due --json`'s answer as its own bytes.
 type holdDueLine struct {
-	Stream string          `json:"stream"`
-	Crew   string          `json:"crew"`
-	Holds  json.RawMessage `json:"holds"`
-	TS     int64           `json:"ts"`
-	Repo   string          `json:"repo,omitempty"`
+	Stream   string          `json:"stream"`
+	Crew     string          `json:"crew"`
+	Holds    json.RawMessage `json:"holds"`
+	TS       int64           `json:"ts"`
+	Repo     string          `json:"repo,omitempty"`
+	Playbook string          `json:"playbook,omitempty"`
 }
 
 // reapLine is written to the reap child's own file, which printReap forwards,
@@ -776,11 +778,12 @@ func (l *loop) holdDue() {
 	ts := l.nowMS()
 	if l.sup.repeat("hold", holdIDs(holds), ts, l.heartbeatMS()) {
 		l.emit(holdDueLine{
-			Stream: "hold_due",
-			Crew:   l.c.crew,
-			Holds:  holds,
-			TS:     ts,
-			Repo:   l.repo,
+			Stream:   "hold_due",
+			Crew:     l.c.crew,
+			Holds:    holds,
+			TS:       ts,
+			Repo:     l.repo,
+			Playbook: "dispatcher:budget-holds",
 		})
 	}
 }

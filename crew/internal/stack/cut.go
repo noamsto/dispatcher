@@ -46,7 +46,7 @@ func (s *stackCmd) cut(ctx context.Context, record bool, child, oid string) erro
 			return nil
 		}
 		return s.refuse("crew: no recorded cut for %s in crew %s — ask the child for the parent oid "+
-			"it is based on (DISPATCHER_PROTOCOL.md → Rebase coordination); never guess\n", child, s.crew)
+			"it is based on (-> skill dispatcher:stacked); never guess\n", child, s.crew)
 	}
 
 	parent, err := s.recordedParent(child)

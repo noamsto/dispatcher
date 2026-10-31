@@ -256,9 +256,9 @@ budget_stop() {
   IFS=$'\t' read -r key pct _ resets_iso <<<"${gate%%$'\n'*}"
   exhausted="$key at $pct%${resets_iso:+, resets $resets_iso}"
   if [ -n "$role_label" ]; then
-    echo "dispatch: role '$role_label' ($engine) quota exhausted ($exhausted) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+    echo "dispatch: role '$role_label' ($engine) quota exhausted ($exhausted) — pick another engine, wait for the reset, or pass --ignore-budget -> skill dispatcher:budget-holds" >&2
   else
-    echo "dispatch: $engine quota exhausted ($exhausted) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+    echo "dispatch: $engine quota exhausted ($exhausted) — pick another engine, wait for the reset, or pass --ignore-budget -> skill dispatcher:budget-holds" >&2
   fi
   exit 1
 }
@@ -275,9 +275,9 @@ absolute_limit_stop() {
   gate=$(_budget_limit "$budget_file" "$engine" "$(date +%s)") || return 0
   IFS=$'\t' read -r abs_limit _ <<<"$gate"
   if [ -n "$role_label" ]; then
-    echo "dispatch: role '$role_label' ($engine) quota exhausted (absolute limit: $abs_limit) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+    echo "dispatch: role '$role_label' ($engine) quota exhausted (absolute limit: $abs_limit) — pick another engine, wait for the reset, or pass --ignore-budget -> skill dispatcher:budget-holds" >&2
   else
-    echo "dispatch: $engine quota exhausted (absolute limit: $abs_limit) — pick another engine, wait for the reset, or pass --ignore-budget" >&2
+    echo "dispatch: $engine quota exhausted (absolute limit: $abs_limit) — pick another engine, wait for the reset, or pass --ignore-budget -> skill dispatcher:budget-holds" >&2
   fi
   exit 1
 }
@@ -893,7 +893,7 @@ _claim_check_extra() {
   claim_had_label+=(1)
   existing="$(git for-each-ref --format='%(refname:short)' "refs/heads/feat/$n-*" 2>/dev/null | head -1)"
   if [ -n "$existing" ]; then
-    echo "dispatch: issue #$n is already claimed (carries the 'dispatched' label; local branch $existing) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
+    echo "dispatch: issue #$n is already claimed (carries the 'dispatched' label; local branch $existing) — another crew is on it." >&2
     exit 1
   fi
   if git show-ref --verify --quiet "refs/heads/$branch" &&
@@ -904,7 +904,7 @@ _claim_check_extra() {
   fi
   evidence="$(_claim_evidence "$n")"
   if [ -n "$evidence" ]; then
-    echo "dispatch: issue #$n is already claimed (carries the 'dispatched' label; $evidence) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
+    echo "dispatch: issue #$n is already claimed (carries the 'dispatched' label; $evidence) — another crew is on it." >&2
     exit 1
   fi
   claim_notes+=("dispatch: issue #$n carries a stale 'dispatched' claim (no branch, remote branch or dispatch row for feat/$n-*) — re-claiming.")
@@ -5513,7 +5513,7 @@ if [ -n "$gh_issue" ]; then
       # unless that push failed.
       claim_evidence="$(_claim_evidence "$gh_issue")"
       if [ -n "$claim_evidence" ]; then
-        echo "dispatch: issue #$gh_issue is already claimed (carries the 'dispatched' label; $claim_evidence) — another crew is on it. If that crew is gone, remove the label by hand and retry." >&2
+        echo "dispatch: issue #$gh_issue is already claimed (carries the 'dispatched' label; $claim_evidence) — another crew is on it." >&2
         exit 1
       fi
       claim_notes+=("dispatch: issue #$gh_issue carries a stale 'dispatched' claim (no branch, remote branch or dispatch row for feat/$gh_issue-*) — re-claiming.")

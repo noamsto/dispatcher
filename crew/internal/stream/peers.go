@@ -20,6 +20,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/peer"
+	"github.com/noamsto/dispatcher/crew/internal/playbook"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 )
 
@@ -35,12 +36,13 @@ type peerHooks struct {
 
 // peerMsgLine announces one peer msg; its fields are the stored row's.
 type peerMsgLine struct {
-	Stream string `json:"stream"`
-	Crew   string `json:"crew"`
-	Peer   string `json:"peer"`
-	From   string `json:"from"`
-	Body   string `json:"body"`
-	TS     int64  `json:"ts"`
+	Stream   string `json:"stream"`
+	Crew     string `json:"crew"`
+	Peer     string `json:"peer"`
+	From     string `json:"from"`
+	Body     string `json:"body"`
+	TS       int64  `json:"ts"`
+	Playbook string `json:"playbook,omitempty"`
 }
 
 // peerLink writes only through out, the loop's line-locked writer. sup is
@@ -266,12 +268,13 @@ func (pl *peerLink) announce(host string) {
 	}
 	for _, m := range msgs {
 		say(pl.out, "%s\n", encode(peerMsgLine{
-			Stream: "peer_msg",
-			Crew:   pl.crew,
-			Peer:   m.Peer,
-			From:   invisible.Escape(m.From),
-			Body:   invisible.Escape(m.Body),
-			TS:     m.TS,
+			Stream:   "peer_msg",
+			Crew:     pl.crew,
+			Peer:     m.Peer,
+			From:     invisible.Escape(m.From),
+			Body:     invisible.Escape(m.Body),
+			TS:       m.TS,
+			Playbook: playbook.Peers,
 		}))
 	}
 	if next == seen {
@@ -296,11 +299,12 @@ func (pl *peerLink) report(host, kind, detail string) {
 		return
 	}
 	say(pl.out, "%s\n", encode(errorLine{
-		Stream: "error",
-		Crew:   pl.crew,
-		Host:   host,
-		RC:     1,
-		Detail: detail,
-		TS:     ts,
+		Stream:   "error",
+		Crew:     pl.crew,
+		Host:     host,
+		RC:       1,
+		Detail:   detail,
+		TS:       ts,
+		Playbook: playbook.Peers,
 	}))
 }

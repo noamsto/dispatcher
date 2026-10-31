@@ -228,10 +228,19 @@ ROWS
   [ "$status" -eq 0 ]
 }
 
-@test "bakes the protocol into pi via --append-system-prompt" {
-  CREW_ID=c1 run_launcher --agent pi
+@test "bakes the protocol into pi via --append-system-prompt and passes the harness skills" {
+  mkdir -p "$BATS_TEST_TMPDIR/skills"
+  DISPATCHER_SKILLS_DIR="$BATS_TEST_TMPDIR/skills" CREW_ID=c1 run_launcher --agent pi
   run grep -F -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/DISPATCHER_PROTOCOL.pi.md" "$STUB_LOG"
   [ "$status" -eq 0 ]
+  run grep -F -- "--skill $BATS_TEST_TMPDIR/skills" "$STUB_LOG"
+  [ "$status" -eq 0 ]
+}
+
+@test "pi launch omits --skill when the resolved skills dir is not a directory" {
+  CREW_ID=c1 run_launcher --agent pi
+  run grep -F -- "--skill" "$STUB_LOG"
+  [ "$status" -eq 1 ]
 }
 
 @test "claude and pi refuse, launch nothing and register nothing when their render is missing" {
