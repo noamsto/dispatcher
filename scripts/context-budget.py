@@ -488,26 +488,35 @@ def stitch_runs(wl):
 
 def worker_run(parts):
     """One run's concatenated turns and phases; a relaunched session resumes the phase its predecessor ended in."""
-    turns, phases, used_fb, cur = [], [], False, "start"
+    turns, phases, bounds, used_fb, cur = [], [], set(), False, "start"
     for s in parts:
         ph, fb, cur = run_phases(s, cur)
+        bounds.add(len(turns))
         phases += ph
         turns += s["turns"]
         used_fb |= fb
-    return {"parts": parts, "turns": turns, "phases": phases, "used_fallback": used_fb}
+    return {"parts": parts, "turns": turns, "phases": phases, "bounds": bounds, "used_fallback": used_fb}
 
 
-def phase_stats(ctxs, phases):
-    """Segment the run; per-phase turns, first/last ctx, delta, integral."""
+def phase_stats(ctxs, phases, bounds=()):
+    """Segment the run; per-phase turns, first/last ctx, delta, integral.
+
+    bounds: turn indices where a relaunched session starts. A segment never spans one,
+    and a segment ending at one takes its delta to its own last turn, not to the fresh
+    session's low first turn.
+    """
     segs = []
     for t, p in enumerate(phases):
-        if segs and segs[-1][0] == p:
+        if segs and segs[-1][0] == p and t not in bounds:
             segs[-1][2] = t
         else:
             segs.append([p, t, t])
     per = {}
     for i, (p, a, b) in enumerate(segs):
-        nxt = ctxs[segs[i + 1][1]] if i + 1 < len(segs) else ctxs[-1]
+        if i + 1 == len(segs):
+            nxt = ctxs[-1]
+        else:
+            nxt = ctxs[b] if segs[i + 1][1] in bounds else ctxs[segs[i + 1][1]]
         d = per.setdefault(p, {"turns": 0, "first": ctxs[a], "last": ctxs[b], "delta": 0, "integral": 0})
         d["turns"] += b - a + 1
         d["last"] = ctxs[b]
@@ -548,7 +557,7 @@ def cmd_growth(args):
             continue
         n_fallback_completed += w["used_fallback"]
         ctxs = w["turns"]
-        per = phase_stats(ctxs, phases)
+        per = phase_stats(ctxs, phases, w["bounds"])
         first_idx = {}
         for t, ph in enumerate(phases):
             first_idx.setdefault(ph, t)

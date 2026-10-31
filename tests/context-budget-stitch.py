@@ -75,6 +75,9 @@ def test_three_sessions_stitch_into_one_run():
     assert s["turns_median"] == 4 + 3 + 3, s
     phases = {k: v["turns_median"] for k, v in obj["phases"].items()}
     assert phases == {"start": 1, "plan": 4, "execute": 3, "review": 1, "pr": 1}, phases
+    # No delta may span a relaunch: plan grew 25k->35k inside its own session.
+    deltas = {k: v["delta_median"] for k, v in obj["phases"].items()}
+    assert deltas == {"start": 5_000, "plan": 16_000, "execute": 10_000, "review": 4_000, "pr": 0}, deltas
 
 
 def test_unmapped_session_is_its_own_run():
