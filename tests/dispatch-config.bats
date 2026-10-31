@@ -140,8 +140,7 @@ ROWS
   jq -e 'has("anthropicCredits") | not' <<<"$output"
   [[ "$stderr" == *"ignoring anthropicCredits from $LOCKED_FILE (locked layer): balance_usd must be a positive number"* ]]
   [[ "$stderr" != *"$USER_FILE"* ]]
-  # The review repro: a larger, later user grant never stands in for a locked
-  # grant whose as_of is not before its expires.
+  # A larger, later user grant never stands in for an invalid locked one.
   user_settings '{"anthropicCredits":{"balance_usd":10000,"expires":"2030-01-01","as_of":"2026-10-01"}}'
   locked_settings '{"anthropicCredits":{"balance_usd":50,"expires":"2026-11-17","as_of":"2026-11-17"}}'
   run --separate-stderr "$CONFIG"
