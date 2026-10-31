@@ -2272,6 +2272,16 @@ EOF
   "$real_jq" -e '.engines.pi == null' "$XDG_DATA_HOME/crew/engine-budget.json"
 }
 
+@test "anthropic credit: a spaced provider key is still counted" {
+  credit_grant
+  local w="$HOME/.pi/dispatcher-worker/sessions/--home-u-git-c--"
+  mkdir -p "$w"
+  printf '%s\n' '{"type": "message", "timestamp": "2026-10-04T00:00:00Z", "message": {"provider": "anthropic", "usage": {"cost": {"total": 0.5}}}}' >"$w/s.jsonl"
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  jq -e '.engines.pi.anthropic.spent_usd == 0.5' "$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
 @test "anthropic credit: an unreadable session file or dir fails the scan rather than undercount" {
   [ "$(id -u)" -ne 0 ] || skip "root reads a mode-000 file"
   credit_fixture

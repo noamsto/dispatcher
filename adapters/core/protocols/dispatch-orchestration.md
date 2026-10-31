@@ -469,9 +469,10 @@ lists it and it matches a pattern of a class the row admits
 needs pi's Anthropic credit instead: `engines.pi.anthropic` (`refresh-budget`'s
 estimate from pi's session spend since `anthropicCredits.as_of`, same 2h and
 future-dated guards) with `remaining_usd` above 0 and `expires` ahead; the
-refusal names why (no fresh cache, no grant recorded, spent, expired). pi
-premium (either opus) is admitted only at `deep`, where `admits` includes
-premium. The catalog itself has no age check. With no
+refusal names why (no fresh cache, no grant recorded, spent, expired). pi's
+OpenRouter stops (≥95% month, `limit_reached`) still refuse every pi launch,
+direct ids included. pi premium (either opus) is admitted only at `deep`,
+where `admits` includes premium. The catalog itself has no age check. With no
 catalog only the rows below apply.
 
 The table below is generated from `adapters/core/defaults.json`: for each

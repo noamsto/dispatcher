@@ -1778,7 +1778,7 @@ _anthropic_credits() {
     def usd: (. * 100 | round) / 100 | tostring;
     if (.fetched_epoch | type) != "number" or .fetched_epoch < $now - 7200 or .fetched_epoch > $now + 300 then empty
     else (.engines.pi.anthropic // null) as $a
-      | if ($a | type) != "object" then "none\tengine-budget.json records no Anthropic credit (engines.pi.anthropic; set anthropicCredits {balance_usd, expires, as_of} and run refresh-budget)"
+      | if ($a | type) != "object" then "none\tengine-budget.json records no Anthropic credit (engines.pi.anthropic; set anthropicCredits {balance_usd, expires, as_of} and run refresh-budget, whose warnings say if it could not estimate the credit)"
         elif ($a.resets_at | type) != "number" or $a.resets_at <= $now then "expired\tthe recorded Anthropic credit expired\(if ($a.resets_at | type) == "number" then " at \($a.resets_at | todateiso8601)" else "" end) (engines.pi.anthropic)"
         elif ($a.remaining_usd | type) != "number" or $a.remaining_usd <= 0 then "spent\tthe recorded Anthropic credit is spent ($\([0, $a.remaining_usd] | max | usd) of $\(if ($a.balance_usd | type) == "number" then $a.balance_usd | usd else "?" end) left, engines.pi.anthropic; update anthropicCredits after checking the Anthropic Console)"
         else "ok" end
