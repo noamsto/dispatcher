@@ -467,8 +467,8 @@ printf '%s\n' "$pid" > "${run%/run}/started"; exit 0`)
 }
 
 // TestServeDispatchViaTmuxReadonlyEnv: bash as /bin/sh exits on exporting a
-// readonly variable such as PPID; that must not cost the exit status (and on a
-// real server, the signal). dash exports it fine and the child runs.
+// readonly variable such as PPID; that must not cost the exit status. dash
+// exports it fine and the child runs.
 func TestServeDispatchViaTmuxReadonlyEnv(t *testing.T) {
 	e := newServeEnv(t)
 	e.fakeTmux(t, "")
