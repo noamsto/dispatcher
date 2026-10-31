@@ -449,7 +449,7 @@ pace-empty-glob|{"paceDowngrades":{"codex":[{"models":["@premium:"],"to":"gpt-5.
 pace-to-glob|{"paceDowngrades":{"codex":[{"models":["@premium"],"to":"@standard:gpt-*"}]}}|paceDowngrades.codex[0].to must be a model id, @cheap, @standard or @premium
 esc-inrow|{"escalation":{"claude":{"deep":[{"failed":["sonnet"],"baseline":"sonnet","inRow":["@frontier"]}]}}}|escalation.claude.deep[0].inRow[0] must be a glob, @cheap, @standard, @premium or @<class>:<glob>
 esc-failed|{"escalation":{"claude":{"deep":[{"failed":["@"],"baseline":"sonnet","inRow":["opus"]}]}}}|escalation.claude.deep[0].failed[0] must be a glob, @cheap, @standard, @premium or @<class>:<glob>
-esc-outofrow|{"escalation":{"codex":{"standard":[{"failed":["gpt-5.6-terra"],"baseline":"terra","outOfRow":["@Premium"]}]}}}|escalation.codex.standard[0].outOfRow[0] must be a glob, @cheap, @standard, @premium or @<class>:<glob>
+esc-outofrow|{"escalation":{"codex":{"standard":[{"failed":["gpt-5.6-terra"],"baseline":"terra","outOfRow":["gpt-5.6-sol","@premium"]}]}}}|escalation.codex.standard[0].outOfRow[1] must be an exact model id (outOfRow widens what the tier gate admits, so it takes no class)
 ROWS
   finish_rows 6
 

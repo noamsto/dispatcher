@@ -400,7 +400,7 @@
         "models": [
           "@premium:grok-*-high"
         ],
-        "to": "@standard"
+        "to": "grok-4.7-medium"
       },
       {
         "models": [

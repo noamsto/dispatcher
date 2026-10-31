@@ -18758,7 +18758,7 @@ _p4_hop() {
   local script=$1 fn
   shift
   (
-    for fn in _settings_load _glob_match _exact_match _model_class _ladder_item _escalation_hop; do
+    for fn in _settings_load _glob_match _exact_match _model_class _class_item _escalation_hop; do
       eval "$(sed -n "/^${fn}() {/,/^}/p" "$script")"
     done
     model_catalog="$XDG_DATA_HOME/crew/model-catalog.json"
@@ -18770,25 +18770,24 @@ _p4_hop() {
 
 @test "model classes P4: escalation class items match catalogued ids, in dispatch and dispatch resume alike" {
   mkdir -p "$XDG_CONFIG_HOME/dispatcher"
-  jq -n '{escalation: {codex: {standard: [{failed: ["gpt-5.6-terra"], baseline: "terra", outOfRow: ["@premium"]}],
-    deep: [{failed: ["@standard"], baseline: "terra", inRow: ["@premium:gpt-*-sol"]}]}}}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+  jq -n '{escalation: {codex: {
+    deep: [{failed: ["@standard"], baseline: "terra", inRow: ["@premium:gpt-*-sol"]}],
+    standard: [{failed: ["@cheap"], baseline: "luna", inRow: ["@standard"]}]}}}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
   local script
   for script in "$DISPATCH" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh"; do
     rm -f "$XDG_DATA_HOME/crew/model-catalog.json"
-    [ -z "$(_p4_hop "$script" codex standard gpt-5.6-terra gpt-5.7-sol outOfRow)" ]
+    [ -z "$(_p4_hop "$script" codex deep gpt-5.7-terra gpt-5.7-sol inRow)" ]
     class_catalog codex gpt-5.7-sol gpt-5.7-terra gpt-5.7-luna
-    [ "$(_p4_hop "$script" codex standard gpt-5.6-terra gpt-5.7-sol outOfRow)" = terra ]
-    [ -z "$(_p4_hop "$script" codex standard gpt-5.6-terra gpt-5.7-luna outOfRow)" ]
     [ "$(_p4_hop "$script" codex deep gpt-5.7-terra gpt-5.7-sol inRow)" = terra ]
     [ -z "$(_p4_hop "$script" codex deep gpt-5.7-luna gpt-5.7-sol inRow)" ]
+    [ "$(_p4_hop "$script" codex standard gpt-5.7-luna gpt-5.7-terra inRow)" = luna ]
+    [ -z "$(_p4_hop "$script" codex standard gpt-5.7-luna gpt-5.7-sol inRow)" ]
+    # A class item never widens what the tier gate admits: outOfRow stays exact.
+    [ -z "$(_p4_hop "$script" codex deep gpt-5.7-terra gpt-5.7-sol outOfRow)" ]
+    # A failing resolver matches no class item, and says so.
+    printf '#!/usr/bin/env bash\nexit 3\n' >"$BATS_TEST_TMPDIR/resolve-fail"
+    out="$(MODEL_RESOLVE_BIN="$BATS_TEST_TMPDIR/resolve-fail" _p4_hop "$script" codex deep gpt-5.7-terra gpt-5.7-sol inRow 2>&1)"
+    [[ "$out" == *"dispatch: warning: model-resolve failed for codex; no @class ladder item matches 'gpt-5.7-terra'"* ]]
+    [[ "$out" != *terra*terra* ]]
   done
-}
-
-@test "model classes P4: --models never lists an @class escalation item as a model" {
-  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
-  jq -n '{escalation: {codex: {standard: [{failed: ["gpt-5.6-terra"], baseline: "terra", outOfRow: ["@premium", "gpt-5.6-sol"]}]}}}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
-  stub_bin codex
-  DISPATCH_ENGINES="codex" run --separate-stderr run_dispatch --models --json
-  [ "$status" -eq 0 ]
-  jq -e '.engines.codex.tiers.standard.models | (index("gpt-5.6-sol") != null) and (map(select(startswith("@"))) == [])' <<<"$output"
 }

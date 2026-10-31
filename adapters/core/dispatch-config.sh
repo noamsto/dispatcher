@@ -158,7 +158,9 @@ check_model_shapes() {
               (if (($row|has("inRow")) and ($row|has("outOfRow"))) or ((($row|has("inRow"))|not) and (($row|has("outOfRow"))|not)) then err("escalation.\($a).\($t)[\($i)]"; "exactly one of inRow or outOfRow") else empty end),
               (if ($row|has("inRow")) and (($row.inRow|string_array)|not) then err("escalation.\($a).\($t)[\($i)].inRow"; "an array of strings") else empty end),
               (if ($row|has("outOfRow")) and (($row.outOfRow|string_array)|not) then err("escalation.\($a).\($t)[\($i)].outOfRow"; "an array of strings") else empty end),
-              (["failed", "inRow", "outOfRow"][] as $k | select($row|has($k)) | ladder_items($row[$k]; "escalation.\($a).\($t)[\($i)].\($k)"))
+              (["failed", "inRow"][] as $k | select($row|has($k)) | ladder_items($row[$k]; "escalation.\($a).\($t)[\($i)].\($k)")),
+              (if ($row.outOfRow|string_array) then ($row.outOfRow | to_entries[] | select(.value|startswith("@"))
+                | err("escalation.\($a).\($t)[\($i)].outOfRow[\(.key)]"; "an exact model id (outOfRow widens what the tier gate admits, so it takes no class)")) else empty end)
              end)
           ) end
         ) end

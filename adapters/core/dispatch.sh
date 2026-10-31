@@ -178,6 +178,25 @@ pace_rule_target() {
   local target_agent="$1" target_model="$2" target_effort="$3" target_role="${4:-}" model_downgrade="" model_downgrade_label="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause escape
   local down_to model_rung target_class=premium down_class=standard c
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
+  # The window test runs first, so a target on a green budget never pays for the
+  # rung lookup (an @class item runs model-resolve).
+  rung_pct=$(jq -r --arg e "$target_agent" --argjson now "$(date +%s)" '
+    def elapsed_pct($w; $len): (100 * ($len - ($w.resets_at - $now)) / $len) as $x
+      | if $x < 0 then 0 elif $x > 100 then 100 else $x end;
+    def rule($w; $win):
+      if $w.used_pct < 70 then empty
+      elif $w.resets_at == null then "\($win)|\($w.used_pct)"
+      else (if $w.starts_at != null then ($w.resets_at - $w.starts_at) else 604800 end) as $len
+        | ($w.used_pct - elapsed_pct($w; $len)) as $ahead
+        | if $ahead > 15 then "\($win)|\($w.used_pct)|\($ahead | round)" else empty end
+      end;
+    if (.fetched_epoch + 7200) < $now or .fetched_epoch > ($now + 300) then empty
+    elif .engines[$e] == null then empty
+    elif .engines[$e].windows["7d"] != null then rule(.engines[$e].windows["7d"]; "7d")
+    elif .engines[$e].windows.month != null then rule(.engines[$e].windows.month; "month")
+    else empty
+    end' "$budget_file" 2>/dev/null || true)
+  [ -n "$rung_pct" ] || return 0
   down_to="$(_pace_downgrade "$target_agent" "$target_model")"
   model_rung="$down_to" model_downgrade="$down_to"
   if [[ $down_to == @* ]]; then
@@ -202,23 +221,6 @@ pace_rule_target() {
   max | xhigh) [ "$target_agent" = cursor ] || effort_downgrade="high" ;;
   esac
   [ -n "$model_rung$effort_downgrade" ] || return 0
-  rung_pct=$(jq -r --arg e "$target_agent" --argjson now "$(date +%s)" '
-    def elapsed_pct($w; $len): (100 * ($len - ($w.resets_at - $now)) / $len) as $x
-      | if $x < 0 then 0 elif $x > 100 then 100 else $x end;
-    def rule($w; $win):
-      if $w.used_pct < 70 then empty
-      elif $w.resets_at == null then "\($win)|\($w.used_pct)"
-      else (if $w.starts_at != null then ($w.resets_at - $w.starts_at) else 604800 end) as $len
-        | ($w.used_pct - elapsed_pct($w; $len)) as $ahead
-        | if $ahead > 15 then "\($win)|\($w.used_pct)|\($ahead | round)" else empty end
-      end;
-    if (.fetched_epoch + 7200) < $now or .fetched_epoch > ($now + 300) then empty
-    elif .engines[$e] == null then empty
-    elif .engines[$e].windows["7d"] != null then rule(.engines[$e].windows["7d"]; "7d")
-    elif .engines[$e].windows.month != null then rule(.engines[$e].windows.month; "month")
-    else empty
-    end' "$budget_file" 2>/dev/null || true)
-  [ -n "$rung_pct" ] || return 0
   win="${rung_pct%%|*}" rung_pct="${rung_pct#*|}"
   used_pct="$rung_pct" pace_notice="" pace_clause=""
   if [[ $rung_pct == *"|"* ]]; then
@@ -1788,36 +1790,34 @@ _model_class() {
   [ -e "$model_catalog" ] || return 0
   t="$(jq -r --arg a "$1" '. as $s | first(.modelMap[$a] // {} | keys_unsorted[] | select($s.classes[$a].tiers[.] != null)) // empty' <<<"$settings")"
   [ -n "$t" ] || return 0
-  out="$("$BASH" "${MODEL_RESOLVE_BIN:-@modelResolve@}" "$1" "$t" "$model_catalog" "$model_class_state" "$2" <<<"$settings" 2>/dev/null)" || return 0
+  out="$("$BASH" "${MODEL_RESOLVE_BIN:-@modelResolve@}" "$1" "$t" "$model_catalog" "$model_class_state" "$2" <<<"$settings" 2>/dev/null)" || {
+    echo "dispatch: warning: model-resolve failed for $1; no @class ladder item matches '$2'" >&2
+    return 0
+  }
   jq -r '.class_of | strings | select(test("\\A(cheap|standard|premium)\\z"))' <<<"$out" 2>/dev/null || true
 }
 
-# _ladder_item <model> <item> <glob|exact> <class> — true when one ladder item
-# admits <model>: `@C` when <class> (the model's _model_class) is C, `@C:<glob>`
-# when it is and the glob matches too; any other item as a glob or exact id.
-_ladder_item() {
+# _class_item <model> <item> <class> — true when an @class ladder item admits
+# <model>: `@C` when <class> (the model's _model_class) is C, `@C:<glob>` when
+# it is and the glob matches too.
+_class_item() {
   local c="${2#@}" g=""
-  if [[ $2 == @* ]]; then
-    if [[ $c == *:* ]]; then
-      g="${c#*:}" c="${c%%:*}"
-    fi
-    [ -n "$4" ] && [ "$c" = "$4" ] || return 1
-    # shellcheck disable=SC2053 # the unquoted RHS is the glob
-    [ -z "$g" ] || [[ $1 == $g ]]
-  elif [ "$3" = glob ]; then
-    # shellcheck disable=SC2053 # the unquoted RHS is the glob
-    [[ $1 == $2 ]]
-  else
-    [ "$1" = "$2" ]
+  if [[ $c == *:* ]]; then
+    g="${c#*:}" c="${c%%:*}"
   fi
+  [ -n "$3" ] && [ "$c" = "$3" ] || return 1
+  # shellcheck disable=SC2053 # the unquoted RHS is the glob
+  [ -z "$g" ] || [[ $1 == $g ]]
 }
 
 # _escalation_hop <agent> <tier> <failed> <model> <inRow|outOfRow> — the
 # baseline of the first escalation rule whose `failed` items match <failed>,
-# when that rule's <kind> list admits <model> (inRow: a glob; outOfRow: an
-# exact id). Prints nothing otherwise. An @class item (_ladder_item) is
-# consulted only when a model catalog exists, so with none every rule
-# resolves exactly as its globs and ids do.
+# when that rule's <kind> list admits <model> (inRow: a glob or @class item;
+# outOfRow: an exact id, never a class, since it widens what the tier gate
+# admits). Prints nothing otherwise. An @class item (_class_item) is consulted
+# only when a model catalog exists, so with none every rule resolves exactly as
+# its globs and ids do; no model id starts with @, so a glob match never takes
+# one.
 _escalation_hop() {
   local rule="" i glob baseline item c3="" c4="" k3="" k4=""
   while IFS=$'\t' read -r i glob; do
@@ -1825,7 +1825,7 @@ _escalation_hop() {
     if [[ $glob == @* ]]; then
       [ -e "${model_catalog:-}" ] || continue
       [ -n "$k3" ] || { c3="$(_model_class "$1" "$3")" k3=1; }
-      _ladder_item "$3" "$glob" glob "$c3" || continue
+      _class_item "$3" "$glob" "$c3" || continue
       rule="$i"
       break
     elif [[ $3 == $glob ]]; then
@@ -1837,18 +1837,18 @@ _escalation_hop() {
   if {
     read -r baseline
     if [ "$5" = inRow ]; then _glob_match "$4"; else _exact_match "$4"; fi
-  } < <(jq -r --arg a "$1" --arg t "$2" --argjson i "$rule" --arg k "$5" '.escalation[$a][$t][$i] | .baseline, ((.[$k] // [])[] | select(startswith("@") | not))' <<<"$settings"); then
+  } < <(jq -r --arg a "$1" --arg t "$2" --argjson i "$rule" --arg k "$5" '.escalation[$a][$t][$i] | .baseline, (.[$k] // [])[]' <<<"$settings"); then
     printf '%s' "$baseline"
     return 0
   fi
-  [ -e "${model_catalog:-}" ] || return 0
+  [ "$5" = inRow ] && [ -e "${model_catalog:-}" ] || return 0
   while IFS= read -r item; do
     [ -n "$k4" ] || { c4="$(_model_class "$1" "$4")" k4=1; }
-    if _ladder_item "$4" "$item" glob "$c4"; then
+    if _class_item "$4" "$item" "$c4"; then
       printf '%s' "$baseline"
       return 0
     fi
-  done < <(jq -r --arg a "$1" --arg t "$2" --argjson i "$rule" --arg k "$5" '.escalation[$a][$t][$i] | (.[$k] // [])[] | select(startswith("@"))' <<<"$settings")
+  done < <(jq -r --arg a "$1" --arg t "$2" --argjson i "$rule" '.escalation[$a][$t][$i] | (.inRow // [])[] | select(startswith("@"))' <<<"$settings")
 }
 
 # _pace_downgrade <agent> <model> — the `to` of the first paceDowngrades entry
@@ -1862,7 +1862,7 @@ _pace_downgrade() {
     if [[ $glob == @* ]]; then
       [ -e "${model_catalog:-}" ] || continue
       [ -n "$looked" ] || { cls="$(_model_class "$1" "$2")" looked=1; }
-      _ladder_item "$2" "$glob" glob "$cls" || continue
+      _class_item "$2" "$glob" "$cls" || continue
     elif [[ $2 != $glob ]]; then
       continue
     fi
@@ -4077,7 +4077,7 @@ if [ "${1:-}" = --models ]; then
            default: ($r.default // $row.default // null),
            trial: ($r.trial // null),
            models: ((($row.models // [])
-             + [($s.escalation[$e][$t] // [])[] | (.outOfRow // [])[] | select(startswith("@") | not)]
+             + [($s.escalation[$e][$t] // [])[] | (.outOfRow // [])[]]
              + ($r.admitted // [])
              + [$cond[] | select(.met) | .id]
              | map(select($e != "pi" or ($local[.] == null)))

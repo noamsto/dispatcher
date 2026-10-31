@@ -556,8 +556,8 @@ the target's class and id, and the downgrade's class and resolved id (`codex
 rung (gpt-5.6-terra) instead`); `DISPATCH_IGNORE_RUNG` takes that exact id,
 never a class name or `@<class>`. A bracketed id of a new cursor family
 (`grok-4.8-high[effort=high]`) is never catalogued, so it stays unrefused.
-`escalation`'s `failed`, `inRow` and `outOfRow` items take the same
-`@<class>[:<glob>]` forms.
+`escalation`'s `failed` and `inRow` items take the same `@<class>[:<glob>]`
+forms; `outOfRow` stays exact ids, since it widens what the tier gate admits.
 
 <!-- BEGIN generated:pace-downgrades from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->
 
@@ -568,7 +568,7 @@ never a class name or `@<class>`. A bracketed id of a new cursor family
 | codex | `@premium` | `@standard` |
 | cursor | `grok-4.7-high`, `grok-4.7-high[*` | `grok-4.7-medium` |
 | cursor | `cursor-grok-4.6-high`, `cursor-grok-4.6-high[*` | `cursor-grok-4.6-medium` |
-| cursor | `@premium:grok-*-high` | `@standard` |
+| cursor | `@premium:grok-*-high` | `grok-4.7-medium` |
 | cursor | `@premium:cursor-grok-*-high` | `cursor-grok-4.6-medium` |
 | pi | `openrouter/anthropic/claude-opus-*` | `@standard` |
 
