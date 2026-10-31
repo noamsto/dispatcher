@@ -3720,7 +3720,7 @@ EOF
   [[ "$stderr" == *"keychain"* ]]
   [[ "$stderr" == *"gh auth login -h github.com --insecure-storage"* ]]
   [[ "$stderr" == *"GUI login session"* ]]
-  grep -q '^auth status' "$STUB_LOG"
+  grep -qx 'auth status --active --hostname github.com' "$STUB_LOG"
   run ! grep -qE '^(issue|label)' "$STUB_LOG"
 }
 
