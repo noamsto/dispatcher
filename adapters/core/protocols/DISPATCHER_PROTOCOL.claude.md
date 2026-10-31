@@ -20,6 +20,7 @@ Load the named skill before acting: `dispatcher:<x>` on claude, `<x>` on codex/c
 - `resume` — a worker died mid-task or a tmux-restored window
 - `stacked` — a task built on an unmerged PR (--base), rebase coordination and layer merge
 - `remote-host` — a worker on another machine (--host)
+- `peers` — a peer dispatcher's claim, `peer_msg` or sync error (peer:<host>)
 - `review-pr` — reviewing an existing PR (--pr, --review)
 - `grid-lazy` — a grid whose roles spawn on demand (--lazy)
 - `chrome` — a task that needs the owner signed-in browser (--chrome)

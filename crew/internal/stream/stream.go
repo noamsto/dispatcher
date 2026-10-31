@@ -269,13 +269,14 @@ type heartbeatLine struct {
 }
 
 type errorLine struct {
-	Stream string `json:"stream"`
-	Crew   string `json:"crew"`
-	Host   string `json:"host,omitempty"`
-	RC     int64  `json:"rc"`
-	Detail string `json:"detail"`
-	TS     int64  `json:"ts"`
-	Repo   string `json:"repo,omitempty"`
+	Stream   string `json:"stream"`
+	Crew     string `json:"crew"`
+	Host     string `json:"host,omitempty"`
+	RC       int64  `json:"rc"`
+	Detail   string `json:"detail"`
+	TS       int64  `json:"ts"`
+	Repo     string `json:"repo,omitempty"`
+	Playbook string `json:"playbook,omitempty"`
 }
 
 // holdDueLine carries `crew hold due --json`'s answer as its own bytes.
