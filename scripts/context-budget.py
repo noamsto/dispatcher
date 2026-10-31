@@ -93,6 +93,7 @@ def parse_file(path):
     seen_blocks = set()
     cwds = set()
     first_prompt = None
+    first_ts = None
     p_role = p_worker = False
     dispatcher_flag = False
     try:
@@ -108,6 +109,8 @@ def parse_file(path):
             except ValueError:
                 continue
             typ = rec.get("type")
+            if first_ts is None:
+                first_ts = str(rec.get("timestamp") or "")
             cwd = rec.get("cwd")
             if cwd:
                 cwds.add(cwd)
@@ -193,7 +196,7 @@ def parse_file(path):
         "path": str(p), "stem": p.stem, "turns": turns, "uses": uses,
         "marks": marks, "results": results, "tin": tin, "asst": asst, "cwds": sorted(cwds),
         "p_role": p_role, "p_worker": p_worker, "dispatcher_flag": dispatcher_flag,
-        "subagent": "subagents" in p.parts,
+        "first_ts": first_ts or "", "subagent": "subagents" in p.parts,
         "worktree": "--worktrees-" in p.parent.name,
     }
 
@@ -229,7 +232,11 @@ def main_git_dir(cwd):
 
 
 def bus_engine_sessions(sessions):
-    """engine_session ids of bus `dispatch` and `relaunch` events; returns (set, n_logs, n_cwds, n_cwds_resolved)."""
+    """engine_session ids of bus `dispatch` and `relaunch` events.
+
+    Returns (set, owners, n_logs, n_cwds, n_cwds_resolved); owners maps each id to
+    the (crew_id, worker_id) that every session of one worker run shares.
+    """
     cwds = {c for s in sessions for c in s["cwds"]}
     gits = set()
     resolved = 0
@@ -239,6 +246,7 @@ def bus_engine_sessions(sessions):
             resolved += 1
             gits.add(g)
     ids = set()
+    owners = {}
     logs = 0
     for g in sorted(gits):
         ev = g / "crew" / "events.jsonl"
@@ -254,8 +262,11 @@ def bus_engine_sessions(sessions):
                 except ValueError:
                     continue
                 if e.get("kind") in ("dispatch", "relaunch") and e.get("engine_session"):
-                    ids.add(str(e["engine_session"]))
-    return ids, logs, len(cwds), resolved
+                    sid = str(e["engine_session"])
+                    ids.add(sid)
+                    if e.get("crew_id") and e.get("worker_id"):
+                        owners[sid] = (e["crew_id"], e["worker_id"])
+    return ids, owners, logs, len(cwds), resolved
 
 
 def classify(s, engine_ids):
@@ -291,9 +302,10 @@ def load(args):
     with multiprocessing.get_context("fork").Pool(min(16, os.cpu_count() or 1)) as pool:
         sessions = [s for s in pool.imap_unordered(parse_file, files, chunksize=4) if s]
     sessions.sort(key=lambda s: s["path"])
-    engine_ids, logs, n_cwds, n_res = bus_engine_sessions(sessions)
+    engine_ids, owners, logs, n_cwds, n_res = bus_engine_sessions(sessions)
     for s in sessions:
         s["class"], s["route"] = classify(s, engine_ids)
+        s["run_key"] = owners.get(s["stem"])
     meta = {"files": len(files), "sessions": len(sessions), "bus_logs": logs,
             "cwds": n_cwds, "cwds_resolved": n_res, "engine_sessions": len(engine_ids)}
     return sessions, meta
@@ -452,17 +464,37 @@ def lead_markers(s):
     return markers, used_fallback
 
 
-def run_phases(s):
-    """Per-turn phase array honouring 'effective from the next turn'."""
+def run_phases(s, cur="start"):
+    """Per-turn phase array honouring 'effective from the next turn'; also the phase after the last turn."""
     markers, used_fallback = lead_markers(s)
     by_turn = {}
     for t, p in markers:
         by_turn[t] = p
-    cur, phases = "start", []
+    phases = []
     for t in range(len(s["turns"])):
         phases.append(cur)
         cur = by_turn.get(t, cur)
-    return phases, used_fallback
+    return phases, used_fallback, cur
+
+
+def stitch_runs(wl):
+    """Group worker-lead sessions into worker runs: sessions sharing a bus (crew_id, worker_id)
+    are one run; a session with no bus row is a run of its own."""
+    groups = {}
+    for s in sorted(wl, key=lambda s: (s["first_ts"], s["path"])):
+        groups.setdefault(s["run_key"] or s["path"], []).append(s)
+    return list(groups.values())
+
+
+def worker_run(parts):
+    """One run's concatenated turns and phases; a relaunched session resumes the phase its predecessor ended in."""
+    turns, phases, used_fb, cur = [], [], False, "start"
+    for s in parts:
+        ph, fb, cur = run_phases(s, cur)
+        phases += ph
+        turns += s["turns"]
+        used_fb |= fb
+    return {"parts": parts, "turns": turns, "phases": phases, "used_fallback": used_fb}
 
 
 def phase_stats(ctxs, phases):
@@ -507,14 +539,15 @@ def restart_saving(ctxs, reorient, seams):
 def cmd_growth(args):
     sessions, meta = load(args)
     wl = [s for s in sessions if s["class"] == "worker-lead"]
+    all_runs = [worker_run(parts) for parts in stitch_runs(wl)]
     runs, n_fallback, n_fallback_completed = [], 0, 0
-    for s in wl:
-        phases, used_fb = run_phases(s)
-        n_fallback += used_fb
+    for w in all_runs:
+        phases = w["phases"]
+        n_fallback += w["used_fallback"]
         if "pr" not in phases:
             continue
-        n_fallback_completed += used_fb
-        ctxs = s["turns"]
+        n_fallback_completed += w["used_fallback"]
+        ctxs = w["turns"]
         per = phase_stats(ctxs, phases)
         first_idx = {}
         for t, ph in enumerate(phases):
@@ -544,8 +577,9 @@ def cmd_growth(args):
                      fmt(e["delta_median"]), fmt(e["delta_p90"]),
                      fmt(e["integral_median"]), fmt(e["integral_p90"]),
                      f"{e['integral_share_pct']:.1f}", fmt(e["first_ctx_median"])])
+    n_stitched = sum(1 for w in all_runs if len(w["parts"]) > 1)
     summary = {
-        "n_total": len(wl), "n_completed": len(runs),
+        "n_total": len(all_runs), "n_sessions": len(wl), "n_stitched": n_stitched, "n_completed": len(runs),
         "n_fallback_total": n_fallback, "n_fallback_completed": n_fallback_completed,
         "first_ctx_median": med([r["first"] for r in runs]),
         "peak_ctx_median": med([r["peak"] for r in runs]),
@@ -584,7 +618,8 @@ def cmd_growth(args):
     text = hdr(meta) + "\n\n" + table(
         ["phase", "n", "turns_med", "turns_p90", "delta_med", "delta_p90", "integ_med", "integ_p90",
          "share%", "first_ctx_med"], rows)
-    text += (f"\n\nworker-leads: {len(wl)} total, {len(runs)} completed (reached phase pr); "
+    text += (f"\n\nworker runs: {len(all_runs)} from {len(wl)} worker-lead sessions "
+             f"({n_stitched} stitched across seams); {len(runs)} completed (reached phase pr); "
              f"phase fallback used by {n_fallback} total ({n_fallback_completed} completed)\n"
              f"median first-turn ctx: {fmt(summary['first_ctx_median'])}   "
              f"median peak ctx: {fmt(summary['peak_ctx_median'])}   "
@@ -653,6 +688,7 @@ def tool_class(name, arg):
 def cmd_tools(args):
     sessions, meta = load(args)
     wl = [s for s in sessions if s["class"] == "worker-lead"]
+    n_runs = len(stitch_runs(wl))
     wl_integral = sum(sum(s["turns"]) for s in wl)
     r = args.ratio
     by = {}
@@ -660,6 +696,8 @@ def cmd_tools(args):
     thinking = {"count": 0, "chars": 0, "carry": 0.0}
     floor = 0
     images = 0
+    # Carry stays per session: a relaunched session starts with a fresh context, so a result
+    # from its predecessor does not ride along into it.
     for s in wl:
         n = len(s["turns"])
         floor += s["turns"][0] * n
@@ -735,7 +773,7 @@ def cmd_tools(args):
             "assistant_text_pct": share(text_carry, wl_integral),
             "thinking_pct_uncertain": share(thinking["carry"], wl_integral),
             "floor_pct": share(floor, wl_integral)}
-    obj = {"meta": meta, "ratio": r, "worker_leads": len(wl), "worker_lead_integral": wl_integral,
+    obj = {"meta": meta, "ratio": r, "worker_runs": n_runs, "worker_sessions": len(wl), "worker_lead_integral": wl_integral,
            "classes": out, "total": tot, "gate_hygiene": gate, "gate_total": gsum,
            "all_results_carry_share_of_integral_pct": all_share, "image_results": images,
            "assistant_side": side_out,
@@ -743,7 +781,7 @@ def cmd_tools(args):
                         "tokens": thinking["chars"] / r, "carry_cost": thinking["carry"],
                         "note": "whether prior thinking stays in context is uncertain"},
            "growth_composition_pct_of_integral": comp}
-    text = (hdr(meta) + f"\nratio={r} chars/token   worker-leads={len(wl)}   "
+    text = (hdr(meta) + f"\nratio={r} chars/token   worker runs={n_runs} (sessions={len(wl)})   "
             f"worker-lead integral={fmt(wl_integral)}\n\n"
             + table(["class", "count", "chars", "tokens", "carry_cost", "share%", "tok_med", "tok_p90"], rows)
             + f"\n\ngate hygiene (cap each result at {CAP_CHARS} chars):\n"
