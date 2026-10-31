@@ -12,6 +12,7 @@ const (
 	BlockedReplies = "dispatcher:blocked-replies"
 	PrWatch        = "dispatcher:pr-watch"
 	FollowUps      = "dispatcher:follow-ups"
+	Peers          = "dispatcher:peers"
 )
 
 // watchdogPrefixes are the reserved `stall-watch` detail prefixes.

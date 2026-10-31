@@ -18,6 +18,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/peer"
+	"github.com/noamsto/dispatcher/crew/internal/playbook"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	crewstatus "github.com/noamsto/dispatcher/crew/internal/status"
@@ -166,6 +167,9 @@ func TestPeerMsgWakesStream(t *testing.T) {
 	if got["crew"] != "c1" || got["peer"] != "mbp" || got["from"] != "dispatcher:c1" || got["body"] != "deploy is yours" {
 		t.Errorf("peer_msg = %v", got)
 	}
+	if got["playbook"] != playbook.Peers {
+		t.Errorf("peer_msg playbook = %#v, want %q", got["playbook"], playbook.Peers)
+	}
 	if _, ok := got["ts"].(float64); !ok {
 		t.Errorf("peer_msg ts = %#v", got["ts"])
 	}
@@ -242,6 +246,9 @@ func TestPeerSyncErrorReportedOncePerHeartbeat(t *testing.T) {
 	e := errs[0]
 	if e["crew"] != "c1" || e["host"] != "halo" || e["rc"] != float64(1) || e["detail"] != "peer halo: ssh: exit 255: connection refused" {
 		t.Errorf("error line = %v", e)
+	}
+	if e["playbook"] != playbook.Peers {
+		t.Errorf("error line playbook = %#v, want %q", e["playbook"], playbook.Peers)
 	}
 }
 
