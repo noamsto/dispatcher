@@ -45,8 +45,8 @@ type Decision struct {
 // order, and counts what it dropped per origin. ds must be oldest first.
 func CapPerOrigin(ds []Decision, n int) (kept []Decision, older map[string]int) {
 	seen := map[string]int{}
-	for i := len(ds) - 1; i >= 0; i-- {
-		seen[ds[i].Origin]++
+	for _, d := range ds {
+		seen[d.Origin]++
 	}
 	older = map[string]int{}
 	for o, total := range seen {
@@ -74,9 +74,10 @@ type decisionRow struct {
 }
 
 // Decisions is every decision at ts >= since: the local log's dispatcher
-// decisions plus those in each peer store file (origin "peer:<host>"), oldest first (stable: local
-// before peers on a tie, then file order). A peer reset re-delivers rows
-// already stored, so a repeat of (origin, ts, crew_id, body) is dropped.
+// decisions plus those in each peer store file (origin "peer:<host>"), oldest
+// first (stable: local before peers on a tie, then file order). A peer reset
+// re-delivers rows already stored, so a repeat of (origin, ts, crew_id, body)
+// is dropped.
 // Admission has already checked peer rows; the local log is held to the same
 // from rule so a worker cannot forge a decision.
 func Decisions(p bus.Paths, since int64) ([]Decision, error) {
