@@ -50,7 +50,7 @@ Any lead reaches other engines' models as stateless, read-only shell one-shots, 
   | codex | `env -u CREW_WORKER_ID -u CREW_ID timeout 540 codex exec -m gpt-5.6-sol -s read-only --ephemeral '<prompt>'`; stdin is appended as a `<stdin>` block |
   | cursor | `env -u CREW_WORKER_ID -u CREW_ID timeout 540 cursor-agent -p --mode ask --trust --model grok-4.7-high '<prompt>'`; `--mode ask` keeps it read-only; never add `--force` (not read-only) |
 
-  The codex and cursor `-m`/`--model` ids are each engine's premium class (cursor: its Grok `-high`) when this was written. A one-shot takes no `@class`, so read the current id first and use it: `dispatch --models --json | jq -r '.engines.codex.tiers.deep.default'`, and for cursor the Grok `-high` id in `.engines.cursor.tiers.deep.models`.
+  The codex and cursor `-m`/`--model` ids are each engine's premium class (cursor: its Grok `-high`) when this was written. A one-shot takes no `@class`, so read the current id first and use it: `dispatch --models --json | jq -r '.engines.codex.tiers.deep.default'`, and for cursor `dispatch --models --json | jq -r 'first(.engines.cursor.tiers.deep.models[] | select(test("^grok-[0-9.]+-high$")))'` (the non-fast Grok `-high`).
 
 - Diverse reviewer: first available in `dispatch --engines --in-budget` of a different family from the lead; a reply citing no changed file is a failed one-shot: drop it.
 <!-- only:claude -->
