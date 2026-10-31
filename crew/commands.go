@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/alecthomas/kong"
 
@@ -294,6 +295,15 @@ type peerClaimsCmd struct {
 	Issue string `arg:"" optional:"" name:"issue"`
 }
 
+type decideCmd struct {
+	Text string `arg:"" optional:"" name:"text"`
+}
+
+type decisionsCmd struct {
+	JSON  bool    `name:"json"`
+	Since *string `name:"since"`
+}
+
 // specLintCmd.Issue keeps each value whole; validate checks them as issue numbers.
 type specLintCmd struct {
 	Issue        []string `name:"issue" sep:"none"`
@@ -426,6 +436,8 @@ const (
 	remoteRunUsage    = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] -- <argv>..."
 	dispatchRowUsage  = "usage: crew dispatch-row --session S [--crew ID]"
 	peerClaimsUsage   = "usage: crew peer-claims <issue>"
+	decideUsage       = `usage: crew decide "<text>"`
+	decisionsUsage    = "usage: crew decisions [--json] [--since <ms|duration>]"
 	specLintUsage     = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
 )
 
@@ -440,6 +452,14 @@ type wording struct {
 }
 
 // plain builds the `crew: <sub>: …` phrasing the arms without a custom one share.
+func usageWording(sub, usage string) wording {
+	return wording{
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: %s: unknown flag '%s' (%s)", sub, f, usage) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: %s: unexpected argument '%s' (%s)", sub, w, usage) },
+		code:        exitRemoteUsage,
+	}
+}
+
 func plain(sub string) wording {
 	return wording{
 		unknownFlag: func(f string) string { return fmt.Sprintf("crew: %s: unknown flag '%s'", sub, f) },
@@ -561,6 +581,8 @@ var wordings = map[string]wording{
 		},
 		code: exitRemoteUsage,
 	},
+	"decide":    usageWording("decide", decideUsage),
+	"decisions": usageWording("decisions", decisionsUsage),
 	"spec-lint": {all: specLintUsage, code: exitRemoteUsage},
 	"stream": {
 		unknownFlag: func(f string) string { return fmt.Sprintf("crew: stream: unknown arg '%s'", f) },
@@ -803,6 +825,15 @@ func validate(sub string, r *root) *refusal {
 	case "peer-claims":
 		if n := r.PeerClaims.Issue; n == "" || strings.Trim(n, "0123456789") != "" {
 			return &refusal{peerClaimsUsage, exitRemoteUsage}
+		}
+	case "decide":
+		if r.Decide.Text == "" {
+			return &refusal{decideUsage, exitRemoteUsage}
+		}
+	case "decisions":
+		c := r.Decisions
+		if _, ok := parseSince(c.Since, time.Now()); !ok {
+			return &refusal{decisionsUsage, exitRemoteUsage}
 		}
 	case "spec-lint":
 		c := r.SpecLint

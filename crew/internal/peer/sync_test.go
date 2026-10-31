@@ -1078,3 +1078,57 @@ exit 255
 		}
 	})
 }
+
+func TestDecisionRoundTrip(t *testing.T) {
+	mbp, halo := pair(t)
+	writeLines(t, mbp.paths.Log, DecisionRow(ms(time.Minute), "c1", "mbp decides: use sqlite"))
+	writeLines(t, halo.paths.Log, DecisionRow(ms(2*time.Minute), "c2", "halo decides: ship friday"))
+	mbpLog, haloLog := readFile(t, mbp.paths.Log), readFile(t, halo.paths.Log)
+
+	if _, err := syncTo(mbp, halo, serveOn(t, halo)); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		on   *side
+		want Decision
+	}{
+		{"halo reads mbp's", halo, Decision{TS: ms(time.Minute), Origin: "mbp", CrewID: "c1", Body: "mbp decides: use sqlite"}},
+		{"mbp reads halo's", mbp, Decision{TS: ms(2 * time.Minute), Origin: "halo", CrewID: "c2", Body: "halo decides: ship friday"}},
+	} {
+		got, err := Decisions(c.on.paths, 0)
+		if err != nil || !slices.Contains(got, c.want) {
+			t.Errorf("%s: Decisions = %+v, %v; want to hold %+v", c.name, got, err, c.want)
+		}
+	}
+	if got := readFile(t, mbp.paths.Log); got != mbpLog {
+		t.Errorf("mbp events.jsonl changed:\n%s", got)
+	}
+	if got := readFile(t, halo.paths.Log); got != haloLog {
+		t.Errorf("halo events.jsonl changed:\n%s", got)
+	}
+}
+
+func TestSyncDropsBadPeerDecisions(t *testing.T) {
+	mbp, halo := pair(t)
+	rows := []string{
+		DecisionRow(ms(time.Minute), "c1", "esc \x1b[31m"),
+		DecisionRow(ms(time.Minute), "c1", "zero\u200bwidth"),
+		DecisionRow(ms(time.Minute), "c1", strings.Repeat("x", MaxBody+1)),
+	}
+	seqs := writeLines(t, halo.paths.Log, rows...)
+	resp := Response{V: 1, Host: "halo", ID: halo.busID(t), Cursor: seqs[len(seqs)-1]}
+	for i, r := range rows {
+		resp.Rows = append(resp.Rows, Entry{Seq: seqs[i], Row: json.RawMessage(r)})
+	}
+	res, err := syncTo(mbp, halo, answer(t, resp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]int{"control": 2, "oversize": 1}; res.Stored != 0 || !reflect.DeepEqual(res.Dropped, want) {
+		t.Errorf("Result = %+v, want nothing stored, Dropped %v", res, want)
+	}
+	if got, err := Decisions(mbp.paths, 0); err != nil || len(got) != 0 {
+		t.Errorf("Decisions = %+v, %v; want none", got, err)
+	}
+}

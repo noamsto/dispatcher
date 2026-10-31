@@ -143,7 +143,7 @@ var subcommands = []string{
 	"git-guard", "help", "hold", "msg", "nudge",
 	"pr-watch", "reap", "reap-autosweep",
 	"relay", "reply", "stall-watch", "status", "stream", "watch",
-	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "spec-lint", "followups",
+	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups",
 }
 
 // typedSubcommands are the subcommands whose argv root binds: every name but
@@ -158,7 +158,7 @@ var typedSubcommands = map[string]bool{
 	"nudge": true, "await": true, "watch": true, "relay": true, "stream": true,
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
 	"adopt": true, "merge": true, "pr-watch": true, "stall-watch": true, "help": true,
-	"remote-run": true, "remote-exec": true, "dispatch-row": true, "peer-sync": true, "peer-claims": true, "spec-lint": true,
+	"remote-run": true, "remote-exec": true, "dispatch-row": true, "peer-sync": true, "peer-claims": true, "decide": true, "decisions": true, "spec-lint": true,
 	"followups": true,
 }
 
@@ -224,6 +224,8 @@ type root struct {
 	DispatchRow dispatchRowCmd `cmd:"" name:"dispatch-row" help:"The dispatch row of one session."`
 	PeerSync    peerSyncCmd    `cmd:"" name:"peer-sync" help:"The ssh side of a peer sync: one exchange on stdin."`
 	PeerClaims  peerClaimsCmd  `cmd:"" name:"peer-claims" help:"Print a peer host's live claim on an issue."`
+	Decide      decideCmd      `cmd:"" name:"decide" help:"Announce a dispatcher decision to the peer hosts."`
+	Decisions   decisionsCmd   `cmd:"" name:"decisions" help:"List the decisions announced here and by peer hosts."`
 
 	SpecLint specLintCmd `cmd:"" name:"spec-lint" help:"Lint a dispatcher task spec."`
 
@@ -684,6 +686,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			say(stdout, "%s\n", line)
 		}
 		return 0
+	}
+
+	if sub == "decide" {
+		return status.RunDecide(ctx, parsed.typed.Decide.Text, paths, stderr, status.Options{
+			Dir:       cwd,
+			CrewID:    func() string { return bus.CrewID(ctx, cwd) },
+			Clock:     clock.FromEnv(),
+			Sender:    senderProbes(e.proc),
+			Tmux:      tmux.Exec{},
+			PeerHosts: e.peerHosts,
+		})
+	}
+	if sub == "decisions" {
+		c := parsed.typed.Decisions
+		since, _ := parseSince(c.Since, time.Now())
+		return printDecisions(paths, since, c.JSON, stdout, stderr)
 	}
 
 	// spec-lint reads a spec file and the repo's origin refs, never the bus.

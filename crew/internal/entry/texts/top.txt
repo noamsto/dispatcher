@@ -49,6 +49,8 @@ Remote hosts:
   dispatch-row    Print the dispatch row of one session, for link-loss recovery
   peer-sync       The ssh side of a peer sync (reads an exchange on stdin)
   peer-claims     Print a peer host's live claim on an issue
+  decide          Announce a dispatcher decision to the peer hosts
+  decisions       List decisions announced here and by peer hosts
 
 Holds:
   hold            Park a queued dispatch on a quota window
