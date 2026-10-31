@@ -51,8 +51,7 @@ var (
 	errWorker = errors.New("refusing to run with CREW_WORKER_ID set")
 	errBusy   = errors.New("class-state is busy; retry")
 	errNoCrew = errors.New("no crew id — run it from the dispatcher pane or set CREW_ID=<crew id>")
-	// errUnusable is a state file that exists but cannot be read; no change is
-	// made over it.
+	// errUnusable is a state file Load warned about; no change is made over it.
 	errUnusable = errors.New("class-state is unusable")
 	// errSkip is a promotion the re-evaluation under the lock no longer backs:
 	// another sweep got there first.
@@ -257,7 +256,7 @@ func numericFailure(cands []Candidate, model string) bool {
 }
 
 // candidates lists the models rated on engine/tier other than the incumbent,
-// each with the reasons it may not be promoted, in the spec's order. Rated ids
+// each with the reasons it may not be promoted, in a fixed order. Rated ids
 // come from untrusted rows and each costs a resolver run, so it keeps the
 // tierCap most-run ones (the trial always among them) and reports how many it
 // left out.
@@ -594,7 +593,6 @@ func apply(engine, class string, env Env, stderr io.Writer, prefix string, mutat
 	statePath := StatePath(env.Getenv)
 	st, usable, warnings := Load(statePath)
 	if len(warnings) > 0 {
-		// Saving what Load kept would erase the history and vetoes it dropped.
 		return unusable(warnings, statePath)
 	}
 	if !usable {

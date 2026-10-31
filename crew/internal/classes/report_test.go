@@ -19,7 +19,7 @@ func reportLine(t *testing.T, lines []string) string {
 
 func TestReportLinesEligible(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, nil)
-	lines := ReportLines(ac1Rows(), f.env)
+	lines := ReportLines(eligibleRows(), f.env)
 	if lines[0] != "Class trials (pooled across repos):" {
 		t.Errorf("header = %q", lines[0])
 	}
@@ -47,7 +47,7 @@ func TestReportLinesAutoOff(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, func(doc map[string]any) {
 		doc["classes"].(map[string]any)["codex"].(map[string]any)["autoPromote"] = false
 	})
-	line := reportLine(t, ReportLines(ac1Rows(), f.env))
+	line := reportLine(t, ReportLines(eligibleRows(), f.env))
 	if !strings.HasSuffix(line, "— eligible (auto-promotion off)") {
 		t.Errorf("line = %q", line)
 	}
@@ -70,7 +70,7 @@ func TestReportLinesShortfall(t *testing.T) {
 
 func TestReportLinesNotTheHead(t *testing.T) {
 	f := newPromoteFixture(t, catalogWithHead, nil)
-	line := reportLine(t, ReportLines(ac1Rows(), f.env))
+	line := reportLine(t, ReportLines(eligibleRows(), f.env))
 	want := "— not the trial head (gpt-5.8-terra) — crew class promote codex standard gpt-5.7-terra"
 	if !strings.HasSuffix(line, want) {
 		t.Errorf("line = %q, want suffix %q", line, want)
@@ -94,7 +94,7 @@ func TestReportLinesUnmeasured(t *testing.T) {
 func TestReportLinesWarnings(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, nil)
 	f.writeState(`{"codex":{"cheap":{"default":"gpt-5.6-sol"}}}`)
-	lines := ReportLines(ac1Rows(), f.env)
+	lines := ReportLines(eligibleRows(), f.env)
 	if !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "  warning: model-resolve: ") }) {
 		t.Errorf("lines = %q, want a '  warning: model-resolve: …' line", lines)
 	}
@@ -109,7 +109,7 @@ func TestReportLinesUnusableState(t *testing.T) {
 			doc["classes"].(map[string]any)["codex"].(map[string]any)["autoPromote"] = !autoOff
 		})
 		f.writeState(`{"codex":{"standard":{"default":"gpt-5.6-terra","vetoed":["gpt-5.7-terra"]}}`)
-		lines := ReportLines(ac1Rows(), f.env)
+		lines := ReportLines(eligibleRows(), f.env)
 		if lines[0] != "Class trials (pooled across repos):" {
 			t.Errorf("header = %q", lines[0])
 		}
@@ -135,7 +135,7 @@ func TestReportLinesNone(t *testing.T) {
 func TestReportLinesUnavailable(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, nil)
 	f.env.Script = ""
-	lines := ReportLines(ac1Rows(), f.env)
+	lines := ReportLines(eligibleRows(), f.env)
 	want := "Class trials: unavailable (model-resolve not found (set MODEL_RESOLVE_SCRIPT))"
 	if len(lines) != 1 || lines[0] != want {
 		t.Errorf("lines = %q, want %q", lines, want)
@@ -143,7 +143,7 @@ func TestReportLinesUnavailable(t *testing.T) {
 
 	f = newPromoteFixture(t, catalogJSON, nil)
 	f.env.Settings = func() ([]byte, error) { return nil, errors.New("boom") }
-	lines = ReportLines(ac1Rows(), f.env)
+	lines = ReportLines(eligibleRows(), f.env)
 	if len(lines) != 1 || lines[0] != "Class trials: unavailable (settings: boom)" {
 		t.Errorf("lines = %q", lines)
 	}

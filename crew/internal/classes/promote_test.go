@@ -154,11 +154,11 @@ func runs(n int, model, tier string, merged int, rework, costMS float64) []any {
 	return out
 }
 
-// incumbentRows is the AC1 incumbent: 6 runs, 5 merged, rework 0.5, 1h each.
+// incumbentRows is the incumbent the fixtures share: 6 runs, 5 merged, rework 0.5, 1h each.
 func incumbentRows() []any { return runs(6, "gpt-5.6-terra", "standard", 5, 0.5, hourMS) }
 
-// ac1Rows add a perfect 6-run trial to incumbentRows.
-func ac1Rows() []any {
+// eligibleRows add a perfect 6-run trial to incumbentRows.
+func eligibleRows() []any {
 	return append(runs(6, "gpt-5.7-terra", "standard", 6, 0, hourMS), incumbentRows()...)
 }
 
@@ -190,7 +190,7 @@ func hasReason(c Candidate, sub string) bool {
 
 func TestCheckPromotesOnce(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, nil)
-	rows := ac1Rows()
+	rows := eligibleRows()
 	var stderr bytes.Buffer
 	if got := Check(rows, f.env, &stderr); got != 1 {
 		t.Fatalf("Check = %d, want 1; stderr %q", got, stderr.String())
@@ -334,7 +334,7 @@ func TestCheckExactlyOnceUnderTheLock(t *testing.T) {
 	}
 	t.Cleanup(func() { beforeApply = nil })
 	var stderr bytes.Buffer
-	if got := Check(ac1Rows(), f.env, &stderr); got != 0 {
+	if got := Check(eligibleRows(), f.env, &stderr); got != 0 {
 		t.Errorf("Check = %d, want 0: another sweep promoted first; stderr %q", got, stderr.String())
 	}
 	if calls != 1 {
@@ -353,7 +353,7 @@ func TestUnusableStateRefusesWrites(t *testing.T) {
 	const garbled = `{"codex":{"standard":{"default":"gpt-5.6-terra","vetoed":["gpt-5.7-terra"]}}`
 	f.writeState(garbled)
 	var stderr bytes.Buffer
-	if got := Check(ac1Rows(), f.env, &stderr); got != 0 {
+	if got := Check(eligibleRows(), f.env, &stderr); got != 0 {
 		t.Errorf("Check = %d, want 0", got)
 	}
 	refusal := "class-state is unusable ("
@@ -377,7 +377,7 @@ func TestUnusableStateRefusesWrites(t *testing.T) {
 	if rows := f.busRows(); len(rows) != 0 {
 		t.Errorf("bus rows: %v", rows)
 	}
-	lines := ReportLines(ac1Rows(), f.env)
+	lines := ReportLines(eligibleRows(), f.env)
 	reportLine(t, lines)
 	if !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "  warning: class-state: ") }) {
 		t.Errorf("report = %q, want the class-state warning", lines)
@@ -389,7 +389,7 @@ func TestPartlyDroppedStateRefusesWrites(t *testing.T) {
 	const pruned = `{"codex":{"standard":{"default":null,"vetoed":["gpt-5.7-terra"],"history":[{"from":"a","to":"b"}]}}}`
 	f.writeState(pruned)
 	var stderr bytes.Buffer
-	if got := Check(ac1Rows(), f.env, &stderr); got != 0 {
+	if got := Check(eligibleRows(), f.env, &stderr); got != 0 {
 		t.Errorf("Check = %d, want 0", got)
 	}
 	refusal := "class-state is unusable ("
@@ -418,7 +418,7 @@ func TestUnusableStateAutoOffProposesNothing(t *testing.T) {
 	})
 	f.writeState(`{"codex":{"standard":{"default":"gpt-5.6-terra","vetoed":["gpt-5.7-terra"]}}`)
 	var stderr bytes.Buffer
-	if got := Check(ac1Rows(), f.env, &stderr); got != 0 {
+	if got := Check(eligibleRows(), f.env, &stderr); got != 0 {
 		t.Errorf("Check = %d, want 0", got)
 	}
 	if strings.Contains(stderr.String(), "auto-promotion is off") {
@@ -440,7 +440,7 @@ func TestCandidatesCapped(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.env.Bash = wrapper
-	rows := ac1Rows()
+	rows := eligibleRows()
 	rows = append(rows, runs(8, long, "standard", 0, 0, hourMS)...)
 	for i := range 14 {
 		rows = append(rows, runs(7, "junk-"+strconv.Itoa(10+i), "standard", 0, 0, hourMS)...)
@@ -476,7 +476,7 @@ func TestCandidatesCapped(t *testing.T) {
 
 func TestEvaluateNotTheHead(t *testing.T) {
 	f := newPromoteFixture(t, catalogWithHead, nil)
-	vs, _, err := Evaluate(ac1Rows(), f.env)
+	vs, _, err := Evaluate(eligibleRows(), f.env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,9 +506,9 @@ func TestEvaluateIncumbentWithoutRuns(t *testing.T) {
 func TestCheckForgedIncumbentWarnsOnce(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, nil)
 	f.writeState(`{"codex":{"cheap":{"default":"gpt-5.6-sol"}}}`)
-	// The AC1 rows make Check re-evaluate under the lock, whose warnings must
+	// The eligible rows make Check re-evaluate under the lock, whose warnings must
 	// not print again.
-	rows := append(runs(6, "gpt-5.6-luna", "trivial", 6, 0, hourMS), ac1Rows()...)
+	rows := append(runs(6, "gpt-5.6-luna", "trivial", 6, 0, hourMS), eligibleRows()...)
 	vs, warnings, err := Evaluate(rows, f.env)
 	if err != nil {
 		t.Fatal(err)
@@ -540,7 +540,7 @@ func TestCheckForgedIncumbentWarnsOnce(t *testing.T) {
 
 func TestRevert(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, nil)
-	rows := ac1Rows()
+	rows := eligibleRows()
 	if got := Check(rows, f.env, &bytes.Buffer{}); got != 1 {
 		t.Fatalf("Check = %d, want 1", got)
 	}
@@ -584,7 +584,7 @@ func TestAutoPromoteOff(t *testing.T) {
 		doc["classes"].(map[string]any)["codex"].(map[string]any)["autoPromote"] = false
 	})
 	var stderr bytes.Buffer
-	if got := Check(ac1Rows(), f.env, &stderr); got != 0 {
+	if got := Check(eligibleRows(), f.env, &stderr); got != 0 {
 		t.Errorf("Check = %d, want 0", got)
 	}
 	if !strings.Contains(stderr.String(), "crew rate: class codex standard: gpt-5.7-terra is eligible; auto-promotion is off — crew class promote codex standard gpt-5.7-terra") {
@@ -643,7 +643,7 @@ func TestNoCrewID(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, nil)
 	f.env.CrewID = ""
 	var stderr bytes.Buffer
-	if got := Check(ac1Rows(), f.env, &stderr); got != 0 {
+	if got := Check(eligibleRows(), f.env, &stderr); got != 0 {
 		t.Errorf("Check = %d, want 0", got)
 	}
 	if lines := strings.Count(stderr.String(), "\n"); lines != 1 || !strings.Contains(stderr.String(), "no crew id") {
@@ -672,7 +672,7 @@ func TestLockBusy(t *testing.T) {
 	}
 	defer lock.Release(dir)
 	var stderr bytes.Buffer
-	if got := Check(ac1Rows(), f.env, &stderr); got != 0 {
+	if got := Check(eligibleRows(), f.env, &stderr); got != 0 {
 		t.Errorf("Check = %d, want 0", got)
 	}
 	if lines := strings.Count(stderr.String(), "\n"); lines != 1 || !strings.Contains(stderr.String(), "busy") {
@@ -721,7 +721,7 @@ func TestWorkerRefusal(t *testing.T) {
 		t.Errorf("WorkerRefusal = %q, want %q", got, want)
 	}
 	var stderr bytes.Buffer
-	if got := Check(ac1Rows(), f.env, &stderr); got != 0 || stderr.Len() != 0 {
+	if got := Check(eligibleRows(), f.env, &stderr); got != 0 || stderr.Len() != 0 {
 		t.Errorf("Check = %d, stderr %q; want 0 and silence", got, stderr.String())
 	}
 	for name, run := range map[string]func() int{
