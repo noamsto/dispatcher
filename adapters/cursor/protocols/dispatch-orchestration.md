@@ -548,10 +548,15 @@ its `-fast` and `kimi-*` ids have no entry and stay unrefused.
 A table item is a glob, or `@<class>`: an id the model catalog lists under
 that class (the most expensive class whose patterns match it), and
 `@<class>:<glob>` one that also matches the glob. With no catalog only the
-globs match. A `@<class>` target is that class's resolved default (`dispatch
---models`). The downgrade applies only when its `burnClasses` weight is lower;
-an unweighted target never lifts the refusal. The refusal names the engine,
-the target's class and id, and the downgrade's class and resolved id (`codex
+globs match. A downgrade is a literal id or `@<class>`, that class's resolved
+default (`dispatch --models`). A literal downgrade applies only when its
+`burnClasses` weight is lower than the refused rung's; if either has no weight,
+the refusal stands. A `@<class>` downgrade never lifts a refusal on weight,
+since its default comes from the class-state file. An unresolved `@<class>`
+still refuses, with `(@standard, unresolved)`: pick a model from `dispatch
+--models` or use the `DISPATCH_IGNORE_RUNG` escape. The refusal names the
+engine, the refused rung's class and id, and the downgrade's class and
+resolved id (`codex
 7d is at 77% … — the premium rung (gpt-5.7-sol) is refused; use the standard
 rung (gpt-5.6-terra) instead`); `DISPATCH_IGNORE_RUNG` takes that exact id,
 never a class name or `@<class>`. A bracketed id of a new cursor family

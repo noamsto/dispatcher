@@ -203,9 +203,10 @@ pace_rule_target() {
     down_class="${down_to#@}"
     model_downgrade="$(_class_default "$target_agent" "$down_class")"
   fi
-  # Only shed a rung when the downgrade burns less (defaults.json
-  # `burnClasses`): opus at low/medium matches sonnet's weight.
-  if [ -n "$model_downgrade" ]; then
+  # Only shed a rung when a literal downgrade burns less (defaults.json
+  # `burnClasses`): opus at low/medium matches sonnet's weight. A class target
+  # resolves through the untrusted class-state file, so it never lifts the refusal.
+  if [ -n "$model_downgrade" ] && [[ $down_to != @* ]]; then
     model_weight="$(_pace_burn_weight "$target_model" "$target_effort")"
     downgrade_weight="$(_pace_burn_weight "$model_downgrade" "$target_effort")"
     # Numeric, not `[ -le ]`: burnClasses weights are JSON numbers, and a

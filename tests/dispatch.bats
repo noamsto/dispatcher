@@ -18717,6 +18717,24 @@ STUB
   [[ "$stderr" != *"premium rung"* ]]
 }
 
+# The class default comes from the untrusted class-state file, so its weight
+# must never lift the refusal: a heavier (*fable*, 8) or equal (*opus*@high, 4)
+# default still refuses.
+@test "model classes P4: a class downgrade target keeps the pace refusal whatever its weight" {
+  opus=openrouter/anthropic/claude-opus-5-5
+  pi_budget_json 80 777600 1814400
+  class_catalog pi openrouter/qwen/qwen-fable-flash "$opus"
+  printf '%s' '{"pi":{"standard":{"default":"openrouter/qwen/qwen-fable-flash"}}}' >"$XDG_DATA_HOME/crew/model-class-state.json"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung ($opus) is refused"* ]]
+  class_catalog pi openrouter/qwen/qwen-opus-flash "$opus"
+  printf '%s' '{"pi":{"standard":{"default":"openrouter/qwen/qwen-opus-flash"}}}' >"$XDG_DATA_HOME/crew/model-class-state.json"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung ($opus) is refused"* ]]
+}
+
 @test "model classes P4: an unresolvable class target keeps the refusal and names the class" {
   mkdir -p "$XDG_CONFIG_HOME/dispatcher"
   jq -n '{paceDowngrades: {pi: [{models: ["openrouter/anthropic/claude-opus-*"], to: "@premium"}]}}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
