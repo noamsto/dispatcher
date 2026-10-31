@@ -349,9 +349,10 @@ func epochOf(f *os.File) (string, error) {
 	return hex.EncodeToString(sum[:16]), nil
 }
 
-// ExportDrop is why a peer sync would not export row, "" when it would.
-func ExportDrop(row string, now time.Time) string {
-	_, reason := exportRow([]byte(row), 1, "peer", now)
+// ExportDrop is why a peer sync to toHost would not export row, "" when it
+// would. A msg is addressed to its host, so the host decides its identity.
+func ExportDrop(row, toHost string, now time.Time) string {
+	_, reason := exportRow([]byte(row), 1, toHost, now)
 	return reason
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
@@ -80,8 +81,12 @@ func peerRefusal(from, host, body, crew string, ts int64, o Options) string {
 	if len(body) > peer.MaxBody {
 		return fmt.Sprintf("body is %d bytes, over the %d-byte peer limit", len(body), peer.MaxBody)
 	}
-	if line := encodeLine(row[string]{TS: ts, CrewID: crew, From: from, To: "peer:" + host, Kind: bus.KindMsg, Body: body}); len(line) > bus.LineMax {
+	line := encodeLine(row[string]{TS: ts, CrewID: crew, From: from, To: "peer:" + host, Kind: bus.KindMsg, Body: body})
+	if len(line) > bus.LineMax {
 		return fmt.Sprintf("the encoded row is %d bytes, over the %d-byte bus line, so the body would be elided", len(line), bus.LineMax)
+	}
+	if reason := peer.ExportDrop(line, host, time.UnixMilli(ts)); reason != "" {
+		return fmt.Sprintf("peers would drop this row as %s (the encoded row is %d bytes; the peer row limit is %d)", reason, len(line), peer.MaxRow)
 	}
 	return ""
 }

@@ -543,7 +543,7 @@ func TestExportDrop(t *testing.T) {
 		"oversize":  {DecisionRow(ms(0), "c1", strings.Repeat("abcdefg\n", 437)), "oversize"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := ExportDrop(tc.row, testNow); got != tc.want {
+			if got := ExportDrop(tc.row, "halo", testNow); got != tc.want {
 				t.Errorf("ExportDrop = %q, want %q", got, tc.want)
 			}
 		})
