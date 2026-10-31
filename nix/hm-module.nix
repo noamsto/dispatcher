@@ -27,6 +27,13 @@ self: {
     // lib.optionalAttrs (cfg.repoTrackers != null) {inherit (cfg) repoTrackers;}
     // lib.optionalAttrs (cfg.orgTrackers != null) {inherit (cfg) orgTrackers;}
     // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;}
+    // lib.optionalAttrs (cfg.anthropicCredits != null) {
+      anthropicCredits = {
+        balance_usd = cfg.anthropicCredits.balanceUsd;
+        inherit (cfg.anthropicCredits) expires;
+        as_of = cfg.anthropicCredits.asOf;
+      };
+    }
     // lib.optionalAttrs (cfg.localModels != null) {localModels = lockFields cfg.localModels;}
     // lib.optionalAttrs (cfg.laneProfiles != null) {laneProfiles = lockFields cfg.laneProfiles;}
     // lib.optionalAttrs (cfg.hosts != null) {hosts = lockFields cfg.hosts;}
@@ -42,7 +49,7 @@ self: {
   localModelKeyValid = k:
     builtins.match "[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._/-]*" k
     != null
-    && lib.toLower (lib.head (lib.splitString "/" k)) != "openrouter";
+    && !(lib.elem (lib.toLower (lib.head (lib.splitString "/" k))) ["openrouter" "anthropic"]);
   badLocalModelKeys =
     lib.optionals (cfg.localModels != null)
     (lib.filter (k: !localModelKeyValid k) (builtins.attrNames cfg.localModels));
@@ -318,8 +325,8 @@ in {
       };
       description = ''
         Local pi models, served from your own endpoint. Keys are pi dispatch
-        ids `<provider>/<model>`; a malformed key or an `openrouter` provider
-        fails the build. Size `maxConcurrent` for the endpoint's other
+        ids `<provider>/<model>`; a malformed key or an `openrouter` or
+        `anthropic` provider fails the build. Size `maxConcurrent` for the endpoint's other
         consumers (chat bots, interactive sessions), which dispatch does not
         count. Set, each declared entry pins the fields it sets in the locked
         settings layer, so the user settings file cannot change them (object
@@ -444,6 +451,41 @@ in {
           pi's login is never consulted.
         '';
       };
+    };
+
+    anthropicCredits = lib.mkOption {
+      type = lib.types.nullOr (lib.types.submodule {
+        options = let
+          isoDate = lib.types.strMatching "[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}(:[0-9]{2}([.][0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2})?)?";
+        in {
+          balanceUsd = lib.mkOption {
+            type = lib.types.numbers.positive;
+            example = 200;
+            description = "Credit balance in USD as of `asOf`, read off the Anthropic Console.";
+          };
+          expires = lib.mkOption {
+            type = isoDate;
+            example = "2026-11-17";
+            description = "When the grant expires: an ISO-8601 date (00:00 UTC) or datetime.";
+          };
+          asOf = lib.mkOption {
+            type = isoDate;
+            example = "2026-10-25";
+            description = "When `balanceUsd` was read: an ISO-8601 date or datetime, before `expires`.";
+          };
+        };
+      });
+      default = null;
+      description = ''
+        The prepaid Anthropic API credit pi's direct `anthropic/*` models
+        draw on. Set, it lands as `anthropicCredits = {balance_usd, expires,
+        as_of}` in the locked settings layer; `refresh-budget` then estimates
+        the remainder from pi's own session spend since `asOf`, and `dispatch`
+        admits the direct `anthropic/claude-*` class patterns on pi only while
+        credit remains and before `expires`. Spend outside pi is unseen, so
+        update `asOf` and `balanceUsd` after checking the Console. Unset, the
+        key is left out and the user settings file governs alone.
+      '';
     };
 
     refresh = {
@@ -655,7 +697,7 @@ in {
     assertions = [
       {
         assertion = badLocalModelKeys == [];
-        message = "programs.dispatcher.localModels: invalid id(s) ${lib.concatStringsSep ", " badLocalModelKeys} -- keys are <provider>/<model> (letters, digits, \".\", \"_\", \"-\", \"/\"; provider not openrouter); dispatch-config would refuse them at runtime, taking every dispatch down.";
+        message = "programs.dispatcher.localModels: invalid id(s) ${lib.concatStringsSep ", " badLocalModelKeys} -- keys are <provider>/<model> (letters, digits, \".\", \"_\", \"-\", \"/\"; provider not openrouter or anthropic); dispatch-config would refuse them at runtime, taking every dispatch down.";
       }
       {
         assertion = badMcpServers == [];

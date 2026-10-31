@@ -3189,3 +3189,24 @@ _phase_stems() {
   [ "$status" -eq 0 ]
   [ "$output" = "50" ]
 }
+
+# P4b (#1384): pi's anthropic credit estimate is no quota window. Alone it reads
+# as unknown, as the null entry it replaces did; beside OpenRouter fields a 100%
+# credit trips neither predicate.
+@test "budget-gate: a pi entry holding only the anthropic credit is unknown, and the credit is never a window" {
+  local cache="$BATS_TEST_TMPDIR/engine-budget.json" now=1000000
+  # shellcheck disable=SC1091
+  source "$BATS_TEST_DIRNAME/../adapters/core/budget-gate.sh"
+  jq -n --argjson e "$now" '{fetched_epoch: $e, engines: {pi: {anthropic: {used_pct: 100, remaining_usd: 0, resets_at: ($e + 10)}}}}' >"$cache"
+  run _budget_windows "$cache" pi "$now"
+  [ "$status" -eq 2 ]
+  run _budget_limit "$cache" pi "$now"
+  [ "$status" -eq 2 ]
+  jq -n --argjson e "$now" '{fetched_epoch: $e, engines: {pi: {source: "openrouter_key", windows: {month: {used_pct: 10, starts_at: ($e - 10), resets_at: ($e + 10)}},
+    anthropic: {used_pct: 100, remaining_usd: 0, starts_at: ($e - 10), resets_at: ($e + 10)}}}}' >"$cache"
+  run _budget_windows "$cache" pi "$now"
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  run _budget_limit "$cache" pi "$now"
+  [ "$status" -eq 1 ]
+}

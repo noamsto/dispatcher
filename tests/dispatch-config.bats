@@ -94,6 +94,59 @@ locked_settings() {
   [[ "$stderr" != *"$LOCKED_FILE"* ]]
 }
 
+@test "anthropicCredits: a well-formed grant passes through unchanged, dates or datetimes" {
+  local v
+  for v in \
+    '{"balance_usd":200,"expires":"2026-11-17","as_of":"2026-10-25"}' \
+    '{"balance_usd":12.5,"expires":"2026-11-17T00:00:00Z","as_of":"2026-10-25T10:00:00.250Z"}' \
+    '{"balance_usd":1,"expires":"2026-11-17T09:30+02:00","as_of":"2026-10-25T10:00"}'; do
+    user_settings "{\"anthropicCredits\":$v}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -eq 0 ]
+    [ -z "$stderr" ]
+    [ "$(jq -cS .anthropicCredits <<<"$output")" = "$(jq -cS . <<<"$v")" ]
+  done
+}
+
+@test "anthropicCredits: a malformed grant is dropped with a warning, never a crash (AC5)" {
+  local v
+  while IFS='|' read -r v why; do
+    user_settings "{\"engines\":[\"pi\"],\"anthropicCredits\":$v}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -eq 0 ] || { echo "$v: status $status"; false; }
+    jq -e 'has("anthropicCredits") | not' <<<"$output"
+    jq -e '.engines == ["pi"]' <<<"$output"
+    [[ "$stderr" == *"ignoring anthropicCredits from $USER_FILE (user layer): $why"* ]] || { echo "$v: $stderr"; false; }
+  done <<'ROWS'
+"200"|must be an object
+null|must be an object
+{"balance_usd":200,"expires":"2026-11-17"}|must have exactly the keys
+{"balance_usd":200,"expires":"2026-11-17","as_of":"2026-10-25","note":"x"}|must have exactly the keys
+{"balance_usd":0,"expires":"2026-11-17","as_of":"2026-10-25"}|balance_usd must be a positive number
+{"balance_usd":"200","expires":"2026-11-17","as_of":"2026-10-25"}|balance_usd must be a positive number
+{"balance_usd":200,"expires":"2026-02-30","as_of":"2026-01-25"}|expires must be an ISO-8601 date or datetime
+{"balance_usd":200,"expires":"11/17/2026","as_of":"2026-10-25"}|expires must be an ISO-8601 date or datetime
+{"balance_usd":200,"expires":"2026-11-17","as_of":"2026-10-25T25:00Z"}|as_of must be an ISO-8601 date or datetime
+{"balance_usd":200,"expires":"2026-11-17","as_of":"2026-11-17"}|as_of must be before expires
+{"balance_usd":200,"expires":"2026-11-17T01:00+02:00","as_of":"2026-11-17T00:00Z"}|as_of must be before expires
+ROWS
+}
+
+@test "anthropicCredits: each layer is validated on its own, so a bad locked grant leaves the user one" {
+  user_settings '{"anthropicCredits":{"balance_usd":50,"expires":"2026-11-17","as_of":"2026-10-25"}}'
+  locked_settings '{"anthropicCredits":{"balance_usd":-1,"expires":"2026-11-17","as_of":"2026-10-25"}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.anthropicCredits.balance_usd == 50' <<<"$output"
+  [[ "$stderr" == *"ignoring anthropicCredits from $LOCKED_FILE (locked layer): balance_usd must be a positive number"* ]]
+  [[ "$stderr" != *"$USER_FILE"* ]]
+  locked_settings '{"anthropicCredits":{"balance_usd":75,"expires":"2026-12-01","as_of":"2026-10-30"}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  jq -e '.anthropicCredits == {"balance_usd":75,"expires":"2026-12-01","as_of":"2026-10-30"}' <<<"$output"
+}
+
 @test "--show-origin names the last layer holding each leaf" {
   user_settings '{"modelMap":{"pi":{"deep":{"default":"u"}}}}'
   locked_settings '{"openrouter":{"monthlyUsd":5}}'
@@ -1054,13 +1107,30 @@ ROWS
 }
 
 @test "a classes.pi provider is reserved against localModels" {
-  local lm='"localModels":{"anthropic/foo":{"baseUrl":"http://h:1/v1","contextWindow":8192}}'
+  local lm='"localModels":{"moonshot/foo":{"baseUrl":"http://h:1/v1","contextWindow":8192}}'
   user_settings "{$lm}"
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
 
-  user_settings "{$lm,\"classes\":{\"pi\":{\"premium\":[\"anthropic/claude-opus-*\"]}}}"
+  user_settings "{$lm,\"classes\":{\"pi\":{\"premium\":[\"moonshot/kimi-*\"]}}}"
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"moonshot is reserved"* ]]
+
+  # P4b ships direct anthropic/* class patterns, so anthropic is reserved by default.
+  user_settings '{"localModels":{"anthropic/foo":{"baseUrl":"http://h:1/v1","contextWindow":8192}}}'
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"anthropic is reserved"* ]]
+}
+
+@test "a class pattern may require anthropic_credits; any other requirement is refused" {
+  user_settings '{"classes":{"pi":{"standard":[{"glob":"anthropic/claude-haiku-*","requires":"anthropic_credits"}]}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.classes.pi.standard == [{"glob":"anthropic/claude-haiku-*","requires":"anthropic_credits"}]' <<<"$output"
+  user_settings '{"classes":{"pi":{"standard":[{"glob":"anthropic/claude-haiku-*","requires":"credits"}]}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *'{glob, requires: "pi_month_target" or "anthropic_credits"}'* ]]
 }

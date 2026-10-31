@@ -15,12 +15,15 @@
 # <jq-filter> yields over the engine's cache entry (bound as $en, beside $e and
 # $now). Returns 0 when it printed any, 1 when none, 2 when the cache can't
 # tell: missing or unparsable, fetched_epoch not a number, over 2h old or more than 300 s in the future, or
-# the engine's entry null (its probe failed or never ran).
+# the engine's entry null (its probe failed or never ran). An entry holding only
+# pi's `anthropic` credit estimate counts as null too: the credit is no quota
+# window, so it must not turn an unknown OpenRouter reading into a clear one.
 _budget_query() {
   local out
   out=$(jq -r --arg e "$2" --argjson now "$3" '
     if (.fetched_epoch | type) != "number" or .fetched_epoch < $now - 7200 or .fetched_epoch > $now + 300
-       or .engines[$e] == null then "unknown"
+       or .engines[$e] == null
+       or (.engines[$e] | type == "object" and has("anthropic") and del(.anthropic) == {}) then "unknown"
     else "known", (.engines[$e] as $en | '"$4"')
     end' "$1" 2>/dev/null) || return 2
   case "$out" in

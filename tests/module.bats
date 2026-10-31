@@ -176,6 +176,11 @@ let
       monthlyTarget = 50;
       keyFile = "/run/agenix/openrouter";
     };
+    anthropicCredits = {
+      balanceUsd = 200;
+      expires = "2026-11-17";
+      asOf = "2026-10-25T09:00:00Z";
+    };
     localModels."lemonade/Qwen3.8-Flash-Next-MTP" = {
       baseUrl = "http://halo:13305/v1";
       contextWindow = 131072;
@@ -290,6 +295,7 @@ in {
     localModels = {
       "no-slash" = {baseUrl = "http://h/v1"; contextWindow = 1;};
       "OpenRouter/m" = {baseUrl = "http://h/v1"; contextWindow = 1;};
+      "Anthropic/m" = {baseUrl = "http://h/v1"; contextWindow = 1;};
       "ok/model" = {baseUrl = "http://h/v1"; contextWindow = 1;};
     };
   }).assertions);
@@ -880,7 +886,7 @@ worktree_git_lib_crew_go_row() { # bin
 }
 
 @test "the module declares an assertion that rejects bad localModels keys" {
-  run jq -e '(.badLocalModelAsserts | length) == 1 and (.badLocalModelAsserts[0] | contains("no-slash") and contains("OpenRouter/m") and (contains("ok/model") | not))' "$EVAL"
+  run jq -e '(.badLocalModelAsserts | length) == 1 and (.badLocalModelAsserts[0] | contains("no-slash") and contains("OpenRouter/m") and contains("Anthropic/m") and (contains("ok/model") | not))' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.goodLocalModelAsserts == []' "$EVAL"
   [ "$status" -eq 0 ]
@@ -1005,6 +1011,10 @@ worktree_git_lib_crew_go_row() { # bin
   run jq -e '.full.locked.openrouter.keyFile == "/run/agenix/openrouter"' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.openrouter.monthlyUsd == 50' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.anthropicCredits == {"balance_usd": 200, "expires": "2026-11-17", "as_of": "2026-10-25T09:00:00Z"}' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '(.options | index("anthropicCredits")) != null' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.localModels == {"lemonade/Qwen3.8-Flash-Next-MTP": {"baseUrl": "http://halo:13305/v1", "contextWindow": 131072, "maxConcurrent": 1, "tiers": ["trivial", "standard"], "workerNotes": "- Run only targeted bats files."}, "lemonade/Reasoner": {"baseUrl": "http://halo:13305/v1", "contextWindow": 4096, "maxConcurrent": 1, "maxTokens": 32768, "input": ["text", "image"], "tiers": ["trivial", "standard"], "reasoning": true, "thinkingFormat": "qwen-chat-template", "effortThinking": {"low": "off"}}, "lemonade/Plain": {"baseUrl": "http://halo:13305/v1", "contextWindow": 8192, "maxConcurrent": 1, "tiers": ["trivial", "standard"]}}' "$EVAL"
   [ "$status" -eq 0 ]
