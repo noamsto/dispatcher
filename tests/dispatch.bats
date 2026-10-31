@@ -18482,3 +18482,133 @@ _fs_assert_three_launches() {
   [[ "$(cat "$STUB_DIR/last.2")" == *"Process authority:"* ]]
   [[ "$(cat "$STUB_DIR/last.3")" == *"Process authority:"* ]]
 }
+
+# Model classes P3 (#1377): the tier gate and --models read model-resolve over
+# the crew data dir's catalog. class_catalog <engine> <id>... writes it.
+class_catalog() {
+  local engine=$1
+  shift
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --arg e "$engine" '{($e): {fetched_epoch: 1, source: "test", models: [$ARGS.positional[] | {id: .}]}}' \
+    --args "$@" >"$XDG_DATA_HOME/crew/model-catalog.json"
+}
+
+# pi_target_budget <target|null> — a fresh budget cache whose only pi field is
+# its monthly target.
+pi_target_budget() {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  jq -n --argjson t "$1" --argjson now "$(date +%s)" '{fetched_epoch: $now, engines: {pi: {target_usd: $t}}}' \
+    >"$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
+@test "model classes: a catalogued class match off the seed row dispatches without overrides; with no catalog it is refused" {
+  glm=openrouter/z-ai/glm-5.4-flash
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch trivial "$glm" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"model '$glm' is not trivial's row for --agent pi"* ]]
+  class_catalog pi "$glm"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch trivial "$glm" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *"is not trivial's row"* ]]
+}
+
+@test "model classes: the pi_month_target pattern is admitted at pi deep only with a monthly target" {
+  opus=openrouter/anthropic/claude-opus-5-5
+  class_catalog pi "$opus"
+  pi_target_budget 50
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  # pi standard admits only the standard class, target or not.
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard "$opus" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"is not standard's row"* ]]
+  pi_target_budget null
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"needs a pi monthly target"*"engines.pi.target_usd"* ]]
+  [[ "$stderr" == *"model '$opus' is not deep's row for --agent pi"* ]]
+  rm "$XDG_DATA_HOME/crew/engine-budget.json"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+}
+
+@test "model classes: a FIFO at the catalog path is rejected with a warning, never a hang" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  mkfifo "$XDG_DATA_HOME/crew/model-catalog.json"
+  DISPATCH_PRECHECK=1 run --separate-stderr timeout 10 bash -euo pipefail "$DISPATCH" trivial openrouter/z-ai/glm-5.4-flash --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: warning: model-resolve: catalog is not a readable regular file; ignoring it"* ]]
+  [[ "$stderr" == *"is not trivial's row"* ]]
+}
+
+@test "model classes: an in-row model never consults the catalog" {
+  mkdir -p "$XDG_DATA_HOME/crew"
+  printf '{"pi": ' >"$XDG_DATA_HOME/crew/model-catalog.json"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch trivial openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *"model-resolve"* ]]
+}
+
+@test "model classes: a failing resolver falls back to the seed row with a warning" {
+  class_catalog pi openrouter/z-ai/glm-5.4-flash
+  printf '#!/usr/bin/env bash\nexit 3\n' >"$BATS_TEST_TMPDIR/resolve-fail"
+  MODEL_RESOLVE_BIN="$BATS_TEST_TMPDIR/resolve-fail" DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch trivial openrouter/z-ai/glm-5.4-flash --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"model-resolve failed for pi trivial"* ]]
+  [[ "$stderr" == *"is not trivial's row"* ]]
+}
+
+@test "model classes: --models shows each tier's class, trial, catalog admissions, conditionals and warnings" {
+  class_catalog pi openrouter/deepseek/deepseek-v4.2-flash openrouter/z-ai/glm-5.4-flash openrouter/anthropic/claude-opus-5-5
+  DISPATCH_ENGINES="pi" run --separate-stderr run_dispatch --models --json
+  [ "$status" -eq 0 ]
+  jq -e '.engines.pi.tiers.standard | .class == "standard" and .admits == ["standard"]
+    and .trial == "openrouter/deepseek/deepseek-v4.2-flash"
+    and (.models | index("openrouter/z-ai/glm-5.4-flash") != null)
+    and .conditional == []' <<<"$output"
+  jq -e '.engines.pi.tiers.deep.conditional == [{"id": "openrouter/anthropic/claude-opus-5-5", "requires": "pi_month_target", "met": false}]
+    and (.engines.pi.tiers.deep.models | index("openrouter/anthropic/claude-opus-5-5") == null)' <<<"$output"
+  jq -e '.engines.pi.warnings | type == "array" and length > 0' <<<"$output"
+  jq -e '.engines.pi.models | index("openrouter/z-ai/glm-5.4-flash") != null' <<<"$output"
+  pi_target_budget 50
+  DISPATCH_ENGINES="pi" run --separate-stderr run_dispatch --models --json
+  jq -e '.engines.pi.tiers.deep | .conditional[0].met and (.models | index("openrouter/anthropic/claude-opus-5-5") != null)' <<<"$output"
+  rm "$XDG_DATA_HOME/crew/engine-budget.json"
+  DISPATCH_ENGINES="pi" run --separate-stderr run_dispatch --models
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == ENGINE*TIER*CLASS*DEFAULT*TRIAL*MODELS* ]]
+  [[ "$output" == *"pi"*"standard"*"standard"*"openrouter/deepseek/deepseek-v4.1-flash"*"openrouter/deepseek/deepseek-v4.2-flash"* ]]
+  [[ "$output" == *"[needs pi_month_target: openrouter/anthropic/claude-opus-5-5]"* ]]
+  [[ "$stderr" == *"dispatch: warning: model-resolve: pi "* ]]
+}
+
+@test "model classes: --models with no cache keeps today's rows and adds only the class fields" {
+  DISPATCH_ENGINES="pi" run --separate-stderr run_dispatch --models --json
+  [ "$status" -eq 0 ]
+  jq -e '.engines.pi.tiers.trivial | .class == "standard" and .trial == null and .conditional == []
+    and .default == "openrouter/deepseek/deepseek-v4.1-flash"
+    and .models == ["openrouter/deepseek/deepseek-v4.1-flash", "openrouter/deepseek/deepseek-v4.1-flash-1017", "openrouter/deepseek/deepseek-v4-flash"]' <<<"$output"
+  jq -e '.engines.pi.warnings == []' <<<"$output"
+  [ -z "$stderr" ]
+}
+
+@test "model classes: resolver text is control-stripped before the gate or --models prints it" {
+  class_catalog pi openrouter/z-ai/glm-5.4-flash
+  cat >"$BATS_TEST_TMPDIR/resolve-esc" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+printf '{"admitted":["openrouter/deepseek/deepseek-v4.1-flash","x\\u001b[31m"],"regex":[],"conditional":[],"default":"openrouter/deepseek/deepseek-v4.1-flash\\u001b]0;t\\u0007","trial":"t\\u202e","warnings":["model-resolve: w\\u001b[2J"]}\n'
+STUB
+  export MODEL_RESOLVE_BIN="$BATS_TEST_TMPDIR/resolve-esc"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch trivial openrouter/z-ai/glm-5.4-flash --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: warning: model-resolve: w[2J"* ]]
+  [[ "$stderr" != *$'\e'* ]]
+  DISPATCH_ENGINES="pi" run --separate-stderr run_dispatch --models
+  [ "$status" -eq 0 ]
+  [[ "$output$stderr" != *$'\e'* ]]
+  [[ "$output$stderr" != *$'\a'* ]]
+  [[ "$output" != *$'\u202e'* ]]
+}

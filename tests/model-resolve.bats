@@ -357,3 +357,35 @@ field() { jq -c "$1" <<<"$output"; }
   resolve nosuchengine standard
   [ "$status" -eq 1 ]
 }
+
+@test "model-resolve: a FIFO or directory at the catalog or class-state path is rejected promptly with a warning" {
+  mkfifo "$BATS_TEST_TMPDIR/fifo"
+  mkdir "$BATS_TEST_TMPDIR/dir"
+  local path
+  for path in "$BATS_TEST_TMPDIR/fifo" "$BATS_TEST_TMPDIR/dir"; do
+    run --separate-stderr timeout 10 "$RESOLVE" pi standard "$path" "$NONE" <"$SETTINGS"
+    [ "$status" -eq 0 ]
+    [ "$(field .admitted | jq length)" -eq 2 ]
+    [ "$(field .warnings)" = '["model-resolve: catalog is not a readable regular file; ignoring it"]' ]
+    run --separate-stderr timeout 10 "$RESOLVE" pi standard "$NONE" "$path" <"$SETTINGS"
+    [ "$status" -eq 0 ]
+    [ "$(field .default)" = "\"$PI_DEEPSEEK\"" ]
+    [ "$(field .warnings)" = '["model-resolve: class-state is not a readable regular file; ignoring it"]' ]
+  done
+}
+
+# The regular-file pre-check cannot be raced from a test, so the open behind it
+# (what a FIFO renamed in after the check reaches) is driven directly.
+@test "model-resolve: the bounded open fails on a FIFO instead of blocking, and caps a regular file" {
+  eval "$(sed -n '/^bounded_copy() {/,/^}/p' "$RESOLVE")"
+  mkfifo "$BATS_TEST_TMPDIR/fifo"
+  local start=$SECONDS
+  run timeout 10 bash -c "$(declare -f bounded_copy); bounded_copy \"\$1\" 10" _ "$BATS_TEST_TMPDIR/fifo"
+  [ "$status" -ne 0 ]
+  [ $((SECONDS - start)) -lt 8 ]
+  [ -z "$output" ]
+  printf '0123456789abcdef' >"$BATS_TEST_TMPDIR/plain"
+  run bounded_copy "$BATS_TEST_TMPDIR/plain" 10
+  [ "$status" -eq 0 ]
+  [ "$output" = 0123456789 ]
+}

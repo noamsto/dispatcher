@@ -80,7 +80,7 @@ Overrides
 Other entry points
   dispatch resume ...     Relaunch the worker of the worktree you are standing in
   dispatch --engines      Engines enabled and installed here (--in-budget: affordable)
-  dispatch --models       The tier map per engine: default and accepted models (--json: machine-readable)
+  dispatch --models       The tier map per engine: class, default, trial and accepted models (--json: machine-readable)
   dispatch --host H --recover S   Record the remote worker of session S after a dropped ssh link
 
 Internal (called by workers and the harness, not by hand)
@@ -1705,6 +1705,54 @@ _model_in_row() {
 # _row_expected <agent> <tier> — the row's "expected …" text for the refusal.
 _row_expected() {
   jq -r --arg a "$1" --arg t "$2" '.modelMap[$a][$t].expected // ""' <<<"$settings"
+}
+
+# The model catalog (refresh-models) and class-state caches model-resolve reads.
+model_catalog="${XDG_DATA_HOME:-$HOME/.local/share}/crew/model-catalog.json"
+model_class_state="${XDG_DATA_HOME:-$HOME/.local/share}/crew/model-class-state.json"
+
+# _model_resolve <agent> <tier> — model-resolve's JSON for the row, every string
+# control-stripped again (it lands on a terminal). Non-zero when the resolver
+# fails.
+_model_resolve() {
+  local out
+  out="$("$BASH" "${MODEL_RESOLVE_BIN:-@modelResolve@}" "$1" "$2" "$model_catalog" "$model_class_state" <<<"$settings")" || return 1
+  jq -c 'walk(if type == "string" then gsub("[[:cntrl:]\\p{Cf}]"; "") else . end)' <<<"$out"
+}
+
+# _pi_month_target — true when a fresh engine-budget.json gives pi a monthly
+# target (engines.pi.target_usd a number): what a `requires: "pi_month_target"`
+# class pattern needs. A missing, stale or unparsable cache is no target.
+_pi_month_target() {
+  # shellcheck disable=SC2016 # jq program text, not shell
+  _budget_query "$budget_file" pi "$(date +%s)" '$en.target_usd | numbers' >/dev/null
+}
+
+# _model_class_admitted <agent> <tier> <model> — true when the catalog admits
+# <model> on the row through a class pattern (docs/model-classes.md §5): it is
+# in model-resolve's admitted set, or a conditional candidate whose requirement
+# holds. No catalog file means false without running the resolver, so the gate
+# is the seed row alone. The resolver's warnings, and why a conditional
+# candidate is refused, go to stderr.
+_model_class_admitted() {
+  local out req
+  [ -e "$model_catalog" ] || return 1
+  out="$(_model_resolve "$1" "$2")" || {
+    echo "dispatch: warning: model-resolve failed for $1 $2; the tier gate uses the seed row alone" >&2
+    return 1
+  }
+  jq -r '.warnings[] | "dispatch: warning: " + .' <<<"$out" >&2
+  jq -e --arg m "$3" 'any(.admitted[]; . == $m)' <<<"$out" >/dev/null && return 0
+  req="$(jq -r --arg m "$3" 'first(.conditional[] | select(.id == $m) | .requires) // ""' <<<"$out")"
+  case "$req" in
+  "") return 1 ;;
+  pi_month_target)
+    _pi_month_target && return 0
+    echo "dispatch: model '$3' matches a $1 class pattern that needs a pi monthly target, and engine-budget.json has none (engines.pi.target_usd; run refresh-budget with DISPATCH_OPENROUTER_MONTHLY_USD or a monthly key limit set)" >&2
+    ;;
+  *) echo "dispatch: model '$3' matches a $1 class pattern gated on an unknown requirement '$req'" >&2 ;;
+  esac
+  return 1
 }
 
 # _escalation_hop <agent> <tier> <failed> <model> <inRow|outOfRow> — the
@@ -3885,9 +3933,11 @@ if [ "${1:-}" = "--engines" ]; then
 fi
 
 # `dispatch --models [--json]` — the tier map the gate enforces, read-only:
-# settings only, no lock, no budget probe, no crew writes. Per tier: the row's
-# default, its `models` globs plus escalation `outOfRow` rungs (and, for pi,
-# the localModels ids whose tiers admit it), and the row's `regex` EREs.
+# settings and the model caches only, no lock, no budget probe, no crew writes.
+# Per tier: the row's class and default, its `models` globs plus the catalog's
+# class admissions, escalation `outOfRow` rungs (and, for pi, the localModels
+# ids whose tiers admit it), the row's `regex` EREs, the trial head and the
+# conditional candidates; per engine, model-resolve's warnings.
 if [ "${1:-}" = --models ]; then
   as_json=
   [ "${2:-}" != --json ] || as_json=1
@@ -3903,31 +3953,59 @@ if [ "${1:-}" = --models ]; then
     command -v "$(engine_cli "$e")" >/dev/null 2>&1 || continue
     roster+=("$e")
   done
+  # model-resolve per row, only when a cache exists: with neither file it
+  # returns the seed row, which the jq below already prints.
+  resolved='{}' pitarget=false
+  if [ -e "$model_catalog" ] || [ -e "$model_class_state" ]; then
+    for e in "${roster[@]}"; do
+      for t in trivial standard deep; do
+        r="$(_model_resolve "$e" "$t")" || r='{"warnings": ["model-resolve failed for '"$e $t"'; showing the seed row"]}'
+        resolved="$(jq -c --arg e "$e" --arg t "$t" --argjson r "$r" '.[$e][$t] = $r' <<<"$resolved")"
+      done
+    done
+    ! _pi_month_target || pitarget=true
+  fi
   # A localModels id is admitted by its entry alone (the gate checks it before
   # modelMap), whose tiers default as in local-models.sh's _local_entry.
-  map="$(jq --args '
+  map="$(jq --argjson res "$resolved" --argjson pitarget "$pitarget" --args '
     def uniq: reduce .[] as $m ([]; if index([$m]) then . else . + [$m] end);
     . as $s
     | ($s.localModels // {} | map_values((.tiers // ["trivial", "standard"]))) as $local
     | {engines: ($ARGS.positional | map(. as $e | {key: $e, value: (
       (["trivial", "standard", "deep"] | map(. as $t | {key: $t, value: (
         ($s.modelMap[$e][$t] // {}) as $row
-        | {default: ($row.default // null),
+        | ($res[$e][$t] // {}) as $r
+        | ($s.classes[$e].tiers[$t] // {}) as $ct
+        | (($r.conditional // []) | map(. + {met: (.requires == "pi_month_target" and $pitarget)})) as $cond
+        | {class: ($ct.class // null),
+           admits: ($ct.admits // (if $ct.class then [$ct.class] else [] end)),
+           default: ($r.default // $row.default // null),
+           trial: ($r.trial // null),
            models: ((($row.models // [])
              + [($s.escalation[$e][$t] // [])[] | (.outOfRow // [])[]]
+             + ($r.admitted // [])
+             + [$cond[] | select(.met) | .id]
              | map(select($e != "pi" or ($local[.] == null)))
              ) + (if $e == "pi" then [$local | to_entries[] | select(.value | index($t)) | .key] else [] end)
              | uniq),
-           regex: ($row.regex // [])})}) | from_entries) as $tiers
-      | {tiers: $tiers, models: ([$tiers[].models] | add | uniq)})}) | from_entries)}
+           regex: ($row.regex // []),
+           conditional: $cond,
+           warnings: ($r.warnings // [])})}) | from_entries) as $tiers
+      | {tiers: ($tiers | map_values(del(.warnings))),
+         models: ([$tiers[].models] | add | uniq),
+         warnings: ([$tiers[].warnings] | add | uniq)})}) | from_entries)}
   ' "${roster[@]}" <<<"$settings")"
   if [ -n "$as_json" ]; then
     printf '%s\n' "$map"
   else
+    jq -r '[.engines[].warnings[]] | unique[] | "dispatch: warning: " + .' <<<"$map" >&2
     jq -r '.engines | to_entries[] | .key as $e | .value.tiers | to_entries[]
-      | [$e, .key, (.value.default // "-"), (.value.models | join(" ")), (.value.regex | join(" "))] | @tsv' <<<"$map" |
-      awk -F'\t' 'BEGIN { printf "%-8s %-9s %-40s %s\n", "ENGINE", "TIER", "DEFAULT", "MODELS [/ REGEX]" }
-        { printf "%-8s %-9s %-40s %s%s\n", $1, $2, $3, $4, ($5 == "" ? "" : "  / " $5) }'
+      | [$e, .key, (.value.class // "-"), (.value.default // "-"), (.value.trial // "-"),
+         (.value.models | join(" ")), (.value.regex | join(" ")),
+         (.value.conditional | map(select(.met | not)) | group_by(.requires)
+          | map(" [needs " + .[0].requires + ": " + (map(.id) | join(" ")) + "]") | join(""))] | @tsv' <<<"$map" |
+      awk -F'\t' 'BEGIN { printf "%-8s %-9s %-9s %-40s %-40s %s\n", "ENGINE", "TIER", "CLASS", "DEFAULT", "TRIAL", "MODELS [/ REGEX]" }
+        { printf "%-8s %-9s %-9s %-40s %-40s %s%s%s\n", $1, $2, $3, $4, $5, $6, ($7 == "" ? "" : "  / " $7), $8 }'
   fi
   exit 0
 fi
@@ -4972,8 +5050,9 @@ fi
 # Tier↔model gate (#89). Enforces tier-appropriateness on top of
 # the dispatchability gate above — see dispatch-orchestration.md
 # "Tier map". The rows live in defaults.json's modelMap, read through the
-# settings resolver; a tier without a row admits nothing (fail closed).
-# DISPATCH_SKIP_MODEL_CHECK does not cover this gate (it is
+# settings resolver; a tier without a row admits nothing (fail closed). Off
+# the row, a model the catalog lists under a class the row admits passes too
+# (_model_class_admitted). DISPATCH_SKIP_MODEL_CHECK does not cover this gate (it is
 # about shape/cache staleness, not tier); --ignore-map does. A local id's
 # entry lists its tiers; it has no modelMap row and no escalation rung.
 # Set only by the proven-escalation paths below; never inherited from the environment.
@@ -4999,6 +5078,11 @@ elif [ -z "$ignore_map" ]; then
           pace_escalation=1
         fi
       fi
+    fi
+    # A catalogued class match: after escalation, so a proven escalation
+    # target keeps its escalated_from stamp.
+    if [ "$tier_ok" = 0 ] && _model_class_admitted "$agent" "$tier" "$model"; then
+      tier_ok=1
     fi
     if [ "$tier_ok" = 0 ]; then
       tier_expected="$(_row_expected "$agent" "$tier")"

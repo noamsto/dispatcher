@@ -285,7 +285,8 @@ grammar follows on the next rebuild. This skip var covers the Model gate
 (shape) only — it does not bypass the Tier map gate below. A genuinely new
 model that is also a new tier's row additionally needs `--ignore-map` until
 its row in `adapters/core/defaults.json` is updated and rebuilt
-(`scripts/gen-adapters.sh` regenerates the tables).
+(`scripts/gen-adapters.sh` regenerates the tables), unless the model catalog
+already admits it by class (Tier map, below).
 
 **Machine-readable view.** `dispatch --models [--json]` prints the tier map
 the gate enforces, read from the resolved settings (`defaults.json` plus
@@ -294,15 +295,20 @@ read-only and fast: no lock, budget probe or crew write. It covers the engines
 `dispatch --engines` lists. Without `--json` it prints a table. The JSON shape:
 
 ```json
-{"engines": {"<engine>": {"tiers": {"trivial": {"default": "<model>", "models": ["..."], "regex": ["..."]}, "standard": {...}, "deep": {...}}, "models": ["<union, map order>"]}}}
+{"engines": {"<engine>": {"tiers": {"trivial": {"class": "<class>", "admits": ["..."], "default": "<model>", "trial": "<model>", "models": ["..."], "regex": ["..."], "conditional": [{"id": "...", "requires": "pi_month_target", "met": false}]}, "standard": {...}, "deep": {...}}, "models": ["<union, map order>"], "warnings": ["..."]}}}
 ```
 
 `default` is the model the protocol leads with for that tier (`null` if the
 row has none). `models` is everything the gate accepts on that row, escalation
-rungs (`outOfRow`) included, plus, for pi, each `localModels` id whose `tiers`
-admit it; entries can be bash globs (`claude-opus-*`), not only literal ids.
-`regex` lists the EREs the gate also accepts (`[]` when none). The engine-level
-`models` is the order-preserving union of its tiers.
+rungs (`outOfRow`) and catalog class admissions included, plus, for pi, each
+`localModels` id whose `tiers` admit it; entries can be bash globs
+(`claude-opus-*`), not only literal ids. `regex` lists the EREs the gate also
+accepts (`[]` when none). `class` and `admits` come from `classes` in
+`defaults.json`; `trial` is the newest catalogued match of the row's class
+newer than the default (`null` when none); `conditional` lists catalogued
+matches of a gated pattern, `met` when the gate admits them now. The
+engine-level `models` is the order-preserving union of its tiers; `warnings`
+are the resolver's (on stderr in the table).
 
 ### Local models
 
@@ -447,6 +453,16 @@ already recognizes) on `deep` only. Pi accepts its tier's Model-map worker plus
 the rotation alternatives named there, on every profile — see the generated
 table below for the per-tier lists.
 
+**Class admission.** A model off its row is also admitted when
+`${XDG_DATA_HOME:-~/.local/share}/crew/model-catalog.json` (`refresh-models`)
+lists it and it matches a pattern of a class the row admits
+(`classes.<engine>.tiers.<tier>.admits` in `defaults.json`;
+`docs/model-classes.md` §5), so a new catalogued model needs no
+`--ignore-map`. A pattern with `requires: "pi_month_target"` (pi premium,
+`openrouter/anthropic/claude-opus-*`) also needs a pi monthly target
+(`engines.pi.target_usd` in a fresh `engine-budget.json`). With no catalog
+only the rows below apply.
+
 The table below is generated from `adapters/core/defaults.json`: for each
 engine × tier it lists the map's `default` (typical launch) model and
 everything the gate admits at that row.
@@ -512,8 +528,8 @@ to a lazy role after its persisted values and CLI overrides resolve. Premium
 effort is `xhigh` and `max` (both downgrade to `high`); `high` is not
 premium. Model refusal is checked before effort refusal, so a target that
 is premium on both dimensions needs a matching escape for each (or
-`--ignore-budget`). pi has no premium model rung — every pi model is a Flash
-rung in one burn class — so only effort is ever refused for it. While pi's
+`--ignore-budget`). pi has no premium model rung in the table below, so only
+effort is ever refused for it, a class-admitted pi opus included. While pi's
 `month` window is ahead of pace, both `max` and `xhigh` are refused at once,
 so a refused pi dispatch lands directly on `high` — which matters because
 `deepseek-v4.1-flash`, pi's tier-typical `standard`/`deep` model, exposes no

@@ -82,7 +82,7 @@ map_file() {
   adapters/core/dispatch-notify.sh) add adapters dispatch-notify dispatch ;;
   adapters/core/dispatcher.sh) add adapters dispatch dispatcher module ;;
   adapters/core/lead-launcher.sh) add adapters dispatch dispatch-resume dispatcher lead-launcher module ;;
-  adapters/core/model-resolve.sh) add model-resolve ;;
+  adapters/core/model-resolve.sh) add dispatch model-resolve module ;;
   adapters/core/openrouter-key.sh) add adapters dispatch module refresh-budget refresh-scores ;;
   adapters/core/permission-check.sh) add adapters dispatch-resume dispatch module permission-check remote-host ;;
   adapters/core/phase-status.sh) add adapters phase-status ;;
