@@ -66,12 +66,20 @@ func TestDecideRefusesEmptyAndOversize(t *testing.T) {
 	}
 }
 
-func TestDecideRefusesALineOverTheBusLimit(t *testing.T) {
-	f := newFixture(t)
-	// 3000 control bytes encode to 6 bytes each, past bus.LineMax, under MaxBody.
-	code, stderr := f.decide(strings.Repeat("\x01", 3000))
-	if code != 1 || !strings.Contains(stderr, "bus line") {
-		t.Errorf("got %d %q", code, stderr)
+func TestDecideRefusesARowThePeerWouldDrop(t *testing.T) {
+	for name, text := range map[string]string{
+		// 3000 control bytes encode to 6 bytes each, past the row limit, under MaxBody.
+		"control bytes": strings.Repeat("\x01", 3000),
+		// 437 newlines-terminated lines encode to ~4027 bytes: under bus.LineMax, over peer.MaxRow.
+		"newlines": strings.Repeat("abcdefg\n", 437),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			code, stderr := f.decide(text)
+			if code != 1 || !strings.Contains(stderr, "peer row limit") || !strings.Contains(stderr, "oversize") {
+				t.Errorf("got %d %q", code, stderr)
+			}
+			f.wantNoRow()
+		})
 	}
-	f.wantNoRow()
 }

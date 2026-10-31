@@ -452,19 +452,20 @@ type wording struct {
 }
 
 // plain builds the `crew: <sub>: …` phrasing the arms without a custom one share.
-func usageWording(sub, usage string) wording {
-	return wording{
-		unknownFlag: func(f string) string { return fmt.Sprintf("crew: %s: unknown flag '%s' (%s)", sub, f, usage) },
-		extra:       func(w string) string { return fmt.Sprintf("crew: %s: unexpected argument '%s' (%s)", sub, w, usage) },
-		code:        exitRemoteUsage,
-	}
-}
-
 func plain(sub string) wording {
 	return wording{
 		unknownFlag: func(f string) string { return fmt.Sprintf("crew: %s: unknown flag '%s'", sub, f) },
 		extra:       func(w string) string { return fmt.Sprintf("crew: %s: unexpected argument '%s'", sub, w) },
 		code:        exitFailure,
+	}
+}
+
+// usageWording is plain with the usage line appended to each grammar failure.
+func usageWording(sub, usage string) wording {
+	return wording{
+		unknownFlag: func(f string) string { return fmt.Sprintf("crew: %s: unknown flag '%s' (%s)", sub, f, usage) },
+		extra:       func(w string) string { return fmt.Sprintf("crew: %s: unexpected argument '%s' (%s)", sub, w, usage) },
+		code:        exitRemoteUsage,
 	}
 }
 

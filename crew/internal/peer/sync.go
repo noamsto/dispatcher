@@ -105,6 +105,10 @@ func serve(stdin io.Reader, o ServeOptions) (Response, error) {
 	if req.Expect != "" && req.Expect != id {
 		return Response{}, fmt.Errorf("identity: peer %s has pinned another id for this host (remove peers/%s.state there to re-pin)", req.Host, self)
 	}
+	now := nowFunc(o.Now)()
+	// A full parse of our own log, kept out of the host lock; its error is
+	// reported where the export's would be.
+	snap, snapErr := TakeSnapshot(o.Paths.Log, now)
 	unlock, ok := store.Lock(req.Host)
 	if !ok {
 		return Response{}, errBusy
@@ -117,7 +121,6 @@ func serve(stdin io.Reader, o ServeOptions) (Response, error) {
 	if err := pin(&st, req.Host, req.ID); err != nil {
 		return Response{}, err
 	}
-	now := nowFunc(o.Now)()
 	if err := takeEpoch(store, req.Host, &st, req.Epoch, now); err != nil {
 		return Response{}, err
 	}
@@ -152,9 +155,8 @@ func serve(stdin io.Reader, o ServeOptions) (Response, error) {
 	if err != nil {
 		return Response{}, err
 	}
-	snap, err := TakeSnapshot(o.Paths.Log, now)
-	if err != nil {
-		return Response{}, err
+	if snapErr != nil {
+		return Response{}, snapErr
 	}
 	// An inbound exchange proves the link as well as an outbound one.
 	if err := store.writeLink(req.Host, true, "", now); err != nil {

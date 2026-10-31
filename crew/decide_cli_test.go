@@ -6,10 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/peer"
+	"github.com/noamsto/dispatcher/crew/internal/remote"
 )
 
 // decideRepo is a repo whose session is the dispatcher of crew c1.
@@ -161,5 +166,99 @@ func TestDecideRefusesAWorkerSession(t *testing.T) {
 	code, _, errs := crewRun(t, e, "decide", "x")
 	if code != 1 || !strings.HasPrefix(errs, "crew: decide: refusing sender 'dispatcher:c1'") {
 		t.Errorf("%d %q", code, errs)
+	}
+}
+
+func TestDecideCrossesToAPeerThroughSync(t *testing.T) {
+	const slug = "acme/widget"
+	type side struct {
+		name, crew, repo, log string
+		e                     env
+		hosts                 map[string]remote.Host
+	}
+	mk := func(name, crew string) *side {
+		repo, logPath := repoWithLog(t, nil, 0o644)
+		s := &side{name: name, crew: crew, repo: repo, log: logPath, hosts: map[string]remote.Host{}}
+		s.e = env{getwd: func() (string, error) { return repo, nil }, peerHosts: func() (map[string]remote.Host, error) { return s.hosts, nil }}
+		return s
+	}
+	a, b := mk("mbp", "ca"), mk("halo", "cb")
+	for _, k := range []string{"CREW_WORKER_ID", "CREW_ROLE_ID", "TMUX_PANE"} {
+		t.Setenv(k, "")
+	}
+	a.hosts[b.name] = remote.Host{SSH: b.name, Peer: true, Repos: map[string]string{slug: b.repo}}
+	b.hosts[a.name] = remote.Host{SSH: a.name, Peer: true, Repos: map[string]string{slug: a.repo}}
+	for _, s := range []*side{a, b} {
+		if out, err := exec.Command("git", "-C", s.repo, "config", "remote.origin.url", "git@github.com:"+slug+".git").CombinedOutput(); err != nil {
+			t.Fatalf("git config: %v: %s", err, out)
+		}
+		t.Setenv("CREW_ID", s.crew)
+		if code, _, errs := crewRun(t, s.e, "decide", "decision from "+s.name); code != 0 {
+			t.Fatalf("decide on %s: %d %q", s.name, code, errs)
+		}
+	}
+	before := map[string][]byte{}
+	for _, s := range []*side{a, b} {
+		data, err := os.ReadFile(s.log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[s.name] = data
+	}
+
+	paths, err := bus.Locate(t.Context(), b.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aPaths, err := bus.Locate(t.Context(), a.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := func(_ context.Context, _ string, request []byte) ([]byte, error) {
+		var req remote.Request
+		if err := json.Unmarshal(request, &req); err != nil || req.Stdin == nil {
+			t.Fatalf("request: %v", err)
+		}
+		var out, errb bytes.Buffer
+		rc := peer.Serve(strings.NewReader(*req.Stdin), &out, &errb, peer.ServeOptions{
+			Paths: paths, Self: b.name, Hosts: func() (map[string]remote.Host, error) { return b.hosts, nil },
+		})
+		if rc != 0 {
+			return nil, fmt.Errorf("serve exit %d: %s", rc, errb.String())
+		}
+		return out.Bytes(), nil
+	}
+	if _, err := peer.Sync(t.Context(), peer.SyncOptions{
+		Paths: aPaths, Self: a.name, Name: b.name, Slug: slug, Transport: transport,
+		Target: remote.Target{SSH: b.name, Repo: a.hosts[b.name].Repos[slug]},
+	}); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	for _, c := range []struct {
+		s              *side
+		origin, remote string
+	}{{b, "mbp", "decision from mbp"}, {a, "halo", "decision from halo"}} {
+		code, out, errs := crewRun(t, c.s.e, "decisions", "--json")
+		if code != 0 || errs != "" {
+			t.Fatalf("decisions on %s: %d %q", c.s.name, code, errs)
+		}
+		var got []map[string]any
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("%q: %v", out, err)
+		}
+		found := false
+		for _, d := range got {
+			found = found || (d["body"] == c.remote && d["origin"] == c.origin)
+		}
+		if !found {
+			t.Errorf("%s lacks %q from %s: %s", c.s.name, c.remote, c.origin, out)
+		}
+	}
+	for _, s := range []*side{a, b} {
+		after, err := os.ReadFile(s.log)
+		if err != nil || !bytes.Equal(after, before[s.name]) {
+			t.Errorf("%s events.jsonl changed: %v", s.name, err)
+		}
 	}
 }

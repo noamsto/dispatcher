@@ -2,7 +2,9 @@ package status
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/peer"
@@ -29,8 +31,9 @@ func RunDecide(ctx context.Context, text string, paths bus.Paths, stderr io.Writ
 		say(stderr, "crew: decide: text is %d bytes, over the %d-byte peer limit\n", len(text), peer.MaxBody)
 		return exitFailure
 	}
-	if n := len(peer.DecisionRow(ts, crew, text)); n > bus.LineMax {
-		say(stderr, "crew: decide: the encoded row is %d bytes, over the %d-byte bus line, so the text would be elided\n", n, bus.LineMax)
+	row := peer.DecisionRow(ts, crew, text)
+	if _, reason := peer.Admit(peer.Entry{Seq: 1, Row: json.RawMessage(row)}, "peer", time.UnixMilli(ts)); reason != "" {
+		say(stderr, "crew: decide: peers would drop this row as %s (the encoded row is %d bytes; the peer row limit is %d)\n", reason, len(row), peer.MaxRow)
 		return exitFailure
 	}
 	return post("decide", paths, stderr, func(b string) string { return peer.DecisionRow(ts, crew, b) }, text)

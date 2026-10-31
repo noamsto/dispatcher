@@ -336,7 +336,7 @@ func epochOf(f *os.File) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	buf := make([]byte, bus.LineMax)
+	buf := make([]byte, bus.LineMax+1) // a line of LineMax bytes ends its newline at the next byte
 	n, err := f.ReadAt(buf, 0)
 	if err != nil && err != io.EOF {
 		return "", err

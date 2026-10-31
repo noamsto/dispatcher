@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/invisible"
 )
 
@@ -298,6 +299,14 @@ func TestExportEpoch(t *testing.T) {
 	}
 	if e := epochs(t, p.Log); e == rewritten || e == "" {
 		t.Errorf("replaced log with the same content: epoch %q, want a new one", e)
+	}
+}
+
+func TestEpochOfALineAtTheBusCap(t *testing.T) {
+	p := newBus(t)
+	appendRaw(t, p.Log, strings.Repeat("x", bus.LineMax)+"\n")
+	if e := epochs(t, p.Log); e == "" {
+		t.Error("a first line of exactly bus.LineMax bytes left the epoch unknown")
 	}
 }
 
