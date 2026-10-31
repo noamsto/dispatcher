@@ -323,7 +323,8 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
         (($c | to_entries[]) as {key: $e, value: $v}
           | if ($v | type) != "object" then [["classes", $e], "an object"]
             else
-              ($v | keys[] | select(IN("cheap", "standard", "premium", "tiers") | not) | [["classes", $e, .], "one of cheap, standard, premium, tiers"]),
+              ($v | keys[] | select(IN("cheap", "standard", "premium", "tiers", "autoPromote") | not) | [["classes", $e, .], "one of cheap, standard, premium, tiers, autoPromote"]),
+              (select($v | has("autoPromote")) | select(($v.autoPromote | type) != "boolean") | [["classes", $e, "autoPromote"], "a boolean"]),
               (("cheap", "standard", "premium") as $cl
                 | select($v | has($cl))
                 | ["classes", $e, $cl] as $p

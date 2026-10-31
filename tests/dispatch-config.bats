@@ -1019,6 +1019,22 @@ ROWS
   finish_rows 6
 }
 
+@test "classes.<engine>.autoPromote false resolves silently" {
+  user_settings '{"classes":{"codex":{"autoPromote":false}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  jq -e '.classes.codex.autoPromote == false' <<<"$output"
+}
+
+@test "a non-boolean classes.<engine>.autoPromote is refused" {
+  user_settings '{"classes":{"codex":{"autoPromote":"no"}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"classes.codex.autoPromote"* ]]
+  [[ "$stderr" == *"a boolean"* ]]
+}
+
 @test "a classes.pi provider is reserved against localModels" {
   local lm='"localModels":{"anthropic/foo":{"baseUrl":"http://h:1/v1","contextWindow":8192}}'
   user_settings "{$lm}"
