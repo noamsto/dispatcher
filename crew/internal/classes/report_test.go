@@ -83,6 +83,12 @@ func TestReportLinesUnmeasured(t *testing.T) {
 	if !strings.Contains(line, "n 6 vs 0, merge 100% (0 failed) vs —, rework 0.0 vs —, burn/merged 1.00h vs —") {
 		t.Errorf("line = %q", line)
 	}
+
+	rows := append(costedOnly(runs(6, "gpt-5.7-terra", "standard", 6, 0, hourMS), 1), incumbentRows()...)
+	line = reportLine(t, ReportLines(rows, f.env))
+	if !strings.Contains(line, "burn/merged — vs 1.20h, costed 1/6 — burn unmeasured (costed 1/6)") {
+		t.Errorf("partly costed line = %q", line)
+	}
 }
 
 func TestReportLinesWarnings(t *testing.T) {

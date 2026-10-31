@@ -2,6 +2,7 @@ package classes
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +35,13 @@ const burnSlack = 1.25
 // state.
 const idMax = 120
 
+// idCheckMax is the longest rated id worth a resolver run; no real model id
+// comes near it.
+const idCheckMax = 200
+
+// tierCap bounds the candidates, and so the resolver runs, per engine/tier.
+const tierCap = 10
+
 const (
 	blockedTiers     = "tiers disagree on the incumbent"
 	blockedConflicts = "conflicting trials"
@@ -44,6 +51,9 @@ var (
 	errWorker = errors.New("refusing to run with CREW_WORKER_ID set")
 	errBusy   = errors.New("class-state is busy; retry")
 	errNoCrew = errors.New("no crew id — run it from the dispatcher pane or set CREW_ID=<crew id>")
+	// errUnusable is a state file that exists but cannot be read; no change is
+	// made over it.
+	errUnusable = errors.New("class-state is unusable")
 	// errSkip is a promotion the re-evaluation under the lock no longer backs:
 	// another sweep got there first.
 	errSkip = errors.New("verdict changed")
@@ -112,7 +122,12 @@ type Verdict struct {
 	Blocked       string // "tiers disagree on the incumbent" | "conflicting trials" | ""
 	AutoOff       bool
 	Candidates    []Candidate
+	Omitted       int // rated models left out of Candidates by the per-tier cap
 }
+
+// beforeApply is a test seam run just before each auto promotion takes the
+// lock.
+var beforeApply func()
 
 // WorkerRefusal is the line a class change prints when run from a worker
 // session, "" otherwise. It is an accident guard, not access control.
@@ -202,11 +217,12 @@ func verdict(s Settings, r Resolver, st State, stats map[Key]*Stats, results map
 		if !slices.Contains(incumbents, res.Default) {
 			incumbents = append(incumbents, res.Default)
 		}
-		cands, err := candidates(r, st, stats, res, engine, class, tier)
+		cands, omitted, err := candidates(r, st, stats, res, engine, class, tier)
 		if err != nil {
 			return Verdict{}, err
 		}
 		v.Candidates = append(v.Candidates, cands...)
+		v.Omitted += omitted
 	}
 	var qualified []string
 	why := map[string]string{}
@@ -241,18 +257,31 @@ func numericFailure(cands []Candidate, model string) bool {
 }
 
 // candidates lists the models rated on engine/tier other than the incumbent,
-// each with the reasons it may not be promoted, in the spec's order.
-func candidates(r Resolver, st State, stats map[Key]*Stats, res Result, engine, class, tier string) ([]Candidate, error) {
+// each with the reasons it may not be promoted, in the spec's order. Rated ids
+// come from untrusted rows and each costs a resolver run, so it keeps the
+// tierCap most-run ones (the trial always among them) and reports how many it
+// left out.
+func candidates(r Resolver, st State, stats map[Key]*Stats, res Result, engine, class, tier string) ([]Candidate, int, error) {
 	var models []string
 	for k := range stats {
 		if k.Engine == engine && k.Tier == tier && k.Model != res.Default {
 			models = append(models, k.Model)
 		}
 	}
-	sort.Strings(models)
+	slices.SortFunc(models, func(a, b string) int {
+		return cmp.Or(cmp.Compare(stats[Key{engine, tier, b}].N, stats[Key{engine, tier, a}].N), cmp.Compare(a, b))
+	})
 	trial := "none"
 	if res.Trial != nil {
 		trial = *res.Trial
+	}
+	omitted := 0
+	if len(models) > tierCap {
+		omitted = len(models) - tierCap
+		if slices.Index(models, trial) >= tierCap {
+			models[tierCap-1] = trial
+		}
+		models = models[:tierCap]
 	}
 	var inc Stats
 	if s := stats[Key{engine, tier, res.Default}]; s != nil {
@@ -262,9 +291,12 @@ func candidates(r Resolver, st State, stats map[Key]*Stats, res Result, engine, 
 	out := make([]Candidate, 0, len(models))
 	for _, model := range models {
 		c := Candidate{Engine: engine, Class: class, Tier: tier, Model: model, Incumbent: res.Default, T: *stats[Key{engine, tier, model}], I: inc}
-		ok, _, err := r.ValidDefault(engine, tier, class, model)
-		if err != nil {
-			return nil, err
+		ok := false
+		if len(model) <= idCheckMax {
+			var err error
+			if ok, _, err = r.ValidDefault(engine, tier, class, model); err != nil {
+				return nil, 0, err
+			}
 		}
 		if !ok {
 			c.Reasons = append(c.Reasons, "not class "+class)
@@ -287,7 +319,7 @@ func candidates(r Resolver, st State, stats map[Key]*Stats, res Result, engine, 
 		c.HeadOnly = len(c.Reasons) == 1 && c.Reasons[0] == headReason
 		out = append(out, c)
 	}
-	return out, nil
+	return out, omitted, nil
 }
 
 // guardrails are D5's numeric checks of trial t against incumbent i.
@@ -306,12 +338,18 @@ func guardrails(t, i Stats) []string {
 	case tr > ir:
 		out = append(out, fmt.Sprintf("rework %.1f > incumbent %.1f", tr, ir))
 	}
+	if t.Merged == 0 || i.Merged == 0 {
+		return append(out, "no merged PR")
+	}
 	tb, tok := t.BurnPerMergedHours()
 	ib, iok := i.BurnPerMergedHours()
-	switch {
-	case !tok || !iok:
-		out = append(out, "no merged PR")
-	case tb > burnSlack*ib:
+	if !tok {
+		out = append(out, fmt.Sprintf("burn unmeasured (costed %d/%d)", t.Costed, t.N))
+	}
+	if !iok {
+		out = append(out, fmt.Sprintf("incumbent burn unmeasured (costed %d/%d)", i.Costed, i.N))
+	}
+	if tok && iok && tb > burnSlack*ib {
 		out = append(out, fmt.Sprintf("burn/merged %.2fh > 1.25 × incumbent %.2fh", tb, ib))
 	}
 	return out
@@ -384,6 +422,9 @@ func Check(rows []any, env Env, stderr io.Writer) int {
 			continue
 		}
 		prefix := fmt.Sprintf("crew rate: class %s %s: ", e, c)
+		if beforeApply != nil {
+			beforeApply()
+		}
 		err := apply(v.Engine, v.Class, env, stderr, prefix, func(tx *txn) (string, error) {
 			again, _, err := Evaluate(rows, env)
 			if err != nil {
@@ -403,7 +444,7 @@ func Check(rows []any, env Env, stderr io.Writer) int {
 		case err == nil:
 			made++
 		case errors.Is(err, errSkip):
-		case errors.Is(err, errBusy), errors.Is(err, errNoCrew):
+		case errors.Is(err, errBusy), errors.Is(err, errNoCrew), errors.Is(err, errUnusable):
 			say(stderr, "%s%v\n", prefix, err)
 			return made
 		default:
@@ -538,8 +579,13 @@ func apply(engine, class string, env Env, stderr io.Writer, prefix string, mutat
 	defer lock.Release(lockDir)
 
 	statePath := StatePath(env.Getenv)
-	st, usable, _ := Load(statePath)
-	if !usable {
+	st, usable, warnings := Load(statePath)
+	switch {
+	case usable:
+	case len(warnings) > 0:
+		// Seeding over a file that exists would erase its history and vetoes.
+		return fmt.Errorf("%w (%s); fix or remove %s", errUnusable, strings.TrimPrefix(warnings[0], warnPrefix), statePath)
+	default:
 		st = SeedState(s)
 	}
 	if st[engine] == nil {

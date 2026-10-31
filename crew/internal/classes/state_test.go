@@ -6,7 +6,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
+	"unicode"
 
 	"github.com/noamsto/dispatcher/crew/internal/drift"
 )
@@ -172,6 +175,10 @@ func TestLoadUnusable(t *testing.T) {
 		return p
 	}
 	big := write("big.json", []byte(`{"claude":{"standard":{"default":"`+strings.Repeat("x", StateCap)+`"}}}`))
+	link := filepath.Join(dir, "link.json")
+	if err := os.Symlink(write("clean.json", []byte(`{"claude":{"standard":{"default":"sonnet"}}}`)), link); err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name     string
 		path     string
@@ -179,6 +186,7 @@ func TestLoadUnusable(t *testing.T) {
 	}{
 		{"absent", filepath.Join(dir, "absent.json"), false},
 		{"directory", dir, true},
+		{"symlink", link, true},
 		{"oversize", big, true},
 		{"array", write("array.json", []byte(`[]`)), true},
 		{"garbage", write("garbage.json", []byte(`garbage`)), true},
@@ -272,6 +280,44 @@ func TestLoadDropsBadEntries(t *testing.T) {
 				t.Errorf("state = %+v, want %+v", st, tc.want)
 			}
 		})
+	}
+}
+
+func TestLoadFIFODoesNotBlock(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.json")
+	if err := syscall.Mkfifo(p, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		usable bool
+		warns  []string
+	}
+	done := make(chan result, 1)
+	go func() {
+		_, usable, warns := Load(p)
+		done <- result{usable, warns}
+	}()
+	select {
+	case r := <-done:
+		if r.usable || len(r.warns) != 1 {
+			t.Errorf("usable = %v, warnings %v; want unusable with one warning", r.usable, r.warns)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Load blocked on a FIFO")
+	}
+}
+
+func TestLoadWarningsEscapeKeys(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.json")
+	if err := os.WriteFile(p, []byte(`{"co\ndex\u001b[31m":{"stan\u202edard\n":{"default":7}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, warns := Load(p)
+	if len(warns) != 1 {
+		t.Fatalf("warnings = %q, want 1", warns)
+	}
+	if strings.ContainsFunc(warns[0], func(r rune) bool { return unicode.IsControl(r) || r == '\u202e' }) {
+		t.Errorf("warning %q carries raw control or bidi characters", warns[0])
 	}
 }
 

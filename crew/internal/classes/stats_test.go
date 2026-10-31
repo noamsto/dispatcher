@@ -84,8 +84,8 @@ func TestCollect(t *testing.T) {
 	if r, ok := s.Rework(); !ok || r != 1 {
 		t.Fatalf("Rework = %v, %v", r, ok)
 	}
-	if b, ok := s.BurnPerMergedHours(); !ok || b != 1.5 {
-		t.Fatalf("BurnPerMergedHours = %v, %v", b, ok)
+	if b, ok := s.BurnPerMergedHours(); ok {
+		t.Fatalf("BurnPerMergedHours = %v with 2 of 4 runs costed, want unmeasured", b)
 	}
 }
 
@@ -96,8 +96,16 @@ func TestStatsDerived(t *testing.T) {
 	if _, ok := (Stats{}).MergeRate(); ok {
 		t.Fatal("MergeRate with N == 0 should be unavailable")
 	}
-	if _, ok := (Stats{N: 2, Failed: 2, CostMS: 5}).BurnPerMergedHours(); ok {
+	if _, ok := (Stats{N: 2, Failed: 2, Costed: 2, CostMS: 5}).BurnPerMergedHours(); ok {
 		t.Fatal("BurnPerMergedHours with no merged runs should be unavailable")
+	}
+	if b, ok := (Stats{N: 4, Merged: 2, Costed: 4, CostMS: 3 * hourMS}).BurnPerMergedHours(); !ok || b != 1.5 {
+		t.Fatalf("BurnPerMergedHours fully costed = %v, %v; want 1.5", b, ok)
+	}
+	for _, costed := range []int{0, 1} {
+		if _, ok := (Stats{N: 6, Merged: 6, Costed: costed, CostMS: float64(costed) * hourMS}).BurnPerMergedHours(); ok {
+			t.Fatalf("BurnPerMergedHours with %d of 6 runs costed should be unavailable", costed)
+		}
 	}
 	if _, ok := (Stats{N: 2}).Rework(); ok {
 		t.Fatal("Rework with ReworkN == 0 should be unavailable")

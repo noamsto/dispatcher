@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"syscall"
 )
 
 // StateCap is model-resolve's size cap on the state file. The file is untrusted
@@ -73,12 +74,15 @@ func CatalogPath(getenv func(string) string) string {
 // Load reads the state file. The file is untrusted: a missing file is silently
 // not usable, a file that is not a bounded regular JSON object is not usable
 // with one warning, and a malformed engine, class, history or vetoed item is
-// dropped alone with a warning so the rest survives.
+// dropped alone with a warning so the rest survives. So unusable without a
+// warning means absent, the one case a writer may seed over.
 func Load(path string) (st State, usable bool, warnings []string) {
 	warn := func(format string, args ...any) {
 		warnings = append(warnings, warnPrefix+fmt.Sprintf(format, args...))
 	}
-	f, err := os.Open(path)
+	// Lstat refuses a FIFO before open could block on it, and a symlink too:
+	// stricter than model-resolve's -f, which follows one.
+	fi, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, false, nil
 	}
@@ -86,8 +90,17 @@ func Load(path string) (st State, usable bool, warnings []string) {
 		warn("%v", err)
 		return nil, false, warnings
 	}
+	if !fi.Mode().IsRegular() {
+		warn("%s is not a regular file", path)
+		return nil, false, warnings
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		warn("%v", err)
+		return nil, false, warnings
+	}
 	defer func() { _ = f.Close() }()
-	fi, err := f.Stat()
+	fi, err = f.Stat()
 	if err != nil {
 		warn("%v", err)
 		return nil, false, warnings
@@ -119,7 +132,7 @@ func Load(path string) (st State, usable bool, warnings []string) {
 		}
 		for class, raw := range classes {
 			entry, ok := parseEntry(raw, func(format string, args ...any) {
-				warn("%s/%s: %s", engine, class, fmt.Sprintf(format, args...))
+				warn("%s/%s: %s", cleanID(engine), cleanID(class), fmt.Sprintf(format, args...))
 			})
 			if !ok {
 				continue

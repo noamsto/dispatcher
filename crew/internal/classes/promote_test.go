@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -228,21 +229,40 @@ func TestCheckPromotesOnce(t *testing.T) {
 	}
 }
 
+// costedOnly drops cost_proxy from every row after the first keep, as the
+// ledger does for a model the burn table does not price.
+func costedOnly(rows []any, keep int) []any {
+	for i, r := range rows {
+		if i >= keep {
+			r.(map[string]any)["cost_proxy"] = nil
+		}
+	}
+	return rows
+}
+
 func TestCheckShortfalls(t *testing.T) {
 	tests := []struct {
 		name   string
 		trial  []any
+		inc    []any // nil → incumbentRows
 		reason string
 	}{
-		{"runs", runs(4, "gpt-5.7-terra", "standard", 4, 0, hourMS), "runs 4 < 5"},
-		{"merge", runs(6, "gpt-5.7-terra", "standard", 4, 0, hourMS), "merge 67% < incumbent 83%"},
-		{"rework", runs(6, "gpt-5.7-terra", "standard", 6, 1, hourMS), "rework 1.0 > incumbent 0.5"},
-		{"burn", runs(6, "gpt-5.7-terra", "standard", 6, 0, 2*hourMS), "burn/merged 2.00h > 1.25 × incumbent 1.20h"},
+		{"runs", runs(4, "gpt-5.7-terra", "standard", 4, 0, hourMS), nil, "runs 4 < 5"},
+		{"merge", runs(6, "gpt-5.7-terra", "standard", 4, 0, hourMS), nil, "merge 67% < incumbent 83%"},
+		{"rework", runs(6, "gpt-5.7-terra", "standard", 6, 1, hourMS), nil, "rework 1.0 > incumbent 0.5"},
+		{"burn", runs(6, "gpt-5.7-terra", "standard", 6, 0, 2*hourMS), nil, "burn/merged 2.00h > 1.25 × incumbent 1.20h"},
+		{"uncosted", costedOnly(runs(6, "gpt-5.7-terra", "standard", 6, 0, hourMS), 0), nil, "burn unmeasured (costed 0/6)"},
+		{"partly costed", costedOnly(runs(6, "gpt-5.7-terra", "standard", 6, 0, hourMS), 1), nil, "burn unmeasured (costed 1/6)"},
+		{"incumbent uncosted", runs(6, "gpt-5.7-terra", "standard", 6, 0, hourMS), costedOnly(incumbentRows(), 2), "incumbent burn unmeasured (costed 2/6)"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newPromoteFixture(t, catalogJSON, nil)
-			rows := append(tc.trial, incumbentRows()...)
+			inc := tc.inc
+			if inc == nil {
+				inc = incumbentRows()
+			}
+			rows := append(tc.trial, inc...)
 			vs, _, err := Evaluate(rows, f.env)
 			if err != nil {
 				t.Fatal(err)
@@ -269,19 +289,143 @@ func TestCheckShortfalls(t *testing.T) {
 }
 
 func TestCheckNeverPromotesCrossClass(t *testing.T) {
+	// The standard tier admits cheap models too, so a cheaper trial is as
+	// foreign to the class as a pricier one.
+	for _, model := range []string{"gpt-5.7-sol", "gpt-5.6-luna"} {
+		t.Run(model, func(t *testing.T) {
+			f := newPromoteFixture(t, catalogJSON, nil)
+			rows := append(runs(6, model, "standard", 6, 0, hourMS), incumbentRows()...)
+			vs, _, err := Evaluate(rows, f.env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v := findVerdict(t, vs, "codex", "standard")
+			c := findCandidate(t, v, model)
+			if v.To != "" || len(c.Reasons) == 0 || c.Reasons[0] != "not class standard" {
+				t.Errorf("To = %q, reasons = %q; want no promotion, first reason 'not class standard'", v.To, c.Reasons)
+			}
+			if got := Check(rows, f.env, &bytes.Buffer{}); got != 0 || f.stateBytes() != "" {
+				t.Errorf("Check = %d, state %q; want 0 and no state", got, f.stateBytes())
+			}
+			if rows := f.busRows(); len(rows) != 0 {
+				t.Errorf("bus rows: %v", rows)
+			}
+		})
+	}
+}
+
+func TestCheckExactlyOnceUnderTheLock(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, nil)
-	rows := append(runs(6, "gpt-5.7-sol", "standard", 6, 0, hourMS), incumbentRows()...)
+	s, err := f.env.settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	promoted := SeedState(s)
+	e := promoted["codex"]["standard"]
+	e.Default = "gpt-5.7-terra"
+	e.Push(Change{From: "gpt-5.6-terra", To: "gpt-5.7-terra", TS: fixedNow.UnixMilli(), By: "auto", Why: "another sweep"})
+	promoted["codex"]["standard"] = e
+	calls := 0
+	beforeApply = func() {
+		calls++
+		if err := Save(f.statePath(), promoted); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { beforeApply = nil })
+	var stderr bytes.Buffer
+	if got := Check(ac1Rows(), f.env, &stderr); got != 0 {
+		t.Errorf("Check = %d, want 0: another sweep promoted first; stderr %q", got, stderr.String())
+	}
+	if calls != 1 {
+		t.Errorf("beforeApply ran %d times, want 1", calls)
+	}
+	if got := f.state()["codex"]["standard"]; !reflect.DeepEqual(got, e) {
+		t.Errorf("entry = %+v, want the other sweep's %+v", got, e)
+	}
+	if rows := f.busRows(); len(rows) != 0 {
+		t.Errorf("bus rows: %v", rows)
+	}
+}
+
+func TestUnusableStateRefusesWrites(t *testing.T) {
+	f := newPromoteFixture(t, catalogJSON, nil)
+	const garbled = `{"codex":{"standard":{"default":"gpt-5.6-terra","vetoed":["gpt-5.7-terra"]}}`
+	f.writeState(garbled)
+	var stderr bytes.Buffer
+	if got := Check(ac1Rows(), f.env, &stderr); got != 0 {
+		t.Errorf("Check = %d, want 0", got)
+	}
+	refusal := "class-state is unusable ("
+	tail := "); fix or remove " + f.statePath() + "\n"
+	if n := strings.Count(stderr.String(), refusal); n != 1 || !strings.Contains(stderr.String(), tail) {
+		t.Errorf("Check stderr = %q, want the refusal once, ending %q", stderr.String(), tail)
+	}
+	if s := f.stateBytes(); s != garbled {
+		t.Errorf("state rewritten to %q", s)
+	}
+	stderr.Reset()
+	if got := Promote("codex", "standard", "gpt-5.7-terra", f.env, &stderr); got != 1 {
+		t.Errorf("Promote = %d, want 1", got)
+	}
+	if !strings.HasPrefix(stderr.String(), "crew: class: "+refusal) || !strings.HasSuffix(stderr.String(), tail) {
+		t.Errorf("Promote stderr = %q, want the refusal", stderr.String())
+	}
+	if s := f.stateBytes(); s != garbled {
+		t.Errorf("state rewritten to %q", s)
+	}
+	if rows := f.busRows(); len(rows) != 0 {
+		t.Errorf("bus rows: %v", rows)
+	}
+	lines := ReportLines(ac1Rows(), f.env)
+	reportLine(t, lines)
+	if !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "  warning: class-state: ") }) {
+		t.Errorf("report = %q, want the class-state warning", lines)
+	}
+}
+
+func TestCandidatesCapped(t *testing.T) {
+	f := newPromoteFixture(t, catalogJSON, nil)
+	long := strings.Repeat("j", 250)
+	// The wrapper logs any resolver run whose state file names the long id.
+	hits := filepath.Join(t.TempDir(), "hits")
+	wrapper := filepath.Join(t.TempDir(), "bash")
+	script := "#!/bin/sh\nif grep -q " + long[:50] + " \"$5\" 2>/dev/null; then echo hit >>'" + hits + "'; fi\nexec bash \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.env.Bash = wrapper
+	rows := ac1Rows()
+	rows = append(rows, runs(8, long, "standard", 0, 0, hourMS)...)
+	for i := range 14 {
+		rows = append(rows, runs(7, "junk-"+strconv.Itoa(10+i), "standard", 0, 0, hourMS)...)
+	}
 	vs, _, err := Evaluate(rows, f.env)
 	if err != nil {
 		t.Fatal(err)
 	}
 	v := findVerdict(t, vs, "codex", "standard")
-	c := findCandidate(t, v, "gpt-5.7-sol")
-	if v.To != "" || len(c.Reasons) == 0 || c.Reasons[0] != "not class standard" {
-		t.Errorf("To = %q, reasons = %q; want no promotion, first reason 'not class standard'", v.To, c.Reasons)
+	perTier := map[string]int{}
+	for _, c := range v.Candidates {
+		perTier[c.Tier]++
 	}
-	if got := Check(rows, f.env, &bytes.Buffer{}); got != 0 || f.stateBytes() != "" {
-		t.Errorf("Check = %d, state %q; want 0 and no state", got, f.stateBytes())
+	for tier, n := range perTier {
+		if n > 10 {
+			t.Errorf("tier %s has %d candidates, want at most 10", tier, n)
+		}
+	}
+	if v.Omitted != 6 {
+		t.Errorf("Omitted = %d, want 6", v.Omitted)
+	}
+	findCandidate(t, v, "gpt-5.7-terra")
+	if c := findCandidate(t, v, long); len(c.Reasons) == 0 || c.Reasons[0] != "not class standard" {
+		t.Errorf("long id reasons = %q, want first 'not class standard'", c.Reasons)
+	}
+	if _, err := os.Stat(hits); err == nil {
+		t.Error("the resolver ran for an id over 200 bytes")
+	}
+	if !slices.Contains(ReportLines(rows, f.env), "  codex standard: 6 more rated models not shown") {
+		t.Errorf("report lacks the omitted line: %q", ReportLines(rows, f.env))
 	}
 }
 

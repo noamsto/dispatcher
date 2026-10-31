@@ -95,8 +95,10 @@ func (s Stats) Rework() (float64, bool) {
 }
 
 // BurnPerMergedHours is the weighted wall-clock spent per merged PR, in hours.
+// It is measured only when every rated run is costed: an uncosted run would
+// add to the merged count and not to the cost, reading too cheap.
 func (s Stats) BurnPerMergedHours() (float64, bool) {
-	if s.Merged == 0 {
+	if s.Merged == 0 || s.Costed != s.N {
 		return 0, false
 	}
 	return s.CostMS / float64(s.Merged) / 3_600_000, true

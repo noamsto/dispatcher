@@ -23,6 +23,9 @@ func ReportLines(rows []any, env Env) []string {
 		if v.Blocked != "" {
 			body = append(body, fmt.Sprintf("  %s %s: not promoted: %s", cleanID(v.Engine), cleanID(v.Class), v.Blocked))
 		}
+		if v.Omitted > 0 {
+			body = append(body, fmt.Sprintf("  %s %s: %d more rated models not shown", cleanID(v.Engine), cleanID(v.Class), v.Omitted))
+		}
 	}
 	if len(body) == 0 && len(warnings) == 0 {
 		return []string{"Class trials: none"}
