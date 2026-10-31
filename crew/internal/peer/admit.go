@@ -23,6 +23,11 @@ import (
 // claim that never expires.
 const maxSkew = 5 * time.Minute
 
+// keepFor is the longest any reader looks back: the dispatch-row claim window.
+// Claim-issue rows count for 15 minutes within it, reap rows matter only while
+// a dispatch they cancel could, and peer messages are kept as long.
+const keepFor = claimindex.StaleAfter
+
 // Drop reasons, the keys of a drop count.
 const (
 	reasonMalformed = "malformed"
@@ -30,6 +35,7 @@ const (
 	reasonWorker    = "worker"
 	reasonIdentity  = "identity"
 	reasonControl   = "control"
+	reasonStale     = "stale"
 )
 
 type fieldType int
@@ -91,7 +97,13 @@ func Admit(e Entry, self string, now time.Time) (json.RawMessage, string) {
 			return nil, reasonMalformed
 		}
 	}
-	if ts, ok := intValue(obj["ts"]); ok && time.UnixMilli(ts).Sub(now) > maxSkew {
+	ts, ok := intValue(obj["ts"])
+	if !ok {
+		return nil, reasonStale
+	}
+	if age := now.Sub(time.UnixMilli(ts)); age > keepFor {
+		return nil, reasonStale
+	} else if -age > maxSkew {
 		return nil, reasonMalformed
 	}
 	if !identity(kind, obj, self) {

@@ -2,6 +2,7 @@ package peer
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -93,7 +94,7 @@ func TestStateMissingIsZero(t *testing.T) {
 
 func TestStateRoundTrip(t *testing.T) {
 	s := StoreFor(newBus(t))
-	want := State{ID: strings.Repeat("ab", 16), HWM: 120, Ack: 7}
+	want := State{ID: strings.Repeat("ab", 16), HWM: 120, Scan: 130, Ack: 7}
 	if err := s.WriteState("halo", want); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +103,7 @@ func TestStateRoundTrip(t *testing.T) {
 		t.Fatalf("State = %+v, %v, want %+v", got, err, want)
 	}
 	data, _ := os.ReadFile(filepath.Join(s.Dir, "halo.state"))
-	if string(data) != `{"id":"`+want.ID+`","hwm":120,"ack":7}`+"\n" {
+	if string(data) != `{"id":"`+want.ID+`","hwm":120,"scan":130,"ack":7}`+"\n" {
 		t.Errorf("halo.state = %q", data)
 	}
 }
@@ -125,7 +126,7 @@ func TestAppendWrapsRows(t *testing.T) {
 	err := s.Append("halo", []Entry{
 		{Seq: 40, Row: []byte(`{"ts":1,"kind":"reap","branch":"feat/a<b"}`)},
 		{Seq: 95, Row: []byte(`{"ts":2,"kind":"reap","branch":"feat/c"}`)},
-	})
+	}, testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,6 +138,96 @@ func TestAppendWrapsRows(t *testing.T) {
 		`{"peer":"halo","seq":95,"row":{"ts":2,"kind":"reap","branch":"feat/c"}}` + "\n"
 	if string(data) != want {
 		t.Fatalf("halo.jsonl =\n%s\nwant\n%s", data, want)
+	}
+}
+
+// storeLines writes each row to host's store file in stored form and returns
+// the offset past each line.
+func storeLines(t *testing.T, s Store, host string, rows ...string) []int64 {
+	t.Helper()
+	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := make([]string, len(rows))
+	for i, r := range rows {
+		lines[i] = fmt.Sprintf(`{"peer":%q,"seq":%d,"row":%s}`, host, i+1, r)
+	}
+	return writeLines(t, filepath.Join(s.Dir, host+".jsonl"), lines...)
+}
+
+func shortMaxStore(t *testing.T, n int64) {
+	t.Helper()
+	old := maxStore
+	maxStore = n
+	t.Cleanup(func() { maxStore = old })
+}
+
+func peerMsg(body string, age time.Duration) string {
+	return fmt.Sprintf(`{"ts":%d,"kind":"msg","from":"a","body":%q}`, ms(age), body)
+}
+
+const stale = keepFor + time.Hour
+
+func TestAppendCompactsStaleRowsOverCap(t *testing.T) {
+	s := StoreFor(newBus(t))
+	ends := storeLines(t, s, "halo", peerMsg("old1", stale), peerMsg("live1", 0), peerMsg("old2", stale), peerMsg("live2", 0))
+	shortMaxStore(t, ends[3])
+	err := s.Append("halo", []Entry{{Seq: 9, Row: []byte(peerMsg("new", 0))}}, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(s.Dir, "halo.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gone := range []string{"old1", "old2"} {
+		if strings.Contains(string(data), gone) {
+			t.Errorf("halo.jsonl still holds %s:\n%s", gone, data)
+		}
+	}
+	msgs, _, err := Messages(s, "halo", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 3 || msgs[0].Body != "live1" || msgs[1].Body != "live2" || msgs[2].Body != "new" {
+		t.Errorf("msgs = %+v, want live1, live2, new", msgs)
+	}
+}
+
+func TestAppendRefusesWhenLiveRowsFillCap(t *testing.T) {
+	s := StoreFor(newBus(t))
+	ends := storeLines(t, s, "halo", peerMsg("live1", 0), peerMsg("live2", 0))
+	shortMaxStore(t, ends[1])
+	path := filepath.Join(s.Dir, "halo.jsonl")
+	before, _ := os.ReadFile(path)
+	err := s.Append("halo", []Entry{{Seq: 9, Row: []byte(peerMsg("new", 0))}}, testNow)
+	if err == nil {
+		t.Fatal("Append over a cap of live rows succeeded")
+	}
+	after, _ := os.ReadFile(path)
+	if string(after) != string(before) {
+		t.Errorf("halo.jsonl changed:\n%s\nwant\n%s", after, before)
+	}
+}
+
+func TestCompactRemapsSeen(t *testing.T) {
+	s := StoreFor(newBus(t))
+	ends := storeLines(t, s, "halo",
+		peerMsg("old1", stale), peerMsg("live1", 0), peerMsg("old2", stale), peerMsg("live2", 0), peerMsg("live3", 0))
+	if err := s.WriteSeen("halo", ends[3]); err != nil {
+		t.Fatal(err)
+	}
+	shortMaxStore(t, ends[4])
+	err := s.Append("halo", []Entry{{Seq: 9, Row: []byte(peerMsg("new", 0))}}, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs, _, err := Messages(s, "halo", s.Seen("halo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 || msgs[0].Body != "live3" || msgs[1].Body != "new" {
+		t.Errorf("unannounced msgs = %+v, want live3, new", msgs)
 	}
 }
 

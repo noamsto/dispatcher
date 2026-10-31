@@ -1,7 +1,6 @@
 package peer
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -16,7 +15,8 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 )
 
-// evidenceBranchMax caps the branch text an evidence line quotes.
+// evidenceBranchMax caps the branch text an evidence line quotes, so a peer
+// cannot pad the line with prose of its own.
 const evidenceBranchMax = 80
 
 // Msg is a peer message read from the store.
@@ -81,11 +81,11 @@ func Claims(s Store, issue string, now time.Time) (string, error) {
 		if !ok || !remote.HostNameRe.MatchString(host) {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(s.Dir, e.Name()))
+		ev, err := hostClaim(host, filepath.Join(s.Dir, e.Name()), issue, now)
 		if err != nil {
 			return "", err
 		}
-		if ev := hostClaim(host, data, issue, now); ev != "" {
+		if ev != "" {
 			return ev, nil
 		}
 	}
@@ -98,19 +98,20 @@ type candidate struct {
 	evidence string
 }
 
-// hostClaim judges one host's store file. Candidates are judged after the whole
+// hostClaim judges one host's store file, streamed line by line so a huge
+// store cannot fail the gate. Candidates are judged after the whole
 // file is read, so a reap row later in the file cancels an earlier claim. File
 // order, not seq: a seq is the peer's log offset, which restarts after the
 // peer's log is reset and re-pinned.
-func hostClaim(host string, data []byte, issue string, now time.Time) string {
+func hostClaim(host, path, issue string, now time.Time) (string, error) {
 	reaped := map[string]int{}
 	var cands []candidate
 	n := 0
-	for line := range bytes.Lines(data) {
+	_, err := eachLine(path, 0, func(line []byte, _ int64) bool {
 		n++
-		row, ok := decodeStored(bytes.TrimSuffix(line, []byte("\n")))
+		row, ok := decodeStored(line)
 		if !ok {
-			continue
+			return true
 		}
 		// A ts up to maxSkew ahead still counts, so a peer clock running a little
 		// fast cannot hide its claim; further ahead never counts, since a row
@@ -122,20 +123,38 @@ func hostClaim(host string, data []byte, issue string, now time.Time) string {
 			reaped[row.Branch] = n
 		case "dispatch":
 			if live(claimindex.StaleAfter) && (strings.HasPrefix(row.Branch, "feat/"+issue+"-") || slices.ContainsFunc(row.AlsoCloses, func(r json.RawMessage) bool { return issueText(r) == issue })) {
-				cands = append(cands, candidate{n, row.Branch, "peer " + host + " dispatch row for " + capText(row.Branch, evidenceBranchMax)})
+				cands = append(cands, candidate{n, row.Branch, "peer " + host + " dispatch row for " + plainBranch(row.Branch)})
 			}
 		case "claim-issue":
 			if live(ClaimTTL) && issueText(row.Issue) == issue {
-				cands = append(cands, candidate{n, row.Branch, "peer " + host + " claim on #" + issue + " (" + capText(row.Branch, evidenceBranchMax) + ")"})
+				cands = append(cands, candidate{n, row.Branch, "peer " + host + " claim on #" + issue + " (" + plainBranch(row.Branch) + ")"})
 			}
 		}
+		return true
+	})
+	if err != nil {
+		return "", err
 	}
 	for _, c := range cands {
 		if reaped[c.branch] < c.line {
-			return c.evidence
+			return c.evidence, nil
 		}
 	}
-	return ""
+	return "", nil
+}
+
+// plainBranch is a peer's branch text for an evidence line: every rune outside
+// a git branch's usual alphabet becomes "?", which no real branch name holds,
+// so peer prose cannot read as crew's own output.
+func plainBranch(branch string) string {
+	plain := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '/', r == '.', r == '_', r == '-':
+			return r
+		}
+		return '?'
+	}, branch)
+	return capText(plain, evidenceBranchMax)
 }
 
 // issueText is an issue number as its decimal text, whether it was stored as

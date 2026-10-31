@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -115,11 +114,12 @@ func serve(stdin io.Reader, o ServeOptions) (Response, error) {
 		return Response{}, err
 	}
 	now := nowFunc(o.Now)()
-	kept, dropped := admitRows(req.Rows, st.HWM, req.Cursor, self, now)
-	if err := store.Append(req.Host, kept); err != nil {
+	kept, dropped, seen := admitRows(req.Rows, st.HWM, req.Cursor, self, now)
+	if err := store.Append(req.Host, kept, now); err != nil {
 		return Response{}, err
 	}
-	st.HWM = max(st.HWM, req.Cursor)
+	st.HWM = max(st.HWM, seen)
+	st.Scan = max(st.Scan, req.Cursor)
 	// The requester has stored our rows through Since, so a later dial from
 	// this side need not resend them.
 	st.Ack = max(st.Ack, req.Since)
@@ -132,7 +132,7 @@ func serve(stdin io.Reader, o ServeOptions) (Response, error) {
 	if err != nil {
 		return Response{}, err
 	}
-	return Response{V: 1, Host: self, ID: id, Ack: st.HWM, Cursor: cursor, More: more, Rows: rows, Dropped: dropped}, nil
+	return Response{V: 1, Host: self, ID: id, Ack: max(st.HWM, st.Scan), Cursor: cursor, More: more, Rows: rows, Dropped: dropped}, nil
 }
 
 // Sync is the L side of one exchange with the peer host o.Name: it pushes our
@@ -158,7 +158,7 @@ func Sync(ctx context.Context, o SyncOptions) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	req, err := buildRequest(Request{V: 1, Host: self, ID: id, Expect: st.ID, Since: st.HWM, Cursor: cursor, Rows: rows}, o)
+	req, err := buildRequest(Request{V: 1, Host: self, ID: id, Expect: st.ID, Since: max(st.HWM, st.Scan), Cursor: cursor, Rows: rows}, o)
 	if err != nil {
 		return Result{}, err
 	}
@@ -166,7 +166,12 @@ func Sync(ctx context.Context, o SyncOptions) (Result, error) {
 	defer cancel()
 	out, err := o.Transport(ctx, o.Target.SSH, req)
 	if err != nil {
-		return Result{}, err
+		var ex SSHExit
+		if !errors.As(err, &ex) {
+			return Result{}, err
+		}
+		_ = store.replace(store.path(o.Name, ".log"), ex.Stderr)
+		return Result{}, fmt.Errorf("ssh: exit %d (peer stderr in peers/%s.log)", ex.Code, o.Name)
 	}
 	if len(out) > MaxResponse {
 		return Result{}, errors.New("response over 1 MiB")
@@ -194,11 +199,12 @@ func Sync(ctx context.Context, o SyncOptions) (Result, error) {
 	if err := pin(&st, o.Name, resp.ID); err != nil {
 		return Result{}, err
 	}
-	kept, dropped := admitRows(resp.Rows, st.HWM, resp.Cursor, self, now)
-	if err := store.Append(o.Name, kept); err != nil {
+	kept, dropped, seen := admitRows(resp.Rows, st.HWM, resp.Cursor, self, now)
+	if err := store.Append(o.Name, kept, now); err != nil {
 		return Result{}, err
 	}
-	st.HWM = max(st.HWM, resp.Cursor)
+	st.HWM = max(st.HWM, seen)
+	st.Scan = max(st.Scan, resp.Cursor)
 	st.Ack = resp.Ack
 	if err := store.WriteState(o.Name, st); err != nil {
 		return Result{}, err
@@ -212,7 +218,7 @@ func knownReasons(counts map[string]int) map[string]int {
 	out := map[string]int{}
 	for r, n := range counts {
 		switch r {
-		case reasonMalformed, reasonOversize, reasonWorker, reasonIdentity, reasonControl:
+		case reasonMalformed, reasonOversize, reasonWorker, reasonIdentity, reasonControl, reasonStale:
 		default:
 			r = "other"
 		}
@@ -271,10 +277,10 @@ func pin(st *State, host, id string) error {
 	return nil
 }
 
-// admitRows is the rows past hwm and through cursor that pass Admit, and the
-// drop counts of the rest. Seqs must rise, so a repeated seq is never stored
-// twice.
-func admitRows(es []Entry, hwm, cursor int64, self string, now time.Time) ([]Entry, map[string]int) {
+// admitRows is the rows past hwm and through cursor that pass Admit, the drop
+// counts of the rest, and the highest seq it processed. Seqs must rise, so a
+// repeated seq is never stored twice.
+func admitRows(es []Entry, hwm, cursor int64, self string, now time.Time) ([]Entry, map[string]int, int64) {
 	var kept []Entry
 	dropped := map[string]int{}
 	last := hwm
@@ -290,7 +296,7 @@ func admitRows(es []Entry, hwm, cursor int64, self string, now time.Time) ([]Ent
 		}
 		kept = append(kept, Entry{Seq: e.Seq, Row: row})
 	}
-	return kept, dropped
+	return kept, dropped, last
 }
 
 // wire is a peer-sync message: its version and its sender's bus id.
@@ -350,8 +356,7 @@ func SSHTransport(ctx context.Context, dest string, request []byte) ([]byte, err
 	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
-		line, _, _ := strings.Cut(strings.TrimSpace(errb.buf.String()), "\n")
-		return nil, fmt.Errorf("ssh: exit %d: %s", ee.ExitCode(), capText(stripControl(line), stderrLineMax))
+		return nil, SSHExit{Code: ee.ExitCode(), Stderr: errb.buf.Bytes()}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("ssh: %w", err)
@@ -359,12 +364,17 @@ func SSHTransport(ctx context.Context, dest string, request []byte) ([]byte, err
 	return out.buf.Bytes(), nil
 }
 
-// The ssh stderr kept, and the most of its first line an error quotes: the
-// peer writes it, and it reaches the stream's error line.
-const (
-	stderrKeep    = 4096
-	stderrLineMax = 200
-)
+// SSHExit is a failed ssh run. Its Stderr is peer text, so Error omits it: the
+// error reaches the stream's error line.
+type SSHExit struct {
+	Code   int
+	Stderr []byte
+}
+
+func (e SSHExit) Error() string { return fmt.Sprintf("ssh: exit %d", e.Code) }
+
+// stderrKeep is the most of ssh's stderr kept.
+const stderrKeep = 4096
 
 // headBuffer keeps the first max bytes and discards the rest without failing,
 // so a chatty stderr neither fills memory nor fails the call.

@@ -12,6 +12,7 @@
 package peer
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
@@ -80,12 +81,15 @@ type Response struct {
 	Dropped map[string]int `json:"dropped"`
 }
 
-// State is `<host>.state`: the peer's pinned bus id, the peer's scan cursor we
-// have stored through (HWM), and our scan cursor the peer last acknowledged.
+// State is `<host>.state`: the peer's pinned bus id, the highest peer seq we
+// have processed (HWM, the dedupe mark), the peer's claimed scan cursor (Scan,
+// only the resume point we hand back, never admission), and our scan cursor
+// the peer last acknowledged.
 type State struct {
-	ID  string `json:"id"`
-	HWM int64  `json:"hwm"`
-	Ack int64  `json:"ack"`
+	ID   string `json:"id"`
+	HWM  int64  `json:"hwm"`
+	Scan int64  `json:"scan"`
+	Ack  int64  `json:"ack"`
 }
 
 // Store is the peer store directory, `<common>/crew/peers`. Every host passed
@@ -239,22 +243,103 @@ type storedLine struct {
 	Row  json.RawMessage `json:"row"`
 }
 
+// maxStore caps a host's store file; a var so tests can shorten it.
+var maxStore int64 = 8 << 20
+
 // Append writes each entry to `<host>.jsonl` as a `{"peer","seq","row"}` line.
-func (s Store) Append(host string, es []Entry) error {
+// A file that the entries would push past maxStore is first compacted to its
+// rows within keepFor of now; if they still do not fit, nothing is written, so
+// the caller keeps its state and the rows come again once others age out.
+func (s Store) Append(host string, es []Entry, now time.Time) error {
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return err
 	}
 	path := s.path(host, ".jsonl")
-	for _, e := range es {
+	lines := make([][]byte, len(es))
+	var incoming int64
+	for i, e := range es {
 		line, err := encode(storedLine{Peer: host, Seq: e.Seq, Row: e.Row})
 		if err != nil {
 			return err
 		}
+		lines[i] = line
+		incoming += int64(len(line)) + 1
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	var size int64
+	if st, err := os.Stat(path); err == nil {
+		size = st.Size()
+	}
+	if size+incoming > maxStore {
+		var err error
+		if size, err = s.compact(host, now); err != nil {
+			return err
+		}
+		if size+incoming > maxStore {
+			return fmt.Errorf("peers/%s.jsonl is over %d MiB of live rows; refusing more", host, maxStore>>20)
+		}
+	}
+	for _, line := range lines {
 		if err := bus.Append(path, string(line)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// compact rewrites host's store file to the rows within keepFor of now and
+// returns its new size. The seen offset moves to the same place in the kept
+// rows before the rename: a crash between leaves it behind, which only
+// announces again, never skips.
+func (s Store) compact(host string, now time.Time) (int64, error) {
+	path := s.path(host, ".jsonl")
+	f, err := os.CreateTemp(s.Dir, host+".jsonl.tmp.*")
+	if err != nil {
+		return 0, err
+	}
+	fail := func(err error) (int64, error) {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return 0, err
+	}
+	seen := s.Seen(host)
+	w := bufio.NewWriter(f)
+	var kept, newSeen int64
+	var werr error
+	_, err = eachLine(path, 0, func(line []byte, end int64) bool {
+		row, ok := decodeStored(line)
+		if !ok || now.Sub(time.UnixMilli(row.TS)) > keepFor {
+			return true
+		}
+		if _, werr = w.Write(append(line, '\n')); werr != nil {
+			return false
+		}
+		kept += int64(len(line)) + 1
+		if end <= seen {
+			newSeen = kept
+		}
+		return true
+	})
+	if err = errors.Join(err, werr, w.Flush()); err != nil {
+		return fail(err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(f.Name())
+		return 0, err
+	}
+	if newSeen != seen {
+		if err := s.WriteSeen(host, newSeen); err != nil {
+			_ = os.Remove(f.Name())
+			return 0, err
+		}
+	}
+	if err := os.Rename(f.Name(), path); err != nil {
+		_ = os.Remove(f.Name())
+		return 0, err
+	}
+	return kept, nil
 }
 
 var busIDRe = regexp.MustCompile(`\A[0-9a-f]{32}\z`)

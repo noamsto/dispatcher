@@ -242,6 +242,8 @@ func TestExportSinceBeyondSizeReadsFromStart(t *testing.T) {
 }
 
 func TestAdmit(t *testing.T) {
+	// The fixtures' placeholder ts values stand for a current row.
+	current := strings.NewReplacer(`"ts":1,`, fmt.Sprintf(`"ts":%d,`, ms(0)), `"ts":5`, fmt.Sprintf(`"ts":%d`, ms(0)))
 	long := strings.Repeat("t", MaxRow)
 	for _, c := range []struct {
 		name, row, reason, want string
@@ -328,9 +330,9 @@ func TestAdmit(t *testing.T) {
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			row, reason := Admit(Entry{Seq: 10, Row: json.RawMessage(c.row)}, "halo", testNow)
-			if reason != c.reason || string(row) != c.want {
-				t.Errorf("Admit = %s, %q; want %s, %q", row, reason, c.want, c.reason)
+			row, reason := Admit(Entry{Seq: 10, Row: json.RawMessage(current.Replace(c.row))}, "halo", testNow)
+			if want := current.Replace(c.want); reason != c.reason || string(row) != want {
+				t.Errorf("Admit = %s, %q; want %s, %q", row, reason, want, c.reason)
 			}
 		})
 	}
@@ -349,6 +351,22 @@ func TestAdmitRefusesAFarFutureTS(t *testing.T) {
 		if _, reason := Admit(Entry{Seq: 10, Row: json.RawMessage(row)}, "halo", testNow); reason != c.reason {
 			t.Errorf("ts %s ahead: reason = %q, want %q", c.ahead, reason, c.reason)
 		}
+	}
+}
+
+func TestAdmitRefusesAStaleOrUndatedRow(t *testing.T) {
+	for _, c := range []struct {
+		name, row, reason string
+	}{
+		{"just past the window", fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/x"}`, ms(keepFor+time.Millisecond)), "stale"},
+		{"at the window edge", fmt.Sprintf(`{"ts":%d,"kind":"reap","branch":"feat/x"}`, ms(keepFor)), ""},
+		{"no ts", `{"crew_id":"c1","kind":"claim-issue","issue":"42","branch":"feat/42-x"}`, "stale"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, reason := Admit(Entry{Seq: 10, Row: json.RawMessage(c.row)}, "halo", testNow); reason != c.reason {
+				t.Errorf("reason = %q, want %q", reason, c.reason)
+			}
+		})
 	}
 }
 

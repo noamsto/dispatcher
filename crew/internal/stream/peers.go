@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -58,12 +59,19 @@ type peerLink struct {
 
 	// seen, the wake goroutine's own, is each host's announced offset as this
 	// link knows it, so a failing WriteSeen does not re-announce every tick.
-	seen map[string]int64
+	seen map[string]seenAt
 
 	ctx    context.Context
 	cancel context.CancelFunc
 	stop   chan struct{}
 	wg     sync.WaitGroup
+}
+
+// seenAt is an announced offset into one file; compaction renames a new file
+// into place, so the offset means nothing once the file is another.
+type seenAt struct {
+	off  int64
+	file os.FileInfo
 }
 
 func newPeerLink(l *loop, paths bus.Paths) *peerLink {
@@ -92,7 +100,7 @@ func newPeerLink(l *loop, paths bus.Paths) *peerLink {
 		now:         l.nowMS,
 		hooks:       h,
 		sup:         &suppress{key: map[string]string{}, ts: map[string]int64{}},
-		seen:        map[string]int64{},
+		seen:        map[string]seenAt{},
 		ctx:         ctx,
 		cancel:      cancel,
 		stop:        make(chan struct{}),
@@ -212,15 +220,19 @@ func (pl *peerLink) wake() {
 			continue
 		}
 		info, err := e.Info()
-		if err != nil || info.Size() <= pl.seenOf(host) {
+		if err != nil || info.Size() <= pl.seenOf(host, info) {
 			continue
 		}
 		pl.announce(host)
 	}
 }
 
-func (pl *peerLink) seenOf(host string) int64 {
-	return max(pl.store.Seen(host), pl.seen[host])
+func (pl *peerLink) seenOf(host string, file os.FileInfo) int64 {
+	n := pl.store.Seen(host)
+	if m, ok := pl.seen[host]; ok && os.SameFile(m.file, file) {
+		return max(n, m.off)
+	}
+	return n
 }
 
 func (pl *peerLink) announce(host string) {
@@ -229,7 +241,12 @@ func (pl *peerLink) announce(host string) {
 		return
 	}
 	defer unlock()
-	seen := pl.seenOf(host)
+	file, err := os.Stat(filepath.Join(pl.store.Dir, host+".jsonl"))
+	if err != nil {
+		pl.report(host, "wake", err.Error())
+		return
+	}
+	seen := pl.seenOf(host, file)
 	msgs, next, err := peer.Messages(pl.store, host, seen)
 	if err != nil {
 		pl.report(host, "wake", err.Error())
@@ -248,7 +265,7 @@ func (pl *peerLink) announce(host string) {
 	if next == seen {
 		return
 	}
-	pl.seen[host] = next
+	pl.seen[host] = seenAt{next, file}
 	if err := pl.store.WriteSeen(host, next); err != nil {
 		pl.report(host, "wake", err.Error())
 	}
