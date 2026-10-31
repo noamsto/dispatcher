@@ -464,8 +464,14 @@ lists it and it matches a pattern of a class the row admits
 `--ignore-map`. A pattern with `requires: "pi_month_target"` (pi premium,
 `openrouter/anthropic/claude-opus-*`) also needs a pi monthly target
 (`engines.pi.target_usd` in `engine-budget.json`, at most 2h old, refreshed by
-`refresh-budget`). pi premium (OpenRouter opus) is admitted only at `deep`,
-where `admits` includes premium. The catalog itself has no age check. With no
+`refresh-budget`). A pattern with `requires: "anthropic_credits"` (pi's direct
+`anthropic/claude-opus-*` premium and `anthropic/claude-sonnet-*` standard)
+needs pi's Anthropic credit instead: `engines.pi.anthropic` (`refresh-budget`'s
+estimate from pi's session spend since `anthropicCredits.as_of`, same 2h and
+future-dated guards) with `remaining_usd` above 0 and `expires` ahead; the
+refusal names why (no fresh cache, no grant recorded, spent, expired). pi
+premium (either opus) is admitted only at `deep`, where `admits` includes
+premium. The catalog itself has no age check. With no
 catalog only the rows below apply.
 
 The table below is generated from `adapters/core/defaults.json`: for each
@@ -534,9 +540,11 @@ to a lazy role after its persisted values and CLI overrides resolve. Premium
 effort is `xhigh` and `max` (both downgrade to `high`); `high` is not
 premium. Model refusal is checked before effort refusal, so a target that
 is premium on both dimensions needs a matching escape for each (or
-`--ignore-budget`). pi's one premium model rung is its OpenRouter opus
-pattern, shed to pi's standard default; a direct-provider `anthropic/*` id has
-none. While pi's
+`--ignore-budget`). pi's OpenRouter opus pattern sheds to pi's standard
+default on the `month` window. A direct `anthropic/*` id paces on pi's
+Anthropic credit instead (`engines.pi.anthropic`, `L` = `expires` minus
+`as_of`), never the month: direct opus sheds to `anthropic/claude-sonnet-5-5`,
+and direct ids have no effort rung, so direct sonnet is never refused. While pi's
 `month` window is ahead of pace, both `max` and `xhigh` are refused at once,
 so a refused pi dispatch lands directly on `high` — which matters because
 `deepseek-v4.1-flash`, pi's tier-typical `standard`/`deep` model, exposes no

@@ -271,7 +271,7 @@ four `DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`,
 installs the Codex plugin and writes the Cursor rule, commands, skills and
 rosters when those engines are included in `engines`. The settings above
 (`profile`, `engines`, `grantRoots`, `fleetBudget`, `repoTrackers`, `orgTrackers`,
-`openrouter`, `localModels`, `laneProfiles`, `hosts`, `workerDeniedMcpServers`, `dispatcherChrome`, `dispatcherMcp`, `mcpServers`) are not exported as `DISPATCH_*`: they go into a locked settings
+`openrouter`, `anthropicCredits`, `localModels`, `laneProfiles`, `hosts`, `workerDeniedMcpServers`, `dispatcherChrome`, `dispatcherMcp`, `mcpServers`) are not exported as `DISPATCH_*`: they go into a locked settings
 file baked into `dispatch-config` and every CLI that resolves through it
 (`dispatch`, `dispatch-resume`, `dispatcher`, `refresh-budget`), so no
 locked-layer path is exported to go stale. `userSettings` symlinks
@@ -637,6 +637,17 @@ key is never printed or cached. The figure is **per key** — it only covers
 spend on the key pi actually uses, not the whole OpenRouter account — so
 OpenRouter's own per-key credit limit (in its dashboard) stays the hard
 backstop regardless of this target.
+
+`anthropicCredits = { balanceUsd; expires; asOf; }` records the prepaid
+Anthropic API credit pi's direct `anthropic/*` models draw on (a user settings
+file can set `anthropicCredits = {balance_usd, expires, as_of}` instead).
+No API returns that balance, so `refresh-budget` estimates it from pi's own
+session records: the `anthropic`-provider spend since `asOf` in both the worker
+and the interactive pi agent dirs. `dispatch` admits the direct
+`anthropic/claude-*` class patterns on pi only while that estimate is above 0
+and before `expires`, paces direct opus against the grant period, and the
+`refresh-budget` summary shows what is left. Spend outside pi is unseen, so
+update `asOf` and `balanceUsd` after checking the Anthropic Console.
 
 Claude workers also get the protocol, skills, reviewers and critics dirs
 granted read-only (an `Edit` deny rule alongside the `--add-dir`), so a
