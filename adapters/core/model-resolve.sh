@@ -19,7 +19,7 @@
 # A missing catalog or state file is not an error. A catalog or state file that
 # is not a regular file, is over its size cap (4 MiB, 64 KiB) or is not one JSON
 # object is ignored with a warning, as is a catalog entry of more than 5000
-# models. The open itself is bounded (3 s, coreutils timeout), so a FIFO swapped
+# models. The open itself is bounded (1 s, coreutils timeout), so a FIFO swapped
 # in after the regular-file check is rejected the same way and never blocks;
 # with no timeout command a present file is rejected. With no catalog snapshot
 # the seed row is the admitted set; the catalog and class-state are separate
@@ -38,7 +38,7 @@ set -euo pipefail
 engine=$1 tier=$2
 
 # bounded_copy <file> <bytes> — print at most <bytes> of <file>, opened and
-# checked to be a regular file in a child killed after 3 s, so a FIFO (whose
+# checked to be a regular file in a child killed after 1 s, so a FIFO (whose
 # open blocks until a writer appears) fails instead of hanging. Non-zero when
 # the open fails, the file is not regular, the bound fires or there is no
 # timeout command.
@@ -46,7 +46,7 @@ bounded_copy() {
   local to
   to=$(command -v timeout || command -v gtimeout) || return 1
   # shellcheck disable=SC2016 # the child expands its own positional args
-  "$to" 3 "$BASH" -c 'exec <"$1" || exit 3; [ -f /dev/stdin ] || exit 4; exec head -c "$2"' _ "$1" "$2" 2>/dev/null
+  "$to" 1 "$BASH" -c 'exec <"$1" || exit 3; [ -f /dev/stdin ] || exit 4; exec head -c "$2"' _ "$1" "$2" 2>/dev/null
 }
 
 # open_capped <file> <label> <cap> — sets mode (absent|read|bad) and fd. One

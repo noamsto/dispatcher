@@ -3176,3 +3176,16 @@ _phase_stems() {
   done
   [ "$bad" -eq 0 ]
 }
+
+@test "budget-gate: _budget_query treats a cache fetched more than 300 s in the future as stale" {
+  local cache="$BATS_TEST_TMPDIR/engine-budget.json" now=1000000
+  # shellcheck disable=SC1091
+  source "$BATS_TEST_DIRNAME/../adapters/core/budget-gate.sh"
+  jq -n --argjson e $((now + 301)) '{fetched_epoch: $e, engines: {pi: {target_usd: 50}}}' >"$cache"
+  run _budget_query "$cache" pi "$now" '$en.target_usd'
+  [ "$status" -eq 2 ]
+  jq -n --argjson e $((now + 300)) '{fetched_epoch: $e, engines: {pi: {target_usd: 50}}}' >"$cache"
+  run _budget_query "$cache" pi "$now" '$en.target_usd'
+  [ "$status" -eq 0 ]
+  [ "$output" = "50" ]
+}
