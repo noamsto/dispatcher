@@ -181,8 +181,8 @@ func TestLoadDropsBadEntries(t *testing.T) {
 			State{"pi": {"standard": {Default: "a"}}},
 		},
 		{
-			"non-string default",
-			`{"pi":{"standard":{"default":"a"},"premium":{"default":5}}}`,
+			"null default",
+			`{"pi":{"standard":{"default":"a"},"premium":{"default":null}}}`,
 			State{"pi": {"standard": {Default: "a"}}},
 		},
 		{
@@ -223,6 +223,18 @@ func TestLoadDropsBadEntries(t *testing.T) {
 				t.Errorf("state = %+v, want %+v", st, tc.want)
 			}
 		})
+	}
+}
+
+func TestLoadVetoOnlyEntry(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.json")
+	if err := os.WriteFile(p, []byte(`{"pi":{"standard":{"vetoed":["x"]}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, usable, warns := Load(p)
+	want := State{"pi": {"standard": {Vetoed: []string{"x"}}}}
+	if !usable || len(warns) != 0 || !reflect.DeepEqual(st, want) {
+		t.Errorf("Load = %+v, usable %v, warnings %v; want %+v, usable, none", st, usable, warns, want)
 	}
 }
 

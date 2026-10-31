@@ -199,6 +199,12 @@ field() { jq -c "$1" <<<"$output"; }
   [ "$(field .default)" = "\"$PI_DEEPSEEK\"" ]
   [ "$(field '.warnings | length')" -eq 1 ]
   [[ "$(field '.warnings[0]')" == *"not a string"* ]]
+
+  state '{"pi":{"standard":{"default":null}}}'
+  resolve pi standard
+  [ "$(field .default)" = "\"$PI_DEEPSEEK\"" ]
+  [ "$(field '.warnings | length')" -eq 1 ]
+  [[ "$(field '.warnings[0]')" == *"not a string"* ]]
 }
 
 @test "model-resolve: a garbled catalog resolves to the seed with a warning" {
