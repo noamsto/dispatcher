@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: reviewing an existing PR (--pr, --review)
+description: Use when a task reviews an existing PR (--pr, --review), to attach and scope the review
 ---
 
 # review-pr

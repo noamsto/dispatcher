@@ -1,6 +1,6 @@
 ---
 name: grid-lazy
-description: a grid whose roles spawn on demand (--lazy)
+description: Use when a grid spawns its roles on demand (--lazy), to materialize a role pane at its seam
 ---
 
 # grid-lazy

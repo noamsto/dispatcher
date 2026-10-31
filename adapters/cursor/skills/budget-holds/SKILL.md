@@ -1,6 +1,6 @@
 ---
 name: budget-holds
-description: budget >=85% advisories, >=95% and absolute-limit refusals, holds and release
+description: Use when a budget window is near full or a hold matures, to hold, release or take an override
 ---
 
 # budget-holds

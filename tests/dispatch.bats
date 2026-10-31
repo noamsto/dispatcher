@@ -7778,7 +7778,7 @@ EOF
   [[ "$output" == *"#42"* ]]
   [[ "$output" == *"already claimed"* ]]
   [[ "$output" == *"origin unreachable"* ]]
-  [[ "$output" == *"-> skill dispatcher:resume"* ]]
+  [[ "$output" != *"dispatcher:resume"* ]]
   run ! grep -q '^reap' "$STUB_LOG"
   run ! grep -q 'new-window' "$STUB_LOG"
   run ! grep -q 'switch' "$STUB_LOG"
@@ -9618,7 +9618,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"already claimed"* ]]
-  [[ "$output" == *"-> skill dispatcher:resume"* ]]
+  [[ "$output" != *"dispatcher:resume"* ]]
   run ! grep -q 'add-label' "$STUB_LOG"
   run ! grep -q 'new-window' "$STUB_LOG"
 }
@@ -9652,7 +9652,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"already claimed"* ]]
-  [[ "$output" == *"-> skill dispatcher:resume"* ]]
+  [[ "$output" != *"dispatcher:resume"* ]]
   run ! grep -q 'add-label' "$STUB_LOG"
   run ! grep -q 'new-window' "$STUB_LOG"
 }
@@ -11237,7 +11237,7 @@ _lead_uuid_re='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
     DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --add-dir "$v" --crew-id c1 42 "unsafe dir"
     [ "$status" -eq 1 ]
     [[ "$output" == *"dispatch: --add-dir '$v' refused"* ]]
-    [[ "$output" == *"-> skill dispatcher:grants"* ]]
+    [[ "$output" != *"dispatcher:grants"* ]]
   done
   run ! grep -q '^switch' "$STUB_LOG"
   [ ! -e "$TEST_REPO/.dispatch-wt" ]

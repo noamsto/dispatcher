@@ -1,6 +1,6 @@
 ---
 name: remote-host
-description: a worker on another machine (--host)
+description: Use when a worker runs on another machine (--host), to follow, recover and route its events
 ---
 
 # remote-host

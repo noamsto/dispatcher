@@ -1,6 +1,6 @@
 ---
 name: pr-watch
-description: a pr-watch event
+description: Use when a pr-watch event arrives, to re-arm or rebase the PR it names
 ---
 
 # pr-watch

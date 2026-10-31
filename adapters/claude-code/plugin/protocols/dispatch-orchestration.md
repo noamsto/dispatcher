@@ -190,8 +190,8 @@ adding `--grid` there would change the topology itself (adding `reviewer`), not
 just make it lazy. **The default topology stays eager**: both deep default
 roles are used by any task that reaches its plan seam, so laziness only defers
 a one-time startup-read cost, not a permanent saving.
-`--lazy` is a deliberate per-dispatch opt-in (see `DISPATCHER_PROTOCOL.md` →
-"Lazy grid"), never a default.
+`--lazy` is a deliberate per-dispatch opt-in (see skill `dispatcher:grid-lazy`),
+never a default.
 
 **Bounded execute-time replanning.** A missing lower execute rung is a same-rung implementation fallback: it is not planning and does not consume the bounded re-plan budget. The provided/legacy contradiction fallback and a plan-shaped three-amendment recovery share exactly one execute-time budget. The latter must use a strictly higher planning tuple from the task file's authoritative engine/model/effort metadata; it never changes engines or skips a rung; a same-or-higher Grok substitute for a refused next rung is not a skipped rung. Claude ascends `haiku → sonnet → opus → fable` (subject to the existing opus-to-fable eligibility check). Codex ascends effort `low → medium → high → xhigh → max`, then at max family `gpt-5.6-luna → gpt-5.6-terra → gpt-5.6-sol`; never ultra. Cursor ascends `grok-4.7-low → grok-4.7-medium → grok-4.7-high`. Claude fable/ineligible opus/unknown ids, codex sol/max or legacy/unknown/outside-table tuples, and cursor high/Kimi/Composer/cross-vendor/unknown ids are top/no-rung blocks, as are unavailable planning launches. A cursor Task-slug refusal takes the substitution rule in “Cursor Task-spawn slugs” first. The full auditable ledger, viability rule, and blocking evidence are in `WORKER_EXECUTE.md` → “Bounded plan-shaped recovery”.
 
@@ -496,8 +496,8 @@ near-reset exemption, not a second rule to keep in sync. A weekly window's
 (`reset_source: "month"` in the cache). A null `resets_at`
 means pace isn't computable and the gate falls back to the flat ≥70 rule it
 always had. Either way it names the downgrade target below — before the
-engine goes fully dark at the existing ≥95% gate (`DISPATCHER_PROTOCOL.md` →
-"Budget is the fifth lever"). Two overrides, different blast radii:
+engine goes fully dark at the existing ≥95% gate (skill
+`dispatcher:budget-holds`). Two overrides, different blast radii:
 `DISPATCH_IGNORE_RUNG=<the exact model id or effort>` bypasses just the
 matching model or effort refusal for that one launch target and leaves the ≥95% stop armed — the escape an
 agent can actually reach for, since `--ignore-budget` reads as spend
@@ -505,7 +505,7 @@ authorization to the auto-mode classifier and a dispatcher agent can't pass
 it; `--ignore-budget` still bypasses both this gate and the ≥95% stop, and
 remains the human's spend decision. Codex and cursor carry a sibling: the
 window-independent absolute-limit stop from `limit_reached` (#201, #629), lead
-only, described in `DISPATCHER_PROTOCOL.md` → "Budget is the fifth lever".
+only, described in skill `dispatcher:budget-holds`.
 
 The same rule applies independently to every lead and eager role target, and
 to a lazy role after its persisted values and CLI overrides resolve. Premium

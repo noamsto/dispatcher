@@ -1,6 +1,6 @@
 ---
 name: owner-auth
-description: an outward-facing action the human explicitly approved (--owner-auth)
+description: Use when the human named-approved an outward-facing action (--owner-auth), to record their verbatim quote and named approval
 ---
 
 # owner-auth

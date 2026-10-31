@@ -1,6 +1,6 @@
 ---
 name: chrome
-description: a task that needs the owner signed-in browser (--chrome)
+description: Use when a task needs the owner signed-in browser (--chrome), to route it and guard the one-worker rule
 ---
 
 # chrome

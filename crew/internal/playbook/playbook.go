@@ -45,6 +45,9 @@ func For(ev map[string]any) string {
 		if source == "watchdog" && hasPrefix(detail, watchdogPrefixes) {
 			return Watchdog
 		}
+		if state == "pr_open" {
+			return BlockedReplies
+		}
 		if state == "blocked" && source != "watchdog" &&
 			(strings.HasPrefix(detail, "acceptance:") || strings.HasPrefix(detail, "permission:")) {
 			return BlockedReplies

@@ -1,6 +1,6 @@
 ---
 name: follow-ups
-description: a worker msg opening a follow-ups (untracked) batch
+description: Use when a worker msg opens a follow-ups (untracked) batch, to dedupe, file and link the entries
 ---
 
 # follow-ups

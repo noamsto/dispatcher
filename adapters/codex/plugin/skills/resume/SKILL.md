@@ -1,6 +1,6 @@
 ---
 name: resume
-description: a worker died mid-task or a tmux-restored window
+description: Use when a worker died mid-task or a tmux-restored window appears, to restart it in place
 ---
 
 # resume
@@ -9,3 +9,5 @@ To restart a worker that died mid-task, prefer `dispatch resume` to a fresh same
 A tmux-remux-restored window is not a live worker: a target proceeds when at least one pane carries the branch stamp, every such pane sits in the recorded worktree, and no lead pane among them runs an engine; with no stamped pane, `cd` into the worktree and resume there. When tmux-og already relaunched the lead's engine (a full resume refuses that pane), `dispatch resume [<target>] --rearm-roles` re-attaches the role panes (watchers, stall-watch, window stamps) and launches nothing.
 
 **A refusal that names a live claim.** An `already claimed` abort means another crew holds the issue: relay it verbatim and do not remove the label (the core protocol's **Claim** bullet is the rule). Resume applies only to a dead worker of your own.
+
+**Never carry an authorization in the extra prompt.** `dispatch resume`'s extra prompt has no cap, no literal-text check and no human yes, and the bus `resume` row records no `owner_auth`; an authorization travels only through a re-dispatch's `--owner-auth`.

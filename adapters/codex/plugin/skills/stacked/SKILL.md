@@ -1,6 +1,6 @@
 ---
 name: stacked
-description: a task built on an unmerged PR (--base), rebase coordination and layer merge
+description: Use when a task builds on an unmerged PR (--base), to link, rebase and merge the layers
 ---
 
 # stacked

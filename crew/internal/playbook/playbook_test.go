@@ -14,6 +14,8 @@ func TestFor(t *testing.T) {
 		{"watchdog dead", map[string]any{"kind": "status", "body": map[string]any{"source": "watchdog", "state": "failed", "detail": "dead: gone"}}, Watchdog},
 		{"worker acceptance", map[string]any{"kind": "status", "body": map[string]any{"state": "blocked", "detail": "acceptance: AC3 — no browser"}}, BlockedReplies},
 		{"worker permission", map[string]any{"kind": "status", "body": map[string]any{"state": "blocked", "detail": "permission: needs a dir"}}, BlockedReplies},
+		{"worker pr_open", map[string]any{"kind": "status", "body": map[string]any{"state": "pr_open", "detail": ""}}, BlockedReplies},
+		{"pr_open while watchdog-sourced", map[string]any{"kind": "status", "body": map[string]any{"source": "watchdog", "state": "pr_open", "detail": "load: busy"}}, Watchdog},
 		{"pr-watch", map[string]any{"kind": "msg", "from": "pr-watch:12", "body": "{}"}, PrWatch},
 		{"follow-ups", map[string]any{"kind": "msg", "from": "worker:feat/x#s1-1", "body": "follow-ups (untracked): x"}, FollowUps},
 		{"watchdog prefix on bad source", map[string]any{"kind": "status", "body": map[string]any{"source": "worker", "state": "blocked", "detail": "quota: wait"}}, ""},

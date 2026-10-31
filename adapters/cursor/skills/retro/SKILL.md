@@ -1,6 +1,6 @@
 ---
 name: retro
-description: a batch that leaves the roster drained
+description: Use when a batch leaves the roster drained, to write the retro synthesis
 ---
 
 # retro

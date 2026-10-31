@@ -1,6 +1,6 @@
 ---
 name: pane-injection
-description: the human asks you to type into a pane
+description: Use when the human asks you to type into an engine pane, to give them the send-keys steps
 ---
 
 # pane-injection
