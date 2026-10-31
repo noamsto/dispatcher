@@ -68,8 +68,6 @@ func TestDecideRefusesEmptyAndOversize(t *testing.T) {
 
 func TestDecideRefusesARowThePeerWouldDrop(t *testing.T) {
 	for name, text := range map[string]string{
-		// 3000 control bytes encode to 6 bytes each, past the row limit, under MaxBody.
-		"control bytes": strings.Repeat("\x01", 3000),
 		// 437 newlines-terminated lines encode to ~4027 bytes: under bus.LineMax, over peer.MaxRow.
 		"newlines": strings.Repeat("abcdefg\n", 437),
 	} {
@@ -80,6 +78,23 @@ func TestDecideRefusesARowThePeerWouldDrop(t *testing.T) {
 				t.Errorf("got %d %q", code, stderr)
 			}
 			f.wantNoRow()
+		})
+	}
+}
+
+func TestDecideAcceptsATextPeersWouldClean(t *testing.T) {
+	for name, text := range map[string]string{
+		"crlf":        "line one\r\nline two",
+		"soft hyphen": "co\u00ADoperate",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			if code, stderr := f.decide(text); code != 0 || stderr != "" {
+				t.Fatalf("%d %q", code, stderr)
+			}
+			if got := len(f.lines()); got != 1 {
+				t.Errorf("%d rows, want 1", got)
+			}
 		})
 	}
 }

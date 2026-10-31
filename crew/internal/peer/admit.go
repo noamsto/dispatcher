@@ -288,8 +288,8 @@ func Export(log string, since int64, sinceEpoch, toHost string, now time.Time) (
 	}
 	size := 0
 	cursor, err = eachLineFile(f, since, func(line []byte, end int64) bool {
-		row, ok := exportRow(line, end, toHost, now)
-		if !ok {
+		row, reason := exportRow(line, end, toHost, now)
+		if reason != "" {
 			return true
 		}
 		if len(rows) == MaxRows || size+len(row) > MaxBatch {
@@ -349,23 +349,31 @@ func epochOf(f *os.File) (string, error) {
 	return hex.EncodeToString(sum[:16]), nil
 }
 
-// exportRow is line projected for toHost, or false when it is not exportable.
+// ExportDrop is why a peer sync would not export row, "" when it would.
+func ExportDrop(row string, now time.Time) string {
+	_, reason := exportRow([]byte(row), 1, "peer", now)
+	return reason
+}
+
+// exportRow is line projected for toHost, or the reason it is not exportable.
 // Rows the receiver's Admit would drop are skipped here, so a peer never
 // reports our rows as drops for their shape.
-func exportRow(line []byte, seq int64, toHost string, now time.Time) (json.RawMessage, bool) {
+func exportRow(line []byte, seq int64, toHost string, now time.Time) (json.RawMessage, string) {
 	if !utf8.Valid(line) {
-		return nil, false
+		return nil, reasonMalformed
 	}
 	obj, ok := decodeObject(line)
 	if !ok {
-		return nil, false
+		return nil, reasonMalformed
 	}
 	ts, ok := intValue(obj["ts"])
 	if !ok {
-		return nil, false
+		return nil, reasonMalformed
 	}
-	if t := time.UnixMilli(ts); now.Sub(t) > keepFor || t.After(now.Add(maxSkew)) {
-		return nil, false
+	if t := time.UnixMilli(ts); now.Sub(t) > keepFor {
+		return nil, reasonStale
+	} else if t.After(now.Add(maxSkew)) {
+		return nil, reasonMalformed
 	}
 	kind, _ := obj["kind"].(string)
 	switch kind {
@@ -379,11 +387,11 @@ func exportRow(line []byte, seq int64, toHost string, now time.Time) (json.RawMe
 			obj["body"] = invisible.Drop(stripControl(body))
 		}
 	default:
-		return nil, false
+		return nil, reasonWorker
 	}
 	// The projection drops `from` on the kinds that must not carry one.
 	if !identity(kind, obj, toHost) {
-		return nil, false
+		return nil, reasonIdentity
 	}
 	fields := allowlist[kind]
 	row, err := project(fields, obj)
@@ -391,10 +399,9 @@ func exportRow(line []byte, seq int64, toHost string, now time.Time) (json.RawMe
 		row, err = fitTitle(fields, obj, row)
 	}
 	if err != nil {
-		return nil, false
+		return nil, reasonMalformed
 	}
-	admitted, reason := Admit(Entry{Seq: seq, Row: row}, toHost, now)
-	return admitted, reason == ""
+	return Admit(Entry{Seq: seq, Row: row}, toHost, now)
 }
 
 // fitTitle shortens a dispatch row's title, whole runes at a time, until the
