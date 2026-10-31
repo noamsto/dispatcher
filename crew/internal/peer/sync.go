@@ -50,6 +50,9 @@ type Result struct {
 // errMalformed marks a payload Serve refuses with exit 2.
 type errMalformed struct{ error }
 
+// errBusy is another local exchange with the same host holding its lock.
+var errBusy = errors.New("busy")
+
 // Serve is `crew peer-sync`, the P side of one exchange: it stores the
 // requester's rows and answers with its own. It exits 0 on success, 1 on a
 // refusal and 2 on a malformed payload.
@@ -102,9 +105,13 @@ func serve(stdin io.Reader, o ServeOptions) (Response, error) {
 	if req.Expect != "" && req.Expect != id {
 		return Response{}, fmt.Errorf("identity: peer %s has pinned another id for this host (remove peers/%s.state there to re-pin)", req.Host, self)
 	}
+	now := nowFunc(o.Now)()
+	// A full parse of our own log, kept out of the host lock; its error is
+	// reported where the export's would be.
+	snap, snapErr := TakeSnapshot(o.Paths.Log, now)
 	unlock, ok := store.Lock(req.Host)
 	if !ok {
-		return Response{}, errors.New("busy")
+		return Response{}, errBusy
 	}
 	defer unlock()
 	st, err := store.State(req.Host)
@@ -114,38 +121,78 @@ func serve(stdin io.Reader, o ServeOptions) (Response, error) {
 	if err := pin(&st, req.Host, req.ID); err != nil {
 		return Response{}, err
 	}
-	now := nowFunc(o.Now)()
+	if err := takeEpoch(store, req.Host, &st, req.Epoch, now); err != nil {
+		return Response{}, err
+	}
 	kept, dropped, seen := admitRows(req.Rows, st.HWM, req.Cursor, self, now)
 	if err := store.Append(req.Host, kept, now); err != nil {
+		return Response{}, err
+	}
+	if err := takeRoster(store, req.Host, req.Roster, dropped, now); err != nil {
 		return Response{}, err
 	}
 	st.HWM = max(st.HWM, seen)
 	st.Scan = max(st.Scan, req.Cursor)
 	// The requester has stored our rows through Since, so a later dial from
-	// this side need not resend them.
-	st.Ack = max(st.Ack, req.Since)
+	// this side need not resend them, unless Since or Ack predate our log's
+	// epoch. An unreadable epoch is unknown: the state write below must not
+	// wait on it.
+	own, _ := LogEpoch(o.Paths.Log)
+	if changed(req.SinceEpoch, own) || changed(st.AckEpoch, own) {
+		st.Ack = 0
+	} else {
+		st.Ack = max(st.Ack, req.Since)
+	}
+	if own != "" {
+		st.AckEpoch = own
+	}
 	// Written before the export, so a failed export cannot get the stored rows
 	// stored again.
 	if err := store.WriteState(req.Host, st); err != nil {
 		return Response{}, err
 	}
-	rows, cursor, more, err := Export(o.Paths.Log, req.Since, req.Host, now)
+	rows, cursor, more, epoch, err := Export(o.Paths.Log, req.Since, req.SinceEpoch, req.Host, now)
 	if err != nil {
 		return Response{}, err
 	}
-	return Response{V: 1, Host: self, ID: id, Ack: max(st.HWM, st.Scan), Cursor: cursor, More: more, Rows: rows, Dropped: dropped}, nil
+	if snapErr != nil {
+		return Response{}, snapErr
+	}
+	// An inbound exchange proves the link as well as an outbound one.
+	if err := store.writeLink(req.Host, true, "", now); err != nil {
+		return Response{}, err
+	}
+	return Response{
+		V: 1, Host: self, ID: id, Ack: max(st.HWM, st.Scan), AckEpoch: st.Epoch, Epoch: epoch,
+		Cursor: cursor, More: more, Rows: rows, Dropped: dropped, Roster: &snap,
+	}, nil
 }
 
 // Sync is the L side of one exchange with the peer host o.Name: it pushes our
 // rows after the peer's ack and stores the peer's rows after our hwm. The
 // host's lock is held only around local reads and writes, never across the
-// Transport, so two hosts dialing each other cannot deadlock.
+// Transport, so two hosts dialing each other cannot deadlock. Every outcome
+// but busy is recorded in `<host>.link`.
 func Sync(ctx context.Context, o SyncOptions) (Result, error) {
+	now := nowFunc(o.Now)()
+	res, err := exchange(ctx, o, now)
+	if err == nil || errors.Is(err, errBusy) {
+		return res, err
+	}
+	store := StoreFor(o.Paths)
+	if unlock, ok := store.Lock(o.Name); ok {
+		// Best effort: the sync error is what the caller must see.
+		_ = store.writeLink(o.Name, false, err.Error(), now)
+		unlock()
+	}
+	return res, err
+}
+
+func exchange(ctx context.Context, o SyncOptions, now time.Time) (Result, error) {
 	self, err := selfName(o.Self)
 	if err != nil {
 		return Result{}, err
 	}
-	now := nowFunc(o.Now)()
 	store := StoreFor(o.Paths)
 	id, err := store.BusID()
 	if err != nil {
@@ -155,11 +202,18 @@ func Sync(ctx context.Context, o SyncOptions) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	rows, cursor, _, err := Export(o.Paths.Log, st.Ack, o.Name, now)
+	rows, cursor, _, epoch, err := Export(o.Paths.Log, st.Ack, st.AckEpoch, o.Name, now)
 	if err != nil {
 		return Result{}, err
 	}
-	req, err := buildRequest(Request{V: 1, Host: self, ID: id, Expect: st.ID, Since: max(st.HWM, st.Scan), Cursor: cursor, Rows: rows}, o)
+	snap, err := TakeSnapshot(o.Paths.Log, now)
+	if err != nil {
+		return Result{}, err
+	}
+	req, err := buildRequest(Request{
+		V: 1, Host: self, ID: id, Expect: st.ID, Since: max(st.HWM, st.Scan), SinceEpoch: st.Epoch, Epoch: epoch,
+		Cursor: cursor, Rows: rows, Roster: &snap,
+	}, o)
 	if err != nil {
 		return Result{}, err
 	}
@@ -193,7 +247,7 @@ func Sync(ctx context.Context, o SyncOptions) (Result, error) {
 
 	unlock, ok := store.Lock(o.Name)
 	if !ok {
-		return Result{}, errors.New("busy")
+		return Result{}, errBusy
 	}
 	defer unlock()
 	// Re-read: a Serve for this host may have pinned it and stored its rows
@@ -205,14 +259,24 @@ func Sync(ctx context.Context, o SyncOptions) (Result, error) {
 	if err := pin(&st, o.Name, resp.ID); err != nil {
 		return Result{}, err
 	}
+	if err := takeEpoch(store, o.Name, &st, resp.Epoch, now); err != nil {
+		return Result{}, err
+	}
 	kept, dropped, seen := admitRows(resp.Rows, st.HWM, resp.Cursor, self, now)
 	if err := store.Append(o.Name, kept, now); err != nil {
+		return Result{}, err
+	}
+	if err := takeRoster(store, o.Name, resp.Roster, dropped, now); err != nil {
 		return Result{}, err
 	}
 	st.HWM = max(st.HWM, seen)
 	st.Scan = max(st.Scan, resp.Cursor)
 	st.Ack = resp.Ack
+	st.AckEpoch = resp.AckEpoch
 	if err := store.WriteState(o.Name, st); err != nil {
+		return Result{}, err
+	}
+	if err := store.writeLink(o.Name, true, "", now); err != nil {
 		return Result{}, err
 	}
 	return Result{Stored: len(kept), Dropped: dropped, RemoteDropped: knownReasons(resp.Dropped)}, nil
@@ -236,7 +300,7 @@ func knownReasons(counts map[string]int) map[string]int {
 func lockedState(store Store, host string) (State, error) {
 	unlock, ok := store.Lock(host)
 	if !ok {
-		return State{}, errors.New("busy")
+		return State{}, errBusy
 	}
 	defer unlock()
 	return store.State(host)
@@ -283,6 +347,37 @@ func pin(st *State, host, id string) error {
 	return nil
 }
 
+// takeEpoch records host's log epoch theirs in st. A change means host's log
+// was reset, so the old seqs mean nothing: HWM and Scan restart before this
+// exchange's rows, which the peer sent from 0 on seeing our stale epoch, are
+// admitted, and the reset is marked for the stream to report.
+func takeEpoch(store Store, host string, st *State, theirs string, now time.Time) error {
+	if changed(st.Epoch, theirs) {
+		st.HWM, st.Scan = 0, 0
+		if err := store.markReset(host, now); err != nil {
+			return err
+		}
+	}
+	if theirs != "" {
+		st.Epoch = theirs
+	}
+	return nil
+}
+
+// takeRoster admits the peer's snapshot raw, counts its drops into dropped and
+// replaces host's roster with what passed. A peer that predates rosters sends
+// none, which leaves the stored roster alone.
+func takeRoster(store Store, host string, raw *Snapshot, dropped map[string]int, now time.Time) error {
+	if raw == nil {
+		return nil
+	}
+	rows, d := AdmitSnapshot(raw, now)
+	for r, n := range d {
+		dropped[r] += n
+	}
+	return store.writeRoster(host, rows, now)
+}
+
 // admitRows is the rows past hwm and through cursor that pass Admit, the drop
 // counts of the rest, and the highest seq it processed. Seqs must rise, so a
 // repeated seq is never stored twice.
@@ -306,10 +401,30 @@ func admitRows(es []Entry, hwm, cursor int64, self string, now time.Time) ([]Ent
 }
 
 // wire is a peer-sync message: its version and its sender's bus id.
-type wire interface{ header() (v int, id string) }
+type wire interface {
+	header() (v int, id string)
+	dropBadEpochs()
+}
 
 func (r *Request) header() (int, string)  { return r.V, r.ID }
 func (r *Response) header() (int, string) { return r.V, r.ID }
+
+func (r *Request) dropBadEpochs() {
+	r.Epoch, r.SinceEpoch = goodEpoch(r.Epoch), goodEpoch(r.SinceEpoch)
+}
+func (r *Response) dropBadEpochs() {
+	r.Epoch, r.AckEpoch = goodEpoch(r.Epoch), goodEpoch(r.AckEpoch)
+}
+
+// goodEpoch is e if it has the shape of our own epochs, else "" (unknown).
+// Epochs are stored and echoed back, so an arbitrary peer string must not
+// reach either.
+func goodEpoch(e string) string {
+	if busIDRe.MatchString(e) {
+		return e
+	}
+	return ""
+}
 
 // decodeOne decodes data as exactly one JSON object of version 1 carrying a
 // bus id.
@@ -329,6 +444,7 @@ func decodeOne(data []byte, msg wire) error {
 	if !busIDRe.MatchString(id) {
 		return errors.New("id is not a bus id")
 	}
+	msg.dropBadEpochs()
 	return nil
 }
 

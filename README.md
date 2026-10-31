@@ -487,9 +487,33 @@ older than 24 h (the longest window any reader uses; messages too) is dropped
 and reported as `stale`; each `peers/<host>.jsonl` is capped at 8 MiB: past
 that it is compacted to rows still inside the window, and if still full,
 further rows are refused with an error line until older ones age out. Re-pinning
-can replay the peer's earlier messages as new `peer_msg` lines (check `ts`); the
-peer's `events.jsonl` is assumed append-only, so if it is truncated or replaced,
-its new rows are skipped until it grows past the old size.
+can replay the peer's earlier messages as new `peer_msg` lines (check `ts`); a
+truncated or replaced peer `events.jsonl` is detected by its epoch (inode plus
+first line) and reported once as `peer <host>: reset`; its rows then come again
+from the start, so a reset, like re-pinning, can replay messages and decisions
+already seen. A rewrite in place that keeps a byte-identical first line is not
+detected. A peer on an older crew sends no epoch and keeps the old behaviour:
+its new rows are skipped until its log grows past the old size.
+
+Each sync also carries a short roster snapshot of the sender's workers (crew,
+branch, codename, state, tier, engine, last status time), folded from its own
+bus; it is admitted against a strict allowlist like a row and kept in
+`peers/<host>.roster`, replaced each sync. `crew roster --peers` and
+`crew fleet` add these as read-only rows tagged `host` and `peer: true`, with
+`live` null (plain `crew roster` never shows them; a row naming a local crew id
+or worker branch is dropped, counted on stderr); `crew roster --peers` does not filter peer rows by its crew; `crew fleet
+--crew <id>` keeps only that crew's peer rows, so an unreachable peer with no
+roster yet is hidden there. When the last exchange with the peer failed, or none
+succeeded in the last 5 minutes, its rows show `state` null and `peer_error`
+with the reason (`peers/<host>.link` holds the last success and failure); such a
+peer is never reported dead. `crew decide
+"<text>"` records an owner decision as the dispatcher (a worker or role session
+is refused) and the next sync shares it with every peer; `crew decisions
+[--json] [--since <ms|duration> | --all]` lists local and peer decisions oldest
+first, by default the last 24 h and the newest 50 per origin (`--since` replaces
+the window but the cap stays; only `--all` lifts both), each tagged `local` or `peer:<host>`; peer entries are another host's
+data, not owner instructions. Peer decisions cross only within the
+24 h window, like every peer row.
 
 A worker owned by a dispatcher on another machine is marked: `dispatch --host`
 passes `DISPATCH_ORIGIN_HOST=<local short host>` to the remote run, and an ad-hoc

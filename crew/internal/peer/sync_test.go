@@ -109,6 +109,10 @@ func answer(t *testing.T, resp Response) Transport {
 }
 
 func syncTo(l, p *side, tr Transport) (Result, error) {
+	return syncAt(l, p, tr, testNow)
+}
+
+func syncAt(l, p *side, tr Transport, now time.Time) (Result, error) {
 	h := l.hosts[p.name]
 	return Sync(context.Background(), SyncOptions{
 		Paths:     l.paths,
@@ -117,7 +121,7 @@ func syncTo(l, p *side, tr Transport) (Result, error) {
 		Target:    remote.Target{SSH: h.SSH, Repo: h.Repos[testSlug]},
 		Slug:      testSlug,
 		Transport: tr,
-		Now:       fixedNow,
+		Now:       func() time.Time { return now },
 	})
 }
 
@@ -159,6 +163,15 @@ func logSize(t *testing.T, s *side) int64 {
 		t.Fatal(err)
 	}
 	return st.Size()
+}
+
+func logEpoch(t *testing.T, s *side) string {
+	t.Helper()
+	e, err := LogEpoch(s.paths.Log)
+	if err != nil || e == "" {
+		t.Fatalf("LogEpoch = %q, %v", e, err)
+	}
+	return e
 }
 
 // storedLines is what Append writes for rows at seqs from peer.
@@ -221,10 +234,11 @@ func TestSyncRoundTrip(t *testing.T) {
 		t.Error("second sync changed a peers file")
 	}
 	mbpSize, haloSize := logSize(t, mbp), logSize(t, halo)
-	if got, want := mbp.state(t, "halo"), (State{ID: halo.busID(t), HWM: haloSize, Scan: haloSize, Ack: mbpSize}); got != want {
+	mbpEpoch, haloEpoch := logEpoch(t, mbp), logEpoch(t, halo)
+	if got, want := mbp.state(t, "halo"), (State{ID: halo.busID(t), HWM: haloSize, Scan: haloSize, Ack: mbpSize, Epoch: haloEpoch, AckEpoch: mbpEpoch}); got != want {
 		t.Errorf("mbp halo.state = %+v, want %+v", got, want)
 	}
-	if got, want := halo.state(t, "mbp"), (State{ID: mbp.busID(t), HWM: mbpSize, Scan: mbpSize, Ack: haloSize}); got != want {
+	if got, want := halo.state(t, "mbp"), (State{ID: mbp.busID(t), HWM: mbpSize, Scan: mbpSize, Ack: haloSize, Epoch: mbpEpoch, AckEpoch: haloEpoch}); got != want {
 		t.Errorf("halo mbp.state = %+v, want %+v", got, want)
 	}
 
@@ -712,6 +726,307 @@ func TestServeBusy(t *testing.T) {
 	}
 }
 
+// resetLog truncates s's log in place, as a rewrite does, and writes lines to
+// it, returning their seqs.
+func resetLog(t *testing.T, s *side, lines ...string) []int64 {
+	t.Helper()
+	if err := os.WriteFile(s.paths.Log, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return writeLines(t, s.paths.Log, lines...)
+}
+
+func mustSync(t *testing.T, l, p *side, tr Transport) Result {
+	t.Helper()
+	res, err := syncTo(l, p, tr)
+	if err != nil {
+		t.Fatalf("sync %s→%s: %v", l.name, p.name, err)
+	}
+	return res
+}
+
+func TestSyncDetectsAPeerLogReset(t *testing.T) {
+	mbp, halo := pair(t)
+	writeLines(t, halo.paths.Log, busDispatch("c2", "feat/7-y"), busDispatch("c2", "feat/8-y"), busDispatch("c2", "feat/9-y"))
+	mustSync(t, mbp, halo, serveOn(t, halo))
+	oldSize := logSize(t, halo)
+	before := readFile(t, mbp.peerFile("halo"))
+
+	rows := []string{busClaim("c2", "10"), busClaim("c2", "11")}
+	seqs := resetLog(t, halo, rows...)
+	if seqs[1] >= oldSize {
+		t.Fatalf("new log %d bytes, want under the old %d", seqs[1], oldSize)
+	}
+	if res := mustSync(t, mbp, halo, serveOn(t, halo)); res.Stored != 2 {
+		t.Errorf("reset sync stored %d, want 2", res.Stored)
+	}
+	want := before + storedLines("halo", rows, seqs)
+	if got := readFile(t, mbp.peerFile("halo")); got != want {
+		t.Errorf("mbp peers/halo.jsonl =\n%s\nwant\n%s", got, want)
+	}
+	if st := mbp.state(t, "halo"); st.HWM != seqs[1] {
+		t.Errorf("mbp halo.state = %+v, want hwm %d", st, seqs[1])
+	}
+	store := StoreFor(mbp.paths)
+	if !TakeReset(store, "halo") || TakeReset(store, "halo") {
+		t.Error("TakeReset: want the marker once")
+	}
+
+	if res := mustSync(t, mbp, halo, serveOn(t, halo)); res.Stored != 0 {
+		t.Errorf("third sync stored %d", res.Stored)
+	}
+	if TakeReset(store, "halo") || readFile(t, mbp.peerFile("halo")) != want {
+		t.Error("third sync marked a reset or stored rows")
+	}
+}
+
+func TestServeDetectsARequesterLogReset(t *testing.T) {
+	mbp, halo := pair(t)
+	writeLines(t, mbp.paths.Log, busDispatch("c1", "feat/7-y"), busDispatch("c1", "feat/8-y"), busDispatch("c1", "feat/9-y"))
+	mustSync(t, mbp, halo, serveOn(t, halo))
+	before := readFile(t, halo.peerFile("mbp"))
+
+	rows := []string{busClaim("c1", "10"), busClaim("c1", "11")}
+	seqs := resetLog(t, mbp, rows...)
+	mustSync(t, mbp, halo, serveOn(t, halo))
+	want := before + storedLines("mbp", rows, seqs)
+	if got := readFile(t, halo.peerFile("mbp")); got != want {
+		t.Errorf("halo peers/mbp.jsonl =\n%s\nwant\n%s", got, want)
+	}
+	if st := halo.state(t, "mbp"); st.HWM != seqs[1] {
+		t.Errorf("halo mbp.state = %+v, want hwm %d", st, seqs[1])
+	}
+	if !TakeReset(StoreFor(halo.paths), "mbp") {
+		t.Error("halo has no reset marker for mbp")
+	}
+	if TakeReset(StoreFor(mbp.paths), "halo") {
+		t.Error("mbp marked a reset of halo's log")
+	}
+}
+
+func TestResetRedeliversInTheSameSyncWhenTheLogRegrew(t *testing.T) {
+	mbp, halo := pair(t)
+	writeLines(t, halo.paths.Log, busDispatch("c2", "feat/7-y"), busDispatch("c2", "feat/8-y"))
+	mustSync(t, mbp, halo, serveOn(t, halo))
+	oldSize := logSize(t, halo)
+	before := readFile(t, mbp.peerFile("halo"))
+
+	var rows []string
+	for i := range 5 {
+		rows = append(rows, busClaim("c2", fmt.Sprint(20+i)))
+	}
+	seqs := resetLog(t, halo, rows...)
+	if seqs[len(seqs)-1] <= oldSize {
+		t.Fatalf("new log %d bytes, want over the old %d", seqs[len(seqs)-1], oldSize)
+	}
+	if res := mustSync(t, mbp, halo, serveOn(t, halo)); res.Stored != len(rows) {
+		t.Errorf("reset sync stored %d, want %d", res.Stored, len(rows))
+	}
+	if got, want := readFile(t, mbp.peerFile("halo")), before+storedLines("halo", rows, seqs); got != want {
+		t.Errorf("mbp peers/halo.jsonl =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// stripKeys re-encodes the JSON object data without keys.
+func stripKeys(t *testing.T, data []byte, keys ...string) []byte {
+	t.Helper()
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(data, &obj); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range keys {
+		delete(obj, k)
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// oldPeer is a transport to p as a peer that predates epochs and rosters
+// would see it: those fields never reach either side.
+func oldPeer(t *testing.T, p *side) Transport {
+	to := serveOn(t, p)
+	return func(ctx context.Context, dest string, request []byte) ([]byte, error) {
+		var req remote.Request
+		if err := json.Unmarshal(request, &req); err != nil {
+			return nil, err
+		}
+		stdin := string(stripKeys(t, []byte(*req.Stdin), "epoch", "since_epoch", "roster"))
+		req.Stdin = &stdin
+		request, err := json.Marshal(req)
+		if err != nil {
+			return nil, err
+		}
+		out, err := to(ctx, dest, request)
+		if err != nil {
+			return nil, err
+		}
+		return stripKeys(t, out, "epoch", "ack_epoch", "roster"), nil
+	}
+}
+
+func TestOldPeerWithoutEpochKeepsBehaviour(t *testing.T) {
+	mbp, halo := pair(t)
+	writeLines(t, halo.paths.Log, busDispatch("c2", "feat/7-y"), busDispatch("c2", "feat/8-y"), busDispatch("c2", "feat/9-y"))
+	mustSync(t, mbp, halo, oldPeer(t, halo))
+	oldSize := logSize(t, halo)
+	before := readFile(t, mbp.peerFile("halo"))
+
+	// Every new seq is at or under the old hwm: rows past it would cross today.
+	seqs := resetLog(t, halo, busClaim("c2", "10"), busClaim("c2", "11"))
+	if seqs[1] > oldSize {
+		t.Fatalf("new log %d bytes, want at most the old %d", seqs[1], oldSize)
+	}
+	if res := mustSync(t, mbp, halo, oldPeer(t, halo)); res.Stored != 0 {
+		t.Errorf("stored %d, want the old peer's reset unseen", res.Stored)
+	}
+	if readFile(t, mbp.peerFile("halo")) != before || TakeReset(StoreFor(mbp.paths), "halo") {
+		t.Error("an old peer's reset stored rows or left a marker")
+	}
+	if st := mbp.state(t, "halo"); st.HWM != oldSize || st.Epoch != "" {
+		t.Errorf("mbp halo.state = %+v, want hwm %d and no epoch", st, oldSize)
+	}
+	if st := halo.state(t, "mbp"); st.Epoch != "" {
+		t.Errorf("halo mbp.state = %+v, want no epoch", st)
+	}
+}
+
+func TestResetNeverRepinsIdentity(t *testing.T) {
+	mbp, halo := pair(t)
+	writeLines(t, halo.paths.Log, busDispatch("c2", "feat/7-y"), busDispatch("c2", "feat/8-y"))
+	mustSync(t, mbp, halo, serveOn(t, halo))
+	st := mbp.state(t, "halo")
+	before := readFile(t, mbp.peerFile("halo"))
+
+	if err := os.WriteFile(filepath.Join(StoreFor(halo.paths).Dir, "self.id"), []byte(strings.Repeat("ef", 16)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resetLog(t, halo, busClaim("c2", "10"))
+	if _, err := syncTo(mbp, halo, serveOn(t, halo)); err == nil || !strings.Contains(err.Error(), "identity") {
+		t.Fatalf("Sync err = %v, want an identity refusal", err)
+	}
+	if got := mbp.state(t, "halo"); got != st {
+		t.Errorf("mbp halo.state = %+v, want unchanged %+v", got, st)
+	}
+	if readFile(t, mbp.peerFile("halo")) != before || TakeReset(StoreFor(mbp.paths), "halo") {
+		t.Error("a refused sync stored rows or marked a reset")
+	}
+}
+
+func (s *side) roster(t *testing.T, host string) rosterFile {
+	t.Helper()
+	var r rosterFile
+	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(StoreFor(s.paths).Dir, host+".roster"))), &r); err != nil {
+		t.Fatalf("%s peers/%s.roster: %v", s.name, host, err)
+	}
+	return r
+}
+
+func (s *side) link(t *testing.T, host string) string {
+	t.Helper()
+	return readFile(t, filepath.Join(StoreFor(s.paths).Dir, host+".link"))
+}
+
+func TestSyncShipsRosterBothWays(t *testing.T) {
+	mbp, halo := pair(t)
+	writeLines(t, mbp.paths.Log, busNamedDispatch("c1", "feat/m1", "iris", "standard", "claude", 5*time.Minute),
+		busStatus("c1", "worker:feat/m1#s1-2", "working", time.Minute))
+	writeLines(t, halo.paths.Log, busStatus("c2", "worker:feat/h1", "pr_open", 2*time.Minute))
+	mustSync(t, mbp, halo, serveOn(t, halo))
+
+	atMbp := rosterFile{Synced: testNow.UnixMilli(), Rows: []SnapshotRow{{CrewID: "c2", Branch: "feat/h1", State: "pr_open", TS: ms(2 * time.Minute)}}}
+	if got := mbp.roster(t, "halo"); !reflect.DeepEqual(got, atMbp) {
+		t.Errorf("mbp peers/halo.roster = %+v, want %+v", got, atMbp)
+	}
+	atHalo := rosterFile{Synced: testNow.UnixMilli(), Rows: []SnapshotRow{{CrewID: "c1", Branch: "feat/m1", Name: "iris", State: "working", Tier: "standard", Engine: "claude", TS: ms(time.Minute)}}}
+	if got := halo.roster(t, "mbp"); !reflect.DeepEqual(got, atHalo) {
+		t.Errorf("halo peers/mbp.roster = %+v, want %+v", got, atHalo)
+	}
+}
+
+func TestSyncRecordsLinkHealth(t *testing.T) {
+	mbp, halo := pair(t)
+	mustSync(t, mbp, halo, serveOn(t, halo))
+	okLink := fmt.Sprintf(`{"ok":%d,"err":0,"detail":""}`+"\n", testNow.UnixMilli())
+	if got := mbp.link(t, "halo"); got != okLink {
+		t.Errorf("mbp peers/halo.link = %q, want %q", got, okLink)
+	}
+	if got := halo.link(t, "mbp"); got != okLink {
+		t.Errorf("halo peers/mbp.link = %q, want %q", got, okLink)
+	}
+
+	failAt := testNow.Add(time.Minute)
+	fail := func(context.Context, string, []byte) ([]byte, error) {
+		return nil, errors.New("dial \x1b[31mhalo\u202e: " + strings.Repeat("x", 300))
+	}
+	if _, err := syncAt(mbp, halo, fail, failAt); err == nil {
+		t.Fatal("Sync succeeded over a failing transport")
+	}
+	var l struct {
+		OK     int64  `json:"ok"`
+		Err    int64  `json:"err"`
+		Detail string `json:"detail"`
+	}
+	failLink := mbp.link(t, "halo")
+	if err := json.Unmarshal([]byte(failLink), &l); err != nil {
+		t.Fatal(err)
+	}
+	if l.OK != testNow.UnixMilli() || l.Err != failAt.UnixMilli() || len(l.Detail) != 200 || !strings.HasPrefix(l.Detail, "dial [31mhalo: xxx") {
+		t.Errorf("mbp peers/halo.link = %+v, want ok kept, err now, detail sanitized and capped", l)
+	}
+
+	// Another local exchange holding the lock says nothing about the link.
+	shortLockWait(t, 50*time.Millisecond)
+	busy := func(ctx context.Context, dest string, request []byte) ([]byte, error) {
+		out, err := serveOn(t, halo)(ctx, dest, request)
+		unlock, ok := StoreFor(mbp.paths).Lock("halo")
+		if !ok {
+			t.Fatal("lock")
+		}
+		t.Cleanup(unlock)
+		return out, err
+	}
+	if _, err := syncAt(mbp, halo, busy, failAt.Add(time.Minute)); err == nil || err.Error() != "busy" {
+		t.Fatalf("Sync err = %v, want busy", err)
+	}
+	if got := mbp.link(t, "halo"); got != failLink {
+		t.Errorf("busy sync rewrote peers/halo.link: %q, want %q", got, failLink)
+	}
+}
+
+func TestSnapshotDropsCountInDropped(t *testing.T) {
+	mbp, halo := pair(t)
+	ok := fmt.Sprintf(`{"crew_id":"c2","branch":"feat/h1","state":"working","ts":%d,"cmd":"rm -rf /"}`, ms(time.Minute))
+	bad := fmt.Sprintf(`{"crew_id":"c2","branch":"feat/h2","state":"pwned","ts":%d}`, ms(time.Minute))
+	resp := fmt.Sprintf(`{"v":1,"host":"halo","id":%q,"ack":0,"cursor":0,"rows":[],"roster":{"ts":%d,"rows":[%s,%s]}}`, halo.busID(t), testNow.UnixMilli(), ok, bad)
+	tr := func(context.Context, string, []byte) ([]byte, error) { return []byte(resp), nil }
+	res, err := syncTo(mbp, halo, tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(res.Dropped, map[string]int{"malformed": 1}) {
+		t.Errorf("Dropped = %v, want one malformed", res.Dropped)
+	}
+	want := fmt.Sprintf(`{"synced":%d,"rows":[{"crew_id":"c2","branch":"feat/h1","state":"working","ts":%d}]}`+"\n", testNow.UnixMilli(), ms(time.Minute))
+	if got := readFile(t, filepath.Join(StoreFor(mbp.paths).Dir, "halo.roster")); got != want {
+		t.Errorf("peers/halo.roster = %q, want %q", got, want)
+	}
+}
+
+func TestOldPeerLeavesNoRoster(t *testing.T) {
+	mbp, halo := pair(t)
+	writeLines(t, halo.paths.Log, busStatus("c2", "worker:feat/h1", "working", time.Minute))
+	mustSync(t, mbp, halo, oldPeer(t, halo))
+	if got := readFile(t, filepath.Join(StoreFor(mbp.paths).Dir, "halo.roster")); got != "" {
+		t.Errorf("peers/halo.roster = %q, want none from an old peer", got)
+	}
+	if got := readFile(t, filepath.Join(StoreFor(halo.paths).Dir, "mbp.roster")); got != "" {
+		t.Errorf("halo peers/mbp.roster = %q, want none from an old requester", got)
+	}
+}
+
 // sshOnPath puts a fake ssh running body first on PATH.
 func sshOnPath(t *testing.T, body string) {
 	t.Helper()
@@ -762,4 +1077,128 @@ exit 255
 			t.Fatal("SSHTransport accepted an oversize response")
 		}
 	})
+}
+
+func TestDecisionRoundTrip(t *testing.T) {
+	mbp, halo := pair(t)
+	writeLines(t, mbp.paths.Log, DecisionRow(ms(time.Minute), "c1", "mbp decides: use sqlite"))
+	writeLines(t, halo.paths.Log, DecisionRow(ms(2*time.Minute), "c2", "halo decides: ship friday"))
+	mbpLog, haloLog := readFile(t, mbp.paths.Log), readFile(t, halo.paths.Log)
+
+	if _, err := syncTo(mbp, halo, serveOn(t, halo)); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		on   *side
+		want Decision
+	}{
+		{"halo reads mbp's", halo, Decision{TS: ms(time.Minute), Origin: "peer:mbp", Peer: true, CrewID: "c1", Body: "mbp decides: use sqlite"}},
+		{"mbp reads halo's", mbp, Decision{TS: ms(2 * time.Minute), Origin: "peer:halo", Peer: true, CrewID: "c2", Body: "halo decides: ship friday"}},
+	} {
+		got, err := Decisions(c.on.paths, 0)
+		if err != nil || !slices.Contains(got, c.want) {
+			t.Errorf("%s: Decisions = %+v, %v; want to hold %+v", c.name, got, err, c.want)
+		}
+	}
+	if got := readFile(t, mbp.paths.Log); got != mbpLog {
+		t.Errorf("mbp events.jsonl changed:\n%s", got)
+	}
+	if got := readFile(t, halo.paths.Log); got != haloLog {
+		t.Errorf("halo events.jsonl changed:\n%s", got)
+	}
+}
+
+func TestSyncDropsBadPeerDecisions(t *testing.T) {
+	mbp, halo := pair(t)
+	rows := []string{
+		DecisionRow(ms(time.Minute), "c1", "esc \x1b[31m"),
+		DecisionRow(ms(time.Minute), "c1", "zero\u200bwidth"),
+		DecisionRow(ms(time.Minute), "c1", strings.Repeat("x", MaxBody+1)),
+	}
+	seqs := writeLines(t, halo.paths.Log, rows...)
+	resp := Response{V: 1, Host: "halo", ID: halo.busID(t), Cursor: seqs[len(seqs)-1]}
+	for i, r := range rows {
+		resp.Rows = append(resp.Rows, Entry{Seq: seqs[i], Row: json.RawMessage(r)})
+	}
+	res, err := syncTo(mbp, halo, answer(t, resp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]int{"control": 2, "oversize": 1}; res.Stored != 0 || !reflect.DeepEqual(res.Dropped, want) {
+		t.Errorf("Result = %+v, want nothing stored, Dropped %v", res, want)
+	}
+	if got, err := Decisions(mbp.paths, 0); err != nil || len(got) != 0 {
+		t.Errorf("Decisions = %+v, %v; want none", got, err)
+	}
+}
+
+// A peer's epoch strings are stored and echoed back, so anything that is not
+// the 32 hex chars our own epochs are counts as unknown.
+func TestServeIgnoresMalformedPeerEpochs(t *testing.T) {
+	_, halo := pair(t)
+	for name, bad := range map[string]string{
+		"oversize":  strings.Repeat("a", 400<<10),
+		"uppercase": strings.Repeat("A", 32),
+		"long":      strings.Repeat("a", 33),
+	} {
+		t.Run(name, func(t *testing.T) {
+			payload, err := json.Marshal(Request{V: 1, Host: "mbp", ID: strings.Repeat("ab", 16),
+				Epoch: bad, SinceEpoch: bad})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out, errb bytes.Buffer
+			if rc := Serve(bytes.NewReader(payload), &out, &errb, halo.serveOptions()); rc != 0 {
+				t.Fatalf("Serve = %d: %.200s", rc, errb.String())
+			}
+			var resp Response
+			if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if resp.AckEpoch != "" {
+				t.Errorf("ack_epoch = %.40q, want unknown", resp.AckEpoch)
+			}
+			if st := halo.state(t, "mbp"); st.Epoch != "" || st.AckEpoch != "" {
+				t.Errorf("state kept a bad epoch: %.40q %.40q", st.Epoch, st.AckEpoch)
+			}
+			if size := len(readFile(t, filepath.Join(StoreFor(halo.paths).Dir, "mbp.state"))); size > 1<<10 {
+				t.Errorf("mbp.state is %d bytes", size)
+			}
+		})
+	}
+}
+
+func TestSyncIgnoresMalformedPeerEpochs(t *testing.T) {
+	for name, bad := range map[string]string{
+		"oversize":  strings.Repeat("a", 400<<10),
+		"uppercase": strings.Repeat("A", 32),
+		"long":      strings.Repeat("a", 33),
+	} {
+		t.Run(name, func(t *testing.T) {
+			mbp, halo := pair(t)
+			mustSync(t, mbp, halo, serveOn(t, halo))
+			resp := Response{V: 1, Host: "halo", ID: halo.busID(t), Epoch: bad, AckEpoch: bad,
+				Rows: []Entry{}, Dropped: map[string]int{}}
+			mustSync(t, mbp, halo, answer(t, resp))
+			if st := mbp.state(t, "halo"); st.Epoch != "" || st.AckEpoch != "" {
+				t.Errorf("state kept a bad epoch: %.40q %.40q", st.Epoch, st.AckEpoch)
+			}
+			var req Request
+			tr := func(_ context.Context, _ string, request []byte) ([]byte, error) {
+				var rr remote.Request
+				if err := json.Unmarshal(request, &rr); err != nil {
+					return nil, err
+				}
+				if err := json.Unmarshal([]byte(*rr.Stdin), &req); err != nil {
+					return nil, err
+				}
+				return json.Marshal(Response{V: 1, Host: "halo", ID: halo.busID(t), Rows: []Entry{}, Dropped: map[string]int{}})
+			}
+			mustSync(t, mbp, halo, tr)
+			if req.SinceEpoch != "" {
+				t.Errorf("request echoed since_epoch %.40q", req.SinceEpoch)
+			}
+		})
+	}
 }

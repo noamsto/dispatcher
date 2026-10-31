@@ -143,7 +143,7 @@ var subcommands = []string{
 	"git-guard", "help", "hold", "msg", "nudge",
 	"pr-watch", "reap", "reap-autosweep",
 	"relay", "reply", "stall-watch", "status", "stream", "watch",
-	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "spec-lint", "followups",
+	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups",
 }
 
 // typedSubcommands are the subcommands whose argv root binds: every name but
@@ -158,7 +158,7 @@ var typedSubcommands = map[string]bool{
 	"nudge": true, "await": true, "watch": true, "relay": true, "stream": true,
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
 	"adopt": true, "merge": true, "pr-watch": true, "stall-watch": true, "help": true,
-	"remote-run": true, "remote-exec": true, "dispatch-row": true, "peer-sync": true, "peer-claims": true, "spec-lint": true,
+	"remote-run": true, "remote-exec": true, "dispatch-row": true, "peer-sync": true, "peer-claims": true, "decide": true, "decisions": true, "spec-lint": true,
 	"followups": true,
 }
 
@@ -224,6 +224,8 @@ type root struct {
 	DispatchRow dispatchRowCmd `cmd:"" name:"dispatch-row" help:"The dispatch row of one session."`
 	PeerSync    peerSyncCmd    `cmd:"" name:"peer-sync" help:"The ssh side of a peer sync: one exchange on stdin."`
 	PeerClaims  peerClaimsCmd  `cmd:"" name:"peer-claims" help:"Print a peer host's live claim on an issue."`
+	Decide      decideCmd      `cmd:"" name:"decide" help:"Announce a dispatcher decision to the peer hosts."`
+	Decisions   decisionsCmd   `cmd:"" name:"decisions" help:"List the decisions announced here and by peer hosts."`
 
 	SpecLint specLintCmd `cmd:"" name:"spec-lint" help:"Lint a dispatcher task spec."`
 
@@ -409,14 +411,21 @@ type env struct {
 	proc   proc.Table  // the process table the pid reads go through
 	stdin  io.Reader   // remote-exec's request
 	clock  clock.Clock // the fold's clock (jq's `now`); nil Now is the wall clock
+	// peerHosts is the settings loader behind every peer read; nil reads no peer.
+	peerHosts func() (map[string]remote.Host, error)
+}
+
+// now is the env clock when one is set, else the wall clock.
+func (e env) now() time.Time {
+	if e.clock.Now != nil {
+		return e.clock.Now()
+	}
+	return time.Now()
 }
 
 // nowSec is jq's `now`: the env clock when one is set, in fractional seconds.
 func (e env) nowSec() float64 {
-	now := time.Now()
-	if e.clock.Now != nil {
-		now = e.clock.Now()
-	}
+	now := e.now()
 	return float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
 }
 
@@ -429,6 +438,9 @@ func main() {
 		probes: probes,
 		proc:   proc.OS{},
 		stdin:  os.Stdin,
+		peerHosts: func() (map[string]remote.Host, error) {
+			return remote.Load(context.Background(), remote.ConfigBin(), io.Discard)
+		},
 	}
 	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, e))
 }
@@ -676,6 +688,28 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return 0
 	}
 
+	if sub == "decide" {
+		return status.RunDecide(ctx, parsed.typed.Decide.Text, paths, stderr, status.Options{
+			Dir:       cwd,
+			CrewID:    func() string { return bus.CrewID(ctx, cwd) },
+			Clock:     clock.FromEnv(),
+			Sender:    senderProbes(e.proc),
+			Tmux:      tmux.Exec{},
+			PeerHosts: e.peerHosts,
+		})
+	}
+	if sub == "decisions" {
+		c := parsed.typed.Decisions
+		now := e.now()
+		since := now.Add(-decisionsWindow).UnixMilli()
+		if c.All {
+			since = 0
+		} else if c.Since != nil {
+			since, _ = parseSince(c.Since, now)
+		}
+		return printDecisions(paths, since, c.All, c.JSON, stdout, stderr)
+	}
+
 	// spec-lint reads a spec file and the repo's origin refs, never the bus.
 	if sub == "spec-lint" {
 		c := parsed.typed.SpecLint
@@ -857,11 +891,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			return ""
 		}
 		o := status.Options{
-			Dir:    cwd,
-			CrewID: func() string { return bus.CrewID(ctx, cwd) },
-			Clock:  clock.FromEnv(),
-			Sender: senderProbes(e.proc),
-			Tmux:   tmux.Exec{},
+			Dir:       cwd,
+			CrewID:    func() string { return bus.CrewID(ctx, cwd) },
+			Clock:     clock.FromEnv(),
+			Sender:    senderProbes(e.proc),
+			Tmux:      tmux.Exec{},
+			PeerHosts: e.peerHosts,
 		}
 		if sub == "status" {
 			c := parsed.typed.Status
@@ -987,6 +1022,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		})
 		v = merged
 	}
+	if sub == "roster" && parsed.typed.Roster.Peers {
+		peerRows, err := peer.RosterRows(peer.StoreFor(paths), e.peerHosts, e.now())
+		if err != nil {
+			say(stderr, "crew: roster: peer settings: %v\n", err)
+		}
+		peerRows, dropped := peer.DropLocal(peerRows, events)
+		if dropped > 0 {
+			say(stderr, "crew: roster: %d peer rows dropped (a local crew id or branch)\n", dropped)
+		}
+		v = append(v.([]map[string]any), peerRows...) // after the merge, so a host never relays its peers
+	}
 
 	if sub == "roster" || sub == "sessions" {
 		v = invisible.Value(v)
@@ -1055,9 +1101,10 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 		})
 	}
 	o := fleet.Options{
-		Tmux:  tmux.Exec{},
-		Git:   git.Exec{},
-		Clock: clock.FromEnv(),
+		Tmux:      tmux.Exec{},
+		Git:       git.Exec{},
+		Clock:     clock.FromEnv(),
+		PeerHosts: e.peerHosts,
 		// A repo's remote workers answer for themselves, as they do for
 		// `crew roster`: through remote-run, which runs the sender check, from
 		// the checkout of the repo whose bus is being read.

@@ -178,6 +178,11 @@ func (pl *peerLink) syncAll() {
 			Slug:      slug,
 			Transport: pl.hooks.transport,
 		})
+		// A reset found by this sync or by a peer's dial into us since the last
+		// round, whether or not this sync went through.
+		if peer.TakeReset(pl.store, name) {
+			pl.report(name, "reset", "reset")
+		}
 		if err != nil {
 			if pl.ctx.Err() == nil {
 				pl.report(name, "sync", err.Error())

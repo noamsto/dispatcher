@@ -3,14 +3,18 @@ package peer
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -62,8 +66,9 @@ var allowlist = map[string][]field{
 		{"worker_id", textField}, {"host", textField}, {"remote", boolField}, {"title", textField}, {"name", textField},
 		{"also_closes", closesField},
 	},
-	"reap": {{"ts", intField}, {"kind", textField}, {"branch", textField}},
-	"msg":  {{"ts", intField}, {"crew_id", textField}, {"kind", textField}, {"from", textField}, {"to", textField}, {"body", textField}},
+	"reap":     {{"ts", intField}, {"kind", textField}, {"branch", textField}},
+	"msg":      {{"ts", intField}, {"crew_id", textField}, {"kind", textField}, {"from", textField}, {"to", textField}, {"body", textField}},
+	"decision": {{"ts", intField}, {"crew_id", textField}, {"kind", textField}, {"from", textField}, {"body", textField}},
 }
 
 // Admit is the reader-side check every peer row passes before it is stored:
@@ -112,11 +117,11 @@ func Admit(e Entry, self string, now time.Time) (json.RawMessage, string) {
 		return nil, reasonIdentity
 	}
 	for _, f := range fields {
-		if hasControl(obj[f.name], kind == "msg" && f.name == "body") {
+		if hasControl(obj[f.name], f.name == "body" && freeText(kind)) {
 			return nil, reasonControl
 		}
 	}
-	if body, _ := obj["body"].(string); kind == "msg" && len(body) > MaxBody {
+	if body, _ := obj["body"].(string); freeText(kind) && len(body) > MaxBody {
 		return nil, reasonOversize
 	}
 	row, err := project(fields, obj)
@@ -130,11 +135,15 @@ func Admit(e Entry, self string, now time.Time) (json.RawMessage, string) {
 	return row, ""
 }
 
+// freeText reports whether kind carries a free-text body.
+func freeText(kind string) bool { return kind == "msg" || kind == "decision" }
+
 // identity is the per-row identity rule: dispatch.sh writes claim-issue,
-// dispatch and reap rows without a `from` (crew status and crew msg always set
-// one), and a msg must come from its crew's dispatcher to this host.
+// dispatch and reap rows without a `from` (crew status, crew msg and crew
+// decide always set one), a msg must come from its crew's dispatcher to this
+// host, and a decision from its crew's dispatcher.
 func identity(kind string, obj map[string]any, self string) bool {
-	if _, ok := obj["from"]; ok && kind != "msg" {
+	if _, ok := obj["from"]; ok && !freeText(kind) {
 		return false
 	}
 	if kind == "reap" {
@@ -144,7 +153,10 @@ func identity(kind string, obj map[string]any, self string) bool {
 	if !bus.ValidCrewID(crew) {
 		return false
 	}
-	return kind != "msg" || obj["from"] == "dispatcher:"+crew && obj["to"] == "peer:"+self
+	if !freeText(kind) {
+		return true
+	}
+	return obj["from"] == "dispatcher:"+crew && (kind != "msg" || obj["to"] == "peer:"+self)
 }
 
 func (t fieldType) valid(v any) bool {
@@ -256,12 +268,28 @@ func project(fields []field, obj map[string]any) ([]byte, error) {
 // scanned through: the end of the last complete line, or, when the batch was
 // truncated at MaxRows or MaxBatch (more), the end of the last row returned. A
 // missing log has no rows and cursor 0; a since past the log's size reads from
-// 0.
-func Export(log string, since int64, toHost string, now time.Time) (rows []Entry, cursor int64, more bool, err error) {
+// 0. epoch is the log's epoch; a sinceEpoch it has changed from (the log was
+// replaced or rewritten since the peer took since) also reads from 0. Both come
+// from one open file, so the rows always belong to the epoch returned.
+func Export(log string, since int64, sinceEpoch, toHost string, now time.Time) (rows []Entry, cursor int64, more bool, epoch string, err error) {
+	f, err := os.Open(log)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, 0, false, "", nil
+	}
+	if err != nil {
+		return nil, 0, false, "", err
+	}
+	defer func() { _ = f.Close() }()
+	if epoch, err = epochOf(f); err != nil {
+		return nil, 0, false, "", err
+	}
+	if changed(sinceEpoch, epoch) {
+		since = 0
+	}
 	size := 0
-	cursor, err = eachLine(log, since, func(line []byte, end int64) bool {
-		row, ok := exportRow(line, end, toHost, now)
-		if !ok {
+	cursor, err = eachLineFile(f, since, func(line []byte, end int64) bool {
+		row, reason := exportRow(line, end, toHost, now)
+		if reason != "" {
 			return true
 		}
 		if len(rows) == MaxRows || size+len(row) > MaxBatch {
@@ -273,45 +301,97 @@ func Export(log string, since int64, toHost string, now time.Time) (rows []Entry
 		return true
 	})
 	if err != nil {
-		return nil, 0, false, err
+		return nil, 0, false, "", err
 	}
 	if more {
 		cursor = rows[len(rows)-1].Seq
 	}
-	return rows, cursor, more, nil
+	return rows, cursor, more, epoch, nil
 }
 
-// exportRow is line projected for toHost, or false when it is not exportable.
+// changed reports whether a log's epoch went from old to new; "" is unknown,
+// never a change.
+func changed(old, new string) bool { return old != "" && new != "" && old != new }
+
+// LogEpoch is the epoch of the log at path; a missing log's is "".
+func LogEpoch(path string) (string, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	return epochOf(f)
+}
+
+// epochOf names one incarnation of a log: its inode and first line, so a
+// truncate-and-rewrite and a rename-replace each give a new epoch while appends
+// keep it. A log without a complete first line has an unknown epoch, "", so the
+// first row landing never reads as a reset. It reads with ReadAt, leaving f's
+// offset alone.
+func epochOf(f *os.File) (string, error) {
+	st, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	buf := make([]byte, bus.LineMax+1) // a line of LineMax bytes ends its newline at the next byte
+	n, err := f.ReadAt(buf, 0)
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+	first, _, ok := bytes.Cut(buf[:n], []byte("\n"))
+	if !ok {
+		return "", nil
+	}
+	sum := sha256.Sum256(fmt.Appendf(nil, "%d\n%s", st.Sys().(*syscall.Stat_t).Ino, first))
+	return hex.EncodeToString(sum[:16]), nil
+}
+
+// ExportDrop is why a peer sync would not export row, "" when it would.
+func ExportDrop(row string, now time.Time) string {
+	_, reason := exportRow([]byte(row), 1, "peer", now)
+	return reason
+}
+
+// exportRow is line projected for toHost, or the reason it is not exportable.
 // Rows the receiver's Admit would drop are skipped here, so a peer never
 // reports our rows as drops for their shape.
-func exportRow(line []byte, seq int64, toHost string, now time.Time) (json.RawMessage, bool) {
+func exportRow(line []byte, seq int64, toHost string, now time.Time) (json.RawMessage, string) {
 	if !utf8.Valid(line) {
-		return nil, false
+		return nil, reasonMalformed
 	}
 	obj, ok := decodeObject(line)
 	if !ok {
-		return nil, false
+		return nil, reasonMalformed
+	}
+	ts, ok := intValue(obj["ts"])
+	if !ok {
+		return nil, reasonMalformed
+	}
+	if t := time.UnixMilli(ts); now.Sub(t) > keepFor {
+		return nil, reasonStale
+	} else if t.After(now.Add(maxSkew)) {
+		return nil, reasonMalformed
 	}
 	kind, _ := obj["kind"].(string)
 	switch kind {
-	case "claim-issue", "dispatch", "reap":
-		ts, ok := intValue(obj["ts"])
-		if !ok || now.Sub(time.UnixMilli(ts)) > claimindex.StaleAfter {
-			return nil, false
-		}
-		if title, ok := obj["title"].(string); ok && kind == "dispatch" {
+	case "claim-issue", "reap":
+	case "dispatch":
+		if title, ok := obj["title"].(string); ok {
 			obj["title"] = invisible.Drop(title)
 		}
-	case "msg":
+	case "msg", "decision":
 		if body, ok := obj["body"].(string); ok {
 			obj["body"] = invisible.Drop(stripControl(body))
 		}
 	default:
-		return nil, false
+		return nil, reasonWorker
 	}
 	// The projection drops `from` on the kinds that must not carry one.
 	if !identity(kind, obj, toHost) {
-		return nil, false
+		return nil, reasonIdentity
 	}
 	fields := allowlist[kind]
 	row, err := project(fields, obj)
@@ -319,10 +399,9 @@ func exportRow(line []byte, seq int64, toHost string, now time.Time) (json.RawMe
 		row, err = fitTitle(fields, obj, row)
 	}
 	if err != nil {
-		return nil, false
+		return nil, reasonMalformed
 	}
-	admitted, reason := Admit(Entry{Seq: seq, Row: row}, toHost, now)
-	return admitted, reason == ""
+	return Admit(Entry{Seq: seq, Row: row}, toHost, now)
 }
 
 // fitTitle shortens a dispatch row's title, whole runes at a time, until the
@@ -365,6 +444,11 @@ func eachLine(path string, from int64, fn func(line []byte, end int64) bool) (in
 		return 0, err
 	}
 	defer func() { _ = f.Close() }()
+	return eachLineFile(f, from, fn)
+}
+
+// eachLineFile is eachLine over an open file.
+func eachLineFile(f *os.File, from int64, fn func(line []byte, end int64) bool) (int64, error) {
 	st, err := f.Stat()
 	if err != nil {
 		return 0, err

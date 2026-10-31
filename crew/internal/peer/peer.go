@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 )
@@ -49,6 +50,13 @@ const (
 	LockWait    = 5 * time.Second
 )
 
+// MaxSnapshotRows caps a roster snapshot; PeerStale is how long after the last
+// good exchange a peer's roster still counts as current.
+const (
+	MaxSnapshotRows = 100
+	PeerStale       = 5 * time.Minute
+)
+
 // Entry is one exported row and its seq: the byte offset just past the row's
 // line in its writer's events.jsonl.
 type Entry struct {
@@ -58,38 +66,51 @@ type Entry struct {
 
 // Request is the payload `crew peer-sync` reads on stdin. Expect is the id the
 // requester has pinned for the server ("" before first contact), so the server
-// can refuse an id change before it stores anything.
+// can refuse an id change before it stores anything. Epoch is the requester's
+// log epoch and SinceEpoch the server epoch Since refers to; peers that predate
+// epochs send neither. Roster is the requester's roster snapshot.
 type Request struct {
-	V      int     `json:"v"`
-	Host   string  `json:"host"`
-	ID     string  `json:"id"`
-	Expect string  `json:"expect"`
-	Since  int64   `json:"since"`
-	Cursor int64   `json:"cursor"`
-	Rows   []Entry `json:"rows"`
+	V          int       `json:"v"`
+	Host       string    `json:"host"`
+	ID         string    `json:"id"`
+	Expect     string    `json:"expect"`
+	Since      int64     `json:"since"`
+	SinceEpoch string    `json:"since_epoch,omitempty"`
+	Epoch      string    `json:"epoch,omitempty"`
+	Cursor     int64     `json:"cursor"`
+	Rows       []Entry   `json:"rows"`
+	Roster     *Snapshot `json:"roster,omitempty"`
 }
 
-// Response is the object `crew peer-sync` prints.
+// Response is the object `crew peer-sync` prints. Epoch is the server's log
+// epoch and AckEpoch the requester epoch Ack refers to. Roster is the server's
+// roster snapshot.
 type Response struct {
-	V       int            `json:"v"`
-	Host    string         `json:"host"`
-	ID      string         `json:"id"`
-	Ack     int64          `json:"ack"`
-	Cursor  int64          `json:"cursor"`
-	More    bool           `json:"more"`
-	Rows    []Entry        `json:"rows"`
-	Dropped map[string]int `json:"dropped"`
+	V        int            `json:"v"`
+	Host     string         `json:"host"`
+	ID       string         `json:"id"`
+	Ack      int64          `json:"ack"`
+	AckEpoch string         `json:"ack_epoch,omitempty"`
+	Epoch    string         `json:"epoch,omitempty"`
+	Cursor   int64          `json:"cursor"`
+	More     bool           `json:"more"`
+	Rows     []Entry        `json:"rows"`
+	Dropped  map[string]int `json:"dropped"`
+	Roster   *Snapshot      `json:"roster,omitempty"`
 }
 
 // State is `<host>.state`: the peer's pinned bus id, the highest peer seq we
 // have processed (HWM, the dedupe mark), the peer's claimed scan cursor (Scan,
 // only the resume point we hand back, never admission), and our scan cursor
-// the peer last acknowledged.
+// the peer last acknowledged. Epoch is the peer log epoch HWM and Scan refer
+// to, AckEpoch our log epoch Ack refers to; "" is unknown.
 type State struct {
-	ID   string `json:"id"`
-	HWM  int64  `json:"hwm"`
-	Scan int64  `json:"scan"`
-	Ack  int64  `json:"ack"`
+	ID       string `json:"id"`
+	HWM      int64  `json:"hwm"`
+	Scan     int64  `json:"scan"`
+	Ack      int64  `json:"ack"`
+	Epoch    string `json:"epoch,omitempty"`
+	AckEpoch string `json:"ack_epoch,omitempty"`
 }
 
 // Store is the peer store directory, `<common>/crew/peers`. Every host passed
@@ -211,6 +232,75 @@ func (s Store) Seen(host string) int64 {
 // WriteSeen replaces host's seen offset.
 func (s Store) WriteSeen(host string, off int64) error {
 	return s.replace(s.path(host, ".seen"), []byte(strconv.FormatInt(off, 10)+"\n"))
+}
+
+// markReset records that host's log was found reset at now, for the stream to
+// report once.
+func (s Store) markReset(host string, now time.Time) error {
+	return s.replace(s.path(host, ".reset"), []byte(strconv.FormatInt(now.UnixMilli(), 10)+"\n"))
+}
+
+// TakeReset reports whether a reset of host's log is waiting to be reported,
+// and clears it.
+func TakeReset(s Store, host string) bool {
+	return os.Remove(s.path(host, ".reset")) == nil
+}
+
+// writeRoster replaces host's roster with rows, admitted at now.
+func (s Store) writeRoster(host string, rows []SnapshotRow, now time.Time) error {
+	if rows == nil {
+		rows = []SnapshotRow{}
+	}
+	data, err := encode(rosterFile{Synced: now.UnixMilli(), Rows: rows})
+	if err != nil {
+		return err
+	}
+	return s.replace(s.path(host, ".roster"), append(data, '\n'))
+}
+
+// link is `<host>.link`: when the last exchange with host succeeded and when
+// one last failed, and why.
+type link struct {
+	OK     int64  `json:"ok"`
+	Err    int64  `json:"err"`
+	Detail string `json:"detail"`
+}
+
+// linkDetailMax caps a link failure's detail, in bytes.
+const linkDetailMax = 200
+
+// readLink is host's link; a missing file is the zero link.
+func (s Store) readLink(host string) (link, error) {
+	path := s.path(host, ".link")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return link{}, nil
+	}
+	if err != nil {
+		return link{}, err
+	}
+	var l link
+	if err := json.Unmarshal(data, &l); err != nil {
+		return link{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return l, nil
+}
+
+// writeLink records an exchange with host at now: a success, or a failure and
+// its detail. The caller holds host's lock. An unreadable link starts over.
+func (s Store) writeLink(host string, ok bool, detail string, now time.Time) error {
+	l, _ := s.readLink(host)
+	if ok {
+		l.OK = now.UnixMilli()
+	} else {
+		l.Err = now.UnixMilli()
+		l.Detail = capText(invisible.Drop(stripControl(detail)), linkDetailMax)
+	}
+	data, err := encode(l)
+	if err != nil {
+		return err
+	}
+	return s.replace(s.path(host, ".link"), append(data, '\n'))
 }
 
 func (s Store) replace(path string, data []byte) error {

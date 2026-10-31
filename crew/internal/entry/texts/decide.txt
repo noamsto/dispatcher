@@ -1,0 +1,12 @@
+usage: crew decide "<text>"
+
+Record a dispatcher decision on this bus as a decision row (from
+dispatcher:<crew>, addressed to nobody). The peer sync carries it to every
+peer host, where `crew decisions` lists it with this host as its origin.
+
+Only a dispatcher can decide: a worker or role session is refused. The text
+must be non-empty, at most 3500 bytes and its encoded row at most 3900 bytes, since a
+row a peer would drop must not look shared. A peer receives decisions up to 24
+hours old. Exits 1 on a refusal, 2 for missing text.
+
+  crew decide "use sqlite for the cache"

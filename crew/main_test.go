@@ -578,7 +578,7 @@ func TestRunBusSubsRefuseOutsideRepo(t *testing.T) {
 		"crews", "log", "report", "sessions", "roster", "identity", "inbox", "hold", "await", "watch",
 		"retro", "reply", "resolve-target", "pr-watch", "merge", "where", "stream", "roster-render", "adopt",
 		"status", "msg", "register", "deregister", "rate", "git-baseline", "reap", "stack", "nudge", "stall-watch",
-		"remote-run", "dispatch-row", "peer-sync", "peer-claims", "spec-lint", "followups",
+		"remote-run", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups",
 	} {
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), []string{sub}, &stdout, &stderr, e)
@@ -1341,13 +1341,13 @@ func TestAdmittedSubcommands(t *testing.T) {
 		"git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help",
 		"id", "new", "engine-cmd", "dash", "pi-agent-dir", "relay",
 		"remote-run", "remote-exec", "dispatch-row", "spec-lint",
-		"merge", "followups", "peer-sync", "peer-claims", // added after that revision
+		"merge", "followups", "peer-sync", "peer-claims", "decide", "decisions", // added after that revision
 	}
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
 		"status", "msg", "reply", "hold", "nudge", "await", "watch", "relay", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "merge", "pr-watch", "stall-watch", "help",
-		"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "spec-lint", "followups"} {
+		"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -1776,6 +1776,13 @@ var refusalRows = []struct {
 	{"peer-claims no issue", []string{"peer-claims"}, wantPeerClaimsUsage, 2},
 	{"peer-claims bad issue", []string{"peer-claims", "4x"}, wantPeerClaimsUsage, 2},
 	{"peer-claims extra positional", []string{"peer-claims", "4", "5"}, "crew: peer-claims: unexpected argument '5' (" + wantPeerClaimsUsage + ")", 2},
+	{"decide no text", []string{"decide"}, wantDecideUsage, 2},
+	{"decide empty text", []string{"decide", ""}, wantDecideUsage, 2},
+	{"decide extra positional", []string{"decide", "a", "b"}, "crew: decide: unexpected argument 'b' (" + wantDecideUsage + ")", 2},
+	{"decisions bad since", []string{"decisions", "--since", "bogus"}, wantDecisionsUsage, 2},
+	{"decisions empty since", []string{"decisions", "--since", ""}, wantDecisionsUsage, 2},
+	{"decisions since missing value", []string{"decisions", "--since"}, wantDecisionsUsage, 2},
+	{"decisions extra positional", []string{"decisions", "x"}, "crew: decisions: unexpected argument 'x' (" + wantDecisionsUsage + ")", 2},
 	{"peer-sync extra positional", []string{"peer-sync", "x"}, "crew: peer-sync: takes no arguments (got 'x')", 2},
 	{"spec-lint no file", []string{"spec-lint"}, wantSpecLintUsage, 2},
 	{"spec-lint bad issue", []string{"spec-lint", "f.md", "--issue", "x1"}, wantSpecLintUsage, 2},
@@ -1870,6 +1877,8 @@ const (
 	wantRemoteRunUsage   = "usage: crew remote-run --host H [--env K=V]... [--spec-file F] -- <argv>..."
 	wantDispatchRowUsage = "usage: crew dispatch-row --session S [--crew ID]"
 	wantPeerClaimsUsage  = "usage: crew peer-claims <issue>"
+	wantDecideUsage      = `usage: crew decide "<text>"`
+	wantDecisionsUsage   = "usage: crew decisions [--json] [--since <ms|duration> | --all]"
 	wantSpecLintUsage    = "usage: crew spec-lint <file> [--issue N]... [--no-host-checks]"
 	wantFollowupsUsage   = "usage: crew followups <PR> (--entries FILE [--apply] [--tracker github|linear] | --draft [--crew ID])"
 	guardUsage           = "crew-go: git-guard: usage: crew-go git-guard check|check-cwd|init|commondir|pairs|union|show-url|show-key|show-pair|canon …"
