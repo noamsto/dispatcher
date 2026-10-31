@@ -1242,3 +1242,34 @@ func TestMalformedSessionKeysDoNotThrowTheFold(t *testing.T) {
 		})
 	}
 }
+
+// A batch event whose handling is a moved playbook carries the skill pointer
+// (#1278); an event with no moved playbook carries none.
+func TestWatchBatchCarriesPlaybook(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p,
+		status(1785951264000, "worker:feat/x#s1-1", "blocked", "quota: wait", "watchdog"),
+		status(1785951265000, "worker:feat/x#s1-1", "blocked", "permission: needs a dir", ""),
+		`{"ts":1785951266000,"crew_id":"c1","from":"pr-watch:1","to":"dispatcher:c1","kind":"msg","body":"{}"}`,
+		`{"ts":1785951267000,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"msg","body":"follow-ups (untracked): x"}`,
+	)
+	out, errS, code, _ := run(t, p, Request{Since: since("0"), Timeout: "1", Interval: "1"})
+	if code != 0 {
+		t.Fatalf("code = %d, stderr %s", code, errS)
+	}
+	var batch struct {
+		Events []map[string]any `json:"events"`
+	}
+	if err := json.Unmarshal([]byte(out), &batch); err != nil {
+		t.Fatalf("batch = %q: %v", out, err)
+	}
+	want := []string{"dispatcher:watchdog", "dispatcher:blocked-replies", "dispatcher:pr-watch", "dispatcher:follow-ups"}
+	if len(batch.Events) != len(want) {
+		t.Fatalf("events = %d (%s), want %d", len(batch.Events), out, len(want))
+	}
+	for i, w := range want {
+		if got := batch.Events[i]["playbook"]; got != w {
+			t.Errorf("event %d playbook = %v, want %v", i, got, w)
+		}
+	}
+}

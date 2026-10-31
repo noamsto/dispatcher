@@ -683,7 +683,7 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"budget lever: claude 5h at 91% (resets in 35m) — short window: prefer waiting past the reset to shedding burn class"* ]]
   [[ "$output" == *"budget lever: claude 7d at 97% (resets in 3d 22h, 53 points ahead of pace) — binding window; not holdable: 3d 22h is outside the window's last 15%, hand the task back"* ]]
-  [[ "$output" == *"budget lever: codex 1d at 90% — approaching quota (>=85%), prefer a cheaper burn class or rotate engines (see DISPATCHER_PROTOCOL.md)"* ]]
+  [[ "$output" == *"budget lever: codex 1d at 90% — approaching quota (>=85%), prefer a cheaper burn class or rotate engines -> skill dispatcher:budget-holds"* ]]
   # The summary line gains the relative remaining only on a future reset —
   # the oauth fixture's past-dated one has no ", in ..." tail by design.
   [[ "$output" == *"claude: "*"(resets "*", in "* ]]

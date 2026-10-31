@@ -956,6 +956,11 @@ while :; do
       --thinking "${effort:-$(orch_default effort)}" \
       --no-approve \
       --append-system-prompt "$protocol"
+    # --no-approve drops project-local resources; a raw-script run leaves
+    # @skillsDir@ unsubstituted, so guard on the directory.
+    if [ -d "$SKILLS_DIR" ]; then
+      set -- "$@" --skill "$SKILLS_DIR"
+    fi
     # pi has no --mcp-config: catalog servers come from a generated extension
     # that registers exactly them for this launch.
     if [ -n "$catalog" ]; then

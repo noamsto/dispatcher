@@ -141,3 +141,17 @@ func TestRelayRefusesWhatWatchRefuses(t *testing.T) {
 		t.Errorf("code %d stderr %q", code, errB.String())
 	}
 }
+
+// The relay annotates its own fold, so a remote batch carries the same playbook
+// pointer as a local watch (#1278).
+func TestRelayBatchCarriesPlaybook(t *testing.T) {
+	p := fixture(t)
+	writeLog(t, p, status(1785951264000, "worker:feat/x#s1-1", "blocked", "stalled: no engine", "watchdog"))
+	got, code, _ := relayRun(t, p, RelayRequest{Since: since("0")})
+	if code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	if !strings.Contains(got, `"playbook":"dispatcher:watchdog"`) {
+		t.Errorf("relay = %s, want the watchdog playbook", got)
+	}
+}

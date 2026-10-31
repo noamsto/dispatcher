@@ -233,7 +233,7 @@ func (s *stackCmd) plan(ctx context.Context, layers []layer) error {
 			doubt = fmt.Sprintf("PR base %s differs from the recorded parent %s — ask the child; never guess", p, rp)
 		case cut == "":
 			doubt = fmt.Sprintf("no recorded cut for %s — ask the child for the parent oid it is based on "+
-				"(DISPATCHER_PROTOCOL.md → Rebase coordination); never guess", b)
+				"(-> skill dispatcher:stacked); never guess", b)
 		default:
 			has, err := s.hasCut(ctx, cut, s.fetched[b])
 			if err != nil {

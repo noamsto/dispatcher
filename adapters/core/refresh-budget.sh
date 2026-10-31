@@ -155,7 +155,7 @@ JQ_DEFS='
         elif $fam == "7d" then "real budget: prefer a cheaper burn class or rotate engines"
         elif $fam == "month" and $e == "pi" then "monthly spend target: keep standard/trivial work off pi and shed pi fan-out"
         elif $fam == "month" then "monthly plan quota: prefer a cheaper burn class or rotate engines"
-        else "approaching quota (>=85%), prefer a cheaper burn class or rotate engines (see DISPATCHER_PROTOCOL.md)"
+        else "approaching quota (>=85%), prefer a cheaper burn class or rotate engines -> skill dispatcher:budget-holds"
         end)
      elif $gate == null then "not binding: window has already reset"
      elif $k != $gate.key then "not binding: \($e) is gated until \($gate.key) resets"
