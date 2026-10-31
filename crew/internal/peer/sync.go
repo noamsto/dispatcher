@@ -115,6 +115,9 @@ func serve(stdin io.Reader, o ServeOptions) (Response, error) {
 		return Response{}, err
 	}
 	now := nowFunc(o.Now)()
+	if err := takeEpoch(store, req.Host, &st, req.Epoch, now); err != nil {
+		return Response{}, err
+	}
 	kept, dropped, seen := admitRows(req.Rows, st.HWM, req.Cursor, self, now)
 	if err := store.Append(req.Host, kept, now); err != nil {
 		return Response{}, err
@@ -122,18 +125,31 @@ func serve(stdin io.Reader, o ServeOptions) (Response, error) {
 	st.HWM = max(st.HWM, seen)
 	st.Scan = max(st.Scan, req.Cursor)
 	// The requester has stored our rows through Since, so a later dial from
-	// this side need not resend them.
-	st.Ack = max(st.Ack, req.Since)
+	// this side need not resend them, unless Since or Ack predate our log's
+	// epoch. An unreadable epoch is unknown: the state write below must not
+	// wait on it.
+	own, _ := LogEpoch(o.Paths.Log)
+	if changed(req.SinceEpoch, own) || changed(st.AckEpoch, own) {
+		st.Ack = 0
+	} else {
+		st.Ack = max(st.Ack, req.Since)
+	}
+	if own != "" {
+		st.AckEpoch = own
+	}
 	// Written before the export, so a failed export cannot get the stored rows
 	// stored again.
 	if err := store.WriteState(req.Host, st); err != nil {
 		return Response{}, err
 	}
-	rows, cursor, more, err := Export(o.Paths.Log, req.Since, req.Host, now)
+	rows, cursor, more, epoch, err := Export(o.Paths.Log, req.Since, req.SinceEpoch, req.Host, now)
 	if err != nil {
 		return Response{}, err
 	}
-	return Response{V: 1, Host: self, ID: id, Ack: max(st.HWM, st.Scan), Cursor: cursor, More: more, Rows: rows, Dropped: dropped}, nil
+	return Response{
+		V: 1, Host: self, ID: id, Ack: max(st.HWM, st.Scan), AckEpoch: st.Epoch, Epoch: epoch,
+		Cursor: cursor, More: more, Rows: rows, Dropped: dropped,
+	}, nil
 }
 
 // Sync is the L side of one exchange with the peer host o.Name: it pushes our
@@ -155,11 +171,14 @@ func Sync(ctx context.Context, o SyncOptions) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	rows, cursor, _, err := Export(o.Paths.Log, st.Ack, o.Name, now)
+	rows, cursor, _, epoch, err := Export(o.Paths.Log, st.Ack, st.AckEpoch, o.Name, now)
 	if err != nil {
 		return Result{}, err
 	}
-	req, err := buildRequest(Request{V: 1, Host: self, ID: id, Expect: st.ID, Since: max(st.HWM, st.Scan), Cursor: cursor, Rows: rows}, o)
+	req, err := buildRequest(Request{
+		V: 1, Host: self, ID: id, Expect: st.ID, Since: max(st.HWM, st.Scan), SinceEpoch: st.Epoch, Epoch: epoch,
+		Cursor: cursor, Rows: rows,
+	}, o)
 	if err != nil {
 		return Result{}, err
 	}
@@ -205,6 +224,9 @@ func Sync(ctx context.Context, o SyncOptions) (Result, error) {
 	if err := pin(&st, o.Name, resp.ID); err != nil {
 		return Result{}, err
 	}
+	if err := takeEpoch(store, o.Name, &st, resp.Epoch, now); err != nil {
+		return Result{}, err
+	}
 	kept, dropped, seen := admitRows(resp.Rows, st.HWM, resp.Cursor, self, now)
 	if err := store.Append(o.Name, kept, now); err != nil {
 		return Result{}, err
@@ -212,6 +234,7 @@ func Sync(ctx context.Context, o SyncOptions) (Result, error) {
 	st.HWM = max(st.HWM, seen)
 	st.Scan = max(st.Scan, resp.Cursor)
 	st.Ack = resp.Ack
+	st.AckEpoch = resp.AckEpoch
 	if err := store.WriteState(o.Name, st); err != nil {
 		return Result{}, err
 	}
@@ -279,6 +302,23 @@ func pin(st *State, host, id string) error {
 	}
 	if st.ID != id {
 		return fmt.Errorf("identity: peer %s id changed (remove peers/%s.state to re-pin)", host, host)
+	}
+	return nil
+}
+
+// takeEpoch records host's log epoch theirs in st. A change means host's log
+// was reset, so the old seqs mean nothing: HWM and Scan restart before this
+// exchange's rows, which the peer sent from 0 on seeing our stale epoch, are
+// admitted, and the reset is marked for the stream to report.
+func takeEpoch(store Store, host string, st *State, theirs string, now time.Time) error {
+	if changed(st.Epoch, theirs) {
+		st.HWM, st.Scan = 0, 0
+		if err := store.markReset(host, now); err != nil {
+			return err
+		}
+	}
+	if theirs != "" {
+		st.Epoch = theirs
 	}
 	return nil
 }

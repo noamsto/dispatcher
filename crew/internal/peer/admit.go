@@ -3,14 +3,18 @@ package peer
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -264,10 +268,26 @@ func project(fields []field, obj map[string]any) ([]byte, error) {
 // scanned through: the end of the last complete line, or, when the batch was
 // truncated at MaxRows or MaxBatch (more), the end of the last row returned. A
 // missing log has no rows and cursor 0; a since past the log's size reads from
-// 0.
-func Export(log string, since int64, toHost string, now time.Time) (rows []Entry, cursor int64, more bool, err error) {
+// 0. epoch is the log's epoch; a sinceEpoch it has changed from (the log was
+// replaced or rewritten since the peer took since) also reads from 0. Both come
+// from one open file, so the rows always belong to the epoch returned.
+func Export(log string, since int64, sinceEpoch, toHost string, now time.Time) (rows []Entry, cursor int64, more bool, epoch string, err error) {
+	f, err := os.Open(log)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, 0, false, "", nil
+	}
+	if err != nil {
+		return nil, 0, false, "", err
+	}
+	defer func() { _ = f.Close() }()
+	if epoch, err = epochOf(f); err != nil {
+		return nil, 0, false, "", err
+	}
+	if changed(sinceEpoch, epoch) {
+		since = 0
+	}
 	size := 0
-	cursor, err = eachLine(log, since, func(line []byte, end int64) bool {
+	cursor, err = eachLineFile(f, since, func(line []byte, end int64) bool {
 		row, ok := exportRow(line, end, toHost, now)
 		if !ok {
 			return true
@@ -281,12 +301,52 @@ func Export(log string, since int64, toHost string, now time.Time) (rows []Entry
 		return true
 	})
 	if err != nil {
-		return nil, 0, false, err
+		return nil, 0, false, "", err
 	}
 	if more {
 		cursor = rows[len(rows)-1].Seq
 	}
-	return rows, cursor, more, nil
+	return rows, cursor, more, epoch, nil
+}
+
+// changed reports whether a log's epoch went from old to new; "" is unknown,
+// never a change.
+func changed(old, new string) bool { return old != "" && new != "" && old != new }
+
+// LogEpoch is the epoch of the log at path; a missing log's is "".
+func LogEpoch(path string) (string, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	return epochOf(f)
+}
+
+// epochOf names one incarnation of a log: its inode and first line, so a
+// truncate-and-rewrite and a rename-replace each give a new epoch while appends
+// keep it. A log without a complete first line has an unknown epoch, "", so the
+// first row landing never reads as a reset. It reads with ReadAt, leaving f's
+// offset alone.
+func epochOf(f *os.File) (string, error) {
+	st, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	buf := make([]byte, bus.LineMax)
+	n, err := f.ReadAt(buf, 0)
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+	first, _, ok := bytes.Cut(buf[:n], []byte("\n"))
+	if !ok {
+		return "", nil
+	}
+	sum := sha256.Sum256(fmt.Appendf(nil, "%d\n%s", st.Sys().(*syscall.Stat_t).Ino, first))
+	return hex.EncodeToString(sum[:16]), nil
 }
 
 // exportRow is line projected for toHost, or false when it is not exportable.
@@ -377,6 +437,11 @@ func eachLine(path string, from int64, fn func(line []byte, end int64) bool) (in
 		return 0, err
 	}
 	defer func() { _ = f.Close() }()
+	return eachLineFile(f, from, fn)
+}
+
+// eachLineFile is eachLine over an open file.
+func eachLineFile(f *os.File, from int64, fn func(line []byte, end int64) bool) (int64, error) {
 	st, err := f.Stat()
 	if err != nil {
 		return 0, err

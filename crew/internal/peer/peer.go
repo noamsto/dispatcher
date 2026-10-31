@@ -58,38 +58,48 @@ type Entry struct {
 
 // Request is the payload `crew peer-sync` reads on stdin. Expect is the id the
 // requester has pinned for the server ("" before first contact), so the server
-// can refuse an id change before it stores anything.
+// can refuse an id change before it stores anything. Epoch is the requester's
+// log epoch and SinceEpoch the server epoch Since refers to; peers that predate
+// epochs send neither.
 type Request struct {
-	V      int     `json:"v"`
-	Host   string  `json:"host"`
-	ID     string  `json:"id"`
-	Expect string  `json:"expect"`
-	Since  int64   `json:"since"`
-	Cursor int64   `json:"cursor"`
-	Rows   []Entry `json:"rows"`
+	V          int     `json:"v"`
+	Host       string  `json:"host"`
+	ID         string  `json:"id"`
+	Expect     string  `json:"expect"`
+	Since      int64   `json:"since"`
+	SinceEpoch string  `json:"since_epoch,omitempty"`
+	Epoch      string  `json:"epoch,omitempty"`
+	Cursor     int64   `json:"cursor"`
+	Rows       []Entry `json:"rows"`
 }
 
-// Response is the object `crew peer-sync` prints.
+// Response is the object `crew peer-sync` prints. Epoch is the server's log
+// epoch and AckEpoch the requester epoch Ack refers to.
 type Response struct {
-	V       int            `json:"v"`
-	Host    string         `json:"host"`
-	ID      string         `json:"id"`
-	Ack     int64          `json:"ack"`
-	Cursor  int64          `json:"cursor"`
-	More    bool           `json:"more"`
-	Rows    []Entry        `json:"rows"`
-	Dropped map[string]int `json:"dropped"`
+	V        int            `json:"v"`
+	Host     string         `json:"host"`
+	ID       string         `json:"id"`
+	Ack      int64          `json:"ack"`
+	AckEpoch string         `json:"ack_epoch,omitempty"`
+	Epoch    string         `json:"epoch,omitempty"`
+	Cursor   int64          `json:"cursor"`
+	More     bool           `json:"more"`
+	Rows     []Entry        `json:"rows"`
+	Dropped  map[string]int `json:"dropped"`
 }
 
 // State is `<host>.state`: the peer's pinned bus id, the highest peer seq we
 // have processed (HWM, the dedupe mark), the peer's claimed scan cursor (Scan,
 // only the resume point we hand back, never admission), and our scan cursor
-// the peer last acknowledged.
+// the peer last acknowledged. Epoch is the peer log epoch HWM and Scan refer
+// to, AckEpoch our log epoch Ack refers to; "" is unknown.
 type State struct {
-	ID   string `json:"id"`
-	HWM  int64  `json:"hwm"`
-	Scan int64  `json:"scan"`
-	Ack  int64  `json:"ack"`
+	ID       string `json:"id"`
+	HWM      int64  `json:"hwm"`
+	Scan     int64  `json:"scan"`
+	Ack      int64  `json:"ack"`
+	Epoch    string `json:"epoch,omitempty"`
+	AckEpoch string `json:"ack_epoch,omitempty"`
 }
 
 // Store is the peer store directory, `<common>/crew/peers`. Every host passed
@@ -211,6 +221,18 @@ func (s Store) Seen(host string) int64 {
 // WriteSeen replaces host's seen offset.
 func (s Store) WriteSeen(host string, off int64) error {
 	return s.replace(s.path(host, ".seen"), []byte(strconv.FormatInt(off, 10)+"\n"))
+}
+
+// markReset records that host's log was found reset at now, for the stream to
+// report once.
+func (s Store) markReset(host string, now time.Time) error {
+	return s.replace(s.path(host, ".reset"), []byte(strconv.FormatInt(now.UnixMilli(), 10)+"\n"))
+}
+
+// TakeReset reports whether a reset of host's log is waiting to be reported,
+// and clears it.
+func TakeReset(s Store, host string) bool {
+	return os.Remove(s.path(host, ".reset")) == nil
 }
 
 func (s Store) replace(path string, data []byte) error {

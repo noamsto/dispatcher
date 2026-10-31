@@ -38,9 +38,9 @@ func writeLines(t *testing.T, path string, lines ...string) []int64 {
 }
 
 func TestExportMissingLog(t *testing.T) {
-	rows, cursor, more, err := Export(filepath.Join(t.TempDir(), "events.jsonl"), 0, "halo", testNow)
-	if err != nil || len(rows) != 0 || cursor != 0 || more {
-		t.Fatalf("Export = %v, %d, %v, %v; want nothing, 0", rows, cursor, more, err)
+	rows, cursor, more, epoch, err := Export(filepath.Join(t.TempDir(), "events.jsonl"), 0, "", "halo", testNow)
+	if err != nil || len(rows) != 0 || cursor != 0 || more || epoch != "" {
+		t.Fatalf("Export = %v, %d, %v, %q, %v; want nothing, 0", rows, cursor, more, epoch, err)
 	}
 }
 
@@ -59,7 +59,7 @@ func TestExportSelectsRows(t *testing.T) {
 	)
 	appendRaw(t, p.Log, fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"reap","bra`, now))
 
-	rows, cursor, more, err := Export(p.Log, 0, "halo", testNow)
+	rows, cursor, more, _, err := Export(p.Log, 0, "", "halo", testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestExportSelectsRows(t *testing.T) {
 		t.Errorf("cursor, more = %d, %v; want %d, false", cursor, more, ends[7])
 	}
 
-	rows, again, more, err := Export(p.Log, cursor, "halo", testNow)
+	rows, again, more, _, err := Export(p.Log, cursor, "", "halo", testNow)
 	if err != nil || len(rows) != 0 || again != cursor || more {
 		t.Errorf("second Export = %v, %d, %v, %v; want nothing at %d", rows, again, more, err, cursor)
 	}
@@ -108,7 +108,7 @@ func msgLine(body string) string {
 func TestExportStripsBodyControl(t *testing.T) {
 	p := newBus(t)
 	writeLines(t, p.Log, msgLine("a\x01b\nc\td\u0085e"))
-	rows, _, _, err := Export(p.Log, 0, "halo", testNow)
+	rows, _, _, _, err := Export(p.Log, 0, "", "halo", testNow)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("Export = %v, %v", rows, err)
 	}
@@ -125,7 +125,7 @@ func TestExportDropsInvisibleFromBodyAndTitle(t *testing.T) {
 		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"feat/42-x","title":"Do\u200b x"}`, ms(0)),
 		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"claim-issue","issue":"43","branch":"feat/43-\u200bx"}`, ms(0)),
 	)
-	rows, _, _, err := Export(p.Log, 0, "halo", testNow)
+	rows, _, _, _, err := Export(p.Log, 0, "", "halo", testNow)
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("Export = %s, %v; want the msg and the dispatch, not the claim-issue", rowsText(rows), err)
 	}
@@ -145,7 +145,7 @@ func TestExportSkipsOversizeRow(t *testing.T) {
 		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"claim-issue","issue":"42","branch":"feat/42-%s"}`, ms(0), strings.Repeat("x", MaxRow)),
 		msgLine("after"),
 	)
-	rows, cursor, _, err := Export(p.Log, 0, "halo", testNow)
+	rows, cursor, _, _, err := Export(p.Log, 0, "", "halo", testNow)
 	if err != nil || len(rows) != 1 || rows[0].Seq != ends[1] || cursor != ends[1] {
 		t.Fatalf("Export = %s, %d, %v; want only the msg, cursor %d", rowsText(rows), cursor, err, ends[1])
 	}
@@ -158,7 +158,7 @@ func TestExportShortensALongTitle(t *testing.T) {
 		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"feat/42-x","title":%q}`, ms(0), long),
 		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"feat/43-%s","title":%q}`, ms(0), strings.Repeat("y", MaxRow), long),
 	)
-	rows, _, _, err := Export(p.Log, 0, "halo", testNow)
+	rows, _, _, _, err := Export(p.Log, 0, "", "halo", testNow)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("Export = %s, %v; want only the row whose title alone was too long", rowsText(rows), err)
 	}
@@ -182,7 +182,7 @@ func TestExportShortensAnEmojiTitle(t *testing.T) {
 		p := newBus(t)
 		writeLines(t, p.Log, fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"feat/42-%s","title":%q}`,
 			ms(0), strings.Repeat("x", pad), long))
-		rows, _, _, err := Export(p.Log, 0, "halo", testNow)
+		rows, _, _, _, err := Export(p.Log, 0, "", "halo", testNow)
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("pad %d: Export = %s, %v; want the row", pad, rowsText(rows), err)
 		}
@@ -200,11 +200,11 @@ func TestExportTruncatesAtMaxRows(t *testing.T) {
 		lines[i] = msgLine(fmt.Sprint(i))
 	}
 	ends := writeLines(t, p.Log, lines...)
-	rows, cursor, more, err := Export(p.Log, 0, "halo", testNow)
+	rows, cursor, more, _, err := Export(p.Log, 0, "", "halo", testNow)
 	if err != nil || len(rows) != MaxRows || !more || cursor != ends[MaxRows-1] {
 		t.Fatalf("Export = %d rows, cursor %d, more %v, %v; want %d, %d, true", len(rows), cursor, more, err, MaxRows, ends[MaxRows-1])
 	}
-	rows, cursor, more, err = Export(p.Log, cursor, "halo", testNow)
+	rows, cursor, more, _, err = Export(p.Log, cursor, "", "halo", testNow)
 	if err != nil || len(rows) != 1 || more || cursor != ends[MaxRows] {
 		t.Fatalf("rest = %d rows, cursor %d, more %v, %v", len(rows), cursor, more, err)
 	}
@@ -217,7 +217,7 @@ func TestExportTruncatesAtMaxBatch(t *testing.T) {
 		lines[i] = msgLine(strings.Repeat("b", 3000))
 	}
 	writeLines(t, p.Log, lines...)
-	rows, cursor, more, err := Export(p.Log, 0, "halo", testNow)
+	rows, cursor, more, _, err := Export(p.Log, 0, "", "halo", testNow)
 	if err != nil || !more || len(rows) == 0 || len(rows) == len(lines) {
 		t.Fatalf("Export = %d rows, more %v, %v; want a truncated batch", len(rows), more, err)
 	}
@@ -236,9 +236,88 @@ func TestExportTruncatesAtMaxBatch(t *testing.T) {
 func TestExportSinceBeyondSizeReadsFromStart(t *testing.T) {
 	p := newBus(t)
 	ends := writeLines(t, p.Log, msgLine("one"))
-	rows, cursor, _, err := Export(p.Log, 1<<30, "halo", testNow)
+	rows, cursor, _, _, err := Export(p.Log, 1<<30, "", "halo", testNow)
 	if err != nil || len(rows) != 1 || cursor != ends[0] {
 		t.Fatalf("Export = %s, %d, %v; want the one row", rowsText(rows), cursor, err)
+	}
+}
+
+// epochs is the log's epoch from LogEpoch and from Export, which must agree.
+func epochs(t *testing.T, log string) string {
+	t.Helper()
+	got, err := LogEpoch(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, exported, err := Export(log, 0, "", "halo", testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exported != got {
+		t.Fatalf("Export epoch %q, LogEpoch %q", exported, got)
+	}
+	return got
+}
+
+func TestExportEpoch(t *testing.T) {
+	p := newBus(t)
+	if e := epochs(t, filepath.Join(t.TempDir(), "missing.jsonl")); e != "" {
+		t.Errorf("missing log epoch %q, want unknown", e)
+	}
+	if e := epochs(t, p.Log); e != "" {
+		t.Errorf("empty log epoch %q, want unknown", e)
+	}
+	appendRaw(t, p.Log, msgLine("one"))
+	if e := epochs(t, p.Log); e != "" {
+		t.Errorf("partial first line epoch %q, want unknown", e)
+	}
+	appendRaw(t, p.Log, "\n")
+	first := epochs(t, p.Log)
+	if len(first) != 32 {
+		t.Fatalf("epoch %q, want 32 hex", first)
+	}
+	writeLines(t, p.Log, msgLine("two"))
+	if e := epochs(t, p.Log); e != first {
+		t.Errorf("appended log epoch %q, want %q", e, first)
+	}
+
+	if err := os.WriteFile(p.Log, []byte(msgLine("other")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rewritten := epochs(t, p.Log)
+	if rewritten == first || rewritten == "" {
+		t.Errorf("rewritten log epoch %q, want a new one", rewritten)
+	}
+
+	tmp := p.Log + ".new"
+	if err := os.WriteFile(tmp, []byte(msgLine("other")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, p.Log); err != nil {
+		t.Fatal(err)
+	}
+	if e := epochs(t, p.Log); e == rewritten || e == "" {
+		t.Errorf("replaced log with the same content: epoch %q, want a new one", e)
+	}
+}
+
+func TestExportRestartsOnChangedEpoch(t *testing.T) {
+	p := newBus(t)
+	ends := writeLines(t, p.Log, msgLine("one"), msgLine("two"))
+	current, err := LogEpoch(p.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := strings.Repeat("0", 32)
+	rows, cursor, _, epoch, err := Export(p.Log, ends[1], stale, "halo", testNow)
+	if err != nil || len(rows) != 2 || rows[0].Seq != ends[0] || cursor != ends[1] || epoch != current {
+		t.Fatalf("stale epoch: Export = %s, %d, %q, %v; want both rows from 0", rowsText(rows), cursor, epoch, err)
+	}
+	for _, since := range []string{current, ""} {
+		rows, cursor, _, _, err := Export(p.Log, ends[0], since, "halo", testNow)
+		if err != nil || len(rows) != 1 || rows[0].Seq != ends[1] || cursor != ends[1] {
+			t.Errorf("since epoch %q: Export = %s, %d, %v; want only the row after since", since, rowsText(rows), cursor, err)
+		}
 	}
 }
 
@@ -254,7 +333,7 @@ func TestExportSkipsFutureRowsOfEveryKind(t *testing.T) {
 		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"peer:halo","body":"old"}`, ms(25*time.Hour)),
 		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"peer:halo","body":"ok"}`, inRange),
 	)
-	rows, _, _, err := Export(p.Log, 0, "halo", testNow)
+	rows, _, _, _, err := Export(p.Log, 0, "", "halo", testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +477,7 @@ func TestExportDecision(t *testing.T) {
 		return fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"decision","from":%q,"body":%s}`, ms(0), from, b)
 	}
 	ends := writeLines(t, p.Log, line("dispatcher:c1", "use\x07 sql​ite"), line("worker:x", "no"))
-	rows, _, _, err := Export(p.Log, 0, "halo", testNow)
+	rows, _, _, _, err := Export(p.Log, 0, "", "halo", testNow)
 	if err != nil {
 		t.Fatal(err)
 	}

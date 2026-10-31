@@ -351,6 +351,38 @@ func TestPeerSyncErrorDoesNotEchoAHugeLiteral(t *testing.T) {
 	}
 }
 
+func TestPeerResetReportedOnce(t *testing.T) {
+	mbp, halo := peerPair(t)
+	store := peer.StoreFor(mbp.paths)
+	if err := os.MkdirAll(store.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(store.Dir, "halo.reset")
+	if err := os.WriteFile(marker, []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int64
+	toHalo := serveOn(t, halo)
+	l := peerLane(t, mbp, peerHooks{
+		hosts: mbp.settings,
+		transport: func(ctx context.Context, dest string, request []byte) ([]byte, error) {
+			calls.Add(1)
+			return toHalo(ctx, dest, request)
+		},
+		every: 50 * time.Millisecond,
+		self:  mbp.name,
+	})
+	// The third dial starts after the second round's report.
+	waitFor(t, "three sync rounds", func() bool { return calls.Load() >= 3 })
+	errs := l.ofKind("error")
+	if len(errs) != 1 || errs[0]["host"] != "halo" || errs[0]["detail"] != "peer halo: reset" {
+		t.Errorf("error lines = %v, want one reset line", errs)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("marker still there: %v", err)
+	}
+}
+
 // TestPeerMsgAnnouncedOnceWhenSeenWontWrite has a directory where halo.seen
 // goes, so every WriteSeen fails: the msg is still announced only once.
 func TestPeerMsgAnnouncedOnceWhenSeenWontWrite(t *testing.T) {
