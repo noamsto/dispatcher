@@ -3711,6 +3711,7 @@ echo "$*" >>"$STUB_LOG"
 case "$*" in
   "auth status"*)
     echo "X Failed to log in to github.com account octo (keyring)" >&2
+    echo "  - The token in GH_TOKEN is invalid." >&2
     echo "  - Token: gho_s3cr3tvalue" >&2
     exit 1
     ;;
@@ -3725,9 +3726,11 @@ EOF
   [[ "$stderr" == *"gh auth login -h github.com --insecure-storage"* ]]
   [[ "$stderr" == *"GUI login session"* ]]
   [[ "$stderr" == *"Failed to log in to github.com account octo"* ]]
+  [[ "$stderr" == *"The token in GH_TOKEN is invalid."* ]]
   [[ "$stderr" != *"gho_s3cr3tvalue"* ]]
-  [[ "$stderr" != *"Token"* ]]
+  [[ "$stderr" != *"Token:"* ]]
   grep -qx 'auth status --active --hostname github.com' "$STUB_LOG"
+  run ! grep -qx 'auth status --hostname github.com' "$STUB_LOG"
   run ! grep -qE '^(issue|label)' "$STUB_LOG"
 }
 

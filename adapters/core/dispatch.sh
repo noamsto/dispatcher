@@ -5356,8 +5356,8 @@ if [ "${DISPATCH_EMIT_ROW:-}" = 1 ]; then
   fi
   if [ "$gh_auth_rc" -ne 0 ]; then
     echo "dispatch: gh is not authenticated for github.com on $(_short_host) — on macOS a dispatch started over ssh cannot read the login keychain where gh keeps its token; either run 'gh auth login -h github.com --insecure-storage' there, or start its tmux server from the GUI login session (dispatch --host then runs inside it); gh auth status said:" >&2
-    # Token lines are masked by gh, but never relay them.
-    grep -iv token <<<"$gh_auth" | sed 's/^/  /' >&2 || true
+    # gh masks its Token: lines, but never relay them.
+    grep -v 'Token:' <<<"$gh_auth" | sed 's/^/  /' >&2 || true
     exit 1
   fi
 fi
