@@ -428,7 +428,7 @@ func TestPeerErrorDetailEscapesInvisible(t *testing.T) {
 	}
 }
 
-func TestSeenOfDropsEntryForAnotherFile(t *testing.T) {
+func TestSeenOfDropsAStaleEntry(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string) os.FileInfo {
 		path := filepath.Join(dir, name)
@@ -448,5 +448,12 @@ func TestSeenOfDropsEntryForAnotherFile(t *testing.T) {
 	}
 	if _, ok := pl.seen["h"]; ok {
 		t.Error("stale entry kept")
+	}
+	pl.seen["h"] = seenAt{off: 5, file: file}
+	if got := pl.seenOf("h", file); got != 0 {
+		t.Errorf("seenOf past the end = %d, want the store's 0", got)
+	}
+	if _, ok := pl.seen["h"]; ok {
+		t.Error("entry past the end kept")
 	}
 }
