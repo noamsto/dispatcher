@@ -454,8 +454,8 @@ func TestAdmitDecision(t *testing.T) {
 		{name: "another crew", row: row("dispatcher:other", "use sqlite"), reason: "identity"},
 		{name: "no from", row: fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"decision","body":"x"}`, ms(0)), reason: "identity"},
 		{name: "escape in body", row: row("dispatcher:c1", "a\x1bb"), reason: "control"},
-		{name: "bidi override in body", row: row("dispatcher:c1", "a‮b"), reason: "control"},
-		{name: "zero-width in body", row: row("dispatcher:c1", "a​b"), reason: "control"},
+		{name: "bidi override in body", row: row("dispatcher:c1", "a\u202eb"), reason: "control"},
+		{name: "zero-width in body", row: row("dispatcher:c1", "a\u200bb"), reason: "control"},
 		{name: "body over MaxBody", row: row("dispatcher:c1", strings.Repeat("b", MaxBody+1)), reason: "oversize"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -476,7 +476,7 @@ func TestExportDecision(t *testing.T) {
 		b, _ := json.Marshal(body)
 		return fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"decision","from":%q,"body":%s}`, ms(0), from, b)
 	}
-	ends := writeLines(t, p.Log, line("dispatcher:c1", "use\x07 sql​ite"), line("worker:x", "no"))
+	ends := writeLines(t, p.Log, line("dispatcher:c1", "use\x07 sql\u200bite"), line("worker:x", "no"))
 	rows, _, _, _, err := Export(p.Log, 0, "", "halo", testNow)
 	if err != nil {
 		t.Fatal(err)

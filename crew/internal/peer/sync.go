@@ -50,6 +50,9 @@ type Result struct {
 // errMalformed marks a payload Serve refuses with exit 2.
 type errMalformed struct{ error }
 
+// errBusy is another local exchange with the same host holding its lock.
+var errBusy = errors.New("busy")
+
 // Serve is `crew peer-sync`, the P side of one exchange: it stores the
 // requester's rows and answers with its own. It exits 0 on success, 1 on a
 // refusal and 2 on a malformed payload.
@@ -104,7 +107,7 @@ func serve(stdin io.Reader, o ServeOptions) (Response, error) {
 	}
 	unlock, ok := store.Lock(req.Host)
 	if !ok {
-		return Response{}, errors.New("busy")
+		return Response{}, errBusy
 	}
 	defer unlock()
 	st, err := store.State(req.Host)
@@ -120,6 +123,9 @@ func serve(stdin io.Reader, o ServeOptions) (Response, error) {
 	}
 	kept, dropped, seen := admitRows(req.Rows, st.HWM, req.Cursor, self, now)
 	if err := store.Append(req.Host, kept, now); err != nil {
+		return Response{}, err
+	}
+	if err := takeRoster(store, req.Host, req.Roster, dropped, now); err != nil {
 		return Response{}, err
 	}
 	st.HWM = max(st.HWM, seen)
@@ -146,22 +152,45 @@ func serve(stdin io.Reader, o ServeOptions) (Response, error) {
 	if err != nil {
 		return Response{}, err
 	}
+	snap, err := TakeSnapshot(o.Paths.Log, now)
+	if err != nil {
+		return Response{}, err
+	}
+	// An inbound exchange proves the link as well as an outbound one.
+	if err := store.writeLink(req.Host, true, "", now); err != nil {
+		return Response{}, err
+	}
 	return Response{
 		V: 1, Host: self, ID: id, Ack: max(st.HWM, st.Scan), AckEpoch: st.Epoch, Epoch: epoch,
-		Cursor: cursor, More: more, Rows: rows, Dropped: dropped,
+		Cursor: cursor, More: more, Rows: rows, Dropped: dropped, Roster: &snap,
 	}, nil
 }
 
 // Sync is the L side of one exchange with the peer host o.Name: it pushes our
 // rows after the peer's ack and stores the peer's rows after our hwm. The
 // host's lock is held only around local reads and writes, never across the
-// Transport, so two hosts dialing each other cannot deadlock.
+// Transport, so two hosts dialing each other cannot deadlock. Every outcome
+// but busy is recorded in `<host>.link`.
 func Sync(ctx context.Context, o SyncOptions) (Result, error) {
+	now := nowFunc(o.Now)()
+	res, err := exchange(ctx, o, now)
+	if err == nil || errors.Is(err, errBusy) {
+		return res, err
+	}
+	store := StoreFor(o.Paths)
+	if unlock, ok := store.Lock(o.Name); ok {
+		// Best effort: the sync error is what the caller must see.
+		_ = store.writeLink(o.Name, false, err.Error(), now)
+		unlock()
+	}
+	return res, err
+}
+
+func exchange(ctx context.Context, o SyncOptions, now time.Time) (Result, error) {
 	self, err := selfName(o.Self)
 	if err != nil {
 		return Result{}, err
 	}
-	now := nowFunc(o.Now)()
 	store := StoreFor(o.Paths)
 	id, err := store.BusID()
 	if err != nil {
@@ -175,9 +204,13 @@ func Sync(ctx context.Context, o SyncOptions) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	snap, err := TakeSnapshot(o.Paths.Log, now)
+	if err != nil {
+		return Result{}, err
+	}
 	req, err := buildRequest(Request{
 		V: 1, Host: self, ID: id, Expect: st.ID, Since: max(st.HWM, st.Scan), SinceEpoch: st.Epoch, Epoch: epoch,
-		Cursor: cursor, Rows: rows,
+		Cursor: cursor, Rows: rows, Roster: &snap,
 	}, o)
 	if err != nil {
 		return Result{}, err
@@ -212,7 +245,7 @@ func Sync(ctx context.Context, o SyncOptions) (Result, error) {
 
 	unlock, ok := store.Lock(o.Name)
 	if !ok {
-		return Result{}, errors.New("busy")
+		return Result{}, errBusy
 	}
 	defer unlock()
 	// Re-read: a Serve for this host may have pinned it and stored its rows
@@ -231,11 +264,17 @@ func Sync(ctx context.Context, o SyncOptions) (Result, error) {
 	if err := store.Append(o.Name, kept, now); err != nil {
 		return Result{}, err
 	}
+	if err := takeRoster(store, o.Name, resp.Roster, dropped, now); err != nil {
+		return Result{}, err
+	}
 	st.HWM = max(st.HWM, seen)
 	st.Scan = max(st.Scan, resp.Cursor)
 	st.Ack = resp.Ack
 	st.AckEpoch = resp.AckEpoch
 	if err := store.WriteState(o.Name, st); err != nil {
+		return Result{}, err
+	}
+	if err := store.writeLink(o.Name, true, "", now); err != nil {
 		return Result{}, err
 	}
 	return Result{Stored: len(kept), Dropped: dropped, RemoteDropped: knownReasons(resp.Dropped)}, nil
@@ -259,7 +298,7 @@ func knownReasons(counts map[string]int) map[string]int {
 func lockedState(store Store, host string) (State, error) {
 	unlock, ok := store.Lock(host)
 	if !ok {
-		return State{}, errors.New("busy")
+		return State{}, errBusy
 	}
 	defer unlock()
 	return store.State(host)
@@ -321,6 +360,20 @@ func takeEpoch(store Store, host string, st *State, theirs string, now time.Time
 		st.Epoch = theirs
 	}
 	return nil
+}
+
+// takeRoster admits the peer's snapshot raw, counts its drops into dropped and
+// replaces host's roster with what passed. A peer that predates rosters sends
+// none, which leaves the stored roster alone.
+func takeRoster(store Store, host string, raw *Snapshot, dropped map[string]int, now time.Time) error {
+	if raw == nil {
+		return nil
+	}
+	rows, d := AdmitSnapshot(raw, now)
+	for r, n := range d {
+		dropped[r] += n
+	}
+	return store.writeRoster(host, rows, now)
 }
 
 // admitRows is the rows past hwm and through cursor that pass Admit, the drop

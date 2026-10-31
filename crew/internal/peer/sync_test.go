@@ -109,6 +109,10 @@ func answer(t *testing.T, resp Response) Transport {
 }
 
 func syncTo(l, p *side, tr Transport) (Result, error) {
+	return syncAt(l, p, tr, testNow)
+}
+
+func syncAt(l, p *side, tr Transport, now time.Time) (Result, error) {
 	h := l.hosts[p.name]
 	return Sync(context.Background(), SyncOptions{
 		Paths:     l.paths,
@@ -117,7 +121,7 @@ func syncTo(l, p *side, tr Transport) (Result, error) {
 		Target:    remote.Target{SSH: h.SSH, Repo: h.Repos[testSlug]},
 		Slug:      testSlug,
 		Transport: tr,
-		Now:       fixedNow,
+		Now:       func() time.Time { return now },
 	})
 }
 
@@ -908,6 +912,118 @@ func TestResetNeverRepinsIdentity(t *testing.T) {
 	}
 	if readFile(t, mbp.peerFile("halo")) != before || TakeReset(StoreFor(mbp.paths), "halo") {
 		t.Error("a refused sync stored rows or marked a reset")
+	}
+}
+
+func (s *side) roster(t *testing.T, host string) rosterFile {
+	t.Helper()
+	var r rosterFile
+	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(StoreFor(s.paths).Dir, host+".roster"))), &r); err != nil {
+		t.Fatalf("%s peers/%s.roster: %v", s.name, host, err)
+	}
+	return r
+}
+
+func (s *side) link(t *testing.T, host string) string {
+	t.Helper()
+	return readFile(t, filepath.Join(StoreFor(s.paths).Dir, host+".link"))
+}
+
+func TestSyncShipsRosterBothWays(t *testing.T) {
+	mbp, halo := pair(t)
+	writeLines(t, mbp.paths.Log, busNamedDispatch("c1", "feat/m1", "iris", "standard", "claude", 5*time.Minute),
+		busStatus("c1", "worker:feat/m1#s1-2", "working", time.Minute))
+	writeLines(t, halo.paths.Log, busStatus("c2", "worker:feat/h1", "pr_open", 2*time.Minute))
+	mustSync(t, mbp, halo, serveOn(t, halo))
+
+	atMbp := rosterFile{Synced: testNow.UnixMilli(), Rows: []SnapshotRow{{CrewID: "c2", Branch: "feat/h1", State: "pr_open", TS: ms(2 * time.Minute)}}}
+	if got := mbp.roster(t, "halo"); !reflect.DeepEqual(got, atMbp) {
+		t.Errorf("mbp peers/halo.roster = %+v, want %+v", got, atMbp)
+	}
+	atHalo := rosterFile{Synced: testNow.UnixMilli(), Rows: []SnapshotRow{{CrewID: "c1", Branch: "feat/m1", Name: "iris", State: "working", Tier: "standard", Engine: "claude", TS: ms(time.Minute)}}}
+	if got := halo.roster(t, "mbp"); !reflect.DeepEqual(got, atHalo) {
+		t.Errorf("halo peers/mbp.roster = %+v, want %+v", got, atHalo)
+	}
+}
+
+func TestSyncRecordsLinkHealth(t *testing.T) {
+	mbp, halo := pair(t)
+	mustSync(t, mbp, halo, serveOn(t, halo))
+	okLink := fmt.Sprintf(`{"ok":%d,"err":0,"detail":""}`+"\n", testNow.UnixMilli())
+	if got := mbp.link(t, "halo"); got != okLink {
+		t.Errorf("mbp peers/halo.link = %q, want %q", got, okLink)
+	}
+	if got := halo.link(t, "mbp"); got != okLink {
+		t.Errorf("halo peers/mbp.link = %q, want %q", got, okLink)
+	}
+
+	failAt := testNow.Add(time.Minute)
+	fail := func(context.Context, string, []byte) ([]byte, error) {
+		return nil, errors.New("dial \x1b[31mhalo\u202e: " + strings.Repeat("x", 300))
+	}
+	if _, err := syncAt(mbp, halo, fail, failAt); err == nil {
+		t.Fatal("Sync succeeded over a failing transport")
+	}
+	var l struct {
+		OK     int64  `json:"ok"`
+		Err    int64  `json:"err"`
+		Detail string `json:"detail"`
+	}
+	failLink := mbp.link(t, "halo")
+	if err := json.Unmarshal([]byte(failLink), &l); err != nil {
+		t.Fatal(err)
+	}
+	if l.OK != testNow.UnixMilli() || l.Err != failAt.UnixMilli() || len(l.Detail) != 200 || !strings.HasPrefix(l.Detail, "dial [31mhalo: xxx") {
+		t.Errorf("mbp peers/halo.link = %+v, want ok kept, err now, detail sanitized and capped", l)
+	}
+
+	// Another local exchange holding the lock says nothing about the link.
+	shortLockWait(t, 50*time.Millisecond)
+	busy := func(ctx context.Context, dest string, request []byte) ([]byte, error) {
+		out, err := serveOn(t, halo)(ctx, dest, request)
+		unlock, ok := StoreFor(mbp.paths).Lock("halo")
+		if !ok {
+			t.Fatal("lock")
+		}
+		t.Cleanup(unlock)
+		return out, err
+	}
+	if _, err := syncAt(mbp, halo, busy, failAt.Add(time.Minute)); err == nil || err.Error() != "busy" {
+		t.Fatalf("Sync err = %v, want busy", err)
+	}
+	if got := mbp.link(t, "halo"); got != failLink {
+		t.Errorf("busy sync rewrote peers/halo.link: %q, want %q", got, failLink)
+	}
+}
+
+func TestSnapshotDropsCountInDropped(t *testing.T) {
+	mbp, halo := pair(t)
+	ok := fmt.Sprintf(`{"crew_id":"c2","branch":"feat/h1","state":"working","ts":%d,"cmd":"rm -rf /"}`, ms(time.Minute))
+	bad := fmt.Sprintf(`{"crew_id":"c2","branch":"feat/h2","state":"pwned","ts":%d}`, ms(time.Minute))
+	resp := fmt.Sprintf(`{"v":1,"host":"halo","id":%q,"ack":0,"cursor":0,"rows":[],"roster":{"ts":%d,"rows":[%s,%s]}}`, halo.busID(t), testNow.UnixMilli(), ok, bad)
+	tr := func(context.Context, string, []byte) ([]byte, error) { return []byte(resp), nil }
+	res, err := syncTo(mbp, halo, tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(res.Dropped, map[string]int{"malformed": 1}) {
+		t.Errorf("Dropped = %v, want one malformed", res.Dropped)
+	}
+	want := fmt.Sprintf(`{"synced":%d,"rows":[{"crew_id":"c2","branch":"feat/h1","state":"working","ts":%d}]}`+"\n", testNow.UnixMilli(), ms(time.Minute))
+	if got := readFile(t, filepath.Join(StoreFor(mbp.paths).Dir, "halo.roster")); got != want {
+		t.Errorf("peers/halo.roster = %q, want %q", got, want)
+	}
+}
+
+func TestOldPeerLeavesNoRoster(t *testing.T) {
+	mbp, halo := pair(t)
+	writeLines(t, halo.paths.Log, busStatus("c2", "worker:feat/h1", "working", time.Minute))
+	mustSync(t, mbp, halo, oldPeer(t, halo))
+	if got := readFile(t, filepath.Join(StoreFor(mbp.paths).Dir, "halo.roster")); got != "" {
+		t.Errorf("peers/halo.roster = %q, want none from an old peer", got)
+	}
+	if got := readFile(t, filepath.Join(StoreFor(halo.paths).Dir, "mbp.roster")); got != "" {
+		t.Errorf("halo peers/mbp.roster = %q, want none from an old requester", got)
 	}
 }
 
