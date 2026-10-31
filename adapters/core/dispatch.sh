@@ -1980,7 +1980,7 @@ _class_sigil() {
     ;;
   esac
   t="$(jq -r --arg a "$1" --arg t "$2" --arg c "$c" '. as $s | ($s.classes[$a].tiers // {}) as $r
-    | first(($t, "trivial", "standard", "deep") | select(($r[.].class? == $c) and (($s.modelMap[$a][.]? | type) == "object"))) // empty' <<<"$settings" 2>/dev/null)" || t=""
+    | first(($t, "trivial", "standard", "deep") | select($r[.].class == $c and ($s.modelMap[$a][.] | type) == "object")) // empty' <<<"$settings")"
   if [ -z "$t" ]; then
     echo "dispatch: $3 names no $1 model — no $1 tier row takes its default from class $c (classes.$1.tiers), so the class has no default; name a model id instead (dispatch --models lists them)" >&2
     return 1
