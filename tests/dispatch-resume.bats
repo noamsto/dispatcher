@@ -3495,7 +3495,7 @@ _target_restored_fixture() {
 # Model classes P7 (#1391): --model @class resolves like dispatch's positional
 # sigil, once. The launch, the resume row and the precheck get the resolved id;
 # the precheck gets the sigil only in DISPATCH_CLASS_SIGIL, for dispatch's own
-# class admission (#1392 review).
+# class admission.
 @test "resume --model @standard resolves to the class default; a header sigil and an unknown class are refused" {
   setup_worker_wt
   sed -i 's/^model: sonnet/model: haiku/' "$WT/WORKER_TASK.md"

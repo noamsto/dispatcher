@@ -19120,7 +19120,7 @@ _p4_hop() {
 
 @test "class sigil: DISPATCH_CLASS_SIGIL beside a resolved id gates that id and only names the class" {
   # A resolver that would now answer another default: the precheck never
-  # re-resolves, so the id it gates is the positional one (#1392 review).
+  # re-resolves, so the id it gates is the positional one.
   printf '#!/usr/bin/env bash\nout=$("$BASH" %q "$@") || exit\njq -c '"'"'.default = "gpt-5.7-sol"'"'"' <<<"$out"\n' "$MODEL_RESOLVE_BIN" >"$BATS_TEST_TMPDIR/resolve-moved"
   chmod +x "$BATS_TEST_TMPDIR/resolve-moved"
   export MODEL_RESOLVE_BIN="$BATS_TEST_TMPDIR/resolve-moved"
