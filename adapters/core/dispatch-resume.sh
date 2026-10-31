@@ -976,10 +976,13 @@ _ensure_roster_render() {
   CREW_ID="$1" crew roster-render --crew "$1" ${flags[@]+"${flags[@]}"} --detach >/dev/null 2>&1 || true
 }
 
-# _settings_load, _glob_match, _exact_match and _escalation_hop: duplicated
-# from dispatch.sh (standalone build), parity-tested. See dispatch.sh for
-# their contracts: the settings come from dispatch-config, the escalation
-# rules from defaults.json.
+# _settings_load, _glob_match, _exact_match, _model_class, _class_item and
+# _escalation_hop: duplicated from dispatch.sh (standalone build),
+# parity-tested. See dispatch.sh for their contracts: the settings come from
+# dispatch-config, the escalation rules from defaults.json, an @class item's
+# class from model-resolve over the same catalog and class-state caches.
+model_catalog="${XDG_DATA_HOME:-$HOME/.local/share}/crew/model-catalog.json"
+model_class_state="${XDG_DATA_HOME:-$HOME/.local/share}/crew/model-class-state.json"
 _settings_load() {
   settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"
   [ -n "${DISPATCH_ENGINES:-}" ] || DISPATCH_ENGINES="$(jq -r '.engines // [] | join(" ")' <<<"$settings")"
@@ -1003,11 +1006,39 @@ _exact_match() {
   return 1
 }
 
+_model_class() {
+  local t out
+  [ -e "$model_catalog" ] || return 0
+  t="$(jq -r --arg a "$1" '. as $s | first(.modelMap[$a] // {} | keys_unsorted[] | select($s.classes[$a].tiers[.] != null)) // empty' <<<"$settings")"
+  [ -n "$t" ] || return 0
+  out="$("$BASH" "${MODEL_RESOLVE_BIN:-@modelResolve@}" "$1" "$t" "$model_catalog" "$model_class_state" "$2" <<<"$settings" 2>/dev/null)" || {
+    echo "dispatch: warning: model-resolve failed for $1; no @class ladder item matches '$2'" >&2
+    return 0
+  }
+  jq -r '.class_of | strings' <<<"$out" 2>/dev/null || true
+}
+
+_class_item() {
+  local c="${2#@}" g=""
+  if [[ $c == *:* ]]; then
+    g="${c#*:}" c="${c%%:*}"
+  fi
+  [ -n "$3" ] && [ "$c" = "$3" ] || return 1
+  # shellcheck disable=SC2053 # the unquoted RHS is the glob
+  [ -z "$g" ] || [[ $1 == $g ]]
+}
+
 _escalation_hop() {
-  local rule="" i glob baseline
+  local rule="" i glob baseline item c3="" c4="" k3="" k4=""
   while IFS=$'\t' read -r i glob; do
     # shellcheck disable=SC2053 # the unquoted RHS is the glob
-    if [[ $3 == $glob ]]; then
+    if [[ $glob == @* ]]; then
+      [ -e "${model_catalog:-}" ] || continue
+      [ -n "$k3" ] || { c3="$(_model_class "$1" "$3")" k3=1; }
+      _class_item "$3" "$glob" "$c3" || continue
+      rule="$i"
+      break
+    elif [[ $3 == $glob ]]; then
       rule="$i"
       break
     fi
@@ -1018,7 +1049,16 @@ _escalation_hop() {
     if [ "$5" = inRow ]; then _glob_match "$4"; else _exact_match "$4"; fi
   } < <(jq -r --arg a "$1" --arg t "$2" --argjson i "$rule" --arg k "$5" '.escalation[$a][$t][$i] | .baseline, (.[$k] // [])[]' <<<"$settings"); then
     printf '%s' "$baseline"
+    return 0
   fi
+  [ "$5" = inRow ] && [ -e "${model_catalog:-}" ] || return 0
+  while IFS= read -r item; do
+    [ -n "$k4" ] || { c4="$(_model_class "$1" "$4")" k4=1; }
+    if _class_item "$4" "$item" "$c4"; then
+      printf '%s' "$baseline"
+      return 0
+    fi
+  done < <(jq -r --arg a "$1" --arg t "$2" --argjson i "$rule" '.escalation[$a][$t][$i] | (.inRow // [])[] | select(startswith("@"))' <<<"$settings")
 }
 
 mapfile -t required_protocol_files < <({ printf '%s\n' WORKER_PROTOCOL.md EVIDENCE_REVIEW.md; _worker_protocol_files "$agent"; } | awk '!seen[$0]++')

@@ -622,9 +622,9 @@ any other `DISPATCH_*` var, in every shell) or the server/shell restarts.
 against it — `GET /api/v1/key`'s `usage_monthly`, the current UTC calendar
 month — and records the target and a projected month-end total. `dispatch
 --agent pi` gates on that the same way as the subscription engines: a pace
-refusal of `xhigh`/`max` effort once spend is ≥70% of the target _and_ more
-than 15 points ahead of the month's elapsed fraction (escape with
-`DISPATCH_IGNORE_RUNG=<effort>`), and a hard stop at ≥95% (escape with
+refusal of the OpenRouter opus model rung and of `xhigh`/`max` effort once
+spend is ≥70% of the target _and_ more than 15 points ahead of the month's
+elapsed fraction (escape with `DISPATCH_IGNORE_RUNG=<model id or effort>`), and a hard stop at ≥95% (escape with
 `--ignore-budget`). Without a rebuild, set `DISPATCH_OPENROUTER_MONTHLY_USD`
 and `DISPATCH_OPENROUTER_KEY_FILE` (or `OPENROUTER_API_KEY`) directly.
 When `openrouter.keyFile` is set, its first line is the only key source (an

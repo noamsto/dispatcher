@@ -169,28 +169,17 @@ refuse_claude_sonnet_cap() {
 # launch carries DISPATCH_TMUX_SESSION instead.
 # A `lead` target with pace_escalation set skips only the model-rung refusal;
 # effort refusals and budget_stop stay armed.
+# The refusal names the target's class and the downgrade as class plus resolved
+# id: a `to: "@<class>"` resolves through _class_default (unresolved keeps the
+# refusal), and with a model catalog each id's own class (_model_class) replaces
+# the premium/standard default. Until a positional @class exists the typed id is
+# the resolved one, so DISPATCH_IGNORE_RUNG compares against that one id.
 pace_rule_target() {
   local target_agent="$1" target_model="$2" target_effort="$3" target_role="${4:-}" model_downgrade="" model_downgrade_label="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause escape
+  local down_to model_rung target_class=premium down_class=standard c
   [ -z "${ignore_budget:-}" ] && [ -f "$budget_file" ] || return 0
-  model_downgrade="$(_pace_downgrade "$target_agent" "$target_model")"
-  # Only shed a rung when the downgrade burns less (defaults.json
-  # `burnClasses`): opus at low/medium matches sonnet's weight.
-  if [ -n "$model_downgrade" ]; then
-    model_weight="$(_pace_burn_weight "$target_model" "$target_effort")"
-    downgrade_weight="$(_pace_burn_weight "$model_downgrade" "$target_effort")"
-    # Numeric, not `[ -le ]`: burnClasses weights are JSON numbers, and a
-    # fractional layer value (2.0) would make bash's integer test error and
-    # read false, flipping the decision.
-    if [ -n "$model_weight" ] && [ -n "$downgrade_weight" ] &&
-      jq -en --argjson a "$model_weight" --argjson b "$downgrade_weight" '$a <= $b' >/dev/null; then
-      model_downgrade=""
-    fi
-  fi
-  # cursor's --effort is accepted and ignored, so there is no effort to shed.
-  case "$target_effort" in
-  max | xhigh) [ "$target_agent" = cursor ] || effort_downgrade="high" ;;
-  esac
-  [ -n "$model_downgrade$effort_downgrade" ] || return 0
+  # The window test runs first, so a target on a green budget never pays for the
+  # rung lookup (an @class item runs model-resolve).
   rung_pct=$(jq -r --arg e "$target_agent" --argjson now "$(date +%s)" '
     def elapsed_pct($w; $len): (100 * ($len - ($w.resets_at - $now)) / $len) as $x
       | if $x < 0 then 0 elif $x > 100 then 100 else $x end;
@@ -201,33 +190,69 @@ pace_rule_target() {
         | ($w.used_pct - elapsed_pct($w; $len)) as $ahead
         | if $ahead > 15 then "\($win)|\($w.used_pct)|\($ahead | round)" else empty end
       end;
-    if (.fetched_epoch + 7200) < $now then empty
+    if (.fetched_epoch + 7200) < $now or .fetched_epoch > ($now + 300) then empty
     elif .engines[$e] == null then empty
     elif .engines[$e].windows["7d"] != null then rule(.engines[$e].windows["7d"]; "7d")
     elif .engines[$e].windows.month != null then rule(.engines[$e].windows.month; "month")
     else empty
     end' "$budget_file" 2>/dev/null || true)
   [ -n "$rung_pct" ] || return 0
+  down_to="$(_pace_downgrade "$target_agent" "$target_model")"
+  model_rung="$down_to" model_downgrade="$down_to"
+  if [[ $down_to == @* ]]; then
+    down_class="${down_to#@}"
+    model_downgrade="$(_class_default "$target_agent" "$down_class")"
+  fi
+  # Only shed a rung when a literal downgrade burns less (defaults.json
+  # `burnClasses`): opus at low/medium matches sonnet's weight. A class target
+  # resolves through the untrusted class-state file, so it never lifts the refusal.
+  if [ -n "$model_downgrade" ] && [[ $down_to != @* ]]; then
+    model_weight="$(_pace_burn_weight "$target_model" "$target_effort")"
+    downgrade_weight="$(_pace_burn_weight "$model_downgrade" "$target_effort")"
+    # Numeric, not `[ -le ]`: burnClasses weights are JSON numbers, and a
+    # fractional layer value (2.0) would make bash's integer test error and
+    # read false, flipping the decision.
+    if [ -n "$model_weight" ] && [ -n "$downgrade_weight" ] &&
+      jq -en --argjson a "$model_weight" --argjson b "$downgrade_weight" '$a <= $b' >/dev/null; then
+      model_rung=""
+    fi
+  fi
+  # cursor's --effort is accepted and ignored, so there is no effort to shed.
+  case "$target_effort" in
+  max | xhigh) [ "$target_agent" = cursor ] || effort_downgrade="high" ;;
+  esac
+  [ -n "$model_rung$effort_downgrade" ] || return 0
   win="${rung_pct%%|*}" rung_pct="${rung_pct#*|}"
   used_pct="$rung_pct" pace_notice="" pace_clause=""
   if [[ $rung_pct == *"|"* ]]; then
     used_pct="${rung_pct%%|*}"; ahead="${rung_pct#*|}"
     pace_notice=" ($ahead ahead of pace)"; pace_clause=" and $ahead points ahead of pace"
   fi
-  if [ -n "$model_downgrade" ]; then
+  if [ -n "$model_rung" ]; then
     if [ "${DISPATCH_IGNORE_RUNG:-}" = "$target_model" ]; then
       echo "dispatch: rung refusal skipped (DISPATCH_IGNORE_RUNG) — '$target_model' on --agent $target_agent at $win ${used_pct}%${pace_notice}" >&2
     elif [ "$target_role" = lead ] && [ -n "${pace_escalation:-}" ]; then
       echo "dispatch: rung refusal skipped (escalation) — '$target_model' on --agent $target_agent is one rung up from a failed run, at $win ${used_pct}%${pace_notice}" >&2
     else
+      if [ -e "${model_catalog:-}" ]; then
+        c="$(_model_class "$target_agent" "$target_model")"
+        [ -z "$c" ] || target_class="$c"
+        if [[ $down_to != @* ]]; then
+          c="$(_model_class "$target_agent" "$model_downgrade")"
+          [ -z "$c" ] || down_class="$c"
+        fi
+      fi
       # sonnet's ceiling is `high` (the cap above), so name the effort too.
       model_downgrade_label="$model_downgrade"
-      if [ "$model_downgrade" = sonnet ] && [ -n "$effort_downgrade" ]; then
+      if [ -z "$model_downgrade" ]; then
+        model_downgrade_label="$down_to, unresolved"
+        echo "dispatch: warning: paceDowngrades target $down_to names no $target_agent model (no tier row of that class, or model-resolve failed); the refusal stands" >&2
+      elif [ "$model_downgrade" = sonnet ] && [ -n "$effort_downgrade" ]; then
         model_downgrade_label="$model_downgrade at $effort_downgrade"
       fi
       escape=""
       [ -n "${remote_host:-}" ] || [ -n "${DISPATCH_TMUX_SESSION:-}" ] || escape="set DISPATCH_IGNORE_RUNG=$target_model to override just this refusal, "
-      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium rung ($target_model) is refused; use the standard rung ($model_downgrade_label) instead, ${escape}or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
+      echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the $target_class rung ($target_model) is refused; use the $down_class rung ($model_downgrade_label) instead, ${escape}or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
       exit 1
     fi
   fi
@@ -1757,15 +1782,54 @@ _model_class_admitted() {
   return 1
 }
 
+# _model_class <agent> <model> — <model>'s class (cheap|standard|premium) when
+# the model catalog lists it under a `classes` pattern (model-resolve's
+# class_of), else nothing. No catalog file means nothing, without running the
+# resolver.
+_model_class() {
+  local t out
+  [ -e "$model_catalog" ] || return 0
+  t="$(jq -r --arg a "$1" '. as $s | first(.modelMap[$a] // {} | keys_unsorted[] | select($s.classes[$a].tiers[.] != null)) // empty' <<<"$settings")"
+  [ -n "$t" ] || return 0
+  out="$("$BASH" "${MODEL_RESOLVE_BIN:-@modelResolve@}" "$1" "$t" "$model_catalog" "$model_class_state" "$2" <<<"$settings" 2>/dev/null)" || {
+    echo "dispatch: warning: model-resolve failed for $1; no @class ladder item matches '$2'" >&2
+    return 0
+  }
+  jq -r '.class_of | strings' <<<"$out" 2>/dev/null || true
+}
+
+# _class_item <model> <item> <class> — true when an @class ladder item admits
+# <model>: `@C` when <class> (the model's _model_class) is C, `@C:<glob>` when
+# it is and the glob matches too.
+_class_item() {
+  local c="${2#@}" g=""
+  if [[ $c == *:* ]]; then
+    g="${c#*:}" c="${c%%:*}"
+  fi
+  [ -n "$3" ] && [ "$c" = "$3" ] || return 1
+  # shellcheck disable=SC2053 # the unquoted RHS is the glob
+  [ -z "$g" ] || [[ $1 == $g ]]
+}
+
 # _escalation_hop <agent> <tier> <failed> <model> <inRow|outOfRow> — the
-# baseline of the first escalation rule whose `failed` globs match <failed>,
-# when that rule's <kind> list admits <model> (inRow: a glob; outOfRow: an
-# exact id). Prints nothing otherwise.
+# baseline of the first escalation rule whose `failed` items match <failed>,
+# when that rule's <kind> list admits <model> (inRow: a glob or @class item;
+# outOfRow: an exact id, never a class, since it widens what the tier gate
+# admits). Prints nothing otherwise. An @class item (_class_item) is consulted
+# only when a model catalog exists, so with none every rule resolves exactly as
+# its globs and ids do; no model id starts with @, so a glob match never takes
+# one.
 _escalation_hop() {
-  local rule="" i glob baseline
+  local rule="" i glob baseline item c3="" c4="" k3="" k4=""
   while IFS=$'\t' read -r i glob; do
     # shellcheck disable=SC2053 # the unquoted RHS is the glob
-    if [[ $3 == $glob ]]; then
+    if [[ $glob == @* ]]; then
+      [ -e "${model_catalog:-}" ] || continue
+      [ -n "$k3" ] || { c3="$(_model_class "$1" "$3")" k3=1; }
+      _class_item "$3" "$glob" "$c3" || continue
+      rule="$i"
+      break
+    elif [[ $3 == $glob ]]; then
       rule="$i"
       break
     fi
@@ -1776,20 +1840,50 @@ _escalation_hop() {
     if [ "$5" = inRow ]; then _glob_match "$4"; else _exact_match "$4"; fi
   } < <(jq -r --arg a "$1" --arg t "$2" --argjson i "$rule" --arg k "$5" '.escalation[$a][$t][$i] | .baseline, (.[$k] // [])[]' <<<"$settings"); then
     printf '%s' "$baseline"
+    return 0
   fi
+  [ "$5" = inRow ] && [ -e "${model_catalog:-}" ] || return 0
+  while IFS= read -r item; do
+    [ -n "$k4" ] || { c4="$(_model_class "$1" "$4")" k4=1; }
+    if _class_item "$4" "$item" "$c4"; then
+      printf '%s' "$baseline"
+      return 0
+    fi
+  done < <(jq -r --arg a "$1" --arg t "$2" --argjson i "$rule" '.escalation[$a][$t][$i] | (.inRow // [])[] | select(startswith("@"))' <<<"$settings")
 }
 
 # _pace_downgrade <agent> <model> — the `to` of the first paceDowngrades entry
-# whose `models` globs match <model>; prints nothing when none does.
+# whose `models` items match <model>, printed as written (a model id or an
+# @class _class_default resolves); prints nothing when none does. An @class
+# item is consulted only when a model catalog exists (see _escalation_hop).
 _pace_downgrade() {
-  local to glob
+  local to glob cls="" looked=""
   while IFS=$'\t' read -r to glob; do
     # shellcheck disable=SC2053 # the unquoted RHS is the glob
-    if [[ $2 == $glob ]]; then
-      printf '%s' "$to"
-      return 0
+    if [[ $glob == @* ]]; then
+      [ -e "${model_catalog:-}" ] || continue
+      [ -n "$looked" ] || { cls="$(_model_class "$1" "$2")" looked=1; }
+      _class_item "$2" "$glob" "$cls" || continue
+    elif [[ $2 != $glob ]]; then
+      continue
     fi
+    printf '%s' "$to"
+    return 0
   done < <(jq -r --arg a "$1" '.paceDowngrades[$a] // [] | .[] | "\(.to)\t\(.models[])"' <<<"$settings")
+}
+
+# _class_default <agent> <class> — the resolved default (model-resolve) of
+# <agent>'s first tier row, in trivial, standard, deep order, whose class is
+# <class>: what a paceDowngrades `to: "@<class>"` names. Prints nothing when no
+# row has that class or the resolver fails.
+_class_default() {
+  local t out
+  for t in trivial standard deep; do
+    jq -e --arg a "$1" --arg t "$t" --arg c "$2" '.classes[$a].tiers[$t].class == $c and (.modelMap[$a][$t] | type) == "object"' <<<"$settings" >/dev/null || continue
+    out="$(_model_resolve "$1" "$t")" || return 0
+    jq -r '.default | strings' <<<"$out"
+    return 0
+  done
 }
 
 # _pace_burn_weight <model> <effort> — the burn weight defaults.json's
@@ -5147,7 +5241,7 @@ if [ -z "$ignore_budget" ] && [ -f "$budget_file" ]; then
   now_ts="$(date +%s)"
   stale_before=$((now_ts - 7200))
   if [ "$agent" = claude ] && jq -e --argjson stale_before "$stale_before" --argjson now "$now_ts" \
-    '.fetched_epoch >= $stale_before and .engines.claude == null' "$budget_file" >/dev/null 2>&1; then
+    '.fetched_epoch >= $stale_before and .fetched_epoch <= ($now + 300) and .engines.claude == null' "$budget_file" >/dev/null 2>&1; then
     echo "dispatch: budget gate blind: claude quota unknown" >&2
   fi
 fi

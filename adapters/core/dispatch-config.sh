@@ -124,6 +124,13 @@ check_model_shapes() {
   violations=$(jq -r '
     def string_array: type == "array" and all(.[]; type == "string");
     def err($p; $w): "\($p)\t\($w)";
+    # A ladder list item that names a class: @cheap|@standard|@premium, optionally
+    # :<glob>. Anything else after @ would silently match nothing, so it fails.
+    def ladder_items($l; $p):
+      if ($l|string_array) then
+        ($l | to_entries[] | select((.value|startswith("@")) and (.value|test("\\A@(cheap|standard|premium)(:.+)?\\z")|not))
+          | err("\($p)[\(.key)]"; "a glob, @cheap, @standard, @premium or @<class>:<glob>"))
+      else empty end;
     def modelmap($m):
       if ($m|type) != "object" then err("modelMap"; "an object")
       else ($m | to_entries[] |
@@ -152,7 +159,10 @@ check_model_shapes() {
               (if (($row|has("baseline"))|not) or (($row.baseline|type) != "string") then err("escalation.\($a).\($t)[\($i)].baseline"; "a string") else empty end),
               (if (($row|has("inRow")) and ($row|has("outOfRow"))) or ((($row|has("inRow"))|not) and (($row|has("outOfRow"))|not)) then err("escalation.\($a).\($t)[\($i)]"; "exactly one of inRow or outOfRow") else empty end),
               (if ($row|has("inRow")) and (($row.inRow|string_array)|not) then err("escalation.\($a).\($t)[\($i)].inRow"; "an array of strings") else empty end),
-              (if ($row|has("outOfRow")) and (($row.outOfRow|string_array)|not) then err("escalation.\($a).\($t)[\($i)].outOfRow"; "an array of strings") else empty end)
+              (if ($row|has("outOfRow")) and (($row.outOfRow|string_array)|not) then err("escalation.\($a).\($t)[\($i)].outOfRow"; "an array of strings") else empty end),
+              (["failed", "inRow"][] as $k | select($row|has($k)) | ladder_items($row[$k]; "escalation.\($a).\($t)[\($i)].\($k)")),
+              (if ($row.outOfRow|string_array) then ($row.outOfRow | to_entries[] | select(.value|startswith("@"))
+                | err("escalation.\($a).\($t)[\($i)].outOfRow[\(.key)]"; "an exact model id (outOfRow widens what the tier gate admits, so it takes no class)")) else empty end)
              end)
           ) end
         ) end
@@ -166,7 +176,9 @@ check_model_shapes() {
           (if ($row|type) != "object" then err("paceDowngrades.\($a)[\($i)]"; "an object")
            else
             (if (($row|has("models"))|not) or (($row.models|string_array)|not) then err("paceDowngrades.\($a)[\($i)].models"; "an array of strings") else empty end),
-            (if (($row|has("to"))|not) or (($row.to|type) != "string") then err("paceDowngrades.\($a)[\($i)].to"; "a string") else empty end)
+            (if (($row|has("to"))|not) or (($row.to|type) != "string") then err("paceDowngrades.\($a)[\($i)].to"; "a string") else empty end),
+            (if ($row|has("models")) then ladder_items($row.models; "paceDowngrades.\($a)[\($i)].models") else empty end),
+            (if ($row.to|type) == "string" and ($row.to|startswith("@")) and ($row.to|test("\\A@(cheap|standard|premium)\\z")|not) then err("paceDowngrades.\($a)[\($i)].to"; "a model id, @cheap, @standard or @premium") else empty end)
            end)
         ) end
       ) end;

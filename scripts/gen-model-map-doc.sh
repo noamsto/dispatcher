@@ -54,7 +54,7 @@ render_tier_rows() {
 }
 
 # render_pace_downgrades <defaults.json> — one row per paceDowngrades entry;
-# an engine with none (pi) is refused on effort only, so it gets a fixed row.
+# an engine with none is refused on effort only, so it gets a fixed row.
 render_pace_downgrades() {
   printf '| engine | premium | downgrade target |\n'
   printf '| --- | --- | --- |\n'
