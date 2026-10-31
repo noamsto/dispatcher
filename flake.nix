@@ -283,7 +283,7 @@
 
           refresh-models = pkgs.writeShellApplication {
             name = "refresh-models";
-            runtimeInputs = with pkgs; [jq gnugrep gnused coreutils];
+            runtimeInputs = with pkgs; [jq gnugrep gnused coreutils curl];
             text = builtins.readFile ./adapters/core/refresh-models.sh;
           };
 
