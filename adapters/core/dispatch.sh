@@ -1784,7 +1784,7 @@ _model_class_admitted() {
 # _model_class <agent> <model> — <model>'s class (cheap|standard|premium) when
 # the model catalog lists it under a `classes` pattern (model-resolve's
 # class_of), else nothing. No catalog file means nothing, without running the
-# resolver. The ladders' @class items read it.
+# resolver.
 _model_class() {
   local t out
   [ -e "$model_catalog" ] || return 0
@@ -1794,7 +1794,7 @@ _model_class() {
     echo "dispatch: warning: model-resolve failed for $1; no @class ladder item matches '$2'" >&2
     return 0
   }
-  jq -r '.class_of | strings | select(test("\\A(cheap|standard|premium)\\z"))' <<<"$out" 2>/dev/null || true
+  jq -r '.class_of | strings' <<<"$out" 2>/dev/null || true
 }
 
 # _class_item <model> <item> <class> — true when an @class ladder item admits

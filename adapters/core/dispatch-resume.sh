@@ -1015,7 +1015,7 @@ _model_class() {
     echo "dispatch: warning: model-resolve failed for $1; no @class ladder item matches '$2'" >&2
     return 0
   }
-  jq -r '.class_of | strings | select(test("\\A(cheap|standard|premium)\\z"))' <<<"$out" 2>/dev/null || true
+  jq -r '.class_of | strings' <<<"$out" 2>/dev/null || true
 }
 
 _class_item() {
