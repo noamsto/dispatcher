@@ -55,8 +55,8 @@ description: a watchdog detail prefix, a prompt dialog, or a role-pane watch
   the verdict, tell the lead in its pane to read it
   (`crew await --from role:<branch>:<role>`), naming the pane with
   `crew where <lead branch>`. Clears on delivery; never escalates, never `failed`.
-  `unread: dispatcher directive …` is the same for your own msg. The watchdog auto-nudges an idle claude/pi lead once per msg (`crew nudge`
-  below); on `auto-nudge typed but not accepted`, verify the pane with `crew where`.
+  `unread: dispatcher directive …` is the same for your own msg. The watchdog auto-nudges an idle claude/pi lead once per msg (`crew nudge` in the core protocol);
+  on `auto-nudge typed but not accepted`, verify the pane with `crew where`.
   Else run `crew nudge <target> --wait` (backgrounded); mid-stage, the lead reads at
   its next seam; `tmux kill-window` is the hard stop. A codex/cursor lead, or a refused
   or unaccepted nudge → the human nudges its pane (`crew where`).
@@ -90,7 +90,7 @@ description: a watchdog detail prefix, a prompt dialog, or a role-pane watch
   3 attempts per watch (`not resumed (auto-continue limit reached …)`). On
   `blocked "<prefix> … not resumed"` (frame persisted, line not accepted, or
   auto-continue refused or off via `--no-nudge`), verify with `crew where`, then have
-  the human type `continue` in the pane (per the pane-injection rule below) or re-dispatch. Never escalates to `dead:`; clears when
+  the human type `continue` in the pane (per skill `dispatcher:pane-injection`) or re-dispatch. Never escalates to `dead:`; clears when
   the pane moves on.
 - `budget:` — the worker's (or role's) engine crossed ≥95% on a window whose
   `resets_at` is null or ahead, or carries `limit_reached`: the `dispatch` ≥95% /

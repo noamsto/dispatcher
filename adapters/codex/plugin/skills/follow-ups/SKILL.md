@@ -1,6 +1,6 @@
 ---
 name: follow-ups
-description: a worker msg opening follow-ups (untracked):
+description: a worker msg opening a follow-ups (untracked) batch
 ---
 
 # follow-ups

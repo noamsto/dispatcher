@@ -9618,6 +9618,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"already claimed"* ]]
+  [[ "$output" == *"-> skill dispatcher:resume"* ]]
   run ! grep -q 'add-label' "$STUB_LOG"
   run ! grep -q 'new-window' "$STUB_LOG"
 }
@@ -9651,6 +9652,7 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 1 ]
   [[ "$output" == *"already claimed"* ]]
+  [[ "$output" == *"-> skill dispatcher:resume"* ]]
   run ! grep -q 'add-label' "$STUB_LOG"
   run ! grep -q 'new-window' "$STUB_LOG"
 }

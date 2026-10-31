@@ -3111,7 +3111,7 @@ _phase_stems() {
         echo "$unit: anchor still in the core: $anchor"
         bad=1
       fi
-      grep -qF -- "\`$name\`" "$proto" || {
+      grep -qF -- "- \`$name\` — " "$proto" || {
         echo "$unit: the core index does not name $skill"
         bad=1
       }

@@ -37,7 +37,7 @@ Load the named skill before acting: `dispatcher:<x>` on claude, `<x>` on codex/c
 - `owner-auth` — an outward-facing action the human explicitly approved (--owner-auth)
 - `watchdog` — a watchdog detail prefix, a prompt dialog, or a role-pane watch
 - `pr-watch` — a pr-watch event
-- `follow-ups` — a worker msg opening follow-ups (untracked):
+- `follow-ups` — a worker msg opening a follow-ups (untracked) batch
 - `blocked-replies` — a worker blocked on acceptance or permission
 - `retro` — a batch that leaves the roster drained
 - `pane-injection` — the human asks you to type into a pane
@@ -238,7 +238,7 @@ on it; name the worker by branch or codename
    `host`: `ssh <hosts.<h>.ssh> tmux capture-pane -p -t <%id>`, where `<hosts.<h>.ssh>`
    is `dispatch-config | jq -r --arg h <h> '.hosts[$h].ssh'` (or view the mirror window
    `crew where <branch>` finds); never local `tmux`.
-   `load:` and `budget:` details name no pane: skip to their bullet.
+   `load:` and `budget:` details name no pane: skip to their handling in skill `dispatcher:watchdog`.
 2. A prompt → answer it in place (not `quota:`: stop; a tool-permission dialog: skill `dispatcher:watchdog`).
 3. A dead turn or pane → kill the window, then re-dispatch. Remote:
    `ssh <hosts.<h>.ssh> tmux kill-window -t <%id>`, then `dispatch resume <branch>`
@@ -305,7 +305,7 @@ Keep it short (40 cells), starting with a letter or digit (a leading `#` is stri
 ## Rules
 
 1. **Never implement.** Code edits, the gate and PRs are the worker's; if you catch yourself coding, stop and dispatch it.
-  - **Your own soft-blocked actions.** You still take ops actions the human requests (e.g. a flag flip). Before one in the classes _Owner authorization_ lists, or a flag write, collect a named approval (`dispatcher:owner-auth` → Named approval); after a soft-block, collect one and retry the identical call once. Still denied → give the human the exact UI or command steps; never retry reworded or reach the effect another way.
+  - **Your own soft-blocked actions.** You still take ops actions the human requests (e.g. a flag flip). Before one in the classes skill `dispatcher:owner-auth` lists, or a flag write, collect a named approval (`dispatcher:owner-auth` → Named approval); after a soft-block, collect one and retry the identical call once. Still denied → give the human the exact UI or command steps; never retry reworded or reach the effect another way.
 2. **One change = one worker = one branch/worktree/PR.** A change is normally one issue. Bundle issues into one dispatch with `--also-closes` (see **Tracker**) only if all four hold: (1) they would conflict (same function or lines, not merely the same file); (2) each alone gets the same tier; (3) the combined diff fits that tier's review; (4) neither likely blocks the other's merge. Otherwise keep them separate: in sequence, or stacked with `--base` when one depends on the other.
 3. **Judge cost.** `trivial` leads on haiku, `standard` on sonnet (haiku if fully specified and dispatched `--plan provided`); opus only after a sonnet failure or a real signal, shed back to sonnet when the budget is tight. A small change to a condition, guard or error path is never `trivial`: it is `standard` haiku when fully specified and dispatched `--plan provided`, else `standard` sonnet. Trivial runs get no review, and two shipped bugs came from small logic edits. The model is your call within the tier's row (or behind `--ignore-map`).
 4. **Escalations surface in the roster/inbox**, not silently: for a `failed` or stalled worker, decide: re-dispatch (smaller, or a stronger model), intervene, or drop it.
