@@ -389,26 +389,32 @@
       {
         "models": [
           "grok-4.7-high",
-          "grok-4.7-high\\[*"
+          "grok-4.7-high\\[*",
+          "grok-4.7-high-fast",
+          "grok-4.7-high-fast\\[*"
         ],
         "to": "grok-4.7-medium"
       },
       {
         "models": [
           "cursor-grok-4.6-high",
-          "cursor-grok-4.6-high\\[*"
+          "cursor-grok-4.6-high\\[*",
+          "cursor-grok-4.6-high-fast",
+          "cursor-grok-4.6-high-fast\\[*"
         ],
         "to": "cursor-grok-4.6-medium"
       },
       {
         "models": [
-          "@premium:grok-*-high"
+          "@premium:grok-*-high",
+          "@premium:grok-*-high-fast"
         ],
         "to": "grok-4.7-medium"
       },
       {
         "models": [
-          "@premium:cursor-grok-*-high"
+          "@premium:cursor-grok-*-high",
+          "@premium:cursor-grok-*-high-fast"
         ],
         "to": "cursor-grok-4.6-medium"
       }

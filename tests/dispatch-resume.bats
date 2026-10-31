@@ -39,6 +39,7 @@ EOF
 printf '%s\n' "$*" >>"$STUB_LOG"
 [ "$1" != --role-watch ] || printf 'CREW_ID=%s\n' "$CREW_ID" >>"$STUB_LOG"
 [ -z "${DISPATCH_CHROME_SELF:-}" ] || printf 'DISPATCH_CHROME_SELF=%s\n' "$DISPATCH_CHROME_SELF" >>"$STUB_LOG"
+[ -z "${DISPATCH_CLASS_SIGIL:-}" ] || printf 'DISPATCH_CLASS_SIGIL=%s\n' "$DISPATCH_CLASS_SIGIL" >>"$STUB_LOG"
 [ -n "${DISPATCH_PRECHECK:-}" ] || exit 0
 [ -z "${CREW_WORKER_ID:-}" ] || printf 'PRECHECK_CREW_WORKER_ID=%s\n' "$CREW_WORKER_ID" >>"$STUB_LOG"
 [ -z "${STUB_PRECHECK_FAIL:-}" ] || {
@@ -3489,4 +3490,69 @@ _target_restored_fixture() {
   run run_resume '#7' --print
   [ "$status" -eq 1 ]
   [[ "$output" == *"is still alive"* ]]
+}
+
+# Model classes P7 (#1391): --model @class resolves like dispatch's positional
+# sigil, once. The launch, the resume row and the precheck get the resolved id;
+# the precheck gets the sigil only in DISPATCH_CLASS_SIGIL, for dispatch's own
+# class admission.
+@test "resume --model @standard resolves to the class default; a header sigil and an unknown class are refused" {
+  setup_worker_wt
+  sed -i 's/^model: sonnet/model: haiku/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  run run_resume --model @standard
+  [ "$status" -eq 0 ]
+  grep -q -- '--name iris --model sonnet --effort medium' <(launch_log)
+  grep 'resume precheck' "$STUB_LOG" | grep -q -- 'standard sonnet '
+  grep -qx 'DISPATCH_CLASS_SIGIL=@standard' "$STUB_LOG"
+  [ "$(jq -r 'select(.kind == "resume") | .model' "$(bus_log)")" = sonnet ]
+  : >"$STUB_LOG"
+  run run_resume --model @frontier
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unknown model class '@frontier'"* ]]
+  run ! grep -q 'resume precheck' "$STUB_LOG"
+  sed -i 's/^model: haiku/model: @premium/' "$WT/WORKER_TASK.md"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refusing to launch: model '@premium' is not a plain word"* ]]
+}
+
+@test "resume escalation: --model @premium after a failed standard terra escalates on the resolved id" {
+  setup_worker_wt
+  sed -i -e 's/^engine: claude/engine: codex/' -e 's/^model: sonnet/model: gpt-5.6-terra/' "$WT/WORKER_TASK.md"
+  _resume_esc_seed s1-99 200 codex gpt-5.6-terra standard
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cd "$WT"
+  DISPATCH_PROFILE=work DISPATCH_ENGINES="claude codex cursor pi" run run_resume --model @premium
+  [ "$status" -eq 0 ]
+  _precheck_ignores_map
+  grep 'resume precheck' "$STUB_LOG" | grep -q -- 'standard gpt-5.6-sol '
+  grep -qx 'DISPATCH_CLASS_SIGIL=@premium' "$STUB_LOG"
+  grep -qx 'model: gpt-5.6-sol' "$WT/WORKER_TASK.md"
+  grep -qx 'escalated_from: terra' "$WT/WORKER_TASK.md"
+}
+
+@test "resume --model @class: a class default that changes after resolution never splits the checked id from the launched one" {
+  setup_worker_wt
+  sed -i 's/^model: sonnet/model: haiku/' "$WT/WORKER_TASK.md"
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  # The resolver answers sonnet once, then opus: a class-state write landing
+  # between resume's resolution and the precheck.
+  cat >"$BATS_TEST_TMPDIR/resolve-flip" <<STUB
+#!/usr/bin/env bash
+n=\$(cat "$BATS_TEST_TMPDIR/resolve-calls" 2>/dev/null || echo 0)
+echo \$((n + 1)) >"$BATS_TEST_TMPDIR/resolve-calls"
+out=\$("\$BASH" "$MODEL_RESOLVE_BIN" "\$@") || exit
+[ "\$n" -eq 0 ] && printf '%s\\n' "\$out" || jq -c '.default = "opus"' <<<"\$out"
+STUB
+  chmod +x "$BATS_TEST_TMPDIR/resolve-flip"
+  cd "$WT"
+  MODEL_RESOLVE_BIN="$BATS_TEST_TMPDIR/resolve-flip" run run_resume --model @standard
+  [ "$status" -eq 0 ]
+  grep -q -- '--name iris --model sonnet --effort medium' <(launch_log)
+  grep 'resume precheck' "$STUB_LOG" | grep -q -- 'standard sonnet '
+  run ! grep -E 'resume precheck.*(@standard|opus)' "$STUB_LOG"
+  grep -qx 'DISPATCH_CLASS_SIGIL=@standard' "$STUB_LOG"
+  [ "$(jq -r 'select(.kind == "resume") | .model' "$(bus_log)")" = sonnet ]
 }

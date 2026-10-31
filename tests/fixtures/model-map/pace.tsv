@@ -163,13 +163,13 @@ cursor	grok-4.7-low-fast	-
 cursor	grok-4.7-medium	-
 cursor	grok-4.7-medium-fast	-
 cursor	grok-4.7-high	grok-4.7-medium
-cursor	grok-4.7-high-fast	-
+cursor	grok-4.7-high-fast	grok-4.7-medium
 cursor	cursor-grok-4.6-low	-
 cursor	cursor-grok-4.6-low-fast	-
 cursor	cursor-grok-4.6-medium	-
 cursor	cursor-grok-4.6-medium-fast	-
 cursor	cursor-grok-4.6-high	cursor-grok-4.6-medium
-cursor	cursor-grok-4.6-high-fast	-
+cursor	cursor-grok-4.6-high-fast	cursor-grok-4.6-medium
 cursor	composer-2.5	-
 cursor	composer-2.5-fast	-
 cursor	openrouter/deepseek/deepseek-v4.1-flash	-

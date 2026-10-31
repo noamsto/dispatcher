@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # gen-model-map-doc.sh — render, or check, the generated regions of
 # adapters/core/protocols/dispatch-orchestration.md from
-# adapters/core/defaults.json (#560): the Tier map's tier-rows table and its
-# pace-downgrade table are pure data, so they are generated rather than
-# hand-copied. `--check` also proves the hand-written Model map table (which
-# carries execute/escalate ladders defaults.json does not hold) has not
-# drifted from the map's `default` model per tier.
+# adapters/core/defaults.json (#560): the Model map's class table (#1391) and
+# the Tier map's pace-downgrade table are pure data, so they are generated
+# rather than hand-copied. `--check` also proves the hand-written Model map
+# table (which carries execute/escalate ladders defaults.json does not hold,
+# in class names) has not drifted from each tier row's
+# `classes.<engine>.tiers.<tier>.class`.
 #
 # Usage: gen-model-map-doc.sh [--check] [<defaults.json> <doc.md>]
 # With no paths, both default to this repo's own copies, resolved relative to
@@ -14,7 +15,7 @@
 # Regions are delimited by
 #   <!-- BEGIN generated:<name> from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->
 #   <!-- END generated:<name> -->
-# for names `tier-rows` and `pace-downgrades`; the markers themselves must
+# for names `model-classes` and `pace-downgrades`; the markers themselves must
 # already exist in the doc (this script fills what is between them, it does
 # not place them).
 set -euo pipefail
@@ -34,22 +35,31 @@ fi
 defaults="${1:-$root/adapters/core/defaults.json}"
 doc="${2:-$root/adapters/core/protocols/dispatch-orchestration.md}"
 
-# render_tier_rows <defaults.json> — one row per engine x tier in data order;
-# the literal-bracket glob escape `\[` is shown as `[`.
-render_tier_rows() {
-  printf '| engine | tier | typical launch model | the gate admits |\n'
-  printf '| --- | --- | --- | --- |\n'
+# render_model_classes <defaults.json> — one row per engine x class (cheap,
+# standard, premium) that has patterns or a tier row: the tiers whose default
+# comes from the class, the tiers that admit it, its patterns (a gated pattern
+# names its requirement) and its seed default, the modelMap default of its first
+# tier row in trivial, standard, deep order (what a @class sigil names with no
+# class-state file).
+render_model_classes() {
+  printf '| engine | class | default on | admitted on | patterns | seed default |\n'
+  printf '| --- | --- | --- | --- | --- | --- |\n'
   jq -r '
-    .modelMap
-    | to_entries[]
-    | .key as $engine
-    | .value
-    | to_entries[]
-    | .key as $tier
-    | .value as $row
-    | ([$row.models[] | "`" + (split("\\[") | join("[")) + "`"] | join(", ")) as $models
-    | ($models + (if ($row.regex // [] | length) > 0 then ", plus ids matching the row'\''s regex" else "" end)) as $admits
-    | "| \($engine) | `\($tier)` | `\($row.default)` | \($admits) |"
+    def code: "`" + (split("\\[") | join("[")) + "`";
+    def list: if length == 0 then "—" else map(code) | join(", ") end;
+    . as $root
+    | ($root.modelMap | keys_unsorted[]) as $e
+    | ($root.classes[$e] // {}) as $cl
+    | ["trivial", "standard", "deep"] as $order
+    | ("cheap", "standard", "premium") as $c
+    | [$order[] | select($cl.tiers[.].class == $c)] as $defaults
+    | [$order[] | select(($cl.tiers[.] // null) as $r | $r != null and (($r.admits // [$r.class]) | index($c)) != null)] as $admitted
+    | ($cl[$c] // []) as $pats
+    | select(($pats | length) > 0 or ($defaults | length) > 0)
+    | ($pats | map(if type == "string" then code else (.glob | code) + " (needs " + .requires + ")" end)
+        | if length == 0 then "—" else join(", ") end) as $patterns
+    | (first($defaults[] | $root.modelMap[$e][.].default // empty) // null) as $seed
+    | "| \($e) | `@\($c)` | \($defaults | list) | \($admitted | list) | \($patterns) | \(if $seed == null then "—" else ($seed | code) end) |"
   ' "$1"
 }
 
@@ -102,34 +112,36 @@ splice() {
   ' "$in"
 }
 
-# render_doc <defaults.json> <in-doc> — <in-doc> with both generated regions
+# render_doc <defaults.json> <in-doc> — <in-doc> with every generated region
 # freshly rendered from <defaults.json>, on stdout.
 render_doc() {
-  local defaults="$1" in="$2" tier_rows pace_downgrades tmp1
-  tier_rows="$work/tier_rows"
+  local defaults="$1" in="$2" model_classes pace_downgrades tmp1
+  model_classes="$work/model_classes"
   pace_downgrades="$work/pace_downgrades"
   tmp1="$work/tmp1"
-  render_tier_rows "$defaults" >"$tier_rows"
+  render_model_classes "$defaults" >"$model_classes"
   render_pace_downgrades "$defaults" >"$pace_downgrades"
-  splice tier-rows "$tier_rows" "$in" >"$tmp1"
+  splice model-classes "$model_classes" "$in" >"$tmp1"
   splice pace-downgrades "$pace_downgrades" "$tmp1"
 }
 
 # check_model_map_table <defaults.json> <doc> — the hand-written table under
 # "## Model map": for its `deep`/`standard`/`trivial` rows, the first
-# `**…**` token of each engine column (backticks stripped) must equal that
-# engine/tier's `default` in defaults.json. Prints every mismatch; also fails,
+# `**…**` token of each engine column (backticks stripped) must be `@` plus
+# that engine/tier's `classes.<engine>.tiers.<tier>.class` in defaults.json,
+# the class its default comes from. Prints every mismatch; also fails,
 # naming the problem, when the "## Model map" heading or its `Tier` table
 # header is not found, or when zero cells were compared.
 check_model_map_table() {
   local defaults="$1" doc="$2" lut rc=0
   lut="$work/lut"
   jq -r '
-    .modelMap
+    . as $root
+    | .modelMap
     | to_entries[] as $e
     | $e.value
-    | to_entries[]
-    | [$e.key, .key, .value.default] | @tsv
+    | keys_unsorted[]
+    | [$e.key, ., "@" + ($root.classes[$e.key].tiers[.].class // "?")] | @tsv
   ' "$defaults" >"$lut"
   awk '
     FNR == NR { lut[$1, $2] = $3; next }
@@ -174,7 +186,7 @@ check_model_map_table() {
           want = lut[eng, tier]
           compared++
           if (tok != want) {
-            printf "Model map table mismatch: %s/%s: doc has %s, defaults.json default is %s\n", eng, tier, tok, want
+            printf "Model map table mismatch: %s/%s: doc has %s, defaults.json class is %s\n", eng, tier, tok, want
             mism = 1
           }
         }

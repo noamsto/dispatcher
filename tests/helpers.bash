@@ -25,7 +25,7 @@ unset DISPATCHER_CRITICS_DIR DISPATCHER_REVIEWERS_DIR DISPATCHER_SKILLS_DIR
 # The repo copy of the pinned pi subagent extension and agent roster pi leads load.
 export DISPATCHER_PI_DIR="$BATS_TEST_DIRNAME/../adapters/pi"
 unset DISPATCH_PROFILE DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_GRANT_ROOTS
-unset DISPATCH_SPEC DISPATCH_SHAPE DISPATCH_DRAFT_PR DISPATCH_CLAUDE_CONNECTORS
+unset DISPATCH_SPEC DISPATCH_SHAPE DISPATCH_DRAFT_PR DISPATCH_CLAUDE_CONNECTORS DISPATCH_CLASS_SIGIL
 # Raw-source consumers carry the unsubstituted @dispatchConfig@; point them at
 # the repo copy of the resolver (every test file lives in tests/).
 export DISPATCH_CONFIG_BIN="$BATS_TEST_DIRNAME/../adapters/core/dispatch-config.sh"
