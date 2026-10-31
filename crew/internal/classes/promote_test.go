@@ -424,6 +424,25 @@ func TestNullClassEntryRefusesWrites(t *testing.T) {
 	}
 }
 
+func TestNullFileOrEngineRefusesWrites(t *testing.T) {
+	for _, pruned := range []string{`null`, `{"codex":null}`} {
+		t.Run(pruned, func(t *testing.T) {
+			f := newPromoteFixture(t, catalogJSON, nil)
+			f.writeState(pruned)
+			var stderr bytes.Buffer
+			if got := Promote("codex", "standard", "gpt-5.7-terra", f.env, &stderr); got != 1 {
+				t.Errorf("Promote = %d, want 1", got)
+			}
+			if !strings.HasPrefix(stderr.String(), "crew: class: class-state is unusable (") {
+				t.Errorf("Promote stderr = %q, want the refusal", stderr.String())
+			}
+			if s := f.stateBytes(); s != pruned {
+				t.Errorf("state rewritten to %q", s)
+			}
+		})
+	}
+}
+
 func TestUnusableStateAutoOffProposesNothing(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, func(doc map[string]any) {
 		doc["classes"].(map[string]any)["codex"].(map[string]any)["autoPromote"] = false
