@@ -543,8 +543,9 @@ is premium on both dimensions needs a matching escape for each (or
 `--ignore-budget`). pi's OpenRouter opus pattern sheds to pi's standard
 default on the `month` window. A direct `anthropic/*` id paces on pi's
 Anthropic credit instead (`engines.pi.anthropic`, `L` = `expires` minus
-`as_of`), never the month: direct opus sheds to `anthropic/claude-sonnet-5-5`,
-and direct ids have no effort rung, so direct sonnet is never refused. While pi's
+`as_of`), never the month: direct opus sheds to `anthropic/claude-sonnet-5-5`
+at any effort (the credit is dollars, so no burn-weight lift), and direct ids
+have no effort rung, so direct sonnet is never refused. While pi's
 `month` window is ahead of pace, both `max` and `xhigh` are refused at once,
 so a refused pi dispatch lands directly on `high` — which matters because
 `deepseek-v4.1-flash`, pi's tier-typical `standard`/`deep` model, exposes no

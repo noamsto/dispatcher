@@ -2272,6 +2272,25 @@ EOF
   "$real_jq" -e '.engines.pi == null' "$XDG_DATA_HOME/crew/engine-budget.json"
 }
 
+@test "anthropic credit: an unreadable session file or dir fails the scan rather than undercount" {
+  [ "$(id -u)" -ne 0 ] || skip "root reads a mode-000 file"
+  credit_fixture
+  credit_grant
+  local f="$HOME/.pi/agent/sessions/--home-u-git-b--/2026-10-03_two.jsonl" d="$HOME/.pi/dispatcher-worker/sessions/--home-u-git-a--"
+  chmod 000 "$f"
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  chmod 644 "$f"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"anthropic credit unknown"*"scanning pi session records failed"* ]]
+  jq -e '.engines.pi == null' "$XDG_DATA_HOME/crew/engine-budget.json"
+  chmod 000 "$d"
+  SHIM_NOW=$CREDIT_NOW run --separate-stderr bash "$SCRIPT"
+  chmod 755 "$d"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"scanning pi session records failed"* ]]
+  jq -e '.engines.pi == null' "$XDG_DATA_HOME/crew/engine-budget.json"
+}
+
 @test "anthropic credit: dispatch-config and refresh-budget carry the same iso_epoch" {
   local a b
   a="$(sed -n "/^iso_epoch_def='/,/^    end;'\$/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-config.sh")"

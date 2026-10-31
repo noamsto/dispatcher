@@ -18696,6 +18696,11 @@ ROWS
   DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"dispatch: pi anthropic credit is at 80% and 50 points ahead of pace — the premium rung ($opus) is refused; use the standard rung ($sonnet) instead, set DISPATCH_IGNORE_RUNG=$opus to override just this refusal"* ]]
+  # Even at low effort: the credit is dollars, so opus@low's sonnet-equal burn
+  # weight does not lift the refusal.
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort low --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung ($opus) is refused; use the standard rung ($sonnet) instead"* ]]
   DISPATCH_IGNORE_RUNG="$opus" DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep "$opus" --agent pi --effort high --crew-id c1 "t"
   [ "$status" -eq 0 ]
   [[ "$stderr" == *"rung refusal skipped (DISPATCH_IGNORE_RUNG) — '$opus' on --agent pi at anthropic credit 80% (50 ahead of pace)"* ]]

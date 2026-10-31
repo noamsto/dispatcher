@@ -762,16 +762,20 @@ anthropic_credit() {
     [[ ${#dirs[@]} -eq 0 || ${dirs[0]} != "$real" ]] || continue
     dirs+=("$real")
   done
-  # grep is a cheap prefilter (pi writes compact JSONL); jq decides. A grep
-  # batch with no match exits 1, so only jq's status is the scan's. Paths are
-  # absolute, though the session dirs' names start with "--".
+  # grep is a cheap prefilter (pi writes compact JSONL); jq decides. Paths are
+  # absolute, though the session dirs' names start with "--". A grep batch with
+  # no match exits 1, which is fine; a find or read error fails the scan, since
+  # an undercount would overstate what is left (fail open).
   # shellcheck disable=SC2016 # jq program text, not shell
   if ! spent=$(
-    {
+    (
+      rc=0
       for d in "${dirs[@]}"; do
-        find "$d" -type f -name '*.jsonl' -newermt "@$((as_of - 1))" -print0
-      done | xargs -0 -r grep -h -F -e '"provider":"anthropic"' -- || true
-    } | jq -nR --argjson asof "$as_of" "$iso_epoch_def"'
+        find "$d" -type f -name '*.jsonl' -newermt "@$((as_of - 1))" -print0 || rc=1
+      done
+      exit "$rc"
+    ) | xargs -0 -r "$BASH" -c 'grep -h -F -e "$0" -- "$@"; [ "$?" -le 1 ]' '"provider":"anthropic"' |
+      jq -nR --argjson asof "$as_of" "$iso_epoch_def"'
       reduce (inputs | fromjson? | objects
         | select(.type == "message" and (.message | type) == "object" and .message.provider == "anthropic")
         | select((.timestamp | iso_epoch) as $t | $t != null and $t >= $asof)
