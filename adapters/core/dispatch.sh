@@ -176,9 +176,8 @@ refuse_claude_sonnet_cap() {
 # the resolved one, so DISPATCH_IGNORE_RUNG compares against that one id.
 # A direct anthropic/* id on pi bills pi's prepaid Anthropic credit, not
 # OpenRouter: its pace window is engines.pi.anthropic (paced from as_of to
-# expires), never the OpenRouter month; its downgrade applies at any effort (no
-# burn-weight lift), and it has no effort rung, so direct sonnet is never
-# pace-refused.
+# expires), never the OpenRouter month, and it has no effort rung, so direct
+# sonnet is never pace-refused.
 pace_rule_target() {
   local target_agent="$1" target_model="$2" target_effort="$3" target_role="${4:-}" model_downgrade="" model_downgrade_label="" effort_downgrade="" model_weight downgrade_weight rung_pct win used_pct ahead pace_notice pace_clause escape
   local down_to model_rung target_class=premium down_class=standard c
@@ -1777,7 +1776,7 @@ _anthropic_credits() {
   out="$(jq -r --argjson now "$(date +%s)" '
     def usd: (. * 100 | round) / 100 | tostring;
     if (.fetched_epoch | type) != "number" or .fetched_epoch < $now - 7200 or .fetched_epoch > $now + 300 then empty
-    else (.engines.pi.anthropic // null) as $a
+    else .engines.pi.anthropic as $a
       | if ($a | type) != "object" then "none\tengine-budget.json records no Anthropic credit (engines.pi.anthropic; set anthropicCredits {balance_usd, expires, as_of} and run refresh-budget, whose warnings say if it could not estimate the credit)"
         elif ($a.resets_at | type) != "number" or $a.resets_at <= $now then "expired\tthe recorded Anthropic credit expired\(if ($a.resets_at | type) == "number" then " at \($a.resets_at | todateiso8601)" else "" end) (engines.pi.anthropic)"
         elif ($a.remaining_usd | type) != "number" or $a.remaining_usd <= 0 then "spent\tthe recorded Anthropic credit is spent ($\([0, $a.remaining_usd] | max | usd) of $\(if ($a.balance_usd | type) == "number" then $a.balance_usd | usd else "?" end) left, engines.pi.anthropic; update anthropicCredits after checking the Anthropic Console)"

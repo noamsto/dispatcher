@@ -763,10 +763,10 @@ anthropic_credit() {
     dirs+=("$real")
   done
   # grep is a cheap prefilter (whitespace-tolerant, though pi writes compact
-  # JSONL); jq decides. Paths are
-  # absolute, though the session dirs' names start with "--". A grep batch with
-  # no match exits 1, which is fine; a find or read error fails the scan, since
-  # an undercount would overstate what is left (fail open).
+  # JSONL); jq decides. Paths are absolute, though the session dirs' names
+  # start with "--". A grep batch with no match exits 1, which is fine; a find
+  # or read error fails the scan, since an undercount would overstate what is
+  # left (fail open).
   # shellcheck disable=SC2016 # jq program text, not shell
   if ! spent=$(
     (
