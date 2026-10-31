@@ -4099,6 +4099,25 @@ EOF
   grep -q -- '-- dispatch deep opus --agent claude --effort high --ignore-budget 42' "$STUB_LOG"
 }
 
+@test "dispatch --host resolves a claude @class for the local pace gate and forwards the sigil" {
+  stub_launch_bins
+  _host_crew_stub
+  budget_json 75 "$(date +%s)"
+  run --separate-stderr run_dispatch deep @premium --agent claude --host mini --effort high --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung (claude premium: @premium → opus) is refused"* ]]
+  run ! grep -q -- '-- dispatch deep' "$STUB_LOG"
+  # A role's sigil, with an effort suffix after it, gets the same gate.
+  run --separate-stderr run_dispatch deep @standard --agent claude --host mini --effort high --roles 'reviewer=claude:@premium@high' --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung (claude premium: @premium → opus) is refused"* ]]
+  run ! grep -q -- '-- dispatch deep' "$STUB_LOG"
+  # The remote resolves the sigil against its own caches.
+  run --separate-stderr run_dispatch deep @premium --agent claude --host mini --effort high --ignore-budget --crew-id c1 42 "t"
+  [ "$status" -eq 3 ]
+  grep -q -- '-- dispatch deep @premium --agent claude --effort high --ignore-budget 42' "$STUB_LOG"
+}
+
 @test "dispatch --host runs the claude quota stop for a role on claude under a non-claude lead" {
   stub_launch_bins
   _host_crew_stub
@@ -5148,55 +5167,90 @@ TABLE
   if [ -f "$STUB_LOG" ]; then run ! grep -q 'switch' "$STUB_LOG"; fi
 }
 
-@test "burn map conformance: the doc slice names every classed rung" {
-  # Copied from the Model map/Burn classes table, so it makes drift loud
-  # rather than impossible. kimi-k3* is deliberately excluded: the burn doc
-  # does not class it and _burn_weight falls it through to "" on purpose. The
-  # cursor rungs listed are the non-fast defaults; `-fast` is a price
-  # multiplier crew/internal/rate/burn_test.go pins.
-  doc="$BATS_TEST_DIRNAME/../adapters/core/protocols/dispatch-orchestration.md"
-  doc_slice="$(sed -n '/^## Model map/,/^### Tier map/p' "$doc")"
-  for token in opus sonnet haiku fable composer-2.5 \
-    gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol \
-    grok-4.7-low grok-4.7-medium grok-4.7-high \
-    claude-fable-5; do
-    grep -qF "$token" <<<"$doc_slice" || {
-      printf 'token %s missing from the Model map/Burn classes doc slice\n' "$token" >&2
+# class_table_conforms <defaults.json> <doc> — for every engine x tier row in
+# <defaults.json>, the hand-written Model map table leads that cell with the
+# row's `@<class>`, and the generated model-classes region carries that class's
+# row ending in its live seed default (the default of the class's first tier
+# row). Names the first drift it finds on stderr.
+class_table_conforms() {
+  local defaults=$1 doc=$2 slice region hdr row e t c seed i tok line found
+  local -a cols cells
+  slice="$(sed -n '/^## Model map/,/^### /p' "$doc")"
+  region="$(sed -n '/BEGIN generated:model-classes/,/END generated:model-classes/p' <<<"$slice")"
+  hdr="$(grep -m1 '^| Tier ' <<<"$slice")"
+  [ -n "$region" ] && [ -n "$hdr" ] || {
+    printf 'the Model map has no model-classes region or Tier table\n' >&2
+    return 1
+  }
+  IFS='|' read -r -a cols <<<"$hdr"
+  while IFS=$'\t' read -r e t c seed; do
+    found=""
+    while IFS= read -r line; do
+      if [[ $line == "| $e | \`@$c\` |"* && $line == *"| \`$seed\` |" ]]; then found=1; fi
+    done <<<"$region"
+    [ -n "$found" ] || {
+      printf '%s %s: no model-classes row for @%s with seed default %s\n' "$e" "$t" "$c" "$seed" >&2
       return 1
     }
-  done
+    row="$(grep -m1 "^| \`$t\` " <<<"$slice")"
+    IFS='|' read -r -a cells <<<"$row"
+    tok=""
+    for i in "${!cols[@]}"; do
+      read -r line _ <<<"${cols[$i]}"
+      if [ "$line" = "$e" ] && [[ ${cells[$i]:-} =~ \*\*([^*]+)\*\* ]]; then tok="${BASH_REMATCH[1]}"; fi
+    done
+    [ "$tok" = "@$c" ] || {
+      printf '%s %s: the Model map table leads with %s, not @%s\n' "$e" "$t" "${tok:-nothing}" "$c" >&2
+      return 1
+    }
+  done < <(jq -r '. as $r | .modelMap | to_entries[] | .key as $e | .value | keys_unsorted[] as $t
+    | $r.classes[$e].tiers[$t].class as $c
+    | [$e, $t, $c, first(("trivial", "standard", "deep") | select($r.classes[$e].tiers[.].class == $c) | $r.modelMap[$e][.].default)] | @tsv' "$defaults")
 }
 
-@test "tier map conformance: dispatch.sh matches the documented rule" {
-  # Copied from the Model map/Burn classes table, so it makes drift loud
-  # rather than impossible — same tolerance as :747's precedent test.
-  # dispatch.sh's side matches through the human-readable tier_expected
-  # strings gate 1 builds, not the bash regexes (which carry escaped `\.`
-  # and would not literal-match e.g. gpt-5.6-sol) — a future edit that
-  # removes those strings without keeping some literal occurrence of each id
-  # would silently gut this tripwire.
-  doc="$BATS_TEST_DIRNAME/../adapters/core/protocols/dispatch-orchestration.md"
-  # Model map through the Model gate section only — stops before the new
-  # Tier map subsection, whose own downgrade-target table repeats most of
-  # these same tokens and would let this test pass even if the ORIGINAL
-  # Model map/Burn classes text were deleted.
-  doc_slice="$(sed -n '/^## Model map/,/^### Tier map/p' "$doc")"
-  for token in opus sonnet haiku fable \
-    gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna gpt-5.5 gpt-5.4 gpt-5.4-mini \
-    kimi-k3-high grok-4.7-high grok-4.7-medium grok-4.7-low \
-    composer-2.5 claude-fable-5-1 \
-    openrouter/deepseek/deepseek-v4.1-flash \
-    openrouter/deepseek/deepseek-v4-flash \
-    openrouter/z-ai/glm-5.3-flash openrouter/qwen/qwen3.8-flash; do
-    grep -qF "$token" <<<"$doc_slice" || {
-      printf 'token %s missing from the Model map/Burn classes doc slice\n' "$token" >&2
+@test "burn map conformance: every subscription class seed in the class table burns at its own class" {
+  # Selection classes are the burn classes (dispatch-orchestration.md "Burn
+  # classes"), so each claude/codex/cursor seed default the generated table
+  # names must hit a burnClasses glob of the same class (opus at its default
+  # effort). kimi-* is deliberately unweighted: _burn_weight falls it through
+  # to "" on purpose, so it is the one exception, matched by glob, not id.
+  local defaults="$BATS_TEST_DIRNAME/../adapters/core/defaults.json" e c seed pat cls got n=0
+  region="$(sed -n '/BEGIN generated:model-classes/,/END generated:model-classes/p' "$BATS_TEST_DIRNAME/../adapters/core/protocols/dispatch-orchestration.md")"
+  rules="$(jq -r '.burnClasses[] | [.match, (.byEffort.default.class // .class)] | @tsv' "$defaults")"
+  while IFS='|' read -r _ e c _ _ _ seed _; do
+    e="${e// /}" c="${c//[ \`@]/}" seed="${seed//[ \`]/}"
+    case "$e" in claude | codex | cursor) ;; *) continue ;; esac
+    [ "$seed" != — ] || continue
+    [[ $seed != kimi-* ]] || continue
+    got=""
+    while IFS=$'\t' read -r pat cls; do
+      # shellcheck disable=SC2053 # the unquoted RHS is the glob
+      if [[ $seed == $pat ]]; then got="$cls" && break; fi
+    done <<<"$rules"
+    [ "$got" = "$c" ] || {
+      printf '%s @%s seed %s burns as %s\n' "$e" "$c" "$seed" "${got:-unweighted}" >&2
       return 1
     }
-    grep -qF "$token" "$DISPATCH" "$BATS_TEST_DIRNAME/../adapters/core/defaults.json" || {
-      printf 'token %s missing from dispatch.sh and defaults.json\n' "$token" >&2
-      return 1
-    }
-  done
+    n=$((n + 1))
+  done < <(grep '^| [a-z]* | `@' <<<"$region")
+  [ "$n" -ge 8 ]
+}
+
+@test "tier map conformance: the Model map names each row's class and the class table its live seed default" {
+  local defaults="$BATS_TEST_DIRNAME/../adapters/core/defaults.json"
+  local doc="$BATS_TEST_DIRNAME/../adapters/core/protocols/dispatch-orchestration.md"
+  class_table_conforms "$defaults" "$doc"
+  # A seed bump in defaults.json without regenerating the doc trips it.
+  jq '.modelMap.claude.trivial.default = "claude-haiku-9-9" | .modelMap.claude.trivial.models += ["claude-haiku-9-9"]' \
+    "$defaults" >"$BATS_TEST_TMPDIR/bumped.json"
+  run class_table_conforms "$BATS_TEST_TMPDIR/bumped.json" "$doc"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"claude trivial: no model-classes row for @cheap with seed default claude-haiku-9-9"* ]]
+  # So does a row moved to another class while the hand table still names the old one.
+  jq '.classes.codex.tiers.standard.class = "cheap"' "$defaults" >"$BATS_TEST_TMPDIR/moved.json"
+  run class_table_conforms "$BATS_TEST_TMPDIR/moved.json" "$doc"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"codex standard: the Model map table leads with @standard, not @cheap"* ]]
 }
 
 # Folded family F32: codex 7d budget-rung and exhaustion refusals.
@@ -18978,4 +19032,80 @@ _p4_hop() {
     [[ "$out" == *"dispatch: warning: model-resolve failed for codex; no @class ladder item matches 'gpt-5.7-terra'"* ]]
     [[ "$out" != *terra*terra* ]]
   done
+}
+
+# Model classes P7 (#1391): a positional or --roles @cheap|@standard|@premium
+# resolves through model-resolve to the engine's class default before every gate.
+@test "class sigil: deep @premium on codex launches the resolved id, which the task doc and dispatch row record" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep @premium --agent codex --effort high --crew-id c1 42 "sigil premium"
+  [ "$status" -eq 0 ]
+  grep -qF -- 'codex --profile worker -m gpt-5.6-sol ' <(launch_log)
+  grep -qx 'model: gpt-5.6-sol' "$TEST_REPO/.dispatch-wt/feat-42-sigil-premium/WORKER_TASK.md"
+  [ "$(jq -r 'select(.kind == "dispatch") | .model' "$TEST_REPO/.git/crew/events.jsonl")" = gpt-5.6-sol ]
+}
+
+@test "class sigil: a promoted class default in the class-state file is what @premium names" {
+  stub_launch_bins
+  class_catalog codex gpt-5.6-sol gpt-5.7-sol
+  printf '%s\n' '{"codex":{"premium":{"default":"gpt-5.7-sol"}}}' >"$XDG_DATA_HOME/crew/model-class-state.json"
+  DISPATCH_PROFILE=work run run_dispatch deep @premium --agent codex --effort high --crew-id c1 42 "sigil promoted"
+  [ "$status" -eq 0 ]
+  grep -qF -- 'codex --profile worker -m gpt-5.7-sol ' <(launch_log)
+  grep -qx 'model: gpt-5.7-sol' "$TEST_REPO/.dispatch-wt/feat-42-sigil-promoted/WORKER_TASK.md"
+}
+
+@test "class sigil: a class the tier does not admit is refused naming the class; --ignore-map still resolves it" {
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard @premium --agent codex --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: class @premium (gpt-5.6-sol) is not standard's row for --agent codex — standard admits @cheap, @standard; expected "*"--ignore-map"* ]]
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard @premium --agent codex --effort medium --ignore-map --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  # An admitted class passes on its resolved id.
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard @cheap --agent codex --effort medium --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+}
+
+@test "class sigil: trivial @cheap on claude resolves to the seed alias with no catalog" {
+  stub_launch_bins
+  [ ! -e "$XDG_DATA_HOME/crew/model-catalog.json" ]
+  DISPATCH_PROFILE=work run run_dispatch trivial @cheap --agent claude --effort low --crew-id c1 42 "sigil cheap"
+  [ "$status" -eq 0 ]
+  grep -qF -- '--model haiku --effort low' <(launch_log)
+  grep -qx 'model: haiku' "$TEST_REPO/.dispatch-wt/feat-42-sigil-cheap/WORKER_TASK.md"
+}
+
+@test "class sigil: a class with no resolvable id, or no class at all, is refused naming why" {
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep @premium --agent pi --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: @premium names no pi model — no pi tier row takes its default from class premium"* ]]
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep @frontier --agent codex --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"unknown model class '@frontier' — a class sigil is @cheap, @standard or @premium"* ]]
+  printf '#!/usr/bin/env bash\nexit 3\n' >"$BATS_TEST_TMPDIR/resolve-fail"
+  MODEL_RESOLVE_BIN="$BATS_TEST_TMPDIR/resolve-fail" DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep @premium --agent codex --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"@premium names no codex model — model-resolve gave no default for the codex deep row"* ]]
+}
+
+@test "class sigil: DISPATCH_IGNORE_RUNG never takes the sigil, only the resolved id" {
+  codex_budget_json 80 "$(date +%s)"
+  DISPATCH_IGNORE_RUNG=@premium DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep @premium --agent codex --effort high --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the premium rung (codex premium: @premium → gpt-5.6-sol) is refused"* ]]
+  [[ "$stderr" == *"set DISPATCH_IGNORE_RUNG=gpt-5.6-sol to override"* ]]
+  DISPATCH_IGNORE_RUNG=gpt-5.6-sol DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep @premium --agent codex --effort high --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"rung refusal skipped (DISPATCH_IGNORE_RUNG) — 'gpt-5.6-sol'"* ]]
+}
+
+@test "class sigil: --roles takes @class with or without an engine and an effort suffix, and roles.json records the resolved id" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch deep opus --agent claude --roles "reviewer=codex:@premium,critic=@standard@low" --effort high --crew-id c1 42 "sigil roles"
+  [ "$status" -eq 0 ]
+  task="$TEST_REPO/.dispatch-wt/feat-42-sigil-roles/WORKER_TASK.md"
+  roles="$(sed -n 's/^crew_dir: //p' "$task")/artifacts/feat/42-sigil-roles/roles.json"
+  jq -e '.reviewer.agent == "codex" and .reviewer.model == "gpt-5.6-sol" and .reviewer.effort == "high"
+    and .critic.agent == "claude" and .critic.model == "sonnet" and .critic.effort == "low"' "$roles"
+  grep -qF -- 'codex --profile worker -m gpt-5.6-sol ' <(launch_log)
 }

@@ -142,9 +142,10 @@ EOF
 }
 
 # P4 (#1381): _escalation_hop's @class items go through _model_class and
-# _class_item, so dispatch-resume.sh carries byte-identical copies of those too.
+# _class_item, and P7's (#1391) resume --model @class through _class_sigil, so
+# dispatch-resume.sh carries byte-identical copies of those too.
 @test "model map: the ladder class helpers are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in _model_class _class_item; do
+  for fn in _model_class _class_item _class_sigil; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$DISPATCH")"
     b="$(sed -n "/^${fn}() {/,/^}/p" "$RESUME")"
     [ -n "$a" ]

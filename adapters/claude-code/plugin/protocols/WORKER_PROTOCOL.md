@@ -270,7 +270,7 @@ The PR flow is in `WORKER_SHIP` ("When done (PR flow)"); this is the metrics rec
   ```
   `crew id` = `WORKER_TASK.md` `crew_id:`, else `$CREW_ID` if no task doc (`_crew_id`).
   - `consulted`: orchestration consult ran (deep only; else `false`).
-  - `consult_engine`: consultant family via Agent tool, codex MCP or one-shot: `opus`, `fable`, `codex` (gpt-5.6-sol), `cursor` (grok-4.7-high); `null` if not consulted.
+  - `consult_engine`: consultant family via Agent tool, codex MCP or one-shot: `opus`, `fable`, `codex` (its premium), `cursor` (Grok premium); `null` if not consulted.
   - `plan_critic_first_pass`: plan-critic verdict on the first draft, same as the plan seam's (every engine runs the critics); `null` only if no plan phase ran (trivial or resumed).
   - `rework_count`: execute-stage fixes the gates forced (`0` if none).
   - `replanned`: `true` once same-rung re-entry or strict-upward planning began (even if viability later failed) or a dispatcher replacement was adopted; else `false` (not counted: same-rung implementation fallback, top/no-rung block, initial planning, critics, consult recovery). A recovery-planner launch never bumps `rework_count`.
