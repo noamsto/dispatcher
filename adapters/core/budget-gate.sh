@@ -14,12 +14,12 @@
 # _budget_query <cache> <engine> <now> <jq-filter> — print the lines
 # <jq-filter> yields over the engine's cache entry (bound as $en, beside $e and
 # $now). Returns 0 when it printed any, 1 when none, 2 when the cache can't
-# tell: missing or unparsable, fetched_epoch not a number or over 2h old, or
+# tell: missing or unparsable, fetched_epoch not a number, over 2h old or more than 300 s in the future, or
 # the engine's entry null (its probe failed or never ran).
 _budget_query() {
   local out
   out=$(jq -r --arg e "$2" --argjson now "$3" '
-    if (.fetched_epoch | type) != "number" or .fetched_epoch < $now - 7200
+    if (.fetched_epoch | type) != "number" or .fetched_epoch < $now - 7200 or .fetched_epoch > $now + 300
        or .engines[$e] == null then "unknown"
     else "known", (.engines[$e] as $en | '"$4"')
     end' "$1" 2>/dev/null) || return 2
