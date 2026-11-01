@@ -5016,6 +5016,9 @@ while [ $# -gt 0 ]; do
     elif [ -z "$tier" ] && [[ $1 =~ ^(trivial|standard|deep)$ ]]; then
       echo "dispatch: the tier goes first: dispatch $1 [<model>] [flags] [--] <title...> (put -- before a title that starts with a tier word)" >&2
       exit 1
+    elif [ -z "$model" ] && [[ $1 == @* ]]; then
+      echo "dispatch: the model follows the tier: dispatch <tier> $1 [flags] [--] <title...> (put -- before a title that starts with @)" >&2
+      exit 1
     else
       break
     fi

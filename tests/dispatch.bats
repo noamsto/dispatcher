@@ -19326,11 +19326,19 @@ task_profile_settings() {
   [ "$status" -eq 1 ]
 }
 
-@test "task profile: a tier word after --profile is refused, not read as the title" {
+@test "task profile: a tier word or @class after --profile is refused, not read as the title" {
   run --separate-stderr run_dispatch --profile docs deep --crew-id c1 "t"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"dispatch: the tier goes first: dispatch deep"* ]]
   DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile docs --crew-id c1 -- deep title
+  [ "$status" -eq 0 ]
+  run --separate-stderr run_dispatch --profile docs --crew-id c1 @premium "t x"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: the model follows the tier: dispatch <tier> @premium"* ]]
+  run --separate-stderr run_dispatch deep --profile docs @premium Fix
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: the model follows the tier: dispatch <tier> @premium"* ]]
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile docs --crew-id c1 -- @premium title
   [ "$status" -eq 0 ]
 }
 
