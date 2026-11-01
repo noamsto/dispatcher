@@ -4322,7 +4322,9 @@ if [ "${1:-}" = --profiles ]; then
     jq -r '.profiles | to_entries[] | .key as $n | .value
       | [$n, (.tier // "-"), .engine, (.class // "-"), (.effort // "-"), (.model // "-"),
          (if .note then "  (" + .note + ")" else "" end)] | join("\u001f")' <<<"$out" |
-      awk -F'\x1f' 'BEGIN { printf "%-20s %-9s %-8s %-9s %-7s %s\n", "PROFILE", "TIER", "ENGINE", "CLASS", "EFFORT", "MODEL" }
+      # \037 (octal) is the POSIX spelling of the 0x1f separator: \x1f is a
+      # gawk/mawk extension that onetrueawk (macOS awk) leaves unexpanded.
+      awk -F'\037' 'BEGIN { printf "%-20s %-9s %-8s %-9s %-7s %s\n", "PROFILE", "TIER", "ENGINE", "CLASS", "EFFORT", "MODEL" }
         { printf "%-20s %-9s %-8s %-9s %-7s %s%s\n", $1, $2, $3, $4, $5, $6, $7 }'
   fi
   exit 0

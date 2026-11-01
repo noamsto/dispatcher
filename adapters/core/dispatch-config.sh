@@ -70,9 +70,10 @@
 # shipped value. A malformed entry is dropped from its layer with a warning,
 # never fatal. Like grantRoots, a profile's `tier` decides review rigour (which
 # critics and reviewer run), so it is honoured only from the shipped defaults
-# and the locked layer: a copy in the user layer is dropped with a warning (no
-# env var can set a profile). It has no home-manager option: overrides go
-# through userSettings or the user file.
+# and a locked layer -- a build that reads DISPATCH_LOCKED_SETTINGS; the
+# home-manager module bakes no taskProfiles. A copy in the user layer is
+# dropped with a warning (no env var can set a profile). The other fields stay
+# userSettings-/user-file-overridable.
 #
 # laneProfiles maps an engine or "<engine>/<model>" glob to a lane profile (its
 # name, and optionally inline notes text) that `dispatch` applies to the task

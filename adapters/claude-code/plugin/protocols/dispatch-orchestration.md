@@ -450,8 +450,10 @@ sigil, so every gate runs on the resolved id. `dispatch --profiles` shows what
 each profile resolves to on this machine.
 
 `—` means the profile leaves it to you: tier → pass one (a profile's tier comes
-only from the shipped defaults or the locked settings: the user layer cannot
-lower review rigour); engine → `dispatch` runs claude unless you pass
+only from the shipped defaults, or from a locked layer on a build that reads
+`DISPATCH_LOCKED_SETTINGS`; the home-manager module bakes no `taskProfiles`, so
+there it is defaults.json only, and the user layer cannot lower review rigour);
+engine → `dispatch` runs claude unless you pass
 `--agent`; choose it by the leans, budget rules and rotation, not by this
 default; class → the tier row's class for the engine; effort → pass `--effort`.
 
