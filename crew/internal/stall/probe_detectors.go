@@ -331,8 +331,8 @@ func msTS(s string) (int64, bool) {
 // reported; a role msg the lead answered is handled, a dispatcher directive
 // clears only on delivery. Never escalates.
 //
-// An overdue dispatcher directive first gets one auto-nudge per newest
-// directive. An accepted nudge skips this tick's verdict, since the lead is
+// An overdue reason — a dispatcher directive or a role verdict — first gets
+// one auto-nudge per newest reason. An accepted nudge skips this tick's verdict, since the lead is
 // reading its inbox now; a typed-but-unaccepted one is reported once as the
 // episode; an anchor refusal means a stale pane or session, so nudging stops
 // for good.
@@ -427,7 +427,7 @@ func (w *watch) autoNudge() (bool, error) {
 	if !okOld || !okNew || w.now*1000-dOld < w.cfg.unread*1000 || dNew <= pd.nudgedTS {
 		return false, nil
 	}
-	// Once per directive across watchdogs and the dispatcher: a restarted
+	// Once per reason across watchdogs and the dispatcher: a restarted
 	// watchdog or a manual `crew nudge` may already have typed for it.
 	if w.nudged(dNew) {
 		pd.nudgedTS = dNew

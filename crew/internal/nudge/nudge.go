@@ -1,9 +1,10 @@
 // Package nudge types one fixed line into a worker lead's provably idle, empty
 // input box and submits it. Two lines are ever typed: `crew inbox
-// "$CREW_WORKER_ID"`, which points a lead whose wake expired at the directive
-// already posted with `crew reply` (`crew nudge`, and the watchdog's D6
-// auto-nudge), and ContinueLine, which the watchdog's D9 offers a pi lead whose
-// turn ended truncated or on a provider error.
+// "$CREW_WORKER_ID"`, which points a lead its wake did not reach at an unread
+// reason — the directive already posted with `crew reply`, or an overdue role
+// verdict (`crew nudge`, and the watchdog's D6 auto-nudge) — and ContinueLine,
+// which the watchdog's D9 offers a pi lead whose turn ended truncated or on a
+// provider error.
 //
 // Pane is the whole decision — frame gate, anchor gate, type, confirm, Enter,
 // classify, one bus row — and it is exported because the arm and `internal/stall`
@@ -52,7 +53,7 @@ type PaneRequest struct {
 	Session string // the sessioned worker id, `worker:<branch>#s<epoch>-<pid>`
 	Crew    string
 	Actor   string // `dispatcher:<crew>` from the arm, `watchdog` from D6 and D9
-	MsgTS   string // the unread directive's ms timestamp; D9 types with "0"
+	MsgTS   string // the pointed-at msg's ms timestamp (a dispatcher directive or a role verdict); D9 types with "0"
 	Line    string // what to type; empty is the inbox line
 }
 

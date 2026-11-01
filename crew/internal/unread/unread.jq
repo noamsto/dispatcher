@@ -1,9 +1,11 @@
-# crew.sh's `_unread_scan` program, verbatim but for its input: the helper
-# piped `tail -n 2000 "$log"` into `jq -Rnr` and collected the decoded lines
-# with [inputs | fromjson? | select …], while the Go caller hands over the
-# already-decoded tail (probe.BusRows drops exactly the lines fromjson?
-# dropped). So the collect is [.[] | select …] and every other token is the
-# helper's.
+# crew.sh's `_unread_scan` program, verbatim but for two patches: its input,
+# and the #1406 `any` mode. The helper piped `tail -n 2000 "$log"` into
+# `jq -Rnr` and collected the decoded lines with [inputs | fromjson? | select …],
+# while the Go caller hands over the already-decoded tail (probe.BusRows drops
+# exactly the lines fromjson? dropped). So the collect is [.[] | select …] and
+# every other token is the helper's. The helper's `dispatcher` mode is replaced
+# by `any`: "<oldest-ts> <newest-ts> role|dispatcher" over the role+dispatcher
+# set, src the oldest's source, so a nudge can point at either kind.
 
 def lead($x): if $f == $me then ($x == $me or ($x | startswith($me + "#")))
               else $x == $f end;

@@ -13,9 +13,10 @@ import (
 )
 
 // Default is the wiring `crew nudge` actually runs, and the arm's own tests inject a
-// fake scan, so this pins what the real gate is wired to: the dispatcher's undelivered
-// directives, keyed on the branch id for the lead and the session id for its marks.
-func TestDefaultUnreadReadsOnlyAnUndeliveredDirective(t *testing.T) {
+// fake scan, so this pins what the real gate is wired to: every undelivered
+// reason — a dispatcher directive or a role verdict — keyed on the branch id for
+// the lead and the session id for its marks.
+func TestDefaultUnreadReadsEveryUndeliveredReason(t *testing.T) {
 	const (
 		crew  = "c1"
 		br    = "feat/x"
