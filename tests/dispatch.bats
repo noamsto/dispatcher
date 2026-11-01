@@ -19154,3 +19154,118 @@ _p4_hop() {
     and .critic.agent == "claude" and .critic.model == "sonnet" and .critic.effort == "low"' "$roles"
   grep -qF -- 'codex --profile worker -m gpt-5.6-sol ' <(launch_log)
 }
+
+# task_profile_settings <json> — the user settings layer, for taskProfiles
+# overrides and additions.
+task_profile_settings() {
+  mkdir -p "$XDG_CONFIG_HOME/dispatcher"
+  printf '%s\n' "$1" >"$XDG_CONFIG_HOME/dispatcher/settings.json"
+}
+
+@test "task profile: --profile docs alone fills tier, effort and the class, recorded in the task doc and the dispatch row" {
+  stub_launch_bins
+  DISPATCH_PROFILE=work run --separate-stderr run_dispatch --profile docs --crew-id c1 42 "profile docs"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatch: task profile docs: tier trivial, engine claude, model @cheap, effort low (filled: tier effort model)"* ]]
+  task="$TEST_REPO/.dispatch-wt/feat-42-profile-docs/WORKER_TASK.md"
+  grep -qx 'tier: trivial' "$task"
+  grep -qx 'engine: claude' "$task"
+  grep -qx 'model: haiku' "$task"
+  grep -qx 'effort: low' "$task"
+  grep -qx 'task_profile: docs' "$task"
+  jq -e 'select(.kind == "dispatch" and .branch == "feat/42-profile-docs") | .task_profile == "docs" and .model == "haiku"' "$TEST_REPO/.git/crew/events.jsonl"
+  grep -qF -- '--model haiku --effort low' <(launch_log)
+  # A dispatch without --profile records neither.
+  DISPATCH_PROFILE=work run --separate-stderr run_dispatch trivial haiku --effort low --crew-id c1 43 "no profile"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" != *"task profile"* ]]
+  run ! grep -q '^task_profile:' "$TEST_REPO/.dispatch-wt/feat-43-no-profile/WORKER_TASK.md"
+  jq -e 'select(.kind == "dispatch" and .branch == "feat/43-no-profile") | has("task_profile") | not' "$TEST_REPO/.git/crew/events.jsonl"
+}
+
+@test "task profile: a profile engine fills --agent and the tier row's class resolves on it" {
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile mechanical-refactor --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatch: task profile mechanical-refactor: tier standard, engine codex, model @standard, effort medium (filled: tier engine effort model)"* ]]
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch --profile mechanical-refactor --crew-id c1 42 "profile refactor"
+  [ "$status" -eq 0 ]
+  grep -qF -- 'codex --profile worker -m gpt-5.6-terra ' <(launch_log)
+  grep -qx 'model: gpt-5.6-terra' "$TEST_REPO/.dispatch-wt/feat-42-profile-refactor/WORKER_TASK.md"
+}
+
+@test "task profile: explicit tier, model, @class, --agent and --effort each win over the profile" {
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep --profile security --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatch: task profile security: tier deep, engine claude, model @premium, effort medium (filled: engine effort model)"* ]]
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard sonnet --profile security --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatch: task profile security: tier standard, engine claude, model sonnet, effort medium (filled: engine effort)"* ]]
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard @standard --profile security --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatch: task profile security: tier standard, engine claude, model @standard, effort medium (filled: engine effort)"* ]]
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --agent claude --profile mechanical-refactor --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatch: task profile mechanical-refactor: tier standard, engine claude, model @standard, effort medium (filled: tier effort model)"* ]]
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --effort high --profile docs --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatch: task profile docs: tier trivial, engine claude, model @cheap, effort high (filled: tier model)"* ]]
+}
+
+@test "task profile: an unknown profile is refused" {
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile nope --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: unknown task profile 'nope' — dispatch --profiles lists them"* ]]
+}
+
+@test "task profile: a profile class the tier does not admit is refused like the sigil" {
+  task_profile_settings '{"taskProfiles":{"lean":{"tier":"trivial","engine":"codex","class":"premium"}}}'
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile lean --effort low --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: task profile lean: tier trivial, engine codex, model @premium, effort low (filled: tier engine model)"* ]]
+  [[ "$stderr" == *"dispatch: class @premium (gpt-5.6-sol) is not trivial's row for --agent codex"* ]]
+}
+
+@test "task profile: a user-layer field overrides the shipped profile's" {
+  task_profile_settings '{"taskProfiles":{"docs":{"engine":"codex"}}}'
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile docs --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatch: task profile docs: tier trivial, engine codex, model @cheap, effort low (filled: tier engine effort model)"* ]]
+  stub_launch_bins
+  DISPATCH_PROFILE=work run run_dispatch --profile docs --crew-id c1 42 "profile luna"
+  [ "$status" -eq 0 ]
+  grep -qF -- 'codex --profile worker -m gpt-5.6-luna ' <(launch_log)
+}
+
+@test "task profile: a malformed user profile is dropped with the config warning and refused as unknown" {
+  task_profile_settings '{"taskProfiles":{"bad":{"tier":"huge"}}}'
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile bad --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch-config: ignoring taskProfiles.bad from "* ]]
+  [[ "$stderr" == *"dispatch: unknown task profile 'bad' — dispatch --profiles lists them"* ]]
+}
+
+@test "task profile: --profile is refused with --host and without a name" {
+  stub_launch_bins
+  _host_crew_stub
+  run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 --profile security 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: --host cannot combine with --profile — it is local to this machine"* ]]
+  run ! grep -q '^remote-run' "$STUB_LOG"
+  run --separate-stderr run_dispatch standard sonnet --effort medium --profile "" "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: --profile needs a task profile name (dispatch --profiles lists them)"* ]]
+  run --separate-stderr run_dispatch standard sonnet --effort medium --profile
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: --profile needs a task profile name (dispatch --profiles lists them)"* ]]
+}
+
+@test "task profile: a profile without a tier is refused naming it unless the tier is passed" {
+  task_profile_settings '{"taskProfiles":{"loose":{"effort":"low"}}}'
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile loose --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: task profile 'loose' sets no tier — pass one: dispatch <tier> --profile loose ..."* ]]
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch trivial --profile loose --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatch: task profile loose: tier trivial, engine claude, model @cheap, effort low (filled: effort model)"* ]]
+}
