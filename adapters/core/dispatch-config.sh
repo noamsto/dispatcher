@@ -305,8 +305,7 @@ check_anthropic_credits() {
 
 # check_task_profiles <json> <file> <layer> — print the layer, with each
 # malformed taskProfiles entry dropped and one warning per drop on stderr naming
-# <file> and <layer>. A null field or profile is valid: it is how a higher layer
-# clears a shipped one. Never fatal: a bad entry only loses itself, so the
+# <file> and <layer>. Never fatal: a bad entry only loses itself, so the
 # shipped profile of the same name survives.
 check_task_profiles() {
   local result
