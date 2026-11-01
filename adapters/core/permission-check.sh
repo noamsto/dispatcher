@@ -226,9 +226,15 @@ capture() {
   CAPTURE=${CAPTURE%.}
 }
 
-# frame_parse — spec "Frame gate". Walks the non-empty lines up from the
-# bottom: footer, the three options, the question, a one- or two-line request
-# block, the subagent Bash header. Sets F_AGENT, F_BLOCK1, F_BLOCK2, F_NBLOCK.
+# frame_parse — spec "Frame gate". The real Claude Code 2.1.310 plain dialog
+# renders, top-down: a `─` top rule, the header (`Bash command · from the
+# <name> agent` for a subagent), the auto-mode Tip, an optional description,
+# a `╌` rule, the command, a `╌` rule, the question, and four options, over
+# the footer. Walks the trimmed non-empty lines up from the bottom: footer,
+# `4. No`, option 3, option 2, `❯ 1. Yes`, the question, the command's `╌`
+# rule, the command, the upper `╌` rule, an optional description, the exact
+# Tip, and the subagent header. Sets F_AGENT, F_BLOCK1 (the command),
+# F_BLOCK2 (the description, or empty), F_NBLOCK.
 frame_parse() {
   local lines=() ne=() line t
   mapfile -t lines <<<"$CAPTURE"
@@ -239,27 +245,43 @@ frame_parse() {
   done
 
   local n=${#ne[@]}
-  [ "$n" -ge 7 ] || refuse "frame: not a permission dialog"
-  [ "${ne[n - 1]}" = "Esc to cancel · Tab to amend" ] || refuse "frame: footer is not the last line"
-  [ "${ne[n - 2]}" = "3. No" ] || refuse "frame: option 3 is not No"
-  [[ ${ne[n - 3]} == "2. Yes, and don’t ask again for:"* ]] || refuse "frame: option 2 unrecognised"
-  [ "${ne[n - 4]}" = "❯ 1. Yes" ] || refuse "frame: option 1 is not exactly Yes"
-  [ "${ne[n - 5]}" = "Do you want to proceed?" ] || refuse "frame: question unrecognised"
+  [ "$n" -ge 11 ] || refuse "frame: not a permission dialog"
+  # The footer is one of the two real forms: the plain one, or the one a live
+  # background subagent appends. No open-ended suffix.
+  case ${ne[n - 1]} in
+  "Esc to cancel · Tab to amend" | "Esc to cancel · Tab to amend · ctrl+x ctrl+k twice to stop background agents") ;;
+  *) refuse "frame: footer is not the last line" ;;
+  esac
+  [ "${ne[n - 2]}" = "4. No" ] || refuse "frame: option 4 is not No"
+  [[ ${ne[n - 3]} == "3. Yes, and switch to auto mode · "* ]] || refuse "frame: option 3 unrecognised"
+  [[ ${ne[n - 4]} == "2. Yes, and always allow access to "*" from this project" ]] || refuse "frame: option 2 unrecognised"
+  [ "${ne[n - 5]}" = "❯ 1. Yes" ] || refuse "frame: option 1 is not exactly Yes"
+  [ "${ne[n - 6]}" = "Do you want to proceed?" ] || refuse "frame: question unrecognised"
+  [[ ${ne[n - 7]} =~ ^(╌)+$ ]] || refuse "frame: no rule above the options"
+  F_BLOCK1=${ne[n - 8]}
+  [[ ${ne[n - 9]} =~ ^(╌)+$ ]] || refuse "frame: no rule above the command"
 
-  # A block line shaped like a header could shift the block boundary, so a
-  # header match at both depths is refused rather than resolved.
-  local header_re='^Bash command · from the ([A-Za-z0-9:_-]+) agent$' agent1="" agent2=""
-  if [[ ${ne[n - 7]} =~ $header_re ]]; then agent1=${BASH_REMATCH[1]}; fi
-  if [ "$n" -ge 8 ] && [[ ${ne[n - 8]} =~ $header_re ]]; then agent2=${BASH_REMATCH[1]}; fi
-  if [ -n "$agent1" ] && [ -n "$agent2" ]; then
-    refuse "frame: ambiguous header"
-  elif [ -n "$agent1" ]; then
-    F_AGENT=$agent1 F_NBLOCK=1 F_BLOCK1=${ne[n - 6]} F_BLOCK2=""
-  elif [ -n "$agent2" ]; then
-    F_AGENT=$agent2 F_NBLOCK=2 F_BLOCK1=${ne[n - 7]} F_BLOCK2=${ne[n - 6]}
+  # The description, when present, sits directly above the upper rule; the
+  # auto-mode Tip always sits directly above the description (or the upper
+  # rule when there is none). A forged multi-line request cannot smuggle a
+  # `╌` line into the block: each rule must be all-`╌`, and the command and
+  # description are compared byte-for-byte to the transcript's
+  # printable-ASCII-only call.
+  local tip='Tip: auto mode handles these prompts for you — choose "switch to auto mode" below'
+  local i=$((n - 10))
+  if [ "$i" -ge 0 ] && [ "${ne[i]}" != "$tip" ]; then
+    F_BLOCK2=${ne[i]} F_NBLOCK=2
+    i=$((i - 1))
   else
+    F_BLOCK2="" F_NBLOCK=1
+  fi
+  [ "$i" -ge 0 ] && [ "${ne[i]}" = "$tip" ] || refuse "frame: no auto-mode tip above the request"
+  i=$((i - 1))
+  local header_re='^Bash command · from the ([A-Za-z0-9:_-]+) agent$'
+  if [ "$i" -lt 0 ] || [[ ! ${ne[i]} =~ $header_re ]]; then
     refuse "frame: no subagent Bash header above a one- or two-line request"
   fi
+  F_AGENT=${BASH_REMATCH[1]}
 }
 
 regular_file() {

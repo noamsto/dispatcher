@@ -5,6 +5,8 @@ bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 
 FIXTURE_DIR="$BATS_TEST_DIRNAME/fixtures/permission"
 CLASSIFIER_FRAME="$FIXTURE_DIR/classifier-escalation.txt"
+PLAIN_FRAME="$FIXTURE_DIR/plain-subagent.txt"
+TOPLEVEL_FRAME="$BATS_TEST_DIRNAME/../crew/internal/frame/testdata/frames/permission_bash.txt"
 DENIAL_FIXTURE="$FIXTURE_DIR/classifier-denial.txt"
 DENIAL=$(<"$DENIAL_FIXTURE")
 
@@ -203,23 +205,31 @@ result_for() {
     >>"${3:-$SUB_LOG}"
 }
 
-# frame <line1> [line2] — the real capture's dialog with the classifier's `│`
-# box removed and the request block replaced. FRAME_HEADER overrides the
-# header line.
+# frame <command> [description...] — the real Claude Code 2.1.310 plain
+# permission dialog. The `─` rule, header, auto-mode Tip, the description
+# lines above the command, the `╌` rules, the question, the four real options
+# and the footer are fixed; FRAME_HEADER overrides the header line. Each
+# argument after the command becomes one request line above the command, so a
+# three-request case still refuses.
 frame() {
-  local sep header
-  sep=$(grep '^─' "$CLASSIFIER_FRAME" | tail -n 1)
+  local header rule cmd=$1
+  shift
   header=${FRAME_HEADER:-Bash command · from the shell-reviewer agent}
+  rule=$(printf '╌%.0s' {1..120})
   {
-    printf '%s\n' "$sep"
+    printf '%s\n' "$(printf '─%.0s' {1..120})"
     printf ' %s\n' "$header"
-    printf '\n'
-    printf '   %s\n' "$@"
-    printf '\n'
+    printf ' Tip: auto mode handles these prompts for you — choose "switch to auto mode" below\n'
+    local d
+    for d in "$@"; do printf ' %s\n' "$d"; done
+    printf '%s\n' "$rule"
+    printf ' %s\n' "$cmd"
+    printf '%s\n' "$rule"
     printf ' Do you want to proceed?\n'
     printf ' ❯ 1. Yes\n'
-    printf '   2. Yes, and don’t ask again for: %s *\n' "${1%% *}"
-    printf '   3. No\n'
+    printf '   2. Yes, and always allow access to %s from this project\n' "$WT"
+    printf '   3. Yes, and switch to auto mode · auto mode handles these prompts for you\n'
+    printf '   4. No\n'
     printf '\n'
     printf ' Esc to cancel · Tab to amend\n'
   } >"$FRAME"
@@ -335,6 +345,43 @@ try() {
 @test "permission-check: the real classifier escalation goes to the human" {
   check "$CLASSIFIER_FRAME"
   assert_human
+}
+
+@test "permission-check: the real plain subagent frame passes the frame gate" {
+  # The capture's own command, description and agent, so the refusal is the
+  # lexer's (`>` is outside the lex set): the frame gate and the transcript
+  # binding both passed.
+  jq -nc '{agentType:"general-purpose",toolUseId:"toolu_parent",spawnDepth:1}' \
+    >"$PROJ/$SID/subagents/agent-a1.meta.json"
+  pending_bash 'printf hi > ./out.txt' 'Write "hi" to out.txt'
+  check "$PLAIN_FRAME"
+  assert_refused "lex:"
+}
+
+@test "permission-check: the real top-level frame is refused for its header" {
+  check "$TOPLEVEL_FRAME"
+  assert_refused "frame: no subagent Bash header"
+}
+
+@test "permission-check: the real subagent frame without option 4 goes to the human" {
+  sed '/4\. No$/d' "$PLAIN_FRAME" >"$FRAME"
+  pending_bash 'printf hi > ./out.txt' 'Write "hi" to out.txt'
+  check "$FRAME"
+  assert_refused "frame: option 4"
+}
+
+@test "permission-check: the real subagent frame with a broken rule goes to the human" {
+  sed '0,/^╌\{2,\}$/s//not a rule/' "$PLAIN_FRAME" >"$FRAME"
+  pending_bash 'printf hi > ./out.txt' 'Write "hi" to out.txt'
+  check "$FRAME"
+  assert_refused "frame:"
+}
+
+@test "permission-check: the real subagent frame with a different Tip goes to the human" {
+  sed 's/^ Tip: .*/ Tip: a different tip/' "$PLAIN_FRAME" >"$FRAME"
+  pending_bash 'printf hi > ./out.txt' 'Write "hi" to out.txt'
+  check "$FRAME"
+  assert_refused "frame:"
 }
 
 @test "permission-check: a three-line request block goes to the human" {
