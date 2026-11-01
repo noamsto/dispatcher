@@ -54,9 +54,10 @@ type Options struct {
 	// worker as an id in the environment is.
 	Git    git.Client
 	Exists func(path string) bool
-	// Unread is the lead's unread-directive pair, `"<oldest> <newest>"`: the
-	// in-process `internal/unread` scan in dispatcher mode, the way the arm ran
-	// `_unread_scan <crew> <branch> worker:<branch> <sid> 0 dispatcher`. An
+	// Unread is the lead's unread-reason scan, `"<oldest-ts> <newest-ts>
+	// role|dispatcher"`: the in-process `internal/unread` scan in Any mode,
+	// which replaces the arm's `_unread_scan <crew> <branch> worker:<branch>
+	// <sid> 0 dispatcher`. The newest ts is what the nudge row points at; an
 	// empty scan is the "post it first" refusal, never a failure.
 	Unread func(ctx context.Context, crew, branch, sid string) string
 	// Rows reads the log's last maxLines lines with each line decoded on its own — the
@@ -326,25 +327,29 @@ func (a *arm) checkEngine(stderr io.Writer) int {
 	return 0
 }
 
-// checkUnread is the arm's unread scan: the newest unread directive is what the nudge
-// row will point at, and an empty scan is the "post it first" refusal.
+// checkUnread is the arm's unread scan: it accepts a dispatcher directive or an
+// overdue role/critic msg, and the newest unread reason is what the nudge row will
+// point at. An empty scan is the "post it first" refusal.
 func (a *arm) checkUnread(stderr io.Writer) int {
 	out := a.o.Unread(a.ctx, a.crew, a.branch, a.sid)
-	_, newest, _ := strings.Cut(out, " ")
-	a.ts = strings.TrimSpace(newest)
-	if a.ts == "" {
-		return refuse(stderr, "no unread msg from dispatcher:"+a.crew+" to "+a.sid+
-			" — post the directive first (crew reply), then nudge")
+	f := strings.Fields(out)
+	if len(f) < 3 {
+		return refuse(stderr, "no unread msg from dispatcher:"+a.crew+" or a role to "+a.sid+
+			" — nothing to nudge; a directive needs `crew reply` first, a role verdict needs no post")
 	}
+	a.ts = f[1]
 	return 0
 }
 
 // unread is the same scan's oldest unread ts — the arm reads the first field, which is
-// empty when the lead has read the directive meanwhile.
+// empty when the lead has read the reason meanwhile.
 func (a *arm) unread() string {
 	out := a.o.Unread(a.ctx, a.crew, a.branch, a.sid)
-	oldest, _, _ := strings.Cut(out, " ")
-	return strings.TrimSpace(oldest)
+	f := strings.Fields(out)
+	if len(f) == 0 {
+		return ""
+	}
+	return f[0]
 }
 
 // wait is the `--wait` loop: one waiter per lead session, and a joiner reports the

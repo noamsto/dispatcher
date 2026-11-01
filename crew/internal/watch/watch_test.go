@@ -832,7 +832,7 @@ func TestRunCreatesBusDir(t *testing.T) {
 func TestUnreadRestampSuppressed(t *testing.T) {
 	const (
 		directive = "unread: dispatcher directive undelivered for %ds — lead is working but has not reached a peek seam (long stage or idle on a background task)"
-		verdict   = "unread: role verdict undelivered for %ds — lead is working but has not read it; nudge it to run `crew await`"
+		verdict   = "unread: role verdict undelivered for %ds — lead is working but has not read it; nudge it (`crew nudge <lead>`) to run `crew await`"
 		nudge     = "unread: dispatcher directive undelivered for %ds — auto-nudge typed but not accepted (nudge held: %%9 worker:feat/x#s1-1); verify the pane with crew where"
 	)
 	for _, tc := range []struct {

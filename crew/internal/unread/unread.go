@@ -27,16 +27,18 @@ import (
 //go:embed unread.jq
 var scanProgram string
 
-// Mode is the output shape, the helper's seventh argv.
+// Mode is the output shape, the helper's seventh argv: which undelivered msgs
+// the scan reports and how.
 type Mode string
 
 const (
 	// Oldest prints "<ts-ms> role|dispatcher" for the oldest undelivered
 	// role/dispatcher msg to the lead.
 	Oldest Mode = "oldest"
-	// Dispatcher prints "<oldest-ts> <newest-ts>" of the undelivered
-	// dispatcher msgs only.
-	Dispatcher Mode = "dispatcher"
+	// Any prints "<oldest-ts> <newest-ts> role|dispatcher" over every
+	// undelivered role/dispatcher msg to the lead; src is the source of the
+	// oldest.
+	Any Mode = "any"
 )
 
 // tailLines is the helper's `tail -n 2000`: a msg scrolled out of the tail

@@ -331,8 +331,8 @@ func msTS(s string) (int64, bool) {
 // reported; a role msg the lead answered is handled, a dispatcher directive
 // clears only on delivery. Never escalates.
 //
-// An overdue dispatcher directive first gets one auto-nudge per newest
-// directive. An accepted nudge skips this tick's verdict, since the lead is
+// An overdue reason — a dispatcher directive or a role verdict — first gets
+// one auto-nudge per newest reason. An accepted nudge skips this tick's verdict, since the lead is
 // reading its inbox now; a typed-but-unaccepted one is reported once as the
 // episode; an anchor refusal means a stale pane or session, so nudging stops
 // for good.
@@ -353,7 +353,7 @@ func (w *watch) d6() error {
 		oldest, src, ok := w.unreadOldest()
 		if ok && w.now*1000-oldest >= w.cfg.unread*1000 {
 			age := strconv.FormatInt((w.now*1000-oldest)/1000, 10)
-			detail := "unread: role verdict undelivered for " + age + "s — lead is working but has not read it; nudge it to run `crew await`"
+			detail := "unread: role verdict undelivered for " + age + "s — lead is working but has not read it; nudge it (`crew nudge <lead>`) to run `crew await`"
 			if src == "dispatcher" {
 				detail = "unread: dispatcher directive undelivered for " + age + "s — lead is working but has not reached a peek seam (long stage or idle on a background task)"
 			}
@@ -415,14 +415,19 @@ func (w *watch) autoNudge() (bool, error) {
 		(w.cfg.engine != "claude" && w.cfg.engine != "pi") {
 		return false, nil
 	}
-	out := w.o.Unread(w.ctx, unread.Dispatcher)
-	a, b := readWords(out)
+	out := w.o.Unread(w.ctx, unread.Any)
+	a, rest := readWords(out)
+	f := strings.Fields(rest)
+	if len(f) != 2 {
+		return false, nil
+	}
 	dOld, okOld := msTS(a)
-	dNew, okNew := msTS(b)
+	dNew, okNew := msTS(f[0])
+	src := f[1]
 	if !okOld || !okNew || w.now*1000-dOld < w.cfg.unread*1000 || dNew <= pd.nudgedTS {
 		return false, nil
 	}
-	// Once per directive across watchdogs and the dispatcher: a restarted
+	// Once per reason across watchdogs and the dispatcher: a restarted
 	// watchdog or a manual `crew nudge` may already have typed for it.
 	if w.nudged(dNew) {
 		pd.nudgedTS = dNew
@@ -430,7 +435,7 @@ func (w *watch) autoNudge() (bool, error) {
 	}
 	out, rc, err := w.nudgeCall(nudge.PaneRequest{
 		Pane: w.cfg.pane, Engine: w.cfg.engine, Session: w.cfg.fromID,
-		Crew: w.cfg.crew, Actor: "watchdog", MsgTS: b,
+		Crew: w.cfg.crew, Actor: "watchdog", MsgTS: f[0],
 	})
 	if err != nil {
 		return false, err
@@ -442,14 +447,18 @@ func (w *watch) autoNudge() (bool, error) {
 	case 3:
 		pd.nudgedTS = dNew
 		reason, _, _ := strings.Cut(out, " — ")
+		kind := "dispatcher directive"
+		if src == "role" {
+			kind = "role verdict"
+		}
 		// post, not postBlocked: our own open unread: episode must not swallow
 		// the failure.
-		err := w.post("blocked", "unread: dispatcher directive undelivered for "+strconv.FormatInt((w.now*1000-dOld)/1000, 10)+
+		err := w.post("blocked", "unread: "+kind+" undelivered for "+strconv.FormatInt((w.now*1000-dOld)/1000, 10)+
 			"s — auto-nudge typed but not accepted ("+reason+"); verify the pane with crew where")
 		if err != nil {
 			return true, err
 		}
-		pd.d6At, pd.d6Src = w.now, "dispatcher"
+		pd.d6At, pd.d6Src = w.now, src
 		return true, nil
 	}
 	if strings.HasPrefix(out, "anchor:") {

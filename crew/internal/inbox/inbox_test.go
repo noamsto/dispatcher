@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
+	"github.com/noamsto/dispatcher/crew/internal/unread"
 )
 
 // fixture is a bus without git: Run reads bus.Paths, so a temp dir stands in
@@ -879,5 +881,42 @@ func TestUndeliveredWithoutALogIsSilent(t *testing.T) {
 	}
 	if left, _ := filepath.Glob(p.Dir + "/await.lock/*"); len(left) != 0 {
 		t.Errorf("lock dir holds %v", left)
+	}
+}
+
+// The nudge line is exactly `crew inbox "$CREW_WORKER_ID"` with no flags, and
+// that plain read is what hands the lead an overdue role verdict: the delivered
+// mark it raises drops the verdict from the unread scan, so the nudge will not
+// repeat for a verdict the lead has now read.
+//
+// The scan runs as the branch-keyed lead (Me) reading the session's delivered
+// marks (FromID = lead), which is how `crew nudge` wires it; the branch-keyed
+// Me cannot equal the session FromID, or unread.Scan stays silent.
+func TestNudgeLineClearsRoleVerdictFromScan(t *testing.T) {
+	p := fixture(t)
+	const lead = "worker:feat/x#s1-1"
+	writeLog(t, p, `{"ts":1500000,"crew_id":"c1","from":"role:feat/x:reviewer","to":"`+lead+`","kind":"msg","body":"verdict"}`+"\n")
+
+	scan := func() string {
+		return unread.Scan(unread.Request{Dir: p.Dir, Log: p.Log, Crew: "c1", Branch: "feat/x", Me: "worker:feat/x", FromID: lead, T0: 0}, unread.Any)
+	}
+	if got := scan(); got != "1500000 1500000 role" {
+		t.Fatalf("precondition: scan = %q, want %q", got, "1500000 1500000 role")
+	}
+
+	// No flags: the typed line is a plain inbox read for the session.
+	var out bytes.Buffer
+	rc := Run(Request{Me: lead, Crew: "c1"}, p, &out, io.Discard, Options{
+		CrewID: func() string { return "c1" },
+		Flush:  func() error { return nil },
+	})
+	if rc != 0 {
+		t.Fatalf("rc = %d, want 0", rc)
+	}
+	if !strings.Contains(out.String(), `"from":"role:feat/x:reviewer"`) {
+		t.Errorf("stdout = %q, want the role verdict handed to the lead", out.String())
+	}
+	if got := scan(); got != "" {
+		t.Errorf("scan after the nudge = %q, want empty: the delivered verdict is no repeat reason", got)
 	}
 }

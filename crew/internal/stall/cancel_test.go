@@ -128,7 +128,7 @@ func TestNudgeSurvivesCancel(t *testing.T) {
 	h, _, w := d6Watch(t, s, Request{})
 	ctx, cancel := sigterm(t)
 	w.ctx = ctx
-	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
+	s.any = fmt.Sprintf("%d %d dispatcher", agedMS(w, 0, 700), agedMS(w, 0, 650))
 	finished := false
 	w.o.Nudge = slowNudge(cancel, &finished)
 	if code, ok := codeOf(pdTick(t, w, 0, 0, w.d6)); !ok || code != 143 {
@@ -163,7 +163,7 @@ func TestNudgeNotStartedAfterCancel(t *testing.T) {
 	h, f, w := d6Watch(t, s, Request{})
 	ctx, cancel := sigterm(t)
 	w.ctx = ctx
-	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
+	s.any = fmt.Sprintf("%d %d dispatcher", agedMS(w, 0, 700), agedMS(w, 0, 650))
 	f.busRows = func(path string, sinceMS int64, maxLines int) ([]any, bool) {
 		if maxLines == nudgedTailLines {
 			cancel() // the signal lands mid-scan, before the write could start

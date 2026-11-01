@@ -34,7 +34,7 @@ type armFixture struct {
 	env    map[string]string
 	crewID string
 
-	// unread is the dispatcher-mode scan pair, "<oldest> <newest>".
+	// unread is the scan triple, "<oldest> <newest> role|dispatcher".
 	unread string
 	// unreadSeq, when set, is what the scan answers call by call (the last entry
 	// repeats), the first call being the arm's own gate: a follow-up msg landing, or
@@ -73,7 +73,7 @@ func newArm(t *testing.T) *armFixture {
 		bus:    &fakeBus{},
 		now:    time.Now().UnixMilli(),
 		crewID: "c1",
-		unread: idleTS + " " + idleTS,
+		unread: idleTS + " " + idleTS + " dispatcher",
 	}
 	f.pane.windows, f.pane.panes = f.windowRows("@7", featX, "lead"), f.paneRows("@7", leadID, "lead", "claude")
 	f.bus.rows = sessionRows(t, idleReq, "working")
@@ -490,14 +490,63 @@ func TestRunUnreadGate(t *testing.T) {
 	f := newArm(t)
 	f.unread = ""
 	if rc := f.run(Request{Target: featX}); rc != 2 ||
-		!strings.Contains(f.errOut(), "no unread msg from dispatcher:c1 to "+idleReq+
-			" — post the directive first (crew reply), then nudge") {
+		!strings.Contains(f.errOut(), "no unread msg from dispatcher:c1 or a role to "+idleReq+
+			" — nothing to nudge; a directive needs `crew reply` first, a role verdict needs no post") {
 		t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
 	}
 	for _, c := range f.pane.tmux {
 		if strings.HasPrefix(c, "send-keys") {
 			t.Errorf("the unread gate typed: %q", c)
 		}
+	}
+}
+
+// nudgeRows is the kind:"nudge" rows the call appended, decoded to JSON text.
+func nudgeRows(t *testing.T, f *armFixture) []string {
+	t.Helper()
+	var rows []string
+	for _, row := range f.bus.appended {
+		if s := rowJSON(t, row); strings.Contains(s, `"kind":"nudge"`) {
+			rows = append(rows, s)
+		}
+	}
+	return rows
+}
+
+// A role or critic verdict the lead has not answered is a nudge reason too: the arm
+// types the line and its row points at the verdict's ts.
+func TestRunNudgesForARoleVerdict(t *testing.T) {
+	f := newArm(t)
+	f.unread = "1500000000000 1500000000000 role"
+	if rc := f.run(Request{Target: featX}); rc != 0 {
+		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
+	}
+	if !strings.Contains(f.out(), "nudge accepted: "+leadID+" "+idleReq) {
+		t.Errorf("out = %q, want the accepted outcome", f.out())
+	}
+	if strings.Contains(f.stderr.String(), "crew: nudge:") {
+		t.Errorf("stderr = %q, want no error", f.stderr.String())
+	}
+	rows := nudgeRows(t, f)
+	if len(rows) != 1 || !strings.Contains(rows[0], `"msg_ts":1500000000000`) {
+		t.Errorf("nudge rows = %v, want one with msg_ts 1500000000000", rows)
+	}
+}
+
+// The row points at the newest reason: a newer verdict than a directive is the ts the
+// nudge carries.
+func TestRunMixedSourcesPointsAtNewest(t *testing.T) {
+	f := newArm(t)
+	f.unread = "1500000000000 1600000000000 dispatcher"
+	if rc := f.run(Request{Target: featX}); rc != 0 {
+		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
+	}
+	rows := nudgeRows(t, f)
+	if len(rows) != 1 || !strings.Contains(rows[0], `"msg_ts":1600000000000`) {
+		t.Fatalf("nudge rows = %v, want one with msg_ts 1600000000000", rows)
+	}
+	if strings.Contains(rows[0], "1500000000000") {
+		t.Errorf("row %s points at the oldest, want the newest", rows[0])
 	}
 }
 
@@ -645,7 +694,7 @@ func TestRunWaitLeadReadIt(t *testing.T) {
 	f.rows = dispatchRows(t, "claude")
 	// The directive was there when the call started and is gone by the next look:
 	// the lead read it, so nothing is typed.
-	f.unreadSeq = []string{idleTS + " " + idleTS, ""}
+	f.unreadSeq = []string{idleTS + " " + idleTS + " dispatcher", ""}
 	if rc := f.run(Request{Wait: "30", Target: idleReq}); rc != 0 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 	}
@@ -782,12 +831,12 @@ func TestRunWaitRefusesACodexLeadAndAMissingMsg(t *testing.T) {
 		want   string
 	}{
 		{
-			name: "codex lead", engine: "codex", unread: idleTS + " " + idleTS,
+			name: "codex lead", engine: "codex", unread: idleTS + " " + idleTS + " dispatcher",
 			want: "refused — no verified idle lead frame for codex",
 		},
 		{
 			name: "no unread msg", engine: "claude",
-			want: "no unread msg from dispatcher:c1 to " + idleReq,
+			want: "no unread msg from dispatcher:c1 or a role to " + idleReq,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -813,8 +862,8 @@ func TestRunWaitStillTypesOnceForAFollowUpMsg(t *testing.T) {
 	f := newArm(t)
 	// Scan 1 is the arm's own gate; scan 2, inside the wait, sees a newer msg too.
 	f.unreadSeq = []string{
-		idleTS + " " + idleTS,
-		idleTS + " " + "1800000000000",
+		idleTS + " " + idleTS + " dispatcher",
+		idleTS + " " + "1800000000000 dispatcher",
 	}
 	f.pane.frames = []string{
 		fixture(t, "meter.2s.1.2k.txt"),

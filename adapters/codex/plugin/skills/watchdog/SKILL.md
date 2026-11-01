@@ -51,10 +51,10 @@ description: Use when a watchdog detail prefix, a prompt dialog or a role-pane w
   re-dispatch.
 - `unread:` — a `working` lead has a `role:<branch>:<role>` msg (a verdict) to its
   session undelivered for `--unread` (default 10 min, the bounded-wait ceiling), with no
-  reply to that role. **Verify, then nudge**: if `crew inbox <lead session id>` shows
-  the verdict, tell the lead in its pane to read it
-  (`crew await --from role:<branch>:<role>`), naming the pane with
-  `crew where <lead branch>`. Clears on delivery; never escalates, never `failed`.
+  reply to that role. **Nudge it**: run `crew nudge <lead>` — for a role verdict there
+  is nothing to post (the undelivered msg is the nudge reason); for your own directive
+  post it first. If it refuses (a codex/cursor lead, or typed-but-unaccepted), give the
+  human the `crew where <lead branch>` line and let them poke the pane. Clears on delivery; never escalates, never `failed`.
   `unread: dispatcher directive …` is the same for your own msg. The watchdog auto-nudges an idle claude/pi lead once per msg (`crew nudge` in the core protocol);
   on `auto-nudge typed but not accepted`, verify the pane with `crew where`.
   Else run `crew nudge <target> --wait` (backgrounded); mid-stage, the lead reads at

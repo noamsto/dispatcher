@@ -68,7 +68,7 @@ func Default(paths bus.Paths, stderr io.Writer, pid int, crewID func() string) O
 			return unread.Scan(unread.Request{
 				Dir: paths.Dir, Log: paths.Log, Crew: crew, Branch: branch,
 				Me: "worker:" + branch, FromID: sid,
-			}, unread.Dispatcher)
+			}, unread.Any)
 		},
 		Rows: func(maxLines int) ([]any, bool) { return probe.BusRows(paths.Log, 0, maxLines) },
 		Git:  git.Exec{},
