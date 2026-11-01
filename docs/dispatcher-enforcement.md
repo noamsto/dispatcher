@@ -579,8 +579,9 @@ reap --quiet` (how dispatch runs it) drops reap's own `keeping …` note,
     withheld when it has `@`/`?`; a URL-subsection key the grammar cannot mask,
     and an `includeIf.hasconfig:remote.*.url:` pattern with `@`/`?`, is
     withheld behind its fingerprint; each withheld value or key is followed by
-    the `git config` command, run with `-z` and piped through `od -An -c -v`, so every byte shows in its own cell and each entry ends at a `\0` no value can forge,
-    that reads it in the human's own terminal; `crew git-baseline` shows a
+    the `git config` command, run with `-z` and piped through `od -An -c -v`,
+    so every byte shows in its own cell and each entry ends at a `\0` no value
+    can forge, that reads it in the human's own terminal; `crew git-baseline` shows a
     withheld value's `sha256:` fingerprint, and `--accept` asks the human to
     type yes only if a plain listing showed the same fingerprints and they
     checked each value after it — a value swapped between that check and
