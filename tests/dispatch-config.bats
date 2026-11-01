@@ -1150,3 +1150,78 @@ ROWS
   [ "$status" -eq 1 ]
   [[ "$stderr" == *'{glob, requires: "pi_month_target" or "anthropic_credits"}'* ]]
 }
+
+@test "taskProfiles: a user override wins per field and keeps the shipped profile's other fields; a new profile is added" {
+  user_settings '{"taskProfiles":{"docs":{"engine":"codex"}}}'
+  locked_settings '{"taskProfiles":{"lint":{"tier":"trivial","class":"cheap"}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  jq -e '.taskProfiles.docs == {"tier":"trivial","effort":"low","engine":"codex"}' <<<"$output"
+  jq -e '.taskProfiles.lint == {"tier":"trivial","class":"cheap"}' <<<"$output"
+  jq -e '.taskProfiles.ui == {"tier":"standard","engine":"claude","effort":"medium"}' <<<"$output"
+}
+
+@test "taskProfiles: a user-layer tier is dropped with a warning; only the locked layer may set one" {
+  user_settings '{"taskProfiles":{"lint":{"tier":"trivial","class":"cheap"}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.taskProfiles.lint == {"class":"cheap"}' <<<"$output"
+  [[ "$stderr" == *"ignoring taskProfiles.lint.tier from $USER_FILE (user layer)"* ]]
+  [[ "$stderr" == *"it is honoured only from the shipped defaults or the locked settings"* ]]
+
+  user_settings '{}'
+  locked_settings '{"taskProfiles":{"lint":{"tier":"trivial","class":"cheap"}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.taskProfiles.lint == {"tier":"trivial","class":"cheap"}' <<<"$output"
+  [ -z "$stderr" ]
+}
+
+@test "taskProfiles: a malformed user entry is dropped with a warning and the shipped profile survives" {
+  local name v why
+  while IFS='|' read -r name v why; do
+    user_settings "{\"engines\":[\"pi\"],\"taskProfiles\":{\"$name\":$v}}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -eq 0 ] || { echo "$name $v: status $status"; false; }
+    jq -e '.engines == ["pi"]' <<<"$output"
+    jq -e '.taskProfiles.docs == {"tier":"trivial","effort":"low"}' <<<"$output"
+    jq -e '.taskProfiles | has("Bad Name") | not' <<<"$output"
+    [[ "$stderr" == *"ignoring taskProfiles.$name from $USER_FILE (user layer): $why"* ]] || { echo "$name $v: $stderr"; false; }
+  done <<'ROWS'
+docs|{"tier":"huge"}|tier must be trivial, standard or deep
+docs|{"engine":"gemini"}|engine must be claude, codex, cursor or pi
+docs|{"class":"fable"}|class must be cheap, standard or premium
+docs|{"effort":"none"}|effort must be low, medium, high, xhigh, max or ultra
+docs|{"model":"opus"}|unknown key "model" (allowed: tier, engine, class, effort)
+docs|"standard"|must be an object or null
+Bad Name|{"tier":"standard"}|name must match [a-z0-9][a-z0-9-]*
+ROWS
+}
+
+@test "taskProfiles: a non-object taskProfiles in the user layer is dropped whole" {
+  user_settings '{"engines":["pi"],"taskProfiles":["docs"]}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.engines == ["pi"]' <<<"$output"
+  jq -e '(.taskProfiles | keys) == ["docs","eval","mechanical-refactor","security","trivial-fix","ui"]' <<<"$output"
+  [[ "$stderr" == *"ignoring taskProfiles from $USER_FILE (user layer): must be an object of profiles"* ]]
+}
+
+@test "taskProfiles: a malformed locked-layer entry is dropped, never fatal" {
+  locked_settings '{"taskProfiles":{"ui":{"tier":"huge"},"docs":{"engine":"pi"}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.taskProfiles.ui == {"tier":"standard","engine":"claude","effort":"medium"}' <<<"$output"
+  jq -e '.taskProfiles.docs.engine == "pi"' <<<"$output"
+  [[ "$stderr" == *"ignoring taskProfiles.ui from $LOCKED_FILE (locked layer): tier must be trivial, standard or deep"* ]]
+}
+
+@test "taskProfiles: a null field clears a shipped field and a null profile removes it" {
+  user_settings '{"taskProfiles":{"ui":{"engine":null},"eval":null}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  [ -z "$stderr" ]
+  jq -e '.taskProfiles.ui == {"tier":"standard","effort":"medium"}' <<<"$output"
+  jq -e '.taskProfiles | has("eval") | not' <<<"$output"
+}

@@ -64,6 +64,17 @@
 # all drops it from the lower layers. It has no env var. The estimate counts
 # only the spend this host's pi recorded, so set the grant on one host.
 #
+# taskProfiles maps a name to {tier, engine, class, effort}, every field
+# optional: `dispatch --profile` fills what the caller left unset. A null field
+# clears it and a null profile removes it, which is how a higher layer undoes a
+# shipped value. A malformed entry is dropped from its layer with a warning,
+# never fatal. Like grantRoots, a profile's `tier` decides review rigour (which
+# critics and reviewer run), so it is honoured only from the shipped defaults
+# and a locked layer -- a build that reads DISPATCH_LOCKED_SETTINGS; the
+# home-manager module bakes no taskProfiles. A copy in the user layer is
+# dropped with a warning (no env var can set a profile). The other fields stay
+# userSettings-/user-file-overridable.
+#
 # laneProfiles maps an engine or "<engine>/<model>" glob to a lane profile (its
 # name, and optionally inline notes text) that `dispatch` applies to the task
 # doc; like localModels it is validated on the merged tree and has no env var.
@@ -296,6 +307,52 @@ check_anthropic_credits() {
   jq -c 'del(.anthropicCredits)' <<<"$1"
 }
 
+# check_task_profiles <json> <file> <layer> — print the layer, with each
+# malformed taskProfiles entry dropped and one warning per drop on stderr naming
+# <file> and <layer>. Never fatal: a bad entry only loses itself, so the
+# shipped profile of the same name survives.
+check_task_profiles() {
+  local result
+  result=$(jq -c --arg file "$2" --arg layer "$3" '
+    def alt: if length > 1 then (.[:-1] | join(", ")) + " or " + .[-1] else .[0] end;
+    {tier: ["trivial", "standard", "deep"], engine: ["claude", "codex", "cursor", "pi"],
+     class: ["cheap", "standard", "premium"],
+     effort: ["low", "medium", "high", "xhigh", "max", "ultra"]} as $enums
+    | def reason($k; $v):
+        if ($k | test("\\A[a-z0-9][a-z0-9-]*\\z") | not) then "name must match [a-z0-9][a-z0-9-]*"
+        elif $v == null then null
+        elif ($v | type) != "object" then "must be an object or null"
+        elif any($v | keys[]; in($enums) | not) then "unknown key \"\(first($v | keys[] | select(in($enums) | not)))\" (allowed: \($enums | keys_unsorted | join(", ")))"
+        else first($enums | to_entries[] | . as $e | select($v[$e.key] != null and ($v[$e.key] | IN($e.value[]) | not)) | "\(.key) must be \(.value | alt)") // null
+        end;
+      if has("taskProfiles") | not then {layer: ., warnings: []}
+      elif (.taskProfiles | type) != "object" then
+        {layer: del(.taskProfiles), warnings: ["taskProfiles from \($file) (\($layer) layer): must be an object of profiles"]}
+      else
+        [.taskProfiles | to_entries[] | {key, reason: reason(.key; .value)}] as $r
+        | {layer: .taskProfiles |= with_entries(select(.key as $k | $r | all(.key != $k or .reason == null))),
+           warnings: [$r[] | select(.reason != null) | "taskProfiles.\(.key) from \($file) (\($layer) layer): \(.reason)"]}
+      end' <<<"$1")
+  jq -r '.warnings[] | "dispatch-config: ignoring " + .' <<<"$result" >&2
+  jq -c '.layer' <<<"$result"
+}
+
+# strip_task_profile_tiers <json> <file> — drop taskProfiles.*.tier from the
+# user layer with a warning (the rule: the header's taskProfiles note). A
+# profile left without one makes `dispatch` ask the caller for an explicit tier.
+strip_task_profile_tiers() {
+  local name
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    echo "dispatch-config: ignoring taskProfiles.$name.tier from $2 (user layer) — it is honoured only from the shipped defaults or the locked settings" >&2
+  done < <(jq -r 'if (.taskProfiles | type) == "object" then
+      .taskProfiles | to_entries[] | select((.value | type) == "object" and (.value | has("tier"))) | .key
+    else empty end' <<<"$1")
+  jq -c 'if (.taskProfiles | type) == "object" then
+      .taskProfiles |= with_entries(if (.value | type) == "object" then .value |= del(.tier) else . end)
+    else . end' <<<"$1"
+}
+
 # strip <json> <path> — drop the keys only the locked and env layers may set.
 strip() {
   local key
@@ -330,6 +387,7 @@ fi
 base=$(layer "$base_file")
 check_model_shapes "$base" "$base_file" base
 base=$(check_anthropic_credits "$base" "$base_file" base)
+base=$(check_task_profiles "$base" "$base_file" base)
 base=$(strip "$base" "$base_file")
 
 user='{}'
@@ -338,6 +396,8 @@ if [[ -e $user_file ]]; then
   check_no_blank_engines "$user" "$user_file"
   check_model_shapes "$user" "$user_file" user
   user=$(check_anthropic_credits "$user" "$user_file" user)
+  user=$(check_task_profiles "$user" "$user_file" user)
+  user=$(strip_task_profile_tiers "$user" "$user_file")
   user=$(strip "$user" "$user_file")
 fi
 
@@ -352,6 +412,7 @@ if [[ -n $locked_file ]]; then
     user=$(jq -c 'del(.anthropicCredits)' <<<"$user")
   fi
   locked=$(check_anthropic_credits "$locked" "$locked_file" locked)
+  locked=$(check_task_profiles "$locked" "$locked_file" locked)
 fi
 
 env_layer=$(jq -cn '
@@ -602,6 +663,7 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | (first(class_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end
   | ([class_warnings] | map(stderr)) as $w
   | .classes |= map_values(if (.tiers | type) == "object" then .tiers |= map_values(.admits //= [.class]) else . end)
+  | if (.taskProfiles | type) == "object" then .taskProfiles |= map_values(select(. != null) | with_entries(select(.value != null))) else . end
   | if has("localModels") then (first(local_model_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
   | if has("laneProfiles") then (first(lane_profile_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end
   | if has("hosts") then (first(host_violations) // null) as $bad | if $bad then die($bad[0]; $bad[1]) else . end else . end

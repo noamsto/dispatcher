@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # gen-model-map-doc.sh — render, or check, the generated regions of
 # adapters/core/protocols/dispatch-orchestration.md from
-# adapters/core/defaults.json (#560): the Model map's class table (#1391) and
-# the Tier map's pace-downgrade table are pure data, so they are generated
-# rather than hand-copied. `--check` also proves the hand-written Model map
-# table (which carries execute/escalate ladders defaults.json does not hold,
-# in class names) has not drifted from each tier row's
-# `classes.<engine>.tiers.<tier>.class`.
+# adapters/core/defaults.json (#560): the Model map's class table (#1391), the
+# task-profiles table and the Tier map's pace-downgrade table are pure data, so
+# they are generated rather than hand-copied. `--check` also proves the
+# hand-written Model map table (which carries execute/escalate ladders
+# defaults.json does not hold, in class names) has not drifted from each tier
+# row's `classes.<engine>.tiers.<tier>.class`.
 #
 # Usage: gen-model-map-doc.sh [--check] [<defaults.json> <doc.md>]
 # With no paths, both default to this repo's own copies, resolved relative to
@@ -15,9 +15,9 @@
 # Regions are delimited by
 #   <!-- BEGIN generated:<name> from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->
 #   <!-- END generated:<name> -->
-# for names `model-classes` and `pace-downgrades`; the markers themselves must
-# already exist in the doc (this script fills what is between them, it does
-# not place them).
+# for names `model-classes`, `pace-downgrades` and `task-profiles`; the markers
+# themselves must already exist in the doc (this script fills what is between
+# them, it does not place them).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -83,6 +83,19 @@ render_pace_downgrades() {
   ' "$1"
 }
 
+# render_task_profiles <defaults.json> — one row per taskProfiles entry in key
+# order; a field the profile leaves unset is `—`.
+render_task_profiles() {
+  printf '| profile | tier | engine | class | effort |\n'
+  printf '| --- | --- | --- | --- | --- |\n'
+  jq -r '
+    def cell: if . == null then "—" else "`" + . + "`" end;
+    .taskProfiles
+    | to_entries[]
+    | "| \(.key) | \(.value.tier | cell) | \(.value.engine | cell) | \(.value.class | cell) | \(.value.effort | cell) |"
+  ' "$1"
+}
+
 # splice <name> <content-file> <in-file> — everything between the BEGIN/END
 # markers for <name> in <in-file> is replaced by <content-file>'s lines,
 # printed to stdout. Fails when <in-file> does not have exactly one BEGIN and
@@ -115,14 +128,18 @@ splice() {
 # render_doc <defaults.json> <in-doc> — <in-doc> with every generated region
 # freshly rendered from <defaults.json>, on stdout.
 render_doc() {
-  local defaults="$1" in="$2" model_classes pace_downgrades tmp1
+  local defaults="$1" in="$2" model_classes pace_downgrades task_profiles tmp1 tmp2
   model_classes="$work/model_classes"
   pace_downgrades="$work/pace_downgrades"
+  task_profiles="$work/task_profiles"
   tmp1="$work/tmp1"
+  tmp2="$work/tmp2"
   render_model_classes "$defaults" >"$model_classes"
   render_pace_downgrades "$defaults" >"$pace_downgrades"
+  render_task_profiles "$defaults" >"$task_profiles"
   splice model-classes "$model_classes" "$in" >"$tmp1"
-  splice pace-downgrades "$pace_downgrades" "$tmp1"
+  splice pace-downgrades "$pace_downgrades" "$tmp1" >"$tmp2"
+  splice task-profiles "$task_profiles" "$tmp2"
 }
 
 # check_model_map_table <defaults.json> <doc> — the hand-written table under

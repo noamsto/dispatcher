@@ -16,9 +16,11 @@ usage() {
 _dispatch_help() {
   cat <<'HELP'
 usage: dispatch <trivial|standard|deep> <model> [flags] [--] <title...>
+       dispatch [<tier> [<model>]] --profile NAME [flags] [--] <title...>
        dispatch resume [<target>] [flags]
        dispatch --engines [--in-budget]
        dispatch --models [--json]
+       dispatch --profiles [--json]
        dispatch --host <name> --recover <session> [--crew-id <id>]
 
 Scaffold a worker session: claim or mint its issue, create the branch, the
@@ -29,7 +31,10 @@ Task shape
   tier                    Positional: trivial | standard | deep — sets review rigor
   model                   Positional: the model id or alias the engine runs, or @cheap,
                           @standard or @premium: that class's current default (dispatch --models)
-  --effort E              low | medium | high | xhigh | max | ultra (required)
+  --effort E              low | medium | high | xhigh | max | ultra (required unless --profile fills it)
+  --profile NAME          Fill the tier, engine, class and effort left unset from the taskProfiles
+                          setting (dispatch --profiles); explicit values win; with no model,
+                          options follow the tier directly
   --plan provided|required   Task doc is the plan of record (default: required)
 
 Engine and roles
@@ -55,8 +60,8 @@ Tracker
 
 Remote host
   --host NAME             Run the worker on settings host NAME (hosts.NAME), followed from here
-                          (refused with --add-dir, --base, --status, --lazy, and the env overrides
-                          DISPATCH_PRECHECK, DISPATCH_IGNORE_RUNG, DISPATCH_SKIP_MODEL_CHECK,
+                          (refused with --add-dir, --base, --status, --lazy, --profile, and the env
+                          overrides DISPATCH_PRECHECK, DISPATCH_IGNORE_RUNG, DISPATCH_SKIP_MODEL_CHECK,
                           DISPATCH_SHAPE, DISPATCH_CLAUDE_CONNECTORS, DISPATCH_CLASS_SIGIL;
                           DISPATCH_DRAFT_PR=1 travels as --draft)
 
@@ -83,6 +88,7 @@ Other entry points
   dispatch resume ...     Relaunch the worker of the worktree you are standing in
   dispatch --engines      Engines enabled and installed here (--in-budget: affordable)
   dispatch --models       The tier map per engine: class, default, trial and accepted models (--json: machine-readable)
+  dispatch --profiles     Task profiles and what each resolves to here (--json: machine-readable)
   dispatch --host H --recover S   Record the remote worker of session S after a dropped ssh link
 
 Internal (called by workers and the harness, not by hand)
@@ -1996,6 +2002,50 @@ _class_sigil() {
     return 1
   fi
   printf '%s\n' "$out"
+}
+
+# _apply_task_profile — fill what the caller left unset from the
+# taskProfiles.$task_profile setting, in order: tier, the engine
+# (only without --agent), effort, then the model as @<class>, the profile's
+# class or else the tier row's class for the engine. The positional-sigil block
+# resolves that sigil, so every gate sees it exactly as a typed @class.
+_apply_task_profile() {
+  local p v class filled=""
+  p="$(jq -c --arg p "$task_profile" '.taskProfiles[$p] | objects' <<<"$settings")"
+  if [ -z "$p" ]; then
+    echo "dispatch: unknown task profile '$task_profile' — dispatch --profiles lists them" >&2
+    exit 1
+  fi
+  if [ -z "$tier" ]; then
+    tier="$(jq -r '.tier // empty' <<<"$p")"
+    [ -z "$tier" ] || filled+=" tier"
+  fi
+  if [ -z "$tier" ]; then
+    echo "dispatch: task profile '$task_profile' sets no tier — pass one: dispatch <tier> --profile $task_profile ..." >&2
+    exit 1
+  fi
+  if [ -z "$agent_flag" ]; then
+    v="$(jq -r '.engine // empty' <<<"$p")"
+    [ -z "$v" ] || {
+      agent="$v"
+      filled+=" engine"
+    }
+  fi
+  if [ -z "$effort" ]; then
+    effort="$(jq -r '.effort // empty' <<<"$p")"
+    [ -z "$effort" ] || filled+=" effort"
+  fi
+  if [ -z "$model" ]; then
+    class="$(jq -r '.class // empty' <<<"$p")"
+    [ -n "$class" ] || class="$(jq -r --arg a "$agent" --arg t "$tier" '.classes[$a].tiers[$t].class // empty' <<<"$settings")"
+    if [ -z "$class" ]; then
+      echo "dispatch: task profile '$task_profile' sets no class and classes.$agent.tiers.$tier names none — pass a model: dispatch $tier <model> --profile $task_profile ..." >&2
+      exit 1
+    fi
+    model="@$class"
+    filled+=" model"
+  fi
+  echo "dispatch: task profile $task_profile: tier $tier, engine $agent, model $model, effort ${effort:-unset} (filled:${filled:- none})" >&2
 }
 
 # _pace_burn_weight <model> <effort> — the burn weight defaults.json's
@@ -4219,6 +4269,67 @@ if [ "${1:-}" = --models ]; then
   exit 0
 fi
 
+# `dispatch --profiles [--json]` — the taskProfiles setting and what each
+# resolves to on this machine, read-only like --models: settings and the model
+# caches only. Per profile: tier, engine, class and effort as `--profile`
+# would fill them, the model its class resolves to for that engine and tier,
+# and a note when the profile is not launchable as it stands (no tier, a tier
+# that does not admit the class, a resolver failure, an engine not enabled or
+# installed here).
+if [ "${1:-}" = --profiles ]; then
+  as_json=
+  [ "${2:-}" != --json ] || as_json=1
+  { [ $# -le 1 ] || { [ $# -eq 2 ] && [ -n "$as_json" ]; }; } || {
+    usage
+    exit 1
+  }
+  _settings_load
+  out='{"profiles":{}}'
+  prof_err="$(mktemp)"
+  while IFS= read -r name; do
+    p="$(jq -c --arg n "$name" '.taskProfiles[$n]' <<<"$settings")"
+    IFS=$'\x1f' read -r tier engine class effort < <(jq -r --argjson s "$settings" '
+      (.engine // "claude") as $e | ($s.classes[$e].tiers[.tier // ""].class // "") as $tc
+      | [.tier // "", $e, (.class // (if .tier then $tc else "" end)), .effort // ""] | join("\u001f")' <<<"$p")
+    model='' note=''
+    if [ -n "$tier" ] && [ -n "$class" ]; then
+      if ! model="$(_class_sigil "$engine" "$tier" "@$class" 2>"$prof_err")"; then
+        model=''
+        note="$(tail -n 1 "$prof_err")"
+        note="${note#dispatch: }"
+      fi
+    fi
+    if [ -z "$tier" ]; then
+      note="no tier: pass one"
+    elif [ -n "$class" ] && ! jq -e --arg e "$engine" --arg t "$tier" --arg c "$class" '
+      (.classes[$e].tiers[$t] // {}) as $r | ($r.admits // [$r.class]) | index($c)' <<<"$settings" >/dev/null; then
+      note="$tier does not admit @$class on $engine"
+    elif [ -z "$note" ]; then
+      if ! engine_enabled "$engine" || ! command -v "$(engine_cli "$engine")" >/dev/null 2>&1; then
+        note="$engine is not enabled or installed here"
+      fi
+    fi
+    out="$(jq -c --arg n "$name" --argjson p "$p" --arg tier "$tier" --arg engine "$engine" --arg class "$class" \
+      --arg effort "$effort" --arg model "$model" --arg note "$note" '
+      def nn: if . == "" then null else . end;
+      .profiles[$n] = {profile: $p, tier: ($tier | nn), engine: $engine, class: ($class | nn),
+        effort: ($effort | nn), model: ($model | nn), note: ($note | nn)}' <<<"$out")"
+  done < <(jq -r '.taskProfiles // {} | keys_unsorted[]' <<<"$settings")
+  rm -f "$prof_err"
+  if [ -n "$as_json" ]; then
+    printf '%s\n' "$out"
+  else
+    jq -r '.profiles | to_entries[] | .key as $n | .value
+      | [$n, (.tier // "-"), .engine, (.class // "-"), (.effort // "-"), (.model // "-"),
+         (if .note then "  (" + .note + ")" else "" end)] | join("\u001f")' <<<"$out" |
+      # \037 (octal) is the POSIX spelling of the 0x1f separator: \x1f is a
+      # gawk/mawk extension that onetrueawk (macOS awk) leaves unexpanded.
+      awk -F'\037' 'BEGIN { printf "%-20s %-9s %-8s %-9s %-7s %s\n", "PROFILE", "TIER", "ENGINE", "CLASS", "EFFORT", "MODEL" }
+        { printf "%-20s %-9s %-8s %-9s %-7s %s%s\n", $1, $2, $3, $4, $5, $6, $7 }'
+  fi
+  exit 0
+fi
+
 # --- dispatch --host: the dispatcher-side half of a worker on another host ---
 # The remote runs its own dispatch through `crew remote-run`, the one place that
 # builds an ssh call; this side only records the row the remote confirms. The
@@ -4436,6 +4547,7 @@ _dispatch_remote() {
   [ -z "$base_flag" ] || refused=--base
   [ -z "$grid_status" ] || refused=--status
   [ -z "$grid_lazy" ] || refused=--lazy
+  [ -z "$task_profile" ] || refused=--profile
   # Env overrides of this run's gates or launch: the remote dispatch never sees
   # this environment, so it would silently run without them.
   for v in DISPATCH_PRECHECK DISPATCH_IGNORE_RUNG DISPATCH_SKIP_MODEL_CHECK DISPATCH_SHAPE DISPATCH_CLAUDE_CONNECTORS DISPATCH_CLASS_SIGIL; do
@@ -4643,25 +4755,30 @@ if [ "${1:-}" = resume ]; then
   exec dispatch-resume "$@"
 fi
 
-tier="${1:-}"
-model="${2:-}"
-case "$tier" in
-trivial | standard | deep) ;;
-*)
-  usage
-  exit 1
+# Tier and model may be left to --profile; without it the check after the
+# option loop still requires both. A model follows only a tier, so a leading
+# issue token or title word never reads as one. A token shaped like a tracker
+# id (a GitHub issue #N or N, a Linear ABC-12) belongs to the option loop,
+# which reads it as the issue; taking it as the model would swallow the issue.
+tier="" model=""
+case "${1:-}" in
+trivial | standard | deep)
+  tier="$1"
+  shift
+  if [ $# -gt 0 ] && [[ $1 != -* ]] &&
+    ! [[ $1 =~ ^#?[0-9]+$ || $1 =~ ^[A-Z]{2,}-[0-9]+$ ]]; then
+    model="$1"
+    shift
+  fi
   ;;
 esac
-[ -n "$model" ] || {
-  usage
-  exit 1
-}
-shift 2
 
 # Leading options before the free-form title, order-independent. A LINEAR-ID or
 # a GitHub issue number (#N / N) is detected by shape so the bare <title...>
 # form still works.
 agent=claude
+agent_flag=""
+task_profile=""
 effort=""
 linear_id=""
 gh_issue=""
@@ -4717,6 +4834,15 @@ while [ $# -gt 0 ]; do
       exit 1
       ;;
     esac
+    agent_flag=1
+    shift 2
+    ;;
+  --profile)
+    [ -n "${2:-}" ] || {
+      echo "dispatch: --profile needs a task profile name (dispatch --profiles lists them)" >&2
+      exit 1
+    }
+    task_profile="$2"
     shift 2
     ;;
   --effort)
@@ -4892,6 +5018,12 @@ while [ $# -gt 0 ]; do
       # treated as a title, which would mint a second issue for it.
       echo "dispatch: '$1' is not a valid issue number — pass a single decimal integer, '#N' or 'N'" >&2
       exit 1
+    elif [ -z "$tier" ] && [[ $1 =~ ^(trivial|standard|deep)$ ]]; then
+      echo "dispatch: the tier goes first: dispatch $1 [<model>] [flags] [--] <title...> (put -- before a title that starts with a tier word)" >&2
+      exit 1
+    elif [ -z "$model" ] && [[ $1 == @* ]]; then
+      echo "dispatch: the model follows the tier: dispatch <tier> $1 [flags] [--] <title...> (put -- before a title that starts with @)" >&2
+      exit 1
     else
       break
     fi
@@ -4908,6 +5040,15 @@ while [ $# -gt 0 ]; do
     ;;
   esac
 done
+
+if [ -n "$task_profile" ]; then
+  _settings_load
+  _apply_task_profile
+fi
+if [ -z "$tier" ] || [ -z "$model" ]; then
+  usage
+  exit 1
+fi
 
 if [ "$kind" = review ] && [ "$draft" = true ]; then
   echo "dispatch: --draft cannot be combined with --review" >&2
@@ -5054,7 +5195,9 @@ fi
 # then the user file); unset everywhere means every engine, so a non-Nix
 # checkout and the test suite need no extra setup. `profile` no longer gates
 # engines — it is still read below for the work+claude+deep rung.
-_settings_load
+# A --profile dispatch already loaded settings right after the option loop, so
+# dispatch-config's warnings print once.
+[ -n "$task_profile" ] || _settings_load
 profile="$(jq -r '.profile // "personal"' <<<"$settings")"
 # A configured localModels id: its entry, not modelMap, admits it, and its
 # endpoint's slots, not OpenRouter quota, are its budget.
@@ -6517,13 +6660,15 @@ line=$(jq -nc --arg crew "$crew_id" --arg branch "$branch" --arg session "$sessi
   --argjson chrome "$([ -n "$chrome" ] && echo true || echo false)" \
   --argjson fresh_seams "$fresh_seams" \
   --arg pushed_oid "$pushed_oid" \
+  --arg task_profile "$task_profile" \
   '{ts:(now*1000|floor), crew_id:$crew, kind:"dispatch", branch:$branch, session:$session, worker_id:$worker, engine:$engine, model:$model, tier:$tier, effort:$effort, shape:$shape, task_kind:$task_kind, host:$host, title:$title, plan:$plan, resume:$resume, owner_auth:$owner_auth, engine_session:(if $engine_session == "" then null else $engine_session end)} + $ident
    + if $escalated_from != "" then {escalated_from:$escalated_from} else {} end
    + if $base != "" then {base:$base, base_oid:(if $base_oid == "" then null else $base_oid end)} else {} end
    + if (($also_closes | length) > 0 or $also_closes_explicit) then {also_closes:$also_closes} else {} end
    + if $chrome then {chrome:true} else {} end
    + if $fresh_seams then {fresh_seams:true} else {} end
-   + if $pushed_oid != "" then {pushed_oid:$pushed_oid} else {} end')
+   + if $pushed_oid != "" then {pushed_oid:$pushed_oid} else {} end
+   + if $task_profile != "" then {task_profile:$task_profile} else {} end')
 _crew_append "$line"
 # A dispatcher on another host records the same row from this line.
 [ "${DISPATCH_EMIT_ROW:-}" != 1 ] || printf 'dispatch_row: %s\n' "$line"
@@ -6693,6 +6838,7 @@ task_dispatcher_host="${DISPATCH_ORIGIN_HOST:-}"
 {
   printf 'tier: %s\nkind: %s\ndraft: %s\nengine: %s\nmodel: %s\neffort: %s\n' \
     "$tier" "$kind" "$draft" "$agent" "$model" "$effort"
+  [ -z "$task_profile" ] || printf 'task_profile: %s\n' "$task_profile"
   [ -n "${escalated_from:-}" ] && printf 'escalated_from: %s\n' "$escalated_from"
   printf 'mcp: %s\nchrome: %s\nplan: %s\ntitle: %s\n%s\n' \
     "$mcp_profile" "$([ -n "$chrome" ] && echo true || echo false)" "$plan_val" "$title" "$closes"
