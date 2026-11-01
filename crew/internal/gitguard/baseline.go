@@ -252,7 +252,8 @@ func ownTerminal(k string) string {
 	}
 	// git prints values raw, so a planted CR or ESC could redraw the terminal and
 	// a planted LF or TAB forge another origin and value; -z ends each entry with
-	// NUL, which no value can hold, and od -c prints every byte in its own cell,
-	// so no value can spell an entry's end.
-	return ` — check it in your own terminal (od shows one byte per cell; each entry ends at \0), from each checkout or worktree that may set it: ` + cmd + " | od -An -c -v"
+	// NUL, which no value can hold, and in the C locale od -c prints every byte in
+	// its own cell, as an ASCII character or an escape (another locale may print a
+	// multibyte character as its glyph), so no value can spell an entry's end.
+	return ` — check it in your own terminal (od shows each byte as a character or an escape; each entry ends at \0), from each checkout or worktree that may set it: ` + cmd + " | env LC_ALL=C od -An -c -v"
 }

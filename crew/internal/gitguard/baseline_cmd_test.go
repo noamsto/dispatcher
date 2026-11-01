@@ -654,7 +654,7 @@ func TestRunBaselineWithheldKeyPointsToOwnTerminal(t *testing.T) {
 	got := runBaseline(r.main, false, "", false)
 	got.want(t, 1,
 		driftLine(kd+"=proxy.example:3128", "main checkout", r.common+"/config")+
-			"  "+kd+` — check it in your own terminal (od shows one byte per cell; each entry ends at \0), from each checkout or worktree that may set it: git config -z --show-origin --get-regexp `+Quote(`^http\.`)+" | od -An -c -v\n", "")
+			"  "+kd+` — check it in your own terminal (od shows each byte as a character or an escape; each entry ends at \0), from each checkout or worktree that may set it: git config -z --show-origin --get-regexp `+Quote(`^http\.`)+" | env LC_ALL=C od -An -c -v\n", "")
 	if strings.Contains(got.stdout+got.stderr, "tok") {
 		t.Fatalf("userinfo leaked:\n%s%s", got.stdout, got.stderr)
 	}
@@ -686,7 +686,7 @@ func TestRunBaselineWithholdsCredentialedValues(t *testing.T) {
 		aliasKey  = "url.x.pushinsteadof"
 		hasconfig = "includeif.hasconfig:remote.*.url:https://u:" + token + "@h.example/**.path"
 	)
-	regexpPointer := ` — check it in your own terminal (od shows one byte per cell; each entry ends at \0), from each checkout or worktree that may set it: git config -z --show-origin --get-regexp ` + Quote(`^includeif\.`) + " | od -An -c -v"
+	regexpPointer := ` — check it in your own terminal (od shows each byte as a character or an escape; each entry ends at \0), from each checkout or worktree that may set it: git config -z --show-origin --get-regexp ` + Quote(`^includeif\.`) + " | env LC_ALL=C od -An -c -v"
 	for _, tc := range []struct {
 		name      string
 		pre, post func(t *testing.T, r repo)

@@ -72,7 +72,7 @@ func TestCheckUnmaskableKeyWithheld(t *testing.T) {
 		kd := ShowKey(k)
 		want += "refusing git: " + kd + " (from " + cfg + ") is not in the git-config baseline " + r.baseline() + "\n" +
 			"  restore the baselined value or remove it: edit " + cfg + "\n" +
-			"  " + kd + ` — check it in your own terminal (od shows one byte per cell; each entry ends at \0), from each checkout or worktree that may set it: git config -z --show-origin --get-regexp ` + Quote(`^http\.`) + " | od -An -c -v\n"
+			"  " + kd + ` — check it in your own terminal (od shows each byte as a character or an escape; each entry ends at \0), from each checkout or worktree that may set it: git config -z --show-origin --get-regexp ` + Quote(`^http\.`) + " | env LC_ALL=C od -An -c -v\n"
 	}
 	want += clearHint()
 	got, err := capture(checkRepo(r))
@@ -96,7 +96,7 @@ func TestCheckHasconfigPatternWithheld(t *testing.T) {
 	kd := "includeif." + urlWithheld("hasconfig:remote.*.url:https://u:FAKETOKEN1400@h.example/**") + ".path"
 	want := "refusing git: " + kd + " (from " + cfg + ") is not in the git-config baseline " + r.baseline() + "\n" +
 		"  restore the baselined value or remove it: edit " + cfg + "\n" +
-		"  " + kd + ` — check it in your own terminal (od shows one byte per cell; each entry ends at \0), from each checkout or worktree that may set it: git config -z --show-origin --get-regexp ` + Quote(`^includeif\.`) + " | od -An -c -v\n" +
+		"  " + kd + ` — check it in your own terminal (od shows each byte as a character or an escape; each entry ends at \0), from each checkout or worktree that may set it: git config -z --show-origin --get-regexp ` + Quote(`^includeif\.`) + " | env LC_ALL=C od -An -c -v\n" +
 		clearHint()
 	got, err := capture(checkRepo(r))
 	if err == nil {
