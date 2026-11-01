@@ -271,8 +271,8 @@ frame_parse() {
   # auto-mode Tip always sits directly above the description (or the upper
   # rule when there is none). A forged multi-line request cannot smuggle a
   # `╌` line into the block: each rule must be all-`╌`, and the command and
-  # description are compared byte-for-byte to the transcript's
-  # printable-ASCII-only call.
+  # description are compared after trimming surrounding spaces to the
+  # transcript's printable-ASCII-only call.
   local tip='Tip: auto mode handles these prompts for you — choose "switch to auto mode" below'
   local i=$((n - 10))
   if [ "$i" -ge 0 ] && [ "${ne[i]}" != "$tip" ]; then

@@ -402,11 +402,35 @@ try() {
   assert_refused "frame: option 2"
 }
 
+@test "permission-check: an option 3 with extra suffix text goes to the human" {
+  sed 's/^   3\. .*/& and more/' "$PLAIN_FRAME" >"$FRAME"
+  grep -qF 'auto mode handles these prompts for you and more' "$FRAME"
+  pending_bash 'printf hi > ./out.txt' 'Write "hi" to out.txt'
+  check "$FRAME"
+  assert_refused "frame: option 3 unrecognised"
+}
+
+@test "permission-check: an option 2 missing its trailing anchor goes to the human" {
+  sed 's/from this project$/from this project and more/' "$PLAIN_FRAME" >"$FRAME"
+  grep -qF 'from this project and more' "$FRAME"
+  pending_bash 'printf hi > ./out.txt' 'Write "hi" to out.txt'
+  check "$FRAME"
+  assert_refused "frame: option 2 unrecognised"
+}
+
+@test "permission-check: the real subagent frame with a broken lower rule goes to the human" {
+  sed '0,/^╌╌/! s/^╌╌.*/not a rule/' "$PLAIN_FRAME" >"$FRAME"
+  grep -qF 'not a rule' "$FRAME"
+  pending_bash 'printf hi > ./out.txt' 'Write "hi" to out.txt'
+  check "$FRAME"
+  assert_refused "frame: no rule above the options"
+}
+
 @test "permission-check: a three-line request block goes to the human" {
   pending_bash "cat $WT/README.md" "Show the readme"
   frame "cat $WT/README.md" "Show the readme" "and more"
   check
-  assert_human
+  assert_refused "frame: no auto-mode tip above the request"
 }
 
 @test "permission-check: a top-level Bash command header goes to the human" {
