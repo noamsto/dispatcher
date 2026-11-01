@@ -9,7 +9,7 @@ description: Use when a command fails with an error you may have seen before, be
 
 ## When to look
 
-- **A command fails** with an error you may have hit before: `deja fix "<error text>"`.
+- **A command fails** with an error you may have hit before: `deja fix '<error text>'`. Single-quote a short literal fragment and drop any `'` from it: double quotes let the shell expand `$(...)` or `$VAR` in the error.
 - **Before planning in an unfamiliar area**: `deja search <query>` or `deja how <what>`.
 - **The digest names a session that looks relevant**: `deja show <id-prefix>`.
 - **Before re-deciding** something a past session may have settled: `deja search <query>`.
@@ -18,10 +18,10 @@ description: Use when a command fails with an error you may have seen before, be
 
 | Command | Returns |
 |---|---|
-| `deja search [flags] <query>` | matching sessions, with snippets; bare `deja <query>` is the same, `search` lets a query start with a dash |
+| `deja search [flags] <query>` | matching sessions, with snippets; always type `search`: a bare `deja <query>` whose first word is a command (`secrets`, `sync`, `update`, …) runs that command |
 | `deja show <id-prefix> [--offset n] [--limit n]` | one past session's messages; the output names the next `--offset` |
 | `deja ctx <query\|id-prefix>` | a context bundle for a topic or session |
-| `deja fix "<error text>" [--limit n]` | what was run after this error before |
+| `deja fix '<error text>' [--limit n]` | what was run after this error before |
 | `deja how <what> [--project name] [--all-projects] [--limit n]` | commands this project actually ran |
 | `deja files <topic> [--limit n]` | files touched for a topic |
 | `deja blame <path>[:line]` | which session wrote this |
