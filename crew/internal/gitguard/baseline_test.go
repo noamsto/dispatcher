@@ -256,6 +256,24 @@ func TestNoteKeysWithholdsUnmaskableKeys(t *testing.T) {
 	}
 }
 
+func TestInitNoteWithholdsHasconfigPattern(t *testing.T) {
+	r := newRepo(t)
+	r.config(t, "includeif.hasconfig:remote.*.url:https://u:FAKETOKEN1400@h.example/**.path", filepath.Join(r.root, "nonexistent.cfg"))
+	got, err := capture(func(w io.Writer) error { return Init(r.common, w) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	kd := "includeif." + urlWithheld("hasconfig:remote.*.url:https://u:FAKETOKEN1400@h.example/**") + ".path"
+	want := "git-config baseline: recorded " + r.baseline() + ": " + kd + "\n" +
+		"  " + kd + " — check it in your own terminal, from each checkout or worktree that may set it: git config --show-origin --get-regexp " + Quote(`^includeif\.`) + "\n"
+	if strings.Contains(got, "FAKETOKEN1400") {
+		t.Errorf("note shows the token: %q", got)
+	}
+	if got != want {
+		t.Fatalf("note:\n%q\nwant:\n%q", got, want)
+	}
+}
+
 func TestInitMigrationWithholdsAliasRewrittenRemote(t *testing.T) {
 	const url = "ssh://git@example.com/o/r.git"
 	for _, tc := range []struct {

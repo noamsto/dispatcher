@@ -211,24 +211,34 @@ func noteKeys(stderr io.Writer, file, what string, recs, aliases []string) {
 	}
 }
 
-// showRecorded is ShowPair, or the key and a pointer to read the value from
-// one's own terminal when ShowPair would print it whole while it may carry
-// userinfo or a query: the note reaches the dispatcher, not the human's
-// terminal.
-func showRecorded(k, v string, aliases []string) string {
-	kd, keyWithheld := showKey(k)
+// showValue is ShowPair, or the key and why its value is withheld: an exec
+// value may carry a token, and a value with userinfo or a query prints only
+// masked.
+func showValue(k, v string, aliases []string) (string, bool) {
+	kd := ShowKey(k)
+	if IsExec(k, v) {
+		return kd + ": value withheld (exec value)", true
+	}
 	shown := ShowPair(k, v, aliases)
 	if !strings.ContainsAny(v, "@?") || shown != kd+"="+Quote(v) {
-		if keyWithheld {
-			return shown + ownTerminal(k)
-		}
-		return shown
+		return shown, false
 	}
 	reason := "outside the mask grammar"
 	if globAny(k, "remote.*.url", "remote.*.pushurl") && Rewritten(v, aliases) {
 		reason = "an insteadOf alias rewrites it"
 	}
-	return kd + ": value withheld (" + reason + ")" + ownTerminal(k)
+	return kd + ": value withheld (" + reason + ")", true
+}
+
+// showRecorded is showValue, plus a pointer to read the value from one's own
+// terminal when it or the key is withheld: the note reaches the dispatcher,
+// not the human's terminal.
+func showRecorded(k, v string, aliases []string) string {
+	shown, withheld := showValue(k, v, aliases)
+	if _, keyWithheld := showKey(k); withheld || keyWithheld {
+		return shown + ownTerminal(k)
+	}
+	return shown
 }
 
 // ownTerminal points at the command that reads k's value in the human's own

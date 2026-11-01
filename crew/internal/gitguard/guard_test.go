@@ -87,6 +87,29 @@ func TestCheckUnmaskableKeyWithheld(t *testing.T) {
 	}
 }
 
+func TestCheckHasconfigPatternWithheld(t *testing.T) {
+	const k = "includeif.hasconfig:remote.*.url:https://u:FAKETOKEN1400@h.example/**.path"
+	r := newRepo(t)
+	r.init(t)
+	r.config(t, k, filepath.Join(r.root, "nonexistent.cfg"))
+	cfg := Quote(r.common + "/config")
+	kd := "includeif." + urlWithheld("hasconfig:remote.*.url:https://u:FAKETOKEN1400@h.example/**") + ".path"
+	want := "refusing git: " + kd + " (from " + cfg + ") is not in the git-config baseline " + r.baseline() + "\n" +
+		"  restore the baselined value or remove it: edit " + cfg + "\n" +
+		"  " + kd + " — check it in your own terminal, from each checkout or worktree that may set it: git config --show-origin --get-regexp " + Quote(`^includeif\.`) + "\n" +
+		clearHint()
+	got, err := capture(checkRepo(r))
+	if err == nil {
+		t.Fatal("passed, want refusal")
+	}
+	if strings.Contains(got, "FAKETOKEN1400") {
+		t.Errorf("refusal shows the token: %q", got)
+	}
+	if got != want {
+		t.Fatalf("stderr:\n%q\nwant:\n%q", got, want)
+	}
+}
+
 func TestCheckIncludeOrigin(t *testing.T) {
 	r := newRepo(t)
 	r.init(t)
