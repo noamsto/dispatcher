@@ -20,6 +20,7 @@ usage: dispatch <trivial|standard|deep> <model> [flags] [--] <title...>
        dispatch resume [<target>] [flags]
        dispatch --engines [--in-budget]
        dispatch --models [--json]
+       dispatch --profiles [--json]
        dispatch --host <name> --recover <session> [--crew-id <id>]
 
 Scaffold a worker session: claim or mint its issue, create the branch, the
@@ -87,6 +88,7 @@ Other entry points
   dispatch resume ...     Relaunch the worker of the worktree you are standing in
   dispatch --engines      Engines enabled and installed here (--in-budget: affordable)
   dispatch --models       The tier map per engine: class, default, trial and accepted models (--json: machine-readable)
+  dispatch --profiles     Task profiles and what each resolves to here (--json: machine-readable)
   dispatch --host H --recover S   Record the remote worker of session S after a dropped ssh link
 
 Internal (called by workers and the harness, not by hand)
@@ -4263,6 +4265,65 @@ if [ "${1:-}" = --models ]; then
           | map(" [needs " + .[0].requires + ": " + (map(.id) | join(" ")) + "]") | join(""))] | @tsv' <<<"$map" |
       awk -F'\t' 'BEGIN { printf "%-8s %-9s %-9s %-40s %-40s %s\n", "ENGINE", "TIER", "CLASS", "DEFAULT", "TRIAL", "MODELS [/ REGEX]" }
         { printf "%-8s %-9s %-9s %-40s %-40s %s%s%s\n", $1, $2, $3, $4, $5, $6, ($7 == "" ? "" : "  / " $7), $8 }'
+  fi
+  exit 0
+fi
+
+# `dispatch --profiles [--json]` — the taskProfiles setting and what each
+# resolves to on this machine, read-only like --models: settings and the model
+# caches only. Per profile: tier, engine, class and effort as `--profile`
+# would fill them, the model its class resolves to for that engine and tier,
+# and a note when the profile is not launchable as it stands (no tier, a tier
+# that does not admit the class, a resolver failure, an engine not enabled or
+# installed here).
+if [ "${1:-}" = --profiles ]; then
+  as_json=
+  [ "${2:-}" != --json ] || as_json=1
+  { [ $# -le 1 ] || { [ $# -eq 2 ] && [ -n "$as_json" ]; }; } || {
+    usage
+    exit 1
+  }
+  _settings_load
+  out='{"profiles":{}}'
+  prof_err="$(mktemp)"
+  while IFS= read -r name; do
+    p="$(jq -c --arg n "$name" '.taskProfiles[$n]' <<<"$settings")"
+    IFS=$'\x1f' read -r tier engine class effort < <(jq -r --argjson s "$settings" '
+      (.engine // "claude") as $e | ($s.classes[$e].tiers[.tier // ""].class // "") as $tc
+      | [.tier // "", $e, (.class // (if .tier then $tc else "" end)), .effort // ""] | join("\u001f")' <<<"$p")
+    model='' note=''
+    if [ -n "$tier" ] && [ -n "$class" ]; then
+      if ! model="$(_class_sigil "$engine" "$tier" "@$class" 2>"$prof_err")"; then
+        model=''
+        note="$(tail -n 1 "$prof_err")"
+        note="${note#dispatch: }"
+      fi
+    fi
+    if [ -z "$tier" ]; then
+      note="no tier: pass one"
+    elif [ -n "$class" ] && ! jq -e --arg e "$engine" --arg t "$tier" --arg c "$class" '
+      (.classes[$e].tiers[$t] // {}) as $r | ($r.admits // [$r.class]) | index($c)' <<<"$settings" >/dev/null; then
+      note="$tier does not admit @$class on $engine"
+    elif [ -z "$note" ]; then
+      if ! engine_enabled "$engine" || ! command -v "$(engine_cli "$engine")" >/dev/null 2>&1; then
+        note="$engine is not enabled or installed here"
+      fi
+    fi
+    out="$(jq -c --arg n "$name" --argjson p "$p" --arg tier "$tier" --arg engine "$engine" --arg class "$class" \
+      --arg effort "$effort" --arg model "$model" --arg note "$note" '
+      def nn: if . == "" then null else . end;
+      .profiles[$n] = {profile: $p, tier: ($tier | nn), engine: $engine, class: ($class | nn),
+        effort: ($effort | nn), model: ($model | nn), note: ($note | nn)}' <<<"$out")"
+  done < <(jq -r '.taskProfiles // {} | keys_unsorted[]' <<<"$settings")
+  rm -f "$prof_err"
+  if [ -n "$as_json" ]; then
+    printf '%s\n' "$out"
+  else
+    jq -r '.profiles | to_entries[] | .key as $n | .value
+      | [$n, (.tier // "-"), .engine, (.class // "-"), (.effort // "-"), (.model // "-"),
+         (if .note then "  (" + .note + ")" else "" end)] | join("\u001f")' <<<"$out" |
+      awk -F'\x1f' 'BEGIN { printf "%-20s %-9s %-8s %-9s %-7s %s\n", "PROFILE", "TIER", "ENGINE", "CLASS", "EFFORT", "MODEL" }
+        { printf "%-20s %-9s %-8s %-9s %-7s %s%s\n", $1, $2, $3, $4, $5, $6, $7 }'
   fi
   exit 0
 fi

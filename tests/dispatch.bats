@@ -19269,3 +19269,51 @@ task_profile_settings() {
   [ "$status" -eq 0 ]
   [[ "$stderr" == *"dispatch: task profile loose: tier trivial, engine claude, model @cheap, effort low (filled: effort model)"* ]]
 }
+
+@test "task profile: --profiles lists the seeds with what each resolves to" {
+  run --separate-stderr run_dispatch --profiles
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == PROFILE*TIER*ENGINE*CLASS*EFFORT*MODEL ]]
+  [[ "$output" == *"docs "*"trivial"*"claude"*"cheap"*"haiku"* ]]
+  [[ "$output" == *"security "*"standard"*"claude"*"premium"*"opus"* ]]
+  [[ "$output" == *"mechanical-refactor "*"standard"*"codex"*"standard"*"gpt-5.6-terra"* ]]
+  [[ "$stderr" != *"warning"* ]]
+}
+
+@test "task profile: --profiles --json carries the raw profile and the resolved fields" {
+  run run_dispatch --profiles --json
+  [ "$status" -eq 0 ]
+  jq -e '.profiles.docs.model == "haiku" and .profiles.docs.engine == "claude"
+    and .profiles.docs.class == "cheap" and .profiles.docs.tier == "trivial" and .profiles.docs.effort == "low"
+    and .profiles.docs.profile == {"tier":"trivial","effort":"low"} and .profiles.docs.note == null
+    and .profiles.security.class == "premium"' <<<"$output"
+}
+
+@test "task profile: --profiles notes a class the tier does not admit and a profile without a tier" {
+  task_profile_settings '{"taskProfiles":{"lean":{"tier":"trivial","engine":"codex","class":"premium"},"loose":{"effort":"low"}}}'
+  run run_dispatch --profiles --json
+  [ "$status" -eq 0 ]
+  jq -e '.profiles.lean.note == "trivial does not admit @premium on codex"
+    and .profiles.loose.note == "no tier: pass one" and .profiles.loose.model == null
+    and .profiles.loose.tier == null and .profiles.loose.class == null and .profiles.loose.effort == "low"' <<<"$output"
+  run run_dispatch --profiles
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"lean "*"(trivial does not admit @premium on codex)"* ]]
+  [[ "$output" == *"loose "*"-"*"low"*"(no tier: pass one)"* ]]
+}
+
+@test "task profile: --profiles notes an engine that is not installed here" {
+  rm "$STUB_DIR/codex"
+  PATH="$(path_without_real codex)" DISPATCH_ENGINES="claude codex pi" run run_dispatch --profiles --json
+  [ "$status" -eq 0 ]
+  jq -e '.profiles["mechanical-refactor"].note == "codex is not enabled or installed here"
+    and .profiles.docs.note == null' <<<"$output"
+}
+
+@test "task profile: --profiles rejects an unknown or extra argument" {
+  run --separate-stderr run_dispatch --profiles extra
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"usage: dispatch"* ]]
+  run run_dispatch --profiles --json junk
+  [ "$status" -eq 1 ]
+}
