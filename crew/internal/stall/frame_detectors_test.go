@@ -879,6 +879,8 @@ func TestPermissionDetail(t *testing.T) {
 			"prompt: permission — Bash command: ls — pane %1"},
 		{"an empty box reports unparsed, not the dialog question", topHead + rule254c + "\n" + rule254c + "\n Do you want to proceed?\n", "%1",
 			"prompt: permission — (unparsed) — pane %1"},
+		{"an unterminated box reports unparsed", topHead + rule254c + "\n Do you want to proceed?\n", "%1",
+			"prompt: permission — (unparsed) — pane %1"},
 		{"a top-level title need not be bare letters", " MCP tool: netstat\n Tip: a tool\n" + rule254c + "\n netstat -an\n" + rule254c + "\n", "%1",
 			"prompt: permission — MCP tool: netstat: netstat -an — pane %1"},
 		{"blank lines before the request are skipped", hdr + "\n  \n\t\n  rm -rf x\nsecond\n", "%1",

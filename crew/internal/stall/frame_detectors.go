@@ -718,23 +718,24 @@ func permissionDetail(text, pane string) string {
 	return body + suffix
 }
 
-// boxedRequest is the first non-blank line between the first and second
-// U+254C rules after a boxed top-level title — the request claude draws
-// inside the rule box. It is empty when the box has no content line, so the
-// caller reports (unparsed) rather than a later line such as the dialog's
-// own "Do you want to proceed?".
+// boxedRequest is the first non-blank line between the two U+254C rules
+// after a boxed top-level title — the request claude draws inside the rule
+// box. It is returned only once the closing rule is seen, so an empty or
+// unterminated box reports (unparsed) rather than a later line such as the
+// dialog's own "Do you want to proceed?".
 func boxedRequest(lines []string, from int) string {
 	open := false
+	content := ""
 	for _, l := range lines[from+1:] {
 		if rePermRule.MatchString(l) {
 			if open {
-				return ""
+				return content
 			}
 			open = true
 			continue
 		}
-		if open && !reBlank.MatchString(l) {
-			return reTrimSpace.ReplaceAllString(l, "")
+		if open && content == "" && !reBlank.MatchString(l) {
+			content = reTrimSpace.ReplaceAllString(l, "")
 		}
 	}
 	return ""
