@@ -19246,6 +19246,11 @@ task_profile_settings() {
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"dispatch-config: ignoring taskProfiles.bad from "* ]]
   [[ "$stderr" == *"dispatch: unknown task profile 'bad' — dispatch --profiles lists them"* ]]
+  # A valid profile beside it reaches the engine gate, which reuses the settings
+  # the profile loaded: the config warning prints once.
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile docs --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'ignoring taskProfiles.bad' <<<"$stderr")" -eq 1 ]
 }
 
 @test "task profile: --profile is refused with --host and without a name" {
