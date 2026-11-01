@@ -244,13 +244,16 @@ func showRecorded(k, v string, aliases []string) string {
 // ownTerminal points at the command that reads k's value in the human's own
 // terminal.
 func ownTerminal(k string) string {
-	cmd := "git config --show-origin --get-all " + Quote(k)
+	cmd := "git config -z --show-origin --get-all " + Quote(k)
 	// A URL-subsection key can carry userinfo ShowKey cannot mask either.
 	if match(urlSubsectionKeys, k, "") && strings.ContainsAny(k, "@?") {
 		sec, _, _ := strings.Cut(k, ".")
-		cmd = "git config --show-origin --get-regexp " + Quote("^"+sec+`\.`)
+		cmd = "git config -z --show-origin --get-regexp " + Quote("^"+sec+`\.`)
 	}
-	// git prints values raw, so a planted CR or ESC could redraw the terminal to
-	// show a harmless value; cat -v shows those bytes as ^M and ^[.
-	return " — check it in your own terminal, from each checkout or worktree that may set it: " + cmd + " | cat -v"
+	// git prints values raw, so a planted CR or ESC could redraw the terminal and
+	// a planted LF or TAB forge another origin and value; -z ends each entry with
+	// NUL, which no value can hold, and od -c prints every byte in its own cell,
+	// so no value can spell an entry's end. (od -An -c -v is POSIX on GNU and BSD;
+	// sed's l is not defined for NUL input.)
+	return ` — check it in your own terminal (od shows one byte per cell; each entry ends at \0), from each checkout or worktree that may set it: ` + cmd + " | od -An -c -v"
 }

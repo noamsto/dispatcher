@@ -161,7 +161,7 @@ func TestInitMigrationAddsRedirectPairsOnly(t *testing.T) {
 
 // withheld is the text the note prints in place of a value it cannot show.
 func withheld(reason string) string {
-	return ": value withheld (" + reason + ") — check it in your own terminal, from each checkout or worktree that may set it: "
+	return ": value withheld (" + reason + `) — check it in your own terminal (od shows one byte per cell; each entry ends at \0), from each checkout or worktree that may set it: `
 }
 
 func TestInitMigrationNoteMasksOrWithholdsValues(t *testing.T) {
@@ -187,9 +187,9 @@ func TestInitMigrationNoteMasksOrWithholdsValues(t *testing.T) {
 	}
 	line := map[string]string{
 		"remote.origin.url":                     "  " + ShowKey("remote.origin.url") + "=https://***@example.com/o/r.git [sha256:" + sha8("https://u:tok@example.com/o/r.git") + "]\n",
-		"remote.origin.pushurl":                 "  " + ShowKey("remote.origin.pushurl") + withheld("outside the mask grammar") + "git config --show-origin --get-all remote.origin.pushurl | cat -v\n",
+		"remote.origin.pushurl":                 "  " + ShowKey("remote.origin.pushurl") + withheld("outside the mask grammar") + "git config -z --show-origin --get-all remote.origin.pushurl | od -An -c -v\n",
 		"http.proxy":                            "  " + ShowKey("http.proxy") + "=***@proxy.example:8080 [sha256:" + sha8("user:pw@proxy.example:8080") + "]\n",
-		"http.https://u:tok@example.com/.proxy": "  " + ShowKey("http.https://u:tok@example.com/.proxy") + withheld("outside the mask grammar") + "git config --show-origin --get-regexp " + Quote("^http\\.") + " | cat -v\n",
+		"http.https://u:tok@example.com/.proxy": "  " + ShowKey("http.https://u:tok@example.com/.proxy") + withheld("outside the mask grammar") + "git config -z --show-origin --get-regexp " + Quote("^http\\.") + " | od -An -c -v\n",
 	}
 	var keys []string
 	var lines strings.Builder
@@ -227,7 +227,7 @@ func TestNoteKeysWithholdsUnmaskableKeys(t *testing.T) {
 	}
 	slices.Sort(recs)
 	pointer := func(sec string) string {
-		return " — check it in your own terminal, from each checkout or worktree that may set it: git config --show-origin --get-regexp " + Quote("^"+sec+`\.`) + " | cat -v\n"
+		return ` — check it in your own terminal (od shows one byte per cell; each entry ends at \0), from each checkout or worktree that may set it: git config -z --show-origin --get-regexp ` + Quote("^"+sec+`\.`) + " | od -An -c -v\n"
 	}
 	line := map[string]string{
 		kUserinfo: "  " + ShowKey(kUserinfo) + "=***@proxy.example:3128 [sha256:" + sha8("p:pw@proxy.example:3128") + "]" + pointer("http"),
@@ -256,6 +256,18 @@ func TestNoteKeysWithholdsUnmaskableKeys(t *testing.T) {
 	}
 }
 
+func TestOwnTerminalPointerText(t *testing.T) {
+	const prefix = ` — check it in your own terminal (od shows one byte per cell; each entry ends at \0), from each checkout or worktree that may set it: `
+	for _, tc := range []struct{ key, want string }{
+		{"core.fsmonitor", prefix + `git config -z --show-origin --get-all core.fsmonitor | od -An -c -v`},
+		{"http.https://u:tok@[::1]/.proxy", prefix + `git config -z --show-origin --get-regexp \^http\\. | od -An -c -v`},
+	} {
+		if got := ownTerminal(tc.key); got != tc.want {
+			t.Errorf("ownTerminal(%q):\n%q\nwant:\n%q", tc.key, got, tc.want)
+		}
+	}
+}
+
 func TestInitNoteWithholdsHasconfigPattern(t *testing.T) {
 	r := newRepo(t)
 	r.config(t, "includeif.hasconfig:remote.*.url:https://u:FAKETOKEN1400@h.example/**.path", filepath.Join(r.root, "nonexistent.cfg"))
@@ -265,7 +277,7 @@ func TestInitNoteWithholdsHasconfigPattern(t *testing.T) {
 	}
 	kd := "includeif." + urlWithheld("hasconfig:remote.*.url:https://u:FAKETOKEN1400@h.example/**") + ".path"
 	want := "git-config baseline: recorded " + r.baseline() + ": " + kd + "\n" +
-		"  " + kd + " — check it in your own terminal, from each checkout or worktree that may set it: git config --show-origin --get-regexp " + Quote(`^includeif\.`) + " | cat -v\n"
+		"  " + kd + ` — check it in your own terminal (od shows one byte per cell; each entry ends at \0), from each checkout or worktree that may set it: git config -z --show-origin --get-regexp ` + Quote(`^includeif\.`) + " | od -An -c -v\n"
 	if strings.Contains(got, "FAKETOKEN1400") {
 		t.Errorf("note shows the token: %q", got)
 	}
@@ -281,7 +293,7 @@ func TestInitMigrationWithholdsAliasRewrittenRemote(t *testing.T) {
 		alias bool
 		line  string
 	}{
-		{"global alias rewrites the remote", true, "  remote.upstream.url" + withheld("an insteadOf alias rewrites it") + "git config --show-origin --get-all remote.upstream.url | cat -v\n"},
+		{"global alias rewrites the remote", true, "  remote.upstream.url" + withheld("an insteadOf alias rewrites it") + "git config -z --show-origin --get-all remote.upstream.url | od -An -c -v\n"},
 		{"no alias masks it", false, "  remote.upstream.url=ssh://***@example.com/o/r.git [sha256:" + sha8(url) + "]\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
