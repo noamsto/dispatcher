@@ -12,7 +12,8 @@
 - **Command:** `claude --permission-mode manual`, launched from
   `/tmp/cap509/scratch`. (`--permission-mode default` resolves to the user's
   auto mode and would auto-approve, so `manual` was used to force the dialog.
-  `--no-chrome` made this version enter print mode, so it was not used.)
+  An initial attempt adding `--no-chrome` exited with an `--print` input
+  error, so the capture was taken without it.)
 - **Steps:** answered the workspace-trust prompt ("Yes, I trust this folder"),
   then asked the main agent to have a `general-purpose` subagent run
   `printf hi > ./out.txt`. This Claude version backgrounds subagents, so the

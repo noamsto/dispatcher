@@ -6,6 +6,7 @@ bats_require_minimum_version 1.5.0 # `run --separate-stderr`
 FIXTURE_DIR="$BATS_TEST_DIRNAME/fixtures/permission"
 CLASSIFIER_FRAME="$FIXTURE_DIR/classifier-escalation.txt"
 PLAIN_FRAME="$FIXTURE_DIR/plain-subagent.txt"
+PLAIN_READ_FRAME="$FIXTURE_DIR/plain-subagent-read.txt"
 TOPLEVEL_FRAME="$BATS_TEST_DIRNAME/../crew/internal/frame/testdata/frames/permission_bash.txt"
 DENIAL_FIXTURE="$FIXTURE_DIR/classifier-denial.txt"
 DENIAL=$(<"$DENIAL_FIXTURE")
@@ -344,7 +345,7 @@ try() {
 
 @test "permission-check: the real classifier escalation goes to the human" {
   check "$CLASSIFIER_FRAME"
-  assert_human
+  assert_refused "frame: option 4"
 }
 
 @test "permission-check: the real plain subagent frame passes the frame gate" {
@@ -371,17 +372,34 @@ try() {
 }
 
 @test "permission-check: the real subagent frame with a broken rule goes to the human" {
-  sed '0,/^╌\{2,\}$/s//not a rule/' "$PLAIN_FRAME" >"$FRAME"
+  sed '0,/^╌╌/s//not a rule/' "$PLAIN_FRAME" >"$FRAME"
   pending_bash 'printf hi > ./out.txt' 'Write "hi" to out.txt'
   check "$FRAME"
-  assert_refused "frame:"
+  assert_refused "frame: no rule above the command"
 }
 
 @test "permission-check: the real subagent frame with a different Tip goes to the human" {
   sed 's/^ Tip: .*/ Tip: a different tip/' "$PLAIN_FRAME" >"$FRAME"
   pending_bash 'printf hi > ./out.txt' 'Write "hi" to out.txt'
   check "$FRAME"
-  assert_refused "frame:"
+  assert_refused "frame: no auto-mode tip above the request"
+}
+
+@test "permission-check: the real read-form subagent frame passes the frame gate" {
+  # The read capture's own command, description and agent: the frame gate and
+  # transcript binding both pass, so the refusal is the path rule's.
+  jq -nc '{agentType:"general-purpose",toolUseId:"toolu_parent",spawnDepth:1}' \
+    >"$PROJ/$SID/subagents/agent-a1.meta.json"
+  pending_bash 'cat /etc/os-release' 'Show OS release info'
+  check "$PLAIN_READ_FRAME"
+  assert_refused "path: not under an allowed root"
+}
+
+@test "permission-check: an unrecognised option 2 goes to the human" {
+  sed 's/^   2\. Yes, .*/   2. Yes, and don’t ask again for: cat */' "$PLAIN_FRAME" >"$FRAME"
+  pending_bash 'printf hi > ./out.txt' 'Write "hi" to out.txt'
+  check "$FRAME"
+  assert_refused "frame: option 2"
 }
 
 @test "permission-check: a three-line request block goes to the human" {

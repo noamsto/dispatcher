@@ -231,10 +231,11 @@ capture() {
 # <name> agent` for a subagent), the auto-mode Tip, an optional description,
 # a `╌` rule, the command, a `╌` rule, the question, and four options, over
 # the footer. Walks the trimmed non-empty lines up from the bottom: footer,
-# `4. No`, option 3, option 2, `❯ 1. Yes`, the question, the command's `╌`
-# rule, the command, the upper `╌` rule, an optional description, the exact
-# Tip, and the subagent header. Sets F_AGENT, F_BLOCK1 (the command),
-# F_BLOCK2 (the description, or empty), F_NBLOCK.
+# `4. No`, option 3, option 2 (accepted in its write form and its read form),
+# `❯ 1. Yes`, the question, the command's `╌` rule, the command, the upper
+# `╌` rule, an optional description, the exact Tip, and the subagent header.
+# Sets F_AGENT, F_BLOCK1 (the command), F_BLOCK2 (the description, or empty),
+# F_NBLOCK.
 frame_parse() {
   local lines=() ne=() line t
   mapfile -t lines <<<"$CAPTURE"
@@ -253,8 +254,13 @@ frame_parse() {
   *) refuse "frame: footer is not the last line" ;;
   esac
   [ "${ne[n - 2]}" = "4. No" ] || refuse "frame: option 4 is not No"
-  [[ ${ne[n - 3]} == "3. Yes, and switch to auto mode · "* ]] || refuse "frame: option 3 unrecognised"
-  [[ ${ne[n - 4]} == "2. Yes, and always allow access to "*" from this project" ]] || refuse "frame: option 2 unrecognised"
+  # Option 3's suffix is fixed; option 2 has exactly two real forms — the
+  # write form and the read form — each anchored with only the directory free.
+  [ "${ne[n - 3]}" = "3. Yes, and switch to auto mode · auto mode handles these prompts for you" ] ||
+    refuse "frame: option 3 unrecognised"
+  [[ ${ne[n - 4]} == "2. Yes, and always allow access to "*" from this project" ||
+    ${ne[n - 4]} == "2. Yes, allow reading from "*" from this project" ]] ||
+    refuse "frame: option 2 unrecognised"
   [ "${ne[n - 5]}" = "❯ 1. Yes" ] || refuse "frame: option 1 is not exactly Yes"
   [ "${ne[n - 6]}" = "Do you want to proceed?" ] || refuse "frame: question unrecognised"
   [[ ${ne[n - 7]} =~ ^(╌)+$ ]] || refuse "frame: no rule above the options"

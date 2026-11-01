@@ -147,7 +147,7 @@ than worked around. A wrong inference fails closed — no plain frame matches, s
 nothing is approved — because the approval is decided from transcript bytes
 and the frame is only a witness. The dangerous inference error would be an
 escalation that renders with no extra line; guard 2 covers the known trigger.
-Validating the frame against a real plain capture is left to #486.
+Real plain captures are pinned (#509): tests/fixtures/permission/plain-subagent.txt (write form) and plain-subagent-read.txt (read form).
 
 ## Honest expected yield
 
@@ -231,12 +231,18 @@ permission-check.sh --capture <file> --branch <branch> --worktree <dir> \
 
 ### Frame gate (on the plain capture, stripped as `_permission_detail` strips)
 
-1. The last non-empty line is exactly `Esc to cancel · Tab to amend` (trimmed).
-2. Walking up over non-empty lines: `3. No`; a line starting
-   `2. Yes, and don’t ask again for:`; exactly `❯ 1. Yes`;
-   exactly `Do you want to proceed?`.
-3. Above that, up to the header: one or two non-empty lines (the request
-   block), and nothing else.
+1. The last non-empty line is the footer: exactly
+   `Esc to cancel · Tab to amend`, or that plus the background-agent chrome
+   ` · ctrl+x ctrl+k twice to stop background agents`.
+2. Walking up over non-empty lines: `4. No`; exactly
+   `3. Yes, and switch to auto mode · auto mode handles these prompts for you`;
+   a line matching `2. Yes, and always allow access to … from this project` or
+   `2. Yes, allow reading from … from this project` (the write and read forms
+   of the same option); exactly `❯ 1. Yes`; exactly
+   `Do you want to proceed?`.
+3. Above the question: a `╌` rule, the command, a `╌` rule; above the upper
+   rule an optional description line, then exactly
+   `Tip: auto mode handles these prompts for you — choose "switch to auto mode" below`.
 4. The header is exactly `Bash command · from the <name> agent` with `<name>`
    matching `[A-Za-z0-9:_-]+`. A top-level header (#486) or any other tool →
    human.
