@@ -127,6 +127,21 @@ func TestRunBaselineAliasRewrite(t *testing.T) {
 			ownTerminalLine("remote.origin.url", "remote.origin.url"), "")
 }
 
+// A withheld line printed only by the alias rewrite still reaches --accept's note.
+func TestRunBaselineAcceptAliasRewriteNotesWithheld(t *testing.T) {
+	r := newRepo(t)
+	r.config(t, "remote.origin.url", "https://t@h.example/r")
+	r.init(t)
+	r.config(t, "url.https://evil.example/.insteadof", "https://t@h")
+	origin := r.common + "/config"
+	runBaseline(r.main, true, "no\n", true).want(t, 1,
+		driftLine(ShowPair("url.https://evil.example/.insteadof", "https://t@h", nil), "main checkout", origin)+
+			"  rewritten by the alias above: "+
+			withheldLine("remote.origin.url", "an insteadOf alias rewrites it", "https://t@h.example/r", "main checkout", origin)+
+			ownTerminalLine("remote.origin.url", "remote.origin.url")+
+			withheldNote+prompt(r.baseline()), "crew: baseline unchanged\n")
+}
+
 func TestRunBaselineLegacy(t *testing.T) {
 	r := newRepo(t)
 	r.init(t)
@@ -639,7 +654,7 @@ func TestRunBaselineWithheldKeyPointsToOwnTerminal(t *testing.T) {
 	got := runBaseline(r.main, false, "", false)
 	got.want(t, 1,
 		driftLine(kd+"=proxy.example:3128", "main checkout", r.common+"/config")+
-			"  "+kd+" — check it in your own terminal, from each checkout or worktree that may set it: git config --show-origin --get-regexp "+Quote(`^http\.`)+"\n", "")
+			"  "+kd+" — check it in your own terminal, from each checkout or worktree that may set it: git config --show-origin --get-regexp "+Quote(`^http\.`)+" | cat -v\n", "")
 	if strings.Contains(got.stdout+got.stderr, "tok") {
 		t.Fatalf("userinfo leaked:\n%s%s", got.stdout, got.stderr)
 	}
@@ -662,7 +677,7 @@ func execPair(r repo, k, v string) string {
 	return withheldPair(k, "exec value", v, "main checkout", r.common+"/config")
 }
 
-const withheldNote = "withheld above: check each value with the git config command under it before typing yes — a sha256 that differs from the listing you checked means the value changed since\n"
+const withheldNote = "withheld above: type yes only if a plain `crew git-baseline` listing showed the same sha256 for each, and you then checked each value with the git config command under it\n"
 
 func TestRunBaselineWithholdsCredentialedValues(t *testing.T) {
 	const (
@@ -671,7 +686,7 @@ func TestRunBaselineWithholdsCredentialedValues(t *testing.T) {
 		aliasKey  = "url.x.pushinsteadof"
 		hasconfig = "includeif.hasconfig:remote.*.url:https://u:" + token + "@h.example/**.path"
 	)
-	regexpPointer := " — check it in your own terminal, from each checkout or worktree that may set it: git config --show-origin --get-regexp " + Quote(`^includeif\.`)
+	regexpPointer := " — check it in your own terminal, from each checkout or worktree that may set it: git config --show-origin --get-regexp " + Quote(`^includeif\.`) + " | cat -v"
 	for _, tc := range []struct {
 		name      string
 		pre, post func(t *testing.T, r repo)

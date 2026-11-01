@@ -165,7 +165,7 @@ func RunBaseline(accept bool, cwd string, o BaselineOptions, stdout, stderr io.W
 		say(stdout, "no guarded git config yet — yes records an empty baseline\n")
 	}
 	if withheld {
-		say(stdout, "withheld above: check each value with the git config command under it before typing yes — a sha256 that differs from the listing you checked means the value changed since\n")
+		say(stdout, "withheld above: type yes only if a plain `crew git-baseline` listing showed the same sha256 for each, and you then checked each value with the git config command under it\n")
 	}
 	say(stdout, "Accept these into the baseline %s? type yes: ", file)
 	if readAnswer(o.In) != "yes" {

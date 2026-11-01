@@ -250,5 +250,7 @@ func ownTerminal(k string) string {
 		sec, _, _ := strings.Cut(k, ".")
 		cmd = "git config --show-origin --get-regexp " + Quote("^"+sec+`\.`)
 	}
-	return " — check it in your own terminal, from each checkout or worktree that may set it: " + cmd
+	// git prints values raw, so a planted CR or ESC could redraw the terminal to
+	// show a harmless value; cat -v shows those bytes as ^M and ^[.
+	return " — check it in your own terminal, from each checkout or worktree that may set it: " + cmd + " | cat -v"
 }

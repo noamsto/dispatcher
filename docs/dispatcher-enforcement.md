@@ -579,10 +579,13 @@ reap --quiet` (how dispatch runs it) drops reap's own `keeping …` note,
     withheld when it has `@`/`?`; a URL-subsection key the grammar cannot mask,
     and an `includeIf.hasconfig:remote.*.url:` pattern with `@`/`?`, is
     withheld behind its fingerprint; each withheld value or key is followed by
-    the `git config` command that reads it in the human's own terminal, and
-    `crew git-baseline` also shows a withheld value's `sha256:` fingerprint, so
-    a value that changed between the listing the human checked and `--accept`
-    shows a different one (a swap and swap back does not); values without
+    the `git config` command, piped through `cat -v` so control bytes show,
+    that reads it in the human's own terminal; `crew git-baseline` shows a
+    withheld value's `sha256:` fingerprint, and `--accept` asks the human to
+    type yes only if a plain listing showed the same fingerprints and they
+    checked each value after it — a value swapped between that check and
+    `--accept` and swapped back is not caught, as the fingerprint cannot be
+    computed from the `git config` output; values without
     `@`/`?` still print whole, as do other `includeIf` condition keys and
     anything else outside the grammar (brackets, ssh `%`-escapes, other
     schemes, fragments, spaces, a query with no path) that has neither;

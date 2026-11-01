@@ -187,9 +187,9 @@ func TestInitMigrationNoteMasksOrWithholdsValues(t *testing.T) {
 	}
 	line := map[string]string{
 		"remote.origin.url":                     "  " + ShowKey("remote.origin.url") + "=https://***@example.com/o/r.git [sha256:" + sha8("https://u:tok@example.com/o/r.git") + "]\n",
-		"remote.origin.pushurl":                 "  " + ShowKey("remote.origin.pushurl") + withheld("outside the mask grammar") + "git config --show-origin --get-all remote.origin.pushurl\n",
+		"remote.origin.pushurl":                 "  " + ShowKey("remote.origin.pushurl") + withheld("outside the mask grammar") + "git config --show-origin --get-all remote.origin.pushurl | cat -v\n",
 		"http.proxy":                            "  " + ShowKey("http.proxy") + "=***@proxy.example:8080 [sha256:" + sha8("user:pw@proxy.example:8080") + "]\n",
-		"http.https://u:tok@example.com/.proxy": "  " + ShowKey("http.https://u:tok@example.com/.proxy") + withheld("outside the mask grammar") + "git config --show-origin --get-regexp " + Quote("^http\\.") + "\n",
+		"http.https://u:tok@example.com/.proxy": "  " + ShowKey("http.https://u:tok@example.com/.proxy") + withheld("outside the mask grammar") + "git config --show-origin --get-regexp " + Quote("^http\\.") + " | cat -v\n",
 	}
 	var keys []string
 	var lines strings.Builder
@@ -227,7 +227,7 @@ func TestNoteKeysWithholdsUnmaskableKeys(t *testing.T) {
 	}
 	slices.Sort(recs)
 	pointer := func(sec string) string {
-		return " — check it in your own terminal, from each checkout or worktree that may set it: git config --show-origin --get-regexp " + Quote("^"+sec+`\.`) + "\n"
+		return " — check it in your own terminal, from each checkout or worktree that may set it: git config --show-origin --get-regexp " + Quote("^"+sec+`\.`) + " | cat -v\n"
 	}
 	line := map[string]string{
 		kUserinfo: "  " + ShowKey(kUserinfo) + "=***@proxy.example:3128 [sha256:" + sha8("p:pw@proxy.example:3128") + "]" + pointer("http"),
@@ -265,7 +265,7 @@ func TestInitNoteWithholdsHasconfigPattern(t *testing.T) {
 	}
 	kd := "includeif." + urlWithheld("hasconfig:remote.*.url:https://u:FAKETOKEN1400@h.example/**") + ".path"
 	want := "git-config baseline: recorded " + r.baseline() + ": " + kd + "\n" +
-		"  " + kd + " — check it in your own terminal, from each checkout or worktree that may set it: git config --show-origin --get-regexp " + Quote(`^includeif\.`) + "\n"
+		"  " + kd + " — check it in your own terminal, from each checkout or worktree that may set it: git config --show-origin --get-regexp " + Quote(`^includeif\.`) + " | cat -v\n"
 	if strings.Contains(got, "FAKETOKEN1400") {
 		t.Errorf("note shows the token: %q", got)
 	}
@@ -281,7 +281,7 @@ func TestInitMigrationWithholdsAliasRewrittenRemote(t *testing.T) {
 		alias bool
 		line  string
 	}{
-		{"global alias rewrites the remote", true, "  remote.upstream.url" + withheld("an insteadOf alias rewrites it") + "git config --show-origin --get-all remote.upstream.url\n"},
+		{"global alias rewrites the remote", true, "  remote.upstream.url" + withheld("an insteadOf alias rewrites it") + "git config --show-origin --get-all remote.upstream.url | cat -v\n"},
 		{"no alias masks it", false, "  remote.upstream.url=ssh://***@example.com/o/r.git [sha256:" + sha8(url) + "]\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
