@@ -555,13 +555,13 @@ func TestRoleEndOfLife(t *testing.T) {
 // d6Script answers D6's in-process scan and, through the fake's nudge hook,
 // the D6 type. nudgeRC is that type's verdict.
 type d6Script struct {
-	dispatcher, oldest, nudgeOut string
-	nudgeRC                      int
+	any, oldest, nudgeOut string
+	nudgeRC               int
 }
 
 func (s *d6Script) answer(mode string) string {
-	if mode == "dispatcher" {
-		return s.dispatcher
+	if mode == "any" {
+		return s.any
 	}
 	return s.oldest
 }
@@ -587,7 +587,7 @@ func d6Watch(t *testing.T, s *d6Script, req Request) (*harness, *fake, *watch) {
 func agedMS(w *watch, off, age int64) int64 { return (w.start+off)*1000 - age*1000 }
 
 const (
-	roleDetail = "unread: role verdict undelivered for %ds — lead is working but has not read it; nudge it to run `crew await`"
+	roleDetail = "unread: role verdict undelivered for %ds — lead is working but has not read it; nudge it (`crew nudge <lead>`) to run `crew await`"
 	dispDetail = "unread: dispatcher directive undelivered for %ds — lead is working but has not reached a peek seam (long stage or idle on a background task)"
 )
 
@@ -614,7 +614,7 @@ func TestD6OldestDetails(t *testing.T) {
 			want = []string{tc.want}
 		}
 		wantRows(t, h, want...)
-		wantScans := []string{"dispatcher", "oldest"}
+		wantScans := []string{"any", "oldest"}
 		if !slices.Equal(f.unreadCalls, wantScans) {
 			t.Errorf("scans %q, want %q", f.unreadCalls, wantScans)
 		}
@@ -657,7 +657,7 @@ func TestD6OtherEpisode(t *testing.T) {
 	h, f, w := d6Watch(t, s, Request{})
 	h.writeRows(h.status(d6ID, 1, `{"state":"blocked","source":"watchdog","detail":"stalled: x"}`))
 	s.oldest = fmt.Sprintf("%d role", agedMS(w, 0, 700))
-	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
+	s.any = fmt.Sprintf("%d %d dispatcher", agedMS(w, 0, 700), agedMS(w, 0, 650))
 	pdOK(t, w, 0, 0, w.d6)
 	wantRows(t, h, "blocked|stalled: x")
 	if len(f.shCalls) != 0 {
@@ -714,14 +714,14 @@ func TestNudgeGating(t *testing.T) {
 		req := tc.req
 		req.Target, req.Pane, req.Engine = tc.id, ptr("%1"), cmp.Or(req.Engine, ptr("claude"))
 		_, w := pdWatch(t, f, req)
-		s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
+		s.any = fmt.Sprintf("%d %d dispatcher", agedMS(w, 0, 700), agedMS(w, 0, 650))
 		s.oldest = fmt.Sprintf("%d dispatcher", agedMS(w, 0, 700))
 		pdOK(t, w, 0, 0, w.d6)
 		if got := countCalls(f, "nudge ") == 1; got != tc.nudge {
 			t.Errorf("%s: nudged %v, want %v (calls %q)", tc.name, got, tc.nudge, f.shCalls)
 		}
-		if got := countScans(f, "dispatcher") == 1; got != tc.nudge {
-			t.Errorf("%s: dispatcher scan %d, want one (scans %q)", tc.name, countScans(f, "dispatcher"), f.unreadCalls)
+		if got := countScans(f, "any") == 1; got != tc.nudge {
+			t.Errorf("%s: dispatcher scan %d, want one (scans %q)", tc.name, countScans(f, "any"), f.unreadCalls)
 		}
 	}
 }
@@ -731,20 +731,21 @@ func TestNudgeScanParse(t *testing.T) {
 		out   string
 		nudge bool
 	}{
-		{"%[1]d %[2]d", true},
-		{"  %[1]d \t %[2]d  ", true},
-		{"%[1]d %[2]d\nmore", true},
+		{"%[1]d %[2]d role", true},
+		{"  %[1]d \t %[2]d dispatcher  ", true},
+		{"%[1]d %[2]d dispatcher\nmore", true},
 		{"%[1]d", false},
-		{"%[1]d %[2]d 9", false},
-		{"%[1]dx %[2]d", false},
-		{"%[1]d -%[2]d", false},
+		{"%[1]d %[2]d", false},
+		{"%[1]d %[2]d role extra", false},
+		{"%[1]dx %[2]d role", false},
+		{"%[1]d -%[2]d role", false},
 		{"", false},
 	}
 	for _, tc := range cases {
 		s := &d6Script{nudgeRC: 0}
 		_, f, w := d6Watch(t, s, Request{})
 		if tc.out != "" {
-			s.dispatcher = fmt.Sprintf(tc.out, agedMS(w, 0, 700), agedMS(w, 0, 650))
+			s.any = fmt.Sprintf(tc.out, agedMS(w, 0, 700), agedMS(w, 0, 650))
 		}
 		pdOK(t, w, 0, 0, w.d6)
 		if got := countCalls(f, "nudge ") == 1; got != tc.nudge {
@@ -761,7 +762,7 @@ func TestNudgeThresholds(t *testing.T) {
 	for _, tc := range cases {
 		s := &d6Script{}
 		_, f, w := d6Watch(t, s, Request{})
-		s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, tc.age), agedMS(w, 0, 10))
+		s.any = fmt.Sprintf("%d %d dispatcher", agedMS(w, 0, tc.age), agedMS(w, 0, 10))
 		pdOK(t, w, 0, 0, w.d6)
 		if got := countCalls(f, "nudge ") == 1; got != tc.nudge {
 			t.Errorf("age %d: nudged %v, want %v", tc.age, got, tc.nudge)
@@ -775,11 +776,11 @@ func TestNudgeAccepted(t *testing.T) {
 	s := &d6Script{nudgeOut: "nudged", nudgeRC: 0}
 	h, f, w := d6Watch(t, s, Request{})
 	newest := agedMS(w, 0, 650)
-	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), newest)
+	s.any = fmt.Sprintf("%d %d dispatcher", agedMS(w, 0, 700), newest)
 	s.oldest = fmt.Sprintf("%d dispatcher", agedMS(w, 0, 700))
 	pdOK(t, w, 0, 0, w.d6)
 	wantRows(t, h)
-	if want := []string{"nudge %1 claude " + d6ID + " c1 " + strconv.FormatInt(newest, 10)}; countScans(f, "dispatcher") != 1 ||
+	if want := []string{"nudge %1 claude " + d6ID + " c1 " + strconv.FormatInt(newest, 10)}; countScans(f, "any") != 1 ||
 		!slices.Equal(f.shCalls, want) {
 		t.Errorf("scans %q sh calls %q, want one scan then %q", f.unreadCalls, f.shCalls, want)
 	}
@@ -789,7 +790,7 @@ func TestNudgeAccepted(t *testing.T) {
 	}
 	wantRows(t, h, "blocked|"+fmt.Sprintf(dispDetail, 760))
 	// A newer directive while our own unread: episode is open nudges again.
-	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 120, 820), agedMS(w, 120, 10))
+	s.any = fmt.Sprintf("%d %d dispatcher", agedMS(w, 120, 820), agedMS(w, 120, 10))
 	pdOK(t, w, 120, 8, w.d6)
 	if n := countCalls(f, "nudge "); n != 2 {
 		t.Errorf("nudged %d times, want 2 after a newer directive", n)
@@ -803,13 +804,34 @@ func TestNudgeTypedNotAccepted(t *testing.T) {
 	h, _, w := d6Watch(t, s, Request{})
 	s.oldest = fmt.Sprintf("%d role", agedMS(w, 0, 700))
 	pdOK(t, w, 0, 0, w.d6)
-	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 60, 700), agedMS(w, 60, 650))
+	s.any = fmt.Sprintf("%d %d dispatcher", agedMS(w, 60, 700), agedMS(w, 60, 650))
 	pdOK(t, w, 60, 4, w.d6)
 	wantRows(t, h, "blocked|"+fmt.Sprintf(roleDetail, 700),
 		"blocked|unread: dispatcher directive undelivered for 700s — auto-nudge typed but not accepted (typed: prompt still holds the text); verify the pane with crew where")
 	if w.pd.d6At != w.now || w.pd.d6Src != "dispatcher" {
 		t.Errorf("d6At %d d6Src %q", w.pd.d6At-w.start, w.pd.d6Src)
 	}
+}
+
+// A typed-but-unaccepted role verdict is reported once under its own wording,
+// and its open episode must not flap when the scan's newest half goes away
+// while the oldest role verdict holds.
+func TestNudgeTypedNotAcceptedRole(t *testing.T) {
+	s := &d6Script{nudgeOut: "typed: prompt still holds the text — check the pane", nudgeRC: 3}
+	h, _, w := d6Watch(t, s, Request{})
+	s.oldest = fmt.Sprintf("%d role", agedMS(w, 0, 700))
+	s.any = fmt.Sprintf("%d %d role", agedMS(w, 0, 700), agedMS(w, 0, 650))
+	pdOK(t, w, 0, 0, w.d6)
+	posted := "blocked|unread: role verdict undelivered for 700s — auto-nudge typed but not accepted (typed: prompt still holds the text); verify the pane with crew where"
+	wantRows(t, h, posted)
+	if w.pd.d6At != w.now || w.pd.d6Src != "role" {
+		t.Errorf("d6At %d d6Src %q", w.pd.d6At-w.start, w.pd.d6Src)
+	}
+	// The scan's newest half is gone but the oldest role verdict holds: the
+	// open episode must not clear.
+	s.any = ""
+	pdOK(t, w, 60, 4, w.d6)
+	wantRows(t, h, posted)
 }
 
 func TestNudgeRefusals(t *testing.T) {
@@ -824,7 +846,7 @@ func TestNudgeRefusals(t *testing.T) {
 	for _, tc := range cases {
 		s := &d6Script{nudgeOut: tc.out, nudgeRC: 2}
 		h, f, w := d6Watch(t, s, Request{})
-		s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
+		s.any = fmt.Sprintf("%d %d dispatcher", agedMS(w, 0, 700), agedMS(w, 0, 650))
 		pdOK(t, w, 0, 0, w.d6)
 		if w.pd.nudgeOff != tc.latch {
 			t.Errorf("%q: nudgeOff %v, want %v", tc.out, w.pd.nudgeOff, tc.latch)
@@ -834,7 +856,7 @@ func TestNudgeRefusals(t *testing.T) {
 		if len(f.unreadCalls) != 2 {
 			t.Errorf("%q: verdict skipped: %q", tc.out, f.unreadCalls)
 		}
-		s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 60, 760), agedMS(w, 60, 5))
+		s.any = fmt.Sprintf("%d %d dispatcher", agedMS(w, 60, 760), agedMS(w, 60, 5))
 		pdOK(t, w, 60, 4, w.d6)
 		want := 2
 		if tc.latch {
@@ -879,7 +901,7 @@ func TestNudgeAlreadyNudged(t *testing.T) {
 			s := &d6Script{nudgeRC: 0}
 			h, f, w := d6Watch(t, s, Request{})
 			newest := agedMS(w, 0, 650)
-			s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), newest)
+			s.any = fmt.Sprintf("%d %d dispatcher", agedMS(w, 0, 700), newest)
 			rows := tc.rows(strconv.FormatInt(newest, 10))
 			for range tc.lines {
 				rows = append(rows, `{"kind":"msg"}`)
@@ -906,7 +928,7 @@ func TestNudgeAlreadyNudged(t *testing.T) {
 func TestBusReadsAreBounded(t *testing.T) {
 	s := &d6Script{}
 	_, f, w := d6Watch(t, s, Request{})
-	s.dispatcher = fmt.Sprintf("%d %d", agedMS(w, 0, 700), agedMS(w, 0, 650))
+	s.any = fmt.Sprintf("%d %d dispatcher", agedMS(w, 0, 700), agedMS(w, 0, 650))
 	runRead := fmt.Sprintf("%d/0", w.cfg.runStartMS)
 	tailRead := fmt.Sprintf("0/%d", nudgedTailLines)
 	seen := map[string]int{}

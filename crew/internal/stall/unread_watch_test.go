@@ -190,7 +190,7 @@ func d6WatchRun(t *testing.T, tc d6Run) (*harness, []string, []nudge.PaneRequest
 }
 
 const (
-	d6Role30 = "blocked|unread: role verdict undelivered for 30s — lead is working but has not read it; nudge it to run `crew await`"
+	d6Role30 = "blocked|unread: role verdict undelivered for 30s — lead is working but has not read it; nudge it (`crew nudge <lead>`) to run `crew await`"
 	d6Disp   = "blocked|unread: dispatcher directive undelivered for %ds — lead is working but has not reached a peek seam (long stage or idle on a background task)"
 )
 
@@ -205,8 +205,10 @@ func TestUnreadWatchVerdict(t *testing.T) {
 		want []string
 	}{
 		{
-			name:  "flags a working lead with an undelivered role verdict",
-			d6Run: d6Run{roleAge: 30, req: Request{MaxLife: ptr("3")}},
+			name: "flags a working lead with an undelivered role verdict",
+			// NoNudge keeps the verdict side of D6 under test; the auto-nudge
+			// side has its own cases.
+			d6Run: d6Run{roleAge: 30, req: Request{NoNudge: true, MaxLife: ptr("3")}},
 			want:  []string{d6Role30},
 		},
 		{
@@ -299,7 +301,7 @@ func TestUnreadWatchRelabelsOnPartialDelivery(t *testing.T) {
 		req: Request{NoNudge: true, MaxLife: ptr("13")},
 	})
 	want := []string{
-		"blocked|unread: role verdict undelivered for 40s — lead is working but has not read it; nudge it to run `crew await`",
+		"blocked|unread: role verdict undelivered for 40s — lead is working but has not read it; nudge it (`crew nudge <lead>`) to run `crew await`",
 		"working|unread: cleared",
 		d6DispAt(38),
 	}
@@ -367,9 +369,25 @@ func TestUnreadWatchAutoNudge(t *testing.T) {
 			wantRows: []string{d6DispAt(30)},
 		},
 		{
-			name: "does not nudge for a role verdict",
-			// Only a role verdict is undelivered: nothing to nudge the lead for.
-			d6Run:    d6Run{roleAge: 30, nudge: accepted},
+			name: "auto-nudges an idle lead for an overdue role verdict",
+			// The accepted type skips this tick's post; the lead reads the role
+			// verdict right after and never gets a verdict row.
+			d6Run:     d6Run{roleAge: 30, deliverAt: 4, nudge: accepted},
+			wantCalls: 1,
+		},
+		{
+			name:     "role verdict on codex",
+			d6Run:    d6Run{roleAge: 30, req: Request{Engine: ptr("codex")}, nudge: accepted},
+			wantRows: []string{d6Role30},
+		},
+		{
+			name:     "role verdict on cursor",
+			d6Run:    d6Run{roleAge: 30, req: Request{Engine: ptr("cursor")}, nudge: accepted},
+			wantRows: []string{d6Role30},
+		},
+		{
+			name:     "role verdict with --no-nudge",
+			d6Run:    d6Run{roleAge: 30, req: Request{NoNudge: true, MaxLife: ptr("3")}, nudge: accepted},
 			wantRows: []string{d6Role30},
 		},
 		{

@@ -326,25 +326,29 @@ func (a *arm) checkEngine(stderr io.Writer) int {
 	return 0
 }
 
-// checkUnread is the arm's unread scan: the newest unread directive is what the nudge
-// row will point at, and an empty scan is the "post it first" refusal.
+// checkUnread is the arm's unread scan: it accepts a dispatcher directive or an
+// overdue role/critic msg, and the newest unread reason is what the nudge row will
+// point at. An empty scan is the "post it first" refusal.
 func (a *arm) checkUnread(stderr io.Writer) int {
 	out := a.o.Unread(a.ctx, a.crew, a.branch, a.sid)
-	_, newest, _ := strings.Cut(out, " ")
-	a.ts = strings.TrimSpace(newest)
-	if a.ts == "" {
-		return refuse(stderr, "no unread msg from dispatcher:"+a.crew+" to "+a.sid+
+	f := strings.Fields(out)
+	if len(f) < 3 {
+		return refuse(stderr, "no unread msg from dispatcher:"+a.crew+" or a role to "+a.sid+
 			" — post the directive first (crew reply), then nudge")
 	}
+	a.ts = f[1]
 	return 0
 }
 
 // unread is the same scan's oldest unread ts — the arm reads the first field, which is
-// empty when the lead has read the directive meanwhile.
+// empty when the lead has read the reason meanwhile.
 func (a *arm) unread() string {
 	out := a.o.Unread(a.ctx, a.crew, a.branch, a.sid)
-	oldest, _, _ := strings.Cut(out, " ")
-	return strings.TrimSpace(oldest)
+	f := strings.Fields(out)
+	if len(f) == 0 {
+		return ""
+	}
+	return f[0]
 }
 
 // wait is the `--wait` loop: one waiter per lead session, and a joiner reports the

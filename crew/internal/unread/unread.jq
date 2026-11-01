@@ -12,8 +12,8 @@ def lead($x): if $f == $me then ($x == $me or ($x | startswith($me + "#")))
 | [$m[] | select(((.from | strings | startswith($b)) or .from == $d) and lead(.to) and .ts > ($marks[.from] // 0))
    | . as $r
    | select($r.from == $d or (any($sent[]; .to == $r.from and .ts > $r.ts) | not))] as $u
-| if $mode == "dispatcher" then
-    [$u[] | select(.from == $d)] | if length == 0 then empty else "\(min_by(.ts).ts) \(max_by(.ts).ts)" end
+| if $mode == "any" then
+    ($u | if length == 0 then empty else (min_by(.ts)) as $o | (max_by(.ts)) as $n | "\($o.ts) \($n.ts) \(if $o.from == $d then "dispatcher" else "role" end)" end)
   else
     ($u | min_by(.ts) // empty) | "\(.ts) \(if .from == $d then "dispatcher" else "role" end)"
   end

@@ -58,17 +58,18 @@ func TestDefaultUnreadReadsOnlyAnUndeliveredDirective(t *testing.T) {
 		}
 	})
 
-	// The directive is the dispatcher's alone: a role's verdict, however undelivered,
-	// is not a directive to wake a lead for.
-	t.Run("a role msg is no directive", func(t *testing.T) {
-		if got := scan(t, role, other); got != "" {
-			t.Errorf("scan = %q, want empty for an undelivered role msg", got)
+	// An undelivered role msg is a nudge reason too: the lead owes the role a
+	// reply, so the scan reports it as the pair with the role tag.
+	t.Run("a role msg is a nudge reason", func(t *testing.T) {
+		if got := scan(t, role, other); got != "1500000 1500000 role" {
+			t.Errorf("scan = %q, want %q for an undelivered role msg", got, "1500000 1500000 role")
 		}
 	})
 
-	t.Run("an undelivered directive is the pair", func(t *testing.T) {
-		if got := scan(t, role, disp, other); got != "1600000 1600000" {
-			t.Errorf("scan = %q, want %q", got, "1600000 1600000")
+	// The pair spans every nudge reason, oldest to newest, and src is the oldest's.
+	t.Run("an undelivered pair spans role and directive", func(t *testing.T) {
+		if got := scan(t, role, disp, other); got != "1500000 1600000 role" {
+			t.Errorf("scan = %q, want %q", got, "1500000 1600000 role")
 		}
 	})
 

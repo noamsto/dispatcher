@@ -85,26 +85,26 @@ func TestScan(t *testing.T) {
 		rows       []string
 		deliv      []string // rows the lead was handed, raising their senders' marks
 		wantOldest string
-		wantDisp   string
+		wantAny    string
 	}{
 		{
 			name:       "empty log",
-			wantOldest: "", wantDisp: "",
+			wantOldest: "", wantAny: "",
 		},
 		{
 			name:       "undelivered role msg",
 			rows:       []string{roleMsg},
-			wantOldest: "1500000 role", wantDisp: "",
+			wantOldest: "1500000 role", wantAny: "1500000 1500000 role",
 		},
 		{
 			name:       "undelivered directive",
 			rows:       []string{dispMsg},
-			wantOldest: "1600000 dispatcher", wantDisp: "1600000 1600000",
+			wantOldest: "1600000 dispatcher", wantAny: "1600000 1600000 dispatcher",
 		},
 		{
 			name:       "oldest of both kinds, directive pair spans",
 			rows:       []string{dispMsg, roleMsg, msg(1_800_000, "dispatcher:c1", sid)},
-			wantOldest: "1500000 role", wantDisp: "1600000 1800000",
+			wantOldest: "1500000 role", wantAny: "1500000 1800000 role",
 		},
 		{
 			// A role msg drops out once the lead answered that role later;
@@ -112,35 +112,35 @@ func TestScan(t *testing.T) {
 			// dispatcher is no answer either.
 			name:       "role msg answered by the lead drops out",
 			rows:       []string{roleMsg, leadReply, dispMsg},
-			wantOldest: "1600000 dispatcher", wantDisp: "1600000 1600000",
+			wantOldest: "1600000 dispatcher", wantAny: "1600000 1600000 dispatcher",
 		},
 		{
 			name:       "a reply older than the verdict does not answer it",
 			rows:       []string{msg(1_400_000, sid, "role:feat/x:reviewer"), roleMsg},
-			wantOldest: "1500000 role", wantDisp: "",
+			wantOldest: "1500000 role", wantAny: "1500000 1500000 role",
 		},
 		{
 			name:       "a lead msg to the dispatcher does not clear the directive",
 			rows:       []string{dispMsg, msg(1_700_000, sid, "dispatcher:c1")},
-			wantOldest: "1600000 dispatcher", wantDisp: "1600000 1600000",
+			wantOldest: "1600000 dispatcher", wantAny: "1600000 1600000 dispatcher",
 		},
 		{
 			// Delivery is the mark: the same rows, once handed out.
 			name:       "delivered msgs drop out of both modes",
 			rows:       []string{roleMsg, dispMsg},
 			deliv:      []string{roleMsg, dispMsg},
-			wantOldest: "", wantDisp: "",
+			wantOldest: "", wantAny: "",
 		},
 		{
 			name:       "a delivered directive leaves the undelivered verdict",
 			rows:       []string{roleMsg, dispMsg},
 			deliv:      []string{dispMsg},
-			wantOldest: "1500000 role", wantDisp: "",
+			wantOldest: "1500000 role", wantAny: "1500000 1500000 role",
 		},
 		{
 			name:       "a verdict for another session of the branch is not this lead's",
 			rows:       []string{msg(1_500_000, "role:feat/x:reviewer", "worker:feat/x#s99-1")},
-			wantOldest: "", wantDisp: "",
+			wantOldest: "", wantAny: "",
 		},
 		{
 			name: "other crews, branches, kinds and roles are not this scan's rows",
@@ -150,7 +150,7 @@ func TestScan(t *testing.T) {
 				msg(1_500_000, "role:feat/x:reviewer", "dispatcher:c1"),
 				status(1_500_000, "dispatcher:c1"),
 			},
-			wantOldest: "", wantDisp: "",
+			wantOldest: "", wantAny: "",
 		},
 		{
 			// The helper scopes by t0 only when it cannot trust the marks it
@@ -158,29 +158,29 @@ func TestScan(t *testing.T) {
 			// still count.
 			name:       "a pre-t0 row still counts for a sessioned scan",
 			rows:       []string{msg(500_000, "role:feat/x:reviewer", sid)},
-			wantOldest: "500000 role", wantDisp: "",
+			wantOldest: "500000 role", wantAny: "500000 500000 role",
 		},
 		{
 			name:       "junk lines drop out, a torn tail alone",
 			rows:       []string{"not json", `{"ts":`, "", roleMsg},
-			wantOldest: "1500000 role", wantDisp: "",
+			wantOldest: "1500000 role", wantAny: "1500000 1500000 role",
 		},
 		{
 			// A row that decodes but is no object breaks the fold the way it
 			// broke jq; the helper's `2>/dev/null || true` read that as empty.
 			name:       "a bare-string row silences the scan, as a jq error did",
 			rows:       []string{`"a string"`, roleMsg},
-			wantOldest: "", wantDisp: "",
+			wantOldest: "", wantAny: "",
 		},
 		{
 			name:       "a msg within the last 2000 lines reads",
 			rows:       append([]string{roleMsg}, fill(1999)...),
-			wantOldest: "1500000 role", wantDisp: "",
+			wantOldest: "1500000 role", wantAny: "1500000 1500000 role",
 		},
 		{
 			name:       "a msg scrolled out of the 2000-line tail reads as gone",
 			rows:       append([]string{roleMsg}, fill(2000)...),
-			wantOldest: "", wantDisp: "",
+			wantOldest: "", wantAny: "",
 		},
 	}
 	for _, tc := range cases {
@@ -196,8 +196,8 @@ func TestScan(t *testing.T) {
 			if got := Scan(r, Oldest); got != tc.wantOldest {
 				t.Errorf("oldest = %q, want %q", got, tc.wantOldest)
 			}
-			if got := Scan(r, Dispatcher); got != tc.wantDisp {
-				t.Errorf("dispatcher = %q, want %q", got, tc.wantDisp)
+			if got := Scan(r, Any); got != tc.wantAny {
+				t.Errorf("any = %q, want %q", got, tc.wantAny)
 			}
 		})
 	}
@@ -212,8 +212,8 @@ func TestScanBranchKeyedIsSilent(t *testing.T) {
 	if got := Scan(r, Oldest); got != "" {
 		t.Errorf("oldest = %q, want silent", got)
 	}
-	if got := Scan(r, Dispatcher); got != "" {
-		t.Errorf("dispatcher = %q, want silent", got)
+	if got := Scan(r, Any); got != "" {
+		t.Errorf("any = %q, want silent", got)
 	}
 }
 
@@ -224,8 +224,8 @@ func TestScanMissingLog(t *testing.T) {
 	if got := Scan(r, Oldest); got != "" {
 		t.Errorf("oldest = %q, want empty", got)
 	}
-	if got := Scan(r, Dispatcher); got != "" {
-		t.Errorf("dispatcher = %q, want empty", got)
+	if got := Scan(r, Any); got != "" {
+		t.Errorf("any = %q, want empty", got)
 	}
 }
 
@@ -236,11 +236,11 @@ func TestScanClearsOnMarksTheGoReadersRaise(t *testing.T) {
 	dir, log := env(t)
 	m := msg(1_500_000, "dispatcher:c1", sid)
 	writeLog(t, log, m)
-	if got := scan(dir, log, Dispatcher); got != "1500000 1500000" {
+	if got := scan(dir, log, Any); got != "1500000 1500000 dispatcher" {
 		t.Fatalf("before delivery: %q", got)
 	}
 	deliver(t, dir, m)
-	if got := scan(dir, log, Dispatcher); got != "" {
+	if got := scan(dir, log, Any); got != "" {
 		t.Errorf("after delivery: %q, want empty", got)
 	}
 }
