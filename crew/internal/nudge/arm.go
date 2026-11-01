@@ -55,10 +55,10 @@ type Options struct {
 	Git    git.Client
 	Exists func(path string) bool
 	// Unread is the lead's unread-reason scan, `"<oldest-ts> <newest-ts>
-	// role|dispatcher"`: the in-process `internal/unread` scan in Any mode, the
-	// way the arm ran `_unread_scan <crew> <branch> worker:<branch> <sid> 0
-	// any`. The newest ts is what the nudge row points at; an empty scan is the
-	// "post it first" refusal, never a failure.
+	// role|dispatcher"`: the in-process `internal/unread` scan in Any mode,
+	// which replaces the arm's `_unread_scan <crew> <branch> worker:<branch>
+	// <sid> 0 dispatcher`. The newest ts is what the nudge row points at; an
+	// empty scan is the "post it first" refusal, never a failure.
 	Unread func(ctx context.Context, crew, branch, sid string) string
 	// Rows reads the log's last maxLines lines with each line decoded on its own — the
 	// arm's `tail -n N | jq -R 'fromjson?'`. The engine lookup reads the whole log

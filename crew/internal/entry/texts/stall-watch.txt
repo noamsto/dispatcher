@@ -29,7 +29,7 @@ one parked on a prompt looks exactly like one that is working.
   --runaway-tokens  Output growth required alongside it (default 1500)
   --no-budget       Turn off the quota-window detector (dispatch's --ignore-budget)
   --budget-refresh  Refresh the engine budget cache every S (default 900)
-  --no-nudge        Do not auto-nudge a lead past an overdue directive
+  --no-nudge        Do not auto-nudge a lead past an overdue directive or role verdict
 
 Every detector posts a recoverable blocked state; only quiet: and turn-stall:
 escalate, and only after the second --dead evidence check.
