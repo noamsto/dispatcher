@@ -883,6 +883,8 @@ func TestPermissionDetail(t *testing.T) {
 			"prompt: permission — (unparsed) — pane %1"},
 		{"a top-level title need not be bare letters", " MCP tool: netstat\n Tip: a tool\n" + rule254c + "\n netstat -an\n" + rule254c + "\n", "%1",
 			"prompt: permission — MCP tool: netstat: netstat -an — pane %1"},
+		{"a stale rule box does not overwrite an agent-header request with a Tip title", hdr + "ls\n Write x\n Tip: y\n" + rule254c + "\n", "%1",
+			"prompt: permission — Bash command: ls — pane %1"},
 		{"blank lines before the request are skipped", hdr + "\n  \n\t\n  rm -rf x\nsecond\n", "%1",
 			"prompt: permission — Bash command: rm -rf x — pane %1"},
 		{"only the first request line", hdr + "first\nsecond\n", "%1", "prompt: permission — Bash command: first — pane %1"},

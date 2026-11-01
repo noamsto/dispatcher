@@ -696,8 +696,10 @@ func permissionDetail(text, pane string) string {
 			tool = rePermTool.ReplaceAllString(reLeadSpace.ReplaceAllString(l, ""), "")
 			req, have, boxed = "", true, false
 		case ruled && topTitle(i):
-			tool = reTrimSpace.ReplaceAllString(l, "")
-			req, have, boxed = boxedRequest(lines, i), true, true
+			if r, closed := boxedRequest(lines, i); closed {
+				tool = reTrimSpace.ReplaceAllString(l, "")
+				req, have, boxed = r, true, true
+			}
 		case !boxed && have && req == "" && !reBlank.MatchString(l):
 			req = reTrimSpace.ReplaceAllString(l, "")
 		}
@@ -718,16 +720,17 @@ func permissionDetail(text, pane string) string {
 
 // boxedRequest is the first non-blank line between the two U+254C rules
 // after a boxed top-level title — the request claude draws inside the rule
-// box. It is returned only once the closing rule is seen, so an empty or
-// unterminated box reports (unparsed) rather than a later line such as the
-// dialog's own "Do you want to proceed?".
-func boxedRequest(lines []string, from int) string {
+// box. The second result reports whether the U+254C rule that closes the box
+// was seen: the first result is only meaningful when it is true, so an empty
+// closed box returns ("", true) and an unterminated box returns ("", false)
+// rather than a later line such as the dialog's own "Do you want to proceed?".
+func boxedRequest(lines []string, from int) (string, bool) {
 	open := false
 	content := ""
 	for _, l := range lines[from+1:] {
 		if rePermRule.MatchString(l) {
 			if open {
-				return content
+				return content, true
 			}
 			open = true
 			continue
@@ -736,7 +739,7 @@ func boxedRequest(lines []string, from int) string {
 			content = reTrimSpace.ReplaceAllString(l, "")
 		}
 	}
-	return ""
+	return "", false
 }
 
 // stripControl is `tr -d '\000-\010\013-\037\177'`: it keeps tab and newline.
