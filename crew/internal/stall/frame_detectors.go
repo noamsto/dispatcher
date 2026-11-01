@@ -68,9 +68,17 @@ var (
 	rePermEsc    = regexp.MustCompile(`\x1b[@-Z\\-_]`)
 	rePermHeader = regexp.MustCompile(`^[` + space + `]*[A-Za-z][A-Za-z ]+ · from the `)
 	rePermTool   = regexp.MustCompile(`[` + space + `]+· from the .*`)
-	reLeadSpace  = regexp.MustCompile(`^[` + space + `]+`)
-	reTrimSpace  = regexp.MustCompile(`^[` + space + `]+|[` + space + `]+$`)
-	reRunSpace   = regexp.MustCompile(`[` + space + `]+`)
+	// claude 2.1.x's top-level tool-permission dialog (issue #486) is not the
+	// subagent shape rePermHeader matches: the tool is a bare title (` Bash
+	// command`, no `· from the <agent>` suffix), a `Tip:` hint and a
+	// description sit under it, and the request is boxed between two U+254C
+	// rules. The title is read only on a frame that carries such a rule, and
+	// only when its next non-blank line is the hint.
+	rePermTip   = regexp.MustCompile(`^[` + space + `]*Tip:`)
+	rePermRule  = regexp.MustCompile(`^[` + space + `]*\x{254C}{4,}[` + space + `]*$`)
+	reLeadSpace = regexp.MustCompile(`^[` + space + `]+`)
+	reTrimSpace = regexp.MustCompile(`^[` + space + `]+|[` + space + `]+$`)
+	reRunSpace  = regexp.MustCompile(`[` + space + `]+`)
 )
 
 // frameDetect runs D1, D2, D1b, D7, D3, D0 and D9 on this tick's frame.
@@ -644,21 +652,57 @@ func holdsEpisode(detail string) bool {
 // request cannot be parsed still fires, with `(unparsed)`. The header is the
 // last `· from the …` line in the capture, not the first: a prior dialog
 // scrolled into the transcript must not make the relay report its stale
-// tool/request while the live dialog is parked at the bottom.
+// tool/request while the live dialog is parked at the bottom. A top-level
+// dialog has one of two headers: that same `· from the …` line, or the bare
+// tool title whose next non-blank line is the `Tip:` hint; the last of either
+// wins, and its request is the first non-blank line inside the U+254C rule box
+// that follows it.
 func permissionDetail(text, pane string) string {
 	clean := rePermOSC.ReplaceAllString(text, "")
 	clean = rePermCSI.ReplaceAllString(clean, "")
 	clean = rePermEsc.ReplaceAllString(clean, "")
 	clean = string(stripControl([]byte(clean)))
 
+	lines := strings.Split(clean, "\n")
+	ruled := false
+	for _, l := range lines {
+		if rePermRule.MatchString(l) {
+			ruled = true
+			break
+		}
+	}
+	// topTitle reports whether lines[i] opens a boxed top-level dialog: a
+	// non-blank, non-rule line whose next non-blank line is the `Tip:` hint. A
+	// version may label the tool with digits, punctuation or non-ASCII, so the
+	// line itself is not character-restricted.
+	topTitle := func(i int) bool {
+		if reBlank.MatchString(lines[i]) || rePermRule.MatchString(lines[i]) {
+			return false
+		}
+		for j := i + 1; j < len(lines); j++ {
+			if reBlank.MatchString(lines[j]) {
+				continue
+			}
+			return rePermTip.MatchString(lines[j])
+		}
+		return false
+	}
+
 	var tool, req string
-	have := false
-	for _, l := range strings.Split(clean, "\n") {
+	have, boxed := false, false
+	for i, l := range lines {
 		switch {
 		case rePermHeader.MatchString(l):
 			tool = rePermTool.ReplaceAllString(reLeadSpace.ReplaceAllString(l, ""), "")
-			req, have = "", true
-		case have && req == "" && !reBlank.MatchString(l):
+			req, have, boxed = "", true, false
+		case ruled && topTitle(i):
+			if r, closed := boxedRequest(lines, i); closed {
+				tool = reTrimSpace.ReplaceAllString(l, "")
+				req, have, boxed = r, true, true
+			} else if !boxed && have && req == "" && !reBlank.MatchString(l) {
+				req = reTrimSpace.ReplaceAllString(l, "")
+			}
+		case !boxed && have && req == "" && !reBlank.MatchString(l):
 			req = reTrimSpace.ReplaceAllString(l, "")
 		}
 	}
@@ -674,6 +718,30 @@ func permissionDetail(text, pane string) string {
 		body = string(r[:limit])
 	}
 	return body + suffix
+}
+
+// boxedRequest is the first non-blank line between the two U+254C rules
+// after a boxed top-level title — the request claude draws inside the rule
+// box. The second result reports whether the U+254C rule that closes the box
+// was seen: the first result is only meaningful when it is true, so an empty
+// closed box returns ("", true) and an unterminated box returns ("", false)
+// rather than a later line such as the dialog's own "Do you want to proceed?".
+func boxedRequest(lines []string, from int) (string, bool) {
+	open := false
+	content := ""
+	for _, l := range lines[from+1:] {
+		if rePermRule.MatchString(l) {
+			if open {
+				return content, true
+			}
+			open = true
+			continue
+		}
+		if open && content == "" && !reBlank.MatchString(l) {
+			content = reTrimSpace.ReplaceAllString(l, "")
+		}
+	}
+	return "", false
 }
 
 // stripControl is `tr -d '\000-\010\013-\037\177'`: it keeps tab and newline.
