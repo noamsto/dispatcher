@@ -457,7 +457,7 @@ engine → `dispatch` runs claude unless you pass
 `--agent`; choose it by the leans, budget rules and rotation, not by this
 default; class → the tier row's class for the engine; effort → pass `--effort`.
 
-A profile's class stays when `--agent` changes the engine: `--profile security --agent codex` is refused at `standard`, which on codex does not admit `@premium`; name a model or `@class`. `trivial-fix` is the trivial row's scope (no executable logic change); a small logic fix is `standard`.
+`security` defaults to `deep` at `high` effort (`dispatch --profile security <title>`). A profile's class stays when `--agent` changes the engine: `dispatch standard --profile security --agent codex` is refused, since codex's `standard` row does not admit `@premium`; name a model or `@class`. `trivial-fix` is the trivial row's scope (no executable logic change); a small logic fix is `standard`.
 
 <!-- BEGIN generated:task-profiles from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->
 
@@ -466,7 +466,7 @@ A profile's class stays when `--agent` changes the engine: `--profile security -
 | ui | `standard` | `claude` | — | `medium` |
 | docs | `trivial` | — | — | `low` |
 | mechanical-refactor | `standard` | `codex` | — | `medium` |
-| security | — | `claude` | `premium` | `medium` |
+| security | `deep` | `claude` | `premium` | `high` |
 | eval | `standard` | `cursor` | — | `medium` |
 | trivial-fix | `trivial` | — | — | `low` |
 

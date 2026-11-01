@@ -113,8 +113,7 @@ doc_fail_row() { # id sed-expr
 
 @test "the task-profiles region lists every taskProfiles key with its set values" {
   region="$(sed -n '/BEGIN generated:task-profiles/,/END generated:task-profiles/p' "$DOC")"
-  # security sets no tier since #1395: it must be passed explicitly.
-  grep -qxF '| security | — | `claude` | `premium` | `medium` |' <<<"$region"
+  grep -qxF '| security | `deep` | `claude` | `premium` | `high` |' <<<"$region"
   grep -qxF '| docs | `trivial` | — | — | `low` |' <<<"$region"
   grep -qxF '| eval | `standard` | `cursor` | — | `medium` |' <<<"$region"
   want="$(jq '.taskProfiles | length' "$DEFAULTS")"

@@ -482,7 +482,7 @@
     "ui": {"tier": "standard", "engine": "claude", "effort": "medium"},
     "docs": {"tier": "trivial", "effort": "low"},
     "mechanical-refactor": {"tier": "standard", "engine": "codex", "effort": "medium"},
-    "security": {"engine": "claude", "class": "premium", "effort": "medium"},
+    "security": {"tier": "deep", "engine": "claude", "class": "premium", "effort": "high"},
     "eval": {"tier": "standard", "engine": "cursor", "effort": "medium"},
     "trivial-fix": {"tier": "trivial", "effort": "low"}
   }

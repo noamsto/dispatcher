@@ -19208,13 +19208,13 @@ locked_task_profile_settings() {
 @test "task profile: explicit tier, model, @class, --agent and --effort each win over the profile" {
   DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch deep --profile security --crew-id c1 "t"
   [ "$status" -eq 0 ]
-  [[ "$stderr" == *"dispatch: task profile security: tier deep, engine claude, model @premium, effort medium (filled: engine effort model)"* ]]
+  [[ "$stderr" == *"dispatch: task profile security: tier deep, engine claude, model @premium, effort high (filled: engine effort model)"* ]]
   DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard sonnet --profile security --crew-id c1 "t"
   [ "$status" -eq 0 ]
-  [[ "$stderr" == *"dispatch: task profile security: tier standard, engine claude, model sonnet, effort medium (filled: engine effort)"* ]]
+  [[ "$stderr" == *"dispatch: task profile security: tier standard, engine claude, model sonnet, effort high (filled: engine effort)"* ]]
   DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard @standard --profile security --crew-id c1 "t"
   [ "$status" -eq 0 ]
-  [[ "$stderr" == *"dispatch: task profile security: tier standard, engine claude, model @standard, effort medium (filled: engine effort)"* ]]
+  [[ "$stderr" == *"dispatch: task profile security: tier standard, engine claude, model @standard, effort high (filled: engine effort)"* ]]
   DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --agent claude --profile mechanical-refactor --crew-id c1 "t"
   [ "$status" -eq 0 ]
   [[ "$stderr" == *"dispatch: task profile mechanical-refactor: tier standard, engine claude, model @standard, effort medium (filled: tier effort model)"* ]]
@@ -19237,14 +19237,20 @@ locked_task_profile_settings() {
   [[ "$stderr" == *"dispatch: class @premium (gpt-5.6-sol) is not trivial's row for --agent codex"* ]]
 }
 
-@test "task profile: a user-layer tier is dropped with a warning, so the dispatch refuses without one (#1395)" {
-  task_profile_settings '{"taskProfiles":{"security":{"tier":"trivial","class":null,"effort":"low"}}}'
+@test "task profile: security defaults to deep at high effort with the premium class" {
   DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile security --crew-id c1 "auth fix"
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatch: task profile security: tier deep, engine claude, model @premium, effort high (filled: tier engine effort model)"* ]]
+}
+
+@test "task profile: a user-layer tier is dropped with a warning, so the shipped deep tier stands (#1395)" {
+  task_profile_settings '{"taskProfiles":{"security":{"tier":"trivial","effort":"low"}}}'
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile security --crew-id c1 "auth fix"
+  [ "$status" -eq 0 ]
   [[ "$stderr" == *"ignoring taskProfiles.security.tier"* ]]
   [[ "$stderr" == *"(user layer)"* ]]
   [[ "$stderr" == *"it is honoured only from the shipped defaults or the locked settings"* ]]
-  [[ "$stderr" == *"dispatch: task profile 'security' sets no tier — pass one"* ]]
+  [[ "$stderr" == *"dispatch: task profile security: tier deep, engine claude, model @premium, effort low (filled: tier engine effort model)"* ]]
 }
 
 @test "task profile: a user-layer tier cannot lower a shipped profile's tier (#1395)" {
@@ -19338,9 +19344,7 @@ locked_task_profile_settings() {
   [ "$status" -eq 0 ]
   [[ "${lines[0]}" == PROFILE*TIER*ENGINE*CLASS*EFFORT*MODEL ]]
   [[ "$output" == *"docs "*"trivial"*"claude"*"cheap"*"haiku"* ]]
-  # security sets no tier since #1395: it must be passed explicitly, so it
-  # lists its engine, class and effort with no tier and no model.
-  [[ "$output" == *"security "*"-"*"claude"*"premium"*"(no tier: pass one)"* ]]
+  [[ "$output" == *"security "*"deep"*"claude"*"premium"*"high"* ]]
   [[ "$output" == *"mechanical-refactor "*"standard"*"codex"*"standard"*"gpt-5.6-terra"* ]]
   [[ "$stderr" != *"warning"* ]]
 }
@@ -19402,6 +19406,6 @@ locked_task_profile_settings() {
 @test "task profile: a profile's class stays with --agent and the tier gate refuses what the engine's row does not admit" {
   DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard --profile security --agent codex --crew-id c1 "t"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"dispatch: task profile security: tier standard, engine codex, model @premium, effort medium (filled: effort model)"* ]]
+  [[ "$stderr" == *"dispatch: task profile security: tier standard, engine codex, model @premium, effort high (filled: effort model)"* ]]
   [[ "$stderr" == *"dispatch: class @premium (gpt-5.6-sol) is not standard's row for --agent codex"* ]]
 }

@@ -386,7 +386,7 @@ Defaults for P8 to confirm. The owner sets the final values in P8; the table nam
 
 - The settings key is `taskProfiles` (not `profiles`): settings already carry `profile` (work/personal, `DISPATCH_PROFILE`) and `laneProfiles`. Each profile is `{tier, engine, class, effort}`, every field optional; the table names classes, never model IDs.
 - `dispatch --profile <name>` fills only the fields the caller left unset; an explicit tier, model or `@class`, `--agent` or `--effort` wins. An unset class means the tier row's class for the engine, so `--agent pi` still resolves (pi has no `cheap`). The model resolves as a `@class` sigil, so every gate runs on the resolved id; an unknown profile is refused. A class the profile sets stays when `--agent` changes the engine, so a class the new engine's tier row does not admit is refused rather than silently losing the lead.
-- Departures from the proposed table: the profile tier is a default that fills an unset tier, not a floor; review defaults are dropped (tier alone decides review depth); `eval` is on cursor (today's protocol lean), not codex; `docs` and `trivial-fix` carry no engine, since no protocol lean names one; `mechanical-sweep` is named `mechanical-refactor`, and `trivial-fix` is added. `trivial-fix` keeps the trivial row's scope (no executable logic change); `security` carries no tier, so pass one explicitly (normally `deep`, per the tier table).
+- Departures from the proposed table: the profile tier is a default that fills an unset tier, not a floor; review defaults are dropped (tier alone decides review depth); `eval` is on cursor (today's protocol lean), not codex; `docs` and `trivial-fix` carry no engine, since no protocol lean names one; `mechanical-sweep` is named `mechanical-refactor`, and `trivial-fix` is added. `trivial-fix` keeps the trivial row's scope (no executable logic change); `security` defaults to `deep` at `high` effort, since the owner decided security work gets spec and plan critics.
 - The engine-lean prose stays; the dispatcher protocol gains one paragraph pointing at the profiles, and the leans and budget rules still pick the engine.
 - Records: the dispatch row and `WORKER_TASK.md` carry `task_profile` (`profile:` is already the lane-profile header stamp).
 - `dispatch resume` does not take a profile: it relaunches the stamped concrete tier, engine, model and effort, so a profile or class default changed since dispatch never swaps a running task's model. `crew hold add` does not either: it stores every field the release dispatches, and a profile name there would be a second source of truth.
@@ -400,6 +400,6 @@ Shipped seeds (`—` = unset):
 | ui                  | standard | claude | —       | medium |
 | docs                | trivial  | —      | —       | low    |
 | mechanical-refactor | standard | codex  | —       | medium |
-| security            | —        | claude | premium | medium |
+| security            | deep     | claude | premium | high   |
 | eval                | standard | cursor | —       | medium |
 | trivial-fix         | trivial  | —      | —       | low    |
