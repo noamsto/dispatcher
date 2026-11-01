@@ -569,13 +569,28 @@ reap --quiet` (how dispatch runs it) drops reap's own `keeping …` note,
     of the full value so two secrets never look alike; masking is output-only, comparison and the baseline file use
     full values; it applies only to URLs in a strict grammar (http/https/ftp/ftps/
     ssh schemes, socks proxies, scp form, scheme-less proxy) where git, curl and ssh agree on the
-    host, and anything else (brackets, ssh `%`-escapes, other schemes,
-    fragments, spaces, a query with no path, a remote URL an `insteadOf` alias
-    (listed or baselined) rewrites, `includeIf` condition keys) prints whole, so masking never hides the endpoint git contacts, but such a value may
-    still carry a credential; an alias drift line is followed by every remote URL
-    it rewrites, printed whole even if baselined; exec-class values (a `credential.helper` argument)
-    still print verbatim, so the human runs `crew git-baseline` in their own
-    terminal, never the dispatcher;
+    host; exec values (a `credential.helper` argument) are never printed, so
+    refusals, the baseline-recorded note and `crew git-baseline` (listing and
+    `--accept` prompt) give exec keys by name only; a redirect value with
+    userinfo or a query (`@`/`?`) that the grammar cannot mask, or a remote URL
+    an `insteadOf` alias (listed or baselined) rewrites, is withheld, never
+    printed whole, so masking never hides the endpoint git contacts; an alias
+    drift line is still followed by every local remote URL it rewrites,
+    withheld when it has `@`/`?`; a URL-subsection key the grammar cannot mask,
+    and an `includeIf.hasconfig:remote.*.url:` pattern with `@`/`?`, is
+    withheld behind its fingerprint; each withheld value or key is followed by
+    the `git config` command, run with `-z` and piped through
+    `env LC_ALL=C od -An -c -v`, so every byte shows in its own cell as an
+    ASCII character or an escape and each entry ends at a `\0` no value can
+    forge, that reads it in the human's own terminal; `crew git-baseline` shows a
+    withheld value's `sha256:` fingerprint, and `--accept` asks the human to
+    type yes only if a plain listing showed the same fingerprints and they
+    checked each value after it — a value swapped between that check and
+    `--accept` and swapped back is not caught, as the fingerprint cannot be
+    computed from the `git config` output; values without
+    `@`/`?` still print whole, as do other `includeIf` condition keys and
+    anything else outside the grammar (brackets, ssh `%`-escapes, other
+    schemes, fragments, spaces, a query with no path) that has neither;
     gh-based repo
     resolution reads `remote.origin.url` outside the guard;
     `<git-common-dir>/info/attributes` still selects

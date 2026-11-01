@@ -21,8 +21,9 @@ type ctxEntry struct {
 }
 
 // RunBaseline is `crew git-baseline [--accept]`: it lists — or, with --accept,
-// merges into — the baseline Check enforces. Values print masked, and --accept
-// writes exactly the pairs this run printed.
+// merges into — the baseline Check enforces. Values print masked or withheld
+// behind their fingerprint, and --accept writes exactly the pairs this run
+// printed.
 func RunBaseline(accept bool, cwd string, o BaselineOptions, stdout, stderr io.Writer) int {
 	if accept && !o.IsTTY() {
 		say(stderr, "crew: git-baseline --accept needs your own terminal (not Claude Code's ! prefix)\n")
@@ -113,6 +114,7 @@ func RunBaseline(accept bool, cwd string, o BaselineOptions, stdout, stderr io.W
 	}
 
 	var shown []string
+	withheld := false
 	seen := map[string]bool{}
 	for _, e := range all {
 		if e.scope != "local" && e.scope != "worktree" {
@@ -131,13 +133,10 @@ func RunBaseline(accept bool, cwd string, o BaselineOptions, stdout, stderr io.W
 			continue
 		}
 		seen[origin+"\n"+rec] = true
-		say(stdout, "%s (%s, %s)\n", ShowPair(key, value, aliases), e.label, Quote(origin))
-		if kd, withheld := showKey(key); withheld {
-			say(stdout, "  %s%s\n", kd, ownTerminal(key))
-		}
+		withheld = listPair(stdout, "", key, value, aliases, e.label, origin) || withheld
 		shown = append(shown, rec)
 		if isAliasKey(key) {
-			showRewritten(stdout, all, value)
+			withheld = showRewritten(stdout, all, value) || withheld
 		}
 	}
 
@@ -164,6 +163,9 @@ func RunBaseline(accept bool, cwd string, o BaselineOptions, stdout, stderr io.W
 
 	if len(shown) == 0 {
 		say(stdout, "no guarded git config yet — yes records an empty baseline\n")
+	}
+	if withheld {
+		say(stdout, "withheld above: type yes only if a plain `crew git-baseline` listing showed the same sha256 for each, and you then checked each value with the git config command under it\n")
 	}
 	say(stdout, "Accept these into the baseline %s? type yes: ", file)
 	if readAnswer(o.In) != "yes" {
@@ -200,9 +202,11 @@ func isAliasKey(k string) bool {
 }
 
 // showRewritten lists the remote urls the drifted alias rewrites: one may have
-// been accepted earlier while shown masked.
-func showRewritten(stdout io.Writer, all []ctxEntry, alias string) {
+// been accepted earlier while shown masked. It reports whether it printed an
+// own-terminal pointer.
+func showRewritten(stdout io.Writer, all []ctxEntry, alias string) bool {
 	aliases := []string{alias}
+	pointed := false
 	seen := map[string]bool{}
 	for _, e := range all {
 		if e.scope != "local" && e.scope != "worktree" {
@@ -217,8 +221,27 @@ func showRewritten(stdout io.Writer, all []ctxEntry, alias string) {
 			continue
 		}
 		seen[origin+"\n"+e.rec] = true
-		say(stdout, "  rewritten by the alias above: %s (%s, %s)\n", ShowPair(k, v, aliases), e.label, Quote(origin))
+		pointed = listPair(stdout, "  rewritten by the alias above: ", k, v, aliases, e.label, origin) || pointed
 	}
+	return pointed
+}
+
+// listPair prints one listed pair, then the own-terminal pointer when its
+// value or key is withheld; it reports whether it printed the pointer. A
+// withheld value carries its fingerprint, so a value swapped between the
+// listing the human checked and the --accept listing shows.
+func listPair(stdout io.Writer, lead, k, v string, aliases []string, label, origin string) bool {
+	disp, withheld := showValue(k, v, aliases)
+	if withheld {
+		disp += " [sha256:" + fingerprint(v) + "]"
+	}
+	say(stdout, "%s%s (%s, %s)\n", lead, disp, label, Quote(origin))
+	kd, keyWithheld := showKey(k)
+	if !withheld && !keyWithheld {
+		return false
+	}
+	say(stdout, "  %s%s\n", kd, ownTerminal(k))
+	return true
 }
 
 // readAnswer is bash's `read -r`: one line, a missing final newline still

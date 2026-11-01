@@ -41,9 +41,9 @@ var RedirectKeys = []string{
 	"fetch.bundleuri",
 }
 
-// urlSubsectionKeys are the keys whose subsection is itself a URL; only these
-// are masked in a key.
-var urlSubsectionKeys = []string{"url.*.insteadof", "url.*.pushinsteadof", "http.*.*", "credential.*.*"}
+// urlSubsectionKeys are the keys whose subsection is a URL or a remote-url
+// pattern; only these are masked or withheld in a key.
+var urlSubsectionKeys = []string{"url.*.insteadof", "url.*.pushinsteadof", "http.*.*", "credential.*.*", "includeif.hasconfig:remote.*.url:*.path"}
 
 // IsExec reports whether ExecKeys names the pair.
 func IsExec(k, v string) bool { return match(ExecKeys, k, v) }

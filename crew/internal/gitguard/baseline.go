@@ -211,34 +211,49 @@ func noteKeys(stderr io.Writer, file, what string, recs, aliases []string) {
 	}
 }
 
-// showRecorded is ShowPair, or the key and a pointer to read the value from
-// one's own terminal when ShowPair would print it whole while it may carry
-// userinfo or a query: the note reaches the dispatcher, not the human's
-// terminal.
-func showRecorded(k, v string, aliases []string) string {
-	kd, keyWithheld := showKey(k)
+// showValue is ShowPair, or the key and why its value is withheld: an exec
+// value may carry a token, and a value with userinfo or a query prints only
+// masked.
+func showValue(k, v string, aliases []string) (string, bool) {
+	kd := ShowKey(k)
+	if IsExec(k, v) {
+		return kd + ": value withheld (exec value)", true
+	}
 	shown := ShowPair(k, v, aliases)
 	if !strings.ContainsAny(v, "@?") || shown != kd+"="+Quote(v) {
-		if keyWithheld {
-			return shown + ownTerminal(k)
-		}
-		return shown
+		return shown, false
 	}
 	reason := "outside the mask grammar"
 	if globAny(k, "remote.*.url", "remote.*.pushurl") && Rewritten(v, aliases) {
 		reason = "an insteadOf alias rewrites it"
 	}
-	return kd + ": value withheld (" + reason + ")" + ownTerminal(k)
+	return kd + ": value withheld (" + reason + ")", true
+}
+
+// showRecorded is showValue, plus a pointer to read the value from one's own
+// terminal when it or the key is withheld: the note reaches the dispatcher,
+// not the human's terminal.
+func showRecorded(k, v string, aliases []string) string {
+	shown, withheld := showValue(k, v, aliases)
+	if _, keyWithheld := showKey(k); withheld || keyWithheld {
+		return shown + ownTerminal(k)
+	}
+	return shown
 }
 
 // ownTerminal points at the command that reads k's value in the human's own
 // terminal.
 func ownTerminal(k string) string {
-	cmd := "git config --show-origin --get-all " + Quote(k)
+	cmd := "git config -z --show-origin --get-all " + Quote(k)
 	// A URL-subsection key can carry userinfo ShowKey cannot mask either.
 	if match(urlSubsectionKeys, k, "") && strings.ContainsAny(k, "@?") {
 		sec, _, _ := strings.Cut(k, ".")
-		cmd = "git config --show-origin --get-regexp " + Quote("^"+sec+`\.`)
+		cmd = "git config -z --show-origin --get-regexp " + Quote("^"+sec+`\.`)
 	}
-	return " — check it in your own terminal, from each checkout or worktree that may set it: " + cmd
+	// git prints values raw, so a planted CR or ESC could redraw the terminal and
+	// a planted LF or TAB forge another origin and value; -z ends each entry with
+	// NUL, which no value can hold, and in the C locale od -c prints every byte in
+	// its own cell, as an ASCII character or an escape (another locale may print a
+	// multibyte character as its glyph), so no value can spell an entry's end.
+	return ` — check it in your own terminal (od shows each byte as a character or an escape; each entry ends at \0), from each checkout or worktree that may set it: ` + cmd + " | env LC_ALL=C od -An -c -v"
 }

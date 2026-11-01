@@ -91,12 +91,20 @@ func TestShowKey(t *testing.T) {
 		{"url.https://github.com/.insteadof", "url.https://github.com/.insteadof"},
 		{"remote.origin.url", "remote.origin.url"},
 		{"url.a b@h/.insteadof", "url." + urlWithheld("a b@h/") + ".insteadof"},
+		{"includeif.hasconfig:remote.*.url:https://u:FAKETOKEN1400@h.example/**.path",
+			"includeif." + urlWithheld("hasconfig:remote.*.url:https://u:FAKETOKEN1400@h.example/**") + ".path"},
+		{"includeif.hasconfig:remote.*.url:https://github.com/o/**?x=FAKETOKEN1400.path",
+			"includeif." + urlWithheld("hasconfig:remote.*.url:https://github.com/o/**?x=FAKETOKEN1400") + ".path"},
+		{"includeif.hasconfig:remote.*.url:https://github.com/o/**.path",
+			Quote("includeif.hasconfig:remote.*.url:https://github.com/o/**.path")},
+		// Only the hasconfig:remote.*.url: pattern is a URL; a gitdir condition is a path.
+		{"includeif.gitdir:/u@x/.path", Quote("includeif.gitdir:/u@x/.path")},
 	} {
 		got := ShowKey(tc.k)
 		if got != tc.want {
 			t.Errorf("ShowKey(%q) = %q, want %q", tc.k, got, tc.want)
 		}
-		if strings.Contains(got, "tok") {
+		if strings.Contains(got, "tok") || strings.Contains(got, "FAKETOKEN1400") {
 			t.Errorf("ShowKey(%q) = %q shows the token", tc.k, got)
 		}
 	}
