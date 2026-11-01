@@ -338,10 +338,8 @@ check_task_profiles() {
 }
 
 # strip_task_profile_tiers <json> <file> — drop taskProfiles.*.tier from the
-# user layer: a profile's tier decides review rigour, so it is honoured only
-# from the shipped defaults or the locked settings (like grantRoots). Never
-# fatal: a shipped profile keeps its tier, and a profile left without one makes
-# `dispatch` ask the caller for an explicit tier.
+# user layer with a warning (the rule: the header's taskProfiles note). A
+# profile left without one makes `dispatch` ask the caller for an explicit tier.
 strip_task_profile_tiers() {
   local name
   while IFS= read -r name; do

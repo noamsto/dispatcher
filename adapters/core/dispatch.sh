@@ -4759,8 +4759,7 @@ fi
 # option loop still requires both. A model follows only a tier, so a leading
 # issue token or title word never reads as one. A token shaped like a tracker
 # id (a GitHub issue #N or N, a Linear ABC-12) belongs to the option loop,
-# which reads it as the issue: taking it as the model would swallow the issue
-# and leave --profile with a non-empty model it then will not fill (#1395).
+# which reads it as the issue; taking it as the model would swallow the issue.
 tier="" model=""
 case "${1:-}" in
 trivial | standard | deep)
