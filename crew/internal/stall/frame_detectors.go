@@ -699,6 +699,8 @@ func permissionDetail(text, pane string) string {
 			if r, closed := boxedRequest(lines, i); closed {
 				tool = reTrimSpace.ReplaceAllString(l, "")
 				req, have, boxed = r, true, true
+			} else if !boxed && have && req == "" && !reBlank.MatchString(l) {
+				req = reTrimSpace.ReplaceAllString(l, "")
 			}
 		case !boxed && have && req == "" && !reBlank.MatchString(l):
 			req = reTrimSpace.ReplaceAllString(l, "")
