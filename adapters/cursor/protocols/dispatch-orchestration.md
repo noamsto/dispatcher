@@ -440,6 +440,32 @@ after a compaction.
   brief, the guards and the tests, so a profile carries no tiers, no effort and
   no executor behaviour.
 
+### Task profiles
+
+`dispatch --profile <name>` fills the tier, engine, class and effort the
+dispatch leaves unset from the `taskProfiles` setting (owner data in
+`defaults.json`, overridable per settings layer). Any explicit tier, model or
+`@class`, `--agent` or `--effort` wins. The model resolves as the `@class`
+sigil, so every gate runs on the resolved id. `dispatch --profiles` shows what
+each profile resolves to on this machine.
+
+`—` means the profile leaves it to you: tier → pass one; engine → claude
+unless you pass `--agent` (judge it: the leans and budget rules); class → the
+tier row's class for the engine; effort → pass `--effort`.
+
+<!-- BEGIN generated:task-profiles from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->
+
+| profile | tier | engine | class | effort |
+| --- | --- | --- | --- | --- |
+| ui | `standard` | `claude` | — | `medium` |
+| docs | `trivial` | — | — | `low` |
+| mechanical-refactor | `standard` | `codex` | — | `medium` |
+| security | `standard` | `claude` | `premium` | `medium` |
+| eval | `standard` | `cursor` | — | `medium` |
+| trivial-fix | `trivial` | — | — | `low` |
+
+<!-- END generated:task-profiles -->
+
 ### Tier map
 
 `dispatch` layers a second check on top of the Model gate above: once a model

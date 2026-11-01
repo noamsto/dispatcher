@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # The generated doc regions in dispatch-orchestration.md (#560): the
-# model-classes (#1391) and pace-downgrades tables are rendered from
-# adapters/core/defaults.json, and `--check` also asserts the hand-written
+# model-classes (#1391), pace-downgrades and task-profiles tables are rendered
+# from adapters/core/defaults.json, and `--check` also asserts the hand-written
 # Model map table names each tier row's class.
 
 setup() {
@@ -76,8 +76,10 @@ finish_rows() {
 stale-row|s/openrouter\/deepseek\/deepseek-v4\.1-flash/openrouter\/deepseek\/deepseek-v9-flash/
 worker-cell|0,/\*\*@premium\*\* → @standard/s//\*\*@standard\*\* → @standard/
 missing-markers|/BEGIN generated:model-classes\|END generated:model-classes/d
+stale-profile|s/^| mechanical-refactor | `standard` | `codex`/| mechanical-refactor | `standard` | `pi`/
+missing-profile-markers|/BEGIN generated:task-profiles\|END generated:task-profiles/d
 ROWS
-  finish_rows 3
+  finish_rows 5
 }
 
 doc_fail_row() { # id sed-expr
@@ -107,6 +109,27 @@ doc_fail_row() { # id sed-expr
   run bash "$GEN" --check "$tmpdefaults" "$DOC"
   [ "$status" -eq 1 ]
   [[ "$output" == *'| codex | `@premium` |'*'`gpt-5.6-terra` |'* ]]
+}
+
+@test "the task-profiles region lists every taskProfiles key with its set values" {
+  region="$(sed -n '/BEGIN generated:task-profiles/,/END generated:task-profiles/p' "$DOC")"
+  grep -qxF '| security | `standard` | `claude` | `premium` | `medium` |' <<<"$region"
+  grep -qxF '| docs | `trivial` | — | — | `low` |' <<<"$region"
+  grep -qxF '| eval | `standard` | `cursor` | — | `medium` |' <<<"$region"
+  want="$(jq '.taskProfiles | length' "$DEFAULTS")"
+  [ "$want" -gt 0 ]
+  [ "$(grep -c '^| [a-z][a-z-]* | ' <<<"$region")" -eq "$((want + 1))" ]
+  while IFS= read -r key; do
+    grep -q "^| $key | " <<<"$region"
+  done < <(jq -r '.taskProfiles | keys_unsorted[]' "$DEFAULTS")
+}
+
+@test "doc check fails when a taskProfiles seed changes without regenerating" {
+  tmpdefaults="$BATS_TEST_TMPDIR/new-profile.json"
+  jq '.taskProfiles.docs.effort = "high"' "$DEFAULTS" >"$tmpdefaults"
+  run bash "$GEN" --check "$tmpdefaults" "$DOC"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *'| docs | `trivial` | — | — | `high` |'* ]]
 }
 
 @test "doc check fails when a row's default is not in its models" {
