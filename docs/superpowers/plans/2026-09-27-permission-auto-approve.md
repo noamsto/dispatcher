@@ -1,5 +1,9 @@
 # Plan: dispatcher auto-approve checker (#441)
 
+Superseded in part by #509: the frame gate (`frame_parse`) now matches the
+real four-option 2.1.310 dialog; see the spec's "Frame gate" section. The
+steps below are the historical #441 plan.
+
 Spec: `docs/superpowers/specs/2026-09-27-permission-auto-approve-design.md`
 (accepted by spec-critic). Every rule below is the spec's; this plan only
 orders the work.
