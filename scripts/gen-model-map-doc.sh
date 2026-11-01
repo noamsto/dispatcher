@@ -257,6 +257,10 @@ if [ "$check" = true ]; then
   exit "$fail"
 fi
 
+# Rename into place: truncating $doc in place lets a concurrent reader see it
+# empty or half-written. cp -p gives the temp file $doc's mode, not mktemp's 0600.
 tmp="$(mktemp "${doc}.XXXXXX")"
+cp -p "$doc" "$tmp"
 render_doc "$defaults" "$doc" >"$tmp"
-cat "$tmp" >"$doc"
+mv "$tmp" "$doc"
+tmp=""
