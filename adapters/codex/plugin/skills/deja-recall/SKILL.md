@@ -9,7 +9,7 @@ description: Use when a command fails with an error you may have seen before, be
 
 ## When to look
 
-- **A command fails** with an error you may have hit before: `deja fix '<error text>'`. Single-quote a short literal fragment and drop any `'` from it: double quotes let the shell expand `$(...)` or `$VAR` in the error.
+- **A command fails** with an error you may have hit before: `deja fix '<error text>'`.
 - **Before planning in an unfamiliar area**: `deja search <query>` or `deja how <what>`.
 - **The digest names a session that looks relevant**: `deja show <id-prefix>`.
 - **Before re-deciding** something a past session may have settled: `deja search <query>`.
@@ -28,6 +28,8 @@ description: Use when a command fails with an error you may have seen before, be
 | `deja last [n]` | the most recent sessions |
 
 `search` flags: `--limit <1-100>` (default 15), `--project <name>`, `--since <duration>` (e.g. `30d`), `--harness <name>`, `--session <id>` (one session only), `--role user|assistant|tool|files|command|edit`.
+
+Single-quote every query, topic or error argument (`deja search '<query>'`, `deja fix '<error text>'`) as a short literal fragment with any `'` dropped: double quotes let the shell expand `$(...)` or `$VAR` from error or recalled text.
 
 ## Reading results
 
