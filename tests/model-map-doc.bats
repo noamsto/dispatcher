@@ -180,3 +180,15 @@ doc_fail_row() { # id sed-expr
   [ "$status" -ne 0 ]
   [ -z "$(ls -A "$TMPDIR")" ]
 }
+
+@test "write mode swaps the doc in atomically, keeping its mode" {
+  tmpdoc="$BATS_TEST_TMPDIR/atomic.md"
+  cp "$DOC" "$tmpdoc"
+  chmod 640 "$tmpdoc"
+  inode_before="$(stat -c %i "$tmpdoc")"
+  run bash "$GEN" "$DEFAULTS" "$tmpdoc"
+  [ "$status" -eq 0 ]
+  [ "$(stat -c %i "$tmpdoc")" -ne "$inode_before" ]
+  [ "$(stat -c %a "$tmpdoc")" = 640 ]
+  cmp "$DOC" "$tmpdoc"
+}

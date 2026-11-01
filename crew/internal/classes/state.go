@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"syscall"
 )
 
@@ -127,6 +128,10 @@ func Load(path string) (st State, usable bool, warnings []string) {
 		warn("%s is not a JSON object", path)
 		return nil, false, warnings
 	}
+	if hasLoneSurrogate(data) {
+		warn("%s has an unpaired surrogate escape", path)
+		return nil, false, warnings
+	}
 	if err := json.Unmarshal(data, &engines); err != nil {
 		warn("%s is not a JSON object: %v", path, err)
 		return nil, false, warnings
@@ -163,6 +168,51 @@ func Load(path string) (st State, usable bool, warnings []string) {
 func isObject(raw []byte) bool {
 	trimmed := bytes.TrimSpace(raw)
 	return len(trimmed) > 0 && trimmed[0] == '{'
+}
+
+// hasLoneSurrogate reports whether raw has a high-surrogate \u escape that is not
+// followed by a low-surrogate escape. json.Unmarshal turns such an escape into
+// U+FFFD, but model-resolve's jq rejects the file, so Load must refuse it. A lone
+// low surrogate is accepted by both, so only the high half is checked.
+func hasLoneSurrogate(raw []byte) bool {
+	inString := false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if !inString {
+			inString = c == '"'
+			continue
+		}
+		switch c {
+		case '"':
+			inString = false
+		case '\\':
+			unit, ok := unicodeEscape(raw, i)
+			if !ok {
+				// Skipping the escaped byte keeps \\ and \" from being read as escapes.
+				i++
+				continue
+			}
+			if unit < 0xD800 || unit > 0xDBFF {
+				i += 5
+				continue
+			}
+			low, ok := unicodeEscape(raw, i+6)
+			if !ok || low < 0xDC00 || low > 0xDFFF {
+				return true
+			}
+			i += 11
+		}
+	}
+	return false
+}
+
+// unicodeEscape reads the \uXXXX escape starting at raw[i].
+func unicodeEscape(raw []byte, i int) (uint64, bool) {
+	if i+6 > len(raw) || raw[i] != '\\' || raw[i+1] != 'u' {
+		return 0, false
+	}
+	unit, err := strconv.ParseUint(string(raw[i+2:i+6]), 16, 16)
+	return unit, err == nil
 }
 
 // parseChange decodes one history item with exact keys.

@@ -160,6 +160,42 @@ func TestLoadUnusable(t *testing.T) {
 	}
 }
 
+func TestLoadSurrogateEscapes(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string // "" means unusable
+	}{
+		{"lone high", `\ud800`, ""},
+		{"high before non-surrogate", `\ud800\u0041`, ""},
+		{"lone low matches jq", `\udc00`, "\uFFFD"},
+		{"pair", `\ud800\udc00`, "\U00010000"},
+		{"escaped backslash", `\\ud800`, `\ud800`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "state.json")
+			data := `{"claude":{"standard":{"default":"` + tc.body + `"}}}`
+			if err := os.WriteFile(p, []byte(data), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			st, usable, warns := Load(p)
+			if tc.want == "" {
+				if usable || len(st) != 0 || len(warns) != 1 {
+					t.Fatalf("usable = %v, state = %v, warnings = %v; want unusable with one warning", usable, st, warns)
+				}
+				return
+			}
+			if !usable || len(warns) != 0 {
+				t.Fatalf("usable = %v, warnings = %v; want usable with none", usable, warns)
+			}
+			if got := st["claude"]["standard"].Default; got != tc.want {
+				t.Errorf("Default = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadDropsBadEntries(t *testing.T) {
 	tests := []struct {
 		name string
