@@ -440,6 +440,14 @@ func TestRunBaselineVerbatimAndMaskedValues(t *testing.T) {
 	}
 }
 
+// aliasPointer is the line that follows a withheld url.<alias>.insteadof key.
+func aliasPointer(alias string) string {
+	if alias == "" {
+		return ""
+	}
+	return "  url." + urlWithheld(alias) + ".insteadof" + ownTerminal("url."+alias+".insteadof") + "\n"
+}
+
 // #686: an insteadOf alias from any scope git reads — the main checkout's, or
 // the human's own global file — rewrites the remote url git contacts, so that
 // url prints whole rather than masked.
@@ -458,6 +466,7 @@ func TestRunBaselineAliasFromAnyScopeRewrites(t *testing.T) {
 		// The alias is itself drift, and it reprints the url it rewrites.
 		runBaseline(r.main, false, "", false).want(t, 1,
 			want+driftLine(disp+"=https://", "main checkout", r.common+"/config")+
+				aliasPointer(alias)+
 				"  rewritten by the alias above: "+want, "")
 		r.config(t, "--unset", "url."+alias+".insteadof")
 	}
@@ -491,7 +500,7 @@ func TestRunBaselineBaselinedAliasRewrites(t *testing.T) {
 	r.init(t)
 	origin := r.common + "/config"
 	accepted := "git-config baseline " + r.baseline() + ": accepted\n"
-	alias := driftLine("url."+urlWithheld("git@")+".insteadof=https://", "main checkout", origin)
+	alias := driftLine("url."+urlWithheld("git@")+".insteadof=https://", "main checkout", origin) + aliasPointer("git@")
 	r.config(t, "url.git@.insteadof", "https://")
 	runBaseline(r.main, true, "yes\n", true).want(t, 0, alias+prompt(r.baseline())+accepted, "")
 	r.config(t, "--unset", "url.git@.insteadof")
@@ -616,5 +625,21 @@ func TestRunBaselineAcceptWritesOnlyShownPairs(t *testing.T) {
 	last := strings.TrimSpace(readFile(t, count))
 	if slices.Contains(recs, "core.fsmonitor\n/evil"+last) {
 		t.Fatalf("the key planted after the last listing was recorded: %q", recs)
+	}
+}
+
+// A drift key whose URL subsection cannot be masked prints withheld, with the
+// command that reads it in the human's own terminal; the userinfo never prints.
+func TestRunBaselineWithheldKeyPointsToOwnTerminal(t *testing.T) {
+	r := newRepo(t)
+	r.init(t)
+	r.config(t, "http.https://u:tok@[::1]/.proxy", "proxy.example:3128")
+	kd := "http." + urlWithheld("https://u:tok@[::1]/") + ".proxy"
+	got := runBaseline(r.main, false, "", false)
+	got.want(t, 1,
+		driftLine(kd+"=proxy.example:3128", "main checkout", r.common+"/config")+
+			"  "+kd+" — check it in your own terminal, from each checkout or worktree that may set it: git config --show-origin --get-regexp "+Quote(`^http\.`)+"\n", "")
+	if strings.Contains(got.stdout+got.stderr, "tok") {
+		t.Fatalf("userinfo leaked:\n%s%s", got.stdout, got.stderr)
 	}
 }
