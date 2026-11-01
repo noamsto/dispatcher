@@ -73,8 +73,7 @@ var (
 	// command`, no `· from the <agent>` suffix), a `Tip:` hint and a
 	// description sit under it, and the request is boxed between two U+254C
 	// rules. The title is read only on a frame that carries such a rule, and
-	// only when its next non-blank line is the hint, so a letter-only request
-	// line in the older shape stays a request.
+	// only when its next non-blank line is the hint.
 	rePermTip   = regexp.MustCompile(`^[` + space + `]*Tip:`)
 	rePermRule  = regexp.MustCompile(`^[` + space + `]*\x{254C}{4,}[` + space + `]*$`)
 	reLeadSpace = regexp.MustCompile(`^[` + space + `]+`)
@@ -672,11 +671,10 @@ func permissionDetail(text, pane string) string {
 			break
 		}
 	}
-	// topTitle reports whether lines[i] opens a boxed top-level dialog: a line
-	// whose next non-blank line is the `Tip:` hint. The title is not
-	// character-restricted (a version may label the tool with digits,
-	// punctuation or non-ASCII); the hint adjacency, plus the rule gate above,
-	// keep a request or description line from matching.
+	// topTitle reports whether lines[i] opens a boxed top-level dialog: a
+	// non-blank, non-rule line whose next non-blank line is the `Tip:` hint. A
+	// version may label the tool with digits, punctuation or non-ASCII, so the
+	// line itself is not character-restricted.
 	topTitle := func(i int) bool {
 		if reBlank.MatchString(lines[i]) || rePermRule.MatchString(lines[i]) {
 			return false
