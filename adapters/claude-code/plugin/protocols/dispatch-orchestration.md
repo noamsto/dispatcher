@@ -453,6 +453,8 @@ each profile resolves to on this machine.
 unless you pass `--agent` (judge it: the leans and budget rules); class → the
 tier row's class for the engine; effort → pass `--effort`.
 
+A profile's class stays when `--agent` changes the engine: `--profile security --agent codex` is refused at `standard`, which on codex does not admit `@premium`; name a model or `@class`. `trivial-fix` is the trivial row's scope (no executable logic change); a small logic fix is `standard`.
+
 <!-- BEGIN generated:task-profiles from adapters/core/defaults.json by scripts/gen-model-map-doc.sh -->
 
 | profile | tier | engine | class | effort |

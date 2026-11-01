@@ -404,6 +404,9 @@ write_cursor_models_cache() { # <fetched_epoch>
   run run_dispatch standard
   [ "$status" -eq 1 ]
   [[ "$output" == *"usage: dispatch"* ]]
+  run run_dispatch standard --effort medium "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"usage: dispatch"* ]]
 }
 
 # #817: `dispatch --help` is a grouped screen, not the one-line synopsis. The
@@ -19316,4 +19319,19 @@ task_profile_settings() {
   [[ "$stderr" == *"usage: dispatch"* ]]
   run run_dispatch --profiles --json junk
   [ "$status" -eq 1 ]
+}
+
+@test "task profile: a tier word after --profile is refused, not read as the title" {
+  run --separate-stderr run_dispatch --profile docs deep --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: the tier goes first: dispatch deep"* ]]
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile docs --crew-id c1 -- deep title
+  [ "$status" -eq 0 ]
+}
+
+@test "task profile: a profile's class stays with --agent and the tier gate refuses what the engine's row does not admit" {
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile security --agent codex --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: task profile security: tier standard, engine codex, model @premium, effort medium (filled: tier effort model)"* ]]
+  [[ "$stderr" == *"dispatch: class @premium (gpt-5.6-sol) is not standard's row for --agent codex"* ]]
 }

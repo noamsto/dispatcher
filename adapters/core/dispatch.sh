@@ -31,7 +31,7 @@ Task shape
   tier                    Positional: trivial | standard | deep — sets review rigor
   model                   Positional: the model id or alias the engine runs, or @cheap,
                           @standard or @premium: that class's current default (dispatch --models)
-  --effort E              low | medium | high | xhigh | max | ultra (required)
+  --effort E              low | medium | high | xhigh | max | ultra (required unless --profile fills it)
   --profile NAME          Fill the tier, engine, class and effort left unset from the taskProfiles
                           setting (dispatch --profiles); explicit values win; with no model,
                           options follow the tier directly
@@ -5013,6 +5013,9 @@ while [ $# -gt 0 ]; do
       # treated as a title, which would mint a second issue for it.
       echo "dispatch: '$1' is not a valid issue number — pass a single decimal integer, '#N' or 'N'" >&2
       exit 1
+    elif [ -z "$tier" ] && [[ $1 =~ ^(trivial|standard|deep)$ ]]; then
+      echo "dispatch: the tier goes first: dispatch $1 [<model>] [flags] [--] <title...> (put -- before a title that starts with a tier word)" >&2
+      exit 1
     else
       break
     fi
@@ -5184,7 +5187,9 @@ fi
 # then the user file); unset everywhere means every engine, so a non-Nix
 # checkout and the test suite need no extra setup. `profile` no longer gates
 # engines — it is still read below for the work+claude+deep rung.
-_settings_load
+# A --profile dispatch already loaded settings right after the option loop, so
+# dispatch-config's warnings print once.
+[ -n "$task_profile" ] || _settings_load
 profile="$(jq -r '.profile // "personal"' <<<"$settings")"
 # A configured localModels id: its entry, not modelMap, admits it, and its
 # endpoint's slots, not OpenRouter quota, are its budget.
