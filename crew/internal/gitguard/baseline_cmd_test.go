@@ -451,9 +451,13 @@ func TestRunBaselineAliasFromAnyScopeRewrites(t *testing.T) {
 	want := driftLine("remote.origin.url="+Quote(url), "main checkout", r.common+"/config")
 	for _, alias := range []string{"", "git@"} {
 		r.config(t, "url."+alias+".insteadof", "https://")
+		disp := "url." + alias + ".insteadof"
+		if alias != "" {
+			disp = "url." + urlWithheld(alias) + ".insteadof"
+		}
 		// The alias is itself drift, and it reprints the url it rewrites.
 		runBaseline(r.main, false, "", false).want(t, 1,
-			want+driftLine("url."+alias+".insteadof=https://", "main checkout", r.common+"/config")+
+			want+driftLine(disp+"=https://", "main checkout", r.common+"/config")+
 				"  rewritten by the alias above: "+want, "")
 		r.config(t, "--unset", "url."+alias+".insteadof")
 	}
@@ -487,7 +491,7 @@ func TestRunBaselineBaselinedAliasRewrites(t *testing.T) {
 	r.init(t)
 	origin := r.common + "/config"
 	accepted := "git-config baseline " + r.baseline() + ": accepted\n"
-	alias := driftLine("url.git@.insteadof=https://", "main checkout", origin)
+	alias := driftLine("url."+urlWithheld("git@")+".insteadof=https://", "main checkout", origin)
 	r.config(t, "url.git@.insteadof", "https://")
 	runBaseline(r.main, true, "yes\n", true).want(t, 0, alias+prompt(r.baseline())+accepted, "")
 	r.config(t, "--unset", "url.git@.insteadof")

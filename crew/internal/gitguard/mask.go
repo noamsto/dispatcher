@@ -35,8 +35,12 @@ func ShowURL(s string, proxy bool) string {
 	if !ok {
 		return Quote(s)
 	}
+	return masked + " [sha256:" + fingerprint(s) + "]"
+}
+
+func fingerprint(s string) string {
 	sum := sha256.Sum256([]byte(s))
-	return masked + " [sha256:" + hex.EncodeToString(sum[:4]) + "]"
+	return hex.EncodeToString(sum[:4])
 }
 
 func maskURL(s string, proxy bool) (string, bool) {
@@ -97,19 +101,30 @@ func maskURL(s string, proxy bool) (string, bool) {
 	return "", false
 }
 
-// ShowKey renders k, its URL subsection masked for the keys that embed one.
+// ShowKey renders k, its URL subsection masked for the keys that embed one. An
+// unmaskable subsection that may carry userinfo or a query is withheld behind
+// its fingerprint.
 func ShowKey(k string) string {
+	kd, _ := showKey(k)
+	return kd
+}
+
+// showKey is ShowKey and whether the subsection was withheld.
+func showKey(k string) (string, bool) {
 	if !match(urlSubsectionKeys, k, "") {
-		return Quote(k)
+		return Quote(k), false
 	}
 	sec, _, _ := strings.Cut(k, ".")
 	variable := k[strings.LastIndexByte(k, '.')+1:]
 	sub := strings.TrimSuffix(strings.TrimPrefix(k, sec+"."), "."+variable)
 	masked := ShowURL(sub, false)
-	if masked == Quote(sub) {
-		return Quote(k)
+	if masked != Quote(sub) {
+		return sec + "." + masked + "." + variable, false
 	}
-	return sec + "." + masked + "." + variable
+	if !strings.ContainsAny(sub, "@?") {
+		return Quote(k), false
+	}
+	return sec + ".<url withheld sha256:" + fingerprint(sub) + ">." + variable, true
 }
 
 // Rewritten reports whether an insteadOf alias prefixes url.

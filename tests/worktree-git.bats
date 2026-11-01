@@ -1151,7 +1151,7 @@ fp8() { printf %s "$1" | sha256sum | cut -c1-8; }
   _wt_cfg_show_key 'diff.x://attacker.example@y.textconv' disp
   [ "$disp" = 'diff.x://attacker.example@y.textconv' ]
   _wt_cfg_show_key 'url.ssh://evil.example%2f@github.com/.insteadof' disp
-  [ "$disp" = "$(printf %q 'url.ssh://evil.example%2f@github.com/.insteadof')" ]
+  [[ $disp =~ ^url\.\<url\ withheld\ sha256:[0-9a-f]{8}\>\.insteadof$ ]]
   _wt_cfg_show_key 'url.https://github.com/.insteadof' disp
   [ "$disp" = 'url.https://github.com/.insteadof' ]
   _wt_cfg_show_key 'remote.origin.url' disp
