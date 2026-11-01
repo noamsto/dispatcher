@@ -335,7 +335,7 @@ func (a *arm) checkUnread(stderr io.Writer) int {
 	f := strings.Fields(out)
 	if len(f) < 3 {
 		return refuse(stderr, "no unread msg from dispatcher:"+a.crew+" or a role to "+a.sid+
-			" — post the directive first (crew reply), then nudge")
+			" — nothing to nudge; a directive needs `crew reply` first, a role verdict needs no post")
 	}
 	a.ts = f[1]
 	return 0

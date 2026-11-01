@@ -491,7 +491,7 @@ func TestRunUnreadGate(t *testing.T) {
 	f.unread = ""
 	if rc := f.run(Request{Target: featX}); rc != 2 ||
 		!strings.Contains(f.errOut(), "no unread msg from dispatcher:c1 or a role to "+idleReq+
-			" — post the directive first (crew reply), then nudge") {
+			" — nothing to nudge; a directive needs `crew reply` first, a role verdict needs no post") {
 		t.Errorf("rc = %d, stderr = %q", rc, f.errOut())
 	}
 	for _, c := range f.pane.tmux {
@@ -537,7 +537,7 @@ func TestRunNudgesForARoleVerdict(t *testing.T) {
 // nudge carries.
 func TestRunMixedSourcesPointsAtNewest(t *testing.T) {
 	f := newArm(t)
-	f.unread = "1500000000000 1600000000000 role"
+	f.unread = "1500000000000 1600000000000 dispatcher"
 	if rc := f.run(Request{Target: featX}); rc != 0 {
 		t.Fatalf("rc = %d, stderr = %q", rc, f.errOut())
 	}

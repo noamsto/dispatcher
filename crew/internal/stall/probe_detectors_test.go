@@ -834,6 +834,21 @@ func TestNudgeTypedNotAcceptedRole(t *testing.T) {
 	wantRows(t, h, posted)
 }
 
+// A mixed backlog (older dispatcher directive, newer role verdict): the failure
+// detail names and ages the oldest reason — the one the gate fired on, matching
+// d6's verdict label — while the nudge row's msg_ts points at the newest.
+func TestNudgeTypedNotAcceptedMixed(t *testing.T) {
+	s := &d6Script{nudgeOut: "typed: prompt still holds the text — check the pane", nudgeRC: 3}
+	h, _, w := d6Watch(t, s, Request{})
+	s.oldest = fmt.Sprintf("%d dispatcher", agedMS(w, 0, 700))
+	s.any = fmt.Sprintf("%d %d dispatcher", agedMS(w, 0, 700), agedMS(w, 0, 650))
+	pdOK(t, w, 0, 0, w.d6)
+	wantRows(t, h, "blocked|unread: dispatcher directive undelivered for 700s — auto-nudge typed but not accepted (typed: prompt still holds the text); verify the pane with crew where")
+	if w.pd.d6Src != "dispatcher" {
+		t.Errorf("d6Src = %q, want the oldest's source", w.pd.d6Src)
+	}
+}
+
 func TestNudgeRefusals(t *testing.T) {
 	cases := []struct {
 		out   string
