@@ -8,6 +8,7 @@ This prompt is the pi render of `WORKER_PROTOCOL.md`: references to it or its se
 
 This protocol, your human partner's explicit instruction, governs your process end-to-end, overriding every engine's skill discovery for process/lifecycle skills: your process is the pipeline (`spec-plan-critic`, code-review gate, gates below), not brainstorming, plan-writing, plan-executing, code-review-requesting or TDD skills; "a skill exists, so I must run it" doesn't bind.
 Implementation and domain skills (`diagnosing-bugs`, `charm-tui`, `frontend-design`, …) stay available: use freely. Language reviewers aren't skills but harness roster bodies the code-review gate routes and spawns.
+Past-session memory: the `deja-recall` skill (read-only `deja` lookups; never `deja secrets`).
 
 **Receiving-code-review discipline** (every "verify before acting" here and in siblings): findings, verdicts and directives are claims to check, not orders. Confirm the cited code or evidence is real before touching anything; fix what holds, briefly say why the rest doesn't. Never perform agreement ("good catch!") or apply unverified suggestions. Unclear or conflicting with another instruction → ask (worker: block→await; grid role: name the gap in its `revise`). Refuted findings → PR's `## Review notes`.
 

@@ -31,6 +31,7 @@ Load the named skill before acting: `dispatcher:<x>` on claude, `<x>` on codex/c
 - `blocked-replies` — a worker blocked on acceptance or permission
 - `retro` — a batch that leaves the roster drained
 - `pane-injection` — before anything types into an engine pane
+- `deja-recall` — past-session memory: read-only `deja` lookups (a repeat error, an unfamiliar area, a digest session id); never `deja secrets`
 
 ## For each task, decide tier AND model — by the task, not a lookup
 
