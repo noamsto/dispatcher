@@ -177,6 +177,9 @@ const (
 // subagentPermission is permission_subagent.txt's relay row.
 const subagentPermission = "prompt: permission — Bash command: bats --filter grant tests/dispatch-resume.bats 2>&1 | tail -30 — pane %1"
 
+// topPermission is permission_bash.txt's relay row.
+const topPermission = "prompt: permission — Bash command: printf hi > ./out.txt — pane %1"
+
 func wd(detail string) string { return fmt.Sprintf(wdBlock, detail) }
 
 // meterFrame is a live claude meter whose clock is the tick.
@@ -224,6 +227,11 @@ func TestD1Prompt(t *testing.T) {
 			end:   60,
 			frame: static(perm),
 			want:  map[int64][]string{15: {"blocked|" + subagentPermission}},
+		}},
+		{"top-level permission dialog", fdScript{
+			end:   60,
+			frame: static(fixture(t, "permission_bash.txt")),
+			want:  map[int64][]string{15: {"blocked|" + topPermission}},
 		}},
 		// A real, answerable prompt with the quota phrase painted further up the
 		// same screen stays a prompt: the worker can still answer it.
@@ -855,10 +863,18 @@ func TestPermissionDetail(t *testing.T) {
 		r := []rune(body)
 		return string(r[:min(len(r), max(160-len([]rune(suffix)), 0))]) + suffix
 	}
+	rule254c := strings.Repeat("╌", 40)
+	topHead := " Bash command\n Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below\n Write \"hi\" to out.txt\n"
 	cases := []struct {
 		name, text, pane, want string
 	}{
 		{"tool and request", hdr + "   ls -la  \n", "%1", "prompt: permission — Bash command: ls -la — pane %1"},
+		{"top-level dialog boxes the request between rules", topHead + rule254c + "\n printf hi > ./out.txt\n" + rule254c + "\n Do you want to proceed?\n", "%1",
+			"prompt: permission — Bash command: printf hi > ./out.txt — pane %1"},
+		{"a bare title without the Tip hint is not a top-level dialog", " Bash command\n" + rule254c + "\n printf hi\n" + rule254c + "\n", "%1",
+			"prompt: permission — (unparsed) — pane %1"},
+		{"a bare title with no rule stays unparsed", " first\nsecond\n", "%1",
+			"prompt: permission — (unparsed) — pane %1"},
 		{"blank lines before the request are skipped", hdr + "\n  \n\t\n  rm -rf x\nsecond\n", "%1",
 			"prompt: permission — Bash command: rm -rf x — pane %1"},
 		{"only the first request line", hdr + "first\nsecond\n", "%1", "prompt: permission — Bash command: first — pane %1"},
@@ -910,6 +926,7 @@ func TestPermissionDetail(t *testing.T) {
 func TestPermissionDetailFixtures(t *testing.T) {
 	cases := map[string]string{
 		"edge_permission_multibyte_header.txt": "prompt: permission — Bash command: bats --filter grant tests/dispatch-resume.bats — pane %1",
+		"permission_bash.txt":                  topPermission,
 		"permission_subagent.txt":              subagentPermission,
 	}
 	for name, prefix := range cases {

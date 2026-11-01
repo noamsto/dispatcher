@@ -68,9 +68,18 @@ var (
 	rePermEsc    = regexp.MustCompile(`\x1b[@-Z\\-_]`)
 	rePermHeader = regexp.MustCompile(`^[` + space + `]*[A-Za-z][A-Za-z ]+ · from the `)
 	rePermTool   = regexp.MustCompile(`[` + space + `]+· from the .*`)
-	reLeadSpace  = regexp.MustCompile(`^[` + space + `]+`)
-	reTrimSpace  = regexp.MustCompile(`^[` + space + `]+|[` + space + `]+$`)
-	reRunSpace   = regexp.MustCompile(`[` + space + `]+`)
+	// claude 2.1.x's top-level tool-permission dialog (issue #486) is not the
+	// subagent shape rePermHeader matches: the tool is a bare title (` Bash
+	// command`, no `· from the <agent>` suffix), a `Tip:` hint and a
+	// description sit under it, and the request is boxed between two U+254C
+	// rules. rePermTitle is read only when the frame carries such a rule, so a
+	// letter-only line in the older shape stays a request.
+	rePermTitle = regexp.MustCompile(`^[` + space + `]*[A-Za-z][A-Za-z ]+[` + space + `]*$`)
+	rePermTip   = regexp.MustCompile(`^[` + space + `]*Tip:`)
+	rePermRule  = regexp.MustCompile(`^[` + space + `]*\x{254C}{4,}[` + space + `]*$`)
+	reLeadSpace = regexp.MustCompile(`^[` + space + `]+`)
+	reTrimSpace = regexp.MustCompile(`^[` + space + `]+|[` + space + `]+$`)
+	reRunSpace  = regexp.MustCompile(`[` + space + `]+`)
 )
 
 // frameDetect runs D1, D2, D1b, D7, D3, D0 and D9 on this tick's frame.
@@ -651,14 +660,44 @@ func permissionDetail(text, pane string) string {
 	clean = rePermEsc.ReplaceAllString(clean, "")
 	clean = string(stripControl([]byte(clean)))
 
+	lines := strings.Split(clean, "\n")
+	ruled := false
+	for _, l := range lines {
+		if rePermRule.MatchString(l) {
+			ruled = true
+			break
+		}
+	}
+	// topTitle reports whether lines[i] opens a boxed top-level dialog: a bare
+	// tool title whose next non-blank line is the `Tip:` hint.
+	topTitle := func(i int) bool {
+		if !rePermTitle.MatchString(lines[i]) {
+			return false
+		}
+		for j := i + 1; j < len(lines); j++ {
+			if reBlank.MatchString(lines[j]) {
+				continue
+			}
+			return rePermTip.MatchString(lines[j])
+		}
+		return false
+	}
+
 	var tool, req string
-	have := false
-	for _, l := range strings.Split(clean, "\n") {
+	have, boxed, boxRule := false, false, false
+	for i, l := range lines {
 		switch {
 		case rePermHeader.MatchString(l):
 			tool = rePermTool.ReplaceAllString(reLeadSpace.ReplaceAllString(l, ""), "")
-			req, have = "", true
-		case have && req == "" && !reBlank.MatchString(l):
+			req, have, boxed, boxRule = "", true, false, false
+		case ruled && topTitle(i):
+			tool = reTrimSpace.ReplaceAllString(l, "")
+			req, have, boxed, boxRule = "", true, true, false
+		case boxed && rePermRule.MatchString(l):
+			boxRule = true
+		case boxed && boxRule && req == "" && !reBlank.MatchString(l):
+			req = reTrimSpace.ReplaceAllString(l, "")
+		case !boxed && have && req == "" && !reBlank.MatchString(l):
 			req = reTrimSpace.ReplaceAllString(l, "")
 		}
 	}
