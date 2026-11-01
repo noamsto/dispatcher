@@ -1152,13 +1152,30 @@ ROWS
 }
 
 @test "taskProfiles: a user override wins per field and keeps the shipped profile's other fields; a new profile is added" {
-  user_settings '{"taskProfiles":{"docs":{"engine":"codex"},"lint":{"tier":"trivial","class":"cheap"}}}'
+  user_settings '{"taskProfiles":{"docs":{"engine":"codex"}}}'
+  locked_settings '{"taskProfiles":{"lint":{"tier":"trivial","class":"cheap"}}}'
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
   [ -z "$stderr" ]
   jq -e '.taskProfiles.docs == {"tier":"trivial","effort":"low","engine":"codex"}' <<<"$output"
   jq -e '.taskProfiles.lint == {"tier":"trivial","class":"cheap"}' <<<"$output"
   jq -e '.taskProfiles.ui == {"tier":"standard","engine":"claude","effort":"medium"}' <<<"$output"
+}
+
+@test "taskProfiles: a user-layer tier is dropped with a warning; only the locked layer may set one" {
+  user_settings '{"taskProfiles":{"lint":{"tier":"trivial","class":"cheap"}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.taskProfiles.lint == {"class":"cheap"}' <<<"$output"
+  [[ "$stderr" == *"ignoring taskProfiles.lint.tier from $USER_FILE (user layer)"* ]]
+  [[ "$stderr" == *"it is honoured only from the shipped defaults or the locked settings"* ]]
+
+  user_settings '{}'
+  locked_settings '{"taskProfiles":{"lint":{"tier":"trivial","class":"cheap"}}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.taskProfiles.lint == {"tier":"trivial","class":"cheap"}' <<<"$output"
+  [ -z "$stderr" ]
 }
 
 @test "taskProfiles: a malformed user entry is dropped with a warning and the shipped profile survives" {

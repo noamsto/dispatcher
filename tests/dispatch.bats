@@ -19165,6 +19165,14 @@ task_profile_settings() {
   printf '%s\n' "$1" >"$XDG_CONFIG_HOME/dispatcher/settings.json"
 }
 
+# locked_task_profile_settings <json> — the locked settings layer. Only the
+# shipped defaults and the locked layer may set a profile's tier, so a test
+# that needs one on a user-defined profile belongs here.
+locked_task_profile_settings() {
+  printf '%s\n' "$1" >"$BATS_TEST_TMPDIR/locked-task-profiles.json"
+  export DISPATCH_LOCKED_SETTINGS="$BATS_TEST_TMPDIR/locked-task-profiles.json"
+}
+
 @test "task profile: --profile docs alone fills tier, effort and the class, recorded in the task doc and the dispatch row" {
   stub_launch_bins
   DISPATCH_PROFILE=work run --separate-stderr run_dispatch --profile docs --crew-id c1 42 "profile docs"
@@ -19222,11 +19230,58 @@ task_profile_settings() {
 }
 
 @test "task profile: a profile class the tier does not admit is refused like the sigil" {
-  task_profile_settings '{"taskProfiles":{"lean":{"tier":"trivial","engine":"codex","class":"premium"}}}'
+  locked_task_profile_settings '{"taskProfiles":{"lean":{"tier":"trivial","engine":"codex","class":"premium"}}}'
   DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile lean --effort low --crew-id c1 "t"
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"dispatch: task profile lean: tier trivial, engine codex, model @premium, effort low (filled: tier engine model)"* ]]
   [[ "$stderr" == *"dispatch: class @premium (gpt-5.6-sol) is not trivial's row for --agent codex"* ]]
+}
+
+@test "task profile: a user-layer tier is dropped with a warning, so the dispatch refuses without one (#1395)" {
+  task_profile_settings '{"taskProfiles":{"security":{"tier":"trivial","class":null,"effort":"low"}}}'
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile security --crew-id c1 "auth fix"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"ignoring taskProfiles.security.tier"* ]]
+  [[ "$stderr" == *"(user layer)"* ]]
+  [[ "$stderr" == *"it is honoured only from the shipped defaults or the locked settings"* ]]
+  [[ "$stderr" == *"dispatch: task profile 'security' sets no tier — pass one"* ]]
+}
+
+@test "task profile: a user-layer tier cannot lower a shipped profile's tier (#1395)" {
+  task_profile_settings '{"taskProfiles":{"docs":{"tier":"deep"}}}'
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile docs --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"ignoring taskProfiles.docs.tier"* ]]
+  [[ "$stderr" == *"dispatch: task profile docs: tier trivial"* ]]
+}
+
+@test "task profile: an issue token after the tier is read as the issue, not the model (#1395)" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  DISPATCH_PROFILE=personal run --separate-stderr run_dispatch standard 42 --profile ui --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatch: task profile ui: tier standard, engine claude, model @standard, effort medium"* ]]
+  wt_path="$TEST_REPO/.dispatch-wt/feat-42-t"
+  [ -f "$wt_path/WORKER_TASK.md" ]
+  grep -qx 'task_profile: ui' "$wt_path/WORKER_TASK.md"
+  grep -q 'issue edit 42 --add-label dispatched' "$STUB_LOG"
+}
+
+@test "task profile: a Linear id after the tier is read as the Linear id, not the model (#1395)" {
+  stub_launch_bins
+  DISPATCH_PROFILE=personal run --separate-stderr run_dispatch standard ENG-1234 --profile ui --crew-id c1 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatch: task profile ui: tier standard, engine claude, model @standard, effort medium"* ]]
+  wt_path="$TEST_REPO/.dispatch-wt/eng-1234-t"
+  [ -f "$wt_path/WORKER_TASK.md" ]
+  grep -qx 'Closes ENG-1234' "$wt_path/WORKER_TASK.md"
+  grep -qx 'task_profile: ui' "$wt_path/WORKER_TASK.md"
+}
+
+@test "task profile: without --profile an issue token after the tier still ends at the usage refusal (#1395)" {
+  run --separate-stderr run_dispatch standard 42 --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"usage: dispatch"* ]]
 }
 
 @test "task profile: a user-layer field overrides the shipped profile's" {
@@ -19283,7 +19338,9 @@ task_profile_settings() {
   [ "$status" -eq 0 ]
   [[ "${lines[0]}" == PROFILE*TIER*ENGINE*CLASS*EFFORT*MODEL ]]
   [[ "$output" == *"docs "*"trivial"*"claude"*"cheap"*"haiku"* ]]
-  [[ "$output" == *"security "*"standard"*"claude"*"premium"*"opus"* ]]
+  # security sets no tier since #1395: it must be passed explicitly, so it
+  # lists its engine, class and effort with no tier and no model.
+  [[ "$output" == *"security "*"-"*"claude"*"premium"*"(no tier: pass one)"* ]]
   [[ "$output" == *"mechanical-refactor "*"standard"*"codex"*"standard"*"gpt-5.6-terra"* ]]
   [[ "$stderr" != *"warning"* ]]
 }
@@ -19298,7 +19355,7 @@ task_profile_settings() {
 }
 
 @test "task profile: --profiles notes a class the tier does not admit and a profile without a tier" {
-  task_profile_settings '{"taskProfiles":{"lean":{"tier":"trivial","engine":"codex","class":"premium"},"loose":{"effort":"low"}}}'
+  locked_task_profile_settings '{"taskProfiles":{"lean":{"tier":"trivial","engine":"codex","class":"premium"},"loose":{"effort":"low"}}}'
   run run_dispatch --profiles --json
   [ "$status" -eq 0 ]
   jq -e '.profiles.lean.note == "trivial does not admit @premium on codex"
@@ -19343,8 +19400,8 @@ task_profile_settings() {
 }
 
 @test "task profile: a profile's class stays with --agent and the tier gate refuses what the engine's row does not admit" {
-  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch --profile security --agent codex --crew-id c1 "t"
+  DISPATCH_PRECHECK=1 run --separate-stderr run_dispatch standard --profile security --agent codex --crew-id c1 "t"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"dispatch: task profile security: tier standard, engine codex, model @premium, effort medium (filled: tier effort model)"* ]]
+  [[ "$stderr" == *"dispatch: task profile security: tier standard, engine codex, model @premium, effort medium (filled: effort model)"* ]]
   [[ "$stderr" == *"dispatch: class @premium (gpt-5.6-sol) is not standard's row for --agent codex"* ]]
 }

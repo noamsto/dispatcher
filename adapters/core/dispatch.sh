@@ -4755,13 +4755,17 @@ fi
 
 # Tier and model may be left to --profile; without it the check after the
 # option loop still requires both. A model follows only a tier, so a leading
-# issue token or title word never reads as one.
+# issue token or title word never reads as one. A token shaped like a tracker
+# id (a GitHub issue #N or N, a Linear ABC-12) belongs to the option loop,
+# which reads it as the issue: taking it as the model would swallow the issue
+# and leave --profile with a non-empty model it then will not fill (#1395).
 tier="" model=""
 case "${1:-}" in
 trivial | standard | deep)
   tier="$1"
   shift
-  if [ $# -gt 0 ] && [[ $1 != -* ]]; then
+  if [ $# -gt 0 ] && [[ $1 != -* ]] &&
+    ! [[ $1 =~ ^#?[0-9]+$ || $1 =~ ^[A-Z]{2,}-[0-9]+$ ]]; then
     model="$1"
     shift
   fi

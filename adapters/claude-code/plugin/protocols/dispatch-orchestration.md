@@ -437,8 +437,8 @@ after a compaction.
   one escalated onto another model) keeps the block and stamp it launched with;
   a re-dispatch re-resolves both.
 - **Not personas.** Text and a stamp only. What moves executor quality is the
-  brief, the guards and the tests, so a profile carries no tiers, no effort and
-  no executor behaviour.
+  brief, the guards and the tests, so a lane profile carries no tiers, no effort
+  and no executor behaviour.
 
 ### Task profiles
 
@@ -449,9 +449,11 @@ dispatch leaves unset from the `taskProfiles` setting (owner data in
 sigil, so every gate runs on the resolved id. `dispatch --profiles` shows what
 each profile resolves to on this machine.
 
-`—` means the profile leaves it to you: tier → pass one; engine → claude
-unless you pass `--agent` (judge it: the leans and budget rules); class → the
-tier row's class for the engine; effort → pass `--effort`.
+`—` means the profile leaves it to you: tier → pass one (a profile's tier comes
+only from the shipped defaults or the locked settings: the user layer cannot
+lower review rigour); engine → `dispatch` runs claude unless you pass
+`--agent`; choose it by the leans, budget rules and rotation, not by this
+default; class → the tier row's class for the engine; effort → pass `--effort`.
 
 A profile's class stays when `--agent` changes the engine: `--profile security --agent codex` is refused at `standard`, which on codex does not admit `@premium`; name a model or `@class`. `trivial-fix` is the trivial row's scope (no executable logic change); a small logic fix is `standard`.
 
@@ -462,7 +464,7 @@ A profile's class stays when `--agent` changes the engine: `--profile security -
 | ui | `standard` | `claude` | — | `medium` |
 | docs | `trivial` | — | — | `low` |
 | mechanical-refactor | `standard` | `codex` | — | `medium` |
-| security | `standard` | `claude` | `premium` | `medium` |
+| security | — | `claude` | `premium` | `medium` |
 | eval | `standard` | `cursor` | — | `medium` |
 | trivial-fix | `trivial` | — | — | `low` |
 

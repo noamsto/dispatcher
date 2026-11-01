@@ -68,7 +68,10 @@
 # optional: `dispatch --profile` fills what the caller left unset. A null field
 # clears it and a null profile removes it, which is how a higher layer undoes a
 # shipped value. A malformed entry is dropped from its layer with a warning,
-# never fatal. It has no env var and no home-manager option: overrides go
+# never fatal. Like grantRoots, a profile's `tier` decides review rigour (which
+# critics and reviewer run), so it is honoured only from the shipped defaults
+# and the locked layer: a copy in the user layer is dropped with a warning (no
+# env var can set a profile). It has no home-manager option: overrides go
 # through userSettings or the user file.
 #
 # laneProfiles maps an engine or "<engine>/<model>" glob to a lane profile (its
@@ -333,6 +336,24 @@ check_task_profiles() {
   jq -c '.layer' <<<"$result"
 }
 
+# strip_task_profile_tiers <json> <file> — drop taskProfiles.*.tier from the
+# user layer: a profile's tier decides review rigour, so it is honoured only
+# from the shipped defaults or the locked settings (like grantRoots). Never
+# fatal: a shipped profile keeps its tier, and a profile left without one makes
+# `dispatch` ask the caller for an explicit tier.
+strip_task_profile_tiers() {
+  local name
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    echo "dispatch-config: ignoring taskProfiles.$name.tier from $2 (user layer) — it is honoured only from the shipped defaults or the locked settings" >&2
+  done < <(jq -r 'if (.taskProfiles | type) == "object" then
+      .taskProfiles | to_entries[] | select((.value | type) == "object" and (.value | has("tier"))) | .key
+    else empty end' <<<"$1")
+  jq -c 'if (.taskProfiles | type) == "object" then
+      .taskProfiles |= with_entries(if (.value | type) == "object" then .value |= del(.tier) else . end)
+    else . end' <<<"$1"
+}
+
 # strip <json> <path> — drop the keys only the locked and env layers may set.
 strip() {
   local key
@@ -377,6 +398,7 @@ if [[ -e $user_file ]]; then
   check_model_shapes "$user" "$user_file" user
   user=$(check_anthropic_credits "$user" "$user_file" user)
   user=$(check_task_profiles "$user" "$user_file" user)
+  user=$(strip_task_profile_tiers "$user" "$user_file")
   user=$(strip "$user" "$user_file")
 fi
 
