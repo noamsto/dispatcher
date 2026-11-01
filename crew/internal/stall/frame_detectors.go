@@ -72,9 +72,9 @@ var (
 	// subagent shape rePermHeader matches: the tool is a bare title (` Bash
 	// command`, no `· from the <agent>` suffix), a `Tip:` hint and a
 	// description sit under it, and the request is boxed between two U+254C
-	// rules. rePermTitle is read only when the frame carries such a rule, so a
-	// letter-only line in the older shape stays a request.
-	rePermTitle = regexp.MustCompile(`^[` + space + `]*[A-Za-z][A-Za-z ]+[` + space + `]*$`)
+	// rules. The title is read only on a frame that carries such a rule, and
+	// only when its next non-blank line is the hint, so a letter-only request
+	// line in the older shape stays a request.
 	rePermTip   = regexp.MustCompile(`^[` + space + `]*Tip:`)
 	rePermRule  = regexp.MustCompile(`^[` + space + `]*\x{254C}{4,}[` + space + `]*$`)
 	reLeadSpace = regexp.MustCompile(`^[` + space + `]+`)
@@ -653,7 +653,11 @@ func holdsEpisode(detail string) bool {
 // request cannot be parsed still fires, with `(unparsed)`. The header is the
 // last `· from the …` line in the capture, not the first: a prior dialog
 // scrolled into the transcript must not make the relay report its stale
-// tool/request while the live dialog is parked at the bottom.
+// tool/request while the live dialog is parked at the bottom. A top-level
+// dialog has one of two headers: that same `· from the …` line, or the bare
+// tool title whose next non-blank line is the `Tip:` hint; the last of either
+// wins, and its request is the first non-blank line inside the U+254C rule box
+// that follows it.
 func permissionDetail(text, pane string) string {
 	clean := rePermOSC.ReplaceAllString(text, "")
 	clean = rePermCSI.ReplaceAllString(clean, "")
@@ -668,10 +672,13 @@ func permissionDetail(text, pane string) string {
 			break
 		}
 	}
-	// topTitle reports whether lines[i] opens a boxed top-level dialog: a bare
-	// tool title whose next non-blank line is the `Tip:` hint.
+	// topTitle reports whether lines[i] opens a boxed top-level dialog: a line
+	// whose next non-blank line is the `Tip:` hint. The title is not
+	// character-restricted (a version may label the tool with digits,
+	// punctuation or non-ASCII); the hint adjacency, plus the rule gate above,
+	// keep a request or description line from matching.
 	topTitle := func(i int) bool {
-		if !rePermTitle.MatchString(lines[i]) {
+		if reBlank.MatchString(lines[i]) || rePermRule.MatchString(lines[i]) {
 			return false
 		}
 		for j := i + 1; j < len(lines); j++ {
@@ -684,19 +691,15 @@ func permissionDetail(text, pane string) string {
 	}
 
 	var tool, req string
-	have, boxed, boxRule := false, false, false
+	have, boxed := false, false
 	for i, l := range lines {
 		switch {
 		case rePermHeader.MatchString(l):
 			tool = rePermTool.ReplaceAllString(reLeadSpace.ReplaceAllString(l, ""), "")
-			req, have, boxed, boxRule = "", true, false, false
+			req, have, boxed = "", true, false
 		case ruled && topTitle(i):
 			tool = reTrimSpace.ReplaceAllString(l, "")
-			req, have, boxed, boxRule = "", true, true, false
-		case boxed && rePermRule.MatchString(l):
-			boxRule = true
-		case boxed && boxRule && req == "" && !reBlank.MatchString(l):
-			req = reTrimSpace.ReplaceAllString(l, "")
+			req, have, boxed = boxedRequest(lines, i), true, true
 		case !boxed && have && req == "" && !reBlank.MatchString(l):
 			req = reTrimSpace.ReplaceAllString(l, "")
 		}
@@ -713,6 +716,28 @@ func permissionDetail(text, pane string) string {
 		body = string(r[:limit])
 	}
 	return body + suffix
+}
+
+// boxedRequest is the first non-blank line between the first and second
+// U+254C rules after a boxed top-level title — the request claude draws
+// inside the rule box. It is empty when the box has no content line, so the
+// caller reports (unparsed) rather than a later line such as the dialog's
+// own "Do you want to proceed?".
+func boxedRequest(lines []string, from int) string {
+	open := false
+	for _, l := range lines[from+1:] {
+		if rePermRule.MatchString(l) {
+			if open {
+				return ""
+			}
+			open = true
+			continue
+		}
+		if open && !reBlank.MatchString(l) {
+			return reTrimSpace.ReplaceAllString(l, "")
+		}
+	}
+	return ""
 }
 
 // stripControl is `tr -d '\000-\010\013-\037\177'`: it keeps tab and newline.
