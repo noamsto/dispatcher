@@ -85,15 +85,25 @@ func TestShowKey(t *testing.T) {
 		{"credential.https://u:FAKETOKEN0686@h.example.helper",
 			"credential." + fingerprinted("https://***@h.example", "https://u:FAKETOKEN0686@h.example") + ".helper"},
 		{"diff.x://attacker.example@y.textconv", "diff.x://attacker.example@y.textconv"},
-		{"url.ssh://evil.example%2f@github.com/.insteadof", Quote("url.ssh://evil.example%2f@github.com/.insteadof")},
+		{"url.ssh://evil.example%2f@github.com/.insteadof", "url." + urlWithheld("ssh://evil.example%2f@github.com/") + ".insteadof"},
+		{"http.https://u:tok@[::1]/.proxy", "http." + urlWithheld("https://u:tok@[::1]/") + ".proxy"},
+		{"http.https://[::1]/?access_token=tok.proxy", "http." + urlWithheld("https://[::1]/?access_token=tok") + ".proxy"},
 		{"url.https://github.com/.insteadof", "url.https://github.com/.insteadof"},
 		{"remote.origin.url", "remote.origin.url"},
-		{"url.a b@h/.insteadof", `url.a\ b@h/.insteadof`},
+		{"url.a b@h/.insteadof", "url." + urlWithheld("a b@h/") + ".insteadof"},
 	} {
-		if got := ShowKey(tc.k); got != tc.want {
+		got := ShowKey(tc.k)
+		if got != tc.want {
 			t.Errorf("ShowKey(%q) = %q, want %q", tc.k, got, tc.want)
 		}
+		if strings.Contains(got, "tok") {
+			t.Errorf("ShowKey(%q) = %q shows the token", tc.k, got)
+		}
 	}
+}
+
+func urlWithheld(sub string) string {
+	return "<url withheld sha256:" + sha8(sub) + ">"
 }
 
 type pairCase struct {

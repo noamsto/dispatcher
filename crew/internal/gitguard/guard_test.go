@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -54,6 +55,36 @@ func TestCheckMaskedKeyHintsEdit(t *testing.T) {
 	kd := ShowKey("credential.https://u:tok@example.com.helper")
 	wantRefusal(t, "refusing git: "+kd+" (from "+cfg+") is not in the git-config baseline "+r.baseline()+"\n"+
 		"  restore the baselined value or remove it: edit "+cfg+"\n"+clearHint(), checkRepo(r))
+}
+
+func TestCheckUnmaskableKeyWithheld(t *testing.T) {
+	r := newRepo(t)
+	r.init(t)
+	const (
+		kUserinfo = "http.https://u:tok@[::1]/.proxy"
+		kQuery    = "http.https://[::1]/?access_token=tok.proxy"
+	)
+	r.config(t, kUserinfo, "x")
+	r.config(t, kQuery, "y")
+	cfg := Quote(r.common + "/config")
+	var want string
+	for _, k := range []string{kQuery, kUserinfo} {
+		kd := ShowKey(k)
+		want += "refusing git: " + kd + " (from " + cfg + ") is not in the git-config baseline " + r.baseline() + "\n" +
+			"  restore the baselined value or remove it: edit " + cfg + "\n" +
+			"  " + kd + " — check it in your own terminal, from each checkout or worktree that may set it: git config --show-origin --get-regexp " + Quote(`^http\.`) + "\n"
+	}
+	want += clearHint()
+	got, err := capture(checkRepo(r))
+	if err == nil {
+		t.Fatal("passed, want refusal")
+	}
+	if got != want {
+		t.Fatalf("stderr:\n%q\nwant:\n%q", got, want)
+	}
+	if strings.Contains(got, "tok") {
+		t.Fatalf("refusal shows the token: %q", got)
+	}
 }
 
 func TestCheckIncludeOrigin(t *testing.T) {

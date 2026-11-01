@@ -132,6 +132,9 @@ func RunBaseline(accept bool, cwd string, o BaselineOptions, stdout, stderr io.W
 		}
 		seen[origin+"\n"+rec] = true
 		say(stdout, "%s (%s, %s)\n", ShowPair(key, value, aliases), e.label, Quote(origin))
+		if kd, withheld := showKey(key); withheld {
+			say(stdout, "  %s%s\n", kd, ownTerminal(key))
+		}
 		shown = append(shown, rec)
 		if isAliasKey(key) {
 			showRewritten(stdout, all, value)

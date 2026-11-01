@@ -210,6 +210,52 @@ func TestInitMigrationNoteMasksOrWithholdsValues(t *testing.T) {
 	}
 }
 
+func TestNoteKeysWithholdsUnmaskableKeys(t *testing.T) {
+	const (
+		kUserinfo = "http.https://u:tok@[::1]/.proxy"
+		kQuery    = "http.https://[::1]/?access_token=tok.proxy"
+		kExec     = "credential.https://u:tok@[::1]/.helper"
+	)
+	pairs := [][2]string{
+		{kUserinfo, "p:pw@proxy.example:3128"},
+		{kQuery, "proxy.example:3128"},
+		{kExec, "store"},
+	}
+	var recs []string
+	for _, p := range pairs {
+		recs = append(recs, p[0]+"\n"+p[1])
+	}
+	slices.Sort(recs)
+	pointer := func(sec string) string {
+		return " — check it in your own terminal, from each checkout or worktree that may set it: git config --show-origin --get-regexp " + Quote("^"+sec+`\.`) + "\n"
+	}
+	line := map[string]string{
+		kUserinfo: "  " + ShowKey(kUserinfo) + "=***@proxy.example:3128 [sha256:" + sha8("p:pw@proxy.example:3128") + "]" + pointer("http"),
+		kQuery:    "  " + ShowKey(kQuery) + "=proxy.example:3128" + pointer("http"),
+		kExec:     "  " + ShowKey(kExec) + pointer("credential"),
+	}
+	var keys []string
+	var lines strings.Builder
+	for _, rec := range recs {
+		k, _, _ := strings.Cut(rec, "\n")
+		keys = append(keys, ShowKey(k))
+		lines.WriteString(line[k])
+	}
+	const file = "/b/git-config-baseline"
+	got, _ := capture(func(w io.Writer) error {
+		noteKeys(w, file, file, recs, nil)
+		return nil
+	})
+	want := "git-config baseline: recorded " + file + ": " + strings.Join(keys, ", ") + "\n" +
+		lines.String() + noteHint(file)
+	if got != want {
+		t.Fatalf("note:\n%q\nwant:\n%q", got, want)
+	}
+	if strings.Contains(got, "tok") {
+		t.Fatalf("note shows the token: %q", got)
+	}
+}
+
 func TestInitMigrationWithholdsAliasRewrittenRemote(t *testing.T) {
 	const url = "ssh://git@example.com/o/r.git"
 	for _, tc := range []struct {

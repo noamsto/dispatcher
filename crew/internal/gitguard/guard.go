@@ -94,7 +94,7 @@ func reportDrift(gitdir, dir, file string, drift []string, bad map[string]bool, 
 	out, _ := git(dir, stderr, "--git-dir="+gitdir, "config", "--list", "--show-origin", "--show-scope", "-z")
 	listing := splitNUL(out)
 	for _, key := range drift {
-		kd := ShowKey(key)
+		kd, withheld := showKey(key)
 		found := map[string]bool{}
 		for i := 0; i+2 < len(listing); i += 3 {
 			if scope := listing[i]; scope != "local" && scope != "worktree" {
@@ -122,6 +122,9 @@ func reportDrift(gitdir, dir, file string, drift []string, bad map[string]bool, 
 		}
 		if len(found) == 0 {
 			say(stderr, "refusing git: %s is not in the git-config baseline %s\n", kd, file)
+		}
+		if withheld {
+			say(stderr, "  %s%s\n", kd, ownTerminal(key))
 		}
 	}
 	say(stderr, "  to clear it: list drift with `crew git-baseline`, remove any key you did not set (git config --unset-all), then accept the rest from your own terminal: `crew git-baseline --accept`\n")

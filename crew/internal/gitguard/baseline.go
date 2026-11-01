@@ -190,12 +190,17 @@ func noteKeys(stderr io.Writer, file, what string, recs, aliases []string) {
 	}
 	say(stderr, "git-config baseline: recorded %s: %s\n", what, strings.Join(keys, ", "))
 	shown := false
+	pointed := map[string]bool{}
 	for _, rec := range recs {
 		if rec == RedirectMark || rec == LegacyMark || strings.HasPrefix(rec, legacyPrefix) {
 			continue
 		}
 		k, v := keyValue(rec)
 		if !IsRedirect(k, v) {
+			if kd, withheld := showKey(k); withheld && !pointed[k] {
+				pointed[k] = true
+				say(stderr, "  %s%s\n", kd, ownTerminal(k))
+			}
 			continue
 		}
 		say(stderr, "  %s\n", showRecorded(k, v, aliases))
@@ -211,19 +216,29 @@ func noteKeys(stderr io.Writer, file, what string, recs, aliases []string) {
 // userinfo or a query: the note reaches the dispatcher, not the human's
 // terminal.
 func showRecorded(k, v string, aliases []string) string {
-	kd, shown := ShowKey(k), ShowPair(k, v, aliases)
+	kd, keyWithheld := showKey(k)
+	shown := ShowPair(k, v, aliases)
 	if !strings.ContainsAny(v, "@?") || shown != kd+"="+Quote(v) {
+		if keyWithheld {
+			return shown + ownTerminal(k)
+		}
 		return shown
 	}
+	reason := "outside the mask grammar"
+	if globAny(k, "remote.*.url", "remote.*.pushurl") && Rewritten(v, aliases) {
+		reason = "an insteadOf alias rewrites it"
+	}
+	return kd + ": value withheld (" + reason + ")" + ownTerminal(k)
+}
+
+// ownTerminal points at the command that reads k's value in the human's own
+// terminal.
+func ownTerminal(k string) string {
 	cmd := "git config --show-origin --get-all " + Quote(k)
 	// A URL-subsection key can carry userinfo ShowKey cannot mask either.
 	if match(urlSubsectionKeys, k, "") && strings.ContainsAny(k, "@?") {
 		sec, _, _ := strings.Cut(k, ".")
 		cmd = "git config --show-origin --get-regexp " + Quote("^"+sec+`\.`)
 	}
-	reason := "outside the mask grammar"
-	if globAny(k, "remote.*.url", "remote.*.pushurl") && Rewritten(v, aliases) {
-		reason = "an insteadOf alias rewrites it"
-	}
-	return kd + ": value withheld (" + reason + ") — check it in your own terminal, from each checkout or worktree that may set it: " + cmd
+	return " — check it in your own terminal, from each checkout or worktree that may set it: " + cmd
 }
