@@ -148,7 +148,7 @@ U9.1	design-doc	git allows one worktree per branch	git allows one worktree per b
 U9.2	one-liner	a live worker in the worktree: dispatch exits non-zero naming the session and remedies (crew reply, or take over)	refuses to stack a second worker on an occupied worktree	adapters/core/dispatch.sh	tests/dispatch.bats::claim: a dispatched label on the exact branch is still refused when a live engine occupies its worktree
 U9.3	design-doc	a finished worker is reclaimed automatically	A worker that has already finished is reclaimed automatically	adapters/core/dispatch.sh	tests/dispatch.bats::gate: reclaims a finished session and proceeds
 U9.4	kept	do not retry a refused dispatch unchanged: redirect with crew reply, or wait	Do not retry a refused dispatch unchanged
-U10.1	kept	crew reap runs on every dispatch (--quiet) and from crew stream	runs on every `dispatch` and from `crew stream`
+U10.1	kept	crew reap runs on every dispatch, from crew stream, and machine-wide on the dispatcher-reap timer	runs on every `dispatch`, from `crew stream`, and machine-wide on the `dispatcher-reap` timer
 U10.2	design-doc	stream cadence: --reap-every (900, 0 off) and after terminal or merged/closed batches	every `--reap-every` seconds (default 900
 U10.3	one-liner	reap reclaims a finished worker's window and worktree once its PR is merged or closed	once its PR is merged or closed	crew/internal/reap	crew/internal/reap/reap_test.go::TestMergedPRReachesRemoval	behaviour pin
 U10.4	design-doc	each reclaim posts a terminal reaped status and removes per-branch records, keeping artifacts	posts a terminal `reaped` status

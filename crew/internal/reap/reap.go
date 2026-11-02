@@ -29,6 +29,9 @@ type Options struct {
 	Self string
 	// RateRun is the in-process `crew rate` sweep.
 	RateRun func(args []string, paths bus.Paths, cwd string, stdout, stderr io.Writer) int
+	// FleetReap reaps one discovered repo, given its bus and checkout; nil
+	// runs Run. Tests replace it to pin --fleet's loop without tmux, gh or a lock.
+	FleetReap func(ctx context.Context, req Request, paths bus.Paths, cwd string, stdout, stderr io.Writer) int
 }
 
 // run is one `crew reap`: the arm's flags and globals, shared by the candidate

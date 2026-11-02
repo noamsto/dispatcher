@@ -199,6 +199,7 @@ self: {
     "/bin"
   ];
   refreshLog = "${config.home.homeDirectory}/Library/Logs/dispatcher-refresh.log";
+  reapLog = "${config.home.homeDirectory}/Library/Logs/dispatcher-reap.log";
 in {
   options.programs.dispatcher = {
     enable = lib.mkEnableOption "the dispatcher agent fan-out harness";
@@ -557,7 +558,7 @@ in {
           Run `refresh-models` and `refresh-scores` once a day without a
           dispatcher session, so the model and score caches do not go stale
           between sessions: a systemd user timer on Linux, a launchd agent on
-          Darwin. Set false to schedule nothing.
+          Darwin. Set false to schedule no refresh run (the reap timer is separate).
         '';
       };
 
@@ -568,6 +569,29 @@ in {
         description = ''
           systemd `OnCalendar` value for the Linux timer. The Darwin agent
           always runs once a day, at midnight.
+        '';
+      };
+    };
+
+    reap = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Reclaim finished workers' windows and worktrees machine-wide without
+          a dispatcher session: a systemd user timer on Linux, a launchd agent
+          on Darwin, running `crew reap --fleet` over every repo with a crew
+          bus. Set false to schedule nothing.
+        '';
+      };
+
+      interval = lib.mkOption {
+        type = lib.types.str;
+        default = "*:0/10";
+        example = "*-*-* 06:00:00";
+        description = ''
+          systemd `OnCalendar` value for the Linux timer. The Darwin agent
+          always runs every 10 minutes.
         '';
       };
     };
@@ -904,44 +928,82 @@ in {
     # Each command may fail alone (cursor-agent missing must not skip scores),
     # so systemd's `-` prefix and the `;` in the launchd shell both run the
     # second one regardless.
-    systemd.user = lib.optionalAttrs (cfg.refresh.enable && pkgs.stdenv.hostPlatform.isLinux) {
-      services.dispatcher-refresh = {
-        Unit.Description = "Refresh the dispatcher model and score caches";
-        Service = {
-          Type = "oneshot";
-          Environment = ["PATH=${refreshPath}"];
-          ExecStart = map (command: "-${command}") refreshCommands;
+    systemd.user = lib.optionalAttrs ((cfg.refresh.enable || cfg.reap.enable) && pkgs.stdenv.hostPlatform.isLinux) (lib.mkMerge [
+      (lib.optionalAttrs cfg.refresh.enable {
+        services.dispatcher-refresh = {
+          Unit.Description = "Refresh the dispatcher model and score caches";
+          Service = {
+            Type = "oneshot";
+            Environment = ["PATH=${refreshPath}"];
+            ExecStart = map (command: "-${command}") refreshCommands;
+          };
         };
-      };
-      timers.dispatcher-refresh = {
-        Unit.Description = "Daily refresh of the dispatcher model and score caches";
-        Timer = {
-          OnCalendar = cfg.refresh.interval;
-          Persistent = true;
-          RandomizedDelaySec = "1h";
+        timers.dispatcher-refresh = {
+          Unit.Description = "Daily refresh of the dispatcher model and score caches";
+          Timer = {
+            OnCalendar = cfg.refresh.interval;
+            Persistent = true;
+            RandomizedDelaySec = "1h";
+          };
+          Install.WantedBy = ["timers.target"];
         };
-        Install.WantedBy = ["timers.target"];
-      };
-    };
+      })
+      (lib.optionalAttrs cfg.reap.enable {
+        services.dispatcher-reap = {
+          Unit.Description = "Reclaim landed workers' windows and worktrees machine-wide";
+          Service = {
+            Type = "oneshot";
+            Environment = ["PATH=${refreshPath}" "CREW_RATE_AUTOSWEEP=sync"];
+            TimeoutStartSec = "1h";
+            ExecStart = ["${pkgsFor.crew}/bin/crew reap --fleet --quiet --no-wait"];
+          };
+        };
+        timers.dispatcher-reap = {
+          Unit.Description = "Periodic machine-wide reap of landed workers";
+          Timer = {
+            OnCalendar = cfg.reap.interval;
+            Persistent = true;
+            RandomizedDelaySec = "1min";
+          };
+          Install.WantedBy = ["timers.target"];
+        };
+      })
+    ]);
 
-    launchd.agents = lib.optionalAttrs (cfg.refresh.enable && pkgs.stdenv.hostPlatform.isDarwin) {
-      dispatcher-refresh = {
-        enable = true;
-        config = {
-          ProgramArguments = ["/bin/sh" "-c" (lib.concatStringsSep "; " refreshCommands)];
-          EnvironmentVariables.PATH = refreshPath;
-          StandardOutPath = refreshLog;
-          StandardErrorPath = refreshLog;
-          StartCalendarInterval = [
-            {
-              Hour = 0;
-              Minute = 0;
-            }
-          ];
-          RunAtLoad = false;
+    launchd.agents = lib.optionalAttrs ((cfg.refresh.enable || cfg.reap.enable) && pkgs.stdenv.hostPlatform.isDarwin) (lib.mkMerge [
+      (lib.optionalAttrs cfg.refresh.enable {
+        dispatcher-refresh = {
+          enable = true;
+          config = {
+            ProgramArguments = ["/bin/sh" "-c" (lib.concatStringsSep "; " refreshCommands)];
+            EnvironmentVariables.PATH = refreshPath;
+            StandardOutPath = refreshLog;
+            StandardErrorPath = refreshLog;
+            StartCalendarInterval = [
+              {
+                Hour = 0;
+                Minute = 0;
+              }
+            ];
+            RunAtLoad = false;
+          };
         };
-      };
-    };
+      })
+      (lib.optionalAttrs cfg.reap.enable {
+        dispatcher-reap = {
+          enable = true;
+          config = {
+            ProgramArguments = ["/bin/sh" "-c" "${pkgsFor.crew}/bin/crew reap --fleet --quiet --no-wait"];
+            EnvironmentVariables.PATH = refreshPath;
+            EnvironmentVariables.CREW_RATE_AUTOSWEEP = "sync";
+            StandardOutPath = reapLog;
+            StandardErrorPath = reapLog;
+            StartInterval = 600;
+            RunAtLoad = false;
+          };
+        };
+      })
+    ]);
 
     xdg.configFile = lib.optionalAttrs (cfg.userSettings != null) {
       "dispatcher/settings.json".source = config.lib.file.mkOutOfStoreSymlink cfg.userSettings;
