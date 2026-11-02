@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -436,6 +437,29 @@ func TestResolveBudget(t *testing.T) {
 	}
 	if _, err := ResolveBudget(context.Background(), filepath.Join(dir, "absent"), &bytes.Buffer{}); err == nil {
 		t.Error("a missing dispatch-config must error")
+	}
+}
+
+// A helper that backgrounds a child holding the pipe must not keep the read
+// past its deadline.
+func TestStatusReadsBoundedByWaitDelay(t *testing.T) {
+	sleep, _ := exec.LookPath("sleep")
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "dispatch-config")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"+sleep+" 30 &\nwait\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, run := range map[string]func(context.Context) error{
+		"ResolveBudget": func(ctx context.Context) error { _, err := ResolveBudget(ctx, bin, io.Discard); return err },
+		"runCmd":        func(ctx context.Context) error { _, err := runCmd(ctx, bin); return err },
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		start := time.Now()
+		err := run(ctx)
+		cancel()
+		if err == nil || time.Since(start) > 5*time.Second {
+			t.Errorf("%s: err %v after %v", name, err, time.Since(start))
+		}
 	}
 }
 

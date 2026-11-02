@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -252,8 +253,14 @@ func probe(ctx context.Context, o LoadOptions, name string, args ...string) stri
 	return out
 }
 
+// waitDelay bounds Wait once the context is done, so a grandchild holding the
+// pipe cannot outlast the deadline (as tmux.Exec).
+const waitDelay = 2 * time.Second
+
 func runCmd(ctx context.Context, name string, args ...string) (string, error) {
-	out, err := exec.CommandContext(ctx, name, args...).Output()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = waitDelay
+	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
 }
 
@@ -309,6 +316,7 @@ func ResolveBudget(ctx context.Context, bin string, stderr io.Writer) (int, erro
 // configJSON is dispatch-config's output: the merged dispatcher settings.
 func configJSON(ctx context.Context, bin string, stderr io.Writer) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, bin)
+	cmd.WaitDelay = waitDelay
 	cmd.Stderr = stderr
 	out, err := cmd.Output()
 	if err != nil {
