@@ -533,8 +533,8 @@ type dueEntry struct {
 	Parked   int64 `json:"parked,omitempty"`
 }
 
-// paused is e with its running stretch banked into Accrued: time that does not
-// count toward demotion neither resets nor adds to it.
+// paused is e with its running stretch banked into Accrued, so a pause keeps
+// the due time so far and counts none of its own.
 func (e dueEntry) paused(nowMS int64) dueEntry {
 	if e.FirstDue != 0 {
 		e.Accrued += max(0, nowMS-e.FirstDue)
