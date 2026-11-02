@@ -201,7 +201,7 @@ Review-gate harness diagnostics (repo-local reviewer override or rejection, igno
 
 ## Report to the bus (mandatory)
 
-Right before every stopping path (done; terminal spec, plan, consult or gate failure; dispatcher-requested stop, incl. startup-drain and permission-block answers; budget exhaustion), emit one complete latest-state metrics snapshot; none while blocked and awaiting (per-cycle `blocked` re-stamps). Resumed run → newer snapshot (`crew rate` takes the latest timestamp). Every pre-execute snapshot: `replanned: false`.
+Right before every stopping path (done; terminal spec, plan, consult or gate failure; dispatcher-requested stop, incl. startup-drain and permission-block answers; budget exhaustion), emit one complete latest-state metrics snapshot; none while blocked and awaiting (per-cycle `blocked` re-stamps). Resumed run → newer snapshot (`crew rate` takes the latest timestamp). Every pre-execute snapshot: `replanned: false`. Before the final `done` or `failed`, stop every background shell, monitor and `crew pr-watch`/`await` you started (claude: `TaskStop`/`KillShell` on your own task ids; pi, codex and cursor: their equivalents, or the captured pid) and confirm the footer shows none; never kill a process you did not start, never `pkill` by name.
 
 - start: `crew status "$CREW_WORKER_ID" working`
 - PR open: `crew status "$CREW_WORKER_ID" pr_open "<acceptance ledger>" <pr_url>`, ledger per "Acceptance ledger"
