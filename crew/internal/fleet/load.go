@@ -75,7 +75,6 @@ type LoadRequest struct {
 	Own    []string
 }
 
-// Lead is one live lead pane.
 type Lead struct {
 	Repo   string `json:"repo"`
 	Branch string `json:"branch"`
@@ -84,7 +83,6 @@ type Lead struct {
 	Weight int    `json:"weight"`
 }
 
-// Engine is one engine's quota summary from the budget cache.
 type Engine struct {
 	InBudget     bool     `json:"in_budget"`
 	HotWindows   []string `json:"hot_windows"`
@@ -109,7 +107,6 @@ type LoadDoc struct {
 	load1Text string // Load1 as the host printed it
 }
 
-// paneFormat is the field list the lead scan reads from every pane.
 const paneFormat = "#{pane_current_command}\x1f#{@crew_name}\x1f#{@crew_branch}\x1f#{@crew_role}\x1f#{pane_current_path}"
 
 // pane is one `list-panes -a` row that is a lead's: stamped with a branch and
@@ -312,7 +309,6 @@ func ResolveBudget(ctx context.Context, bin string, stderr io.Writer) (int, erro
 	return int(math.Min(math.Max(math.Floor(b), 0), maxBudget)), nil
 }
 
-// ConfigBin is the dispatch-config command ResolveBudget runs.
 func ConfigBin() string { return remote.ConfigBin() }
 
 // budgetSummary is the quota cache per engine, with the predicates of
@@ -496,7 +492,6 @@ func refusal(d LoadDoc, add int) string {
 	return ""
 }
 
-// tierWord names the tier a weight stands for, with its trailing space.
 func tierWord(add int) string {
 	switch add {
 	case 1:
