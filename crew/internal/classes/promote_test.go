@@ -16,6 +16,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/drift"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
 const (
@@ -827,6 +828,34 @@ func TestWorkerRefusal(t *testing.T) {
 		stderr.Reset()
 		if got := run(); got != 1 || stderr.String() != want+"\n" {
 			t.Errorf("%s = %d, stderr %q; want 1 and the refusal", name, got, stderr.String())
+		}
+	}
+	if s := f.stateBytes(); s != "" {
+		t.Errorf("state written: %s", s)
+	}
+	if rows := f.busRows(); len(rows) != 0 {
+		t.Errorf("bus rows: %v", rows)
+	}
+}
+
+func TestSenderRefusal(t *testing.T) {
+	f := newPromoteFixture(t, catalogJSON, nil)
+	f.env.Sender = sender.Probes{
+		Getenv: func(k string) string { return map[string]string{"CREW_OVERSEER": "h1"}[k] },
+	}
+	const reason = "this is the overseer session (CREW_OVERSEER is set), which posts only as overseer:<host> through crew overseer msg"
+	var stderr bytes.Buffer
+	if got := Check(eligibleRows(), f.env, &stderr); got != 0 || stderr.Len() != 0 {
+		t.Errorf("Check = %d, stderr %q; want 0 and silence", got, stderr.String())
+	}
+	for name, run := range map[string]func() int{
+		"promote": func() int { return Promote("codex", "standard", "gpt-5.7-terra", f.env, &stderr) },
+		"revert":  func() int { return Revert("codex", "standard", f.env, &stderr) },
+	} {
+		stderr.Reset()
+		const want = "crew: class: refusing sender 'dispatcher:c1' — " + reason + "\n"
+		if got := run(); got != 1 || stderr.String() != want {
+			t.Errorf("%s = %d, stderr %q; want 1 and %q", name, got, stderr.String(), want)
 		}
 	}
 	if s := f.stateBytes(); s != "" {

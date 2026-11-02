@@ -99,6 +99,11 @@ func classRepo(t *testing.T) (e env, logPath, statePath string) {
 	t.Setenv("XDG_DATA_HOME", data)
 	t.Setenv("MODEL_RESOLVE_SCRIPT", script)
 	t.Setenv("DISPATCH_CONFIG_BIN", stub)
+	// The sender check reads the real tmux, which would anchor this test to the
+	// stamped pane it runs in.
+	stubs := t.TempDir()
+	writeStub(t, stubs, "tmux", "#!/bin/sh\nexit 1\n")
+	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return e, logPath, filepath.Join(data, "crew", "model-class-state.json")
 }
 

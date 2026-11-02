@@ -3,6 +3,7 @@ package classes
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/peer"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
 // minRuns is D5's floor on a trial's rated runs.
@@ -67,6 +69,13 @@ type Env struct {
 	Now      func() time.Time       // nil → time.Now
 	CrewID   string                 // "" → no change is made
 	Paths    bus.Paths              // the bus announcements go to
+	Sender   sender.Probes          // the sender check's reads; zero checks nothing
+}
+
+// senderRefusal is the sender check's reason for this session posting as
+// dispatcher:<CrewID> into its crew, "" when it may.
+func (e Env) senderRefusal() string {
+	return sender.Check(context.Background(), "dispatcher:"+e.CrewID, e.CrewID, e.Sender)
 }
 
 func (e Env) withDefaults() Env {
@@ -398,7 +407,7 @@ func withStateFile(st State, fn func(path string) error) error {
 // promoted. It never fails the sweep that runs it: problems are stderr lines.
 func Check(rows []any, env Env, stderr io.Writer) int {
 	env = env.withDefaults()
-	if WorkerRefusal(env.Getenv) != "" {
+	if WorkerRefusal(env.Getenv) != "" || env.senderRefusal() != "" {
 		return 0
 	}
 	statePath := StatePath(env.Getenv)
@@ -576,6 +585,9 @@ func apply(engine, class string, env Env, stderr io.Writer, prefix string, mutat
 	}
 	if env.CrewID == "" {
 		return errNoCrew
+	}
+	if reason := env.senderRefusal(); reason != "" {
+		return fmt.Errorf("refusing sender 'dispatcher:%s' — %s", env.CrewID, reason)
 	}
 	if env.Script == "" {
 		return ErrUnavailable

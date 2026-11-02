@@ -29,6 +29,10 @@ func RunMsg(ctx context.Context, req MsgRequest, paths bus.Paths, stderr io.Writ
 	if refuseSender(ctx, "msg", from, crew, o, stderr) {
 		return exitFailure
 	}
+	if strings.HasPrefix(from, "overseer:") {
+		say(stderr, "crew: msg: refusing sender '%s' — the overseer posts only through crew overseer msg, which picks the bus and checks the body\n", from)
+		return exitFailure
+	}
 
 	// A caller that expanded an unset shell var into the recipient (e.g.
 	// `dispatcher:$CREW_ID` with CREW_ID empty) silently lands a message nobody
@@ -55,9 +59,12 @@ func RunMsg(ctx context.Context, req MsgRequest, paths bus.Paths, stderr io.Writ
 		return exitFailure
 	}
 
-	return post("msg", paths, stderr, func(b string) string {
-		return encodeLine(row[string]{TS: ts, CrewID: crew, From: from, To: to, Kind: bus.KindMsg, Body: b})
-	}, body)
+	return post("msg", paths, stderr, func(b string) string { return msgLine(ts, crew, from, to, b) }, body)
+}
+
+// msgLine is a msg row as written.
+func msgLine(ts int64, crew, from, to, body string) string {
+	return encodeLine(row[string]{TS: ts, CrewID: crew, From: from, To: to, Kind: bus.KindMsg, Body: body})
 }
 
 // peerRefusal is why a msg to peer:<host> cannot ride the peer sync, "" when it
@@ -81,7 +88,7 @@ func peerRefusal(from, host, body, crew string, ts int64, o Options) string {
 	if len(body) > peer.MaxBody {
 		return fmt.Sprintf("body is %d bytes, over the %d-byte peer limit", len(body), peer.MaxBody)
 	}
-	line := encodeLine(row[string]{TS: ts, CrewID: crew, From: from, To: "peer:" + host, Kind: bus.KindMsg, Body: body})
+	line := msgLine(ts, crew, from, "peer:"+host, body)
 	if len(line) > bus.LineMax {
 		return fmt.Sprintf("the encoded row is %d bytes, over the %d-byte bus line, so the body would be elided", len(line), bus.LineMax)
 	}

@@ -24,6 +24,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
 //go:embed already.jq
@@ -70,6 +71,7 @@ type Options struct {
 	// Remote runs argv on host and returns its status: how a nudge reaches a
 	// worker dispatched there, whose pane is on that host's tmux. Nil routes nothing.
 	Remote func(host string, argv []string) int
+	Sender sender.Probes // the sender check's reads; zero checks nothing
 }
 
 // Request is the typed nudge call. Crew "" is the checkout's crew; Wait "" is no
@@ -122,6 +124,9 @@ func Run(ctx context.Context, r Request, paths bus.Paths, stdout, stderr io.Writ
 	}
 	if a.crew == "" {
 		return fail(stderr, "CREW_ID not set and no WORKER_TASK.md crew_id — pass --crew <id>")
+	}
+	if reason := sender.Check(ctx, "dispatcher:"+a.crew, a.crew, o.Sender); reason != "" {
+		return refuse(stderr, "refusing sender 'dispatcher:"+a.crew+"' — "+reason)
 	}
 
 	want := ""

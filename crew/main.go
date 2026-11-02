@@ -848,6 +848,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		req, _ := nudge.NewRequest(str(n.Crew), n.Target, n.Wait)
 		crewID := func() string { return bus.CrewID(ctx, cwd) }
 		o := nudge.Default(paths, stderr, os.Getpid(), crewID)
+		o.Sender = senderProbes(e.proc)
 		o.Remote = func(host string, argv []string) int {
 			return remoteAs(ctx, e, cwd, cmp.Or(req.Crew, crewID()))(host, argv, stdout, stderr)
 		}
@@ -1190,6 +1191,7 @@ func classEnv(ctx context.Context, cwd string, paths bus.Paths) classes.Env {
 		Script: cmp.Or(os.Getenv("MODEL_RESOLVE_SCRIPT"), modelResolveScript),
 		CrewID: bus.CrewID(ctx, cwd),
 		Paths:  paths,
+		Sender: senderProbes(proc.OS{}),
 	}
 }
 
