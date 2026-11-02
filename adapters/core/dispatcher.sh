@@ -467,8 +467,9 @@ if [ -n "$relaunch_id" ]; then
     echo "dispatcher: --relaunch: crew $CREW_ID's launch record agent $rec_agent is not enabled and installed here (dispatch --engines)" >&2
     exit 1
   fi
-  word_re='^[A-Za-z0-9._:/@-]{1,80}$'
-  [[ $rec_model =~ $word_re ]] || _bad_record model "$rec_model"
+  # No leading '-': the model must not read as a flag.
+  model_re='^[A-Za-z0-9._:/@][A-Za-z0-9._:/@-]{0,79}$'
+  [[ $rec_model =~ $model_re ]] || _bad_record model "$rec_model"
   case "$rec_effort" in
   '' | low | medium | high | xhigh | max | ultra) ;;
   *) _bad_record effort "$rec_effort" ;;
@@ -478,7 +479,14 @@ if [ -n "$relaunch_id" ]; then
 
   # A relaunch that keeps dying must not loop. The marker is worker-writable
   # too, so a non-numeric or future one counts as recent: refusing is the safe
-  # side.
+  # side. mkdir is the lock (no flock on macOS), so two concurrent relaunches
+  # cannot both pass the check before either writes the marker.
+  lock="$crew_dir/.relaunch.lock"
+  mkdir -- "$lock" 2>/dev/null || {
+    echo "dispatcher: --relaunch: another --relaunch of crew $CREW_ID is in progress ($lock)" >&2
+    exit 1
+  }
+  trap 'rmdir -- "$lock"' EXIT
   marker="$crew_dir/relaunch"
   if [ -e "$marker" ]; then
     last=$(cat -- "$marker" 2>/dev/null) || last=""
@@ -507,8 +515,9 @@ if [ -n "$relaunch_id" ]; then
     relaunch_cmd+=("This dispatcher session for crew $CREW_ID was relaunched after a crash, without a handoff note. Run crew roster, answer every blocked worker, reconcile the other rows, and confirm the queue and standing instructions with the human before dispatching anything new.")
     ;;
   esac
-  pane=$(tmux new-window -d -P -F '#{pane_id}' -c "$wt" -n "dispatcher:$(basename "$wt")" \
-    -e "CREW_ID=$CREW_ID" -- "${relaunch_cmd[@]}") || {
+  # The window starts on a placeholder so remain-on-exit is set before the
+  # launcher runs: one that dies at once would otherwise close the pane first.
+  pane=$(tmux new-window -d -P -F '#{pane_id}' -c "$wt" -n "dispatcher:$(basename "$wt")" -- sleep 60) || {
     echo "dispatcher: --relaunch: tmux new-window failed" >&2
     exit 1
   }
@@ -519,6 +528,11 @@ if [ -n "$relaunch_id" ]; then
   # Kept on until the new pid shows, so a refusing launcher's message stays
   # readable; off after, or every later normal exit would leave a dead window.
   tmux set-option -p -t "$pane" remain-on-exit on
+  tmux respawn-pane -k -t "$pane" -c "$wt" -e "CREW_ID=$CREW_ID" -- "${relaunch_cmd[@]}" || {
+    tmux kill-pane -t "$pane" || true
+    echo "dispatcher: --relaunch: tmux respawn-pane failed — killed placeholder pane $pane" >&2
+    exit 1
+  }
   for _ in $(seq 20); do
     sleep 0.5
     new_pid=$(cat -- "$crew_dir/pid" 2>/dev/null) || new_pid=""

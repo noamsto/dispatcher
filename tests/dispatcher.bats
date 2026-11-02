@@ -1889,9 +1889,10 @@ date +%s >\"\$DISPATCHER_HANDOFF_DIR/\$CREW_ID.\$DISPATCHER_LAUNCHER_PID.restart
 # _relaunch_setup — in tmux, crew c1 dead with a launch record. The crew stub
 # answers `crews` from crews.tsv and runs the real engine-cmd. The tmux stub
 # logs every call; display-message prints pane.state (fails when absent);
-# new-window keeps its argv (new-window.argv, one word per line), prints %9 and
-# starts the command after `--` in its -c dir with its -e vars. The dispatcher
-# stub registers a live pid, or exits 1 under RELAUNCH_DISPATCHER=fail.
+# new-window keeps its argv (new-window.argv, one word per line) and prints %9;
+# respawn-pane keeps its argv (respawn-pane.argv) and starts the command after
+# `--` in its -c dir with its -e vars, or fails under RELAUNCH_RESPAWN=fail. The
+# dispatcher stub registers a live pid, or exits 1 under RELAUNCH_DISPATCHER=fail.
 _relaunch_setup() {
   export TMUX=/tmp/fake,1,0 TMUX_PANE=%1
   crews_tsv "$(printf 'c1\t5\t5\t1\t999999\tno')" >"$STUB_DIR/crews.tsv"
@@ -1914,19 +1915,23 @@ display-message)
   ;;
 new-window)
   printf '%s\n' "$@" >"$STUB_DIR/new-window.argv"
+  echo %9
+  ;;
+respawn-pane)
+  printf '%s\n' "$@" >"$STUB_DIR/respawn-pane.argv"
+  [ "${RELAUNCH_RESPAWN:-}" != fail ] || exit 1
   shift
   dir="" vars=()
   while [ "$1" != -- ]; do
     case "$1" in
     -c) dir=$2; shift ;;
     -e) vars+=("$2"); shift ;;
-    -F | -n) shift ;;
+    -t) shift ;;
     esac
     shift
   done
   shift
   (cd "$dir" && export "${vars[@]}" && exec "$@") </dev/null >"$STUB_DIR/window.out" 2>&1 &
-  echo %9
   ;;
 esac
 exit 0
@@ -2021,6 +2026,23 @@ _relaunch_refuses() { # message [repo]
   finish_rows 3
 }
 
+@test "1420: --relaunch passes a marker older than 30 min" {
+  _relaunch_setup
+  echo $(($(date +%s) - 1801)) >"$C1/relaunch"
+  run run_launcher --relaunch c1 --repo "$TEST_REPO"
+  live_pid=$(cat "$STUB_DIR/dispatcher.pid")
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"relaunched crew c1 in pane %9"* ]]
+}
+
+@test "1420: --relaunch refuses while another --relaunch of the crew holds the lock" {
+  _relaunch_setup
+  mkdir "$C1/.relaunch.lock"
+  _relaunch_refuses "another --relaunch of crew c1 is in progress"
+  [ -d "$C1/.relaunch.lock" ]
+  [ ! -e "$C1/relaunch" ]
+}
+
 @test "1420: --relaunch refuses outside tmux" {
   _relaunch_setup
   unset TMUX
@@ -2050,7 +2072,8 @@ _bad_record_row() { # record message
   keep_row effort _bad_record_row '{"agent":"claude","model":"opus","effort":"huge","autocompact":"auto"}' "launch record effort"
   keep_row autocompact _bad_record_row '{"agent":"claude","model":"opus","effort":"high","autocompact":"-1"}' "launch record autocompact"
   keep_row model-type _bad_record_row '{"agent":"claude","model":["opus"],"effort":"high","autocompact":"auto"}' "launch record model"
-  finish_rows 7
+  keep_row model-flag _bad_record_row '{"agent":"claude","model":"--x","effort":"high","autocompact":"auto"}' "launch record model"
+  finish_rows 8
   [ ! -e "$pwned" ]
 }
 
@@ -2061,7 +2084,22 @@ _bad_record_row() { # record message
 }
 
 _assert_clean_argv() {
-  if grep -q "[;&|\$\`<>\\\\'\"]" "$STUB_DIR/new-window.argv"; then return 1; fi
+  if grep -q "[;&|\$\`<>\\\\'\"]" "$STUB_DIR/respawn-pane.argv"; then return 1; fi
+}
+
+# _assert_kept_then_respawned — remain-on-exit is on before the command starts,
+# so a launcher that dies at once still leaves its pane readable.
+_assert_kept_then_respawned() {
+  local on respawn
+  on=$(grep -nx 'set-option -p -t %9 remain-on-exit on' "$STUB_LOG" | cut -d: -f1)
+  respawn=$(grep -n '^respawn-pane ' "$STUB_LOG" | cut -d: -f1)
+  [ -n "$on" ] && [ -n "$respawn" ] && [ "$on" -lt "$respawn" ]
+}
+
+_want_new_window_argv() { # wt
+  printf '%s\n' new-window -d -P -F '#{pane_id}' -c "$1" -n "dispatcher:$(basename "$1")" -- sleep 60 \
+    >"$BATS_TEST_TMPDIR/want-new-window.argv"
+  diff "$BATS_TEST_TMPDIR/want-new-window.argv" "$STUB_DIR/new-window.argv"
 }
 
 @test "1420: --relaunch starts a claude crew as an argv and waits for its new pid" {
@@ -2072,13 +2110,15 @@ _assert_clean_argv() {
   [[ "$output" == *"relaunched crew c1 in pane %9"* ]]
   wt=$(git rev-parse --path-format=absolute --git-common-dir)
   wt=${wt%/.git}
-  printf '%s\n' new-window -d -P -F '#{pane_id}' -c "$wt" -n "dispatcher:$(basename "$wt")" -e CREW_ID=c1 -- \
+  _want_new_window_argv "$wt"
+  printf '%s\n' respawn-pane -k -t %9 -c "$wt" -e CREW_ID=c1 -- \
     env -u CREW_OVERSEER dispatcher --fresh --no-note --agent claude --model sonnet --effort max --autocompact 200000 \
     >"$BATS_TEST_TMPDIR/want.argv"
-  diff "$BATS_TEST_TMPDIR/want.argv" "$STUB_DIR/new-window.argv"
+  diff "$BATS_TEST_TMPDIR/want.argv" "$STUB_DIR/respawn-pane.argv"
   _assert_clean_argv
-  grep -qx 'set-option -p -t %9 remain-on-exit on' "$STUB_LOG"
+  _assert_kept_then_respawned
   grep -qx 'set-option -p -t %9 remain-on-exit off' "$STUB_LOG"
+  [ ! -e "$C1/.relaunch.lock" ]
   [[ $(cat "$C1/relaunch") =~ ^[0-9]+$ ]]
 }
 
@@ -2088,11 +2128,16 @@ _assert_clean_argv() {
   run run_launcher --relaunch c1 --repo "$TEST_REPO"
   live_pid=$(cat "$STUB_DIR/dispatcher.pid")
   [ "$status" -eq 0 ]
-  mapfile -t got <"$STUB_DIR/new-window.argv"
-  [ "${got[*]:12:10}" = "env -u CREW_OVERSEER dispatcher --agent cursor --model kimi-k3-high --autocompact auto" ]
-  [ "${#got[@]}" -eq 23 ]
-  [[ "${got[22]}" == *"relaunched after a crash"* && "${got[22]}" == *"crew roster"* ]]
+  wt=$(git rev-parse --path-format=absolute --git-common-dir)
+  wt=${wt%/.git}
+  _want_new_window_argv "$wt"
+  mapfile -t got <"$STUB_DIR/respawn-pane.argv"
+  [ "${got[*]:0:9}" = "respawn-pane -k -t %9 -c $wt -e CREW_ID=c1 --" ]
+  [ "${got[*]:9:10}" = "env -u CREW_OVERSEER dispatcher --agent cursor --model kimi-k3-high --autocompact auto" ]
+  [ "${#got[@]}" -eq 20 ]
+  [[ "${got[19]}" == *"relaunched after a crash"* && "${got[19]}" == *"crew roster"* ]]
   _assert_clean_argv
+  _assert_kept_then_respawned
   grep -qx 'set-option -p -t %9 remain-on-exit off' "$STUB_LOG"
 }
 
@@ -2102,8 +2147,19 @@ _assert_clean_argv() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"no live dispatcher registered"* ]]
   [ -e "$STUB_DIR/dispatcher.argv" ]
-  grep -qx 'set-option -p -t %9 remain-on-exit on' "$STUB_LOG"
+  _assert_kept_then_respawned
   if grep -qx 'set-option -p -t %9 remain-on-exit off' "$STUB_LOG"; then return 1; fi
+  [ ! -e "$C1/.relaunch.lock" ]
+}
+
+@test "1420: --relaunch kills the placeholder pane when respawn-pane fails" {
+  _relaunch_setup
+  RELAUNCH_RESPAWN=fail run run_launcher --relaunch c1 --repo "$TEST_REPO"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"tmux respawn-pane failed"* ]]
+  grep -qx 'kill-pane -t %9' "$STUB_LOG"
+  [ ! -e "$STUB_DIR/dispatcher.argv" ]
+  [ ! -e "$C1/.relaunch.lock" ]
 }
 
 @test "1420: --relaunch takes no other flags or task words; --repo needs --relaunch" {
