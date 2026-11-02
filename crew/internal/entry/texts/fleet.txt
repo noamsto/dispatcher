@@ -74,9 +74,9 @@ It never reaps and never runs holds; --states, --park, --coalesce and --retry
 are accepted and do nothing here.
 
 The overseer lane starts silent: a bus with no overseer cursor is read from the
-lane's start, and its first status read is a baseline that wakes nothing. What
-predates the lane is in `crew fleet status` (overseer_inbox, attention), never
-a wake.
+lane's start, and its first completed status read is a baseline that wakes
+nothing. What predates the lane is in `crew fleet status` (overseer_inbox,
+attention), never a wake.
 
   crew fleet stream --crew <crew-id>
   crew fleet stream --overseer

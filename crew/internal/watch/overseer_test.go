@@ -131,7 +131,7 @@ func TestFoldOverseerSkipsNonObjectRows(t *testing.T) {
 func TestFoldOverseerSkipsRowsWithoutAWholeMsTS(t *testing.T) {
 	ok1 := overseerMsg(1001, "c1", "dispatcher:c1", overseerMe, "ack")
 	huge := strings.Repeat("9", 400)
-	for _, ts := range []string{"2500.5", "1e30", "99999999999999999999", "-5", "1e400", "-1e400", huge, "-" + huge} {
+	for _, ts := range []string{"2500.5", "1e30", "99999999999999999999", "-5", "1e400", "-1e400", huge, "-" + huge, "9007199254740992", "9007199254740991.5"} {
 		row := func(from string) string {
 			return `{"ts":` + ts + `,"crew_id":"c1","from":"` + from + `","to":"` + overseerMe + `","kind":"msg","body":"x"}`
 		}
@@ -159,6 +159,9 @@ func TestWholeMS(t *testing.T) {
 		{"-5", 0, false},
 		{"9007199254740992", 0, false},
 		{"1e400", 0, false},
+		{"2500.5", 0, false},
+		{"9.007199254740992e15", 0, false},
+		{"-2.5e3", 0, false},
 		{"9007199254740991", 9007199254740991, true},
 		{"2.5e3", 2500, true},
 	} {
