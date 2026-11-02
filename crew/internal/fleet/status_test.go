@@ -492,7 +492,9 @@ func TestUnsentInput(t *testing.T) {
 	frame := func(row string) string {
 		return strings.Join([]string{"  ⎿  Done", rule, row, rule, "  ? for shortcuts"}, "\n")
 	}
-	plain := func(row string) string { return strings.NewReplacer("\x1b[2m", "", "\x1b[0m", "", "\x1b[39m", "").Replace(frame(row)) }
+	plain := func(row string) string {
+		return strings.NewReplacer("\x1b[2m", "", "\x1b[0m", "", "\x1b[39m", "").Replace(frame(row))
+	}
 	ghost := "\x1b[39m❯\u00a0\x1b[2mmerge it\x1b[0m"
 	typed := "\x1b[39m❯\u00a0merge it"
 	for _, tc := range []struct {
