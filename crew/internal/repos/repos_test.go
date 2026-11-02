@@ -218,3 +218,73 @@ func TestName(t *testing.T) {
 		}
 	}
 }
+
+// Register is `_registry_add`: it makes the registry's directory, appends the
+// line once, and treats an exact line already there as done.
+func TestRegisterAppendsOnceAndCreatesTheDir(t *testing.T) {
+	reg := filepath.Join(t.TempDir(), "nested", "crew", "repos")
+	read := func() string {
+		t.Helper()
+		data, err := os.ReadFile(reg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	if err := Register(reg, "/w/a/.git"); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got != "/w/a/.git\n" {
+		t.Fatalf("registry %q", got)
+	}
+	for _, common := range []string{"/w/a/.git", "/w/b/.git", "/w/a/.git", "/w/b/.git"} {
+		if err := Register(reg, common); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := read(); got != "/w/a/.git\n/w/b/.git\n" {
+		t.Errorf("registry %q, want each line once", got)
+	}
+	// A line that only contains the path is not the exact line.
+	if err := Register(reg, "/w/a"); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got != "/w/a/.git\n/w/b/.git\n/w/a\n" {
+		t.Errorf("registry %q, want the prefix path added", got)
+	}
+}
+
+func TestRegisterReportsAnUnwritableRegistry(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(filepath.Join(blocker, "crew", "repos"), "/w/a/.git"); err == nil {
+		t.Error("registering under a regular file succeeded")
+	}
+}
+
+// Registered reads the registry alone: a bus the walk would find is no member.
+func TestRegisteredIsTheRegistryOnly(t *testing.T) {
+	root := t.TempDir()
+	a := mkbus(t, filepath.Join(root, "a"))
+	z := mkbus(t, filepath.Join(root, "z"))
+	mkbus(t, filepath.Join(root, "walk-only"))
+	gone := filepath.Join(root, "gone", ".git")
+	data := t.TempDir()
+	reg := filepath.Join(data, "crew", "repos")
+	if err := os.MkdirAll(filepath.Dir(reg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reg, []byte(z+"\n"+gone+"\n\n"+a+"\n"+z+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := envOf(map[string]string{"XDG_DATA_HOME": data, "CREW_SWEEP_ROOTS": root, "HOME": root})
+	want := []Repo{{a, StatusOK}, {gone, StatusGone}, {z, StatusOK}}
+	if got := Registered("", env); !reflect.DeepEqual(got, want) {
+		t.Errorf("Registered = %v, want %v", got, want)
+	}
+	if got := Registered(filepath.Join(data, "absent"), env); len(got) != 0 {
+		t.Errorf("a missing registry lists %v", got)
+	}
+}

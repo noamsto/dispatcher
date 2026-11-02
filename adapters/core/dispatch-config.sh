@@ -645,6 +645,8 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["openrouter", "monthlyUsd"]; "a number or string"; type == "number" or type == "string")
   | need(["profile"]; "a string"; type == "string")
   | need(["fleetBudget"]; "a non-negative integer"; type == "number" and . == floor and . >= 0)
+  | need(["fleetBackfillAfter"]; "a non-negative integer"; type == "number" and . == floor and . >= 0)
+  | need(["fleetHeadTimeout"]; "a non-negative integer"; type == "number" and . == floor and . >= 0)
   | need(["repoTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | need(["orgTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | need(["workerDeniedMcpServers"]; "an array of MCP server names (letters, digits, \"_\", \"-\")"; string_array and all(.[]; test("^[A-Za-z0-9_-]+$")))

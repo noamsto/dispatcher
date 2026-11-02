@@ -1,9 +1,24 @@
-usage: crew hold due [--crew ID] [--json]
+usage: crew hold due [--crew ID] [--json [--with-parked]]
 
-Only the holds whose quota window has already reset — what a dispatcher may
-dispatch now.
+Only the holds that may be dispatched now. A quota hold is due when its
+quota window has already reset, a fleet hold when the fleet queue admits it (at
+most one machine-wide). Take a due fleet hold with `dispatch --fleet-hold <id>`,
+then `crew hold release <id>`: a plain dispatch is refused by the queue's
+admission. Fleet holds the queue parked are listed apart and never due. Exits 0
+when something is due, 1 when nothing is, 5 when the fleet queue cannot be
+evaluated (nothing is printed).
 
-  --crew  Crew id; defaults to this repo's crew
-  --json  Machine-readable rows
+  --crew         Crew id; defaults to this repo's crew
+  --json         The due holds, one array of hold rows
+  --with-parked  With --json: one object, {"due": [...], "parked": [...]}, both
+                 arrays of hold rows, each parked row with an added "reason"
+
+The table lists the due rows, then, if any hold is parked, a block headed
+`parked  reason  branch  title`. The reason is demoted (it was the due hold for
+fleetHeadTimeout, was demoted, and was the due hold for another without being
+released) or oversize (heavier than fleetBudget, so the queue never admits it).
+A parked hold stays outstanding until `crew hold release <id>`: release it, then
+re-add the task as a new fleet hold (an oversize one at a tier within
+fleetBudget), or ask the human.
 
   crew hold due --json

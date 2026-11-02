@@ -130,8 +130,8 @@ as `crew fleet` finds them.
            answered} (the first row of its current run of blocked rows),
            finished_window, remote_unprobed and pr_candidate. machine is
            `crew fleet load`'s document, null when fleetBudget cannot be read
-           (the reason goes to stderr); queue stays empty until fleet holds
-           exist. overseer_inbox lists a crew's dispatcher msgs to
+           (the reason goes to stderr); queue is the fleet hold queue's {head,
+           demoted[], parked[]}, as `crew fleet queue` lists it. overseer_inbox lists a crew's dispatcher msgs to
            overseer:<host> after the overseer's cursor, else from the last 24 h;
            msgs from any other sender only count in misrouted, over the last
            24 h whatever the cursor
@@ -148,3 +148,48 @@ a remote worker is its dispatch row with remote_unprobed true. Gone repos and
 repos without a bus land in skipped; the exit status is 0 with a document.
 
   crew fleet status --json --gh | jq '.repos[].crews[] | select(.attention == "unattended")'
+
+usage: crew fleet queue [--json] [--admit WEIGHT [--hold ID] [--own BRANCH]...] [--crew ID]
+
+The machine-wide queue of fleet holds (`crew hold add --fleet`), from any
+directory (no git repo needed), across every repo in the registry. Holds are in
+queue order: repo priority (`crew fleet prio`), then hold prio, then the repo
+whose newest fleet release is oldest, then the hold's age. STATE is due (the one
+hold the gate admits now), waiting, demoted (it stayed the due hold for
+fleetHeadTimeout without being released, `crew hold release`, so it queues
+behind every non-demoted hold) or parked, with the reason: oversize (heavier
+than fleetBudget), demoted (demoted, and due for another fleetHeadTimeout) or
+ineligible (its crew has no live dispatcher, or its lane is dead or stale).
+Read-only: it never writes fleet-due.json or the bus.
+
+  --json         The document: {ts, budget, free, load_over, due, head,
+                 holds[{repo, common, crew_id, id, branch, prio, repo_prio,
+                 weight, ts, waited_s, state, reason, first_due, demoted_at}]}.
+                 due and head are null when there is none
+  --crew ID      List only this crew's holds
+  --admit WEIGHT Judge a new lead of this weight against the queue: exit 0
+                 admits it, 3 refuses and names the first hold in order on
+                 stdout, 1 is an error. It is refused while a hold that can
+                 bind waits, unless it re-dispatches a branch that already has
+                 a lead pane (--own) or takes the due hold (--hold)
+  --hold ID      The fleet hold this dispatch takes (dispatch --fleet-hold);
+                 release it with crew hold release after the dispatch
+  --own BRANCH   That dispatch's own branch; repeatable
+
+  crew fleet queue --json | jq '.head'
+
+usage: crew fleet prio <repo> <n>
+
+Set a registered repo's priority in the fleet queue, on the human's word. 0 is
+the default and resets it; higher goes first, and n may be negative (`crew
+fleet prio <repo> -3`). <repo> is the repo's git common dir, its checkout or any
+directory inside it (a linked worktree included), or its name as `crew fleet`
+shows it; it must be in the registry. n is a whole number within one million
+either way.
+
+Refused in a worker or role session and in a crew-stamped pane, so a worker
+cannot rank its own repo ahead of the rest. The priority is written to
+${XDG_DATA_HOME:-~/.local/share}/crew/fleet-priority.json and every change
+appends one line (time, repo, old, new, caller) to fleet-priority.log beside it.
+
+  crew fleet prio acme/api 5

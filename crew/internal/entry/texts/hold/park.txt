@@ -1,9 +1,11 @@
 usage: crew hold park <default> [--crew ID]
 
 Print how many seconds to park a watch for: the earlier of <default> and the
-moment the earliest outstanding hold's window resets, never below 1 — or
+moment the earliest outstanding quota hold's window resets, never below 1 — or
 <default> itself when no hold is outstanding, or the earliest already matured.
-Writes nothing; it is the length to hand 'crew watch --timeout'.
+While any fleet hold is outstanding the answer is at most 60, so the lane
+re-checks the fleet queue each minute. Writes nothing; it is the length to hand
+'crew watch --timeout'.
 
   <default>  Positive whole seconds
   --crew     Crew id; defaults to this repo's crew

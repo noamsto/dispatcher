@@ -174,6 +174,8 @@ let
     engines = ["claude" "codex" "cursor" "pi"];
     grantRoots = ["/a/git" "/b/src"];
     fleetBudget = 0;
+    fleetBackfillAfter = 600;
+    fleetHeadTimeout = 300;
     repoTrackers."factify-inc/mono" = "linear:ENG";
     orgTrackers."factify-inc" = "linear:ENG";
     openrouter = {
@@ -947,7 +949,7 @@ worktree_git_lib_crew_go_row() { # bin
 }
 
 @test "the module declares the engines option" {
-  for name in engines grantRoots fleetBudget repoTrackers orgTrackers; do
+  for name in engines grantRoots fleetBudget fleetBackfillAfter fleetHeadTimeout repoTrackers orgTrackers; do
     run jq -e --arg n "$name" '(.options | index($n)) != null' "$EVAL"
     [ "$status" -eq 0 ]
   done
@@ -1075,6 +1077,10 @@ worktree_git_lib_crew_go_row() { # bin
   run jq -e '.full.locked.profile == "work"' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.fleetBudget == 0' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.fleetBackfillAfter == 600' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.fleetHeadTimeout == 300' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.engines == ["claude", "codex", "cursor", "pi"]' "$EVAL"
   [ "$status" -eq 0 ]

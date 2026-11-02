@@ -357,6 +357,28 @@ func TestStatusQuotaHolds(t *testing.T) {
 	}
 }
 
+// Only the dispatcher writes a hold row: a worker's post to hold:<crew> makes
+// no crew a holder, adds no hold and dates none.
+func TestStatusIgnoresWorkerHoldRows(t *testing.T) {
+	quota := func(id string) string {
+		return fmt.Sprintf(`"{\"id\":\"%s\",\"wait\":{\"engine\":\"claude\",\"window\":\"five_hour\",\"resets_at\":%d},\"task\":{}}"`, id, nowS+3600)
+	}
+	f := newStatusFix(t,
+		wmsg(900, "c1", "worker:feat/x#s1", "hold:c1", quota("h")),
+		wmsg(300, "c1", "dispatcher:c1", "hold:c1", quota("h")),
+		wmsg(800, "c2", "worker:feat/y#s1", "hold:c2", quota("f")),
+	)
+	f.pidfile("c1", "101")
+	f.pidfile("c2", "101")
+	doc := f.collect(StatusRequest{})
+	if got, want := doc.crew(t, "c1").Holds, []HoldStatus{{ID: "h", Kind: "quota", WaitedS: 300}}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("c1 holds = %+v, want %+v", got, want)
+	}
+	if c := doc.crew(t, "c2"); len(c.Holds) != 0 || c.Attention != "idle" {
+		t.Errorf("c2 = %+v, want no hold and idle", c)
+	}
+}
+
 // A crew id is worker-written and becomes a path under crews/: one that is not
 // a valid id never becomes a crew, so it cannot point status at a file the
 // worker made.
@@ -374,7 +396,8 @@ func TestStatusIgnoresInvalidCrewIDs(t *testing.T) {
 
 // A bus the hold fold cannot read must not read as a crew with no holds.
 func TestStatusUnreadableHoldFoldSkipsTheRepo(t *testing.T) {
-	f := newStatusFix(t, "5",
+	f := newStatusFix(t,
+		wmsg(20, "c1", "dispatcher:c1", "hold:c1", `"5"`),
 		wmsg(10, "c1", "dispatcher:c1", "hold:c1", `"{\"id\":\"h\"}"`))
 	doc := f.collect(StatusRequest{})
 	if len(doc.Repos) != 0 || len(doc.Skipped) != 1 || doc.Skipped[0].Path != f.common {
@@ -609,5 +632,94 @@ func TestStatusTableGolden(t *testing.T) {
 	}
 	if out.String() != string(want) {
 		t.Errorf("table differs from %s:\n got:\n%s\nwant:\n%s", golden, out.String(), want)
+	}
+}
+
+// The queue object and each fleet hold's due come from one read-only queue
+// evaluation over the registry; a repo the walk alone finds is never in it.
+func TestStatusFleetQueue(t *testing.T) {
+	fleetHold := func(agoS int64, crew, id string, weight int) string {
+		return fleetAddRow(ago(agoS), crew, id, "feat/"+id, "normal", weight)
+	}
+	f := newStatusFix(t,
+		fleetHold(900, "c1", "h1", 2),
+		fleetHold(800, "c1", "h2", 1), // demoted in the record
+		fleetHold(700, "c1", "h3", 9), // heavier than the budget
+		fleetHold(600, "c2", "h4", 1), // its dispatcher is dead
+		fleetHold(500, "c1", "h5", 1), // parked by demotion
+		wmsg(400, "c1", "dispatcher:c1", "hold:c1",
+			fmt.Sprintf(`"{\"id\":\"q1\",\"wait\":{\"engine\":\"claude\",\"window\":\"five_hour\",\"resets_at\":%d},\"task\":{}}"`, nowS-10)),
+	)
+	f.pidfile("c1", "100")
+	f.pidfile("c2", "101")
+	walked := mkRepo(t, f.env["CREW_SWEEP_ROOTS"], "walked", "", fleetHold(1000, "w1", "hw", 1))
+	pid := filepath.Join(walked, "crew", "crews", "w1", "pid")
+	if err := os.MkdirAll(filepath.Dir(pid), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pid, []byte("100\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	record := filepath.Join(f.env["XDG_STATE_HOME"], "crew", "fleet-due.json")
+	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := json.Marshal(dueDoc(map[holdKey]dueEntry{
+		{f.common, "c1", "h2"}: {Demoted: ago(300)},
+		{f.common, "c1", "h5"}: {Demoted: ago(400), Parked: ago(200)},
+	}))
+	if err := os.WriteFile(record, rec, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	doc := f.collect(StatusRequest{})
+	q := doc.Queue
+	if q.Head == nil || *q.Head != (QueueHead{Repo: "acme/alpha", CrewID: "c1", ID: "h1", WaitedS: 900}) {
+		t.Errorf("head = %+v", q.Head)
+	}
+	if want := []QueueDemote{{Repo: "acme/alpha", CrewID: "c1", ID: "h2", DemotedAt: ago(300)}}; fmt.Sprint(q.Demoted) != fmt.Sprint(want) {
+		t.Errorf("demoted = %+v, want %+v", q.Demoted, want)
+	}
+	wantParked := []QueueParked{
+		{Repo: "acme/alpha", CrewID: "c1", ID: "h3", Reason: "oversize"},
+		{Repo: "acme/alpha", CrewID: "c2", ID: "h4", Reason: "ineligible"},
+		{Repo: "acme/alpha", CrewID: "c1", ID: "h5", Reason: "demoted"},
+	}
+	if fmt.Sprint(q.Parked) != fmt.Sprint(wantParked) {
+		t.Errorf("parked = %+v, want %+v", q.Parked, wantParked)
+	}
+	wantHolds := []HoldStatus{
+		{ID: "h1", Kind: "fleet", WaitedS: 900, Due: true},
+		{ID: "h2", Kind: "fleet", WaitedS: 800},
+		{ID: "h3", Kind: "fleet", WaitedS: 700},
+		{ID: "h5", Kind: "fleet", WaitedS: 500},
+		{ID: "q1", Kind: "quota", WaitedS: 400, Due: true},
+	}
+	if got := doc.crew(t, "c1").Holds; fmt.Sprint(got) != fmt.Sprint(wantHolds) {
+		t.Errorf("c1 holds = %+v\nwant %+v", got, wantHolds)
+	}
+	if got := doc.crew(t, "w1").Holds; fmt.Sprint(got) != fmt.Sprint([]HoldStatus{{ID: "hw", Kind: "fleet", WaitedS: 1000}}) {
+		t.Errorf("a walk-only repo's hold = %+v, want never due", got)
+	}
+
+	// With h1 released, the demoted h2 is the due hold and carries its clock.
+	bus, err := os.OpenFile(filepath.Join(f.common, "crew", "events.jsonl"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = bus.WriteString(releaseRow(ago(0), "c1", "h1") + "\n")
+	_ = bus.Close()
+	doc = f.collect(StatusRequest{})
+	if doc.Queue.Head != nil {
+		t.Errorf("head = %+v, want none: every other hold is demoted or parked", doc.Queue.Head)
+	}
+	if want := []QueueDemote{{Repo: "acme/alpha", CrewID: "c1", ID: "h2", FirstDue: fixedNow.UnixMilli(), DemotedAt: ago(300)}}; fmt.Sprint(doc.Queue.Demoted) != fmt.Sprint(want) {
+		t.Errorf("demoted = %+v, want %+v", doc.Queue.Demoted, want)
+	}
+	if h := doc.crew(t, "c1").Holds; len(h) != 4 || h[0].ID != "h2" || !h[0].Due {
+		t.Errorf("c1 holds = %+v, want h2 due", h)
+	}
+	if data, _ := os.ReadFile(record); !strings.Contains(string(data), `"h5"`) || strings.Contains(string(data), "first_due") {
+		t.Errorf("status wrote the record: %s", data)
 	}
 }

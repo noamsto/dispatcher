@@ -42,7 +42,7 @@ type stub struct {
 // $d/argv.log, which is how a case asserts what the inner `crew watch` was
 // re-entered with. A subcommand with no body answers the way the real one does
 // with nothing to report: `watch` exits 0 printing nothing, `hold due` prints
-// `[]` and exits 1, `reap` says nothing.
+// an answer with nothing due or parked and exits 1, `reap` says nothing.
 func entryStub(t *testing.T, bodies map[string]string) *stub {
 	t.Helper()
 	dir := t.TempDir()
@@ -65,7 +65,7 @@ esac
 `, dir,
 		of("watch", "exit 0"),
 		// `hold due` only: the stream's hold pre-check is the sole `hold` call.
-		`if [ "${2:-}" = due ]; then `+of("hold due", "printf '[]\\n'; exit 1")+`
+		`if [ "${2:-}" = due ]; then `+of("hold due", "printf '"+holdDueJSON("[]", "[]")+"\\n'; exit 1")+`
   fi
   exit 0`,
 		of("reap", "exit 0")))

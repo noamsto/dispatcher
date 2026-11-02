@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/repos"
 )
 
 // holdCLI runs argv through the same run() the binary does, against a repo
@@ -30,6 +33,10 @@ func newHoldCLI(t *testing.T) *holdCLI {
 			t.Fatal(err)
 		}
 	}
+	// `hold due` evaluates the fleet queue over the registry and records its
+	// demotion clocks, so neither may be the real ones.
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repo, log := repoWithLog(t, nil, 0)
 	return &holdCLI{t: t, repo: repo, log: log}
 }
@@ -150,5 +157,46 @@ func TestUnsetCrewClockUsesRealTime(t *testing.T) {
 	}
 	if n < 1 || n > 100 {
 		t.Errorf("park printed %d, want 1..100", n)
+	}
+}
+
+// `due --json` is the bare due array and `--with-parked` the object; `add
+// --fleet` registers its repo in the fleet registry and a quota hold does not.
+// The due calls come first: with a fleet hold registered they would evaluate
+// the load, and read the machine's tmux.
+func TestHoldDueShapesAndFleetAddEnrollsTheRepo(t *testing.T) {
+	h := newHoldCLI(t)
+	stub := filepath.Join(t.TempDir(), "dispatch-config")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\necho '{\"fleetBudget\": 8}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DISPATCH_CONFIG_BIN", stub)
+	registry := repos.RegistryPath(os.Getenv)
+
+	h.add("a quota hold")
+	if _, err := os.Stat(registry); err == nil {
+		t.Fatal("a quota hold registered the repo")
+	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--json"}, "[]\n"},
+		{[]string{"--json", "--with-parked"}, `{"due":[],"parked":[]}` + "\n"},
+	} {
+		out, _, code := h.run(append([]string{"hold", "due", "--crew", "c1"}, tc.args...)...)
+		if code != 1 || out != tc.want {
+			t.Errorf("hold due %v: code %d, stdout %q, want 1, %q", tc.args, code, out, tc.want)
+		}
+	}
+
+	_, errOut, code := h.run("hold", "add", "--fleet", "--agent", "codex", "--ref", "r1", "--branch", "b2",
+		"--tier", "standard", "--model", "sonnet", "--effort", "medium", "--crew", "c1", "a fleet hold")
+	if code != 0 {
+		t.Fatalf("hold add --fleet: code %d, stderr %q", code, errOut)
+	}
+	data, err := os.ReadFile(registry)
+	if want := filepath.Join(h.repo, ".git") + "\n"; err != nil || string(data) != want {
+		t.Errorf("registry %q (%v), want %q", data, err, want)
 	}
 }
