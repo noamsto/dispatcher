@@ -978,6 +978,20 @@ func TestOverloadedTimeAloneNeverDemotes(t *testing.T) {
 	}
 }
 
+// Time banked under load can already reach the timeout when the hold is due
+// again, which demotes it on that evaluation rather than a tick later.
+func TestBankedTimeAtTheTimeoutDemotesOnResume(t *testing.T) {
+	f := newQueueFix(t, "alpha")
+	f.register("alpha", "c1", livePID)
+	f.add("alpha", "c1", "a", 2, 100)
+	ka := f.key("alpha", "c1", "a")
+	f.writeRecord(map[holdKey]dueEntry{ka: {Accrued: headTimeout * 1000}})
+	f.due("alpha", "c1", true)
+	if now := f.now.UnixMilli(); f.record()[ka] != (dueEntry{FirstDue: now, Demoted: now}) {
+		t.Errorf("record %v, want a demoted on the evaluation that found it due again", f.record())
+	}
+}
+
 // A record written before the pause carries only first_due: one uninterrupted
 // stretch, which demotes at the timeout and banks under load like any other.
 func TestAnOldFormatRecordStillRunsItsClock(t *testing.T) {

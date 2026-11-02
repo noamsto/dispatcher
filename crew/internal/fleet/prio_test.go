@@ -70,13 +70,14 @@ func TestPrioAcceptsTheOverseer(t *testing.T) {
 		env  map[string]string
 		self func() (string, error)
 		want int
+		why  string // in the refusal, which names the overseer check's cause
 	}{
-		"the overseer session":            {map[string]string{"CREW_OVERSEER": "h1"}, selfOK, 0},
-		"a worker marked as the overseer": {map[string]string{"CREW_OVERSEER": "h1", "CREW_WORKER_ID": "worker:feat/x#s1"}, selfOK, 1},
-		"a role marked as the overseer":   {map[string]string{"CREW_OVERSEER": "h1", "CREW_ROLE_ID": "role:feat/x:reviewer"}, selfOK, 1},
-		"an overseer for another host":    {map[string]string{"CREW_OVERSEER": "h2"}, selfOK, 1},
-		"an unreadable host name":         {map[string]string{"CREW_OVERSEER": "h1"}, func() (string, error) { return "", errors.New("no hostname") }, 1},
-		"no host name probe":              {map[string]string{"CREW_OVERSEER": "h1"}, nil, 1},
+		"the overseer session":            {map[string]string{"CREW_OVERSEER": "h1"}, selfOK, 0, ""},
+		"a worker marked as the overseer": {map[string]string{"CREW_OVERSEER": "h1", "CREW_WORKER_ID": "worker:feat/x#s1"}, selfOK, 1, "worker or role session"},
+		"a role marked as the overseer":   {map[string]string{"CREW_OVERSEER": "h1", "CREW_ROLE_ID": "role:feat/x:reviewer"}, selfOK, 1, "worker or role session"},
+		"an overseer for another host":    {map[string]string{"CREW_OVERSEER": "h2"}, selfOK, 1, "not this host's name h1"},
+		"an unreadable host name":         {map[string]string{"CREW_OVERSEER": "h1"}, func() (string, error) { return "", errors.New("no hostname") }, 1, "host's name cannot be read (no hostname)"},
+		"no host name probe":              {map[string]string{"CREW_OVERSEER": "h1"}, nil, 1, "host's name cannot be read"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newQueueFix(t, "alpha")
@@ -90,8 +91,8 @@ func TestPrioAcceptsTheOverseer(t *testing.T) {
 			if tc.want == 0 {
 				return
 			}
-			if !strings.HasPrefix(errb, "crew: fleet prio: refused — ") || strings.Count(errb, "\n") != 1 {
-				t.Errorf("stderr %q", errb)
+			if !strings.HasPrefix(errb, "crew: fleet prio: refused — ") || strings.Count(errb, "\n") != 1 || !strings.Contains(errb, tc.why) {
+				t.Errorf("stderr %q, want a refusal naming %q", errb, tc.why)
 			}
 			f.noPriorityFile()
 		})

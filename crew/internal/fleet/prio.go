@@ -3,6 +3,7 @@ package fleet
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -120,14 +121,29 @@ func Prio(ctx context.Context, req PrioRequest, stdout, stderr io.Writer, o Queu
 }
 
 // prioSender is why the caller may not set a priority, "" when it may: the
-// dispatcher, or the overseer session, which posts only as overseer:<host>.
+// dispatcher, or the overseer session, which posts only as overseer:<host>. A
+// session marked as the overseer is told why the overseer check refused it,
+// not the dispatcher check's reason, which says it may not post here at all.
 func prioSender(ctx context.Context, o QueueOptions) string {
 	reason := sender.Check(ctx, "dispatcher:fleet", "", o.Sender)
-	if reason == "" || o.Sender.Self == nil {
+	if reason == "" {
+		return ""
+	}
+	marked := o.Sender.Getenv != nil && o.Sender.Getenv("CREW_OVERSEER") != ""
+	var self string
+	err := errors.New("no host-name probe")
+	if o.Sender.Self != nil {
+		self, err = o.Sender.Self()
+	}
+	if err != nil {
+		if marked {
+			return "this host's name cannot be read (" + err.Error() + "), so the overseer cannot be told from a worker"
+		}
 		return reason
 	}
-	if self, err := o.Sender.Self(); err == nil && sender.Check(ctx, "overseer:"+self, "", o.Sender) == "" {
-		return ""
+	overseer := sender.Check(ctx, "overseer:"+self, "", o.Sender)
+	if overseer == "" || marked {
+		return overseer
 	}
 	return reason
 }
