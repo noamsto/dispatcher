@@ -3,6 +3,6 @@
 # plus the fleet exclusion. The input is the outstanding array, not the bus: the
 # arm piped one into the other. Matured is `<=`, not `<`: a hold whose window
 # resets this second is dispatchable now. A fleet hold has no resets_at, and null
-# sorts before every number, so it would mature at once; fleet holds pass the
-# injected fleet predicate instead (hold.go's `due`).
+# sorts before every number, so the filter excludes it; the fleet queue decides
+# when it is due (hold.go's `due`).
 [.[] | select(.wait.kind != "fleet" and .wait.resets_at <= $now)]

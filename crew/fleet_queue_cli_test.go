@@ -96,10 +96,7 @@ func TestFleetQueueFlagsBind(t *testing.T) {
 	}
 }
 
-// TestFleetPrioNegativeNumber: kong reads -3 as a short flag unless the repo
-// word ends flag parsing, so a negative priority binds as the second word.
-// Flags after the repo are words too, so a stray one is a bad number, not a
-// flag.
+// TestFleetPrioNegativeNumber: a negative priority binds as the second word.
 func TestFleetPrioNegativeNumber(t *testing.T) {
 	for _, tc := range []struct {
 		name string

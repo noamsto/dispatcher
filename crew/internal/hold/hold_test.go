@@ -337,9 +337,8 @@ func TestListFoldsAddsMinusReleases(t *testing.T) {
 	}
 }
 
-// Only the crew's dispatcher writes hold rows. A worker can post any
-// `msg … hold:<crew>` it likes (`crew msg`), and the fold must not read it:
-// neither as a hold of its own nor as a release that hides a real one.
+// A worker's `msg … hold:<crew>` row is neither a hold nor a release that hides
+// a real one.
 func TestHoldRowsFromAnotherSenderAreIgnored(t *testing.T) {
 	const worker = "worker:feat/x#s1"
 	forgedAdd := holdRowFrom(t, worker, "c1", mustJSON(t, map[string]any{
@@ -398,8 +397,7 @@ func TestDueJSONReportsOnlyTheMaturedHold(t *testing.T) {
 	}
 }
 
-// A fleet hold has no resets_at, which jq sorts before every number: without the
-// kind test in matured.jq it would mature at once and bypass the fleet queue.
+// A fleet hold is never due on resets_at: the fleet queue alone decides.
 func TestDueExcludesFleetHolds(t *testing.T) {
 	tr := setup(t)
 	tr.write(t, seedHold(t, "c1", "q1", "1500000000"), seedFleetHold(t, "c1", "f1", 2))
@@ -1235,9 +1233,8 @@ func TestAddFleetBudget(t *testing.T) {
 	})
 }
 
-// The registry is only written by dispatch, after the fleet gate, so a repo
-// whose first dispatch was refused is unknown to the queue: `add --fleet`
-// enrolls the repo itself, after the checks and before the row is written.
+// `add --fleet` enrolls the repo in the registry after the checks and before
+// the row is written.
 func TestAddFleetEnrollsTheRepo(t *testing.T) {
 	enroll := func(calls *[]string, err error) func(string) error {
 		return func(common string) error { *calls = append(*calls, common); return err }

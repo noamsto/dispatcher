@@ -3279,8 +3279,8 @@ EOF
   grep -qF -- 'fleet load --budget 8 --add 2' "$STUB_LOG"
 }
 
-# Fleet hold queue (#1426). `crew fleet queue` reads the registry's repos, not
-# the cwd, and a crew's holds bind only while its dispatcher's pid is live.
+# Fleet hold queue: `crew fleet queue` reads the registry's repos, not the cwd,
+# and a crew's holds bind only while its dispatcher's pid is live.
 fleet_hold_fixture() {
   export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"
   mkdir -p "$XDG_DATA_HOME/crew"

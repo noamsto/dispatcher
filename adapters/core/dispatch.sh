@@ -1317,9 +1317,9 @@ chrome_gate() {
   exit 1
 }
 
-# _fleet_hold_hint <tier> — the second line of a fleet refusal: the
-# machine-wide queue is the alternative to retrying by hand. A refused release
-# (--fleet-hold) is already queued, so it is told to wait, not to place another.
+# _fleet_hold_hint <tier> — the second line of a fleet refusal. A refused
+# release (--fleet-hold) is already queued, so it is told to wait, not to place
+# another.
 _fleet_hold_hint() {
   if [ -n "$fleet_hold" ]; then
     echo "dispatch: fleet hold $fleet_hold stays queued; take it again when crew hold due reports it due" >&2
@@ -1355,13 +1355,13 @@ _fleet_queue_gate() {
 
 # fleet_gate <tier> [<branch>...] — refuse a new lead dispatch when the live
 # lead weight on the machine plus this tier's would exceed fleetBudget, or when
-# the 1-minute load average is above the core count; 0 disables both. A
-# dispatch whose own branch already has a lead pane (re-dispatch over a
-# finished worker) is not a new lead and skips it. Within capacity, admission
-# against the fleet hold queue decides (_fleet_queue_gate). --ignore-budget
-# notes the refusal and proceeds. A check, not a lock: two dispatches racing
-# can both pass. The weighing is `crew fleet load` (exit 3 refuses, its stdout
-# the reason); one that errors fails open, like an unreadable load average.
+# the 1-minute load average is above the core count. 0 disables both. A dispatch
+# whose own branch already has a lead pane (re-dispatch over a finished worker)
+# is not a new lead and skips it. Within capacity, _fleet_queue_gate decides.
+# --ignore-budget notes the refusal and proceeds. A check, not a lock: two
+# dispatches racing can both pass. The weighing is `crew fleet load` (exit 3
+# refuses, its stdout the reason); one that errors fails open, like an
+# unreadable load average.
 fleet_gate() {
   local tier="$1" budget add=2 why="" rc=0 own_args=() b
   shift
@@ -1394,7 +1394,7 @@ fleet_gate() {
 }
 
 # fleet_hold_gate — a --fleet-hold id must name an outstanding fleet hold of
-# this crew: a stale id or a quota hold would only be refused at admission.
+# this crew.
 fleet_hold_gate() {
   [ -n "$fleet_hold" ] || return 0
   crew hold list --crew "$crew_id" --json |

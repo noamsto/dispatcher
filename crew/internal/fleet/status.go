@@ -422,7 +422,7 @@ func (b *repoBuild) derive(crew string, row map[string]any) {
 
 // session is a crew's dispatcher as its registration says: the pid file's
 // state (live, dead or closed) and pid, and the lane tick's state, nil when
-// no tick was ever written. Status and the fleet queue read it alike.
+// no tick was ever written.
 type session struct {
 	state string
 	pid   *int

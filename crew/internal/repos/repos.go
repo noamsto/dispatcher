@@ -59,9 +59,7 @@ func RegistryPath(lookup func(string) string) string {
 	return filepath.Join(base, "crew", "repos")
 }
 
-// Register adds common to the registry the way dispatch's `_registry_add` does:
-// nothing when the exact line is already there, otherwise the directory is made
-// and the line appended.
+// Register adds common to the registry the way dispatch's `_registry_add` does.
 func Register(registry, common string) error {
 	if slices.Contains(registryLines(registry), common) {
 		return nil

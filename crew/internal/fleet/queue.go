@@ -167,9 +167,7 @@ func (c busCache) read(common string) ([]bus.Event, string, string) {
 }
 
 // scanFleet reads the registry's repos, never the walk: the walk's roots are
-// the caller's, and every dispatcher must see the same queue. A repo whose bus
-// cannot be read, or a crew whose hold fold fails, adds no hold this
-// evaluation.
+// the caller's, and every dispatcher must see the same queue.
 func scanFleet(registry string, getenv func(string) string, read busReader, nowMS int64) fleetScan {
 	s := fleetScan{lastRelease: map[string]int64{}, unread: unread{repos: map[string]bool{}, crews: map[crewRef]bool{}}}
 	for _, r := range repos.Registered(registry, getenv) {
@@ -196,11 +194,10 @@ type holdAdd struct {
 	weight           int
 }
 
-// addRepo adds one bus. Only the dispatcher writes a hold row, and any sender
-// may post to hold:<crew>, so a row from anyone else is no input. Which holds
-// are outstanding is hold.Outstanding's answer over the dispatcher's rows, the
-// fold `crew hold due` matches the verdict against; a hold's ts is its first
-// add row's, and a release counts once, at its first row.
+// addRepo adds one bus. Rows from anyone but the crew's dispatcher are no
+// input. Which holds are outstanding is hold.Outstanding's answer over the
+// dispatcher's rows, the fold `crew hold due` matches the verdict against; a
+// hold's ts is its first add row's, and a release counts once, at its first row.
 func (s *fleetScan) addRepo(common string, events []bus.Event, nowMS int64) {
 	adds := map[crewHold]holdAdd{}
 	releasedAt := map[crewHold]int64{}
@@ -436,8 +433,7 @@ func (q *queue) pick(rec map[holdKey]dueEntry) *queued {
 
 // advance is the demotion record after this evaluation, and the hold it
 // finds due. It is pure: every evaluator runs it, and only a recording run
-// keeps what it returns. The entries of holds no longer outstanding are
-// dropped; those of holds the scan could not read are kept as they were.
+// keeps what it returns.
 func (q *queue) advance(rec map[holdKey]dueEntry) (map[holdKey]dueEntry, *queued) {
 	next := map[holdKey]dueEntry{}
 	for _, h := range q.holds {
@@ -577,11 +573,10 @@ func readRecord(path string) map[holdKey]dueEntry {
 }
 
 // updateRecord runs step over the record under its lock, re-read inside it,
-// and replaces the file only when the result differs. A step that changes
-// nothing on an unlocked read takes no lock: every live dispatcher records on
-// each stream tick. While another writer holds the lock past lockWait, step
-// runs on an unlocked read and the file is left alone: the evaluation is then
-// read-only, and a later run records.
+// and replaces the file only when the result differs. Every live dispatcher
+// records on each stream tick, so a step that changes nothing takes no lock;
+// when another writer holds the lock past lockWait the evaluation is read-only
+// and a later run records.
 func updateRecord(path string, step func(map[holdKey]dueEntry) map[holdKey]dueEntry) error {
 	if prev := readRecord(path); maps.Equal(prev, step(prev)) {
 		return nil
@@ -608,8 +603,6 @@ func updateRecord(path string, step func(map[holdKey]dueEntry) map[holdKey]dueEn
 	return writeAtomic(path, append(data, '\n'))
 }
 
-// acquire takes the lock at dir for this process, polling until lockWait
-// runs out.
 func acquire(dir string) bool {
 	owner := strconv.Itoa(os.Getpid())
 	deadline := time.Now().Add(lockWait)

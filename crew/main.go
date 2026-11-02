@@ -1222,8 +1222,6 @@ func fleetRemote(e env) func(dir, crew string) roster.Capture {
 	}
 }
 
-// fleetQueueOptions is the production fleet.QueueOptions: the OS probes, the
-// registry's default path, and dispatch-config for the queue's settings.
 func fleetQueueOptions(e env, stderr io.Writer) fleet.QueueOptions {
 	return fleet.QueueOptions{
 		LoadOptions: fleet.LoadOptions{

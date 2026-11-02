@@ -160,11 +160,10 @@ func TestUnsetCrewClockUsesRealTime(t *testing.T) {
 	}
 }
 
-// `due --json` is the bare due array and `--with-parked` the object, whatever
-// the build that asks; `add --fleet` registers its repo in the fleet registry,
-// so the queue sees a hold placed where dispatch never ran, and a quota hold
-// leaves the registry alone. The due calls come first: with a fleet hold
-// registered they would evaluate the load, and read the machine's tmux.
+// `due --json` is the bare due array and `--with-parked` the object; `add
+// --fleet` registers its repo in the fleet registry and a quota hold does not.
+// The due calls come first: with a fleet hold registered they would evaluate
+// the load, and read the machine's tmux.
 func TestHoldDueShapesAndFleetAddEnrollsTheRepo(t *testing.T) {
 	h := newHoldCLI(t)
 	stub := filepath.Join(t.TempDir(), "dispatch-config")

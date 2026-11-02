@@ -727,9 +727,8 @@ type holdSet struct {
 }
 
 // decodeHoldDue reads `hold due --json --with-parked`'s one object,
-// `{"due":[…],"parked":[…]}`.
-// ok is false for anything else, including an object either of whose keys is
-// not an array.
+// `{"due":[…],"parked":[…]}`; ok is false for anything else, including an
+// object either of whose keys is not an array.
 func decodeHoldDue(text string) (due, parked holdSet, ok bool) {
 	obj, err := decodeObject(text)
 	if err != nil {
