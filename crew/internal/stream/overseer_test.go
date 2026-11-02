@@ -462,36 +462,120 @@ func TestOverseerStopsOnTermDuringAHungStatusRead(t *testing.T) {
 	if got := ofEvent(l.lines(), "dispatcher_down"); len(got) != 0 {
 		t.Errorf("a cancelled status read woke the overseer: %v", got)
 	}
+	for _, line := range l.lines() {
+		if line["stream"] == "error" {
+			t.Errorf("a status read TERM cut short printed an error line: %v", line)
+		}
+	}
 }
 
-// A status read gets --interval at most; the document it returns past that is
-// dropped, so the next one in time still fires.
+// bareOverseer is an overseer with only what diff reads: its clock stands at
+// ovStart, and collect is its status read.
+func bareOverseer(out io.Writer, collect func(context.Context, io.Writer) fleetpkg.StatusDoc) *overseer {
+	return &overseer{
+		c:       call{crew: ovMe, heartbeat: defaultHeartbeat},
+		o:       FleetOptions{Options: Options{Clock: clock.Clock{Now: newMSClock(ovStart).Now}}},
+		out:     &laneWriter{w: out, now: time.Now},
+		notes:   newNotes(io.Discard),
+		sup:     &suppress{key: map[string]string{}, ts: map[string]int64{}},
+		moves:   newTransitions(),
+		collect: collect,
+	}
+}
+
+// A status read gets its timeout at most. The document it returns past that is
+// dropped with one error line per --heartbeat, and the next one in time still
+// fires; a read that completes re-arms the error line.
 func TestOverseerDiffDropsADocumentPastItsTimeout(t *testing.T) {
 	var out lockedWriter
 	w := ovWorker("worker:feat/a#s1-1", "working")
 	hang := true
-	v := &overseer{
-		o:        FleetOptions{Options: Options{Clock: clock.Clock{Now: newMSClock(ovStart).Now}}},
-		out:      &laneWriter{w: &out, now: time.Now},
-		notes:    newNotes(io.Discard),
-		moves:    newTransitions(),
-		interval: 10 * time.Millisecond,
-		collect: func(ctx context.Context, _ io.Writer) fleetpkg.StatusDoc {
-			if hang {
-				<-ctx.Done()
-			}
-			return ovDoc(ovStart+minute, ovRepo("alpha", ovCrew("c1", "dead", "unattended", w)))
-		},
-	}
+	v := bareOverseer(&out, func(ctx context.Context, _ io.Writer) fleetpkg.StatusDoc {
+		if hang {
+			<-ctx.Done()
+		}
+		return ovDoc(ovStart+minute, ovRepo("alpha", ovCrew("c1", "dead", "unattended", w)))
+	})
+	v.timeout = 10 * time.Millisecond
 	v.moves.next(ovDoc(ovStart, ovRepo("alpha", ovCrew("c1", "live", "attended", w))), ovStart)
 	v.diff(t.Context())
-	if got := out.str(); got != "" {
-		t.Fatalf("a timed-out status read printed %q", got)
+	want := map[string]any{"stream": "error", "crew": ovMe, "rc": float64(1),
+		"detail": "status: no document within 10ms", "ts": float64(ovStart)}
+	if got := decodeLinesT(t, out.str()); len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+		t.Fatalf("a timed-out status read printed %v, want [%v]", got, want)
 	}
+	v.diff(t.Context())
+	if got := decodeLinesT(t, out.str()); len(got) != 1 {
+		t.Fatalf("a second timed-out read within --heartbeat printed again: %q", out.str())
+	}
+
 	hang = false
+	v.timeout = time.Minute
 	v.diff(t.Context())
 	if got := ofEvent(decodeLinesT(t, out.str()), "dispatcher_down"); len(got) != 1 {
 		t.Errorf("the next read in time = %v, want one dispatcher_down", got)
+	}
+	hang = true
+	v.timeout = 10 * time.Millisecond
+	v.diff(t.Context())
+	var errs int
+	for _, line := range decodeLinesT(t, out.str()) {
+		if line["stream"] == "error" {
+			errs++
+		}
+	}
+	if errs != 2 {
+		t.Errorf("a timed-out read after a completed one gave %d error lines in all, want 2: %q", errs, out.str())
+	}
+}
+
+// --interval paces the diffs, never a read's deadline: at --interval 1 a read
+// slower than a second still completes.
+func TestOverseerStatusDeadlineIsNotTheInterval(t *testing.T) {
+	r := newOvRig(t)
+	o := r.options(okRepos())
+	left := make(chan time.Duration, 1)
+	o.CollectStatus = func(ctx context.Context, _ io.Writer) fleetpkg.StatusDoc {
+		deadline, _ := ctx.Deadline()
+		select {
+		case left <- time.Until(deadline):
+		default:
+		}
+		return ovDoc(ovStart)
+	}
+	startFleet(t, o, FleetRequest{Request: Request{Interval: "1"}, Overseer: true})
+	select {
+	case got := <-left:
+		if got <= 10*time.Second {
+			t.Errorf("a status read at --interval 1 had %s left, want more than 10s", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the lane never read the status")
+	}
+}
+
+// A read past its timeout is no baseline: the first that completes is, and it
+// wakes nothing whatever it holds.
+func TestOverseerFirstCompletedReadIsTheBaseline(t *testing.T) {
+	var out lockedWriter
+	w := ovWorker("worker:feat/a#s1-1", "working")
+	hang := true
+	v := bareOverseer(&out, func(ctx context.Context, _ io.Writer) fleetpkg.StatusDoc {
+		if hang {
+			<-ctx.Done()
+			return ovDoc(ovStart, ovRepo("alpha", ovCrew("c1", "live", "attended", w)))
+		}
+		return ovDoc(ovStart+minute, ovRepo("alpha", ovCrew("c1", "dead", "unattended", w)))
+	})
+	v.timeout = 10 * time.Millisecond
+	v.diff(t.Context())
+	hang = false
+	v.timeout = time.Minute
+	v.diff(t.Context())
+	for _, line := range decodeLinesT(t, out.str()) {
+		if line["stream"] == "overseer" {
+			t.Errorf("the first completed read woke the overseer: %v", line)
+		}
 	}
 }
 

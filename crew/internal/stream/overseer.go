@@ -42,6 +42,9 @@ const (
 	// overseerPoll is how often each bus is read for msgs, in seconds: `crew
 	// watch`'s default interval.
 	overseerPoll = 2
+	// statusTimeout bounds one status read whatever --interval is: fleet
+	// status's own gh timeout, well inside the tick age --status calls alive.
+	statusTimeout = 20 * time.Second
 
 	laneDeadAfter   = 10 * time.Minute
 	blockedAgeAfter = 30 * time.Minute
@@ -107,6 +110,7 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 		collect:    o.CollectStatus,
 		moves:      newTransitions(),
 		interval:   time.Duration(c.interval) * time.Second,
+		timeout:    statusTimeout,
 		rediscover: time.Duration(rediscover) * time.Second,
 		tick:       time.Duration(tick) * time.Second,
 		ticker:     &loop{c: tickCall, o: o.Options, cdir: lane},
@@ -131,6 +135,7 @@ type overseer struct {
 	collect    func(context.Context, io.Writer) fleetpkg.StatusDoc
 	moves      *transitions
 	interval   time.Duration
+	timeout    time.Duration
 	rediscover time.Duration
 	tick       time.Duration
 	ticker     *loop
@@ -233,7 +238,7 @@ func (v *overseer) poll(b *follower) {
 	}
 	fold, ok, err := watch.FoldOverseer(b.log, v.c.crew, b.cursor)
 	if err != nil {
-		v.fail(b, "fold "+b.log, "fold: "+oneLine(err))
+		v.fail(b.repo, "fold "+b.log, "fold: "+oneLine(err))
 		return
 	}
 	if !ok {
@@ -259,15 +264,16 @@ func (v *overseer) poll(b *follower) {
 	if err := watch.WriteCursor(b.cursorPath, fold.Cursor); err != nil {
 		// Kept in memory regardless: a restart re-delivers from the file, which
 		// is the at-least-once side of the contract.
-		v.fail(b, "cursor "+b.cursorPath, "cursor: "+oneLine(err))
+		v.fail(b.repo, "cursor "+b.cursorPath, "cursor: "+oneLine(err))
 	}
 }
 
-// fail prints an error line about b's bus, once per cause per --heartbeat.
-func (v *overseer) fail(b *follower, kind, detail string) {
+// fail prints an error line, about repo's bus unless repo is "", once per
+// cause per --heartbeat.
+func (v *overseer) fail(repo, kind, detail string) {
 	ts := clockMS(v.o.Options)
 	if v.sup.repeat(kind, digitsToN(detail), ts, v.c.heartbeat*1000) {
-		say(v.out, "%s\n", encode(errorLine{Stream: "error", Crew: v.c.crew, RC: 1, Detail: detail, TS: ts, Repo: b.repo}))
+		say(v.out, "%s\n", encode(errorLine{Stream: "error", Crew: v.c.crew, RC: 1, Detail: detail, TS: ts, Repo: repo}))
 	}
 }
 
@@ -310,19 +316,25 @@ func senderText(s string) string {
 	return b.String()
 }
 
-// diff computes the fleet status, given --interval at most, and prints every
+// diff computes the fleet status, given v.timeout at most, and prints every
 // transition since the last. A document built under a done context is
 // dropped: a probe it cut short can read as a cleared condition, re-arming
-// its key.
+// its key. A drop is silent when a signal cut the read short, and an error
+// line, once per --heartbeat, when the read ran out of time.
 func (v *overseer) diff(ctx context.Context) {
-	ctx, cancel := context.WithTimeout(ctx, v.interval)
+	read, cancel := context.WithTimeout(ctx, v.timeout)
 	defer cancel()
 	var text bytes.Buffer
-	doc := v.collect(ctx, &text)
+	doc := v.collect(read, &text)
 	v.notes.lines(text.String())
 	if ctx.Err() != nil {
 		return
 	}
+	if read.Err() != nil {
+		v.fail("", "status", "status: no document within "+v.timeout.String())
+		return
+	}
+	v.sup.clear("status")
 	for _, line := range v.moves.next(doc, clockMS(v.o.Options)) {
 		say(v.out, "%s\n", encode(line))
 	}

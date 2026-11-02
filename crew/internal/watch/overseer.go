@@ -88,7 +88,7 @@ func wholeMS(v any) (int64, bool) {
 		f = n
 	case json.Number:
 		if ms, err := n.Int64(); err == nil {
-			return ms, true
+			return ms, ms >= 0 && ms < 1<<53
 		}
 		var err error
 		if f, err = n.Float64(); err != nil {

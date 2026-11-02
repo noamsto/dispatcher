@@ -10,11 +10,12 @@
 #
 # Only objects whose ts is a whole number of ms below 2^53 are read, so the
 # cursor is always an int64: a row that is no object, or carries any other ts,
-# is neither delivered nor misrouted, and cannot stall the bus.
+# is neither delivered nor misrouted, and cannot stall the bus. The bounds run
+# before floor, which throws on a number past float64 such as 1e400.
 def qualifies:
   (.crew_id | type) == "string" and .crew_id != "" and .from == "dispatcher:" + .crew_id;
 def whole_ms:
-  type == "number" and . == floor and . >= 0 and . < 9007199254740992;
+  type == "number" and . >= 0 and . < 9007199254740992 and . == floor;
 to_entries
 | map(select((.value | type) == "object"
     and .value.kind == "msg" and .value.to == $me

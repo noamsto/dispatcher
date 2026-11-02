@@ -126,10 +126,12 @@ func TestFoldOverseerSkipsNonObjectRows(t *testing.T) {
 }
 
 // A ts that is not a whole ms the cursor can hold must not become the cursor,
-// or every poll of the bus would stall on it.
+// or every poll of the bus would stall on it; nor may one past float64 throw
+// the fold.
 func TestFoldOverseerSkipsRowsWithoutAWholeMsTS(t *testing.T) {
 	ok1 := overseerMsg(1001, "c1", "dispatcher:c1", overseerMe, "ack")
-	for _, ts := range []string{"2500.5", "1e30", "99999999999999999999", "-5"} {
+	huge := strings.Repeat("9", 400)
+	for _, ts := range []string{"2500.5", "1e30", "99999999999999999999", "-5", "1e400", "-1e400", huge, "-" + huge} {
 		row := func(from string) string {
 			return `{"ts":` + ts + `,"crew_id":"c1","from":"` + from + `","to":"` + overseerMe + `","kind":"msg","body":"x"}`
 		}
@@ -144,6 +146,24 @@ func TestFoldOverseerSkipsRowsWithoutAWholeMsTS(t *testing.T) {
 		events, _ := got.Batch["events"].([]any)
 		if !ok || got.Cursor != 2500 || got.Batch["cursor"] != json.Number("2500") || len(events) != 2 {
 			t.Errorf("ts %s: fold = %+v, %v; want both msgs, cursor 2500", ts, got, ok)
+		}
+	}
+}
+
+func TestWholeMS(t *testing.T) {
+	for _, tc := range []struct {
+		in json.Number
+		ms int64
+		ok bool
+	}{
+		{"-5", 0, false},
+		{"9007199254740992", 0, false},
+		{"1e400", 0, false},
+		{"9007199254740991", 9007199254740991, true},
+		{"2.5e3", 2500, true},
+	} {
+		if ms, ok := wholeMS(tc.in); ok != tc.ok || ok && ms != tc.ms {
+			t.Errorf("wholeMS(%s) = %d, %v; want %d, %v", tc.in, ms, ok, tc.ms, tc.ok)
 		}
 	}
 }
