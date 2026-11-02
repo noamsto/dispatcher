@@ -382,6 +382,7 @@ claude_lean_env() {
   else
     printf 'ENABLE_CLAUDEAI_MCP_SERVERS=false '
   fi
+  printf 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false '
 }
 
 launch_dir_args() {

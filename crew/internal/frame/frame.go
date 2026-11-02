@@ -39,6 +39,7 @@ var (
 	reMeter   = posix(`^[^[:alnum:]]*[A-Za-z]+…[[:space:]]\(([0-9]+h([[:space:]][0-9]+m)?([[:space:]][0-9]+s)?|[0-9]+m([[:space:]][0-9]+s)?|[0-9]+s)[[:space:]]·[[:space:]]↓[[:space:]][0-9.]+k?[[:space:]]tokens`)
 	reSubrow  = posix(`^[[:space:]]*[^[:alnum:][:space:]]+[[:space:]]+[a-z][a-z-]+[[:space:]][[:space:]]+.*[[:space:]](([0-9]+h[[:space:]])?([0-9]+m[[:space:]])?[0-9]+s)[[:space:]]·[[:space:]]↓`)
 	reSpinner = posix(`^[^[:alnum:]]*[A-Za-z]+…`)
+	reLiveish = posix(`^[^[:alnum:]]*[^[:space:]]+…|…[[:space:]]*\(`)
 	reDone    = posix(`·[[:space:]]done[[:space:]]+[0-9]{1,2}:[0-9]{2}`)
 	reShells  = posix(`(^|[^0-9])[1-9][0-9]*[[:space:]]shells?([[:space:]]still running|[[:space:]]·|$)`)
 	reBgWork  = posix(`(^|[^0-9])[1-9][0-9]*[[:space:]](shells?|monitors?)([[:space:]]still running|[[:space:]]·|$)`)
@@ -479,7 +480,7 @@ func PaneIdleReason(plain, colored string, skipBg bool) (reason string, idle boo
 	if !ClaudeIdleBox(plain, colored, false) {
 		return "live turn, unsent input, or no idle input box", false
 	}
-	if _, above, _ := BoxRows(plain, FirstRowClaude); !anyMatch(above, reDone) && !doneBehindPostTurn(plain) {
+	if _, above, _ := BoxRows(plain, FirstRowClaude); !anyMatch(above, reDone) && !doneBehindPostTurn(plain) && !clearHintAboveBox(plain) {
 		return "no finished-turn marker above the input box", false
 	}
 	return "", true
@@ -504,6 +505,20 @@ func PiIdleReason(text string) (reason string, idle bool) {
 		return "stopped on " + stopped, false
 	}
 	return "", true
+}
+
+// clearHintAboveBox reports the `new task? /clear` hint on the row directly above
+// the box with no finished-turn marker in the window (one doneBehindPostTurn could
+// not walk to keeps the pane). 2.1.310 clears the hint when a turn starts, but
+// other versions or custom spinnerVerbs may keep it, so any ellipsis-bearing row
+// (reLiveish, independent of the verb spelling) above the box rejects. A spinner
+// outside the 30-row window can't be seen.
+func clearHintAboveBox(text string) bool {
+	_, plain, a, _, off, ok := scanBox(text)
+	if !ok || a-1 < off {
+		return false
+	}
+	return reClearHint.MatchString(plain[a-1]) && !anyMatch(plain[off:], reDone) && !anyMatch(plain[off:a], reLiveish)
 }
 
 // maxRecapRows bounds the wrapped rows of one recap.
