@@ -1,0 +1,30 @@
+  subcommand), the claude prompt, and the crew reply/msg body are recognised as data. The
+  exemption is withdrawn whenever the program's identity can't be trusted — an impersonated
+  resolution (exec -a, sudo -u, env -S, path-invoked wrapper, leading quoted "NAME=value",
+  env <number>) or any in-command redefinition (function/alias/hash/trap, BASH_CMDS/PATH/…
+  incl. quote-split, opaque command word, or manufacturing a data-taker name).
+  Unknown/renamed programs keep zero exemption, so every rename bypass stays denied. The
+  three repros now pass; some-unknown-tool . and all round-1/round-2 probes stay denied.
+  Pipeline (grid, deep tier):
+  - Spec — spec-critic cap reached (initial + 3 rounds); every finding folded (including
+    the critic-sanctioned final two).
+  - Plan — accept after 1 revision. (A Claude Code safety-classifier model-switch dialog
+    briefly blocked the plan-critic pane on the probe-laden plan; the dispatcher cleared
+    it; I discarded an empty-body and a stale pre-edit verdict before the real accept.)
+  - Execute — opus agent (gate code + tests, red-green), sonnet agent (docs); I verified
+    all 4 deviations and reconciled the README.
+  - Fast gate — green (race, both golangci-lint, nilaway).
+  - Code review — review_mode: full, review_high: 0; security-reviewer Approve (60+
+    probes), two mechanical MEDIUMs from go/general reviewers fixed, one security
+    non-finding declined (below bar).
+  - Deslop → push → PR → CI green → pr_open → done.
+  One thing I'd flag for your awareness: the plan-phase safety-classifier dialog required a
+  dispatcher intervention (answering the model-switch prompt) — the attack-probe strings
+  in a security-tooling plan reliably trip the classifier, which is worth noting if this
+  recurs on similar guard work.
+                                                   new task? /clear to save 485.5k tokens
+─────────────────────────────────────────────────────────────────────────────────── khaki ─
+❯ 
+───────────────────────────────────────────────────────────────────────────────────────────
+  🤖 Opus 4.8 🧠 xhi | 📊 480k/1M
+  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle) · PR #267 · ← 1 agent

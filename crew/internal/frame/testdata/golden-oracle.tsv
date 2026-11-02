@@ -184,6 +184,12 @@ idle_box.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no 
 idle_box.txt	idle_reason.skip1.plain	rc=1 reason=live turn, unsent input, or no idle input box
 idle_box.txt	quota_prompt	0
 idle_box.txt	quota_session_limit	0
+idle_clear_hint_no_done.txt	idle_reason.skip0.color	rc=0 reason=
+idle_clear_hint_no_done.txt	idle_reason.skip0.plain	rc=0 reason=
+idle_clear_hint_no_done.txt	idle_reason.skip1.color	rc=0 reason=
+idle_clear_hint_no_done.txt	idle_reason.skip1.plain	rc=0 reason=
+idle_clear_hint_no_done.txt	quota_prompt	0
+idle_clear_hint_no_done.txt	quota_session_limit	0
 meter.1h_5m_3s.120.4k.txt	idle_reason.skip0.color	rc=1 reason=live turn, unsent input, or no idle input box
 meter.1h_5m_3s.120.4k.txt	idle_reason.skip0.plain	rc=1 reason=live turn, unsent input, or no idle input box
 meter.1h_5m_3s.120.4k.txt	idle_reason.skip1.color	rc=1 reason=live turn, unsent input, or no idle input box
