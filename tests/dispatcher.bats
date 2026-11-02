@@ -2171,3 +2171,163 @@ _want_new_window_argv() { # wt
   keep_row no-value _fresh_refusal_row 1 "--relaunch needs a value" --relaunch
   finish_rows 5
 }
+
+# --overseer: the one-per-host fleet session, started outside any repo.
+_overseer_setup() {
+  OVERSEER_ROOT="$BATS_TEST_TMPDIR/repos"
+  mkdir -p "$OVERSEER_ROOT"
+  cd "$OVERSEER_ROOT"
+  export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"
+  unset CREW_SWEEP_ROOTS CREW_OVERSEER
+  OVERSEER_HOST=$(uname -n)
+  OVERSEER_HOST=${OVERSEER_HOST%%.*}
+  printf '%s\n' overseer-protocol | tee "$DISPATCHER_PROTOCOL_DIR/OVERSEER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/OVERSEER_PROTOCOL.pi.md" >/dev/null
+  cat >"$STUB_DIR/claude" <<'ENGINE'
+#!/usr/bin/env bash
+printf 'claude env CREW_ID=%s CREW_OVERSEER=%s CREW_SWEEP_ROOTS=%s\n' "${CREW_ID-UNSET}" "${CREW_OVERSEER-UNSET}" "${CREW_SWEEP_ROOTS-UNSET}" >>"$STUB_LOG"
+printf 'claude argv %s\n' "$*" >>"$STUB_LOG"
+exit 0
+ENGINE
+  chmod +x "$STUB_DIR/claude"
+}
+
+# _overseer_tmux <pane> <pid> <role> — a tmux whose one pane runs <pid> and
+# carries @crew_role <role>.
+_overseer_tmux() {
+  cat >"$STUB_DIR/tmux" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$1 \$2" in
+"list-panes -a") printf '%s %s\n' '$1' '$2' ;;
+"display-message -p") printf '%s\n' '$3' ;;
+esac
+exit 0
+STUB
+  chmod +x "$STUB_DIR/tmux"
+}
+
+@test "overseer: refuses inside a git repo" {
+  _overseer_setup
+  cd "$TEST_REPO"
+  run run_launcher --overseer
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"not inside one"* ]]
+}
+
+@test "overseer: refuses --new, --fresh, --note, --relaunch and task words" {
+  _overseer_setup
+  begin_rows
+  keep_row new _fresh_refusal_row 2 "--overseer takes no" --overseer --new
+  keep_row fresh _fresh_refusal_row 2 "--overseer takes no" --overseer --fresh
+  keep_row note _fresh_refusal_row 2 "--overseer takes no" --overseer --note /dev/null
+  keep_row relaunch _fresh_refusal_row 2 "--overseer takes no" --overseer --relaunch c1
+  keep_row task _fresh_refusal_row 2 "--overseer takes no" --overseer fix it
+  finish_rows 5
+}
+
+@test "overseer: refuses codex and cursor" {
+  _overseer_setup
+  begin_rows
+  keep_row codex _fresh_refusal_row 2 "--overseer is claude and pi only" --overseer --agent codex
+  keep_row cursor _fresh_refusal_row 2 "--overseer is claude and pi only" --overseer --agent cursor
+  finish_rows 2
+}
+
+@test "overseer: refuses with OVERSEER_PROTOCOL missing when the file is absent" {
+  _overseer_setup
+  rm "$DISPATCHER_PROTOCOL_DIR/OVERSEER_PROTOCOL.claude.md"
+  run run_launcher --overseer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"OVERSEER_PROTOCOL missing"* ]]
+  [ ! -e "$XDG_STATE_HOME/crew/overseer/pid" ]
+}
+
+@test "overseer: exports CREW_OVERSEER and CREW_SWEEP_ROOTS, never CREW_ID, loads the protocol, never registers" {
+  _overseer_setup
+  CREW_ID=inherited run run_launcher --overseer
+  [ "$status" -eq 0 ]
+  grep -qx "claude env CREW_ID=UNSET CREW_OVERSEER=$OVERSEER_HOST CREW_SWEEP_ROOTS=$OVERSEER_ROOT" "$STUB_LOG"
+  grep -q -- "--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/OVERSEER_PROTOCOL.claude.md" "$STUB_LOG"
+  grep -q "OVERSEER_PROTOCOL.md \"Cold start\"" "$STUB_LOG"
+  if grep -qE '^(register|new)( |$)' "$STUB_LOG"; then return 1; fi
+  [[ "$output" != *"crew id:"* ]]
+  [ ! -e "$XDG_STATE_HOME/crew/overseer/pid" ]
+}
+
+@test "overseer: keeps an exported CREW_SWEEP_ROOTS" {
+  _overseer_setup
+  CREW_SWEEP_ROOTS=/elsewhere run run_launcher --overseer
+  [ "$status" -eq 0 ]
+  grep -q "CREW_SWEEP_ROOTS=/elsewhere" "$STUB_LOG"
+}
+
+@test "overseer: stamps its pane @crew_role overseer in tmux" {
+  _overseer_setup
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%4 run run_launcher --overseer
+  [ "$status" -eq 0 ]
+  grep -qx 'set-option -p -t %4 @crew_role overseer' "$STUB_LOG"
+  if grep -q 'set-window-option' "$STUB_LOG"; then return 1; fi
+}
+
+@test "overseer: a live owner gets the client switched to its pane" {
+  _overseer_setup
+  sleep 300 &
+  live_pid=$!
+  mkdir -p "$XDG_STATE_HOME/crew/overseer"
+  printf '%s\n' "$live_pid" >"$XDG_STATE_HOME/crew/overseer/pid"
+  _overseer_tmux '%7' "$live_pid" overseer
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher --overseer
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"%7"* ]]
+  grep -qx 'switch-client -t %7' "$STUB_LOG"
+  if grep -q '^claude' "$STUB_LOG"; then return 1; fi
+  [ "$(cat "$XDG_STATE_HOME/crew/overseer/pid")" = "$live_pid" ]
+}
+
+@test "overseer: a live owner outside tmux refuses" {
+  _overseer_setup
+  sleep 300 &
+  live_pid=$!
+  mkdir -p "$XDG_STATE_HOME/crew/overseer"
+  printf '%s\n' "$live_pid" >"$XDG_STATE_HOME/crew/overseer/pid"
+  run run_launcher --overseer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"already running"* ]]
+  if grep -q '^claude' "$STUB_LOG"; then return 1; fi
+}
+
+@test "overseer: a stale pid file is replaced" {
+  _overseer_setup
+  mkdir -p "$XDG_STATE_HOME/crew/overseer"
+  printf '%s\n' 2147483646 >"$XDG_STATE_HOME/crew/overseer/pid"
+  run run_launcher --overseer
+  [ "$status" -eq 0 ]
+  grep -q "CREW_OVERSEER=$OVERSEER_HOST" "$STUB_LOG"
+}
+
+@test "overseer: a pid file whose owner is not an overseer pane is stale" {
+  _overseer_setup
+  sleep 300 &
+  live_pid=$!
+  mkdir -p "$XDG_STATE_HOME/crew/overseer"
+  printf '%s\n' "$live_pid" >"$XDG_STATE_HOME/crew/overseer/pid"
+  _overseer_tmux '%7' "$live_pid" ''
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher --overseer
+  [ "$status" -eq 0 ]
+  if grep -q '^switch-client' "$STUB_LOG"; then return 1; fi
+  grep -q "CREW_OVERSEER=$OVERSEER_HOST" "$STUB_LOG"
+}
+
+@test "overseer: clears its pane stamp on exit and drops inherited worker and role ids" {
+  _overseer_setup
+  CREW_WORKER_ID=w CREW_ROLE_ID=r TMUX=/tmp/fake,1,0 TMUX_PANE=%4 run run_launcher --overseer
+  [ "$status" -eq 0 ]
+  grep -qx 'set-option -pu -t %4 @crew_role' "$STUB_LOG"
+  [ "$(grep -nx 'set-option -p -t %4 @crew_role overseer' "$STUB_LOG" | cut -d: -f1)" -lt "$(grep -nx 'set-option -pu -t %4 @crew_role' "$STUB_LOG" | cut -d: -f1)" ]
+}
+
+@test "overseer: a normal dispatcher clears a stale overseer stamp" {
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%4 CREW_ID=c1 run run_launcher
+  [ "$status" -eq 0 ]
+  grep -qx 'set-option -pu -t %4 @crew_role' "$STUB_LOG"
+}

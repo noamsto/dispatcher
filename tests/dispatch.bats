@@ -633,6 +633,15 @@ EOF
   [[ "$output" == $'claude\ncodex\npi' ]]
 }
 
+@test "dispatch refuses under CREW_OVERSEER but --engines still answers" {
+  CREW_OVERSEER=host1 run run_dispatch standard sonnet --effort medium --crew-id c1 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the overseer never dispatches; ask that repo's dispatcher with crew overseer msg"* ]]
+  CREW_OVERSEER=host1 DISPATCH_ENGINES="claude pi" run run_dispatch --engines
+  [ "$status" -eq 0 ]
+  [[ "$output" == $'claude\npi' ]]
+}
+
 @test "--engines omits an engine whose CLI is missing" {
   rm "$STUB_DIR/codex"
   PATH="$(path_without_real codex)" DISPATCH_ENGINES="claude codex pi" run run_dispatch --engines
