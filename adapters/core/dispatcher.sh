@@ -483,10 +483,10 @@ if [ -n "$relaunch_id" ]; then
   # cannot both pass the check before either writes the marker.
   lock="$crew_dir/.relaunch.lock"
   mkdir -- "$lock" 2>/dev/null || {
-    echo "dispatcher: --relaunch: another --relaunch of crew $CREW_ID is in progress ($lock)" >&2
+    echo "dispatcher: --relaunch: another --relaunch of crew $CREW_ID is in progress ($lock — rmdir it if none is running)" >&2
     exit 1
   }
-  trap 'rmdir -- "$lock"' EXIT
+  trap 'rmdir -- "$lock" 2>/dev/null || true' EXIT
   marker="$crew_dir/relaunch"
   if [ -e "$marker" ]; then
     last=$(cat -- "$marker" 2>/dev/null) || last=""
