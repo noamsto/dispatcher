@@ -2181,7 +2181,10 @@ _overseer_setup() {
   unset CREW_SWEEP_ROOTS CREW_OVERSEER
   OVERSEER_HOST=$(uname -n)
   OVERSEER_HOST=${OVERSEER_HOST%%.*}
-  printf '%s\n' overseer-protocol | tee "$DISPATCHER_PROTOCOL_DIR/OVERSEER_PROTOCOL.claude.md" "$DISPATCHER_PROTOCOL_DIR/OVERSEER_PROTOCOL.pi.md" >/dev/null
+  local shipped_protocols="$BATS_TEST_DIRNAME/../adapters/core/protocols"
+  cp "$shipped_protocols/OVERSEER_PROTOCOL.claude.md" \
+    "$shipped_protocols/OVERSEER_PROTOCOL.pi.md" \
+    "$DISPATCHER_PROTOCOL_DIR/"
   cat >"$STUB_DIR/claude" <<'ENGINE'
 #!/usr/bin/env bash
 printf 'claude env CREW_ID=%s CREW_OVERSEER=%s CREW_SWEEP_ROOTS=%s\n' "${CREW_ID-UNSET}" "${CREW_OVERSEER-UNSET}" "${CREW_SWEEP_ROOTS-UNSET}" >>"$STUB_LOG"
@@ -2233,13 +2236,16 @@ STUB
   finish_rows 2
 }
 
-@test "overseer: refuses with OVERSEER_PROTOCOL missing when the file is absent" {
+@test "overseer: loads the shipped OVERSEER_PROTOCOL" {
   _overseer_setup
-  rm "$DISPATCHER_PROTOCOL_DIR/OVERSEER_PROTOCOL.claude.md"
+  # The installed render is the shipped one, not a stub.
+  grep -q 'Cold start' "$DISPATCHER_PROTOCOL_DIR/OVERSEER_PROTOCOL.claude.md"
+  [ "$(cat "$DISPATCHER_PROTOCOL_DIR/OVERSEER_PROTOCOL.claude.md")" = \
+    "$(cat "$BATS_TEST_DIRNAME/../adapters/core/protocols/OVERSEER_PROTOCOL.claude.md")" ]
   run run_launcher --overseer
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"OVERSEER_PROTOCOL missing"* ]]
-  [ ! -e "$XDG_STATE_HOME/crew/overseer/pid" ]
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"OVERSEER_PROTOCOL missing"* ]]
+  grep -q -- "--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/OVERSEER_PROTOCOL.claude.md" "$STUB_LOG"
 }
 
 @test "overseer: exports CREW_OVERSEER and CREW_SWEEP_ROOTS, never CREW_ID, loads the protocol, never registers" {
