@@ -19,7 +19,7 @@ setup() {
   # The launcher sources the worker-settings lib; copied-out launchers
   # (_store_launcher) have no sibling file and an unsubstituted placeholder.
   export CLAUDE_WORKER_SETTINGS_LIB="$BATS_TEST_DIRNAME/../adapters/core/claude-worker-settings.sh"
-  unset TMUX CREW_ID DISPATCH_DISPATCHER_MCP ENABLE_CLAUDEAI_MCP_SERVERS
+  unset TMUX CREW_ID DISPATCH_DISPATCHER_MCP ENABLE_CLAUDEAI_MCP_SERVERS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION
   unset DISPATCHER_LAUNCHER_PID DISPATCHER_HANDOFF_DIR DISPATCHER_HANDOFF_CREW
 }
 
@@ -370,6 +370,7 @@ _argv_claude_stub() {
   cat >"$STUB_DIR/claude" <<'EOF'
 #!/usr/bin/env bash
 printf 'ENABLE_CLAUDEAI_MCP_SERVERS=%s\n' "${ENABLE_CLAUDEAI_MCP_SERVERS-UNSET}" >>"$STUB_LOG"
+printf 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=%s\n' "${CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION-UNSET}" >>"$STUB_LOG"
 printf 'ARG %s\n' "$@" >>"$STUB_LOG"
 EOF
   chmod +x "$STUB_DIR/claude"
@@ -402,6 +403,7 @@ _settings_word() { sed -n '/^ARG --settings$/{n;s/^ARG //;p;}' "$STUB_LOG"; }
   _profile_launch
   _assert_lean_mcp
   grep -qxF -- "$_lean_disallowed" "$STUB_LOG"
+  grep -qx 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=UNSET' "$STUB_LOG"
   # Tools the dispatcher uses stay available.
   local keep
   for keep in Artifact ArtifactComments ArtifactData WebSearch PushNotification AskUserQuestion Monitor Skill Task Agent; do

@@ -2689,13 +2689,15 @@ _record_worktree_anchor() {
 # claude_lean_env — emit the env prefix of a claude worker launch that drops the
 # claude.ai account connectors (Gmail, Drive, Sentry, ...). Workers never use
 # them and their tool names ride every turn's context. DISPATCH_CLAUDE_CONNECTORS=1
-# opts out. Plugin and base MCP servers are untouched.
+# opts out. Plugin and base MCP servers are untouched. Prompt suggestions are ghost
+# text no worker pane reader wants, and each one is a background model request.
 claude_lean_env() {
   if [ "${DISPATCH_CLAUDE_CONNECTORS:-}" = 1 ]; then
     printf 'DISPATCH_CLAUDE_CONNECTORS=1 '
   else
     printf 'ENABLE_CLAUDEAI_MCP_SERVERS=false '
   fi
+  printf 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false '
 }
 
 # launch_dir_args <engine> <branch> — emit the ` --add-dir <dir>` flags a claude
