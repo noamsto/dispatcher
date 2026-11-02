@@ -3073,6 +3073,7 @@ fleet_nproc() {
 
   run run_dispatch trivial haiku --effort medium --crew-id c1 102 "t"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet check skipped"* ]]
 
   # At most three workers are named.
   fleet_lead claude dune feat/4-d "" trivial
@@ -3094,12 +3095,14 @@ fleet_nproc() {
 
   DISPATCH_FLEET_BUDGET=0 run run_dispatch standard sonnet --effort medium --crew-id c1 105 "t"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet check skipped"* ]]
   [[ "$output" != *"machine at capacity"* ]]
 
   mkdir -p "$XDG_CONFIG_HOME/dispatcher"
   printf '{"fleetBudget":0}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
   run run_dispatch standard sonnet --effort medium --crew-id c1 106 "t"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet check skipped"* ]]
   rm "$XDG_CONFIG_HOME/dispatcher/settings.json"
 
   run run_dispatch standard sonnet --effort medium --ignore-budget --crew-id c1 107 "t"
@@ -3128,6 +3131,7 @@ fleet_nproc() {
   fleet_lead claude "" "" "" deep
   run run_dispatch standard sonnet --effort medium --crew-id c1 108 "t"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet check skipped"* ]]
 
   fleet_lead claude cedar feat/3-c "" none
   fleet_lead claude dune feat/4-d "" none
@@ -3217,6 +3221,7 @@ fleet_nproc() {
   [ "$status" -eq 1 ]
   run run_dispatch standard sonnet --effort medium --crew-id c1 42 "t"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet check skipped"* ]]
   [[ "$output" != *"machine at capacity"* ]]
 }
 
@@ -3232,6 +3237,7 @@ fleet_nproc() {
   printf '4.00 3.00 2.00 1/1 1\n' >"$DISPATCH_LOADAVG_FILE"
   run run_dispatch trivial haiku --effort medium --crew-id c1 113 "t"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet check skipped"* ]]
 
   printf '9.00 3.00 2.00 1/1 1\n' >"$DISPATCH_LOADAVG_FILE"
   run run_dispatch trivial haiku --effort medium --ignore-budget --crew-id c1 114 "t"
@@ -3241,6 +3247,7 @@ fleet_nproc() {
   printf 'garbage\n' >"$DISPATCH_LOADAVG_FILE"
   run run_dispatch trivial haiku --effort medium --crew-id c1 115 "t"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet check skipped"* ]]
 }
 
 @test "927 fleet: a crew fleet load that errors fails open with a note on stderr" {

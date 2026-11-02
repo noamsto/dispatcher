@@ -528,3 +528,36 @@ func TestLoadTextOutput(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadCleansWorkerText(t *testing.T) {
+	f := newLoadFixture(t)
+	f.pane("claude", "a\x1b]0;x\acd", "feat/\x1b[2Jb", "", f.worktree("wt-a", "deep"))
+	doc, _, _, _ := f.load(LoadRequest{Budget: new(8)})
+	if l := doc.Leads[0]; l.Name != "a?]0;x?cd" || l.Branch != "feat/?[2Jb" {
+		t.Errorf("lead %+v", l)
+	}
+	_, _, stdout, _ := f.load(LoadRequest{Budget: new(8)})
+	if strings.Contains(stdout, "\x1b") {
+		t.Errorf("escape in %q", stdout)
+	}
+}
+
+func TestLoadTierOnlyFromARegularFile(t *testing.T) {
+	f := newLoadFixture(t)
+	dir := f.worktree("wt-a", "")
+	// A directory and a symlink to a device are not task docs; reading either
+	// must neither hang nor weigh deep.
+	if err := os.Mkdir(filepath.Join(dir, "WORKER_TASK.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, w := tierOf(dir); w != 2 {
+		t.Errorf("directory weighs %d", w)
+	}
+	dev := f.worktree("wt-b", "")
+	if err := os.Symlink("/dev/zero", filepath.Join(dev, "WORKER_TASK.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, w := tierOf(dev); w != 2 {
+		t.Errorf("device weighs %d", w)
+	}
+}

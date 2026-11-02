@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
@@ -41,6 +42,7 @@ const (
 	hotPct = 95
 	// maxBudgetAge and maxBudgetSkew bound a cache the predicates still trust.
 	maxBudgetAge  = 7200
+	maxTaskHead   = 64 << 10
 	maxBudgetSkew = 300
 )
 
@@ -133,18 +135,35 @@ var tierLine = regexp.MustCompile(`(?m)^tier: (.*)$`)
 // tierOf is the `tier:` header of the worktree's WORKER_TASK.md as a weight:
 // trivial 1, deep 3, anything else, an unreadable header included, standard 2.
 func tierOf(root string) (string, int) {
-	data, err := os.ReadFile(root + "/WORKER_TASK.md")
-	if err == nil {
-		if m := tierLine.FindSubmatch(data); m != nil {
-			switch string(m[1]) {
-			case "trivial":
-				return "trivial", 1
-			case "deep":
-				return "deep", 3
+	// A worker owns this file: only a regular one is read (opening a FIFO
+	// blocks), and only its head, so a symlink to /dev/zero cannot stall dispatch.
+	path := root + "/WORKER_TASK.md"
+	if st, err := os.Stat(path); err == nil && st.Mode().IsRegular() {
+		if f, err := os.Open(path); err == nil {
+			defer func() { _ = f.Close() }()
+			data, _ := io.ReadAll(io.LimitReader(f, maxTaskHead))
+			if m := tierLine.FindSubmatch(data); m != nil {
+				switch string(m[1]) {
+				case "trivial":
+					return "trivial", 1
+				case "deep":
+					return "deep", 3
+				}
 			}
 		}
 	}
 	return "standard", 2
+}
+
+// cleanText is worker-written text with control runes made "?", before it can
+// forge a line or drive the terminal, as the roster table does.
+func cleanText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return '?'
+		}
+		return r
+	}, s)
 }
 
 // finishedBranches are the branches whose newest worker status row, in file
@@ -211,7 +230,7 @@ func scanLeads(ctx context.Context, o LoadOptions) (leads []Lead, owned map[stri
 		if name == "" {
 			name = "?"
 		}
-		leads = append(leads, Lead{Repo: repo, Branch: p.branch, Name: name, Tier: tier, Weight: w})
+		leads = append(leads, Lead{Repo: cleanText(repo), Branch: cleanText(p.branch), Name: cleanText(name), Tier: tier, Weight: w})
 	}
 	return leads, owned
 }
