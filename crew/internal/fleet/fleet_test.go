@@ -181,6 +181,30 @@ func TestJSONHasRepoAndCrew(t *testing.T) {
 	}
 }
 
+func TestRowsNameARepoByItsLabel(t *testing.T) {
+	f := setup(t)
+	stub := stubGit(f.alpha, nil)
+	f.opts.Git = &gittest.Fake{Func: func(dir string, args []string) (string, error) {
+		if args[0] == "--git-dir="+f.alpha && args[len(args)-1] != "--porcelain" {
+			return "https://github.com/acme/my repo+x.git", nil
+		}
+		return stub.Func(dir, args)
+	}}
+	out, _, code := run(t, f, Request{JSON: true, All: true})
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	var named int
+	for _, r := range jsonRows(t, out) {
+		if r["repo"] == "acme/my?repo?x" {
+			named++
+		}
+	}
+	if named != 2 {
+		t.Errorf("rows labelled acme/my?repo?x = %d, want alpha's two", named)
+	}
+}
+
 func TestCrewAndAllFilters(t *testing.T) {
 	tests := []struct {
 		name string
