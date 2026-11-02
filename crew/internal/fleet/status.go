@@ -287,12 +287,14 @@ type repoBuild struct {
 	due      *queued // the fleet queue's due hold, nil for none
 
 	repoName   string
+	ghRepo     string // the raw owner/name, the PR-ownership check's identity
 	candidates []prCandidate
 }
 
 func (b *repoBuild) build() (RepoStatus, error) {
 	ctx, o := b.ctx, b.o
 	origin, _ := git.Origin(ctx, o.Git, b.common)
+	b.ghRepo = repos.Name(b.common, origin)
 	b.repoName = repos.Label(b.common, origin)
 	worktrees := sync.OnceValues(func() (string, error) { return git.Worktrees(ctx, o.Git, "", b.common) })
 	live := roster.Liveness{Windows: func() map[string]bool { return roster.Windows(ctx, b.once) }, Worktrees: worktrees}
@@ -421,7 +423,7 @@ func (b *repoBuild) derive(crew string, row map[string]any) {
 	candidate := (state == "pr_open" || state == "done") && url != ""
 	row["pr_candidate"] = candidate
 	if candidate {
-		b.candidates = append(b.candidates, prCandidate{row: row, repo: b.repoName})
+		b.candidates = append(b.candidates, prCandidate{row: row, repo: b.ghRepo})
 	}
 }
 

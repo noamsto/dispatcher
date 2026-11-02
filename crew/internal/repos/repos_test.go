@@ -220,7 +220,7 @@ func TestName(t *testing.T) {
 }
 
 func TestLabelSanitizesTheNameItShows(t *testing.T) {
-	const origin = "https://github.com/owner/my repo+x‮​.git"
+	const origin = "https://github.com/owner/my repo+x\u202e\u200b.git"
 	if got, want := Label("/w/proj/.git", origin), "owner/my?repo?x??"; got != want {
 		t.Errorf("Label = %q, want %q", got, want)
 	}

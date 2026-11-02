@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/lane"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
@@ -564,6 +566,32 @@ func TestStatusLabelsARepoAsOverseerAddressesIt(t *testing.T) {
 	doc := f.collect(StatusRequest{})
 	if len(doc.Repos) != 1 || doc.Repos[0].Repo != "acme/my?repo?x" {
 		t.Errorf("repos = %+v, want the one repo labelled acme/my?repo?x", doc.Repos)
+	}
+}
+
+// The PR-ownership check compares against the raw owner/name, so a name past
+// the label's cap still enriches its PR.
+func TestStatusPRsOfALongRepoNameStillEnrich(t *testing.T) {
+	name := strings.Repeat("a", 120)
+	url := "https://github.com/acme/" + name + "/pull/1"
+	f := newStatusFix(t, wstatus(10, "c1", "feat/long", "pr_open", `,"pr_url":"`+url+`"`))
+	stub := stubGit(f.common, nil)
+	f.opts.Git = &gittest.Fake{Func: func(dir string, args []string) (string, error) {
+		if args[0] == "--git-dir="+f.common && args[len(args)-1] != "--porcelain" {
+			return "https://github.com/acme/" + name + ".git", nil
+		}
+		return stub.Func(dir, args)
+	}}
+	f.opts.Gh = &ghtest.Fake{Func: func(args []string) (string, error) {
+		if args[2] == url {
+			return `{"state":"OPEN","statusCheckRollup":[]}`, nil
+		}
+		return "", errors.New("unexpected call")
+	}}
+
+	row := f.collect(StatusRequest{GH: true}).crew(t, "c1").worker(t, "feat/long")
+	if row["pr"] == nil || row["pr_error"] != nil {
+		t.Errorf("worker row = %v, want its PR enriched", row)
 	}
 }
 
