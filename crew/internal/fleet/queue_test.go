@@ -886,21 +886,146 @@ func TestAnUnreadableBusKeepsItsClocks(t *testing.T) {
 	f.add("alpha", "c1", "a", 1, 600)
 	f.add("beta", "c2", "b", 1, 300)
 	kb := f.key("beta", "c2", "b")
-	f.writeRecord(map[holdKey]dueEntry{kb: {Demoted: 1}})
+	f.writeRecord(map[holdKey]dueEntry{kb: {FirstDue: f.ms(100), Demoted: 1}})
 	if err := os.Chmod(f.busPath("beta"), 0o000); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(f.busPath("beta"), 0o644) })
 
+	// Its due stretch is banked, not left running through the unreadable time.
+	banked := dueEntry{Accrued: 100 * 1000, Demoted: 1}
 	f.due("alpha", "c1", true)
-	want := map[holdKey]dueEntry{kb: {Demoted: 1}, f.key("alpha", "c1", "a"): {FirstDue: f.now.UnixMilli()}}
+	want := map[holdKey]dueEntry{kb: banked, f.key("alpha", "c1", "a"): {FirstDue: f.now.UnixMilli()}}
 	if got := f.record(); !maps.Equal(got, want) {
 		t.Errorf("record %v, want %v", got, want)
 	}
 	f.release("alpha", "c1", "a", 0)
+	f.advance(2 * headTimeout)
 	f.due("alpha", "c1", true)
-	if got := f.record(); !maps.Equal(got, map[holdKey]dueEntry{kb: {Demoted: 1}}) {
+	if got := f.record(); !maps.Equal(got, map[holdKey]dueEntry{kb: banked}) {
 		t.Errorf("with no hold read anywhere: record %v, want b's entry kept", got)
+	}
+
+	// Read again, b is not parked for the time it could not be read.
+	if err := os.Chmod(f.busPath("beta"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.due("beta", "c2", true)
+	if got := f.record(); got[kb] != (dueEntry{FirstDue: f.now.UnixMilli(), Accrued: banked.Accrued, Demoted: 1}) {
+		t.Fatalf("readable again: record %v, want b due with its banked time", got)
+	}
+	f.advance(headTimeout - 101)
+	f.due("beta", "c2", true)
+	if got := f.record(); got[kb].Parked != 0 {
+		t.Fatalf("record %v, want b not parked before its due time reaches the timeout", got)
+	}
+	f.advance(1)
+	f.due("beta", "c2", true)
+	if got := f.record(); got[kb].Parked != f.now.UnixMilli() {
+		t.Errorf("record %v, want b parked once banked and due time reach the timeout", got)
+	}
+}
+
+// Time under load over the cores is paused, not reset: a head found due often
+// enough under load still reaches its timeout on its non-overloaded time.
+func TestOverloadedTimePausesTheDemotionClock(t *testing.T) {
+	f := newQueueFix(t, "alpha")
+	f.register("alpha", "c1", livePID)
+	f.add("alpha", "c1", "a", 2, 100)
+	ka := f.key("alpha", "c1", "a")
+	over := func(s int64) {
+		f.loadavg("9.00")
+		f.advance(s)
+		f.due("alpha", "c1", true)
+		f.loadavg("0.50")
+	}
+
+	var spent int64
+	for range 4 {
+		f.due("alpha", "c1", true)
+		f.advance(200)
+		spent += 200
+		over(0)
+		over(400)
+		if got := f.record(); got[ka] != (dueEntry{Accrued: spent * 1000}) {
+			t.Fatalf("record %v, want %ds banked and no running stretch", got, spent)
+		}
+	}
+	f.due("alpha", "c1", true)
+	f.advance(headTimeout - spent - 1)
+	f.due("alpha", "c1", true)
+	if got := f.record(); got[ka].Demoted != 0 {
+		t.Fatalf("record %v, want no demotion a second short of the timeout", got)
+	}
+	f.advance(1)
+	f.due("alpha", "c1", true)
+	if now := f.now.UnixMilli(); f.record()[ka] != (dueEntry{FirstDue: now, Demoted: now}) {
+		t.Errorf("record %v, want a demoted once its non-overloaded due time reached the timeout", f.record())
+	}
+}
+
+func TestOverloadedTimeAloneNeverDemotes(t *testing.T) {
+	f := newQueueFix(t, "alpha")
+	f.register("alpha", "c1", livePID)
+	f.add("alpha", "c1", "a", 2, 100)
+	f.loadavg("9.00")
+	for range 5 {
+		f.due("alpha", "c1", true)
+		f.advance(headTimeout)
+	}
+	if got := f.record(); len(got) != 0 {
+		t.Errorf("record %v, want nothing kept for a hold never due", got)
+	}
+}
+
+// Time banked under load can already reach the timeout when the hold is due
+// again, which demotes it on that evaluation rather than a tick later.
+func TestBankedTimeAtTheTimeoutDemotesOnResume(t *testing.T) {
+	f := newQueueFix(t, "alpha")
+	f.register("alpha", "c1", livePID)
+	f.add("alpha", "c1", "a", 2, 100)
+	ka := f.key("alpha", "c1", "a")
+	f.writeRecord(map[holdKey]dueEntry{ka: {Accrued: headTimeout * 1000}})
+	f.due("alpha", "c1", true)
+	if now := f.now.UnixMilli(); f.record()[ka] != (dueEntry{FirstDue: now, Demoted: now}) {
+		t.Errorf("record %v, want a demoted on the evaluation that found it due again", f.record())
+	}
+}
+
+// A record written before the pause carries only first_due: one uninterrupted
+// stretch, which demotes at the timeout and banks under load like any other.
+func TestAnOldFormatRecordStillRunsItsClock(t *testing.T) {
+	f := newQueueFix(t, "alpha")
+	f.register("alpha", "c1", livePID)
+	f.add("alpha", "c1", "a", 2, 100)
+	ka := f.key("alpha", "c1", "a")
+	oldRecord := func(agoS int64) {
+		f.write(f.recordPath(), fmt.Sprintf(`{"holds":{"a":{%q:{"c1":{"first_due":%d}}}}}`, f.commons["alpha"], f.ms(agoS)))
+	}
+
+	oldRecord(headTimeout)
+	f.due("alpha", "c1", true)
+	if now := f.now.UnixMilli(); f.record()[ka] != (dueEntry{FirstDue: now, Demoted: now}) {
+		t.Fatalf("record %v, want a demoted at its old clock's timeout", f.record())
+	}
+
+	oldRecord(400)
+	f.loadavg("9.00")
+	f.due("alpha", "c1", true)
+	if got := f.record(); got[ka] != (dueEntry{Accrued: 400 * 1000}) {
+		t.Fatalf("record %v, want the old stretch banked", got)
+	}
+	f.loadavg("0.50")
+	f.due("alpha", "c1", true)
+	f.advance(headTimeout - 401)
+	f.due("alpha", "c1", true)
+	if got := f.record(); got[ka].Demoted != 0 {
+		t.Fatalf("record %v, want no demotion before the banked and new time reach the timeout", got)
+	}
+	f.advance(1)
+	f.due("alpha", "c1", true)
+	if got := f.record(); got[ka].Demoted != f.now.UnixMilli() {
+		t.Errorf("record %v, want a demoted", got)
 	}
 }
 

@@ -3,6 +3,7 @@ package fleet
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -59,10 +60,11 @@ func readPriorities(path string) map[string]int64 {
 
 // Prio sets a registered repo's priority, which the fleet queue ranks before
 // anything else, on the human's word. It is refused under the dispatcher
-// tripwire, so a worker following an injected instruction cannot put its repo
-// first, and every change appends one audit line.
+// tripwire unless the caller is the overseer session, so a worker following an
+// injected instruction cannot put its repo first, and every change appends one
+// audit line.
 func Prio(ctx context.Context, req PrioRequest, stdout, stderr io.Writer, o QueueOptions) int {
-	if reason := sender.Check(ctx, "dispatcher:fleet", "", o.Sender); reason != "" {
+	if reason := prioSender(ctx, o); reason != "" {
 		say(stderr, "crew: fleet prio: refused — %s\n", reason)
 		return ExitError
 	}
@@ -116,6 +118,34 @@ func Prio(ctx context.Context, req PrioRequest, stdout, stderr io.Writer, o Queu
 	}
 	say(stdout, "%s: priority %d → %d\n", cleanText(name), old, n)
 	return ExitFits
+}
+
+// prioSender is why the caller may not set a priority, "" when it may: the
+// dispatcher, or the overseer session, which posts only as overseer:<host>. A
+// session marked as the overseer is told why the overseer check refused it,
+// not the dispatcher check's reason, which says it may not post here at all.
+func prioSender(ctx context.Context, o QueueOptions) string {
+	reason := sender.Check(ctx, "dispatcher:fleet", "", o.Sender)
+	if reason == "" {
+		return ""
+	}
+	marked := o.Sender.Getenv != nil && o.Sender.Getenv("CREW_OVERSEER") != ""
+	var self string
+	err := errors.New("no host-name probe")
+	if o.Sender.Self != nil {
+		self, err = o.Sender.Self()
+	}
+	if err != nil {
+		if marked {
+			return "this host's name cannot be read (" + err.Error() + "), so the overseer cannot be told from a worker"
+		}
+		return reason
+	}
+	overseer := sender.Check(ctx, "overseer:"+self, "", o.Sender)
+	if overseer == "" || marked {
+		return overseer
+	}
+	return reason
 }
 
 // registeredRepo is the one registry entry arg names, by its common dir, its

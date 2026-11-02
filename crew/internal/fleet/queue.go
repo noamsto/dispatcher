@@ -133,13 +133,13 @@ type unread struct {
 	crews map[crewRef]bool
 }
 
-// kept is rec's entries for the holds u could not read, which wait untouched
-// for a scan that reads them.
-func (u unread) kept(rec map[holdKey]dueEntry) map[holdKey]dueEntry {
+// kept is rec's entries for the holds u could not read, which wait for a scan
+// that reads them with their clocks paused: unreadable time is not due time.
+func (u unread) kept(rec map[holdKey]dueEntry, nowMS int64) map[holdKey]dueEntry {
 	out := map[holdKey]dueEntry{}
 	for k, e := range rec {
 		if u.repos[k.common] || u.crews[crewRef{k.common, k.crew}] {
-			out[k] = e
+			out[k] = e.paused(nowMS)
 		}
 	}
 	return out
@@ -442,22 +442,28 @@ func (q *queue) advance(rec map[holdKey]dueEntry) (map[holdKey]dueEntry, *queued
 		}
 	}
 	due := q.runClocks(next)
-	maps.Copy(next, q.unread.kept(rec))
+	maps.Copy(next, q.unread.kept(rec, q.nowMS))
 	return compact(next), due
 }
 
 // runClocks moves the outstanding holds' clocks in next and returns the due
-// hold. The clock counts only time spent due, so congestion demotes nothing;
-// each timeout demotes or parks one hold and the queue is picked again, so the
-// next hold is due in the same evaluation.
+// hold. The clock counts only time spent due, so congestion demotes nothing,
+// and time under load over the cores is paused, not reset: no hold is due
+// then, but the head keeps what it accrued. Each timeout demotes or parks one
+// hold and the queue is picked again, so the next hold is due in the same
+// evaluation.
 func (q *queue) runClocks(next map[holdKey]dueEntry) *queued {
 	timeout := int64(q.settings.HeadTimeout) * 1000
 	for {
 		due := q.pick(next)
 		for k, e := range next {
-			if due == nil || k != due.key() {
-				e.FirstDue = 0
-				next[k] = e
+			if due != nil && k == due.key() {
+				continue
+			}
+			if q.load.LoadOver {
+				next[k] = e.paused(q.nowMS)
+			} else {
+				next[k] = dueEntry{Demoted: e.Demoted, Parked: e.Parked}
 			}
 		}
 		if due == nil {
@@ -465,11 +471,14 @@ func (q *queue) runClocks(next map[holdKey]dueEntry) *queued {
 		}
 		e := next[due.key()]
 		if e.FirstDue == 0 {
+			resumed := e.Accrued != 0
 			e.FirstDue = q.nowMS
 			next[due.key()] = e
-			return due
+			if !resumed {
+				return due
+			}
 		}
-		if timeout == 0 || q.nowMS-e.FirstDue < timeout {
+		if timeout == 0 || e.Accrued+q.nowMS-e.FirstDue < timeout {
 			return due
 		}
 		if e.Demoted == 0 {
@@ -477,7 +486,7 @@ func (q *queue) runClocks(next map[holdKey]dueEntry) *queued {
 		} else {
 			e.Parked = q.nowMS
 		}
-		e.FirstDue = 0
+		e.FirstDue, e.Accrued = 0, 0
 		next[due.key()] = e
 	}
 }
@@ -513,12 +522,25 @@ func (q *queue) verdict(common, crew string, rec map[holdKey]dueEntry, due *queu
 	return v
 }
 
-// dueEntry is one hold's demotion clocks, in ms: since when it has been the
-// due hold (cleared once it is not), and when it was demoted and parked.
+// dueEntry is one hold's demotion clocks, in ms: since when its current due
+// stretch began (cleared once it is not due, or while time is paused), the due
+// time banked from earlier stretches, and when it was demoted and parked. A
+// record with only FirstDue is one uninterrupted stretch.
 type dueEntry struct {
 	FirstDue int64 `json:"first_due,omitempty"`
+	Accrued  int64 `json:"accrued,omitempty"`
 	Demoted  int64 `json:"demoted,omitempty"`
 	Parked   int64 `json:"parked,omitempty"`
+}
+
+// paused is e with its running stretch banked into Accrued, so a pause keeps
+// the due time so far and counts none of its own.
+func (e dueEntry) paused(nowMS int64) dueEntry {
+	if e.FirstDue != 0 {
+		e.Accrued += max(0, nowMS-e.FirstDue)
+		e.FirstDue = 0
+	}
+	return e
 }
 
 // dueFile is fleet-due.json, the machine's demotion record: each hold's clocks
@@ -655,7 +677,7 @@ func Due(ctx context.Context, common, crew string, record bool, o QueueOptions) 
 	scan := scanFleet(o.Registry, o.Getenv, readBus, now.UnixMilli())
 	path := duePath(o.Getenv)
 	var v hold.FleetVerdict
-	step := scan.unread.kept
+	step := func(rec map[holdKey]dueEntry) map[holdKey]dueEntry { return scan.unread.kept(rec, now.UnixMilli()) }
 	if len(scan.holds) == 0 {
 		// No fleet hold read anywhere: no load scan, and a record only to drop
 		// what was read.
