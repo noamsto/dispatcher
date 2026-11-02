@@ -1076,7 +1076,7 @@ func TestHoldDueRecordsOnlyForTheDispatcher(t *testing.T) {
 	run := func(probes sender.Probes) []string {
 		t.Helper()
 		var out, errb bytes.Buffer
-		code := hold.Run(t.Context(), hold.Request{Action: "due", JSON: true, Crew: "c1"}, paths, &out, &errb, hold.Options{
+		code := hold.Run(t.Context(), hold.Request{Action: "due", JSON: true, WithParked: true, Crew: "c1"}, paths, &out, &errb, hold.Options{
 			Clock:  f.opts.Clock,
 			Sender: probes,
 			FleetDue: func(ctx context.Context, common, crew string, record bool) (hold.FleetVerdict, error) {

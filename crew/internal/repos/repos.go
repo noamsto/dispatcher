@@ -59,6 +59,27 @@ func RegistryPath(lookup func(string) string) string {
 	return filepath.Join(base, "crew", "repos")
 }
 
+// Register adds common to the registry the way dispatch's `_registry_add` does:
+// nothing when the exact line is already there, otherwise the directory is made
+// and the line appended.
+func Register(registry, common string) error {
+	if slices.Contains(registryLines(registry), common) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(registry), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(registry, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(common + "\n"); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
 // Discover returns every registry or walk candidate, byte-sorted and
 // deduplicated, each tagged with its status.
 func Discover(o Options) []Repo {

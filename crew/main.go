@@ -47,6 +47,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/reply"
 	"github.com/noamsto/dispatcher/crew/internal/report"
+	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 	"github.com/noamsto/dispatcher/crew/internal/retro"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -384,7 +385,7 @@ func holdRequest(p crewArgs) hold.Request {
 	case "list":
 		return hold.Request{Action: action, JSON: h.List.JSON, Crew: str(h.List.Crew)}
 	case "due":
-		return hold.Request{Action: action, JSON: h.Due.JSON, Crew: str(h.Due.Crew)}
+		return hold.Request{Action: action, JSON: h.Due.JSON, WithParked: h.Due.WithParked, Crew: str(h.Due.Crew)}
 	case "park":
 		return hold.Request{Action: action, Crew: str(h.Park.Crew), Default: h.Park.Default}
 	default:
@@ -817,6 +818,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			},
 			FleetBudget: func(ctx context.Context) (int, error) {
 				return fleet.ResolveBudget(ctx, fleet.ConfigBin(), stderr)
+			},
+			EnrollRepo: func(common string) error {
+				return repos.Register(repos.RegistryPath(os.Getenv), common)
 			},
 		})
 	}

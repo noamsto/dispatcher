@@ -131,9 +131,10 @@ The machine-wide queue of fleet holds (`crew hold add --fleet`), from any
 directory (no git repo needed), across every repo in the registry. Holds are in
 queue order: repo priority (`crew fleet prio`), then hold prio, then the repo
 whose newest fleet release is oldest, then the hold's age. STATE is due (the one
-hold the gate admits now), waiting, demoted (it was due and its dispatch did not
-start within fleetHeadTimeout, so it queues behind the rest) or parked, with the
-reason: oversize (heavier than fleetBudget), demoted (demoted a second time) or
+hold the gate admits now), waiting, demoted (it stayed the due hold for
+fleetHeadTimeout without being released, `crew hold release`, so it queues
+behind every non-demoted hold) or parked, with the reason: oversize (heavier
+than fleetBudget), demoted (demoted, and due for another fleetHeadTimeout) or
 ineligible (its crew has no live dispatcher, or its lane is dead or stale).
 Read-only: it never writes fleet-due.json or the bus.
 
@@ -146,8 +147,9 @@ Read-only: it never writes fleet-due.json or the bus.
                  admits it, 3 refuses and names the first hold in order on
                  stdout, 1 is an error. It is refused while a hold that can
                  bind waits, unless it re-dispatches a branch that already has
-                 a lead pane (--own) or is the release of the due hold (--hold)
-  --hold ID      The fleet hold this dispatch releases
+                 a lead pane (--own) or takes the due hold (--hold)
+  --hold ID      The fleet hold this dispatch takes (dispatch --fleet-hold);
+                 release it with crew hold release after the dispatch
   --own BRANCH   That dispatch's own branch; repeatable
 
   crew fleet queue --json | jq '.head'
@@ -156,9 +158,10 @@ usage: crew fleet prio <repo> <n>
 
 Set a registered repo's priority in the fleet queue, on the human's word. 0 is
 the default and resets it; higher goes first, and n may be negative (`crew
-fleet prio <repo> -3`). <repo> is the repo's git common dir, a checkout of it,
-or its name as `crew fleet` shows it; it must be in the registry. n is a whole
-number within one million either way.
+fleet prio <repo> -3`). <repo> is the repo's git common dir, its checkout or any
+directory inside it (a linked worktree included), or its name as `crew fleet`
+shows it; it must be in the registry. n is a whole number within one million
+either way.
 
 Refused in a worker or role session and in a crew-stamped pane, so a worker
 cannot rank its own repo ahead of the rest. The priority is written to

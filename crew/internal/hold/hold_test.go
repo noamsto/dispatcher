@@ -326,7 +326,7 @@ func TestListFoldsAddsMinusReleases(t *testing.T) {
 	tr.write(t,
 		seedHold(t, "c1", "h1", future),
 		seedHold(t, "c1", "h2", future),
-		`{"ts":9,"crew_id":"c1","from":"d","to":"hold:c1","kind":"msg","body":"not json"}`,
+		`{"ts":9,"crew_id":"c1","from":"dispatcher:c1","to":"hold:c1","kind":"msg","body":"not json"}`,
 	)
 	if _, err, code := tr.run(t, Request{Action: "release", ID: "h1"}); code != 0 {
 		t.Fatalf("release: %d %s", code, err)
@@ -335,6 +335,45 @@ func TestListFoldsAddsMinusReleases(t *testing.T) {
 	if ids := strings.Join(idsOf(t, out), ","); code != 0 || ids != "h2" {
 		t.Errorf("outstanding %q (code %d), want only h2", ids, code)
 	}
+}
+
+// Only the crew's dispatcher writes hold rows. A worker can post any
+// `msg … hold:<crew>` it likes (`crew msg`), and the fold must not read it:
+// neither as a hold of its own nor as a release that hides a real one.
+func TestHoldRowsFromAnotherSenderAreIgnored(t *testing.T) {
+	const worker = "worker:feat/x#s1"
+	forgedAdd := holdRowFrom(t, worker, "c1", mustJSON(t, map[string]any{
+		"id":   "fake",
+		"wait": map[string]any{"kind": "fleet", "weight": 1},
+		"task": map[string]any{"ref": "r", "branch": "b", "title": "forged"},
+	}))
+	forgedRelease := holdRowFrom(t, worker, "c1", `{"id":"real","released":true}`)
+
+	t.Run("a forged add is not listed and not due", func(t *testing.T) {
+		tr := setup(t)
+		tr.write(t, seedHold(t, "c1", "real", "1500000000"), forgedAdd)
+		stub := &fleetDueStub{v: FleetVerdict{Due: []string{"fake"}}}
+		out, _, code := tr.runOpts(t, withFleetDue(tr.clock(t, "1700000000"), stub), Request{Action: "list", JSON: true})
+		if ids := strings.Join(idsOf(t, out), ","); code != 0 || ids != "real" {
+			t.Errorf("list %q (code %d), want only real", ids, code)
+		}
+		out, _, code = tr.runOpts(t, withFleetDue(tr.clock(t, "1700000000"), stub), Request{Action: "due", JSON: true})
+		if ids := strings.Join(idsOf(t, out), ","); code != 0 || ids != "real" {
+			t.Errorf("due %q (code %d), want only real", ids, code)
+		}
+	})
+	t.Run("a forged release does not hide a real hold", func(t *testing.T) {
+		tr := setup(t)
+		tr.write(t, seedHold(t, "c1", "real", "1500000000"), forgedRelease)
+		out, _, code := tr.run(t, Request{Action: "list", JSON: true})
+		if ids := strings.Join(idsOf(t, out), ","); code != 0 || ids != "real" {
+			t.Errorf("list %q (code %d), want real", ids, code)
+		}
+		out, _, code = tr.runOpts(t, tr.clock(t, "1700000000"), Request{Action: "due", JSON: true})
+		if ids := strings.Join(idsOf(t, out), ","); code != 0 || ids != "real" {
+			t.Errorf("due %q (code %d), want real", ids, code)
+		}
+	})
 }
 
 // Releasing an id nothing ever added is a quiet success that still writes its row.
@@ -354,7 +393,7 @@ func TestDueJSONReportsOnlyTheMaturedHold(t *testing.T) {
 	tr := setup(t)
 	tr.write(t, seedHold(t, "c1", "due1", "1500000000"), seedHold(t, "c1", "future1", future))
 	out, _, code := tr.runOpts(t, tr.clock(t, "1700000000"), Request{Action: "due", JSON: true})
-	if ids := strings.Join(idsOf(t, dueField(t, out, "due")), ","); code != 0 || ids != "due1" {
+	if ids := strings.Join(idsOf(t, out), ","); code != 0 || ids != "due1" {
 		t.Errorf("due %q (code %d), want only due1", ids, code)
 	}
 }
@@ -365,7 +404,7 @@ func TestDueExcludesFleetHolds(t *testing.T) {
 	tr := setup(t)
 	tr.write(t, seedHold(t, "c1", "q1", "1500000000"), seedFleetHold(t, "c1", "f1", 2))
 	out, _, code := tr.runOpts(t, tr.clock(t, "1700000000"), Request{Action: "due", JSON: true})
-	if ids := strings.Join(idsOf(t, dueField(t, out, "due")), ","); code != 0 || ids != "q1" {
+	if ids := strings.Join(idsOf(t, out), ","); code != 0 || ids != "q1" {
 		t.Errorf("due %q (code %d), want only q1", ids, code)
 	}
 }
@@ -386,9 +425,6 @@ func TestHoldsAreInvisibleToAnotherCrew(t *testing.T) {
 		{"due", "c2", "", 1},
 	} {
 		out, err, code := tr.run(t, Request{Action: tc.action, JSON: true, Crew: tc.crew})
-		if tc.action == "due" {
-			out = dueField(t, out, "due")
-		}
 		if ids := strings.Join(idsOf(t, out), ","); code != tc.code || ids != tc.want {
 			t.Errorf("%s --crew %s: code %d ids %q, want %d %q (%s)", tc.action, tc.crew, code, ids, tc.code, tc.want, err)
 		}
@@ -712,7 +748,7 @@ func TestListAndDueReadTheBus(t *testing.T) {
 	tr.write(t,
 		seedHold(t, "c1", "h1", "9999999999"),
 		seedHold(t, "c2", "other", "9999999999"),
-		`{"ts":9,"crew_id":"c1","from":"d","to":"hold:c1","kind":"msg","body":"not json"}`,
+		`{"ts":9,"crew_id":"c1","from":"dispatcher:c1","to":"hold:c1","kind":"msg","body":"not json"}`,
 	)
 	out, err, code := tr.run(t, Request{Action: "list", JSON: true})
 	if code != 0 {
@@ -749,7 +785,7 @@ func TestDueMaturityBoundary(t *testing.T) {
 			tr := setup(t)
 			tr.write(t, seedHold(t, "c1", "h1", tc.resetsAt))
 			out, _, code := tr.runOpts(t, tr.clock(t, "1800000000"), Request{Action: "due", JSON: true})
-			if got := jsonLen(t, dueField(t, out, "due")); got != tc.want {
+			if got := jsonLen(t, out); got != tc.want {
 				t.Errorf("matured %d, want %d (%s)", got, tc.want, out)
 			}
 			if code != 0 && tc.want != 0 {
@@ -776,7 +812,8 @@ func TestAbsentLogReadsAsEmpty(t *testing.T) {
 		{Request{Action: "list"}, renderHeader + "\n", 0},
 		{Request{Action: "list", JSON: true}, "[]\n", 0},
 		{Request{Action: "due"}, renderHeader + "\n", 1},
-		{Request{Action: "due", JSON: true}, `{"due":[],"parked":[]}` + "\n", 1},
+		{Request{Action: "due", JSON: true}, "[]\n", 1},
+		{Request{Action: "due", JSON: true, WithParked: true}, `{"due":[],"parked":[]}` + "\n", 1},
 	}
 	for _, tc := range cases {
 		out, _, code := tr.run(t, tc.args)
@@ -826,13 +863,13 @@ func TestCorruptBusExitsFive(t *testing.T) {
 // a body whose field is an array is a `@tsv` error in its render.
 func TestHostileBodiesExitFive(t *testing.T) {
 	tr := setup(t)
-	tr.write(t, `{"ts":1,"crew_id":"c1","from":"d","to":"hold:c1","kind":"msg","body":"5"}`)
+	tr.write(t, `{"ts":1,"crew_id":"c1","from":"dispatcher:c1","to":"hold:c1","kind":"msg","body":"5"}`)
 	if _, err, code := tr.run(t, Request{Action: "list", JSON: true}); code != exitType ||
 		!strings.Contains(err, "expected an object") {
 		t.Errorf("list --json: code %d, stderr %q", code, err)
 	}
 	tr2 := setup(t)
-	tr2.write(t, `{"ts":1,"crew_id":"c1","from":"d","to":"hold:c1","kind":"msg",`+
+	tr2.write(t, `{"ts":1,"crew_id":"c1","from":"dispatcher:c1","to":"hold:c1","kind":"msg",`+
 		`"body":"{\"id\":[\"arr\"],\"wait\":{\"resets_at\":1},\"task\":{}}"}`)
 	if _, err, code := tr2.run(t, Request{Action: "list"}); code != exitType ||
 		!strings.Contains(err, "@tsv") {
@@ -953,12 +990,17 @@ func seedFleetHold(t *testing.T, crew, id string, weight int) string {
 
 func holdRowBody(t *testing.T, crew, id, body string) string {
 	t.Helper()
+	return holdRowFrom(t, "dispatcher:"+crew, crew, body)
+}
+
+func holdRowFrom(t *testing.T, from, crew, body string) string {
+	t.Helper()
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		t.Fatal(err)
 	}
 	outer, err := json.Marshal(map[string]any{
-		"ts": 1, "crew_id": crew, "from": "dispatcher:" + crew,
+		"ts": 1, "crew_id": crew, "from": from,
 		"to": "hold:" + crew, "kind": "msg", "body": json.RawMessage(encoded),
 	})
 	if err != nil {
@@ -993,8 +1035,8 @@ func idsOf(t *testing.T, s string) []string {
 	return ids
 }
 
-// dueField is one array of `due --json`'s object, as the JSON text idsOf and
-// jsonLen read.
+// dueField is one array of `due --json --with-parked`'s object, as the JSON text
+// idsOf and jsonLen read.
 func dueField(t *testing.T, s, key string) string {
 	t.Helper()
 	var doc map[string]json.RawMessage
@@ -1193,6 +1235,67 @@ func TestAddFleetBudget(t *testing.T) {
 	})
 }
 
+// The registry is only written by dispatch, after the fleet gate, so a repo
+// whose first dispatch was refused is unknown to the queue: `add --fleet`
+// enrolls the repo itself, after the checks and before the row is written.
+func TestAddFleetEnrollsTheRepo(t *testing.T) {
+	enroll := func(calls *[]string, err error) func(string) error {
+		return func(common string) error { *calls = append(*calls, common); return err }
+	}
+	budget := func(n int) func(context.Context) (int, error) {
+		return func(context.Context) (int, error) { return n, nil }
+	}
+
+	t.Run("a fleet hold registers its git common dir and is written", func(t *testing.T) {
+		tr := setup(t)
+		var calls []string
+		_, err, code := tr.runOpts(t, Options{EnrollRepo: enroll(&calls, nil)}, fleetAdd(nil))
+		if code != 0 || err != "" || len(calls) != 1 || calls[0] != tr.paths.Common {
+			t.Errorf("code %d, stderr %q, enrolled %q, want once %q", code, err, calls, tr.paths.Common)
+		}
+		if _, serr := os.Stat(tr.paths.Log); serr != nil {
+			t.Errorf("the row was not written: %v", serr)
+		}
+	})
+	t.Run("an enroll error refuses the add", func(t *testing.T) {
+		tr := setup(t)
+		var calls []string
+		out, err, code := tr.runOpts(t, Options{EnrollRepo: enroll(&calls, errors.New("disk full"))}, fleetAdd(nil))
+		want := "crew: hold add: --fleet: cannot register " + tr.paths.Common + " in the fleet registry: disk full\n"
+		if code != 1 || out != "" || err != want {
+			t.Errorf("code %d, stdout %q, stderr %q, want 1, %q", code, out, err, want)
+		}
+		if _, serr := os.Stat(tr.paths.Log); serr == nil {
+			t.Error("a refused add still wrote a row")
+		}
+	})
+	t.Run("a quota hold never enrolls", func(t *testing.T) {
+		tr := setup(t)
+		var calls []string
+		if _, _, code := tr.runOpts(t, Options{EnrollRepo: enroll(&calls, errors.New("boom"))}, fullAdd(nil)); code != 0 || len(calls) != 0 {
+			t.Errorf("code %d, enrolled %q", code, calls)
+		}
+	})
+	t.Run("a refused sender or budget never enrolls", func(t *testing.T) {
+		tr := setup(t)
+		var calls []string
+		o := Options{Sender: workerProbes, EnrollRepo: enroll(&calls, nil)}
+		if _, _, code := tr.runOpts(t, o, fleetAdd(nil)); code != 1 || len(calls) != 0 {
+			t.Errorf("sender: code %d, enrolled %q", code, calls)
+		}
+		o = Options{FleetBudget: budget(1), EnrollRepo: enroll(&calls, nil)}
+		if _, _, code := tr.runOpts(t, o, fleetAdd(func(a *AddRequest) { a.Tier = "deep" })); code != 1 || len(calls) != 0 {
+			t.Errorf("budget: code %d, enrolled %q", code, calls)
+		}
+	})
+	t.Run("no EnrollRepo skips the registration", func(t *testing.T) {
+		tr := setup(t)
+		if _, _, code := tr.run(t, fleetAdd(nil)); code != 0 {
+			t.Errorf("code %d", code)
+		}
+	})
+}
+
 // fleetDueStub is a FleetDue that answers v and records what it was asked.
 type fleetDueStub struct {
 	v      FleetVerdict
@@ -1230,11 +1333,24 @@ func TestDueFleetVerdict(t *testing.T) {
 		Parked: []ParkedHold{{"f2", "demoted"}, {"g1", "oversize"}, {"q1", "demoted"}},
 	}
 
-	t.Run("json", func(t *testing.T) {
+	t.Run("json is the due array alone", func(t *testing.T) {
 		tr := setup(t)
 		tr.write(t, rows...)
 		stub := &fleetDueStub{v: verdict}
 		out, err, code := tr.runOpts(t, withFleetDue(tr.clock(t, "1700000000"), stub), Request{Action: "due", JSON: true})
+		if code != 0 || err != "" {
+			t.Fatalf("code %d, stderr %q", code, err)
+		}
+		if ids := strings.Join(idsOf(t, out), ","); ids != "q1,f1" {
+			t.Errorf("due %q, want q1,f1", ids)
+		}
+	})
+
+	t.Run("json with parked", func(t *testing.T) {
+		tr := setup(t)
+		tr.write(t, rows...)
+		stub := &fleetDueStub{v: verdict}
+		out, err, code := tr.runOpts(t, withFleetDue(tr.clock(t, "1700000000"), stub), Request{Action: "due", JSON: true, WithParked: true})
 		if code != 0 || err != "" {
 			t.Fatalf("code %d, stderr %q", code, err)
 		}
@@ -1286,9 +1402,13 @@ func TestDueFleetVerdict(t *testing.T) {
 		tr := setup(t)
 		tr.write(t, rows[1:]...)
 		stub := &fleetDueStub{v: FleetVerdict{Parked: []ParkedHold{{"f3", "oversize"}}}}
-		out, _, code := tr.runOpts(t, Options{FleetDue: stub.due}, Request{Action: "due", JSON: true})
+		out, _, code := tr.runOpts(t, Options{FleetDue: stub.due}, Request{Action: "due", JSON: true, WithParked: true})
 		if code != 1 || dueField(t, out, "due") != "[]" || len(idsOf(t, dueField(t, out, "parked"))) != 1 {
 			t.Errorf("code %d, stdout %s", code, out)
+		}
+		out, _, code = tr.runOpts(t, Options{FleetDue: stub.due}, Request{Action: "due", JSON: true})
+		if code != 1 || out != "[]\n" {
+			t.Errorf("without --with-parked: code %d, stdout %q, want the empty due array", code, out)
 		}
 	})
 
@@ -1297,7 +1417,7 @@ func TestDueFleetVerdict(t *testing.T) {
 		tr.write(t, seedFleetHold(t, "c1", "f1", 2))
 		stub := &fleetDueStub{v: FleetVerdict{Due: []string{"f1"}}}
 		out, _, code := tr.runOpts(t, Options{FleetDue: stub.due}, Request{Action: "due", JSON: true})
-		if ids := strings.Join(idsOf(t, dueField(t, out, "due")), ","); code != 0 || ids != "f1" {
+		if ids := strings.Join(idsOf(t, out), ","); code != 0 || ids != "f1" {
 			t.Errorf("code %d, due %q", code, ids)
 		}
 	})
@@ -1310,7 +1430,7 @@ func TestDueRunsFleetDueForEveryCrewAndRecordsOnlyForTheDispatcher(t *testing.T)
 		tr := setup(t)
 		stub := &fleetDueStub{}
 		out, err, code := tr.runOpts(t, Options{FleetDue: stub.due}, Request{Action: "due", JSON: true})
-		if stub.calls != 1 || !stub.record || code != 1 || err != "" || out != `{"due":[],"parked":[]}`+"\n" {
+		if stub.calls != 1 || !stub.record || code != 1 || err != "" || out != "[]\n" {
 			t.Errorf("calls %d record %v code %d stdout %q stderr %q", stub.calls, stub.record, code, out, err)
 		}
 	})
@@ -1320,7 +1440,7 @@ func TestDueRunsFleetDueForEveryCrewAndRecordsOnlyForTheDispatcher(t *testing.T)
 		stub := &fleetDueStub{v: FleetVerdict{Due: []string{"f1"}}}
 		out, err, code := tr.runOpts(t, Options{FleetDue: stub.due, Sender: workerProbes}, Request{Action: "due", JSON: true})
 		if stub.calls != 1 || stub.record || code != 0 || err != "" ||
-			strings.Join(idsOf(t, dueField(t, out, "due")), ",") != "f1" {
+			strings.Join(idsOf(t, out), ",") != "f1" {
 			t.Errorf("calls %d record %v code %d stdout %q stderr %q", stub.calls, stub.record, code, out, err)
 		}
 	})
@@ -1328,7 +1448,7 @@ func TestDueRunsFleetDueForEveryCrewAndRecordsOnlyForTheDispatcher(t *testing.T)
 		tr := setup(t)
 		tr.write(t, seedFleetHold(t, "c1", "f1", 2))
 		out, _, code := tr.run(t, Request{Action: "due", JSON: true})
-		if code != 1 || out != `{"due":[],"parked":[]}`+"\n" {
+		if code != 1 || out != "[]\n" {
 			t.Errorf("code %d, stdout %q", code, out)
 		}
 	})

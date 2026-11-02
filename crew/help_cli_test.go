@@ -186,7 +186,7 @@ func TestHoldActionHelpScreens(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("hold due --help wrote %q to stderr", stderr.String())
 	}
-	if got, _, _ := strings.Cut(stdout.String(), "\n"); got != "usage: crew hold due [--crew ID] [--json]" {
+	if got, _, _ := strings.Cut(stdout.String(), "\n"); got != "usage: crew hold due [--crew ID] [--json [--with-parked]]" {
 		t.Errorf("hold due --help printed %q", got)
 	}
 	if !strings.Contains(stdout.String(), "quota window has already reset") {

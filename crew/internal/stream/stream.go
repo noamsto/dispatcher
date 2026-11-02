@@ -280,9 +280,10 @@ type errorLine struct {
 	Playbook string `json:"playbook,omitempty"`
 }
 
-// holdDueLine carries `crew hold due --json`'s answer as its own bytes: Holds is
-// the answer's `due` array, and Parked its `parked` array — the fleet holds the
-// machine-wide queue parked, each with a reason — present only when it has rows.
+// holdDueLine carries `crew hold due --json --with-parked`'s answer as its own
+// bytes: Holds is the answer's `due` array, and Parked its `parked` array — the
+// fleet holds the machine-wide queue parked, each with a reason — present only
+// when it has rows.
 type holdDueLine struct {
 	Stream   string          `json:"stream"`
 	Crew     string          `json:"crew"`
@@ -668,7 +669,7 @@ func (l *loop) afterWatch(rc int, sigs chan os.Signal) os.Signal {
 // would fold into that same silence, and a hold exists precisely because nobody
 // is watching the lane.
 func (l *loop) holdDue() {
-	out, rc := l.procs.run([]string{"hold", "due", "--crew", l.c.crew, "--json"}, l.holderr)
+	out, rc := l.procs.run([]string{"hold", "due", "--crew", l.c.crew, "--json", "--with-parked"}, l.holderr)
 	if rc > holdDueNone {
 		detail := invisible.Escape(firstLine(l.holderr))
 		ts := l.nowMS()
@@ -725,7 +726,8 @@ type holdSet struct {
 	n   int
 }
 
-// decodeHoldDue reads `hold due --json`'s one object, `{"due":[…],"parked":[…]}`.
+// decodeHoldDue reads `hold due --json --with-parked`'s one object,
+// `{"due":[…],"parked":[…]}`.
 // ok is false for anything else, including an object either of whose keys is
 // not an array.
 func decodeHoldDue(text string) (due, parked holdSet, ok bool) {

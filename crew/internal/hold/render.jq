@@ -1,10 +1,10 @@
-# `_hold_render`, verbatim apart from one patch: `jq -r` printed one @tsv row per
-# line, and jqrun wants exactly one value, so the rows are collected and joined
-# (the report.jq patch, same reason). The Go caller adds the one trailing
-# newline, byte-identically, and prints nothing for the empty string — which is
-# only ever zero rows, since a @tsv row always carries its six tabs. A fleet
-# hold has no engine, window or resets_at: it prints `fleet`, `weight <W>` and
-# `-` in those columns.
+# `_hold_render`, verbatim apart from two patches. The join: `jq -r` printed one
+# @tsv row per line, and jqrun wants exactly one value, so the rows are collected
+# and joined (the report.jq patch, same reason). The Go caller adds the one
+# trailing newline, byte-identically, and prints nothing for the empty string —
+# which is only ever zero rows, since a @tsv row always carries its six tabs. The
+# fleet columns: a fleet hold has no engine, window or resets_at, so it prints
+# `fleet`, `weight <W>` and `-` in those columns.
 [ .[] | (.wait.kind == "fleet") as $fleet
         | [ .id,
             (if $fleet then "fleet" else .wait.engine end),

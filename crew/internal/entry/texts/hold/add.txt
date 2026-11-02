@@ -9,7 +9,8 @@ usage: crew hold add --engine E --window W --resets-at EPOCH --agent A --ref R
 
 Queue a dispatch to be taken once the quota window it is parked on resets. With
 --fleet it waits on the machine-wide fleet queue instead, and is due when that
-queue admits it.
+queue admits it; the repo is registered in the fleet registry so the queue sees
+the hold.
 
   --engine      Engine whose quota is being waited on (required; not with --fleet)
   --window      Window name, e.g. week (required; not with --fleet)
@@ -17,7 +18,7 @@ queue admits it.
   --fleet       Wait on the fleet queue, not a quota window; --tier must be
                 trivial, standard or deep, weighing 1, 2 or 3
   --prio        Fleet queue priority: high | normal | low (default normal;
-                needs --fleet)
+                needs --fleet); high only on the human's word
   --agent       Engine the task will be dispatched to (required; task.engine)
   --ref         Branch or commit to dispatch from (required)
   --branch      Branch the worktree gets (required)
@@ -38,5 +39,5 @@ queue admits it.
     --agent pi --ref main --branch feat/x --tier standard \
     --model lemonade/Qwen3.8-Flash --effort medium "Echo task"
 
-  crew hold add --fleet --prio high --agent claude --ref main --branch feat/y \
+  crew hold add --fleet --agent claude --ref main --branch feat/y \
     --tier deep --model opus --effort high "Fleet task"

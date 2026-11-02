@@ -78,7 +78,7 @@ Grants and authorization
 
 Overrides
   --ignore-budget         Spend past the quota stop and the machine fan-out cap (a human's decision)
-  --fleet-hold ID         The fleet hold this dispatch releases (`crew hold add --fleet`); admission lets the queue's due hold through
+  --fleet-hold ID         The fleet hold this dispatch takes (`crew hold add --fleet`); admission lets the queue's due hold through, then `crew hold release ID`
   --ignore-map            Skip the tier-map model refusals (a human's model call)
   DISPATCH_SPEC=FILE      Task body to inline into WORKER_TASK.md
   DISPATCH_SKIP_SPEC_LINT=1  Dispatch despite `crew spec-lint` errors in DISPATCH_SPEC

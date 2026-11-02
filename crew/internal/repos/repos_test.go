@@ -219,6 +219,51 @@ func TestName(t *testing.T) {
 	}
 }
 
+// Register is `_registry_add`: it makes the registry's directory, appends the
+// line once, and treats an exact line already there as done.
+func TestRegisterAppendsOnceAndCreatesTheDir(t *testing.T) {
+	reg := filepath.Join(t.TempDir(), "nested", "crew", "repos")
+	read := func() string {
+		t.Helper()
+		data, err := os.ReadFile(reg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	if err := Register(reg, "/w/a/.git"); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got != "/w/a/.git\n" {
+		t.Fatalf("registry %q", got)
+	}
+	for _, common := range []string{"/w/a/.git", "/w/b/.git", "/w/a/.git", "/w/b/.git"} {
+		if err := Register(reg, common); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := read(); got != "/w/a/.git\n/w/b/.git\n" {
+		t.Errorf("registry %q, want each line once", got)
+	}
+	// A line that only contains the path is not the exact line.
+	if err := Register(reg, "/w/a"); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got != "/w/a/.git\n/w/b/.git\n/w/a\n" {
+		t.Errorf("registry %q, want the prefix path added", got)
+	}
+}
+
+func TestRegisterReportsAnUnwritableRegistry(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(filepath.Join(blocker, "crew", "repos"), "/w/a/.git"); err == nil {
+		t.Error("registering under a regular file succeeded")
+	}
+}
+
 // Registered reads the registry alone: a bus the walk would find is no member.
 func TestRegisteredIsTheRegistryOnly(t *testing.T) {
 	root := t.TempDir()

@@ -82,11 +82,11 @@ one_hold_each() {
   HOLD_B="$(add_hold "$REPO_B" "$CREW_B")"
 }
 
-# hold_due <repo> <crew> — `crew hold due --json` as the crew's dispatcher
-# runs it, from inside its repo.
+# hold_due <repo> <crew> — `crew hold due --json --with-parked` as the crew's
+# dispatcher runs it, from inside its repo.
 hold_due() {
   cd "$1" || return 1
-  "$CREW" hold due --crew "$2" --json
+  "$CREW" hold due --crew "$2" --json --with-parked
 }
 
 @test "a full budget leaves every fleet hold waiting" {
@@ -188,4 +188,27 @@ hold_due() {
   [ "$status" -eq 0 ]
   [ -f "$DUE_RECORD" ]
   [ "$(jq -r '.holds | keys | join(",")' "$DUE_RECORD")" = "$HOLD_A" ]
+}
+
+@test "a fleet hold registers its repo, so a never-dispatched repo's hold is seen" {
+  rm "$XDG_DATA_HOME/crew/repos"
+  lead_pane_gone
+  HOLD_A="$(add_hold "$REPO_A" "$CREW_A")"
+  [ "$(cat "$XDG_DATA_HOME/crew/repos")" = "$COMMON_A" ]
+  add_hold "$REPO_A" "$CREW_A" >/dev/null
+  [ "$(cat "$XDG_DATA_HOME/crew/repos")" = "$COMMON_A" ]
+
+  run --separate-stderr hold_due "$REPO_A" "$CREW_A"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r '.due | map(.id) | join(",")' <<<"$output")" = "$HOLD_A" ]
+}
+
+@test "hold due --json alone is the bare due array, as an older stream reads it" {
+  one_hold_each
+  lead_pane_gone
+
+  cd "$REPO_A"
+  run --separate-stderr "$CREW" hold due --crew "$CREW_A" --json
+  [ "$status" -eq 0 ]
+  [ "$(jq -r 'map(.id) | join(",")' <<<"$output")" = "$HOLD_A" ]
 }

@@ -58,7 +58,7 @@ const (
 	Usage = "crew: hold add|list|due|park|release"
 	// ListUsage and its siblings are the action's line for a grammar error.
 	ListUsage    = "crew: hold list [--crew ID] [--json]"
-	DueUsage     = "crew: hold due [--crew ID] [--json]"
+	DueUsage     = "crew: hold due [--crew ID] [--json [--with-parked]]"
 	ParkUsage    = "crew: hold park <default> [--crew ID]"
 	ReleaseUsage = "crew: hold release <id> [--crew ID]"
 	// renderHeader is `_hold_render`'s printf, matching the fold's columns.
@@ -84,6 +84,10 @@ type Options struct {
 	// FleetBudget is the fleet's weight budget; `add --fleet` refuses a hold
 	// heavier than it. nil: no check.
 	FleetBudget func(ctx context.Context) (int, error)
+	// EnrollRepo registers the repo's git common dir in the fleet registry, which
+	// dispatch only writes after its fleet gate: `add --fleet` calls it so the
+	// queue sees a hold placed in a repo that was never dispatched from. nil: skip.
+	EnrollRepo func(common string) error
 }
 
 // FleetVerdict is one crew's share of an evaluation: Due holds at most one id
@@ -112,14 +116,17 @@ type AddRequest struct {
 }
 
 // Request is one `crew hold` call: the action and the fields that action reads.
-// Crew is the action's --crew, "" for the caller's own.
+// Crew is the action's --crew, "" for the caller's own. WithParked is `due
+// --json --with-parked`: the `{"due","parked"}` object where --json alone prints
+// the due array.
 type Request struct {
-	Action  string
-	JSON    bool
-	Crew    string
-	Default string
-	ID      string
-	Add     AddRequest
+	Action     string
+	JSON       bool
+	WithParked bool
+	Crew       string
+	Default    string
+	ID         string
+	Add        AddRequest
 }
 
 // Run is the arm's `case "$holdsub"`. `--help` never reaches here: the crew.sh
@@ -253,7 +260,13 @@ func due(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	ready := append([]any{}, elems(matured)...)
 	ready = append(ready, fleetDue...)
 	if jsonOut {
-		print_(stdout, map[string]any{"due": ready, "parked": parked})
+		// Bare array unless asked: a stream from an older build reads this output
+		// through the binary the entry now points at.
+		if req.WithParked {
+			print_(stdout, map[string]any{"due": ready, "parked": parked})
+		} else {
+			print_(stdout, ready)
+		}
 	} else {
 		if code = render(f, stdout, ready); code != 0 {
 			return code
@@ -410,6 +423,12 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		}
 		if w := tierWeights[fl.Tier]; w > budget {
 			say(stderr, "crew: hold add: --fleet: a %s hold weighs %d, more than fleetBudget %d, so it could never be released\n", fl.Tier, w, budget)
+			return exitFailure
+		}
+	}
+	if fl.Fleet && o.EnrollRepo != nil {
+		if err := o.EnrollRepo(paths.Common); err != nil {
+			say(stderr, "crew: hold add: --fleet: cannot register %s in the fleet registry: %v\n", paths.Common, err)
 			return exitFailure
 		}
 	}

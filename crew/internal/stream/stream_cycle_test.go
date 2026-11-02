@@ -14,9 +14,9 @@ import (
 	"time"
 )
 
-// holdDueJSON is what `crew hold due --json` answers with: the matured rows and
-// the fleet-parked ones, which the stream embeds verbatim and keys its
-// suppression on.
+// holdDueJSON is what `crew hold due --json --with-parked` answers with: the
+// matured rows and the fleet-parked ones, which the stream embeds verbatim and
+// keys its suppression on.
 func holdDueJSON(due, parked string) string {
 	return `{"due":` + due + `,"parked":` + parked + `}`
 }
@@ -286,6 +286,25 @@ func TestDecodeHoldDue(t *testing.T) {
 	}
 	if got := holdIDs(due.raw); got != "h1,h2" {
 		t.Errorf("due ids = %q", got)
+	}
+}
+
+// The stream asks for the parked block by name: `hold due --json` alone is the
+// bare due array, the shape a stream from an older build reads.
+func TestStreamHoldDueAsksForTheParkedBlock(t *testing.T) {
+	p := streamBus(t)
+	s := entryStub(t, map[string]string{"watch": parkedWatch("0")})
+	startLane(t, p, s, Request{Heartbeat: "3600"}, laneOpts{})
+
+	waitFor(t, "the first hold due", func() bool { return s.calls("hold") >= 1 })
+	for _, a := range s.argv() {
+		if !strings.HasPrefix(a, "hold ") {
+			continue
+		}
+		if want := "hold due --crew c1 --json --with-parked"; a != want {
+			t.Errorf("hold argv = %q, want %q", a, want)
+		}
+		return
 	}
 }
 

@@ -234,6 +234,12 @@ type holdReadCmd struct {
 	Crew *string `name:"crew"`
 }
 
+type holdDueCmd struct {
+	JSON       bool    `name:"json"`
+	WithParked bool    `name:"with-parked"`
+	Crew       *string `name:"crew"`
+}
+
 type holdParkCmd struct {
 	Crew    *string `name:"crew"`
 	Default string  `arg:"" optional:"" name:"default"`
@@ -270,7 +276,7 @@ type holdAddCmd struct {
 type holdCmd struct {
 	Add     holdAddCmd     `cmd:"" name:"add"`
 	List    holdReadCmd    `cmd:"" name:"list"`
-	Due     holdReadCmd    `cmd:"" name:"due"`
+	Due     holdDueCmd     `cmd:"" name:"due"`
 	Park    holdParkCmd    `cmd:"" name:"park"`
 	Release holdReleaseCmd `cmd:"" name:"release"`
 }
@@ -939,6 +945,9 @@ func validate(sub string, r *root) *refusal {
 		}
 		if given(crew) {
 			return fail("crew: --crew needs a value")
+		}
+		if due := r.Hold.Due; sub == "hold due" && due.WithParked && !due.JSON {
+			return fail(hold.DueUsage)
 		}
 	case "rate":
 		for _, d := range r.Rate.Root {
