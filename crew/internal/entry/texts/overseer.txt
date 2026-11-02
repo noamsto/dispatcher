@@ -3,7 +3,8 @@ usage: crew overseer msg <repo> <crew> '<json>'
 Post the overseer's message to one crew's dispatcher, on that repo's bus. Only
 the overseer session runs it: CREW_OVERSEER set to this host's name (uname -n
 up to the first dot), no CREW_WORKER_ID or CREW_ROLE_ID, and no crew-stamped
-pane above it. The row is from overseer:<host> to dispatcher:<crew>; crew msg
+pane above it; it is refused when tmux list-panes -a or the process ancestry
+cannot be read. The row is from overseer:<host> to dispatcher:<crew>; crew msg
 and crew status refuse an overseer: sender.
 
   <repo>   A repo as crew fleet names it (owner/name from its origin, else
@@ -12,7 +13,9 @@ and crew status refuse an overseer: sender.
   <crew>   A crew on that repo's bus (crew crews)
   <json>   One JSON object of at most 3500 bytes whose "kind" is ask,
            request, capacity or notice, with no control or invisible
-           characters, escaped or not (compact one-line JSON, e.g. jq -c)
+           characters, escaped or not (compact one-line JSON, e.g. jq -c);
+           its bus row must also fit 4096 bytes, where each " or \ is
+           escaped, so counts twice
 
 Runs from any directory. Exits 1 on any refusal, with nothing written.
 

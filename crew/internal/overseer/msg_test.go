@@ -117,7 +117,7 @@ func (f *fixture) opts() Options {
 		Sender: sender.Probes{
 			Getenv: func(k string) string { return f.env[k] },
 			Tmux:   &tmuxtest.Fake{Out: map[string]string{"list-panes": ""}},
-			Proc:   proctest.New(nil, map[int]int{}),
+			Proc:   proctest.New(nil, map[int]int{os.Getpid(): 1}),
 			Self:   f.self,
 		},
 	}

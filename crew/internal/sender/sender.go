@@ -49,8 +49,8 @@ func Check(ctx context.Context, from, crew string, p Probes) string {
 		return reason
 	}
 	rows, read := p.rows(ctx)
-	s, ok := p.anchor(rows)
-	if reason := p.overseerPane(from, s, ok, read); reason != "" {
+	s, ok, walked := p.anchor(rows)
+	if reason := p.overseerPane(from, s, ok, read && walked); reason != "" {
 		return reason
 	}
 	if !ok || s.branch == "" {
@@ -72,8 +72,8 @@ func Watch(ctx context.Context, from, crew, pane string, p Probes) string {
 		return "pane " + pane + " is not a pane id (%N)"
 	}
 	rows, read := p.rows(ctx)
-	a, anchored := p.anchor(rows)
-	if reason := p.overseerPane(from, a, anchored, read); reason != "" {
+	a, anchored, walked := p.anchor(rows)
+	if reason := p.overseerPane(from, a, anchored, read && walked); reason != "" {
 		return reason
 	}
 	anchored = anchored && a.branch != ""
@@ -171,11 +171,12 @@ func (p Probes) overseerEnv(from string) string {
 }
 
 // overseerPane is the pane half of the overseer rule. An overseer: sender needs
-// both pane probes, since a failed read would hide the stamped pane it sits in;
-// the overseer's own pane posts only as overseer:<host>.
-func (p Probes) overseerPane(from string, a stamp, anchored, read bool) string {
-	if strings.HasPrefix(from, "overseer:") && (!read || p.Proc == nil) {
-		return "the pane stamps cannot be read, and only a session outside every crew pane posts as " + from
+// both pane probes read through (probed), since a failed tmux read or ancestry
+// walk would hide the stamped pane it sits in; the overseer's own pane posts
+// only as overseer:<host>.
+func (p Probes) overseerPane(from string, a stamp, anchored, probed bool) string {
+	if strings.HasPrefix(from, "overseer:") && !probed {
+		return "the pane stamps cannot be read (tmux list-panes or the process ancestry failed), and only a session outside every crew pane posts as " + from
 	}
 	if !anchored || !a.overseer() {
 		return ""
@@ -265,10 +266,12 @@ func (p Probes) rows(ctx context.Context) ([]stamp, bool) {
 }
 
 // anchor is the stamps of the nearest pane in rows whose pid is the caller or
-// one of its ancestors.
-func (p Probes) anchor(rows []stamp) (stamp, bool) {
+// one of its ancestors, whether there is one, and whether the walk ended
+// cleanly: at a pane or at pid 1. It did not when there is no Proc, a parent
+// read fails short of pid 1, or the step cap runs out.
+func (p Probes) anchor(rows []stamp) (stamp, bool, bool) {
 	if p.Proc == nil {
-		return stamp{}, false
+		return stamp{}, false, false
 	}
 	panes := map[int]stamp{}
 	for _, r := range rows {
@@ -277,13 +280,14 @@ func (p Probes) anchor(rows []stamp) (stamp, bool) {
 	cur := os.Getpid()
 	for range 32 {
 		if s, ok := panes[cur]; ok {
-			return s, true
+			return s, true, true
 		}
 		next, ok := p.Proc.Parent(cur)
 		if !ok || next <= 0 {
-			break
+			// Parent reads init's parent and a failed ps alike as none.
+			return stamp{}, false, cur == 1
 		}
 		cur = next
 	}
-	return stamp{}, false
+	return stamp{}, false, false
 }

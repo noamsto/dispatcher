@@ -70,7 +70,7 @@ const (
 	markedOnly      = "this is the overseer session (CREW_OVERSEER is set), which posts only as overseer:<host> through crew overseer msg"
 	overseerOnly    = "only the overseer session (CREW_OVERSEER set to this host's name) posts as overseer:<host>"
 	overseerIDs     = "this is a worker or role session (CREW_WORKER_ID or CREW_ROLE_ID is set) and only the overseer session posts as overseer:<host>; post as your own id ($CREW_WORKER_ID for a lead, role:<branch>:<role> for a grid role)"
-	overseerProbe   = "the pane stamps cannot be read, and only a session outside every crew pane posts as overseer:h1"
+	overseerProbe   = "the pane stamps cannot be read (tmux list-panes or the process ancestry failed), and only a session outside every crew pane posts as overseer:h1"
 	overseerStamped = "this pane is stamped as the overseer's (@crew_role overseer), which posts only as overseer:h1"
 	notH1           = "the overseer session on h1 posts only as overseer:h1, not "
 )
@@ -141,6 +141,7 @@ func TestCheck(t *testing.T) {
 		{"nil panes", "dispatcher:c1", "c1", fixture{panes: lead, noPanes: true}, ""},
 		{"nil parent", "dispatcher:c1", "c1", fixture{panes: lead, noParent: true}, ""},
 		{"parent cycle terminates", "dispatcher:c1", "c1", fixture{panes: pane("999", "feat/x", "lead", "c1", "@1", "%1"), tree: map[int]int{self: 200, 200: self}}, ""},
+		{"ancestry ending short of init is unanchored", "dispatcher:c1", "c1", fixture{panes: lead, tree: map[int]int{self: 200}}, ""},
 		{"malformed line skipped", "worker:feat/x", "c1", fixture{panes: "garbage\n" + pane("x", "feat/y", "lead", "c1", "@1", "%1") + pane("0", "feat/y", "lead", "c1", "@1", "%1") + "100\x1ffeat/y\n" + lead}, ""},
 		{"malformed line does not anchor", "dispatcher:c1", "c1", fixture{panes: "100\x1ffeat/y\x1flead\n"}, ""},
 
@@ -166,6 +167,10 @@ func TestCheck(t *testing.T) {
 		{"overseer refuses panes error", "overseer:h1", "c1", fixture{env: marked, panes: dispatcherPane, panesErr: true}, overseerProbe},
 		{"overseer refuses nil panes", "overseer:h1", "c1", fixture{env: marked, noPanes: true}, overseerProbe},
 		{"overseer refuses nil parent", "overseer:h1", "c1", fixture{env: marked, noParent: true}, overseerProbe},
+		{"overseer refuses unreadable own parent", "overseer:h1", "c1", fixture{env: marked, panes: lead, tree: map[int]int{200: 100}}, overseerProbe},
+		{"overseer refuses ancestry ending short of init", "overseer:h1", "c1", fixture{env: marked, tree: map[int]int{self: 200}}, overseerProbe},
+		{"overseer refuses parent cycle", "overseer:h1", "c1", fixture{env: marked, tree: map[int]int{self: 200, 200: self}}, overseerProbe},
+		{"overseer allows own pid as its pane", "overseer:h1", "c1", fixture{env: marked, panes: pane(strconv.Itoa(self), "", "overseer", "", "@1", "%1"), tree: map[int]int{}}, ""},
 
 		{"marked refuses dispatcher", "dispatcher:c1", "c1", fixture{env: marked}, markedOnly},
 		{"marked refuses worker", "worker:feat/x", "c1", fixture{env: marked}, markedOnly},
@@ -264,6 +269,7 @@ func TestWatch(t *testing.T) {
 			"pane %2 is stamped as the overseer's (@crew_role overseer), and this host's name cannot be read (boom)"},
 		{"overseer target allows overseer", "overseer:h1", "c1", "%2", fixture{env: marked, panes: overseerTarget}, ""},
 		{"overseer panes error", "overseer:h1", "c1", "%2", fixture{env: marked, panes: overseerTarget, panesErr: true}, overseerProbe},
+		{"overseer ancestry ending short of init", "overseer:h1", "c1", "%2", fixture{env: marked, panes: overseerTarget, tree: map[int]int{self: 200}}, overseerProbe},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

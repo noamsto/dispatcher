@@ -12,7 +12,6 @@ setup() {
   load helpers
   setup_repo
   stub_bin tmux
-  unset CREW_OVERSEER
   COMMON="$(git rev-parse --path-format=absolute --git-common-dir)"
   LOG="$COMMON/crew/events.jsonl"
   # crew's repo discovery reads the registry and these roots only, never $HOME.
