@@ -18595,6 +18595,15 @@ _fs_not_armed() {
   [[ "$call" != *fresh-seams* ]]
 }
 
+@test "1426 fleet holds: --host refuses --fleet-hold" {
+  stub_launch_bins
+  _host_crew_stub
+  run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 --fleet-hold hold-7 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: --host cannot combine with --fleet-hold — it is local to this machine"* ]]
+  run ! grep -q '^remote-run' "$STUB_LOG"
+}
+
 # _replay_lead_launch_env <marker> — run the lead's typed launch line the way tmux
 # would: the new-window's -e CREW_WORKER_ID/CREW_ID, and nothing inherited from
 # this shell, are the environment, and no lead-launcher resolves on PATH, as on

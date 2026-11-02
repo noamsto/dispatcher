@@ -374,7 +374,7 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		{"--agent", fl.Agent, false}, {"--ref", fl.Ref, false}, {"--branch", fl.Branch, false},
 		{"--tier", fl.Tier, false}, {"--model", fl.Model, false}, {"--effort", fl.Effort, false},
 	} {
-		if req.val == "" && !(fl.Fleet && req.quota) {
+		if req.val == "" && (!fl.Fleet || !req.quota) {
 			say(stderr, "crew: hold add: %s is required\n", req.flag)
 			return exitFailure
 		}

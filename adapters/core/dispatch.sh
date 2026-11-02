@@ -4518,6 +4518,7 @@ _dispatch_remote() {
   [ -z "$grid_status" ] || refused=--status
   [ -z "$grid_lazy" ] || refused=--lazy
   [ -z "$task_profile" ] || refused=--profile
+  [ -z "$fleet_hold" ] || refused=--fleet-hold
   # Env overrides of this run's gates or launch: the remote dispatch never sees
   # this environment, so it would silently run without them.
   for v in DISPATCH_PRECHECK DISPATCH_IGNORE_RUNG DISPATCH_SKIP_MODEL_CHECK DISPATCH_SHAPE DISPATCH_CLAUDE_CONNECTORS DISPATCH_CLASS_SIGIL; do
