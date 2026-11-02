@@ -78,6 +78,7 @@ Grants and authorization
 
 Overrides
   --ignore-budget         Spend past the quota stop and the machine fan-out cap (a human's decision)
+  --fleet-hold ID         The fleet hold this dispatch releases (`crew hold add --fleet`); admission lets the queue's due hold through
   --ignore-map            Skip the tier-map model refusals (a human's model call)
   DISPATCH_SPEC=FILE      Task body to inline into WORKER_TASK.md
   DISPATCH_SKIP_SPEC_LINT=1  Dispatch despite `crew spec-lint` errors in DISPATCH_SPEC
@@ -1316,14 +1317,46 @@ chrome_gate() {
   exit 1
 }
 
+# _fleet_hold_hint <tier> — the second line of a fleet refusal: the
+# machine-wide queue is the alternative to retrying by hand.
+_fleet_hold_hint() {
+  echo "dispatch: to wait in the machine-wide queue instead, place a fleet hold: crew hold add --fleet --agent <engine> --ref <ref> --branch <branch> --tier $1 --model <model> --effort <effort> <title> -> skill dispatcher:budget-holds" >&2
+}
+
+# _fleet_queue_gate <tier> <weight> [--own <branch>...] — refuse a new lead
+# while an eligible fleet hold waits and this dispatch is not the release of
+# the queue's due hold (--fleet-hold). `crew fleet queue --admit` exit 3
+# refuses, its stdout the reason; one that errors fails open.
+_fleet_queue_gate() {
+  local tier="$1" why="" rc=0 args=(--crew "$crew_id")
+  [ -z "$fleet_hold" ] || args+=(--hold "$fleet_hold")
+  why="$(crew fleet queue --admit "$2" "${args[@]}" "${@:3}")" || rc=$?
+  case "$rc" in
+  0) return 0 ;;
+  3) ;;
+  *)
+    echo "dispatch: fleet queue check skipped — crew fleet queue failed (exit $rc)" >&2
+    return 0
+    ;;
+  esac
+  if [ -n "${ignore_budget:-}" ]; then
+    echo "dispatch: fleet queue check skipped (--ignore-budget) — $why" >&2
+    return 0
+  fi
+  echo "dispatch: refused, $why; a new lead waits its turn in the machine-wide queue, or pass --ignore-budget" >&2
+  _fleet_hold_hint "$tier"
+  exit 1
+}
+
 # fleet_gate <tier> [<branch>...] — refuse a new lead dispatch when the live
 # lead weight on the machine plus this tier's would exceed fleetBudget, or when
-# the 1-minute load average is above the core count. 0 disables both. A dispatch
-# whose own branch already has a lead pane (re-dispatch over a finished worker)
-# is not a new lead and skips it. --ignore-budget notes the refusal and
-# proceeds. A check, not a lock: two dispatches racing can both pass. The
-# weighing is `crew fleet load` (exit 3 refuses, its stdout the reason); one
-# that errors fails open, like an unreadable load average.
+# the 1-minute load average is above the core count; 0 disables both. A
+# dispatch whose own branch already has a lead pane (re-dispatch over a
+# finished worker) is not a new lead and skips it. Within capacity, admission
+# against the fleet hold queue decides (_fleet_queue_gate). --ignore-budget
+# notes the refusal and proceeds. A check, not a lock: two dispatches racing
+# can both pass. The weighing is `crew fleet load` (exit 3 refuses, its stdout
+# the reason); one that errors fails open, like an unreadable load average.
 fleet_gate() {
   local tier="$1" budget add=2 why="" rc=0 own_args=() b
   shift
@@ -1336,7 +1369,10 @@ fleet_gate() {
   done
   why="$(crew fleet load --budget "$budget" --add "$add" ${own_args[@]+"${own_args[@]}"})" || rc=$?
   case "$rc" in
-  0) return 0 ;;
+  0)
+    _fleet_queue_gate "$tier" "$add" ${own_args[@]+"${own_args[@]}"}
+    return 0
+    ;;
   3) ;;
   *)
     echo "dispatch: fleet check skipped — crew fleet load failed (exit $rc)" >&2
@@ -1348,7 +1384,19 @@ fleet_gate() {
     return 0
   fi
   echo "dispatch: refused, machine at capacity — $why; wait for a worker to finish (\`crew reap\` closes finished windows), or pass --ignore-budget" >&2
+  _fleet_hold_hint "$tier"
   exit 1
+}
+
+# fleet_hold_gate — a --fleet-hold id must name an outstanding fleet hold of
+# this crew: a stale id or a quota hold would only be refused at admission.
+fleet_hold_gate() {
+  [ -n "$fleet_hold" ] || return 0
+  crew hold list --crew "$crew_id" --json |
+    jq -e --arg id "$fleet_hold" 'any(.[]; .id == $id and .wait.kind == "fleet")' >/dev/null || {
+    echo "dispatch: --fleet-hold '$fleet_hold' is not an outstanding fleet hold of crew $crew_id — see crew hold list" >&2
+    exit 1
+  }
 }
 
 # local_probe_gate <id> — refuse unless the id's endpoint answers /models and
@@ -4730,6 +4778,7 @@ fresh_flag=""
 crew_id_flag=""
 plan_val="required"
 ignore_budget=""
+fleet_hold=""
 ignore_map=""
 remote_host=""
 host_fwd_args=()
@@ -4915,6 +4964,14 @@ while [ $# -gt 0 ]; do
   --ignore-budget)
     ignore_budget=1
     shift
+    ;;
+  --fleet-hold)
+    fleet_hold="${2:-}"
+    [ -n "$fleet_hold" ] || {
+      echo "dispatch: --fleet-hold needs a hold id" >&2
+      exit 1
+    }
+    shift 2
     ;;
   --ignore-map)
     ignore_map=1
@@ -5833,6 +5890,7 @@ fi
 fleet_own=()
 [ -z "$gh_issue" ] || fleet_own+=("$branch")
 [ -z "$linear_id" ] || fleet_own+=("$(printf '%s' "$linear_id" | tr '[:upper:]' '[:lower:]')-$slug")
+fleet_hold_gate
 fleet_gate "$tier" ${fleet_own[@]+"${fleet_own[@]}"}
 
 # A re-dispatch onto an existing branch keeps the bundle its first run claimed:
