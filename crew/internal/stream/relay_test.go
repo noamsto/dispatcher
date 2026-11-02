@@ -29,7 +29,7 @@ func relayStub(t *testing.T) (script, dir string) {
 	writeFile(t, script, bashShebang()+`d='`+dir+`'
 case "${1:-}" in
   watch) echo watch >> "$d/watch.log"; [ -f "$d/park" ] && exec sleep 30; sleep 0.1; exit 0 ;;
-  hold) printf '[]\n'; exit 1 ;;
+  hold) printf '{"due":[],"parked":[]}\n'; exit 1 ;;
   remote-run)
     printf '%s\n' "$*" >> "$d/argv.log"
     while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done

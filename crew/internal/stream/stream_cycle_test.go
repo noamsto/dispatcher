@@ -7,22 +7,36 @@ package stream
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
-// holdRowJSON is what `crew hold due --json` answers with: the matured rows the
-// stream embeds verbatim and keys its suppression on.
-func holdRowJSON(ids ...string) string {
+// holdDueJSON is what `crew hold due --json` answers with: the matured rows and
+// the fleet-parked ones, which the stream embeds verbatim and keys its
+// suppression on.
+func holdDueJSON(due, parked string) string {
+	return `{"due":` + due + `,"parked":` + parked + `}`
+}
+
+// holdRowJSON is an array of matured hold rows, one per id.
+func holdRowJSON(ids ...string) string { return holdRows("", ids) }
+
+// parkedRowJSON is an array of rows the fleet queue parked, each with its reason.
+func parkedRowJSON(reason string, ids ...string) string {
+	return holdRows(fmt.Sprintf(`,"reason":%q`, reason), ids)
+}
+
+func holdRows(extra string, ids []string) string {
 	var b strings.Builder
 	b.WriteString("[")
 	for i, id := range ids {
 		if i > 0 {
 			b.WriteString(",")
 		}
-		fmt.Fprintf(&b, `{"id":%q,"ref":"FOO-1","branch":"feat/x","tier":"standard","title":"hold %s"}`, id, id)
+		fmt.Fprintf(&b, `{"id":%q,"ref":"FOO-1","branch":"feat/x","tier":"standard","title":"hold %s"%s}`, id, id, extra)
 	}
 	b.WriteString("]")
 	return b.String()
@@ -115,7 +129,7 @@ func TestStreamMaturedHoldAnnouncesOnce(t *testing.T) {
 	p := streamBus(t)
 	s := entryStub(t, map[string]string{
 		"watch":    parkedWatch("0"),
-		"hold due": `printf '%s\n' '` + holdRowJSON("h1") + `'; exit 0`,
+		"hold due": `printf '%s\n' '` + holdDueJSON(holdRowJSON("h1"), "[]") + `'; exit 0`,
 	})
 	l := startLane(t, p, s, Request{}, laneOpts{})
 
@@ -137,6 +151,141 @@ func TestStreamMaturedHoldAnnouncesOnce(t *testing.T) {
 	}
 	if line["playbook"] != "dispatcher:budget-holds" {
 		t.Errorf("playbook = %v, want dispatcher:budget-holds", line["playbook"])
+	}
+	if parked, has := line["parked"]; has {
+		t.Errorf("parked = %v, want no key for a line with nothing parked", parked)
+	}
+}
+
+// parkedOf is a hold_due line's parked rows, as "id=reason" pairs.
+func parkedOf(t *testing.T, v any) string {
+	t.Helper()
+	rows, ok := v.([]any)
+	if !ok {
+		t.Fatalf("parked = %#v, want an array", v)
+	}
+	pairs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		m, ok := row.(map[string]any)
+		if !ok {
+			t.Fatalf("parked row = %#v", row)
+		}
+		id, _ := m["id"].(string)
+		reason, _ := m["reason"].(string)
+		pairs = append(pairs, id+"="+reason)
+	}
+	sort.Strings(pairs)
+	return strings.Join(pairs, ",")
+}
+
+// A crew whose only holds are parked by the fleet queue has nothing due — `hold
+// due` exits 1 — and still announces: the owner learns of a parked hold even with
+// no other watcher. holds stays the due array, empty here.
+func TestStreamParkedOnlyHoldAnnounces(t *testing.T) {
+	p := streamBus(t)
+	s := entryStub(t, map[string]string{
+		"watch":    parkedWatch("0"),
+		"hold due": `printf '%s\n' '` + holdDueJSON("[]", parkedRowJSON("demoted", "p1")) + `'; exit 1`,
+	})
+	l := startLane(t, p, s, Request{}, laneOpts{})
+
+	l.waitKind("hold_due", 1)
+	l.park()
+	l.park()
+
+	dues := l.ofKind("hold_due")
+	if len(dues) != 1 {
+		t.Fatalf("hold_due lines = %d (%s), want one", len(dues), l.raw())
+	}
+	line := dues[0]
+	if got := holdIDsOf(t, line["holds"]); got != "" {
+		t.Errorf("holds = %v, want the empty due array", line["holds"])
+	}
+	if got := parkedOf(t, line["parked"]); got != "p1=demoted" {
+		t.Errorf("parked = %v, want the one parked hold with its reason", line["parked"])
+	}
+}
+
+// Due and parked holds travel on one line, each in its own field.
+func TestStreamDueAndParkedAnnounceTogether(t *testing.T) {
+	p := streamBus(t)
+	s := entryStub(t, map[string]string{
+		"watch":    parkedWatch("0"),
+		"hold due": `printf '%s\n' '` + holdDueJSON(holdRowJSON("h1"), parkedRowJSON("oversize", "p1")) + `'; exit 0`,
+	})
+	l := startLane(t, p, s, Request{}, laneOpts{})
+
+	l.waitKind("hold_due", 1)
+	line := l.ofKind("hold_due")[0]
+	if got := holdIDsOf(t, line["holds"]); got != "h1" {
+		t.Errorf("holds = %v, want the due id", line["holds"])
+	}
+	if got := parkedOf(t, line["parked"]); got != "p1=oversize" {
+		t.Errorf("parked = %v, want the parked hold with its reason", line["parked"])
+	}
+}
+
+// The suppression key covers both sets: a change in the parked set alone
+// re-announces, and the unchanged pair then stays silent.
+func TestStreamParkedSetChangeReannounces(t *testing.T) {
+	p := streamBus(t)
+	s := entryStub(t, map[string]string{
+		"watch": parkedWatch("0"),
+		"hold due": `if [ -f "$d/release" ]; then printf '%s\n' '` + holdDueJSON(holdRowJSON("h1"), parkedRowJSON("demoted", "p2")) + `';
+    else printf '%s\n' '` + holdDueJSON(holdRowJSON("h1"), parkedRowJSON("demoted", "p1", "p2")) + `'; fi
+    exit 0`,
+	})
+	l := startLane(t, p, s, Request{}, laneOpts{})
+
+	l.waitKind("hold_due", 1)
+	if got := parkedOf(t, l.ofKind("hold_due")[0]["parked"]); got != "p1=demoted,p2=demoted" {
+		t.Errorf("first announcement parked = %q, want both parked holds", got)
+	}
+
+	s.write("release", "p1")
+	l.park()
+	l.waitKind("hold_due", 2)
+	second := l.ofKind("hold_due")[1]
+	if got := holdIDsOf(t, second["holds"]); got != "h1" {
+		t.Errorf("re-announcement holds = %q, want the unchanged due id", got)
+	}
+	if got := parkedOf(t, second["parked"]); got != "p2=demoted" {
+		t.Errorf("re-announcement parked = %q, want the surviving parked id alone", got)
+	}
+
+	l.park()
+	l.park()
+	if got := len(l.ofKind("hold_due")); got != 2 {
+		t.Errorf("hold_due lines = %d (%s), want the unchanged pair silent", got, l.raw())
+	}
+}
+
+// Anything but the object — the bare array an older `hold due` printed, or an
+// object whose either key is not an array — is an undecodable answer, which the
+// stream leaves silent.
+func TestDecodeHoldDue(t *testing.T) {
+	for _, bad := range []string{
+		`[]`,
+		`[{"id":"h1"}]`,
+		`null`,
+		`{}`,
+		`{"due":[]}`,
+		`{"parked":[]}`,
+		`{"due":null,"parked":[]}`,
+		`{"due":{},"parked":[]}`,
+		`{"due":[],"parked":"p1"}`,
+		`{"due":[]} {"parked":[]}`,
+	} {
+		if _, _, ok := decodeHoldDue(bad); ok {
+			t.Errorf("decodeHoldDue(%s) accepted, want it refused", bad)
+		}
+	}
+	due, parked, ok := decodeHoldDue(holdDueJSON(holdRowJSON("h1", "h2"), parkedRowJSON("demoted", "p1")))
+	if !ok || due.n != 2 || parked.n != 1 {
+		t.Errorf("decodeHoldDue = (%d, %d, %t), want (2, 1, true)", due.n, parked.n, ok)
+	}
+	if got := holdIDs(due.raw); got != "h1,h2" {
+		t.Errorf("due ids = %q", got)
 	}
 }
 
@@ -164,8 +313,8 @@ func TestStreamHoldSetChangeReannounces(t *testing.T) {
 	p := streamBus(t)
 	s := entryStub(t, map[string]string{
 		"watch": parkedWatch("0"),
-		"hold due": `if [ -f "$d/release" ]; then printf '%s\n' '` + holdRowJSON("h2") + `';
-    else printf '%s\n' '` + holdRowJSON("h1", "h2") + `'; fi
+		"hold due": `if [ -f "$d/release" ]; then printf '%s\n' '` + holdDueJSON(holdRowJSON("h2"), "[]") + `';
+    else printf '%s\n' '` + holdDueJSON(holdRowJSON("h1", "h2"), "[]") + `'; fi
     exit 0`,
 	})
 	l := startLane(t, p, s, Request{}, laneOpts{})
@@ -201,7 +350,7 @@ func TestStreamHoldDueDoesNotResetQuiet(t *testing.T) {
 	p := streamBus(t)
 	s := entryStub(t, map[string]string{
 		"watch":    parkedWatch("0"),
-		"hold due": `printf '%s\n' '` + holdRowJSON("h1") + `'; exit 0`,
+		"hold due": `printf '%s\n' '` + holdDueJSON(holdRowJSON("h1"), "[]") + `'; exit 0`,
 	})
 	const heartbeatSecs = 3 // parks to a heartbeat, and the re-announce window in seconds
 	clk := newStepClock()
