@@ -218,6 +218,19 @@ dispatcher:<crew_id>` on that bus with `ts` above the overseer's per-bus
 - **`machine`**: the `crew fleet load` document (§4), so status and the
   dispatch gate read one implementation.
 
+**Pane reads.** Wherever this spec reads a pane (stale-window and idle
+classification, "human present", "unsent input", any digest line derived from
+a pane), it must tell Claude Code's prompt-suggestion ghost text from typed
+input, and never report or act on a suggestion as input (a dim `merge it` is
+not unsent input). Ghost text is dim: `❯` U+276F, U+00A0, then `ESC[2m`, the
+`ghostMarker` in `crew/internal/frame/frame.go:75`; the claude idle-box check
+already treats a ghost-marked draft as empty (`frame.go:322`). Reuse that
+handling, no new parser. Read panes with colored captures (`tmux capture-pane
+-e`), never plain ones, which strip the dim attribute. Since #1414 worker
+launches set `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`, so worker panes show
+no suggestions; dispatcher panes, and workers launched before that change,
+still do.
+
 **PRs awaiting merge.** A standard or deep worker posts `pr_open` and then
 `done` (`WORKER_PROTOCOL.md` rule 5), so most rows with an open PR read
 `done`. The candidate set is every row whose state is `pr_open` or `done`
@@ -785,6 +798,8 @@ no crew filter and no dispatcher-liveness check, `crew/internal/reap/reap.go:65`
    - kill a dispatcher's or worker's window or process (`tmux kill-window`,
      signals); a deaf or stuck dispatcher is flagged to the human;
    - type into another session's pane;
+   - treat a dim ghost-text suggestion in a pane as typed input (§1 "Pane
+     reads");
    - the secret rule of the worker and dispatcher protocols.
 
 **Dispatcher-protocol changes** (S7):
@@ -864,6 +879,13 @@ hold due`), then the next hold matures, and a later release elsewhere
 - Statelessness: a test that runs `crew fleet status --json` twice with the
   overseer state dir deleted in between and compares the documents (except
   `ts` and `overseer_inbox`'s window).
+
+## Open questions
+
+- **Overseer's own prompt suggestions.** Does the overseer's launch keep
+  Claude Code prompt suggestions on (as dispatcher panes do today) or set
+  `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false` (as workers do)? §1 "Pane
+  reads" covers its pane either way. Owner decides; not decided here.
 
 ## Acceptance mapping
 
