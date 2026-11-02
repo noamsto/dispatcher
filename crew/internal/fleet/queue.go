@@ -902,7 +902,7 @@ func repoNamer(ctx context.Context, g git.Client) func(common string) string {
 			return n
 		}
 		origin, _ := git.Origin(ctx, g, common)
-		names[common] = repos.Name(common, origin)
+		names[common] = repos.Label(common, origin)
 		return names[common]
 	}
 }

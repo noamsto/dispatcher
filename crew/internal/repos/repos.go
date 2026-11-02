@@ -228,5 +228,31 @@ func Name(common, originURL string) string {
 	return strings.TrimSuffix(base, ".git")
 }
 
+// senderCap bounds a sender, crew id, branch or repo label on an overseer line.
+const senderCap = 120
+
+// Sanitize keeps the sender charset of s, any other rune a `?`, at most
+// senderCap bytes.
+func Sanitize(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if b.Len() == senderCap {
+			break
+		}
+		if 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || strings.ContainsRune(":/#._@-", r) {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('?')
+		}
+	}
+	return b.String()
+}
+
+// Label is Name as an overseer line or status row shows it, so a repo is
+// addressed by the label it displays.
+func Label(common, originURL string) string {
+	return Sanitize(Name(common, originURL))
+}
+
 // say writes to a stream whose failure is not worth failing the command over.
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }

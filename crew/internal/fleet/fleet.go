@@ -120,7 +120,7 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 			continue
 		}
 		origin, _ := git.Origin(ctx, o.Git, r.Common)
-		name := repos.Name(r.Common, origin)
+		name := repos.Label(r.Common, origin)
 		peerRows, err := peer.RosterRows(peer.StoreFor(bus.Paths{Common: r.Common, Dir: r.Common + "/crew"}), peerHosts, now)
 		if err != nil {
 			say(stderr, "crew: fleet: %s: peer rows skipped (%s)\n", r.Common, oneLine(err))

@@ -219,6 +219,16 @@ func TestName(t *testing.T) {
 	}
 }
 
+func TestLabelSanitizesTheNameItShows(t *testing.T) {
+	const origin = "https://github.com/owner/my repo+x\u202e\u200b.git"
+	if got, want := Label("/w/proj/.git", origin), "owner/my?repo?x??"; got != want {
+		t.Errorf("Label = %q, want %q", got, want)
+	}
+	if got, want := Label("/w/proj/.git", "git@github.com:acme/alpha.git"), "acme/alpha"; got != want {
+		t.Errorf("Label of a plain origin = %q, want %q", got, want)
+	}
+}
+
 // Register is `_registry_add`: it makes the registry's directory, appends the
 // line once, and treats an exact line already there as done.
 func TestRegisterAppendsOnceAndCreatesTheDir(t *testing.T) {

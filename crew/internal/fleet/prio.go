@@ -157,19 +157,22 @@ func registeredRepo(ctx context.Context, arg string, o QueueOptions) (common, na
 	if info, err := os.Stat(abs); err == nil && info.IsDir() {
 		gitCommon = git.Output(ctx, o.Git, abs, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	}
-	names := repoNamer(ctx, o.Git)
+	labels := map[string]string{}
 	var matches []string
 	for _, r := range repos.Registered(o.Registry, o.Getenv) {
 		c := filepath.Clean(r.Common)
-		if abs == c || abs == filepath.Dir(c) || gitCommon == c || arg == names(r.Common) {
+		origin, _ := git.Origin(ctx, o.Git, r.Common)
+		label, raw := repos.Label(r.Common, origin), repos.Name(r.Common, origin)
+		if abs == c || abs == filepath.Dir(c) || gitCommon == c || arg == label || arg == raw {
 			matches = append(matches, c)
+			labels[c] = label
 		}
 	}
 	switch len(matches) {
 	case 0:
 		return "", "", cleanText(arg) + " is not a registered repo"
 	case 1:
-		return matches[0], names(matches[0]), ""
+		return matches[0], labels[matches[0]], ""
 	}
 	return "", "", cleanText(arg) + " matches more than one registered repo: " + cleanText(strings.Join(matches, ", "))
 }
