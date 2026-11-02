@@ -1701,3 +1701,417 @@ EOF
     }
   done
 }
+
+# ---- #1420: relaunch a dead crew -------------------------------------------
+
+# _real_crew_logged — the real crew behind a stub that logs each call first.
+_real_crew_logged() {
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+exec "$CREW" "$@"
+EOF
+  chmod +x "$STUB_DIR/crew"
+  export CREW
+}
+
+# _launch_record_stub <bin> — an engine that copies its crew's launch record.
+_launch_record_stub() {
+  cat >"$STUB_DIR/$1" <<'EOF'
+#!/usr/bin/env bash
+cp -- "$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/$CREW_ID/launch" "$STUB_DIR/launch.json"
+EOF
+  chmod +x "$STUB_DIR/$1"
+}
+
+_launch_record_row() { # want-json launcher-args...
+  local want=$1
+  shift
+  rm -f "$STUB_DIR/launch.json"
+  CREW_ID=c1 run_launcher "$@"
+  [ "$(jq -cS . "$STUB_DIR/launch.json")" = "$(jq -cS . <<<"$want")" ]
+  [ ! -e "$(_crew_dir c1)" ]
+}
+
+@test "1420: the launcher records its resolved launch, and a normal exit removes it" {
+  _real_crew_logged
+  _launch_record_stub claude
+  _launch_record_stub cursor-agent
+  begin_rows
+  keep_row flags _launch_record_row '{"agent":"claude","model":"sonnet","effort":"max","autocompact":"200000"}' \
+    --agent claude --model sonnet --effort max --autocompact 200000
+  keep_row defaults _launch_record_row '{"agent":"claude","model":"opus","effort":"high","autocompact":"300000"}'
+  keep_row cursor _launch_record_row '{"agent":"cursor","model":"kimi-k3-high","effort":"","autocompact":"auto"}' --agent cursor
+  finish_rows 3
+}
+
+@test "1420: an engine killed by a signal leaves the crew registered for a relaunch" {
+  _real_crew_logged
+  _engine_stub claude 'kill -KILL $$'
+  CREW_ID=c1 run --separate-stderr run_launcher
+  [ "$status" -eq 137 ]
+  [ "$(_launches)" = 1 ]
+  [ -s "$(_crew_dir c1)/pid" ]
+  [ -s "$(_crew_dir c1)/launch" ]
+  if grep -qx deregister "$STUB_LOG"; then return 1; fi
+  [[ "$stderr" == *"dispatcher --relaunch c1"* ]]
+}
+
+@test "1420: an engine exiting 130 (a Ctrl-C quit) deregisters like a normal exit" {
+  _real_crew_logged
+  _engine_stub claude 'exit 130'
+  CREW_ID=c1 run run_launcher
+  [ "$status" -eq 130 ]
+  grep -qx deregister "$STUB_LOG"
+  [ ! -e "$(_crew_dir c1)" ]
+}
+
+_wait_for() { # path
+  local _
+  for _ in $(seq 100); do
+    [ -e "$1" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+# The engine marks itself started, then holds until the test touches go.
+_hold_body='touch "$STUB_DIR/started"
+for _ in $(seq 100); do [ -e "$STUB_DIR/go" ] && break; sleep 0.1; done'
+
+# Job control gives the launcher its own process group (pgid = its pid) and
+# keeps SIGINT at its default, as in a tmux pane.
+_start_bg_launcher() {
+  set -m
+  CREW_ID=c1 bash -euo pipefail "$LAUNCHER" "$@" </dev/null >"$BATS_TEST_TMPDIR/bg.out" 2>&1 &
+  live_pid=$!
+  set +m
+  _wait_for "$STUB_DIR/started"
+}
+
+_signal_row() { # signal want-status
+  rm -f "$STUB_DIR/started" "$STUB_DIR/go" "$STUB_DIR/launches"
+  : >"$STUB_LOG"
+  _start_bg_launcher
+  kill -"$1" "$live_pid"
+  touch "$STUB_DIR/go"
+  local rc=0
+  wait "$live_pid" || rc=$?
+  live_pid=""
+  [ "$rc" -eq "$2" ]
+  grep -qx deregister "$STUB_LOG"
+  [ ! -e "$(_crew_dir c1)" ]
+  [ "$(_launches)" = 1 ]
+}
+
+@test "1420: HUP or TERM to the launcher deregisters the crew before it exits" {
+  _real_crew_logged
+  export LAUNCHER
+  _engine_stub claude "$_hold_body"
+  begin_rows
+  keep_row hup _signal_row HUP 129
+  keep_row term _signal_row TERM 143
+  finish_rows 2
+}
+
+@test "1420: INT is not trapped: a Ctrl-C meant for the engine keeps the handoff relaunch" {
+  _real_crew_logged
+  export LAUNCHER
+  _engine_stub claude "trap '' INT
+$_hold_body
+mkdir -p \"\$DISPATCHER_HANDOFF_DIR\"
+date +%s >\"\$DISPATCHER_HANDOFF_DIR/\$CREW_ID.\$DISPATCHER_LAUNCHER_PID.restart\""
+  _start_bg_launcher
+  kill -INT -- -"$live_pid"
+  touch "$STUB_DIR/go"
+  local rc=0
+  wait "$live_pid" || rc=$?
+  live_pid=""
+  [ "$rc" -eq 0 ]
+  [ "$(_launches)" = 2 ]
+  [[ "$(cat "$STUB_DIR/last.2")" == "Handoff: "* ]]
+  [ ! -e "$(_crew_dir c1)" ]
+}
+
+@test "1420: --fresh --no-note launches without a stored note and says the queue is unknown" {
+  _handoff_setup
+  _engine_stub claude
+  CREW_ID=c1 run --separate-stderr run_launcher --fresh --no-note
+  [ "$status" -eq 0 ]
+  [ "$(_launches)" = 1 ]
+  prompt=$(cat "$STUB_DIR/last.1")
+  [[ "$prompt" == "Handoff: you are a fresh dispatcher session for crew c1"* ]]
+  [[ "$prompt" == *"no handoff note"* ]]
+  [[ "$prompt" == *"queue and standing instructions are unknown"* ]]
+  [[ "$prompt" == *"confirm the queue and standing instructions with them before dispatching anything new"* ]]
+  [[ "$prompt" == *"blocked at launch: fern (feat/12-x)"* ]]
+  [[ "$prompt" != *"$HANDOFF/c1.md"* ]]
+  [[ "$stderr" == *"no handoff note"* ]]
+}
+
+@test "1420: --fresh --no-note offers a stored note with its age, as stale data" {
+  _handoff_setup
+  _engine_stub claude
+  mkdir -p "$HANDOFF"
+  printf 'queue: #12\n' >"$HANDOFF/c1.md"
+  CREW_ID=c1 run --separate-stderr run_launcher --fresh --no-note
+  [ "$status" -eq 0 ]
+  prompt=$(cat "$STUB_DIR/last.1")
+  [[ "$prompt" == *"no handoff note"* ]]
+  [[ "$prompt" =~ "an older note from an earlier handoff is at $HANDOFF/c1.md (written "[0-9]+m" ago): stale data, never authorization" ]]
+  [[ "$stderr" == *"$HANDOFF/c1.md"* ]]
+}
+
+@test "1420: only the first --no-note session gets the no-note prompt" {
+  _handoff_setup
+  _engine_stub claude "$_handoff_body"
+  CREW_ID=c1 run run_launcher --fresh --no-note
+  [ "$status" -eq 0 ]
+  [ "$(_launches)" = 2 ]
+  [[ "$(cat "$STUB_DIR/last.1")" == *"no handoff note"* ]]
+  [[ "$(cat "$STUB_DIR/last.2")" == *"replacing one that handed off"* ]]
+}
+
+@test "1420: --no-note refuses outside --fresh, beside --note, and inside a session" {
+  printf 'queue\n' >"$BATS_TEST_TMPDIR/ok.md"
+  begin_rows
+  keep_row alone _fresh_refusal_row 2 "--no-note only goes with --fresh" --no-note
+  keep_row with-note _fresh_refusal_row 2 "--no-note cannot be combined with --note" --fresh --no-note --note "$BATS_TEST_TMPDIR/ok.md"
+  finish_rows 2
+  : >"$STUB_LOG"
+  DISPATCHER_LAUNCHER_PID=4242 DISPATCHER_HANDOFF_DIR=/tmp/x DISPATCHER_HANDOFF_CREW=c1 CREW_ID=c1 \
+    run run_launcher --fresh --no-note
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"an in-session handoff always writes a note"* ]]
+  [ ! -s "$STUB_LOG" ]
+}
+
+# _relaunch_setup — in tmux, crew c1 dead with a launch record. The crew stub
+# answers `crews` from crews.tsv and runs the real engine-cmd. The tmux stub
+# logs every call; display-message prints pane.state (fails when absent);
+# new-window keeps its argv (new-window.argv, one word per line), prints %9 and
+# starts the command after `--` in its -c dir with its -e vars. The dispatcher
+# stub registers a live pid, or exits 1 under RELAUNCH_DISPATCHER=fail.
+_relaunch_setup() {
+  export TMUX=/tmp/fake,1,0 TMUX_PANE=%1
+  crews_tsv "$(printf 'c1\t5\t5\t1\t999999\tno')" >"$STUB_DIR/crews.tsv"
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+crews) cat "$STUB_DIR/crews.tsv" ;;
+engine-cmd) exec "$CREW" "$@" ;;
+esac
+exit 0
+EOF
+  cat >"$STUB_DIR/tmux" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+display-message)
+  [ -e "$STUB_DIR/pane.state" ] || exit 1
+  cat "$STUB_DIR/pane.state"
+  ;;
+new-window)
+  printf '%s\n' "$@" >"$STUB_DIR/new-window.argv"
+  shift
+  dir="" vars=()
+  while [ "$1" != -- ]; do
+    case "$1" in
+    -c) dir=$2; shift ;;
+    -e) vars+=("$2"); shift ;;
+    -F | -n) shift ;;
+    esac
+    shift
+  done
+  shift
+  (cd "$dir" && export "${vars[@]}" && exec "$@") </dev/null >"$STUB_DIR/window.out" 2>&1 &
+  echo %9
+  ;;
+esac
+exit 0
+EOF
+  cat >"$STUB_DIR/dispatch" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = --engines ] && printf '%s\n' claude codex cursor pi
+EOF
+  cat >"$STUB_DIR/dispatcher" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$STUB_DIR/dispatcher.argv"
+[ "${RELAUNCH_DISPATCHER:-}" != fail ] || exit 1
+echo $$ >"$STUB_DIR/dispatcher.pid"
+echo $$ >"$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/$CREW_ID/pid"
+exec sleep 15
+EOF
+  chmod +x "$STUB_DIR/crew" "$STUB_DIR/tmux" "$STUB_DIR/dispatch" "$STUB_DIR/dispatcher"
+  export CREW
+  C1="$(_crew_dir c1)"
+  mkdir -p "$C1"
+  echo 999999 >"$C1/pid"
+  _launch_record '{"agent":"claude","model":"sonnet","effort":"max","autocompact":200000}'
+}
+
+_launch_record() { printf '%s\n' "$1" >"$C1/launch"; }
+
+_no_new_window() { ! grep -q '^new-window' "$STUB_LOG"; }
+
+_relaunch_refuses() { # message [repo]
+  : >"$STUB_LOG"
+  run run_launcher --relaunch c1 --repo "${2:-$TEST_REPO}"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$1"* ]]
+  _no_new_window
+}
+
+@test "1420: --relaunch refuses an unknown crew" {
+  _relaunch_setup
+  crews_tsv "$(printf 'c2\t5\t5\t1\t999998\tno')" >"$STUB_DIR/crews.tsv"
+  _relaunch_refuses "crew c1 is not in 'crew crews'"
+}
+
+@test "1420: --relaunch refuses a live crew" {
+  _relaunch_setup
+  crews_tsv "$(printf 'c1\t5\t5\t1\t4321\tyes')" >"$STUB_DIR/crews.tsv"
+  _relaunch_refuses "crew c1's dispatcher (pid 4321) is still live"
+}
+
+@test "1420: --relaunch refuses while another crew in the repo is live" {
+  _relaunch_setup
+  crews_tsv "$(printf 'c1\t5\t5\t1\t999999\tno')" "$(printf 'c2\t5\t5\t1\t4321\tyes')" >"$STUB_DIR/crews.tsv"
+  _relaunch_refuses "crew c2's dispatcher is live in this repo — ask it instead"
+}
+
+@test "1420: --relaunch refuses a crew whose pane still runs an engine" {
+  _relaunch_setup
+  printf '%%7\n' >"$C1/pane"
+  echo '0 claude' >"$STUB_DIR/pane.state"
+  _relaunch_refuses "pane %7 still runs an engine"
+  grep -q '^display-message -p -t %7 ' "$STUB_LOG"
+}
+
+@test "1420: --relaunch passes a non-engine pane and refuses a malformed one" {
+  _relaunch_setup
+  printf '%%7\n' >"$C1/pane"
+  echo '0 bash' >"$STUB_DIR/pane.state"
+  run run_launcher --relaunch c1 --repo "$TEST_REPO"
+  [ "$status" -eq 0 ]
+  live_pid=$(cat "$STUB_DIR/dispatcher.pid")
+  kill "$live_pid"
+  live_pid=""
+  rm "$C1/relaunch"
+  printf 'x;y\n' >"$C1/pane"
+  _relaunch_refuses "is not a pane id"
+}
+
+@test "1420: --relaunch refuses a repo whose common dir is not a main worktree's .git" {
+  _relaunch_setup
+  git init -q --separate-git-dir "$BATS_TEST_TMPDIR/sep.git" "$BATS_TEST_TMPDIR/sep"
+  _relaunch_refuses "does not end in /.git" "$BATS_TEST_TMPDIR/sep"
+}
+
+@test "1420: --relaunch refuses a second relaunch within 30 min" {
+  _relaunch_setup
+  begin_rows
+  date +%s >"$C1/relaunch"
+  keep_row now _relaunch_refuses "relaunched within the last 30 min"
+  echo $(($(date +%s) + 3000)) >"$C1/relaunch"
+  keep_row future _relaunch_refuses "relaunched within the last 30 min"
+  echo soon >"$C1/relaunch"
+  keep_row garbage _relaunch_refuses "relaunched within the last 30 min"
+  finish_rows 3
+}
+
+@test "1420: --relaunch refuses outside tmux" {
+  _relaunch_setup
+  unset TMUX
+  _relaunch_refuses "--relaunch needs tmux"
+}
+
+@test "1420: --relaunch refuses a crew with no launch record" {
+  _relaunch_setup
+  rm "$C1/launch"
+  _relaunch_refuses "dispatcher: no launch record — relaunch by hand with --agent/--model"
+}
+
+_bad_record_row() { # record message
+  _launch_record "$1"
+  _relaunch_refuses "$2"
+}
+
+@test "1420: --relaunch refuses an untrusted launch record that fails validation" {
+  _relaunch_setup
+  local pwned="$BATS_TEST_TMPDIR/pwned" long
+  long=$(printf 'm%.0s' $(seq 200))
+  begin_rows
+  keep_row metachar _bad_record_row "{\"agent\":\"claude\",\"model\":\"x; touch $pwned\",\"effort\":\"high\",\"autocompact\":\"auto\"}" "launch record model"
+  keep_row agent _bad_record_row '{"agent":"bash","model":"opus","effort":"high","autocompact":"auto"}' "launch record agent"
+  keep_row long-model _bad_record_row "{\"agent\":\"claude\",\"model\":\"$long\",\"effort\":\"high\",\"autocompact\":\"auto\"}" "launch record model"
+  keep_row not-json _bad_record_row 'agent=claude model=opus' "launch record is not a JSON object"
+  keep_row effort _bad_record_row '{"agent":"claude","model":"opus","effort":"huge","autocompact":"auto"}' "launch record effort"
+  keep_row autocompact _bad_record_row '{"agent":"claude","model":"opus","effort":"high","autocompact":"-1"}' "launch record autocompact"
+  keep_row model-type _bad_record_row '{"agent":"claude","model":["opus"],"effort":"high","autocompact":"auto"}' "launch record model"
+  finish_rows 7
+  [ ! -e "$pwned" ]
+}
+
+@test "1420: --relaunch refuses an engine that dispatch --engines does not list" {
+  _relaunch_setup
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" pi\n' >"$STUB_DIR/dispatch"
+  _relaunch_refuses "launch record agent"
+}
+
+_assert_clean_argv() {
+  if grep -q "[;&|\$\`<>\\\\'\"]" "$STUB_DIR/new-window.argv"; then return 1; fi
+}
+
+@test "1420: --relaunch starts a claude crew as an argv and waits for its new pid" {
+  _relaunch_setup
+  run run_launcher --relaunch c1 --repo "$TEST_REPO"
+  live_pid=$(cat "$STUB_DIR/dispatcher.pid")
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"relaunched crew c1 in pane %9"* ]]
+  wt=$(git rev-parse --path-format=absolute --git-common-dir)
+  wt=${wt%/.git}
+  printf '%s\n' new-window -d -P -F '#{pane_id}' -c "$wt" -n "dispatcher:$(basename "$wt")" -e CREW_ID=c1 -- \
+    env -u CREW_OVERSEER dispatcher --fresh --no-note --agent claude --model sonnet --effort max --autocompact 200000 \
+    >"$BATS_TEST_TMPDIR/want.argv"
+  diff "$BATS_TEST_TMPDIR/want.argv" "$STUB_DIR/new-window.argv"
+  _assert_clean_argv
+  grep -qx 'set-option -p -t %9 remain-on-exit on' "$STUB_LOG"
+  grep -qx 'set-option -p -t %9 remain-on-exit off' "$STUB_LOG"
+  [[ $(cat "$C1/relaunch") =~ ^[0-9]+$ ]]
+}
+
+@test "1420: --relaunch starts a cursor crew with the fixed recovery task and no --fresh" {
+  _relaunch_setup
+  _launch_record '{"agent":"cursor","model":"kimi-k3-high","effort":"","autocompact":"auto"}'
+  run run_launcher --relaunch c1 --repo "$TEST_REPO"
+  live_pid=$(cat "$STUB_DIR/dispatcher.pid")
+  [ "$status" -eq 0 ]
+  mapfile -t got <"$STUB_DIR/new-window.argv"
+  [ "${got[*]:12:10}" = "env -u CREW_OVERSEER dispatcher --agent cursor --model kimi-k3-high --autocompact auto" ]
+  [ "${#got[@]}" -eq 23 ]
+  [[ "${got[22]}" == *"relaunched after a crash"* && "${got[22]}" == *"crew roster"* ]]
+  _assert_clean_argv
+  grep -qx 'set-option -p -t %9 remain-on-exit off' "$STUB_LOG"
+}
+
+@test "1420: a relaunched dispatcher that never registers fails --relaunch and keeps the window" {
+  _relaunch_setup
+  RELAUNCH_DISPATCHER=fail run run_launcher --relaunch c1 --repo "$TEST_REPO"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no live dispatcher registered"* ]]
+  [ -e "$STUB_DIR/dispatcher.argv" ]
+  grep -qx 'set-option -p -t %9 remain-on-exit on' "$STUB_LOG"
+  if grep -qx 'set-option -p -t %9 remain-on-exit off' "$STUB_LOG"; then return 1; fi
+}
+
+@test "1420: --relaunch takes no other flags or task words; --repo needs --relaunch" {
+  begin_rows
+  keep_row agent _fresh_refusal_row 2 "--relaunch takes no other flags" --relaunch c1 --agent pi
+  keep_row fresh _fresh_refusal_row 2 "--relaunch takes no other flags" --relaunch c1 --fresh
+  keep_row task _fresh_refusal_row 2 "--relaunch takes no other flags" --relaunch c1 fix it
+  keep_row repo _fresh_refusal_row 2 "--repo only goes with --relaunch" --repo .
+  keep_row no-value _fresh_refusal_row 1 "--relaunch needs a value" --relaunch
+  finish_rows 5
+}
