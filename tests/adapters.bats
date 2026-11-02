@@ -249,9 +249,9 @@ commands_reach_row() { # path template containing $ROOT and $n
     for source in "$ROOT"/adapters/core/protocols/*.md; do
       case "$(basename "$source")" in
       # only a claude lead reads the claude render, so codex and cursor do not ship it.
-      WORKER_*.claude.md | DISPATCHER_PROTOCOL.claude.md) [ "$adapter" = claude-code/plugin ] || continue ;;
+      WORKER_*.claude.md | DISPATCHER_PROTOCOL.claude.md | OVERSEER_PROTOCOL.claude.md) [ "$adapter" = claude-code/plugin ] || continue ;;
       # no tree ships the pi render; the sync test covers its absence.
-      WORKER_*.pi.md | DISPATCHER_PROTOCOL.pi.md) continue ;;
+      WORKER_*.pi.md | DISPATCHER_PROTOCOL.pi.md | OVERSEER_PROTOCOL.pi.md) continue ;;
       # claude-code ships the claude render; the sync test covers it.
       WORKER_*.md | DISPATCHER_PROTOCOL.md) [ "$adapter" != claude-code/plugin ] || continue ;;
       esac
@@ -452,9 +452,9 @@ guard_ships_row() { # script basename
     is_source=0
     case "$name" in
     # no tree ships a pi render; the sync tests cover its absence.
-    WORKER_*.pi.md | DISPATCHER_PROTOCOL.pi.md) continue ;;
-    WORKER_*.claude.md | DISPATCHER_PROTOCOL.claude.md) ;;
-    WORKER_*.md | DISPATCHER_PROTOCOL.md) is_source=1 ;;
+    WORKER_*.pi.md | DISPATCHER_PROTOCOL.pi.md | OVERSEER_PROTOCOL.pi.md) continue ;;
+    WORKER_*.claude.md | DISPATCHER_PROTOCOL.claude.md | OVERSEER_PROTOCOL.claude.md) ;;
+    WORKER_*.md | DISPATCHER_PROTOCOL.md | OVERSEER_PROTOCOL.md) is_source=1 ;;
     esac
     # claude-code ships the claude render in place of a source; the sync tests cover it.
     if [ "$is_source" -eq 0 ]; then
@@ -462,7 +462,7 @@ guard_ships_row() { # script basename
       [ "$status" -eq 0 ]
     fi
     # only a claude lead reads the claude render; codex does not ship it.
-    case "$name" in WORKER_*.claude.md | DISPATCHER_PROTOCOL.claude.md) continue ;; esac
+    case "$name" in WORKER_*.claude.md | DISPATCHER_PROTOCOL.claude.md | OVERSEER_PROTOCOL.claude.md) continue ;; esac
     run cmp -s "$source" "$ROOT/adapters/codex/plugin/protocols/$name"
     [ "$status" -eq 0 ]
   done

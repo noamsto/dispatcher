@@ -2248,6 +2248,15 @@ STUB
   grep -q -- "--append-system-prompt-file $DISPATCHER_PROTOCOL_DIR/OVERSEER_PROTOCOL.claude.md" "$STUB_LOG"
 }
 
+@test "overseer: refuses with OVERSEER_PROTOCOL missing when the file is absent" {
+  _overseer_setup
+  rm "$DISPATCHER_PROTOCOL_DIR/OVERSEER_PROTOCOL.claude.md"
+  run run_launcher --overseer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"OVERSEER_PROTOCOL missing"* ]]
+  [ ! -e "$XDG_STATE_HOME/crew/overseer/pid" ]
+}
+
 @test "overseer: exports CREW_OVERSEER and CREW_SWEEP_ROOTS, never CREW_ID, loads the protocol, never registers" {
   _overseer_setup
   CREW_ID=inherited run run_launcher --overseer
