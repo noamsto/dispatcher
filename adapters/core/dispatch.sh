@@ -1316,113 +1316,33 @@ chrome_gate() {
   exit 1
 }
 
-# _fleet_leads — one `<weight>\x1f<name>\x1f<repo>\x1f<tier>`
-# line per live lead pane on the machine: stamped @crew_branch, @crew_role empty
-# or `lead` (a grid lead; other roles are its role panes), and a pane still
-# running an engine (_is_engine_cmd) in a worktree that still exists. A lead whose
-# newest bus status on its branch is done, failed, exited or reaped is finished and
-# weighs 0; each repo's bus is read once. The tier is the `tier:` header of the
-# pane's worktree WORKER_TASK.md (trivial=1, standard=2, deep=3); an unreadable
-# one counts as standard. Role panes add nothing: the tier weight already
-# includes them. No tmux server yields no lines, status 0.
-_fleet_leads() {
-  local cmd name lbranch role path root tier w repo common finished
-  local -A done_by_repo=()
-  { tmux list-panes -a -F '#{pane_current_command}'$'\x1f''#{@crew_name}'$'\x1f''#{@crew_branch}'$'\x1f''#{@crew_role}'$'\x1f''#{pane_current_path}' 2>/dev/null || true; } |
-    while IFS=$'\x1f' read -r cmd name lbranch role path; do
-      [ -n "$lbranch" ] || continue
-      [ -z "$role" ] || [ "$role" = lead ] || continue
-      _is_engine_cmd "$cmd" || continue
-      [ -d "$path" ] || continue
-      root="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)" || root="$path"
-      common="$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || common=""
-      if [ -n "$common" ]; then
-        if [ -z "${done_by_repo[$common]+x}" ]; then
-          done_by_repo[$common]="$(_fleet_finished "$common/crew/events.jsonl")"
-        fi
-        finished="${done_by_repo[$common]}"
-        case $'\n'"$finished"$'\n' in *$'\n'"$lbranch"$'\n'*) continue ;; esac
-      fi
-      tier="$(sed -n 's/^tier: //p' "$root/WORKER_TASK.md" 2>/dev/null | head -1)" || tier=""
-      case "$tier" in
-      trivial) w=1 ;;
-      deep) w=3 ;;
-      *)
-        w=2
-        tier=standard
-        ;;
-      esac
-      repo="$(basename "$(dirname "${common:-?/?}")")"
-      printf '%s\x1f%s\x1f%s\x1f%s\n' "$w" "${name:-?}" "$repo" "$tier"
-    done
-  return 0
-}
-
-# _fleet_finished <events.jsonl> — the branches whose newest worker status row
-# (in file order) is done, failed, exited or reaped, one per line.
-_fleet_finished() {
-  [ -r "$1" ] || return 0
-  jq -r 'select(.kind == "status" and ((.from // "") | startswith("worker:")))
-    | "\(.from | ltrimstr("worker:") | sub("#[^#]*$"; ""))\t\((.body? // {}) | (.state? // ""))"' "$1" 2>/dev/null |
-    awk -F'\t' '{ s[$1] = $2 } END { for (b in s) if (s[b] ~ /^(done|failed|exited|reaped)$/) print b }' || true
-}
-
-# _fleet_owned <branch>... — non-empty when a lead pane (engine alive or not)
-# is stamped with one of the branches.
-_fleet_owned() {
-  local cmd name lbranch role path
-  { tmux list-panes -a -F '#{pane_current_command}'$'\x1f''#{@crew_name}'$'\x1f''#{@crew_branch}'$'\x1f''#{@crew_role}'$'\x1f''#{pane_current_path}' 2>/dev/null || true; } |
-    while IFS=$'\x1f' read -r cmd name lbranch role path; do
-      if [ -n "$lbranch" ] && { [ -z "$role" ] || [ "$role" = lead ]; } && [[ " $* " == *" $lbranch "* ]]; then echo "$name"; fi
-    done
-  return 0
-}
-
-# _host_load — print "<1-min load> <cores>"; nothing when either is unreadable.
-# $DISPATCH_LOADAVG_FILE overrides /proc/loadavg (tests).
-_host_load() {
-  local load cores
-  if [ -r "${DISPATCH_LOADAVG_FILE:-/proc/loadavg}" ]; then
-    read -r load _ <"${DISPATCH_LOADAVG_FILE:-/proc/loadavg}" || return 0
-  else
-    load="$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')"
-  fi
-  cores="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null)" || return 0
-  [[ $load =~ ^[0-9]+([.][0-9]+)?$ && $cores =~ ^[1-9][0-9]*$ ]] || return 0
-  printf '%s %s\n' "$load" "$cores"
-}
-
 # fleet_gate <tier> [<branch>...] — refuse a new lead dispatch when the live
 # lead weight on the machine plus this tier's would exceed fleetBudget, or when
 # the 1-minute load average is above the core count. 0 disables both. A dispatch
 # whose own branch already has a lead pane (re-dispatch over a finished worker)
 # is not a new lead and skips it. --ignore-budget notes the refusal and
-# proceeds. A check, not a lock: two dispatches racing can both pass.
+# proceeds. A check, not a lock: two dispatches racing can both pass. The
+# weighing is `crew fleet load` (exit 3 refuses, its stdout the reason); one
+# that errors fails open, like an unreadable load average.
 fleet_gate() {
-  local tier="$1" budget add=2 leads=() weight=0 w name repo ltier top who="" load cores why=""
+  local tier="$1" budget add=2 why="" rc=0 own_args=() b
   shift
   budget="$(jq -r '(.fleetBudget // 8) + 0 | floor | [., 1000000] | min | tostring' <<<"$settings")"
   [ "$budget" != 0 ] || return 0
   [ "$tier" != trivial ] || add=1
   [ "$tier" != deep ] || add=3
-  if [ $# -gt 0 ] && [ -n "$(_fleet_owned "$@")" ]; then return 0; fi
-  mapfile -t leads < <(_fleet_leads)
-  for w in "${leads[@]}"; do
-    weight=$((weight + ${w%%$'\x1f'*}))
+  for b in "$@"; do
+    own_args+=(--own "$b")
   done
-  if [ $((weight + add)) -gt "$budget" ]; then
-    top="$(printf '%s\n' "${leads[@]}" | sort -t$'\x1f' -k1,1nr -s | head -3)"
-    while IFS=$'\x1f' read -r w name repo ltier; do
-      [ -z "$name" ] || who="${who:+$who, }$name ($repo, $ltier)"
-    done <<<"$top"
-    why="live lead weight $weight + this $tier dispatch ($add) exceeds fleetBudget $budget${who:+ — heaviest: $who}"
-  else
-    read -r load cores <<<"$(_host_load)"
-    if [ -n "${load:-}" ] && awk -v l="$load" -v c="$cores" 'BEGIN { exit !(l > c) }'; then
-      why="1-minute load average $load is above the $cores cores"
-    fi
-  fi
-  [ -n "$why" ] || return 0
+  why="$(crew fleet load --budget "$budget" --add "$add" ${own_args[@]+"${own_args[@]}"})" || rc=$?
+  case "$rc" in
+  0) return 0 ;;
+  3) ;;
+  *)
+    echo "dispatch: fleet check skipped — crew fleet load failed (exit $rc)" >&2
+    return 0
+    ;;
+  esac
   if [ -n "${ignore_budget:-}" ]; then
     echo "dispatch: fleet check skipped (--ignore-budget) — $why" >&2
     return 0

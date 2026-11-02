@@ -27,6 +27,7 @@ setup() {
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
 EOF
@@ -132,6 +133,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
 EOF
@@ -230,6 +232,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "${1:-}" in
 identity) printf '%s\n' '{"name":"coral-fox","tmux":"colour1"}' ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
 EOF
@@ -3070,6 +3073,7 @@ fleet_nproc() {
 
   run run_dispatch trivial haiku --effort medium --crew-id c1 102 "t"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet check skipped"* ]]
 
   # At most three workers are named.
   fleet_lead claude dune feat/4-d "" trivial
@@ -3091,12 +3095,14 @@ fleet_nproc() {
 
   DISPATCH_FLEET_BUDGET=0 run run_dispatch standard sonnet --effort medium --crew-id c1 105 "t"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet check skipped"* ]]
   [[ "$output" != *"machine at capacity"* ]]
 
   mkdir -p "$XDG_CONFIG_HOME/dispatcher"
   printf '{"fleetBudget":0}\n' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
   run run_dispatch standard sonnet --effort medium --crew-id c1 106 "t"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet check skipped"* ]]
   rm "$XDG_CONFIG_HOME/dispatcher/settings.json"
 
   run run_dispatch standard sonnet --effort medium --ignore-budget --crew-id c1 107 "t"
@@ -3125,6 +3131,7 @@ fleet_nproc() {
   fleet_lead claude "" "" "" deep
   run run_dispatch standard sonnet --effort medium --crew-id c1 108 "t"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet check skipped"* ]]
 
   fleet_lead claude cedar feat/3-c "" none
   fleet_lead claude dune feat/4-d "" none
@@ -3214,6 +3221,7 @@ fleet_nproc() {
   [ "$status" -eq 1 ]
   run run_dispatch standard sonnet --effort medium --crew-id c1 42 "t"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet check skipped"* ]]
   [[ "$output" != *"machine at capacity"* ]]
 }
 
@@ -3229,6 +3237,7 @@ fleet_nproc() {
   printf '4.00 3.00 2.00 1/1 1\n' >"$DISPATCH_LOADAVG_FILE"
   run run_dispatch trivial haiku --effort medium --crew-id c1 113 "t"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet check skipped"* ]]
 
   printf '9.00 3.00 2.00 1/1 1\n' >"$DISPATCH_LOADAVG_FILE"
   run run_dispatch trivial haiku --effort medium --ignore-budget --crew-id c1 114 "t"
@@ -3238,6 +3247,35 @@ fleet_nproc() {
   printf 'garbage\n' >"$DISPATCH_LOADAVG_FILE"
   run run_dispatch trivial haiku --effort medium --crew-id c1 115 "t"
   [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet check skipped"* ]]
+}
+
+@test "927 fleet: a crew fleet load that errors fails open with a note on stderr" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_lead claude amber feat/1-a "" deep
+  fleet_lead claude birch feat/2-b "" deep
+  fleet_lead claude cedar feat/3-c "" deep
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "${1:-}" in
+identity) printf '%s\n' '{"name":"coral-fox","tmux":"colour1"}' ;;
+pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet)
+  echo "crew: fleet load: boom" >&2
+  exit 1
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 140 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"crew: fleet load: boom"* ]]
+  [[ "$stderr" == *"dispatch: fleet check skipped — crew fleet load failed (exit 1)"* ]]
+  [[ "$stderr" != *"machine at capacity"* ]]
+  grep -qF -- 'fleet load --budget 8 --add 2' "$STUB_LOG"
 }
 
 @test "local lane: a local id passes at an allowed tier and probes its endpoint" {
@@ -3415,6 +3453,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "${1:-}" in
 identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 occupants) cat "$STUB_DIR/occ.json" ;;
 sessions) cat "$STUB_DIR/sess.json" ;;
 esac
@@ -4179,6 +4218,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 spec-lint)
   [ -z "${STUB_SPEC_LINT_OUT:-}" ] || printf '%s\n' "$STUB_SPEC_LINT_OUT" >&2
   exit "${STUB_SPEC_LINT_RC:-0}"
@@ -6887,6 +6927,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 stream) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
@@ -15466,6 +15507,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 identity) exec "$CREW_REAL" "$@" ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
 EOF2
@@ -15490,6 +15532,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 identity) exec "$CREW_REAL" "$@" ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
 EOF2

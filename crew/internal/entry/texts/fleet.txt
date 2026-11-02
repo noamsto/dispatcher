@@ -57,3 +57,32 @@ ${XDG_STATE_HOME:-~/.local/state}/crew/fleet-stream/<crew>, outside every repo.
 Gone repos and repos without a bus are noted once on stderr and skipped.
 
   crew fleet stream --crew <crew-id>
+
+usage: crew fleet load [--json] [--budget N] [--add WEIGHT] [--own BRANCH]...
+
+How loaded the machine is, from any directory (no git repo needed): the live
+lead weight against fleetBudget, and the 1-minute load average against the core
+count. This is the check every `dispatch` runs. A live lead is a pane stamped
+with a branch, and no role or role `lead`, running an engine in a worktree that
+still exists, whose branch has not posted done, failed, exited or reaped. It
+weighs its WORKER_TASK.md tier: trivial 1, standard 2, deep 3 (an unreadable
+header counts as standard). Role panes add nothing.
+
+  --json         The document: {budget, weight, pending, free, leads[{repo,
+                 branch, name, tier, weight}], load1, cores, load_over,
+                 engines{<e>: {in_budget, hot_windows, limit_reached}},
+                 budget_age_s}. free is null when fleetBudget is 0, which
+                 turns both checks off; load1 and cores are null when the host
+                 does not say; an engine reads in budget when the quota cache
+                 cannot tell (missing, over 2 h old)
+  --budget N     Use this fleetBudget instead of asking `dispatch-config`
+  --add WEIGHT   Judge a dispatch of this weight: exit 0 fits, 3 refuses and
+                 prints why (to stderr with --json), 1 is an error
+  --own BRANCH   That dispatch's own branch; one that already has a lead pane
+                 (engine alive or not) is no new lead and always fits
+
+Load comes from $DISPATCH_LOADAVG_FILE, else /proc/loadavg, else `sysctl -n
+vm.loadavg`; cores from `nproc` on PATH, else `sysctl -n hw.ncpu`. An unreadable
+one skips the load check.
+
+  crew fleet load --json | jq '.free'

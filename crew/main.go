@@ -111,7 +111,7 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 			return entry.RunHelp([]string{"hold", arg(args, 1)}, stdout, stderr), true
 		}
 	case "fleet":
-		if arg(args, 1) == "stream" && isHelpFlag(arg(args, 2)) {
+		if (arg(args, 1) == "stream" || arg(args, 1) == "load") && isHelpFlag(arg(args, 2)) {
 			return entry.RunHelp([]string{"fleet"}, stdout, stderr), true
 		}
 	case "class":
@@ -329,6 +329,9 @@ func parseCrew(args []string) (crewArgs, bool) {
 	if strings.HasPrefix(cmd, "fleet stream") {
 		key = "fleet stream"
 	}
+	if strings.HasPrefix(cmd, "fleet load") {
+		key = "fleet load"
+	}
 	return crewArgs{sub: args[0], argv: args[1:], typed: r, refusal: validate(key, &r), cmd: cmd}, true
 }
 
@@ -341,6 +344,8 @@ func refusalKey(args []string) string {
 			return "hold " + args[1]
 		case args[0] == "fleet" && args[1] == "stream":
 			return "fleet stream"
+		case args[0] == "fleet" && args[1] == "load":
+			return "fleet load"
 		}
 	}
 	return args[0]
@@ -1135,6 +1140,9 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 			Git:     git.Exec{},
 		})
 	}
+	if strings.HasPrefix(p.cmd, "fleet load") {
+		return runFleetLoad(ctx, p.typed.Fleet.Load, stdout, stderr)
+	}
 	o := fleet.Options{
 		Tmux:      tmux.Exec{},
 		Git:       git.Exec{},
@@ -1151,6 +1159,22 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 	}
 	c := p.typed.Fleet.Table
 	return fleet.Run(ctx, fleet.Request{All: c.All, JSON: c.JSON, Crew: str(c.Crew)}, stdout, stderr, o)
+}
+
+func runFleetLoad(ctx context.Context, c fleetLoadCmd, stdout, stderr io.Writer) int {
+	o := fleet.LoadOptions{
+		Getenv:     os.Getenv,
+		Tmux:       tmux.Exec{},
+		Git:        git.Exec{},
+		Clock:      clock.FromEnv(),
+		BudgetFile: budgetFile(),
+	}
+	if c.Budget == nil {
+		o.Budget = func(ctx context.Context) (int, error) {
+			return fleet.ResolveBudget(ctx, fleet.ConfigBin(), stderr)
+		}
+	}
+	return fleet.Load(ctx, fleet.LoadRequest{JSON: c.JSON, Budget: c.Budget, Add: c.Add, Own: c.Own}, stdout, stderr, o)
 }
 
 // The Nix build sets these with -X: the pinned bash and the two libs
