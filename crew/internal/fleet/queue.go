@@ -348,7 +348,7 @@ func newQueue(ctx context.Context, o QueueOptions, scan fleetScan, s QueueSettin
 		ref := crewRef{h.common, h.crew}
 		ok, seen := eligible[ref]
 		if !seen {
-			ok = readSession(filepath.Join(h.common, "crew", "crews", h.crew), t, now).eligible()
+			ok = readSession(filepath.Join(h.common, "crew", "crews", h.crew), fleetLane(o.Getenv, h.crew), t, now).eligible()
 			eligible[ref] = ok
 		}
 		h.eligible, h.repoPrio, h.lastRelease = ok, prios[filepath.Clean(h.common)], scan.lastRelease[h.common]

@@ -1067,6 +1067,37 @@ func TestTransitionsFilterWorkerText(t *testing.T) {
 	}
 }
 
+func TestTransitionsFilterRepoAndQueueText(t *testing.T) {
+	const dirty = "o/al\u202epha\u200b\u0085"
+	const clean = "o/al?pha??"
+	w := ovWorker("worker:feat/a#s1-1", "working")
+	repo := ovRepo("alpha", ovCrew("c1", "live", "attended", w))
+	repo.Repo = dirty
+	tr := newTransitions()
+	step(t, tr, ovDoc(ovStart, repo))
+	repo.Crews = []fleetpkg.CrewStatus{ovCrew("c1", "dead", "unattended", w)}
+	got := step(t, tr, ovDoc(ovStart+minute, repo))
+	if len(got) != 1 || got[0]["repo"] != clean {
+		t.Errorf("repo label = %v, want %q", got, clean)
+	}
+
+	q := fleetpkg.QueueStatus{Head: &fleetpkg.QueueHead{Repo: dirty, CrewID: "c\u202e1", ID: "h\u200b1", WaitedS: headWaitS}}
+	tr = newTransitions()
+	step(t, tr, withQueue(ovDoc(ovStart), fleetpkg.QueueStatus{}, 10, 5))
+	got = step(t, tr, withQueue(ovDoc(ovStart+minute), q, 10, 5))
+	if len(got) != 1 || got[0]["repo"] != clean || got[0]["crew"] != "c?1" || got[0]["hold"] != "h?1" {
+		t.Errorf("capacity_stuck = %v, want repo %q crew c?1 hold h?1", got, clean)
+	}
+}
+
+func TestFleetRepoNameFiltersOrigin(t *testing.T) {
+	common := "/git/alpha/.git"
+	o := FleetOptions{Git: origin(common, "https://github.com/acme/al\u202epha\u200b.git")}
+	if got, want := o.repoName(common), "acme/al?pha?"; got != want {
+		t.Errorf("repoName = %q, want %q", got, want)
+	}
+}
+
 func TestTransitionsBlockedAgingRearms(t *testing.T) {
 	at := func(m, since int64, answered bool) fleetpkg.StatusDoc {
 		return ovDoc(ovStart+m*minute, ovRepo("alpha", ovCrew("c1", "live", "attended",

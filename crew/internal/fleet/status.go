@@ -425,14 +425,23 @@ func (b *repoBuild) derive(crew string, row map[string]any) {
 
 // session is a crew's dispatcher as its registration says: the pid file's
 // state (live, dead or closed) and pid, and the lane tick's state, nil when
-// no tick was ever written.
+// no tick from this dispatcher's session exists.
 type session struct {
 	state string
 	pid   *int
 	lane  *string
 }
 
-func readSession(dir string, t proc.Table, now time.Time) session {
+// fleetLane is the lane dir `crew fleet stream --crew` keeps for crew.
+func fleetLane(getenv func(string) string, crew string) string {
+	return filepath.Join(stateHome(getenv), "crew", "fleet-stream", crew)
+}
+
+// readSession reads the crew's dispatcher at dir. Its lane is the freshest tick
+// of the per-repo lane in dir and the fleet-stream lane in fleet; a tick
+// written before the dispatcher process started is an earlier session's and
+// counts as none, so a leftover never reads as a dead lane.
+func readSession(dir, fleet string, t proc.Table, now time.Time) session {
 	pidfile := filepath.Join(dir, "pid")
 	text, _ := crews.PidFileText(pidfile)
 	s := session{state: "closed"}
@@ -446,9 +455,26 @@ func readSession(dir string, t proc.Table, now time.Time) session {
 	if n, err := strconv.Atoi(strings.TrimSpace(text)); err == nil && n > 0 && s.state != "closed" {
 		s.pid = &n
 	}
-	if _, err := os.Stat(filepath.Join(dir, "stream.tick")); err == nil {
-		state, _, _, _ := lane.State(dir, t, now.UnixMilli())
-		s.lane = &state
+	nowMS := now.UnixMilli()
+	// ps counts whole seconds, so a tick may land that far before the start it
+	// reports; RecordedLive allows the same slack.
+	var startMS int64
+	if s.pid != nil && s.state == "live" {
+		if elapsed, ok := t.Elapsed(*s.pid); ok {
+			startMS = nowMS - elapsed*1000 - 2000
+		}
+	}
+	var newest int64
+	for _, cdir := range []string{dir, fleet} {
+		if _, err := os.Stat(filepath.Join(cdir, "stream.tick")); err != nil {
+			continue
+		}
+		tick := lane.ReadTick(filepath.Join(cdir, "stream.tick"))
+		if tick.OK && tick.TS < startMS || s.lane != nil && tick.TS <= newest {
+			continue
+		}
+		state, _, _, _ := lane.State(cdir, t, nowMS)
+		s.lane, newest = &state, tick.TS
 	}
 	return s
 }
@@ -464,7 +490,7 @@ func (s session) eligible() bool {
 // tick, with the state each says about the session.
 func (b *repoBuild) dispatcher(id string) Dispatcher {
 	dir := filepath.Join(b.common, "crew", "crews", id)
-	s := readSession(dir, b.o.Proc, b.now)
+	s := readSession(dir, fleetLane(b.o.Getenv, id), b.o.Proc, b.now)
 	d := Dispatcher{State: s.state, PID: s.pid, Lane: s.lane}
 	if pane, _ := crews.PidFileText(filepath.Join(dir, "pane")); pane != "" {
 		d.Pane = &pane

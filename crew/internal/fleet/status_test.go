@@ -199,6 +199,50 @@ func TestStatusLaneStates(t *testing.T) {
 	}
 }
 
+// A live dispatcher's lane is the freshest tick of its per-repo lane and its
+// fleet-stream lane, and a tick from before the dispatcher started is no tick.
+func TestStatusLaneSessions(t *testing.T) {
+	f := newStatusFix(t)
+	fleetTick := func(crew, holder string, ageS int64) {
+		dir := filepath.Join(f.env["XDG_STATE_HOME"], "crew", "fleet-stream", crew)
+		for name, text := range map[string]string{
+			"stream.lock.d/pid": holder + "\n",
+			"stream.tick":       fmt.Sprintf(`{"pid":%s,"ts":%d,"park":300}`, holder, ago(ageS)),
+		} {
+			path := filepath.Join(dir, name)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	repoTick := func(crew, holder string, ageS int64) {
+		f.crewFile(crew, "stream.lock.d/pid", holder+"\n")
+		f.crewFile(crew, "stream.tick", fmt.Sprintf(`{"pid":%s,"ts":%d,"park":300}`, holder, ago(ageS)))
+	}
+	// Pid 100 started 5000 s ago.
+	f.pidfile("moved", "100")
+	repoTick("moved", "100", 4000) // this session's per-repo tick, long stopped
+	fleetTick("moved", "100", 10)
+	f.pidfile("leftover", "100")
+	repoTick("leftover", "101", 9000) // an earlier session's tick
+	f.pidfile("died", "100")
+	repoTick("died", "101", 4000) // this session's tick, now old, its holder gone
+	doc := f.collect(StatusRequest{})
+
+	for crew, want := range map[string]string{"moved": "alive", "leftover": "", "died": "dead"} {
+		got := doc.crew(t, crew).Dispatcher.Lane
+		switch {
+		case want == "" && got != nil:
+			t.Errorf("%s lane = %q, want null", crew, *got)
+		case want != "" && (got == nil || *got != want):
+			t.Errorf("%s lane = %v, want %q", crew, got, want)
+		}
+	}
+}
+
 func TestStatusAttention(t *testing.T) {
 	f := newStatusFix(t,
 		// c-live is attended by a live dispatcher whatever its workers do.
