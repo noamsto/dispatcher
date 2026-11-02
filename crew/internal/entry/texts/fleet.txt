@@ -100,17 +100,21 @@ as `crew fleet` finds them.
            last_event_s}, attention, workers[], holds[], overseer_inbox[]}]}],
            skipped[{path, status}]}. state is live, dead or closed (no pid
            file); lane is the stream tick's alive, stale or dead, null when no
-           tick was written; attention is unattended or idle for a crew with
-           no live dispatcher, by whether it has live work or a hold. A worker
+           tick was written; attention is attended while the dispatcher is
+           live, else unattended or idle by whether the crew has live work or a
+           hold. A worker
            is its roster row plus blocked {since, cycle, budget_left_s, source,
            answered} (the first row of its current run of blocked rows),
            finished_window, remote_unprobed and pr_candidate. machine is
-           `crew fleet load`'s document; queue stays empty until fleet holds
+           `crew fleet load`'s document, null when fleetBudget cannot be read
+           (the reason goes to stderr); queue stays empty until fleet holds
            exist. overseer_inbox lists a crew's dispatcher msgs to
            overseer:<host> after the overseer's cursor, else from the last 24 h;
            msgs from any other sender only count in misrouted
   --gh     Ask GitHub about each PR candidate (a pr_open or done row with a
-           pr_url that is not reaped), four at a time, 20 s each: adds pr
+           pr_url that is not reaped), four at a time, 20 s each; only a PR of the
+           repo whose bus the row is on is asked for, any other pr_url is a
+           pr_error. Adds pr
            {state, merge_state, review, checks: pass|fail|pending} or, when the
            lookup fails, pr_error. Never fails the command
 

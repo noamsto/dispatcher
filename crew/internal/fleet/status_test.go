@@ -357,6 +357,31 @@ func TestStatusQuotaHolds(t *testing.T) {
 	}
 }
 
+// A crew id is worker-written and becomes a path under crews/: one that is not
+// a valid id never becomes a crew, so it cannot point status at a file the
+// worker made.
+func TestStatusIgnoresInvalidCrewIDs(t *testing.T) {
+	f := newStatusFix(t,
+		wstatus(10, "../../escape", "feat/a", "working", ""),
+		wmsg(10, "../../escape", "dispatcher:../../escape", "hold:../../escape", `"{\"id\":\"h\"}"`),
+		wstatus(10, "c1", "feat/b", "working", ""),
+	)
+	doc := f.collect(StatusRequest{})
+	if got := len(doc.Repos[0].Crews); got != 1 || doc.Repos[0].Crews[0].CrewID != "c1" {
+		t.Errorf("crews = %+v, want only c1", doc.Repos[0].Crews)
+	}
+}
+
+// A bus the hold fold cannot read must not read as a crew with no holds.
+func TestStatusUnreadableHoldFoldSkipsTheRepo(t *testing.T) {
+	f := newStatusFix(t, "5",
+		wmsg(10, "c1", "dispatcher:c1", "hold:c1", `"{\"id\":\"h\"}"`))
+	doc := f.collect(StatusRequest{})
+	if len(doc.Repos) != 0 || len(doc.Skipped) != 1 || doc.Skipped[0].Path != f.common {
+		t.Errorf("repos = %+v, skipped = %+v, want the repo skipped", doc.Repos, doc.Skipped)
+	}
+}
+
 func TestStatusOverseerInbox(t *testing.T) {
 	f := newStatusFix(t,
 		wstatus(10, "c1", "feat/a", "working", ""),

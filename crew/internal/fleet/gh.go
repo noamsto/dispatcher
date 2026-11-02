@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -30,40 +31,56 @@ type prView struct {
 	} `json:"statusCheckRollup"`
 }
 
+var prURLRe = regexp.MustCompile(`^https://github\.com/([^/]+)/([^/]+)/pull/[0-9]+$`)
+
+// prCandidate is a worker row with a pr_url, and the repo whose bus it is on.
+type prCandidate struct {
+	row  map[string]any
+	repo string
+}
+
 // enrichPRs asks GitHub about each PR candidate row, ghParallel at a time, and
 // adds `pr` or, when the call fails, `pr_error`. It never fails the command,
 // and never caches: GitHub is the durable source.
-func enrichPRs(ctx context.Context, c gh.Client, rows []map[string]any, timeout time.Duration) {
+func enrichPRs(ctx context.Context, c gh.Client, cands []prCandidate, timeout time.Duration) {
 	sem := make(chan struct{}, ghParallel)
 	var wg sync.WaitGroup
-	for _, row := range rows {
+	for _, cand := range cands {
 		sem <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-sem }()
-			url, _ := row["pr_url"].(string)
-			pr, err := viewPR(ctx, c, url, timeout)
+			url, _ := cand.row["pr_url"].(string)
+			pr, err := viewPR(ctx, c, url, cand.repo, timeout)
 			if err != nil {
-				row["pr_error"] = err.Error()
+				cand.row["pr_error"] = err.Error()
 				return
 			}
-			row["pr"] = pr
+			cand.row["pr"] = pr
 		})
 	}
 	wg.Wait()
 }
 
-func viewPR(ctx context.Context, c gh.Client, url string, timeout time.Duration) (map[string]any, error) {
+// viewPR is one `gh pr view`. A pr_url is worker-written text, so it only
+// reaches gh as a PR of the repo whose bus it is on: never another repo's, and
+// never a value gh would read as a flag or resolve against the cwd.
+func viewPR(ctx context.Context, c gh.Client, url, repo string, timeout time.Duration) (map[string]any, error) {
 	if c == nil {
 		return nil, errors.New("gh is not available")
 	}
+	if m := prURLRe.FindStringSubmatch(url); m == nil || !strings.EqualFold(m[1]+"/"+m[2], repo) {
+		return nil, errors.New("pr_url is not a PR of this repo")
+	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	out, err := c.Combined(ctx, "pr", "view", url, "--json", prFields)
+	out, err := c.Run(ctx, "pr", "view", url, "--json", prFields)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("gh timed out after %s", timeout)
 		}
-		if line := firstLine(out); line != "" {
+		// Run drops stderr, which is where gh says why: ask again for the line.
+		msg, _ := c.Combined(ctx, "pr", "view", url, "--json", prFields)
+		if line := firstLine(msg); line != "" {
 			return nil, errors.New(line)
 		}
 		return nil, errors.New(firstLine(err.Error()))

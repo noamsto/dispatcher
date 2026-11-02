@@ -213,7 +213,7 @@ func CollectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		doc.Machine = &machine
 	}
 
-	var candidates []map[string]any
+	var candidates []prCandidate
 	for _, r := range repos.Discover(repos.Options{Registry: o.Registry, Getenv: o.Getenv, Stderr: stderr, Prefix: "crew: fleet status"}) {
 		if r.Status != repos.StatusOK {
 			doc.Skipped = append(doc.Skipped, Skipped{Path: r.Common, Status: string(r.Status)})
@@ -262,11 +262,14 @@ type repoBuild struct {
 	overseer bool
 	stateDir string
 
-	candidates []map[string]any
+	repoName   string
+	candidates []prCandidate
 }
 
 func (b *repoBuild) build() (RepoStatus, error) {
 	ctx, o := b.ctx, b.o
+	origin, _ := git.Origin(ctx, o.Git, b.common)
+	b.repoName = repos.Name(b.common, origin)
 	worktrees := sync.OnceValues(func() (string, error) { return git.Worktrees(ctx, o.Git, "", b.common) })
 	live := roster.Liveness{Windows: func() map[string]bool { return roster.Windows(ctx, b.once) }, Worktrees: worktrees}
 	rows, err := foldRepo(ctx, b.common, b.events, b.docs, "", b.nowSec,
@@ -278,13 +281,16 @@ func (b *repoBuild) build() (RepoStatus, error) {
 	for _, r := range rows {
 		byCrew[r.crew] = append(byCrew[r.crew], r.Row)
 	}
-	origin, _ := git.Origin(ctx, o.Git, b.common)
-	repo := RepoStatus{Repo: repos.Name(b.common, origin), Common: b.common, Crews: []CrewStatus{}}
+	repo := RepoStatus{Repo: b.repoName, Common: b.common, Crews: []CrewStatus{}}
 
 	cutoff := b.inboxCutoff()
 	repo.Misrouted = b.idx.misrouted(cutoff)
 	for _, id := range b.crewIDs(byCrew) {
-		repo.Crews = append(repo.Crews, b.crew(id, byCrew[id], live, cutoff))
+		c, err := b.crew(id, byCrew[id], live, cutoff)
+		if err != nil {
+			return RepoStatus{}, err
+		}
+		repo.Crews = append(repo.Crews, c)
 	}
 	return repo, nil
 }
@@ -321,6 +327,8 @@ func (b *repoBuild) inboxCutoff() int64 {
 }
 
 // crewIDs are the crews with a worker row, a crew dir or a hold, in id order.
+// A crew id becomes a path under crews/, so only a valid one counts, whatever
+// wrote it.
 func (b *repoBuild) crewIDs(byCrew map[string][]map[string]any) []string {
 	ids := map[string]bool{}
 	for id := range byCrew {
@@ -331,8 +339,13 @@ func (b *repoBuild) crewIDs(byCrew map[string][]map[string]any) []string {
 	}
 	entries, _ := os.ReadDir(filepath.Join(b.common, "crew", "crews"))
 	for _, e := range entries {
-		if e.IsDir() && bus.ValidCrewID(e.Name()) {
+		if e.IsDir() {
 			ids[e.Name()] = true
+		}
+	}
+	for id := range ids {
+		if !bus.ValidCrewID(id) {
+			delete(ids, id)
 		}
 	}
 	out := make([]string, 0, len(ids))
@@ -343,8 +356,12 @@ func (b *repoBuild) crewIDs(byCrew map[string][]map[string]any) []string {
 	return out
 }
 
-func (b *repoBuild) crew(id string, rows []map[string]any, live roster.Liveness, cutoff int64) CrewStatus {
-	c := CrewStatus{CrewID: id, Workers: []map[string]any{}, Holds: b.holds(id), OverseerInbox: b.idx.inbox(id, cutoff)}
+func (b *repoBuild) crew(id string, rows []map[string]any, live roster.Liveness, cutoff int64) (CrewStatus, error) {
+	holds, err := b.holds(id)
+	if err != nil {
+		return CrewStatus{}, err
+	}
+	c := CrewStatus{CrewID: id, Workers: []map[string]any{}, Holds: holds, OverseerInbox: b.idx.inbox(id, cutoff)}
 	c.Dispatcher = b.dispatcher(id)
 	for _, row := range rows {
 		row = jsonval.Clamp(row).(map[string]any)
@@ -354,7 +371,7 @@ func (b *repoBuild) crew(id string, rows []map[string]any, live roster.Liveness,
 		c.Workers = append(c.Workers, row)
 	}
 	c.Attention = attention(c)
-	return c
+	return c, nil
 }
 
 // derive adds the status-only fields to a worker row.
@@ -379,7 +396,7 @@ func (b *repoBuild) derive(crew string, row map[string]any) {
 	candidate := (state == "pr_open" || state == "done") && url != ""
 	row["pr_candidate"] = candidate
 	if candidate {
-		b.candidates = append(b.candidates, row)
+		b.candidates = append(b.candidates, prCandidate{row: row, repo: b.repoName})
 	}
 }
 
@@ -415,15 +432,16 @@ func (b *repoBuild) dispatcher(id string) Dispatcher {
 }
 
 // holds are the crew's outstanding holds. A quota hold is due once the window
-// it waits on has reset.
-func (b *repoBuild) holds(crew string) []HoldStatus {
+// it waits on has reset. A bus the fold cannot read fails the repo rather than
+// reading as no holds: a crew parked on quota would look idle.
+func (b *repoBuild) holds(crew string) ([]HoldStatus, error) {
 	out := []HoldStatus{}
 	if !b.idx.holders[crew] {
-		return out
+		return out, nil
 	}
 	held, err := hold.Outstanding(b.docs, crew)
 	if err != nil {
-		return out
+		return nil, err
 	}
 	list, _ := held.([]any)
 	for _, h := range list {
@@ -444,7 +462,7 @@ func (b *repoBuild) holds(crew string) []HoldStatus {
 		}
 		out = append(out, hs)
 	}
-	return out
+	return out, nil
 }
 
 // attention says whether a crew with no live dispatcher needs one: yes while it

@@ -17,12 +17,15 @@ import (
 
 func prURL(n int) string { return fmt.Sprintf("https://github.com/acme/alpha/pull/%d", n) }
 
-func prRows(urls ...string) []map[string]any {
+// prRows are candidates of acme/alpha, plus the rows the caller reads back.
+func prRows(urls ...string) ([]prCandidate, []map[string]any) {
+	cands := make([]prCandidate, len(urls))
 	rows := make([]map[string]any, len(urls))
 	for i, u := range urls {
 		rows[i] = map[string]any{"pr_url": u}
+		cands[i] = prCandidate{row: rows[i], repo: "acme/alpha"}
 	}
-	return rows
+	return cands, rows
 }
 
 // ghAnswering is a fake gh that answers `pr view <url>` from answers.
@@ -39,7 +42,7 @@ func TestEnrichPRsStatesAndRollupFolding(t *testing.T) {
 	run := func(state, rollup string) string {
 		return fmt.Sprintf(`{"state":%q,"mergeStateStatus":"CLEAN","reviewDecision":"APPROVED","statusCheckRollup":%s}`, state, rollup)
 	}
-	rows := prRows(prURL(1), prURL(2), prURL(3), prURL(4), prURL(5), prURL(6))
+	cands, rows := prRows(prURL(1), prURL(2), prURL(3), prURL(4), prURL(5), prURL(6))
 	fake := ghAnswering(map[string]string{
 		prURL(1): run("OPEN", `[{"status":"COMPLETED","conclusion":"SUCCESS"},{"status":"COMPLETED","conclusion":"SKIPPED"},{"state":"SUCCESS"}]`),
 		prURL(2): run("OPEN", `[{"status":"COMPLETED","conclusion":"SUCCESS"},{"status":"COMPLETED","conclusion":"FAILURE"},{"status":"IN_PROGRESS"}]`),
@@ -48,7 +51,7 @@ func TestEnrichPRsStatesAndRollupFolding(t *testing.T) {
 		prURL(5): run("OPEN", `[{"state":"ERROR"}]`),
 		prURL(6): `{"state":"MERGED","mergeStateStatus":"UNKNOWN","reviewDecision":"","statusCheckRollup":[]}`,
 	})
-	enrichPRs(t.Context(), fake, rows, time.Second)
+	enrichPRs(t.Context(), fake, cands, time.Second)
 
 	want := []struct{ state, checks string }{
 		{"OPEN", "pass"}, {"OPEN", "fail"}, {"OPEN", "pending"}, {"OPEN", "pending"}, {"OPEN", "fail"}, {"MERGED", "pass"},
@@ -75,14 +78,14 @@ func TestEnrichPRsStatesAndRollupFolding(t *testing.T) {
 // blockingGh never answers until its context ends.
 type blockingGh struct{ gh.Client }
 
-func (blockingGh) Combined(ctx context.Context, _ ...string) (string, error) {
+func (blockingGh) Run(ctx context.Context, _ ...string) (string, error) {
 	<-ctx.Done()
 	return "", ctx.Err()
 }
 
 func TestEnrichPRsTimeoutIsAPRError(t *testing.T) {
-	rows := prRows(prURL(1))
-	enrichPRs(t.Context(), blockingGh{}, rows, 20*time.Millisecond)
+	cands, rows := prRows(prURL(1))
+	enrichPRs(t.Context(), blockingGh{}, cands, 20*time.Millisecond)
 	msg, _ := rows[0]["pr_error"].(string)
 	if !strings.Contains(msg, "timed out") {
 		t.Errorf("pr_error = %q, want a timeout", msg)
@@ -93,7 +96,7 @@ func TestEnrichPRsTimeoutIsAPRError(t *testing.T) {
 }
 
 func TestEnrichPRsErrorIsGhsFirstLineWithoutControlCharacters(t *testing.T) {
-	rows := prRows(prURL(1), prURL(2), prURL(3))
+	cands, rows := prRows(prURL(1), prURL(2), prURL(3))
 	fake := &ghtest.Fake{Func: func(args []string) (string, error) {
 		switch args[2] {
 		case prURL(1):
@@ -103,7 +106,7 @@ func TestEnrichPRsErrorIsGhsFirstLineWithoutControlCharacters(t *testing.T) {
 		}
 		return "not json at all", nil
 	}}
-	enrichPRs(t.Context(), fake, rows, time.Second)
+	enrichPRs(t.Context(), fake, cands, time.Second)
 	if got := rows[0]["pr_error"]; got != "GraphQL: Could not resolve[31m to a PullRequest" {
 		t.Errorf("pr_error = %q", got)
 	}
@@ -129,12 +132,58 @@ func TestEnrichPRsRunsFourAtATime(t *testing.T) {
 	for i := range 12 {
 		urls = append(urls, prURL(i))
 	}
-	enrichPRs(t.Context(), fake, prRows(urls...), time.Second)
+	cands, _ := prRows(urls...)
+	enrichPRs(t.Context(), fake, cands, time.Second)
 	if got := peak.Load(); got != ghParallel {
 		t.Errorf("peak concurrency = %d, want %d", got, ghParallel)
 	}
 	if len(fake.Calls()) != 12 {
 		t.Errorf("%d calls, want 12", len(fake.Calls()))
+	}
+}
+
+// A pr_url is worker-written text: only a PR of the repo whose bus it is on
+// reaches gh, never another repo's, a bare number, or something gh reads as a
+// flag.
+func TestEnrichPRsOnlyAsksForThisReposPRs(t *testing.T) {
+	cands, rows := prRows(
+		"https://github.com/other/repo/pull/7",
+		"123",
+		"--jq=.",
+		"https://github.com/acme/alpha/pull/8/files",
+		"https://github.com/ACME/Alpha/pull/9",
+	)
+	fake := &ghtest.Fake{Func: func([]string) (string, error) { return `{"state":"OPEN","statusCheckRollup":[]}`, nil }}
+	enrichPRs(t.Context(), fake, cands, time.Second)
+	for i := range 4 {
+		if rows[i]["pr_error"] != "pr_url is not a PR of this repo" || rows[i]["pr"] != nil {
+			t.Errorf("row %d = %v, want a pr_error", i, rows[i])
+		}
+	}
+	if rows[4]["pr"] == nil {
+		t.Errorf("a PR of this repo, whatever its case, is asked for: %v", rows[4])
+	}
+	if calls := fake.Calls(); len(calls) != 1 || !strings.Contains(calls[0], "/ACME/Alpha/pull/9") {
+		t.Errorf("gh calls = %v, want only the one valid PR", calls)
+	}
+}
+
+// gh's stderr on a successful call is no part of its JSON.
+type noisyGh struct{ gh.Client }
+
+func (noisyGh) Run(context.Context, ...string) (string, error) {
+	return `{"state":"OPEN","statusCheckRollup":[]}`, nil
+}
+
+func (noisyGh) Combined(context.Context, ...string) (string, error) {
+	return "warning: a new release is available\n" + `{"state":"OPEN","statusCheckRollup":[]}`, nil
+}
+
+func TestEnrichPRsReadsStdoutOnly(t *testing.T) {
+	cands, rows := prRows(prURL(1))
+	enrichPRs(t.Context(), noisyGh{}, cands, time.Second)
+	if rows[0]["pr"] == nil || rows[0]["pr_error"] != nil {
+		t.Errorf("row = %v, want the PR despite stderr noise", rows[0])
 	}
 }
 
