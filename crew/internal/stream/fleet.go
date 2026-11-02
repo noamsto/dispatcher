@@ -27,9 +27,11 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
+	fleetpkg "github.com/noamsto/dispatcher/crew/internal/fleet"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	lanepkg "github.com/noamsto/dispatcher/crew/internal/lane"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
+	"github.com/noamsto/dispatcher/crew/internal/peer"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 )
 
@@ -52,6 +54,16 @@ type FleetOptions struct {
 	Rediscover func(d time.Duration) <-chan time.Time
 	Getenv     func(string) string
 	Registry   string
+
+	// Host is this machine's short name, the overseer's `overseer:<host>`. nil
+	// is peer.SelfName.
+	Host func() (string, error)
+	// CollectStatus is the overseer lane's offline fleet status document. nil
+	// is fleet.CollectStatus over these options.
+	CollectStatus func(ctx context.Context, stderr io.Writer) fleetpkg.StatusDoc
+	// Flush puts the overseer lane's stdout on the wire before a msg cursor
+	// moves past the batch it printed. nil is an unbuffered stdout.
+	Flush func() error
 }
 
 func (o FleetOptions) withDefaults() FleetOptions {
@@ -66,27 +78,46 @@ func (o FleetOptions) withDefaults() FleetOptions {
 		}
 	}
 	if o.LaneRoot == "" {
-		base := o.Getenv("XDG_STATE_HOME")
-		if base == "" {
-			base = o.Getenv("HOME") + "/.local/state"
-		}
-		o.LaneRoot = filepath.Join(base, "crew", "fleet-stream")
+		o.LaneRoot = filepath.Join(stateHome(o.Getenv), "crew", "fleet-stream")
 	}
 	if o.Rediscover == nil {
 		o.Rediscover = o.Timer
 	}
+	if o.Host == nil {
+		o.Host = peer.SelfName
+	}
 	return o
 }
 
+// stateHome is ${XDG_STATE_HOME:-$HOME/.local/state}.
+func stateHome(getenv func(string) string) string {
+	if base := getenv("XDG_STATE_HOME"); base != "" {
+		return base
+	}
+	return getenv("HOME") + "/.local/state"
+}
+
+// repoName labels a bus's lines by its origin, else by its directory.
+func (o FleetOptions) repoName(common string) string {
+	var origin string
+	if o.Git != nil {
+		origin, _ = git.Origin(context.Background(), o.Git, common)
+	}
+	return repos.Name(common, origin)
+}
+
 // FleetRequest is one `crew fleet stream` call: `crew stream`'s request, whose
-// ReapEvery the lane ignores, plus --rediscover ("" for its default).
+// ReapEvery the lane ignores, plus --rediscover ("" for its default) and
+// --overseer.
 type FleetRequest struct {
 	Request
 	Rediscover string
+	Overseer   bool
 }
 
 // RunFleet is `crew fleet stream`. --crew is required: the lane spans repos,
-// so no one repo's ambient crew can stand in for it.
+// so no one repo's ambient crew can stand in for it. --overseer is the host's
+// overseer lane instead, which is no crew's.
 func RunFleet(r FleetRequest, stdout, stderr io.Writer, opts FleetOptions) int {
 	o := opts.withDefaults()
 	rediscoverText := r.Rediscover
@@ -97,6 +128,13 @@ func RunFleet(r FleetRequest, stdout, stderr io.Writer, opts FleetOptions) int {
 	if !ok {
 		say(stderr, "crew: --rediscover must be a positive integer number of seconds\n")
 		return exitUsage
+	}
+	if r.Overseer {
+		if r.Crew != "" {
+			say(stderr, "crew: fleet stream: --overseer and --crew are exclusive\n")
+			return exitUsage
+		}
+		return runOverseer(r.Request, rediscover, stdout, stderr, o)
 	}
 	if r.Crew == "" {
 		say(stderr, "crew: fleet stream: --crew ID is required\n")
@@ -144,25 +182,25 @@ func RunFleet(r FleetRequest, stdout, stderr io.Writer, opts FleetOptions) int {
 	tick := min(c.park, rediscover)
 	tickCall := c
 	tickCall.park = tick
+	errw := &laneWriter{w: stderr, now: o.Clock.Now, last: o.Clock.Now()}
 	f := &fleet{
 		c:          c,
 		o:          o,
 		lane:       lane,
 		lockd:      lockd,
 		out:        &laneWriter{w: stdout, now: o.Clock.Now, last: o.Clock.Now()},
-		stderr:     &laneWriter{w: stderr, now: o.Clock.Now, last: o.Clock.Now()},
+		stderr:     errw,
 		rediscover: time.Duration(rediscover) * time.Second,
 		tick:       time.Duration(tick) * time.Second,
 		ticker:     &loop{c: tickCall, o: o.Options, cdir: lane},
 		buses:      map[string]*busLoop{},
-		noted:      map[string]string{},
-		said:       map[string]bool{},
+		notes:      newNotes(errw),
 	}
 	return f.run(sigs)
 }
 
 // fleet is the coordinator: the only goroutine that discovers, joins and stops
-// bus loops, so buses, noted and said need no lock.
+// bus loops, so buses and notes need no lock.
 type fleet struct {
 	c          call
 	o          FleetOptions
@@ -178,8 +216,7 @@ type fleet struct {
 
 	buses        map[string]*busLoop
 	wg           sync.WaitGroup
-	noted        map[string]string
-	said         map[string]bool
+	notes        *notes
 	lastDiscover time.Time
 	discovered   bool
 }
@@ -233,20 +270,26 @@ func (f *fleet) shutdown(s os.Signal) int {
 	return 0
 }
 
-// discover is one pass over the candidates: skip notes, a loop stopped for a
-// repo that is gone or no longer listed as a bus, and a join for each bus that
-// has gained a row for the crew. A bus with none is never watched, so no cursor
-// or crew dir is created in a repo the crew never touched.
+// discover joins each bus that has gained a row for the crew. A bus with none
+// is never watched, so no cursor or crew dir is created in a repo the crew
+// never touched.
 func (f *fleet) discover() {
-	var notes bytes.Buffer
-	found := f.o.Discover(&notes)
-	for _, line := range strings.SplitAfter(notes.String(), "\n") {
-		if line == "" || f.said[line] {
-			continue
+	discoverBuses(f.o.Discover, f.notes, f.buses, f.leave, func(common string, events []bus.Event) {
+		if hasCrew(events, f.c.crew) {
+			f.join(common)
 		}
-		f.said[line] = true
-		say(f.stderr, "%s", line)
-	}
+	})
+}
+
+// discoverBuses is one pass over the candidates, for either lane: discovery's
+// notes, a leave for each joined repo that is gone or no longer listed as a
+// bus, skip notes, and join for each listed bus not joined yet, with the events
+// its log holds.
+func discoverBuses[B any](discover func(io.Writer) []repos.Repo, n *notes, joined map[string]B,
+	leave func(common string), join func(common string, events []bus.Event)) {
+	var text bytes.Buffer
+	found := discover(&text)
+	n.lines(text.String())
 
 	// A repo deleted under a sweep root just drops out of discovery, with no
 	// gone row to say so.
@@ -254,51 +297,73 @@ func (f *fleet) discover() {
 	for _, r := range found {
 		listed[r.Common] = r.Status
 	}
-	for common := range f.buses {
+	for common := range joined {
 		status, present := listed[common]
 		if status == repos.StatusOK {
 			continue
 		}
-		f.leave(common)
+		leave(common)
 		if !present {
-			f.skip(common, "no longer discovered")
+			n.skip(common, "no longer discovered")
 		}
 	}
 
 	for _, r := range found {
 		if r.Status != repos.StatusOK {
-			f.skip(r.Common, string(r.Status))
+			n.skip(r.Common, string(r.Status))
 			continue
 		}
-		if f.buses[r.Common] != nil {
-			delete(f.noted, r.Common)
+		if _, ok := joined[r.Common]; ok {
+			delete(n.noted, r.Common)
 			continue
 		}
 		events, err := bus.ReadEventsTolerant(r.Common + "/crew/events.jsonl")
 		var decode *bus.DecodeError
 		switch {
 		case errors.Is(err, bus.ErrNoLog):
-			f.skip(r.Common, string(repos.StatusNoBus))
+			n.skip(r.Common, string(repos.StatusNoBus))
 			continue
 		case err != nil && !errors.As(err, &decode):
-			f.skip(r.Common, strings.Join(strings.Fields(err.Error()), " "))
+			n.skip(r.Common, oneLine(err))
 			continue
 		}
-		delete(f.noted, r.Common)
-		if hasCrew(events, f.c.crew) {
-			f.join(r.Common)
+		delete(n.noted, r.Common)
+		join(r.Common, events)
+	}
+}
+
+// notes is what a lane says once on stderr however often it rediscovers: each
+// line discovery wrote, and each repo's skip reason until the reason changes.
+type notes struct {
+	w     io.Writer
+	said  map[string]bool
+	noted map[string]string
+}
+
+func newNotes(w io.Writer) *notes {
+	return &notes{w: w, said: map[string]bool{}, noted: map[string]string{}}
+}
+
+func (n *notes) lines(text string) {
+	for _, line := range strings.SplitAfter(text, "\n") {
+		if line == "" || n.said[line] {
+			continue
 		}
+		n.said[line] = true
+		say(n.w, "%s", line)
 	}
 }
 
 // skip notes a repo once per reason: a 300 s rediscovery must not repeat it.
-func (f *fleet) skip(common, why string) {
-	if f.noted[common] == why {
+func (n *notes) skip(common, why string) {
+	if n.noted[common] == why {
 		return
 	}
-	f.noted[common] = why
-	say(f.stderr, "crew: fleet stream: %s: skipped (%s)\n", common, why)
+	n.noted[common] = why
+	say(n.w, "crew: fleet stream: %s: skipped (%s)\n", common, why)
 }
+
+func oneLine(err error) string { return strings.Join(strings.Fields(err.Error()), " ") }
 
 func hasCrew(events []bus.Event, crew string) bool {
 	for _, e := range events {
@@ -316,14 +381,10 @@ func hasCrew(events []bus.Event, crew string) bool {
 func (f *fleet) join(common string) {
 	scratch := lanepkg.BusScratch(f.lane, common)
 	if err := os.MkdirAll(scratch, 0o755); err != nil {
-		f.skip(common, strings.Join(strings.Fields(err.Error()), " "))
+		f.notes.skip(common, oneLine(err))
 		return
 	}
-	var origin string
-	if f.o.Git != nil {
-		origin, _ = git.Origin(context.Background(), f.o.Git, common)
-	}
-	repo := repos.Name(common, origin)
+	repo := f.o.repoName(common)
 	l := &loop{
 		c:       f.c,
 		o:       f.o.Options,

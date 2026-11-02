@@ -169,6 +169,7 @@ func (f streamFlags) valueFlags() []valueFlag {
 type fleetStreamCmd struct {
 	streamFlags `embed:""`
 	Rediscover  *string `name:"rediscover"`
+	Overseer    bool    `name:"overseer"`
 	ReapEvery   *string `name:"reap-every" hidden:""`
 }
 
