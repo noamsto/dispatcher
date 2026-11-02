@@ -1,0 +1,30 @@
+  subcommand), the [38;5;105mclaude[39m prompt, and the [38;5;105mcrew reply[39m/[38;5;105mmsg[39m body are recognised as data. The
+  exemption is withdrawn whenever the program's identity can't be trusted — an impersonated
+  resolution ([38;5;105mexec -a[39m, [38;5;105msudo -u[39m, [38;5;105menv -S[39m, path-invoked wrapper, leading quoted [38;5;105m"NAME=value"[39m,
+  [38;5;105menv <number>[39m) or any in-command redefinition (function/alias/hash/trap, [38;5;105mBASH_CMDS[39m/[38;5;105mPATH[39m/…
+  incl. quote-split, opaque command word, or manufacturing a data-taker name).
+  Unknown/renamed programs keep zero exemption, so every rename bypass stays denied. The
+  three repros now pass; [38;5;105msome-unknown-tool .[39m and all round-1/round-2 probes stay denied.
+  [1mPipeline (grid, deep tier):[0m
+  - [1mSpec[0m — spec-critic cap reached (initial + 3 rounds); every finding folded (including
+    the critic-sanctioned final two).
+  - [1mPlan[0m — [38;5;105maccept[39m after 1 revision. (A Claude Code safety-classifier model-switch dialog
+    briefly blocked the plan-critic pane on the probe-laden plan; the dispatcher cleared
+    it; I discarded an empty-body and a stale pre-edit verdict before the real [38;5;105maccept[39m.)
+  - [1mExecute[0m — opus agent (gate code + tests, red-green), sonnet agent (docs); I verified
+    all 4 deviations and reconciled the README.
+  - [1mFast gate[0m — green (race, both golangci-lint, nilaway).
+  - [1mCode review[0m — [38;5;105mreview_mode: full[39m, [38;5;105mreview_high: 0[39m; [1msecurity-reviewer Approve[0m (60+
+    probes), two mechanical MEDIUMs from go/general reviewers fixed, one security
+    non-finding declined (below bar).
+  - [1mDeslop → push → PR → CI green → [38;5;105mpr_open[39m → [38;5;105mdone[39m.[0m
+  One thing I'd flag for your awareness: the plan-phase safety-classifier dialog required a
+  dispatcher intervention (answering the model-switch prompt) — the attack-probe strings
+  in a security-tooling plan reliably trip the classifier, which is worth noting if this
+  recurs on similar guard work.
+                                                   [38;5;241mnew task? [38;5;105m/clear[38;5;241m to save [38;5;105m485.5k tokens[39m
+[38;5;245m─────────────────────────────────────────────────────────────────────────────────── khaki ─
+[39m❯ 
+[38;5;245m───────────────────────────────────────────────────────────────────────────────────────────
+[39m  [1m[34m🤖 Opus 4.8[0m[38;5;241m [2m🧠 xhi[0m[38;5;241m | [1m[32m📊 480k/1M[0m
+  [38;5;241m-- INSERT --[39m [38;5;137m⏵⏵ auto mode on[38;5;241m (shift+tab to cycle) · PR[39m [4m[38;5;137m]8;id=185lecj;https://github.com/noamsto/hookyard/pull/267\#267[0m[38;5;241m]8;;\ · ← 1 agent[39m
