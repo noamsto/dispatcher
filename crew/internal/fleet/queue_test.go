@@ -348,6 +348,41 @@ func reasonOf(r queueRow) string {
 	return *r.Reason
 }
 
+// A crew's lane is the freshest tick of its per-repo and fleet-stream lanes,
+// ignoring any from before its dispatcher started, so the queue binds holds of
+// a crew that only follows the fleet lane or left a stale per-repo tick.
+func TestQueueEligibilityReadsFleetLane(t *testing.T) {
+	f := newQueueFix(t, "alpha")
+	f.procs.Procs[100] = proctest.Proc{Elapsed: 5000}
+	fleetTick := func(crew, holder string, ageS int64) {
+		dir := filepath.Join(f.env["XDG_STATE_HOME"], "crew", "fleet-stream", crew)
+		f.write(filepath.Join(dir, "stream.lock.d", "pid"), holder+"\n")
+		f.write(filepath.Join(dir, "stream.tick"), fmt.Sprintf(`{"pid":%s,"ts":%d,"park":300}`, holder, f.ms(ageS)))
+	}
+	f.register("alpha", "c1", livePID)
+	f.laneTick("alpha", "c1", deadPID, 9000) // an earlier session's tick
+	f.register("alpha", "c2", livePID)
+	f.laneTick("alpha", "c2", deadPID, 4000)
+	fleetTick("c2", livePID, 10)
+	f.register("alpha", "c3", livePID)
+	f.laneTick("alpha", "c3", livePID, 10)
+	fleetTick("c3", deadPID, 4000)
+	f.register("alpha", "c4", livePID) // this session's lane, dead
+	f.laneTick("alpha", "c4", deadPID, 4000)
+	for i, c := range []string{"c1", "c2", "c3", "c4"} {
+		f.add("alpha", c, "h-"+c, 1, int64(100-i))
+	}
+
+	got := map[string]string{}
+	for _, h := range f.doc().Holds {
+		got[h.ID] = h.State
+	}
+	want := map[string]string{"h-c1": "due", "h-c2": "waiting", "h-c3": "waiting", "h-c4": "parked"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("states = %v\nwant     %v", got, want)
+	}
+}
+
 // A repo the walk finds but the registry does not list is no member, and a
 // crew whose dispatcher is not live, or whose lane is dead or stale, has its
 // holds parked. A dispatcher pid that names an engine (a bare `crew register`)

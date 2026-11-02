@@ -230,9 +230,14 @@ func TestStatusLaneSessions(t *testing.T) {
 	repoTick("leftover", "101", 9000) // an earlier session's tick
 	f.pidfile("died", "100")
 	repoTick("died", "101", 4000) // this session's tick, now old, its holder gone
+	f.pidfile("back", "100")
+	repoTick("back", "100", 10)
+	fleetTick("back", "101", 4000) // older than the per-repo tick, its holder gone
+	f.pidfile("fleet-leftover", "100")
+	fleetTick("fleet-leftover", "101", 9000)
 	doc := f.collect(StatusRequest{})
 
-	for crew, want := range map[string]string{"moved": "alive", "leftover": "", "died": "dead"} {
+	for crew, want := range map[string]string{"moved": "alive", "leftover": "", "died": "dead", "back": "alive", "fleet-leftover": ""} {
 		got := doc.crew(t, crew).Dispatcher.Lane
 		switch {
 		case want == "" && got != nil:

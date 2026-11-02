@@ -151,8 +151,10 @@ type CrewStatus struct {
 	OverseerInbox []InboxMsg       `json:"overseer_inbox"`
 }
 
-// Dispatcher is the crew's session: State is live, dead or closed; Lane is
-// null when the dispatcher never wrote a stream tick.
+// Dispatcher is the crew's session: State is live, dead or closed; Lane is the
+// freshest of the per-repo and fleet-stream lane ticks written since the
+// dispatcher started, null when there is none (a park lane, or only an earlier
+// session's tick).
 type Dispatcher struct {
 	State      string  `json:"state"`
 	PID        *int    `json:"pid"`
