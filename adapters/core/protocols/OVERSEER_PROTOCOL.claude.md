@@ -24,7 +24,7 @@ On every open and every lane re-arm, in order, before anything else:
 
 1. **Arm the lane.** `crew fleet stream --overseer --status` reports the lane (`alive`, `stale`, `dead`; exit 0/1/2). `alive` → nothing, unless a previous session armed it, then `crew fleet stream --overseer --force`; `stale` → `--force`; `dead` → arm `crew fleet stream --overseer`. Arm it once, as its own persistent lane (claude: `Monitor`, no timeout; pi: foreground — no `Monitor`), and never two. A foreground lane cannot double-arm; check `--status` before re-arming after a compaction, which loses your memory of arming but not the lane.
 2. **Read the fleet.** `crew fleet status --json --gh` — the whole cold-start document: dispatchers, attention, workers, blocked waits, PR candidates, holds, the `overseer_inbox`, and the `machine` load. `--gh` asks GitHub about each PR candidate and never fails the command. This is also the whole of "open anytime"; run it again whenever the human asks.
-3. **Read the queue.** `crew fleet queue --json` — the machine-wide fleet-hold queue's `head` (first in order), `due` (the one hold the gate admits now), and `holds[]` (demoted and parked holds carry `state` `demoted`/`parked` with `reason`), with `free`, `budget` and `load_over`.
+3. **Read the queue.** `crew fleet queue --json` — the machine-wide fleet-hold queue's `head` (first in order), `due` (the one hold the gate admits now), and `holds[]` (every entry carries `state`; `parked` rows carry a `reason`, `demoted` rows have none), with `free`, `budget` and `load_over`.
 4. **Digest.** Produce the cold-start digest (§7) from those two documents.
 5. **Act on Needs-you.** For each unattended crew: flag it, and relaunch per §6. For each blocked worker with `answered: false`, report it with `budget_left_s`. For each deaf dispatcher (`live`, lane `dead`), `ask` it and flag it. For each PR candidate awaiting merge, report it. Never dispatch, merge or answer a worker.
 
@@ -63,7 +63,7 @@ The lane prints one line per event (`{"stream":"overseer","event":…,"repo":…
 
 ## 5. Capacity
 
-Read the queue with `crew fleet queue --json`: `head` (first in order) and `due` (the one hold the gate admits now), with `ts`, `budget`, `free`, `load_over` and each `holds[]` entry's `state` (`demoted`/`parked` carry a `reason`), `waited_s` and `first_due`. Report it in the digest's Capacity section. Order, admission, maturity and demotion are computed by the dispatchers' own commands — with no overseer the queue still orders, binds and releases, so never hold state it needs.
+Read the queue with `crew fleet queue --json`: `head` (first in order) and `due` (the one hold the gate admits now), with `ts`, `budget`, `free`, `load_over` and each `holds[]` entry's `state` (`parked` carries a `reason` like `oversize`/`demoted`/`ineligible`; `demoted` rows have no `reason`), `waited_s` and `first_due`. Report it in the digest's Capacity section. Order, admission, maturity and demotion are computed by the dispatchers' own commands — with no overseer the queue still orders, binds and releases, so never hold state it needs.
 
 Send `capacity`, never act:
 
