@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -25,7 +26,11 @@ func foldOverseer(t *testing.T, since int64, rows ...string) (OverseerFold, bool
 	t.Helper()
 	p := fixture(t)
 	writeLog(t, p, rows...)
-	return FoldOverseer(p.Log, overseerMe, since)
+	f, ok, err := FoldOverseer(p.Log, overseerMe, since)
+	if err != nil {
+		t.Fatalf("fold: %v", err)
+	}
+	return f, ok
 }
 
 func batchOf(t *testing.T, cursor int64, rows ...string) string {
@@ -86,8 +91,18 @@ func TestFoldOverseerNothingNewPollsAgain(t *testing.T) {
 	); ok {
 		t.Errorf("fold = %+v, want nothing above the cursor", got)
 	}
-	if _, ok := FoldOverseer(filepath.Join(t.TempDir(), "events.jsonl"), overseerMe, 0); ok {
-		t.Error("a missing log folded")
+}
+
+// A log the fold cannot read is an error, never "poll again": its caller must
+// retry it rather than take it for nothing new.
+func TestFoldOverseerUnreadableLogIsAnError(t *testing.T) {
+	if _, ok, err := FoldOverseer(filepath.Join(t.TempDir(), "events.jsonl"), overseerMe, 0); ok || err == nil {
+		t.Errorf("a missing log = %v, %v; want an error", ok, err)
+	}
+	p := fixture(t)
+	writeLog(t, p, overseerMsg(4000, "c1", "dispatcher:c1", overseerMe, "x"), "{not json}")
+	if _, ok, err := FoldOverseer(p.Log, overseerMe, 0); ok || err == nil {
+		t.Errorf("an unparseable log = %v, %v; want an error", ok, err)
 	}
 }
 
@@ -107,6 +122,29 @@ func TestFoldOverseerSkipsNonObjectRows(t *testing.T) {
 	got, ok := foldOverseer(t, 0, `7`, `"text"`, row)
 	if !ok || got.Cursor != 4000 {
 		t.Errorf("fold = %+v, %v; want the one msg", got, ok)
+	}
+}
+
+// A ts that is not a whole ms the cursor can hold must not become the cursor,
+// or every poll of the bus would stall on it.
+func TestFoldOverseerSkipsRowsWithoutAWholeMsTS(t *testing.T) {
+	ok1 := overseerMsg(1001, "c1", "dispatcher:c1", overseerMe, "ack")
+	for _, ts := range []string{"2500.5", "1e30", "99999999999999999999", "-5"} {
+		row := func(from string) string {
+			return `{"ts":` + ts + `,"crew_id":"c1","from":"` + from + `","to":"` + overseerMe + `","kind":"msg","body":"x"}`
+		}
+		got, ok := foldOverseer(t, 0, ok1, row("dispatcher:c1"), row("worker:feat/x#s1-1"))
+		if !ok || got.Cursor != 1001 || testjson.Compact(got.Batch) != batchOf(t, 1001, ok1) || len(got.Misrouted) != 0 {
+			t.Errorf("ts %s: fold = %+v, %v; want the valid msg alone, cursor 1001", ts, got, ok)
+		}
+	}
+	for _, ts := range []string{"2500.0", "2.5e3"} {
+		row := `{"ts":` + ts + `,"crew_id":"c1","from":"dispatcher:c1","to":"` + overseerMe + `","kind":"msg","body":"x"}`
+		got, ok := foldOverseer(t, 0, ok1, row)
+		events, _ := got.Batch["events"].([]any)
+		if !ok || got.Cursor != 2500 || got.Batch["cursor"] != json.Number("2500") || len(events) != 2 {
+			t.Errorf("ts %s: fold = %+v, %v; want both msgs, cursor 2500", ts, got, ok)
+		}
 	}
 }
 

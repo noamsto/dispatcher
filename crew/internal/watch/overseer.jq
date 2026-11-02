@@ -6,19 +6,23 @@
 # reported as {ts, crew_id, from}, never its body.
 #
 # cursor covers both sets, or a misrouted msg would be re-reported every poll.
-# Nothing above $since emits no value at all: jqrun's "poll again".
+# Nothing above $since is null: poll again.
 #
-# Only objects with a number ts are read: one bad append must not throw the
-# fold and stop the overseer reading this bus.
+# Only objects whose ts is a whole number of ms below 2^53 are read, so the
+# cursor is always an int64: a row that is no object, or carries any other ts,
+# is neither delivered nor misrouted, and cannot stall the bus.
 def qualifies:
   (.crew_id | type) == "string" and .crew_id != "" and .from == "dispatcher:" + .crew_id;
+def whole_ms:
+  type == "number" and . == floor and . >= 0 and . < 9007199254740992;
 to_entries
 | map(select((.value | type) == "object"
     and .value.kind == "msg" and .value.to == $me
-    and (.value.ts | type) == "number" and .value.ts > $since))
+    and (.value.ts | whole_ms) and .value.ts > $since))
 | sort_by(.value.ts, .key)
 | map(.value)
-| select(length > 0)
-| {cursor: (.[length - 1].ts),
-   events: map(select(qualifies)),
-   misrouted: map(select(qualifies | not) | {ts, crew_id, from})}
+| if length == 0 then null
+  else {cursor: (.[length - 1].ts),
+        events: map(select(qualifies)),
+        misrouted: map(select(qualifies | not) | {ts, crew_id, from})}
+  end

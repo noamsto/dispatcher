@@ -342,6 +342,159 @@ func TestOverseerSkipsAnUnchangedLog(t *testing.T) {
 	}
 }
 
+// Production leaves Flush nil, so the write's own error is the only guard: a
+// batch that did not reach stdout leaves the cursor where it was.
+func TestOverseerRedeliversWhenTheBatchWriteFails(t *testing.T) {
+	alpha := gitRepo(t, "alpha")
+	appendRow(t, alpha, statusRow(1000, "c1", "worker:feat/a", "working"))
+	r := newOvRig(t)
+	l := r.start(okRepos(alpha))
+	var failed atomic.Bool
+	l.out.failWhen(func(p []byte) bool {
+		return bytes.Contains(p, []byte(`"events":`)) && failed.CompareAndSwap(false, true)
+	})
+	appendRow(t, alpha, ovMsg(ovStart+1000, "c1", "dispatcher:c1", ovMe, "ack"))
+	l.kick()
+	seed := fmt.Sprintf("%d\n", ovStart)
+	if !failed.Load() || r.cursor(alpha) != seed {
+		t.Fatalf("cursor after a failed write = %q (write failed: %v), want the seed %q", r.cursor(alpha), failed.Load(), seed)
+	}
+	l.kick()
+	l.stop()
+	if got := l.delivered()["alpha"][ovStart+1000]; got != 1 {
+		t.Errorf("the msg reached stdout %d times, want once on the retry: %q", got, l.out.str())
+	}
+	if got := r.cursor(alpha); got != fmt.Sprintf("%d\n", ovStart+1000) {
+		t.Errorf("cursor = %q after the retry", got)
+	}
+}
+
+// A log the fold cannot read is an error line, and its stat stays unrecorded:
+// mended in place, at the same size and mtime, it is folded on the next poll.
+func TestOverseerRetriesALogItCannotFold(t *testing.T) {
+	alpha := gitRepo(t, "alpha")
+	log := filepath.Join(alpha, "crew", "events.jsonl")
+	appendRow(t, alpha, statusRow(1000, "c1", "worker:feat/a", "working"))
+	r := newOvRig(t)
+	l := r.start(okRepos(alpha))
+	appendRow(t, alpha, ovMsg(ovStart+1000, "c1", "dispatcher:c1", ovMe, "ack"))
+	f, err := os.OpenFile(log, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("{not json}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	l.kick()
+	l.kick()
+	var errs []map[string]any
+	for _, line := range l.lines() {
+		if line["stream"] == "error" {
+			errs = append(errs, line)
+		}
+	}
+	if len(errs) != 1 || errs[0]["repo"] != "alpha" || errs[0]["crew"] != ovMe || !strings.HasPrefix(errs[0]["detail"].(string), "fold: ") {
+		t.Fatalf("error lines = %v, want one fold: line for alpha", errs)
+	}
+	if got := r.cursor(alpha); got != fmt.Sprintf("%d\n", ovStart) {
+		t.Fatalf("cursor = %q after a failed fold, want the seed", got)
+	}
+
+	before, err := os.Stat(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(log, []byte(strings.Replace(readFile(log), "{not json}", "          ", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(log, before.ModTime(), before.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	l.kick()
+	l.stop()
+	if got := l.delivered()["alpha"][ovStart+1000]; got != 1 {
+		t.Errorf("the msg was delivered %d times once the log was mended, want once: %q", got, l.out.str())
+	}
+	if got := r.cursor(alpha); got != fmt.Sprintf("%d\n", ovStart+1000) {
+		t.Errorf("cursor = %q after the mended fold", got)
+	}
+}
+
+// TERM cuts a hung status read short, and the document it returns then is
+// dropped: built under a cancelled context, it may read a failed probe as a
+// cleared condition.
+func TestOverseerStopsOnTermDuringAHungStatusRead(t *testing.T) {
+	r := newOvRig(t)
+	o := r.options(okRepos())
+	w := ovWorker("worker:feat/a#s1-1", "working")
+	entered := make(chan struct{}, 1)
+	calls := 0
+	o.CollectStatus = func(ctx context.Context, _ io.Writer) fleetpkg.StatusDoc {
+		if calls++; calls == 1 {
+			return ovDoc(ovStart, ovRepo("alpha", ovCrew("c1", "live", "attended", w)))
+		}
+		entered <- struct{}{}
+		<-ctx.Done()
+		return ovDoc(ovStart+minute, ovRepo("alpha", ovCrew("c1", "dead", "unattended", w)))
+	}
+	l := startFleet(t, o, FleetRequest{Overseer: true})
+	r.clock.advance(time.Minute)
+	select {
+	case l.tick <- time.Now():
+	case <-time.After(10 * time.Second):
+		t.Fatal("the lane never took the tick")
+	}
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the second status read never started")
+	}
+	start := time.Now()
+	if rc := l.stop(); rc != 0 {
+		t.Errorf("exit = %d, want 0; stderr %q", rc, l.errb.str())
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("the lane took %s to stop on TERM", took)
+	}
+	if got := ofEvent(l.lines(), "dispatcher_down"); len(got) != 0 {
+		t.Errorf("a cancelled status read woke the overseer: %v", got)
+	}
+}
+
+// A status read gets --interval at most; the document it returns past that is
+// dropped, so the next one in time still fires.
+func TestOverseerDiffDropsADocumentPastItsTimeout(t *testing.T) {
+	var out lockedWriter
+	w := ovWorker("worker:feat/a#s1-1", "working")
+	hang := true
+	v := &overseer{
+		o:        FleetOptions{Options: Options{Clock: clock.Clock{Now: newMSClock(ovStart).Now}}},
+		out:      &laneWriter{w: &out, now: time.Now},
+		notes:    newNotes(io.Discard),
+		moves:    newTransitions(),
+		interval: 10 * time.Millisecond,
+		collect: func(ctx context.Context, _ io.Writer) fleetpkg.StatusDoc {
+			if hang {
+				<-ctx.Done()
+			}
+			return ovDoc(ovStart+minute, ovRepo("alpha", ovCrew("c1", "dead", "unattended", w)))
+		},
+	}
+	v.moves.next(ovDoc(ovStart, ovRepo("alpha", ovCrew("c1", "live", "attended", w))), ovStart)
+	v.diff(t.Context())
+	if got := out.str(); got != "" {
+		t.Fatalf("a timed-out status read printed %q", got)
+	}
+	hang = false
+	v.diff(t.Context())
+	if got := ofEvent(decodeLinesT(t, out.str()), "dispatcher_down"); len(got) != 1 {
+		t.Errorf("the next read in time = %v, want one dispatcher_down", got)
+	}
+}
+
 func TestOverseerSeedsMissingCursorAtStart(t *testing.T) {
 	alpha := gitRepo(t, "alpha")
 	appendRow(t, alpha, ovMsg(ovStart-1000, "c1", "dispatcher:c1", ovMe, "before the lane"))
@@ -793,7 +946,50 @@ func TestTransitionsAbandoned(t *testing.T) {
 	if got := step(t, tr, at(2, failed("blocked, no dispatcher reply"))); len(got) != 0 {
 		t.Errorf("still failed = %v, want nothing", got)
 	}
+	if got := step(t, tr, at(3, ovWorker("worker:feat/a#s1-1", "working"))); len(got) != 0 {
+		t.Errorf("working again = %v, want nothing", got)
+	}
+	if got := step(t, tr, at(4, failed("blocked, no dispatcher reply"))); len(got) != 1 || got[0]["event"] != "abandoned" {
+		t.Errorf("failed again = %v, want abandoned again", got)
+	}
 	wantSteps(t, steps(t, at(0, ovWorker("worker:feat/a#s1-1", "working")), at(1, failed("tests red"))), none(), none())
+}
+
+// A stamped lead pane can post any worker:<branch>#s<sid>: the session and
+// branch reach a line in the sender charset only.
+func TestTransitionsFilterWorkerText(t *testing.T) {
+	from := "worker:feat/a\u202e#s1\u200b-1\u0085"
+	failed := ovWorker(from+"x", "failed")
+	failed["detail"] = "blocked, no dispatcher reply"
+	at := func(m int64, ws ...map[string]any) fleetpkg.StatusDoc {
+		return ovDoc(ovStart+m*minute, ovRepo("alpha", ovCrew("c1", "live", "attended", ws...)))
+	}
+	blocked := blockedWorker(from, ovStart, nil, "worker", false)
+	tr := newTransitions()
+	step(t, tr, at(0, blocked, ovWorker(from+"x", "working")))
+	got := step(t, tr, at(30, blocked, failed))
+	want := map[string]map[string]any{
+		"abandoned":     {"session": "worker:feat/a?#s1?-1?x", "branch": "feat/a?"},
+		"blocked_aging": {"session": "worker:feat/a?#s1?-1?", "branch": "feat/a?"},
+	}
+	if len(got) != 2 {
+		t.Fatalf("lines = %v, want abandoned and blocked_aging", got)
+	}
+	for _, l := range got {
+		w := want[l["event"].(string)]
+		if l["session"] != w["session"] || l["branch"] != w["branch"] {
+			t.Errorf("%s line = %v, want session %q branch %q", l["event"], l, w["session"], w["branch"])
+		}
+	}
+}
+
+func TestTransitionsBlockedAgingRearms(t *testing.T) {
+	at := func(m, since int64, answered bool) fleetpkg.StatusDoc {
+		return ovDoc(ovStart+m*minute, ovRepo("alpha", ovCrew("c1", "live", "attended",
+			blockedWorker("worker:feat/a#s1-1", ovStart+since*minute, nil, "worker", answered))))
+	}
+	wantSteps(t, steps(t, at(0, 0, false), at(30, 0, false), at(31, 0, true), at(32, 32, false), at(61, 32, false), at(62, 32, false)),
+		none(), evs("blocked_aging"), none(), none(), none(), evs("blocked_aging"))
 }
 
 func TestTransitionsCapacityStuck(t *testing.T) {
@@ -862,6 +1058,53 @@ func TestTransitionsCapacityStuck(t *testing.T) {
 	if !reflect.DeepEqual(got[5][0], overshoot) {
 		t.Errorf("overshoot line = %v, want %v", got[5][0], overshoot)
 	}
+}
+
+// causes runs each document in turn and returns its capacity_stuck lines as
+// "<cause> <hold>".
+func causes(t *testing.T, docs ...fleetpkg.StatusDoc) [][]string {
+	t.Helper()
+	tr := newTransitions()
+	var out [][]string
+	for _, d := range docs {
+		var names []string
+		for _, l := range step(t, tr, d) {
+			names = append(names, l["cause"].(string)+" "+l["hold"].(string))
+		}
+		out = append(out, names)
+	}
+	return out
+}
+
+// One hold moving to another cause is a new condition.
+func TestTransitionsCapacityCauseIsInTheKey(t *testing.T) {
+	at := func(m int64, q fleetpkg.Queue) fleetpkg.StatusDoc {
+		return withQueue(ovDoc(ovStart+m*minute), q, 10, 5)
+	}
+	h1 := []fleetpkg.QueueDemote{{Repo: "o/alpha", CrewID: "c1", ID: "h1"}}
+	wantSteps(t, causes(t,
+		at(0, fleetpkg.Queue{}),
+		at(1, fleetpkg.Queue{Demoted: h1}),
+		at(2, fleetpkg.Queue{Parked: []fleetpkg.QueueParked{{Repo: "o/alpha", CrewID: "c1", ID: "h1", Reason: "demoted"}}}),
+	), none(), evs("demoted h1"), evs("parked h1"))
+
+	head := func(waited int64) *fleetpkg.QueueHead {
+		return &fleetpkg.QueueHead{Repo: "o/alpha", CrewID: "c1", ID: "h2", WaitedS: waited}
+	}
+	wantSteps(t, causes(t,
+		at(0, fleetpkg.Queue{Head: head(100)}),
+		at(1, fleetpkg.Queue{Head: head(1800)}),
+		at(2, fleetpkg.Queue{Head: head(1900), Demoted: []fleetpkg.QueueDemote{{Repo: "o/alpha", CrewID: "c1", ID: "h2"}}}),
+	), none(), evs("head_wait h2"), evs("demoted h2"))
+}
+
+func TestTransitionsOvershootRearms(t *testing.T) {
+	q := fleetpkg.Queue{Demoted: []fleetpkg.QueueDemote{{Repo: "o/alpha", CrewID: "c1", ID: "h1"}}}
+	at := func(m int64, weight int) fleetpkg.StatusDoc {
+		return withQueue(ovDoc(ovStart+m*minute), q, 10, weight)
+	}
+	wantSteps(t, causes(t, at(0, 5), at(1, 12), at(2, 12), at(3, 5), at(4, 12)),
+		none(), evs("overshoot "), none(), none(), evs("overshoot "))
 }
 
 func TestTransitionsCapacityNeverWithoutBudgetOrQueue(t *testing.T) {

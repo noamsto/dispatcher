@@ -29,11 +29,9 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	fleetpkg "github.com/noamsto/dispatcher/crew/internal/fleet"
-	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	lanepkg "github.com/noamsto/dispatcher/crew/internal/lane"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
-	"github.com/noamsto/dispatcher/crew/internal/tmux"
 	"github.com/noamsto/dispatcher/crew/internal/watch"
 )
 
@@ -81,20 +79,19 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 		say(stderr, "crew: %v\n", err)
 		return 1
 	}
-	// As in RunFleet: the arm precedes the acquire (#1294).
+	// As in RunFleet: the arm precedes the acquire (#1294). ctx is how a signal
+	// reaches a status read already under way.
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer signal.Stop(sigs)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	defer stop()
 
 	lockd := filepath.Join(lane, "stream.lock.d")
 	if !acquire(lockd, c, o.Options, stderr) {
 		return 1
 	}
 
-	collect := o.CollectStatus
-	if collect == nil {
-		collect = offlineStatus(o, host)
-	}
 	tick := min(overseerPoll, c.interval, rediscover)
 	tickCall := c
 	tickCall.park = tick
@@ -107,7 +104,7 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 		out:        &laneWriter{w: stdout, now: o.Clock.Now, last: o.Clock.Now()},
 		notes:      newNotes(&laneWriter{w: stderr, now: o.Clock.Now, last: o.Clock.Now()}),
 		sup:        &suppress{key: map[string]string{}, ts: map[string]int64{}},
-		collect:    collect,
+		collect:    o.CollectStatus,
 		moves:      newTransitions(),
 		interval:   time.Duration(c.interval) * time.Second,
 		rediscover: time.Duration(rediscover) * time.Second,
@@ -115,24 +112,7 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 		ticker:     &loop{c: tickCall, o: o.Options, cdir: lane},
 		buses:      map[string]*follower{},
 	}
-	return v.run(sigs)
-}
-
-// offlineStatus is the fleet status document without --gh, from the lane's own
-// reads. Unlike a lane's labels, the document cannot do without git.
-func offlineStatus(o FleetOptions, host string) func(context.Context, io.Writer) fleetpkg.StatusDoc {
-	g := o.Git
-	if g == nil {
-		g = git.Exec{}
-	}
-	so := fleetpkg.StatusOptions{
-		Options: fleetpkg.Options{Getenv: o.Getenv, Registry: o.Registry, Tmux: tmux.Exec{}, Git: g, Clock: o.Clock},
-		Proc:    o.Proc,
-		Host:    func() (string, error) { return host, nil },
-	}
-	return func(ctx context.Context, stderr io.Writer) fleetpkg.StatusDoc {
-		return fleetpkg.CollectStatus(ctx, fleetpkg.StatusRequest{}, stderr, so)
-	}
+	return v.run(ctx, sigs)
 }
 
 // overseer is the lane's one goroutine: it writes the tick, rediscovers, polls
@@ -173,7 +153,7 @@ type follower struct {
 	mtime                 time.Time
 }
 
-func (v *overseer) run(sigs chan os.Signal) int {
+func (v *overseer) run(ctx context.Context, sigs chan os.Signal) int {
 	for {
 		v.ticker.writeTick()
 		if now := v.o.Clock.Now(); !v.discovered || now.Sub(v.lastDiscover) >= v.rediscover {
@@ -193,7 +173,7 @@ func (v *overseer) run(sigs chan os.Signal) int {
 		}
 		if now := v.o.Clock.Now(); !v.diffed || now.Sub(v.lastDiff) >= v.interval {
 			v.diffed, v.lastDiff = true, now
-			v.diff()
+			v.diff(ctx)
 		}
 		if quiet := v.out.quiet(); quiet >= time.Duration(v.c.heartbeat)*time.Second {
 			say(v.out, "%s\n", encode(heartbeatLine{
@@ -238,11 +218,11 @@ func (v *overseer) join(common string) {
 }
 
 // poll prints what the bus holds for the overseer above its cursor, then moves
-// the cursor. A batch that did not reach the wire leaves the cursor where it
-// was and the log's stat unrecorded, so the next poll, or the next lane,
-// delivers it again. A log whose size and mtime are those of the last completed
-// poll is not folded again; the stat is taken before the fold, so an append
-// during it is seen next time.
+// the cursor. A batch that did not reach the wire, or a log the fold could not
+// read, leaves the cursor where it was and the log's stat unrecorded, so the
+// next poll, or the next lane, folds it again. A log whose size and mtime are
+// those of the last completed poll is not folded again; the stat is taken
+// before the fold, so an append during it is seen next time.
 func (v *overseer) poll(b *follower) {
 	fi, err := os.Stat(b.log)
 	if err != nil {
@@ -251,7 +231,11 @@ func (v *overseer) poll(b *follower) {
 	if fi.Size() == b.size && fi.ModTime().Equal(b.mtime) {
 		return
 	}
-	fold, ok := watch.FoldOverseer(b.log, v.c.crew, b.cursor)
+	fold, ok, err := watch.FoldOverseer(b.log, v.c.crew, b.cursor)
+	if err != nil {
+		v.fail(b, "fold "+b.log, "fold: "+oneLine(err))
+		return
+	}
 	if !ok {
 		b.size, b.mtime = fi.Size(), fi.ModTime()
 		return
@@ -275,11 +259,15 @@ func (v *overseer) poll(b *follower) {
 	if err := watch.WriteCursor(b.cursorPath, fold.Cursor); err != nil {
 		// Kept in memory regardless: a restart re-delivers from the file, which
 		// is the at-least-once side of the contract.
-		detail := "cursor: " + oneLine(err)
-		ts := clockMS(v.o.Options)
-		if v.sup.repeat("cursor "+b.cursorPath, digitsToN(detail), ts, v.c.heartbeat*1000) {
-			say(v.out, "%s\n", encode(errorLine{Stream: "error", Crew: v.c.crew, RC: 1, Detail: detail, TS: ts, Repo: b.repo}))
-		}
+		v.fail(b, "cursor "+b.cursorPath, "cursor: "+oneLine(err))
+	}
+}
+
+// fail prints an error line about b's bus, once per cause per --heartbeat.
+func (v *overseer) fail(b *follower, kind, detail string) {
+	ts := clockMS(v.o.Options)
+	if v.sup.repeat(kind, digitsToN(detail), ts, v.c.heartbeat*1000) {
+		say(v.out, "%s\n", encode(errorLine{Stream: "error", Crew: v.c.crew, RC: 1, Detail: detail, TS: ts, Repo: b.repo}))
 	}
 }
 
@@ -305,8 +293,8 @@ func (v *overseer) misrouted(b *follower, ms []watch.Misrouted) {
 	}))
 }
 
-// senderText is a sender or crew id as a misrouted line may carry it: the
-// sender charset kept, any other rune a `?`, at most senderCap bytes.
+// senderText is a sender, crew id or branch as an overseer line may carry it:
+// the sender charset kept, any other rune a `?`, at most senderCap bytes.
 func senderText(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -322,11 +310,19 @@ func senderText(s string) string {
 	return b.String()
 }
 
-// diff computes the fleet status and prints every transition since the last.
-func (v *overseer) diff() {
+// diff computes the fleet status, given --interval at most, and prints every
+// transition since the last. A document built under a done context is
+// dropped: a probe it cut short can read as a cleared condition, re-arming
+// its key.
+func (v *overseer) diff(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, v.interval)
+	defer cancel()
 	var text bytes.Buffer
-	doc := v.collect(context.Background(), &text)
+	doc := v.collect(ctx, &text)
 	v.notes.lines(text.String())
+	if ctx.Err() != nil {
+		return
+	}
 	for _, line := range v.moves.next(doc, clockMS(v.o.Options)) {
 		say(v.out, "%s\n", encode(line))
 	}
@@ -484,10 +480,12 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 			}
 			for _, w := range c.Workers {
 				session, _ := w["from"].(string)
-				branch, _ := w["branch"].(string)
+				raw, _ := w["branch"].(string)
+				// A stamped lead pane can post as any worker:<branch>#s<sid>.
+				who, branch := senderText(session), senderText(raw)
 				if w["state"] == "failed" && w["detail"] == "blocked, no dispatcher reply" {
 					fire(condKey{event: "abandoned", common: r.Common, crew: c.CrewID, id: session},
-						abandonedLine{overseerHead: head("abandoned"), Session: session, Branch: branch, TS: nowMS})
+						abandonedLine{overseerHead: head("abandoned"), Session: who, Branch: branch, TS: nowMS})
 				}
 				b, _ := w["blocked"].(map[string]any)
 				// A watchdog block has no reply to wait for, and an attended
@@ -502,7 +500,7 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 				}
 				aging := func(trigger string) (condKey, any) {
 					return condKey{event: "blocked_aging", common: r.Common, crew: c.CrewID, id: session, kind: trigger},
-						blockedAgingLine{overseerHead: head("blocked_aging"), Session: session, Branch: branch,
+						blockedAgingLine{overseerHead: head("blocked_aging"), Session: who, Branch: branch,
 							Trigger: trigger, Since: since, BudgetLeftS: left, TS: nowMS}
 				}
 				if doc.TS-since >= blockedAgeAfter.Milliseconds() {

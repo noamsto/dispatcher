@@ -140,7 +140,10 @@ lane_said_down() { jq -e 'select(.event == "dispatcher_down")' "$BATS_TEST_TMPDI
     cat "$BATS_TEST_TMPDIR/lane.out" "$BATS_TEST_TMPDIR/lane.err" >&2
     false
   }
-  # Another iteration passes before the count, so a repeat would be seen.
+  # A tick is stamped at the top of an iteration, before its diff: only the
+  # second new stamp proves the next diff ran, so a repeat would be in the file.
+  seen="$(tick_ts)"
+  poll_for 100 ticked_past "$seen"
   seen="$(tick_ts)"
   poll_for 100 ticked_past "$seen"
 

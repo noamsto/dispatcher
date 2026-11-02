@@ -425,6 +425,26 @@ func TestStatusOverseerInbox(t *testing.T) {
 	}
 }
 
+// The overseer lane's cursor passes every misrouted msg within a poll, so
+// misrouted keeps the fixed day back instead.
+func TestStatusMisroutedIgnoresTheOverseerCursor(t *testing.T) {
+	f := newStatusFix(t,
+		wstatus(10, "c1", "feat/a", "working", ""),
+		wmsg(25*3600, "c1", "worker:feat/a#s1-1", "overseer:box", `{"kind":"ack"}`),
+		wmsg(3600, "c1", "worker:feat/a#s1-1", "overseer:box", `{"kind":"ack"}`),
+	)
+	cursor := lane.OverseerCursor(f.env["XDG_STATE_HOME"], f.common)
+	if err := os.MkdirAll(filepath.Dir(cursor), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cursor, []byte(fmt.Sprintf("%d\n", ago(60))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := f.collect(StatusRequest{}).Repos[0]; r.Misrouted != 1 {
+		t.Errorf("misrouted = %d, want the msg from an hour ago, not the one from 25 h ago", r.Misrouted)
+	}
+}
+
 func TestStatusSkippedReposAndNonGitCwd(t *testing.T) {
 	f := newStatusFix(t, wstatus(10, "c1", "feat/a", "working", ""))
 	gone := filepath.Join(f.root, "vanished", ".git")

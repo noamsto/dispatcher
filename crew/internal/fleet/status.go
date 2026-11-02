@@ -37,7 +37,8 @@ const (
 	// 300 s, each re-stamped `(cycle K of 24)`.
 	blockedCycles = 24
 	blockedCycleS = 300
-	// inboxWindow is how far back overseer_inbox reaches with no cursor.
+	// inboxWindow is how far back overseer_inbox reaches with no cursor, and
+	// misrouted always.
 	inboxWindow = 24 * time.Hour
 	// unprobed is the reason an overseer's remote capture fails with: it asks no
 	// host, and the placeholder row it leaves is marked remote_unprobed.
@@ -115,8 +116,8 @@ type Skipped struct {
 type RepoStatus struct {
 	Repo   string `json:"repo"`
 	Common string `json:"common"`
-	// Misrouted counts msgs to the overseer from anyone but a dispatcher of the
-	// crew they name; they are never shown.
+	// Misrouted counts the last 24 h of msgs to the overseer from anyone but a
+	// dispatcher of the crew they name; they are never shown.
 	Misrouted int          `json:"misrouted"`
 	Crews     []CrewStatus `json:"crews"`
 }
@@ -282,8 +283,10 @@ func (b *repoBuild) build() (RepoStatus, error) {
 	}
 	repo := RepoStatus{Repo: b.repoName, Common: b.common, Crews: []CrewStatus{}}
 
+	// Not from the overseer's cursor: its lane moves that past every misrouted
+	// msg within a poll, and counts them only in memory.
+	repo.Misrouted = b.idx.misrouted(b.nowMS - inboxWindow.Milliseconds())
 	cutoff := b.inboxCutoff()
-	repo.Misrouted = b.idx.misrouted(cutoff)
 	for _, id := range b.crewIDs(byCrew) {
 		c, err := b.crew(id, byCrew[id], live, cutoff)
 		if err != nil {

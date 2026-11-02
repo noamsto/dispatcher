@@ -58,8 +58,8 @@ type FleetOptions struct {
 	// Host is this machine's short name, the overseer's `overseer:<host>`. nil
 	// is peer.SelfName.
 	Host func() (string, error)
-	// CollectStatus is the overseer lane's offline fleet status document. nil
-	// is fleet.CollectStatus over these options.
+	// CollectStatus is the overseer lane's offline fleet status document,
+	// required for --overseer.
 	CollectStatus func(ctx context.Context, stderr io.Writer) fleetpkg.StatusDoc
 	// Flush puts the overseer lane's stdout on the wire before a msg cursor
 	// moves past the batch it printed. nil is an unbuffered stdout.

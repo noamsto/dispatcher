@@ -528,14 +528,25 @@ func TestSignalReleasesEverything(t *testing.T) {
 // lockedWriter is a bytes.Buffer with the lock `go test -race` asks for: Run
 // prints from its own goroutine while the test polls the same buffer.
 type lockedWriter struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
+	mu   sync.Mutex
+	buf  bytes.Buffer
+	fail func(p []byte) bool
 }
 
 func (w *lockedWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.fail != nil && w.fail(p) {
+		return 0, syscall.EPIPE
+	}
 	return w.buf.Write(p)
+}
+
+// failWhen refuses each later write that fail picks, as a closed pipe would.
+func (w *lockedWriter) failWhen(fail func(p []byte) bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.fail = fail
 }
 
 func (w *lockedWriter) len() int {
