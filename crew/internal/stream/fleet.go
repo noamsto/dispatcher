@@ -97,13 +97,14 @@ func stateHome(getenv func(string) string) string {
 	return getenv("HOME") + "/.local/state"
 }
 
-// repoName labels a bus's lines by its origin, else by its directory.
+// repoName labels a bus's lines by its origin, else by its directory. A worker
+// can set the origin URL, so the label is filtered as a sender is.
 func (o FleetOptions) repoName(common string) string {
 	var origin string
 	if o.Git != nil {
 		origin, _ = git.Origin(context.Background(), o.Git, common)
 	}
-	return repos.Name(common, origin)
+	return senderText(repos.Name(common, origin))
 }
 
 // FleetRequest is one `crew fleet stream` call: `crew stream`'s request, whose

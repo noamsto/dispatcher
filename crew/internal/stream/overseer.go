@@ -464,7 +464,7 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 		for _, c := range r.Crews {
 			ref := crewRef{r.Common, c.CrewID}
 			head := func(event string) overseerHead {
-				return overseerHead{Stream: "overseer", Event: event, Repo: r.Repo, Crew: c.CrewID}
+				return overseerHead{Stream: "overseer", Event: event, Repo: senderText(r.Repo), Crew: c.CrewID}
 			}
 			live := c.Dispatcher.State == "live"
 			if live && t.down[ref] {
@@ -530,8 +530,8 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 	if q := doc.Queue; q.Head != nil || len(q.Demoted) > 0 || len(q.Parked) > 0 {
 		stuck := func(cause, repo, crew, id string, waited *int64) {
 			fire(condKey{event: "capacity_stuck", kind: cause, host: doc.Host, repo: repo, crew: crew, id: id},
-				capacityLine{overseerHead: overseerHead{Stream: "overseer", Event: "capacity_stuck", Repo: repo, Crew: crew},
-					Host: doc.Host, Cause: cause, Hold: id, WaitedS: waited, TS: nowMS})
+				capacityLine{overseerHead: overseerHead{Stream: "overseer", Event: "capacity_stuck", Repo: senderText(repo), Crew: senderText(crew)},
+					Host: doc.Host, Cause: cause, Hold: senderText(id), WaitedS: waited, TS: nowMS})
 		}
 		if h := q.Head; h != nil && h.WaitedS >= headWaitS {
 			waited := h.WaitedS
