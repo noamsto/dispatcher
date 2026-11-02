@@ -60,6 +60,24 @@ type StatusOptions struct {
 	Budget     func(ctx context.Context) (int, error)
 	BudgetFile string
 	Cmd        func(ctx context.Context, name string, args ...string) (string, error)
+	// Settings resolves the fleet queue's settings, its budget the machine
+	// document's too. nil: the defaults, with Budget's budget when it is set.
+	Settings func(ctx context.Context) (QueueSettings, error)
+}
+
+func (o StatusOptions) queueSettings(ctx context.Context) (QueueSettings, error) {
+	if o.Settings != nil {
+		return o.Settings(ctx)
+	}
+	s := defaultQueueSettings
+	if o.Budget != nil {
+		b, err := o.Budget(ctx)
+		if err != nil {
+			return s, err
+		}
+		s.Budget = b
+	}
+	return s, nil
 }
 
 type StatusRequest struct {
@@ -73,13 +91,13 @@ type StatusDoc struct {
 	TS      int64        `json:"ts"`
 	Host    string       `json:"host"`
 	Machine *LoadDoc     `json:"machine"`
-	Queue   Queue        `json:"queue"`
+	Queue   QueueStatus  `json:"queue"`
 	Repos   []RepoStatus `json:"repos"`
 	Skipped []Skipped    `json:"skipped"`
 }
 
-// Queue is the fleet hold queue; empty until fleet holds exist.
-type Queue struct {
+// QueueStatus is the fleet hold queue; empty until fleet holds exist.
+type QueueStatus struct {
 	Head    *QueueHead    `json:"head"`
 	Demoted []QueueDemote `json:"demoted"`
 	Parked  []QueueParked `json:"parked"`
@@ -192,24 +210,27 @@ func CollectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		host = h
 	}
 	overseer := o.Getenv("CREW_OVERSEER") != ""
-	stateDir := o.Getenv("XDG_STATE_HOME")
-	if stateDir == "" {
-		stateDir = o.Getenv("HOME") + "/.local/state"
-	}
+	stateDir := stateHome(o.Getenv)
 
 	doc := StatusDoc{
 		TS:      nowMS,
 		Host:    host,
-		Queue:   Queue{Demoted: []QueueDemote{}, Parked: []QueueParked{}},
+		Queue:   QueueStatus{Demoted: []QueueDemote{}, Parked: []QueueParked{}},
 		Repos:   []RepoStatus{},
 		Skipped: []Skipped{},
 	}
-	lo := LoadOptions{Getenv: o.Getenv, Tmux: once, Git: o.Git, Clock: o.Clock, BudgetFile: o.BudgetFile, Budget: o.Budget, Cmd: o.Cmd}
-	if budget, err := resolveBudget(ctx, nil, lo); err != nil {
+	// One read-only queue evaluation, over a bus cache the repo pass reuses.
+	buses := busCache{}
+	var due *queued
+	if s, err := o.queueSettings(ctx); err != nil {
 		say(stderr, "crew: fleet status: machine: %s\n", oneLine(err))
 	} else {
-		machine, _ := collectLoad(ctx, budget, lo)
-		doc.Machine = &machine
+		lo := LoadOptions{Getenv: o.Getenv, Registry: o.Registry, Tmux: once, Git: o.Git, Clock: o.Clock, BudgetFile: o.BudgetFile, Cmd: o.Cmd}
+		q := newQueue(ctx, QueueOptions{LoadOptions: lo, Proc: o.Proc}, scanFleet(o.Registry, o.Getenv, buses.read, nowMS), s, now)
+		var rec map[string]dueEntry
+		rec, due = q.advance(readRecord(duePath(o.Getenv)))
+		doc.Machine = &q.load
+		doc.Queue = q.report(rec, repoNamer(ctx, o.Git))
 	}
 
 	var candidates []prCandidate
@@ -218,7 +239,7 @@ func CollectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 			doc.Skipped = append(doc.Skipped, Skipped{Path: r.Common, Status: string(r.Status)})
 			continue
 		}
-		events, torn, skip := readBus(r.Common)
+		events, torn, skip := buses.read(r.Common)
 		if skip != "" {
 			doc.Skipped = append(doc.Skipped, Skipped{Path: r.Common, Status: skip})
 			continue
@@ -227,7 +248,7 @@ func CollectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 			say(stderr, "crew: fleet status: %s: %s (rows from the readable prefix)\n", r.Common, torn)
 		}
 		b := repoBuild{ctx: ctx, o: o, once: once, common: r.Common, events: events, docs: eventDocs(events),
-			idx: indexBus(events, host), now: now, nowMS: nowMS, nowSec: nowSec, overseer: overseer, stateDir: stateDir}
+			idx: indexBus(events, host), now: now, nowMS: nowMS, nowSec: nowSec, overseer: overseer, stateDir: stateDir, due: due}
 		repo, err := b.build()
 		if err != nil {
 			doc.Skipped = append(doc.Skipped, Skipped{Path: r.Common, Status: oneLine(err)})
@@ -260,6 +281,7 @@ type repoBuild struct {
 	nowSec   float64
 	overseer bool
 	stateDir string
+	due      *queued // the fleet queue's due hold, nil for none
 
 	repoName   string
 	candidates []prCandidate
@@ -398,29 +420,51 @@ func (b *repoBuild) derive(crew string, row map[string]any) {
 	}
 }
 
+// session is a crew's dispatcher as its registration says: the pid file's
+// state (live, dead or closed) and pid, and the lane tick's state, nil when
+// no tick was ever written. Status and the fleet queue read it alike.
+type session struct {
+	state string
+	pid   *int
+	lane  *string
+}
+
+func readSession(dir string, t proc.Table, now time.Time) session {
+	pidfile := filepath.Join(dir, "pid")
+	text, _ := crews.PidFileText(pidfile)
+	s := session{state: "closed"}
+	switch alive := crews.PidAlive(t, now, pidfile, text); {
+	case alive == nil:
+	case *alive:
+		s.state = "live"
+	default:
+		s.state = "dead"
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(text)); err == nil && n > 0 && s.state != "closed" {
+		s.pid = &n
+	}
+	if _, err := os.Stat(filepath.Join(dir, "stream.tick")); err == nil {
+		state, _, _, _ := lane.State(dir, t, now.UnixMilli())
+		s.lane = &state
+	}
+	return s
+}
+
+// eligible is whether the crew's fleet holds can bind the queue: a live
+// dispatcher whose lane, if it ever ticked, is neither dead nor stale. A park
+// lane writes no tick, so it counts.
+func (s session) eligible() bool {
+	return s.state == "live" && (s.lane == nil || *s.lane != "dead" && *s.lane != "stale")
+}
+
 // dispatcher reads the crew's registration: pid file, pane file and the lane
 // tick, with the state each says about the session.
 func (b *repoBuild) dispatcher(id string) Dispatcher {
 	dir := filepath.Join(b.common, "crew", "crews", id)
-	pidfile := filepath.Join(dir, "pid")
-	text, _ := crews.PidFileText(pidfile)
-	d := Dispatcher{State: "closed"}
-	switch alive := crews.PidAlive(b.o.Proc, b.now, pidfile, text); {
-	case alive == nil:
-	case *alive:
-		d.State = "live"
-	default:
-		d.State = "dead"
-	}
-	if n, err := strconv.Atoi(strings.TrimSpace(text)); err == nil && n > 0 && d.State != "closed" {
-		d.PID = &n
-	}
+	s := readSession(dir, b.o.Proc, b.now)
+	d := Dispatcher{State: s.state, PID: s.pid, Lane: s.lane}
 	if pane, _ := crews.PidFileText(filepath.Join(dir, "pane")); pane != "" {
 		d.Pane = &pane
-	}
-	if _, err := os.Stat(filepath.Join(dir, "stream.tick")); err == nil {
-		state, _, _, _ := lane.State(dir, b.o.Proc, b.nowMS)
-		d.Lane = &state
 	}
 	if last, ok := b.idx.last[id]; ok {
 		s := max((b.nowMS-last)/1000, 0)
@@ -430,8 +474,9 @@ func (b *repoBuild) dispatcher(id string) Dispatcher {
 }
 
 // holds are the crew's outstanding holds. A quota hold is due once the window
-// it waits on has reset. A bus the fold cannot read fails the repo rather than
-// reading as no holds: a crew parked on quota would look idle.
+// it waits on has reset, a fleet hold when it is the fleet queue's due hold. A
+// bus the fold cannot read fails the repo rather than reading as no holds: a
+// crew parked on quota would look idle.
 func (b *repoBuild) holds(crew string) ([]HoldStatus, error) {
 	out := []HoldStatus{}
 	if !b.idx.holders[crew] {
@@ -445,18 +490,16 @@ func (b *repoBuild) holds(crew string) ([]HoldStatus, error) {
 	for _, h := range list {
 		body, _ := h.(map[string]any)
 		id, _ := body["id"].(string)
-		kind := "quota"
-		if body["kind"] == "fleet" {
-			kind = "fleet"
-		}
-		hs := HoldStatus{ID: id, Kind: kind}
+		wait, _ := body["wait"].(map[string]any)
+		hs := HoldStatus{ID: id, Kind: "quota"}
 		if at, ok := b.idx.holdAt[crewKey{crew, id}]; ok {
 			hs.WaitedS = max((b.nowMS-at)/1000, 0)
 		}
-		if wait, ok := body["wait"].(map[string]any); ok && kind == "quota" {
-			if resets, ok := number(wait["resets_at"]); ok {
-				hs.Due = resets <= b.nowSec
-			}
+		if wait["kind"] == "fleet" {
+			hs.Kind = "fleet"
+			hs.Due = b.due != nil && b.due.id == id && b.due.crew == crew && filepath.Clean(b.due.common) == filepath.Clean(b.common)
+		} else if resets, ok := number(wait["resets_at"]); ok {
+			hs.Due = resets <= b.nowSec
 		}
 		out = append(out, hs)
 	}

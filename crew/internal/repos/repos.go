@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -94,10 +95,8 @@ func Discover(o Options) []Repo {
 		seen[c] = true
 		found = append(found, c)
 	}
-	if data, err := os.ReadFile(registry); err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			add(line)
-		}
+	for _, c := range registryLines(registry) {
+		add(c)
 	}
 	for _, root := range rootList {
 		if info, err := os.Stat(root); err != nil || !info.IsDir() {
@@ -116,6 +115,39 @@ func Discover(o Options) []Repo {
 		out = append(out, Repo{Common: c, Status: statusOf(c)})
 	}
 	return out
+}
+
+// Registered is every repo the registry lists, byte-sorted and deduplicated,
+// each tagged with its status: the walk's roots are the caller's, the registry
+// is the machine's. registry "" reads RegistryPath(getenv).
+func Registered(registry string, getenv func(string) string) []Repo {
+	if registry == "" {
+		registry = RegistryPath(getenv)
+	}
+	commons := registryLines(registry)
+	slices.Sort(commons)
+	commons = slices.Compact(commons)
+	out := make([]Repo, 0, len(commons))
+	for _, c := range commons {
+		out = append(out, Repo{Common: c, Status: statusOf(c)})
+	}
+	return out
+}
+
+// registryLines is the registry's entries in file order; a missing file has
+// none.
+func registryLines(registry string) []string {
+	data, err := os.ReadFile(registry)
+	if err != nil {
+		return nil
+	}
+	var lines []string
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 func statusOf(common string) Status {

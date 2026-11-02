@@ -33,7 +33,8 @@ func newLoadFixture(t *testing.T) *loadFixture {
 	t.Helper()
 	f := &loadFixture{t: t, root: t.TempDir(), env: map[string]string{}, cmds: map[string]string{"nproc": "4"}}
 	f.opts = LoadOptions{
-		Getenv: func(k string) string { return f.env[k] },
+		Getenv:   func(k string) string { return f.env[k] },
+		Registry: filepath.Join(f.root, "registry"),
 		Tmux: &tmuxtest.Fake{Func: func(args []string) (string, error) {
 			if len(args) > 1 && args[0] == "list-panes" && args[1] == "-a" {
 				return strings.Join(f.panes, "\n"), nil
@@ -312,6 +313,41 @@ func TestLoadRefusalWithNoLeadsNamesNobody(t *testing.T) {
 	_, code, _, stderr := f.load(LoadRequest{Budget: new(2), Add: 3})
 	if code != ExitRefused || strings.TrimSpace(stderr) != "live lead weight 0 + this deep dispatch (3) exceeds fleetBudget 2" {
 		t.Errorf("exit %d %q", code, stderr)
+	}
+}
+
+// A fleet hold released in the last 120 s weighs as pending until its branch
+// has a lead pane; a quota hold's release, an older release and a hold still
+// waiting weigh nothing, and neither does a repo outside the registry.
+func TestLoadPendingIsRecentlyReleasedFleetHolds(t *testing.T) {
+	f := newLoadFixture(t)
+	ms := func(agoS int64) int64 { return (loadNow - agoS) * 1000 }
+	dir := f.repo("repo", "",
+		fleetAddRow(ms(500), "c1", "deep", "feat/deep", "normal", 3),
+		releaseRow(ms(60), "c1", "deep"),
+		fleetAddRow(ms(500), "c1", "old", "feat/old", "normal", 2),
+		releaseRow(ms(130), "c1", "old"),
+		fleetAddRow(ms(500), "c1", "waiting", "feat/waiting", "normal", 1),
+		holdRowJSON(ms(500), "c1", map[string]any{"id": "quota", "wait": map[string]any{"engine": "claude", "window": "5h", "resets_at": 1}, "task": map[string]any{"branch": "feat/quota"}}),
+		releaseRow(ms(10), "c1", "quota"),
+	)
+	if doc, _, _, _ := f.load(LoadRequest{Budget: new(5)}); doc.Pending != 0 {
+		t.Errorf("an unregistered repo weighs pending %d", doc.Pending)
+	}
+	if err := os.WriteFile(f.opts.Registry, []byte(filepath.Join(dir, ".git")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	doc, _, _, _ := f.load(LoadRequest{Budget: new(5)})
+	if doc.Pending != 3 || doc.Free == nil || *doc.Free != 2 {
+		t.Errorf("pending %d free %v, want 3 and 2", doc.Pending, doc.Free)
+	}
+	_, code, _, stderr := f.load(LoadRequest{Budget: new(5), Add: 3})
+	if code != ExitRefused || strings.TrimSpace(stderr) != "live lead weight 0 + pending 3 + this deep dispatch (3) exceeds fleetBudget 5" {
+		t.Errorf("exit %d %q", code, stderr)
+	}
+	f.pane("fish", "dune", "feat/deep", "", filepath.Join(f.root, "gone"))
+	if doc, code, _, _ := f.load(LoadRequest{Budget: new(5), Add: 3}); doc.Pending != 0 || code != ExitFits {
+		t.Errorf("with the branch's lead pane up: pending %d, exit %d", doc.Pending, code)
 	}
 }
 

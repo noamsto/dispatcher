@@ -218,3 +218,28 @@ func TestName(t *testing.T) {
 		}
 	}
 }
+
+// Registered reads the registry alone: a bus the walk would find is no member.
+func TestRegisteredIsTheRegistryOnly(t *testing.T) {
+	root := t.TempDir()
+	a := mkbus(t, filepath.Join(root, "a"))
+	z := mkbus(t, filepath.Join(root, "z"))
+	mkbus(t, filepath.Join(root, "walk-only"))
+	gone := filepath.Join(root, "gone", ".git")
+	data := t.TempDir()
+	reg := filepath.Join(data, "crew", "repos")
+	if err := os.MkdirAll(filepath.Dir(reg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reg, []byte(z+"\n"+gone+"\n\n"+a+"\n"+z+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := envOf(map[string]string{"XDG_DATA_HOME": data, "CREW_SWEEP_ROOTS": root, "HOME": root})
+	want := []Repo{{a, StatusOK}, {gone, StatusGone}, {z, StatusOK}}
+	if got := Registered("", env); !reflect.DeepEqual(got, want) {
+		t.Errorf("Registered = %v, want %v", got, want)
+	}
+	if got := Registered(filepath.Join(data, "absent"), env); len(got) != 0 {
+		t.Errorf("a missing registry lists %v", got)
+	}
+}
