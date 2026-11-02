@@ -2,7 +2,9 @@ package hold
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -352,14 +354,19 @@ func TestDueJSONReportsOnlyTheMaturedHold(t *testing.T) {
 	tr := setup(t)
 	tr.write(t, seedHold(t, "c1", "due1", "1500000000"), seedHold(t, "c1", "future1", future))
 	out, _, code := tr.runOpts(t, tr.clock(t, "1700000000"), Request{Action: "due", JSON: true})
-	var held []struct {
-		ID string `json:"id"`
+	if ids := strings.Join(idsOf(t, dueField(t, out, "due")), ","); code != 0 || ids != "due1" {
+		t.Errorf("due %q (code %d), want only due1", ids, code)
 	}
-	if err := json.Unmarshal([]byte(out), &held); err != nil || code != 0 {
-		t.Fatalf("code %d, %q (%v)", code, out, err)
-	}
-	if len(held) != 1 || held[0].ID != "due1" {
-		t.Errorf("due %v, want only due1", held)
+}
+
+// A fleet hold has no resets_at, which jq sorts before every number: without the
+// kind test in matured.jq it would mature at once and bypass the fleet queue.
+func TestDueExcludesFleetHolds(t *testing.T) {
+	tr := setup(t)
+	tr.write(t, seedHold(t, "c1", "q1", "1500000000"), seedFleetHold(t, "c1", "f1", 2))
+	out, _, code := tr.runOpts(t, tr.clock(t, "1700000000"), Request{Action: "due", JSON: true})
+	if ids := strings.Join(idsOf(t, dueField(t, out, "due")), ","); code != 0 || ids != "q1" {
+		t.Errorf("due %q (code %d), want only q1", ids, code)
 	}
 }
 
@@ -379,6 +386,9 @@ func TestHoldsAreInvisibleToAnotherCrew(t *testing.T) {
 		{"due", "c2", "", 1},
 	} {
 		out, err, code := tr.run(t, Request{Action: tc.action, JSON: true, Crew: tc.crew})
+		if tc.action == "due" {
+			out = dueField(t, out, "due")
+		}
 		if ids := strings.Join(idsOf(t, out), ","); code != tc.code || ids != tc.want {
 			t.Errorf("%s --crew %s: code %d ids %q, want %d %q (%s)", tc.action, tc.crew, code, ids, tc.code, tc.want, err)
 		}
@@ -739,7 +749,7 @@ func TestDueMaturityBoundary(t *testing.T) {
 			tr := setup(t)
 			tr.write(t, seedHold(t, "c1", "h1", tc.resetsAt))
 			out, _, code := tr.runOpts(t, tr.clock(t, "1800000000"), Request{Action: "due", JSON: true})
-			if got := jsonLen(t, out); got != tc.want {
+			if got := jsonLen(t, dueField(t, out, "due")); got != tc.want {
 				t.Errorf("matured %d, want %d (%s)", got, tc.want, out)
 			}
 			if code != 0 && tc.want != 0 {
@@ -766,7 +776,7 @@ func TestAbsentLogReadsAsEmpty(t *testing.T) {
 		{Request{Action: "list"}, renderHeader + "\n", 0},
 		{Request{Action: "list", JSON: true}, "[]\n", 0},
 		{Request{Action: "due"}, renderHeader + "\n", 1},
-		{Request{Action: "due", JSON: true}, "[]\n", 1},
+		{Request{Action: "due", JSON: true}, `{"due":[],"parked":[]}` + "\n", 1},
 	}
 	for _, tc := range cases {
 		out, _, code := tr.run(t, tc.args)
@@ -927,6 +937,20 @@ func seedHold(t *testing.T, crew, id, resetsAt string) string {
 	}))
 }
 
+// seedFleetHold is a fleet hold row as `add --fleet` writes it: no resets_at.
+func seedFleetHold(t *testing.T, crew, id string, weight int) string {
+	t.Helper()
+	return holdRowBody(t, crew, id, mustJSON(t, map[string]any{
+		"id":   id,
+		"wait": map[string]any{"kind": "fleet", "weight": weight},
+		"task": map[string]any{
+			"ref": "r1", "branch": "b-" + id, "tier": "standard", "engine": "codex",
+			"model": "sonnet", "effort": "medium", "plan": nil, "mcp": nil,
+			"draft": false, "shape": nil, "title": "t-" + id, "spec": nil, "prio": "normal",
+		},
+	}))
+}
+
 func holdRowBody(t *testing.T, crew, id, body string) string {
 	t.Helper()
 	encoded, err := json.Marshal(body)
@@ -969,6 +993,21 @@ func idsOf(t *testing.T, s string) []string {
 	return ids
 }
 
+// dueField is one array of `due --json`'s object, as the JSON text idsOf and
+// jsonLen read.
+func dueField(t *testing.T, s, key string) string {
+	t.Helper()
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(s), &doc); err != nil {
+		t.Fatalf("not a JSON object (%v): %q", err, s)
+	}
+	field, ok := doc[key]
+	if !ok {
+		t.Fatalf("no %q in %q", key, s)
+	}
+	return string(field)
+}
+
 func jsonLen(t *testing.T, s string) int {
 	t.Helper()
 	var v []any
@@ -976,6 +1015,376 @@ func jsonLen(t *testing.T, s string) int {
 		t.Fatalf("not a JSON array (%v): %q", err, s)
 	}
 	return len(v)
+}
+
+// fleetAdd is an `add --fleet` that passes every check; a case edits the field it
+// probes.
+func fleetAdd(edit func(*AddRequest)) Request {
+	return fullAdd(func(a *AddRequest) {
+		a.Engine, a.Window, a.ResetsAt = "", "", ""
+		a.Fleet, a.Tier = true, "standard"
+		if edit != nil {
+			edit(a)
+		}
+	})
+}
+
+// workerProbes make sender.Check refuse a dispatcher post: a worker session.
+var workerProbes = sender.Probes{Getenv: func(name string) string {
+	if name == "CREW_WORKER_ID" {
+		return "x"
+	}
+	return ""
+}}
+
+// A fleet hold's body is `wait:{kind,weight}` and a trailing `task.prio`; the
+// weight is the tier's and the priority defaults to normal.
+func TestAddFleetRowMatchesTheBuilder(t *testing.T) {
+	cases := map[string]struct {
+		edit   func(*AddRequest)
+		tier   string
+		weight int
+		prio   string
+	}{
+		"deep, high":             {func(a *AddRequest) { a.Tier, a.Prio = "deep", "high" }, "deep", 3, "high"},
+		"default prio is normal": {nil, "standard", 2, "normal"},
+		"trivial, low":           {func(a *AddRequest) { a.Tier, a.Prio = "trivial", "low" }, "trivial", 1, "low"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tr := setup(t)
+			out, err, code := tr.run(t, fleetAdd(tc.edit))
+			if code != 0 {
+				t.Fatalf("exit %d: %s", code, err)
+			}
+			id := strings.TrimSpace(out)
+			want := fmt.Sprintf(`{"id":"%s","wait":{"kind":"fleet","weight":%d},`+
+				`"task":{"ref":"r","branch":"b","tier":"%s","engine":"a","model":"m",`+
+				`"effort":"f","plan":null,"mcp":null,"draft":false,"shape":null,`+
+				`"title":"x","spec":null,"prio":"%s"}}`, id, tc.weight, tc.tier, tc.prio)
+			if got := mustBody(t, tr.rows(t)[0]); got != want {
+				t.Errorf("body string\n got %s\nwant %s", got, want)
+			}
+		})
+	}
+}
+
+// A fleet hold added and then listed shows `fleet`, `weight <W>` and `-` where a
+// quota hold shows its engine, window and resets_at.
+func TestAddFleetThenListRendersTheFleetColumns(t *testing.T) {
+	tr := setup(t)
+	if _, err, code := tr.run(t, fleetAdd(func(a *AddRequest) { a.Tier = "deep" })); code != 0 {
+		t.Fatalf("add: %d %s", code, err)
+	}
+	out, _, code := tr.run(t, Request{Action: "list"})
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if code != 0 || len(lines) != 2 || lines[0] != renderHeader ||
+		!strings.HasSuffix(lines[1], "\tfleet\tweight 3\t-\tr\tb\tx") {
+		t.Errorf("list (code %d):\n%s", code, out)
+	}
+}
+
+func TestAddFleetRefusals(t *testing.T) {
+	cases := map[string]struct {
+		req  Request
+		want string
+	}{
+		"prio without fleet": {
+			fullAdd(func(a *AddRequest) { a.Prio = "high" }),
+			"crew: hold add: --prio needs --fleet\n",
+		},
+		"bad prio": {
+			fleetAdd(func(a *AddRequest) { a.Prio = "urgent" }),
+			"crew: hold add: --prio must be high, normal or low\n",
+		},
+		"engine": {
+			fleetAdd(func(a *AddRequest) { a.Engine = "claude" }),
+			"crew: hold add: --fleet takes no --engine, --window or --resets-at\n",
+		},
+		"window": {
+			fleetAdd(func(a *AddRequest) { a.Window = "5h" }),
+			"crew: hold add: --fleet takes no --engine, --window or --resets-at\n",
+		},
+		"resets-at": {
+			fleetAdd(func(a *AddRequest) { a.ResetsAt = future }),
+			"crew: hold add: --fleet takes no --engine, --window or --resets-at\n",
+		},
+		"tier outside the weights": {
+			fleetAdd(func(a *AddRequest) { a.Tier = "t" }),
+			"crew: hold add: --fleet needs --tier trivial, standard or deep\n",
+		},
+		"missing tier": {
+			fleetAdd(func(a *AddRequest) { a.Tier = "" }),
+			"crew: hold add: --tier is required\n",
+		},
+		"missing agent": {
+			fleetAdd(func(a *AddRequest) { a.Agent = "" }),
+			"crew: hold add: --agent is required\n",
+		},
+		"missing title": {
+			fleetAdd(func(a *AddRequest) { a.Title = nil }),
+			"crew: hold add: a title is required\n",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tr := setup(t)
+			out, err, code := tr.run(t, tc.req)
+			if code != 1 || out != "" || err != tc.want {
+				t.Errorf("code %d, stdout %q, stderr %q, want 1, %q", code, out, err, tc.want)
+			}
+			if _, serr := os.Stat(tr.paths.Log); serr == nil {
+				t.Error("a refused add still wrote a log")
+			}
+		})
+	}
+}
+
+// A fleet hold heavier than the budget could never be released, so `add`
+// refuses it; the budget is read after the sender check and before any write.
+func TestAddFleetBudget(t *testing.T) {
+	budget := func(n int, err error) func(context.Context) (int, error) {
+		return func(context.Context) (int, error) { return n, err }
+	}
+	cases := map[string]struct {
+		tier   string
+		budget func(context.Context) (int, error)
+		code   int
+		stderr string
+	}{
+		"deep over a budget of 2": {
+			"deep", budget(2, nil), 1,
+			"crew: hold add: --fleet: a deep hold weighs 3, more than fleetBudget 2, so it could never be released\n",
+		},
+		"standard within a budget of 2": {"standard", budget(2, nil), 0, ""},
+		"trivial within a budget of 2":  {"trivial", budget(2, nil), 0, ""},
+		"an error from the budget":      {"standard", budget(0, errors.New("boom")), 1, "crew: hold add: boom\n"},
+		"no budget skips the check":     {"deep", nil, 0, ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tr := setup(t)
+			_, err, code := tr.runOpts(t, Options{FleetBudget: tc.budget}, fleetAdd(func(a *AddRequest) { a.Tier = tc.tier }))
+			if code != tc.code || err != tc.stderr {
+				t.Errorf("code %d, stderr %q, want %d, %q", code, err, tc.code, tc.stderr)
+			}
+			_, serr := os.Stat(tr.paths.Log)
+			if wrote := serr == nil; wrote != (tc.code == 0) {
+				t.Errorf("log written %v on exit %d", wrote, code)
+			}
+		})
+	}
+
+	t.Run("a refused sender never reaches the budget", func(t *testing.T) {
+		tr := setup(t)
+		called := false
+		o := Options{Sender: workerProbes, FleetBudget: func(context.Context) (int, error) { called = true; return 0, nil }}
+		if _, _, code := tr.runOpts(t, o, fleetAdd(nil)); code != 1 || called {
+			t.Errorf("code %d, budget called %v", code, called)
+		}
+	})
+	t.Run("a quota hold never reads it", func(t *testing.T) {
+		tr := setup(t)
+		called := false
+		o := Options{FleetBudget: func(context.Context) (int, error) { called = true; return 0, nil }}
+		if _, _, code := tr.runOpts(t, o, fullAdd(nil)); code != 0 || called {
+			t.Errorf("code %d, budget called %v", code, called)
+		}
+	})
+}
+
+// fleetDueStub is a FleetDue that answers v and records what it was asked.
+type fleetDueStub struct {
+	v      FleetVerdict
+	err    error
+	calls  int
+	common string
+	crew   string
+	record bool
+}
+
+func (s *fleetDueStub) due(_ context.Context, common, crew string, record bool) (FleetVerdict, error) {
+	s.calls++
+	s.common, s.crew, s.record = common, crew, record
+	return s.v, s.err
+}
+
+func withFleetDue(o Options, s *fleetDueStub) Options {
+	o.FleetDue = s.due
+	return o
+}
+
+// `due` merges the queue's verdict into the crew's own fleet holds: a due id
+// joins the matured quota holds, a parked id is listed apart with its reason, and
+// ids that are not this crew's outstanding fleet holds are ignored.
+func TestDueFleetVerdict(t *testing.T) {
+	rows := []string{
+		seedHold(t, "c1", "q1", "1500000000"),
+		seedFleetHold(t, "c1", "f1", 2),
+		seedFleetHold(t, "c1", "f2", 1),
+		seedFleetHold(t, "c1", "f3", 3),
+		seedFleetHold(t, "c2", "g1", 1),
+	}
+	verdict := FleetVerdict{
+		Due:    []string{"f1", "g1", "q1"},
+		Parked: []ParkedHold{{"f2", "demoted"}, {"g1", "oversize"}, {"q1", "demoted"}},
+	}
+
+	t.Run("json", func(t *testing.T) {
+		tr := setup(t)
+		tr.write(t, rows...)
+		stub := &fleetDueStub{v: verdict}
+		out, err, code := tr.runOpts(t, withFleetDue(tr.clock(t, "1700000000"), stub), Request{Action: "due", JSON: true})
+		if code != 0 || err != "" {
+			t.Fatalf("code %d, stderr %q", code, err)
+		}
+		if ids := strings.Join(idsOf(t, dueField(t, out, "due")), ","); ids != "q1,f1" {
+			t.Errorf("due %q, want q1,f1", ids)
+		}
+		var parked []struct {
+			ID     string `json:"id"`
+			Reason string `json:"reason"`
+		}
+		if err := json.Unmarshal([]byte(dueField(t, out, "parked")), &parked); err != nil {
+			t.Fatal(err)
+		}
+		if len(parked) != 1 || parked[0].ID != "f2" || parked[0].Reason != "demoted" {
+			t.Errorf("parked %+v, want only f2 demoted", parked)
+		}
+		if stub.calls != 1 || stub.common != tr.paths.Common || stub.crew != "c1" || !stub.record {
+			t.Errorf("FleetDue called %d times with %q %q record=%v", stub.calls, stub.common, stub.crew, stub.record)
+		}
+	})
+
+	t.Run("table", func(t *testing.T) {
+		tr := setup(t)
+		tr.write(t, rows...)
+		stub := &fleetDueStub{v: verdict}
+		out, _, code := tr.runOpts(t, withFleetDue(tr.clock(t, "1700000000"), stub), Request{Action: "due"})
+		want := renderHeader + "\n" +
+			"q1\tclaude\t5h\t1500000000\tr1\tb1\tt-q1\n" +
+			"f1\tfleet\tweight 2\t-\tr1\tb-f1\tt-f1\n" +
+			"parked\treason\tbranch\ttitle\n" +
+			"f2\tdemoted\tb-f2\tt-f2\n"
+		if code != 0 || out != want {
+			t.Errorf("code %d, stdout\n%s\nwant\n%s", code, out, want)
+		}
+	})
+
+	t.Run("no parked block when nothing is parked", func(t *testing.T) {
+		tr := setup(t)
+		tr.write(t, rows[1:]...)
+		stub := &fleetDueStub{v: FleetVerdict{Due: []string{"f1"}}}
+		out, _, code := tr.runOpts(t, Options{FleetDue: stub.due}, Request{Action: "due"})
+		want := renderHeader + "\n" + "f1\tfleet\tweight 2\t-\tr1\tb-f1\tt-f1\n"
+		if code != 0 || out != want {
+			t.Errorf("code %d, stdout\n%s\nwant\n%s", code, out, want)
+		}
+	})
+
+	t.Run("parked alone exits 1", func(t *testing.T) {
+		tr := setup(t)
+		tr.write(t, rows[1:]...)
+		stub := &fleetDueStub{v: FleetVerdict{Parked: []ParkedHold{{"f3", "oversize"}}}}
+		out, _, code := tr.runOpts(t, Options{FleetDue: stub.due}, Request{Action: "due", JSON: true})
+		if code != 1 || dueField(t, out, "due") != "[]" || len(idsOf(t, dueField(t, out, "parked"))) != 1 {
+			t.Errorf("code %d, stdout %s", code, out)
+		}
+	})
+
+	t.Run("a due fleet hold alone exits 0", func(t *testing.T) {
+		tr := setup(t)
+		tr.write(t, seedFleetHold(t, "c1", "f1", 2))
+		stub := &fleetDueStub{v: FleetVerdict{Due: []string{"f1"}}}
+		out, _, code := tr.runOpts(t, Options{FleetDue: stub.due}, Request{Action: "due", JSON: true})
+		if ids := strings.Join(idsOf(t, dueField(t, out, "due")), ","); code != 0 || ids != "f1" {
+			t.Errorf("code %d, due %q", code, ids)
+		}
+	})
+}
+
+// Every `due` evaluates the whole machine's queue, whether or not this crew has a
+// fleet hold, and only the dispatcher's own run may record it.
+func TestDueRunsFleetDueForEveryCrewAndRecordsOnlyForTheDispatcher(t *testing.T) {
+	t.Run("a crew with no fleet hold, and no log", func(t *testing.T) {
+		tr := setup(t)
+		stub := &fleetDueStub{}
+		out, err, code := tr.runOpts(t, Options{FleetDue: stub.due}, Request{Action: "due", JSON: true})
+		if stub.calls != 1 || !stub.record || code != 1 || err != "" || out != `{"due":[],"parked":[]}`+"\n" {
+			t.Errorf("calls %d record %v code %d stdout %q stderr %q", stub.calls, stub.record, code, out, err)
+		}
+	})
+	t.Run("a worker session evaluates read-only and silently", func(t *testing.T) {
+		tr := setup(t)
+		tr.write(t, seedFleetHold(t, "c1", "f1", 2))
+		stub := &fleetDueStub{v: FleetVerdict{Due: []string{"f1"}}}
+		out, err, code := tr.runOpts(t, Options{FleetDue: stub.due, Sender: workerProbes}, Request{Action: "due", JSON: true})
+		if stub.calls != 1 || stub.record || code != 0 || err != "" ||
+			strings.Join(idsOf(t, dueField(t, out, "due")), ",") != "f1" {
+			t.Errorf("calls %d record %v code %d stdout %q stderr %q", stub.calls, stub.record, code, out, err)
+		}
+	})
+	t.Run("no FleetDue never reports a fleet hold", func(t *testing.T) {
+		tr := setup(t)
+		tr.write(t, seedFleetHold(t, "c1", "f1", 2))
+		out, _, code := tr.run(t, Request{Action: "due", JSON: true})
+		if code != 1 || out != `{"due":[],"parked":[]}`+"\n" {
+			t.Errorf("code %d, stdout %q", code, out)
+		}
+	})
+}
+
+// A queue that cannot be evaluated is a failure, not an empty answer: exit 5, one
+// stderr line, nothing on stdout.
+func TestDueFleetDueErrorExitsFive(t *testing.T) {
+	for _, req := range []Request{{Action: "due", JSON: true}, {Action: "due"}} {
+		tr := setup(t)
+		tr.write(t, seedHold(t, "c1", "q1", "1500000000"))
+		stub := &fleetDueStub{err: errors.New("boom")}
+		out, err, code := tr.runOpts(t, Options{FleetDue: stub.due}, req)
+		if want := "crew: hold due: fleet queue: boom\n"; code != exitType || out != "" || err != want {
+			t.Errorf("%+v: code %d, stdout %q, stderr %q, want %d, %q", req, code, out, err, exitType, want)
+		}
+	}
+}
+
+// Parking a reason on a copy leaves the fold's own row as it was read.
+func TestFleetRowsCopiesTheParkedRow(t *testing.T) {
+	row := map[string]any{"id": "f1", "wait": map[string]any{"kind": "fleet"}}
+	_, parked := fleetRows([]any{row}, FleetVerdict{Parked: []ParkedHold{{"f1", "demoted"}}})
+	if _, mutated := row["reason"]; mutated || len(parked) != 1 {
+		t.Errorf("row %v, parked %v", row, parked)
+	}
+}
+
+// While a fleet hold is outstanding the park lane re-checks at least once a
+// minute; the earliest quota reset still counts, and a fleet hold has none.
+func TestParkFleetCapsAtAMinute(t *testing.T) {
+	cases := map[string]struct {
+		quotaResets string
+		def         string
+		want        string
+	}{
+		"fleet only, default over the cap":  {"", "300", "60\n"},
+		"fleet only, default under the cap": {"", "30", "30\n"},
+		"a quota reset sooner than the cap": {"1800000020", "300", "20\n"},
+		"a quota reset later than the cap":  {"1800000600", "300", "60\n"},
+		"a matured quota hold":              {"1500000000", "300", "60\n"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tr := setup(t)
+			rows := []string{seedFleetHold(t, "c1", "f1", 2)}
+			if tc.quotaResets != "" {
+				rows = append(rows, seedHold(t, "c1", "q1", tc.quotaResets))
+			}
+			tr.write(t, rows...)
+			out, err, code := tr.runOpts(t, tr.clock(t, "1800000000"), Request{Action: "park", Default: tc.def})
+			if code != 0 || out != tc.want {
+				t.Errorf("park %s: code %d, stdout %q (%s), want %q", tc.def, code, out, err, tc.want)
+			}
+		})
+	}
 }
 
 func TestWorkerAndRoleSessionsCannotWriteHolds(t *testing.T) {

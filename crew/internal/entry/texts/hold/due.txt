@@ -1,9 +1,16 @@
 usage: crew hold due [--crew ID] [--json]
 
-Only the holds whose quota window has already reset — what a dispatcher may
-dispatch now.
+Only the holds that may be dispatched now. A quota hold is due when its
+quota window has already reset, a fleet hold when the fleet queue admits it (at
+most one machine-wide). Fleet holds the queue parked, as demoted or oversize,
+are listed apart and never due. Exits 0 when something is due, 1 when nothing
+is.
 
   --crew  Crew id; defaults to this repo's crew
-  --json  Machine-readable rows
+  --json  One object, {"due": [...], "parked": [...]}: both arrays of hold rows,
+          each parked row with an added "reason"
+
+The table lists the due rows, then, if any hold is parked, a block headed
+`parked  reason  branch  title`.
 
   crew hold due --json

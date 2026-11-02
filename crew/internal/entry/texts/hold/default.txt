@@ -2,6 +2,10 @@ usage: crew hold add --engine E --window W --resets-at EPOCH --agent A --ref R
                      --branch B --tier T --model M --effort F
                      [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE]
                      [--crew ID] <title...>
+       crew hold add --fleet [--prio high|normal|low] --agent A --ref R
+                     --branch B --tier T --model M --effort F
+                     [--plan P] [--mcp P] [--draft] [--shape S] [--spec FILE]
+                     [--crew ID] <title...>
        crew hold list [--crew ID] [--json]
        crew hold due [--crew ID] [--json]
        crew hold park <default> [--crew ID]

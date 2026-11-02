@@ -369,7 +369,7 @@ func holdRequest(p crewArgs) hold.Request {
 			Agent: str(a.Agent), Ref: str(a.Ref), Branch: str(a.Branch),
 			Tier: str(a.Tier), Model: str(a.Model), Effort: str(a.Effort),
 			Plan: str(a.Plan), MCP: str(a.MCP), Shape: str(a.Shape), Spec: str(a.Spec),
-			Draft: a.Draft, Title: a.Title,
+			Prio: str(a.Prio), Draft: a.Draft, Fleet: a.Fleet, Title: a.Title,
 		}}
 	case "list":
 		return hold.Request{Action: action, JSON: h.List.JSON, Crew: str(h.List.Crew)}

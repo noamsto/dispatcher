@@ -243,8 +243,10 @@ type holdAddCmd struct {
 	MCP      *string  `name:"mcp"`
 	Shape    *string  `name:"shape"`
 	Spec     *string  `name:"spec"`
+	Prio     *string  `name:"prio"`
 	Crew     *string  `name:"crew"`
 	Draft    bool     `name:"draft"`
+	Fleet    bool     `name:"fleet"`
 	Title    []string `arg:"" optional:"" passthrough:"partial" name:"title"`
 }
 
@@ -892,7 +894,7 @@ func validate(sub string, r *root) *refusal {
 			{"--agent", c.Agent}, {"--ref", c.Ref}, {"--branch", c.Branch},
 			{"--tier", c.Tier}, {"--model", c.Model}, {"--effort", c.Effort},
 			{"--plan", c.Plan}, {"--mcp", c.MCP}, {"--shape", c.Shape},
-			{"--spec", c.Spec}, {"--crew", c.Crew},
+			{"--spec", c.Spec}, {"--prio", c.Prio}, {"--crew", c.Crew},
 		} {
 			if given(f.v) {
 				return fail(fmt.Sprintf("crew: %s needs a value", f.name))

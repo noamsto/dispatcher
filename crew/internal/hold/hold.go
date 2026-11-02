@@ -24,8 +24,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -48,6 +50,9 @@ var parkProg string
 //go:embed render.jq
 var renderProg string
 
+//go:embed parked.jq
+var parkedProg string
+
 const (
 	// Usage is what the arm prints for an action it does not have.
 	Usage = "crew: hold add|list|due|park|release"
@@ -58,6 +63,8 @@ const (
 	ReleaseUsage = "crew: hold release <id> [--crew ID]"
 	// renderHeader is `_hold_render`'s printf, matching the fold's columns.
 	renderHeader = "id\tengine\twindow\tresets_at\tref\tbranch\ttitle"
+	// parkedHeader heads the block of fleet holds `due` lists as parked.
+	parkedHeader = "parked\treason\tbranch\ttitle"
 	// exitType is jq's status for a fold that fails on a row it cannot use.
 	exitType    = 5
 	exitFailure = 1
@@ -70,7 +77,23 @@ type Options struct {
 	CrewID func() string
 	Clock  clock.Clock
 	Sender sender.Probes // the sender check's reads; zero checks nothing
+	// FleetDue is the machine-wide fleet queue's verdict on one crew's fleet holds
+	// (fleet.Due, wired in main.go). record asks it to persist the demotion clocks.
+	// nil: no fleet hold is ever due.
+	FleetDue func(ctx context.Context, common, crew string, record bool) (FleetVerdict, error)
+	// FleetBudget is the fleet's weight budget; `add --fleet` refuses a hold
+	// heavier than it. nil: no check.
+	FleetBudget func(ctx context.Context) (int, error)
 }
+
+// FleetVerdict is one crew's share of an evaluation: Due holds at most one id
+// machine-wide; Parked the crew's holds parked as "demoted" or "oversize".
+type FleetVerdict struct {
+	Due    []string
+	Parked []ParkedHold
+}
+
+type ParkedHold struct{ ID, Reason string }
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
 // or nowhere, for stderr) — main.go's helper, same reason.
@@ -78,11 +101,13 @@ func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format
 
 // AddRequest is `crew hold add`'s flags and title words. Engine is the engine
 // whose quota is being waited on and Agent the engine the task will be
-// dispatched to (task.engine): both are required and kept distinct.
+// dispatched to (task.engine): both are required and kept distinct. A Fleet hold
+// waits on the machine-wide queue instead, so it takes no Engine, Window or
+// ResetsAt; Prio is its queue priority.
 type AddRequest struct {
 	Engine, Window, ResetsAt, Agent, Ref, Branch, Tier, Model, Effort string
-	Plan, MCP, Shape, Spec                                            string
-	Draft                                                             bool
+	Plan, MCP, Shape, Spec, Prio                                      string
+	Draft, Fleet                                                      bool
 	Title                                                             []string
 }
 
@@ -107,7 +132,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	case "list":
 		return list(req, paths, stdout, stderr, o)
 	case "due":
-		return due(req, paths, stdout, stderr, o)
+		return due(ctx, req, paths, stdout, stderr, o)
 	case "park":
 		return park(req, paths, stdout, stderr, o)
 	case "release":
@@ -195,7 +220,7 @@ func list(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int
 	return render(f, stdout, holds)
 }
 
-func due(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
+func due(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	jsonOut := req.JSON
 	crew, ok := resolveCrew(req.Crew, stderr, o)
 	if !ok {
@@ -212,18 +237,63 @@ func due(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	if code != 0 {
 		return code
 	}
-	if jsonOut {
-		print_(stdout, matured)
-	} else if code = render(f, stdout, matured); code != 0 {
-		return code
+	// Every run evaluates the whole machine's queue, this crew's fleet holds or
+	// not, so it runs even with none; only a dispatcher's own run may record it.
+	var verdict FleetVerdict
+	if o.FleetDue != nil {
+		record := sender.Check(ctx, "dispatcher:"+crew, crew, o.Sender) == ""
+		var err error
+		if verdict, err = o.FleetDue(ctx, paths.Common, crew, record); err != nil {
+			say(stderr, "crew: hold due: fleet queue: %v\n", err)
+			return exitType
+		}
 	}
-	// Exits 0 when any hold is matured, 1 when none — including a missing log,
-	// since the outstanding fold already answered `[]` for that case.
-	held, ok := matured.([]any)
-	if ok && len(held) > 0 {
+	fleetDue, parked := fleetRows(elems(holds), verdict)
+	// Non-nil, so an empty set prints as `[]`.
+	ready := append([]any{}, elems(matured)...)
+	ready = append(ready, fleetDue...)
+	if jsonOut {
+		print_(stdout, map[string]any{"due": ready, "parked": parked})
+	} else {
+		if code = render(f, stdout, ready); code != 0 {
+			return code
+		}
+		if len(parked) > 0 {
+			if code = table(f, stdout, parkedHeader, parkedProg, parked); code != 0 {
+				return code
+			}
+		}
+	}
+	// Exits 0 when any hold is due, 1 when none — including a missing log, since
+	// the outstanding fold already answered `[]` for that case. Parked holds do
+	// not count.
+	if len(ready) > 0 {
 		return 0
 	}
 	return exitFailure
+}
+
+// fleetRows splits this crew's outstanding fleet holds by the queue's verdict:
+// the ones due now, and the parked ones with their reason added (on a copy, so
+// the fold's own rows stay as read).
+func fleetRows(holds []any, v FleetVerdict) (due, parked []any) {
+	due, parked = []any{}, []any{}
+	for _, h := range holds {
+		row, _ := h.(map[string]any)
+		if wait, _ := row["wait"].(map[string]any); wait["kind"] != "fleet" {
+			continue
+		}
+		id, _ := row["id"].(string)
+		if slices.Contains(v.Due, id) {
+			due = append(due, h)
+		}
+		if i := slices.IndexFunc(v.Parked, func(p ParkedHold) bool { return p.ID == id }); i >= 0 {
+			withReason := maps.Clone(row)
+			withReason["reason"] = v.Parked[i].Reason
+			parked = append(parked, withReason)
+		}
+	}
+	return due, parked
 }
 
 func park(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
@@ -262,11 +332,15 @@ func park(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int
 	return 0
 }
 
-// render is `_hold_render`: the header goes out before the rows' jq starts, so a
-// fold that then fails still leaves it on stdout.
 func render(f *folds, stdout io.Writer, holds any) int {
-	say(stdout, "%s\n", renderHeader)
-	rows, code := f.call(renderProg, elems(holds), nil)
+	return table(f, stdout, renderHeader, renderProg, holds)
+}
+
+// table is `_hold_render`: the header goes out before the rows' jq starts, so a
+// fold that then fails still leaves it on stdout.
+func table(f *folds, stdout io.Writer, header, prog string, holds any) int {
+	say(stdout, "%s\n", header)
+	rows, code := f.call(prog, elems(holds), nil)
 	if code != 0 {
 		return code
 	}
@@ -282,14 +356,25 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	fl := req.Add
 	title := strings.Join(fl.Title, " ")
 
+	if !fl.Fleet && fl.Prio != "" {
+		say(stderr, "crew: hold add: --prio needs --fleet\n")
+		return exitFailure
+	}
+	if fl.Fleet && (fl.Engine != "" || fl.Window != "" || fl.ResetsAt != "") {
+		say(stderr, "crew: hold add: --fleet takes no --engine, --window or --resets-at\n")
+		return exitFailure
+	}
 	// Reject a missing required field by name. The order is the arm's, and it
 	// decides which line a doubly-incomplete call prints.
-	for _, req := range []struct{ flag, val string }{
-		{"--engine", fl.Engine}, {"--window", fl.Window}, {"--resets-at", fl.ResetsAt},
-		{"--agent", fl.Agent}, {"--ref", fl.Ref}, {"--branch", fl.Branch},
-		{"--tier", fl.Tier}, {"--model", fl.Model}, {"--effort", fl.Effort},
+	for _, req := range []struct {
+		flag, val string
+		quota     bool
+	}{
+		{"--engine", fl.Engine, true}, {"--window", fl.Window, true}, {"--resets-at", fl.ResetsAt, true},
+		{"--agent", fl.Agent, false}, {"--ref", fl.Ref, false}, {"--branch", fl.Branch, false},
+		{"--tier", fl.Tier, false}, {"--model", fl.Model, false}, {"--effort", fl.Effort, false},
 	} {
-		if req.val == "" {
+		if req.val == "" && !(fl.Fleet && req.quota) {
 			say(stderr, "crew: hold add: %s is required\n", req.flag)
 			return exitFailure
 		}
@@ -298,22 +383,11 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		say(stderr, "crew: hold add: a title is required\n")
 		return exitFailure
 	}
-	// Shape only, never the floor — `refresh-budget.sh` alone owns the 85%/95%
-	// judgment. Seconds here, matching `resets_at`'s own unit; `id`/`ts` below are
-	// milliseconds, a different clock.
-	if !ascii.IsDigits(fl.ResetsAt) {
-		say(stderr, "crew: hold add: --resets-at must be an integer epoch-seconds timestamp\n")
-		return exitFailure
-	}
-	// A default outside int64 makes bash's `test` fail outright, so it lands here
-	// too (minus the shell's own diagnostic, which is not ours to invent).
-	resets, err := strconv.ParseInt(fl.ResetsAt, 10, 64)
-	if err != nil {
-		say(stderr, "crew: hold add: --resets-at must be in the future\n")
-		return exitFailure
-	}
-	if resets <= o.Clock.Seconds() {
-		say(stderr, "crew: hold add: --resets-at must be in the future\n")
+	if fl.Fleet {
+		if !checkFleetFlags(&fl, stderr) {
+			return exitFailure
+		}
+	} else if !checkResetsAt(fl.ResetsAt, stderr, o) {
 		return exitFailure
 	}
 	if fl.Spec != "" {
@@ -327,6 +401,17 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	crew, ok := resolveCrew(req.Crew, stderr, o)
 	if !ok || !mayPost(ctx, "add", crew, stderr, o) {
 		return exitFailure
+	}
+	if fl.Fleet && o.FleetBudget != nil {
+		budget, err := o.FleetBudget(ctx)
+		if err != nil {
+			say(stderr, "crew: hold add: %v\n", err)
+			return exitFailure
+		}
+		if w := tierWeights[fl.Tier]; w > budget {
+			say(stderr, "crew: hold add: --fleet: a %s hold weighs %d, more than fleetBudget %d, so it could never be released\n", fl.Tier, w, budget)
+			return exitFailure
+		}
 	}
 	// A `hold add` with no --spec would otherwise fail its append on a repo with
 	// no bus dir yet — mirrors `status`/`msg`'s own mkdir -p.
@@ -373,6 +458,50 @@ func add(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	return 0
 }
 
+// tierWeights is a fleet hold's weight against the fleet budget: the tier's own,
+// as `crew fleet load` counts it.
+var tierWeights = map[string]int{"trivial": 1, "standard": 2, "deep": 3}
+
+// checkFleetFlags validates what only a fleet hold takes, and defaults --prio.
+func checkFleetFlags(fl *AddRequest, stderr io.Writer) bool {
+	if _, ok := tierWeights[fl.Tier]; !ok {
+		say(stderr, "crew: hold add: --fleet needs --tier trivial, standard or deep\n")
+		return false
+	}
+	switch fl.Prio {
+	case "":
+		fl.Prio = "normal"
+	case "high", "normal", "low":
+	default:
+		say(stderr, "crew: hold add: --prio must be high, normal or low\n")
+		return false
+	}
+	return true
+}
+
+// checkResetsAt is the quota hold's --resets-at validation.
+func checkResetsAt(raw string, stderr io.Writer, o Options) bool {
+	// Shape only, never the floor — `refresh-budget.sh` alone owns the 85%/95%
+	// judgment. Seconds here, matching `resets_at`'s own unit; `id`/`ts` below are
+	// milliseconds, a different clock.
+	if !ascii.IsDigits(raw) {
+		say(stderr, "crew: hold add: --resets-at must be an integer epoch-seconds timestamp\n")
+		return false
+	}
+	// A default outside int64 makes bash's `test` fail outright, so it lands here
+	// too (minus the shell's own diagnostic, which is not ours to invent).
+	resets, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		say(stderr, "crew: hold add: --resets-at must be in the future\n")
+		return false
+	}
+	if resets <= o.Clock.Seconds() {
+		say(stderr, "crew: hold add: --resets-at must be in the future\n")
+		return false
+	}
+	return true
+}
+
 // holdRow is one `hold` bus row. Field order is the row's byte order — the arm
 // built it in jq's construction order and `crew log` prints the line verbatim.
 // `ts` is a json.Number so the minted digits print as written, never through a
@@ -391,7 +520,7 @@ type holdRow struct {
 // cannot normalise it; `TestAddRowMatchesTheBuilder` pins the exact text.
 type holdBody struct {
 	ID   string   `json:"id"`
-	Wait holdWait `json:"wait"`
+	Wait any      `json:"wait"` // holdWait or fleetWait
 	Task holdTask `json:"task"`
 }
 
@@ -399,6 +528,11 @@ type holdWait struct {
 	Engine   string `json:"engine"`
 	Window   string `json:"window"`
 	ResetsAt int64  `json:"resets_at"`
+}
+
+type fleetWait struct {
+	Kind   string `json:"kind"`
+	Weight int    `json:"weight"`
 }
 
 type holdTask struct {
@@ -416,6 +550,9 @@ type holdTask struct {
 	Shape  *string `json:"shape"`
 	Title  string  `json:"title"`
 	Spec   *string `json:"spec"`
+	// Prio is a fleet hold's queue priority; omitted, so a quota hold's body text
+	// is unchanged.
+	Prio *string `json:"prio,omitempty"`
 }
 
 type releaseBody struct {
@@ -427,9 +564,21 @@ type releaseBody struct {
 // the title is the only shrinkable part. Handing Shrink the whole body would
 // truncate `id`, `task.branch` and `task.spec` along with the title.
 func addRow(crew, id, ts string, fl *AddRequest, specpath, title string) holdRow {
-	// The arm's `--argjson resets_at <digits>`: digitsLiteral is that literal,
-	// and int64 holds every value the ParseInt in `add` bounded.
-	resets, _ := strconv.ParseInt(digitsLiteral(fl.ResetsAt), 10, 64)
+	var wait any
+	var prio *string
+	if fl.Fleet {
+		wait = fleetWait{Kind: "fleet", Weight: tierWeights[fl.Tier]}
+		prio = &fl.Prio
+	} else {
+		// The arm's `--argjson resets_at <digits>`: digitsLiteral is that literal,
+		// and int64 holds every value the ParseInt in `add` bounded.
+		resets, _ := strconv.ParseInt(digitsLiteral(fl.ResetsAt), 10, 64)
+		wait = holdWait{
+			Engine:   fl.Engine,
+			Window:   fl.Window,
+			ResetsAt: resets,
+		}
+	}
 	return holdRow{
 		TS:     json.Number(ts),
 		CrewID: crew,
@@ -437,12 +586,8 @@ func addRow(crew, id, ts string, fl *AddRequest, specpath, title string) holdRow
 		To:     "hold:" + crew,
 		Kind:   "msg",
 		Body: encode(holdBody{
-			ID: id,
-			Wait: holdWait{
-				Engine:   fl.Engine,
-				Window:   fl.Window,
-				ResetsAt: resets,
-			},
+			ID:   id,
+			Wait: wait,
 			Task: holdTask{
 				Ref:    fl.Ref,
 				Branch: fl.Branch,
@@ -456,6 +601,7 @@ func addRow(crew, id, ts string, fl *AddRequest, specpath, title string) holdRow
 				Shape:  orNull(fl.Shape),
 				Title:  title,
 				Spec:   orNull(specpath),
+				Prio:   prio,
 			},
 		}),
 	}
