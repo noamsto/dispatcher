@@ -45,23 +45,27 @@ the overseer wrote, kill it, start a new one. The new one must show the same
 fleet status, and no dispatcher may have behaved differently while none ran.
 Files the overseer session writes or causes, and why none breaks the test:
 
-| file                                             | written by                                                                  | if lost or never written                                                         |
-| ------------------------------------------------ | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| per-bus msg cursors (§2)                         | overseer stream                                                             | the cold start's `overseer_inbox` replays up to 24 h                             |
-| `${XDG_STATE_HOME}/crew/overseer/pid` (§7)       | overseer launcher                                                           | a second overseer may start; nothing else reads it                               |
-| `crews/<id>/relaunch` marker (§5)                | `dispatcher --relaunch`                                                     | the 30 min relaunch rate limit restarts; dispatchers never read it               |
-| `${XDG_DATA_HOME}/crew/fleet-priority.json` (§4) | `crew fleet prio`, a human command the overseer may run on the human's word | every repo has priority 0; dispatchers read it whether or not an overseer exists |
-| `${XDG_DATA_HOME}/crew/fleet-priority.log` (§4)  | `crew fleet prio` (audit line per change)                                   | the digest loses its "changes since last digest" list; ordering is unaffected    |
+| file                                             | written by                                                                  | if lost or never written                                                           |
+| ------------------------------------------------ | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| per-bus msg cursors (§2)                         | overseer stream                                                             | the cold start's `overseer_inbox` replays up to 24 h                               |
+| `${XDG_STATE_HOME}/crew/overseer/pid` (§7)       | overseer launcher                                                           | a second overseer may start; nothing else reads it                                 |
+| `crews/<id>/relaunch` marker (§5)                | `dispatcher --relaunch`                                                     | the 30 min relaunch rate limit restarts; dispatchers never read it                 |
+| `${XDG_DATA_HOME}/crew/fleet-priority.json` (§4) | `crew fleet prio`, a human command the overseer may run on the human's word | every repo has priority 0; dispatchers read it whether or not an overseer exists   |
+| `${XDG_DATA_HOME}/crew/fleet-priority.log` (§4)  | `crew fleet prio` (audit line per change)                                   | the digest loses its "changes since last digest" list; ordering is unaffected      |
+| `${XDG_STATE_HOME}/crew/fleet-due.json` (§4)     | `crew hold due` run by any live dispatcher (never the overseer)             | demotion clocks restart; a stuck hold's demotion is delayed by at most one timeout |
 
 No dispatcher reads an overseer-private file, and no fleet duty waits on one.
 
-**Out of scope:** cross-host overseers. Remote workers appear only through
-their local bus rows (`dispatch` and status rows), without a live probe:
-`crew fleet`'s live merge (`roster.MergeRemote`,
+**Out of scope:** cross-host overseers. In the overseer session (with
+`CREW_OVERSEER` set) remote workers appear only through their local bus
+rows (`dispatch` and status rows), marked `remote_unprobed: true`, without
+a live probe: `crew fleet`'s live merge (`roster.MergeRemote`,
 `crew/internal/roster/remote.go:33`) goes through `remoteRun`, which
 sender-checks every remote argv as `dispatcher:<crew>`
 (`crew/main.go:1088-1099`), and the overseer is refused every
-`dispatcher:` sender (§3). Peers appear through the peer store; codex and cursor as the overseer's engine in
+`dispatcher:` sender (§3). Run by anyone else, `crew fleet status` keeps
+the live merge `crew fleet` has. Peers appear through the peer store;
+codex and cursor as the overseer's engine in
 v1 (§7); the machine-wide reap timer (#1410) and idle detection without a done
 marker (#1409), which ship separately and which the overseer relies on.
 
@@ -115,7 +119,9 @@ elsewhere. Gone or bus-less repos are listed under `skipped` with their
   "machine": { "...": "the crew fleet load document, §4" },
   "queue": {
     "head": { "repo": "", "crew_id": "", "id": "", "waited_s": 0 },
-    "demoted": [{ "repo": "", "crew_id": "", "id": "", "head_since": 0 }],
+    "demoted": [
+      { "repo": "", "crew_id": "", "id": "", "first_due": 0, "demoted_at": 0 }
+    ],
     "parked": [{ "repo": "", "crew_id": "", "id": "" }]
   },
   "repos": [
@@ -137,7 +143,8 @@ elsewhere. Gone or bus-less repos are listed under `skipped` with their
             {
               "...roster row...": "",
               "blocked": null,
-              "finished_window": false
+              "finished_window": false,
+              "remote_unprobed": false
             }
           ],
           "holds": [
@@ -157,13 +164,13 @@ Field derivations, each from durable state:
 - **`dispatcher.state`**: `crews.PidAlive` over `crews/<id>/pid` → `true` =
   `live`; `false` = `dead` (a pid file naming a dead or recycled pid, or
   holding `0` or non-digits); `nil` = `closed` (no or empty pid file:
-  deregistered, or never registered). `dead` means the launcher did not
-  deregister: a crash, but today also a killed window, since
-  `dispatcher.sh` has no signal trap and `crew deregister` runs only on a
-  normal exit (`:991-993`); in-session promoted crews (`crew register` in
+  deregistered, or never registered). Today the mapping to causes is
+  poor: the launcher deregisters after **any** non-handoff engine exit,
+  including an engine crash or OOM kill (`dispatcher.sh:975-993`), so those
+  read `closed`; a killed window skips the deregister (no signal trap), so
+  it reads `dead`; in-session promoted crews (`crew register` in
   `adapters/core/commands/dispatcher.md:24`) never deregister at all. §5
-  narrows `dead` with a trap and the launch record. `pane` from
-  `crews/<id>/pane`.
+  fixes the mapping in the launcher. `pane` from `crews/<id>/pane`.
 - **`dispatcher.lane`**: `stream.laneState` over `crews/<id>/stream.tick`;
   `null` when no tick was ever written (a park-lane engine: pi, codex,
   cursor). Only meaningful when `state == live`.
@@ -193,7 +200,7 @@ Field derivations, each from durable state:
   `due` from `matured.jq` for quota holds and from the read-only §4
   predicate (`fleet.Due`) for fleet holds.
 - **`queue`**: the §4 fleet queue: the current head and its wait, demoted
-  holds with their `head_since`, and parked holds (non-eligible crews). The
+  holds with their demotion times, and parked holds (non-eligible crews, or demoted twice). `waited_s` is always `now − hold.ts`. The
   §2 `capacity_stuck` transition reads these fields.
 - **`overseer_inbox`**: msgs `to: overseer:<host>` **and** `from:
 dispatcher:<crew_id>` on that bus with `ts` above the overseer's per-bus
@@ -251,7 +258,10 @@ and to == "overseer:<host>" and from == "dispatcher:" + crew_id` across
    A msg to the overseer from any other sender emits one
    `{"stream":"overseer","event":"misrouted_msg","repo","crew","from"}`
    line, sender charset-filtered, never the body (like the existing
-   `role_watch_drop` report). Its cursor lives **outside the
+   `role_watch_drop` report), at most one per repo per `--interval`
+   (a stamped lead pane may post as any `worker:<b>#s<sid>`, so the key
+   is unbounded); the rest only bump the repo's `misrouted` count for the
+   digest. Its cursor lives **outside the
    bus**, at `${XDG_STATE_HOME}/crew/overseer/buses/<sha256(common)[:8]>/cursor`
    (the `busScratch` naming the fleet stream already uses,
    `crew/internal/stream/fleet.go:387`). It must never use
@@ -430,12 +440,12 @@ weight: W}` (W = the task's tier weight) and `--prio high|normal|low`
   ran `dispatch` is in it, `dispatch.sh:1036` `_registry_add`), never the
   walk: the walk's roots come from each caller's `$CREW_SWEEP_ROOTS`/`$HOME`,
   and every dispatcher must compute the same set. A hold counts only when its
-  crew is **eligible**: dispatcher `live` (whose recorded pid's command line
-  names the `dispatcher` launcher, the check the in-engine `--fresh` path
-  already makes, `dispatcher.sh:239-285`, so a planted pid file naming an
-  unrelated long-lived process does not count) and lane not `dead` or
-  `stale` (`null`, a park lane, counts as eligible). A non-eligible crew's
-  holds are parked: listed, never head, never blocking.
+  crew is **eligible**: dispatcher `live` (`crews.RecordedLive`, whatever
+  process the pid names: the launcher, or the engine a promoted or adopted
+  crew records, `adapters/core/commands/dispatcher.md:22-29`) and lane not
+  `dead` or `stale` (`null`, a park lane, counts as eligible). A
+  non-eligible crew's holds are parked: listed, never head, never blocking.
+  A planted pid file is bounded by demotion below, not by eligibility.
 - **Order**, all from durable state:
   1. repo priority from `${XDG_DATA_HOME}/crew/fleet-priority.json`
      (`{"<repo>": <int>}`, default 0, higher first), set by the human
@@ -444,59 +454,67 @@ weight: W}` (W = the task's tier weight) and `--prio high|normal|low`
   3. fairness: the repo whose most recent fleet-hold release is oldest goes
      first (release rows are on the bus);
   4. hold `ts`, oldest first.
-- **Demotion.** A hold that has been head longer than `fleetHeadTimeout`
-  (default 15 min) without a release is demoted: it leaves the ordered
-  queue, never blocks admission or backfill again, and matures whenever it
-  fits (it keeps its record, loses its place). A dispatcher that never acts
-  (a stuck park lane included) therefore stalls the queue for at most one
-  timeout per hold; it is reported as `capacity_stuck`.
-- **Demotion clock.** Derived read-only by any evaluator, from rows only a
-  dispatcher can write, so no worker can hold it back. The anchor `A` is
-  the latest of any fleet-hold release row on the registered buses
-  (written through `crew hold release`, dispatcher-only by `sender.Check`,
-  `hold.go:516`) and the `updated_ts` in `fleet-priority.json`. Walk the
-  non-demoted holds in order. The first has `head_since = max(h1.ts, A)`;
-  when it passes the timeout it is demoted, and the next becomes head with
-  `head_since = max(h2.ts, head_since(h1) + fleetHeadTimeout)`, and so on
-  down the order. The chaining stops one stuck hold from demoting every
-  hold behind it at the same instant. Worker status rows are deliberately
-  not part of the clock: they are worker-writable, and a finish after the
-  head is already due would only push its demotion later. Capacity freeing
-  with no anchor event (a worker finishing, a load drop, the pending weight
-  expiring) makes `head_since` earlier than the real due time, so the
-  error demotes early, and demotion only reorders, never drops.
+- **Due, one at a time.** Hold _h_ is due when `free ≥ W(h)` **and not
+  `load_over`** (`fleet_gate` refuses on load even when the weight fits,
+  `dispatch.sh:1419-1423`, so a hold due on weight alone would loop through
+  refused releases), and _h_ is the first fitting non-demoted hold in
+  order, or, when no non-demoted hold fits, the first fitting demoted hold.
+  At most one hold is due per evaluation, which is what keeps the race
+  overshoot at one (Races, below). Once the head has waited
+  `fleetBackfillAfter` (default 20 min, `waited_s = now − hold.ts`), only
+  the head may be due among non-demoted holds (head-of-line protection, so
+  a deep task is not starved by a stream of trivial ones).
+- **Demotion counts time spent due, not time spent waiting.** Congestion
+  (a full fleet for an hour) demotes nothing: a hold that does not fit is
+  never due. A hold that has been the due hold for `fleetHeadTimeout`
+  (default 15 min) without a release is demoted: it drops behind every
+  non-demoted hold and stays there (sticky) until its own release. A hold
+  that is demoted and then stays the due hold for another
+  `fleetHeadTimeout` is parked like a non-eligible crew's hold. A
+  dispatcher that never acts (a stuck park lane, a planted pid file)
+  therefore holds the queue for at most two timeouts per hold, and each
+  step is reported as `capacity_stuck`.
+- **The demotion record** is `${XDG_STATE_HOME}/crew/fleet-due.json`,
+  machine-wide: per hold id, `first_due` (when an evaluation first found
+  it the due hold), `demoted` and `parked` timestamps. Only `crew hold due`
+  writes it (atomic replace under a lock), and only when run under a
+  dispatcher identity: refused under the `dispatcher:` sender tripwire
+  (`CREW_WORKER_ID`/`CREW_ROLE_ID` set, or a crew-stamped pane), the same
+  check `crew hold` already runs (`hold.go:516`). Every live dispatcher's
+  stream runs `crew hold due` for its own crew (`stream.go:746` `holdDue`)
+  and each run evaluates the whole queue, so a stuck owner cannot keep its
+  own hold from being recorded: any other live dispatcher does it.
+  `first_due` clears when the hold stops being the due hold (capacity was
+  taken again); entries for holds no longer outstanding are dropped. Losing
+  the file restarts the clocks, delaying a demotion by at most one timeout.
+  No worker-written row is an input, so no worker can move the clock.
 - **Maturity lives in `crew hold due` and `crew hold park`**, not a second
   entry point. `matured.jq` (`[.[] | select(.wait.resets_at <= $now)]`)
-  would read a fleet hold's absent `resets_at` as null, and null sorts before
-  every number in jq, so it would mature at once; it is changed to exclude
-  `.wait.kind == "fleet"`. Fleet holds pass the fleet predicate instead,
-  computed by `fleet.Due` from `crew fleet load` and the queue and injected
-  into the hold package through `hold.Options`. Hold _h_ is due when `free ≥ W(h)` **and not
-  `load_over`** (`fleet_gate` refuses on load even when the weight fits,
-  `dispatch.sh:1419-1423`, so a hold due on weight alone would loop
-  through refused releases), and _h_ is either the first fitting
-  non-demoted hold in order or a demoted hold that fits. Once the head has
-  waited `fleetBackfillAfter` (default 20 min), only the head may mature
-  among non-demoted holds (head-of-line protection, so a deep task is not
-  starved by a stream of trivial ones). The dispatcher stream already shells
-  out to `crew hold due --crew <id> --json` (`stream.go:746` `holdDue`) and
-  emits `hold_due` (`:781`), so only the owner of the due hold wakes; park
-  lanes get a park timeout of at most 60 s from `crew hold park` while one
-  of their fleet holds is outstanding. Every evaluator (`crew hold due`,
-  `crew hold park`, `crew fleet queue [--admit]`, `crew fleet status`, the
-  overseer stream) computes the predicate in-process and read-only; none of
-  them writes a row.
+  would read a fleet hold's absent `resets_at` as null, and null sorts
+  before every number in jq, so it would mature at once; it is changed to
+  exclude `.wait.kind == "fleet"`. Fleet holds pass the fleet predicate
+  instead, computed by `fleet.Due` from `crew fleet load`, the queue and
+  the demotion record, and injected into the hold package through
+  `hold.Options`. The dispatcher stream emits `hold_due` (`stream.go:781`)
+  only for the owner of the due hold; park lanes get a park timeout of at
+  most 60 s from `crew hold park` while one of their fleet holds is
+  outstanding. `crew hold park`, `crew fleet queue [--admit]`, `crew fleet
+status` and the overseer stream only read the record; none of them, and
+  no evaluator at all, writes a bus row.
 - **Admission binds every new lead, not only held ones.** `fleet_gate`
   (through `crew fleet queue --admit <weight> [--hold <id>]`) refuses a new
-  lead, with the fleet-hold hint, while any eligible non-demoted fleet hold
-  is waiting and the dispatch is not the release of a due hold (`dispatch
---fleet-hold <id>`, passed by the releasing dispatcher). A dispatcher
-  cannot jump the queue with a fresh dispatch the moment capacity frees,
-  with or without an overseer. `--ignore-budget` still bypasses every check,
-  as today, and an overshoot shows up as `capacity_stuck`.
+  lead, with the fleet-hold hint, while any eligible fleet hold (demoted or
+  not; parked holds excluded) is waiting and the dispatch is not the
+  release of the due hold (`dispatch --fleet-hold <id>`, passed by the
+  releasing dispatcher). The refused dispatch becomes a fleet hold, which
+  ranks ahead of every demoted hold, so a stuck demoted hold blocks nobody
+  while still keeping fresh dispatches from jumping a responsive one. A
+  dispatcher cannot jump the queue the moment capacity frees, with or
+  without an overseer. `--ignore-budget` still bypasses every check, as
+  today, and an overshoot shows up as `capacity_stuck`.
 - **Release** stays the dispatcher's, per `budget-holds`: `dispatch
---fleet-hold <id>` first, then `crew hold release <id>`; `dispatch` re-runs
-  `fleet_gate`, so a stale `due` only costs a refusal.
+--fleet-hold <id>` first, then `crew hold release <id>`; `dispatch`
+  re-runs `fleet_gate`, so a stale `due` only costs a refusal.
 - **Quota holds meet admission.** A quota hold that matures while fleet
   holds wait is not a fleet release, so admission refuses its dispatch. The
   `budget-holds` skill converts it: `crew hold add --fleet` with the same
@@ -516,7 +534,7 @@ weight: W}` (W = the task's tier weight) and `--prio high|normal|low`
   of §5 and §6 (`overseer.autoRelaunch`, `overseer.digestEvery`) live in the
   same layers.
 - **Races.** `fleet_gate` is "a check, not a lock" (`dispatch.sh:1395-1400`).
-  The single-head predicate plus the 120 s pending weight closes the common
+  The one-due-hold predicate plus the 120 s pending weight closes the common
   race (two dispatchers releasing in one tick); a residual overshoot by one
   dispatch is accepted, as today, and surfaces as `capacity_stuck`.
 - **Dispatch refusal** keeps exit 1 and its message, plus one line naming the
@@ -559,18 +577,31 @@ is closed: it fails both owner constraints.
 no later than the pidfile mtime plus 2 s) keeps a recycled pid from reading
 as live.
 
-**Making `dead` mean "crashed".** Today a killed window also reads `dead`
-(no trap, §1). S6a adds a `HUP`/`TERM`/`INT` trap to `dispatcher.sh` that
-runs `crew deregister` before exiting, so a window the human closes reads
-`closed`. Promoted in-session crews have no launch record (below), and
-auto-relaunch requires one, so they are never auto-relaunched either.
-SIGKILL and OOM still read `dead`, which is the case relaunch exists for.
+**Making `dead` mean "crashed".** Two launcher changes (S6a):
+
+- **Engine died by a signal → keep the registration.** When the engine
+  exits with `rc ≥ 128` and no handoff marker, the launcher skips `crew
+deregister` and exits, so the pid file and launch record survive and the
+  crew reads `dead` once the launcher is gone. An OOM kill or engine crash
+  therefore reads `dead` (today it reads `closed`, `dispatcher.sh:975-993`).
+  A normal engine exit (`/exit`, rc 0 or a small rc) still deregisters.
+- **Window closed → deregister.** A `HUP`/`TERM` trap runs `crew
+deregister`, so a window the human closes reads `closed`. Not `INT`: the
+  launcher bash shares the pane's foreground process group with the engine,
+  so a Ctrl-C meant for the engine would run a trapped `INT` once the
+  engine exits, deregistering before the handoff relaunch check
+  (`dispatcher.sh:975-985`) and breaking the in-engine `--fresh` handoff.
+
+`dead` then means an engine crash, an OOM kill, a `kill -9` of the
+launcher, or a reboot: the cases relaunch exists for. Promoted in-session
+crews have no launch record (below), and auto-relaunch requires one, so
+they are never auto-relaunched.
 
 **Detection limit.** Deafness is detectable only for streaming lanes, which
 write `stream.tick`. A park-lane dispatcher (pi, codex, cursor) writes none,
 so `lane` is `null` and a live but stuck one reads as fine. The overseer
 covers it indirectly: its unanswered questions fire `blocked_aging` and its
-unreleased head holds are demoted by the dispatcher-only `head_since` clock
+unreleased due holds are demoted through the demotion record that every live dispatcher updates
 (§4) and fire `capacity_stuck`.
 
 **Relaunch** means launcher re-entry with the same crew id in that repo, never
@@ -607,6 +638,12 @@ the overseer acting as the dispatcher:
   claude/pi, or `… dispatcher --agent "$a" …` with a fixed recovery task
   line for codex/cursor (which have no `--fresh`). `env -u CREW_OVERSEER`
   keeps the relaunched dispatcher from inheriting the overseer's identity.
+  The window gets `remain-on-exit on` (so a refusing launcher's message
+  stays readable), and `--relaunch` takes the new pane id
+  (`new-window -P -F '#{pane_id}'`) and waits up to 10 s for
+  `crews/<id>/pid` to name a new live pid; if none appears it exits
+  non-zero and the overseer reports the failure instead of sending a
+  `notice: relaunched`.
 - **No note**: manual `--fresh` today needs a stored note (`dispatcher.sh:497-504`).
   A relaunch passes `--fresh --no-note`, which runs the same handoff startup
   steps (`DISPATCHER_PROTOCOL.md:299-304`: re-arm the lane, answer `blocked`
@@ -745,16 +782,16 @@ Each slice merges on its own and leaves the fleet working with no overseer.
 Arrows are dependencies; slices without one branch off `main` (stack only
 where an arrow forces it, bottom-up merges).
 
-| slice | content                                                                                                                                                                                                                                                                                                                                                                                                                                                     | depends on      | tier / engine                                                                                 |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | --------------------------------------------------------------------------------------------- |
-| S1    | `crew fleet load` (Go port of the lead scan, weights, load, budget-cache summary) and `fleet_gate` rewired to it                                                                                                                                                                                                                                                                                                                                            | —               | standard, claude opus (touches the capacity gate)                                             |
-| S2    | `crew fleet status [--json] [--gh]` (§1), table form; remote rows from the local bus only                                                                                                                                                                                                                                                                                                                                                                   | S1              | standard, claude opus                                                                         |
-| S3    | identity: `overseer:` sender rules (allowlist, `CREW_OVERSEER == SelfName()`, `@crew_role overseer` pane anchor), `crew overseer msg` verb                                                                                                                                                                                                                                                                                                                  | —               | deep, claude opus (sender enforcement is security-sensitive; security-reviewer in the batch)  |
-| S4    | `crew fleet stream --overseer` (§2): dispatcher-only msg follower, `misrouted_msg`, transitions including `capacity_stuck` over the §1 `queue` contract (tested with injected documents)                                                                                                                                                                                                                                                                    | S2, S3          | deep, claude opus                                                                             |
-| S5    | fleet holds: `hold add --fleet --prio`, `crew fleet queue [--admit]`, `crew fleet prio` (tripwire, audit log), the fleet predicate in `crew hold due`/`park` (`matured.jq` excludes fleet; `load_over` blocks), the dispatcher-only chained `head_since` demotion, admission in `fleet_gate` with `dispatch --fleet-hold`, the pending weight in `fleet load`, the §1 `queue` fields and fleet `holds[].due` in `fleet.Status`, settings keys, refusal hint | S1, S2          | deep, claude opus                                                                             |
-| S6a   | launcher: signal trap that deregisters, validated `crews/<id>/launch` record, `dispatcher --relaunch` (argv-only tmux, live-pane and second-live-crew refusals), `--fresh --no-note`                                                                                                                                                                                                                                                                        | —               | standard, claude opus (the relaunch builds a command from untrusted input)                    |
-| S6b   | launcher: `dispatcher --overseer` mode                                                                                                                                                                                                                                                                                                                                                                                                                      | S2, S3, S4, S6a | standard, claude sonnet                                                                       |
-| S7    | `OVERSEER_PROTOCOL.md` + renders (delivers §6 reporting and §7), the `overseer` skill, the `budget-holds` and handoff-startup edits, README                                                                                                                                                                                                                                                                                                                 | S1–S6b          | standard, pi (claude classifiers block protocol self-edits) with claude critic/reviewer roles |
+| slice | content                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | depends on      | tier / engine                                                                                 |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------- | --------------------------------------------------------------------------------------------- |
+| S1    | `crew fleet load` (Go port of the lead scan, weights, load, budget-cache summary) and `fleet_gate` rewired to it                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | —               | standard, claude opus (touches the capacity gate)                                             |
+| S2    | `crew fleet status [--json] [--gh]` (§1), table form; under `CREW_OVERSEER`, remote rows from the local bus only (`remote_unprobed`)                                                                                                                                                                                                                                                                                                                                                                                                                                                 | S1              | standard, claude opus                                                                         |
+| S3    | identity: `overseer:` sender rules (allowlist, `CREW_OVERSEER == SelfName()`, `@crew_role overseer` pane anchor), `crew overseer msg` verb                                                                                                                                                                                                                                                                                                                                                                                                                                           | —               | deep, claude opus (sender enforcement is security-sensitive; security-reviewer in the batch)  |
+| S4    | `crew fleet stream --overseer` (§2): dispatcher-only msg follower, `misrouted_msg`, transitions including `capacity_stuck` over the §1 `queue` contract (tested with injected documents)                                                                                                                                                                                                                                                                                                                                                                                             | S2, S3          | deep, claude opus                                                                             |
+| S5    | fleet holds: `hold add --fleet --prio`, `crew fleet queue [--admit]`, `crew fleet prio` (tripwire, audit log), the fleet predicate in `crew hold due`/`park` (`matured.jq` excludes fleet; `load_over` blocks), one due hold per evaluation, sticky demotion counting time due via `fleet-due.json` (written only by `crew hold due` under the dispatcher tripwire), demoted-twice parking, admission in `fleet_gate` with `dispatch --fleet-hold`, the pending weight in `fleet load`, the §1 `queue` fields and fleet `holds[].due` in `fleet.Status`, settings keys, refusal hint | S1, S2          | deep, claude opus                                                                             |
+| S6a   | launcher: `HUP`/`TERM` deregister trap, no deregister after an engine signal exit, validated `crews/<id>/launch` record, `dispatcher --relaunch` (argv-only tmux, live-pane and second-live-crew refusals, new-pid check), `--fresh --no-note`                                                                                                                                                                                                                                                                                                                                       | —               | standard, claude opus (the relaunch builds a command from untrusted input)                    |
+| S6b   | launcher: `dispatcher --overseer` mode                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | S2, S3, S4, S6a | standard, claude sonnet                                                                       |
+| S7    | `OVERSEER_PROTOCOL.md` + renders (delivers §6 reporting and §7), the `overseer` skill, the `budget-holds` and handoff-startup edits, README                                                                                                                                                                                                                                                                                                                                                                                                                                          | S1–S6b          | standard, pi (claude classifiers block protocol self-edits) with claude critic/reviewer roles |
 
 S1, S3 and S6a can run in parallel; S2 follows S1; S4 and S5 follow S2 (S4
 also S3); S6b and S7 close the stack. §6 has no code slice of its own: S2
@@ -765,11 +802,14 @@ supplies the data, S6b the `digestEvery` setting, S7 the digest procedure.
 - Go unit tests per new package function, with fixture buses (the fleet and
   roster tests' pattern): liveness classification (pid alive, dead, absent,
   recycled), `blocked.since` across restamps, `answered`, `finished_window`,
-  queue order and the head-of-line rule; a stuck owner demoted at
-  `fleetHeadTimeout` while a worker re-posts `done` every 5 min, after
-  which another crew's hold matures; a second hold whose `ts` predates the
-  anchor is not demoted at the same instant (the chained clock); a
-  load-over machine makes no hold due; the overseer cursor never touching
+  queue order and the head-of-line rule; a full fleet for three timeouts
+  with live owners demotes nothing; a stuck owner's due hold is demoted
+  after `fleetHeadTimeout` of being due (recorded by another crew's `crew
+hold due`), then the next hold matures, and a later release elsewhere
+  does not re-head it; demoted twice → parked; at most one hold due per
+  evaluation; a load-over machine makes no hold due; a promoted crew whose
+  pid is an engine process is eligible; `crew hold due` under a worker env
+  does not write `fleet-due.json`; the overseer cursor never touching
   `crews/<crew>/cursor`; a `worker:` msg to the overseer neither wakes it
   nor shows in `overseer_inbox`; transition keys emitting once; sender
   refusals, including `overseer:` from a dispatcher session and any
@@ -778,7 +818,10 @@ supplies the data, S6b the `digestEvery` setting, S7 the digest procedure.
   `dispatcher --overseer` refusals, `dispatcher --relaunch` refusals (a
   launch record with a shell metacharacter or unknown agent, a live pane, a
   second live crew in the repo) and the rate limit, with the asserted tmux
-  argv carrying no `sh -c`; the deregister trap on `HUP`; `--fresh
+  argv carrying no `sh -c`, and a refusing relaunched launcher making
+  `--relaunch` exit non-zero; the deregister trap on `HUP`; no deregister
+  after an engine exit by signal; a Ctrl-C (`INT` to the process group)
+  mid-session followed by a handoff still relaunches; `--fresh
 --no-note` prompt.
 - An end-to-end bats case per slice that changes a dispatcher-visible
   contract: a fleet hold maturing for exactly one of two crews in two fixture
