@@ -62,7 +62,6 @@ type StatusOptions struct {
 	Cmd        func(ctx context.Context, name string, args ...string) (string, error)
 }
 
-// StatusRequest is `crew fleet status`'s flags.
 type StatusRequest struct {
 	JSON bool
 	GH   bool
@@ -374,7 +373,6 @@ func (b *repoBuild) crew(id string, rows []map[string]any, live roster.Liveness,
 	return c, nil
 }
 
-// derive adds the status-only fields to a worker row.
 func (b *repoBuild) derive(crew string, row map[string]any) {
 	state := str(row, "state")
 	row["blocked"] = nil
@@ -483,7 +481,6 @@ func attention(c CrewStatus) string {
 	return "idle"
 }
 
-// number is a decoded JSON number as a float, whatever type the decoder left.
 func number(v any) (float64, bool) {
 	switch n := v.(type) {
 	case float64:
@@ -606,7 +603,6 @@ func (idx busIndex) blocked(crew string, row map[string]any) map[string]any {
 	return b
 }
 
-// inbox is the crew's dispatcher msgs to the overseer after cutoff.
 func (idx busIndex) inbox(crew string, cutoff int64) []InboxMsg {
 	out := []InboxMsg{}
 	for _, m := range idx.overseer {
@@ -659,7 +655,6 @@ func bodyObject(v any) map[string]any {
 	return nil
 }
 
-// statusTable is one line per crew.
 func statusTable(doc StatusDoc) []byte {
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
