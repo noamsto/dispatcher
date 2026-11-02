@@ -197,8 +197,9 @@ if [ "$overseer" = 1 ]; then
     echo "dispatcher: --overseer runs from the folder that holds your repos, not inside one — cd there first (inside a repo it would be mistaken for that repo's dispatcher)" >&2
     exit 2
   fi
-  # Never a crew's session: an inherited CREW_ID would make crew calls act as it.
-  unset CREW_ID
+  # Never a crew's session: an inherited crew, worker or role id would make crew
+  # calls act as it, and sender.Check refuses overseer posts beside them.
+  unset CREW_ID CREW_WORKER_ID CREW_ROLE_ID
 fi
 
 # Checked before the settings read: an exported CREW_ID already answers what
@@ -870,25 +871,45 @@ if [ "$overseer" = 1 ]; then
   overseer_dir="${XDG_STATE_HOME:-$HOME/.local/state}/crew/overseer"
   overseer_pidfile="$overseer_dir/pid"
   old_pid=""
-  read -r old_pid <"$overseer_pidfile" 2>/dev/null || true
+  { read -r old_pid <"$overseer_pidfile"; } 2>/dev/null || true
   if [[ $old_pid =~ ^[1-9][0-9]*$ ]] && [ "$old_pid" != "$$" ] && kill -0 "$old_pid" 2>/dev/null; then
     pane=$(_pane_for_pid "$old_pid") || pane=''
-    if [ -n "$pane" ] && [ -n "${TMUX:-}" ]; then
+    # A recycled pid is some other process: a pane that is not stamped as the
+    # overseer's means the file is stale.
+    if [ -n "$pane" ] && [ -n "${TMUX:-}" ] &&
+      [ "$(tmux display-message -p -t "$pane" '#{@crew_role}' 2>/dev/null)" != overseer ]; then
+      pane=stale
+    fi
+    if [ "$pane" = stale ]; then
+      rm -f -- "$overseer_pidfile"
+    elif [ -n "$pane" ] && [ -n "${TMUX:-}" ]; then
       tmux switch-client -t "$pane" || {
         echo "dispatcher: could not switch the client to pane $pane" >&2
         exit 1
       }
       echo "dispatcher: the overseer already runs in pane $pane — nothing started"
       exit 0
+    else
+      echo "dispatcher: the overseer is already running (pid $old_pid${pane:+, pane $pane}) — switch to its tmux pane; one per host (if that pid is not the overseer, delete $overseer_pidfile)" >&2
+      exit 1
     fi
-    echo "dispatcher: the overseer is already running (pid $old_pid${pane:+, pane $pane}) — switch to its tmux pane; one per host" >&2
-    exit 1
   fi
   mkdir -p -- "$overseer_dir"
   overseer_tmp=$(mktemp "$overseer_dir/.pid.XXXXXX")
   printf '%s\n' "$$" >"$overseer_tmp"
-  mv -f -- "$overseer_tmp" "$overseer_pidfile"
-  trap '[ "$(cat -- "$overseer_pidfile" 2>/dev/null)" != "$$" ] || rm -f -- "$overseer_pidfile"' EXIT
+  # Any file left here is stale (the live case exited above). ln, not mv: it
+  # fails when a concurrent launch claimed the file first.
+  rm -f -- "$overseer_pidfile"
+  if ! ln -- "$overseer_tmp" "$overseer_pidfile" 2>/dev/null; then
+    rm -f -- "$overseer_tmp"
+    echo "dispatcher: another overseer launch claimed $overseer_pidfile first — one per host" >&2
+    exit 1
+  fi
+  rm -f -- "$overseer_tmp"
+  # The pane stamp outlives the session otherwise, and a dispatcher later
+  # started in this pane would be refused as the overseer.
+  trap '[ "$(cat -- "$overseer_pidfile" 2>/dev/null)" != "$$" ] || rm -f -- "$overseer_pidfile"
+    [ -z "${TMUX:-}" ] || tmux set-option -pu -t "$TMUX_PANE" @crew_role 2>/dev/null || true' EXIT
   trap 'exit 129' HUP
   trap 'exit 143' TERM
   export CREW_OVERSEER="$overseer_host"
@@ -914,6 +935,7 @@ if [ "$overseer" = 1 ]; then
     tmux set-option -p -t "$TMUX_PANE" @crew_role overseer
   fi
 elif [ -n "${TMUX:-}" ]; then
+  tmux set-option -pu -t "$TMUX_PANE" @crew_role 2>/dev/null || true
   tmux set-window-option -t "$TMUX_PANE" pane-border-style "bg=#{@thm_bg},fg=#{@thm_mauve}"
   tmux set-window-option -t "$TMUX_PANE" pane-active-border-style "bg=#{@thm_bg},fg=#{@thm_mauve},bold"
   tmux set-window-option -t "$TMUX_PANE" pane-border-format " #[bold]dispatcher#[nobold] "

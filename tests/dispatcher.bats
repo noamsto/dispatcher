@@ -2191,6 +2191,21 @@ ENGINE
   chmod +x "$STUB_DIR/claude"
 }
 
+# _overseer_tmux <pane> <pid> <role> — a tmux whose one pane runs <pid> and
+# carries @crew_role <role>.
+_overseer_tmux() {
+  cat >"$STUB_DIR/tmux" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$1 \$2" in
+"list-panes -a") printf '%s %s\n' '$1' '$2' ;;
+"display-message -p") printf '%s\n' '$3' ;;
+esac
+exit 0
+STUB
+  chmod +x "$STUB_DIR/tmux"
+}
+
 @test "overseer: refuses inside a git repo" {
   _overseer_setup
   cd "$TEST_REPO"
@@ -2260,7 +2275,7 @@ ENGINE
   live_pid=$!
   mkdir -p "$XDG_STATE_HOME/crew/overseer"
   printf '%s\n' "$live_pid" >"$XDG_STATE_HOME/crew/overseer/pid"
-  stub_tmux_panes '%7' "$live_pid"
+  _overseer_tmux '%7' "$live_pid" overseer
   TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher --overseer
   [ "$status" -eq 0 ]
   [[ "$output" == *"%7"* ]]
@@ -2288,4 +2303,31 @@ ENGINE
   run run_launcher --overseer
   [ "$status" -eq 0 ]
   grep -q "CREW_OVERSEER=$OVERSEER_HOST" "$STUB_LOG"
+}
+
+@test "overseer: a pid file whose owner is not an overseer pane is stale" {
+  _overseer_setup
+  sleep 300 &
+  live_pid=$!
+  mkdir -p "$XDG_STATE_HOME/crew/overseer"
+  printf '%s\n' "$live_pid" >"$XDG_STATE_HOME/crew/overseer/pid"
+  _overseer_tmux '%7' "$live_pid" ''
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%1 run run_launcher --overseer
+  [ "$status" -eq 0 ]
+  if grep -q '^switch-client' "$STUB_LOG"; then return 1; fi
+  grep -q "CREW_OVERSEER=$OVERSEER_HOST" "$STUB_LOG"
+}
+
+@test "overseer: clears its pane stamp on exit and drops inherited worker and role ids" {
+  _overseer_setup
+  CREW_WORKER_ID=w CREW_ROLE_ID=r TMUX=/tmp/fake,1,0 TMUX_PANE=%4 run run_launcher --overseer
+  [ "$status" -eq 0 ]
+  grep -qx 'set-option -pu -t %4 @crew_role' "$STUB_LOG"
+  [ "$(grep -nx 'set-option -p -t %4 @crew_role overseer' "$STUB_LOG" | cut -d: -f1)" -lt "$(grep -nx 'set-option -pu -t %4 @crew_role' "$STUB_LOG" | cut -d: -f1)" ]
+}
+
+@test "overseer: a normal dispatcher clears a stale overseer stamp" {
+  TMUX=/tmp/fake,1,0 TMUX_PANE=%4 CREW_ID=c1 run run_launcher
+  [ "$status" -eq 0 ]
+  grep -qx 'set-option -pu -t %4 @crew_role' "$STUB_LOG"
 }
