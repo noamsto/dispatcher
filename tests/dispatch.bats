@@ -27,6 +27,7 @@ setup() {
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
 EOF
@@ -132,6 +133,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
 EOF
@@ -230,6 +232,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "${1:-}" in
 identity) printf '%s\n' '{"name":"coral-fox","tmux":"colour1"}' ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
 EOF
@@ -3240,6 +3243,34 @@ fleet_nproc() {
   [ "$status" -eq 0 ]
 }
 
+@test "927 fleet: a crew fleet load that errors fails open with a note on stderr" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_lead claude amber feat/1-a "" deep
+  fleet_lead claude birch feat/2-b "" deep
+  fleet_lead claude cedar feat/3-c "" deep
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "${1:-}" in
+identity) printf '%s\n' '{"name":"coral-fox","tmux":"colour1"}' ;;
+pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet)
+  echo "crew: fleet load: boom" >&2
+  exit 1
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 140 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"crew: fleet load: boom"* ]]
+  [[ "$stderr" == *"dispatch: fleet check skipped — crew fleet load failed (exit 1)"* ]]
+  [[ "$stderr" != *"machine at capacity"* ]]
+  grep -qF -- 'fleet load --budget 8 --add 2' "$STUB_LOG"
+}
+
 @test "local lane: a local id passes at an allowed tier and probes its endpoint" {
   local_lane_fixture
   DISPATCH_PRECHECK=1 run run_dispatch standard "$LOCAL_ID" --agent pi --effort medium --crew-id c1 "t"
@@ -3415,6 +3446,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "${1:-}" in
 identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 occupants) cat "$STUB_DIR/occ.json" ;;
 sessions) cat "$STUB_DIR/sess.json" ;;
 esac
@@ -4179,6 +4211,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 spec-lint)
   [ -z "${STUB_SPEC_LINT_OUT:-}" ] || printf '%s\n' "$STUB_SPEC_LINT_OUT" >&2
   exit "${STUB_SPEC_LINT_RC:-0}"
@@ -6887,6 +6920,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 stream) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
@@ -15466,6 +15500,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 identity) exec "$CREW_REAL" "$@" ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
 EOF2
@@ -15490,6 +15525,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 identity) exec "$CREW_REAL" "$@" ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
 EOF2
