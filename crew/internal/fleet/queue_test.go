@@ -482,6 +482,16 @@ func TestWorkerHoldRowsAreNoQueueInput(t *testing.T) {
 	}
 }
 
+func TestRepoNamerLabelsAsStatusDoes(t *testing.T) {
+	f := newQueueFix(t)
+	spaced := f.repo("spaced", false)
+	f.origins[spaced] = "https://github.com/acme/my repo+x.git"
+
+	if got, want := repoNamer(t.Context(), f.opts.Git)(spaced), "acme/my?repo?x"; got != want {
+		t.Errorf("repoNamer = %q, want %q", got, want)
+	}
+}
+
 func TestQueueOrder(t *testing.T) {
 	type h struct {
 		repo, crew, id, prio string

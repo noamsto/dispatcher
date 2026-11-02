@@ -209,6 +209,19 @@ func TestPrioByADirectoryInTheRepo(t *testing.T) {
 	}
 }
 
+func TestPrioAddressesASpacedRepoByItsLabelOrRawName(t *testing.T) {
+	f := newQueueFix(t)
+	spaced := f.repo("spaced", true)
+	f.origins[spaced] = "https://github.com/acme/my repo+x.git"
+
+	if code, out, errb := f.prio("acme/my?repo?x", "5"); code != 0 || out != "acme/my?repo?x: priority 0 → 5\n" {
+		t.Errorf("by label: exit %d, stdout %q, stderr %q", code, out, errb)
+	}
+	if code, out, errb := f.prio("acme/my repo+x", "6"); code != 0 || out != "acme/my?repo?x: priority 5 → 6\n" {
+		t.Errorf("by raw name: exit %d, stdout %q, stderr %q", code, out, errb)
+	}
+}
+
 func TestPrioReordersTheQueue(t *testing.T) {
 	f := newQueueFix(t, "alpha", "beta")
 	f.register("alpha", "c1", livePID)

@@ -161,7 +161,8 @@ func registeredRepo(ctx context.Context, arg string, o QueueOptions) (common, na
 	var matches []string
 	for _, r := range repos.Registered(o.Registry, o.Getenv) {
 		c := filepath.Clean(r.Common)
-		if abs == c || abs == filepath.Dir(c) || gitCommon == c || arg == names(r.Common) {
+		origin, _ := git.Origin(ctx, o.Git, r.Common)
+		if abs == c || abs == filepath.Dir(c) || gitCommon == c || arg == names(r.Common) || arg == repos.Name(r.Common, origin) {
 			matches = append(matches, c)
 		}
 	}
