@@ -762,7 +762,7 @@ func TestSenderTextKeepsOnlyTheSenderCharset(t *testing.T) {
 // ts, so successive documents are the clock.
 
 func ovDoc(ts int64, rs ...fleetpkg.RepoStatus) fleetpkg.StatusDoc {
-	return fleetpkg.StatusDoc{TS: ts, Host: ovHost, Queue: fleetpkg.Queue{Demoted: []fleetpkg.QueueDemote{}, Parked: []fleetpkg.QueueParked{}}, Repos: rs}
+	return fleetpkg.StatusDoc{TS: ts, Host: ovHost, Queue: fleetpkg.QueueStatus{Demoted: []fleetpkg.QueueDemote{}, Parked: []fleetpkg.QueueParked{}}, Repos: rs}
 }
 
 func ovRepo(name string, crews ...fleetpkg.CrewStatus) fleetpkg.RepoStatus {
@@ -792,7 +792,7 @@ func blockedWorker(from string, since int64, budget any, source string, answered
 	return w
 }
 
-func withQueue(d fleetpkg.StatusDoc, q fleetpkg.Queue, budget, weight int) fleetpkg.StatusDoc {
+func withQueue(d fleetpkg.StatusDoc, q fleetpkg.QueueStatus, budget, weight int) fleetpkg.StatusDoc {
 	if q.Demoted == nil {
 		q.Demoted = []fleetpkg.QueueDemote{}
 	}
@@ -855,7 +855,7 @@ func TestTransitionsBaselineEmitsNothing(t *testing.T) {
 				return w
 			}()),
 		)),
-		fleetpkg.Queue{
+		fleetpkg.QueueStatus{
 			Head:    &fleetpkg.QueueHead{Repo: "o/alpha", CrewID: "c1", ID: "h1", WaitedS: 5000},
 			Demoted: []fleetpkg.QueueDemote{{Repo: "o/alpha", CrewID: "c1", ID: "h2"}},
 			Parked:  []fleetpkg.QueueParked{{Repo: "o/alpha", CrewID: "c1", ID: "h3", Reason: "oversize"}},
@@ -1092,21 +1092,21 @@ func TestTransitionsCapacityStuck(t *testing.T) {
 		{Repo: "o/beta", CrewID: "c2", ID: "h5", Reason: "oversize"},
 		{Repo: "o/beta", CrewID: "c2", ID: "h6", Reason: "ineligible"},
 	}
-	at := func(m int64, q fleetpkg.Queue, weight int) fleetpkg.StatusDoc {
+	at := func(m int64, q fleetpkg.QueueStatus, weight int) fleetpkg.StatusDoc {
 		return withQueue(ovDoc(ovStart+m*minute), q, 10, weight)
 	}
 	tr := newTransitions()
 	var got [][]map[string]any
 	for _, d := range []fleetpkg.StatusDoc{
-		at(0, fleetpkg.Queue{Head: head(100)}, 5),
-		at(1, fleetpkg.Queue{Head: head(1800)}, 5),
-		at(2, fleetpkg.Queue{Head: head(1900), Demoted: demoted("h2")}, 5),
-		at(3, fleetpkg.Queue{Head: head(2000), Demoted: demoted("h2", "h3")}, 5),
-		at(4, fleetpkg.Queue{Head: head(2100), Demoted: demoted("h2", "h3"), Parked: parked}, 5),
-		at(5, fleetpkg.Queue{Head: head(2200), Demoted: demoted("h2", "h3"), Parked: parked}, 12),
-		at(6, fleetpkg.Queue{Head: head(2300), Demoted: demoted("h2", "h3"), Parked: parked}, 12),
-		at(7, fleetpkg.Queue{Head: head(100)}, 5),
-		at(8, fleetpkg.Queue{Head: head(1800)}, 5),
+		at(0, fleetpkg.QueueStatus{Head: head(100)}, 5),
+		at(1, fleetpkg.QueueStatus{Head: head(1800)}, 5),
+		at(2, fleetpkg.QueueStatus{Head: head(1900), Demoted: demoted("h2")}, 5),
+		at(3, fleetpkg.QueueStatus{Head: head(2000), Demoted: demoted("h2", "h3")}, 5),
+		at(4, fleetpkg.QueueStatus{Head: head(2100), Demoted: demoted("h2", "h3"), Parked: parked}, 5),
+		at(5, fleetpkg.QueueStatus{Head: head(2200), Demoted: demoted("h2", "h3"), Parked: parked}, 12),
+		at(6, fleetpkg.QueueStatus{Head: head(2300), Demoted: demoted("h2", "h3"), Parked: parked}, 12),
+		at(7, fleetpkg.QueueStatus{Head: head(100)}, 5),
+		at(8, fleetpkg.QueueStatus{Head: head(1800)}, 5),
 	} {
 		got = append(got, step(t, tr, d))
 	}
@@ -1162,28 +1162,28 @@ func causes(t *testing.T, docs ...fleetpkg.StatusDoc) [][]string {
 
 // One hold moving to another cause is a new condition.
 func TestTransitionsCapacityCauseIsInTheKey(t *testing.T) {
-	at := func(m int64, q fleetpkg.Queue) fleetpkg.StatusDoc {
+	at := func(m int64, q fleetpkg.QueueStatus) fleetpkg.StatusDoc {
 		return withQueue(ovDoc(ovStart+m*minute), q, 10, 5)
 	}
 	h1 := []fleetpkg.QueueDemote{{Repo: "o/alpha", CrewID: "c1", ID: "h1"}}
 	wantSteps(t, causes(t,
-		at(0, fleetpkg.Queue{}),
-		at(1, fleetpkg.Queue{Demoted: h1}),
-		at(2, fleetpkg.Queue{Parked: []fleetpkg.QueueParked{{Repo: "o/alpha", CrewID: "c1", ID: "h1", Reason: "demoted"}}}),
+		at(0, fleetpkg.QueueStatus{}),
+		at(1, fleetpkg.QueueStatus{Demoted: h1}),
+		at(2, fleetpkg.QueueStatus{Parked: []fleetpkg.QueueParked{{Repo: "o/alpha", CrewID: "c1", ID: "h1", Reason: "demoted"}}}),
 	), none(), evs("demoted h1"), evs("parked h1"))
 
 	head := func(waited int64) *fleetpkg.QueueHead {
 		return &fleetpkg.QueueHead{Repo: "o/alpha", CrewID: "c1", ID: "h2", WaitedS: waited}
 	}
 	wantSteps(t, causes(t,
-		at(0, fleetpkg.Queue{Head: head(100)}),
-		at(1, fleetpkg.Queue{Head: head(1800)}),
-		at(2, fleetpkg.Queue{Head: head(1900), Demoted: []fleetpkg.QueueDemote{{Repo: "o/alpha", CrewID: "c1", ID: "h2"}}}),
+		at(0, fleetpkg.QueueStatus{Head: head(100)}),
+		at(1, fleetpkg.QueueStatus{Head: head(1800)}),
+		at(2, fleetpkg.QueueStatus{Head: head(1900), Demoted: []fleetpkg.QueueDemote{{Repo: "o/alpha", CrewID: "c1", ID: "h2"}}}),
 	), none(), evs("head_wait h2"), evs("demoted h2"))
 }
 
 func TestTransitionsOvershootRearms(t *testing.T) {
-	q := fleetpkg.Queue{Demoted: []fleetpkg.QueueDemote{{Repo: "o/alpha", CrewID: "c1", ID: "h1"}}}
+	q := fleetpkg.QueueStatus{Demoted: []fleetpkg.QueueDemote{{Repo: "o/alpha", CrewID: "c1", ID: "h1"}}}
 	at := func(m int64, weight int) fleetpkg.StatusDoc {
 		return withQueue(ovDoc(ovStart+m*minute), q, 10, weight)
 	}
@@ -1192,14 +1192,14 @@ func TestTransitionsOvershootRearms(t *testing.T) {
 }
 
 func TestTransitionsCapacityNeverWithoutBudgetOrQueue(t *testing.T) {
-	q := fleetpkg.Queue{Head: &fleetpkg.QueueHead{Repo: "o/alpha", CrewID: "c1", ID: "h1", WaitedS: 10}}
+	q := fleetpkg.QueueStatus{Head: &fleetpkg.QueueHead{Repo: "o/alpha", CrewID: "c1", ID: "h1", WaitedS: 10}}
 	wantSteps(t, steps(t,
 		withQueue(ovDoc(ovStart), q, 0, 0),
 		withQueue(ovDoc(ovStart+minute), q, 0, 8),
 	), none(), none())
 	wantSteps(t, steps(t,
-		withQueue(ovDoc(ovStart), fleetpkg.Queue{}, 4, 2),
-		withQueue(ovDoc(ovStart+minute), fleetpkg.Queue{}, 4, 9),
+		withQueue(ovDoc(ovStart), fleetpkg.QueueStatus{}, 4, 2),
+		withQueue(ovDoc(ovStart+minute), fleetpkg.QueueStatus{}, 4, 9),
 	), none(), none())
 }
 
