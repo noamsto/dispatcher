@@ -357,6 +357,28 @@ func TestStatusQuotaHolds(t *testing.T) {
 	}
 }
 
+// Only the dispatcher writes a hold row: a worker's post to hold:<crew> makes
+// no crew a holder, adds no hold and dates none.
+func TestStatusIgnoresWorkerHoldRows(t *testing.T) {
+	quota := func(id string) string {
+		return fmt.Sprintf(`"{\"id\":\"%s\",\"wait\":{\"engine\":\"claude\",\"window\":\"five_hour\",\"resets_at\":%d},\"task\":{}}"`, id, nowS+3600)
+	}
+	f := newStatusFix(t,
+		wmsg(900, "c1", "worker:feat/x#s1", "hold:c1", quota("h")),
+		wmsg(300, "c1", "dispatcher:c1", "hold:c1", quota("h")),
+		wmsg(800, "c2", "worker:feat/y#s1", "hold:c2", quota("f")),
+	)
+	f.pidfile("c1", "101")
+	f.pidfile("c2", "101")
+	doc := f.collect(StatusRequest{})
+	if got, want := doc.crew(t, "c1").Holds, []HoldStatus{{ID: "h", Kind: "quota", WaitedS: 300}}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("c1 holds = %+v, want %+v", got, want)
+	}
+	if c := doc.crew(t, "c2"); len(c.Holds) != 0 || c.Attention != "idle" {
+		t.Errorf("c2 = %+v, want no hold and idle", c)
+	}
+}
+
 // A crew id is worker-written and becomes a path under crews/: one that is not
 // a valid id never becomes a crew, so it cannot point status at a file the
 // worker made.
@@ -374,7 +396,8 @@ func TestStatusIgnoresInvalidCrewIDs(t *testing.T) {
 
 // A bus the hold fold cannot read must not read as a crew with no holds.
 func TestStatusUnreadableHoldFoldSkipsTheRepo(t *testing.T) {
-	f := newStatusFix(t, "5",
+	f := newStatusFix(t,
+		wmsg(20, "c1", "dispatcher:c1", "hold:c1", `"5"`),
 		wmsg(10, "c1", "dispatcher:c1", "hold:c1", `"{\"id\":\"h\"}"`))
 	doc := f.collect(StatusRequest{})
 	if len(doc.Repos) != 0 || len(doc.Skipped) != 1 || doc.Skipped[0].Path != f.common {
@@ -621,7 +644,11 @@ func TestStatusFleetQueue(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(record, fmt.Appendf(nil, `{"holds":{"h2":{"demoted":%d},"h5":{"demoted":%d,"parked":%d}}}`, ago(300), ago(400), ago(200)), 0o644); err != nil {
+	rec, _ := json.Marshal(dueDoc(map[holdKey]dueEntry{
+		{f.common, "c1", "h2"}: {Demoted: ago(300)},
+		{f.common, "c1", "h5"}: {Demoted: ago(400), Parked: ago(200)},
+	}))
+	if err := os.WriteFile(record, rec, 0o644); err != nil {
 		t.Fatal(err)
 	}
 

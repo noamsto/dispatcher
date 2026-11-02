@@ -1318,9 +1318,14 @@ chrome_gate() {
 }
 
 # _fleet_hold_hint <tier> — the second line of a fleet refusal: the
-# machine-wide queue is the alternative to retrying by hand.
+# machine-wide queue is the alternative to retrying by hand. A refused release
+# (--fleet-hold) is already queued, so it is told to wait, not to place another.
 _fleet_hold_hint() {
-  echo "dispatch: to wait in the machine-wide queue instead, place a fleet hold: crew hold add --fleet --agent <engine> --ref <ref> --branch <branch> --tier $1 --model <model> --effort <effort> <title> -> skill dispatcher:budget-holds" >&2
+  if [ -n "$fleet_hold" ]; then
+    echo "dispatch: fleet hold $fleet_hold stays queued; take it again when crew hold due reports it due" >&2
+    return 0
+  fi
+  echo "dispatch: to wait in the machine-wide queue instead, place a fleet hold: crew hold add --fleet --agent <engine> --ref <ref> --branch <branch> --tier $1 --model <model> --effort <effort> <title>; when crew hold due reports it, take it with dispatch --fleet-hold <id>, then crew hold release <id> -> skill dispatcher:budget-holds" >&2
 }
 
 # _fleet_queue_gate <tier> <weight> [--own <branch>...] — refuse a new lead

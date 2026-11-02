@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
@@ -118,15 +119,19 @@ func Prio(ctx context.Context, req PrioRequest, stdout, stderr io.Writer, o Queu
 }
 
 // registeredRepo is the one registry entry arg names, by its common dir, its
-// checkout or its repo name, as a clean path; why says when none or several
-// do.
+// checkout, a directory in one of its worktrees or its repo name, as a clean
+// path; why says when none or several do.
 func registeredRepo(ctx context.Context, arg string, o QueueOptions) (common, name, why string) {
 	abs, _ := filepath.Abs(arg)
+	var gitCommon string
+	if info, err := os.Stat(abs); err == nil && info.IsDir() {
+		gitCommon = git.Output(ctx, o.Git, abs, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	}
 	names := repoNamer(ctx, o.Git)
 	var matches []string
 	for _, r := range repos.Registered(o.Registry, o.Getenv) {
 		c := filepath.Clean(r.Common)
-		if abs == c || abs == filepath.Dir(c) || arg == names(r.Common) {
+		if abs == c || abs == filepath.Dir(c) || gitCommon == c || arg == names(r.Common) {
 			matches = append(matches, c)
 		}
 	}

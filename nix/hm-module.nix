@@ -273,10 +273,10 @@ in {
       example = 900;
       description = ''
         A fleet hold that stays the due hold this many seconds without being
-        released is demoted behind every other hold; demoted and due for another
-        timeout, it is parked. 0 disables demotion. Set, it is emitted into the
-        locked settings layer. Unset (the default, 900 from the base defaults),
-        the user settings file governs.
+        released is demoted behind every non-demoted hold; demoted and due for
+        another timeout, it is parked. 0 disables demotion. Set, it is emitted
+        into the locked settings layer. Unset (the default, 900 from the base
+        defaults), the user settings file governs.
       '';
     };
 

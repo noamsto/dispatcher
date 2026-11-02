@@ -227,7 +227,7 @@ func CollectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 	} else {
 		lo := LoadOptions{Getenv: o.Getenv, Registry: o.Registry, Tmux: once, Git: o.Git, Clock: o.Clock, BudgetFile: o.BudgetFile, Cmd: o.Cmd}
 		q := newQueue(ctx, QueueOptions{LoadOptions: lo, Proc: o.Proc}, scanFleet(o.Registry, o.Getenv, buses.read, nowMS), s, now)
-		var rec map[string]dueEntry
+		var rec map[holdKey]dueEntry
 		rec, due = q.advance(readRecord(duePath(o.Getenv)))
 		doc.Machine = &q.load
 		doc.Queue = q.report(rec, repoNamer(ctx, o.Git))
@@ -482,7 +482,7 @@ func (b *repoBuild) holds(crew string) ([]HoldStatus, error) {
 	if !b.idx.holders[crew] {
 		return out, nil
 	}
-	held, err := hold.Outstanding(b.docs, crew)
+	held, err := hold.Outstanding(b.idx.holdDocs, crew)
 	if err != nil {
 		return nil, err
 	}
@@ -563,6 +563,7 @@ type busIndex struct {
 	last     map[string]int64       // crew → newest event
 	holdAt   map[crewKey]int64      // {crew, hold id} → ts of its add
 	holders  map[string]bool        // crews with a hold row
+	holdDocs []any                  // the hold rows, the fold's input
 	overseer []overseerMsg
 }
 
@@ -594,8 +595,10 @@ func indexBus(events []bus.Event, host string) busIndex {
 			k := crewKey{e.CrewID, e.To}
 			idx.replies[k] = append(idx.replies[k], ts)
 		}
-		if crew, ok := strings.CutPrefix(e.To, "hold:"); ok && crew == e.CrewID {
+		// Any sender may post to hold:<crew>; only the dispatcher's rows are holds.
+		if crew, ok := strings.CutPrefix(e.To, "hold:"); ok && crew == e.CrewID && e.From == "dispatcher:"+crew {
 			idx.holders[crew] = true
+			idx.holdDocs = append(idx.holdDocs, e.Doc)
 			if id, _ := bodyObject(doc["body"])["id"].(string); id != "" {
 				if _, seen := idx.holdAt[crewKey{crew, id}]; !seen {
 					idx.holdAt[crewKey{crew, id}] = ts

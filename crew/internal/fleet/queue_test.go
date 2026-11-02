@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -246,13 +247,16 @@ func (f *queueFix) recordPath() string {
 	return filepath.Join(f.env["XDG_STATE_HOME"], "crew", "fleet-due.json")
 }
 
-func (f *queueFix) record() map[string]dueEntry { return readRecord(f.recordPath()) }
+func (f *queueFix) record() map[holdKey]dueEntry { return readRecord(f.recordPath()) }
 
-func (f *queueFix) writeRecord(holds map[string]dueEntry) {
+func (f *queueFix) writeRecord(rec map[holdKey]dueEntry) {
 	f.t.Helper()
-	b, _ := json.Marshal(map[string]any{"holds": holds})
+	b, _ := json.Marshal(dueDoc(rec))
 	f.write(f.recordPath(), string(b))
 }
+
+// key is the record key of crew's hold id in repo.
+func (f *queueFix) key(repo, crew, id string) holdKey { return holdKey{f.commons[repo], crew, id} }
 
 func (f *queueFix) due(repo, crew string, record bool) hold.FleetVerdict {
 	f.t.Helper()
@@ -395,6 +399,54 @@ func TestQueueMembershipAndEligibility(t *testing.T) {
 	}
 }
 
+// forged is row as a worker can post it with `crew msg`: the same row, from a
+// worker.
+func forged(row string) string {
+	var doc map[string]any
+	_ = json.Unmarshal([]byte(row), &doc)
+	doc["from"] = "worker:feat/x#s1"
+	b, _ := json.Marshal(doc)
+	return string(b)
+}
+
+// Only the dispatcher writes a hold row: a worker's post to hold:<crew> adds no
+// hold, re-dates or re-ranks none, releases none and weighs nothing.
+func TestWorkerHoldRowsAreNoQueueInput(t *testing.T) {
+	f := newQueueFix(t, "alpha", "beta")
+	f.register("alpha", "c1", livePID)
+	f.register("beta", "c2", livePID)
+	f.register("beta", "c3", livePID)
+	f.post("alpha", forged(fleetAddRow(f.ms(900), "c1", "x", "feat/x", "high", 1)))
+	f.add("alpha", "c1", "a", 2, 600)
+	f.post("alpha",
+		forged(releaseRow(f.ms(10), "c1", "a")),
+		forged(fleetAddRow(f.ms(50), "c1", "p", "feat/p", "normal", 3)),
+		forged(releaseRow(f.ms(5), "c1", "p")),
+	)
+	f.post("beta",
+		forged(fleetAddRow(f.ms(5000), "c2", "b", "feat/b", "high", 1)),
+		forged(fleetAddRow(f.ms(800), "c3", "z", "feat/z", "high", 1)),
+	)
+	f.add("beta", "c2", "b", 1, 300)
+
+	d := f.doc()
+	if strings.Join(d.ids(), ",") != "a,b" || d.dueID() != "a" || d.Free == nil || *d.Free != 8 {
+		t.Errorf("holds %v, due %q, free %v; want a,b with a due and nothing pending", d.ids(), d.dueID(), d.Free)
+	}
+	if b := d.row(t, "b"); b.Prio != "normal" || b.TS != f.ms(300) {
+		t.Errorf("b = %+v, want its own add's prio and ts", b)
+	}
+	if v := f.due("alpha", "c1", false); strings.Join(v.Due, ",") != "a" {
+		t.Errorf("c1 handed %v, want a", v.Due)
+	}
+	if v := f.due("beta", "c3", false); len(v.Due) != 0 || len(v.Parked) != 0 {
+		t.Errorf("a crew with only worker rows got %+v", v)
+	}
+	if code, out := f.admit(QueueRequest{}); code != ExitRefused || !strings.Contains(out, "first in order: a ") {
+		t.Errorf("--admit exits %d: %q", code, out)
+	}
+}
+
 func TestQueueOrder(t *testing.T) {
 	type h struct {
 		repo, crew, id, prio string
@@ -506,9 +558,9 @@ func TestDueOneAtATime(t *testing.T) {
 			f.add("alpha", "c1", "a", 2, 600)
 			f.add("beta", "c2", "b", 1, 300)
 			f.add("beta", "c2", "c", 1, 100)
-			rec := map[string]dueEntry{}
+			rec := map[holdKey]dueEntry{}
 			for _, id := range tc.demoted {
-				rec[id] = dueEntry{Demoted: 1}
+				rec[f.key("beta", "c2", id)] = dueEntry{Demoted: 1}
 			}
 			f.writeRecord(rec)
 
@@ -546,16 +598,16 @@ func TestDueHandsAtMostOneCrewADueHold(t *testing.T) {
 				f.register(c.repo, c.crew, livePID)
 			}
 		}
-		rec := map[string]dueEntry{}
+		rec := map[holdKey]dueEntry{}
 		for i := range rng.IntN(9) {
 			c := crews[rng.IntN(len(crews))]
 			id := fmt.Sprintf("h%d", i)
 			f.addPrio(c.repo, c.crew, id, []string{"high", "normal", "low", ""}[rng.IntN(4)], 1+rng.IntN(3), int64(rng.IntN(3000)))
 			switch rng.IntN(6) {
 			case 0:
-				rec[id] = dueEntry{Demoted: f.ms(100)}
+				rec[f.key(c.repo, c.crew, id)] = dueEntry{Demoted: f.ms(100)}
 			case 1:
-				rec[id] = dueEntry{FirstDue: f.ms(int64(rng.IntN(1000)))}
+				rec[f.key(c.repo, c.crew, id)] = dueEntry{FirstDue: f.ms(int64(rng.IntN(1000)))}
 			case 2:
 				f.release(c.repo, c.crew, id, int64(rng.IntN(300)))
 			}
@@ -612,6 +664,16 @@ func TestDueFreeIncludesPending(t *testing.T) {
 	if d := f.doc(); *d.Free != 4 || d.dueID() != "h" {
 		t.Errorf("with the released branch's lead pane up: free %d, due %q; want 4 and h", *d.Free, d.dueID())
 	}
+
+	// A weight that is no number cannot be weighed: released, it weighs
+	// nothing; outstanding, it is parked as oversize.
+	unweighable := func(id string) string {
+		return holdRowJSON(f.ms(20), "c2", map[string]any{"id": id, "wait": map[string]any{"kind": "fleet", "weight": "heavy"}, "task": map[string]any{"branch": "feat/" + id}})
+	}
+	f.post("beta", unweighable("u"), releaseRow(f.ms(10), "c2", "u"), unweighable("w"))
+	if d := f.doc(); *d.Free != 4 || d.dueID() != "h" || reasonOf(d.row(t, "w")) != "oversize" {
+		t.Errorf("with an unweighable release: free %d, due %q, w %+v; want 4, h and w oversize", *d.Free, d.dueID(), d.row(t, "w"))
+	}
 }
 
 // A full machine demotes nothing: a hold that never fits is never due, so its
@@ -637,7 +699,7 @@ func TestCongestionDemotesNothing(t *testing.T) {
 	if v := f.due("alpha", "c1", true); strings.Join(v.Due, ",") != "a" {
 		t.Errorf("once capacity frees, due %v, want a", v.Due)
 	}
-	if got := f.record(); len(got) != 1 || got["a"] != (dueEntry{FirstDue: f.now.UnixMilli()}) {
+	if got := f.record(); len(got) != 1 || got[f.key("alpha", "c1", "a")] != (dueEntry{FirstDue: f.now.UnixMilli()}) {
 		t.Errorf("record %v, want a's clock started now", got)
 	}
 }
@@ -661,7 +723,7 @@ func TestTheClockCountsOnlyTimeDue(t *testing.T) {
 	f.advance(headTimeout / 2)
 	f.panes = nil
 	f.due("alpha", "c1", true)
-	if got := f.record(); got["a"] != (dueEntry{FirstDue: f.now.UnixMilli()}) {
+	if got := f.record(); got[f.key("alpha", "c1", "a")] != (dueEntry{FirstDue: f.now.UnixMilli()}) {
 		t.Errorf("record %v, want a due since now, not demoted", got)
 	}
 }
@@ -676,18 +738,19 @@ func TestDemotionCountsTimeDue(t *testing.T) {
 	f.register("gamma", "c3", livePID)
 	f.add("alpha", "c1", "a", 2, 100)
 	f.add("beta", "c2", "b", 2, 50)
+	ka, kb := f.key("alpha", "c1", "a"), f.key("beta", "c2", "b")
 	t0 := f.now.UnixMilli()
 
 	// c1 never runs a recording `crew hold due`; c2 does.
 	if v := f.due("beta", "c2", true); len(v.Due) != 0 {
 		t.Fatalf("c2 handed %v while a leads", v.Due)
 	}
-	if got := f.record(); got["a"] != (dueEntry{FirstDue: t0}) {
+	if got := f.record(); got[ka] != (dueEntry{FirstDue: t0}) {
 		t.Fatalf("record %v, want a due since t0", got)
 	}
 	f.advance(headTimeout - 1)
 	f.due("beta", "c2", true)
-	if got := f.record(); got["a"] != (dueEntry{FirstDue: t0}) {
+	if got := f.record(); got[ka] != (dueEntry{FirstDue: t0}) {
 		t.Fatalf("a timeout less a second: record %v", got)
 	}
 
@@ -696,7 +759,7 @@ func TestDemotionCountsTimeDue(t *testing.T) {
 	if v := f.due("beta", "c2", true); strings.Join(v.Due, ",") != "b" {
 		t.Fatalf("at the timeout c2 is handed %v, want b in the same run", v.Due)
 	}
-	if got := f.record(); len(got) != 2 || got["a"] != (dueEntry{Demoted: t1}) || got["b"] != (dueEntry{FirstDue: t1}) {
+	if got := f.record(); len(got) != 2 || got[ka] != (dueEntry{Demoted: t1}) || got[kb] != (dueEntry{FirstDue: t1}) {
 		t.Fatalf("record %v, want a demoted and b due", got)
 	}
 	if v := f.due("alpha", "c1", false); len(v.Due) != 0 || len(v.Parked) != 0 {
@@ -726,7 +789,7 @@ func TestDemotionCountsTimeDue(t *testing.T) {
 	if v := f.due("alpha", "c1", false); strings.Join(v.Due, ",") != "a" {
 		t.Fatalf("a alone: c1 handed %v", v.Due)
 	}
-	if got := f.record(); len(got) != 1 || got["a"] != (dueEntry{FirstDue: t2, Demoted: t1}) {
+	if got := f.record(); len(got) != 1 || got[ka] != (dueEntry{FirstDue: t2, Demoted: t1}) {
 		t.Fatalf("record %v, want a demoted and due since t2", got)
 	}
 
@@ -737,7 +800,7 @@ func TestDemotionCountsTimeDue(t *testing.T) {
 	if v := f.due("beta", "c2", true); len(v.Due) != 0 {
 		t.Errorf("after the second timeout c2 is handed %v", v.Due)
 	}
-	if got := f.record(); got["a"] != (dueEntry{Demoted: t1, Parked: t3}) {
+	if got := f.record(); got[ka] != (dueEntry{Demoted: t1, Parked: t3}) {
 		t.Fatalf("record %v, want a parked at t3", got)
 	}
 	v := f.due("alpha", "c1", false)
@@ -753,29 +816,123 @@ func TestDemotionCountsTimeDue(t *testing.T) {
 	}
 }
 
+// A hold id is unique only within its crew's sink: two holds that share one,
+// here even the crew id, keep clocks of their own.
+func TestHoldsSharingAnIDKeepTheirOwnClocks(t *testing.T) {
+	f := newQueueFix(t, "alpha", "beta")
+	f.register("alpha", "c1", livePID)
+	f.register("beta", "c1", livePID)
+	f.add("alpha", "c1", "h", 2, 100)
+	f.add("beta", "c1", "h", 2, 50)
+	f.due("alpha", "c1", true)
+	f.advance(headTimeout)
+	if v := f.due("beta", "c1", true); strings.Join(v.Due, ",") != "h" {
+		t.Errorf("at the timeout beta's c1 is handed %v, want its own h", v.Due)
+	}
+	now := f.now.UnixMilli()
+	want := map[holdKey]dueEntry{f.key("alpha", "c1", "h"): {Demoted: now}, f.key("beta", "c1", "h"): {FirstDue: now}}
+	if got := f.record(); !maps.Equal(got, want) {
+		t.Errorf("record %v, want %v", got, want)
+	}
+	if v := f.due("alpha", "c1", false); len(v.Due) != 0 {
+		t.Errorf("alpha's demoted h is handed %v", v.Due)
+	}
+	states := map[string]string{}
+	for _, r := range f.doc().Holds {
+		states[r.Common] = r.State
+	}
+	if want := map[string]string{f.commons["alpha"]: "demoted", f.commons["beta"]: "due"}; fmt.Sprint(states) != fmt.Sprint(want) {
+		t.Errorf("states %v, want %v", states, want)
+	}
+}
+
+// A crew whose hold fold fails is unknown this evaluation, not released: it
+// hides no other crew's hold, its repo's releases still weigh and rank it, and
+// a recording run leaves its clocks as they were.
+func TestAFailedFoldCostsOnlyItsCrew(t *testing.T) {
+	f := newQueueFix(t, "alpha", "beta")
+	f.register("alpha", "c1", livePID)
+	f.register("alpha", "c2", livePID)
+	f.register("beta", "c3", livePID)
+	f.add("alpha", "c1", "a", 1, 600)
+	f.add("alpha", "c2", "b", 1, 300)
+	f.add("alpha", "c2", "r", 3, 400)
+	f.release("alpha", "c2", "r", 30)
+	f.post("alpha", fmt.Sprintf(`{"ts":%d,"crew_id":"c2","from":"dispatcher:c2","to":"hold:c2","kind":"msg","body":"5"}`, f.ms(200)))
+	f.add("beta", "c3", "g", 1, 100)
+
+	d := f.doc()
+	if strings.Join(d.ids(), ",") != "g,a" || d.dueID() != "g" || d.Free == nil || *d.Free != 5 {
+		t.Errorf("holds %v, due %q, free %v; want g ahead of the just-released alpha's a, and r pending", d.ids(), d.dueID(), d.Free)
+	}
+
+	kb := f.key("alpha", "c2", "b")
+	f.writeRecord(map[holdKey]dueEntry{kb: {Demoted: 1}, f.key("alpha", "c1", "gone"): {Demoted: 1}})
+	f.due("alpha", "c1", true)
+	want := map[holdKey]dueEntry{kb: {Demoted: 1}, f.key("beta", "c3", "g"): {FirstDue: f.now.UnixMilli()}}
+	if got := f.record(); !maps.Equal(got, want) {
+		t.Errorf("record %v, want %v", got, want)
+	}
+}
+
+// A registered repo whose bus cannot be read this scan keeps its clocks.
+func TestAnUnreadableBusKeepsItsClocks(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode 000 file")
+	}
+	f := newQueueFix(t, "alpha", "beta")
+	f.register("alpha", "c1", livePID)
+	f.register("beta", "c2", livePID)
+	f.add("alpha", "c1", "a", 1, 600)
+	f.add("beta", "c2", "b", 1, 300)
+	kb := f.key("beta", "c2", "b")
+	f.writeRecord(map[holdKey]dueEntry{kb: {Demoted: 1}})
+	if err := os.Chmod(f.busPath("beta"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(f.busPath("beta"), 0o644) })
+
+	f.due("alpha", "c1", true)
+	want := map[holdKey]dueEntry{kb: {Demoted: 1}, f.key("alpha", "c1", "a"): {FirstDue: f.now.UnixMilli()}}
+	if got := f.record(); !maps.Equal(got, want) {
+		t.Errorf("record %v, want %v", got, want)
+	}
+	f.release("alpha", "c1", "a", 0)
+	f.due("alpha", "c1", true)
+	if got := f.record(); !maps.Equal(got, map[holdKey]dueEntry{kb: {Demoted: 1}}) {
+		t.Errorf("with no hold read anywhere: record %v, want b's entry kept", got)
+	}
+}
+
 // Losing the record restarts the clocks: the demotion comes a timeout later.
 func TestLosingTheRecordRestartsTheClocks(t *testing.T) {
 	f := newQueueFix(t, "alpha")
 	f.register("alpha", "c1", livePID)
 	f.add("alpha", "c1", "a", 2, 100)
+	ka := f.key("alpha", "c1", "a")
 	f.due("alpha", "c1", true)
 	if err := os.Remove(f.recordPath()); err != nil {
 		t.Fatal(err)
 	}
 	f.advance(headTimeout)
 	f.due("alpha", "c1", true)
-	if got := f.record(); got["a"] != (dueEntry{FirstDue: f.now.UnixMilli()}) {
+	if got := f.record(); got[ka] != (dueEntry{FirstDue: f.now.UnixMilli()}) {
 		t.Fatalf("record %v, want a fresh clock", got)
 	}
-	f.write(f.recordPath(), "{not json")
-	f.advance(headTimeout)
-	f.due("alpha", "c1", true)
-	if got := f.record(); got["a"] != (dueEntry{FirstDue: f.now.UnixMilli()}) {
-		t.Fatalf("a corrupt record: %v, want a fresh clock", got)
+	for name, text := range map[string]string{
+		"a corrupt record":                   "{not json",
+		"a record keyed by the bare hold id": fmt.Sprintf(`{"holds":{"a":{"first_due":%d}}}`, f.ms(headTimeout)),
+	} {
+		f.write(f.recordPath(), text)
+		f.advance(headTimeout)
+		f.due("alpha", "c1", true)
+		if got := f.record(); got[ka] != (dueEntry{FirstDue: f.now.UnixMilli()}) {
+			t.Fatalf("%s: %v, want a fresh clock", name, got)
+		}
 	}
 	f.advance(headTimeout)
 	f.due("alpha", "c1", true)
-	if got := f.record(); got["a"].Demoted != f.now.UnixMilli() {
+	if got := f.record(); got[ka].Demoted != f.now.UnixMilli() {
 		t.Errorf("record %v, want a demoted one timeout after its clock restarted", got)
 	}
 }
@@ -792,7 +949,7 @@ func TestHeadTimeoutZeroNeverDemotes(t *testing.T) {
 		}
 		f.advance(100 * headTimeout)
 	}
-	if got := f.record(); got["a"] != (dueEntry{FirstDue: t0}) {
+	if got := f.record(); got[f.key("alpha", "c1", "a")] != (dueEntry{FirstDue: t0}) {
 		t.Errorf("record %v, want a due since t0 and never demoted", got)
 	}
 }
@@ -846,7 +1003,7 @@ func TestOnlyARecordingDueWrites(t *testing.T) {
 	}
 	// A record the evaluation would change (a demotion, a stale entry) is left
 	// byte for byte by every reader.
-	f.writeRecord(map[string]dueEntry{"a": {FirstDue: f.ms(headTimeout + 1)}, "gone": {Demoted: 1}})
+	f.writeRecord(map[holdKey]dueEntry{f.key("alpha", "c1", "a"): {FirstDue: f.ms(headTimeout + 1)}, f.key("alpha", "c1", "gone"): {Demoted: 1}})
 	before, _ := os.ReadFile(f.recordPath())
 	for name, read := range readers {
 		read()
@@ -857,7 +1014,7 @@ func TestOnlyARecordingDueWrites(t *testing.T) {
 
 	f.due("alpha", "c1", true)
 	now := f.now.UnixMilli()
-	if got := f.record(); len(got) != 1 || got["a"] != (dueEntry{FirstDue: now, Demoted: now}) {
+	if got := f.record(); len(got) != 1 || got[f.key("alpha", "c1", "a")] != (dueEntry{FirstDue: now, Demoted: now}) {
 		t.Errorf("record %v, want a demoted, due again, and gone dropped", got)
 	}
 	if info, err := os.Stat(f.recordPath()); err != nil || info.Mode().Perm() != 0o644 {
@@ -955,7 +1112,7 @@ func TestHoldDueRecordsOnlyForTheDispatcher(t *testing.T) {
 	if ids := run(sender.Probes{}); strings.Join(ids, ",") != "a" {
 		t.Errorf("the dispatcher sees due %v, want a", ids)
 	}
-	if got := f.record(); got["a"] != (dueEntry{FirstDue: f.now.UnixMilli()}) {
+	if got := f.record(); got[f.key("alpha", "c1", "a")] != (dueEntry{FirstDue: f.now.UnixMilli()}) {
 		t.Errorf("record %v, want a's clock started", got)
 	}
 }
@@ -994,11 +1151,12 @@ func TestQueueAdmit(t *testing.T) {
 		t.Errorf("a re-dispatch over a branch with a lead pane: exit %d %q", code, out)
 	}
 
-	f.writeRecord(map[string]dueEntry{"a": {Demoted: 1}, "b": {Demoted: 1}})
+	ka, kb := f.key("alpha", "c1", "a"), f.key("beta", "c2", "b")
+	f.writeRecord(map[holdKey]dueEntry{ka: {Demoted: 1}, kb: {Demoted: 1}})
 	if code, out := f.admit(QueueRequest{}); code != ExitRefused || !strings.Contains(out, "first in order: a ") {
 		t.Errorf("demoted holds still wait: exit %d %q", code, out)
 	}
-	f.writeRecord(map[string]dueEntry{"a": {Parked: 1}, "b": {Demoted: 1, Parked: 1}})
+	f.writeRecord(map[holdKey]dueEntry{ka: {Parked: 1}, kb: {Demoted: 1, Parked: 1}})
 	f.add("beta", "c3", "dead-crew", 1, 900)
 	if code, out := f.admit(QueueRequest{}); code != ExitFits || out != "" {
 		t.Errorf("only parked holds remain: exit %d %q", code, out)
@@ -1026,7 +1184,7 @@ func TestQueueDocument(t *testing.T) {
 	f.addPrio("alpha", "c1", "a", "high", 2, 600)
 	f.addPrio("beta", "c2", "b", "", 3, 300)
 	f.add("beta", "c2", "c", 1, 100)
-	f.writeRecord(map[string]dueEntry{"c": {Demoted: f.ms(50)}})
+	f.writeRecord(map[holdKey]dueEntry{f.key("beta", "c2", "c"): {Demoted: f.ms(50)}})
 
 	d := f.doc()
 	if d.TS != f.now.UnixMilli() || d.Budget != 3 || d.Free == nil || *d.Free != 3 || d.LoadOver {

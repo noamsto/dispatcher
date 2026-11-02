@@ -3310,7 +3310,7 @@ fleet_hold_add() {
   run run_dispatch standard sonnet --effort medium --crew-id c1 201 "t"
   [ "$status" -eq 1 ]
   [[ "$output" == *"dispatch: refused, fleet holds are waiting — first in order: $other ("*", crew other, waited "*"); a new lead waits its turn in the machine-wide queue, or pass --ignore-budget"* ]]
-  [[ "$output" == *"dispatch: to wait in the machine-wide queue instead, place a fleet hold: crew hold add --fleet --agent <engine> --ref <ref> --branch <branch> --tier standard --model <model> --effort <effort> <title> -> skill dispatcher:budget-holds"* ]]
+  [[ "$output" == *"dispatch: to wait in the machine-wide queue instead, place a fleet hold: crew hold add --fleet --agent <engine> --ref <ref> --branch <branch> --tier standard --model <model> --effort <effort> <title>; when crew hold due reports it, take it with dispatch --fleet-hold <id>, then crew hold release <id> -> skill dispatcher:budget-holds"* ]]
   [[ "$output" != *"machine at capacity"* ]]
   grep -qF -- 'fleet queue --admit 2 --crew c1' "$STUB_LOG"
 }
@@ -3352,6 +3352,8 @@ fleet_hold_add() {
   run run_dispatch standard sonnet --effort medium --crew-id c1 --fleet-hold "$mine" 204 "t"
   [ "$status" -eq 1 ]
   [[ "$output" == *"dispatch: refused, fleet holds are waiting — first in order: $first "* ]]
+  [[ "$output" == *"dispatch: fleet hold $mine stays queued; take it again when crew hold due reports it due"* ]]
+  [[ "$output" != *"crew hold add --fleet"* ]]
 
   run run_dispatch standard sonnet --effort medium --ignore-budget --crew-id c1 --fleet-hold "$mine" 204 "t"
   [ "$status" -eq 0 ]
@@ -3408,6 +3410,15 @@ fleet_hold_add() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"dispatch: refused, machine at capacity — "* ]]
   [[ "$output" == *"dispatch: to wait in the machine-wide queue instead, place a fleet hold: crew hold add --fleet --agent <engine> --ref <ref> --branch <branch> --tier deep --model <model>"* ]]
+  [[ "$output" == *"take it with dispatch --fleet-hold <id>, then crew hold release <id>"* ]]
+
+  fleet_crew_live c1
+  mine="$(fleet_hold_add c1)"
+  run run_dispatch deep opus --effort medium --crew-id c1 --fleet-hold "$mine" 208 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: refused, machine at capacity — "* ]]
+  [[ "$output" == *"dispatch: fleet hold $mine stays queued; take it again when crew hold due reports it due"* ]]
+  [[ "$output" != *"crew hold add --fleet"* ]]
 }
 
 @test "1426 fleet holds: a crew fleet queue that errors fails open with a note on stderr" {

@@ -103,6 +103,12 @@ type queued struct {
 	eligible         bool
 }
 
+// holdKey is a hold's identity on the machine: a hold id is unique only within
+// its crew's sink.
+type holdKey struct{ common, crew, id string }
+
+func (h *queued) key() holdKey { return holdKey{h.common, h.crew, h.id} }
+
 // releasedHold is a fleet hold released within the pending window.
 type releasedHold struct {
 	branch string
@@ -110,12 +116,33 @@ type releasedHold struct {
 }
 
 // fleetScan is one read of the registry repos' buses: their outstanding fleet
-// holds, the fleet holds released within the pending window, and each repo's
-// newest fleet release.
+// holds, the fleet holds released within the pending window, each repo's
+// newest fleet release, and what could not be read.
 type fleetScan struct {
 	holds       []*queued
 	released    []releasedHold
 	lastRelease map[string]int64
+	unread      unread
+}
+
+// unread is what one scan could not read: repos whose bus failed, by common
+// dir, and crews whose hold fold failed. Their holds are unknown this
+// evaluation, not released.
+type unread struct {
+	repos map[string]bool
+	crews map[crewRef]bool
+}
+
+// kept is rec's entries for the holds u could not read, which wait untouched
+// for a scan that reads them.
+func (u unread) kept(rec map[holdKey]dueEntry) map[holdKey]dueEntry {
+	out := map[holdKey]dueEntry{}
+	for k, e := range rec {
+		if u.repos[k.common] || u.crews[crewRef{k.common, k.crew}] {
+			out[k] = e
+		}
+	}
+	return out
 }
 
 // busReader reads one repo's bus as readBus does.
@@ -141,16 +168,20 @@ func (c busCache) read(common string) ([]bus.Event, string, string) {
 
 // scanFleet reads the registry's repos, never the walk: the walk's roots are
 // the caller's, and every dispatcher must see the same queue. A repo whose bus
-// or hold fold cannot be read adds nothing this evaluation.
+// cannot be read, or a crew whose hold fold fails, adds no hold this
+// evaluation.
 func scanFleet(registry string, getenv func(string) string, read busReader, nowMS int64) fleetScan {
-	s := fleetScan{lastRelease: map[string]int64{}}
+	s := fleetScan{lastRelease: map[string]int64{}, unread: unread{repos: map[string]bool{}, crews: map[crewRef]bool{}}}
 	for _, r := range repos.Registered(registry, getenv) {
 		if r.Status != repos.StatusOK {
 			continue
 		}
-		if events, _, skip := read(r.Common); skip == "" {
-			s.addRepo(r.Common, events, nowMS)
+		events, _, skip := read(r.Common)
+		if skip != "" {
+			s.unread.repos[r.Common] = true
+			continue
 		}
+		s.addRepo(r.Common, events, nowMS)
 	}
 	return s
 }
@@ -159,24 +190,28 @@ type crewHold struct{ crew, id string }
 
 // holdAdd is the first add row of one hold id in a crew's sink.
 type holdAdd struct {
-	ts           int64
-	fleet        bool
-	branch, prio string
-	weight       int
+	ts               int64
+	fleet, weighable bool
+	branch, prio     string
+	weight           int
 }
 
-// addRepo adds one bus. Which holds are outstanding is hold.Outstanding's
-// answer, the fold `crew hold due` matches the verdict against; a hold's ts is
-// its first add row's, and a release counts once, at its first row.
+// addRepo adds one bus. Only the dispatcher writes a hold row, and any sender
+// may post to hold:<crew>, so a row from anyone else is no input. Which holds
+// are outstanding is hold.Outstanding's answer over the dispatcher's rows, the
+// fold `crew hold due` matches the verdict against; a hold's ts is its first
+// add row's, and a release counts once, at its first row.
 func (s *fleetScan) addRepo(common string, events []bus.Event, nowMS int64) {
 	adds := map[crewHold]holdAdd{}
 	releasedAt := map[crewHold]int64{}
+	var docs []any
 	var fleetCrews []string
 	for _, e := range events {
 		crew, ok := strings.CutPrefix(e.To, "hold:")
-		if e.Kind != bus.KindMsg || !ok || crew != e.CrewID || !bus.ValidCrewID(crew) {
+		if e.Kind != bus.KindMsg || !ok || crew != e.CrewID || e.From != "dispatcher:"+crew || !bus.ValidCrewID(crew) {
 			continue
 		}
+		docs = append(docs, e.Doc)
 		doc, _ := e.Doc.(map[string]any)
 		body := holdBody(doc["body"])
 		id, _ := body["id"].(string)
@@ -196,12 +231,11 @@ func (s *fleetScan) addRepo(common string, events []bus.Event, nowMS int64) {
 			}
 		}
 	}
-	docs := eventDocs(events)
-	var holds []*queued
 	for _, crew := range fleetCrews {
 		out, err := hold.Outstanding(docs, crew)
 		if err != nil {
-			return
+			s.unread.crews[crewRef{common, crew}] = true
+			continue
 		}
 		list, _ := out.([]any)
 		seen := map[string]bool{}
@@ -213,7 +247,7 @@ func (s *fleetScan) addRepo(common string, events []bus.Event, nowMS int64) {
 				continue
 			}
 			seen[id] = true
-			holds = append(holds, &queued{common: common, crew: crew, id: id, branch: a.branch, prio: a.prio, weight: a.weight, ts: a.ts})
+			s.holds = append(s.holds, &queued{common: common, crew: crew, id: id, branch: a.branch, prio: a.prio, weight: a.weight, ts: a.ts})
 		}
 	}
 	for k, at := range releasedAt {
@@ -222,11 +256,12 @@ func (s *fleetScan) addRepo(common string, events []bus.Event, nowMS int64) {
 			continue
 		}
 		s.lastRelease[common] = max(s.lastRelease[common], at)
-		if age := nowMS - at; age >= 0 && age < pendingWindowMS {
+		// An unweighable weight stands in as past any budget, which as pending
+		// would refuse every dispatch on the machine for the window.
+		if age := nowMS - at; a.weighable && age >= 0 && age < pendingWindowMS {
 			s.released = append(s.released, releasedHold{branch: a.branch, weight: a.weight})
 		}
 	}
-	s.holds = append(s.holds, holds...)
 }
 
 // holdBody is a hold row's body as the hold fold reads it: JSON text in a
@@ -251,20 +286,21 @@ func addOf(ts int64, body map[string]any) holdAdd {
 	}
 	task, _ := body["task"].(map[string]any)
 	prio, _ := task["prio"].(string)
-	a.fleet, a.prio, a.weight = true, prioOf(prio), weightOf(wait["weight"])
+	a.fleet, a.prio = true, prioOf(prio)
+	a.weight, a.weighable = weightOf(wait["weight"])
 	a.branch, _ = task["branch"].(string)
 	return a
 }
 
-// weightOf is a fleet hold's weight, a whole number of at least 1. One that
-// is no number cannot be weighed, so it reads as past any budget: parked as
-// oversize, it never binds the queue.
-func weightOf(v any) int {
+// weightOf is a fleet hold's weight, a whole number of at least 1, and whether
+// it could be weighed. One that is no number reads as past any budget: parked
+// as oversize, it never binds the queue.
+func weightOf(v any) (int, bool) {
 	w, ok := number(v)
 	if !ok {
-		return maxBudget + 1
+		return maxBudget + 1, false
 	}
-	return int(math.Min(math.Max(math.Ceil(w), 1), maxBudget+1))
+	return int(math.Min(math.Max(math.Ceil(w), 1), maxBudget+1)), true
 }
 
 // prioOf is a hold's queue priority; a missing or unknown one is normal.
@@ -288,13 +324,15 @@ func prioRank(p string) int {
 type crewRef struct{ common, crew string }
 
 // queue is one evaluation's inputs: the outstanding fleet holds in queue
-// order, the capacity they wait on and the settings that judge them.
+// order, the capacity they wait on, the settings that judge them, and what the
+// scan could not read.
 type queue struct {
 	settings QueueSettings
 	nowMS    int64
 	load     LoadDoc
 	owned    map[string]bool
 	holds    []*queued
+	unread   unread
 }
 
 // newQueue weighs a scan: the machine's load, with the scan's releases as
@@ -305,7 +343,7 @@ func newQueue(ctx context.Context, o QueueOptions, scan fleetScan, s QueueSettin
 	if t == nil {
 		t = proc.OS{}
 	}
-	q := &queue{settings: s, nowMS: now.UnixMilli(), holds: slices.Clone(scan.holds)}
+	q := &queue{settings: s, nowMS: now.UnixMilli(), holds: slices.Clone(scan.holds), unread: scan.unread}
 	q.load, q.owned = measure(ctx, s.Budget, o.LoadOptions, scan.released)
 	prios := readPriorities(priorityPath(o.Getenv))
 	eligible := map[crewRef]bool{}
@@ -341,11 +379,11 @@ func (q *queue) waitedS(h *queued) int64 { return max(q.nowMS-h.ts, 0) / 1000 }
 
 // parked is why h cannot bind this evaluation, "" when it can: heavier than
 // the budget, parked by demotion, or its crew not eligible, in that order.
-func (q *queue) parked(h *queued, rec map[string]dueEntry) string {
+func (q *queue) parked(h *queued, rec map[holdKey]dueEntry) string {
 	switch {
 	case h.weight > q.settings.Budget:
 		return "oversize"
-	case rec[h.id].Parked != 0:
+	case rec[h.key()].Parked != 0:
 		return "demoted"
 	case !h.eligible:
 		return "ineligible"
@@ -355,11 +393,11 @@ func (q *queue) parked(h *queued, rec map[string]dueEntry) string {
 
 // split is the holds that can bind, each part in queue order: the
 // non-demoted, then the demoted.
-func (q *queue) split(rec map[string]dueEntry) (fresh, demoted []*queued) {
+func (q *queue) split(rec map[holdKey]dueEntry) (fresh, demoted []*queued) {
 	for _, h := range q.holds {
 		switch {
 		case q.parked(h, rec) != "":
-		case rec[h.id].Demoted != 0:
+		case rec[h.key()].Demoted != 0:
 			demoted = append(demoted, h)
 		default:
 			fresh = append(fresh, h)
@@ -371,7 +409,7 @@ func (q *queue) split(rec map[string]dueEntry) (fresh, demoted []*queued) {
 // pick is the one hold due under rec, nil for none. Nothing is due while the
 // load is over the cores: the gate refuses on load even when the weight fits,
 // so a hold due on weight alone would loop through refused releases.
-func (q *queue) pick(rec map[string]dueEntry) *queued {
+func (q *queue) pick(rec map[holdKey]dueEntry) *queued {
 	if q.load.LoadOver {
 		return nil
 	}
@@ -398,36 +436,45 @@ func (q *queue) pick(rec map[string]dueEntry) *queued {
 
 // advance is the demotion record after this evaluation, and the hold it
 // finds due. It is pure: every evaluator runs it, and only a recording run
-// keeps what it returns. The clock counts only time spent due, so congestion
-// demotes nothing; each timeout demotes or parks one hold and the queue is
-// picked again, so the next hold is due in the same evaluation.
-func (q *queue) advance(rec map[string]dueEntry) (map[string]dueEntry, *queued) {
-	next := map[string]dueEntry{}
+// keeps what it returns. The entries of holds no longer outstanding are
+// dropped; those of holds the scan could not read are kept as they were.
+func (q *queue) advance(rec map[holdKey]dueEntry) (map[holdKey]dueEntry, *queued) {
+	next := map[holdKey]dueEntry{}
 	for _, h := range q.holds {
-		if e, ok := rec[h.id]; ok {
-			next[h.id] = e
+		if e, ok := rec[h.key()]; ok {
+			next[h.key()] = e
 		}
 	}
+	due := q.runClocks(next)
+	maps.Copy(next, q.unread.kept(rec))
+	return compact(next), due
+}
+
+// runClocks moves the outstanding holds' clocks in next and returns the due
+// hold. The clock counts only time spent due, so congestion demotes nothing;
+// each timeout demotes or parks one hold and the queue is picked again, so the
+// next hold is due in the same evaluation.
+func (q *queue) runClocks(next map[holdKey]dueEntry) *queued {
 	timeout := int64(q.settings.HeadTimeout) * 1000
 	for {
 		due := q.pick(next)
-		for id, e := range next {
-			if due == nil || id != due.id {
+		for k, e := range next {
+			if due == nil || k != due.key() {
 				e.FirstDue = 0
-				next[id] = e
+				next[k] = e
 			}
 		}
 		if due == nil {
-			return compact(next), nil
+			return nil
 		}
-		e := next[due.id]
+		e := next[due.key()]
 		if e.FirstDue == 0 {
 			e.FirstDue = q.nowMS
-			next[due.id] = e
-			return compact(next), due
+			next[due.key()] = e
+			return due
 		}
 		if timeout == 0 || q.nowMS-e.FirstDue < timeout {
-			return compact(next), due
+			return due
 		}
 		if e.Demoted == 0 {
 			e.Demoted = q.nowMS
@@ -435,17 +482,17 @@ func (q *queue) advance(rec map[string]dueEntry) (map[string]dueEntry, *queued) 
 			e.Parked = q.nowMS
 		}
 		e.FirstDue = 0
-		next[due.id] = e
+		next[due.key()] = e
 	}
 }
 
-func compact(rec map[string]dueEntry) map[string]dueEntry {
-	maps.DeleteFunc(rec, func(_ string, e dueEntry) bool { return e == dueEntry{} })
+func compact(rec map[holdKey]dueEntry) map[holdKey]dueEntry {
+	maps.DeleteFunc(rec, func(_ holdKey, e dueEntry) bool { return e == dueEntry{} })
 	return rec
 }
 
 // first is the first hold in order that can bind, nil when none can.
-func (q *queue) first(rec map[string]dueEntry) *queued {
+func (q *queue) first(rec map[holdKey]dueEntry) *queued {
 	fresh, demoted := q.split(rec)
 	if all := append(fresh, demoted...); len(all) > 0 {
 		return all[0]
@@ -456,7 +503,7 @@ func (q *queue) first(rec map[string]dueEntry) *queued {
 // verdict is one crew's share of an evaluation: the due hold when it is the
 // crew's, and the crew's holds parked by demotion or as oversize, which its
 // owner must hear about. An ineligible crew's holds come back once it is.
-func (q *queue) verdict(common, crew string, rec map[string]dueEntry, due *queued) hold.FleetVerdict {
+func (q *queue) verdict(common, crew string, rec map[holdKey]dueEntry, due *queued) hold.FleetVerdict {
 	mine := func(h *queued) bool { return h.crew == crew && filepath.Clean(h.common) == filepath.Clean(common) }
 	var v hold.FleetVerdict
 	if due != nil && mine(due) {
@@ -478,9 +525,24 @@ type dueEntry struct {
 	Parked   int64 `json:"parked,omitempty"`
 }
 
-// dueFile is fleet-due.json, the machine's demotion record, keyed by hold id.
+// dueFile is fleet-due.json, the machine's demotion record: each hold's clocks
+// by its id, then its common dir and crew.
 type dueFile struct {
-	Holds map[string]dueEntry `json:"holds"`
+	Holds map[string]map[string]map[string]dueEntry `json:"holds"`
+}
+
+func dueDoc(rec map[holdKey]dueEntry) dueFile {
+	f := dueFile{Holds: map[string]map[string]map[string]dueEntry{}}
+	for k, e := range rec {
+		if f.Holds[k.id] == nil {
+			f.Holds[k.id] = map[string]map[string]dueEntry{}
+		}
+		if f.Holds[k.id][k.common] == nil {
+			f.Holds[k.id][k.common] = map[string]dueEntry{}
+		}
+		f.Holds[k.id][k.common][k.crew] = e
+	}
+	return f
 }
 
 func duePath(getenv func(string) string) string {
@@ -497,13 +559,21 @@ func stateHome(getenv func(string) string) string {
 
 // readRecord is the demotion record. A missing or unreadable one is empty,
 // which restarts the clocks: a demotion comes at most one timeout late.
-func readRecord(path string) map[string]dueEntry {
+func readRecord(path string) map[holdKey]dueEntry {
+	rec := map[holdKey]dueEntry{}
 	var f dueFile
 	data, err := os.ReadFile(path)
-	if err != nil || json.Unmarshal(data, &f) != nil || f.Holds == nil {
-		return map[string]dueEntry{}
+	if err != nil || json.Unmarshal(data, &f) != nil {
+		return rec
 	}
-	return f.Holds
+	for id, commons := range f.Holds {
+		for common, crews := range commons {
+			for crew, e := range crews {
+				rec[holdKey{common, crew, id}] = e
+			}
+		}
+	}
+	return rec
 }
 
 // updateRecord runs step over the record under its lock, re-read inside it,
@@ -512,7 +582,7 @@ func readRecord(path string) map[string]dueEntry {
 // each stream tick. While another writer holds the lock past lockWait, step
 // runs on an unlocked read and the file is left alone: the evaluation is then
 // read-only, and a later run records.
-func updateRecord(path string, step func(map[string]dueEntry) map[string]dueEntry) error {
+func updateRecord(path string, step func(map[holdKey]dueEntry) map[holdKey]dueEntry) error {
 	if prev := readRecord(path); maps.Equal(prev, step(prev)) {
 		return nil
 	}
@@ -531,7 +601,7 @@ func updateRecord(path string, step func(map[string]dueEntry) map[string]dueEntr
 	if maps.Equal(prev, next) {
 		return nil
 	}
-	data, err := json.Marshal(dueFile{Holds: next})
+	data, err := json.Marshal(dueDoc(next))
 	if err != nil {
 		return err
 	}
@@ -592,9 +662,10 @@ func Due(ctx context.Context, common, crew string, record bool, o QueueOptions) 
 	scan := scanFleet(o.Registry, o.Getenv, readBus, now.UnixMilli())
 	path := duePath(o.Getenv)
 	var v hold.FleetVerdict
-	step := func(map[string]dueEntry) map[string]dueEntry { return map[string]dueEntry{} }
+	step := scan.unread.kept
 	if len(scan.holds) == 0 {
-		// No fleet hold anywhere: no load scan, and a record only to empty.
+		// No fleet hold read anywhere: no load scan, and a record only to drop
+		// what was read.
 		if !record {
 			return v, nil
 		}
@@ -604,7 +675,7 @@ func Due(ctx context.Context, common, crew string, record bool, o QueueOptions) 
 			return v, err
 		}
 		q := newQueue(ctx, o, scan, s, now)
-		step = func(rec map[string]dueEntry) map[string]dueEntry {
+		step = func(rec map[holdKey]dueEntry) map[holdKey]dueEntry {
 			next, due := q.advance(rec)
 			v = q.verdict(common, crew, next, due)
 			return next
@@ -709,7 +780,7 @@ func Queue(ctx context.Context, req QueueRequest, stdout, stderr io.Writer, o Qu
 // admit is the admission rule: a new lead may start when it re-dispatches a
 // branch that already has a lead pane, when it is the release of the due
 // hold, or when no hold that can bind is waiting. Parked holds bar nobody.
-func (q *queue) admit(req QueueRequest, rec map[string]dueEntry, due *queued, names func(string) string, stdout io.Writer) int {
+func (q *queue) admit(req QueueRequest, rec map[holdKey]dueEntry, due *queued, names func(string) string, stdout io.Writer) int {
 	if ownsAny(q.owned, req.Own) {
 		return ExitFits
 	}
@@ -725,7 +796,7 @@ func (q *queue) admit(req QueueRequest, rec map[string]dueEntry, due *queued, na
 	return ExitRefused
 }
 
-func (q *queue) document(rec map[string]dueEntry, due *queued, crew string, names func(string) string) queueDoc {
+func (q *queue) document(rec map[holdKey]dueEntry, due *queued, crew string, names func(string) string) queueDoc {
 	ref := func(h *queued) queueRef {
 		return queueRef{Repo: names(h.common), Common: h.common, CrewID: h.crew, ID: h.id}
 	}
@@ -750,14 +821,14 @@ func (q *queue) document(rec map[string]dueEntry, due *queued, crew string, name
 		}
 		row := queueRow{
 			queueRef: ref(h), Branch: h.branch, Prio: h.prio, RepoPrio: h.repoPrio, Weight: h.weight, TS: h.ts,
-			WaitedS: q.waitedS(h), State: "waiting", FirstDue: nonZero(rec[h.id].FirstDue), DemotedAt: nonZero(rec[h.id].Demoted),
+			WaitedS: q.waitedS(h), State: "waiting", FirstDue: nonZero(rec[h.key()].FirstDue), DemotedAt: nonZero(rec[h.key()].Demoted),
 		}
 		switch reason := q.parked(h, rec); {
 		case reason != "":
 			row.State, row.Reason = "parked", &reason
 		case h == due:
 			row.State = "due"
-		case rec[h.id].Demoted != 0:
+		case rec[h.key()].Demoted != 0:
 			row.State = "demoted"
 		}
 		d.Holds = append(d.Holds, row)
@@ -790,7 +861,7 @@ func queueTable(rows []queueRow) []byte {
 
 // report is the queue as fleet status shows it: the head and its wait, the
 // demoted holds with their clocks, and every parked hold with its reason.
-func (q *queue) report(rec map[string]dueEntry, names func(string) string) QueueStatus {
+func (q *queue) report(rec map[holdKey]dueEntry, names func(string) string) QueueStatus {
 	out := QueueStatus{Demoted: []QueueDemote{}, Parked: []QueueParked{}}
 	fresh, demoted := q.split(rec)
 	if len(fresh) > 0 {
@@ -798,7 +869,7 @@ func (q *queue) report(rec map[string]dueEntry, names func(string) string) Queue
 		out.Head = &QueueHead{Repo: names(h.common), CrewID: h.crew, ID: h.id, WaitedS: q.waitedS(h)}
 	}
 	for _, h := range demoted {
-		out.Demoted = append(out.Demoted, QueueDemote{Repo: names(h.common), CrewID: h.crew, ID: h.id, FirstDue: rec[h.id].FirstDue, DemotedAt: rec[h.id].Demoted})
+		out.Demoted = append(out.Demoted, QueueDemote{Repo: names(h.common), CrewID: h.crew, ID: h.id, FirstDue: rec[h.key()].FirstDue, DemotedAt: rec[h.key()].Demoted})
 	}
 	for _, h := range q.holds {
 		if reason := q.parked(h, rec); reason != "" {

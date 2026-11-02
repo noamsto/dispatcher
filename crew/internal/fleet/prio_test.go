@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/noamsto/dispatcher/crew/internal/git"
+	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 )
 
@@ -128,6 +131,43 @@ func TestPrioWritesAndAudits(t *testing.T) {
 	}
 	if got := audit(); fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("audit\n%q\nwant\n%q", got, want)
+	}
+}
+
+// A linked worktree or any directory in a checkout names its repo through git,
+// so `crew fleet prio . <n>` works from wherever the human stands.
+func TestPrioByADirectoryInTheRepo(t *testing.T) {
+	f := newQueueFix(t, "alpha")
+	walk := f.repo("walk", false)
+	worktree := filepath.Join(f.root, "worktrees", "alpha-feat")
+	sub := filepath.Join(filepath.Dir(f.commons["alpha"]), "sub", "dir")
+	walkWorktree := filepath.Join(f.root, "worktrees", "walk-feat")
+	commons := map[string]string{worktree: f.commons["alpha"], sub: f.commons["alpha"], walkWorktree: walk}
+	for dir := range commons {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inner := f.opts.Git
+	f.opts.Git = &gittest.Fake{Func: func(dir string, args []string) (string, error) {
+		if slices.Contains(args, "--git-common-dir") {
+			if c, ok := commons[dir]; ok {
+				return c, nil
+			}
+			return "", &git.ExitError{Code: 128}
+		}
+		return inner.Run(t.Context(), dir, args...)
+	}}
+
+	t.Chdir(worktree)
+	if code, out, errb := f.prio(".", "5"); code != 0 || out != "acme/alpha: priority 0 → 5\n" {
+		t.Errorf("from a linked worktree: exit %d, stdout %q, stderr %q", code, out, errb)
+	}
+	if code, out, errb := f.prio(sub, "3"); code != 0 || out != "acme/alpha: priority 5 → 3\n" {
+		t.Errorf("from a subdirectory: exit %d, stdout %q, stderr %q", code, out, errb)
+	}
+	if code, _, errb := f.prio(walkWorktree, "1"); code != 1 || errb != "crew: fleet prio: "+walkWorktree+" is not a registered repo\n" {
+		t.Errorf("an unregistered repo's worktree: exit %d, stderr %q", code, errb)
 	}
 }
 
