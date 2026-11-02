@@ -46,6 +46,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
+	lanepkg "github.com/noamsto/dispatcher/crew/internal/lane"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 )
@@ -310,7 +311,7 @@ type reapLine struct {
 // call cannot shift the answer. A lock with no readable tick counts as `stale`,
 // the safe direction: the tick is written immediately on acquiring the lock.
 func status(cdir, crew string, stdout io.Writer, o Options) int {
-	st, rc, pid, age := laneState(cdir, o)
+	st, rc, pid, age := lanepkg.State(cdir, o.Proc, clockMS(o))
 	say(stdout, "%s\n", encode(statusLine{
 		Stream: "status",
 		State:  st,
@@ -319,44 +320,6 @@ func status(cdir, crew string, stdout io.Writer, o Options) int {
 		AgeS:   age,
 	}))
 	return rc
-}
-
-// laneState is the state machine behind `--status` for the lane whose lock and
-// tick live in cdir: the state, its exit status, the holder pid and the tick's
-// age.
-func laneState(cdir string, o Options) (state string, rc int, pid json.RawMessage, age *int64) {
-	holder := statusPID(lock.Holder(filepath.Join(cdir, "stream.lock.d")))
-	live := isSinglePositivePID(holder) && o.Proc.Alive(pidNumber(holder))
-
-	// The holder is reported whether or not it answers: `dead` still names the
-	// pid that is gone.
-	pid = holderPID(holder)
-	state, rc = "dead", 2
-	if live {
-		state, rc = "stale", 1
-		if tick := readTick(filepath.Join(cdir, "stream.tick")); tick.ok {
-			ageS := (clockMS(o) - tick.ts) / 1000
-			age = &ageS
-			if ageS < 2*tick.park+60 {
-				state, rc = "alive", 0
-			}
-		}
-	}
-	return state, rc, pid, age
-}
-
-// holderPID is the pid `--status` reports for a holder's digits: those digits
-// with the leading zeros jq drops (`00` reads 0, `007` reads 7), and nil for no
-// holder.
-func holderPID(holder string) json.RawMessage {
-	if holder == "" {
-		return nil
-	}
-	text := strings.TrimLeft(holder, "0")
-	if text == "" {
-		text = "0"
-	}
-	return json.RawMessage(text)
 }
 
 // pidText renders a holder pid for the lane's stderr note, `null` and all.
@@ -373,38 +336,6 @@ type tickFile struct {
 	PID  int64 `json:"pid"`
 	TS   int64 `json:"ts"`
 	Park int64 `json:"park"`
-}
-
-// tickState is a stream.tick: the two numbers the writer recorded, and ok for
-// whether the file read as both of them.
-type tickState struct {
-	ts, park int64
-	ok       bool
-}
-
-// readTick is the arm's `jq -r '.ts // empty'` plus its digits-only `case`: a
-// missing file, one that will not decode, and a non-numeric field all read the
-// same — no tick.
-func readTick(path string) tickState {
-	v, err := decodeObject(readFile(path))
-	if err != nil {
-		return tickState{}
-	}
-	ts, okTS := digitsField(v, "ts")
-	park, okPark := digitsField(v, "park")
-	if !okTS || !okPark {
-		return tickState{}
-	}
-	return tickState{ts: ts, park: park, ok: true}
-}
-
-// statusPID is the arm's `case "$lockpid" in ” | *[!0-9]* | 0)`: empty,
-// non-numeric and a literal 0 are all no holder at all.
-func statusPID(text string) string {
-	if !ascii.IsDigits(text) || text == "0" {
-		return ""
-	}
-	return text
 }
 
 // isSinglePID is the same guard before a pid becomes a *signal target*, and
@@ -425,17 +356,6 @@ func signalTarget(holder string) (int, bool) {
 		return 0, false
 	}
 	return n, true
-}
-
-// pidNumber is the arm's arithmetic context: the digits as an int. Every caller
-// is behind isSinglePositivePID, so an unparsable or out-of-range holder never
-// reaches a probe; -1 keeps that true if a caller forgets.
-func pidNumber(text string) int {
-	n, err := strconv.Atoi(text)
-	if err != nil || n < 0 || n > lock.MaxPID {
-		return -1
-	}
-	return n
 }
 
 // check is the arm's value checks, in its order: the five positive intervals,

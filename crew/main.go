@@ -112,7 +112,7 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 			return entry.RunHelp([]string{"hold", arg(args, 1)}, stdout, stderr), true
 		}
 	case "fleet":
-		if arg(args, 1) == "stream" && isHelpFlag(arg(args, 2)) {
+		if slices.Contains([]string{"stream", "load", "status"}, arg(args, 1)) && isHelpFlag(arg(args, 2)) {
 			return entry.RunHelp([]string{"fleet"}, stdout, stderr), true
 		}
 	case "class":
@@ -335,6 +335,12 @@ func parseCrew(args []string) (crewArgs, bool) {
 	if strings.HasPrefix(cmd, "fleet stream") {
 		key = "fleet stream"
 	}
+	if strings.HasPrefix(cmd, "fleet load") {
+		key = "fleet load"
+	}
+	if strings.HasPrefix(cmd, "fleet status") {
+		key = "fleet status"
+	}
 	return crewArgs{sub: args[0], argv: args[1:], typed: r, refusal: validate(key, &r), cmd: cmd}, true
 }
 
@@ -347,6 +353,10 @@ func refusalKey(args []string) string {
 			return "hold " + args[1]
 		case args[0] == "fleet" && args[1] == "stream":
 			return "fleet stream"
+		case args[0] == "fleet" && args[1] == "load":
+			return "fleet load"
+		case args[0] == "fleet" && args[1] == "status":
+			return "fleet status"
 		}
 	}
 	return args[0]
@@ -1151,22 +1161,64 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 			Git:     git.Exec{},
 		})
 	}
+	if strings.HasPrefix(p.cmd, "fleet load") {
+		return runFleetLoad(ctx, p.typed.Fleet.Load, stdout, stderr)
+	}
 	o := fleet.Options{
 		Tmux:      tmux.Exec{},
 		Git:       git.Exec{},
 		Clock:     clock.FromEnv(),
 		PeerHosts: e.peerHosts,
-		// A repo's remote workers answer for themselves, as they do for
-		// `crew roster`: through remote-run, which runs the sender check, from
-		// the checkout of the repo whose bus is being read.
-		Remote: func(dir, crew string) roster.Capture {
-			return func(ctx context.Context, host string, argv []string, stdout, stderr io.Writer) int {
-				return remoteAs(ctx, e, dir, crew)(host, argv, stdout, stderr)
-			}
-		},
+		Remote:    fleetRemote(e),
+	}
+	if strings.HasPrefix(p.cmd, "fleet status") {
+		s := p.typed.Fleet.Status
+		return runFleetStatus(ctx, fleet.StatusRequest{JSON: s.JSON, GH: s.GH}, o, e, stdout, stderr)
 	}
 	c := p.typed.Fleet.Table
 	return fleet.Run(ctx, fleet.Request{All: c.All, JSON: c.JSON, Crew: str(c.Crew)}, stdout, stderr, o)
+}
+
+// fleetRemote asks a repo's remote workers for themselves, as `crew roster`
+// does: through remote-run, which runs the sender check, from the checkout of
+// the repo whose bus is being read.
+func fleetRemote(e env) func(dir, crew string) roster.Capture {
+	return func(dir, crew string) roster.Capture {
+		return func(ctx context.Context, host string, argv []string, stdout, stderr io.Writer) int {
+			return remoteAs(ctx, e, dir, crew)(host, argv, stdout, stderr)
+		}
+	}
+}
+
+func runFleetStatus(ctx context.Context, req fleet.StatusRequest, o fleet.Options, e env, stdout, stderr io.Writer) int {
+	so := fleet.StatusOptions{
+		Options:    o,
+		Proc:       e.proc,
+		Gh:         gh.Exec{},
+		Host:       peer.SelfName,
+		BudgetFile: budgetFile(),
+		Budget: func(ctx context.Context) (int, error) {
+			return fleet.ResolveBudget(ctx, fleet.ConfigBin(), stderr)
+		},
+	}
+	so.Getenv = os.Getenv
+	return fleet.Status(ctx, req, stdout, stderr, so)
+}
+
+func runFleetLoad(ctx context.Context, c fleetLoadCmd, stdout, stderr io.Writer) int {
+	o := fleet.LoadOptions{
+		Getenv:     os.Getenv,
+		Tmux:       tmux.Exec{},
+		Git:        git.Exec{},
+		Clock:      clock.FromEnv(),
+		BudgetFile: budgetFile(),
+	}
+	if c.Budget == nil {
+		o.Budget = func(ctx context.Context) (int, error) {
+			return fleet.ResolveBudget(ctx, fleet.ConfigBin(), stderr)
+		}
+	}
+	return fleet.Load(ctx, fleet.LoadRequest{JSON: c.JSON, Budget: c.Budget, Add: c.Add, Own: c.Own}, stdout, stderr, o)
 }
 
 // The Nix build sets these with -X: the pinned bash and the two libs
