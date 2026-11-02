@@ -168,6 +168,25 @@ func TestEnrichPRsOnlyAsksForThisReposPRs(t *testing.T) {
 	}
 }
 
+// A failed gh prints nothing on stdout: its reason is only in the merged read.
+type failingGh struct{ gh.Client }
+
+func (failingGh) Run(context.Context, ...string) (string, error) {
+	return "", errors.New("exit status 1")
+}
+
+func (failingGh) Combined(context.Context, ...string) (string, error) {
+	return "GraphQL: Could not resolve to a PullRequest\nmore", errors.New("exit status 1")
+}
+
+func TestEnrichPRsErrorReasonComesFromStderr(t *testing.T) {
+	cands, rows := prRows(prURL(1))
+	enrichPRs(t.Context(), failingGh{}, cands, time.Second)
+	if got := rows[0]["pr_error"]; got != "GraphQL: Could not resolve to a PullRequest" {
+		t.Errorf("pr_error = %q, want gh's first stderr line", got)
+	}
+}
+
 // gh's stderr on a successful call is no part of its JSON.
 type noisyGh struct{ gh.Client }
 
