@@ -16,7 +16,9 @@ evaluated (nothing is printed).
 The table lists the due rows, then, if any hold is parked, a block headed
 `parked  reason  branch  title`. The reason is demoted (it was the due hold for
 fleetHeadTimeout, was demoted, and was the due hold for another without being
-released) or oversize (heavier than fleetBudget, so it could never be released):
-re-add the task as a new fleet hold, or ask the human.
+released) or oversize (heavier than fleetBudget, so the queue never admits it).
+A parked hold stays outstanding until `crew hold release <id>`: release it, then
+re-add the task as a new fleet hold (an oversize one at a tier within
+fleetBudget), or ask the human.
 
   crew hold due --json
