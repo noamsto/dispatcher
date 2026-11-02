@@ -553,15 +553,21 @@ func TestStatusSkippedReposAndNonGitCwd(t *testing.T) {
 	}
 }
 
-func TestStatusLabelsARepoAsOverseerAddressesIt(t *testing.T) {
-	f := newStatusFix(t, wstatus(10, "c1", "feat/a", "working", ""))
+// originGit answers the fixture repo's origin with origin, and every other git
+// call as stubGit does.
+func originGit(f *statusFix, origin string) *gittest.Fake {
 	stub := stubGit(f.common, nil)
-	f.opts.Git = &gittest.Fake{Func: func(dir string, args []string) (string, error) {
+	return &gittest.Fake{Func: func(dir string, args []string) (string, error) {
 		if args[0] == "--git-dir="+f.common && args[len(args)-1] != "--porcelain" {
-			return "https://github.com/acme/my repo+x.git", nil
+			return origin, nil
 		}
 		return stub.Func(dir, args)
 	}}
+}
+
+func TestStatusLabelsARepoAsOverseerAddressesIt(t *testing.T) {
+	f := newStatusFix(t, wstatus(10, "c1", "feat/a", "working", ""))
+	f.opts.Git = originGit(f, "https://github.com/acme/my repo+x.git")
 
 	doc := f.collect(StatusRequest{})
 	if len(doc.Repos) != 1 || doc.Repos[0].Repo != "acme/my?repo?x" {
@@ -575,13 +581,7 @@ func TestStatusPRsOfALongRepoNameStillEnrich(t *testing.T) {
 	name := strings.Repeat("a", 120)
 	url := "https://github.com/acme/" + name + "/pull/1"
 	f := newStatusFix(t, wstatus(10, "c1", "feat/long", "pr_open", `,"pr_url":"`+url+`"`))
-	stub := stubGit(f.common, nil)
-	f.opts.Git = &gittest.Fake{Func: func(dir string, args []string) (string, error) {
-		if args[0] == "--git-dir="+f.common && args[len(args)-1] != "--porcelain" {
-			return "https://github.com/acme/" + name + ".git", nil
-		}
-		return stub.Func(dir, args)
-	}}
+	f.opts.Git = originGit(f, "https://github.com/acme/"+name+".git")
 	f.opts.Gh = &ghtest.Fake{Func: func(args []string) (string, error) {
 		if args[2] == url {
 			return `{"state":"OPEN","statusCheckRollup":[]}`, nil
