@@ -18,6 +18,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/ledger"
 	"github.com/noamsto/dispatcher/crew/internal/reply"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
 // Usage is the one-line signature.
@@ -102,6 +103,12 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	n, err := strconv.Atoi(req.PR)
 	if err != nil || n <= 0 {
 		say(stderr, "crew: merge: %s\n", Usage)
+		return exitFailure
+	}
+	// Before any gh call: the release reply refuses such a session only after
+	// the merge, and --dry-run reads the PR just the same.
+	if reason := sender.Check(ctx, "dispatcher:"+req.Crew, req.Crew, o.Reply.Sender); reason != "" {
+		say(stderr, "crew: merge: refusing sender 'dispatcher:%s' — %s\n", req.Crew, reason)
 		return exitFailure
 	}
 	refuse := func(format string, args ...any) int {

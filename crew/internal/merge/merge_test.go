@@ -15,6 +15,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/merge"
 	"github.com/noamsto/dispatcher/crew/internal/reply"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
 const (
@@ -136,6 +137,45 @@ func TestRun(t *testing.T) {
 						t.Errorf("unexpected jobs lookup %q", c)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestSenderRefusedBeforeMerge(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"worker", map[string]string{"CREW_WORKER_ID": "worker:feat/x#s1-1"}, "worker or role session"},
+		{"role", map[string]string{"CREW_ROLE_ID": "role:feat/x:reviewer"}, "worker or role session"},
+		{"overseer", map[string]string{"CREW_OVERSEER": "host1"}, "overseer session"},
+		{"dispatcher", nil, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			paths := bus.Paths{Common: dir, Dir: dir, Log: filepath.Join(dir, "events.jsonl")}
+			if err := os.WriteFile(paths.Log, []byte(okRow+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			g := &ghtest.Fake{Out: map[string]string{viewIn: view("OPEN", "false", "MERGEABLE", okRoll), runsIn: okRuns, mergeG: "merged"}}
+			gt := &gittest.Fake{Func: func(string, []string) (string, error) { return "", nil }}
+			rep := reply.Options{Clock: clock.FromEnv(), Sender: sender.Probes{Getenv: func(k string) string { return tt.env[k] }}}
+			var stdout, stderr bytes.Buffer
+			code := merge.Run(context.Background(), merge.Request{PR: "7", Crew: "c1"}, paths, &stdout, &stderr, merge.Options{GH: g, Git: gt, Dir: dir, Reply: rep})
+			if tt.want == "" {
+				if code != 0 {
+					t.Fatalf("code = %d, want 0 (stderr %q)", code, stderr.String())
+				}
+				return
+			}
+			if code != 1 || !strings.Contains(stderr.String(), "refusing sender 'dispatcher:c1' — ") || !strings.Contains(stderr.String(), tt.want) {
+				t.Errorf("code %d stderr %q, want the sender refusal containing %q", code, stderr.String(), tt.want)
+			}
+			if calls := g.Calls(); len(calls) != 0 {
+				t.Errorf("gh calls = %v, want none", calls)
 			}
 		})
 	}
