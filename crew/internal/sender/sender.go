@@ -5,11 +5,16 @@
 // session runs as the same uid, and a deliberate process can unset its env or
 // double-fork out of the pane tree. Without an anchor pane (outside tmux, a
 // nohup'd process reparented away from its pane, a pid-namespaced sandbox that
-// hides the host ancestor) only the env rule applies.
+// hides the host ancestor) only the env rule applies. overseer:<host> is held
+// tighter and refused whenever a probe cannot be read: only a session marked
+// CREW_OVERSEER=<this host's name>, with no worker or role id and outside every
+// crew pane, posts as it, and a marked session or the overseer's own pane posts
+// as nothing else.
 package sender
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strconv"
 	"strings"
@@ -23,11 +28,13 @@ import (
 // the window and pane ids.
 const Format = "#{pane_pid}\x1f#{@crew_branch}\x1f#{@crew_role}\x1f#{@crew_id}\x1f#{window_id}\x1f#{pane_id}"
 
-// Probes are the reads Check makes; the zero value checks nothing.
+// Probes are the reads Check makes. The zero value checks nothing for any
+// sender but an overseer: one, which it refuses.
 type Probes struct {
-	Getenv func(string) string // nil: no env
-	Tmux   tmux.Client         // reads list-panes -a -F Format; nil: no tmux
-	Proc   proc.Table          // walks the caller's ancestry; nil: no ancestry
+	Getenv func(string) string    // nil: no env
+	Tmux   tmux.Client            // reads list-panes -a -F Format; nil: no tmux
+	Proc   proc.Table             // walks the caller's ancestry; nil: no ancestry
+	Self   func() (string, error) // this host's name (peer.SelfName); nil reads as an error
 }
 
 type stamp struct {
@@ -41,7 +48,11 @@ func Check(ctx context.Context, from, crew string, p Probes) string {
 	if reason := p.envRefusal(from); reason != "" {
 		return reason
 	}
-	s, ok := p.anchor(p.rows(ctx))
+	rows, read := p.rows(ctx)
+	s, ok, walked := p.anchor(rows)
+	if reason := p.overseerPane(from, s, ok, read && walked); reason != "" {
+		return reason
+	}
 	if !ok || s.branch == "" {
 		return ""
 	}
@@ -60,8 +71,11 @@ func Watch(ctx context.Context, from, crew, pane string, p Probes) string {
 	if !paneID(pane) {
 		return "pane " + pane + " is not a pane id (%N)"
 	}
-	rows := p.rows(ctx)
-	a, anchored := p.anchor(rows)
+	rows, read := p.rows(ctx)
+	a, anchored, walked := p.anchor(rows)
+	if reason := p.overseerPane(from, a, anchored, read && walked); reason != "" {
+		return reason
+	}
 	anchored = anchored && a.branch != ""
 	if anchored {
 		if reason := a.refuse(from, crew, "this pane"); reason != "" {
@@ -83,7 +97,13 @@ func Watch(ctx context.Context, from, crew, pane string, p Probes) string {
 	if !found && rows != nil {
 		return subject + " is not a live pane"
 	}
-	if !found || target.branch == "" {
+	if !found {
+		return ""
+	}
+	if target.overseer() {
+		return p.refuseOverseer(from, subject)
+	}
+	if target.branch == "" {
 		return ""
 	}
 	return target.refuse(from, crew, subject)
@@ -108,7 +128,86 @@ func (p Probes) envRefusal(from string) string {
 		(p.Getenv("CREW_WORKER_ID") != "" || p.Getenv("CREW_ROLE_ID") != "") {
 		return "this is a worker or role session (CREW_WORKER_ID or CREW_ROLE_ID is set) and only the dispatcher posts as dispatcher:<crew>; post as your own id ($CREW_WORKER_ID for a lead, role:<branch>:<role> for a grid role)"
 	}
+	return p.overseerEnv(from)
+}
+
+const overseerRule = "only the overseer session (CREW_OVERSEER set to this host's name) posts as overseer:<host>"
+
+// overseerEnv is the env half of the overseer rule: overseer:<host> needs a
+// session marked with this host's name and no worker or role id, and a marked
+// session posts as nothing else.
+func (p Probes) overseerEnv(from string) string {
+	host, isOverseer := strings.CutPrefix(from, "overseer:")
+	marked := ""
+	if p.Getenv != nil {
+		marked = p.Getenv("CREW_OVERSEER")
+	}
+	if !isOverseer {
+		if marked != "" {
+			return "this is the overseer session (CREW_OVERSEER is set), which posts only as overseer:<host> through crew overseer msg"
+		}
+		return ""
+	}
+	if p.Getenv == nil {
+		return "the session env cannot be read, and " + overseerRule
+	}
+	if p.Getenv("CREW_WORKER_ID") != "" || p.Getenv("CREW_ROLE_ID") != "" {
+		return "this is a worker or role session (CREW_WORKER_ID or CREW_ROLE_ID is set) and only the overseer session posts as overseer:<host>; post as your own id ($CREW_WORKER_ID for a lead, role:<branch>:<role> for a grid role)"
+	}
+	if marked == "" {
+		return overseerRule
+	}
+	self, err := p.self()
+	if err != nil {
+		return "this host's name cannot be read (" + err.Error() + "), so no session can post as overseer:<host>"
+	}
+	if marked != self {
+		return "CREW_OVERSEER is " + marked + ", not this host's name " + self + "; " + overseerRule
+	}
+	if host != self {
+		return "the overseer session on " + self + " posts only as overseer:" + self + ", not " + from
+	}
 	return ""
+}
+
+// overseerPane is the pane half of the overseer rule. An overseer: sender needs
+// both pane probes read through (probed), since a failed tmux read or ancestry
+// walk would hide the stamped pane it sits in; the overseer's own pane posts
+// only as overseer:<host>.
+func (p Probes) overseerPane(from string, a stamp, anchored, probed bool) string {
+	if strings.HasPrefix(from, "overseer:") && !probed {
+		return "the pane stamps cannot be read (tmux list-panes or the process ancestry failed), and only a session outside every crew pane posts as " + from
+	}
+	if !anchored || !a.overseer() {
+		return ""
+	}
+	return p.refuseOverseer(from, "this pane")
+}
+
+// overseer: the stamp `dispatcher --overseer` puts on its pane, which carries
+// no branch, so @crew_id is not consulted for it.
+func (s stamp) overseer() bool {
+	return s.branch == "" && s.role == "overseer"
+}
+
+func (p Probes) refuseOverseer(from, subject string) string {
+	self, err := p.self()
+	if err != nil {
+		return subject + " is stamped as the overseer's (@crew_role overseer), and this host's name cannot be read (" + err.Error() + ")"
+	}
+	if from != "overseer:"+self {
+		return subject + " is stamped as the overseer's (@crew_role overseer), which posts only as overseer:" + self
+	}
+	return ""
+}
+
+var errNoSelf = errors.New("no host-name probe")
+
+func (p Probes) self() (string, error) {
+	if p.Self == nil {
+		return "", errNoSelf
+	}
+	return p.Self()
 }
 
 // refuse is the stamp rule: a stamped lead pane posts only as its branch's
@@ -141,14 +240,15 @@ func leadID(from, branch string) bool {
 	return ok && !strings.Contains(sid, "#")
 }
 
-// rows parses one list-panes read; nil when there is no tmux or the read fails.
-func (p Probes) rows(ctx context.Context) []stamp {
+// rows parses one list-panes read; read is false when there is no tmux or the
+// read fails, and true for a successful listing even when it lists nothing.
+func (p Probes) rows(ctx context.Context) ([]stamp, bool) {
 	if p.Tmux == nil {
-		return nil
+		return nil, false
 	}
 	out, err := p.Tmux.Run(ctx, "list-panes", "-a", "-F", Format)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	var rows []stamp
 	for line := range strings.Lines(out) {
@@ -162,14 +262,16 @@ func (p Probes) rows(ctx context.Context) []stamp {
 		}
 		rows = append(rows, stamp{pid: pid, branch: f[1], role: f[2], crew: f[3], window: f[4], pane: f[5]})
 	}
-	return rows
+	return rows, true
 }
 
 // anchor is the stamps of the nearest pane in rows whose pid is the caller or
-// one of its ancestors.
-func (p Probes) anchor(rows []stamp) (stamp, bool) {
+// one of its ancestors, whether there is one, and whether the walk ended
+// cleanly: at a pane or at pid 1. It did not when there is no Proc, a parent
+// read fails short of pid 1, or the step cap runs out.
+func (p Probes) anchor(rows []stamp) (stamp, bool, bool) {
 	if p.Proc == nil {
-		return stamp{}, false
+		return stamp{}, false, false
 	}
 	panes := map[int]stamp{}
 	for _, r := range rows {
@@ -178,13 +280,14 @@ func (p Probes) anchor(rows []stamp) (stamp, bool) {
 	cur := os.Getpid()
 	for range 32 {
 		if s, ok := panes[cur]; ok {
-			return s, true
+			return s, true, true
 		}
 		next, ok := p.Proc.Parent(cur)
 		if !ok || next <= 0 {
-			break
+			// Parent reads init's parent and a failed ps alike as none.
+			return stamp{}, false, cur == 1
 		}
 		cur = next
 	}
-	return stamp{}, false
+	return stamp{}, false, false
 }

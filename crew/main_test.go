@@ -23,6 +23,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
+	"github.com/noamsto/dispatcher/crew/internal/overseer"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
@@ -378,6 +379,7 @@ func TestRunHelpRouting(t *testing.T) {
 		// -h at a sub-subcommand position is routed by isHelpFlag, not by kong.
 		{"fleet stream -h", []string{"fleet", "stream", "-h"}, "usage: crew fleet"},
 		{"pi-agent-dir --help", []string{"pi-agent-dir", "--help"}, "usage: crew pi-agent-dir"},
+		{"overseer msg --help", []string{"overseer", "msg", "--help"}, "usage: crew overseer msg"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -1341,13 +1343,13 @@ func TestAdmittedSubcommands(t *testing.T) {
 		"git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help",
 		"id", "new", "engine-cmd", "dash", "pi-agent-dir", "relay",
 		"remote-run", "remote-exec", "dispatch-row", "spec-lint",
-		"merge", "followups", "peer-sync", "peer-claims", "decide", "decisions", "class", // added after that revision
+		"merge", "followups", "peer-sync", "peer-claims", "decide", "decisions", "class", "overseer", // added after that revision
 	}
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
 		"status", "msg", "reply", "hold", "nudge", "await", "watch", "relay", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "merge", "pr-watch", "stall-watch", "help",
-		"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class"} {
+		"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class", "overseer"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
 		}
@@ -1385,6 +1387,27 @@ func TestAdmittedSubcommands(t *testing.T) {
 			}
 		}
 		t.Errorf("the grammar admits a different set: missing %v, extra %v", missing, extra)
+	}
+}
+
+// TestOverseerGrammarRefusals runs from a directory that is no repo: the usage
+// line printing proves overseer is judged before Locate.
+func TestOverseerGrammarRefusals(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", dir)
+	e := env{getwd: func() (string, error) { return dir, nil }}
+	for _, args := range [][]string{
+		{"overseer"},
+		{"overseer", "bogus"},
+		{"overseer", "msg"},
+		{"overseer", "msg", "a"},
+		{"overseer", "msg", "a", "c1"},
+		{"overseer", "msg", "a", "c1", "{}", "extra"},
+	} {
+		code, out, errs := crewRun(t, e, args...)
+		if code != exitFailure || out != "" || errs != overseer.MsgUsage+"\n" {
+			t.Errorf("crew %v: %d %q %q", args, code, out, errs)
+		}
 	}
 }
 

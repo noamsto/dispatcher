@@ -17,6 +17,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/merge"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
+	"github.com/noamsto/dispatcher/crew/internal/overseer"
 	"github.com/noamsto/dispatcher/crew/internal/rate"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 	"github.com/noamsto/dispatcher/crew/internal/retro"
@@ -330,6 +331,16 @@ type classPromoteCmd struct {
 	ID     string `arg:"" name:"id"`
 }
 
+type overseerCmd struct {
+	Msg overseerMsgCmd `cmd:"" name:"msg" help:"Post the overseer's message to a dispatcher."`
+}
+
+type overseerMsgCmd struct {
+	Repo string `arg:"" optional:"" name:"repo"`
+	Crew string `arg:"" optional:"" name:"crew"`
+	Body string `arg:"" optional:"" name:"body"`
+}
+
 type decisionsCmd struct {
 	JSON  bool    `name:"json"`
 	Since *string `name:"since"`
@@ -565,6 +576,7 @@ var wordings = map[string]wording{
 		extra: func(string) string { return "crew: nudge: one target only (usage: " + nudge.Usage + ")" },
 		code:  exitFailure,
 	},
+	"overseer": {all: overseer.MsgUsage, code: exitFailure},
 	"await": {
 		unknownFlag: func(f string) string { return fmt.Sprintf("crew: await: unknown arg '%s'", f) },
 		extra:       func(w string) string { return fmt.Sprintf("crew: await: unknown arg '%s'", w) },
@@ -966,6 +978,10 @@ func validate(sub string, r *root) *refusal {
 		c := r.Merge
 		if c.PR == "" || given(c.Crew) {
 			return fail(merge.Usage)
+		}
+	case "overseer":
+		if c := r.Overseer.Msg; c.Repo == "" || c.Crew == "" || c.Body == "" {
+			return fail(overseer.MsgUsage)
 		}
 	case "followups":
 		c := r.Followups

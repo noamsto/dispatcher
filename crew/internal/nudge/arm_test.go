@@ -16,6 +16,9 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
+	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
+	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
 
 // armFixture is the CLI under test with its side effects faked: the bus log and the
@@ -53,6 +56,8 @@ type armFixture struct {
 	holdLock string
 	// remote is Options.Remote: where a remote worker's nudge goes.
 	remote func(host string, argv []string) int
+	// sender is Options.Sender; zero checks nothing.
+	sender sender.Probes
 }
 
 const (
@@ -135,6 +140,7 @@ func (f *armFixture) run(req Request) int {
 		Rows:   func(int) ([]any, bool) { return f.rows, true },
 		PID:    4242,
 		Remote: f.remote,
+		Sender: f.sender,
 	})
 }
 
@@ -245,6 +251,50 @@ func TestRunIsDispatcherOnly(t *testing.T) {
 			}
 			if len(f.pane.tmux) != 0 {
 				t.Errorf("a dispatcher-only refusal touched tmux: %v", f.pane.tmux)
+			}
+		})
+	}
+}
+
+func TestRunRefusesSender(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		probes sender.Probes
+		reason string
+	}{
+		{
+			name: "overseer env",
+			probes: sender.Probes{
+				Getenv: func(k string) string { return map[string]string{"CREW_OVERSEER": "h1"}[k] },
+			},
+			reason: "this is the overseer session (CREW_OVERSEER is set), which posts only as overseer:<host> through crew overseer msg",
+		},
+		{
+			name: "overseer pane with the env blanked",
+			probes: sender.Probes{
+				Getenv: func(string) string { return "" },
+				Tmux:   &tmuxtest.Fake{Out: map[string]string{"list-panes": "200\x1f\x1foverseer\x1f\x1f@1\x1f%1\n"}},
+				Proc:   proctest.New(nil, map[int]int{os.Getpid(): 200, 200: 1}),
+				Self:   func() (string, error) { return "h1", nil },
+			},
+			reason: "this pane is stamped as the overseer's (@crew_role overseer), which posts only as overseer:h1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newArm(t)
+			f.sender = tc.probes
+			if rc := f.run(Request{Target: featX}); rc != 2 {
+				t.Errorf("rc = %d, want 2", rc)
+			}
+			want := "crew: nudge: refusing sender 'dispatcher:c1' — " + tc.reason + "\n"
+			if f.stderr.String() != want {
+				t.Errorf("stderr = %q, want %q", f.stderr.String(), want)
+			}
+			if len(f.pane.tmux) != 0 {
+				t.Errorf("a sender refusal touched tmux: %q", f.pane.tmux)
+			}
+			if len(f.bus.appended) != 0 {
+				t.Errorf("a sender refusal appended rows:\n%s", f.rowsText())
 			}
 		})
 	}

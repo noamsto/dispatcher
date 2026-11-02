@@ -8,6 +8,7 @@ Bus I/O:
   status          Post or update a session's state on the bus
   msg             Post a message from one agent to another
   reply           Post a message as dispatcher:<crew>
+  overseer        Post the overseer's message to a dispatcher in any repo
   await           Block until a message answers an outstanding question
   inbox           Print the messages addressed to one agent
   log             Print every bus event for a crew

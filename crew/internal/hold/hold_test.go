@@ -979,7 +979,7 @@ func jsonLen(t *testing.T, s string) int {
 }
 
 func TestWorkerAndRoleSessionsCannotWriteHolds(t *testing.T) {
-	for _, env := range []string{"CREW_WORKER_ID", "CREW_ROLE_ID"} {
+	for _, env := range []string{"CREW_WORKER_ID", "CREW_ROLE_ID", "CREW_OVERSEER"} {
 		p := sender.Probes{Getenv: func(name string) string {
 			if name == env {
 				return "x"

@@ -50,7 +50,8 @@ type fixture struct {
 	crew   string
 
 	panes string     // sender check: tmux list-panes output; "" leaves the anchor unreadable
-	proc  proc.Table // sender check: the caller's ancestry
+	proc  proc.Table // sender check: the caller's ancestry; non-nil also makes list-panes readable
+	self  string     // sender check: this host's name; "" leaves the probe nil
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -83,10 +84,13 @@ func (f *fixture) opts() Options {
 		Fold:   f.fold,
 		Sender: sender.Probes{Getenv: func(k string) string { return f.env[k] }},
 	}
+	if f.self != "" {
+		o.Sender.Self = func() (string, error) { return f.self, nil }
+	}
 	if f.noTop {
 		o.Git = &gittest.Fake{Out: map[string]string{"-C . rev-parse --show-toplevel": ""}}
 	}
-	if f.panes != "" {
+	if f.panes != "" || f.proc != nil {
 		o.Sender.Tmux = &tmuxtest.Fake{Out: map[string]string{"list-panes": f.panes}}
 		o.Sender.Proc = f.proc
 	}
@@ -1044,6 +1048,14 @@ func (f *fixture) anchored(panes string) {
 	f.proc = proctest.New(nil, map[int]int{os.Getpid(): 200, 200: 1})
 }
 
+// overseer makes the caller the overseer session of host: marked, on that host,
+// and outside every pane, with both pane probes readable.
+func (f *fixture) overseer(host string) {
+	f.env["CREW_OVERSEER"] = host
+	f.self = host
+	f.proc = proctest.New(nil, map[int]int{os.Getpid(): 1})
+}
+
 func TestStatusRefusesSenderAnchorMismatch(t *testing.T) {
 	f := newFixture(t)
 	f.anchored(rolePane)
@@ -1063,6 +1075,39 @@ func TestStatusRefusesDispatcherFromWorkerEnv(t *testing.T) {
 		t.Errorf("got %d %q", code, stderr)
 	}
 	f.wantNoRow()
+}
+
+func TestStatusRefusesAMarkedOverseerSessionAsAnyoneElse(t *testing.T) {
+	f := newFixture(t)
+	f.env["CREW_OVERSEER"] = "h1"
+	code, stderr := f.status(worker, "working")
+	want := "crew: status: refusing sender '" + worker + "' — " + sender.Check(t.Context(), worker, crewID, f.opts().Sender) + "\n"
+	if code != 1 || stderr != want {
+		t.Errorf("got %d %q", code, stderr)
+	}
+	f.wantNoRow()
+}
+
+func TestStatusRefusesTheOverseerSender(t *testing.T) {
+	t.Run("overseer session", func(t *testing.T) {
+		f := newFixture(t)
+		f.overseer("h1")
+		code, stderr := f.status("overseer:h1", "working")
+		want := "crew: status: refusing sender 'overseer:h1' — the overseer posts no status rows; it messages a dispatcher through crew overseer msg\n"
+		if code != 1 || stderr != want {
+			t.Errorf("got %d %q", code, stderr)
+		}
+		f.wantNoRow()
+	})
+	t.Run("other session gets the identity refusal", func(t *testing.T) {
+		f := newFixture(t)
+		code, stderr := f.status("overseer:h1", "working")
+		want := "crew: status: refusing sender 'overseer:h1' — " + sender.Check(t.Context(), "overseer:h1", crewID, f.opts().Sender) + "\n"
+		if code != 1 || stderr != want {
+			t.Errorf("got %d %q", code, stderr)
+		}
+		f.wantNoRow()
+	})
 }
 
 // TestGateReadsToplevelFromDir pins the exact argv the gate reads the

@@ -50,6 +50,17 @@ func TestDecideRefusesWorkerAndRole(t *testing.T) {
 	})
 }
 
+func TestDecideRefusesAMarkedOverseerSession(t *testing.T) {
+	f := newFixture(t)
+	f.env["CREW_OVERSEER"] = "h1"
+	code, stderr := f.decide("x")
+	want := "crew: decide: refusing sender 'dispatcher:c1' — " + sender.Check(t.Context(), "dispatcher:c1", crewID, f.opts().Sender) + "\n"
+	if code != 1 || stderr != want {
+		t.Errorf("got %d %q", code, stderr)
+	}
+	f.wantNoRow()
+}
+
 func TestDecideRefusesEmptyAndOversize(t *testing.T) {
 	for name, text := range map[string]string{
 		"empty":    "",

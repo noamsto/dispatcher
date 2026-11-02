@@ -177,6 +177,10 @@ func RunStatus(ctx context.Context, req StatusRequest, paths bus.Paths, stderr i
 	if refuseSender(ctx, "status", from, crew, o, stderr) {
 		return exitFailure
 	}
+	if strings.HasPrefix(from, "overseer:") {
+		say(stderr, "crew: status: refusing sender '%s' — the overseer posts no status rows; it messages a dispatcher through crew overseer msg\n", from)
+		return exitFailure
+	}
 
 	switch state {
 	case "working", "blocked", "pr_open", "done", "failed", "exited", "reaped":
