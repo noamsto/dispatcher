@@ -40,7 +40,7 @@ bash "$root/scripts/gen-model-map-doc.sh"
 # The claude and pi leads read renders of every worker protocol file; codex and
 # cursor read the sources. Claude and pi dispatchers launch from their own renders.
 # The tmp files sit inside the rev-hashed protocol dir, so every exit path removes them.
-trap 'rm -f "$protocols"/.WORKER_*.tmp "$protocols"/.DISPATCHER_*.tmp' EXIT
+trap 'rm -f "$protocols"/.WORKER_*.tmp "$protocols"/.DISPATCHER_*.tmp "$protocols"/.OVERSEER_*.tmp' EXIT
 worker_stems=()
 for f in "$protocols"/WORKER_*.md; do
   case "$f" in *.claude.md | *.pi.md) continue ;; esac
@@ -65,6 +65,12 @@ bash "$root/scripts/render-engine.sh" claude "$protocols/DISPATCHER_PROTOCOL.md"
 mv "$dtmp_claude" "$protocols/DISPATCHER_PROTOCOL.claude.md"
 bash "$root/scripts/render-engine.sh" pi "$protocols/DISPATCHER_PROTOCOL.md" >"$dtmp_pi" || exit 1
 mv "$dtmp_pi" "$protocols/DISPATCHER_PROTOCOL.pi.md"
+otmp_claude="$protocols/.OVERSEER_PROTOCOL.claude.md.tmp"
+otmp_pi="$protocols/.OVERSEER_PROTOCOL.pi.md.tmp"
+bash "$root/scripts/render-engine.sh" claude "$protocols/OVERSEER_PROTOCOL.md" >"$otmp_claude" || exit 1
+mv "$otmp_claude" "$protocols/OVERSEER_PROTOCOL.claude.md"
+bash "$root/scripts/render-engine.sh" pi "$protocols/OVERSEER_PROTOCOL.md" >"$otmp_pi" || exit 1
+mv "$otmp_pi" "$protocols/OVERSEER_PROTOCOL.pi.md"
 
 # The protocol revision marker (#184, #193) is no longer a committed file:
 # the content hash of adapters/core/protocols (sorted `name:sha256;` entries,
