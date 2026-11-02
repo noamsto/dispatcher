@@ -105,8 +105,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		say(stderr, "crew: merge: %s\n", Usage)
 		return exitFailure
 	}
-	// Before any gh call: the release reply refuses such a session only after
-	// the merge, and --dry-run reads the PR just the same.
+	// First, so a refused session never reaches GitHub, --dry-run included.
 	if reason := sender.Check(ctx, "dispatcher:"+req.Crew, req.Crew, o.Reply.Sender); reason != "" {
 		say(stderr, "crew: merge: refusing sender 'dispatcher:%s' — %s\n", req.Crew, reason)
 		return exitFailure
