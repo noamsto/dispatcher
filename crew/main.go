@@ -48,6 +48,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/reply"
 	"github.com/noamsto/dispatcher/crew/internal/report"
+	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 	"github.com/noamsto/dispatcher/crew/internal/retro"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -112,7 +113,7 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 			return entry.RunHelp([]string{"hold", arg(args, 1)}, stdout, stderr), true
 		}
 	case "fleet":
-		if slices.Contains([]string{"stream", "load", "status"}, arg(args, 1)) && isHelpFlag(arg(args, 2)) {
+		if slices.Contains([]string{"stream", "load", "status", "queue", "prio"}, arg(args, 1)) && isHelpFlag(arg(args, 2)) {
 			return entry.RunHelp([]string{"fleet"}, stdout, stderr), true
 		}
 	case "class":
@@ -341,6 +342,12 @@ func parseCrew(args []string) (crewArgs, bool) {
 	if strings.HasPrefix(cmd, "fleet status") {
 		key = "fleet status"
 	}
+	if strings.HasPrefix(cmd, "fleet queue") {
+		key = "fleet queue"
+	}
+	if strings.HasPrefix(cmd, "fleet prio") {
+		key = "fleet prio"
+	}
 	return crewArgs{sub: args[0], argv: args[1:], typed: r, refusal: validate(key, &r), cmd: cmd}, true
 }
 
@@ -357,6 +364,10 @@ func refusalKey(args []string) string {
 			return "fleet load"
 		case args[0] == "fleet" && args[1] == "status":
 			return "fleet status"
+		case args[0] == "fleet" && args[1] == "queue":
+			return "fleet queue"
+		case args[0] == "fleet" && args[1] == "prio":
+			return "fleet prio"
 		}
 	}
 	return args[0]
@@ -375,12 +386,12 @@ func holdRequest(p crewArgs) hold.Request {
 			Agent: str(a.Agent), Ref: str(a.Ref), Branch: str(a.Branch),
 			Tier: str(a.Tier), Model: str(a.Model), Effort: str(a.Effort),
 			Plan: str(a.Plan), MCP: str(a.MCP), Shape: str(a.Shape), Spec: str(a.Spec),
-			Draft: a.Draft, Title: a.Title,
+			Prio: str(a.Prio), Draft: a.Draft, Fleet: a.Fleet, Title: a.Title,
 		}}
 	case "list":
 		return hold.Request{Action: action, JSON: h.List.JSON, Crew: str(h.List.Crew)}
 	case "due":
-		return hold.Request{Action: action, JSON: h.Due.JSON, Crew: str(h.Due.Crew)}
+		return hold.Request{Action: action, JSON: h.Due.JSON, WithParked: h.Due.WithParked, Crew: str(h.Due.Crew)}
 	case "park":
 		return hold.Request{Action: action, Crew: str(h.Park.Crew), Default: h.Park.Default}
 	default:
@@ -817,6 +828,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Clock:  clock.FromEnv(),
 			Sender: senderProbes(e.proc),
+			FleetDue: func(ctx context.Context, common, crew string, record bool) (hold.FleetVerdict, error) {
+				return fleet.Due(ctx, common, crew, record, fleetQueueOptions(e, stderr))
+			},
+			FleetBudget: func(ctx context.Context) (int, error) {
+				return fleet.ResolveBudget(ctx, fleet.ConfigBin(), stderr)
+			},
+			EnrollRepo: func(common string) error {
+				return repos.Register(repos.RegistryPath(os.Getenv), common)
+			},
 		})
 	}
 
@@ -1164,6 +1184,18 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 	if strings.HasPrefix(p.cmd, "fleet load") {
 		return runFleetLoad(ctx, p.typed.Fleet.Load, stdout, stderr)
 	}
+	if strings.HasPrefix(p.cmd, "fleet queue") {
+		q := p.typed.Fleet.Queue
+		req := fleet.QueueRequest{JSON: q.JSON, Hold: str(q.Hold), Crew: str(q.Crew), Own: q.Own}
+		if q.Admit != nil {
+			req.Admit = *q.Admit
+		}
+		return fleet.Queue(ctx, req, stdout, stderr, fleetQueueOptions(e, stderr))
+	}
+	if strings.HasPrefix(p.cmd, "fleet prio") {
+		pr := p.typed.Fleet.Prio
+		return fleet.Prio(ctx, fleet.PrioRequest{Repo: pr.Repo, N: pr.N}, stdout, stderr, fleetQueueOptions(e, stderr))
+	}
 	o := fleet.Options{
 		Tmux:      tmux.Exec{},
 		Git:       git.Exec{},
@@ -1190,6 +1222,27 @@ func fleetRemote(e env) func(dir, crew string) roster.Capture {
 	}
 }
 
+func fleetQueueOptions(e env, stderr io.Writer) fleet.QueueOptions {
+	return fleet.QueueOptions{
+		LoadOptions: fleet.LoadOptions{
+			Getenv:     os.Getenv,
+			Tmux:       tmux.Exec{},
+			Git:        git.Exec{},
+			Clock:      clock.FromEnv(),
+			BudgetFile: budgetFile(),
+		},
+		Proc:     e.proc,
+		Settings: fleetSettings(stderr),
+		Sender:   senderProbes(e.proc),
+	}
+}
+
+func fleetSettings(stderr io.Writer) func(context.Context) (fleet.QueueSettings, error) {
+	return func(ctx context.Context) (fleet.QueueSettings, error) {
+		return fleet.ResolveQueueSettings(ctx, fleet.ConfigBin(), stderr)
+	}
+}
+
 func runFleetStatus(ctx context.Context, req fleet.StatusRequest, o fleet.Options, e env, stdout, stderr io.Writer) int {
 	so := fleet.StatusOptions{
 		Options:    o,
@@ -1200,6 +1253,7 @@ func runFleetStatus(ctx context.Context, req fleet.StatusRequest, o fleet.Option
 		Budget: func(ctx context.Context) (int, error) {
 			return fleet.ResolveBudget(ctx, fleet.ConfigBin(), stderr)
 		},
+		Settings: fleetSettings(stderr),
 	}
 	so.Getenv = os.Getenv
 	return fleet.Status(ctx, req, stdout, stderr, so)

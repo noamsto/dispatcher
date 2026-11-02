@@ -1,8 +1,8 @@
 // Package stream is `crew stream`: the long-lived process a streaming lane
 // arms once, so the dispatcher's monitor is *pushed* batches instead of
 // re-arming a one-shot `crew watch` every turn. One cycle writes the tick
-// `--status` reads, announces matured holds, parks on the inner watch, passes
-// one batch line through, and reaps finished workers.
+// `--status` reads, announces matured and fleet-parked holds, parks on the
+// inner watch, passes one batch line through, and reaps finished workers.
 //
 // Every stdout line is a protocol message a dispatcher parses: the batch
 // itself, then `{"stream":"heartbeat"|"error"|"hold_due"|"reap"|"status",…}`.
@@ -280,11 +280,15 @@ type errorLine struct {
 	Playbook string `json:"playbook,omitempty"`
 }
 
-// holdDueLine carries `crew hold due --json`'s answer as its own bytes.
+// holdDueLine carries `crew hold due --json --with-parked`'s answer as its own
+// bytes: Holds is the answer's `due` array, and Parked its `parked` array — the
+// fleet holds the machine-wide queue parked, each with a reason — present only
+// when it has rows.
 type holdDueLine struct {
 	Stream   string          `json:"stream"`
 	Crew     string          `json:"crew"`
 	Holds    json.RawMessage `json:"holds"`
+	Parked   json.RawMessage `json:"parked,omitempty"`
 	TS       int64           `json:"ts"`
 	Repo     string          `json:"repo,omitempty"`
 	Playbook string          `json:"playbook,omitempty"`
@@ -656,15 +660,16 @@ func (l *loop) afterWatch(rc int, sigs chan os.Signal) os.Signal {
 	return l.wait(time.Duration(l.c.retry)*time.Second, sigs)
 }
 
-// holdDue runs `crew hold due` ahead of the park, so a matured hold announces
-// on the batch path too, and at --park resolution rather than --heartbeat —
-// which is coarser than the longest wait a hold can legally carry.
+// holdDue runs `crew hold due` ahead of the park, so a matured or fleet-parked
+// hold announces on the batch path too, and at --park resolution rather than
+// --heartbeat — which is coarser than the longest wait a hold can legally carry.
 //
 // The rc is read rather than discarded: `due` exits 1 for the ordinary "nothing
-// matured", so a genuine failure would fold into that same silence, and a hold
-// exists precisely because nobody is watching the lane.
+// matured" — which can still come with parked holds — so a genuine failure
+// would fold into that same silence, and a hold exists precisely because nobody
+// is watching the lane.
 func (l *loop) holdDue() {
-	out, rc := l.procs.run([]string{"hold", "due", "--crew", l.c.crew, "--json"}, l.holderr)
+	out, rc := l.procs.run([]string{"hold", "due", "--crew", l.c.crew, "--json", "--with-parked"}, l.holderr)
 	if rc > holdDueNone {
 		detail := invisible.Escape(firstLine(l.holderr))
 		ts := l.nowMS()
@@ -680,32 +685,72 @@ func (l *loop) holdDue() {
 		}
 		out = ""
 	}
-	matured := strings.TrimRight(out, "\n")
-	if matured == "" || matured == "[]" {
-		// Empty as well as `[]`: a failed shell-out above may print nothing at
-		// all, and neither answer may reach the fold. Cleared rather than kept,
-		// so a hold released and later re-added announces again.
+	answer := strings.TrimRight(out, "\n")
+	var due, parked holdSet
+	if answer != "" {
+		var ok bool
+		if due, parked, ok = decodeHoldDue(answer); !ok {
+			return
+		}
+	}
+	if due.n == 0 && parked.n == 0 {
+		// Empty as well as nothing due or parked: a failed shell-out above may
+		// print nothing at all, and neither answer may reach the fold. Cleared
+		// rather than kept, so a hold released and later re-added announces again.
 		l.sup.clear("hold")
 		return
 	}
-	holds, err := decodeOne(matured)
-	if err != nil {
-		return
-	}
-	// Keyed on the matured set, not on the transition into it: releasing one of
+	// Keyed on both sets, not on the transition into them: releasing one of
 	// several holds changes the key, so the rest re-announce on the next
 	// iteration instead of stranding until the stream restarts.
 	ts := l.nowMS()
-	if l.sup.repeat("hold", holdIDs(holds), ts, l.heartbeatMS()) {
-		l.emit(holdDueLine{
+	if l.sup.repeat("hold", holdIDs(due.raw)+"|"+holdIDs(parked.raw), ts, l.heartbeatMS()) {
+		line := holdDueLine{
 			Stream:   "hold_due",
 			Crew:     l.c.crew,
-			Holds:    holds,
+			Holds:    due.raw,
 			TS:       ts,
 			Repo:     l.repo,
 			Playbook: "dispatcher:budget-holds",
-		})
+		}
+		if parked.n > 0 {
+			line.Parked = parked.raw
+		}
+		l.emit(line)
 	}
+}
+
+// holdSet is one array of `hold due`'s answer: its own bytes, and its row count.
+type holdSet struct {
+	raw json.RawMessage
+	n   int
+}
+
+// decodeHoldDue reads `hold due --json --with-parked`'s one object,
+// `{"due":[…],"parked":[…]}`; ok is false for anything else, including an
+// object either of whose keys is not an array.
+func decodeHoldDue(text string) (due, parked holdSet, ok bool) {
+	obj, err := decodeObject(text)
+	if err != nil {
+		return holdSet{}, holdSet{}, false
+	}
+	if due, ok = decodeHoldSet(obj["due"]); !ok {
+		return holdSet{}, holdSet{}, false
+	}
+	if parked, ok = decodeHoldSet(obj["parked"]); !ok {
+		return holdSet{}, holdSet{}, false
+	}
+	return due, parked, true
+}
+
+// decodeHoldSet is false for a missing key (no bytes) and for `null`, which
+// decodes to a nil slice, as well as for any other non-array.
+func decodeHoldSet(raw json.RawMessage) (holdSet, bool) {
+	var rows []json.RawMessage
+	if err := json.Unmarshal(raw, &rows); err != nil || rows == nil {
+		return holdSet{}, false
+	}
+	return holdSet{raw: raw, n: len(rows)}, true
 }
 
 // startReap is the arm's `_stream_reap`: a background `crew reap`, never
@@ -916,7 +961,7 @@ func reapLines(out string) []string {
 	return lines
 }
 
-// holdIDs is the arm's `[.[].id] | sort | join(",")`: the matured set, keyed on
+// holdIDs is the arm's `[.[].id] | sort | join(",")`: a set of holds, keyed on
 // its ids. A row that is not an object, or carries no string id, joins an empty
 // id, as `jq -r '.id'` on null printed one.
 func holdIDs(holds json.RawMessage) string {

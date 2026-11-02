@@ -1681,8 +1681,11 @@ var refusalRows = []struct {
 	{"hold list crew missing value", []string{"hold", "list", "--json", "--crew"}, "crew: --crew needs a value", 1},
 	{"hold list crew empty value", []string{"hold", "list", "--crew", ""}, "crew: --crew needs a value", 1},
 	{"hold list crew empty value equals", []string{"hold", "list", "--crew="}, "crew: --crew needs a value", 1},
-	{"hold due unknown flag", []string{"hold", "due", "--bogus"}, "crew: hold due [--crew ID] [--json]", 1},
-	{"hold due extra positional", []string{"hold", "due", "x"}, "crew: hold due [--crew ID] [--json]", 1},
+	{"hold due unknown flag", []string{"hold", "due", "--bogus"}, "crew: hold due [--crew ID] [--json [--with-parked]]", 1},
+	{"hold due extra positional", []string{"hold", "due", "x"}, "crew: hold due [--crew ID] [--json [--with-parked]]", 1},
+	{"hold due with-parked needs json", []string{"hold", "due", "--with-parked"}, "crew: hold due [--crew ID] [--json [--with-parked]]", 1},
+	{"hold due with-parked json=false", []string{"hold", "due", "--json=false", "--with-parked"}, "crew: hold due [--crew ID] [--json [--with-parked]]", 1},
+	{"hold list has no with-parked", []string{"hold", "list", "--json", "--with-parked"}, "crew: hold list [--crew ID] [--json]", 1},
 	{"hold due crew missing value", []string{"hold", "due", "--crew"}, "crew: --crew needs a value", 1},
 	{"hold due crew empty value", []string{"hold", "due", "--crew", ""}, "crew: --crew needs a value", 1},
 	{"hold park json is unknown", []string{"hold", "park", "60", "--json"}, "crew: hold park <default> [--crew ID]", 1},
@@ -2138,6 +2141,7 @@ func TestFlagSpellingsAreIdentical(t *testing.T) {
 	// The rest of the converted subcommands, where running both spellings is safe:
 	// roster-render only through argv it refuses, rate and retro through reads.
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	for _, tc := range []struct {
 		name         string
 		bare, joined []string
@@ -2237,6 +2241,7 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 		{"reply --crew after body", []string{"reply", "worker:x", "go", "--crew", "c1"}, []string{"reply", "worker:x", "go", "--crew=c1"}, false},
 		{"hold list flags", []string{"hold", "list", "--json", "--crew", "c1"}, []string{"hold", "list", "--json=true", "--crew=c1"}, false},
 		{"hold due flags", []string{"hold", "due", "--json", "--crew", "c1"}, []string{"hold", "due", "--json=true", "--crew=c1"}, false},
+		{"hold due --with-parked", []string{"hold", "due", "--json", "--with-parked"}, []string{"hold", "due", "--json=true", "--with-parked=true"}, false},
 		{"hold park --crew", []string{"hold", "park", "60", "--crew", "c1"}, []string{"hold", "park", "60", "--crew=c1"}, false},
 		{"hold park --crew first", []string{"hold", "park", "--crew", "c1", "60"}, []string{"hold", "park", "--crew=c1", "60"}, false},
 		{"hold release --crew", []string{"hold", "release", "h1", "--crew", "c1"}, []string{"hold", "release", "h1", "--crew=c1"}, false},
@@ -2566,11 +2571,11 @@ func TestStreamChildWatchArgv(t *testing.T) {
 // TestStreamChildHoldDueArgv pins the argv `crew stream` re-enters `crew hold
 // due` with (internal/stream/stream.go holdDue).
 func TestStreamChildHoldDueArgv(t *testing.T) {
-	parsed, ok := parseCrew([]string{"hold", "due", "--crew", "c1", "--json"})
+	parsed, ok := parseCrew([]string{"hold", "due", "--crew", "c1", "--json", "--with-parked"})
 	if !ok || parsed.refusal != nil || parsed.cmd != "hold due" {
 		t.Fatalf("stream's child argv refused: ok %v cmd %q refusal %v", ok, parsed.cmd, parsed.refusal)
 	}
-	if got := holdRequest(parsed); !reflect.DeepEqual(got, hold.Request{Action: "due", JSON: true, Crew: "c1"}) {
+	if got := holdRequest(parsed); !reflect.DeepEqual(got, hold.Request{Action: "due", JSON: true, WithParked: true, Crew: "c1"}) {
 		t.Errorf("stream's child argv bound %+v", got)
 	}
 }

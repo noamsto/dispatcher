@@ -53,9 +53,12 @@ var budgetEngines = []string{"claude", "codex", "cursor", "pi"}
 // LoadOptions carry every outside read, so tests use temp dirs and stubs.
 type LoadOptions struct {
 	Getenv func(string) string
-	Tmux   tmux.Client
-	Git    git.Client
-	Clock  clock.Clock
+	// Registry overrides repos.RegistryPath: the repos whose released fleet holds
+	// weigh as pending.
+	Registry string
+	Tmux     tmux.Client
+	Git      git.Client
+	Clock    clock.Clock
 	// BudgetFile is engine-budget.json, the quota cache refresh-budget writes.
 	BudgetFile string
 	// Budget resolves fleetBudget from the dispatcher settings; unset when the
@@ -290,11 +293,9 @@ func hostLoad(ctx context.Context, o LoadOptions) (load string, cores int, ok bo
 // always did: a non-negative number, 8 when absent, floored and capped at a
 // million so a float literal still caps.
 func ResolveBudget(ctx context.Context, bin string, stderr io.Writer) (int, error) {
-	cmd := exec.CommandContext(ctx, bin)
-	cmd.Stderr = stderr
-	out, err := cmd.Output()
+	out, err := configJSON(ctx, bin, stderr)
 	if err != nil {
-		return 0, fmt.Errorf("could not resolve the dispatcher settings (%s: %w)", bin, err)
+		return 0, err
 	}
 	var settings struct {
 		FleetBudget *float64 `json:"fleetBudget"`
@@ -302,11 +303,28 @@ func ResolveBudget(ctx context.Context, bin string, stderr io.Writer) (int, erro
 	if err := json.Unmarshal(out, &settings); err != nil {
 		return 0, fmt.Errorf("settings fleetBudget: %v", err)
 	}
-	b := float64(defaultBudget)
-	if settings.FleetBudget != nil {
-		b = *settings.FleetBudget
+	return setting(settings.FleetBudget, defaultBudget, maxBudget), nil
+}
+
+// configJSON is dispatch-config's output: the merged dispatcher settings.
+func configJSON(ctx context.Context, bin string, stderr io.Writer) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, bin)
+	cmd.Stderr = stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("could not resolve the dispatcher settings (%s: %w)", bin, err)
 	}
-	return int(math.Min(math.Max(math.Floor(b), 0), maxBudget)), nil
+	return out, nil
+}
+
+// setting is a numeric setting as a whole number: def when absent, floored and
+// clamped to [0, ceiling], so a float literal still caps.
+func setting(v *float64, def, ceiling int) int {
+	n := float64(def)
+	if v != nil {
+		n = *v
+	}
+	return int(math.Min(math.Max(math.Floor(n), 0), float64(ceiling)))
 }
 
 func ConfigBin() string { return remote.ConfigBin() }
@@ -412,6 +430,14 @@ func resolveBudget(ctx context.Context, flag *int, o LoadOptions) (int, error) {
 // collectLoad reads the machine's capacity against budget, and the branches
 // that already have a lead pane.
 func collectLoad(ctx context.Context, budget int, o LoadOptions) (LoadDoc, map[string]bool) {
+	return measure(ctx, budget, o, scanFleet(o.Registry, o.Getenv, readBus, o.Clock.Now().UnixMilli()).released)
+}
+
+// measure is collectLoad over a fleet scan already read. A fleet hold released
+// within the pending window weighs as pending until its branch has a lead
+// pane: its dispatch is still on the way, and a second release in that gap
+// must not count the capacity as free.
+func measure(ctx context.Context, budget int, o LoadOptions, released []releasedHold) (LoadDoc, map[string]bool) {
 	leads, owned := scanLeads(ctx, o)
 	if leads == nil {
 		leads = []Lead{}
@@ -420,6 +446,11 @@ func collectLoad(ctx context.Context, budget int, o LoadOptions) (LoadDoc, map[s
 	doc := LoadDoc{Budget: budget, Leads: leads}
 	for _, l := range leads {
 		doc.Weight += l.Weight
+	}
+	for _, r := range released {
+		if !owned[r.branch] {
+			doc.Pending += r.weight
+		}
 	}
 	if budget > 0 {
 		free := max(budget-doc.Weight-doc.Pending, 0)
@@ -489,7 +520,11 @@ func refusal(d LoadDoc, add int) string {
 		for _, l := range d.Leads[:min(len(d.Leads), 3)] {
 			who = append(who, fmt.Sprintf("%s (%s, %s)", l.Name, l.Repo, l.Tier))
 		}
-		why := fmt.Sprintf("live lead weight %d + this %sdispatch (%d) exceeds fleetBudget %d", d.Weight, tierWord(add), add, d.Budget)
+		pending := ""
+		if d.Pending > 0 {
+			pending = fmt.Sprintf(" + pending %d", d.Pending)
+		}
+		why := fmt.Sprintf("live lead weight %d%s + this %sdispatch (%d) exceeds fleetBudget %d", d.Weight, pending, tierWord(add), add, d.Budget)
 		if len(who) > 0 {
 			why += " — heaviest: " + strings.Join(who, ", ")
 		}

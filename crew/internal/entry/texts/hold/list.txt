@@ -1,6 +1,8 @@
 usage: crew hold list [--crew ID] [--json]
 
-Every hold on the crew, with its window, reset time and target branch.
+Every hold on the crew, with its window, reset time and target branch. A fleet
+hold has no window: its engine, window and resets_at columns read `fleet`,
+`weight W` and `-`.
 
   --crew  Crew id; defaults to this repo's crew
   --json  Machine-readable rows

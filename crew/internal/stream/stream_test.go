@@ -471,7 +471,7 @@ func TestSignalReleasesEverything(t *testing.T) {
 	if err := os.WriteFile(script, []byte(
 		bashShebang()+"case \"${1:-}\" in\n"+
 			"  watch) printf '%s\\n' "+`'`+batch+`'`+"; exit 0 ;;\n"+
-			"  hold) printf '[]\\n'; exit 1 ;;\n"+
+			"  hold) printf '{\"due\":[],\"parked\":[]}\\n'; exit 1 ;;\n"+
 			"  *) exit 0 ;;\nesac\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}

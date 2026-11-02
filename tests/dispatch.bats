@@ -134,6 +134,7 @@ case "$1" in
 identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
 fleet) exec "$CREW_REAL" "$@" ;;
+hold) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
 EOF
@@ -3276,6 +3277,174 @@ EOF
   [[ "$stderr" == *"dispatch: fleet check skipped — crew fleet load failed (exit 1)"* ]]
   [[ "$stderr" != *"machine at capacity"* ]]
   grep -qF -- 'fleet load --budget 8 --add 2' "$STUB_LOG"
+}
+
+# Fleet hold queue: `crew fleet queue` reads the registry's repos, not the cwd,
+# and a crew's holds bind only while its dispatcher's pid is live.
+fleet_hold_fixture() {
+  export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"
+  mkdir -p "$XDG_DATA_HOME/crew"
+  git rev-parse --path-format=absolute --git-common-dir >>"$XDG_DATA_HOME/crew/repos"
+}
+
+# fleet_crew_live <crew> — a live dispatcher: the bats process itself.
+fleet_crew_live() {
+  local dir
+  dir="$(git rev-parse --path-format=absolute --git-common-dir)/crew/crews/$1"
+  mkdir -p "$dir"
+  printf '%s\n' "$$" >"$dir/pid"
+}
+
+# fleet_hold_add <crew> — a standard fleet hold of <crew>; prints its id.
+fleet_hold_add() {
+  "$CREW" hold add --fleet --crew "$1" --agent claude --ref "r-$1" --branch "feat/9-$1" \
+    --tier standard --model sonnet --effort medium "held by $1"
+}
+
+@test "1426 fleet holds: a new lead is refused while another crew's fleet hold waits, naming the hold and the fleet-hold command" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_hold_fixture
+  fleet_crew_live other
+  other="$(fleet_hold_add other)"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 201 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: refused, fleet holds are waiting — first in order: $other ("*", crew other, waited "*"); a new lead waits its turn in the machine-wide queue, or pass --ignore-budget"* ]]
+  [[ "$output" == *"dispatch: to wait in the machine-wide queue instead, place a fleet hold: crew hold add --fleet --agent <engine> --ref <ref> --branch <branch> --tier standard --model <model> --effort <effort> <title>; when crew hold due reports it, take it with dispatch --fleet-hold <id>, then crew hold release <id> -> skill dispatcher:budget-holds"* ]]
+  [[ "$output" != *"machine at capacity"* ]]
+  grep -qF -- 'fleet queue --admit 2 --crew c1' "$STUB_LOG"
+}
+
+@test "1426 fleet holds: a fleet hold of a crew with no live dispatcher bars nobody" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_hold_fixture
+  fleet_hold_add gone >/dev/null
+  run run_dispatch standard sonnet --effort medium --crew-id c1 202 "t"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet holds are waiting"* ]]
+}
+
+@test "1426 fleet holds: --fleet-hold of the queue's due hold is admitted" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_hold_fixture
+  fleet_crew_live c1
+  mine="$(fleet_hold_add c1)"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 203 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"fleet holds are waiting — first in order: $mine "* ]]
+
+  run run_dispatch standard sonnet --effort medium --crew-id c1 --fleet-hold "$mine" 203 "t"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet holds are waiting"* ]]
+  grep -qF -- "fleet queue --admit 2 --crew c1 --hold $mine" "$STUB_LOG"
+}
+
+@test "1426 fleet holds: --fleet-hold of a hold that is not the due one is refused at admission" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_hold_fixture
+  fleet_crew_live c1
+  fleet_crew_live other
+  first="$(fleet_hold_add other)"
+  mine="$(fleet_hold_add c1)"
+  run run_dispatch standard sonnet --effort medium --crew-id c1 --fleet-hold "$mine" 204 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: refused, fleet holds are waiting — first in order: $first "* ]]
+  [[ "$output" == *"dispatch: fleet hold $mine stays queued; take it again when crew hold due reports it due"* ]]
+  [[ "$output" != *"crew hold add --fleet"* ]]
+
+  run run_dispatch standard sonnet --effort medium --ignore-budget --crew-id c1 --fleet-hold "$mine" 204 "t"
+  [ "$status" -eq 0 ]
+}
+
+@test "1426 fleet holds: --ignore-budget bypasses the queue refusal with a notice" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_hold_fixture
+  fleet_crew_live other
+  other="$(fleet_hold_add other)"
+  run --separate-stderr run_dispatch standard sonnet --effort medium --ignore-budget --crew-id c1 205 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"dispatch: fleet queue check skipped (--ignore-budget) — fleet holds are waiting — first in order: $other ("* ]]
+  [[ "$stderr" != *"refused"* ]]
+}
+
+@test "1426 fleet holds: --fleet-hold must name an outstanding fleet hold of this crew, before the gate" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_hold_fixture
+  fleet_crew_live c1
+  fleet_crew_live other
+  theirs="$(fleet_hold_add other)"
+  quota="$("$CREW" hold add --crew c1 --engine claude --window 5h --resets-at "$(($(date +%s) + 3600))" \
+    --agent claude --ref r-q --branch feat/9-q --tier standard --model sonnet --effort medium "quota hold")"
+
+  for id in nosuchhold "$theirs" "$quota"; do
+    run run_dispatch standard sonnet --effort medium --crew-id c1 --fleet-hold "$id" 206 "t"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dispatch: --fleet-hold '$id' is not an outstanding fleet hold of crew c1 — see crew hold list" ]]
+  done
+  run ! grep -qF -- 'fleet queue' "$STUB_LOG"
+
+  run run_dispatch standard sonnet --effort medium --crew-id c1 --fleet-hold
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --fleet-hold needs a hold id" ]]
+}
+
+@test "1426 fleet holds: no fleet hold outstanding admits as before; a refusing fleet load names the fleet-hold command" {
+  stub_launch_bins
+  fleet_tmux
+  fleet_hold_fixture
+  run run_dispatch standard sonnet --effort medium --crew-id c1 207 "t"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"fleet holds are waiting"* ]]
+  [[ "$output" != *"fleet check skipped"* ]]
+  grep -qF -- 'fleet queue --admit 2 --crew c1' "$STUB_LOG"
+
+  fleet_lead claude amber feat/1-a "" deep
+  fleet_lead claude birch feat/2-b "" deep
+  fleet_lead claude cedar feat/3-c "" deep
+  run run_dispatch deep opus --effort medium --crew-id c1 208 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: refused, machine at capacity — "* ]]
+  [[ "$output" == *"dispatch: to wait in the machine-wide queue instead, place a fleet hold: crew hold add --fleet --agent <engine> --ref <ref> --branch <branch> --tier deep --model <model>"* ]]
+  [[ "$output" == *"take it with dispatch --fleet-hold <id>, then crew hold release <id>"* ]]
+
+  fleet_crew_live c1
+  mine="$(fleet_hold_add c1)"
+  run run_dispatch deep opus --effort medium --crew-id c1 --fleet-hold "$mine" 208 "t"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: refused, machine at capacity — "* ]]
+  [[ "$output" == *"dispatch: fleet hold $mine stays queued; take it again when crew hold due reports it due"* ]]
+  [[ "$output" != *"crew hold add --fleet"* ]]
+}
+
+@test "1426 fleet holds: a crew fleet queue that errors fails open with a note on stderr" {
+  stub_launch_bins
+  fleet_tmux
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "${1:-}" in
+identity) printf '%s\n' '{"name":"coral-fox","tmux":"colour1"}' ;;
+pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet)
+  if [ "${2:-}" = queue ]; then
+    echo "crew: fleet queue: boom" >&2
+    exit 1
+  fi
+  exec "$CREW_REAL" "$@"
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 209 "t"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"crew: fleet queue: boom"* ]]
+  [[ "$stderr" == *"dispatch: fleet queue check skipped — crew fleet queue failed (exit 1)"* ]]
 }
 
 @test "local lane: a local id passes at an allowed tier and probes its endpoint" {
@@ -18435,6 +18604,15 @@ _fs_not_armed() {
   [[ "$stderr" != *"--fresh-seams not armed"* ]]
   call="$(grep -- '-- dispatch standard' "$STUB_LOG")"
   [[ "$call" != *fresh-seams* ]]
+}
+
+@test "1426 fleet holds: --host refuses --fleet-hold" {
+  stub_launch_bins
+  _host_crew_stub
+  run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 --fleet-hold hold-7 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"dispatch: --host cannot combine with --fleet-hold — it is local to this machine"* ]]
+  run ! grep -q '^remote-run' "$STUB_LOG"
 }
 
 # _replay_lead_launch_env <marker> — run the lead's typed launch line the way tmux

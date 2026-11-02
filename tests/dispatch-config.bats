@@ -692,6 +692,30 @@ EOF
   [[ "$stderr" == *"fleetBudget must be a non-negative integer"* ]]
 }
 
+@test "fleetBackfillAfter defaults to 1200 and fleetHeadTimeout to 900; the user layer overrides them" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.fleetBackfillAfter == 1200' <<<"$output"
+  jq -e '.fleetHeadTimeout == 900' <<<"$output"
+
+  user_settings '{"fleetBackfillAfter":600,"fleetHeadTimeout":300}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.fleetBackfillAfter == 600' <<<"$output"
+  jq -e '.fleetHeadTimeout == 300' <<<"$output"
+}
+
+@test "a negative or fractional fleetBackfillAfter or fleetHeadTimeout is refused" {
+  for key in fleetBackfillAfter fleetHeadTimeout; do
+    for bad in -1 2.5; do
+      user_settings "{\"$key\":$bad}"
+      run --separate-stderr "$CONFIG"
+      [ "$status" -eq 1 ]
+      [[ "$stderr" == *"$key must be a non-negative integer"* ]]
+    done
+  done
+}
+
 @test "rosterDiagram.autoOpen defaults to true" {
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]

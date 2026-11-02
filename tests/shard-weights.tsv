@@ -81,6 +81,7 @@ tests/dispatch.bats	trust	!timing	24875
 tests/dispatch.bats	worktree anchor	!timing	21476
 tests/dispatcher.bats	*	!timing	49160
 tests/dispatcher.bats	orchestrator defaults are data	!timing	1651
+tests/fleet-holds.bats	*	!timing	1450
 tests/model-map-doc.bats	*	!timing	3811
 tests/model-map.bats	model map	!timing	223238
 tests/overseer.bats	overseer msg	!timing	2600
