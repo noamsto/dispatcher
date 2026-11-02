@@ -34,7 +34,7 @@ func RunFleet(ctx context.Context, req Request, stdout, stderr io.Writer, o Opti
 	// wtgit.TrustedCwd, whose ancestor walk never terminates on a relative
 	// path (filepath.Dir(".") == "."). reap.Run also changes the process's
 	// working directory, so a relative path resolved in the second pass would
-	// use the wrong base. Skip reporting stays in pass one.
+	// use the wrong base.
 	commons := make([]string, 0, len(found))
 	for _, r := range found {
 		if r.Status != repos.StatusOK {
