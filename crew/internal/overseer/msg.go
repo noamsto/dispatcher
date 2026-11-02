@@ -165,7 +165,7 @@ func findBus(ctx context.Context, repo string, o Options, stderr io.Writer) (str
 			continue
 		}
 		origin, _ := git.Origin(ctx, o.Git, r.Common)
-		if repos.Name(r.Common, origin) == repo {
+		if repos.Label(r.Common, origin) == repo {
 			named = append(named, r.Common)
 		}
 	}

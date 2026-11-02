@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/lane"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
@@ -547,6 +548,22 @@ func TestStatusSkippedReposAndNonGitCwd(t *testing.T) {
 	}
 	if skipped[gone] != "gone" || skipped[nobus] != "no bus" || len(skipped) != 2 {
 		t.Errorf("skipped = %v", skipped)
+	}
+}
+
+func TestStatusLabelsARepoAsOverseerAddressesIt(t *testing.T) {
+	f := newStatusFix(t, wstatus(10, "c1", "feat/a", "working", ""))
+	stub := stubGit(f.common, nil)
+	f.opts.Git = &gittest.Fake{Func: func(dir string, args []string) (string, error) {
+		if args[0] == "--git-dir="+f.common && args[len(args)-1] != "--porcelain" {
+			return "https://github.com/acme/my repo+x.git", nil
+		}
+		return stub.Func(dir, args)
+	}}
+
+	doc := f.collect(StatusRequest{})
+	if len(doc.Repos) != 1 || doc.Repos[0].Repo != "acme/my?repo?x" {
+		t.Errorf("repos = %+v, want the one repo labelled acme/my?repo?x", doc.Repos)
 	}
 }
 

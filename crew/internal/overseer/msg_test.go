@@ -201,6 +201,15 @@ func TestMsgWritesTheRowByRepoNameAndByCommonDir(t *testing.T) {
 	}
 }
 
+func TestMsgAddressesARepoByTheLabelItShows(t *testing.T) {
+	f := newFixture(t)
+	spaced := f.repo("spaced", "git@github.com:owner/my repo+x.git")
+
+	if got, want := f.posted("owner/my?repo?x", "c1", notice, spaced), rowFor("c1", notice); got != want {
+		t.Errorf("by label: last line %q, want %q", got, want)
+	}
+}
+
 func TestMsgNamesARepoWithoutAnOriginByItsDirectory(t *testing.T) {
 	f := newFixture(t)
 	plain := f.repo("plain", "")

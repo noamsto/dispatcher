@@ -293,7 +293,7 @@ type repoBuild struct {
 func (b *repoBuild) build() (RepoStatus, error) {
 	ctx, o := b.ctx, b.o
 	origin, _ := git.Origin(ctx, o.Git, b.common)
-	b.repoName = repos.Name(b.common, origin)
+	b.repoName = repos.Label(b.common, origin)
 	worktrees := sync.OnceValues(func() (string, error) { return git.Worktrees(ctx, o.Git, "", b.common) })
 	live := roster.Liveness{Windows: func() map[string]bool { return roster.Windows(ctx, b.once) }, Worktrees: worktrees}
 	rows, err := foldRepo(ctx, b.common, b.events, b.docs, "", b.nowSec,

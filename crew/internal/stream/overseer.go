@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -32,6 +31,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	lanepkg "github.com/noamsto/dispatcher/crew/internal/lane"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
+	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/watch"
 )
 
@@ -50,7 +50,6 @@ const (
 	blockedAgeAfter = 30 * time.Minute
 	budgetLowS      = 1800
 	headWaitS       = 1800
-	senderCap       = 120
 )
 
 // wakeStates are the worker states a dead lane strands: the default --states.
@@ -299,21 +298,9 @@ func (v *overseer) misrouted(b *follower, ms []watch.Misrouted) {
 	}))
 }
 
-// senderText is a sender, crew id or branch as an overseer line may carry it:
-// the sender charset kept, any other rune a `?`, at most senderCap bytes.
+// senderText is a sender, crew id or branch as an overseer line may carry it.
 func senderText(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if b.Len() == senderCap {
-			break
-		}
-		if 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || strings.ContainsRune(":/#._@-", r) {
-			b.WriteRune(r)
-		} else {
-			b.WriteByte('?')
-		}
-	}
-	return b.String()
+	return repos.Sanitize(s)
 }
 
 // diff computes the fleet status, given v.timeout at most, and prints every

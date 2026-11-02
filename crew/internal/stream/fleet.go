@@ -104,7 +104,7 @@ func (o FleetOptions) repoName(common string) string {
 	if o.Git != nil {
 		origin, _ = git.Origin(context.Background(), o.Git, common)
 	}
-	return senderText(repos.Name(common, origin))
+	return repos.Label(common, origin)
 }
 
 // FleetRequest is one `crew fleet stream` call: `crew stream`'s request, whose
