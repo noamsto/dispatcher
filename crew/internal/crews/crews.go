@@ -117,6 +117,8 @@ func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		meta = append(meta, map[string]any{"id": id, "pid": pidV, "alive": alive})
 	}
 
+	// A corrupt log contributes nothing to stats (jq -s failed whole,
+	// `|| echo '{}'`).
 	var stats any = map[string]any{}
 	if logOK {
 		docs := make([]any, len(events))
@@ -153,8 +155,7 @@ func IDs(paths bus.Paths) []string {
 
 // discover is the discovery union: every crews/ subdirectory plus every
 // crew_id the log carries, byte-sorted and deduplicated. A corrupt log keeps
-// its well-formed prefix here (`jq -r ... || true` printed it) and contributes
-// nothing to stats (jq -s failed whole, `|| echo '{}'`).
+// its well-formed prefix here (`jq -r ... || true` printed it).
 func discover(paths bus.Paths, events []bus.Event, logErr error) []string {
 	ids := crewDirs(paths)
 	if _, decodable := logErr.(*bus.DecodeError); logErr == nil || decodable {
