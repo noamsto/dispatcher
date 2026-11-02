@@ -80,6 +80,10 @@ func isHelpFlag(s string) bool { return s == "--help" || s == "-h" }
 // prints outside a repo.
 func isSweepAll(a string) bool { return strings.HasPrefix(a, "--sweep-all") }
 
+// isFleet names --fleet on a line kong could not parse, so its refusal still
+// prints outside a repo.
+func isFleet(a string) bool { return strings.HasPrefix(a, "--fleet") }
+
 // arg is args[i], or "" when the caller passed fewer arguments.
 func arg(args []string, i int) string {
 	if i < len(args) {
@@ -492,6 +496,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			say(stderr, "%s\n", line)
 			return exitFailure
 		}
+	case "reap":
+		// --fleet reads every repo on the machine, so it runs before Locate
+		// and outside any repo, like fleet and rate --sweep-all.
+		if !parsed.typed.Reap.Fleet && (parsed.refusal == nil || !slices.ContainsFunc(parsed.argv, isFleet)) {
+			break
+		}
+		if parsed.refusal != nil {
+			return refuse(stderr, parsed.refusal)
+		}
+		c := parsed.typed.Reap
+		return reap.RunFleet(ctx, reap.Request{
+			Quiet: c.Quiet, DryRun: c.DryRun, NoWait: c.NoWait, Idle: str(c.Idle), Discard: str(c.Discard),
+		}, stdout, stderr, reapOptions(ctx), reap.FleetOptions{})
 	}
 
 	// remote-exec is what sshd starts in the remote user's $HOME, so it runs
@@ -570,17 +587,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// reap prints its lines as it goes and runs the ratings sweep as a detached
 	// child of this binary, so it writes straight to stdout like stream.
 	if sub == "reap" || sub == "reap-autosweep" {
-		self, _ := os.Executable()
-		o := reap.Options{
-			Probes: reap.DefaultProbes(),
-			PID:    os.Getpid(),
-			Self:   self,
-			RateRun: func(_ []string, p bus.Paths, c string, so, se io.Writer) int {
-				return rate.Run(rate.Request{}, p, c, so, se, rate.Options{
-					ClassCheck: func(rows []any, w io.Writer) { classes.Check(rows, classEnv(ctx, c, p), w) },
-				})
-			},
-		}
+		o := reapOptions(ctx)
 		if sub == "reap-autosweep" {
 			return reap.RunAutosweep(paths, cwd, o)
 		}
@@ -1157,6 +1164,23 @@ var (
 	// check and `crew class` run it. MODEL_RESOLVE_SCRIPT overrides it.
 	modelResolveScript string
 )
+
+// reapOptions is the production reap.Options: the OS probes, this process, and
+// the ratings sweep as a detached child of this binary. The machine-wide
+// --fleet run and a repo-keyed reap share it.
+func reapOptions(ctx context.Context) reap.Options {
+	self, _ := os.Executable()
+	return reap.Options{
+		Probes: reap.DefaultProbes(),
+		PID:    os.Getpid(),
+		Self:   self,
+		RateRun: func(_ []string, p bus.Paths, c string, so, se io.Writer) int {
+			return rate.Run(rate.Request{}, p, c, so, se, rate.Options{
+				ClassCheck: func(rows []any, w io.Writer) { classes.Check(rows, classEnv(ctx, c, p), w) },
+			})
+		},
+	}
+}
 
 // classEnv is the production classes.Env: the baked resolver, this crew's id
 // and bus. Getenv, Settings and Now take the classes defaults.

@@ -86,7 +86,11 @@ let
         default = {};
       };
       systemd.user = lib.mkOption {
-        type = lib.types.attrsOf lib.types.raw;
+        # `services` and `timers` are themselves attr-merging (home-manager
+        # declares them attrsOf submodule); model that nesting so a
+        # value-level `lib.mkMerge` over the Linux block merges the two
+        # units instead of colliding on the shared `services`/`timers` key.
+        type = lib.types.attrsOf (lib.types.attrsOf lib.types.raw);
         default = {};
       };
       launchd.agents = lib.mkOption {
@@ -231,6 +235,11 @@ let
     refresh.enable = false;
   };
 
+  reapOffCfg = {
+    enable = true;
+    reap.enable = false;
+  };
+
   # #1304: the mcpServers catalog, and dispatcherMcp naming its entries.
   mcpCfg = {
     enable = true;
@@ -278,6 +287,7 @@ in {
   cursorless = mkResult cursorlessCfg;
   float = mkResult floatCfg;
   refreshOff = mkResult refreshOffCfg;
+  reapOff = mkResult reapOffCfg;
   # The launchd agent is picked by hostPlatform, so the Darwin eval takes its
   # package set rather than the host's.
   darwin = let
@@ -286,6 +296,8 @@ in {
     launchdAgents = d.launchd.agents;
     systemdUser = d.systemd.user;
   };
+  darwinReapOff = (evalOn darwinPkgs {enable = true; reap.enable = false;}).launchd.agents;
+  darwinRefreshOff = (evalOn darwinPkgs {enable = true; refresh.enable = false;}).launchd.agents;
   codexOnly = mkResult codexOnlyCfg // mkDrvs codexOnlyCfg;
   # A malformed or openrouter-provider localModels key must trip an HM
   # assertion (its message names the keys), not wait for dispatch-config to
@@ -998,7 +1010,44 @@ worktree_git_lib_crew_go_row() { # bin
 }
 
 @test "refresh.enable = false schedules neither unit" {
-  run jq -e '.refreshOff.systemdUser == {} and .refreshOff.launchdAgents == {}' "$EVAL"
+  run jq -e '(.refreshOff.systemdUser.services["dispatcher-refresh"] == null) and (.refreshOff.systemdUser.timers["dispatcher-refresh"] == null) and (.refreshOff.launchdAgents["dispatcher-refresh"] == null) and (.refreshOff.systemdUser.services["dispatcher-reap"] != null) and (.refreshOff.systemdUser.timers["dispatcher-reap"] != null)' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '(.darwinRefreshOff["dispatcher-refresh"] == null) and (.darwinRefreshOff["dispatcher-reap"] != null)' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "the reap timer runs a machine-wide reap on Linux, and nothing on Darwin" {
+  run jq -e '.full.systemdUser.timers["dispatcher-reap"].Timer == {"OnCalendar": "*:0/10", "Persistent": true, "RandomizedDelaySec": "1min"}' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.systemdUser.timers["dispatcher-reap"].Install.WantedBy == ["timers.target"]' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.systemdUser.services["dispatcher-reap"].Service.Type == "oneshot"' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.systemdUser.services["dispatcher-reap"].Service.Environment == ["PATH=/home/test/.local/bin:/home/test/.nix-profile/bin:/etc/profiles/per-user/test/bin:/run/current-system/sw/bin:/usr/bin:/bin", "CREW_RATE_AUTOSWEEP=sync"]' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.systemdUser.services["dispatcher-reap"].Service.TimeoutStartSec == "1h"' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.systemdUser.services["dispatcher-reap"].Service.ExecStart | length == 1 and (.[0] | test("^/nix/store/[^/]+-crew/bin/crew reap --fleet --quiet --no-wait$"))' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.launchdAgents["dispatcher-reap"] == null' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "the reap agent is a launchd job on Darwin, every ten minutes" {
+  run jq -e '.darwin.launchdAgents["dispatcher-reap"] | .enable == true and .config.RunAtLoad == false and .config.StartInterval == 600' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.darwin.launchdAgents["dispatcher-reap"].config | .StandardErrorPath == "/home/test/Library/Logs/dispatcher-reap.log" and .StandardOutPath == .StandardErrorPath' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.darwin.launchdAgents["dispatcher-reap"].config.ProgramArguments | length == 3 and .[0] == "/bin/sh" and .[1] == "-c" and (.[2] | test("^/nix/store/[^/]+-crew/bin/crew reap --fleet --quiet --no-wait$"))' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.darwin.launchdAgents["dispatcher-reap"].config.EnvironmentVariables.CREW_RATE_AUTOSWEEP == "sync"' "$EVAL"
+  [ "$status" -eq 0 ]
+}
+
+@test "reap.enable = false schedules neither unit" {
+  run jq -e '(.reapOff.systemdUser.services["dispatcher-reap"] == null) and (.reapOff.systemdUser.timers["dispatcher-reap"] == null) and (.reapOff.systemdUser.services["dispatcher-refresh"] != null) and (.reapOff.systemdUser.timers["dispatcher-refresh"] != null)' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '(.darwinReapOff["dispatcher-reap"] == null) and (.darwinReapOff["dispatcher-refresh"] != null)' "$EVAL"
   [ "$status" -eq 0 ]
 }
 

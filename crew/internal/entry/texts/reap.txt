@@ -1,4 +1,4 @@
-usage: crew reap [--quiet] [--dry-run] [--no-wait] [--idle S] [--discard BRANCH]
+usage: crew reap [--quiet] [--dry-run] [--no-wait] [--fleet] [--idle S] [--discard BRANCH]
 
 Reclaim a worker's tmux window and worktree once its PR has landed. The PR, not
 elapsed time, is the gate: a done worker sits for as long as its PR takes. The
@@ -8,6 +8,7 @@ reap row, else `gh pr list --head`.
   --quiet     Suppress the per-worker notes
   --dry-run   Print what would be reclaimed, change nothing
   --no-wait   Do not wait out the idle threshold on a terminal lead
+  --fleet     Reap every repo with a crew bus on the machine (ignores cwd)
   --idle      Idle seconds before the idle-release phase kills the window (default 300)
   --discard BRANCH
               Save a finished worker's uncommitted state, then reclaim it
