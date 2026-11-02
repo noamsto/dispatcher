@@ -118,6 +118,8 @@ type fleetCmd struct {
 	Stream fleetStreamCmd `cmd:"" name:"stream"`
 	Load   fleetLoadCmd   `cmd:"" name:"load"`
 	Status fleetStatusCmd `cmd:"" name:"status"`
+	Queue  fleetQueueCmd  `cmd:"" name:"queue"`
+	Prio   fleetPrioCmd   `cmd:"" name:"prio"`
 }
 
 type fleetStatusCmd struct {
@@ -130,6 +132,21 @@ type fleetLoadCmd struct {
 	Budget *int     `name:"budget"`
 	Add    int      `name:"add"`
 	Own    []string `name:"own" sep:"none"`
+}
+
+type fleetQueueCmd struct {
+	JSON  bool     `name:"json"`
+	Admit *int     `name:"admit"`
+	Hold  *string  `name:"hold"`
+	Crew  *string  `name:"crew"`
+	Own   []string `name:"own" sep:"none"`
+}
+
+// fleetPrioCmd's repo is a passthrough so that what follows it is positional:
+// kong reads a negative priority, -3, as a short flag otherwise.
+type fleetPrioCmd struct {
+	Repo string `arg:"" optional:"" passthrough:""`
+	N    string `arg:"" optional:""`
 }
 
 // streamFlags are the flags `crew stream` and `crew fleet stream` share.
@@ -640,6 +657,8 @@ var wordings = map[string]wording{
 	// fleet load answers 3 for a refusal, so its grammar errors stay 1.
 	"fleet load":   {all: fleet.LoadUsage, code: exitFailure},
 	"fleet status": {all: fleet.StatusUsage, code: exitFailure},
+	"fleet queue":  {all: fleet.QueueUsage, code: exitFailure},
+	"fleet prio":   {all: fleet.PrioUsage, code: exitFailure},
 	// stack.Usage ends in the newline run adds back.
 	"stack": {all: strings.TrimSuffix(stack.Usage, "\n"), code: exitFailure},
 	"roster-render": {
@@ -949,6 +968,20 @@ func validate(sub string, r *root) *refusal {
 	case "fleet status":
 		if t := r.Fleet.Table; t.All || t.JSON || t.Crew != nil {
 			return fail(fleet.StatusUsage)
+		}
+	case "fleet queue":
+		c := r.Fleet.Queue
+		if t := r.Fleet.Table; t.All || t.JSON || t.Crew != nil {
+			return fail(fleet.QueueUsage)
+		}
+		if (c.Admit != nil && *c.Admit < 1) || (c.Admit == nil && (c.Hold != nil || len(c.Own) > 0)) ||
+			slices.Contains(c.Own, "") || given(c.Hold) || given(c.Crew) {
+			return fail(fleet.QueueUsage)
+		}
+	case "fleet prio":
+		c := r.Fleet.Prio
+		if t := r.Fleet.Table; t.All || t.JSON || t.Crew != nil || c.Repo == "" || c.N == "" {
+			return fail(fleet.PrioUsage)
 		}
 	case "fleet stream":
 		// `fleet --all stream` selects the lane with the table's flags bound.

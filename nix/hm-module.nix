@@ -260,9 +260,10 @@ in {
       description = ''
         Head-of-line protection for the machine-wide fleet hold queue: once the
         fleet hold at its head has waited this many seconds, only that head may
-        be released among the holds that are not demoted. Set, it is emitted
-        into the locked settings layer. Unset (the default, 1200 from the base
-        defaults), the user settings file governs.
+        be released among the holds that are not demoted. 0 protects the head
+        from the start. Set, it is emitted into the locked settings layer. Unset
+        (the default, 1200 from the base defaults), the user settings file
+        governs.
       '';
     };
 
@@ -273,9 +274,9 @@ in {
       description = ''
         A fleet hold that stays the due hold this many seconds without being
         released is demoted behind every other hold; demoted and due for another
-        timeout, it is parked. Set, it is emitted into the locked settings layer.
-        Unset (the default, 900 from the base defaults), the user settings file
-        governs.
+        timeout, it is parked. 0 disables demotion. Set, it is emitted into the
+        locked settings layer. Unset (the default, 900 from the base defaults),
+        the user settings file governs.
       '';
     };
 
