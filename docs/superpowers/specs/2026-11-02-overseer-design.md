@@ -517,7 +517,12 @@ budget`, and `fleet.Due` treats an existing hold with `W > budget` (the
   and each run evaluates the whole queue, so a stuck owner cannot keep its
   own hold from being recorded: any other live dispatcher does it.
   `first_due` clears when the hold stops being the due hold (capacity was
-  taken again); entries for holds no longer outstanding are dropped. Losing
+  taken again); entries for holds no longer outstanding are dropped. Time
+  spent while the load is over the cores, or while the hold's bus cannot be
+  read, is paused, not counted and not reset: the running stretch is banked
+  into `accrued`, and the hold is demoted once `accrued` plus its current
+  stretch reaches the timeout. A record with only `first_due` reads as one
+  uninterrupted stretch. Losing
   the file restarts the clocks, delaying a demotion by at most one timeout.
   No worker-written row is an input, so no worker can move the clock.
 - **Maturity lives in `crew hold due` and `crew hold park`**, not a second

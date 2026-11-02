@@ -59,10 +59,11 @@ func readPriorities(path string) map[string]int64 {
 
 // Prio sets a registered repo's priority, which the fleet queue ranks before
 // anything else, on the human's word. It is refused under the dispatcher
-// tripwire, so a worker following an injected instruction cannot put its repo
-// first, and every change appends one audit line.
+// tripwire unless the caller is the overseer session, so a worker following an
+// injected instruction cannot put its repo first, and every change appends one
+// audit line.
 func Prio(ctx context.Context, req PrioRequest, stdout, stderr io.Writer, o QueueOptions) int {
-	if reason := sender.Check(ctx, "dispatcher:fleet", "", o.Sender); reason != "" {
+	if reason := prioSender(ctx, o); reason != "" {
 		say(stderr, "crew: fleet prio: refused — %s\n", reason)
 		return ExitError
 	}
@@ -116,6 +117,19 @@ func Prio(ctx context.Context, req PrioRequest, stdout, stderr io.Writer, o Queu
 	}
 	say(stdout, "%s: priority %d → %d\n", cleanText(name), old, n)
 	return ExitFits
+}
+
+// prioSender is why the caller may not set a priority, "" when it may: the
+// dispatcher, or the overseer session, which posts only as overseer:<host>.
+func prioSender(ctx context.Context, o QueueOptions) string {
+	reason := sender.Check(ctx, "dispatcher:fleet", "", o.Sender)
+	if reason == "" || o.Sender.Self == nil {
+		return reason
+	}
+	if self, err := o.Sender.Self(); err == nil && sender.Check(ctx, "overseer:"+self, "", o.Sender) == "" {
+		return ""
+	}
+	return reason
 }
 
 // registeredRepo is the one registry entry arg names, by its common dir, its
