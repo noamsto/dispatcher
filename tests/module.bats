@@ -176,6 +176,10 @@ let
     fleetBudget = 0;
     fleetBackfillAfter = 600;
     fleetHeadTimeout = 300;
+    overseer = {
+      autoRelaunch = true;
+      digestEvery = 7200;
+    };
     repoTrackers."factify-inc/mono" = "linear:ENG";
     orgTrackers."factify-inc" = "linear:ENG";
     openrouter = {
@@ -949,7 +953,7 @@ worktree_git_lib_crew_go_row() { # bin
 }
 
 @test "the module declares the engines option" {
-  for name in engines grantRoots fleetBudget fleetBackfillAfter fleetHeadTimeout repoTrackers orgTrackers; do
+  for name in engines grantRoots fleetBudget fleetBackfillAfter fleetHeadTimeout overseer repoTrackers orgTrackers; do
     run jq -e --arg n "$name" '(.options | index($n)) != null' "$EVAL"
     [ "$status" -eq 0 ]
   done
@@ -1081,6 +1085,8 @@ worktree_git_lib_crew_go_row() { # bin
   run jq -e '.full.locked.fleetBackfillAfter == 600' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.fleetHeadTimeout == 300' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.locked.overseer == {"autoRelaunch": true, "digestEvery": 7200}' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.engines == ["claude", "codex", "cursor", "pi"]' "$EVAL"
   [ "$status" -eq 0 ]

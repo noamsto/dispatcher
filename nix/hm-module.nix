@@ -20,6 +20,9 @@ self: {
     inherit (cfg.openrouter) keyFile;
     monthlyUsd = cfg.openrouter.monthlyTarget;
   };
+  overseerLocked = lib.filterAttrs (_: v: v != null) {
+    inherit (cfg.overseer) autoRelaunch digestEvery;
+  };
   lockedSettings =
     {inherit (cfg) profile grantRoots;}
     // lib.optionalAttrs (cfg.engines != null) {inherit (cfg) engines;}
@@ -29,6 +32,7 @@ self: {
     // lib.optionalAttrs (cfg.repoTrackers != null) {inherit (cfg) repoTrackers;}
     // lib.optionalAttrs (cfg.orgTrackers != null) {inherit (cfg) orgTrackers;}
     // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;}
+    // lib.optionalAttrs (overseerLocked != {}) {overseer = overseerLocked;}
     // lib.optionalAttrs (cfg.anthropicCredits != null) {
       anthropicCredits = {
         balance_usd = cfg.anthropicCredits.balanceUsd;
@@ -538,6 +542,33 @@ in {
           `pi auth print-api-key --provider openrouter`, pi 0.83+,
           timeout-bounded). A set keyFile is exclusive:
           pi's login is never consulted.
+        '';
+      };
+    };
+
+    overseer = {
+      autoRelaunch = lib.mkOption {
+        type = lib.types.nullOr lib.types.bool;
+        default = null;
+        example = true;
+        description = ''
+          Whether the overseer session relaunches a dead dispatcher with
+          `dispatcher --relaunch` without asking the human first. Set, it
+          lands as `overseer.autoRelaunch` in the locked settings layer.
+          Unset (the default, false from the base defaults), the user
+          settings file governs.
+        '';
+      };
+
+      digestEvery = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.positive;
+        default = null;
+        example = 14400;
+        description = ''
+          Seconds between the overseer's periodic fleet digests. Set, it
+          lands as `overseer.digestEvery` in the locked settings layer.
+          Unset (the default, 14400 from the base defaults), the user
+          settings file governs.
         '';
       };
     };

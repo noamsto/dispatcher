@@ -82,6 +82,8 @@ no_note=0
 relaunch_id=""
 relaunch_repo=""
 agent_set=0
+# --overseer: the one-per-host fleet session, started from the repos root.
+overseer=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -151,6 +153,10 @@ while [ $# -gt 0 ]; do
     }
     shift 2
     ;;
+  --overseer)
+    overseer=1
+    shift
+    ;;
   --repo)
     relaunch_repo="${2:-}"
     [ -n "$relaunch_repo" ] || {
@@ -174,6 +180,25 @@ if [ -n "$relaunch_id" ] && { [ "$agent_set" = 1 ] || [ -n "$model$effort$autoco
   [ "$new_crew$fresh$no_note" != 000 ]; }; then
   echo "dispatcher: --relaunch takes no other flags or task words — the crew's launch record decides the engine and its flags" >&2
   exit 2
+fi
+
+if [ "$overseer" = 1 ]; then
+  if [ -n "$relaunch_id" ] || [ "$new_crew$fresh$no_note" != 000 ] || [ -n "$note_src$task" ]; then
+    echo "dispatcher: --overseer takes no --new, --fresh, --note, --relaunch or task words — the overseer has no crew" >&2
+    exit 2
+  fi
+  case "$agent" in
+  codex | cursor)
+    echo "dispatcher: --overseer is claude and pi only" >&2
+    exit 2
+    ;;
+  esac
+  if git rev-parse --git-common-dir >/dev/null 2>&1; then
+    echo "dispatcher: --overseer runs from the folder that holds your repos, not inside one — cd there first (inside a repo it would be mistaken for that repo's dispatcher)" >&2
+    exit 2
+  fi
+  # Never a crew's session: an inherited CREW_ID would make crew calls act as it.
+  unset CREW_ID
 fi
 
 # Checked before the settings read: an exported CREW_ID already answers what
@@ -552,7 +577,13 @@ case "$agent" in
 claude | pi) protocol="$PROTOCOL_DIR/DISPATCHER_PROTOCOL.$agent.md" ;;
 *) protocol="$PROTOCOL_DIR/DISPATCHER_PROTOCOL.md" ;;
 esac
-if [ ! -f "$protocol" ]; then
+if [ "$overseer" = 1 ]; then
+  protocol="$PROTOCOL_DIR/OVERSEER_PROTOCOL.$agent.md"
+  if [ ! -f "$protocol" ]; then
+    echo "dispatcher: OVERSEER_PROTOCOL missing: $protocol${DISPATCHER_PROTOCOL_DIR:+ (DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR)}" >&2
+    exit 1
+  fi
+elif [ ! -f "$protocol" ]; then
   echo "dispatcher: missing protocol file $protocol${DISPATCHER_PROTOCOL_DIR:+ (DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR)}; regenerate with scripts/gen-adapters.sh or point DISPATCHER_PROTOCOL_DIR at a dir that has it" >&2
   exit 1
 fi
@@ -830,10 +861,45 @@ _reattach_or_switch() {
   return 0
 }
 
+# One overseer per host: a pid file under the state dir. A live owner gets the
+# client switched to its pane (or a refusal outside tmux); a stale file is
+# replaced. No crew is minted, adopted or registered on this path.
+if [ "$overseer" = 1 ]; then
+  overseer_host=$(uname -n)
+  overseer_host=${overseer_host%%.*}
+  overseer_dir="${XDG_STATE_HOME:-$HOME/.local/state}/crew/overseer"
+  overseer_pidfile="$overseer_dir/pid"
+  old_pid=""
+  read -r old_pid <"$overseer_pidfile" 2>/dev/null || true
+  if [[ $old_pid =~ ^[1-9][0-9]*$ ]] && [ "$old_pid" != "$$" ] && kill -0 "$old_pid" 2>/dev/null; then
+    pane=$(_pane_for_pid "$old_pid") || pane=''
+    if [ -n "$pane" ] && [ -n "${TMUX:-}" ]; then
+      tmux switch-client -t "$pane" || {
+        echo "dispatcher: could not switch the client to pane $pane" >&2
+        exit 1
+      }
+      echo "dispatcher: the overseer already runs in pane $pane — nothing started"
+      exit 0
+    fi
+    echo "dispatcher: the overseer is already running (pid $old_pid${pane:+, pane $pane}) — switch to its tmux pane; one per host" >&2
+    exit 1
+  fi
+  mkdir -p -- "$overseer_dir"
+  overseer_tmp=$(mktemp "$overseer_dir/.pid.XXXXXX")
+  printf '%s\n' "$$" >"$overseer_tmp"
+  mv -f -- "$overseer_tmp" "$overseer_pidfile"
+  trap '[ "$(cat -- "$overseer_pidfile" 2>/dev/null)" != "$$" ] || rm -f -- "$overseer_pidfile"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 143' TERM
+  export CREW_OVERSEER="$overseer_host"
+  export CREW_SWEEP_ROOTS="${CREW_SWEEP_ROOTS:-$PWD}"
+  task="You are the overseer for host $overseer_host. Run OVERSEER_PROTOCOL.md \"Cold start\" now, in order, before anything else."
+fi
+
 # An exported CREW_ID already means "this crew", and a mint outside a git repo
 # has no per-repo crew table to consult (same guard `crew register` uses).
 adopted_live=0
-if [ -z "${CREW_ID:-}" ] && [ "$new_crew" = 0 ] &&
+if [ "$overseer" = 0 ] && [ -z "${CREW_ID:-}" ] && [ "$new_crew" = 0 ] &&
   git rev-parse --git-common-dir >/dev/null 2>&1; then
   _reattach_or_switch
 fi
@@ -841,7 +907,13 @@ fi
 # Fixed identity for the orchestrator window so it stands out from the
 # per-branch worker windows it spawns. Guarded on $TMUX — the dispatcher can be
 # launched outside a tmux pane.
-if [ -n "${TMUX:-}" ]; then
+if [ "$overseer" = 1 ]; then
+  # sender.Check anchors a caller to this stamp: it may post only as
+  # overseer:<host>, whatever its env.
+  if [ -n "${TMUX:-}" ]; then
+    tmux set-option -p -t "$TMUX_PANE" @crew_role overseer
+  fi
+elif [ -n "${TMUX:-}" ]; then
   tmux set-window-option -t "$TMUX_PANE" pane-border-style "bg=#{@thm_bg},fg=#{@thm_mauve}"
   tmux set-window-option -t "$TMUX_PANE" pane-active-border-style "bg=#{@thm_bg},fg=#{@thm_mauve},bold"
   tmux set-window-option -t "$TMUX_PANE" pane-border-format " #[bold]dispatcher#[nobold] "
@@ -874,7 +946,9 @@ if common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/nul
 else
   repo=$(basename "$PWD")
 fi
-if [ -n "$task" ]; then
+if [ "$overseer" = 1 ]; then
+  session_name="overseer · $overseer_host · $(date '+%m-%d %H:%M')"
+elif [ -n "$task" ]; then
   session_name="dispatcher: $task"
 else
   session_name="dispatcher · $repo · $(date '+%m-%d %H:%M')"
@@ -885,9 +959,11 @@ fi
 # git repo. Printed because a script cannot export back to the calling shell.
 # Above this, the #929 pass already adopted a crew when this repo had one, so a
 # mint here means there was nothing to re-attach to — or --new asked for one.
-: "${CREW_ID:=$(crew new)}"
-export CREW_ID
-echo "crew id: $CREW_ID"
+if [ "$overseer" = 0 ]; then
+  : "${CREW_ID:=$(crew new)}"
+  export CREW_ID
+  echo "crew id: $CREW_ID"
+fi
 
 if git rev-parse --git-common-dir >/dev/null 2>&1; then
   registered=1
