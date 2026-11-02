@@ -122,7 +122,14 @@ elsewhere. Gone or bus-less repos are listed under `skipped` with their
     "demoted": [
       { "repo": "", "crew_id": "", "id": "", "first_due": 0, "demoted_at": 0 }
     ],
-    "parked": [{ "repo": "", "crew_id": "", "id": "" }]
+    "parked": [
+      {
+        "repo": "",
+        "crew_id": "",
+        "id": "",
+        "reason": "ineligible|demoted|oversize"
+      }
+    ]
   },
   "repos": [
     {
@@ -279,15 +286,15 @@ and to == "overseer:<host>" and from == "dispatcher:" + crew_id` across
    happened while no stream ran is seen there. Each key below emits once per
    stream lifetime per occurrence (re-armed when the condition clears):
 
-| event             | key                 | fires when                                                                                                                                                                                                                                                                |
-| ----------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dispatcher_down` | repo, crew          | `dispatcher.state` leaves `live` and `attention == unattended`, or an `idle` crew turns `unattended`                                                                                                                                                                      |
-| `dispatcher_up`   | repo, crew          | a crew that emitted `dispatcher_down` is `live` again                                                                                                                                                                                                                     |
-| `lane_dead`       | repo, crew          | `state == live`, `lane == dead` for ≥ 10 min, and the crew has a worker in a wake state                                                                                                                                                                                   |
-| `blocked_aging`   | repo, crew, session | an unanswered worker-sourced `blocked` crosses 30 min since `since`, and again when `budget_left_s` drops under 1800; a `source: watchdog` block counts only in an unattended crew (a watchdog block has no reply to wait for, and an attended crew's dispatcher owns it) |
-| `abandoned`       | repo, crew, session | a worker posts `failed "blocked, no dispatcher reply"`                                                                                                                                                                                                                    |
-| `capacity_stuck`  | host                | from the §1 `queue` and `machine` fields: the head has waited ≥ 30 min, a hold was demoted, or live weight exceeds `fleetBudget` (an `--ignore-budget` overshoot or a residual race; skipped when `fleetBudget` is 0, which disables the budget)                          |
-| `misrouted_msg`   | repo, crew, from    | a msg to `overseer:<host>` from a sender other than `dispatcher:<crew_id>` (above)                                                                                                                                                                                        |
+| event             | key                  | fires when                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dispatcher_down` | repo, crew           | `dispatcher.state` leaves `live` and `attention == unattended`, or an `idle` crew turns `unattended`                                                                                                                                                                                                                                                                                                                        |
+| `dispatcher_up`   | repo, crew           | a crew that emitted `dispatcher_down` is `live` again                                                                                                                                                                                                                                                                                                                                                                       |
+| `lane_dead`       | repo, crew           | `state == live`, `lane == dead` for ≥ 10 min, and the crew has a worker in a wake state                                                                                                                                                                                                                                                                                                                                     |
+| `blocked_aging`   | repo, crew, session  | an unanswered worker-sourced `blocked` crosses 30 min since `since`, and again when `budget_left_s` drops under 1800; a `source: watchdog` block counts only in an unattended crew (a watchdog block has no reply to wait for, and an attended crew's dispatcher owns it)                                                                                                                                                   |
+| `abandoned`       | repo, crew, session  | a worker posts `failed "blocked, no dispatcher reply"`                                                                                                                                                                                                                                                                                                                                                                      |
+| `capacity_stuck`  | host, cause, hold id | from the §1 `queue` and `machine` fields, one key per cause and hold: `head_wait` (the head has waited ≥ 30 min), `demoted` (a hold was demoted), `parked` (a hold entered `parked` by demotion), `oversize` (a hold heavier than the budget), `overshoot` (live weight exceeds `fleetBudget`: an `--ignore-budget` dispatch or a residual race; hold id empty; skipped when `fleetBudget` is 0, which disables the budget) |
+| `misrouted_msg`   | repo                 | at most one per repo per `--interval` for msgs to `overseer:<host>` from a sender other than `dispatcher:<crew_id>` (above); the rest bump the repo's `misrouted` count                                                                                                                                                                                                                                                     |
 
 Output lines: `{"stream":"overseer","event":"<event>","repo":…,"crew":…,…}`
 for transitions; `{"cursor":…,"events":[…],"repo":…}` batches for msgs (the
@@ -473,7 +480,19 @@ weight: W}` (W = the task's tier weight) and `--prio high|normal|low`
   `fleetHeadTimeout` is parked like a non-eligible crew's hold. A
   dispatcher that never acts (a stuck park lane, a planted pid file)
   therefore holds the queue for at most two timeouts per hold, and each
-  step is reported as `capacity_stuck`.
+  step is reported as `capacity_stuck` (keyed per hold, §2).
+- **A parked hold is never lost silently.** `crew hold due --crew <owner>`
+  returns the owner's demotion-parked holds in a `parked` array beside the
+  due ones, and the stream emits them on its `hold_due` line, so the
+  owner learns of it with or without an overseer. The `budget-holds`
+  skill then re-adds the task as a new fleet hold (fresh id and clock) or
+  asks its human.
+- **A hold heavier than the budget never binds.** `fleetBudget` is any
+  non-negative integer (`dispatch-config.sh:647`), so a deep task (weight 3) can exceed a budget of 1 or 2 even on an empty machine, where today
+  it refuses only that one dispatch. `crew hold add --fleet` refuses `W >
+budget`, and `fleet.Due` treats an existing hold with `W > budget` (the
+  budget was lowered) as parked with reason `oversize`: never head, never
+  binding admission, reported to its owner like a demotion park.
 - **The demotion record** is `${XDG_STATE_HOME}/crew/fleet-due.json`,
   machine-wide: per hold id, `first_due` (when an evaluation first found
   it the due hold), `demoted` and `parked` timestamps. Only `crew hold due`
@@ -580,11 +599,14 @@ as live.
 **Making `dead` mean "crashed".** Two launcher changes (S6a):
 
 - **Engine died by a signal → keep the registration.** When the engine
-  exits with `rc ≥ 128` and no handoff marker, the launcher skips `crew
-deregister` and exits, so the pid file and launch record survive and the
-  crew reads `dead` once the launcher is gone. An OOM kill or engine crash
-  therefore reads `dead` (today it reads `closed`, `dispatcher.sh:975-993`).
-  A normal engine exit (`/exit`, rc 0 or a small rc) still deregisters.
+  exits with `rc ≥ 128`, other than 130, and no handoff marker, the
+  launcher skips `crew deregister` and exits, so the pid file and launch
+  record survive and the crew reads `dead` once the launcher is gone. An
+  OOM kill or engine crash therefore reads `dead` (today it reads
+  `closed`, `dispatcher.sh:975-993`). 130 is excluded because it is both
+  death by `SIGINT` and the usual explicit exit status of a CLI quit with
+  Ctrl-C, a deliberate close. A normal engine exit (`/exit`, rc 0 or a
+  small rc, or 130) still deregisters.
 - **Window closed → deregister.** A `HUP`/`TERM` trap runs `crew
 deregister`, so a window the human closes reads `closed`. Not `INT`: the
   launcher bash shares the pane's foreground process group with the engine,
@@ -593,7 +615,11 @@ deregister`, so a window the human closes reads `closed`. Not `INT`: the
   (`dispatcher.sh:975-985`) and breaking the in-engine `--fresh` handoff.
 
 `dead` then means an engine crash, an OOM kill, a `kill -9` of the
-launcher, or a reboot: the cases relaunch exists for. Promoted in-session
+launcher, or a power loss or hard reset: the cases relaunch exists for. An
+orderly reboot tears tmux down, the panes get `HUP`, and the trap
+deregisters, so after a normal reboot every crew reads `closed` and is
+flagged, never auto-relaunched; the human relaunches by hand (a known
+limit, accepted: a reboot is a human act). Promoted in-session
 crews have no launch record (below), and auto-relaunch requires one, so
 they are never auto-relaunched.
 
@@ -639,7 +665,10 @@ the overseer acting as the dispatcher:
   line for codex/cursor (which have no `--fresh`). `env -u CREW_OVERSEER`
   keeps the relaunched dispatcher from inheriting the overseer's identity.
   The window gets `remain-on-exit on` (so a refusing launcher's message
-  stays readable), and `--relaunch` takes the new pane id
+  stays readable), switched back off with `tmux set-option -p -t <pane>
+  remain-on-exit off` once the new-pid check passes (else every later
+  normal exit would leave a dead window the overseer may not kill), and
+  `--relaunch` takes the new pane id
   (`new-window -P -F '#{pane_id}'`) and waits up to 10 s for
   `crews/<id>/pid` to name a new live pid; if none appears it exits
   non-zero and the overseer reports the failure instead of sending a
@@ -769,7 +798,9 @@ no crew filter and no dispatcher-liveness check, `crew/internal/reap/reap.go:65`
   on an overseer.
 - `budget-holds` skill: a fleet refusal → `crew hold add --fleet`; `hold_due`
   for a fleet hold → `dispatch --fleet-hold <id>`, then release; a matured
-  quota hold refused by admission → convert it to a fleet hold (§4);
+  quota hold refused by admission → convert it to a fleet hold (§4); a
+  hold reported in `crew hold due`'s `parked` array → re-add it as a new
+  fleet hold or ask the human;
   `--prio high` only on the human's word or an overseer `capacity prio`;
   honour `capacity` `defer`/`prio`.
 - "Hand off to a fresh session" → "On startup": the `--no-note` variant
@@ -809,7 +840,10 @@ hold due`), then the next hold matures, and a later release elsewhere
   does not re-head it; demoted twice → parked; at most one hold due per
   evaluation; a load-over machine makes no hold due; a promoted crew whose
   pid is an engine process is eligible; `crew hold due` under a worker env
-  does not write `fleet-due.json`; the overseer cursor never touching
+  does not write `fleet-due.json`; a demotion-parked hold reported in its
+  owner's `crew hold due` `parked` array; a hold heavier than the budget
+  refused at add and parked `oversize` if the budget drops, never binding
+  admission; the overseer cursor never touching
   `crews/<crew>/cursor`; a `worker:` msg to the overseer neither wakes it
   nor shows in `overseer_inbox`; transition keys emitting once; sender
   refusals, including `overseer:` from a dispatcher session and any
@@ -819,8 +853,9 @@ hold due`), then the next hold matures, and a later release elsewhere
   launch record with a shell metacharacter or unknown agent, a live pane, a
   second live crew in the repo) and the rate limit, with the asserted tmux
   argv carrying no `sh -c`, and a refusing relaunched launcher making
-  `--relaunch` exit non-zero; the deregister trap on `HUP`; no deregister
-  after an engine exit by signal; a Ctrl-C (`INT` to the process group)
+  `--relaunch` exit non-zero, and `remain-on-exit off` after a success;
+  the deregister trap on `HUP`; no deregister after an engine exit by
+  signal, but a deregister after exit 130; a Ctrl-C (`INT` to the process group)
   mid-session followed by a handoff still relaunches; `--fresh
 --no-note` prompt.
 - An end-to-end bats case per slice that changes a dispatcher-visible
