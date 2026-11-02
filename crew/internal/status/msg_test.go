@@ -157,6 +157,39 @@ func TestMsgStampedLeadPanePostsOnlyAsLead(t *testing.T) {
 	f.wantRow(msgWant(worker, "dispatcher:c1", "hi"))
 }
 
+func TestMsgRefusesAMarkedOverseerSessionAsAnyoneElse(t *testing.T) {
+	f := newFixture(t)
+	f.env["CREW_OVERSEER"] = "h1"
+	code, stderr := f.msg(worker, "dispatcher:c1", "hi")
+	want := "crew: msg: refusing sender '" + worker + "' — " + sender.Check(t.Context(), worker, crewID, f.opts().Sender) + "\n"
+	if code != 1 || stderr != want {
+		t.Errorf("got %d %q", code, stderr)
+	}
+	f.wantNoRow()
+}
+
+func TestMsgRefusesTheOverseerSender(t *testing.T) {
+	t.Run("overseer session", func(t *testing.T) {
+		f := newFixture(t)
+		f.overseer("h1")
+		code, stderr := f.msg("overseer:h1", "dispatcher:c1", "hi")
+		want := "crew: msg: refusing sender 'overseer:h1' — the overseer posts only through crew overseer msg, which picks the bus and checks the body\n"
+		if code != 1 || stderr != want {
+			t.Errorf("got %d %q", code, stderr)
+		}
+		f.wantNoRow()
+	})
+	t.Run("other session gets the identity refusal", func(t *testing.T) {
+		f := newFixture(t)
+		code, stderr := f.msg("overseer:h1", "dispatcher:c1", "hi")
+		want := "crew: msg: refusing sender 'overseer:h1' — " + sender.Check(t.Context(), "overseer:h1", crewID, f.opts().Sender) + "\n"
+		if code != 1 || stderr != want {
+			t.Errorf("got %d %q", code, stderr)
+		}
+		f.wantNoRow()
+	})
+}
+
 // noPlanMsg is the review-seam refusal `crew msg` posts under `plan: required`
 // when the branch has no plan seam: the same hint the pr_open/done gate gives.
 const noPlanMsg = "crew: msg: refusing the review seam for standard session " + worker +

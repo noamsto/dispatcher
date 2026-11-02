@@ -13,10 +13,11 @@ ${XDG_DATA_HOME:-$HOME/.local/share}/crew/model-class-state.json.
 
 Run both inside the crew's repo; outside a git repo they are refused with
 `crew: not in a git repo`. Both post a message to the dispatcher and a decision
-row on that repo's bus. They are refused when CREW_WORKER_ID is set, and need a
-crew id: the `crew_id:` in the repo's WORKER_TASK.md, else CREW_ID. A class-state
-file that cannot be read or parsed makes both refuse; fix or remove it. Exits 1
-on any refusal.
+row on that repo's bus. They are refused when CREW_WORKER_ID is set, or when the
+sender check refuses dispatcher:<crew> for this session (a role session, a
+crew-stamped pane, the overseer), and need a crew id: the `crew_id:` in the
+repo's WORKER_TASK.md, else CREW_ID. A class-state file that cannot be read or
+parsed makes both refuse; fix or remove it. Exits 1 on any refusal.
 
   crew class promote codex standard gpt-5.7-terra
   crew class revert codex standard

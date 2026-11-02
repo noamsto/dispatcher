@@ -37,6 +37,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/log"
 	"github.com/noamsto/dispatcher/crew/internal/merge"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
+	"github.com/noamsto/dispatcher/crew/internal/overseer"
 	"github.com/noamsto/dispatcher/crew/internal/peer"
 	"github.com/noamsto/dispatcher/crew/internal/piagentdir"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
@@ -119,6 +120,10 @@ func routeHelp(sub string, args []string, stdout, stderr io.Writer) (int, bool) 
 		if isHelpFlag(arg(args, 2)) {
 			return entry.RunHelp([]string{"class"}, stdout, stderr), true
 		}
+	case "overseer":
+		if isHelpFlag(arg(args, 2)) {
+			return entry.RunHelp([]string{"overseer"}, stdout, stderr), true
+		}
 	}
 	if isHelpFlag(arg(args, 1)) {
 		return entry.RunHelp([]string{sub}, stdout, stderr), true
@@ -153,7 +158,7 @@ var subcommands = []string{
 	"git-guard", "help", "hold", "msg", "nudge",
 	"pr-watch", "reap", "reap-autosweep",
 	"relay", "reply", "stall-watch", "status", "stream", "watch",
-	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class",
+	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class", "overseer",
 }
 
 // typedSubcommands are the subcommands whose argv root binds: every name but
@@ -169,7 +174,7 @@ var typedSubcommands = map[string]bool{
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
 	"adopt": true, "merge": true, "pr-watch": true, "stall-watch": true, "help": true,
 	"remote-run": true, "remote-exec": true, "dispatch-row": true, "peer-sync": true, "peer-claims": true, "decide": true, "decisions": true, "spec-lint": true,
-	"followups": true, "class": true,
+	"followups": true, "class": true, "overseer": true,
 }
 
 // passthroughCmd is dash to kong: its name, then whatever words it wants, kept
@@ -237,6 +242,7 @@ type root struct {
 	Decide      decideCmd      `cmd:"" name:"decide" help:"Announce a dispatcher decision to the peer hosts."`
 	Decisions   decisionsCmd   `cmd:"" name:"decisions" help:"List the decisions announced here and by peer hosts."`
 	Class       classCmd       `cmd:"" name:"class" help:"Revert or promote a model class default."`
+	Overseer    overseerCmd    `cmd:"" name:"overseer" help:"Post the overseer's message to a dispatcher."`
 
 	SpecLint specLintCmd `cmd:"" name:"spec-lint" help:"Lint a dispatcher task spec."`
 
@@ -530,6 +536,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return reap.RunFleet(ctx, reap.Request{
 			Quiet: c.Quiet, DryRun: c.DryRun, NoWait: c.NoWait, Idle: str(c.Idle), Discard: str(c.Discard),
 		}, stdout, stderr, reapOptions(ctx), reap.FleetOptions{})
+	case "overseer":
+		// It picks its own bus, so it runs before Locate and outside any repo.
+		if parsed.refusal != nil {
+			return refuse(stderr, parsed.refusal)
+		}
+		c := parsed.typed.Overseer.Msg
+		return overseer.RunMsg(ctx, overseer.MsgRequest{Repo: c.Repo, Crew: c.Crew, Body: c.Body}, stderr, overseer.Options{
+			Git: git.Exec{}, Clock: clock.FromEnv(), Sender: senderProbes(e.proc),
+		})
 	}
 
 	// remote-exec is what sshd starts in the remote user's $HOME, so it runs
@@ -741,7 +756,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		})
 	}
 	if sub == "class" {
-		ce := classEnv(ctx, cwd, paths)
+		ce := classEnv(ctx, cwd, paths, e.proc)
 		if strings.Fields(parsed.cmd)[1] == "revert" {
 			c := parsed.typed.Class.Revert
 			return classes.Revert(c.Engine, c.Class, ce, stderr)
@@ -848,9 +863,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// rate's two repo-keyed modes: the sweep of this repo, and the store rollup.
 	if sub == "rate" {
 		return rate.Run(rateRequest(parsed.typed.Rate), paths, cwd, stdout, stderr, rate.Options{
-			ClassCheck: func(rows []any, w io.Writer) { classes.Check(rows, classEnv(ctx, cwd, paths), w) },
+			ClassCheck: func(rows []any, w io.Writer) { classes.Check(rows, classEnv(ctx, cwd, paths, e.proc), w) },
 			ClassReport: func(rows []any) []string {
-				return classes.ReportLines(rows, classEnv(ctx, cwd, paths))
+				return classes.ReportLines(rows, classEnv(ctx, cwd, paths, e.proc))
 			},
 		})
 	}
@@ -878,6 +893,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		req, _ := nudge.NewRequest(str(n.Crew), n.Target, n.Wait)
 		crewID := func() string { return bus.CrewID(ctx, cwd) }
 		o := nudge.Default(paths, stderr, os.Getpid(), crewID)
+		o.Sender = senderProbes(e.proc)
 		o.Remote = func(host string, argv []string) int {
 			return remoteAs(ctx, e, cwd, cmp.Or(req.Crew, crewID()))(host, argv, stdout, stderr)
 		}
@@ -1284,7 +1300,7 @@ func reapOptions(ctx context.Context) reap.Options {
 		Self:   self,
 		RateRun: func(_ []string, p bus.Paths, c string, so, se io.Writer) int {
 			return rate.Run(rate.Request{}, p, c, so, se, rate.Options{
-				ClassCheck: func(rows []any, w io.Writer) { classes.Check(rows, classEnv(ctx, c, p), w) },
+				ClassCheck: func(rows []any, w io.Writer) { classes.Check(rows, classEnv(ctx, c, p, proc.OS{}), w) },
 			})
 		},
 	}
@@ -1292,12 +1308,13 @@ func reapOptions(ctx context.Context) reap.Options {
 
 // classEnv is the production classes.Env: the baked resolver, this crew's id
 // and bus. Getenv, Settings and Now take the classes defaults.
-func classEnv(ctx context.Context, cwd string, paths bus.Paths) classes.Env {
+func classEnv(ctx context.Context, cwd string, paths bus.Paths, t proc.Table) classes.Env {
 	return classes.Env{
 		Bash:   bashBin,
 		Script: cmp.Or(os.Getenv("MODEL_RESOLVE_SCRIPT"), modelResolveScript),
 		CrewID: bus.CrewID(ctx, cwd),
 		Paths:  paths,
+		Sender: senderProbes(t),
 	}
 }
 
@@ -1369,7 +1386,7 @@ func fold(sub string, events []bus.Event, readErr error, log string, stderr io.W
 // senderProbes are the real reads behind the sender check: the caller's env, its
 // pid ancestry, and every pane's stamps.
 func senderProbes(t proc.Table) sender.Probes {
-	return sender.Probes{Getenv: os.Getenv, Tmux: tmux.Exec{}, Proc: t}
+	return sender.Probes{Getenv: os.Getenv, Tmux: tmux.Exec{}, Proc: t, Self: peer.SelfName}
 }
 
 func probes(ctx context.Context, cwd string) roster.Probes {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -136,6 +137,43 @@ func TestTableCorruptLogContributesNoIDs(t *testing.T) {
 	}
 	if !strings.HasSuffix(out, "c-dir\t—\t—\t0\t—\t—\n") {
 		t.Errorf("c-dir row wrong: %q", out)
+	}
+}
+
+func TestIDsAreDirsAndLogIDsSortedAndDeduped(t *testing.T) {
+	p := fixture(t)
+	crewDir(t, p, "c-dir", "")
+	crewDir(t, p, "c-both", "")
+	writeLog(t, p, status(1785951000000, "c-log", "worker:feat/x#s1")+"\n"+
+		status(1785951001000, "c-both", "worker:feat/y#s1")+"\n"+
+		status(1785951002000, "c-log", "worker:feat/x#s1")+"\n"+
+		`{"ts":1785951003000,"kind":"status"}`+"\n")
+
+	want := []string{"c-both", "c-dir", "c-log"}
+	if got := IDs(p); !slices.Equal(got, want) {
+		t.Errorf("IDs = %q, want %q", got, want)
+	}
+}
+
+func TestIDsKeepTheWellFormedPrefixOfACorruptLog(t *testing.T) {
+	p := fixture(t)
+	crewDir(t, p, "c-dir", "")
+	writeLog(t, p, status(1785951000000, "c-intact", "worker:feat/x#s1")+"\n"+`{"ts":1785951264000,"crew_id":"c-to`)
+
+	want := []string{"c-dir", "c-intact"}
+	if got := IDs(p); !slices.Equal(got, want) {
+		t.Errorf("IDs = %q, want %q", got, want)
+	}
+}
+
+func TestIDsOfAMissingLogAreTheDirsOnly(t *testing.T) {
+	p := fixture(t)
+	crewDir(t, p, "c-b", "")
+	crewDir(t, p, "c-a", "")
+
+	want := []string{"c-a", "c-b"}
+	if got := IDs(p); !slices.Equal(got, want) {
+		t.Errorf("IDs = %q, want %q", got, want)
 	}
 }
 

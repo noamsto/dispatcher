@@ -32,13 +32,14 @@ suite_count() { find "$REPO_ROOT/tests" -maxdepth 1 -name '*.bats' | wc -l; }
   [[ "$output" != *tests/secret-read-guard.bats* ]]
 }
 
-@test "affected: crew/ Go sources select the crew set's 10 files, fleet-holds and remote-host" {
+@test "affected: crew/ Go sources select the crew set's 10 files, fleet-holds, remote-host and overseer" {
   affected --files crew/main.go
   [ "$status" -eq 0 ]
-  [ "${#lines[@]}" -eq 12 ]
+  [ "${#lines[@]}" -eq 13 ]
   [[ "$output" == *tests/dispatch.bats* ]]
   [[ "$output" == *tests/fleet-holds.bats* ]]
   [[ "$output" == *tests/remote-host.bats* ]]
+  [[ "$output" == *tests/overseer.bats* ]]
   [[ "$output" != *tests/secret-read-guard.bats* ]]
 }
 

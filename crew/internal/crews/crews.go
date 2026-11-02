@@ -90,23 +90,9 @@ func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	nowSec := float64(now.Unix()) + float64(now.Nanosecond()/1000)/1e6
 
 	events, logErr := bus.ReadEventsTolerant(paths.Log)
-	_, logDecodable := logErr.(*bus.DecodeError)
 	logOK := logErr == nil
 
-	// Discovery union: every crews/ subdirectory plus every crew_id the log
-	// carries. A corrupt log keeps its well-formed prefix here (`jq -r ...
-	// || true` printed it) and contributes nothing to stats (jq -s failed
-	// whole, `|| echo '{}'`).
-	ids := crewDirs(paths)
-	if logOK || logDecodable {
-		for _, ev := range events {
-			if ev.CrewID != "" {
-				ids = append(ids, ev.CrewID)
-			}
-		}
-	}
-	slices.Sort(ids)
-	ids = slices.Compact(ids)
+	ids := discover(paths, events, logErr)
 	if len(ids) == 0 {
 		return 0
 	}
@@ -131,6 +117,8 @@ func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		meta = append(meta, map[string]any{"id": id, "pid": pidV, "alive": alive})
 	}
 
+	// A corrupt log contributes nothing to stats (jq -s failed whole,
+	// `|| echo '{}'`).
 	var stats any = map[string]any{}
 	if logOK {
 		docs := make([]any, len(events))
@@ -157,6 +145,28 @@ func table(paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		say(stdout, "%s\n", s)
 	}
 	return 0
+}
+
+// IDs is the crew set `crew crews` lists for a bus.
+func IDs(paths bus.Paths) []string {
+	events, logErr := bus.ReadEventsTolerant(paths.Log)
+	return discover(paths, events, logErr)
+}
+
+// discover is the discovery union: every crews/ subdirectory plus every
+// crew_id the log carries, byte-sorted and deduplicated. A corrupt log keeps
+// its well-formed prefix here (`jq -r ... || true` printed it).
+func discover(paths bus.Paths, events []bus.Event, logErr error) []string {
+	ids := crewDirs(paths)
+	if _, decodable := logErr.(*bus.DecodeError); logErr == nil || decodable {
+		for _, ev := range events {
+			if ev.CrewID != "" {
+				ids = append(ids, ev.CrewID)
+			}
+		}
+	}
+	slices.Sort(ids)
+	return slices.Compact(ids)
 }
 
 // crewDirs is the arm's `for d in "$dir"/crews/*/` glob: subdirectory

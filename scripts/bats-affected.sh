@@ -106,7 +106,7 @@ map_file() {
   scripts/gen-model-map-doc.sh) add adapters model-map-doc ;;
   README.md) add adapters dispatch permission-check ;;
   hookyard.json) add adapters directive-delivery phase-status public-leak-guard secret-read-guard test-scope-guard tmux-server-guard ;;
-  crew/*) add "${crew_set[@]}" fleet-holds remote-host ;;
+  crew/*) add "${crew_set[@]}" fleet-holds remote-host overseer ;;
   dash/*) add module ;;
   docs/* | spikes/* | EVIDENCE-*.txt | LICENSE | .gitignore | .envrc | WORKER_TASK.md) ;;
   *) full_suite "full suite: $f has no map row" ;;
