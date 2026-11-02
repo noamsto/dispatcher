@@ -1175,10 +1175,16 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 	// writes straight to stdout like stream.
 	if strings.HasPrefix(p.cmd, "fleet stream") {
 		s := p.typed.Fleet.Stream
-		req := stream.FleetRequest{Request: streamRequest(s.streamFlags, nil), Rediscover: str(s.Rediscover)}
+		req := stream.FleetRequest{Request: streamRequest(s.streamFlags, nil), Rediscover: str(s.Rediscover), Overseer: s.Overseer}
 		return stream.RunFleet(req, stdout, stderr, stream.FleetOptions{
 			Options: stream.Options{Clock: clock.FromEnv(), Proc: e.proc},
 			Git:     git.Exec{},
+			Host:    peer.SelfName,
+			// The overseer lane's status is offline: no gh, no remote workers.
+			CollectStatus: func(ctx context.Context, stderr io.Writer) fleet.StatusDoc {
+				o := fleet.Options{Tmux: tmux.Exec{}, Git: git.Exec{}, Clock: clock.FromEnv()}
+				return fleet.CollectStatus(ctx, fleet.StatusRequest{}, stderr, statusOptions(o, e, stderr))
+			},
 		})
 	}
 	if strings.HasPrefix(p.cmd, "fleet load") {
@@ -1244,10 +1250,17 @@ func fleetSettings(stderr io.Writer) func(context.Context) (fleet.QueueSettings,
 }
 
 func runFleetStatus(ctx context.Context, req fleet.StatusRequest, o fleet.Options, e env, stdout, stderr io.Writer) int {
+	so := statusOptions(o, e, stderr)
+	so.Gh = gh.Exec{}
+	return fleet.Status(ctx, req, stdout, stderr, so)
+}
+
+// statusOptions is the production fleet.StatusOptions, without a gh client:
+// --gh asks for one.
+func statusOptions(o fleet.Options, e env, stderr io.Writer) fleet.StatusOptions {
 	so := fleet.StatusOptions{
 		Options:    o,
 		Proc:       e.proc,
-		Gh:         gh.Exec{},
 		Host:       peer.SelfName,
 		BudgetFile: budgetFile(),
 		Budget: func(ctx context.Context) (int, error) {
@@ -1256,7 +1269,7 @@ func runFleetStatus(ctx context.Context, req fleet.StatusRequest, o fleet.Option
 		Settings: fleetSettings(stderr),
 	}
 	so.Getenv = os.Getenv
-	return fleet.Status(ctx, req, stdout, stderr, so)
+	return so
 }
 
 func runFleetLoad(ctx context.Context, c fleetLoadCmd, stdout, stderr io.Writer) int {

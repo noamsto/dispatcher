@@ -362,10 +362,33 @@ func signalTarget(holder string) (int, bool) {
 	return n, true
 }
 
-// check is the arm's value checks, in its order: the five positive intervals,
-// then --reap-every (non-negative: 0 is how the cadence reap is disabled, not an
-// error), then --states, the crew and the crew's charset.
+// check is the arm's value checks, in its order: checkFlags, then the crew and
+// the crew's charset.
 func check(r Request, o Options) (call, string) {
+	c, msg := checkFlags(r)
+	if msg != "" {
+		return c, msg
+	}
+	c.crew = r.Crew
+	if c.crew == "" {
+		c.crew = o.CrewID()
+	}
+	if c.crew == "" {
+		return c, "crew: CREW_ID unset and no WORKER_TASK.md crew_id"
+	}
+	// The guard `adopt` applies to its caller-supplied id: `--crew` here is
+	// just as caller-supplied, and unvalidated would let `/` or `..` mkdir and
+	// write a pid file outside the bus dir.
+	if !bus.ValidCrewID(c.crew) {
+		return c, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'"
+	}
+	return c, ""
+}
+
+// checkFlags is the value checks that name no crew: the five positive
+// intervals, then --reap-every (non-negative: 0 is how the cadence reap is
+// disabled, not an error), then --states.
+func checkFlags(r Request) (call, string) {
 	or := func(text, def string) string {
 		if text == "" {
 			return def
@@ -382,7 +405,7 @@ func check(r Request, o Options) (call, string) {
 		parkText      = or(r.Park, strconv.Itoa(defaultPark))
 		intervalText  = or(r.Interval, strconv.Itoa(defaultInterval))
 	)
-	c.statesText, c.parkText, c.intervalText, c.crew = statesText, parkText, intervalText, r.Crew
+	c.statesText, c.parkText, c.intervalText = statesText, parkText, intervalText
 	c.force, c.statusMode = r.Force, r.Status
 	for _, f := range []struct {
 		name, text string
@@ -408,18 +431,6 @@ func check(r Request, o Options) (call, string) {
 	c.states = splitStates(statesText)
 	if len(c.states) == 0 {
 		return c, "crew: --states must be non-empty"
-	}
-	if c.crew == "" {
-		c.crew = o.CrewID()
-	}
-	if c.crew == "" {
-		return c, "crew: CREW_ID unset and no WORKER_TASK.md crew_id"
-	}
-	// The guard `adopt` applies to its caller-supplied id: `--crew` here is
-	// just as caller-supplied, and unvalidated would let `/` or `..` mkdir and
-	// write a pid file outside the bus dir.
-	if !bus.ValidCrewID(c.crew) {
-		return c, "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'"
 	}
 	return c, ""
 }

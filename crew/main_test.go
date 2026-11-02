@@ -1210,6 +1210,13 @@ func TestRunFleetStreamNeedsCrew(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
+	code = run(context.Background(), []string{"fleet", "stream", "--overseer", "--crew", "c1"}, &stdout, &stderr, e)
+	if code != 64 || stdout.Len() != 0 || stderr.String() != "crew: fleet stream: --overseer and --crew are exclusive\n" {
+		t.Fatalf("--overseer --crew: code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
 	if code := run(context.Background(), []string{"fleet", "--all"}, &stdout, &stderr, e); code != 0 || !strings.HasPrefix(stdout.String(), "REPO") {
 		t.Fatalf("fleet --all after fleet stream: code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
 	}
@@ -2279,6 +2286,8 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 		{"fleet stream --reap-every", []string{"fleet", "stream", "--reap-every", "0"}, []string{"fleet", "stream", "--reap-every=0"}, true},
 		{"fleet stream bools", []string{"fleet", "stream", "--crew", "c1", "--force", "--status"},
 			[]string{"fleet", "stream", "--crew=c1", "--force=true", "--status=true"}, false},
+		{"fleet stream --overseer", []string{"fleet", "stream", "--overseer", "--interval", "1"},
+			[]string{"fleet", "stream", "--overseer=true", "--interval=1"}, false},
 		{"roster-render bools", []string{"roster-render", "--no-open", "--once", "--detach"},
 			[]string{"roster-render", "--no-open=true", "--once=true", "--detach=true"}, false},
 		{"git-baseline --accept", []string{"git-baseline", "--accept"}, []string{"git-baseline", "--accept=true"}, false},

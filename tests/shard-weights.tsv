@@ -84,6 +84,7 @@ tests/dispatcher.bats	orchestrator defaults are data	!timing	1651
 tests/fleet-holds.bats	*	!timing	1450
 tests/model-map-doc.bats	*	!timing	3811
 tests/model-map.bats	model map	!timing	223238
+tests/overseer.bats	fleet stream --overseer	!timing	2500
 tests/overseer.bats	overseer msg	!timing	2600
 tests/permission-check.bats	permission-check	!timing	61306
 tests/pr-watch.bats	*	!timing	10296

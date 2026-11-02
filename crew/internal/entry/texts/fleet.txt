@@ -23,6 +23,9 @@ usage: crew fleet stream --crew ID [--rediscover S] [--states a,b,c] [--park S]
                          [--heartbeat S] [--coalesce S] [--retry S]
                          [--interval S] [--force]
        crew fleet stream --status --crew ID
+       crew fleet stream --overseer [--interval S] [--rediscover S]
+                         [--heartbeat S] [--force]
+       crew fleet stream --status --overseer
 
 One long-running lane that delivers a crew's bus events from every repo on the
 machine, so a dispatcher whose workers land in other repos needs one Monitor
@@ -31,6 +34,7 @@ carries a top-level `repo` (the label `crew fleet` shows); error lines name the
 repo they concern, and the lane's own heartbeat has none.
 
   --crew ID       The crew to follow (required; no ambient CREW_ID)
+  --overseer      The host's overseer lane, below; exclusive with --crew
   --rediscover S  Look for newly joined buses every S seconds (default 300)
   --status        Report the lane (alive, stale or dead; exit 0, 1 or 2)
   --force         Replace a live lane, as `crew stream --force`
@@ -56,7 +60,26 @@ The lane lock lives under
 ${XDG_STATE_HOME:-~/.local/state}/crew/fleet-stream/<crew>, outside every repo.
 Gone repos and repos without a bus are noted once on stderr and skipped.
 
+With --overseer the lane is the host's overseer's, one per host, under
+${XDG_STATE_HOME:-~/.local/state}/crew/fleet-stream/overseer:<host>. --interval
+(default 60 here) is the transition period, and the window that holds
+misrouted_msg to one line per repo. It prints `crew watch` batches
+{"cursor","events","repo"} of the dispatchers' msgs to overseer:<host>, with a
+cursor kept per bus under ${XDG_STATE_HOME:-~/.local/state}/crew/overseer/buses/
+and never a crew's own, and {"stream":"overseer","event":...} lines for
+dispatcher_down, dispatcher_up, lane_dead, blocked_aging, abandoned,
+capacity_stuck and misrouted_msg, plus heartbeat and error lines. A status read
+with no document within 20 s is dropped, with one error line per --heartbeat.
+It never reaps and never runs holds; --states, --park, --coalesce and --retry
+are accepted and do nothing here.
+
+The overseer lane starts silent: a bus with no overseer cursor is read from the
+lane's start, and its first completed status read is a baseline that wakes
+nothing. What predates the lane is in `crew fleet status` (overseer_inbox,
+attention), never a wake.
+
   crew fleet stream --crew <crew-id>
+  crew fleet stream --overseer
 
 usage: crew fleet load [--json] [--budget N] [--add WEIGHT] [--own BRANCH]...
 
@@ -110,7 +133,8 @@ as `crew fleet` finds them.
            (the reason goes to stderr); queue is the fleet hold queue's {head,
            demoted[], parked[]}, as `crew fleet queue` lists it. overseer_inbox lists a crew's dispatcher msgs to
            overseer:<host> after the overseer's cursor, else from the last 24 h;
-           msgs from any other sender only count in misrouted
+           msgs from any other sender only count in misrouted, over the last
+           24 h whatever the cursor
   --gh     Ask GitHub about each PR candidate (a pr_open or done row with a
            pr_url that is not reaped), four at a time, 20 s each; only a PR of the
            repo whose bus the row is on is asked for, any other pr_url is a
