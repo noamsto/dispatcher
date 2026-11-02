@@ -478,6 +478,8 @@
     "elevenlabs": {"url": "https://api.elevenlabs.io/v1/mcp", "description": "ElevenLabs voices, speech and agents"}
   },
   "fleetBudget": 8,
+  "fleetBackfillAfter": 1200,
+  "fleetHeadTimeout": 900,
   "taskProfiles": {
     "ui": {"tier": "standard", "engine": "claude", "effort": "medium"},
     "docs": {"tier": "trivial", "effort": "low"},

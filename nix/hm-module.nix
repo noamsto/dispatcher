@@ -24,6 +24,8 @@ self: {
     {inherit (cfg) profile grantRoots;}
     // lib.optionalAttrs (cfg.engines != null) {inherit (cfg) engines;}
     // lib.optionalAttrs (cfg.fleetBudget != null) {inherit (cfg) fleetBudget;}
+    // lib.optionalAttrs (cfg.fleetBackfillAfter != null) {inherit (cfg) fleetBackfillAfter;}
+    // lib.optionalAttrs (cfg.fleetHeadTimeout != null) {inherit (cfg) fleetHeadTimeout;}
     // lib.optionalAttrs (cfg.repoTrackers != null) {inherit (cfg) repoTrackers;}
     // lib.optionalAttrs (cfg.orgTrackers != null) {inherit (cfg) orgTrackers;}
     // lib.optionalAttrs (openrouterLocked != {}) {openrouter = openrouterLocked;}
@@ -248,6 +250,32 @@ in {
         into the locked settings layer. Unset (the default, 8 from the base
         defaults), the user settings file governs. A per-launch
         `DISPATCH_FLEET_BUDGET` still overrides every layer.
+      '';
+    };
+
+    fleetBackfillAfter = lib.mkOption {
+      type = lib.types.nullOr lib.types.ints.unsigned;
+      default = null;
+      example = 1200;
+      description = ''
+        Head-of-line protection for the machine-wide fleet hold queue: once the
+        fleet hold at its head has waited this many seconds, only that head may
+        be released among the holds that are not demoted. Set, it is emitted
+        into the locked settings layer. Unset (the default, 1200 from the base
+        defaults), the user settings file governs.
+      '';
+    };
+
+    fleetHeadTimeout = lib.mkOption {
+      type = lib.types.nullOr lib.types.ints.unsigned;
+      default = null;
+      example = 900;
+      description = ''
+        A fleet hold that stays the due hold this many seconds without being
+        released is demoted behind every other hold; demoted and due for another
+        timeout, it is parked. Set, it is emitted into the locked settings layer.
+        Unset (the default, 900 from the base defaults), the user settings file
+        governs.
       '';
     };
 

@@ -395,7 +395,7 @@ both, and `dispatcherMcp` (below), are honoured from any layer (see "Lean claude
 disables) is the machine-wide fan-out cap: `dispatch` refuses a new lead when
 the live leads on the host (trivial=1, standard=2, deep=3, from every
 dispatcher) plus its own would exceed it, or when the 1-minute load average is
-above the core count; `--ignore-budget` bypasses both. The model map itself lives in
+above the core count; `--ignore-budget` bypasses both. `fleetBackfillAfter` (default 1200 s) and `fleetHeadTimeout` (default 900 s) tune the fleet hold queue: head-of-line protection after the head has waited that long, and demotion of a due hold nobody releases. The model map itself lives in
 `adapters/core/defaults.json`: edit it, then run `scripts/gen-adapters.sh` to
 regenerate the Tier map's doc tables and the adapter mirrors.
 
