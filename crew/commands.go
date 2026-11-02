@@ -117,6 +117,12 @@ type fleetCmd struct {
 	Table  fleetTableCmd  `cmd:"" name:"-table" default:"withargs" hidden:""`
 	Stream fleetStreamCmd `cmd:"" name:"stream"`
 	Load   fleetLoadCmd   `cmd:"" name:"load"`
+	Status fleetStatusCmd `cmd:"" name:"status"`
+}
+
+type fleetStatusCmd struct {
+	JSON bool `name:"json"`
+	GH   bool `name:"gh"`
 }
 
 type fleetLoadCmd struct {
@@ -630,7 +636,8 @@ var wordings = map[string]wording{
 	"rate":   {all: rate.Usage, code: exitFailure},
 	"fleet":  {all: fleet.Usage, code: exitFailure},
 	// fleet load answers 3 for a refusal, so its grammar errors stay 1.
-	"fleet load": {all: fleet.LoadUsage, code: exitFailure},
+	"fleet load":   {all: fleet.LoadUsage, code: exitFailure},
+	"fleet status": {all: fleet.StatusUsage, code: exitFailure},
 	// stack.Usage ends in the newline run adds back.
 	"stack": {all: strings.TrimSuffix(stack.Usage, "\n"), code: exitFailure},
 	"roster-render": {
@@ -936,6 +943,10 @@ func validate(sub string, r *root) *refusal {
 		}
 		if (c.Budget != nil && *c.Budget < 0) || c.Add < 0 || slices.Contains(c.Own, "") {
 			return fail(fleet.LoadUsage)
+		}
+	case "fleet status":
+		if t := r.Fleet.Table; t.All || t.JSON || t.Crew != nil {
+			return fail(fleet.StatusUsage)
 		}
 	case "fleet stream":
 		// `fleet --all stream` selects the lane with the table's flags bound.

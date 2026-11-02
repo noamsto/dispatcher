@@ -14,8 +14,6 @@ package stream
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -30,6 +28,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/filekind"
 	"github.com/noamsto/dispatcher/crew/internal/git"
+	lanepkg "github.com/noamsto/dispatcher/crew/internal/lane"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 )
@@ -315,7 +314,7 @@ func hasCrew(events []bus.Event, crew string) bool {
 // writes is in its own dir under the lane: an empty base would make the reap
 // sweep glob `.*` in the process cwd.
 func (f *fleet) join(common string) {
-	scratch := busScratch(f.lane, common)
+	scratch := lanepkg.BusScratch(f.lane, common)
 	if err := os.MkdirAll(scratch, 0o755); err != nil {
 		f.skip(common, strings.Join(strings.Fields(err.Error()), " "))
 		return
@@ -371,7 +370,7 @@ func (f *fleet) leave(common string) {
 func (f *fleet) yielder(repo, cdir string) func() bool {
 	yielding := false
 	return func() bool {
-		state, _, pid, _ := laneState(cdir, f.o.Options)
+		state, _, pid, _ := lanepkg.State(cdir, f.o.Proc, clockMS(f.o.Options))
 		alive := state == "alive"
 		switch {
 		case alive && !yielding:
@@ -382,11 +381,6 @@ func (f *fleet) yielder(repo, cdir string) func() bool {
 		yielding = alive
 		return alive
 	}
-}
-
-func busScratch(lane, common string) string {
-	sum := sha256.Sum256([]byte(common))
-	return filepath.Join(lane, "buses", hex.EncodeToString(sum[:8]))
 }
 
 // laneWriter is one stream shared by every bus loop. say writes a whole line per

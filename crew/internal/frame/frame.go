@@ -322,6 +322,18 @@ func ClaudeIdleBox(plain, colored string, own bool) bool {
 	return ok && strings.Contains(coloredRow, ghostMarker)
 }
 
+// ClaudeUnsentInput reports a draft typed into claude's prompt box and not yet
+// sent. The dim prompt-suggestion ghost text is not one, and with no colored
+// capture a suggestion cannot be told from a draft, so that reads as none.
+func ClaudeUnsentInput(plain, colored string) bool {
+	row, _, ok := BoxRows(plain, FirstRowClaude)
+	if !ok || reDraft.ReplaceAllLiteralString(row, "") == "" || colored == "" {
+		return false
+	}
+	coloredRow, _, ok := BoxRows(colored, FirstRowClaude)
+	return ok && !strings.Contains(coloredRow, ghostMarker)
+}
+
 // PiLiveTurn is _pi_live_turn: rule text other than pi's scroll indicators
 // and pi-vim's lower-rule mode label.
 func PiLiveTurn(text string) bool {

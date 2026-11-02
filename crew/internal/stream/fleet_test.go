@@ -19,6 +19,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
+	lanepkg "github.com/noamsto/dispatcher/crew/internal/lane"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/watch"
@@ -481,7 +482,7 @@ func TestFleetSkipsGoneAndNoBus(t *testing.T) {
 		},
 	}, rediscoverEachSecond())
 
-	betaScratch := busScratch(filepath.Join(l.root, "c1"), beta)
+	betaScratch := lanepkg.BusScratch(filepath.Join(l.root, "c1"), beta)
 	waitFor(t, "beta's bus loop", func() bool { _, err := os.Stat(betaScratch); return err == nil })
 	betaGone.Store(true)
 	l.kickUntil("two rediscoveries", func() bool { return l.discovered.Load() >= 3 })
@@ -551,7 +552,7 @@ func TestFleetLeavesRepoDroppedFromDiscovery(t *testing.T) {
 		},
 	}, rediscoverEachSecond())
 
-	betaScratch := busScratch(filepath.Join(l.root, "c1"), beta)
+	betaScratch := lanepkg.BusScratch(filepath.Join(l.root, "c1"), beta)
 	waitFor(t, "beta's bus loop", func() bool { _, err := os.Stat(betaScratch); return err == nil })
 	betaListed.Store(false)
 	l.kickUntil("beta's loop to stop", func() bool { _, err := os.Stat(betaScratch); return os.IsNotExist(err) })
@@ -691,7 +692,7 @@ func TestFleetStopTagsDrainedBatch(t *testing.T) {
 		Git:      origin(alpha, "git@github.com:acme/alpha.git"),
 	}, fastRequest())
 
-	outf := filepath.Join(busScratch(filepath.Join(l.root, "c1"), alpha), "stream.out")
+	outf := filepath.Join(lanepkg.BusScratch(filepath.Join(l.root, "c1"), alpha), "stream.out")
 	waitFor(t, "the parked child's batch", func() bool { _, ok := readIfNonEmpty(outf); return ok })
 	if len(l.batches()) != 0 {
 		t.Fatalf("the batch was printed before the stop: %q", l.out.str())
@@ -718,7 +719,7 @@ func TestFleetKeepsCwdDotfiles(t *testing.T) {
 		Discover: okRepos(alpha),
 	}, fastRequest())
 	lane := filepath.Join(l.root, "c1")
-	waitFor(t, "alpha's bus loop", func() bool { _, err := os.Stat(busScratch(lane, alpha)); return err == nil })
+	waitFor(t, "alpha's bus loop", func() bool { _, err := os.Stat(lanepkg.BusScratch(lane, alpha)); return err == nil })
 	if _, err := os.Stat(keep); err != nil {
 		t.Fatalf("the cwd's dotfile went at start: %v", err)
 	}
@@ -816,7 +817,7 @@ func TestFleetStatus(t *testing.T) {
 	}()
 	me := fmt.Sprint(os.Getpid())
 	waitFor(t, "the reclaimed lane's tick", func() bool {
-		return readTick(filepath.Join(lane, "stream.tick")).ok && strings.Contains(readFile(filepath.Join(lane, "stream.tick")), `"pid":`+me)
+		return lanepkg.ReadTick(filepath.Join(lane, "stream.tick")).OK && strings.Contains(readFile(filepath.Join(lane, "stream.tick")), `"pid":`+me)
 	})
 	select {
 	case <-exited:
@@ -905,7 +906,7 @@ func TestFleetLeavesRepoNoLongerListedOK(t *testing.T) {
 		},
 	}, rediscoverEachSecond())
 
-	betaScratch := busScratch(filepath.Join(l.root, "c1"), beta)
+	betaScratch := lanepkg.BusScratch(filepath.Join(l.root, "c1"), beta)
 	waitFor(t, "beta's bus loop", func() bool { _, err := os.Stat(betaScratch); return err == nil })
 	appendRow(t, beta, statusRow(2000, "c1", "worker:feat/b", "pr_open"))
 	waitFor(t, "beta's first batch", func() bool { return l.delivered()["beta"][2000] > 0 })

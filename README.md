@@ -86,6 +86,7 @@ anything.
 crew roster                  # who is working, on what, how long
 crew fleet                   # every live worker across all repos (--all: stale rows too)
 crew fleet stream --crew <id>  # one lane for a crew whose workers span repos
+crew fleet status --json --gh  # cold start: dispatchers, blocked workers, PRs, holds, load
 crew status <from> <state>   # worker → dispatcher progress
 crew watch --states blocked  # block until something needs you
 crew inbox dispatcher:<id>   # messages addressed to you
