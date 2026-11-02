@@ -711,7 +711,7 @@ Removed text (line 1607):
 
 Protocol rule now:
 
-> 5. **Cleanup is automatic, and gated on the PR.** `crew reap` runs on every `dispatch` and from `crew stream`. It reclaims a finished worker's window and worktree once its PR is merged or closed, keeps one with an open PR, uncommitted changes or an unfinished session, and releases a finished worker's idle window after `--idle` seconds (a `pr_open` worker's window never idle-releases). Never remove a worker worktree by hand; `crew reap --dry-run` names why something is kept. Reap also files each run's outcome into the ratings store (`crew rate --report`).
+> 5. **Cleanup is automatic, and gated on the PR.** `crew reap` runs on every `dispatch`, from `crew stream`, and machine-wide on the `dispatcher-reap` timer (`crew reap --fleet` over every repo with a crew bus), independent of any dispatcher session. It reclaims a finished worker's window and worktree once its PR is merged or closed, keeps one with an open PR, uncommitted changes or an unfinished session, and releases a finished worker's idle window after `--idle` seconds (a `pr_open` worker's window never idle-releases). Never remove a worker worktree by hand; `crew reap --dry-run` names why something is kept. Reap also files each run's outcome into the ratings store (`crew rate --report`).
 
 Removed text (line 1626):
 
