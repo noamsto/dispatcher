@@ -8,6 +8,12 @@
 # entirely, and re-runs only the gates it names. The shebang and
 # `set -euo pipefail` are prepended by writeShellApplication.
 
+# Its own binary on PATH, so dispatch.sh's guard never sees a direct call.
+if [ -n "${CREW_OVERSEER:-}" ]; then
+  echo "dispatch resume: the overseer never dispatches; ask that repo's dispatcher with crew overseer msg" >&2
+  exit 1
+fi
+
 usage() {
   echo "usage: dispatch resume [<target>] [flags] [extra prompt...] — see: dispatch resume --help" >&2
 }

@@ -3556,3 +3556,9 @@ STUB
   grep -qx 'DISPATCH_CLASS_SIGIL=@standard' "$STUB_LOG"
   [ "$(jq -r 'select(.kind == "resume") | .model' "$(bus_log)")" = sonnet ]
 }
+
+@test "resume refuses under CREW_OVERSEER" {
+  CREW_OVERSEER=host1 run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the overseer never dispatches"* ]]
+}

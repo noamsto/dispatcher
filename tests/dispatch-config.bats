@@ -716,6 +716,30 @@ EOF
   done
 }
 
+@test "overseer defaults to no auto relaunch and a 4 h digest; the user layer overrides them" {
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.overseer == {"autoRelaunch": false, "digestEvery": 14400}' <<<"$output"
+
+  user_settings '{"overseer":{"autoRelaunch":true,"digestEvery":600}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.overseer == {"autoRelaunch": true, "digestEvery": 600}' <<<"$output"
+}
+
+@test "a non-boolean overseer.autoRelaunch or a non-positive overseer.digestEvery is refused" {
+  user_settings '{"overseer":{"autoRelaunch":"yes"}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"overseer.autoRelaunch must be a boolean"* ]]
+  for bad in 0 -5 2.5 '"x"'; do
+    user_settings "{\"overseer\":{\"digestEvery\":$bad}}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"overseer.digestEvery must be a positive integer (seconds)"* ]]
+  done
+}
+
 @test "rosterDiagram.autoOpen defaults to true" {
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]

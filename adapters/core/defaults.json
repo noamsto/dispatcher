@@ -480,6 +480,7 @@
   "fleetBudget": 8,
   "fleetBackfillAfter": 1200,
   "fleetHeadTimeout": 900,
+  "overseer": {"autoRelaunch": false, "digestEvery": 14400},
   "taskProfiles": {
     "ui": {"tier": "standard", "engine": "claude", "effort": "medium"},
     "docs": {"tier": "trivial", "effort": "low"},

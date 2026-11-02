@@ -115,6 +115,18 @@ case "${1:-}" in
   ;;
 esac
 
+# The overseer reports and messages; it never starts workers (--engines and
+# --models only read settings, so they stay allowed).
+case "${1:-}" in
+--engines | --models) ;;
+*)
+  if [ -n "${CREW_OVERSEER:-}" ]; then
+    echo "dispatch: the overseer never dispatches; ask that repo's dispatcher with crew overseer msg" >&2
+    exit 1
+  fi
+  ;;
+esac
+
 valid_effort() {
   case "$1" in
   low | medium | high | xhigh | max | ultra) return 0 ;;

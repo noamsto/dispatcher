@@ -271,7 +271,7 @@ four `DISPATCHER_PROTOCOL_DIR`, `DISPATCHER_REVIEWERS_DIR`,
 `DISPATCHER_CRITICS_DIR` and `DISPATCHER_SKILLS_DIR` session variables,
 installs the Codex plugin and writes the Cursor rule, commands, skills and
 rosters when those engines are included in `engines`. The settings above
-(`profile`, `engines`, `grantRoots`, `fleetBudget`, `fleetBackfillAfter`, `fleetHeadTimeout`, `repoTrackers`, `orgTrackers`,
+(`profile`, `engines`, `grantRoots`, `fleetBudget`, `fleetBackfillAfter`, `fleetHeadTimeout`, `overseer`, `repoTrackers`, `orgTrackers`,
 `openrouter`, `anthropicCredits`, `localModels`, `laneProfiles`, `hosts`, `workerDeniedMcpServers`, `dispatcherChrome`, `dispatcherMcp`, `mcpServers`) are not exported as `DISPATCH_*`: they go into a locked settings
 file baked into `dispatch-config` and every CLI that resolves through it
 (`dispatch`, `dispatch-resume`, `dispatcher`, `refresh-budget`), so no
@@ -805,7 +805,17 @@ dispatcher --agent codex         # …running on a different engine
 dispatcher "fix the flaky test"  # …with a first task
 dispatcher --new                 # …minting a second crew on purpose
 dispatcher --fresh --note <file> # …handing this crew off to a fresh session
+dispatcher --overseer            # …the one-per-host overseer, from the folder holding your repos
 ```
+
+`dispatcher --overseer` refuses inside a git repo, with `--new`/`--fresh`/`--note`
+or task words, and on codex or cursor. It has no crew: it exports
+`CREW_OVERSEER=<host>` and `CREW_SWEEP_ROOTS=$PWD`, never `CREW_ID`, stamps its
+pane `@crew_role overseer`, and loads `OVERSEER_PROTOCOL`. A second launch with a
+live overseer switches to its pane. `dispatch` refuses to run under
+`CREW_OVERSEER` (`--engines` and `--models` stay allowed). Settings:
+`overseer.autoRelaunch` (default false) and `overseer.digestEvery` (seconds,
+default 14400).
 
 A bare `dispatcher` in a repo that already has a live one switches your client to
 its pane instead of starting a second; task words there are refused with the pane
