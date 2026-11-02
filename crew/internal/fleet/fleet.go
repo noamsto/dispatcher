@@ -92,22 +92,15 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 			say(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, r.Status)
 			continue
 		}
-		events, err := bus.ReadEventsTolerant(r.Common + "/crew/events.jsonl")
-		var decode *bus.DecodeError
-		switch {
-		case errors.Is(err, bus.ErrNoLog):
-			say(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, repos.StatusNoBus)
+		events, torn, skip := readBus(r.Common)
+		if skip != "" {
+			say(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, skip)
 			continue
-		case err != nil && !errors.As(err, &decode):
-			say(stderr, "crew: fleet: %s: skipped (%s)\n", r.Common, oneLine(err))
-			continue
-		case decode != nil:
-			say(stderr, "crew: fleet: %s: %s (rows from the readable prefix)\n", r.Common, oneLine(decode))
 		}
-		docs := make([]any, len(events))
-		for i, e := range events {
-			docs[i] = e.Doc
+		if torn != "" {
+			say(stderr, "crew: fleet: %s: %s (rows from the readable prefix)\n", r.Common, torn)
 		}
+		docs := eventDocs(events)
 		worktrees := sync.OnceValues(func() (string, error) { return git.Worktrees(ctx, o.Git, "", r.Common) })
 		live := roster.Liveness{Windows: windowBranches, Worktrees: worktrees}
 		// A discovered repo's checkout is its common dir's parent, the same
@@ -146,16 +139,7 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 		for _, row := range repoRows {
 			row.Row["repo"] = name
 			row.Row["crew_id"] = row.crew
-			// A remote row answers for a window and a worktree on another host,
-			// so this host's liveness reads nothing about it. A host that did not
-			// answer has no state either, and no state is not a terminal one, so
-			// --all never hides it.
-			_, remoteRow := row.Row["host"].(string)
-			_, unanswered := row.Row["host_error"]
-			_, peerErr := row.Row["peer_error"]
-			isPeer := row.Row["peer"] == true
-			nonTerminal := unanswered || peerErr || slices.Contains(roster.LiveStates, str(row.Row, "state"))
-			stale := !remoteRow && !isPeer && nonTerminal && live.Stale(row.Row)
+			stale, nonTerminal := staleOf(row.Row, live)
 			row.Row["stale"] = stale
 			switch {
 			case !all && !nonTerminal:
@@ -179,6 +163,43 @@ func Run(ctx context.Context, req Request, stdout, stderr io.Writer, o Options) 
 		return write(stdout, stderr, buf.Bytes())
 	}
 	return write(stdout, stderr, table(rows))
+}
+
+// readBus is a repo's events. skip is why the bus cannot be read at all; torn
+// notes a bad tail, with the events before it still returned.
+func readBus(common string) (events []bus.Event, torn, skip string) {
+	events, err := bus.ReadEventsTolerant(common + "/crew/events.jsonl")
+	var decode *bus.DecodeError
+	switch {
+	case errors.Is(err, bus.ErrNoLog):
+		return nil, "", string(repos.StatusNoBus)
+	case err != nil && !errors.As(err, &decode):
+		return nil, "", oneLine(err)
+	case decode != nil:
+		torn = oneLine(decode)
+	}
+	return events, torn, ""
+}
+
+func eventDocs(events []bus.Event) []any {
+	docs := make([]any, len(events))
+	for i, e := range events {
+		docs[i] = e.Doc
+	}
+	return docs
+}
+
+// staleOf is a row's `stale` mark and whether the row is non-terminal. A remote
+// row answers for a window and a worktree on another host, so this host's
+// liveness reads nothing about it. A host that did not answer has no state
+// either, and no state is not a terminal one, so --all never hides it.
+func staleOf(row map[string]any, live roster.Liveness) (stale, nonTerminal bool) {
+	_, remoteRow := row["host"].(string)
+	_, unanswered := row["host_error"]
+	_, peerErr := row["peer_error"]
+	isPeer := row["peer"] == true
+	nonTerminal = unanswered || peerErr || slices.Contains(roster.LiveStates, str(row, "state"))
+	return !remoteRow && !isPeer && nonTerminal && live.Stale(row), nonTerminal
 }
 
 type crewRow struct {
@@ -328,15 +349,20 @@ func table(rows []map[string]any) []byte {
 // Workers write these fields, so control runes become "?" before they can
 // forge a row or drive the terminal.
 func str(row map[string]any, key string) string {
-	if s, ok := row[key].(string); ok && s != "" {
-		return strings.Map(func(r rune) rune {
-			if unicode.IsControl(r) {
-				return '?'
-			}
-			return r
-		}, s)
+	s, _ := row[key].(string)
+	return clean(s)
+}
+
+func clean(s string) string {
+	if s == "" {
+		return "-"
 	}
-	return "-"
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return '?'
+		}
+		return r
+	}, s)
 }
 
 func age(row map[string]any) string {
@@ -356,6 +382,10 @@ func age(row map[string]any) string {
 	default:
 		return "-"
 	}
+	return fmtAge(s)
+}
+
+func fmtAge(s int64) string {
 	switch {
 	case s < 60:
 		return fmt.Sprintf("%ds", s)

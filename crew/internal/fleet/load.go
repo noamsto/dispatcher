@@ -397,27 +397,21 @@ func limitReached(engine string, en map[string]any, now int64) bool {
 	return false
 }
 
-// Load reads the machine's capacity and, when req.Add is positive, judges a
-// dispatch of that weight against it: exit 0 fits, 3 refuses (the reason on
-// stdout, or stderr beside the JSON document), 1 is an error. fleetBudget 0
-// disables both checks, and a dispatch onto a branch that already has a lead
-// pane is no new lead.
-func Load(ctx context.Context, req LoadRequest, stdout, stderr io.Writer, o LoadOptions) int {
-	var budget int
+// resolveBudget is the fleetBudget a call weighs against: the flag's, else the
+// settings', else the default.
+func resolveBudget(ctx context.Context, flag *int, o LoadOptions) (int, error) {
 	switch {
-	case req.Budget != nil:
-		budget = min(max(*req.Budget, 0), maxBudget)
+	case flag != nil:
+		return min(max(*flag, 0), maxBudget), nil
 	case o.Budget != nil:
-		b, err := o.Budget(ctx)
-		if err != nil {
-			say(stderr, "crew: fleet load: %s\n", oneLine(err))
-			return ExitError
-		}
-		budget = b
-	default:
-		budget = defaultBudget
+		return o.Budget(ctx)
 	}
+	return defaultBudget, nil
+}
 
+// collectLoad reads the machine's capacity against budget, and the branches
+// that already have a lead pane.
+func collectLoad(ctx context.Context, budget int, o LoadOptions) (LoadDoc, map[string]bool) {
 	leads, owned := scanLeads(ctx, o)
 	if leads == nil {
 		leads = []Lead{}
@@ -437,6 +431,21 @@ func Load(ctx context.Context, req LoadRequest, stdout, stderr io.Writer, o Load
 		doc.LoadOver = load > float64(cores)
 	}
 	doc.Engines, doc.BudgetAgeS = budgetSummary(o.BudgetFile, o.Clock.Now().Unix())
+	return doc, owned
+}
+
+// Load reads the machine's capacity and, when req.Add is positive, judges a
+// dispatch of that weight against it: exit 0 fits, 3 refuses (the reason on
+// stdout, or stderr beside the JSON document), 1 is an error. fleetBudget 0
+// disables both checks, and a dispatch onto a branch that already has a lead
+// pane is no new lead.
+func Load(ctx context.Context, req LoadRequest, stdout, stderr io.Writer, o LoadOptions) int {
+	budget, err := resolveBudget(ctx, req.Budget, o)
+	if err != nil {
+		say(stderr, "crew: fleet load: %s\n", oneLine(err))
+		return ExitError
+	}
+	doc, owned := collectLoad(ctx, budget, o)
 
 	why := ""
 	if req.Add > 0 && budget > 0 && !ownsAny(owned, req.Own) {
