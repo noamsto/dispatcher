@@ -897,10 +897,16 @@ if [ "$overseer" = 1 ]; then
   mkdir -p -- "$overseer_dir"
   overseer_tmp=$(mktemp "$overseer_dir/.pid.XXXXXX")
   printf '%s\n' "$$" >"$overseer_tmp"
-  # Any file left here is stale (the live case exited above). ln, not mv: it
-  # fails when a concurrent launch claimed the file first.
+  # Stamped before the claim: a launch that sees the new pid file must find the
+  # overseer's stamp on its pane, or it would take the file for stale.
+  # sender.Check anchors a caller to this stamp: it may post only as
+  # overseer:<host>, whatever its env.
+  [ -z "${TMUX:-}" ] || tmux set-option -p -t "$TMUX_PANE" @crew_role overseer
+  # Any file left here is stale (the live case exited above). A launch inside
+  # the few milliseconds between that check and this claim can still slip past.
   rm -f -- "$overseer_pidfile"
   if ! ln -- "$overseer_tmp" "$overseer_pidfile" 2>/dev/null; then
+    [ -z "${TMUX:-}" ] || tmux set-option -pu -t "$TMUX_PANE" @crew_role 2>/dev/null || true
     rm -f -- "$overseer_tmp"
     echo "dispatcher: another overseer launch claimed $overseer_pidfile first — one per host" >&2
     exit 1
@@ -928,13 +934,7 @@ fi
 # Fixed identity for the orchestrator window so it stands out from the
 # per-branch worker windows it spawns. Guarded on $TMUX — the dispatcher can be
 # launched outside a tmux pane.
-if [ "$overseer" = 1 ]; then
-  # sender.Check anchors a caller to this stamp: it may post only as
-  # overseer:<host>, whatever its env.
-  if [ -n "${TMUX:-}" ]; then
-    tmux set-option -p -t "$TMUX_PANE" @crew_role overseer
-  fi
-elif [ -n "${TMUX:-}" ]; then
+if [ "$overseer" = 0 ] && [ -n "${TMUX:-}" ]; then
   tmux set-option -pu -t "$TMUX_PANE" @crew_role 2>/dev/null || true
   tmux set-window-option -t "$TMUX_PANE" pane-border-style "bg=#{@thm_bg},fg=#{@thm_mauve}"
   tmux set-window-option -t "$TMUX_PANE" pane-active-border-style "bg=#{@thm_bg},fg=#{@thm_mauve},bold"
