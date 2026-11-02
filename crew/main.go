@@ -1261,7 +1261,7 @@ func fold(sub string, events []bus.Event, readErr error, log string, stderr io.W
 // senderProbes are the real reads behind the sender check: the caller's env, its
 // pid ancestry, and every pane's stamps.
 func senderProbes(t proc.Table) sender.Probes {
-	return sender.Probes{Getenv: os.Getenv, Tmux: tmux.Exec{}, Proc: t}
+	return sender.Probes{Getenv: os.Getenv, Tmux: tmux.Exec{}, Proc: t, Self: peer.SelfName}
 }
 
 func probes(ctx context.Context, cwd string) roster.Probes {
