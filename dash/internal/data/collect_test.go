@@ -6,7 +6,9 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func readTestdata(t *testing.T, name string) []byte {
@@ -349,6 +351,105 @@ func TestRatingsWrongShapeSetsError(t *testing.T) {
 	}
 	if len(snap.Runs.RatingsGroups) != 0 {
 		t.Errorf("RatingsGroups = %+v, want empty on a decode failure", snap.Runs.RatingsGroups)
+	}
+}
+
+// barrierRunner holds every call until n calls have arrived, so Collect only
+// finishes before the context deadline if its sources really overlap.
+type barrierRunner struct {
+	inner *FakeRunner
+	n     int
+
+	mu      sync.Mutex
+	arrived int
+	all     chan struct{}
+}
+
+func newBarrierRunner(inner *FakeRunner, n int) *barrierRunner {
+	return &barrierRunner{inner: inner, n: n, all: make(chan struct{})}
+}
+
+func (b *barrierRunner) Run(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
+	b.mu.Lock()
+	b.arrived++
+	if b.arrived == b.n {
+		close(b.all)
+	}
+	b.mu.Unlock()
+	select {
+	case <-b.all:
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	}
+	return b.inner.Run(ctx, name, args...)
+}
+
+// TestCollectRunsSourcesConcurrently: dispatch-config's two calls,
+// refresh-budget, retro, rate and `crew crews` are six calls that must all
+// be in flight at once.
+func TestCollectRunsSourcesConcurrently(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	snap := Collect(ctx, newBarrierRunner(allOKRunner(t), 6), baseConfig())
+
+	if ctx.Err() != nil {
+		t.Fatal("Collect did not finish before the deadline: sources ran serially")
+	}
+	if snap.Settings.Error != nil || len(snap.Settings.Rows) == 0 || snap.Settings.Layers == nil {
+		t.Errorf("settings not populated: %+v", snap.Settings)
+	}
+	if snap.Budget.Error != nil || snap.Budget.Report == nil {
+		t.Errorf("budget not populated: %+v", snap.Budget)
+	}
+	if snap.Runs.RetroError != nil || snap.Runs.Retro == nil {
+		t.Errorf("retro not populated: %+v", snap.Runs)
+	}
+	if snap.Runs.RatingsError != nil || len(snap.Runs.RatingsGroups) == 0 {
+		t.Errorf("ratings not populated: %+v", snap.Runs)
+	}
+	if snap.Roster.Error != nil {
+		t.Errorf("roster errored: %v", *snap.Roster.Error)
+	}
+}
+
+// TestCollectRosterRunsCrewsConcurrentlyKeepsOrder gates the first crew's
+// roster call until the second crew's has started, then checks the result
+// still follows `crew crews` order.
+func TestCollectRosterRunsCrewsConcurrentlyKeepsOrder(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	gate := make(chan struct{})
+	r := allOKRunner(t)
+	r.Responses["crew crews"] = FakeResponse{
+		Stdout: []byte("crew_id\tlast_event_s\tfirst_event_s\tworkers\tpid\talive\nc1\t0\t0\t0\t1\tyes\nc2\t0\t0\t0\t1\tyes\n"),
+	}
+	r.Responses["crew roster c1"] = FakeResponse{Stdout: []byte(`[{"name":"w1"}]`), Wait: gate}
+	r.Responses["crew roster c2"] = FakeResponse{Stdout: []byte(`[{"name":"w2"}]`)}
+	r.Responses["crew hold list --crew c1 --json"] = FakeResponse{Stdout: []byte("[]")}
+	r.Responses["crew hold list --crew c2 --json"] = FakeResponse{Stdout: []byte("[]")}
+
+	go func() {
+		for ctx.Err() == nil {
+			for _, c := range r.CallsSnapshot() {
+				if fakeKey(c.Name, c.Args) == "crew roster c2" {
+					close(gate)
+					return
+				}
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	sec := CollectRoster(ctx, r, baseConfig())
+	if len(sec.Crews) != 2 {
+		t.Fatalf("expected 2 crews, got %d", len(sec.Crews))
+	}
+	if sec.Crews[0].ID != "c1" || sec.Crews[1].ID != "c2" {
+		t.Errorf("crew order = %s, %s; want c1, c2", sec.Crews[0].ID, sec.Crews[1].ID)
+	}
+	if sec.Crews[0].WorkersError != nil {
+		t.Errorf("c1 WorkersError = %v, want nil (c2 never started while c1 was gated)", *sec.Crews[0].WorkersError)
 	}
 }
 

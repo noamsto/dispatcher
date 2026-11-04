@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Config resolves every source Collect calls: crew is the resolved argv
@@ -22,17 +23,35 @@ type Config struct {
 	Now               int64
 }
 
-// Collect runs every read-only source through r and folds the results into
-// one Snapshot. A source failure degrades only its own pane — Collect itself
-// never errors.
+// Collect runs every read-only source through r concurrently and folds the
+// results into one Snapshot. A source failure degrades only its own pane —
+// Collect itself never errors.
 func Collect(ctx context.Context, r Runner, cfg Config) Snapshot {
-	return Snapshot{
-		Now:      cfg.Now,
-		Settings: collectSettings(ctx, r, cfg),
-		Budget:   collectBudget(ctx, r, cfg),
-		Runs:     collectRuns(ctx, r, cfg),
-		Roster:   CollectRoster(ctx, r, cfg),
+	snap := Snapshot{Now: cfg.Now}
+	var retro, ratings RunsSection
+	var wg sync.WaitGroup
+	for _, fn := range []func(){
+		func() { snap.Settings = CollectSettings(ctx, r, cfg) },
+		func() { snap.Budget = CollectBudget(ctx, r, cfg) },
+		func() { retro = CollectRetro(ctx, r, cfg) },
+		func() { ratings = CollectRatings(ctx, r, cfg) },
+		func() { snap.Roster = CollectRoster(ctx, r, cfg) },
+	} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn()
+		}()
 	}
+	wg.Wait()
+	snap.Runs = RunsSection{
+		Retro:         retro.Retro,
+		RetroError:    retro.RetroError,
+		Ratings:       ratings.Ratings,
+		RatingsGroups: ratings.RatingsGroups,
+		RatingsError:  ratings.RatingsError,
+	}
+	return snap
 }
 
 // sourceResult is run_src()'s {data, error, warnings} triple.
@@ -94,9 +113,16 @@ func sortedUnique(lists ...[]string) []string {
 	return out
 }
 
-func collectSettings(ctx context.Context, r Runner, cfg Config) SettingsSection {
-	showOrigin := runSource(ctx, r, cfg.DispatchConfigBin, []string{"--show-origin"}, false)
-	layersRes := runSource(ctx, r, cfg.DispatchConfigBin, []string{"--layers"}, false)
+func CollectSettings(ctx context.Context, r Runner, cfg Config) SettingsSection {
+	var showOrigin, layersRes sourceResult
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		layersRes = runSource(ctx, r, cfg.DispatchConfigBin, []string{"--layers"}, false)
+	}()
+	showOrigin = runSource(ctx, r, cfg.DispatchConfigBin, []string{"--show-origin"}, false)
+	wg.Wait()
 
 	sec := SettingsSection{
 		Warnings: sortedUnique(showOrigin.Warnings, layersRes.Warnings),
@@ -124,7 +150,7 @@ func collectSettings(ctx context.Context, r Runner, cfg Config) SettingsSection 
 	return sec
 }
 
-func collectBudget(ctx context.Context, r Runner, cfg Config) BudgetSection {
+func CollectBudget(ctx context.Context, r Runner, cfg Config) BudgetSection {
 	res := runSource(ctx, r, cfg.RefreshBudget, []string{"--report", "--json"}, false)
 	sec := BudgetSection{Warnings: nonNil(res.Warnings), Error: res.Error}
 	if res.Error != nil {
@@ -147,7 +173,8 @@ func nonNil(s []string) []string {
 	return s
 }
 
-func collectRuns(ctx context.Context, r Runner, cfg Config) RunsSection {
+// CollectRetro fills only RunsSection.Retro/RetroError.
+func CollectRetro(ctx context.Context, r Runner, cfg Config) RunsSection {
 	var sec RunsSection
 
 	retroRes := runSource(ctx, r, cfg.Crew[0], crewArgs(cfg, "retro", "--report", "--json"), true)
@@ -173,6 +200,12 @@ func collectRuns(ctx context.Context, r Runner, cfg Config) RunsSection {
 		}
 	}
 
+	return sec
+}
+
+// CollectRatings fills only RunsSection.Ratings/RatingsGroups/RatingsError.
+func CollectRatings(ctx context.Context, r Runner, cfg Config) RunsSection {
+	var sec RunsSection
 	rateRes := runSource(ctx, r, cfg.Crew[0], crewArgs(cfg, "rate", "--report", "--json"), false)
 	sec.RatingsError = rateRes.Error
 	sec.Ratings = rateRes.Data
@@ -200,25 +233,44 @@ func CollectRoster(ctx context.Context, r Runner, cfg Config) RosterSection {
 		return RosterSection{Crews: []RosterCrew{}, Error: &msg}
 	}
 
-	crews := []RosterCrew{}
-	for _, id := range aliveCrewIDs(out) {
-		workers, wErr := fetchRosterList(ctx, r, cfg, crewArgs(cfg, "roster", id))
-		if workers == nil {
-			workers = []map[string]any{}
-		}
-		for _, w := range workers {
-			ts, _ := w["ts"].(float64)
-			w["age_s"] = cfg.Now - int64(math.Floor(ts/1000))
-		}
-
-		holds, hErr := fetchRosterList(ctx, r, cfg, crewArgs(cfg, "hold", "list", "--crew", id, "--json"))
-		if holds == nil {
-			holds = []map[string]any{}
-		}
-
-		crews = append(crews, RosterCrew{ID: id, Workers: workers, Holds: holds, WorkersError: wErr, HoldsError: hErr})
+	ids := aliveCrewIDs(out)
+	crews := make([]RosterCrew, len(ids))
+	var wg sync.WaitGroup
+	for i, id := range ids {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			crews[i] = collectCrew(ctx, r, cfg, id)
+		}()
 	}
+	wg.Wait()
 	return RosterSection{Crews: crews, Error: nil}
+}
+
+// collectCrew runs one crew's roster and hold list calls concurrently.
+func collectCrew(ctx context.Context, r Runner, cfg Config, id string) RosterCrew {
+	var holds []map[string]any
+	var hErr *string
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		holds, hErr = fetchRosterList(ctx, r, cfg, crewArgs(cfg, "hold", "list", "--crew", id, "--json"))
+	}()
+	workers, wErr := fetchRosterList(ctx, r, cfg, crewArgs(cfg, "roster", id))
+	wg.Wait()
+
+	if workers == nil {
+		workers = []map[string]any{}
+	}
+	for _, w := range workers {
+		ts, _ := w["ts"].(float64)
+		w["age_s"] = cfg.Now - int64(math.Floor(ts/1000))
+	}
+	if holds == nil {
+		holds = []map[string]any{}
+	}
+	return RosterCrew{ID: id, Workers: workers, Holds: holds, WorkersError: wErr, HoldsError: hErr}
 }
 
 // fetchRosterList runs one per-crew roster/hold source and classifies it the

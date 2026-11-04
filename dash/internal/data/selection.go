@@ -14,6 +14,10 @@ type Worker struct {
 	Crew    string
 	Branch  string
 	Session string
+	Name    string
+	State   string
+	PRURL   string
+	Host    string
 }
 
 func (Worker) isSelection() {}
