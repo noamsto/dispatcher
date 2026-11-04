@@ -982,7 +982,7 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
-  for pkg in crew crew-dash dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check dispatch-config; do
+  for pkg in crew crew-dash dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check dispatch-config completions; do
     run jq -e --arg p "$pkg" '(.full.packageNames | index($p)) != null' "$EVAL"
     [ "$status" -eq 0 ]
   done

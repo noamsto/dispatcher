@@ -306,9 +306,16 @@
             text = withConfig (sub (builtins.readFile ./adapters/core/permission-check.sh));
           };
 
+          completions = pkgs.runCommand "completions" {} ''
+            dir=$out/share/fish/vendor_completions.d
+            mkdir -p "$dir"
+            ${crewGo}/bin/crew-go completion fish >"$dir/crew.fish"
+            cp ${./completions}/*.fish "$dir/"
+          '';
+
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew crew-dash dispatch dispatch-resume dispatch-config dispatcher lead-launcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check];
+            paths = [crew crew-dash dispatch dispatch-resume dispatch-config dispatcher lead-launcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check completions];
           };
         };
       in {
@@ -417,6 +424,9 @@
               pkgs.bats
               pkgs.parallel
               pkgs.shellcheck
+              # fish: tests/completions.bats runs `fish -n` and `complete -C`
+              # over the shipped completion files.
+              pkgs.fish
               pkgs.jq
               # yq-go: tests/adapters.bats parses generated codex skill
               # frontmatter to prove it is valid YAML. Without it here the test

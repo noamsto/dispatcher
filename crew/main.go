@@ -158,7 +158,7 @@ var subcommands = []string{
 	"git-guard", "help", "hold", "msg", "nudge",
 	"pr-watch", "reap", "reap-autosweep",
 	"relay", "reply", "stall-watch", "status", "stream", "watch",
-	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class", "overseer",
+	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class", "overseer", "completion",
 }
 
 // typedSubcommands are the subcommands whose argv root binds: every name but
@@ -174,7 +174,7 @@ var typedSubcommands = map[string]bool{
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
 	"adopt": true, "merge": true, "pr-watch": true, "stall-watch": true, "help": true,
 	"remote-run": true, "remote-exec": true, "dispatch-row": true, "peer-sync": true, "peer-claims": true, "decide": true, "decisions": true, "spec-lint": true,
-	"followups": true, "class": true, "overseer": true,
+	"followups": true, "class": true, "overseer": true, "completion": true,
 }
 
 // passthroughCmd is dash to kong: its name, then whatever words it wants, kept
@@ -263,6 +263,8 @@ type root struct {
 	ReapAutosweep argvCmd `cmd:"" name:"reap-autosweep" help:"The detached ratings sweep reap starts."`
 
 	Help argvCmd `cmd:"" name:"help" help:"The grouped help."`
+
+	Completion argvCmd `cmd:"" name:"completion" help:"Print a shell completion script." hidden:""`
 }
 
 // crewArgs is what the root parse resolves to: the word that named the
@@ -545,6 +547,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		return overseer.RunMsg(ctx, overseer.MsgRequest{Repo: c.Repo, Crew: c.Crew, Body: c.Body}, stderr, overseer.Options{
 			Git: git.Exec{}, Clock: clock.FromEnv(), Sender: senderProbes(e.proc),
 		})
+	}
+
+	// completion prints a script from the grammar alone, so it runs in the build
+	// sandbox, where there is no repo and no working directory to read.
+	if sub == "completion" {
+		return runCompletion(parsed.typed.Completion.Args, stdout, stderr)
 	}
 
 	// remote-exec is what sshd starts in the remote user's $HOME, so it runs
