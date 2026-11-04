@@ -703,11 +703,15 @@ func liveColumns(w int, multiCrew bool) []col {
 	if multiCrew {
 		cols = append(cols, col{id: colCrew, title: "crew", min: 4, max: 12})
 	}
+	tierMax := 30
+	if w >= detailMinW {
+		tierMax = 56
+	}
 	cols = append(cols,
 		col{id: colName, title: "name", min: 6, max: 14},
 		col{id: colState, title: "state", min: 7, max: 9},
 		col{id: colAge, title: "age", min: 3, max: 6},
-		col{id: colTier, title: "tier/engine/model", min: 10, max: 30, flex: w < detailMinW},
+		col{id: colTier, title: "tier/engine/model", min: 10, max: tierMax, flex: w < detailMinW},
 		col{id: colPR, title: "pr", min: 3, max: 8},
 	)
 	if w >= detailMinW {

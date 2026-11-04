@@ -781,6 +781,23 @@ func TestLiveDetailColumnOnlyFrom120(t *testing.T) {
 	}
 }
 
+func TestLiveTierColumnFullAt200(t *testing.T) {
+	asciiProfile(t)
+	snap := loadFullSnapshot(t)
+	snap.Roster.Crews = []data.RosterCrew{
+		{
+			ID: "c1",
+			Workers: []map[string]any{
+				{"name": "w1", "state": "working", "tier": "standard", "engine": "pi", "model": "openrouter/deepseek/deepseek-v4.1-flash", "age_s": float64(5)},
+			},
+		},
+	}
+	out := newLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(200, 24)
+	if want := "standard/pi/openrouter/deepseek/deepseek-v4.1-flash"; !strings.Contains(out, want) {
+		t.Errorf("tier/engine/model truncated at 200, want %q:\n%s", want, out)
+	}
+}
+
 // TestLiveWidthTable checks every frame line stays within its width across
 // widths and fixtures — on the raw frame, before the root's normalizeFrame
 // safety net — and that the column layout itself fits where its minimums
