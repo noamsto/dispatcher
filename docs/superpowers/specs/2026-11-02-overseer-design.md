@@ -45,16 +45,16 @@ the overseer wrote, kill it, start a new one. The new one must show the same
 fleet status, and no dispatcher may have behaved differently while none ran.
 Files the overseer session writes or causes, and why none breaks the test:
 
-| file                                                    | written by                                                                  | if lost or never written                                                           |
-| ------------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| per-bus msg cursors (§2)                                | overseer stream                                                             | the cold start's `overseer_inbox` replays up to 24 h                               |
-| `${XDG_STATE_HOME}/crew/overseer/pid` (§7)              | overseer launcher                                                           | a second overseer may start; nothing else reads it                                 |
-| `crews/<id>/relaunch` marker (§5)                       | `dispatcher --relaunch`                                                     | the 30 min relaunch rate limit restarts; dispatchers never read it                 |
-| `${XDG_DATA_HOME}/crew/fleet-priority.json` (§4)        | `crew fleet prio`, a human command the overseer may run on the human's word | every repo has priority 0; dispatchers read it whether or not an overseer exists   |
-| `${XDG_DATA_HOME}/crew/fleet-priority.log` (§4)         | `crew fleet prio` (audit line per change)                                   | the digest loses its "changes since last digest" list; ordering is unaffected      |
-| `${XDG_STATE_HOME}/crew/fleet-due.json` (§4)            | `crew hold due` run by any live dispatcher (never the overseer)             | demotion clocks restart; a stuck hold's demotion is delayed by at most one timeout |
-| `${XDG_STATE_HOME}/crew/overseer/hosts/<h>/cursor` (§9) | overseer stream                                                             | the cold start's `overseer_inbox` replays up to 24 h of that host's replies        |
-| `${XDG_STATE_HOME}/crew/overseer/hosts/<h>/ok` (§9)     | overseer stream, `crew fleet status` in overseer mode                       | `last_ok_ts` reads null until the next good answer from that host                  |
+| file                                                      | written by                                                                  | if lost or never written                                                                               |
+| --------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| per-bus msg cursors (§2)                                  | overseer stream                                                             | the cold start's `overseer_inbox` replays up to 24 h                                                   |
+| `${XDG_STATE_HOME}/crew/overseer/pid` (§7)                | overseer launcher                                                           | a second overseer may start; nothing else reads it                                                     |
+| `crews/<id>/relaunch` marker (§5)                         | `dispatcher --relaunch`                                                     | the 30 min relaunch rate limit restarts; dispatchers never read it                                     |
+| `${XDG_DATA_HOME}/crew/fleet-priority.json` (§4)          | `crew fleet prio`, a human command the overseer may run on the human's word | every repo has priority 0; dispatchers read it whether or not an overseer exists                       |
+| `${XDG_DATA_HOME}/crew/fleet-priority.log` (§4)           | `crew fleet prio` (audit line per change)                                   | the digest loses its "changes since last digest" list; ordering is unaffected                          |
+| `${XDG_STATE_HOME}/crew/fleet-due.json` (§4)              | `crew hold due` run by any live dispatcher (never the overseer)             | demotion clocks restart; a stuck hold's demotion is delayed by at most one timeout                     |
+| `${XDG_STATE_HOME}/crew/overseer/hosts/<h>/` cursors (§9) | overseer stream                                                             | per far repo; lost, the far `--since` falls back to 24 h and the cold start's `overseer_inbox` replays |
+| `${XDG_STATE_HOME}/crew/overseer/hosts/<h>/ok` (§9)       | overseer stream, `crew fleet status` in overseer mode                       | `last_ok_ts` reads null until the next good answer from that host                                      |
 
 No dispatcher reads an overseer-private file, and no fleet duty waits on one.
 
@@ -871,7 +871,9 @@ refuses the `scope` key and reads as `unreachable` with that line.
   probes, so no recursion or loops); `inbox`, `misrouted` and `cursor` fold the
   buses for the address `overseer:<origin>` from `--since` (default 24 h),
   never from the far overseer's own cursor files. Discovery uses
-  `overseer.root` or the registry, never a `$HOME` walk over ssh.
+  `overseer.root` or the registry, never a `$HOME` walk over ssh; `deliver` and
+  served `status` share that one discovery. `crew overseer status` fails rather
+  than serve fewer buses when the settings cannot be read.
 - `crew overseer deliver --origin <h> <repo> <crew> '<json>'` is the one write:
   one `msg` row `from: overseer:<h>`, `to: dispatcher:<crew>`; it prints
   `{"ts":<ms>}`, the `re` a reply carries. It re-runs every check of the local
@@ -883,7 +885,8 @@ refuses the `scope` key and reads as `unreachable` with that line.
 none of `CREW_WORKER_ID`, `CREW_ROLE_ID`, `CREW_OVERSEER`; both pane probes read
 through and the caller is in no pane stamped with a branch or role. When the far
 tmux server cannot answer `list-panes -a` from the sshd session, `deliver`
-fails closed. `crew msg` and `crew status` keep refusing every `overseer:`
+fails closed. A dispatcher session (`CREW_ID` set, or a pane stamped with a
+crew) is refused by the relay rule too. `crew msg` and `crew status` keep refusing every `overseer:`
 sender. This is a tripwire on the sanctioned path, not authentication.
 **Posture:** anything on the requesting host that can run
 `ssh <far> crew remote-exec` can craft a host-scope `deliver` with
@@ -896,7 +899,7 @@ Without `--host`, or with this host, it is today's local post. With a remote
 `<h>`: the local overseer sender check, local `bodyRefusal` (before any ssh),
 `<h>` in settings `hosts`, then `deliver` over host scope. Far stdout is
 re-validated and printed as `{"host":<h>,"ts":<ms>}`; the `ts` is the far
-row's. A far failure exits 1 with `crew: overseer msg: <host>: <far first
+row's. Far stderr is capped and the call has a 30 s deadline. A far failure exits 1 with `crew: overseer msg: <host>: <far first
 stderr line>`. No `--host` value comes from a bus row.
 
 **D5. Federated fleet status.** In overseer mode, with a passing local
@@ -905,7 +908,9 @@ partner reads `unprobed` with the reason), `CollectStatus` fetches each partner
 concurrently with the local collection, each bounded by 10 s, with the cursor
 as `--since`. Each answer is admitted as untrusted data (`fleet.AdmitHost`):
 size and shape caps, `v == 1`, strings stripped of control and invisible
-characters and capped, every repo's `host` set to the asked settings key, inbox
+characters and capped, repo labels, crew ids and hold ids sanitized to the
+identifier set (`[A-Za-z0-9:/#._@-]`) with invalid crew ids dropped, every
+repo's `host` set to the asked settings key, inbox
 events re-checked (`kind == "msg"`, `to == overseer:<self>`,
 `from == dispatcher:<crew_id>`, `ts` above the cursor) with failures moved to
 `misrouted` by sender only. Nothing in an answer selects a host, path, command
@@ -933,19 +938,20 @@ ts, last_ok_ts, age_s, error, machine, queue, repos, skipped}`. An
   (the lane skips rows whose own `host` differs from the doc's host). Digest
   counts count a worker once, under its home crew; a guest crew is one line,
   "on `<far>` for `<home>`", outside per-repo counts. Capacity is per machine
-  and already correct. A guest crew whose home host is unreachable or whose
-  stamp is missing stays `unattended`: it fails visible.
+  and already correct. A guest crew whose home host is unreachable or or is
+  not a settings host, or whose stamp is missing, stays `unattended`: it fails
+  visible.
 - The table form gains a leading `HOST` column and one line per non-ok partner.
 
-**D6. Overseer lane.** Every lane line carries `host`. Transitions are tracked
+**D6. Overseer lane.** Every event line and msg batch carries `host` (heartbeat and error lines do not). Transitions are tracked
 per host; a non-ok partner's carry forward untouched (absent is not cleared).
 `host_unreachable` `{host, error, last_ok_ts, ts}` fires when a partner turns
-non-ok and `host_reachable` when it recovers (level-triggered, first doc is the
-baseline). For each ok partner, every admitted inbox batch above the per-host
-cursor prints as `{"cursor","events","repo","host"}` and the cursor file then
-advances (at-least-once); remote misrouted msgs print `misrouted_msg` with
+non-ok and `host_reachable` when it recovers (edge-triggered: one line per change;
+the first document is the baseline). For each ok partner, every admitted inbox batch above the per-host
+cursor prints as `{"cursor","events","repo","host"}` and the per-far-repo cursor
+file then advances (at-least-once); remote misrouted msgs print `misrouted_msg` with
 `host`, sender only. Remote replies reach the lane once per 60 s status
-interval, not the 2 s local poll. State files: `cursor` and `ok` under
+interval, not the 2 s local poll. State files: one cursor file per far repo and `ok` under
 `${XDG_STATE_HOME}/crew/overseer/hosts/<h>/`; the `ok` write is temp file plus
 rename under the `lock` package and never lowers the stored value. No
 dispatcher reads either; the statelessness test holds.
