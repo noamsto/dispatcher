@@ -806,6 +806,7 @@ dispatcher "fix the flaky test"  # …with a first task
 dispatcher --new                 # …minting a second crew on purpose
 dispatcher --fresh --note <file> # …handing this crew off to a fresh session
 dispatcher --overseer            # …the one-per-host overseer, from the folder holding your repos
+overseer                         # …resolve the repos root and run dispatcher --overseer
 ```
 
 `dispatcher --overseer` refuses inside a git repo, with `--new`/`--fresh`/`--note`
@@ -814,8 +815,13 @@ or task words, and on codex or cursor. It has no crew: it exports
 pane `@crew_role overseer`, and loads `OVERSEER_PROTOCOL`. A second launch with a
 live overseer switches to its pane. `dispatch` refuses to run under
 `CREW_OVERSEER` (`--engines` and `--models` stay allowed). Settings:
-`overseer.autoRelaunch` (default false) and `overseer.digestEvery` (seconds,
-default 14400).
+`overseer.root`, `overseer.autoRelaunch` (default false) and `overseer.digestEvery`
+(seconds, default 14400).
+
+The `overseer` command resolves the repos root as the `overseer.root` setting,
+else the first entry of `$CREW_SWEEP_ROOTS`, else `$HOME`; it errors with exit 2
+if that root is missing or not a directory, or is inside a git repo; then it cds
+there and execs `dispatcher --overseer`.
 
 A bare `dispatcher` in a repo that already has a live one switches your client to
 its pane instead of starting a second; task words there are refused with the pane
