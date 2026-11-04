@@ -11,15 +11,36 @@
 
 set -euo pipefail
 
+# First non-empty colon- or newline-separated field, matching crew's own
+# CREW_SWEEP_ROOTS discovery (crew/internal/repos/repos.go), which skips
+# empty entries. Returns 1 when every field is empty.
+_first_sweep_root() { # roots
+  local field
+  while IFS= read -r field; do
+    if [ -n "$field" ]; then
+      printf '%s\n' "$field"
+      return 0
+    fi
+  done < <(printf '%s\n' "$1" | tr ':' '\n')
+  return 1
+}
+
 setting_root=""
-if settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}" 2>/dev/null)"; then
+config_bin="${DISPATCH_CONFIG_BIN:-@dispatchConfig@}"
+if command -v "$config_bin" >/dev/null 2>&1; then
+  if ! settings="$("$config_bin")"; then
+    printf 'overseer: cannot read settings from %s\n' "$config_bin" >&2
+    exit 1
+  fi
   setting_root="$(jq -r '.overseer.root // empty' <<<"$settings" 2>/dev/null || true)"
 fi
 
 if [ -n "$setting_root" ]; then
   root="$setting_root"
 elif [ -n "${CREW_SWEEP_ROOTS:-}" ]; then
-  root="${CREW_SWEEP_ROOTS%%:*}"
+  if ! root="$(_first_sweep_root "$CREW_SWEEP_ROOTS")"; then
+    root="${HOME:?}"
+  fi
 else
   root="${HOME:?}"
 fi

@@ -2365,11 +2365,12 @@ STUB
 # then the first CREW_SWEEP_ROOTS entry, then $HOME.
 @test "overseer command: the setting picks the root and forwards the flags" {
   local root="$BATS_TEST_TMPDIR/setting-repos"
-  mkdir -p "$root"
+  local sweep="$BATS_TEST_TMPDIR/sweep-other"
+  mkdir -p "$root" "$sweep"
   _dispatcher_settings "{\"overseer\":{\"root\":\"$root\"}}"
   cd "$TEST_REPO"
   : >"$STUB_LOG"
-  run run_overseer --agent pi --model m --effort low
+  CREW_SWEEP_ROOTS="$sweep" run run_overseer --agent pi --model m --effort low
   [ "$status" -eq 0 ]
   grep -qx "cwd=$root argv=--overseer --agent pi --model m --effort low" "$STUB_LOG"
 }
@@ -2381,6 +2382,29 @@ STUB
   cd "$TEST_REPO"
   : >"$STUB_LOG"
   CREW_SWEEP_ROOTS="$a:$b" run run_overseer
+  [ "$status" -eq 0 ]
+  grep -qx "cwd=$a argv=--overseer" "$STUB_LOG"
+}
+
+@test "overseer command: CREW_SWEEP_ROOTS skips an empty leading field" {
+  local a="$BATS_TEST_TMPDIR/sweep-empty-a"
+  mkdir -p "$a"
+  rm -f "$XDG_CONFIG_HOME/dispatcher/settings.json"
+  cd "$TEST_REPO"
+  : >"$STUB_LOG"
+  CREW_SWEEP_ROOTS=":$a" run run_overseer
+  [ "$status" -eq 0 ]
+  grep -qx "cwd=$a argv=--overseer" "$STUB_LOG"
+}
+
+@test "overseer command: CREW_SWEEP_ROOTS splits on newlines too" {
+  local a="$BATS_TEST_TMPDIR/sweep-nl-a" b="$BATS_TEST_TMPDIR/sweep-nl-b"
+  mkdir -p "$a" "$b"
+  rm -f "$XDG_CONFIG_HOME/dispatcher/settings.json"
+  cd "$TEST_REPO"
+  : >"$STUB_LOG"
+  CREW_SWEEP_ROOTS="$a
+$b" run run_overseer
   [ "$status" -eq 0 ]
   grep -qx "cwd=$a argv=--overseer" "$STUB_LOG"
 }
@@ -2411,5 +2435,14 @@ STUB
   run run_overseer
   [ "$status" -eq 2 ]
   [[ "$output" == *"not a directory"* ]]
+  if grep -q '^cwd=' "$STUB_LOG"; then return 1; fi
+}
+
+@test "overseer command: an invalid settings file surfaces the resolver error" {
+  _dispatcher_settings '{"overseer":{"root":7}}'
+  : >"$STUB_LOG"
+  run run_overseer
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must be an absolute path string"* ]]
   if grep -q '^cwd=' "$STUB_LOG"; then return 1; fi
 }

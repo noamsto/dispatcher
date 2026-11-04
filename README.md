@@ -820,8 +820,8 @@ live overseer switches to its pane. `dispatch` refuses to run under
 
 The `overseer` command resolves the repos root as the `overseer.root` setting,
 else the first entry of `$CREW_SWEEP_ROOTS`, else `$HOME`; it errors with exit 2
-if that root is inside a git repo; then it cds there and execs
-`dispatcher --overseer`.
+if that root is missing or not a directory, or is inside a git repo; then it cds
+there and execs `dispatcher --overseer`.
 
 A bare `dispatcher` in a repo that already has a live one switches your client to
 its pane instead of starting a second; task words there are refused with the pane
