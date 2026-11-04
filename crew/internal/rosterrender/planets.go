@@ -59,6 +59,7 @@ type planet struct {
 	host   string
 	base   string
 	size   float64
+	ts     float64 // the row's last-activity ms
 	moons  []moon
 }
 
@@ -100,7 +101,8 @@ func buildPlanets(m map[string]any, now float64) ([]planet, legend) {
 		default:
 			lg.done++
 		}
-		if class == classDone && now*1000-number(row["ts"]) > float64(doneFold.Milliseconds()) {
+		ts := number(row["ts"])
+		if class == classDone && now*1000-ts > float64(doneFold.Milliseconds()) {
 			continue
 		}
 
@@ -122,6 +124,7 @@ func buildPlanets(m map[string]any, now float64) ([]planet, legend) {
 			failed: failed,
 			base:   base,
 			size:   standardSize,
+			ts:     ts,
 		}
 		if p.name == "" {
 			p.name = "?"

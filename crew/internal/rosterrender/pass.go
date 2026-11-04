@@ -71,7 +71,7 @@ func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, no
 	if err := os.MkdirAll(filepath.Dir(t), 0o755); err != nil {
 		return live, nil
 	}
-	if put(t, wrapper(svg), o.Stderr) != nil ||
+	if put(t, string(finishSVG(svg)), o.Stderr) != nil ||
 		put(filepath.Join(cdir, fileDot), dot, o.Stderr) != nil ||
 		saveSlots(filepath.Join(cdir, fileSlots), slots, o.Stderr) != nil {
 		return live, nil

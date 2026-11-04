@@ -426,6 +426,7 @@
 
         devShells.default = pkgs.mkShell {
           inherit (config.pre-commit) shellHook;
+          AEYE_D2_FONT_DIR = "${pkgs.source-sans}/share/fonts/truetype";
           packages =
             config.pre-commit.settings.enabledPackages
             ++ [
@@ -442,11 +443,11 @@
               # silently uses whatever yq leaks in from the user profile and
               # fails in CI.
               pkgs.yq-go
-              # d2: TestWrapperCompilesThroughD2 compiles the one-node D2 image
-              # wrapper that publishes the roster svg. d2 is not in crewGo's
-              # nativeCheckInputs, so that test skips under the nix build and
-              # runs in CI's `nix develop` test run.
-              pkgs.d2
+              # resvg, source-sans: TestRenderedSVGText rasterizes the roster svg
+              # with resvg under aeye's font setup (AEYE_D2_FONT_DIR) and skips
+              # when either is missing.
+              pkgs.resvg
+              pkgs.source-sans
               # graphviz: `neato` renders the roster diagram (the rosterrender
               # SVG golden/render tests).
               pkgs.graphviz

@@ -2,7 +2,7 @@ package rosterrender
 
 import (
 	"bytes"
-	"encoding/base64"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -214,7 +214,7 @@ func TestOnceDrawsTheFixtureBus(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	out := l.diagram()
+	out := l.published()
 	for id, label := range map[string]string{"p1": `sage\n1`, "p2": `atlas\n2`, "p3": `nova\n3`, "p4": `ember\n4`} {
 		if line := nodeLine(t, out, id); !strings.Contains(line, `label="`+label+`"`) {
 			t.Errorf("%s is not %s: %s", id, label, line)
@@ -243,20 +243,17 @@ func TestOnceDrawsTheFixtureBus(t *testing.T) {
 	}
 }
 
-// TestThePublishedFileIsTheImageWrapperAndTheRecordsAreWritten: the file aeye
-// reads carries the neato svg as one base64 image node, so a changed picture is a
-// changed file, and the dot and the slots are recorded beside the crew's other
-// records, never in the carousel directory.
-func TestThePublishedFileIsTheImageWrapperAndTheRecordsAreWritten(t *testing.T) {
+// TestThePublishedFileIsTheSVGAndTheRecordsAreWritten: the file aeye reads is the
+// neato svg itself, so a changed picture is a changed file, and the dot and the
+// slots are recorded beside the crew's other records, never in the carousel
+// directory.
+func TestThePublishedFileIsTheSVGAndTheRecordsAreWritten(t *testing.T) {
 	l := newLoop(t)
 	l.seedBus(t)
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	if want := wrapper([]byte(l.diagram())); l.published() != want {
-		t.Errorf("published file = %q, want %q", l.published(), want)
-	}
-	if got, want := l.diagram(), "<svg>\n"+l.dot()+"</svg>\n"; got != want {
+	if got, want := l.published(), "<svg>\n"+l.dot()+"</svg>\n"; got != want {
 		t.Errorf("the svg was not drawn from the recorded dot:\n%s\nwant\n%s", got, want)
 	}
 	entries, err := os.ReadDir(filepath.Dir(l.diagramPath()))
@@ -264,7 +261,7 @@ func TestThePublishedFileIsTheImageWrapperAndTheRecordsAreWritten(t *testing.T) 
 		t.Fatal(err)
 	}
 	if len(entries) != 1 {
-		t.Errorf("the carousel directory holds %d files, want the wrapper alone", len(entries))
+		t.Errorf("the carousel directory holds %d files, want the svg alone", len(entries))
 	}
 	var s slotState
 	data, err := os.ReadFile(filepath.Join(l.cdir(), fileSlots))
@@ -273,6 +270,24 @@ func TestThePublishedFileIsTheImageWrapperAndTheRecordsAreWritten(t *testing.T) 
 	}
 	if err := json.Unmarshal(data, &s); err != nil || len(s.Order) != 4 {
 		t.Errorf("slots = %s (%v), want four workers", data, err)
+	}
+}
+
+// TestThePublishedSVGIsFinished: what Graphviz draws goes through finishSVG on
+// its way to the carousel directory, so the hooks animate and the background is
+// opaque.
+func TestThePublishedSVGIsFinished(t *testing.T) {
+	l := newLoop(t)
+	l.seedBus(t)
+	l.opts.Probes.Graphviz = func(context.Context, []byte) ([]byte, error) {
+		return []byte(`<svg viewBox="0.00 0.00 10.00 20.00"><g class="edge aeye&#45;flow"/></svg>` + "\n"), nil
+	}
+	if code, stderr := l.once(Request{}); code != exitOK {
+		t.Fatalf("code = %d, stderr %q", code, stderr)
+	}
+	want := `<svg viewBox="0.00 0.00 10.00 20.00"><rect x="0.00" y="0.00" width="10.00" height="20.00" fill="#1e1e2e"/><g class="edge aeye-flow"/></svg>` + "\n"
+	if got := l.published(); got != want {
+		t.Errorf("published file = %q, want %q", got, want)
 	}
 }
 
@@ -320,7 +335,7 @@ func TestHostileTextCannotBreakOutOfTheDot(t *testing.T) {
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	out := l.diagram()
+	out := l.published()
 	if n := len(planetNode.FindAllString(out, -1)); n != 3 {
 		t.Fatalf("%d planets drawn, want 3:\n%s", n, out)
 	}
@@ -392,7 +407,7 @@ func TestStaleFinishedAndReapedRowsAreNotDrawn(t *testing.T) {
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	out := l.diagram()
+	out := l.published()
 	for _, want := range []string{`sage\n1`, `iris\n5`, "working 2", "blocked 0", "done 0"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q in\n%s", want, out)
@@ -429,7 +444,7 @@ func TestAFinishedBranchIsDrawnUntilItsWorktreeIsReaped(t *testing.T) {
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	if out := l.diagram(); !strings.Contains(out, `sage\n1`) {
+	if out := l.published(); !strings.Contains(out, `sage\n1`) {
 		t.Errorf("a finished branch with its worktree was not drawn:\n%s", out)
 	}
 
@@ -437,7 +452,7 @@ func TestAFinishedBranchIsDrawnUntilItsWorktreeIsReaped(t *testing.T) {
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	if out := l.diagram(); strings.Contains(out, "sage") {
+	if out := l.published(); strings.Contains(out, "sage") {
 		t.Errorf("the row outlived its worktree:\n%s", out)
 	}
 }
@@ -461,7 +476,7 @@ func TestAFinishedRowPastStaleAfterIsNotDrawn(t *testing.T) {
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	out := l.diagram()
+	out := l.published()
 	if strings.Contains(out, "sage") {
 		t.Errorf("a finished row past staleAfter outlived its window:\n%s", out)
 	}
@@ -476,7 +491,7 @@ const staleAfterMs = 48 * 60 * 60 * 1000
 // TestUnchangedBusWritesNothingAndSkipsGraphviz is the gate end to end: a pass
 // whose dot equals the recorded one runs no neato and rewrites nothing, even when
 // the bus grew by a line the picture does not show; a state change redraws the
-// wrapper, the dot and the slots.
+// svg, the dot and the slots.
 func TestUnchangedBusWritesNothingAndSkipsGraphviz(t *testing.T) {
 	l := newLoop(t)
 	l.seedBus(t)
@@ -487,7 +502,7 @@ func TestUnchangedBusWritesNothingAndSkipsGraphviz(t *testing.T) {
 	if n := l.graphvizCalls(); n != 1 {
 		t.Fatalf("Graphviz ran %d times on the first pass", n)
 	}
-	before := l.diagram()
+	before := l.published()
 	stamps := make([]string, len(files))
 	for i, f := range files {
 		stamps[i] = rewind(t, f)
@@ -521,14 +536,14 @@ func TestUnchangedBusWritesNothingAndSkipsGraphviz(t *testing.T) {
 			t.Errorf("a changed picture left %s alone", filepath.Base(f))
 		}
 	}
-	after := l.diagram()
+	after := l.published()
 	if after == before {
 		t.Fatal("the published picture did not change")
 	}
 	if line := nodeLine(t, after, "p1"); !strings.Contains(line, "aeye-pulse") {
 		t.Errorf("the newly blocked worker does not pulse: %s", line)
 	}
-	if got, want := l.diagram(), "<svg>\n"+l.dot()+"</svg>\n"; got != want {
+	if got, want := l.published(), "<svg>\n"+l.dot()+"</svg>\n"; got != want {
 		t.Errorf("the dot record is not what was drawn")
 	}
 }
@@ -569,7 +584,7 @@ func TestAWorkerKeepsItsSlotAcrossPasses(t *testing.T) {
 	if want := []slotEntry{{Branch: "feat/1-a", Class: classWorking}, {Branch: "feat/2-b", Class: classWorking}}; !slices.Equal(first.Order, want) {
 		t.Fatalf("slots after the first pass = %+v, want %+v", first.Order, want)
 	}
-	posA := posOf(l.diagram(), "p1")
+	posA := posOf(l.published(), "p1")
 
 	// atlas flips to blocked and moves ahead of sage, who is reordered with it:
 	// the two evenly spaced seats swap.
@@ -581,7 +596,7 @@ func TestAWorkerKeepsItsSlotAcrossPasses(t *testing.T) {
 	if want := []slotEntry{{Branch: "feat/2-b", Class: classBlocked}, {Branch: "feat/1-a", Class: classWorking}}; !slices.Equal(second.Order, want) {
 		t.Errorf("slots after the flip = %+v, want %+v", second.Order, want)
 	}
-	if got := posOf(l.diagram(), "p1"); got == posA {
+	if got := posOf(l.published(), "p1"); got == posA {
 		t.Errorf("sage still drew at %s after the seats swapped", got)
 	}
 }
@@ -635,7 +650,7 @@ func TestAFailingGraphvizKeepsTheOldPictureAndTheLiveCount(t *testing.T) {
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	if line := nodeLine(t, l.diagram(), "p1"); !strings.Contains(line, "aeye-pulse") {
+	if line := nodeLine(t, l.published(), "p1"); !strings.Contains(line, "aeye-pulse") {
 		t.Errorf("the redraw after the failure is stale: %s", line)
 	}
 }
@@ -657,7 +672,7 @@ func TestAFirstRenderThatFailsWritesNoRecords(t *testing.T) {
 }
 
 // TestDiagramFileIsNamedForItsRepoAndCrew is the carousel directory's contract, read
-// off the files a renderer actually wrote: `roster-<repo>-<when>-<hash>.d2`, where
+// off the files a renderer actually wrote: `roster-<repo>-<when>-<hash>.svg`, where
 // `<when>` is the crew id's epoch prefix in the renderer's zone and the hash keeps
 // two crews of one repo, or two repos sharing a directory name, in separate files.
 func TestDiagramFileIsNamedForItsRepoAndCrew(t *testing.T) {
@@ -665,7 +680,7 @@ func TestDiagramFileIsNamedForItsRepoAndCrew(t *testing.T) {
 		l := newLoop(t)
 		// A crew started in the same minute as another is a different file, and both
 		// hold the same crew: the bus is the repo's, shared by its crews.
-		want := regexp.MustCompile(`^roster-` + regexp.QuoteMeta(repoToken(l.paths.Common)) + `-10-07-0800-[0-9a-f]{4}\.d2\z`)
+		want := regexp.MustCompile(`^roster-` + regexp.QuoteMeta(repoToken(l.paths.Common)) + `-10-07-0800-[0-9a-f]{4}\.svg\z`)
 		var names []string
 		for _, crew := range []string{"1791360000-123", "1791360000-456"} {
 			l.crew = crew
@@ -677,7 +692,7 @@ func TestDiagramFileIsNamedForItsRepoAndCrew(t *testing.T) {
 			if !want.MatchString(name) {
 				t.Errorf("%q is not a crew diagram name: want %s", name, want)
 			}
-			if got := l.diagram(); !strings.Contains(got, `sage\n1`) {
+			if got := l.published(); !strings.Contains(got, `sage\n1`) {
 				t.Errorf("%s holds no worker:\n%s", name, got)
 			}
 			names = append(names, name)
@@ -704,8 +719,8 @@ func TestDiagramFileIsNamedForItsRepoAndCrew(t *testing.T) {
 				t.Fatalf("%s: code = %d, stderr %q", tc.common, code, stderr)
 			}
 			files = append(files, l.diagramPath())
-			if !strings.Contains(l.diagram(), tc.name) {
-				t.Errorf("%s was not drawn in %s:\n%s", tc.name, tc.common, l.diagram())
+			if !strings.Contains(l.published(), tc.name) {
+				t.Errorf("%s was not drawn in %s:\n%s", tc.name, tc.common, l.published())
 			}
 		}
 		if files[0] == files[1] {
@@ -720,12 +735,8 @@ func TestDiagramFileIsNamedForItsRepoAndCrew(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		svg, err := base64.StdEncoding.DecodeString(wrapperRe.FindStringSubmatch(string(first))[1])
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(svg), "orgx") || strings.Contains(string(svg), "orgy") {
-			t.Errorf("the first repo drew the second's crew:\n%s", svg)
+		if !strings.Contains(string(first), "orgx") || strings.Contains(string(first), "orgy") {
+			t.Errorf("the first repo drew the second's crew:\n%s", first)
 		}
 	})
 }
@@ -736,7 +747,7 @@ func repoToken(common string) string {
 	return sanitize(filepath.Base(filepath.Dir(common)))
 }
 
-// hashSuffix is the name's `-<4hex>.d2`, the only part two repos' names differ by.
+// hashSuffix is the name's `-<4hex>.svg`, the only part two repos' names differ by.
 func hashSuffix(file string) string {
 	base := filepath.Base(file)
 	i := strings.LastIndex(base, "-")
@@ -804,7 +815,7 @@ func TestTheLaunchWorktreeCanBeReapedUnderTheRenderer(t *testing.T) {
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	text := l.diagram()
+	text := l.published()
 	if line := nodeLine(t, text, "p1"); !strings.Contains(line, "aeye-pulse") {
 		t.Errorf("the renderer stopped drawing once its worktree was gone:\n%s", text)
 	}

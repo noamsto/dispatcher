@@ -92,7 +92,7 @@ func TestPublishOpensOncePerPaneAndRepublishesOnChange(t *testing.T) {
 	if want := "aeye publish-diagram " + file + " --pane %7"; got[1] != want {
 		t.Errorf("a change re-opened the carousel: %q, want %q", got[1], want)
 	}
-	if line := nodeLine(t, l.diagram(), "p1"); !strings.Contains(line, "aeye-pulse") {
+	if line := nodeLine(t, l.published(), "p1"); !strings.Contains(line, "aeye-pulse") {
 		t.Errorf("the new state never reached the diagram: %s", line)
 	}
 
