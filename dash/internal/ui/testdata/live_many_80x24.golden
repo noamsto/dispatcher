@@ -1,0 +1,24 @@
+▸ Live │   Budget │   Runs │   Settings
+claude 5h 10%  codex ?  cursor ?  pi ?
+6 blocked · 3 holds
+  crew  name    state    age  tier/engine/model             pr
+› c1    c1w4    blocked  5m   deep/claude/opus              #904
+  c2    c2w4    blocked  5m   deep/claude/opus              #904
+  c3    c3w4    blocked  5m   deep/claude/opus              #904
+  c1    c1w1    blocked  2m   standard/codex/gpt-5.6-terra  —
+  c2    c2w1    blocked  2m   standard/codex/gpt-5.6-terra  —
+  c3    c3w1    blocked  2m   standard/codex/gpt-5.6-terra  —
+  c1    c1w6    working  7m   deep/claude/opus              —
+  c1    c1w3    working  4m   standard/codex/gpt-5.6-terra  —
+  c2    c2w3    working  4m   standard/codex/gpt-5.6-terra  —
+  c3    c3w3    working  4m   standard/codex/gpt-5.6-terra  —
+  c1    c1w0    working  1m   deep/claude/opus              #900
+  c2    c2w0    working  1m   deep/claude/opus              #900
+  c3    c3w0    working  1m   deep/claude/opus              #900
+  c1    c1w5    idle     6m   standard/codex/gpt-5.6-terra  —
+────────────────────────────────────────────────────────────────────────────────
+feat/many-c1-4 · s1
+PR https://github.com/noamsto/dispatcher/pull/904
+doing task 4 for c1
+
+j/k move • enter events • t jump • o open PR • m reply …  refreshed 14:13:20

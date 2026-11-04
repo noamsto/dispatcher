@@ -2,32 +2,28 @@ package ui
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 )
 
 var update = flag.Bool("update", false, "update golden files")
 
-func goldenFrame(t *testing.T, active, w, h int) string {
-	t.Helper()
-	orig := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.Ascii)
-	defer lipgloss.SetColorProfile(orig)
+// Tab indexes in the root model's view order.
+const (
+	goldenTabLive = iota
+	goldenTabBudget
+	goldenTabRuns
+	goldenTabSettings
+)
 
-	m := sized(newTestModel(t), w, h)
-	m.active = active
-	return m.View()
-}
-
-func checkGolden(t *testing.T, name, got string) {
+func checkGolden(t *testing.T, name, got string, w, h int) {
 	t.Helper()
+	assertWidth(t, got, w, h)
 	path := filepath.Join("testdata", name)
 	if *update {
 		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
@@ -44,110 +40,74 @@ func checkGolden(t *testing.T, name, got string) {
 	}
 }
 
-func TestGoldenSettings80x24(t *testing.T) {
-	checkGolden(t, "settings_80x24.golden", goldenFrame(t, 0, 80, 24))
-}
-
-func TestGoldenSettings120x40(t *testing.T) {
-	checkGolden(t, "settings_120x40.golden", goldenFrame(t, 0, 120, 40))
-}
-
-func TestGoldenBudget80x24(t *testing.T) {
-	checkGolden(t, "budget_80x24.golden", goldenFrame(t, 1, 80, 24))
-}
-
-func TestGoldenBudget120x40(t *testing.T) {
-	checkGolden(t, "budget_120x40.golden", goldenFrame(t, 1, 120, 40))
-}
-
-func goldenFrameFull(t *testing.T, active, w, h int) string {
+// goldenSizes checks prefix_{80x24,160x40}.golden for the model build()
+// returns, rendered on the given tab.
+func goldenSizes(t *testing.T, prefix string, build func() Model, active int) {
 	t.Helper()
-	orig := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.Ascii)
-	defer lipgloss.SetColorProfile(orig)
+	asciiProfile(t)
+	for _, sz := range [][2]int{{80, 24}, {160, 40}} {
+		w, h := sz[0], sz[1]
+		m := sized(build(), w, h)
+		m.active = active
+		checkGolden(t, fmt.Sprintf("%s_%dx%d.golden", prefix, w, h), m.View(), w, h)
+	}
+}
 
+func TestGoldenLive(t *testing.T) {
 	snap := loadFullSnapshot(t)
-	m := sized(testModel(snap), w, h)
-	m.active = active
-	return m.View()
+	goldenSizes(t, "live", func() Model { return testModel(snap) }, goldenTabLive)
 }
 
-func TestGoldenRuns80x24(t *testing.T) {
-	checkGolden(t, "runs_80x24.golden", goldenFrameFull(t, 2, 80, 24))
+func TestGoldenLiveLoading(t *testing.T) {
+	snap := loadFullSnapshot(t)
+	goldenSizes(t, "live_loading", func() Model { return loadingModel(Deps{Now: snap.Now}) }, goldenTabLive)
 }
 
-func TestGoldenRuns120x40(t *testing.T) {
-	checkGolden(t, "runs_120x40.golden", goldenFrameFull(t, 2, 120, 40))
+// TestGoldenLiveMany and TestGoldenLiveManyEnd80x24 check that the Live body
+// windows to h instead of letting normalizeFrame silently clip rows past it.
+// The "many" fixture (3 crews, 18 workers, holds) overflows a 24-row frame,
+// so the cursor-at-top and cursor-at-last-worker frames necessarily differ.
+func TestGoldenLiveMany(t *testing.T) {
+	snap := loadManySnapshot(t)
+	goldenSizes(t, "live_many", func() Model { return testModel(snap) }, goldenTabLive)
+}
+
+func TestGoldenLiveManyEnd80x24(t *testing.T) {
+	asciiProfile(t)
+	m := sized(testModel(loadManySnapshot(t)), 80, 24)
+	m.active = goldenTabLive
+	nm, _ := m.Update(keyRune('G'))
+	out := nm.(Model).View()
+	checkGolden(t, "live_many_end_80x24.golden", out, 80, 24)
+
+	if !strings.Contains(out, "›") {
+		t.Errorf("cursor marker › not visible after moving to the last worker:\n%s", out)
+	}
+}
+
+func TestGoldenLiveCrewErr(t *testing.T) {
+	snap := loadCrewErrSnapshot(t)
+	goldenSizes(t, "live_crewerr", func() Model { return testModel(snap) }, goldenTabLive)
+}
+
+func TestGoldenBudget(t *testing.T) {
+	goldenSizes(t, "budget", func() Model { return newTestModel(t) }, goldenTabBudget)
+}
+
+func TestGoldenRuns(t *testing.T) {
+	snap := loadFullSnapshot(t)
+	goldenSizes(t, "runs", func() Model { return testModel(snap) }, goldenTabRuns)
 }
 
 func TestGoldenRunsDetail80x24(t *testing.T) {
-	snap := loadFullSnapshot(t)
-	orig := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.Ascii)
-	defer lipgloss.SetColorProfile(orig)
-
-	m := sized(testModel(snap), 80, 24)
-	m.active = 2
+	asciiProfile(t)
+	m := sized(testModel(loadFullSnapshot(t)), 80, 24)
+	m.active = goldenTabRuns
 	nm, _ := m.Update(keyRune('f'))
-	m = nm.(Model)
-	nm, _ = m.Update(keyType(tea.KeyEnter))
-	m = nm.(Model)
-	checkGolden(t, "runs_detail_80x24.golden", m.View())
+	nm, _ = nm.Update(keyType(tea.KeyEnter))
+	checkGolden(t, "runs_detail_80x24.golden", nm.(Model).View(), 80, 24)
 }
 
-func TestGoldenRoster80x24(t *testing.T) {
-	checkGolden(t, "roster_80x24.golden", goldenFrameFull(t, 3, 80, 24))
-}
-
-func TestGoldenRoster120x40(t *testing.T) {
-	checkGolden(t, "roster_120x40.golden", goldenFrameFull(t, 3, 120, 40))
-}
-
-// TestGoldenRosterMany80x24 and TestGoldenRosterManyEnd80x24 check that
-// tableView windows its body to h instead of letting normalizeFrame
-// silently clip rows past it. The "many" fixture (3 crews, 18 workers,
-// holds) overflows a 24-row frame, so the cursor-at-top and
-// cursor-at-last-worker frames necessarily differ.
-func TestGoldenRosterMany80x24(t *testing.T) {
-	orig := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.Ascii)
-	defer lipgloss.SetColorProfile(orig)
-
-	snap := loadManySnapshot(t)
-	m := sized(testModel(snap), 80, 24)
-	m.active = 3
-	checkGolden(t, "roster_many_80x24.golden", m.View())
-}
-
-func TestGoldenRosterManyEnd80x24(t *testing.T) {
-	orig := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.Ascii)
-	defer lipgloss.SetColorProfile(orig)
-
-	snap := loadManySnapshot(t)
-	m := sized(testModel(snap), 80, 24)
-	m.active = 3
-	nm, _ := m.Update(keyRune('G'))
-	m = nm.(Model)
-	out := m.View()
-	checkGolden(t, "roster_many_end_80x24.golden", out)
-
-	lines := strings.Split(out, "\n")
-	if len(lines) != 24 {
-		t.Fatalf("frame has %d lines, want 24", len(lines))
-	}
-	for _, l := range lines {
-		if w := ansi.StringWidth(l); w > 80 {
-			t.Errorf("line %q is %d cells wide, want <= 80", l, w)
-		}
-	}
-	var cursorVisible bool
-	for _, l := range lines {
-		if strings.Contains(l, "›") {
-			cursorVisible = true
-		}
-	}
-	if !cursorVisible {
-		t.Errorf("cursor marker › not visible after moving to the last worker:\n%s", out)
-	}
+func TestGoldenSettings(t *testing.T) {
+	goldenSizes(t, "settings", func() Model { return newTestModel(t) }, goldenTabSettings)
 }

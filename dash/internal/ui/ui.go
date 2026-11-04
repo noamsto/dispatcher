@@ -4,6 +4,7 @@
 package ui
 
 import (
+	"context"
 	"os"
 	"time"
 
@@ -14,18 +15,21 @@ import (
 	"github.com/noamsto/dispatcher/dash/internal/data"
 )
 
-// Deps bundles everything Run needs beyond the initial Snapshot: the full
-// re-collect (bound to "r"), the roster-only re-collect the live bus
-// watcher triggers, and the bus log path RecentEvents/the watcher read —
-// resolved once by the caller (main.go), since resolving it needs a
-// Runner/Config this package doesn't own. EventsPathErr explains an empty
-// EventsPath in the Roster view's status note.
+// Deps bundles everything Run needs. Nothing is collected up front: Load's
+// per-source collectors run after the first frame is drawn. EventsPath is
+// the bus log path RecentEvents/the watcher read — resolved once by the
+// caller (main.go), since resolving it needs a Runner/Config this package
+// doesn't own. EventsPathErr explains an empty EventsPath in the Live
+// view's status note.
 type Deps struct {
-	Snapshot      data.Snapshot
-	Collect       func() data.Snapshot
-	CollectRoster func() data.RosterSection
+	Ctx           context.Context // passed to every loader; main cancels it on return
+	Load          Loaders
+	Runner        data.Runner
+	Crew          []string // resolved crew argv prefix (data.Config.Crew)
+	InTmux        bool
 	EventsPath    string
 	EventsPathErr error
+	Now           int64 // collection clock (data.Config.Now) stamped into the snapshot
 }
 
 // Run starts the interactive dashboard. It resolves the roster's live bus
@@ -49,13 +53,12 @@ func Run(deps Deps) error {
 		liveOff = "live refresh off: " + reason
 	}
 
-	roster := rosterDeps{
+	live := liveDeps{
 		eventsPath:  deps.EventsPath,
 		watcher:     watcher,
 		liveOffNote: liveOff,
-		collect:     deps.CollectRoster,
 	}
-	m := NewModel(deps.Snapshot, deps.Collect, time.Now, roster)
+	m := NewModel(deps, time.Now, live)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	if watcher != nil {
 		watcher.Close()

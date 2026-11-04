@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // Runner is the seam every read-only source call goes through — an exec
@@ -44,6 +45,12 @@ func exitCode(err error) int {
 	return 127
 }
 
+// FailureLine is the first stderr line of a failed Run, or "exit <rc>" when
+// there is none: the one-line reason an action reports.
+func FailureLine(stderr []byte, err error) string {
+	return firstLineOrExit(stderr, exitCode(err))
+}
+
 // FakeExitError lets a FakeRunner response report a non-zero exit without a
 // real subprocess; it satisfies exitCoder the same way *exec.ExitError does.
 type FakeExitError struct{ Code int }
@@ -53,10 +60,13 @@ func (e FakeExitError) ExitCode() int { return e.Code }
 
 // FakeRunner is the test double: canned responses keyed by "name arg1 arg2
 // …", every call recorded for assertions (e.g. "roster was re-collected
-// exactly once").
+// exactly once"). Run is safe for concurrent use; concurrent readers should
+// use CallsSnapshot rather than Calls.
 type FakeRunner struct {
 	Responses map[string]FakeResponse
 	Calls     []FakeCall
+
+	mu sync.Mutex
 }
 
 type FakeCall struct {
@@ -64,19 +74,38 @@ type FakeCall struct {
 	Args []string
 }
 
+// FakeResponse.Wait, when non-nil, holds the call (after it is recorded)
+// until the channel closes or ctx is done, so tests can keep a source open.
 type FakeResponse struct {
 	Stdout []byte
 	Stderr []byte
 	Err    error
+	Wait   <-chan struct{}
 }
 
-func (f *FakeRunner) Run(_ context.Context, name string, args ...string) ([]byte, []byte, error) {
-	f.Calls = append(f.Calls, FakeCall{Name: name, Args: append([]string{}, args...)})
+func (f *FakeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
 	key := fakeKey(name, args)
-	if resp, ok := f.Responses[key]; ok {
-		return resp.Stdout, resp.Stderr, resp.Err
+	f.mu.Lock()
+	f.Calls = append(f.Calls, FakeCall{Name: name, Args: append([]string{}, args...)})
+	resp, ok := f.Responses[key]
+	f.mu.Unlock()
+	if !ok {
+		return nil, nil, fmt.Errorf("fake runner: no response for %q", key)
 	}
-	return nil, nil, fmt.Errorf("fake runner: no response for %q", key)
+	if resp.Wait != nil {
+		select {
+		case <-resp.Wait:
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
+	}
+	return resp.Stdout, resp.Stderr, resp.Err
+}
+
+func (f *FakeRunner) CallsSnapshot() []FakeCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]FakeCall(nil), f.Calls...)
 }
 
 func fakeKey(name string, args []string) string {

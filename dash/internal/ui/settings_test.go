@@ -14,7 +14,7 @@ import (
 
 func newTestSettingsView(t *testing.T) settingsView {
 	t.Helper()
-	return newSettingsView(loadSnapshot(t))
+	return newSettingsView(loadSnapshot(t), allLoaded)
 }
 
 func TestSettingsTreeAllExpandedInitially(t *testing.T) {
@@ -246,7 +246,7 @@ func TestSettingsErrorInjectionIsCleaned(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	msg := injectedErr
 	snap.Settings.Error = &msg
-	out := newSettingsView(snap).View(120, 24)
+	out := newSettingsView(snap, allLoaded).View(120, 24)
 	requireNoControl(t, out)
 	if !strings.Contains(out, "unavailable: boom") {
 		t.Errorf("missing unavailable: boom:\n%q", out)
@@ -268,7 +268,7 @@ func TestSettingsFieldsInjectionAreCleaned(t *testing.T) {
 	for i := range snap.Settings.Rows {
 		snap.Settings.Rows[i].Value = json.RawMessage("\"v\u202e\"")
 	}
-	out := newSettingsView(snap).View(160, 40)
+	out := newSettingsView(snap, allLoaded).View(160, 40)
 	requireNoControl(t, out)
 	if !strings.Contains(out, "warning: boom") {
 		t.Errorf("missing warning: boom:\n%q", out)

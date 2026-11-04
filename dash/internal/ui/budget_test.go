@@ -14,7 +14,7 @@ import (
 
 func newTestBudgetView(t *testing.T) budgetView {
 	t.Helper()
-	return newBudgetView(loadSnapshot(t))
+	return newBudgetView(loadSnapshot(t), allLoaded)
 }
 
 func TestBudgetGaugePresentPerWindow(t *testing.T) {
@@ -117,7 +117,7 @@ func TestBudgetUnknownEngines(t *testing.T) {
 func TestBudgetLimitReachedReasonCleaned(t *testing.T) {
 	snap := loadSnapshot(t)
 	snap.Budget.Report.Engines["cursor"].LimitReached = []byte(`{"reason":"limit\tat\n50%"}`)
-	v := newBudgetView(snap)
+	v := newBudgetView(snap, allLoaded)
 	out := strings.Join(v.engineLines("cursor", snap.Budget.Report.Engines["cursor"], 200), "\n")
 	if !strings.Contains(out, "limit reached: limit at 50%") {
 		t.Fatalf("cleaned limit-reached reason missing:\n%s", out)
@@ -130,7 +130,7 @@ func TestBudgetUnlimitedHidesWindowTable(t *testing.T) {
 	snap := loadSnapshot(t)
 	eb := snap.Budget.Report.Engines["codex"]
 	eb.Unlimited = true
-	v := newBudgetView(snap)
+	v := newBudgetView(snap, allLoaded)
 	// claude's 5h+7d and cursor's month stay selectable; codex's 5h does not.
 	if len(v.sel) != 3 {
 		t.Fatalf("unlimited engine's windows still selectable: %+v", v.sel)
@@ -146,14 +146,14 @@ func TestBudgetUnlimitedHidesWindowTable(t *testing.T) {
 
 func TestBudgetStaleFlag(t *testing.T) {
 	snap := loadSnapshot(t)
-	v := newBudgetView(snap)
+	v := newBudgetView(snap, allLoaded)
 	out := v.View(80, 24)
 	if strings.Contains(out, "stale") {
 		t.Fatalf("fresh budget flagged stale:\n%s", out)
 	}
 
 	snap.Budget.Report.FetchedEpoch = snap.Now - 7201
-	v = newBudgetView(snap)
+	v = newBudgetView(snap, allLoaded)
 	out = v.View(80, 24)
 	if !strings.Contains(out, "stale") {
 		t.Fatalf("budget older than 7200s not flagged stale:\n%s", out)
@@ -194,7 +194,7 @@ func TestBudgetErrorInjectionIsCleaned(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	msg := injectedErr
 	snap.Budget.Error = &msg
-	out := newBudgetView(snap).View(120, 24)
+	out := newBudgetView(snap, allLoaded).View(120, 24)
 	requireNoControl(t, out)
 	if !strings.Contains(out, "unavailable: boom") {
 		t.Errorf("missing unavailable: boom:\n%q", out)
@@ -221,7 +221,7 @@ func TestBudgetFieldsInjectionAreCleaned(t *testing.T) {
 			eb.Windows[i].Verdict = &verdict
 		}
 	}
-	v := newBudgetView(snap)
+	v := newBudgetView(snap, allLoaded)
 	out := v.View(160, 40)
 	requireNoControl(t, out)
 	nv, _ := v.Update(keyType(tea.KeyEnter))

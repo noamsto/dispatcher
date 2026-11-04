@@ -42,8 +42,10 @@ func run() int {
 	}
 
 	cfg := resolveConfig()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	collect := func() data.Snapshot {
-		return data.Collect(context.Background(), data.ExecRunner{}, cfg)
+		return data.Collect(ctx, data.ExecRunner{}, cfg)
 	}
 
 	switch mode {
@@ -59,16 +61,23 @@ func run() int {
 		fmt.Print(once.Render(collect(), colorEnabled()))
 		return 0
 	case "interactive":
-		eventsPath, eventsErr := data.EventsPath(context.Background(), data.ExecRunner{}, cfg.Git)
-		collectRoster := func() data.RosterSection {
-			return data.CollectRoster(context.Background(), data.ExecRunner{}, cfg)
-		}
+		eventsPath, eventsErr := data.EventsPath(ctx, data.ExecRunner{}, cfg.Git)
+		runner := data.ExecRunner{}
 		deps := ui.Deps{
-			Snapshot:      collect(),
-			Collect:       collect,
-			CollectRoster: collectRoster,
+			Ctx: ctx,
+			Load: ui.Loaders{
+				Settings: func(ctx context.Context) data.SettingsSection { return data.CollectSettings(ctx, runner, cfg) },
+				Budget:   func(ctx context.Context) data.BudgetSection { return data.CollectBudget(ctx, runner, cfg) },
+				Retro:    func(ctx context.Context) data.RunsSection { return data.CollectRetro(ctx, runner, cfg) },
+				Ratings:  func(ctx context.Context) data.RunsSection { return data.CollectRatings(ctx, runner, cfg) },
+				Roster:   func(ctx context.Context) data.RosterSection { return data.CollectRoster(ctx, runner, cfg) },
+			},
+			Runner:        runner,
+			Crew:          cfg.Crew,
+			InTmux:        os.Getenv("TMUX") != "",
 			EventsPath:    eventsPath,
 			EventsPathErr: eventsErr,
+			Now:           cfg.Now,
 		}
 		if err := ui.Run(deps); err != nil {
 			fmt.Fprintln(os.Stderr, "crew dash: "+err.Error())

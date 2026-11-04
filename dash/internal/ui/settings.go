@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -137,19 +138,33 @@ type settingsView struct {
 	filter   textinput.Model
 	filterOn bool
 	query    string
+
+	section data.SettingsSection
+	loaded  bool
 }
 
-func newSettingsView(snap data.Snapshot) settingsView {
-	v := settingsView{
-		layers:   snap.Settings.Layers,
-		warnings: snap.Settings.Warnings,
-		err:      snap.Settings.Error,
-		root:     buildSettingsTree(snap.Settings.Rows),
-	}
+func newSettingsView(snap data.Snapshot, loaded [numSources]bool) settingsView {
+	var v settingsView
 	v.filter = textinput.New()
 	v.filter.Prompt = "/"
-	v.refreshFlat()
+	v.load(snap.Settings, loaded[srcSettings])
 	return v
+}
+
+// load rebuilds the tree only when the settings section changed: every
+// source landing is broadcast to every view, and an unrelated roster
+// refresh must not reset the tree's collapsed branches.
+func (v *settingsView) load(sec data.SettingsSection, loaded bool) {
+	v.loaded = loaded
+	if v.root != nil && reflect.DeepEqual(sec, v.section) {
+		return
+	}
+	v.section = sec
+	v.layers = sec.Layers
+	v.warnings = sec.Warnings
+	v.err = sec.Error
+	v.root = buildSettingsTree(sec.Rows)
+	v.refreshFlat()
 }
 
 // refreshFlat recomputes the visible node list from the current tree and
@@ -194,12 +209,7 @@ func (v *settingsView) refreshFlat() {
 func (v settingsView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
 	case snapshotMsg:
-		snap := data.Snapshot(msg)
-		v.layers = snap.Settings.Layers
-		v.warnings = snap.Settings.Warnings
-		v.err = snap.Settings.Error
-		v.root = buildSettingsTree(snap.Settings.Rows)
-		v.refreshFlat()
+		v.load(msg.snap.Settings, msg.loaded[srcSettings])
 		return v, nil
 
 	case tea.KeyMsg:
@@ -279,6 +289,12 @@ func (v settingsView) cur() *node {
 }
 
 func (v settingsView) Keys() []key.Binding {
+	if v.filterOn {
+		return []key.Binding{
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
+			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear")),
+		}
+	}
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "move")),
 		key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "expand/collapse")),
@@ -306,6 +322,10 @@ func (v settingsView) View(w, h int) string {
 	lines = append(lines, v.headerLines(w)...)
 
 	bodyH := max0(h - len(lines))
+	if !v.loaded {
+		lines = append(lines, loadingLine(srcSettings, w))
+		return strings.Join(normalizeFrame(strings.Join(lines, "\n"), h, w), "\n")
+	}
 	if v.err != nil {
 		lines = append(lines, truncateLine("unavailable: "+cleanText(*v.err), w))
 		return strings.Join(normalizeFrame(strings.Join(lines, "\n"), h, w), "\n")

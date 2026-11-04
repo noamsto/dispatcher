@@ -1,4 +1,4 @@
-▸ Settings │   Budget │   Runs │   Roster
+  Live │   Budget │   Runs │ ▸ Settings
 layers: default <BASE>
         user    <USER> (present)
         locked  <LOCKED>
@@ -21,4 +21,4 @@ layers: default <BASE>
     ▾ claude                                                                    
       ▾ deep                                                                    
         default: "opus"                                                  default
-1-4 views • tab next view • r refresh • ? help • q quit …  refreshed 14:13:20
+j/k move • enter expand/collapse • / filter • 1-4 views …  refreshed 14:13:20

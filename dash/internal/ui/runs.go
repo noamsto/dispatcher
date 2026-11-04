@@ -85,15 +85,18 @@ type runsView struct {
 
 	detail       bool
 	detailCursor int // index into the open row's Notes
+
+	ratingsLoaded, retroLoaded bool
 }
 
-func newRunsView(snap data.Snapshot) runsView {
+func newRunsView(snap data.Snapshot, loaded [numSources]bool) runsView {
 	var v runsView
-	v.load(snap)
+	v.load(snap, loaded)
 	return v
 }
 
-func (v *runsView) load(snap data.Snapshot) {
+func (v *runsView) load(snap data.Snapshot, loaded [numSources]bool) {
+	v.ratingsLoaded, v.retroLoaded = loaded[srcRatings], loaded[srcRetro]
 	v.ratingsErr = snap.Runs.RatingsError
 	if v.ratingsErr == nil {
 		v.ratingsNatural = sortRatingsNatural(snap.Runs.RatingsGroups)
@@ -130,7 +133,7 @@ func (v *runsView) applySort() {
 func (v runsView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
 	case snapshotMsg:
-		v.load(data.Snapshot(msg))
+		v.load(msg.snap, msg.loaded)
 		return v, nil
 
 	case tea.KeyMsg:
@@ -279,6 +282,9 @@ func (v runsView) sectionTitle(text string, focused bool) string {
 
 func (v runsView) ratingsLines(w, h int) []string {
 	title := truncateLine(v.sectionTitle("Ratings", v.focus == 0)+" — sort: "+sortColumns[v.sortCol]+" "+orderArrow(v.desc), w)
+	if !v.ratingsLoaded {
+		return []string{title, loadingLine(srcRatings, w)}
+	}
 	if v.ratingsErr != nil {
 		return []string{title, truncateLine("unavailable: "+cleanText(*v.ratingsErr), w)}
 	}
@@ -327,6 +333,9 @@ func orderArrow(desc bool) string {
 
 func (v runsView) rowsLines(w, h int) []string {
 	title := truncateLine(v.sectionTitle("Runs (newest first)", v.focus == 1), w)
+	if !v.retroLoaded {
+		return []string{title, loadingLine(srcRetro, w)}
+	}
 	if v.retroErr != nil {
 		return []string{title, truncateLine("unavailable: "+cleanText(*v.retroErr), w)}
 	}
