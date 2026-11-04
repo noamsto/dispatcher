@@ -707,6 +707,19 @@ func TestStatusTableGolden(t *testing.T) {
 	f.crewFile("c1", "stream.tick", fmt.Sprintf(`{"pid":100,"ts":%d,"park":300}`, ago(5)))
 	f.pidfile("c2", "101")
 	f.crewFile("c3", "pane", "%9\n")
+	// A federated overseer: mbp answers, zed last answered two hours ago.
+	f.overseer("box", "mbp", "zed")
+	if err := WriteOK(f.hostDir("zed"), ago(7200)); err != nil {
+		t.Fatal(err)
+	}
+	mbp := answering(string(marshal(t, farAnswer())))
+	f.opts.Federate = func(ctx context.Context, host string, argv []string, stdout, stderr io.Writer) int {
+		if host == "mbp" {
+			return mbp(ctx, host, argv, stdout, stderr)
+		}
+		_, _ = io.WriteString(stderr, "ssh: connect to host zed port 22: Connection refused\x1b[0m\n")
+		return 255
+	}
 
 	var out bytes.Buffer
 	if code := Status(t.Context(), StatusRequest{}, &out, io.Discard, f.opts); code != 0 {

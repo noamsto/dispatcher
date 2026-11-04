@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -132,6 +133,11 @@ type HostStatus struct {
 	Queue    QueueStatus  `json:"queue"`
 	Repos    []RepoStatus `json:"repos"`
 	Skipped  []Skipped    `json:"skipped"`
+
+	// The admitted inbox of an ok partner, kept for the overseer lane only.
+	batches   []FarBatch
+	misroutes []FarMisrouted
+	cursor    int64
 }
 
 // QueueStatus is the fleet hold queue; empty until fleet holds exist.
@@ -233,7 +239,17 @@ func Status(ctx context.Context, req StatusRequest, stdout, stderr io.Writer, o 
 // CollectStatus rebuilds the fleet's state from durable state on disk, from
 // any directory, with no memory of earlier runs. A repo it cannot read lands
 // in Skipped; with GitHub enrichment a failure only becomes a pr_error.
+//
+// In overseer mode, with a passing sender check for overseer:<host>, it also
+// pulls every partner host through Federate, concurrently with the local
+// pass, and asks --host workers through OverseerProbe.
 func CollectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o StatusOptions) StatusDoc {
+	doc, _ := collectStatus(ctx, req, stderr, o)
+	return doc
+}
+
+// collectStatus is CollectStatus plus the repos its discovery found.
+func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o StatusOptions) (StatusDoc, []repos.Repo) {
 	once := onceTmux{o.Tmux, map[string]string{}}
 	o.Tmux = once
 	if o.Proc == nil {
@@ -262,6 +278,17 @@ func CollectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		Skipped: []Skipped{},
 		Hosts:   []HostStatus{},
 	}
+	var fed *federation
+	var probe *probeMemo
+	if overseer && o.Served == nil && (o.Federate != nil || o.OverseerProbe != nil) {
+		gate := sender.Check(ctx, "overseer:"+host, "", o.Sender)
+		if o.Federate != nil {
+			fed = federate(ctx, stderr, o, host, gate, stateDir, nowMS)
+		}
+		if o.OverseerProbe != nil && gate == "" {
+			probe = &probeMemo{timeout: o.federateTimeout(), failed: map[string]string{}}
+		}
+	}
 	// One read-only queue evaluation, over a bus cache the repo pass reuses.
 	buses := busCache{}
 	var due *queued
@@ -288,6 +315,8 @@ func CollectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		busHost = o.Served.Origin
 		found = repos.Discover(repos.Options{Registry: o.Registry, Roots: []string{o.Served.Root}, Getenv: o.Getenv, Stderr: stderr, Prefix: "crew: fleet status"})
 	}
+	stamps, _ := once.Run(ctx, "list-windows", "-a", "-F", "#{@crew_id}\x1f#{@crew_dispatcher_host}")
+	homes := guestHomes(stamps, host)
 	var candidates []prCandidate
 	for _, r := range found {
 		if r.Status != repos.StatusOK {
@@ -303,7 +332,8 @@ func CollectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 			say(stderr, "crew: fleet status: %s: %s (rows from the readable prefix)\n", r.Common, torn)
 		}
 		b := repoBuild{ctx: ctx, o: o, once: once, common: r.Common, events: events, docs: eventDocs(events),
-			idx: indexBus(events, busHost), now: now, nowMS: nowMS, nowSec: nowSec, overseer: overseer, host: host, stateDir: stateDir, due: due}
+			idx: indexBus(events, busHost), now: now, nowMS: nowMS, nowSec: nowSec, overseer: overseer, host: host, stateDir: stateDir, due: due,
+			probe: probe, homes: homes}
 		repo, err := b.build()
 		if err != nil {
 			doc.Skipped = append(doc.Skipped, Skipped{Path: r.Common, Status: oneLine(err)})
@@ -319,7 +349,10 @@ func CollectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		}
 		enrichPRs(ctx, o.Gh, candidates, timeout)
 	}
-	return doc
+	if fed != nil {
+		doc.Hosts = fed.finish(stderr, stateDir, nowMS)
+	}
+	return doc, found
 }
 
 // repoBuild is one repo's pass: the reads it shares across its crews.
@@ -337,7 +370,9 @@ type repoBuild struct {
 	overseer bool
 	host     string
 	stateDir string
-	due      *queued // the fleet queue's due hold, nil for none
+	due      *queued           // the fleet queue's due hold, nil for none
+	probe    *probeMemo        // the overseer's --host probes, nil for none
+	homes    map[string]string // crew id → home host of its guest windows
 
 	repoName   string
 	ghRepo     string // the raw owner/name, the PR-ownership check's identity
@@ -377,11 +412,15 @@ func (b *repoBuild) build() (RepoStatus, error) {
 }
 
 // remote is the capture the fold merges remote workers through. An overseer
-// asks no host: remoteRun sender-checks every argv as `dispatcher:<crew>`, an
-// identity the overseer never takes, so its remote rows are the bus's
-// placeholders.
+// never asks through Remote, which sender-checks every argv as
+// `dispatcher:<crew>`: it asks through OverseerProbe when its own sender check
+// passed, else its remote rows are the bus's placeholders, as a served pull's
+// always are.
 func (b *repoBuild) remote() func(crew string) roster.Capture {
 	switch {
+	case b.probe != nil:
+		capture := b.o.OverseerProbe(filepath.Dir(b.common))
+		return func(crew string) roster.Capture { return b.probe.wrap(capture, crew) }
 	case b.overseer || b.o.Served != nil:
 		return func(string) roster.Capture {
 			return func(_ context.Context, _ string, _ []string, _, stderr io.Writer) int {
@@ -552,6 +591,11 @@ func (b *repoBuild) dispatcher(id string) Dispatcher {
 	dir := filepath.Join(b.common, "crew", "crews", id)
 	s := readSession(dir, fleetLane(b.o.Getenv, id), b.o.Proc, b.now)
 	d := Dispatcher{State: s.state, PID: s.pid, Lane: s.lane}
+	// No registration here and a window another host's dispatcher launched:
+	// a --host worker's crew, attended from its home.
+	if home, ok := b.homes[id]; ok && s.state == "closed" && s.pid == nil {
+		d.Home = &home
+	}
 	if pane, _ := crews.PidFileText(filepath.Join(dir, "pane")); pane != "" {
 		d.Pane = &pane
 	}
@@ -597,20 +641,21 @@ func (b *repoBuild) holds(crew string) ([]HoldStatus, error) {
 
 // attention says whether a crew with no live dispatcher needs one: yes while it
 // has a worker that is live by roster's rules, or a hold. Stale rows are cleanup,
-// never a need.
+// never a need. A guest crew's need is its home dispatcher's, never this host's.
 func attention(c CrewStatus) string {
 	if c.Dispatcher.State == "live" {
 		return "attended"
 	}
-	if len(c.Holds) > 0 {
-		return "unattended"
+	need := len(c.Holds) > 0 || slices.ContainsFunc(c.Workers, func(w map[string]any) bool {
+		return slices.Contains(roster.LiveStates, str(w, "state")) && w["stale"] == false
+	})
+	switch {
+	case !need:
+		return "idle"
+	case c.Dispatcher.Home != nil:
+		return "guest"
 	}
-	for _, w := range c.Workers {
-		if slices.Contains(roster.LiveStates, str(w, "state")) && w["stale"] == false {
-			return "unattended"
-		}
-	}
-	return "idle"
+	return "unattended"
 }
 
 func number(v any) (float64, bool) {
@@ -790,11 +835,17 @@ func bodyObject(v any) map[string]any {
 	return nil
 }
 
+// statusTable is one line per crew, this host's and every ok partner's, then
+// one line per partner that did not answer.
 func statusTable(doc StatusDoc) []byte {
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	say(tw, "REPO\tCREW\tDISPATCHER\tLANE\tLIVE\tBLOCKED(oldest)\tPR_OPEN\tHOLDS\n")
-	for _, r := range doc.Repos {
+	say(tw, "HOST\tREPO\tCREW\tDISPATCHER\tLANE\tLIVE\tBLOCKED(oldest)\tPR_OPEN\tHOLDS\n")
+	all := slices.Clone(doc.Repos)
+	for _, h := range doc.Hosts {
+		all = append(all, h.Repos...)
+	}
+	for _, r := range all {
 		for _, c := range r.Crews {
 			lane := "-"
 			if c.Dispatcher.Lane != nil {
@@ -810,8 +861,8 @@ func statusTable(doc StatusDoc) []byte {
 					prN++
 				}
 				if b, ok := w["blocked"].(map[string]any); ok {
-					if since, _ := b["since"].(int64); oldest == 0 || since < oldest {
-						oldest = since
+					if since, _ := number(b["since"]); oldest == 0 || int64(since) < oldest {
+						oldest = int64(since)
 					}
 				}
 			}
@@ -819,10 +870,24 @@ func statusTable(doc StatusDoc) []byte {
 			if oldest > 0 {
 				blocked = fmtAge(max((doc.TS-oldest)/1000, 0))
 			}
-			say(tw, "%s\t%s\t%s\t%s\t%d\t%s\t%d\t%d\n",
-				clean(r.Repo), clean(c.CrewID), c.Dispatcher.State, lane, liveN, blocked, prN, len(c.Holds))
+			say(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%d\t%d\n",
+				clean(r.Host), clean(r.Repo), clean(c.CrewID), clean(c.Dispatcher.State), clean(lane), liveN, blocked, prN, len(c.Holds))
 		}
 	}
 	_ = tw.Flush()
+	for _, h := range doc.Hosts {
+		if h.State == "ok" {
+			continue
+		}
+		last := "never"
+		if h.AgeS != nil {
+			last = fmtAge(*h.AgeS) + " ago"
+		}
+		line := fmt.Sprintf("%s  %s  last ok %s", clean(h.Host), clean(h.State), last)
+		if h.Error != nil {
+			line += "  " + clean(*h.Error)
+		}
+		say(&buf, "%s\n", line)
+	}
 	return buf.Bytes()
 }
