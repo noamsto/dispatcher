@@ -899,7 +899,7 @@ Without `--host`, or with this host, it is today's local post. With a remote
 `<h>`: the local overseer sender check, local `bodyRefusal` (before any ssh),
 `<h>` in settings `hosts`, then `deliver` over host scope. Far stdout is
 re-validated and printed as `{"host":<h>,"ts":<ms>}`; the `ts` is the far
-row's. Far stderr is capped and the call has a 30 s deadline. A far failure exits 1 with `crew: overseer msg: <host>: <reason>`,
+row's. Far stderr is discarded unread, and the call has a 30 s deadline. A far failure exits 1 with `crew: overseer msg: <host>: <reason>`,
 worded locally and never from far text: a fixed sentence per refusal code the far `deliver` prints on stdout
 (a closed enum), `exit status N`, `ssh failed (255)`, the 30 s timeout note or `malformed far answer`. No `--host`
 value comes from a bus row.
