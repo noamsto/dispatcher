@@ -27,7 +27,10 @@ func relayProbes() Probes {
 
 func TestCheckRelay(t *testing.T) {
 	const unread = "the pane stamps cannot be read on halo (tmux list-panes or the process ancestry failed), so no relay is posted"
-	anchored := "this session sits in a crew pane stamped with a branch or a role, and only a session outside every crew pane posts a relay"
+	anchored := "this session sits in a crew pane stamped with a branch, a role or a crew, and only a session outside every crew pane posts a relay"
+	envRefused := func(k string) string {
+		return "this session has " + k + " set, and only a session that is no dispatcher, worker, role or overseer posts a relay"
+	}
 	envSet := func(k string) func(*Probes) {
 		return func(p *Probes) { p.Getenv = func(n string) string { return map[string]string{k: "x"}[n] } }
 	}
@@ -60,12 +63,10 @@ func TestCheckRelay(t *testing.T) {
 		}, "the settings hosts cannot be read (bad json), so no relay is posted"},
 		{"refuses origin not in hosts", "evil", nil, "origin evil is not in settings hosts, so no relay is posted"},
 		{"refuses nil env", "mbp", func(p *Probes) { p.Getenv = nil }, "the session env cannot be read, so no relay is posted"},
-		{"refuses worker env", "mbp", envSet("CREW_WORKER_ID"),
-			"this session has CREW_WORKER_ID set, and only a session that is no worker, role or overseer posts a relay"},
-		{"refuses role env", "mbp", envSet("CREW_ROLE_ID"),
-			"this session has CREW_ROLE_ID set, and only a session that is no worker, role or overseer posts a relay"},
-		{"refuses overseer env", "mbp", envSet("CREW_OVERSEER"),
-			"this session has CREW_OVERSEER set, and only a session that is no worker, role or overseer posts a relay"},
+		{"refuses worker env", "mbp", envSet("CREW_WORKER_ID"), envRefused("CREW_WORKER_ID")},
+		{"refuses role env", "mbp", envSet("CREW_ROLE_ID"), envRefused("CREW_ROLE_ID")},
+		{"refuses overseer env", "mbp", envSet("CREW_OVERSEER"), envRefused("CREW_OVERSEER")},
+		{"refuses dispatcher env", "mbp", envSet("CREW_ID"), envRefused("CREW_ID")},
 		{"refuses tmux read failure", "mbp", func(p *Probes) { p.Tmux = &tmuxtest.Fake{} }, unread},
 		{"refuses nil tmux", "mbp", func(p *Probes) { p.Tmux = nil }, unread},
 		{"refuses nil proc", "mbp", func(p *Probes) { p.Proc = nil }, unread},
@@ -75,6 +76,7 @@ func TestCheckRelay(t *testing.T) {
 		{"refuses a lead pane with no role", "mbp", panes(pane("100", "feat/x", "", "c1", "@1", "%1")), anchored},
 		{"refuses a role pane", "mbp", panes(pane("200", "feat/x", "reviewer", "c1", "@1", "%1")), anchored},
 		{"refuses the overseer pane", "mbp", panes(pane("100", "", "overseer", "", "@1", "%1")), anchored},
+		{"refuses a dispatcher pane", "mbp", panes(pane("100", "", "", "c1", "@1", "%1")), anchored},
 		{"refuses own pid as a pane", "mbp", func(p *Probes) {
 			p.Tmux = &tmuxtest.Fake{Out: map[string]string{"list-panes": pane(strconv.Itoa(self), "feat/x", "lead", "c1", "@1", "%1")}}
 			p.Proc = proctest.New(nil, map[int]int{})

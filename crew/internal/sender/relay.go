@@ -30,9 +30,9 @@ func CheckRelay(ctx context.Context, origin string, p Probes) string {
 	if p.Getenv == nil {
 		return "the session env cannot be read, so no relay is posted"
 	}
-	for _, k := range []string{"CREW_WORKER_ID", "CREW_ROLE_ID", "CREW_OVERSEER"} {
+	for _, k := range []string{"CREW_ID", "CREW_WORKER_ID", "CREW_ROLE_ID", "CREW_OVERSEER"} {
 		if p.Getenv(k) != "" {
-			return "this session has " + k + " set, and only a session that is no worker, role or overseer posts a relay"
+			return "this session has " + k + " set, and only a session that is no dispatcher, worker, role or overseer posts a relay"
 		}
 	}
 	rows, read := p.rows(ctx)
@@ -40,8 +40,8 @@ func CheckRelay(ctx context.Context, origin string, p Probes) string {
 	if !read || !walked {
 		return "the pane stamps cannot be read on " + self + " (tmux list-panes or the process ancestry failed), so no relay is posted"
 	}
-	if anchored && (s.branch != "" || s.role != "") {
-		return "this session sits in a crew pane stamped with a branch or a role, and only a session outside every crew pane posts a relay"
+	if anchored && (s.branch != "" || s.role != "" || s.crew != "") {
+		return "this session sits in a crew pane stamped with a branch, a role or a crew, and only a session outside every crew pane posts a relay"
 	}
 	return ""
 }

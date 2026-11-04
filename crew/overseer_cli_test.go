@@ -191,6 +191,39 @@ func TestOverseerStatusPrintsOneVersionedLine(t *testing.T) {
 	}
 }
 
+// TestOverseerFarVerbsFailOnUnreadableSettings: with the settings unreadable
+// the far verbs fail rather than serve the registry alone, while the settings
+// hosts still admit the origin.
+func TestOverseerFarVerbsFailOnUnreadableSettings(t *testing.T) {
+	for _, args := range [][]string{
+		{"overseer", "status", "--origin", "zz-origin"},
+		{"overseer", "deliver", "--origin", "zz-origin", "--", "repo", "c1", `{"kind":"notice","detail":"x"}`},
+	} {
+		t.Run(args[1], func(t *testing.T) {
+			e, common := overseerFar(t)
+			e.peerHosts = func() (map[string]remote.Host, error) {
+				return map[string]remote.Host{"zz-origin": {SSH: "zz-origin"}}, nil
+			}
+			bin := filepath.Join(t.TempDir(), "settings")
+			if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 3\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("DISPATCH_CONFIG_BIN", bin)
+			before, err := os.ReadFile(filepath.Join(common, "crew", "events.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			code, out, errs := crewRun(t, e, args...)
+			if want := "crew: overseer " + args[1] + ": overseer root: " + bin + ": exit status 3\n"; code != exitFailure || out != "" || errs != want {
+				t.Fatalf("exit %d, stdout %q, stderr %q; want 1, no answer, %q", code, out, errs, want)
+			}
+			if after, _ := os.ReadFile(filepath.Join(common, "crew", "events.jsonl")); string(after) != string(before) {
+				t.Errorf("a failed far verb wrote %q", after)
+			}
+		})
+	}
+}
+
 func TestOverseerFarGrammarRefusals(t *testing.T) {
 	e := env{getwd: func() (string, error) { return t.TempDir(), nil }}
 	for _, tc := range []struct {

@@ -65,29 +65,31 @@ func overseerProbeFor(p sender.Probes, run func(context.Context, remote.Call, io
 func overseerOptions(e env, stderr io.Writer) overseer.Options {
 	o := fleet.Options{Tmux: tmux.Exec{}, Git: git.Exec{}, Clock: clock.FromEnv()}
 	return overseer.Options{
-		Git:     git.Exec{},
-		Clock:   clock.FromEnv(),
-		Sender:  overseerProbes(e),
-		RunHost: remote.RunHost,
-		Status:  statusOptions(o, e, stderr),
+		Git:        git.Exec{},
+		Clock:      clock.FromEnv(),
+		Sender:     overseerProbes(e),
+		RunHost:    remote.RunHost,
+		Status:     statusOptions(o, e, stderr),
+		ServedRoot: servedRoot,
 	}
 }
 
-// servedRoot is the sweep root the far status verb walks besides the
-// registry: .overseer.root of the dispatcher settings. Unreadable settings
-// leave it empty, so only the registry is served.
-func servedRoot(ctx context.Context) string {
-	out, err := exec.CommandContext(ctx, remote.ConfigBin()).Output()
+// servedRoot is the sweep root the far verbs walk besides the registry:
+// .overseer.root of the dispatcher settings, "" when unset. Unreadable
+// settings are an error, so a far verb never serves fewer buses than it has.
+func servedRoot(ctx context.Context) (string, error) {
+	bin := remote.ConfigBin()
+	out, err := exec.CommandContext(ctx, bin).Output()
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("%s: %w", bin, err)
 	}
 	var s struct {
 		Overseer struct {
 			Root string `json:"root"`
 		} `json:"overseer"`
 	}
-	if json.Unmarshal(out, &s) != nil {
-		return ""
+	if err := json.Unmarshal(out, &s); err != nil {
+		return "", fmt.Errorf("%s: %w", bin, err)
 	}
-	return s.Overseer.Root
+	return s.Overseer.Root, nil
 }

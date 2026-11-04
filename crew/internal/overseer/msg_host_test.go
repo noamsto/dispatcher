@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/peer"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
@@ -57,6 +58,27 @@ func (f *fixture) hostRefused(req MsgRequest, calls *[]farCall, want string) {
 	}
 	if after := f.logs(); !maps.Equal(after, before) {
 		f.t.Errorf("a --host request changed a local log:\nbefore %q\nafter  %q", before, after)
+	}
+}
+
+func TestMsgHostTimesOutAFarHostThatNeverAnswers(t *testing.T) {
+	saved := hostDeadline
+	hostDeadline = 50 * time.Millisecond
+	t.Cleanup(func() { hostDeadline = saved })
+	f := haloFixture(t)
+	f.runHost = func(ctx context.Context, _ string, _ []string, _, _ io.Writer) int {
+		<-ctx.Done()
+		return 255
+	}
+
+	start := time.Now()
+	code, stdout, stderr := f.msg(MsgRequest{Repo: "alpha", Crew: "c1", Body: notice, Host: "mbp"})
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("msg --host took %v, want the 50ms deadline", took)
+	}
+	want := prefix + "mbp: no answer within 50ms, and the row may still be posted there\n"
+	if code != 1 || stdout != "" || stderr != want {
+		t.Errorf("got %d %q %q, want 1, no stdout, %q", code, stdout, stderr, want)
 	}
 }
 

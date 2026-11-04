@@ -2,6 +2,7 @@ package overseer
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -76,11 +77,11 @@ func TestDeliverRefusesAndWritesNothing(t *testing.T) {
 			}},
 		{"a worker session", relayReq(notice), func(f *fixture) { f.env["CREW_WORKER_ID"] = "worker:feat/x" },
 			func(*fixture) string {
-				return relay("this session has CREW_WORKER_ID set, and only a session that is no worker, role or overseer posts a relay")
+				return relay("this session has CREW_WORKER_ID set, and only a session that is no dispatcher, worker, role or overseer posts a relay")
 			}},
 		{"an overseer session", relayReq(notice), func(f *fixture) { f.env["CREW_OVERSEER"] = "mbp" },
 			func(*fixture) string {
-				return relay("this session has CREW_OVERSEER set, and only a session that is no worker, role or overseer posts a relay")
+				return relay("this session has CREW_OVERSEER set, and only a session that is no dispatcher, worker, role or overseer posts a relay")
 			}},
 		{"tmux cannot be read", relayReq(notice), func(f *fixture) { delete(f.tmux.Out, "list-panes") },
 			func(f *fixture) string { return relay(sender.CheckRelay(f.t.Context(), "halo", f.opts().Sender)) }},
@@ -123,6 +124,50 @@ func TestDeliverRefusesAndWritesNothing(t *testing.T) {
 				t.Errorf("a refused relay changed a log:\nbefore %q\nafter  %q", before, after)
 			}
 		})
+	}
+}
+
+// TestDeliverFindsReposAsServedStatusDoes: deliver resolves <repo> over the
+// registry and the overseer root, as the served status does, and never walks
+// the sweep roots or $HOME.
+func TestDeliverFindsReposAsServedStatusDoes(t *testing.T) {
+	notFound := func(repo string) string {
+		return deliverPrefix + "repo " + repo + " is not a discovered crew bus; pass a repo as crew fleet names it, or its git common dir\n"
+	}
+	for _, served := range []bool{false, true} {
+		t.Run(fmt.Sprintf("root set %v", served), func(t *testing.T) {
+			f := mbpFixture(t)
+			walked := f.unregistered(f.sweep, "walked")
+			under := f.unregistered(f.root+"/served", "under")
+			if served {
+				f.served = f.root + "/served"
+			}
+			want := map[string]string{f.commons[0]: "", walked: notFound(walked), under: notFound(under)}
+			if served {
+				want[under] = ""
+			}
+			for repo, refusal := range want {
+				code, _, stderr := f.deliver(DeliverRequest{Origin: "halo", Repo: repo, Crew: "c1", Body: notice})
+				if refusal == "" && (code != 0 || stderr != "") || refusal != "" && (code != 1 || stderr != refusal) {
+					t.Errorf("deliver to %s: %d %q, want refusal %q", repo, code, stderr, refusal)
+				}
+			}
+		})
+	}
+}
+
+func TestDeliverFailsWhenTheServedRootCannotBeRead(t *testing.T) {
+	f := mbpFixture(t)
+	o := f.opts()
+	o.ServedRoot = func(context.Context) (string, error) { return "", errors.New("exit status 3") }
+	before := f.logs()
+	var stdout, stderr bytes.Buffer
+	code := RunDeliver(t.Context(), relayReq(notice), &stdout, &stderr, o)
+	if want := deliverPrefix + "overseer root: exit status 3\n"; code != 1 || stdout.Len() != 0 || stderr.String() != want {
+		t.Errorf("got %d %q %q, want 1, no stdout, %q", code, stdout.String(), stderr.String(), want)
+	}
+	if !maps.Equal(f.logs(), before) {
+		t.Error("a failed deliver changed a log")
 	}
 }
 

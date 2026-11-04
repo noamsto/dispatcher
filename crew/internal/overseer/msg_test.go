@@ -47,6 +47,7 @@ type fixture struct {
 	hosts    map[string]remote.Host // settings hosts; nil: no hosts probe
 	runHost  roster.Capture
 	tmux     *tmuxtest.Fake
+	served   string // the far verbs' overseer root; "" serves the registry alone
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -151,7 +152,24 @@ func (f *fixture) opts() Options {
 		Sender:   probes,
 		RunHost:  f.runHost,
 		Status:   f.statusOpts(clk, probes),
+		ServedRoot: func(context.Context) (string, error) {
+			return f.served, nil
+		},
 	}
+}
+
+// unregistered adds <parent>/<name> with a log holding a c1 row, outside the
+// registry, and returns its common dir.
+func (f *fixture) unregistered(parent, name string) string {
+	f.t.Helper()
+	common := parent + "/" + name + "/.git"
+	if err := os.MkdirAll(common+"/crew", 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.WriteFile(common+"/crew/events.jsonl", []byte(seed+"\n"), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+	return common
 }
 
 // statusOpts are the fleet status reads of this machine: its registry, a

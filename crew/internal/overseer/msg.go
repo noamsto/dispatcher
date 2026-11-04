@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -46,9 +47,12 @@ const (
 )
 
 var (
-	kinds      = []string{"ask", "request", "capacity", "notice"}
-	errNoSelf  = errors.New("no host-name probe")
-	errNoHosts = errors.New("no settings-hosts probe")
+	// hostDeadline bounds a --host relay: ssh to a host that stopped answering
+	// otherwise hangs the overseer's turn.
+	hostDeadline = 30 * time.Second
+	kinds        = []string{"ask", "request", "capacity", "notice"}
+	errNoSelf    = errors.New("no host-name probe")
+	errNoHosts   = errors.New("no settings-hosts probe")
 )
 
 // MsgRequest is `crew overseer msg [--host <h>] <repo> <crew> '<json>'`.
@@ -67,6 +71,9 @@ type Options struct {
 	// Status is the far `status` verb's fleet status options; ServeFar sets
 	// served mode itself.
 	Status fleet.StatusOptions
+	// ServedRoot reads the root the far verbs walk besides the registry
+	// (.overseer.root, "" for none); nil serves the registry alone.
+	ServedRoot func(context.Context) (string, error)
 }
 
 // RunMsg posts the overseer's JSON message to the dispatcher of <crew> on the
@@ -91,7 +98,8 @@ func RunMsg(ctx context.Context, req MsgRequest, stdout, stderr io.Writer, o Opt
 	if req.Host != "" && req.Host != self {
 		return relay(ctx, req, self, stdout, stderr, o)
 	}
-	paths, reason := busFor(ctx, req.Repo, req.Crew, "msg", o, stderr)
+	found := repos.Discover(repos.Options{Registry: o.Registry, Getenv: o.Getenv, Stderr: stderr, Prefix: "crew: overseer msg"})
+	paths, reason := busFor(ctx, req.Repo, req.Crew, found, o)
 	if reason != "" {
 		return refuse(stderr, "%s", reason)
 	}
@@ -102,7 +110,7 @@ func RunMsg(ctx context.Context, req MsgRequest, stdout, stderr io.Writer, o Opt
 // overseer:<self>, and prints {"host","ts"} from its answer. The far host's
 // output is untrusted: both streams are capped, a failure shows only its first
 // stderr line stripped of hidden characters, and stdout must be exactly
-// {"ts":<whole ms>}.
+// {"ts":<whole ms>}. The far call gets hostDeadline to answer.
 func relay(ctx context.Context, req MsgRequest, self string, stdout, stderr io.Writer, o Options) int {
 	if reason := settingsHost("host", req.Host, o.Sender); reason != "" {
 		return refuse(stderr, "%s", reason)
@@ -112,7 +120,12 @@ func relay(ctx context.Context, req MsgRequest, self string, stdout, stderr io.W
 	}
 	out, errOut := &capped{max: farAnswerMax}, &capped{max: farAnswerMax}
 	argv := []string{"crew", "overseer", "deliver", "--origin", self, "--", req.Repo, req.Crew, req.Body}
+	ctx, cancel := context.WithTimeout(ctx, hostDeadline)
+	defer cancel()
 	if rc := o.RunHost(ctx, req.Host, argv, out, errOut); rc != 0 {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return refuse(stderr, "%s: no answer within %s, and the row may still be posted there", req.Host, hostDeadline)
+		}
 		return refuse(stderr, "%s: %s", req.Host, farFailure(errOut.buf.String(), rc))
 	}
 	ts, ok := farTS(out)
@@ -298,9 +311,10 @@ func hiddenIn(v any) bool {
 	return false
 }
 
-// busFor is the bus of repo that crew is on, else the refusal reason.
-func busFor(ctx context.Context, repo, crew, verb string, o Options, stderr io.Writer) (bus.Paths, string) {
-	common, reason := findBus(ctx, repo, verb, o, stderr)
+// busFor is the bus of repo, among found, that crew is on, else the refusal
+// reason.
+func busFor(ctx context.Context, repo, crew string, found []repos.Repo, o Options) (bus.Paths, string) {
+	common, reason := findBus(ctx, repo, found, o)
 	if reason != "" {
 		return bus.Paths{}, reason
 	}
@@ -311,11 +325,10 @@ func busFor(ctx context.Context, repo, crew, verb string, o Options, stderr io.W
 	return paths, ""
 }
 
-// findBus resolves repo to the git common dir of a discovered repo with a bus,
+// findBus resolves repo to the git common dir of a repo in found with a bus,
 // else returns the refusal reason. An exact common dir wins; otherwise repo is
 // matched as the name crew fleet gives it, which must pick one repo.
-func findBus(ctx context.Context, repo, verb string, o Options, stderr io.Writer) (string, string) {
-	found := repos.Discover(repos.Options{Registry: o.Registry, Getenv: o.Getenv, Stderr: stderr, Prefix: "crew: overseer " + verb})
+func findBus(ctx context.Context, repo string, found []repos.Repo, o Options) (string, string) {
 	for _, r := range found {
 		if r.Common != repo {
 			continue

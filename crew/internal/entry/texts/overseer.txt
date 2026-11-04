@@ -23,6 +23,9 @@ and crew status refuse an overseer: sender.
            escaped, so counts twice
 
 Runs from any directory. Exits 1 on any refusal, with nothing written.
+With --host the far host has 30 s to answer. A failure after it was reached
+(a lost connection, the timeout, a malformed answer) may leave the row posted
+there, so check its bus before resending.
 
 status and deliver are run by a federated overseer over ssh through crew
 remote-exec; not for interactive use. status prints this host's fleet status

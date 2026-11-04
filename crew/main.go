@@ -550,7 +550,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		o := overseerOptions(e, stderr)
 		switch strings.Fields(parsed.cmd)[1] {
 		case "status":
-			o.Status.Served = &fleet.ServedStatus{Root: servedRoot(ctx)}
 			var since *int64
 			if c.Status.Since != nil {
 				n, _ := strconv.ParseInt(*c.Status.Since, 10, 64) // validated as digits within int64

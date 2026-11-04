@@ -32,6 +32,11 @@ func RunStatus(ctx context.Context, req StatusRequest, stdout, stderr io.Writer,
 		}
 		since = *req.Since
 	}
+	root, err := o.servedRoot(ctx)
+	if err != nil {
+		return fail(stderr, "status", "overseer root: %v", err)
+	}
+	o.Status.Served = &fleet.ServedStatus{Root: root}
 	ans, err := fleet.ServeFar(ctx, req.Origin, since, stderr, o.Status)
 	if err != nil {
 		return fail(stderr, "status", "%v", err)
