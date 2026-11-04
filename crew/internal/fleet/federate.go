@@ -38,7 +38,7 @@ const (
 	farMaxRepos   = 200
 	farMaxCrews   = 100
 	farMaxWorkers = 200
-	farMaxEvents  = 500
+	FarMaxEvents  = 500
 	overSize      = "answer over 4 MiB"
 	// stderrMax is how much of a far stderr is kept: only its first line is
 	// read.
@@ -58,8 +58,8 @@ type FarAnswer struct {
 }
 
 // FarBatch is one far bus's replies to the overseer, as `crew watch` batches
-// them. Common is the far bus's common dir, the key of the lane's cursor for
-// it.
+// them. Common is the far bus's common dir, part of each reply's key in the
+// lane's inbox.
 type FarBatch struct {
 	Repo   string           `json:"repo"`
 	Common string           `json:"common"`
@@ -221,8 +221,8 @@ func recheck(obj map[string]any, self string, cutoff int64) error {
 		evs, _ := bm["events"].([]any)
 		n += len(evs)
 	}
-	if n > farMaxEvents {
-		return fmt.Errorf("answer has %d inbox events, over the cap of %d inbox events", n, farMaxEvents)
+	if n > FarMaxEvents {
+		return fmt.Errorf("answer has %d inbox events, over the cap of %d inbox events", n, FarMaxEvents)
 	}
 	misrouted, _ := obj["misrouted"].([]any)
 	kept := []any{}
@@ -382,22 +382,12 @@ func federate(ctx context.Context, stderr io.Writer, o StatusOptions, self, gate
 	return f
 }
 
-// hostSince is the --since of a pull from host: the oldest of the lane's
-// per-far-repo cursors, so a reply a far bus took after its fold is still
-// above it next pull; with none, the lane's seed, else fallback. Each repo's
-// own cursor then drops what the lane already printed.
+// hostSince is the --since of a pull from host: the floor of the lane's inbox
+// for it, else fallback. The lane drops what it already printed above that
+// floor by key.
 func hostSince(stateDir, host string, fallback int64) int64 {
-	since, found := int64(0), false
-	for _, path := range lane.OverseerHostCursors(stateDir, host) {
-		if c, ok := watch.ReadCursor(path); ok && (!found || c < since) {
-			since, found = c, true
-		}
-	}
-	if found {
-		return since
-	}
-	if seed, ok := watch.ReadCursor(lane.OverseerHostSeed(stateDir, host)); ok {
-		return seed
+	if in, ok := lane.ReadFarInbox(lane.OverseerHostInbox(stateDir, host)); ok {
+		return in.Floor
 	}
 	return fallback
 }

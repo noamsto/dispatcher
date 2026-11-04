@@ -841,35 +841,28 @@ func TestAdmitHostRestrictsFarIdentifiers(t *testing.T) {
 	}
 }
 
-func TestFederateSinceIsTheOldestRepoCursor(t *testing.T) {
+func TestFederateSinceIsTheInboxFloor(t *testing.T) {
 	far := farFix(t, "mbp")
-	write := func(t *testing.T, path string, ts int64) {
-		t.Helper()
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, fmt.Appendf(nil, "%d\n", ts), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
 	for _, tc := range []struct {
 		name  string
-		seed  int64
-		repos map[string]int64
+		inbox string
 		since int64
 	}{
-		{name: "no cursor", since: nowMS() - 24*3600*1000},
-		{name: "the seed alone", seed: ago(500), since: ago(500)},
-		{name: "the oldest repo cursor", seed: ago(900), repos: map[string]int64{"/git/a/.git": ago(300), "/git/b/.git": ago(200)}, since: ago(300)},
+		{name: "no inbox", since: nowMS() - 24*3600*1000},
+		{name: "a torn inbox", inbox: `{"floor":`, since: nowMS() - 24*3600*1000},
+		{name: "the floor", inbox: fmt.Sprintf(`{"floor":%d,"seen":["k"]}`, ago(300)), since: ago(300)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newStatusFix(t)
 			f.overseer("halo", "mbp")
-			if tc.seed != 0 {
-				write(t, filepath.Join(f.hostDir("mbp"), "seed"), tc.seed)
-			}
-			for common, ts := range tc.repos {
-				write(t, lane.OverseerHostCursor(f.env["XDG_STATE_HOME"], "mbp", common), ts)
+			if tc.inbox != "" {
+				path := lane.OverseerHostInbox(f.env["XDG_STATE_HOME"], "mbp")
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(tc.inbox), 0o644); err != nil {
+					t.Fatal(err)
+				}
 			}
 			var calls fedCalls
 			f.opts.Federate = calls.serve(t, far)

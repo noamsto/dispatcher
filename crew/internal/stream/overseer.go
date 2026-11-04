@@ -15,6 +15,8 @@ package stream
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"maps"
@@ -382,83 +384,72 @@ var hostBatches = func(h fleetpkg.HostStatus) ([]fleetpkg.FarBatch, []fleetpkg.F
 
 // farSettle bounds how long a far msg takes from its ts to its bus: the far
 // answer's ts is read before any of its buses, so a msg at or below that ts
-// less farSettle that the answer lacks is one the far bus took that much
-// late. Every far cursor rises to it, so a quiet bus never holds back the
-// --since of every later pull.
+// less farSettle was on its bus before the fold. The inbox floor rises to it;
+// every reply above it is in every later pull.
 const farSettle = time.Minute
 
-// remote prints a partner's replies above the overseer's cursor for each far
-// bus, then moves that bus's cursor alone: as poll does, the flush precedes
-// the write. A far bus first seen starts at the host's seed, the start of the
-// lane that first pulled it. Once every batch is out, each cursor of the host
-// rises to the answer's ts less farSettle.
+// farSeenCap bounds the inbox's keys at four full answers' worth.
+const farSeenCap = 4 * fleetpkg.FarMaxEvents
+
+// remote prints a partner's replies, and counts its misrouted msgs, above the
+// floor of the lane's inbox for it and not yet seen by key. As poll does, the
+// flush precedes the write: a pull whose batch missed the wire leaves the
+// inbox as it was, and the next pull prints that batch again. A partner with
+// no inbox starts at the lane's start; the floor then rises to the answer's
+// ts less farSettle, and only the keys above it are kept.
 func (v *overseer) remote(h fleetpkg.HostStatus, p *partner, now int64) {
 	batches, misrouted := hostBatches(h)
-	seedPath := lanepkg.OverseerHostSeed(v.stateDir, h.Host)
-	seed, ok := watch.ReadCursor(seedPath)
+	path := lanepkg.OverseerHostInbox(v.stateDir, h.Host)
+	in, ok := lanepkg.ReadFarInbox(path)
 	if !ok {
-		if err := watch.WriteCursor(seedPath, v.start); err != nil {
-			v.fail("", "cursor "+seedPath, "cursor: "+oneLine(err))
+		in = lanepkg.FarInbox{Floor: v.start, Seen: []string{}}
+		if err := lanepkg.WriteFarInbox(path, in); err != nil {
+			v.fail("", "inbox "+path, "inbox: "+oneLine(err))
 			return
 		}
-		seed = v.start
 	}
-	cursors := map[string]int64{}
-	cursorOf := func(path string) int64 {
-		if c, ok := cursors[path]; ok {
-			return c
-		}
-		c, ok := watch.ReadCursor(path)
-		if !ok {
-			c = seed
-		}
-		cursors[path] = c
-		return c
+	seen := map[string]bool{}
+	for _, k := range in.Seen {
+		seen[k] = true
 	}
-	move := func(path string, to int64) {
-		if to <= cursorOf(path) {
-			return
+	// delivered is every row above the floor, printed before or now, with its
+	// ts: what the inbox keeps once the lines are out.
+	delivered := map[string]int64{}
+	fresh := func(key string, ts int64) bool {
+		if ts <= in.Floor {
+			return false
 		}
-		cursors[path] = to
-		if err := watch.WriteCursor(path, to); err != nil {
-			v.fail("", "cursor "+path, "cursor: "+oneLine(err))
-		}
+		delivered[key] = ts
+		return !seen[key]
 	}
-	farCursor := func(common string) string { return lanepkg.OverseerHostCursor(v.stateDir, h.Host, common) }
 
-	// Counted against the cursors as they stood, before a batch moves them.
-	var above []fleetpkg.FarMisrouted
-	for _, m := range misrouted {
-		if m.TS > cursorOf(farCursor(m.Common)) {
-			above = append(above, m)
-		}
-	}
 	for _, b := range batches {
-		path := farCursor(b.Common)
-		cursor := cursorOf(path)
-		if b.Cursor <= cursor {
-			continue
-		}
 		events := []any{}
 		for _, ev := range b.Events {
-			if ts, ok := watch.WholeMS(ev["ts"]); ok && ts > cursor {
+			if ts, ok := watch.WholeMS(ev["ts"]); ok && fresh(farKey(b.Common, ev), ts) {
 				events = append(events, ev)
 			}
 		}
-		if len(events) > 0 {
-			batch := map[string]any{"cursor": json.Number(strconv.FormatInt(b.Cursor, 10)), "events": events, "repo": senderText(b.Repo), "host": h.Host}
-			var line bytes.Buffer
-			if jsonval.Encode(&line, invisible.Value(jsonval.Clamp(batch)), false) != nil {
-				return
-			}
-			if _, err := v.out.Write(line.Bytes()); err != nil {
-				return
-			}
-			if v.o.Flush != nil && v.o.Flush() != nil {
-				return
-			}
+		if len(events) == 0 {
+			continue
 		}
-		move(path, b.Cursor)
+		batch := map[string]any{"cursor": json.Number(strconv.FormatInt(b.Cursor, 10)), "events": events, "repo": senderText(b.Repo), "host": h.Host}
+		var line bytes.Buffer
+		if jsonval.Encode(&line, invisible.Value(jsonval.Clamp(batch)), false) != nil {
+			return
+		}
+		if _, err := v.out.Write(line.Bytes()); err != nil {
+			return
+		}
+		if v.o.Flush != nil && v.o.Flush() != nil {
+			return
+		}
+	}
+	var above []fleetpkg.FarMisrouted
+	for _, m := range misrouted {
+		if fresh(farKey(m.Common, m), m.TS) {
+			above = append(above, m)
+		}
 	}
 	if len(above) > 0 {
 		p.misrouted += len(above)
@@ -472,13 +463,18 @@ func (v *overseer) remote(h fleetpkg.HostStatus, p *partner, now int64) {
 			}))
 		}
 	}
-	for _, m := range above {
-		move(farCursor(m.Common), m.TS)
+	next := in.Next(*h.TS-farSettle.Milliseconds(), delivered, farSeenCap)
+	if err := lanepkg.WriteFarInbox(path, next); err != nil {
+		v.fail("", "inbox "+path, "inbox: "+oneLine(err))
 	}
-	floor := *h.TS - farSettle.Milliseconds()
-	for _, path := range lanepkg.OverseerHostCursors(v.stateDir, h.Host) {
-		move(path, floor)
-	}
+}
+
+// farKey names a far row in the inbox: its bus's common dir and its JSON, map
+// keys sorted.
+func farKey(common string, row any) string {
+	data, _ := json.Marshal(row)
+	sum := sha256.Sum256(append([]byte(common+"\x00"), data...))
+	return hex.EncodeToString(sum[:])
 }
 
 // The overseer's lines, one struct per event, each opening with the event and
