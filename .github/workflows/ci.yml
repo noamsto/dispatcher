@@ -174,8 +174,9 @@ jobs:
 
   # Darwin consumers otherwise compile crew-go (and run its suite) themselves,
   # and macOS-only test failures surface first in their rebuilds.
+  # Pinned: macos-latest (macOS 26 arm64) has had hosted-runner capacity shortages since 2026-11-02; revisit (https://github.com/orgs/community/discussions/211885).
   build-darwin:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
