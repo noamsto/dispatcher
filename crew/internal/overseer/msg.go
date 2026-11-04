@@ -108,10 +108,9 @@ func RunMsg(ctx context.Context, req MsgRequest, stdout, stderr io.Writer, o Opt
 
 // relay asks req.Host's `crew overseer deliver` to post the message from
 // overseer:<self>, and prints {"host","ts"} from its answer. The far host's
-// output is untrusted, so none of it is shown: its stderr is dropped, its
-// capped stdout must be exactly {"ts":<whole ms>}, and a failure is worded
-// here from its refusal code or status. The far call gets hostDeadline to
-// answer.
+// output is untrusted and never shown: its stderr is dropped, its capped stdout
+// must be exactly {"ts":<whole ms>}, and a failure is worded here from its
+// refusal code or status. The far call gets hostDeadline to answer.
 func relay(ctx context.Context, req MsgRequest, self string, stdout, stderr io.Writer, o Options) int {
 	if reason := settingsHost("host", req.Host, o.Sender); reason != "" {
 		return refuse(stderr, "%s", reason)

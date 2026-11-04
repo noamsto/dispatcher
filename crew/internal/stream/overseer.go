@@ -388,14 +388,12 @@ var hostBatches = func(h fleetpkg.HostStatus) ([]fleetpkg.FarBatch, []fleetpkg.F
 const farSeenCap = 4 * fleetpkg.FarMaxEvents
 
 // remote prints a partner's replies, and counts its misrouted msgs, above the
-// floor of the lane's inbox for it and not yet seen by key. As poll does, the
-// flush precedes the inbox's move: a pull whose batch missed the wire leaves
-// the inbox as it was, and the next pull prints that batch again. The lane's
-// own inbox is its memory once it has one, the file only what a restart and
-// --since read, so a file it cannot write never replays a batch. A partner
-// with no inbox starts at the lane's start, written before any flush so the
-// next pull's --since is the start; the floor then rises to the answer's ts
-// less farSettle, and only the keys above it are kept.
+// floor of the lane's inbox for it and not yet seen by key. The flush precedes
+// the inbox's move, so a batch that missed the wire prints again on the next
+// pull. The in-memory inbox is authoritative once it exists; the file is what
+// a restart and --since read. A partner with no inbox starts at the lane's
+// start; the floor then rises to the answer's ts less farSettle, and only the
+// keys above it are kept.
 func (v *overseer) remote(h fleetpkg.HostStatus, p *partner, now int64) {
 	batches, misrouted := hostBatches(h)
 	path := lanepkg.OverseerHostInbox(v.stateDir, h.Host)

@@ -27,8 +27,7 @@ func RunOverseerMsg(ctx context.Context, req OverseerMsgRequest, paths bus.Paths
 
 // RunOverseerRelay posts a row another host's overseer relayed over ssh:
 // from overseer:<req.Self> (the origin host) to dispatcher:<req.Crew>. It runs
-// sender.CheckRelay itself, so no caller writes the row without it, and returns
-// the posted row's ts for the caller to print.
+// sender.CheckRelay itself and returns the posted row's ts.
 func RunOverseerRelay(ctx context.Context, req OverseerMsgRequest, paths bus.Paths, stderr io.Writer, o Options) (ts int64, rc int) {
 	o = o.withDefaults()
 	from := "overseer:" + req.Self

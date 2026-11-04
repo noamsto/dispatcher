@@ -171,10 +171,9 @@ func (f *Far) Serve() roster.Capture {
 	}
 }
 
-// Overseer is the status options of self's overseer session: CREW_OVERSEER
-// set, state under stateDir, no repos of its own, a passing sender check for
-// overseer:<self>, and settings hosts self plus partners, each pulled through
-// federate.
+// Overseer is the status options of self's overseer session: no repos of its
+// own, state under stateDir, a passing sender check for overseer:<self>, and
+// settings hosts self plus partners, each pulled through federate.
 func Overseer(tb testing.TB, self, stateDir string, now func() time.Time, federate roster.Capture, partners ...string) fleet.StatusOptions {
 	tb.Helper()
 	root := tb.TempDir()

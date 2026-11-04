@@ -41,9 +41,9 @@ type DeliverRequest struct{ Origin, Repo, Crew, Body string }
 // RunDeliver posts a message the overseer of origin, another settings host,
 // relayed over ssh: from overseer:<origin> to the dispatcher of <crew> on the
 // bus of <repo>, under the same body rules as `crew overseer msg`. <repo> is
-// one the served `status` names. It prints the posted row's ts. The relay
-// check runs before any repo is read, and every refusal prints one stderr line
-// and its {"refused":"<code>"} answer, and writes nothing.
+// one the served `status` names. It prints the posted row's ts. Every refusal
+// prints one stderr line and its {"refused":"<code>"} answer, and writes
+// nothing; the relay check runs before any repo is read.
 func RunDeliver(ctx context.Context, req DeliverRequest, stdout, stderr io.Writer, o Options) int {
 	if reason := badName("origin", req.Origin); reason != "" {
 		return refuseFar(stdout, stderr, refusedOrigin, "%s", reason)

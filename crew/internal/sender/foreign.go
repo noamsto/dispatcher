@@ -16,8 +16,8 @@ const retryAfter = 30 * time.Second
 // overseer: row, the settings only on the first overseer:<h≠self> row; a
 // successful read is kept, a failed one refuses every such row with its cause
 // and is retried once retryAfter has passed. A nil *OverseerHosts knows no
-// host, so every overseer: sender is foreign (self included); callers that must
-// admit self build one with Probes.Self set. It is safe for concurrent use.
+// host, so every overseer: sender is foreign (self included). It is safe for
+// concurrent use.
 type OverseerHosts struct {
 	p   Probes
 	now func() time.Time
