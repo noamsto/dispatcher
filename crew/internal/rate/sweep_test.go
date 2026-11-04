@@ -403,6 +403,7 @@ func TestSweepMergedActionsGrace(t *testing.T) {
 	}{
 		{"last call failed", 8 * day, "false"},
 		{"merged 6 days ago", 6 * day, "true"},
+		{"merged 1 ms inside the grace", 7*day - 1, "true"},
 		{"merged 6 days ago, no query flag", 6 * day, "null"},
 		{"merge time unknown", -1, "true"},
 	}
@@ -420,6 +421,53 @@ func TestSweepMergedActionsGrace(t *testing.T) {
 				t.Errorf("Actions was not queried:\n%s", f.callLog())
 			}
 		})
+	}
+}
+
+// TestSweepMergedGraceEndsInclusive pins the boundary: a merge exactly 7 d ago
+// is already past the grace.
+func TestSweepMergedGraceEndsInclusive(t *testing.T) {
+	f := newFixture(t)
+	f.seedSettings()
+	f.seedPRRow()
+	mergedUnknownCI(f, 7*day, "true")
+	f.gh = func(string) (string, bool) { return `{"workflow_runs":[]}`, true }
+	if _, code := f.runQuiet(); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if strings.Contains(f.callLog(), "actions/runs") {
+		t.Errorf("Actions was queried for a row exactly 7 d past its merge:\n%s", f.callLog())
+	}
+}
+
+// TestSweepMergedPastGraceFoldErrorStaysQueried pins that a response gh
+// returned but the fold cannot read counts as a failed call: the row keeps
+// last_query_ok false, so a past-grace row is not settled with its CI never
+// read.
+func TestSweepMergedPastGraceFoldErrorStaysQueried(t *testing.T) {
+	f := newFixture(t)
+	f.seedSettings()
+	f.seedPRRow()
+	mergedUnknownCI(f, 8*day, "false")
+	f.gh = func(string) (string, bool) {
+		return `{"workflow_runs":[{"head_sha":"s","created_at":"not-a-date","status":"completed","conclusion":"success"}]}`, true
+	}
+	for _, label := range []string{"first", "second"} {
+		f.calls = nil
+		stderr, code := f.runQuiet()
+		if code != 0 {
+			t.Fatalf("%s sweep exit %d", label, code)
+		}
+		if !strings.Contains(stderr, "1 gh call(s) failed") {
+			t.Errorf("%s sweep stderr = %q, want the fold error counted as a failed call", label, stderr)
+		}
+		if !strings.Contains(f.callLog(), "actions/runs") {
+			t.Errorf("%s sweep did not query Actions:\n%s", label, f.callLog())
+		}
+		rows := f.rows()
+		if last := rows[len(rows)-1]; last["last_query_ok"] != false {
+			t.Errorf("%s sweep stored last_query_ok = %v, want false", label, last["last_query_ok"])
+		}
 	}
 }
 

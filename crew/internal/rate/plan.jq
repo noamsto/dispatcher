@@ -1,8 +1,7 @@
-# The arm's skip-decision fold, verbatim from adapters/core/crew.sh apart from
-# two patches: $records and $snap arrive as jqrun vars (the arm piped the two
-# values and read them with `input`), and each run is one object collected into
-# an array instead of an `@tsv` row — the `-` sentinels existed only to carry
-# nulls through bash's `while read`.
+# The sweep's skip-decision fold: which gh calls each run still needs.
+# $records and $snap arrive as jqrun vars, and one object per run is collected
+# into an array. do_actions settles a MERGED row 7 d after its merge (see
+# below).
 ($snap | map({key: .run_id, value: .}) | from_entries) as $S
 | (now * 1000) as $now
 | [ $records[] as $r

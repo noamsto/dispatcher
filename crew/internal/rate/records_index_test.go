@@ -93,6 +93,13 @@ func TestRecordsIndexMatchesScan(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "zero dispatches, non-string from",
+			events: []string{
+				`{"ts":1100,"kind":"status","from":5,"body":{"state":"working"}}`,
+			},
+			records: 0,
+		},
+		{
 			name:    "empty",
 			events:  nil,
 			records: 0,
