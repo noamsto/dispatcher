@@ -999,6 +999,8 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   run jq -e '.full.systemdUser.services["dispatcher-refresh"].Service.Type == "oneshot"' "$EVAL"
   [ "$status" -eq 0 ]
+  run jq -e '.full.systemdUser.services["dispatcher-refresh"].Unit["X-SwitchMethod"] == "keep-old"' "$EVAL"
+  [ "$status" -eq 0 ]
   # refresh-models needs cursor-agent, which lives outside the store.
   run jq -e '.full.systemdUser.services["dispatcher-refresh"].Service.Environment == ["PATH=/home/test/.local/bin:/home/test/.nix-profile/bin:/etc/profiles/per-user/test/bin:/run/current-system/sw/bin:/usr/bin:/bin"]' "$EVAL"
   [ "$status" -eq 0 ]
@@ -1032,6 +1034,8 @@ worktree_git_lib_crew_go_row() { # bin
   run jq -e '.full.systemdUser.timers["dispatcher-reap"].Install.WantedBy == ["timers.target"]' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.systemdUser.services["dispatcher-reap"].Service.Type == "oneshot"' "$EVAL"
+  [ "$status" -eq 0 ]
+  run jq -e '.full.systemdUser.services["dispatcher-reap"].Unit["X-SwitchMethod"] == "keep-old"' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.systemdUser.services["dispatcher-reap"].Service.Environment == ["PATH=/home/test/.local/bin:/home/test/.nix-profile/bin:/etc/profiles/per-user/test/bin:/run/current-system/sw/bin:/usr/bin:/bin", "CREW_RATE_AUTOSWEEP=sync"]' "$EVAL"
   [ "$status" -eq 0 ]

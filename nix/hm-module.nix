@@ -1005,6 +1005,8 @@ in {
       (lib.optionalAttrs cfg.refresh.enable {
         services.dispatcher-refresh = {
           Unit.Description = "Refresh the dispatcher model and score caches";
+          # A switch must not block on, or restart, a running refresh; the timer runs the new unit.
+          Unit."X-SwitchMethod" = "keep-old";
           Service = {
             Type = "oneshot";
             Environment = ["PATH=${refreshPath}"];
@@ -1024,6 +1026,8 @@ in {
       (lib.optionalAttrs cfg.reap.enable {
         services.dispatcher-reap = {
           Unit.Description = "Reclaim landed workers' windows and worktrees machine-wide";
+          # A switch must not block on, or restart, a running reap; the timer runs the new unit.
+          Unit."X-SwitchMethod" = "keep-old";
           Service = {
             Type = "oneshot";
             Environment = ["PATH=${refreshPath}" "CREW_RATE_AUTOSWEEP=sync"];
