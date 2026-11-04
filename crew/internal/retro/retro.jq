@@ -8,7 +8,9 @@
 # trailing newline, and prints nothing for the empty string, which is only ever
 # zero rows: a @tsv row always carries its five tabs. The plan-seam evidence
 # rule for plan_required_unaudited and `clean`'s Go-defined `_invisible_drop`
-# are new since the Go port, not in the bash original.
+# are new since the Go port, not in the bash original. So is the once-built
+# $byb/$resumes index replacing the per-run scans of every event; output and
+# errors are unchanged.
 
     # unique_by would sort, and both the tag list on a row and the note order
     # within a run are read in first-appearance order.
@@ -52,6 +54,8 @@
             elif $c == $end then $cell
             else ($cell + (" " * $p)) end
         ] | join("  ");
+    # The branch an event's `from` belongs to: "worker:<branch>#<session>".
+    def runkey: (.from // "") | ltrimstr("worker:") | sub("#[^#]*$"; "");
 
     # Unlike every other tag here, "plan_required_unaudited" is not authored by
     # a worker or the dispatcher — `crew retro` synthesizes it itself from the
@@ -62,6 +66,13 @@
      "misrouted", "fanout_binder", "spec_too_thin", "session_summary"] as $vocab
     | . as $all
     | ($all | map(select(.kind == "dispatch"))) as $disp
+    # Indexed once: scanning $all with a regex per run is quadratic in the bus.
+    # Lazy, so a bus with no dispatch row never evaluates runkey.
+    | ($all | map(select(.kind == "resume"))) as $resumes
+    | (if ($disp | length) == 0 then {}
+       else $all | map(select(.kind != "dispatch"))
+            | group_by(runkey) | map({key: (.[0] | runkey), value: .}) | from_entries
+       end) as $byb
     # Dispatch-boundary windowing, as `crew rate` folds it: run i owns
     # [runs[i].ts, runs[i+1].ts), so a re-dispatch on a reused branch cannot
     # inherit the notes of the run before it.
@@ -73,12 +84,10 @@
         | $d.ts as $t0
         | (if $i + 1 < $n then $runs[$i+1].ts else 9999999999999 end) as $t1
         # A `dispatch resume` row has no `from` field, so it is invisible to
-        # $ev (which is filtered by `from`) — match it directly off $all instead.
-        | ($all | any(.kind == "resume" and .branch == $b and .ts >= $t0 and .ts < $t1)) as $resumed
-        | ($all | map(select(
-              .kind != "dispatch"
-              and (((.from // "") | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b)
-              and .ts >= $t0 and .ts < $t1))) as $ev
+        # $ev (which is filtered by `from`) — match it directly off $resumes instead.
+        | ($resumes | any(.branch == $b and .ts >= $t0 and .ts < $t1)) as $resumed
+        | ((if ($b | type) == "string" then $byb[$b] // [] else [] end)
+           | map(select(.ts >= $t0 and .ts < $t1))) as $ev
         | ($ev | map(select(.kind == "status")) | sort_by(.ts) | (.[-1] // null)) as $last
         # Latest snapshot only: putting notes INSIDE the snapshot is what makes
         # a resumed run supersede rather than duplicate (design §Mechanism).

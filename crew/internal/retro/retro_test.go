@@ -13,7 +13,7 @@ import (
 
 // fixture gives the tests a real repo: the arm resolves the bus through
 // `git rev-parse`, so a temp dir with a .git is what `paths` must point at.
-func fixture(t *testing.T, events string) bus.Paths {
+func fixture(t testing.TB, events string) bus.Paths {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".git", "crew"), 0o755); err != nil {
@@ -342,6 +342,380 @@ func TestJSONIsNeverColoured(t *testing.T) {
 		t.Errorf("colour leaked: %q", out)
 	}
 }
+
+// windowedBus exercises what the per-run lookups touch: feat/a is dispatched
+// twice (the window splits at ts 5000), resume rows inside, before and outside
+// every window, events without a `from`, a dispatcher `from`, a branch that was
+// never dispatched, ties on ts across branches and within one, and plan-required
+// runs that are flagged (feat/a's second window, feat/c) or saved by a resume
+// (feat/a's first window) or a plan seam (feat/b).
+const windowedBus = `{"ts":500,"crew_id":"c1","kind":"resume","branch":"feat/a"}` + "\n" +
+	`{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/a","engine":"claude","model":"sonnet","tier":"standard","plan":"required","title":"t"}` + "\n" +
+	`{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/b","engine":"claude","model":"opus","tier":"standard","plan":"required","title":"t"}` + "\n" +
+	`{"ts":1000,"crew_id":"c1","kind":"dispatch","branch":"feat/c","engine":"pi","model":"lemonade","tier":"standard","plan":"required","title":"t"}` + "\n" +
+	`{"ts":1100,"crew_id":"c1","kind":"status","to":"dispatcher:c1","body":{"state":"working"}}` + "\n" +
+	`{"ts":1100,"crew_id":"c1","kind":"status","from":"dispatcher:c1","to":"worker:feat/a#s1","body":{"state":"idle"}}` + "\n" +
+	`{"ts":1150,"crew_id":"c1","kind":"msg","from":"worker:feat/a#s1","to":"metrics:c1","body":"{\"review_mode\":\"full\",\"plan_critic_first_pass\":null,\"notes\":[{\"seam\":\"gate\",\"tag\":\"other\",\"detail\":\"a-win1-snap\"}]}"}` + "\n" +
+	`{"ts":1200,"crew_id":"c1","kind":"resume","branch":"feat/a"}` + "\n" +
+	`{"ts":1250,"crew_id":"c1","kind":"msg","from":"worker:feat/a#s1","to":"retro:c1","body":"{\"seam\":\"execute\",\"tag\":\"gate_thrash\",\"detail\":\"a-win1-seam\"}"}` + "\n" +
+	`{"ts":1300,"crew_id":"c1","kind":"status","from":"worker:feat/a#s1","to":"dispatcher:c1","body":{"state":"failed"}}` + "\n" +
+	`{"ts":1300,"crew_id":"c1","kind":"status","from":"worker:feat/orphan#s1","to":"dispatcher:c1","body":{"state":"failed"}}` + "\n" +
+	`{"ts":1350,"crew_id":"c1","kind":"msg","from":"worker:feat/orphan#s1","to":"retro:c1","body":"{\"seam\":\"execute\",\"tag\":\"other\",\"detail\":\"orphan\"}"}` + "\n" +
+	`{"ts":1400,"crew_id":"c1","kind":"resume","branch":"feat/zzz"}` + "\n" +
+	`{"ts":2000,"crew_id":"c1","kind":"msg","from":"worker:feat/b#s1","to":"metrics:c1","body":"{\"review_mode\":\"full\",\"plan_critic_first_pass\":null,\"notes\":[{\"seam\":\"gate\",\"tag\":\"other\",\"detail\":\"b-snap\"}]}"}` + "\n" +
+	`{"ts":2000,"crew_id":"c1","kind":"msg","from":"worker:feat/c#s1","to":"metrics:c1","body":"{\"review_mode\":\"full\",\"plan_critic_first_pass\":null,\"notes\":[{\"seam\":\"gate\",\"tag\":\"other\",\"detail\":\"c-snap\"}]}"}` + "\n" +
+	`{"ts":2000,"crew_id":"c1","kind":"msg","from":"worker:feat/b#s1","to":"review:c1","body":"{\"seam\":\"plan\",\"plan_critic_first_pass\":\"accept\"}"}` + "\n" +
+	`{"ts":2100,"crew_id":"c1","kind":"status","from":"worker:feat/b#s1","to":"dispatcher:c1","body":{"state":"done"}}` + "\n" +
+	`{"ts":2100,"crew_id":"c1","kind":"status","from":"worker:feat/c#s1","to":"dispatcher:c1","body":{"state":"failed"}}` + "\n" +
+	`{"ts":3000,"crew_id":"c1","kind":"status","from":"feat/a#s9","to":"dispatcher:c1","body":{"state":"working"}}` + "\n" +
+	`{"ts":4000,"crew_id":"c1","kind":"status","from":"worker:feat/a#s1","to":"dispatcher:c1","body":{"state":"done"}}` + "\n" +
+	`{"ts":4000,"crew_id":"c1","kind":"status","from":"worker:feat/a#s1","to":"dispatcher:c1","body":{"state":"stuck"}}` + "\n" +
+	`{"ts":5000,"crew_id":"c1","kind":"dispatch","branch":"feat/a","engine":"claude","model":"sonnet","tier":"standard","plan":"required","title":"t"}` + "\n" +
+	`{"ts":5000,"crew_id":"c1","kind":"msg","from":"worker:feat/a#s2","to":"retro:c1","body":"{\"seam\":\"execute\",\"tag\":\"approach_abandoned\",\"detail\":\"a-boundary\"}"}` + "\n" +
+	`{"ts":5050,"crew_id":"c1","kind":"msg","from":"worker:feat/a#s2","to":"metrics:c1","body":"{\"review_mode\":\"full\",\"plan_critic_first_pass\":null,\"notes\":[]}"}` + "\n" +
+	`{"ts":5100,"crew_id":"c1","kind":"status","from":"worker:feat/a#s2","to":"dispatcher:c1","body":{"state":"failed"}}` + "\n" +
+	`{"ts":6000,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"retro:c1","body":"{\"seam\":\"dispatch\",\"tag\":\"fanout_binder\",\"detail\":\"d1\"}"}` + "\n" +
+	`{"ts":6000,"crew_id":"c2","kind":"msg","from":"dispatcher:c2","to":"retro:c2","body":"{\"seam\":\"dispatch\",\"tag\":\"misrouted\",\"detail\":\"d2\"}"}` + "\n"
+
+// The goldens are what the unindexed fold printed, captured before the
+// per-run scans became lookups: the index must change speed, not output. The
+// guard cases pin what the old filters did with a malformed row: a dispatch
+// without a string branch matches nothing and costs nothing, and a non-string
+// `from` aborts the fold only when some dispatch row makes it look at the bus.
+func TestIndexedFoldMatchesOnWindowedBus(t *testing.T) {
+	const header = "branch\tengine\tmodel\ttier\toutcome\ttags\n"
+	foldError := [3]string{header, "", ""}
+	cases := []struct {
+		name   string
+		events string
+		code   int
+		want   [3]string
+	}{
+		{"windowed", windowedBus, 0, windowedGolden},
+		{"dispatch-without-branch", oneRun +
+			`{"ts":2500,"crew_id":"c1","kind":"dispatch","engine":"claude","model":"m","tier":"standard","title":"t"}` + "\n" +
+			`{"ts":2600,"crew_id":"c1","kind":"status","to":"dispatcher:c1","body":{"state":"working"}}` + "\n" +
+			`{"ts":2700,"crew_id":"c1","kind":"resume"}` + "\n", 0, oneRunGolden},
+		{"dispatch-with-numeric-branch", oneRun +
+			`{"ts":2500,"crew_id":"c1","kind":"dispatch","branch":42,"engine":"claude","model":"m","tier":"standard","title":"t"}` + "\n" +
+			`{"ts":2600,"crew_id":"c1","kind":"status","from":"worker:42#s1","to":"dispatcher:c1","body":{"state":"working"}}` + "\n", 0, oneRunGolden},
+		{"numeric-from-without-dispatch",
+			`{"ts":1000,"crew_id":"c1","kind":"status","from":7,"to":"dispatcher:c1","body":{"state":"working"}}` + "\n" +
+				`{"ts":1100,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"retro:c1","body":"{\"seam\":\"dispatch\",\"tag\":\"fanout_binder\",\"detail\":\"d1\"}"}` + "\n", 0, numericFromNoDispatchGolden},
+		{"numeric-from-with-dispatch", oneRun +
+			`{"ts":3000,"crew_id":"c1","kind":"status","from":7,"to":"dispatcher:c1","body":{"state":"working"}}` + "\n", 5, foldError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for i, req := range []Request{{}, {Report: true}, {Report: true, JSON: true}} {
+				out, errb, code := run(t, tc.events, req)
+				if code != tc.code {
+					t.Fatalf("%+v: exit %d, want %d (%s)", req, code, tc.code, errb)
+				}
+				if out != tc.want[i] {
+					t.Errorf("%+v: stdout =\n%s\nwant\n%s", req, out, tc.want[i])
+				}
+				if code != 0 && !strings.HasPrefix(errb, "crew: retro: ") {
+					t.Errorf("%+v: stderr = %q", req, errb)
+				}
+			}
+		})
+	}
+}
+
+// Stdout of the bare, --report and --report --json shapes.
+var (
+	windowedGolden = [3]string{
+		"branch\tengine\tmodel\ttier\toutcome\ttags\nfeat/a\tclaude\tsonnet\tstandard\tstuck\tgate_thrash,other\nfeat/a\tclaude\tsonnet\tstandard\tfailed\tapproach_abandoned,plan_required_unaudited\nfeat/b\tclaude\topus\tstandard\tdone\tother\nfeat/c\tpi\tlemonade\tstandard\tfailed\tother,plan_required_unaudited\ndispatcher:c1\t—\t—\t—\t—\tfanout_binder\ndispatcher:c2\t—\t—\t—\t—\tmisrouted\n",
+		"tag                      hits  runs  engines    nondone  sample\ngate_thrash                 1     1  claude         100  a-win1-seam\napproach_abandoned          1     1  claude         100  a-boundary\nplan_required_unaudited     2     2  claude,pi      100  plan: required but no plan seam and plan_critic_first_pass i…\nother                       3     3  claude,pi       67  a-win1-snap\nmisrouted                   1     0  —                —  d2\nfanout_binder               1     0  —                —  d1\n",
+		`{
+  "rows": [
+    {
+      "branch": "feat/a",
+      "crew": "c1",
+      "engine": "claude",
+      "kind": "run",
+      "model": "sonnet",
+      "notes": [
+        {
+          "detail": "a-win1-seam",
+          "seam": "execute",
+          "tag": "gate_thrash"
+        },
+        {
+          "detail": "a-win1-snap",
+          "seam": "gate",
+          "tag": "other"
+        }
+      ],
+      "outcome": "stuck",
+      "t0": 1000,
+      "tier": "standard"
+    },
+    {
+      "branch": "feat/a",
+      "crew": "c1",
+      "engine": "claude",
+      "kind": "run",
+      "model": "sonnet",
+      "notes": [
+        {
+          "detail": "a-boundary",
+          "seam": "execute",
+          "tag": "approach_abandoned"
+        },
+        {
+          "detail": "plan: required but no plan seam and plan_critic_first_pass is null in the metrics snapshot",
+          "seam": "plan",
+          "tag": "plan_required_unaudited"
+        }
+      ],
+      "outcome": "failed",
+      "t0": 5000,
+      "tier": "standard"
+    },
+    {
+      "branch": "feat/b",
+      "crew": "c1",
+      "engine": "claude",
+      "kind": "run",
+      "model": "opus",
+      "notes": [
+        {
+          "detail": "b-snap",
+          "seam": "gate",
+          "tag": "other"
+        }
+      ],
+      "outcome": "done",
+      "t0": 1000,
+      "tier": "standard"
+    },
+    {
+      "branch": "feat/c",
+      "crew": "c1",
+      "engine": "pi",
+      "kind": "run",
+      "model": "lemonade",
+      "notes": [
+        {
+          "detail": "c-snap",
+          "seam": "gate",
+          "tag": "other"
+        },
+        {
+          "detail": "plan: required but no plan seam and plan_critic_first_pass is null in the metrics snapshot",
+          "seam": "plan",
+          "tag": "plan_required_unaudited"
+        }
+      ],
+      "outcome": "failed",
+      "t0": 1000,
+      "tier": "standard"
+    },
+    {
+      "branch": "dispatcher:c1",
+      "crew": "c1",
+      "engine": "—",
+      "kind": "dispatcher",
+      "model": "—",
+      "notes": [
+        {
+          "detail": "d1",
+          "seam": "dispatch",
+          "tag": "fanout_binder"
+        }
+      ],
+      "outcome": "—",
+      "t0": 6000,
+      "tier": "—"
+    },
+    {
+      "branch": "dispatcher:c2",
+      "crew": "c2",
+      "engine": "—",
+      "kind": "dispatcher",
+      "model": "—",
+      "notes": [
+        {
+          "detail": "d2",
+          "seam": "dispatch",
+          "tag": "misrouted"
+        }
+      ],
+      "outcome": "—",
+      "t0": 6000,
+      "tier": "—"
+    }
+  ],
+  "tags": [
+    {
+      "details": [
+        "a-win1-seam"
+      ],
+      "engines": [
+        "claude"
+      ],
+      "hits": 1,
+      "known": true,
+      "nondone_pct": 100,
+      "runs": 1,
+      "tag": "gate_thrash"
+    },
+    {
+      "details": [
+        "a-boundary"
+      ],
+      "engines": [
+        "claude"
+      ],
+      "hits": 1,
+      "known": true,
+      "nondone_pct": 100,
+      "runs": 1,
+      "tag": "approach_abandoned"
+    },
+    {
+      "details": [
+        "plan: required but no plan seam and plan_critic_first_pass is null in the metrics snapshot",
+        "plan: required but no plan seam and plan_critic_first_pass is null in the metrics snapshot"
+      ],
+      "engines": [
+        "claude",
+        "pi"
+      ],
+      "hits": 2,
+      "known": true,
+      "nondone_pct": 100,
+      "runs": 2,
+      "tag": "plan_required_unaudited"
+    },
+    {
+      "details": [
+        "a-win1-snap",
+        "b-snap",
+        "c-snap"
+      ],
+      "engines": [
+        "claude",
+        "pi"
+      ],
+      "hits": 3,
+      "known": true,
+      "nondone_pct": 67,
+      "runs": 3,
+      "tag": "other"
+    },
+    {
+      "details": [
+        "d2"
+      ],
+      "engines": [],
+      "hits": 1,
+      "known": true,
+      "nondone_pct": null,
+      "runs": 0,
+      "tag": "misrouted"
+    },
+    {
+      "details": [
+        "d1"
+      ],
+      "engines": [],
+      "hits": 1,
+      "known": true,
+      "nondone_pct": null,
+      "runs": 0,
+      "tag": "fanout_binder"
+    }
+  ],
+  "unknown": []
+}
+`,
+	}
+	oneRunGolden = [3]string{
+		"branch\tengine\tmodel\ttier\toutcome\ttags\nfeat/a\tclaude\tsonnet\tstandard\tfailed\tgate_thrash\n",
+		"tag          hits  runs  engines  nondone  sample\ngate_thrash     1     1  claude       100  circled build\n",
+		`{
+  "rows": [
+    {
+      "branch": "feat/a",
+      "crew": "c1",
+      "engine": "claude",
+      "kind": "run",
+      "model": "sonnet",
+      "notes": [
+        {
+          "detail": "circled build",
+          "seam": "execute",
+          "tag": "gate_thrash"
+        }
+      ],
+      "outcome": "failed",
+      "t0": 1000,
+      "tier": "standard"
+    }
+  ],
+  "tags": [
+    {
+      "details": [
+        "circled build"
+      ],
+      "engines": [
+        "claude"
+      ],
+      "hits": 1,
+      "known": true,
+      "nondone_pct": 100,
+      "runs": 1,
+      "tag": "gate_thrash"
+    }
+  ],
+  "unknown": []
+}
+`,
+	}
+	numericFromNoDispatchGolden = [3]string{
+		"branch\tengine\tmodel\ttier\toutcome\ttags\ndispatcher:c1\t—\t—\t—\t—\tfanout_binder\n",
+		"tag            hits  runs  engines  nondone  sample\nfanout_binder     1     0  —              —  d1\n",
+		`{
+  "rows": [
+    {
+      "branch": "dispatcher:c1",
+      "crew": "c1",
+      "engine": "—",
+      "kind": "dispatcher",
+      "model": "—",
+      "notes": [
+        {
+          "detail": "d1",
+          "seam": "dispatch",
+          "tag": "fanout_binder"
+        }
+      ],
+      "outcome": "—",
+      "t0": 1100,
+      "tier": "—"
+    }
+  ],
+  "tags": [
+    {
+      "details": [
+        "d1"
+      ],
+      "engines": [],
+      "hits": 1,
+      "known": true,
+      "nondone_pct": null,
+      "runs": 0,
+      "tag": "fanout_binder"
+    }
+  ],
+  "unknown": []
+}
+`,
+	}
+)
 
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)

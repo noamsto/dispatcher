@@ -26,6 +26,7 @@ setup_file() {
     "$root#crew" "$root#dispatch" "$root#dispatch-resume" "$root#dispatcher" \
     "$root#refresh-scores" "$root#refresh-budget" "$root#refresh-models" "$root#pr-watch" \
     "$root#reviewer-roster" "$root#permission-check" "$root#crew-dash" "$root#lead-launcher" \
+    "$root#overseer" \
     >"$BATS_FILE_TMPDIR/out-paths"
 
   # The module's own eval, through a real `lib.evalModules` (not a bare call
@@ -179,6 +180,7 @@ let
     overseer = {
       autoRelaunch = true;
       digestEvery = 7200;
+      root = "/a/repos";
     };
     repoTrackers."factify-inc/mono" = "linear:ENG";
     orgTrackers."factify-inc" = "linear:ENG";
@@ -494,6 +496,7 @@ setup() {
     read -r OUT_PERMISSION_CHECK
     read -r OUT_CREW_DASH
     read -r OUT_LEAD_LAUNCHER
+    read -r OUT_OVERSEER
   } <"$BATS_FILE_TMPDIR/out-paths"
   {
     read -r OUT_MINIMAL_DISPATCH_CONFIG
@@ -509,6 +512,7 @@ setup() {
   for out in "$OUT_CREW" "$OUT_DISPATCH" "$OUT_DISPATCH_RESUME" "$OUT_DISPATCHER" \
     "$OUT_REFRESH_SCORES" "$OUT_REFRESH_BUDGET" "$OUT_REFRESH_MODELS" "$OUT_PR_WATCH" \
     "$OUT_REVIEWER_ROSTER" "$OUT_PERMISSION_CHECK" "$OUT_CREW_DASH" "$OUT_LEAD_LAUNCHER" \
+    "$OUT_OVERSEER" \
     "$OUT_MINIMAL_DISPATCH_CONFIG" "$OUT_MINIMAL_DISPATCH" \
     "$OUT_CODEX_DISPATCH_CONFIG" "$OUT_CODEX_DISPATCH"; do
     [ -n "$out" ]
@@ -982,7 +986,7 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   # Every CLI the module claims to install, resolved from the flake — a package
   # that isn't in `packages` fails the eval outright, not a grep.
-  for pkg in crew crew-dash dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check dispatch-config completions; do
+  for pkg in crew crew-dash dispatch dispatch-resume dispatcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check dispatch-config overseer completions; do
     run jq -e --arg p "$pkg" '(.full.packageNames | index($p)) != null' "$EVAL"
     [ "$status" -eq 0 ]
   done
@@ -1086,7 +1090,7 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.fleetHeadTimeout == 300' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '.full.locked.overseer == {"autoRelaunch": true, "digestEvery": 7200}' "$EVAL"
+  run jq -e '.full.locked.overseer == {"autoRelaunch": true, "digestEvery": 7200, "root": "/a/repos"}' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.engines == ["claude", "codex", "cursor", "pi"]' "$EVAL"
   [ "$status" -eq 0 ]
@@ -1356,7 +1360,7 @@ worktree_git_lib_crew_go_row() { # bin
 @test "built consumers bake the settings resolver" {
   for bin in "$OUT_DISPATCH/bin/dispatch" "$OUT_DISPATCH_RESUME/bin/dispatch-resume" \
     "$OUT_DISPATCHER/bin/dispatcher" "$OUT_REFRESH_BUDGET/bin/refresh-budget" \
-    "$OUT_PERMISSION_CHECK/bin/permission-check"; do
+    "$OUT_PERMISSION_CHECK/bin/permission-check" "$OUT_OVERSEER/bin/overseer"; do
     run grep -c '@dispatchConfig@' "$bin"
     [ "$output" = "0" ]
     run grep -q '/bin/dispatch-config' "$bin"

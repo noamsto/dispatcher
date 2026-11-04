@@ -34,6 +34,10 @@
 # (interactive browsers); it is validated on the merged tree and has no env var.
 # dispatcherChrome (boolean) launches the claude dispatcher session with
 # --chrome; it is honoured from every layer and has no env var.
+# overseer.root (absolute path, optional) is the folder the standalone
+# `overseer` command treats as holding the user's repos; when unset it falls
+# through to the first CREW_SWEEP_ROOTS entry, then $HOME. It is honoured from
+# every layer and has no env var.
 # freshSeams (boolean, default false) arms dispatch's fresh lead relaunch at
 # the execute and review seams for eligible claude/pi standard/deep implement
 # workers; dispatch --fresh-seams/--no-fresh-seams override it per dispatch.
@@ -650,6 +654,7 @@ printf '%s\n' "$base" "$user" "$locked" "$env_layer" | jq -n --argjson show_orig
   | need(["overseer"]; "an object"; type == "object")
   | need(["overseer", "autoRelaunch"]; "a boolean"; type == "boolean")
   | need(["overseer", "digestEvery"]; "a positive integer (seconds)"; pos_int)
+  | need(["overseer", "root"]; "an absolute path string"; type == "string" and startswith("/"))
   | need(["repoTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | need(["orgTrackers"]; "an object of strings"; type == "object" and all(.[]; type == "string"))
   | need(["workerDeniedMcpServers"]; "an array of MCP server names (letters, digits, \"_\", \"-\")"; string_array and all(.[]; test("^[A-Za-z0-9_-]+$")))

@@ -21,7 +21,7 @@ self: {
     monthlyUsd = cfg.openrouter.monthlyTarget;
   };
   overseerLocked = lib.filterAttrs (_: v: v != null) {
-    inherit (cfg.overseer) autoRelaunch digestEvery;
+    inherit (cfg.overseer) autoRelaunch digestEvery root;
   };
   lockedSettings =
     {inherit (cfg) profile grantRoots;}
@@ -571,6 +571,19 @@ in {
           settings file governs.
         '';
       };
+
+      root = lib.mkOption {
+        type = lib.types.nullOr (lib.types.strMatching "/.*");
+        default = null;
+        example = "/home/user/git";
+        description = ''
+          The absolute path of the folder that holds your repos, used by
+          the standalone `overseer` command as its working directory. Set,
+          it lands as `overseer.root` in the locked settings layer. Unset
+          (the default), the command falls back to the first
+          `CREW_SWEEP_ROOTS` entry, then `$HOME`.
+        '';
+      };
     };
 
     anthropicCredits = lib.mkOption {
@@ -873,7 +886,7 @@ in {
     # One `home` attrset, not four `home.*` assignments — statix flags the
     # repeated key.
     home = {
-      packages = [pkgsFor.crew pkgsFor.crew-dash pkgsFor.dispatch pkgsFor.dispatch-resume pkgsFor.dispatcher pkgsFor.refresh-scores pkgsFor.refresh-budget pkgsFor.refresh-models pkgsFor.pr-watch pkgsFor.reviewer-roster pkgsFor.permission-check pkgsFor.dispatch-config pkgsFor.completions] ++ lib.optional (cfg.agentBrowser.package != null) agentBrowserPackage;
+      packages = [pkgsFor.crew pkgsFor.crew-dash pkgsFor.dispatch pkgsFor.dispatch-resume pkgsFor.dispatcher pkgsFor.refresh-scores pkgsFor.refresh-budget pkgsFor.refresh-models pkgsFor.pr-watch pkgsFor.reviewer-roster pkgsFor.permission-check pkgsFor.dispatch-config pkgsFor.overseer pkgsFor.completions] ++ lib.optional (cfg.agentBrowser.package != null) agentBrowserPackage;
 
       sessionVariables = {
         # Exported, not merely baked into the CLIs. The `dispatcher` slash
