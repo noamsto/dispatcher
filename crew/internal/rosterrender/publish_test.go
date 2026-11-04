@@ -81,7 +81,7 @@ func TestPublishOpensOncePerPaneAndRepublishesOnChange(t *testing.T) {
 		t.Fatalf("an unchanged bus republished: %q", got)
 	}
 
-	l.appendBus(t, statusEvent("worker:feat/1-a#s1", 1791361500000, "working", "execute: lint", "", ""))
+	l.appendBus(t, statusEvent("worker:feat/1-a#s1", 1791361500000, "blocked", "", "", ""))
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
@@ -92,8 +92,8 @@ func TestPublishOpensOncePerPaneAndRepublishesOnChange(t *testing.T) {
 	if want := "aeye publish-diagram " + file + " --pane %7"; got[1] != want {
 		t.Errorf("a change re-opened the carousel: %q, want %q", got[1], want)
 	}
-	if !strings.Contains(l.diagram(), `working · execute: lint · since 08:25" {`) {
-		t.Errorf("the new detail never reached the diagram:\n%s", l.diagram())
+	if line := nodeLine(t, l.diagram(), "p1"); !strings.Contains(line, "aeye-pulse") {
+		t.Errorf("the new state never reached the diagram: %s", line)
 	}
 
 	// A new pane republishes the unchanged file without rewriting it.
@@ -206,7 +206,7 @@ func TestAFailingPublishStillExitsAndIsRetried(t *testing.T) {
 	}
 
 	l.publishErr = failed
-	l.appendBus(t, statusEvent("worker:feat/1-a#s1", 1791361500000, "working", "execute: lint", "", ""))
+	l.appendBus(t, statusEvent("worker:feat/1-a#s1", 1791361500000, "blocked", "", "", ""))
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
