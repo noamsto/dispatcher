@@ -1,4 +1,6 @@
-usage: crew overseer msg <repo> <crew> '<json>'
+usage: crew overseer msg [--host <h>] <repo> <crew> '<json>'
+       crew overseer status --origin <host> [--since <ms>]
+       crew overseer deliver --origin <host> -- <repo> <crew> '<json>'
 
 Post the overseer's message to one crew's dispatcher, on that repo's bus. Only
 the overseer session runs it: CREW_OVERSEER set to this host's name (uname -n
@@ -7,6 +9,9 @@ pane above it; it is refused when tmux list-panes -a or the process ancestry
 cannot be read. The row is from overseer:<host> to dispatcher:<crew>; crew msg
 and crew status refuse an overseer: sender.
 
+  --host   Post on another settings host instead: that host's own crew
+           overseer deliver writes the row there; prints {"host","ts"}.
+           <repo> is then named as that host's crew fleet names it
   <repo>   A repo as crew fleet names it (owner/name from its origin, else
            its checkout dir), or its git common dir; a name two buses share
            is refused — pass the common dir
@@ -18,6 +23,12 @@ and crew status refuse an overseer: sender.
            escaped, so counts twice
 
 Runs from any directory. Exits 1 on any refusal, with nothing written.
+
+status and deliver are run by a federated overseer over ssh through crew
+remote-exec; not for interactive use. status prints this host's fleet status
+and the msgs to overseer:<origin> above --since (a millisecond ts) as one
+JSON line; deliver posts a message relayed from overseer:<origin>, a host in
+this host's settings, and prints its ts.
 
   crew overseer msg noamsto/dispatcher <crew-id> \
     '{"kind":"ask","detail":"worker violet blocked 45 min — handling it?"}'

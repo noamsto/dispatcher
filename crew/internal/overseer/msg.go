@@ -31,7 +31,13 @@ import (
 )
 
 // MsgUsage is the line every `crew overseer msg` grammar refusal prints.
-const MsgUsage = "usage: crew overseer msg <repo> <crew> '<json>'"
+const MsgUsage = "usage: crew overseer msg [--host <h>] <repo> <crew> '<json>'"
+
+// StatusUsage and DeliverUsage are the grammar refusals of the far verbs.
+const (
+	StatusUsage  = "usage: crew overseer status --origin <host> [--since <ms>]"
+	DeliverUsage = "usage: crew overseer deliver --origin <host> -- <repo> <crew> '<json>'"
+)
 
 const (
 	exitFailure = 1

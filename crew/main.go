@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -360,6 +361,8 @@ func refusalKey(args []string) string {
 		switch {
 		case args[0] == "hold" && slices.Contains([]string{"add", "list", "due", "park", "release"}, args[1]):
 			return "hold " + args[1]
+		case args[0] == "overseer" && slices.Contains([]string{"msg", "status", "deliver"}, args[1]):
+			return "overseer " + args[1]
 		case args[0] == "fleet" && args[1] == "stream":
 			return "fleet stream"
 		case args[0] == "fleet" && args[1] == "load":
@@ -543,10 +546,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		if parsed.refusal != nil {
 			return refuse(stderr, parsed.refusal)
 		}
-		c := parsed.typed.Overseer.Msg
-		return overseer.RunMsg(ctx, overseer.MsgRequest{Repo: c.Repo, Crew: c.Crew, Body: c.Body}, stdout, stderr, overseer.Options{
-			Git: git.Exec{}, Clock: clock.FromEnv(), Sender: senderProbes(e.proc),
-		})
+		c := parsed.typed.Overseer
+		o := overseerOptions(e, stderr)
+		switch strings.Fields(parsed.cmd)[1] {
+		case "status":
+			o.Status.Served = &fleet.ServedStatus{Root: servedRoot(ctx)}
+			var since *int64
+			if c.Status.Since != nil {
+				n, _ := strconv.ParseInt(*c.Status.Since, 10, 64) // validated as digits within int64
+				since = &n
+			}
+			return overseer.RunStatus(ctx, overseer.StatusRequest{Origin: c.Status.Origin, Since: since}, stdout, stderr, o)
+		case "deliver":
+			d := c.Deliver
+			return overseer.RunDeliver(ctx, overseer.DeliverRequest{Origin: d.Origin, Repo: d.Repo, Crew: d.Crew, Body: d.Body}, stdout, stderr, o)
+		default:
+			m := c.Msg
+			return overseer.RunMsg(ctx, overseer.MsgRequest{Repo: m.Repo, Crew: m.Crew, Body: m.Body, Host: str(m.Host)}, stdout, stderr, o)
+		}
 	}
 
 	// completion prints a script from the grammar alone, so it runs in the build
@@ -671,6 +688,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		}, paths, out, stderr, inbox.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Flush:  out.Flush,
+			Hosts:  sender.NewOverseerHosts(overseerProbes(e)),
 		})
 		return flush(out, stderr, code)
 	}
@@ -684,6 +702,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		code := await.Run(await.Request{Me: aw.Agent, From: str(aw.From), Timeout: str(aw.Timeout), Interval: str(aw.Interval)}, paths, out, stderr, await.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Flush:  out.Flush,
+			Hosts:  sender.NewOverseerHosts(overseerProbes(e)),
 			Clock:  clock.FromEnv(),
 		})
 		return flush(out, stderr, code)
@@ -700,6 +719,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		}, paths, out, stderr, watch.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Flush:  out.Flush,
+			Hosts:  sender.NewOverseerHosts(overseerProbes(e)),
 			Clock:  clock.FromEnv(),
 		})
 		return flush(out, stderr, code)
@@ -716,6 +736,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		}, paths, out, stderr, watch.Options{
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Flush:  out.Flush,
+			Hosts:  sender.NewOverseerHosts(overseerProbes(e)),
 			Clock:  clock.FromEnv(),
 		})
 	}
@@ -1188,10 +1209,13 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 			Options: stream.Options{Clock: clock.FromEnv(), Proc: e.proc},
 			Git:     git.Exec{},
 			Host:    peer.SelfName,
-			// The overseer lane's status is offline: no gh, no remote workers.
+			// The overseer lane's status is offline: no gh, no remote-worker probes;
+			// it federates with partner hosts.
 			CollectStatus: func(ctx context.Context, stderr io.Writer) fleet.StatusDoc {
 				o := fleet.Options{Tmux: tmux.Exec{}, Git: git.Exec{}, Clock: clock.FromEnv()}
-				return fleet.CollectStatus(ctx, fleet.StatusRequest{}, stderr, statusOptions(o, e, stderr))
+				so := statusOptions(o, e, stderr)
+				so.OverseerProbe = nil
+				return fleet.CollectStatus(ctx, fleet.StatusRequest{}, stderr, so)
 			},
 		})
 	}
@@ -1274,7 +1298,10 @@ func statusOptions(o fleet.Options, e env, stderr io.Writer) fleet.StatusOptions
 		Budget: func(ctx context.Context) (int, error) {
 			return fleet.ResolveBudget(ctx, fleet.ConfigBin(), stderr)
 		},
-		Settings: fleetSettings(stderr),
+		Settings:      fleetSettings(stderr),
+		Sender:        overseerProbes(e),
+		Federate:      remote.RunHost,
+		OverseerProbe: overseerProbe(e, remote.Run),
 	}
 	so.Getenv = os.Getenv
 	return so
