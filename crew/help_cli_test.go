@@ -19,8 +19,8 @@ var helpRow = regexp.MustCompile(`^  ([a-z][a-z0-9-]+) +[^ ].*$`)
 
 // unlistedSubs are the words crew admits and the grouped list never carries:
 // `help` is the screen printer rather than a row of its own, and `git-guard`
-// and `reap-autosweep` are callable but deliberately undocumented.
-var unlistedSubs = []string{"help", "git-guard", "reap-autosweep"}
+// `reap-autosweep` and `completion` are callable but deliberately undocumented.
+var unlistedSubs = []string{"help", "git-guard", "reap-autosweep", "completion"}
 
 // admittedSubs is every word the router admits, in the order main.go's literal
 // lists them, a duplicate left where it is.

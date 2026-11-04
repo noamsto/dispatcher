@@ -886,7 +886,7 @@ in {
     # One `home` attrset, not four `home.*` assignments — statix flags the
     # repeated key.
     home = {
-      packages = [pkgsFor.crew pkgsFor.crew-dash pkgsFor.dispatch pkgsFor.dispatch-resume pkgsFor.dispatcher pkgsFor.refresh-scores pkgsFor.refresh-budget pkgsFor.refresh-models pkgsFor.pr-watch pkgsFor.reviewer-roster pkgsFor.permission-check pkgsFor.dispatch-config pkgsFor.overseer] ++ lib.optional (cfg.agentBrowser.package != null) agentBrowserPackage;
+      packages = [pkgsFor.crew pkgsFor.crew-dash pkgsFor.dispatch pkgsFor.dispatch-resume pkgsFor.dispatcher pkgsFor.refresh-scores pkgsFor.refresh-budget pkgsFor.refresh-models pkgsFor.pr-watch pkgsFor.reviewer-roster pkgsFor.permission-check pkgsFor.dispatch-config pkgsFor.overseer pkgsFor.completions] ++ lib.optional (cfg.agentBrowser.package != null) agentBrowserPackage;
 
       sessionVariables = {
         # Exported, not merely baked into the CLIs. The `dispatcher` slash
