@@ -1,7 +1,7 @@
 digraph roster {
   layout=neato; splines=false; outputorder=edgesfirst; pad=0.2; labelloc=b;
-  bgcolor="#1e1e2e"; fontname="sans-serif"; fontsize=10; fontcolor="#a6adc8";
-  node [shape=circle style=filled fontname="sans-serif" fontsize=10 fontcolor="#cdd6f4" fillcolor="#313244" penwidth=3 fixedsize=true];
+  bgcolor="#1e1e2e"; fontname="Source Sans 3"; fontsize=13; fontcolor="#a6adc8";
+  node [shape=circle style=filled fontname="Source Sans 3" fontsize=12 fontcolor="#cdd6f4" fillcolor="#313244" penwidth=3 fixedsize=true];
   edge [color="#585b70" penwidth=1.5 arrowhead=none];
   c1 [label="" style=invis shape=point width=0 pos="-329.00,304.00!"];
   c2 [label="" style=invis shape=point width=0 pos="329.00,304.00!"];

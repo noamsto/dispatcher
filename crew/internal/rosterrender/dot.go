@@ -34,6 +34,14 @@ const (
 	legendH   = 50.0
 )
 
+// diagramFont is aeye's default render font (AEYE_D2_FONT), matched through
+// fontconfig when the probe draws the svg with the cairo renderer. That renderer
+// writes text as glyph paths, which is the point: aeye rasterizes the svg with
+// resvg as a nested image, and resvg resolves no font names there at all (and
+// has no generic sans-serif). Node sizes are fixed, so a host without this font
+// just draws a fallback one.
+const diagramFont = "Source Sans 3"
+
 // dotq quotes s as a DOT string.
 func dotq(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`).Replace(s) + `"`
@@ -76,8 +84,8 @@ func renderDOT(sc scene, lg legend) string {
 	var b strings.Builder
 	b.WriteString("digraph roster {\n")
 	b.WriteString("  layout=neato; splines=false; outputorder=edgesfirst; pad=0.2; labelloc=b;\n")
-	b.WriteString("  " + str("bgcolor", colBG) + "; " + str("fontname", "sans-serif") + "; fontsize=10; " + str("fontcolor", colLegend) + ";\n")
-	b.WriteString("  node [shape=circle style=filled " + str("fontname", "sans-serif") + " fontsize=10 " +
+	b.WriteString("  " + str("bgcolor", colBG) + "; " + str("fontname", diagramFont) + "; fontsize=13; " + str("fontcolor", colLegend) + ";\n")
+	b.WriteString("  node [shape=circle style=filled " + str("fontname", diagramFont) + " fontsize=12 " +
 		str("fontcolor", colText) + " " + str("fillcolor", colFill) + " penwidth=3 fixedsize=true];\n")
 	b.WriteString("  edge [" + str("color", colEdge) + " penwidth=1.5 arrowhead=none];\n")
 

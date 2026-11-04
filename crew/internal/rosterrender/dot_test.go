@@ -241,6 +241,13 @@ func nodeLine(t *testing.T, out, id string) string {
 	return ""
 }
 
+func TestDotUsesAeyesFont(t *testing.T) {
+	out, _, _ := emit(dotModel(eightWorkers(), 0))
+	if strings.Contains(out, "sans-serif") || strings.Count(out, `fontname="Source Sans 3"`) != 2 {
+		t.Errorf("fonts are not aeye's Source Sans 3:\n%s", out)
+	}
+}
+
 func TestDotLegend(t *testing.T) {
 	out, _, _ := emit(dotModel(sixteenWorkers(), 2))
 	_, label, ok := strings.Cut(out, "label=<")
