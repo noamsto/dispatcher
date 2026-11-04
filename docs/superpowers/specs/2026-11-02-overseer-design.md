@@ -909,12 +909,22 @@ concurrently with the local collection, each bounded by 10 s, with the floor of
 that host's inbox file (D6) as `--since`, else the last 24 h. Each answer is
 admitted as untrusted data (`fleet.AdmitHost`):
 size and shape caps, `v == 1`, strings stripped of control and invisible
-characters and capped, repo labels, crew ids and hold ids sanitized to the
-identifier set (`[A-Za-z0-9:/#._@-]`) with invalid crew ids dropped, every
-repo's `host` set to the asked settings key, inbox
+characters and capped, repo labels, crew ids and hold ids validated against the
+identifier set (`[A-Za-z0-9:/#._@-]`) and dropped when invalid (never
+rewritten): an invalid crew id drops its crew, an invalid repo label leaves its
+crews, replies and misrouted msgs unlabeled under one skipped note counting
+them, and a far worker row that does not hold is counted in a skipped note.
+Every repo's `host` is set to the asked settings key, and inbox
 events re-checked (`kind == "msg"`, `to == overseer:<self>`,
 `from == dispatcher:<crew_id>`, `ts` above `--since`) with failures moved to
-`misrouted` by sender only. Nothing in an answer selects a host, path, command
+`misrouted` by sender only. A far `common` dir is only ever hashed into a reply
+key: never validated and never shown (a far repo row's `common` and a far
+skipped `path` are empty). A failure is worded locally, never from far stderr:
+`exit status N`, `ssh failed (255)`, `no answer within <timeout>`,
+`answer over 4 MiB` or `answer: <reason>`. The far side truncates an answer
+over the caps oldest-first, inbox events and misrouted msgs together, and
+lowers its `ts` so the lane's floor stays below the first row left out; the
+next pull serves the rest. Nothing in an answer selects a host, path, command
 or recipient.
 
 - `StatusDoc.hosts[]` is always present: `{host, state: ok|unreachable|unprobed,
@@ -922,7 +932,7 @@ ts, last_ok_ts, age_s, error, machine, queue, repos, skipped}`. An
   unreachable host is listed with its error and the age of its last good data,
   never missing, and its stale repos are never shown as current. Every
   `repos[]` row gains `host`; local repos stay top-level, remote repos live
-  under `hosts[].repos`; a remote row's `common` is display data only.
+  under `hosts[].repos`; a remote row's `common` is never shown.
 - In overseer mode a local dispatcher's `--host` workers are probed through
   `overseerRemote`: argv exactly `crew roster --live -- <crew>`, sender check as
   the overseer, no env, so no `CREW_ID` and no `dispatcher:` sender. A host that

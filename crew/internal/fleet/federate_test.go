@@ -28,6 +28,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
+	"github.com/noamsto/dispatcher/crew/internal/watch"
 )
 
 const stampFormat = "list-windows -a -F #{@crew_id}\x1f#{@crew_dispatcher_host}"
@@ -190,8 +191,8 @@ func TestFederateUnreachable(t *testing.T) {
 		f.opts.Federate = failing
 		doc := f.collect(StatusRequest{})
 		h := doc.Hosts[0]
-		if h.State != "unreachable" || h.Error == nil || *h.Error != "ssh: connect to host mbp: [31mrefused" {
-			t.Errorf("host = %+v error %v", h, h.Error)
+		if h.State != "unreachable" || h.Error == nil || *h.Error != "ssh failed (255)" {
+			t.Errorf("host = %+v error %v", h, deref(h.Error))
 		}
 		if h.LastOkTS == nil || *h.LastOkTS != ago(3600) || h.AgeS == nil || *h.AgeS != 3600 {
 			t.Errorf("last_ok_ts/age_s = %v/%v, want %d/3600", h.LastOkTS, h.AgeS, ago(3600))
@@ -395,7 +396,7 @@ func TestAdmitHostRefusals(t *testing.T) {
 		{"v missing", "version", with(func(a map[string]any) { delete(a, "v") })},
 		{"ts not whole", "ts", with(func(a map[string]any) { a["ts"] = 1.5 })},
 		{"ts a string", "ts", with(func(a map[string]any) { a["ts"] = "1700000100000" })},
-		{"status not an object", "status", with(func(a map[string]any) { a["status"] = "x" })},
+		{"status not an object", "does not hold its type", with(func(a map[string]any) { a["status"] = "x" })},
 		{"repos cap", "200 repos", with(func(a map[string]any) {
 			r := repos(a)[0]
 			a["status"].(map[string]any)["repos"] = slices.Repeat([]any{r}, 201)
@@ -486,20 +487,23 @@ func TestAdmitHostSanitizes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ans.Status.Repos) != 1 {
-		t.Fatalf("repos = %+v, want beta's label dropped", ans.Status.Repos)
+	if len(ans.Status.Repos) != 2 {
+		t.Fatalf("repos = %+v, want beta kept unlabeled", ans.Status.Repos)
 	}
 	r := ans.Status.Repos[0]
-	if r.Host != "mbp" || r.Repo != "acme/alpha" {
-		t.Errorf("repo host/label = %q/%q", r.Host, r.Repo)
+	if r.Host != "mbp" || r.Repo != "acme/alpha" || r.Common != "" {
+		t.Errorf("repo host/label/common = %q/%q/%q", r.Host, r.Repo, r.Common)
+	}
+	if beta := ans.Status.Repos[1]; beta.Repo != "" || beta.Common != "" || beta.Key != "/git/beta/.git" {
+		t.Errorf("beta = %+v, want its label withheld and its common a key only", beta)
 	}
 	w := r.Crews[0].Workers[0]
 	if _, has := w["name"]; has || w["branch"] != "feat/z" {
 		t.Errorf("worker = %v, want its invalid name dropped and the invisible-laced key unread", w)
 	}
 	sk := ans.Status.Skipped
-	if len(sk) != 2 || sk[1] != (Skipped{Path: "/git/beta/.git", Status: "invalid repo label"}) {
-		t.Fatalf("skipped = %+v, want gamma's and beta's", sk)
+	if len(sk) != 2 || sk[0].Path != "" || sk[1] != (Skipped{Status: "1 repo(s) with an invalid label shown unlabeled"}) {
+		t.Fatalf("skipped = %+v, want gamma's with no path and the unlabeled count", sk)
 	}
 	if s := sk[0].Status; len(s) > peer.MaxBody || !utf8.ValidString(s) || s == "" || strings.ContainsRune(s, '\x1b') {
 		t.Errorf("skipped status is %d bytes, valid=%v; want scrubbed and capped at %d rune-safe", len(s), utf8.ValidString(s), peer.MaxBody)
@@ -630,8 +634,8 @@ func TestOverseerProbe(t *testing.T) {
 		}
 	}
 	for _, crew := range []string{"c3", "c5"} {
-		if w := doc.crew(t, crew).Workers[0]; w["host_error"] != "h2 is down" || w["remote_unprobed"] != false {
-			t.Errorf("%s row = %v, want h2's first line", crew, w)
+		if w := doc.crew(t, crew).Workers[0]; w["host_error"] != "ssh failed (255)" || w["remote_unprobed"] != false {
+			t.Errorf("%s row = %v, want ssh's failure worded here", crew, w)
 		}
 	}
 	if w := doc.crew(t, "c4").Workers[0]; w["host_error"] != "no answer within 100ms" {
@@ -807,8 +811,8 @@ func TestAdmitHostRestrictsFarIdentifiers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ans.Status.Repos) != 1 {
-		t.Fatalf("repos = %+v, want the repo with an invalid label and common dir dropped", ans.Status.Repos)
+	if len(ans.Status.Repos) != 2 || ans.Status.Repos[1].Repo != "" || ans.Status.Repos[1].Common != "" {
+		t.Fatalf("repos = %+v, want the repo with an invalid label kept unlabeled, its common dir unshown", ans.Status.Repos)
 	}
 	var ids []string
 	for _, c := range ans.Status.Repos[0].Crews {
@@ -820,18 +824,27 @@ func TestAdmitHostRestrictsFarIdentifiers(t *testing.T) {
 	if w := ans.Status.Repos[0].Crews[0].Workers; len(w) != 1 || w[0]["branch"] != "feat/n" || w[0]["name"] != nil {
 		t.Errorf("c9 workers = %v, want only feat/n, its name dropped: an invalid branch or sender drops the row", w)
 	}
-	if n := len(ans.Status.Skipped); n != 5 {
-		t.Errorf("skipped = %+v, want the 4 dropped crews and the dropped repo", ans.Status.Skipped)
+	// Both repos hold c9, each with two worker rows that do not hold; the three
+	// far commons are the unlabeled repos.
+	if sk := ans.Status.Skipped; len(sk) != 7 || sk[6].Status != "3 repo(s) with an invalid label shown unlabeled" {
+		t.Errorf("skipped = %+v, want the 4 dropped crews, 2 worker-row counts and the unlabeled count", sk)
 	}
-	if len(ans.Inbox) != 1 || len(ans.Inbox[0].Events) != 1 || ans.Inbox[0].Events[0]["crew_id"] != "c9" {
-		t.Errorf("inbox = %+v, want only c9's reply in the valid batch", ans.Inbox)
+	if len(ans.Inbox) != 2 || len(ans.Inbox[0].Events) != 1 || ans.Inbox[0].Events[0]["crew_id"] != "c9" || ans.Inbox[1].Repo != "" {
+		t.Errorf("inbox = %+v, want c9's reply in each batch, the second unlabeled", ans.Inbox)
 	}
-	if len(ans.Misrouted) != 1 || ans.Misrouted[0].TS != ago(43) {
-		t.Errorf("misrouted = %+v, want only the valid one: an invalid crew id, sender or repo drops it", ans.Misrouted)
+	if m := ans.Misrouted; len(m) != 2 || m[0].TS != ago(42) || m[0].Repo != "" || m[1].TS != ago(43) {
+		t.Errorf("misrouted = %+v, want the unlabeled and the valid one: an invalid crew id or sender drops it", m)
 	}
 	q := ans.Status.Queue
 	if q.Head != nil || len(q.Demoted) != 1 || q.Demoted[0].ID != "1700000000000-2" || len(q.Parked) != 1 || q.Parked[0].ID != "1700000000000-5" {
 		t.Errorf("queue = %+v, want the head, the evil demotion and the invalid parked entries dropped", q)
+	}
+	// A far common dir is a key only, never shown: the rest must hold.
+	for i := range ans.Inbox {
+		ans.Inbox[i].Common = ""
+	}
+	for i := range ans.Misrouted {
+		ans.Misrouted[i].Common = ""
 	}
 	for _, part := range []any{ans.Status.Repos, ans.Status.Queue, ans.Misrouted, ans.Inbox} {
 		raw := marshal(t, part)
@@ -971,46 +984,19 @@ func TestFederateUnreadableHostsListsKnownPartners(t *testing.T) {
 	}
 }
 
-// megStderr writes 1 MiB to stderr after a first line, and reports how much of
-// it the writer it was handed holds.
-func megStderr(held *int, rc int) roster.Capture {
-	return func(_ context.Context, _ string, _ []string, _, stderr io.Writer) int {
-		_, _ = io.WriteString(stderr, "far: refused\n")
-		chunk := bytes.Repeat([]byte("x"), 64<<10)
-		for range 16 {
-			_, _ = stderr.Write(chunk)
-		}
-		if s, ok := stderr.(interface{ String() string }); ok {
-			*held = len(s.String())
-		}
-		return rc
-	}
-}
-
-func TestFederateFarStderrIsCapped(t *testing.T) {
-	f := newStatusFix(t)
-	f.overseer("halo", "mbp")
-	held := -1
-	f.opts.Federate = megStderr(&held, 1)
-	h := f.collect(StatusRequest{}).Hosts[0]
-	if held < 0 || held > stderrMax {
-		t.Errorf("the far stderr held %d bytes, want at most %d", held, stderrMax)
-	}
-	if h.Error == nil || *h.Error != "far: refused" {
-		t.Errorf("error = %v, want the first line", h.Error)
-	}
-}
-
-func TestOverseerProbeStderrIsCapped(t *testing.T) {
+// A probe's far stderr is never kept: its failure line is worded here.
+func TestOverseerProbeStderrIsNotRead(t *testing.T) {
 	m := &probeMemo{timeout: time.Second, failed: map[string]string{}}
-	held := -1
-	var stderr bytes.Buffer
-	rc := m.wrap(megStderr(&held, 1), "c1")(t.Context(), "h1", []string{"crew", "roster", "--live", "--", "c1"}, io.Discard, &stderr)
-	if rc != 1 || held < 0 || held > stderrMax {
-		t.Errorf("rc = %d, the probe stderr held %d bytes, want at most %d", rc, held, stderrMax)
+	held := false
+	far := func(_ context.Context, _ string, _ []string, _, stderr io.Writer) int {
+		_, _ = io.WriteString(stderr, "far: $(id) refused\n")
+		_, held = stderr.(interface{ String() string })
+		return 1
 	}
-	if stderr.String() != "far: refused\n" {
-		t.Errorf("stderr = %q, want the first line", stderr.String())
+	var stderr bytes.Buffer
+	rc := m.wrap(far, "c1")(t.Context(), "h1", []string{"crew", "roster", "--live", "--", "c1"}, io.Discard, &stderr)
+	if rc != 1 || held || stderr.String() != "exit status 1\n" {
+		t.Errorf("rc = %d held = %v stderr = %q, want 1, nothing held and the exit status", rc, held, stderr.String())
 	}
 }
 
@@ -1036,7 +1022,7 @@ func TestOverseerProbeMemoizesOnlyTransportFailures(t *testing.T) {
 		t.Errorf("h2 rc = %d", rc)
 	}
 	var stderr bytes.Buffer
-	if rc := m.wrap(capture(0, ""), "c4")(t.Context(), "h2", argv("c4"), io.Discard, &stderr); rc == 0 || stderr.String() != "ssh: h2: refused\n" {
+	if rc := m.wrap(capture(0, ""), "c4")(t.Context(), "h2", argv("c4"), io.Discard, &stderr); rc == 0 || stderr.String() != "ssh failed (255)\n" {
 		t.Errorf("after ssh's 255: rc = %d stderr %q, want a fast failure", rc, stderr.String())
 	}
 	if want := []string{"h1 c1", "h1 c2", "h2 c3"}; !slices.Equal(calls, want) {
@@ -1051,6 +1037,14 @@ const poison = "x;$(id)`|&<>'\"*? \n"
 
 // farTextPaths are the only far strings admission copies as text.
 var farTextPaths = []string{"status.skipped[].status", "inbox[].events[].body"}
+
+// farKeyPaths are the far common dirs admission keeps as they are, as keys
+// only: never validated, never shown.
+var farKeyPaths = []string{"inbox[].common", "misrouted[].common"}
+
+// farLabelPaths are the far repo labels: an invalid one is withheld, its
+// element kept and counted in a skipped note.
+var farLabelPaths = []string{"status.repos[].repo", "inbox[].repo", "misrouted[].repo"}
 
 var farIdentRE = regexp.MustCompile(`^[A-Za-z0-9:/#._@-]*$`)
 
@@ -1286,7 +1280,7 @@ func TestAdmitHostPoisonEveryLeaf(t *testing.T) {
 					walk(e, strings.TrimPrefix(path+"."+strconv.Itoa(i), "."))
 				}
 			case string:
-				if slices.Contains(farTextPaths, norm(path)) {
+				if slices.Contains(farTextPaths, norm(path)) || slices.Contains(farKeyPaths, norm(path)) {
 					got[path] = x
 					return
 				}
@@ -1348,6 +1342,14 @@ func TestAdmitHostPoisonEveryLeaf(t *testing.T) {
 			np := norm(strings.TrimSuffix(path, "#key"))
 			switch {
 			case slices.Contains(farTextPaths, np), kept[path] == "":
+			case slices.Contains(farKeyPaths, np):
+				if got[path] != poison {
+					t.Errorf("%s = %q, want the key kept as it is", path, got[path])
+				}
+			case slices.Contains(farLabelPaths, np):
+				if got[path] != "" || !slices.Contains(slices.Collect(maps.Values(got)), "1 repo(s) with an invalid label shown unlabeled") {
+					t.Errorf("a poisoned %s left %q, want it withheld and counted", path, got[path])
+				}
 			case np == "status.repos[].host":
 				if got[path] != "mbp" {
 					t.Errorf("repo host = %q, want the settings key", got[path])
@@ -1360,7 +1362,7 @@ func TestAdmitHostPoisonEveryLeaf(t *testing.T) {
 }
 
 // A far roster row an overseer's --host probe returns keeps only the fields
-// a lane line or the protocol reads, each valid, or is dropped.
+// a lane line or the protocol reads, an invalid name dropped.
 func TestOverseerProbeRowsProjected(t *testing.T) {
 	f := newStatusFix(t,
 		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"r/1","name":"remy","host":"h1","remote":true}`, ago(60)),
@@ -1369,22 +1371,27 @@ func TestOverseerProbeRowsProjected(t *testing.T) {
 	f.overseer("halo")
 	f.opts.OverseerProbe = func(string) roster.Capture {
 		return func(_ context.Context, _ string, _ []string, stdout, _ io.Writer) int {
-			_, _ = io.WriteString(stdout, `[{"branch":"r/1","from":"worker:$(id)","state":"working","live":true,"age_s":5,"zz_extra":"x"},`+
+			_, _ = io.WriteString(stdout, `[{"branch":"r/1","name":"re my","state":"working","live":true,"age_s":5,"zz_extra":"x"},`+
 				`{"branch":"r/2","from":"worker:r/2#s1-1","name":"rex","state":"working","live":true,"age_s":5,"title":"t;x","zz_extra":"x"}]`)
 			return 0
 		}
 	}
 	doc := f.collect(StatusRequest{})
 	rows := doc.crew(t, "c1").Workers
-	if len(rows) != 1 || rows[0]["branch"] != "r/2" {
-		t.Fatalf("rows = %v, want only r/2: r/1's from is no worker id", rows)
+	if len(rows) != 2 || rows[0]["branch"] != "r/1" || rows[1]["branch"] != "r/2" {
+		t.Fatalf("rows = %v, want r/1 and r/2", rows)
 	}
-	for k := range rows[0] {
-		if !slices.Contains(projectedWorkerKeys, k) {
-			t.Errorf("row kept %s: %v", k, rows[0])
+	for _, w := range rows {
+		for k := range w {
+			if !slices.Contains(projectedWorkerKeys, k) {
+				t.Errorf("row kept %s: %v", k, w)
+			}
 		}
 	}
-	if w := rows[0]; w["host"] != "h1" || w["from"] != "worker:r/2#s1-1" || w["state"] != "working" || w["remote_unprobed"] != false {
+	if _, has := rows[0]["name"]; has {
+		t.Errorf("r/1 = %v, want its invalid name dropped", rows[0])
+	}
+	if w := rows[1]; w["host"] != "h1" || w["from"] != "worker:r/2#s1-1" || w["state"] != "working" || w["remote_unprobed"] != false {
 		t.Errorf("row = %v", w)
 	}
 }
@@ -1414,5 +1421,233 @@ func TestOverseerProbeStdoutIsCapped(t *testing.T) {
 	held = 0
 	if rc := m.wrap(big, "c1")(t.Context(), "h1", argv, io.Discard, io.Discard); rc != 1 || calls != 2 {
 		t.Errorf("rc = %d after %d calls, want the host asked again", rc, calls)
+	}
+}
+
+// A far crew's worker rows that do not hold are counted in the host's skipped
+// notes, never dropped silently.
+func TestAdmitHostCountsDroppedWorkerRows(t *testing.T) {
+	a := farAnswer()
+	crew := a["status"].(map[string]any)["repos"].([]any)[0].(map[string]any)["crews"].([]any)[0].(map[string]any)
+	crew["workers"] = append(crew["workers"].([]any),
+		map[string]any{"branch": "feat/$(id)", "state": "working"},
+		map[string]any{"branch": "feat/y", "from": "worker:x y", "state": "working"},
+	)
+	ans, err := AdmitHost(marshal(t, a), "mbp", "halo", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := ans.Status.Repos[0].Crews[0].Workers; len(w) != 1 || w[0]["branch"] != "feat/z" {
+		t.Errorf("workers = %v, want feat/z", w)
+	}
+	if want := (Skipped{Status: "crew c9: 2 worker rows dropped"}); !slices.Equal(ans.Status.Skipped, []Skipped{want}) {
+		t.Errorf("skipped = %+v, want %+v", ans.Status.Skipped, want)
+	}
+}
+
+// A far repo whose label is no identifier keeps its crews, replies and
+// misrouted msgs unlabeled; its common dir is a key only, never validated and
+// never shown.
+func TestAdmitHostKeepsUnlabeledRepos(t *testing.T) {
+	a := farAnswer(farEvent(ago(30), "c9", "dispatcher:c9", "overseer:halo", "{}"))
+	status := a["status"].(map[string]any)
+	repo := status["repos"].([]any)[0].(map[string]any)
+	repo["repo"], repo["common"] = "my repo", "/git/my repo;$(x)/"+strings.Repeat("d", 200)+"/.git"
+	status["skipped"] = []any{map[string]any{"path": "/git/c++/.git", "status": "no bus"}}
+	batch := a["inbox"].([]any)[0].(map[string]any)
+	batch["repo"], batch["common"] = "c++", "/git/c++/.git"
+	a["misrouted"] = []any{map[string]any{"repo": "c++", "common": "/git/c++/.git", "crew_id": "c9", "from": "worker:a", "ts": ago(40)}}
+
+	ans, err := AdmitHost(marshal(t, a), "mbp", "halo", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := ans.Status.Repos; len(r) != 1 || r[0].Repo != "" || r[0].Common != "" || r[0].Key != repo["common"] || len(r[0].Crews) != 1 {
+		t.Errorf("repos = %+v, want the repo kept unlabeled, its common a key only", r)
+	}
+	if b := ans.Inbox; len(b) != 1 || b[0].Repo != "" || b[0].Common != "/git/c++/.git" || len(b[0].Events) != 1 {
+		t.Errorf("inbox = %+v, want the reply kept unlabeled", b)
+	}
+	if m := ans.Misrouted; len(m) != 1 || m[0].Repo != "" || m[0].Common != "/git/c++/.git" {
+		t.Errorf("misrouted = %+v, want it kept unlabeled", m)
+	}
+	want := []Skipped{{Status: "no bus"}, {Status: "2 repo(s) with an invalid label shown unlabeled"}}
+	if !slices.Equal(ans.Status.Skipped, want) {
+		t.Errorf("skipped = %+v, want %+v", ans.Status.Skipped, want)
+	}
+	raw := marshal(t, ans.Status)
+	for _, s := range []string{"my repo", "c++", "/git/"} {
+		if bytes.Contains(raw, []byte(s)) {
+			t.Errorf("%q is in the status: %s", s, raw)
+		}
+	}
+}
+
+// fitFar keeps an answer's oldest rows, inbox events and misrouted msgs
+// together, within the row cap and the byte budget, and lowers its ts so the
+// lane's floor stays below the first row it left out.
+func TestFitFarTruncatesOldestFirst(t *testing.T) {
+	base := ago(100)
+	ev := func(k int64) map[string]any {
+		return map[string]any{"ts": json.Number(strconv.FormatInt(base+k, 10)), "body": strings.Repeat("b", 1000)}
+	}
+	answer := func() FarAnswer {
+		return FarAnswer{V: 1, Self: "mbp", TS: nowMS(), Status: StatusDoc{TS: nowMS()},
+			Inbox: []FarBatch{
+				{Repo: "a", Common: "/a", Cursor: 9, Events: []map[string]any{ev(10), ev(30), ev(50)}},
+				{Repo: "b", Common: "/b", Cursor: 9, Events: []map[string]any{ev(20), ev(60)}},
+			},
+			Misrouted: []FarMisrouted{{Repo: "a", Common: "/a", CrewID: "c9", From: "worker:x", TS: base + 40}, {Repo: "b", TS: base + 70}},
+		}
+	}
+	all := []int64{10, 20, 30, 40, 50, 60, 70}
+	rows := func(a FarAnswer) []int64 {
+		var out []int64
+		for _, b := range a.Inbox {
+			for _, e := range b.Events {
+				ts, _ := watch.WholeMS(e["ts"])
+				out = append(out, ts-base)
+			}
+		}
+		for _, m := range a.Misrouted {
+			out = append(out, m.TS-base)
+		}
+		slices.Sort(out)
+		return out
+	}
+	settle := FarSettle.Milliseconds()
+
+	a := answer()
+	fitFar(&a, 4, farMaxBytes)
+	if got := rows(a); !slices.Equal(got, all[:4]) {
+		t.Errorf("rows = %v, want the 4 oldest", got)
+	}
+	if a.TS != base+50-1+settle {
+		t.Errorf("ts = %d, want %d: one below the first omitted row, plus the settle", a.TS, base+50-1+settle)
+	}
+
+	a = answer()
+	fitFar(&a, 500, farMaxBytes)
+	if got := rows(a); !slices.Equal(got, all) || a.TS != nowMS() {
+		t.Errorf("rows = %v ts = %d, want all 7 and ts unchanged", got, a.TS)
+	}
+
+	a = answer()
+	a.TS = base + 40
+	fitFar(&a, 4, farMaxBytes)
+	if a.TS != base+40 {
+		t.Errorf("ts = %d, want never above the real ts", a.TS)
+	}
+
+	a = answer()
+	budget := len(marshal(t, a)) - 2500
+	fitFar(&a, 500, budget)
+	got := rows(a)
+	if n := len(marshal(t, a)); n > budget {
+		t.Errorf("the answer is %d bytes, over the budget of %d", n, budget)
+	}
+	if len(got) == 0 || len(got) >= len(all) || !slices.Equal(got, all[:len(got)]) {
+		t.Fatalf("rows = %v, want an oldest-first prefix", got)
+	}
+	if omitted := all[len(got)]; a.TS != base+omitted-1+settle {
+		t.Errorf("ts = %d, want below the first omitted row %d", a.TS, omitted)
+	}
+}
+
+// A far failure is worded here: the far stderr never reaches a host's error
+// or a probe's host_error.
+func TestFederateFailureIsLocallyWorded(t *testing.T) {
+	poisoned := func(rc int) roster.Capture {
+		return func(_ context.Context, _ string, _ []string, _, stderr io.Writer) int {
+			_, _ = io.WriteString(stderr, "far: \x1b[31m$(id) refused\nmore\n")
+			return rc
+		}
+	}
+	for _, tc := range []struct {
+		rc   int
+		want string
+	}{{1, "exit status 1"}, {255, "ssh failed (255)"}} {
+		f := newStatusFix(t)
+		f.overseer("halo", "mbp")
+		f.opts.Federate = poisoned(tc.rc)
+		if h := f.collect(StatusRequest{}).Hosts[0]; h.Error == nil || *h.Error != tc.want {
+			t.Errorf("rc %d: error = %v, want %q", tc.rc, deref(h.Error), tc.want)
+		}
+	}
+	f := newStatusFix(t)
+	f.overseer("halo", "mbp")
+	f.opts.Federate = answering("x;$(id) {")
+	if h := f.collect(StatusRequest{}).Hosts[0]; h.Error == nil || *h.Error != "answer is not JSON" {
+		t.Errorf("error = %v, want the refusal with no far text", deref(h.Error))
+	}
+
+	p := newStatusFix(t, fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"r/1","name":"remy","host":"h1","remote":true}`, ago(60)))
+	p.overseer("halo")
+	p.opts.OverseerProbe = func(string) roster.Capture { return poisoned(1) }
+	if w := p.collect(StatusRequest{}).crew(t, "c1").Workers[0]; w["host_error"] != "exit status 1" {
+		t.Errorf("row = %v, want host_error exit status 1", w)
+	}
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return "<nil>"
+	}
+	return *s
+}
+
+// A probe answer keeps one row per branch, the first; past the worker cap the
+// probe fails and the host's workers read as placeholders.
+func TestOverseerProbeRowsOnePerBranchCapped(t *testing.T) {
+	answer := func(rows []string) *statusFix {
+		f := newStatusFix(t, fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"r/1","name":"remy","host":"h1","remote":true}`, ago(60)))
+		f.overseer("halo")
+		f.opts.OverseerProbe = func(string) roster.Capture {
+			return func(_ context.Context, _ string, _ []string, stdout, _ io.Writer) int {
+				_, _ = io.WriteString(stdout, "["+strings.Join(rows, ",")+"]")
+				return 0
+			}
+		}
+		return f
+	}
+	dup := slices.Repeat([]string{`{"branch":"r/1","state":"blocked","live":true}`}, 5000)
+	dup[0] = `{"branch":"r/1","state":"working","live":true}`
+	rows := answer(dup).collect(StatusRequest{}).crew(t, "c1").Workers
+	if len(rows) != 1 || rows[0]["state"] != "working" {
+		t.Errorf("%d rows, first %v; want the first r/1 row alone", len(rows), rows[0])
+	}
+
+	var many []string
+	for i := range farMaxWorkers + 1 {
+		many = append(many, fmt.Sprintf(`{"branch":"r/%d","state":"working","live":true}`, i+1))
+	}
+	rows = answer(many).collect(StatusRequest{}).crew(t, "c1").Workers
+	if len(rows) != 1 || rows[0]["host_error"] != "answer: 201 roster rows, over the cap of 200 rows" {
+		t.Errorf("rows = %v, want the r/1 placeholder with the cap reason", rows)
+	}
+}
+
+// A probe row that does not hold fails the probe: the host's workers read as
+// placeholders with a reason worded here, never vanish.
+func TestOverseerProbeDroppedRowFailsTheProbe(t *testing.T) {
+	f := newStatusFix(t,
+		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"r/1","name":"remy","host":"h1","remote":true}`, ago(60)),
+		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"r/2","name":"rex","host":"h1","remote":true}`, ago(60)),
+	)
+	f.overseer("halo")
+	f.opts.OverseerProbe = func(string) roster.Capture {
+		return func(_ context.Context, _ string, _ []string, stdout, _ io.Writer) int {
+			_, _ = io.WriteString(stdout, `[{"branch":"r/1","from":"worker:$(id)","state":"working"},{"branch":"r/2","state":"working"},7]`)
+			return 0
+		}
+	}
+	rows := f.collect(StatusRequest{}).crew(t, "c1").Workers
+	if len(rows) != 2 {
+		t.Fatalf("rows = %v, want both placeholders", rows)
+	}
+	for _, w := range rows {
+		if w["host_error"] != "answer: 2 roster rows dropped" || w["state"] != nil {
+			t.Errorf("row = %v, want a placeholder naming the dropped rows", w)
+		}
 	}
 }

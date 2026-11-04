@@ -3,4 +3,4 @@ box   acme/alpha  c1    live        alive  3     15m              1        0
 box   acme/alpha  c2    dead        -      0     -                1        1
 box   acme/alpha  c3    closed      -      0     -                0        0
 mbp   acme/alpha  c9    live        -      1     -                0        0
-zed  unreachable  last ok 2h0m ago  ssh: connect to host zed port 22: Connection refused[0m
+zed  unreachable  last ok 2h0m ago  ssh failed (255)

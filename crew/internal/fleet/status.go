@@ -174,9 +174,13 @@ type Skipped struct {
 }
 
 type RepoStatus struct {
-	Host   string `json:"host"`
-	Repo   string `json:"repo"`
+	Host string `json:"host"`
+	Repo string `json:"repo"`
+	// Common is the repo's git common dir, "" on a far repo: a far common dir
+	// is never shown, only kept as Key.
 	Common string `json:"common"`
+	// Key is the repo's bus key: Common here, the far common dir on a far repo.
+	Key string `json:"-"`
 	// Misrouted counts the last 24 h of msgs to the overseer from anyone but a
 	// dispatcher of the crew they name; they are never shown.
 	Misrouted int          `json:"misrouted"`
@@ -405,7 +409,7 @@ func (b *repoBuild) build() (RepoStatus, error) {
 	for _, r := range rows {
 		byCrew[r.crew] = append(byCrew[r.crew], r.Row)
 	}
-	repo := RepoStatus{Host: b.host, Repo: b.repoName, Common: b.common, Crews: []CrewStatus{}}
+	repo := RepoStatus{Host: b.host, Repo: b.repoName, Common: b.common, Key: b.common, Crews: []CrewStatus{}}
 
 	// Not from the overseer's cursor: its lane moves that past every misrouted
 	// msg within a poll, and counts them only in memory.

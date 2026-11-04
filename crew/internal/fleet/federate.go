@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,10 +40,10 @@ const (
 	farMaxCrews   = 100
 	farMaxWorkers = 200
 	FarMaxEvents  = 500
-	overSize      = "answer over 4 MiB"
-	// stderrMax is how much of a far stderr is kept: only its first line is
-	// read.
-	stderrMax = 4 << 10
+	// FarSettle bounds how long a far msg takes from its ts to its bus: the
+	// overseer lane's inbox floor rises to a far answer's ts less FarSettle.
+	FarSettle = time.Minute
+	overSize  = "answer over 4 MiB"
 )
 
 // FarAnswer is a partner's reply to `crew overseer status --origin <self>`:
@@ -59,7 +60,7 @@ type FarAnswer struct {
 
 // FarBatch is one far bus's replies to the overseer, as `crew watch` batches
 // them. Common is the far bus's common dir, part of each reply's key in the
-// lane's inbox.
+// lane's inbox: only ever hashed, never validated or shown.
 type FarBatch struct {
 	Repo   string           `json:"repo"`
 	Common string           `json:"common"`
@@ -87,8 +88,9 @@ func (h HostStatus) Misroutes() []FarMisrouted { return h.misroutes }
 
 // ServeFar answers a partner overseer's pull: this host's status in served
 // mode, and the fold of every bus that discovery found for overseer:<origin>
-// above since. A bus the fold cannot read fails the answer: its replies would
-// otherwise fall below a cursor the origin moves past.
+// above since, cut to the caps oldest-first (fitFar). A bus the fold cannot
+// read fails the answer: its replies would otherwise fall below a cursor the
+// origin moves past.
 func ServeFar(ctx context.Context, origin string, since int64, stderr io.Writer, o StatusOptions) (FarAnswer, error) {
 	served := &ServedStatus{Origin: origin, Since: since}
 	if o.Served != nil {
@@ -136,14 +138,96 @@ func ServeFar(ctx context.Context, origin string, since int64, stderr io.Writer,
 		}
 		ans.Inbox = append(ans.Inbox, b)
 	}
+	fitFar(&ans, FarMaxEvents, farMaxBytes)
 	return ans, nil
+}
+
+// fitFar keeps ans's oldest rows, inbox events and misrouted msgs together by
+// ts, at most maxRows of them within maxBytes encoded. When any is left out,
+// ts drops to one below the first left out plus FarSettle, never above the
+// real ts: the lane's floor, ts less FarSettle, then stays below every row
+// left out, and its next pull is served them.
+func fitFar(ans *FarAnswer, maxRows, maxBytes int) {
+	type row struct {
+		ts           int64
+		batch, index int // batch is -1 for a misrouted msg
+		size         int
+	}
+	var rows []row
+	for i, b := range ans.Inbox {
+		for j, ev := range b.Events {
+			ts, _ := watch.WholeMS(ev["ts"])
+			rows = append(rows, row{ts, i, j, encodedLen(ev) + 1})
+		}
+	}
+	for j, m := range ans.Misrouted {
+		rows = append(rows, row{m.TS, -1, j, encodedLen(m) + 1})
+	}
+	slices.SortStableFunc(rows, func(a, b row) int { return cmp.Compare(a.ts, b.ts) })
+
+	// The sizes are json.Marshal's, an upper bound on the served encoding: it
+	// escapes no HTML.
+	skeleton := *ans
+	skeleton.Inbox, skeleton.Misrouted = []FarBatch{}, []FarMisrouted{}
+	used := encodedLen(skeleton) + 1
+	opened := make([]bool, len(ans.Inbox))
+	n := 0
+	for ; n < len(rows) && n < maxRows; n++ {
+		r := rows[n]
+		size := r.size
+		if r.batch >= 0 && !opened[r.batch] {
+			head := ans.Inbox[r.batch]
+			head.Events = []map[string]any{}
+			size += encodedLen(head) + 1
+		}
+		if used+size > maxBytes {
+			break
+		}
+		used += size
+		if r.batch >= 0 {
+			opened[r.batch] = true
+		}
+	}
+	if n == len(rows) {
+		return
+	}
+	ans.TS = min(ans.TS, rows[n].ts-1+FarSettle.Milliseconds())
+	kept := map[[2]int]bool{}
+	for _, r := range rows[:n] {
+		kept[[2]int{r.batch, r.index}] = true
+	}
+	inbox := []FarBatch{}
+	for i, b := range ans.Inbox {
+		var events []map[string]any
+		for j, ev := range b.Events {
+			if kept[[2]int{i, j}] {
+				events = append(events, ev)
+			}
+		}
+		if len(events) > 0 {
+			b.Events = events
+			inbox = append(inbox, b)
+		}
+	}
+	misrouted := []FarMisrouted{}
+	for j, m := range ans.Misrouted {
+		if kept[[2]int{-1, j}] {
+			misrouted = append(misrouted, m)
+		}
+	}
+	ans.Inbox, ans.Misrouted = inbox, misrouted
+}
+
+func encodedLen(v any) int {
+	raw, _ := json.Marshal(v)
+	return len(raw)
 }
 
 // AdmitHost reads a partner's stdout as untrusted data: one JSON object of at
 // most 4 MiB within the caps, decoded into the far wire types and projected
 // field by field (farwire.go), every repo relabelled as host's. An inbox event
 // the fold's rule for overseer:<self> above cutoff refuses is moved to
-// Misrouted, by sender only.
+// Misrouted, by sender only. A refusal is worded here: no far text in it.
 func AdmitHost(stdout []byte, host, self string, cutoff int64) (FarAnswer, error) {
 	if len(stdout) > farMaxBytes {
 		return FarAnswer{}, errors.New(overSize)
@@ -151,8 +235,8 @@ func AdmitHost(stdout []byte, host, self string, cutoff int64) (FarAnswer, error
 	dec := json.NewDecoder(bytes.NewReader(stdout))
 	dec.UseNumber()
 	var top any
-	if err := dec.Decode(&top); err != nil {
-		return FarAnswer{}, fmt.Errorf("answer is not JSON: %s", oneLine(err))
+	if dec.Decode(&top) != nil {
+		return FarAnswer{}, errors.New("answer is not JSON")
 	}
 	if _, err := dec.Token(); err != io.EOF {
 		return FarAnswer{}, errors.New("answer is more than one JSON value")
@@ -173,11 +257,11 @@ func AdmitHost(stdout []byte, host, self string, cutoff int64) (FarAnswer, error
 	}
 	raw, err := json.Marshal(obj)
 	if err != nil {
-		return FarAnswer{}, fmt.Errorf("answer: %s", oneLine(err))
+		return FarAnswer{}, errors.New("answer: cannot be re-encoded")
 	}
 	var wire farWire
-	if err := decodeNumbers(raw, &wire); err != nil {
-		return FarAnswer{}, fmt.Errorf("answer: %s", oneLine(err))
+	if decodeNumbers(raw, &wire) != nil {
+		return FarAnswer{}, errors.New("answer: a field does not hold its type")
 	}
 	if err := capStatus(wire.Status); err != nil {
 		return FarAnswer{}, err
@@ -212,19 +296,20 @@ func capStatus(s farStatus) error {
 // event qualifies only as a msg to overseer:<self> from the dispatcher of the
 // crew it names, whole-ms ts above cutoff, a string body within peer.MaxBody.
 // Any other moves to misrouted by {repo, crew_id, from, ts}; a batch left
-// empty is dropped.
+// empty is dropped. Events and misrouted msgs count toward one cap, as
+// ServeFar fits them.
 func recheck(obj map[string]any, self string, cutoff int64) error {
 	batches, _ := obj["inbox"].([]any)
-	n := 0
+	misrouted, _ := obj["misrouted"].([]any)
+	n := len(misrouted)
 	for _, b := range batches {
 		bm, _ := b.(map[string]any)
 		evs, _ := bm["events"].([]any)
 		n += len(evs)
 	}
 	if n > FarMaxEvents {
-		return fmt.Errorf("answer has %d inbox events, over the cap of %d inbox events", n, FarMaxEvents)
+		return fmt.Errorf("answer has %d inbox events and misrouted msgs, over the cap of %d inbox events", n, FarMaxEvents)
 	}
-	misrouted, _ := obj["misrouted"].([]any)
 	kept := []any{}
 	for _, b := range batches {
 		bm, ok := b.(map[string]any)
@@ -287,14 +372,14 @@ func stripControl(s string) string {
 	}, s)
 }
 
-// failure is why a capture that exited rc gave no answer: the first line of
-// its stderr, scrubbed, else the timeout or the status.
-func failure(ctx context.Context, stderr string, rc int, timeout time.Duration) string {
-	if line := strings.TrimSpace(scrub(firstLine(stderr))); line != "" {
-		return line
-	}
-	if ctx.Err() != nil {
+// failure is why a capture that exited rc gave no answer, worded here: a far
+// stderr is never read.
+func failure(ctx context.Context, rc int, timeout time.Duration) string {
+	switch {
+	case ctx.Err() != nil:
 		return "no answer within " + timeout.String()
+	case rc == 255:
+		return "ssh failed (255)"
 	}
 	return fmt.Sprintf("exit status %d", rc)
 }
@@ -318,21 +403,6 @@ func (w *cappedWriter) Write(p []byte) (int, error) {
 	n, _ := w.buf.Write(p[:max(room, 0)])
 	return n, errOverCap
 }
-
-// headWriter keeps the first max bytes written to it and swallows the rest: a
-// far stderr is read for its first line only, and refusing the rest would cut
-// the capture short.
-type headWriter struct {
-	max int
-	buf bytes.Buffer
-}
-
-func (w *headWriter) Write(p []byte) (int, error) {
-	w.buf.Write(p[:min(len(p), max(w.max-w.buf.Len(), 0))])
-	return len(p), nil
-}
-
-func (w *headWriter) String() string { return w.buf.String() }
 
 func (o StatusOptions) federateTimeout() time.Duration {
 	if o.FederateTimeout > 0 {
@@ -426,14 +496,13 @@ func pullHost(ctx context.Context, capture roster.Capture, host, self string, si
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	stdout := &cappedWriter{max: farMaxBytes}
-	stderr := &headWriter{max: stderrMax}
 	argv := []string{"crew", "overseer", "status", "--origin", self, "--since", strconv.FormatInt(since, 10)}
-	rc := capture(ctx, host, argv, stdout, stderr)
+	rc := capture(ctx, host, argv, stdout, io.Discard)
 	switch {
 	case stdout.over:
 		return pull{reason: overSize}
 	case rc != 0:
-		return pull{reason: failure(ctx, stderr.String(), rc, timeout)}
+		return pull{reason: failure(ctx, rc, timeout)}
 	}
 	ans, err := AdmitHost(stdout.buf.Bytes(), host, self, since)
 	if err != nil {
@@ -545,8 +614,7 @@ func (m *probeMemo) wrap(capture roster.Capture, crew string) roster.Capture {
 		ctx, cancel := context.WithTimeout(ctx, m.timeout)
 		defer cancel()
 		out := &cappedWriter{max: farMaxBytes}
-		errb := &headWriter{max: stderrMax}
-		rc := capture(ctx, host, argv, out, errb)
+		rc := capture(ctx, host, argv, out, io.Discard)
 		// An answer over the cap is this repo's alone, as a refused write can
 		// end the transport with any status.
 		if out.over {
@@ -560,10 +628,9 @@ func (m *probeMemo) wrap(capture roster.Capture, crew string) roster.Capture {
 				return 1
 			}
 			_, _ = stdout.Write(rows)
-			_, _ = io.WriteString(stderr, errb.String())
 			return 0
 		}
-		line = failure(ctx, errb.String(), rc, m.timeout)
+		line = failure(ctx, rc, m.timeout)
 		// Only ssh's own 255 or no answer in time says the host is down; any
 		// other status is this repo's checkout alone.
 		if rc == 255 || ctx.Err() != nil {
@@ -579,21 +646,36 @@ func (m *probeMemo) wrap(capture roster.Capture, crew string) roster.Capture {
 }
 
 // projectRows is a far `crew roster --live` answer with each row projected:
-// one JSON array, its rows that are no object or do not hold dropped.
+// one JSON array, one row per branch (the first), at most farMaxWorkers rows.
+// A row that is no object or does not hold fails the answer, so its worker
+// reads as a placeholder rather than vanishing.
 func projectRows(stdout []byte) ([]byte, error) {
 	var rows []json.RawMessage
 	if err := json.Unmarshal(stdout, &rows); err != nil || rows == nil {
 		return nil, errors.New("remote roster is not an array")
 	}
 	kept := []map[string]any{}
+	branches := map[any]bool{}
+	dropped := 0
 	for _, r := range rows {
 		var raw map[string]json.RawMessage
-		if json.Unmarshal(r, &raw) != nil || raw == nil {
-			continue
+		var row map[string]any
+		if json.Unmarshal(r, &raw) == nil && raw != nil {
+			row = projectWorker(raw)
 		}
-		if row := projectWorker(raw); row != nil {
+		switch {
+		case row == nil:
+			dropped++
+		case !branches[row["branch"]]:
+			branches[row["branch"]] = true
 			kept = append(kept, row)
 		}
+	}
+	switch {
+	case dropped > 0:
+		return nil, fmt.Errorf("answer: %d roster rows dropped", dropped)
+	case len(kept) > farMaxWorkers:
+		return nil, fmt.Errorf("answer: %d roster rows, over the cap of %d rows", len(kept), farMaxWorkers)
 	}
 	return json.Marshal(kept)
 }

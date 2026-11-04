@@ -113,6 +113,7 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 		collect:    o.CollectStatus,
 		moves:      newTransitions(),
 		partners:   map[string]*partner{},
+		inboxes:    map[string]lanepkg.FarInbox{},
 		interval:   time.Duration(c.interval) * time.Second,
 		timeout:    statusTimeout,
 		rediscover: time.Duration(rediscover) * time.Second,
@@ -140,6 +141,7 @@ type overseer struct {
 	collect    func(context.Context, io.Writer) fleetpkg.StatusDoc
 	moves      *transitions
 	partners   map[string]*partner
+	inboxes    map[string]lanepkg.FarInbox
 	interval   time.Duration
 	timeout    time.Duration
 	rediscover time.Duration
@@ -382,30 +384,29 @@ var hostBatches = func(h fleetpkg.HostStatus) ([]fleetpkg.FarBatch, []fleetpkg.F
 	return h.Batches(), h.Misroutes()
 }
 
-// farSettle bounds how long a far msg takes from its ts to its bus: the far
-// answer's ts is read before any of its buses, so a msg at or below that ts
-// less farSettle was on its bus before the fold. The inbox floor rises to it;
-// every reply above it is in every later pull.
-const farSettle = time.Minute
-
 // farSeenCap bounds the inbox's keys at four full answers' worth.
 const farSeenCap = 4 * fleetpkg.FarMaxEvents
 
 // remote prints a partner's replies, and counts its misrouted msgs, above the
 // floor of the lane's inbox for it and not yet seen by key. As poll does, the
-// flush precedes the write: a pull whose batch missed the wire leaves the
-// inbox as it was, and the next pull prints that batch again. A partner with
-// no inbox starts at the lane's start; the floor then rises to the answer's
-// ts less farSettle, and only the keys above it are kept.
+// flush precedes the inbox's move: a pull whose batch missed the wire leaves
+// the inbox as it was, and the next pull prints that batch again. The lane's
+// own inbox is its memory once it has one, the file only what a restart and
+// --since read, so a file it cannot write never replays a batch. A partner
+// with no inbox starts at the lane's start, written before any flush so the
+// next pull's --since is the start; the floor then rises to the answer's ts
+// less farSettle, and only the keys above it are kept.
 func (v *overseer) remote(h fleetpkg.HostStatus, p *partner, now int64) {
 	batches, misrouted := hostBatches(h)
 	path := lanepkg.OverseerHostInbox(v.stateDir, h.Host)
-	in, ok := lanepkg.ReadFarInbox(path)
+	in, ok := v.inboxes[h.Host]
+	if !ok {
+		in, ok = lanepkg.ReadFarInbox(path)
+	}
 	if !ok {
 		in = lanepkg.FarInbox{Floor: v.start, Seen: []string{}}
 		if err := lanepkg.WriteFarInbox(path, in); err != nil {
 			v.fail("", "inbox "+path, "inbox: "+oneLine(err))
-			return
 		}
 	}
 	seen := map[string]bool{}
@@ -463,7 +464,8 @@ func (v *overseer) remote(h fleetpkg.HostStatus, p *partner, now int64) {
 			}))
 		}
 	}
-	next := in.Next(*h.TS-farSettle.Milliseconds(), delivered, farSeenCap)
+	next := in.Next(*h.TS-fleetpkg.FarSettle.Milliseconds(), delivered, farSeenCap)
+	v.inboxes[h.Host] = next
 	if err := lanepkg.WriteFarInbox(path, next); err != nil {
 		v.fail("", "inbox "+path, "inbox: "+oneLine(err))
 	}
@@ -557,16 +559,15 @@ func newTransitions() *transitions {
 	return &transitions{on: map[condKey]bool{}, down: map[crewRef]bool{}, deadSince: map[crewRef]int64{}}
 }
 
-type crewRef struct{ common, crew string }
+type crewRef struct{ key, crew string }
 
-// condKey is one level condition. A crew's is keyed by its repo's common dir
-// (its lines carry the repo label); capacity_stuck's is machine-wide and has
-// none.
+// condKey is one level condition. A crew's is keyed by its repo's key (its
+// lines carry the repo label); capacity_stuck's is machine-wide and has none.
 type condKey struct {
-	event, common, crew string
-	id                  string // the worker's session, or the hold id
-	kind                string // blocked_aging's trigger, or capacity_stuck's cause
-	host, repo          string // capacity_stuck's
+	event, key, crew string
+	id               string // the worker's session, or the hold id
+	kind             string // blocked_aging's trigger, or capacity_stuck's cause
+	host, repo       string // capacity_stuck's
 }
 
 // next diffs doc against the last evaluation and returns a line for each
@@ -577,17 +578,17 @@ type condKey struct {
 func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 	present := map[string]bool{}
 	for _, r := range doc.Repos {
-		present[r.Common] = true
+		present[r.Key] = true
 	}
 	on := map[condKey]bool{}
 	for k := range t.on {
-		if k.common != "" && !present[k.common] {
+		if k.key != "" && !present[k.key] {
 			on[k] = true
 		}
 	}
 	deadSince := map[crewRef]int64{}
 	for ref, ts := range t.deadSince {
-		if !present[ref.common] {
+		if !present[ref.key] {
 			deadSince[ref] = ts
 		}
 	}
@@ -606,7 +607,7 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 
 	for _, r := range doc.Repos {
 		for _, c := range r.Crews {
-			ref := crewRef{r.Common, c.CrewID}
+			ref := crewRef{r.Key, c.CrewID}
 			head := func(event string) overseerHead {
 				return overseerHead{Stream: "overseer", Event: event, Repo: senderText(r.Repo), Crew: senderText(c.CrewID), Host: doc.Host}
 			}
@@ -618,7 +619,7 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 			// A crew going idle never fires: nothing waits on it. An idle one
 			// gaining work again does.
 			if !live && c.Attention == "unattended" {
-				k := condKey{event: "dispatcher_down", common: r.Common, crew: c.CrewID}
+				k := condKey{event: "dispatcher_down", key: r.Key, crew: c.CrewID}
 				if fire(k, downLine{overseerHead: head("dispatcher_down"), State: senderText(c.Dispatcher.State), TS: nowMS}) {
 					t.down[ref] = true
 				}
@@ -630,7 +631,7 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 				}
 				deadSince[ref] = since
 				if doc.TS-since >= laneDeadAfter.Milliseconds() && strandsWork(c.Workers) {
-					fire(condKey{event: "lane_dead", common: r.Common, crew: c.CrewID},
+					fire(condKey{event: "lane_dead", key: r.Key, crew: c.CrewID},
 						laneDeadLine{overseerHead: head("lane_dead"), DeadS: (doc.TS - since) / 1000, TS: nowMS})
 				}
 			}
@@ -645,7 +646,7 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 				// A stamped lead pane can post as any worker:<branch>#s<sid>.
 				who, branch := senderText(session), senderText(raw)
 				if w["state"] == "failed" && w["detail"] == "blocked, no dispatcher reply" {
-					fire(condKey{event: "abandoned", common: r.Common, crew: c.CrewID, id: session},
+					fire(condKey{event: "abandoned", key: r.Key, crew: c.CrewID, id: session},
 						abandonedLine{overseerHead: head("abandoned"), Session: who, Branch: branch, TS: nowMS})
 				}
 				b, _ := w["blocked"].(map[string]any)
@@ -660,7 +661,7 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 					left = &n
 				}
 				aging := func(trigger string) (condKey, any) {
-					return condKey{event: "blocked_aging", common: r.Common, crew: c.CrewID, id: session, kind: trigger},
+					return condKey{event: "blocked_aging", key: r.Key, crew: c.CrewID, id: session, kind: trigger},
 						blockedAgingLine{overseerHead: head("blocked_aging"), Session: who, Branch: branch,
 							Trigger: trigger, Since: since, BudgetLeftS: left, TS: nowMS}
 				}

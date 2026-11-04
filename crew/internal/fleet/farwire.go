@@ -3,6 +3,7 @@ package fleet
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"slices"
 
@@ -14,9 +15,10 @@ import (
 )
 
 // A far answer is decoded into the wire types below, which hold no plain
-// string: each far string is a farID, a farEnum or a farText, and reaches a
-// local type only through project, which validates it or drops its element.
-// Nothing is rewritten: a `?` from repos.Sanitize is itself a glob character.
+// string: each far string is a farID, a farEnum, a farText or a farKey, and
+// reaches a local type only through project, which validates it or drops its
+// element. Nothing is rewritten: a `?` from repos.Sanitize is itself a glob
+// character.
 
 // farID is a far identifier, valid only as one of the kinds below.
 type farID string
@@ -42,6 +44,10 @@ func (e farEnum) in(set []string) bool { return slices.Contains(set, string(e)) 
 type farText string
 
 func (t farText) text() string { return scrub(string(t)) }
+
+// farKey is a far common dir: only ever hashed into a key, so any bytes do,
+// and never shown.
+type farKey string
 
 // abandonedDetail is the one worker detail a lane compares.
 const abandonedDetail = "blocked, no dispatcher reply"
@@ -124,14 +130,14 @@ type farQueueEntry struct {
 
 func (e farQueueEntry) ok() bool { return e.Repo.ident() && e.CrewID.crew() && e.ID.hold() }
 
+// farSkipped is a far skipped repo; its path, a far common dir, is never read.
 type farSkipped struct {
-	Path   farID   `json:"path"`
 	Status farText `json:"status"`
 }
 
 type farRepo struct {
 	Repo      farID     `json:"repo"`
-	Common    farID     `json:"common"`
+	Common    farKey    `json:"common"`
 	Misrouted int       `json:"misrouted"`
 	Crews     []farCrew `json:"crews"`
 }
@@ -167,52 +173,63 @@ type farInboxMsg struct {
 
 type farBatch struct {
 	Repo   farID                        `json:"repo"`
-	Common farID                        `json:"common"`
+	Common farKey                       `json:"common"`
 	Cursor int64                        `json:"cursor"`
 	Events []map[string]json.RawMessage `json:"events"`
 }
 
 type farMisrouted struct {
-	Repo   farID `json:"repo"`
-	Common farID `json:"common"`
-	CrewID farID `json:"crew_id"`
-	From   farID `json:"from"`
-	TS     int64 `json:"ts"`
+	Repo   farID  `json:"repo"`
+	Common farKey `json:"common"`
+	CrewID farID  `json:"crew_id"`
+	From   farID  `json:"from"`
+	TS     int64  `json:"ts"`
 }
 
-// project is the answer as host's, for an overseer named self.
+// project is the answer as host's, for an overseer named self. A repo whose
+// label is no identifier keeps its crews, replies and misrouted msgs
+// unlabeled, and one skipped note counts such repos, never naming them.
 func (w farWire) project(host, self string, ts int64) FarAnswer {
-	ans := FarAnswer{V: 1, TS: ts, Status: w.Status.project(host), Inbox: []FarBatch{}, Misrouted: []FarMisrouted{}, Cursor: w.Cursor}
+	unlabeled := map[farKey]bool{}
+	label := func(repo farID, common farKey) string {
+		if repo.ident() {
+			return string(repo)
+		}
+		unlabeled[common] = true
+		return ""
+	}
+	ans := FarAnswer{V: 1, TS: ts, Status: w.Status.project(host, label), Inbox: []FarBatch{}, Misrouted: []FarMisrouted{}, Cursor: w.Cursor}
 	if w.Self.host() {
 		ans.Self = string(w.Self)
 	}
 	for _, b := range w.Inbox {
-		if !b.Repo.ident() || !b.Common.optional() {
-			continue
-		}
-		kept := FarBatch{Repo: string(b.Repo), Common: string(b.Common), Cursor: b.Cursor}
+		var events []map[string]any
 		for _, raw := range b.Events {
 			if ev := projectEvent(raw, self); ev != nil {
-				kept.Events = append(kept.Events, ev)
+				events = append(events, ev)
 			}
 		}
-		if len(kept.Events) > 0 {
-			ans.Inbox = append(ans.Inbox, kept)
+		if len(events) > 0 {
+			ans.Inbox = append(ans.Inbox, FarBatch{Repo: label(b.Repo, b.Common), Common: string(b.Common), Cursor: b.Cursor, Events: events})
 		}
 	}
 	// A misrouted msg may name no crew at all, or no sender.
 	for _, m := range w.Misrouted {
-		if !m.Repo.ident() || !m.Common.optional() || m.CrewID != "" && !m.CrewID.crew() || !m.From.optional() {
+		if m.CrewID != "" && !m.CrewID.crew() || !m.From.optional() {
 			continue
 		}
-		ans.Misrouted = append(ans.Misrouted, FarMisrouted{Repo: string(m.Repo), Common: string(m.Common), CrewID: string(m.CrewID), From: string(m.From), TS: m.TS})
+		ans.Misrouted = append(ans.Misrouted, FarMisrouted{Repo: label(m.Repo, m.Common), Common: string(m.Common), CrewID: string(m.CrewID), From: string(m.From), TS: m.TS})
+	}
+	if n := len(unlabeled); n > 0 {
+		ans.Status.Skipped = append(ans.Status.Skipped, Skipped{Status: fmt.Sprintf("%d repo(s) with an invalid label shown unlabeled", n)})
 	}
 	return ans
 }
 
-// project is the far status as host's. A repo or crew that does not hold is
-// moved to Skipped, by a reason this host words.
-func (s farStatus) project(host string) StatusDoc {
+// project is the far status as host's, each repo labelled by label. A crew
+// that does not hold, or a worker row, is moved to Skipped by a reason this
+// host words. A far common dir is only the repo's Key: no far path is shown.
+func (s farStatus) project(host string, label func(farID, farKey) string) StatusDoc {
 	doc := StatusDoc{TS: s.TS, Queue: s.Queue.project(), Repos: []RepoStatus{}, Skipped: []Skipped{}, Hosts: []HostStatus{}}
 	if s.Host.host() {
 		doc.Host = string(s.Host)
@@ -221,25 +238,18 @@ func (s farStatus) project(host string) StatusDoc {
 		doc.Machine = s.Machine.project()
 	}
 	for _, k := range s.Skipped {
-		if k.Path.ident() {
-			doc.Skipped = append(doc.Skipped, Skipped{Path: string(k.Path), Status: k.Status.text()})
-		}
+		doc.Skipped = append(doc.Skipped, Skipped{Status: k.Status.text()})
 	}
 	for _, r := range s.Repos {
-		if !r.Common.ident() {
-			doc.Skipped = append(doc.Skipped, Skipped{Status: "invalid common dir"})
-			continue
-		}
-		if !r.Repo.ident() {
-			doc.Skipped = append(doc.Skipped, Skipped{Path: string(r.Common), Status: "invalid repo label"})
-			continue
-		}
-		repo := RepoStatus{Host: host, Repo: string(r.Repo), Common: string(r.Common), Misrouted: r.Misrouted, Crews: []CrewStatus{}}
+		repo := RepoStatus{Host: host, Repo: label(r.Repo, r.Common), Key: string(r.Common), Misrouted: r.Misrouted, Crews: []CrewStatus{}}
 		for _, c := range r.Crews {
-			crew, why := c.project()
+			crew, dropped, why := c.project()
 			if why != "" {
-				doc.Skipped = append(doc.Skipped, Skipped{Path: repo.Common, Status: why})
+				doc.Skipped = append(doc.Skipped, Skipped{Status: why})
 				continue
+			}
+			if dropped > 0 {
+				doc.Skipped = append(doc.Skipped, Skipped{Status: fmt.Sprintf("crew %s: %d worker rows dropped", crew.CrewID, dropped)})
 			}
 			repo.Crews = append(repo.Crews, crew)
 		}
@@ -294,29 +304,32 @@ func (q farQueue) project() QueueStatus {
 	return out
 }
 
-// project is the crew, or why no fleet status could have built it. Only a
-// valid crew id is ever named.
-func (c farCrew) project() (CrewStatus, string) {
+// project is the crew and how many of its worker rows did not hold, or why no
+// fleet status could have built it. Only a valid crew id is ever named.
+func (c farCrew) project() (CrewStatus, int, string) {
 	if !c.CrewID.crew() {
-		return CrewStatus{}, "invalid crew id"
+		return CrewStatus{}, 0, "invalid crew id"
 	}
 	id := string(c.CrewID)
 	d := c.Dispatcher
 	switch {
 	case !d.State.in(dispatcherStates):
-		return CrewStatus{}, "crew " + id + ": invalid dispatcher state"
+		return CrewStatus{}, 0, "crew " + id + ": invalid dispatcher state"
 	case d.Lane != nil && !d.Lane.in(laneStates):
-		return CrewStatus{}, "crew " + id + ": invalid lane state"
+		return CrewStatus{}, 0, "crew " + id + ": invalid lane state"
 	case !c.Attention.in(attentions):
-		return CrewStatus{}, "crew " + id + ": invalid attention"
+		return CrewStatus{}, 0, "crew " + id + ": invalid attention"
 	case d.Home != nil && !d.Home.host():
-		return CrewStatus{}, "crew " + id + ": invalid home"
+		return CrewStatus{}, 0, "crew " + id + ": invalid home"
 	}
 	out := CrewStatus{CrewID: id, Attention: string(c.Attention), Workers: []map[string]any{}, Holds: []HoldStatus{}, OverseerInbox: []InboxMsg{},
 		Dispatcher: Dispatcher{State: string(d.State), Lane: (*string)(d.Lane), LastEventS: d.LastEventS, Home: (*string)(d.Home)}}
+	dropped := 0
 	for _, raw := range c.Workers {
 		if w := projectWorker(raw); w != nil {
 			out.Workers = append(out.Workers, w)
+		} else {
+			dropped++
 		}
 	}
 	for _, h := range c.Holds {
@@ -331,7 +344,7 @@ func (c farCrew) project() (CrewStatus, string) {
 		}
 		out.OverseerInbox = append(out.OverseerInbox, msg)
 	}
-	return out, ""
+	return out, dropped, ""
 }
 
 // rowField decodes row[key] into v: present is false for a missing or null
