@@ -289,6 +289,12 @@ func (v settingsView) cur() *node {
 }
 
 func (v settingsView) Keys() []key.Binding {
+	if v.filterOn {
+		return []key.Binding{
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
+			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear")),
+		}
+	}
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "move")),
 		key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "expand/collapse")),

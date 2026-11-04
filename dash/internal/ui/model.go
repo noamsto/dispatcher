@@ -340,6 +340,8 @@ func (m Model) renderFooter() string {
 		view:      m.views[m.active].Keys(),
 		capturing: m.views[m.active].Capturing(),
 	})
+	// help can overshoot Width by one item; clip it so the status stays whole.
+	keys = ansi.Truncate(keys, h.Width, "…")
 	line := keys + statusStyle.Render(status)
 	return truncateLine(line, m.width)
 }

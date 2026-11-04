@@ -540,3 +540,57 @@ func TestFooterShowsOnlyPromptKeysWhileCapturing(t *testing.T) {
 		}
 	}
 }
+
+func TestReplyLongPromptKeepsTailVisibleOnNarrowWidth(t *testing.T) {
+	asciiProfile(t)
+	branch := "feat/" + strings.Repeat("b", 45)
+	snap := loadFullSnapshot(t)
+	for _, w := range snap.Roster.Crews[0].Workers {
+		if w["name"] == "coral" {
+			delete(w, "name")
+			w["branch"] = branch
+		}
+	}
+	m := actionModel(t, snap, &data.FakeRunner{}, true)
+	for range 20 {
+		if w, _ := m.views[0].Selection().(data.Worker); w.Branch == branch {
+			break
+		}
+		m = send(m, keyRune('j'))
+	}
+	m = sized(m, 60, 24)
+	m = send(m, keyRune('m'))
+	m = typeText(m, strings.Repeat("x", 40)+"ENDMARK")
+	out := m.View()
+	assertWidth(t, out, 60, 24)
+	if !strings.Contains(out, "ENDMARK") {
+		t.Fatalf("tail of a reply is cut off under a long prompt:\n%s", out)
+	}
+}
+
+func TestFooterShowsFilterKeysWhileSettingsFilterOpen(t *testing.T) {
+	asciiProfile(t)
+	m := sized(testModel(loadFullSnapshot(t)), 80, 24)
+	m.active = 3
+	m = send(m, keyRune('/'))
+	foot := footerOf(m)
+	for _, want := range []string{"enter apply", "esc clear"} {
+		if !strings.Contains(foot, want) {
+			t.Errorf("footer lacks %q: %q", want, foot)
+		}
+	}
+	if strings.Contains(foot, "expand/collapse") {
+		t.Errorf("footer lists tree keys while the filter captures keys: %q", foot)
+	}
+}
+
+func TestFooterKeepsWholeLoadStatusWhenKeysOverflow(t *testing.T) {
+	asciiProfile(t)
+	snap := loadFullSnapshot(t)
+	m := sized(loadingModel(Deps{Now: snap.Now}), 160, 40)
+	foot := footerOf(m)
+	if want := "loading settings, budget, retro, ratings, roster…"; !strings.Contains(foot, want) {
+		t.Fatalf("footer cut the load status, want %q in %q", want, foot)
+	}
+	assertWidth(t, foot, 160, 1)
+}

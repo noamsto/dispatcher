@@ -199,7 +199,6 @@ func (v liveView) startAction(a action) (view, tea.Cmd) {
 	case actReply:
 		v.mode, v.target = modeReply, sel
 		v.input = textinput.New()
-		v.input.Prompt = "reply to " + cleanText(nudgeTarget(sel)) + ": "
 		v.fitInput()
 		v.input.Focus()
 		return v, textinput.Blink
@@ -209,10 +208,16 @@ func (v liveView) startAction(a action) (view, tea.Cmd) {
 	}
 }
 
-// fitInput sizes the reply input to the body width so textinput scrolls its
-// text and cursor into view instead of the frame clipping them.
+// fitInput sizes the reply prompt and input to the body width so textinput
+// scrolls its text and cursor into view instead of the frame clipping them.
+// The prompt takes at most half the width, and a Width of 0 would mean
+// unlimited to textinput, so the input keeps at least one cell.
 func (v *liveView) fitInput() {
-	v.input.Width = max0(v.width - ansi.StringWidth(v.input.Prompt) - 1)
+	const lead, tail = "reply to ", ": "
+	room := max(v.width/2-ansi.StringWidth(lead)-ansi.StringWidth(tail), 1)
+	target := ansi.Truncate(cleanText(nudgeTarget(v.target)), room, "…")
+	v.input.Prompt = lead + target + tail
+	v.input.Width = max(v.width-ansi.StringWidth(v.input.Prompt)-1, 1)
 }
 
 func (v liveView) handleReplyKey(msg tea.KeyMsg) (view, tea.Cmd) {
