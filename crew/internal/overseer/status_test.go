@@ -97,7 +97,7 @@ func TestStatusServesTheOriginsReplies(t *testing.T) {
 	if len(ans.Inbox) != 1 || ans.Inbox[0].Repo != "owner/alpha" || len(ans.Inbox[0].Events) != 1 || ans.Inbox[0].Events[0]["from"] != "dispatcher:c1" {
 		t.Errorf("inbox = %+v, want the dispatcher's reply only", ans.Inbox)
 	}
-	if want := []fleet.FarMisrouted{{Repo: "owner/alpha", CrewID: "c1", From: "worker:feat/x#s1", TS: misrouted}}; !slices.Equal(ans.Misrouted, want) {
+	if want := []fleet.FarMisrouted{{Repo: "owner/alpha", Common: f.commons[0], CrewID: "c1", From: "worker:feat/x#s1", TS: misrouted}}; !slices.Equal(ans.Misrouted, want) {
 		t.Errorf("misrouted = %+v, want %+v", ans.Misrouted, want)
 	}
 	if len(ans.Status.Repos) != 1 || len(ans.Status.Repos[0].Crews) != 1 {

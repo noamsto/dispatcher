@@ -141,8 +141,31 @@ func OverseerCursor(stateDir, common string) string {
 	return filepath.Join(BusScratch(filepath.Join(stateDir, "crew", "overseer"), common), "cursor")
 }
 
-// OverseerHostDir is the overseer's per-partner state dir: its cursor and ok
-// files for host.
+// OverseerHosts holds one OverseerHostDir per partner the overseer pulled.
+func OverseerHosts(stateDir string) string {
+	return filepath.Join(stateDir, "crew", "overseer", "hosts")
+}
+
+// OverseerHostDir is the overseer's per-partner state dir: its seed, ok file
+// and per-far-repo cursors for host.
 func OverseerHostDir(stateDir, host string) string {
-	return filepath.Join(stateDir, "crew", "overseer", "hosts", host)
+	return filepath.Join(OverseerHosts(stateDir), host)
+}
+
+// OverseerHostSeed is the lane's start as host's first lane wrote it: the
+// cursor a far bus of host starts from when first seen.
+func OverseerHostSeed(stateDir, host string) string {
+	return filepath.Join(OverseerHostDir(stateDir, host), "seed")
+}
+
+// OverseerHostCursor is the overseer's msg cursor for one far bus of host,
+// keyed by that bus's far common dir.
+func OverseerHostCursor(stateDir, host, common string) string {
+	return filepath.Join(BusScratch(OverseerHostDir(stateDir, host), common), "cursor")
+}
+
+// OverseerHostCursors are the paths of every per-far-repo cursor host has.
+func OverseerHostCursors(stateDir, host string) []string {
+	paths, _ := filepath.Glob(filepath.Join(OverseerHostDir(stateDir, host), "buses", "*", "cursor"))
+	return paths
 }

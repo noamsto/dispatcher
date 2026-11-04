@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"math"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -41,6 +41,9 @@ const (
 	farMaxWorkers = 200
 	farMaxEvents  = 500
 	overSize      = "answer over 4 MiB"
+	// stderrMax is how much of a far stderr is kept: only its first line is
+	// read.
+	stderrMax = 4 << 10
 )
 
 // FarAnswer is a partner's reply to `crew overseer status --origin <self>`:
@@ -56,9 +59,11 @@ type FarAnswer struct {
 }
 
 // FarBatch is one far bus's replies to the overseer, as `crew watch` batches
-// them.
+// them. Common is the far bus's common dir, the key of the lane's cursor for
+// it.
 type FarBatch struct {
 	Repo   string           `json:"repo"`
+	Common string           `json:"common"`
 	Cursor int64            `json:"cursor"`
 	Events []map[string]any `json:"events"`
 }
@@ -67,6 +72,7 @@ type FarBatch struct {
 // crew it names: who sent it, never what it said.
 type FarMisrouted struct {
 	Repo   string `json:"repo"`
+	Common string `json:"common"`
 	CrewID string `json:"crew_id"`
 	From   string `json:"from"`
 	TS     int64  `json:"ts"`
@@ -79,9 +85,6 @@ func (h HostStatus) Batches() []FarBatch { return h.batches }
 // Misroutes are the msgs an ok partner's buses hold for the overseer from
 // anyone but a crew's dispatcher, by sender only.
 func (h HostStatus) Misroutes() []FarMisrouted { return h.misroutes }
-
-// Cursor is the newest msg to the overseer an ok partner saw.
-func (h HostStatus) Cursor() int64 { return h.cursor }
 
 // ServeFar answers a partner overseer's pull: this host's status in served
 // mode, and the fold of every bus that discovery found for overseer:<origin>
@@ -120,12 +123,12 @@ func ServeFar(ctx context.Context, origin string, since int64, stderr io.Writer,
 		}
 		ans.Cursor = max(ans.Cursor, fold.Cursor)
 		for _, m := range fold.Misrouted {
-			ans.Misrouted = append(ans.Misrouted, FarMisrouted{Repo: label, CrewID: m.Crew, From: m.From, TS: m.TS})
+			ans.Misrouted = append(ans.Misrouted, FarMisrouted{Repo: label, Common: r.Common, CrewID: m.Crew, From: m.From, TS: m.TS})
 		}
 		if fold.Batch == nil {
 			continue
 		}
-		b := FarBatch{Repo: label, Cursor: fold.Cursor}
+		b := FarBatch{Repo: label, Common: r.Common, Cursor: fold.Cursor}
 		events, _ := fold.Batch["events"].([]any)
 		for _, e := range events {
 			if ev, ok := e.(map[string]any); ok {
@@ -139,9 +142,10 @@ func ServeFar(ctx context.Context, origin string, since int64, stderr io.Writer,
 
 // AdmitHost reads a partner's stdout as untrusted data: one JSON object of at
 // most 4 MiB within the caps, every string stripped of control and invisible
-// characters and capped at peer.MaxBody bytes, every repo relabelled as host's.
+// characters and capped at peer.MaxBody bytes, every repo relabelled as host's,
+// and every identifier held to what a local status could carry (restrict).
 // An inbox event the fold's rule for overseer:<self> above cutoff refuses is
-// moved to Misrouted, by sender only.
+// moved to Misrouted, by sender only; one naming an invalid crew id is dropped.
 func AdmitHost(stdout []byte, host, self string, cutoff int64) (FarAnswer, error) {
 	if len(stdout) > farMaxBytes {
 		return FarAnswer{}, errors.New(overSize)
@@ -159,10 +163,10 @@ func AdmitHost(stdout []byte, host, self string, cutoff int64) (FarAnswer, error
 	if !ok {
 		return FarAnswer{}, errors.New("answer is not a JSON object")
 	}
-	if v, ok := wholeMS(obj["v"]); !ok || v != 1 {
+	if v, ok := watch.WholeMS(obj["v"]); !ok || v != 1 {
 		return FarAnswer{}, errors.New("answer version is not 1")
 	}
-	ts, ok := wholeMS(obj["ts"])
+	ts, ok := watch.WholeMS(obj["ts"])
 	if !ok {
 		return FarAnswer{}, errors.New("answer ts is not a whole ms")
 	}
@@ -197,20 +201,97 @@ func AdmitHost(stdout []byte, host, self string, cutoff int64) (FarAnswer, error
 	if status.Skipped == nil {
 		status.Skipped = []Skipped{}
 	}
+	restrict(&status)
 	for i := range status.Repos {
 		status.Repos[i].Host = host
 	}
-	ans := FarAnswer{V: 1, Self: wire.Self, TS: ts, Status: status, Inbox: wire.Inbox, Misrouted: wire.Misrouted, Cursor: wire.Cursor}
+	ans := FarAnswer{V: 1, Self: repos.Sanitize(wire.Self), TS: ts, Status: status, Inbox: wire.Inbox, Misrouted: []FarMisrouted{}, Cursor: wire.Cursor}
 	if ans.Inbox == nil {
 		ans.Inbox = []FarBatch{}
 	}
-	if ans.Misrouted == nil {
-		ans.Misrouted = []FarMisrouted{}
+	for i, b := range ans.Inbox {
+		ans.Inbox[i].Repo, ans.Inbox[i].Common = repos.Sanitize(b.Repo), repos.Sanitize(b.Common)
 	}
-	for i, m := range ans.Misrouted {
-		ans.Misrouted[i].CrewID, ans.Misrouted[i].From = repos.Sanitize(m.CrewID), repos.Sanitize(m.From)
+	// A misrouted msg may name no crew at all; one naming an invalid id is
+	// dropped, as the event it came from would be.
+	for _, m := range wire.Misrouted {
+		if m.CrewID != "" && !bus.ValidCrewID(m.CrewID) {
+			continue
+		}
+		m.Repo, m.Common, m.From = repos.Sanitize(m.Repo), repos.Sanitize(m.Common), repos.Sanitize(m.From)
+		ans.Misrouted = append(ans.Misrouted, m)
 	}
 	return ans, nil
+}
+
+var (
+	dispatcherStates = []string{"live", "dead", "closed"}
+	laneStates       = []string{"alive", "stale", "dead"}
+	attentions       = []string{"attended", "unattended", "idle", "guest"}
+	// workerNames are the row fields an overseer line copies.
+	workerNames = []string{"branch", "from", "name"}
+)
+
+// restrict holds a far status to what a local one carries: repo labels, the
+// queue's ids and the row fields a lane line copies go through
+// repos.Sanitize, a queue entry naming an invalid crew id is dropped, and a
+// crew whose id, dispatcher state, lane, attention or home no fleet status
+// writes is moved to Skipped.
+func restrict(s *StatusDoc) {
+	for i := range s.Repos {
+		r := &s.Repos[i]
+		r.Repo, r.Common = repos.Sanitize(r.Repo), repos.Sanitize(r.Common)
+		kept := []CrewStatus{}
+		for _, c := range r.Crews {
+			if why := crewRefusal(c); why != "" {
+				s.Skipped = append(s.Skipped, Skipped{Path: r.Common, Status: why})
+				continue
+			}
+			for _, w := range c.Workers {
+				for _, k := range workerNames {
+					if v, ok := w[k].(string); ok {
+						w[k] = repos.Sanitize(v)
+					}
+				}
+			}
+			kept = append(kept, c)
+		}
+		r.Crews = kept
+	}
+	q := &s.Queue
+	if h := q.Head; h != nil {
+		h.Repo, h.ID = repos.Sanitize(h.Repo), repos.Sanitize(h.ID)
+		if !bus.ValidCrewID(h.CrewID) {
+			q.Head = nil
+		}
+	}
+	q.Demoted = slices.DeleteFunc(q.Demoted, func(d QueueDemote) bool { return !bus.ValidCrewID(d.CrewID) })
+	for i, d := range q.Demoted {
+		q.Demoted[i].Repo, q.Demoted[i].ID = repos.Sanitize(d.Repo), repos.Sanitize(d.ID)
+	}
+	q.Parked = slices.DeleteFunc(q.Parked, func(p QueueParked) bool { return !bus.ValidCrewID(p.CrewID) })
+	for i, p := range q.Parked {
+		q.Parked[i].Repo, q.Parked[i].ID = repos.Sanitize(p.Repo), repos.Sanitize(p.ID)
+	}
+}
+
+// crewRefusal is why a far crew is not one a fleet status could have built,
+// "" when it is. Only a valid crew id is ever named.
+func crewRefusal(c CrewStatus) string {
+	d := c.Dispatcher
+	switch {
+	case !bus.ValidCrewID(c.CrewID):
+		return "invalid crew id"
+	case !slices.Contains(dispatcherStates, d.State):
+		return "crew " + c.CrewID + ": invalid dispatcher state"
+	case d.Lane != nil && !slices.Contains(laneStates, *d.Lane):
+		return "crew " + c.CrewID + ": invalid lane state"
+	case !slices.Contains(attentions, c.Attention):
+		return "crew " + c.CrewID + ": invalid attention"
+	case d.Home != nil && !remote.HostNameRe.MatchString(*d.Home):
+		return "crew " + c.CrewID + ": invalid home"
+	}
+	return ""
 }
 
 func decodeNumbers(data []byte, v any) error {
@@ -270,8 +351,8 @@ func recheck(obj map[string]any, self string, cutoff int64) error {
 			}
 			crew, _ := ev["crew_id"].(string)
 			from, _ := ev["from"].(string)
-			ts, _ := wholeMS(ev["ts"])
-			misrouted = append(misrouted, map[string]any{"repo": bm["repo"], "crew_id": crew, "from": from, "ts": json.Number(strconv.FormatInt(ts, 10))})
+			ts, _ := watch.WholeMS(ev["ts"])
+			misrouted = append(misrouted, map[string]any{"repo": bm["repo"], "common": bm["common"], "crew_id": crew, "from": from, "ts": json.Number(strconv.FormatInt(ts, 10))})
 		}
 		if len(stay) > 0 {
 			bm["events"] = stay
@@ -286,8 +367,8 @@ func recheck(obj map[string]any, self string, cutoff int64) error {
 // bounded; any other body is bounded encoded.
 func farEventOK(ev map[string]any, self string, cutoff int64) bool {
 	crew, _ := ev["crew_id"].(string)
-	ts, whole := wholeMS(ev["ts"])
-	if ev["kind"] != "msg" || ev["to"] != "overseer:"+self || crew == "" || ev["from"] != "dispatcher:"+crew || !whole || ts <= cutoff {
+	ts, whole := watch.WholeMS(ev["ts"])
+	if ev["kind"] != "msg" || ev["to"] != "overseer:"+self || !bus.ValidCrewID(crew) || ev["from"] != "dispatcher:"+crew || !whole || ts <= cutoff {
 		return false
 	}
 	if body, ok := ev["body"].(string); ok {
@@ -295,22 +376,6 @@ func farEventOK(ev map[string]any, self string, cutoff int64) bool {
 	}
 	body, err := json.Marshal(ev["body"])
 	return err == nil && len(body) <= peer.MaxBody
-}
-
-// wholeMS is a decoded JSON number that is a whole ms below 2^53.
-func wholeMS(v any) (int64, bool) {
-	n, ok := v.(json.Number)
-	if !ok {
-		return 0, false
-	}
-	if ms, err := n.Int64(); err == nil {
-		return ms, ms >= 0 && ms < 1<<53
-	}
-	f, err := n.Float64()
-	if err != nil || f != math.Trunc(f) || f < 0 || f >= 1<<53 {
-		return 0, false
-	}
-	return int64(f), true
 }
 
 // scrubValue is v with every string and map key scrubbed. A key that only
@@ -399,6 +464,21 @@ func (w *cappedWriter) Write(p []byte) (int, error) {
 	return n, errOverCap
 }
 
+// headWriter keeps the first max bytes written to it and swallows the rest: a
+// far stderr is read for its first line only, and refusing the rest would cut
+// the capture short.
+type headWriter struct {
+	max int
+	buf bytes.Buffer
+}
+
+func (w *headWriter) Write(p []byte) (int, error) {
+	w.buf.Write(p[:min(len(p), max(w.max-w.buf.Len(), 0))])
+	return len(p), nil
+}
+
+func (w *headWriter) String() string { return w.buf.String() }
+
 func (o StatusOptions) federateTimeout() time.Duration {
 	if o.FederateTimeout > 0 {
 		return o.FederateTimeout
@@ -410,7 +490,9 @@ func (o StatusOptions) federateTimeout() time.Duration {
 // only its own slot; finish merges them once every pull returned.
 type federation struct {
 	hosts []string
-	gate  string // the sender check's refusal: no partner is pulled
+	// gate is why no partner is pulled: the sender check's refusal, or settings
+	// hosts that cannot be read.
+	gate  string
 	pulls []pull
 	wg    sync.WaitGroup
 }
@@ -422,10 +504,16 @@ type pull struct {
 
 // federate starts one pull per settings host but self, unless the overseer
 // sender check refused: then every partner reads unprobed with its reason.
+// Settings hosts that cannot be read leave the partners an earlier pull left a
+// state dir for, each unprobed with that reason.
 func federate(ctx context.Context, stderr io.Writer, o StatusOptions, self, gate, stateDir string, nowMS int64) *federation {
 	hosts, err := partners(o.Sender, self)
 	if err != nil {
 		say(stderr, "crew: fleet status: hosts: %s\n", oneLine(err))
+		hosts = knownPartners(stateDir, self)
+		if gate == "" {
+			gate = "settings hosts cannot be read (" + scrub(oneLine(err)) + ")"
+		}
 	}
 	f := &federation{hosts: hosts, gate: gate, pulls: make([]pull, len(hosts))}
 	if gate != "" {
@@ -433,18 +521,47 @@ func federate(ctx context.Context, stderr io.Writer, o StatusOptions, self, gate
 	}
 	timeout := o.federateTimeout()
 	for i, host := range hosts {
-		since := nowMS - inboxWindow.Milliseconds()
-		if c, ok := watch.ReadCursor(filepath.Join(lane.OverseerHostDir(stateDir, host), "cursor")); ok {
-			since = c
-		}
+		since := hostSince(stateDir, host, nowMS-inboxWindow.Milliseconds())
 		f.wg.Go(func() { f.pulls[i] = pullHost(ctx, o.Federate, host, self, since, timeout) })
 	}
 	return f
 }
 
+// hostSince is the --since of a pull from host: the oldest of the lane's
+// per-far-repo cursors, so a reply a far bus took after its fold is still
+// above it next pull; with none, the lane's seed, else fallback. Each repo's
+// own cursor then drops what the lane already printed.
+func hostSince(stateDir, host string, fallback int64) int64 {
+	since, found := int64(0), false
+	for _, path := range lane.OverseerHostCursors(stateDir, host) {
+		if c, ok := watch.ReadCursor(path); ok && (!found || c < since) {
+			since, found = c, true
+		}
+	}
+	if found {
+		return since
+	}
+	if seed, ok := watch.ReadCursor(lane.OverseerHostSeed(stateDir, host)); ok {
+		return seed
+	}
+	return fallback
+}
+
+// knownPartners are the hosts but self with a state dir under the overseer's.
+func knownPartners(stateDir, self string) []string {
+	entries, _ := os.ReadDir(lane.OverseerHosts(stateDir))
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() && e.Name() != self && remote.HostNameRe.MatchString(e.Name()) {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
 func partners(p sender.Probes, self string) ([]string, error) {
 	if p.Hosts == nil {
-		return nil, errors.New("settings hosts cannot be read")
+		return nil, errors.New("no settings-hosts probe")
 	}
 	hosts, err := p.Hosts()
 	if err != nil {
@@ -464,9 +581,9 @@ func pullHost(ctx context.Context, capture roster.Capture, host, self string, si
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	stdout := &cappedWriter{max: farMaxBytes}
-	var stderr bytes.Buffer
+	stderr := &headWriter{max: stderrMax}
 	argv := []string{"crew", "overseer", "status", "--origin", self, "--since", strconv.FormatInt(since, 10)}
-	rc := capture(ctx, host, argv, stdout, &stderr)
+	rc := capture(ctx, host, argv, stdout, stderr)
 	switch {
 	case stdout.over:
 		return pull{reason: overSize}
@@ -493,13 +610,11 @@ func (f *federation) finish(stderr io.Writer, stateDir string, nowMS int64) []Ho
 		case f.gate != "":
 			reason := f.gate
 			h.State, h.Error = "unprobed", &reason
+			h.LastOkTS, h.AgeS = lastOK(dir, nowMS)
 		case p.reason != "":
 			reason := p.reason
 			h.State, h.Error = "unreachable", &reason
-			if last, ok := ReadOK(dir); ok {
-				age := max((nowMS-last)/1000, 0)
-				h.LastOkTS, h.AgeS = &last, &age
-			}
+			h.LastOkTS, h.AgeS = lastOK(dir, nowMS)
 		default:
 			if err := WriteOK(dir, nowMS); err != nil {
 				say(stderr, "crew: fleet status: %s: ok file: %s\n", host, oneLine(err))
@@ -508,7 +623,7 @@ func (f *federation) finish(stderr io.Writer, stateDir string, nowMS int64) []Ho
 			s := p.ans.Status
 			h.State, h.TS, h.LastOkTS, h.AgeS = "ok", &ts, &last, &age
 			h.Machine, h.Queue, h.Repos, h.Skipped = s.Machine, s.Queue, s.Repos, s.Skipped
-			h.batches, h.misroutes, h.cursor = p.ans.Inbox, p.ans.Misrouted, p.ans.Cursor
+			h.batches, h.misroutes = p.ans.Inbox, p.ans.Misrouted
 			if p.ans.Self != host {
 				e := fmt.Sprintf("far self-name %s ≠ settings key %s: its overseer's msgs are refused here", p.ans.Self, host)
 				h.Error = &e
@@ -519,10 +634,49 @@ func (f *federation) finish(stderr io.Writer, stateDir string, nowMS int64) []Ho
 	return out
 }
 
+// lastOK is dir's last ok and its age in seconds, both nil with no ok file.
+func lastOK(dir string, nowMS int64) (*int64, *int64) {
+	last, ok := ReadOK(dir)
+	if !ok {
+		return nil, nil
+	}
+	age := max((nowMS-last)/1000, 0)
+	return &last, &age
+}
+
+// demoteGuests holds a guest crew to a home known to attend it: one whose home
+// is neither the requester nor an ok partner reads as if it had no home, so it
+// fails visible. Its home stays named.
+func demoteGuests(doc *StatusDoc) {
+	attended := map[string]bool{doc.Host: true}
+	for _, h := range doc.Hosts {
+		if h.State == "ok" {
+			attended[h.Host] = true
+		}
+	}
+	demote := func(rs []RepoStatus) {
+		for i := range rs {
+			for j := range rs[i].Crews {
+				c := &rs[i].Crews[j]
+				if c.Attention != "guest" || c.Dispatcher.Home != nil && attended[*c.Dispatcher.Home] {
+					continue
+				}
+				homeless := *c
+				homeless.Dispatcher.Home = nil
+				c.Attention = attention(homeless)
+			}
+		}
+	}
+	demote(doc.Repos)
+	for _, h := range doc.Hosts {
+		demote(h.Repos)
+	}
+}
+
 // probeMemo makes an overseer's --host probes read-only and bounded: only
 // `crew roster --live -- <crew>` runs, each within the federate timeout, and
-// a host that failed once in this collection fails its later probes at once.
-// Probes run concurrently across crews, hence the mutex.
+// a host whose transport failed once in this collection fails its later
+// probes at once. Probes run concurrently across crews, hence the mutex.
 type probeMemo struct {
 	timeout time.Duration
 	mu      sync.Mutex
@@ -544,18 +698,22 @@ func (m *probeMemo) wrap(capture roster.Capture, crew string) roster.Capture {
 		}
 		ctx, cancel := context.WithTimeout(ctx, m.timeout)
 		defer cancel()
-		var errb bytes.Buffer
-		rc := capture(ctx, host, argv, stdout, &errb)
+		errb := &headWriter{max: stderrMax}
+		rc := capture(ctx, host, argv, stdout, errb)
 		if rc == 0 {
-			_, _ = stderr.Write(errb.Bytes())
+			_, _ = io.WriteString(stderr, errb.String())
 			return 0
 		}
 		line = failure(ctx, errb.String(), rc, m.timeout)
-		m.mu.Lock()
-		if _, seen := m.failed[host]; !seen {
-			m.failed[host] = line
+		// Only ssh's own 255 or no answer in time says the host is down; any
+		// other status is this repo's checkout alone.
+		if rc == 255 || ctx.Err() != nil {
+			m.mu.Lock()
+			if _, seen := m.failed[host]; !seen {
+				m.failed[host] = line
+			}
+			m.mu.Unlock()
 		}
-		m.mu.Unlock()
 		say(stderr, "%s\n", line)
 		return rc
 	}

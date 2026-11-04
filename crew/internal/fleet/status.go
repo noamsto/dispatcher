@@ -137,7 +137,6 @@ type HostStatus struct {
 	// The admitted inbox of an ok partner, kept for the overseer lane only.
 	batches   []FarBatch
 	misroutes []FarMisrouted
-	cursor    int64
 }
 
 // QueueStatus is the fleet hold queue; empty until fleet holds exist.
@@ -248,6 +247,16 @@ func CollectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 	return doc
 }
 
+// ServedRepos are the repos the far verbs serve: the registry, plus a walk of
+// root when it is set. Unlike a local discovery it never walks
+// $CREW_SWEEP_ROOTS or $HOME.
+func ServedRepos(registry string, getenv func(string) string, root string, stderr io.Writer, prefix string) []repos.Repo {
+	if root == "" {
+		return repos.Registered(registry, getenv)
+	}
+	return repos.Discover(repos.Options{Registry: registry, Roots: []string{root}, Getenv: getenv, Stderr: stderr, Prefix: prefix})
+}
+
 // collectStatus is CollectStatus plus the repos its discovery found.
 func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o StatusOptions) (StatusDoc, []repos.Repo) {
 	once := onceTmux{o.Tmux, map[string]string{}}
@@ -310,10 +319,10 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		found = repos.Discover(repos.Options{Registry: o.Registry, Getenv: o.Getenv, Stderr: stderr, Prefix: "crew: fleet status"})
 	case o.Served.Root == "":
 		busHost = o.Served.Origin
-		found = repos.Registered(o.Registry, o.Getenv)
+		found = ServedRepos(o.Registry, o.Getenv, "", stderr, "crew: fleet status")
 	default:
 		busHost = o.Served.Origin
-		found = repos.Discover(repos.Options{Registry: o.Registry, Roots: []string{o.Served.Root}, Getenv: o.Getenv, Stderr: stderr, Prefix: "crew: fleet status"})
+		found = ServedRepos(o.Registry, o.Getenv, o.Served.Root, stderr, "crew: fleet status")
 	}
 	stamps, _ := once.Run(ctx, "list-windows", "-a", "-F", "#{@crew_id}\x1f#{@crew_dispatcher_host}")
 	homes := guestHomes(stamps, host)
@@ -351,6 +360,7 @@ func collectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 	}
 	if fed != nil {
 		doc.Hosts = fed.finish(stderr, stateDir, nowMS)
+		demoteGuests(&doc)
 	}
 	return doc, found
 }

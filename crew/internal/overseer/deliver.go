@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/noamsto/dispatcher/crew/internal/repos"
+	"github.com/noamsto/dispatcher/crew/internal/fleet"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/status"
 )
@@ -32,7 +32,7 @@ func RunDeliver(ctx context.Context, req DeliverRequest, stdout, stderr io.Write
 	if err != nil {
 		return fail(stderr, "deliver", "overseer root: %v", err)
 	}
-	paths, reason := busFor(ctx, req.Repo, req.Crew, servedRepos(root, o, stderr), o)
+	paths, reason := busFor(ctx, req.Repo, req.Crew, fleet.ServedRepos(o.Registry, o.Getenv, root, stderr, "crew: overseer deliver"), o)
 	if reason != "" {
 		return fail(stderr, "deliver", "%s", reason)
 	}
@@ -43,16 +43,6 @@ func RunDeliver(ctx context.Context, req DeliverRequest, stdout, stderr io.Write
 	return emit(stdout, stderr, "deliver", struct {
 		TS int64 `json:"ts"`
 	}{ts})
-}
-
-// servedRepos are the repos the far verbs serve, as fleet's served status
-// finds them: the registry, plus a walk of root when it is set. Unlike a local
-// discovery it never walks $CREW_SWEEP_ROOTS or $HOME.
-func servedRepos(root string, o Options, stderr io.Writer) []repos.Repo {
-	if root == "" {
-		return repos.Registered(o.Registry, o.Getenv)
-	}
-	return repos.Discover(repos.Options{Registry: o.Registry, Roots: []string{root}, Getenv: o.Getenv, Stderr: stderr, Prefix: "crew: overseer deliver"})
 }
 
 // servedRoot is o.ServedRoot's answer, "" when none is wired.

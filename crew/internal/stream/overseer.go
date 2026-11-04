@@ -375,55 +375,90 @@ func (v *overseer) federate(h fleetpkg.HostStatus, now int64) {
 	v.remote(h, p, now)
 }
 
-// hostBatches is a partner's replies and misrouted msgs above its far cursor,
-// and the far cursor itself.
-var hostBatches = func(h fleetpkg.HostStatus) ([]fleetpkg.FarBatch, []fleetpkg.FarMisrouted, int64) {
-	return h.Batches(), h.Misroutes(), h.Cursor()
+// hostBatches is a partner's replies and misrouted msgs, per far bus.
+var hostBatches = func(h fleetpkg.HostStatus) ([]fleetpkg.FarBatch, []fleetpkg.FarMisrouted) {
+	return h.Batches(), h.Misroutes()
 }
 
-// remote prints a partner's replies above the overseer's cursor for it, then
-// moves the cursor: as poll does, the flush precedes the write.
+// farSettle bounds how long a far msg takes from its ts to its bus: the far
+// answer's ts is read before any of its buses, so a msg at or below that ts
+// less farSettle that the answer lacks is one the far bus took that much
+// late. Every far cursor rises to it, so a quiet bus never holds back the
+// --since of every later pull.
+const farSettle = time.Minute
+
+// remote prints a partner's replies above the overseer's cursor for each far
+// bus, then moves that bus's cursor alone: as poll does, the flush precedes
+// the write. A far bus first seen starts at the host's seed, the start of the
+// lane that first pulled it. Once every batch is out, each cursor of the host
+// rises to the answer's ts less farSettle.
 func (v *overseer) remote(h fleetpkg.HostStatus, p *partner, now int64) {
-	batches, misrouted, far := hostBatches(h)
-	path := filepath.Join(lanepkg.OverseerHostDir(v.stateDir, h.Host), "cursor")
-	cursor, ok := watch.ReadCursor(path)
+	batches, misrouted := hostBatches(h)
+	seedPath := lanepkg.OverseerHostSeed(v.stateDir, h.Host)
+	seed, ok := watch.ReadCursor(seedPath)
 	if !ok {
-		if err := watch.WriteCursor(path, v.start); err != nil {
-			v.fail("", "cursor "+path, "cursor: "+oneLine(err))
+		if err := watch.WriteCursor(seedPath, v.start); err != nil {
+			v.fail("", "cursor "+seedPath, "cursor: "+oneLine(err))
 			return
 		}
-		cursor = v.start
+		seed = v.start
+	}
+	cursors := map[string]int64{}
+	cursorOf := func(path string) int64 {
+		if c, ok := cursors[path]; ok {
+			return c
+		}
+		c, ok := watch.ReadCursor(path)
+		if !ok {
+			c = seed
+		}
+		cursors[path] = c
+		return c
+	}
+	move := func(path string, to int64) {
+		if to <= cursorOf(path) {
+			return
+		}
+		cursors[path] = to
+		if err := watch.WriteCursor(path, to); err != nil {
+			v.fail("", "cursor "+path, "cursor: "+oneLine(err))
+		}
+	}
+	farCursor := func(common string) string { return lanepkg.OverseerHostCursor(v.stateDir, h.Host, common) }
+
+	// Counted against the cursors as they stood, before a batch moves them.
+	var above []fleetpkg.FarMisrouted
+	for _, m := range misrouted {
+		if m.TS > cursorOf(farCursor(m.Common)) {
+			above = append(above, m)
+		}
 	}
 	for _, b := range batches {
+		path := farCursor(b.Common)
+		cursor := cursorOf(path)
 		if b.Cursor <= cursor {
 			continue
 		}
 		events := []any{}
 		for _, ev := range b.Events {
-			if ts, _ := wholeNumber(ev["ts"]); ts > cursor {
+			if ts, ok := watch.WholeMS(ev["ts"]); ok && ts > cursor {
 				events = append(events, ev)
 			}
 		}
-		if len(events) == 0 {
-			continue
+		if len(events) > 0 {
+			batch := map[string]any{"cursor": json.Number(strconv.FormatInt(b.Cursor, 10)), "events": events, "repo": senderText(b.Repo), "host": h.Host}
+			var line bytes.Buffer
+			if jsonval.Encode(&line, invisible.Value(jsonval.Clamp(batch)), false) != nil {
+				return
+			}
+			if _, err := v.out.Write(line.Bytes()); err != nil {
+				return
+			}
+			if v.o.Flush != nil && v.o.Flush() != nil {
+				return
+			}
 		}
-		batch := map[string]any{"cursor": json.Number(strconv.FormatInt(b.Cursor, 10)), "events": events, "repo": b.Repo, "host": h.Host}
-		var line bytes.Buffer
-		if jsonval.Encode(&line, invisible.Value(jsonval.Clamp(batch)), false) != nil {
-			return
-		}
-		if _, err := v.out.Write(line.Bytes()); err != nil {
-			return
-		}
-		if v.o.Flush != nil && v.o.Flush() != nil {
-			return
-		}
-	}
-	var above []fleetpkg.FarMisrouted
-	for _, m := range misrouted {
-		if m.TS > cursor {
-			above = append(above, m)
-		}
+		move(path, b.Cursor)
 	}
 	if len(above) > 0 {
 		p.misrouted += len(above)
@@ -437,11 +472,12 @@ func (v *overseer) remote(h fleetpkg.HostStatus, p *partner, now int64) {
 			}))
 		}
 	}
-	if far <= cursor {
-		return
+	for _, m := range above {
+		move(farCursor(m.Common), m.TS)
 	}
-	if err := watch.WriteCursor(path, far); err != nil {
-		v.fail("", "cursor "+path, "cursor: "+oneLine(err))
+	floor := *h.TS - farSettle.Milliseconds()
+	for _, path := range lanepkg.OverseerHostCursors(v.stateDir, h.Host) {
+		move(path, floor)
 	}
 }
 
@@ -576,7 +612,7 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 		for _, c := range r.Crews {
 			ref := crewRef{r.Common, c.CrewID}
 			head := func(event string) overseerHead {
-				return overseerHead{Stream: "overseer", Event: event, Repo: senderText(r.Repo), Crew: c.CrewID, Host: doc.Host}
+				return overseerHead{Stream: "overseer", Event: event, Repo: senderText(r.Repo), Crew: senderText(c.CrewID), Host: doc.Host}
 			}
 			live := c.Dispatcher.State == "live"
 			if live && t.down[ref] {
@@ -587,7 +623,7 @@ func (t *transitions) next(doc fleetpkg.StatusDoc, nowMS int64) []any {
 			// gaining work again does.
 			if !live && c.Attention == "unattended" {
 				k := condKey{event: "dispatcher_down", common: r.Common, crew: c.CrewID}
-				if fire(k, downLine{overseerHead: head("dispatcher_down"), State: c.Dispatcher.State, TS: nowMS}) {
+				if fire(k, downLine{overseerHead: head("dispatcher_down"), State: senderText(c.Dispatcher.State), TS: nowMS}) {
 					t.down[ref] = true
 				}
 			}
