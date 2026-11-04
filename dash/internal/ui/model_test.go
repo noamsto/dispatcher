@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -78,43 +79,65 @@ func TestHelpToggle(t *testing.T) {
 
 func TestRefreshReplacesSnapshot(t *testing.T) {
 	snap := loadSnapshot(t)
-	other := snap
-	other.Now = snap.Now + 999
+	other := snap.Budget
 	calls := 0
-	collect := func() data.Snapshot {
-		calls++
-		return other
-	}
-	m := sized(NewModel(snap, collect, fixedNow(snap), rosterDeps{}), 80, 24)
+	deps := Deps{Now: snap.Now, Load: Loaders{
+		Budget: func(context.Context) data.BudgetSection {
+			calls++
+			return other
+		},
+	}}
+	m := sized(loadedModel(snap, deps), 80, 24)
 
 	nm, cmd := m.Update(keyRune('r'))
 	m = nm.(Model)
-	if !m.refreshing {
-		t.Fatalf("r did not set refreshing")
-	}
 	if cmd == nil {
 		t.Fatalf("r did not return a Cmd")
 	}
-	msg := cmd()
-	sm, ok := msg.(snapshotMsg)
-	if !ok {
-		t.Fatalf("Cmd's msg = %T, want snapshotMsg", msg)
+	if got := m.loadStatus(); got != "loading settings, budget, retro, ratings, roster…" {
+		t.Fatalf("status after r = %q, want every source loading", got)
 	}
-	if data.Snapshot(sm).Now != other.Now {
-		t.Fatalf("snapshotMsg.Now = %d, want %d", data.Snapshot(sm).Now, other.Now)
+	var sm sourceMsg
+	for _, msg := range flattenCmd(cmd) {
+		if s, ok := msg.(sourceMsg); ok && s.src == srcBudget {
+			sm = s
+		}
+	}
+	if sm.apply == nil {
+		t.Fatalf("r did not reload the budget source")
 	}
 	if calls != 1 {
-		t.Fatalf("collect called %d times, want 1", calls)
+		t.Fatalf("budget loader called %d times, want 1", calls)
 	}
 
 	nm, _ = m.Update(sm)
 	m = nm.(Model)
-	if m.refreshing {
-		t.Fatalf("refreshing still true after snapshotMsg")
+	if m.load[srcBudget].inFlight {
+		t.Fatalf("budget still in flight after its sourceMsg")
 	}
-	bv := m.views[1].(budgetView)
-	if bv.now != other.Now {
-		t.Fatalf("budget view did not pick up refreshed snapshot: now = %d, want %d", bv.now, other.Now)
+	if m.load[srcSettings].inFlight != true {
+		t.Fatalf("settings landed before its own sourceMsg")
+	}
+}
+
+func TestFooterLoadStatus(t *testing.T) {
+	snap := loadSnapshot(t)
+	m := sized(loadingModel(Deps{Now: snap.Now}), 120, 24)
+	if got := m.loadStatus(); got != "loading settings, budget, retro, ratings, roster…" {
+		t.Fatalf("fresh status = %q", got)
+	}
+	m = sized(testModel(snap), 120, 24)
+	if got := m.loadStatus(); got != "refreshed "+fixedNow(snap)().Format("15:04:05") {
+		t.Fatalf("loaded status = %q", got)
+	}
+	m.load[srcRetro].inFlight = true
+	m.load[srcRoster].inFlight = true
+	if got := m.loadStatus(); got != "loading retro, roster…" {
+		t.Fatalf("partial status = %q", got)
+	}
+	var idle Model
+	if got := idle.loadStatus(); got != "loading…" {
+		t.Fatalf("nothing loaded status = %q", got)
 	}
 }
 

@@ -23,7 +23,7 @@ func fixedRosterNow(t *testing.T) func() time.Time {
 func newTestRosterView(t *testing.T) rosterView {
 	t.Helper()
 	snap := loadFullSnapshot(t)
-	return newRosterView(snap, rosterDeps{}, fixedRosterNow(t))
+	return newRosterView(snap, allLoaded, liveDeps{}, fixedRosterNow(t))
 }
 
 func TestRosterCodenameColourTrueColor(t *testing.T) {
@@ -47,7 +47,7 @@ func TestRosterCodenameColourTrueColor(t *testing.T) {
 func TestRosterNoActiveCrew(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	snap.Roster.Crews = nil
-	v := newRosterView(snap, rosterDeps{}, fixedRosterNow(t))
+	v := newRosterView(snap, allLoaded, liveDeps{}, fixedRosterNow(t))
 	out := v.View(80, 24)
 	if !strings.Contains(out, "no active crew") {
 		t.Fatalf("empty roster should read \"no active crew\":\n%s", out)
@@ -58,7 +58,7 @@ func TestRosterSourceError(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	msg := "exit 1"
 	snap.Roster.Error = &msg
-	v := newRosterView(snap, rosterDeps{}, fixedRosterNow(t))
+	v := newRosterView(snap, allLoaded, liveDeps{}, fixedRosterNow(t))
 	out := v.View(80, 24)
 	if !strings.Contains(out, "unavailable: exit 1") {
 		t.Fatalf("roster error should read unavailable: exit 1:\n%s", out)
@@ -72,7 +72,7 @@ func TestRosterCrewErrorShown(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	msg := "boom"
 	snap.Roster.Crews[0].WorkersError = &msg
-	v := newRosterView(snap, rosterDeps{}, fixedRosterNow(t))
+	v := newRosterView(snap, allLoaded, liveDeps{}, fixedRosterNow(t))
 	out := v.View(80, 24)
 	if !strings.Contains(out, "unavailable: boom") {
 		t.Fatalf("crew roster failure should read unavailable: boom:\n%s", out)
@@ -86,7 +86,7 @@ func TestRosterHoldsErrorShownWorkersStillRender(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	msg := "hold boom"
 	snap.Roster.Crews[0].HoldsError = &msg
-	v := newRosterView(snap, rosterDeps{}, fixedRosterNow(t))
+	v := newRosterView(snap, allLoaded, liveDeps{}, fixedRosterNow(t))
 	out := v.View(80, 24)
 	if !strings.Contains(out, "sage") || !strings.Contains(out, "coral") {
 		t.Fatalf("holds-only failure should still render the crew's workers:\n%s", out)
@@ -113,7 +113,7 @@ func TestRosterFlatSkipsWorkersErrorCrew(t *testing.T) {
 	}
 	snap.Roster.Crews = append(snap.Roster.Crews, healthy)
 
-	v := newRosterView(snap, rosterDeps{eventsPath: "testdata/events.jsonl"}, fixedRosterNow(t))
+	v := newRosterView(snap, allLoaded, liveDeps{eventsPath: "testdata/events.jsonl"}, fixedRosterNow(t))
 	if len(v.flat) != 1 {
 		t.Fatalf("flat should count only the healthy crew's workers, got %d", len(v.flat))
 	}
@@ -146,7 +146,7 @@ func TestRosterStateInjectionIsCleaned(t *testing.T) {
 
 	snap := loadFullSnapshot(t)
 	snap.Roster.Crews[0].Workers[0]["state"] = "\x1b]0;pwned\x07working‮"
-	v := newRosterView(snap, rosterDeps{}, fixedRosterNow(t))
+	v := newRosterView(snap, allLoaded, liveDeps{}, fixedRosterNow(t))
 	out := v.View(80, 24)
 	if strings.ContainsRune(out, 0x1b) {
 		t.Errorf("rendered roster table contains a raw ESC from an injected state:\n%q", out)
@@ -168,7 +168,7 @@ func TestRosterPRURLInjectionIsCleaned(t *testing.T) {
 
 	snap := loadFullSnapshot(t)
 	snap.Roster.Crews[0].Workers[0]["pr_url"] = "\x1b[2Jhttps://pr‮"
-	v := newRosterView(snap, rosterDeps{}, fixedRosterNow(t))
+	v := newRosterView(snap, allLoaded, liveDeps{}, fixedRosterNow(t))
 	out := v.View(80, 24)
 	if strings.ContainsRune(out, 0x1b) {
 		t.Errorf("rendered roster table contains a raw ESC from an injected pr_url:\n%q", out)
@@ -185,8 +185,8 @@ func TestRosterEventKindInjectionIsCleaned(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.Ascii)
 	defer lipgloss.SetColorProfile(orig)
 
-	deps := rosterDeps{eventsPath: "testdata/events.jsonl"}
-	v := newRosterView(loadFullSnapshot(t), deps, fixedRosterNow(t))
+	deps := liveDeps{eventsPath: "testdata/events.jsonl"}
+	v := newRosterView(loadFullSnapshot(t), allLoaded, deps, fixedRosterNow(t))
 	nv, cmd := v.Update(keyType(tea.KeyEnter))
 	v = nv.(rosterView)
 	msg := cmd().(recentEventsMsg)
@@ -258,13 +258,11 @@ func TestRosterHoldShown(t *testing.T) {
 }
 
 func TestRosterTickChangesAgeWithoutCollect(t *testing.T) {
-	calls := 0
-	deps := rosterDeps{collect: func() data.RosterSection { calls++; return data.RosterSection{} }}
 	snap := loadFullSnapshot(t)
 	base := fixedRosterNow(t)
 	cur := base()
 	now := func() time.Time { return cur }
-	v := newRosterView(snap, deps, now)
+	v := newRosterView(snap, allLoaded, liveDeps{}, now)
 
 	before := v.View(80, 24)
 	cur = cur.Add(2 * time.Hour)
@@ -277,18 +275,13 @@ func TestRosterTickChangesAgeWithoutCollect(t *testing.T) {
 	if before == after {
 		t.Fatalf("age text did not change after a tick + advanced clock")
 	}
-	if calls != 0 {
-		t.Fatalf("tickMsg triggered %d collect(s), want 0", calls)
-	}
 }
 
-func TestRosterBusChangeDebouncedToOneCollect(t *testing.T) {
-	calls := 0
-	deps := rosterDeps{collect: func() data.RosterSection { calls++; return data.RosterSection{Crews: []data.RosterCrew{}} }}
+func TestRosterBusChangeDebouncedToOneRequest(t *testing.T) {
 	base := fixedRosterNow(t)
 	cur := base()
 	now := func() time.Time { return cur }
-	v := newRosterView(loadFullSnapshot(t), deps, now)
+	v := newRosterView(loadFullSnapshot(t), allLoaded, liveDeps{}, now)
 
 	nv, cmd1 := v.Update(busChangedMsg{})
 	v = nv.(rosterView)
@@ -311,10 +304,7 @@ func TestRosterBusChangeDebouncedToOneCollect(t *testing.T) {
 	nv, cmdAfter1 := v.Update(msg1)
 	v = nv.(rosterView)
 	if cmdAfter1 != nil {
-		t.Fatalf("stale debounce (t1) returned a Cmd, want nil (no collect)")
-	}
-	if calls != 0 {
-		t.Fatalf("stale debounce collected: calls = %d, want 0", calls)
+		t.Fatalf("stale debounce (t1) returned a Cmd, want nil (no request)")
 	}
 
 	msg2, ok := cmd2().(debounceFireMsg)
@@ -324,20 +314,16 @@ func TestRosterBusChangeDebouncedToOneCollect(t *testing.T) {
 	nv, cmdAfter2 := v.Update(msg2)
 	v = nv.(rosterView)
 	if cmdAfter2 == nil {
-		t.Fatalf("fresh debounce (t2) did not return a collect Cmd")
+		t.Fatalf("fresh debounce (t2) did not return a request Cmd")
 	}
-	result := cmdAfter2()
-	if _, ok := result.(rosterCollectedMsg); !ok {
-		t.Fatalf("fresh debounce Cmd result = %T, want rosterCollectedMsg", result)
-	}
-	if calls != 1 {
-		t.Fatalf("collect called %d times, want exactly 1", calls)
+	if result := cmdAfter2(); result != (requestRosterMsg{}) {
+		t.Fatalf("fresh debounce Cmd result = %T, want requestRosterMsg", result)
 	}
 }
 
 func TestRosterEnterShowsRecentEvents(t *testing.T) {
-	deps := rosterDeps{eventsPath: "testdata/events.jsonl"}
-	v := newRosterView(loadFullSnapshot(t), deps, fixedRosterNow(t))
+	deps := liveDeps{eventsPath: "testdata/events.jsonl"}
+	v := newRosterView(loadFullSnapshot(t), allLoaded, deps, fixedRosterNow(t))
 
 	nv, cmd := v.Update(keyType(tea.KeyEnter))
 	v = nv.(rosterView)
@@ -393,7 +379,7 @@ func TestRosterErrorLinesInjectionIsCleaned(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			snap := loadFullSnapshot(t)
 			c.set(&snap)
-			out := newRosterView(snap, rosterDeps{}, fixedRosterNow(t)).View(120, 24)
+			out := newRosterView(snap, allLoaded, liveDeps{}, fixedRosterNow(t)).View(120, 24)
 			requireNoControl(t, out)
 			if !strings.Contains(out, c.want) {
 				t.Errorf("missing %q:\n%q", c.want, out)
@@ -432,7 +418,7 @@ func TestRosterFieldsInjectionAreCleaned(t *testing.T) {
 			{"id": "h" + injectedErr, "wait": map[string]any{"engine": "e" + injectedErr, "window": "w" + injectedErr}},
 		},
 	}}
-	out := newRosterView(snap, rosterDeps{}, fixedRosterNow(t)).View(160, 24)
+	out := newRosterView(snap, allLoaded, liveDeps{}, fixedRosterNow(t)).View(160, 24)
 	requireNoControl(t, out)
 	for _, want := range []string{"crew cboom", "hold hboom]0;pwned[31m: eboom]0;pwned[31m wboom"} {
 		if !strings.Contains(out, want) {

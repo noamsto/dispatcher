@@ -62,15 +62,22 @@ func run() int {
 		return 0
 	case "interactive":
 		eventsPath, eventsErr := data.EventsPath(ctx, data.ExecRunner{}, cfg.Git)
-		collectRoster := func() data.RosterSection {
-			return data.CollectRoster(ctx, data.ExecRunner{}, cfg)
-		}
+		runner := data.ExecRunner{}
 		deps := ui.Deps{
-			Snapshot:      collect(),
-			Collect:       collect,
-			CollectRoster: collectRoster,
+			Ctx: ctx,
+			Load: ui.Loaders{
+				Settings: func(ctx context.Context) data.SettingsSection { return data.CollectSettings(ctx, runner, cfg) },
+				Budget:   func(ctx context.Context) data.BudgetSection { return data.CollectBudget(ctx, runner, cfg) },
+				Retro:    func(ctx context.Context) data.RunsSection { return data.CollectRetro(ctx, runner, cfg) },
+				Ratings:  func(ctx context.Context) data.RunsSection { return data.CollectRatings(ctx, runner, cfg) },
+				Roster:   func(ctx context.Context) data.RosterSection { return data.CollectRoster(ctx, runner, cfg) },
+			},
+			Runner:        runner,
+			Crew:          cfg.Crew,
+			InTmux:        os.Getenv("TMUX") != "",
 			EventsPath:    eventsPath,
 			EventsPathErr: eventsErr,
+			Now:           cfg.Now,
 		}
 		if err := ui.Run(deps); err != nil {
 			fmt.Fprintln(os.Stderr, "crew dash: "+err.Error())

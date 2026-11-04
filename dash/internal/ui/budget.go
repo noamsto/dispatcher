@@ -29,17 +29,22 @@ type budgetView struct {
 	sel    []winRef
 	cursor int
 	detail bool
+	loaded bool
 }
 
-func newBudgetView(snap data.Snapshot) budgetView {
-	v := budgetView{
-		now:      snap.Now,
-		report:   snap.Budget.Report,
-		warnings: snap.Budget.Warnings,
-		err:      snap.Budget.Error,
-	}
-	v.rebuildSel()
+func newBudgetView(snap data.Snapshot, loaded [numSources]bool) budgetView {
+	var v budgetView
+	v.load(snap, loaded)
 	return v
+}
+
+func (v *budgetView) load(snap data.Snapshot, loaded [numSources]bool) {
+	v.now = snap.Now
+	v.report = snap.Budget.Report
+	v.warnings = snap.Budget.Warnings
+	v.err = snap.Budget.Error
+	v.loaded = loaded[srcBudget]
+	v.rebuildSel()
 }
 
 func (v *budgetView) rebuildSel() {
@@ -71,12 +76,7 @@ func (v budgetView) curWindow() (data.Window, bool) {
 func (v budgetView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
 	case snapshotMsg:
-		snap := data.Snapshot(msg)
-		v.now = snap.Now
-		v.report = snap.Budget.Report
-		v.warnings = snap.Budget.Warnings
-		v.err = snap.Budget.Error
-		v.rebuildSel()
+		v.load(msg.snap, msg.loaded)
 		return v, nil
 
 	case tea.KeyMsg:
@@ -123,6 +123,9 @@ func (v budgetView) Capturing() bool {
 }
 
 func (v budgetView) View(w, h int) string {
+	if !v.loaded {
+		return strings.Join(normalizeFrame(loadingLine(srcBudget, w), h, w), "\n")
+	}
 	if v.err != nil {
 		lines := []string{truncateLine("unavailable: "+cleanText(*v.err), w)}
 		return strings.Join(normalizeFrame(strings.Join(lines, "\n"), h, w), "\n")

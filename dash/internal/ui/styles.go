@@ -12,7 +12,8 @@ var (
 	tabInactiveStyle = lipgloss.NewStyle().Faint(true)
 	tabSepStyle      = lipgloss.NewStyle().Faint(true)
 
-	statusStyle = lipgloss.NewStyle().Faint(true)
+	statusStyle  = lipgloss.NewStyle().Faint(true)
+	loadingStyle = lipgloss.NewStyle().Faint(true)
 
 	cursorStyle = lipgloss.NewStyle().Bold(true)
 

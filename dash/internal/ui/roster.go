@@ -15,21 +15,19 @@ import (
 	"github.com/noamsto/dispatcher/dash/internal/data"
 )
 
-// rosterDeps bundles the roster view's live-refresh seams. eventsPath and
+// liveDeps bundles the roster view's live-refresh seams. eventsPath and
 // watcher are resolved/started once by ui.Run (not here — see watcher.go
 // and ui.go): eventsPath "" disables the enter-to-drill-in Cmd, watcher nil
-// disables the bus-change re-collect (liveOffNote explains why). collect
-// re-runs only the roster sources (data.CollectRoster).
-type rosterDeps struct {
+// disables the bus-change reload (liveOffNote explains why).
+type liveDeps struct {
 	eventsPath  string
 	watcher     busWatcher
 	liveOffNote string
-	collect     func() data.RosterSection
 }
 
 const debounceDelay = 300 * time.Millisecond
 
-// rosterMsg tags the four message types the roster view's background
+// rosterMsg tags the message types the roster view's background
 // watcher/ticker loop produces, so the root model can route them straight
 // to the roster view (see model.go) even while another tab is active —
 // the watcher and the age ticker must keep running out of sight.
@@ -38,17 +36,15 @@ type rosterMsg interface{ isRosterMsg() }
 type tickMsg struct{}
 type busChangedMsg struct{}
 type debounceFireMsg struct{ at time.Time }
-type rosterCollectedMsg data.RosterSection
 type recentEventsMsg struct {
 	events []data.Event
 	err    string
 }
 
-func (tickMsg) isRosterMsg()            {}
-func (busChangedMsg) isRosterMsg()      {}
-func (debounceFireMsg) isRosterMsg()    {}
-func (rosterCollectedMsg) isRosterMsg() {}
-func (recentEventsMsg) isRosterMsg()    {}
+func (tickMsg) isRosterMsg()         {}
+func (busChangedMsg) isRosterMsg()   {}
+func (debounceFireMsg) isRosterMsg() {}
+func (recentEventsMsg) isRosterMsg() {}
 
 func tickCmd() tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
@@ -71,8 +67,8 @@ func debounceCmd(at time.Time) tea.Cmd {
 	return tea.Tick(debounceDelay, func(time.Time) tea.Msg { return debounceFireMsg{at: at} })
 }
 
-func collectRosterCmd(collect func() data.RosterSection) tea.Cmd {
-	return func() tea.Msg { return rosterCollectedMsg(collect()) }
+func requestRosterCmd() tea.Cmd {
+	return func() tea.Msg { return requestRosterMsg{} }
 }
 
 // rosterWorkerRow pairs a worker map with its owning crew id for the flat,
@@ -83,11 +79,12 @@ type rosterWorkerRow struct {
 }
 
 type rosterView struct {
-	deps rosterDeps
+	deps liveDeps
 	now  func() time.Time
 
-	crews []data.RosterCrew
-	err   *string
+	crews  []data.RosterCrew
+	err    *string
+	loaded bool
 
 	flat   []rosterWorkerRow
 	cursor int
@@ -101,13 +98,14 @@ type rosterView struct {
 	detailCursor  int // index into detailEvents — RecentEvents is oldest-first, so this starts at the last (newest) event
 }
 
-func newRosterView(snap data.Snapshot, deps rosterDeps, now func() time.Time) rosterView {
+func newRosterView(snap data.Snapshot, loaded [numSources]bool, deps liveDeps, now func() time.Time) rosterView {
 	v := rosterView{deps: deps, now: now}
-	v.load(snap)
+	v.load(snap, loaded)
 	return v
 }
 
-func (v *rosterView) load(snap data.Snapshot) {
+func (v *rosterView) load(snap data.Snapshot, loaded [numSources]bool) {
+	v.loaded = loaded[srcRoster]
 	v.setRoster(snap.Roster)
 }
 
@@ -140,7 +138,7 @@ func (v rosterView) Init() tea.Cmd {
 func (v rosterView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
 	case snapshotMsg:
-		v.load(data.Snapshot(msg))
+		v.load(msg.snap, msg.loaded)
 		return v, nil
 
 	case tickMsg:
@@ -156,14 +154,10 @@ func (v rosterView) Update(msg tea.Msg) (view, tea.Cmd) {
 		return v, tea.Batch(cmds...)
 
 	case debounceFireMsg:
-		if !msg.at.Equal(v.lastChange) || v.deps.collect == nil {
-			return v, nil // superseded by a newer change, or no collector wired
+		if !msg.at.Equal(v.lastChange) {
+			return v, nil // superseded by a newer change
 		}
-		return v, collectRosterCmd(v.deps.collect)
-
-	case rosterCollectedMsg:
-		v.setRoster(data.RosterSection(msg))
-		return v, nil
+		return v, requestRosterCmd()
 
 	case recentEventsMsg:
 		v.detailLoading = false
@@ -274,6 +268,10 @@ func (v rosterView) tableView(w, h int) string {
 	var top []string
 	if v.deps.watcher == nil && v.deps.liveOffNote != "" {
 		top = append(top, truncateLine(warnStyle.Render(v.deps.liveOffNote), w))
+	}
+	if !v.loaded {
+		top = append(top, loadingLine(srcRoster, w))
+		return strings.Join(top, "\n")
 	}
 	if v.err != nil {
 		top = append(top, truncateLine("unavailable: "+cleanText(*v.err), w))

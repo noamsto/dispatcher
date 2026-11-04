@@ -29,7 +29,7 @@ func loadFullSnapshot(t *testing.T) data.Snapshot {
 
 func newTestRunsView(t *testing.T) runsView {
 	t.Helper()
-	return newRunsView(loadFullSnapshot(t))
+	return newRunsView(loadFullSnapshot(t), allLoaded)
 }
 
 func TestRunsDefaultSortIsTierEngineModel(t *testing.T) {
@@ -211,7 +211,7 @@ func TestRunsEmptyStates(t *testing.T) {
 	snap.Runs.Retro.Rows = nil
 	snap.Runs.Ratings = nil
 	snap.Runs.RatingsGroups = nil
-	v := newRunsView(snap)
+	v := newRunsView(snap, allLoaded)
 	out := v.View(80, 24)
 	if !strings.Contains(out, "no retro notes yet") {
 		t.Errorf("empty retro should read \"no retro notes yet\":\n%s", out)
@@ -227,7 +227,7 @@ func TestRunsSourceErrors(t *testing.T) {
 	ratingsErr := "exit 2"
 	snap.Runs.RetroError = &retroErr
 	snap.Runs.RatingsError = &ratingsErr
-	v := newRunsView(snap)
+	v := newRunsView(snap, allLoaded)
 	out := v.View(80, 24)
 	if !strings.Contains(out, "unavailable: exit 1") {
 		t.Errorf("retro error should read unavailable: exit 1:\n%s", out)
@@ -253,7 +253,7 @@ func TestRunsRatingsWrongShapeIsUnavailable(t *testing.T) {
 
 	snap := loadFullSnapshot(t)
 	snap.Runs = runs
-	v := newRunsView(snap)
+	v := newRunsView(snap, allLoaded)
 	out := v.View(80, 24)
 	if !strings.Contains(out, "unavailable: unparseable crew rate output:") {
 		t.Fatalf("wrong-shape ratings should read unavailable: unparseable crew rate output: ...:\n%s", out)
@@ -272,7 +272,7 @@ func TestRunsRowTagInjectionIsCleaned(t *testing.T) {
 
 	snap := loadFullSnapshot(t)
 	snap.Runs.Retro.Rows[0].Notes[0].Tag = "tag\x1b]0;x\x07‮"
-	v := newRunsView(snap)
+	v := newRunsView(snap, allLoaded)
 	out := v.View(80, 24)
 	if strings.ContainsRune(out, 0x1b) {
 		t.Errorf("rendered rows list contains a raw ESC from an injected tag:\n%q", out)
@@ -299,7 +299,7 @@ func TestRunsNoteSeamInjectionIsCleaned(t *testing.T) {
 			snap.Runs.Retro.Rows[i].Notes[j].Tag = "tag\x1b[31m‮"
 		}
 	}
-	v := newRunsView(snap)
+	v := newRunsView(snap, allLoaded)
 	nv, _ := v.Update(keyRune('f'))
 	v = nv.(runsView)
 	nv, _ = v.Update(keyType(tea.KeyEnter))
@@ -342,7 +342,7 @@ func TestRunsErrorLinesInjectionIsCleaned(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			snap := loadFullSnapshot(t)
 			set(&snap)
-			out := newRunsView(snap).View(120, 24)
+			out := newRunsView(snap, allLoaded).View(120, 24)
 			requireNoControl(t, out)
 			if !strings.Contains(out, "unavailable: boom") {
 				t.Errorf("missing %q:\n%q", "unavailable: boom", out)
@@ -360,7 +360,7 @@ func TestRunsBranchInjectionIsCleaned(t *testing.T) {
 	for i := range snap.Runs.Retro.Rows {
 		snap.Runs.Retro.Rows[i].Branch = "feat/inj\x1b]0;pwned\x07\x1b[31m‮"
 	}
-	v := newRunsView(snap)
+	v := newRunsView(snap, allLoaded)
 	out := v.View(120, 24)
 	if !strings.Contains(out, "feat/inj") {
 		t.Fatalf("list should render the injected branch:\n%s", out)
@@ -396,7 +396,7 @@ func TestRunsRowFieldsInjectionAreCleaned(t *testing.T) {
 	for i := range snap.Runs.RatingsGroups {
 		snap.Runs.RatingsGroups[i].Model = "m" + injectedErr
 	}
-	v := newRunsView(snap)
+	v := newRunsView(snap, allLoaded)
 	requireNoControl(t, v.View(160, 40))
 
 	nv, _ := v.Update(keyRune('f'))
