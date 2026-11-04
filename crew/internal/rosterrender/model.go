@@ -17,6 +17,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
+	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
 
@@ -26,14 +27,8 @@ var pendingProg string
 //go:embed model.jq
 var modelProg string
 
-//go:embed d2.jq
-var d2Prog string
-
 //go:embed live.jq
 var liveProg string
-
-//go:embed hex.json
-var hexJSON []byte
 
 // rolePaneFormat is `_rr_role_panes`' `-F`: the six dispatcher-set window stamps
 // the diagram is keyed on. Never discovery — a role pane with no stamps is not
@@ -106,6 +101,20 @@ func model(ctx context.Context, paths bus.Paths, crew string, nowSec float64, ro
 	m, ok := out.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("roster-render: model is %T, not an object", out)
+	}
+	// A remote worker's status rows never reach this bus, so it only ever has its
+	// synthesized `dispatched` row; the host is the one thing that tells it apart.
+	hosts := map[string]string{}
+	for _, w := range remote.RemoteWorkers(events, crew) {
+		hosts[w.Branch] = w.Host
+	}
+	final, _ := m["rows"].([]any)
+	for _, r := range final {
+		row, _ := r.(map[string]any)
+		branch, _ := row["branch"].(string)
+		if host, ok := hosts[branch]; ok {
+			row["host"] = host
+		}
 	}
 	return m, nil
 }
@@ -184,36 +193,6 @@ func roleEngine(dir, branch, role string) string {
 		return "?"
 	}
 	return name
-}
-
-// renderText is `_rr_d2`: the model to D2 text. The program emits one string per
-// output line; the arm read them through `jq -r` into `$(…)`, which strips every
-// trailing newline, and wrote `printf '%s\n'` of that — so Go joins with one
-// newline, trims any trailing ones, and appends exactly one.
-func renderText(m map[string]any) (string, error) {
-	var table map[string]string
-	if err := json.Unmarshal(hexJSON, &table); err != nil {
-		return "", fmt.Errorf("roster-render: hex table: %v", err)
-	}
-	hex := make(map[string]any, len(table))
-	for k, v := range table {
-		hex[k] = v
-	}
-	var palette []any
-	for _, c := range identity.Palette() {
-		palette = append(palette, c)
-	}
-	out, err := jqrun.RunAny(d2Prog, []any{m}, 0, map[string]any{"palette": palette, "hex": hex})
-	if err != nil {
-		return "", err
-	}
-	var lines []string
-	elems, _ := out.([]any)
-	for _, e := range elems {
-		s, _ := e.(string)
-		lines = append(lines, s)
-	}
-	return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n", nil
 }
 
 // liveCount is `_rr_pass`' live number: working, blocked and dispatched rows

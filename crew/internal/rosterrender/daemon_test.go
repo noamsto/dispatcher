@@ -3,8 +3,11 @@ package rosterrender
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +49,11 @@ type loop struct {
 	publishes  []string
 	spawns     [][]string
 	spawnEnv   []string
+
+	// graphvizRuns counts the Graphviz fake's calls; graphvizErr, when set, fails
+	// them all.
+	graphvizRuns int
+	graphvizErr  error
 }
 
 type hop struct {
@@ -89,6 +97,7 @@ func newLoop(t *testing.T) *loop {
 			AeyePublish: func(_ context.Context, file, pane string, open bool) error {
 				return l.recordPublish(file, pane, open)
 			},
+			Graphviz:      l.recordGraphviz,
 			InstalledCrew: func(string) string { return "" },
 			SpawnDetached: func(argv, env []string) error {
 				l.recordSpawn(argv, env)
@@ -152,6 +161,24 @@ func (l *loop) recordPublish(file, pane string, open bool) error {
 	return l.publishErr
 }
 
+// recordGraphviz is a deterministic neato: the svg is the dot between two tags,
+// so a test reads what was drawn off the published file.
+func (l *loop) recordGraphviz(_ context.Context, dot []byte) ([]byte, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.graphvizRuns++
+	if l.graphvizErr != nil {
+		return nil, l.graphvizErr
+	}
+	return []byte("<svg>\n" + string(dot) + "</svg>\n"), nil
+}
+
+func (l *loop) graphvizCalls() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.graphvizRuns
+}
+
 func (l *loop) recordSpawn(argv, env []string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -174,10 +201,38 @@ func (l *loop) diagramPath() string {
 	return target(l.paths.Common, l.crew, l.opts.RosterDir, l.opts.Clock.Now)
 }
 
-// diagram is $CREW_ROSTER_DIR's file for this crew, read back.
-func (l *loop) diagram() string {
+// wrapperRe is the published file: one image node carrying the svg as base64.
+var wrapperRe = regexp.MustCompile(`\Adiagram: "" \{shape: image; icon: "data:image/svg\+xml;base64,([A-Za-z0-9+/=]+)"; width: 900; height: 900\}\n\z`)
+
+// published is $CREW_ROSTER_DIR's file for this crew, read back as written.
+func (l *loop) published() string {
 	l.t.Helper()
 	got, err := os.ReadFile(l.diagramPath())
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	return string(got)
+}
+
+// diagram is the svg inside the published wrapper: what the Graphviz fake drew,
+// which is the dot text.
+func (l *loop) diagram() string {
+	l.t.Helper()
+	m := wrapperRe.FindStringSubmatch(l.published())
+	if m == nil {
+		l.t.Fatalf("the published file is not the image wrapper:\n%s", l.published())
+	}
+	svg, err := base64.StdEncoding.DecodeString(m[1])
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	return string(svg)
+}
+
+// dot is the record of the text the published picture was drawn from.
+func (l *loop) dot() string {
+	l.t.Helper()
+	got, err := os.ReadFile(filepath.Join(l.cdir(), fileDot))
 	if err != nil {
 		l.t.Fatal(err)
 	}
@@ -504,6 +559,25 @@ func TestDaemonExitsAfterTheQuietWindow(t *testing.T) {
 		}
 		if l.slept < 5 || l.slept > 8 {
 			t.Errorf("exited after %d ticks, want the 5s window and no more", l.slept)
+		}
+	})
+	t.Run("a broken Graphviz does not hold the daemon up", func(t *testing.T) {
+		l := newLoop(t)
+		l.graphvizErr = errors.New("neato: not found")
+		if err := os.WriteFile(l.paths.Log, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if code := l.run("5"); code != exitOK {
+			t.Errorf("code = %d", code)
+		}
+		if l.slept < 5 || l.slept > 8 {
+			t.Errorf("exited after %d ticks, want the 5s window and no more", l.slept)
+		}
+		if l.graphvizCalls() == 0 {
+			t.Error("Graphviz never ran, so the exit above proves nothing")
+		}
+		if errOut := l.opts.Stderr.(*bytes.Buffer).String(); !strings.Contains(errOut, "neato: not found") {
+			t.Errorf("the failure was not reported; stderr was %q", errOut)
 		}
 	})
 	t.Run("live crew outlasts it", func(t *testing.T) {

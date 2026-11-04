@@ -23,16 +23,19 @@ func (o Options) passProbes(ctx context.Context, common string) (roster.Probes, 
 		roster.Liveness{Windows: windows, Worktrees: wt}
 }
 
-// pass is `_rr_pass <crew> <cdir> <no_open> [role_rows]`: one render. Write the
-// diagram when its text changed, publish when written or when the recorded pane
-// is not the one last published to, and return the live count.
+// pass is `_rr_pass <crew> <cdir> <no_open> [role_rows]`: one render. Draw the
+// diagram when its DOT text changed, publish when written or when the recorded
+// pane is not the one last published to, and return the live count.
 //
-// The three reads that build the picture are fallible and return before anything
-// is written, so a malformed bus can never replace a good diagram. A refused
-// `put` is not: it stops the publish and still returns the count.
+// The reads that build the picture are fallible and return before anything is
+// written, so a malformed bus can never replace a good diagram. Graphviz is not:
+// a failed run is logged, leaves the old picture and still returns the count,
+// because an error here would freeze the daemon's quiet window. A refused `put`
+// likewise stops the publish and still returns the count.
 func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, noOpen bool, roleRows []string) (int64, error) {
+	now := float64(o.wallSec())
 	rp, rule := o.passProbes(ctx, paths.Common)
-	m, err := model(ctx, paths, crew, float64(o.wallSec()), roleRows, rp, rule)
+	m, err := model(ctx, paths, crew, now, roleRows, rp, rule)
 	if err != nil {
 		return 0, err
 	}
@@ -40,10 +43,9 @@ func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, no
 	if err != nil {
 		return 0, err
 	}
-	text, err := renderText(m)
-	if err != nil {
-		return 0, err
-	}
+	ps, lg := buildPlanets(m, now)
+	slots, sc := arrange(loadSlots(filepath.Join(cdir, fileSlots)), ps)
+	dot := renderDOT(sc, lg)
 
 	t := target(paths.Common, crew, o.RosterDir, o.Clock.Now)
 	pane := record(cdir, filePane)
@@ -51,21 +53,27 @@ func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, no
 		pane = ""
 	}
 
-	// `[ -f "$target" ] && [ ! -L "$target" ] && cmp -s`: a symlink never counts as
-	// the current diagram, so it falls through to the write — which refuses it.
-	if st, err := os.Lstat(t); err == nil && st.Mode().IsRegular() && st.Mode()&os.ModeSymlink == 0 {
-		if prev, err := os.ReadFile(t); err == nil && string(prev) == text {
-			// Unchanged: publish only for a pane nobody has been published to yet.
-			if pane != "" && pane != record(cdir, filePublished) {
-				publish(ctx, o.Probes, cdir, t, pane, noOpen)
-			}
-			return live, nil
+	// A symlink never counts as the current diagram, so it falls through to the
+	// write — which refuses it.
+	prev, _ := os.ReadFile(filepath.Join(cdir, fileDot))
+	if st, err := os.Lstat(t); err == nil && st.Mode().IsRegular() && string(prev) == dot {
+		// Unchanged: publish only for a pane nobody has been published to yet.
+		if pane != "" && pane != record(cdir, filePublished) {
+			publish(ctx, o.Probes, cdir, t, pane, noOpen)
 		}
+		return live, nil
+	}
+	svg, err := o.Probes.Graphviz(ctx, []byte(dot))
+	if err != nil {
+		say(o.Stderr, "crew: roster-render: %v\n", err)
+		return live, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(t), 0o755); err != nil {
 		return live, nil
 	}
-	if err := put(t, text, o.Stderr); err != nil {
+	if put(t, wrapper(svg), o.Stderr) != nil ||
+		put(filepath.Join(cdir, fileDot), dot, o.Stderr) != nil ||
+		saveSlots(filepath.Join(cdir, fileSlots), slots, o.Stderr) != nil {
 		return live, nil
 	}
 	if pane != "" {

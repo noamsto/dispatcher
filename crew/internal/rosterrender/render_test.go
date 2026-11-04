@@ -1,29 +1,27 @@
 package rosterrender
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
-	"github.com/noamsto/dispatcher/crew/internal/identity"
 )
 
 // The diagram, from the bus to the file: the bats fixtures' `_rr_seed` and the
-// `roster-render:` cases that read the D2 text its `--once` writes.
+// `roster-render:` cases that read what its `--once` publishes.
 
-// utc pins the process zone, which is what the diagram's `strflocaltime` reads —
-// the "since HH:MM" and "until MM-DD HH:MM" stamps. The bats fixtures exported
-// TZ=UTC; gojq reads time.Local per call, so the pin lands for the render.
+// utc pins the process zone, which names the diagram's file: the `<when>` stamp is
+// the crew id's epoch in the renderer's local time. The bats fixtures exported
+// TZ=UTC.
 func utc(t *testing.T) {
 	t.Helper()
 	got := time.Local
@@ -195,41 +193,16 @@ func (l *loop) rolesJSON(t *testing.T, branch, text string) {
 // the renderer publishes on.
 const aeyePublishHelp = "Usage: aeye [command]\n\nCommands:\n  render <file>\n  publish-diagram <file> [flags]\n  open\n"
 
-// seedDiagram is the fixture bus drawn: the exact D2 text the bats case diffed its
-// file against.
-const seedDiagram = `title: "Crew roster" {near: top-center; shape: text}
-legend: "2 active · 1 blocked · 1 done" {near: bottom-center; shape: text}
-dispatcher: "dispatcher" {style.bold: true}
-w1: "sage\nAlpha task\nstandard·claude·sonnet\nworking · plan-critic r2 (loop) · since 08:20" {
-  grid-rows: 1
-  style: {fill: transparent; stroke: "#76a76b"; stroke-width: 3; font-size: 16}
-  r1: "spec-critic\nclaude · idle"
-}
-dispatcher -> w1
-w2: "atlas\nBravo task\nstandard·codex·gpt-5\ndone · since 08:40" {
-  style: {fill: transparent; stroke: "#6b8fd6"; stroke-width: 3; font-size: 16}
-}
-dispatcher -> w2
-w2_pr: "PR #124" {shape: page}
-w2 -> w2_pr: "#124"
-w3: "nova\nCharlie task\ndeep·claude·opus\nblocked (watchdog) · quiet: %204 · since 08:50 · 2 sessions" {
-  style: {fill: transparent; stroke: "#c46bb5"; stroke-width: 3; font-size: 16; stroke-dash: 3}
-}
-dispatcher -> w3
-w4: "ember\nDelta task\nquick·cursor·composer\ndispatched · since 08:03" {
-  style: {fill: transparent; stroke: "#d49a62"; stroke-width: 3; font-size: 16}
-}
-dispatcher -> w4
-w3 -> w1: "stacked on"
-h1: "hold r-5\nwaiting on claude 5h\nuntil 10-07 12:00" {shape: hexagon}
-dispatcher -> h1: {style.stroke-dash: 3}
-`
+// planetNode is a planet's node line in a dot text; moons and the sun are not
+// planets.
+var planetNode = regexp.MustCompile(`(?m)^  p[0-9]+ \[`)
 
-// TestOnceRendersTheFixtureBus is the diagram end to end: the bus the fixture
-// plants, one `--once`, and every byte of the file it writes — the palette stroke,
-// the legend's counts, the stacked edge that survives a re-dispatch naming no
-// base, the PR node, the role pane inside its worker, and the hold.
-func TestOnceRendersTheFixtureBus(t *testing.T) {
+// TestOnceDrawsTheFixtureBus is the picture end to end: the bus the fixture
+// plants, one `--once`, and what reaches the published file — a planet per drawn
+// worker labelled codename and issue, a pulsing ring for the blocked one, the
+// stacked edge that survives a re-dispatch naming no base, the role pane as a
+// moon, and the legend's counts with the hold.
+func TestOnceDrawsTheFixtureBus(t *testing.T) {
 	l := newLoop(t)
 	l.seedBus(t)
 	// A re-dispatch without --base, older than feat/3-c's last status: the
@@ -241,97 +214,85 @@ func TestOnceRendersTheFixtureBus(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	if got := l.diagram(); got != seedDiagram {
-		t.Errorf("diagram =\n%s\nwant\n%s", got, seedDiagram)
+	out := l.diagram()
+	for id, label := range map[string]string{"p1": `sage\n1`, "p2": `atlas\n2`, "p3": `nova\n3`, "p4": `ember\n4`} {
+		if line := nodeLine(t, out, id); !strings.Contains(line, `label="`+label+`"`) {
+			t.Errorf("%s is not %s: %s", id, label, line)
+		}
+	}
+	if line := nodeLine(t, out, "p3"); !strings.Contains(line, "aeye-pulse") {
+		t.Errorf("the blocked worker does not pulse: %s", line)
+	}
+	if !strings.Contains(out, "  p3 -> p1 [style=dashed") {
+		t.Errorf("no stacked edge from nova to sage:\n%s", out)
+	}
+	if n := len(planetNode.FindAllString(out, -1)); n != 4 {
+		t.Errorf("%d planets drawn, want 4", n)
+	}
+	// One role pane is this crew's (the lead and the other crew's are not): a grey moon.
+	if line := nodeLine(t, out, "p1m1"); strings.Contains(line, "aeye-glow") {
+		t.Errorf("an idle role pane glows: %s", line)
+	}
+	if strings.Contains(out, "p1m2") {
+		t.Error("a pane that is not a role of this crew was drawn as a moon")
+	}
+	for _, want := range []string{"working 2", "blocked 1", "pr open 0", "done 1", "holds 1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("legend lacks %q", want)
+		}
 	}
 }
 
-// TestPRNodeIsLabelledByNumberAndCarriesNoURL is the carousel's one link out: the
-// node says `PR #124` and the edge says `#124`, while the url itself never reaches
-// the file a screenshot is drawn from. A pr_url with no /pull/N is still a PR,
-// just one with no number to show.
-func TestPRNodeIsLabelledByNumberAndCarriesNoURL(t *testing.T) {
-	t.Run("numbered", func(t *testing.T) {
-		l := newLoop(t)
-		l.seedBus(t)
-		if code, stderr := l.once(Request{}); code != exitOK {
-			t.Fatalf("code = %d, stderr %q", code, stderr)
-		}
-		text := l.diagram()
-		lines := diagramLines(text)
-		for _, want := range []string{"w2_pr: \"PR #124\" {shape: page}", "w2 -> w2_pr: \"#124\""} {
-			if !slices.Contains(lines, want) {
-				t.Errorf("no line %q in\n%s", want, text)
-			}
-		}
-		if strings.Contains(text, "github.com") {
-			t.Errorf("the url reached the diagram:\n%s", text)
-		}
-	})
-
-	t.Run("unnumbered", func(t *testing.T) {
-		l := newLoop(t)
-		utc(t)
-		l.seed(t,
-			dispatchEvent("feat/1-a", 1791360000000, "sage", "green", "colour28", "Alpha task", "standard", "claude", "sonnet"),
-			statusEvent("worker:feat/1-a#s1", 1791361200000, "pr_open", "", "", "https://example.com/x"),
-		)
-		l.windows = "feat/1-a"
-
-		if code, stderr := l.once(Request{}); code != exitOK {
-			t.Fatalf("code = %d, stderr %q", code, stderr)
-		}
-		text := l.diagram()
-		lines := diagramLines(text)
-		for _, want := range []string{"w1_pr: \"PR\" {shape: page}", "w1 -> w1_pr"} {
-			if !slices.Contains(lines, want) {
-				t.Errorf("no line %q in\n%s", want, text)
-			}
-		}
-	})
-}
-
-// TestLongTitleIsCutAtAWordBoundary is the worker box's own width: a title of
-// words is cut between them, dropping the partial word, and one unbroken word is
-// cut mid-letter because there is no boundary to land on.
-func TestLongTitleIsCutAtAWordBoundary(t *testing.T) {
-	long := "word alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho"
+// TestThePublishedFileIsTheImageWrapperAndTheRecordsAreWritten: the file aeye
+// reads carries the neato svg as one base64 image node, so a changed picture is a
+// changed file, and the dot and the slots are recorded beside the crew's other
+// records, never in the carousel directory.
+func TestThePublishedFileIsTheImageWrapperAndTheRecordsAreWritten(t *testing.T) {
 	l := newLoop(t)
-	utc(t)
-	l.seed(t,
-		dispatchEvent("feat/1-a", 1791360000000, "sage", "green", "colour28", long, "standard", "claude", "sonnet"),
-		dispatchEvent("feat/2-b", 1791360060000, "atlas", "blue", "colour32", strings.Repeat("x", 100), "standard", "claude", "sonnet"),
-		statusEvent("worker:feat/1-a#s1", 1791361200000, "working", "", "", ""),
-		statusEvent("worker:feat/2-b#s1", 1791361800000, "working", "", "", ""),
-	)
-	l.windows = "feat/1-a\nfeat/2-b"
-
+	l.seedBus(t)
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	text := l.diagram()
-	// Cut lands mid-"omicron": the partial word is dropped, never half a word.
-	if !strings.Contains(text, `\nword alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi…\n`) {
-		t.Errorf("the word-boundary cut is missing:\n%s", text)
+	if want := wrapper([]byte(l.diagram())); l.published() != want {
+		t.Errorf("published file = %q, want %q", l.published(), want)
 	}
-	if !strings.Contains(text, `\n`+strings.Repeat("x", 79)+`…\n`) {
-		t.Errorf("the hard cut of one unbroken word is missing:\n%s", text)
+	if got, want := l.diagram(), "<svg>\n"+l.dot()+"</svg>\n"; got != want {
+		t.Errorf("the svg was not drawn from the recorded dot:\n%s\nwant\n%s", got, want)
+	}
+	entries, err := os.ReadDir(filepath.Dir(l.diagramPath()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("the carousel directory holds %d files, want the wrapper alone", len(entries))
+	}
+	var s slotState
+	data, err := os.ReadFile(filepath.Join(l.cdir(), fileSlots))
+	if err != nil {
+		t.Fatalf("no slots file: %v", err)
+	}
+	if err := json.Unmarshal(data, &s); err != nil || len(s.Workers) != 4 {
+		t.Errorf("slots = %s (%v), want four workers", data, err)
 	}
 }
 
-// TestHostileTextStaysInsideQuotedLabels is the injection row: a title, a detail,
-// a hold id, a role name and a palette color all arrive from the bus or from tmux,
-// and none of them may leave a quoted label, add a style line, or put a control
-// byte in the file.
-func TestHostileTextStaysInsideQuotedLabels(t *testing.T) {
+// TestHostileTextCannotBreakOutOfTheDot is the injection row: a codename, a host,
+// a hold id, a role name, an engine and a palette color all arrive from the bus or
+// from tmux, and none of them may leave a quoted label, add a statement, or put a
+// control byte in the file.
+func TestHostileTextCannotBreakOutOfTheDot(t *testing.T) {
 	l := newLoop(t)
-	utc(t)
-	// The bats wrote this title with $'…': one real newline, one backslash, and
-	// the `$d` of an expansion that never happens.
-	title := "a\"b\\c$d |md ...@import x } {\n# e"
+	name := "a\"b\\c$d |md ...@import x } {\n# e<b>"
+	remote := busDoc(map[string]any{
+		"ts": 1791360000000, "crew_id": "c1", "kind": "dispatch", "branch": "feat/3-r", "session": "s1",
+		"worker_id": "worker:feat/3-r#s1", "engine": "claude", "model": "sonnet", "tier": "standard",
+		"title": "Remote", "name": "rem", "color": "green", "tmux": "colour28",
+		"host": "mbp\"];evil [label=\"x", "remote": true,
+	})
 	l.seed(t,
-		dispatchEvent("feat/1-a", 1791360000000, "atlas", "red; fill: blue", "colour32", title, "standard", "claude", "sonnet"),
+		dispatchEvent("feat/1-a", 1791360000000, name, "red; fill: blue", "colour32", "T\"itle", "standard", "claude", "sonnet"),
 		dispatchEvent("feat/2-b", 1791360060000, "sage", "green", "colour28", "Plain", "standard", "claude", "sonnet"),
+		remote,
 		statusEvent("worker:feat/1-a#s1", 1791361200000, "working", "go ${x}\x01end", "", ""),
 		statusEvent("worker:feat/2-b#s1", 1791361800000, "working", "", "", ""),
 		holdEvent("h-1", 1791374400, "feat/5-e", `h"1$`, "claude", "codex", "Echo task"),
@@ -349,7 +310,7 @@ func TestHostileTextStaysInsideQuotedLabels(t *testing.T) {
 	if err := os.Symlink(elsewhere, filepath.Join(l.paths.Dir, "artifacts", "feat/2-b", "roles.json")); err != nil {
 		t.Fatal(err)
 	}
-	l.windows = "feat/1-a\nfeat/2-b"
+	l.windows = "feat/1-a\nfeat/2-b\nfeat/3-r"
 	l.panes = strings.Join([]string{
 		l.paths.Dir + "\tc1\tfeat/1-a\tr\";x\tidle\t",
 		l.paths.Dir + "\tc1\tfeat/1-a\tspec-critic\tidle\t",
@@ -359,172 +320,51 @@ func TestHostileTextStaysInsideQuotedLabels(t *testing.T) {
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	text := l.diagram()
-	lines := diagramLines(text)
-	for _, want := range []string{
-		`w1: "atlas\na\"b\\c\$d |md ...@import x } {\n# e\nstandard·claude·sonnet\nworking · go \${x}end · since 08:20" {`,
-		`  style: {fill: transparent; stroke-width: 3; font-size: 16}`,
-		`  r1: "spec-critic\n? · idle"`,
-		`w2: "sage\nPlain\nstandard·claude·sonnet\nworking · since 08:30" {`,
-		`  style: {fill: transparent; stroke: "#76a76b"; stroke-width: 3; font-size: 16}`,
-		`  r1: "critic\n? · idle"`,
-		"h1: \"hold h\\\"1\\$\\nwaiting on claude 5h\\nuntil 10-07 12:00\" {shape: hexagon}",
-	} {
-		// Whole lines, the way `grep -qFx` read them: a fragment of a longer line
-		// is not the label the renderer was supposed to write.
-		if !slices.Contains(lines, want) {
-			t.Errorf("no line %q in\n%s", want, text)
+	out := l.diagram()
+	if n := len(planetNode.FindAllString(out, -1)); n != 3 {
+		t.Fatalf("%d planets drawn, want 3:\n%s", n, out)
+	}
+	// The fold swaps a codename the pool grammar rejects for a pool one; clean
+	// guards what survives (planets_test).
+	if line := nodeLine(t, out, "p1"); !regexp.MustCompile(`label="[a-z][a-z0-9-]*\\n1"`).MatchString(line) {
+		t.Errorf("the hostile codename was drawn as is: %s", line)
+	}
+	if line := nodeLine(t, out, "p3"); !strings.Contains(line, "shape=hexagon") {
+		t.Errorf("the remote worker is not a hexagon: %s", line)
+	}
+	if !strings.Contains(out, `label="mbpevillabelx"`) {
+		t.Errorf("the hostile host is not reduced to its safe characters:\n%s", out)
+	}
+	for _, banned := range []string{"red;", "fill: blue", ";x", "<b>", "$", "h\"1", `\y`, "Itle"} {
+		if strings.Contains(out, banned) {
+			t.Errorf("%q reached the diagram:\n%s", banned, out)
 		}
 	}
-
-	// The hostile role pane and the non-palette color leave no trace.
-	for _, banned := range []string{"red", "fill: blue", ";x", "evil"} {
-		if strings.Contains(text, banned) {
-			t.Errorf("%q reached the diagram:\n%s", banned, text)
+	// Only generated ids start a statement, every quote closes on its own line, and
+	// the only control byte in the file is the newline between statements.
+	id := regexp.MustCompile(`^(p\d+(m\d+)?|h\d+|c\d+|dispatcher|node|edge)$`)
+	stmt := regexp.MustCompile(`^  (\S+)(?: -> (\S+))? \[`)
+	for _, line := range strings.Split(l.dot(), "\n") {
+		if !balanced(line) {
+			t.Errorf("unbalanced quotes: %s", line)
 		}
-	}
-	// Only generated keys start a line, and the only control byte in the file is the
-	// newline between them: a label's own breaks are the two-character escape.
-	for _, line := range lines {
-		if !generatedLine.MatchString(line) {
-			t.Errorf("a line the renderer did not write: %q", line)
-		}
-	}
-	if controlByte.MatchString(text) {
-		t.Errorf("a control byte reached the file: %q", text)
-	}
-}
-
-// controlByte is the bats `grep -qP '[\x00-\x09\x0b-\x1f]'`: every control character
-// except the newline the model itself writes between label segments. A tab off the
-// pane listing, or an ESC off the bus, would reach a terminal otherwise.
-var controlByte = regexp.MustCompile(`[\x00-\x09\x0b-\x1f]`)
-
-// diagramLines is the file as `grep -x` saw it: whole lines, no trailing blank.
-func diagramLines(text string) []string {
-	return strings.Split(strings.TrimRight(text, "\n"), "\n")
-}
-
-// generatedLine is one line the renderer writes: a key, an edge, or the `}` that
-// closes a container. Anything else in the file came off the bus.
-var generatedLine = regexp.MustCompile(
-	`^(\}$|(title|legend|dispatcher|w[0-9]+(_pr)?|h[0-9]+|  (style|grid-rows|r[0-9]+)|dispatcher -> (w|h)[0-9]+|w[0-9]+ -> w[0-9]+(_pr)?)[:" {-])`)
-
-// TestWorkerBlockLinesStayWithin80Chars is the carousel's own width limit: every
-// `\n`-separated segment of a worker box, and of the role panes drawn inside it,
-// fits 80 characters however long the detail is.
-func TestWorkerBlockLinesStayWithin80Chars(t *testing.T) {
-	l := newLoop(t)
-	utc(t)
-	detail := strings.Repeat("lengthy detail words ", 30) + "ending in r3"
-	l.seed(t,
-		dispatchEvent("feat/1-a", 1791360000000, "sage", "green", "colour28", "Alpha task", "standard", "claude", "sonnet"),
-		statusEvent("worker:feat/1-a#s1", 1791361200000, "working", detail, "watchdog", ""),
-		statusEvent("worker:feat/1-a#s2", 1791361300000, "working", detail, "watchdog", ""),
-	)
-	l.windows = "feat/1-a"
-	l.rolesJSON(t, "feat/1-a", `{"spec-critic":{"agent":"claude"}}`)
-	l.panes = l.paths.Dir + "\tc1\tfeat/1-a\tspec-critic\tidle\t\n"
-
-	if code, stderr := l.once(Request{}); code != exitOK {
-		t.Fatalf("code = %d, stderr %q", code, stderr)
-	}
-	// name, title, engine line, status line, then the role's two lines.
-	if n := checkSegments(t, l.diagram()); n != 6 {
-		t.Errorf("%d label segments, want 6", n)
-	}
-}
-
-// TestLongStateWatchdogAndSessionsFitTheStatusLine is the same limit from the
-// other side: a watchdog state, its detail and a dozen sessions crowded onto one
-// status line.
-func TestLongStateWatchdogAndSessionsFitTheStatusLine(t *testing.T) {
-	l := newLoop(t)
-	utc(t)
-	events := []string{
-		dispatchEvent("feat/1-a", 1791360000000, "sage", "green", "colour28", "Alpha task", "standard", "claude", "sonnet"),
-	}
-	for i := 1; i <= 12; i++ {
-		events = append(events, statusEvent(fmt.Sprintf("worker:feat/1-a#s%d", i),
-			int64(1791361200000+i), "abcdefghijklmnopqrstuvwxyz",
-			"plan-critic revision 3 of the lengthy fix cycle r3", "watchdog", ""))
-	}
-	l.seed(t, events...)
-	l.windows = "feat/1-a"
-
-	if code, stderr := l.once(Request{}); code != exitOK {
-		t.Fatalf("code = %d, stderr %q", code, stderr)
-	}
-	text := l.diagram()
-	if !strings.Contains(text, "12 sessions") {
-		t.Errorf("the sessions were not counted:\n%s", text)
-	}
-	checkSegments(t, text)
-}
-
-// labelLine is a worker's or a role's own label line — the PR node and the hold
-// are not worker blocks, and the bats check did not read them.
-var labelLine = regexp.MustCompile(`^(w[0-9]+|  r[0-9]+): "`)
-
-// checkSegments is `_rr_segments_le80`: every `\n`-separated segment of every
-// worker label, counted, and no segment over 80 characters — characters, the way
-// `${#seg}` and jq's `length` count them, not bytes.
-func checkSegments(t *testing.T, text string) int {
-	t.Helper()
-	n := 0
-	for _, line := range strings.Split(text, "\n") {
-		if !labelLine.MatchString(line) {
-			continue
-		}
-		_, rest, ok := strings.Cut(line, `: "`)
-		if !ok {
-			continue
-		}
-		end := strings.LastIndex(rest, `"`)
-		if end < 0 {
-			continue
-		}
-		for _, seg := range strings.Split(rest[:end], `\n`) {
-			if utf8.RuneCountInString(seg) > 80 {
-				t.Errorf("segment over 80: %s", seg)
+		if m := stmt.FindStringSubmatch(line); m != nil {
+			for _, name := range m[1:] {
+				if name != "" && !id.MatchString(name) {
+					t.Errorf("id %q is not a generated one: %s", name, line)
+				}
 			}
-			n++
 		}
 	}
-	return n
-}
-
-// TestALoopDetailShowsLoopAsTextEvenWhenTruncated is the loop marker: it is
-// spelled out in words, it survives the cut of a long detail, and the ↻ glyph the
-// arm used to have never appears.
-func TestALoopDetailShowsLoopAsTextEvenWhenTruncated(t *testing.T) {
-	l := newLoop(t)
-	utc(t)
-	l.seed(t,
-		dispatchEvent("feat/1-a", 1791360000000, "sage", "green", "colour28", "Alpha task", "standard", "claude", "sonnet"),
-		dispatchEvent("feat/2-b", 1791360060000, "atlas", "blue", "colour32", "Bravo task", "standard", "claude", "sonnet"),
-		statusEvent("worker:feat/1-a#s1", 1791361200000, "working", "plan-critic r2", "", ""),
-		statusEvent("worker:feat/2-b#s1", 1791361800000, "working", strings.Repeat("lengthy detail words ", 4)+"ending in r3", "", ""),
-	)
-	l.windows = "feat/1-a\nfeat/2-b"
-
-	if code, stderr := l.once(Request{}); code != exitOK {
-		t.Fatalf("code = %d, stderr %q", code, stderr)
-	}
-	text := l.diagram()
-	if !strings.Contains(text, `working · plan-critic r2 (loop) · since 08:20" {`) {
-		t.Errorf("the loop marker is missing:\n%s", text)
-	}
-	if !loopTruncated.MatchString(text) {
-		t.Errorf("a truncated detail lost its loop marker:\n%s", text)
-	}
-	if strings.Contains(text, "↻") {
-		t.Errorf("the glyph the arm dropped is back:\n%s", text)
+	if controlByte.MatchString(l.dot()) {
+		t.Errorf("a control byte reached the file: %q", l.dot())
 	}
 }
 
-// loopTruncated is the truncated detail's own line: cut short, then (loop).
-var loopTruncated = regexp.MustCompile(`lengthy detail[^"]*… \(loop\) · since 08:30" \{`)
+// controlByte is every control character except the newline between statements.
+// A tab off the pane listing, or an ESC off the bus, would reach a terminal
+// otherwise.
+var controlByte = regexp.MustCompile(`[\x00-\x09\x0b-\x1f]`)
 
 // TestStaleFinishedAndReapedRowsAreNotDrawn is the diagram's cut on the file: of a
 // bus with one windowed worker, one silent-but-dispatched one, one working row no
@@ -552,25 +392,21 @@ func TestStaleFinishedAndReapedRowsAreNotDrawn(t *testing.T) {
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	text := l.diagram()
-	for _, want := range []string{`sage\nAlpha task`, `iris\nEcho task`, `legend: "2 active · 0 blocked · 0 done"`} {
-		if !strings.Contains(text, want) {
-			t.Errorf("no %q in\n%s", want, text)
+	out := l.diagram()
+	for _, want := range []string{`sage\n1`, `iris\n5`, "working 2", "blocked 0", "done 0"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
 		}
 	}
-	if n := len(workerLines.FindAllString(text, -1)); n != 2 {
-		t.Errorf("%d worker boxes drawn, want 2:\n%s", n, text)
+	if n := len(planetNode.FindAllString(out, -1)); n != 2 {
+		t.Errorf("%d planets drawn, want 2:\n%s", n, out)
 	}
 	for _, banned := range []string{"atlas", "nova", "ember"} {
-		if strings.Contains(text, banned) {
-			t.Errorf("%s was drawn:\n%s", banned, text)
+		if strings.Contains(out, banned) {
+			t.Errorf("%s was drawn:\n%s", banned, out)
 		}
 	}
 }
-
-// workerLines is one worker box's opening line — the PR node and the hold are not
-// workers.
-var workerLines = regexp.MustCompile(`(?m)^w[0-9]+: `)
 
 // TestAFinishedBranchIsDrawnUntilItsWorktreeIsReaped is the same rule with the
 // evidence moving: `crew reap` takes the worktree, the row was the pointer to it,
@@ -581,8 +417,9 @@ func TestAFinishedBranchIsDrawnUntilItsWorktreeIsReaped(t *testing.T) {
 	l.seed(t,
 		dispatchEvent("feat/1-a", l.wallNow()*1000-1200000, "sage", "green", "colour28", "Alpha task", "standard", "claude", "sonnet"),
 		// Minutes before the pinned wall clock: the row is younger than staleAfter,
-		// so the worktree is its only evidence of life.
-		statusEvent("worker:feat/1-a#s1", l.wallNow()*1000-600000, "done", "", "", ""),
+		// so the worktree is its only evidence of life, and younger than the fold
+		// that moves a finished planet into the legend.
+		statusEvent("worker:feat/1-a#s1", l.wallNow()*1000-120000, "done", "", "", ""),
 	)
 	// No window and no age to spare: the worktree is the only thing keeping this
 	// row drawn.
@@ -592,16 +429,16 @@ func TestAFinishedBranchIsDrawnUntilItsWorktreeIsReaped(t *testing.T) {
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	if text := l.diagram(); !strings.Contains(text, `sage\nAlpha task`) {
-		t.Errorf("a finished branch with its worktree was not drawn:\n%s", text)
+	if out := l.diagram(); !strings.Contains(out, `sage\n1`) {
+		t.Errorf("a finished branch with its worktree was not drawn:\n%s", out)
 	}
 
 	l.worktrees(t)
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	if text := l.diagram(); strings.Contains(text, "sage") {
-		t.Errorf("the row outlived its worktree:\n%s", text)
+	if out := l.diagram(); strings.Contains(out, "sage") {
+		t.Errorf("the row outlived its worktree:\n%s", out)
 	}
 }
 
@@ -624,118 +461,201 @@ func TestAFinishedRowPastStaleAfterIsNotDrawn(t *testing.T) {
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	text := l.diagram()
-	if strings.Contains(text, "sage") {
-		t.Errorf("a finished row past staleAfter outlived its window:\n%s", text)
+	out := l.diagram()
+	if strings.Contains(out, "sage") {
+		t.Errorf("a finished row past staleAfter outlived its window:\n%s", out)
 	}
-	if !strings.Contains(text, `legend: "0 active · 0 blocked · 0 done"`) {
-		t.Errorf("the legend counted a row the cut dropped:\n%s", text)
+	if !strings.Contains(out, "done 0") {
+		t.Errorf("the legend counted a row the cut dropped:\n%s", out)
 	}
 }
 
 // staleAfterMs is the roster rule's bound in the bus's millisecond stamps.
 const staleAfterMs = 48 * 60 * 60 * 1000
 
-// TestUnchangedBusWritesNothingIsTheCmpGateEndToEnd: a rewrite, even of identical
-// bytes, would move the mtime off the epoch the fixture left there, and a one-word
-// change to a detail is exactly one line of the diagram out and one in.
-func TestUnchangedBusWritesNothingIsTheCmpGateEndToEnd(t *testing.T) {
+// TestUnchangedBusWritesNothingAndSkipsGraphviz is the gate end to end: a pass
+// whose dot equals the recorded one runs no neato and rewrites nothing, even when
+// the bus grew by a line the picture does not show; a state change redraws the
+// wrapper, the dot and the slots.
+func TestUnchangedBusWritesNothingAndSkipsGraphviz(t *testing.T) {
 	l := newLoop(t)
 	l.seedBus(t)
-	file := l.diagramPath()
+	files := []string{l.diagramPath(), filepath.Join(l.cdir(), fileDot), filepath.Join(l.cdir(), fileSlots)}
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	before := rewind(t, file)
-	beforeText := l.diagram()
-
-	if code, stderr := l.once(Request{}); code != exitOK {
-		t.Fatalf("code = %d, stderr %q", code, stderr)
+	if n := l.graphvizCalls(); n != 1 {
+		t.Fatalf("Graphviz ran %d times on the first pass", n)
 	}
-	if after := stampOf(t, file); after != before {
-		t.Fatalf("an unchanged bus rewrote the diagram: %s then %s", before, after)
+	before := l.diagram()
+	stamps := make([]string, len(files))
+	for i, f := range files {
+		stamps[i] = rewind(t, f)
 	}
 
+	// A detail is not on the picture: the bus changed, the dot did not.
 	l.appendBus(t, statusEvent("worker:feat/1-a#s1", 1791361500000, "working", "execute: lint", "", ""))
+	for range 2 {
+		if code, stderr := l.once(Request{}); code != exitOK {
+			t.Fatalf("code = %d, stderr %q", code, stderr)
+		}
+	}
+	if n := l.graphvizCalls(); n != 1 {
+		t.Errorf("an unchanged picture ran Graphviz again: %d runs", n)
+	}
+	for i, f := range files {
+		if after := stampOf(t, f); after != stamps[i] {
+			t.Errorf("an unchanged picture rewrote %s: %s then %s", filepath.Base(f), stamps[i], after)
+		}
+	}
+
+	l.appendBus(t, statusEvent("worker:feat/1-a#s1", 1791361600000, "blocked", "", "", ""))
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	if after := stampOf(t, file); after == before {
-		t.Fatalf("a changed bus left the diagram alone")
+	if n := l.graphvizCalls(); n != 2 {
+		t.Errorf("a changed picture ran Graphviz %d times in all, want 2", n)
+	}
+	for i, f := range files {
+		if after := stampOf(t, f); after == stamps[i] {
+			t.Errorf("a changed picture left %s alone", filepath.Base(f))
+		}
 	}
 	after := l.diagram()
-	out, in := diffLines(beforeText, after)
-	if out != 1 || in != 1 {
-		t.Errorf("the detail change moved %d lines out and %d in, want one of each\n%s", out, in, after)
+	if after == before {
+		t.Fatal("the published picture did not change")
 	}
-	if !strings.Contains(after, `working · execute: lint · since 08:25" {`) {
-		t.Errorf("the new detail is not what was drawn:\n%s", after)
+	if line := nodeLine(t, after, "p1"); !strings.Contains(line, "aeye-pulse") {
+		t.Errorf("the newly blocked worker does not pulse: %s", line)
+	}
+	if got, want := l.diagram(), "<svg>\n"+l.dot()+"</svg>\n"; got != want {
+		t.Errorf("the dot record is not what was drawn")
 	}
 }
 
-// diffLines is `diff | grep -c '^<'` and `'^>'`: how many lines belong to only one
-// of the two renders.
-func diffLines(before, after string) (int, int) {
-	set := func(text string) map[string]int {
-		out := map[string]int{}
-		for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
-			out[line]++
-		}
-		return out
-	}
-	a, b := set(before), set(after)
-	var onlyA, onlyB int
-	for line, n := range a {
-		if m := b[line]; m < n {
-			onlyA += n - m
-		}
-	}
-	for line, n := range b {
-		if m := a[line]; m < n {
-			onlyB += n - m
-		}
-	}
-	return onlyA, onlyB
-}
-
-// TestEveryPaletteColorCompilesThroughD2 is the pool's own guarantee: the renderer
-// writes each identity color as a quoted hex stroke looked up by name, so an entry
-// with no hex gets no stroke at all. The colors are read from the pool, so a new
-// one cannot join without this seeing it, and d2 — the real compiler — takes what
-// comes out.
-func TestEveryPaletteColorCompilesThroughD2(t *testing.T) {
+// TestAWorkerKeepsItsSlotAcrossPasses is the persistence end to end: the slots
+// file written by the first pass is what the second reads, so a worker whose
+// neighbour flips state is where it was.
+func TestAWorkerKeepsItsSlotAcrossPasses(t *testing.T) {
 	l := newLoop(t)
 	utc(t)
-	pool := identity.Palette()
-	events := make([]string, 0, len(pool))
-	windows := make([]string, 0, len(pool))
-	for i, color := range pool {
-		branch := fmt.Sprintf("feat/pal-%d", i+1)
-		events = append(events, dispatchEvent(branch, int64(1791360000000+(i+1)*1000),
-			fmt.Sprintf("pal%d", i+1), color, "colour28", fmt.Sprintf("Palette %d", i+1), "standard", "claude", "sonnet"))
-		windows = append(windows, branch)
+	l.seed(t,
+		dispatchEvent("feat/1-a", 1791360000000, "sage", "green", "colour28", "Alpha", "standard", "claude", "sonnet"),
+		dispatchEvent("feat/2-b", 1791360060000, "atlas", "blue", "colour32", "Bravo", "standard", "claude", "sonnet"),
+		statusEvent("worker:feat/1-a#s1", 1791361200000, "working", "", "", ""),
+		statusEvent("worker:feat/2-b#s1", 1791361200000, "working", "", "", ""),
+	)
+	l.windows = "feat/1-a\nfeat/2-b"
+	slots := func() slotState {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(l.cdir(), fileSlots))
+		if err != nil {
+			t.Fatalf("no slots file: %v", err)
+		}
+		var s slotState
+		if err := json.Unmarshal(data, &s); err != nil {
+			t.Fatal(err)
+		}
+		return s
 	}
-	l.seed(t, events...)
-	l.windows = strings.Join(windows, "\n")
+	posOf := func(out, id string) string {
+		return regexp.MustCompile(`pos="[^"]*"`).FindString(nodeLine(t, out, id))
+	}
 
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	// Every entry reached a stroke, so the compile below cannot pass vacuously.
-	text := l.diagram()
-	if n := strings.Count(text, `  style: {fill: transparent; stroke: "#`); n != len(pool) {
-		t.Errorf("%d palette colors reached a stroke, want %d", n, len(pool))
+	first := slots()
+	if len(first.Workers) != 2 {
+		t.Fatalf("slots after the first pass = %+v", first)
+	}
+	posA := posOf(l.diagram(), "p1")
+
+	// atlas flips to blocked and sage stays working: sage must not move, and atlas
+	// moves to the blocked sector.
+	l.appendBus(t, statusEvent("worker:feat/2-b#s1", 1791361500000, "blocked", "", "", ""))
+	if code, stderr := l.once(Request{}); code != exitOK {
+		t.Fatalf("code = %d, stderr %q", code, stderr)
+	}
+	second := slots()
+	if second.Workers["feat/1-a"] != first.Workers["feat/1-a"] {
+		t.Errorf("an unrelated flip moved sage: %+v then %+v", first.Workers["feat/1-a"], second.Workers["feat/1-a"])
+	}
+	if second.Workers["feat/2-b"].Class != classBlocked || second.Workers["feat/2-b"].Slot == first.Workers["feat/2-b"].Slot {
+		t.Errorf("atlas was not reseated for its new class: %+v then %+v", first.Workers["feat/2-b"], second.Workers["feat/2-b"])
+	}
+	if got := posOf(l.diagram(), "p1"); got != posA {
+		t.Errorf("sage drew at %s, then %s", posA, got)
+	}
+}
+
+// TestAFailingGraphvizKeepsTheOldPictureAndTheLiveCount: neato is gone or broken,
+// the pass says so, writes nothing, and still returns the model's live count, so
+// the daemon's quiet window keeps working.
+func TestAFailingGraphvizKeepsTheOldPictureAndTheLiveCount(t *testing.T) {
+	l := newLoop(t)
+	l.seedBus(t)
+	if code, stderr := l.once(Request{}); code != exitOK {
+		t.Fatalf("code = %d, stderr %q", code, stderr)
+	}
+	files := []string{l.diagramPath(), filepath.Join(l.cdir(), fileDot), filepath.Join(l.cdir(), fileSlots)}
+	want := map[string]string{}
+	stamps := map[string]string{}
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want[f], stamps[f] = string(data), rewind(t, f)
 	}
 
-	// d2 is the compiler the palette has to satisfy. The devshell has it; a sandbox
-	// that builds only ./crew does not.
-	d2, err := exec.LookPath("d2")
+	l.graphvizErr = errors.New("neato: exit status 1: syntax error in line 3")
+	l.appendBus(t, statusEvent("worker:feat/1-a#s1", 1791361600000, "blocked", "", "", ""))
+	runs := l.graphvizCalls()
+	n, err := pass(t.Context(), l.opts, l.paths, l.cdir(), l.crew, true, nil)
 	if err != nil {
-		t.Skip("d2 not on PATH")
+		t.Fatalf("a Graphviz failure is not a pass failure: %v", err)
 	}
-	out, err := exec.Command(d2, l.diagramPath(), filepath.Join(t.TempDir(), "palette.svg")).CombinedOutput()
-	if err != nil {
-		t.Errorf("d2 rejected the diagram: %v\n%s", err, out)
+	// feat/1-a is now blocked, feat/4-d dispatched, feat/3-c blocked, plus the hold.
+	if n != 4 {
+		t.Errorf("live = %d, want the model's 4", n)
+	}
+	if l.graphvizCalls() != runs+1 {
+		t.Errorf("Graphviz ran %d times, want one more", l.graphvizCalls()-runs)
+	}
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil || string(data) != want[f] || stampOf(t, f) != stamps[f] {
+			t.Errorf("%s was touched by a failed render (%v)", filepath.Base(f), err)
+		}
+	}
+	if errOut := l.opts.Stderr.(*bytes.Buffer).String(); !strings.Contains(errOut, "roster-render: neato: exit status 1: syntax error in line 3") {
+		t.Errorf("stderr does not name the failure: %q", errOut)
+	}
+
+	// neato comes back: the same bus draws.
+	l.graphvizErr = nil
+	if code, stderr := l.once(Request{}); code != exitOK {
+		t.Fatalf("code = %d, stderr %q", code, stderr)
+	}
+	if line := nodeLine(t, l.diagram(), "p1"); !strings.Contains(line, "aeye-pulse") {
+		t.Errorf("the redraw after the failure is stale: %s", line)
+	}
+}
+
+// TestAFirstRenderThatFailsWritesNoRecords: with nothing drawn yet there is no
+// picture to keep, and no slots or dot may be recorded for one that never was.
+func TestAFirstRenderThatFailsWritesNoRecords(t *testing.T) {
+	l := newLoop(t)
+	l.seedBus(t)
+	l.graphvizErr = errors.New("neato: not found")
+	if code, stderr := l.once(Request{}); code != exitOK || !strings.Contains(stderr, "neato: not found") {
+		t.Fatalf("code = %d, stderr %q", code, stderr)
+	}
+	for _, f := range []string{l.diagramPath(), filepath.Join(l.cdir(), fileDot), filepath.Join(l.cdir(), fileSlots)} {
+		if _, err := os.Stat(f); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s exists after a failed first render (%v)", filepath.Base(f), err)
+		}
 	}
 }
 
@@ -760,7 +680,7 @@ func TestDiagramFileIsNamedForItsRepoAndCrew(t *testing.T) {
 			if !want.MatchString(name) {
 				t.Errorf("%q is not a crew diagram name: want %s", name, want)
 			}
-			if got := l.diagram(); !strings.Contains(got, "Alpha task") {
+			if got := l.diagram(); !strings.Contains(got, `sage\n1`) {
 				t.Errorf("%s holds no worker:\n%s", name, got)
 			}
 			names = append(names, name)
@@ -774,21 +694,21 @@ func TestDiagramFileIsNamedForItsRepoAndCrew(t *testing.T) {
 		l := newLoop(t)
 		utc(t)
 		var files []string
-		for _, tc := range []struct{ common, title string }{
-			{filepath.Join(t.TempDir(), "x", "repo", ".git"), "from org x"},
-			{filepath.Join(t.TempDir(), "y", "repo", ".git"), "from org y"},
+		for _, tc := range []struct{ common, name string }{
+			{filepath.Join(t.TempDir(), "x", "repo", ".git"), "orgx"},
+			{filepath.Join(t.TempDir(), "y", "repo", ".git"), "orgy"},
 		} {
 			l.moveToRepo(t, tc.common)
 			l.seed(t,
-				dispatchEvent("feat/1-a", 1791360000000, "sage", "green", "colour28", tc.title, "standard", "claude", "sonnet"),
+				dispatchEvent("feat/1-a", 1791360000000, tc.name, "green", "colour28", "Alpha task", "standard", "claude", "sonnet"),
 				statusEvent("worker:feat/1-a#s1", 1791361200000, "working", "", "", ""),
 			)
 			if code, stderr := l.once(Request{}); code != exitOK {
 				t.Fatalf("%s: code = %d, stderr %q", tc.common, code, stderr)
 			}
 			files = append(files, l.diagramPath())
-			if !strings.Contains(l.diagram(), tc.title) {
-				t.Errorf("%s was not drawn in %s:\n%s", tc.title, tc.common, l.diagram())
+			if !strings.Contains(l.diagram(), tc.name) {
+				t.Errorf("%s was not drawn in %s:\n%s", tc.name, tc.common, l.diagram())
 			}
 		}
 		if files[0] == files[1] {
@@ -803,8 +723,12 @@ func TestDiagramFileIsNamedForItsRepoAndCrew(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(first), "from org x") || strings.Contains(string(first), "from org y") {
-			t.Errorf("the first repo drew the second's crew:\n%s", first)
+		svg, err := base64.StdEncoding.DecodeString(wrapperRe.FindStringSubmatch(string(first))[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(svg), "orgx") || strings.Contains(string(svg), "orgy") {
+			t.Errorf("the first repo drew the second's crew:\n%s", svg)
 		}
 	})
 }
@@ -879,12 +803,12 @@ func TestTheLaunchWorktreeCanBeReapedUnderTheRenderer(t *testing.T) {
 		t.Fatalf("the launch worktree survived the reap")
 	}
 
-	l.appendBus(t, statusEvent("worker:feat/1-a#s1", 1791361500000, "working", "after-reap detail", "", ""))
+	l.appendBus(t, statusEvent("worker:feat/1-a#s1", 1791361500000, "blocked", "", "", ""))
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
 	text := l.diagram()
-	if !strings.Contains(text, "after-reap detail") {
+	if line := nodeLine(t, text, "p1"); !strings.Contains(line, "aeye-pulse") {
 		t.Errorf("the renderer stopped drawing once its worktree was gone:\n%s", text)
 	}
 	if strings.Contains(text, "nova") {

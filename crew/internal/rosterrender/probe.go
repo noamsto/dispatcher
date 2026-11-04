@@ -1,9 +1,12 @@
 package rosterrender
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,6 +27,9 @@ type Probes struct {
 	// AeyePublish is `timeout 60 aeye publish-diagram <file> --pane <pane>
 	// [--open]` with both streams dropped; its status is the arm's.
 	AeyePublish func(ctx context.Context, file, pane string, open bool) error
+	// Graphviz is `neato -n -Tsvg`: the DOT text in, the svg out. Every node is
+	// pinned, so neato only draws.
+	Graphviz func(ctx context.Context, dot []byte) ([]byte, error)
 	// InstalledCrew is `_rr_installed_crew` over the given PATH.
 	InstalledCrew func(path string) string
 	// SpawnDetached starts argv as a detached child — new session, /dev/null
@@ -51,6 +57,7 @@ func Default() Probes {
 			}
 			return exec.CommandContext(ctx, args[0], args[1:]...).Run()
 		},
+		Graphviz:      graphviz,
 		InstalledCrew: InstalledCrew,
 		SpawnDetached: SpawnDetached,
 		Exec: func(path string, argv, env []string) error {
@@ -67,6 +74,25 @@ func Default() Probes {
 			}
 		},
 	}
+}
+
+// graphvizTimeout bounds one neato run so a hung one cannot hold the loop.
+const graphvizTimeout = 30 * time.Second
+
+func graphviz(ctx context.Context, dot []byte) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, graphvizTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "neato", "-n", "-Tsvg")
+	cmd.Stdin = bytes.NewReader(dot)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("neato: %w: %s", err, msg)
+		}
+		return nil, fmt.Errorf("neato: %w", err)
+	}
+	return stdout.Bytes(), nil
 }
 
 // rolePanes is the stdout of `tmux list-panes -a -F` with rolePaneFormat. A

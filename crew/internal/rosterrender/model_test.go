@@ -122,14 +122,10 @@ func TestModelWithoutABusIsTheArmsEmptyOne(t *testing.T) {
 	}
 }
 
-// TestRenderTextEndsWithExactlyOneNewline is the `$(…)` plus `printf '%s\n'` pair
-// the arm wrote the file with: every trailing newline of the jq output is dropped
-// and one is appended, so `cmp -s` sees the same bytes the next pass produces.
-func TestRenderTextEndsWithExactlyOneNewline(t *testing.T) {
-	text, err := renderText(decodeOne(t, `{"rows":[],"holds":[],"roles":[]}`))
-	if err != nil {
-		t.Fatal(err)
-	}
+// TestRenderedDOTEndsWithExactlyOneNewline: the pass compares the dot byte for
+// byte with the record it wrote, so the text must end as the file does.
+func TestRenderedDOTEndsWithExactlyOneNewline(t *testing.T) {
+	text, _, _ := emit(decodeOne(t, `{"rows":[],"holds":[],"roles":[]}`))
 	if !strings.HasSuffix(text, "\n") || strings.HasSuffix(text, "\n\n") {
 		t.Errorf("text ends with %q", text[len(text)-2:])
 	}
@@ -316,6 +312,51 @@ func TestLoopSigIsTheBusSizeThePaneAndTheRoles(t *testing.T) {
 	missing := bus.Paths{Common: t.TempDir(), Log: t.TempDir() + "/events.jsonl"}
 	if got := busSize(missing); got != 0 {
 		t.Errorf("busSize = %d", got)
+	}
+}
+
+// rowHosts is the model's rows as branch -> host ("" when a row has none).
+func rowHosts(t *testing.T, m map[string]any) map[string]string {
+	t.Helper()
+	rows, _ := m["rows"].([]any)
+	out := map[string]string{}
+	for _, r := range rows {
+		row, _ := r.(map[string]any)
+		b, _ := row["branch"].(string)
+		h, _ := row["host"].(string)
+		out[b] = h
+	}
+	return out
+}
+
+// TestModelRemoteRowCarriesItsHost: a remote worker's status rows never reach
+// this bus, so its only row is the synthesized dispatched one, and it names the
+// host the dispatch ran on. A newer local dispatch of the same branch drops it.
+func TestModelRemoteRowCarriesItsHost(t *testing.T) {
+	remoteDispatch := `{"ts":1791360000000,"crew_id":"c1","kind":"dispatch","branch":"feat/9-x","session":"s1","worker_id":"worker:feat/9-x#s1","engine":"claude","model":"sonnet","tier":"standard","title":"Xray","name":"sage","color":"green","tmux":"colour28","host":"mbp","remote":true}`
+	localDispatch := `{"ts":1791360100000,"crew_id":"c1","kind":"dispatch","branch":"feat/9-x","session":"s2","worker_id":"worker:feat/9-x#s2","engine":"claude","model":"sonnet","tier":"standard","title":"Xray","name":"sage","color":"green","tmux":"colour28"}`
+	tests := []struct {
+		name   string
+		events []string
+		host   string
+	}{
+		{"remote dispatch only", []string{remoteDispatch}, "mbp"},
+		{"newer local dispatch", []string{remoteDispatch, localDispatch}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p, _ := modelFixture(t, tc.events...)
+			m, err := model(t.Context(), p, "c1", 1791360300, nil, emptyRoster, emptyLive)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := rowStates(t, m); len(got) != 1 || got[0] != "feat/9-x dispatched" {
+				t.Fatalf("rows = %v", got)
+			}
+			if got := rowHosts(t, m)["feat/9-x"]; got != tc.host {
+				t.Errorf("host = %q, want %q", got, tc.host)
+			}
+		})
 	}
 }
 

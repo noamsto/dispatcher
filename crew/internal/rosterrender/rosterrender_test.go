@@ -293,15 +293,12 @@ func TestPanePIDMatchesIsTheArmsShapeCheck(t *testing.T) {
 	}
 }
 
-func TestReapedRowIsDoneInTheLegendAndDrawsItsPR(t *testing.T) {
-	text, err := renderText(decodeOne(t, `{"rows":[{"state":"reaped","pr_url":"https://github.com/o/r/pull/7","name":"n","title":"t","detail":"","sessions":[1]}],"holds":[],"roles":[]}`))
-	if err != nil {
-		t.Fatal(err)
+func TestReapedRowIsDoneInTheLegend(t *testing.T) {
+	text, _, lg := emit(decodeOne(t, `{"rows":[{"branch":"feat/7-x","state":"reaped","name":"n","ts":1800000000000}],"holds":[],"roles":[]}`))
+	if lg.done != 1 || !strings.Contains(text, "done 1") {
+		t.Errorf("legend does not count reaped as done: %+v\n%s", lg, text)
 	}
-	if !strings.Contains(text, "1 done") {
-		t.Errorf("legend does not count reaped as done:\n%s", text)
-	}
-	if !strings.Contains(text, `w1_pr: "PR #7"`) {
-		t.Errorf("reaped row drew no PR node:\n%s", text)
+	if !strings.Contains(text, `label="n\n7"`) {
+		t.Errorf("a fresh reaped row is not drawn:\n%s", text)
 	}
 }

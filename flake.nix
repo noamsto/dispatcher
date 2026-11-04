@@ -115,7 +115,7 @@
             # pinned bash (the interpreter writeShellApplication gives crew);
             # `crew class` and the rate sweep run model-resolve under it too.
             ldflags = ["-s" "-w" "-X main.bashBin=${pkgs.bash}/bin/bash" "-X main.budgetGateLib=${./adapters/core/budget-gate.sh}" "-X main.localModelsLib=${./adapters/core/local-models.sh}" "-X main.modelResolveScript=${./adapters/core/model-resolve.sh}"];
-            nativeCheckInputs = [pkgs.git pkgs.ps];
+            nativeCheckInputs = [pkgs.git pkgs.ps pkgs.graphviz];
             postInstall = "mv $out/bin/crew $out/bin/crew-go";
           };
 
@@ -187,7 +187,7 @@
           # crew never references the protocols and sources no shared lib: the two
           # libs stall-watch needs are baked into crewGo's ldflags.
           crew = let
-            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gtrash procps]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
+            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gtrash procps graphviz]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
           in
             pkgs.runCommand "crew" {nativeBuildInputs = [pkgs.makeWrapper];} ''
               mkdir -p $out/bin
@@ -442,12 +442,14 @@
               # silently uses whatever yq leaks in from the user profile and
               # fails in CI.
               pkgs.yq-go
-              # d2: the rosterrender package's palette test
-              # (TestEveryPaletteColorCompilesThroughD2) compiles every roster
-              # palette color with the real compiler, so a palette name d2
-              # rejects (steel, rust, sky before the renderer's mapping) fails
-              # CI instead of silently skipping.
+              # d2: TestWrapperCompilesThroughD2 compiles the one-node D2 image
+              # wrapper that publishes the roster svg. d2 is not in crewGo's
+              # nativeCheckInputs, so that test skips under the nix build and
+              # runs in CI's `nix develop` test run.
               pkgs.d2
+              # graphviz: `neato` renders the roster diagram (the rosterrender
+              # SVG golden/render tests).
+              pkgs.graphviz
               pkgs.git
               pkgs.tmux
               pkgs.gh
