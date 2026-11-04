@@ -276,7 +276,7 @@ func TestLiveHoldShown(t *testing.T) {
 func TestLiveAttentionLine(t *testing.T) {
 	asciiProfile(t)
 	out := newTestLiveView(t).View(80, 24)
-	if !strings.Contains(out, "1 blocked · 1 holds") {
+	if !strings.Contains(out, "1 blocked · 1 hold") {
 		t.Fatalf("attention line missing:\n%s", out)
 	}
 
@@ -284,7 +284,7 @@ func TestLiveAttentionLine(t *testing.T) {
 	snap.Roster.Crews[0].Workers = snap.Roster.Crews[0].Workers[:1] // sage only: nothing blocked
 	snap.Roster.Crews[0].Holds = nil
 	out = newLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(80, 24)
-	if strings.Contains(out, "blocked ·") || strings.Contains(out, " holds") {
+	if strings.Contains(out, "blocked ·") || strings.Contains(out, " hold") {
 		t.Fatalf("attention line shown with nothing to report:\n%s", out)
 	}
 }

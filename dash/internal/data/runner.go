@@ -45,6 +45,12 @@ func exitCode(err error) int {
 	return 127
 }
 
+// FailureLine is the first stderr line of a failed Run, or "exit <rc>" when
+// there is none: the one-line reason an action reports.
+func FailureLine(stderr []byte, err error) string {
+	return firstLineOrExit(stderr, exitCode(err))
+}
+
 // FakeExitError lets a FakeRunner response report a non-zero exit without a
 // real subprocess; it satisfies exitCoder the same way *exec.ExitError does.
 type FakeExitError struct{ Code int }

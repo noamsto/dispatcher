@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -88,9 +89,24 @@ func rowKey(crewID string, w map[string]any) string {
 	return crewID + "\x00" + branch + "\x00" + session
 }
 
+// liveMode is what owns the keyboard: the table, the reply prompt or the
+// nudge confirm.
+type liveMode int
+
+const (
+	modeNormal liveMode = iota
+	modeReply
+	modeConfirmNudge
+)
+
 type liveView struct {
 	deps liveDeps
+	acts actionDeps
 	now  func() time.Time
+
+	mode   liveMode
+	input  textinput.Model // the reply prompt
+	target data.Worker     // the worker the open prompt or confirm acts on
 
 	snap   data.Snapshot
 	loaded [numSources]bool
@@ -244,8 +260,13 @@ func (v liveView) Update(msg tea.Msg) (view, tea.Cmd) {
 		return v, nil
 
 	case tea.KeyMsg:
-		if v.detail {
+		switch {
+		case v.detail:
 			return v.handleDetailKey(msg)
+		case v.mode == modeReply:
+			return v.handleReplyKey(msg)
+		case v.mode == modeConfirmNudge:
+			return v.handleConfirmKey(msg)
 		}
 		return v.handleKey(msg)
 	}
@@ -262,6 +283,14 @@ func (v liveView) handleKey(msg tea.KeyMsg) (view, tea.Cmd) {
 		v.moveTo(0)
 	case "G":
 		v.moveTo(len(v.rows) - 1)
+	case "t":
+		return v.startAction(actJump)
+	case "o":
+		return v.startAction(actOpenPR)
+	case "m":
+		return v.startAction(actReply)
+	case "n":
+		return v.startAction(actNudge)
 	case "enter":
 		if v.cursor >= len(v.rows) || v.deps.eventsPath == "" {
 			return v, nil
@@ -308,9 +337,25 @@ func (v liveView) Keys() []key.Binding {
 			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 		}
 	}
+	switch v.mode {
+	case modeReply:
+		return []key.Binding{
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "send")),
+			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+		}
+	case modeConfirmNudge:
+		return []key.Binding{
+			key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm")),
+			key.NewBinding(key.WithKeys("n", "esc"), key.WithHelp("n/esc", "cancel")),
+		}
+	}
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "move")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "events")),
+		key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "jump")),
+		key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open PR")),
+		key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "reply")),
+		key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "nudge")),
 	}
 }
 
@@ -331,7 +376,8 @@ func (v liveView) Selection() data.Selection {
 	}
 }
 
-func (v liveView) Capturing() bool { return false }
+// Capturing is true while the reply prompt or nudge confirm owns the keys.
+func (v liveView) Capturing() bool { return v.mode != modeNormal }
 
 func (v liveView) View(w, h int) string {
 	if v.detail {
@@ -340,8 +386,9 @@ func (v liveView) View(w, h int) string {
 	return strings.Join(normalizeFrame(v.tableView(w, h), h, w), "\n")
 }
 
-// selectedPaneH is the rule plus the three selected-worker lines.
-const selectedPaneH = 4
+// selectedPaneH is the rule plus four selected-worker lines: where it
+// lives, its PR, and two lines of detail.
+const selectedPaneH = 5
 
 // minBodyH is the fewest table lines (rows and holds) worth giving up the
 // selected-worker pane for.
@@ -389,8 +436,13 @@ func (v liveView) tableView(w, h int) string {
 		}
 	}
 
+	// An open prompt or confirm renders on the pane, so it outranks the body.
+	needBody := minBodyH
+	if v.mode != modeNormal {
+		needBody = 0
+	}
 	paneH := 0
-	if len(v.rows) > 0 && h-len(top)-selectedPaneH >= minBodyH {
+	if len(v.rows) > 0 && h-len(top)-selectedPaneH >= needBody {
 		paneH = selectedPaneH
 	}
 	bodyH := max0(h - len(top) - paneH)
@@ -425,7 +477,11 @@ func (v liveView) attentionLines(w int) []string {
 		parts = append(parts, fmt.Sprintf("%d blocked", blocked))
 	}
 	if holds > 0 {
-		parts = append(parts, fmt.Sprintf("%d holds", holds))
+		noun := "holds"
+		if holds == 1 {
+			noun = "hold"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", holds, noun))
 	}
 	var out []string
 	if len(parts) > 0 {
@@ -443,9 +499,10 @@ func (v liveView) attentionLines(w int) []string {
 	return out
 }
 
-// selectedPane is the rule plus three lines about the selected worker:
-// where it lives, its full PR URL, and its detail text wrapped to the
-// remaining lines — the place truncated table cells are readable in full.
+// selectedPane is the rule plus four lines about the selected worker: where
+// it lives (or the open reply prompt / nudge confirm), its full PR URL, and
+// its detail text wrapped to the remaining two lines — the place truncated
+// table cells are readable in full.
 func (v liveView) selectedPane(w int) []string {
 	out := []string{ruleStyle.Render(strings.Repeat("─", w))}
 	sel, _ := v.Selection().(data.Worker)
@@ -463,7 +520,7 @@ func (v liveView) selectedPane(w int) []string {
 	if sel.PRURL != "" {
 		pr = cleanText(sel.PRURL)
 	}
-	out = append(out, truncateLine(where, w), truncateLine("PR "+pr, w))
+	out = append(out, truncateLine(v.promptOr(where, w), w), truncateLine("PR "+pr, w))
 
 	detail, _ := strField(row.w, "detail")
 	room := selectedPaneH - len(out)
@@ -480,6 +537,19 @@ func (v liveView) selectedPane(w int) []string {
 		out = append(out, "")
 	}
 	return out
+}
+
+// promptOr is the open reply prompt or nudge confirm, else fallback.
+func (v liveView) promptOr(fallback string, w int) string {
+	switch v.mode {
+	case modeReply:
+		in := v.input
+		in.Width = max0(w - ansi.StringWidth(in.Prompt) - 1)
+		return in.View()
+	case modeConfirmNudge:
+		return "nudge " + cleanText(nudgeTarget(v.target)) + "? y/N"
+	}
+	return fallback
 }
 
 // budgetLines is the strip of one segment per engine (its highest-used

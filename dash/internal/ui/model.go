@@ -40,6 +40,12 @@ type snapshotMsg struct {
 // live view's bus-change debounce).
 type requestRosterMsg struct{}
 
+// clearStatusMsg clears the status line it was scheduled for; a newer
+// status has a later at and survives.
+type clearStatusMsg struct{ at time.Time }
+
+const statusTTL = 10 * time.Second
+
 // Model is the root Bubble Tea model.
 type Model struct {
 	now     func() time.Time
@@ -51,6 +57,10 @@ type Model struct {
 
 	width, height int
 	ready         bool
+
+	status    string // last action outcome, shown above the help bar
+	statusErr bool
+	statusAt  time.Time
 
 	active int
 	views  [4]view
@@ -86,8 +96,10 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 	for i := range m.load {
 		m.load[i].inFlight = true
 	}
+	lv := newLiveView(m.snap, m.loaded(), live, now)
+	lv.acts = actionDeps{ctx: ctx, runner: deps.Runner, crew: deps.Crew, inTmux: deps.InTmux}
 	m.views = [4]view{
-		newLiveView(m.snap, m.loaded(), live, now),
+		lv,
 		newBudgetView(m.snap, m.loaded()),
 		newRunsView(m.snap, m.loaded()),
 		newSettingsView(m.snap, m.loaded()),
@@ -156,6 +168,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.request(msg.src))
 		}
 		return m, tea.Batch(cmds...)
+
+	case actionMsg:
+		m.status, m.statusErr, m.statusAt = msg.text, msg.err, m.now()
+		at := m.statusAt
+		return m, tea.Tick(statusTTL, func(time.Time) tea.Msg { return clearStatusMsg{at: at} })
+
+	case clearStatusMsg:
+		if msg.at.Equal(m.statusAt) {
+			m.status = ""
+		}
+		return m, nil
 
 	case requestRosterMsg:
 		return m, m.request(srcRoster)
@@ -228,7 +251,8 @@ func (m Model) View() string {
 	headerLines := strings.Split(tabBar, "\n")
 	footerLines := strings.Split(footer, "\n")
 
-	bodyH := max0(m.height - len(headerLines) - len(footerLines))
+	statusLines := m.statusLines()
+	bodyH := max0(m.height - len(headerLines) - len(statusLines) - len(footerLines))
 	bodyW := max0(m.width)
 	body := m.views[m.active].View(bodyW, bodyH)
 	bodyLines := normalizeFrame(body, bodyH, bodyW)
@@ -236,6 +260,7 @@ func (m Model) View() string {
 	all := make([]string, 0, m.height)
 	all = append(all, headerLines...)
 	all = append(all, bodyLines...)
+	all = append(all, statusLines...)
 	all = append(all, footerLines...)
 	for len(all) < m.height {
 		all = append(all, "")
@@ -244,6 +269,18 @@ func (m Model) View() string {
 		all = all[:m.height]
 	}
 	return strings.Join(all, "\n")
+}
+
+// statusLines is the one-line action status, or nothing when unset.
+func (m Model) statusLines() []string {
+	if m.status == "" {
+		return nil
+	}
+	line := truncateLine(m.status, m.width)
+	if m.statusErr {
+		line = warnStyle.Render(line)
+	}
+	return []string{line}
 }
 
 // renderTabs marks the active tab with a leading "▸ " (and a blank "  " on
