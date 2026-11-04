@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -141,11 +140,10 @@ func ServeFar(ctx context.Context, origin string, since int64, stderr io.Writer,
 }
 
 // AdmitHost reads a partner's stdout as untrusted data: one JSON object of at
-// most 4 MiB within the caps, every string stripped of control and invisible
-// characters and capped at peer.MaxBody bytes, every repo relabelled as host's,
-// and every identifier held to what a local status could carry (restrict).
-// An inbox event the fold's rule for overseer:<self> above cutoff refuses is
-// moved to Misrouted, by sender only; one naming an invalid crew id is dropped.
+// most 4 MiB within the caps, decoded into the far wire types and projected
+// field by field (farwire.go), every repo relabelled as host's. An inbox event
+// the fold's rule for overseer:<self> above cutoff refuses is moved to
+// Misrouted, by sender only.
 func AdmitHost(stdout []byte, host, self string, cutoff int64) (FarAnswer, error) {
 	if len(stdout) > farMaxBytes {
 		return FarAnswer{}, errors.New(overSize)
@@ -173,125 +171,18 @@ func AdmitHost(stdout []byte, host, self string, cutoff int64) (FarAnswer, error
 	if err := recheck(obj, self, cutoff); err != nil {
 		return FarAnswer{}, err
 	}
-	clean, err := json.Marshal(scrubValue(obj))
+	raw, err := json.Marshal(obj)
 	if err != nil {
 		return FarAnswer{}, fmt.Errorf("answer: %s", oneLine(err))
 	}
-	var wire struct {
-		Self      string          `json:"self"`
-		Status    json.RawMessage `json:"status"`
-		Inbox     []FarBatch      `json:"inbox"`
-		Misrouted []FarMisrouted  `json:"misrouted"`
-		Cursor    int64           `json:"cursor"`
-	}
-	if err := decodeNumbers(clean, &wire); err != nil {
+	var wire farWire
+	if err := decodeNumbers(raw, &wire); err != nil {
 		return FarAnswer{}, fmt.Errorf("answer: %s", oneLine(err))
 	}
-	var status StatusDoc
-	if err := decodeNumbers(wire.Status, &status); err != nil {
-		return FarAnswer{}, fmt.Errorf("answer status: %s", oneLine(err))
-	}
-	if err := capStatus(status); err != nil {
+	if err := capStatus(wire.Status); err != nil {
 		return FarAnswer{}, err
 	}
-	status.Hosts = []HostStatus{}
-	if status.Repos == nil {
-		status.Repos = []RepoStatus{}
-	}
-	if status.Skipped == nil {
-		status.Skipped = []Skipped{}
-	}
-	restrict(&status)
-	for i := range status.Repos {
-		status.Repos[i].Host = host
-	}
-	ans := FarAnswer{V: 1, Self: repos.Sanitize(wire.Self), TS: ts, Status: status, Inbox: wire.Inbox, Misrouted: []FarMisrouted{}, Cursor: wire.Cursor}
-	if ans.Inbox == nil {
-		ans.Inbox = []FarBatch{}
-	}
-	for i, b := range ans.Inbox {
-		ans.Inbox[i].Repo, ans.Inbox[i].Common = repos.Sanitize(b.Repo), repos.Sanitize(b.Common)
-	}
-	// A misrouted msg may name no crew at all; one naming an invalid id is
-	// dropped, as the event it came from would be.
-	for _, m := range wire.Misrouted {
-		if m.CrewID != "" && !bus.ValidCrewID(m.CrewID) {
-			continue
-		}
-		m.Repo, m.Common, m.From = repos.Sanitize(m.Repo), repos.Sanitize(m.Common), repos.Sanitize(m.From)
-		ans.Misrouted = append(ans.Misrouted, m)
-	}
-	return ans, nil
-}
-
-var (
-	dispatcherStates = []string{"live", "dead", "closed"}
-	laneStates       = []string{"alive", "stale", "dead"}
-	attentions       = []string{"attended", "unattended", "idle", "guest"}
-	// workerNames are the row fields an overseer line copies.
-	workerNames = []string{"branch", "from", "name"}
-)
-
-// restrict holds a far status to what a local one carries: repo labels, the
-// queue's ids and the row fields a lane line copies go through
-// repos.Sanitize, a queue entry naming an invalid crew id is dropped, and a
-// crew whose id, dispatcher state, lane, attention or home no fleet status
-// writes is moved to Skipped.
-func restrict(s *StatusDoc) {
-	for i := range s.Repos {
-		r := &s.Repos[i]
-		r.Repo, r.Common = repos.Sanitize(r.Repo), repos.Sanitize(r.Common)
-		kept := []CrewStatus{}
-		for _, c := range r.Crews {
-			if why := crewRefusal(c); why != "" {
-				s.Skipped = append(s.Skipped, Skipped{Path: r.Common, Status: why})
-				continue
-			}
-			for _, w := range c.Workers {
-				for _, k := range workerNames {
-					if v, ok := w[k].(string); ok {
-						w[k] = repos.Sanitize(v)
-					}
-				}
-			}
-			kept = append(kept, c)
-		}
-		r.Crews = kept
-	}
-	q := &s.Queue
-	if h := q.Head; h != nil {
-		h.Repo, h.ID = repos.Sanitize(h.Repo), repos.Sanitize(h.ID)
-		if !bus.ValidCrewID(h.CrewID) {
-			q.Head = nil
-		}
-	}
-	q.Demoted = slices.DeleteFunc(q.Demoted, func(d QueueDemote) bool { return !bus.ValidCrewID(d.CrewID) })
-	for i, d := range q.Demoted {
-		q.Demoted[i].Repo, q.Demoted[i].ID = repos.Sanitize(d.Repo), repos.Sanitize(d.ID)
-	}
-	q.Parked = slices.DeleteFunc(q.Parked, func(p QueueParked) bool { return !bus.ValidCrewID(p.CrewID) })
-	for i, p := range q.Parked {
-		q.Parked[i].Repo, q.Parked[i].ID = repos.Sanitize(p.Repo), repos.Sanitize(p.ID)
-	}
-}
-
-// crewRefusal is why a far crew is not one a fleet status could have built,
-// "" when it is. Only a valid crew id is ever named.
-func crewRefusal(c CrewStatus) string {
-	d := c.Dispatcher
-	switch {
-	case !bus.ValidCrewID(c.CrewID):
-		return "invalid crew id"
-	case !slices.Contains(dispatcherStates, d.State):
-		return "crew " + c.CrewID + ": invalid dispatcher state"
-	case d.Lane != nil && !slices.Contains(laneStates, *d.Lane):
-		return "crew " + c.CrewID + ": invalid lane state"
-	case !slices.Contains(attentions, c.Attention):
-		return "crew " + c.CrewID + ": invalid attention"
-	case d.Home != nil && !remote.HostNameRe.MatchString(*d.Home):
-		return "crew " + c.CrewID + ": invalid home"
-	}
-	return ""
+	return wire.project(host, self, ts), nil
 }
 
 func decodeNumbers(data []byte, v any) error {
@@ -300,7 +191,7 @@ func decodeNumbers(data []byte, v any) error {
 	return dec.Decode(v)
 }
 
-func capStatus(s StatusDoc) error {
+func capStatus(s farStatus) error {
 	if n := len(s.Repos); n > farMaxRepos {
 		return fmt.Errorf("answer has %d repos, over the cap of %d repos", n, farMaxRepos)
 	}
@@ -319,9 +210,9 @@ func capStatus(s StatusDoc) error {
 
 // recheck runs the overseer fold's rule again on the raw answer: an inbox
 // event qualifies only as a msg to overseer:<self> from the dispatcher of the
-// crew it names, whole-ms ts above cutoff, body within peer.MaxBody. Any other
-// moves to misrouted by {repo, crew_id, from, ts}; a batch left empty is
-// dropped.
+// crew it names, whole-ms ts above cutoff, a string body within peer.MaxBody.
+// Any other moves to misrouted by {repo, crew_id, from, ts}; a batch left
+// empty is dropped.
 func recheck(obj map[string]any, self string, cutoff int64) error {
 	batches, _ := obj["inbox"].([]any)
 	n := 0
@@ -363,50 +254,14 @@ func recheck(obj map[string]any, self string, cutoff int64) error {
 	return nil
 }
 
-// farEventOK is the fold's rule. A string body is the text `crew overseer msg`
-// bounded; any other body is bounded encoded.
+// farEventOK is the fold's rule, with the body a `crew msg` reply posts: text
+// within peer.MaxBody.
 func farEventOK(ev map[string]any, self string, cutoff int64) bool {
 	crew, _ := ev["crew_id"].(string)
 	ts, whole := watch.WholeMS(ev["ts"])
-	if ev["kind"] != "msg" || ev["to"] != "overseer:"+self || !bus.ValidCrewID(crew) || ev["from"] != "dispatcher:"+crew || !whole || ts <= cutoff {
-		return false
-	}
-	if body, ok := ev["body"].(string); ok {
-		return len(body) <= peer.MaxBody
-	}
-	body, err := json.Marshal(ev["body"])
-	return err == nil && len(body) <= peer.MaxBody
-}
-
-// scrubValue is v with every string and map key scrubbed. A key that only
-// scrubs into another never shadows it, and colliding keys resolve in sorted
-// order, so the result does not depend on map order.
-func scrubValue(v any) any {
-	switch x := v.(type) {
-	case string:
-		return scrub(x)
-	case []any:
-		out := make([]any, len(x))
-		for i, e := range x {
-			out[i] = scrubValue(e)
-		}
-		return out
-	case map[string]any:
-		out := make(map[string]any, len(x))
-		for k, e := range x {
-			if scrub(k) == k {
-				out[k] = scrubValue(e)
-			}
-		}
-		for _, k := range slices.Sorted(maps.Keys(x)) {
-			ck := scrub(k)
-			if _, taken := out[ck]; !taken {
-				out[ck] = scrubValue(x[k])
-			}
-		}
-		return out
-	}
-	return v
+	body, text := ev["body"].(string)
+	return ev["kind"] == "msg" && ev["to"] == "overseer:"+self && bus.ValidCrewID(crew) && ev["from"] == "dispatcher:"+crew &&
+		whole && ts > cutoff && text && len(body) <= peer.MaxBody
 }
 
 // scrub drops control (C0, DEL, C1) and invisible characters from s and caps
@@ -674,9 +529,10 @@ func demoteGuests(doc *StatusDoc) {
 }
 
 // probeMemo makes an overseer's --host probes read-only and bounded: only
-// `crew roster --live -- <crew>` runs, each within the federate timeout, and
-// a host whose transport failed once in this collection fails its later
-// probes at once. Probes run concurrently across crews, hence the mutex.
+// `crew roster --live -- <crew>` runs, each within the federate timeout and
+// farMaxBytes, its rows projected as a far status's are, and a host whose
+// transport failed once in this collection fails its later probes at once.
+// Probes run concurrently across crews, hence the mutex.
 type probeMemo struct {
 	timeout time.Duration
 	mu      sync.Mutex
@@ -698,9 +554,22 @@ func (m *probeMemo) wrap(capture roster.Capture, crew string) roster.Capture {
 		}
 		ctx, cancel := context.WithTimeout(ctx, m.timeout)
 		defer cancel()
+		out := &cappedWriter{max: farMaxBytes}
 		errb := &headWriter{max: stderrMax}
-		rc := capture(ctx, host, argv, stdout, errb)
+		rc := capture(ctx, host, argv, out, errb)
+		// An answer over the cap is this repo's alone, as a refused write can
+		// end the transport with any status.
+		if out.over {
+			say(stderr, "%s\n", overSize)
+			return 1
+		}
 		if rc == 0 {
+			rows, err := projectRows(out.buf.Bytes())
+			if err != nil {
+				say(stderr, "%s\n", err)
+				return 1
+			}
+			_, _ = stdout.Write(rows)
 			_, _ = io.WriteString(stderr, errb.String())
 			return 0
 		}
@@ -717,6 +586,26 @@ func (m *probeMemo) wrap(capture roster.Capture, crew string) roster.Capture {
 		say(stderr, "%s\n", line)
 		return rc
 	}
+}
+
+// projectRows is a far `crew roster --live` answer with each row projected:
+// one JSON array, its rows that are no object or do not hold dropped.
+func projectRows(stdout []byte) ([]byte, error) {
+	var rows []json.RawMessage
+	if err := json.Unmarshal(stdout, &rows); err != nil || rows == nil {
+		return nil, errors.New("remote roster is not an array")
+	}
+	kept := []map[string]any{}
+	for _, r := range rows {
+		var raw map[string]json.RawMessage
+		if json.Unmarshal(r, &raw) != nil || raw == nil {
+			continue
+		}
+		if row := projectWorker(raw); row != nil {
+			kept = append(kept, row)
+		}
+	}
+	return json.Marshal(kept)
 }
 
 // guestHomes reads the `@crew_id`/`@crew_dispatcher_host` window stamps: per

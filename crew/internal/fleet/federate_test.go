@@ -7,8 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -121,7 +124,7 @@ func nowMS() int64 { return fixedNow.UnixMilli() }
 func TestFederateTwoHostsUp(t *testing.T) {
 	far := farFix(t, "mbp",
 		wstatus(100, "c9", "feat/z", "working", ""),
-		wmsg(50, "c9", "dispatcher:c9", "overseer:halo", `{"kind":"ack","re":7}`),
+		wmsg(50, "c9", "dispatcher:c9", "overseer:halo", `"{\"kind\":\"ack\",\"re\":7}"`),
 		wmsg(40, "c9", "worker:feat/z#s1-1", "overseer:halo", `{"kind":"ack"}`),
 	)
 	far.windows("feat/z")
@@ -445,9 +448,9 @@ func TestAdmitHostRechecksEvents(t *testing.T) {
 	if len(ans.Inbox) != 1 || len(ans.Inbox[0].Events) != 1 || ans.Inbox[0].Events[0]["ts"] != json.Number(strconv.FormatInt(ago(30), 10)) {
 		t.Fatalf("inbox = %+v, want only the dispatcher's ack", ans.Inbox)
 	}
+	// The msg from worker:feat/z#s1-1\x1b names no valid sender: dropped.
 	want := []FarMisrouted{
 		{Repo: "acme/alpha", CrewID: "c9", From: "dispatcher:c9", TS: ago(28)},
-		{Repo: "acme/alpha", CrewID: "c9", From: "worker:feat/z#s1-1", TS: ago(27)},
 		{Repo: "acme/alpha", CrewID: "", From: "dispatcher:", TS: ago(26)},
 		{Repo: "acme/alpha", CrewID: "c9", From: "dispatcher:c9", TS: 0},
 		{Repo: "acme/alpha", CrewID: "c9", From: "dispatcher:c9", TS: ago(2000)},
@@ -465,37 +468,50 @@ func TestAdmitHostSanitizes(t *testing.T) {
 	status := a["status"].(map[string]any)
 	repo := status["repos"].([]any)[0].(map[string]any)
 	repo["host"] = "evil"
-	repo["repo"] = "acme/\x1b[2Jalpha\u200b"
+	bad := maps.Clone(repo)
+	bad["common"], bad["repo"] = "/git/beta/.git", "acme/\x1b[2Jbeta\u200b"
+	status["repos"] = append(status["repos"].([]any), bad)
+	status["skipped"] = []any{map[string]any{"path": "/git/gamma/.git", "status": strings.Repeat("é", peer.MaxBody) + "\x1b"}}
 	worker := repo["crews"].([]any)[0].(map[string]any)["workers"].([]any)[0].(map[string]any)
-	worker["na\u202eme"] = "ot\x07ter\u0085"
-	worker["title"] = strings.Repeat("é", peer.MaxBody)
-	a["misrouted"] = []any{map[string]any{"repo": "acme/alpha", "crew_id": "c9\u2066", "from": "worker:x\x00y", "ts": ago(40)}}
+	worker["na\u202eme"] = "otter"
+	worker["name"] = "ot\x07ter\u0085"
+	a["misrouted"] = []any{
+		map[string]any{"repo": "acme/alpha", "crew_id": "c9\u2066", "from": "worker:xy", "ts": ago(40)},
+		map[string]any{"repo": "acme/alpha", "crew_id": "c9", "from": "worker:x\x00y", "ts": ago(39)},
+		map[string]any{"repo": "acme/alpha", "crew_id": "c9", "from": "worker:xy", "ts": ago(38)},
+	}
 	a["self"] = "mbp\x1b"
 
 	ans, err := AdmitHost(marshal(t, a), "mbp", "halo", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(ans.Status.Repos) != 1 {
+		t.Fatalf("repos = %+v, want beta's label dropped", ans.Status.Repos)
+	}
 	r := ans.Status.Repos[0]
-	if r.Host != "mbp" || r.Repo != "acme/?2Jalpha" {
+	if r.Host != "mbp" || r.Repo != "acme/alpha" {
 		t.Errorf("repo host/label = %q/%q", r.Host, r.Repo)
 	}
 	w := r.Crews[0].Workers[0]
-	if w["name"] != "otter" {
-		t.Errorf("worker = %v, want name otter with its key and value stripped", w)
+	if _, has := w["name"]; has || w["branch"] != "feat/z" {
+		t.Errorf("worker = %v, want its invalid name dropped and the invisible-laced key unread", w)
 	}
-	title, _ := w["title"].(string)
-	if len(title) > peer.MaxBody || !utf8.ValidString(title) || title == "" {
-		t.Errorf("title is %d bytes, valid=%v; want capped at %d rune-safe", len(title), utf8.ValidString(title), peer.MaxBody)
+	sk := ans.Status.Skipped
+	if len(sk) != 2 || sk[1] != (Skipped{Path: "/git/beta/.git", Status: "invalid repo label"}) {
+		t.Fatalf("skipped = %+v, want gamma's and beta's", sk)
+	}
+	if s := sk[0].Status; len(s) > peer.MaxBody || !utf8.ValidString(s) || s == "" || strings.ContainsRune(s, '\x1b') {
+		t.Errorf("skipped status is %d bytes, valid=%v; want scrubbed and capped at %d rune-safe", len(s), utf8.ValidString(s), peer.MaxBody)
 	}
 	if body := ans.Inbox[0].Events[0]["body"]; body != `{"kind":"ack","text":"hi"}` {
 		t.Errorf("body = %q", body)
 	}
-	if m := ans.Misrouted; len(m) != 1 || m[0].CrewID != "c9" || m[0].From != "worker:xy" {
-		t.Errorf("misrouted = %+v", m)
+	if m := ans.Misrouted; len(m) != 1 || m[0].TS != ago(38) {
+		t.Errorf("misrouted = %+v, want only the valid one", m)
 	}
-	if ans.Self != "mbp" {
-		t.Errorf("self = %q", ans.Self)
+	if ans.Self != "" {
+		t.Errorf("self = %q, want an invalid self-name dropped", ans.Self)
 	}
 }
 
@@ -743,10 +759,15 @@ func TestAdmitHostRestrictsFarIdentifiers(t *testing.T) {
 	)
 	status := a["status"].(map[string]any)
 	repo := status["repos"].([]any)[0].(map[string]any)
-	repo["repo"], repo["common"] = "a/b$(id)", "/git/a b;`x`/.git"
+	bad := maps.Clone(repo)
+	bad["repo"], bad["common"] = "a/b$(id)", "/git/a b;`x`/.git"
+	status["repos"] = append(status["repos"].([]any), bad)
 	good := repo["crews"].([]any)[0].(map[string]any)
-	worker := good["workers"].([]any)[0].(map[string]any)
-	worker["branch"], worker["from"], worker["name"] = "feat/$(id)", "worker:x;y", "n m`"
+	good["workers"] = []any{
+		map[string]any{"branch": "feat/$(id)", "state": "working"},
+		map[string]any{"branch": "feat/y", "from": "worker:x;y", "state": "working"},
+		map[string]any{"branch": "feat/n", "name": "n m`", "state": "working"},
+	}
 	crewWith := func(id string, edit func(c, d map[string]any)) map[string]any {
 		d := map[string]any{"state": "dead", "pid": nil, "pane": nil, "lane": nil, "last_event_s": nil, "home": nil}
 		c := map[string]any{"crew_id": id, "attention": "idle", "workers": []any{}, "holds": []any{}, "overseer_inbox": []any{}, "dispatcher": d}
@@ -761,20 +782,33 @@ func TestAdmitHostRestrictsFarIdentifiers(t *testing.T) {
 		crewWith("c5", func(_, d map[string]any) { d["lane"] = "stale" }),
 	}
 	status["queue"] = map[string]any{
-		"head":    map[string]any{"repo": "a/b$(id)", "crew_id": "c9", "id": "h 1;x", "waited_s": 5},
-		"demoted": []any{map[string]any{"repo": "a/b", "crew_id": evil, "id": "h2", "first_due": 1, "demoted_at": 2}},
-		"parked":  []any{map[string]any{"repo": "r(", "crew_id": "c9", "id": "i`d", "reason": "demoted"}},
+		"head": map[string]any{"repo": "a/b", "crew_id": "c9", "id": "h 1;x", "waited_s": 5},
+		"demoted": []any{
+			map[string]any{"repo": "a/b", "crew_id": evil, "id": "1700000000000-1", "first_due": 1, "demoted_at": 2},
+			map[string]any{"repo": "a/b", "crew_id": "c9", "id": "1700000000000-2", "first_due": 1, "demoted_at": 2},
+		},
+		"parked": []any{
+			map[string]any{"repo": "r(", "crew_id": "c9", "id": "1700000000000-3", "reason": "demoted"},
+			map[string]any{"repo": "a/b", "crew_id": "c9", "id": "i`d", "reason": "demoted"},
+			map[string]any{"repo": "a/b", "crew_id": "c9", "id": "1700000000000-4", "reason": "x y"},
+			map[string]any{"repo": "a/b", "crew_id": "c9", "id": "1700000000000-5", "reason": "demoted"},
+		},
 	}
-	a["inbox"].([]any)[0].(map[string]any)["repo"] = "a/b$(id)"
-	a["inbox"].([]any)[0].(map[string]any)["common"] = "/x y$(z)"
+	a["inbox"] = append(a["inbox"].([]any), map[string]any{"repo": "a/b$(id)", "common": "/x y$(z)", "cursor": ago(10),
+		"events": []any{farEvent(ago(28), "c9", "dispatcher:c9", "overseer:halo", "{}")}})
 	a["misrouted"] = []any{
-		map[string]any{"repo": "a/b$(id)", "common": "/x y", "crew_id": evil, "from": "worker:a", "ts": ago(40)},
-		map[string]any{"repo": "a/b$(id)", "common": "/x y", "crew_id": "c9", "from": "worker:$(id)", "ts": ago(41)},
+		map[string]any{"repo": "a/b", "common": "/x/y", "crew_id": evil, "from": "worker:a", "ts": ago(40)},
+		map[string]any{"repo": "a/b", "common": "/x/y", "crew_id": "c9", "from": "worker:$(id)", "ts": ago(41)},
+		map[string]any{"repo": "a/b$(id)", "common": "/x/y", "crew_id": "c9", "from": "worker:a", "ts": ago(42)},
+		map[string]any{"repo": "a/b", "common": "/x/y", "crew_id": "c9", "from": "worker:a", "ts": ago(43)},
 	}
 
 	ans, err := AdmitHost(marshal(t, a), "mbp", "halo", 0)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(ans.Status.Repos) != 1 {
+		t.Fatalf("repos = %+v, want the repo with an invalid label and common dir dropped", ans.Status.Repos)
 	}
 	var ids []string
 	for _, c := range ans.Status.Repos[0].Crews {
@@ -783,19 +817,23 @@ func TestAdmitHostRestrictsFarIdentifiers(t *testing.T) {
 	if !slices.Equal(ids, []string{"c9", "c5"}) {
 		t.Errorf("crews = %q, want only c9 and c5: an invalid id, state, lane or attention drops the crew", ids)
 	}
-	if n := len(ans.Status.Skipped); n != 4 {
-		t.Errorf("skipped = %+v, want the 4 dropped crews", ans.Status.Skipped)
+	if w := ans.Status.Repos[0].Crews[0].Workers; len(w) != 1 || w[0]["branch"] != "feat/n" || w[0]["name"] != nil {
+		t.Errorf("c9 workers = %v, want only feat/n, its name dropped: an invalid branch or sender drops the row", w)
+	}
+	if n := len(ans.Status.Skipped); n != 5 {
+		t.Errorf("skipped = %+v, want the 4 dropped crews and the dropped repo", ans.Status.Skipped)
 	}
 	if len(ans.Inbox) != 1 || len(ans.Inbox[0].Events) != 1 || ans.Inbox[0].Events[0]["crew_id"] != "c9" {
-		t.Errorf("inbox = %+v, want only c9's reply", ans.Inbox)
+		t.Errorf("inbox = %+v, want only c9's reply in the valid batch", ans.Inbox)
 	}
-	if len(ans.Misrouted) != 1 || ans.Misrouted[0].CrewID != "c9" {
-		t.Errorf("misrouted = %+v, want only c9's: an invalid crew id is dropped", ans.Misrouted)
+	if len(ans.Misrouted) != 1 || ans.Misrouted[0].TS != ago(43) {
+		t.Errorf("misrouted = %+v, want only the valid one: an invalid crew id, sender or repo drops it", ans.Misrouted)
 	}
-	if q := ans.Status.Queue; q.Head == nil || len(q.Demoted) != 0 || len(q.Parked) != 1 {
-		t.Errorf("queue = %+v, want the head and the parked entry, the evil demotion dropped", q)
+	q := ans.Status.Queue
+	if q.Head != nil || len(q.Demoted) != 1 || q.Demoted[0].ID != "1700000000000-2" || len(q.Parked) != 1 || q.Parked[0].ID != "1700000000000-5" {
+		t.Errorf("queue = %+v, want the head, the evil demotion and the invalid parked entries dropped", q)
 	}
-	for _, part := range []any{ans.Status.Repos, ans.Status.Queue, ans.Misrouted, ans.Inbox[0].Repo, ans.Inbox[0].Common} {
+	for _, part := range []any{ans.Status.Repos, ans.Status.Queue, ans.Misrouted, ans.Inbox} {
 		raw := marshal(t, part)
 		if i := bytes.IndexAny(raw, shellish); i >= 0 {
 			t.Errorf("%q survived admission in %s", raw[i], raw)
@@ -988,8 +1026,9 @@ func TestOverseerProbeMemoizesOnlyTransportFailures(t *testing.T) {
 	argv := func(crew string) []string { return []string{"crew", "roster", "--live", "--", crew} }
 	var calls []string
 	capture := func(rc int, line string) roster.Capture {
-		return func(_ context.Context, host string, argv []string, _, stderr io.Writer) int {
+		return func(_ context.Context, host string, argv []string, stdout, stderr io.Writer) int {
 			calls = append(calls, host+" "+argv[len(argv)-1])
+			_, _ = io.WriteString(stdout, "[]")
 			_, _ = io.WriteString(stderr, line+"\n")
 			return rc
 		}
@@ -1009,5 +1048,378 @@ func TestOverseerProbeMemoizesOnlyTransportFailures(t *testing.T) {
 	}
 	if want := []string{"h1 c1", "h1 c2", "h2 c3"}; !slices.Equal(calls, want) {
 		t.Errorf("calls = %q, want %q", calls, want)
+	}
+}
+
+// poison is what each far string becomes in TestAdmitHostPoisonEveryLeaf:
+// shell, glob and line-breaking characters around the letters x, i and d, so
+// a rewrite that strips them leaves "xid".
+const poison = "x;$(id)`|&<>'\"*? \n"
+
+// farTextPaths are the only far strings admission copies as text.
+var farTextPaths = []string{"status.skipped[].status", "inbox[].events[].body"}
+
+var farIdentRE = regexp.MustCompile(`^[A-Za-z0-9:/#._@-]*$`)
+
+// keyedPaths are the far objects whose keys are data, not field names.
+var keyedPaths = []string{"status.machine.engines"}
+
+// norm is a concrete leaf path as its type names it: a list index is [], a
+// key of a keyed object {}.
+func norm(path string) string {
+	out := ""
+	for seg := range strings.SplitSeq(path, ".") {
+		switch {
+		case seg != "" && strings.Trim(seg, "0123456789") == "":
+			out += "[]"
+		case slices.Contains(keyedPaths, out):
+			out += "{}"
+		case out == "":
+			out = seg
+		default:
+			out += "." + seg
+		}
+	}
+	return out
+}
+
+// typeLeaves adds the path of every string field t holds, by json tag, to out;
+// with have, only those v carries. A row typed map[string]any is poisoned
+// value by value instead, and a far status's hosts are never read.
+func typeLeaves(t reflect.Type, v any, have bool, path string, out map[string]bool) {
+	switch t.Kind() {
+	case reflect.Pointer:
+		typeLeaves(t.Elem(), v, have, path, out)
+	case reflect.String:
+		if _, ok := v.(string); ok || !have {
+			out[path] = true
+		}
+	case reflect.Interface:
+		// Any value at all: whatever strings it holds, the fixture must carry it.
+		if v != nil || !have {
+			out[path] = true
+		}
+	case reflect.Invalid, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128, reflect.Chan, reflect.Func, reflect.UnsafePointer:
+	case reflect.Slice, reflect.Array:
+		list, _ := v.([]any)
+		if !have {
+			list = []any{nil}
+		}
+		for _, e := range list {
+			typeLeaves(t.Elem(), e, have, path+"[]", out)
+		}
+	case reflect.Map:
+		if t.Elem().Kind() == reflect.Interface {
+			return
+		}
+		m, _ := v.(map[string]any)
+		if !have {
+			m = map[string]any{"": nil}
+		}
+		for _, e := range m {
+			out[path+"{key}"] = true
+			typeLeaves(t.Elem(), e, have, path+"{}", out)
+		}
+	case reflect.Struct:
+		m, _ := v.(map[string]any)
+		for f := range t.Fields() {
+			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			p := strings.TrimPrefix(path+"."+name, ".")
+			if name == "" || name == "-" || p == "status.hosts" {
+				continue
+			}
+			if e, ok := m[name]; ok || !have {
+				typeLeaves(f.Type, e, have, p, out)
+			}
+		}
+	}
+}
+
+// walkStrings visits every string of a decoded JSON value, and every key of a
+// keyed object as path#key, in a stable order, with a setter for it.
+func walkStrings(v any, path string, visit func(path, s string, set func(string))) {
+	join := func(seg string) string { return strings.TrimPrefix(path+"."+seg, ".") }
+	switch x := v.(type) {
+	case map[string]any:
+		keyed := slices.Contains(keyedPaths, norm(path))
+		for _, k := range slices.Sorted(maps.Keys(x)) {
+			p := join(k)
+			if keyed {
+				visit(p+"#key", k, func(n string) { x[n] = x[k]; delete(x, k) })
+			}
+			if s, ok := x[k].(string); ok {
+				visit(p, s, func(n string) { x[k] = n })
+				continue
+			}
+			walkStrings(x[k], p, visit)
+		}
+	case []any:
+		for i, e := range x {
+			p := join(strconv.Itoa(i))
+			if s, ok := e.(string); ok {
+				visit(p, s, func(n string) { x[i] = n })
+				continue
+			}
+			walkStrings(e, p, visit)
+		}
+	}
+}
+
+func decoded(t *testing.T, v any) map[string]any {
+	t.Helper()
+	var out map[string]any
+	if err := decodeNumbers(marshal(t, v), &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// maximalFar is a far answer from mbp for halo built by ServeFar, carrying
+// every string a FarAnswer can: a live dispatcher with a pid file, a pane and
+// a lane, quota and fleet holds (head, demoted, parked), a working, a blocked
+// and a remote-host worker, a guest crew, engines with a hot window, a
+// skipped repo, an inbox reply and a misrouted msg. A lead, and an unknown key
+// on each worker and event, are added to the encoded answer.
+func maximalFar(t *testing.T) map[string]any {
+	t.Helper()
+	hold := func(agoS int64, crew, id string, weight int) string {
+		return fleetAddRow(ago(agoS), crew, id, "feat/"+id, "normal", weight)
+	}
+	far := farFix(t, "mbp",
+		hold(900, "c1", "1700000000001-1", 2),
+		hold(800, "c1", "1700000000002-1", 1),
+		hold(700, "c1", "1700000000003-1", 9),
+		wmsg(600, "c1", "dispatcher:c1", "hold:c1",
+			fmt.Sprintf(`"{\"id\":\"1700000000004-1\",\"wait\":{\"engine\":\"claude\",\"window\":\"five_hour\",\"resets_at\":%d},\"task\":{}}"`, nowS+3600)),
+		wstatus(500, "c1", "feat/w", "working", ""),
+		wstatus(400, "c1", "feat/b", "blocked", `,"detail":"waiting (cycle 2 of 24)"`),
+		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"r/1","name":"remy","host":"h3","remote":true}`, ago(300)),
+		wstatus(300, "c2", "g/1", "working", ""),
+		wmsg(200, "c1", "dispatcher:c1", "overseer:halo", `"{\"kind\":\"ack\",\"re\":7}"`),
+		wmsg(100, "c1", "worker:feat/w#s1-1", "overseer:halo", `"hi"`),
+	)
+	far.pidfile("c1", "100")
+	far.crewFile("c1", "pane", "%81\n")
+	far.crewFile("c1", "stream.lock.d/pid", "100\n")
+	far.crewFile("c1", "stream.tick", fmt.Sprintf(`{"pid":100,"ts":%d,"park":300}`, ago(10)))
+	far.windows("feat/w", "feat/b", "g/1")
+	far.tmux.Out[stampFormat] = "c2\x1fhalo\n"
+	gone := filepath.Join(far.root, "gone", ".git")
+	if err := os.WriteFile(far.opts.Registry, []byte(far.common+"\n"+gone+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	record := filepath.Join(far.env["XDG_STATE_HOME"], "crew", "fleet-due.json")
+	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := marshal(t, dueDoc(map[holdKey]dueEntry{{far.common, "c1", "1700000000002-1"}: {Demoted: ago(300)}}))
+	if err := os.WriteFile(record, rec, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache := fmt.Sprintf(`{"fetched_epoch":%d,"engines":{"claude":{"windows":{"5h":{"used_pct":99,"resets_at":%d}},"limit_reached":null}}}`, nowS-60, nowS+100)
+	if err := os.WriteFile(far.opts.BudgetFile, []byte(cache), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ans, err := ServeFar(t.Context(), "halo", ago(1000), io.Discard, far.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := decoded(t, ans)
+	status := a["status"].(map[string]any)
+	status["machine"].(map[string]any)["leads"] = []any{
+		map[string]any{"repo": "alpha", "branch": "feat/w", "name": "remy", "tier": "standard", "weight": 2},
+	}
+	for _, r := range status["repos"].([]any) {
+		for _, c := range r.(map[string]any)["crews"].([]any) {
+			for _, w := range c.(map[string]any)["workers"].([]any) {
+				w.(map[string]any)["zz_extra"] = "kept nowhere"
+			}
+		}
+	}
+	for _, b := range a["inbox"].([]any) {
+		for _, e := range b.(map[string]any)["events"].([]any) {
+			e.(map[string]any)["zz_extra"] = "kept nowhere"
+		}
+	}
+	return a
+}
+
+// projectedWorkerKeys are the keys a far worker row may keep.
+var projectedWorkerKeys = []string{
+	"age_s", "blocked", "branch", "detail", "finished_window", "from", "host", "live",
+	"name", "pr_candidate", "pr_url", "remote_unprobed", "source", "stale", "state", "ts",
+}
+
+func TestAdmitHostPoisonEveryLeaf(t *testing.T) {
+	fixture := maximalFar(t)
+	want, have := map[string]bool{}, map[string]bool{}
+	typeLeaves(reflect.TypeFor[FarAnswer](), nil, false, "", want)
+	typeLeaves(reflect.TypeFor[FarAnswer](), fixture, true, "", have)
+	for _, p := range slices.Sorted(maps.Keys(want)) {
+		if !have[p] {
+			t.Errorf("the fixture carries no %s: a far string with no poison case", p)
+		}
+	}
+
+	admit := func(t *testing.T, a map[string]any) map[string]any {
+		t.Helper()
+		ans, err := AdmitHost(marshal(t, a), "mbp", "halo", ago(1000))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return decoded(t, ans)
+	}
+	// leaves are an admitted answer's non-empty strings and object keys, by
+	// path; every one but far text holds to the identifier charset.
+	leaves := func(t *testing.T, out map[string]any) map[string]string {
+		t.Helper()
+		got := map[string]string{}
+		var walk func(v any, path string)
+		walk = func(v any, path string) {
+			switch x := v.(type) {
+			case map[string]any:
+				for k, e := range x {
+					if !farIdentRE.MatchString(k) {
+						t.Errorf("key %q at %s", k, path)
+					}
+					p := strings.TrimPrefix(path+"."+k, ".")
+					got[p+"#key"] = k
+					walk(e, p)
+				}
+			case []any:
+				for i, e := range x {
+					walk(e, strings.TrimPrefix(path+"."+strconv.Itoa(i), "."))
+				}
+			case string:
+				if slices.Contains(farTextPaths, norm(path)) {
+					got[path] = x
+					return
+				}
+				if !farIdentRE.MatchString(x) || strings.Contains(x, "xid") {
+					t.Errorf("%s = %q", path, x)
+				}
+				if x != "" {
+					got[path] = x
+				}
+			}
+		}
+		walk(out, "")
+		return got
+	}
+
+	clean := admit(t, fixture)
+	kept := leaves(t, clean)
+	var ans FarAnswer
+	if err := decodeNumbers(marshal(t, clean), &ans); err != nil {
+		t.Fatal(err)
+	}
+	s := ans.Status
+	if len(s.Repos) != 1 || len(s.Repos[0].Crews) != 2 || len(s.Skipped) != 1 || s.Machine == nil || len(s.Machine.Leads) != 1 ||
+		s.Queue.Head == nil || len(s.Queue.Demoted) != 1 || len(s.Queue.Parked) != 1 || len(ans.Inbox) != 1 || len(ans.Misrouted) != 1 {
+		t.Fatalf("a clean answer lost an element: %+v", ans)
+	}
+	c1 := s.Repos[0].Crews[0]
+	if d := c1.Dispatcher; d.PID != nil || d.Pane != nil || d.Lane == nil || len(c1.Holds) != 4 || len(c1.Workers) != 3 || len(c1.OverseerInbox) != 1 {
+		t.Errorf("clean c1 = %+v, want pid and pane dropped, the rest kept", c1)
+	}
+	for _, w := range slices.Concat(c1.Workers, s.Repos[0].Crews[1].Workers) {
+		for k := range w {
+			if !slices.Contains(projectedWorkerKeys, k) {
+				t.Errorf("worker %v kept %s", w["branch"], k)
+			}
+		}
+	}
+	for _, e := range ans.Inbox[0].Events {
+		if _, ok := e["zz_extra"]; ok {
+			t.Errorf("event kept an unknown key: %v", e)
+		}
+	}
+
+	n := 0
+	walkStrings(fixture, "", func(string, string, func(string)) { n++ })
+	for i := range n {
+		a := decoded(t, fixture)
+		var path string
+		j := 0
+		walkStrings(a, "", func(p, _ string, set func(string)) {
+			if j == i {
+				path = p
+				set(poison)
+			}
+			j++
+		})
+		t.Run(path, func(t *testing.T) {
+			got := leaves(t, admit(t, a))
+			np := norm(strings.TrimSuffix(path, "#key"))
+			switch {
+			case slices.Contains(farTextPaths, np), kept[path] == "":
+			case np == "status.repos[].host":
+				if got[path] != "mbp" {
+					t.Errorf("repo host = %q, want the settings key", got[path])
+				}
+			case len(got) >= len(kept):
+				t.Errorf("a poisoned %s left %d strings of %d: its element was rewritten, not dropped", path, len(got), len(kept))
+			}
+		})
+	}
+}
+
+// A far roster row an overseer's --host probe returns keeps only the fields
+// a lane line or the protocol reads, each valid, or is dropped.
+func TestOverseerProbeRowsProjected(t *testing.T) {
+	f := newStatusFix(t,
+		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"r/1","name":"remy","host":"h1","remote":true}`, ago(60)),
+		fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"r/2","name":"rex","host":"h1","remote":true}`, ago(60)),
+	)
+	f.overseer("halo")
+	f.opts.OverseerProbe = func(string) roster.Capture {
+		return func(_ context.Context, _ string, _ []string, stdout, _ io.Writer) int {
+			_, _ = io.WriteString(stdout, `[{"branch":"r/1","from":"worker:$(id)","state":"working","live":true,"age_s":5,"zz_extra":"x"},`+
+				`{"branch":"r/2","from":"worker:r/2#s1-1","name":"rex","state":"working","live":true,"age_s":5,"title":"t;x","zz_extra":"x"}]`)
+			return 0
+		}
+	}
+	doc := f.collect(StatusRequest{})
+	rows := doc.crew(t, "c1").Workers
+	if len(rows) != 1 || rows[0]["branch"] != "r/2" {
+		t.Fatalf("rows = %v, want only r/2: r/1's from is no worker id", rows)
+	}
+	for k := range rows[0] {
+		if !slices.Contains(projectedWorkerKeys, k) {
+			t.Errorf("row kept %s: %v", k, rows[0])
+		}
+	}
+	if w := rows[0]; w["host"] != "h1" || w["from"] != "worker:r/2#s1-1" || w["state"] != "working" || w["remote_unprobed"] != false {
+		t.Errorf("row = %v", w)
+	}
+}
+
+// An overseer probe's stdout is capped as a pull's is: over the cap is a
+// failure of that probe alone, never remembered for the host.
+func TestOverseerProbeStdoutIsCapped(t *testing.T) {
+	m := &probeMemo{timeout: time.Second, failed: map[string]string{}}
+	argv := []string{"crew", "roster", "--live", "--", "c1"}
+	calls, held := 0, 0
+	big := func(_ context.Context, _ string, _ []string, stdout, _ io.Writer) int {
+		calls++
+		chunk := bytes.Repeat([]byte(" "), 1<<20)
+		for range 5 {
+			n, _ := stdout.Write(chunk)
+			held += n
+		}
+		return 0
+	}
+	var stdout, stderr bytes.Buffer
+	if rc := m.wrap(big, "c1")(t.Context(), "h1", argv, &stdout, &stderr); rc != 1 || stderr.String() != overSize+"\n" || stdout.Len() != 0 {
+		t.Errorf("rc = %d stderr = %q stdout %d bytes, want 1, %q and nothing", rc, stderr.String(), stdout.Len(), overSize)
+	}
+	if held > farMaxBytes {
+		t.Errorf("the probe's stdout held %d bytes, want at most %d", held, farMaxBytes)
+	}
+	held = 0
+	if rc := m.wrap(big, "c1")(t.Context(), "h1", argv, io.Discard, io.Discard); rc != 1 || calls != 2 {
+		t.Errorf("rc = %d after %d calls, want the host asked again", rc, calls)
 	}
 }

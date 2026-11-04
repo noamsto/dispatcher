@@ -27,7 +27,7 @@ func relayProbes() Probes {
 
 func TestCheckRelay(t *testing.T) {
 	const unread = "the pane stamps cannot be read on halo (tmux list-panes or the process ancestry failed), so no relay is posted"
-	anchored := "this session sits in a crew pane stamped with a branch, a role or a crew, and only a session outside every crew pane posts a relay"
+	anchored := "this session sits in a tmux pane, and only a session outside every tmux pane (a remote exec) posts a relay"
 	envRefused := func(k string) string {
 		return "this session has " + k + " set, and only a session that is no dispatcher, worker, role or overseer posts a relay"
 	}
@@ -45,7 +45,8 @@ func TestCheckRelay(t *testing.T) {
 	}{
 		{"admits a settings host", "mbp", nil, ""},
 		{"admits with no panes listed", "mbp", panes(""), ""},
-		{"admits under an unstamped pane", "mbp", panes(pane("100", "", "", "", "@1", "%1")), ""},
+		{"admits with no pane in the ancestry", "mbp", panes(pane("999", "", "", "", "@1", "%1")), ""},
+		{"refuses an unstamped pane (a promoted dispatcher with no CREW_ID)", "mbp", panes(pane("100", "", "", "", "@1", "%1")), anchored},
 
 		{"refuses a bad host name", "-mbp", nil, "origin -mbp is not a valid host name, so no relay is posted"},
 		{"refuses an empty origin", "", nil, "origin  is not a valid host name, so no relay is posted"},

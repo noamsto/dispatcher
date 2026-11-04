@@ -36,12 +36,14 @@ func CheckRelay(ctx context.Context, origin string, p Probes) string {
 		}
 	}
 	rows, read := p.rows(ctx)
-	s, anchored, walked := p.anchor(rows)
+	_, anchored, walked := p.anchor(rows)
 	if !read || !walked {
 		return "the pane stamps cannot be read on " + self + " (tmux list-panes or the process ancestry failed), so no relay is posted"
 	}
-	if anchored && (s.branch != "" || s.role != "" || s.crew != "") {
-		return "this session sits in a crew pane stamped with a branch, a role or a crew, and only a session outside every crew pane posts a relay"
+	// Stamped or not: a dispatcher promoted or adopted in place has no CREW_ID
+	// and may carry no stamp, while the sshd remote exec sits in no pane.
+	if anchored {
+		return "this session sits in a tmux pane, and only a session outside every tmux pane (a remote exec) posts a relay"
 	}
 	return ""
 }

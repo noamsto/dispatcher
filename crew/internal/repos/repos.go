@@ -239,13 +239,31 @@ func Sanitize(s string) string {
 		if b.Len() == senderCap {
 			break
 		}
-		if 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || strings.ContainsRune(":/#._@-", r) {
+		if senderRune(r) {
 			b.WriteRune(r)
 		} else {
 			b.WriteByte('?')
 		}
 	}
 	return b.String()
+}
+
+// ValidIdent is whether s is an identifier Sanitize leaves as it is: not
+// empty, at most senderCap bytes, all of the sender charset.
+func ValidIdent(s string) bool {
+	if s == "" || len(s) > senderCap {
+		return false
+	}
+	for _, r := range s {
+		if !senderRune(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func senderRune(r rune) bool {
+	return 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || strings.ContainsRune(":/#._@-", r)
 }
 
 // Label is Name as an overseer line or status row shows it, so a repo is
