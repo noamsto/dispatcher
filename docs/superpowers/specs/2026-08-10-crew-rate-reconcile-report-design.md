@@ -157,16 +157,26 @@ A run-level "skip if MERGED" would strand any field whose own call failed on the
 sweep that first saw the merge: it would be `null` forever with no path back. Each
 call is therefore skipped only when **its own** output is final:
 
-| call           | skipped when                                                                                |
-| -------------- | ------------------------------------------------------------------------------------------- |
-| `gh pr view`   | `pr_state == "MERGED"`, or `CLOSED` older than 30d                                          |
-| Actions runs   | `first_ci_green != null` — it describes the _first_ CI, which never changes once known      |
-| review threads | `pr_state == "MERGED"` **and** `unresolved_notes != null` — threads stop moving after merge |
+| call           | skipped when                                                                                                                                                         |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gh pr view`   | `pr_state == "MERGED"`, or `CLOSED` older than 30d                                                                                                                   |
+| Actions runs   | `first_ci_green != null` — it describes the _first_ CI, which never changes once known; or `MERGED` with `merged_at_ms` 7d or more past and `last_query_ok != false` |
+| review threads | `pr_state == "MERGED"` **and** `unresolved_notes != null` — threads stop moving after merge                                                                          |
 
 So a stored `MERGED` row with a null `first_ci_green` still issues the Actions
-call on the next sweep. Any call failing sets `last_query_ok: false` and leaves
-that field's stored value untouched (see §Merge-forward); nothing is ever fatal to
-the sweep.
+call on the next sweep, but only until 7 days after the merge, and not at all
+past that unless its `last_query_ok` is `false`. The runs `first_ci_green` reads
+are those in the run's window, and they exist before the merge: an empty window a
+week after it is final. (For the last run on a branch the window is open-ended,
+but runs created long after the merge on a reused branch name are not this PR's
+CI.) The 7 days cover sweep downtime. A row whose last call failed stays
+queried, so a failure is never made permanent; the test is `!= false` rather than
+`== true` because a settled row tries nothing and so stores `last_query_ok: null`
+— `== true` would flip-flop. A `MERGED` row with a null `merged_at_ms` stays
+queried. When a past-grace row settles, its `last_query_ok` goes `true` → `null`
+once ("no reason to try") and is stable afterwards. Any call failing sets
+`last_query_ok: false` and leaves that field's stored value untouched (see
+§Merge-forward); nothing is ever fatal to the sweep.
 
 ### Fields
 
@@ -525,14 +535,18 @@ wires it in.
   their fixture `pr_url` is `https://example.com/pr/1`, not a GitHub PR URL, so
   they issue no calls.
 - **Idempotency** — sweep twice; the store is byte-identical after the second
-  sweep and the folded projection is unchanged.
+  sweep and the folded projection is unchanged. A `MERGED` row that settles
+  between sweeps (past the 7d Actions grace) appends once, `last_query_ok`
+  `true` → `null`; after that sweeps are byte-identical.
 - **Last-wins** — a stale row followed by a fresh one for the same `run_id` folds
   to the fresh one.
 - **t1 → t2 upgrade** — sweep with an `OPEN` PR, re-sweep with `MERGED`; the first
   row is non-terminal, the second carries `merged` and `time_to_merge_ms`.
 - **Per-call finality** — a stored `MERGED` row issues no `gh pr view` but _does_
-  issue the Actions call while `first_ci_green` is null; a `CLOSED` row inside 30d
-  re-queries and outside 30d does not (assert via the stub's call log).
+  issue the Actions call while `first_ci_green` is null and the merge is under 7d
+  old, its last call failed, or its merge time is unknown; past 7d with a good
+  last call it issues no Actions call. A `CLOSED` row inside 30d re-queries and
+  outside 30d does not (assert via the stub's call log).
 - **Merge-forward** — reconcile once, then sweep with a `gh` that exits non-zero;
   stored t2 survives, `last_query_ok` is `false`, and `pr_state` is unchanged.
 - **Branch reuse** — two dispatches on one branch sharing a `pr_url`; the earlier

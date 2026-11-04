@@ -296,7 +296,7 @@ func TestSweepMergedSkipsView(t *testing.T) {
 	f := newFixture(t)
 	f.seedSettings()
 	f.seedPRRow()
-	f.seedStore(`{"run_id":"acme/widgets:feat/x:1000","repo":"acme/widgets","pr_state":"MERGED","merged_at_ms":1200,"merge_commit":"abc","unresolved_notes":0,"first_ci_green":null,"swept_at":1}`)
+	f.seedStore(`{"run_id":"acme/widgets:feat/x:1000","repo":"acme/widgets","pr_state":"MERGED","merged_at_ms":1799913600000,"merge_commit":"abc","unresolved_notes":0,"first_ci_green":null,"swept_at":1}`)
 	f.gh = func(args string) (string, bool) {
 		if strings.Contains(args, "actions/runs") {
 			return `{"workflow_runs":[{"head_sha":"s","created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"success"}]}`, true
@@ -330,6 +330,99 @@ func TestSweepMergedSkipsView(t *testing.T) {
 	}
 }
 
+// mergedUnknownCI seeds a MERGED row whose Actions result is still null, merged
+// mergedAgoMs before the fixture clock (1.8e12 ms); a negative value leaves the
+// merge time null.
+func mergedUnknownCI(f *fixture, mergedAgoMs int64, lastQueryOK string) {
+	merged := "null"
+	if mergedAgoMs >= 0 {
+		merged = strconv.FormatInt(1800000000000-mergedAgoMs, 10)
+	}
+	f.seedStore(fmt.Sprintf(`{"run_id":"acme/widgets:feat/x:1000","repo":"acme/widgets","pr_state":"MERGED","merged_at_ms":%s,"merge_commit":"abc","unresolved_notes":0,"first_ci_green":null,"last_query_ok":%s,"swept_at":1}`,
+		merged, lastQueryOK))
+}
+
+const day = int64(86400000)
+
+// TestSweepMergedPastGraceStopsQueryingActions pins the end of the Actions
+// retry: a MERGED row a week past its merge with no CI result and no failed
+// call is final, so a sweep makes no call for it. The one sweep that settles
+// it flips last_query_ok from true to null (nothing was tried) and appends
+// once; every later sweep is byte-identical.
+func TestSweepMergedPastGraceStopsQueryingActions(t *testing.T) {
+	f := newFixture(t)
+	f.seedSettings()
+	f.seedPRRow()
+	mergedUnknownCI(f, 8*day, "true")
+	f.gh = func(string) (string, bool) { return `{"workflow_runs":[]}`, true }
+
+	settle := func(label string) []byte {
+		t.Helper()
+		f.calls = nil
+		if _, code := f.runQuiet(); code != 0 {
+			t.Fatalf("%s sweep exit %d", label, code)
+		}
+		for _, banned := range []string{"actions/runs", "graphql", "pr view"} {
+			if strings.Contains(f.callLog(), banned) {
+				t.Errorf("%s sweep queried %s for a settled row:\n%s", label, banned, f.callLog())
+			}
+		}
+		data, err := os.ReadFile(f.store)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+
+	settle("settling")
+	rows := f.rows()
+	if len(rows) != 2 {
+		t.Fatalf("settling sweep left %d rows, want the seed plus one", len(rows))
+	}
+	if last := rows[1]; last["last_query_ok"] != nil || last["first_ci_green"] != nil {
+		t.Errorf("settled row = %v, want last_query_ok and first_ci_green null", last)
+	}
+	second := settle("second")
+	third := settle("third")
+	if !bytes.Equal(second, third) {
+		t.Errorf("a sweep after the settling one appended:\n%s\n--\n%s", second, third)
+	}
+	if n := len(f.rows()); n != 2 {
+		t.Errorf("store has %d rows, want 2", n)
+	}
+}
+
+// TestSweepMergedActionsGrace pins what keeps a MERGED row with unknown CI
+// queried: a failed last call, a merge inside the 7 d grace, an unknown merge
+// time.
+func TestSweepMergedActionsGrace(t *testing.T) {
+	cases := []struct {
+		name        string
+		mergedAgo   int64
+		lastQueryOK string
+	}{
+		{"last call failed", 8 * day, "false"},
+		{"merged 6 days ago", 6 * day, "true"},
+		{"merged 6 days ago, no query flag", 6 * day, "null"},
+		{"merge time unknown", -1, "true"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.seedSettings()
+			f.seedPRRow()
+			mergedUnknownCI(f, c.mergedAgo, c.lastQueryOK)
+			f.gh = func(string) (string, bool) { return `{"workflow_runs":[]}`, true }
+			if _, code := f.runQuiet(); code != 0 {
+				t.Fatalf("exit %d", code)
+			}
+			if !strings.Contains(f.callLog(), "actions/runs") {
+				t.Errorf("Actions was not queried:\n%s", f.callLog())
+			}
+		})
+	}
+}
+
 func TestSweepSecondSweepAppendsNothing(t *testing.T) {
 	f := newFixture(t)
 	f.seedSettings()
@@ -337,7 +430,7 @@ func TestSweepSecondSweepAppendsNothing(t *testing.T) {
 	f.gh = func(args string) (string, bool) {
 		switch {
 		case strings.HasPrefix(args, "pr view"):
-			return `{"state":"MERGED","closedAt":"2026-01-02T00:00:00Z","mergedAt":"2026-01-02T00:00:00Z","mergeCommit":null,"commits":[],"reviews":[]}`, true
+			return `{"state":"MERGED","closedAt":"2027-01-14T00:00:00Z","mergedAt":"2027-01-14T00:00:00Z","mergeCommit":null,"commits":[],"reviews":[]}`, true
 		default:
 			return `{"workflow_runs":[]}`, true
 		}
