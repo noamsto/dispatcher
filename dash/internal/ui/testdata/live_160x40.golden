@@ -1,0 +1,40 @@
+▸ Live │   Budget │   Runs │   Settings
+claude 5h 10%  codex ?  cursor ?  pi ?
+1 blocked · 1 hold
+  name    state    age    tier/engine/model             pr    detail
+› coral   blocked  1h 0m  standard/codex/gpt-5.6-terra  —     waiting on codex budget window to reset before continuing this really quite long diagnostic detai…
+  sage    working  1m     deep/claude/opus              #999  writing golden tests
+  hold h1: claude 7d until 2026-09-25T02:13:20Z — Resume after 7d window resets
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+fix/123-widget · s1
+PR —
+waiting on codex budget window to reset before continuing this really quite long diagnostic detail line that should get truncated in the roster table view
+
+1-4 views • tab next view • r refresh • ? help • q quit • j/k move • enter events • t jump • o open PR • m reply • n nudge  refreshed 14:13:20
