@@ -334,26 +334,36 @@ func (a *seater) nearest(i int) (seat, bool) {
 	return seat{}, false
 }
 
-// near is the free slot on q's ring closest to q, trying one slot away, then
-// two, and so on; of two equally far it takes the one nearer i's anchor. A
-// stacked pair therefore stays a short arc apart however crowded the base is.
+// nearReach is how many slots from its partner a stacked planet may sit: any
+// farther and the dashed edge between the pair is a chord across the circle.
+const nearReach = 2
+
+// near is the free slot within nearReach of q: on q's ring first, then on the
+// next ring outward at q's angle, closest first; of two equally far it takes
+// the one nearer i's anchor, then the clockwise one. False when none is free,
+// and the caller falls back to nearest.
 func (a *seater) near(i int, q seat) (seat, bool) {
-	for d := 1; d <= ringSlots/2; d++ {
-		best, bestOff, found := 0, 0.0, false
-		for _, slot := range []int{q.slot + d, q.slot - d} {
-			if q.remote && (slot < 0 || slot >= ringSlots) {
+	for ring := q.ring; ring <= min(q.ring+1, kindRings-1); ring++ {
+		for d := range nearReach + 1 {
+			if d == 0 && ring == q.ring {
 				continue
 			}
-			slot = (slot + ringSlots) % ringSlots
-			if !a.allowed(i, slot) || a.used[a.space(i)][q.ring*ringSlots+slot] {
-				continue
+			best, bestOff, found := 0, 0.0, false
+			for _, slot := range []int{q.slot + d, q.slot - d} {
+				if q.remote && (slot < 0 || slot >= ringSlots) {
+					continue
+				}
+				slot = (slot + ringSlots) % ringSlots
+				if !a.allowed(i, slot) || a.used[a.space(i)][ring*ringSlots+slot] {
+					continue
+				}
+				if off := a.offset(i, slot); !found || closer(off, bestOff) {
+					best, bestOff, found = slot, off, true
+				}
 			}
-			if off := a.offset(i, slot); !found || closer(off, bestOff) {
-				best, bestOff, found = slot, off, true
+			if found {
+				return seatAt(q.remote, ring*ringSlots+best), true
 			}
-		}
-		if found {
-			return seatAt(q.remote, q.ring*ringSlots+best), true
 		}
 	}
 	return seat{}, false

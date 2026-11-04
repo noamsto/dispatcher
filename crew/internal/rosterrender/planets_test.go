@@ -94,9 +94,33 @@ func TestPlanetHostileTextIsReduced(t *testing.T) {
 	if got := onlyPlanet(t, row).host; got != "?" {
 		t.Errorf("all-hostile host = %q, want ?", got)
 	}
-	row["name"] = "·middle-dot_1.0"
-	if got := onlyPlanet(t, row).name; got != "·middle-dot_1.0" {
+	row["name"] = "dash-dot_1.0"
+	if got := onlyPlanet(t, row).name; got != "dash-dot_1.0" {
 		t.Errorf("safe name changed to %q", got)
+	}
+}
+
+func TestPlanetCodenameDropsFoldSuffix(t *testing.T) {
+	for _, tc := range []struct{ name, branch, label string }{
+		{"orchid·1450", "feat/1450-x", "orchid\n1450"},
+		{"fern", "feat/111-x", "fern\n111"},
+		{"blush·1278", "feat/no-digits", "blush\n1278"},
+		{"sky·ABC-12", "feat/no-digits", "sky\nABC-12"},
+		{"sky·feat/odd", "feat/no-digits", "sky"},
+		{"sky·", "feat/no-digits", "sky"},
+		{"·1450", "feat/1450-x", "?\n1450"},
+		{"a\"b$·c;d·9", "feat/no-digits", "ab"},
+		{"lime·7·8", "feat/5-x", "lime\n5"},
+	} {
+		row := planetRow(tc.branch, "working")
+		row["name"] = tc.name
+		p := onlyPlanet(t, row)
+		if p.label != tc.label {
+			t.Errorf("name %q branch %q: label = %q, want %q", tc.name, tc.branch, p.label, tc.label)
+		}
+		if strings.Contains(p.name, "·") {
+			t.Errorf("name %q kept the suffix: %q", tc.name, p.name)
+		}
 	}
 }
 

@@ -542,6 +542,54 @@ func TestLayoutStackedChildStaysNearBaseWhenNeighboursTaken(t *testing.T) {
 	}
 }
 
+// crowd is n working locals named a01.., which seat at 4, 5, 3, 6, 2, ... around
+// the working anchor; a01 therefore sits on ring 0 slot 4.
+func crowd(n int) []planet {
+	var ps []planet
+	for i := 1; i <= n; i++ {
+		ps = append(ps, wp(fmt.Sprintf("a%02d", i), classWorking))
+	}
+	return ps
+}
+
+func TestLayoutStackedChildNeverFarFromBaseOnCrowdedRing(t *testing.T) {
+	ps := crowd(15)
+	state, seats := seatsByBranch(newSlotState(), ps)
+	if seats["a01"].slot != 4 {
+		t.Fatalf("setup: a01 at %+v", seats["a01"])
+	}
+	taken := map[int]bool{}
+	for _, s := range seats {
+		taken[s.slot] = true
+	}
+	if len(taken) != 15 || taken[12] {
+		t.Fatalf("setup: ring 0 should be full but slot 12, got %v", taken)
+	}
+
+	child := wp("zchild", classWorking)
+	child.base = "a01"
+	_, got := seatsByBranch(state, append(ps, child))
+	c := got["zchild"]
+	if c.remote || c.ring != 1 || c.slot != 4 {
+		t.Fatalf("child seat = %+v, want ring 1 slot 4 beside its base, not the free slot 12 across the circle", c)
+	}
+}
+
+func TestLayoutStackedFallsBackToNearestWhenBothRingNeighbourhoodsTaken(t *testing.T) {
+	// 21 workers fill ring 0 and ring 1 slots 2-6; a01 is on ring 0 slot 4.
+	ps := crowd(21)
+	state, seats := seatsByBranch(newSlotState(), ps)
+	if seats["a21"].ring != 1 || seats["a21"].slot != 2 {
+		t.Fatalf("setup: a21 at %+v", seats["a21"])
+	}
+	child := wp("zchild", classWorking)
+	child.base = "a01"
+	_, got := seatsByBranch(state, append(ps, child))
+	if c := got["zchild"]; !c.seated || c.ring != 1 || c.slot != 7 {
+		t.Fatalf("child seat = %+v, want the nearest-anchor fallback ring 1 slot 7", c)
+	}
+}
+
 func TestLayoutRemoteSeatsSitBetweenInnerAngles(t *testing.T) {
 	s := seatAt(true, 5)
 	if want := 5.5 * slotDeg; s.angle != want || s.index() != 5 {

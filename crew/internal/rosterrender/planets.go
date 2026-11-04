@@ -35,6 +35,10 @@ const standardSize = 0.75
 
 var issueRe = regexp.MustCompile(`[0-9]+`)
 
+// foldIDRe is the id shape the roster fold appends to a colliding codename as
+// `name·id`.
+var foldIDRe = regexp.MustCompile(`\A(?:[A-Za-z]+-[0-9]+|[0-9]+)\z`)
+
 // moon is one role pane of a drawn worker. x and y are set by the layout.
 type moon struct {
 	role    string
@@ -103,10 +107,15 @@ func buildPlanets(m map[string]any, now float64) ([]planet, legend) {
 		name, _ := row["name"].(string)
 		tier, _ := row["tier"].(string)
 		base, _ := row["base"].(string)
+		codename, suffix, _ := strings.Cut(name, "·")
+		issue := issueOf(branch)
+		if issue == "" && foldIDRe.MatchString(suffix) {
+			issue = suffix
+		}
 		p := planet{
 			branch: branch,
-			name:   clean(name),
-			issue:  clean(issueOf(branch)),
+			name:   clean(codename),
+			issue:  clean(issue),
 			tier:   tier,
 			state:  state,
 			class:  class,
