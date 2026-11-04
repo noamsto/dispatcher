@@ -92,8 +92,21 @@ crew_script() {
 }
 
 @test "overseer offers only flags dispatcher also parses" {
+  parsed="$(parser_flags dispatcher)"
   for f in $(grep -oE -- '-l [a-z-]+' "$COMP/overseer.fish" | cut -d' ' -f2); do
-    has_flag dispatcher "$f" || { echo "dispatcher has no --$f"; return 1; }
+    grep -qx -- "--$f" <<<"$parsed" || { echo "dispatcher.sh has no --$f"; return 1; }
+  done
+}
+
+# dispatch copies dispatch-resume's flags into its resume block; this keeps the
+# copy and dispatch-resume.sh's parser equal, in both directions.
+@test "dispatch resume's flags match dispatch-resume's parser" {
+  parsed="$(parser_flags dispatch-resume)"
+  for f in $parsed; do
+    grep -qE -- "^complete -c dispatch -n '__fish_seen_subcommand_from resume' .*-l ${f#--}( |\$)" "$COMP/dispatch.fish" || { echo "dispatch resume: no $f"; return 1; }
+  done
+  for f in $(grep "^complete -c dispatch -n '__fish_seen_subcommand_from resume'" "$COMP/dispatch.fish" | grep -oE -- '-l [a-z-]+' | cut -d' ' -f2); do
+    grep -qx -- "--$f" <<<"$parsed" || { echo "dispatch-resume.sh has no --$f"; return 1; }
   done
 }
 

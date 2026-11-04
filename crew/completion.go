@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/alecthomas/kong"
@@ -14,17 +15,11 @@ import (
 // non-flag words after `crew` positionally, so a nested command never fires its
 // namesake's lines (`fleet stream` vs `stream`).
 const fishHelpers = `function __crew_targets
-    timeout 1 crew roster 2>/dev/null | jq -r '.[]? | .name, .branch' 2>/dev/null
+    timeout 1 crew roster --live 2>/dev/null | jq -r '.[]? | .name, .branch' 2>/dev/null
 end
 
 function __crew_ids
     timeout 1 crew crews 2>/dev/null | tail -n +2 | cut -f1
-end
-
-function __crew_words
-    set -l w (commandline -xpc)
-    set -e w[1]
-    string match -v -- '-*' $w
 end
 
 function __crew_at
@@ -53,8 +48,56 @@ var skippedSubs = map[string]bool{"git-guard": true, "reap-autosweep": true}
 // writeFishCompletions renders the grammar as fish `complete` lines. Hidden
 // commands and flags stay out of it, as they stay out of the help.
 func writeFishCompletions(model *kong.Application, w io.Writer) {
-	say(w, "complete -c crew -f\n\n%s\n", fishHelpers)
+	say(w, "complete -c crew -f\n\n%s\n%s\n", fishHelpers, fishWords(model))
 	fishNode(w, model.Node, nil)
+}
+
+// fishWords is __crew_words: the leading non-flag words of the command line.
+// A value-taking flag's value is the word after it, so the flags that take one
+// are listed here and their value skipped (`crew fleet --crew c1 stream` is
+// `fleet stream`).
+func fishWords(model *kong.Application) string {
+	names := map[string]bool{}
+	valueFlagNames(model.Node, names)
+	list := make([]string, 0, len(names))
+	for name := range names {
+		list = append(list, name)
+	}
+	slices.Sort(list)
+	return fmt.Sprintf(`function __crew_words
+    set -l w (commandline -xpc)
+    set -e w[1]
+    set -l valued %s
+    set -l skip 0
+    for t in $w
+        if test $skip = 1
+            set skip 0
+            continue
+        end
+        if string match -q -- '--*' $t; and contains -- (string replace -r '^--' '' -- $t) $valued
+            set skip 1
+            continue
+        end
+        if not string match -q -- '-*' $t
+            echo $t
+        end
+    end
+end
+`, strings.Join(list, " "))
+}
+
+func valueFlagNames(n *kong.Node, names map[string]bool) {
+	for _, f := range n.Flags {
+		if !f.IsBool() {
+			names[f.Name] = true
+		}
+	}
+	for _, c := range n.Children {
+		valueFlagNames(c, names)
+	}
+	if n.DefaultCmd != nil {
+		valueFlagNames(n.DefaultCmd, names)
+	}
 }
 
 func fishNode(w io.Writer, n *kong.Node, path []string) {
@@ -80,7 +123,7 @@ func fishNode(w io.Writer, n *kong.Node, path []string) {
 			line += " -d " + fishQuote(help)
 		}
 		say(w, "%s\n", line)
-		fishNode(w, c, append(path[:len(path):len(path)], c.Name))
+		fishNode(w, c, append(slices.Clip(path), c.Name))
 	}
 }
 

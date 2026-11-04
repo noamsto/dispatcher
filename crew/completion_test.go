@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -80,7 +81,7 @@ func TestFishCompletionCoversGrammar(t *testing.T) {
 			if !completes(script, in, "-a "+c.Name) {
 				t.Errorf("%s: subcommand %s has no completion under %s", where, c.Name, in)
 			}
-			walk(c, append(path[:len(path):len(path)], c.Name))
+			walk(c, append(slices.Clip(path), c.Name))
 		}
 	}
 	walk(p.Model.Node, nil)
@@ -102,6 +103,48 @@ func TestFishPositionalSetsNameRealCommands(t *testing.T) {
 			if !children[name] {
 				t.Errorf("%q is not a top-level command", name)
 			}
+		}
+	}
+}
+
+// fishValueCollisions are flag names that take a value on one command and are a
+// bool on another. __crew_words skips the word after any value flag of that
+// name, so the bool side loses a word only if it has positionals or children.
+var fishValueCollisions = map[string]bool{"quiet": true}
+
+// TestFishFlagKindsAgree fails on a new flag-name collision, so the generated
+// __crew_words cannot silently drop a word; it also fails once an exception stops
+// colliding, so the list stays honest.
+func TestFishFlagKindsAgree(t *testing.T) {
+	p, err := newCrewParser(&root{}, &passthroughCmd{})
+	if err != nil {
+		t.Fatalf("grammar: %v", err)
+	}
+	kinds := map[string]map[bool]bool{}
+	var walk func(n *kong.Node)
+	walk = func(n *kong.Node) {
+		for _, f := range n.Flags {
+			if kinds[f.Name] == nil {
+				kinds[f.Name] = map[bool]bool{}
+			}
+			kinds[f.Name][f.IsBool()] = true
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+		if n.DefaultCmd != nil {
+			walk(n.DefaultCmd)
+		}
+	}
+	walk(p.Model.Node)
+	for name, k := range kinds {
+		if len(k) > 1 && !fishValueCollisions[name] {
+			t.Errorf("--%s is a value flag on one command and a bool on another", name)
+		}
+	}
+	for name := range fishValueCollisions {
+		if len(kinds[name]) < 2 {
+			t.Errorf("fishValueCollisions lists --%s, which no longer collides", name)
 		}
 	}
 }
@@ -132,7 +175,7 @@ func TestFishCompletionDynamicHelpers(t *testing.T) {
 	for _, want := range []string{
 		"function __crew_targets",
 		"function __crew_ids",
-		"timeout 1 crew roster",
+		"timeout 1 crew roster --live",
 		"timeout 1 crew crews",
 		"-n '__crew_at where' -f -a '(__crew_targets)'",
 		"-l crew -r -f -a '(__crew_ids)'",
@@ -176,6 +219,7 @@ func TestFishCompletionIsPositional(t *testing.T) {
 	}{
 		{"crew stream --re", "--reap-every", ""},
 		{"crew fleet stream --re", "--rediscover", "--reap-every"},
+		{"crew fleet --crew c1 stream --re", "--rediscover", ""},
 		{"crew status --", "--restamp", ""},
 		{"crew fleet status --", "--json", "--restamp"},
 		{"crew fleet ", "stream", "adopt"},
