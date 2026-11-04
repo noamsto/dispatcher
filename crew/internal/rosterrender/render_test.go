@@ -271,7 +271,7 @@ func TestThePublishedFileIsTheImageWrapperAndTheRecordsAreWritten(t *testing.T) 
 	if err != nil {
 		t.Fatalf("no slots file: %v", err)
 	}
-	if err := json.Unmarshal(data, &s); err != nil || len(s.Workers) != 4 {
+	if err := json.Unmarshal(data, &s); err != nil || len(s.Order) != 4 {
 		t.Errorf("slots = %s (%v), want four workers", data, err)
 	}
 }
@@ -566,26 +566,23 @@ func TestAWorkerKeepsItsSlotAcrossPasses(t *testing.T) {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
 	first := slots()
-	if len(first.Workers) != 2 {
-		t.Fatalf("slots after the first pass = %+v", first)
+	if want := []slotEntry{{"feat/1-a", classWorking}, {"feat/2-b", classWorking}}; !slices.Equal(first.Order, want) {
+		t.Fatalf("slots after the first pass = %+v, want %+v", first.Order, want)
 	}
 	posA := posOf(l.diagram(), "p1")
 
-	// atlas flips to blocked and sage stays working: sage must not move, and atlas
-	// moves to the blocked sector.
+	// atlas flips to blocked and moves ahead of sage, who is reordered with it:
+	// the two evenly spaced seats swap.
 	l.appendBus(t, statusEvent("worker:feat/2-b#s1", 1791361500000, "blocked", "", "", ""))
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
 	second := slots()
-	if second.Workers["feat/1-a"] != first.Workers["feat/1-a"] {
-		t.Errorf("an unrelated flip moved sage: %+v then %+v", first.Workers["feat/1-a"], second.Workers["feat/1-a"])
+	if want := []slotEntry{{"feat/2-b", classBlocked}, {"feat/1-a", classWorking}}; !slices.Equal(second.Order, want) {
+		t.Errorf("slots after the flip = %+v, want %+v", second.Order, want)
 	}
-	if second.Workers["feat/2-b"].Class != classBlocked || second.Workers["feat/2-b"].Slot == first.Workers["feat/2-b"].Slot {
-		t.Errorf("atlas was not reseated for its new class: %+v then %+v", first.Workers["feat/2-b"], second.Workers["feat/2-b"])
-	}
-	if got := posOf(l.diagram(), "p1"); got != posA {
-		t.Errorf("sage drew at %s, then %s", posA, got)
+	if got := posOf(l.diagram(), "p1"); got == posA {
+		t.Errorf("sage still drew at %s after the seats swapped", got)
 	}
 }
 

@@ -2,6 +2,7 @@ package rosterrender
 
 import (
 	"encoding/base64"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -97,21 +98,23 @@ func renderDOT(sc scene, lg legend) string {
 	stmt(&b, "dispatcher", str("label", "dispatcher"), num("width", sunSize), num("height", sunSize), pos(0, 0),
 		str("color", colSun), str("fillcolor", colDone))
 
-	ids := make(map[string]string, len(sc.planets))
-	for i, p := range sc.planets {
+	planets := slices.Clone(sc.planets)
+	slices.SortFunc(planets, func(x, y placed) int { return strings.Compare(x.branch, y.branch) })
+	ids := make(map[string]string, len(planets))
+	for i, p := range planets {
 		ids[p.branch] = "p" + strconv.Itoa(i+1)
 	}
-	for _, p := range sc.planets {
+	for _, p := range planets {
 		stmt(&b, ids[p.branch], planetAttrs(p)...)
 	}
-	for _, p := range sc.planets {
+	for _, p := range planets {
 		attrs := []string(nil)
 		if p.class == classWorking {
 			attrs = append(attrs, str("class", "aeye-flow"))
 		}
 		stmt(&b, "dispatcher -> "+ids[p.branch], attrs...)
 	}
-	for _, p := range sc.planets {
+	for _, p := range planets {
 		for k, m := range p.moons {
 			id := ids[p.branch] + "m" + strconv.Itoa(k+1)
 			fill, extra := colEdge, []string(nil)

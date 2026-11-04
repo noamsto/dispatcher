@@ -1,0 +1,21 @@
+digraph roster {
+  layout=neato; splines=false; outputorder=edgesfirst; pad=0.2; labelloc=b;
+  bgcolor="#1e1e2e"; fontname="Source Sans 3"; fontsize=13; fontcolor="#a6adc8";
+  node [shape=circle style=filled fontname="Source Sans 3" fontsize=12 fontcolor="#cdd6f4" fillcolor="#313244" penwidth=3 fixedsize=true];
+  edge [color="#585b70" penwidth=1.5 arrowhead=none];
+  c1 [label="" style=invis shape=point width=0 pos="-246.00,221.00!"];
+  c2 [label="" style=invis shape=point width=0 pos="246.00,221.00!"];
+  c3 [label="" style=invis shape=point width=0 pos="-246.00,-221.00!"];
+  c4 [label="" style=invis shape=point width=0 pos="246.00,-221.00!"];
+  dispatcher [label="dispatcher" width=1 height=1 pos="0.00,0.00!" color="#f9e2af" fillcolor="#45475a"];
+  p1 [label="lime\n1" width=0.75 height=0.75 pos="0.00,-150.00!" color="#a6e3a1"];
+  p2 [label="sky\n2" width=0.9 height=0.9 pos="0.00,150.00!" color="#f38ba8" penwidth=5 class="aeye-pulse"];
+  dispatcher -> p1 [class="aeye-flow"];
+  dispatcher -> p2;
+  p1m1 [label="" width=0.16 height=0.16 pos="0.00,-191.00!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
+  p1 -> p1m1 [color="#45475a"];
+  label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="4">
+    <tr><td><font color="#a6e3a1">●</font> working 1&nbsp;&nbsp;&nbsp;&nbsp;<font color="#f38ba8">●</font> blocked 1&nbsp;&nbsp;&nbsp;&nbsp;<font color="#89b4fa">●</font> pr open 0&nbsp;&nbsp;&nbsp;&nbsp;<font color="#45475a">●</font> done 0</td></tr>
+    <tr><td>size = tier&nbsp;&nbsp;&nbsp;&nbsp;<font color="#585b70">●</font> small dot = role&nbsp;&nbsp;&nbsp;&nbsp;<font color="#89b4fa">⇢</font> dashed arrow = stacked on&nbsp;&nbsp;&nbsp;&nbsp;⬡ = remote host</td></tr>
+  </table>>;
+}

@@ -9,59 +9,54 @@ import (
 	"sort"
 )
 
-// Geometry. A ring holds ringSlots planets, slotDeg apart clockwise from 12
-// o'clock; coordinates are points with y up. A remote ring is cut into wedges of
-// wedgeSlots, one per host.
+// Geometry. Planets sit evenly around the dispatcher, clockwise from 12
+// o'clock, in a persisted sequence; coordinates are points with y up. A ring
+// holds at most ringCap planets, and a roster past that spreads over more rings,
+// each evenly spaced too. A ring's radius grows with its count so the planets
+// keep arcPerPlanet of room, and never drops below minRadius.
 const (
-	ringSlots  = 16
-	slotDeg    = 360.0 / ringSlots
-	wedgeSlots = 4
-
-	ring0Radius = 240.0
-	ringStep    = 90.0
+	ringCap      = 16
+	arcPerPlanet = 100.0
+	minRadius    = 150.0
+	ringStep     = 90.0
 
 	moonGap    = 14.0
 	moonStep   = 14.0
 	moonRadius = 6.0
 
 	hostLabelGap  = 55.0
-	hostLabelStep = 22.0
 	hostLabelHalf = 20.0
 
-	minExtent = ring0Radius + 40
-	slotsVer  = 1
+	minExtent = minRadius + 40
+	slotsVer  = 2
 
-	// The picture holds maxRings rings, half local and half remote, so a bad
-	// state file or a runaway roster cannot push planets out of frame.
-	maxRings  = 8
-	kindRings = maxRings / 2
-	maxSlots  = kindRings * ringSlots
-	maxHosts  = kindRings * (ringSlots / wedgeSlots)
+	// maxPlanets bounds the picture, so a bad state file or a runaway roster
+	// cannot push planets out of frame.
+	maxPlanets = 4 * ringCap
 )
 
-// slotEntry is one worker's persisted seat: slot is ring*ringSlots + position,
-// class the sector class it was seated for.
+// slotEntry is one worker in the persisted sequence, with the class it was
+// placed for.
 type slotEntry struct {
-	Slot  int    `json:"slot"`
-	Class string `json:"class"`
+	Branch string `json:"branch"`
+	Class  string `json:"class"`
 }
 
-// slotState is roster-render.slots.json: what makes a redraw keep every worker
-// where it was. Hosts is positional: a host's index fixes its wedge, and a host
-// that left is a "" hole the next new host fills.
+// slotState is roster-render.slots.json: the ring sequence, which is what makes
+// a redraw keep every worker's place relative to the others. Angles are not
+// stored; they follow from the sequence length.
 type slotState struct {
-	V       int                  `json:"v"`
-	Workers map[string]slotEntry `json:"workers"`
-	Hosts   []string             `json:"hosts"`
+	V     int         `json:"v"`
+	Order []slotEntry `json:"order"`
 }
 
 func newSlotState() slotState {
-	return slotState{V: slotsVer, Workers: map[string]slotEntry{}, Hosts: []string{}}
+	return slotState{V: slotsVer, Order: []slotEntry{}}
 }
 
 // loadSlots reads the state file. Missing, unreadable, corrupt or another
-// version all read as empty: the next redraw just seats everyone afresh. Seats
-// outside the picture and surplus or repeated hosts are dropped.
+// version all read as empty: the next redraw just orders everyone afresh.
+// Repeated and oversize entries are dropped.
 func loadSlots(path string) slotState {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -71,26 +66,16 @@ func loadSlots(path string) slotState {
 	if json.Unmarshal(data, &s) != nil || s.V != slotsVer {
 		return newSlotState()
 	}
-	if s.Workers == nil {
-		s.Workers = map[string]slotEntry{}
-	}
-	if s.Hosts == nil {
-		s.Hosts = []string{}
-	}
-	for branch, e := range s.Workers {
-		if e.Slot < 0 || e.Slot >= maxSlots {
-			delete(s.Workers, branch)
-		}
-	}
-	s.Hosts = s.Hosts[:min(len(s.Hosts), maxHosts)]
+	out := newSlotState()
 	seen := map[string]bool{}
-	for i, h := range s.Hosts {
-		if seen[h] {
-			s.Hosts[i] = ""
+	for _, e := range s.Order {
+		if e.Branch == "" || seen[e.Branch] || len(out.Order) >= maxPlanets {
+			continue
 		}
-		seen[h] = true
+		seen[e.Branch] = true
+		out.Order = append(out.Order, e)
 	}
-	return s
+	return out
 }
 
 // saveSlots writes the state through put, so a reader never sees half of it.
@@ -102,365 +87,264 @@ func saveSlots(path string, s slotState, stderr io.Writer) error {
 	return put(path, string(data)+"\n", stderr)
 }
 
-// seat is where one planet sits: a local or remote ring and a position on it.
-// The zero seat is "no room": seated is false.
-type seat struct {
-	seated bool
-	remote bool
-	ring   int
-	slot   int
-	angle  float64
+// sequencer holds one sequence run.
+type sequencer struct {
+	ps       []planet
+	byName   map[string]int
+	seq      []int // indexes into ps, in ring order
+	inSeq    map[int]bool
+	visiting map[int]bool
 }
 
-func (s seat) index() int { return s.ring*ringSlots + s.slot }
-
-// seatAt turns a slot index into a seat. A remote seat sits half a slot off the
-// local grid, so no spoke to a remote planet runs under an inner one.
-func seatAt(remote bool, index int) seat {
-	slot := index % ringSlots
-	angle := float64(slot) * slotDeg
-	if remote {
-		angle += slotDeg / 2
+// sequence is the ring order of the drawn planets, as indexes into ps. A planet
+// keeps its persisted place unless it is new or its class changed (a remote
+// planet ignores class); those are inserted afresh, a stacked planet right after
+// its base, a local one after the last planet of its class or an earlier one, a
+// remote one at the end of its host's run (a new host's run goes last). Local
+// planets come first and each host's planets are contiguous. Workers that were
+// drawn are never displaced by ones that do not fit.
+func sequence(prev slotState, ps []planet) []int {
+	a := &sequencer{ps: ps, byName: map[string]int{}, inSeq: map[int]bool{}, visiting: map[int]bool{}}
+	for i, p := range ps {
+		a.byName[p.branch] = i
 	}
-	return seat{seated: true, remote: remote, ring: index / ringSlots, slot: slot, angle: angle}
-}
-
-// seater holds one assign run. used[0] is the local rings' taken slots,
-// used[1] the remote rings'.
-type seater struct {
-	ps      []planet
-	order   []int // indexes into ps, by branch
-	seats   []seat
-	placed  []bool
-	visited []bool
-	used    [2]map[int]bool
-	hostIdx map[string]int
-	byName  map[string]int
-	next    slotState
-}
-
-// assign seats every planet and returns the state to persist. A planet keeps
-// its persisted slot unless it is new or its class changed (a remote planet
-// ignores class); the rest take the free slot nearest their anchor, bases ahead
-// of their stacked children, a stacked pair beside each other when a neighbour
-// is free. Slots of workers no longer drawn are released. The seats are
-// index-aligned with ps; branch order, not input order, decides every tie.
-func assign(prev slotState, ps []planet) (slotState, []seat) {
-	a := &seater{
-		ps:      ps,
-		seats:   make([]seat, len(ps)),
-		placed:  make([]bool, len(ps)),
-		visited: make([]bool, len(ps)),
-		used:    [2]map[int]bool{{}, {}},
-		hostIdx: map[string]int{},
-		byName:  map[string]int{},
-		next:    slotState{V: slotsVer, Workers: map[string]slotEntry{}},
-	}
-	a.order = branchOrder(ps)
-	drawn := map[string]bool{}
-	for i := range ps {
-		a.byName[ps[i].branch] = i
-		drawn[ps[i].host] = true
-	}
-
-	// A host with no drawn planet leaves a hole, so the hosts after it keep their
-	// wedges; a new host takes the first hole.
-	hosts := slices.Clone(prev.Hosts)
-	for k, h := range hosts {
-		if !drawn[h] {
-			hosts[k] = ""
-		}
-	}
-	for _, i := range a.order {
-		h := ps[i].host
-		if h == "" || slices.Contains(hosts, h) {
+	prior := map[int]bool{}
+	for _, e := range prev.Order {
+		i, ok := a.byName[e.Branch]
+		if !ok || prior[i] {
 			continue
 		}
-		if k := slices.Index(hosts, ""); k >= 0 {
-			hosts[k] = h
-		} else if len(hosts) < maxHosts {
+		prior[i] = true
+		if ps[i].host == "" && e.Class != ps[i].class {
+			continue
+		}
+		a.seq = append(a.seq, i)
+		a.inSeq[i] = true
+	}
+
+	// A planet stacked on one that has to move moves with it.
+	for moved := true; moved; {
+		moved = false
+		for _, i := range a.seq {
+			if j, ok := a.baseOf(i); ok && !a.inSeq[j] && prior[j] {
+				delete(a.inSeq, i)
+				moved = true
+			}
+		}
+		a.seq = slices.DeleteFunc(a.seq, func(i int) bool { return !a.inSeq[i] })
+	}
+	a.normalize()
+
+	pending := make([]int, 0, len(ps))
+	for i := range ps {
+		if !a.inSeq[i] {
+			pending = append(pending, i)
+		}
+	}
+	sort.SliceStable(pending, func(x, y int) bool {
+		px, py := prior[pending[x]], prior[pending[y]]
+		if px != py {
+			return px
+		}
+		return ps[pending[x]].branch < ps[pending[y]].branch
+	})
+	for _, i := range pending {
+		a.insert(i)
+	}
+	return a.seq
+}
+
+// baseOf is the planet i is stacked on, when it is drawn on the same host.
+func (a *sequencer) baseOf(i int) (int, bool) {
+	j, ok := a.byName[a.ps[i].base]
+	return j, ok && j != i && a.ps[j].host == a.ps[i].host
+}
+
+// normalize puts local planets first and each host's planets together, hosts in
+// the order they first appear.
+func (a *sequencer) normalize() {
+	var hosts []string
+	for _, i := range a.seq {
+		if h := a.ps[i].host; h != "" && !slices.Contains(hosts, h) {
 			hosts = append(hosts, h)
 		}
 	}
-	for k, h := range hosts {
-		if h != "" {
-			a.hostIdx[h] = k
+	rank := func(i int) int {
+		if a.ps[i].host == "" {
+			return 0
 		}
+		return 1 + slices.Index(hosts, a.ps[i].host)
 	}
-	for len(hosts) > 0 && hosts[len(hosts)-1] == "" {
-		hosts = hosts[:len(hosts)-1]
-	}
-	a.next.Hosts = append([]string{}, hosts...)
-
-	for _, i := range a.order {
-		e, ok := prev.Workers[ps[i].branch]
-		if ok && a.hosted(i) && (ps[i].host != "" || e.Class == ps[i].class) {
-			a.keep(i, e.Slot)
-		}
-	}
-	for _, i := range a.order {
-		a.seat(i)
-	}
-	return a.next, a.seats
+	sort.SliceStable(a.seq, func(x, y int) bool { return rank(a.seq[x]) < rank(a.seq[y]) })
 }
 
-// branchOrder is the indexes of ps sorted by branch.
-func branchOrder(ps []planet) []int {
-	order := make([]int, len(ps))
-	for i := range order {
-		order[i] = i
-	}
-	sort.Slice(order, func(x, y int) bool { return ps[order[x]].branch < ps[order[y]].branch })
-	return order
-}
-
-// hosted reports whether i has a wedge to sit in: a local planet always does, a
-// remote one only if its host fit in the host list.
-func (a *seater) hosted(i int) bool {
-	_, ok := a.hostIdx[a.ps[i].host]
-	return a.ps[i].host == "" || ok
-}
-
-func (a *seater) space(i int) int {
-	if a.ps[i].host != "" {
-		return 1
-	}
-	return 0
-}
-
-// column is the wedge a remote planet's host owns on every remote ring.
-func (a *seater) column(i int) int { return a.hostIdx[a.ps[i].host] % (ringSlots / wedgeSlots) }
-
-func (a *seater) allowed(i, slot int) bool {
-	return a.ps[i].host == "" || slot/wedgeSlots == a.column(i)
-}
-
-// keep restores a persisted seat if it is still valid and free.
-func (a *seater) keep(i, index int) {
-	if index < 0 || index >= maxSlots || !a.allowed(i, index%ringSlots) || a.used[a.space(i)][index] {
+// insert places planet i, its base first so the child can follow it.
+func (a *sequencer) insert(i int) {
+	if a.inSeq[i] || a.visiting[i] {
 		return
 	}
-	a.put(i, seatAt(a.ps[i].host != "", index))
-}
-
-func (a *seater) put(i int, s seat) {
-	a.used[a.space(i)][s.index()] = true
-	a.seats[i] = s
-	a.placed[i] = true
-	a.next.Workers[a.ps[i].branch] = slotEntry{Slot: s.index(), Class: a.ps[i].class}
-}
-
-// seat places planet i if it is not yet placed and there is room. Its base goes
-// first so the child can sit beside it.
-func (a *seater) seat(i int) {
-	if a.placed[i] || a.visited[i] || !a.hosted(i) {
+	a.visiting[i] = true
+	if j, ok := a.baseOf(i); ok {
+		a.insert(j)
+	}
+	if len(a.seq) >= maxPlanets {
 		return
 	}
-	a.visited[i] = true
-	if j, ok := a.byName[a.ps[i].base]; ok {
-		a.seat(j)
-	}
-	for _, partner := range a.partners(i) {
-		if s, ok := a.near(i, a.seats[partner]); ok {
-			a.put(i, s)
-			return
-		}
-	}
-	if s, ok := a.nearest(i); ok {
-		a.put(i, s)
-	}
+	a.seq = slices.Insert(a.seq, a.position(i), i)
+	a.inSeq[i] = true
 }
 
-// partners are the placed planets i is stacked with: its base, then the
-// children built on it, all on the same host.
-func (a *seater) partners(i int) []int {
-	var out []int
-	if j, ok := a.byName[a.ps[i].base]; ok && j != i {
-		out = append(out, j)
+func (a *sequencer) position(i int) int {
+	p := a.ps[i]
+	if j, ok := a.baseOf(i); ok && a.inSeq[j] {
+		return a.afterBlock(slices.Index(a.seq, j))
 	}
-	for _, j := range a.order {
-		if j != i && a.ps[j].base == a.ps[i].branch {
-			out = append(out, j)
-		}
-	}
-	return slices.DeleteFunc(out, func(j int) bool { return !a.placed[j] || a.ps[j].host != a.ps[i].host })
-}
-
-// anchor is the in-ring position i wants to be near.
-func (a *seater) anchor(i int) float64 {
-	if a.ps[i].host != "" {
-		return float64(a.column(i)*wedgeSlots) + (wedgeSlots-1)/2.0
-	}
-	return sectorAnchor[a.ps[i].class] / slotDeg
-}
-
-// offset is the signed clockwise distance from anchor to slot; on a local ring
-// it wraps, so 8 is the farthest either way.
-func (a *seater) offset(i, slot int) float64 {
-	d := float64(slot) - a.anchor(i)
-	if a.ps[i].host != "" {
-		return d
-	}
-	d = math.Mod(d, ringSlots)
-	if d > ringSlots/2 {
-		d -= ringSlots
-	}
-	if d <= -ringSlots/2 {
-		d += ringSlots
-	}
-	return d
-}
-
-// closer reports whether offset d beats best: nearer, or equally near on the
-// clockwise side.
-func closer(d, best float64) bool {
-	return math.Abs(d) < math.Abs(best) || (math.Abs(d) == math.Abs(best) && d > best)
-}
-
-// nearest is the free slot closest to i's anchor, ring by ring; false when its
-// rings are full.
-func (a *seater) nearest(i int) (seat, bool) {
-	remote := a.ps[i].host != ""
-	ring := 0
-	if remote {
-		ring = a.hostIdx[a.ps[i].host] / (ringSlots / wedgeSlots)
-	}
-	for ; ring < kindRings; ring++ {
-		best, bestD := -1, 0.0
-		for slot := range ringSlots {
-			if !a.allowed(i, slot) || a.used[a.space(i)][ring*ringSlots+slot] {
-				continue
-			}
-			if d := a.offset(i, slot); best < 0 || closer(d, bestD) {
-				best, bestD = slot, d
+	if p.host != "" {
+		last := -1
+		for k, x := range a.seq {
+			if a.ps[x].host == p.host {
+				last = k
 			}
 		}
-		if best >= 0 {
-			return seatAt(remote, ring*ringSlots+best), true
+		if last < 0 {
+			return len(a.seq)
+		}
+		return a.afterBlock(last)
+	}
+	pos := -1
+	for k, x := range a.seq {
+		if a.ps[x].host != "" {
+			break
+		}
+		if classRank[a.ps[x].class] <= classRank[p.class] {
+			pos = k
 		}
 	}
-	return seat{}, false
-}
-
-// nearReach is how many slots from its partner a stacked planet may sit: any
-// farther and the dashed edge between the pair is a chord across the circle.
-const nearReach = 2
-
-// near is the free slot within nearReach of q: on q's ring first, then on the
-// next ring outward at q's angle, closest first; of two equally far it takes
-// the one nearer i's anchor, then the clockwise one. False when none is free,
-// and the caller falls back to nearest.
-func (a *seater) near(i int, q seat) (seat, bool) {
-	for ring := q.ring; ring <= min(q.ring+1, kindRings-1); ring++ {
-		for d := range nearReach + 1 {
-			if d == 0 && ring == q.ring {
-				continue
-			}
-			best, bestOff, found := 0, 0.0, false
-			for _, slot := range []int{q.slot + d, q.slot - d} {
-				if q.remote && (slot < 0 || slot >= ringSlots) {
-					continue
-				}
-				slot = (slot + ringSlots) % ringSlots
-				if !a.allowed(i, slot) || a.used[a.space(i)][ring*ringSlots+slot] {
-					continue
-				}
-				if off := a.offset(i, slot); !found || closer(off, bestOff) {
-					best, bestOff, found = slot, off, true
-				}
-			}
-			if found {
-				return seatAt(q.remote, ring*ringSlots+best), true
-			}
-		}
+	if pos < 0 {
+		return 0
 	}
-	return seat{}, false
+	return a.afterBlock(pos)
 }
 
-// placed is a planet with its seat and its position in points.
+// afterBlock is the index after seq[at] and the planets stacked on it, so a new
+// planet never lands inside a stack.
+func (a *sequencer) afterBlock(at int) int {
+	stack := map[int]bool{a.seq[at]: true}
+	pos := at + 1
+	for pos < len(a.seq) {
+		if j, ok := a.baseOf(a.seq[pos]); !ok || !stack[j] {
+			break
+		}
+		stack[a.seq[pos]] = true
+		pos++
+	}
+	return pos
+}
+
+// placed is a planet with its ring, angle (degrees clockwise from 12 o'clock)
+// and position in points.
 type placed struct {
 	planet
-	seat
-	x, y float64
+	ring  int
+	angle float64
+	x, y  float64
 }
 
-// hostLabel is where a remote wedge's host name goes.
+// hostLabel is where a remote host's name goes.
 type hostLabel struct {
 	host string
 	x, y float64
 }
 
-// scene is the whole layout: planets in branch order, a label per drawn remote
+// scene is the whole layout: planets in ring order, a label per drawn remote
 // host in first-seen order, and extent, the radius of the smallest circle around
-// everything (the emitter squares the canvas with it).
+// everything (the emitter fits the canvas to it).
 type scene struct {
 	planets []placed
 	hosts   []hostLabel
 	extent  float64
 }
 
-func ringRadius(ring int) float64 { return ring0Radius + ringStep*float64(ring) }
-
 func polar(r, deg float64) (x, y float64) {
 	rad := deg * math.Pi / 180
 	return r * math.Sin(rad), r * math.Cos(rad)
 }
 
-// arrange seats the planets and turns the seats into coordinates. Remote rings
-// start just past the outermost local ring in use.
+// ringSizes splits n planets over as few rings as fit, as evenly as possible.
+func ringSizes(n int) []int {
+	rings := (n + ringCap - 1) / ringCap
+	sizes := make([]int, rings)
+	for k := range sizes {
+		sizes[k] = n / rings
+		if k < n%rings {
+			sizes[k]++
+		}
+	}
+	return sizes
+}
+
+// arrange orders the planets, spaces them evenly and turns that into
+// coordinates. Every second ring is turned half a step, so its spokes do not run
+// under an inner planet.
 func arrange(prev slotState, ps []planet) (slotState, scene) {
-	next, seats := assign(prev, ps)
-
-	localRings, remoteRings := 1, 0
-	for _, s := range seats {
-		if s.remote {
-			remoteRings = max(remoteRings, s.ring+1)
-		} else {
-			localRings = max(localRings, s.ring+1)
-		}
-	}
-	radius := func(s seat) float64 {
-		if s.remote {
-			return ringRadius(localRings + s.ring)
-		}
-		return ringRadius(s.ring)
-	}
-
+	seq := sequence(prev, ps)
+	next := newSlotState()
 	sc := scene{extent: minExtent}
-	drawn := map[string]bool{}
-	for _, i := range branchOrder(ps) {
-		s := seats[i]
-		if !s.seated {
-			continue
-		}
-		r := radius(s)
-		pl := placed{planet: ps[i], seat: s}
-		pl.x, pl.y = polar(r, s.angle)
-		pr := pl.size * 72 / 2
-		sc.extent = max(sc.extent, r+pr)
 
-		pl.moons = make([]moon, len(ps[i].moons))
-		for k, m := range ps[i].moons {
-			along := (float64(k) - float64(len(pl.moons)-1)/2) * moonStep
-			ux, uy := polar(1, s.angle)
-			m.x = pl.x + ux*(pr+moonGap) + uy*along
-			m.y = pl.y + uy*(pr+moonGap) - ux*along
-			pl.moons[k] = m
-			sc.extent = max(sc.extent, math.Hypot(m.x, m.y)+moonRadius)
+	type run struct{ x, y, first float64 }
+	runs := map[string]*run{}
+	var hostOrder []string
+	outer, k := 0.0, 0
+	for ring, n := range ringSizes(len(seq)) {
+		r := max(minRadius, float64(n)*arcPerPlanet/(2*math.Pi))
+		if ring > 0 {
+			r = max(r, outer+ringStep)
 		}
-		sc.planets = append(sc.planets, pl)
-		if ps[i].host != "" {
-			drawn[ps[i].host] = true
+		outer = r
+		turn := 0.0
+		if ring%2 == 1 {
+			turn = 180 / float64(n)
+		}
+		for j := range n {
+			i := seq[k]
+			k++
+			angle := math.Mod(float64(j)*360/float64(n)+turn, 360)
+			pl := placed{planet: ps[i], ring: ring, angle: angle}
+			pl.x, pl.y = polar(r, angle)
+			pr := pl.size * 72 / 2
+			sc.extent = max(sc.extent, r+pr)
+
+			pl.moons = make([]moon, len(ps[i].moons))
+			for m, mn := range ps[i].moons {
+				along := (float64(m) - float64(len(pl.moons)-1)/2) * moonStep
+				ux, uy := polar(1, angle)
+				mn.x = pl.x + ux*(pr+moonGap) + uy*along
+				mn.y = pl.y + uy*(pr+moonGap) - ux*along
+				pl.moons[m] = mn
+				sc.extent = max(sc.extent, math.Hypot(mn.x, mn.y)+moonRadius)
+			}
+			sc.planets = append(sc.planets, pl)
+			next.Order = append(next.Order, slotEntry{Branch: ps[i].branch, Class: ps[i].class})
+
+			if h := ps[i].host; h != "" {
+				u, v := polar(1, angle)
+				if runs[h] == nil {
+					runs[h] = &run{first: angle}
+					hostOrder = append(hostOrder, h)
+				}
+				runs[h].x += u
+				runs[h].y += v
+			}
 		}
 	}
 
-	for k, h := range next.Hosts {
-		if !drawn[h] {
-			continue
+	for _, h := range hostOrder {
+		deg := runs[h].first
+		if math.Hypot(runs[h].x, runs[h].y) > 1e-9 {
+			deg = math.Atan2(runs[h].x, runs[h].y) * 180 / math.Pi
 		}
-		col := k % (ringSlots / wedgeSlots)
-		r := ringRadius(localRings+remoteRings-1) + hostLabelGap + hostLabelStep*float64(k/(ringSlots/wedgeSlots))
-		x, y := polar(r, (float64(col*wedgeSlots)+wedgeSlots/2.0)*slotDeg)
+		r := outer + hostLabelGap
+		x, y := polar(r, deg)
 		sc.hosts = append(sc.hosts, hostLabel{host: h, x: x, y: y})
 		sc.extent = max(sc.extent, r+hostLabelHalf)
 	}

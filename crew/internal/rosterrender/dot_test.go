@@ -89,6 +89,10 @@ type dotCase struct {
 var dotCases = []dotCase{
 	{"0-workers", nil, 0},
 	{"1-workers", []dotWorker{{branch: "feat/1-solo", name: "lime", tier: "standard", state: "working", age: 3, roles: roleOne}}, 0},
+	{"2-workers", []dotWorker{
+		{branch: "feat/1-solo", name: "lime", tier: "standard", state: "working", age: 3, roles: roleOne},
+		{branch: "feat/2-duo", name: "sky", tier: "deep", state: "blocked", age: 5},
+	}, 0},
 	{"8-workers", eightWorkers(), 0},
 	{"16-workers", sixteenWorkers(), 2},
 }
@@ -123,6 +127,41 @@ func TestDotGoldens(t *testing.T) {
 	}
 }
 
+// TestDotEveryRenderIsLabelledAndFitted: every planet carries its codename, every
+// picture has the legend, and the invisible corners that size the canvas are
+// centred on the dispatcher and hug the content.
+func TestDotEveryRenderIsLabelledAndFitted(t *testing.T) {
+	for _, c := range dotCases {
+		t.Run(c.name, func(t *testing.T) {
+			out, sc, _ := emit(dotModel(c.workers, c.holds))
+			if !strings.Contains(out, "working ") || !strings.Contains(out, "size = tier") {
+				t.Errorf("no legend in\n%s", out)
+			}
+			for _, p := range sc.planets {
+				if p.name == "" || !strings.Contains(out, "label="+dotq(p.label)) {
+					t.Errorf("planet %s is unlabelled", p.branch)
+				}
+			}
+			if len(c.workers) == 0 {
+				return
+			}
+			var xs, ys []float64
+			for _, id := range []string{"c1", "c2", "c3", "c4"} {
+				m := regexp.MustCompile(`pos="(-?[0-9.]+),(-?[0-9.]+)!"`).FindStringSubmatch(nodeLine(t, out, id))
+				x, _ := strconv.ParseFloat(m[1], 64)
+				y, _ := strconv.ParseFloat(m[2], 64)
+				xs, ys = append(xs, x), append(ys, y)
+			}
+			if xs[0] != -xs[1] || xs[2] != -xs[3] || ys[0] != -ys[2] || ys[1] != -ys[3] {
+				t.Errorf("canvas not centred on the dispatcher: x %v y %v", xs, ys)
+			}
+			if margin := ys[0] - sc.extent; margin < 0 || margin > 2*canvasPad {
+				t.Errorf("margin around the outermost planet = %v", margin)
+			}
+		})
+	}
+}
+
 func TestDotDeterministicAndInputOrderFree(t *testing.T) {
 	m := dotModel(sixteenWorkers(), 1)
 	a, _, _ := emit(m)
@@ -138,12 +177,13 @@ func TestDotDeterministicAndInputOrderFree(t *testing.T) {
 	}
 }
 
-// idOf maps each drawn planet's branch to its node id and returns the planets
-// in id order.
+// idOf maps each drawn planet's branch to its node id: ids follow branch order.
 func idOf(sc scene) map[string]string {
+	names := branches(sc)
+	slices.Sort(names)
 	ids := map[string]string{}
-	for i, p := range sc.planets {
-		ids[p.branch] = "p" + strconv.Itoa(i+1)
+	for i, b := range names {
+		ids[b] = "p" + strconv.Itoa(i+1)
 	}
 	return ids
 }

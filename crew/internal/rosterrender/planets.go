@@ -25,8 +25,8 @@ const doneFold = 5 * time.Minute
 // maxText bounds every bus- or tmux-sourced string that reaches the diagram.
 const maxText = 24
 
-// sectorAnchor is each class's home angle in degrees clockwise from 12 o'clock.
-var sectorAnchor = map[string]float64{classBlocked: 0, classWorking: 90, classPROpen: 180, classDone: 270}
+// classRank is a class's place in the ring, clockwise from 12 o'clock.
+var classRank = map[string]int{classBlocked: 0, classWorking: 1, classPROpen: 2, classDone: 3}
 
 // tierSize is a planet's diameter in inches; an unknown tier draws as standard.
 var tierSize = map[string]float64{"deep": 0.9, "standard": 0.75, "trivial": 0.6}

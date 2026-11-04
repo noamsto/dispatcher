@@ -3,18 +3,18 @@ digraph roster {
   bgcolor="#1e1e2e"; fontname="Source Sans 3"; fontsize=13; fontcolor="#a6adc8";
   node [shape=circle style=filled fontname="Source Sans 3" fontsize=12 fontcolor="#cdd6f4" fillcolor="#313244" penwidth=3 fixedsize=true];
   edge [color="#585b70" penwidth=1.5 arrowhead=none];
-  c1 [label="" style=invis shape=point width=0 pos="-454.00,429.00!"];
-  c2 [label="" style=invis shape=point width=0 pos="454.00,429.00!"];
-  c3 [label="" style=invis shape=point width=0 pos="-454.00,-429.00!"];
-  c4 [label="" style=invis shape=point width=0 pos="454.00,-429.00!"];
+  c1 [label="" style=invis shape=point width=0 pos="-274.00,249.00!"];
+  c2 [label="" style=invis shape=point width=0 pos="274.00,249.00!"];
+  c3 [label="" style=invis shape=point width=0 pos="-274.00,-249.00!"];
+  c4 [label="" style=invis shape=point width=0 pos="274.00,-249.00!"];
   dispatcher [label="dispatcher" width=1 height=1 pos="0.00,0.00!" color="#f9e2af" fillcolor="#45475a"];
-  p1 [label="lime\n101" width=0.9 height=0.9 pos="240.00,0.00!" color="#a6e3a1"];
-  p2 [label="sky\n102" width=0.75 height=0.75 pos="0.00,240.00!" color="#f38ba8" penwidth=5 class="aeye-pulse"];
-  p3 [label="rose\n103" width=0.6 height=0.6 pos="0.00,-240.00!" color="#89b4fa"];
-  p4 [label="teal\n104" width=0.75 height=0.75 pos="221.73,-91.84!" color="#a6e3a1"];
-  p5 [label="olive\n105" width=0.75 height=0.75 pos="274.38,183.34!" shape=hexagon color="#a6e3a1"];
-  p6 [label="slate\n106" width=0.6 height=0.6 pos="-240.00,0.00!" color="#45475a" fillcolor="#1e1e2e" fontcolor="#6c7086"];
-  p7 [label="plum\n108" width=0.9 height=0.9 pos="221.73,91.84!" color="#a6e3a1"];
+  p1 [label="lime\n101" width=0.9 height=0.9 pos="117.27,93.52!" color="#a6e3a1"];
+  p2 [label="sky\n102" width=0.75 height=0.75 pos="0.00,150.00!" color="#f38ba8" penwidth=5 class="aeye-pulse"];
+  p3 [label="rose\n103" width=0.6 height=0.6 pos="-65.08,-135.15!" color="#89b4fa"];
+  p4 [label="teal\n104" width=0.75 height=0.75 pos="146.24,-33.38!" color="#a6e3a1"];
+  p5 [label="olive\n105" width=0.75 height=0.75 pos="-117.27,93.52!" shape=hexagon color="#a6e3a1"];
+  p6 [label="slate\n106" width=0.6 height=0.6 pos="-146.24,-33.38!" color="#45475a" fillcolor="#1e1e2e" fontcolor="#6c7086"];
+  p7 [label="plum\n108" width=0.9 height=0.9 pos="65.08,-135.15!" color="#a6e3a1"];
   dispatcher -> p1 [class="aeye-flow"];
   dispatcher -> p2;
   dispatcher -> p3;
@@ -22,14 +22,14 @@ digraph roster {
   dispatcher -> p5 [class="aeye-flow"];
   dispatcher -> p6;
   dispatcher -> p7 [class="aeye-flow"];
-  p1m1 [label="" width=0.16 height=0.16 pos="286.40,7.00!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
+  p1m1 [label="" width=0.16 height=0.16 pos="149.19,127.93!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
   p1 -> p1m1 [color="#45475a"];
-  p1m2 [label="" width=0.16 height=0.16 pos="286.40,-7.00!" fillcolor="#585b70" penwidth=0];
+  p1m2 [label="" width=0.16 height=0.16 pos="157.92,116.98!" fillcolor="#585b70" penwidth=0];
   p1 -> p1m2 [color="#45475a"];
-  p2m1 [label="" width=0.16 height=0.16 pos="0.00,281.00!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
+  p2m1 [label="" width=0.16 height=0.16 pos="0.00,191.00!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
   p2 -> p2m1 [color="#45475a"];
   p4 -> p1 [style=dashed color="#89b4fa" arrowhead=normal arrowsize=0.6 penwidth=2];
-  h1 [label="mbp" shape=plaintext style=solid fixedsize=false fontcolor="#a6adc8" pos="272.24,272.24!"];
+  h1 [label="mbp" shape=plaintext style=solid fixedsize=false fontcolor="#a6adc8" pos="-160.28,127.82!"];
   label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="4">
     <tr><td><font color="#a6e3a1">●</font> working 4&nbsp;&nbsp;&nbsp;&nbsp;<font color="#f38ba8">●</font> blocked 1&nbsp;&nbsp;&nbsp;&nbsp;<font color="#89b4fa">●</font> pr open 1&nbsp;&nbsp;&nbsp;&nbsp;<font color="#45475a">●</font> done 2</td></tr>
     <tr><td>size = tier&nbsp;&nbsp;&nbsp;&nbsp;<font color="#585b70">●</font> small dot = role&nbsp;&nbsp;&nbsp;&nbsp;<font color="#89b4fa">⇢</font> dashed arrow = stacked on&nbsp;&nbsp;&nbsp;&nbsp;⬡ = remote host</td></tr>
