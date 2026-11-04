@@ -22,6 +22,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
 // exitType is jq's status for a bus it could not parse, and for a row it could
@@ -33,6 +34,8 @@ const exitType = 5
 type Options struct {
 	CrewID func() string
 	Flush  func() error
+	// Hosts decides which overseer:<host> senders are read; nil refuses all.
+	Hosts *sender.OverseerHosts
 }
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
@@ -100,6 +103,7 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		switch v := ev.Doc.(type) {
 		case map[string]any:
 			failed = false
+			v, _ = sender.ForeignOverseer(v, o.Hosts)
 			if !selects(v, crew, me, since, q.From) {
 				continue
 			}

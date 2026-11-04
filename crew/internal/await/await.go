@@ -23,6 +23,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
 //go:embed await.jq
@@ -47,6 +48,8 @@ type Options struct {
 	CrewID func() string
 	Flush  func() error
 	Clock  clock.Clock
+	// Hosts decides which overseer:<host> senders are read; nil refuses all.
+	Hosts *sender.OverseerHosts
 }
 
 // timeoutRe is the arm's `^[0-9]{1,9}$` — up to nine digits, so the value always
@@ -62,6 +65,7 @@ func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format
 type call struct {
 	me, from, interval string
 	timeout            int
+	hosts              *sender.OverseerHosts
 }
 
 // Run is the arm. A timeout is not a failure: empty stdout, not the exit status,
@@ -74,6 +78,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 		return 1
 	}
 	c, msg := check(req)
+	c.hosts = o.Hosts
 	if msg != "" {
 		say(stderr, "%s\n", msg)
 		return 1
@@ -171,6 +176,9 @@ func due(path, crew string, c call, got any) []any {
 	in := []any{}
 	for _, line := range bytes.Split(data, []byte("\n")) {
 		if v, ok := row(line); ok {
+			if m, isMap := v.(map[string]any); isMap {
+				v, _ = sender.ForeignOverseer(m, c.hosts)
+			}
 			in = append(in, v)
 		}
 	}
