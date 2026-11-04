@@ -357,7 +357,7 @@ func TestHelpBarKeysAreHandled(t *testing.T) {
 		}
 		nv, cmd := v.Update(msg)
 		after := nv.(liveView)
-		if cmd == nil && after.cursor == v.cursor && after.mode == v.mode && after.detail == v.detail {
+		if cmd == nil && after.cursor == v.cursor && after.mode == v.mode && after.detail == v.detail && after.showReaped == v.showReaped {
 			t.Errorf("help-bar key %q is a silent no-op", k)
 		}
 	}
@@ -374,7 +374,7 @@ func TestKeysPerMode(t *testing.T) {
 		}
 		return strings.Join(parts, ", ")
 	}
-	if got, want := helps(v), "j/k move, enter events, t jump, o open PR, m reply, n nudge"; got != want {
+	if got, want := helps(v), "j/k move, enter events, t jump, o open PR, m reply, n nudge, a show reaped"; got != want {
 		t.Errorf("normal keys = %q, want %q", got, want)
 	}
 	reply := press(v, keyRune('m'))

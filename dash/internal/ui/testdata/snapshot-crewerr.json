@@ -278,6 +278,42 @@
             "color": "#ff6600",
             "tmux": "colour61",
             "host": "mini"
+          },
+          {
+            "from": "worker:docs/55-readme#s1",
+            "branch": "docs/55-readme",
+            "session": "s1",
+            "state": "done",
+            "detail": "merged",
+            "source": null,
+            "ts": 1789990000000,
+            "age_s": 10000,
+            "pr_url": "https://github.com/noamsto/dispatcher/pull/55",
+            "title": "Readme",
+            "engine": "claude",
+            "model": "sonnet",
+            "tier": "standard",
+            "name": "amber",
+            "color": "#ffcc00",
+            "tmux": "colour178"
+          },
+          {
+            "from": "worker:chore/12-old#s1",
+            "branch": "chore/12-old",
+            "session": "s1",
+            "state": "reaped",
+            "detail": "cleaned up",
+            "source": null,
+            "ts": 1789900000000,
+            "age_s": 100000,
+            "pr_url": null,
+            "title": "Old chore",
+            "engine": "pi",
+            "model": "pi-mini",
+            "tier": "trivial",
+            "name": "slate",
+            "color": "#888888",
+            "tmux": "colour244"
           }
         ],
         "holds": [

@@ -111,9 +111,11 @@ type liveView struct {
 	snap   data.Snapshot
 	loaded [numSources]bool
 
-	rows   []liveRow
-	cursor int
-	selKey string // rowKey of the cursor row; the cursor follows it across reloads
+	rows         []liveRow
+	showReaped   bool
+	hiddenReaped int
+	cursor       int
+	selKey       string // rowKey of the cursor row; the cursor follows it across reloads
 
 	lastChange time.Time
 
@@ -141,29 +143,41 @@ func stateRank(state string) int {
 	switch state {
 	case "blocked":
 		return 0
-	case "working":
+	case "failed":
 		return 1
-	case "pr_open":
+	case "working":
 		return 2
-	case "idle":
+	case "pr_open":
 		return 3
+	case "idle":
+		return 4
+	case "done":
+		return 5
+	case "reaped":
+		return 7
 	}
-	return 4
+	return 6
 }
 
 // setRoster rebuilds the sorted worker list (state rank, then age
-// descending) and puts the cursor back on the worker it was on, falling back
+// descending), leaving reaped workers out unless showReaped, and puts the cursor back on the worker it was on, falling back
 // to the same index, clamped, when that worker vanished.
 func (v *liveView) setRoster(r data.RosterSection) {
 	var rows []liveRow
+	hidden := 0
 	for _, c := range r.Crews {
 		if c.WorkersError != nil {
 			continue
 		}
 		for _, w := range c.Workers {
+			if state, _ := strField(w, "state"); state == "reaped" && !v.showReaped {
+				hidden++
+				continue
+			}
 			rows = append(rows, liveRow{crewID: c.ID, w: w})
 		}
 	}
+	v.hiddenReaped = hidden
 	now := v.now()
 	sort.SliceStable(rows, func(i, j int) bool {
 		si, _ := strField(rows[i].w, "state")
@@ -291,6 +305,9 @@ func (v liveView) handleKey(msg tea.KeyMsg) (view, tea.Cmd) {
 		return v.startAction(actReply)
 	case "n":
 		return v.startAction(actNudge)
+	case "a":
+		v.showReaped = !v.showReaped
+		v.setRoster(v.snap.Roster)
 	case "enter":
 		if v.cursor >= len(v.rows) || v.deps.eventsPath == "" {
 			return v, nil
@@ -330,6 +347,10 @@ func (v liveView) handleDetailKey(msg tea.KeyMsg) (view, tea.Cmd) {
 }
 
 func (v liveView) Keys() []key.Binding {
+	reapedHelp := "show reaped"
+	if v.showReaped {
+		reapedHelp = "hide reaped"
+	}
 	if v.detail {
 		return []key.Binding{
 			key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "scroll")),
@@ -356,6 +377,7 @@ func (v liveView) Keys() []key.Binding {
 		key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open PR")),
 		key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "reply")),
 		key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "nudge")),
+		key.NewBinding(key.WithKeys("a"), key.WithHelp("a", reapedHelp)),
 	}
 }
 
@@ -459,7 +481,7 @@ func (v liveView) tableView(w, h int) string {
 	return strings.Join(out, "\n")
 }
 
-// attentionLines is the "N blocked · M holds" summary plus one line per
+// attentionLines is the "N blocked · M holds · K reaped hidden" summary plus one line per
 // crew-level failure, so a failing crew is never silently dropped.
 func (v liveView) attentionLines(w int) []string {
 	blocked := 0
@@ -482,6 +504,9 @@ func (v liveView) attentionLines(w int) []string {
 			noun = "hold"
 		}
 		parts = append(parts, fmt.Sprintf("%d %s", holds, noun))
+	}
+	if v.hiddenReaped > 0 {
+		parts = append(parts, fmt.Sprintf("%d reaped hidden", v.hiddenReaped))
 	}
 	var out []string
 	if len(parts) > 0 {

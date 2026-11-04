@@ -507,6 +507,92 @@ func TestLiveSortsBlockedFirst(t *testing.T) {
 	}
 }
 
+func TestLiveStateRankOrder(t *testing.T) {
+	order := []string{"blocked", "failed", "working", "pr_open", "idle", "done", "mystery", "reaped"}
+	for i := 1; i < len(order); i++ {
+		if stateRank(order[i-1]) >= stateRank(order[i]) {
+			t.Errorf("%s (%d) should rank before %s (%d)", order[i-1], stateRank(order[i-1]), order[i], stateRank(order[i]))
+		}
+	}
+}
+
+func liveStates(v liveView) []string {
+	var states []string
+	for _, r := range v.rows {
+		s, _ := strField(r.w, "state")
+		states = append(states, s)
+	}
+	return states
+}
+
+func TestLiveReapedHiddenByDefault(t *testing.T) {
+	asciiProfile(t)
+	snap := loadCrewErrSnapshot(t)
+	v := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
+
+	if want := []string{"blocked", "working", "idle", "done"}; !slices.Equal(liveStates(v), want) {
+		t.Fatalf("rows = %v, want %v", liveStates(v), want)
+	}
+	out := v.View(120, 24)
+	if !strings.Contains(out, "1 blocked · 1 hold · 1 reaped hidden") {
+		t.Errorf("attention line missing the hidden count:\n%s", out)
+	}
+	if strings.Contains(out, "slate") {
+		t.Errorf("reaped worker rendered while hidden:\n%s", out)
+	}
+
+	snap.Roster.Crews[0].Holds = nil
+	snap.Roster.Crews[0].Workers = snap.Roster.Crews[0].Workers[2:]
+	out = newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap)).View(120, 24)
+	if !strings.Contains(out, "1 reaped hidden") || strings.Contains(out, "blocked") {
+		t.Errorf("hidden count should show alone:\n%s", out)
+	}
+}
+
+func TestLiveToggleShowsReaped(t *testing.T) {
+	asciiProfile(t)
+	snap := loadCrewErrSnapshot(t)
+	v := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
+
+	helpOf := func(v liveView) string {
+		keys := v.Keys()
+		return keys[len(keys)-1].Help().Key + " " + keys[len(keys)-1].Help().Desc
+	}
+	if got := helpOf(v); got != "a show reaped" {
+		t.Errorf("help = %q, want %q", got, "a show reaped")
+	}
+	v = press(v, keyRune('a'))
+	if got := helpOf(v); got != "a hide reaped" {
+		t.Errorf("help = %q, want %q", got, "a hide reaped")
+	}
+	if want := []string{"blocked", "working", "idle", "done", "reaped"}; !slices.Equal(liveStates(v), want) {
+		t.Fatalf("rows after a = %v, want %v", liveStates(v), want)
+	}
+	out := v.View(120, 24)
+	if !strings.Contains(out, "slate") || strings.Contains(out, "reaped hidden") {
+		t.Errorf("reaped worker should show with no hidden count:\n%s", out)
+	}
+
+	v = press(v, keyRune('G'))
+	if got := v.Selection().(data.Worker); got.State != "reaped" {
+		t.Fatalf("G selected %q, want the reaped worker", got.State)
+	}
+	v = press(v, keyRune('a'))
+	if want := []string{"blocked", "working", "idle", "done"}; !slices.Equal(liveStates(v), want) {
+		t.Fatalf("rows after second a = %v, want %v", liveStates(v), want)
+	}
+	if v.cursor != len(v.rows)-1 || v.Selection() == nil {
+		t.Errorf("cursor = %d with %d rows, want clamped onto the last visible row", v.cursor, len(v.rows))
+	}
+
+	v = press(v, keyRune('k'))
+	before := v.Selection().(data.Worker)
+	v = press(v, keyRune('a'))
+	if after := v.Selection().(data.Worker); after != before {
+		t.Errorf("selection after toggling = %+v, want the still-visible %+v", after, before)
+	}
+}
+
 func TestLiveCursorFollowsWorkerAcrossReload(t *testing.T) {
 	snap := loadManySnapshot(t)
 	v := newLiveView(snap, allLoaded, liveDeps{}, fixedNow(snap))
