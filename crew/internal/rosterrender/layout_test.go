@@ -1,10 +1,13 @@
 package rosterrender
 
 import (
+	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 )
 
@@ -377,6 +380,200 @@ func TestLayoutMoonsOutwardAndExtent(t *testing.T) {
 		t.Errorf("extent %v inside host label %v", sc.extent, math.Hypot(h.x, h.y))
 	}
 }
+
+func TestSlotsLoadDropsOutOfRangeAndOversize(t *testing.T) {
+	var hosts []string
+	for i := range maxHosts + 5 {
+		hosts = append(hosts, "h"+strconv.Itoa(i))
+	}
+	hostJSON, _ := json.Marshal(hosts)
+	content := fmt.Sprintf(`{"v":1,"workers":{
+		"huge":{"slot":1000000000000000000,"class":"working"},
+		"neg":{"slot":-1,"class":"working"},
+		"edge":{"slot":%d,"class":"working"},
+		"ok":{"slot":%d,"class":"working"}},"hosts":%s}`, maxSlots, maxSlots-1, hostJSON)
+	path := filepath.Join(t.TempDir(), "slots.json")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := loadSlots(path)
+	if len(got.Workers) != 1 || got.Workers["ok"].Slot != maxSlots-1 {
+		t.Errorf("workers = %+v, want only ok", got.Workers)
+	}
+	if len(got.Hosts) != maxHosts {
+		t.Errorf("hosts = %d, want %d", len(got.Hosts), maxHosts)
+	}
+
+	if err := os.WriteFile(path, []byte(`{"v":1,"workers":{},"hosts":["a","a","","b"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadSlots(path).Hosts; !reflect.DeepEqual(got, []string{"a", "", "", "b"}) {
+		t.Errorf("hosts = %q, want duplicates blanked", got)
+	}
+}
+
+func TestLayoutIgnoresOutOfRangePersistedSlot(t *testing.T) {
+	state := newSlotState()
+	state.Workers["a"] = slotEntry{Slot: math.MaxInt, Class: classWorking}
+	state.Workers["r"] = slotEntry{Slot: maxSlots * 1000, Class: classWorking}
+	next, seats := seatsByBranch(state, []planet{wp("a", classWorking), remoteWP("r", classWorking, "mbp")})
+	for branch, s := range seats {
+		if !s.seated || s.ring >= kindRings {
+			t.Errorf("%s seat = %+v", branch, s)
+		}
+		if next.Workers[branch].Slot >= maxSlots {
+			t.Errorf("%s persisted slot %d", branch, next.Workers[branch].Slot)
+		}
+	}
+}
+
+func TestLayoutLocalCapacityDropsExtraPlanetsButCountsThem(t *testing.T) {
+	n := maxSlots + 1
+	rows := make([]map[string]any, n)
+	for i := range rows {
+		rows[i] = planetRow(fmt.Sprintf("feat/%03d-x", i), "working")
+	}
+	ps, lg := buildPlanets(planetModel(rows...), planetNow)
+	state, sc := arrange(newSlotState(), ps)
+	if len(sc.planets) != maxSlots || len(state.Workers) != maxSlots {
+		t.Fatalf("drawn %d, persisted %d, want %d", len(sc.planets), len(state.Workers), maxSlots)
+	}
+	if lg.working != n {
+		t.Errorf("legend working = %d, want all %d counted", lg.working, n)
+	}
+	for _, p := range sc.planets {
+		if p.ring >= kindRings {
+			t.Fatalf("%s on ring %d", p.branch, p.ring)
+		}
+	}
+	// A worker that was drawn is never displaced by one that does not fit.
+	again, sc2 := arrange(state, ps)
+	if len(sc2.planets) != maxSlots || !reflect.DeepEqual(again, state) {
+		t.Errorf("second pass changed the layout: %d drawn", len(sc2.planets))
+	}
+}
+
+func TestLayoutRemoteCapacityDropsExtraHosts(t *testing.T) {
+	var ps []planet
+	for i := range maxHosts + 1 {
+		ps = append(ps, remoteWP(fmt.Sprintf("w%02d", i), classWorking, fmt.Sprintf("h%02d", i)))
+	}
+	state, seats := seatsByBranch(newSlotState(), ps)
+	drawn := 0
+	for _, s := range seats {
+		if s.seated {
+			drawn++
+			if s.ring >= kindRings {
+				t.Errorf("seat %+v beyond the remote rings", s)
+			}
+		}
+	}
+	if drawn != maxHosts || len(state.Hosts) != maxHosts || len(state.Workers) != maxHosts {
+		t.Fatalf("drawn %d, hosts %d, persisted %d, want %d", drawn, len(state.Hosts), len(state.Workers), maxHosts)
+	}
+}
+
+func hostWorkers(hosts ...string) []planet {
+	var ps []planet
+	for _, h := range hosts {
+		ps = append(ps, remoteWP("w-"+h, classWorking, h))
+	}
+	return ps
+}
+
+func wedgeOf(s seat) int { return s.ring*(ringSlots/wedgeSlots) + s.slot/wedgeSlots }
+
+func TestSlotsGoneHostsFreeTheirWedgeIndex(t *testing.T) {
+	state, _ := seatsByBranch(newSlotState(), hostWorkers("h1", "h2", "h3", "h4"))
+
+	state, seats := seatsByBranch(state, hostWorkers("h5"))
+	if s := seats["w-h5"]; s.ring != 0 || wedgeOf(s) != 0 {
+		t.Errorf("h5 seat = %+v, want the first freed wedge on remote ring 0", s)
+	}
+	if !reflect.DeepEqual(state.Hosts, []string{"h5"}) {
+		t.Errorf("hosts = %q, want trailing holes trimmed", state.Hosts)
+	}
+}
+
+func TestSlotsSurvivingHostsKeepWedgesWhileHolesFill(t *testing.T) {
+	state, first := seatsByBranch(newSlotState(), hostWorkers("h1", "h2", "h3", "h4"))
+
+	state, second := seatsByBranch(state, hostWorkers("h2", "h3", "h5"))
+	if !reflect.DeepEqual(state.Hosts, []string{"h5", "h2", "h3"}) {
+		t.Fatalf("hosts = %q, want h5 in the first hole", state.Hosts)
+	}
+	for _, h := range []string{"w-h2", "w-h3"} {
+		if second[h] != first[h] {
+			t.Errorf("%s moved: %+v -> %+v", h, first[h], second[h])
+		}
+	}
+
+	state, third := seatsByBranch(state, hostWorkers("h1", "h2", "h3", "h5"))
+	wedges := map[int]string{}
+	for h, s := range third {
+		if other, dup := wedges[wedgeOf(s)]; dup {
+			t.Errorf("%s and %s share wedge %d", h, other, wedgeOf(s))
+		}
+		wedges[wedgeOf(s)] = h
+	}
+	if third["w-h2"] != first["w-h2"] || state.Hosts[3] != "h1" {
+		t.Errorf("hosts = %q, h2 %+v", state.Hosts, third["w-h2"])
+	}
+}
+
+func TestLayoutStackedChildStaysNearBaseWhenNeighboursTaken(t *testing.T) {
+	for _, tc := range []struct {
+		class string
+		slot  int
+	}{{classWorking, 2}, {classPROpen, 14}} {
+		t.Run(tc.class, func(t *testing.T) {
+			ps := []planet{wp("a-base", classBlocked), wp("b1", classBlocked), wp("b2", classBlocked)}
+			state, seats := seatsByBranch(newSlotState(), ps)
+			if seats["a-base"].slot != 0 || seats["b1"].slot != 1 || seats["b2"].slot != 15 {
+				t.Fatalf("setup seats = %+v", seats)
+			}
+			child := wp("child", tc.class)
+			child.base = "a-base"
+			_, got := seatsByBranch(state, append(ps, child))
+			if c := got["child"]; c.ring != 0 || c.slot != tc.slot {
+				t.Fatalf("child seat = %+v, want ring 0 slot %d (two from its base)", c, tc.slot)
+			}
+		})
+	}
+}
+
+func TestLayoutRemoteSeatsSitBetweenInnerAngles(t *testing.T) {
+	s := seatAt(true, 5)
+	if want := 5.5 * slotDeg; s.angle != want || s.index() != 5 {
+		t.Fatalf("remote seat = %+v, want angle %v and index 5", s, want)
+	}
+	if got := seatAt(false, 5).angle; got != 5*slotDeg {
+		t.Errorf("local angle = %v", got)
+	}
+
+	ps := []planet{wp("a", classBlocked), remoteWP("r", classWorking, "mbp")}
+	_, sc := arrange(newSlotState(), ps)
+	if len(sc.hosts) != 1 {
+		t.Fatalf("hosts = %+v", sc.hosts)
+	}
+	h := sc.hosts[0]
+	var r placed
+	for _, p := range sc.planets {
+		if p.remote {
+			r = p
+		}
+	}
+	// One wedge holds slots 0-3 at 0.5..3.5 slots; its label sits at their centre.
+	if got, want := compass(h.x, h.y), 2*slotDeg; !near(got, want) {
+		t.Errorf("host label angle = %v, want %v", got, want)
+	}
+	if got := compass(r.x, r.y); !near(math.Mod(got/slotDeg, 1), 0.5) {
+		t.Errorf("remote planet angle %v is not half a slot off the inner grid", got)
+	}
+}
+
+// compass is the clockwise angle from 12 o'clock of a point, in degrees.
+func compass(x, y float64) float64 { return math.Mod(math.Atan2(x, y)*180/math.Pi+360, 360) }
 
 func TestLayoutEmptyRosterHasExtent(t *testing.T) {
 	state, sc := arrange(newSlotState(), nil)
