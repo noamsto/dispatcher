@@ -27,6 +27,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/reap"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
 // StatusUsage is the line every `crew fleet status` grammar refusal prints.
@@ -64,6 +65,26 @@ type StatusOptions struct {
 	// Settings resolves the fleet queue's settings, its budget the machine
 	// document's too. nil: the defaults, with Budget's budget when it is set.
 	Settings func(ctx context.Context) (QueueSettings, error)
+	// Sender gates federation: sender.Check("overseer:<self>") must pass.
+	Sender sender.Probes
+	// Federate fetches a partner host's status; nil leaves Hosts empty.
+	Federate roster.Capture
+	// OverseerProbe is the capture an overseer asks a repo's --host workers
+	// through, given the repo's checkout dir; nil keeps remote_unprobed.
+	OverseerProbe func(dir string) roster.Capture
+	// FederateTimeout bounds each partner fetch and probe; zero is 10 s.
+	FederateTimeout time.Duration
+	// Served answers a far overseer's pull instead of the local view.
+	Served *ServedStatus
+}
+
+// ServedStatus is the far side of a federated pull: inbox and misrouted are
+// for overseer:<Origin> from Since on, with no federation and no probes.
+// Root, when set, is walked for buses besides the registry's.
+type ServedStatus struct {
+	Origin string
+	Since  int64
+	Root   string
 }
 
 func (o StatusOptions) queueSettings(ctx context.Context) (QueueSettings, error) {
@@ -95,6 +116,22 @@ type StatusDoc struct {
 	Queue   QueueStatus  `json:"queue"`
 	Repos   []RepoStatus `json:"repos"`
 	Skipped []Skipped    `json:"skipped"`
+	Hosts   []HostStatus `json:"hosts"`
+}
+
+// HostStatus is one partner host's view, or why there is none: State is ok,
+// unreachable or unprobed.
+type HostStatus struct {
+	Host     string       `json:"host"`
+	State    string       `json:"state"`
+	TS       *int64       `json:"ts"`
+	LastOkTS *int64       `json:"last_ok_ts"`
+	AgeS     *int64       `json:"age_s"`
+	Error    *string      `json:"error"`
+	Machine  *LoadDoc     `json:"machine"`
+	Queue    QueueStatus  `json:"queue"`
+	Repos    []RepoStatus `json:"repos"`
+	Skipped  []Skipped    `json:"skipped"`
 }
 
 // QueueStatus is the fleet hold queue; empty until fleet holds exist.
@@ -132,6 +169,7 @@ type Skipped struct {
 }
 
 type RepoStatus struct {
+	Host   string `json:"host"`
 	Repo   string `json:"repo"`
 	Common string `json:"common"`
 	// Misrouted counts the last 24 h of msgs to the overseer from anyone but a
@@ -161,6 +199,7 @@ type Dispatcher struct {
 	Pane       *string `json:"pane"`
 	Lane       *string `json:"lane"`
 	LastEventS *int64  `json:"last_event_s"`
+	Home       *string `json:"home"`
 }
 
 type HoldStatus struct {
@@ -221,6 +260,7 @@ func CollectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		Queue:   QueueStatus{Demoted: []QueueDemote{}, Parked: []QueueParked{}},
 		Repos:   []RepoStatus{},
 		Skipped: []Skipped{},
+		Hosts:   []HostStatus{},
 	}
 	// One read-only queue evaluation, over a bus cache the repo pass reuses.
 	buses := busCache{}
@@ -236,8 +276,20 @@ func CollectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 		doc.Queue = q.report(rec, repoNamer(ctx, o.Git))
 	}
 
+	busHost := host
+	var found []repos.Repo
+	switch {
+	case o.Served == nil:
+		found = repos.Discover(repos.Options{Registry: o.Registry, Getenv: o.Getenv, Stderr: stderr, Prefix: "crew: fleet status"})
+	case o.Served.Root == "":
+		busHost = o.Served.Origin
+		found = repos.Registered(o.Registry, o.Getenv)
+	default:
+		busHost = o.Served.Origin
+		found = repos.Discover(repos.Options{Registry: o.Registry, Roots: []string{o.Served.Root}, Getenv: o.Getenv, Stderr: stderr, Prefix: "crew: fleet status"})
+	}
 	var candidates []prCandidate
-	for _, r := range repos.Discover(repos.Options{Registry: o.Registry, Getenv: o.Getenv, Stderr: stderr, Prefix: "crew: fleet status"}) {
+	for _, r := range found {
 		if r.Status != repos.StatusOK {
 			doc.Skipped = append(doc.Skipped, Skipped{Path: r.Common, Status: string(r.Status)})
 			continue
@@ -251,7 +303,7 @@ func CollectStatus(ctx context.Context, req StatusRequest, stderr io.Writer, o S
 			say(stderr, "crew: fleet status: %s: %s (rows from the readable prefix)\n", r.Common, torn)
 		}
 		b := repoBuild{ctx: ctx, o: o, once: once, common: r.Common, events: events, docs: eventDocs(events),
-			idx: indexBus(events, host), now: now, nowMS: nowMS, nowSec: nowSec, overseer: overseer, stateDir: stateDir, due: due}
+			idx: indexBus(events, busHost), now: now, nowMS: nowMS, nowSec: nowSec, overseer: overseer, host: host, stateDir: stateDir, due: due}
 		repo, err := b.build()
 		if err != nil {
 			doc.Skipped = append(doc.Skipped, Skipped{Path: r.Common, Status: oneLine(err)})
@@ -283,6 +335,7 @@ type repoBuild struct {
 	nowMS    int64
 	nowSec   float64
 	overseer bool
+	host     string
 	stateDir string
 	due      *queued // the fleet queue's due hold, nil for none
 
@@ -307,7 +360,7 @@ func (b *repoBuild) build() (RepoStatus, error) {
 	for _, r := range rows {
 		byCrew[r.crew] = append(byCrew[r.crew], r.Row)
 	}
-	repo := RepoStatus{Repo: b.repoName, Common: b.common, Crews: []CrewStatus{}}
+	repo := RepoStatus{Host: b.host, Repo: b.repoName, Common: b.common, Crews: []CrewStatus{}}
 
 	// Not from the overseer's cursor: its lane moves that past every misrouted
 	// msg within a poll, and counts them only in memory.
@@ -329,7 +382,7 @@ func (b *repoBuild) build() (RepoStatus, error) {
 // placeholders.
 func (b *repoBuild) remote() func(crew string) roster.Capture {
 	switch {
-	case b.overseer:
+	case b.overseer || b.o.Served != nil:
 		return func(string) roster.Capture {
 			return func(_ context.Context, _ string, _ []string, _, stderr io.Writer) int {
 				say(stderr, "%s\n", unprobed)
@@ -347,6 +400,9 @@ func (b *repoBuild) remote() func(crew string) roster.Capture {
 // this bus when it left one, else a day back. Reading it is the only place
 // status touches overseer-written state.
 func (b *repoBuild) inboxCutoff() int64 {
+	if b.o.Served != nil {
+		return b.o.Served.Since
+	}
 	text, _ := crews.PidFileText(lane.OverseerCursor(b.stateDir, b.common))
 	if ts, err := strconv.ParseInt(strings.TrimSpace(text), 10, 64); err == nil && ts >= 0 {
 		return ts

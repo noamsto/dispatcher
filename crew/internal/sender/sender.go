@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/proc"
+	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
@@ -31,10 +32,11 @@ const Format = "#{pane_pid}\x1f#{@crew_branch}\x1f#{@crew_role}\x1f#{@crew_id}\x
 // Probes are the reads Check makes. The zero value checks nothing for any
 // sender but an overseer: one, which it refuses.
 type Probes struct {
-	Getenv func(string) string    // nil: no env
-	Tmux   tmux.Client            // reads list-panes -a -F Format; nil: no tmux
-	Proc   proc.Table             // walks the caller's ancestry; nil: no ancestry
-	Self   func() (string, error) // this host's name (peer.SelfName); nil reads as an error
+	Getenv func(string) string                    // nil: no env
+	Tmux   tmux.Client                            // reads list-panes -a -F Format; nil: no tmux
+	Proc   proc.Table                             // walks the caller's ancestry; nil: no ancestry
+	Self   func() (string, error)                 // this host's name (peer.SelfName); nil reads as an error
+	Hosts  func() (map[string]remote.Host, error) // settings hosts; nil reads as unreadable
 }
 
 type stamp struct {

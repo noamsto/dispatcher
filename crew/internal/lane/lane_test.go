@@ -108,3 +108,9 @@ func TestOverseerCursor(t *testing.T) {
 		t.Errorf("OverseerCursor = %q, want %q", got, want)
 	}
 }
+
+func TestOverseerHostDir(t *testing.T) {
+	if got, want := OverseerHostDir("/state", "mbp"), "/state/crew/overseer/hosts/mbp"; got != want {
+		t.Errorf("OverseerHostDir = %q, want %q", got, want)
+	}
+}

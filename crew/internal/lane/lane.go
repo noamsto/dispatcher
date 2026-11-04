@@ -140,3 +140,9 @@ func BusScratch(lane, common string) string {
 func OverseerCursor(stateDir, common string) string {
 	return filepath.Join(BusScratch(filepath.Join(stateDir, "crew", "overseer"), common), "cursor")
 }
+
+// OverseerHostDir is the overseer's per-partner state dir: its cursor and ok
+// files for host.
+func OverseerHostDir(stateDir, host string) string {
+	return filepath.Join(stateDir, "crew", "overseer", "hosts", host)
+}

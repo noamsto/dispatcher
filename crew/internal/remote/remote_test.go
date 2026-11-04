@@ -384,6 +384,82 @@ func TestRunRefusesBeforeSSH(t *testing.T) {
 	}
 }
 
+func TestBuildHostRequest(t *testing.T) {
+	data, err := BuildHostRequest([]string{"crew", "overseer", "status", "--origin", "halo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"v":1,"scope":"host","repo":"","slug":"","argv":["crew","overseer","status","--origin","halo"],"env":{}}`; string(data) != want {
+		t.Fatalf("request = %s, want %s", data, want)
+	}
+	for _, argv := range [][]string{nil, {"crew", "overseer"}, {"crew", "overseer", "msg"}, {"crew", "roster", "--live"}, {"dispatch"}} {
+		if _, err := BuildHostRequest(argv); err == nil {
+			t.Errorf("argv %q accepted", argv)
+		}
+	}
+}
+
+func TestRunHost(t *testing.T) {
+	t.Setenv("DISPATCH_CONFIG_BIN", configBin(t, mini))
+	shim := sshShim(t, "7")
+	argv := []string{"crew", "overseer", "deliver", "--origin", "halo"}
+	var stdout, stderr bytes.Buffer
+	if rc := RunHost(context.Background(), "mini", argv, &stdout, &stderr); rc != 7 {
+		t.Fatalf("rc = %d, stderr %q", rc, stderr.String())
+	}
+	if stdout.String() != "remote-out\n" || stderr.String() != "remote-err\n" {
+		t.Fatalf("stdout %q stderr %q", stdout.String(), stderr.String())
+	}
+	gotArgv, _ := os.ReadFile(filepath.Join(shim, "argv"))
+	if want := strings.Join(SSHArgv("me@mini"), "\x00") + "\x00"; string(gotArgv) != want {
+		t.Fatalf("ssh argv = %q", gotArgv)
+	}
+	stdin, _ := os.ReadFile(filepath.Join(shim, "stdin"))
+	want, err := BuildHostRequest(argv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stdin) != string(want) {
+		t.Fatalf("request = %s, want %s", stdin, want)
+	}
+}
+
+func TestRunHostSSHFailure(t *testing.T) {
+	t.Setenv("DISPATCH_CONFIG_BIN", configBin(t, mini))
+	sshShim(t, "255")
+	var stderr bytes.Buffer
+	if rc := RunHost(context.Background(), "mini", []string{"crew", "overseer", "status"}, io.Discard, &stderr); rc != 255 {
+		t.Fatalf("rc = %d", rc)
+	}
+	if want := "remote-err\nssh to host 'mini' (me@mini) failed (exit 255)\n"; stderr.String() != want {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+}
+
+func TestRunHostRefusesBeforeSSH(t *testing.T) {
+	t.Setenv("DISPATCH_CONFIG_BIN", configBin(t, mini))
+	shim := sshShim(t, "0")
+	for _, tc := range []struct {
+		host string
+		argv []string
+		want string
+	}{
+		{"maxi", []string{"crew", "overseer", "status"}, "unknown host 'maxi' (no hosts.maxi in settings)\n"},
+		{"mini", []string{"crew", "overseer", "msg"}, "argv not allowed in host scope: [\"crew\" \"overseer\" \"msg\"]\n"},
+	} {
+		var stderr bytes.Buffer
+		if rc := RunHost(context.Background(), tc.host, tc.argv, io.Discard, &stderr); rc != 2 || stderr.String() != tc.want {
+			t.Errorf("RunHost(%s, %q) = %d, stderr %q, want %q", tc.host, tc.argv, rc, stderr.String(), tc.want)
+		}
+		if strings.Contains(stderr.String(), "remote-run") {
+			t.Errorf("refusal %q carries the remote-run prefix", stderr.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(shim, "argv")); err == nil {
+		t.Fatal("ssh ran despite a refusal")
+	}
+}
+
 const chromeRefusal = "crew: remote-run: --chrome is dispatcher-only — a worker or role pane cannot grant a session the owner's browser\n"
 
 func TestRunChromeTripwire(t *testing.T) {

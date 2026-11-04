@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -815,5 +816,92 @@ func TestStatusFleetQueue(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(record); !strings.Contains(string(data), `"h5"`) || strings.Contains(string(data), "first_due") {
 		t.Errorf("status wrote the record: %s", data)
+	}
+}
+
+func TestStatusHostFieldsAndEmptyHosts(t *testing.T) {
+	f := newStatusFix(t, wstatus(100, "c1", "feat/a", "working", ""))
+	for _, overseer := range []bool{false, true} {
+		if overseer {
+			f.env["CREW_OVERSEER"] = "1"
+		}
+		doc := f.collect(StatusRequest{})
+		if doc.Repos[0].Host != "box" {
+			t.Errorf("overseer=%v repos[0].host = %q, want box", overseer, doc.Repos[0].Host)
+		}
+		raw, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		if string(m["hosts"]) != "[]" {
+			t.Errorf("overseer=%v hosts = %s, want []", overseer, m["hosts"])
+		}
+	}
+}
+
+func TestStatusServed(t *testing.T) {
+	f := newStatusFix(t,
+		wstatus(5000, "c1", "feat/a", "working", ""),
+		wmsg(3000, "c1", "dispatcher:c1", "overseer:halo", `{"kind":"ack","re":7}`),
+		wmsg(2000, "c1", "dispatcher:c1", "overseer:halo", `{"kind":"note"}`),
+		wmsg(1500, "c1", "dispatcher:c1", "overseer:box", `{"kind":"ack"}`),
+		wmsg(900, "c1", "worker:feat/a#s1-1", "overseer:halo", `{"kind":"ack"}`),
+	)
+	f.opts.Served = &ServedStatus{Origin: "halo", Since: ago(2500)}
+	cursor := lane.OverseerCursor(f.env["XDG_STATE_HOME"], f.common)
+	if err := os.MkdirAll(filepath.Dir(cursor), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cursor, []byte(fmt.Sprintf("%d\n", ago(100))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	doc := f.collect(StatusRequest{})
+	if doc.Host != "box" {
+		t.Errorf("host = %q, want box", doc.Host)
+	}
+	r := doc.Repos[0]
+	if got := r.Crews[0].OverseerInbox; len(got) != 1 || got[0].TS != ago(2000) {
+		t.Errorf("inbox = %+v, want only the halo note after Since (local cursor ignored)", got)
+	}
+	if r.Misrouted != 1 {
+		t.Errorf("misrouted = %d, want the worker's msg to overseer:halo", r.Misrouted)
+	}
+}
+
+func TestStatusServedRunsNoRemoteCapture(t *testing.T) {
+	dispatchRemote := fmt.Sprintf(`{"ts":%d,"crew_id":"c1","kind":"dispatch","branch":"r/1","name":"remy","host":"h1","remote":true}`, ago(60))
+	f := newStatusFix(t, dispatchRemote)
+	asked := 0
+	f.opts.Remote = func(string, string) roster.Capture {
+		return func(context.Context, string, []string, io.Writer, io.Writer) int {
+			asked++
+			return 0
+		}
+	}
+	f.opts.Served = &ServedStatus{Origin: "halo", Since: 0}
+	w := f.collect(StatusRequest{}).crew(t, "c1").worker(t, "r/1")
+	if asked != 0 || w["remote_unprobed"] != true || w["state"] != nil {
+		t.Errorf("asked=%d row=%v, want no capture and a remote_unprobed placeholder", asked, w)
+	}
+}
+
+func TestStatusServedDiscovery(t *testing.T) {
+	f := newStatusFix(t)
+	walked := mkRepo(t, f.root, "walked", "")
+	f.opts.Served = &ServedStatus{Origin: "halo"}
+	if doc := f.collect(StatusRequest{}); len(doc.Repos) != 1 || doc.Repos[0].Common != f.common {
+		t.Errorf("registry-only repos = %+v, want only the registered bus", doc.Repos)
+	}
+	f.opts.Served.Root = f.root
+	var got []string
+	for _, r := range f.collect(StatusRequest{}).Repos {
+		got = append(got, r.Common)
+	}
+	if len(got) != 2 || !slices.Contains(got, walked) {
+		t.Errorf("walked repos = %v, want the registered bus and %s", got, walked)
 	}
 }
