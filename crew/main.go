@@ -544,7 +544,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			return refuse(stderr, parsed.refusal)
 		}
 		c := parsed.typed.Overseer.Msg
-		return overseer.RunMsg(ctx, overseer.MsgRequest{Repo: c.Repo, Crew: c.Crew, Body: c.Body}, stderr, overseer.Options{
+		return overseer.RunMsg(ctx, overseer.MsgRequest{Repo: c.Repo, Crew: c.Crew, Body: c.Body}, stdout, stderr, overseer.Options{
 			Git: git.Exec{}, Clock: clock.FromEnv(), Sender: senderProbes(e.proc),
 		})
 	}
