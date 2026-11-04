@@ -108,8 +108,8 @@ func model(ctx context.Context, paths bus.Paths, crew string, nowSec float64, ro
 	for _, w := range remote.RemoteWorkers(events, crew) {
 		hosts[w.Branch] = w.Host
 	}
-	final, _ := m["rows"].([]any)
-	for _, r := range final {
+	modelRows, _ := m["rows"].([]any)
+	for _, r := range modelRows {
 		row, _ := r.(map[string]any)
 		branch, _ := row["branch"].(string)
 		if host, ok := hosts[branch]; ok {

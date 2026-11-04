@@ -156,14 +156,12 @@ func assign(prev slotState, ps []planet) (slotState, []seat) {
 		byName:  map[string]int{},
 		next:    slotState{V: slotsVer, Workers: map[string]slotEntry{}},
 	}
-	a.order = make([]int, len(ps))
+	a.order = branchOrder(ps)
 	drawn := map[string]bool{}
 	for i := range ps {
-		a.order[i] = i
 		a.byName[ps[i].branch] = i
 		drawn[ps[i].host] = true
 	}
-	sort.Slice(a.order, func(x, y int) bool { return ps[a.order[x]].branch < ps[a.order[y]].branch })
 
 	// A host with no drawn planet leaves a hole, so the hosts after it keep their
 	// wedges; a new host takes the first hole.
@@ -204,6 +202,16 @@ func assign(prev slotState, ps []planet) (slotState, []seat) {
 		a.seat(i)
 	}
 	return a.next, a.seats
+}
+
+// branchOrder is the indexes of ps sorted by branch.
+func branchOrder(ps []planet) []int {
+	order := make([]int, len(ps))
+	for i := range order {
+		order[i] = i
+	}
+	sort.Slice(order, func(x, y int) bool { return ps[order[x]].branch < ps[order[y]].branch })
+	return order
 }
 
 // hosted reports whether i has a wedge to sit in: a local planet always does, a
@@ -288,7 +296,7 @@ func (a *seater) anchor(i int) float64 {
 
 // offset is the signed clockwise distance from anchor to slot; on a local ring
 // it wraps, so 8 is the farthest either way.
-func (a *seater) offset(i int, slot int) float64 {
+func (a *seater) offset(i, slot int) float64 {
 	d := float64(slot) - a.anchor(i)
 	if a.ps[i].host != "" {
 		return d
@@ -419,14 +427,8 @@ func arrange(prev slotState, ps []planet) (slotState, scene) {
 	}
 
 	sc := scene{extent: minExtent}
-	order := make([]int, len(ps))
-	for i := range order {
-		order[i] = i
-	}
-	sort.Slice(order, func(x, y int) bool { return ps[order[x]].branch < ps[order[y]].branch })
-
 	drawn := map[string]bool{}
-	for _, i := range order {
+	for _, i := range branchOrder(ps) {
 		s := seats[i]
 		if !s.seated {
 			continue

@@ -389,8 +389,8 @@ output contract below), with each edit justified.
   Slot layout and a DOT emitter feed Graphviz `neato -n`, whose SVG is published to aeye
   as a one-node D2 image wrapper, so `d2.jq` and `hex.json` are gone. The DOT is text a
   `cmp -s` gates and every label is quoted against injection. Row folding is the one
-  part that stops being a subprocess: the arm re-entered the script for `crew roster`, and Go calls `roster.Fold` in process on the
-  same wall clock. The upgrade is a `syscall.Exec`, at the top of the sleep and nowhere
+  part that stops being a subprocess: the arm re-entered the script for `crew roster`,
+  and Go calls `roster.Fold` in process on the same wall clock. The upgrade is a `syscall.Exec`, at the top of the sleep and nowhere
   else, so the pid never changes hands; the flock does not survive the exec (`O_CLOEXEC`),
   and the new image re-acquires it and adopts the record carrying its own pid; the
   entry is followed whenever it names a build other than the running one, a rollback
