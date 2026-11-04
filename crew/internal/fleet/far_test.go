@@ -37,9 +37,9 @@ func newFarLane(t *testing.T) *farLane {
 	return l
 }
 
-// pull is one status read: mbp's host status, the bodies the lane delivers,
-// and everything the collection printed (its JSON document and stderr).
-func (l *farLane) pull(t *testing.T) (fleet.HostStatus, []string, string) {
+// host is one status read: mbp's host status and everything the collection
+// printed (its JSON document and stderr).
+func (l *farLane) host(t *testing.T) (fleet.HostStatus, string) {
 	t.Helper()
 	var stderr, out bytes.Buffer
 	doc := fleet.CollectStatus(t.Context(), fleet.StatusRequest{}, &stderr, l.opts)
@@ -49,7 +49,14 @@ func (l *farLane) pull(t *testing.T) (fleet.HostStatus, []string, string) {
 	if len(doc.Hosts) != 1 {
 		t.Fatalf("hosts = %+v, want mbp", doc.Hosts)
 	}
-	h := doc.Hosts[0]
+	return doc.Hosts[0], out.String() + stderr.String()
+}
+
+// pull is one status read of an ok mbp: its host status, the bodies the lane
+// delivers, and everything the collection printed.
+func (l *farLane) pull(t *testing.T) (fleet.HostStatus, []string, string) {
+	t.Helper()
+	h, printed := l.host(t)
 	if h.State != "ok" || h.TS == nil {
 		t.Fatalf("host mbp = %s (%v), want ok", h.State, deref(h.Error))
 	}
@@ -82,7 +89,7 @@ func (l *farLane) pull(t *testing.T) (fleet.HostStatus, []string, string) {
 	if err := lane.WriteFarInbox(path, in.Next(*h.TS-fleet.FarSettle.Milliseconds(), delivered, 4*fleet.FarMaxEvents)); err != nil {
 		t.Fatal(err)
 	}
-	return h, bodies, out.String() + stderr.String()
+	return h, bodies, printed
 }
 
 func deref(s *string) string {
@@ -171,5 +178,52 @@ func TestFarOverCapAnswerDeliversInPulls(t *testing.T) {
 		if want := fmt.Sprintf("r%04d", i); b != want {
 			t.Fatalf("reply %d = %s, want %s: oldest first, each once", i, b, want)
 		}
+	}
+}
+
+// replies are n replies from c1 to halo, all at ts, bodies prefix0000 on.
+func replies(n int, ts int64, prefix string) []string {
+	var lines []string
+	for i := range n {
+		lines = append(lines, fleettest.Reply(ts, "c1", "halo", fmt.Sprintf("%s%04d", prefix, i)))
+	}
+	return lines
+}
+
+// A cut never splits a ts group: the first pull delivers the older group
+// whole and nothing of the next, and later pulls deliver the rest, each once.
+func TestFarCutKeepsTsGroupsWhole(t *testing.T) {
+	l := newFarLane(t)
+	l.far.Repo("a")
+	t1, t2 := farNow-120_000, farNow-60_000
+	l.far.Append("a", slices.Concat(replies(300, t1, "a"), replies(300, t2, "b"))...)
+	from := func(prefix string) func(string) bool {
+		return func(b string) bool { return !strings.HasPrefix(b, prefix) }
+	}
+	if _, first, _ := l.pull(t); len(first) != 300 || slices.ContainsFunc(first, from("a")) {
+		t.Fatalf("first pull delivered %d replies, want the 300 at t1 only", len(first))
+	}
+	if _, second, _ := l.pull(t); len(second) != 300 || slices.ContainsFunc(second, from("b")) {
+		t.Errorf("second pull delivered %d replies, want the 300 at t2", len(second))
+	}
+	if _, again, _ := l.pull(t); len(again) != 0 {
+		t.Errorf("a third pull delivered %d replies again", len(again))
+	}
+}
+
+// A ts group over the event cap cannot be cut without serving the same rows
+// again on every pull: the far refuses its answer and the host reads
+// unreachable in this host's words, never a silent ok.
+func TestFarAnswerThatCannotAdvanceIsUnreachable(t *testing.T) {
+	l := newFarLane(t)
+	l.far.Repo("a")
+	ts := farNow - 120_000
+	l.far.Append("a", slices.Concat(replies(600, ts, "a"), replies(1, ts+1000, "later"))...)
+	h, printed := l.host(t)
+	if h.State != "unreachable" || deref(h.Error) != "exit status 1" {
+		t.Errorf("host mbp = %s (%s), want unreachable (exit status 1)", h.State, deref(h.Error))
+	}
+	if strings.Contains(printed, "cannot advance") {
+		t.Errorf("the far refusal was printed here:\n%s", printed)
 	}
 }

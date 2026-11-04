@@ -165,7 +165,7 @@ func TestOverseerDeliverRefusesAForeignOrigin(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, out, errs := crewRun(t, e, "overseer", "deliver", "--origin", "zz-evil", "--", common, "c1", `{"kind":"notice","detail":"x"}`)
-	if code != 1 || out != "" || errs == "" {
+	if code != 1 || out != `{"refused":"relay"}`+"\n" || errs == "" {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errs)
 	}
 	after, err := os.ReadFile(filepath.Join(common, "crew", "events.jsonl"))
@@ -214,8 +214,12 @@ func TestOverseerFarVerbsFailOnUnreadableSettings(t *testing.T) {
 				t.Fatal(err)
 			}
 			code, out, errs := crewRun(t, e, args...)
-			if want := "crew: overseer " + args[1] + ": overseer root: " + bin + ": exit status 3\n"; code != exitFailure || out != "" || errs != want {
-				t.Fatalf("exit %d, stdout %q, stderr %q; want 1, no answer, %q", code, out, errs, want)
+			wantOut := ""
+			if args[1] == "deliver" {
+				wantOut = `{"refused":"root"}` + "\n"
+			}
+			if want := "crew: overseer " + args[1] + ": overseer root: " + bin + ": exit status 3\n"; code != exitFailure || out != wantOut || errs != want {
+				t.Fatalf("exit %d, stdout %q, stderr %q; want 1, %q, %q", code, out, errs, wantOut, want)
 			}
 			if after, _ := os.ReadFile(filepath.Join(common, "crew", "events.jsonl")); string(after) != string(before) {
 				t.Errorf("a failed far verb wrote %q", after)

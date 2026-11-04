@@ -899,8 +899,10 @@ Without `--host`, or with this host, it is today's local post. With a remote
 `<h>`: the local overseer sender check, local `bodyRefusal` (before any ssh),
 `<h>` in settings `hosts`, then `deliver` over host scope. Far stdout is
 re-validated and printed as `{"host":<h>,"ts":<ms>}`; the `ts` is the far
-row's. Far stderr is capped and the call has a 30 s deadline. A far failure exits 1 with `crew: overseer msg: <host>: <far first
-stderr line>`. No `--host` value comes from a bus row.
+row's. Far stderr is capped and the call has a 30 s deadline. A far failure exits 1 with `crew: overseer msg: <host>: <reason>`,
+worded locally and never from far text: a fixed sentence per refusal code the far `deliver` prints on stdout
+(a closed enum), `exit status N`, `ssh failed (255)`, the 30 s timeout note or `malformed far answer`. No `--host`
+value comes from a bus row.
 
 **D5. Federated fleet status.** In overseer mode, with a passing local
 `sender.Check("overseer:<self>")` (a failing check federates nothing: every
@@ -924,7 +926,11 @@ skipped `path` are empty). A failure is worded locally, never from far stderr:
 `answer over 4 MiB` or `answer: <reason>`. The far side truncates an answer
 over the caps oldest-first, inbox events and misrouted msgs together, and
 lowers its `ts` so the lane's floor stays below the first row left out; the
-next pull serves the rest. Nothing in an answer selects a host, path, command
+next pull serves the rest. Truncation never splits a ts group. An answer that
+cannot advance (at least the event cap of rows share one ms, or the oldest row
+alone is oversize) is refused, so the host reads `unreachable` with a local
+reason, never a silent stall. Every far list has a count cap (`skipped`,
+`overseer_inbox`, queue `demoted` and `parked`, `hot_windows` and the rest). Nothing in an answer selects a host, path, command
 or recipient.
 
 - `StatusDoc.hosts[]` is always present: `{host, state: ok|unreachable|unprobed,

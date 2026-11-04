@@ -238,7 +238,9 @@ func (s farStatus) project(host string, label func(farID, farKey) string) Status
 		doc.Machine = s.Machine.project()
 	}
 	for _, k := range s.Skipped {
-		doc.Skipped = append(doc.Skipped, Skipped{Status: k.Status.text()})
+		if status := k.Status.text(); status != "" {
+			doc.Skipped = append(doc.Skipped, Skipped{Status: status})
+		}
 	}
 	for _, r := range s.Repos {
 		repo := RepoStatus{Host: host, Repo: label(r.Repo, r.Common), Key: string(r.Common), Misrouted: r.Misrouted, Crews: []CrewStatus{}}

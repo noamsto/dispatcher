@@ -426,6 +426,88 @@ func TestAdmitHostRefusals(t *testing.T) {
 	}
 }
 
+// Every far list has a count cap, so an answer within 4 MiB cannot grow
+// without bound once projected and printed: a list at its cap is admitted,
+// one entry over refuses the answer in this host's words.
+func TestAdmitHostCountCaps(t *testing.T) {
+	status := func(a map[string]any) map[string]any { return a["status"].(map[string]any) }
+	crew := func(a map[string]any) map[string]any {
+		return status(a)["repos"].([]any)[0].(map[string]any)["crews"].([]any)[0].(map[string]any)
+	}
+	machine := func(a map[string]any) map[string]any {
+		m := map[string]any{"budget": 8, "leads": []any{}, "engines": map[string]any{}}
+		status(a)["machine"] = m
+		return m
+	}
+	entry := map[string]any{"repo": "acme/alpha", "crew_id": "c9", "id": "1700000000001-1", "reason": "oversize"}
+	for _, tc := range []struct {
+		name  string
+		limit int
+		want  string
+		set   func(a map[string]any, n int)
+	}{
+		{"skipped", farMaxRepos + farMaxCrews, "skipped repos", func(a map[string]any, n int) {
+			status(a)["skipped"] = slices.Repeat([]any{map[string]any{"status": "unreadable"}}, n)
+		}},
+		{"overseer inbox", FarMaxEvents, "overseer inbox msgs", func(a map[string]any, n int) {
+			crew(a)["overseer_inbox"] = slices.Repeat([]any{map[string]any{"ts": 5}}, n)
+		}},
+		{"holds", farMaxWorkers, "holds", func(a map[string]any, n int) {
+			crew(a)["holds"] = slices.Repeat([]any{map[string]any{"id": "1700000000001-1", "kind": "quota"}}, n)
+		}},
+		{"demoted", farMaxCrews, "demoted holds", func(a map[string]any, n int) {
+			status(a)["queue"].(map[string]any)["demoted"] = slices.Repeat([]any{entry}, n)
+		}},
+		{"parked", farMaxCrews, "parked holds", func(a map[string]any, n int) {
+			status(a)["queue"].(map[string]any)["parked"] = slices.Repeat([]any{entry}, n)
+		}},
+		{"leads", farMaxWorkers, "leads", func(a map[string]any, n int) {
+			lead := map[string]any{"repo": "acme/alpha", "branch": "feat/z", "tier": "standard", "weight": 1}
+			machine(a)["leads"] = slices.Repeat([]any{lead}, n)
+		}},
+		{"engines", farMaxCrews, "engines", func(a map[string]any, n int) {
+			engines := map[string]any{}
+			for i := range n {
+				engines[fmt.Sprintf("e%d", i)] = map[string]any{}
+			}
+			machine(a)["engines"] = engines
+		}},
+		{"hot windows", farMaxWorkers, "hot windows", func(a map[string]any, n int) {
+			machine(a)["engines"] = map[string]any{
+				"claude": map[string]any{"hot_windows": slices.Repeat([]any{"feat/z"}, n-1)},
+				"codex":  map[string]any{"hot_windows": []any{"feat/y"}},
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := farAnswer()
+			tc.set(a, tc.limit)
+			if _, err := AdmitHost(marshal(t, a), "mbp", "halo", 0); err != nil {
+				t.Errorf("at the cap of %d: %v", tc.limit, err)
+			}
+			a = farAnswer()
+			tc.set(a, tc.limit+1)
+			_, err := AdmitHost(marshal(t, a), "mbp", "halo", 0)
+			if want := fmt.Sprintf("%d %s, over the cap of %d %s", tc.limit+1, tc.want, tc.limit, tc.want); err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("over the cap: err = %v, want one naming %q", err, want)
+			}
+		})
+	}
+}
+
+// A far skipped note with no text left is dropped, not shown empty.
+func TestAdmitHostDropsEmptySkipped(t *testing.T) {
+	a := farAnswer()
+	a["status"].(map[string]any)["skipped"] = []any{map[string]any{}, map[string]any{"status": "\x1b\x07"}, map[string]any{"status": "gone"}}
+	ans, err := AdmitHost(marshal(t, a), "mbp", "halo", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []Skipped{{Status: "gone"}}; !slices.Equal(ans.Status.Skipped, want) {
+		t.Errorf("skipped = %+v, want %+v", ans.Status.Skipped, want)
+	}
+}
+
 func TestAdmitHostRechecksEvents(t *testing.T) {
 	cutoff := ago(1000)
 	good := farEvent(ago(30), "c9", "dispatcher:c9", "overseer:halo", `{"kind":"ack","re":7}`)
@@ -570,6 +652,28 @@ func TestServeFar(t *testing.T) {
 	}
 	if quiet.Cursor != ago(50) || quiet.Inbox == nil || len(quiet.Inbox) != 0 || quiet.Misrouted == nil {
 		t.Errorf("nothing above since: %+v", quiet)
+	}
+}
+
+// A served crew's overseer_inbox is cut with the inbox: below the first row
+// left out and within the cap, so a busy crew never makes its own host's
+// answer refused.
+func TestServeFarCutsOverseerInbox(t *testing.T) {
+	lines := []string{wstatus(900, "c9", "feat/z", "working", "")}
+	for i := range 600 {
+		lines = append(lines, wmsg(800-int64(i), "c9", "dispatcher:c9", "overseer:halo", `"{\"kind\":\"ack\",\"re\":7}"`))
+	}
+	far := farFix(t, "mbp", lines...)
+	ans, err := ServeFar(t.Context(), "halo", ago(1000), io.Discard, far.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inbox := ans.Status.Repos[0].Crews[0].OverseerInbox
+	if len(inbox) != FarMaxEvents || inbox[len(inbox)-1].TS != ago(800-FarMaxEvents+1) {
+		t.Errorf("overseer_inbox holds %d msgs, want the %d oldest", len(inbox), FarMaxEvents)
+	}
+	if _, err := AdmitHost(marshal(t, ans), "mbp", "halo", ago(1000)); err != nil {
+		t.Errorf("the served answer is refused: %v", err)
 	}
 }
 
@@ -1518,7 +1622,7 @@ func TestFitFarTruncatesOldestFirst(t *testing.T) {
 	settle := FarSettle.Milliseconds()
 
 	a := answer()
-	fitFar(&a, 4, farMaxBytes)
+	fit(t, &a, 4, farMaxBytes)
 	if got := rows(a); !slices.Equal(got, all[:4]) {
 		t.Errorf("rows = %v, want the 4 oldest", got)
 	}
@@ -1527,21 +1631,21 @@ func TestFitFarTruncatesOldestFirst(t *testing.T) {
 	}
 
 	a = answer()
-	fitFar(&a, 500, farMaxBytes)
+	fit(t, &a, 500, farMaxBytes)
 	if got := rows(a); !slices.Equal(got, all) || a.TS != nowMS() {
 		t.Errorf("rows = %v ts = %d, want all 7 and ts unchanged", got, a.TS)
 	}
 
 	a = answer()
 	a.TS = base + 40
-	fitFar(&a, 4, farMaxBytes)
+	fit(t, &a, 4, farMaxBytes)
 	if a.TS != base+40 {
 		t.Errorf("ts = %d, want never above the real ts", a.TS)
 	}
 
 	a = answer()
 	budget := len(marshal(t, a)) - 2500
-	fitFar(&a, 500, budget)
+	fit(t, &a, 500, budget)
 	got := rows(a)
 	if n := len(marshal(t, a)); n > budget {
 		t.Errorf("the answer is %d bytes, over the budget of %d", n, budget)
@@ -1551,6 +1655,46 @@ func TestFitFarTruncatesOldestFirst(t *testing.T) {
 	}
 	if omitted := all[len(got)]; a.TS != base+omitted-1+settle {
 		t.Errorf("ts = %d, want below the first omitted row %d", a.TS, omitted)
+	}
+}
+
+func fit(t *testing.T, a *FarAnswer, maxRows, maxBytes int) {
+	t.Helper()
+	if err := fitFar(a, maxRows, maxBytes); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fitFar's cut backs off to the start of the ts group it falls in, so no
+// group straddles it; when that leaves nothing to serve, the answer cannot
+// advance and is refused instead of served again unchanged.
+func TestFitFarCutsBetweenTsGroups(t *testing.T) {
+	base := ago(100)
+	answer := func(ts ...int64) FarAnswer {
+		var evs []map[string]any
+		for _, k := range ts {
+			evs = append(evs, map[string]any{"ts": json.Number(strconv.FormatInt(base+k, 10)), "body": "b"})
+		}
+		return FarAnswer{V: 1, Self: "mbp", TS: nowMS(), Status: StatusDoc{TS: nowMS()},
+			Inbox: []FarBatch{{Repo: "a", Common: "/a", Events: evs}}, Misrouted: []FarMisrouted{{Repo: "a", TS: base + 20}}}
+	}
+
+	a := answer(10, 10, 10, 20, 20, 30)
+	fit(t, &a, 4, farMaxBytes)
+	if n := len(a.Inbox[0].Events); n != 3 || len(a.Misrouted) != 0 || a.TS != base+20-1+FarSettle.Milliseconds() {
+		t.Errorf("kept %d events %d misrouted, ts %d: want the ts-10 group alone, ts below the ts-20 group", n, len(a.Misrouted), a.TS)
+	}
+
+	a = answer(10, 10, 10, 10, 10, 30)
+	if err := fitFar(&a, 4, farMaxBytes); err == nil || err.Error() != fmt.Sprintf("answer cannot advance: 5 rows share ts %d, over the caps", base+10) {
+		t.Errorf("err = %v, want the ts-10 group refused", err)
+	}
+
+	a = answer(10, 30)
+	skeleton := a
+	skeleton.Inbox, skeleton.Misrouted = []FarBatch{}, []FarMisrouted{}
+	if err := fitFar(&a, 4, len(marshal(t, skeleton))+20); err == nil || err.Error() != "answer cannot advance: its oldest row is over the byte budget" {
+		t.Errorf("err = %v, want the oversize oldest row refused", err)
 	}
 }
 

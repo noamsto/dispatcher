@@ -23,15 +23,18 @@ and crew status refuse an overseer: sender.
            escaped, so counts twice
 
 Runs from any directory. Exits 1 on any refusal, with nothing written.
-With --host the far host has 30 s to answer. A failure after it was reached
-(a lost connection, the timeout, a malformed answer) may leave the row posted
-there, so check its bus before resending.
+With --host the far host has 30 s to answer. Its failures are reported in
+fixed local words (a refusal's reason, its exit status), never the far
+host's own text. A failure after it was reached (a lost connection, the
+timeout, a malformed answer) may leave the row posted there, so check its
+bus before resending.
 
 status and deliver are run by a federated overseer over ssh through crew
 remote-exec; not for interactive use. status prints this host's fleet status
 and the msgs to overseer:<origin> above --since (a millisecond ts) as one
 JSON line; deliver posts a message relayed from overseer:<origin>, a host in
-this host's settings, and prints its ts.
+this host's settings, and prints its ts, or {"refused":"<code>"} when it
+refuses.
 
   crew overseer msg noamsto/dispatcher <crew-id> \
     '{"kind":"ask","detail":"worker violet blocked 45 min — handling it?"}'

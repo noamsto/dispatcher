@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -90,7 +91,7 @@ func (h HostStatus) Misroutes() []FarMisrouted { return h.misroutes }
 // mode, and the fold of every bus that discovery found for overseer:<origin>
 // above since, cut to the caps oldest-first (fitFar). A bus the fold cannot
 // read fails the answer: its replies would otherwise fall below a cursor the
-// origin moves past.
+// origin moves past. So does a cut that cannot advance the origin's floor.
 func ServeFar(ctx context.Context, origin string, since int64, stderr io.Writer, o StatusOptions) (FarAnswer, error) {
 	served := &ServedStatus{Origin: origin, Since: since}
 	if o.Served != nil {
@@ -138,16 +139,20 @@ func ServeFar(ctx context.Context, origin string, since int64, stderr io.Writer,
 		}
 		ans.Inbox = append(ans.Inbox, b)
 	}
-	fitFar(&ans, FarMaxEvents, farMaxBytes)
+	if err := fitFar(&ans, FarMaxEvents, farMaxBytes); err != nil {
+		return FarAnswer{}, err
+	}
 	return ans, nil
 }
 
 // fitFar keeps ans's oldest rows, inbox events and misrouted msgs together by
-// ts, at most maxRows of them within maxBytes encoded. When any is left out,
-// ts drops to one below the first left out plus FarSettle, never above the
-// real ts: the lane's floor, ts less FarSettle, then stays below every row
-// left out, and its next pull is served them.
-func fitFar(ans *FarAnswer, maxRows, maxBytes int) {
+// ts, at most maxRows of them within maxBytes encoded, and never part of a ts
+// group. When any is left out, ts drops to one below the first left out plus
+// FarSettle, never above the real ts: the lane's floor, ts less FarSettle,
+// then stays below every row left out, and its next pull is served them. When
+// not even the oldest ts group fits, that floor could never rise: the answer
+// is refused instead.
+func fitFar(ans *FarAnswer, maxRows, maxBytes int) error {
 	type row struct {
 		ts           int64
 		batch, index int // batch is -1 for a misrouted msg
@@ -189,9 +194,24 @@ func fitFar(ans *FarAnswer, maxRows, maxBytes int) {
 		}
 	}
 	if n == len(rows) {
-		return
+		cutOverseerInbox(&ans.Status, math.MaxInt64, maxRows)
+		return nil
+	}
+	if n == 0 {
+		return errors.New("answer cannot advance: its oldest row is over the byte budget")
+	}
+	if ts := rows[0].ts; rows[n].ts == ts {
+		group := 0
+		for group < len(rows) && rows[group].ts == ts {
+			group++
+		}
+		return fmt.Errorf("answer cannot advance: %d rows share ts %d, over the caps", group, ts)
+	}
+	for rows[n-1].ts == rows[n].ts {
+		n--
 	}
 	ans.TS = min(ans.TS, rows[n].ts-1+FarSettle.Milliseconds())
+	cutOverseerInbox(&ans.Status, rows[n].ts, maxRows)
 	kept := map[[2]int]bool{}
 	for _, r := range rows[:n] {
 		kept[[2]int{r.batch, r.index}] = true
@@ -216,6 +236,21 @@ func fitFar(ans *FarAnswer, maxRows, maxBytes int) {
 		}
 	}
 	ans.Inbox, ans.Misrouted = inbox, misrouted
+	return nil
+}
+
+// cutOverseerInbox keeps each crew's overseer_inbox, oldest first, below cut
+// and at most maxRows long: the replies it summarizes are the inbox's, so it
+// is cut with them, and a busy crew never puts its answer over the requester's
+// cap.
+func cutOverseerInbox(doc *StatusDoc, cut int64, maxRows int) {
+	for i := range doc.Repos {
+		for j := range doc.Repos[i].Crews {
+			c := &doc.Repos[i].Crews[j]
+			kept := slices.DeleteFunc(c.OverseerInbox, func(m InboxMsg) bool { return m.TS >= cut })
+			c.OverseerInbox = kept[:min(len(kept), maxRows)]
+		}
+	}
 }
 
 func encodedLen(v any) int {
@@ -275,21 +310,37 @@ func decodeNumbers(data []byte, v any) error {
 	return dec.Decode(v)
 }
 
+// capStatus bounds every far list by count, so an answer within the byte cap
+// cannot grow without bound as it is projected and printed.
 func capStatus(s farStatus) error {
-	if n := len(s.Repos); n > farMaxRepos {
-		return fmt.Errorf("answer has %d repos, over the cap of %d repos", n, farMaxRepos)
+	var err error
+	check := func(scope string, n, limit int, what string) {
+		if err == nil && n > limit {
+			err = fmt.Errorf("answer%s has %d %s, over the cap of %d %s", scope, n, what, limit, what)
+		}
+	}
+	check("", len(s.Repos), farMaxRepos, "repos")
+	check("", len(s.Skipped), farMaxRepos+farMaxCrews, "skipped repos")
+	check(" queue", len(s.Queue.Demoted), farMaxCrews, "demoted holds")
+	check(" queue", len(s.Queue.Parked), farMaxCrews, "parked holds")
+	if m := s.Machine; m != nil {
+		hot := 0
+		for _, e := range m.Engines {
+			hot += len(e.HotWindows)
+		}
+		check(" machine", len(m.Leads), farMaxWorkers, "leads")
+		check(" machine", len(m.Engines), farMaxCrews, "engines")
+		check(" machine", hot, farMaxWorkers, "hot windows")
 	}
 	for _, r := range s.Repos {
-		if n := len(r.Crews); n > farMaxCrews {
-			return fmt.Errorf("answer repo has %d crews, over the cap of %d crews", n, farMaxCrews)
-		}
+		check(" repo", len(r.Crews), farMaxCrews, "crews")
 		for _, c := range r.Crews {
-			if n := len(c.Workers); n > farMaxWorkers {
-				return fmt.Errorf("answer crew has %d workers, over the cap of %d workers", n, farMaxWorkers)
-			}
+			check(" crew", len(c.Workers), farMaxWorkers, "workers")
+			check(" crew", len(c.Holds), farMaxWorkers, "holds")
+			check(" crew", len(c.OverseerInbox), FarMaxEvents, "overseer inbox msgs")
 		}
 	}
-	return nil
+	return err
 }
 
 // recheck runs the overseer fold's rule again on the raw answer: an inbox

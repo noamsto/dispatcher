@@ -42,7 +42,7 @@ const (
 
 const (
 	exitFailure = 1
-	// farAnswerMax bounds what a far deliver may print, on either stream.
+	// farAnswerMax bounds what is kept of a far deliver's stdout.
 	farAnswerMax = 4 << 10
 )
 
@@ -108,9 +108,10 @@ func RunMsg(ctx context.Context, req MsgRequest, stdout, stderr io.Writer, o Opt
 
 // relay asks req.Host's `crew overseer deliver` to post the message from
 // overseer:<self>, and prints {"host","ts"} from its answer. The far host's
-// output is untrusted: both streams are capped, a failure shows only its first
-// stderr line stripped of hidden characters, and stdout must be exactly
-// {"ts":<whole ms>}. The far call gets hostDeadline to answer.
+// output is untrusted, so none of it is shown: its stderr is dropped, its
+// capped stdout must be exactly {"ts":<whole ms>}, and a failure is worded
+// here from its refusal code or status. The far call gets hostDeadline to
+// answer.
 func relay(ctx context.Context, req MsgRequest, self string, stdout, stderr io.Writer, o Options) int {
 	if reason := settingsHost("host", req.Host, o.Sender); reason != "" {
 		return refuse(stderr, "%s", reason)
@@ -118,15 +119,15 @@ func relay(ctx context.Context, req MsgRequest, self string, stdout, stderr io.W
 	if o.RunHost == nil {
 		return refuse(stderr, "--host %s needs a remote runner, and none is wired", req.Host)
 	}
-	out, errOut := &capped{max: farAnswerMax}, &capped{max: farAnswerMax}
+	out := &capped{max: farAnswerMax}
 	argv := []string{"crew", "overseer", "deliver", "--origin", self, "--", req.Repo, req.Crew, req.Body}
 	ctx, cancel := context.WithTimeout(ctx, hostDeadline)
 	defer cancel()
-	if rc := o.RunHost(ctx, req.Host, argv, out, errOut); rc != 0 {
+	if rc := o.RunHost(ctx, req.Host, argv, out, io.Discard); rc != 0 {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return refuse(stderr, "%s: no answer within %s, and the row may still be posted there", req.Host, hostDeadline)
 		}
-		return refuse(stderr, "%s: %s", req.Host, farFailure(errOut.buf.String(), rc))
+		return refuse(stderr, "%s: %s", req.Host, farFailure(out, rc))
 	}
 	ts, ok := farTS(out)
 	if !ok {
@@ -138,43 +139,47 @@ func relay(ctx context.Context, req MsgRequest, self string, stdout, stderr io.W
 	}{req.Host, ts})
 }
 
-// farFailure is why a far deliver failed: the first line of its stderr with
-// every control and invisible character dropped, else its status.
-func farFailure(stderr string, rc int) string {
-	line, _, _ := strings.Cut(strings.TrimSpace(stderr), "\n")
-	line = strings.TrimSpace(strings.Map(func(r rune) rune {
-		if control(r) {
-			return -1
+// farFailure words why a far deliver failed, from its refusal code or its
+// status alone, so no far text reaches the overseer.
+func farFailure(out *capped, rc int) string {
+	if code, ok := farAnswer(out, "refused").(string); ok {
+		if sentence, known := farRefusals[farRefusal(code)]; known {
+			return "refused: " + sentence
 		}
-		return r
-	}, invisible.Drop(line)))
-	if line == "" {
-		return fmt.Sprintf("exit status %d", rc)
+		return "refused (unknown reason)"
 	}
-	return line
+	if rc == 255 {
+		return "ssh failed (255)"
+	}
+	return fmt.Sprintf("exit status %d", rc)
 }
 
-// farTS is the ts of a far deliver's answer, which must be one JSON object
-// holding only a whole, non-negative ms.
+// farTS is the ts of a far deliver's answer, a whole, non-negative ms.
 func farTS(out *capped) (int64, bool) {
-	if out.over {
-		return 0, false
-	}
-	dec := json.NewDecoder(bytes.NewReader(out.buf.Bytes()))
-	dec.UseNumber()
-	var obj map[string]any
-	if err := dec.Decode(&obj); err != nil || len(obj) != 1 {
-		return 0, false
-	}
-	if _, err := dec.Token(); err != io.EOF {
-		return 0, false
-	}
-	n, ok := obj["ts"].(json.Number)
+	n, ok := farAnswer(out, "ts").(json.Number)
 	if !ok {
 		return 0, false
 	}
 	ts, err := strconv.ParseInt(n.String(), 10, 64)
 	return ts, err == nil && ts >= 0
+}
+
+// farAnswer is the value of key in a far deliver's answer, which must be one
+// JSON object holding only key; nil otherwise.
+func farAnswer(out *capped, key string) any {
+	if out.over {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(out.buf.Bytes()))
+	dec.UseNumber()
+	var obj map[string]any
+	if err := dec.Decode(&obj); err != nil || len(obj) != 1 {
+		return nil
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil
+	}
+	return obj[key]
 }
 
 // capped keeps the first max bytes written to it and notes that more came. It
@@ -318,6 +323,12 @@ func busFor(ctx context.Context, repo, crew string, found []repos.Repo, o Option
 	if reason != "" {
 		return bus.Paths{}, reason
 	}
+	return onBus(common, crew)
+}
+
+// onBus is the bus at the git common dir common when crew is on it, else the
+// refusal reason.
+func onBus(common, crew string) (bus.Paths, string) {
 	paths := bus.Paths{Common: common, Dir: common + "/crew", Log: common + "/crew/events.jsonl"}
 	if !bus.ValidCrewID(crew) || !slices.Contains(crews.IDs(paths), crew) {
 		return bus.Paths{}, fmt.Sprintf("crew %s is not on %s's bus", crew, common)

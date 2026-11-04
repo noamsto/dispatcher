@@ -173,23 +173,62 @@ func TestMsgHostRefusesAHostOutsideSettings(t *testing.T) {
 	})
 }
 
-func TestMsgHostMapsAFarFailure(t *testing.T) {
+func TestMsgHostWordsAFarFailureLocally(t *testing.T) {
 	cases := []struct {
-		name, stderr string
+		name, stdout string
 		rc           int
 		want         string
 	}{
-		{"its first stderr line", "\ncrew: overseer deliver: refusing relay\nsecond line\n", 1, "crew: overseer deliver: refusing relay"},
-		{"control and invisible chars stripped", "bad\x1b[31mthing\u200b\r\n", 1, "bad[31mthing"},
-		{"no stderr", "", 3, "exit status 3"},
-		{"only hidden chars", "\x1b\u200b\n", 255, "exit status 255"},
+		{"origin refused", `{"refused":"origin"}`, 1, "refused: the far host does not take this host's name as an origin"},
+		{"relay refused", `{"refused":"relay"}` + "\n", 1, "refused: the far host does not accept a relay from this host"},
+		{"body refused", `{"refused":"body"}`, 1, "refused: the body is not one the far host accepts"},
+		{"root refused", `{"refused":"root"}`, 1, "refused: the far host cannot read its overseer root"},
+		{"repo refused", `{"refused":"repo"}`, 1, "refused: the repo is not a crew bus the far host serves"},
+		{"crew refused", `{"refused":"crew"}`, 1, "refused: the crew is not on that repo's bus there"},
+		{"post refused", `{"refused":"post"}`, 1, "refused: the far host could not post the row"},
+		{"an unknown code", `{"refused":"directive"}`, 1, "refused (unknown reason)"},
+		{"a refusal under ssh's status", `{"refused":"body"}`, 255, "refused: the body is not one the far host accepts"},
+		{"no answer", "", 3, "exit status 3"},
+		{"ssh failed", "", 255, "ssh failed (255)"},
+		{"a code that is no string", `{"refused":1}`, 1, "exit status 1"},
+		{"a refusal with more keys", `{"refused":"body","why":"x"}`, 1, "exit status 1"},
+		{"two refusals", `{"refused":"body"}{"refused":"crew"}`, 1, "exit status 1"},
+		{"a refusal over the cap", `{"refused":"body"}` + strings.Repeat(" ", 4096), 1, "exit status 1"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			f := haloFixture(t)
-			f.far(`{"ts":1}`, c.stderr, c.rc)
+			f.far(c.stdout, "crew: overseer deliver: far words\n", c.rc)
 			f.hostRefused(MsgRequest{Repo: "alpha", Crew: "c1", Body: notice, Host: "mbp"}, nil, prefix+"mbp: "+c.want)
 		})
+	}
+}
+
+// TestMsgHostShowsNoFarBytes: whatever the far host prints, on either stream
+// and with any status, none of it reaches this host's output.
+func TestMsgHostShowsNoFarBytes(t *testing.T) {
+	poison := []string{"\x1b[31m", "$(id)", "run crew overseer msg --host", "\u200b", strings.Repeat("Z", 64)}
+	far := strings.Join(poison, " ") + strings.Repeat("Z", 8192)
+	stdouts := []string{
+		"",
+		far,
+		`{"refused":"` + strings.Join(poison, " ") + `"}`,
+		`{"refused":"body","note":"` + strings.Join(poison, " ") + `"}`,
+		`{"ts":1,"note":"` + strings.Join(poison, " ") + `"}`,
+	}
+	for _, rc := range []int{0, 1, 2, 255} {
+		for i, out := range stdouts {
+			t.Run(fmt.Sprintf("rc %d stdout %d", rc, i), func(t *testing.T) {
+				f := haloFixture(t)
+				f.far(out, "\n"+far+"\nsecond "+far+"\n", rc)
+				_, stdout, stderr := f.msg(MsgRequest{Repo: "alpha", Crew: "c1", Body: notice, Host: "mbp"})
+				for _, p := range poison {
+					if strings.Contains(stdout, p) || strings.Contains(stderr, p) {
+						t.Errorf("far bytes %q reached this host: %q %q", p, stdout, stderr)
+					}
+				}
+			})
+		}
 	}
 }
 

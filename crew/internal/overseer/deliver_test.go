@@ -57,55 +57,56 @@ func TestDeliverRefusesAndWritesNothing(t *testing.T) {
 	long := `{"kind":"notice","detail":"` + strings.Repeat("x", peer.MaxBody) + `"}`
 	cases := []struct {
 		name string
+		code farRefusal
 		req  DeliverRequest
 		mark func(f *fixture)
 		want func(f *fixture) string
 	}{
-		{"origin not in settings hosts", DeliverRequest{Origin: "evil", Repo: "alpha", Crew: "c1", Body: notice}, nil,
+		{"origin not in settings hosts", refusedRelay, DeliverRequest{Origin: "evil", Repo: "alpha", Crew: "c1", Body: notice}, nil,
 			func(*fixture) string {
 				return deliverPrefix + "refusing relay from 'overseer:evil' — origin evil is not in settings hosts, so no relay is posted"
 			}},
-		{"origin is this host", DeliverRequest{Origin: "mbp", Repo: "alpha", Crew: "c1", Body: notice}, nil,
+		{"origin is this host", refusedRelay, DeliverRequest{Origin: "mbp", Repo: "alpha", Crew: "c1", Body: notice}, nil,
 			func(*fixture) string {
 				return deliverPrefix + "refusing relay from 'overseer:mbp' — origin mbp is this host's own name, and a relay comes only from another host"
 			}},
-		{"origin is no host name", DeliverRequest{Origin: "a b", Repo: "alpha", Crew: "c1", Body: notice}, nil,
+		{"origin is no host name", refusedOrigin, DeliverRequest{Origin: "a b", Repo: "alpha", Crew: "c1", Body: notice}, nil,
 			func(*fixture) string { return deliverPrefix + `origin "a b" is not a valid host name` }},
-		{"settings hosts unreadable", relayReq(notice), func(f *fixture) { f.hosts = nil },
+		{"settings hosts unreadable", refusedRelay, relayReq(notice), func(f *fixture) { f.hosts = nil },
 			func(*fixture) string {
 				return relay("the settings hosts cannot be read (no settings-hosts probe), so no relay is posted")
 			}},
-		{"a worker session", relayReq(notice), func(f *fixture) { f.env["CREW_WORKER_ID"] = "worker:feat/x" },
+		{"a worker session", refusedRelay, relayReq(notice), func(f *fixture) { f.env["CREW_WORKER_ID"] = "worker:feat/x" },
 			func(*fixture) string {
 				return relay("this session has CREW_WORKER_ID set, and only a session that is no dispatcher, worker, role or overseer posts a relay")
 			}},
-		{"an overseer session", relayReq(notice), func(f *fixture) { f.env["CREW_OVERSEER"] = "mbp" },
+		{"an overseer session", refusedRelay, relayReq(notice), func(f *fixture) { f.env["CREW_OVERSEER"] = "mbp" },
 			func(*fixture) string {
 				return relay("this session has CREW_OVERSEER set, and only a session that is no dispatcher, worker, role or overseer posts a relay")
 			}},
-		{"tmux cannot be read", relayReq(notice), func(f *fixture) { delete(f.tmux.Out, "list-panes") },
+		{"tmux cannot be read", refusedRelay, relayReq(notice), func(f *fixture) { delete(f.tmux.Out, "list-panes") },
 			func(f *fixture) string { return relay(sender.CheckRelay(f.t.Context(), "halo", f.opts().Sender)) }},
-		{"over the byte limit", relayReq(long), nil,
+		{"over the byte limit", refusedBody, relayReq(long), nil,
 			func(*fixture) string {
 				return deliverPrefix + fmt.Sprintf("body is %d bytes, over the %d-byte limit", len(long), peer.MaxBody)
 			}},
-		{"a raw control", relayReq("{\"kind\":\"notice\",\"detail\":\"a\x1bb\"}"), nil,
+		{"a raw control", refusedBody, relayReq("{\"kind\":\"notice\",\"detail\":\"a\x1bb\"}"), nil,
 			func(*fixture) string { return deliverPrefix + reasonControl }},
-		{"a raw zero-width space", relayReq("{\"kind\":\"notice\",\"detail\":\"a\u200bb\"}"), nil,
+		{"a raw zero-width space", refusedBody, relayReq("{\"kind\":\"notice\",\"detail\":\"a\u200bb\"}"), nil,
 			func(*fixture) string { return deliverPrefix + reasonControl }},
-		{"an escaped ESC", relayReq(`{"kind":"notice","detail":"a\u001bb"}`), nil,
+		{"an escaped ESC", refusedBody, relayReq(`{"kind":"notice","detail":"a\u001bb"}`), nil,
 			func(*fixture) string { return deliverPrefix + reasonControl }},
-		{"an escaped zero-width space", relayReq(`{"kind":"notice","detail":"a\u200bb"}`), nil,
+		{"an escaped zero-width space", refusedBody, relayReq(`{"kind":"notice","detail":"a\u200bb"}`), nil,
 			func(*fixture) string { return deliverPrefix + reasonControl }},
-		{"a kind outside the set", relayReq(`{"kind":"directive"}`), nil,
+		{"a kind outside the set", refusedBody, relayReq(`{"kind":"directive"}`), nil,
 			func(*fixture) string {
 				return deliverPrefix + `body kind must be one of ask|request|capacity|notice, got "directive"`
 			}},
-		{"an unknown repo", DeliverRequest{Origin: "halo", Repo: "owner/unknown", Crew: "c1", Body: notice}, nil,
+		{"an unknown repo", refusedRepo, DeliverRequest{Origin: "halo", Repo: "owner/unknown", Crew: "c1", Body: notice}, nil,
 			func(*fixture) string {
 				return deliverPrefix + "repo owner/unknown is not a discovered crew bus; pass a repo as crew fleet names it, or its git common dir"
 			}},
-		{"a crew not on the bus", DeliverRequest{Origin: "halo", Repo: "alpha", Crew: "c9", Body: notice}, nil,
+		{"a crew not on the bus", refusedCrew, DeliverRequest{Origin: "halo", Repo: "alpha", Crew: "c9", Body: notice}, nil,
 			func(f *fixture) string { return deliverPrefix + "crew c9 is not on " + f.commons[0] + "'s bus" }},
 	}
 	for _, c := range cases {
@@ -117,8 +118,8 @@ func TestDeliverRefusesAndWritesNothing(t *testing.T) {
 			want := c.want(f)
 			before := f.logs()
 			code, stdout, stderr := f.deliver(c.req)
-			if code != 1 || stdout != "" || stderr != want+"\n" {
-				t.Errorf("got %d %q %q, want 1, no stdout, %q", code, stdout, stderr, want+"\n")
+			if wantOut := `{"refused":"` + string(c.code) + `"}` + "\n"; code != 1 || stdout != wantOut || stderr != want+"\n" {
+				t.Errorf("got %d %q %q, want 1, %q, %q", code, stdout, stderr, wantOut, want+"\n")
 			}
 			if after := f.logs(); !maps.Equal(after, before) {
 				t.Errorf("a refused relay changed a log:\nbefore %q\nafter  %q", before, after)
@@ -163,8 +164,8 @@ func TestDeliverFailsWhenTheServedRootCannotBeRead(t *testing.T) {
 	before := f.logs()
 	var stdout, stderr bytes.Buffer
 	code := RunDeliver(t.Context(), relayReq(notice), &stdout, &stderr, o)
-	if want := deliverPrefix + "overseer root: exit status 3\n"; code != 1 || stdout.Len() != 0 || stderr.String() != want {
-		t.Errorf("got %d %q %q, want 1, no stdout, %q", code, stdout.String(), stderr.String(), want)
+	if want := deliverPrefix + "overseer root: exit status 3\n"; code != 1 || stdout.String() != `{"refused":"root"}`+"\n" || stderr.String() != want {
+		t.Errorf("got %d %q %q, want 1, a root refusal, %q", code, stdout.String(), stderr.String(), want)
 	}
 	if !maps.Equal(f.logs(), before) {
 		t.Error("a failed deliver changed a log")
@@ -189,8 +190,23 @@ func TestDeliverRefusesWhenTheHostNameCannotBeRead(t *testing.T) {
 	before := f.logs()
 	code, stdout, stderr := f.deliver(relayReq(notice))
 	want := deliverPrefix + "refusing relay from 'overseer:halo' — this host's name cannot be read (no hostname), so no relay is posted\n"
-	if code != 1 || stdout != "" || stderr != want {
+	if code != 1 || stdout != `{"refused":"relay"}`+"\n" || stderr != want {
 		t.Errorf("got %d %q %q, want %q", code, stdout, stderr, want)
+	}
+	if !maps.Equal(f.logs(), before) {
+		t.Error("a refused relay changed a log")
+	}
+}
+
+// TestDeliverRefusesARowTheBusCannotHold: a body under the byte limit whose
+// row outgrows the bus line, as each \" counts twice there, is a post refusal.
+func TestDeliverRefusesARowTheBusCannotHold(t *testing.T) {
+	f := mbpFixture(t)
+	quoted := `{"kind":"notice","detail":"` + strings.Repeat(`\"`, 1700) + `"}`
+	before := f.logs()
+	code, stdout, stderr := f.deliver(relayReq(quoted))
+	if code != 1 || stdout != `{"refused":"post"}`+"\n" || !strings.HasPrefix(stderr, deliverPrefix+"the encoded row is ") {
+		t.Errorf("got %d %q %q, want 1 and a post refusal", code, stdout, stderr)
 	}
 	if !maps.Equal(f.logs(), before) {
 		t.Error("a refused relay changed a log")
