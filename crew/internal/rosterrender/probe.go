@@ -27,9 +27,9 @@ type Probes struct {
 	// AeyePublish is `timeout 60 aeye publish-diagram <file> --pane <pane>
 	// [--open]` with both streams dropped; its status is the arm's.
 	AeyePublish func(ctx context.Context, file, pane string, open bool) error
-	// Graphviz is `neato -n -Tsvg:cairo`: the DOT text in, the svg out. Every
-	// node is pinned, so neato only draws; the cairo renderer is what turns text
-	// into paths (see diagramFont).
+	// Graphviz is `neato -n -Tsvg`: the DOT text in, the svg out. Every node is
+	// pinned, so neato only draws; the native renderer is the one that keeps the
+	// DOT `class` attributes (see finishSVG).
 	Graphviz func(ctx context.Context, dot []byte) ([]byte, error)
 	// InstalledCrew is `_rr_installed_crew` over the given PATH.
 	InstalledCrew func(path string) string
@@ -83,7 +83,7 @@ const graphvizTimeout = 30 * time.Second
 func graphviz(ctx context.Context, dot []byte) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, graphvizTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "neato", "-n", "-Tsvg:cairo")
+	cmd := exec.CommandContext(ctx, "neato", "-n", "-Tsvg")
 	cmd.Stdin = bytes.NewReader(dot)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

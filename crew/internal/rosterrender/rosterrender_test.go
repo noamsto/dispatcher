@@ -70,18 +70,18 @@ func TestTargetNamesEachCrewPerRepo(t *testing.T) {
 	fixed := time.Date(2026, 12, 25, 23, 59, 0, 0, time.UTC)
 	for _, tc := range []struct{ name, common, crew, want string }{
 		{"epoch prefix becomes a local time", "/work/myrepo/.git", "1791360000-abc",
-			"/r/roster-myrepo-10-07-0800-" + hex("/work/myrepo/.git|1791360000-abc") + ".d2"},
+			"/r/roster-myrepo-10-07-0800-" + hex("/work/myrepo/.git|1791360000-abc") + ".svg"},
 		{"leading zero falls back to the crew id", "/work/myrepo/.git", "01791360000-abc",
-			"/r/roster-myrepo-01791360000-abc-" + hex("/work/myrepo/.git|01791360000-abc") + ".d2"},
+			"/r/roster-myrepo-01791360000-abc-" + hex("/work/myrepo/.git|01791360000-abc") + ".svg"},
 		{"13 digits is no epoch", "/work/myrepo/.git", "1791360000123-x",
-			"/r/roster-myrepo-1791360000123-x-" + hex("/work/myrepo/.git|1791360000123-x") + ".d2"},
+			"/r/roster-myrepo-1791360000123-x-" + hex("/work/myrepo/.git|1791360000123-x") + ".svg"},
 		{"a non-numeric id stands in for the time", "/work/myrepo/.git", "c1",
-			"/r/roster-myrepo-c1-" + hex("/work/myrepo/.git|c1") + ".d2"},
+			"/r/roster-myrepo-c1-" + hex("/work/myrepo/.git|c1") + ".svg"},
 		// Two repos sharing a directory name, and two crews of one repo, are separate.
 		{"repo is the dir that owns the bus", "/other/myrepo/.git", "c1",
-			"/r/roster-myrepo-c1-" + hex("/other/myrepo/.git|c1") + ".d2"},
+			"/r/roster-myrepo-c1-" + hex("/other/myrepo/.git|c1") + ".svg"},
 		{"a space or slash in the id cannot steer the path", "/work/myrepo/.git", "../evil id",
-			"/r/roster-myrepo-.._evil_id-" + hex("/work/myrepo/.git|../evil id") + ".d2"},
+			"/r/roster-myrepo-.._evil_id-" + hex("/work/myrepo/.git|../evil id") + ".svg"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := target(tc.common, tc.crew, "/r", func() time.Time { return fixed })

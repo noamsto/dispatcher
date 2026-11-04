@@ -3,11 +3,9 @@ package rosterrender
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -201,10 +199,8 @@ func (l *loop) diagramPath() string {
 	return target(l.paths.Common, l.crew, l.opts.RosterDir, l.opts.Clock.Now)
 }
 
-// wrapperRe is the published file: one image node carrying the svg as base64.
-var wrapperRe = regexp.MustCompile(`\Adiagram: "" \{shape: image; icon: "data:image/svg\+xml;base64,([A-Za-z0-9+/=]+)"; width: 900; height: 900\}\n\z`)
-
-// published is $CREW_ROSTER_DIR's file for this crew, read back as written.
+// published is $CREW_ROSTER_DIR's file for this crew, read back as written: the
+// svg the Graphviz fake drew, which holds the dot text, finished.
 func (l *loop) published() string {
 	l.t.Helper()
 	got, err := os.ReadFile(l.diagramPath())
@@ -212,21 +208,6 @@ func (l *loop) published() string {
 		l.t.Fatal(err)
 	}
 	return string(got)
-}
-
-// diagram is the svg inside the published wrapper: what the Graphviz fake drew,
-// which is the dot text.
-func (l *loop) diagram() string {
-	l.t.Helper()
-	m := wrapperRe.FindStringSubmatch(l.published())
-	if m == nil {
-		l.t.Fatalf("the published file is not the image wrapper:\n%s", l.published())
-	}
-	svg, err := base64.StdEncoding.DecodeString(m[1])
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	return string(svg)
 }
 
 // dot is the record of the text the published picture was drawn from.

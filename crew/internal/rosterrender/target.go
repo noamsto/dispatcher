@@ -20,7 +20,7 @@ const defaultRosterDir = "/tmp/claude-status/images/diagrams/src"
 var plainEpoch = regexp.MustCompile(`\A[1-9][0-9]{0,11}\z`)
 
 // target is `_rr_target`: one diagram per crew per repo bus,
-// `roster-<repo>-<when>-<h4>.d2`. `<repo>` is the dir that owns the bus, `<when>`
+// `roster-<repo>-<when>-<h4>.svg`. `<repo>` is the dir that owns the bus, `<when>`
 // the crew id's epoch prefix in the renderer's local timezone (the crew id's own
 // sanitized text when the prefix is not a plain epoch), and `<h4>` a 16-bit
 // checksum of the bus path plus the crew, so two repos' renderers, or two crews
@@ -38,7 +38,7 @@ func target(common, crew, rosterDir string, now func() time.Time) string {
 		}
 	}
 	sum := identity.CKsum([]byte(common+"|"+crew)) % 65536
-	return fmt.Sprintf("%s/roster-%s-%s-%04x.d2", rosterDir,
+	return fmt.Sprintf("%s/roster-%s-%s-%04x.svg", rosterDir,
 		sanitize(filepath.Base(filepath.Dir(common))), sanitize(when), sum)
 }
 

@@ -1,7 +1,10 @@
 package rosterrender
 
 import (
-	"encoding/base64"
+	"bytes"
+	"cmp"
+	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,12 +38,10 @@ const (
 	legendH   = 74.0
 )
 
-// diagramFont is aeye's default render font (AEYE_D2_FONT), matched through
-// fontconfig when the probe draws the svg with the cairo renderer. That renderer
-// writes text as glyph paths, which is the point: aeye rasterizes the svg with
-// resvg as a nested image, and resvg resolves no font names there at all (and
-// has no generic sans-serif). Node sizes are fixed, so a host without this font
-// just draws a fallback one.
+// diagramFont is aeye's default render font (AEYE_D2_FONT). The native svg
+// names it in every text element and aeye's resvg draws it from its font
+// directory, which holds nothing else. Node sizes are fixed, so a host without
+// this font only measures the legend and the host labels with a fallback one.
 const diagramFont = "Source Sans 3"
 
 // dotq quotes s as a DOT string.
@@ -48,11 +49,61 @@ func dotq(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`).Replace(s) + `"`
 }
 
-// wrapper is the one-node D2 file that carries the svg into aeye, which only
-// publishes .d2 sources. The picture is in the text as a data URI, so aeye's
-// content-addressed cache sees every change to it.
-func wrapper(svg []byte) string {
-	return `diagram: "" {shape: image; icon: "data:image/svg+xml;base64,` + base64.StdEncoding.EncodeToString(svg) + `"; width: 900; height: 900}` + "\n"
+// svgRootRe is the root element's opening tag, with the four numbers of its viewBox.
+var svgRootRe = regexp.MustCompile(`<svg\b[^>]*?\sviewBox="([-0-9.]+)\s+([-0-9.]+)\s+([-0-9.]+)\s+([-0-9.]+)"[^>]*>`)
+
+// finishSVG turns Graphviz's native svg into what aeye's carousel takes. Graphviz
+// entity-encodes the hyphen of a class (`aeye&#45;flow`), which aeye's text-level
+// hook detection does not see; resvg cannot parse an unquoted multi-word
+// font-family; and Graphviz's background polygon stops short of the viewBox edge
+// and moves with the zoom, so a rect over the viewBox, in absolute user units
+// because aeye zooms by rewriting the viewBox, goes in first. Text without a root
+// viewBox is not an svg this knows, and comes back unchanged.
+func finishSVG(svg []byte) []byte {
+	m := svgRootRe.FindSubmatchIndex(svg)
+	if m == nil {
+		return svg
+	}
+	num := func(i int) string { return string(svg[m[2*i]:m[2*i+1]]) }
+	rect := fmt.Sprintf(`<rect x="%s" y="%s" width="%s" height="%s" fill="%s"/>`, num(1), num(2), num(3), num(4), colBG)
+	out := slices.Concat(svg[:m[1]], []byte(rect), svg[m[1]:])
+	out = bytes.ReplaceAll(out, []byte("aeye&#45;"), []byte("aeye-"))
+	return bytes.ReplaceAll(out, []byte(`font-family="`+diagramFont+`"`), []byte(`font-family="'`+diagramFont+`'"`))
+}
+
+// maxAnimated caps each animated class. Motion should mark what is live and
+// recent; past about eight elements it turns into noise and costs per-frame
+// render time. The legend counts carry the totals.
+const maxAnimated = 8
+
+type moonKey struct {
+	branch string
+	k      int
+}
+
+// animatedSets picks what moves: flow spokes of working planets, pulses of
+// blocked planets, glows of working moons. Planets rank newest first, ties by
+// branch, and the glow cap counts moons, so the last planet may be taken partly.
+func animatedSets(planets []placed) (flow, pulse map[string]bool, glow map[moonKey]bool) {
+	ranked := slices.Clone(planets)
+	slices.SortFunc(ranked, func(x, y placed) int {
+		return cmp.Or(cmp.Compare(y.ts, x.ts), strings.Compare(x.branch, y.branch))
+	})
+	flow, pulse, glow = map[string]bool{}, map[string]bool{}, map[moonKey]bool{}
+	for _, p := range ranked {
+		switch {
+		case p.class == classWorking && len(flow) < maxAnimated:
+			flow[p.branch] = true
+		case p.class == classBlocked && len(pulse) < maxAnimated:
+			pulse[p.branch] = true
+		}
+		for k, m := range p.moons {
+			if m.working && len(glow) < maxAnimated {
+				glow[moonKey{p.branch, k}] = true
+			}
+		}
+	}
+	return
 }
 
 func str(k, v string) string { return k + "=" + dotq(v) }
@@ -104,12 +155,13 @@ func renderDOT(sc scene, lg legend) string {
 	for i, p := range planets {
 		ids[p.branch] = "p" + strconv.Itoa(i+1)
 	}
+	flow, pulse, glow := animatedSets(planets)
 	for _, p := range planets {
-		stmt(&b, ids[p.branch], planetAttrs(p)...)
+		stmt(&b, ids[p.branch], planetAttrs(p, pulse[p.branch])...)
 	}
 	for _, p := range planets {
 		attrs := []string(nil)
-		if p.class == classWorking {
+		if flow[p.branch] {
 			attrs = append(attrs, str("class", "aeye-flow"))
 		}
 		stmt(&b, "dispatcher -> "+ids[p.branch], attrs...)
@@ -119,7 +171,10 @@ func renderDOT(sc scene, lg legend) string {
 			id := ids[p.branch] + "m" + strconv.Itoa(k+1)
 			fill, extra := colEdge, []string(nil)
 			if m.working {
-				fill, extra = colWorking, []string{str("class", "aeye-glow")}
+				fill = colWorking
+			}
+			if glow[moonKey{p.branch, k}] {
+				extra = []string{str("class", "aeye-glow")}
 			}
 			stmt(&b, id, append([]string{`label=""`, num("width", moonSize), num("height", moonSize), pos(m.x, m.y),
 				str("fillcolor", fill), "penwidth=0"}, extra...)...)
@@ -139,7 +194,7 @@ func renderDOT(sc scene, lg legend) string {
 	return b.String()
 }
 
-func planetAttrs(p placed) []string {
+func planetAttrs(p placed, pulse bool) []string {
 	attrs := []string{str("label", p.label), num("width", p.size), num("height", p.size), pos(p.x, p.y)}
 	if p.host != "" {
 		attrs = append(attrs, "shape=hexagon")
@@ -148,7 +203,10 @@ func planetAttrs(p placed) []string {
 	case p.failed:
 		attrs = append(attrs, str("color", colFailed), str("style", "filled,dashed"), str("fillcolor", colBG), str("fontcolor", colDim))
 	case p.class == classBlocked:
-		attrs = append(attrs, str("color", colBlocked), "penwidth=5", str("class", "aeye-pulse"))
+		attrs = append(attrs, str("color", colBlocked), "penwidth=5")
+		if pulse {
+			attrs = append(attrs, str("class", "aeye-pulse"))
+		}
 	case p.class == classPROpen:
 		attrs = append(attrs, str("color", colPROpen))
 	case p.class == classDone:
@@ -179,9 +237,9 @@ func legendHTML(lg legend) string {
 	shapes := []string{
 		"size = tier",
 		`<font color="` + colEdge + `">●</font> small dot = role`,
-		"⬡ = remote host",
+		"hexagon = remote host",
 	}
-	stacked := `<font color="` + colPROpen + `">⇢</font> dashed arrow = stacked on`
+	stacked := `<font color="` + colPROpen + `">→</font> dashed arrow = stacked on`
 	const gap = "&nbsp;&nbsp;&nbsp;&nbsp;"
 	var b strings.Builder
 	b.WriteString(`<table border="0" cellborder="0" cellspacing="0" cellpadding="4">` + "\n")
