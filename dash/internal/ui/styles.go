@@ -22,6 +22,9 @@ var (
 	headerStyle = lipgloss.NewStyle().Bold(true)
 	warnStyle   = lipgloss.NewStyle().Faint(true)
 
+	attentionStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
+	ruleStyle      = lipgloss.NewStyle().Faint(true)
+
 	// Badge styles: one distinct rendering per settings origin — default
 	// faint, user cyan, env magenta, locked bold yellow with a lock glyph
 	// the only emoji on screen.

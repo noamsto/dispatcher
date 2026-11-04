@@ -163,10 +163,11 @@ func TestQuitQuits(t *testing.T) {
 }
 
 func TestFilterModeSwallowsGlobalKeys(t *testing.T) {
-	m := sized(newTestModel(t), 80, 24) // settings is the active (0) view
+	m := sized(newTestModel(t), 80, 24)
+	m.active = 3 // settings
 	nm, _ := m.Update(keyRune('/'))
 	m = nm.(Model)
-	if !m.views[0].Capturing() {
+	if !m.views[3].Capturing() {
 		t.Fatalf("/ did not enter capturing mode")
 	}
 
@@ -180,14 +181,14 @@ func TestFilterModeSwallowsGlobalKeys(t *testing.T) {
 
 	nm, _ = m.Update(keyRune('2'))
 	m = nm.(Model)
-	if m.active != 0 {
+	if m.active != 3 {
 		t.Fatalf("digit switched tab while capturing: active = %d", m.active)
 	}
 
 	// esc leaves capturing mode again, and q now quits as normal.
 	nm, _ = m.Update(keyType(tea.KeyEsc))
 	m = nm.(Model)
-	if m.views[0].Capturing() {
+	if m.views[3].Capturing() {
 		t.Fatalf("esc did not leave capturing mode")
 	}
 }
@@ -212,17 +213,17 @@ func TestResizeAllViewsExactFrame(t *testing.T) {
 	}
 }
 
-// TestResizeRunsRosterWithContentExactFrame is TestResizeAllViewsExactFrame
+// TestResizeLiveRunsWithContentExactFrame is TestResizeAllViewsExactFrame
 // but over the full fixture (populated ratings/retro rows, live roster,
 // holds) — the mostly-empty snapshot fixture never exercises the widest
 // content (long detail/pr cells, the ratings table, the detail panes) at a
-// degenerate width like 20x5, which is exactly where a fixed-width column
-// budget (roster.go) or a wrap/window computation (runs.go detail) is most
-// likely to break.
-func TestResizeRunsRosterWithContentExactFrame(t *testing.T) {
+// degenerate width like 20x5, which is exactly where a column layout
+// (live.go) or a wrap/window computation (runs.go detail) is most likely to
+// break.
+func TestResizeLiveRunsWithContentExactFrame(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	sizes := [][2]int{{80, 24}, {60, 20}, {120, 40}, {20, 5}}
-	for view := 2; view <= 3; view++ {
+	for _, view := range []int{0, 2} {
 		for _, sz := range sizes {
 			m := sized(testModel(snap), sz[0], sz[1])
 			m.active = view

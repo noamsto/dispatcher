@@ -26,7 +26,7 @@ type view interface {
 	Capturing() bool
 }
 
-var tabTitles = []string{"Settings", "Budget", "Runs", "Roster"}
+var tabTitles = []string{"Live", "Budget", "Runs", "Settings"}
 
 // snapshotMsg carries the root model's current Snapshot and per-source
 // loaded flags to every view's Update, not just the active one, so a tab
@@ -37,7 +37,7 @@ type snapshotMsg struct {
 }
 
 // requestRosterMsg asks the root to reload the roster source (emitted by the
-// roster view's bus-change debounce).
+// live view's bus-change debounce).
 type requestRosterMsg struct{}
 
 // Model is the root Bubble Tea model.
@@ -62,7 +62,7 @@ type Model struct {
 // NewModel builds the root model with an empty Snapshot: every view renders
 // its loading placeholder until Init's loaders land. now stamps "refreshed
 // HH:MM:SS" and is injected so tests get a deterministic clock; live carries
-// the Roster tab's live-refresh seams (watcher, events path), already
+// the Live tab's live-refresh seams (watcher, events path), already
 // resolved/started by ui.Run.
 func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 	ctx := deps.Ctx
@@ -87,10 +87,10 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 		m.load[i].inFlight = true
 	}
 	m.views = [4]view{
-		newSettingsView(m.snap, m.loaded()),
+		newLiveView(m.snap, m.loaded(), live, now),
 		newBudgetView(m.snap, m.loaded()),
 		newRunsView(m.snap, m.loaded()),
-		newRosterView(m.snap, m.loaded(), live, now),
+		newSettingsView(m.snap, m.loaded()),
 	}
 	return m
 }
@@ -123,8 +123,8 @@ func (m *Model) requestAll() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// Init starts every source loader concurrently plus the roster view's
-// background watcher/ticker loop (see roster.go's rosterView.Init) — the
+// Init starts every source loader concurrently plus the live view's
+// background watcher/ticker loop (see live.go's liveView.Init) — the
 // only view with startup Cmds, so the root doesn't carry a general per-view
 // Init in the shared `view` interface for the sake of one caller. Nothing
 // here runs before the first View.
@@ -133,8 +133,8 @@ func (m Model) Init() tea.Cmd {
 	for s := source(0); s < numSources; s++ {
 		cmds = append(cmds, m.loaders.cmd(m.ctx, s))
 	}
-	if rv, ok := m.views[3].(rosterView); ok {
-		cmds = append(cmds, rv.Init())
+	if lv, ok := m.views[0].(liveView); ok {
+		cmds = append(cmds, lv.Init())
 	}
 	return tea.Batch(cmds...)
 }
@@ -161,11 +161,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.request(srcRoster)
 
 	case rosterMsg:
-		// The roster view's background watcher/ticker loop must keep
+		// The live view's background watcher/ticker loop must keep
 		// running (and its results must land) regardless of which tab is
-		// active — route straight to views[3] rather than m.active.
-		nv, cmd := m.views[3].Update(msg)
-		m.views[3] = nv
+		// active — route straight to views[0] rather than m.active.
+		nv, cmd := m.views[0].Update(msg)
+		m.views[0] = nv
 		return m, cmd
 
 	case tea.KeyMsg:

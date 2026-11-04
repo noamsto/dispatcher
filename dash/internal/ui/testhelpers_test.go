@@ -3,10 +3,12 @@ package ui
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
 )
@@ -42,6 +44,35 @@ func loadManySnapshot(t *testing.T) data.Snapshot {
 	return snap
 }
 
+// loadCrewErrSnapshot reads a fixture with one crew whose roster call failed,
+// one whose hold list failed, and a worker on a remote host.
+func loadCrewErrSnapshot(t *testing.T) data.Snapshot {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/snapshot-crewerr.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var snap data.Snapshot
+	if err := json.Unmarshal(raw, &snap); err != nil {
+		t.Fatalf("unmarshal fixture: %v", err)
+	}
+	return snap
+}
+
+// assertWidth fails unless frame is exactly h lines, none wider than w cells.
+func assertWidth(t *testing.T, frame string, w, h int) {
+	t.Helper()
+	lines := strings.Split(frame, "\n")
+	if len(lines) != h {
+		t.Errorf("frame has %d lines, want %d", len(lines), h)
+	}
+	for i, l := range lines {
+		if got := ansi.StringWidth(l); got > w {
+			t.Errorf("line %d is %d cells wide, want <= %d: %q", i, got, w, l)
+		}
+	}
+}
+
 // fixedNow returns a clock frozen at the fixture's Now (as a fake "now" for
 // status-stamp determinism in tests).
 func fixedNow(snap data.Snapshot) func() time.Time {
@@ -66,7 +97,7 @@ func loadingModel(deps Deps) Model {
 
 // loadedModel builds a root Model with every source of snap applied, with
 // no live roster refresh (no watcher) — the default for tests that don't
-// specifically exercise live-refresh wiring (see roster_test.go for those).
+// specifically exercise live-refresh wiring (see live_test.go for those).
 func loadedModel(snap data.Snapshot, deps Deps) Model {
 	var m tea.Model = NewModel(deps, fixedNow(snap), liveDeps{})
 	for _, msg := range []sourceMsg{

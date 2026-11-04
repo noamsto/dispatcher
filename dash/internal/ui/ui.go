@@ -19,7 +19,7 @@ import (
 // per-source collectors run after the first frame is drawn. EventsPath is
 // the bus log path RecentEvents/the watcher read — resolved once by the
 // caller (main.go), since resolving it needs a Runner/Config this package
-// doesn't own. EventsPathErr explains an empty EventsPath in the Roster
+// doesn't own. EventsPathErr explains an empty EventsPath in the Live
 // view's status note.
 type Deps struct {
 	Ctx           context.Context // passed to every loader; main cancels it on return
