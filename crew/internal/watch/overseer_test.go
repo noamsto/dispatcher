@@ -165,8 +165,8 @@ func TestWholeMS(t *testing.T) {
 		{"9007199254740991", 9007199254740991, true},
 		{"2.5e3", 2500, true},
 	} {
-		if ms, ok := wholeMS(tc.in); ok != tc.ok || ok && ms != tc.ms {
-			t.Errorf("wholeMS(%s) = %d, %v; want %d, %v", tc.in, ms, ok, tc.ms, tc.ok)
+		if ms, ok := WholeMS(tc.in); ok != tc.ok || ok && ms != tc.ms {
+			t.Errorf("WholeMS(%s) = %d, %v; want %d, %v", tc.in, ms, ok, tc.ms, tc.ok)
 		}
 	}
 }

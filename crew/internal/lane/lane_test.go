@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
@@ -106,5 +108,88 @@ func TestOverseerCursor(t *testing.T) {
 	want := filepath.Join(BusScratch("/state/crew/overseer", common), "cursor")
 	if got := OverseerCursor("/state", common); got != want {
 		t.Errorf("OverseerCursor = %q, want %q", got, want)
+	}
+}
+
+func TestOverseerHostDir(t *testing.T) {
+	if got, want := OverseerHostDir("/state", "mbp"), "/state/crew/overseer/hosts/mbp"; got != want {
+		t.Errorf("OverseerHostDir = %q, want %q", got, want)
+	}
+	if got, want := OverseerHostInbox("/state", "mbp"), "/state/crew/overseer/hosts/mbp/inbox.json"; got != want {
+		t.Errorf("OverseerHostInbox = %q, want %q", got, want)
+	}
+}
+
+func TestFarInboxRoundTrip(t *testing.T) {
+	path := OverseerHostInbox(t.TempDir(), "mbp")
+	if _, ok := ReadFarInbox(path); ok {
+		t.Fatal("a missing inbox read as present")
+	}
+	want := FarInbox{Floor: 1700, Seen: []string{"k2", "k1"}}
+	if err := WriteFarInbox(path, want); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := ReadFarInbox(path)
+	if !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("ReadFarInbox = %+v, %v, want %+v", got, ok, want)
+	}
+	if err := os.WriteFile(path, []byte(`{"floor":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ReadFarInbox(path); ok {
+		t.Error("a torn inbox read as present")
+	}
+}
+
+// A write replaces the inbox whole and leaves no temp file behind; one that
+// cannot land leaves the old inbox as it was.
+func TestWriteFarInboxIsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "inbox.json")
+	for _, in := range []FarInbox{{Floor: 1, Seen: []string{"a", "b", "c"}}, {Floor: 2, Seen: []string{}}} {
+		if err := WriteFarInbox(path, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := ReadFarInbox(path); got.Floor != 2 || len(got.Seen) != 0 {
+		t.Errorf("inbox = %+v, want the second write whole", got)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("dir holds %v, want inbox.json alone", entries)
+	}
+
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.MkdirAll(filepath.Join(blocked, "inbox.json", "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteFarInbox(filepath.Join(blocked, "inbox.json"), FarInbox{Floor: 3}); err == nil {
+		t.Error("a write over a non-empty dir succeeded")
+	}
+	if entries, _ := os.ReadDir(blocked); len(entries) != 1 {
+		t.Errorf("a failed write left %v, want no temp file", entries)
+	}
+}
+
+func TestFarInboxNextPrunesBelowTheFloor(t *testing.T) {
+	in := FarInbox{Floor: 100, Seen: []string{"old"}}
+	delivered := map[string]int64{"old": 150, "mid": 200, "new": 300}
+	got := in.Next(180, delivered, 10)
+	if want := (FarInbox{Floor: 180, Seen: []string{"new", "mid"}}); !reflect.DeepEqual(got, want) {
+		t.Errorf("Next = %+v, want %+v", got, want)
+	}
+	if got := in.Next(50, map[string]int64{}, 10); got.Floor != 100 || got.Seen == nil || len(got.Seen) != 0 {
+		t.Errorf("Next with a lower floor = %+v, want floor 100 and an empty seen", got)
+	}
+}
+
+func TestFarInboxNextKeepsTheNewestUpToTheCap(t *testing.T) {
+	delivered := map[string]int64{"a": 10, "b": 40, "c": 30, "d": 40, "e": 20}
+	got := FarInbox{}.Next(0, delivered, 3)
+	if want := []string{"b", "d", "c"}; !slices.Equal(got.Seen, want) {
+		t.Errorf("seen = %q, want the newest three %q", got.Seen, want)
 	}
 }

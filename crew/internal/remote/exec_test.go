@@ -622,3 +622,86 @@ func TestServeDispatchViaRealTmux(t *testing.T) {
 		t.Fatalf("scratch while the child ran = %q, want no run script", got)
 	}
 }
+
+// hostRequest is a host-scope request for argv; mut edits it before encoding.
+func hostRequest(t *testing.T, argv []string, mut func(m map[string]any)) string {
+	t.Helper()
+	m := map[string]any{"v": 1, "scope": "host", "repo": "", "slug": "", "argv": argv, "env": map[string]string{}}
+	if mut != nil {
+		mut(m)
+	}
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestServeHostScope(t *testing.T) {
+	e := newServeEnv(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	argv := []string{"crew", "overseer", "status", "--origin", "h"}
+	rc, stdout, stderr := e.serve(t, hostRequest(t, argv, nil))
+	if rc != 0 || stdout != "child-out\n" || stderr != "child-err\n" {
+		t.Fatalf("rc %d, stdout %q, stderr %q", rc, stdout, stderr)
+	}
+	if got := e.dumped(t, "argv"); got != strings.Join(argv, "\x00")+"\x00" {
+		t.Fatalf("argv = %q", got)
+	}
+	want, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(e.dumped(t, "pwd")); got != want {
+		t.Fatalf("child cwd = %q, want %q", got, want)
+	}
+	for _, dir := range []string{home, cwd} {
+		if _, err := os.Stat(filepath.Join(dir, "crew")); !os.IsNotExist(err) {
+			t.Fatalf("a scratch root was made under %s (%v)", dir, err)
+		}
+	}
+	if dirs := e.scratchDirs(t); len(dirs) != 0 {
+		t.Fatalf("scratch dirs %q", dirs)
+	}
+
+	t.Setenv("FAKE_RC", "4")
+	if rc, _, _ := e.serve(t, hostRequest(t, []string{"crew", "overseer", "deliver"}, nil)); rc != 4 {
+		t.Fatalf("deliver rc = %d, want 4", rc)
+	}
+}
+
+func TestServeHostScopeRefusals(t *testing.T) {
+	e := newServeEnv(t)
+	t.Setenv("HOME", t.TempDir())
+	status := []string{"crew", "overseer", "status"}
+	for _, tc := range []struct {
+		name, stdin, want string
+	}{
+		{"repo", hostRequest(t, status, func(m map[string]any) { m["repo"] = e.repo }), "host scope"},
+		{"slug", hostRequest(t, status, func(m map[string]any) { m["slug"] = "acme/widget" }), "host scope"},
+		{"env", hostRequest(t, status, func(m map[string]any) { m["env"] = map[string]string{"CREW_ID": "c1"} }), "host scope"},
+		{"spec", hostRequest(t, status, func(m map[string]any) { m["spec"] = "s" }), "host scope"},
+		{"empty spec", hostRequest(t, status, func(m map[string]any) { m["spec"] = "" }), "host scope"},
+		{"stdin", hostRequest(t, status, func(m map[string]any) { m["stdin"] = "s" }), "host scope"},
+		{"crew roster", hostRequest(t, []string{"crew", "roster", "--live"}, nil), "argv not allowed"},
+		{"dispatch", hostRequest(t, []string{"dispatch"}, nil), "argv not allowed"},
+		{"overseer msg", hostRequest(t, []string{"crew", "overseer", "msg"}, nil), "argv not allowed"},
+		{"bare overseer", hostRequest(t, []string{"crew", "overseer"}, nil), "argv not allowed"},
+		{"empty argv", hostRequest(t, []string{}, nil), "argv not allowed"},
+		{"unknown scope", hostRequest(t, status, func(m map[string]any) { m["scope"] = "fleet" }), `unsupported request scope "fleet"`},
+		{"repo scope overseer", e.request(t, status, nil, nil), "argv not allowed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc, stdout, stderr := e.serve(t, tc.stdin)
+			if rc != 2 || stdout != "" || !strings.Contains(stderr, tc.want) {
+				t.Fatalf("rc %d, stdout %q, stderr %q, want rc 2 naming %q", rc, stdout, stderr, tc.want)
+			}
+			if e.childRan() {
+				t.Fatal("the child ran despite the refusal")
+			}
+		})
+	}
+}

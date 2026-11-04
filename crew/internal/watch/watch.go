@@ -44,6 +44,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/playbook"
+	"github.com/noamsto/dispatcher/crew/internal/sender"
 )
 
 //go:embed watch.jq
@@ -72,6 +73,8 @@ type Options struct {
 	// costs its own message and status 1, which is what killed the arm under
 	// `set -e`. Tests stub it so a poll loop does not wait.
 	Sleep func(interval string, stderr io.Writer) error
+	// Hosts decides which overseer:<host> senders are read; nil refuses all.
+	Hosts *sender.OverseerHosts
 }
 
 // call is one parsed invocation. sinceText and timeoutText stay the caller's
@@ -82,6 +85,7 @@ type call struct {
 	sinceSet                                           bool
 	states                                             []string
 	since, timeout                                     int64
+	hosts                                              *sender.OverseerHosts
 }
 
 // Test seam: the signal-window regression parks the child here, right after the
@@ -225,6 +229,7 @@ func check(r Request, o Options) (call, string) {
 		statesText:  orDefault(r.States, defaultStates),
 		interval:    orDefault(r.Interval, defaultInterv),
 		crew:        r.Crew,
+		hosts:       o.Hosts,
 	}
 	if r.Since != nil {
 		c.sinceText, c.sinceSet = *r.Since, true
@@ -291,6 +296,9 @@ func fold(path string, c call) (map[string]any, bool) {
 	in := make([]any, len(events))
 	for i, ev := range events {
 		in[i] = ev.Doc
+		if m, ok := ev.Doc.(map[string]any); ok {
+			in[i], _ = sender.ForeignOverseer(m, c.hosts)
+		}
 	}
 	states := make([]any, len(c.states))
 	for i, s := range c.states {

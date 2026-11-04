@@ -61,6 +61,20 @@ var EnvAllow = map[string]*regexp.Regexp{
 // CrewSubcommands are the `crew` subcommands a request may run.
 var CrewSubcommands = []string{"reply", "nudge", "where", "roster", "relay", "reap", "dispatch-row", "peer-sync"}
 
+// HostArgv are the argv prefixes a host-scope request may run. Host scope
+// reaches nothing else, and these are not in CrewSubcommands, so a repo-scope
+// request never reaches them.
+var HostArgv = [][]string{{"crew", "overseer", "status"}, {"crew", "overseer", "deliver"}}
+
+// scopeHost marks a request that names no clone and runs a HostArgv command.
+const scopeHost = "host"
+
+func allowedHostArgv(argv []string) bool {
+	return slices.ContainsFunc(HostArgv, func(p []string) bool {
+		return len(argv) >= len(p) && slices.Equal(argv[:len(p)], p)
+	})
+}
+
 const exitUsage = 2
 
 // Host is one `hosts.<name>` settings entry.
@@ -80,6 +94,7 @@ type Target struct {
 // reads. Field order is the wire order.
 type Request struct {
 	V     int               `json:"v"`
+	Scope string            `json:"scope,omitempty"` // "" for repo scope, or scopeHost
 	Repo  string            `json:"repo"`
 	Slug  string            `json:"slug"`
 	Argv  []string          `json:"argv"`
@@ -142,7 +157,7 @@ func validHost(name string, h Host) error {
 func lookupHost(hosts map[string]Host, name string) (Host, error) {
 	h, ok := hosts[name]
 	if !ok {
-		return Host{}, fmt.Errorf("crew: remote-run: unknown host '%s' (no hosts.%s in settings)", name, name)
+		return Host{}, fmt.Errorf("unknown host '%s' (no hosts.%s in settings)", name, name)
 	}
 	return h, nil
 }
@@ -152,7 +167,7 @@ func lookupHost(hosts map[string]Host, name string) (Host, error) {
 func Resolve(hosts map[string]Host, name, slug string) (Target, error) {
 	h, err := lookupHost(hosts, name)
 	if err != nil {
-		return Target{}, err
+		return Target{}, fmt.Errorf("crew: remote-run: %w", err)
 	}
 	keys := make([]string, 0, len(h.Repos))
 	for k := range h.Repos {
@@ -215,6 +230,15 @@ func BuildRequest(repo, slug string, argv, env []string, spec *string) ([]byte, 
 		vars[key] = value
 	}
 	return json.Marshal(Request{V: 1, Repo: repo, Slug: slug, Argv: argv, Env: vars, Spec: spec})
+}
+
+// BuildHostRequest encodes a host-scope request for argv, which must match
+// HostArgv.
+func BuildHostRequest(argv []string) ([]byte, error) {
+	if !allowedHostArgv(argv) {
+		return nil, fmt.Errorf("argv not allowed in host scope: %q", argv[:min(len(argv), 3)])
+	}
+	return json.Marshal(Request{V: 1, Scope: scopeHost, Argv: argv, Env: map[string]string{}})
 }
 
 // dispatchRow is the part of a bus row the route reads.
@@ -312,13 +336,41 @@ func Run(ctx context.Context, c Call, stdout, stderr io.Writer) int {
 		}
 		return exitUsage
 	}
-	cmd := exec.CommandContext(ctx, "ssh", SSHArgv(target.SSH)...)
+	return viaSSH(ctx, c.Host, target.SSH, req, stdout, stderr, "crew: remote-run: ")
+}
+
+// RunHost sends a host-scope request for argv to host over ssh and returns
+// ssh's status, or 2 for a refusal before any ssh. Its own messages carry no
+// command prefix, so a caller can print them as its own.
+func RunHost(ctx context.Context, host string, argv []string, stdout, stderr io.Writer) int {
+	hosts, err := Load(ctx, ConfigBin(), stderr)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return exitUsage
+	}
+	h, err := lookupHost(hosts, host)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return exitUsage
+	}
+	req, err := BuildHostRequest(argv)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return exitUsage
+	}
+	return viaSSH(ctx, host, h.SSH, req, stdout, stderr, "")
+}
+
+// viaSSH runs `crew remote-exec` at dest with req on its stdin; prefix leads
+// each message it writes itself.
+func viaSSH(ctx context.Context, host, dest string, req []byte, stdout, stderr io.Writer, prefix string) int {
+	cmd := exec.CommandContext(ctx, "ssh", SSHArgv(dest)...)
 	cmd.Stdin = bytes.NewReader(req)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	rc := reportStatus(cmd.Run(), stderr, "crew: remote-run: ssh")
+	rc := reportStatus(cmd.Run(), stderr, prefix+"ssh")
 	if rc == 255 {
-		_, _ = fmt.Fprintf(stderr, "crew: remote-run: ssh to host '%s' (%s) failed (exit 255)\n", c.Host, target.SSH)
+		_, _ = fmt.Fprintf(stderr, "%sssh to host '%s' (%s) failed (exit 255)\n", prefix, host, dest)
 	}
 	return rc
 }
@@ -360,7 +412,7 @@ func prepare(ctx context.Context, c Call, stderr io.Writer) (Target, []byte, err
 		return Target{}, nil, fmt.Errorf("crew: remote-run: %w", err)
 	}
 	if _, err := lookupHost(hosts, c.Host); err != nil {
-		return Target{}, nil, err
+		return Target{}, nil, fmt.Errorf("crew: remote-run: %w", err)
 	}
 	paths, err := bus.Locate(ctx, c.Cwd)
 	if err != nil {

@@ -4,11 +4,13 @@
 package lane
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -139,4 +141,91 @@ func BusScratch(lane, common string) string {
 // steal that dispatcher's wakes. stateDir is ${XDG_STATE_HOME:-$HOME/.local/state}.
 func OverseerCursor(stateDir, common string) string {
 	return filepath.Join(BusScratch(filepath.Join(stateDir, "crew", "overseer"), common), "cursor")
+}
+
+// OverseerHosts holds one OverseerHostDir per partner the overseer pulled.
+func OverseerHosts(stateDir string) string {
+	return filepath.Join(stateDir, "crew", "overseer", "hosts")
+}
+
+// OverseerHostDir is the overseer's per-partner state dir: its ok file and
+// inbox for host.
+func OverseerHostDir(stateDir, host string) string {
+	return filepath.Join(OverseerHosts(stateDir), host)
+}
+
+// OverseerHostInbox is the overseer's FarInbox for host's replies.
+func OverseerHostInbox(stateDir, host string) string {
+	return filepath.Join(OverseerHostDir(stateDir, host), "inbox.json")
+}
+
+// FarInbox is what the overseer delivered of one partner's replies: every
+// reply at or below Floor, and above it each whose key Seen holds. Floor is
+// the --since of the next pull from that partner.
+type FarInbox struct {
+	Floor int64    `json:"floor"`
+	Seen  []string `json:"seen"`
+}
+
+// ReadFarInbox is the inbox at path, false when it is missing or unreadable.
+func ReadFarInbox(path string) (FarInbox, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return FarInbox{}, false
+	}
+	var in FarInbox
+	if json.Unmarshal(data, &in) != nil {
+		return FarInbox{}, false
+	}
+	return in, true
+}
+
+// WriteFarInbox replaces the inbox at path through a temp file renamed over
+// it, so a reader sees the old inbox or the new one, never a torn one.
+func WriteFarInbox(path string, in FarInbox) error {
+	data, err := json.Marshal(in)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".inbox.")
+	if err != nil {
+		return err
+	}
+	_, werr := tmp.Write(append(data, '\n'))
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), path)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp.Name())
+	}
+	return werr
+}
+
+// Next is the inbox after a pull, given every reply delivered so far that the
+// pull still holds, keyed with its ts: Floor raised to floor, and Seen the keys
+// above it, the newest limit at most.
+func (in FarInbox) Next(floor int64, delivered map[string]int64, limit int) FarInbox {
+	next := FarInbox{Floor: max(in.Floor, floor), Seen: []string{}}
+	for key, ts := range delivered {
+		if ts > next.Floor {
+			next.Seen = append(next.Seen, key)
+		}
+	}
+	slices.SortFunc(next.Seen, func(a, b string) int {
+		if c := cmp.Compare(delivered[b], delivered[a]); c != 0 {
+			return c
+		}
+		return strings.Compare(a, b)
+	})
+	if len(next.Seen) > limit {
+		next.Seen = next.Seen[:limit]
+	}
+	return next
 }

@@ -2,6 +2,7 @@ package overseer
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -12,9 +13,13 @@ import (
 	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/fleet"
+	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/git/gittest"
 	"github.com/noamsto/dispatcher/crew/internal/peer"
 	"github.com/noamsto/dispatcher/crew/internal/proc/proctest"
+	"github.com/noamsto/dispatcher/crew/internal/remote"
+	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
@@ -39,6 +44,10 @@ type fixture struct {
 	origins  map[string]string
 	commons  []string
 	git      *gittest.Fake
+	hosts    map[string]remote.Host // settings hosts; nil: no hosts probe
+	runHost  roster.Capture
+	tmux     *tmuxtest.Fake
+	served   string // the far verbs' overseer root; "" serves the registry alone
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -55,11 +64,25 @@ func newFixture(t *testing.T) *fixture {
 		env:      map[string]string{"CREW_OVERSEER": "h1"},
 		self:     func() (string, error) { return "h1", nil },
 		origins:  map[string]string{},
+		tmux:     &tmuxtest.Fake{Out: map[string]string{"list-panes": "", "list-windows": ""}},
 	}
 	if err := os.Mkdir(f.sweep, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(root+"/loadavg", []byte("0.50 0 0 1/1 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return f
+}
+
+// host makes f the machine named self whose settings hosts are self and
+// partners.
+func (f *fixture) host(self string, partners ...string) {
+	f.self = func() (string, error) { return self, nil }
+	f.hosts = map[string]remote.Host{self: {}}
+	for _, p := range partners {
+		f.hosts[p] = remote.Host{}
+	}
 }
 
 // repo adds <root>/<name> with a log holding a c1 row and returns its common dir.
@@ -104,6 +127,18 @@ func (f *fixture) opts() Options {
 		answers["--git-dir="+common+" config --get remote.origin.url"] = url
 	}
 	f.git = &gittest.Fake{Out: answers}
+	var hosts func() (map[string]remote.Host, error)
+	if f.hosts != nil {
+		hosts = func() (map[string]remote.Host, error) { return f.hosts, nil }
+	}
+	clk := clock.Clock{Now: func() time.Time { return time.UnixMilli(1700000000500) }}
+	probes := sender.Probes{
+		Getenv: func(k string) string { return f.env[k] },
+		Tmux:   f.tmux,
+		Proc:   proctest.New(nil, map[int]int{os.Getpid(): 1}),
+		Self:   f.self,
+		Hosts:  hosts,
+	}
 	return Options{
 		Getenv: func(k string) string {
 			if k == "CREW_SWEEP_ROOTS" {
@@ -113,21 +148,85 @@ func (f *fixture) opts() Options {
 		},
 		Registry: f.registry,
 		Git:      f.git,
-		Clock:    clock.Clock{Now: func() time.Time { return time.UnixMilli(1700000000500) }},
-		Sender: sender.Probes{
-			Getenv: func(k string) string { return f.env[k] },
-			Tmux:   &tmuxtest.Fake{Out: map[string]string{"list-panes": ""}},
-			Proc:   proctest.New(nil, map[int]int{os.Getpid(): 1}),
-			Self:   f.self,
+		Clock:    clk,
+		Sender:   probes,
+		RunHost:  f.runHost,
+		Status:   f.statusOpts(clk, probes),
+		ServedRoot: func(context.Context) (string, error) {
+			return f.served, nil
 		},
 	}
 }
 
+// unregistered adds <parent>/<name> with a log holding a c1 row, outside the
+// registry, and returns its common dir.
+func (f *fixture) unregistered(parent, name string) string {
+	f.t.Helper()
+	common := parent + "/" + name + "/.git"
+	if err := os.MkdirAll(common+"/crew", 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.WriteFile(common+"/crew/events.jsonl", []byte(seed+"\n"), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+	return common
+}
+
+// statusOpts are the fleet status reads of this machine: its registry, a
+// state dir under root, no live windows and a fixed machine document.
+func (f *fixture) statusOpts(clk clock.Clock, probes sender.Probes) fleet.StatusOptions {
+	env := map[string]string{
+		"HOME":                  f.sweep,
+		"CREW_SWEEP_ROOTS":      f.sweep,
+		"XDG_STATE_HOME":        f.root + "/state",
+		"DISPATCH_LOADAVG_FILE": f.root + "/loadavg",
+	}
+	maps.Copy(env, f.env)
+	return fleet.StatusOptions{
+		Options: fleet.Options{
+			Getenv:   func(k string) string { return env[k] },
+			Registry: f.registry,
+			Tmux:     &tmuxtest.Fake{Out: map[string]string{"list-panes": "", "list-windows": ""}},
+			Git: &gittest.Fake{Func: func(_ string, args []string) (string, error) {
+				if args[len(args)-1] == "--porcelain" {
+					return "", nil
+				}
+				if url := f.origins[strings.TrimPrefix(args[0], "--git-dir=")]; url != "" && args[len(args)-1] == "remote.origin.url" {
+					return url, nil
+				}
+				return "", &git.ExitError{Code: 1}
+			}},
+			Clock: clk,
+		},
+		Proc:   proctest.New(nil, nil),
+		Host:   f.self,
+		Budget: func(context.Context) (int, error) { return 8, nil },
+		Cmd: func(_ context.Context, name string, _ ...string) (string, error) {
+			if name == "nproc" {
+				return "4", nil
+			}
+			return "", errors.New("no such command")
+		},
+		BudgetFile: f.root + "/engine-budget.json",
+		Sender:     probes,
+	}
+}
+
+// run is one local `crew overseer msg`, which prints nothing on stdout.
 func (f *fixture) run(repo, crew, body string) (int, string) {
 	f.t.Helper()
-	var stderr bytes.Buffer
-	code := RunMsg(f.t.Context(), MsgRequest{Repo: repo, Crew: crew, Body: body}, &stderr, f.opts())
-	return code, stderr.String()
+	code, stdout, stderr := f.msg(MsgRequest{Repo: repo, Crew: crew, Body: body})
+	if stdout != "" {
+		f.t.Errorf("the local path printed %q", stdout)
+	}
+	return code, stderr
+}
+
+func (f *fixture) msg(req MsgRequest) (int, string, string) {
+	f.t.Helper()
+	var stdout, stderr bytes.Buffer
+	code := RunMsg(f.t.Context(), req, &stdout, &stderr, f.opts())
+	return code, stdout.String(), stderr.String()
 }
 
 // logs is every registered repo's log text, by common dir.
@@ -172,8 +271,11 @@ func (f *fixture) posted(repo, crew, body, common string) string {
 	return lines[len(lines)-1]
 }
 
-func rowFor(crew, body string) string {
-	return `{"ts":` + tsText + `,"crew_id":"` + crew + `","from":"overseer:h1","to":"dispatcher:` + crew + `","kind":"msg","body":` + jsonString(body) + `}`
+func rowFor(crew, body string) string { return rowFrom("h1", crew, body) }
+
+// rowFrom is the row overseer:<host> posts to dispatcher:<crew>.
+func rowFrom(host, crew, body string) string {
+	return `{"ts":` + tsText + `,"crew_id":"` + crew + `","from":"overseer:` + host + `","to":"dispatcher:` + crew + `","kind":"msg","body":` + jsonString(body) + `}`
 }
 
 // jsonString is body as the row encodes it: quotes and backslashes escaped.

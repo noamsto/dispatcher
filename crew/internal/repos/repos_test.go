@@ -229,6 +229,36 @@ func TestLabelSanitizesTheNameItShows(t *testing.T) {
 	}
 }
 
+func TestValidIdent(t *testing.T) {
+	for s, want := range map[string]bool{
+		"acme/alpha":                 true,
+		"worker:feat/x#s1-2":         true,
+		"/git/a_b/.git":              true,
+		"me@host.local":              true,
+		strings.Repeat("a", 120):     true,
+		"":                           false,
+		strings.Repeat("a", 121):     false,
+		"a b":                        false,
+		"a?b":                        false,
+		"a*":                         false,
+		"$(id)":                      false,
+		"x;y":                        false,
+		"a\nb":                       false,
+		"café":                       false,
+		"name·x":                     false,
+		"zero\u200bwidth":            false,
+		"https://github.com/o/r/1":   true,
+		"https://github.com/o/r?x=1": false,
+	} {
+		if got := ValidIdent(s); got != want {
+			t.Errorf("ValidIdent(%q) = %v, want %v", s, got, want)
+		}
+		if want && Sanitize(s) != s {
+			t.Errorf("Sanitize(%q) = %q: a valid identifier changes", s, Sanitize(s))
+		}
+	}
+}
+
 // Register is `_registry_add`: it makes the registry's directory, appends the
 // line once, and treats an exact line already there as done.
 func TestRegisterAppendsOnceAndCreatesTheDir(t *testing.T) {

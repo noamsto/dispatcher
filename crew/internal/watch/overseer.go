@@ -57,7 +57,7 @@ func FoldOverseer(path, me string, since int64) (OverseerFold, bool, error) {
 		return OverseerFold{}, false, err
 	}
 	out, _ := res.(map[string]any)
-	cursor, ok := wholeMS(out["cursor"])
+	cursor, ok := WholeMS(out["cursor"])
 	if !ok {
 		return OverseerFold{}, false, fmt.Errorf("cursor %v is not a whole ms", out["cursor"])
 	}
@@ -65,7 +65,7 @@ func FoldOverseer(path, me string, since int64) (OverseerFold, bool, error) {
 	misrouted, _ := out["misrouted"].([]any)
 	for _, m := range misrouted {
 		row, _ := m.(map[string]any)
-		ts, _ := wholeMS(row["ts"])
+		ts, _ := WholeMS(row["ts"])
 		crew, _ := row["crew_id"].(string)
 		from, _ := row["from"].(string)
 		f.Misrouted = append(f.Misrouted, Misrouted{TS: ts, Crew: crew, From: from})
@@ -78,10 +78,9 @@ func FoldOverseer(path, me string, since int64) (OverseerFold, bool, error) {
 	return f, true, nil
 }
 
-// wholeMS is a ts the fold selected, as jqrun hands it back: a ts the log
-// wrote as 2500.0 or 2.5e3 is still that json.Number text, a computed one a
-// float64.
-func wholeMS(v any) (int64, bool) {
+// WholeMS is a ts as a decoder hands it back, below 2^53: a ts written as
+// 2500.0 or 2.5e3 is still that json.Number text, a computed one a float64.
+func WholeMS(v any) (int64, bool) {
 	var f float64
 	switch n := v.(type) {
 	case float64:
