@@ -471,6 +471,65 @@ func TestSweepMergedPastGraceFoldErrorStaysQueried(t *testing.T) {
 	}
 }
 
+// TestSweepFoldErrorKeepsPartialPatch pins that a fold error fails only its own
+// call: the patch an earlier or later call contributed is stored, the failed
+// fold's result is not applied, and the calls after it still run.
+func TestSweepFoldErrorKeepsPartialPatch(t *testing.T) {
+	const goodRun = `{"workflow_runs":[{"head_sha":"s","created_at":"2026-01-01T00:00:00Z","status":"completed","conclusion":"success"}]}`
+	const badRun = `{"workflow_runs":[{"head_sha":"s","created_at":"not-a-date","status":"completed","conclusion":"success"}]}`
+	const goodView = `{"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","mergeCommit":{"oid":"def"}}`
+	const badView = `{"state":"MERGED","mergedAt":"not-a-date","mergeCommit":{"oid":"def"}}`
+
+	cases := []struct {
+		name        string
+		view, run   string
+		wantState   string
+		wantCommit  any
+		wantCIGreen any
+	}{
+		{"view fold fails, actions applies", badView, goodRun, "OPEN", nil, true},
+		{"actions fold fails, view applies", goodView, badRun, "MERGED", "def", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.seedSettings()
+			f.seedPRRow()
+			f.seedStore(`{"run_id":"acme/widgets:feat/x:1000","repo":"acme/widgets","pr_state":"OPEN","merged_at_ms":null,"merge_commit":null,"unresolved_notes":0,"first_ci_green":null,"swept_at":1}`)
+			f.gh = func(args string) (string, bool) {
+				switch {
+				case strings.Contains(args, "pr view"):
+					return c.view, true
+				case strings.Contains(args, "actions/runs"):
+					return c.run, true
+				}
+				return `{}`, true
+			}
+			stderr, code := f.runQuiet()
+			if code != 0 {
+				t.Fatalf("exit %d", code)
+			}
+			if !strings.Contains(stderr, "1 gh call(s) failed") {
+				t.Errorf("stderr = %q, want one failed call", stderr)
+			}
+			for _, call := range []string{"pr view", "actions/runs"} {
+				if !strings.Contains(f.callLog(), call) {
+					t.Errorf("%s did not run:\n%s", call, f.callLog())
+				}
+			}
+			rows := f.rows()
+			last := rows[len(rows)-1]
+			if last["pr_state"] != c.wantState || last["merge_commit"] != c.wantCommit || last["first_ci_green"] != c.wantCIGreen {
+				t.Errorf("row = %v, want pr_state %v merge_commit %v first_ci_green %v",
+					last, c.wantState, c.wantCommit, c.wantCIGreen)
+			}
+			if last["last_query_ok"] != false {
+				t.Errorf("last_query_ok = %v, want false", last["last_query_ok"])
+			}
+		})
+	}
+}
+
 func TestSweepSecondSweepAppendsNothing(t *testing.T) {
 	f := newFixture(t)
 	f.seedSettings()
