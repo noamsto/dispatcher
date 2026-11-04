@@ -8,7 +8,9 @@
 # trailing newline, and prints nothing for the empty string, which is only ever
 # zero rows: a @tsv row always carries its five tabs. The plan-seam evidence
 # rule for plan_required_unaudited and `clean`'s Go-defined `_invisible_drop`
-# are new since the Go port, not in the bash original.
+# are new since the Go port, not in the bash original. So is the once-built
+# $byb/$resumes index replacing the per-run scans of every event; output and
+# errors are unchanged.
 
     # unique_by would sort, and both the tag list on a row and the note order
     # within a run are read in first-appearance order.

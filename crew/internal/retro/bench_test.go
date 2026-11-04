@@ -41,8 +41,9 @@ func bigBus(runs int) string {
 	return b.String()
 }
 
-// The per-run scans of the whole bus were quadratic and took tens of seconds
-// here; the bar only has to catch their return, with a wide margin for a slow CI box.
+// The per-run scans of the whole bus were quadratic and took 65-86 s here against
+// ~0.4 s indexed (BenchmarkReportJSON shows the real number). The bound only has to
+// catch their return, so it sits far above what -race or a contended CI box costs.
 func TestReportJSONSpeedOnBigBus(t *testing.T) {
 	if testing.Short() {
 		t.Skip("big-bus speed gate")
@@ -55,8 +56,8 @@ func TestReportJSONSpeedOnBigBus(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
-	if elapsed >= 2*time.Second {
-		t.Errorf("--report --json over a 900-run bus took %v, want < 2s", elapsed)
+	if elapsed >= 15*time.Second {
+		t.Errorf("--report --json over a 900-run bus took %v, want well under 15s (indexed: ~0.4s)", elapsed)
 	}
 }
 
