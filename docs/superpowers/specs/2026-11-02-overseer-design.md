@@ -45,29 +45,25 @@ the overseer wrote, kill it, start a new one. The new one must show the same
 fleet status, and no dispatcher may have behaved differently while none ran.
 Files the overseer session writes or causes, and why none breaks the test:
 
-| file                                             | written by                                                                  | if lost or never written                                                           |
-| ------------------------------------------------ | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| per-bus msg cursors (§2)                         | overseer stream                                                             | the cold start's `overseer_inbox` replays up to 24 h                               |
-| `${XDG_STATE_HOME}/crew/overseer/pid` (§7)       | overseer launcher                                                           | a second overseer may start; nothing else reads it                                 |
-| `crews/<id>/relaunch` marker (§5)                | `dispatcher --relaunch`                                                     | the 30 min relaunch rate limit restarts; dispatchers never read it                 |
-| `${XDG_DATA_HOME}/crew/fleet-priority.json` (§4) | `crew fleet prio`, a human command the overseer may run on the human's word | every repo has priority 0; dispatchers read it whether or not an overseer exists   |
-| `${XDG_DATA_HOME}/crew/fleet-priority.log` (§4)  | `crew fleet prio` (audit line per change)                                   | the digest loses its "changes since last digest" list; ordering is unaffected      |
-| `${XDG_STATE_HOME}/crew/fleet-due.json` (§4)     | `crew hold due` run by any live dispatcher (never the overseer)             | demotion clocks restart; a stuck hold's demotion is delayed by at most one timeout |
+| file                                                    | written by                                                                  | if lost or never written                                                           |
+| ------------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| per-bus msg cursors (§2)                                | overseer stream                                                             | the cold start's `overseer_inbox` replays up to 24 h                               |
+| `${XDG_STATE_HOME}/crew/overseer/pid` (§7)              | overseer launcher                                                           | a second overseer may start; nothing else reads it                                 |
+| `crews/<id>/relaunch` marker (§5)                       | `dispatcher --relaunch`                                                     | the 30 min relaunch rate limit restarts; dispatchers never read it                 |
+| `${XDG_DATA_HOME}/crew/fleet-priority.json` (§4)        | `crew fleet prio`, a human command the overseer may run on the human's word | every repo has priority 0; dispatchers read it whether or not an overseer exists   |
+| `${XDG_DATA_HOME}/crew/fleet-priority.log` (§4)         | `crew fleet prio` (audit line per change)                                   | the digest loses its "changes since last digest" list; ordering is unaffected      |
+| `${XDG_STATE_HOME}/crew/fleet-due.json` (§4)            | `crew hold due` run by any live dispatcher (never the overseer)             | demotion clocks restart; a stuck hold's demotion is delayed by at most one timeout |
+| `${XDG_STATE_HOME}/crew/overseer/hosts/<h>/cursor` (§9) | overseer stream                                                             | the cold start's `overseer_inbox` replays up to 24 h of that host's replies        |
+| `${XDG_STATE_HOME}/crew/overseer/hosts/<h>/ok` (§9)     | overseer stream, `crew fleet status` in overseer mode                       | `last_ok_ts` reads null until the next good answer from that host                  |
 
 No dispatcher reads an overseer-private file, and no fleet duty waits on one.
 
-**Out of scope:** cross-host overseers. In the overseer session (with
-`CREW_OVERSEER` set) remote workers appear only through their local bus
-rows (`dispatch` and status rows), marked `remote_unprobed: true`, without
-a live probe: `crew fleet`'s live merge (`roster.MergeRemote`,
-`crew/internal/roster/remote.go:33`) goes through `remoteRun`, which
-sender-checks every remote argv as `dispatcher:<crew>`
-(`crew/main.go:1088-1099`), and the overseer is refused every
-`dispatcher:` sender (§3). Run by anyone else, `crew fleet status` keeps
-the live merge `crew fleet` has. Peers appear through the peer store;
-codex and cursor as the overseer's engine in
-v1 (§7); the machine-wide reap timer (#1410) and idle detection without a done
-marker (#1409), which ship separately and which the overseer relies on.
+**Cross-host overseers** are covered by §9 (federation, #1450). Peers appear
+through the peer store.
+
+**Out of scope:** codex and cursor as the overseer's engine in v1 (§7); the
+machine-wide reap timer (#1410) and idle detection without a done marker
+(#1409), which ship separately and which the overseer relies on.
 
 ## What exists (verified)
 
@@ -684,7 +680,7 @@ the overseer acting as the dispatcher:
   keeps the relaunched dispatcher from inheriting the overseer's identity.
   The window gets `remain-on-exit on` (so a refusing launcher's message
   stays readable), switched back off with `tmux set-option -p -t <pane>
-  remain-on-exit off` once the new-pid check passes (else every later
+remain-on-exit off` once the new-pid check passes (else every later
   normal exit would leave a dead window the overseer may not kill), and
   `--relaunch` takes the new pane id
   (`new-window -P -F '#{pane_id}'`) and waits up to 10 s for
@@ -847,6 +843,141 @@ where an arrow forces it, bottom-up merges).
 S1, S3 and S6a can run in parallel; S2 follows S1; S4 and S5 follow S2 (S4
 also S3); S6b and S7 close the stack. §6 has no code slice of its own: S2
 supplies the data, S6b the `digestEvery` setting, S7 the digest procedure.
+
+### 9. Federation across hosts
+
+Every host keeps its own overseer; overseers read each other's fleet and relay
+msgs over the existing `hosts.<h>.ssh` link. No host is primary and each works
+alone when the others are down. Partners are every settings `hosts` key except
+this host's own name; no new settings key. A host's settings key for another
+host equals that host's short hostname (the same assumption as peer sync). The
+requester labels a far answer with its own settings key, never with anything
+inside the answer. Only `ssh` crosses, through the fixed `crew remote-exec`.
+
+**D1. Host-scoped `remote-exec`.** A request gains `scope: "host"`: `repo`,
+`slug`, `env`, `spec` and `stdin` all empty, and an argv in a separate host
+allowlist, exactly `crew overseer status …` or `crew overseer deliver …`. The
+repo-scope allowlist does not gain `overseer`, so these verbs are unreachable
+repo-scoped and host scope reaches nothing else. The child runs in the remote
+user's home, exec'd directly. `remote.RunHost` is the client. An old far `crew`
+refuses the `scope` key and reads as `unreachable` with that line.
+
+**D2. Far verbs.**
+
+- `crew overseer status --origin <h> [--since <ms>]` is read-only and refuses an
+  `<h>` that is malformed, the far host itself, or not a far settings `hosts`
+  key. It prints `{"v":1,"self","ts","status","inbox","misrouted","cursor"}`:
+  `status` is this host only, in served mode (no federation, no remote-worker
+  probes, so no recursion or loops); `inbox`, `misrouted` and `cursor` fold the
+  buses for the address `overseer:<origin>` from `--since` (default 24 h),
+  never from the far overseer's own cursor files. Discovery uses
+  `overseer.root` or the registry, never a `$HOME` walk over ssh.
+- `crew overseer deliver --origin <h> <repo> <crew> '<json>'` is the one write:
+  one `msg` row `from: overseer:<h>`, `to: dispatcher:<crew>`; it prints
+  `{"ts":<ms>}`, the `re` a reply carries. It re-runs every check of the local
+  `crew overseer msg` (`bodyRefusal`, bus resolution, crew on that bus, line
+  size) and never trusts the client.
+
+**D3. Relay sender rule.** `sender.CheckRelay` is used only by `deliver`:
+`origin` is well-formed, not this host and a settings `hosts` key; the env holds
+none of `CREW_WORKER_ID`, `CREW_ROLE_ID`, `CREW_OVERSEER`; both pane probes read
+through and the caller is in no pane stamped with a branch or role. When the far
+tmux server cannot answer `list-panes -a` from the sshd session, `deliver`
+fails closed. `crew msg` and `crew status` keep refusing every `overseer:`
+sender. This is a tripwire on the sanctioned path, not authentication.
+**Posture:** anything on the requesting host that can run
+`ssh <far> crew remote-exec` can craft a host-scope `deliver` with
+`origin=<requester>` and skip the client-side check, the same posture
+`remoteRun` has for `dispatcher:` calls. The ssh login is the boundary, and the
+far dispatcher treats every overseer body as data.
+
+**D4. Send verb.** `crew overseer msg [--host <h>] <repo> <crew> '<json>'`.
+Without `--host`, or with this host, it is today's local post. With a remote
+`<h>`: the local overseer sender check, local `bodyRefusal` (before any ssh),
+`<h>` in settings `hosts`, then `deliver` over host scope. Far stdout is
+re-validated and printed as `{"host":<h>,"ts":<ms>}`; the `ts` is the far
+row's. A far failure exits 1 with `crew: overseer msg: <host>: <far first
+stderr line>`. No `--host` value comes from a bus row.
+
+**D5. Federated fleet status.** In overseer mode, with a passing local
+`sender.Check("overseer:<self>")` (a failing check federates nothing: every
+partner reads `unprobed` with the reason), `CollectStatus` fetches each partner
+concurrently with the local collection, each bounded by 10 s, with the cursor
+as `--since`. Each answer is admitted as untrusted data (`fleet.AdmitHost`):
+size and shape caps, `v == 1`, strings stripped of control and invisible
+characters and capped, every repo's `host` set to the asked settings key, inbox
+events re-checked (`kind == "msg"`, `to == overseer:<self>`,
+`from == dispatcher:<crew_id>`, `ts` above the cursor) with failures moved to
+`misrouted` by sender only. Nothing in an answer selects a host, path, command
+or recipient.
+
+- `StatusDoc.hosts[]` is always present: `{host, state: ok|unreachable|unprobed,
+ts, last_ok_ts, age_s, error, machine, queue, repos, skipped}`. An
+  unreachable host is listed with its error and the age of its last good data,
+  never missing, and its stale repos are never shown as current. Every
+  `repos[]` row gains `host`; local repos stay top-level, remote repos live
+  under `hosts[].repos`; a remote row's `common` is display data only.
+- In overseer mode a local dispatcher's `--host` workers are probed through
+  `overseerRemote`: argv exactly `crew roster --live -- <crew>`, sender check as
+  the overseer, no env, so no `CREW_ID` and no `dispatcher:` sender. A host that
+  fails once fails fast for its later probes.
+- **Guest crews.** A `--host` worker lives on the far bus under its home
+  dispatcher's crew id, with no dispatcher registration there. A crew with no
+  pid file and a window whose `@crew_dispatcher_host` stamp names another host
+  is `attention: "guest"` with `dispatcher.home: <host>`.
+- **Dedup rule (one owner per worker).** Dispatcher-level conditions
+  (`dispatcher_down`, `lane_dead`, relaunch, Needs-you "unattended") come only
+  from the home crew; `guest` never fires them. Worker-level conditions
+  (`blocked_aging`, `abandoned`) come only from the guest crew, where the
+  worker's real status rows live; the home crew's remote rows never fire them
+  (the lane skips rows whose own `host` differs from the doc's host). Digest
+  counts count a worker once, under its home crew; a guest crew is one line,
+  "on `<far>` for `<home>`", outside per-repo counts. Capacity is per machine
+  and already correct. A guest crew whose home host is unreachable or whose
+  stamp is missing stays `unattended`: it fails visible.
+- The table form gains a leading `HOST` column and one line per non-ok partner.
+
+**D6. Overseer lane.** Every lane line carries `host`. Transitions are tracked
+per host; a non-ok partner's carry forward untouched (absent is not cleared).
+`host_unreachable` `{host, error, last_ok_ts, ts}` fires when a partner turns
+non-ok and `host_reachable` when it recovers (level-triggered, first doc is the
+baseline). For each ok partner, every admitted inbox batch above the per-host
+cursor prints as `{"cursor","events","repo","host"}` and the cursor file then
+advances (at-least-once); remote misrouted msgs print `misrouted_msg` with
+`host`, sender only. Remote replies reach the lane once per 60 s status
+interval, not the 2 s local poll. State files: `cursor` and `ok` under
+`${XDG_STATE_HOME}/crew/overseer/hosts/<h>/`; the `ok` write is temp file plus
+rename under the `lock` package and never lowers the stored value. No
+dispatcher reads either; the statelessness test holds.
+
+**D7. Dispatcher-side refusal.** A delivered row `from: overseer:<h>` whose
+host is neither this host nor a settings `hosts` key is replaced by a row with
+`refused` and `body: null`; its cursor still advances and its body never reaches
+the reader. One helper, `sender.ForeignOverseer`, applies on every msg read
+path: `crew watch`, `crew stream` and `crew relay`, `crew inbox`, and
+`crew await`.
+
+**Trust boundary.**
+
+| path            | crosses                                    | guard                                                                                                 |
+| --------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| federation read | far fleet doc and replies to the requester | admission (D5); provenance from the settings key; data, never instructions                            |
+| relay write     | requester body to the far bus              | client and far `bodyRefusal`; far `CheckRelay`; only `overseer:<origin>` to `dispatcher:<crew>`       |
+| probe read      | far `crew roster --live`                   | fixed argv, no env, overseer sender check                                                             |
+| dispatcher read | `overseer:<h>` rows                        | settings-hosts filter on `watch.fold`, `inbox.Run`, `await.due`                                       |
+| transport       | ssh only                                   | `SSHArgv` (BatchMode, forwarding off); host scope carries no env, spec or stdin, so no secret crosses |
+
+**Setup prerequisites** (documented, not enforced beyond refusals): each partner
+lists this host in its own settings `hosts` (else its `status --origin`,
+`CheckRelay` and D7 refuse us), and runs a `crew` with host-scope `remote-exec`
+(else `unreachable`). The far answer's `self` is compared with the settings key;
+a mismatch keeps `state: "ok"` but sets an `error` naming both, because the
+reverse direction breaks visibly: that overseer's msgs are refused here.
+
+**Out of scope:** overseer-to-overseer messaging (a remote dead dispatcher is
+flagged here; the far host's own overseer derives the same event from its own
+durable state, and nothing relaunches across ssh); peer-channel changes, new
+settings keys, codex and cursor overseers.
 
 ## Testing
 
