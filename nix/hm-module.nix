@@ -21,7 +21,7 @@ self: {
     monthlyUsd = cfg.openrouter.monthlyTarget;
   };
   overseerLocked = lib.filterAttrs (_: v: v != null) {
-    inherit (cfg.overseer) autoRelaunch digestEvery;
+    inherit (cfg.overseer) autoRelaunch digestEvery root;
   };
   lockedSettings =
     {inherit (cfg) profile grantRoots;}
@@ -569,6 +569,19 @@ in {
           lands as `overseer.digestEvery` in the locked settings layer.
           Unset (the default, 14400 from the base defaults), the user
           settings file governs.
+        '';
+      };
+
+      root = lib.mkOption {
+        type = lib.types.nullOr (lib.types.strMatching "/.*");
+        default = null;
+        example = "/home/user/git";
+        description = ''
+          The absolute path of the folder that holds your repos, used by
+          the standalone `overseer` command as its working directory. Set,
+          it lands as `overseer.root` in the locked settings layer. Unset
+          (the default), the command falls back to the first
+          `CREW_SWEEP_ROOTS` entry, then `$HOME`.
         '';
       };
     };

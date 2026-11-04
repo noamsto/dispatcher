@@ -179,6 +179,7 @@ let
     overseer = {
       autoRelaunch = true;
       digestEvery = 7200;
+      root = "/a/repos";
     };
     repoTrackers."factify-inc/mono" = "linear:ENG";
     orgTrackers."factify-inc" = "linear:ENG";
@@ -1086,7 +1087,7 @@ worktree_git_lib_crew_go_row() { # bin
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.fleetHeadTimeout == 300' "$EVAL"
   [ "$status" -eq 0 ]
-  run jq -e '.full.locked.overseer == {"autoRelaunch": true, "digestEvery": 7200}' "$EVAL"
+  run jq -e '.full.locked.overseer == {"autoRelaunch": true, "digestEvery": 7200, "root": "/a/repos"}' "$EVAL"
   [ "$status" -eq 0 ]
   run jq -e '.full.locked.engines == ["claude", "codex", "cursor", "pi"]' "$EVAL"
   [ "$status" -eq 0 ]

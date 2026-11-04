@@ -11,9 +11,21 @@ setup() {
   load helpers
   LAUNCHER="$BATS_TEST_DIRNAME/../adapters/core/dispatcher.sh"
   run_launcher() { bash -euo pipefail "$LAUNCHER" "$@"; }
+  OVERSEER="$BATS_TEST_DIRNAME/../adapters/core/overseer.sh"
+  run_overseer() { bash -euo pipefail "$OVERSEER" "$@"; }
   setup_repo
   stub_bin tmux
   stub_bin crew
+  # The standalone wrapper resolves a root then execs `dispatcher`; this stub
+  # records the cwd it chose and the argv it forwarded.
+  cat >"$STUB_DIR/dispatcher" <<'STUB'
+#!/usr/bin/env bash
+printf 'cwd=%s argv=%s\n' "$PWD" "$*" >>"$STUB_LOG"
+exit 0
+STUB
+  chmod +x "$STUB_DIR/dispatcher"
+  # Ambient sweep roots must not leak into the resolution-order tests.
+  unset CREW_SWEEP_ROOTS
   export DISPATCHER_PROTOCOL_DIR="$BATS_TEST_TMPDIR/protocols"
   _protocol_fixture "$DISPATCHER_PROTOCOL_DIR" core
   # The launcher sources the worker-settings lib; copied-out launchers
@@ -2345,4 +2357,59 @@ STUB
   TMUX=/tmp/fake,1,0 TMUX_PANE=%4 CREW_ID=c1 run run_launcher
   [ "$status" -eq 0 ]
   grep -qx 'set-option -pu -t %4 @crew_role' "$STUB_LOG"
+}
+
+# The standalone `overseer` command (adapters/core/overseer.sh) resolves the
+# folder holding the user's repos, refuses a bad root, then cd's there and
+# execs `dispatcher --overseer "$@"`. Resolution order: overseer.root setting,
+# then the first CREW_SWEEP_ROOTS entry, then $HOME.
+@test "overseer command: the setting picks the root and forwards the flags" {
+  local root="$BATS_TEST_TMPDIR/setting-repos"
+  mkdir -p "$root"
+  _dispatcher_settings "{\"overseer\":{\"root\":\"$root\"}}"
+  cd "$TEST_REPO"
+  : >"$STUB_LOG"
+  run run_overseer --agent pi --model m --effort low
+  [ "$status" -eq 0 ]
+  grep -qx "cwd=$root argv=--overseer --agent pi --model m --effort low" "$STUB_LOG"
+}
+
+@test "overseer command: CREW_SWEEP_ROOTS picks its first entry" {
+  local a="$BATS_TEST_TMPDIR/sweep-a" b="$BATS_TEST_TMPDIR/sweep-b"
+  mkdir -p "$a" "$b"
+  rm -f "$XDG_CONFIG_HOME/dispatcher/settings.json"
+  cd "$TEST_REPO"
+  : >"$STUB_LOG"
+  CREW_SWEEP_ROOTS="$a:$b" run run_overseer
+  [ "$status" -eq 0 ]
+  grep -qx "cwd=$a argv=--overseer" "$STUB_LOG"
+}
+
+@test "overseer command: falls back to HOME" {
+  local home="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$home"
+  rm -f "$XDG_CONFIG_HOME/dispatcher/settings.json"
+  cd "$TEST_REPO"
+  : >"$STUB_LOG"
+  HOME="$home" run run_overseer
+  [ "$status" -eq 0 ]
+  grep -qx "cwd=$home argv=--overseer" "$STUB_LOG"
+}
+
+@test "overseer command: a root inside a git repo refuses with a clear message" {
+  _dispatcher_settings "{\"overseer\":{\"root\":\"$TEST_REPO\"}}"
+  : >"$STUB_LOG"
+  run run_overseer
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"inside a git repo"* ]]
+  if grep -q '^cwd=' "$STUB_LOG"; then return 1; fi
+}
+
+@test "overseer command: a non-existent root refuses with a clear message" {
+  _dispatcher_settings "{\"overseer\":{\"root\":\"$BATS_TEST_TMPDIR/missing\"}}"
+  : >"$STUB_LOG"
+  run run_overseer
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"not a directory"* ]]
+  if grep -q '^cwd=' "$STUB_LOG"; then return 1; fi
 }

@@ -270,6 +270,15 @@
               text = launcherPath rt (builtins.readFile ./adapters/core/lead-launcher.sh);
             };
 
+          overseer = let
+            rt = (with pkgs; [git jq coreutils]) ++ [dispatch-config dispatcher];
+          in
+            pkgs.writeShellApplication {
+              name = "overseer";
+              runtimeInputs = rt;
+              text = withConfig (builtins.readFile ./adapters/core/overseer.sh);
+            };
+
           refresh-scores = pkgs.writeShellApplication {
             name = "refresh-scores";
             runtimeInputs = with pkgs; [curl jq coreutils];
@@ -308,7 +317,7 @@
 
           default = pkgs.symlinkJoin {
             name = "dispatcher-all";
-            paths = [crew crew-dash dispatch dispatch-resume dispatch-config dispatcher lead-launcher refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check];
+            paths = [crew crew-dash dispatch dispatch-resume dispatch-config dispatcher lead-launcher overseer refresh-scores refresh-budget refresh-models pr-watch reviewer-roster permission-check];
           };
         };
       in {

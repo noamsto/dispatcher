@@ -740,6 +740,20 @@ EOF
   done
 }
 
+@test "overseer.root accepts an absolute path and refuses a relative path or non-string" {
+  user_settings '{"overseer":{"root":"/a/repos"}}'
+  run --separate-stderr "$CONFIG"
+  [ "$status" -eq 0 ]
+  jq -e '.overseer.root == "/a/repos"' <<<"$output"
+
+  for bad in '"relative"' '7'; do
+    user_settings "{\"overseer\":{\"root\":$bad}}"
+    run --separate-stderr "$CONFIG"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"overseer.root must be an absolute path string"* ]]
+  done
+}
+
 @test "rosterDiagram.autoOpen defaults to true" {
   run --separate-stderr "$CONFIG"
   [ "$status" -eq 0 ]
