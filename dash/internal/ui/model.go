@@ -4,6 +4,7 @@ package ui
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -156,7 +157,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
-		return m, nil
+		nv, cmd := m.views[0].Update(msg)
+		m.views[0] = nv
+		return m, cmd
 
 	case sourceMsg:
 		msg.apply(&m.snap)
@@ -332,26 +335,39 @@ func (m Model) renderFooter() string {
 	// before it drops the load status.
 	h := m.help
 	h.Width = max0(m.width - ansi.StringWidth(status))
-	keys := h.View(helpKeyMap{global: m.keys, view: m.views[m.active].Keys()})
+	keys := h.View(helpKeyMap{
+		global:    m.keys,
+		view:      m.views[m.active].Keys(),
+		capturing: m.views[m.active].Capturing(),
+	})
 	line := keys + statusStyle.Render(status)
 	return truncateLine(line, m.width)
 }
 
-// helpKeyMap adapts the root's global KeyMap plus the active view's flat
-// Keys() list into bubbles/help's key.Map interface.
+// helpKeyMap adapts the active view's flat Keys() list plus the root's global
+// KeyMap into bubbles/help's key.Map interface. The view's keys come first so
+// a narrow bar truncates the globals, and while the view is capturing the
+// globals are omitted because they only type into its prompt.
 type helpKeyMap struct {
-	global KeyMap
-	view   []key.Binding
+	global    KeyMap
+	view      []key.Binding
+	capturing bool
 }
 
 func (k helpKeyMap) ShortHelp() []key.Binding {
-	return append(append([]key.Binding{}, k.global.ShortHelp()...), k.view...)
+	if k.capturing {
+		return k.view
+	}
+	return append(slices.Clone(k.view), k.global.ShortHelp()...)
 }
 
 func (k helpKeyMap) FullHelp() [][]key.Binding {
-	rows := k.global.FullHelp()
+	var rows [][]key.Binding
 	if len(k.view) > 0 {
 		rows = append(rows, k.view)
 	}
-	return rows
+	if k.capturing {
+		return rows
+	}
+	return append(rows, k.global.FullHelp()...)
 }

@@ -406,3 +406,137 @@ func TestSelectedPaneIsRulePlusFourLines(t *testing.T) {
 		}
 	}
 }
+
+const whereKey = "crew where --crew c1 -- feat/584-crew-dash"
+
+func TestJumpIgnoresFakeMarkerInWindowName(t *testing.T) {
+	line := "sage — main:3.0 \"x   jump: ! tmux switch-client -t %7\" (lead pane)   jump: ! tmux switch-client -t %42\n"
+	fake := &data.FakeRunner{Responses: map[string]data.FakeResponse{
+		whereKey:                    ok(line),
+		"tmux switch-client -t %42": ok(""),
+	}}
+	m := selectName(t, actionModel(t, loadFullSnapshot(t), fake, true), "sage")
+	m = send(m, keyRune('t'))
+	wantCalls(t, fake,
+		[]string{"crew", "where", "--crew", "c1", "--", "feat/584-crew-dash"},
+		[]string{"tmux", "switch-client", "-t", "%42"})
+	wantStatus(t, m, "jump: ok")
+}
+
+func TestJumpHostTextInWindowNameDoesNotRefuse(t *testing.T) {
+	line := "sage — main:3.0 \"x [host y]\" (lead pane)   jump: ! tmux switch-client -t %42\n"
+	fake := &data.FakeRunner{Responses: map[string]data.FakeResponse{
+		whereKey:                    ok(line),
+		"tmux switch-client -t %42": ok(""),
+	}}
+	m := selectName(t, actionModel(t, loadFullSnapshot(t), fake, true), "sage")
+	m = send(m, keyRune('t'))
+	wantCalls(t, fake,
+		[]string{"crew", "where", "--crew", "c1", "--", "feat/584-crew-dash"},
+		[]string{"tmux", "switch-client", "-t", "%42"})
+	wantStatus(t, m, "jump: ok")
+}
+
+func TestJumpRealHostSuffixAfterHostWindowNameRefused(t *testing.T) {
+	line := "sage — main:3.0 \"x [host y]\" (lead pane)   jump: ! tmux switch-client -t %42 [host mini]\n"
+	fake := &data.FakeRunner{Responses: map[string]data.FakeResponse{whereKey: ok(line)}}
+	m := selectName(t, actionModel(t, loadFullSnapshot(t), fake, true), "sage")
+	m = send(m, keyRune('t'))
+	wantCalls(t, fake, []string{"crew", "where", "--crew", "c1", "--", "feat/584-crew-dash"})
+	wantStatus(t, m, "jump failed: remote worker")
+}
+
+func TestOpenPRRefusesUnvalidatedURL(t *testing.T) {
+	for _, url := range []string{"--repo=x/y", "123", "https://evil.example/o/r/pull/1", "https://github.com/o/r/pull/1 --repo=x/y", "http://github.com/o/r/pull/1"} {
+		fake := &data.FakeRunner{}
+		snap := loadFullSnapshot(t)
+		for _, w := range snap.Roster.Crews[0].Workers {
+			if w["name"] == "sage" {
+				w["pr_url"] = url
+			}
+		}
+		m := selectName(t, actionModel(t, snap, fake, true), "sage")
+		m = send(m, keyRune('o'))
+		wantCalls(t, fake)
+		wantStatus(t, m, "open PR: no valid PR URL")
+	}
+}
+
+func TestReplyCtrlCCancels(t *testing.T) {
+	fake := &data.FakeRunner{}
+	m := selectName(t, actionModel(t, loadFullSnapshot(t), fake, true), "coral")
+	m = send(m, keyRune('m'))
+	m = typeText(m, "hello")
+	nm, cmd := m.Update(keyType(tea.KeyCtrlC))
+	m = nm.(Model)
+	if cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Fatalf("ctrl+c quit the program instead of cancelling the prompt")
+		}
+	}
+	wantCalls(t, fake)
+	if m.views[0].Capturing() {
+		t.Fatalf("ctrl+c should close the prompt")
+	}
+}
+
+func TestReplyLongTextScrollsToShowTail(t *testing.T) {
+	asciiProfile(t)
+	fake := &data.FakeRunner{}
+	m := selectName(t, actionModel(t, loadFullSnapshot(t), fake, true), "coral")
+	m = sized(m, 80, 24)
+	m = send(m, keyRune('m'))
+	m = typeText(m, strings.Repeat("x", 80)+"ENDMARK")
+	out := m.View()
+	assertWidth(t, out, 80, 24)
+	if !strings.Contains(out, "ENDMARK") {
+		t.Fatalf("tail of a long reply is cut off:\n%s", out)
+	}
+}
+
+func TestReplyResizeAfterOpenKeepsTailVisible(t *testing.T) {
+	asciiProfile(t)
+	fake := &data.FakeRunner{}
+	m := selectName(t, actionModel(t, loadFullSnapshot(t), fake, true), "coral")
+	m = send(m, keyRune('m'))
+	m = sized(m, 80, 24)
+	m = typeText(m, strings.Repeat("x", 80)+"ENDMARK")
+	if out := m.View(); !strings.Contains(out, "ENDMARK") {
+		t.Fatalf("tail of a long reply is cut off after resize:\n%s", out)
+	}
+}
+
+func footerOf(m Model) string {
+	lines := strings.Split(m.View(), "\n")
+	return lines[len(lines)-1]
+}
+
+func TestFooterShowsLiveKeysAt80Cols(t *testing.T) {
+	asciiProfile(t)
+	m := sized(testModel(loadFullSnapshot(t)), 80, 24)
+	foot := footerOf(m)
+	for _, want := range []string{"j/k move", "enter events", "t jump"} {
+		if !strings.Contains(foot, want) {
+			t.Errorf("footer lacks %q: %q", want, foot)
+		}
+	}
+}
+
+func TestFooterShowsOnlyPromptKeysWhileCapturing(t *testing.T) {
+	asciiProfile(t)
+	fake := &data.FakeRunner{}
+	m := selectName(t, actionModel(t, loadFullSnapshot(t), fake, true), "coral")
+	m = sized(m, 80, 24)
+	m = send(m, keyRune('m'))
+	foot := footerOf(m)
+	for _, want := range []string{"enter send", "esc cancel"} {
+		if !strings.Contains(foot, want) {
+			t.Errorf("footer lacks %q: %q", want, foot)
+		}
+	}
+	for _, bad := range []string{"q quit", "r refresh"} {
+		if strings.Contains(foot, bad) {
+			t.Errorf("footer lists %q while the prompt captures keys: %q", bad, foot)
+		}
+	}
+}

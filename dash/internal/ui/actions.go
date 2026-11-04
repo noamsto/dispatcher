@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
 )
@@ -59,8 +60,11 @@ func disabledReason(a action, w data.Worker, inTmux, have bool) string {
 			return "no branch"
 		}
 	case actOpenPR:
-		if w.PRURL == "" {
+		switch {
+		case w.PRURL == "":
 			return "no PR"
+		case !ghPRURLRe.MatchString(w.PRURL):
+			return "no valid PR URL"
 		}
 	case actReply:
 		if w.State != "blocked" {
@@ -73,6 +77,10 @@ func disabledReason(a action, w data.Worker, inTmux, have bool) string {
 	}
 	return ""
 }
+
+// ghPRURLRe is the only shape of worker-written pr_url allowed to reach gh: it
+// cannot read as a flag, resolve against the cwd repo, or name another host.
+var ghPRURLRe = regexp.MustCompile(`^https://github\.com/[^/]+/[^/]+/pull/[0-9]+$`)
 
 // nudgeTarget is the codename, else the branch.
 func nudgeTarget(w data.Worker) string {
@@ -106,22 +114,26 @@ const jumpMarker = "jump: ! tmux switch-client -t "
 
 var paneIDRe = regexp.MustCompile(`^%[0-9]+$`)
 
-// parseJumpPane extracts the pane id from `crew where` output: the first
-// token after the jump marker. A line naming a host is refused because a
+// parseJumpPane extracts the pane id from `crew where` output. The window name
+// is worker-controlled and printed before the real marker, so the first line
+// is parsed from its end: the last marker's token is the pane, and only the
+// text after that token can name a host. A host suffix is refused because a
 // remote worker's pane id belongs to another tmux server.
 func parseJumpPane(out string) (string, error) {
-	if strings.Contains(out, " [host ") {
+	line, _, _ := strings.Cut(out, "\n")
+	i := strings.LastIndex(line, jumpMarker)
+	if i < 0 {
+		return "", errors.New("no pane id")
+	}
+	rest := line[i+len(jumpMarker):]
+	pane, _, _ := strings.Cut(rest, " ")
+	if !paneIDRe.MatchString(pane) {
+		return "", errors.New("no pane id")
+	}
+	if strings.Contains(rest[len(pane):], " [host ") {
 		return "", errors.New("remote worker")
 	}
-	_, rest, ok := strings.Cut(out, jumpMarker)
-	if !ok {
-		return "", errors.New("no pane id")
-	}
-	fields := strings.Fields(rest)
-	if len(fields) == 0 || !paneIDRe.MatchString(fields[0]) {
-		return "", errors.New("no pane id")
-	}
-	return fields[0], nil
+	return pane, nil
 }
 
 func statusCmd(text string, isErr bool) tea.Cmd {
@@ -188,6 +200,7 @@ func (v liveView) startAction(a action) (view, tea.Cmd) {
 		v.mode, v.target = modeReply, sel
 		v.input = textinput.New()
 		v.input.Prompt = "reply to " + cleanText(nudgeTarget(sel)) + ": "
+		v.fitInput()
 		v.input.Focus()
 		return v, textinput.Blink
 	default:
@@ -196,9 +209,15 @@ func (v liveView) startAction(a action) (view, tea.Cmd) {
 	}
 }
 
+// fitInput sizes the reply input to the body width so textinput scrolls its
+// text and cursor into view instead of the frame clipping them.
+func (v *liveView) fitInput() {
+	v.input.Width = max0(v.width - ansi.StringWidth(v.input.Prompt) - 1)
+}
+
 func (v liveView) handleReplyKey(msg tea.KeyMsg) (view, tea.Cmd) {
 	switch msg.String() {
-	case "esc":
+	case "esc", "ctrl+c":
 		v.mode = modeNormal
 		return v, nil
 	case "enter":

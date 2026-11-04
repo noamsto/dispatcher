@@ -107,6 +107,7 @@ type liveView struct {
 	mode   liveMode
 	input  textinput.Model // the reply prompt
 	target data.Worker     // the worker the open prompt or confirm acts on
+	width  int             // body width, from the root's WindowSizeMsg
 
 	snap   data.Snapshot
 	loaded [numSources]bool
@@ -241,6 +242,11 @@ func (v liveView) Init() tea.Cmd {
 
 func (v liveView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		v.width = msg.Width
+		v.fitInput()
+		return v, nil
+
 	case snapshotMsg:
 		v.load(msg.snap, msg.loaded)
 		return v, nil
@@ -545,7 +551,7 @@ func (v liveView) selectedPane(w int) []string {
 	if sel.PRURL != "" {
 		pr = cleanText(sel.PRURL)
 	}
-	out = append(out, truncateLine(v.promptOr(where, w), w), truncateLine("PR "+pr, w))
+	out = append(out, truncateLine(v.promptOr(where), w), truncateLine("PR "+pr, w))
 
 	detail, _ := strField(row.w, "detail")
 	room := selectedPaneH - len(out)
@@ -565,12 +571,10 @@ func (v liveView) selectedPane(w int) []string {
 }
 
 // promptOr is the open reply prompt or nudge confirm, else fallback.
-func (v liveView) promptOr(fallback string, w int) string {
+func (v liveView) promptOr(fallback string) string {
 	switch v.mode {
 	case modeReply:
-		in := v.input
-		in.Width = max0(w - ansi.StringWidth(in.Prompt) - 1)
-		return in.View()
+		return v.input.View()
 	case modeConfirmNudge:
 		return "nudge " + cleanText(nudgeTarget(v.target)) + "? y/N"
 	}
@@ -851,13 +855,14 @@ func (v liveView) workerLines(w int) (header string, lines []string, cursorLine 
 		}
 		return truncateLine(b.String(), w)
 	}
-	header = headerStyle.Render(compose("  ", func(c col) string {
+	blank := strings.Repeat(" ", livePrefixW)
+	header = headerStyle.Render(compose(blank, func(c col) string {
 		return truncateLine(c.title, widthOf(cols, widths, c.id))
 	}))
 	for i, r := range v.rows {
-		prefix := "  "
+		prefix := blank
 		if i == v.cursor {
-			prefix = cursorStyle.Render("›") + " "
+			prefix = padCell(cursorStyle.Render("›"), livePrefixW, true)
 			cursorLine = i
 		}
 		lines = append(lines, compose(prefix, func(c col) string {
