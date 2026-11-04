@@ -100,7 +100,7 @@ type sequencer struct {
 // sequence is the ring order of the drawn planets, as indexes into ps. A planet
 // keeps its persisted place unless it is new or its class changed (a remote
 // planet ignores class); those are inserted afresh, a stacked planet right after
-// its base, a local one after the last planet of its class or an earlier one, a
+// its base, a local one before the first planet of a later class, a
 // remote one at the end of its host's run (a new host's run goes last). Local
 // planets come first and each host's planets are contiguous. Workers that were
 // drawn are never displaced by ones that do not fit.
