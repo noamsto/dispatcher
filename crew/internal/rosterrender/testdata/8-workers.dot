@@ -3,10 +3,10 @@ digraph roster {
   bgcolor="#1e1e2e"; fontname="Source Sans 3"; fontsize=13; fontcolor="#a6adc8";
   node [shape=circle style=filled fontname="Source Sans 3" fontsize=12 fontcolor="#cdd6f4" fillcolor="#313244" penwidth=3 fixedsize=true];
   edge [color="#585b70" penwidth=1.5 arrowhead=none];
-  c1 [label="" style=invis shape=point width=0 pos="-274.00,249.00!"];
-  c2 [label="" style=invis shape=point width=0 pos="274.00,249.00!"];
-  c3 [label="" style=invis shape=point width=0 pos="-274.00,-249.00!"];
-  c4 [label="" style=invis shape=point width=0 pos="274.00,-249.00!"];
+  c1 [label="" style=invis shape=point width=0 pos="-286.00,249.00!"];
+  c2 [label="" style=invis shape=point width=0 pos="286.00,249.00!"];
+  c3 [label="" style=invis shape=point width=0 pos="-286.00,-249.00!"];
+  c4 [label="" style=invis shape=point width=0 pos="286.00,-249.00!"];
   dispatcher [label="dispatcher" width=1 height=1 pos="0.00,0.00!" color="#f9e2af" fillcolor="#45475a"];
   p1 [label="lime\n101" width=0.9 height=0.9 pos="117.27,93.52!" color="#a6e3a1"];
   p2 [label="sky\n102" width=0.75 height=0.75 pos="0.00,150.00!" color="#f38ba8" penwidth=5 class="aeye-pulse"];
@@ -32,6 +32,7 @@ digraph roster {
   h1 [label="mbp" shape=plaintext style=solid fixedsize=false fontcolor="#a6adc8" pos="-160.28,127.82!"];
   label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="4">
     <tr><td><font color="#a6e3a1">●</font> working 4&nbsp;&nbsp;&nbsp;&nbsp;<font color="#f38ba8">●</font> blocked 1&nbsp;&nbsp;&nbsp;&nbsp;<font color="#89b4fa">●</font> pr open 1&nbsp;&nbsp;&nbsp;&nbsp;<font color="#45475a">●</font> done 2</td></tr>
-    <tr><td>size = tier&nbsp;&nbsp;&nbsp;&nbsp;<font color="#585b70">●</font> small dot = role&nbsp;&nbsp;&nbsp;&nbsp;<font color="#89b4fa">⇢</font> dashed arrow = stacked on&nbsp;&nbsp;&nbsp;&nbsp;⬡ = remote host</td></tr>
+    <tr><td>size = tier&nbsp;&nbsp;&nbsp;&nbsp;<font color="#585b70">●</font> small dot = role&nbsp;&nbsp;&nbsp;&nbsp;⬡ = remote host</td></tr>
+    <tr><td><font color="#89b4fa">⇢</font> dashed arrow = stacked on</td></tr>
   </table>>;
 }

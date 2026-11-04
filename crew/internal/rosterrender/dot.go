@@ -32,7 +32,7 @@ const (
 	// corners; legendH is the height the legend adds under the canvas, which the
 	// corners pre-pay in width so the picture comes out square.
 	canvasPad = 24.0
-	legendH   = 50.0
+	legendH   = 74.0
 )
 
 // diagramFont is aeye's default render font (AEYE_D2_FONT), matched through
@@ -176,17 +176,18 @@ func legendHTML(lg legend) string {
 	if lg.holds > 0 {
 		keys = append(keys, key(colHolds, count("holds", lg.holds)))
 	}
-	static := []string{
+	shapes := []string{
 		"size = tier",
 		`<font color="` + colEdge + `">●</font> small dot = role`,
-		`<font color="` + colPROpen + `">⇢</font> dashed arrow = stacked on`,
 		"⬡ = remote host",
 	}
+	stacked := `<font color="` + colPROpen + `">⇢</font> dashed arrow = stacked on`
 	const gap = "&nbsp;&nbsp;&nbsp;&nbsp;"
 	var b strings.Builder
 	b.WriteString(`<table border="0" cellborder="0" cellspacing="0" cellpadding="4">` + "\n")
 	b.WriteString("    <tr><td>" + strings.Join(keys, gap) + "</td></tr>\n")
-	b.WriteString("    <tr><td>" + strings.Join(static, gap) + "</td></tr>\n")
+	b.WriteString("    <tr><td>" + strings.Join(shapes, gap) + "</td></tr>\n")
+	b.WriteString("    <tr><td>" + stacked + "</td></tr>\n")
 	b.WriteString("  </table>")
 	return b.String()
 }

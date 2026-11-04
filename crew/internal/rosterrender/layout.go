@@ -35,11 +35,12 @@ const (
 	maxPlanets = 4 * ringCap
 )
 
-// slotEntry is one worker in the persisted sequence, with the class it was
-// placed for.
+// slotEntry is one worker in the persisted sequence, with the class and host it
+// was placed for.
 type slotEntry struct {
 	Branch string `json:"branch"`
 	Class  string `json:"class"`
+	Host   string `json:"host,omitempty"`
 }
 
 // slotState is roster-render.slots.json: the ring sequence, which is what makes
@@ -115,7 +116,7 @@ func sequence(prev slotState, ps []planet) []int {
 			continue
 		}
 		prior[i] = true
-		if ps[i].host == "" && e.Class != ps[i].class {
+		if e.Host != ps[i].host || (ps[i].host == "" && e.Class != ps[i].class) {
 			continue
 		}
 		a.seq = append(a.seq, i)
@@ -126,7 +127,7 @@ func sequence(prev slotState, ps []planet) []int {
 	for moved := true; moved; {
 		moved = false
 		for _, i := range a.seq {
-			if j, ok := a.baseOf(i); ok && !a.inSeq[j] && prior[j] {
+			if j, ok := a.baseOf(i); ok && !a.inSeq[j] && (prior[j] || len(a.seq) < maxPlanets) {
 				delete(a.inSeq, i)
 				moved = true
 			}
@@ -211,19 +212,17 @@ func (a *sequencer) position(i int) int {
 		}
 		return a.afterBlock(last)
 	}
-	pos := -1
+	// Stacked planets sit out of class order, so only top-level ones anchor the
+	// scan: the new planet goes before the first one of a later class.
 	for k, x := range a.seq {
 		if a.ps[x].host != "" {
-			break
+			return k
 		}
-		if classRank[a.ps[x].class] <= classRank[p.class] {
-			pos = k
+		if _, stacked := a.baseOf(x); !stacked && classRank[a.ps[x].class] > classRank[p.class] {
+			return k
 		}
 	}
-	if pos < 0 {
-		return 0
-	}
-	return a.afterBlock(pos)
+	return len(a.seq)
 }
 
 // afterBlock is the index after seq[at] and the planets stacked on it, so a new
@@ -324,7 +323,7 @@ func arrange(prev slotState, ps []planet) (slotState, scene) {
 				sc.extent = max(sc.extent, math.Hypot(mn.x, mn.y)+moonRadius)
 			}
 			sc.planets = append(sc.planets, pl)
-			next.Order = append(next.Order, slotEntry{Branch: ps[i].branch, Class: ps[i].class})
+			next.Order = append(next.Order, slotEntry{Branch: ps[i].branch, Class: ps[i].class, Host: ps[i].host})
 
 			if h := ps[i].host; h != "" {
 				u, v := polar(1, angle)

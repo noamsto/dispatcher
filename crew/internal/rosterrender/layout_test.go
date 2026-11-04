@@ -151,6 +151,34 @@ func TestLayoutStackedChildOfADifferentClassStaysInTheStack(t *testing.T) {
 	}
 }
 
+func TestLayoutNewBlockedWorkerGoesFirstDespiteAStackedChild(t *testing.T) {
+	ps := []planet{wp("w", classWorking), stackedWP("c", classBlocked, "w"), wp("x", classWorking)}
+	state, _ := arrange(newSlotState(), ps)
+	_, sc := arrange(state, append(ps, wp("n", classBlocked)))
+	if got, want := branches(sc), []string{"n", "w", "c", "x"}; !slices.Equal(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+}
+
+func TestLayoutLateBaseGathersItsStackedChild(t *testing.T) {
+	ps := []planet{wp("a", classWorking), stackedWP("c", classWorking, "b"), wp("d", classWorking)}
+	state, _ := arrange(newSlotState(), ps)
+	_, sc := arrange(state, append(ps, wp("b", classWorking)))
+	if got, want := branches(sc), []string{"a", "d", "b", "c"}; !slices.Equal(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+}
+
+func TestLayoutWorkerGoingLocalTakesItsClassPlace(t *testing.T) {
+	ps := []planet{wp("a", classBlocked), wp("b", classDone), remoteWP("r", classBlocked, "mbp")}
+	state, _ := arrange(newSlotState(), ps)
+	ps[2].host = ""
+	_, sc := arrange(state, ps)
+	if got, want := branches(sc), []string{"a", "r", "b"}; !slices.Equal(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+}
+
 func TestLayoutRemoteHostsAreContiguousRuns(t *testing.T) {
 	ps := []planet{
 		remoteWP("r1", classWorking, "mbp"), wp("a", classBlocked), remoteWP("s1", classDone, "nas"),
@@ -336,14 +364,16 @@ func TestSlotsLoadDropsRepeatedBlankAndOversize(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := loadSlots(path)
-	if len(got.Order) != maxPlanets || got.Order[0] != (slotEntry{"a", classWorking}) || got.Order[1].Branch != "x0" {
+	if len(got.Order) != maxPlanets || got.Order[0] != (slotEntry{Branch: "a", Class: classWorking}) || got.Order[1].Branch != "x0" {
 		t.Errorf("loaded %d entries, head %+v", len(got.Order), got.Order[:2])
 	}
 }
 
 func TestLayoutRepairsAHandEditedSequence(t *testing.T) {
 	state := slotState{V: slotsVer, Order: []slotEntry{
-		{"r1", classWorking}, {"a", classWorking}, {"s1", classWorking}, {"r2", classWorking}, {"gone", classWorking}, {"a", classWorking},
+		{Branch: "r1", Class: classWorking, Host: "mbp"}, {Branch: "a", Class: classWorking},
+		{Branch: "s1", Class: classWorking, Host: "nas"}, {Branch: "r2", Class: classWorking, Host: "mbp"},
+		{Branch: "gone", Class: classWorking}, {Branch: "a", Class: classWorking},
 	}}
 	ps := []planet{remoteWP("r1", classWorking, "mbp"), wp("a", classWorking), remoteWP("s1", classWorking, "nas"), remoteWP("r2", classWorking, "mbp")}
 	_, sc := arrange(state, ps)
