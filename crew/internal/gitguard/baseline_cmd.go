@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -174,6 +175,8 @@ func RunBaseline(accept bool, cwd string, o BaselineOptions, stdout, stderr io.W
 			say(stdout, "\nRemove the legacy entries above first (--accept refuses while they are listed), then record the rest: crew git-baseline --accept\n")
 		case len(legacy) > 0:
 			say(stdout, "\nRemove the legacy entries above, then re-run: crew git-baseline\n")
+		case len(shown) == 0:
+			say(stdout, "\nNothing is new; to record the redirect-key marker: crew git-baseline --accept\n")
 		default:
 			say(stdout, "\nIf they're yours, record them: crew git-baseline --accept\n")
 		}
@@ -189,6 +192,8 @@ func RunBaseline(accept bool, cwd string, o BaselineOptions, stdout, stderr io.W
 		say(stdout, "No guarded git config yet. Record an empty baseline as trusted? Type yes: ")
 	case slices.ContainsFunc(entries, func(e listed) bool { return e.reason != "" }):
 		say(stdout, "\nRecord %s as trusted? The sha256 values should match what you checked. Type yes: ", these(len(shown)))
+	case len(cmds) > 0:
+		say(stdout, "\nRecord %s as trusted? Run the commands above first. Type yes: ", these(len(shown)))
 	default:
 		say(stdout, "\nRecord %s as trusted? Type yes: ", these(len(shown)))
 	}
@@ -307,7 +312,13 @@ func renderListing(w io.Writer, root string, n int, since string, entries []list
 		id := e.label + "\x00" + e.origin
 		g := idx[id]
 		if g == nil {
-			rel := strings.TrimPrefix(e.origin, root+"/")
+			// Only a clean path under the repo is shortened: git keeps a doubled
+			// slash from an include, which would pass another file off as a
+			// shorter one.
+			rel := e.origin
+			if r, ok := strings.CutPrefix(e.origin, root+"/"); ok && filepath.IsLocal(r) && filepath.Clean(r) == r {
+				rel = r
+			}
 			g = &group{in: e.label + " (" + Quote(rel) + ")"}
 			idx[id] = g
 			groups = append(groups, g)
@@ -345,7 +356,7 @@ func renderListing(w io.Writer, root string, n int, since string, entries []list
 
 func hiddenNote(reason string) string {
 	if reason == "exec value" {
-		return "runs a command — value hidden"
+		return "can run code — value hidden"
 	}
 	return "value hidden (" + reason + ")"
 }

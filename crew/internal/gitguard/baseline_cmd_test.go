@@ -597,7 +597,8 @@ func TestRunBaselineBaselinedAliasRewrites(t *testing.T) {
 	r.init(t)
 	alias := listing(r, 1, last, mainGrp("url."+urlWithheld("git@")+".insteadof=https://"), "url.git@.insteadof")
 	r.config(t, "url.git@.insteadof", "https://")
-	runBaseline(r.main, true, "yes\n", true).want(t, 0, alias+prompt(1, false)+accepted(r.baseline()), "")
+	runBaseline(r.main, true, "yes\n", true).want(t, 0,
+		alias+"\nRecord this entry as trusted? Run the commands above first. Type yes: "+accepted(r.baseline()), "")
 	r.config(t, "--unset", "url.git@.insteadof")
 	r.config(t, "remote.origin.url", url)
 	// The alias is gone from the config; the baselined alias still rewrites.
@@ -727,13 +728,17 @@ func TestRunBaselineAcceptWritesOnlyShownPairs(t *testing.T) {
 func TestRunBaselineWithheldKeyPointsToOwnTerminal(t *testing.T) {
 	r := newRepo(t)
 	r.init(t)
-	r.config(t, "http.https://u:tok@[::1]/.proxy", "proxy.example:3128")
-	kd := "http." + urlWithheld("https://u:tok@[::1]/") + ".proxy"
+	const key = "http.https://u:FAKETOKEN1468b@[::1]/.proxy"
+	r.config(t, key, "proxy.example:3128")
+	kd := "http." + urlWithheld("https://u:FAKETOKEN1468b@[::1]/") + ".proxy"
 	got := runBaseline(r.main, false, "", false)
 	got.want(t, 1,
-		listing(r, 1, last, mainGrp(kd+"=proxy.example:3128"), "http.https://u:tok@[::1]/.proxy")+nextStep, "")
-	if strings.Contains(got.stdout+got.stderr, "u:tok") {
+		listing(r, 1, last, mainGrp(kd+"=proxy.example:3128"), key)+nextStep, "")
+	if strings.Contains(got.stdout+got.stderr, "FAKETOKEN1468b") {
 		t.Fatalf("userinfo leaked:\n%s%s", got.stdout, got.stderr)
+	}
+	if !strings.Contains(got.stdout, "  git config -z --show-origin --get-regexp \\^http\\\\. | env LC_ALL=C od -An -c -v\n") {
+		t.Fatalf("the regexp command is missing:\n%s", got.stdout)
 	}
 }
 
@@ -833,7 +838,7 @@ func TestRunBaselineLayout(t *testing.T) {
 	}
 	row := func(k string) string {
 		return "  " + k + strings.Repeat(" ", len("filter.lfs.process")-len(k)) +
-			"  runs a command — value hidden  sha256:" + sha8(vals[k]) + "\n"
+			"  can run code — value hidden  sha256:" + sha8(vals[k]) + "\n"
 	}
 	cmd := func(k string) string {
 		return "  git config -z --show-origin --get-all " + k + strings.Repeat(" ", len("filter.lfs.process")-len(k)) +
@@ -868,5 +873,19 @@ func TestRunBaselineLayout(t *testing.T) {
 		"\nRecord these 3 entries as trusted? The sha256 values should match what you checked. Type yes: "
 	if acc.code != 1 || acc.stdout != wantAcc || acc.stderr != "crew: baseline unchanged\n" {
 		t.Fatalf("exit %d, stdout:\n%s\nstderr %q\nwant stdout:\n%s", acc.code, acc.stdout, acc.stderr, wantAcc)
+	}
+}
+
+// An include path git reports with a doubled slash must not print as the
+// shorter repo-relative path, which could pass it off as another file.
+func TestRunBaselineOriginNotShortenedWhenUnclean(t *testing.T) {
+	r := newRepo(t)
+	r.init(t)
+	inc := filepath.Join(r.main, "inc.cfg")
+	writeFile(t, inc, "[core]\n\tsshCommand = x\n")
+	r.config(t, "include.path", strings.TrimSuffix(r.main, "/")+"//inc.cfg")
+	got := runBaseline(r.main, false, "", false)
+	if !strings.Contains(got.stdout, "in: main checkout ("+Quote(r.main+"//inc.cfg")+")") {
+		t.Fatalf("the unclean origin was shortened:\n%s", got.stdout)
 	}
 }
