@@ -16,9 +16,16 @@ evaluated (nothing is printed).
 The table lists the due rows, then, if any hold is parked, a block headed
 `parked  reason  branch  title`. The reason is demoted (it was the due hold for
 fleetHeadTimeout, was demoted, and was the due hold for another without being
-released) or oversize (heavier than fleetBudget, so the queue never admits it).
-A parked hold stays outstanding until `crew hold release <id>`: release it, then
-re-add the task as a new fleet hold (an oversize one at a tier within
-fleetBudget), or ask the human.
+released), oversize (heavier than fleetBudget, so the queue never admits it) or
+ineligible (its crew has no live dispatcher in any registered repo, no per-repo
+stream lane of the crew is alive in this hold's repo when its dispatcher
+registered in another repo, or its lane is dead or stale). A parked hold stays
+outstanding until `crew hold release <id>`: for demoted or oversize, release
+it, then re-add the task as a new fleet hold (an oversize one at a tier within
+fleetBudget), or ask the human. An ineligible hold returns by itself once its
+crew is eligible; releasing and re-adding it cannot fix it. Re-arm a dead or
+stale lane. If the dispatcher registered in another repo and runs a stream,
+arm `crew stream --crew <id>` in this hold's repo (the fleet stream does not
+poll holds). Otherwise tell the human.
 
   crew hold due --json

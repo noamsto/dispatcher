@@ -216,6 +216,14 @@ func (f *queueFix) laneTick(repo, crew, holder string, ageS int64) {
 	f.crewFile(repo, crew, "stream.tick", fmt.Sprintf(`{"pid":%s,"ts":%d,"park":300}`, holder, f.ms(ageS)))
 }
 
+// fleetTick gives crew a fleet-stream lane held by holder whose tick is ageS old.
+func (f *queueFix) fleetTick(crew, holder string, ageS int64) {
+	f.t.Helper()
+	dir := filepath.Join(f.env["XDG_STATE_HOME"], "crew", "fleet-stream", crew)
+	f.write(filepath.Join(dir, "stream.lock.d", "pid"), holder+"\n")
+	f.write(filepath.Join(dir, "stream.tick"), fmt.Sprintf(`{"pid":%s,"ts":%d,"park":300}`, holder, f.ms(ageS)))
+}
+
 func (f *queueFix) pane(cmd, name, branch, role, path string) {
 	f.panes = append(f.panes, strings.Join([]string{cmd, name, branch, role, path}, "\x1f"))
 }
@@ -354,19 +362,14 @@ func reasonOf(r queueRow) string {
 func TestQueueEligibilityReadsFleetLane(t *testing.T) {
 	f := newQueueFix(t, "alpha")
 	f.procs.Procs[100] = proctest.Proc{Elapsed: 5000}
-	fleetTick := func(crew, holder string, ageS int64) {
-		dir := filepath.Join(f.env["XDG_STATE_HOME"], "crew", "fleet-stream", crew)
-		f.write(filepath.Join(dir, "stream.lock.d", "pid"), holder+"\n")
-		f.write(filepath.Join(dir, "stream.tick"), fmt.Sprintf(`{"pid":%s,"ts":%d,"park":300}`, holder, f.ms(ageS)))
-	}
 	f.register("alpha", "c1", livePID)
 	f.laneTick("alpha", "c1", deadPID, 9000) // an earlier session's tick
 	f.register("alpha", "c2", livePID)
 	f.laneTick("alpha", "c2", deadPID, 4000)
-	fleetTick("c2", livePID, 10)
+	f.fleetTick("c2", livePID, 10)
 	f.register("alpha", "c3", livePID)
 	f.laneTick("alpha", "c3", livePID, 10)
-	fleetTick("c3", deadPID, 4000)
+	f.fleetTick("c3", deadPID, 4000)
 	f.register("alpha", "c4", livePID) // this session's lane, dead
 	f.laneTick("alpha", "c4", deadPID, 4000)
 	for i, c := range []string{"c1", "c2", "c3", "c4"} {
@@ -429,8 +432,121 @@ func TestQueueMembershipAndEligibility(t *testing.T) {
 	if v := f.due("walk", "c8", false); len(v.Due) != 0 || len(v.Parked) != 0 {
 		t.Errorf("a walk-only crew got %+v", v)
 	}
-	if v := f.due("alpha", "c2", false); len(v.Parked) != 0 {
-		t.Errorf("an ineligible hold is no owner-visible park: %+v", v)
+	if v := f.due("alpha", "c2", false); fmt.Sprint(v.Parked) != "[{h-c2 ineligible}]" {
+		t.Errorf("an ineligible hold is an owner-visible park: %+v", v)
+	}
+}
+
+// A crew registers only in the repo it was launched in, so a fleet hold it
+// adds from another repo is eligible when its dispatcher is live in any
+// registered repo and a per-repo stream lane of the crew is alive in the hold's
+// repo, whether or not the dispatcher's repo bus can be read.
+func TestQueueCrewLiveInAnotherRepoIsEligible(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(f *queueFix)
+		want  string
+	}{
+		{"live in another registered repo", func(f *queueFix) {
+			f.register("alpha", "c1", livePID)
+			f.laneTick("beta", "c1", livePID, 10)
+		}, "due"},
+		{"live in another registered repo, no lane anywhere", func(f *queueFix) { f.register("alpha", "c1", livePID) }, "parked:ineligible"},
+		{"live in another registered repo, only its own lane", func(f *queueFix) {
+			f.register("alpha", "c1", livePID)
+			f.laneTick("alpha", "c1", livePID, 10)
+		}, "parked:ineligible"},
+		{"live in another registered repo, a fleet-stream lane is no listener for the hold's repo", func(f *queueFix) {
+			f.register("alpha", "c1", livePID)
+			f.fleetTick("c1", livePID, 10)
+		}, "parked:ineligible"},
+		{"live in another registered repo, dead lane in the hold's repo", func(f *queueFix) {
+			f.register("alpha", "c1", livePID)
+			f.laneTick("beta", "c1", deadPID, 10)
+		}, "parked:ineligible"},
+		{"live in another registered repo, stale lane in the hold's repo", func(f *queueFix) {
+			f.register("alpha", "c1", livePID)
+			f.laneTick("beta", "c1", livePID, 5000)
+		}, "parked:ineligible"},
+		{"dead in another registered repo", func(f *queueFix) {
+			f.register("alpha", "c1", deadPID)
+			f.laneTick("beta", "c1", livePID, 10)
+		}, "parked:ineligible"},
+		{"live only in an unregistered repo", func(f *queueFix) {
+			f.repo("walk", false)
+			f.register("walk", "c1", livePID)
+			f.laneTick("beta", "c1", livePID, 10)
+		}, "parked:ineligible"},
+		{"dead in the hold's repo, live in another", func(f *queueFix) {
+			f.register("beta", "c1", deadPID)
+			f.laneTick("beta", "c1", livePID, 10)
+			f.register("alpha", "c1", livePID)
+		}, "due"},
+		{"live in a repo whose bus is unreadable", func(f *queueFix) {
+			if os.Geteuid() == 0 {
+				t.Skip("root reads a mode 000 file")
+			}
+			f.register("alpha", "c1", livePID)
+			f.laneTick("beta", "c1", livePID, 10)
+			if err := os.Chmod(f.busPath("alpha"), 0o000); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(f.busPath("alpha"), 0o644) })
+		}, "due"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newQueueFix(t, "alpha", "beta")
+			tc.setup(f)
+			f.add("beta", "c1", "h", 1, 100)
+
+			var got string
+			for _, h := range f.doc().Holds {
+				got = h.State
+				if h.Reason != nil {
+					got += ":" + *h.Reason
+				}
+			}
+			if got != tc.want {
+				t.Errorf("state = %q, want %q", got, tc.want)
+			}
+			v := f.due("beta", "c1", false)
+			if tc.want == "due" {
+				if fmt.Sprint(v.Due) != "[h]" || len(v.Parked) != 0 {
+					t.Errorf("verdict %+v, want h due", v)
+				}
+				return
+			}
+			if len(v.Due) != 0 || fmt.Sprint(v.Parked) != "[{h ineligible}]" {
+				t.Errorf("verdict %+v, want h parked as ineligible", v)
+			}
+		})
+	}
+}
+
+// The listener a foreign registration needs is judged per hold repo: a crew
+// whose own lane runs in alpha has its alpha hold due and its beta hold, which
+// no lane polls, parked.
+func TestQueueForeignListenerIsPerHoldRepo(t *testing.T) {
+	f := newQueueFix(t, "alpha", "beta")
+	f.register("alpha", "c1", livePID)
+	f.laneTick("alpha", "c1", livePID, 10)
+	f.add("alpha", "c1", "h-alpha", 1, 200)
+	f.add("beta", "c1", "h-beta", 1, 100)
+
+	d := f.doc()
+	got := map[string]string{}
+	for _, h := range d.Holds {
+		got[h.ID] = h.State
+		if h.Reason != nil {
+			got[h.ID] += ":" + *h.Reason
+		}
+	}
+	want := map[string]string{"h-alpha": "due", "h-beta": "parked:ineligible"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("states = %v\nwant     %v", got, want)
+	}
+	if strings.Join(d.ids(), ",") != "h-alpha,h-beta" {
+		t.Errorf("order %v, want the active hold first, the parked last", d.ids())
 	}
 }
 

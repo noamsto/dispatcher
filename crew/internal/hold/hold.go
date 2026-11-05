@@ -91,7 +91,8 @@ type Options struct {
 }
 
 // FleetVerdict is one crew's share of an evaluation: Due holds at most one id
-// machine-wide; Parked the crew's holds parked as "demoted" or "oversize".
+// machine-wide; Parked the crew's holds parked as "demoted", "oversize" or
+// "ineligible".
 type FleetVerdict struct {
 	Due    []string
 	Parked []ParkedHold

@@ -21,6 +21,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
+	"github.com/noamsto/dispatcher/crew/internal/lane"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
@@ -117,9 +118,11 @@ type releasedHold struct {
 
 // fleetScan is one read of the registry repos' buses: their outstanding fleet
 // holds, the fleet holds released within the pending window, each repo's
-// newest fleet release, and what could not be read.
+// newest fleet release, the common dirs of every readable registered repo (the
+// places a crew's dispatcher may be registered), and what could not be read.
 type fleetScan struct {
 	holds       []*queued
+	commons     []string
 	released    []releasedHold
 	lastRelease map[string]int64
 	unread      unread
@@ -174,6 +177,7 @@ func scanFleet(registry string, getenv func(string) string, read busReader, nowM
 		if r.Status != repos.StatusOK {
 			continue
 		}
+		s.commons = append(s.commons, r.Common)
 		events, _, skip := read(r.Common)
 		if skip != "" {
 			s.unread.repos[r.Common] = true
@@ -334,7 +338,9 @@ type queue struct {
 
 // newQueue weighs a scan: the machine's load, with the scan's releases as
 // pending, each crew's eligibility, each repo's priority, and the holds in
-// queue order.
+// queue order. A crew registers only in the repo it was launched in, so it is
+// eligible when its session is live in the hold's repo, or in any registered
+// one while a per-repo stream lane of the crew is alive in the hold's repo.
 func newQueue(ctx context.Context, o QueueOptions, scan fleetScan, s QueueSettings, now time.Time) *queue {
 	t := o.Proc
 	if t == nil {
@@ -344,11 +350,28 @@ func newQueue(ctx context.Context, o QueueOptions, scan fleetScan, s QueueSettin
 	q.load, q.owned = measure(ctx, s.Budget, o.LoadOptions, scan.released)
 	prios := readPriorities(priorityPath(o.Getenv))
 	eligible := map[crewRef]bool{}
+	read := func(common, crew string) session {
+		return readSession(filepath.Join(common, "crew", "crews", crew), fleetLane(o.Getenv, crew), t, now)
+	}
+	repoLaneAlive := func(common, crew string) bool {
+		state, _, _, _ := lane.State(filepath.Join(common, "crew", "crews", crew), t, q.nowMS)
+		return state == "alive"
+	}
 	for _, h := range q.holds {
 		ref := crewRef{h.common, h.crew}
 		ok, seen := eligible[ref]
 		if !seen {
-			ok = readSession(filepath.Join(h.common, "crew", "crews", h.crew), fleetLane(o.Getenv, h.crew), t, now).eligible()
+			ok = read(h.common, h.crew).eligible()
+			// Only a per-repo stream runs `hold due` for its repo; the fleet
+			// stream does not, so a dispatcher registered elsewhere needs a
+			// per-repo lane alive here.
+			if !ok && repoLaneAlive(h.common, h.crew) {
+				for _, c := range scan.commons {
+					if ok = filepath.Clean(c) != filepath.Clean(h.common) && read(c, h.crew).eligible(); ok {
+						break
+					}
+				}
+			}
 			eligible[ref] = ok
 		}
 		h.eligible, h.repoPrio, h.lastRelease = ok, prios[filepath.Clean(h.common)], scan.lastRelease[h.common]
@@ -506,8 +529,8 @@ func (q *queue) first(rec map[holdKey]dueEntry) *queued {
 }
 
 // verdict is one crew's share of an evaluation: the due hold when it is the
-// crew's, and the crew's holds parked by demotion or as oversize, which its
-// owner must hear about. An ineligible crew's holds come back once it is.
+// crew's, and the crew's parked holds (demoted, oversize or ineligible), which
+// its owner must hear about.
 func (q *queue) verdict(common, crew string, rec map[holdKey]dueEntry, due *queued) hold.FleetVerdict {
 	mine := func(h *queued) bool { return h.crew == crew && filepath.Clean(h.common) == filepath.Clean(common) }
 	var v hold.FleetVerdict
@@ -515,7 +538,7 @@ func (q *queue) verdict(common, crew string, rec map[holdKey]dueEntry, due *queu
 		v.Due = []string{due.id}
 	}
 	for _, h := range q.holds {
-		if reason := q.parked(h, rec); mine(h) && (reason == "demoted" || reason == "oversize") {
+		if reason := q.parked(h, rec); mine(h) && reason != "" {
 			v.Parked = append(v.Parked, hold.ParkedHold{ID: h.id, Reason: reason})
 		}
 	}
