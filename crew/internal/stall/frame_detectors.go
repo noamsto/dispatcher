@@ -2,6 +2,7 @@ package stall
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -74,11 +75,13 @@ var (
 	// description sit under it, and the request is boxed between two U+254C
 	// rules. The title is read only on a frame that carries such a rule, and
 	// only when its next non-blank line is the hint.
-	rePermTip   = regexp.MustCompile(`^[` + space + `]*Tip:`)
-	rePermRule  = regexp.MustCompile(`^[` + space + `]*\x{254C}{4,}[` + space + `]*$`)
-	reLeadSpace = regexp.MustCompile(`^[` + space + `]+`)
-	reTrimSpace = regexp.MustCompile(`^[` + space + `]+|[` + space + `]+$`)
-	reRunSpace  = regexp.MustCompile(`[` + space + `]+`)
+	rePermTip       = regexp.MustCompile(`^[` + space + `]*Tip:`)
+	rePermCountdown = regexp.MustCompile(`^[` + space + `]*⚠[` + space + `]+Claude Code will automatically deny this request in `)
+	rePermSeparator = regexp.MustCompile(`^[` + space + `]*\x{2500}{4,}[` + space + `]*$`)
+	rePermRule      = regexp.MustCompile(`^[` + space + `]*\x{254C}{4,}[` + space + `]*$`)
+	reLeadSpace     = regexp.MustCompile(`^[` + space + `]+`)
+	reTrimSpace     = regexp.MustCompile(`^[` + space + `]+|[` + space + `]+$`)
+	reRunSpace      = regexp.MustCompile(`[` + space + `]+`)
 )
 
 // frameDetect runs D1, D2, D1b, D7, D3, D0 and D9 on this tick's frame.
@@ -656,7 +659,8 @@ func holdsEpisode(detail string) bool {
 // dialog has one of two headers: that same `· from the …` line, or the bare
 // tool title whose next non-blank line is the `Tip:` hint; the last of either
 // wins, and its request is the first non-blank line inside the U+254C rule box
-// that follows it.
+// that follows it. A dialog carrying the auto-deny countdown line is parsed by
+// countdownDialog instead, whatever rows sit between its title and its box.
 func permissionDetail(text, pane string) string {
 	clean := rePermOSC.ReplaceAllString(text, "")
 	clean = rePermCSI.ReplaceAllString(clean, "")
@@ -690,7 +694,14 @@ func permissionDetail(text, pane string) string {
 
 	var tool, req string
 	have, boxed := false, false
+	t, r, anchored := countdownDialog(lines)
+	if anchored {
+		tool, req, have = t, r, true
+	}
 	for i, l := range lines {
+		if anchored {
+			break
+		}
 		switch {
 		case rePermHeader.MatchString(l):
 			tool = rePermTool.ReplaceAllString(reLeadSpace.ReplaceAllString(l, ""), "")
@@ -718,6 +729,45 @@ func permissionDetail(text, pane string) string {
 		body = string(r[:limit])
 	}
 	return body + suffix
+}
+
+// countdownDialog parses a Bash dialog that carries the auto-deny countdown
+// line. Its layout varies by version (Tip row, description row, guard line
+// before or after the box), so it anchors on the dialog's own U+2500
+// separator above the last countdown line: the title is the first non-blank
+// line after it, the request the first line of the U+254C box that follows.
+func countdownDialog(lines []string) (tool, req string, ok bool) {
+	c := -1
+	for i, l := range lines {
+		if rePermCountdown.MatchString(l) {
+			c = i
+		}
+	}
+	if c < 0 {
+		return "", "", false
+	}
+	// A later dialog below the countdown is the live one: it wins.
+	if slices.ContainsFunc(lines[c+1:], func(l string) bool {
+		return rePermSeparator.MatchString(l) || rePermHeader.MatchString(l) || rePermTip.MatchString(l)
+	}) {
+		return "", "", false
+	}
+	for s := c - 1; s >= 0; s-- {
+		if !rePermSeparator.MatchString(lines[s]) {
+			continue
+		}
+		for t := s + 1; t < c; t++ {
+			if reBlank.MatchString(lines[t]) {
+				continue
+			}
+			if r, closed := boxedRequest(lines[:c], t); closed && r != "" {
+				return reTrimSpace.ReplaceAllString(lines[t], ""), r, true
+			}
+			return "", "", false
+		}
+		return "", "", false
+	}
+	return "", "", false
 }
 
 // boxedRequest is the first non-blank line between the two U+254C rules
