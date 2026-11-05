@@ -131,6 +131,7 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 		ticker:     &loop{c: tickCall, o: o.Options, cdir: lane},
 		buses:      map[string]*follower{},
 	}
+	v.loadDiffer()
 	return v.run(ctx, sigs)
 }
 
@@ -258,8 +259,75 @@ func (v *overseer) run(ctx context.Context, sigs chan os.Signal) int {
 }
 
 func (v *overseer) shutdown() int {
+	v.saveDiffer()
 	lock.Release(v.lockd)
 	return 0
+}
+
+// differName is the park lane's differ memory, in the lane dir beside its lock.
+const differName = "differ.json"
+
+// differPath is that file: every park of this lane is a fresh process, and this
+// is the memory it inherits.
+func (v *overseer) differPath() string { return filepath.Join(filepath.Dir(v.lockd), differName) }
+
+// loadDiffer restores the differ memory the lane's previous park saved, so a
+// condition that turned true between two parks still fires, lane_dead keeps
+// aging and a host's reachability edge survives. Only a park reads it: the
+// persistent lane outlives every document it diffs. A missing, unreadable or
+// unrecognised file is no memory at all, and this park re-baselines.
+func (v *overseer) loadDiffer() {
+	if !v.park {
+		return
+	}
+	data, err := os.ReadFile(v.differPath())
+	if err != nil {
+		return
+	}
+	var f differFile
+	if json.Unmarshal(data, &f) != nil || f.Version != differVersion {
+		return
+	}
+	v.moves = f.Lane.transitions()
+	for _, h := range f.Partners {
+		if h.Host == "" {
+			continue
+		}
+		v.partners[h.Host] = &partner{moves: h.Moves.transitions(), seen: h.Seen, ok: h.OK}
+	}
+}
+
+// saveDiffer hands the differ memory to the lane's next park, atomically: a
+// temp file in the same dir renamed over the old one. It is never fatal. A park
+// that cannot write simply re-baselines on its next run.
+func (v *overseer) saveDiffer() {
+	if !v.park {
+		return
+	}
+	f := differFile{Version: differVersion, Lane: v.moves.snapshot(), Partners: []hostMoves{}}
+	for _, host := range slices.Sorted(maps.Keys(v.partners)) {
+		p := v.partners[host]
+		f.Partners = append(f.Partners, hostMoves{Host: host, Seen: p.seen, OK: p.ok, Moves: p.moves.snapshot()})
+	}
+	data, err := json.Marshal(f)
+	if err != nil {
+		return
+	}
+	path := v.differPath()
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+differName+".*")
+	if err != nil {
+		return
+	}
+	_, werr := tmp.Write(append(data, '\n'))
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), path)
+	}
+	if werr != nil {
+		_ = os.Remove(tmp.Name())
+	}
 }
 
 // join follows a bus from the overseer's cursor for it. A missing cursor is
@@ -624,6 +692,96 @@ type condKey struct {
 	id               string // the worker's session, or the hold id
 	kind             string // blocked_aging's trigger, or capacity_stuck's cause
 	host, repo       string // capacity_stuck's
+}
+
+// differFile is the park lane's differ memory as JSON, with the version that
+// wrote it. A file of any other version is ignored whole.
+type differFile struct {
+	Version  int         `json:"version"`
+	Lane     differMoves `json:"lane"`
+	Partners []hostMoves `json:"partners"`
+}
+
+// differVersion is the only layout this lane reads.
+const differVersion = 1
+
+// differMoves is transitions as JSON: its maps are keyed by structs, which JSON
+// cannot, so each goes out as an array of entries.
+type differMoves struct {
+	Seen      bool        `json:"seen"`
+	On        []condEntry `json:"on"`
+	Down      []refEntry  `json:"down"`
+	DeadSince []deadEntry `json:"dead_since"`
+}
+
+// condEntry is one condKey entry.
+type condEntry struct {
+	Event string `json:"event"`
+	Key   string `json:"key"`
+	Crew  string `json:"crew"`
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	Host  string `json:"host"`
+	Repo  string `json:"repo"`
+}
+
+// refEntry is one crewRef entry.
+type refEntry struct {
+	Key  string `json:"key"`
+	Crew string `json:"crew"`
+}
+
+// deadEntry is one deadSince entry: the crew and when its lane was first seen
+// dead.
+type deadEntry struct {
+	refEntry
+	TS int64 `json:"ts"`
+}
+
+// hostMoves is one partner host's memory: whether its last document was ok and
+// its transitions. Its misrouted count and throttle start empty on each park.
+type hostMoves struct {
+	Host  string      `json:"host"`
+	Seen  bool        `json:"seen"`
+	OK    bool        `json:"ok"`
+	Moves differMoves `json:"moves"`
+}
+
+// snapshot is t as JSON may carry it: its maps as entries, in map order, which
+// a reader must not depend on.
+func (t *transitions) snapshot() differMoves {
+	m := differMoves{On: []condEntry{}, Down: []refEntry{}, DeadSince: []deadEntry{}}
+	if t == nil {
+		return m
+	}
+	m.Seen = t.seen
+	for k := range t.on {
+		m.On = append(m.On, condEntry{Event: k.event, Key: k.key, Crew: k.crew, ID: k.id, Kind: k.kind, Host: k.host, Repo: k.repo})
+	}
+	for ref := range t.down {
+		m.Down = append(m.Down, refEntry{Key: ref.key, Crew: ref.crew})
+	}
+	for ref, ts := range t.deadSince {
+		m.DeadSince = append(m.DeadSince, deadEntry{refEntry: refEntry{Key: ref.key, Crew: ref.crew}, TS: ts})
+	}
+	return m
+}
+
+// transitions is the differ memory m describes. Stale entries are safe: next
+// rebuilds on and deadSince from what the document still holds.
+func (m differMoves) transitions() *transitions {
+	t := newTransitions()
+	t.seen = m.Seen
+	for _, e := range m.On {
+		t.on[condKey{event: e.Event, key: e.Key, crew: e.Crew, id: e.ID, kind: e.Kind, host: e.Host, repo: e.Repo}] = true
+	}
+	for _, e := range m.Down {
+		t.down[crewRef{key: e.Key, crew: e.Crew}] = true
+	}
+	for _, e := range m.DeadSince {
+		t.deadSince[crewRef{key: e.Key, crew: e.Crew}] = e.TS
+	}
+	return t
 }
 
 // next diffs doc against the last evaluation and returns a line for each

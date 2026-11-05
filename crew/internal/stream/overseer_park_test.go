@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
+	fleetpkg "github.com/noamsto/dispatcher/crew/internal/fleet"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 )
 
@@ -32,6 +34,13 @@ type parkLane struct {
 // itself.
 func startPark(t *testing.T, r *ovRig, discover func(io.Writer) []repos.Repo, req Request) *parkLane {
 	t.Helper()
+	return startParkIn(t, r, discover, req, t.TempDir())
+}
+
+// startParkIn is startPark on a lane root the test picks. Two parks over one
+// root share the lane's files, as two parks of one host do.
+func startParkIn(t *testing.T, r *ovRig, discover func(io.Writer) []repos.Repo, req Request, root string) *parkLane {
+	t.Helper()
 	p := &parkLane{
 		t:    t,
 		out:  &lockedWriter{},
@@ -40,7 +49,7 @@ func startPark(t *testing.T, r *ovRig, discover func(io.Writer) []repos.Repo, re
 		done: make(chan int, 1),
 	}
 	fo := r.options(discover)
-	fo.LaneRoot = t.TempDir()
+	fo.LaneRoot = root
 	fo.Rediscover = func(time.Duration) <-chan time.Time {
 		p.waits.Add(1)
 		return p.tick
@@ -208,5 +217,97 @@ func TestOverseerParkHeartbeatDoesNotWake(t *testing.T) {
 	p.kick()
 	if rc := p.wait(); rc != 0 {
 		t.Fatalf("park exit = %d, want 0 after the deadline; stderr %q", rc, p.errb.str())
+	}
+}
+
+// A partner host's transition wakes a park too: the bool federate returns
+// reaches diff, so the park exits on that line rather than sleeping to its
+// deadline. Its first document is the baseline, and the second one, past
+// --interval, is the transition.
+func TestOverseerParkWakesOnPartnerTransition(t *testing.T) {
+	r := newOvRig(t)
+	w := ovWorker("worker:feat/b#s1-1", "working")
+	up := okHost("mbp", ovStart, ovRepo("beta", ovCrew("c9", "live", "attended", w)))
+	down := okHost("mbp", ovStart+minute, ovRepo("beta", ovCrew("c9", "dead", "unattended", w)))
+	r.docs = []fleetpkg.StatusDoc{withHosts(ovDoc(ovStart), up), withHosts(ovDoc(ovStart+minute), down)}
+
+	p := startPark(t, r, okRepos(), Request{Park: "300"})
+	waitFor(t, "the park's baseline document", func() bool { return p.waits.Load() >= 1 })
+	if lines := decodeLinesT(t, p.out.str()); len(lines) != 0 {
+		t.Fatalf("the baseline document printed %v, want nothing", lines)
+	}
+
+	r.clock.advance(time.Duration(defaultOverseerInterval) * time.Second)
+	p.kick()
+	if rc := p.wait(); rc != 0 {
+		t.Fatalf("park exit = %d, want 0 on the partner transition; stderr %q", rc, p.errb.str())
+	}
+	got := ofEvent(decodeLinesT(t, p.out.str()), "dispatcher_down")
+	if len(got) != 1 || got[0]["host"] != "mbp" || got[0]["crew"] != "c9" || got[0]["repo"] != "o/beta" {
+		t.Fatalf("the park's partner transition = %v, want one dispatcher_down for mbp's c9", got)
+	}
+}
+
+// A park is a fresh process, so the differ memory is the lane's own file: a
+// condition off in one park and on in the next fires on the next park's first
+// document instead of re-baselining it away.
+func TestOverseerParkKeepsTheDifferAcrossParks(t *testing.T) {
+	r := newOvRig(t)
+	root := t.TempDir()
+	r.docs = []fleetpkg.StatusDoc{ovDoc(ovStart, ovRepo("alpha", ovCrew("c1", "live", "unattended")))}
+
+	first := startParkIn(t, r, okRepos(), Request{Park: "270"}, root)
+	waitFor(t, "the first park's baseline document", func() bool { return first.waits.Load() >= 1 })
+	if lines := decodeLinesT(t, first.out.str()); len(lines) != 0 {
+		t.Fatalf("the baseline document printed %v, want nothing", lines)
+	}
+	r.clock.advance(271 * time.Second)
+	first.kick()
+	if rc := first.wait(); rc != 0 {
+		t.Fatalf("first park exit = %d, want 0; stderr %q", rc, first.errb.str())
+	}
+
+	// The next park reads a document in which the same crew's dispatcher is no
+	// longer live: a condition that turned true between the two parks.
+	r.docs = []fleetpkg.StatusDoc{ovDoc(ovStart+minute, ovRepo("alpha", ovCrew("c1", "dead", "unattended")))}
+	second := startParkIn(t, r, okRepos(), Request{Park: "270"}, root)
+	if rc := second.wait(); rc != 0 {
+		t.Fatalf("second park exit = %d, want 0 on the carried condition; stderr %q", rc, second.errb.str())
+	}
+	got := ofEvent(decodeLinesT(t, second.out.str()), "dispatcher_down")
+	if len(got) != 1 || got[0]["repo"] != "o/alpha" || got[0]["crew"] != "c1" || got[0]["state"] != "dead" || got[0]["host"] != ovHost {
+		t.Fatalf("the second park's first document = %v, want one dispatcher_down for alpha's c1", got)
+	}
+}
+
+// The persistent lane never touches the differ file: without --park its memory
+// is the process's own.
+func TestOverseerPersistentLaneWritesNoDifferFile(t *testing.T) {
+	r := newOvRig(t)
+	r.docs = []fleetpkg.StatusDoc{ovDoc(ovStart, ovRepo("alpha", ovCrew("c1", "live", "unattended")))}
+	root := t.TempDir()
+	o := r.options(okRepos())
+	o.LaneRoot = root
+	var out, errb lockedWriter
+	done := make(chan int, 1)
+	go func() { done <- RunFleet(FleetRequest{Overseer: true}, &out, &errb, o) }()
+	lane := filepath.Join(root, ovMe)
+	waitFor(t, "the persistent lane's tick", func() bool {
+		_, err := os.Stat(filepath.Join(lane, "stream.tick"))
+		return err == nil
+	})
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case rc := <-done:
+		if rc != 0 {
+			t.Errorf("exit = %d, want 0; stderr %q", rc, errb.str())
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the persistent lane did not stop on TERM")
+	}
+	if _, err := os.Stat(filepath.Join(lane, differName)); !os.IsNotExist(err) {
+		t.Errorf("the persistent lane wrote %s (%v)", differName, err)
 	}
 }
