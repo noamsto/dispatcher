@@ -1,4 +1,4 @@
-  Live │   Budget │   Runs │ ▸ Settings
+  Live │   Budget │   Runs │ ▸ Settings │   Map
 layers: default <BASE>
         user    <USER> (present)
         locked  <LOCKED>
@@ -21,4 +21,4 @@ layers: default <BASE>
     ▾ claude                                                                    
       ▾ deep                                                                    
         default: "opus"                                                  default
-j/k move • enter expand/collapse • / filter • 1-4 views …  refreshed 14:13:20
+j/k move • enter expand/collapse • / filter • 1-5 views …  refreshed 14:13:20

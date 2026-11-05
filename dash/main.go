@@ -16,6 +16,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/noamsto/dispatcher/dash/internal/data"
+	"github.com/noamsto/dispatcher/dash/internal/kitty"
 	"github.com/noamsto/dispatcher/dash/internal/once"
 	"github.com/noamsto/dispatcher/dash/internal/ui"
 )
@@ -63,6 +64,8 @@ func run() int {
 	case "interactive":
 		eventsPath, eventsErr := data.EventsPath(ctx, data.ExecRunner{}, cfg.Git)
 		runner := data.ExecRunner{}
+		mapDeps, closeMap := resolveMap(runner)
+		defer closeMap()
 		deps := ui.Deps{
 			Ctx: ctx,
 			Load: ui.Loaders{
@@ -78,6 +81,7 @@ func run() int {
 			EventsPath:    eventsPath,
 			EventsPathErr: eventsErr,
 			Now:           cfg.Now,
+			Map:           mapDeps,
 		}
 		if err := ui.Run(deps); err != nil {
 			fmt.Fprintln(os.Stderr, "crew dash: "+err.Error())
@@ -86,6 +90,51 @@ func run() int {
 		return 0
 	}
 	return 0
+}
+
+// resolveMap builds the Map tab's terminal seams. It runs before bubbletea
+// owns the terminal because the capability probe shells out to tmux and the
+// cell-size query reads the terminal's reply from the tty. A terminal that
+// cannot show the image yields a not-capable result carrying the reason; the
+// returned func releases the tty and the PNG path.
+func resolveMap(runner data.Runner) (ui.MapDeps, func()) {
+	notCapable := func(why string) ui.MapDeps {
+		return ui.MapDeps{Capable: func() (bool, string) { return false, why }}
+	}
+	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	if err != nil {
+		return notCapable("no controlling tty"), func() {}
+	}
+	run := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		out, _, err := runner.Run(ctx, name, args...)
+		return out, err
+	}
+	if ok, why := kitty.Capable(os.Getenv, run); !ok {
+		tty.Close()
+		return notCapable(why), func() {}
+	}
+	png, err := os.CreateTemp("", "crew-dash-map-*.png")
+	if err != nil {
+		tty.Close()
+		return notCapable("cannot create the map image file: " + err.Error()), func() {}
+	}
+	png.Close()
+
+	cellW, cellH := kitty.FallbackCellW, kitty.FallbackCellH
+	if query, err := os.OpenFile("/dev/tty", os.O_RDWR, 0); err == nil {
+		cellW, cellH = kitty.QueryCellPx(query)
+	}
+	host, _ := os.Hostname()
+	return ui.MapDeps{
+			TTY:     tty,
+			CellPx:  func() (int, int) { return cellW, cellH },
+			Capable: func() (bool, string) { return true, "" },
+			OutPath: png.Name(),
+			IDBase:  kitty.ID(host, os.Getenv("TMUX_PANE")),
+		}, func() {
+			tty.Close()
+			os.Remove(png.Name())
+		}
 }
 
 // parseArgs: no args leaves mode empty (decided by the caller from the

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -177,12 +178,23 @@ func runArgv(ctx context.Context, r data.Runner, argv []string) (string, error) 
 	return string(stdout), nil
 }
 
-// startAction runs the key's action on the selected worker, opens its
-// prompt (reply) or confirm (nudge), or reports why it is disabled.
-func (v liveView) startAction(a action) (view, tea.Cmd) {
-	sel, have := v.Selection().(data.Worker)
-	if reason := disabledReason(a, sel, v.acts.inTmux, have); reason != "" {
-		return v, statusCmd(a.String()+": "+reason, true)
+// actionUI is the prompt and confirm state and the action dispatch shared by
+// every view that acts on a worker. Views embed it and call its pointer
+// methods on their own (copied) receiver.
+type actionUI struct {
+	acts actionDeps
+
+	mode   liveMode
+	input  textinput.Model // the reply prompt
+	target data.Worker     // the worker the open prompt or confirm acts on
+	width  int             // body width, from the root's WindowSizeMsg
+}
+
+// start runs action a on sel, opens its prompt (reply) or confirm (nudge), or
+// reports why it is disabled. have is false when nothing is selected.
+func (u *actionUI) start(a action, sel data.Worker, have bool) tea.Cmd {
+	if reason := disabledReason(a, sel, u.acts.inTmux, have); reason != "" {
+		return statusCmd(a.String()+": "+reason, true)
 	}
 	switch a {
 	case actJump:
@@ -193,55 +205,126 @@ func (v liveView) startAction(a action) (view, tea.Cmd) {
 			}
 			return switchArgv(pane), nil
 		}
-		return v, runActionCmd(v.acts.ctx, v.acts.runner, a, whereArgv(v.acts.crew, sel), then)
+		return runActionCmd(u.acts.ctx, u.acts.runner, a, whereArgv(u.acts.crew, sel), then)
 	case actOpenPR:
-		return v, runActionCmd(v.acts.ctx, v.acts.runner, a, ghArgv(sel.PRURL), nil)
+		return runActionCmd(u.acts.ctx, u.acts.runner, a, ghArgv(sel.PRURL), nil)
 	case actReply:
-		v.mode, v.target = modeReply, sel
-		v.input = textinput.New()
-		v.fitInput()
-		v.input.Focus()
-		return v, textinput.Blink
+		u.mode, u.target = modeReply, sel
+		u.input = textinput.New()
+		u.fit()
+		u.input.Focus()
+		return textinput.Blink
 	default:
-		v.mode, v.target = modeConfirmNudge, sel
-		return v, nil
+		u.mode, u.target = modeConfirmNudge, sel
+		return nil
 	}
 }
 
-// fitInput sizes the reply prompt and input to the body width so textinput
+// fit sizes the reply prompt and input to the body width so textinput
 // scrolls its text and cursor into view instead of the frame clipping them.
 // The prompt takes at most half the width, and a Width of 0 would mean
 // unlimited to textinput, so the input keeps at least one cell.
-func (v *liveView) fitInput() {
+func (u *actionUI) fit() {
 	const lead, tail = "reply to ", ": "
-	room := max(v.width/2-ansi.StringWidth(lead)-ansi.StringWidth(tail), 1)
-	target := ansi.Truncate(cleanText(nudgeTarget(v.target)), room, "…")
-	v.input.Prompt = lead + target + tail
-	v.input.Width = max(v.width-ansi.StringWidth(v.input.Prompt)-1, 1)
+	room := max(u.width/2-ansi.StringWidth(lead)-ansi.StringWidth(tail), 1)
+	target := ansi.Truncate(cleanText(nudgeTarget(u.target)), room, "…")
+	u.input.Prompt = lead + target + tail
+	u.input.Width = max(u.width-ansi.StringWidth(u.input.Prompt)-1, 1)
 }
 
-func (v liveView) handleReplyKey(msg tea.KeyMsg) (view, tea.Cmd) {
+// handleKey feeds msg to the open reply prompt or nudge confirm. handled is
+// false when neither is open, so the caller keeps the key.
+func (u *actionUI) handleKey(msg tea.KeyMsg) (cmd tea.Cmd, handled bool) {
+	switch u.mode {
+	case modeReply:
+		return u.handleReplyKey(msg), true
+	case modeConfirmNudge:
+		return u.handleConfirmKey(msg), true
+	}
+	return nil, false
+}
+
+func (u *actionUI) handleReplyKey(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "esc", "ctrl+c":
-		v.mode = modeNormal
-		return v, nil
+		u.mode = modeNormal
+		return nil
 	case "enter":
-		text := strings.TrimSpace(v.input.Value())
+		text := strings.TrimSpace(u.input.Value())
 		if text == "" {
-			return v, statusCmd("reply: text required", true)
+			return statusCmd("reply: text required", true)
 		}
-		v.mode = modeNormal
-		return v, runActionCmd(v.acts.ctx, v.acts.runner, actReply, replyArgv(v.acts.crew, v.target, text), nil)
+		u.mode = modeNormal
+		return runActionCmd(u.acts.ctx, u.acts.runner, actReply, replyArgv(u.acts.crew, u.target, text), nil)
 	}
 	var cmd tea.Cmd
-	v.input, cmd = v.input.Update(msg)
-	return v, cmd
+	u.input, cmd = u.input.Update(msg)
+	return cmd
 }
 
-func (v liveView) handleConfirmKey(msg tea.KeyMsg) (view, tea.Cmd) {
-	v.mode = modeNormal
+func (u *actionUI) handleConfirmKey(msg tea.KeyMsg) tea.Cmd {
+	u.mode = modeNormal
 	if msg.String() != "y" {
-		return v, statusCmd("nudge: cancelled", false)
+		return statusCmd("nudge: cancelled", false)
 	}
-	return v, runActionCmd(v.acts.ctx, v.acts.runner, actNudge, nudgeArgv(v.acts.crew, v.target), nil)
+	return runActionCmd(u.acts.ctx, u.acts.runner, actNudge, nudgeArgv(u.acts.crew, u.target), nil)
+}
+
+// prompt is the open reply prompt or nudge confirm, else fallback.
+func (u *actionUI) prompt(fallback string) string {
+	switch u.mode {
+	case modeReply:
+		return u.input.View()
+	case modeConfirmNudge:
+		return "nudge " + cleanText(nudgeTarget(u.target)) + "? y/N"
+	}
+	return fallback
+}
+
+// promptKeys is the help for the open reply prompt or nudge confirm, nil when
+// neither is open.
+func (u *actionUI) promptKeys() []key.Binding {
+	switch u.mode {
+	case modeReply:
+		return []key.Binding{
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "send")),
+			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+		}
+	case modeConfirmNudge:
+		return []key.Binding{
+			key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm")),
+			key.NewBinding(key.WithKeys("n", "esc"), key.WithHelp("n/esc", "cancel")),
+		}
+	}
+	return nil
+}
+
+// workerFromRow maps a roster worker map to the Worker the actions take.
+func workerFromRow(crewID string, w map[string]any) data.Worker {
+	f := func(k string) string { s, _ := strField(w, k); return s }
+	return data.Worker{
+		Crew:    crewID,
+		Branch:  f("branch"),
+		Session: f("session"),
+		Name:    f("name"),
+		State:   f("state"),
+		PRURL:   f("pr_url"),
+		Host:    f("host"),
+	}
+}
+
+// workerByBranch finds crewID's worker on branch over every worker in the
+// roster, reaped ones included. A crew whose workers failed to load has none.
+func workerByBranch(snap data.Snapshot, crewID, branch string) (data.Worker, bool) {
+	for _, c := range snap.Roster.Crews {
+		if c.ID != crewID || c.WorkersError != nil {
+			continue
+		}
+		for _, w := range c.Workers {
+			if b, _ := strField(w, "branch"); b == branch {
+				return workerFromRow(crewID, w), true
+			}
+		}
+	}
+	return data.Worker{}, false
 }

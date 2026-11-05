@@ -1,4 +1,4 @@
-  Live │   Budget │ ▸ Runs │   Settings
+  Live │   Budget │ ▸ Runs │   Settings │   Map
 Ratings — sort: tier ▲
   tier      engine  model              n     pr%   success  burn(med)
 › deep      claude  opus               8     100   87.5(7)        2.3
@@ -37,4 +37,4 @@ Runs (newest first)
 
 
 
-f focus • s sort • o order • j/k move • enter detail • 1-4 views • tab next view • r refresh • ? help • q quit  refreshed 14:13:20
+f focus • s sort • o order • j/k move • enter detail • 1-5 views • tab next view • r refresh • ? help • q quit  refreshed 14:13:20

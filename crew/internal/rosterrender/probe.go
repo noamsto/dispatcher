@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -31,6 +33,10 @@ type Probes struct {
 	// pinned, so neato only draws; the native renderer is the one that keeps the
 	// DOT `class` attributes (see finishSVG).
 	Graphviz func(ctx context.Context, dot []byte) ([]byte, error)
+	// Resvg rasterizes the finished svg to a PNG of exactly w x h pixels: the
+	// diagram is scaled to fit and centred, the margins are transparent. It reads
+	// its fonts from $AEYE_D2_FONT_DIR when that is set, like aeye's own resvg.
+	Resvg func(ctx context.Context, svg []byte, w, h int) ([]byte, error)
 	// InstalledCrew is `_rr_installed_crew` over the given PATH.
 	InstalledCrew func(path string) string
 	// SpawnDetached starts argv as a detached child — new session, /dev/null
@@ -59,6 +65,7 @@ func Default() Probes {
 			return exec.CommandContext(ctx, args[0], args[1:]...).Run()
 		},
 		Graphviz:      graphviz,
+		Resvg:         resvg,
 		InstalledCrew: InstalledCrew,
 		SpawnDetached: SpawnDetached,
 		Exec: func(path string, argv, env []string) error {
@@ -80,6 +87,9 @@ func Default() Probes {
 // graphvizTimeout bounds one neato run so a hung one cannot hold the loop.
 const graphvizTimeout = 30 * time.Second
 
+// resvgTimeout bounds one resvg run the same way.
+const resvgTimeout = 30 * time.Second
+
 func graphviz(ctx context.Context, dot []byte) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, graphvizTimeout)
 	defer cancel()
@@ -92,6 +102,43 @@ func graphviz(ctx context.Context, dot []byte) ([]byte, error) {
 			return nil, fmt.Errorf("neato: %w: %s", err, msg)
 		}
 		return nil, fmt.Errorf("neato: %w", err)
+	}
+	return stdout.Bytes(), nil
+}
+
+var (
+	svgWidthRe  = regexp.MustCompile(`\swidth="[^"]*"`)
+	svgHeightRe = regexp.MustCompile(`\sheight="[^"]*"`)
+)
+
+// sizeSVG sets the root element's width and height to w x h pixels and keeps
+// its viewBox, so resvg fits the drawing into that box.
+func sizeSVG(svg []byte, w, h int) []byte {
+	m := svgRootRe.FindIndex(svg)
+	if m == nil {
+		return svg
+	}
+	tag := svgWidthRe.ReplaceAll(svg[m[0]:m[1]], []byte(fmt.Sprintf(` width="%dpx"`, w)))
+	tag = svgHeightRe.ReplaceAll(tag, []byte(fmt.Sprintf(` height="%dpx"`, h)))
+	return slices.Concat(svg[:m[0]], tag, svg[m[1]:])
+}
+
+func resvg(ctx context.Context, svg []byte, w, h int) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, resvgTimeout)
+	defer cancel()
+	var args []string
+	if fonts := os.Getenv("AEYE_D2_FONT_DIR"); fonts != "" {
+		args = append(args, "--skip-system-fonts", "--use-fonts-dir", fonts)
+	}
+	cmd := exec.CommandContext(ctx, "resvg", append(args, "-", "-c")...)
+	cmd.Stdin = bytes.NewReader(sizeSVG(svg, w, h))
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("resvg: %w: %s", err, msg)
+		}
+		return nil, fmt.Errorf("resvg: %w", err)
 	}
 	return stdout.Bytes(), nil
 }

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -100,14 +99,10 @@ const (
 )
 
 type liveView struct {
-	deps liveDeps
-	acts actionDeps
-	now  func() time.Time
+	actionUI
 
-	mode   liveMode
-	input  textinput.Model // the reply prompt
-	target data.Worker     // the worker the open prompt or confirm acts on
-	width  int             // body width, from the root's WindowSizeMsg
+	deps liveDeps
+	now  func() time.Time
 
 	snap   data.Snapshot
 	loaded [numSources]bool
@@ -244,7 +239,7 @@ func (v liveView) Update(msg tea.Msg) (view, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		v.width = msg.Width
-		v.fitInput()
+		v.fit()
 		return v, nil
 
 	case snapshotMsg:
@@ -280,13 +275,11 @@ func (v liveView) Update(msg tea.Msg) (view, tea.Cmd) {
 		return v, nil
 
 	case tea.KeyMsg:
-		switch {
-		case v.detail:
+		if v.detail {
 			return v.handleDetailKey(msg)
-		case v.mode == modeReply:
-			return v.handleReplyKey(msg)
-		case v.mode == modeConfirmNudge:
-			return v.handleConfirmKey(msg)
+		}
+		if cmd, ok := v.actionUI.handleKey(msg); ok {
+			return v, cmd
 		}
 		return v.handleKey(msg)
 	}
@@ -364,17 +357,8 @@ func (v liveView) Keys() []key.Binding {
 			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 		}
 	}
-	switch v.mode {
-	case modeReply:
-		return []key.Binding{
-			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "send")),
-			key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-		}
-	case modeConfirmNudge:
-		return []key.Binding{
-			key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "confirm")),
-			key.NewBinding(key.WithKeys("n", "esc"), key.WithHelp("n/esc", "cancel")),
-		}
+	if keys := v.promptKeys(); keys != nil {
+		return keys
 	}
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "move")),
@@ -392,16 +376,14 @@ func (v liveView) Selection() data.Selection {
 		return nil
 	}
 	row := v.rows[v.cursor]
-	f := func(k string) string { s, _ := strField(row.w, k); return s }
-	return data.Worker{
-		Crew:    row.crewID,
-		Branch:  f("branch"),
-		Session: f("session"),
-		Name:    f("name"),
-		State:   f("state"),
-		PRURL:   f("pr_url"),
-		Host:    f("host"),
-	}
+	return workerFromRow(row.crewID, row.w)
+}
+
+// startAction runs the key's action on the selected worker.
+func (v liveView) startAction(a action) (view, tea.Cmd) {
+	sel, have := v.Selection().(data.Worker)
+	cmd := v.actionUI.start(a, sel, have)
+	return v, cmd
 }
 
 // Capturing is true while the reply prompt or nudge confirm owns the keys.
@@ -551,7 +533,7 @@ func (v liveView) selectedPane(w int) []string {
 	if sel.PRURL != "" {
 		pr = cleanText(sel.PRURL)
 	}
-	out = append(out, truncateLine(v.promptOr(where), w), truncateLine("PR "+pr, w))
+	out = append(out, truncateLine(v.prompt(where), w), truncateLine("PR "+pr, w))
 
 	detail, _ := strField(row.w, "detail")
 	room := selectedPaneH - len(out)
@@ -568,17 +550,6 @@ func (v liveView) selectedPane(w int) []string {
 		out = append(out, "")
 	}
 	return out
-}
-
-// promptOr is the open reply prompt or nudge confirm, else fallback.
-func (v liveView) promptOr(fallback string) string {
-	switch v.mode {
-	case modeReply:
-		return v.input.View()
-	case modeConfirmNudge:
-		return "nudge " + cleanText(nudgeTarget(v.target)) + "? y/N"
-	}
-	return fallback
 }
 
 // budgetLines is the strip of one segment per engine (its highest-used

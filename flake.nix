@@ -187,7 +187,7 @@
           # crew never references the protocols and sources no shared lib: the two
           # libs stall-watch needs are baked into crewGo's ldflags.
           crew = let
-            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gtrash procps graphviz]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
+            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gtrash procps graphviz resvg]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
           in
             pkgs.runCommand "crew" {nativeBuildInputs = [pkgs.makeWrapper];} ''
               mkdir -p $out/bin

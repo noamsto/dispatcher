@@ -1,0 +1,24 @@
+  Live │   Budget │   Runs │   Settings │ ▸ Map
+Map unavailable: needs kitty or ghostty
+The Map tab needs kitty or ghostty.
+Under tmux, also run: tmux set -g allow-passthrough on
+Press 1 for the Live table.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1-5 views • tab next view • r refresh • ? help • q quit  refreshed 14:13:20

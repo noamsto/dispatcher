@@ -834,12 +834,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		req := rosterrender.Request{
 			Crew: str(rr.Crew), Pane: str(rr.Pane), Interval: str(rr.Interval), Quiet: str(rr.Quiet),
 			NoOpen: rr.NoOpen, Once: rr.Once, Detach: rr.Detach,
+			Map: rr.Map, Px: str(rr.Px), Select: str(rr.Select), Out: str(rr.Out),
 		}
 		return rosterrender.Run(ctx, req, paths, rosterrender.Options{
 			Probes:    rosterrender.Default(),
 			Proc:      e.proc,
 			Git:       git.Exec{},
 			Clock:     clock.FromEnv(),
+			Stdout:    stdout,
 			Stderr:    stderr,
 			RosterDir: os.Getenv("CREW_ROSTER_DIR"),
 			Self:      os.Getenv("CREW_SELF"),

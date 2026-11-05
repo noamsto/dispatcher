@@ -10,6 +10,7 @@ type KeyMap struct {
 	Tab2    key.Binding
 	Tab3    key.Binding
 	Tab4    key.Binding
+	Tab5    key.Binding
 	Next    key.Binding
 	Prev    key.Binding
 	Refresh key.Binding
@@ -19,10 +20,11 @@ type KeyMap struct {
 
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
-		Tab1:    key.NewBinding(key.WithKeys("1"), key.WithHelp("1-4", "views")),
+		Tab1:    key.NewBinding(key.WithKeys("1"), key.WithHelp("1-5", "views")),
 		Tab2:    key.NewBinding(key.WithKeys("2")),
 		Tab3:    key.NewBinding(key.WithKeys("3")),
 		Tab4:    key.NewBinding(key.WithKeys("4")),
+		Tab5:    key.NewBinding(key.WithKeys("5")),
 		Next:    key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next view")),
 		Prev:    key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev view")),
 		Refresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
@@ -52,6 +54,8 @@ func tabIndex(s string) int {
 		return 2
 	case "4":
 		return 3
+	case "5":
+		return 4
 	}
 	return -1
 }

@@ -23,6 +23,33 @@ func (o Options) passProbes(ctx context.Context, common string) (roster.Probes, 
 		roster.Liveness{Windows: windows, Worktrees: wt}
 }
 
+// frame is what one read of the bus draws: the scene, the persisted sequence it
+// came from, the legend counts and the live count.
+type frame struct {
+	slots slotState
+	sc    scene
+	lg    legend
+	live  int64
+}
+
+// buildFrame reads the bus into a frame without writing anything. The reads are
+// fallible and the arrangement is not, so an error means nothing was drawn.
+func buildFrame(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, roleRows []string) (frame, error) {
+	now := float64(o.wallSec())
+	rp, rule := o.passProbes(ctx, paths.Common)
+	m, err := model(ctx, paths, crew, now, roleRows, rp, rule)
+	if err != nil {
+		return frame{}, err
+	}
+	live, err := liveCount(m)
+	if err != nil {
+		return frame{}, err
+	}
+	ps, lg := buildPlanets(m, now)
+	slots, sc := arrange(loadSlots(filepath.Join(cdir, fileSlots)), ps)
+	return frame{slots: slots, sc: sc, lg: lg, live: live}, nil
+}
+
 // pass is `_rr_pass <crew> <cdir> <no_open> [role_rows]`: one render. Draw the
 // diagram when its DOT text changed, publish when written or when the recorded
 // pane is not the one last published to, and return the live count.
@@ -33,19 +60,12 @@ func (o Options) passProbes(ctx context.Context, common string) (roster.Probes, 
 // because an error here would freeze the daemon's quiet window. A refused `put`
 // likewise stops the publish and still returns the count.
 func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, noOpen bool, roleRows []string) (int64, error) {
-	now := float64(o.wallSec())
-	rp, rule := o.passProbes(ctx, paths.Common)
-	m, err := model(ctx, paths, crew, now, roleRows, rp, rule)
+	fr, err := buildFrame(ctx, o, paths, cdir, crew, roleRows)
 	if err != nil {
 		return 0, err
 	}
-	live, err := liveCount(m)
-	if err != nil {
-		return 0, err
-	}
-	ps, lg := buildPlanets(m, now)
-	slots, sc := arrange(loadSlots(filepath.Join(cdir, fileSlots)), ps)
-	dot := renderDOT(sc, lg)
+	live := fr.live
+	dot := renderDOT(fr.sc, fr.lg)
 
 	t := target(paths.Common, crew, o.RosterDir, o.Clock.Now)
 	pane := record(cdir, filePane)
@@ -73,7 +93,7 @@ func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, no
 	}
 	if put(t, string(finishSVG(svg)), o.Stderr) != nil ||
 		put(filepath.Join(cdir, fileDot), dot, o.Stderr) != nil ||
-		saveSlots(filepath.Join(cdir, fileSlots), slots, o.Stderr) != nil {
+		saveSlots(filepath.Join(cdir, fileSlots), fr.slots, o.Stderr) != nil {
 		return live, nil
 	}
 	if pane != "" {
