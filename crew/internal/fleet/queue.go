@@ -118,8 +118,8 @@ type releasedHold struct {
 
 // fleetScan is one read of the registry repos' buses: their outstanding fleet
 // holds, the fleet holds released within the pending window, each repo's
-// newest fleet release, the common dirs of every readable registered repo (the places a
-// crew's dispatcher may be registered), and what could not be read.
+// newest fleet release, the common dirs of every readable registered repo (the
+// places a crew's dispatcher may be registered), and what could not be read.
 type fleetScan struct {
 	holds       []*queued
 	commons     []string
