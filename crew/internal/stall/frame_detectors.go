@@ -737,6 +737,15 @@ func countdownDialog(lines []string) (tool, req string, ok bool) {
 			c = i
 		}
 	}
+	if c < 0 {
+		return "", "", false
+	}
+	// A later dialog below the countdown is the live one: it wins.
+	if slices.ContainsFunc(lines[c+1:], func(l string) bool {
+		return rePermSeparator.MatchString(l) || rePermHeader.MatchString(l) || rePermTip.MatchString(l)
+	}) {
+		return "", "", false
+	}
 	for s := c - 1; s >= 0; s-- {
 		if !rePermSeparator.MatchString(lines[s]) {
 			continue
@@ -745,7 +754,7 @@ func countdownDialog(lines []string) (tool, req string, ok bool) {
 			if reBlank.MatchString(lines[t]) {
 				continue
 			}
-			if r, closed := boxedRequest(lines, t); closed && r != "" {
+			if r, closed := boxedRequest(lines[:c], t); closed && r != "" {
 				return reTrimSpace.ReplaceAllString(lines[t], ""), r, true
 			}
 			return "", "", false
