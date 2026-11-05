@@ -21,6 +21,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
+	"github.com/noamsto/dispatcher/crew/internal/lane"
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 	"github.com/noamsto/dispatcher/crew/internal/repos"
@@ -339,7 +340,7 @@ type queue struct {
 // pending, each crew's eligibility, each repo's priority, and the holds in
 // queue order. A crew registers only in the repo it was launched in, so it is
 // eligible when its session is live in the hold's repo, or in any registered
-// one while a lane listens for the hold's repo.
+// one while a per-repo stream lane of the crew is alive in the hold's repo.
 func newQueue(ctx context.Context, o QueueOptions, scan fleetScan, s QueueSettings, now time.Time) *queue {
 	t := o.Proc
 	if t == nil {
@@ -352,19 +353,24 @@ func newQueue(ctx context.Context, o QueueOptions, scan fleetScan, s QueueSettin
 	read := func(common, crew string) session {
 		return readSession(filepath.Join(common, "crew", "crews", crew), fleetLane(o.Getenv, crew), t, now)
 	}
+	repoLaneAlive := func(common, crew string) bool {
+		state, _, _, _ := lane.State(filepath.Join(common, "crew", "crews", crew), t, q.nowMS)
+		return state == "alive"
+	}
 	for _, h := range q.holds {
 		ref := crewRef{h.common, h.crew}
 		ok, seen := eligible[ref]
 		if !seen {
-			own := read(h.common, h.crew)
-			ok = own.eligible()
-			for _, c := range scan.commons {
-				if ok {
-					break
+			ok = read(h.common, h.crew).eligible()
+			// Only a per-repo stream runs `hold due` for its repo; the fleet
+			// stream does not, so a dispatcher registered elsewhere needs a
+			// per-repo lane alive here.
+			if !ok && repoLaneAlive(h.common, h.crew) {
+				for _, c := range scan.commons {
+					if ok = filepath.Clean(c) != filepath.Clean(h.common) && read(c, h.crew).eligible(); ok {
+						break
+					}
 				}
-				// Only the hold's repo is asked about it, so a dispatcher
-				// registered elsewhere needs a lane that listens here.
-				ok = filepath.Clean(c) != filepath.Clean(h.common) && own.listening() && read(c, h.crew).eligible()
 			}
 			eligible[ref] = ok
 		}

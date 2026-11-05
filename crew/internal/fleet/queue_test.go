@@ -439,8 +439,8 @@ func TestQueueMembershipAndEligibility(t *testing.T) {
 
 // A crew registers only in the repo it was launched in, so a fleet hold it
 // adds from another repo is eligible when its dispatcher is live in any
-// registered repo and a lane listens for the hold's repo, whether or not the
-// dispatcher's repo bus can be read.
+// registered repo and a per-repo stream lane of the crew is alive in the hold's
+// repo, whether or not the dispatcher's repo bus can be read.
 func TestQueueCrewLiveInAnotherRepoIsEligible(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -456,10 +456,10 @@ func TestQueueCrewLiveInAnotherRepoIsEligible(t *testing.T) {
 			f.register("alpha", "c1", livePID)
 			f.laneTick("alpha", "c1", livePID, 10)
 		}, "parked:ineligible"},
-		{"live in another registered repo, fleet-stream lane", func(f *queueFix) {
+		{"live in another registered repo, a fleet-stream lane is no listener for the hold's repo", func(f *queueFix) {
 			f.register("alpha", "c1", livePID)
 			f.fleetTick("c1", livePID, 10)
-		}, "due"},
+		}, "parked:ineligible"},
 		{"live in another registered repo, dead lane in the hold's repo", func(f *queueFix) {
 			f.register("alpha", "c1", livePID)
 			f.laneTick("beta", "c1", deadPID, 10)
@@ -520,6 +520,33 @@ func TestQueueCrewLiveInAnotherRepoIsEligible(t *testing.T) {
 				t.Errorf("verdict %+v, want h parked as ineligible", v)
 			}
 		})
+	}
+}
+
+// The listener a foreign registration needs is judged per hold repo: a crew
+// whose own lane runs in alpha has its alpha hold due and its beta hold, which
+// no lane polls, parked.
+func TestQueueForeignListenerIsPerHoldRepo(t *testing.T) {
+	f := newQueueFix(t, "alpha", "beta")
+	f.register("alpha", "c1", livePID)
+	f.laneTick("alpha", "c1", livePID, 10)
+	f.add("alpha", "c1", "h-alpha", 1, 200)
+	f.add("beta", "c1", "h-beta", 1, 100)
+
+	d := f.doc()
+	got := map[string]string{}
+	for _, h := range d.Holds {
+		got[h.ID] = h.State
+		if h.Reason != nil {
+			got[h.ID] += ":" + *h.Reason
+		}
+	}
+	want := map[string]string{"h-alpha": "due", "h-beta": "parked:ineligible"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("states = %v\nwant     %v", got, want)
+	}
+	if strings.Join(d.ids(), ",") != "h-alpha,h-beta" {
+		t.Errorf("order %v, want the active hold first, the parked last", d.ids())
 	}
 }
 

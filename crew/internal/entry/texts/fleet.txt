@@ -160,9 +160,9 @@ fleetHeadTimeout without being released, `crew hold release`, so it queues
 behind every non-demoted hold) or parked, with the reason: oversize (heavier
 than fleetBudget), demoted (demoted, and due for another fleetHeadTimeout) or
 ineligible (its crew has no live dispatcher in any registered repo, so one
-launched from an unregistered repo stays ineligible; no lane listens for the
-hold's repo when the dispatcher registered elsewhere; or that dispatcher's
-lane is dead or stale).
+launched from an unregistered repo stays ineligible; no per-repo stream lane of
+the crew is alive in the hold's repo when the dispatcher registered elsewhere;
+or that dispatcher's lane is dead or stale).
 Read-only: it never writes fleet-due.json or the bus.
 
   --json         The document: {ts, budget, free, load_over, due, head,
