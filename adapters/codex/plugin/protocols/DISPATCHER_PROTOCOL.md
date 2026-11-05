@@ -155,7 +155,7 @@ One `crew fleet stream --crew <id>` lane covers a crew spanning repos: it watche
 
 A remote worker (`dispatch --host`) is followed only by the relay in a streaming lane (`crew stream`, or `crew fleet stream`, which also reaps remote hosts); a `crew watch` park sees no remote events, so park-lane dispatchers (cursor, codex, pi) never dispatch `--host`. Relayed batches and events carry `host`; compare `cursor` per `host` (and `repo` in fleet mode). Read `{"stream":"error",…,"host":"<h>"}` by `detail`: `relay to <h> lost:` is a dropped link that reconnects from its cursor by itself (`crew roster` shows `host_error`; don't re-arm); `relay from <h>: undecodable line` is a malformed remote line, dropped without advancing the cursor; `reap:` is the remote's reap failing, handled per "Reap output" below. `{"stream":"reap",…,"host":"<h>"}` is the remote's reap: informational.
 
-`crew` draws the roster diagram: each `dispatch`/`dispatch resume` starts a per-crew `crew roster-render` redrawing it in the aeye carousel beside your pane on each bus change. Never write `roster-*.d2` yourself; reopen a closed carousel with `prefix + I`.
+`crew` draws the roster diagram: each `dispatch`/`dispatch resume` starts a per-crew `crew roster-render` redrawing it in the aeye carousel beside your pane on each bus change. Never write the roster diagram file (`roster-*.svg`) yourself; reopen a closed carousel with `prefix + I`.
 
 <!-- only:claude -->
 **claude — streaming monitor.** Arm once with your crew id written literally, never `$CREW_ID` (an in-session `/dispatcher` doesn't export it; the lane dies on start):
