@@ -139,6 +139,8 @@ func noRun(context.Context, string, ...string) ([]byte, error) {
 	return nil, errors.New("runner must not be called outside tmux")
 }
 
+const sshWhy = "the terminal must run on this host: over ssh it cannot read the image file"
+
 func TestCapable(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -163,6 +165,9 @@ func TestCapable(t *testing.T) {
 			tmuxRunner("xterm-256color", nil, "on", nil), false, "tmux client terminal is xterm-256color, not kitty"},
 		{"tmux client probe fails", map[string]string{"TERM": "xterm-kitty", "TMUX": "x"},
 			tmuxRunner("", errors.New("no server"), "on", nil), false, "cannot read the tmux client terminal: no server"},
+		{"ssh connection", map[string]string{"TERM": "xterm-kitty", "SSH_CONNECTION": "1.2.3.4 5 6.7.8.9 22"}, noRun, false, sshWhy},
+		{"ssh tty", map[string]string{"TERM": "xterm-kitty", "SSH_TTY": "/dev/pts/3"}, noRun, false, sshWhy},
+		{"ssh under tmux", map[string]string{"TERM": "tmux-256color", "TMUX": "x", "SSH_TTY": "/dev/pts/3"}, noRun, false, sshWhy},
 	} {
 		ok, why := Capable(env(c.env), c.run)
 		if ok != c.ok || why != c.why {

@@ -44,7 +44,7 @@ func Placeholders(id, cols, rows int) []string {
 // Store returns the sequence that stores the PNG at path as a virtual
 // placement under id, sized cols x rows cells (pass the same values given to
 // Placeholders), without drawing anything. t=f makes the terminal read the
-// file itself, so it must run on this host. q=2 suppresses the terminal's
+// file itself, so it only works when the terminal runs on this host. q=2 suppresses the terminal's
 // replies, which would otherwise arrive on stdin as keystrokes.
 func Store(id int, path string, cols, rows int, inTmux bool) string {
 	enc := base64.StdEncoding.EncodeToString([]byte(path))
@@ -157,9 +157,13 @@ type Runner func(ctx context.Context, name string, args ...string) (stdout []byt
 // Capable reports whether this terminal can show unicode-placeholder images.
 // There is no capability query for placeholders, so it is a TERM allowlist
 // (kitty and ghostty). Under tmux the outer terminal's name comes from the
-// attached client, and tmux must also pass the graphics escapes through. When
-// not ok, why is a short human reason fit to show as is.
+// attached client, and tmux must also pass the graphics escapes through. An ssh
+// session is never capable because Store has the terminal read the image file.
+// When not ok, why is a short human reason fit to show as is.
 func Capable(getenv func(string) string, run Runner) (ok bool, why string) {
+	if getenv("SSH_CONNECTION") != "" || getenv("SSH_TTY") != "" {
+		return false, "the terminal must run on this host: over ssh it cannot read the image file"
+	}
 	termName := getenv("TERM")
 	if getenv("TMUX") != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

@@ -1046,3 +1046,99 @@ func goldenMap(t *testing.T, prefix string, capable bool) {
 func TestGoldenMapFallback(t *testing.T) { goldenMap(t, "map_fallback", false) }
 
 func TestGoldenMap(t *testing.T) { goldenMap(t, "map", true) }
+
+func TestMapRenderErrorRetriesOnTheNextSnapshotOfTheSameRoster(t *testing.T) {
+	r := newMapRig(t, false, true)
+	fail := data.FakeResponse{Stderr: []byte("crew: roster-render: neato not found\n"), Err: data.FakeExitError{Code: 1}}
+	for _, px := range mapPx {
+		r.fake.Responses["crew roster-render --map --crew c1 --px "+px+" --out "+mapOut+" --select feat/101-basil"] = fail
+	}
+	m := r.open()
+	if m.views[mapTab].(mapView).err == "" {
+		t.Fatalf("the render did not fail")
+	}
+	before := renders(r.fake)
+	r.press(m, sourceMsg{srcRoster, func(s *data.Snapshot) {}})
+	if got := renders(r.fake) - before; got != 1 {
+		t.Fatalf("%d renders after a snapshot of the same roster, want 1 retry", got)
+	}
+}
+
+// textLines is a frame without its placeholder lines, for failure messages.
+func textLines(frame string) string {
+	var out []string
+	for _, l := range strings.Split(frame, "\n") {
+		if !strings.Contains(l, placeholder) {
+			out = append(out, l)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// footer is the help bar line of a frame.
+func footer(m Model) string {
+	lines := strings.Split(m.View(), "\n")
+	return lines[len(lines)-1]
+}
+
+func TestMapHelpAdvertisesTabAsSelectionOnlyWhileItOwnsTab(t *testing.T) {
+	r := newMapRig(t, false, true)
+	bar := footer(r.press(r.model(160, 40), keyRune('5')))
+	if strings.Contains(bar, "next view") || !strings.Contains(bar, "←/→/tab select") {
+		t.Fatalf("owning map footer: %q", bar)
+	}
+	for _, ownsTab := range []bool{false, true} {
+		var helps []string
+		for _, row := range (helpKeyMap{global: DefaultKeyMap(), ownsTab: ownsTab}).FullHelp() {
+			for _, b := range row {
+				helps = append(helps, b.Help().Desc)
+			}
+		}
+		if got := slices.Contains(helps, "next view") || slices.Contains(helps, "prev view"); got == ownsTab {
+			t.Fatalf("ownsTab %v: full help %q", ownsTab, helps)
+		}
+	}
+
+	loading := r.model(160, 40)
+	nm, _ := loading.Update(keyRune('5'))
+	if bar := footer(nm.(Model)); !strings.Contains(bar, "tab next view") {
+		t.Fatalf("map before its image lands lost %q: %q", "tab next view", bar)
+	}
+
+	off := newMapRig(t, false, false)
+	if bar := footer(off.press(off.model(160, 40), keyRune('5'))); !strings.Contains(bar, "tab next view") {
+		t.Fatalf("fallback footer lost %q: %q", "tab next view", bar)
+	}
+}
+
+func TestMapShrinkBeforeTheNewRenderLandsKeepsInfoLinesAndWidth(t *testing.T) {
+	for name, prompt := range map[string]bool{"info line": false, "reply prompt": true} {
+		t.Run(name, func(t *testing.T) {
+			r := newMapRig(t, false, true)
+			m := r.open()
+			if prompt {
+				m = r.press(m, keyRune('m'))
+			}
+			// The new render is started but not delivered.
+			nm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+			m = nm.(Model)
+			frame := m.View()
+			assertWidth(t, frame, 80, 24)
+			want := "basil · feat/101-basil · blocked"
+			if prompt {
+				want = "reply to basil: "
+			}
+			if !strings.Contains(frame, want) {
+				t.Fatalf("%q missing after the shrink:\n%s", want, textLines(frame))
+			}
+			if !strings.Contains(frame, "crew c1 · 4 working") {
+				t.Fatalf("counts line missing after the shrink:\n%s", textLines(frame))
+			}
+			for i, l := range strings.Split(frame, "\n") {
+				if strings.Contains(l, placeholder) && (strings.Contains(l, "…") || strings.Count(l, placeholder) > 80) {
+					t.Fatalf("line %d overflows the image block: %d cells, truncated %v", i, strings.Count(l, placeholder), strings.Contains(l, "…"))
+				}
+			}
+		})
+	}
+}

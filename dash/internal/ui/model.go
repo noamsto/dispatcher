@@ -415,10 +415,13 @@ func (m Model) renderFooter() string {
 	// before it drops the load status.
 	h := m.help
 	h.Width = max0(m.width - ansi.StringWidth(status))
+	owner, _ := m.views[m.active].(tabOwner)
+	capturing := m.views[m.active].Capturing()
 	keys := h.View(helpKeyMap{
 		global:    m.keys,
 		view:      m.views[m.active].Keys(),
-		capturing: m.views[m.active].Capturing(),
+		capturing: capturing,
+		ownsTab:   !capturing && owner != nil && owner.ownsTab(),
 	})
 	// help can overshoot Width by one item; clip it so the status stays whole.
 	keys = ansi.Truncate(keys, h.Width, "…")
@@ -434,13 +437,14 @@ type helpKeyMap struct {
 	global    KeyMap
 	view      []key.Binding
 	capturing bool
+	ownsTab   bool // the view uses tab for its own selection
 }
 
 func (k helpKeyMap) ShortHelp() []key.Binding {
 	if k.capturing {
 		return k.view
 	}
-	return append(slices.Clone(k.view), k.global.ShortHelp()...)
+	return append(slices.Clone(k.view), k.global.shortHelp(k.ownsTab)...)
 }
 
 func (k helpKeyMap) FullHelp() [][]key.Binding {
@@ -451,5 +455,5 @@ func (k helpKeyMap) FullHelp() [][]key.Binding {
 	if k.capturing {
 		return rows
 	}
-	return append(rows, k.global.FullHelp()...)
+	return append(rows, k.global.fullHelp(k.ownsTab)...)
 }

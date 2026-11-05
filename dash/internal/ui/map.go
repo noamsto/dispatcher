@@ -377,7 +377,7 @@ func (v mapView) renderCmd(gen int, crewID, sel string, p mapgeom.Placement) tea
 // those lines; only the first image after entering needs a full repaint.
 func (v *mapView) accept(msg mapRenderedMsg) tea.Cmd {
 	if msg.err != nil {
-		v.err = cleanText(msg.err.Error())
+		v.err, v.sig = cleanText(msg.err.Error()), ""
 		v.drop()
 		return nil
 	}
@@ -428,7 +428,7 @@ func (v mapView) Keys() []key.Binding {
 		return nil
 	}
 	keys := []key.Binding{
-		key.NewBinding(key.WithKeys("left", "right", "h", "l"), key.WithHelp("←/→", "select")),
+		key.NewBinding(key.WithKeys("left", "right", "h", "l"), key.WithHelp("←/→/tab", "select")),
 		key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "jump")),
 		key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open PR")),
 		key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "reply")),
@@ -466,12 +466,16 @@ func (v mapView) View(w, h int) string {
 	}
 
 	left, top := v.origin()
-	lines := make([]string, 0, top+v.place.Rows+mapInfoLines)
+	// After a shrink the old block outlives the new box until the re-render
+	// lands; fewer cells just crop the stored image.
+	cols := min(v.place.Cols, max0(w-left))
+	rows := min(v.place.Rows, max0(v.boxH-mapInfoLines-top))
+	lines := make([]string, 0, top+rows+mapInfoLines)
 	for range top {
 		lines = append(lines, "")
 	}
 	pad := strings.Repeat(" ", left)
-	for _, l := range kitty.Placeholders(v.curID, v.place.Cols, v.place.Rows) {
+	for _, l := range kitty.Placeholders(v.curID, cols, rows) {
 		lines = append(lines, padRight(pad+l, w))
 	}
 	lines = append(lines, truncateLine(v.prompt(v.infoLine()), w), truncateLine(v.countsLine(), w))

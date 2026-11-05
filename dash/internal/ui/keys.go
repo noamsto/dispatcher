@@ -34,12 +34,24 @@ func DefaultKeyMap() KeyMap {
 }
 
 // ShortHelp is the global row shown collapsed.
-func (k KeyMap) ShortHelp() []key.Binding {
+func (k KeyMap) ShortHelp() []key.Binding { return k.shortHelp(false) }
+
+// FullHelp is the global row shown expanded (`?`).
+func (k KeyMap) FullHelp() [][]key.Binding { return k.fullHelp(false) }
+
+// shortHelp and fullHelp drop the view-switching tab keys while the active view
+// owns them, since they move its selection instead.
+func (k KeyMap) shortHelp(ownsTab bool) []key.Binding {
+	if ownsTab {
+		return []key.Binding{k.Tab1, k.Refresh, k.Help, k.Quit}
+	}
 	return []key.Binding{k.Tab1, k.Next, k.Refresh, k.Help, k.Quit}
 }
 
-// FullHelp is the global row shown expanded (`?`).
-func (k KeyMap) FullHelp() [][]key.Binding {
+func (k KeyMap) fullHelp(ownsTab bool) [][]key.Binding {
+	if ownsTab {
+		return [][]key.Binding{{k.Tab1, k.Refresh, k.Help, k.Quit}}
+	}
 	return [][]key.Binding{{k.Tab1, k.Next, k.Prev, k.Refresh, k.Help, k.Quit}}
 }
 
