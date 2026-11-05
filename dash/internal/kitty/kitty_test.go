@@ -119,7 +119,8 @@ func env(kv map[string]string) func(string) string {
 	return func(k string) string { return kv[k] }
 }
 
-// tmuxRunner answers the two tmux queries Capable makes.
+// tmuxRunner answers the tmux queries Capable makes; show-environment reports
+// no ssh client unless withSSH overrides it.
 func tmuxRunner(termname string, termErr error, passthrough string, passErr error) Runner {
 	return func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name != "tmux" {
@@ -130,8 +131,20 @@ func tmuxRunner(termname string, termErr error, passthrough string, passErr erro
 			return []byte(termname + "\n"), termErr
 		case "show-options":
 			return []byte(passthrough + "\n"), passErr
+		case "show-environment":
+			return []byte("-SSH_CONNECTION\n"), nil
 		}
 		return nil, errors.New("unexpected tmux subcommand " + args[0])
+	}
+}
+
+// withSSH makes the tmux show-environment probe answer out and err.
+func withSSH(r Runner, out string, err error) Runner {
+	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "show-environment" {
+			return []byte(out), err
+		}
+		return r(ctx, name, args...)
 	}
 }
 
@@ -167,7 +180,17 @@ func TestCapable(t *testing.T) {
 			tmuxRunner("", errors.New("no server"), "on", nil), false, "cannot read the tmux client terminal: no server"},
 		{"ssh connection", map[string]string{"TERM": "xterm-kitty", "SSH_CONNECTION": "1.2.3.4 5 6.7.8.9 22"}, noRun, false, sshWhy},
 		{"ssh tty", map[string]string{"TERM": "xterm-kitty", "SSH_TTY": "/dev/pts/3"}, noRun, false, sshWhy},
-		{"ssh under tmux", map[string]string{"TERM": "tmux-256color", "TMUX": "x", "SSH_TTY": "/dev/pts/3"}, noRun, false, sshWhy},
+		{"tmux ignores process ssh env when the client is local",
+			map[string]string{"TMUX": "x", "SSH_CONNECTION": "1.2.3.4 5 6.7.8.9 22", "SSH_TTY": "/dev/pts/3"},
+			withSSH(tmuxRunner("xterm-kitty", nil, "on", nil), "-SSH_CONNECTION\n", nil), true, ""},
+		{"tmux unknown variable means not ssh", map[string]string{"TMUX": "x", "SSH_TTY": "/dev/pts/3"},
+			withSSH(tmuxRunner("xterm-kitty", nil, "on", nil), "", errors.New("exit 1")), true, ""},
+		{"tmux client attached over ssh", map[string]string{"TMUX": "x"},
+			withSSH(tmuxRunner("xterm-kitty", nil, "on", nil), "SSH_CONNECTION=1.2.3.4 1 5.6.7.8 22\n", nil), false, sshWhy},
+		{"tmux non-kitty client wins over ssh", map[string]string{"TMUX": "x"},
+			withSSH(tmuxRunner("xterm-256color", nil, "on", nil), "SSH_CONNECTION=1.2.3.4 1 5.6.7.8 22\n", nil), false, "tmux client terminal is xterm-256color, not kitty"},
+		{"tmux passthrough off wins over ssh", map[string]string{"TMUX": "x"},
+			withSSH(tmuxRunner("xterm-kitty", nil, "off", nil), "SSH_CONNECTION=1.2.3.4 1 5.6.7.8 22\n", nil), false, "tmux allow-passthrough is off — run: tmux set -g allow-passthrough on"},
 	} {
 		ok, why := Capable(env(c.env), c.run)
 		if ok != c.ok || why != c.why {
@@ -191,6 +214,7 @@ func TestCapableQueriesTmuxArgv(t *testing.T) {
 	want := []string{
 		"tmux display-message -p #{client_termname}",
 		"tmux show-options -gv allow-passthrough",
+		"tmux show-environment SSH_CONNECTION",
 	}
 	if strings.Join(calls, "|") != strings.Join(want, "|") {
 		t.Errorf("calls = %q, want %q", calls, want)

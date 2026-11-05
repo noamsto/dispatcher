@@ -158,14 +158,17 @@ type Runner func(ctx context.Context, name string, args ...string) (stdout []byt
 // There is no capability query for placeholders, so it is a TERM allowlist
 // (kitty and ghostty). Under tmux the outer terminal's name comes from the
 // attached client, and tmux must also pass the graphics escapes through. An ssh
-// session is never capable because Store has the terminal read the image file.
+// session is never capable because Store has the terminal read the image file;
+// under tmux that is the most recent client's session, asked of tmux.
 // When not ok, why is a short human reason fit to show as is.
 func Capable(getenv func(string) string, run Runner) (ok bool, why string) {
-	if getenv("SSH_CONNECTION") != "" || getenv("SSH_TTY") != "" {
-		return false, "the terminal must run on this host: over ssh it cannot read the image file"
-	}
+	const sshWhy = "the terminal must run on this host: over ssh it cannot read the image file"
 	termName := getenv("TERM")
-	if getenv("TMUX") != "" {
+	if getenv("TMUX") == "" {
+		if getenv("SSH_CONNECTION") != "" || getenv("SSH_TTY") != "" {
+			return false, sshWhy
+		}
+	} else {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		out, err := run(ctx, "tmux", "display-message", "-p", "#{client_termname}")
@@ -179,6 +182,13 @@ func Capable(getenv func(string) string, run Runner) (ok bool, why string) {
 		out, err = run(ctx, "tmux", "show-options", "-gv", "allow-passthrough")
 		if v := strings.TrimSpace(string(out)); err != nil || (v != "on" && v != "all") {
 			return false, "tmux allow-passthrough is off — run: tmux set -g allow-passthrough on"
+		}
+		// A pane keeps the SSH_CONNECTION it was created with, so ask tmux for
+		// the most recent client's. Any error, including "unknown variable",
+		// means the variable is unset and the client is local.
+		out, err = run(ctx, "tmux", "show-environment", "SSH_CONNECTION")
+		if err == nil && strings.HasPrefix(string(out), "SSH_CONNECTION=") {
+			return false, sshWhy
 		}
 		return true, ""
 	}

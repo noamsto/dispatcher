@@ -181,7 +181,12 @@ func (v mapView) Update(msg tea.Msg) (view, tea.Cmd) {
 			return v, nil
 		}
 		left, top := v.origin()
-		i := mapgeom.Hit(v.geom, v.place, msg.X-left, msg.Y-top)
+		x, y := msg.X-left, msg.Y-top
+		cols, rows := v.visible(v.boxW)
+		if x >= cols || y >= rows {
+			return v, nil
+		}
+		i := mapgeom.Hit(v.geom, v.place, x, y)
 		if i < 0 {
 			return v, nil
 		}
@@ -420,6 +425,14 @@ func (v mapView) origin() (left, top int) {
 	return max0(v.boxW-v.place.Cols) / 2, max0(v.boxH-mapInfoLines-v.place.Rows) / 2
 }
 
+// visible is how many cells of the stored block fit the box of width w. After a
+// shrink the old block outlives the new box until the re-render lands; fewer
+// cells just crop the stored image.
+func (v mapView) visible(w int) (cols, rows int) {
+	left, top := v.origin()
+	return min(v.place.Cols, max0(w-left)), min(v.place.Rows, max0(v.boxH-mapInfoLines-top))
+}
+
 func (v mapView) Keys() []key.Binding {
 	if keys := v.promptKeys(); keys != nil {
 		return keys
@@ -427,8 +440,12 @@ func (v mapView) Keys() []key.Binding {
 	if ok, _ := v.capable(); !ok {
 		return nil
 	}
+	selectHelp := "←/→"
+	if v.ownsTab() {
+		selectHelp = "←/→/tab"
+	}
 	keys := []key.Binding{
-		key.NewBinding(key.WithKeys("left", "right", "h", "l"), key.WithHelp("←/→/tab", "select")),
+		key.NewBinding(key.WithKeys("left", "right", "h", "l"), key.WithHelp(selectHelp, "select")),
 		key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "jump")),
 		key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open PR")),
 		key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "reply")),
@@ -466,10 +483,7 @@ func (v mapView) View(w, h int) string {
 	}
 
 	left, top := v.origin()
-	// After a shrink the old block outlives the new box until the re-render
-	// lands; fewer cells just crop the stored image.
-	cols := min(v.place.Cols, max0(w-left))
-	rows := min(v.place.Rows, max0(v.boxH-mapInfoLines-top))
+	cols, rows := v.visible(w)
 	lines := make([]string, 0, top+rows+mapInfoLines)
 	for range top {
 		lines = append(lines, "")

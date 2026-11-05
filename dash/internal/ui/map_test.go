@@ -1103,11 +1103,15 @@ func TestMapHelpAdvertisesTabAsSelectionOnlyWhileItOwnsTab(t *testing.T) {
 	nm, _ := loading.Update(keyRune('5'))
 	if bar := footer(nm.(Model)); !strings.Contains(bar, "tab next view") {
 		t.Fatalf("map before its image lands lost %q: %q", "tab next view", bar)
+	} else if strings.Contains(bar, "←/→/tab") || !strings.Contains(bar, "←/→ select") {
+		t.Fatalf("loading map footer advertises tab as selection: %q", bar)
 	}
 
 	off := newMapRig(t, false, false)
 	if bar := footer(off.press(off.model(160, 40), keyRune('5'))); !strings.Contains(bar, "tab next view") {
 		t.Fatalf("fallback footer lost %q: %q", "tab next view", bar)
+	} else if strings.Contains(bar, "←/→/tab") {
+		t.Fatalf("fallback footer advertises tab as selection: %q", bar)
 	}
 }
 
@@ -1140,5 +1144,36 @@ func TestMapShrinkBeforeTheNewRenderLandsKeepsInfoLinesAndWidth(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// After a shrink the stored block is larger than what View shows; a click on a
+// cell View does not draw must not pick the planet hidden there.
+func TestMapClickOutsideTheShownBlockAfterAShrinkIsIgnored(t *testing.T) {
+	r := newMapRig(t, false, true)
+	m := r.open()
+	g := loadMapGeometry(t)
+	// The new render is started but not delivered. The box is now 80x21, so
+	// 19 body rows of the 100x25 block show: body row 19 is the info line.
+	nm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = nm.(Model)
+	before := renders(r.fake)
+	for name, planet := range map[string]int{
+		"info line row":     6, // cell 78,20 in root rows
+		"counts line row":   7,
+		"past the last col": 3, // cell 86,9
+	} {
+		x, y := cellOf(g.Planets[planet].CX, g.Planets[planet].CY)
+		got := r.press(m, click(x, y))
+		if mapSel(got) != "feat/101-basil" {
+			t.Fatalf("%s: click on hidden planet %d selected %q", name, planet, mapSel(got))
+		}
+	}
+	if renders(r.fake) != before {
+		t.Fatalf("a click outside the shown block rendered")
+	}
+	x, y := cellOf(g.Planets[0].CX, g.Planets[0].CY)
+	if got := mapSel(r.press(m, click(x, y))); got != "feat/100-amber" {
+		t.Fatalf("a click inside the shown block selected %q, want planet 0", got)
 	}
 }
