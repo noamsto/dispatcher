@@ -60,7 +60,9 @@ var wakeStates = splitStates(defaultStates)
 
 // runOverseer is the lane of `crew fleet stream --overseer`, one per host:
 // overseer:<host> under the lane root, and the crew label of its lines.
-// --states, --park, --coalesce and --retry are checked but do not apply.
+// --states, --coalesce and --retry are checked but do not apply. An explicit
+// --park turns the lane into a one-shot park: it returns after the first
+// non-heartbeat line or when --park seconds have passed, whichever is first.
 func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetOptions) int {
 	if r.Interval == "" {
 		r.Interval = strconv.Itoa(defaultOverseerInterval)
@@ -70,6 +72,7 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 		say(stderr, "%s\n", msg)
 		return exitUsage
 	}
+	park := r.Park != ""
 	host, err := o.Host()
 	if err != nil {
 		say(stderr, "crew: fleet stream: host name: %s\n", oneLine(err))
@@ -100,6 +103,11 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 	tick := min(overseerPoll, c.interval, rediscover)
 	tickCall := c
 	tickCall.park = tick
+	out := &laneWriter{w: stdout, now: o.Clock.Now, last: o.Clock.Now()}
+	var sink lineSink = out
+	if park {
+		sink = &parkSink{lane: out}
+	}
 	v := &overseer{
 		c:          c,
 		o:          o,
@@ -107,7 +115,9 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 		lockd:      lockd,
 		stateDir:   stateHome(o.Getenv),
 		start:      clockMS(o.Options),
-		out:        &laneWriter{w: stdout, now: o.Clock.Now, last: o.Clock.Now()},
+		park:       park,
+		parkMS:     clockMS(o.Options) + c.park*1000,
+		out:        sink,
 		notes:      newNotes(&laneWriter{w: stderr, now: o.Clock.Now, last: o.Clock.Now()}),
 		sup:        &suppress{key: map[string]string{}, ts: map[string]int64{}},
 		collect:    o.CollectStatus,
@@ -121,6 +131,7 @@ func runOverseer(r Request, rediscover int64, stdout, stderr io.Writer, o FleetO
 		ticker:     &loop{c: tickCall, o: o.Options, cdir: lane},
 		buses:      map[string]*follower{},
 	}
+	v.loadDiffer()
 	return v.run(ctx, sigs)
 }
 
@@ -135,7 +146,9 @@ type overseer struct {
 	lockd      string
 	stateDir   string
 	start      int64
-	out        *laneWriter
+	park       bool
+	parkMS     int64
+	out        lineSink
 	notes      *notes
 	sup        *suppress
 	collect    func(context.Context, io.Writer) fleetpkg.StatusDoc
@@ -151,6 +164,40 @@ type overseer struct {
 
 	lastDiscover, lastDiff time.Time
 	discovered, diffed     bool
+}
+
+// lineSink is the overseer lane's stdout: the lane writer, optionally wrapped
+// in a parkSink so a park can notice the lane's first non-heartbeat line.
+type lineSink interface {
+	io.Writer
+	quiet() time.Duration
+}
+
+// parkSink forwards to the lane writer and records whether a non-heartbeat
+// line has been written. The lane is one goroutine, so the bool needs no lock.
+type parkSink struct {
+	lane *laneWriter
+	woke bool
+}
+
+func (s *parkSink) Write(p []byte) (int, error) {
+	n, err := s.lane.Write(p)
+	if err != nil {
+		return n, err
+	}
+	if !bytes.Contains(p, []byte(`"stream":"heartbeat"`)) {
+		s.woke = true
+	}
+	return n, nil
+}
+
+func (s *parkSink) quiet() time.Duration { return s.lane.quiet() }
+
+// parkWoke is whether this park should stop: a non-heartbeat line reached the
+// wire. It is false when the lane is not parking.
+func (v *overseer) parkWoke() bool {
+	s, ok := v.out.(*parkSink)
+	return v.park && ok && s.woke
 }
 
 // follower is one followed bus: its log, its repo label, the overseer's cursor
@@ -169,6 +216,9 @@ type follower struct {
 func (v *overseer) run(ctx context.Context, sigs chan os.Signal) int {
 	for {
 		v.ticker.writeTick()
+		if v.park && clockMS(v.o.Options) >= v.parkMS {
+			return v.shutdown()
+		}
 		if now := v.o.Clock.Now(); !v.discovered || now.Sub(v.lastDiscover) >= v.rediscover {
 			v.discovered, v.lastDiscover = true, now
 			discoverBuses(v.o.Discover, v.notes, v.buses,
@@ -179,14 +229,18 @@ func (v *overseer) run(ctx context.Context, sigs chan os.Signal) int {
 			if pending(sigs) {
 				return v.shutdown()
 			}
-			v.poll(v.buses[common])
+			if v.poll(v.buses[common]) {
+				return v.shutdown()
+			}
 		}
 		if pending(sigs) {
 			return v.shutdown()
 		}
 		if now := v.o.Clock.Now(); !v.diffed || now.Sub(v.lastDiff) >= v.interval {
 			v.diffed, v.lastDiff = true, now
-			v.diff(ctx)
+			if v.diff(ctx) {
+				return v.shutdown()
+			}
 		}
 		if quiet := v.out.quiet(); quiet >= time.Duration(v.c.heartbeat)*time.Second {
 			say(v.out, "%s\n", encode(heartbeatLine{
@@ -205,8 +259,78 @@ func (v *overseer) run(ctx context.Context, sigs chan os.Signal) int {
 }
 
 func (v *overseer) shutdown() int {
+	v.saveDiffer()
 	lock.Release(v.lockd)
 	return 0
+}
+
+// differName is the park lane's differ memory, in the lane dir beside its lock.
+const differName = "differ.json"
+
+// differPath is that file: every park of this lane is a fresh process, and this
+// is the memory it inherits.
+func (v *overseer) differPath() string { return filepath.Join(filepath.Dir(v.lockd), differName) }
+
+// loadDiffer restores the differ memory the lane's previous park saved, so a
+// condition that turned true between two parks still fires, lane_dead keeps
+// aging and a host's reachability edge survives. Only a park reads it: the
+// persistent lane outlives every document it diffs. A missing, unreadable or
+// unrecognised file is no memory at all, and this park re-baselines.
+func (v *overseer) loadDiffer() {
+	if !v.park {
+		return
+	}
+	data, err := os.ReadFile(v.differPath())
+	if err != nil {
+		return
+	}
+	var f differFile
+	if json.Unmarshal(data, &f) != nil || f.Version != differVersion {
+		return
+	}
+	v.moves = f.Lane.transitions()
+	for _, h := range f.Partners {
+		if h.Host == "" {
+			continue
+		}
+		v.partners[h.Host] = &partner{moves: h.Moves.transitions(), seen: h.Seen, ok: h.OK}
+	}
+}
+
+// saveDiffer hands the differ memory to the lane's next park, atomically: a
+// temp file in the same dir renamed over the old one. It is never fatal. A park
+// that cannot write simply re-baselines on its next run.
+func (v *overseer) saveDiffer() {
+	if !v.park {
+		return
+	}
+	f := differFile{Version: differVersion, Lane: v.moves.snapshot(), Partners: []hostMoves{}}
+	for _, host := range slices.Sorted(maps.Keys(v.partners)) {
+		p := v.partners[host]
+		f.Partners = append(f.Partners, hostMoves{Host: host, Seen: p.seen, OK: p.ok, Moves: p.moves.snapshot()})
+	}
+	path := v.differPath()
+	data, err := json.Marshal(f)
+	if err != nil {
+		v.fail("", "differ "+path, "differ: "+oneLine(err))
+		return
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+differName+".*")
+	if err != nil {
+		v.fail("", "differ "+path, "differ: "+oneLine(err))
+		return
+	}
+	_, werr := tmp.Write(append(data, '\n'))
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), path)
+	}
+	if werr != nil {
+		v.fail("", "differ "+path, "differ: "+oneLine(werr))
+		_ = os.Remove(tmp.Name())
+	}
 }
 
 // join follows a bus from the overseer's cursor for it. A missing cursor is
@@ -236,35 +360,35 @@ func (v *overseer) join(common string) {
 // next poll, or the next lane, folds it again. A log whose size and mtime are
 // those of the last completed poll is not folded again; the stat is taken
 // before the fold, so an append during it is seen next time.
-func (v *overseer) poll(b *follower) {
+func (v *overseer) poll(b *follower) bool {
 	fi, err := os.Stat(b.log)
 	if err != nil {
-		return
+		return v.parkWoke()
 	}
 	if fi.Size() == b.size && fi.ModTime().Equal(b.mtime) {
-		return
+		return v.parkWoke()
 	}
 	fold, ok, err := watch.FoldOverseer(b.log, v.c.crew, b.cursor)
 	if err != nil {
 		v.fail(b.repo, "fold "+b.log, "fold: "+oneLine(err))
-		return
+		return v.parkWoke()
 	}
 	if !ok {
 		b.size, b.mtime = fi.Size(), fi.ModTime()
-		return
+		return v.parkWoke()
 	}
 	if fold.Batch != nil {
 		fold.Batch["repo"] = b.repo
 		fold.Batch["host"] = v.host
 		var line bytes.Buffer
 		if jsonval.Encode(&line, fold.Batch, false) != nil {
-			return
+			return v.parkWoke()
 		}
 		if _, err := v.out.Write(line.Bytes()); err != nil {
-			return
+			return v.parkWoke()
 		}
 		if v.o.Flush != nil && v.o.Flush() != nil {
-			return
+			return v.parkWoke()
 		}
 	}
 	v.misrouted(b, fold.Misrouted)
@@ -275,6 +399,7 @@ func (v *overseer) poll(b *follower) {
 		// is the at-least-once side of the contract.
 		v.fail(b.repo, "cursor "+b.cursorPath, "cursor: "+oneLine(err))
 	}
+	return v.parkWoke()
 }
 
 // fail prints an error line, about repo's bus unless repo is "", once per
@@ -318,18 +443,18 @@ func senderText(s string) string {
 // dropped: a probe it cut short can read as a cleared condition, re-arming
 // its key. A drop is silent when a signal cut the read short, and an error
 // line, once per --heartbeat, when the read ran out of time.
-func (v *overseer) diff(ctx context.Context) {
+func (v *overseer) diff(ctx context.Context) bool {
 	read, cancel := context.WithTimeout(ctx, v.timeout)
 	defer cancel()
 	var text bytes.Buffer
 	doc := v.collect(read, &text)
 	v.notes.lines(text.String())
 	if ctx.Err() != nil {
-		return
+		return v.parkWoke()
 	}
 	if read.Err() != nil {
 		v.fail("", "status", "status: no document within "+v.timeout.String())
-		return
+		return v.parkWoke()
 	}
 	v.sup.clear("status")
 	now := clockMS(v.o.Options)
@@ -337,8 +462,11 @@ func (v *overseer) diff(ctx context.Context) {
 		say(v.out, "%s\n", encode(line))
 	}
 	for _, h := range doc.Hosts {
-		v.federate(h, now)
+		if v.federate(h, now) {
+			return true
+		}
 	}
+	return v.parkWoke()
 }
 
 // partner is one partner host's memory: its own transitions, whether its last
@@ -354,7 +482,7 @@ type partner struct {
 // federate folds one partner's view into the lane: the host's reachability
 // edge, its conditions while it is ok (an unreachable host's are carried, not
 // cleared), and the replies it holds for the overseer.
-func (v *overseer) federate(h fleetpkg.HostStatus, now int64) {
+func (v *overseer) federate(h fleetpkg.HostStatus, now int64) bool {
 	p := v.partners[h.Host]
 	if p == nil {
 		p = &partner{moves: newTransitions()}
@@ -370,13 +498,13 @@ func (v *overseer) federate(h fleetpkg.HostStatus, now int64) {
 	}
 	p.seen, p.ok = true, ok
 	if !ok {
-		return
+		return v.parkWoke()
 	}
 	doc := fleetpkg.StatusDoc{TS: *h.TS, Host: h.Host, Machine: h.Machine, Queue: h.Queue, Repos: h.Repos}
 	for _, line := range p.moves.next(doc, now) {
 		say(v.out, "%s\n", encode(line))
 	}
-	v.remote(h, p, now)
+	return v.remote(h, p, now)
 }
 
 // hostBatches is a partner's replies and misrouted msgs, per far bus.
@@ -394,7 +522,7 @@ const farSeenCap = 4 * fleetpkg.FarMaxEvents
 // a restart and --since read. A partner with no inbox starts at the lane's
 // start; the floor then rises to the answer's ts less farSettle, and only the
 // keys above it are kept.
-func (v *overseer) remote(h fleetpkg.HostStatus, p *partner, now int64) {
+func (v *overseer) remote(h fleetpkg.HostStatus, p *partner, now int64) bool {
 	batches, misrouted := hostBatches(h)
 	path := lanepkg.OverseerHostInbox(v.stateDir, h.Host)
 	in, ok := v.inboxes[h.Host]
@@ -435,13 +563,13 @@ func (v *overseer) remote(h fleetpkg.HostStatus, p *partner, now int64) {
 		batch := map[string]any{"cursor": json.Number(strconv.FormatInt(b.Cursor, 10)), "events": events, "repo": senderText(b.Repo), "host": h.Host}
 		var line bytes.Buffer
 		if jsonval.Encode(&line, invisible.Value(jsonval.Clamp(batch)), false) != nil {
-			return
+			return false
 		}
 		if _, err := v.out.Write(line.Bytes()); err != nil {
-			return
+			return false
 		}
 		if v.o.Flush != nil && v.o.Flush() != nil {
-			return
+			return false
 		}
 	}
 	var above []fleetpkg.FarMisrouted
@@ -467,6 +595,7 @@ func (v *overseer) remote(h fleetpkg.HostStatus, p *partner, now int64) {
 	if err := lanepkg.WriteFarInbox(path, next); err != nil {
 		v.fail("", "inbox "+path, "inbox: "+oneLine(err))
 	}
+	return v.parkWoke()
 }
 
 // farKey names a far row in the inbox: its bus's common dir and its JSON, map
@@ -566,6 +695,94 @@ type condKey struct {
 	id               string // the worker's session, or the hold id
 	kind             string // blocked_aging's trigger, or capacity_stuck's cause
 	host, repo       string // capacity_stuck's
+}
+
+// differFile is the park lane's differ memory as JSON, with the version that
+// wrote it. A file of any other version is ignored whole.
+type differFile struct {
+	Version  int         `json:"version"`
+	Lane     differMoves `json:"lane"`
+	Partners []hostMoves `json:"partners"`
+}
+
+// differVersion is the only layout this lane reads.
+const differVersion = 1
+
+// differMoves is transitions as JSON: its maps are keyed by structs, which JSON
+// cannot, so each goes out as an array of entries.
+type differMoves struct {
+	Seen      bool        `json:"seen"`
+	On        []condEntry `json:"on"`
+	Down      []refEntry  `json:"down"`
+	DeadSince []deadEntry `json:"dead_since"`
+}
+
+type condEntry struct {
+	Event string `json:"event"`
+	Key   string `json:"key"`
+	Crew  string `json:"crew"`
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	Host  string `json:"host"`
+	Repo  string `json:"repo"`
+}
+
+type refEntry struct {
+	Key  string `json:"key"`
+	Crew string `json:"crew"`
+}
+
+// deadEntry is one deadSince entry: the crew and when its lane was first seen
+// dead.
+type deadEntry struct {
+	refEntry
+	TS int64 `json:"ts"`
+}
+
+// hostMoves is one partner host's memory: whether its last document was ok and
+// its transitions. Its misrouted count and throttle start empty on each park.
+type hostMoves struct {
+	Host  string      `json:"host"`
+	Seen  bool        `json:"seen"`
+	OK    bool        `json:"ok"`
+	Moves differMoves `json:"moves"`
+}
+
+// snapshot is t as JSON may carry it: its maps as entries, in map order, which
+// a reader must not depend on.
+func (t *transitions) snapshot() differMoves {
+	m := differMoves{On: []condEntry{}, Down: []refEntry{}, DeadSince: []deadEntry{}}
+	if t == nil {
+		return m
+	}
+	m.Seen = t.seen
+	for k := range t.on {
+		m.On = append(m.On, condEntry{Event: k.event, Key: k.key, Crew: k.crew, ID: k.id, Kind: k.kind, Host: k.host, Repo: k.repo})
+	}
+	for ref := range t.down {
+		m.Down = append(m.Down, refEntry{Key: ref.key, Crew: ref.crew})
+	}
+	for ref, ts := range t.deadSince {
+		m.DeadSince = append(m.DeadSince, deadEntry{refEntry: refEntry{Key: ref.key, Crew: ref.crew}, TS: ts})
+	}
+	return m
+}
+
+// transitions is the differ memory m describes. Stale entries are safe: next
+// rebuilds on and deadSince from what the document still holds.
+func (m differMoves) transitions() *transitions {
+	t := newTransitions()
+	t.seen = m.Seen
+	for _, e := range m.On {
+		t.on[condKey{event: e.Event, key: e.Key, crew: e.Crew, id: e.ID, kind: e.Kind, host: e.Host, repo: e.Repo}] = true
+	}
+	for _, e := range m.Down {
+		t.down[crewRef{key: e.Key, crew: e.Crew}] = true
+	}
+	for _, e := range m.DeadSince {
+		t.deadSince[crewRef{key: e.Key, crew: e.Crew}] = e.TS
+	}
+	return t
 }
 
 // next diffs doc against the last evaluation and returns a line for each

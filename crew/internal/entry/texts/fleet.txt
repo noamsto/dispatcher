@@ -24,7 +24,7 @@ usage: crew fleet stream --crew ID [--rediscover S] [--states a,b,c] [--park S]
                          [--interval S] [--force]
        crew fleet stream --status --crew ID
        crew fleet stream --overseer [--interval S] [--rediscover S]
-                         [--heartbeat S] [--force]
+                         [--park S] [--heartbeat S] [--force]
        crew fleet stream --status --overseer
 
 One long-running lane that delivers a crew's bus events from every repo on the
@@ -70,8 +70,10 @@ and never a crew's own, and {"stream":"overseer","event":...} lines for
 dispatcher_down, dispatcher_up, lane_dead, blocked_aging, abandoned,
 capacity_stuck and misrouted_msg, plus heartbeat and error lines. A status read
 with no document within 20 s is dropped, with one error line per --heartbeat.
-It never reaps and never runs holds; --states, --park, --coalesce and --retry
-are accepted and do nothing here.
+It never reaps and never runs holds; --states, --coalesce and --retry are
+accepted and do nothing here. An explicit --park S makes the lane one-shot: it
+returns after its first non-heartbeat line or after S seconds, whichever is
+first.
 
 The overseer lane starts silent: a bus with no overseer cursor is read from the
 lane's start, and its first completed status read is a baseline that wakes
