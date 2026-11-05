@@ -25,7 +25,7 @@ func TestViewEmptyBeforeWindowSize(t *testing.T) {
 
 func TestTabSwitchingByDigits(t *testing.T) {
 	m := sized(newTestModel(t), 80, 24)
-	for want, digit := range []rune{'1', '2', '3', '4'} {
+	for want, digit := range []rune{'1', '2', '3', '4', '5'} {
 		nm, _ := m.Update(keyRune(digit))
 		m = nm.(Model)
 		if m.active != want {
@@ -52,7 +52,7 @@ func TestTabSwitchingByTab(t *testing.T) {
 		t.Fatalf("after shift+tab: active = %d, want 1", m.active)
 	}
 	// wraps around
-	m.active = 3
+	m.active = mapTab
 	nm, _ = m.Update(keyType(tea.KeyTab))
 	m = nm.(Model)
 	if m.active != 0 {
@@ -195,7 +195,7 @@ func TestFilterModeSwallowsGlobalKeys(t *testing.T) {
 
 func TestResizeAllViewsExactFrame(t *testing.T) {
 	sizes := [][2]int{{80, 24}, {60, 20}, {120, 40}, {20, 5}}
-	for view := 0; view < 4; view++ {
+	for view := range newTestModel(t).views {
 		for _, sz := range sizes {
 			m := sized(newTestModel(t), sz[0], sz[1])
 			m.active = view

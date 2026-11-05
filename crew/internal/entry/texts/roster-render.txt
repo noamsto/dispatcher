@@ -1,5 +1,6 @@
 usage: crew roster-render --crew ID [--pane %N] [--no-open] [--once | --detach]
                           [--interval S] [--quiet S]
+       crew roster-render --map --crew ID --px WxH --out FILE [--select BRANCH]
 
 Draw the crew's roster diagram from the bus and its live role panes, and publish
 it to the aeye carousel beside the recorded dispatcher pane.
@@ -14,6 +15,12 @@ it to the aeye carousel beside the recorded dispatcher pane.
   --quiet      Exit after S seconds with no working/blocked/dispatched worker
                and no outstanding hold (default 1800; 0 exits as soon as the
                crew drains)
+  --map        Draw once to a PNG without the legend and print the planets'
+               places as one JSON line; reads the bus, writes nothing else,
+               and refuses every flag above but --crew
+  --px         The PNG's size, WxH, each side 64 to 4096
+  --out        The PNG's path
+  --select     Ring the planet of this branch
 
 Usage errors exit 64, like `stream`; --once and --detach together are one.
 

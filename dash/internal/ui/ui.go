@@ -30,6 +30,7 @@ type Deps struct {
 	EventsPath    string
 	EventsPathErr error
 	Now           int64 // collection clock (data.Config.Now) stamped into the snapshot
+	Map           MapDeps
 }
 
 // Run starts the interactive dashboard. It resolves the roster's live bus
@@ -60,6 +61,7 @@ func Run(deps Deps) error {
 	}
 	m := NewModel(deps, time.Now, live)
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+	deps.Map.deleteImages(deps.InTmux)
 	if watcher != nil {
 		watcher.Close()
 	}

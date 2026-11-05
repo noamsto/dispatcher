@@ -27,7 +27,22 @@ type view interface {
 	Capturing() bool
 }
 
-var tabTitles = []string{"Live", "Budget", "Runs", "Settings"}
+// tabOwner is implemented by a view that sometimes wants tab and shift+tab
+// for itself; the root then forwards them instead of switching views.
+type tabOwner interface{ ownsTab() bool }
+
+// tabHooks is implemented by a view that does work while it is the active tab.
+// enter gets the first view's selection, so a view can open on what the
+// operator was looking at.
+type tabHooks interface {
+	enter(first data.Selection) (view, tea.Cmd)
+	leave() (view, tea.Cmd)
+}
+
+var tabTitles = []string{"Live", "Budget", "Runs", "Settings", "Map"}
+
+// mapTab is the Map view's index in Model.views.
+const mapTab = 4
 
 // snapshotMsg carries the root model's current Snapshot and per-source
 // loaded flags to every view's Update, not just the active one, so a tab
@@ -64,7 +79,7 @@ type Model struct {
 	statusAt  time.Time
 
 	active int
-	views  [4]view
+	views  [5]view
 
 	help help.Model
 	keys KeyMap
@@ -98,12 +113,14 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 		m.load[i].inFlight = true
 	}
 	lv := newLiveView(m.snap, m.loaded(), live, now)
-	lv.acts = actionDeps{ctx: ctx, runner: deps.Runner, crew: deps.Crew, inTmux: deps.InTmux}
-	m.views = [4]view{
+	acts := actionDeps{ctx: ctx, runner: deps.Runner, crew: deps.Crew, inTmux: deps.InTmux}
+	lv.acts = acts
+	m.views = [5]view{
 		lv,
 		newBudgetView(m.snap, m.loaded()),
 		newRunsView(m.snap, m.loaded()),
 		newSettingsView(m.snap, m.loaded()),
+		newMapView(m.snap, deps.Map, acts),
 	}
 	return m
 }
@@ -153,6 +170,53 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	nm, cmd := m.update(msg)
+	sync := nm.syncMapBox()
+	return nm, tea.Batch(cmd, sync)
+}
+
+// mapBox is the body cells the Map view may use. A status line is always
+// reserved so the image does not resize each time one appears.
+func (m Model) mapBox() (w, h int) {
+	footer := strings.Split(m.renderFooter(), "\n")
+	return m.width, max0(m.height - len(m.headerLines()) - 1 - len(footer))
+}
+
+// syncMapBox tells the Map view its box while it is the active tab; the other
+// tabs change the footer's height, so the box is recomputed on switching.
+func (m *Model) syncMapBox() tea.Cmd {
+	if m.active != mapTab || !m.ready {
+		return nil
+	}
+	w, h := m.mapBox()
+	nv, cmd := m.views[mapTab].(mapView).resize(w, h)
+	m.views[mapTab] = nv
+	return cmd
+}
+
+// switchTab makes tab i active, running the leaving and entering views'
+// hooks.
+func (m *Model) switchTab(i int) tea.Cmd {
+	if i == m.active {
+		return nil
+	}
+	var cmds []tea.Cmd
+	if h, ok := m.views[m.active].(tabHooks); ok {
+		nv, cmd := h.leave()
+		m.views[m.active] = nv
+		cmds = append(cmds, cmd)
+	}
+	m.active = i
+	cmds = append(cmds, m.syncMapBox())
+	if h, ok := m.views[i].(tabHooks); ok {
+		nv, cmd := h.enter(m.views[0].Selection())
+		m.views[i] = nv
+		cmds = append(cmds, cmd)
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -194,6 +258,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.views[0] = nv
 		return m, cmd
 
+	case mapRenderedMsg:
+		// A render lands whichever tab is active, like the roster messages.
+		nv, cmd := m.views[mapTab].Update(msg)
+		m.views[mapTab] = nv
+		return m, cmd
+
+	case tea.MouseMsg:
+		msg.Y -= len(m.headerLines())
+		nv, cmd := m.views[m.active].Update(msg)
+		m.views[m.active] = nv
+		return m, cmd
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -215,8 +291,10 @@ func (m *Model) broadcast() []tea.Cmd {
 	return cmds
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	if !m.views[m.active].Capturing() {
+		owner, _ := m.views[m.active].(tabOwner)
+		ownsTab := owner != nil && owner.ownsTab()
 		switch {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
@@ -225,16 +303,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, m.keys.Refresh):
 			return m, m.requestAll()
-		case key.Matches(msg, m.keys.Next):
-			m.active = (m.active + 1) % len(m.views)
-			return m, nil
-		case key.Matches(msg, m.keys.Prev):
-			m.active = (m.active - 1 + len(m.views)) % len(m.views)
-			return m, nil
+		case key.Matches(msg, m.keys.Next) && !ownsTab:
+			cmd := m.switchTab((m.active + 1) % len(m.views))
+			return m, cmd
+		case key.Matches(msg, m.keys.Prev) && !ownsTab:
+			cmd := m.switchTab((m.active - 1 + len(m.views)) % len(m.views))
+			return m, cmd
 		default:
 			if i := tabIndex(msg.String()); i >= 0 {
-				m.active = i
-				return m, nil
+				cmd := m.switchTab(i)
+				return m, cmd
 			}
 		}
 	}
@@ -249,9 +327,8 @@ func (m Model) View() string {
 		return ""
 	}
 
-	tabBar := m.renderTabs()
 	footer := m.renderFooter()
-	headerLines := strings.Split(tabBar, "\n")
+	headerLines := m.headerLines()
 	footerLines := strings.Split(footer, "\n")
 
 	statusLines := m.statusLines()
@@ -273,6 +350,9 @@ func (m Model) View() string {
 	}
 	return strings.Join(all, "\n")
 }
+
+// headerLines is the tab bar, which sits above every view's body.
+func (m Model) headerLines() []string { return strings.Split(m.renderTabs(), "\n") }
 
 // statusLines is the one-line action status, or nothing when unset.
 func (m Model) statusLines() []string {
@@ -335,10 +415,13 @@ func (m Model) renderFooter() string {
 	// before it drops the load status.
 	h := m.help
 	h.Width = max0(m.width - ansi.StringWidth(status))
+	owner, _ := m.views[m.active].(tabOwner)
+	capturing := m.views[m.active].Capturing()
 	keys := h.View(helpKeyMap{
 		global:    m.keys,
 		view:      m.views[m.active].Keys(),
-		capturing: m.views[m.active].Capturing(),
+		capturing: capturing,
+		ownsTab:   !capturing && owner != nil && owner.ownsTab(),
 	})
 	// help can overshoot Width by one item; clip it so the status stays whole.
 	keys = ansi.Truncate(keys, h.Width, "…")
@@ -354,13 +437,14 @@ type helpKeyMap struct {
 	global    KeyMap
 	view      []key.Binding
 	capturing bool
+	ownsTab   bool // the view uses tab for its own selection
 }
 
 func (k helpKeyMap) ShortHelp() []key.Binding {
 	if k.capturing {
 		return k.view
 	}
-	return append(slices.Clone(k.view), k.global.ShortHelp()...)
+	return append(slices.Clone(k.view), k.global.shortHelp(k.ownsTab)...)
 }
 
 func (k helpKeyMap) FullHelp() [][]key.Binding {
@@ -371,5 +455,5 @@ func (k helpKeyMap) FullHelp() [][]key.Binding {
 	if k.capturing {
 		return rows
 	}
-	return append(rows, k.global.FullHelp()...)
+	return append(rows, k.global.fullHelp(k.ownsTab)...)
 }

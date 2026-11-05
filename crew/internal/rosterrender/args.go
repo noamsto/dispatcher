@@ -2,7 +2,9 @@ package rosterrender
 
 import (
 	"cmp"
+	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 )
@@ -14,6 +16,19 @@ const (
 	errCrewRequired = "crew: roster-render: --crew is required"
 	errOnceDetach   = "crew: roster-render: --once and --detach are mutually exclusive"
 	errCrewID       = "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'"
+)
+
+// The map mode's refusals.
+const (
+	errMapConflict = "crew: roster-render: --map and %s are mutually exclusive"
+	errMapRequires = "crew: roster-render: --map requires %s"
+	errMapOnly     = "crew: roster-render: --px, --select and --out need --map"
+	errMapPx       = "crew: roster-render: --px must be WxH with each side from 64 to 4096 pixels"
+)
+
+const (
+	minMapPx = 64
+	maxMapPx = 4096
 )
 
 const (
@@ -33,6 +48,11 @@ type call struct {
 	pane         string
 	noOpen, once bool
 	detach       bool
+
+	mapMode      bool
+	pxW, pxH     int
+	selectBranch string
+	out          string
 }
 
 // Request is `crew roster-render`'s flags as the caller typed them. An empty
@@ -40,12 +60,22 @@ type call struct {
 type Request struct {
 	Crew, Pane, Interval, Quiet string
 	NoOpen, Once, Detach        bool
+	// Map is the one-shot map render: Px is WxH, Out the PNG's path and Select
+	// the branch to ring.
+	Map             bool
+	Px, Select, Out string
 }
 
 // check is the arm's five refusals that follow its flag loop, in that order: a
 // bad interval beats a missing crew. msg is the stderr line and code its status
 // when the arguments themselves fail.
 func check(r Request) (call, string, int) {
+	if r.Map {
+		return checkMap(r)
+	}
+	if r.Px != "" || r.Select != "" || r.Out != "" {
+		return call{}, errMapOnly, exitUsage
+	}
 	c := call{crew: r.Crew, pane: r.Pane, noOpen: r.NoOpen, once: r.Once, detach: r.Detach}
 	// The arm's initialisers: a flag the caller never passed still reaches the
 	// daemon with the default's own bytes.
@@ -81,6 +111,50 @@ func check(r Request) (call, string, int) {
 	c.interval, c.quiet = interval, quiet
 	c.intervalText, c.quietText = strconv.FormatInt(interval, 10), strconv.FormatInt(quiet, 10)
 	return c, "", exitOK
+}
+
+func checkMap(r Request) (call, string, int) {
+	c := call{mapMode: true, crew: r.Crew, selectBranch: r.Select, out: r.Out}
+	for _, f := range []struct {
+		name string
+		set  bool
+	}{
+		{"--once", r.Once}, {"--detach", r.Detach}, {"--pane", r.Pane != ""},
+		{"--no-open", r.NoOpen}, {"--interval", r.Interval != ""}, {"--quiet", r.Quiet != ""},
+	} {
+		if f.set {
+			return c, fmt.Sprintf(errMapConflict, f.name), exitUsage
+		}
+	}
+	switch {
+	case c.crew == "":
+		return c, errCrewRequired, exitUsage
+	case !bus.ValidCrewID(c.crew):
+		return c, errCrewID, exitUsage
+	case r.Px == "":
+		return c, fmt.Sprintf(errMapRequires, "--px"), exitUsage
+	case c.out == "":
+		return c, fmt.Sprintf(errMapRequires, "--out"), exitUsage
+	}
+	w, h, ok := parsePx(r.Px)
+	if !ok {
+		return c, errMapPx, exitUsage
+	}
+	c.pxW, c.pxH = w, h
+	return c, "", exitOK
+}
+
+func parsePx(s string) (w, h int, ok bool) {
+	ws, hs, found := strings.Cut(s, "x")
+	if !found {
+		return 0, 0, false
+	}
+	wn, okW := positive(ws)
+	hn, okH := positive(hs)
+	if !okW || !okH || min(wn, hn) < minMapPx || max(wn, hn) > maxMapPx {
+		return 0, 0, false
+	}
+	return int(wn), int(hn), true
 }
 
 // positive is bash's digit `case` plus the decimal read. A digit string too big for

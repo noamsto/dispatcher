@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -36,6 +37,21 @@ const (
 	// corners pre-pay in width so the picture comes out square.
 	canvasPad = 24.0
 	legendH   = 74.0
+
+	// planetPenwidth is every node's ring width; a blocked planet's is heavier.
+	// The map's hit radius includes half of it.
+	planetPenwidth  = 3.0
+	blockedPenwidth = 5.0
+
+	// selectGap is how far the selection ring stands off a planet's edge.
+	selectGap = 9.0
+
+	// A host label is a plaintext node that grows with its text, so the map
+	// bounds it by a width that overestimates Source Sans 3 at 12pt: the corners
+	// must hold the whole label for Graphviz's bounding box to equal them.
+	hostCharWidth = 7.2
+	hostMargin    = 16.0
+	hostMinWidth  = 54.0
 )
 
 // diagramFont is aeye's default render font (AEYE_D2_FONT). The native svg
@@ -129,21 +145,42 @@ func stmt(b *strings.Builder, head string, attrs ...string) {
 	b.WriteString(";\n")
 }
 
-// renderDOT is the whole picture as DOT for `neato -n`: every node is pinned, so
+func renderDOT(sc scene, lg legend) string { return buildDOT(sc, &lg, "") }
+
+// mapHalf is the half extent of the map's canvas around the dispatcher, wide
+// enough for the host labels.
+func mapHalf(sc scene) (halfX, halfY float64) {
+	half := sc.extent + canvasPad
+	halfX, halfY = half, half
+	for _, h := range sc.hosts {
+		w := max(hostMinWidth, float64(len(h.host))*hostCharWidth+hostMargin)
+		halfX = max(halfX, math.Abs(h.x)+w/2)
+	}
+	return halfX, halfY
+}
+
+// buildDOT is the whole picture as DOT for `neato -n`: every node is pinned, so
 // Graphviz only draws. Ids are generated from the branch order (p1, p1m1, h1),
 // never from user text, and every string goes through dotq.
-func renderDOT(sc scene, lg legend) string {
+//
+// A nil legend is the map: no graph label, so the corners are the canvas and
+// the layout's coordinates map onto it by a constant offset, and a ring around
+// the planet sel names, when there is one.
+func buildDOT(sc scene, lg *legend, sel string) string {
 	var b strings.Builder
 	b.WriteString("digraph roster {\n")
 	b.WriteString("  layout=neato; splines=false; outputorder=edgesfirst; pad=0.2; labelloc=b;\n")
 	b.WriteString("  " + str("bgcolor", colBG) + "; " + str("fontname", diagramFont) + "; fontsize=13; " + str("fontcolor", colLegend) + ";\n")
 	b.WriteString("  node [shape=circle style=filled " + str("fontname", diagramFont) + " fontsize=12 " +
-		str("fontcolor", colText) + " " + str("fillcolor", colFill) + " penwidth=3 fixedsize=true];\n")
+		str("fontcolor", colText) + " " + str("fillcolor", colFill) + " " + num("penwidth", planetPenwidth) + " fixedsize=true];\n")
 	b.WriteString("  edge [" + str("color", colEdge) + " penwidth=1.5 arrowhead=none];\n")
 
 	half := sc.extent + canvasPad
-	wide := half + legendH/2
-	for i, c := range [4][2]float64{{-wide, half}, {wide, half}, {-wide, -half}, {wide, -half}} {
+	halfX, halfY := half+legendH/2, half
+	if lg == nil {
+		halfX, halfY = mapHalf(sc)
+	}
+	for i, c := range [4][2]float64{{-halfX, halfY}, {halfX, halfY}, {-halfX, -halfY}, {halfX, -halfY}} {
 		stmt(&b, "c"+strconv.Itoa(i+1), `label=""`, "style=invis", "shape=point", "width=0", pos(c[0], c[1]))
 	}
 	stmt(&b, "dispatcher", str("label", "dispatcher"), num("width", sunSize), num("height", sunSize), pos(0, 0),
@@ -190,7 +227,17 @@ func renderDOT(sc scene, lg legend) string {
 		stmt(&b, "h"+strconv.Itoa(i+1), str("label", h.host), "shape=plaintext", "style=solid", "fixedsize=false",
 			str("fontcolor", colLegend), pos(h.x, h.y))
 	}
-	b.WriteString("  label=<" + legendHTML(lg) + ">;\n}\n")
+	for _, p := range sc.planets {
+		if p.branch != sel {
+			continue
+		}
+		d := p.size + 2*selectGap/72
+		stmt(&b, "sel", `label=""`, "style=solid", num("width", d), num("height", d), pos(p.x, p.y), str("color", colSun))
+	}
+	if lg != nil {
+		b.WriteString("  label=<" + legendHTML(*lg) + ">;\n")
+	}
+	b.WriteString("}\n")
 	return b.String()
 }
 
@@ -203,7 +250,7 @@ func planetAttrs(p placed, pulse bool) []string {
 	case p.failed:
 		attrs = append(attrs, str("color", colFailed), str("style", "filled,dashed"), str("fillcolor", colBG), str("fontcolor", colDim))
 	case p.class == classBlocked:
-		attrs = append(attrs, str("color", colBlocked), "penwidth=5")
+		attrs = append(attrs, str("color", colBlocked), num("penwidth", blockedPenwidth))
 		if pulse {
 			attrs = append(attrs, str("class", "aeye-pulse"))
 		}

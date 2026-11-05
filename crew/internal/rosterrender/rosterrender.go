@@ -2,6 +2,8 @@ package rosterrender
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -37,6 +39,8 @@ type Options struct {
 	// clock because that fold's child read `jq now`.
 	Clock  clock.Clock
 	Stderr io.Writer // every diagnostic, the arm's and the daemon's own
+	// Stdout is where `--map` prints its geometry; the daemon never writes to it.
+	Stdout io.Writer
 	// RosterDir is $CREW_ROSTER_DIR.
 	RosterDir string
 	// Self is the build this process was started as — the arm's `readlink -f
@@ -76,6 +80,9 @@ func Run(ctx context.Context, req Request, paths bus.Paths, o Options) int {
 	if msg != "" {
 		say(o.Stderr, "%s\n", msg)
 		return code
+	}
+	if c.mapMode {
+		return runMap(ctx, c, paths, o)
 	}
 	cdir := paths.CrewDir(c.crew)
 	if err := os.MkdirAll(cdir, 0o755); err != nil {
@@ -133,6 +140,61 @@ func Run(ctx context.Context, req Request, paths bus.Paths, o Options) int {
 	default:
 		return o.daemon(ctx, paths, cdir, c, daemon)
 	}
+}
+
+// mapOut is `--map`'s stdout: the image's size, where it is, and each planet in
+// slot order, which is the keyboard order.
+type mapOut struct {
+	V       int         `json:"v"`
+	W       int         `json:"w"`
+	H       int         `json:"h"`
+	PNG     string      `json:"png"`
+	Planets []mapPlanet `json:"planets"`
+}
+
+// runMap is one render of the crew's picture to a PNG, with the planets' places
+// on stdout. It runs before the crew dir or the working directory is touched
+// and writes nothing but the PNG: no lock, no records, no publish, and the slot
+// sequence is read but not saved, so the daemon's own diagram keeps its places.
+func runMap(ctx context.Context, c call, paths bus.Paths, o Options) int {
+	fail := func(err error) int {
+		say(o.Stderr, "crew: roster-render: %v\n", err)
+		return exitFailure
+	}
+	out, err := filepath.Abs(c.out)
+	if err != nil {
+		return fail(err)
+	}
+	fr, err := buildFrame(ctx, o, paths, paths.CrewDir(c.crew), c.crew, roleRows(o.rolePanes(ctx), paths.Dir, c.crew))
+	if err != nil {
+		return fail(err)
+	}
+	svg, err := o.Probes.Graphviz(ctx, []byte(buildDOT(fr.sc, nil, c.selectBranch)))
+	if err != nil {
+		return fail(err)
+	}
+	svg = finishSVG(svg)
+	vbW, vbH, ok := viewBoxSize(svg)
+	if !ok {
+		return fail(errors.New("neato: the svg has no viewBox"))
+	}
+	png, err := o.Probes.Resvg(ctx, svg, c.pxW, c.pxH)
+	if err != nil {
+		return fail(err)
+	}
+	if err := put(out, string(png), io.Discard); err != nil {
+		return fail(err)
+	}
+	halfX, halfY := mapHalf(fr.sc)
+	data, err := json.Marshal(mapOut{
+		V: 1, W: c.pxW, H: c.pxH, PNG: out,
+		Planets: mapGeometry(fr.sc, halfX, halfY, vbW, vbH, c.pxW, c.pxH),
+	})
+	if err != nil {
+		return fail(err)
+	}
+	say(o.Stdout, "%s\n", data)
+	return exitOK
 }
 
 // detachArgv names the entry the detached daemon re-enters. A worker entered

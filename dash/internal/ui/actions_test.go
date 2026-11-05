@@ -594,3 +594,38 @@ func TestFooterKeepsWholeLoadStatusWhenKeysOverflow(t *testing.T) {
 	}
 	assertWidth(t, foot, 160, 1)
 }
+
+func TestWorkerByBranch(t *testing.T) {
+	msg := "boom"
+	row := func(branch, state string) map[string]any {
+		return map[string]any{"branch": branch, "name": "n-" + branch, "state": state, "pr_url": "https://github.com/o/r/pull/1", "host": "h", "session": "s"}
+	}
+	want := func(crew, branch, state string) data.Worker {
+		return data.Worker{Crew: crew, Branch: branch, Session: "s", Name: "n-" + branch, State: state, PRURL: "https://github.com/o/r/pull/1", Host: "h"}
+	}
+	snap := data.Snapshot{Roster: data.RosterSection{Crews: []data.RosterCrew{
+		{ID: "c1", Workers: []map[string]any{row("feat/a", "working"), row("feat/gone", "reaped")}},
+		{ID: "c2", Workers: []map[string]any{row("feat/b", "idle")}},
+		{ID: "bad", Workers: []map[string]any{row("feat/x", "idle")}, WorkersError: &msg},
+	}}}
+
+	tests := []struct {
+		name, crew, branch string
+		want               data.Worker
+		ok                 bool
+	}{
+		{"found", "c1", "feat/a", want("c1", "feat/a", "working"), true},
+		{"reaped found", "c1", "feat/gone", want("c1", "feat/gone", "reaped"), true},
+		{"wrong crew", "c2", "feat/a", data.Worker{}, false},
+		{"unknown branch", "c1", "feat/nope", data.Worker{}, false},
+		{"crew with workers error", "bad", "feat/x", data.Worker{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := workerByBranch(snap, tt.crew, tt.branch)
+			if ok != tt.ok || got != tt.want {
+				t.Fatalf("workerByBranch(%q, %q) = %+v, %v; want %+v, %v", tt.crew, tt.branch, got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
