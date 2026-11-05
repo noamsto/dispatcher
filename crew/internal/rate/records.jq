@@ -1,12 +1,22 @@
-# The arm's run fold, verbatim from adapters/core/crew.sh (the `rate)` sweep
-# body). One record per RUN: a dispatch plus the branch events until the next
-# dispatch on that branch. $repo and $costmap arrive as jqrun vars — the arm
-# passed the costmap through --slurpfile only to dodge execve's E2BIG, and
-# jqrun hands values in memory.
+# The sweep's run fold. One record per RUN: a dispatch plus the branch events
+# until the next dispatch on that branch. The non-dispatch events are indexed
+# per branch once ($byb), so each run scans only its own branch's events
+# instead of the whole bus. $repo and $costmap arrive as jqrun vars, which
+# jqrun hands over in memory.
 (map(select(.kind=="dispatch"))) as $disp
+  # An empty $disp skips the index so a bus with no dispatches never evaluates
+  # the `.from` key. group_by is a stable sort: events keep bus order within a
+  # branch, which the `last` calls below depend on.
+  | (if ($disp|length) == 0 then {} else
+      (map(select(.kind != "dispatch"))
+       | group_by(((.from // "") | ltrimstr("worker:") | sub("#[^#]*$";"")))
+       | map({key: (.[0] | ((.from // "") | ltrimstr("worker:") | sub("#[^#]*$";""))), value: .})
+       | from_entries)
+    end) as $byb
   | [ ($disp | map(.branch) | unique)[] as $b
       | ($disp | map(select(.branch==$b)) | sort_by(.ts)) as $runs
       | ($runs|length) as $n
+      | (if ($b|type)=="string" then ($byb[$b] // []) else [] end) as $bev
       # Branch reuse (spec §Branch reuse and t2): the PR owner is the
       # earliest run on this branch whose OWN window contains a status
       # carrying a pr_url. Computed once per branch, entirely bus-derived,
@@ -15,10 +25,7 @@
           | $runs[$k] as $dk
           | $dk.ts as $tk0
           | (if $k+1 < $n then $runs[$k+1].ts else 9999999999999 end) as $tk1
-          | (map(select(
-                .kind!="dispatch"
-                and (((.from // "") | ltrimstr("worker:") | sub("#[^#]*$";"")) == $b)
-                and .ts >= $tk0 and .ts < $tk1))
+          | ($bev | map(select(.ts >= $tk0 and .ts < $tk1))
              | map(select(.kind=="status"))
              | map(.body.pr_url) | map(select(.!=null)) | last)
         ]) as $owner_prs
@@ -28,10 +35,7 @@
       | ($d.ts) as $t0
       | (if $i+1 < $n then $runs[$i+1].ts else 9999999999999 end) as $t1
       | (if $i+1 < $n then $runs[$i+1].ts else null end) as $window_end
-      | (map(select(
-            .kind!="dispatch"
-            and (((.from // "") | ltrimstr("worker:") | sub("#[^#]*$";"")) == $b)
-            and .ts >= $t0 and .ts < $t1))) as $ev
+      | ($bev | map(select(.ts >= $t0 and .ts < $t1))) as $ev
       # Reap's closing row is not the worker's own outcome.
       | ($ev | map(select(.kind=="status" and .body.state != "reaped"))) as $st
       | ($st | sort_by(.ts) | (.[-1] // null)) as $last

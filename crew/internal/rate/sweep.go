@@ -315,13 +315,14 @@ func (s *sweep) reconcile(records any, rows []any) (map[string]any, int) {
 			if callOK {
 				next, err := s.patch(viewProgram, gh, map[string]any{"p": patch})
 				if err != nil {
-					ghFailures++
-					continue
+					callOK = false
+				} else {
+					patch = next
+					mCommit = fieldText(patch, "merge_commit")
+					mAt = fieldText(patch, "merged_at_ms")
 				}
-				patch = next
-				mCommit = fieldText(patch, "merge_commit")
-				mAt = fieldText(patch, "merged_at_ms")
-			} else {
+			}
+			if !callOK {
 				ok = false
 				ghFailures++
 			}
@@ -338,11 +339,12 @@ func (s *sweep) reconcile(records any, rows []any) (map[string]any, int) {
 					"we": field(row, "win_end"),
 				})
 				if err != nil {
-					ghFailures++
-					continue
+					callOK = false
+				} else {
+					patch = next
 				}
-				patch = next
-			} else {
+			}
+			if !callOK {
 				ok = false
 				ghFailures++
 			}
@@ -355,11 +357,12 @@ func (s *sweep) reconcile(records any, rows []any) (map[string]any, int) {
 			if callOK {
 				next, err := s.patch(threadsProgram, gh, map[string]any{"p": patch})
 				if err != nil {
-					ghFailures++
-					continue
+					callOK = false
+				} else {
+					patch = next
 				}
-				patch = next
-			} else {
+			}
+			if !callOK {
 				ok = false
 				ghFailures++
 			}

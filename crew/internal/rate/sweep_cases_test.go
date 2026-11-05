@@ -574,7 +574,7 @@ func TestSweepGHFailureAfterAGoodSweepPreservesStoredT2(t *testing.T) {
 func TestSweepMergedRowFromASweepSkipsViewAndThreadsNextTime(t *testing.T) {
 	f := newSweepFixture(t)
 	f.prRun("feat/finality", 1000)
-	f.view = viewMerged5
+	f.view = `{"state":"MERGED","closedAt":null,"mergedAt":"2027-01-14T00:00:00Z","mergeCommit":{"oid":"deadbeef"},"commits":[],"reviews":[]}`
 	f.sweep()
 	row := f.only()
 	if row["pr_state"] != "MERGED" || row["first_ci_green"] != nil || row["unresolved_notes"] != float64(0) {
