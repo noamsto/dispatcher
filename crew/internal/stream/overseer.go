@@ -717,7 +717,6 @@ type differMoves struct {
 	DeadSince []deadEntry `json:"dead_since"`
 }
 
-// condEntry is one condKey entry.
 type condEntry struct {
 	Event string `json:"event"`
 	Key   string `json:"key"`
@@ -728,7 +727,6 @@ type condEntry struct {
 	Repo  string `json:"repo"`
 }
 
-// refEntry is one crewRef entry.
 type refEntry struct {
 	Key  string `json:"key"`
 	Crew string `json:"crew"`
