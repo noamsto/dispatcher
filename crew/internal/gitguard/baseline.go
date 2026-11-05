@@ -211,23 +211,32 @@ func noteKeys(stderr io.Writer, file, what string, recs, aliases []string) {
 	}
 }
 
-// showValue is ShowPair, or the key and why its value is withheld: an exec
+// classify is ShowPair, or, when the value is withheld instead, why: an exec
 // value may carry a token, and a value with userinfo or a query prints only
 // masked.
-func showValue(k, v string, aliases []string) (string, bool) {
-	kd := ShowKey(k)
+func classify(k, v string, aliases []string) (shown, reason string) {
 	if IsExec(k, v) {
-		return kd + ": value withheld (exec value)", true
+		return "", "exec value"
 	}
-	shown := ShowPair(k, v, aliases)
-	if !strings.ContainsAny(v, "@?") || shown != kd+"="+Quote(v) {
-		return shown, false
+	shown = ShowPair(k, v, aliases)
+	if !strings.ContainsAny(v, "@?") || shown != ShowKey(k)+"="+Quote(v) {
+		return shown, ""
 	}
-	reason := "outside the mask grammar"
+	reason = "outside the mask grammar"
 	if globAny(k, "remote.*.url", "remote.*.pushurl") && Rewritten(v, aliases) {
 		reason = "an insteadOf alias rewrites it"
 	}
-	return kd + ": value withheld (" + reason + ")", true
+	return "", reason
+}
+
+// showValue is classify as one line: the pair, or the key and why its value is
+// withheld.
+func showValue(k, v string, aliases []string) (string, bool) {
+	shown, reason := classify(k, v, aliases)
+	if reason == "" {
+		return shown, false
+	}
+	return ShowKey(k) + ": value withheld (" + reason + ")", true
 }
 
 // showRecorded is showValue, plus a pointer to read the value from one's own
@@ -244,6 +253,13 @@ func showRecorded(k, v string, aliases []string) string {
 // ownTerminal points at the command that reads k's value in the human's own
 // terminal.
 func ownTerminal(k string) string {
+	return ` — check it in your own terminal (od shows each byte as a character or an escape; each entry ends at \0), from each checkout or worktree that may set it: ` + ownTerminalCmd(k) + odPipe
+}
+
+const odPipe = " | env LC_ALL=C od -An -c -v"
+
+// ownTerminalCmd is the git config command, before odPipe, that reads k.
+func ownTerminalCmd(k string) string {
 	cmd := "git config -z --show-origin --get-all " + Quote(k)
 	// A URL-subsection key can carry userinfo ShowKey cannot mask either.
 	if match(urlSubsectionKeys, k, "") && strings.ContainsAny(k, "@?") {
@@ -255,5 +271,5 @@ func ownTerminal(k string) string {
 	// NUL, which no value can hold, and in the C locale od -c prints every byte in
 	// its own cell, as an ASCII character or an escape (another locale may print a
 	// multibyte character as its glyph), so no value can spell an entry's end.
-	return ` — check it in your own terminal (od shows each byte as a character or an escape; each entry ends at \0), from each checkout or worktree that may set it: ` + cmd + " | env LC_ALL=C od -An -c -v"
+	return cmd
 }

