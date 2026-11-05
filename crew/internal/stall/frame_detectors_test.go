@@ -868,6 +868,9 @@ func TestPermissionDetail(t *testing.T) {
 		return string(r[:min(len(r), max(160-len([]rune(suffix)), 0))]) + suffix
 	}
 	rule254c := strings.Repeat("╌", 40)
+	sep := strings.Repeat("─", 40) + "\n"
+	guardLine := `Dangerous rm operation on possibly-empty variable path: rm -f "$S"/*.log`
+	countdown := "⚠ Claude Code will automatically deny this request in 1:30, to avoid blocking progress on an unattended session"
 	topHead := " Bash command\n Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below\n Write \"hi\" to out.txt\n"
 	cases := []struct {
 		name, text, pane, want string
@@ -887,6 +890,18 @@ func TestPermissionDetail(t *testing.T) {
 			"prompt: permission — (unparsed) — pane %1"},
 		{"a top-level title need not be bare letters", " MCP tool: netstat\n Tip: a tool\n" + rule254c + "\n netstat -an\n" + rule254c + "\n", "%1",
 			"prompt: permission — MCP tool: netstat: netstat -an — pane %1"},
+		{"countdown dialog without a Tip row", sep + " Bash command\n" + rule254c + "\n rm -f x\n " + guardLine + "\n" + rule254c + "\n" + countdown + "\n Do you want to proceed?\n", "%1",
+			"prompt: permission — Bash command: rm -f x — pane %1"},
+		{"countdown dialog with a description row and no Tip", sep + " Bash command\n Remove logs\n" + rule254c + "\n rm -f x\n " + guardLine + "\n" + rule254c + "\n" + countdown + "\n Do you want to proceed?\n", "%1",
+			"prompt: permission — Bash command: rm -f x — pane %1"},
+		{"countdown dialog with Tip and description", sep + topHead + rule254c + "\n rm -f x\n" + rule254c + "\n " + guardLine + "\n" + countdown + "\n Do you want to proceed?\n", "%1",
+			"prompt: permission — Bash command: rm -f x — pane %1"},
+		{"countdown on a plain-layout dialog keeps the tool title", sep + topHead + rule254c + "\n printf hi > ./out.txt\n" + rule254c + "\n" + countdown + "\n Do you want to proceed?\n", "%1",
+			"prompt: permission — Bash command: printf hi > ./out.txt — pane %1"},
+		{"a stray rule above a countdown dialog is ignored", "some output\n" + rule254c + "\n" + sep + " Bash command\n" + rule254c + "\n rm -f x\n" + rule254c + "\n" + countdown + "\n", "%1",
+			"prompt: permission — Bash command: rm -f x — pane %1"},
+		{"a countdown with a wide-glyph gap still parses", sep + " Bash command\n" + rule254c + "\n rm -f x\n" + rule254c + "\n⚠  Claude Code will automatically deny this request in 0:05\n", "%1",
+			"prompt: permission — Bash command: rm -f x — pane %1"},
 		{"a stale rule box does not overwrite an agent-header request with a Tip title", hdr + "ls\n Write x\n Tip: y\n" + rule254c + "\n", "%1",
 			"prompt: permission — Bash command: ls — pane %1"},
 		{"a Tip title candidate with an unterminated rule box still lets the header request win", hdr + "ls\n Tip: x\n" + rule254c + "\n", "%1",
