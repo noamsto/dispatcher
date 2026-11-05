@@ -145,7 +145,6 @@ func stmt(b *strings.Builder, head string, attrs ...string) {
 	b.WriteString(";\n")
 }
 
-// renderDOT is the diagram with its legend.
 func renderDOT(sc scene, lg legend) string { return buildDOT(sc, &lg, "") }
 
 // mapHalf is the half extent of the map's canvas around the dispatcher, wide

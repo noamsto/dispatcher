@@ -18,8 +18,7 @@ const (
 	errCrewID       = "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'"
 )
 
-// The map mode's refusals. It is one render to a file, so every daemon flag is
-// refused rather than ignored.
+// The map mode's refusals.
 const (
 	errMapConflict = "crew: roster-render: --map and %s are mutually exclusive"
 	errMapRequires = "crew: roster-render: --map requires %s"
@@ -114,8 +113,6 @@ func check(r Request) (call, string, int) {
 	return c, "", exitOK
 }
 
-// checkMap is the refusals of `--map`: no daemon flag, a valid crew, a pixel
-// size and an output path.
 func checkMap(r Request) (call, string, int) {
 	c := call{mapMode: true, crew: r.Crew, selectBranch: r.Select, out: r.Out}
 	for _, f := range []struct {
@@ -147,7 +144,6 @@ func checkMap(r Request) (call, string, int) {
 	return c, "", exitOK
 }
 
-// parsePx reads WxH, each side within the bounds a PNG the dash can hold has.
 func parsePx(s string) (w, h int, ok bool) {
 	ws, hs, found := strings.Cut(s, "x")
 	if !found {

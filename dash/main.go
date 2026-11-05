@@ -94,9 +94,7 @@ func run() int {
 
 // resolveMap builds the Map tab's terminal seams. It runs before bubbletea
 // owns the terminal because the capability probe shells out to tmux and the
-// cell-size query reads the terminal's reply from the tty. A terminal that
-// cannot show the image yields a not-capable result carrying the reason; the
-// returned func releases the tty and the PNG path.
+// cell-size query reads the terminal's reply from the tty.
 func resolveMap(runner data.Runner) (ui.MapDeps, func()) {
 	notCapable := func(why string) ui.MapDeps {
 		return ui.MapDeps{Capable: func() (bool, string) { return false, why }}

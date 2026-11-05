@@ -16,7 +16,6 @@ type mapPlanet struct {
 	R      float64 `json:"r"`
 }
 
-// viewBoxSize is the width and height of the svg's root viewBox.
 func viewBoxSize(svg []byte) (w, h float64, ok bool) {
 	m := svgRootRe.FindSubmatch(svg)
 	if m == nil {

@@ -382,7 +382,7 @@ func (v liveView) Selection() data.Selection {
 // startAction runs the key's action on the selected worker.
 func (v liveView) startAction(a action) (view, tea.Cmd) {
 	sel, have := v.Selection().(data.Worker)
-	cmd := v.actionUI.start(a, sel, have)
+	cmd := v.start(a, sel, have)
 	return v, cmd
 }
 

@@ -44,8 +44,9 @@ func Placeholders(id, cols, rows int) []string {
 // Store returns the sequence that stores the PNG at path as a virtual
 // placement under id, sized cols x rows cells (pass the same values given to
 // Placeholders), without drawing anything. t=f makes the terminal read the
-// file itself, so it only works when the terminal runs on this host. q=2 suppresses the terminal's
-// replies, which would otherwise arrive on stdin as keystrokes.
+// file itself, so it only works when the terminal runs on this host. q=2
+// suppresses the terminal's replies, which would otherwise arrive on stdin as
+// keystrokes.
 func Store(id int, path string, cols, rows int, inTmux bool) string {
 	enc := base64.StdEncoding.EncodeToString([]byte(path))
 	return passthrough(fmt.Sprintf("\x1b_Gi=%d,a=T,U=1,q=2,f=100,c=%d,r=%d,t=f;%s\x1b\\",
@@ -151,7 +152,6 @@ func QueryCellPx(tty *os.File) (w, h int) {
 	return FallbackCellW, FallbackCellH
 }
 
-// Runner runs a program and returns its stdout.
 type Runner func(ctx context.Context, name string, args ...string) (stdout []byte, err error)
 
 // Capable reports whether this terminal can show unicode-placeholder images.

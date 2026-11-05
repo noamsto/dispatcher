@@ -241,7 +241,7 @@ func (v mapView) startAction(a action) (view, tea.Cmd) {
 		}
 		return v, statusCmd(a.String()+": "+reason, true)
 	}
-	cmd := v.actionUI.start(a, w, true)
+	cmd := v.start(a, w, true)
 	return v, cmd
 }
 
@@ -511,7 +511,6 @@ func mapMessage(w int, reason string) string {
 	return strings.Join(lines, "\n")
 }
 
-// infoLine describes the selected planet's worker.
 func (v mapView) infoLine() string {
 	if v.sel == "" {
 		return "no workers"
@@ -529,7 +528,6 @@ func (v mapView) infoLine() string {
 	return strings.Join(parts, " · ")
 }
 
-// countsLine is the displayed crew's workers per state.
 func (v mapView) countsLine() string {
 	counts := map[string]int{}
 	for _, c := range v.snap.Roster.Crews {

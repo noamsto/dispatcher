@@ -23,8 +23,6 @@ func (o Options) passProbes(ctx context.Context, common string) (roster.Probes, 
 		roster.Liveness{Windows: windows, Worktrees: wt}
 }
 
-// frame is what one read of the bus draws: the scene, the persisted sequence it
-// came from, the legend counts and the live count.
 type frame struct {
 	slots slotState
 	sc    scene
