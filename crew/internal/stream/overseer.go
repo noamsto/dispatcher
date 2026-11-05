@@ -309,13 +309,15 @@ func (v *overseer) saveDiffer() {
 		p := v.partners[host]
 		f.Partners = append(f.Partners, hostMoves{Host: host, Seen: p.seen, OK: p.ok, Moves: p.moves.snapshot()})
 	}
+	path := v.differPath()
 	data, err := json.Marshal(f)
 	if err != nil {
+		v.fail("", "differ "+path, "differ: "+oneLine(err))
 		return
 	}
-	path := v.differPath()
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+differName+".*")
 	if err != nil {
+		v.fail("", "differ "+path, "differ: "+oneLine(err))
 		return
 	}
 	_, werr := tmp.Write(append(data, '\n'))
@@ -326,6 +328,7 @@ func (v *overseer) saveDiffer() {
 		werr = os.Rename(tmp.Name(), path)
 	}
 	if werr != nil {
+		v.fail("", "differ "+path, "differ: "+oneLine(werr))
 		_ = os.Remove(tmp.Name())
 	}
 }

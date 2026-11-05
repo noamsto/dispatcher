@@ -1,10 +1,13 @@
 package stream
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -309,5 +312,192 @@ func TestOverseerPersistentLaneWritesNoDifferFile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(lane, differName)); !os.IsNotExist(err) {
 		t.Errorf("the persistent lane wrote %s (%v)", differName, err)
+	}
+}
+
+// The differ memory's whole DTO is the park boundary's contract: the lane's
+// seen flag, every condition key, its down crews and its lane_dead clock
+// round-trip through snapshot/transitions, and a partner host carries its own
+// moves, including the flattened deadEntry shape.
+func TestDifferMovesRoundTripThroughJSON(t *testing.T) {
+	tr := &transitions{
+		seen: true,
+		on: map[condKey]bool{
+			{event: "abandoned", key: "k1", crew: "c1", id: "worker:feat/a#s1-1"}:                       true,
+			{event: "blocked_aging", key: "k2", crew: "c2", id: "worker:feat/b#s2-1", kind: "budget"}:   true,
+			{event: "capacity_stuck", kind: "overshoot", host: "h1", repo: "o/c", crew: "c3", id: "h9"}: true,
+			{event: "lane_dead", key: "k4", crew: "c4"}:                                                 true,
+		},
+		down: map[crewRef]bool{
+			{key: "k1", crew: "c1"}: true,
+			{key: "k2", crew: "c2"}: true,
+			{key: "k4", crew: "c4"}: true,
+		},
+		deadSince: map[crewRef]int64{
+			{key: "k1", crew: "c9"}: ovStart,
+			{key: "k2", crew: "c8"}: ovStart + minute,
+			{key: "k5", crew: "c7"}: ovStart + 2*minute,
+		},
+	}
+	back := tr.snapshot().transitions()
+	if !back.seen {
+		t.Error("seen did not round-trip")
+	}
+	if !reflect.DeepEqual(back.on, tr.on) {
+		t.Errorf("on = %v, want %v", back.on, tr.on)
+	}
+	if !reflect.DeepEqual(back.down, tr.down) {
+		t.Errorf("down = %v, want %v", back.down, tr.down)
+	}
+	if !reflect.DeepEqual(back.deadSince, tr.deadSince) {
+		t.Errorf("deadSince = %v, want %v", back.deadSince, tr.deadSince)
+	}
+
+	data, err := json.Marshal(differFile{Version: differVersion,
+		Partners: []hostMoves{{Host: "mbp", Seen: true, OK: true, Moves: tr.snapshot()}}})
+	if err != nil {
+		t.Fatalf("marshal differFile: %v", err)
+	}
+	var got differFile
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal differFile: %v", err)
+	}
+	if len(got.Partners) != 1 {
+		t.Fatalf("partners = %v, want one", got.Partners)
+	}
+	if g := got.Partners[0]; g.Host != "mbp" || !g.Seen || !g.OK {
+		t.Errorf("partner = %+v, want host mbp seen and ok", g)
+	}
+	if round := got.Partners[0].Moves.transitions(); !round.seen ||
+		!reflect.DeepEqual(round.on, tr.on) || !reflect.DeepEqual(round.down, tr.down) || !reflect.DeepEqual(round.deadSince, tr.deadSince) {
+		t.Errorf("partner moves = %+v, want the lane's own", round)
+	}
+	// The flattened deadEntry: refEntry's key/crew sit beside ts, not nested.
+	if !strings.Contains(string(data), `"dead_since"`) || !strings.Contains(string(data), `"ts"`) {
+		t.Errorf("differ JSON %s lacks the flattened dead_since entries", data)
+	}
+}
+
+// The lane_dead clock and a partner host's memory survive a park boundary: park
+// 2 resumes c1's dead age from park 1's baseline (dead_s 660, not 0) and still
+// knows mbp was ok, so it reports the unreachable edge exactly once.
+func TestOverseerParkKeepsDeadSinceAndPartnerAcrossParks(t *testing.T) {
+	deadLane := func(ts int64) fleetpkg.StatusDoc {
+		w := ovWorker("worker:feat/a#s1-1", "pr_open")
+		return ovDoc(ts, ovRepo("alpha", withLane(ovCrew("c1", "live", "attended", w), "dead")))
+	}
+	r := newOvRig(t)
+	root := t.TempDir()
+	r.docs = []fleetpkg.StatusDoc{withHosts(deadLane(ovStart), okHost("mbp", ovStart))}
+
+	first := startParkIn(t, r, okRepos(), Request{Park: "270"}, root)
+	waitFor(t, "the first park's baseline document", func() bool { return first.waits.Load() >= 1 })
+	if lines := ofEvent(decodeLinesT(t, first.out.str()), "lane_dead"); len(lines) != 0 {
+		t.Fatalf("the baseline document fired lane_dead: %v", lines)
+	}
+	r.clock.advance(271 * time.Second)
+	first.kick()
+	if rc := first.wait(); rc != 0 {
+		t.Fatalf("first park exit = %d, want 0; stderr %q", rc, first.errb.str())
+	}
+
+	r.docs = []fleetpkg.StatusDoc{withHosts(deadLane(ovStart+11*minute), downHost("mbp", ovStart, "ssh failed"))}
+	second := startParkIn(t, r, okRepos(), Request{Park: "270"}, root)
+	if rc := second.wait(); rc != 0 {
+		t.Fatalf("second park exit = %d, want 0; stderr %q", rc, second.errb.str())
+	}
+	lines := decodeLinesT(t, second.out.str())
+	dead := ofEvent(lines, "lane_dead")
+	if len(dead) != 1 || dead[0]["crew"] != "c1" || dead[0]["repo"] != "o/alpha" || dead[0]["dead_s"] != float64(660) {
+		t.Fatalf("lane_dead = %v, want one for alpha's c1 with dead_s 660", dead)
+	}
+	unreachable := ofEvent(lines, "host_unreachable")
+	if len(unreachable) != 1 || unreachable[0]["host"] != "mbp" {
+		t.Fatalf("host_unreachable = %v, want one for mbp", unreachable)
+	}
+}
+
+// A differ file of an unknown version, or one that is not JSON at all, is no
+// memory: the park re-baselines on its first document instead of carrying the
+// down condition the file claims, then times out and still exits 0.
+func TestOverseerParkRebaselinesOnABadDifferFile(t *testing.T) {
+	for name, body := range map[string]string{
+		"unknown version": `{"version":9,"lane":{"seen":true,"on":[]},"partners":[]}`,
+		"not json":        `{not json`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newOvRig(t)
+			root := t.TempDir()
+			lane := filepath.Join(root, ovMe)
+			if err := os.MkdirAll(lane, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(lane, differName), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			r.docs = []fleetpkg.StatusDoc{ovDoc(ovStart, ovRepo("alpha", ovCrew("c1", "dead", "unattended")))}
+
+			p := startParkIn(t, r, okRepos(), Request{Park: "270"}, root)
+			waitFor(t, "the park's first document", func() bool { return p.waits.Load() >= 1 })
+			if lines := ofEvent(decodeLinesT(t, p.out.str()), "dispatcher_down"); len(lines) != 0 {
+				t.Fatalf("the bad differ file carried a condition: %v", lines)
+			}
+			r.clock.advance(271 * time.Second)
+			p.kick()
+			if rc := p.wait(); rc != 0 {
+				t.Fatalf("park exit = %d, want 0; stderr %q", rc, p.errb.str())
+			}
+		})
+	}
+}
+
+// A persistent lane ignores a differ file a park left in its lane: without
+// --park its memory is the process's own, so its first document is a baseline
+// even when the file claims the condition was already on.
+func TestOverseerPersistentLaneIgnoresAPreExistingDifferFile(t *testing.T) {
+	r := newOvRig(t)
+	r.docs = []fleetpkg.StatusDoc{ovDoc(ovStart, ovRepo("alpha", ovCrew("c1", "dead", "unattended")))}
+	root := t.TempDir()
+	lane := filepath.Join(root, ovMe)
+	if err := os.MkdirAll(lane, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lane, differName),
+		[]byte(`{"version":1,"lane":{"seen":true,"on":[]},"partners":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o := r.options(okRepos())
+	o.LaneRoot = root
+	reached := make(chan struct{}, 4)
+	o.Rediscover = func(time.Duration) <-chan time.Time {
+		select {
+		case reached <- struct{}{}:
+		default:
+		}
+		return make(chan time.Time)
+	}
+	var out, errb lockedWriter
+	done := make(chan int, 1)
+	go func() { done <- RunFleet(FleetRequest{Overseer: true}, &out, &errb, o) }()
+	// The select is reached only after the first diff, so this handshake proves
+	// the first document was folded before the stdout assertion.
+	select {
+	case <-reached:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the persistent lane never diffed its first document")
+	}
+	if lines := ofEvent(decodeLinesT(t, out.str()), "dispatcher_down"); len(lines) != 0 {
+		t.Errorf("the persistent lane printed %v for a pre-existing differ file", lines)
+	}
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case rc := <-done:
+		if rc != 0 {
+			t.Errorf("exit = %d, want 0; stderr %q", rc, errb.str())
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the persistent lane did not stop on TERM")
 	}
 }
