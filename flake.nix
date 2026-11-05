@@ -420,6 +420,15 @@
             ${modTests}/bin/mod-tests ${./adapters/claude-code/plugin}
             touch $out
           '';
+
+          # Validates the plugin tree the Home Manager module ships with the
+          # agent-browser skill joined in, built by the module's own helper: a
+          # symlinked component fails validation and its agents never load.
+          claude-plugin-joined = pkgs.runCommand "claude-plugin-joined" {} ''
+            export HOME=$TMPDIR
+            ${claudeCode}/bin/claude plugin validate ${import ./nix/join-skill.nix {inherit pkgs;} "claude-skills-agent-browser" ./adapters/claude-code/plugin "skills" ./nix/agent-browser-skill}
+            touch $out
+          '';
         };
 
         packages = mkPackages null;

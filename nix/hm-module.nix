@@ -181,11 +181,7 @@ self: {
   agentBrowserSkillTree = ./agent-browser-skill;
   withAgentBrowserSkill = engine: base: subdir:
     if cfg.agentBrowser.package != null && hasEngine engine
-    then
-      pkgs.symlinkJoin {
-        name = "${engine}-skills-agent-browser";
-        paths = [base (pkgs.runCommandLocal "agent-browser-skill-${engine}" {} "mkdir -p $out/${subdir} && cp -r ${agentBrowserSkillTree}/agent-browser $out/${subdir}/")];
-      }
+    then import ./join-skill.nix {inherit pkgs;} "${engine}-skills-agent-browser" base subdir agentBrowserSkillTree
     else base;
   claudePluginDir = withAgentBrowserSkill "claude" ccPlugin "skills";
   piSkillsDir = withAgentBrowserSkill "pi" "${self}/adapters/core/skills" ".";
