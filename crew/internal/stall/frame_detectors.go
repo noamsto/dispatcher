@@ -668,7 +668,13 @@ func permissionDetail(text, pane string) string {
 	clean = string(stripControl([]byte(clean)))
 
 	lines := strings.Split(clean, "\n")
-	ruled := slices.ContainsFunc(lines, rePermRule.MatchString)
+	ruled := false
+	for _, l := range lines {
+		if rePermRule.MatchString(l) {
+			ruled = true
+			break
+		}
+	}
 	// topTitle reports whether lines[i] opens a boxed top-level dialog: a
 	// non-blank, non-rule line whose next non-blank line is the `Tip:` hint. A
 	// version may label the tool with digits, punctuation or non-ASCII, so the
