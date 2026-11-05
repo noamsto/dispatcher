@@ -14,11 +14,12 @@ func TestExec(t *testing.T) {
 	for _, tt := range []struct {
 		body, run, output string // body "" = no tmux on PATH
 		fail              bool
+		timeout           time.Duration // only the orphan case needs a short one; a loaded builder misses tight deadlines
 	}{
-		{"echo a; echo b; echo; echo", "a\nb", "a\nb", false},
-		{"echo partial; exit 3", "partial", "", true},
-		{"", "", "", true},
-		{sleep + " 30 &\nwait", "", "", true}, // WaitDelay must free the orphaned sleep's pipe
+		{"echo a; echo b; echo; echo", "a\nb", "a\nb", false, 5 * time.Second},
+		{"echo partial; exit 3", "partial", "", true, 5 * time.Second},
+		{"", "", "", true, 5 * time.Second},
+		{sleep + " 30 &\nwait", "", "", true, 300 * time.Millisecond}, // WaitDelay must free the orphaned sleep's pipe
 	} {
 		dir := t.TempDir()
 		if tt.body != "" {
@@ -27,11 +28,11 @@ func TestExec(t *testing.T) {
 			}
 		}
 		t.Setenv("PATH", dir)
-		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), tt.timeout)
 		start := time.Now()
 		got, err := Exec{}.Run(ctx, "list-panes")
 		cancel()
-		if got != tt.run || (err != nil) != tt.fail || time.Since(start) > 5*time.Second {
+		if got != tt.run || (err != nil) != tt.fail || time.Since(start) > tt.timeout+5*time.Second {
 			t.Errorf("%q: Run = %q, %v after %v", tt.body, got, err, time.Since(start))
 		}
 		if tt.run != "" && Output(context.Background(), Exec{}, "list-panes") != tt.output {
