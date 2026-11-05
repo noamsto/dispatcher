@@ -180,6 +180,10 @@ const subagentPermission = "prompt: permission — Bash command: bats --filter g
 // topPermission is permission_bash.txt's relay row.
 const topPermission = "prompt: permission — Bash command: printf hi > ./out.txt — pane %1"
 
+// guardPermission is permission_bash_guard.txt's relay row: the guard and
+// countdown lines are not the request.
+const guardPermission = "prompt: permission — Bash command: rm -f \"$S\"/*.log — pane %1"
+
 func wd(detail string) string { return fmt.Sprintf(wdBlock, detail) }
 
 // meterFrame is a live claude meter whose clock is the tick.
@@ -939,6 +943,8 @@ func TestPermissionDetailFixtures(t *testing.T) {
 	cases := map[string]string{
 		"edge_permission_multibyte_header.txt": "prompt: permission — Bash command: bats --filter grant tests/dispatch-resume.bats — pane %1",
 		"permission_bash.txt":                  topPermission,
+		"permission_bash_guard.txt":            guardPermission,
+		"permission_bash_guard.color.txt":      guardPermission,
 		"permission_subagent.txt":              subagentPermission,
 	}
 	for name, prefix := range cases {

@@ -2,6 +2,7 @@ package stall
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -74,11 +75,12 @@ var (
 	// description sit under it, and the request is boxed between two U+254C
 	// rules. The title is read only on a frame that carries such a rule, and
 	// only when its next non-blank line is the hint.
-	rePermTip   = regexp.MustCompile(`^[` + space + `]*Tip:`)
-	rePermRule  = regexp.MustCompile(`^[` + space + `]*\x{254C}{4,}[` + space + `]*$`)
-	reLeadSpace = regexp.MustCompile(`^[` + space + `]+`)
-	reTrimSpace = regexp.MustCompile(`^[` + space + `]+|[` + space + `]+$`)
-	reRunSpace  = regexp.MustCompile(`[` + space + `]+`)
+	rePermTip       = regexp.MustCompile(`^[` + space + `]*Tip:`)
+	rePermCountdown = regexp.MustCompile(`^[` + space + `]*⚠ Claude Code will automatically deny this request in `)
+	rePermRule      = regexp.MustCompile(`^[` + space + `]*\x{254C}{4,}[` + space + `]*$`)
+	reLeadSpace     = regexp.MustCompile(`^[` + space + `]+`)
+	reTrimSpace     = regexp.MustCompile(`^[` + space + `]+|[` + space + `]+$`)
+	reRunSpace      = regexp.MustCompile(`[` + space + `]+`)
 )
 
 // frameDetect runs D1, D2, D1b, D7, D3, D0 and D9 on this tick's frame.
@@ -664,12 +666,18 @@ func permissionDetail(text, pane string) string {
 	clean = string(stripControl([]byte(clean)))
 
 	lines := strings.Split(clean, "\n")
-	ruled := false
-	for _, l := range lines {
-		if rePermRule.MatchString(l) {
-			ruled = true
-			break
+	ruled := slices.ContainsFunc(lines, rePermRule.MatchString)
+	// guarded: the dialog carries the auto-deny countdown, whose frame has
+	// no Tip row under the title.
+	guarded := slices.ContainsFunc(lines, rePermCountdown.MatchString)
+	evenRulesAbove := func(i int) bool {
+		n := 0
+		for _, l := range lines[:i] {
+			if rePermRule.MatchString(l) {
+				n++
+			}
 		}
+		return n%2 == 0
 	}
 	// topTitle reports whether lines[i] opens a boxed top-level dialog: a
 	// non-blank, non-rule line whose next non-blank line is the `Tip:` hint. A
@@ -683,7 +691,13 @@ func permissionDetail(text, pane string) string {
 			if reBlank.MatchString(lines[j]) {
 				continue
 			}
-			return rePermTip.MatchString(lines[j])
+			if rePermTip.MatchString(lines[j]) {
+				return true
+			}
+			// An auto-deny dialog has no Tip row: its title is followed
+			// directly by the rule box. A line inside a box (odd rule count
+			// above) never opens one.
+			return guarded && rePermRule.MatchString(lines[j]) && evenRulesAbove(i)
 		}
 		return false
 	}
