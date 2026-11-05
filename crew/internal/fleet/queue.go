@@ -117,7 +117,7 @@ type releasedHold struct {
 
 // fleetScan is one read of the registry repos' buses: their outstanding fleet
 // holds, the fleet holds released within the pending window, each repo's
-// newest fleet release, the common dirs of every registered repo (the places a
+// newest fleet release, the common dirs of every readable registered repo (the places a
 // crew's dispatcher may be registered), and what could not be read.
 type fleetScan struct {
 	holds       []*queued
@@ -338,7 +338,8 @@ type queue struct {
 // newQueue weighs a scan: the machine's load, with the scan's releases as
 // pending, each crew's eligibility, each repo's priority, and the holds in
 // queue order. A crew registers only in the repo it was launched in, so it is
-// eligible when its session is live in the hold's repo or any registered one.
+// eligible when its session is live in the hold's repo, or in any registered
+// one while a lane listens for the hold's repo.
 func newQueue(ctx context.Context, o QueueOptions, scan fleetScan, s QueueSettings, now time.Time) *queue {
 	t := o.Proc
 	if t == nil {
@@ -347,21 +348,25 @@ func newQueue(ctx context.Context, o QueueOptions, scan fleetScan, s QueueSettin
 	q := &queue{settings: s, nowMS: now.UnixMilli(), holds: slices.Clone(scan.holds), unread: scan.unread}
 	q.load, q.owned = measure(ctx, s.Budget, o.LoadOptions, scan.released)
 	prios := readPriorities(priorityPath(o.Getenv))
-	eligible := map[string]bool{}
-	live := func(common, crew string) bool {
-		return readSession(filepath.Join(common, "crew", "crews", crew), fleetLane(o.Getenv, crew), t, now).eligible()
+	eligible := map[crewRef]bool{}
+	read := func(common, crew string) session {
+		return readSession(filepath.Join(common, "crew", "crews", crew), fleetLane(o.Getenv, crew), t, now)
 	}
 	for _, h := range q.holds {
-		ok, seen := eligible[h.crew]
+		ref := crewRef{h.common, h.crew}
+		ok, seen := eligible[ref]
 		if !seen {
-			ok = live(h.common, h.crew)
+			own := read(h.common, h.crew)
+			ok = own.eligible()
 			for _, c := range scan.commons {
 				if ok {
 					break
 				}
-				ok = filepath.Clean(c) != filepath.Clean(h.common) && live(c, h.crew)
+				// Only the hold's repo is asked about it, so a dispatcher
+				// registered elsewhere needs a lane that listens here.
+				ok = filepath.Clean(c) != filepath.Clean(h.common) && own.listening() && read(c, h.crew).eligible()
 			}
-			eligible[h.crew] = ok
+			eligible[ref] = ok
 		}
 		h.eligible, h.repoPrio, h.lastRelease = ok, prios[filepath.Clean(h.common)], scan.lastRelease[h.common]
 	}

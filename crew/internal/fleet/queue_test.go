@@ -216,6 +216,14 @@ func (f *queueFix) laneTick(repo, crew, holder string, ageS int64) {
 	f.crewFile(repo, crew, "stream.tick", fmt.Sprintf(`{"pid":%s,"ts":%d,"park":300}`, holder, f.ms(ageS)))
 }
 
+// fleetTick gives crew a fleet-stream lane held by holder whose tick is ageS old.
+func (f *queueFix) fleetTick(crew, holder string, ageS int64) {
+	f.t.Helper()
+	dir := filepath.Join(f.env["XDG_STATE_HOME"], "crew", "fleet-stream", crew)
+	f.write(filepath.Join(dir, "stream.lock.d", "pid"), holder+"\n")
+	f.write(filepath.Join(dir, "stream.tick"), fmt.Sprintf(`{"pid":%s,"ts":%d,"park":300}`, holder, f.ms(ageS)))
+}
+
 func (f *queueFix) pane(cmd, name, branch, role, path string) {
 	f.panes = append(f.panes, strings.Join([]string{cmd, name, branch, role, path}, "\x1f"))
 }
@@ -354,19 +362,14 @@ func reasonOf(r queueRow) string {
 func TestQueueEligibilityReadsFleetLane(t *testing.T) {
 	f := newQueueFix(t, "alpha")
 	f.procs.Procs[100] = proctest.Proc{Elapsed: 5000}
-	fleetTick := func(crew, holder string, ageS int64) {
-		dir := filepath.Join(f.env["XDG_STATE_HOME"], "crew", "fleet-stream", crew)
-		f.write(filepath.Join(dir, "stream.lock.d", "pid"), holder+"\n")
-		f.write(filepath.Join(dir, "stream.tick"), fmt.Sprintf(`{"pid":%s,"ts":%d,"park":300}`, holder, f.ms(ageS)))
-	}
 	f.register("alpha", "c1", livePID)
 	f.laneTick("alpha", "c1", deadPID, 9000) // an earlier session's tick
 	f.register("alpha", "c2", livePID)
 	f.laneTick("alpha", "c2", deadPID, 4000)
-	fleetTick("c2", livePID, 10)
+	f.fleetTick("c2", livePID, 10)
 	f.register("alpha", "c3", livePID)
 	f.laneTick("alpha", "c3", livePID, 10)
-	fleetTick("c3", deadPID, 4000)
+	f.fleetTick("c3", deadPID, 4000)
 	f.register("alpha", "c4", livePID) // this session's lane, dead
 	f.laneTick("alpha", "c4", deadPID, 4000)
 	for i, c := range []string{"c1", "c2", "c3", "c4"} {
@@ -436,21 +439,47 @@ func TestQueueMembershipAndEligibility(t *testing.T) {
 
 // A crew registers only in the repo it was launched in, so a fleet hold it
 // adds from another repo is eligible when its dispatcher is live in any
-// registered repo, whether or not that repo's bus can be read.
+// registered repo and a lane listens for the hold's repo, whether or not the
+// dispatcher's repo bus can be read.
 func TestQueueCrewLiveInAnotherRepoIsEligible(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		setup func(f *queueFix)
 		want  string
 	}{
-		{"live in another registered repo", func(f *queueFix) { f.register("alpha", "c1", livePID) }, "due"},
-		{"dead in another registered repo", func(f *queueFix) { f.register("alpha", "c1", deadPID) }, "parked:ineligible"},
+		{"live in another registered repo", func(f *queueFix) {
+			f.register("alpha", "c1", livePID)
+			f.laneTick("beta", "c1", livePID, 10)
+		}, "due"},
+		{"live in another registered repo, no lane anywhere", func(f *queueFix) { f.register("alpha", "c1", livePID) }, "parked:ineligible"},
+		{"live in another registered repo, only its own lane", func(f *queueFix) {
+			f.register("alpha", "c1", livePID)
+			f.laneTick("alpha", "c1", livePID, 10)
+		}, "parked:ineligible"},
+		{"live in another registered repo, fleet-stream lane", func(f *queueFix) {
+			f.register("alpha", "c1", livePID)
+			f.fleetTick("c1", livePID, 10)
+		}, "due"},
+		{"live in another registered repo, dead lane in the hold's repo", func(f *queueFix) {
+			f.register("alpha", "c1", livePID)
+			f.laneTick("beta", "c1", deadPID, 10)
+		}, "parked:ineligible"},
+		{"live in another registered repo, stale lane in the hold's repo", func(f *queueFix) {
+			f.register("alpha", "c1", livePID)
+			f.laneTick("beta", "c1", livePID, 5000)
+		}, "parked:ineligible"},
+		{"dead in another registered repo", func(f *queueFix) {
+			f.register("alpha", "c1", deadPID)
+			f.laneTick("beta", "c1", livePID, 10)
+		}, "parked:ineligible"},
 		{"live only in an unregistered repo", func(f *queueFix) {
 			f.repo("walk", false)
 			f.register("walk", "c1", livePID)
+			f.laneTick("beta", "c1", livePID, 10)
 		}, "parked:ineligible"},
 		{"dead in the hold's repo, live in another", func(f *queueFix) {
 			f.register("beta", "c1", deadPID)
+			f.laneTick("beta", "c1", livePID, 10)
 			f.register("alpha", "c1", livePID)
 		}, "due"},
 		{"live in a repo whose bus is unreadable", func(f *queueFix) {
@@ -458,6 +487,7 @@ func TestQueueCrewLiveInAnotherRepoIsEligible(t *testing.T) {
 				t.Skip("root reads a mode 000 file")
 			}
 			f.register("alpha", "c1", livePID)
+			f.laneTick("beta", "c1", livePID, 10)
 			if err := os.Chmod(f.busPath("alpha"), 0o000); err != nil {
 				t.Fatal(err)
 			}

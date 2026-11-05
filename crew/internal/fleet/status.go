@@ -596,7 +596,12 @@ func readSession(dir, fleet string, t proc.Table, now time.Time) session {
 // dispatcher whose lane, if it ever ticked, is neither dead nor stale. A park
 // lane writes no tick, so it counts.
 func (s session) eligible() bool {
-	return s.state == "live" && (s.lane == nil || *s.lane != "dead" && *s.lane != "stale")
+	return s.state == "live" && (s.lane == nil || s.listening())
+}
+
+// listening is whether a lane ticked and is neither dead nor stale.
+func (s session) listening() bool {
+	return s.lane != nil && *s.lane != "dead" && *s.lane != "stale"
 }
 
 // dispatcher reads the crew's registration: pid file, pane file and the lane
