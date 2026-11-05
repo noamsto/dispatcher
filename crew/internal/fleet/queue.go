@@ -117,9 +117,11 @@ type releasedHold struct {
 
 // fleetScan is one read of the registry repos' buses: their outstanding fleet
 // holds, the fleet holds released within the pending window, each repo's
-// newest fleet release, and what could not be read.
+// newest fleet release, the common dirs of every registered repo (the places a
+// crew's dispatcher may be registered), and what could not be read.
 type fleetScan struct {
 	holds       []*queued
+	commons     []string
 	released    []releasedHold
 	lastRelease map[string]int64
 	unread      unread
@@ -174,6 +176,7 @@ func scanFleet(registry string, getenv func(string) string, read busReader, nowM
 		if r.Status != repos.StatusOK {
 			continue
 		}
+		s.commons = append(s.commons, r.Common)
 		events, _, skip := read(r.Common)
 		if skip != "" {
 			s.unread.repos[r.Common] = true
@@ -334,7 +337,8 @@ type queue struct {
 
 // newQueue weighs a scan: the machine's load, with the scan's releases as
 // pending, each crew's eligibility, each repo's priority, and the holds in
-// queue order.
+// queue order. A crew registers only in the repo it was launched in, so it is
+// eligible when its session is live in the hold's repo or any registered one.
 func newQueue(ctx context.Context, o QueueOptions, scan fleetScan, s QueueSettings, now time.Time) *queue {
 	t := o.Proc
 	if t == nil {
@@ -343,13 +347,21 @@ func newQueue(ctx context.Context, o QueueOptions, scan fleetScan, s QueueSettin
 	q := &queue{settings: s, nowMS: now.UnixMilli(), holds: slices.Clone(scan.holds), unread: scan.unread}
 	q.load, q.owned = measure(ctx, s.Budget, o.LoadOptions, scan.released)
 	prios := readPriorities(priorityPath(o.Getenv))
-	eligible := map[crewRef]bool{}
+	eligible := map[string]bool{}
+	live := func(common, crew string) bool {
+		return readSession(filepath.Join(common, "crew", "crews", crew), fleetLane(o.Getenv, crew), t, now).eligible()
+	}
 	for _, h := range q.holds {
-		ref := crewRef{h.common, h.crew}
-		ok, seen := eligible[ref]
+		ok, seen := eligible[h.crew]
 		if !seen {
-			ok = readSession(filepath.Join(h.common, "crew", "crews", h.crew), fleetLane(o.Getenv, h.crew), t, now).eligible()
-			eligible[ref] = ok
+			ok = live(h.common, h.crew)
+			for _, c := range scan.commons {
+				if ok {
+					break
+				}
+				ok = filepath.Clean(c) != filepath.Clean(h.common) && live(c, h.crew)
+			}
+			eligible[h.crew] = ok
 		}
 		h.eligible, h.repoPrio, h.lastRelease = ok, prios[filepath.Clean(h.common)], scan.lastRelease[h.common]
 	}
@@ -506,8 +518,8 @@ func (q *queue) first(rec map[holdKey]dueEntry) *queued {
 }
 
 // verdict is one crew's share of an evaluation: the due hold when it is the
-// crew's, and the crew's holds parked by demotion or as oversize, which its
-// owner must hear about. An ineligible crew's holds come back once it is.
+// crew's, and the crew's parked holds (demoted, oversize or ineligible), which
+// its owner must hear about.
 func (q *queue) verdict(common, crew string, rec map[holdKey]dueEntry, due *queued) hold.FleetVerdict {
 	mine := func(h *queued) bool { return h.crew == crew && filepath.Clean(h.common) == filepath.Clean(common) }
 	var v hold.FleetVerdict
@@ -515,7 +527,7 @@ func (q *queue) verdict(common, crew string, rec map[holdKey]dueEntry, due *queu
 		v.Due = []string{due.id}
 	}
 	for _, h := range q.holds {
-		if reason := q.parked(h, rec); mine(h) && (reason == "demoted" || reason == "oversize") {
+		if reason := q.parked(h, rec); mine(h) && reason != "" {
 			v.Parked = append(v.Parked, hold.ParkedHold{ID: h.id, Reason: reason})
 		}
 	}

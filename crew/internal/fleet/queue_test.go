@@ -429,8 +429,67 @@ func TestQueueMembershipAndEligibility(t *testing.T) {
 	if v := f.due("walk", "c8", false); len(v.Due) != 0 || len(v.Parked) != 0 {
 		t.Errorf("a walk-only crew got %+v", v)
 	}
-	if v := f.due("alpha", "c2", false); len(v.Parked) != 0 {
-		t.Errorf("an ineligible hold is no owner-visible park: %+v", v)
+	if v := f.due("alpha", "c2", false); fmt.Sprint(v.Parked) != "[{h-c2 ineligible}]" {
+		t.Errorf("an ineligible hold is an owner-visible park: %+v", v)
+	}
+}
+
+// A crew registers only in the repo it was launched in, so a fleet hold it
+// adds from another repo is eligible when its dispatcher is live in any
+// registered repo, whether or not that repo's bus can be read.
+func TestQueueCrewLiveInAnotherRepoIsEligible(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(f *queueFix)
+		want  string
+	}{
+		{"live in another registered repo", func(f *queueFix) { f.register("alpha", "c1", livePID) }, "due"},
+		{"dead in another registered repo", func(f *queueFix) { f.register("alpha", "c1", deadPID) }, "parked:ineligible"},
+		{"live only in an unregistered repo", func(f *queueFix) {
+			f.repo("walk", false)
+			f.register("walk", "c1", livePID)
+		}, "parked:ineligible"},
+		{"dead in the hold's repo, live in another", func(f *queueFix) {
+			f.register("beta", "c1", deadPID)
+			f.register("alpha", "c1", livePID)
+		}, "due"},
+		{"live in a repo whose bus is unreadable", func(f *queueFix) {
+			if os.Geteuid() == 0 {
+				t.Skip("root reads a mode 000 file")
+			}
+			f.register("alpha", "c1", livePID)
+			if err := os.Chmod(f.busPath("alpha"), 0o000); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(f.busPath("alpha"), 0o644) })
+		}, "due"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newQueueFix(t, "alpha", "beta")
+			tc.setup(f)
+			f.add("beta", "c1", "h", 1, 100)
+
+			var got string
+			for _, h := range f.doc().Holds {
+				got = h.State
+				if h.Reason != nil {
+					got += ":" + *h.Reason
+				}
+			}
+			if got != tc.want {
+				t.Errorf("state = %q, want %q", got, tc.want)
+			}
+			v := f.due("beta", "c1", false)
+			if tc.want == "due" {
+				if fmt.Sprint(v.Due) != "[h]" || len(v.Parked) != 0 {
+					t.Errorf("verdict %+v, want h due", v)
+				}
+				return
+			}
+			if len(v.Due) != 0 || fmt.Sprint(v.Parked) != "[{h ineligible}]" {
+				t.Errorf("verdict %+v, want h parked as ineligible", v)
+			}
+		})
 	}
 }
 

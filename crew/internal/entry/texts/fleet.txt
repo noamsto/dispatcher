@@ -159,7 +159,9 @@ hold the gate admits now), waiting, demoted (it stayed the due hold for
 fleetHeadTimeout without being released, `crew hold release`, so it queues
 behind every non-demoted hold) or parked, with the reason: oversize (heavier
 than fleetBudget), demoted (demoted, and due for another fleetHeadTimeout) or
-ineligible (its crew has no live dispatcher, or its lane is dead or stale).
+ineligible (its crew has no live dispatcher in any registered repo, one
+launched from an unregistered repo stays ineligible, or its lane is dead or
+stale).
 Read-only: it never writes fleet-due.json or the bus.
 
   --json         The document: {ts, budget, free, load_over, due, head,

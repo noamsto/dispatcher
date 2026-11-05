@@ -29,6 +29,11 @@ func parkedRowJSON(reason string, ids ...string) string {
 	return holdRows(fmt.Sprintf(`,"reason":%q`, reason), ids)
 }
 
+// mergeRows is one array of the rows of two arrays.
+func mergeRows(a, b string) string {
+	return strings.TrimSuffix(a, "]") + "," + strings.TrimPrefix(b, "[")
+}
+
 func holdRows(extra string, ids []string) string {
 	var b strings.Builder
 	b.WriteString("[")
@@ -211,7 +216,7 @@ func TestStreamDueAndParkedAnnounceTogether(t *testing.T) {
 	p := streamBus(t)
 	s := entryStub(t, map[string]string{
 		"watch":    parkedWatch("0"),
-		"hold due": `printf '%s\n' '` + holdDueJSON(holdRowJSON("h1"), parkedRowJSON("oversize", "p1")) + `'; exit 0`,
+		"hold due": `printf '%s\n' '` + holdDueJSON(holdRowJSON("h1"), mergeRows(parkedRowJSON("oversize", "p1"), parkedRowJSON("ineligible", "p2"))) + `'; exit 0`,
 	})
 	l := startLane(t, p, s, Request{}, laneOpts{})
 
@@ -220,7 +225,7 @@ func TestStreamDueAndParkedAnnounceTogether(t *testing.T) {
 	if got := holdIDsOf(t, line["holds"]); got != "h1" {
 		t.Errorf("holds = %v, want the due id", line["holds"])
 	}
-	if got := parkedOf(t, line["parked"]); got != "p1=oversize" {
+	if got := parkedOf(t, line["parked"]); got != "p1=oversize,p2=ineligible" {
 		t.Errorf("parked = %v, want the parked hold with its reason", line["parked"])
 	}
 }
