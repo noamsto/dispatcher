@@ -251,12 +251,12 @@ func TestHitRadius(t *testing.T) {
 		{"blocked", func(p *placed) { p.class = classBlocked }, pr + blockedPenwidth/2},
 		{"failed", func(p *placed) { p.class, p.failed = classDone, true }, pr + planetPenwidth/2},
 		{"waiting", func(p *placed) { p.class, p.waiting = classBlocked, true }, pr + waitGap + waitPenwidth/2},
-		{"ci pass", func(p *placed) { p.ci = "pass" }, pr + ciBadgeRadius},
-		{"ci pending", func(p *placed) { p.ci = "pending" }, pr + ciBadgeRadius + 1},
-		{"ci fail", func(p *placed) { p.ci = "fail" }, pr + ciBadgeRadius},
-		{"ci none", func(p *placed) { p.ci = "none" }, pr + ciBadgeRadius + 0.5},
+		{"ci pass", func(p *placed) { p.ci = "pass" }, pr + ciBadgeStandoff + ciBadgeRadius},
+		{"ci pending", func(p *placed) { p.ci = "pending" }, pr + ciBadgeStandoff + ciBadgeRadius + 1},
+		{"ci fail", func(p *placed) { p.ci = "fail" }, pr + ciBadgeStandoff + ciBadgeRadius},
+		{"ci none", func(p *placed) { p.ci = "none" }, pr + ciBadgeStandoff + ciBadgeRadius + 0.5},
 		{"unknown ci", func(p *placed) { p.ci = "bogus" }, pr + planetPenwidth/2},
-		{"waiting and ci pending", func(p *placed) { p.waiting, p.ci = true, "pending" }, pr + ciBadgeRadius + 1},
+		{"waiting and ci pending", func(p *placed) { p.waiting, p.ci = true, "pending" }, pr + ciBadgeStandoff + ciBadgeRadius + 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := placed{planet: planet{size: standardSize, class: classWorking}}
@@ -291,7 +291,7 @@ func TestMapGeometryRadiusCoversTheMarkers(t *testing.T) {
 		}
 		if _, badgePen, ok := ciBadge(p.ci); ok {
 			badges++
-			floor = max(floor, (pr+ciBadgeRadius+badgePen/2)*s)
+			floor = max(floor, (pr+ciBadgeStandoff+ciBadgeRadius+badgePen/2)*s)
 		}
 		if got.R < floor-0.01 {
 			t.Errorf("%s: r = %v, short of the outer edge of what is drawn, %v", p.branch, got.R, floor)

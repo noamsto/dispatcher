@@ -52,11 +52,14 @@ const (
 	selectGap = 9.0
 
 	// A waiting planet gets a dotted ring waitGap off its edge; a CI badge sits
-	// on the planet's rim at the upper right. The map's hit radius covers both.
-	waitGap       = 6.0
-	waitPenwidth  = 2.5
-	ciBadgeSize   = 0.2
-	ciBadgeRadius = ciBadgeSize * 72 / 2
+	// at the upper right, its centre ciBadgeStandoff outside the planet's edge so
+	// it overlaps the rim without covering the codename. The map's hit radius
+	// covers both.
+	waitGap         = 6.0
+	waitPenwidth    = 2.5
+	ciBadgeSize     = 0.2
+	ciBadgeRadius   = ciBadgeSize * 72 / 2
+	ciBadgeStandoff = ciBadgeRadius / 2
 
 	// Wedge boundary spokes start spokeInner from the dispatcher; the rim arc is
 	// a polyline of points at most arcStep degrees apart, inset arcInset from the
@@ -210,7 +213,7 @@ func hitRadius(p placed) float64 {
 		r = max(r, pr+waitGap+waitPenwidth/2)
 	}
 	if _, badgePen, ok := ciBadge(p.ci); ok {
-		r = max(r, pr+ciBadgeRadius+badgePen/2)
+		r = max(r, pr+ciBadgeStandoff+ciBadgeRadius+badgePen/2)
 	}
 	return r
 }
@@ -290,7 +293,7 @@ func buildDOT(sc scene, lg *legend, sel string) string {
 				str("color", colWaiting), num("penwidth", waitPenwidth))
 		}
 		if attrs, _, ok := ciBadge(p.ci); ok {
-			dx, dy := polar(p.size*72/2, 45)
+			dx, dy := polar(p.size*72/2+ciBadgeStandoff, 45)
 			stmt(&b, ids[p.key()]+"c", append([]string{num("width", ciBadgeSize), num("height", ciBadgeSize), pos(p.x+dx, p.y+dy)}, attrs...)...)
 		}
 	}

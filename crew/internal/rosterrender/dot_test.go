@@ -1062,9 +1062,9 @@ func TestDotCIBadge(t *testing.T) {
 				}
 			}
 			x, y := posOf(t, line)
-			dx, dy := polar(p.size*72/2, 45)
+			dx, dy := polar(p.size*72/2+ciBadgeStandoff, 45)
 			if math.Abs(x-(p.x+dx)) > 0.011 || math.Abs(y-(p.y+dy)) > 0.011 || dx <= 0 || dy <= 0 {
-				t.Errorf("badge at (%v, %v), want the planet's upper right rim (%v, %v)", x, y, p.x+dx, p.y+dy)
+				t.Errorf("badge at (%v, %v), want the planet's upper right (%v, %v)", x, y, p.x+dx, p.y+dy)
 			}
 			if strings.Index(out, "  "+ids[p.key()]+"c [") < strings.Index(out, "  "+ids[p.key()]+" [") {
 				t.Error("the badge is declared before its planet")

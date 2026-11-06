@@ -65,7 +65,7 @@ func loadCI(cdir string) map[string]ciEntry {
 	if err != nil {
 		return out
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var file ciFile
 	if err := json.NewDecoder(io.LimitReader(f, ciMaxFile)).Decode(&file); err != nil || file.V != ciVer {
 		return out
