@@ -97,9 +97,14 @@ type mapRender struct {
 
 func renderMap(t *testing.T, ws []dotWorker, w, h int, sel string) mapRender {
 	t.Helper()
-	needTools(t)
 	ps, _ := buildPlanets(dotModel(ws, 0), dotNow)
 	_, sc := arrange(newSlotState(), ps)
+	return renderScene(t, sc, w, h, sel)
+}
+
+func renderScene(t *testing.T, sc scene, w, h int, sel string) mapRender {
+	t.Helper()
+	needTools(t)
 	ctx := context.Background()
 	svg, err := Default().Graphviz(ctx, []byte(buildDOT(sc, nil, sel)))
 	if err != nil {
@@ -232,6 +237,133 @@ func TestMapHalfHoldsAHostLabel(t *testing.T) {
 	}
 	if x, y := mapHalf(scene{extent: 300}); x != y || x != 300+canvasPad {
 		t.Errorf("without hosts the canvas is square: %v x %v", x, y)
+	}
+}
+
+func TestHitRadius(t *testing.T) {
+	const pr = standardSize * 72 / 2
+	for _, tc := range []struct {
+		name string
+		mod  func(*placed)
+		want float64
+	}{
+		{"plain", func(*placed) {}, pr + planetPenwidth/2},
+		{"blocked", func(p *placed) { p.class = classBlocked }, pr + blockedPenwidth/2},
+		{"failed", func(p *placed) { p.class, p.failed = classDone, true }, pr + planetPenwidth/2},
+		{"waiting", func(p *placed) { p.class, p.waiting = classBlocked, true }, pr + waitGap + waitPenwidth/2},
+		{"ci pass", func(p *placed) { p.ci = "pass" }, pr + ciBadgeRadius},
+		{"ci pending", func(p *placed) { p.ci = "pending" }, pr + ciBadgeRadius + 1},
+		{"ci fail", func(p *placed) { p.ci = "fail" }, pr + ciBadgeRadius},
+		{"ci none", func(p *placed) { p.ci = "none" }, pr + ciBadgeRadius + 0.5},
+		{"unknown ci", func(p *placed) { p.ci = "bogus" }, pr + planetPenwidth/2},
+		{"waiting and ci pending", func(p *placed) { p.waiting, p.ci = true, "pending" }, pr + ciBadgeRadius + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := placed{planet: planet{size: standardSize, class: classWorking}}
+			tc.mod(&p)
+			if got := hitRadius(p); math.Abs(got-tc.want) > 1e-9 {
+				t.Errorf("hitRadius = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMapGeometryRadiusCoversTheMarkers: r reaches the outer edge of a planet's
+// waiting ring and CI badge, in pixels, and a plain planet's is what it was.
+func TestMapGeometryRadiusCoversTheMarkers(t *testing.T) {
+	ps, _ := repoPlanets(wedgeRoster())
+	_, sc := arrange(newSlotState(), ps)
+	halfX, halfY := mapHalf(sc)
+	vbW, vbH := 2*halfX+30, 2*halfY+30
+	s := min(800/vbW, 800/vbH)
+	var rings, badges, plain int
+	for i, got := range mapGeometry(sc, halfX, halfY, vbW, vbH, 800, 800) {
+		p := sc.planets[i]
+		pr := p.size * 72 / 2
+		pen := planetPenwidth
+		if !p.failed && p.class == classBlocked {
+			pen = blockedPenwidth
+		}
+		floor := (pr + pen/2) * s
+		if p.waiting {
+			rings++
+			floor = max(floor, (pr+waitGap+waitPenwidth/2)*s)
+		}
+		if _, badgePen, ok := ciBadge(p.ci); ok {
+			badges++
+			floor = max(floor, (pr+ciBadgeRadius+badgePen/2)*s)
+		}
+		if got.R < floor-0.01 {
+			t.Errorf("%s: r = %v, short of the outer edge of what is drawn, %v", p.branch, got.R, floor)
+		}
+		if !p.waiting && p.ci == "" {
+			plain++
+			if want := round2((pr + pen/2) * s); got.R != want {
+				t.Errorf("%s: a plain planet's r = %v, want %v", p.branch, got.R, want)
+			}
+		}
+	}
+	if rings == 0 || badges != 4 || plain == 0 {
+		t.Errorf("%d rings, %d badges, %d plain planets: the roster does not cover every case", rings, badges, plain)
+	}
+}
+
+func TestMapPlanetNamesItsRepoOnlyInAMultiRepoScene(t *testing.T) {
+	ps, _ := repoPlanets(wedgeRoster())
+	_, multi := arrange(newSlotState(), ps)
+	halfX, halfY := mapHalf(multi)
+	data, err := json.Marshal(mapGeometry(multi, halfX, halfY, 2*halfX, 2*halfY, 800, 800))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, repo := range []string{"alpha", "beta"} {
+		if !strings.Contains(string(data), `"repo":"`+repo+`"`) {
+			t.Errorf("no planet names repo %s in %s", repo, data)
+		}
+	}
+
+	_, single := arrange(newSlotState(), ps[:6])
+	if len(single.wedges) != 0 {
+		t.Fatal("one repo drew wedges")
+	}
+	halfX, halfY = mapHalf(single)
+	data, err = json.Marshal(mapGeometry(single, halfX, halfY, 2*halfX, 2*halfY, 800, 800))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"repo"`) {
+		t.Errorf("a single-repo scene carries a repo: %s", data)
+	}
+	old, _ := buildPlanets(dotModel(sixteenWorkers(), 0), dotNow)
+	_, sc := arrange(newSlotState(), old)
+	halfX, halfY = mapHalf(sc)
+	data, _ = json.Marshal(mapGeometry(sc, halfX, halfY, 2*halfX, 2*halfY, 800, 800))
+	if strings.Contains(string(data), `"repo"`) {
+		t.Errorf("a plain roster carries a repo: %s", data)
+	}
+}
+
+// TestMapGeometryWithWedges: the wedge labels widen the corners and the
+// planets of every wedge still land where the real svg puts them.
+func TestMapGeometryWithWedges(t *testing.T) {
+	ws := wedgeRoster()
+	for i := range ws {
+		// The svg names a planet by branch, so a branch can be drawn once here.
+		if ws[i].repo == "beta" && ws[i].branch == "feat/1-shared" {
+			ws[i].branch = "feat/10-beta"
+		}
+		if ws[i].base == "feat/1-shared" {
+			ws[i].base = "feat/10-beta"
+		}
+	}
+	ps, _ := repoPlanets(ws)
+	_, sc := arrange(newSlotState(), ps)
+	if len(sc.wedges) != 2 {
+		t.Fatalf("%d wedges, want 2", len(sc.wedges))
+	}
+	for _, size := range [][2]int{{900, 900}, {1000, 400}} {
+		r := renderScene(t, sc, size[0], size[1], "")
+		checkCentres(t, r, size[0], size[1])
 	}
 }
 

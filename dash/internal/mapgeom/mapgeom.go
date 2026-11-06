@@ -31,11 +31,13 @@ const (
 // at the image's top-left. For a remote-host hexagon R is the circumscribed
 // radius.
 type Planet struct {
-	Branch string  `json:"branch"`
-	Name   string  `json:"name"`
-	CX     float64 `json:"cx"`
-	CY     float64 `json:"cy"`
-	R      float64 `json:"r"`
+	Branch string `json:"branch"`
+	Name   string `json:"name"`
+	// Repo is the repo's label, empty when the crew spans one repo.
+	Repo string  `json:"repo,omitempty"`
+	CX   float64 `json:"cx"`
+	CY   float64 `json:"cy"`
+	R    float64 `json:"r"`
 }
 
 // Geometry is the decoded `--map` output. Planets are in ring/slot order,
@@ -63,15 +65,16 @@ func Parse(data []byte) (Geometry, error) {
 	if len(g.Planets) > MaxPlanets {
 		return Geometry{}, fmt.Errorf("map geometry: %d planets, max %d", len(g.Planets), MaxPlanets)
 	}
-	seen := make(map[string]bool, len(g.Planets))
+	// Two repos of one crew may each have a worker on the same branch name.
+	seen := make(map[[2]string]bool, len(g.Planets))
 	for i, p := range g.Planets {
 		if p.Branch == "" {
 			return Geometry{}, fmt.Errorf("map geometry: planet %d has no branch", i)
 		}
-		if seen[p.Branch] {
+		if seen[[2]string{p.Repo, p.Branch}] {
 			return Geometry{}, fmt.Errorf("map geometry: duplicate branch %q", p.Branch)
 		}
-		seen[p.Branch] = true
+		seen[[2]string{p.Repo, p.Branch}] = true
 		if !finite(p.CX, p.CY, p.R) || p.R <= 0 {
 			return Geometry{}, fmt.Errorf("map geometry: planet %q has a bad circle", p.Branch)
 		}

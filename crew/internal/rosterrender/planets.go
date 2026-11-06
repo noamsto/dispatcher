@@ -22,6 +22,10 @@ const (
 // folded into the legend count.
 const doneFold = 5 * time.Minute
 
+// staleStatus is how long a working or blocked worker may stay silent before it
+// is likely wedged. pr_open is exempt because silence is its normal state.
+const staleStatus = 45 * time.Minute
+
 // maxText bounds every bus- or tmux-sourced string that reaches the diagram.
 const maxText = 24
 
@@ -61,12 +65,21 @@ type planet struct {
 	size   float64
 	ts     float64 // the row's last-activity ms
 	moons  []moon
+
+	repo      string // the bus's repo identity (its git common dir)
+	repoLabel string
+	prURL     string
+	waiting   bool // blocked on a human answer
+	stale     bool
+	ci        string // "", "pass", "pending", "fail" or "none"
 }
 
 // legend is the count line: every drawn or folded worker by class, plus the
-// outstanding holds, which have no planet.
+// outstanding holds, which have no planet. waiting, stale, ci and repos count
+// drawn planets only.
 type legend struct {
 	working, blocked, prOpen, done, failed, holds int
+	waiting, stale, ci, repos                     int
 }
 
 // buildPlanets reads the jq model into typed planets and legend counts. now is
@@ -144,9 +157,50 @@ func buildPlanets(m map[string]any, now float64) ([]planet, legend) {
 		if class != classDone && class != classPROpen {
 			p.moons = moons[branch]
 		}
+		if class == classPROpen {
+			p.prURL, _ = row["pr_url"].(string)
+		}
+		p.waiting = waitingOn(class, row)
+		p.stale = !p.waiting && (class == classWorking || class == classBlocked) &&
+			ts > 0 && now*1000-ts > float64(staleStatus.Milliseconds())
 		out = append(out, p)
 	}
+	tally(out, &lg)
 	return out, lg
+}
+
+// tally overwrites the drawn-planet counts of lg.
+func tally(ps []planet, lg *legend) {
+	lg.waiting, lg.stale, lg.ci = 0, 0, 0
+	repos := map[string]bool{}
+	for _, p := range ps {
+		if p.waiting {
+			lg.waiting++
+		}
+		if p.stale {
+			lg.stale++
+		}
+		if p.ci != "" {
+			lg.ci++
+		}
+		if p.repo != "" {
+			repos[p.repo] = true
+		}
+	}
+	lg.repos = len(repos)
+}
+
+// waitingOn reports a blocked worker parked on a human answer. A watchdog row
+// is the watchdog's own report, not the worker asking.
+func waitingOn(class string, row map[string]any) bool {
+	if class != classBlocked {
+		return false
+	}
+	if source, _ := row["source"].(string); source == "watchdog" {
+		return false
+	}
+	detail, _ := row["detail"].(string)
+	return strings.HasPrefix(detail, "permission:") || strings.HasPrefix(detail, "acceptance:")
 }
 
 // classify maps a row state to its sector class; failed marks the done-sector

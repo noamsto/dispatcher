@@ -242,3 +242,117 @@ func TestPlanetMoons(t *testing.T) {
 		t.Errorf("dispatched moons = %+v", c)
 	}
 }
+
+func TestPlanetWaiting(t *testing.T) {
+	for _, tc := range []struct {
+		name, state, source, detail string
+		want                        bool
+	}{
+		{"permission", "blocked", "", "permission: Bash(rm -rf x)", true},
+		{"acceptance", "blocked", "worker", "acceptance: waive the gate?", true},
+		{"plain blocked", "blocked", "", "waiting on CI", false},
+		{"no detail", "blocked", "", "", false},
+		{"watchdog permission", "blocked", "watchdog", "permission: Bash(ls)", false},
+		{"watchdog acceptance", "blocked", "watchdog", "acceptance: x", false},
+		{"pr_open permission", "pr_open", "", "permission: Bash(ls)", false},
+		{"working permission", "working", "", "permission: Bash(ls)", false},
+		{"failed permission", "failed", "", "permission: Bash(ls)", false},
+	} {
+		row := planetRow("feat/1-a", tc.state)
+		row["detail"] = tc.detail
+		if tc.source != "" {
+			row["source"] = tc.source
+		}
+		if got := onlyPlanet(t, row).waiting; got != tc.want {
+			t.Errorf("%s: waiting = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestPlanetStale(t *testing.T) {
+	const limit = 45 * 60
+	for _, tc := range []struct {
+		name, state string
+		age         float64 // seconds since the row's last activity
+		want        bool
+	}{
+		{"working at limit", "working", limit, false},
+		{"working over", "working", limit + 1, true},
+		{"blocked at limit", "blocked", limit, false},
+		{"blocked over", "blocked", limit + 1, true},
+		{"pr_open never", "pr_open", 86400, false},
+		{"done never", "done", 120, false},
+		{"failed never", "failed", 120, false},
+	} {
+		row := planetRow("feat/1-a", tc.state)
+		row["ts"] = (planetNow - tc.age) * 1000
+		if got := onlyPlanet(t, row).stale; got != tc.want {
+			t.Errorf("%s: stale = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+
+	unknown := planetRow("feat/1-a", "working")
+	delete(unknown, "ts")
+	if onlyPlanet(t, unknown).stale {
+		t.Error("a row without a ts is stale")
+	}
+
+	waiting := planetRow("feat/1-a", "blocked")
+	waiting["ts"] = (planetNow - 3*limit) * 1000
+	waiting["detail"] = "permission: Bash(ls)"
+	if p := onlyPlanet(t, waiting); !p.waiting || p.stale {
+		t.Errorf("old waiting planet: waiting %v stale %v, want waiting and not stale", p.waiting, p.stale)
+	}
+}
+
+func TestPlanetPRURLOnlyForPROpen(t *testing.T) {
+	const url = "https://github.com/o/r/pull/7"
+	for state, want := range map[string]string{
+		"pr_open": url, "working": "", "blocked": "", "done": "", "failed": "",
+	} {
+		row := planetRow("feat/1-a", state)
+		row["pr_url"] = url
+		if got := onlyPlanet(t, row).prURL; got != want {
+			t.Errorf("%s prURL = %q, want %q", state, got, want)
+		}
+	}
+	row := planetRow("feat/1-a", "pr_open")
+	row["pr_url"] = 7
+	if got := onlyPlanet(t, row).prURL; got != "" {
+		t.Errorf("non-string pr_url = %q, want empty", got)
+	}
+}
+
+func TestPlanetTally(t *testing.T) {
+	ps := []planet{
+		{repo: "/a", waiting: true, ci: "pass"},
+		{repo: "/a", stale: true, ci: "none"},
+		{repo: "/b", stale: true},
+		{},
+	}
+	lg := legend{waiting: 9, stale: 9, ci: 9, repos: 9, working: 4}
+	tally(ps, &lg)
+	if lg.waiting != 1 || lg.stale != 2 || lg.ci != 2 || lg.repos != 2 || lg.working != 4 {
+		t.Errorf("legend = %+v, want waiting 1 stale 2 ci 2 repos 2 and working untouched", lg)
+	}
+
+	old := planetRow("feat/1-old", "done")
+	old["ts"] = (planetNow - 3600) * 1000
+	wait := planetRow("feat/2-wait", "blocked")
+	wait["detail"] = "acceptance: ok?"
+	wedged := planetRow("feat/3-wedged", "working")
+	wedged["ts"] = (planetNow - 3600) * 1000
+	_, lg = buildPlanets(planetModel(old, wait, wedged), planetNow)
+	if lg.waiting != 1 || lg.stale != 1 || lg.ci != 0 || lg.repos != 0 {
+		t.Errorf("built legend = %+v, want waiting 1 stale 1 ci 0 repos 0", lg)
+	}
+}
+
+func TestPlanetCallerFieldsStayZero(t *testing.T) {
+	for _, state := range []string{"working", "blocked", "pr_open", "done"} {
+		p := onlyPlanet(t, planetRow("feat/1-a", state))
+		if p.repo != "" || p.repoLabel != "" || p.ci != "" || p.waiting || p.stale || p.prURL != "" {
+			t.Errorf("%s planet carries new fields: %+v", state, p)
+		}
+	}
+}

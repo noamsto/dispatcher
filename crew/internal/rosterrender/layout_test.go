@@ -369,6 +369,326 @@ func TestSlotsLoadDropsRepeatedBlankAndOversize(t *testing.T) {
 	}
 }
 
+func repoWP(repo, branch string) planet {
+	p := wp(branch, classWorking)
+	p.repo, p.repoLabel = repo, repo
+	return p
+}
+
+// repoUniform returns n working planets named w00, w01, ... in one repo.
+func repoUniform(repo string, n int) []planet {
+	ps := uniform(n)
+	for i := range ps {
+		ps[i].repo, ps[i].repoLabel = repo, repo
+	}
+	return ps
+}
+
+func wedgeOf(t *testing.T, sc scene, repo string) wedge {
+	t.Helper()
+	for _, w := range sc.wedges {
+		if w.repo == repo {
+			return w
+		}
+	}
+	t.Fatalf("no wedge for %q in %+v", repo, sc.wedges)
+	return wedge{}
+}
+
+func repoBranches(sc scene, repo string) []string {
+	var out []string
+	for _, p := range sc.planets {
+		if p.repo == repo {
+			out = append(out, p.branch)
+		}
+	}
+	return out
+}
+
+type slotPos struct {
+	ring  int
+	angle float64
+}
+
+func positions(sc scene) map[[2]string]slotPos {
+	out := map[[2]string]slotPos{}
+	for _, p := range sc.planets {
+		out[[2]string{p.repo, p.branch}] = slotPos{p.ring, p.angle}
+	}
+	return out
+}
+
+func TestWedgesPartitionTheCircleAndHoldTheirPlanets(t *testing.T) {
+	ps := append(repoUniform("a", 5), repoUniform("b", 1)...)
+	ps = append(ps, repoUniform("c", 3)...)
+	state, sc := arrange(newSlotState(), ps)
+	if len(sc.wedges) != 3 || len(sc.planets) != 9 || len(state.Order) != 9 {
+		t.Fatalf("wedges %d, planets %d, persisted %d", len(sc.wedges), len(sc.planets), len(state.Order))
+	}
+	next, total := 0.0, 0.0
+	for _, w := range sc.wedges {
+		if !near(w.start, next) {
+			t.Errorf("wedge %q starts at %v, want %v", w.repo, w.start, next)
+		}
+		next = w.start + w.span
+		total += w.span
+	}
+	if !near(total, 360) {
+		t.Errorf("spans sum to %v", total)
+	}
+	if got, want := sc.wedges[0].repo+sc.wedges[1].repo+sc.wedges[2].repo, "abc"; got != want {
+		t.Errorf("wedge order %q, want %q", got, want)
+	}
+	// weights 5, 2 (floor) and 3
+	if want := 360 * 2.0 / 10; !near(sc.wedges[1].span, want) {
+		t.Errorf("one-planet wedge spans %v, want %v", sc.wedges[1].span, want)
+	}
+	for _, p := range sc.planets {
+		w := wedgeOf(t, sc, p.repo)
+		if p.angle <= w.start || p.angle >= w.start+w.span {
+			t.Errorf("%s/%s at %v outside wedge [%v, %v]", p.repo, p.branch, p.angle, w.start, w.start+w.span)
+		}
+		if !near(compass(p.x, p.y), p.angle) {
+			t.Errorf("%s/%s at %v but angle %v", p.repo, p.branch, compass(p.x, p.y), p.angle)
+		}
+		if p.ring == 0 && !near(math.Hypot(p.x, p.y), minRadius) {
+			t.Errorf("%s/%s ring 0 at radius %v", p.repo, p.branch, math.Hypot(p.x, p.y))
+		}
+	}
+	for _, w := range sc.wedges {
+		if w.label != w.repo {
+			t.Errorf("wedge %q labelled %q", w.repo, w.label)
+		}
+	}
+}
+
+func TestWedgesKeepSameBranchInTwoReposApart(t *testing.T) {
+	ps := []planet{repoWP("a", "feat"), repoWP("b", "feat"), repoWP("a", "z")}
+	state, sc := arrange(newSlotState(), ps)
+	if len(sc.planets) != 3 {
+		t.Fatalf("drawn %d, want 3", len(sc.planets))
+	}
+	pos := positions(sc)
+	if pos[[2]string{"a", "feat"}] == pos[[2]string{"b", "feat"}] {
+		t.Errorf("the same branch in two repos shares a place")
+	}
+
+	path := filepath.Join(t.TempDir(), "slots.json")
+	if err := saveSlots(path, state, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadSlots(path); !reflect.DeepEqual(got, state) || len(got.Order) != 3 {
+		t.Errorf("round trip = %+v, want %+v", got, state)
+	}
+}
+
+func TestWedgesStackResolvesOnlyInsideItsRepo(t *testing.T) {
+	c := stackedWP("c", classWorking, "a")
+	c.repo, c.repoLabel = "a", "a"
+	ps := []planet{repoWP("a", "a"), repoWP("a", "z"), c, repoWP("b", "a"), repoWP("b", "b"), repoWP("b", "c")}
+	_, sc := arrange(newSlotState(), ps)
+	if got, want := repoBranches(sc, "a"), []string{"a", "c", "z"}; !slices.Equal(got, want) {
+		t.Errorf("repo a = %v, want %v", got, want)
+	}
+	if got, want := repoBranches(sc, "b"), []string{"a", "b", "c"}; !slices.Equal(got, want) {
+		t.Errorf("repo b = %v, want %v", got, want)
+	}
+}
+
+func TestWedgesSamePlaceOnRedraw(t *testing.T) {
+	ps := append(repoUniform("a", 6), repoUniform("b", 4)...)
+	state, sc := arrange(newSlotState(), ps)
+	again, sc2 := arrange(state, ps)
+	if !reflect.DeepEqual(positions(sc), positions(sc2)) || !reflect.DeepEqual(again, state) {
+		t.Errorf("a redraw moved planets")
+	}
+}
+
+func TestWedgesGrowingARepoKeepsTheOthersOrder(t *testing.T) {
+	a := []planet{repoWP("a", "a1"), repoWP("a", "a2"), repoWP("a", "a3")}
+	b := []planet{repoWP("b", "b1"), repoWP("b", "b2")}
+	state, sc := arrange(newSlotState(), append(slices.Clone(a), b...))
+	wantA, wantB := repoBranches(sc, "a"), repoBranches(sc, "b")
+
+	grown := append(slices.Clone(a), repoWP("a", "a0"))
+	state, sc = arrange(state, append(grown, b...))
+	if got := repoBranches(sc, "b"); !slices.Equal(got, wantB) {
+		t.Errorf("repo b = %v after a grew, want %v", got, wantB)
+	}
+	if got := repoBranches(sc, "a"); !slices.Equal(got, append(slices.Clone(wantA), "a0")) {
+		t.Errorf("repo a = %v, want %v then the new one", got, wantA)
+	}
+	if sc.wedges[0].repo != "a" || sc.wedges[1].repo != "b" {
+		t.Errorf("wedge order changed: %+v", sc.wedges)
+	}
+
+	// A new repo sorting before both still goes after them.
+	ps := append(append(slices.Clone(grown), b...), repoWP("0", "n1"))
+	_, sc = arrange(state, ps)
+	var order []string
+	for _, w := range sc.wedges {
+		order = append(order, w.repo)
+	}
+	if want := []string{"a", "b", "0"}; !slices.Equal(order, want) {
+		t.Errorf("wedge order = %v, want %v", order, want)
+	}
+	if got := repoBranches(sc, "b"); !slices.Equal(got, wantB) {
+		t.Errorf("repo b = %v after a third repo, want %v", got, wantB)
+	}
+	if got, want := repoBranches(sc, "a"), append(slices.Clone(wantA), "a0"); !slices.Equal(got, want) {
+		t.Errorf("repo a = %v after a third repo, want %v", got, want)
+	}
+}
+
+func TestWedgesLoadAStateFromTheSingleRepoEra(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "slots.json")
+	body := `{"v":2,"order":[{"branch":"a1","class":"working"},{"branch":"b1","class":"working"},{"branch":"a2","class":"working"}]}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ps := []planet{repoWP("a", "a1"), repoWP("a", "a2"), repoWP("b", "b1")}
+	state, sc := arrange(loadSlots(path), ps)
+	if len(sc.wedges) != 2 || len(sc.planets) != 3 || len(state.Order) != 3 {
+		t.Fatalf("wedges %d, planets %d, persisted %d", len(sc.wedges), len(sc.planets), len(state.Order))
+	}
+	for _, e := range state.Order {
+		if e.Repo == "" {
+			t.Errorf("entry %+v persisted without its repo", e)
+		}
+	}
+}
+
+func TestWedgesAWedgeOfManyPlanetsUsesOuterRings(t *testing.T) {
+	ps := append(repoUniform("a", 40), repoUniform("b", 2)...)
+	_, sc := arrange(newSlotState(), ps)
+	if len(sc.planets) != 42 {
+		t.Fatalf("drawn %d, want 42", len(sc.planets))
+	}
+	w := wedgeOf(t, sc, "a")
+	counts := map[int]int{}
+	outer := 0.0
+	for _, p := range sc.planets {
+		if p.repo != "a" {
+			continue
+		}
+		counts[p.ring]++
+		outer = max(outer, math.Hypot(p.x, p.y))
+		if want := minRadius + float64(p.ring)*ringStep; !near(math.Hypot(p.x, p.y), want) {
+			t.Errorf("ring %d planet at radius %v, want %v", p.ring, math.Hypot(p.x, p.y), want)
+		}
+	}
+	if len(counts) < 2 {
+		t.Fatalf("40 planets on %d rings", len(counts))
+	}
+	for ring, n := range counts {
+		r := minRadius + float64(ring)*ringStep
+		if limit := max(1, int(r*w.span*math.Pi/180/arcPerPlanet)); n > limit {
+			t.Errorf("ring %d holds %d, cap %d", ring, n, limit)
+		}
+		if ring < len(counts)-1 && n < max(1, int(r*w.span*math.Pi/180/arcPerPlanet)) {
+			t.Errorf("ring %d holds %d but a further ring is in use", ring, n)
+		}
+	}
+	if !near(w.rim, outer+wedgeRimGap) {
+		t.Errorf("rim %v, want %v", w.rim, outer+wedgeRimGap)
+	}
+}
+
+func TestWedgesTotalNeverExceedsCapacity(t *testing.T) {
+	ps := append(repoUniform("a", 30), repoUniform("b", 30)...)
+	ps = append(ps, repoUniform("c", 30)...)
+	state, sc := arrange(newSlotState(), ps)
+	if len(sc.planets) != maxPlanets || len(state.Order) != maxPlanets {
+		t.Fatalf("drawn %d, persisted %d, want %d", len(sc.planets), len(state.Order), maxPlanets)
+	}
+	if n := len(repoBranches(sc, "a")) + len(repoBranches(sc, "b")); n != 60 {
+		t.Errorf("earlier repos hold %d, want all 60", n)
+	}
+	again, sc2 := arrange(state, ps)
+	if len(sc2.planets) != maxPlanets || !reflect.DeepEqual(again, state) {
+		t.Errorf("a redraw changed the capped state")
+	}
+}
+
+func TestWedgesOneRepoIsTheRingLayout(t *testing.T) {
+	for name, repo := range map[string]string{"empty": "", "named": "a"} {
+		t.Run(name, func(t *testing.T) {
+			ps := uniform(5)
+			ps[1].host = "mbp"
+			for i := range ps {
+				ps[i].repo, ps[i].repoLabel = repo, repo
+			}
+			state, sc := arrange(newSlotState(), ps)
+			wantState, wantSc := arrangeRings(newSlotState(), ps)
+			if !reflect.DeepEqual(state, wantState) || !reflect.DeepEqual(sc, wantSc) {
+				t.Errorf("single-repo layout differs from the ring layout")
+			}
+			if len(sc.wedges) != 0 {
+				t.Errorf("wedges = %+v", sc.wedges)
+			}
+			for _, e := range state.Order {
+				if e.Repo != repo {
+					t.Errorf("entry %+v, want repo %q", e, repo)
+				}
+			}
+		})
+	}
+}
+
+func TestWedgesInputOrderDoesNotMatter(t *testing.T) {
+	ps := append(repoUniform("a", 4), repoUniform("b", 3)...)
+	ps = append(ps, repoWP("c", "x"), repoWP("c", "feat"))
+	ps[1].host = "mbp"
+	rev := slices.Clone(ps)
+	slices.Reverse(rev)
+	sx, x := arrange(newSlotState(), ps)
+	sy, y := arrange(newSlotState(), rev)
+	if !reflect.DeepEqual(sx, sy) || !reflect.DeepEqual(x, y) {
+		t.Errorf("the scene depends on the order planets arrive in")
+	}
+}
+
+func TestWedgesExtentHoldsEverything(t *testing.T) {
+	ps := append(repoUniform("a", 20), repoUniform("b", 3)...)
+	ps[0].moons = []moon{{}, {working: true}}
+	ps[1].host, ps[2].host, ps[21].host = "mbp", "mbp", "nas"
+	_, sc := arrange(newSlotState(), ps)
+	if len(sc.hosts) != 2 {
+		t.Fatalf("hosts = %+v", sc.hosts)
+	}
+	check := func(what string, r float64) {
+		t.Helper()
+		if sc.extent < r-1e-9 {
+			t.Errorf("extent %v inside %s at %v", sc.extent, what, r)
+		}
+	}
+	for _, p := range sc.planets {
+		check(p.branch, math.Hypot(p.x, p.y)+p.size*72/2)
+		for _, m := range p.moons {
+			check("a moon", math.Hypot(m.x, m.y)+moonRadius)
+		}
+	}
+	for _, w := range sc.wedges {
+		check("wedge "+w.repo, w.rim+wedgeLabelGap+hostLabelHalf)
+		check("label "+w.repo, math.Hypot(w.x, w.y)+hostLabelHalf)
+		if !near(compass(w.x, w.y), w.start+w.span/2) {
+			t.Errorf("label of %q at %v, wedge middle %v", w.repo, compass(w.x, w.y), w.start+w.span/2)
+		}
+	}
+	for _, h := range sc.hosts {
+		check("host "+h.host, math.Hypot(h.x, h.y)+hostLabelHalf)
+		for _, w := range sc.wedges {
+			a := compass(h.x, h.y)
+			if a < w.start || a > w.start+w.span {
+				continue
+			}
+			if r := math.Hypot(h.x, h.y); r < w.rim+wedgeLabelGap+2*hostLabelHalf {
+				t.Errorf("host %s at %v overlaps the label band of wedge %s", h.host, r, w.repo)
+			}
+		}
+	}
+}
+
 func TestLayoutRepairsAHandEditedSequence(t *testing.T) {
 	state := slotState{V: slotsVer, Order: []slotEntry{
 		{Branch: "r1", Class: classWorking, Host: "mbp"}, {Branch: "a", Class: classWorking},

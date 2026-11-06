@@ -836,6 +836,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			NoOpen: rr.NoOpen, Once: rr.Once, Detach: rr.Detach,
 			Map: rr.Map, Px: str(rr.Px), Select: str(rr.Select), Out: str(rr.Out),
 		}
+		var ghc gh.Client
+		if gh.Installed(ctx, gh.Exec{}) {
+			ghc = gh.Exec{}
+		}
 		return rosterrender.Run(ctx, req, paths, rosterrender.Options{
 			Probes:    rosterrender.Default(),
 			Proc:      e.proc,
@@ -848,6 +852,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			StartPath: os.Getenv("CREW_RR_START_PATH"),
 			Path:      os.Getenv("PATH"),
 			PID:       os.Getpid(),
+			Discover: func(w io.Writer) []repos.Repo {
+				return repos.Discover(repos.Options{Getenv: os.Getenv, Stderr: w, Prefix: "crew: roster-render"})
+			},
+			Gh: ghc,
 		})
 	}
 

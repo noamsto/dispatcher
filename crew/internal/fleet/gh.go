@@ -61,33 +61,25 @@ func enrichPRs(ctx context.Context, c gh.Client, cands []prCandidate, timeout ti
 	wg.Wait()
 }
 
-// viewPR is one `gh pr view`. A pr_url is worker-written text, so it only
-// reaches gh as a PR of the repo whose bus it is on: never another repo's, and
-// never a value gh would read as a flag or resolve against the cwd.
-func viewPR(ctx context.Context, c gh.Client, url, repo string, timeout time.Duration) (map[string]any, error) {
-	if c == nil {
-		return nil, errors.New("gh is not available")
-	}
-	if m := prURLRe.FindStringSubmatch(url); m == nil || !strings.EqualFold(m[1]+"/"+m[2], repo) {
-		return nil, errors.New("pr_url is not a PR of this repo")
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	out, err := c.Run(ctx, "pr", "view", url, "--json", prFields)
+// PRChecksInfo is what the roster diagram reads of a PR: its CI state
+// (pass, pending, fail, none) and GitHub's review decision ("" when none).
+type PRChecksInfo struct{ CI, Review string }
+
+// PRChecks is one `gh pr view` folded to PRChecksInfo, with viewPR's guard on
+// which PRs reach gh.
+func PRChecks(ctx context.Context, c gh.Client, url, repo string, timeout time.Duration) (PRChecksInfo, error) {
+	v, err := fetchPRView(ctx, c, url, repo, timeout)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, fmt.Errorf("gh timed out after %s", timeout)
-		}
-		// Run drops stderr, which is where gh says why: ask again for the line.
-		msg, _ := c.Combined(ctx, "pr", "view", url, "--json", prFields)
-		if line := firstLine(msg); line != "" {
-			return nil, errors.New(line)
-		}
-		return nil, errors.New(firstLine(err.Error()))
+		return PRChecksInfo{}, err
 	}
-	var v prView
-	if err := json.Unmarshal([]byte(out), &v); err != nil {
-		return nil, fmt.Errorf("gh output is not a PR: %s", firstLine(out))
+	return PRChecksInfo{CI: checkState(v), Review: v.ReviewDecision}, nil
+}
+
+// viewPR is one `gh pr view` as a status row's `pr` map.
+func viewPR(ctx context.Context, c gh.Client, url, repo string, timeout time.Duration) (map[string]any, error) {
+	v, err := fetchPRView(ctx, c, url, repo, timeout)
+	if err != nil {
+		return nil, err
 	}
 	var review any
 	if v.ReviewDecision != "" {
@@ -96,10 +88,52 @@ func viewPR(ctx context.Context, c gh.Client, url, repo string, timeout time.Dur
 	return map[string]any{"state": v.State, "merge_state": v.MergeStateStatus, "review": review, "checks": checks(v)}, nil
 }
 
-// checks folds the rollup to the worst of its entries: any failure is `fail`,
-// else any unfinished check is `pending`. No checks at all is `pass`, as no
+// fetchPRView is one `gh pr view`. A pr_url is worker-written text, so it only
+// reaches gh as a PR of the repo whose bus it is on: never another repo's, and
+// never a value gh would read as a flag or resolve against the cwd.
+func fetchPRView(ctx context.Context, c gh.Client, url, repo string, timeout time.Duration) (prView, error) {
+	if c == nil {
+		return prView{}, errors.New("gh is not available")
+	}
+	if m := prURLRe.FindStringSubmatch(url); m == nil || !strings.EqualFold(m[1]+"/"+m[2], repo) {
+		return prView{}, errors.New("pr_url is not a PR of this repo")
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	out, err := c.Run(ctx, "pr", "view", url, "--json", prFields)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return prView{}, fmt.Errorf("gh timed out after %s", timeout)
+		}
+		// Run drops stderr, which is where gh says why: ask again for the line.
+		msg, _ := c.Combined(ctx, "pr", "view", url, "--json", prFields)
+		if line := firstLine(msg); line != "" {
+			return prView{}, errors.New(line)
+		}
+		return prView{}, errors.New(firstLine(err.Error()))
+	}
+	var v prView
+	if err := json.Unmarshal([]byte(out), &v); err != nil {
+		return prView{}, fmt.Errorf("gh output is not a PR: %s", firstLine(out))
+	}
+	return v, nil
+}
+
+// checks is checkState for the status row: no checks at all is `pass`, as no
 // gate stands in the way.
 func checks(v prView) string {
+	if s := checkState(v); s != "none" {
+		return s
+	}
+	return "pass"
+}
+
+// checkState folds the rollup to the worst of its entries: any failure is
+// `fail`, else any unfinished check is `pending`. No entries at all is `none`.
+func checkState(v prView) string {
+	if len(v.StatusCheckRollup) == 0 {
+		return "none"
+	}
 	result := "pass"
 	for _, e := range v.StatusCheckRollup {
 		// A check run carries status and conclusion; a commit status, a state.

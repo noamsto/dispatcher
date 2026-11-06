@@ -177,6 +177,44 @@ func goodJSON() map[string]any {
 
 func planetsOf(m map[string]any) []any { return m["planets"].([]any) }
 
+func TestParseRepo(t *testing.T) {
+	m := goodJSON()
+	planetsOf(m)[0].(map[string]any)["repo"] = "dispatcher"
+	data, _ := json.Marshal(m)
+	g, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Planets[0].Repo != "dispatcher" || g.Planets[1].Repo != "" {
+		t.Errorf("repos = %q, %q; want %q, empty", g.Planets[0].Repo, g.Planets[1].Repo, "dispatcher")
+	}
+}
+
+func TestParseSameBranchInTwoRepos(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		repo0, repo1 string
+		ok           bool
+	}{
+		{"different repos", "one", "two", true},
+		{"same repo", "one", "one", false},
+		{"no repo on either", "", "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m := goodJSON()
+			ps := planetsOf(m)
+			ps[1].(map[string]any)["branch"] = ps[0].(map[string]any)["branch"]
+			ps[0].(map[string]any)["repo"] = c.repo0
+			ps[1].(map[string]any)["repo"] = c.repo1
+			data, _ := json.Marshal(m)
+			_, err := Parse(data)
+			if (err == nil) != c.ok {
+				t.Errorf("Parse err = %v, want ok=%v", err, c.ok)
+			}
+		})
+	}
+}
+
 func TestParse(t *testing.T) {
 	data, _ := json.Marshal(goodJSON())
 	g, err := Parse(data)

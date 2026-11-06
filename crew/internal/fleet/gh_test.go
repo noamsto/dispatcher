@@ -3,6 +3,7 @@ package fleet
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -72,6 +73,64 @@ func TestEnrichPRsStatesAndRollupFolding(t *testing.T) {
 	got := fake.Calls()[0]
 	if !strings.HasPrefix(got, "pr view https://") || !strings.HasSuffix(got, " --json state,mergeStateStatus,reviewDecision,statusCheckRollup") {
 		t.Errorf("gh argv = %q", got)
+	}
+}
+
+func TestCheckState(t *testing.T) {
+	for _, tc := range []struct{ name, rollup, want string }{
+		{"empty", `[]`, "none"},
+		{"all success", `[{"status":"COMPLETED","conclusion":"SUCCESS"},{"state":"SUCCESS"}]`, "pass"},
+		{"neutral and skipped", `[{"status":"COMPLETED","conclusion":"NEUTRAL"},{"status":"COMPLETED","conclusion":"SKIPPED"}]`, "pass"},
+		{"in progress", `[{"status":"COMPLETED","conclusion":"SUCCESS"},{"status":"IN_PROGRESS"}]`, "pending"},
+		{"queued", `[{"status":"QUEUED"}]`, "pending"},
+		{"failing conclusion", `[{"status":"IN_PROGRESS"},{"status":"COMPLETED","conclusion":"FAILURE"}]`, "fail"},
+		{"status success", `[{"state":"SUCCESS"}]`, "pass"},
+		{"status pending", `[{"state":"PENDING"}]`, "pending"},
+		{"status error", `[{"state":"ERROR"}]`, "fail"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var v prView
+			if err := json.Unmarshal([]byte(`{"statusCheckRollup":`+tc.rollup+`}`), &v); err != nil {
+				t.Fatal(err)
+			}
+			if got := checkState(v); got != tc.want {
+				t.Errorf("checkState = %q, want %q", got, tc.want)
+			}
+			wantChecks := tc.want
+			if wantChecks == "none" {
+				wantChecks = "pass"
+			}
+			if got := checks(v); got != wantChecks {
+				t.Errorf("checks = %q, want %q", got, wantChecks)
+			}
+		})
+	}
+}
+
+func TestPRChecks(t *testing.T) {
+	fake := ghAnswering(map[string]string{
+		prURL(1): `{"state":"OPEN","reviewDecision":"APPROVED","statusCheckRollup":[{"status":"IN_PROGRESS"}]}`,
+		prURL(2): `{"state":"OPEN","reviewDecision":"","statusCheckRollup":[]}`,
+	})
+	got, err := PRChecks(t.Context(), fake, prURL(1), "acme/alpha", time.Second)
+	if err != nil || got != (PRChecksInfo{CI: "pending", Review: "APPROVED"}) {
+		t.Errorf("PRChecks = %+v, %v", got, err)
+	}
+	got, err = PRChecks(t.Context(), fake, prURL(2), "acme/alpha", time.Second)
+	if err != nil || got != (PRChecksInfo{CI: "none"}) {
+		t.Errorf("PRChecks without a runner = %+v, %v", got, err)
+	}
+
+	calls := len(fake.Calls())
+	if _, err := PRChecks(t.Context(), fake, "https://github.com/other/repo/pull/7", "acme/alpha", time.Second); err == nil || err.Error() != "pr_url is not a PR of this repo" {
+		t.Errorf("another repo's PR: err = %v", err)
+	}
+	if len(fake.Calls()) != calls {
+		t.Error("another repo's PR reached gh")
+	}
+
+	if _, err := PRChecks(t.Context(), failingGh{}, prURL(1), "acme/alpha", time.Second); err == nil || err.Error() != "GraphQL: Could not resolve to a PullRequest" {
+		t.Errorf("gh failure: err = %v", err)
 	}
 }
 
