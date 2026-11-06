@@ -1223,10 +1223,9 @@ func TestRunFleetStreamNeedsCrew(t *testing.T) {
 	}
 }
 
-// TestOverseerStatusOptionsWiresTheLaneFloor pins the lane's floor hook into
-// the options it collects through. The lane's own end-to-end test in
-// internal/stream rebuilds these options and assigns HostSince itself, so
-// without this the production wiring can be deleted and the suite stays green.
+// TestOverseerStatusOptionsWiresTheLaneFloor pins the lane's floor hook
+// into the options it collects through: internal/stream's lane tests build
+// those options themselves, so this is the production wiring's only cover.
 func TestOverseerStatusOptionsWiresTheLaneFloor(t *testing.T) {
 	const floor = int64(1700000000000)
 	so := overseerStatusOptions(env{}, io.Discard, func(host string) (int64, bool) {

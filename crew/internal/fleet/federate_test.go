@@ -435,7 +435,7 @@ func TestAdmitHostRefusesARefusalAnswer(t *testing.T) {
 		a["refuse"] = code
 		return marshal(t, a)
 	}
-	for _, code := range []string{codeOverBudget, codeTSGroupOverCap, unknownRefusalCode} {
+	for _, code := range []string{RefuseOverBudget, RefuseTSGroupOverCap, unknownRefusalCode} {
 		t.Run(code, func(t *testing.T) {
 			ans, err := AdmitHost(answer(code), "mbp", "halo", 0)
 			if err == nil {
@@ -705,11 +705,11 @@ func TestServeFarCutsOverseerInbox(t *testing.T) {
 	}
 }
 
-// A crew can hold far more overseer_inbox rows than the answer's byte budget,
-// so the answer skeleton — the status alone, before any inbox event — is over
-// farMaxBytes. fitFar must cut the inbox before it measures the skeleton, or
-// ServeFar refuses its own answer with "its oldest row is over the byte
-// budget". On main fitFar measures the untrimmed inbox and refuses.
+// A crew can hold far more overseer_inbox rows than the answer's byte
+// budget, so the answer skeleton — the status alone, before any inbox event —
+// is over farMaxBytes. fitFar must cut the inbox before it measures the
+// skeleton, or ServeFar refuses its own answer with "its oldest row is over
+// the byte budget".
 func TestServeFarTrimsTheServedInboxBeforeMeasuring(t *testing.T) {
 	const rows, pad = 2000, 3000
 	lines := []string{wstatus(1000, "c9", "feat/z", "working", "")}
@@ -752,9 +752,7 @@ func TestServeFarTrimsTheServedInboxBeforeMeasuring(t *testing.T) {
 // A far answer cut between two ts groups lowers the answer's own ts for the
 // requester's floor, but the partner's clock is the status.ts the answer
 // already carries: the ok partner reports that, not the cut. Its rows still
-// stop at or below the next --since, so the floor re-serves the rest. On main
-// finish reads the lowered answer ts, so HostStatus.TS is the cut, not the
-// far clock.
+// stop at or below the next --since, so the floor re-serves the rest.
 func TestServeFarReportsTheFarClockNotTheCut(t *testing.T) {
 	var lines []string
 	for i := range FarMaxEvents {
@@ -1746,10 +1744,7 @@ func TestAdmitHostKeepsUnlabeledRepos(t *testing.T) {
 // not once per row it appears in.
 //
 // Built through AdmitHost on a hand-built answer, the way
-// TestAdmitHostKeepsUnlabeledRepos and TestAdmitHostRestrictsFarIdentifiers
-// are: this finding is in the near-side queue projection AdmitHost owns, while
-// the package's far-side producer (ServeFar) would need a whole far fleet with
-// holds and budget pressure to emit a queue head at all.
+// TestAdmitHostKeepsUnlabeledRepos is.
 func TestFarQueueEntryUnlabeledRepoSurvives(t *testing.T) {
 	const raw = "my repo"
 	a := farAnswer()
@@ -1975,11 +1970,7 @@ func TestFederateFailureIsLocallyWorded(t *testing.T) {
 	}
 }
 
-// The far status's refusal codes, and this host's sentence for each: Step 17
-// promotes the codes and the sentence map into production.
 const (
-	codeOverBudget     = "over_budget"
-	codeTSGroupOverCap = "ts_group_over_cap"
 	// unknownRefusalCode is no code this host knows, and no far text in it may
 	// reach a sentence.
 	unknownRefusalCode = "directive$(id)"
@@ -1990,8 +1981,8 @@ const (
 )
 
 var refusalSentences = map[string]string{
-	codeOverBudget:     "refused: the far answer cannot advance: its oldest row is over the byte budget",
-	codeTSGroupOverCap: "refused: the far answer cannot advance: too many rows share one ts",
+	RefuseOverBudget:     "refused: the far answer cannot advance: its oldest row is over the byte budget",
+	RefuseTSGroupOverCap: "refused: the far answer cannot advance: too many rows share one ts",
 }
 
 // A far refusal is this host's sentence for the code on the answer, never the
@@ -2007,10 +1998,10 @@ func TestFarRefusalSentence(t *testing.T) {
 		rc         int
 		want       string
 	}{
-		{"over budget, on a non-zero exit", codeOverBudget, 1, refusalSentences[codeOverBudget]},
-		{"over budget, on rc 0", codeOverBudget, 0, refusalSentences[codeOverBudget]},
-		{"ts group over cap, on a non-zero exit", codeTSGroupOverCap, 1, refusalSentences[codeTSGroupOverCap]},
-		{"ts group over cap, on rc 0", codeTSGroupOverCap, 0, refusalSentences[codeTSGroupOverCap]},
+		{"over budget, on a non-zero exit", RefuseOverBudget, 1, refusalSentences[RefuseOverBudget]},
+		{"over budget, on rc 0", RefuseOverBudget, 0, refusalSentences[RefuseOverBudget]},
+		{"ts group over cap, on a non-zero exit", RefuseTSGroupOverCap, 1, refusalSentences[RefuseTSGroupOverCap]},
+		{"ts group over cap, on rc 0", RefuseTSGroupOverCap, 0, refusalSentences[RefuseTSGroupOverCap]},
 		{"an unknown code, on a non-zero exit", unknownRefusalCode, 1, refuseUnknownSentence},
 		{"an unknown code, on rc 0", unknownRefusalCode, 0, refuseUnknownSentence},
 	} {

@@ -198,12 +198,10 @@ func (w farWire) project(host, self string, ts int64) FarAnswer {
 		commons[common] = repo
 		return ""
 	}
-	// A queue entry carries no common dir. Reuse a common dir already counted
-	// whose raw far label equals the entry's, else count the raw label under a
-	// map of its own: either way the label is counted once and never shown. The
-	// two key spaces are disjoint by construction, one keyed by far common dir
-	// bytes and the other by far repo label, so no crafted common dir can
-	// overwrite a fallback entry.
+	// A queue entry carries no common dir, so its raw label is counted in a map
+	// of its own: a far answer cannot collide it with a common dir and shrink
+	// the count of repos shown unlabeled. Either way a label counts once and is
+	// never shown.
 	fallback := map[farID]bool{}
 	labelQueue := func(repo farID) string {
 		if repo.ident() {

@@ -169,7 +169,8 @@ func (f *Far) DeadLaneCrew(name, crewID string, tickAge time.Duration) string {
 // table reports alive) and one bus row from dispatcher:<crewID> to
 // hold:<crewID> whose body is a fleet hold of weight 1. The hold is the
 // served queue's eligible head, and its repo's label is no identifier when
-// name is not one. It returns the hold id, its add ts a dash a pid.
+// name is not one. It returns the hold id, whose text is its add ts dash a
+// pid.
 func (f *Far) HeadHold(name, crewID string, waitedS int64) string {
 	f.tb.Helper()
 	f.Repo(name)

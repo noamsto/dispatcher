@@ -1863,12 +1863,10 @@ func TestOverseerRemoteSeedsPartnerInboxAtTheLaneStart(t *testing.T) {
 	}
 }
 
-// A partner's first pull asks from the lane's start, not the fallback
-// window: a reply older than that window but newer than the lane's start is
-// still served. Both clocks sit 25 h past the lane start, so the fallback
-// window (now-24 h, here ovStart+1h1m) begins above the reply at ovStart+1h.
-// On main the first pull asks from there, serves nothing, and then raises its
-// floor to the answer's clock, so the reply is never delivered.
+// A partner's first pull asks from the lane's start, not the fallback window:
+// a reply older than that window but newer than the lane's start is still
+// served. Both clocks sit 25 h past the lane start, so the fallback window
+// (now-24 h, here ovStart+1h1m) begins above the reply at ovStart+1h.
 func TestOverseerFirstPullSinceIsTheLaneStart(t *testing.T) {
 	r := newFarRig(t)
 	r.far.Advance(25 * time.Hour)
@@ -1998,8 +1996,7 @@ func TestOverseerFarOverCapDeliversEveryReply(t *testing.T) {
 // replies the far still owes. The far clock is 10 min ahead of the lane start,
 // so the first answer reports a doc ts far above the reply it carried; a later
 // reply whose ts trails that clock by far more than FarSettle is still asked
-// for. On main the floor rose to the far ts less FarSettle, above the second
-// reply, so the far never served it again.
+// for.
 func TestOverseerFarClockAheadDelivers(t *testing.T) {
 	r := newFarRig(t)
 	r.far.Advance(9 * time.Minute) // the far clock, 10 min ahead of the lane's start
@@ -2084,9 +2081,7 @@ func TestOverseerFarCutKeepsTsGroupsWhole(t *testing.T) {
 // A far answer over the event cap lands in two pulls even when the lane
 // cannot rewrite its inbox file: the floor lives in memory, so the far is not
 // asked from the file's stale floor and does not re-serve rows the lane
-// already delivered. On main the pull's --since is read from the stale file,
-// the far serves the same oldest FarMaxEvents rows again, the lane's raised
-// in-memory floor drops them, and it stalls forever.
+// already delivered.
 func TestOverseerFarStallWithAnUnwritableInboxFile(t *testing.T) {
 	r := newFarRig(t)
 	r.far.Advance(30 * time.Minute)
@@ -2146,9 +2141,7 @@ func TestOverseerFarStallWithAnUnwritableInboxFile(t *testing.T) {
 // A partner whose lane is dead and whose crew has a worker the lane strands
 // must not read a cut answer's lowered ts as a clock that has fallen behind:
 // the host's own status clock is the far clock, so while a backlog still
-// drains no lane_dead fires. On main the cut ts is the host ts, the first
-// pull's dead_since sits ~19 min behind the second pull's far clock, and
-// lane_dead fires on the second pull.
+// drains no lane_dead fires.
 func TestOverseerBacklogKeepsHostClockAlive(t *testing.T) {
 	r := newFarRig(t)
 	r.far.Advance(39 * time.Minute)
