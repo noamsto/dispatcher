@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 	"github.com/noamsto/dispatcher/crew/internal/fleet"
 	"github.com/noamsto/dispatcher/crew/internal/gh"
 )
@@ -26,9 +27,16 @@ const (
 	ciParallel = 4
 	ciVer      = 1
 
+	// ciMaxAge is how old a lookup may be and still be drawn: a gh that keeps
+	// failing, or a map read of a cache no daemon refreshes, must not show a state
+	// that has long gone.
+	ciMaxAge = 10 * ciTTL
+
 	// ciMaxKey and ciMaxFile bound what an edited cache file can cost to read.
 	ciMaxKey  = 200
 	ciMaxFile = 1 << 20
+
+	maxPRDigits = 10
 )
 
 // ciEntry is one PR's CI state and review decision; TS is the unix second of
@@ -43,10 +51,12 @@ type ciEntry struct {
 }
 
 // prOf is whether url is a PR page of the owner/name repo. It is the cheap
-// check ahead of fleet.PRChecks's own, so a worker-written url of another repo
-// never costs a lookup attempt.
+// check ahead of fleet.PRChecks's own, so a worker-written url of another repo,
+// or one too long for the cache to keep, never costs a lookup attempt or reaches
+// the log.
 func prOf(url, repo string) bool {
-	return strings.HasPrefix(strings.ToLower(url), "https://github.com/"+strings.ToLower(repo)+"/pull/")
+	number, ok := strings.CutPrefix(strings.ToLower(url), "https://github.com/"+strings.ToLower(repo)+"/pull/")
+	return ok && len(url) <= ciMaxKey && len(number) <= maxPRDigits && ascii.IsDigits(number)
 }
 
 // ciWant is a PR to look up, with the raw owner/name of the bus it belongs to.
@@ -153,14 +163,15 @@ func refreshCI(ctx context.Context, c gh.Client, cdir string, wants []ciWant, no
 
 // applyCI paints an open PR's planet with its CI state. A review still
 // required on a PR whose checks have not failed is a merge waiting on a human.
-func applyCI(ps []planet, entries map[string]ciEntry) {
+// An entry older than ciMaxAge says nothing.
+func applyCI(ps []planet, entries map[string]ciEntry, now time.Time) {
 	for i := range ps {
 		p := &ps[i]
 		if p.class != classPROpen || p.prURL == "" {
 			continue
 		}
 		e, ok := entries[p.prURL]
-		if !ok || e.CI == "" {
+		if !ok || e.CI == "" || now.Sub(time.Unix(e.TS, 0)) > ciMaxAge {
 			continue
 		}
 		p.ci = e.CI

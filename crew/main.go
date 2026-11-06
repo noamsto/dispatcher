@@ -837,7 +837,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Map: rr.Map, Px: str(rr.Px), Select: str(rr.Select), Out: str(rr.Out),
 		}
 		var ghc gh.Client
-		if gh.Installed(ctx, gh.Exec{}) {
+		if !rr.Map && gh.Installed(ctx, gh.Exec{}) {
 			ghc = gh.Exec{}
 		}
 		return rosterrender.Run(ctx, req, paths, rosterrender.Options{

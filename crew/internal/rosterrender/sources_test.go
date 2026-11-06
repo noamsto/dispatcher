@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/gh/ghtest"
@@ -193,18 +194,10 @@ func TestAnUnreadableBusIsSkippedWithOneLine(t *testing.T) {
 	}
 }
 
-func TestABusThatBreaksAfterJoiningIsSkippedAndTheLocalOneDraws(t *testing.T) {
-	l := newLoop(t)
-	l.seed(t, workerEvents("feat/1-a")...)
-	alpha := repoAt(t, "alpha", workerEvents("feat/9-z")...)
-	l.opts.Discover = (&discoverStub{found: okRepos(alpha)}).discover
-	l.opts.disc = &discovery{}
-	l.windows = "feat/1-a\nfeat/9-z"
-	if fr := l.frame(t); len(fr.sc.wedges) != 2 {
-		t.Fatalf("%d wedges before the break, want 2", len(fr.sc.wedges))
-	}
-
-	f, err := os.OpenFile(alpha.Log, os.O_APPEND|os.O_WRONLY, 0o644)
+// tear appends a line the bus reader refuses and discovery's tolerant one skips.
+func tear(t *testing.T, p bus.Paths) {
+	t.Helper()
+	f, err := os.OpenFile(p.Log, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,13 +205,103 @@ func TestABusThatBreaksAfterJoiningIsSkippedAndTheLocalOneDraws(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = f.Close()
+}
 
-	fr := l.frame(t)
-	if len(fr.sc.planets) != 1 || len(fr.sc.wedges) != 0 {
-		t.Errorf("%d planets, %d wedges, want the local worker alone", len(fr.sc.planets), len(fr.sc.wedges))
+func TestABusThatBreaksAfterJoiningIsSkippedAndTheLocalOneDraws(t *testing.T) {
+	for name, tc := range map[string]struct {
+		disc                  *discovery
+		planets, wedges, live int
+		wantLastGood          bool
+	}{
+		"without a discovery record the repo is skipped": {nil, 1, 0, 1, false},
+		"with one it keeps its last good frame":          {&discovery{}, 2, 2, 2, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := newLoop(t)
+			l.seed(t, workerEvents("feat/1-a")...)
+			alpha := repoAt(t, "alpha", workerEvents("feat/9-z")...)
+			l.opts.Discover = (&discoverStub{found: okRepos(alpha)}).discover
+			l.opts.disc = tc.disc
+			l.windows = "feat/1-a\nfeat/9-z"
+			if fr := l.frame(t); len(fr.sc.wedges) != 2 {
+				t.Fatalf("%d wedges before the break, want 2", len(fr.sc.wedges))
+			}
+
+			tear(t, alpha)
+
+			fr := l.frame(t)
+			if len(fr.sc.planets) != tc.planets || len(fr.sc.wedges) != tc.wedges || fr.live != int64(tc.live) {
+				t.Errorf("%d planets, %d wedges, live %d, want %d, %d and %d",
+					len(fr.sc.planets), len(fr.sc.wedges), fr.live, tc.planets, tc.wedges, tc.live)
+			}
+			skip := "crew: roster-render: " + alpha.Common + ": skipped ("
+			if !strings.Contains(l.stderr(), skip) {
+				t.Errorf("no skip line in %q", l.stderr())
+			}
+			if got := strings.Contains(l.stderr(), "; showing its last good frame\n"); got != tc.wantLastGood {
+				t.Errorf("last-good note = %v in %q, want %v", got, l.stderr(), tc.wantLastGood)
+			}
+		})
 	}
-	if !strings.Contains(l.stderr(), "crew: roster-render: "+alpha.Common+": skipped (") {
-		t.Errorf("no skip line in %q", l.stderr())
+}
+
+func TestALastGoodResultIsACopy(t *testing.T) {
+	d := &discovery{}
+	d.remember("/r", sourceResult{planets: []planet{{branch: "b", moons: []moon{{role: "critic"}}}}})
+
+	got, ok := d.recall("/r")
+	if !ok {
+		t.Fatal("nothing recalled")
+	}
+	got.planets[0].ci, got.planets[0].moons[0].x = "fail", 7
+	again, _ := d.recall("/r")
+	if again.planets[0].ci != "" || again.planets[0].moons[0].x != 0 {
+		t.Errorf("a change to the recalled planets wrote through: %+v", again.planets[0])
+	}
+	if _, ok := d.recall("/other"); ok {
+		t.Error("recalled a repo that never had a good pass")
+	}
+	if _, ok := (*discovery)(nil).recall("/r"); ok {
+		t.Error("a nil record recalled something")
+	}
+}
+
+func TestAJoinedBusThatBreaksDoesNotRetireTheDaemon(t *testing.T) {
+	l := newLoop(t)
+	utc(t)
+	// The local crew is drained: its one worker waits on a PR, so only the joined
+	// repo's worker is live.
+	l.seed(t,
+		dispatchEvent("feat/1-a", 1791360000000, "orion", "red", "colour1", "Task", "standard", "claude", "sonnet"),
+		statusEvent("worker:feat/1-a#s1", 1791360100000, "pr_open", "", "", ""))
+	alpha := repoAt(t, "alpha", workerEvents("feat/9-z")...)
+	l.opts.Discover = (&discoverStub{found: okRepos(alpha)}).discover
+	l.opts.disc = &discovery{}
+	l.windows = "feat/1-a\nfeat/9-z"
+
+	sleep := l.opts.Probes.Sleep
+	ticks := 0
+	l.opts.Probes.Sleep = func(ctx context.Context, d time.Duration) error {
+		ticks++
+		if ticks == 3 {
+			tear(t, alpha)
+		}
+		return sleep(ctx, d)
+	}
+	l.run("10")
+
+	if !l.hitCeiling() {
+		t.Fatalf("the renderer retired at tick %d while the joined repo's worker was live\n%s", ticks, l.stderr())
+	}
+	if !strings.Contains(l.stderr(), "showing its last good frame") {
+		t.Errorf("the break never reached a pass: %q", l.stderr())
+	}
+	dot := l.dot()
+	if n := len(planetNode.FindAllString(dot, -1)); n != 2 {
+		t.Errorf("%d planets in the last dot, want 2", n)
+	}
+	if !strings.Contains(dot, `label="alpha"`) {
+		t.Errorf("the joined repo's wedge is gone from the dot:\n%s", dot)
 	}
 }
 
@@ -425,8 +508,8 @@ func TestMapNeverAsksGitHubAndDrawsTheCachedState(t *testing.T) {
 	}
 	l.opts.Probes.Resvg = func(context.Context, []byte, int, int) ([]byte, error) { return []byte("PNG"), nil }
 	l.opts.Stdout = io.Discard
-	// Well past the TTL: a daemon or --once would ask again.
-	*at = at.Add(time.Hour)
+	// Past the TTL, short of the max age: a daemon or --once would ask again.
+	*at = at.Add(5 * time.Minute)
 	req := Request{Crew: l.crew, Map: true, Px: "300x200", Out: filepath.Join(t.TempDir(), "map.png")}
 	if code := Run(t.Context(), req, l.paths, l.opts); code != exitOK {
 		t.Fatalf("code %d: %s", code, l.stderr())
@@ -582,5 +665,101 @@ func TestWithoutADiscoveryRecordEveryPassDiscovers(t *testing.T) {
 	l.frame(t)
 	if d.calls != 2 {
 		t.Errorf("%d discoveries over two one-shot passes, want 2", d.calls)
+	}
+}
+
+func TestAnOldCacheDrawsNoBadge(t *testing.T) {
+	l, _, at := ciLoop(t, map[string]string{"feat/ci-5": ciURL(5)})
+	l.frame(t)
+	l.opts.Gh = nil
+	cached := func(age time.Duration) placed {
+		t.Helper()
+		*at = at.Add(age)
+		return ciOf(t, l.frame(t), l.paths.Common, "feat/ci-5")
+	}
+
+	if p := cached(ciMaxAge); p.ci != "pass" || !p.waiting {
+		t.Errorf("at the max age: ci %q waiting %v, want the cached pass", p.ci, p.waiting)
+	}
+	if p := cached(time.Second); p.ci != "" || p.waiting {
+		t.Errorf("a second past it: ci %q waiting %v, want no badge", p.ci, p.waiting)
+	}
+}
+
+func sourcesOf(labels ...string) []source {
+	out := make([]source, len(labels))
+	for i, l := range labels {
+		out[i] = source{label: l}
+	}
+	return out
+}
+
+func TestNameWedges(t *testing.T) {
+	long := strings.Repeat("x", 30)
+	for name, tc := range map[string]struct {
+		labels []string
+		want   []string
+	}{
+		"distinct names stay the repo name":    {[]string{"a/one", "b/two"}, []string{"one", "two"}},
+		"a checkout dir has no owner":          {[]string{"tools", "o/other"}, []string{"tools", "other"}},
+		"same name, different owners":          {[]string{"a/tools", "b/tools", "c/other"}, []string{"a·tools", "b·tools", "other"}},
+		"same owner and name, two clones":      {[]string{"o/tools", "o/tools", "o/tools"}, []string{"o·tools", "o·tools·2", "o·tools·3"}},
+		"a name colliding with an owner label": {[]string{"tools", "a/tools"}, []string{"tools", "a·tools"}},
+		"a suffix never meets an existing one": {[]string{"o/t", "o/t", "o·t·2"}, []string{"o·t", "o·t·2", "o·t·2·2"}},
+		"a shared 24-rune prefix":              {[]string{"a/" + long + "1", "b/" + long + "2"}, []string{"a·" + strings.Repeat("x", 22), "b·" + strings.Repeat("x", 22)}},
+		"a shared prefix under one owner": {
+			[]string{"o/" + long + "1", "o/" + long + "2", "o/" + long + "3"},
+			[]string{"o·" + strings.Repeat("x", 22), "o·" + strings.Repeat("x", 20) + "·2", "o·" + strings.Repeat("x", 20) + "·3"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srcs := sourcesOf(tc.labels...)
+			nameWedges(srcs)
+			var got []string
+			for _, s := range srcs {
+				got = append(got, s.wedge)
+				if n := utf8.RuneCountInString(s.wedge); n > maxText {
+					t.Errorf("%q is %d runes, want at most %d", s.wedge, n, maxText)
+				}
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("wedges = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTwoClonesOfOneRepoGetDistinctWedgesAndKeys(t *testing.T) {
+	l := newLoop(t)
+	x := repoAt(t, "x", workerEvents("feat/1-a")...)
+	y := repoAt(t, "y", workerEvents("feat/1-a")...)
+	l.seed(t, workerEvents("feat/1-a")...)
+	origins := map[string]string{
+		l.paths.Common: "https://github.com/a/tools.git",
+		x.Common:       "https://github.com/b/tools.git",
+		y.Common:       "https://github.com/a/tools.git",
+	}
+	l.opts.Git = &gittest.Fake{Func: func(_ string, args []string) (string, error) {
+		if slices.Contains(args, "config") {
+			return origins[strings.TrimPrefix(args[0], "--git-dir=")], nil
+		}
+		return "", nil
+	}}
+	l.opts.Discover = (&discoverStub{found: okRepos(x, y)}).discover
+
+	fr := l.frame(t)
+	if want := []string{"a·tools", "a·tools·2", "b·tools"}; !slices.Equal(wedgeLabels(fr), want) {
+		t.Fatalf("wedges = %q, want %q", wedgeLabels(fr), want)
+	}
+	seen := map[[2]string]bool{}
+	for _, p := range fr.sc.planets {
+		key := [2]string{p.repoLabel, p.branch}
+		if seen[key] {
+			t.Errorf("two planets share the (repo, branch) key %q", key)
+		}
+		seen[key] = true
+	}
+	if len(seen) != 3 {
+		t.Errorf("%d planets, want 3", len(seen))
 	}
 }

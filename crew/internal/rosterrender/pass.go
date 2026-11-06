@@ -1,12 +1,10 @@
 package rosterrender
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -46,7 +44,9 @@ func (l *legend) add(o legend) {
 // buildFrame reads every repo bus the crew has rows on into a frame without
 // writing anything. The reads are fallible and the arrangement is not, so an
 // error means nothing was drawn. A repo joined besides the local one that cannot
-// be read is skipped with a note; the local one's failure fails the frame.
+// be read keeps its last good result when the discovery record has one, and is
+// skipped otherwise, with a note either way; the local one's failure fails the
+// frame.
 func buildFrame(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, localRoles []string) (frame, error) {
 	now := float64(o.wallSec())
 	windows := sync.OnceValue(func() map[string]bool { return roster.Windows(ctx, o.Probes.Tmux) })
@@ -63,24 +63,32 @@ func buildFrame(ctx context.Context, o Options, paths bus.Paths, cdir, crew stri
 		if i > 0 {
 			roles = roleRows(panes(), src.paths.Dir, crew)
 		}
-		sps, slg, slive, err := o.sourcePlanets(ctx, src, crew, now, roles, windows)
-		if err != nil {
-			if i == 0 {
-				return frame{}, err
-			}
-			say(o.Stderr, "crew: roster-render: %s: skipped (%s)\n", src.paths.Common, oneLine(err))
-			continue
+		res, err := o.sourcePlanets(ctx, src, crew, now, roles, windows)
+		if err != nil && i == 0 {
+			return frame{}, err
 		}
-		for _, p := range sps {
+		if err != nil {
+			last, ok := o.disc.recall(src.paths.Common)
+			if !ok {
+				say(o.Stderr, "crew: roster-render: %s: skipped (%s)\n", src.paths.Common, oneLine(err))
+				continue
+			}
+			say(o.Stderr, "crew: roster-render: %s: skipped (%s); showing its last good frame\n", src.paths.Common, oneLine(err))
+			res = last
+		} else if i > 0 {
+			o.disc.remember(src.paths.Common, res)
+		}
+		for _, p := range res.planets {
 			if p.class == classPROpen && src.slug != "" && prOf(p.prURL, src.slug) {
 				wants = append(wants, ciWant{URL: p.prURL, Repo: src.slug})
 			}
 		}
-		ps = append(ps, sps...)
-		lg.add(slg)
-		live += slive
+		ps = append(ps, res.planets...)
+		lg.add(res.lg)
+		live += res.live
 	}
-	applyCI(ps, refreshCI(ctx, o.Gh, cdir, wants, o.Clock.Now(), o.Stderr))
+	at := o.Clock.Now()
+	applyCI(ps, refreshCI(ctx, o.Gh, cdir, wants, at, o.Stderr), at)
 	tally(ps, &lg)
 	slots, sc := arrange(loadSlots(filepath.Join(cdir, fileSlots)), ps)
 	return frame{slots: slots, sc: sc, lg: lg, live: live}, nil
@@ -88,25 +96,21 @@ func buildFrame(ctx context.Context, o Options, paths bus.Paths, cdir, crew stri
 
 // sourcePlanets is one repo's planets, each carrying the repo it came from, with
 // its legend counts and live count.
-func (o Options) sourcePlanets(ctx context.Context, src source, crew string, now float64, roles []string, windows func() map[string]bool) ([]planet, legend, int64, error) {
+func (o Options) sourcePlanets(ctx context.Context, src source, crew string, now float64, roles []string, windows func() map[string]bool) (sourceResult, error) {
 	rp, rule := o.passProbes(ctx, src.paths.Common, windows)
 	m, err := model(ctx, src.paths, crew, now, roles, rp, rule)
 	if err != nil {
-		return nil, legend{}, 0, err
+		return sourceResult{}, err
 	}
 	live, err := liveCount(m)
 	if err != nil {
-		return nil, legend{}, 0, err
+		return sourceResult{}, err
 	}
 	ps, lg := buildPlanets(m, now)
-	// A wedge is named by the repo, not owner/name: clean would drop the slash
-	// and run the two together.
-	_, name, _ := strings.Cut(src.label, "/")
-	label := clean(cmp.Or(name, src.label))
 	for i := range ps {
-		ps[i].repo, ps[i].repoLabel = src.paths.Common, label
+		ps[i].repo, ps[i].repoLabel = src.paths.Common, src.wedge
 	}
-	return ps, lg, live, nil
+	return sourceResult{planets: ps, lg: lg, live: live}, nil
 }
 
 // pass is `_rr_pass <crew> <cdir> <no_open> [role_rows]`: one render. Draw the

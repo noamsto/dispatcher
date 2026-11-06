@@ -261,6 +261,20 @@ func TestPROf(t *testing.T) {
 		"":                                     false,
 		"http://github.com/o/r/pull/1":         false,
 		"https://evil.test/https://github.com": false,
+
+		"https://github.com/o/r/pull/1234567890":                  true,
+		"https://github.com/o/r/pull/12345678901":                 false,
+		"https://github.com/o/r/pull/" + strings.Repeat("9", 400): false,
+		"https://github.com/o/r/pull/12x":                         false,
+		"https://github.com/o/r/pull/x":                           false,
+		"https://github.com/o/r/pull/1\x1b[31m":                   false,
+		"https://github.com/o/r/pull/1\n":                         false,
+		"https://github.com/o/r/pull/":                            false,
+		"https://github.com/o/r/pull/1/":                          false,
+		"https://github.com/o/r/pull/1/files":                     false,
+		"https://github.com/o/r/pull/1?x=1":                       false,
+		"https://github.com/o/r/pull/1#c":                         false,
+		"https://github.com/o/r/pull/-1":                          false,
 	} {
 		if got := prOf(url, ciRepo); got != want {
 			t.Errorf("prOf(%q) = %v, want %v", url, got, want)
@@ -270,12 +284,14 @@ func TestPROf(t *testing.T) {
 
 func TestApplyCI(t *testing.T) {
 	u := ciURL(1)
+	now := time.Unix(1_000_000, 0)
+	ts := now.Unix()
 	entries := map[string]ciEntry{
-		u:          {CI: "pass", Review: "REVIEW_REQUIRED"},
-		ciURL(2):   {CI: "fail", Review: "REVIEW_REQUIRED"},
-		ciURL(3):   {CI: "pass", Review: "APPROVED"},
-		ciURL(4):   {CI: "pending"},
-		"untouchd": {CI: "pass", Review: "REVIEW_REQUIRED"},
+		u:          {CI: "pass", Review: "REVIEW_REQUIRED", TS: ts},
+		ciURL(2):   {CI: "fail", Review: "REVIEW_REQUIRED", TS: ts},
+		ciURL(3):   {CI: "pass", Review: "APPROVED", TS: ts},
+		ciURL(4):   {CI: "pending", TS: ts},
+		"untouchd": {CI: "pass", Review: "REVIEW_REQUIRED", TS: ts},
 	}
 	ps := []planet{
 		{class: classPROpen, prURL: u},
@@ -287,7 +303,7 @@ func TestApplyCI(t *testing.T) {
 		{class: classWorking, prURL: u},
 		{class: classPROpen, prURL: ciURL(3), waiting: true},
 	}
-	applyCI(ps, entries)
+	applyCI(ps, entries, now)
 	type view struct {
 		ci      string
 		waiting bool
@@ -306,5 +322,25 @@ func TestApplyCI(t *testing.T) {
 		if got := (view{p.ci, p.waiting}); got != want[i] {
 			t.Errorf("planet %d = %+v, want %+v", i, got, want[i])
 		}
+	}
+}
+
+func TestApplyCIIgnoresAnEntryOlderThanTheMaxAge(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	entry := ciEntry{CI: "pass", Review: "REVIEW_REQUIRED", TS: now.Add(-ciMaxAge).Unix()}
+	for name, tc := range map[string]struct {
+		age  time.Duration
+		want string
+	}{
+		"exactly the max age": {0, "pass"},
+		"one second over":     {time.Second, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ps := []planet{{class: classPROpen, prURL: ciURL(1)}}
+			applyCI(ps, map[string]ciEntry{ciURL(1): entry}, now.Add(tc.age))
+			if ps[0].ci != tc.want || ps[0].waiting != (tc.want != "") {
+				t.Errorf("ci %q waiting %v, want %q", ps[0].ci, ps[0].waiting, tc.want)
+			}
+		})
 	}
 }
