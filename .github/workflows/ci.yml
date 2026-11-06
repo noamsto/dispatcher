@@ -10,14 +10,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: DeterminateSystems/nix-installer-action@main
-      # The post phase of this step is the cache upload, and it inherits the
-      # continue-on-error below: a stalled push stays a failed step, never a
-      # failed job.
+      # Read-only: no authToken, so this job only substitutes from the cache
+      # (only flake-check and build-darwin push). continue-on-error keeps a
+      # cachix install or configure failure from failing the job; the job then
+      # builds from source.
       - uses: cachix/cachix-action@v17
         continue-on-error: true
         with:
           name: dispatcher
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: shellcheck
         run: nix develop -c shellcheck adapters/core/*.sh adapters/core/reviewers/*.sh scripts/*.sh
       - name: go vet + golangci-lint (crew)
@@ -61,7 +61,6 @@ jobs:
         continue-on-error: true
         with:
           name: dispatcher
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: bats (module.bats, serial)
         run: nix develop -c bats tests/module.bats
 
@@ -78,7 +77,6 @@ jobs:
         continue-on-error: true
         with:
           name: dispatcher
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: bats (shard ${{ matrix.shard }})
         shell: bash
         env:
@@ -153,7 +151,6 @@ jobs:
         continue-on-error: true
         with:
           name: dispatcher
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: bats (secret-read-guard timing, serial)
         run: nix develop -c bats --filter-tags timing tests/secret-read-guard.bats
 
@@ -166,11 +163,20 @@ jobs:
         continue-on-error: true
         with:
           name: dispatcher
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: flake check
         run: nix flake check
       - name: build packages for the cache
         run: nix build .#default --no-link
+      # Only the installable packages (.#default bundles every binary the
+      # Home Manager module installs) go to the cache, and only from main.
+      # The token reaches this step alone, never the read-only cachix setup.
+      - name: push packages to the cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        shell: bash
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: nix build .#default --no-link --print-out-paths | cachix push dispatcher
 
   # Darwin consumers otherwise compile crew-go (and run its suite) themselves,
   # and macOS-only test failures surface first in their rebuilds.
@@ -184,9 +190,15 @@ jobs:
         continue-on-error: true
         with:
           name: dispatcher
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: build packages for the cache
         run: nix build .#default --no-link
+      - name: push packages to the cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        shell: bash
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: nix build .#default --no-link --print-out-paths | cachix push dispatcher
 
   check:
     if: always()
