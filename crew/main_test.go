@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1219,6 +1220,26 @@ func TestRunFleetStreamNeedsCrew(t *testing.T) {
 	stderr.Reset()
 	if code := run(context.Background(), []string{"fleet", "--all"}, &stdout, &stderr, e); code != 0 || !strings.HasPrefix(stdout.String(), "REPO") {
 		t.Fatalf("fleet --all after fleet stream: code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
+	}
+}
+
+// TestOverseerStatusOptionsWiresTheLaneFloor pins the lane's floor hook into
+// the options it collects through. The lane's own end-to-end test in
+// internal/stream rebuilds these options and assigns HostSince itself, so
+// without this the production wiring can be deleted and the suite stays green.
+func TestOverseerStatusOptionsWiresTheLaneFloor(t *testing.T) {
+	const floor = int64(1700000000000)
+	so := overseerStatusOptions(env{}, io.Discard, func(host string) (int64, bool) {
+		return floor, host == "mbp"
+	})
+	if so.HostSince == nil {
+		t.Fatal("HostSince = nil, want the lane's live floor hook, not the file's fallback")
+	}
+	if got, ok := so.HostSince("mbp"); got != floor || !ok {
+		t.Errorf("HostSince(mbp) = %d/%v, want %d/true", got, ok, floor)
+	}
+	if so.OverseerProbe != nil {
+		t.Error("OverseerProbe is set, want nil in overseer mode")
 	}
 }
 

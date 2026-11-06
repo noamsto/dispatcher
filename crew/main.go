@@ -1213,11 +1213,7 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 			// The overseer lane's status is offline: no gh, no remote-worker probes;
 			// it federates with partner hosts.
 			CollectStatus: func(ctx context.Context, stderr io.Writer, hostSince func(host string) (int64, bool)) fleet.StatusDoc {
-				o := fleet.Options{Tmux: tmux.Exec{}, Git: git.Exec{}, Clock: clock.FromEnv()}
-				so := statusOptions(o, e, stderr)
-				so.OverseerProbe = nil
-				so.HostSince = hostSince
-				return fleet.CollectStatus(ctx, fleet.StatusRequest{}, stderr, so)
+				return fleet.CollectStatus(ctx, fleet.StatusRequest{}, stderr, overseerStatusOptions(e, stderr, hostSince))
 			},
 		})
 	}
@@ -1306,6 +1302,17 @@ func statusOptions(o fleet.Options, e env, stderr io.Writer) fleet.StatusOptions
 		OverseerProbe: overseerProbe(e, remote.Run),
 	}
 	so.Getenv = os.Getenv
+	return so
+}
+
+// overseerStatusOptions is the lane's status read: the production options with
+// no remote-worker probe, and its per-host floor the live lane's hostSince
+// hook.
+func overseerStatusOptions(e env, stderr io.Writer, hostSince func(host string) (int64, bool)) fleet.StatusOptions {
+	o := fleet.Options{Tmux: tmux.Exec{}, Git: git.Exec{}, Clock: clock.FromEnv()}
+	so := statusOptions(o, e, stderr)
+	so.OverseerProbe = nil
+	so.HostSince = hostSince
 	return so
 }
 

@@ -1065,8 +1065,10 @@ func TestAdmitHostRestrictsFarIdentifiers(t *testing.T) {
 	if w := ans.Status.Repos[0].Crews[0].Workers; len(w) != 1 || w[0]["branch"] != "feat/n" || w[0]["name"] != nil {
 		t.Errorf("c9 workers = %v, want only feat/n, its name dropped: an invalid branch or sender drops the row", w)
 	}
-	// Both repos hold c9, each with two worker rows that do not hold; the three
-	// far commons are the unlabeled repos.
+	// Both repos hold c9, each with two worker rows that do not hold. Four
+	// sources are unlabeled: the two bad row labels/commons (the status repo row
+	// and the misrouted row), the forged inbox batch's distinct common, and the
+	// queue parked entry's raw-label key.
 	if sk := ans.Status.Skipped; len(sk) != 7 || sk[6].Status != "4 repo(s) with an invalid label shown unlabeled" {
 		t.Errorf("skipped = %+v, want the 4 dropped crews, 2 worker-row counts and the unlabeled count", sk)
 	}
@@ -1787,6 +1789,43 @@ func TestFarQueueEntryUnlabeledRepoSurvives(t *testing.T) {
 		if bytes.Contains(rawStatus, []byte(s)) {
 			t.Errorf("%q is in the status: %s", s, rawStatus)
 		}
+	}
+}
+
+// A queue entry has no common dir, so it falls back to its raw label as a key.
+// That fallback must not collide with a row's common dir: a row whose common
+// dir is the literal text of another unlabeled repo's invalid raw label is a
+// distinct unlabeled repo, so the row and the queue entry count as two, not
+// one.
+func TestFarQueueEntryRawLabelDoesNotCollideWithACommonDir(t *testing.T) {
+	const raw = "my repo"
+	a := farAnswer()
+	status := a["status"].(map[string]any)
+	repo := status["repos"].([]any)[0].(map[string]any)
+	repo["repo"], repo["common"] = "b c", raw
+	status["queue"] = map[string]any{
+		"head":    nil,
+		"demoted": []any{},
+		"parked": []any{
+			map[string]any{"repo": raw, "crew_id": "c9", "id": "1700000000000-1", "reason": "demoted"},
+		},
+	}
+
+	ans, err := AdmitHost(marshal(t, a), "mbp", "halo", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := ans.Status.Repos; len(r) != 1 || r[0].Repo != "" || r[0].Common != "" || r[0].Key != raw {
+		t.Errorf("repos = %+v, want the row kept unlabeled, its common dir a key only", r)
+	}
+	if q := ans.Status.Queue; len(q.Parked) != 1 || q.Parked[0].Repo != "" || q.Parked[0].ID != "1700000000000-1" {
+		t.Errorf("queue = %+v, want the parked entry kept unlabeled", q)
+	}
+	// The row and the queue entry are two distinct unlabeled repos: the entry's
+	// fallback key must not overwrite the row's common dir key.
+	want := []Skipped{{Status: "2 repo(s) with an invalid label shown unlabeled"}}
+	if !slices.Equal(ans.Status.Skipped, want) {
+		t.Errorf("skipped = %+v, want %+v", ans.Status.Skipped, want)
 	}
 }
 

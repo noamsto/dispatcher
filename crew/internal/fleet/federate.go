@@ -547,8 +547,8 @@ func federate(ctx context.Context, stderr io.Writer, o StatusOptions, self, gate
 	timeout := o.federateTimeout()
 	for i, host := range hosts {
 		// The lane's in-memory floor wins when it has one; a one-shot read
-		// (nil hook) and a host the lane has not seen yet fall back to the
-		// file's floor and then the window.
+		// (nil hook) falls back to the file's floor and then the window, while a
+		// host the lane has not seen yet gets the lane's start from hostFloor.
 		since, ok := int64(0), false
 		if o.HostSince != nil {
 			since, ok = o.HostSince(host)

@@ -190,27 +190,33 @@ type farMisrouted struct {
 // label is no identifier keeps its crews, replies and misrouted msgs
 // unlabeled, and one skipped note counts such repos, never naming them.
 func (w farWire) project(host, self string, ts int64) FarAnswer {
-	unlabeled := map[farKey]farID{}
+	commons := map[farKey]farID{}
 	label := func(repo farID, common farKey) string {
 		if repo.ident() {
 			return string(repo)
 		}
-		unlabeled[common] = repo
+		commons[common] = repo
 		return ""
 	}
 	// A queue entry carries no common dir. Reuse a common dir already counted
-	// whose raw far label equals the entry's, else the raw label text is its
-	// own key: either way the label is counted once and never shown.
+	// whose raw far label equals the entry's, else count the raw label under a
+	// map of its own: either way the label is counted once and never shown. The
+	// two key spaces are disjoint by construction, one keyed by far common dir
+	// bytes and the other by far repo label, so no crafted common dir can
+	// overwrite a fallback entry.
+	fallback := map[farID]bool{}
 	labelQueue := func(repo farID) string {
 		if repo.ident() {
 			return string(repo)
 		}
-		for _, raw := range unlabeled {
+		for _, raw := range commons {
 			if raw == repo {
 				return ""
 			}
 		}
-		unlabeled[farKey(repo)] = repo
+		if !fallback[repo] {
+			fallback[repo] = true
+		}
 		return ""
 	}
 	ans := FarAnswer{V: 1, TS: ts, Status: w.Status.project(host, label, labelQueue), Inbox: []FarBatch{}, Misrouted: []FarMisrouted{}, Cursor: w.Cursor}
@@ -235,7 +241,7 @@ func (w farWire) project(host, self string, ts int64) FarAnswer {
 		}
 		ans.Misrouted = append(ans.Misrouted, FarMisrouted{Repo: label(m.Repo, m.Common), Common: string(m.Common), CrewID: string(m.CrewID), From: string(m.From), TS: m.TS})
 	}
-	if n := len(unlabeled); n > 0 {
+	if n := len(commons) + len(fallback); n > 0 {
 		ans.Status.Skipped = append(ans.Status.Skipped, Skipped{Status: fmt.Sprintf("%d repo(s) with an invalid label shown unlabeled", n)})
 	}
 	return ans

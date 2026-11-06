@@ -927,8 +927,10 @@ skipped `path` are empty). A failure is worded locally, never from far stderr:
 `exit status N`, `ssh failed (255)`, `no answer within <timeout>`,
 `answer over 4 MiB` or `answer: <reason>`. The far side truncates an answer
 over the caps oldest-first, inbox events and misrouted msgs together, and
-lowers its `ts` so the lane's floor stays below the first row left out; the
-next pull serves the rest. Truncation never splits a ts group. An answer that
+lowers its `ts` so a lane running the previous crew keeps a floor below the
+first row left out; a current lane's floor is the far clock less 60 s, capped by
+the newest row the answer carried, so the next pull serves the rest. Truncation
+never splits a ts group. An answer that
 cannot advance (at least the event cap of rows share one ms, or the oldest row
 alone is oversize) is refused, so the host reads `unreachable` with a local
 reason, never a silent stall. Every far list has a count cap (`skipped`,
@@ -973,9 +975,9 @@ JSON) is not in `seen` prints in a `{"cursor","events","repo","host"}` batch;
 remote misrouted msgs above the floor and unseen print `misrouted_msg` with
 `host`, sender only. Once the lines are flushed, the inbox file is rewritten
 (temp file plus rename): the printed keys join `seen`, the floor rises to the
-far clock (the answer's ts, the partner's own clock, which is what `hosts[].ts`
-reports) less 60 s, but never above the newest row that answer carried, and does
-not rise when the answer carried none. `seen` keeps only keys above the floor,
+far clock less 60 s, but never above the newest row that answer carried, and does
+not rise when the answer carried none. `hosts[].ts` is the partner's own status
+clock (`status.ts`), not the answer's `ts`, which `fitFar` may lower. `seen` keeps only keys above the floor,
 at most 2000 (the newest). A failed write or flush leaves the file as it was, so the
 next pull prints the batch again (at-least-once). A new inbox starts at the
 lane's start. The far ts is read before any far bus is folded, so a reply that
