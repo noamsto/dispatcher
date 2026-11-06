@@ -128,7 +128,7 @@ type farQueueEntry struct {
 	Reason    farEnum `json:"reason"`
 }
 
-func (e farQueueEntry) ok() bool { return e.Repo.ident() && e.CrewID.crew() && e.ID.hold() }
+func (e farQueueEntry) ok() bool { return e.CrewID.crew() && e.ID.hold() }
 
 // farSkipped is a far skipped repo; its path, a far common dir, is never read.
 type farSkipped struct {
@@ -190,15 +190,34 @@ type farMisrouted struct {
 // label is no identifier keeps its crews, replies and misrouted msgs
 // unlabeled, and one skipped note counts such repos, never naming them.
 func (w farWire) project(host, self string, ts int64) FarAnswer {
-	unlabeled := map[farKey]bool{}
+	commons := map[farKey]farID{}
 	label := func(repo farID, common farKey) string {
 		if repo.ident() {
 			return string(repo)
 		}
-		unlabeled[common] = true
+		commons[common] = repo
 		return ""
 	}
-	ans := FarAnswer{V: 1, TS: ts, Status: w.Status.project(host, label), Inbox: []FarBatch{}, Misrouted: []FarMisrouted{}, Cursor: w.Cursor}
+	// A queue entry carries no common dir, so its raw label is counted in a map
+	// of its own: a far answer cannot collide it with a common dir and shrink
+	// the count of repos shown unlabeled. Either way a label counts once and is
+	// never shown.
+	fallback := map[farID]bool{}
+	labelQueue := func(repo farID) string {
+		if repo.ident() {
+			return string(repo)
+		}
+		for _, raw := range commons {
+			if raw == repo {
+				return ""
+			}
+		}
+		if !fallback[repo] {
+			fallback[repo] = true
+		}
+		return ""
+	}
+	ans := FarAnswer{V: 1, TS: ts, Status: w.Status.project(host, label, labelQueue), Inbox: []FarBatch{}, Misrouted: []FarMisrouted{}, Cursor: w.Cursor}
 	if w.Self.host() {
 		ans.Self = string(w.Self)
 	}
@@ -220,7 +239,7 @@ func (w farWire) project(host, self string, ts int64) FarAnswer {
 		}
 		ans.Misrouted = append(ans.Misrouted, FarMisrouted{Repo: label(m.Repo, m.Common), Common: string(m.Common), CrewID: string(m.CrewID), From: string(m.From), TS: m.TS})
 	}
-	if n := len(unlabeled); n > 0 {
+	if n := len(commons) + len(fallback); n > 0 {
 		ans.Status.Skipped = append(ans.Status.Skipped, Skipped{Status: fmt.Sprintf("%d repo(s) with an invalid label shown unlabeled", n)})
 	}
 	return ans
@@ -229,8 +248,8 @@ func (w farWire) project(host, self string, ts int64) FarAnswer {
 // project is the far status as host's, each repo labelled by label. A crew
 // that does not hold, or a worker row, is moved to Skipped by a reason this
 // host words. A far common dir is only the repo's Key: no far path is shown.
-func (s farStatus) project(host string, label func(farID, farKey) string) StatusDoc {
-	doc := StatusDoc{TS: s.TS, Queue: s.Queue.project(), Repos: []RepoStatus{}, Skipped: []Skipped{}, Hosts: []HostStatus{}}
+func (s farStatus) project(host string, label func(farID, farKey) string, labelQueue func(farID) string) StatusDoc {
+	doc := StatusDoc{TS: s.TS, Repos: []RepoStatus{}, Skipped: []Skipped{}, Hosts: []HostStatus{}}
 	if s.Host.host() {
 		doc.Host = string(s.Host)
 	}
@@ -257,6 +276,9 @@ func (s farStatus) project(host string, label func(farID, farKey) string) Status
 		}
 		doc.Repos = append(doc.Repos, repo)
 	}
+	// Project the queue after the repos: a queue entry, which has no common
+	// dir, can then reuse a common dir a repo row already contributed.
+	doc.Queue = s.Queue.project(labelQueue)
 	return doc
 }
 
@@ -288,19 +310,19 @@ func (l farLoad) project() *LoadDoc {
 	return d
 }
 
-func (q farQueue) project() QueueStatus {
+func (q farQueue) project(label func(farID) string) QueueStatus {
 	out := QueueStatus{Demoted: []QueueDemote{}, Parked: []QueueParked{}}
 	if h := q.Head; h != nil && h.ok() {
-		out.Head = &QueueHead{Repo: string(h.Repo), CrewID: string(h.CrewID), ID: string(h.ID), WaitedS: h.WaitedS}
+		out.Head = &QueueHead{Repo: label(h.Repo), CrewID: string(h.CrewID), ID: string(h.ID), WaitedS: h.WaitedS}
 	}
 	for _, d := range q.Demoted {
 		if d.ok() {
-			out.Demoted = append(out.Demoted, QueueDemote{Repo: string(d.Repo), CrewID: string(d.CrewID), ID: string(d.ID), FirstDue: d.FirstDue, DemotedAt: d.DemotedAt})
+			out.Demoted = append(out.Demoted, QueueDemote{Repo: label(d.Repo), CrewID: string(d.CrewID), ID: string(d.ID), FirstDue: d.FirstDue, DemotedAt: d.DemotedAt})
 		}
 	}
 	for _, p := range q.Parked {
 		if p.ok() && p.Reason.in(parkedReasons) {
-			out.Parked = append(out.Parked, QueueParked{Repo: string(p.Repo), CrewID: string(p.CrewID), ID: string(p.ID), Reason: string(p.Reason)})
+			out.Parked = append(out.Parked, QueueParked{Repo: label(p.Repo), CrewID: string(p.CrewID), ID: string(p.ID), Reason: string(p.Reason)})
 		}
 	}
 	return out

@@ -2,6 +2,7 @@ package overseer
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 
@@ -18,9 +19,20 @@ type StatusRequest struct {
 	Since  *int64
 }
 
+// statusRefusal is the answer a refusing far status writes on stdout: the
+// requester words the code locally, so one JSON line carries v, this host's
+// name and clock, and the fixed refuse code alone.
+type statusRefusal struct {
+	V      int    `json:"v"`
+	Self   string `json:"self"`
+	TS     int64  `json:"ts"`
+	Refuse string `json:"refuse"`
+}
+
 // RunStatus answers a pull from the overseer of origin, another settings host:
 // this host's fleet status in served mode, and the msgs to overseer:<origin>
-// above since, as one JSON line. It writes nothing.
+// above since, as one JSON line. An answer that cannot advance is refused: one
+// coded line on stdout, the human reason on stderr, the exit non-zero.
 func RunStatus(ctx context.Context, req StatusRequest, stdout, stderr io.Writer, o Options) int {
 	if reason := originRefusal(req.Origin, o.Sender); reason != "" {
 		return fail(stderr, "status", "%s", reason)
@@ -39,6 +51,13 @@ func RunStatus(ctx context.Context, req StatusRequest, stdout, stderr io.Writer,
 	o.Status.Served = &fleet.ServedStatus{Root: root}
 	ans, err := fleet.ServeFar(ctx, req.Origin, since, stderr, o.Status)
 	if err != nil {
+		var refusal fleet.Refusal
+		if errors.As(err, &refusal) {
+			// A refusal is still one coded answer on stdout; the human reason
+			// stays on stderr and the exit stays non-zero.
+			self, _ := hostName(o.Sender)
+			_ = emit(stdout, stderr, "status", statusRefusal{V: 1, Self: self, TS: o.Clock.Now().UnixMilli(), Refuse: refusal.Code})
+		}
 		return fail(stderr, "status", "%v", err)
 	}
 	return emit(stdout, stderr, "status", ans)

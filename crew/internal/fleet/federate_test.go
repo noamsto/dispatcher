@@ -426,6 +426,34 @@ func TestAdmitHostRefusals(t *testing.T) {
 	}
 }
 
+// A refusal answer is not a FarAnswer: AdmitHost refuses one carrying a known
+// code or an unknown one rather than admit it as an empty ok answer. A refuse
+// key that is empty is not a refusal.
+func TestAdmitHostRefusesARefusalAnswer(t *testing.T) {
+	answer := func(code string) []byte {
+		a := farAnswer()
+		a["refuse"] = code
+		return marshal(t, a)
+	}
+	for _, code := range []string{RefuseOverBudget, RefuseTSGroupOverCap, unknownRefusalCode} {
+		t.Run(code, func(t *testing.T) {
+			ans, err := AdmitHost(answer(code), "mbp", "halo", 0)
+			if err == nil {
+				t.Fatalf("a %q refusal was admitted as %+v, want an error", code, ans)
+			}
+			if ans.V != 0 || ans.Self != "" || ans.TS != 0 || len(ans.Inbox) != 0 {
+				t.Errorf("answer = %+v, want the zero answer beside the error", ans)
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), "refus") {
+				t.Errorf("err = %v, want one naming the refusal", err)
+			}
+		})
+	}
+	if ans, err := AdmitHost(answer(""), "mbp", "halo", 0); err != nil || ans.V != 1 {
+		t.Errorf("an empty refuse key = %+v, %v; want the answer admitted", ans, err)
+	}
+}
+
 // Every far list has a count cap, so an answer within 4 MiB cannot grow
 // without bound once projected and printed: a list at its cap is admitted,
 // one entry over refuses the answer in this host's words.
@@ -674,6 +702,113 @@ func TestServeFarCutsOverseerInbox(t *testing.T) {
 	}
 	if _, err := AdmitHost(marshal(t, ans), "mbp", "halo", ago(1000)); err != nil {
 		t.Errorf("the served answer is refused: %v", err)
+	}
+}
+
+// A crew can hold far more overseer_inbox rows than the answer's byte
+// budget, so the answer skeleton — the status alone, before any inbox event —
+// is over farMaxBytes. fitFar must cut the inbox before it measures the
+// skeleton, or ServeFar refuses its own answer with "its oldest row is over
+// the byte budget".
+func TestServeFarTrimsTheServedInboxBeforeMeasuring(t *testing.T) {
+	const rows, pad = 2000, 3000
+	lines := []string{wstatus(1000, "c9", "feat/z", "working", "")}
+	for i := range rows {
+		// Each row is also a fold event, so a distinct ts keeps the refusal
+		// from being the ts-group one. The long kind (within peer.MaxBody)
+		// sizes the inbox row in the skeleton; the re value keeps it a real
+		// reply.
+		body := strconv.Quote(fmt.Sprintf(`{"kind":"%s","re":%d}`, strings.Repeat("k", pad), 9007199254740991))
+		lines = append(lines, wmsg(1000+int64(i), "c9", "dispatcher:c9", "overseer:halo", body))
+	}
+	far := farFix(t, "mbp", lines...)
+
+	// Record the fixture as over the line, not near it: the served status
+	// alone, before ServeFar folds in any inbox event, is past the budget.
+	served := far.opts
+	served.Served = &ServedStatus{Origin: "halo", Since: ago(4000)}
+	doc, _ := collectStatus(t.Context(), StatusRequest{}, io.Discard, served)
+	skeleton := encodedLen(doc) + 1
+	if skeleton <= farMaxBytes {
+		t.Fatalf("the fixture skeleton is %d bytes, want over the byte budget of %d", skeleton, farMaxBytes)
+	}
+
+	ans, err := ServeFar(t.Context(), "halo", ago(4000), io.Discard, far.opts)
+	if err != nil {
+		t.Fatalf("ServeFar refused its own %d-byte skeleton: %v", skeleton, err)
+	}
+	inbox := ans.Status.Repos[0].Crews[0].OverseerInbox
+	if len(inbox) != FarMaxEvents {
+		t.Errorf("overseer_inbox holds %d msgs, want the %d oldest", len(inbox), FarMaxEvents)
+	}
+	if n := len(marshal(t, ans)); n > farMaxBytes {
+		t.Errorf("the served answer is %d bytes, over the byte budget of %d", n, farMaxBytes)
+	}
+	if _, err := AdmitHost(marshal(t, ans), "mbp", "halo", ago(4000)); err != nil {
+		t.Errorf("the served answer is refused: %v", err)
+	}
+}
+
+// A far answer cut between two ts groups lowers the answer's own ts for the
+// requester's floor, but the partner's clock is the status.ts the answer
+// already carries: the ok partner reports that, not the cut. Its rows still
+// stop at or below the next --since, so the floor re-serves the rest.
+func TestServeFarReportsTheFarClockNotTheCut(t *testing.T) {
+	var lines []string
+	for i := range FarMaxEvents {
+		body := fmt.Sprintf(`"{\"kind\":\"ack\",\"n\":%d}"`, i)
+		lines = append(lines, wmsg(900, "c9", "dispatcher:c9", "overseer:halo", body))
+	}
+	lines = append(lines, wmsg(100, "c9", "dispatcher:c9", "overseer:halo", `"{\"kind\":\"note\"}"`))
+	far := farFix(t, "mbp", lines...)
+
+	f := newStatusFix(t)
+	f.overseer("halo", "mbp")
+	var ans FarAnswer
+	f.opts.Federate = func(ctx context.Context, _ string, argv []string, stdout, stderr io.Writer) int {
+		since, err := strconv.ParseInt(argv[6], 10, 64)
+		if err != nil {
+			t.Errorf("--since %q: %v", argv[6], err)
+			return 2
+		}
+		a, err := ServeFar(ctx, argv[4], since, stderr, far.opts)
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, err)
+			return 1
+		}
+		ans = a
+		if err := jsonval.Encode(stdout, a, false); err != nil {
+			t.Error(err)
+			return 1
+		}
+		return 0
+	}
+
+	doc := f.collect(StatusRequest{})
+	if ans.TS >= ans.Status.TS {
+		t.Fatalf("the fixture did not cut: answer ts %d, status ts %d", ans.TS, ans.Status.TS)
+	}
+	if len(doc.Hosts) != 1 || doc.Hosts[0].State != "ok" {
+		t.Fatalf("hosts = %+v, want mbp ok", doc.Hosts)
+	}
+	h := doc.Hosts[0]
+	newest := int64(0)
+	for _, b := range h.Batches() {
+		for _, ev := range b.Events {
+			if ts, ok := watch.WholeMS(ev["ts"]); ok && ts > newest {
+				newest = ts
+			}
+		}
+	}
+	if next := ans.TS - FarSettle.Milliseconds(); newest > next {
+		t.Errorf("the newest served row %d is above the next --since %d", newest, next)
+	}
+	got := "nil"
+	if h.TS != nil {
+		got = strconv.FormatInt(*h.TS, 10)
+	}
+	if h.TS == nil || *h.TS != ans.Status.TS {
+		t.Errorf("HostStatus.TS = %s, want the far clock %d", got, ans.Status.TS)
 	}
 }
 
@@ -928,9 +1063,11 @@ func TestAdmitHostRestrictsFarIdentifiers(t *testing.T) {
 	if w := ans.Status.Repos[0].Crews[0].Workers; len(w) != 1 || w[0]["branch"] != "feat/n" || w[0]["name"] != nil {
 		t.Errorf("c9 workers = %v, want only feat/n, its name dropped: an invalid branch or sender drops the row", w)
 	}
-	// Both repos hold c9, each with two worker rows that do not hold; the three
-	// far commons are the unlabeled repos.
-	if sk := ans.Status.Skipped; len(sk) != 7 || sk[6].Status != "3 repo(s) with an invalid label shown unlabeled" {
+	// Both repos hold c9, each with two worker rows that do not hold. Four
+	// sources are unlabeled: the two bad row labels/commons (the status repo row
+	// and the misrouted row), the forged inbox batch's distinct common, and the
+	// queue parked entry's raw-label key.
+	if sk := ans.Status.Skipped; len(sk) != 7 || sk[6].Status != "4 repo(s) with an invalid label shown unlabeled" {
 		t.Errorf("skipped = %+v, want the 4 dropped crews, 2 worker-row counts and the unlabeled count", sk)
 	}
 	if len(ans.Inbox) != 2 || len(ans.Inbox[0].Events) != 1 || ans.Inbox[0].Events[0]["crew_id"] != "c9" || ans.Inbox[1].Repo != "" {
@@ -940,8 +1077,9 @@ func TestAdmitHostRestrictsFarIdentifiers(t *testing.T) {
 		t.Errorf("misrouted = %+v, want the unlabeled and the valid one: an invalid crew id or sender drops it", m)
 	}
 	q := ans.Status.Queue
-	if q.Head != nil || len(q.Demoted) != 1 || q.Demoted[0].ID != "1700000000000-2" || len(q.Parked) != 1 || q.Parked[0].ID != "1700000000000-5" {
-		t.Errorf("queue = %+v, want the head, the evil demotion and the invalid parked entries dropped", q)
+	if q.Head != nil || len(q.Demoted) != 1 || q.Demoted[0].ID != "1700000000000-2" ||
+		len(q.Parked) != 2 || q.Parked[0].Repo != "" || q.Parked[1].ID != "1700000000000-5" {
+		t.Errorf("queue = %+v, want the head and the evil demotion dropped, the unlabeled parked entry kept", q)
 	}
 	// A far common dir is a key only, never shown: the rest must hold.
 	for i := range ans.Inbox {
@@ -961,17 +1099,29 @@ func TestAdmitHostRestrictsFarIdentifiers(t *testing.T) {
 func TestFederateSinceIsTheInboxFloor(t *testing.T) {
 	far := farFix(t, "mbp")
 	for _, tc := range []struct {
-		name  string
-		inbox string
-		since int64
+		name      string
+		inbox     string
+		since     int64
+		hostSince func(host string) (int64, bool)
 	}{
 		{name: "no inbox", since: nowMS() - 24*3600*1000},
 		{name: "a torn inbox", inbox: `{"floor":`, since: nowMS() - 24*3600*1000},
 		{name: "the floor", inbox: fmt.Sprintf(`{"floor":%d,"seen":["k"]}`, ago(300)), since: ago(300)},
+		// The lane's in-memory floor wins over the file's: the pull asks from
+		// the hook even when the file holds an older floor.
+		{
+			name:  "the lane's floor above the file's",
+			inbox: fmt.Sprintf(`{"floor":%d,"seen":["k"]}`, ago(300)),
+			since: ago(100),
+			hostSince: func(string) (int64, bool) {
+				return ago(100), true
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newStatusFix(t)
 			f.overseer("halo", "mbp")
+			f.opts.HostSince = tc.hostSince
 			if tc.inbox != "" {
 				path := lane.OverseerHostInbox(f.env["XDG_STATE_HOME"], "mbp")
 				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -1148,7 +1298,8 @@ var farKeyPaths = []string{"inbox[].common", "misrouted[].common"}
 
 // farLabelPaths are the far repo labels: an invalid one is withheld, its
 // element kept and counted in a skipped note.
-var farLabelPaths = []string{"status.repos[].repo", "inbox[].repo", "misrouted[].repo"}
+var farLabelPaths = []string{"status.repos[].repo", "inbox[].repo", "misrouted[].repo",
+	"status.queue.head.repo", "status.queue.demoted[].repo", "status.queue.parked[].repo"}
 
 var farIdentRE = regexp.MustCompile(`^[A-Za-z0-9:/#._@-]*$`)
 
@@ -1587,6 +1738,92 @@ func TestAdmitHostKeepsUnlabeledRepos(t *testing.T) {
 	}
 }
 
+// A far repo whose label is no identifier appears in one answer as a status
+// row, as the queue head and as a demoted entry: all three survive the
+// overseer's queue projection, shown unlabeled, and the repo is counted once,
+// not once per row it appears in.
+//
+// Built through AdmitHost on a hand-built answer, the way
+// TestAdmitHostKeepsUnlabeledRepos is.
+func TestFarQueueEntryUnlabeledRepoSurvives(t *testing.T) {
+	const raw = "my repo"
+	a := farAnswer()
+	status := a["status"].(map[string]any)
+	repo := status["repos"].([]any)[0].(map[string]any)
+	repo["repo"], repo["common"] = raw, "/git/my repo/.git"
+	status["queue"] = map[string]any{
+		"head": map[string]any{"repo": raw, "crew_id": "c9", "id": "1700000000000-1", "waited_s": 5},
+		"demoted": []any{
+			map[string]any{"repo": raw, "crew_id": "c9", "id": "1700000000000-2", "first_due": 1, "demoted_at": 2},
+		},
+		"parked": []any{},
+	}
+
+	ans, err := AdmitHost(marshal(t, a), "mbp", "halo", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := ans.Status.Queue
+	if q.Head == nil {
+		t.Fatalf("queue head = nil, want the unlabeled head kept, not dropped on the way in: %+v", q)
+	}
+	if q.Head.Repo != "" || q.Head.CrewID != "c9" || q.Head.ID != "1700000000000-1" {
+		t.Errorf("head = %+v, want repo unlabeled with its crew and id kept", q.Head)
+	}
+	if len(q.Demoted) != 1 || q.Demoted[0].Repo != "" || q.Demoted[0].CrewID != "c9" || q.Demoted[0].ID != "1700000000000-2" {
+		t.Errorf("demoted = %+v, want the unlabeled demotion kept", q.Demoted)
+	}
+	// The row, the head and the demoted entry are the same repo: it is counted
+	// once, not once per queue row it appears in.
+	want := []Skipped{{Status: "1 repo(s) with an invalid label shown unlabeled"}}
+	if !slices.Equal(ans.Status.Skipped, want) {
+		t.Errorf("skipped = %+v, want %+v", ans.Status.Skipped, want)
+	}
+	rawStatus := marshal(t, ans.Status)
+	for _, s := range []string{raw, "/git/"} {
+		if bytes.Contains(rawStatus, []byte(s)) {
+			t.Errorf("%q is in the status: %s", s, rawStatus)
+		}
+	}
+}
+
+// A queue entry has no common dir, so it falls back to its raw label as a key.
+// That fallback must not collide with a row's common dir: a row whose common
+// dir is the literal text of another unlabeled repo's invalid raw label is a
+// distinct unlabeled repo, so the row and the queue entry count as two, not
+// one.
+func TestFarQueueEntryRawLabelDoesNotCollideWithACommonDir(t *testing.T) {
+	const raw = "my repo"
+	a := farAnswer()
+	status := a["status"].(map[string]any)
+	repo := status["repos"].([]any)[0].(map[string]any)
+	repo["repo"], repo["common"] = "b c", raw
+	status["queue"] = map[string]any{
+		"head":    nil,
+		"demoted": []any{},
+		"parked": []any{
+			map[string]any{"repo": raw, "crew_id": "c9", "id": "1700000000000-1", "reason": "demoted"},
+		},
+	}
+
+	ans, err := AdmitHost(marshal(t, a), "mbp", "halo", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := ans.Status.Repos; len(r) != 1 || r[0].Repo != "" || r[0].Common != "" || r[0].Key != raw {
+		t.Errorf("repos = %+v, want the row kept unlabeled, its common dir a key only", r)
+	}
+	if q := ans.Status.Queue; len(q.Parked) != 1 || q.Parked[0].Repo != "" || q.Parked[0].ID != "1700000000000-1" {
+		t.Errorf("queue = %+v, want the parked entry kept unlabeled", q)
+	}
+	// The row and the queue entry are two distinct unlabeled repos: the entry's
+	// fallback key must not overwrite the row's common dir key.
+	want := []Skipped{{Status: "2 repo(s) with an invalid label shown unlabeled"}}
+	if !slices.Equal(ans.Status.Skipped, want) {
+		t.Errorf("skipped = %+v, want %+v", ans.Status.Skipped, want)
+	}
+}
+
 // fitFar keeps an answer's oldest rows, inbox events and misrouted msgs
 // together, within the row cap and the byte budget, and lowers its ts so the
 // lane's floor stays below the first row it left out.
@@ -1730,6 +1967,69 @@ func TestFederateFailureIsLocallyWorded(t *testing.T) {
 	p.opts.OverseerProbe = func(string) roster.Capture { return poisoned(1) }
 	if w := p.collect(StatusRequest{}).crew(t, "c1").Workers[0]; w["host_error"] != "exit status 1" {
 		t.Errorf("row = %v, want host_error exit status 1", w)
+	}
+}
+
+const (
+	// unknownRefusalCode is no code this host knows, and no far text in it may
+	// reach a sentence.
+	unknownRefusalCode = "directive$(id)"
+	// refuseUnknownSentence is the default, mirroring overseer/msg.go's
+	// `refused (unknown reason)`: never empty, since finish would read an empty
+	// reason as an ok answer.
+	refuseUnknownSentence = "refused (unknown reason)"
+)
+
+var refusalSentences = map[string]string{
+	RefuseOverBudget:     "refused: the far answer cannot advance: its oldest row is over the byte budget",
+	RefuseTSGroupOverCap: "refused: the far answer cannot advance: too many rows share one ts",
+}
+
+// A far refusal is this host's sentence for the code on the answer, never the
+// exit status and never any far text. The sentence is the same whether the far
+// exited non-zero or answered rc 0 with a code, and a code this host does not
+// know gets the default sentence, never an empty one.
+func TestFarRefusalSentence(t *testing.T) {
+	refusal := func(code string) string {
+		return fmt.Sprintf(`{"v":1,"self":"mbp","ts":%d,"refuse":%q}`, nowMS(), code)
+	}
+	for _, tc := range []struct {
+		name, code string
+		rc         int
+		want       string
+	}{
+		{"over budget, on a non-zero exit", RefuseOverBudget, 1, refusalSentences[RefuseOverBudget]},
+		{"over budget, on rc 0", RefuseOverBudget, 0, refusalSentences[RefuseOverBudget]},
+		{"ts group over cap, on a non-zero exit", RefuseTSGroupOverCap, 1, refusalSentences[RefuseTSGroupOverCap]},
+		{"ts group over cap, on rc 0", RefuseTSGroupOverCap, 0, refusalSentences[RefuseTSGroupOverCap]},
+		{"an unknown code, on a non-zero exit", unknownRefusalCode, 1, refuseUnknownSentence},
+		{"an unknown code, on rc 0", unknownRefusalCode, 0, refuseUnknownSentence},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newStatusFix(t)
+			f.overseer("halo", "mbp")
+			text := refusal(tc.code)
+			f.opts.Federate = func(_ context.Context, _ string, _ []string, stdout, _ io.Writer) int {
+				_, _ = io.WriteString(stdout, text)
+				return tc.rc
+			}
+			h := f.collect(StatusRequest{}).Hosts[0]
+			if h.State != "unreachable" {
+				t.Errorf("state = %q, want unreachable", h.State)
+			}
+			if h.Error == nil {
+				t.Fatalf("error = nil, want %q", tc.want)
+			}
+			if *h.Error != tc.want {
+				t.Errorf("error = %q, want %q", *h.Error, tc.want)
+			}
+			if strings.Contains(*h.Error, "exit status") || strings.Contains(*h.Error, tc.code) {
+				t.Errorf("error = %q, want no exit status and no far text", *h.Error)
+			}
+			if h.TS != nil || len(h.Repos) != 0 || h.Machine != nil || h.Batches() != nil {
+				t.Errorf("a refused host carries no far data: %+v", h)
+			}
+		})
 	}
 }
 

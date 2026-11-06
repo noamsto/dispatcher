@@ -78,7 +78,7 @@ func (r *ovRig) options(discover func(io.Writer) []repos.Repo) FleetOptions {
 		},
 		Host:  func() (string, error) { return ovHost, nil },
 		Flush: r.flush,
-		CollectStatus: func(_ context.Context, stderr io.Writer) fleetpkg.StatusDoc {
+		CollectStatus: func(_ context.Context, stderr io.Writer, _ func(string) (int64, bool)) fleetpkg.StatusDoc {
 			n := int(r.calls.Add(1))
 			if r.notes != "" {
 				say(stderr, "%s", r.notes)
@@ -434,7 +434,7 @@ func TestOverseerStopsOnTermDuringAHungStatusRead(t *testing.T) {
 	w := ovWorker("worker:feat/a#s1-1", "working")
 	entered := make(chan struct{}, 1)
 	calls := 0
-	o.CollectStatus = func(ctx context.Context, _ io.Writer) fleetpkg.StatusDoc {
+	o.CollectStatus = func(ctx context.Context, _ io.Writer, _ func(string) (int64, bool)) fleetpkg.StatusDoc {
 		if calls++; calls == 1 {
 			return ovDoc(ovStart, ovRepo("alpha", ovCrew("c1", "live", "attended", w)))
 		}
@@ -473,7 +473,7 @@ func TestOverseerStopsOnTermDuringAHungStatusRead(t *testing.T) {
 
 // bareOverseer is an overseer with only what diff reads: its clock stands at
 // ovStart, and collect is its status read.
-func bareOverseer(out io.Writer, collect func(context.Context, io.Writer) fleetpkg.StatusDoc) *overseer {
+func bareOverseer(out io.Writer, collect func(context.Context, io.Writer, func(string) (int64, bool)) fleetpkg.StatusDoc) *overseer {
 	return &overseer{
 		c:        call{crew: ovMe, heartbeat: defaultHeartbeat},
 		o:        FleetOptions{Options: Options{Clock: clock.Clock{Now: newMSClock(ovStart).Now}}},
@@ -494,7 +494,7 @@ func TestOverseerDiffDropsADocumentPastItsTimeout(t *testing.T) {
 	var out lockedWriter
 	w := ovWorker("worker:feat/a#s1-1", "working")
 	hang := true
-	v := bareOverseer(&out, func(ctx context.Context, _ io.Writer) fleetpkg.StatusDoc {
+	v := bareOverseer(&out, func(ctx context.Context, _ io.Writer, _ func(string) (int64, bool)) fleetpkg.StatusDoc {
 		if hang {
 			<-ctx.Done()
 		}
@@ -539,7 +539,7 @@ func TestOverseerStatusDeadlineIsNotTheInterval(t *testing.T) {
 	r := newOvRig(t)
 	o := r.options(okRepos())
 	left := make(chan time.Duration, 1)
-	o.CollectStatus = func(ctx context.Context, _ io.Writer) fleetpkg.StatusDoc {
+	o.CollectStatus = func(ctx context.Context, _ io.Writer, _ func(string) (int64, bool)) fleetpkg.StatusDoc {
 		deadline, _ := ctx.Deadline()
 		select {
 		case left <- time.Until(deadline):
@@ -564,7 +564,7 @@ func TestOverseerFirstCompletedReadIsTheBaseline(t *testing.T) {
 	var out lockedWriter
 	w := ovWorker("worker:feat/a#s1-1", "working")
 	hang := true
-	v := bareOverseer(&out, func(ctx context.Context, _ io.Writer) fleetpkg.StatusDoc {
+	v := bareOverseer(&out, func(ctx context.Context, _ io.Writer, _ func(string) (int64, bool)) fleetpkg.StatusDoc {
 		if hang {
 			<-ctx.Done()
 			return ovDoc(ovStart, ovRepo("alpha", ovCrew("c1", "live", "attended", w)))
@@ -1331,7 +1331,7 @@ func fedRun(t *testing.T, v *overseer, docs ...fleetpkg.StatusDoc) [][]map[strin
 	var out lockedWriter
 	v.out = &laneWriter{w: &out, now: time.Now}
 	i := 0
-	v.collect = func(context.Context, io.Writer) fleetpkg.StatusDoc { i++; return docs[i-1] }
+	v.collect = func(context.Context, io.Writer, func(string) (int64, bool)) fleetpkg.StatusDoc { i++; return docs[i-1] }
 	v.interval = time.Minute
 	var got [][]map[string]any
 	seen := 0
@@ -1525,12 +1525,16 @@ func TestOverseerRemoteMisroutedCarriesHostAndSenderOnly(t *testing.T) {
 	}
 }
 
-func TestOverseerRemoteInboxFloorFollowsTheFarClock(t *testing.T) {
+// A partner whose clock runs ahead must not raise the lane's floor above the
+// newest row the answer carried: the floor ends at that row's ts, not at the
+// far ts less farSettle, and a later answer carrying no row leaves it there.
+func TestOverseerRemoteInboxFloorCapsAtTheNewestRow(t *testing.T) {
 	v := fedOverseer(t)
+	row := ovStart + 1
 	ev := func(ts int64) map[string]any { return map[string]any{"ts": float64(ts), "kind": "msg"} }
 	pulls := [][]fleetpkg.FarBatch{
-		{{Repo: "o/a", Common: "/git/a/.git", Cursor: ovStart + 1, Events: []map[string]any{ev(ovStart + 1)}}},
-		nil,
+		{{Repo: "o/a", Common: "/git/a/.git", Cursor: row + 1, Events: []map[string]any{ev(row)}}},
+		{{Repo: "o/a", Common: "/git/a/.git", Cursor: row + 1}},
 	}
 	old := hostBatches
 	t.Cleanup(func() { hostBatches = old })
@@ -1540,9 +1544,18 @@ func TestOverseerRemoteInboxFloorFollowsTheFarClock(t *testing.T) {
 		return pulls[n-1], nil
 	}
 	doc := func(ts int64) fleetpkg.StatusDoc { return withHosts(ovDoc(ts), okHost("mbp", ts)) }
-	fedRun(t, v, doc(ovStart+minute), doc(ovStart+10*minute))
-	if in := farInbox(t, v.stateDir); in.Floor != ovStart+9*minute || len(in.Seen) != 0 {
-		t.Errorf("inbox = %+v, want floor %d, the far ts less farSettle, and the key below it pruned", in, ovStart+9*minute)
+	// The doc ts is far more than farSettle above the row: only the cap keeps the
+	// floor at the row rather than at the far clock less farSettle.
+	if got := ovStart + 10*minute - fleetpkg.FarSettle.Milliseconds(); got <= row {
+		t.Fatalf("fixture needs the far clock over farSettle above the row: farSettle = %v, line = %d", fleetpkg.FarSettle, got)
+	}
+	fedRun(t, v, doc(ovStart+10*minute))
+	if in := farInbox(t, v.stateDir); in.Floor != row {
+		t.Errorf("first pull: floor = %d, want %d, the newest row the answer carried", in.Floor, row)
+	}
+	fedRun(t, v, doc(ovStart+20*minute))
+	if in := farInbox(t, v.stateDir); in.Floor != row || len(in.Seen) != 0 {
+		t.Errorf("no-row pull: inbox = %+v, want the floor still %d and no key above it", in, row)
 	}
 }
 
@@ -1661,8 +1674,10 @@ func newFarRig(t *testing.T) *farRig {
 // lane is a fresh overseer lane started at ovStart over the rig's state.
 func (r *farRig) lane(t *testing.T) *overseer {
 	t.Helper()
-	v := bareOverseer(io.Discard, func(ctx context.Context, w io.Writer) fleetpkg.StatusDoc {
-		doc := fleetpkg.CollectStatus(ctx, fleetpkg.StatusRequest{}, w, r.opts)
+	v := bareOverseer(io.Discard, func(ctx context.Context, w io.Writer, hostSince func(string) (int64, bool)) fleetpkg.StatusDoc {
+		opts := r.opts
+		opts.HostSince = hostSince
+		doc := fleetpkg.CollectStatus(ctx, fleetpkg.StatusRequest{}, w, opts)
 		if len(doc.Hosts) != 1 || doc.Hosts[0].State != "ok" {
 			t.Fatalf("hosts = %+v, want mbp ok", doc.Hosts)
 		}
@@ -1681,10 +1696,16 @@ func (r *farRig) lane(t *testing.T) *overseer {
 // pull is one status read of v: the bodies of the far replies it printed.
 func (r *farRig) pull(t *testing.T, v *overseer) []string {
 	t.Helper()
+	return farBodies(r.pullLines(t, v))
+}
+
+// pullLines is one status read of v: the lane lines it printed.
+func (r *farRig) pullLines(t *testing.T, v *overseer) []map[string]any {
+	t.Helper()
 	var out lockedWriter
 	v.out = &laneWriter{w: &out, now: time.Now}
 	v.diff(t.Context())
-	return farBodies(decodeLinesT(t, out.str()))
+	return decodeLinesT(t, out.str())
 }
 
 // farBodies are the bodies of the far replies among lines.
@@ -1842,6 +1863,31 @@ func TestOverseerRemoteSeedsPartnerInboxAtTheLaneStart(t *testing.T) {
 	}
 }
 
+// A partner's first pull asks from the lane's start, not the fallback window:
+// a reply older than that window but newer than the lane's start is still
+// served. Both clocks sit 25 h past the lane start, so the fallback window
+// (now-24 h, here ovStart+1h1m) begins above the reply at ovStart+1h.
+func TestOverseerFirstPullSinceIsTheLaneStart(t *testing.T) {
+	r := newFarRig(t)
+	r.far.Advance(25 * time.Hour)
+	r.clock.advance(25 * time.Hour)
+	r.far.Repo("a")
+	r.far.Append("a", fleettest.Reply(ovStart+time.Hour.Milliseconds(), "c1", ovHost, "reply-1h"))
+	serve := r.far.Serve()
+	var sinces []string
+	r.opts.Federate = func(ctx context.Context, host string, argv []string, stdout, stderr io.Writer) int {
+		sinces = append(sinces, argv[len(argv)-1])
+		return serve(ctx, host, argv, stdout, stderr)
+	}
+	v := r.lane(t)
+	if got := r.pull(t, v); !slices.Equal(got, []string{"reply-1h"}) {
+		t.Errorf("first pull delivered %q, want reply-1h", got)
+	}
+	if len(sinces) != 1 || sinces[0] != fmt.Sprint(ovStart) {
+		t.Errorf("first pull --since = %q, want the lane start %d", sinces, ovStart)
+	}
+}
+
 // Twice an answer's worth of replies, over many far buses, leave one inbox
 // file whose keys are only those above its floor.
 func TestFarInboxStateIsBounded(t *testing.T) {
@@ -1873,14 +1919,16 @@ func TestFarInboxStateIsBounded(t *testing.T) {
 			printed[b]++
 		}
 		in := farInbox(t, r.state)
-		above := 0
-		for _, ts := range posted {
-			if ts > in.Floor {
-				above++
-			}
+		// The floor is the far clock less farSettle, capped by the newest row the
+		// answer carried (the last reply this pull posted, now-1s, which sits
+		// above that line): pin it, so the inbox bound is a floor assertion rather
+		// than a comparison an empty inbox would satisfy.
+		newest := now - 1000
+		if want := min(now-fleetpkg.FarSettle.Milliseconds(), newest); in.Floor != want {
+			t.Errorf("pull %d: floor = %d, want %d, the far clock less farSettle capped at the newest row", n, in.Floor, want)
 		}
-		if len(in.Seen) > above || len(in.Seen) > farSeenCap {
-			t.Errorf("pull %d: %d keys, want at most the %d replies above floor %d and the cap %d", n, len(in.Seen), above, in.Floor, farSeenCap)
+		if want := repos * perRepo; len(in.Seen) != want || len(in.Seen) > farSeenCap {
+			t.Errorf("pull %d: %d keys, want the %d replies above floor %d, within the cap %d", n, len(in.Seen), want, in.Floor, farSeenCap)
 		}
 		r.far.Advance(2 * time.Minute)
 		r.clock.advance(2 * time.Minute)
@@ -1895,5 +1943,295 @@ func TestFarInboxStateIsBounded(t *testing.T) {
 	}
 	if got, want := tree(t, lanepkg.OverseerHostDir(r.state, "mbp")), []string{"inbox.json", "ok"}; !slices.Equal(got, want) {
 		t.Errorf("host dir holds %q, want %q", got, want)
+	}
+}
+
+// farReplies is n far replies from c1 to ovHost at ts, bodies prefix0000 on.
+func farReplies(n int, ts int64, prefix string) []string {
+	var lines []string
+	for i := range n {
+		lines = append(lines, fleettest.Reply(ts, "c1", ovHost, fmt.Sprintf("%s%04d", prefix, i)))
+	}
+	return lines
+}
+
+// A far answer over the event cap is cut oldest-first with its ts lowered
+// below the first row it left out, so three pulls deliver every reply once,
+// oldest first, each within the cap, and a fourth delivers none.
+func TestOverseerFarOverCapDeliversEveryReply(t *testing.T) {
+	r := newFarRig(t)
+	r.far.Advance(30 * time.Minute)
+	r.clock.advance(30 * time.Minute)
+	r.far.Repo("a")
+	const n = 1200
+	base := r.far.Now()
+	var lines []string
+	for i := range n {
+		lines = append(lines, fleettest.Reply(base-1_200_000+int64(i)*1000, "c1", ovHost, fmt.Sprintf("r%04d", i)))
+	}
+	r.far.Append("a", lines...)
+	v := r.lane(t)
+	var all []string
+	for p := 1; p <= 3; p++ {
+		bodies := r.pull(t, v)
+		if len(bodies) > fleetpkg.FarMaxEvents {
+			t.Errorf("pull %d delivered %d replies, over the cap", p, len(bodies))
+		}
+		all = append(all, bodies...)
+	}
+	if len(all) != n {
+		t.Fatalf("three pulls delivered %d replies, want %d", len(all), n)
+	}
+	if again := r.pull(t, v); len(again) != 0 {
+		t.Errorf("a fourth pull delivered %d replies again", len(again))
+	}
+	for i, b := range all {
+		if want := fmt.Sprintf("r%04d", i); b != want {
+			t.Fatalf("reply %d = %s, want %s: oldest first, each once", i, b, want)
+		}
+	}
+}
+
+// A partner whose clock runs ahead must not raise the lane's floor past the
+// replies the far still owes. The far clock is 10 min ahead of the lane start,
+// so the first answer reports a doc ts far above the reply it carried; a later
+// reply whose ts trails that clock by far more than FarSettle is still asked
+// for.
+func TestOverseerFarClockAheadDelivers(t *testing.T) {
+	r := newFarRig(t)
+	r.far.Advance(9 * time.Minute) // the far clock, 10 min ahead of the lane's start
+	r.far.Repo("a")
+	// The answer's doc ts is ~10 min above this row, so on main the floor it
+	// raises to sits far above the row that the answer carried.
+	r.far.Append("a", fleettest.Reply(ovStart+5_000, "c1", ovHost, "early"))
+	v := r.lane(t)
+	if got := r.pull(t, v); !slices.Equal(got, []string{"early"}) {
+		t.Fatalf("pull 1 printed %q, want early", got)
+	}
+	// This row lands after that answer, 30 s after the lane start: its ts trails
+	// the far clock by 9.5 min, more than FarSettle, so only the capped floor
+	// keeps it above the next --since.
+	r.far.Append("a", fleettest.Reply(ovStart+30_000, "c1", ovHost, "late"))
+	if got := r.pull(t, v); !slices.Equal(got, []string{"late"}) {
+		t.Errorf("pull 2 printed %q, want late: a far-clock-ahead partner's floor rose past a reply it still owed", got)
+	}
+}
+
+// A far repo whose name is no identifier still has its replies delivered,
+// unlabeled: neither a far path nor its raw or `?`-sanitized label reaches
+// the printed lines.
+func TestOverseerFarUnlabeledReposDeliver(t *testing.T) {
+	r := newFarRig(t)
+	long := strings.Repeat("l", 130)
+	names := []string{"my repo", "c++", long}
+	base := r.far.Now()
+	for i, name := range names {
+		r.far.Repo(name)
+		r.far.Append(name, fleettest.Reply(base-int64(i+1)*10_000, "c1", ovHost, "body-"+name[:2]))
+	}
+	v := r.lane(t)
+	lines := r.pullLines(t, v)
+	bodies := farBodies(lines)
+	slices.Sort(bodies)
+	if want := []string{"body-c+", "body-ll", "body-my"}; !slices.Equal(bodies, want) {
+		t.Errorf("delivered %q, want %q", bodies, want)
+	}
+	root := filepath.Dir(filepath.Dir(r.far.Common("c++")))
+	var printed strings.Builder
+	for _, l := range lines {
+		raw, err := json.Marshal(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		printed.Write(raw)
+		printed.WriteByte('\n')
+	}
+	for _, raw := range []string{root, "my repo", "c++", long, "my?repo", "c??"} {
+		if strings.Contains(printed.String(), raw) {
+			t.Errorf("%q was printed:\n%s", raw, printed.String())
+		}
+	}
+}
+
+// A cut never splits a ts group: the first pull delivers the older group
+// whole and nothing of the next, and later pulls deliver the rest, each once.
+func TestOverseerFarCutKeepsTsGroupsWhole(t *testing.T) {
+	r := newFarRig(t)
+	r.far.Advance(30 * time.Minute)
+	r.clock.advance(30 * time.Minute)
+	r.far.Repo("a")
+	base := r.far.Now()
+	t1, t2 := base-120_000, base-60_000
+	r.far.Append("a", slices.Concat(farReplies(300, t1, "a"), farReplies(300, t2, "b"))...)
+	v := r.lane(t)
+	from := func(prefix string) func(string) bool {
+		return func(b string) bool { return !strings.HasPrefix(b, prefix) }
+	}
+	if first := r.pull(t, v); len(first) != 300 || slices.ContainsFunc(first, from("a")) {
+		t.Fatalf("first pull delivered %d replies, want the 300 at t1 only", len(first))
+	}
+	if second := r.pull(t, v); len(second) != 300 || slices.ContainsFunc(second, from("b")) {
+		t.Errorf("second pull delivered %d replies, want the 300 at t2", len(second))
+	}
+	if again := r.pull(t, v); len(again) != 0 {
+		t.Errorf("a third pull delivered %d replies again", len(again))
+	}
+}
+
+// A far answer over the event cap lands in two pulls even when the lane
+// cannot rewrite its inbox file: the floor lives in memory, so the far is not
+// asked from the file's stale floor and does not re-serve rows the lane
+// already delivered.
+func TestOverseerFarStallWithAnUnwritableInboxFile(t *testing.T) {
+	r := newFarRig(t)
+	r.far.Advance(30 * time.Minute)
+	r.clock.advance(30 * time.Minute)
+	r.far.Repo("a")
+	// The file's floor starts well below the lane start, and stays there: the
+	// directory below it is read-only, so the lane cannot advance the file.
+	path := lanepkg.OverseerHostInbox(r.state, "mbp")
+	if err := lanepkg.WriteFarInbox(path, lanepkg.FarInbox{Floor: ovStart - 10*minute, Seen: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(path)
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if lanepkg.WriteFarInbox(path, lanepkg.FarInbox{Floor: ovStart, Seen: []string{}}) == nil {
+		t.Skip("a read-only dir is writable here")
+	}
+	// Just over two answers' worth, at distinct ts so the first pull is cut by
+	// the row cap alone, and all above the lane start (and the stale floor).
+	const n = 2*fleetpkg.FarMaxEvents + 50
+	base := r.far.Now()
+	var lines []string
+	for i := range n {
+		lines = append(lines, fleettest.Reply(base-int64(n)*1000+int64(i)*1000, "c1", ovHost, fmt.Sprintf("s%04d", i)))
+	}
+	r.far.Append("a", lines...)
+	v := r.lane(t)
+	first := r.pull(t, v)
+	if len(first) != fleetpkg.FarMaxEvents {
+		t.Fatalf("pull 1 delivered %d replies, want %d", len(first), fleetpkg.FarMaxEvents)
+	}
+	second := r.pull(t, v)
+	if len(second) == 0 {
+		t.Fatalf("pull 2 delivered nothing, want the rest of the backlog")
+	}
+	// A far answer carries at most FarMaxEvents rows, so just over two answers'
+	// worth needs a third pull; the point is that it never stalls at the stale
+	// file floor.
+	third := r.pull(t, v)
+	all := slices.Concat(first, second, third)
+	if len(all) != n {
+		t.Errorf("three pulls delivered %d replies, want %d", len(all), n)
+	}
+	seen := map[string]int{}
+	for _, b := range all {
+		seen[b]++
+	}
+	for b, c := range seen {
+		if c != 1 {
+			t.Errorf("%s delivered %d times, want once", b, c)
+		}
+	}
+}
+
+// A partner whose lane is dead and whose crew has a worker the lane strands
+// must not read a cut answer's lowered ts as a clock that has fallen behind:
+// the host's own status clock is the far clock, so while a backlog still
+// drains no lane_dead fires.
+func TestOverseerBacklogKeepsHostClockAlive(t *testing.T) {
+	r := newFarRig(t)
+	r.far.Advance(39 * time.Minute)
+	r.clock.advance(39 * time.Minute)
+	crew := r.far.DeadLaneCrew("a", "c9", 5*time.Minute)
+	r.far.Append("a", statusRow(r.far.Now()-30*time.Minute.Milliseconds(), crew, "worker:feat/a#s1-1", "done"))
+
+	// (i) The partner's own document names a live dispatcher whose lane is
+	// dead, with a worker the lane strands: a fixture that does nothing fails
+	// here, not silently.
+	doc := fleetpkg.CollectStatus(t.Context(), fleetpkg.StatusRequest{}, io.Discard, r.opts)
+	if len(doc.Hosts) != 1 || doc.Hosts[0].State != "ok" {
+		t.Fatalf("hosts = %+v, want mbp ok", doc.Hosts)
+	}
+	var c fleetpkg.CrewStatus
+	found := false
+	for _, repo := range doc.Hosts[0].Repos {
+		for _, got := range repo.Crews {
+			if got.CrewID == crew {
+				c, found = got, true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("crew %s not in the partner's document: %+v", crew, doc.Hosts[0].Repos)
+	}
+	if c.Dispatcher.State != "live" || c.Dispatcher.Lane == nil || *c.Dispatcher.Lane != "dead" {
+		t.Fatalf("dispatcher = %+v, want a live dispatcher whose lane is dead", c.Dispatcher)
+	}
+	if len(c.Workers) != 1 || c.Workers[0]["stale"] != false {
+		t.Fatalf("workers = %+v, want one not-stale worker the lane strands", c.Workers)
+	}
+
+	// (ii) The backlog's oldest rows sit over laneDeadAfter below the far
+	// clock, so a clock read off the cut reads as long stopped.
+	oldest := r.far.Now() - 30*time.Minute.Milliseconds()
+	var lines []string
+	for i := range fleetpkg.FarMaxEvents {
+		lines = append(lines, fleettest.Reply(oldest, crew, ovHost, fmt.Sprintf("a%04d", i)))
+	}
+	lines = append(lines, fleettest.Reply(r.far.Now()-20*time.Minute.Milliseconds(), crew, ovHost, "b0000"))
+	r.far.Append("a", lines...)
+	if below := r.far.Now() - oldest; below < laneDeadAfter.Milliseconds() {
+		t.Fatalf("the backlog is only %d ms below the far clock, want at least %d", below, laneDeadAfter.Milliseconds())
+	}
+
+	// (iii) Two pulls, replies still arriving, print no lane_dead: the first
+	// answer's cut never becomes the clock the differ ages the lane against.
+	v := r.lane(t)
+	if got := ofEvent(r.pullLines(t, v), "lane_dead"); len(got) != 0 {
+		t.Fatalf("pull 1 fired lane_dead: %v", got)
+	}
+	r.far.Advance(2 * time.Minute)
+	r.clock.advance(2 * time.Minute)
+	r.far.Append("a", fleettest.Reply(r.far.Now()-30_000, crew, ovHost, "fresh"))
+	second := r.pullLines(t, v)
+	if got := farBodies(second); !slices.Contains(got, "fresh") {
+		t.Errorf("pull 2 delivered %q, want the fresh reply", got)
+	}
+	if got := ofEvent(second, "lane_dead"); len(got) != 0 {
+		t.Fatalf("pull 2 fired lane_dead: %v", got)
+	}
+}
+
+// A far partner's head hold in an unlabeled repo still fires at this lane: the
+// served queue's head carries no repo label, and the lane prints one
+// capacity_stuck line with cause head_wait, the hold's host the partner, and
+// neither the far path nor the raw or sanitized label on the wire.
+func TestOverseerFarUnlabeledHeadStuck(t *testing.T) {
+	r := newFarRig(t)
+	v := r.lane(t)
+	r.pullLines(t, v) // the baseline: the partner has no queue yet
+	id := r.far.HeadHold("my repo", "c1", 3600)
+	lines := r.pullLines(t, v)
+	stuck := ofEvent(lines, "capacity_stuck")
+	if len(stuck) != 1 {
+		t.Fatalf("capacity_stuck = %v, want exactly one", stuck)
+	}
+	l := stuck[0]
+	if l["cause"] != "head_wait" || l["host"] != "mbp" || l["hold"] != id || l["repo"] != "" {
+		t.Errorf("line = %v, want cause head_wait, host mbp, hold %s and no repo", l, id)
+	}
+	raw, err := json.Marshal(lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Dir(filepath.Dir(r.far.Common("my repo")))
+	for _, bad := range []string{root, "my repo", "my?repo"} {
+		if bytes.Contains(raw, []byte(bad)) {
+			t.Errorf("%q reached the wire:\n%s", bad, raw)
+		}
 	}
 }

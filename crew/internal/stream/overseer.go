@@ -151,7 +151,7 @@ type overseer struct {
 	out        lineSink
 	notes      *notes
 	sup        *suppress
-	collect    func(context.Context, io.Writer) fleetpkg.StatusDoc
+	collect    func(context.Context, io.Writer, func(string) (int64, bool)) fleetpkg.StatusDoc
 	moves      *transitions
 	partners   map[string]*partner
 	inboxes    map[string]lanepkg.FarInbox
@@ -447,7 +447,7 @@ func (v *overseer) diff(ctx context.Context) bool {
 	read, cancel := context.WithTimeout(ctx, v.timeout)
 	defer cancel()
 	var text bytes.Buffer
-	doc := v.collect(read, &text)
+	doc := v.collect(read, &text, v.hostFloor)
 	v.notes.lines(text.String())
 	if ctx.Err() != nil {
 		return v.parkWoke()
@@ -512,16 +512,54 @@ var hostBatches = func(h fleetpkg.HostStatus) ([]fleetpkg.FarBatch, []fleetpkg.F
 	return h.Batches(), h.Misroutes()
 }
 
+// newestFarRow is the newest ts among the replies and misrouted msgs the
+// answer carried, false when it carried none. It caps the floor a pull may
+// raise to: a partner whose clock runs ahead must not lift the floor past a
+// row it still owes.
+func newestFarRow(batches []fleetpkg.FarBatch, misrouted []fleetpkg.FarMisrouted) (int64, bool) {
+	newest, ok := int64(0), false
+	for _, b := range batches {
+		for _, ev := range b.Events {
+			if ts, valid := watch.WholeMS(ev["ts"]); valid && (!ok || ts > newest) {
+				newest, ok = ts, true
+			}
+		}
+	}
+	for _, m := range misrouted {
+		if !ok || m.TS > newest {
+			newest, ok = m.TS, true
+		}
+	}
+	return newest, ok
+}
+
 // farSeenCap bounds the inbox's keys at four full answers' worth.
 const farSeenCap = 4 * fleetpkg.FarMaxEvents
+
+// hostFloor is the --since of a pull from host: the lane's in-memory floor for
+// it, else the floor of its inbox file, else the lane's start. It is only a
+// --since reader: remote keeps its own memory-then-file read for the floor and
+// the seen keys, so this never consumes or moves either.
+func (v *overseer) hostFloor(host string) (int64, bool) {
+	if in, ok := v.inboxes[host]; ok {
+		return in.Floor, true
+	}
+	if in, ok := lanepkg.ReadFarInbox(lanepkg.OverseerHostInbox(v.stateDir, host)); ok {
+		return in.Floor, true
+	}
+	return v.start, true
+}
 
 // remote prints a partner's replies, and counts its misrouted msgs, above the
 // floor of the lane's inbox for it and not yet seen by key. The flush precedes
 // the inbox's move, so a batch that missed the wire prints again on the next
 // pull. The in-memory inbox is authoritative once it exists; the file is what
 // a restart and --since read. A partner with no inbox starts at the lane's
-// start; the floor then rises to the answer's ts less farSettle, and only the
-// keys above it are kept.
+// start; the floor then rises to the far clock (the answer's ts) less
+// farSettle, but never above the newest row the answer carried, so a partner
+// whose clock runs ahead cannot lift it past a reply it still owes, and an
+// answer carrying no row leaves it where it is. Only the keys above it are
+// kept.
 func (v *overseer) remote(h fleetpkg.HostStatus, p *partner, now int64) bool {
 	batches, misrouted := hostBatches(h)
 	path := lanepkg.OverseerHostInbox(v.stateDir, h.Host)
@@ -590,7 +628,11 @@ func (v *overseer) remote(h fleetpkg.HostStatus, p *partner, now int64) bool {
 			}))
 		}
 	}
-	next := in.Next(*h.TS-fleetpkg.FarSettle.Milliseconds(), delivered, farSeenCap)
+	floor := in.Floor
+	if newest, ok := newestFarRow(batches, misrouted); ok {
+		floor = min(*h.TS-fleetpkg.FarSettle.Milliseconds(), newest)
+	}
+	next := in.Next(floor, delivered, farSeenCap)
 	v.inboxes[h.Host] = next
 	if err := lanepkg.WriteFarInbox(path, next); err != nil {
 		v.fail("", "inbox "+path, "inbox: "+oneLine(err))

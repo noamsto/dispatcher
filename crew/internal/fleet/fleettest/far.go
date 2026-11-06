@@ -38,6 +38,7 @@ type Far struct {
 	ms       atomic.Int64
 	mu       sync.Mutex
 	names    []string
+	procs    *proctest.Table
 	opts     fleet.StatusOptions
 }
 
@@ -47,6 +48,7 @@ func NewFar(tb testing.TB, host string, nowMS int64) *Far {
 	root := tb.TempDir()
 	f := &Far{tb: tb, root: root, registry: filepath.Join(root, "registry")}
 	f.ms.Store(nowMS)
+	f.procs = proctest.New(nil, nil)
 	empty := tb.TempDir()
 	env := map[string]string{
 		"HOME":                  empty,
@@ -69,7 +71,7 @@ func NewFar(tb testing.TB, host string, nowMS int64) *Far {
 			}},
 			Clock: clock.Clock{Now: f.now},
 		},
-		Proc:       proctest.New(nil, nil),
+		Proc:       f.procs,
 		Host:       func() (string, error) { return host, nil },
 		Budget:     func(context.Context) (int, error) { return 8, nil },
 		BudgetFile: filepath.Join(root, "engine-budget.json"),
@@ -138,6 +140,53 @@ func (f *Far) Append(name string, lines ...string) {
 			f.tb.Fatal(err)
 		}
 	}
+}
+
+// DeadLaneCrew registers repo name and writes crewID's crew with a live
+// dispatcher and a dead lane: a pid file the far's Proc table reports alive,
+// and a stream.lock.d whose holder is a different pid the table does not hold,
+// so lane.State reads the lock's holder as gone. stream.tick is tickAge old. It
+// returns crewID for the caller to post the crew's worker row.
+func (f *Far) DeadLaneCrew(name, crewID string, tickAge time.Duration) string {
+	f.tb.Helper()
+	f.Repo(name)
+	dir := filepath.Join(f.Common(name), "crew", "crews", crewID)
+	const live, dead = 4240, 4241
+	f.procs.Procs[live] = proctest.Proc{}
+	if err := os.MkdirAll(filepath.Join(dir, "stream.lock.d"), 0o755); err != nil {
+		f.tb.Fatal(err)
+	}
+	write(f.tb, filepath.Join(dir, "pid"), strconv.Itoa(live)+"\n")
+	write(f.tb, filepath.Join(dir, "stream.lock.d", "pid"), strconv.Itoa(dead)+"\n")
+	write(f.tb, filepath.Join(dir, "stream.tick"),
+		fmt.Sprintf(`{"pid":%d,"ts":%d,"park":300}`, dead, f.Now()-tickAge.Milliseconds()))
+	return crewID
+}
+
+// HeadHold registers repo name and gives crewID a live dispatcher with no
+// lane tick, then posts a fleet hold for it added waitedS seconds before the
+// far clock. It writes the crew's pid file (pid 4242, which the far's Proc
+// table reports alive) and one bus row from dispatcher:<crewID> to
+// hold:<crewID> whose body is a fleet hold of weight 1. The hold is the
+// served queue's eligible head, and its repo's label is no identifier when
+// name is not one. It returns the hold id, whose text is its add ts dash a
+// pid.
+func (f *Far) HeadHold(name, crewID string, waitedS int64) string {
+	f.tb.Helper()
+	f.Repo(name)
+	const live = 4242
+	f.procs.Procs[live] = proctest.Proc{}
+	dir := filepath.Join(f.Common(name), "crew", "crews", crewID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		f.tb.Fatal(err)
+	}
+	write(f.tb, filepath.Join(dir, "pid"), strconv.Itoa(live)+"\n")
+	ts := f.Now() - waitedS*1000
+	id := fmt.Sprintf("%d-1", ts)
+	body := fmt.Sprintf(`{"id":%q,"wait":{"kind":"fleet","weight":1},"task":{"branch":%q}}`, id, "feat/"+crewID)
+	f.Append(name, fmt.Sprintf(`{"ts":%d,"crew_id":%q,"from":"dispatcher:%s","to":"hold:%s","kind":"msg","body":%q}`,
+		ts, crewID, crewID, crewID, body))
+	return id
 }
 
 // Reply is a bus row: crew's dispatcher replying to overseer:<origin> at ts.

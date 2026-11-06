@@ -45,16 +45,16 @@ the overseer wrote, kill it, start a new one. The new one must show the same
 fleet status, and no dispatcher may have behaved differently while none ran.
 Files the overseer session writes or causes, and why none breaks the test:
 
-| file                                                        | written by                                                                  | if lost or never written                                                                                                           |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| per-bus msg cursors (§2)                                    | overseer stream                                                             | the cold start's `overseer_inbox` replays up to 24 h                                                                               |
-| `${XDG_STATE_HOME}/crew/overseer/pid` (§7)                  | overseer launcher                                                           | a second overseer may start; nothing else reads it                                                                                 |
-| `crews/<id>/relaunch` marker (§5)                           | `dispatcher --relaunch`                                                     | the 30 min relaunch rate limit restarts; dispatchers never read it                                                                 |
-| `${XDG_DATA_HOME}/crew/fleet-priority.json` (§4)            | `crew fleet prio`, a human command the overseer may run on the human's word | every repo has priority 0; dispatchers read it whether or not an overseer exists                                                   |
-| `${XDG_DATA_HOME}/crew/fleet-priority.log` (§4)             | `crew fleet prio` (audit line per change)                                   | the digest loses its "changes since last digest" list; ordering is unaffected                                                      |
-| `${XDG_STATE_HOME}/crew/fleet-due.json` (§4)                | `crew hold due` run by any live dispatcher (never the overseer)             | demotion clocks restart; a stuck hold's demotion is delayed by at most one timeout                                                 |
-| `${XDG_STATE_HOME}/crew/overseer/hosts/<h>/inbox.json` (§9) | overseer stream                                                             | `floor` plus the recently delivered keys; lost, the far `--since` falls back to 24 h and the cold start's `overseer_inbox` replays |
-| `${XDG_STATE_HOME}/crew/overseer/hosts/<h>/ok` (§9)         | overseer stream, `crew fleet status` in overseer mode                       | `last_ok_ts` reads null until the next good answer from that host                                                                  |
+| file                                                        | written by                                                                  | if lost or never written                                                                                                                                                                                              |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| per-bus msg cursors (§2)                                    | overseer stream                                                             | the cold start's `overseer_inbox` replays up to 24 h                                                                                                                                                                  |
+| `${XDG_STATE_HOME}/crew/overseer/pid` (§7)                  | overseer launcher                                                           | a second overseer may start; nothing else reads it                                                                                                                                                                    |
+| `crews/<id>/relaunch` marker (§5)                           | `dispatcher --relaunch`                                                     | the 30 min relaunch rate limit restarts; dispatchers never read it                                                                                                                                                    |
+| `${XDG_DATA_HOME}/crew/fleet-priority.json` (§4)            | `crew fleet prio`, a human command the overseer may run on the human's word | every repo has priority 0; dispatchers read it whether or not an overseer exists                                                                                                                                      |
+| `${XDG_DATA_HOME}/crew/fleet-priority.log` (§4)             | `crew fleet prio` (audit line per change)                                   | the digest loses its "changes since last digest" list; ordering is unaffected                                                                                                                                         |
+| `${XDG_STATE_HOME}/crew/fleet-due.json` (§4)                | `crew hold due` run by any live dispatcher (never the overseer)             | demotion clocks restart; a stuck hold's demotion is delayed by at most one timeout                                                                                                                                    |
+| `${XDG_STATE_HOME}/crew/overseer/hosts/<h>/inbox.json` (§9) | overseer stream                                                             | `floor` plus the recently delivered keys; lost, a restarted lane re-delivers keys it had already printed (the delivered-key de-duplication is gone), but the floor a live lane pulls with is in memory and unaffected |
+| `${XDG_STATE_HOME}/crew/overseer/hosts/<h>/ok` (§9)         | overseer stream, `crew fleet status` in overseer mode                       | `last_ok_ts` reads null until the next good answer from that host                                                                                                                                                     |
 
 No dispatcher reads an overseer-private file, and no fleet duty waits on one.
 
@@ -907,8 +907,10 @@ value comes from a bus row.
 **D5. Federated fleet status.** In overseer mode, with a passing local
 `sender.Check("overseer:<self>")` (a failing check federates nothing: every
 partner reads `unprobed` with the reason), `CollectStatus` fetches each partner
-concurrently with the local collection, each bounded by 10 s, with the floor of
-that host's inbox file (D6) as `--since`, else the last 24 h. Each answer is
+concurrently with the local collection, each bounded by 10 s, with the lane's
+in-memory floor for that host as `--since` (its inbox file's floor on a cold
+start, else the lane's start); only a one-shot `crew fleet status` read, with no
+live lane, falls back to that file's floor and then the last 24 h. Each answer is
 admitted as untrusted data (`fleet.AdmitHost`):
 size and shape caps, `v == 1`, strings stripped of control and invisible
 characters and capped, repo labels, crew ids and hold ids validated against the
@@ -925,8 +927,10 @@ skipped `path` are empty). A failure is worded locally, never from far stderr:
 `exit status N`, `ssh failed (255)`, `no answer within <timeout>`,
 `answer over 4 MiB` or `answer: <reason>`. The far side truncates an answer
 over the caps oldest-first, inbox events and misrouted msgs together, and
-lowers its `ts` so the lane's floor stays below the first row left out; the
-next pull serves the rest. Truncation never splits a ts group. An answer that
+lowers its `ts` so a lane running the previous crew keeps a floor below the
+first row left out; a current lane's floor is the far clock less 60 s, capped by
+the newest row the answer carried, so the next pull serves the rest. Truncation
+never splits a ts group. An answer that
 cannot advance (at least the event cap of rows share one ms, or the oldest row
 alone is oversize) is refused, so the host reads `unreachable` with a local
 reason, never a silent stall. Every far list has a count cap (`skipped`,
@@ -965,14 +969,16 @@ per host; a non-ok partner's carry forward untouched (absent is not cleared).
 `host_unreachable` `{host, error, last_ok_ts, ts}` fires when a partner turns
 non-ok and `host_reachable` when it recovers (edge-triggered: one line per change;
 the first document is the baseline). For each ok partner, every pull sends
-`--since` the floor of that host's inbox file, `{"floor","seen"}`. Each admitted
+`--since` the lane's in-memory floor for that host, `{"floor","seen"}`. Each admitted
 reply above the floor whose key (sha256 of its far common dir and its event
 JSON) is not in `seen` prints in a `{"cursor","events","repo","host"}` batch;
 remote misrouted msgs above the floor and unseen print `misrouted_msg` with
 `host`, sender only. Once the lines are flushed, the inbox file is rewritten
 (temp file plus rename): the printed keys join `seen`, the floor rises to the
-far answer's ts less 60 s, and `seen` keeps only keys above the floor, at most
-2000 (the newest). A failed write or flush leaves the file as it was, so the
+far clock less 60 s, but never above the newest row that answer carried, and does
+not rise when the answer carried none. `hosts[].ts` is the partner's own status
+clock (`status.ts`), not the answer's `ts`, which `fitFar` may lower. `seen` keeps only keys above the floor,
+at most 2000 (the newest). A failed write or flush leaves the file as it was, so the
 next pull prints the batch again (at-least-once). A new inbox starts at the
 lane's start. The far ts is read before any far bus is folded, so a reply that
 lands on its bus during a pull is still above the floor next pull. Remote

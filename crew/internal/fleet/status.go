@@ -70,6 +70,10 @@ type StatusOptions struct {
 	Sender sender.Probes
 	// Federate fetches a partner host's status; nil leaves Hosts empty.
 	Federate roster.Capture
+	// HostSince is the overseer lane's in-memory floor for host, the --since of
+	// its pull; nil for a one-shot status read, which keeps the file floor and
+	// the 24 h fallback.
+	HostSince func(host string) (int64, bool)
 	// OverseerProbe is the capture an overseer asks a repo's --host workers
 	// through, given the repo's checkout dir; nil keeps remote_unprobed.
 	OverseerProbe func(dir string) roster.Capture

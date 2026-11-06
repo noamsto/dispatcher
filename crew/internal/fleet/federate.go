@@ -47,6 +47,50 @@ const (
 	overSize  = "answer over 4 MiB"
 )
 
+// RefuseOverBudget and RefuseTSGroupOverCap are the fixed codes a refusing far
+// puts on its answer's stdout: the requester words each in its own sentence.
+const (
+	RefuseOverBudget     = "over_budget"
+	RefuseTSGroupOverCap = "ts_group_over_cap"
+)
+
+// Refusal is why a far answer cannot advance: a fixed Code the requester maps
+// to its own sentence, and the human Reason for stderr. It is not a FarAnswer,
+// so no requester ever projects one.
+type Refusal struct {
+	Code   string
+	Reason string
+}
+
+func (r Refusal) Error() string { return r.Reason }
+
+// refusalSentence is this host's wording for a refusal code, the default for a
+// code it does not know (mirroring overseer/msg.go's `refused (unknown
+// reason)`): never empty, so finish never reads it as an ok answer, and never
+// any far text.
+func refusalSentence(code string) string {
+	switch code {
+	case RefuseOverBudget:
+		return "refused: the far answer cannot advance: its oldest row is over the byte budget"
+	case RefuseTSGroupOverCap:
+		return "refused: the far answer cannot advance: too many rows share one ts"
+	}
+	return "refused (unknown reason)"
+}
+
+// refusedCode is the non-empty `refuse` key off a capture's stdout, "" when the
+// stdout holds no refusal. A value that is not a JSON object with a string
+// refuse key is not a refusal.
+func refusedCode(stdout []byte) string {
+	var obj struct {
+		Refuse string `json:"refuse"`
+	}
+	if json.Unmarshal(stdout, &obj) != nil {
+		return ""
+	}
+	return obj.Refuse
+}
+
 // FarAnswer is a partner's reply to `crew overseer status --origin <self>`:
 // its own status in served mode and the msgs on its buses to overseer:<self>.
 type FarAnswer struct {
@@ -151,7 +195,9 @@ func ServeFar(ctx context.Context, origin string, since int64, stderr io.Writer,
 // FarSettle, never above the real ts: the lane's floor, ts less FarSettle,
 // then stays below every row left out, and its next pull is served them. When
 // not even the oldest ts group fits, that floor could never rise: the answer
-// is refused instead.
+// is refused instead. The served overseer_inbox is trimmed to maxRows before
+// the skeleton is measured, so each crew's inbox is already bounded when the
+// answer is sized.
 func fitFar(ans *FarAnswer, maxRows, maxBytes int) error {
 	type row struct {
 		ts           int64
@@ -172,6 +218,7 @@ func fitFar(ans *FarAnswer, maxRows, maxBytes int) error {
 
 	// The sizes are json.Marshal's, an upper bound on the served encoding: it
 	// escapes no HTML.
+	cutOverseerInbox(&ans.Status, math.MaxInt64, maxRows)
 	skeleton := *ans
 	skeleton.Inbox, skeleton.Misrouted = []FarBatch{}, []FarMisrouted{}
 	used := encodedLen(skeleton) + 1
@@ -194,18 +241,17 @@ func fitFar(ans *FarAnswer, maxRows, maxBytes int) error {
 		}
 	}
 	if n == len(rows) {
-		cutOverseerInbox(&ans.Status, math.MaxInt64, maxRows)
 		return nil
 	}
 	if n == 0 {
-		return errors.New("answer cannot advance: its oldest row is over the byte budget")
+		return Refusal{Code: RefuseOverBudget, Reason: "answer cannot advance: its oldest row is over the byte budget"}
 	}
 	if ts := rows[0].ts; rows[n].ts == ts {
 		group := 0
 		for group < len(rows) && rows[group].ts == ts {
 			group++
 		}
-		return fmt.Errorf("answer cannot advance: %d rows share ts %d, over the caps", group, ts)
+		return Refusal{Code: RefuseTSGroupOverCap, Reason: fmt.Sprintf("answer cannot advance: %d rows share ts %d, over the caps", group, ts)}
 	}
 	for rows[n-1].ts == rows[n].ts {
 		n--
@@ -279,6 +325,9 @@ func AdmitHost(stdout []byte, host, self string, cutoff int64) (FarAnswer, error
 	obj, ok := top.(map[string]any)
 	if !ok {
 		return FarAnswer{}, errors.New("answer is not a JSON object")
+	}
+	if code, _ := obj["refuse"].(string); code != "" {
+		return FarAnswer{}, errors.New(refusalSentence(code))
 	}
 	if v, ok := watch.WholeMS(obj["v"]); !ok || v != 1 {
 		return FarAnswer{}, errors.New("answer version is not 1")
@@ -497,15 +546,24 @@ func federate(ctx context.Context, stderr io.Writer, o StatusOptions, self, gate
 	}
 	timeout := o.federateTimeout()
 	for i, host := range hosts {
-		since := hostSince(stateDir, host, nowMS-inboxWindow.Milliseconds())
+		// The lane's in-memory floor wins when it has one; a one-shot read
+		// (nil hook) falls back to the file's floor and then the window, while a
+		// host the lane has not seen yet gets the lane's start from hostFloor.
+		since, ok := int64(0), false
+		if o.HostSince != nil {
+			since, ok = o.HostSince(host)
+		}
+		if !ok {
+			since = hostSince(stateDir, host, nowMS-inboxWindow.Milliseconds())
+		}
 		f.wg.Go(func() { f.pulls[i] = pullHost(ctx, o.Federate, host, self, since, timeout) })
 	}
 	return f
 }
 
-// hostSince is the --since of a pull from host: the floor of the lane's inbox
-// for it, else fallback. The lane drops what it already printed above that
-// floor by key.
+// hostSince is the fallback --since of a pull from host: the floor of the
+// lane's inbox file for it, else fallback. The lane drops what it already
+// printed above that floor by key.
 func hostSince(stateDir, host string, fallback int64) int64 {
 	if in, ok := lane.ReadFarInbox(lane.OverseerHostInbox(stateDir, host)); ok {
 		return in.Floor
@@ -549,10 +607,16 @@ func pullHost(ctx context.Context, capture roster.Capture, host, self string, si
 	stdout := &cappedWriter{max: farMaxBytes}
 	argv := []string{"crew", "overseer", "status", "--origin", self, "--since", strconv.FormatInt(since, 10)}
 	rc := capture(ctx, host, argv, stdout, io.Discard)
-	switch {
-	case stdout.over:
+	if stdout.over {
 		return pull{reason: overSize}
-	case rc != 0:
+	}
+	// A refusal is a code the far put on its stdout, read before any exit
+	// status: rc 0 with a code words the same sentence as a non-zero exit, and
+	// no far text ever reaches it.
+	if code := refusedCode(stdout.buf.Bytes()); code != "" {
+		return pull{reason: refusalSentence(code)}
+	}
+	if rc != 0 {
 		return pull{reason: failure(ctx, rc, timeout)}
 	}
 	ans, err := AdmitHost(stdout.buf.Bytes(), host, self, since)
@@ -584,8 +648,15 @@ func (f *federation) finish(stderr io.Writer, stateDir string, nowMS int64) []Ho
 			if err := WriteOK(dir, nowMS); err != nil {
 				say(stderr, "crew: fleet status: %s: ok file: %s\n", host, oneLine(err))
 			}
+			// fitFar lowers the answer ts to the cut point so an older lane keeps
+			// a safe floor, while the partner's own status document carries the
+			// clock the differ needs for lane_dead/blocked_aging: prefer that
+			// whenever it is not behind the answer ts.
 			ts, last, age := p.ans.TS, nowMS, int64(0)
 			s := p.ans.Status
+			if s.TS >= ts {
+				ts = s.TS
+			}
 			h.State, h.TS, h.LastOkTS, h.AgeS = "ok", &ts, &last, &age
 			h.Machine, h.Queue, h.Repos, h.Skipped = s.Machine, s.Queue, s.Repos, s.Skipped
 			h.batches, h.misroutes = p.ans.Inbox, p.ans.Misrouted
