@@ -68,7 +68,6 @@ const (
 	arcStep    = 10.0
 	arcInset   = 1.5
 
-	// staleAlpha dims a stale planet's ring colour.
 	staleAlpha = "55"
 
 	// A host label is a plaintext node that grows with its text, so the map
@@ -234,7 +233,6 @@ func ciBadge(state string) (attrs []string, pen float64, ok bool) {
 	return nil, 0, false
 }
 
-// markerRow reports whether the legend carries the extra row for the markers.
 func markerRow(lg legend) bool {
 	return lg.waiting > 0 || lg.ci > 0 || lg.stale > 0 || lg.repos > 1
 }
