@@ -16,6 +16,13 @@ import (
 
 const statusPrefix = "crew: overseer status: "
 
+// The refusal codes a far status puts on its answer's stdout, so the requester
+// words the refusal itself: Step 17 promotes these to production constants.
+const (
+	codeOverBudget     = "over_budget"
+	codeTSGroupOverCap = "ts_group_over_cap"
+)
+
 // appendRows adds lines to the log at common.
 func appendRows(t *testing.T, common string, lines ...string) {
 	t.Helper()
@@ -119,6 +126,50 @@ func TestStatusServesTheOriginsReplies(t *testing.T) {
 	}
 	if len(ans.Inbox) != 0 || len(ans.Misrouted) != 1 {
 		t.Errorf("with --since at the ack: inbox %+v misrouted %+v, want only the misroute", ans.Inbox, ans.Misrouted)
+	}
+}
+
+// A far answer that cannot advance is still one JSON answer, carrying the fixed
+// refusal code on stdout so the requester can word it locally; the exit status
+// stays non-zero and the human reason stays on stderr. The refusal here is the
+// one Step 15's trim leaves in place: more rows at one ts than an answer may
+// carry, never the oversized overseer_inbox that trim removes.
+func TestStatusRefusalCodeOnStdout(t *testing.T) {
+	f := mbpFixture(t)
+	const ts = 1700000000100
+	rows := make([]string, 0, fleet.FarMaxEvents+1)
+	for range fleet.FarMaxEvents + 1 {
+		rows = append(rows, reply(ts, "dispatcher:c1", "overseer:halo", `{"kind":"ack"}`))
+	}
+	appendRows(t, f.commons[0], rows...)
+
+	code, stdout, stderr := f.status(StatusRequest{Origin: "halo"})
+	if code == 0 {
+		t.Fatalf("got exit 0 and %q, want a non-zero refusal", stdout)
+	}
+	if !strings.HasPrefix(stderr, statusPrefix) || !strings.Contains(stderr, "answer cannot advance") {
+		t.Errorf("stderr = %q, want the human reason", stderr)
+	}
+	if strings.Contains(stderr, codeTSGroupOverCap) {
+		t.Errorf("stderr = %q, want no code on stderr", stderr)
+	}
+	if strings.Count(stdout, "\n") != 1 || !strings.HasSuffix(stdout, "\n") {
+		t.Errorf("stdout is not one JSON line: %q", stdout)
+	}
+	var ans struct {
+		V      int    `json:"v"`
+		Self   string `json:"self"`
+		TS     *int64 `json:"ts"`
+		Refuse string `json:"refuse"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &ans); err != nil {
+		t.Fatalf("stdout is not one JSON object: %v (%q)", err, stdout)
+	}
+	if ans.Refuse != codeTSGroupOverCap {
+		t.Errorf("refuse = %q, want %q", ans.Refuse, codeTSGroupOverCap)
+	}
+	if ans.V != 1 || ans.Self != "mbp" || ans.TS == nil {
+		t.Errorf("v/self/ts = %d/%q/%v, want 1/mbp/a whole ms", ans.V, ans.Self, ans.TS)
 	}
 }
 

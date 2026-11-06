@@ -1212,10 +1212,11 @@ func runFleet(ctx context.Context, p crewArgs, stdout, stderr io.Writer, e env) 
 			Host:    peer.SelfName,
 			// The overseer lane's status is offline: no gh, no remote-worker probes;
 			// it federates with partner hosts.
-			CollectStatus: func(ctx context.Context, stderr io.Writer) fleet.StatusDoc {
+			CollectStatus: func(ctx context.Context, stderr io.Writer, hostSince func(host string) (int64, bool)) fleet.StatusDoc {
 				o := fleet.Options{Tmux: tmux.Exec{}, Git: git.Exec{}, Clock: clock.FromEnv()}
 				so := statusOptions(o, e, stderr)
 				so.OverseerProbe = nil
+				so.HostSince = hostSince
 				return fleet.CollectStatus(ctx, fleet.StatusRequest{}, stderr, so)
 			},
 		})
