@@ -763,3 +763,89 @@ func TestTwoClonesOfOneRepoGetDistinctWedgesAndKeys(t *testing.T) {
 		t.Errorf("%d planets, want 3", len(seen))
 	}
 }
+
+func TestARecalledFrameIsRelabelledByTheRenamedSource(t *testing.T) {
+	for name, tc := range map[string]struct {
+		origins       map[string]string // repo name -> owner/name, empty for a checkout dir
+		before, after []string
+		torn          string
+	}{
+		"a clone that sorts first joins and shifts the suffixes": {
+			origins: map[string]string{"b": "o/tools", "c": "o/tools", "a": "o/tools"},
+			before:  []string{"b", "c"}, after: []string{"a", "b", "c"}, torn: "b",
+		},
+		"a checkout dir takes the name an owner repo held": {
+			origins: map[string]string{"x": "o/tools", "tools": ""},
+			before:  []string{"x"}, after: []string{"tools", "x"}, torn: "x",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := newLoop(t)
+			l.seed(t, workerEvents("feat/1-a")...)
+			byName := map[string]bus.Paths{}
+			for n := range tc.origins {
+				byName[n] = repoAt(t, n, workerEvents("feat/1-a")...)
+			}
+			origins := map[string]string{l.paths.Common: "z/local"}
+			for n, o := range tc.origins {
+				origins[byName[n].Common] = o
+			}
+			// Rediscovery skips a torn bus, so the tear lands just after it has read
+			// the repo, while it asks for the origin.
+			var tearOnOrigin string
+			l.opts.Git = &gittest.Fake{Func: func(_ string, args []string) (string, error) {
+				if !slices.Contains(args, "config") {
+					return "", nil
+				}
+				common := strings.TrimPrefix(args[0], "--git-dir=")
+				if common == tearOnOrigin {
+					tear(t, bus.Paths{Log: common + "/crew/events.jsonl"})
+				}
+				if o := origins[common]; o != "" {
+					return "https://github.com/" + o + ".git", nil
+				}
+				return "", nil
+			}}
+			found := func(names []string) []repos.Repo {
+				var ps []bus.Paths
+				for _, n := range names {
+					ps = append(ps, byName[n])
+				}
+				return okRepos(ps...)
+			}
+			d := &discoverStub{found: found(tc.before)}
+			l.opts.Discover = d.discover
+			l.opts.disc = &discovery{}
+			at := l.clockAt()
+			l.frame(t)
+
+			d.found = found(tc.after)
+			*at = at.Add(rediscoverEvery)
+			tearOnOrigin = byName[tc.torn].Common
+			fr := l.frame(t)
+
+			if _, ok := fr.planet(byName[tc.torn].Common, "feat/1-a"); !ok {
+				t.Errorf("%s: no planet drawn from its last good frame", tc.torn)
+			}
+			wedgeOf := map[string]string{}
+			for _, s := range l.opts.disc.srcs {
+				wedgeOf[s.paths.Common] = s.wedge
+			}
+			seen := map[[2]string]bool{}
+			for _, p := range fr.sc.planets {
+				if p.repoLabel != wedgeOf[p.repo] {
+					t.Errorf("planet of %s is labelled %q, want its source's wedge %q", p.repo, p.repoLabel, wedgeOf[p.repo])
+				}
+				key := [2]string{p.repoLabel, p.branch}
+				if seen[key] {
+					t.Errorf("two planets share the (repo, branch) key %q", key)
+				}
+				seen[key] = true
+			}
+			labels := wedgeLabels(fr)
+			if want := len(tc.after) + 1; len(labels) != want || len(slices.Compact(slices.Clone(labels))) != want {
+				t.Errorf("wedges = %q, want %d distinct", labels, want)
+			}
+		})
+	}
+}

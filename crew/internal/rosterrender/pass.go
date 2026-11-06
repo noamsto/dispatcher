@@ -75,6 +75,10 @@ func buildFrame(ctx context.Context, o Options, paths bus.Paths, cdir, crew stri
 			}
 			say(o.Stderr, "crew: roster-render: %s: skipped (%s); showing its last good frame\n", src.paths.Common, oneLine(err))
 			res = last
+			// A rediscovery may have renamed the wedge since the frame was saved.
+			for j := range res.planets {
+				res.planets[j].repoLabel = src.wedge
+			}
 		} else if i > 0 {
 			o.disc.remember(src.paths.Common, res)
 		}
