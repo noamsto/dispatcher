@@ -581,7 +581,8 @@ func TestAWorkerKeepsItsSlotAcrossPasses(t *testing.T) {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
 	first := slots()
-	if want := []slotEntry{{Branch: "feat/1-a", Class: classWorking}, {Branch: "feat/2-b", Class: classWorking}}; !slices.Equal(first.Order, want) {
+	repo := l.paths.Common
+	if want := []slotEntry{{Branch: "feat/1-a", Class: classWorking, Repo: repo}, {Branch: "feat/2-b", Class: classWorking, Repo: repo}}; !slices.Equal(first.Order, want) {
 		t.Fatalf("slots after the first pass = %+v, want %+v", first.Order, want)
 	}
 	posA := posOf(l.published(), "p1")
@@ -593,7 +594,7 @@ func TestAWorkerKeepsItsSlotAcrossPasses(t *testing.T) {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
 	second := slots()
-	if want := []slotEntry{{Branch: "feat/2-b", Class: classBlocked}, {Branch: "feat/1-a", Class: classWorking}}; !slices.Equal(second.Order, want) {
+	if want := []slotEntry{{Branch: "feat/2-b", Class: classBlocked, Repo: repo}, {Branch: "feat/1-a", Class: classWorking, Repo: repo}}; !slices.Equal(second.Order, want) {
 		t.Errorf("slots after the flip = %+v, want %+v", second.Order, want)
 	}
 	if got := posOf(l.published(), "p1"); got == posA {

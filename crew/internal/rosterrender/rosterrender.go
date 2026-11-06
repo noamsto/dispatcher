@@ -9,8 +9,10 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/entry"
+	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/git"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
+	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"io"
 	"os"
 	"path/filepath"
@@ -54,6 +56,15 @@ type Options struct {
 	Path      string
 	// PID is this process's id.
 	PID int
+	// Discover lists the repos that may carry the crew's rows; the roster joins
+	// each whose bus has one. Nil draws the local bus alone.
+	Discover func(stderr io.Writer) []repos.Repo
+	// Gh looks up the CI state of open PRs. Nil asks GitHub nothing and draws only
+	// the states already cached.
+	Gh gh.Client
+
+	// disc remembers the joined repos between passes; only the daemon sets it.
+	disc *discovery
 }
 
 // wallSec is the arm's `date +%s`, the `now` every pass compares against, and
@@ -81,6 +92,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, o Options) int {
 		say(o.Stderr, "%s\n", msg)
 		return code
 	}
+	o.disc = &discovery{}
 	if c.mapMode {
 		return runMap(ctx, c, paths, o)
 	}
@@ -156,7 +168,9 @@ type mapOut struct {
 // on stdout. It runs before the crew dir or the working directory is touched
 // and writes nothing but the PNG: no lock, no records, no publish, and the slot
 // sequence is read but not saved, so the daemon's own diagram keeps its places.
+// It never asks GitHub either, so it draws the CI states the daemon cached.
 func runMap(ctx context.Context, c call, paths bus.Paths, o Options) int {
+	o.Gh = nil
 	fail := func(err error) int {
 		say(o.Stderr, "crew: roster-render: %v\n", err)
 		return exitFailure

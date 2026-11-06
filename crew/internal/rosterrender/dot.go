@@ -26,6 +26,7 @@ const (
 	colText    = "#cdd6f4"
 	colDim     = "#6c7086"
 	colLegend  = "#a6adc8"
+	colWaiting = "#cba6f7"
 )
 
 const (
@@ -38,6 +39,10 @@ const (
 	canvasPad = 24.0
 	legendH   = 74.0
 
+	// legendRowH is the height of the marker row the legend gains when any
+	// marker or wedge is drawn.
+	legendRowH = 20.0
+
 	// planetPenwidth is every node's ring width; a blocked planet's is heavier.
 	// The map's hit radius includes half of it.
 	planetPenwidth  = 3.0
@@ -45,6 +50,25 @@ const (
 
 	// selectGap is how far the selection ring stands off a planet's edge.
 	selectGap = 9.0
+
+	// A waiting planet gets a dotted ring waitGap off its edge; a CI badge sits
+	// at the upper right, its centre ciBadgeStandoff outside the planet's edge so
+	// it overlaps the rim without covering the codename. The map's hit radius
+	// covers both.
+	waitGap         = 6.0
+	waitPenwidth    = 2.5
+	ciBadgeSize     = 0.2
+	ciBadgeRadius   = ciBadgeSize * 72 / 2
+	ciBadgeStandoff = ciBadgeRadius / 2
+
+	// Wedge boundary spokes start spokeInner from the dispatcher; the rim arc is
+	// a polyline of points at most arcStep degrees apart, inset arcInset from the
+	// wedge's edges so neighbouring arcs do not touch.
+	spokeInner = 50.0
+	arcStep    = 10.0
+	arcInset   = 1.5
+
+	staleAlpha = "55"
 
 	// A host label is a plaintext node that grows with its text, so the map
 	// bounds it by a width that overestimates Source Sans 3 at 12pt: the corners
@@ -92,30 +116,39 @@ func finishSVG(svg []byte) []byte {
 // render time. The legend counts carry the totals.
 const maxAnimated = 8
 
+// planetKey is a planet's identity: a branch name can recur in another repo.
+type planetKey struct {
+	repo, branch string
+}
+
+func (p placed) key() planetKey { return planetKey{p.repo, p.branch} }
+
 type moonKey struct {
-	branch string
+	planet planetKey
 	k      int
 }
 
 // animatedSets picks what moves: flow spokes of working planets, pulses of
-// blocked planets, glows of working moons. Planets rank newest first, ties by
-// branch, and the glow cap counts moons, so the last planet may be taken partly.
-func animatedSets(planets []placed) (flow, pulse map[string]bool, glow map[moonKey]bool) {
+// blocked planets, glows of working moons. A stale planet is not live, so it
+// neither flows nor pulses. Planets rank newest first, ties by repo and branch,
+// and the glow cap counts moons, so the last planet may be taken partly.
+func animatedSets(planets []placed) (flow, pulse map[planetKey]bool, glow map[moonKey]bool) {
 	ranked := slices.Clone(planets)
 	slices.SortFunc(ranked, func(x, y placed) int {
-		return cmp.Or(cmp.Compare(y.ts, x.ts), strings.Compare(x.branch, y.branch))
+		return cmp.Or(cmp.Compare(y.ts, x.ts), strings.Compare(x.branch, y.branch), strings.Compare(x.repo, y.repo))
 	})
-	flow, pulse, glow = map[string]bool{}, map[string]bool{}, map[moonKey]bool{}
+	flow, pulse, glow = map[planetKey]bool{}, map[planetKey]bool{}, map[moonKey]bool{}
 	for _, p := range ranked {
 		switch {
+		case p.stale:
 		case p.class == classWorking && len(flow) < maxAnimated:
-			flow[p.branch] = true
+			flow[p.key()] = true
 		case p.class == classBlocked && len(pulse) < maxAnimated:
-			pulse[p.branch] = true
+			pulse[p.key()] = true
 		}
 		for k, m := range p.moons {
 			if m.working && len(glow) < maxAnimated {
-				glow[moonKey{p.branch, k}] = true
+				glow[moonKey{p.key(), k}] = true
 			}
 		}
 	}
@@ -147,16 +180,69 @@ func stmt(b *strings.Builder, head string, attrs ...string) {
 
 func renderDOT(sc scene, lg legend) string { return buildDOT(sc, &lg, "") }
 
+// labelWidth bounds the drawn width of a plaintext label node.
+func labelWidth(text string) float64 {
+	return max(hostMinWidth, float64(len(text))*hostCharWidth+hostMargin)
+}
+
 // mapHalf is the half extent of the map's canvas around the dispatcher, wide
-// enough for the host labels.
+// enough for the host and wedge labels.
 func mapHalf(sc scene) (halfX, halfY float64) {
 	half := sc.extent + canvasPad
 	halfX, halfY = half, half
 	for _, h := range sc.hosts {
-		w := max(hostMinWidth, float64(len(h.host))*hostCharWidth+hostMargin)
-		halfX = max(halfX, math.Abs(h.x)+w/2)
+		halfX = max(halfX, math.Abs(h.x)+labelWidth(h.host)/2)
+	}
+	for _, w := range sc.wedges {
+		halfX = max(halfX, math.Abs(w.x)+labelWidth(w.label)/2)
 	}
 	return halfX, halfY
+}
+
+// hitRadius is the distance from a planet's centre to the farthest thing drawn
+// for it: its ring, the waiting ring and the CI badge.
+func hitRadius(p placed) float64 {
+	pr := p.size * 72 / 2
+	pen := planetPenwidth
+	if !p.failed && p.class == classBlocked {
+		pen = blockedPenwidth
+	}
+	r := pr + pen/2
+	if p.waiting {
+		r = max(r, pr+waitGap+waitPenwidth/2)
+	}
+	if _, badgePen, ok := ciBadge(p.ci); ok {
+		r = max(r, pr+ciBadgeStandoff+ciBadgeRadius+badgePen/2)
+	}
+	return r
+}
+
+// ciBadge is the attributes a CI state draws its badge with, and its pen width,
+// which the hit radius adds half of. An unknown state has no badge.
+func ciBadge(state string) (attrs []string, pen float64, ok bool) {
+	switch state {
+	case "pass":
+		return []string{`label=""`, str("fillcolor", colWorking), "penwidth=0"}, 0, true
+	case "pending":
+		return []string{`label=""`, str("fillcolor", colBG), str("color", colSun), "penwidth=2"}, 2, true
+	case "fail":
+		return []string{str("label", "!"), str("fillcolor", colBlocked), "penwidth=0", str("fontcolor", colBG), "fontsize=9"}, 0, true
+	case "none":
+		return []string{`label=""`, str("fillcolor", colBG), str("color", colDim), "penwidth=1", str("style", "filled,dashed")}, 1, true
+	}
+	return nil, 0, false
+}
+
+func markerRow(lg legend) bool {
+	return lg.waiting > 0 || lg.ci > 0 || lg.stale > 0 || lg.repos > 1
+}
+
+// legendHeight is what the legend adds under the canvas.
+func legendHeight(lg legend) float64 {
+	if markerRow(lg) {
+		return legendH + legendRowH
+	}
+	return legendH
 }
 
 // buildDOT is the whole picture as DOT for `neato -n`: every node is pinned, so
@@ -176,9 +262,11 @@ func buildDOT(sc scene, lg *legend, sel string) string {
 	b.WriteString("  edge [" + str("color", colEdge) + " penwidth=1.5 arrowhead=none];\n")
 
 	half := sc.extent + canvasPad
-	halfX, halfY := half+legendH/2, half
+	var halfX, halfY float64
 	if lg == nil {
 		halfX, halfY = mapHalf(sc)
+	} else {
+		halfX, halfY = half+legendHeight(*lg)/2, half
 	}
 	for i, c := range [4][2]float64{{-halfX, halfY}, {halfX, halfY}, {-halfX, -halfY}, {halfX, -halfY}} {
 		stmt(&b, "c"+strconv.Itoa(i+1), `label=""`, "style=invis", "shape=point", "width=0", pos(c[0], c[1]))
@@ -187,52 +275,72 @@ func buildDOT(sc scene, lg *legend, sel string) string {
 		str("color", colSun), str("fillcolor", colDone))
 
 	planets := slices.Clone(sc.planets)
-	slices.SortFunc(planets, func(x, y placed) int { return strings.Compare(x.branch, y.branch) })
-	ids := make(map[string]string, len(planets))
+	slices.SortFunc(planets, func(x, y placed) int {
+		return cmp.Or(strings.Compare(x.repo, y.repo), strings.Compare(x.branch, y.branch))
+	})
+	ids := make(map[planetKey]string, len(planets))
 	for i, p := range planets {
-		ids[p.branch] = "p" + strconv.Itoa(i+1)
+		ids[p.key()] = "p" + strconv.Itoa(i+1)
 	}
 	flow, pulse, glow := animatedSets(planets)
 	for _, p := range planets {
-		stmt(&b, ids[p.branch], planetAttrs(p, pulse[p.branch])...)
+		stmt(&b, ids[p.key()], planetAttrs(p, pulse[p.key()])...)
+		if p.waiting {
+			d := p.size + 2*waitGap/72
+			stmt(&b, ids[p.key()]+"w", `label=""`, "style=dotted", num("width", d), num("height", d), pos(p.x, p.y),
+				str("color", colWaiting), num("penwidth", waitPenwidth))
+		}
+		if attrs, _, ok := ciBadge(p.ci); ok {
+			dx, dy := polar(p.size*72/2+ciBadgeStandoff, 45)
+			stmt(&b, ids[p.key()]+"c", append([]string{num("width", ciBadgeSize), num("height", ciBadgeSize), pos(p.x+dx, p.y+dy)}, attrs...)...)
+		}
 	}
 	for _, p := range planets {
 		attrs := []string(nil)
-		if flow[p.branch] {
+		if flow[p.key()] {
 			attrs = append(attrs, str("class", "aeye-flow"))
 		}
-		stmt(&b, "dispatcher -> "+ids[p.branch], attrs...)
+		stmt(&b, "dispatcher -> "+ids[p.key()], attrs...)
+	}
+	for i, w := range sc.wedges {
+		wedgeDOT(&b, "w"+strconv.Itoa(i+1), w)
 	}
 	for _, p := range planets {
 		for k, m := range p.moons {
-			id := ids[p.branch] + "m" + strconv.Itoa(k+1)
+			id := ids[p.key()] + "m" + strconv.Itoa(k+1)
 			fill, extra := colEdge, []string(nil)
 			if m.working {
 				fill = colWorking
 			}
-			if glow[moonKey{p.branch, k}] {
+			if glow[moonKey{p.key(), k}] {
 				extra = []string{str("class", "aeye-glow")}
 			}
 			stmt(&b, id, append([]string{`label=""`, num("width", moonSize), num("height", moonSize), pos(m.x, m.y),
 				str("fillcolor", fill), "penwidth=0"}, extra...)...)
-			stmt(&b, ids[p.branch]+" -> "+id, str("color", colDone))
+			stmt(&b, ids[p.key()]+" -> "+id, str("color", colDone))
 		}
 	}
 	for _, p := range sc.planets {
-		if base, ok := ids[p.base]; ok && p.base != p.branch {
-			stmt(&b, ids[p.branch]+" -> "+base, "style=dashed", str("color", colPROpen), "arrowhead=normal", "arrowsize=0.6", "penwidth=2")
+		if base, ok := ids[planetKey{p.repo, p.base}]; ok && p.base != p.branch {
+			stmt(&b, ids[p.key()]+" -> "+base, "style=dashed", str("color", colPROpen), "arrowhead=normal", "arrowsize=0.6", "penwidth=2")
 		}
 	}
 	for i, h := range sc.hosts {
 		stmt(&b, "h"+strconv.Itoa(i+1), str("label", h.host), "shape=plaintext", "style=solid", "fixedsize=false",
 			str("fontcolor", colLegend), pos(h.x, h.y))
 	}
+	rings := 0
 	for _, p := range sc.planets {
 		if p.branch != sel {
 			continue
 		}
+		rings++
+		id := "sel"
+		if rings > 1 {
+			id += strconv.Itoa(rings)
+		}
 		d := p.size + 2*selectGap/72
-		stmt(&b, "sel", `label=""`, "style=solid", num("width", d), num("height", d), pos(p.x, p.y), str("color", colSun))
+		stmt(&b, id, `label=""`, "style=solid", num("width", d), num("height", d), pos(p.x, p.y), str("color", colSun))
 	}
 	if lg != nil {
 		b.WriteString("  label=<" + legendHTML(*lg) + ">;\n")
@@ -241,25 +349,59 @@ func buildDOT(sc scene, lg *legend, sel string) string {
 	return b.String()
 }
 
+// wedgeDOT draws one repo's sector under the id prefix w: the boundary spoke at
+// its start, the rim arc as a polyline of invisible points, and its name. The
+// last wedge ends where the first starts, so only the start gets a spoke.
+func wedgeDOT(b *strings.Builder, w string, wd wedge) {
+	point := func(id string, r, deg float64) {
+		x, y := polar(r, deg)
+		stmt(b, id, `label=""`, "style=invis", "shape=point", "width=0", pos(x, y))
+	}
+	point(w+"s0", spokeInner, wd.start)
+	point(w+"s1", wd.rim, wd.start)
+	stmt(b, w+"s0 -> "+w+"s1", str("color", colDim), "style=dashed", "penwidth=1")
+
+	lo, arc := wd.start+arcInset, wd.span-2*arcInset
+	steps := max(1, int(math.Ceil(arc/arcStep)))
+	for i := range steps + 1 {
+		id := w + "a" + strconv.Itoa(i)
+		point(id, wd.rim, lo+arc*float64(i)/float64(steps))
+		if i > 0 {
+			stmt(b, w+"a"+strconv.Itoa(i-1)+" -> "+id, str("color", colDim), "penwidth=1")
+		}
+	}
+	stmt(b, w, str("label", wd.label), "shape=plaintext", "style=solid", "fixedsize=false",
+		str("fontcolor", colLegend), pos(wd.x, wd.y))
+}
+
 func planetAttrs(p placed, pulse bool) []string {
 	attrs := []string{str("label", p.label), num("width", p.size), num("height", p.size), pos(p.x, p.y)}
 	if p.host != "" {
 		attrs = append(attrs, "shape=hexagon")
 	}
+	ring := func(col string) string {
+		if p.stale {
+			return str("color", col+staleAlpha)
+		}
+		return str("color", col)
+	}
 	switch {
 	case p.failed:
 		attrs = append(attrs, str("color", colFailed), str("style", "filled,dashed"), str("fillcolor", colBG), str("fontcolor", colDim))
 	case p.class == classBlocked:
-		attrs = append(attrs, str("color", colBlocked), num("penwidth", blockedPenwidth))
+		attrs = append(attrs, ring(colBlocked), num("penwidth", blockedPenwidth))
 		if pulse {
 			attrs = append(attrs, str("class", "aeye-pulse"))
 		}
 	case p.class == classPROpen:
-		attrs = append(attrs, str("color", colPROpen))
+		attrs = append(attrs, ring(colPROpen))
 	case p.class == classDone:
 		attrs = append(attrs, str("color", colDone), str("fillcolor", colBG), str("fontcolor", colDim))
 	default:
-		attrs = append(attrs, str("color", colWorking))
+		attrs = append(attrs, ring(colWorking))
+	}
+	if p.stale {
+		attrs = append(attrs, str("style", "filled,dashed"), str("fontcolor", colDim))
 	}
 	return attrs
 }
@@ -293,6 +435,22 @@ func legendHTML(lg legend) string {
 	b.WriteString("    <tr><td>" + strings.Join(keys, gap) + "</td></tr>\n")
 	b.WriteString("    <tr><td>" + strings.Join(shapes, gap) + "</td></tr>\n")
 	b.WriteString("    <tr><td>" + stacked + "</td></tr>\n")
+	if markerRow(lg) {
+		var markers []string
+		if lg.repos > 1 {
+			markers = append(markers, "wedge = repo")
+		}
+		if lg.waiting > 0 {
+			markers = append(markers, key(colWaiting, count("waiting on you", lg.waiting)))
+		}
+		if lg.ci > 0 {
+			markers = append(markers, key(colWorking, "ci pass"), key(colSun, "ci running"), key(colBlocked, "ci fail"), key(colDim, "no runner"))
+		}
+		if lg.stale > 0 {
+			markers = append(markers, "dim = no status "+strconv.Itoa(int(staleStatus.Minutes()))+"m+")
+		}
+		b.WriteString("    <tr><td>" + strings.Join(markers, gap) + "</td></tr>\n")
+	}
 	b.WriteString("  </table>")
 	return b.String()
 }

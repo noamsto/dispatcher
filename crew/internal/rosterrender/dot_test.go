@@ -2,6 +2,7 @@ package rosterrender
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/xml"
 	"flag"
 	"fmt"
@@ -82,21 +83,78 @@ func sixteenWorkers() []dotWorker {
 	}...)
 }
 
+// repoWorker is a roster row of a multi-repo case with the fields the bus
+// model alone does not carry: its repo, CI state and whether it waits on a human.
+type repoWorker struct {
+	dotWorker
+	repo, ci string
+	waiting  bool
+}
+
+// repoPlanets builds the planets and legend of a hand-built multi-repo roster.
+func repoPlanets(ws []repoWorker) ([]planet, legend) {
+	var rows []dotWorker
+	for _, w := range ws {
+		rows = append(rows, w.dotWorker)
+	}
+	ps, lg := buildPlanets(dotModel(rows, 0), dotNow)
+	// buildPlanets keeps the rows in input order.
+	for i, w := range ws {
+		ps[i].repo, ps[i].repoLabel = "/git/"+w.repo+".git", w.repo
+		ps[i].ci, ps[i].waiting = w.ci, w.waiting
+	}
+	tally(ps, &lg)
+	return ps, lg
+}
+
+// wedgeRoster is two repos: a waiting planet, a pr_open planet per CI state, a
+// stale working planet, a stacked planet, a remote one, and the branch
+// feat/1-shared in both repos.
+func wedgeRoster() []repoWorker {
+	return []repoWorker{
+		{dotWorker: dotWorker{branch: "feat/1-shared", name: "sky", tier: "standard", state: "blocked", age: 60}, repo: "alpha", waiting: true},
+		{dotWorker: dotWorker{branch: "feat/2-pass", name: "rose", tier: "trivial", state: "pr_open", age: 90}, repo: "alpha", ci: "pass"},
+		{dotWorker: dotWorker{branch: "feat/3-run", name: "opal", tier: "standard", state: "pr_open", age: 90}, repo: "alpha", ci: "pending"},
+		{dotWorker: dotWorker{branch: "feat/4-fail", name: "coral", tier: "standard", state: "pr_open", age: 90}, repo: "alpha", ci: "fail"},
+		{dotWorker: dotWorker{branch: "feat/5-none", name: "mint", tier: "deep", state: "pr_open", age: 90}, repo: "alpha", ci: "none"},
+		{dotWorker: dotWorker{branch: "feat/6-old", name: "dune", tier: "standard", state: "working", age: 3600}, repo: "alpha"},
+		{dotWorker: dotWorker{branch: "feat/1-shared", name: "lime", tier: "deep", state: "working", age: 30}, repo: "beta"},
+		{dotWorker: dotWorker{branch: "feat/7-stack", name: "teal", tier: "standard", state: "working", age: 20, base: "feat/1-shared", roles: roleOne}, repo: "beta"},
+		{dotWorker: dotWorker{branch: "feat/8-remote", name: "olive", tier: "standard", state: "working", age: 10, host: "mbp"}, repo: "beta"},
+		{dotWorker: dotWorker{branch: "feat/9-block", name: "plum", tier: "standard", state: "blocked", age: 25}, repo: "beta"},
+	}
+}
+
+func emitRepos(ws []repoWorker) (string, scene, legend) {
+	ps, lg := repoPlanets(ws)
+	_, sc := arrange(newSlotState(), ps)
+	return renderDOT(sc, lg), sc, lg
+}
+
 type dotCase struct {
 	name    string
 	workers []dotWorker
 	holds   int
+	repos   []repoWorker // a multi-repo case, in place of workers
+}
+
+func (c dotCase) emit() (string, scene, legend) {
+	if c.repos != nil {
+		return emitRepos(c.repos)
+	}
+	return emit(dotModel(c.workers, c.holds))
 }
 
 var dotCases = []dotCase{
-	{"0-workers", nil, 0},
-	{"1-workers", []dotWorker{{branch: "feat/1-solo", name: "lime", tier: "standard", state: "working", age: 3, roles: roleOne}}, 0},
+	{"0-workers", nil, 0, nil},
+	{"1-workers", []dotWorker{{branch: "feat/1-solo", name: "lime", tier: "standard", state: "working", age: 3, roles: roleOne}}, 0, nil},
 	{"2-workers", []dotWorker{
 		{branch: "feat/1-solo", name: "lime", tier: "standard", state: "working", age: 3, roles: roleOne},
 		{branch: "feat/2-duo", name: "sky", tier: "deep", state: "blocked", age: 5},
-	}, 0},
-	{"8-workers", eightWorkers(), 0},
-	{"16-workers", sixteenWorkers(), 2},
+	}, 0, nil},
+	{"8-workers", eightWorkers(), 0, nil},
+	{"16-workers", sixteenWorkers(), 2, nil},
+	{"wedges", nil, 0, wedgeRoster()},
 }
 
 func emit(m map[string]any) (string, scene, legend) {
@@ -108,7 +166,7 @@ func emit(m map[string]any) (string, scene, legend) {
 func TestDotGoldens(t *testing.T) {
 	for _, c := range dotCases {
 		t.Run(c.name, func(t *testing.T) {
-			got, _, _ := emit(dotModel(c.workers, c.holds))
+			got, _, _ := c.emit()
 			path := filepath.Join("testdata", c.name+".dot")
 			if *update {
 				if err := os.MkdirAll("testdata", 0o755); err != nil {
@@ -135,7 +193,7 @@ func TestDotGoldens(t *testing.T) {
 func TestDotEveryRenderIsLabelledAndFitted(t *testing.T) {
 	for _, c := range dotCases {
 		t.Run(c.name, func(t *testing.T) {
-			out, sc, _ := emit(dotModel(c.workers, c.holds))
+			out, sc, _ := c.emit()
 			if !strings.Contains(out, "working ") || !strings.Contains(out, "size = tier") {
 				t.Errorf("no legend in\n%s", out)
 			}
@@ -144,7 +202,7 @@ func TestDotEveryRenderIsLabelledAndFitted(t *testing.T) {
 					t.Errorf("planet %s is unlabelled", p.branch)
 				}
 			}
-			if len(c.workers) == 0 {
+			if len(sc.planets) == 0 {
 				return
 			}
 			var xs, ys []float64
@@ -179,13 +237,28 @@ func TestDotDeterministicAndInputOrderFree(t *testing.T) {
 	}
 }
 
-// idOf maps each drawn planet's branch to its node id: ids follow branch order.
+// keyIDs maps each drawn planet to its node id: ids follow (repo, branch) order.
+func keyIDs(sc scene) map[planetKey]string {
+	keys := make([]planetKey, len(sc.planets))
+	for i, p := range sc.planets {
+		keys[i] = p.key()
+	}
+	slices.SortFunc(keys, func(x, y planetKey) int {
+		return cmp.Or(strings.Compare(x.repo, y.repo), strings.Compare(x.branch, y.branch))
+	})
+	ids := map[planetKey]string{}
+	for i, k := range keys {
+		ids[k] = "p" + strconv.Itoa(i+1)
+	}
+	return ids
+}
+
+// idOf maps each drawn planet's branch to its node id; a branch drawn in two
+// repos has two ids, so only keyIDs tells those apart.
 func idOf(sc scene) map[string]string {
-	names := branches(sc)
-	slices.Sort(names)
 	ids := map[string]string{}
-	for i, b := range names {
-		ids[b] = "p" + strconv.Itoa(i+1)
+	for k, id := range keyIDs(sc) {
+		ids[k.branch] = id
 	}
 	return ids
 }
@@ -463,17 +536,25 @@ func TestDotHostileTextCannotBreakOut(t *testing.T) {
 }
 
 func TestDotIDsDoNotDeriveFromUserText(t *testing.T) {
-	out, _, _ := emit(dotModel(eightWorkers(), 0))
+	wedges := wedgeRoster()
+	for i := range wedges {
+		wedges[i].repo = hostileRepo + wedges[i].repo
+		wedges[i].branch = hostileRepo + wedges[i].branch
+	}
+	plain, _, _ := emit(dotModel(eightWorkers(), 0))
+	multi, _, _ := emitRepos(wedges)
 	stmt := regexp.MustCompile(`^  (\S+)(?: -> (\S+))? \[`)
-	id := regexp.MustCompile(`^(p\d+(m\d+)?|h\d+|c\d+|dispatcher|node|edge)$`)
-	for _, line := range strings.Split(out, "\n") {
-		m := stmt.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		for _, name := range m[1:] {
-			if name != "" && !id.MatchString(name) {
-				t.Errorf("id %q is not a generated one: %s", name, line)
+	id := regexp.MustCompile(`^(p\d+([mwc]\d*)?|h\d+|c\d+|w\d+(s[01]|a\d+)?|sel\d*|dispatcher|node|edge)$`)
+	for _, out := range []string{plain, multi} {
+		for _, line := range strings.Split(out, "\n") {
+			m := stmt.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+			for _, name := range m[1:] {
+				if name != "" && !id.MatchString(name) {
+					t.Errorf("id %q is not a generated one: %s", name, line)
+				}
 			}
 		}
 	}
@@ -776,5 +857,470 @@ func TestRenderedSVG(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// hostileRepo is a repo name full of DOT and HTML syntax.
+const hostileRepo = "ZQ\"x\\y\nw$<b>]"
+
+var posRe = regexp.MustCompile(`pos="(-?[0-9.]+),(-?[0-9.]+)!"`)
+
+func posOf(t *testing.T, line string) (x, y float64) {
+	t.Helper()
+	m := posRe.FindStringSubmatch(line)
+	if m == nil {
+		t.Fatalf("no pos in %s", line)
+	}
+	x, _ = strconv.ParseFloat(m[1], 64)
+	y, _ = strconv.ParseFloat(m[2], 64)
+	return x, y
+}
+
+func placedBy(t *testing.T, sc scene, repo, branch string) placed {
+	t.Helper()
+	for _, p := range sc.planets {
+		if p.repoLabel == repo && p.branch == branch {
+			return p
+		}
+	}
+	t.Fatalf("no planet %s in repo %s", branch, repo)
+	return placed{}
+}
+
+// degrees is the clockwise angle from 12 o'clock of a point, in [0, 360).
+func degrees(x, y float64) float64 { return math.Mod(math.Atan2(x, y)*180/math.Pi+360, 360) }
+
+func TestDotWedges(t *testing.T) {
+	out, sc, _ := emitRepos(wedgeRoster())
+	if len(sc.wedges) != 2 {
+		t.Fatalf("%d wedges, want 2", len(sc.wedges))
+	}
+	if n := len(regexp.MustCompile(`(?m)^  w\d+ \[`).FindAllString(out, -1)); n != len(sc.wedges) {
+		t.Errorf("%d wedge label nodes, want %d", n, len(sc.wedges))
+	}
+	lastSpoke := strings.LastIndex(out, "dispatcher -> p")
+	firstMoon := regexp.MustCompile(`(?m)^  p\d+m1 \[`).FindStringIndex(out)
+	if firstMoon == nil {
+		t.Fatal("the roster has no moon")
+	}
+	for i, w := range sc.wedges {
+		id := "w" + strconv.Itoa(i+1)
+		label := nodeLine(t, out, id)
+		for _, want := range []string{"label=" + dotq(w.label), "shape=plaintext", "fixedsize=false", `fontcolor="` + colLegend + `"`,
+			"pos=" + dotq(pt(w.x)+","+pt(w.y)+"!")} {
+			if !strings.Contains(label, want) {
+				t.Errorf("%s lacks %s: %s", id, want, label)
+			}
+		}
+
+		s0, s1 := nodeLine(t, out, id+"s0"), nodeLine(t, out, id+"s1")
+		x0, y0 := posOf(t, s0)
+		x1, y1 := posOf(t, s1)
+		if math.Abs(math.Hypot(x0, y0)-spokeInner) > 0.02 || math.Abs(math.Hypot(x1, y1)-w.rim) > 0.02 ||
+			math.Abs(degrees(x0, y0)-w.start) > 0.02 || math.Abs(degrees(x1, y1)-w.start) > 0.02 {
+			t.Errorf("%s spoke runs (%v, %v) to (%v, %v), want radius %v to %v at %v degrees", id, x0, y0, x1, y1, spokeInner, w.rim, w.start)
+		}
+		for _, line := range []string{s0, s1} {
+			if !strings.Contains(line, "style=invis") {
+				t.Errorf("a spoke end is drawn: %s", line)
+			}
+		}
+		edge := nodeLine(t, out, id+"s0 -> "+id+"s1")
+		for _, want := range []string{id + "s0 -> " + id + "s1", "style=dashed", `color="` + colDim + `"`, "penwidth=1"} {
+			if !strings.Contains(edge, want) {
+				t.Errorf("spoke edge lacks %s: %s", want, edge)
+			}
+		}
+
+		points := len(regexp.MustCompile(`(?m)^  `+id+`a\d+ \[`).FindAllString(out, -1))
+		if want := 1 + max(1, int(math.Ceil((w.span-2*arcInset)/arcStep))); points != want {
+			t.Errorf("%s rim has %d points, want %d", id, points, want)
+		}
+		for k := range points {
+			x, y := posOf(t, nodeLine(t, out, id+"a"+strconv.Itoa(k)))
+			if math.Abs(math.Hypot(x, y)-w.rim) > 0.02 {
+				t.Errorf("%s rim point %d is %v from the dispatcher, want %v", id, k, math.Hypot(x, y), w.rim)
+			}
+			if k == 0 || k == points-1 {
+				want := w.start + arcInset
+				if k > 0 {
+					want = w.start + w.span - arcInset
+				}
+				if math.Abs(math.Mod(degrees(x, y)-want+540, 360)-180) > 0.05 {
+					t.Errorf("%s rim point %d is at %v degrees, want %v", id, k, degrees(x, y), want)
+				}
+			}
+			if k == 0 {
+				continue
+			}
+			link := id + "a" + strconv.Itoa(k-1) + " -> " + id + "a" + strconv.Itoa(k) + " ["
+			if !strings.Contains(out, link) {
+				t.Errorf("no rim edge %s", link)
+			}
+		}
+		for line := range strings.SplitSeq(out, "\n") {
+			if strings.Contains(line, id+"a") && strings.Contains(line, "->") && (strings.Contains(line, "dashed") || !strings.Contains(line, `color="`+colDim+`"`)) {
+				t.Errorf("rim edge is not a dim solid line: %s", line)
+			}
+		}
+
+		if at := strings.Index(out, "  "+id+"s0 ["); at < lastSpoke || at > firstMoon[0] {
+			t.Errorf("%s is emitted outside the span between the spokes and the moons", id)
+		}
+	}
+}
+
+func TestDotWedgesAbsentForOneRepo(t *testing.T) {
+	out, sc, _ := emit(dotModel(eightWorkers(), 0))
+	if len(sc.wedges) != 0 || regexp.MustCompile(`(?m)^  w\d`).MatchString(out) {
+		t.Errorf("a single repo drew wedges:\n%s", out)
+	}
+}
+
+func TestDotSameBranchInTwoRepos(t *testing.T) {
+	ws := wedgeRoster()
+	ws[1].base = "feat/7-stack" // a branch of the other repo only
+	out, sc, _ := emitRepos(ws)
+	ids := keyIDs(sc)
+	a, b := placedBy(t, sc, "alpha", "feat/1-shared"), placedBy(t, sc, "beta", "feat/1-shared")
+	if ids[a.key()] == ids[b.key()] || len(ids) != len(sc.planets) {
+		t.Fatalf("ids %v do not tell the planets of one branch apart", ids)
+	}
+	for _, p := range []placed{a, b} {
+		line := nodeLine(t, out, ids[p.key()])
+		if !strings.Contains(line, "label="+dotq(p.label)) {
+			t.Errorf("%s of %s has the wrong node: %s", p.branch, p.repoLabel, line)
+		}
+	}
+	if a.label == b.label {
+		t.Fatalf("both planets are labelled %q, so the check above proves nothing", a.label)
+	}
+
+	stack := placedBy(t, sc, "beta", "feat/7-stack")
+	if want := ids[stack.key()] + " -> " + ids[b.key()] + " ["; !strings.Contains(out, want) {
+		t.Errorf("the stacked planet is not drawn on its own repo's branch (%s)", want)
+	}
+	if strings.Contains(out, ids[stack.key()]+" -> "+ids[a.key()]+" [") {
+		t.Error("the stacked planet is drawn on the other repo's branch")
+	}
+	if n := strings.Count(out, "arrowhead=normal"); n != 1 {
+		t.Errorf("%d stacked edges, want 1 (a base in another repo is no base)", n)
+	}
+}
+
+func TestDotWaitingRing(t *testing.T) {
+	out, sc, _ := emitRepos(wedgeRoster())
+	ids := keyIDs(sc)
+	var got []string
+	for _, m := range regexp.MustCompile(`(?m)^  (p\d+)w \[`).FindAllStringSubmatch(out, -1) {
+		got = append(got, m[1])
+	}
+	var want []string
+	for _, p := range sc.planets {
+		if p.waiting {
+			want = append(want, ids[p.key()])
+		}
+	}
+	if len(want) != 1 || !slices.Equal(got, want) {
+		t.Fatalf("rings on %v, want only the waiting planets %v", got, want)
+	}
+	p := placedBy(t, sc, "alpha", "feat/1-shared")
+	line := nodeLine(t, out, ids[p.key()]+"w")
+	d := strconv.FormatFloat(p.size+2*waitGap/72, 'g', -1, 64)
+	for _, w := range []string{`label=""`, "style=dotted", `color="` + colWaiting + `"`, "penwidth=2.5", "width=" + d, "height=" + d,
+		"pos=" + dotq(pt(p.x)+","+pt(p.y)+"!")} {
+		if !strings.Contains(line, w) {
+			t.Errorf("ring lacks %s: %s", w, line)
+		}
+	}
+	if strings.Contains(line, "fill") || strings.Contains(line, "class") {
+		t.Errorf("the ring is filled or animated: %s", line)
+	}
+	if strings.Index(out, "  "+ids[p.key()]+"w [") < strings.Index(out, "  "+ids[p.key()]+" [") {
+		t.Error("the ring is declared before its planet")
+	}
+}
+
+func TestDotCIBadge(t *testing.T) {
+	out, sc, _ := emitRepos(wedgeRoster())
+	ids := keyIDs(sc)
+	for _, tc := range []struct {
+		branch string
+		want   []string
+	}{
+		{"feat/2-pass", []string{`label=""`, `fillcolor="` + colWorking + `"`, "penwidth=0"}},
+		{"feat/3-run", []string{`label=""`, `fillcolor="` + colBG + `"`, `color="` + colSun + `"`, "penwidth=2"}},
+		{"feat/4-fail", []string{`label="!"`, `fillcolor="` + colBlocked + `"`, "penwidth=0", `fontcolor="` + colBG + `"`, "fontsize=9"}},
+		{"feat/5-none", []string{`label=""`, `fillcolor="` + colBG + `"`, `color="` + colDim + `"`, "penwidth=1", `style="filled,dashed"`}},
+	} {
+		t.Run(tc.branch, func(t *testing.T) {
+			p := placedBy(t, sc, "alpha", tc.branch)
+			line := nodeLine(t, out, ids[p.key()]+"c")
+			for _, w := range append(tc.want, "width=0.2", "height=0.2") {
+				if !strings.Contains(line, w) {
+					t.Errorf("badge lacks %s: %s", w, line)
+				}
+			}
+			x, y := posOf(t, line)
+			dx, dy := polar(p.size*72/2+ciBadgeStandoff, 45)
+			if math.Abs(x-(p.x+dx)) > 0.011 || math.Abs(y-(p.y+dy)) > 0.011 || dx <= 0 || dy <= 0 {
+				t.Errorf("badge at (%v, %v), want the planet's upper right (%v, %v)", x, y, p.x+dx, p.y+dy)
+			}
+			if strings.Index(out, "  "+ids[p.key()]+"c [") < strings.Index(out, "  "+ids[p.key()]+" [") {
+				t.Error("the badge is declared before its planet")
+			}
+		})
+	}
+	if n := len(regexp.MustCompile(`(?m)^  p\d+c \[`).FindAllString(out, -1)); n != 4 {
+		t.Errorf("%d badges, want one per CI state and none for ci %q", n, "")
+	}
+
+	ws := wedgeRoster()
+	ws[1].ci = "bogus"
+	bogus, _, _ := emitRepos(ws)
+	if n := len(regexp.MustCompile(`(?m)^  p\d+c \[`).FindAllString(bogus, -1)); n != 3 {
+		t.Errorf("an unknown CI state drew a badge: %d badges, want 3", n)
+	}
+}
+
+func TestDotStalePlanet(t *testing.T) {
+	out, sc, _ := emitRepos(wedgeRoster())
+	ids := keyIDs(sc)
+	old := placedBy(t, sc, "alpha", "feat/6-old")
+	if !old.stale {
+		t.Fatal("the roster's old working planet is not stale")
+	}
+	line := nodeLine(t, out, ids[old.key()])
+	for _, want := range []string{`color="` + colWorking + staleAlpha + `"`, `style="filled,dashed"`, `fontcolor="` + colDim + `"`} {
+		if !strings.Contains(line, want) {
+			t.Errorf("stale planet lacks %s: %s", want, line)
+		}
+	}
+	live := nodeLine(t, out, ids[placedBy(t, sc, "beta", "feat/1-shared").key()])
+	if strings.Contains(live, staleAlpha+`"`) || strings.Contains(live, "dashed") {
+		t.Errorf("a live planet is drawn dim: %s", live)
+	}
+	flow, pulse, _ := animated(out)
+	if slices.Contains(flow, ids[old.key()]) || slices.Contains(pulse, ids[old.key()]) {
+		t.Errorf("the stale planet is animated: flow %v pulse %v", flow, pulse)
+	}
+	if len(flow) == 0 {
+		t.Error("no live planet flows, so the check above proves nothing")
+	}
+}
+
+func TestAnimatedSetsSkipStalePlanets(t *testing.T) {
+	stale := func(branch, class string, ts float64) placed {
+		return placed{planet: planet{branch: branch, class: class, stale: true, ts: ts, moons: []moon{{working: true}}}}
+	}
+	live := func(branch, class string, ts float64) placed {
+		return placed{planet: planet{branch: branch, class: class, ts: ts}}
+	}
+	ps := []placed{stale("s-work", classWorking, 900), stale("s-block", classBlocked, 800), live("w", classWorking, 1), live("b", classBlocked, 1)}
+	flow, pulse, glow := animatedSets(ps)
+	if len(flow) != 1 || !flow[planetKey{branch: "w"}] || len(pulse) != 1 || !pulse[planetKey{branch: "b"}] {
+		t.Errorf("flow %v pulse %v, want only the live planets", flow, pulse)
+	}
+	if len(glow) != 2 {
+		t.Errorf("glow %v: a stale planet's working moons keep their glow", glow)
+	}
+
+	// The budget is spent on live planets: stale ones do not take a slot.
+	var crowd []placed
+	for i := range maxAnimated {
+		crowd = append(crowd, live(fmt.Sprintf("w%d", i), classWorking, 1), stale(fmt.Sprintf("s%d", i), classWorking, 100))
+	}
+	if flow, _, _ := animatedSets(crowd); len(flow) != maxAnimated || flow[planetKey{branch: "s0"}] {
+		t.Errorf("flow %v, want the %d live planets", flow, maxAnimated)
+	}
+
+	t.Run("the same branch in two repos is two planets", func(t *testing.T) {
+		a := placed{planet: planet{repo: "a", branch: "x", class: classWorking, ts: 1}}
+		b := placed{planet: planet{repo: "b", branch: "x", class: classWorking, ts: 1}}
+		if flow, _, _ := animatedSets([]placed{a, b}); len(flow) != 2 {
+			t.Errorf("flow %v, want both planets", flow)
+		}
+	})
+}
+
+func TestDotMarkerLegend(t *testing.T) {
+	rows := func(lg legend) int { return strings.Count(legendHTML(lg), "<tr>") }
+	base := legend{working: 3, blocked: 1, prOpen: 2, done: 1, holds: 1, repos: 1}
+	if got := rows(base); got != 3 {
+		t.Errorf("a legend without markers has %d rows, want 3", got)
+	}
+	if legendHeight(base) != legendH || legendHeight(legend{}) != legendH {
+		t.Errorf("legendHeight = %v, want %v", legendHeight(base), legendH)
+	}
+
+	extra := func(lg legend) string {
+		t.Helper()
+		_, row, ok := strings.Cut(legendHTML(lg), "stacked on</td></tr>\n    <tr><td>")
+		if !ok {
+			t.Fatalf("no marker row in %+v", lg)
+		}
+		row, _, _ = strings.Cut(row, "</td></tr>")
+		return row
+	}
+	const gap = "&nbsp;&nbsp;&nbsp;&nbsp;"
+	for _, tc := range []struct {
+		name string
+		lg   legend
+		want []string
+		not  []string
+	}{
+		{"repos", legend{repos: 2}, []string{"wedge = repo"}, []string{"waiting", "ci ", "dim ="}},
+		{"waiting", legend{waiting: 2, repos: 1}, []string{`<font color="` + colWaiting + `">●</font> waiting on you 2`}, []string{"wedge", "ci ", "dim =", "ring"}},
+		{"ci", legend{ci: 1}, []string{
+			`<font color="` + colWorking + `">●</font> ci pass`, `<font color="` + colSun + `">●</font> ci running`,
+			`<font color="` + colBlocked + `">●</font> ci fail`, `<font color="` + colDim + `">●</font> no runner`,
+		}, []string{"wedge", "waiting", "dim ="}},
+		{"stale", legend{stale: 1}, []string{"dim = no status 45m+"}, []string{"wedge", "waiting", "ci "}},
+		{"all", legend{repos: 3, waiting: 1, ci: 2, stale: 1}, []string{"wedge = repo" + gap + `<font color="` + colWaiting, "ci pass", "no runner" + gap + "dim = no status"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := rows(tc.lg); got != 4 {
+				t.Errorf("%d rows, want 4", got)
+			}
+			row := extra(tc.lg)
+			for _, w := range tc.want {
+				if !strings.Contains(row, w) {
+					t.Errorf("row lacks %q: %s", w, row)
+				}
+			}
+			for _, n := range tc.not {
+				if strings.Contains(row, n) {
+					t.Errorf("row names %q: %s", n, row)
+				}
+			}
+			if legendHeight(tc.lg) != legendH+legendRowH {
+				t.Errorf("legendHeight = %v, want %v", legendHeight(tc.lg), legendH+legendRowH)
+			}
+		})
+	}
+	if want := fmt.Sprintf("%dm+", int(staleStatus.Minutes())); !strings.Contains(extra(legend{stale: 1}), want) {
+		t.Errorf("the stale key does not state the %s threshold", want)
+	}
+}
+
+// TestDotCanvasPaysTheMarkerRow: the corners widen by half the marker row's
+// height, so the picture stays square with the legend's extra row under it.
+func TestDotCanvasPaysTheMarkerRow(t *testing.T) {
+	out, sc, lg := emitRepos(wedgeRoster())
+	if legendHeight(lg) <= legendH {
+		t.Fatal("the wedges roster has no marker row")
+	}
+	x, _ := posOf(t, nodeLine(t, out, "c2"))
+	if want := sc.extent + canvasPad + legendHeight(lg)/2; math.Abs(x-want) > 0.01 {
+		t.Errorf("canvas half width = %v, want %v", x, want)
+	}
+}
+
+func crowd(repo string, n int) []repoWorker {
+	var ws []repoWorker
+	for i := range n {
+		ws = append(ws, repoWorker{dotWorker: dotWorker{branch: fmt.Sprintf("feat/%d-w", i+1), name: "n", tier: "standard", state: "working", age: 10}, repo: repo})
+	}
+	return ws
+}
+
+func TestWedgeLabelsFitTheCorners(t *testing.T) {
+	long := []repoWorker(nil)
+	long = append(long, crowd(strings.Repeat("a", 24), 4)...)
+	long = append(long, crowd(strings.Repeat("b", 24), 4)...)
+	for name, ws := range map[string][]repoWorker{"the wedges roster": wedgeRoster(), "24-character names": long} {
+		t.Run(name, func(t *testing.T) {
+			ps, _ := repoPlanets(ws)
+			_, sc := arrange(newSlotState(), ps)
+			halfX, halfY := mapHalf(sc)
+			for _, w := range sc.wedges {
+				if reach := math.Abs(w.x) + labelWidth(w.label)/2; reach > halfX {
+					t.Errorf("%q reaches x=%v, past the corner %v", w.label, reach, halfX)
+				}
+				if reach := math.Abs(w.y) + hostLabelHalf; reach > halfY {
+					t.Errorf("%q reaches y=%v, past the corner %v", w.label, reach, halfY)
+				}
+			}
+			if name == "24-character names" {
+				if halfX <= sc.extent+canvasPad {
+					t.Errorf("the labels do not widen the canvas (%v <= %v)", halfX, sc.extent+canvasPad)
+				}
+			}
+		})
+	}
+}
+
+func TestMapHalfHoldsAWedgeLabel(t *testing.T) {
+	sc := scene{extent: 300, wedges: []wedge{{label: strings.Repeat("r", 24), x: -280, y: 10}}}
+	halfX, halfY := mapHalf(sc)
+	if want := 280 + (24*hostCharWidth+hostMargin)/2; halfX != want {
+		t.Errorf("halfX = %v, want %v", halfX, want)
+	}
+	if want := 300 + canvasPad; halfY != want {
+		t.Errorf("halfY = %v, want %v", halfY, want)
+	}
+}
+
+func TestDotHostileRepoLabelCannotBreakOut(t *testing.T) {
+	ws := wedgeRoster()
+	plain, _, _ := emitRepos(ws)
+	for i := range ws {
+		if ws[i].repo == "alpha" {
+			ws[i].repo = hostileRepo
+		}
+	}
+	out, sc, _ := emitRepos(ws)
+	for line := range strings.SplitSeq(out, "\n") {
+		if !balanced(line) {
+			t.Errorf("unbalanced quotes: %s", line)
+		}
+	}
+	if got, want := strings.Count(out, "\n"), strings.Count(plain, "\n"); got != want {
+		t.Errorf("a repo name changed the statement count: %d lines, want %d", got, want)
+	}
+	hostile := placedBy(t, sc, hostileRepo, "feat/2-pass")
+	if hostile.repoLabel != hostileRepo {
+		t.Fatalf("the label was rewritten to %q", hostile.repoLabel)
+	}
+	if !strings.Contains(out, "label="+dotq(hostileRepo)) {
+		t.Errorf("the wedge label is not the quoted repo name in\n%s", out)
+	}
+	_, legend, _ := strings.Cut(out, "label=<")
+	if strings.Contains(legend, "ZQ") || strings.Count(legend, "<table") != 1 || strings.Count(legend, "</table>") != 1 {
+		t.Errorf("legend is not the fixed table: %s", legend)
+	}
+}
+
+func TestRenderedWedges(t *testing.T) {
+	neato := neatoPath(t)
+	golden, err := os.ReadFile(filepath.Join("testdata", "wedges.dot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := map[string]bool{}
+	parseSVG(t, neatoSVG(t, neato, string(golden))).walk(func(n svgNode) {
+		if n.XMLName.Local == "text" {
+			text[strings.TrimSpace(n.Text)] = true
+		}
+	})
+	for _, label := range []string{"alpha", "beta"} {
+		if !text[label] {
+			t.Errorf("the rendered golden has no text %q (has %v)", label, text)
+		}
+	}
+
+	// The map has no legend, so its viewBox is the corners plus the graph pad.
+	_, sc, _ := emitRepos(wedgeRoster())
+	svg := neatoSVG(t, neato, buildDOT(sc, nil, ""))
+	vbW, vbH, ok := viewBoxSize(svg)
+	if !ok {
+		t.Fatal("svg has no viewBox")
+	}
+	halfX, halfY := mapHalf(sc)
+	padX, padY := (vbW-2*halfX)/2, (vbH-2*halfY)/2
+	const wantPad = 0.2 * 72
+	if math.Abs(padX-wantPad) > 0.6 || math.Abs(padY-wantPad) > 0.6 {
+		t.Errorf("viewBox %vx%v around corners %vx%v leaves pads %v, %v, want %v: something is drawn outside the corners",
+			vbW, vbH, 2*halfX, 2*halfY, padX, padY, wantPad)
 	}
 }

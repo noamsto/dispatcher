@@ -27,6 +27,11 @@ const (
 	hostLabelGap  = 55.0
 	hostLabelHalf = 20.0
 
+	// With two or more repos each gets a wedge: its outer arc sits wedgeRimGap
+	// past the wedge's outermost ring and its name wedgeLabelGap past the arc.
+	wedgeRimGap   = 55.0
+	wedgeLabelGap = 18.0
+
 	minExtent = minRadius + 40
 	slotsVer  = 2
 
@@ -41,6 +46,7 @@ type slotEntry struct {
 	Branch string `json:"branch"`
 	Class  string `json:"class"`
 	Host   string `json:"host,omitempty"`
+	Repo   string `json:"repo,omitempty"`
 }
 
 // slotState is roster-render.slots.json: the ring sequence, which is what makes
@@ -68,12 +74,14 @@ func loadSlots(path string) slotState {
 		return newSlotState()
 	}
 	out := newSlotState()
-	seen := map[string]bool{}
+	type key struct{ repo, branch string }
+	seen := map[key]bool{}
 	for _, e := range s.Order {
-		if e.Branch == "" || seen[e.Branch] || len(out.Order) >= maxPlanets {
+		k := key{e.Repo, e.Branch}
+		if e.Branch == "" || seen[k] || len(out.Order) >= maxPlanets {
 			continue
 		}
-		seen[e.Branch] = true
+		seen[k] = true
 		out.Order = append(out.Order, e)
 	}
 	return out
@@ -255,13 +263,63 @@ type hostLabel struct {
 	x, y float64
 }
 
+// wedge is one repo's sector: start and span in degrees clockwise from 12
+// o'clock, rim the radius of its outer arc, and x, y the centre of its label.
+type wedge struct {
+	repo, label string
+	start, span float64
+	rim         float64
+	x, y        float64
+}
+
 // scene is the whole layout: planets in ring order, a label per drawn remote
-// host in first-seen order, and extent, the radius of the smallest circle around
-// everything (the emitter fits the canvas to it).
+// host in first-seen order, the repo wedges (none for a single repo), and
+// extent, the radius of the smallest circle around everything (the emitter fits
+// the canvas to it).
 type scene struct {
 	planets []placed
 	hosts   []hostLabel
+	wedges  []wedge
 	extent  float64
+}
+
+// place puts p on ring at radius r and angle, with its moons pushed outward, and
+// grows the extent over both.
+func (sc *scene) place(p planet, ring int, r, angle float64) {
+	pl := placed{planet: p, ring: ring, angle: angle}
+	pl.x, pl.y = polar(r, angle)
+	pr := pl.size * 72 / 2
+	sc.extent = max(sc.extent, r+pr)
+
+	pl.moons = make([]moon, len(p.moons))
+	for m, mn := range p.moons {
+		along := (float64(m) - float64(len(pl.moons)-1)/2) * moonStep
+		ux, uy := polar(1, angle)
+		mn.x = pl.x + ux*(pr+moonGap) + uy*along
+		mn.y = pl.y + uy*(pr+moonGap) - ux*along
+		pl.moons[m] = mn
+		sc.extent = max(sc.extent, math.Hypot(mn.x, mn.y)+moonRadius)
+	}
+	sc.planets = append(sc.planets, pl)
+}
+
+// hostRun sums the unit vectors of one host's planets, so its label can sit in
+// their mean direction.
+type hostRun struct{ x, y, first float64 }
+
+func (h *hostRun) add(angle float64) {
+	u, v := polar(1, angle)
+	h.x += u
+	h.y += v
+}
+
+// direction is the mean angle of the run, or its first planet's when they
+// cancel out.
+func (h *hostRun) direction() float64 {
+	if math.Hypot(h.x, h.y) > 1e-9 {
+		return math.Atan2(h.x, h.y) * 180 / math.Pi
+	}
+	return h.first
 }
 
 func polar(r, deg float64) (x, y float64) {
@@ -282,16 +340,28 @@ func ringSizes(n int) []int {
 	return sizes
 }
 
-// arrange orders the planets, spaces them evenly and turns that into
+// arrange lays the planets out: on shared rings, or in one wedge per repo when
+// they span two or more.
+func arrange(prev slotState, ps []planet) (slotState, scene) {
+	repos := map[string]bool{}
+	for _, p := range ps {
+		repos[p.repo] = true
+	}
+	if len(repos) < 2 {
+		return arrangeRings(prev, ps)
+	}
+	return arrangeWedges(prev, ps)
+}
+
+// arrangeRings orders the planets, spaces them evenly and turns that into
 // coordinates. Every second ring is turned half a step, so its spokes do not run
 // under an inner planet.
-func arrange(prev slotState, ps []planet) (slotState, scene) {
+func arrangeRings(prev slotState, ps []planet) (slotState, scene) {
 	seq := sequence(prev, ps)
 	next := newSlotState()
 	sc := scene{extent: minExtent}
 
-	type run struct{ x, y, first float64 }
-	runs := map[string]*run{}
+	runs := map[string]*hostRun{}
 	var hostOrder []string
 	outer, k := 0.0, 0
 	for ring, n := range ringSizes(len(seq)) {
@@ -308,44 +378,147 @@ func arrange(prev slotState, ps []planet) (slotState, scene) {
 			i := seq[k]
 			k++
 			angle := math.Mod(float64(j)*360/float64(n)+turn, 360)
-			pl := placed{planet: ps[i], ring: ring, angle: angle}
-			pl.x, pl.y = polar(r, angle)
-			pr := pl.size * 72 / 2
-			sc.extent = max(sc.extent, r+pr)
-
-			pl.moons = make([]moon, len(ps[i].moons))
-			for m, mn := range ps[i].moons {
-				along := (float64(m) - float64(len(pl.moons)-1)/2) * moonStep
-				ux, uy := polar(1, angle)
-				mn.x = pl.x + ux*(pr+moonGap) + uy*along
-				mn.y = pl.y + uy*(pr+moonGap) - ux*along
-				pl.moons[m] = mn
-				sc.extent = max(sc.extent, math.Hypot(mn.x, mn.y)+moonRadius)
-			}
-			sc.planets = append(sc.planets, pl)
-			next.Order = append(next.Order, slotEntry{Branch: ps[i].branch, Class: ps[i].class, Host: ps[i].host})
+			sc.place(ps[i], ring, r, angle)
+			next.Order = append(next.Order, slotEntry{Branch: ps[i].branch, Class: ps[i].class, Host: ps[i].host, Repo: ps[i].repo})
 
 			if h := ps[i].host; h != "" {
-				u, v := polar(1, angle)
 				if runs[h] == nil {
-					runs[h] = &run{first: angle}
+					runs[h] = &hostRun{first: angle}
 					hostOrder = append(hostOrder, h)
 				}
-				runs[h].x += u
-				runs[h].y += v
+				runs[h].add(angle)
 			}
 		}
 	}
 
 	for _, h := range hostOrder {
-		deg := runs[h].first
-		if math.Hypot(runs[h].x, runs[h].y) > 1e-9 {
-			deg = math.Atan2(runs[h].x, runs[h].y) * 180 / math.Pi
-		}
 		r := outer + hostLabelGap
-		x, y := polar(r, deg)
+		x, y := polar(r, runs[h].direction())
 		sc.hosts = append(sc.hosts, hostLabel{host: h, x: x, y: y})
 		sc.extent = max(sc.extent, r+hostLabelHalf)
 	}
 	return next, sc
+}
+
+// wedgeSector is one repo's planets with their sequence.
+type wedgeSector struct {
+	repo, label string
+	ps          []planet
+	seq         []int
+}
+
+// arrangeWedges gives each repo an angular sector, clockwise from 12 o'clock in
+// the order the repos first appear in the persisted sequence (new ones after,
+// by label), and lays its planets out inside it. A sector's span follows its
+// planet count, with a floor of two so a lone worker's wedge still has room.
+// Planets fill the shared ring radii from the inside out, each ring spread
+// evenly across the sector's arc.
+//
+// maxPlanets bounds the total: repos are filled in wedge order, so a new
+// planet in an earlier repo can leave a later repo's last planets undrawn.
+func arrangeWedges(prev slotState, ps []planet) (slotState, scene) {
+	groups := map[string][]planet{}
+	labels := map[string]string{}
+	for _, p := range ps {
+		groups[p.repo] = append(groups[p.repo], p)
+		if l, ok := labels[p.repo]; !ok || p.repoLabel < l {
+			labels[p.repo] = p.repoLabel
+		}
+	}
+
+	var sectors []wedgeSector
+	weights, room := 0, maxPlanets
+	for _, repo := range wedgeOrder(prev, groups, labels) {
+		g := groups[repo]
+		seq := sequence(repoSlots(prev, repo), g)
+		seq = seq[:min(len(seq), room)]
+		if len(seq) == 0 {
+			continue
+		}
+		room -= len(seq)
+		weights += max(len(seq), 2)
+		sectors = append(sectors, wedgeSector{repo: repo, label: labels[repo], ps: g, seq: seq})
+	}
+
+	next := newSlotState()
+	sc := scene{extent: minExtent}
+	start := 0.0
+	for _, s := range sectors {
+		span := 360 * float64(max(len(s.seq), 2)) / float64(weights)
+		w := wedge{repo: s.repo, label: s.label, start: start, span: span}
+		hosts := map[string]*hostRun{}
+		var hostOrder []string
+
+		outer, k := 0.0, 0
+		for ring := 0; k < len(s.seq); ring++ {
+			r := minRadius + float64(ring)*ringStep
+			fit := max(1, int(r*span*math.Pi/180/arcPerPlanet))
+			m := min(fit, len(s.seq)-k)
+			outer = r
+			for j := range m {
+				i := s.seq[k]
+				k++
+				angle := start + span*(float64(j)+0.5)/float64(m)
+				sc.place(s.ps[i], ring, r, angle)
+				next.Order = append(next.Order, slotEntry{Branch: s.ps[i].branch, Class: s.ps[i].class, Host: s.ps[i].host, Repo: s.repo})
+
+				if h := s.ps[i].host; h != "" {
+					if hosts[h] == nil {
+						hosts[h] = &hostRun{first: angle}
+						hostOrder = append(hostOrder, h)
+					}
+					hosts[h].add(angle)
+				}
+			}
+		}
+
+		w.rim = outer + wedgeRimGap
+		w.x, w.y = polar(w.rim+wedgeLabelGap, start+span/2)
+		sc.extent = max(sc.extent, w.rim+wedgeLabelGap+hostLabelHalf)
+		sc.wedges = append(sc.wedges, w)
+
+		hostR := w.rim + wedgeLabelGap + 2*hostLabelHalf + 6
+		for _, h := range hostOrder {
+			x, y := polar(hostR, hosts[h].direction())
+			sc.hosts = append(sc.hosts, hostLabel{host: h, x: x, y: y})
+			sc.extent = max(sc.extent, hostR+hostLabelHalf)
+		}
+		start += span
+	}
+	return next, sc
+}
+
+// wedgeOrder is the repos in wedge order: those already in the persisted
+// sequence first, by their first entry, then the rest by label.
+func wedgeOrder(prev slotState, groups map[string][]planet, labels map[string]string) []string {
+	var repos []string
+	for _, e := range prev.Order {
+		if _, ok := groups[e.Repo]; ok && e.Repo != "" && !slices.Contains(repos, e.Repo) {
+			repos = append(repos, e.Repo)
+		}
+	}
+	var fresh []string
+	for repo := range groups {
+		if !slices.Contains(repos, repo) {
+			fresh = append(fresh, repo)
+		}
+	}
+	sort.Slice(fresh, func(x, y int) bool {
+		if labels[fresh[x]] != labels[fresh[y]] {
+			return labels[fresh[x]] < labels[fresh[y]]
+		}
+		return fresh[x] < fresh[y]
+	})
+	return append(repos, fresh...)
+}
+
+// repoSlots is the part of the persisted sequence that belongs to repo.
+func repoSlots(prev slotState, repo string) slotState {
+	out := newSlotState()
+	for _, e := range prev.Order {
+		if e.Repo == repo {
+			out.Order = append(out.Order, e)
+		}
+	}
+	return out
 }
