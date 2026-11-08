@@ -162,6 +162,23 @@ func advUnsettled(repo, runID, model, state string) string {
 	return strings.Replace(row, `"pr_state":"MERGED"`, `"pr_state":`+prState, 1)
 }
 
+func TestAdviseRanksOnEndToEndMergeRate(t *testing.T) {
+	var rows []string
+	for i := range 45 {
+		rows = append(rows, advUnsettled("acme/widgets", fmt.Sprintf("flaky-x%d", i), "flaky", ""))
+		rows = append(rows, advRow("acme/widgets", fmt.Sprintf("solid-m%d", i), "solid", 5))
+	}
+	rows = append(rows, advRows("acme/widgets", "flaky", 5)...)
+	for i := range 5 {
+		rows = append(rows, advUnsettled("acme/widgets", fmt.Sprintf("solid-c%d", i), "solid", "CLOSED"))
+	}
+	out, _, code := runAdvise(t, storeOf(rows...), Request{Advise: true, Args: []string{"claude", "standard"}})
+	flaky, solid := strings.Index(out, "\n  flaky"), strings.Index(out, "\n  solid")
+	if code != 0 || flaky < 0 || solid < 0 || solid > flaky {
+		t.Errorf("want solid (45 of 50 merged) ahead of flaky (5 of 50):\n%s", out)
+	}
+}
+
 func TestAdviseThinMergeFigureSortsBelowWellMeasured(t *testing.T) {
 	for _, tc := range []struct {
 		name, state string

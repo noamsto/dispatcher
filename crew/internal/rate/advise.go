@@ -100,6 +100,7 @@ func advise(req Request, cwd string, stdout, stderr io.Writer, o Options) int {
 		return cmp.Or(
 			cmp.Compare(a.class, b.class),
 			cmp.Compare(thinMerge(a.ranked()), thinMerge(b.ranked())),
+			-cmp.Compare(endToEndMerge(a.ranked()), endToEndMerge(b.ranked())),
 			-cmp.Compare(mergePct(a.ranked()), mergePct(b.ranked())),
 			-cmp.Compare(runs(a.ranked()), runs(b.ranked())),
 			cmp.Compare(a.model, b.model),
@@ -227,6 +228,20 @@ func mergePct(g map[string]any) float64 {
 		return -1
 	}
 	return v
+}
+
+// endToEndMerge is merged runs as a percentage of all measured runs, -1 when
+// unmeasured. Runs that fail without opening a PR are outside the settled
+// denominator of mergePct, so ranking on it alone would reward them.
+func endToEndMerge(g map[string]any) float64 {
+	if g == nil {
+		return -1
+	}
+	v, k, n := agg(g, "merge_pct")
+	if k == 0 || n == 0 {
+		return -1
+	}
+	return v * float64(k) / float64(n)
 }
 
 // thinMerge is 1 when the merge figure rests on fewer than adviseMeasured
