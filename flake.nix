@@ -114,7 +114,7 @@
             # stall-watch sources the two libs dispatch.sh shares, under the
             # pinned bash (the interpreter writeShellApplication gives crew);
             # `crew class` and the rate sweep run model-resolve under it too.
-            ldflags = ["-s" "-w" "-X main.bashBin=${pkgs.bash}/bin/bash" "-X main.budgetGateLib=${./adapters/core/budget-gate.sh}" "-X main.localModelsLib=${./adapters/core/local-models.sh}" "-X main.modelResolveScript=${./adapters/core/model-resolve.sh}"];
+            ldflags = ["-s" "-w" "-X main.bashBin=${pkgs.bash}/bin/bash" "-X main.budgetGateLib=${./adapters/core/budget-gate.sh}" "-X main.publicLeakGuard=${./adapters/core/public-leak-guard.sh}" "-X main.localModelsLib=${./adapters/core/local-models.sh}" "-X main.modelResolveScript=${./adapters/core/model-resolve.sh}"];
             nativeCheckInputs = [pkgs.git pkgs.ps pkgs.graphviz];
             postInstall = "mv $out/bin/crew $out/bin/crew-go";
           };
@@ -185,9 +185,13 @@
           # the store path makeWrapper execs, which is a build, not the entry.
           #
           # crew never references the protocols and sources no shared lib: the two
-          # libs stall-watch needs are baked into crewGo's ldflags.
+          # libs stall-watch needs and the public-leak guard script are baked into
+          # crewGo's ldflags.
           crew = let
-            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gtrash procps graphviz resvg]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
+            # gnused, findutils, curl, betterleaks: the public-leak guard
+            # `crew retro --sweep` runs on issue text; betterleaks is what scans for
+            # secrets, so dropping it silently weakens the guard.
+            runtimeInputs = (with pkgs; [git jq coreutils gnugrep tmux gtrash procps graphviz resvg gnused findutils curl betterleaks]) ++ [pr-watch dispatch-config crew-dash refresh-budget];
           in
             pkgs.runCommand "crew" {nativeBuildInputs = [pkgs.makeWrapper];} ''
               mkdir -p $out/bin

@@ -26,8 +26,8 @@
 # named `api`, `docs` or `notes` would flag half of all prose. A target in that
 # same list is private, so private-to-private posts pass. Without the list, an
 # anonymous API lookup decides whether the target is public, and the guard
-# abstains when that fails too. betterleaks is optional; without it the secret
-# scan is skipped, said once on stderr.
+# abstains when that fails too. betterleaks is optional; without it, or when it
+# fails, the secret scan is skipped, said once on stderr.
 #
 # Portable to macOS's bash 3.2 and BSD userland: no ${var,,}, and `timeout`
 # only where it exists.
@@ -149,8 +149,13 @@ if [[ -s $cache ]]; then
 fi
 hits+=$'\n'$(grep -oE 'claude\.ai/code/session_[A-Za-z0-9]+|/tmp/claude-[^[:space:]]*|'"$HOME"'/[^[:space:]]*' <<<"$body" | sort -u || true)
 if command -v betterleaks >/dev/null; then
-  hits+=$'\n'$(betterleaks stdin --no-banner -l error --redact -f json -r - <<<"$body" 2>/dev/null |
-    jq -r '.[] | "secret: \(.RuleID)"' | sort -u || true)
+  # --exit-code 0: a found leak is a report, so any non-zero exit is a failure.
+  if report=$(betterleaks stdin --exit-code 0 --no-banner -l error --redact -f json -r - <<<"$body" 2>/dev/null) &&
+    secrets=$(jq -r '.[] | "secret: \(.RuleID)"' <<<"$report" 2>/dev/null | sort -u); then
+    hits+=$'\n'$secrets
+  else
+    echo "public-leak-guard: betterleaks failed; secret scan skipped" >&2
+  fi
 else
   echo "public-leak-guard: betterleaks not found; secret scan skipped" >&2
 fi

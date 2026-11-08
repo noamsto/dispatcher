@@ -33,6 +33,8 @@
     # and lose every other run with it (#25).
     def body_obj: (try fromjson catch null) | if type == "object" then . else null end;
     def note_list: if type == "array" then map(select(type == "object")) else [] end;
+    # Must fit int64 once floored; 9999999999999 ms is the sentinel bound above.
+    def valid_ms: type == "number" and . >= 0 and . <= 9999999999999;
     # Tags and details are agent-authored free text, and a gate_thrash detail
     # quotes arbitrary source and command output. Tab/newline/CR become a space
     # so a padded row keeps its columns; the rest go, because a raw ESC
@@ -146,8 +148,9 @@
                     crew: (.[0].to | ltrimstr("retro:")),
                     engine: "—", model: "—", tier: "—", outcome: "—",
                     t0: (map(.ts) | min), is_run: false,
-                    notes: (sort_by(.ts) | map(.body | body_obj)
-                            | map(select(. != null)) | dedupe_notes) })) as $drows
+                    notes: (sort_by(.ts)
+                            | map((.body | body_obj) as $b | select($b != null) | $b + {ts: .ts})
+                            | dedupe_notes) })) as $drows
     # A clean run is silent: no notes, no row.
     # Tags are cleaned here, once, so the grouping key, the vocabulary check,
     # the first report column, the bare-mode tag list and the `unknown` array
@@ -162,7 +165,12 @@
             detail: (($note.detail // "") | tostring),
             run: (if $r.is_run then ($r.branch + "@" + ($r.t0 | tostring)) else null end),
             engine: (if $r.is_run then $r.engine else null end),
-            outcome: $r.outcome } ] as $flat
+            outcome: $r.outcome,
+            seam: (($note.seam // "") | tostring),
+            ts: (if $r.is_run then $r.t0 else $note.ts end),
+            unit: (if $r.is_run then ($r.branch + "@" + ($r.t0 | tostring))
+                   else ("dispatcher:" + $r.crew + "@" + ($note.ts | tostring)) end),
+            is_run: $r.is_run, branch: $r.branch, crew: $r.crew } ] as $flat
     | ($flat | group_by(.tag) | map(
         .[0].tag as $t
         | (map(select(.run != null))) as $wn
@@ -183,7 +191,8 @@
     | (($groups | map(select(.known)) | sort_by(. as $g | $vocab | index($g.tag)))
        + ($groups | map(select(.known | not)) | sort_by(.tag))) as $sorted
     | ($sorted | map(select(.known | not)) | map(.tag)) as $unknown
-    | if $want_json then
+    | if $want_notes then {notes: ($flat | map(select(.ts | valid_ms) | .ts |= floor)), run_ts: ($disp | map(.ts | select(valid_ms) | floor))}
+      elif $want_json then
         { tags: $sorted, unknown: $unknown,
           rows: ($rows | map({
               kind: (if .is_run then "run" else "dispatcher" end),
