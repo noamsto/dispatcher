@@ -56,7 +56,7 @@ const (
 // The --sweep refusals, one line each like Usage.
 const (
 	SweepUsage = "crew: retro --sweep takes no --report/--json/--draft/--crew/--all"
-	ApplyUsage = "crew: retro --apply takes a digest and needs --sweep"
+	ApplyUsage = "crew: retro --apply-digest takes a digest and needs --sweep"
 )
 
 // say writes to a stream whose failure is reported elsewhere (the exit status,
@@ -85,13 +85,12 @@ type Options struct {
 	// codename off its rows, instead of re-deriving here the `·<issue>` suffix
 	// roster adds when two branches hash to one codename. Only --draft calls it.
 	Roster func(docs []any, crew string) []map[string]any
-	// Ctx, GH, Clock, Guard and Cwd serve --sweep only. A nil Guard never gives a
+	// Ctx, GH, Clock and Guard serve --sweep only. A nil Guard never gives a
 	// verdict, so its writes carry the reduced text.
 	Ctx   context.Context
 	GH    gh.Client
 	Clock clock.Clock
 	Guard Guard
-	Cwd   string
 }
 
 func (o Options) withDefaults() Options {

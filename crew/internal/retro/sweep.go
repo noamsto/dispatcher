@@ -79,7 +79,7 @@ type sweepRun struct {
 }
 
 // sweep derives the plan from the bus and the tracker, then prints it or, with
-// --apply and a matching digest, writes it. Every run re-derives from those two
+// --apply-digest and a matching digest, writes it. Every run re-derives from those two
 // sources, so a partial apply needs no bookkeeping.
 func sweep(req Request, events []bus.Event, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	notes, runTS, err := foldNotes(events)
@@ -125,7 +125,7 @@ func sweep(req Request, events []bus.Event, paths bus.Paths, stdout, stderr io.W
 	}
 	s.home, s.enabled = strings.EqualFold(repo.Name, harnessRepo), repo.Enabled
 	if !s.enabled && s.applying {
-		return fail("refusing --apply — Linear-tracked; the findings need one human approval, write them with the Linear tools")
+		return fail("refusing --apply-digest — Linear-tracked; the findings need one human approval, write them with the Linear tools")
 	}
 
 	tracked := map[string]*trackedIssue{}
@@ -198,7 +198,9 @@ func (s *sweepRun) classifyAll(notes []flatNote, rules []rule) map[string]*findi
 			continue
 		}
 		if key == "" {
-			s.plan.unclustered = append(s.plan.unclustered, n)
+			if s.window30().has(n.TS) {
+				s.plan.unclustered = append(s.plan.unclustered, n)
+			}
 			continue
 		}
 		f := findings[key]
@@ -562,7 +564,7 @@ func (s *sweepRun) print(w io.Writer, repo, digest string) {
 		return
 	}
 	line("digest: %s", digest)
-	line("plan only; pass --apply <digest> to write")
+	line("plan only; pass --apply-digest <digest> to write")
 }
 
 func (s *sweepRun) printStep(line func(string, ...any), st step) {

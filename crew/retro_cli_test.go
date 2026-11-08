@@ -5,13 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
+	"github.com/noamsto/dispatcher/crew/internal/retro"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/tmux/tmuxtest"
 )
@@ -1023,6 +1026,57 @@ func TestRetroDraftUsageErrors(t *testing.T) {
 		out, errOut, code := h.run(append([]string{"retro"}, tc.args...)...)
 		if code != 1 || out != "" || errOut != tc.stderr+"\n" {
 			t.Errorf("retro %v: code %d, stdout %q, stderr %q, want 1 and %q", tc.args, code, out, errOut, tc.stderr)
+		}
+	}
+}
+
+func TestRetroSweepFlagRefusals(t *testing.T) {
+	h := newHoldCLI(t)
+	for _, tc := range []struct {
+		args   []string
+		stderr string
+	}{
+		{[]string{"--apply-digest", "abc"}, retro.ApplyUsage},
+		{[]string{"--sweep", "--apply-digest", ""}, retro.ApplyUsage},
+		{[]string{"--sweep", "--report"}, retro.SweepUsage},
+		{[]string{"--sweep", "--draft"}, retro.SweepUsage},
+	} {
+		out, errOut, code := h.run(append([]string{"retro"}, tc.args...)...)
+		if code != 1 || out != "" || errOut != tc.stderr+"\n" {
+			t.Errorf("retro %v: code %d, stdout %q, stderr %q, want 1 and %q", tc.args, code, out, errOut, tc.stderr)
+		}
+	}
+}
+
+const retroSweepGhStub = `#!/bin/sh
+case "$1 $2" in
+"repo view") printf '%s\n' '{"nameWithOwner":"acme/app","hasIssuesEnabled":true}' ;;
+"issue list") printf '%s\n' '[]' ;;
+esac
+exit 0
+`
+
+func TestRetroSweepPlansARecurringFindingThroughRun(t *testing.T) {
+	h, s := newRetroSeed(t)
+	stubs := t.TempDir()
+	writeStub(t, stubs, "gh", retroSweepGhStub)
+	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
+	unsetenv(t, "PUBLIC_LEAK_GUARD")
+
+	day := int64(24 * time.Hour / time.Millisecond)
+	now := time.Now().UnixMilli()
+	s.msg("dispatcher:c1", "findings:c1", int(now-20*day), `{"key":"pane-timeout","match":"pane.*timeout"}`)
+	for i := range 6 {
+		branch := fmt.Sprintf("feat/r%d", i)
+		ts := int(now - int64(i+1)*day)
+		s.dispatch(branch, ts, nil)
+		s.msg("worker:"+branch+"#s1", "retro:c1", ts+1, note("other", "pane hit a timeout"))
+	}
+
+	out := retroOK(t, h, "--sweep")
+	for _, want := range []string{"file pane-timeout", "digest: ", "plan only; pass --apply-digest <digest> to write"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan missing %q:\n%s", want, out)
 		}
 	}
 }

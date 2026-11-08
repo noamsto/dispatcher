@@ -366,6 +366,7 @@ func TestSweepGroupsOtherAndUnrecognizedTags(t *testing.T) {
 		noteRuns("lab", 1, 6, "flaky_thing", "pane hit a timeout") +
 		noteRun("feat/story", ago(1), "other", "a one-off story") +
 		noteRun("feat/route", ago(1), "misrouted", "wrong lane") +
+		noteRun("feat/stale", ago(45), "other", "an ancient story") +
 		noteRun("feat/sum", ago(1), "session_summary", "pane timeout rollup")
 	paths := fixture(t, events)
 
@@ -386,6 +387,9 @@ func TestSweepGroupsOtherAndUnrecognizedTags(t *testing.T) {
 	}
 	if strings.Contains(out, "rollup") {
 		t.Errorf("session_summary should be excluded:\n%s", out)
+	}
+	if strings.Contains(out, "ancient story") {
+		t.Errorf("a note older than 30 days should not be listed:\n%s", out)
 	}
 
 	f.applyPlan(paths)
@@ -669,7 +673,7 @@ func TestSweepIssuesDisabled(t *testing.T) {
 
 	digest := "abc"
 	_, errb, code := f.sweep(paths, allowAll, &digest)
-	if code != 1 || !strings.Contains(errb, "refusing --apply — Linear-tracked") {
+	if code != 1 || !strings.Contains(errb, "refusing --apply-digest — Linear-tracked") {
 		t.Errorf("apply: exit %d, stderr %q", code, errb)
 	}
 	assertNoWrites(t, f)
