@@ -655,6 +655,36 @@ guard_ships_row() { # script basename
   [ "$status" -eq 0 ]
 }
 
+@test "the worker protocol names the memory seams for every engine (#1473)" {
+  seams=("deja search" "priors search" "deja fix" "deja show" "priors show" "deja secrets" "deja-recall" "priors-recall" "priors add")
+  protocols=(
+    adapters/core/protocols/WORKER_PROTOCOL.md
+    adapters/core/protocols/WORKER_PROTOCOL.pi.md
+    adapters/core/protocols/WORKER_PROTOCOL.claude.md
+    adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md
+    adapters/codex/plugin/protocols/WORKER_PROTOCOL.md
+    adapters/cursor/protocols/WORKER_PROTOCOL.md
+  )
+  for rel in "${protocols[@]}"; do
+    for seam in "${seams[@]}"; do
+      if ! grep -qF -- "$seam" "$ROOT/$rel"; then
+        printf 'missing memory seam in %s: %s\n' "$rel" "$seam" >&3
+        return 1
+      fi
+    done
+  done
+}
+
+@test "the priors lookup skill ships beside deja-recall (#1473)" {
+  [ -f "$ROOT/adapters/core/skills/priors-recall/SKILL.md" ]
+  run cmp -s "$ROOT/adapters/core/skills/priors-recall/SKILL.md" "$ROOT/adapters/claude-code/plugin/skills/priors-recall/SKILL.md"
+  [ "$status" -eq 0 ]
+  run cmp -s "$ROOT/adapters/core/skills/priors-recall/SKILL.md" "$ROOT/adapters/codex/plugin/skills/priors-recall/SKILL.md"
+  [ "$status" -eq 0 ]
+  run cmp -s "$ROOT/adapters/core/skills/priors-recall/SKILL.md" "$ROOT/adapters/cursor/skills/priors-recall/SKILL.md"
+  [ "$status" -eq 0 ]
+}
+
 # The review contract's own base snippet is header-only: a `base:` line in the
 # inlined task body, after the first blank line, is text to review, not the base.
 @test "review task's base snippet reads only the header" {

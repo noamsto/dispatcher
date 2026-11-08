@@ -949,6 +949,24 @@ EOF
   [[ "$role_line" == *"--no-approve --skill $TEST_REPO/.dispatch-wt/"*"/.agents/skills --skill $DISPATCHER_SKILLS_DIR "* ]]
 }
 
+@test "pi worker launch carries the memory skills (#1473)" {
+  stub_launch_bins
+  # setup() seeds DISPATCHER_SKILLS_DIR with a stub holding only
+  # spec-plan-critic (#225), and the memory skills live in the real tree. A raw
+  # dispatch run leaves @skillsDir@ unsubstituted, so _resolve_dir takes the
+  # override.
+  export DISPATCHER_SKILLS_DIR="$BATS_TEST_DIRNAME/../adapters/core/skills"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --grid --crew-id c1 42 "pi memory skills"
+  [ "$status" -eq 0 ]
+
+  # No project skills exist in this fixture's worktree, so the harness dir is
+  # the only --skill the lead's line carries.
+  lead_line=$(grep -F -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md" <(launch_log))
+  [[ "$lead_line" == *"--skill $DISPATCHER_SKILLS_DIR "* ]]
+  [ -f "$DISPATCHER_SKILLS_DIR/deja-recall/SKILL.md" ]
+  [ -f "$DISPATCHER_SKILLS_DIR/priors-recall/SKILL.md" ]
+}
+
 @test "pi dispatch refuses to launch when the agent dir cannot be seeded" {
   stub_launch_bins
   # A crew stub whose pi-agent-dir prints nothing (the generic log-and-succeed
