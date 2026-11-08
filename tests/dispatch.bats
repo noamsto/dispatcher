@@ -959,8 +959,8 @@ EOF
   DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --grid --crew-id c1 42 "pi memory skills"
   [ "$status" -eq 0 ]
 
-  # The lead's line carries several --skill args (project + harness), so match
-  # the harness dir by its own value, never by position.
+  # The harness dir is the only --skill the stubbed worktree gets (no project
+  # skills exist there); still match it by value, not position, so reordering cannot slip a wrong path through.
   lead_line=$(grep -F -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md" <(launch_log))
   [[ "$lead_line" == *"--skill $DISPATCHER_SKILLS_DIR "* ]]
   [ -f "$DISPATCHER_SKILLS_DIR/deja-recall/SKILL.md" ]

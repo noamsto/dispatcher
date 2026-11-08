@@ -656,7 +656,7 @@ guard_ships_row() { # script basename
 }
 
 @test "the worker protocol names the memory seams for every engine (#1473)" {
-  seams=("deja search" "priors search" "deja fix" "deja show" "priors show" "deja secrets" "deja-recall" "priors-recall")
+  seams=("deja search" "priors search" "deja fix" "deja show" "priors show" "deja secrets" "deja-recall" "priors-recall" "priors add")
   protocols=(
     adapters/core/protocols/WORKER_PROTOCOL.md
     adapters/core/protocols/WORKER_PROTOCOL.pi.md
