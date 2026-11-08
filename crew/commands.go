@@ -103,6 +103,8 @@ type rateCmd struct {
 	Pooled   bool      `name:"pooled"`
 	SweepAll bool      `name:"sweep-all"`
 	Root     []*string `name:"root" sep:"none"`
+	Advise   bool      `name:"advise"`
+	Args     []string  `arg:"" optional:""`
 }
 
 // fleetTableCmd is bare `crew fleet`: the hidden default command, so the table's
@@ -993,6 +995,9 @@ func validate(sub string, r *root) *refusal {
 			return fail(hold.DueUsage)
 		}
 	case "rate":
+		if !r.Rate.Advise && len(r.Rate.Args) > 0 {
+			return fail(rate.Usage)
+		}
 		for _, d := range r.Rate.Root {
 			if given(d) {
 				return fail(rateRootUsage)

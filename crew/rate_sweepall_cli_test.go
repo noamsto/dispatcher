@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/noamsto/dispatcher/crew/internal/rate"
 )
 
 // ghOpenPR answers every reconcile query with an open PR, so a sweep never
@@ -331,7 +333,7 @@ func TestSweepAllCLIConflictingOrMalformedFlagsAreErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"--sweep-all", "--report"}, "rate takes --report, --json, --pooled, and --sweep-all/--root"},
+		{[]string{"--sweep-all", "--report"}, "rate takes --report, --json, --pooled, --advise <engine> <tier>, and --sweep-all/--root"},
 		{[]string{"--sweep-all", "--json"}, ""},
 		{[]string{"--sweep-all", "--pooled"}, ""},
 		{[]string{"--root", c.root}, "rate --root needs --sweep-all"},
@@ -343,4 +345,21 @@ func TestSweepAllCLIConflictingOrMalformedFlagsAreErrors(t *testing.T) {
 		}
 		wantContains(t, "output of rate "+strings.Join(tc.args, " "), out+errb, tc.want)
 	}
+}
+
+func TestRateAdviseAndUnknownPositionalAtArgvLevel(t *testing.T) {
+	c := newSweepAllCLI(t)
+	host := c.repo(filepath.Join(filepath.Dir(c.root), "host"), "acme/host")
+
+	out, errb, code := c.runIn(host, "rate", "--advise", "claude", "standard")
+	if code != 0 || errb != "" {
+		t.Fatalf("rate --advise claude standard: code %d, stdout %q, stderr %q", code, out, errb)
+	}
+	wantContains(t, "stdout", out, "no ratings yet for claude standard")
+
+	out, errb, code = c.runIn(host, "rate", "foo")
+	if code != 1 || out != "" {
+		t.Errorf("rate foo: code %d, stdout %q, stderr %q", code, out, errb)
+	}
+	wantContains(t, "stderr", errb, rate.Usage)
 }
