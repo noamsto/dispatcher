@@ -12,16 +12,12 @@ import (
 // flatNote is one flat retro note. TS is the owning run's dispatch ts for a worker
 // note and the message ts for a dispatcher note; Unit is the occurrence key.
 type flatNote struct {
-	Tag     string `json:"tag"`
-	Seam    string `json:"seam"`
-	Detail  string `json:"detail"`
-	TS      int64  `json:"ts"`
-	Unit    string `json:"unit"`
-	IsRun   bool   `json:"is_run"`
-	Branch  string `json:"branch"`
-	Crew    string `json:"crew"`
-	Engine  string `json:"engine"`
-	Outcome string `json:"outcome"`
+	Tag    string `json:"tag"`
+	Detail string `json:"detail"`
+	TS     int64  `json:"ts"`
+	Unit   string `json:"unit"`
+	IsRun  bool   `json:"is_run"`
+	Branch string `json:"branch"`
 }
 
 // foldNotes runs the shared retro program in its flat-notes mode: every note in

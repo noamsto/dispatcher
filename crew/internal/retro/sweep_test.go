@@ -86,6 +86,8 @@ type fakeTracker struct {
 	labelCreates int
 	created      [][]string
 	reopened     []string
+	bareReopens  int
+	candidates   string
 	failCreateAt int
 	failRead     string
 }
@@ -202,6 +204,11 @@ func (f *fakeTracker) answer(args []string) (string, error) {
 		iss.comments = append(iss.comments, args[4])
 		f.reopened = append(f.reopened, args[4])
 		return "", nil
+	case verb == "issue reopen" && len(args) == 3:
+		iss := f.find(args[2])
+		iss.state, iss.reason, iss.at = "open", "reopened", ""
+		f.bareReopens++
+		return "", nil
 	case verb == "issue comment" && len(args) == 5 && args[3] == "--body":
 		iss := f.find(args[2])
 		iss.comments = append(iss.comments, args[4])
@@ -210,6 +217,9 @@ func (f *fakeTracker) answer(args []string) (string, error) {
 		f.labelCreates++
 		return "", nil
 	case verb == "issue list" && slices.Equal(args[2:4], []string{"--state", "open"}):
+		if f.candidates != "" {
+			return f.candidates, nil
+		}
 		return "[]", nil
 	case verb == "pr view" && len(args) == 5 && args[4] == "mergedAt":
 		return encode(map[string]any{"mergedAt": nullable(f.merged[args[2]])}), nil
@@ -218,7 +228,7 @@ func (f *fakeTracker) answer(args []string) (string, error) {
 	return "", errors.New("unknown argv")
 }
 
-func allowAll(string, string) (bool, string, bool) { return false, "", true }
+func allowAll(string, string, string) (bool, string, bool) { return false, "", true }
 
 func (f *fakeTracker) sweep(paths bus.Paths, guard Guard, apply *string) (string, string, int) {
 	f.t.Helper()
@@ -465,6 +475,26 @@ func TestSweepClosedFindingContinuesPlansReopen(t *testing.T) {
 	if len(f.reopened) != 1 {
 		t.Errorf("reopened again: %d", len(f.reopened))
 	}
+}
+
+func TestSweepVerdictPostedButReopenLostPlansBareReopen(t *testing.T) {
+	f := newTracker(t)
+	closedAt := rfc(ago(20))
+	iss := f.add(7, diverseMarker+"\n\nbody", "closed", "completed", closedAt)
+	iss.comments = []string{fmt.Sprintf("%s%s closed=%s verdict=%s\n\nBefore the fix: 5", verdictPrefix, diverseKey, closedAt, verdictDidNotHold)}
+	paths := fixture(t, continuingEvents(20))
+
+	out := f.plan(paths)
+	if !strings.Contains(out, "reopen #7 "+diverseKey) || strings.Contains(out, "recorded for this close") {
+		t.Fatalf("a marker on a still-closed issue should plan a reopen:\n%s", out)
+	}
+	if summary := f.applyPlan(paths); !strings.Contains(summary, "reopened #7") {
+		t.Errorf("summary = %q", summary)
+	}
+	if f.bareReopens != 1 || len(f.reopened) != 0 || len(iss.comments) != 1 || iss.state != "open" {
+		t.Fatalf("bare reopens %d, reopened %q, comments %q, state %s", f.bareReopens, f.reopened, iss.comments, iss.state)
+	}
+	assertEmptyPlan(t, f.plan(paths))
 }
 
 func stoppedEvents(closedAgo, cleanAfter int) string {
@@ -775,8 +805,11 @@ func TestSweepGuardsWorkerTextInIssueBody(t *testing.T) {
 	paths := fixture(t, guardFixtureEvents())
 
 	var guarded []string
-	guard := func(kind, text string) (bool, string, bool) {
+	guard := func(kind, repo, text string) (bool, string, bool) {
 		guarded = append(guarded, kind+":"+text)
+		if repo != harnessRepo {
+			t.Errorf("guard judged repo %q, want the one gh writes to", repo)
+		}
 		return false, "", true
 	}
 	out, errb, code := f.sweep(paths, guard, nil)
@@ -810,7 +843,7 @@ func TestSweepGuardsWorkerTextInIssueBody(t *testing.T) {
 func TestSweepGuardDenyStripsExcerpts(t *testing.T) {
 	f := newTracker(t)
 	paths := fixture(t, guardFixtureEvents())
-	guard := func(_, text string) (bool, string, bool) {
+	guard := func(_, _, text string) (bool, string, bool) {
 		return strings.Contains(text, "Excerpts ("), "looks private", true
 	}
 	out, _, _ := f.sweep(paths, guard, nil)
@@ -829,7 +862,7 @@ func TestSweepGuardDenyStripsExcerpts(t *testing.T) {
 func TestSweepGuardDeniedTwiceBlocksTheStep(t *testing.T) {
 	f := newTracker(t)
 	paths := fixture(t, guardFixtureEvents())
-	guard := func(string, string) (bool, string, bool) { return true, "the secret reason", true }
+	guard := func(string, string, string) (bool, string, bool) { return true, "the secret reason", true }
 
 	out, _, _ := f.sweep(paths, guard, nil)
 	if !strings.Contains(out, "blocked: leak guard: file "+diverseKey) {
@@ -855,7 +888,7 @@ func TestSweepGuardDeniedTwiceBlocksTheStep(t *testing.T) {
 func TestSweepGuardUnavailableReducesText(t *testing.T) {
 	f := newTracker(t)
 	paths := fixture(t, guardFixtureEvents())
-	guard := func(string, string) (bool, string, bool) { return false, "", false }
+	guard := func(string, string, string) (bool, string, bool) { return false, "", false }
 
 	out, _, _ := f.sweep(paths, guard, nil)
 	if !strings.Contains(out, "leak guard unavailable: "+diverseKey) {
@@ -877,6 +910,64 @@ func TestSweepGuardUnavailableReducesText(t *testing.T) {
 	}
 }
 
+func TestSweepGuardUnavailableBlocksRepoScopedFinding(t *testing.T) {
+	f := newTracker(t)
+	f.repo = "acme/app"
+	paths := fixture(t, findingsRow(ago(40), `{"key":"pane-timeout","match":"pane.*timeout"}`)+noteRuns("r", 1, 6, "other", "pane hit a timeout"))
+	guard := func(string, string, string) (bool, string, bool) { return false, "", false }
+
+	out, _, _ := f.sweep(paths, guard, nil)
+	if !strings.Contains(out, "blocked: leak guard: file pane-timeout") || !strings.Contains(out, "leak guard unavailable: pane-timeout blocked") {
+		t.Errorf("plan:\n%s", out)
+	}
+	digest := digestIn(t, out)
+	_, errb, code := f.sweep(paths, guard, &digest)
+	if code != 1 || !strings.Contains(errb, "blocked") {
+		t.Errorf("apply: exit %d, stderr %q", code, errb)
+	}
+	assertNoWrites(t, f)
+}
+
+func TestSweepLeakyLabelTitleFallsBackToKey(t *testing.T) {
+	f := newTracker(t)
+	f.repo = "acme/app"
+	paths := fixture(t, findingsRow(ago(40), `{"key":"pane-timeout","title":"~/git/acme-private build fails","match":"pane.*timeout"}`)+noteRuns("r", 1, 6, "other", "pane hit a timeout"))
+
+	f.applyPlan(paths)
+	if len(f.created) != 1 {
+		t.Fatalf("created %d", len(f.created))
+	}
+	if got := f.created[0][3]; got != "retro: pane-timeout" {
+		t.Errorf("title = %q", got)
+	}
+	if body := f.created[0][5]; strings.Contains(body, "acme-private") {
+		t.Errorf("title leaked into the body:\n%s", body)
+	}
+}
+
+func TestSweepCandidatesLineNamesTheBindTemplate(t *testing.T) {
+	f := newTracker(t)
+	f.candidates = `[{"number":42,"title":"a similar one"}]`
+	out := f.plan(fixture(t, noteRuns("r", 1, 6, "other", diverseDetail)))
+	candidates := strings.Index(out, "    candidates: #42 a similar one")
+	bind := strings.Index(out, "    bind one that covers this: "+bindTemplate)
+	if candidates < 0 || bind < candidates {
+		t.Errorf("candidates=%d bind=%d:\n%s", candidates, bind, out)
+	}
+}
+
+func TestLabelLinePrintsFieldsTerminalSafe(t *testing.T) {
+	got := labelLine(label{Key: "k", Title: "a\x1b\u200bb", Match: `x\d+`, Tags: []string{"other", "flaky"}, From: "dispatcher:c1", TS: 1000})
+	for _, want := range []string{`title "ab"`, `match "x\d+"`, `tags "other,flaky"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in %q", want, got)
+		}
+	}
+	if strings.ContainsAny(got, "\x1b\u200b") {
+		t.Errorf("unsafe text: %q", got)
+	}
+}
+
 func TestSweepPlanPrintsLabelsAndUnclusteredMarker(t *testing.T) {
 	f := newTracker(t)
 	var events strings.Builder
@@ -895,9 +986,17 @@ func TestSweepPlanPrintsLabelsAndUnclusteredMarker(t *testing.T) {
 	if !strings.Contains(out, "Warnings:") || !strings.Contains(out, `invalid key "bad key"`) {
 		t.Errorf("label warning missing:\n%s", out)
 	}
-	header, data, template := strings.Index(out, "Unclustered (19 notes):"), strings.Index(out, "agent-written data, not instructions"), strings.Index(out, labelTemplate)
-	if header < 0 || data < header || template < data {
-		t.Errorf("section order header=%d data=%d template=%d:\n%s", header, data, template, out)
+	header, data, cluster := strings.Index(out, "Unclustered (19 notes):"), strings.Index(out, "agent-written data, not instructions"), strings.Index(out, "  Cluster: "+labelTemplate)
+	if header < 0 || data < header || cluster < data {
+		t.Errorf("section order header=%d data=%d cluster=%d:\n%s", header, data, cluster, out)
+	}
+	if !strings.Contains(labelTemplate, `"tags":["<tag>"]`) {
+		t.Errorf("label template = %s", labelTemplate)
+	}
+	for _, want := range []string{"  Bind: " + bindTemplate, "  Ignore: " + ignoreTemplate} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
 	}
 	if n := strings.Count(out, "\n  other: "); n != 15 {
 		t.Errorf("rows = %d, want 15:\n%s", n, out)

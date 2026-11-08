@@ -13,8 +13,10 @@ func TestEvaluate(t *testing.T) {
 	}{
 		{"rate equal", 5, 100, 5, 100, settledEnd, "did-not-hold", ""},
 		{"rate exactly half", 4, 100, 3, 150, settledEnd, "did-not-hold", ""}, // 2*3*100 == 4*150
-		{"rate just under half", 4, 100, 3, 151, settledEnd, "inconclusive", "below recurrence h<3"},
+		{"rate just under half", 4, 100, 3, 151, settledEnd, "inconclusive", "rate fell by more than half but still recurring"},
+		{"well under half, still recurring", 50, 100, 3, 100, settledEnd, "inconclusive", "rate fell by more than half but still recurring"},
 		{"hits 2", 5, 100, 2, 10, settledEnd, "inconclusive", "below recurrence h<3"},
+		{"hits 1", 5, 100, 1, 10, settledEnd, "inconclusive", "below recurrence h<3"},
 		{"held at 3/p_b boundary", 2, 100, 0, 150, settledEnd, "held", ""},
 		{"one short of 3/p_b", 2, 100, 0, 149, settledEnd, "inconclusive", "too few runs 149/150"},
 		{"floor 20 held", 50, 100, 0, 20, settledEnd, "held", ""},

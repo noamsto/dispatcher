@@ -888,7 +888,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Ctx:    ctx,
 			GH:     gh.Exec{},
 			Clock:  clock.FromEnv(),
-			Guard:  retro.ExecGuard(ctx, bashBin, cmp.Or(os.Getenv("PUBLIC_LEAK_GUARD"), publicLeakGuard), cwd),
+			Guard:  retro.ExecGuard(ctx, bashBin, cmp.Or(os.Getenv("PUBLIC_LEAK_GUARD"), publicLeakGuard), cwd, os.Getenv),
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Roster: func(docs []any, crew string) []map[string]any {
 				rows, err := roster.Fold(ctx, docs, crew, e.nowSec(), e.probes(ctx, cwd))

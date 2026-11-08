@@ -67,6 +67,8 @@ func evaluate(hitsB, runsB, hitsA, runsA int, fix, dayEnd int64) (verdict, reaso
 		return verdictHeld, ""
 	}
 	switch {
+	case hitsA >= recurAfter:
+		return verdictInconclu, "rate fell by more than half but still recurring"
 	case hitsA > 0:
 		return verdictInconclu, "below recurrence h<3"
 	case !settled:

@@ -97,9 +97,13 @@ func (c *Client) Create(title, body string, labels ...string) (int, error) {
 	return strconv.Atoi(m[1])
 }
 
-// Reopen reopens issue n with a comment.
+// Reopen reopens issue n, with a comment unless comment is empty.
 func (c *Client) Reopen(n int, comment string) error {
-	_, err := c.GH.Run(c.Ctx, "issue", "reopen", strconv.Itoa(n), "--comment", comment)
+	args := []string{"issue", "reopen", strconv.Itoa(n)}
+	if comment != "" {
+		args = append(args, "--comment", comment)
+	}
+	_, err := c.GH.Run(c.Ctx, args...)
 	return err
 }
 

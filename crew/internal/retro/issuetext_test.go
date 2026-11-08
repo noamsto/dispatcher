@@ -22,13 +22,36 @@ func TestSafeExcerptsDropsLeakShaped(t *testing.T) {
 		"https://example.com/x",
 		"claude.ai/code/session_abc",
 		"wrote /tmp/claude-1000/x",
+		"`/srv/acme-client/deploy/run.sh`",
+		"`~/git/acme-private/notes.md`",
+		"[/home/other/work/x.log]",
+		"path,/opt/acme/bin/tool",
+		"<~/git/acme/x>",
+		"ssh://git@host.internal/acme/repo",
+		"s3://acme-prod-backups/db.tar",
+		"file:///home/u/x/y",
+		"git@github.com:acme/private-thing.git",
 	} {
 		if got := safeExcerpts([]flatNote{runNote(d, 1)}, nil); len(got) != 0 {
 			t.Errorf("%q kept: %v", d, got)
 		}
 	}
-	got := safeExcerpts([]flatNote{runNote("panic at crew/main.go:1507", 1)}, nil)
-	if len(got) != 1 || got[0] != "panic at crew/main.go:1507" {
+	for _, d := range []string{"panic at crew/main.go:1507", "crew/main.go:1507", "and/or a 3/5 chance"} {
+		got := safeExcerpts([]flatNote{runNote(d, 1)}, nil)
+		if len(got) != 1 || got[0] != d {
+			t.Errorf("%q dropped: %v", d, got)
+		}
+	}
+}
+
+func TestCitationsDropLeakShapedBranches(t *testing.T) {
+	notes := []flatNote{
+		{Branch: "git@github.com:acme/private-thing.git", Unit: "a", IsRun: true, TS: 2},
+		{Branch: "ssh://host/acme", Unit: "b", IsRun: true, TS: 3},
+		{Branch: "feat/plain", Unit: "c", IsRun: true, TS: 1},
+	}
+	got := citations(notes, nil)
+	if len(got) != 1 || !strings.HasPrefix(got[0], "feat/plain ") {
 		t.Fatalf("got %v", got)
 	}
 }
@@ -204,12 +227,12 @@ func TestRenderVerdict(t *testing.T) {
 	}
 }
 
-type guardCall struct{ kind, text string }
+type guardCall struct{ kind, repo, text string }
 
 func scripted(calls *[]guardCall, answers ...[3]any) Guard {
-	return func(kind, text string) (bool, string, bool) {
+	return func(kind, repo, text string) (bool, string, bool) {
 		i := len(*calls)
-		*calls = append(*calls, guardCall{kind, text})
+		*calls = append(*calls, guardCall{kind, repo, text})
 		a := answers[min(i, len(answers)-1)]
 		return a[0].(bool), a[1].(string), a[2].(bool)
 	}
@@ -236,17 +259,37 @@ func TestGuardedMatrix(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls []guardCall
-			title, text, lvl, blocked := guarded(scripted(&calls, tc.answers...), "issue", render)
+			title, text, lvl, blocked := guarded(scripted(&calls, tc.answers...), "issue", "acme/app", false, render)
 			if lvl != tc.wantLvl || text != tc.wantText || blocked != tc.wantBlocked || len(calls) != tc.wantCalls {
 				t.Fatalf("lvl=%d text=%q blocked=%q calls=%d", lvl, text, blocked, len(calls))
 			}
 			if title != [...]string{"T-full", "T-noex", "T-red"}[lvl] {
 				t.Fatalf("title %q", title)
 			}
-			if calls[0].kind != "issue" || calls[0].text != "T-full\n\nfull" {
+			if calls[0].kind != "issue" || calls[0].repo != "acme/app" || calls[0].text != "T-full\n\nfull" {
 				t.Fatalf("guard input %+v", calls[0])
 			}
 		})
+	}
+}
+
+func TestGuardedRepoScopedBlocksWithoutAVerdict(t *testing.T) {
+	render := func(lvl level) (string, string) {
+		return [...]string{"T-full", "T-noex", "T-red"}[lvl], [...]string{"full", "noex", "red"}[lvl]
+	}
+	for _, answers := range [][][3]any{
+		{{false, "", false}},
+		{{true, "r1", true}, {false, "", false}},
+	} {
+		var calls []guardCall
+		title, text, _, blocked := guarded(scripted(&calls, answers...), "issue", "acme/app", true, render)
+		if blocked != "leak guard unavailable" || title != "" || text != "" {
+			t.Errorf("answers %v: title %q text %q blocked %q", answers, title, text, blocked)
+		}
+	}
+	var calls []guardCall
+	if _, text, _, blocked := guarded(scripted(&calls, [3]any{false, "", true}), "issue", "acme/app", true, render); blocked != "" || text != "full" {
+		t.Errorf("a verdict still renders: text %q blocked %q", text, blocked)
 	}
 }
 
@@ -276,10 +319,27 @@ stat -c %a "$file" > ` + outDir + `/mode
 ` + tail + "\n"
 	}
 	ctx := context.Background()
+	cache := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cache, "dispatcher"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "dispatcher", "private-repos"), []byte("acme/secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := func(dir string) func(string) string {
+		return func(k string) string {
+			if k == "XDG_CACHE_HOME" {
+				return dir
+			}
+			return ""
+		}
+	}
+	listed := env(cache)
+	const issuePrefix = "gh issue create --repo acme/app --body-file "
 
 	t.Run("allow", func(t *testing.T) {
-		g := ExecGuard(ctx, bash, writeStub(t, stub("exit 0")), "/work/dir")
-		denied, reason, ok := g("issue", "the text")
+		g := ExecGuard(ctx, bash, writeStub(t, stub("exit 0")), "/work/dir", listed)
+		denied, reason, ok := g("issue", "acme/app", "the text")
 		if denied || reason != "" || !ok {
 			t.Fatalf("denied=%v reason=%q ok=%v", denied, reason, ok)
 		}
@@ -304,58 +364,65 @@ stat -c %a "$file" > ` + outDir + `/mode
 			t.Fatal(err)
 		}
 		if p.Event != "PreToolUse" || p.Tool != "Bash" || p.Cwd != "/work/dir" ||
-			!strings.HasPrefix(p.Input.Command, "gh issue create --body-file ") {
+			!strings.HasPrefix(p.Input.Command, issuePrefix) {
 			t.Fatalf("payload %s", raw)
 		}
-		tmpPath := strings.TrimPrefix(p.Input.Command, "gh issue create --body-file ")
+		tmpPath := strings.TrimPrefix(p.Input.Command, issuePrefix)
 		if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
 			t.Fatalf("temp file not removed: %v", err)
 		}
 	})
 
 	t.Run("comment payload", func(t *testing.T) {
-		g := ExecGuard(ctx, bash, writeStub(t, stub("exit 0")), "/w")
-		g("comment", "x")
+		g := ExecGuard(ctx, bash, writeStub(t, stub("exit 0")), "/w", listed)
+		g("comment", "acme/app", "x")
 		raw, _ := os.ReadFile(filepath.Join(outDir, "payload"))
-		if !strings.Contains(string(raw), "gh issue comment 1 --body-file ") {
+		if !strings.Contains(string(raw), "gh issue comment 1 --repo acme/app --body-file ") {
 			t.Fatalf("payload %s", raw)
 		}
 	})
 
 	t.Run("deny", func(t *testing.T) {
 		tail := `printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"leaks a path"}}'`
-		g := ExecGuard(ctx, bash, writeStub(t, stub(tail)), "/w")
-		denied, reason, ok := g("issue", "x")
+		g := ExecGuard(ctx, bash, writeStub(t, stub(tail)), "/w", listed)
+		denied, reason, ok := g("issue", "acme/app", "x")
 		if !denied || reason != "leaks a path" || !ok {
 			t.Fatalf("denied=%v reason=%q ok=%v", denied, reason, ok)
 		}
 	})
 
 	t.Run("non-zero exit", func(t *testing.T) {
-		g := ExecGuard(ctx, bash, writeStub(t, stub("echo oops; exit 3")), "/w")
-		if denied, _, ok := g("issue", "x"); denied || ok {
+		g := ExecGuard(ctx, bash, writeStub(t, stub("echo oops; exit 3")), "/w", listed)
+		if denied, _, ok := g("issue", "acme/app", "x"); denied || ok {
 			t.Fatalf("denied=%v ok=%v", denied, ok)
 		}
 	})
 
 	t.Run("unparsable stdout", func(t *testing.T) {
-		g := ExecGuard(ctx, bash, writeStub(t, stub("echo not json")), "/w")
-		if denied, _, ok := g("issue", "x"); denied || ok {
+		g := ExecGuard(ctx, bash, writeStub(t, stub("echo not json")), "/w", listed)
+		if denied, _, ok := g("issue", "acme/app", "x"); denied || ok {
 			t.Fatalf("denied=%v ok=%v", denied, ok)
 		}
 	})
 
 	t.Run("empty path", func(t *testing.T) {
-		g := ExecGuard(ctx, bash, "", "/w")
-		if denied, _, ok := g("issue", "x"); denied || ok {
+		g := ExecGuard(ctx, bash, "", "/w", listed)
+		if denied, _, ok := g("issue", "acme/app", "x"); denied || ok {
 			t.Fatalf("denied=%v ok=%v", denied, ok)
 		}
 	})
 
 	t.Run("missing script", func(t *testing.T) {
-		g := ExecGuard(ctx, bash, filepath.Join(t.TempDir(), "nope.sh"), "/w")
-		if _, _, ok := g("issue", "x"); ok {
+		g := ExecGuard(ctx, bash, filepath.Join(t.TempDir(), "nope.sh"), "/w", listed)
+		if _, _, ok := g("issue", "acme/app", "x"); ok {
 			t.Fatal("ok for a missing script")
+		}
+	})
+
+	t.Run("missing cache abstains on empty stdout", func(t *testing.T) {
+		g := ExecGuard(ctx, bash, writeStub(t, stub("exit 0")), "/w", env(t.TempDir()))
+		if denied, _, ok := g("issue", "acme/app", "x"); denied || ok {
+			t.Fatalf("denied=%v ok=%v", denied, ok)
 		}
 	})
 }

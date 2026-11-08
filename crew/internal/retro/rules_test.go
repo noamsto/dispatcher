@@ -70,7 +70,7 @@ func TestCatalogTitles(t *testing.T) {
 }
 
 func labelRow(ts int, from, to, body string) bus.Event {
-	doc := map[string]any{"kind": "msg", "from": from, "to": to, "body": body, "ts": json.Number(itoa(ts))}
+	doc := map[string]any{"kind": "msg", "crew_id": "a", "from": from, "to": to, "body": body, "ts": json.Number(itoa(ts))}
 	return bus.Event{Kind: bus.KindMsg, From: from, To: to, Doc: doc}
 }
 
@@ -124,7 +124,7 @@ func TestFoldLabelsFieldMerge(t *testing.T) {
 
 func TestFoldLabelsObjectBody(t *testing.T) {
 	ev := bus.Event{Kind: bus.KindMsg, Doc: map[string]any{
-		"kind": "msg", "from": "dispatcher:a", "to": "findings:a", "ts": json.Number("1"),
+		"kind": "msg", "crew_id": "a", "from": "dispatcher:a", "to": "findings:a", "ts": json.Number("1"),
 		"body": map[string]any{"key": "k", "issue": json.Number("7")},
 	}}
 	labels, warns := foldLabels([]bus.Event{ev})
@@ -159,10 +159,22 @@ func TestFoldLabelsIgnoresOtherSenders(t *testing.T) {
 	events := []bus.Event{
 		labelRow(1, "worker:x", "findings:a", `{"key":"k","match":"x"}`),
 		labelRow(1, "dispatcher:a", "dispatcher:a", `{"key":"k","match":"x"}`),
+		labelRow(1, "dispatcher:b", "findings:a", `{"key":"k","match":"x"}`),
+		labelRow(1, "dispatcher:a-other", "findings:a", `{"key":"k","match":"x"}`),
 	}
 	labels, warns := foldLabels(events)
 	if len(labels) != 0 || len(warns) != 0 {
 		t.Fatalf("labels=%v warns=%v", labels, warns)
+	}
+}
+
+func TestFoldLabelsWarnsOnUnknownFieldAndApplies(t *testing.T) {
+	labels, warns := foldLabels([]bus.Event{labelRow(1, "dispatcher:a", "findings:a", `{"key":"k","match":"x","tag":["other"]}`)})
+	if len(labels) != 1 || labels[0].Match != "x" {
+		t.Fatalf("labels=%v", labels)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], `"tag"`) {
+		t.Fatalf("warns=%v", warns)
 	}
 }
 

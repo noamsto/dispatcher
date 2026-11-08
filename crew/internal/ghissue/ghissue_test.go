@@ -109,6 +109,16 @@ func TestReopenAndComment(t *testing.T) {
 	}
 }
 
+func TestReopenWithoutCommentPassesNoFlag(t *testing.T) {
+	f := &ghtest.Fake{Func: func([]string) (string, error) { return "", nil }}
+	if err := client(f).Reopen(3, ""); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"issue reopen 3"}; !slices.Equal(f.Calls(), want) {
+		t.Errorf("calls = %q", f.Calls())
+	}
+}
+
 func TestCandidates(t *testing.T) {
 	const argv = "issue list --state open --search some title --limit 5 --json number,title"
 	f := &ghtest.Fake{Out: map[string]string{argv: `[{"number":1,"title":"a"},{"number":2,"title":"b"}]`}}

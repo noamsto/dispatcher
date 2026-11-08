@@ -41,7 +41,7 @@ const (
 	header = "branch\tengine\tmodel\ttier\toutcome\ttags"
 	// Usage is one line for two refusals: a flag outside the grammar and the
 	// `--json` without `--report` test print it and take the same status.
-	Usage       = "crew: retro takes --report and --json"
+	Usage       = "crew: retro takes --report and --json, or --sweep [--apply-digest DIGEST]"
 	exitType    = 5
 	exitFailure = 1
 )
@@ -110,7 +110,7 @@ func (o Options) withDefaults() Options {
 		o.Clock = clock.FromEnv()
 	}
 	if o.Guard == nil {
-		o.Guard = func(string, string) (bool, string, bool) { return false, "", false }
+		o.Guard = func(string, string, string) (bool, string, bool) { return false, "", false }
 	}
 	return o
 }

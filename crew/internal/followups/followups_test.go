@@ -244,6 +244,14 @@ func TestThresholdKeepsOpenRedesignIssue(t *testing.T) {
 			}
 		}
 	})
+	t.Run("the issue the PR closes is no home for it", func(t *testing.T) {
+		closing := fmt.Sprintf(`[{"number":5,"title":%q}]`, title)
+		w := &world{views: openOrigin(), hits: map[string]string{fileA: hits3}, redesigns: map[string]string{fileA: closing}}
+		r := run(t, w, entry, true)
+		if len(r.writes) == 0 || !strings.HasPrefix(r.writes[0], "issue create --title "+title+" ") {
+			t.Errorf("writes %q", r.writes)
+		}
+	})
 	t.Run("another title files a new one", func(t *testing.T) {
 		w := &world{views: openOrigin(), hits: map[string]string{fileA: hits3},
 			redesigns: map[string]string{fileA: `[{"number":9,"title":"redesign: other.sh"}]`}}

@@ -1,8 +1,10 @@
 usage: crew retro [--report [--json]]
        crew retro --draft [--crew ID] [--all]
+       crew retro --sweep [--apply-digest DIGEST]
 
-Read-only rollup of the retro notes workers and the dispatcher post to the
-synthetic retro: and metrics: sinks.
+Rollup of the retro notes workers and the dispatcher post to the synthetic
+retro: and metrics: sinks. Read-only, except --sweep with --apply-digest, which
+writes to the tracker.
 
   (no flags)  One row per run: branch, engine, model, tier, outcome, tags
   --report    Aggregate rollup of tags across runs
@@ -13,6 +15,8 @@ synthetic retro: and metrics: sinks.
   --crew      Crew for --draft; default this checkout's, else $CREW_ID
   --all       --draft: every branch of the crew, not only the ones dispatched
               after its newest session_summary note
+  --sweep     Plan the tracker writes for recurring findings; prints a digest
+  --apply-digest  --sweep: make the writes of the plan with that digest
 
 The rollup takes no crew filter and no positional: notes are cross-run evidence,
 like `rate`. --draft reads the one crew it summarises, and takes neither

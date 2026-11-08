@@ -686,7 +686,7 @@ func TestRetroJSONRowsAreOneRunRowAndOneDispatcherRow(t *testing.T) {
 func TestRetroJSONWithoutReportIsAnError(t *testing.T) {
 	h := newHoldCLI(t)
 	out, errOut, code := h.run("retro", "--json")
-	if code != 1 || out != "" || errOut != "crew: retro takes --report and --json\n" {
+	if code != 1 || out != "" || errOut != retro.Usage+"\n" {
 		t.Errorf("code %d, stdout %q, stderr %q", code, out, errOut)
 	}
 }
@@ -695,7 +695,7 @@ func TestRetroUnknownFlagAndPositionalAreTheSameError(t *testing.T) {
 	h := newHoldCLI(t)
 	for _, args := range [][]string{{"retro", "--bogus"}, {"retro", "c1"}} {
 		out, errOut, code := h.run(args...)
-		if code != 1 || out != "" || errOut != "crew: retro takes --report and --json\n" {
+		if code != 1 || out != "" || errOut != retro.Usage+"\n" {
 			t.Errorf("%v: code %d, stdout %q, stderr %q", args, code, out, errOut)
 		}
 	}

@@ -29,8 +29,9 @@ const (
 )
 
 // leakShaped matches the tokens that must never reach the public tracker:
-// session URLs, scratch paths, any URL, and absolute or home-relative paths.
-var leakShaped = regexp.MustCompile(`(?i)claude\.ai/code/session_|/tmp/claude-|https?://|(^|[\s"'(=:])(~[\w.-]*|/[\w.-]+)/[\w.-]`)
+// session URLs, scratch paths, any URL, git remotes, and absolute or home-relative
+// paths. A path needs a non-word byte before it, so crew/main.go and and/or stay.
+var leakShaped = regexp.MustCompile(`(?i)claude\.ai/code/session_|/tmp/claude-|[a-z][a-z0-9+.-]*://|\bgit@[\w.-]+:|(^|[^\w.-])(~[\w.-]*|/[\w.-]+)/[\w.-]`)
 
 type level int
 
@@ -41,8 +42,8 @@ const (
 )
 
 // Guard reports whether the public-leak guard denies text for a write of kind
-// "issue" or "comment". ok is false when the guard could not give a verdict.
-type Guard func(kind, text string) (denied bool, reason string, ok bool)
+// "issue" or "comment" to repo. ok is false when the guard could not give a verdict.
+type Guard func(kind, repo, text string) (denied bool, reason string, ok bool)
 
 // sanitizeLine drops invisible characters and control bytes and collapses
 // whitespace, so worker text renders as one plain line.
@@ -231,13 +232,13 @@ func renderVerdict(f *finding, v closeEval, lvl level) string {
 }
 
 // ExecGuard runs the public-leak guard script at path under bash, the way
-// dispatch.sh's _mint_leak_check does. An empty path yields a guard that never
-// gives a verdict.
-func ExecGuard(ctx context.Context, bash, path, cwd string) Guard {
+// dispatch.sh's _mint_leak_check does, on a command naming the repo gh writes to.
+// An empty path yields a guard that never gives a verdict.
+func ExecGuard(ctx context.Context, bash, path, cwd string, getenv func(string) string) Guard {
 	if path == "" {
-		return func(string, string) (bool, string, bool) { return false, "", false }
+		return func(string, string, string) (bool, string, bool) { return false, "", false }
 	}
-	return func(kind, text string) (denied bool, reason string, ok bool) {
+	return func(kind, repo, text string) (denied bool, reason string, ok bool) {
 		tmp, err := os.CreateTemp("", "retro-guard-*")
 		if err != nil {
 			return false, "", false
@@ -247,9 +248,9 @@ func ExecGuard(ctx context.Context, bash, path, cwd string) Guard {
 		if cerr := tmp.Close(); werr != nil || cerr != nil {
 			return false, "", false
 		}
-		command := "gh issue create --body-file " + tmp.Name()
+		command := "gh issue create --repo " + repo + " --body-file " + tmp.Name()
 		if kind == "comment" {
-			command = "gh issue comment 1 --body-file " + tmp.Name()
+			command = "gh issue comment 1 --repo " + repo + " --body-file " + tmp.Name()
 		}
 		payload, err := json.Marshal(map[string]any{
 			"hook_event_name": "PreToolUse",
@@ -265,6 +266,11 @@ func ExecGuard(ctx context.Context, bash, path, cwd string) Guard {
 		var stdout bytes.Buffer
 		cmd.Stdout = &stdout
 		if err := cmd.Run(); err != nil {
+			return false, "", false
+		}
+		// Read after the run, which may refresh the list. Without one the script
+		// skips the private-name match, so its answer is partial.
+		if len(loadPrivateRepos(getenv)) == 0 {
 			return false, "", false
 		}
 		if len(bytes.TrimSpace(stdout.Bytes())) == 0 {
@@ -284,12 +290,17 @@ func ExecGuard(ctx context.Context, bash, path, cwd string) Guard {
 
 // guarded renders at the fullest level the guard allows: full, then without
 // excerpts, then blocked. A guard that cannot answer drops to the reduced text
-// without a further call, because that text carries no worker-supplied string.
-func guarded(g Guard, kind string, render func(level) (title, text string)) (title, text string, lvl level, blocked string) {
+// without a further call, because that text carries no worker- or
+// dispatcher-supplied string. A repo-scoped finding's key is dispatcher-chosen, so
+// its write blocks instead.
+func guarded(g Guard, kind, repo string, repoScoped bool, render func(level) (title, text string)) (title, text string, lvl level, blocked string) {
 	for lvl = levelFull; ; lvl = levelNoExcerpts {
 		title, text = render(lvl)
-		denied, reason, ok := g(kind, title+"\n\n"+text)
+		denied, reason, ok := g(kind, repo, title+"\n\n"+text)
 		if !ok {
+			if repoScoped {
+				return "", "", levelReduced, "leak guard unavailable"
+			}
 			title, text = render(levelReduced)
 			return title, text, levelReduced, ""
 		}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -58,20 +59,24 @@ type label struct {
 	re                *regexp.Regexp
 }
 
-var labelKeyRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+var (
+	labelKeyRe  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+	labelFields = []string{"key", "title", "match", "tags", "issue", "ignore"}
+)
 
 const maxMatchLen = 400
 
 // foldLabels merges the dispatcher's findings rows per key in ts order: a field
-// present in a later row overwrites, an absent one keeps. A bad row is a warning
-// and is skipped.
+// present in a later row overwrites, an absent one keeps. Only a row its own
+// crew's dispatcher wrote counts. A bad row is a warning and is skipped; an
+// unknown field is a warning and the row still applies.
 func foldLabels(events []bus.Event) (labels []label, warnings []string) {
 	var rows []bus.Event
 	for _, ev := range events {
 		if ev.Kind != bus.KindMsg {
 			continue
 		}
-		if !strings.HasPrefix(docStr(ev, "to"), "findings:") || !strings.HasPrefix(docStr(ev, "from"), "dispatcher:") {
+		if !strings.HasPrefix(docStr(ev, "to"), "findings:") || docStr(ev, "from") != "dispatcher:"+docStr(ev, "crew_id") {
 			continue
 		}
 		rows = append(rows, ev)
@@ -99,6 +104,9 @@ func foldLabels(events []bus.Event) (labels []label, warnings []string) {
 			warnings = append(warnings, fmt.Sprintf("label %s skipped: %v", key, err))
 			continue
 		}
+		for _, name := range unknownLabelFields(obj) {
+			warnings = append(warnings, fmt.Sprintf("label %s: unknown field %q ignored", key, name))
+		}
 		next.Key = key
 		next.From = docStr(ev, "from")
 		if t := tsOf(ev); !math.IsInf(t, -1) {
@@ -114,6 +122,17 @@ func foldLabels(events []bus.Event) (labels []label, warnings []string) {
 	}
 	sort.SliceStable(labels, func(i, j int) bool { return labels[i].TS < labels[j].TS })
 	return labels, warnings
+}
+
+func unknownLabelFields(obj map[string]any) []string {
+	var unknown []string
+	for name := range obj {
+		if !slices.Contains(labelFields, name) {
+			unknown = append(unknown, name)
+		}
+	}
+	sort.Strings(unknown)
+	return unknown
 }
 
 // mergeLabel applies the fields obj carries onto l; presence is read from the

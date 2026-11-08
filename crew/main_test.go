@@ -1920,7 +1920,7 @@ var preLocateRefusalRows = []struct {
 
 const (
 	holdUsage            = "crew: hold add|list|due|park|release"
-	retroUsage           = "crew: retro takes --report and --json"
+	retroUsage           = "crew: retro takes --report and --json, or --sweep [--apply-digest DIGEST]"
 	rateUsage            = "crew: rate takes --report, --json, --pooled, and --sweep-all/--root"
 	fleetUsage           = "crew: fleet [--all] [--crew ID] [--json]"
 	fleetReapEvery       = "crew: fleet stream: --reap-every is not supported — the fleet lane does not reap (each repo's own stream or dispatch does)"
