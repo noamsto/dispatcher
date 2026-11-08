@@ -70,7 +70,7 @@ func TestCollect(t *testing.T) {
 		t.Fatalf("Collect keys = %d, want 2: %v", len(got), got)
 	}
 	s := got[Key{"claude", "standard", "opus"}]
-	want := Stats{N: 4, Merged: 2, Failed: 1, Costed: 2, ReworkN: 2, ReworkSum: 2, CostMS: 10_800_000}
+	want := Stats{N: 4, Merged: 2, Failed: 1, Costed: 2, CostedMerged: 1, ReworkN: 2, ReworkSum: 2, CostMS: 10_800_000}
 	if s == nil || *s != want {
 		t.Fatalf("stats = %+v, want %+v", s, want)
 	}
@@ -99,16 +99,34 @@ func TestStatsDerived(t *testing.T) {
 	if _, ok := (Stats{N: 2, Failed: 2, Costed: 2, CostMS: 5}).BurnPerMergedHours(); ok {
 		t.Fatal("BurnPerMergedHours with no merged runs should be unavailable")
 	}
-	if b, ok := (Stats{N: 4, Merged: 2, Costed: 4, CostMS: 3 * hourMS}).BurnPerMergedHours(); !ok || b != 1.5 {
+	if b, ok := (Stats{N: 4, Merged: 2, Costed: 4, CostedMerged: 2, CostMS: 3 * hourMS}).BurnPerMergedHours(); !ok || b != 1.5 {
 		t.Fatalf("BurnPerMergedHours fully costed = %v, %v; want 1.5", b, ok)
 	}
-	for _, costed := range []int{0, 1} {
-		if _, ok := (Stats{N: 6, Merged: 6, Costed: costed, CostMS: float64(costed) * hourMS}).BurnPerMergedHours(); ok {
+	for _, costed := range []int{0, 1, 4} {
+		if _, ok := (Stats{N: 6, Merged: 6, Costed: costed, CostedMerged: costed, CostMS: float64(costed) * hourMS}).BurnPerMergedHours(); ok {
 			t.Fatalf("BurnPerMergedHours with %d of 6 runs costed should be unavailable", costed)
 		}
 	}
+	if b, ok := (Stats{N: 6, Merged: 6, Costed: 5, CostedMerged: 5, CostMS: 5 * hourMS}).BurnPerMergedHours(); !ok || b != 1 {
+		t.Fatalf("BurnPerMergedHours with 5 of 6 costed = %v, %v; want 1, true", b, ok)
+	}
 	if _, ok := (Stats{N: 2}).Rework(); ok {
 		t.Fatal("Rework with ReworkN == 0 should be unavailable")
+	}
+}
+
+func TestBurnDividesByCostedMergedRuns(t *testing.T) {
+	var lines []string
+	for range 5 {
+		lines = append(lines, `{"engine":"claude","model":"opus","tier":"standard","owns_pr":true,"pr_state":"MERGED","cost_proxy":3600000}`)
+	}
+	lines = append(lines,
+		`{"engine":"claude","model":"opus","tier":"standard","owns_pr":true,"pr_state":"MERGED","cost_proxy":null}`,
+		`{"engine":"claude","model":"opus","tier":"standard","owns_pr":true,"pr_state":"CLOSED","cost_proxy":3600000}`,
+	)
+	s := Collect(decodeRows(t, lines...))[Key{"claude", "standard", "opus"}]
+	if b, ok := s.BurnPerMergedHours(); !ok || b != 1.2 {
+		t.Fatalf("BurnPerMergedHours = %v, %v; want 1.2 (6h over 5 costed merged runs)", b, ok)
 	}
 }
 

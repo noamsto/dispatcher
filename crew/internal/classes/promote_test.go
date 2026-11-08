@@ -881,7 +881,7 @@ func TestCleanID(t *testing.T) {
 	}
 }
 
-func TestIncumbentPartlyCostedBurnUnmeasured(t *testing.T) {
+func TestIncumbentPartlyCostedBurnMeasured(t *testing.T) {
 	f := newPromoteFixture(t, catalogJSON, nil)
 	inc := costedOnly(runs(54, "gpt-5.6-terra", "standard", 40, 0.5, hourMS), 53)
 	vs, _, err := Evaluate(append(runs(6, "gpt-5.7-terra", "standard", 6, 0, hourMS), inc...), f.env)
@@ -889,7 +889,7 @@ func TestIncumbentPartlyCostedBurnUnmeasured(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := findCandidate(t, findVerdict(t, vs, "codex", "standard"), "gpt-5.7-terra")
-	if !hasReason(c, "incumbent burn unmeasured (costed 53/54)") {
+	if hasReason(c, "incumbent burn unmeasured") {
 		t.Errorf("reasons = %q", c.Reasons)
 	}
 }
