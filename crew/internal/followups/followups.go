@@ -109,7 +109,9 @@ type run struct {
 	marker string
 	origin int
 	// closes is whether the PR body names the origin; otherwise origin is the PR.
-	closes   bool
+	closes bool
+	// closing is every issue number the PR body closes, the origin among them.
+	closing  []int
 	assigned []ghissue.Issue
 }
 
@@ -131,6 +133,17 @@ func closesRef(body string) ref {
 		return ref{num: n}
 	}
 	return ref{ticket: m[2]}
+}
+
+var closingRe = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)`)
+
+func closingNums(body string) []int {
+	var nums []int
+	for _, m := range closingRe.FindAllStringSubmatch(body, -1) {
+		n, _ := strconv.Atoi(m[1])
+		nums = append(nums, n)
+	}
+	return nums
 }
 
 // Run is the command: read, plan, and with --apply write.
@@ -171,6 +184,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	}
 
 	c := closesRef(p.Body)
+	r.closing = closingNums(p.Body)
 	if req.Tracker == "linear" || !repo.HasIssuesEnabled || c.ticket != "" {
 		if req.Apply {
 			return fail("refusing --apply — Linear-tracked; the batch needs one human approval, write it with the Linear tools")
@@ -478,8 +492,8 @@ func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, err
 
 // openRedesign is the lowest-numbered open issue titled exactly as file's
 // redesign issue, 0 when none; seen caches the answer per file. The search is
-// fuzzy, so the title is matched here. Only the PR's first Closes target is
-// excluded: a comment on it would be buried when the PR merges.
+// fuzzy, so the title is matched here. Issues the PR closes are excluded: a
+// comment on one would be buried when the PR merges.
 func (r *run) openRedesign(file string, seen map[string]int) (int, error) {
 	if n, ok := seen[file]; ok {
 		return n, nil
@@ -492,7 +506,7 @@ func (r *run) openRedesign(file string, seen map[string]int) (int, error) {
 	}
 	n := 0
 	for _, is := range found {
-		if r.closes && is.Number == r.origin {
+		if slices.Contains(r.closing, is.Number) {
 			continue
 		}
 		if is.Title == title && (n == 0 || is.Number < n) {

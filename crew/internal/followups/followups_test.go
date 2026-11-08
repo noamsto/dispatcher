@@ -252,6 +252,40 @@ func TestThresholdKeepsOpenRedesignIssue(t *testing.T) {
 			t.Errorf("writes %q", r.writes)
 		}
 	})
+	t.Run("a later Closes target is no home for it either", func(t *testing.T) {
+		w := &world{
+			prBody:    "Closes #5\nCloses #1428\n\n## Follow-ups (untracked)\n- raw\n\n" + ledgerBlock,
+			views:     views(""),
+			hits:      map[string]string{fileA: hits3},
+			redesigns: map[string]string{fileA: open},
+		}
+		r := run(t, w, entry, true)
+		if len(r.writes) == 0 || !strings.HasPrefix(r.writes[0], "issue create --title "+title+" ") {
+			t.Errorf("writes %q", r.writes)
+		}
+		for _, wr := range r.writes {
+			if strings.HasPrefix(wr, "issue comment 1428") {
+				t.Errorf("commented on a closed redesign issue: %q", wr)
+			}
+		}
+	})
+	t.Run("closing keywords mid-line are no home for it either", func(t *testing.T) {
+		w := &world{
+			prBody:    "Closes #5 and fixes #1428\n\n## Follow-ups (untracked)\n- raw\n\n" + ledgerBlock,
+			views:     views(""),
+			hits:      map[string]string{fileA: hits3},
+			redesigns: map[string]string{fileA: open},
+		}
+		r := run(t, w, entry, true)
+		if len(r.writes) == 0 || !strings.HasPrefix(r.writes[0], "issue create --title "+title+" ") {
+			t.Errorf("writes %q", r.writes)
+		}
+		for _, wr := range r.writes {
+			if strings.HasPrefix(wr, "issue comment 1428") {
+				t.Errorf("commented on a closed redesign issue: %q", wr)
+			}
+		}
+	})
 	t.Run("another title files a new one", func(t *testing.T) {
 		w := &world{views: openOrigin(), hits: map[string]string{fileA: hits3},
 			redesigns: map[string]string{fileA: `[{"number":9,"title":"redesign: other.sh"}]`}}
