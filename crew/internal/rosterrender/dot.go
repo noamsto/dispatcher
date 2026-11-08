@@ -178,7 +178,7 @@ func stmt(b *strings.Builder, head string, attrs ...string) {
 	b.WriteString(";\n")
 }
 
-func renderDOT(sc scene, lg legend) string { return buildDOT(sc, &lg, "") }
+func renderDOT(sc scene, lg legend) string { return buildDOT(sc, &lg, "", "") }
 
 // labelWidth bounds the drawn width of a plaintext label node.
 func labelWidth(text string) float64 {
@@ -251,8 +251,9 @@ func legendHeight(lg legend) float64 {
 //
 // A nil legend is the map: no graph label, so the corners are the canvas and
 // the layout's coordinates map onto it by a constant offset, and a ring around
-// the planet sel names, when there is one.
-func buildDOT(sc scene, lg *legend, sel string) string {
+// the planet sel names, when there is one. A selRepo narrows it to that repo's
+// wedge; empty rings the branch in every repo.
+func buildDOT(sc scene, lg *legend, sel, selRepo string) string {
 	var b strings.Builder
 	b.WriteString("digraph roster {\n")
 	b.WriteString("  layout=neato; splines=false; outputorder=edgesfirst; pad=0.2; labelloc=b;\n")
@@ -331,7 +332,7 @@ func buildDOT(sc scene, lg *legend, sel string) string {
 	}
 	rings := 0
 	for _, p := range sc.planets {
-		if p.branch != sel {
+		if p.branch != sel || (selRepo != "" && p.repoLabel != selRepo) {
 			continue
 		}
 		rings++

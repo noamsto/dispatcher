@@ -22,7 +22,7 @@ const (
 const (
 	errMapConflict = "crew: roster-render: --map and %s are mutually exclusive"
 	errMapRequires = "crew: roster-render: --map requires %s"
-	errMapOnly     = "crew: roster-render: --px, --select and --out need --map"
+	errMapOnly     = "crew: roster-render: --px, --select, --select-repo and --out need --map"
 	errMapPx       = "crew: roster-render: --px must be WxH with each side from 64 to 4096 pixels"
 )
 
@@ -52,6 +52,7 @@ type call struct {
 	mapMode      bool
 	pxW, pxH     int
 	selectBranch string
+	selectRepo   string
 	out          string
 }
 
@@ -61,9 +62,9 @@ type Request struct {
 	Crew, Pane, Interval, Quiet string
 	NoOpen, Once, Detach        bool
 	// Map is the one-shot map render: Px is WxH, Out the PNG's path and Select
-	// the branch to ring.
-	Map             bool
-	Px, Select, Out string
+	// the branch to ring, narrowed to the repo wedge SelectRepo when given.
+	Map                         bool
+	Px, Select, SelectRepo, Out string
 }
 
 // check is the arm's five refusals that follow its flag loop, in that order: a
@@ -73,7 +74,7 @@ func check(r Request) (call, string, int) {
 	if r.Map {
 		return checkMap(r)
 	}
-	if r.Px != "" || r.Select != "" || r.Out != "" {
+	if r.Px != "" || r.Select != "" || r.SelectRepo != "" || r.Out != "" {
 		return call{}, errMapOnly, exitUsage
 	}
 	c := call{crew: r.Crew, pane: r.Pane, noOpen: r.NoOpen, once: r.Once, detach: r.Detach}
@@ -114,7 +115,7 @@ func check(r Request) (call, string, int) {
 }
 
 func checkMap(r Request) (call, string, int) {
-	c := call{mapMode: true, crew: r.Crew, selectBranch: r.Select, out: r.Out}
+	c := call{mapMode: true, crew: r.Crew, selectBranch: r.Select, selectRepo: r.SelectRepo, out: r.Out}
 	for _, f := range []struct {
 		name string
 		set  bool

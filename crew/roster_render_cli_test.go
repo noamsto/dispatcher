@@ -52,9 +52,10 @@ func TestRosterRenderMapRefusals(t *testing.T) {
 		{"small px", []string{"--map", "--crew", "c1", "--px", "32x480", "--out", "m.png"},
 			"crew: roster-render: --px must be WxH with each side from 64 to 4096 pixels\n"},
 		{"px without map", []string{"--crew", "c1", "--px", "640x480"},
-			"crew: roster-render: --px, --select and --out need --map\n"},
+			"crew: roster-render: --px, --select, --select-repo and --out need --map\n"},
 		{"empty px", []string{"--map", "--crew", "c1", "--px="}, "crew: --px needs a value\n"},
 		{"empty select", []string{"--map", "--crew", "c1", "--select="}, "crew: --select needs a value\n"},
+		{"empty select-repo", []string{"--map", "--crew", "c1", "--select-repo="}, "crew: --select-repo needs a value\n"},
 		{"empty out", []string{"--map", "--crew", "c1", "--out="}, "crew: --out needs a value\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -106,7 +106,7 @@ func renderScene(t *testing.T, sc scene, w, h int, sel string) mapRender {
 	t.Helper()
 	needTools(t)
 	ctx := context.Background()
-	svg, err := Default().Graphviz(ctx, []byte(buildDOT(sc, nil, sel)))
+	svg, err := Default().Graphviz(ctx, []byte(buildDOT(sc, nil, sel, "")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +404,7 @@ func TestSelectionRingOnlyForAKnownBranch(t *testing.T) {
 	_, sc := arrange(newSlotState(), ps)
 	known := sc.planets[3]
 
-	got := buildDOT(sc, nil, known.branch)
+	got := buildDOT(sc, nil, known.branch, "")
 	var ring []string
 	for line := range strings.SplitSeq(got, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "sel [") {
@@ -431,7 +431,7 @@ func TestSelectionRingOnlyForAKnownBranch(t *testing.T) {
 	}
 
 	for _, sel := range []string{"", "feat/999-nobody"} {
-		if out := buildDOT(sc, nil, sel); strings.Contains(out, "sel [") {
+		if out := buildDOT(sc, nil, sel, ""); strings.Contains(out, "sel [") {
 			t.Errorf("select %q drew a ring", sel)
 		}
 	}
@@ -444,10 +444,10 @@ func TestSelectionRingOnlyForAKnownBranch(t *testing.T) {
 func TestMapDOTHasNoLegend(t *testing.T) {
 	ps, lg := buildPlanets(dotModel(sixteenWorkers(), 2), dotNow)
 	_, sc := arrange(newSlotState(), ps)
-	if out := buildDOT(sc, nil, ""); strings.Contains(out, "label=<") || !strings.HasSuffix(out, "}\n") {
+	if out := buildDOT(sc, nil, "", ""); strings.Contains(out, "label=<") || !strings.HasSuffix(out, "}\n") {
 		t.Errorf("the map carries a graph label:\n%s", out)
 	}
-	if out := buildDOT(sc, &lg, ""); out != renderDOT(sc, lg) || !strings.Contains(out, "label=<") {
+	if out := buildDOT(sc, &lg, "", ""); out != renderDOT(sc, lg) || !strings.Contains(out, "label=<") {
 		t.Error("a legend render is no longer renderDOT's")
 	}
 }
@@ -736,6 +736,7 @@ func TestMapRefusals(t *testing.T) {
 		{"px without map", Request{Crew: "c1", Px: "640x480"}, errMapOnly},
 		{"select without map", Request{Crew: "c1", Select: "feat/x"}, errMapOnly},
 		{"out without map", Request{Crew: "c1", Out: "/tmp/x.png"}, errMapOnly},
+		{"select-repo without map", Request{Crew: "c1", SelectRepo: "alpha"}, errMapOnly},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, msg, code := check(tc.req); msg != tc.msg || code != exitUsage {

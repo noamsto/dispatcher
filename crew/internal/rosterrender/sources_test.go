@@ -531,7 +531,7 @@ func TestMapNeverAsksGitHubAndDrawsTheCachedState(t *testing.T) {
 	if got := ciOf(t, fr, l.paths.Common, "feat/ci-1").ci; got != "pass" {
 		t.Fatalf("cached ci = %q, want pass", got)
 	}
-	if len(dots) != 1 || dots[0] != buildDOT(fr.sc, nil, "") {
+	if len(dots) != 1 || dots[0] != buildDOT(fr.sc, nil, "", "") {
 		t.Errorf("--map did not draw the cached frame:\n%s", dots)
 	}
 }
@@ -847,5 +847,75 @@ func TestARecalledFrameIsRelabelledByTheRenamedSource(t *testing.T) {
 				t.Errorf("wedges = %q, want %d distinct", labels, want)
 			}
 		})
+	}
+}
+
+func homeOf(t *testing.T, geo []mapPlanet, repo string) bool {
+	t.Helper()
+	for _, g := range geo {
+		if g.Repo == repo {
+			return g.Home
+		}
+	}
+	t.Fatalf("no planet in %q: %+v", repo, geo)
+	return false
+}
+
+func TestOnlyTheRenderersOwnBusPlanetsAreHome(t *testing.T) {
+	for name, tc := range map[string]struct {
+		disc     *discovery
+		breakBus bool
+	}{
+		"fresh":     {nil, false},
+		"last good": {&discovery{}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := newLoop(t)
+			l.seed(t, workerEvents("feat/1-a")...)
+			alpha := repoAt(t, "alpha", workerEvents("feat/1-a")...)
+			l.opts.Discover = (&discoverStub{found: okRepos(alpha)}).discover
+			l.opts.disc = tc.disc
+			l.windows = "feat/1-a"
+			fr := l.frame(t)
+			if tc.breakBus {
+				tear(t, alpha)
+				fr = l.frame(t)
+			}
+			if len(fr.sc.planets) != 2 {
+				t.Fatalf("%d planets, want 2", len(fr.sc.planets))
+			}
+			geo := mapGeometry(fr.sc, 1, 1, 2, 2, 100, 100)
+			if !homeOf(t, geo, "001") || homeOf(t, geo, "alpha") {
+				t.Errorf("home flags wrong: %+v", geo)
+			}
+		})
+	}
+
+	l := newLoop(t)
+	l.seed(t, workerEvents("feat/1-a")...)
+	l.windows = "feat/1-a"
+	for _, g := range mapGeometry(l.frame(t).sc, 1, 1, 2, 2, 100, 100) {
+		if g.Home {
+			t.Errorf("single-repo planet flagged home: %+v", g)
+		}
+	}
+}
+
+func TestSelectRepoRingsOnlyThatWedgesPlanet(t *testing.T) {
+	l := newLoop(t)
+	l.seed(t, workerEvents("feat/1-a")...)
+	alpha := repoAt(t, "alpha", workerEvents("feat/1-a")...)
+	l.opts.Discover = (&discoverStub{found: okRepos(alpha)}).discover
+	l.windows = "feat/1-a"
+	sc := l.frame(t).sc
+
+	for _, tc := range []struct {
+		repo string
+		want int
+	}{{"", 2}, {"alpha", 1}, {"001", 1}, {"nowhere", 0}} {
+		out := buildDOT(sc, nil, "feat/1-a", tc.repo)
+		if n := strings.Count(out, "sel"); n != tc.want {
+			t.Errorf("select-repo %q: %d rings, want %d", tc.repo, n, tc.want)
+		}
 	}
 }

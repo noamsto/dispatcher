@@ -209,17 +209,18 @@ type stackCmd struct {
 // rosterRenderCmd keeps interval and quiet as the caller's bytes: they are what
 // the detached daemon is started with.
 type rosterRenderCmd struct {
-	Crew     *string `name:"crew"`
-	Pane     *string `name:"pane"`
-	Interval *string `name:"interval"`
-	Quiet    *string `name:"quiet"`
-	NoOpen   bool    `name:"no-open"`
-	Once     bool    `name:"once"`
-	Detach   bool    `name:"detach"`
-	Map      bool    `name:"map"`
-	Px       *string `name:"px"`
-	Select   *string `name:"select"`
-	Out      *string `name:"out"`
+	Crew       *string `name:"crew"`
+	Pane       *string `name:"pane"`
+	Interval   *string `name:"interval"`
+	Quiet      *string `name:"quiet"`
+	NoOpen     bool    `name:"no-open"`
+	Once       bool    `name:"once"`
+	Detach     bool    `name:"detach"`
+	Map        bool    `name:"map"`
+	Px         *string `name:"px"`
+	Select     *string `name:"select"`
+	SelectRepo *string `name:"select-repo"`
+	Out        *string `name:"out"`
 }
 
 type statusCmd struct {
@@ -1085,7 +1086,7 @@ func validate(sub string, r *root) *refusal {
 			v    *string
 		}{
 			{"--crew", c.Crew}, {"--pane", c.Pane}, {"--interval", c.Interval}, {"--quiet", c.Quiet},
-			{"--px", c.Px}, {"--select", c.Select}, {"--out", c.Out},
+			{"--px", c.Px}, {"--select", c.Select}, {"--select-repo", c.SelectRepo}, {"--out", c.Out},
 		} {
 			if given(f.v) {
 				return &refusal{fmt.Sprintf("crew: %s needs a value", f.name), exitUsage}

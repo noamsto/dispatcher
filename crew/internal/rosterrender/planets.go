@@ -68,6 +68,7 @@ type planet struct {
 
 	repo      string // the bus's repo identity (its git common dir)
 	repoLabel string
+	home      bool // from the bus the renderer was run in
 	prURL     string
 	waiting   bool // blocked on a human answer
 	stale     bool

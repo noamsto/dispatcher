@@ -34,11 +34,19 @@ type Planet struct {
 	Branch string `json:"branch"`
 	Name   string `json:"name"`
 	// Repo is the repo's label, empty when the crew spans one repo.
-	Repo string  `json:"repo,omitempty"`
+	Repo string `json:"repo,omitempty"`
+	// Home marks a planet from the bus the renderer ran in, the only one whose
+	// worker the roster lists. Set only when the crew spans several repos.
+	Home bool    `json:"home,omitempty"`
 	CX   float64 `json:"cx"`
 	CY   float64 `json:"cy"`
 	R    float64 `json:"r"`
 }
+
+// PlanetKey identifies a planet: a branch alone is ambiguous across repos.
+type PlanetKey struct{ Repo, Branch string }
+
+func (p Planet) Key() PlanetKey { return PlanetKey{Repo: p.Repo, Branch: p.Branch} }
 
 // Geometry is the decoded `--map` output. Planets are in ring/slot order,
 // which is the keyboard order.
