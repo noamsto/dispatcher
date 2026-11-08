@@ -395,7 +395,10 @@ dispatch_remote() { # <extra dispatch args...> — a standard dispatch to crew c
   jq -e --arg b "$branch" '.[] | select(.branch == $b and .host == "mini") | .live == true' <<<"$output"
 
   # 6. Killing the remote window flips it.
-  remote_tmux kill-window -t "$(remote_tmux list-windows -t =main-F '#{window_id}' | head -1)"
+  local win
+  win="$(remote_tmux list-windows -t =main -F '#{window_id}' | head -1)"
+  [ -n "$win" ]
+  remote_tmux kill-window -t "$win"
   run crew roster c1
   [ "$status" -eq 0 ]
   jq -e --arg b "$branch" '.[] | select(.branch == $b and .host == "mini") | .live == false' <<<"$output"

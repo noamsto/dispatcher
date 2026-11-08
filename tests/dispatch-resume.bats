@@ -2986,6 +2986,16 @@ EOF
     TMUX_PANE=%3 run run_resume iris
   [ "$status" -eq 0 ]
   grep -Eq '^og-remote-open me@mini main --into .* --window @crew_id=c1$' "$STUB_LOG"
+  [[ "$output" == *"could not ask"* ]]
+}
+
+@test "target: a where reply that is not a window line falls back to the local name" {
+  _remote_resume_world
+  cd "$TEST_REPO"
+  STUB_WHERE='warning: remote profile noise' TMUX_PANE=%3 run run_resume iris
+  [ "$status" -eq 0 ]
+  grep -Eq '^og-remote-open me@mini main --into .* --window @crew_id=c1$' "$STUB_LOG"
+  [[ "$output" == *"could not ask"* ]]
 }
 
 @test "target: a routed resume refuses an unsafe local session name" {

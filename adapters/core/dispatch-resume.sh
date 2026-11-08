@@ -534,11 +534,14 @@ _remote_target_session() {
 
 # <host> <crew> <branch> <fallback>: the session the window's stamps put it in
 _remote_worker_session() {
-  local line s
+  local line
   line="$(crew remote-run --host "$1" --env "CREW_ID=$2" -- crew where "$3" --crew "$2" 2>/dev/null)" || line=""
-  s="${line#* — }"
-  s="${s%%:*}"
-  if _remote_session_ok "$s"; then printf '%s\n' "$s"; else printf '%s\n' "$4"; fi
+  if [[ $line =~ ^[^[:space:]]+\ —\ ([A-Za-z0-9_][A-Za-z0-9_-]*):[0-9]+\.[0-9]+\  ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  echo "dispatch: could not ask $1 where $3 is; assuming remote session $4" >&2
+  printf '%s\n' "$4"
 }
 
 # _remote_window <ssh> <crew_id> <session> — mirror the remote worker window
@@ -772,7 +775,8 @@ while [ $# -gt 0 ]; do
 done
 
 # Remote mode: a dispatcher on another host asked for this worker's window in
-# the crew's own session. The value becomes a tmux target, so its shape is fixed.
+# the named session, possibly shared with windows that are not this crew's. The
+# value becomes a tmux target, so its shape is fixed.
 if [ -n "${DISPATCH_TMUX_SESSION:-}" ] && ! _remote_session_ok "$DISPATCH_TMUX_SESSION"; then
   echo "dispatch resume: DISPATCH_TMUX_SESSION must match ^[A-Za-z0-9_][A-Za-z0-9_-]*\$ (got '$DISPATCH_TMUX_SESSION')" >&2
   exit 1
