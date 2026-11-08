@@ -91,7 +91,12 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 list-panes) : ;;
 new-window) printf '%s %s\n' '%99' '%99' ;;
-display-message) printf '%s\n' '80 24 on' ;;
+display-message)
+  case "$*" in
+  *'#{session_name}'*) printf '%s\n' "${STUB_SESSION_NAME:-main}" ;;
+  *) printf '%s\n' '80 24 on' ;;
+  esac
+  ;;
 esac
 exit 0
 EOF
@@ -2939,6 +2944,9 @@ case "$1" in
 resolve-target) exec "$CREW_REAL" "$@" ;;
 remote-run)
   printf 'remote-run from %s\n' "$PWD" >>"$STUB_LOG"
+  case "$*" in
+  *' crew where '*) [ -z "${STUB_WHERE:-}" ] || printf '%s\n' "$STUB_WHERE" ;;
+  esac
   exit "${STUB_REMOTE_RC:-0}"
   ;;
 esac
@@ -2957,9 +2965,65 @@ EOF
   cd "$TEST_REPO"
   TMUX_PANE=%3 run run_resume --fresh iris --effort high more words
   [ "$status" -eq 0 ]
-  grep -qxF 'remote-run --host mini --env CREW_ID=c1 --env DISPATCH_TMUX_SESSION=crew-c1 -- dispatch resume feat/7-a-thing --fresh --effort high more words' "$STUB_LOG"
-  grep -q '^og-remote-open me@mini crew-c1 --into ' "$STUB_LOG"
+  grep -qxF 'remote-run --host mini --env CREW_ID=c1 --env DISPATCH_TMUX_SESSION=main -- dispatch resume feat/7-a-thing --fresh --effort high more words' "$STUB_LOG"
+  grep -Eq '^og-remote-open me@mini main --into .* --window @crew_id=c1$' "$STUB_LOG"
   run ! grep -qE '^(new-window|new-session|send-keys)' "$STUB_LOG"
+}
+
+@test "target: a routed resume mirrors a worker still in its old crew-<id> session" {
+  _remote_resume_world
+  cd "$TEST_REPO"
+  STUB_WHERE='iris — crew-c1:2.0 "feat-7" (lead pane)   jump: ! tmux switch-client -t %9' \
+    TMUX_PANE=%3 run run_resume iris
+  [ "$status" -eq 0 ]
+  grep -Eq '^og-remote-open me@mini crew-c1 --into .* --window @crew_id=c1$' "$STUB_LOG"
+}
+
+@test "target: a where reply with an unsafe session falls back to the local name" {
+  _remote_resume_world
+  cd "$TEST_REPO"
+  STUB_WHERE='iris — a;b:2.0 "feat-7" (lead pane)   jump: ! tmux switch-client -t %9' \
+    TMUX_PANE=%3 run run_resume iris
+  [ "$status" -eq 0 ]
+  grep -Eq '^og-remote-open me@mini main --into .* --window @crew_id=c1$' "$STUB_LOG"
+  [[ "$output" == *"could not ask"* ]]
+}
+
+@test "target: a where reply that is not a window line falls back to the local name" {
+  _remote_resume_world
+  cd "$TEST_REPO"
+  STUB_WHERE='warning: remote profile noise' TMUX_PANE=%3 run run_resume iris
+  [ "$status" -eq 0 ]
+  grep -Eq '^og-remote-open me@mini main --into .* --window @crew_id=c1$' "$STUB_LOG"
+  [[ "$output" == *"could not ask"* ]]
+}
+
+@test "target: a routed resume refuses an unsafe local session name" {
+  _remote_resume_world
+  cd "$TEST_REPO"
+  STUB_SESSION_NAME='a;b' TMUX_PANE=%3 run run_resume iris
+  [ "$status" -eq 1 ]
+  run ! grep -q '^remote-run' "$STUB_LOG"
+}
+
+@test "remote mode: a routed resume refuses an unsafe DISPATCH_TMUX_SESSION" {
+  _remote_resume_world
+  cd "$TEST_REPO"
+  local s
+  for s in main:1 -x a.b 'a;b'; do
+    : >"$STUB_LOG"
+    DISPATCH_TMUX_SESSION="$s" TMUX_PANE=%3 run run_resume iris
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"DISPATCH_TMUX_SESSION must match"* ]]
+    run ! grep -q '^remote-run' "$STUB_LOG"
+  done
+}
+
+@test "remote mode: DISPATCH_TMUX_SESSION=dispatcher passes the shape check" {
+  _remote_resume_world
+  cd "$TEST_REPO"
+  DISPATCH_TMUX_SESSION=dispatcher TMUX_PANE=%3 run run_resume iris
+  [[ "$output" != *"DISPATCH_TMUX_SESSION must match"* ]]
 }
 
 @test "target: a routed resume exits with the remote status and mirrors nothing" {

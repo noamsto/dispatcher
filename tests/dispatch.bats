@@ -949,6 +949,24 @@ EOF
   [[ "$role_line" == *"--no-approve --skill $TEST_REPO/.dispatch-wt/"*"/.agents/skills --skill $DISPATCHER_SKILLS_DIR "* ]]
 }
 
+@test "pi worker launch carries the memory skills (#1473)" {
+  stub_launch_bins
+  # setup() seeds DISPATCHER_SKILLS_DIR with a stub holding only
+  # spec-plan-critic (#225), and the memory skills live in the real tree. A raw
+  # dispatch run leaves @skillsDir@ unsubstituted, so _resolve_dir takes the
+  # override.
+  export DISPATCHER_SKILLS_DIR="$BATS_TEST_DIRNAME/../adapters/core/skills"
+  DISPATCH_PROFILE=personal run run_dispatch standard openrouter/deepseek/deepseek-v4-flash --agent pi --effort high --grid --crew-id c1 42 "pi memory skills"
+  [ "$status" -eq 0 ]
+
+  # No project skills exist in this fixture's worktree, so the harness dir is
+  # the only --skill the lead's line carries.
+  lead_line=$(grep -F -- "--append-system-prompt $DISPATCHER_PROTOCOL_DIR/WORKER_PROTOCOL.pi.md" <(launch_log))
+  [[ "$lead_line" == *"--skill $DISPATCHER_SKILLS_DIR "* ]]
+  [ -f "$DISPATCHER_SKILLS_DIR/deja-recall/SKILL.md" ]
+  [ -f "$DISPATCHER_SKILLS_DIR/priors-recall/SKILL.md" ]
+}
+
 @test "pi dispatch refuses to launch when the agent dir cannot be seeded" {
   stub_launch_bins
   # A crew stub whose pi-agent-dir prints nothing (the generic log-and-succeed
@@ -3909,8 +3927,20 @@ EOF
   [ "$row" = "$(jq -c 'select(.kind == "dispatch")' "$TEST_REPO/.git/crew/events.jsonl")" ]
   grep -qE '^new-session -d -s crew-c1 -c .* -n feat-42-remote-worker .* -P' "$STUB_LOG"
   grep -qx 'set-environment -t =crew-c1 -u CREW_WORKER_ID' "$STUB_LOG"
+  grep -qx 'set-environment -t =crew-c1 -u CREW_ID' "$STUB_LOG"
   grep -qx 'dispatcher_pane: ' "$TEST_REPO/.dispatch-wt/feat-42-remote-worker/WORKER_TASK.md"
   run ! grep -qE '^(new-window|resize-window)|^roster-render' "$STUB_LOG"
+}
+
+@test "remote mode: DISPATCH_TMUX_SESSION=dispatcher creates the dispatcher's own session" {
+  stub_launch_bins
+  _remote_mode_tmux
+  TMUX_PANE=%7 DISPATCH_TMUX_SESSION=dispatcher DISPATCH_EMIT_ROW=1 \
+    run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "remote worker"
+  [ "$status" -eq 0 ]
+  grep -qE '^new-session -d -s dispatcher -c .* -n feat-42-remote-worker .* -P' "$STUB_LOG"
+  grep -qx 'set-environment -t =dispatcher -u CREW_ID' "$STUB_LOG"
+  run ! grep -qE '^new-session -d -s crew-c1' "$STUB_LOG"
 }
 
 @test "remote mode: an existing crew session gets a new window" {
@@ -4049,13 +4079,15 @@ EOF
   run ! grep -qE '^new-session' "$STUB_LOG"
 }
 
-@test "remote mode: a DISPATCH_TMUX_SESSION outside crew-<id> is refused before any scaffolding" {
+@test "remote mode: an unsafe DISPATCH_TMUX_SESSION is refused before any scaffolding" {
   stub_launch_bins
   _remote_mode_tmux
-  DISPATCH_TMUX_SESSION='main:1' run run_dispatch standard sonnet --effort medium --crew-id c1 42 "t"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"DISPATCH_TMUX_SESSION must match"* ]]
-  [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ]
+  for name in 'main:1' '-x' 'a.b' 'a;b'; do
+    DISPATCH_TMUX_SESSION="$name" run run_dispatch standard sonnet --effort medium --crew-id c1 42 "t"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"DISPATCH_TMUX_SESSION must match"* ]]
+    [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ]
+  done
 }
 
 @test "DISPATCH_ORIGIN_HOST differing from this host stamps the header, window option and border" {

@@ -113,11 +113,11 @@ teardown() {
   done
 }
 
-@test "dispatch-resume's _remote_window and _pane_client copies match dispatch.sh's" {
+@test "dispatch-resume's remote-session helpers, _remote_window and _pane_client copies match dispatch.sh's" {
   # A routed resume mirrors the remote window the way dispatch --host does, and
   # opens its own window through the same scrubbed client; both are standalone
   # builds, so each carries a copy.
-  for fn in _remote_window _pane_client; do
+  for fn in _remote_session_ok _remote_target_session _remote_worker_session _remote_window _pane_client; do
     canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch.sh")"
     [ -n "$canonical" ]
     found="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch-resume.sh")"
@@ -652,6 +652,36 @@ guard_ships_row() { # script basename
   run cmp -s "$ROOT/adapters/core/skills/deslop/SKILL.md" "$ROOT/adapters/codex/plugin/skills/deslop/SKILL.md"
   [ "$status" -eq 0 ]
   run cmp -s "$ROOT/adapters/core/skills/deslop/SKILL.md" "$ROOT/adapters/cursor/skills/deslop/SKILL.md"
+  [ "$status" -eq 0 ]
+}
+
+@test "the worker protocol names the memory seams for every engine (#1473)" {
+  seams=("deja search" "priors search" "deja fix" "deja show" "priors show" "deja secrets" "deja-recall" "priors-recall" "priors add")
+  protocols=(
+    adapters/core/protocols/WORKER_PROTOCOL.md
+    adapters/core/protocols/WORKER_PROTOCOL.pi.md
+    adapters/core/protocols/WORKER_PROTOCOL.claude.md
+    adapters/claude-code/plugin/protocols/WORKER_PROTOCOL.md
+    adapters/codex/plugin/protocols/WORKER_PROTOCOL.md
+    adapters/cursor/protocols/WORKER_PROTOCOL.md
+  )
+  for rel in "${protocols[@]}"; do
+    for seam in "${seams[@]}"; do
+      if ! grep -qF -- "$seam" "$ROOT/$rel"; then
+        printf 'missing memory seam in %s: %s\n' "$rel" "$seam" >&3
+        return 1
+      fi
+    done
+  done
+}
+
+@test "the priors lookup skill ships beside deja-recall (#1473)" {
+  [ -f "$ROOT/adapters/core/skills/priors-recall/SKILL.md" ]
+  run cmp -s "$ROOT/adapters/core/skills/priors-recall/SKILL.md" "$ROOT/adapters/claude-code/plugin/skills/priors-recall/SKILL.md"
+  [ "$status" -eq 0 ]
+  run cmp -s "$ROOT/adapters/core/skills/priors-recall/SKILL.md" "$ROOT/adapters/codex/plugin/skills/priors-recall/SKILL.md"
+  [ "$status" -eq 0 ]
+  run cmp -s "$ROOT/adapters/core/skills/priors-recall/SKILL.md" "$ROOT/adapters/cursor/skills/priors-recall/SKILL.md"
   [ "$status" -eq 0 ]
 }
 

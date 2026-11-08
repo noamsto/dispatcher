@@ -513,9 +513,41 @@ _check_protocol_rev() {
   fi
 }
 
-# _remote_window <ssh> <crew_id> — mirror the remote crew-<id> session into this
-# tmux session, else say how to attach. og-remote-open is idempotent, so every
-# dispatch and resume runs it. Never fails: the remote worker exists either way.
+_remote_session_ok() {
+  [[ $1 =~ ^[A-Za-z0-9_][A-Za-z0-9_-]*$ ]]
+}
+
+# prints this tmux session's name, or crew-<id> outside tmux
+_remote_target_session() {
+  local name=""
+  [ -z "${TMUX_PANE:-}" ] || name="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)"
+  if [ -z "$name" ]; then
+    printf 'crew-%s\n' "$1"
+    return 0
+  fi
+  _remote_session_ok "$name" || {
+    printf "dispatch: tmux session '%s' cannot name a remote session: it must match ^[A-Za-z0-9_][A-Za-z0-9_-]*\$\n" "$name" >&2
+    return 1
+  }
+  printf '%s\n' "$name"
+}
+
+# <host> <crew> <branch> <fallback>: the session the window's stamps put it in
+_remote_worker_session() {
+  local line
+  line="$(crew remote-run --host "$1" --env "CREW_ID=$2" -- crew where "$3" --crew "$2" 2>/dev/null)" || line=""
+  if [[ $line =~ ^[^[:space:]]+\ —\ ([A-Za-z0-9_][A-Za-z0-9_-]*):[0-9]+\.[0-9]+\  ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  echo "dispatch: could not ask $1 where $3 is; assuming remote session $4" >&2
+  printf '%s\n' "$4"
+}
+
+# _remote_window <ssh> <crew_id> <session> — mirror the remote worker window
+# (selected by its @crew_id stamp) of <session> into this tmux session, else say
+# how to attach. og-remote-open is idempotent, so every dispatch and resume runs
+# it. Never fails: the remote worker exists either way.
 _remote_window() {
   local into bin reason=""
   local -a launcher=()
@@ -539,13 +571,13 @@ _remote_window() {
     into="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)"
     if [ -z "$into" ]; then
       reason="no tmux session for $TMUX_PANE"
-    elif "${launcher[@]}" "$1" "crew-$2" --into "$into" >&2; then
+    elif "${launcher[@]}" "$1" "$3" --into "$into" --window "@crew_id=$2" >&2; then
       return 0
     else
       reason="${launcher[*]} failed"
     fi
   fi
-  echo "dispatch: remote window not mirrored ($reason); attach with: ssh -t $1 tmux attach -t crew-$2" >&2
+  echo "dispatch: remote window not mirrored ($reason); attach with: ssh -t $1 tmux attach -t $3" >&2
 }
 
 # _resume_remote <branch> <host> <crew> — a remote:true row's worker lives on
@@ -553,17 +585,18 @@ _remote_window() {
 # with every resume argument but the target. The host name keys settings,
 # which alone give the ssh target.
 _resume_remote() {
-  local rc=0 ssh
+  local rc=0 ssh session
   local -a rest=("${resume_args[@]:0:target_at}" "${resume_args[@]:target_at+1}")
   [ -z "$chrome" ] || {
     echo "dispatch resume: --chrome is not carried to a remote resume — $1 runs on $2; re-dispatch it with dispatch --host $2 --chrome" >&2
     exit 1
   }
-  crew remote-run --host "$2" --env "CREW_ID=$3" --env "DISPATCH_TMUX_SESSION=crew-$3" -- \
+  session="$(_remote_target_session "$3")" || exit 1
+  crew remote-run --host "$2" --env "CREW_ID=$3" --env "DISPATCH_TMUX_SESSION=$session" -- \
     dispatch resume "$1" ${rest[@]+"${rest[@]}"} || rc=$?
   [ "$rc" -eq 0 ] || exit "$rc"
   ssh="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}" | jq -r --arg h "$2" '.hosts[$h].ssh // empty')"
-  _remote_window "$ssh" "$3"
+  _remote_window "$ssh" "$3" "$(_remote_worker_session "$2" "$3" "$1" "$session")"
   exit 0
 }
 
@@ -741,10 +774,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Remote mode: a dispatcher on another host asked for the window in the crew's
-# own session. The value becomes a tmux target, so its shape is fixed.
-if [ -n "${DISPATCH_TMUX_SESSION:-}" ] && [[ ! $DISPATCH_TMUX_SESSION =~ ^crew-[A-Za-z0-9_-]+$ ]]; then
-  echo "dispatch resume: DISPATCH_TMUX_SESSION must match ^crew-[A-Za-z0-9_-]+\$ (got '$DISPATCH_TMUX_SESSION')" >&2
+# Remote mode: a dispatcher on another host asked for this worker's window in
+# the named session, possibly shared with windows that are not this crew's. The
+# value becomes a tmux target, so its shape is fixed.
+if [ -n "${DISPATCH_TMUX_SESSION:-}" ] && ! _remote_session_ok "$DISPATCH_TMUX_SESSION"; then
+  echo "dispatch resume: DISPATCH_TMUX_SESSION must match ^[A-Za-z0-9_][A-Za-z0-9_-]*\$ (got '$DISPATCH_TMUX_SESSION')" >&2
   exit 1
 fi
 
@@ -1563,7 +1597,7 @@ if [ -z "$pane" ]; then
   client_width=""
   client_height=""
   if [ -n "${DISPATCH_TMUX_SESSION:-}" ]; then
-    # Remote mode, as in dispatch: the crew's own session, created with the
+    # Remote mode, as in dispatch: the named session, created with the
     # window when absent; no client to size from.
     win_args=(-c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
     # The `|| true` keeps a failed client reaching the "could not resolve a

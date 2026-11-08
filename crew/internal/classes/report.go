@@ -24,6 +24,13 @@ func ReportLines(rows []any, env Env) []string {
 			strings.TrimPrefix(loaded[0], warnPrefix), statePath))
 	}
 	for _, v := range verdicts {
+		engine, class := cleanID(v.Engine), cleanID(v.Class)
+		if v.NoTrial && len(v.Candidates) > 0 {
+			body = append(body, fmt.Sprintf("  %s %s: no trial: no catalogued %s model sorts newer than incumbent %s", engine, class, class, cleanID(v.From)))
+		}
+		if v.To != "" && !v.AutoOff && !unjudged {
+			body = append(body, fmt.Sprintf("  %s %s: would promote %s → %s", engine, class, cleanID(v.From), cleanID(v.To)))
+		}
 		for _, c := range v.Candidates {
 			body = append(body, candidateLine(c, v.AutoOff, unjudged))
 		}
