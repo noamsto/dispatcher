@@ -200,3 +200,26 @@ func TestGuardrailsReworkTiePrecision(t *testing.T) {
 		t.Errorf("guardrails = %q, want rework reason distinguishable at 1 dp ties", got)
 	}
 }
+
+func TestReportLinesNoWouldPromoteWhenNotJudged(t *testing.T) {
+	autoOff := newPromoteFixture(t, catalogJSON, func(doc map[string]any) {
+		doc["classes"].(map[string]any)["codex"].(map[string]any)["autoPromote"] = false
+	})
+	unusable := newPromoteFixture(t, catalogJSON, nil)
+	unusable.writeState(`{"codex":{"standard":{"default":"gpt-5.6-terra","vetoed":["gpt-5.7-terra"]}}`)
+	for name, f := range map[string]*promoteFixture{"autoPromote false": autoOff, "unusable state": unusable} {
+		for _, l := range ReportLines(eligibleRows(), f.env) {
+			if strings.Contains(l, "would promote") {
+				t.Errorf("%s: unexpected line %q", name, l)
+			}
+		}
+	}
+}
+
+func TestGuardrailsReworkTieNeedsFourDigits(t *testing.T) {
+	tr := Stats{N: 1, ReworkN: 1, ReworkSum: 0.3333}
+	ir := Stats{N: 1, ReworkN: 1, ReworkSum: 0.3332}
+	if !slices.Contains(guardrails(tr, ir), "rework 0.3333 > incumbent 0.3332") {
+		t.Errorf("guardrails = %q", guardrails(tr, ir))
+	}
+}

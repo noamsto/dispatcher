@@ -371,14 +371,14 @@ func guardrails(t, i Stats) []string {
 	return out
 }
 
-// reworkPair renders two rework means at one decimal, or at three significant
-// digits when that would print them as equal.
+// reworkPair renders two rework means at one decimal, or at the fewest
+// significant digits (from three) that print them as different.
 func reworkPair(tr, ir float64) (string, string) {
 	a, b := fmt.Sprintf("%.1f", tr), fmt.Sprintf("%.1f", ir)
-	if a != b {
-		return a, b
+	for p := 3; a == b && p <= 17; p++ {
+		a, b = fmt.Sprintf("%.*g", p, tr), fmt.Sprintf("%.*g", p, ir)
 	}
-	return fmt.Sprintf("%.3g", tr), fmt.Sprintf("%.3g", ir)
+	return a, b
 }
 
 // numbers is the clause an auto promotion records: the evidence that passed.
