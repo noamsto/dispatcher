@@ -241,6 +241,8 @@ func (v mapView) startAction(a action) (view, tea.Cmd) {
 		}
 		if repo, other := v.otherRepo(); other {
 			reason = "worker in another repo: " + cleanText(repo)
+		} else if v.sel.Repo != "" && len(v.geom.Planets) == 0 {
+			reason = "map not rendered"
 		}
 		return v, statusCmd(a.String()+": "+reason, true)
 	}
@@ -554,7 +556,7 @@ func (v mapView) infoLine() string {
 		return "no workers"
 	}
 	if repo, other := v.otherRepo(); other {
-		return cleanText(v.sel.Branch) + " · in " + cleanText(repo) + " (another repo)"
+		return "in " + cleanText(repo) + " (another repo) · " + cleanText(v.sel.Branch)
 	}
 	w, ok := v.worker()
 	if !ok {

@@ -1242,7 +1242,7 @@ func TestMapSelectionFollowsRepoForSameBranch(t *testing.T) {
 			t.Fatalf("%+v: worker resolved = %v, want %v", step.want, ok, home)
 		}
 		if step.want == beta {
-			if got, want := mv.infoLine(), "feat/x · in beta (another repo)"; got != want {
+			if got, want := mv.infoLine(), "in beta (another repo) · feat/x"; got != want {
 				t.Fatalf("info = %q, want %q", got, want)
 			}
 		}
@@ -1274,5 +1274,19 @@ func TestMapEntryKeyRekeysToHomePlanet(t *testing.T) {
 	}
 	if got := m.views[mapTab].(mapView).sel; got != (mapgeom.PlanetKey{Repo: "alpha", Branch: "feat/x"}) {
 		t.Fatalf("sel = %+v after entry", got)
+	}
+}
+
+func TestMapDroppedGeometryNamesTheMissingMap(t *testing.T) {
+	r := twoRepoRig(t)
+	mv := r.open().views[mapTab].(mapView)
+	mv.sel = mapgeom.PlanetKey{Repo: "beta", Branch: "feat/x"}
+	mv.geom = mapgeom.Geometry{}
+	if _, ok := mv.worker(); ok {
+		t.Fatal("worker resolved without geometry for a repo-qualified key")
+	}
+	_, c := mv.startAction(actJump)
+	if got := c().(actionMsg).text; !strings.Contains(got, "map not rendered") {
+		t.Fatalf("status %q lacks the map-not-rendered reason", got)
 	}
 }
