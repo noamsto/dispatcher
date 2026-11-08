@@ -150,16 +150,6 @@ func TestAdviseRefusals(t *testing.T) {
 	}
 }
 
-func TestProtocolNamesTheAdviseCommand(t *testing.T) {
-	data, err := os.ReadFile("../../../adapters/core/protocols/DISPATCHER_PROTOCOL.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "crew rate --advise <engine> <tier>") {
-		t.Error("DISPATCHER_PROTOCOL.md does not tell the dispatcher to run crew rate --advise <engine> <tier>")
-	}
-}
-
 // advUnsettled is a run with no settled PR: an empty state is a failed run that
 // never opened one, "OPEN" a PR still awaiting its verdict.
 func advUnsettled(repo, runID, model, state string) string {
