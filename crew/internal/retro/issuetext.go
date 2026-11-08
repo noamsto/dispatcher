@@ -231,9 +231,17 @@ func renderVerdict(f *finding, v closeEval, lvl level) string {
 	return b.String()
 }
 
+// guardSafePath matches temp paths the guard script's body-file parser reads
+// intact. The script stops at whitespace and strips through `=@`, then silently
+// skips an unreadable file, so any other path would be "scanned" as empty.
+// `+` stays because macOS temp dirs contain it.
+var guardSafePath = regexp.MustCompile(`^[A-Za-z0-9_./+@:~-]+$`)
+
 // ExecGuard runs the public-leak guard script at path under bash, the way
 // dispatch.sh's _mint_leak_check does, on a command naming the repo gh writes to.
-// An empty path yields a guard that never gives a verdict.
+// An empty path yields a guard that never gives a verdict, as does a run that
+// may not have scanned: empty stdout with anything on stderr is a skipped scan,
+// not a clean one.
 func ExecGuard(ctx context.Context, bash, path, cwd string, getenv func(string) string) Guard {
 	if path == "" {
 		return func(string, string, string) (bool, string, bool) { return false, "", false }
@@ -244,6 +252,10 @@ func ExecGuard(ctx context.Context, bash, path, cwd string, getenv func(string) 
 			return false, "", false
 		}
 		defer func() { _ = os.Remove(tmp.Name()) }()
+		if !guardSafePath.MatchString(tmp.Name()) {
+			_ = tmp.Close()
+			return false, "", false
+		}
 		_, werr := tmp.WriteString(text)
 		if cerr := tmp.Close(); werr != nil || cerr != nil {
 			return false, "", false
@@ -263,8 +275,9 @@ func ExecGuard(ctx context.Context, bash, path, cwd string, getenv func(string) 
 		}
 		cmd := exec.CommandContext(ctx, bash, path)
 		cmd.Stdin = bytes.NewReader(payload)
-		var stdout bytes.Buffer
+		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
 			return false, "", false
 		}
@@ -274,7 +287,7 @@ func ExecGuard(ctx context.Context, bash, path, cwd string, getenv func(string) 
 			return false, "", false
 		}
 		if len(bytes.TrimSpace(stdout.Bytes())) == 0 {
-			return false, "", true
+			return false, "", len(bytes.TrimSpace(stderr.Bytes())) == 0
 		}
 		var verdict struct {
 			Output struct {

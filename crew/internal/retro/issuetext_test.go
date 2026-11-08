@@ -425,4 +425,39 @@ stat -c %a "$file" > ` + outDir + `/mode
 			t.Fatalf("denied=%v ok=%v", denied, ok)
 		}
 	})
+
+	for name, leaf := range map[string]string{
+		"temp path with whitespace gives no verdict": "my disk",
+		"temp path with =@ gives no verdict":         "a=@b",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), leaf)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("TMPDIR", dir)
+			g := ExecGuard(ctx, bash, writeStub(t, "cat >/dev/null; exit 0\n"), "/w", listed)
+			if denied, _, ok := g("issue", "acme/app", "x"); denied || ok {
+				t.Fatalf("denied=%v ok=%v", denied, ok)
+			}
+		})
+	}
+
+	const skipNotice = "echo 'public-leak-guard: betterleaks not found; secret scan skipped' >&2\n"
+
+	t.Run("skipped scan gives no verdict", func(t *testing.T) {
+		g := ExecGuard(ctx, bash, writeStub(t, "cat >/dev/null\n"+skipNotice+"exit 0\n"), "/w", listed)
+		if denied, _, ok := g("issue", "acme/app", "x"); denied || ok {
+			t.Fatalf("denied=%v ok=%v", denied, ok)
+		}
+	})
+
+	t.Run("deny alongside a skip notice still denies", func(t *testing.T) {
+		deny := `printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"leaks a path"}}'` + "\n"
+		g := ExecGuard(ctx, bash, writeStub(t, "cat >/dev/null\n"+skipNotice+deny), "/w", listed)
+		denied, reason, ok := g("issue", "acme/app", "x")
+		if !denied || reason != "leaks a path" || !ok {
+			t.Fatalf("denied=%v reason=%q ok=%v", denied, reason, ok)
+		}
+	})
 }

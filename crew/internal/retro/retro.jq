@@ -33,6 +33,8 @@
     # and lose every other run with it (#25).
     def body_obj: (try fromjson catch null) | if type == "object" then . else null end;
     def note_list: if type == "array" then map(select(type == "object")) else [] end;
+    # Must fit int64 once floored; 9999999999999 ms is the sentinel bound above.
+    def valid_ms: type == "number" and . >= 0 and . <= 9999999999999;
     # Tags and details are agent-authored free text, and a gate_thrash detail
     # quotes arbitrary source and command output. Tab/newline/CR become a space
     # so a padded row keeps its columns; the rest go, because a raw ESC
@@ -189,7 +191,7 @@
     | (($groups | map(select(.known)) | sort_by(. as $g | $vocab | index($g.tag)))
        + ($groups | map(select(.known | not)) | sort_by(.tag))) as $sorted
     | ($sorted | map(select(.known | not)) | map(.tag)) as $unknown
-    | if $want_notes then {notes: $flat, run_ts: ($disp | map(.ts))}
+    | if $want_notes then {notes: ($flat | map(select(.ts | valid_ms) | .ts |= floor)), run_ts: ($disp | map(.ts | select(valid_ms) | floor))}
       elif $want_json then
         { tags: $sorted, unknown: $unknown,
           rows: ($rows | map({

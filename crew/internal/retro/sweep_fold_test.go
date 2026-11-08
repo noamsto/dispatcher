@@ -68,6 +68,47 @@ func TestFoldNotesSurvivesNonStringState(t *testing.T) {
 	}
 }
 
+func TestSweepPlansPastMalformedTS(t *testing.T) {
+	const (
+		dispatchStr  = `{"ts":"nope","crew_id":"c1","kind":"dispatch","branch":"feat/bad","engine":"claude","model":"m","tier":"standard","title":"t"}`
+		dispatchFrac = `{"ts":1500.5,"crew_id":"c1","kind":"dispatch","branch":"feat/bad","engine":"claude","model":"m","tier":"standard","title":"t"}`
+		noteStr      = `{"ts":"nope","crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"retro:c1","body":"{\"seam\":\"s\",\"tag\":\"misrouted\",\"detail\":\"d\"}"}`
+		noteFrac     = `{"ts":1500.5,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"retro:c1","body":"{\"seam\":\"s\",\"tag\":\"misrouted\",\"detail\":\"d\"}"}`
+	)
+	cases := []struct{ name, row string }{
+		{"dispatch string ts", dispatchStr},
+		{"dispatch fractional ts", dispatchFrac},
+		{"dispatcher note string ts", noteStr},
+		{"dispatcher note fractional ts", noteFrac},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newTracker(t)
+			paths := fixture(t, noteRuns("r", 1, 6, "other", diverseDetail)+c.row+"\n")
+			out, errb, code := f.sweep(paths, allowAll, nil)
+			if code != 0 {
+				t.Fatalf("exit %d, stderr: %s", code, errb)
+			}
+			digestIn(t, out)
+		})
+	}
+}
+
+func TestFoldNotesFloorsFractionalDispatchTS(t *testing.T) {
+	log := `{"ts":1500.5,"crew_id":"c1","kind":"dispatch","branch":"feat/a","engine":"claude","model":"m","tier":"standard","title":"t"}` + "\n"
+	events, err := bus.ReadEvents(fixture(t, log).Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, runTS, err := foldNotes(events)
+	if err != nil {
+		t.Fatalf("fold aborted: %v", err)
+	}
+	if !slices.Equal(runTS, []int64{1500}) {
+		t.Errorf("runTS = %v", runTS)
+	}
+}
+
 func sorted(s []int64) []int64 {
 	c := slices.Clone(s)
 	slices.Sort(c)

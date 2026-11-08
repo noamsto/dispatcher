@@ -666,6 +666,7 @@ func (s *sweepRun) apply(stdout, stderr io.Writer) int {
 
 	code := 0
 	labelled := false
+	reopened := map[int]bool{}
 	for _, st := range s.plan.steps {
 		if st.blocked {
 			say(stderr, "crew: retro: blocked: %s %s: leak guard\n", st.action, st.key)
@@ -680,12 +681,21 @@ func (s *sweepRun) apply(stdout, stderr io.Writer) int {
 			}
 			labelled = true
 		}
-		res, err := s.write(st)
+		w := st
+		if st.action == actionReopen && reopened[st.target] {
+			// A second reopen of an open issue posts nothing, so its verdict goes in as a comment.
+			if st.text == "" {
+				continue
+			}
+			w.action = actionHeld
+		}
+		res, err := s.write(w)
 		if err != nil {
 			summary()
 			say(stderr, "crew: retro: %s %s failed: %v\n", st.action, st.key, err)
 			return exitFailure
 		}
+		reopened[st.target] = reopened[st.target] || st.action == actionReopen
 		done = append(done, res)
 	}
 	summary()

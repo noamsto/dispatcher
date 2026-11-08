@@ -200,6 +200,9 @@ func (f *fakeTracker) answer(args []string) (string, error) {
 		return f.createIssue(args)
 	case verb == "issue reopen" && len(args) == 5 && args[3] == "--comment":
 		iss := f.find(args[2])
+		if iss.state != "closed" {
+			return "", nil
+		}
 		iss.state, iss.reason, iss.at = "open", "reopened", ""
 		iss.comments = append(iss.comments, args[4])
 		f.reopened = append(f.reopened, args[4])
@@ -1012,5 +1015,104 @@ func TestSweepPlanPrintsLabelsAndUnclusteredMarker(t *testing.T) {
 	}
 	if strings.Contains(out, leakyPath) || strings.ContainsAny(out, "\x1b\u200b") {
 		t.Errorf("unsafe text in plan:\n%q", out)
+	}
+}
+
+const (
+	secondKey    = "pane-timeout"
+	secondDetail = "pane hit a timeout"
+)
+
+// twoKeysOnOneIssue binds the catalog key and a label key to issue 9, both still
+// firing after its close.
+func twoKeysOnOneIssue(closedAgo int) string {
+	return findingsRow(ago(60), `{"key":"`+diverseKey+`","issue":9}`) +
+		findingsRow(ago(60), `{"key":"`+secondKey+`","match":"pane.*timeout","issue":9}`) +
+		continuingEvents(closedAgo) +
+		noteRuns("before2", closedAgo+1, 5, "other", secondDetail) +
+		noteRuns("after2", 1, 4, "other", secondDetail)
+}
+
+func verdictMarker(key, closedAt string) string {
+	return fmt.Sprintf("%s%s closed=%s verdict=%s", verdictPrefix, key, closedAt, verdictDidNotHold)
+}
+
+func commentFirstLines(iss *fakeIssue) []string {
+	var lines []string
+	for _, c := range iss.comments {
+		lines = append(lines, ghissue.FirstLine(c))
+	}
+	return lines
+}
+
+func TestSweepTwoKeysOnOneClosedIssueRecordBothVerdicts(t *testing.T) {
+	f := newTracker(t)
+	closedAt := rfc(ago(20))
+	iss := f.add(9, "a hand-filed issue", "closed", "completed", closedAt)
+	paths := fixture(t, twoKeysOnOneIssue(20))
+
+	out := f.plan(paths)
+	for _, key := range []string{diverseKey, secondKey} {
+		if !strings.Contains(out, "reopen #9 "+key) {
+			t.Fatalf("plan should reopen #9 for %s:\n%s", key, out)
+		}
+	}
+
+	summary := f.applyPlan(paths)
+	if n := strings.Count(summary, "reopened #9"); n != 1 {
+		t.Errorf("want one reopen in %q", summary)
+	}
+	if n := strings.Count(summary, "recorded #9"); n != 1 {
+		t.Errorf("want one recorded in %q", summary)
+	}
+	if len(f.reopened) != 1 || ghissue.FirstLine(f.reopened[0]) != verdictMarker(diverseKey, closedAt) {
+		t.Fatalf("reopened %q", f.reopened)
+	}
+	if got := commentFirstLines(iss); !slices.Equal(got, []string{verdictMarker(diverseKey, closedAt), verdictMarker(secondKey, closedAt)}) {
+		t.Errorf("comments = %q", got)
+	}
+	if iss.state != "open" {
+		t.Errorf("state = %s", iss.state)
+	}
+}
+
+func TestSweepTwoKeysAfterABareReopenCommentsTheSecondVerdict(t *testing.T) {
+	f := newTracker(t)
+	closedAt := rfc(ago(20))
+	iss := f.add(9, "a hand-filed issue", "closed", "completed", closedAt)
+	iss.comments = []string{verdictMarker(diverseKey, closedAt) + "\n\nBefore the fix: 5"}
+	paths := fixture(t, twoKeysOnOneIssue(20))
+
+	summary := f.applyPlan(paths)
+	if f.bareReopens != 1 || len(f.reopened) != 0 {
+		t.Fatalf("bare reopens %d, reopened %q", f.bareReopens, f.reopened)
+	}
+	if n := strings.Count(summary, "reopened #9"); n != 1 {
+		t.Errorf("want one reopen in %q", summary)
+	}
+	if n := strings.Count(summary, "recorded #9"); n != 1 {
+		t.Errorf("want one recorded in %q", summary)
+	}
+	if got := commentFirstLines(iss); !slices.Equal(got, []string{verdictMarker(diverseKey, closedAt), verdictMarker(secondKey, closedAt)}) {
+		t.Errorf("comments = %q", got)
+	}
+}
+
+func TestSweepBareReopenAfterAReopenPostsNothing(t *testing.T) {
+	f := newTracker(t)
+	closedAt := rfc(ago(20))
+	iss := f.add(9, "a hand-filed issue", "closed", "completed", closedAt)
+	iss.comments = []string{verdictMarker(secondKey, closedAt) + "\n\nBefore the fix: 5"}
+	paths := fixture(t, twoKeysOnOneIssue(20))
+
+	summary := f.applyPlan(paths)
+	if len(f.reopened) != 1 || f.bareReopens != 0 {
+		t.Fatalf("reopened %q, bare reopens %d", f.reopened, f.bareReopens)
+	}
+	if n := strings.Count(summary, "#9"); n != 1 {
+		t.Errorf("a bare step after the reopen should leave no summary entry: %q", summary)
+	}
+	if got := commentFirstLines(iss); !slices.Equal(got, []string{verdictMarker(secondKey, closedAt), verdictMarker(diverseKey, closedAt)}) {
+		t.Errorf("comments = %q", got)
 	}
 }
