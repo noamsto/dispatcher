@@ -148,3 +148,55 @@ func TestReportLinesUnavailable(t *testing.T) {
 		t.Errorf("lines = %q", lines)
 	}
 }
+
+const catalogNoNewer = `{"codex":{"models":[{"id":"gpt-5.6-luna"},{"id":"gpt-5.6-terra"},{"id":"gpt-5.6-sol"}]}}`
+
+func TestReportLinesNoTrial(t *testing.T) {
+	f := newPromoteFixture(t, catalogNoNewer, nil)
+	lines := ReportLines(eligibleRows(), f.env)
+	want := "  codex standard: no trial: no catalogued standard model sorts newer than incumbent gpt-5.6-terra"
+	if !slices.Contains(lines, want) {
+		t.Errorf("lines lack %q: %q", want, lines)
+	}
+	line := reportLine(t, lines)
+	if !strings.Contains(line, "; no trial model in class") || strings.Contains(line, "(none)") {
+		t.Errorf("line = %q, want the no-trial reason", line)
+	}
+	vs, _, err := Evaluate(eligibleRows(), f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := findVerdict(t, vs, "codex", "standard"); !v.NoTrial {
+		t.Errorf("NoTrial = false for %+v", v)
+	}
+}
+
+func TestReportLinesNoTrialAbsentWithoutCandidates(t *testing.T) {
+	f := newPromoteFixture(t, catalogNoNewer, nil)
+	for _, l := range ReportLines(incumbentRows(), f.env) {
+		if strings.Contains(l, "no trial:") {
+			t.Errorf("unexpected no-trial line %q", l)
+		}
+	}
+}
+
+func TestReportLinesWouldPromote(t *testing.T) {
+	f := newPromoteFixture(t, catalogJSON, nil)
+	lines := ReportLines(eligibleRows(), f.env)
+	want := "  codex standard: would promote gpt-5.6-terra → gpt-5.7-terra"
+	if !slices.Contains(lines, want) {
+		t.Errorf("lines lack %q: %q", want, lines)
+	}
+	if s := f.stateBytes(); s != "" {
+		t.Errorf("state written: %s", s)
+	}
+}
+
+func TestGuardrailsReworkTiePrecision(t *testing.T) {
+	tr := Stats{N: 6, ReworkN: 6, ReworkSum: 0.18}
+	ir := Stats{N: 6, ReworkN: 6, ReworkSum: 0.01}
+	got := guardrails(tr, ir)
+	if !slices.Contains(got, "rework 0.03 > incumbent 0.00167") {
+		t.Errorf("guardrails = %q, want rework reason distinguishable at 1 dp ties", got)
+	}
+}
