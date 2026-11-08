@@ -37,7 +37,7 @@ start	end	section	unit	class	trigger / replacement rule	skill	anchor
 1064	1110	Read the bus	Intro, per-repo bus, crew stream	a
 1111	1190	Read the bus	claude streaming monitor: batch/heartbeat/error/reap/hold due, --status, compaction	a
 1191	1277	Read the bus	cursor background park, INV-1, park lengths; codex/pi blocking park	b	the dispatcher engine is cursor, codex or pi (dropped by a per-engine render for claude)	render	INV-1 — exactly one outstanding watch
-1278	1331	Read the bus	Retro synthesis on a drained roster	b	a batch leaves the roster DRAINED	dispatcher:retro	**A clean drained roster writes nothing.**
+1278	1331	Read the bus	Retro synthesis on a drained roster	b	a batch leaves the roster DRAINED	dispatcher:retro	**A clean drained roster posts no notes; step 4 still runs.**
 1332	1341	Read the bus	Relaying a pane to the human: crew where line	a
 1342	1345	Read the bus	prompt: watchdog state	b	a watchdog `blocked` with `prompt:`	dispatcher:watchdog	- `prompt:` — parked on an interactive prompt
 1346	1373	Read the bus	Tool-permission dialogs via permission-check; classifier escalations; role-pane watches	b	`prompt: permission —` detail	dispatcher:watchdog	**Tool-permission dialogs are answered only by `permission-check`.**

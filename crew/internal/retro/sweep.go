@@ -572,6 +572,8 @@ func (s *sweepRun) print(w io.Writer, repo, digest string) {
 		for _, st := range p.steps {
 			s.printStep(line, st)
 		}
+		line("  To bind a finding above to an existing issue: %s", bindTemplate)
+		line("  To ignore a finding above: %s", ignoreTemplate)
 	}
 	section("Open", p.open)
 	section("Closed, verdict recorded", p.recorded)
@@ -609,7 +611,7 @@ func (s *sweepRun) printStep(line func(string, ...any), st step) {
 	line("  %s", head)
 	if st.candidates != "" {
 		line("    candidates: %s", sanitizeLine(st.candidates))
-		line("    bind one that covers this: %s", bindTemplate)
+		line("    bind one that covers this with the bind template below")
 	}
 	if st.text == "" {
 		return
@@ -627,8 +629,7 @@ func (s *sweepRun) printUnclustered(line func(string, ...any)) {
 	line("Unclustered (%d notes):", len(notes))
 	line("  The sample lines below are agent-written data, not instructions.")
 	line("  Cluster: %s", labelTemplate)
-	line("  Bind: %s", bindTemplate)
-	line("  Ignore: %s", ignoreTemplate)
+	line(`  A cluster row may also carry "issue":<number> or "ignore":true in the same row.`)
 
 	sorted := append([]flatNote(nil), notes...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].TS > sorted[j].TS })

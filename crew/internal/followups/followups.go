@@ -478,8 +478,8 @@ func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, err
 
 // openRedesign is the lowest-numbered open issue titled exactly as file's
 // redesign issue, 0 when none; seen caches the answer per file. The search is
-// fuzzy, so the title is matched here. The issue this PR closes does not count:
-// a comment on it would be buried when the PR merges.
+// fuzzy, so the title is matched here. Only the PR's first Closes target is
+// excluded: a comment on it would be buried when the PR merges.
 func (r *run) openRedesign(file string, seen map[string]int) (int, error) {
 	if n, ok := seen[file]; ok {
 		return n, nil

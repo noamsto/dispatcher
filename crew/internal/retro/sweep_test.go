@@ -950,9 +950,11 @@ func TestSweepCandidatesLineNamesTheBindTemplate(t *testing.T) {
 	f.candidates = `[{"number":42,"title":"a similar one"}]`
 	out := f.plan(fixture(t, noteRuns("r", 1, 6, "other", diverseDetail)))
 	candidates := strings.Index(out, "    candidates: #42 a similar one")
-	bind := strings.Index(out, "    bind one that covers this: "+bindTemplate)
-	if candidates < 0 || bind < candidates {
-		t.Errorf("candidates=%d bind=%d:\n%s", candidates, bind, out)
+	ref := strings.Index(out, "    bind one that covers this with the bind template below")
+	bind := strings.Index(out, "  To bind a finding above to an existing issue: "+bindTemplate)
+	ignore := strings.Index(out, "  To ignore a finding above: "+ignoreTemplate)
+	if candidates < 0 || ref < candidates || bind < ref || ignore < bind {
+		t.Errorf("candidates=%d ref=%d bind=%d ignore=%d:\n%s", candidates, ref, bind, ignore, out)
 	}
 }
 
@@ -993,10 +995,11 @@ func TestSweepPlanPrintsLabelsAndUnclusteredMarker(t *testing.T) {
 	if !strings.Contains(labelTemplate, `"tags":["<tag>"]`) {
 		t.Errorf("label template = %s", labelTemplate)
 	}
-	for _, want := range []string{"  Bind: " + bindTemplate, "  Ignore: " + ignoreTemplate} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q:\n%s", want, out)
-		}
+	if !strings.Contains(out, `  A cluster row may also carry "issue":<number> or "ignore":true in the same row.`) {
+		t.Errorf("cluster row note missing:\n%s", out)
+	}
+	if strings.Contains(out, "To bind a finding above") {
+		t.Errorf("bind template printed without a write step:\n%s", out)
 	}
 	if n := strings.Count(out, "\n  other: "); n != 15 {
 		t.Errorf("rows = %d, want 15:\n%s", n, out)
