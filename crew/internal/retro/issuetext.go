@@ -241,7 +241,10 @@ var guardSafePath = regexp.MustCompile(`^[A-Za-z0-9_./+@:~-]+$`)
 // dispatch.sh's _mint_leak_check does, on a command naming the repo gh writes to.
 // An empty path yields a guard that never gives a verdict, as does a run that
 // may not have scanned: empty stdout with anything on stderr is a skipped scan,
-// not a clean one.
+// not a clean one. A target in the private-repo list is exempt by the script's
+// own policy, so its silent exit counts as clean. The repo goes last in the
+// command because a repo name ending in `-F` would otherwise swallow the
+// script's `-F <path>` body-file match.
 func ExecGuard(ctx context.Context, bash, path, cwd string, getenv func(string) string) Guard {
 	if path == "" {
 		return func(string, string, string) (bool, string, bool) { return false, "", false }
@@ -260,9 +263,9 @@ func ExecGuard(ctx context.Context, bash, path, cwd string, getenv func(string) 
 		if cerr := tmp.Close(); werr != nil || cerr != nil {
 			return false, "", false
 		}
-		command := "gh issue create --repo " + repo + " --body-file " + tmp.Name()
+		command := "gh issue create --body-file " + tmp.Name() + " --repo " + repo
 		if kind == "comment" {
-			command = "gh issue comment 1 --repo " + repo + " --body-file " + tmp.Name()
+			command = "gh issue comment 1 --body-file " + tmp.Name() + " --repo " + repo
 		}
 		payload, err := json.Marshal(map[string]any{
 			"hook_event_name": "PreToolUse",

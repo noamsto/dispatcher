@@ -313,7 +313,8 @@ func TestExecGuard(t *testing.T) {
 printf '%s' "$payload" > ` + outDir + `/payload
 cmd=${payload#*\"command\":\"}
 cmd=${cmd%%\"*}
-file=${cmd##* }
+file=${cmd#*--body-file }
+file=${file%% *}
 cp "$file" ` + outDir + `/body
 stat -c %a "$file" > ` + outDir + `/mode
 ` + tail + "\n"
@@ -335,7 +336,8 @@ stat -c %a "$file" > ` + outDir + `/mode
 		}
 	}
 	listed := env(cache)
-	const issuePrefix = "gh issue create --repo acme/app --body-file "
+	const issuePrefix = "gh issue create --body-file "
+	const issueSuffix = " --repo acme/app"
 
 	t.Run("allow", func(t *testing.T) {
 		g := ExecGuard(ctx, bash, writeStub(t, stub("exit 0")), "/work/dir", listed)
@@ -364,10 +366,10 @@ stat -c %a "$file" > ` + outDir + `/mode
 			t.Fatal(err)
 		}
 		if p.Event != "PreToolUse" || p.Tool != "Bash" || p.Cwd != "/work/dir" ||
-			!strings.HasPrefix(p.Input.Command, issuePrefix) {
+			!strings.HasPrefix(p.Input.Command, issuePrefix) || !strings.HasSuffix(p.Input.Command, issueSuffix) {
 			t.Fatalf("payload %s", raw)
 		}
-		tmpPath := strings.TrimPrefix(p.Input.Command, issuePrefix)
+		tmpPath := strings.TrimSuffix(strings.TrimPrefix(p.Input.Command, issuePrefix), issueSuffix)
 		if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
 			t.Fatalf("temp file not removed: %v", err)
 		}
@@ -377,7 +379,7 @@ stat -c %a "$file" > ` + outDir + `/mode
 		g := ExecGuard(ctx, bash, writeStub(t, stub("exit 0")), "/w", listed)
 		g("comment", "acme/app", "x")
 		raw, _ := os.ReadFile(filepath.Join(outDir, "payload"))
-		if !strings.Contains(string(raw), "gh issue comment 1 --repo acme/app --body-file ") {
+		if !strings.Contains(string(raw), "gh issue comment 1 --body-file ") || !strings.Contains(string(raw), " --repo acme/app\"") {
 			t.Fatalf("payload %s", raw)
 		}
 	})
@@ -422,6 +424,51 @@ stat -c %a "$file" > ` + outDir + `/mode
 	t.Run("missing cache abstains on empty stdout", func(t *testing.T) {
 		g := ExecGuard(ctx, bash, writeStub(t, stub("exit 0")), "/w", env(t.TempDir()))
 		if denied, _, ok := g("issue", "acme/app", "x"); denied || ok {
+			t.Fatalf("denied=%v ok=%v", denied, ok)
+		}
+	})
+
+	realGuard := func(t *testing.T) string {
+		t.Helper()
+		script, err := filepath.Abs("../../../adapters/core/public-leak-guard.sh")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(script); err != nil {
+			t.Skip("no guard script")
+		}
+		if _, err := exec.LookPath("jq"); err != nil {
+			t.Skip("no jq")
+		}
+		tmpdir, err := os.MkdirTemp("/tmp", "guard")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(tmpdir) })
+		t.Setenv("TMPDIR", tmpdir)
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("XDG_CACHE_HOME", cache)
+		return script
+	}
+
+	t.Run("real script reads the body for a repo ending in -F", func(t *testing.T) {
+		script := realGuard(t)
+		g := ExecGuard(ctx, bash, script, "/w", listed)
+		denied, _, ok := g("issue", "acme/app-F", "see "+os.Getenv("HOME")+"/x")
+		if !denied || !ok {
+			t.Fatalf("denied=%v ok=%v", denied, ok)
+		}
+	})
+
+	t.Run("real script with a failing betterleaks gives no verdict", func(t *testing.T) {
+		script := realGuard(t)
+		bin := t.TempDir()
+		if err := os.WriteFile(filepath.Join(bin, "betterleaks"), []byte("#!/bin/sh\nexit 2\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		g := ExecGuard(ctx, bash, script, "/w", listed)
+		if denied, _, ok := g("issue", "acme/app", "a clean body"); denied || ok {
 			t.Fatalf("denied=%v ok=%v", denied, ok)
 		}
 	})

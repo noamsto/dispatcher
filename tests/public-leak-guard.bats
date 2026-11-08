@@ -155,6 +155,14 @@ assert_silent() {
   [[ $stderr == *"betterleaks not found"* ]]
 }
 
+@test "public-leak-guard: a failing betterleaks allows, and says the scan was skipped" {
+  printf '#!/bin/sh\nexit 2\n' >"$BIN/betterleaks"
+  run --separate-stderr run_guard <<<"$(claude_bash "gh issue comment 1 -R someone/public --body 'token ghp_x'")"
+  [[ $status -eq 0 ]]
+  [[ -z $output ]]
+  [[ $stderr == *"betterleaks failed; secret scan skipped"* ]]
+}
+
 @test "public-leak-guard: without a private-repo list, a public target still gets every other check" {
   rm "$XDG_CACHE_HOME/dispatcher/private-repos"
   export CURL_CODE=200
