@@ -37,6 +37,8 @@ type world struct {
 	failOn    string
 	candidate string
 	tracker   string
+	// redesigns is the open-issue title search's output per file.
+	redesigns map[string]string
 }
 
 func openOrigin() map[int]string {
@@ -69,6 +71,13 @@ func (w *world) gh() *ghtest.Fake {
 		case args[0] == "issue" && args[1] == "list" && slices.Contains(args, "all"):
 			for file, out := range w.hits {
 				if strings.Contains(argv, `"`+file+`"`) {
+					return out, nil
+				}
+			}
+			return "[]", nil
+		case args[0] == "issue" && args[1] == "list" && strings.Contains(argv, " in:title"):
+			for file, out := range w.redesigns {
+				if strings.Contains(argv, `"redesign: `+file+`"`) {
 					return out, nil
 				}
 			}
@@ -202,6 +211,44 @@ func TestThreshold(t *testing.T) {
 		w := &world{views: openOrigin(), hits: map[string]string{fileA: hits2}}
 		r := run(t, w, entry, true)
 		if len(r.writes) != 2 || !strings.HasPrefix(r.writes[0], "issue comment 5") {
+			t.Errorf("writes %q", r.writes)
+		}
+	})
+}
+
+func TestThresholdKeepsOpenRedesignIssue(t *testing.T) {
+	entry := `[{"title":"tidy","body":"b","file":"` + fileA + `","same_area":true}]`
+	title := "redesign: " + fileA
+	open := fmt.Sprintf(`[{"number":9,"title":"redesign: other.sh"},{"number":1428,"title":%q}]`, title)
+	views := func(comments string) map[int]string {
+		v := openOrigin()
+		v[1428] = `{"state":"OPEN","title":"redesign","comments":[` + comments + `]}`
+		return v
+	}
+	t.Run("comments instead of filing a duplicate", func(t *testing.T) {
+		w := &world{views: views(""), hits: map[string]string{fileA: hits3}, redesigns: map[string]string{fileA: open}}
+		r := run(t, w, entry, true)
+		checkWrites(t, r, comment(1428, "tidy", "b"), prEdit(defaultBody(), followups.Link{N: 1428, Title: "tidy"}))
+		search := `issue list --state open --search "redesign: ` + fileA + `" in:title --limit 5 --json number,title`
+		if !slices.Contains(r.calls, search) {
+			t.Errorf("title search missing from %q", r.calls)
+		}
+	})
+	t.Run("rerun writes no second comment", func(t *testing.T) {
+		done := fmt.Sprintf(`{"body":%q}`, marker+"\n\ntidy\n\nb")
+		w := &world{views: views(done), hits: map[string]string{fileA: hits3}, redesigns: map[string]string{fileA: open}}
+		r := run(t, w, entry, true)
+		for _, wr := range r.writes {
+			if strings.HasPrefix(wr, "issue ") {
+				t.Errorf("rerun wrote %q", wr)
+			}
+		}
+	})
+	t.Run("another title files a new one", func(t *testing.T) {
+		w := &world{views: openOrigin(), hits: map[string]string{fileA: hits3},
+			redesigns: map[string]string{fileA: `[{"number":9,"title":"redesign: other.sh"}]`}}
+		r := run(t, w, entry, true)
+		if len(r.writes) == 0 || !strings.HasPrefix(r.writes[0], "issue create --title "+title+" ") {
 			t.Errorf("writes %q", r.writes)
 		}
 	})
