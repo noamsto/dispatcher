@@ -197,7 +197,11 @@ func TestBuildRequestRefusesEnv(t *testing.T) {
 		"CREW_WORKER_ID=worker:x",
 		"CREW_ID=a;b",
 		"CREW_ID=",
-		"DISPATCH_TMUX_SESSION=other",
+		"DISPATCH_TMUX_SESSION=-x",
+		"DISPATCH_TMUX_SESSION=a:b",
+		"DISPATCH_TMUX_SESSION=a.b",
+		"DISPATCH_TMUX_SESSION=a;b",
+		"DISPATCH_TMUX_SESSION=a\nb",
 		"DISPATCH_TMUX_SESSION=crew-a b",
 		"DISPATCH_EMIT_ROW=2",
 		"DISPATCH_ORIGIN_HOST=a b",
@@ -214,7 +218,7 @@ func TestBuildRequestRefusesEnv(t *testing.T) {
 		}
 	}
 	ok := []string{
-		"CREW_ID=c_1-x", "DISPATCH_TMUX_SESSION=crew-c_1", "DISPATCH_EMIT_ROW=1",
+		"CREW_ID=c_1-x", "DISPATCH_TMUX_SESSION=crew-c_1", "DISPATCH_TMUX_SESSION=dispatcher", "DISPATCH_EMIT_ROW=1",
 		"DISPATCH_SESSION_ID=s170-42", "CREW_IDENTITY_AVOID=ada,bo-b", "DISPATCH_ORIGIN_HOST=halo",
 	}
 	if _, err := BuildRequest("/r", "a/b", []string{"dispatch"}, ok, nil); err != nil {

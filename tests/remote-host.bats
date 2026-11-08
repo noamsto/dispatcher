@@ -197,7 +197,7 @@ EOF
 #!/usr/bin/env bash
 exec 3>&-
 if [ -n "\${TMUX_PANE:-}" ] && [ "\${1:-}" = display-message ]; then
-  case "\$*" in *'#{session_name}'*) echo main; exit 0 ;; esac
+  case "\$*" in *'#{session_name}'*) echo "\${STUB_LOCAL_SESSION:-main}"; exit 0 ;; esac
 fi
 if [ "\${1:-}" = show ] && [ "\${3:-}" = @remote_open_bin ]; then
   echo "\${STUB_REMOTE_OPEN_BIN:-}"
@@ -363,12 +363,12 @@ dispatch_remote() { # <extra dispatch args...> — a standard dispatch to crew c
   grep -qx 'crew_id: c1' "$wt/WORKER_TASK.md"
   grep -Eq '^dispatcher_pane: ?$' "$wt/WORKER_TASK.md"
   grep -qF 'Body line.' "$wt/WORKER_TASK.md"
-  remote_tmux list-windows -t =crew-c1 -F '#{@crew_branch}' | grep -qxF "$branch"
+  remote_tmux list-windows -t =main -F '#{@crew_branch}' | grep -qxF "$branch"
   # The dispatch that started the remote tmux server left no CREW_ or
   # DISPATCH_ var (CREW_ID among them) in the server's global environment.
   # Names only, never values.
   [ "$(remote_tmux show-environment -g | cut -d= -f1 | grep -cE '^(CREW|DISPATCH)_')" -eq 0 ]
-  grep -qF 'mini crew-c1 --into main' "$OG_LOG"
+  grep -qxF 'mini main --into main --window @crew_id=c1' "$OG_LOG"
   assert_ssh_command_is_literal
 
   # 2. Follow it from the local dispatcher's lane.
@@ -395,7 +395,7 @@ dispatch_remote() { # <extra dispatch args...> — a standard dispatch to crew c
   jq -e --arg b "$branch" '.[] | select(.branch == $b and .host == "mini") | .live == true' <<<"$output"
 
   # 6. Killing the remote window flips it.
-  remote_tmux kill-window -t "$(remote_tmux list-windows -t =crew-c1 -F '#{window_id}' | head -1)"
+  remote_tmux kill-window -t "$(remote_tmux list-windows -t =main-F '#{window_id}' | head -1)"
   run crew roster c1
   [ "$status" -eq 0 ]
   jq -e --arg b "$branch" '.[] | select(.branch == $b and .host == "mini") | .live == false' <<<"$output"
@@ -457,7 +457,7 @@ mirror_dispatch() {
   printf '#!/usr/bin/env bash\necho "og $*" >>"$OG_LOG"\n' >"$STUB_DIR/og"
   chmod +x "$STUB_DIR/og"
   mirror_dispatch
-  grep -qxF 'mini crew-c1 --into main' "$OG_LOG"
+  grep -qxF 'mini main --into main --window @crew_id=c1' "$OG_LOG"
   ! grep -q '^og ' "$OG_LOG"
 }
 
@@ -466,7 +466,7 @@ mirror_dispatch() {
   printf '#!/usr/bin/env bash\necho "og $*" >>"$OG_LOG"\n' >"$STUB_DIR/og"
   chmod +x "$STUB_DIR/og"
   mirror_dispatch
-  grep -qxF 'og remote open mini crew-c1 --into main' "$OG_LOG"
+  grep -qxF 'og remote open mini main --into main --window @crew_id=c1' "$OG_LOG"
 }
 
 @test "dispatch --host mirrors via the @remote_open_bin executable as the last resort" {
@@ -475,7 +475,7 @@ mirror_dispatch() {
   printf '#!/usr/bin/env bash\necho "opt $*" >>"$OG_LOG"\n' >"$BATS_TEST_TMPDIR/opt-launcher"
   chmod +x "$BATS_TEST_TMPDIR/opt-launcher"
   STUB_REMOTE_OPEN_BIN="$BATS_TEST_TMPDIR/opt-launcher" mirror_dispatch
-  grep -qxF 'opt mini crew-c1 --into main' "$OG_LOG"
+  grep -qxF 'opt mini main --into main --window @crew_id=c1' "$OG_LOG"
 }
 
 @test "dispatch --host names every launcher source when none resolves, and still succeeds" {
@@ -617,7 +617,7 @@ mirror_dispatch() {
   }
   [ "$(local_dispatch_rows | wc -l)" -eq 1 ]
   local_dispatch_rows | jq -e --arg s "$session" '.session == $s and .host == "mini" and .remote == true'
-  grep -qF 'mini crew-c1 --into main' "$OG_LOG"
+  grep -qxF 'mini crew-c1 --into main --window @crew_id=c1' "$OG_LOG"
 
   # A second run is a no-op: still one row.
   DISPATCH_HOST_RECOVER_TRIES=2 DISPATCH_HOST_RECOVER_SLEEP=0 \
@@ -632,4 +632,72 @@ mirror_dispatch() {
   [ "$status" -eq 1 ]
   [[ "$stderr" == *"no remote dispatch row for session s1-1"* ]]
   assert_nothing_recorded_locally
+}
+
+@test "dispatch --host from session dispatcher targets the remote dispatcher session, creating it, stamped and decorated" {
+  STUB_LOCAL_SESSION=dispatcher TMUX_PANE=%0 run --separate-stderr dispatch_remote --host mini 42 "Remote title"
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  run remote_tmux list-windows -t =dispatcher -F '#{@crew_id}|#{@crew_branch}|#{@crew_name}|#{@crew_color}'
+  [ "$status" -eq 0 ]
+  grep -Eq '^c1\|feat/42-[^|]*\|[^|]+\|[^|]+$' <<<"$output"
+  run remote_tmux show-window-options -v -t =dispatcher: pane-border-style
+  [ "$status" -eq 0 ]
+  [[ "$output" == *fg=* ]]
+  run ! remote_tmux has-session -t =crew-c1
+  [ "$(cat "$OG_LOG")" = 'mini dispatcher --into dispatcher --window @crew_id=c1' ]
+
+  # The session is shared with the owner's windows: a later pane inherits no CREW_ID.
+  local f="$BATS_TEST_TMPDIR/pane-env"
+  remote_tmux new-window -d -t =dispatcher: "sh -c 'printenv CREW_ID >$f; echo rc=\$? >>$f'"
+  poll_for 50 grep -q '^rc=' "$f"
+  grep -qx 'rc=1' "$f"
+}
+
+@test "dispatch --host adds its window to an existing remote session of that name" {
+  on_remote "$RHOME" tmux new-session -d -s dispatcher
+  local before
+  before="$(remote_tmux list-windows -t =dispatcher -F '#{window_id}' | wc -l)"
+  STUB_LOCAL_SESSION=dispatcher TMUX_PANE=%0 run --separate-stderr dispatch_remote --host mini 42 "Remote title"
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  [ "$(remote_tmux list-windows -t =dispatcher -F '#{window_id}' | wc -l)" -eq $((before + 1)) ]
+  remote_tmux list-windows -t =dispatcher -F '#{@crew_id}' | grep -qx ''
+  remote_tmux list-windows -t =dispatcher -F '#{@crew_id}' | grep -qx 'c1'
+}
+
+@test "dispatch --host refuses local session names unsafe for the remote" {
+  local name
+  for name in '-x' 'a;b' 'a b' '$(x)' 'a.b' 'a:b'; do
+    rm -f "$SSH_LOG" "$OG_LOG"
+    STUB_LOCAL_SESSION="$name" TMUX_PANE=%0 run --separate-stderr dispatch_remote --host mini 42 "Remote title"
+    [ "$status" -eq 1 ]
+    [[ "$stderr" == *"cannot name a remote session"* ]]
+    assert_nothing_recorded_locally
+    [ ! -e "$OG_LOG" ]
+    [ ! -e "$SSH_LOG" ]
+    [ "$(git -C "$REMOTE_CLONE" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ]
+  done
+}
+
+@test "dispatch --host --recover mirrors a worker still in an old crew-<id> session" {
+  run --separate-stderr dispatch_remote --host mini 42 "Remote title"
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  remote_tmux has-session -t =crew-c1
+  local session
+  session="$(local_dispatch_rows | jq -r .session)"
+  rm -f "$OG_LOG"
+  TMUX_PANE=%0 run --separate-stderr dispatch --host mini --recover "$session" --crew-id c1
+  [ "$status" -eq 0 ] || {
+    echo "$stderr" >&2
+    false
+  }
+  grep -qxF 'mini crew-c1 --into main --window @crew_id=c1' "$OG_LOG"
 }

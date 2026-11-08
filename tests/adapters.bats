@@ -113,11 +113,11 @@ teardown() {
   done
 }
 
-@test "dispatch-resume's _remote_window and _pane_client copies match dispatch.sh's" {
+@test "dispatch-resume's remote-session helpers, _remote_window and _pane_client copies match dispatch.sh's" {
   # A routed resume mirrors the remote window the way dispatch --host does, and
   # opens its own window through the same scrubbed client; both are standalone
   # builds, so each carries a copy.
-  for fn in _remote_window _pane_client; do
+  for fn in _remote_session_ok _remote_target_session _remote_worker_session _remote_window _pane_client; do
     canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch.sh")"
     [ -n "$canonical" ]
     found="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch-resume.sh")"
