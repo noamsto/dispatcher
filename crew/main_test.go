@@ -566,7 +566,7 @@ func TestRunRateSweepAllOutsideRepo(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	if code := run(context.Background(), []string{"rate", "--sweep-all", "--report"}, &stdout, &stderr, e); code != exitFailure ||
-		stderr.String() != "crew: rate takes --report, --json, --pooled, and --sweep-all/--root\n" {
+		stderr.String() != "crew: rate takes --report, --json, --pooled, --advise <engine> <tier>, and --sweep-all/--root\n" {
 		t.Errorf("code %d stdout %q stderr %q", code, stdout.String(), stderr.String())
 	}
 }
@@ -1921,7 +1921,7 @@ var preLocateRefusalRows = []struct {
 const (
 	holdUsage            = "crew: hold add|list|due|park|release"
 	retroUsage           = "crew: retro takes --report and --json, or --sweep [--apply-digest DIGEST]"
-	rateUsage            = "crew: rate takes --report, --json, --pooled, and --sweep-all/--root"
+	rateUsage            = "crew: rate takes --report, --json, --pooled, --advise <engine> <tier>, and --sweep-all/--root"
 	fleetUsage           = "crew: fleet [--all] [--crew ID] [--json]"
 	fleetReapEvery       = "crew: fleet stream: --reap-every is not supported — the fleet lane does not reap (each repo's own stream or dispatch does)"
 	stackUsage           = "usage: crew stack cut [--record] <child-branch|PR#> [<oid>]\n       crew stack align <top-PR#|branch>"

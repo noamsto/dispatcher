@@ -1422,7 +1422,7 @@ func rateRequest(c rateCmd) rate.Request {
 	for i, d := range c.Root {
 		roots[i] = *d
 	}
-	return rate.Request{Report: c.Report, JSON: c.JSON, Pooled: c.Pooled, SweepAll: c.SweepAll, Roots: roots}
+	return rate.Request{Report: c.Report, JSON: c.JSON, Pooled: c.Pooled, SweepAll: c.SweepAll, Roots: roots, Advise: c.Advise, Args: c.Args}
 }
 
 // fold runs the subcommand's fold over the read events, or maps the read or

@@ -1,4 +1,5 @@
-usage: crew rate [--report [--pooled] [--json]] [--sweep-all [--root DIR]...]
+usage: crew rate [--report [--pooled] [--json]] [--advise <engine> <tier> [--json]]
+                 [--sweep-all [--root DIR]...]
 
 Sweep a repo's bus into the global ratings store, or render that store.
 
@@ -6,8 +7,10 @@ Sweep a repo's bus into the global ratings store, or render that store.
   --report    Render the per-(engine, model, tier) rollup instead; reads the
               global store, plus the class-state file and model catalog for the
               text Class trials section — no bus, no network
+  --advise    Rank the models run at <engine> <tier> over the last 60 days, this
+              repo's figures first and pooled beside them; read-only advice
   --pooled    Pool the tiers into one row per engine and model
-  --json      Machine-readable report
+  --json      Machine-readable report or advice
   --sweep-all Walk every repo instead of this one — the one command with no use
               for the caller's own, so it runs outside a repo
   --root      Repo root to sweep; repeatable, only with --sweep-all
@@ -19,3 +22,4 @@ propose-only. --sweep-all never runs the check. The text --report ends with a
 `Class trials` section, pooled across repos; --json is unchanged.
 
   crew rate --report --json
+  crew rate --advise claude standard

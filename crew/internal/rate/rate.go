@@ -21,7 +21,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
@@ -39,7 +41,7 @@ var dedupeProgram string
 const (
 	// Usage is the line an agent reads when it hands rate flags it cannot run;
 	// it is the arm's own, kept verbatim.
-	Usage       = "crew: rate takes --report, --json, --pooled, and --sweep-all/--root"
+	Usage       = "crew: rate takes --report, --json, --pooled, --advise <engine> <tier>, and --sweep-all/--root"
 	exitType    = 5
 	exitFailure = 1
 )
@@ -84,6 +86,9 @@ func (o Options) withDefaults() Options {
 	if o.Getenv == nil {
 		o.Getenv = os.Getenv
 	}
+	if o.Clock.Now == nil {
+		o.Clock.Now = time.Now
+	}
 	if o.Run == nil {
 		o.Run = func(args ...string) (string, error) {
 			if len(args) == 0 {
@@ -112,6 +117,10 @@ type Request struct {
 	Pooled   bool
 	SweepAll bool
 	Roots    []string
+	// Advise renders the ranked model advice for Args, which must be exactly
+	// the engine and the tier.
+	Advise bool
+	Args   []string
 }
 
 // refusal is the mode-combination check, in the arm's order: --root without
@@ -121,6 +130,11 @@ func (r Request) refusal() string {
 	switch {
 	case len(r.Roots) > 0 && !r.SweepAll:
 		return "crew: rate --root needs --sweep-all"
+	case r.Advise:
+		if r.SweepAll || r.Report || r.Pooled || len(r.Args) != 2 || slices.ContainsFunc(r.Args, invalidToken) {
+			return Usage
+		}
+		return ""
 	case r.SweepAll && (r.Report || r.JSON || r.Pooled):
 		return Usage
 	case (r.JSON || r.Pooled) && !r.Report:
@@ -144,6 +158,9 @@ func Run(req Request, paths bus.Paths, cwd string, stdout, stderr io.Writer, o O
 		// why main.go may hand Run the zero paths.
 		return sweepAll(req.Roots, stdout, stderr, o)
 	}
+	if req.Advise {
+		return advise(req, cwd, stdout, stderr, o)
+	}
 	if req.Report {
 		return report(req, cwd, stdout, stderr, o)
 	}
@@ -158,22 +175,7 @@ func Run(req Request, paths bus.Paths, cwd string, stdout, stderr io.Writer, o O
 // git probe the scoped mode makes.
 func report(fl Request, cwd string, stdout, stderr io.Writer, o Options) int {
 	store := storePath(o.StorePath, o.Getenv)
-	rows := []any{}
-	if data, err := os.ReadFile(store); err == nil {
-		if vals, err := decodeAll(bytes.NewReader(data)); err == nil && vals != nil {
-			rows = vals
-		}
-	}
-	deduped, err := jqrun.RunAny(dedupeProgram, rows, 0, nil)
-	if err != nil {
-		// A row `.run_id` cannot index (a bare number, say) failed the arm's
-		// dedupe jq too, and its stderr went to /dev/null: fold to [].
-		deduped = []any{}
-	}
-	list, _ := deduped.([]any)
-	if list == nil {
-		list = []any{}
-	}
+	list := readStore(store)
 
 	currentRepo := ""
 	if !fl.Pooled {
@@ -207,6 +209,28 @@ func report(fl Request, cwd string, stdout, stderr io.Writer, o Options) int {
 	}
 	say(stdout, "%s\n", s)
 	return 0
+}
+
+// readStore is the deduped ratings store; a missing, empty or unparseable store
+// is no rows.
+func readStore(store string) []any {
+	rows := []any{}
+	if data, err := os.ReadFile(store); err == nil {
+		if vals, err := decodeAll(bytes.NewReader(data)); err == nil && vals != nil {
+			rows = vals
+		}
+	}
+	deduped, err := jqrun.RunAny(dedupeProgram, rows, 0, nil)
+	if err != nil {
+		// A row `.run_id` cannot index (a bare number, say) failed the arm's
+		// dedupe jq too, and its stderr went to /dev/null: fold to [].
+		return []any{}
+	}
+	list, _ := deduped.([]any)
+	if list == nil {
+		return []any{}
+	}
+	return list
 }
 
 // storePath is the arm's `${XDG_DATA_HOME:-$HOME/.local/share}/crew/

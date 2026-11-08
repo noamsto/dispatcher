@@ -3240,3 +3240,7 @@ _phase_stems() {
   run _budget_limit "$cache" pi "$now"
   [ "$status" -eq 1 ]
 }
+
+@test "dispatcher protocol tells the dispatcher to consult crew rate --advise" {
+  grep -qF 'crew rate --advise <engine> <tier>' "$ROOT/adapters/core/protocols/DISPATCHER_PROTOCOL.md"
+}
