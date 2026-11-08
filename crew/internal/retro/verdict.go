@@ -52,7 +52,10 @@ func runsIn(runTS []int64, w window) int {
 	return n
 }
 
-// evaluate applies the spec's verdict table with integer arithmetic only.
+// evaluate compares a finding's rate before and after its fix. The did-not-hold
+// and held tests cross-multiply so a float never decides a boundary. The held
+// sample is the rule of three: zero hits under an unchanged rate has at most a 5%
+// chance at ceil(3/p) runs.
 func evaluate(hitsB, runsB, hitsA, runsA int, fix, dayEnd int64) (verdict, reason string) {
 	if hitsA >= recurAfter && 2*hitsA*runsB >= hitsB*runsA {
 		return verdictDidNotHold, ""
