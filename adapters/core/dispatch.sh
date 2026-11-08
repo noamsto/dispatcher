@@ -4326,14 +4326,46 @@ _remote_ssh() { jq -r --arg h "$remote_host" '.hosts[$h].ssh // empty' <<<"$sett
 
 _remote_check_crew_id() {
   [[ $crew_id =~ ^[A-Za-z0-9_-]+$ ]] || {
-    echo "dispatch: --host needs a crew id matching ^[A-Za-z0-9_-]+\$ (got '$crew_id'): it names the remote tmux session crew-<id>" >&2
+    echo "dispatch: --host needs a crew id matching ^[A-Za-z0-9_-]+\$ (got '$crew_id'): it selects the remote windows to mirror" >&2
     exit 1
   }
 }
 
-# _remote_window <ssh> <crew_id> — mirror the remote crew-<id> session into this
-# tmux session, else say how to attach. og-remote-open is idempotent, so every
-# dispatch and resume runs it. Never fails: the remote worker exists either way.
+_remote_session_ok() {
+  [[ $1 =~ ^[A-Za-z0-9_][A-Za-z0-9_-]*$ ]]
+}
+
+# prints this tmux session's name, or crew-<id> outside tmux
+_remote_target_session() {
+  local name=""
+  [ -z "${TMUX_PANE:-}" ] || name="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)"
+  if [ -z "$name" ]; then
+    printf 'crew-%s\n' "$1"
+    return 0
+  fi
+  _remote_session_ok "$name" || {
+    printf "dispatch: tmux session '%s' cannot name a remote session: it must match ^[A-Za-z0-9_][A-Za-z0-9_-]*\$\n" "$name" >&2
+    return 1
+  }
+  printf '%s\n' "$name"
+}
+
+# <host> <crew> <branch> <fallback>: the session the window's stamps put it in
+_remote_worker_session() {
+  local line
+  line="$(crew remote-run --host "$1" --env "CREW_ID=$2" -- crew where "$3" --crew "$2" 2>/dev/null)" || line=""
+  if [[ $line =~ ^[^[:space:]]+\ —\ ([A-Za-z0-9_][A-Za-z0-9_-]*):[0-9]+\.[0-9]+\  ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  echo "dispatch: could not ask $1 where $3 is; assuming remote session $4" >&2
+  printf '%s\n' "$4"
+}
+
+# _remote_window <ssh> <crew_id> <session> — mirror the remote worker window
+# (selected by its @crew_id stamp) of <session> into this tmux session, else say
+# how to attach. og-remote-open is idempotent, so every dispatch and resume runs
+# it. Never fails: the remote worker exists either way.
 _remote_window() {
   local into bin reason=""
   local -a launcher=()
@@ -4357,13 +4389,13 @@ _remote_window() {
     into="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)"
     if [ -z "$into" ]; then
       reason="no tmux session for $TMUX_PANE"
-    elif "${launcher[@]}" "$1" "crew-$2" --into "$into" >&2; then
+    elif "${launcher[@]}" "$1" "$3" --into "$into" --window "@crew_id=$2" >&2; then
       return 0
     else
       reason="${launcher[*]} failed"
     fi
   fi
-  echo "dispatch: remote window not mirrored ($reason); attach with: ssh -t $1 tmux attach -t crew-$2" >&2
+  echo "dispatch: remote window not mirrored ($reason); attach with: ssh -t $1 tmux attach -t $3" >&2
 }
 
 _remote_link_failed() {
@@ -4417,7 +4449,7 @@ _remote_finish() {
     num="${BASH_REMATCH[1]}"
   fi
   _claim_index_dispatch
-  _remote_window "$(_remote_ssh)" "$crew_id"
+  _remote_window "$(_remote_ssh)" "$crew_id" "$remote_session"
   echo "worker_id: $(jq -r .worker_id <<<"$1")"
   echo "dispatch: remote worker on host $remote_host — followed by this repo's crew stream"
 }
@@ -4425,11 +4457,16 @@ _remote_finish() {
 # _remote_recover — `dispatch --host H --recover S`: record the worker a dropped
 # link left unconfirmed. A session already recorded only gets its window again.
 _remote_recover() {
-  local row rc=0
-  if [ -f "$crew_dir/events.jsonl" ] && jq -enR --arg s "$session" --arg h "$remote_host" '
-    [inputs | fromjson? | objects | select(.kind == "dispatch" and .remote == true and .session == $s and .host == $h)] | length > 0' \
-    "$crew_dir/events.jsonl" >/dev/null; then
-    _remote_window "$(_remote_ssh)" "$crew_id"
+  local row rc=0 rec_branch=""
+  remote_session="$(_remote_target_session "$crew_id")" || exit 1
+  if [ -f "$crew_dir/events.jsonl" ]; then
+    rec_branch="$(jq -rnR --arg s "$session" --arg h "$remote_host" '
+      [inputs | fromjson? | objects | select(.kind == "dispatch" and .remote == true and .session == $s and .host == $h)] | last | .branch // empty' \
+      "$crew_dir/events.jsonl")"
+  fi
+  if [ -n "$rec_branch" ]; then
+    remote_session="$(_remote_worker_session "$remote_host" "$crew_id" "$rec_branch" "$remote_session")"
+    _remote_window "$(_remote_ssh)" "$crew_id" "$remote_session"
     return 0
   fi
   row="$(_remote_recover_row)" || rc=$?
@@ -4442,6 +4479,7 @@ _remote_recover() {
     ;;
   esac
   _remote_row_valid "$row" || _remote_unfollowable
+  remote_session="$(_remote_worker_session "$remote_host" "$crew_id" "$(jq -r .branch <<<"$row")" "$remote_session")"
   _remote_finish "$row"
 }
 
@@ -4584,6 +4622,8 @@ _dispatch_remote() {
     fi
   fi
 
+  remote_session="$(_remote_target_session "$crew_id")" || exit 1
+
   # The engine roster is the remote's; this call is also the preflight that
   # surfaces an unknown host, a missing clone mapping or a dead link.
   engines="$(crew remote-run --host "$remote_host" --env "CREW_ID=$crew_id" -- dispatch --engines)" || exit $?
@@ -4660,7 +4700,7 @@ _dispatch_remote() {
       echo "dispatch: --host: not passing codename '$tok' to the remote (not [A-Za-z0-9-]+)" >&2
     fi
   done <<<"$occupied"
-  run_env=(--env "CREW_ID=$crew_id" --env "DISPATCH_TMUX_SESSION=crew-$crew_id" --env DISPATCH_EMIT_ROW=1 --env "DISPATCH_SESSION_ID=$session")
+  run_env=(--env "CREW_ID=$crew_id" --env "DISPATCH_TMUX_SESSION=$remote_session" --env DISPATCH_EMIT_ROW=1 --env "DISPATCH_SESSION_ID=$session")
   # A cosmetic stamp must not fail the dispatch: a local name the remote would refuse is omitted.
   origin_host="$(_short_host)"
   if [[ $origin_host =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
@@ -5166,9 +5206,10 @@ crew_id="${crew_id_flag:-${CREW_ID:-}}"
 }
 
 # Remote mode: a dispatcher on another host asked for this worker's window in
-# the crew's own session. The value becomes a tmux target, so its shape is fixed.
-if [ -n "${DISPATCH_TMUX_SESSION:-}" ] && [[ ! $DISPATCH_TMUX_SESSION =~ ^crew-[A-Za-z0-9_-]+$ ]]; then
-  echo "dispatch: DISPATCH_TMUX_SESSION must match ^crew-[A-Za-z0-9_-]+\$ (got '$DISPATCH_TMUX_SESSION')" >&2
+# the named session, possibly shared with windows that are not this crew's. The
+# value becomes a tmux target, so its shape is fixed.
+if [ -n "${DISPATCH_TMUX_SESSION:-}" ] && ! _remote_session_ok "$DISPATCH_TMUX_SESSION"; then
+  echo "dispatch: DISPATCH_TMUX_SESSION must match ^[A-Za-z0-9_][A-Za-z0-9_-]*\$ (got '$DISPATCH_TMUX_SESSION')" >&2
   exit 1
 fi
 
@@ -6950,7 +6991,7 @@ if [ -z "$target_session" ] && [ -z "${TMUX:-}" ] && [ -z "${TMUX_PANE:-}" ]; th
   echo "dispatch: outside tmux — worker window goes in session $target_session (attach: tmux attach -t $target_session)" >&2
 fi
 if [ -n "$target_session" ]; then
-  # Remote mode: the window goes in the crew's own session, which is created
+  # Remote mode: the window goes in the named session, which is created
   # with it when absent, so no placeholder shell window gets mirrored. There is
   # no client to size from; the mirror resizes.
   win_args=(-c "$wt_path" -n "$sanitized" -e "CREW_WORKER_ID=$worker_id" -e "CREW_ID=$crew_id" -P -F '#{window_id} #{pane_id}')
@@ -6958,7 +6999,9 @@ if [ -n "$target_session" ]; then
     win_ids="$(_pane_client new-window -d -t "=$target_session:" "${win_args[@]}")"
   elif win_ids="$(_pane_client new-session -d -s "$target_session" "${win_args[@]}" 2>/dev/null)"; then
     # new-session -e sets the session environment, which later windows inherit.
+    # The session may be shared with windows that are not this crew's.
     tmux set-environment -t "=$target_session" -u CREW_WORKER_ID
+    tmux set-environment -t "=$target_session" -u CREW_ID
   else
     # A racing dispatch created the session first.
     win_ids="$(_pane_client new-window -d -t "=$target_session:" "${win_args[@]}")"

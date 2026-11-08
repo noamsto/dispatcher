@@ -51,7 +51,7 @@ var (
 // single-host sender tripwire.
 var EnvAllow = map[string]*regexp.Regexp{
 	"CREW_ID":               regexp.MustCompile(`\A[A-Za-z0-9_-]+\z`),
-	"DISPATCH_TMUX_SESSION": regexp.MustCompile(`\Acrew-[A-Za-z0-9_-]+\z`),
+	"DISPATCH_TMUX_SESSION": regexp.MustCompile(`\A[A-Za-z0-9_][A-Za-z0-9_-]*\z`),
 	"DISPATCH_ORIGIN_HOST":  regexp.MustCompile(`\A[A-Za-z0-9][A-Za-z0-9_-]*\z`),
 	"DISPATCH_EMIT_ROW":     regexp.MustCompile(`\A1\z`),
 	"DISPATCH_SESSION_ID":   SessionRe,

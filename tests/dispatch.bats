@@ -3909,8 +3909,20 @@ EOF
   [ "$row" = "$(jq -c 'select(.kind == "dispatch")' "$TEST_REPO/.git/crew/events.jsonl")" ]
   grep -qE '^new-session -d -s crew-c1 -c .* -n feat-42-remote-worker .* -P' "$STUB_LOG"
   grep -qx 'set-environment -t =crew-c1 -u CREW_WORKER_ID' "$STUB_LOG"
+  grep -qx 'set-environment -t =crew-c1 -u CREW_ID' "$STUB_LOG"
   grep -qx 'dispatcher_pane: ' "$TEST_REPO/.dispatch-wt/feat-42-remote-worker/WORKER_TASK.md"
   run ! grep -qE '^(new-window|resize-window)|^roster-render' "$STUB_LOG"
+}
+
+@test "remote mode: DISPATCH_TMUX_SESSION=dispatcher creates the dispatcher's own session" {
+  stub_launch_bins
+  _remote_mode_tmux
+  TMUX_PANE=%7 DISPATCH_TMUX_SESSION=dispatcher DISPATCH_EMIT_ROW=1 \
+    run --separate-stderr run_dispatch standard sonnet --effort medium --crew-id c1 42 "remote worker"
+  [ "$status" -eq 0 ]
+  grep -qE '^new-session -d -s dispatcher -c .* -n feat-42-remote-worker .* -P' "$STUB_LOG"
+  grep -qx 'set-environment -t =dispatcher -u CREW_ID' "$STUB_LOG"
+  run ! grep -qE '^new-session -d -s crew-c1' "$STUB_LOG"
 }
 
 @test "remote mode: an existing crew session gets a new window" {
@@ -4049,13 +4061,15 @@ EOF
   run ! grep -qE '^new-session' "$STUB_LOG"
 }
 
-@test "remote mode: a DISPATCH_TMUX_SESSION outside crew-<id> is refused before any scaffolding" {
+@test "remote mode: an unsafe DISPATCH_TMUX_SESSION is refused before any scaffolding" {
   stub_launch_bins
   _remote_mode_tmux
-  DISPATCH_TMUX_SESSION='main:1' run run_dispatch standard sonnet --effort medium --crew-id c1 42 "t"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"DISPATCH_TMUX_SESSION must match"* ]]
-  [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ]
+  for name in 'main:1' '-x' 'a.b' 'a;b'; do
+    DISPATCH_TMUX_SESSION="$name" run run_dispatch standard sonnet --effort medium --crew-id c1 42 "t"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"DISPATCH_TMUX_SESSION must match"* ]]
+    [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ]
+  done
 }
 
 @test "DISPATCH_ORIGIN_HOST differing from this host stamps the header, window option and border" {
