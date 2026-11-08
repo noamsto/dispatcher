@@ -65,7 +65,7 @@ type mapView struct {
 	active bool // the tab is showing; renders only run then
 	shown  bool // a crew has been chosen
 	crewID string
-	sel    string // branch of the selected planet; follows the worker across renders
+	sel    mapgeom.PlanetKey // selected planet; follows the worker across renders
 
 	boxW, boxH int // body cells reserved for the view, from the root
 
@@ -111,7 +111,7 @@ func (v mapView) enter(live data.Selection) (view, tea.Cmd) {
 		w, _ := live.(data.Worker)
 		v.setCrew(v.pickCrew(w.Crew))
 		if v.crewID == w.Crew {
-			v.sel = w.Branch
+			v.sel = mapgeom.PlanetKey{Branch: w.Branch}
 		}
 		v.shown = true
 	}
@@ -236,8 +236,11 @@ func (v mapView) startAction(a action) (view, tea.Cmd) {
 	w, ok := v.worker()
 	if !ok {
 		reason := "worker not in roster"
-		if v.sel == "" {
+		if v.sel.Branch == "" {
 			reason = "no worker selected"
+		}
+		if repo, other := v.otherRepo(); other {
+			reason = "worker in another repo: " + cleanText(repo)
 		}
 		return v, statusCmd(a.String()+": "+reason, true)
 	}
@@ -245,12 +248,38 @@ func (v mapView) startAction(a action) (view, tea.Cmd) {
 	return v, cmd
 }
 
+// worker resolves the selected planet's worker. The roster lists only the home
+// bus, so a planet from a joined repo has none, and a repo-qualified selection
+// whose planet is gone must not fall back to the same-named home worker.
 func (v mapView) worker() (data.Worker, bool) {
-	return workerByBranch(v.snap, v.crewID, v.sel)
+	if _, other := v.otherRepo(); other {
+		return data.Worker{}, false
+	}
+	if v.sel.Repo != "" && v.selIndex() < 0 {
+		return data.Worker{}, false
+	}
+	return workerByBranch(v.snap, v.crewID, v.sel.Branch)
 }
 
+// otherRepo reports the repo of the selected planet when it is not a home one.
+func (v mapView) otherRepo() (string, bool) {
+	i := v.selIndex()
+	if i < 0 {
+		return "", false
+	}
+	p := v.geom.Planets[i]
+	return p.Repo, p.Repo != "" && !p.Home
+}
+
+// selIndex finds the selected planet. A key without a repo (the entry path,
+// which only knows the roster row's branch) matches the first home planet.
 func (v mapView) selIndex() int {
-	return slices.IndexFunc(v.geom.Planets, func(p mapgeom.Planet) bool { return p.Branch == v.sel })
+	return slices.IndexFunc(v.geom.Planets, func(p mapgeom.Planet) bool {
+		if v.sel.Repo == "" {
+			return p.Branch == v.sel.Branch && (p.Repo == "" || p.Home)
+		}
+		return p.Key() == v.sel
+	})
 }
 
 // step moves the selection d planets along the slot order, wrapping.
@@ -267,11 +296,11 @@ func (v *mapView) step(d int) tea.Cmd {
 }
 
 func (v *mapView) selectPlanet(i int) tea.Cmd {
-	branch := v.geom.Planets[i].Branch
-	if branch == v.sel {
+	key := v.geom.Planets[i].Key()
+	if key == v.sel {
 		return nil
 	}
-	v.sel = branch
+	v.sel = key
 	return v.request()
 }
 
@@ -303,7 +332,7 @@ func (v *mapView) setCrew(id string) {
 	if id == v.crewID {
 		return
 	}
-	v.crewID, v.sel, v.err = id, "", ""
+	v.crewID, v.sel, v.err = id, mapgeom.PlanetKey{}, ""
 	v.gen++
 	v.drop()
 }
@@ -357,11 +386,14 @@ func (v *mapView) request() tea.Cmd {
 	return v.renderCmd(v.gen, v.crewID, v.sel, v.reqPlace)
 }
 
-func (v mapView) renderCmd(gen int, crewID, sel string, p mapgeom.Placement) tea.Cmd {
+func (v mapView) renderCmd(gen int, crewID string, sel mapgeom.PlanetKey, p mapgeom.Placement) tea.Cmd {
 	argv := append(slices.Clone(v.acts.crew), "roster-render", "--map", "--crew", crewID,
 		"--px", fmt.Sprintf("%dx%d", p.PxW(), p.PxH()), "--out", v.deps.OutPath)
-	if sel != "" {
-		argv = append(argv, "--select", sel)
+	if sel.Branch != "" {
+		argv = append(argv, "--select", sel.Branch)
+		if sel.Repo != "" {
+			argv = append(argv, "--select-repo", sel.Repo)
+		}
 	}
 	ctx, runner := v.acts.ctx, v.acts.runner
 	return func() tea.Msg {
@@ -397,8 +429,14 @@ func (v *mapView) accept(msg mapRenderedMsg) tea.Cmd {
 
 	// The selection may have left the crew since the render started; the next
 	// render redraws the ring on a planet that is there.
-	if v.selIndex() < 0 && len(v.geom.Planets) > 0 {
-		v.sel = v.geom.Planets[0].Branch
+	i := v.selIndex()
+	switch {
+	case i < 0 && len(v.geom.Planets) > 0:
+		v.sel = v.geom.Planets[0].Key()
+		v.pending = true
+	case i >= 0 && v.sel.Repo == "" && v.geom.Planets[i].Repo != "":
+		// Re-render so the renderer rings only this repo's planet.
+		v.sel = v.geom.Planets[i].Key()
 		v.pending = true
 	}
 	if v.paint {
@@ -512,12 +550,15 @@ func mapMessage(w int, reason string) string {
 }
 
 func (v mapView) infoLine() string {
-	if v.sel == "" {
+	if v.sel.Branch == "" {
 		return "no workers"
+	}
+	if repo, other := v.otherRepo(); other {
+		return cleanText(v.sel.Branch) + " · in " + cleanText(repo) + " (another repo)"
 	}
 	w, ok := v.worker()
 	if !ok {
-		return "worker not in roster: " + cleanText(v.sel)
+		return "worker not in roster: " + cleanText(v.sel.Branch)
 	}
 	var parts []string
 	for _, s := range []string{w.Name, w.Branch, w.State, prCell(w.PRURL)} {

@@ -834,7 +834,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		req := rosterrender.Request{
 			Crew: str(rr.Crew), Pane: str(rr.Pane), Interval: str(rr.Interval), Quiet: str(rr.Quiet),
 			NoOpen: rr.NoOpen, Once: rr.Once, Detach: rr.Detach,
-			Map: rr.Map, Px: str(rr.Px), Select: str(rr.Select), Out: str(rr.Out),
+			Map: rr.Map, Px: str(rr.Px), Select: str(rr.Select), SelectRepo: str(rr.SelectRepo), Out: str(rr.Out),
 		}
 		var ghc gh.Client
 		if !rr.Map && gh.Installed(ctx, gh.Exec{}) {

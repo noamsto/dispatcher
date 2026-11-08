@@ -121,6 +121,9 @@ func (r *mapRig) respond(crew, px string, g mapgeom.Geometry) {
 	r.fake.Responses[key] = ok(string(raw))
 	for _, p := range g.Planets {
 		r.fake.Responses[key+" --select "+p.Branch] = ok(string(raw))
+		if p.Repo != "" {
+			r.fake.Responses[key+" --select "+p.Branch+" --select-repo "+p.Repo] = ok(string(raw))
+		}
 	}
 }
 
@@ -165,7 +168,7 @@ func (r *mapRig) count(typeName string) int {
 	return n
 }
 
-func mapSel(m Model) string { return m.views[mapTab].(mapView).sel }
+func mapSel(m Model) string { return m.views[mapTab].(mapView).sel.Branch }
 
 func renders(f *data.FakeRunner) int {
 	n := 0
@@ -238,8 +241,8 @@ func TestMapOpensOnLiveCursorCrewAndSelection(t *testing.T) {
 		t.Fatalf("active = %d, want the map tab", m.active)
 	}
 	mv := m.views[mapTab].(mapView)
-	if mv.crewID != "c1" || mv.sel != "feat/101-basil" {
-		t.Fatalf("crew %q sel %q, want c1 on the Live cursor's worker", mv.crewID, mv.sel)
+	if mv.crewID != "c1" || mv.sel.Branch != "feat/101-basil" {
+		t.Fatalf("crew %q sel %q, want c1 on the Live cursor's worker", mv.crewID, mv.sel.Branch)
 	}
 	wantArgv := []string{"crew", "roster-render", "--map", "--crew", "c1", "--px", "1000x500", "--out", mapOut, "--select", "feat/101-basil"}
 	if got := argvs(r.fake); len(got) != 1 || !slices.Equal(got[0], wantArgv) {
@@ -262,8 +265,8 @@ func TestMapOpensOnTheCrewOfTheLiveCursor(t *testing.T) {
 	r.snap.Roster.Crews[1].Workers[0]["ts"] = float64(1789000000000)
 	m := r.open()
 	mv := m.views[mapTab].(mapView)
-	if mv.crewID != "c2" || mv.sel != "feat/200-zeta" {
-		t.Fatalf("crew %q sel %q, want c2 on zeta", mv.crewID, mv.sel)
+	if mv.crewID != "c2" || mv.sel.Branch != "feat/200-zeta" {
+		t.Fatalf("crew %q sel %q, want c2 on zeta", mv.crewID, mv.sel.Branch)
 	}
 }
 
@@ -271,8 +274,8 @@ func TestMapCyclesCrews(t *testing.T) {
 	r := newMapRig(t, false, true)
 	m := r.press(r.open(), keyRune('c'))
 	mv := m.views[mapTab].(mapView)
-	if mv.crewID != "c2" || mv.sel != "feat/200-zeta" || len(mv.geom.Planets) != 1 {
-		t.Fatalf("crew %q sel %q planets %d, want c2 with its own map", mv.crewID, mv.sel, len(mv.geom.Planets))
+	if mv.crewID != "c2" || mv.sel.Branch != "feat/200-zeta" || len(mv.geom.Planets) != 1 {
+		t.Fatalf("crew %q sel %q planets %d, want c2 with its own map", mv.crewID, mv.sel.Branch, len(mv.geom.Planets))
 	}
 	m = r.press(m, keyRune('c'))
 	if mv := m.views[mapTab].(mapView); mv.crewID != "c1" {
@@ -681,8 +684,8 @@ func TestMapNewPlanetKeepsSelectionByBranch(t *testing.T) {
 		ro.Crews[0].Workers = append(ro.Crews[0].Workers, map[string]any{"branch": "feat/099-zero", "name": "zero", "state": "working", "session": "s1"})
 	}))
 	mv := m.views[mapTab].(mapView)
-	if len(mv.geom.Planets) != 17 || mv.sel != "feat/101-basil" || mv.selIndex() != 2 {
-		t.Fatalf("planets %d sel %q index %d, want 17 planets and basil now at slot 2", len(mv.geom.Planets), mv.sel, mv.selIndex())
+	if len(mv.geom.Planets) != 17 || mv.sel.Branch != "feat/101-basil" || mv.selIndex() != 2 {
+		t.Fatalf("planets %d sel %q index %d, want 17 planets and basil now at slot 2", len(mv.geom.Planets), mv.sel.Branch, mv.selIndex())
 	}
 }
 
@@ -1175,5 +1178,101 @@ func TestMapClickOutsideTheShownBlockAfterAShrinkIsIgnored(t *testing.T) {
 	x, y := cellOf(g.Planets[0].CX, g.Planets[0].CY)
 	if got := mapSel(r.press(m, click(x, y))); got != "feat/100-amber" {
 		t.Fatalf("a click inside the shown block selected %q, want planet 0", got)
+	}
+}
+
+// twoRepoRig is crew c1 with one worker on feat/x, drawn as two planets: the
+// home repo's (alpha) and a joined repo's (beta) of the same branch.
+func twoRepoRig(t *testing.T) *mapRig {
+	t.Helper()
+	r := newMapRig(t, false, true)
+	r.snap.Roster.Crews[0].Workers = []map[string]any{{
+		"branch": "feat/x", "name": "xray", "state": "working", "session": "s1",
+		"ts": float64(1789999000000), "age_s": float64(10), "detail": "d",
+	}}
+	g := mapgeom.Geometry{V: 1, W: 1000, H: 500, PNG: mapOut, Planets: []mapgeom.Planet{
+		{Branch: "feat/x", Name: "xray", Repo: "alpha", Home: true, CX: 250, CY: 250, R: 30},
+		{Branch: "feat/x", Name: "xray", Repo: "beta", CX: 750, CY: 250, R: 30},
+	}}
+	for _, px := range mapPx {
+		r.respond("c1", px, g)
+	}
+	return r
+}
+
+func lastRender(f *data.FakeRunner) string {
+	var last []string
+	for _, a := range argvs(f) {
+		if slices.Contains(a, "roster-render") {
+			last = a
+		}
+	}
+	return strings.Join(last, " ")
+}
+
+func TestMapSelectionFollowsRepoForSameBranch(t *testing.T) {
+	r := twoRepoRig(t)
+	m := r.open()
+	mv := m.views[mapTab].(mapView)
+	alpha, beta := mapgeom.PlanetKey{Repo: "alpha", Branch: "feat/x"}, mapgeom.PlanetKey{Repo: "beta", Branch: "feat/x"}
+	if mv.sel != alpha {
+		t.Fatalf("sel = %+v, want the home planet %+v", mv.sel, alpha)
+	}
+	if w, ok := mv.worker(); !ok || w.Name != "xray" {
+		t.Fatalf("home planet worker = %+v, %v", w, ok)
+	}
+	if got := mv.infoLine(); !strings.HasPrefix(got, "xray · feat/x") {
+		t.Fatalf("home info = %q", got)
+	}
+
+	for _, step := range []struct {
+		key  tea.Msg
+		want mapgeom.PlanetKey
+	}{{keyRune('l'), beta}, {keyRune('l'), alpha}, {click(75, 13), beta}, {click(25, 13), alpha}} {
+		m = r.press(m, step.key)
+		mv = m.views[mapTab].(mapView)
+		if mv.sel != step.want {
+			t.Fatalf("sel = %+v, want %+v", mv.sel, step.want)
+		}
+		if want := "--select feat/x --select-repo " + step.want.Repo; !strings.Contains(lastRender(r.fake), want) {
+			t.Fatalf("render argv %q lacks %q", lastRender(r.fake), want)
+		}
+		_, ok := mv.worker()
+		if home := step.want == alpha; ok != home {
+			t.Fatalf("%+v: worker resolved = %v, want %v", step.want, ok, home)
+		}
+		if step.want == beta {
+			if got, want := mv.infoLine(), "feat/x · in beta (another repo)"; got != want {
+				t.Fatalf("info = %q, want %q", got, want)
+			}
+		}
+	}
+
+	m = r.press(m, keyRune('l'))
+	before := len(r.fake.CallsSnapshot())
+	m = r.press(m, keyRune('t'))
+	wantStatus(t, m, "jump: worker in another repo: beta")
+	if got := len(r.fake.CallsSnapshot()); got != before {
+		t.Fatalf("%d runner calls for an action on another repo's planet, want none", got-before)
+	}
+}
+
+func TestMapRepoKeyWithoutPlanetRefusesWorker(t *testing.T) {
+	r := twoRepoRig(t)
+	mv := r.open().views[mapTab].(mapView)
+	mv.sel = mapgeom.PlanetKey{Repo: "gone", Branch: "feat/x"}
+	if _, ok := mv.worker(); ok {
+		t.Fatal("worker resolved for a repo with no planet")
+	}
+}
+
+func TestMapEntryKeyRekeysToHomePlanet(t *testing.T) {
+	r := twoRepoRig(t)
+	m := r.open()
+	if got, want := lastRender(r.fake), "--select feat/x --select-repo alpha"; !strings.Contains(got, want) {
+		t.Fatalf("follow-up render argv %q lacks %q", got, want)
+	}
+	if got := m.views[mapTab].(mapView).sel; got != (mapgeom.PlanetKey{Repo: "alpha", Branch: "feat/x"}) {
+		t.Fatalf("sel = %+v after entry", got)
 	}
 }

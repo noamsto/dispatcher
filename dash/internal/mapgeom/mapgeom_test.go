@@ -190,6 +190,23 @@ func TestParseRepo(t *testing.T) {
 	}
 }
 
+func TestParseHomeAndKey(t *testing.T) {
+	m := goodJSON()
+	planetsOf(m)[0].(map[string]any)["repo"] = "dispatcher"
+	planetsOf(m)[0].(map[string]any)["home"] = true
+	data, _ := json.Marshal(m)
+	g, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !g.Planets[0].Home || g.Planets[1].Home {
+		t.Errorf("home = %v, %v; want true, false", g.Planets[0].Home, g.Planets[1].Home)
+	}
+	if got, want := g.Planets[0].Key(), (PlanetKey{Repo: "dispatcher", Branch: g.Planets[0].Branch}); got != want {
+		t.Errorf("key = %+v, want %+v", got, want)
+	}
+}
+
 func TestParseSameBranchInTwoRepos(t *testing.T) {
 	for _, c := range []struct {
 		name         string

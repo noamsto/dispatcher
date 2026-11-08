@@ -87,6 +87,9 @@ func buildFrame(ctx context.Context, o Options, paths bus.Paths, cdir, crew stri
 				wants = append(wants, ciWant{URL: p.prURL, Repo: src.slug})
 			}
 		}
+		for j := range res.planets {
+			res.planets[j].home = i == 0
+		}
 		ps = append(ps, res.planets...)
 		lg.add(res.lg)
 		live += res.live

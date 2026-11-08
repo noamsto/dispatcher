@@ -183,7 +183,7 @@ func runMap(ctx context.Context, c call, paths bus.Paths, o Options) int {
 	if err != nil {
 		return fail(err)
 	}
-	svg, err := o.Probes.Graphviz(ctx, []byte(buildDOT(fr.sc, nil, c.selectBranch)))
+	svg, err := o.Probes.Graphviz(ctx, []byte(buildDOT(fr.sc, nil, c.selectBranch, c.selectRepo)))
 	if err != nil {
 		return fail(err)
 	}

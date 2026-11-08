@@ -1311,7 +1311,7 @@ func TestRenderedWedges(t *testing.T) {
 
 	// The map has no legend, so its viewBox is the corners plus the graph pad.
 	_, sc, _ := emitRepos(wedgeRoster())
-	svg := neatoSVG(t, neato, buildDOT(sc, nil, ""))
+	svg := neatoSVG(t, neato, buildDOT(sc, nil, "", ""))
 	vbW, vbH, ok := viewBoxSize(svg)
 	if !ok {
 		t.Fatal("svg has no viewBox")
