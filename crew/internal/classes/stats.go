@@ -7,9 +7,9 @@ type Key struct{ Engine, Tier, Model string }
 
 // Stats aggregates the rated runs of one Key.
 type Stats struct {
-	N, Merged, Failed, Costed int
-	ReworkN                   int
-	ReworkSum, CostMS         float64
+	N, Merged, Failed, Costed, CostedMerged int
+	ReworkN                                 int
+	ReworkSum, CostMS                       float64
 }
 
 // Rated reports whether row is a run with a settled outcome: an owned PR that
@@ -62,6 +62,9 @@ func Collect(rows []any) map[Key]*Stats {
 		if v, ok := number(row["cost_proxy"]); ok {
 			s.Costed++
 			s.CostMS += v
+			if row["pr_state"] == "MERGED" {
+				s.CostedMerged++
+			}
 		}
 	}
 	return out
@@ -94,12 +97,15 @@ func (s Stats) Rework() (float64, bool) {
 	return s.ReworkSum / float64(s.ReworkN), true
 }
 
-// BurnPerMergedHours is the weighted wall-clock spent per merged PR, in hours.
-// It is measured only when every rated run is costed: an uncosted run would
-// add to the merged count and not to the cost, reading too cheap.
+// BurnPerMergedHours is the wall-clock spent per merged PR, in hours, over the
+// costed runs. The divisor is the costed merged runs: an uncosted merged run
+// must leave the sum and the divisor alike, or it reads too cheap. Costed
+// failed or closed runs stay in the sum, since their wasted work is part of the
+// cost. It is measured when every rated run is costed, or when at least minRuns
+// are costed; a thinner partly costed sample is unmeasured.
 func (s Stats) BurnPerMergedHours() (float64, bool) {
-	if s.Merged == 0 || s.Costed != s.N {
+	if s.CostedMerged == 0 || (s.Costed != s.N && s.Costed < minRuns) {
 		return 0, false
 	}
-	return s.CostMS / float64(s.Merged) / 3_600_000, true
+	return s.CostMS / float64(s.CostedMerged) / 3_600_000, true
 }
