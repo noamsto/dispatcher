@@ -93,6 +93,8 @@ type retroCmd struct {
 	Draft  bool    `name:"draft"`
 	All    bool    `name:"all"`
 	Crew   *string `name:"crew"`
+	Sweep  bool    `name:"sweep"`
+	Apply  *string `name:"apply-digest"`
 }
 
 // rateCmd.Root keeps every value whole (`sep:"none"`, so a comma stays in the

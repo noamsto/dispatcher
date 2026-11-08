@@ -20,6 +20,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
 	"github.com/noamsto/dispatcher/crew/internal/gh"
+	"github.com/noamsto/dispatcher/crew/internal/ghissue"
 )
 
 // Usage is the one-line signature.
@@ -67,25 +68,6 @@ type entry struct {
 	Supersedes []int  `json:"supersedes"`
 }
 
-type issue struct {
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	Body   string `json:"body"`
-}
-
-type issueView struct {
-	State       string `json:"state"`
-	StateReason string `json:"stateReason"`
-	Title       string `json:"title"`
-	Body        string `json:"body"`
-	CreatedAt   string `json:"createdAt"`
-	ClosedAt    string `json:"closedAt"`
-	Comments    []struct {
-		Body      string `json:"body"`
-		CreatedAt string `json:"createdAt"`
-	} `json:"comments"`
-}
-
 type action int
 
 const (
@@ -119,6 +101,7 @@ func (r *redesign) title() string { return "redesign: " + r.file }
 type run struct {
 	ctx    context.Context
 	gh     gh.Client
+	issues *ghissue.Client
 	stdout io.Writer
 	stderr io.Writer
 
@@ -126,9 +109,10 @@ type run struct {
 	marker string
 	origin int
 	// closes is whether the PR body names the origin; otherwise origin is the PR.
-	closes   bool
-	assigned []issue
-	views    map[int]*issueView
+	closes bool
+	// closing is every issue number the PR body closes, the origin among them.
+	closing  []int
+	assigned []ghissue.Issue
 }
 
 // ref is the first `Closes` target of a PR body.
@@ -151,6 +135,17 @@ func closesRef(body string) ref {
 	return ref{ticket: m[2]}
 }
 
+var closingRe = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)`)
+
+func closingNums(body string) []int {
+	var nums []int
+	for _, m := range closingRe.FindAllStringSubmatch(body, -1) {
+		n, _ := strconv.Atoi(m[1])
+		nums = append(nums, n)
+	}
+	return nums
+}
+
 // Run is the command: read, plan, and with --apply write.
 func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	n, err := strconv.Atoi(req.PR)
@@ -171,24 +166,25 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 	if err != nil {
 		return fail("%v", err)
 	}
-	r := &run{ctx: ctx, gh: o.GH, stdout: stdout, stderr: stderr, pr: n, views: map[int]*issueView{}}
+	r := &run{ctx: ctx, gh: o.GH, issues: ghissue.New(ctx, o.GH), stdout: stdout, stderr: stderr, pr: n}
 
 	var p struct {
 		Number int    `json:"number"`
 		URL    string `json:"url"`
 		Body   string `json:"body"`
 	}
-	if err := r.read(&p, "pr", "view", req.PR, "--json", "number,url,body"); err != nil {
+	if err := r.issues.Read(&p, "pr", "view", req.PR, "--json", "number,url,body"); err != nil {
 		return fail("%v", err)
 	}
 	var repo struct {
 		HasIssuesEnabled bool `json:"hasIssuesEnabled"`
 	}
-	if err := r.read(&repo, "repo", "view", "--json", "hasIssuesEnabled"); err != nil {
+	if err := r.issues.Read(&repo, "repo", "view", "--json", "hasIssuesEnabled"); err != nil {
 		return fail("%v", err)
 	}
 
 	c := closesRef(p.Body)
+	r.closing = closingNums(p.Body)
 	if req.Tracker == "linear" || !repo.HasIssuesEnabled || c.ticket != "" {
 		if req.Apply {
 			return fail("refusing --apply — Linear-tracked; the batch needs one human approval, write it with the Linear tools")
@@ -202,7 +198,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		r.origin, r.closes = c.num, true
 	}
 	r.marker = fmt.Sprintf("Follow-up of #%d (PR #%d)", r.origin, n)
-	if err := r.read(&r.assigned, "issue", "list", "--assignee", "@me", "--state", "all", "--limit", "200", "--json", "number,title,body"); err != nil {
+	if err := r.issues.Read(&r.assigned, "issue", "list", "--assignee", "@me", "--state", "all", "--limit", "200", "--json", "number,title,body"); err != nil {
 		return fail("%v", err)
 	}
 
@@ -246,43 +242,14 @@ func readEntries(path string) ([]entry, error) {
 	return entries, nil
 }
 
-func (r *run) read(dst any, args ...string) error {
-	out, err := r.gh.Run(r.ctx, args...)
-	if err != nil {
-		return fmt.Errorf("gh %s failed: %v", strings.Join(args[:2], " "), err)
-	}
-	if err := json.Unmarshal([]byte(out), dst); err != nil {
-		return fmt.Errorf("unreadable gh %s output: %v", strings.Join(args[:2], " "), err)
-	}
-	return nil
-}
-
-// view is `gh issue view`, cached for the run.
-func (r *run) view(n int) (*issueView, error) {
-	if v, ok := r.views[n]; ok {
-		return v, nil
-	}
-	v := &issueView{}
-	if err := r.read(v, "issue", "view", strconv.Itoa(n), "--json", "state,stateReason,title,comments,body,createdAt,closedAt"); err != nil {
-		return nil, err
-	}
-	r.views[n] = v
-	return v, nil
-}
-
-func firstLine(s string) string {
-	l, _, _ := strings.Cut(s, "\n")
-	return strings.TrimSuffix(l, "\r")
-}
-
 // commented is whether issue n carries this run's comment for the entry.
 func (r *run) commented(n int, title string) (bool, error) {
-	v, err := r.view(n)
+	v, err := r.issues.View(n)
 	if err != nil {
 		return false, err
 	}
 	for _, c := range v.Comments {
-		if firstLine(c.Body) == r.marker && strings.Contains(c.Body, title) {
+		if ghissue.FirstLine(c.Body) == r.marker && strings.Contains(c.Body, title) {
 			return true, nil
 		}
 	}
@@ -292,7 +259,7 @@ func (r *run) commented(n int, title string) (bool, error) {
 // filed is the assigned issue that already carries the entry, 0 when none.
 func (r *run) filed(e entry) (n int, redesign bool) {
 	for _, is := range r.assigned {
-		if firstLine(is.Body) != r.marker {
+		if ghissue.FirstLine(is.Body) != r.marker {
 			continue
 		}
 		switch {
@@ -373,7 +340,7 @@ func (r *run) written(steps []*step) []int {
 // assignee edit alone is the one update that reads as older than it was, dropping
 // a hit rather than inventing one.
 func (r *run) hitBeforeBatch(n int, file string, since time.Time) (bool, error) {
-	v, err := r.view(n)
+	v, err := r.issues.View(n)
 	if err != nil {
 		return false, err
 	}
@@ -381,20 +348,20 @@ func (r *run) hitBeforeBatch(n int, file string, since time.Time) (bool, error) 
 	closeNote := r.marker + "\n\n" + supersededNote
 	hasMarker := containsFold(v.Body, markerNeedle)
 	hasFile := containsFold(v.Body, file)
-	prior := stamp(v.CreatedAt)
+	prior := ghissue.Stamp(v.CreatedAt)
 	for _, c := range v.Comments {
-		if firstLine(c.Body) == r.marker {
+		if ghissue.FirstLine(c.Body) == r.marker {
 			ours = true
 			closedByUs = closedByUs || strings.HasPrefix(c.Body, closeNote)
 			continue
 		}
 		hasMarker = hasMarker || containsFold(c.Body, markerNeedle)
 		hasFile = hasFile || containsFold(c.Body, file)
-		if t := stamp(c.CreatedAt); t.After(prior) {
+		if t := ghissue.Stamp(c.CreatedAt); t.After(prior) {
 			prior = t
 		}
 	}
-	if t := stamp(v.ClosedAt); !closedByUs && t.After(prior) {
+	if t := ghissue.Stamp(v.ClosedAt); !closedByUs && t.After(prior) {
 		prior = t
 	}
 	switch {
@@ -406,15 +373,6 @@ func (r *run) hitBeforeBatch(n int, file string, since time.Time) (bool, error) 
 		return true, nil
 	}
 	return prior.IsZero() || !prior.Before(since), nil
-}
-
-// stamp reads one of gh's RFC 3339 timestamps; the zero time means unreadable.
-func stamp(s string) time.Time {
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		return time.Time{}
-	}
-	return t
 }
 
 func containsFold(s, sub string) bool {
@@ -456,7 +414,7 @@ func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, err
 			Number int `json:"number"`
 		}
 		search := fmt.Sprintf("%q in:body,comments %q updated:>=%s", markerNeedle, f, since.Format("2006-01-02"))
-		if err := r.read(&hits, "issue", "list", "--state", "all", "--limit", "200", "--search", search, "--json", "number"); err != nil {
+		if err := r.issues.Read(&hits, "issue", "list", "--state", "all", "--limit", "200", "--search", search, "--json", "number"); err != nil {
 			return nil, nil, err
 		}
 		var nums []int
@@ -481,6 +439,7 @@ func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, err
 
 	var groups []*redesign
 	byFile := map[string]*redesign{}
+	openRedesigns := map[string]int{}
 	for _, s := range steps {
 		if s.done != 0 {
 			continue
@@ -488,6 +447,21 @@ func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, err
 		e := s.e
 		switch {
 		case e.File != "" && len(touched[e.File]) >= thresholdCount:
+			open, err := r.openRedesign(e.File, openRedesigns)
+			if err != nil {
+				return nil, nil, err
+			}
+			if open != 0 {
+				s.act, s.target = commentOn, open
+				done, err := r.commented(open, e.Title)
+				if err != nil {
+					return nil, nil, err
+				}
+				if done {
+					s.done = open
+				}
+				break
+			}
 			g := byFile[e.File]
 			if g == nil {
 				g = &redesign{file: e.File, touched: touched[e.File]}
@@ -499,7 +473,7 @@ func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, err
 		case e.DupOf > 0:
 			s.act, s.target = commentOn, e.DupOf
 		case e.SameArea && r.closes:
-			v, err := r.view(r.origin)
+			v, err := r.issues.View(r.origin)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -514,6 +488,33 @@ func (r *run) resolve(entries []entry, now time.Time) ([]*step, []*redesign, err
 		}
 	}
 	return steps, groups, nil
+}
+
+// openRedesign is the lowest-numbered open issue titled exactly as file's
+// redesign issue, 0 when none; seen caches the answer per file. The search is
+// fuzzy, so the title is matched here. Issues the PR closes are excluded: a
+// comment on one would be buried when the PR merges.
+func (r *run) openRedesign(file string, seen map[string]int) (int, error) {
+	if n, ok := seen[file]; ok {
+		return n, nil
+	}
+	title := (&redesign{file: file}).title()
+	var found []ghissue.Issue
+	search := fmt.Sprintf("%q in:title", title)
+	if err := r.issues.Read(&found, "issue", "list", "--state", "open", "--search", search, "--limit", "5", "--json", "number,title"); err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, is := range found {
+		if slices.Contains(r.closing, is.Number) {
+			continue
+		}
+		if is.Title == title && (n == 0 || is.Number < n) {
+			n = is.Number
+		}
+	}
+	seen[file] = n
+	return n, nil
 }
 
 func (r *run) describe(s *step) string {
@@ -546,18 +547,14 @@ func (r *run) printPlan(steps []*step) error {
 		if s.e.DupOf > 0 || s.done != 0 {
 			continue
 		}
-		var cands []issue
-		if err := r.read(&cands, "issue", "list", "--state", "open", "--search", s.e.Title, "--limit", "5", "--json", "number,title"); err != nil {
+		cands, err := r.issues.Candidates(s.e.Title)
+		if err != nil {
 			return err
 		}
 		if len(cands) == 0 {
 			continue
 		}
-		parts := make([]string, len(cands))
-		for i, c := range cands {
-			parts[i] = fmt.Sprintf("#%d %s", c.Number, c.Title)
-		}
-		say(r.stdout, "  candidates: %s\n", strings.Join(parts, ", "))
+		say(r.stdout, "  candidates: %s\n", ghissue.FormatCandidates(cands))
 	}
 	say(r.stdout, "plan only; pass --apply to write\n")
 	return nil
@@ -598,20 +595,6 @@ func (g *redesign) body(marker string) string {
 		fmt.Fprintf(&b, "\n\n### %s\n\n%s", s.e.Title, s.e.Body)
 	}
 	return b.String()
-}
-
-var issueNumberRe = regexp.MustCompile(`/(\d+)$`)
-
-func (r *run) create(title, body string) (int, error) {
-	out, err := r.gh.Run(r.ctx, "issue", "create", "--title", title, "--body", body, "--assignee", "@me")
-	if err != nil {
-		return 0, fmt.Errorf("gh issue create %q failed: %v", title, err)
-	}
-	m := issueNumberRe.FindStringSubmatch(strings.TrimSpace(out))
-	if m == nil {
-		return 0, fmt.Errorf("gh issue create %q printed no issue URL: %q", title, out)
-	}
-	return strconv.Atoi(m[1])
 }
 
 func (r *run) apply(steps []*step, groups []*redesign, prBody string) int {
@@ -692,28 +675,28 @@ func (r *run) write(s *step, g *redesign, reopened *bool) (string, error) {
 	var err error
 	switch {
 	case s.act == newIssue:
-		s.target, err = r.create(s.e.Title, r.marker+"\n\n"+s.e.Body)
+		s.target, err = r.issues.Create(s.e.Title, r.marker+"\n\n"+s.e.Body)
 		return "filed", err
 	case s.act == redesignIssue:
 		if g.number == 0 {
-			if g.number, err = r.create(g.title(), g.body(r.marker)); err != nil {
+			if g.number, err = r.issues.Create(g.title(), g.body(r.marker)); err != nil {
 				return "", err
 			}
 		}
 		s.target = g.number
 		return "filed", nil
 	case s.act == reopen && !*reopened:
-		_, err = r.gh.Run(r.ctx, "issue", "reopen", strconv.Itoa(s.target), "--comment", r.commentBody(s))
+		err = r.issues.Reopen(s.target, r.commentBody(s))
 		*reopened = err == nil
 		return "reopened", err
 	}
-	_, err = r.gh.Run(r.ctx, "issue", "comment", strconv.Itoa(s.target), "--body", r.commentBody(s))
+	err = r.issues.Comment(s.target, r.commentBody(s))
 	return "commented", err
 }
 
 // supersede closes n in favour of by unless it is already closed.
 func (r *run) supersede(n, by int) (bool, error) {
-	v, err := r.view(n)
+	v, err := r.issues.View(n)
 	if err != nil {
 		return false, err
 	}

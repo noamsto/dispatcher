@@ -5,16 +5,21 @@
 //
 // The fold is the original jq program from adapters/core/crew.sh (retro.jq), run
 // through gojq, so it stays one shared source with the arm it replaces. It
-// renders three shapes from one run: the per-run TSV rows, the padded --report
+// renders four shapes from one run: the per-run TSV rows, the padded --report
 // table, and the --report --json object, pretty-printed and never coloured, since
-// that output is compared by value.
+// that output is compared by value; the fourth is the flat note list the sweep
+// folds (sweep_fold.go).
 //
 // `--draft` is the one shape the fold never had: it reads one crew and prints the
 // session_summary note for it, folding in Go (draft.go) because there is no arm
 // program to share. Its codenames come off `crew roster`'s own rows.
+//
+// `--sweep` (sweep.go) is the one mode that writes: recurring findings become
+// issues, and a closed issue is checked for whether the finding actually stopped.
 package retro
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -22,6 +27,8 @@ import (
 	"io"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/gh"
 	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 )
@@ -34,7 +41,7 @@ const (
 	header = "branch\tengine\tmodel\ttier\toutcome\ttags"
 	// Usage is one line for two refusals: a flag outside the grammar and the
 	// `--json` without `--report` test print it and take the same status.
-	Usage       = "crew: retro takes --report and --json"
+	Usage       = "crew: retro takes --report and --json, or --sweep [--apply-digest DIGEST]"
 	exitType    = 5
 	exitFailure = 1
 )
@@ -46,18 +53,27 @@ const (
 	CrewNeededUsage = "crew: retro --draft needs --crew ID or CREW_ID"
 )
 
+// The --sweep refusals, one line each like Usage.
+const (
+	SweepUsage = "crew: retro --sweep takes no --report/--json/--draft/--crew/--all"
+	ApplyUsage = "crew: retro --apply-digest takes a digest and needs --sweep"
+)
+
 // say writes to a stream whose failure is reported elsewhere (the exit status,
 // or nowhere, for stderr) — main.go's helper, same reason.
 func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
-// Request is `crew retro`'s flags: the fold's two, and the three --draft reads
-// one crew with.
+// Request is `crew retro`'s flags: the fold's two, the three --draft reads one
+// crew with, and the sweep's two. Apply is nil when absent, so an empty value is
+// told apart and refused.
 type Request struct {
 	Report bool
 	JSON   bool
 	Draft  bool
 	All    bool
 	Crew   string
+	Sweep  bool
+	Apply  *string
 }
 
 // Options is everything Run reads beyond the bus.
@@ -69,6 +85,12 @@ type Options struct {
 	// codename off its rows, instead of re-deriving here the `·<issue>` suffix
 	// roster adds when two branches hash to one codename. Only --draft calls it.
 	Roster func(docs []any, crew string) []map[string]any
+	// Ctx, GH, Clock and Guard serve --sweep only. A nil Guard never gives a
+	// verdict, so its writes carry the reduced text.
+	Ctx   context.Context
+	GH    gh.Client
+	Clock clock.Clock
+	Guard Guard
 }
 
 func (o Options) withDefaults() Options {
@@ -78,12 +100,28 @@ func (o Options) withDefaults() Options {
 	if o.Roster == nil {
 		o.Roster = func([]any, string) []map[string]any { return nil }
 	}
+	if o.Ctx == nil {
+		o.Ctx = context.Background()
+	}
+	if o.GH == nil {
+		o.GH = gh.Exec{}
+	}
+	if o.Clock.Now == nil {
+		o.Clock = clock.FromEnv()
+	}
+	if o.Guard == nil {
+		o.Guard = func(string, string, string) (bool, string, bool) { return false, "", false }
+	}
 	return o
 }
 
 // refusal is why the line is a usage error, or "" when it runs.
 func (r Request) refusal() string {
 	switch {
+	case r.Apply != nil && (!r.Sweep || *r.Apply == ""):
+		return ApplyUsage
+	case r.Sweep && (r.Report || r.JSON || r.Draft || r.Crew != "" || r.All):
+		return SweepUsage
 	case r.Draft && (r.Report || r.JSON):
 		return DraftUsage
 	case !r.Draft && (r.Crew != "" || r.All):
@@ -122,12 +160,16 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	if errors.Is(err, bus.ErrNoLog) {
 		return 0
 	}
-	if req.Draft {
-		// No header precedes the draft, so a torn tail fails before any output.
+	if req.Draft || req.Sweep {
+		// No header precedes either, so a torn tail fails before any output: it
+		// must not read as an empty plan.
 		if err != nil {
 			msg, code := bus.JQFailure(err)
 			say(stderr, "crew: retro: %s: %s\n", paths.Log, msg)
 			return code
+		}
+		if req.Sweep {
+			return sweep(req, events, paths, stdout, stderr, o)
 		}
 		return draft(crew, req.All, events, o, stdout, stderr)
 	}
@@ -147,6 +189,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	out, err := jqrun.RunAny(program, docs, 0, map[string]any{
 		"want_report": report,
 		"want_json":   jsonOut,
+		"want_notes":  false,
 	}, jqrun.WithStringFunc("_invisible_drop", invisible.Drop))
 	if err != nil {
 		say(stderr, "crew: retro: %s: %v\n", paths.Log, err)

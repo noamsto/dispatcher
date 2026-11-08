@@ -884,7 +884,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// own rows.
 	if sub == "retro" {
 		c := parsed.typed.Retro
-		return retro.Run(retro.Request{Report: c.Report, JSON: c.JSON, Draft: c.Draft, All: c.All, Crew: str(c.Crew)}, paths, stdout, stderr, retro.Options{
+		return retro.Run(retro.Request{Report: c.Report, JSON: c.JSON, Draft: c.Draft, All: c.All, Crew: str(c.Crew), Sweep: c.Sweep, Apply: c.Apply}, paths, stdout, stderr, retro.Options{
+			Ctx:    ctx,
+			GH:     gh.Exec{},
+			Clock:  clock.FromEnv(),
+			Guard:  retro.ExecGuard(ctx, bashBin, cmp.Or(os.Getenv("PUBLIC_LEAK_GUARD"), publicLeakGuard), cwd, os.Getenv),
 			CrewID: func() string { return bus.CrewID(ctx, cwd) },
 			Roster: func(docs []any, crew string) []map[string]any {
 				rows, err := roster.Fold(ctx, docs, crew, e.nowSec(), e.probes(ctx, cwd))
@@ -1342,11 +1346,14 @@ func runFleetLoad(ctx context.Context, c fleetLoadCmd, stdout, stderr io.Writer)
 
 // The Nix build sets these with -X: the pinned bash and the two libs
 // stall-watch's budget and local-model probes source. BUDGET_GATE_LIB and
-// LOCAL_MODELS_LIB override the libs, as they do for dispatch.sh.
+// LOCAL_MODELS_LIB override the libs, as they do for dispatch.sh. publicLeakGuard
+// is the guard `crew retro --sweep` runs on issue text; PUBLIC_LEAK_GUARD
+// overrides it.
 var (
-	bashBin        = "bash"
-	budgetGateLib  string
-	localModelsLib string
+	bashBin         = "bash"
+	budgetGateLib   string
+	publicLeakGuard string
+	localModelsLib  string
 	// modelResolveScript is model-resolve.sh, baked by flake.nix; the class
 	// check and `crew class` run it. MODEL_RESOLVE_SCRIPT overrides it.
 	modelResolveScript string
