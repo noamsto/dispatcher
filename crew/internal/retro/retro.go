@@ -5,9 +5,10 @@
 //
 // The fold is the original jq program from adapters/core/crew.sh (retro.jq), run
 // through gojq, so it stays one shared source with the arm it replaces. It
-// renders three shapes from one run: the per-run TSV rows, the padded --report
+// renders four shapes from one run: the per-run TSV rows, the padded --report
 // table, and the --report --json object, pretty-printed and never coloured, since
-// that output is compared by value.
+// that output is compared by value; the fourth is the flat note list the sweep
+// folds (sweep_fold.go).
 //
 // `--draft` is the one shape the fold never had: it reads one crew and prints the
 // session_summary note for it, folding in Go (draft.go) because there is no arm
@@ -147,6 +148,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 	out, err := jqrun.RunAny(program, docs, 0, map[string]any{
 		"want_report": report,
 		"want_json":   jsonOut,
+		"want_notes":  false,
 	}, jqrun.WithStringFunc("_invisible_drop", invisible.Drop))
 	if err != nil {
 		say(stderr, "crew: retro: %s: %v\n", paths.Log, err)
