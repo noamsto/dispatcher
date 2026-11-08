@@ -130,7 +130,8 @@ type Verdict struct {
 	Blocked       string // "tiers disagree on the incumbent" | "conflicting trials" | ""
 	AutoOff       bool
 	Candidates    []Candidate
-	Omitted       int // rated models left out of Candidates by the per-tier cap
+	Omitted       int  // rated models left out of Candidates by the per-tier cap
+	NoTrial       bool // every tier resolved without a trial model
 }
 
 // beforeApply is a test seam run just before each auto promotion takes the
@@ -219,8 +220,12 @@ func verdict(s Settings, r Resolver, st State, stats map[Key]*Stats, results map
 	tiers := s.TiersOf(engine, class)
 	v := Verdict{Engine: engine, Class: class, AutoOff: !s.AutoPromote(engine), From: results[tiers[0]].Default}
 	var incumbents []string
+	v.NoTrial = true
 	for _, tier := range tiers {
 		res := results[tier]
+		if res.Trial != nil {
+			v.NoTrial = false
+		}
 		if !slices.Contains(incumbents, res.Default) {
 			incumbents = append(incumbents, res.Default)
 		}
@@ -278,7 +283,7 @@ func candidates(r Resolver, st State, stats map[Key]*Stats, res Result, engine, 
 	slices.SortFunc(models, func(a, b string) int {
 		return cmp.Or(cmp.Compare(stats[Key{engine, tier, b}].N, stats[Key{engine, tier, a}].N), cmp.Compare(a, b))
 	})
-	trial := "none"
+	trial := ""
 	if res.Trial != nil {
 		trial = *res.Trial
 	}
@@ -294,7 +299,10 @@ func candidates(r Resolver, st State, stats map[Key]*Stats, res Result, engine, 
 	if s := stats[Key{engine, tier, res.Default}]; s != nil {
 		inc = *s
 	}
-	headReason := "not the trial head (" + cleanID(trial) + ")"
+	headReason := "no trial model in class"
+	if res.Trial != nil {
+		headReason = "not the trial head (" + cleanID(trial) + ")"
+	}
 	out := make([]Candidate, 0, len(models))
 	for _, model := range models {
 		c := Candidate{Engine: engine, Class: class, Tier: tier, Model: model, Incumbent: res.Default, T: *stats[Key{engine, tier, model}], I: inc}
@@ -343,7 +351,8 @@ func guardrails(t, i Stats) []string {
 	case !tok || !iok:
 		out = append(out, "rework unmeasured")
 	case tr > ir:
-		out = append(out, fmt.Sprintf("rework %.1f > incumbent %.1f", tr, ir))
+		a, b := reworkPair(tr, ir)
+		out = append(out, "rework "+a+" > incumbent "+b)
 	}
 	if t.Merged == 0 || i.Merged == 0 {
 		return append(out, "no merged PR")
@@ -360,6 +369,16 @@ func guardrails(t, i Stats) []string {
 		out = append(out, fmt.Sprintf("burn/merged %.2fh > 1.25 × incumbent %.2fh", tb, ib))
 	}
 	return out
+}
+
+// reworkPair renders two rework means at one decimal, or at the fewest
+// significant digits (from three) that print them as different.
+func reworkPair(tr, ir float64) (string, string) {
+	a, b := fmt.Sprintf("%.1f", tr), fmt.Sprintf("%.1f", ir)
+	for p := 3; a == b && p <= 17; p++ {
+		a, b = fmt.Sprintf("%.*g", p, tr), fmt.Sprintf("%.*g", p, ir)
+	}
+	return a, b
 }
 
 // numbers is the clause an auto promotion records: the evidence that passed.
