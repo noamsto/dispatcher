@@ -176,3 +176,24 @@ func TestMapNeverResolvesBudget(t *testing.T) {
 		t.Errorf("no planets in %q", l.opts.Stdout)
 	}
 }
+
+func TestPassDrawsTheFleetBudgetStrip(t *testing.T) {
+	l := newLoop(t)
+	l.seedBus(t)
+	l.opts.Budget = func(context.Context) (int, error) { return 7, nil }
+	l.opts.disc = &discovery{}
+	cdir := l.cdir()
+	if err := os.MkdirAll(cdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pass(t.Context(), l.opts, l.paths, cdir, l.crew, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	dot, err := os.ReadFile(filepath.Join(cdir, fileDot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(dot), "fleet budget 7") {
+		t.Errorf("published DOT has no budget strip:\n%s", dot)
+	}
+}
