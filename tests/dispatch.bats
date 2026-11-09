@@ -20001,7 +20001,7 @@ EOF
   cat >"$STUB_DIR/crew" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"\$STUB_LOG"
-[ "\${1:-}" != stall-watch ] || printf '%s\n' "\${!GIT_@}" | grep . >"$stall_env" || : >"$stall_env"
+[ "\${1:-}" != stall-watch ] || { printf '%s\n' "\${!GIT_@}" | grep . || :; } >"$stall_env.tmp"; mv "$stall_env.tmp" "$stall_env"
 exit 0
 EOF
   chmod +x "$STUB_DIR/crew"

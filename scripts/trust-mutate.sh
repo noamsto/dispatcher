@@ -141,7 +141,7 @@ copy_tree() {
 
 # run_bats <dir> <test_file> <filter> <out>: TAP into <out>; returns bats' status.
 run_bats() {
-  (cd "$1" && timeout "${TRUST_MUTATE_TIMEOUT:-1200}" bats --tap --filter "$3" "$2") >"$4" 2>&1
+  (cd "$1" && timeout --foreground "${TRUST_MUTATE_TIMEOUT:-1200}" bats --tap --filter "$3" "$2") >"$4" 2>&1
 }
 
 # Baselines: one unmutated run per distinct (test file, filter).
@@ -191,7 +191,7 @@ mutate_one() {
   line="$(sed -n "${ln}p" "$target")"
   pre="${line%%"${r_pat[$i]}"*}"
   post="${line#*"${r_pat[$i]}"}"
-  awk -v ln="$ln" -v new="$pre${r_repl[$i]}$post" 'NR == ln { print new; next } { print }' "$target" >"$target.mut"
+  NEW="$pre${r_repl[$i]}$post" awk -v ln="$ln" 'NR == ln { print ENVIRON["NEW"]; next } { print }' "$target" >"$target.mut"
   if cmp -s "$target" "$target.mut"; then
     echo "unusable replacement changes nothing at ${r_file[$i]}:$ln" >"$d/res"
     return
@@ -205,10 +205,10 @@ mutate_one() {
   run_bats "$d/t" "${r_tfile[$i]}" "${r_filter[$i]}" "$d/out" || rc=$?
   if [ "$rc" -eq 0 ]; then
     echo "green ${r_file[$i]}:$ln stayed green: the guard is not pinned by ${r_tfile[$i]} --filter '${r_filter[$i]}'" >"$d/res"
-  elif grep -qF -- "${r_expect[$i]}" "$d/out"; then
+  elif grep -vE '^(not )?ok ' "$d/out" | grep -qF -- "${r_expect[$i]}"; then
     echo "red ${r_file[$i]}:$ln" >"$d/res"
   else
-    echo "wrong red ${r_file[$i]}:$ln, but the output never shows the expected assertion '${r_expect[$i]}'; failed instead: $(grep -E "^#.*(failed|\\(in test)" "$d/out" | head -n4 | tr '\n' ' ')" >"$d/res"
+    echo "wrong red ${r_file[$i]}:$ln, but the output never shows the expected assertion '${r_expect[$i]}'; failed instead: $(grep -E '^#.*(failed|\(in test)' "$d/out" | head -n4 | tr '\n' ' ')" >"$d/res"
   fi
 }
 

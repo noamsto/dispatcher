@@ -8,7 +8,7 @@ M3	adapters/core/dispatch.sh	_wt_cfg_guard_cwd "${crew_dir%/crew}" || exit 1	1	t
 M4	adapters/core/dispatch.sh	_wt_cfg_guard "${crew_dir%/crew}" "$prev_admin" || exit 1	1	true	tests/dispatch.bats	^trust pin: M4 	core.fsmonitor
 M5	adapters/core/dispatch.sh	_wt_cfg_guard "${crew_dir%/crew}" "$new_admin" || exit 1	1	true	tests/dispatch.bats	^default create: config drift planted during the create stops the hook replay	pre-start|post-start|post-switch
 M6	adapters/core/dispatch.sh	_wt_cfg_guard "${crew_dir%/crew}" || exit 1	1	true	tests/dispatch.bats	^origin-claim: a guard refusal right before the push refuses the dispatch	for-each-ref refs/heads/feat/42-title
-M7	adapters/core/dispatch.sh	_wt_cfg_guard "${crew_dir%/crew}" >&2	1	true	tests/dispatch.bats	^trust pin: M7 	git config drift
+M7	adapters/core/dispatch.sh	_wt_cfg_guard "${crew_dir%/crew}" >&2	1	true	tests/dispatch.bats	^trust pin: M7 	core.sshcommand
 M8a	adapters/core/dispatch.sh	_wt_git "$wt_admin" "$wt_path" rev-parse HEAD	1	git -C "$wt_path" rev-parse HEAD	tests/dispatch.bats	^trust pin: M8a 	ls -A "$XDG_DATA_HOME/crew/worktrees"
 M8b	adapters/core/dispatch.sh	_wt_status "$wt_admin" "$wt_path"	1	git -C "$wt_path" status --porcelain	tests/dispatch.bats	^(--pr on a forged gitlink never runs its gitdir's config|--pr refuses a worktree whose admin dir has a config.worktree)	SENTINEL
 M8b	adapters/core/dispatch.sh	_wt_git "$wt_admin" "$wt_path" reset --hard "$head_oid"	1	git -C "$wt_path" reset --hard "$head_oid"	tests/dispatch.bats	^(--pr on a forged gitlink never runs its gitdir's config|--pr refuses a worktree whose admin dir has a config.worktree|--pr never runs a worker-planted clean filter)	"$status" -eq 0

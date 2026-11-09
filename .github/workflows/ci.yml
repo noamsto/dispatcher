@@ -173,7 +173,9 @@ jobs:
         shell: bash
         env:
           BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
-        run: echo "run=$(bash scripts/trust-mutate.sh --affected "$BASE_REF")" >>"$GITHUB_OUTPUT"
+        run: |
+          run=$(bash scripts/trust-mutate.sh --affected "$BASE_REF")
+          echo "run=$run" >>"$GITHUB_OUTPUT"
       - name: trust-boundary mutation check
         if: steps.affected.outputs.run == 'yes'
         run: nix develop -c bash scripts/trust-mutate.sh
