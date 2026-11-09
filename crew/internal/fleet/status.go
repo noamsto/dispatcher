@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -394,12 +395,19 @@ type repoBuild struct {
 
 	repoName   string
 	ghRepo     string // the raw owner/name, the PR-ownership check's identity
+	ghErr      error  // why no PR of this repo can be looked up, nil when one can
 	candidates []prCandidate
 }
 
 func (b *repoBuild) build() (RepoStatus, error) {
 	ctx, o := b.ctx, b.o
-	origin, _ := git.Origin(ctx, o.Git, b.common)
+	origin, oerr := git.Origin(ctx, o.Git, b.common)
+	switch {
+	case oerr != nil:
+		b.ghErr = fmt.Errorf("origin could not be read: %s", firstLine(oerr.Error()))
+	case !onGitHub(origin):
+		b.ghErr = errors.New("pr_url is not a PR of this repo: origin is not on github.com")
+	}
 	b.ghRepo = repos.Name(b.common, origin)
 	b.repoName = repos.Label(b.common, origin)
 	worktrees := sync.OnceValues(func() (string, error) { return git.Worktrees(ctx, o.Git, "", b.common) })
@@ -536,7 +544,7 @@ func (b *repoBuild) derive(crew string, row map[string]any) {
 	candidate := (state == "pr_open" || state == "done") && url != ""
 	row["pr_candidate"] = candidate
 	if candidate {
-		b.candidates = append(b.candidates, prCandidate{row: row, repo: b.ghRepo})
+		b.candidates = append(b.candidates, prCandidate{row: row, repo: b.ghRepo, err: b.ghErr})
 	}
 }
 

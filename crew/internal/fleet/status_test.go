@@ -596,6 +596,44 @@ func TestStatusPRsOfALongRepoNameStillEnrich(t *testing.T) {
 	}
 }
 
+// A PR URL on github.com is no PR of a repo whose origin lives elsewhere, and
+// gh is not asked.
+func TestStatusPRsOfANonGitHubOriginAreNotAsked(t *testing.T) {
+	url := "https://github.com/acme/alpha/pull/1"
+	f := newStatusFix(t, wstatus(10, "c1", "feat/a", "pr_open", `,"pr_url":"`+url+`"`))
+	f.opts.Git = originGit(f, "https://gitlab.com/acme/alpha.git")
+	f.opts.Gh = &ghtest.Fake{Func: func([]string) (string, error) {
+		t.Error("gh was asked about a PR of a repo not on github.com")
+		return "", nil
+	}}
+
+	row := f.collect(StatusRequest{GH: true}).crew(t, "c1").worker(t, "feat/a")
+	if msg, _ := row["pr_error"].(string); !strings.Contains(msg, "github.com") || row["pr"] != nil {
+		t.Errorf("worker row = %v, want a pr_error naming github.com", row)
+	}
+}
+
+func TestStatusPRsNameAFailedOriginRead(t *testing.T) {
+	url := "https://github.com/acme/alpha/pull/1"
+	f := newStatusFix(t, wstatus(10, "c1", "feat/a", "pr_open", `,"pr_url":"`+url+`"`))
+	stub := stubGit(f.common, nil)
+	f.opts.Git = &gittest.Fake{Func: func(dir string, args []string) (string, error) {
+		if args[0] == "--git-dir="+f.common && args[len(args)-1] != "--porcelain" {
+			return "", errors.New("config unreadable\nsecond line")
+		}
+		return stub.Func(dir, args)
+	}}
+	f.opts.Gh = &ghtest.Fake{Func: func([]string) (string, error) {
+		t.Error("gh was asked after the origin read failed")
+		return "", nil
+	}}
+
+	row := f.collect(StatusRequest{GH: true}).crew(t, "c1").worker(t, "feat/a")
+	if row["pr_error"] != "origin could not be read: config unreadable" {
+		t.Errorf("worker row = %v, want a pr_error naming the origin read", row)
+	}
+}
+
 func TestStatusMachineAndShape(t *testing.T) {
 	f := newStatusFix(t)
 	var out bytes.Buffer
