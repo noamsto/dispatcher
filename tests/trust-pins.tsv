@@ -91,3 +91,4 @@ F15	adapters/core/dispatch-resume.sh	_check_protocol_rev "$PROTOCOL_DIR" "dispat
 F18	adapters/core/dispatch-resume.sh	precheck+=(--chrome)	1	true	tests/dispatch-resume.bats	^trust pin: F18 	"$status" -eq 1
 F28	adapters/core/dispatch-resume.sh	_add_dir_ok "$line"	1	printf '%s' "$line"	tests/dispatch-resume.bats	^claude resume drops an invalid recorded grant with a warning	dropping invalid grant
 F29	adapters/core/dispatch-resume.sh	_require_safe "branch name" "$branch" "$_branch_re"	1	true	tests/dispatch-resume.bats	^resume refuses a branch name carrying a command substitution	refusing to launch: branch name
+D5a	adapters/core/dispatch-resume.sh	if [ -L "$anchor" ] || [ ! -f "$anchor" ]; then	1	if false; then	tests/dispatch-resume.bats	^refuses when the anchor file is a symlink	_assert_refused_before_discovery

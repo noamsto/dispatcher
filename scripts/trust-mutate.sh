@@ -102,6 +102,25 @@ done <"$manifest"
   exit 1
 }
 
+# A group runs once, with its first line's test_file, filter and expected, so
+# every line of a group must agree on them; a typo'd group ID is an error.
+for g in "${!grouped[@]}"; do
+  lead=-1
+  for i in "${!r_id[@]}"; do
+    [ "${r_id[$i]}" = "$g" ] || continue
+    if ((lead < 0)); then
+      lead=$i
+    elif [ "${r_tfile[$i]}|${r_filter[$i]}|${r_expect[$i]}" != "${r_tfile[$lead]}|${r_filter[$lead]}|${r_expect[$lead]}" ]; then
+      echo "trust-mutate: malformed manifest: grouped ID $g lines differ in test_file, filter or expected" >&2
+      exit 1
+    fi
+  done
+  ((lead >= 0)) || {
+    echo "trust-mutate: malformed manifest: @grouped $g names no rows" >&2
+    exit 1
+  }
+done
+
 if [ "$mode" = affected ]; then
   changed="$(git diff --name-only "$base"...HEAD)" || {
     echo yes
