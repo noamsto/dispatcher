@@ -69,6 +69,7 @@ map_file() {
   scripts/harness-inventory.sh) add harness-inventory ;;
   scripts/harness-manifest.sh) add harness-manifest ;;
   scripts/harness-bench.sh | scripts/harness-split.sh) ;;
+  scripts/trust-mutate.sh) ;;
   scripts/bats-shard.sh | scripts/bats-shard-weights.sh) add bats-shard ;;
   # help-parity.sh (#1007) and pi-agent-dir-parity.sh (#1016) are evidence
   # scripts: they read the pre-change crew.sh out of git history and diff it
