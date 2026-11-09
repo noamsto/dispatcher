@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +75,7 @@ func TestAdviseRanksMeasuredAboveAnecdoteAndMarksIt(t *testing.T) {
 		"repo n=0  | pooled n=2 merge 100% (2 of 2 settled)! (anecdote, n=2)",
 		"Advice only: informs the choice, never overrides dispatch gates, tier rules, budget or the owner's model map.",
 		"Models with no claude standard runs in the last 60 days are not listed; '!' marks a figure measured over fewer than 5 runs.",
+		"Rows fold an alias with the full id of the model it names, so a folded row lists the ids it absorbed; '(gated: …)' names a requirement the dispatcher checks; a row in the trailing section is one the shipped map does not admit for this engine and tier — retired, a class that tier does not admit, or a model your own settings added.",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
@@ -201,6 +205,299 @@ func TestAdviseThinMergeFigureSortsBelowWellMeasured(t *testing.T) {
 		}
 		if !strings.Contains(out, fmt.Sprintf("(1 of %d settled)!", tc.n)) {
 			t.Errorf("%s: lucky's thin figure not marked:\n%s", tc.name, out)
+		}
+	}
+}
+
+// advRowAt is a settled row for engine/tier at model, started daysAgo before
+// adviseNow; advRowsAt is n of them, one run each.
+func advRowAt(repo, runID, engine, tier, model string, daysAgo int) string {
+	row := mergedRow(repo, runID, engine, model, tier, "medium")
+	t0 := adviseNow.AddDate(0, 0, -daysAgo).UnixMilli()
+	return strings.Replace(row, "{", fmt.Sprintf(`{"t0_ms":%d,`, t0), 1)
+}
+
+func advRowsAt(repo, engine, tier, model string, n int) []string {
+	rows := make([]string, n)
+	for i := range rows {
+		rows[i] = advRowAt(repo, fmt.Sprintf("%s-%s-%d", engine, model, i), engine, tier, model, 5)
+	}
+	return rows
+}
+
+// adviseRowLine is the first rendered line whose model column starts with name.
+func adviseRowLine(out, name string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "  "+name+" ") {
+			return line
+		}
+	}
+	return ""
+}
+
+// adviseJSONModel is one --json model object, the three added fields included.
+// in_shipped_map says only what crew checked: false for a row the shipped map
+// does not admit, never that the model is unselectable (the owner's own
+// settings may add or gate it).
+type adviseJSONModel struct {
+	Model        string
+	Class        string
+	InShippedMap bool `json:"in_shipped_map"`
+	Requires     *string
+	Ids          []string
+	Repo, Pooled map[string]any
+}
+
+func adviseJSONModels(t *testing.T, out string) []adviseJSONModel {
+	t.Helper()
+	var got struct {
+		Models []adviseJSONModel
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("%v in %q", err, out)
+	}
+	return got.Models
+}
+
+func adviseJSONIndex(models []adviseJSONModel, name string) int {
+	for i, m := range models {
+		if m.Model == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// adviseJSONRawModels decodes the model objects as raw maps, so a test can see
+// keys the typed struct does not name.
+func adviseJSONRawModels(t *testing.T, out string) []map[string]any {
+	t.Helper()
+	var got struct {
+		Models []map[string]any
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("%v in %q", err, out)
+	}
+	return got.Models
+}
+
+func TestAdviseFoldsAliasAndCurrentFullID(t *testing.T) {
+	var rows []string
+	rows = append(rows, advRowsAt("acme/widgets", "claude", "deep", "fable", 3)...)
+	rows = append(rows, advRowsAt("acme/widgets", "claude", "deep", "claude-fable-5-1", 3)...)
+	out, errb, code := runAdvise(t, storeOf(rows...), Request{Advise: true, Args: []string{"claude", "deep"}})
+	if code != 0 || errb != "" {
+		t.Fatalf("exit %d, stderr %q", code, errb)
+	}
+	line := adviseRowLine(out, "fable")
+	if line == "" {
+		t.Fatalf("no fable row:\n%s", out)
+	}
+	for _, want := range []string{"repo n=6", "| pooled n=6", " (folds claude-fable-5-1)"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("fable row lacks %q: %q", want, line)
+		}
+	}
+	if adviseRowLine(out, "claude-fable-5-1") != "" {
+		t.Errorf("claude-fable-5-1 kept its own row:\n%s", out)
+	}
+}
+
+func TestAdviseKeepsOlderGenerationApart(t *testing.T) {
+	var rows []string
+	rows = append(rows, advRowsAt("acme/widgets", "claude", "standard", "opus", 3)...)
+	rows = append(rows, advRowsAt("acme/widgets", "claude", "standard", "claude-opus-5-5", 3)...)
+	rows = append(rows, advRowsAt("acme/widgets", "claude", "standard", "claude-opus-5", 3)...)
+	out, errb, code := runAdvise(t, storeOf(rows...), Request{Advise: true, Args: []string{"claude", "standard"}})
+	if code != 0 || errb != "" {
+		t.Fatalf("exit %d, stderr %q", code, errb)
+	}
+	opus := adviseRowLine(out, "opus")
+	if opus == "" || !strings.Contains(opus, " (folds claude-opus-5-5)") {
+		t.Errorf("opus row does not fold the newest full id: %q\n%s", opus, out)
+	}
+	if strings.Contains(opus, "claude-opus-5,") {
+		t.Errorf("opus row folded the older generation: %q", opus)
+	}
+	if adviseRowLine(out, "claude-opus-5-5") != "" {
+		t.Errorf("claude-opus-5-5 kept its own row:\n%s", out)
+	}
+	older := adviseRowLine(out, "claude-opus-5")
+	if older == "" {
+		t.Fatalf("claude-opus-5 lost its row:\n%s", out)
+	}
+	if strings.Contains(older, "folds") {
+		t.Errorf("older generation folded into another row: %q", older)
+	}
+}
+
+// TestAdviseKeepsOlderGenerationApartWithNoNewerIDInTheWindow pins the same rule
+// where the window is thinnest: it holds sonnet and claude-sonnet-5 but not the
+// claude-sonnet-5-5 the alias names today, so nothing may fold.
+func TestAdviseKeepsOlderGenerationApartWithNoNewerIDInTheWindow(t *testing.T) {
+	var rows []string
+	rows = append(rows, advRowsAt("acme/widgets", "claude", "standard", "sonnet", 3)...)
+	rows = append(rows, advRowsAt("acme/widgets", "claude", "standard", "claude-sonnet-5", 3)...)
+	out, errb, code := runAdvise(t, storeOf(rows...), Request{Advise: true, Args: []string{"claude", "standard"}})
+	if code != 0 || errb != "" {
+		t.Fatalf("exit %d, stderr %q", code, errb)
+	}
+	sonnet := adviseRowLine(out, "sonnet")
+	if sonnet == "" {
+		t.Fatalf("no sonnet row:\n%s", out)
+	}
+	if strings.Contains(sonnet, "folds") {
+		t.Errorf("sonnet folded an older id with no newer id in the window: %q\n%s", sonnet, out)
+	}
+	older := adviseRowLine(out, "claude-sonnet-5")
+	if older == "" || strings.Contains(older, "folds") {
+		t.Errorf("claude-sonnet-5 must keep its own unfolded row: %q\n%s", older, out)
+	}
+}
+
+// TestAdviseFoldsTheCurrentFullIDThoughTheAliasHasNoRuns: the table names the
+// model today even when the alias never ran in the window, so the row prints the
+// alias and '(folds …)'.
+func TestAdviseFoldsTheCurrentFullIDThoughTheAliasHasNoRuns(t *testing.T) {
+	rows := advRowsAt("acme/widgets", "claude", "standard", "claude-sonnet-5-5", 3)
+	out, errb, code := runAdvise(t, storeOf(rows...), Request{Advise: true, Args: []string{"claude", "standard"}})
+	if code != 0 || errb != "" {
+		t.Fatalf("exit %d, stderr %q", code, errb)
+	}
+	line := adviseRowLine(out, "sonnet")
+	if line == "" || !strings.Contains(line, " (folds claude-sonnet-5-5)") {
+		t.Errorf("sonnet row does not fold the current full id: %q\n%s", line, out)
+	}
+	if adviseRowLine(out, "claude-sonnet-5-5") != "" {
+		t.Errorf("claude-sonnet-5-5 kept its own row:\n%s", out)
+	}
+}
+
+func TestAdviseMarksModelsTheMapNoLongerAdmits(t *testing.T) {
+	var rows []string
+	rows = append(rows, advRowsAt("acme/widgets", "pi", "standard", "openrouter/deepseek/deepseek-v4.1-flash", 6)...)
+	rows = append(rows, advRowsAt("acme/widgets", "pi", "standard", "opencode/minimax-m3", 6)...)
+	out, errb, code := runAdvise(t, storeOf(rows...), Request{Advise: true, Args: []string{"pi", "standard"}})
+	if code != 0 || errb != "" {
+		t.Fatalf("exit %d, stderr %q", code, errb)
+	}
+	header := "Not admitted for pi standard by the shipped model map — check 'dispatch --models'"
+	admittedAt, retiredAt := strings.Index(out, "\n  openrouter/deepseek/deepseek-v4.1-flash "), strings.Index(out, "\n  opencode/minimax-m3 ")
+	headerAt := strings.Index(out, "\n"+header)
+	if admittedAt < 0 || retiredAt < 0 || headerAt < 0 {
+		t.Fatalf("missing admitted row, retired row or section (admitted %d, retired %d, header %d):\n%s", admittedAt, retiredAt, headerAt, out)
+	}
+	if admittedAt > headerAt || headerAt > retiredAt {
+		t.Errorf("want admitted row, then the section header, then the retired row:\n%s", out)
+	}
+	jout, errb, code := runAdvise(t, storeOf(rows...), Request{Advise: true, JSON: true, Args: []string{"pi", "standard"}})
+	if code != 0 || errb != "" {
+		t.Fatalf("json: exit %d, stderr %q", code, errb)
+	}
+	models := adviseJSONModels(t, jout)
+	admitted, retiredAt2 := adviseJSONIndex(models, "openrouter/deepseek/deepseek-v4.1-flash"), adviseJSONIndex(models, "opencode/minimax-m3")
+	if admitted < 0 || retiredAt2 < 0 {
+		t.Fatalf("json models missing a row: %+v", models)
+	}
+	if !models[admitted].InShippedMap || models[retiredAt2].InShippedMap {
+		t.Errorf("json in_shipped_map flags wrong: %+v vs %+v", models[admitted], models[retiredAt2])
+	}
+	for _, m := range adviseJSONRawModels(t, jout) {
+		if _, ok := m["admitted"]; ok {
+			t.Errorf("json still carries an \"admitted\" key: %v", m)
+		}
+		if _, ok := m["in_shipped_map"]; !ok {
+			t.Errorf("json row lacks in_shipped_map: %v", m)
+		}
+	}
+	if retiredAt2 < admitted {
+		t.Errorf("retired model ranked above the admitted one: %+v", models)
+	}
+}
+
+func TestAdviseGatedRowNamesItsRequirement(t *testing.T) {
+	rows := advRowsAt("acme/widgets", "pi", "deep", "openrouter/anthropic/claude-opus-5.5", 3)
+	out, errb, code := runAdvise(t, storeOf(rows...), Request{Advise: true, Args: []string{"pi", "deep"}})
+	if code != 0 || errb != "" {
+		t.Fatalf("exit %d, stderr %q", code, errb)
+	}
+	line := adviseRowLine(out, "openrouter/anthropic/claude-opus-5.5")
+	if line == "" || !strings.Contains(line, " (gated: pi_month_target)") {
+		t.Errorf("gated row does not name its requirement: %q\n%s", line, out)
+	}
+	if strings.Contains(out, "Not admitted for") {
+		t.Errorf("gated row printed as retired:\n%s", out)
+	}
+	jout, errb, code := runAdvise(t, storeOf(rows...), Request{Advise: true, JSON: true, Args: []string{"pi", "deep"}})
+	if code != 0 || errb != "" {
+		t.Fatalf("json: exit %d, stderr %q", code, errb)
+	}
+	models := adviseJSONModels(t, jout)
+	i := adviseJSONIndex(models, "openrouter/anthropic/claude-opus-5.5")
+	if i < 0 {
+		t.Fatalf("json model missing: %+v", models)
+	}
+	if m := models[i]; !m.InShippedMap || m.Requires == nil || *m.Requires != "pi_month_target" {
+		t.Errorf("gated json row = %+v", m)
+	}
+	if ids := models[i].Ids; strings.Join(ids, ",") != "openrouter/anthropic/claude-opus-5.5" {
+		t.Errorf("ids = %v", ids)
+	}
+}
+
+func TestAdvisePathShellsOutToNothing(t *testing.T) {
+	// The crew rate --advise path must run no subprocess. Every non-test file in
+	// the package is covered, so a file added later is checked automatically;
+	// rate.go is the one exception, its git probe is not the advise path.
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "rate.go" {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), name, src, parser.ImportsOnly)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, imp := range f.Imports {
+			path, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			if path == "os/exec" {
+				t.Errorf("%s imports os/exec; crew rate --advise must run no subprocess", name)
+			}
+		}
+		if bytes.Contains(src, []byte("exec.")) {
+			t.Errorf("%s references exec.; crew rate --advise must run no subprocess", name)
+		}
+	}
+}
+
+func TestAdviseLocalLaneIdIsNotCalledUnselectable(t *testing.T) {
+	rows := advRowsAt("acme/widgets", "pi", "standard", "lemonade/Qwen3.8-Flash-Next-Strata", 3)
+	out, errb, code := runAdvise(t, storeOf(rows...), Request{Advise: true, Args: []string{"pi", "standard"}})
+	if code != 0 || errb != "" {
+		t.Fatalf("exit %d, stderr %q", code, errb)
+	}
+	header := "Not admitted for pi standard by the shipped model map — check 'dispatch --models'"
+	headerAt, rowAt := strings.Index(out, "\n"+header), strings.Index(out, "\n  lemonade/Qwen3.8-Flash-Next-Strata ")
+	if headerAt < 0 || rowAt < 0 {
+		t.Fatalf("local lane row not under the section (header %d, row %d):\n%s", headerAt, rowAt, out)
+	}
+	if headerAt > rowAt {
+		t.Errorf("section header must precede the row:\n%s", out)
+	}
+	for _, bad := range []string{"selectable", "no longer"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("section wording says %q, but crew cannot see the user's settings:\n%s", bad, out)
 		}
 	}
 }

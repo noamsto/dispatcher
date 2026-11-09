@@ -8,7 +8,10 @@ Sweep a repo's bus into the global ratings store, or render that store.
               global store, plus the class-state file and model catalog for the
               text Class trials section — no bus, no network
   --advise    Rank the models run at <engine> <tier> over the last 60 days, this
-              repo's figures first and pooled beside them; read-only advice
+              repo's figures first and pooled beside them; read-only advice.
+              Rows fold an alias with the full id of the model it names; ids the
+              shipped model map does not admit for that engine and tier are
+              marked
   --pooled    Pool the tiers into one row per engine and model
   --json      Machine-readable report or advice
   --sweep-all Walk every repo instead of this one — the one command with no use
