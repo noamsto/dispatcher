@@ -31,6 +31,8 @@ unset DISPATCH_SPEC DISPATCH_SHAPE DISPATCH_DRAFT_PR DISPATCH_CLAUDE_CONNECTORS 
 export DISPATCH_CONFIG_BIN="$BATS_TEST_DIRNAME/../adapters/core/dispatch-config.sh"
 # Same idiom, for the shared --add-dir grant validator lib.
 export GRANT_CHECK_LIB="$BATS_TEST_DIRNAME/../adapters/core/grant-check.sh"
+# And for the helpers every launcher shares.
+export LAUNCHER_COMMON_LIB="$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh"
 # And for the anchored-git lib (#539).
 export WORKTREE_GIT_LIB="$BATS_TEST_DIRNAME/../adapters/core/worktree-git.sh"
 # And for the shared localModels lane lib.

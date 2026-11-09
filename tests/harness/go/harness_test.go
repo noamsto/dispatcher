@@ -270,6 +270,7 @@ func newRepoFixture(t *caseTest) *repoFixture {
 		"WORKTREE_GIT_LIB":    filepath.Join(repoRoot, "adapters/core/worktree-git.sh"),
 		"DISPATCH_CONFIG_BIN": filepath.Join(repoRoot, "adapters/core/dispatch-config.sh"),
 		"GRANT_CHECK_LIB":     filepath.Join(repoRoot, "adapters/core/grant-check.sh"),
+		"LAUNCHER_COMMON_LIB": filepath.Join(repoRoot, "adapters/core/launcher-common.sh"),
 	})
 	for _, args := range [][]string{{"init", "-q", "-b", "main", "."}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "test"}} {
 		result := runCommand(f.dir, f.env, "git", args...)

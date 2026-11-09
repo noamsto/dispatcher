@@ -127,8 +127,8 @@
               (builtins.readFile ./adapters/core/worktree-git.sh));
           sub =
             builtins.replaceStrings
-            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@" "@publicLeakGuard@" "@worktreeGitLib@" "@grantCheckLib@" "@claudeWorkerSettingsLib@" "@localModelsLib@" "@budgetGateLib@" "@openrouterKeyLib@" "@laneProfilesDir@" "@agentBrowserWorkerConfig@" "@piDir@" "@modelResolve@"]
-            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}" "${worktreeGitLib}" "${./adapters/core/grant-check.sh}" "${./adapters/core/claude-worker-settings.sh}" "${./adapters/core/local-models.sh}" "${./adapters/core/budget-gate.sh}" "${./adapters/core/openrouter-key.sh}" "${./adapters/core/lane-profiles}" "${./adapters/core/agent-browser-worker.json}" "${./adapters/pi}" "${./adapters/core/model-resolve.sh}"];
+            ["@protocolDir@" "@protocolRev@" "@skillsDir@" "@reviewersDir@" "@criticsDir@" "@crossRepoHintLib@" "@publicLeakGuard@" "@worktreeGitLib@" "@grantCheckLib@" "@claudeWorkerSettingsLib@" "@localModelsLib@" "@budgetGateLib@" "@openrouterKeyLib@" "@laneProfilesDir@" "@agentBrowserWorkerConfig@" "@piDir@" "@modelResolve@" "@launcherCommonLib@"]
+            ["${protocols}" "${protocolRev}" "${skills}" "${./adapters/core/reviewers}" "${./adapters/core/critics}" "${./adapters/core/cross-repo-hint.sh}" "${./adapters/core/public-leak-guard.sh}" "${worktreeGitLib}" "${./adapters/core/grant-check.sh}" "${./adapters/core/claude-worker-settings.sh}" "${./adapters/core/local-models.sh}" "${./adapters/core/budget-gate.sh}" "${./adapters/core/openrouter-key.sh}" "${./adapters/core/lane-profiles}" "${./adapters/core/agent-browser-worker.json}" "${./adapters/pi}" "${./adapters/core/model-resolve.sh}" "${./adapters/core/launcher-common.sh}"];
           # The settings resolver (#560), with defaults.json baked in as its base
           # layer. withConfig bakes its path into the consumers as the default for
           # their env-overridable DISPATCH_CONFIG_BIN, the WORKTREE_GIT_LIB idiom.
@@ -272,7 +272,7 @@
             pkgs.writeShellApplication {
               name = "lead-launcher";
               runtimeInputs = rt;
-              text = launcherPath rt (builtins.readFile ./adapters/core/lead-launcher.sh);
+              text = launcherPath rt (sub (builtins.readFile ./adapters/core/lead-launcher.sh));
             };
 
           overseer = let
@@ -342,8 +342,9 @@
           # edit from being silently reformatted on its way in.
           # dispatcher.sh is NOT excluded: that one is ours, ported from fish.
           # dispatch-resume.sh carries byte-identical copies of dispatch.sh's
-          # liveness helpers (#461); shfmt would reformat some of them and sever
-          # the sync guarantee tests/adapters.bats pins. dispatch.sh and
+          # shell_quote, write_launch_script and other helpers; shfmt would
+          # reformat some of them and sever the sync guarantee
+          # tests/dispatch-resume.bats pins. dispatch.sh and
           # dispatch-notify.sh are excluded for the same reason: shfmt would
           # re-indent the block crew/internal/frame extracts and sources (its
           # anchors are 2-space-indented lines), and rewrite the copies

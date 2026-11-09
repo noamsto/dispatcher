@@ -606,83 +606,6 @@ fi
 # shellcheck source=/dev/null
 . "$claude_worker_settings_lib"
 
-# The origin's owner/repo, for the per-project dispatcherMcp lookup. Copied
-# from dispatch.sh (standalone build); tests/adapters.bats pins the copies.
-# ssh Host aliases are written github.com-<name>. Anything else (a lookalike
-# host, an extra @, a slash) is not GitHub.
-_github_ssh_host() {
-  local host
-  host="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
-  [ "$host" = github.com ] && return 0
-  [[ $host =~ ^github\.com-[^@/]+$ ]]
-}
-
-# owner/repo from a GitHub path. A trailing slash may sit before or after
-# `.git` (`repo/.git`, `repo.git/`, `repo/`). Empty when it is not one slug.
-_tracker_slug_from_path() {
-  local path="$1"
-  while [[ $path == */ ]]; do
-    path="${path%/}"
-  done
-  if [[ $path == *.git ]]; then
-    path="${path%.git}"
-    while [[ $path == */ ]]; do
-      path="${path%/}"
-    done
-  fi
-  if [[ $path =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
-    printf '%s\n' "$path"
-  fi
-  return 0
-}
-
-# _origin_slug — owner/repo of the configured origin when it is a GitHub URL,
-# else nothing. Configured origin, not `git remote get-url`: that applies
-# insteadOf and would hide a GitHub slug behind a rewritten local path. https
-# userinfo is discarded and never printed.
-_origin_slug() {
-  local url="" rest="" host="" path=""
-  url="$(git config --get remote.origin.url 2>/dev/null || true)"
-  case "$url" in
-  https://*)
-    rest="${url#https://}"
-    rest="${rest##*@}"
-    host="${rest%%/*}"
-    host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
-    if [ "$host" = github.com ] && [ "$rest" != "$host" ]; then
-      path="${rest#*/}"
-    fi
-    ;;
-  ssh://git@*/*)
-    rest="${url#ssh://git@}"
-    host="${rest%%/*}"
-    if _github_ssh_host "$host"; then
-      path="${rest#*/}"
-    fi
-    ;;
-  git://*/*)
-    rest="${url#git://}"
-    host="${rest%%/*}"
-    host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
-    if [ "$host" = github.com ]; then
-      path="${rest#*/}"
-    fi
-    ;;
-  git@*:*)
-    rest="${url#git@}"
-    host="${rest%%:*}"
-    if _github_ssh_host "$host"; then
-      path="${rest#*:}"
-    fi
-    ;;
-  *) path="" ;;
-  esac
-  if [ -n "$path" ]; then
-    _tracker_slug_from_path "$path"
-  fi
-  return 0
-}
-
 # Orchestrator model/effort defaults are data (defaults.json →
 # "orchestratorDefaults"), so a ladder bump edits defaults.json and not this
 # launcher. --model/--effort still override per launch.
@@ -1062,34 +985,17 @@ fi
 # stays pinned. A raw run from a checkout leaves the placeholder literal and
 # leaves PATH untouched.
 _launcher_runtime_path='@launcherRuntimePath@'
-engine_path() {
-  local pinned="$_launcher_runtime_path" entry dir keep
-  local -a parts=() pinned_parts=() kept=()
-  # A substituted value is a colon-joined list of store dirs, so it starts with
-  # `/`; anything else is the raw script, where there is nothing to remove. Same
-  # "not absolute means unsubstituted" test _resolve_dir uses.
-  if [ "${pinned:0:1}" != '/' ]; then
-    printf '%s' "${PATH-}"
-    return 0
-  fi
-  IFS=: read -ra parts <<<"${PATH-}" || true
-  IFS=: read -ra pinned_parts <<<"$pinned" || true
-  for entry in "${parts[@]}"; do
-    keep=1
-    for dir in "${pinned_parts[@]}"; do
-      if [ -n "$dir" ] && [ "$entry" = "$dir" ]; then
-        keep=0
-        break
-      fi
-    done
-    if [ "$keep" = 1 ]; then
-      kept+=("$entry")
-    fi
-  done
-  local IFS=:
-  printf '%s' "${kept[*]}"
-}
 
+# Helpers every launcher shares (launcher-common.sh). A run from a checkout, or a
+# copy of this script, finds it through LAUNCHER_COMMON_LIB or beside the script.
+launcher_common_lib="${LAUNCHER_COMMON_LIB:-@launcherCommonLib@}"
+# replaceStrings rewrites the token on both sides of an equality check, so a
+# string compare against the placeholder always matches after bake.
+if [ ! -f "$launcher_common_lib" ]; then
+  launcher_common_lib="$(dirname -- "${BASH_SOURCE[0]}")/launcher-common.sh"
+fi
+# shellcheck source=/dev/null
+. "$launcher_common_lib"
 # Computed while the pinned PATH is still in effect; `env` itself and the tools
 # the launcher still calls after the launch resolve as before.
 engine_env_path="$(engine_path)"

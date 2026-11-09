@@ -50,7 +50,7 @@ function fn_tok(names, line) {
 
 function lit_prod(l) {
   if (l ~ /^[[:space:]]*"[^"]*"( \\|; do)?$/) return 0
-  return l ~ /(ROOT|BATS_TEST_DIRNAME|\.\.)[^ ]*\/(adapters\/core\/[A-Za-z0-9_\/-]+|scripts\/[A-Za-z0-9_-]+)\.sh|(^|[^A-Za-z0-9_])dash\/|WORKTREE_GIT_LIB|GRANT_CHECK_LIB|DISPATCH_CONFIG_BIN/ ||
+  return l ~ /(ROOT|BATS_TEST_DIRNAME|\.\.)[^ ]*\/(adapters\/core\/[A-Za-z0-9_\/-]+|scripts\/[A-Za-z0-9_-]+)\.sh|(^|[^A-Za-z0-9_])dash\/|WORKTREE_GIT_LIB|GRANT_CHECK_LIB|LAUNCHER_COMMON_LIB|DISPATCH_CONFIG_BIN/ ||
     l ~ /(^|[^A-Za-z0-9_])\.\/(scripts|adapters\/core)\/[A-Za-z0-9_\/-]+\.sh/ ||
     l ~ /(^[[:space:]]*|[;&|(] *|run +)(eval|source|nix (eval|build|flake|run)) |(^[[:space:]]*|[;&|(] *|run +|-c +["\x27])\. [^ ]/ ||
     (l ~ /(^|[ (;|&])bash +(-[A-Za-z]+ +|pipefail +)*"\$/) ||

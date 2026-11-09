@@ -308,7 +308,7 @@ branch_dirs_ok() {
 }
 
 # lead_session — the lead's session id from <crew>/leads/<branch>, checked as
-# dispatch.sh's _lead_record_safe checks it before writing. Sets SESSION.
+# launcher-common.sh's _lead_record_safe checks it before writing. Sets SESSION.
 lead_session() {
   case "/$BRANCH/" in
   *//* | */./* | */../*) refuse "lead record: unsafe branch name" ;;

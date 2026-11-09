@@ -749,6 +749,7 @@ setup_role_watch() {
   export STUB_PANE_PID=$$
   export CREW_REAL="$CREW_GO_BIN"
   export GRANT_CHECK_LIB="$ROOT/adapters/core/grant-check.sh"
+  export LAUNCHER_COMMON_LIB="$ROOT/adapters/core/launcher-common.sh"
   export DISPATCH_CONFIG_BIN="$ROOT/adapters/core/dispatch-config.sh"
   export CROSS_REPO_HINT_LIB="$ROOT/adapters/core/cross-repo-hint.sh"
   unset DISPATCH_PROFILE DISPATCH_SKIP_MODEL_CHECK DISPATCH_IGNORE_RUNG DISPATCH_SPEC \

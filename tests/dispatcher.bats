@@ -943,19 +943,6 @@ EOF
   grep -qx "engine crew=$PINNED_BIN/crew" "$STUB_LOG"
 }
 
-# engine_path is duplicated per launcher for the same reason; one test diffs the
-# four so a fix in one file cannot silently miss the others.
-@test "engine_path is byte-identical across the four launchers" {
-  local a b f
-  a="$(sed -n '/^engine_path() {/,/^}/p' "$BATS_TEST_DIRNAME/../adapters/core/dispatcher.sh")"
-  [ -n "$a" ]
-  for f in dispatch dispatch-resume lead-launcher; do
-    b="$(sed -n '/^engine_path() {/,/^}/p' "$BATS_TEST_DIRNAME/../adapters/core/$f.sh")"
-    [ -n "$b" ]
-    [ "$a" = "$b" ]
-  done
-}
-
 # ---- #929: re-attach to this repo's live dispatcher ----------------------
 
 # stub_crew_table <tsv> — a `crew` stub richer than setup()'s, which prints
