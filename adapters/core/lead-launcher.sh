@@ -20,85 +20,17 @@ set -euo pipefail
 # stays pinned. A raw run from a checkout leaves the placeholder literal and
 # leaves PATH untouched.
 _launcher_runtime_path='@launcherRuntimePath@'
-engine_path() {
-  local pinned="$_launcher_runtime_path" entry dir keep
-  local -a parts=() pinned_parts=() kept=()
-  # A substituted value is a colon-joined list of store dirs, so it starts with
-  # `/`; anything else is the raw script, where there is nothing to remove. Same
-  # "not absolute means unsubstituted" test _resolve_dir uses.
-  if [ "${pinned:0:1}" != '/' ]; then
-    printf '%s' "${PATH-}"
-    return 0
-  fi
-  IFS=: read -ra parts <<<"${PATH-}" || true
-  IFS=: read -ra pinned_parts <<<"$pinned" || true
-  for entry in "${parts[@]}"; do
-    keep=1
-    for dir in "${pinned_parts[@]}"; do
-      if [ -n "$dir" ] && [ "$entry" = "$dir" ]; then
-        keep=0
-        break
-      fi
-    done
-    if [ "$keep" = 1 ]; then
-      kept+=("$entry")
-    fi
-  done
-  local IFS=:
-  printf '%s' "${kept[*]}"
-}
 
-# Copied from dispatch.sh (standalone build); tests/dispatch-resume.bats and
-# tests/adapters.bats pin the copies together.
-_uuid() {
-  local h
-  h="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-  printf '%s-%s-4%s-%x%s-%s\n' "${h:0:8}" "${h:8:4}" "${h:13:3}" $(((0x${h:16:1} & 3) | 8)) "${h:17:3}" "${h:20:12}"
-}
-
-_lead_record_safe() {
-  local dir="$crew_dir/leads" part rec="$crew_dir/leads/$branch"
-  local -a parts
-  IFS=/ read -ra parts <<<"$branch"
-  for part in "" "${parts[@]:0:${#parts[@]}-1}"; do
-    dir="$dir${part:+/$part}"
-    if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
-      return 1
-    fi
-  done
-  if [ -L "$rec" ] || { [ -e "$rec" ] && [ ! -f "$rec" ]; }; then
-    return 1
-  fi
-}
-
-_record_lead_session() {
-  local rec="$crew_dir/leads/$branch" tmp
-  if ! _lead_record_safe; then
-    echo "dispatch: $rec is a symlink or not a regular file — not recording the lead session" >&2
-    return 1
-  fi
-  (
-    umask 077
-    mkdir -p "$(dirname "$rec")"
-    tmp="$(mktemp "$(dirname "$rec")/.lead.XXXXXX")"
-    printf '%s %s\n' "$1" "$2" >"$tmp"
-    mv -f -- "$tmp" "$rec"
-  )
-}
-
-_bus_append() {
-  local p='' s1='' s2='' c=''
-  if [ -s "$1" ]; then
-    s1="$(wc -c <"$1" 2>/dev/null)" || true
-    c="$(dd if="$1" bs=1 skip=$((s1 - 1)) count=1 2>/dev/null)" || true
-    if [ -n "$c" ]; then
-      s2="$(wc -c <"$1" 2>/dev/null)" || true
-      [ "$s1" != "$s2" ] || p=$'\n'
-    fi
-  fi
-  printf '%s%s\n' "$p" "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"
-}
-
+# Helpers every launcher shares (launcher-common.sh). A run from a checkout, or a
+# copy of this script, finds it through LAUNCHER_COMMON_LIB or beside the script.
+launcher_common_lib="${LAUNCHER_COMMON_LIB:-@launcherCommonLib@}"
+# replaceStrings rewrites the token on both sides of an equality check, so a
+# string compare against the placeholder always matches after bake.
+if [ ! -f "$launcher_common_lib" ]; then
+  launcher_common_lib="$(dirname -- "${BASH_SOURCE[0]}")/launcher-common.sh"
+fi
+# shellcheck source=/dev/null
+. "$launcher_common_lib"
 # _child_on_chain <pid> — the pid on this process's ancestor chain whose parent
 # is <pid>, i.e. <pid>'s direct child above us. Copied from dispatcher.sh.
 _child_on_chain() {

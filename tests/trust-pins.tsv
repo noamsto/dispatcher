@@ -20,8 +20,8 @@ M10b	adapters/core/dispatch.sh	_fetch_origin_branch "$head"	1	true	tests/dispatc
 M11	adapters/core/dispatch.sh	_record_worktree_anchor "$wt_path" "$wt_admin"	1	true	tests/dispatch.bats	^(trust pin: M11 |worktree anchor: dispatch writes the resume record)	anchors-at-launch=1
 M12	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	3	true	tests/dispatch.bats	^dispatch refuses from a worker worktree whose .git is already a standalone repo	inside the worker worktree
 M13	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	3	true	tests/dispatch.bats	^trust pin: M13 	evil-common/crew
-M14	adapters/core/dispatch.sh	if ! _lead_record_safe; then	2	if ! true; then	tests/dispatch.bats	^lead-session: a symlinked leads dir is refused before any launch	symlink or not a regular file/directory
-M15	adapters/core/dispatch.sh	if ! _lead_record_safe; then	1	if ! true; then	tests/dispatch.bats	^trust pin: M15 	not recording the lead session
+M14	adapters/core/dispatch.sh	if ! _lead_record_safe; then	1	if ! true; then	tests/dispatch.bats	^lead-session: a symlinked leads dir is refused before any launch	symlink or not a regular file/directory
+M15	adapters/core/launcher-common.sh	if ! _lead_record_safe; then	1	if ! true; then	tests/dispatch.bats	^trust pin: M15 	not recording the lead session
 H1	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	1	true	tests/dispatch.bats	^dispatch --host refuses from a worker worktree whose .git is already a standalone repo	"$status" -eq 1
 H2	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	1	true	tests/dispatch.bats	^trust pin: H2 	"$status" -eq 1
 R1	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	2	true	tests/dispatch.bats	^dispatch --host refuses from a worker worktree whose .git is already a standalone repo	inside the worker worktree
@@ -60,7 +60,7 @@ F36	adapters/core/dispatch.sh	[ -L "$_dir" ] || { [ -e "$_dir" ] && [ ! -d "$_di
 
 CR1	crew/internal/reap/reap.go	wtgit.TrustedCwd(paths.Common, cwd, stderr)	1	cwd, error(nil); _ = wtgit.TrustedCwd	crew/internal/reap/reap_test.go	^TestTrustedCwdRefusalExits1$	rc=0, want 1
 CR2	crew/internal/reap/reap.go	wtgit.TrustedCwd(paths.Common, cwd, stderr)	1	cwd, error(nil); _ = wtgit.TrustedCwd	crew/internal/reap/port_f_test.go	^TestPortFPlantedCommondirRefusesBeforeGh$	rc=0 stdout=
-LL1	adapters/core/lead-launcher.sh	if ! _lead_record_safe; then	1	if ! true; then	tests/lead-launcher.bats	^lead-launcher: a symlinked leads record is left alone, and the relaunch still happens	-L "$CREW_DIR/leads/$BRANCH"
+LL1	adapters/core/launcher-common.sh	if ! _lead_record_safe; then	1	if ! true; then	tests/lead-launcher.bats	^lead-launcher: a symlinked leads record is left alone, and the relaunch still happens	-L "$CREW_DIR/leads/$BRANCH"
 P1	adapters/core/permission-check.sh	(_wt_trusted_cwd "$common") || {	1	(true) || {	tests/permission-check.bats	^permission-check: with no --crew-dir, a worker worktree whose .git is a standalone repo is one human line	"$status" -eq 2
 P2	adapters/core/permission-check.sh	(_wt_trusted_cwd "$common") || {	1	(true) || {	tests/permission-check.bats	^permission-check: trust pin: P2 	"$status" -eq 2
 @grouped	D1
@@ -81,8 +81,8 @@ D7	adapters/core/dispatch-resume.sh	_wt_cfg_commondir "$_r_common" || exit 1	1	t
 D7	adapters/core/dispatch-resume.sh	_wt_trusted_cwd "$(git rev-parse --path-format=absolute --git-common-dir)" || exit 1	1	true	tests/dispatch-resume.bats	^resume <target> from the main checkout refuses a planted commondir	*"refusing git: "*
 D8	adapters/core/dispatch-resume.sh	_wt_cfg_guard "${_crew_dir_real%/crew}" || exit 1	1	true	tests/dispatch-resume.bats	^resume from a worker worktree refuses a commondir planted	cksum "$WT/WORKER_TASK.md"
 D8	adapters/core/dispatch-resume.sh	_wt_cfg_guard "${_crew_dir_real%/crew}" "${_anchor_lines[3]}" || exit 1	1	true	tests/dispatch-resume.bats	^resume from a worker worktree refuses a commondir planted	cksum "$WT/WORKER_TASK.md"
-D9	adapters/core/dispatch-resume.sh	if ! _lead_record_safe; then	2	if ! true; then	tests/dispatch-resume.bats	^a symlinked leads (dir is never read through|parent component is never read through)	malformed or unsafe
-D10	adapters/core/dispatch-resume.sh	if ! _lead_record_safe; then	1	if ! true; then	tests/dispatch-resume.bats	^a symlinked leads dir is never written through	symlink
+D9	adapters/core/dispatch-resume.sh	if ! _lead_record_safe; then	1	if ! true; then	tests/dispatch-resume.bats	^a symlinked leads (dir is never read through|parent component is never read through)	malformed or unsafe
+D10	adapters/core/launcher-common.sh	if ! _lead_record_safe; then	1	if ! true; then	tests/dispatch-resume.bats	^a symlinked leads dir is never written through	symlink
 F4	adapters/core/dispatch-resume.sh	_artifacts_dir_bad "$2"	1	false	tests/dispatch-resume.bats	^claude resume refuses a symlinked parent of the artifacts dir	not granting
 F5	adapters/core/dispatch-resume.sh	_artifacts_dir_bad "$branch"	1	false	tests/dispatch-resume.bats	^trust pin: F5 	not re-arming role panes
 F8	adapters/core/dispatch-resume.sh	"$(_protocol_dirs_record_bad)"	1	"$(false)"	tests/dispatch-resume.bats	^resume refuses a symlinked protocol-dirs record before launching	"$status" -eq 1

@@ -67,6 +67,7 @@ def harness(tmp_path, monkeypatch):
         "CREW_RATE_AUTOSWEEP": "0",
         "DISPATCH_CONFIG_BIN": str(ROOT / "adapters/core/dispatch-config.sh"),
         "GRANT_CHECK_LIB": str(ROOT / "adapters/core/grant-check.sh"),
+        "LAUNCHER_COMMON_LIB": str(ROOT / "adapters/core/launcher-common.sh"),
         "WORKTREE_GIT_LIB": str(ROOT / "adapters/core/worktree-git.sh"),
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "STUB_DIR": str(stubs),

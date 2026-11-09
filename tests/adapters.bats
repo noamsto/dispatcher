@@ -59,20 +59,16 @@ teardown() {
   [ -z "$offenders" ] || { printf '%s\n' "$offenders" >&2; false; }
 }
 
-@test "every standalone script's _bus_append copy matches dispatch.sh's" {
-  # dispatch.sh, dispatch-notify.sh and dispatch-resume.sh are separate
-  # writeShellApplication builds with no shared lib to source this one-liner
-  # from (#61), so each carries a copy and nothing keeps them in sync: a fix to
-  # the `dd` invocation in one would silently fail to reach the others,
-  # reopening the splice hazard the helper exists to close. Byte-compare each
-  # against dispatch.sh, which sources no lib either and so is as canonical as
-  # any of them.
-  canonical="$(grep -h '^_bus_append() {' "$ROOT/adapters/core/dispatch.sh")"
+@test "dispatch-notify's _bus_append copy matches the shared launcher lib's, whole function" {
+  # The launchers source _bus_append from launcher-common.sh. dispatch-notify.sh
+  # ships as raw plugin text with no lib to source, so it keeps a copy: a fix
+  # to the `dd` invocation in one would silently fail to reach the other,
+  # reopening the splice hazard the helper exists to close. Compare the whole
+  # function, not its signature line.
+  canonical="$(sed -n '/^_bus_append() {/,/^}/p' "$ROOT/adapters/core/launcher-common.sh")"
   [ -n "$canonical" ]
-  for f in dispatch-notify.sh dispatch-resume.sh lead-launcher.sh; do
-    found="$(grep -h '^_bus_append() {' "$ROOT/adapters/core/$f")"
-    [ "$found" = "$canonical" ]
-  done
+  found="$(sed -n '/^_bus_append() {/,/^}/p' "$ROOT/adapters/core/dispatch-notify.sh")"
+  [ "$found" = "$canonical" ]
 }
 
 @test "every standalone _is_engine_cmd copy matches local-models.sh's" {
@@ -88,41 +84,26 @@ teardown() {
   [ "$found" = "$canonical" ]
 }
 
-@test "dispatch-resume's liveness-helper copies match dispatch.sh's" {
-  # Both files are standalone builds, so each carries its own copies of the
-  # dispatcher-liveness helpers (#461). Neither is treefmt-formatted
-  # (flake.nix), so shfmt cannot rewrite a copy out of sync. All five are
-  # compared, since a partial list is how a copy drifts unnoticed.
-  for fn in _pid_alive _file_mtime_s _ps_elapsed_s _pid_recycled _recorded_pid_live; do
-    canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch.sh")"
-    [ -n "$canonical" ]
-    found="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch-resume.sh")"
-    [ "$found" = "$canonical" ]
+# The helpers the four launchers used to copy live once in launcher-common.sh
+# (dispatch-notify's _bus_append is the one deliberate copy, compared whole
+# above). This pins the single-definition guarantee the byte-compares used to
+# supply: a stray copy in any launcher would fork a fix again.
+@test "the shared launcher helpers are defined only in launcher-common.sh" {
+  for fn in _bus_append engine_path _pid_alive _file_mtime_s _ps_elapsed_s _pid_recycled _recorded_pid_live _pane_client _remote_session_ok _remote_target_session _remote_worker_session _remote_window _uuid _lead_record_safe _record_lead_session _github_ssh_host _tracker_slug_from_path _origin_slug; do
+    run grep -q "^${fn}() {" "$ROOT/adapters/core/launcher-common.sh"
+    [ "$status" -eq 0 ]
+    for f in dispatch dispatch-resume dispatcher lead-launcher; do
+      run grep -q "^${fn}() {" "$ROOT/adapters/core/$f.sh"
+      [ "$status" -ne 0 ]
+    done
   done
 }
 
-@test "dispatcher's origin-slug helper copies match dispatch.sh's" {
-  # The dispatcher launcher resolves the origin repo for its per-project
-  # dispatcherMcp lookup (#1277) exactly as dispatch resolves it for the
-  # tracker stamp; both are standalone builds, so each carries a copy.
-  for fn in _github_ssh_host _tracker_slug_from_path _origin_slug; do
-    canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch.sh")"
-    [ -n "$canonical" ]
-    found="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatcher.sh")"
-    [ "$found" = "$canonical" ]
-  done
-}
-
-@test "dispatch-resume's remote-session helpers, _remote_window and _pane_client copies match dispatch.sh's" {
-  # A routed resume mirrors the remote window the way dispatch --host does, and
-  # opens its own window through the same scrubbed client; both are standalone
-  # builds, so each carries a copy.
-  for fn in _remote_session_ok _remote_target_session _remote_worker_session _remote_window _pane_client; do
-    canonical="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch.sh")"
-    [ -n "$canonical" ]
-    found="$(sed -n "/^${fn}() {/,/^}/p" "$ROOT/adapters/core/dispatch-resume.sh")"
-    [ "$found" = "$canonical" ]
-  done
+@test "launcher-common.sh carries no build-time substitution token" {
+  # A file baked by ${./...} keeps its text raw, so a token in it would reach
+  # the launcher unreplaced; each launcher passes baked values in as variables.
+  run grep -En '@[A-Za-z]+@' "$ROOT/adapters/core/launcher-common.sh"
+  [ "$status" -eq 1 ]
 }
 
 @test "generator is idempotent" {

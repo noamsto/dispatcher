@@ -77,15 +77,6 @@ pi_skill_args() {
   return 0
 }
 
-# _uuid — a random lowercase v4 uuid, the id a claude or pi lead is launched
-# with (--session-id) so a resume can find its own session again. Duplicated from
-# dispatch.sh (standalone build); parity-tested.
-_uuid() {
-  local h
-  h="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-  printf '%s-%s-4%s-%x%s-%s\n' "${h:0:8}" "${h:8:4}" "${h:13:3}" $(((0x${h:16:1} & 3) | 8)) "${h:17:3}" "${h:20:12}"
-}
-
 # Unconditional, unlike the advisory hint lib: without it resume must abort,
 # never fall back to discovery in the worker's worktree (#539).
 wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
@@ -96,6 +87,17 @@ wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
 grant_check_lib="${GRANT_CHECK_LIB:-@grantCheckLib@}"
 # shellcheck source=/dev/null
 . "$grant_check_lib"
+
+# Helpers every launcher shares (launcher-common.sh). A run from a checkout, or a
+# copy of this script, finds it through LAUNCHER_COMMON_LIB or beside the script.
+launcher_common_lib="${LAUNCHER_COMMON_LIB:-@launcherCommonLib@}"
+# replaceStrings rewrites the token on both sides of an equality check, so a
+# string compare against the placeholder always matches after bake.
+if [ ! -f "$launcher_common_lib" ]; then
+  launcher_common_lib="$(dirname -- "${BASH_SOURCE[0]}")/launcher-common.sh"
+fi
+# shellcheck source=/dev/null
+. "$launcher_common_lib"
 
 # Worker-only plugin disablement is shared with dispatch.  It is a separate
 # --settings layer; the Nix wrapper merges it into its overlay (Claude itself
@@ -117,43 +119,6 @@ agent_browser_worker_config="${AGENT_BROWSER_WORKER_CONFIG:-@agentBrowserWorkerC
 if [ ! -f "$agent_browser_worker_config" ]; then
   agent_browser_worker_config="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/agent-browser-worker.json"
 fi
-
-# _lead_record_safe — succeed when $crew_dir/leads/<branch> and every dir above
-# it may be written: mkdir, mktemp and mv all follow a symlink planted at any of
-# them. Mirrors the grant-record checks in dispatch.sh.
-_lead_record_safe() {
-  local dir="$crew_dir/leads" part rec="$crew_dir/leads/$branch"
-  local -a parts
-  IFS=/ read -ra parts <<<"$branch"
-  for part in "" "${parts[@]:0:${#parts[@]}-1}"; do
-    dir="$dir${part:+/$part}"
-    if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
-      return 1
-    fi
-  done
-  if [ -L "$rec" ] || { [ -e "$rec" ] && [ ! -f "$rec" ]; }; then
-    return 1
-  fi
-}
-
-# _record_lead_session <engine> <id> — record which engine session is the
-# lead's, as `<engine> <id>` in $crew_dir/leads/<branch>. Not under artifacts/,
-# which is granted to workers. Only a lead launch writes it: role panes share
-# the worktree and must never claim the lead's session.
-_record_lead_session() {
-  local rec="$crew_dir/leads/$branch" tmp
-  if ! _lead_record_safe; then
-    echo "dispatch: $rec is a symlink or not a regular file — not recording the lead session" >&2
-    return 1
-  fi
-  (
-    umask 077
-    mkdir -p "$(dirname "$rec")"
-    tmp="$(mktemp "$(dirname "$rec")/.lead.XXXXXX")"
-    printf '%s %s\n' "$1" "$2" >"$tmp"
-    mv -f -- "$tmp" "$rec"
-  )
-}
 
 # shell_quote and write_launch_script: duplicated from dispatch.sh (standalone
 # build); parity-tested against dispatch.sh's copies.
@@ -180,52 +145,6 @@ shell_quote() {
 # opens it. A raw run from a checkout leaves the placeholder literal and leaves
 # PATH untouched.
 _launcher_runtime_path='@launcherRuntimePath@'
-engine_path() {
-  local pinned="$_launcher_runtime_path" entry dir keep
-  local -a parts=() pinned_parts=() kept=()
-  # A substituted value is a colon-joined list of store dirs, so it starts with
-  # `/`; anything else is the raw script, where there is nothing to remove. Same
-  # "not absolute means unsubstituted" test _resolve_dir uses.
-  if [ "${pinned:0:1}" != '/' ]; then
-    printf '%s' "${PATH-}"
-    return 0
-  fi
-  IFS=: read -ra parts <<<"${PATH-}" || true
-  IFS=: read -ra pinned_parts <<<"$pinned" || true
-  for entry in "${parts[@]}"; do
-    keep=1
-    for dir in "${pinned_parts[@]}"; do
-      if [ -n "$dir" ] && [ "$entry" = "$dir" ]; then
-        keep=0
-        break
-      fi
-    done
-    if [ "$keep" = 1 ]; then
-      kept+=("$entry")
-    fi
-  done
-  local IFS=:
-  printf '%s' "${kept[*]}"
-}
-
-# _pane_client <tmux args...> — dispatch.sh's: the tmux client that opens the
-# window, under engine_path and without the CREW_ and DISPATCH_ vars a server it
-# starts would hand every later window.
-_pane_client() {
-  local cleaned tmux_bin v
-  local -a scrub=()
-  for v in "${!CREW_@}" "${!DISPATCH_@}"; do
-    scrub+=(-u "$v")
-  done
-  cleaned="$(engine_path)"
-  tmux_bin="$(command -v tmux || true)"
-  if [ -n "$tmux_bin" ] && [ -n "$cleaned" ] && [ "$cleaned" != "$PATH" ]; then
-    env "${scrub[@]}" PATH="$cleaned" "$tmux_bin" "$@"
-  else
-    env "${scrub[@]}" tmux "$@"
-  fi
-}
-
 write_launch_script() {
   local -n _launch="$1"
   local _dir="$crew_dir/launch" _file _quoted
@@ -511,73 +430,6 @@ _check_protocol_rev() {
     fi
     exit 1
   fi
-}
-
-_remote_session_ok() {
-  [[ $1 =~ ^[A-Za-z0-9_][A-Za-z0-9_-]*$ ]]
-}
-
-# prints this tmux session's name, or crew-<id> outside tmux
-_remote_target_session() {
-  local name=""
-  [ -z "${TMUX_PANE:-}" ] || name="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)"
-  if [ -z "$name" ]; then
-    printf 'crew-%s\n' "$1"
-    return 0
-  fi
-  _remote_session_ok "$name" || {
-    printf "dispatch: tmux session '%s' cannot name a remote session: it must match ^[A-Za-z0-9_][A-Za-z0-9_-]*\$\n" "$name" >&2
-    return 1
-  }
-  printf '%s\n' "$name"
-}
-
-# <host> <crew> <branch> <fallback>: the session the window's stamps put it in
-_remote_worker_session() {
-  local line
-  line="$(crew remote-run --host "$1" --env "CREW_ID=$2" -- crew where "$3" --crew "$2" 2>/dev/null)" || line=""
-  if [[ $line =~ ^[^[:space:]]+\ —\ ([A-Za-z0-9_][A-Za-z0-9_-]*):[0-9]+\.[0-9]+\  ]]; then
-    printf '%s\n' "${BASH_REMATCH[1]}"
-    return 0
-  fi
-  echo "dispatch: could not ask $1 where $3 is; assuming remote session $4" >&2
-  printf '%s\n' "$4"
-}
-
-# _remote_window <ssh> <crew_id> <session> — mirror the remote worker window
-# (selected by its @crew_id stamp) of <session> into this tmux session, else say
-# how to attach. og-remote-open is idempotent, so every dispatch and resume runs
-# it. Never fails: the remote worker exists either way.
-_remote_window() {
-  local into bin reason=""
-  local -a launcher=()
-  if [ -z "${TMUX_PANE:-}" ]; then
-    reason="not inside tmux"
-  else
-    # tmux-og keeps its launcher off PATH: og-remote-open, else `og remote
-    # open`, else the executable the @remote_open_bin tmux option names.
-    if command -v og-remote-open >/dev/null 2>&1; then
-      launcher=(og-remote-open)
-    elif command -v og >/dev/null 2>&1; then
-      launcher=(og remote open)
-    else
-      bin="$(tmux show -gv @remote_open_bin 2>/dev/null || true)"
-      if [ -n "$bin" ] && [ -f "$bin" ] && [ -x "$bin" ]; then launcher=("$bin"); fi
-    fi
-  fi
-  if [ -z "$reason" ] && [ "${#launcher[@]}" -eq 0 ]; then
-    reason="no og-remote-open launcher (PATH, og remote open, @remote_open_bin)"
-  elif [ -z "$reason" ]; then
-    into="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)"
-    if [ -z "$into" ]; then
-      reason="no tmux session for $TMUX_PANE"
-    elif "${launcher[@]}" "$1" "$3" --into "$into" --window "@crew_id=$2" >&2; then
-      return 0
-    else
-      reason="${launcher[*]} failed"
-    fi
-  fi
-  echo "dispatch: remote window not mirrored ($reason); attach with: ssh -t $1 tmux attach -t $3" >&2
 }
 
 # _resume_remote <branch> <host> <crew> — a remote:true row's worker lives on
@@ -1703,98 +1555,6 @@ worker_id="worker:$branch#$session"
 mkdir -p "$crew_dir"
 
 [ -z "$lead_record" ] || _record_lead_session "$agent" "$lead_record" || true
-
-# crew.sh's atomic-append helper, duplicated for the same reason dispatch.sh
-# duplicates it: this file builds as its own writeShellApplication with no
-# shared lib, and a bare `printf >>` is not one write(2) (#55, #61).
-_bus_append() {
-  local p='' s1='' s2='' c=''
-  if [ -s "$1" ]; then
-    s1="$(wc -c <"$1" 2>/dev/null)" || true
-    c="$(dd if="$1" bs=1 skip=$((s1 - 1)) count=1 2>/dev/null)" || true
-    if [ -n "$c" ]; then
-      s2="$(wc -c <"$1" 2>/dev/null)" || true
-      [ "$s1" != "$s2" ] || p=$'\n'
-    fi
-  fi
-  printf '%s%s\n' "$p" "$2" | dd bs=1048576 iflag=fullblock status=none >>"$1"
-}
-
-# _pid_alive <pid> — 0 when a process with this pid exists, under any uid.
-# `kill -0 0` signals the caller's own process group and `kill -0 -1`
-# broadcasts, so only a positive integer is a liveness probe. A failed signal
-# is not proof of death: another uid's process returns EPERM, and the signal
-# merely being refused proves it exists, so EPERM reads alive. `ps -p` is the
-# fallback for any other error (and where `kill` cannot name the error we
-# parse). Fail closed: anything unreadable stays alive.
-_pid_alive() {
-  case "$1" in '' | *[!0-9]* | 0) return 1 ;; esac
-  local kmsg
-  kmsg="$(LC_ALL=C kill -0 "$1" 2>&1)" && return 0
-  case "$kmsg" in
-  *"not permitted"* | *"not allowed"*) return 0 ;; # EPERM: the process exists
-  esac
-  ps -p "$1" -o pid= >/dev/null 2>&1
-}
-
-# _file_mtime_s <file> — the file's mtime in epoch seconds, or return 1. GNU
-# stat takes `-c %Y`; BSD/macOS takes `-f %m`. GNU first: its `-f` means
-# "filesystem" and would print a filesystem block for a `-f %m` invocation.
-_file_mtime_s() {
-  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
-}
-
-# _ps_elapsed_s <pid> — the process's elapsed seconds, or return 1 when ps can
-# not say. Duplicated from dispatch.sh (the two ship as standalone builds):
-# `etimes` is exact where the platform has it; `etime` parses the
-# [[dd-]hh:]mm:ss macOS prints. Both are locale- and timezone-independent.
-_ps_elapsed_s() {
-  local pid="$1" out d h m s rest
-  out="$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
-  case "$out" in
-  '' | *[!0-9]*) ;;
-  *) printf '%s' "$out"; return 0 ;;
-  esac
-  out="$(ps -o etime= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
-  case "$out" in
-  '' | *[!0-9:-]*) return 1 ;;
-  esac
-  d=0
-  case "$out" in
-  *-*) d="${out%%-*}"; out="${out#*-}" ;;
-  esac
-  [ -n "$d" ] || d=0
-  case "$out" in
-  *:*:*) h="${out%%:*}"; rest="${out#*:}"; m="${rest%%:*}"; s="${rest#*:}" ;;
-  *:*) h=0; m="${out%%:*}"; s="${out#*:}" ;;
-  *) h=0; m=0; s="$out" ;;
-  esac
-  printf '%s' "$((10#$d * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$s))"
-}
-
-# _pid_recycled <pid> <pidfile> — 0 when the process now holding <pid> started
-# after <pidfile> was last written (plus 2s of slack for ps' second
-# granularity), so it cannot be the dispatcher the file records: that process
-# existed when the file was written, and a later start inherited the number.
-# Returns 1 when either timestamp is unreadable, so a live process is never
-# judged dead; a coarse-mtime filesystem only errs the same, safe way.
-_pid_recycled() {
-  local pid="$1" file="$2" elapsed file_s
-  [ -f "$file" ] || return 1
-  elapsed="$(_ps_elapsed_s "$pid")" || return 1
-  file_s="$(_file_mtime_s "$file")" || return 1
-  case "$elapsed" in '' | *[!0-9]*) return 1 ;; esac
-  case "$file_s" in '' | *[!0-9]*) return 1 ;; esac
-  [ "$(( $(date +%s) - 10#$elapsed ))" -gt "$(( 10#$file_s + 2 ))" ]
-}
-
-# _recorded_pid_live <pid> <pidfile> — 0 when <pid> can still be the dispatcher
-# <pidfile> records: live and not a later-recycled pid.
-_recorded_pid_live() {
-  _pid_alive "$1" || return 1
-  _pid_recycled "$1" "$2" && return 1
-  return 0
-}
 
 # Dispatcher liveness. `crew register` writes the pid, and `crew deregister`
 # removes the whole directory on a clean exit — so absent means gone, a dead

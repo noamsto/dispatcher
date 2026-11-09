@@ -861,7 +861,7 @@ _assert_resume_bound() {
 
 # dispatch-resume.sh is a standalone build, so it carries its own copies.
 @test "shell_quote and write_launch_script are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _settings_env_names _settings_env_json _record_protocol_dirs launch_dir_args claude_lean_env _worker_protocol_files _ensure_roster_render _recorded_pid_live _pid_alive _file_mtime_s _pid_recycled _ps_elapsed_s; do
+  for fn in shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _settings_env_names _settings_env_json _record_protocol_dirs launch_dir_args claude_lean_env _worker_protocol_files _ensure_roster_render; do
     a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
     b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
     [ -n "$a" ]
@@ -909,21 +909,8 @@ _assert_resume_bound() {
   [ "$status" -eq 0 ]
 }
 
-# The lead-session helpers are duplicated for the same reason; one test diffs
-# them so a fix in one file cannot silently miss the other.
-@test "_uuid and the lead-record writers are byte-identical across dispatch.sh, dispatch-resume.sh and lead-launcher.sh" {
-  for fn in _uuid _lead_record_safe _record_lead_session; do
-    a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
-    [ -n "$a" ]
-    for f in dispatch-resume lead-launcher; do
-      b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/$f.sh")"
-      [ "$a" = "$b" ]
-    done
-  done
-}
-
 @test "_uuid emits a distinct lowercase v4-shaped uuid" {
-  eval "$(sed -n '/^_uuid() {/,/^}/p' "$RESUME")"
+  eval "$(sed -n '/^_uuid() {/,/^}/p' "$BATS_TEST_DIRNAME/../adapters/core/launcher-common.sh")"
   a="$(_uuid)"
   b="$(_uuid)"
   [[ "$a" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
