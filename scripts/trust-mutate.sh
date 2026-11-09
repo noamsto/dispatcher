@@ -16,8 +16,8 @@
 # already red cannot pass as a pin. A pin that cannot be made red is a finding.
 #
 # --list prints each resolved site and exits. --affected prints `yes` when a
-# path changed since <base-ref> is in the manifest's file column (or is the
-# manifest or this tool), else `no`.
+# path changed since <base-ref> is in the manifest's file or test_file column
+# (or is the manifest or this tool), else `no`.
 #
 # Exit: 0 all pins red, 1 a pin failed or a row is unusable, 2 usage.
 set -euo pipefail
@@ -99,7 +99,7 @@ if [ "$mode" = affected ]; then
   exit 0
 fi
 
-for want in "${ids[@]}"; do
+for want in ${ids[@]+"${ids[@]}"}; do
   printf '%s\n' "${r_id[@]}" | grep -qxF -- "$want" || {
     echo "trust-mutate: no row $want in $manifest" >&2
     exit 2
