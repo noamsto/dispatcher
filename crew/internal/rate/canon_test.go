@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// TestCanonFamilies pins D3's mechanical derivation from the seed row. No claude
-// tier lists all four aliases (deep has fable but no haiku; standard/trivial the
-// reverse), so the four are the union across tiers.
+// TestCanonFamilies pins the mechanical derivation of families from the seed
+// row. No claude tier lists all four aliases (deep has fable but no haiku;
+// standard/trivial the reverse), so the four are the union across tiers.
 func TestCanonFamilies(t *testing.T) {
 	want := map[string]map[string]string{
 		"deep": {

@@ -15,7 +15,7 @@ var aliasCurrentID = map[string]string{
 }
 
 // families maps a floating alias of the seed row to the trailing-* glob that
-// names its family (D3): the glob's stem, minus one trailing '-', must equal an
+// names its family: the glob's stem, minus one trailing '-', must equal an
 // exact entry of the same row or end with "-"+entry; the longest entry wins.
 func families(engine, tier string) map[string]string {
 	t := admitTableOnce()

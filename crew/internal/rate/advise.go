@@ -78,12 +78,12 @@ func advise(req Request, cwd string, stdout, stderr io.Writer, o Options) int {
 		}
 	}
 
-	// Canonicalize the model field on copies of the pooled and scoped rows
-	// (D3): the two slices share readStore's row maps, so those maps are never
-	// mutated and --report keeps reading the raw ids.
+	// Canonicalize the model field on copies of the pooled and scoped rows: the
+	// two slices share readStore's row maps, so those maps are never mutated and
+	// --report keeps reading the raw ids.
 	canon := canonicalIDs(pooled, engine, tier)
 	pooled, folded := canonicalize(pooled, canon)
-	scoped = canonicalizeOnly(scoped, canon)
+	scoped, _ = canonicalize(scoped, canon)
 
 	pooledStats, err := modelStats(pooled)
 	if err != nil {
@@ -225,7 +225,7 @@ func adviseLine(r adviseRow) string {
 	return line + gateMark(r) + foldMark(r)
 }
 
-// retiredRank puts a retired row after every admitted and gated one (D4).
+// retiredRank puts a retired row after every admitted and gated one.
 func retiredRank(s admitState) int {
 	if s == retired {
 		return 1
@@ -300,12 +300,6 @@ func canonicalize(rows []any, canon map[string]string) ([]any, map[string][]stri
 		byModel[c] = slices.Compact(byModel[c])
 	}
 	return out, byModel
-}
-
-// canonicalizeOnly canonicalizes rows without collecting the folded ids.
-func canonicalizeOnly(rows []any, canon map[string]string) []any {
-	out, _ := canonicalize(rows, canon)
-	return out
 }
 
 func label(r adviseRow) string {

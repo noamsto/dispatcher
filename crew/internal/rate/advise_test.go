@@ -332,9 +332,8 @@ func TestAdviseKeepsOlderGenerationApart(t *testing.T) {
 }
 
 // TestAdviseKeepsOlderGenerationApartWithNoNewerIDInTheWindow pins the same rule
-// in the state that used to slip: the window holds sonnet and claude-sonnet-5 but
-// not the current claude-sonnet-5-5, so a highest-versioned-in-window rule folds
-// the older generation into the alias that means today's model.
+// where the window is thinnest: it holds sonnet and claude-sonnet-5 but not the
+// claude-sonnet-5-5 the alias names today, so nothing may fold.
 func TestAdviseKeepsOlderGenerationApartWithNoNewerIDInTheWindow(t *testing.T) {
 	var rows []string
 	rows = append(rows, advRowsAt("acme/widgets", "claude", "standard", "sonnet", 3)...)
@@ -403,8 +402,6 @@ func TestAdviseMarksModelsTheMapNoLongerAdmits(t *testing.T) {
 	if !models[admitted].InShippedMap || models[retiredAt2].InShippedMap {
 		t.Errorf("json in_shipped_map flags wrong: %+v vs %+v", models[admitted], models[retiredAt2])
 	}
-	// The old "admitted" key claimed a model was unselectable; it must be gone
-	// from the payload, not merely unused by this test's decoder.
 	for _, m := range adviseJSONRawModels(t, jout) {
 		if _, ok := m["admitted"]; ok {
 			t.Errorf("json still carries an \"admitted\" key: %v", m)
