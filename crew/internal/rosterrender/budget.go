@@ -19,7 +19,7 @@ const (
 // names. What the cache cannot vouch for reads as unknown (nil pct), never zero:
 // a missing, unparsable, stale or future-dated cache, an engine entry that is null
 // or holds only pi's `anthropic` credit estimate, or one with no window still
-// ahead of its reset. The trust rules mirror fleet.budgetSummary.
+// ahead of its reset.
 func readEngineWindows(path string, now int64) []engineReading {
 	var cache struct {
 		Fetched any            `json:"fetched_epoch"`
