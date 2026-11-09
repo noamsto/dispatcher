@@ -136,10 +136,9 @@ shell_quote() {
   _out="'$_res'"
 }
 
-# #936, duplicated from dispatcher.sh (adapters/core has no shared library; each
-# launcher bakes standalone): @launcherRuntimePath@, substituted by flake.nix's
-# launcherPath, is this script's own pinned tool PATH — the store dirs its
-# preamble prepends. engine_path prints the caller's PATH with exactly those dirs
+# #936: @launcherRuntimePath@, substituted by flake.nix's launcherPath, is this
+# script's own pinned tool PATH — the store dirs its preamble prepends.
+# engine_path (launcher-common.sh) reads it and prints the caller's PATH with exactly those dirs
 # dropped, every other entry in order; the window creation below runs the tmux
 # client under it, because tmux builds a new window's PATH from the client that
 # opens it. A raw run from a checkout leaves the placeholder literal and leaves

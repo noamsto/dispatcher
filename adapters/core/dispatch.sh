@@ -1446,10 +1446,9 @@ _resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" dispatch
 # The pinned `subagent` extension and generated agent roster pi leads load.
 _resolve_dir PI_DIR DISPATCHER_PI_DIR "@piDir@" dispatch
 
-# #947, duplicated from dispatch-resume.sh (adapters/core has no shared library;
-# each launcher bakes standalone): @launcherRuntimePath@, substituted by flake.nix's
-# launcherPath, is this script's own pinned tool PATH — the store dirs its
-# preamble prepends. engine_path prints the caller's PATH with exactly those dirs
+# #947: @launcherRuntimePath@, substituted by flake.nix's launcherPath, is this
+# script's own pinned tool PATH — the store dirs its preamble prepends.
+# engine_path (launcher-common.sh) reads it and prints the caller's PATH with exactly those dirs
 # dropped, every other entry in order; the client that opens a pane runs under it,
 # because tmux builds a new pane's PATH from the client that opens it. A raw run
 # from a checkout leaves the placeholder literal and leaves PATH untouched.
