@@ -341,14 +341,11 @@
           # rewritten right now — the exclude is what keeps a future upstream
           # edit from being silently reformatted on its way in.
           # dispatcher.sh is NOT excluded: that one is ours, ported from fish.
-          # dispatch-resume.sh carries byte-identical copies of dispatch.sh's
-          # shell_quote, write_launch_script and other helpers; shfmt would
-          # reformat some of them and sever the sync guarantee
-          # tests/dispatch-resume.bats pins. dispatch.sh and
-          # dispatch-notify.sh are excluded for the same reason: shfmt would
-          # re-indent the block crew/internal/frame extracts and sources (its
-          # anchors are 2-space-indented lines), and rewrite the copies
-          # tests/adapters.bats byte-compares.
+          # dispatch-resume.sh stays excluded until docs/dispatch-redesign.md S9
+          # lifts it. dispatch.sh and dispatch-notify.sh are excluded for the same
+          # reason: shfmt would re-indent the block crew/internal/frame extracts
+          # and sources (its anchors are 2-space-indented lines), and rewrite the
+          # _bus_append copy tests/adapters.bats byte-compares.
           settings.global.excludes = [
             "adapters/core/dispatch.sh"
             "adapters/core/dispatch-notify.sh"

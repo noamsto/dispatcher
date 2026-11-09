@@ -65,18 +65,6 @@ case "${1:-}" in
   ;;
 esac
 
-# pi_skill_args <worktree> — emit --skill flags for the worktree's own project
-# skill dirs and for the harness's own skills ($SKILLS_DIR, set below).
-# Duplicated from dispatch.sh (standalone build); see the comment there for why
-# the pi launch's --no-approve needs an explicit --skill.
-pi_skill_args() {
-  local wt="$1" d
-  for d in "$wt/.pi/skills" "$wt/.agents/skills" "$SKILLS_DIR"; do
-    [ -d "$d" ] && printf ' --skill %q' "$d"
-  done
-  return 0
-}
-
 # Unconditional, unlike the advisory hint lib: without it resume must abort,
 # never fall back to discovery in the worker's worktree (#539).
 wt_git_lib="${WORKTREE_GIT_LIB:-@worktreeGitLib@}"
@@ -99,6 +87,17 @@ fi
 # shellcheck source=/dev/null
 . "$launcher_common_lib"
 
+# Baked values the shared helpers read, kept in this file because
+# launcher-common.sh carries no build-time token: the settings and model
+# resolvers (env-overridable for tests) and the protocol revision this build
+# stamped.
+# shellcheck disable=SC2034
+dispatch_config_default="@dispatchConfig@"
+# shellcheck disable=SC2034
+model_resolve_bin="${MODEL_RESOLVE_BIN:-@modelResolve@}"
+# shellcheck disable=SC2034
+stamped_rev="@protocolRev@"
+
 # Worker-only plugin disablement is shared with dispatch.  It is a separate
 # --settings layer; the Nix wrapper merges it into its overlay (Claude itself
 # keeps only the last --settings).
@@ -120,22 +119,6 @@ if [ ! -f "$agent_browser_worker_config" ]; then
   agent_browser_worker_config="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/agent-browser-worker.json"
 fi
 
-# shell_quote and write_launch_script: duplicated from dispatch.sh (standalone
-# build); parity-tested against dispatch.sh's copies.
-shell_quote() {
-  local -n _out="$1"
-  local _text="$2" _res="" _c _i
-  for ((_i = 0; _i < ${#_text}; _i++)); do
-    _c="${_text:_i:1}"
-    case "$_c" in
-    "'") _res+="'\\''" ;;
-    \\) _res+="'\\\\'" ;;
-    *) _res+="$_c" ;;
-    esac
-  done
-  _out="'$_res'"
-}
-
 # #936: @launcherRuntimePath@, substituted by flake.nix's launcherPath, is this
 # script's own pinned tool PATH — the store dirs its preamble prepends.
 # engine_path (launcher-common.sh) reads it and prints the caller's PATH with exactly those dirs
@@ -144,293 +127,6 @@ shell_quote() {
 # opens it. A raw run from a checkout leaves the placeholder literal and leaves
 # PATH untouched.
 _launcher_runtime_path='@launcherRuntimePath@'
-write_launch_script() {
-  local -n _launch="$1"
-  local _dir="$crew_dir/launch" _file _quoted
-  # mkdir -p succeeds on a symlink to a dir, and every write would land in its target.
-  if [ -L "$_dir" ] || { [ -e "$_dir" ] && [ ! -d "$_dir" ]; }; then
-    echo "dispatch: $_dir is a symlink or not a directory — refusing to write a launch script" >&2
-    exit 1
-  fi
-  # shellcheck disable=SC2174 # $crew_dir already exists; -m only needs to reach the new leaf, and chmod below covers a pre-existing one too
-  mkdir -p -m 700 "$_dir"
-  chmod 700 "$_dir"
-  find "$_dir" -type f -name 'launch.*' -mtime +7 -delete 2>/dev/null || true
-  # An exit.* deletes itself when its engine returns, but a reaped pane never
-  # runs it, so the file leaks (#343). Reclaim an old exit.* only once the pane
-  # it names is gone; a reused pane id just delays deletion. tmux failing, or
-  # listing no panes, deletes nothing (fail-safe).
-  local _panes _ef _epane
-  if _panes="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)" && [ -n "$_panes" ]; then
-    while IFS= read -r _ef; do
-      _epane="$(sed -n "s/.*--pane '\(%[0-9][0-9]*\)'.*/\1/p" "$_ef" 2>/dev/null || true)"
-      _epane="${_epane%%$'\n'*}"
-      [ -n "$_epane" ] || continue
-      printf '%s\n' "$_panes" | grep -qxF -- "$_epane" || rm -f -- "$_ef"
-    done < <(find "$_dir" -type f -name 'exit.*' -mtime +7 2>/dev/null)
-  fi
-  if [ "${3:-}" = exit ]; then
-    _file="$(mktemp "$_dir/exit.XXXXXX")"
-    # shellcheck disable=SC2016 # the literal "$0" is the generated script's own, expanded when IT runs, not now
-    printf '#!/usr/bin/env bash\nrm -f -- "$0"\nexec env -u DISPATCHER_PROTOCOL_DIR -u DISPATCHER_SKILLS_DIR -u DISPATCHER_REVIEWERS_DIR -u DISPATCHER_CRITICS_DIR -u DISPATCHER_PI_DIR %s\n' "$2" >"$_file"
-  else
-    local _dirs="" _unset="" _n _v
-    for _n in PROTOCOL SKILLS REVIEWERS CRITICS PI; do
-      _v="${_n}_DIR"
-      _v="${!_v:-}"
-      if [[ $_v == /* ]]; then
-        printf -v _dirs '%sDISPATCHER_%s_DIR=%q ' "$_dirs" "$_n" "$_v"
-      else
-        printf -v _unset '%s-u DISPATCHER_%s_DIR ' "$_unset" "$_n"
-      fi
-    done
-    printf -v _dirs '%sDISPATCH_GRANT_ROOTS=%q ' "$_dirs" "${DISPATCH_GRANT_ROOTS:-:}"
-    _file="$(mktemp "$_dir/launch.XXXXXX")"
-    printf '#!/usr/bin/env bash\nexec env %s%s%s\n' "$_unset" "$_dirs" "$2" >"$_file"
-  fi
-  chmod 700 "$_file"
-  shell_quote _quoted "$_file"
-  _launch="bash $_quoted"
-}
-
-# _artifacts_dir_bad, _protocol_dirs_record_bad, _settings_env_names,
-# _settings_env_json, _record_protocol_dirs, launch_dir_args
-# and _ensure_roster_render: duplicated from dispatch.sh (standalone build),
-# parity-tested like the two above. See
-# dispatch.sh for the record's settings line and the grant rules: a
-# claude launch gets the protocol dirs read-only, the branch's artifacts dir
-# write-capable, and the grants in $crew_dir/grants/<branch>, never the
-# add_dir: header lines. The grant validator itself (_add_dir_ok and its
-# helpers) comes from the shared grant-check lib, sourced above.
-_artifacts_dir_bad() {
-  local p="$crew_dir/artifacts" part
-  local -a parts
-  IFS=/ read -ra parts <<<"$1"
-  for part in "" "${parts[@]}"; do
-    p="$p${part:+/$part}"
-    if [ -L "$p" ] || { [ -e "$p" ] && [ ! -d "$p" ]; }; then
-      printf '%s\n' "$p"
-      return 0
-    fi
-  done
-  return 1
-}
-
-_protocol_dirs_record_bad() {
-  local p="$crew_dir/protocol-dirs" part rec="$crew_dir/protocol-dirs/$branch"
-  local -a parts
-  IFS=/ read -ra parts <<<"$branch"
-  for part in "" "${parts[@]:0:${#parts[@]}-1}"; do
-    p="$p${part:+/$part}"
-    if [ -L "$p" ] || { [ -e "$p" ] && [ ! -d "$p" ]; }; then
-      printf '%s\n' "$p"
-      return 0
-    fi
-  done
-  if [ -L "$rec" ] || { [ -e "$rec" ] && [ ! -f "$rec" ]; }; then
-    printf '%s\n' "$rec"
-    return 0
-  fi
-  return 1
-}
-
-_settings_env_names() {
-  printf '%s\n' XDG_CONFIG_HOME DISPATCH_LOCKED_SETTINGS DISPATCH_ENGINES \
-    DISPATCH_GRANT_ROOTS DISPATCH_OPENROUTER_MONTHLY_USD DISPATCH_OPENROUTER_KEY_FILE \
-    DISPATCH_PROFILE DISPATCH_REPO_TRACKERS DISPATCH_ORG_TRACKERS \
-    DISPATCH_ROSTER_AUTO_OPEN PI_CODING_AGENT_DIR DISPATCH_CONFIG_BIN LOCAL_MODELS_LIB
-}
-
-_settings_env_json() {
-  local n v
-  local -a args=()
-  while IFS= read -r n; do
-    case "$n" in
-    XDG_CONFIG_HOME)
-      v="${XDG_CONFIG_HOME:-$HOME/.config}"
-      [[ $v == /* ]] || v="$HOME/.config"
-      args+=(--arg "$n" "$v")
-      ;;
-    DISPATCH_LOCKED_SETTINGS | DISPATCH_OPENROUTER_KEY_FILE)
-      if [ -z "${!n+x}" ]; then
-        args+=(--argjson "$n" null)
-      else
-        v="${!n}"
-        [[ -z $v || $v == /* ]] || v="$(realpath -m -- "$v")"
-        args+=(--arg "$n" "$v")
-      fi
-      ;;
-    PI_CODING_AGENT_DIR)
-      v="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
-      case "$v" in \~/*) v="$HOME/${v#\~/}" ;; esac
-      [[ $v == /* ]] || v="$HOME/.pi/agent"
-      args+=(--arg "$n" "$v")
-      ;;
-    DISPATCH_GRANT_ROOTS) args+=(--arg "$n" "${DISPATCH_GRANT_ROOTS:-:}") ;;
-    *)
-      if [ -n "${!n+x}" ]; then
-        args+=(--arg "$n" "${!n}")
-      else
-        args+=(--argjson "$n" null)
-      fi
-      ;;
-    esac
-  done < <(_settings_env_names)
-  jq -cn '$ARGS.named' "${args[@]}"
-}
-
-_record_protocol_dirs() {
-  local rec="$crew_dir/protocol-dirs/$branch" n v tmp
-  local -a lines=()
-  for n in PROTOCOL_DIR SKILLS_DIR REVIEWERS_DIR CRITICS_DIR; do
-    v="${!n}"
-    [[ $v == /* ]] || v=""
-    lines+=("$v")
-  done
-  lines+=("$(realpath -e -- "$1")" "$(_settings_env_json)")
-  v="$PI_DIR"
-  [[ $v == /* ]] || v=""
-  lines+=("$v")
-  (
-    umask 077
-    mkdir -p "$(dirname "$rec")"
-    tmp="$(mktemp "$(dirname "$rec")/.dirs.XXXXXX")"
-    printf '%s\n' "${lines[@]}" >"$tmp"
-    mv -f -- "$tmp" "$rec"
-  )
-}
-
-claude_lean_env() {
-  if [ "${DISPATCH_CLAUDE_CONNECTORS:-}" = 1 ]; then
-    printf 'DISPATCH_CLAUDE_CONNECTORS=1 '
-  else
-    printf 'ENABLE_CLAUDEAI_MCP_SERVERS=false '
-  fi
-  printf 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false '
-}
-
-launch_dir_args() {
-  [ "$1" = claude ] || return 0
-  local a c d bad line dirs=() rules=()
-  local -A seen=()
-  for d in "$PROTOCOL_DIR" "$SKILLS_DIR" "$REVIEWERS_DIR" "$CRITICS_DIR"; do
-    [[ $d == /* ]] && [ -d "$d" ] || continue
-    d="${d%/}"
-    c="$(realpath -e -- "$d")"
-    if [[ ! $d =~ ^/[A-Za-z0-9._/+@-]*$ || ! $c =~ ^/[A-Za-z0-9._/+@-]*$ ]]; then
-      echo "dispatch: not granting $d — its path cannot be written as a read-only rule" >&2
-      continue
-    fi
-    dirs+=("$d")
-    rules+=("Edit(/$d/**)")
-    [ "$c" = "$d" ] || rules+=("Edit(/$c/**)")
-  done
-  a="$crew_dir/artifacts/$2"
-  if bad="$(_artifacts_dir_bad "$2")"; then
-    echo "dispatch: $bad is a symlink or not a directory — not granting $a to $2" >&2
-  else
-    mkdir -p -- "$a"
-    dirs+=("$a")
-  fi
-  if [ -f "$crew_dir/grants/$2" ]; then
-    while IFS= read -r line || [ -n "$line" ]; do
-      [ -n "$line" ] || continue
-      if d="$(_add_dir_ok "$line")"; then
-        dirs+=("$d")
-      else
-        echo "dispatch: dropping invalid grant '$line' for $2" >&2
-      fi
-    done <"$crew_dir/grants/$2"
-  fi
-  for d in "${dirs[@]}"; do
-    [ -z "${seen[$d]:-}" ] || continue
-    seen[$d]=1
-    printf ' --add-dir %q' "$d"
-  done
-  if [ "${#rules[@]}" -gt 0 ]; then
-    printf ' --disallowedTools'
-    printf ' %q' "${rules[@]}"
-  fi
-}
-
-# _worker_protocol_files <agent> — the worker protocol files a lead of <agent>
-# reads: the core and every phase file, as the claude or pi render, or the
-# sources for codex and cursor.
-_worker_protocol_files() {
-  local stem suffix=
-  case $1 in
-  claude) suffix=.claude ;;
-  pi) suffix=.pi ;;
-  esac
-  for stem in WORKER_PROTOCOL WORKER_GRID WORKER_REBASE WORKER_PLAN WORKER_EXECUTE WORKER_REVIEW WORKER_SHIP; do
-    printf '%s\n' "$stem$suffix.md"
-  done
-}
-
-# _require_protocol_files <dir> <file...> — abort before any scaffolding if
-# a required protocol file is missing from $PROTOCOL_DIR. $DISPATCHER_PROTOCOL_DIR
-# can point at a stale checkout (#177); this stops the launch instead of
-# spawning an engine against a missing --append-system-prompt(-file) target.
-_require_protocol_files() {
-  local dir="$1" f missing_files=()
-  shift
-  for f in "$@"; do
-    [ -f "$dir/$f" ] || missing_files+=("$f")
-  done
-  [ "${#missing_files[@]}" -eq 0 ] && return 0
-  local override=""
-  [ -n "${DISPATCHER_PROTOCOL_DIR:-}" ] && override=" (DISPATCHER_PROTOCOL_DIR=$DISPATCHER_PROTOCOL_DIR)"
-  echo "dispatch resume: missing protocol file(s) in \$PROTOCOL_DIR ($dir)${override}: ${missing_files[*]} — refusing to launch" >&2
-  exit 1
-}
-
-# _check_protocol_rev <dir> <label> — refuse a protocol directory whose content
-# does not match this script's baked revision (#184, #193). See dispatch.sh's
-# copy of this helper for the full contract: a substituted marker recomputes
-# the build's content hash from the files actually in $dir (same rule, same
-# edge-case handling — sorted bare names, dotfiles included) and refuses a
-# mismatch before any scaffolding; a raw checkout script skips with a one-line
-# warning. There is no committed PROTOCOL_REV file to read.
-_check_protocol_rev() {
-  local dir="$1" label="$2" stamped_rev="@protocolRev@" dir_rev entries=""
-  local names=() file name sig
-  # The sentinel is the placeholder's *shape*, not the literal: flake.nix's
-  # replaceStrings (and a test's sed) rewrite every @protocolRev@ occurrence,
-  # so a literal comparison would make a substituted script skip its own
-  # check. A baked rev (16 hex chars) never starts with @.
-  if [[ $stamped_rev == @* ]]; then
-    echo "$label: unsubstituted protocol revision (raw checkout script) — skipping the protocol revision consistency check" >&2
-    return 0
-  fi
-  shopt -s dotglob nullglob
-  for file in "$dir"/*; do
-    [ -f "$file" ] || continue
-    names+=("$(basename "$file")")
-  done
-  shopt -u dotglob nullglob
-  if [ ${#names[@]} -gt 0 ]; then
-    mapfile -t names < <(printf '%s\n' "${names[@]}" | LC_ALL=C sort)
-  fi
-  for name in "${names[@]}"; do
-    sig="$(sha256sum "$dir/$name" | cut -d' ' -f1)"
-    entries+="${name}:${sig};"$'\n'
-  done
-  # Newlines are a construction convenience only — strip before hashing to
-  # match flake.nix's concatStringsSep "".
-  dir_rev="$(printf '%s' "$entries" | tr -d '\n' | sha256sum | cut -d' ' -f1 | cut -c1-16)"
-  if [ "$dir_rev" != "$stamped_rev" ]; then
-    echo "$label: protocol directory version mismatch — refusing to launch" >&2
-    echo "$label:   script protocol revision: $stamped_rev" >&2
-    echo "$label:   \$PROTOCOL_DIR content revision: $dir_rev" >&2
-    echo "$label:   \$PROTOCOL_DIR: $dir" >&2
-    if [ -n "${DISPATCHER_PROTOCOL_DIR:-}" ]; then
-      echo "$label:   DISPATCHER_PROTOCOL_DIR override: $DISPATCHER_PROTOCOL_DIR" >&2
-      echo "$label:   remedy: unset DISPATCHER_PROTOCOL_DIR, or point it at a checkout matching this build" >&2
-    fi
-    exit 1
-  fi
-}
-
 # _resume_remote <branch> <host> <crew> — a remote:true row's worker lives on
 # <host>: its own dispatch resume runs there, against its own bus and tmux,
 # with every resume argument but the target. The host name keys settings,
@@ -446,7 +142,7 @@ _resume_remote() {
   crew remote-run --host "$2" --env "CREW_ID=$3" --env "DISPATCH_TMUX_SESSION=$session" -- \
     dispatch resume "$1" ${rest[@]+"${rest[@]}"} || rc=$?
   [ "$rc" -eq 0 ] || exit "$rc"
-  ssh="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}" | jq -r --arg h "$2" '.hosts[$h].ssh // empty')"
+  ssh="$("${DISPATCH_CONFIG_BIN:-$dispatch_config_default}" | jq -r --arg h "$2" '.hosts[$h].ssh // empty')"
   _remote_window "$ssh" "$3" "$(_remote_worker_session "$2" "$3" "$1" "$session")"
   exit 0
 }
@@ -804,47 +500,9 @@ _require_safe crew_id "$crew_id" "$_id_re"
 [[ -n $model_flag && $model == @* ]] || _require_safe model "$model" "$_model_re"
 _require_safe effort "$effort" "$_effort_re"
 
-# _resolve_dir <OUT_VAR> <ENV_VAR> <baked> <label> — resolve a DISPATCHER_*_DIR
-# override against the baked default (#303). A shell or tmux server that
-# outlives a rebuild keeps the previous build's export, so an override under the
-# baked path's store root is kept only when its content equals the baked dir's:
-# the current build's export sits at a different store path than the baked
-# projection but holds the same files. A checkout override always wins, as does
-# any override in a raw script (baked is not absolute). diff sits in an `if`
-# because its exit 1 means "differs", not failure. A relative override is
-# refused: a launched session runs in a task worktree, whose files a diff
-# controls, and would resolve it there.
-# A stale value is ignored with a notice and unset, so later diagnostics do not
-# name it.
-_resolve_dir() {
-  local out="$1" var="$2" baked="$3" label="$4" val="${!2:-}"
-  if [ -z "$val" ]; then
-    printf -v "$out" '%s' "$baked"
-    return 0
-  fi
-  if [[ $val != /* ]]; then
-    echo "$label: $var must be an absolute path, got: $val" >&2
-    exit 1
-  fi
-  # The dirs are spliced into launch scripts and their prompts, and a role
-  # launched by --spawn-role inherits this env from the worker (#470).
-  if [[ ! $val =~ ^/[A-Za-z0-9._/+@-]*$ ]]; then
-    echo "$label: $var must not contain shell metacharacters or spaces, got: ${val@Q}" >&2
-    exit 1
-  fi
-  if [[ $baked == /* && $val == "${baked%/*}"/* && $val != "$baked" ]] &&
-    ! diff -rq -- "$val" "$baked" >/dev/null 2>&1; then
-    echo "$label: ignoring stale $var from a previous build: $val; using $baked" >&2
-    unset "$var"
-    printf -v "$out" '%s' "$baked"
-    return 0
-  fi
-  printf -v "$out" '%s' "$val"
-}
-
 _resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@" "dispatch resume"
 
-# Harness skill directory for pi workers; see pi_skill_args above and the
+# Harness skill directory for pi workers; see pi_skill_args (launcher-common.sh) and the
 # matching block in dispatch.sh.
 _resolve_dir SKILLS_DIR DISPATCHER_SKILLS_DIR "@skillsDir@" "dispatch resume"
 
@@ -856,144 +514,17 @@ _resolve_dir CRITICS_DIR DISPATCHER_CRITICS_DIR "@criticsDir@" "dispatch resume"
 # The pinned `subagent` extension and generated agent roster pi leads load.
 _resolve_dir PI_DIR DISPATCHER_PI_DIR "@piDir@" "dispatch resume"
 
-# _ensure_roster_render <crew_id> <pane or empty> — start the crew's roster
-# renderer, or retarget a running one. crew accepts the pane only when its shell
-# is an ancestor of the crew process, so the call is synchronous (--detach
-# returns at once): a nohup'd child can be reparented after this script exits,
-# which would defeat that check. `if . == false` because `// true` would turn
-# an explicit false into true.
-_ensure_roster_render() {
-  local flags=()
-  [ -z "$2" ] || flags+=(--pane "$2")
-  if [ "$(jq -r '.rosterDiagram.autoOpen | if . == false then "false" else "true" end' <<<"$settings")" = false ]; then
-    flags+=(--no-open)
-  fi
-  CREW_ID="$1" crew roster-render --crew "$1" ${flags[@]+"${flags[@]}"} --detach >/dev/null 2>&1 || true
-}
-
 # _settings_load, _glob_match, _exact_match, _model_class, _class_item,
-# _class_sigil and _escalation_hop: duplicated from dispatch.sh (standalone build),
-# parity-tested. See dispatch.sh for their contracts: the settings come from
-# dispatch-config, the escalation rules from defaults.json, an @class item's
-# class from model-resolve over the same catalog and class-state caches.
+# _class_sigil and _escalation_hop live in launcher-common.sh, which holds their
+# contracts: the settings come from dispatch-config, the escalation rules from
+# defaults.json, an @class item's class from model-resolve over the catalog and
+# class-state caches below (read by those helpers, not here).
+# shellcheck disable=SC2034
 model_catalog="${XDG_DATA_HOME:-$HOME/.local/share}/crew/model-catalog.json"
+# shellcheck disable=SC2034
 model_class_state="${XDG_DATA_HOME:-$HOME/.local/share}/crew/model-class-state.json"
-_settings_load() {
-  settings="$("${DISPATCH_CONFIG_BIN:-@dispatchConfig@}")"
-  [ -n "${DISPATCH_ENGINES:-}" ] || DISPATCH_ENGINES="$(jq -r '.engines // [] | join(" ")' <<<"$settings")"
-  [ -n "${DISPATCH_GRANT_ROOTS:-}" ] || DISPATCH_GRANT_ROOTS="$(jq -r '.grantRoots // [] | join(":")' <<<"$settings")"
-}
-
-_glob_match() {
-  local glob
-  while IFS= read -r glob; do
-    # shellcheck disable=SC2053 # the unquoted RHS is the glob
-    if [[ $1 == $glob ]]; then return 0; fi
-  done
-  return 1
-}
-
-_exact_match() {
-  local x
-  while IFS= read -r x; do
-    if [ "$x" = "$1" ]; then return 0; fi
-  done
-  return 1
-}
-
-_model_class() {
-  local t out
-  [ -e "$model_catalog" ] || return 0
-  t="$(jq -r --arg a "$1" '. as $s | first(.modelMap[$a] // {} | keys_unsorted[] | select($s.classes[$a].tiers[.] != null)) // empty' <<<"$settings")"
-  [ -n "$t" ] || return 0
-  out="$("$BASH" "${MODEL_RESOLVE_BIN:-@modelResolve@}" "$1" "$t" "$model_catalog" "$model_class_state" "$2" <<<"$settings" 2>/dev/null)" || {
-    echo "dispatch: warning: model-resolve failed for $1; no @class ladder item matches '$2'" >&2
-    return 0
-  }
-  jq -r '.class_of | strings' <<<"$out" 2>/dev/null || true
-}
-
-_class_item() {
-  local c="${2#@}" g=""
-  if [[ $c == *:* ]]; then
-    g="${c#*:}" c="${c%%:*}"
-  fi
-  [ -n "$3" ] && [ "$c" = "$3" ] || return 1
-  # shellcheck disable=SC2053 # the unquoted RHS is the glob
-  [ -z "$g" ] || [[ $1 == $g ]]
-}
-
-# _class_sigil <agent> <tier> <@class> — the model id a positional or role
-# @cheap, @standard or @premium names (docs/model-classes.md D6): model-resolve's
-# default for <tier>'s row when that row's class is <class>, else for <agent>'s
-# first row of that class in trivial, standard, deep order. The catalog and
-# class-state caches feed it; with neither it is the seed default (claude, which
-# has no catalog, gets its alias: D8). Admission is not checked here: the tier
-# gate does that. Prints the id, or says why on stderr and fails: an unknown
-# class, no tier row taking its default from the class (pi has none for
-# premium, though deep admits premium ids), or a resolver that fails.
-_class_sigil() {
-  local c="${3#@}" t out
-  case "$c" in
-  cheap | standard | premium) ;;
-  *)
-    echo "dispatch: unknown model class '$3' — a class sigil is @cheap, @standard or @premium" >&2
-    return 1
-    ;;
-  esac
-  t="$(jq -r --arg a "$1" --arg t "$2" --arg c "$c" '. as $s | ($s.classes[$a].tiers // {}) as $r
-    | first(($t, "trivial", "standard", "deep") | select($r[.].class == $c and ($s.modelMap[$a][.] | type) == "object")) // empty' <<<"$settings")"
-  if [ -z "$t" ]; then
-    echo "dispatch: $3 names no $1 model — no $1 tier row takes its default from class $c (classes.$1.tiers), so the class has no default; name a model id instead (dispatch --models lists them)" >&2
-    return 1
-  fi
-  out="$("$BASH" "${MODEL_RESOLVE_BIN:-@modelResolve@}" "$1" "$t" "$model_catalog" "$model_class_state" <<<"$settings")" || out=""
-  out="$(jq -ces 'if length == 1 and (.[0] | type) == "object" then .[0] else empty end
-    | walk(if type == "string" then gsub("[[:cntrl:]\\p{Cf}]"; "") else . end)' <<<"$out" 2>/dev/null)" || out=""
-  jq -r '.warnings[]? | strings | "dispatch: warning: " + .' <<<"$out" >&2 2>/dev/null || true
-  out="$(jq -r '.default | strings' <<<"$out" 2>/dev/null)" || out=""
-  if [ -z "$out" ]; then
-    echo "dispatch: $3 names no $1 model — model-resolve gave no default for the $1 $t row" >&2
-    return 1
-  fi
-  printf '%s\n' "$out"
-}
-
-_escalation_hop() {
-  local rule="" i glob baseline item c3="" c4="" k3="" k4=""
-  while IFS=$'\t' read -r i glob; do
-    # shellcheck disable=SC2053 # the unquoted RHS is the glob
-    if [[ $glob == @* ]]; then
-      [ -e "${model_catalog:-}" ] || continue
-      [ -n "$k3" ] || { c3="$(_model_class "$1" "$3")" k3=1; }
-      _class_item "$3" "$glob" "$c3" || continue
-      rule="$i"
-      break
-    elif [[ $3 == $glob ]]; then
-      rule="$i"
-      break
-    fi
-  done < <(jq -r --arg a "$1" --arg t "$2" '.escalation[$a][$t] // [] | to_entries[] | "\(.key)\t\(.value.failed[])"' <<<"$settings")
-  [ -n "$rule" ] || return 0
-  if {
-    read -r baseline
-    if [ "$5" = inRow ]; then _glob_match "$4"; else _exact_match "$4"; fi
-  } < <(jq -r --arg a "$1" --arg t "$2" --argjson i "$rule" --arg k "$5" '.escalation[$a][$t][$i] | .baseline, (.[$k] // [])[]' <<<"$settings"); then
-    printf '%s' "$baseline"
-    return 0
-  fi
-  [ "$5" = inRow ] && [ -e "${model_catalog:-}" ] || return 0
-  while IFS= read -r item; do
-    [ -n "$k4" ] || { c4="$(_model_class "$1" "$4")" k4=1; }
-    if _class_item "$4" "$item" "$c4"; then
-      printf '%s' "$baseline"
-      return 0
-    fi
-  done < <(jq -r --arg a "$1" --arg t "$2" --argjson i "$rule" '.escalation[$a][$t][$i] | (.inRow // [])[] | select(startswith("@"))' <<<"$settings")
-}
-
 mapfile -t required_protocol_files < <({ printf '%s\n' WORKER_PROTOCOL.md EVIDENCE_REVIEW.md; _worker_protocol_files "$agent"; } | awk '!seen[$0]++')
-_require_protocol_files "$PROTOCOL_DIR" "${required_protocol_files[@]}"
+_require_protocol_files "$PROTOCOL_DIR" "dispatch resume" "${required_protocol_files[@]}"
 _check_protocol_rev "$PROTOCOL_DIR" "dispatch resume"
 _settings_load
 
@@ -1013,6 +544,7 @@ fi
 # have dispatch resolve and validate the config files too, which this script
 # must do anyway to build the launch flags.
 if [ -n "$mcp_profile" ]; then
+  # shellcheck disable=SC2154 # set by _settings_load (launcher-common.sh)
   mcp_profile="$(mcp_worker_optins "dispatch resume" "$settings" "$agent" "$mcp_profile")" || exit 1
 fi
 
@@ -1042,68 +574,6 @@ fi
 command -v dispatch >/dev/null 2>&1 || {
   echo "dispatch resume: dispatch is not on PATH — both are installed together by the home-manager module" >&2
   exit 1
-}
-
-# Escalation helpers (duplicated from dispatch.sh — this is a separate binary).
-# _prior_failed_model <branch> <crew_dir> <tier> — prints the model of the
-# dispatch that the branch's latest terminal worker status (failed/done/pr_open)
-# ended, provided that status is `failed` and that dispatch ran at <tier>. The
-# dispatch is the failing worker's own session; a resume-only session falls back
-# to the latest dispatch before the failure. Prints nothing otherwise.
-_prior_failed_model() {
-  local branch="$1" dir="$2" tier="$3" events
-  events="$dir/events.jsonl"
-  [ -f "$events" ] || return 0
-  jq -r --arg b "$branch" --arg t "$tier" '
-    [., inputs] | . as $all
-    | ([$all[] | select(.kind == "status" and
-        ((.from // "") | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b
-        and (.body.state == "failed" or .body.state == "done" or .body.state == "pr_open"))]
-        | sort_by(.ts) | last) as $last
-    | if $last == null or $last.body.state != "failed" then empty
-      else ($last.from | sub("^worker:[^#]*#"; "")) as $sess
-      | ($all | map(select(.kind == "dispatch" and .branch == $b and .ts < $last.ts))) as $ds
-      | ((($ds | map(select(.session == $sess)) | last)
-          // ($ds | sort_by(.ts) | last))) as $d
-      | if $d != null and $d.tier == $t then $d.model // empty else empty end
-      end
-  ' "$events" 2>/dev/null || true
-}
-
-# _prior_failed_escalation_available <branch> <crew_dir> — returns 0 if:
-# 1. The branch's latest terminal worker status (failed/done/pr_open) is
-#    `failed`, AND that worker's session has a matching dispatch or resume
-#    event on the same branch (anti-spoofing), AND
-# 2. No dispatch or resume event on this branch carries escalated_from, AND no
-#    dispatch followed the first failure (an unstamped record-only hop or a
-#    same-model retry is an attempt too).
-_prior_failed_escalation_available() {
-  local branch="$1" dir="$2" events
-  events="$dir/events.jsonl"
-  [ -f "$events" ] || return 1
-  # Check 1: the latest terminal status is a failure posted by a session that
-  # was really dispatched (or resumed) on this branch.
-  jq -e --arg b "$branch" '
-    [., inputs] | . as $all
-    | ([$all[] | select((.kind == "dispatch" or .kind == "resume") and .branch == $b) | .session]) as $sessions
-    | [$all[] | select(.kind == "status" and .from != null
-        and ((.from | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b)
-        and (.body.state == "failed" or .body.state == "done" or .body.state == "pr_open"))]
-    | sort_by(.ts) | last as $last
-    | $last != null and $last.body.state == "failed"
-      and ($sessions | index($last.from | sub("^worker:[^#]*#"; ""))) != null
-  ' "$events" >/dev/null 2>&1 || return 1
-  # Check 2: one-shot. No escalation stamp yet, and no dispatch after the
-  # first failure (dispatch rows cover in-row hops, which are never stamped).
-  jq -e --arg b "$branch" '
-    [., inputs] | . as $all
-    | ([$all[] | select(.kind == "status" and ((.from // "") | ltrimstr("worker:") | sub("#[^#]*$"; "")) == $b
-        and .body.state == "failed") | .ts] | min) as $first
-    | ([$all[] | select((.kind == "dispatch" or .kind == "resume") and .branch == $b and (.escalated_from // "" | length > 0))] | length) as $stamped
-    | ([$all[] | select(.kind == "dispatch" and .branch == $b and .ts > $first)] | length) as $later
-    | $stamped == 0 and $later == 0
-  ' "$events" >/dev/null 2>&1 || return 1
-  return 0
 }
 
 precheck=(--effort "$effort" --agent "$agent" --crew-id "$crew_id")
@@ -1492,31 +962,6 @@ if [ -z "$pane" ]; then
   echo "dispatch resume: could not resolve a tmux pane for $wt_path — is tmux running?" >&2
   exit 1
 fi
-
-# theme_colour <thm-name> <fallback> — a tmux colour expression that prefers
-# the theme's #{@thm_<name>} and falls back to <fallback> when tmux-og has not
-# set it. Byte-identical to dispatch.sh's copy — a parity test diffs the two
-# (a drifted lead label in one path only is the failure mode).
-theme_colour() { printf '#{?#{@thm_%s},#{@thm_%s},%s}' "$1" "$1" "$2"; }
-
-# state_glyph <restore> — the state→glyph+colour widget for the lead border.
-state_glyph() {
-  local restore="$1" c_work c_idle c_block c_done c_fail
-  c_work="$(theme_colour green green)"
-  c_idle="$(theme_colour overlay_1 colour240)"
-  c_block="$(theme_colour peach colour180)"
-  c_done="$(theme_colour green green)"
-  c_fail="$(theme_colour red red)"
-  printf '#{?#{==:#{@crew_state},working},#[fg=%s]●#[fg=%s],#{?#{==:#{@crew_state},idle},#[fg=%s]○#[fg=%s],#{?#{==:#{@crew_state},blocked},#[fg=%s]⚠#[fg=%s],#{?#{==:#{@crew_state},done},#[fg=%s]✓#[fg=%s],#{?#{==:#{@crew_state},pr_open},#[fg=%s]✓#[fg=%s],#{?#{==:#{@crew_state},failed},#[fg=%s]✗#[fg=%s],#{?#{==:#{@crew_state},exited},#[fg=%s]✗#[fg=%s],#[fg=%s]○#[fg=%s]}}}}}}}' \
-    "$c_work" "$restore" "$c_idle" "$restore" "$c_block" "$restore" \
-    "$c_done" "$restore" "$c_done" "$restore" "$c_fail" "$restore" \
-    "$c_fail" "$restore" "$c_idle" "$restore"
-}
-
-# grid_lead_format — the lead pane's state-at-a-glance border.
-grid_lead_format() {
-  printf ' %s #[bold]#{@crew_name}#[nobold] lead · #{@crew_state}#{?#{==:#{@crew_source},watchdog}, (watchdog),}#{?#{@crew_detail}, · #{@crew_detail},}#{?#{@crew_dispatcher_host}, · ⇄ #{@crew_dispatcher_host},} ' "$(state_glyph '#{@crew_color}')"
-}
 
 # Identity surfaces. Re-stamped on both paths: a hand-made window carries none,
 # and a reused worker window may have been renamed since.

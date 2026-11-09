@@ -4,45 +4,16 @@
 # One behaviour change is unavoidable: a script cannot export CREW_ID back into
 # the caller's interactive shell the way `set -gx` did, so the id is printed.
 
-# Duplicated from dispatch.sh (standalone build); tests/dispatch.bats pins the
-# copies together.
-#
-# _resolve_dir <OUT_VAR> <ENV_VAR> <baked> <label> — resolve a DISPATCHER_*_DIR
-# override against the baked default (#303). A shell or tmux server that
-# outlives a rebuild keeps the previous build's export, so an override under the
-# baked path's store root is kept only when its content equals the baked dir's:
-# the current build's export sits at a different store path than the baked
-# projection but holds the same files. A checkout override always wins, as does
-# any override in a raw script (baked is not absolute). diff sits in an `if`
-# because its exit 1 means "differs", not failure. A relative override is
-# refused: a launched session runs in a task worktree, whose files a diff
-# controls, and would resolve it there.
-# A stale value is ignored with a notice; the caller re-exports the resolved dir
-# for the launched session, which reads DISPATCHER_PROTOCOL_DIR from markdown.
-_resolve_dir() {
-  local out="$1" var="$2" baked="$3" label="$4" val="${!2:-}"
-  if [ -z "$val" ]; then
-    printf -v "$out" '%s' "$baked"
-    return 0
-  fi
-  if [[ $val != /* ]]; then
-    echo "$label: $var must be an absolute path, got: $val" >&2
-    exit 1
-  fi
-  # The dirs are spliced into launch scripts and their prompts, and a role
-  # launched by --spawn-role inherits this env from the worker (#470).
-  if [[ ! $val =~ ^/[A-Za-z0-9._/+@-]*$ ]]; then
-    echo "$label: $var must not contain shell metacharacters or spaces, got: ${val@Q}" >&2
-    exit 1
-  fi
-  if [[ $baked == /* && $val == "${baked%/*}"/* && $val != "$baked" ]] &&
-    ! diff -rq -- "$val" "$baked" >/dev/null 2>&1; then
-    echo "$label: ignoring stale $var from a previous build: $val; using $baked" >&2
-    printf -v "$out" '%s' "$baked"
-    return 0
-  fi
-  printf -v "$out" '%s' "$val"
-}
+# Helpers every launcher shares (launcher-common.sh). A run from a checkout, or a
+# copy of this script, finds it through LAUNCHER_COMMON_LIB or beside the script.
+launcher_common_lib="${LAUNCHER_COMMON_LIB:-@launcherCommonLib@}"
+# replaceStrings rewrites the token on both sides of an equality check, so a
+# string compare against the placeholder always matches after bake.
+if [ ! -f "$launcher_common_lib" ]; then
+  launcher_common_lib="$(dirname -- "${BASH_SOURCE[0]}")/launcher-common.sh"
+fi
+# shellcheck source=/dev/null
+. "$launcher_common_lib"
 
 _resolve_dir PROTOCOL_DIR DISPATCHER_PROTOCOL_DIR "@protocolDir@" dispatcher
 # Harness skill, reviewer and critic dirs. #377 guarded these in dispatch.sh and
@@ -264,23 +235,6 @@ if [ -n "$note_src" ]; then
     exit 1
   fi
 fi
-
-# _child_on_chain <pid> — the pid on this process's ancestor chain whose parent
-# is <pid>, i.e. <pid>'s direct child above us. Same bounds as _pane_for_pid.
-_child_on_chain() {
-  local target=$1 pid=$$ ppid hop=0
-  while [ -n "$pid" ] && [ "$pid" != 0 ] && [ "$pid" != 1 ] && [ "$hop" -lt 64 ]; do
-    ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -cd '0-9') || return 1
-    [ -n "$ppid" ] || return 1
-    if [ "$ppid" = "$target" ]; then
-      printf '%s' "$pid"
-      return 0
-    fi
-    pid=$ppid
-    hop=$((hop + 1))
-  done
-  return 1
-}
 
 # _store_note <dir> <crew> <src> — copy <src> to <dir>/<crew>.md through a temp
 # file, so a reader never sees a half-written note.
@@ -612,23 +566,9 @@ fi
 orch_default() { jq -r --arg a "$agent" --arg k "$1" '.orchestratorDefaults[$a][$k] // empty' <<<"$settings"; }
 
 # Engine gate. Enabled (this machine's roster) and available (CLI installed).
-# Unset $DISPATCH_ENGINES means every engine. Duplicated from dispatch.sh on
-# purpose: adapters/core has no shared library, each script bakes standalone.
+# Unset $DISPATCH_ENGINES means every engine. engine_enabled and engine_cli are
+# in launcher-common.sh; this script supplies the roster they read.
 ENGINES_ALL="claude codex cursor pi"
-
-engine_cli() {
-  case "$1" in
-  cursor) printf 'cursor-agent' ;;
-  *) printf '%s' "$1" ;;
-  esac
-}
-
-engine_enabled() {
-  case " ${DISPATCH_ENGINES:-$ENGINES_ALL} " in
-  *" $1 "*) return 0 ;;
-  esac
-  return 1
-}
 
 engine_enabled "$agent" || {
   echo "dispatcher: --agent $agent is not enabled here (enabled: ${DISPATCH_ENGINES:-$ENGINES_ALL})" >&2
@@ -985,17 +925,6 @@ fi
 # stays pinned. A raw run from a checkout leaves the placeholder literal and
 # leaves PATH untouched.
 _launcher_runtime_path='@launcherRuntimePath@'
-
-# Helpers every launcher shares (launcher-common.sh). A run from a checkout, or a
-# copy of this script, finds it through LAUNCHER_COMMON_LIB or beside the script.
-launcher_common_lib="${LAUNCHER_COMMON_LIB:-@launcherCommonLib@}"
-# replaceStrings rewrites the token on both sides of an equality check, so a
-# string compare against the placeholder always matches after bake.
-if [ ! -f "$launcher_common_lib" ]; then
-  launcher_common_lib="$(dirname -- "${BASH_SOURCE[0]}")/launcher-common.sh"
-fi
-# shellcheck source=/dev/null
-. "$launcher_common_lib"
 # Computed while the pinned PATH is still in effect; `env` itself and the tools
 # the launcher still calls after the launch resolve as before.
 engine_env_path="$(engine_path)"
