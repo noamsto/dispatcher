@@ -3,10 +3,10 @@ digraph roster {
   bgcolor="#1e1e2e"; fontname="Source Sans 3"; fontsize=13; fontcolor="#a6adc8";
   node [shape=circle style=filled fontname="Source Sans 3" fontsize=12 fontcolor="#cdd6f4" fillcolor="#313244" penwidth=3 fixedsize=true];
   edge [color="#585b70" penwidth=1.5 arrowhead=none];
-  c1 [label="" style=invis shape=point width=0 pos="-368.82,321.82!"];
-  c2 [label="" style=invis shape=point width=0 pos="368.82,321.82!"];
-  c3 [label="" style=invis shape=point width=0 pos="-368.82,-321.82!"];
-  c4 [label="" style=invis shape=point width=0 pos="368.82,-321.82!"];
+  c1 [label="" style=invis shape=point width=0 pos="-462.76,415.76!"];
+  c2 [label="" style=invis shape=point width=0 pos="462.76,415.76!"];
+  c3 [label="" style=invis shape=point width=0 pos="-462.76,-415.76!"];
+  c4 [label="" style=invis shape=point width=0 pos="462.76,-415.76!"];
   dispatcher [label="dispatcher" width=1 height=1 pos="0.00,0.00!" color="#f9e2af" fillcolor="#45475a"];
   p1 [label="lime\n101" width=0.9 height=0.9 pos="174.21,138.92!" color="#a6e3a1"];
   p2 [label="sky\n102" width=0.75 height=0.75 pos="0.00,222.82!" color="#f38ba8" penwidth=5 class="aeye-pulse"];
@@ -51,6 +51,8 @@ digraph roster {
   p4 -> p1 [style=dashed color="#89b4fa" arrowhead=normal arrowsize=0.6 penwidth=2];
   h1 [label="mbp" shape=plaintext style=solid fixedsize=false fontcolor="#a6adc8" pos="-250.30,120.54!"];
   h2 [label="buildbox" shape=plaintext style=solid fixedsize=false fontcolor="#a6adc8" pos="-120.54,250.30!"];
+  q1 [label="hold" width=0.5 height=0.5 fontsize=10 pos="0.00,372.26!" style="filled,dashed" color="#fab38755" fontcolor="#6c7086"];
+  q2 [label="hold" width=0.5 height=0.5 fontsize=10 pos="0.00,-372.26!" style="filled,dashed" color="#fab38755" fontcolor="#6c7086"];
   label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="4">
     <tr><td><font color="#a6e3a1">●</font> working 8&nbsp;&nbsp;&nbsp;&nbsp;<font color="#f38ba8">●</font> blocked 2&nbsp;&nbsp;&nbsp;&nbsp;<font color="#89b4fa">●</font> pr open 2&nbsp;&nbsp;&nbsp;&nbsp;<font color="#45475a">●</font> done 3&nbsp;&nbsp;&nbsp;&nbsp;<font color="#7f4a5a">●</font> failed 1&nbsp;&nbsp;&nbsp;&nbsp;<font color="#fab387">●</font> holds 2</td></tr>
     <tr><td>size = tier&nbsp;&nbsp;&nbsp;&nbsp;<font color="#585b70">●</font> small dot = role&nbsp;&nbsp;&nbsp;&nbsp;hexagon = remote host&nbsp;&nbsp;&nbsp;&nbsp;<font color="#fab387">●</font> dashed outer dot = queued hold</td></tr>

@@ -160,6 +160,7 @@ var dotCases = []dotCase{
 func emit(m map[string]any) (string, scene, legend) {
 	ps, lg := buildPlanets(m, dotNow)
 	_, sc := arrange(newSlotState(), ps)
+	placeHolds(&sc, buildHolds(m))
 	return renderDOT(sc, lg), sc, lg
 }
 

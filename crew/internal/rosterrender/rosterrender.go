@@ -185,7 +185,7 @@ func runMap(ctx context.Context, c call, paths bus.Paths, o Options) int {
 	if err != nil {
 		return fail(err)
 	}
-	fr, err := buildFrame(ctx, o, paths, paths.CrewDir(c.crew), c.crew, roleRows(o.rolePanes(ctx), paths.Dir, c.crew))
+	fr, err := buildFrame(ctx, o, paths, paths.CrewDir(c.crew), c.crew, roleRows(o.rolePanes(ctx), paths.Dir, c.crew), false)
 	if err != nil {
 		return fail(err)
 	}

@@ -260,7 +260,11 @@ func legendHeight(lg legend) float64 {
 // budget, then each engine's most-used quota window. Unknown is `?`, never 0.
 func stripText(lg legend) string {
 	budget := "?"
-	if lg.budget != nil {
+	switch {
+	case lg.budget == nil:
+	case *lg.budget == 0:
+		budget = "off"
+	default:
 		budget = strconv.Itoa(*lg.budget)
 	}
 	parts := []string{"crew weight " + strconv.Itoa(lg.weight) + " · fleet budget " + budget}

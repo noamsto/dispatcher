@@ -1,11 +1,13 @@
 package rosterrender
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -136,5 +138,41 @@ func TestBuildFrameLegendBudgetStrip(t *testing.T) {
 	fr = l.frame(t)
 	if got := fr.lg.engines[0]; got.name != "claude" || got.window != "7d" || got.pct == nil || *got.pct != 23 {
 		t.Errorf("claude reading = %+v, want 7d 23", got)
+	}
+}
+
+func TestBuildFrameWeightSkipsRemoteWorkers(t *testing.T) {
+	l := newLoop(t)
+	remote := `{"ts":1791360001000,"crew_id":"c1","kind":"dispatch","branch":"feat/8-y","session":"s1","worker_id":"worker:feat/8-y#s1","engine":"claude","model":"sonnet","tier":"deep","title":"Far","name":"vega","color":"blue","tmux":"colour2","host":"mbp","remote":true}`
+	l.seed(t,
+		dispatchEvent("feat/9-x", 1791360000000, "orion", "red", "colour1", "Deep", "deep", "claude", "opus"),
+		remote,
+	)
+	l.windows = "feat/9-x\nfeat/8-y"
+	fr := l.frame(t)
+	if fr.lg.weight != 3 {
+		t.Errorf("weight = %d, want only the local deep worker's 3", fr.lg.weight)
+	}
+}
+
+func TestMapNeverResolvesBudget(t *testing.T) {
+	l := newLoop(t)
+	l.seedBus(t)
+	l.opts.Stdout = &bytes.Buffer{}
+	l.opts.Budget = func(context.Context) (int, error) {
+		t.Error("--map resolved the fleet budget")
+		return 0, nil
+	}
+	l.opts.BudgetFile = filepath.Join(t.TempDir(), "missing.json")
+	l.opts.Probes.Graphviz = func(context.Context, []byte) ([]byte, error) {
+		return []byte(`<svg width="500pt" height="400pt" viewBox="0.00 0.00 500.00 400.00" xmlns="x"></svg>`), nil
+	}
+	l.opts.Probes.Resvg = func(context.Context, []byte, int, int) ([]byte, error) { return []byte("PNG"), nil }
+	req := Request{Crew: l.crew, Map: true, Px: "300x200", Out: filepath.Join(t.TempDir(), "map.png")}
+	if code := Run(t.Context(), req, l.paths, l.opts); code != exitOK {
+		t.Fatalf("code %d: %s", code, l.opts.Stderr.(*bytes.Buffer))
+	}
+	if !strings.Contains(l.opts.Stdout.(*bytes.Buffer).String(), `"planets":[{`) {
+		t.Errorf("no planets in %q", l.opts.Stdout)
 	}
 }

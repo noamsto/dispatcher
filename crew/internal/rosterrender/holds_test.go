@@ -256,6 +256,10 @@ func TestLegendStrip(t *testing.T) {
 	if want := "crew weight 0 · fleet budget ? · claude ?"; !strings.Contains(unknown, want) {
 		t.Errorf("strip lacks %q:\n%s", want, unknown)
 	}
+	off := 0
+	if got := stripText(legend{budget: &off}); !strings.Contains(got, "fleet budget off") {
+		t.Errorf("a zero budget is checks disabled, got %q", got)
+	}
 	if strings.Contains(unknown, "claude 0") || strings.Contains(unknown, "budget 0") {
 		t.Errorf("an unknown reading drew as zero:\n%s", unknown)
 	}

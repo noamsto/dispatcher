@@ -47,8 +47,9 @@ func (l *legend) add(o legend) {
 // error means nothing was drawn. A repo joined besides the local one that cannot
 // be read keeps its last good result when the discovery record has one, and is
 // skipped otherwise, with a note either way; the local one's failure fails the
-// frame.
-func buildFrame(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, localRoles []string) (frame, error) {
+// frame. The legend's engine readings and fleet budget are resolved only when
+// withLegend is set: the map draws none, and runs as a fresh process per selection.
+func buildFrame(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, localRoles []string, withLegend bool) (frame, error) {
 	now := float64(o.wallSec())
 	windows := sync.OnceValue(func() map[string]bool { return roster.Windows(ctx, o.Probes.Tmux) })
 	panes := sync.OnceValue(func() string { return o.rolePanes(ctx) })
@@ -101,12 +102,14 @@ func buildFrame(ctx context.Context, o Options, paths bus.Paths, cdir, crew stri
 	applyCI(ps, refreshCI(ctx, o.Gh, cdir, wants, at, o.Stderr), at)
 	tally(ps, &lg)
 	for _, p := range ps {
-		if p.class == classWorking || p.class == classBlocked {
+		if p.host == "" && (p.class == classWorking || p.class == classBlocked) {
 			lg.weight += tierWeight(p.tier)
 		}
 	}
-	lg.engines = o.engineReadings(now)
-	lg.budget = o.disc.fleetBudget(ctx, at, o.Budget)
+	if withLegend {
+		lg.engines = o.engineReadings(now)
+		lg.budget = o.disc.fleetBudget(ctx, at, o.Budget)
+	}
 	slots, sc := arrange(loadSlots(filepath.Join(cdir, fileSlots)), ps)
 	placeHolds(&sc, holds)
 	return frame{slots: slots, sc: sc, lg: lg, live: live, holds: holds}, nil
@@ -154,7 +157,7 @@ func (o Options) sourcePlanets(ctx context.Context, src source, crew string, now
 // because an error here would freeze the daemon's quiet window. A refused `put`
 // likewise stops the publish and still returns the count.
 func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, noOpen bool, roleRows []string) (int64, error) {
-	fr, err := buildFrame(ctx, o, paths, cdir, crew, roleRows)
+	fr, err := buildFrame(ctx, o, paths, cdir, crew, roleRows, true)
 	if err != nil {
 		return 0, err
 	}
