@@ -227,6 +227,56 @@ func TestEnrichPRsOnlyAsksForThisReposPRs(t *testing.T) {
 	}
 }
 
+// A retry that returns the PR's JSON is no reason: the error stays the first
+// call's line.
+func TestEnrichPRsErrorIgnoresARetryThatSucceeds(t *testing.T) {
+	cands, rows := prRows(prURL(1))
+	var calls atomic.Int32
+	fake := &ghtest.Fake{Func: func([]string) (string, error) {
+		if calls.Add(1) == 1 {
+			return "", errors.New("exit status 1")
+		}
+		return `{"state":"OPEN"}`, nil
+	}}
+	enrichPRs(t.Context(), fake, cands, time.Second)
+	got, _ := rows[0]["pr_error"].(string)
+	if got != "exit status 1" || strings.Contains(got, "{") {
+		t.Errorf("pr_error = %q, want the original error line", got)
+	}
+}
+
+func TestEnrichPRsCandidateErrorSkipsGh(t *testing.T) {
+	cands, rows := prRows(prURL(1))
+	cands[0].err = errors.New("origin could not be read: boom")
+	fake := &ghtest.Fake{Func: func([]string) (string, error) {
+		t.Error("gh was asked about a candidate that carries an error")
+		return "", nil
+	}}
+	enrichPRs(t.Context(), fake, cands, time.Second)
+	if rows[0]["pr_error"] != "origin could not be read: boom" || rows[0]["pr"] != nil {
+		t.Errorf("row = %v", rows[0])
+	}
+}
+
+func TestOnGitHub(t *testing.T) {
+	for origin, want := range map[string]bool{
+		"":                                    true,
+		"https://github.com/acme/alpha.git":   true,
+		"  https://GitHub.com/acme/alpha\n":   true,
+		"ssh://git@github.com/acme/alpha.git": true,
+		"git@github.com:acme/alpha.git":       true,
+		"https://gitlab.com/acme/alpha.git":   false,
+		"ssh://git@gitlab.com/acme/alpha.git": false,
+		"git@gitlab.com:acme/alpha.git":       false,
+		"https://github.com.evil.io/a/b":      false,
+		"/srv/git/alpha.git":                  false,
+	} {
+		if got := onGitHub(origin); got != want {
+			t.Errorf("onGitHub(%q) = %v, want %v", origin, got, want)
+		}
+	}
+}
+
 // A failed gh prints nothing on stdout: its reason is only in the merged read.
 type failingGh struct{ gh.Client }
 
