@@ -212,11 +212,17 @@ type admitProbe struct {
 
 // TestAdmitPatternsMatchModelResolve runs the shipped bash oracle for every
 // (engine, tier, fixture id) triple and checks the ported rules against it:
-// admitClassOf must equal model-resolve's class_of, and every id
-// model-resolve reports as conditional must classify as gated(its requires)
-// where the repo tier admits that class and retired where it does not. The
-// admitted/regex strings model-resolve prints are NOT compared: they hold the
-// seed row's globs, so a concrete seed-matched id is absent from them by design.
+//
+//  1. The package's class-of logic must equal model-resolve's class_of.
+//  2. Every id model-resolve lists in admitted that the seed row does not
+//     match itself (an unconditional catalog candidate) must classify as
+//     admitted.
+//  3. Every id model-resolve lists in conditional must classify as gated with
+//     its requires where the repo tier admits that class, and retired where it
+//     does not.
+//
+// The seed row's own entries — globs AND exact ids, for example gpt-5.6-sol —
+// are in that list and are skipped via admitSeedMatch.
 func TestAdmitPatternsMatchModelResolve(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		drift.Missing(t, "bash (on PATH)", err)
@@ -328,10 +334,7 @@ func TestAdmitPatternsMatchModelResolve(t *testing.T) {
 					t.Errorf("%s %s %q: admitClassOf = %q, model-resolve class_of = %q", engine, tier, id, class, *probe.ClassOf)
 				}
 
-				// 2. bash's admitted list holds the seed row's models (globs, not
-				// concrete ids) plus the unconditional catalog candidates, so a
-				// seed-matched id is compared nowhere. A candidate the oracle
-				// lists as admitted must classify as admitted.
+				// 2. An admitted catalog candidate must classify as admitted.
 				listed := false
 				for _, a := range probe.Admitted {
 					if a == id {
@@ -369,9 +372,7 @@ func TestAdmitPatternsMatchModelResolve(t *testing.T) {
 			len(admitDriftFixtures["codex"])+len(admitDriftFixtures["cursor"])+len(admitDriftFixtures["pi"]))
 }
 
-// admitSeedMatch reports whether the seed row's models globs or regex list name
-// id — model-resolve's seedm for that row. Such an id is absent from the
-// oracle's admitted list by design: the list holds the row's globs instead.
+// admitSeedMatch reports whether the seed row's globs or regex list id.
 func admitSeedMatch(engine, tier, id string) bool {
 	row := admitTableOnce().rows[engine][tier]
 	if row == nil {

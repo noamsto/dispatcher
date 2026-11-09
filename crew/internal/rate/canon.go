@@ -3,9 +3,10 @@ package rate
 import "strings"
 
 // aliasCurrentID names, per claude alias, the full id that alias resolves to
-// today. Staleness under-merges: an id missing here keeps its own row, which
-// is the safe direction (a split sample, never a wrong attribution). Update
-// it when the engine ships a new generation of a family.
+// today. A missing entry splits the sample into two rows, which is the #1499
+// bug; an outdated one keeps folding the previous generation into the alias
+// and nothing here can tell, so update it whenever a family's current id
+// changes.
 var aliasCurrentID = map[string]string{
 	"opus":   "claude-opus-5-5",
 	"sonnet": "claude-sonnet-5-5",

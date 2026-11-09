@@ -163,10 +163,11 @@ func TestCanonIDs(t *testing.T) {
 	}
 }
 
-// TestAliasCurrentIDMatchesTheSeedRow guards the hand-kept table: a stale or
-// typo'd entry folds nothing, silently splitting a model's sample in two, so
-// every alias must still be listed in some engine+tier seed row and every full
-// id must still match that alias's family glob in that row.
+// TestAliasCurrentIDMatchesTheSeedRow guards the hand-kept table: every alias
+// must still be listed in some engine+tier seed row and every full id must
+// still match that alias's family glob in that row. The guard proves an entry
+// lies in that alias's family glob, not that it is still the current id; it
+// catches a rename or a typo'd family, not a stale generation.
 func TestAliasCurrentIDMatchesTheSeedRow(t *testing.T) {
 	for alias, full := range aliasCurrentID {
 		found := false
