@@ -1,0 +1,60 @@
+# Trust-boundary pins (docs/dispatch-redesign.md, section 3), checked by scripts/trust-mutate.sh.
+# id	file	pattern	nth	replacement	test_file	filter	expected
+# One line per mutation site; a row ID repeats when its guard is invoked at several sites.
+# pattern is a fixed string, nth picks the nth line of <file> containing it, replacement stands in for it.
+M1	adapters/core/dispatch.sh	if ! _wt_cfg_baseline_init "${crew_dir%/crew}"	1	if ! true	tests/dispatch.bats	^(dispatch refuses at entry before minting on drift|dispatch refuses a previous worktree with no admin dir)	has a commondir but is not a linked-worktree admin dir
+M2	adapters/core/dispatch.sh	|| ! _wt_cfg_guard_cwd "${crew_dir%/crew}"	1	|| ! true	tests/dispatch.bats	^(dispatch refuses at entry before minting on drift|dispatch from a linked worktree refuses that worktree's own drift)	grep -q 'issue create'
+M3	adapters/core/dispatch.sh	_wt_cfg_guard_cwd "${crew_dir%/crew}" || exit 1	1	true	tests/dispatch.bats	^trust pin: M3 	grep -q 'switch'
+M4	adapters/core/dispatch.sh	_wt_cfg_guard "${crew_dir%/crew}" "$prev_admin" || exit 1	1	true	tests/dispatch.bats	^trust pin: M4 	core.fsmonitor
+M5	adapters/core/dispatch.sh	_wt_cfg_guard "${crew_dir%/crew}" "$new_admin" || exit 1	1	true	tests/dispatch.bats	^default create: config drift planted during the create stops the hook replay	pre-start|post-start|post-switch
+M6	adapters/core/dispatch.sh	_wt_cfg_guard "${crew_dir%/crew}" || exit 1	1	true	tests/dispatch.bats	^origin-claim: a guard refusal right before the push refuses the dispatch	for-each-ref refs/heads/feat/42-title
+M7	adapters/core/dispatch.sh	_wt_cfg_guard "${crew_dir%/crew}" >&2	1	true	tests/dispatch.bats	^trust pin: M7 	core.sshcommand
+M8a	adapters/core/dispatch.sh	_wt_git "$wt_admin" "$wt_path" rev-parse HEAD	1	git -C "$wt_path" rev-parse HEAD	tests/dispatch.bats	^trust pin: M8a 	ls -A "$XDG_DATA_HOME/crew/worktrees"
+M8b	adapters/core/dispatch.sh	_wt_status "$wt_admin" "$wt_path"	1	git -C "$wt_path" status --porcelain	tests/dispatch.bats	^(--pr on a forged gitlink never runs its gitdir's config|--pr refuses a worktree whose admin dir has a config.worktree)	SENTINEL
+M8b	adapters/core/dispatch.sh	_wt_git "$wt_admin" "$wt_path" reset --hard "$head_oid"	1	git -C "$wt_path" reset --hard "$head_oid"	tests/dispatch.bats	^(--pr on a forged gitlink never runs its gitdir's config|--pr refuses a worktree whose admin dir has a config.worktree|--pr never runs a worker-planted clean filter)	"$status" -eq 0
+M9	adapters/core/dispatch.sh	_wt_git "$wt_admin" "$wt_path" ls-files -- WORKER_TASK.md	1	git -C "$wt_path" ls-files -- WORKER_TASK.md	tests/dispatch.bats	^trust pin: M9 	"$status" -eq 1
+M10a	adapters/core/dispatch.sh	_fetch_origin_branch "$default_branch"	1	true	tests/dispatch.bats	^fetch stays anchored from an unrecorded worktree swapped mid-dispatch	rev-parse refs/remotes/origin/main
+M10b	adapters/core/dispatch.sh	_fetch_origin_branch "$base_flag"	1	true	tests/dispatch.bats	^trust pin: M10b --base 	"$status" -eq 1
+M10b	adapters/core/dispatch.sh	_fetch_origin_branch "$branch"	1	true	tests/dispatch.bats	^trust pin: M10b a --pr head 	PR head 'eng-trust-fetch'
+M10b	adapters/core/dispatch.sh	_fetch_origin_branch "$head"	1	true	tests/dispatch.bats	^trust pin: M10b the stale-worktree 	PR head 'eng-trust-m10b2'
+M11	adapters/core/dispatch.sh	_record_worktree_anchor "$wt_path" "$wt_admin"	1	true	tests/dispatch.bats	^(trust pin: M11 |worktree anchor: dispatch writes the resume record)	anchors-at-launch=1
+M12	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	3	true	tests/dispatch.bats	^dispatch refuses from a worker worktree whose .git is already a standalone repo	inside the worker worktree
+M13	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	3	true	tests/dispatch.bats	^trust pin: M13 	evil-common/crew
+M14	adapters/core/dispatch.sh	if ! _lead_record_safe; then	2	if ! true; then	tests/dispatch.bats	^lead-session: a symlinked leads dir is refused before any launch	symlink or not a regular file/directory
+M15	adapters/core/dispatch.sh	if ! _lead_record_safe; then	1	if ! true; then	tests/dispatch.bats	^trust pin: M15 	not recording the lead session
+H1	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	1	true	tests/dispatch.bats	^dispatch --host refuses from a worker worktree whose .git is already a standalone repo	"$status" -eq 1
+H2	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	1	true	tests/dispatch.bats	^trust pin: H2 	"$status" -eq 1
+R1	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	2	true	tests/dispatch.bats	^dispatch --host refuses from a worker worktree whose .git is already a standalone repo	inside the worker worktree
+R2	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	2	true	tests/dispatch.bats	^trust pin: R2 	redirects the git common dir
+W1	adapters/core/dispatch.sh	_rw_sender_allowed "$from"	1	true	tests/dispatch.bats	^role-watch: sender: foreign senders are dropped with a report and no delivery	role_watch_drop
+F1	adapters/core/dispatch.sh	_artifacts_dir_bad "$2"	1	false	tests/dispatch.bats	^add-dir: a symlinked artifacts parent of a slashed branch is not granted	not granting
+F2	adapters/core/dispatch.sh	_artifacts_dir_bad "$branch"	2	false	tests/dispatch.bats	^roles.json: a symlinked artifacts parent is refused and its target left empty	"$status" -eq 1
+F3	adapters/core/dispatch.sh	_artifacts_dir_bad "$branch"	1	false	tests/dispatch.bats	^roles.json: --spawn-role refuses a symlinked artifacts parent	refusing to use roles.json
+F6	adapters/core/dispatch.sh	"$(_protocol_dirs_record_bad)"	2	"$(false)"	tests/dispatch.bats	^(protocol-dirs record: a symlink planted at the record path is refused|a symlinked protocol-dirs parent or worktrees dir is not written through)	"$status" -eq 1
+F7	adapters/core/dispatch.sh	"$(_protocol_dirs_record_bad)"	1	"$(false)"	tests/dispatch.bats	^spawn-role: record — a symlinked record is refused before any split	"$status" -eq 1
+F9	adapters/core/dispatch.sh	_mint_leak_check "$mint_body"	1	true	tests/dispatch.bats	^mint: refuses a summary the public-leak guard objects to, without minting	"$status" -eq 1
+F10	adapters/core/dispatch.sh	_require_protocol_files "$PROTOCOL_DIR" "${required_protocol_files[@]}"	1	true	tests/dispatch.bats	^a plain non-grid dispatch aborts before scaffolding when WORKER_PROTOCOL.md is missing	"$status" -ne 0
+F11	adapters/core/dispatch.sh	_require_protocol_files "$PROTOCOL_DIR" WORKER_PROTOCOL.md EVIDENCE_REVIEW.md GRID_PROTOCOL.md	1	true	tests/dispatch.bats	^grid: --spawn-role aborts before split-window when GRID_PROTOCOL.md is missing	"$status" -eq 1
+F13	adapters/core/dispatch.sh	_check_protocol_rev "$PROTOCOL_DIR" dispatch	2	true	tests/dispatch.bats	^refuses a protocol dir whose content hashes to a different revision than the script marker	"$status" -ne 0
+F14	adapters/core/dispatch.sh	_check_protocol_rev "$PROTOCOL_DIR" dispatch	1	true	tests/dispatch.bats	^grid: --spawn-role refuses a stale protocol dir whose content differs from the script marker	"$status" -eq 1
+F16	adapters/core/dispatch.sh	|| _refuse_chrome_from_worker	1	|| true	tests/dispatch.bats	^chrome: --chrome is refused from a worker	"$status" -eq 1
+F17	adapters/core/dispatch.sh	    _refuse_chrome_from_worker	1	    true	tests/dispatch.bats	^dispatch --host --chrome is refused from a worker	"$status" -eq 1
+F19	adapters/core/dispatch.sh	_pane_is_ancestor "$TMUX_PANE" || {	1	true || {	tests/dispatch.bats	^grid: --spawn-role refuses a [^T]*TMUX_PANE that is not this process's pane	"$status" -eq 1
+F20	adapters/core/dispatch.sh	_pane_is_ancestor "$TMUX_PANE" || {	2	true || {	tests/dispatch.bats	^grid: --reap-roles refuses a [^T]*TMUX_PANE that is not this process's pane	"$status" -eq 1
+F21	adapters/core/dispatch.sh	_pane_is_ancestor "$exited_pane" || {	1	true || {	tests/dispatch.bats	^grid: --role-exited refuses a --pane that is not this process's pane	"$status" -eq 1
+F22	adapters/core/dispatch.sh	[ "$w_role" = "$role" ] || {	1	true || {	tests/dispatch.bats	^grid: --role-watch refuses when the pane's @crew_role does not match --role	"$status" -eq 1
+F22	adapters/core/dispatch.sh	[ "$w_branch" = "$watch_branch" ] || {	1	true || {	tests/dispatch.bats	^grid: --role-watch refuses when the window's @crew_branch does not match --branch	"$status" -eq 1
+F23	adapters/core/dispatch.sh	_rw_stamped || { _rw_orphaned; break; }	2	true	tests/dispatch.bats	^role-watch: a (pane re-stamped with another role|window re-stamped with another branch|window re-stamped with another crew) after a remux restore gets no paste	_rw_expect_exit
+F24	adapters/core/dispatch.sh	_rw_stamped || { _rw_orphaned; break; }	1	true	tests/dispatch.bats	^role-watch: a stamp that flips after the first Enter gets no retry Enter after a remux restore	_rw_expect_exit
+F25	adapters/core/dispatch.sh	for _v in "${!GIT_@}"; do unset "$_v"; done	1	:	tests/dispatch.bats	^trust pin: F25 	-s "$stall_env"
+F26	adapters/core/dispatch.sh	_add_dir_ok "$add_dir"	1	printf '%s' "$add_dir"	tests/dispatch.bats	^add-dir: refuses unsafe values before creating any worktree	"$status" -eq 1
+F27	adapters/core/dispatch.sh	_add_dir_ok "$line"	1	printf '%s' "$line"	tests/dispatch.bats	^add-dir: --spawn-role re-checks the recorded grant against the lead's roots	dropping invalid grant
+F30	adapters/core/dispatch.sh	[[ $_v =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]	1	true	tests/dispatch.bats	^grid: --spawn-role refuses a command substitution in the header's agent_name	"$status" -eq 1
+F31	adapters/core/dispatch.sh	_wt_admin_dir "${crew_dir%/crew}" "$prev_wt"	1	printf '%s' "${crew_dir%/crew}"	tests/dispatch.bats	^dispatch refuses a previous worktree whose admin dir no longer points back at its .git before wt switch	grep -q 'switch'
+F32	adapters/core/dispatch.sh	if [ -z "$new_admin" ] || grep -qxF -- "${new_admin##*/}" <<<"$admin_before" ||	1	if ! true &&	tests/dispatch.bats	^create: a HEAD pointed at the branch mid-dispatch is refused after the switch	"$status" -eq 1
+F33	adapters/core/dispatch.sh	[ "$switch_mode" = create ] && [ -n "$prev_wt" ]	1	false	tests/dispatch.bats	^create: refuses when a worktree's unborn HEAD already names the branch	unborn
+F34	adapters/core/dispatch.sh	_remote_row_valid "$row" || _remote_unfollowable	1	true	tests/dispatch.bats	^trust pin: F34 a recovered 	"$status" -eq 1
+F34	adapters/core/dispatch.sh	_remote_row_valid "$row" || _remote_unfollowable	2	true	tests/dispatch.bats	^trust pin: F34 a remote dispatch row 	"$status" -eq 1
+F35	adapters/core/dispatch.sh	[ -L "$grant_record" ] || { [ -e "$grant_record" ] && [ ! -f "$grant_record" ]; }	1	false	tests/dispatch.bats	^add-dir: a symlink planted at the grant record path is refused	"$status" -eq 1
+F36	adapters/core/dispatch.sh	[ -L "$_dir" ] || { [ -e "$_dir" ] && [ ! -d "$_dir" ]; }	1	false	tests/dispatch.bats	^a symlinked crew launch dir is refused, nothing is written into its target	"$status" -ne 0
+
