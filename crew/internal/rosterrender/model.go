@@ -45,7 +45,7 @@ var engines = []string{"claude", "codex", "cursor", "pi"}
 // emptyModel is the arm's `{"rows":[],"holds":[],"roles":[]}`: what a repo with
 // no bus yet renders as, with no jq run at all.
 func emptyModel() map[string]any {
-	return map[string]any{"rows": []any{}, "holds": []any{}, "roles": []any{}}
+	return map[string]any{"rows": []any{}, "holds": []any{}, "roles": []any{}, "rounds": map[string]any{}}
 }
 
 // model is `_rr_model`: the renderer's whole input, {rows, holds, roles}. Every
@@ -116,7 +116,41 @@ func model(ctx context.Context, paths bus.Paths, crew string, nowSec float64, ro
 			row["host"] = host
 		}
 	}
+	rounds := map[string]any{}
+	for branch, n := range reviewRounds(docs, crew) {
+		rounds[branch] = n
+	}
+	m["rounds"] = rounds
 	return m, nil
+}
+
+// reviewRounds counts, per branch, the reviewer's `revise` verdicts: each is one
+// completed review-then-fix round. Only a post from the branch's own reviewer
+// role counts, and the body is a JSON string decoded per row, so a row that does
+// not parse is skipped rather than failing the model.
+func reviewRounds(docs []any, crew string) map[string]int {
+	const prefix, suffix = "role:", ":reviewer"
+	out := map[string]int{}
+	for _, d := range docs {
+		doc, _ := d.(map[string]any)
+		if doc["kind"] != "msg" || doc["crew_id"] != crew {
+			continue
+		}
+		from, _ := doc["from"].(string)
+		if !strings.HasPrefix(from, prefix) || !strings.HasSuffix(from, suffix) || len(from) <= len(prefix)+len(suffix) {
+			continue
+		}
+		text, _ := doc["body"].(string)
+		var body struct {
+			Seam    string `json:"seam"`
+			Verdict string `json:"verdict"`
+		}
+		if json.Unmarshal([]byte(text), &body) != nil || body.Seam != "review" || body.Verdict != "revise" {
+			continue
+		}
+		out[from[len(prefix):len(from)-len(suffix)]]++
+	}
+	return out
 }
 
 // identityIDs is the arm's `ids` map: one entry per pending branch, the identity

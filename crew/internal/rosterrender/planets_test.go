@@ -2,6 +2,7 @@ package rosterrender
 
 import (
 	"encoding/json"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -149,7 +150,7 @@ func TestPlanetClassMapping(t *testing.T) {
 	}
 	noBranch := planetRow("", "working")
 	ps, lg := buildPlanets(planetModel(noBranch, planetRow("feat/2-b", "")), planetNow)
-	if len(ps) != 0 || lg != (legend{}) {
+	if len(ps) != 0 || !reflect.DeepEqual(lg, legend{}) {
 		t.Errorf("rows without a branch or a state drew %d planets, legend %+v", len(ps), lg)
 	}
 }
@@ -187,8 +188,47 @@ func TestPlanetLegendCountsAndHolds(t *testing.T) {
 	m["holds"] = []any{map[string]any{"id": "h1"}, map[string]any{"id": "h2"}}
 	_, lg := buildPlanets(m, planetNow)
 	want := legend{working: 2, blocked: 1, prOpen: 1, done: 1, failed: 1, holds: 2}
-	if lg != want {
+	if !reflect.DeepEqual(lg, want) {
 		t.Fatalf("legend = %+v, want %+v", lg, want)
+	}
+}
+
+func TestPlanetRoundsComeFromTheModel(t *testing.T) {
+	m := planetModel(planetRow("feat/1-a", "working"), planetRow("feat/2-b", "working"))
+	m["rounds"] = map[string]any{"feat/1-a": 3, "feat/2-b": json.Number("2"), "feat/9-gone": 7}
+	ps, _ := buildPlanets(m, planetNow)
+	if len(ps) != 2 || ps[0].rounds != 3 || ps[1].rounds != 2 {
+		t.Fatalf("rounds = %+v, want 3 and 2", ps)
+	}
+	if p := onlyPlanet(t, planetRow("feat/1-a", "working")); p.rounds != 0 {
+		t.Errorf("rounds without a model entry = %d, want 0", p.rounds)
+	}
+}
+
+func TestBuildHolds(t *testing.T) {
+	quota := map[string]any{
+		"id":   "h1",
+		"wait": map[string]any{"engine": "claude", "window": "7d", "resets_at": 1},
+		"task": map[string]any{"branch": "feat/1458-x", "ref": "r1"},
+	}
+	fleetHold := map[string]any{
+		"id":   "h2",
+		"wait": map[string]any{"kind": "fleet", "weight": 2, "engine": "claude", "window": "7d"},
+		"task": map[string]any{"ref": "gh#77;{evil}"},
+	}
+	bare := map[string]any{"id": "h3", "wait": map[string]any{"engine": "a\"b", "window": "5h]"}}
+	m := emptyModel()
+	m["holds"] = []any{quota, fleetHold, bare}
+	want := []queuedHold{
+		{id: "h1", label: "1458", engine: "claude", window: "7d"},
+		{id: "h2", label: "gh77evil"},
+		{id: "h3", label: "hold", engine: "ab", window: "5h"},
+	}
+	if got := buildHolds(m); !reflect.DeepEqual(got, want) {
+		t.Fatalf("holds = %+v, want %+v", got, want)
+	}
+	if got := buildHolds(emptyModel()); len(got) != 0 {
+		t.Errorf("no holds = %+v", got)
 	}
 }
 

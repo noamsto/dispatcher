@@ -34,12 +34,14 @@ type sourceResult struct {
 	planets []planet
 	lg      legend
 	live    int64
+	holds   []queuedHold
 }
 
 // clone is a copy no later in-place change to the planets or their moons can
 // write back through.
 func (r sourceResult) clone() sourceResult {
 	r.planets = slices.Clone(r.planets)
+	r.holds = slices.Clone(r.holds)
 	for i := range r.planets {
 		r.planets[i].moons = slices.Clone(r.planets[i].moons)
 	}
@@ -53,6 +55,29 @@ type discovery struct {
 	at   time.Time
 	srcs []source
 	good map[string]sourceResult
+
+	budgetAt    time.Time
+	budget      *int
+	budgetKnown bool
+}
+
+// fleetBudget is the resolved budget, asked of resolve at most once per
+// rediscoverEvery so the 2 s tick never runs the config child. A failed or absent
+// resolver is an unknown budget, remembered for the same interval.
+func (d *discovery) fleetBudget(ctx context.Context, now time.Time, resolve func(context.Context) (int, error)) *int {
+	if d != nil && d.budgetKnown && now.Sub(d.budgetAt) < rediscoverEvery {
+		return d.budget
+	}
+	var budget *int
+	if resolve != nil {
+		if n, err := resolve(ctx); err == nil {
+			budget = &n
+		}
+	}
+	if d != nil {
+		d.budgetAt, d.budget, d.budgetKnown = now, budget, true
+	}
+	return budget
 }
 
 func (d *discovery) remember(common string, r sourceResult) {

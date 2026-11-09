@@ -62,8 +62,14 @@ type Options struct {
 	// Gh looks up the CI state of open PRs. Nil asks GitHub nothing and draws only
 	// the states already cached.
 	Gh gh.Client
+	// BudgetFile is the engine quota cache the legend's engine readings come from.
+	// Empty draws every engine as unknown.
+	BudgetFile string
+	// Budget resolves the fleet budget. Nil, or an error, draws it as unknown.
+	Budget func(ctx context.Context) (int, error)
 
-	// disc remembers the joined repos between passes; only the daemon sets it.
+	// disc remembers the joined repos and the resolved budget between passes; Run
+	// sets it for every mode.
 	disc *discovery
 }
 

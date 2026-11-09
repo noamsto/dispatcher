@@ -61,6 +61,11 @@ const (
 	ciBadgeRadius   = ciBadgeSize * 72 / 2
 	ciBadgeStandoff = ciBadgeRadius / 2
 
+	// A review-round badge sits at the lower right, standing off like the CI one.
+	roundBadgeW        = 0.3
+	roundBadgeH        = 0.2
+	roundBadgeStandoff = ciBadgeStandoff
+
 	// Wedge boundary spokes start spokeInner from the dispatcher; the rim arc is
 	// a polyline of points at most arcStep degrees apart, inset arcInset from the
 	// wedge's edges so neighbouring arcs do not touch.
@@ -196,6 +201,9 @@ func mapHalf(sc scene) (halfX, halfY float64) {
 	for _, w := range sc.wedges {
 		halfX = max(halfX, math.Abs(w.x)+labelWidth(w.label)/2)
 	}
+	for _, a := range sc.anchors {
+		halfX = max(halfX, math.Abs(a.x)+labelWidth(a.text)/2)
+	}
 	return halfX, halfY
 }
 
@@ -213,6 +221,9 @@ func hitRadius(p placed) float64 {
 	}
 	if _, badgePen, ok := ciBadge(p.ci); ok {
 		r = max(r, pr+ciBadgeStandoff+ciBadgeRadius+badgePen/2)
+	}
+	if p.rounds > 0 {
+		r = max(r, pr+roundBadgeStandoff+math.Hypot(roundBadgeW*72/2, roundBadgeH*72/2))
 	}
 	return r
 }
@@ -240,9 +251,27 @@ func markerRow(lg legend) bool {
 // legendHeight is what the legend adds under the canvas.
 func legendHeight(lg legend) float64 {
 	if markerRow(lg) {
-		return legendH + legendRowH
+		return legendH + 2*legendRowH
 	}
-	return legendH
+	return legendH + legendRowH
+}
+
+// stripText is the budget strip: this crew's live weight against the fleet
+// budget, then each engine's most-used quota window. Unknown is `?`, never 0.
+func stripText(lg legend) string {
+	budget := "?"
+	if lg.budget != nil {
+		budget = strconv.Itoa(*lg.budget)
+	}
+	parts := []string{"crew weight " + strconv.Itoa(lg.weight) + " · fleet budget " + budget}
+	for _, e := range lg.engines {
+		if e.pct == nil {
+			parts = append(parts, clean(e.name)+" ?")
+			continue
+		}
+		parts = append(parts, clean(e.name)+" "+clean(e.window)+" "+strconv.FormatFloat(*e.pct, 'f', 0, 64)+"%")
+	}
+	return strings.Join(parts, " · ")
 }
 
 // buildDOT is the whole picture as DOT for `neato -n`: every node is pinned, so
@@ -295,6 +324,12 @@ func buildDOT(sc scene, lg *legend, sel, selRepo string) string {
 			dx, dy := polar(p.size*72/2+ciBadgeStandoff, 45)
 			stmt(&b, ids[p.key()]+"c", append([]string{num("width", ciBadgeSize), num("height", ciBadgeSize), pos(p.x+dx, p.y+dy)}, attrs...)...)
 		}
+		if p.rounds > 0 {
+			dx, dy := polar(p.size*72/2+roundBadgeStandoff, 135)
+			stmt(&b, ids[p.key()]+"r", str("label", "r"+strconv.Itoa(p.rounds)), "shape=box", str("style", "rounded,filled"),
+				num("width", roundBadgeW), num("height", roundBadgeH), "fontsize=9", pos(p.x+dx, p.y+dy),
+				str("fillcolor", colWaiting), str("fontcolor", colBG), "penwidth=0")
+		}
 	}
 	for _, p := range planets {
 		attrs := []string(nil)
@@ -329,6 +364,21 @@ func buildDOT(sc scene, lg *legend, sel, selRepo string) string {
 	for i, h := range sc.hosts {
 		stmt(&b, "h"+strconv.Itoa(i+1), str("label", h.host), "shape=plaintext", "style=solid", "fixedsize=false",
 			str("fontcolor", colLegend), pos(h.x, h.y))
+	}
+	anchorIDs := make(map[string]string, len(sc.anchors))
+	for i, a := range sc.anchors {
+		id := "a" + strconv.Itoa(i+1)
+		anchorIDs[a.text] = id
+		stmt(&b, id, str("label", a.text), "shape=plaintext", "style=solid", "fixedsize=false",
+			str("fontcolor", colDim), pos(a.x, a.y))
+	}
+	for i, h := range sc.holds {
+		id := "q" + strconv.Itoa(i+1)
+		stmt(&b, id, str("label", h.label), num("width", holdSize), num("height", holdSize), "fontsize=10", pos(h.x, h.y),
+			str("style", "filled,dashed"), str("color", colHolds+staleAlpha), str("fontcolor", colDim))
+		if a, ok := anchorIDs[h.engine+" · "+h.window]; ok && h.engine != "" && h.window != "" {
+			stmt(&b, id+" -> "+a, "style=dashed", str("color", colHolds+staleAlpha), "penwidth=1")
+		}
 	}
 	rings := 0
 	for _, p := range sc.planets {
@@ -429,6 +479,9 @@ func legendHTML(lg legend) string {
 		`<font color="` + colEdge + `">●</font> small dot = role`,
 		"hexagon = remote host",
 	}
+	if lg.holds > 0 {
+		shapes = append(shapes, `<font color="`+colHolds+`">●</font> dashed outer dot = queued hold`)
+	}
 	stacked := `<font color="` + colPROpen + `">→</font> dashed arrow = stacked on`
 	const gap = "&nbsp;&nbsp;&nbsp;&nbsp;"
 	var b strings.Builder
@@ -452,6 +505,7 @@ func legendHTML(lg legend) string {
 		}
 		b.WriteString("    <tr><td>" + strings.Join(markers, gap) + "</td></tr>\n")
 	}
+	b.WriteString(`    <tr><td><font color="` + colDim + `">` + stripText(lg) + "</font></td></tr>\n")
 	b.WriteString("  </table>")
 	return b.String()
 }

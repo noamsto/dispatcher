@@ -1146,11 +1146,11 @@ func TestAnimatedSetsSkipStalePlanets(t *testing.T) {
 func TestDotMarkerLegend(t *testing.T) {
 	rows := func(lg legend) int { return strings.Count(legendHTML(lg), "<tr>") }
 	base := legend{working: 3, blocked: 1, prOpen: 2, done: 1, holds: 1, repos: 1}
-	if got := rows(base); got != 3 {
-		t.Errorf("a legend without markers has %d rows, want 3", got)
+	if got := rows(base); got != 4 {
+		t.Errorf("a legend without markers has %d rows, want 4", got)
 	}
-	if legendHeight(base) != legendH || legendHeight(legend{}) != legendH {
-		t.Errorf("legendHeight = %v, want %v", legendHeight(base), legendH)
+	if legendHeight(base) != legendH+legendRowH || legendHeight(legend{}) != legendH+legendRowH {
+		t.Errorf("legendHeight = %v, want %v", legendHeight(base), legendH+legendRowH)
 	}
 
 	extra := func(lg legend) string {
@@ -1179,8 +1179,8 @@ func TestDotMarkerLegend(t *testing.T) {
 		{"all", legend{repos: 3, waiting: 1, ci: 2, stale: 1}, []string{"wedge = repo" + gap + `<font color="` + colWaiting, "ci pass", "no runner" + gap + "dim = no status"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := rows(tc.lg); got != 4 {
-				t.Errorf("%d rows, want 4", got)
+			if got := rows(tc.lg); got != 5 {
+				t.Errorf("%d rows, want 5", got)
 			}
 			row := extra(tc.lg)
 			for _, w := range tc.want {
@@ -1193,8 +1193,8 @@ func TestDotMarkerLegend(t *testing.T) {
 					t.Errorf("row names %q: %s", n, row)
 				}
 			}
-			if legendHeight(tc.lg) != legendH+legendRowH {
-				t.Errorf("legendHeight = %v, want %v", legendHeight(tc.lg), legendH+legendRowH)
+			if legendHeight(tc.lg) != legendH+2*legendRowH {
+				t.Errorf("legendHeight = %v, want %v", legendHeight(tc.lg), legendH+2*legendRowH)
 			}
 		})
 	}
@@ -1207,7 +1207,7 @@ func TestDotMarkerLegend(t *testing.T) {
 // height, so the picture stays square with the legend's extra row under it.
 func TestDotCanvasPaysTheMarkerRow(t *testing.T) {
 	out, sc, lg := emitRepos(wedgeRoster())
-	if legendHeight(lg) <= legendH {
+	if legendHeight(lg) <= legendH+legendRowH {
 		t.Fatal("the wedges roster has no marker row")
 	}
 	x, _ := posOf(t, nodeLine(t, out, "c2"))

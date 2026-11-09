@@ -117,7 +117,7 @@ func TestModelWithoutABusIsTheArmsEmptyOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := decodeOne(t, `{"rows":[],"holds":[],"roles":[]}`); !reflect.DeepEqual(m, want) {
+	if want := decodeOne(t, `{"rows":[],"holds":[],"roles":[],"rounds":{}}`); !reflect.DeepEqual(m, want) {
 		t.Errorf("model = %s", compact(m))
 	}
 }
@@ -357,6 +357,47 @@ func TestModelRemoteRowCarriesItsHost(t *testing.T) {
 				t.Errorf("host = %q, want %q", got, tc.host)
 			}
 		})
+	}
+}
+
+func reviewMsg(crew, from, body string) any {
+	return map[string]any{"kind": "msg", "crew_id": crew, "from": from, "body": body}
+}
+
+func TestReviewRoundsCountsOnlyTheReviewersReviseVerdicts(t *testing.T) {
+	revise := `{"role":"reviewer","seam":"review","verdict":"revise"}`
+	docs := []any{
+		reviewMsg("c1", "role:feat/1-a:reviewer", revise),
+		reviewMsg("c1", "role:feat/1-a:reviewer", revise),
+		reviewMsg("c1", "role:feat/2-b:reviewer", revise),
+		reviewMsg("c1", "role:feat/1-a:reviewer", `{"role":"reviewer","seam":"review","verdict":"accept"}`),
+		reviewMsg("c1", "role:feat/1-a:reviewer", `{"role":"reviewer","seam":"review","verdict":"reject"}`),
+		reviewMsg("c1", "role:feat/1-a:reviewer", `{"role":"plan-critic","seam":"plan","verdict":"revise"}`),
+		reviewMsg("c1", "role:feat/1-a:reviewer", "not json"),
+		reviewMsg("c1", "role:feat/1-a:reviewer", ""),
+		reviewMsg("c2", "role:feat/1-a:reviewer", revise),
+		reviewMsg("c1", "role:feat/1-a:plan-critic", revise),
+		reviewMsg("c1", "worker:feat/1-a#s1", revise),
+		reviewMsg("c1", "role::reviewer", revise),
+		map[string]any{"kind": "status", "crew_id": "c1", "from": "role:feat/1-a:reviewer", "body": revise},
+	}
+	want := map[string]int{"feat/1-a": 2, "feat/2-b": 1}
+	if got := reviewRounds(docs, "c1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("rounds = %v, want %v", got, want)
+	}
+}
+
+func TestModelCarriesReviewRounds(t *testing.T) {
+	p, _ := modelFixture(t,
+		`{"ts":1791360000000,"crew_id":"c1","kind":"dispatch","branch":"feat/9-x","session":"s1","worker_id":"worker:feat/9-x#s1","engine":"claude","model":"sonnet","tier":"standard","title":"Xray","name":"sage","color":"green","tmux":"colour28"}`,
+		`{"ts":1791360100000,"crew_id":"c1","from":"role:feat/9-x:reviewer","to":"dispatcher:c1","kind":"msg","body":"{\"role\":\"reviewer\",\"seam\":\"review\",\"verdict\":\"revise\"}"}`)
+	m, err := model(t.Context(), p, "c1", 1791360300, nil, emptyRoster, emptyLive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rounds, _ := m["rounds"].(map[string]any)
+	if got := number(rounds["feat/9-x"]); got != 1 {
+		t.Fatalf("rounds = %v, want feat/9-x 1", rounds)
 	}
 }
 
