@@ -154,6 +154,30 @@ jobs:
       - name: bats (secret-read-guard timing, serial)
         run: nix develop -c bats --filter-tags timing tests/secret-read-guard.bats
 
+  # The workflow has no `paths` filter, so the mutation check decides for itself:
+  # it runs only when a changed path is one the manifest's file column names (or
+  # the manifest or the tool itself), because every pin costs a bats run.
+  trust-pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/cachix-action@v17
+        continue-on-error: true
+        with:
+          name: dispatcher
+      - name: manifest paths changed?
+        id: affected
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: echo "run=$(bash scripts/trust-mutate.sh --affected "$BASE_REF")" >>"$GITHUB_OUTPUT"
+      - name: trust-boundary mutation check
+        if: steps.affected.outputs.run == 'yes'
+        run: nix develop -c bash scripts/trust-mutate.sh
+
   flake-check:
     runs-on: ubuntu-latest
     steps:
@@ -202,7 +226,16 @@ jobs:
 
   check:
     if: always()
-    needs: [lint, bats, bats-module, bats-timing, flake-check, build-darwin]
+    needs:
+      [
+        lint,
+        bats,
+        bats-module,
+        bats-timing,
+        trust-pins,
+        flake-check,
+        build-darwin,
+      ]
     runs-on: ubuntu-latest
     steps:
       - name: report failed dependencies

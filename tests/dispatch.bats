@@ -19672,3 +19672,347 @@ locked_task_profile_settings() {
   [[ "$stderr" == *"dispatch: task profile security: tier standard, engine codex, model @premium, effort high (filled: effort model)"* ]]
   [[ "$stderr" == *"dispatch: class @premium (gpt-5.6-sol) is not standard's row for --agent codex"* ]]
 }
+
+# Entry tests for the trust-boundary gaps in docs/dispatch-redesign.md section 3
+# that scripts/trust-mutate.sh pins (tests/trust-pins.tsv): each plants its input
+# after every earlier guard, so only the named invocation can refuse it.
+
+# _trust_pin_git_shim <args-substring> <key> <value> — a git shim that, once, after a
+# call whose argv contains <args-substring>, plants <key>=<value> in the repo config.
+_trust_pin_git_shim() {
+  local real_git
+  real_git="$(type -P git)"
+  cat >"$STUB_DIR/git" <<EOF
+#!/usr/bin/env bash
+"$real_git" "\$@"
+rc=\$?
+case " \$* " in
+*" $1 "*)
+  if [ ! -e "$BATS_TEST_TMPDIR/planted" ]; then
+    : >"$BATS_TEST_TMPDIR/planted"
+    "$real_git" -C "$TEST_REPO" config "$2" "$3"
+  fi
+  ;;
+esac
+exit \$rc
+EOF
+  chmod +x "$STUB_DIR/git"
+}
+
+# _trust_pin_wt_shim <wt-args-substring> <shell-command> — wraps the wt stub: after a
+# call whose argv contains <wt-args-substring>, runs <shell-command>.
+_trust_pin_wt_shim() {
+  mv "$STUB_DIR/wt" "$STUB_DIR/wt.base"
+  cat >"$STUB_DIR/wt" <<EOF
+#!/usr/bin/env bash
+"$STUB_DIR/wt.base" "\$@"
+rc=\$?
+case " \$* " in
+*" $1 "*) $2 ;;
+esac
+exit \$rc
+EOF
+  chmod +x "$STUB_DIR/wt"
+}
+
+@test "trust pin: M3 a key planted before the create switch is refused before wt switch" {
+  stub_launch_bins
+  stub_gh_claim "" ""
+  seed_git_baseline
+  _trust_pin_git_shim "worktree list --porcelain" core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [ -e "$BATS_TEST_TMPDIR/planted" ]
+  [[ "$output" == *"core.sshcommand"* ]]
+  run ! grep -q 'switch' "$STUB_LOG"
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "trust pin: M4 a previous worktree's config.worktree key is refused before the attach switch" {
+  setup_stale_pr_worktree eng-trust-m4
+  git -C "$TEST_REPO" config extensions.worktreeConfig true
+  seed_git_baseline
+  git -C "$TEST_REPO/.worktrees/eng-trust-m4" config --worktree core.fsmonitor "$BATS_TEST_TMPDIR/hit.sh"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"core.fsmonitor"* ]]
+  run ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "trust pin: M7 a key planted before the claim probe reads as git config drift evidence" {
+  stub_launch_bins
+  stub_gh_claim dispatched ""
+  seed_git_baseline
+  cat >"$STUB_DIR/gh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$*" in
+issue\ view\ *)
+  git -C "$TEST_REPO" config core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
+  echo dispatched
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"core.sshcommand"* ]]
+  [[ "$output" == *"issue #42 is already claimed (carries the 'dispatched' label; git config drift)"* ]]
+  run ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "trust pin: M8a a config.worktree planted after the attach is refused at the HEAD read" {
+  setup_stale_pr_worktree eng-trust-m8a
+  export STALE_NEW_OID="$STALE_OLD_OID"
+  _trust_pin_wt_shim "switch" ": >\"$TEST_REPO/.git/worktrees/eng-trust-m8a/config.worktree\""
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"refusing git in $TEST_REPO/.worktrees/eng-trust-m8a: "*"config.worktree exists"* ]]
+  [ -z "$(ls -A "$XDG_DATA_HOME/crew/worktrees" 2>/dev/null)" ]
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "trust pin: M9 a config.worktree planted after the hook replay is refused before the launch" {
+  stub_launch_bins
+  _trust_pin_wt_shim "hook post-switch" "for a in \"$TEST_REPO\"/.git/worktrees/*; do : >\"\$a/config.worktree\"; done"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"config.worktree exists"* ]]
+  [[ "$output" == *"dispatch: could not read the index at "* ]]
+  run ! grep -q 'new-window' "$STUB_LOG"
+}
+
+@test "trust pin: M10b --base fetch is guarded against a key planted while resolving the PR" {
+  stub_launch_bins
+  git -C "$TEST_REPO" branch stacked
+  git -C "$TEST_REPO" push -q origin stacked
+  seed_git_baseline
+  cat >"$STUB_DIR/gh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$*" in
+pr\ view\ *)
+  git -C "$TEST_REPO" config core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
+  printf '{"headRefName":"stacked","state":"OPEN","isCrossRepository":false}\n'
+  ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/gh"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --base 5 --crew-id c1 42 "title"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"core.sshcommand"* ]]
+  [[ "$output" == *"dispatch: --base 'stacked' is not a plain branch name or could not be fetched from origin"* ]]
+  run ! grep -q 'issue create' "$STUB_LOG"
+}
+
+@test "trust pin: M10b a --pr head fetched by name is guarded against a key planted after the switch guard" {
+  local oid
+  stub_launch_bins
+  git -C "$TEST_REPO" branch eng-trust-fetch
+  git -C "$TEST_REPO" push -q origin eng-trust-fetch
+  oid="$(git -C "$TEST_REPO" rev-parse eng-trust-fetch)"
+  git -C "$TEST_REPO" branch -q -D eng-trust-fetch
+  git -C "$TEST_REPO" update-ref -d refs/remotes/origin/eng-trust-fetch
+  cat >"$STUB_DIR/gh" <<EOT
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+case "\$*" in
+pr\ view\ *)
+  printf '{"headRefName":"eng-trust-fetch","headRefOid":"$oid","baseRefName":"main","isCrossRepository":false,"state":"OPEN"}\n'
+  ;;
+esac
+exit 0
+EOT
+  chmod +x "$STUB_DIR/gh"
+  seed_git_baseline
+  # The second check-cwd is the guard right before the switch; plant right after it.
+  cat >"$BATS_TEST_TMPDIR/crew-shim" <<EOT
+#!/bin/sh
+"$CREW_REAL" "\$@"
+rc=\$?
+if [ "\$1 \$2" = "git-guard check-cwd" ]; then
+  n=\$((\$(cat "$BATS_TEST_TMPDIR/cwd-calls" 2>/dev/null || echo 0) + 1))
+  echo "\$n" >"$BATS_TEST_TMPDIR/cwd-calls"
+  [ "\$n" -ne 2 ] || git -C "$TEST_REPO" config core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
+fi
+exit \$rc
+EOT
+  chmod +x "$BATS_TEST_TMPDIR/crew-shim"
+  export CREW_GO_BIN="$BATS_TEST_TMPDIR/crew-shim"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 1 ]
+  [ "$(cat "$BATS_TEST_TMPDIR/cwd-calls")" = 2 ]
+  [[ "$output" == *"core.sshcommand"* ]]
+  [[ "$output" == *"dispatch: PR head 'eng-trust-fetch' is not a plain branch name or could not be fetched from origin"* ]]
+  run ! grep -q 'switch' "$STUB_LOG"
+}
+
+@test "trust pin: M10b the stale-worktree reset fetch is guarded against a key planted by git status" {
+  setup_stale_pr_worktree eng-trust-m10b2
+  seed_git_baseline
+  _trust_pin_git_shim "status --porcelain" core.sshCommand "$BATS_TEST_TMPDIR/hit.sh"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --pr 99 --crew-id c1 "Fix it"
+  [ "$status" -eq 1 ]
+  [ -e "$BATS_TEST_TMPDIR/planted" ]
+  [[ "$output" == *"core.sshcommand"* ]]
+  [[ "$output" == *"dispatch: PR head 'eng-trust-m10b2' is not a plain branch name or could not be fetched from origin"* ]]
+  [ "$(git -C "$TEST_REPO/.worktrees/eng-trust-m10b2" rev-parse HEAD)" = "$STALE_OLD_OID" ]
+}
+
+@test "trust pin: M11 the worktree anchor record exists before the worker window opens" {
+  stub_launch_bins
+  cat >"$STUB_DIR/tmux" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+if [ "\$1" = new-window ]; then
+  printf 'anchors-at-launch=%s\n' "\$(find "$XDG_DATA_HOME/crew/worktrees" -type f 2>/dev/null | wc -l)" >>"\$STUB_LOG"
+  printf '%s %s\n' '%1' '%1'
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "anchor order"
+  [ "$status" -eq 0 ]
+  grep -qx 'anchors-at-launch=1' "$STUB_LOG"
+}
+
+@test "trust pin: M13 a planted commondir gains no crew dir before the entry guard refuses it" {
+  stub_launch_bins
+  seed_git_baseline
+  plant_commondir
+  rm -rf "$BATS_TEST_TMPDIR/evil-common/crew"
+
+  DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "title"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"redirects the git common dir"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/evil-common/crew" ]
+}
+
+@test "trust pin: M15 a lead record swapped for a symlink at launch is not written through or replaced" {
+  local rec="$TEST_REPO/.git/crew/leads/feat/42-lead-race"
+  stub_launch_bins
+  printf 'keep me\n' >"$BATS_TEST_TMPDIR/victim"
+  cat >"$STUB_DIR/tmux" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+if [ "\$1" = new-window ]; then
+  rm -f "$rec"
+  ln -s "$BATS_TEST_TMPDIR/victim" "$rec"
+  printf '%s %s\n' '%1' '%1'
+fi
+exit 0
+EOF
+  chmod +x "$STUB_DIR/tmux"
+
+  DISPATCH_PROFILE=work run run_dispatch standard sonnet --agent claude --effort medium --no-grid --crew-id c1 42 "lead race"
+  [[ "$output" == *"$rec is a symlink or not a regular file — not recording the lead session"* ]]
+  [ -L "$rec" ]
+  [ "$(cat "$BATS_TEST_TMPDIR/victim")" = "keep me" ]
+}
+
+@test "trust pin: H2 --host refuses a planted commondir before crew remote-run" {
+  stub_launch_bins
+  _host_crew_stub
+  seed_git_baseline
+  plant_commondir
+
+  run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"redirects the git common dir"* ]]
+  run ! grep -q '^remote-run' "$STUB_LOG"
+  [ ! -e "$SENTINEL" ]
+}
+
+@test "trust pin: R2 --host --recover refuses a planted commondir before the recovery" {
+  stub_launch_bins
+  _host_crew_stub
+  seed_git_baseline
+  plant_commondir
+
+  run --separate-stderr run_dispatch --host mini --recover s1-1 --crew-id c1
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"redirects the git common dir"* ]]
+  run ! grep -q '^remote-run' "$STUB_LOG"
+  [ ! -e "$SENTINEL" ]
+}
+
+# _trust_pin_row_stub — a crew stub whose remote dispatch (and dispatch-row) answers a
+# row naming STUB_BAD_BRANCH: well-formed for every check but _remote_row_valid.
+_trust_pin_row_stub() {
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+remote-run)
+  s="$(grep -o 'DISPATCH_SESSION_ID=s[0-9]*-[0-9]*' <<<"$*" | cut -d= -f2)"
+  row() { printf '{"kind":"dispatch","crew_id":"c1","session":"%s","branch":"%s","worker_id":"worker:%s#%s"}\n' "$1" "$STUB_BAD_BRANCH" "$STUB_BAD_BRANCH" "$1"; }
+  case " $* " in
+  *" -- dispatch --engines "*) printf 'claude\n' ;;
+  *" -- crew dispatch-row "*) row s1-1 ;;
+  *" -- dispatch "*)
+    printf 'worker_id: worker:%s#%s\n' "$STUB_BAD_BRANCH" "$s"
+    printf 'dispatch_row: %s\n' "$(row "$s")"
+    ;;
+  esac
+  ;;
+identity) printf 'iris\n' ;;
+spec-lint) ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  export STUB_BAD_BRANCH="feat/..bad"
+}
+
+@test "trust pin: F34 a remote dispatch row naming an invalid branch is not followed" {
+  stub_launch_bins
+  _trust_pin_row_stub
+
+  run --separate-stderr run_dispatch standard sonnet --host mini --effort medium --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the remote dispatch gave no valid dispatch_row for session s"* ]]
+  [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ]
+}
+
+@test "trust pin: F34 a recovered remote row naming an invalid branch is not followed" {
+  stub_launch_bins
+  _trust_pin_row_stub
+
+  run --separate-stderr run_dispatch --host mini --recover s1-1 --crew-id c1
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"the remote dispatch gave no valid dispatch_row for session s1-1"* ]]
+  [ ! -e "$TEST_REPO/.git/crew/events.jsonl" ]
+}
+
+@test "trust pin: F25 role watchers do not inherit an exported GIT_ variable" {
+  local stall_env="$BATS_TEST_TMPDIR/stall-env" i
+  _spawn_role_fixture
+  cat >"$STUB_DIR/crew" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+[ "\${1:-}" != stall-watch ] || printf '%s\n' "\${!GIT_@}" | grep . >"$stall_env" || : >"$stall_env"
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+
+  GIT_COMMON_DIR="$BATS_TEST_TMPDIR/elsewhere" GIT_DIR="$BATS_TEST_TMPDIR/elsewhere" \
+    run run_dispatch --spawn-role reviewer --agent claude --model sonnet
+  [ "$status" -eq 0 ]
+  for i in $(seq 50); do
+    [ -e "$stall_env" ] && break
+    sleep 0.1
+  done
+  [ -e "$stall_env" ]
+  [ ! -s "$stall_env" ]
+}

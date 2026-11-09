@@ -78,6 +78,7 @@ tests/dispatch.bats	stacked create	!timing	5842
 tests/dispatch.bats	tier map conformance	!timing	1230
 tests/dispatch.bats	tracker	!timing	118376
 tests/dispatch.bats	trust	!timing	24875
+tests/dispatch.bats	trust pin	!timing	17000
 tests/dispatch.bats	worktree anchor	!timing	21476
 tests/dispatcher.bats	*	!timing	49160
 tests/dispatcher.bats	orchestrator defaults are data	!timing	1651
