@@ -94,10 +94,17 @@ if [ "$mode" = affected ]; then
     echo yes
     exit 0
   }
-  watched="$manifest"$'\n'"scripts/trust-mutate.sh"$'\n'"$(printf '%s\n' "${r_file[@]}")"
+  watched="$manifest"$'\n'"scripts/trust-mutate.sh"$'\n'"$(printf '%s\n' "${r_file[@]}" "${r_tfile[@]}")"
   if grep -qxFf <(printf '%s\n' "$watched") <<<"$changed"; then echo yes; else echo no; fi
   exit 0
 fi
+
+for want in "${ids[@]}"; do
+  printf '%s\n' "${r_id[@]}" | grep -qxF -- "$want" || {
+    echo "trust-mutate: no row $want in $manifest" >&2
+    exit 2
+  }
+done
 
 # site_line <file> <pattern> <nth>: the line number of the nth line containing
 # the fixed string, or nothing.

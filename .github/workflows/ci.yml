@@ -155,8 +155,9 @@ jobs:
         run: nix develop -c bats --filter-tags timing tests/secret-read-guard.bats
 
   # The workflow has no `paths` filter, so the mutation check decides for itself:
-  # it runs only when a changed path is one the manifest's file column names (or
-  # the manifest or the tool itself), because every pin costs a bats run.
+  # it runs only when a changed path is one the manifest's file or test_file
+  # column names (or the manifest or the tool itself), because every pin costs a
+  # bats run.
   trust-pins:
     runs-on: ubuntu-latest
     steps:
