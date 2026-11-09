@@ -1018,7 +1018,7 @@ fi
 
 # Baked values the shared helpers read, kept in this file because
 # launcher-common.sh carries no build-time token: the settings and model
-# resolvers (env-overridable for tests) and the protocol revision this build
+# resolvers (each env-overridable at call time) and the protocol revision this build
 # stamped.
 # shellcheck disable=SC2034
 dispatch_config_default="@dispatchConfig@"
