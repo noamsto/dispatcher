@@ -3,14 +3,15 @@ digraph roster {
   bgcolor="#1e1e2e"; fontname="Source Sans 3"; fontsize=13; fontcolor="#a6adc8";
   node [shape=circle style=filled fontname="Source Sans 3" fontsize=12 fontcolor="#cdd6f4" fillcolor="#313244" penwidth=3 fixedsize=true];
   edge [color="#585b70" penwidth=1.5 arrowhead=none];
-  c1 [label="" style=invis shape=point width=0 pos="-251.00,214.00!"];
-  c2 [label="" style=invis shape=point width=0 pos="251.00,214.00!"];
-  c3 [label="" style=invis shape=point width=0 pos="-251.00,-214.00!"];
-  c4 [label="" style=invis shape=point width=0 pos="251.00,-214.00!"];
+  c1 [label="" style=invis shape=point width=0 pos="-261.00,214.00!"];
+  c2 [label="" style=invis shape=point width=0 pos="261.00,214.00!"];
+  c3 [label="" style=invis shape=point width=0 pos="-261.00,-214.00!"];
+  c4 [label="" style=invis shape=point width=0 pos="261.00,-214.00!"];
   dispatcher [label="dispatcher" width=1 height=1 pos="0.00,0.00!" color="#f9e2af" fillcolor="#45475a"];
   label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="4">
     <tr><td><font color="#a6e3a1">●</font> working 0&nbsp;&nbsp;&nbsp;&nbsp;<font color="#f38ba8">●</font> blocked 0&nbsp;&nbsp;&nbsp;&nbsp;<font color="#89b4fa">●</font> pr open 0&nbsp;&nbsp;&nbsp;&nbsp;<font color="#45475a">●</font> done 0</td></tr>
     <tr><td>size = tier&nbsp;&nbsp;&nbsp;&nbsp;<font color="#585b70">●</font> small dot = role&nbsp;&nbsp;&nbsp;&nbsp;hexagon = remote host</td></tr>
     <tr><td><font color="#89b4fa">→</font> dashed arrow = stacked on</td></tr>
+    <tr><td><font color="#6c7086">crew weight 0 · fleet budget ?</font></td></tr>
   </table>>;
 }

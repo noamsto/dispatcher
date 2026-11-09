@@ -357,7 +357,7 @@ func TestHostileTextCannotBreakOutOfTheDot(t *testing.T) {
 	}
 	// Only generated ids start a statement, every quote closes on its own line, and
 	// the only control byte in the file is the newline between statements.
-	id := regexp.MustCompile(`^(p\d+(m\d+)?|h\d+|c\d+|dispatcher|node|edge)$`)
+	id := regexp.MustCompile(`^(p\d+(m\d+|[wcr])?|h\d+|q\d+|a\d+|c\d+|dispatcher|node|edge)$`)
 	stmt := regexp.MustCompile(`^  (\S+)(?: -> (\S+))? \[`)
 	for _, line := range strings.Split(l.dot(), "\n") {
 		if !balanced(line) {

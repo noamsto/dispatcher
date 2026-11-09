@@ -82,7 +82,7 @@ func (l *loop) frame(t *testing.T) frame {
 	if err := os.MkdirAll(l.cdir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	fr, err := buildFrame(t.Context(), l.opts, l.paths, l.cdir(), l.crew, roleRows(l.rolePanes(), l.paths.Dir, l.crew))
+	fr, err := buildFrame(t.Context(), l.opts, l.paths, l.cdir(), l.crew, roleRows(l.rolePanes(), l.paths.Dir, l.crew), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +524,7 @@ func TestMapNeverAsksGitHubAndDrawsTheCachedState(t *testing.T) {
 
 	cached := l.opts
 	cached.Gh = nil
-	fr, err := buildFrame(t.Context(), cached, l.paths, l.cdir(), l.crew, nil)
+	fr, err := buildFrame(t.Context(), cached, l.paths, l.cdir(), l.crew, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}

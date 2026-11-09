@@ -550,7 +550,7 @@ func TestMapOutputShapeAndSlotOrder(t *testing.T) {
 	}
 
 	// A persisted sequence is the slot order, read and never rewritten.
-	fr, err := buildFrame(context.Background(), l.opts, l.paths, l.cdir(), l.crew, roleRows(l.rolePanes(), l.paths.Dir, l.crew))
+	fr, err := buildFrame(context.Background(), l.opts, l.paths, l.cdir(), l.crew, roleRows(l.rolePanes(), l.paths.Dir, l.crew), false)
 	if err != nil {
 		t.Fatal(err)
 	}

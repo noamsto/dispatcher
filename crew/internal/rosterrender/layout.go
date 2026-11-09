@@ -33,7 +33,15 @@ const (
 	wedgeLabelGap = 18.0
 
 	minExtent = minRadius + 40
-	slotsVer  = 2
+
+	// Queued holds sit on one orbit holdOrbitGap beyond every label; a hold that
+	// names a quota window hangs off a label holdAnchorGap past its own edge.
+	maxHolds      = 16
+	holdSize      = 0.5
+	holdRadius    = holdSize*72/2 + planetPenwidth/2
+	holdOrbitGap  = 40.0
+	holdAnchorGap = 45.0
+	slotsVer      = 2
 
 	// maxPlanets bounds the picture, so a bad state file or a runaway roster
 	// cannot push planets out of frame.
@@ -281,6 +289,20 @@ type scene struct {
 	hosts   []hostLabel
 	wedges  []wedge
 	extent  float64
+	holds   []placedHold
+	anchors []holdAnchor
+}
+
+// placedHold is a queued hold drawn as a faint planet on the outer orbit.
+type placedHold struct {
+	queuedHold
+	x, y float64
+}
+
+// holdAnchor is the engine and window text a quota hold hangs off.
+type holdAnchor struct {
+	text string
+	x, y float64
 }
 
 // place puts p on ring at radius r and angle, with its moons pushed outward, and
@@ -521,4 +543,48 @@ func repoSlots(prev slotState, repo string) slotState {
 		}
 	}
 	return out
+}
+
+// placeHolds draws up to maxHolds holds evenly spaced clockwise from 12 o'clock
+// on an orbit clear of every planet, moon and label, and grows the extent over
+// them and their anchors.
+func placeHolds(sc *scene, holds []queuedHold) {
+	holds = holds[:min(len(holds), maxHolds)]
+	if len(holds) == 0 {
+		return
+	}
+	base := sc.extent
+	for _, h := range sc.hosts {
+		base = max(base, math.Hypot(math.Abs(h.x)+labelWidth(h.host)/2, math.Abs(h.y)+hostLabelHalf))
+	}
+	for _, w := range sc.wedges {
+		base = max(base, math.Hypot(math.Abs(w.x)+labelWidth(w.label)/2, math.Abs(w.y)+hostLabelHalf))
+	}
+	orbit := base + holdOrbitGap + holdRadius
+
+	runs := map[string]*hostRun{}
+	var order []string
+	for i, h := range holds {
+		angle := float64(i) * 360 / float64(len(holds))
+		x, y := polar(orbit, angle)
+		sc.holds = append(sc.holds, placedHold{queuedHold: h, x: x, y: y})
+		sc.extent = max(sc.extent, orbit+holdRadius)
+		if h.engine == "" || h.window == "" {
+			continue
+		}
+		text := h.engine + " · " + h.window
+		if runs[text] == nil {
+			runs[text] = &hostRun{first: angle}
+			order = append(order, text)
+		}
+		runs[text].add(angle)
+	}
+	for _, text := range order {
+		deg := runs[text].direction()
+		ux, uy := polar(1, deg)
+		reach := math.Abs(ux)*labelWidth(text)/2 + math.Abs(uy)*hostLabelHalf
+		x, y := polar(orbit+holdAnchorGap+reach, deg)
+		sc.anchors = append(sc.anchors, holdAnchor{text: text, x: x, y: y})
+		sc.extent = max(sc.extent, math.Hypot(x, y)+labelWidth(text)/2)
+	}
 }

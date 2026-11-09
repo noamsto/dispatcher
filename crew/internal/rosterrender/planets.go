@@ -73,6 +73,20 @@ type planet struct {
 	waiting   bool // blocked on a human answer
 	stale     bool
 	ci        string // "", "pass", "pending", "fail" or "none"
+	rounds    int    // completed review-then-fix rounds
+}
+
+// queuedHold is one outstanding hold: a task waiting on an engine quota window
+// (engine and window set) or on the fleet queue (both empty).
+type queuedHold struct {
+	id, label, engine, window string
+}
+
+// engineReading is one engine's most-used quota window; a nil pct is unknown,
+// never zero.
+type engineReading struct {
+	name, window string
+	pct          *float64
 }
 
 // legend is the count line: every drawn or folded worker by class, plus the
@@ -81,6 +95,9 @@ type planet struct {
 type legend struct {
 	working, blocked, prOpen, done, failed, holds int
 	waiting, stale, ci, repos                     int
+	weight                                        int  // tier weight of this crew's live rows
+	budget                                        *int // fleet budget; nil is unknown
+	engines                                       []engineReading
 }
 
 // buildPlanets reads the jq model into typed planets and legend counts. now is
@@ -90,6 +107,7 @@ type legend struct {
 func buildPlanets(m map[string]any, now float64) ([]planet, legend) {
 	var lg legend
 	moons := roleMoons(m["roles"])
+	rounds, _ := m["rounds"].(map[string]any)
 	holds, _ := m["holds"].([]any)
 	lg.holds = len(holds)
 
@@ -155,6 +173,7 @@ func buildPlanets(m map[string]any, now float64) ([]planet, legend) {
 				p.host = "?"
 			}
 		}
+		p.rounds = int(number(rounds[branch]))
 		if class != classDone && class != classPROpen {
 			p.moons = moons[branch]
 		}
@@ -168,6 +187,47 @@ func buildPlanets(m map[string]any, now float64) ([]planet, legend) {
 	}
 	tally(out, &lg)
 	return out, lg
+}
+
+// buildHolds reads the model's outstanding holds. A quota hold names the engine
+// window it waits on; a fleet hold waits on the queue and names neither.
+func buildHolds(m map[string]any) []queuedHold {
+	list, _ := m["holds"].([]any)
+	var out []queuedHold
+	for _, h := range list {
+		row, _ := h.(map[string]any)
+		task, _ := row["task"].(map[string]any)
+		wait, _ := row["wait"].(map[string]any)
+		id, _ := row["id"].(string)
+		branch, _ := task["branch"].(string)
+		ref, _ := task["ref"].(string)
+		q := queuedHold{id: clean(id), label: clean(issueOf(branch))}
+		if q.label == "" {
+			q.label = clean(ref)
+		}
+		if q.label == "" {
+			q.label = "hold"
+		}
+		if kind, _ := wait["kind"].(string); kind != "fleet" {
+			engine, _ := wait["engine"].(string)
+			window, _ := wait["window"].(string)
+			q.engine, q.window = clean(engine), clean(window)
+		}
+		out = append(out, q)
+	}
+	return out
+}
+
+// tierWeight is a tier's share of the fleet budget; an unknown tier weighs as
+// standard.
+func tierWeight(tier string) int {
+	switch tier {
+	case "trivial":
+		return 1
+	case "deep":
+		return 3
+	}
+	return 2
 }
 
 // tally overwrites the drawn-planet counts of lg.
@@ -272,6 +332,8 @@ func number(v any) float64 {
 		return f
 	case float64:
 		return n
+	case int:
+		return float64(n)
 	}
 	return 0
 }

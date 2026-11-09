@@ -855,7 +855,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			Discover: func(w io.Writer) []repos.Repo {
 				return repos.Discover(repos.Options{Getenv: os.Getenv, Stderr: w, Prefix: "crew: roster-render"})
 			},
-			Gh: ghc,
+			Gh:         ghc,
+			BudgetFile: budgetFile(),
+			Budget: func(ctx context.Context) (int, error) {
+				ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				defer cancel()
+				return fleet.ResolveBudget(ctx, fleet.ConfigBin(), io.Discard)
+			},
 		})
 	}
 
