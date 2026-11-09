@@ -85,11 +85,12 @@ teardown() {
 }
 
 # The helpers the four launchers used to copy live once in launcher-common.sh
-# (dispatch-notify's _bus_append is the one deliberate copy, compared whole
-# above). This pins the single-definition guarantee the byte-compares used to
-# supply: a stray copy in any launcher would fork a fix again.
+# (dispatch-notify's _bus_append, compared whole above, and resolve-roster's
+# _resolve_dir, pinned in dispatch.bats, are the deliberate copies). This pins
+# the single-definition guarantee the byte-compares used to supply: a stray
+# copy in any launcher would fork a fix again.
 @test "the shared launcher helpers are defined only in launcher-common.sh" {
-  for fn in _bus_append engine_path _pid_alive _file_mtime_s _ps_elapsed_s _pid_recycled _recorded_pid_live _pane_client _remote_session_ok _remote_target_session _remote_worker_session _remote_window _uuid _lead_record_safe _record_lead_session _github_ssh_host _tracker_slug_from_path _origin_slug; do
+  for fn in _bus_append engine_path _pid_alive _file_mtime_s _ps_elapsed_s _pid_recycled _recorded_pid_live _pane_client _remote_session_ok _remote_target_session _remote_worker_session _remote_window _uuid _lead_record_safe _record_lead_session _github_ssh_host _tracker_slug_from_path _origin_slug _resolve_dir engine_cli engine_enabled _settings_load _glob_match _exact_match _model_class _class_item _escalation_hop _class_sigil _worker_protocol_files _require_protocol_files _check_protocol_rev theme_colour state_glyph grid_lead_format _ensure_roster_render shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _settings_env_names _settings_env_json _record_protocol_dirs claude_lean_env launch_dir_args pi_skill_args _prior_failed_model _prior_failed_escalation_available _child_on_chain; do
     run grep -q "^${fn}() {" "$ROOT/adapters/core/launcher-common.sh"
     [ "$status" -eq 0 ]
     for f in dispatch dispatch-resume dispatcher lead-launcher; do
@@ -2897,7 +2898,7 @@ _phase_stems() {
 }
 
 @test "dispatch's _worker_protocol_files lists exactly the Phase files table stems" {
-  listed="$(sed -n '/^_worker_protocol_files() {/,/^}/s/.*for stem in \(.*\); do$/\1/p' "$ROOT/adapters/core/dispatch.sh" | tr ' ' '\n' | grep -vx WORKER_PROTOCOL | LC_ALL=C sort)"
+  listed="$(sed -n '/^_worker_protocol_files() {/,/^}/s/.*for stem in \(.*\); do$/\1/p' "$ROOT/adapters/core/launcher-common.sh" | tr ' ' '\n' | grep -vx WORKER_PROTOCOL | LC_ALL=C sort)"
   [ -n "$listed" ]
   [ "$listed" = "$(_phase_stems | LC_ALL=C sort)" ] || {
     echo "dispatch lists: $listed" >&2

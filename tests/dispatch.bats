@@ -1686,17 +1686,6 @@ EOF
   "$REAL_TMUX" -L "$sock" kill-server 2>/dev/null || true
 }
 
-@test "grid: the lead border builders stay identical in dispatch and resume" {
-  resume="$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh"
-  for fn in state_glyph grid_lead_format; do
-    a="$(sed -n "/^$fn()/,/^}/p" "$DISPATCH")"
-    b="$(sed -n "/^$fn()/,/^}/p" "$resume")"
-    [ -n "$a" ]
-    [ "$a" = "$b" ] || { echo "$fn drifted"; return 1; }
-  done
-  [ "$(grep -F 'theme_colour() { printf' "$DISPATCH")" = "$(grep -F 'theme_colour() { printf' "$resume")" ]
-}
-
 @test "grid mode is stamped into the task doc and the lead prompt" {
   # The lead must know it has role panes (roles: line in WORKER_TASK.md) and be
   # told to delegate the critic/review phases (grid_note in its prompt).
@@ -1800,7 +1789,7 @@ EOF
   # Backslashes are the fish trap: fish reads \\ and \' as escapes inside
   # single quotes, bash does not, so they must be quoted out.
   prompt="it's \"over\"; \`touch $marker1\`; \$(touch $marker2) — \$HOME a\\\\b x\\'y end\\"
-  eval "$(sed -n '/^shell_quote() {/,/^}/p' "$DISPATCH")"
+  eval "$(sed -n '/^shell_quote() {/,/^}/p' "$LAUNCHER_COMMON_LIB")"
   shell_quote quoted_prompt "$prompt"
 
   # bash is the CI shell; fish is the real pane shell, so replay through it too
@@ -2185,17 +2174,16 @@ _store_protocols() { # <dir> <content>
   run ! grep -q 'new-window' "$STUB_LOG"
 }
 
-# The four standalone builds each carry their own _resolve_dir; only the
-# stale-branch `unset` differs (dispatcher.sh re-exports instead).
-@test "the four _resolve_dir copies stay in sync" {
-  local core="$BATS_TEST_DIRNAME/../adapters/core" f
-  for f in dispatch dispatch-resume dispatcher reviewers/resolve-roster; do
-    sed -n '/^_resolve_dir() {/,/^}/p' "$core/$f.sh" | grep -v 'unset "\$var"' >"$BATS_TEST_TMPDIR/resolve-${f##*/}"
-    [ -s "$BATS_TEST_TMPDIR/resolve-${f##*/}" ]
-  done
-  cmp "$BATS_TEST_TMPDIR/resolve-dispatch" "$BATS_TEST_TMPDIR/resolve-dispatch-resume"
-  cmp "$BATS_TEST_TMPDIR/resolve-dispatch" "$BATS_TEST_TMPDIR/resolve-dispatcher"
-  cmp "$BATS_TEST_TMPDIR/resolve-dispatch" "$BATS_TEST_TMPDIR/resolve-resolve-roster"
+# The shared _resolve_dir and reviewers/resolve-roster.sh's copy (a separate
+# build that cannot source the library) stay in sync; only the stale-branch
+# `unset` may differ.
+@test "the _resolve_dir copy in resolve-roster stays in sync with launcher-common" {
+  local core="$BATS_TEST_DIRNAME/../adapters/core"
+  sed -n '/^_resolve_dir() {/,/^}/p' "$LAUNCHER_COMMON_LIB" | grep -v 'unset "\$var"' >"$BATS_TEST_TMPDIR/resolve-common"
+  sed -n '/^_resolve_dir() {/,/^}/p' "$core/reviewers/resolve-roster.sh" | grep -v 'unset "\$var"' >"$BATS_TEST_TMPDIR/resolve-roster"
+  [ -s "$BATS_TEST_TMPDIR/resolve-common" ]
+  [ -s "$BATS_TEST_TMPDIR/resolve-roster" ]
+  cmp "$BATS_TEST_TMPDIR/resolve-common" "$BATS_TEST_TMPDIR/resolve-roster"
 }
 
 @test "stale store-path reviewers/critics dirs are ignored and the launch env carries all five resolved dirs" {
@@ -2740,12 +2728,16 @@ ROWS
   [ "$output" = "0" ]
 }
 
-# Eval column-0 functions out of dispatch.sh. Same extract model-map.bats uses;
-# sourcing the file would run main.
+# Eval column-0 functions out of dispatch.sh or launcher-common.sh. Same extract
+# model-map.bats uses; sourcing either file would run main or need its caller's
+# state. The baked-value variables the shared helpers read are set from the
+# test environment.
 load_dispatch_fns() {
   local fn
+  dispatch_config_default="$DISPATCH_CONFIG_BIN"
+  model_resolve_bin="$MODEL_RESOLVE_BIN"
   for fn in "$@"; do
-    eval "$(sed -n "/^${fn}() {/,/^}/p" "$DISPATCH")"
+    eval "$(sed -n "/^${fn}() {/,/^}/p" "$DISPATCH" "$LAUNCHER_COMMON_LIB")"
   done
 }
 
@@ -10838,6 +10830,16 @@ _spawn_role_anchor_fixture() {
 @test "spawn-role: record — a caller XDG_CONFIG_HOME does not replace the dispatcher's settings" {
   _spawn_role_anchor_fixture
   XDG_CONFIG_HOME="$T/evil" run run_dispatch --spawn-role reviewer
+  [ "$status" -eq 0 ]
+  grep -q anchorgood "$HOME/.pi/dispatcher-worker/models.json"
+  run ! grep -q anchorevil "$HOME/.pi/dispatcher-worker/models.json"
+}
+
+@test "spawn-role: record — a caller DISPATCH_CONFIG_BIN does not replace the recorded settings resolver" {
+  _spawn_role_anchor_fixture
+  printf '#!/usr/bin/env bash\n"%s" | jq -c '"'"'.localModels = {"anchorevil/m": {baseUrl: "http://evil.test/v1", contextWindow: 131072}}'"'"'\n' "$DISPATCH_CONFIG_BIN" >"$T/evil-config"
+  chmod +x "$T/evil-config"
+  DISPATCH_CONFIG_BIN="$T/evil-config" run run_dispatch --spawn-role reviewer
   [ "$status" -eq 0 ]
   grep -q anchorgood "$HOME/.pi/dispatcher-worker/models.json"
   run ! grep -q anchorevil "$HOME/.pi/dispatcher-worker/models.json"
@@ -19279,15 +19281,16 @@ STUB
   [[ "$stderr" == *"budget gate blind: claude quota unknown"* ]]
 }
 
-# _p4_hop <script> <args…> — _escalation_hop from <script> (dispatch.sh or the
-# dispatch-resume.sh copy), against the merged settings and the test caches.
+# _p4_hop <args…> — _escalation_hop from launcher-common.sh, against the merged
+# settings and the test caches.
 _p4_hop() {
-  local script=$1 fn
-  shift
+  local fn
   (
     for fn in _settings_load _glob_match _exact_match _model_class _class_item _escalation_hop; do
-      eval "$(sed -n "/^${fn}() {/,/^}/p" "$script")"
+      eval "$(sed -n "/^${fn}() {/,/^}/p" "$LAUNCHER_COMMON_LIB")"
     done
+    dispatch_config_default="$DISPATCH_CONFIG_BIN"
+    model_resolve_bin="$MODEL_RESOLVE_BIN"
     model_catalog="$XDG_DATA_HOME/crew/model-catalog.json"
     model_class_state="$XDG_DATA_HOME/crew/model-class-state.json"
     _settings_load
@@ -19295,28 +19298,25 @@ _p4_hop() {
   )
 }
 
-@test "model classes P4: escalation class items match catalogued ids, in dispatch and dispatch resume alike" {
+@test "model classes P4: escalation class items match catalogued ids" {
   mkdir -p "$XDG_CONFIG_HOME/dispatcher"
   jq -n '{escalation: {codex: {
     deep: [{failed: ["@standard"], baseline: "terra", inRow: ["@premium:gpt-*-sol"]}],
     standard: [{failed: ["@cheap"], baseline: "luna", inRow: ["@standard"]}]}}}' >"$XDG_CONFIG_HOME/dispatcher/settings.json"
-  local script
-  for script in "$DISPATCH" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh"; do
-    rm -f "$XDG_DATA_HOME/crew/model-catalog.json"
-    [ -z "$(_p4_hop "$script" codex deep gpt-5.7-terra gpt-5.7-sol inRow)" ]
-    class_catalog codex gpt-5.7-sol gpt-5.7-terra gpt-5.7-luna
-    [ "$(_p4_hop "$script" codex deep gpt-5.7-terra gpt-5.7-sol inRow)" = terra ]
-    [ -z "$(_p4_hop "$script" codex deep gpt-5.7-luna gpt-5.7-sol inRow)" ]
-    [ "$(_p4_hop "$script" codex standard gpt-5.7-luna gpt-5.7-terra inRow)" = luna ]
-    [ -z "$(_p4_hop "$script" codex standard gpt-5.7-luna gpt-5.7-sol inRow)" ]
-    # A class item never widens what the tier gate admits: outOfRow stays exact.
-    [ -z "$(_p4_hop "$script" codex deep gpt-5.7-terra gpt-5.7-sol outOfRow)" ]
-    # A failing resolver matches no class item, and says so.
-    printf '#!/usr/bin/env bash\nexit 3\n' >"$BATS_TEST_TMPDIR/resolve-fail"
-    out="$(MODEL_RESOLVE_BIN="$BATS_TEST_TMPDIR/resolve-fail" _p4_hop "$script" codex deep gpt-5.7-terra gpt-5.7-sol inRow 2>&1)"
-    [[ "$out" == *"dispatch: warning: model-resolve failed for codex; no @class ladder item matches 'gpt-5.7-terra'"* ]]
-    [[ "$out" != *terra*terra* ]]
-  done
+  rm -f "$XDG_DATA_HOME/crew/model-catalog.json"
+  [ -z "$(_p4_hop codex deep gpt-5.7-terra gpt-5.7-sol inRow)" ]
+  class_catalog codex gpt-5.7-sol gpt-5.7-terra gpt-5.7-luna
+  [ "$(_p4_hop codex deep gpt-5.7-terra gpt-5.7-sol inRow)" = terra ]
+  [ -z "$(_p4_hop codex deep gpt-5.7-luna gpt-5.7-sol inRow)" ]
+  [ "$(_p4_hop codex standard gpt-5.7-luna gpt-5.7-terra inRow)" = luna ]
+  [ -z "$(_p4_hop codex standard gpt-5.7-luna gpt-5.7-sol inRow)" ]
+  # A class item never widens what the tier gate admits: outOfRow stays exact.
+  [ -z "$(_p4_hop codex deep gpt-5.7-terra gpt-5.7-sol outOfRow)" ]
+  # A failing resolver matches no class item, and says so.
+  printf '#!/usr/bin/env bash\nexit 3\n' >"$BATS_TEST_TMPDIR/resolve-fail"
+  out="$(MODEL_RESOLVE_BIN="$BATS_TEST_TMPDIR/resolve-fail" _p4_hop codex deep gpt-5.7-terra gpt-5.7-sol inRow 2>&1)"
+  [[ "$out" == *"dispatch: warning: model-resolve failed for codex; no @class ladder item matches 'gpt-5.7-terra'"* ]]
+  [[ "$out" != *terra*terra* ]]
 }
 
 # Model classes P7 (#1391): a positional or --roles @cheap|@standard|@premium

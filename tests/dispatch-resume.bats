@@ -859,16 +859,6 @@ _assert_resume_bound() {
   [ "$n" -eq 3 ]
 }
 
-# dispatch-resume.sh is a standalone build, so it carries its own copies.
-@test "shell_quote and write_launch_script are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in shell_quote write_launch_script _artifacts_dir_bad _protocol_dirs_record_bad _settings_env_names _settings_env_json _record_protocol_dirs launch_dir_args claude_lean_env _worker_protocol_files _ensure_roster_render; do
-    a="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh")"
-    b="$(sed -n "/^${fn}() {/,/^}/p" "$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh")"
-    [ -n "$a" ]
-    [ "$a" = "$b" ]
-  done
-}
-
 # _symlink_chain_hops, _git_config_files, _git_protected_dirs and _add_dir_ok
 # live once in the shared grant-check lib, so dispatch, dispatch-resume and
 # permission-check cannot drift. This pins the single-definition guarantee

@@ -8,11 +8,11 @@
 setup() {
   load helpers
   DISPATCH="$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh"
-  RESUME="$BATS_TEST_DIRNAME/../adapters/core/dispatch-resume.sh"
   FIXTURES="$BATS_TEST_DIRNAME/fixtures/model-map"
   settings="$("$DISPATCH_CONFIG_BIN")"
+  model_resolve_bin="$MODEL_RESOLVE_BIN"
   for fn in _glob_match _exact_match _model_in_row _row_expected _escalation_hop _pace_downgrade; do
-    eval "$(sed -n "/^${fn}() {/,/^}/p" "$DISPATCH")"
+    eval "$(sed -n "/^${fn}() {/,/^}/p" "$DISPATCH" "$LAUNCHER_COMMON_LIB")"
   done
 }
 
@@ -125,31 +125,8 @@ EOF
 }
 
 @test "model map: outOfRow escalation compares exactly, not as a grep -F pattern" {
-  eval "$(sed -n "/^_exact_match() {/,/^}/p" "$DISPATCH")"
+  eval "$(sed -n "/^_exact_match() {/,/^}/p" "$LAUNCHER_COMMON_LIB")"
   [ -z "$(_escalation_hop codex standard gpt-5.6-terra $'x\ngpt-5.6-sol' outOfRow)" ]
   [ -z "$(_escalation_hop codex standard gpt-5.6-terra $'gpt-5.6-sol\n' outOfRow)" ]
   [ "$(_escalation_hop codex standard gpt-5.6-terra gpt-5.6-sol outOfRow)" = terra ]
-}
-
-# dispatch-resume.sh is a standalone build, so it carries its own copy of
-# _exact_match too.
-@test "model map: the settings helpers (including _exact_match) are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in _settings_load _glob_match _exact_match _escalation_hop; do
-    a="$(sed -n "/^${fn}() {/,/^}/p" "$DISPATCH")"
-    b="$(sed -n "/^${fn}() {/,/^}/p" "$RESUME")"
-    [ -n "$a" ]
-    [ "$a" = "$b" ]
-  done
-}
-
-# P4 (#1381): _escalation_hop's @class items go through _model_class and
-# _class_item, and P7's (#1391) resume --model @class through _class_sigil, so
-# dispatch-resume.sh carries byte-identical copies of those too.
-@test "model map: the ladder class helpers are byte-identical between dispatch.sh and dispatch-resume.sh" {
-  for fn in _model_class _class_item _class_sigil; do
-    a="$(sed -n "/^${fn}() {/,/^}/p" "$DISPATCH")"
-    b="$(sed -n "/^${fn}() {/,/^}/p" "$RESUME")"
-    [ -n "$a" ]
-    [ "$a" = "$b" ]
-  done
 }

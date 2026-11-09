@@ -31,23 +31,6 @@ if [ ! -f "$launcher_common_lib" ]; then
 fi
 # shellcheck source=/dev/null
 . "$launcher_common_lib"
-# _child_on_chain <pid> — the pid on this process's ancestor chain whose parent
-# is <pid>, i.e. <pid>'s direct child above us. Copied from dispatcher.sh.
-_child_on_chain() {
-  local target=$1 pid=$$ ppid hop=0
-  while [ -n "$pid" ] && [ "$pid" != 0 ] && [ "$pid" != 1 ] && [ "$hop" -lt 64 ]; do
-    ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -cd '0-9') || return 1
-    [ -n "$ppid" ] || return 1
-    if [ "$ppid" = "$target" ]; then
-      printf '%s' "$pid"
-      return 0
-    fi
-    pid=$ppid
-    hop=$((hop + 1))
-  done
-  return 1
-}
-
 # _seam_refusal <done> <stage> — why <stage> may not relaunch after the
 # comma-joined stages in <done>; prints nothing when it may. Once per stage, and
 # never execute after review: the review seam recurs on every review→fix round.

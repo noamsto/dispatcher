@@ -32,8 +32,8 @@ export LC_ALL=C
 
 default_harness="@reviewersDir@"
 
-# Duplicated from dispatch.sh (standalone build); tests/dispatch.bats pins the
-# copies together.
+# Duplicated from launcher-common.sh (this standalone build cannot source it);
+# tests/dispatch.bats pins the copy.
 #
 # _resolve_dir <OUT_VAR> <ENV_VAR> <baked> <label> — resolve a DISPATCHER_*_DIR
 # override against the baked default (#303). A shell or tmux server that
