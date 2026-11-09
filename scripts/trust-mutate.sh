@@ -9,11 +9,19 @@
 #   id file pattern nth replacement test_file filter expected
 # For each line the tool copies the tree, rewrites the nth line of <file>
 # containing the fixed string <pattern> by replacing that string with
-# <replacement> (keeping the surrounding syntax), requires `bash -n` to pass,
-# then runs `bats --filter <filter> <test_file>`. The pin holds only if that run
-# is red and its output contains <expected>, a fragment of the failing assertion.
+# <replacement> (keeping the surrounding syntax), requires the result to parse
+# (`bash -n`; for Go, `gofmt -e` and `go build ./...` in crew/), then runs
+# `bats --filter <filter> <test_file>`. A test_file ending `_test.go` is a Go
+# test: it runs `go test -run <filter> ./<its package dir>` from the crew/ module
+# and <filter> is a Go regexp; the unmutated run must pass at least one test. The
+# pin holds only if that run is red and its output contains <expected>, a
+# fragment of the failing assertion.
 # An unmutated run of the same filter must be green first, so a case that is
 # already red cannot pass as a pin. A pin that cannot be made red is a finding.
+#
+# A line `@grouped<TAB>ID` makes all of ID's lines one mutation: every site is
+# rewritten together in one tree copy and the filter runs once, so a guard
+# invoked at two sites that refuse identically can go red (defence in depth).
 #
 # --list prints each resolved site and exits. --affected prints `yes` when a
 # path changed since <base-ref> is in the manifest's file or test_file column
@@ -75,7 +83,12 @@ cd "$root"
 
 # Parsed rows, index-aligned.
 r_id=() r_file=() r_pat=() r_nth=() r_repl=() r_tfile=() r_filter=() r_expect=()
+declare -A grouped=()
 while IFS=$'\t' read -r id file pat nth repl tfile filter expect extra || [ -n "${id:-}" ]; do
+  if [ "$id" = @grouped ] && [ -n "$file" ]; then
+    grouped["$file"]=1
+    continue
+  fi
   [ -n "$id" ] && [[ $id != '#'* ]] || continue
   if [ -n "${extra:-}" ] || [ -z "${expect:-}" ] || [[ ! $nth =~ ^[1-9][0-9]*$ ]]; then
     echo "trust-mutate: malformed manifest line for ${id}: want 8 tab-separated columns and a positive nth" >&2
@@ -146,6 +159,24 @@ copy_tree() {
   git ls-files -z --cached --others --exclude-standard | tar --null -T - -cf - | tar -xf - -C "$1"
 }
 
+# run_go <dir> <test_file> <filter> <out>: `go test -v` of the test file's package
+# from the crew/ module, into <out>; returns go's status.
+run_go() {
+  local pkg
+  pkg="$(dirname "${2#crew/}")"
+  (cd "$1/crew" && timeout --foreground "${TRUST_MUTATE_TIMEOUT:-1200}" go test -count=1 -v -run "$3" "./$pkg") >"$4" 2>&1
+}
+
+# run_test <dir> <test_file> <filter> <out>: dispatches on the test file's kind.
+run_test() {
+  if [[ $2 == *_test.go ]]; then run_go "$@"; else run_bats "$@"; fi
+}
+
+# passed <test_file> <out>: the count of passing tests in a run's output.
+passed() {
+  if [[ $1 == *_test.go ]]; then grep -cE '^--- PASS' "$2" || true; else grep -c '^ok ' "$2" || true; fi
+}
+
 # run_bats <dir> <test_file> <filter> <out>: TAP into <out>; returns bats' status.
 run_bats() {
   (cd "$1" && timeout --foreground "${TRUST_MUTATE_TIMEOUT:-1200}" bats --tap --filter "$3" "$2") >"$4" 2>&1
@@ -167,8 +198,8 @@ for k in "${!base_key[@]}"; do
     d="$work/base-$n"
     copy_tree "$d/t"
     rc=0
-    run_bats "$d/t" "${k%%$'\t'*}" "${k#*$'\t'}" "$d/out" || rc=$?
-    ok="$(grep -c '^ok ' "$d/out" || true)"
+    run_test "$d/t" "${k%%$'\t'*}" "${k#*$'\t'}" "$d/out" || rc=$?
+    ok="$(passed "${k%%$'\t'*}" "$d/out")"
     if [ "$rc" -eq 0 ] && [ "$ok" -ge 1 ]; then
       echo green >"$d/res"
     else
@@ -184,11 +215,40 @@ for k in "${!base_key[@]}"; do
 done
 wait || true
 
+# follower <index>: succeeds for a later line of a grouped ID; its leader (the
+# first line) mutates every site of the group.
+follower() {
+  local j
+  [ -n "${grouped[${r_id[$1]}]:-}" ] || return 1
+  for ((j = 0; j < $1; j++)); do [ "${r_id[$j]}" = "${r_id[$1]}" ] && return 0; done
+  return 1
+}
+
+# mutate_group_peers <index> <tree>: rewrites the other sites of a grouped ID in
+# <tree>, so the leader's own site goes in on top of them.
+mutate_group_peers() {
+  local j f ln line
+  [ -n "${grouped[${r_id[$1]}]:-}" ] || return 0
+  for j in "${!r_id[@]}"; do
+    [ "$j" != "$1" ] && [ "${r_id[$j]}" = "${r_id[$1]}" ] || continue
+    f="$2/${r_file[$j]}"
+    ln="$(site_line "$f" "${r_pat[$j]}" "${r_nth[$j]}")"
+    [ -n "$ln" ] || return 1
+    line="$(sed -n "${ln}p" "$f")"
+    NEW="${line%%"${r_pat[$j]}"*}${r_repl[$j]}${line#*"${r_pat[$j]}"}" awk -v ln="$ln" 'NR == ln { print ENVIRON["NEW"]; next } { print }' "$f" >"$f.mut"
+    mv "$f.mut" "$f"
+  done
+}
+
 # mutate_one <index>: writes <work>/mut-<index>/res = "<verdict> <detail>".
 mutate_one() {
   local i=$1 d="$work/mut-$1" ln line pre post rc=0
   mkdir -p "$d"
   copy_tree "$d/t"
+  mutate_group_peers "$i" "$d/t" || {
+    echo "unusable a grouped site of ${r_id[$i]} was not found" >"$d/res"
+    return
+  }
   local target="$d/t/${r_file[$i]}"
   ln="$(site_line "$target" "${r_pat[$i]}" "${r_nth[$i]}")"
   if [ -z "$ln" ]; then
@@ -203,25 +263,35 @@ mutate_one() {
     echo "unusable replacement changes nothing at ${r_file[$i]}:$ln" >"$d/res"
     return
   fi
-  if ! bash -n "$target.mut" 2>"$d/syntax"; then
-    echo "unusable mutated ${r_file[$i]}:$ln fails bash -n: $(head -n1 "$d/syntax")" >"$d/res"
-    return
+  if [[ ${r_file[$i]} == *.go ]]; then
+    cat "$target.mut" >"$target"
+    rm -f "$target.mut"
+    if ! (gofmt -e "$target" >/dev/null && cd "$d/t/crew" && go build ./...) 2>"$d/syntax"; then
+      echo "unusable mutated ${r_file[$i]}:$ln fails to compile: $(head -n1 "$d/syntax")" >"$d/res"
+      return
+    fi
+  else
+    if ! bash -n "$target.mut" 2>"$d/syntax"; then
+      echo "unusable mutated ${r_file[$i]}:$ln fails bash -n: $(head -n1 "$d/syntax")" >"$d/res"
+      return
+    fi
+    cat "$target.mut" >"$target"
+    rm -f "$target.mut"
   fi
-  cat "$target.mut" >"$target"
-  rm -f "$target.mut"
-  run_bats "$d/t" "${r_tfile[$i]}" "${r_filter[$i]}" "$d/out" || rc=$?
+  run_test "$d/t" "${r_tfile[$i]}" "${r_filter[$i]}" "$d/out" || rc=$?
   if [ "$rc" -eq 0 ]; then
     echo "green ${r_file[$i]}:$ln stayed green: the guard is not pinned by ${r_tfile[$i]} --filter '${r_filter[$i]}'" >"$d/res"
   elif grep -vE '^(not )?ok ' "$d/out" | grep -qF -- "${r_expect[$i]}"; then
     echo "red ${r_file[$i]}:$ln" >"$d/res"
   else
-    echo "wrong red ${r_file[$i]}:$ln, but the output never shows the expected assertion '${r_expect[$i]}'; failed instead: $(grep -E '^#.*(failed|\(in test)' "$d/out" | head -n4 | tr '\n' ' ')" >"$d/res"
+    echo "wrong red ${r_file[$i]}:$ln, but the output never shows the expected assertion '${r_expect[$i]}'; failed instead: $(grep -E '^#.*(failed|\(in test)|^--- FAIL' "$d/out" | head -n4 | tr '\n' ' ')" >"$d/res"
   fi
 }
 
 pids=()
 for i in "${!r_id[@]}"; do
   selected "${r_id[$i]}" || continue
+  ! follower "$i" || continue
   k="${r_tfile[$i]}"$'\t'"${r_filter[$i]}"
   if [ "$(cat "${base_res[$k]}/res")" != green ]; then
     mkdir -p "$work/mut-$i"
@@ -241,6 +311,7 @@ red=0 bad=0 total=0
 ran=()
 for i in "${!r_id[@]}"; do
   selected "${r_id[$i]}" || continue
+  ! follower "$i" || continue
   total=$((total + 1))
   ran+=("${r_id[$i]}")
   res="$(cat "$work/mut-$i/res")"

@@ -1579,3 +1579,18 @@ recorded_worker_repo() {
   [[ "$stderr" == *"inside the worker worktree"* ]]
   run ! grep -q '^remote-run' "$CREW_LOG"
 }
+
+@test "permission-check: trust pin: P2 a planted commondir is refused as one human line, with no route and no exec" {
+  remote_crew
+  recorded_worker_repo
+  plant_commondir "$REPO"
+  cd "$REPO"
+  run --separate-stderr env PATH="$STUBS:$PATH" HOME="$PANE_HOME" STUB_REMOTE_OUT=allow-once \
+    bash "$CHECK" --pane %9 --branch "$BRANCH"
+  [ "$status" -eq 2 ]
+  [ "${#lines[@]}" -eq 1 ]
+  [ "$output" = "human: cwd: git refused here; run from the main checkout or pass --crew-dir" ]
+  [[ "$stderr" == *"redirects the git common dir"* ]]
+  [ ! -e "$SENTINEL" ]
+  run ! grep -q '^remote-run' "$CREW_LOG"
+}

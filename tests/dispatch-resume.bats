@@ -3626,3 +3626,106 @@ STUB
   [ "$status" -eq 1 ]
   [[ "$output" == *"the overseer never dispatches"* ]]
 }
+
+# Trust-boundary pins (docs/dispatch-redesign.md, section 3): each test fails
+# when the named invocation in dispatch-resume.sh is dropped, and asserts the
+# refusal text and that the later side effect did not happen. See
+# tests/trust-pins.tsv and scripts/trust-mutate.sh.
+
+@test "trust pin: D3 a config.worktree planted after the entry guards is refused at the tracked-file check" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  admin="$(git -C "$WT" rev-parse --absolute-git-dir)"
+  cat >"$STUB_DIR/dispatch" <<EOF2
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"\$STUB_LOG"
+: >"$admin/config.worktree"
+EOF2
+  chmod +x "$STUB_DIR/dispatch"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"config.worktree exists"* ]]
+  [[ "$output" == *"dispatch resume: could not read the index at $WT"* ]]
+  run ! grep -q 'send-keys' "$STUB_LOG"
+}
+
+@test "trust pin: D5b a recorded worktree path that differs from the discovered one is refused" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  write_anchor "$WT" "" "" ""
+  sed -i "1s|.*|$BATS_TEST_TMPDIR/elsewhere|" "$(anchor_path_for "$WT")"
+  cd "$WT"
+  run run_resume
+  _assert_refused_before_discovery
+  [[ "$output" == *"this worktree's worktree path ($WT)"* ]]
+  [[ "$output" == *"does not match the dispatcher's record ($BATS_TEST_TMPDIR/elsewhere)"* ]]
+}
+
+@test "trust pin: D5b a recorded git dir that differs from the discovered one is refused" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  write_anchor "$WT" "" "" "$BATS_TEST_TMPDIR/other-admin"
+  cd "$WT"
+  run run_resume
+  _assert_refused_before_discovery
+  [[ "$output" == *"this worktree's git dir ("* ]]
+  [[ "$output" == *"does not match the dispatcher's record ($BATS_TEST_TMPDIR/other-admin)"* ]]
+}
+
+@test "trust pin: D6 a bare-word target refuses a planted commondir before the bus probe" {
+  setup_worker_wt
+  seed_dispatch_row feat/7-a-thing iris "$(uname -n)"
+  plant_commondir
+  : >"$STUB_LOG"
+  cd "$TEST_REPO"
+  run run_resume iris
+  [ "$status" -eq 1 ]
+  refusal="$output"
+  run ! grep -q '^resolve-target' "$STUB_LOG"
+  [[ "$refusal" == *"redirects the git common dir"* ]]
+  [ ! -e "$SENTINEL" ]
+}
+
+@test "trust pin: F5 a symlinked artifacts parent arms no role panes" {
+  setup_grid
+  local art="$TEST_REPO/.git/crew/artifacts"
+  mv "$art/feat" "$BATS_TEST_TMPDIR/real-feat"
+  ln -s "$BATS_TEST_TMPDIR/real-feat" "$art/feat"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"dispatch resume: not re-arming role panes — $art/feat is a symlink or not a directory"* ]]
+  run ! grep -qF 'set-option -p -t %9 @crew_delivery' "$STUB_LOG"
+  run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
+}
+
+@test "trust pin: F18 resume --chrome from a worker is refused by dispatch's own precheck before any launch" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  cat >"$STUB_DIR/dispatch" <<EOF2
+#!/usr/bin/env bash
+exec bash -euo pipefail "$BATS_TEST_DIRNAME/../adapters/core/dispatch.sh" "\$@"
+EOF2
+  chmod +x "$STUB_DIR/dispatch"
+  cd "$WT"
+  CREW_WORKER_ID='worker:x#s1' run run_resume --chrome
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --chrome is dispatcher-only"* ]]
+  run ! grep -qE 'send-keys|new-window' "$STUB_LOG"
+  run ! grep -qx 'chrome: true' "$WT/WORKER_TASK.md"
+}
+
+@test "trust pin: D1 a key planted in the common config is refused at entry, before any header write or launch" {
+  setup_worker_wt
+  stub_tmux_with_pane_at_wt '@4' '%8' iris
+  git -C "$TEST_REPO" config core.fsmonitor /evil
+  before="$(cksum "$WT/WORKER_TASK.md")"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 1 ]
+  [[ "$output" == *core.fsmonitor* ]]
+  [[ "$output" != *"could not read the index"* ]]
+  [ "$(cksum "$WT/WORKER_TASK.md")" = "$before" ]
+  run ! grep -qE '^standard sonnet |send-keys' "$STUB_LOG"
+}
