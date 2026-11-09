@@ -19634,6 +19634,17 @@ locked_task_profile_settings() {
   [[ "$output" == *"loose "*"-"*"low"*"(no tier: pass one)"* ]]
 }
 
+@test "task profile: --profiles shows a class that fails to resolve as the note" {
+  locked_task_profile_settings '{"taskProfiles":{"frontier":{"tier":"deep","engine":"pi","class":"premium"}}}'
+  run run_dispatch --profiles --json
+  [ "$status" -eq 0 ]
+  note="@premium names no pi model — no pi tier row takes its default from class premium (classes.pi.tiers), so the class has no default; name a model id instead (dispatch --models lists them)"
+  jq -e --arg n "$note" '.profiles.frontier.note == $n and .profiles.frontier.model == null' <<<"$output"
+  run run_dispatch --profiles
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"frontier "*"($note)"* ]]
+}
+
 @test "task profile: --profiles notes an engine that is not installed here" {
   rm "$STUB_DIR/codex"
   PATH="$(path_without_real codex)" DISPATCH_ENGINES="claude codex pi" run run_dispatch --profiles --json

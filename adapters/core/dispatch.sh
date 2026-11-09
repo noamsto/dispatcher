@@ -4272,7 +4272,6 @@ if [ "${1:-}" = --profiles ]; then
   }
   _settings_load
   out='{"profiles":{}}'
-  prof_err="$(mktemp)"
   while IFS= read -r name; do
     p="$(jq -c --arg n "$name" '.taskProfiles[$n]' <<<"$settings")"
     IFS=$'\x1f' read -r tier engine class effort < <(jq -r --argjson s "$settings" '
@@ -4280,9 +4279,9 @@ if [ "${1:-}" = --profiles ]; then
       | [.tier // "", $e, (.class // (if .tier then $tc else "" end)), .effort // ""] | join("\u001f")' <<<"$p")
     model='' note=''
     if [ -n "$tier" ] && [ -n "$class" ]; then
-      if ! model="$(_class_sigil "$engine" "$tier" "@$class" 2>"$prof_err")"; then
+      if ! model="$(_class_sigil "$engine" "$tier" "@$class" 2>/dev/null)"; then
         model=''
-        note="$(tail -n 1 "$prof_err")"
+        note="$(_class_sigil "$engine" "$tier" "@$class" 2>&1 >/dev/null | tail -n 1)" || true
         note="${note#dispatch: }"
       fi
     fi
@@ -4302,7 +4301,6 @@ if [ "${1:-}" = --profiles ]; then
       .profiles[$n] = {profile: $p, tier: ($tier | nn), engine: $engine, class: ($class | nn),
         effort: ($effort | nn), model: ($model | nn), note: ($note | nn)}' <<<"$out")"
   done < <(jq -r '.taskProfiles // {} | keys_unsorted[]' <<<"$settings")
-  rm -f "$prof_err"
   if [ -n "$as_json" ]; then
     printf '%s\n' "$out"
   else
