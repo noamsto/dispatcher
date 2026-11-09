@@ -44,6 +44,11 @@ func TestClassify(t *testing.T) {
 		{"openrouter opus pi deep", "pi", "deep", "openrouter/anthropic/claude-opus-5.5", gated, "pi_month_target"},
 		{"openrouter opus pi trivial", "pi", "trivial", "openrouter/anthropic/claude-opus-5.5", retired, ""},
 		{"pi seed row", "pi", "standard", "openrouter/qwen/qwen3.8-flash", admitted, ""},
+		// Reaches step 3 through a bare (ungated) class pattern: pi trivial's
+		// seed row does not list it, and classes.pi.standard's
+		// openrouter/qwen/qwen*-flash is a bare string, so the class matches
+		// and the tier admits standard — admitted by the pattern alone.
+		{"pi bare class pattern at trivial", "pi", "trivial", "openrouter/qwen/qwen3.8-flash", admitted, ""},
 
 		// Matches no seed row and no class pattern: not in the shipped map.
 		{"minimax claude", "claude", "deep", "opencode/minimax-m3", retired, ""},

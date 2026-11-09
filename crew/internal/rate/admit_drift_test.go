@@ -27,6 +27,9 @@ import (
 //
 // Both read repo files outside crew/, so drift.Missing skips them when the Nix
 // build sandbox (src = ./crew) lacks the file and fails under CREW_DRIFT_REQUIRED.
+// The second also needs bash and jq, and routes those two through drift.Missing
+// for the same reason: under CREW_DRIFT_REQUIRED a missing tool must fail, not
+// silently drop the only oracle for the ported rules.
 
 var (
 	admitDefaultsPath = filepath.Join("..", "..", "..", "adapters", "core", "defaults.json")
@@ -197,7 +200,10 @@ type admitCatalogEntry struct {
 }
 
 type admitProbe struct {
-	ClassOf     *string `json:"class_of"`
+	ClassOf *string `json:"class_of"`
+	// Admitted is model-resolve's admitted list: the seed row's models plus the
+	// unconditional catalog candidates the row does not already match.
+	Admitted    []string `json:"admitted"`
 	Conditional []struct {
 		ID       string `json:"id"`
 		Requires string `json:"requires"`
@@ -213,10 +219,10 @@ type admitProbe struct {
 // seed row's globs, so a concrete seed-matched id is absent from them by design.
 func TestAdmitPatternsMatchModelResolve(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
-		t.Skipf("bash is not on PATH: %v", err)
+		drift.Missing(t, "bash (on PATH)", err)
 	}
 	if _, err := exec.LookPath("jq"); err != nil {
-		t.Skipf("jq is not on PATH and model-resolve.sh needs it: %v", err)
+		drift.Missing(t, "jq (on PATH, model-resolve.sh needs it)", err)
 	}
 	defaults, err := os.ReadFile(admitDefaultsPath)
 	if err != nil {
@@ -322,7 +328,25 @@ func TestAdmitPatternsMatchModelResolve(t *testing.T) {
 					t.Errorf("%s %s %q: admitClassOf = %q, model-resolve class_of = %q", engine, tier, id, class, *probe.ClassOf)
 				}
 
-				// 2. Every gated id: gated(requires) when the repo tier admits
+				// 2. bash's admitted list holds the seed row's models (globs, not
+				// concrete ids) plus the unconditional catalog candidates, so a
+				// seed-matched id is compared nowhere. A candidate the oracle
+				// lists as admitted must classify as admitted.
+				listed := false
+				for _, a := range probe.Admitted {
+					if a == id {
+						listed = true
+						break
+					}
+				}
+				if listed && !admitSeedMatch(engine, tier, id) {
+					if state, requires := classify(engine, tier, id); state != admitted || requires != "" {
+						t.Errorf("%s %s %q: model-resolve lists it as an unconditional candidate, classify = (%s,%q), want (admitted,\"\")",
+							engine, tier, id, state, requires)
+					}
+				}
+
+				// 3. Every gated id: gated(requires) when the repo tier admits
 				// its class, retired when it does not.
 				requires, gatedID := conditionalRequires[engine][id]
 				if !gatedID {
@@ -343,6 +367,27 @@ func TestAdmitPatternsMatchModelResolve(t *testing.T) {
 	t.Logf("cross-checked %d (engine,tier,id) triples over %d engines x %d tiers and %d fixture ids",
 		compared, len(admitDriftEngines), len(admitDriftTiers), len(admitDriftFixtures["claude"])+
 			len(admitDriftFixtures["codex"])+len(admitDriftFixtures["cursor"])+len(admitDriftFixtures["pi"]))
+}
+
+// admitSeedMatch reports whether the seed row's models globs or regex list name
+// id — model-resolve's seedm for that row. Such an id is absent from the
+// oracle's admitted list by design: the list holds the row's globs instead.
+func admitSeedMatch(engine, tier, id string) bool {
+	row := admitTableOnce().rows[engine][tier]
+	if row == nil {
+		return false
+	}
+	for _, re := range row.models {
+		if re.MatchString(id) {
+			return true
+		}
+	}
+	for _, re := range row.regex {
+		if re.MatchString(id) {
+			return true
+		}
+	}
+	return false
 }
 
 // runModelResolve invokes the shipped bash resolver with defaults.json on

@@ -22,7 +22,7 @@ func adviseFooter(engine, tier string) string {
 	return "Advice only: informs the choice, never overrides dispatch gates, tier rules, budget or the owner's model map.\n" +
 		fmt.Sprintf("Models with no %s %s runs in the last %d days are not listed; '!' marks a figure measured over fewer than %d runs.\n",
 			engine, tier, adviseWindowDays, adviseMeasured) +
-		"Rows fold an alias with the full id of the model it names, so a folded row lists the ids it absorbed; '(gated: …)' names a requirement the dispatcher checks; the trailing section lists ids the shipped model map does not name."
+		"Rows fold an alias with the full id of the model it names, so a folded row lists the ids it absorbed; '(gated: …)' names a requirement the dispatcher checks; a row in the trailing section is one the shipped map does not admit for this engine and tier — retired, a class that tier does not admit, or a model your own settings added."
 }
 
 const (
@@ -169,7 +169,10 @@ func adviseJSON(rows []adviseRow, engine, tier, repo string, since time.Time, st
 		}
 		models[i] = map[string]any{
 			"model": r.model, "class": classNames[r.class],
-			"admitted": r.state != retired, "requires": requires, "ids": ids,
+			// in_shipped_map says only what crew checked: a false row is one
+			// the shipped map does not admit, not a model the owner cannot
+			// select — their own settings may add or gate it.
+			"in_shipped_map": r.state != retired, "requires": requires, "ids": ids,
 			"repo": scoped, "pooled": r.pooled,
 		}
 	}
@@ -193,7 +196,7 @@ func adviseText(rows []adviseRow, engine, tier, repo string, since time.Time) st
 		if r.state == retired {
 			if !marked {
 				marked = true
-				fmt.Fprintf(&b, "\nNot in the shipped model map for %s %s — retired, or added by your own settings\n", engine, tier)
+				fmt.Fprintf(&b, "\nNot admitted for %s %s by the shipped model map — check 'dispatch --models'\n", engine, tier)
 			}
 		} else if r.class == classAnecdote && !anecdotes {
 			anecdotes = true
