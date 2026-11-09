@@ -269,6 +269,9 @@ func TestOnGitHub(t *testing.T) {
 		"ssh://git@gitlab.com/acme/alpha.git": false,
 		"git@gitlab.com:acme/alpha.git":       false,
 		"https://github.com.evil.io/a/b":      false,
+		"ssh://git@ssh.github.com:443/a/b":    true,
+		"git@github-work:acme/alpha.git":      true,
+		"github.com:acme/alpha.git":           true,
 		"/srv/git/alpha.git":                  false,
 	} {
 		if got := onGitHub(origin); got != want {

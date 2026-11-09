@@ -113,8 +113,8 @@ func fetchPRView(ctx context.Context, c gh.Client, url, repo string, timeout tim
 		}
 		// Run drops stderr, which is where gh says why: ask again for the line.
 		// A retry that succeeds answers with the PR's JSON, which is no reason.
-		msg, _ := c.Combined(ctx, "pr", "view", url, "--json", prFields)
-		if line := firstLine(msg); line != "" && !json.Valid([]byte(strings.TrimSpace(msg))) {
+		msg, cerr := c.Combined(ctx, "pr", "view", url, "--json", prFields)
+		if line := firstLine(msg); line != "" && (cerr != nil || !json.Valid([]byte(line))) {
 			return prView{}, errors.New(line)
 		}
 		return prView{}, errors.New(firstLine(err.Error()))
@@ -133,15 +133,20 @@ func onGitHub(origin string) bool {
 	if origin == "" {
 		return true
 	}
+	var host string
 	if u, err := neturl.Parse(origin); err == nil && u.Host != "" {
-		return strings.EqualFold(u.Hostname(), "github.com")
-	}
-	host, _, ok := strings.Cut(origin, ":")
-	if !ok {
+		host = u.Hostname()
+	} else if h, _, ok := strings.Cut(origin, ":"); ok {
+		host = h
+		if _, after, found := strings.Cut(h, "@"); found {
+			host = after
+		}
+	} else {
 		return false
 	}
-	_, host, _ = strings.Cut(host, "@")
-	return strings.EqualFold(host, "github.com")
+	host = strings.ToLower(host)
+	// A dotless host is an ssh config alias, which may well be GitHub.
+	return host == "github.com" || strings.HasSuffix(host, ".github.com") || !strings.Contains(host, ".")
 }
 
 // checks is checkState for the status row: no checks at all is `pass`, as no
