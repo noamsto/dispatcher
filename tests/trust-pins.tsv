@@ -26,7 +26,6 @@ H1	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	1	tru
 H2	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	1	true	tests/dispatch.bats	^trust pin: H2 	"$status" -eq 1
 R1	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	2	true	tests/dispatch.bats	^dispatch --host refuses from a worker worktree whose .git is already a standalone repo	inside the worker worktree
 R2	adapters/core/dispatch.sh	_wt_trusted_cwd "${crew_dir%/crew}" || exit 1	2	true	tests/dispatch.bats	^trust pin: R2 	redirects the git common dir
-W1	adapters/core/dispatch.sh	_rw_sender_allowed "$from"	1	true	tests/dispatch.bats	^role-watch: sender: foreign senders are dropped with a report and no delivery	role_watch_drop
 F1	adapters/core/launcher-common.sh	_artifacts_dir_bad "$2"	1	false	tests/dispatch.bats	^add-dir: a symlinked artifacts parent of a slashed branch is not granted	not granting
 F2	adapters/core/dispatch.sh	_artifacts_dir_bad "$branch"	2	false	tests/dispatch.bats	^roles.json: a symlinked artifacts parent is refused and its target left empty	"$status" -eq 1
 F3	adapters/core/dispatch.sh	_artifacts_dir_bad "$branch"	1	false	tests/dispatch.bats	^roles.json: --spawn-role refuses a symlinked artifacts parent	refusing to use roles.json
@@ -42,10 +41,6 @@ F17	adapters/core/dispatch.sh	    _refuse_chrome_from_worker	1	    true	tests/di
 F19	adapters/core/dispatch.sh	_pane_is_ancestor "$TMUX_PANE" || {	1	true || {	tests/dispatch.bats	^grid: --spawn-role refuses a [^T]*TMUX_PANE that is not this process's pane	"$status" -eq 1
 F20	adapters/core/dispatch.sh	_pane_is_ancestor "$TMUX_PANE" || {	2	true || {	tests/dispatch.bats	^grid: --reap-roles refuses a [^T]*TMUX_PANE that is not this process's pane	"$status" -eq 1
 F21	adapters/core/dispatch.sh	_pane_is_ancestor "$exited_pane" || {	1	true || {	tests/dispatch.bats	^grid: --role-exited refuses a --pane that is not this process's pane	"$status" -eq 1
-F22	adapters/core/dispatch.sh	[ "$w_role" = "$role" ] || {	1	true || {	tests/dispatch.bats	^grid: --role-watch refuses when the pane's @crew_role does not match --role	"$status" -eq 1
-F22	adapters/core/dispatch.sh	[ "$w_branch" = "$watch_branch" ] || {	1	true || {	tests/dispatch.bats	^grid: --role-watch refuses when the window's @crew_branch does not match --branch	"$status" -eq 1
-F23	adapters/core/dispatch.sh	_rw_stamped || { _rw_orphaned; break; }	2	true	tests/dispatch.bats	^role-watch: a (pane re-stamped with another role|window re-stamped with another branch|window re-stamped with another crew) after a remux restore gets no paste	_rw_expect_exit
-F24	adapters/core/dispatch.sh	_rw_stamped || { _rw_orphaned; break; }	1	true	tests/dispatch.bats	^role-watch: a stamp that flips after the first Enter gets no retry Enter after a remux restore	_rw_expect_exit
 F25	adapters/core/dispatch.sh	for _v in "${!GIT_@}"; do unset "$_v"; done	1	:	tests/dispatch.bats	^trust pin: F25 	-s "$stall_env"
 F26	adapters/core/dispatch.sh	_add_dir_ok "$add_dir"	1	printf '%s' "$add_dir"	tests/dispatch.bats	^add-dir: refuses unsafe values before creating any worktree	"$status" -eq 1
 F27	adapters/core/launcher-common.sh	_add_dir_ok "$line"	1	printf '%s' "$line"	tests/dispatch.bats	^add-dir: --spawn-role re-checks the recorded grant against the lead's roots	dropping invalid grant

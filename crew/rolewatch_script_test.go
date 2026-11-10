@@ -367,6 +367,9 @@ func runWatcher(t *testing.T, ar *txtar.Archive, bin, root string, prefix, args 
 		"MODEL_RESOLVE_BIN=" + filepath.Join(root, "adapters/core/model-resolve.sh"),
 		"DISPATCH_CONFIG_BIN=" + filepath.Join(root, "adapters/core/dispatch-config.sh"),
 	}
+	if prefix != nil {
+		cmd.Env = append(cmd.Env, "DISPATCH_ROLE_WATCH_BASH_ARM=1")
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

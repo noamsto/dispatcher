@@ -3278,6 +3278,24 @@ crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
   run ! grep -q -e split-window -e kill-pane "$STUB_LOG"
 }
 
+@test "resume leaves live crew role-watch watchers alone and arms only the unwatched pane" {
+  setup_grid
+  local u=$'\x1f'
+  STUB_PANES_W+=$'\n'"%11${u}spec-critic${u}${u}claude${u}$WT"
+  export STUB_PS="/nix/store/abc-crew/bin/crew role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing
+crew stall-watch role:feat/7-a-thing:reviewer --pane %9 --engine claude
+crew role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing
+crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log '^--role-watch spec-critic --pane %11 '
+  wait_for_log 'stall-watch role:feat/7-a-thing:spec-critic --pane %11'
+  run ! grep -q -e '--role-watch reviewer' -e '--role-watch plan-critic' "$STUB_LOG"
+  run ! grep -q -e 'stall-watch role:feat/7-a-thing:reviewer' -e 'stall-watch role:feat/7-a-thing:plan-critic' "$STUB_LOG"
+  run ! grep -q -e split-window -e kill-pane "$STUB_LOG"
+}
+
 @test "a bare role pane is marked exited, not watched (#730)" {
   setup_grid
   local u=$'\x1f'
