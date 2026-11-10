@@ -40,7 +40,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
-const usage = "crew: adopt [--force] <id> [pid]"
+const usage = "crew: adopt [--force | --reattach] <id> [pid]"
 
 const exitFailure = 1
 
@@ -89,7 +89,7 @@ type claim struct {
 	branches []string
 }
 
-// Request is the parsed argv of `crew adopt [--force] <id> [pid]`.
+// Request is the parsed argv of `crew adopt [--force | --reattach] <id> [pid]`.
 type Request struct {
 	ID       string
 	PID      string

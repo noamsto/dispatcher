@@ -680,7 +680,7 @@ func TestAdopt(t *testing.T) {
 	t.Run("missing id is a usage error", func(t *testing.T) {
 		c := newCrewsCLI(t)
 		_, errOut := c.expect(1, "adopt")
-		eq(t, "stderr", errOut, "crew: adopt [--force] <id> [pid]\n")
+		eq(t, "stderr", errOut, "crew: adopt [--force | --reattach] <id> [pid]\n")
 	})
 }
 

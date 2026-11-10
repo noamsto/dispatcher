@@ -1047,7 +1047,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	// `$PWD`, which crew.sh's exec leaves ours.
 	if sub == "adopt" {
 		c := parsed.typed.Adopt
-		return adopt.Run(ctx, adopt.Request{ID: c.ID, PID: c.PID, Force: c.Force}, paths, stdout, stderr, adopt.Options{
+		return adopt.Run(ctx, adopt.Request{ID: c.ID, PID: c.PID, Force: c.Force, Reattach: c.Reattach}, paths, stdout, stderr, adopt.Options{
 			Proc:  e.proc,
 			Clock: clock.FromEnv(),
 			PID:   os.Getpid(),

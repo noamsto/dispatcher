@@ -472,9 +472,10 @@ type stallWatchCmd struct {
 }
 
 type adoptCmd struct {
-	Force bool   `name:"force"`
-	ID    string `arg:"" optional:"" name:"id"`
-	PID   string `arg:"" optional:"" name:"pid"`
+	Force    bool   `name:"force"`
+	Reattach bool   `name:"reattach"`
+	ID       string `arg:"" optional:"" name:"id"`
+	PID      string `arg:"" optional:"" name:"pid"`
 }
 
 type gitBaselineCmd struct {
