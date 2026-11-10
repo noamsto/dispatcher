@@ -12910,7 +12910,7 @@ EOF
 
 # _rw_render_bus — the watcher posts its notices straight into the bus; render
 # each new complete role-authored msg row into $STUB_LOG as `msg <from> <to>
-# <body>`, the line the crew stub used to log. Idempotent: a counter file
+# <body>`, the line the role-watch cases grep for. Idempotent: a counter file
 # remembers how many bus lines are already rendered.
 _rw_render_bus() {
   local bus first seen_first seen total
@@ -13271,14 +13271,13 @@ EOF
 
 @test "role-watch: an unknown engine never receives keys and an empty one is refused" {
   _spawn_role_fixture
-  eng=mystery
   : >"$STUB_LOG"
   rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
   _rw_stub rw_frame_pi_idle
-  _rw_start "$eng"
+  _rw_start mystery
   _rw_wait_captures 2
   _rw_stop
-  [ "$(_rw_captures)" -ge 2 ] || { echo "$eng: never captured"; return 1; }
+  [ "$(_rw_captures)" -ge 2 ] || { echo "mystery: never captured"; return 1; }
   run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
 
   : >"$STUB_LOG"

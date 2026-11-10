@@ -3048,7 +3048,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
       ;;
     esac
   done
-  # The role's nohup'd --role-watch and stall-watch inherit this env and locate
+  # The role's nohup'd crew role-watch and stall-watch inherit this env and locate
   # the bus through git discovery; a worker-set GIT_* would steer them wrong.
   # ${!GIT_@}, not compgen: a non-interactive bash build has no compgen.
   for _v in "${!GIT_@}"; do unset "$_v"; done
