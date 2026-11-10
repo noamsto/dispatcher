@@ -1,0 +1,43 @@
+# A pane marked @crew_exited ends the watcher with exit 0 and never reads as
+# live again: the idle stamp at startup is the last @crew_state write, and the
+# queued assignment is never entered.
+exec git init -q
+mkdir .git/crew
+cp events.jsonl .git/crew/events.jsonl
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# Marked exited after the first liveness read.
+cp state tmux/state
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^set-option' tmux.log
+grep '^set-option -p -t %6 @crew_state idle$' tmux.log
+! grep '^(capture-pane|send-keys|load-buffer|paste-buffer)' tmux.log
+
+# Already exited at startup: no state write at all.
+rm tmux.log tmux/n.alive tmux/after-alive-1
+cp state.exited tmux/state
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+! grep '^(set-option|capture-pane|send-keys|load-buffer|paste-buffer)' tmux.log
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- clock --
+1000
+-- state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=5
+-- state.exited --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=1
+lifetime=5
+-- tmux/after-alive-1 --
+exited=1

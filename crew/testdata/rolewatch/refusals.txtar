@@ -1,0 +1,53 @@
+# Every startup refusal exits 1 with its one stderr line. The grammar ones
+# refuse before the first tmux call; the two F22 stamp checks read the pane's
+# stamps and write nothing.
+exec git init -q
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+! exec crew role-watch
+stderr '^dispatch: --role-watch needs a role name$'
+! exec crew role-watch reviewer
+stderr '^dispatch: --role-watch needs --pane <id>$'
+! exec crew role-watch reviewer --pane %6 --submit-retries x
+stderr '^dispatch: --role-watch: --submit-retries must be a non-negative integer, got x$'
+! exec crew role-watch reviewer --pane %6 --interval fast
+stderr '^dispatch: --role-watch: --interval must be a non-negative number, got fast$'
+! exec crew role-watch reviewer --pane %6 --defer-notice 1.5
+stderr '^dispatch: --role-watch: --defer-notice must be a non-negative integer, got 1.5$'
+! exec crew role-watch reviewer --pane 6 --branch feat/9-x
+stderr '^dispatch: --role-watch: --pane must be a pane id \(%N\), got 6$'
+! exec crew role-watch lead --pane %6 --branch feat/9-x
+stderr '^dispatch: --role-watch: role .lead. is never watched$'
+! exec crew role-watch reviewer --bogus
+stderr '^dispatch: --role-watch: unexpected argument ''--bogus''$'
+! exec crew role-watch reviewer extra --pane %6
+stderr '^dispatch: --role-watch: unexpected argument ''extra''$'
+! exec crew role-watch reviewer --pane
+stderr '^dispatch: --role-watch needs --pane <id>$'
+! exists tmux.log
+
+# F22: the pane carries another role.
+mkdir tmux
+cp state.role tmux/state
+! exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+stderr '^dispatch: --role-watch: pane %6''s @crew_role \(planner\) does not match --role reviewer$'
+grep -count=1 '^display-message -p -t %6 #\{@crew_role\}\|#\{window_id\}\|#\{@crew_delivery\}$' tmux.log
+! grep '^(set-option|send-keys|load-buffer|paste-buffer|capture-pane|show-options)' tmux.log
+
+# F22: the window carries another branch.
+rm tmux.log
+cp state.branch tmux/state
+! exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+stderr '^dispatch: --role-watch: window @1''s @crew_branch \(feat/other\) does not match --branch feat/9-x$'
+! grep '^(set-option|send-keys|load-buffer|paste-buffer|capture-pane)' tmux.log
+
+-- state.role --
+role=planner
+window=@1
+branch=feat/9-x
+crew=c1
+-- state.branch --
+role=reviewer
+window=@1
+branch=feat/other
+crew=c1

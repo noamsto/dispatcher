@@ -1,0 +1,27 @@
+# A pull pane (@crew_delivery pull) is never captured or typed into. Until the
+# role announces itself the deferral waits 5x --defer-notice (here 5s, one
+# virtual second per tick), then tells the lead worker once, naming pull.
+exec git init -q
+mkdir .git/crew
+cp events.jsonl .git/crew/events.jsonl
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2 --defer-notice 1
+! stderr .
+! grep '^(capture-pane|send-keys|load-buffer|paste-buffer)' tmux.log
+! grep '^set-option -p -t %6 @crew_state working' tmux.log
+grep -count=1 'assignment_deferred' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*\\"delivery\\":\\"pull\\"' .git/crew/events.jsonl
+grep 'has not announced itself' .git/crew/events.jsonl
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+delivery=pull
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=9

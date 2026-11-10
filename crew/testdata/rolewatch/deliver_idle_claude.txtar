@@ -1,0 +1,81 @@
+# An idle claude box: startup stamp reads and the idle ticks, then one typed
+# delivery (precheck capture, load/paste, confirming capture, Enter), then the
+# submit check, which sees the idle box again and stays quiet.
+#
+# golden.log is the bash arm's tmux argv log for exactly this fake state.
+# Regenerate it (needs bash, jq and git on PATH):
+#   mkdir -p /tmp/g; ROLEWATCH_GOLDEN_DIR=/tmp/g go test -run TestRoleWatchDifferential .
+# then replace the golden.log section below with /tmp/g/deliver_idle_claude.log.
+# TestRoleWatchDifferential also diffs the arm against crew role-watch live.
+exec git init -q
+mkdir .git/crew
+cp events.jsonl .git/crew/events.jsonl
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+cmp tmux.log golden.log
+grep '\AAssignment: go\z' tmux/buffer
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+! grep '"from":"role:' .git/crew/events.jsonl
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=6
+-- tmux/frames/1 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/2 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯ Assignment: go
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/3 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- golden.log --
+display-message -p -t %6 #{@crew_role}|#{window_id}|#{@crew_delivery}
+show-options -wqv -t @1 @crew_branch
+show-options -wqv -t @1 @crew_id
+display-message -p -t %6 #{@crew_exited}
+set-option -p -t %6 @crew_state idle
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+display-message -p -t %6 #{@crew_exited}
+set-option -p -t %6 @crew_state working
+display-message -p -t %6 #{@crew_exited}
+display-message -p -t %6 #{@crew_role}|#{window_id}
+show-options -wqv -t @1 @crew_branch
+show-options -wqv -t @1 @crew_id
+capture-pane -e -p -t %6
+load-buffer -b rw-assign-N -
+paste-buffer -p -d -r -b rw-assign-N -t %6
+capture-pane -e -p -t %6
+send-keys -t %6 Enter
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+display-message -p -t %6 #{pane_id}
