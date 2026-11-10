@@ -1,0 +1,46 @@
+# The watcher's own event post to the lead (here an assignment_rejected note,
+# appended to the bus after the Enter) is not the role's verdict: the role keeps
+# its working state while its assignment is unanswered, so it is never marked
+# idle after working.
+exec git init -q
+mkdir .git/crew
+cp events.jsonl .git/crew/events.jsonl
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep -count=1 '"from":"role:feat/9-x:reviewer".*assignment_rejected' .git/crew/events.jsonl
+grep -count=1 '^set-option -p -t %6 @crew_state working$' tmux.log
+! grep '(?s)@crew_state working.*@crew_state idle' tmux.log
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- tmux/append-capture-3 --
+{"ts":10000000000005,"crew_id":"c1","kind":"msg","from":"role:feat/9-x:reviewer","to":"worker:feat/9-x#s1-1","body":"{\"event\":\"assignment_rejected\"}"}
+-- tmux/frames/1 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/2 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯ Assignment: go
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/3 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents

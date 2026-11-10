@@ -1,0 +1,132 @@
+# A body with a C0 byte (newline, escape) is rejected for every engine: the
+# sender hears assignment_rejected naming the control character, and nothing is
+# pasted or typed. A literal newline inside a JSON assignment is the same.
+exec git init -q
+mkdir .git/crew
+mkdir tmux/frames
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# newline body, claude
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.newline .git/crew/events.jsonl
+cp $FRAMES/rw_idle.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 'assignment_rejected' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_rejected.*control character' .git/crew/events.jsonl
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# newline body, pi
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.newline .git/crew/events.jsonl
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 'assignment_rejected' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_rejected.*control character' .git/crew/events.jsonl
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# newline body, codex
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.newline .git/crew/events.jsonl
+cp $FRAMES/rw_codex_idle_empty.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 'assignment_rejected' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_rejected.*control character' .git/crew/events.jsonl
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# newline body, cursor
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.newline .git/crew/events.jsonl
+cp $FRAMES/rw_cursor_idle_empty.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 'assignment_rejected' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_rejected.*control character' .git/crew/events.jsonl
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# escape body, claude
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.escape .git/crew/events.jsonl
+cp $FRAMES/rw_idle.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 'assignment_rejected' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_rejected.*control character' .git/crew/events.jsonl
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# escape body, pi
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.escape .git/crew/events.jsonl
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 'assignment_rejected' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_rejected.*control character' .git/crew/events.jsonl
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# escape body, codex
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.escape .git/crew/events.jsonl
+cp $FRAMES/rw_codex_idle_empty.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 'assignment_rejected' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_rejected.*control character' .git/crew/events.jsonl
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# escape body, cursor
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.escape .git/crew/events.jsonl
+cp $FRAMES/rw_cursor_idle_empty.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 'assignment_rejected' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_rejected.*control character' .git/crew/events.jsonl
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# literal body, codex
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.literal .git/crew/events.jsonl
+cp $FRAMES/rw_codex_idle_empty.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 'assignment_rejected' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_rejected.*control character' .git/crew/events.jsonl
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# literal body, cursor
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.literal .git/crew/events.jsonl
+cp $FRAMES/rw_cursor_idle_empty.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 'assignment_rejected' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_rejected.*control character' .git/crew/events.jsonl
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# An unsafe-only queue returns the pane to idle: working is set for the
+# assignment, and the reject sets idle after it.
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.newline .git/crew/events.jsonl
+cp $FRAMES/rw_idle.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)set-option -p -t %6 @crew_state working.*set-option -p -t %6 @crew_state idle' tmux.log
+
+-- events.newline --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go\nsecond line"}
+-- events.escape --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go\u001bescape"}
+-- events.literal --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"{\"role\":\"reviewer\",\"question\":\"literal editor\nnewline\"}"}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=6

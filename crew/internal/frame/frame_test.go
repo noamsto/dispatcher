@@ -1,102 +1,22 @@
 package frame
 
 import (
-	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
-
-	"github.com/noamsto/dispatcher/crew/internal/drift"
 )
 
-const dispatchScript = "../../../adapters/core/dispatch.sh"
-
 var engines = []string{"claude", "codex", "pi", "cursor"}
-
-// goldenKeys are the predicates whose bash is gone: no shipped script carries
-// them, so Go is the only implementation. Every other key still has a live bash
-// copy in dispatch.sh's --role-watch block, which TestDriftAgainstBash and
-// TestRowsMatchBash compare. TestGoldenOracle freezes all keys, goldenKeys or not.
-var goldenKeys = map[string]bool{
-	"quota_prompt":            true,
-	"quota_session_limit":     true,
-	"idle_reason.skip0.plain": true,
-	"idle_reason.skip0.color": true,
-	"idle_reason.skip1.plain": true,
-	"idle_reason.skip1.color": true,
-}
-
-// driver runs after the shipped predicates are defined. Usage:
-// driver <engine> <mode> <frame file>...; a frame's colored capture is the
-// sibling <name>.color.txt, else the plain text itself. It prints
-// "@@ <file name>" and then one "key<TAB>value" line per predicate result,
-// in the order results() produces them. Only _is_permission_prompt and
-// _is_prompt read $engine, so mode "engine" stops after those two and the
-// other engines reuse the "full" run's remaining results.
-const driver = `
-enc() {
-  local v=$1
-  v=${v//\\/\\\\}
-  v=${v//$'\n'/\\n}
-  v=${v//$'\033'/\\e}
-  printf '%s' "$v"
-}
-emit() { printf '%s\t%s\n' "$1" "$(enc "$2")"; }
-flag() {
-  local k=$1
-  shift
-  if "$@" >/dev/null; then emit "$k" 1; else emit "$k" 0; fi
-}
-box() { # key text first-row-regex
-  local out rc
-  out=$(_box_rows "$2" "$3")
-  rc=$?
-  emit "$1.rc" "$rc"
-  emit "$1.out" "$out"
-}
-
-engine=$1
-mode=$2
-shift 2
-. "$ISBGWAIT"
-for f in "$@"; do
-  echo "@@ ${f##*/}"
-  text=$(cat "$f")
-  cf=${f%.txt}.color.txt
-  if [ -e "$cf" ]; then col=$(cat "$cf"); else col=$text; fi
-  flag codex_hook_review _is_codex_hook_review_prompt "$text"
-  flag permission_prompt _is_permission_prompt "$text"
-  flag prompt _is_prompt "$text"
-  [ "$mode" = full ] || continue
-  flag quota_cursor_limit _is_quota_cursor_limit "$text"
-  flag bg_wait _is_bg_wait "$text"
-  emit meter "$(_meter_line "$text")"
-  flag subrow _has_subrow "$text"
-  flag pi_live_turn _pi_live_turn "$text"
-  flag pi_working_row _pi_working_row "$text"
-  flag pi_working_label _pi_working_label "$text"
-  flag pi_idle_box _pi_idle_box "$text"
-  box box_claude "$text" '^[[:space:]]*❯'
-  box box_any "$text" '.*'
-  flag claude_idle_box.own0.plain _claude_idle_box "$text" "" 0
-  flag claude_idle_box.own0.color _claude_idle_box "$text" "$col" 0
-  flag claude_idle_box.own1.plain _claude_idle_box "$text" "" 1
-  flag claude_idle_box.own1.color _claude_idle_box "$text" "$col" 1
-done
-`
 
 type kv struct{ key, val string }
 
 var escaper = strings.NewReplacer("\\", "\\\\", "\n", "\\n", "\x1b", "\\e")
 
-// results mirrors the driver, key for key. colored is the "color" variant's
+// results is every predicate result for one frame, in key order. colored is the "color" variant's
 // colored capture.
 func results(engine, text, colored string) []kv {
 	var r []kv
@@ -194,183 +114,12 @@ func coloredFor(t *testing.T, path, text string) string {
 	return readFrame(t, cf)
 }
 
-// shippedPredicates returns the --role-watch predicate block dispatch.sh
-// carries: the contiguous run of definitions from `re_option=` through the end
-// of `_pi_idle_box`, de-indented by the two spaces that keep it inside
-// watch_role_prompts. The block is definitions and scalar assignments only, so
-// sourcing it runs nothing.
-func shippedPredicates(src string) (string, bool) {
-	lines := strings.Split(src, "\n")
-	start, end := -1, -1
-	for i, l := range lines {
-		if start < 0 && strings.HasPrefix(l, "  re_option=") {
-			start = i
-		}
-		if start >= 0 && strings.HasPrefix(l, "  _pi_idle_box() {") {
-			for j := i + 1; j < len(lines); j++ {
-				if lines[j] == "  }" {
-					end = j
-					break
-				}
-			}
-			break
-		}
-	}
-	if start < 0 || end < 0 {
-		return "", false
-	}
-	var sb strings.Builder
-	for _, l := range lines[start : end+1] {
-		sb.WriteString(strings.TrimPrefix(l, "  "))
-		sb.WriteString("\n")
-	}
-	return sb.String(), true
-}
-
-// bashScript writes the bash program that defines the classifier from the copy
-// dispatch.sh ships and runs the driver.
-func bashScript(t *testing.T) string {
-	t.Helper()
-	if _, err := exec.LookPath("bash"); err != nil {
-		t.Skip("bash not on PATH")
-	}
-	src, err := os.ReadFile(dispatchScript)
-	if os.IsNotExist(err) {
-		drift.Missing(t, dispatchScript, err)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, ok := shippedPredicates(string(src))
-	if !ok {
-		t.Fatalf("the --role-watch predicate block is not in %s", dispatchScript)
-	}
-	var sb strings.Builder
-	sb.WriteString(body)
-	sb.WriteString(driver)
-	path := filepath.Join(t.TempDir(), "drift.bash")
-	if err := os.WriteFile(path, []byte(sb.String()), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
 // engineKeys are the results that depend on the engine.
 var engineKeys = map[string]bool{"permission_prompt": true, "prompt": true}
 
-// bashResults runs the driver script over files in chunks, concurrently, and
-// returns each frame's results keyed by file name, then result key.
-func bashResults(script, engine, mode string, files []string) (map[string]map[string]string, error) {
-	isBgWait, err := filepath.Abs("testdata/is_bg_wait.bash")
-	if err != nil {
-		return nil, err
-	}
-	chunk := max(1, (len(files)+runtime.NumCPU()-1)/runtime.NumCPU())
-	var (
-		mu   sync.Mutex
-		wg   sync.WaitGroup
-		out  = map[string]map[string]string{}
-		rerr error
-	)
-	for lo := 0; lo < len(files); lo += chunk {
-		part := files[lo:min(lo+chunk, len(files))]
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			cmd := exec.Command("bash", append([]string{script, engine, mode}, part...)...)
-			cmd.Env = append(os.Environ(), "LC_ALL=C.UTF-8", "ISBGWAIT="+isBgWait)
-			var stdout, stderr bytes.Buffer
-			cmd.Stdout, cmd.Stderr = &stdout, &stderr
-			err := cmd.Run()
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				rerr = fmt.Errorf("bash driver (%s %s): %w\n%s", engine, mode, err, stderr.String())
-				return
-			}
-			cur := ""
-			for _, l := range strings.Split(strings.TrimSuffix(stdout.String(), "\n"), "\n") {
-				if name, ok := strings.CutPrefix(l, "@@ "); ok {
-					cur = name
-					out[cur] = map[string]string{}
-					continue
-				}
-				k, v, _ := strings.Cut(l, "\t")
-				out[cur][k] = v
-			}
-		}()
-	}
-	wg.Wait()
-	return out, rerr
-}
-
-// bashFor runs the full driver under claude and the engine-dependent part
-// under the other engines.
-func bashFor(t *testing.T, files []string) map[string]map[string]map[string]string {
-	t.Helper()
-	script := bashScript(t)
-	bash := map[string]map[string]map[string]string{}
-	for _, engine := range engines {
-		mode := "engine"
-		if engine == "claude" {
-			mode = "full"
-		}
-		res, err := bashResults(script, engine, mode, files)
-		if err != nil {
-			t.Fatal(err)
-		}
-		bash[engine] = res
-	}
-	return bash
-}
-
-// want is bash's result for key under engine.
-func want(bash map[string]map[string]map[string]string, engine, frame, key string) (string, bool) {
-	e := "claude"
-	if engineKeys[key] {
-		e = engine
-	}
-	v, ok := bash[e][frame][key]
-	return v, ok
-}
-
-func TestDriftAgainstBash(t *testing.T) {
-	frames := corpus(t)
-	bash := bashFor(t, frames)
-
-	const maxReported = 40
-	mismatches, compared := 0, 0
-	for _, engine := range engines {
-		for _, path := range frames {
-			name := filepath.Base(path)
-			text := readFrame(t, path)
-			for _, g := range results(engine, text, coloredFor(t, path, text)) {
-				if goldenKeys[g.key] {
-					continue // no bash side: TestGoldenOracle covers these
-				}
-				w, ok := want(bash, engine, name, g.key)
-				if !ok {
-					t.Fatalf("%s / %s / %s: bash printed no result", engine, name, g.key)
-				}
-				compared++
-				if g.val == w {
-					continue
-				}
-				if mismatches++; mismatches <= maxReported {
-					t.Errorf("%s / %s / %s: Go %q, bash %q", engine, name, g.key, g.val, w)
-				}
-			}
-		}
-	}
-	if mismatches > 0 {
-		t.Errorf("%d of %d predicate results differ from bash across %d frames x %d engines (first %d shown)",
-			mismatches, compared, len(frames), len(engines), min(mismatches, maxReported))
-	}
-}
-
 // row is one focused expectation: key's result for text under engine. The
-// colored capture defaults to text, as in the corpus. TestRowsMatchBash proves
-// every want against the bash original.
+// colored capture defaults to text, as in the corpus. The wants were frozen
+// from the bash original; TestGoldenOracle pins every key.
 type row struct {
 	name, engine, key, text, colored, want string
 }
@@ -557,50 +306,6 @@ func TestRows(t *testing.T) {
 				t.Errorf("%s: got %q, want %q", c.key, got, c.want)
 			}
 		})
-	}
-}
-
-// TestRowsMatchBash keeps every want above honest: the bash original must
-// produce it.
-func TestRowsMatchBash(t *testing.T) {
-	script := bashScript(t)
-	dir := t.TempDir()
-	byEngine := map[string][]string{}
-	for i, c := range rows() {
-		if goldenKeys[c.key] {
-			continue // no bash side: TestGoldenOracle covers these
-		}
-		p := filepath.Join(dir, fmt.Sprintf("%03d.txt", i))
-		if err := os.WriteFile(p, []byte(c.text+"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if c.colored != "" {
-			if err := os.WriteFile(strings.TrimSuffix(p, ".txt")+".color.txt", []byte(c.colored+"\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		byEngine[c.engine] = append(byEngine[c.engine], p)
-	}
-	bash := map[string]map[string]map[string]string{}
-	for engine, files := range byEngine {
-		res, err := bashResults(script, engine, "full", files)
-		if err != nil {
-			t.Fatal(err)
-		}
-		bash[engine] = res
-	}
-	for i, c := range rows() {
-		if goldenKeys[c.key] {
-			continue // no bash side: TestGoldenOracle covers these
-		}
-		got, ok := bash[c.engine][fmt.Sprintf("%03d.txt", i)][c.key]
-		if !ok {
-			t.Errorf("%s: bash printed no %s", c.name, c.key)
-			continue
-		}
-		if got != c.want {
-			t.Errorf("%s: bash gives %q for %s, want %q", c.name, got, c.key, c.want)
-		}
 	}
 }
 

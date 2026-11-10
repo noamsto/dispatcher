@@ -1,0 +1,523 @@
+# #725: the idle composer a codex or cursor pane shows after a turn (and cursor's
+# startup placeholder) is typed into; look-alikes (a prompt row where codex's
+# shortcuts footer is, a cursor frame without its version row or footer path, a
+# non-empty draft, a status line that is a prompt or carries a path, a dialog
+# overlay) only defer: the pane is captured again and nothing is typed. The
+# frames are the captures that issue's tests used, with the ready ones followed
+# by the pasted text and, after the Enter, the idle frame again.
+exec git init -q
+mkdir .git/crew
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# codex post-turn idle is typed into
+mkdir tmux/frames
+cp state.1 tmux/state
+cp events.1 .git/crew/events.jsonl
+cp clock.base clock
+cp f.codex_post-turn_idle tmux/frames/1
+cp f.codex_post-turn_typed tmux/frames/2
+cp f.codex_post-turn_idle tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+
+# cursor post-turn idle is typed into
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.2 tmux/state
+cp events.2 .git/crew/events.jsonl
+cp clock.base clock
+cp f.cursor_post-turn_idle tmux/frames/1
+cp f.cursor_post-turn_typed tmux/frames/2
+cp f.cursor_post-turn_idle tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+
+# cursor startup placeholder is typed into
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.3 tmux/state
+cp events.3 .git/crew/events.jsonl
+cp clock.base clock
+cp f.cursor_startup_idle tmux/frames/1
+cp f.cursor_startup_typed tmux/frames/2
+cp f.cursor_startup_idle tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+
+# codex look-alike defers, nothing typed
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.4 tmux/state
+cp events.4 .git/crew/events.jsonl
+cp clock.base clock
+cp f.codex_look_alike tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# cursor frame without a version row defers, nothing typed
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.5 tmux/state
+cp events.5 .git/crew/events.jsonl
+cp clock.base clock
+cp f.cursor_frame_without_a_version_row tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# cursor footer with no path defers, nothing typed
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.6 tmux/state
+cp events.6 .git/crew/events.jsonl
+cp clock.base clock
+cp f.cursor_footer_with_no_path tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# cursor non-empty draft defers, nothing typed
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.7 tmux/state
+cp events.7 .git/crew/events.jsonl
+cp clock.base clock
+cp f.cursor_non_empty_draft tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# cursor status line that is a prompt defers, nothing typed
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.8 tmux/state
+cp events.8 .git/crew/events.jsonl
+cp clock.base clock
+cp f.cursor_status_line_that_is_a_prompt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# cursor status line with an embedded path defers, nothing typed
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.9 tmux/state
+cp events.9 .git/crew/events.jsonl
+cp clock.base clock
+cp f.cursor_status_line_with_an_embedded_path tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# cursor dialog overlay defers, nothing typed
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.10 tmux/state
+cp events.10 .git/crew/events.jsonl
+cp clock.base clock
+cp f.cursor_dialog_overlay tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+-- clock.base --
+1000
+-- state.1 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.1 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.codex_post-turn_idle --
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to
+do
+  /model - choose what model and reasoning
+effort to use
+  /review - review any changes and find issues
+
+
+› Reply with exactly the word pong and nothing
+  else.
+
+
+• pong
+
+  Worked for 4s • 10:57 AM
+
+
+› Ask Codex to do anything
+
+  GPT-5.6-Luna low · /tmp/rw725-p… Vim: Insert
+  ? for shortcuts                      ⚠ 2 · f2
+-- f.codex_post-turn_typed --
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to
+do
+  /model - choose what model and reasoning
+effort to use
+  /review - review any changes and find issues
+
+
+› Reply with exactly the word pong and nothing
+  else.
+
+
+• pong
+
+  Worked for 4s • 10:57 AM
+
+
+› Assignment: go
+
+  GPT-5.6-Luna low · /tmp/rw725-p… Vim: Insert
+  ? for shortcuts                      ⚠ 2 · f2
+-- state.2 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.2 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.cursor_post-turn_idle --
+  v2026.10.01-e373342
+  Tip: Use /debug to instrument and debug
+  complex problems.
+
+
+  Reply with exactly the word pong and
+  nothing else.
+
+
+  pong
+
+
+
+
+  → Add a follow-up
+
+
+  Grok 4.7  · 6.6  Run Everything -- INSERT --
+  256K Low    %
+  /tmp/rw725-p0VP
+-- f.cursor_post-turn_typed --
+  v2026.10.01-e373342
+  Tip: Use /debug to instrument and debug
+  complex problems.
+
+
+  Reply with exactly the word pong and
+  nothing else.
+
+
+  pong
+
+
+
+
+  → Assignment: go
+
+
+  Grok 4.7  · 6.6  Run Everything -- INSERT --
+  256K Low    %
+  /tmp/rw725-p0VP
+-- state.3 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.3 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.cursor_startup_idle --
+  v2026.10.01-e373342
+  Tip: Use /debug to instrument and debug
+  complex problems.
+
+
+  Reply with exactly the word pong and
+  nothing else.
+
+
+  pong
+
+
+
+
+  → Plan, search, build anything
+
+
+  Grok 4.7  · 6.6  Run Everything -- INSERT --
+  256K Low    %
+  /tmp/rw725-p0VP
+-- f.cursor_startup_typed --
+  v2026.10.01-e373342
+  Tip: Use /debug to instrument and debug
+  complex problems.
+
+
+  Reply with exactly the word pong and
+  nothing else.
+
+
+  pong
+
+
+
+
+  → Assignment: go
+
+
+  Grok 4.7  · 6.6  Run Everything -- INSERT --
+  256K Low    %
+  /tmp/rw725-p0VP
+-- state.4 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.4 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.codex_look_alike --
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to
+do
+  /model - choose what model and reasoning
+effort to use
+  /review - review any changes and find issues
+
+
+› Reply with exactly the word pong and nothing
+  else.
+
+
+• pong
+
+  Worked for 4s • 10:57 AM
+
+
+› Ask Codex to do anything
+
+  GPT-5.6-Luna low · /tmp/rw725-p… Vim: Insert
+  $
+-- state.5 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.5 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.cursor_frame_without_a_version_row --
+  Tip: Use /debug to instrument and debug
+  complex problems.
+
+
+  Reply with exactly the word pong and
+  nothing else.
+
+
+  pong
+
+
+
+
+  → Add a follow-up
+
+
+  Grok 4.7  · 6.6  Run Everything -- INSERT --
+  256K Low    %
+  /tmp/rw725-p0VP
+-- state.6 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.6 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.cursor_footer_with_no_path --
+  v2026.10.01-e373342
+  Tip: Use /debug to instrument and debug
+  complex problems.
+
+
+  Reply with exactly the word pong and
+  nothing else.
+
+
+  pong
+
+
+
+
+  → Add a follow-up
+
+
+  Grok 4.7  · 6.6  Run Everything -- INSERT --
+-- state.7 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.7 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.cursor_non_empty_draft --
+  v2026.10.01-e373342
+  Tip: Use /debug to instrument and debug
+  complex problems.
+
+
+  Reply with exactly the word pong and
+  nothing else.
+
+
+  pong
+
+
+
+
+  → draft unsent text
+
+
+  Grok 4.7  · 6.6  Run Everything -- INSERT --
+  256K Low    %
+  /tmp/rw725-p0VP
+-- state.8 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.8 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.cursor_status_line_that_is_a_prompt --
+  v2026.10.01-e373342
+  Tip: Use /debug to instrument and debug
+  complex problems.
+
+
+  Reply with exactly the word pong and
+  nothing else.
+
+
+  pong
+
+
+
+
+  → Add a follow-up
+
+
+  Grok 4.7  · 6.6  Run Everything -- INSERT --
+  256K Low    %
+  /tmp/rw725-p0VP
+  High — allow this command?
+-- state.9 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.9 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.cursor_status_line_with_an_embedded_path --
+  v2026.10.01-e373342
+  Tip: Use /debug to instrument and debug
+  complex problems.
+
+
+  Reply with exactly the word pong and
+  nothing else.
+
+
+  pong
+
+
+
+
+  → Add a follow-up
+
+
+  Grok 4.7  · 6.6  Run Everything -- INSERT --
+  256K Low    %
+  /tmp/rw725-p0VP
+  write /tmp/out?
+-- state.10 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.10 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.cursor_dialog_overlay --
+  v2026.10.01-e373342
+  Tip: Use /debug to instrument and debug
+  complex problems.
+
+
+  Reply with exactly the word pong and
+  nothing else.
+
+
+  pong
+
+
+
+
+  → Assignment: go
+
+
+  Grok 4.7  · 6.6  Run Everything -- INSERT --
+  256K Low    %
+  /tmp/rw725-p0VP
+
+  Dialog overlay: Enter to confirm

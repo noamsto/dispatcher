@@ -38,6 +38,8 @@ func TestPaneReady(t *testing.T) {
 		{"claude live turn", "claude", "frames/rw_live.txt", "", false, false},
 		{"claude permission dialog", "claude", "frames/rw_permission.txt", "", false, false},
 		{"claude option select", "claude", "frames/rw_select.txt", "", false, false},
+		{"claude quota prompt", "claude", "frames/rw_quota.txt", "", false, false},
+		{"claude idle with cursor anchors", "claude", "frames/rw_claude_with_cursor_anchors.txt", "", false, true},
 		{"claude draft without colour", "claude", "frames/rw_claude_draft.txt", "", false, false},
 		{"claude draft with colour", "claude", "frames/rw_claude_draft.txt", "frames/rw_claude_draft.color.txt", false, false},
 		{"claude ghost with colour", "claude", "frames/rw_claude_ghost.txt", "frames/rw_claude_ghost.color.txt", false, true},
@@ -50,16 +52,24 @@ func TestPaneReady(t *testing.T) {
 		{"codex live turn", "codex", "frames/rw_codex_live_turn.txt", "", false, false},
 		{"codex dialog", "codex", "frames/rw_codex_folder_trust_dialog.txt", "", false, false},
 		{"codex hook review", "codex", "frames/codex_hooks_review.txt", "", false, false},
+		{"codex boot update", "codex", "frames/rw_codex_boot_update.txt", "", false, false},
+		{"codex approval probe", "codex", "frames/rw_codex_approval_probe.txt", "", false, false},
 		{"cursor idle", "cursor", "frames/rw_cursor_idle_empty.txt", "", false, true},
 		{"cursor unsent", "cursor", "frames/rw_cursor_idle_unsent.txt", "", false, false},
 		{"cursor live turn", "cursor", "frames/rw_cursor_live_turn.txt", "", false, false},
 		{"cursor dialog", "cursor", "frames/rw_cursor_ask_dialog.txt", "", false, false},
+		{"cursor ask hook settled", "cursor", "frames/rw_cursor_ask_hook_settled.txt", "", false, false},
 		{"cursor monthly limit", "cursor", "frames/rw_cursor_monthly_limit.txt", "", false, false},
 		{"pi idle", "pi", "frames/rw_pi_idle.txt", "", false, true},
 		{"pi vim idle", "pi", "frames/rw_pi_idle_vim.txt", "", false, true},
 		{"pi live turn", "pi", "frames/rw_pi_live.txt", "", false, false},
+		{"pi vim working row", "pi", "frames/rw_pi_vim_live.txt", "", false, false},
+		{"pi scrolled own text", "pi", "frames/rw_pi_scrolled_held.txt", "", true, true},
 		{"pi unknown frame", "pi", "frames/rw_unknown.txt", "", false, false},
+		{"pi option select", "pi", "frames/rw_select.txt", "", false, false},
+		{"pi bare shell prompt", "pi", "frames/rw_shell.txt", "", false, false},
 		{"unknown engine on an idle claude frame", "bogus", "frames/rw_idle.txt", "", false, false},
+		{"unknown engine on an idle pi frame", "mystery", "frames/rw_pi_idle.txt", "", false, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,6 +84,11 @@ func TestPaneReady(t *testing.T) {
 	}
 }
 
+const (
+	wrappedAssignment        = `{"role":"reviewer","question":"Check the intentionally long assignment that wraps across terminal rows without an editor newline"}`
+	literalNewlineAssignment = "{\"role\":\"reviewer\",\"question\":\"literal editor\nnewline\"}"
+)
+
 func TestAssignmentConfirmed(t *testing.T) {
 	tests := []struct {
 		name, engine, frame, assignment string
@@ -84,9 +99,20 @@ func TestAssignmentConfirmed(t *testing.T) {
 		{"codex empty composer", "codex", "frames/rw_codex_idle_empty.txt", "go", false},
 		{"codex dialog overlay", "codex", "frames/rw_codex_after_assignment_dialog_overlay.txt", "go", false},
 		{"codex historical text", "codex", "frames/rw_codex_historical_assignment_arbitrary.txt", "go", false},
+		{"codex historical row under an empty composer", "codex", "frames/rw_codex_historical_assignment_empty.txt", "go", false},
+		{"codex decoy footer", "codex", "frames/rw_codex_after_decoy_footer_assignment.txt", "go", false},
+		{"codex wrapped assignment", "codex", "frames/rw_codex_after_wrapped_assignment.txt", wrappedAssignment, true},
+		{"codex mismatched wrapped composer", "codex", "frames/rw_codex_after_mismatched_wrapped_assignment.txt", wrappedAssignment, false},
+		{"codex literal newline", "codex", "frames/rw_codex_after_literal_newline_assignment.txt", literalNewlineAssignment, false},
 		{"cursor typed", "cursor", "frames/rw_cursor_after_assignment.txt", "go", true},
 		{"cursor other text", "cursor", "frames/rw_cursor_after_assignment.txt", "stop", false},
 		{"cursor dialog overlay", "cursor", "frames/rw_cursor_after_assignment_dialog_overlay.txt", "go", false},
+		{"cursor historical text", "cursor", "frames/rw_cursor_historical_assignment_arbitrary.txt", "go", false},
+		{"cursor historical row under an empty composer", "cursor", "frames/rw_cursor_historical_assignment_empty.txt", "go", false},
+		{"cursor decoy footer", "cursor", "frames/rw_cursor_after_decoy_footer_assignment.txt", "go", false},
+		{"cursor wrapped assignment", "cursor", "frames/rw_cursor_after_wrapped_assignment.txt", wrappedAssignment, true},
+		{"cursor mismatched wrapped composer", "cursor", "frames/rw_cursor_after_mismatched_wrapped_assignment.txt", wrappedAssignment, false},
+		{"cursor literal newline", "cursor", "frames/rw_cursor_after_literal_newline_assignment.txt", literalNewlineAssignment, false},
 		{"claude own text", "claude", "frames/rw_claude_held.txt", "go", true},
 		{"claude dialog", "claude", "frames/rw_permission.txt", "go", false},
 		{"pi idle box", "pi", "frames/rw_pi_held.txt", "go", true},
@@ -117,6 +143,7 @@ func TestSubmitState(t *testing.T) {
 		{"claude held nbsp", "claude", "go", "", claudeBox("❯ Assignment: go  "), held},
 		{"claude pasted marker", "claude", "go", "", claudeBox("❯ [Pasted text #1 +3 lines]"), held},
 		{"claude human draft", "claude", "go", "frames/rw_claude_draft.txt", "", unknown},
+		{"claude draft that is a substring of the assignment", "claude", "go", "frames/rw_claude_substring_draft.txt", "", unknown},
 		{"claude row not a prefix", "claude", "go", "", claudeBox("❯ Assignment: stop"), unknown},
 		{"claude permission dialog", "claude", "go", "frames/rw_permission.txt", "", dialog},
 		{"claude option select", "claude", "go", "frames/rw_select.txt", "", dialog},
@@ -141,6 +168,11 @@ func TestSubmitState(t *testing.T) {
 		{"pi paste marker", "pi", "go", "frames/rw_pi_paste_marker.txt", "", held},
 		{"pi paste marker wrong length", "pi", "go", "frames/rw_pi_paste_marker_wrong.txt", "", unknown},
 		{"pi paste marker counts runes", "pi", "é", "", piBox("[paste #1 13 chars]"), held},
+		{"pi scrolled held", "pi", "go", "frames/rw_pi_scrolled_held.txt", "", held},
+		{"pi mid-scroll held", "pi", "go", "frames/rw_pi_midscroll_held.txt", "", held},
+		{"pi vim normal-mode held", "pi", "go", "frames/rw_pi_normal_held.txt", "", held},
+		{"pi vim empty box", "pi", "go", "frames/rw_pi_idle_vim.txt", "", submitted},
+		{"pi vim working row", "pi", "go", "frames/rw_pi_vim_live.txt", "", submitted},
 		{"pi human draft", "pi", "go", "", piBox("something else"), unknown},
 		{"pi unknown frame", "pi", "go", "frames/rw_unknown.txt", "", unknown},
 		{"unknown engine", "bogus", "go", "frames/rw_idle.txt", "", unknown},

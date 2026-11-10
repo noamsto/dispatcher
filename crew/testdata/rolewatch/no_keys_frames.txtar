@@ -1,0 +1,173 @@
+# Frames that are not an idle input box for their engine never receive keys:
+# the watcher keeps capturing (at least twice) and types nothing. The frames are
+# the shared classifier fixtures, so each engine/frame pair here is the one the
+# classifier tables use.
+exec git init -q
+mkdir .git/crew
+mkdir tmux/frames
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# claude rw_select.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_select.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# claude rw_quota.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_quota.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# claude rw_live.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_live.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# claude rw_unknown.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_unknown.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# cursor rw_cursor_monthly_limit.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_cursor_monthly_limit.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# pi rw_select.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_select.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# pi rw_shell.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_shell.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# codex rw_codex_boot_update.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_codex_boot_update.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# codex rw_codex_idle_unsent.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_codex_idle_unsent.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# codex rw_codex_live_turn.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_codex_live_turn.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# codex rw_codex_folder_trust_dialog.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_codex_folder_trust_dialog.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# codex rw_codex_approval_probe.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_codex_approval_probe.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# cursor rw_cursor_idle_unsent.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_cursor_idle_unsent.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# cursor rw_cursor_live_turn.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_cursor_live_turn.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# cursor rw_cursor_ask_dialog.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_cursor_ask_dialog.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# cursor rw_cursor_ask_hook_settled.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_cursor_ask_hook_settled.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+# mystery rw_pi_idle.txt
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine mystery --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=4

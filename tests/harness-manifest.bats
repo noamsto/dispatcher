@@ -17,7 +17,6 @@ setup() {
 
   printf '#!/usr/bin/env bats\n\n@test "alpha one" {\n  true\n}\n' >"$REPO/tests/refresh-models.bats"
   printf '#!/usr/bin/env bats\n\n@test "beta one" {\n  true\n}\n' >"$REPO/tests/pr-watch.bats"
-  : >"$REPO/tests/dispatch.bats"
 
   bash "$REPO/scripts/harness-manifest.sh"
 }

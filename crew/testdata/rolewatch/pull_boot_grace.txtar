@@ -1,0 +1,56 @@
+# Pull-role deferral windows. A still-booting pull role (never announced) gets 5x
+# --defer-notice before the lead hears of the assignment: with --defer-notice 3
+# (a 15s grace, one virtual second per tick) a 10-tick run reports nothing. A
+# final release (`{"final":true}`) is never queued, so it is never deferred even
+# past the grace. The control run, a plain assignment, is deferred once, naming
+# the boot.
+exec git init -q
+mkdir .git/crew
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# still inside the boot grace
+cp events.jsonl .git/crew/events.jsonl
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2 --defer-notice 3
+! stderr .
+! grep 'assignment_deferred' .git/crew/events.jsonl
+! grep '^(capture-pane|send-keys|load-buffer|paste-buffer)' tmux.log
+
+# a final release is never queued, long past the grace
+rm tmux.log tmux/n.alive
+cp state-long tmux/state
+cp events-final.jsonl .git/crew/events.jsonl
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2 --defer-notice 1
+! stderr .
+! grep 'assignment_deferred' .git/crew/events.jsonl
+
+# control: the same run with a plain assignment is deferred once, past the grace
+rm tmux.log tmux/n.alive
+cp events.jsonl .git/crew/events.jsonl
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2 --defer-notice 1
+! stderr .
+grep -count=1 'assignment_deferred' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_deferred.*\\"delivery\\":\\"pull\\"' .git/crew/events.jsonl
+grep 'has not announced itself \(still booting, or never started\)' .git/crew/events.jsonl
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"plan the seam"}
+-- events-final.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"{\"final\":true}"}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+delivery=pull
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=10
+-- state-long --
+role=reviewer
+window=@1
+delivery=pull
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14

@@ -1,0 +1,30 @@
+# An idle-looking box under an `esc to interrupt` turn line is a live turn: the
+# watcher keeps capturing it tick after tick and never sends a key or a paste.
+exec git init -q
+mkdir .git/crew
+cp events.jsonl .git/crew/events.jsonl
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+! grep 'assignment_orphaned' .git/crew/events.jsonl
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=6
+-- tmux/frames/1 --
+✻ Working (2s · esc to interrupt)
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents

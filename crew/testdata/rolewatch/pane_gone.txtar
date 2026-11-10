@@ -1,0 +1,52 @@
+# #720: the watcher ends when display-message prints nothing for the pane id
+# (the pane is gone) — before the first tick, or mid-run — and issues nothing
+# after that read. The fake answers an empty #{pane_id} once it has been read
+# `lifetime` times.
+exec git init -q
+mkdir .git/crew
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# gone before the first tick
+mkdir tmux/frames
+cp state.1 tmux/state
+cp events.1 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^display-message -p -t %6 #\{pane_id\}$' tmux.log
+! grep '^(capture-pane|send-keys|load-buffer|paste-buffer)' tmux.log
+
+# gone mid-run
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.2 tmux/state
+cp events.2 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=4 '^display-message -p -t %6 #\{pane_id\}$' tmux.log
+grep '#\{pane_id\}\n\z' tmux.log
+
+-- clock.base --
+1000
+-- state.1 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=0
+-- events.1 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.2 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=3
+-- events.2 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}

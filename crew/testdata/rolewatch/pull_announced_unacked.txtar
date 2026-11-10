@@ -1,0 +1,29 @@
+# An assignment queued before the role announces itself waits out the boot
+# grace; once the role announces (a `working` status appended mid-run) the
+# deferral clock restarts at the plain --defer-notice and the lead worker hears
+# once that it has not acked, not that it never announced.
+exec git init -q
+mkdir .git/crew
+cp events.jsonl .git/crew/events.jsonl
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2 --defer-notice 2
+! stderr .
+grep -count=1 'assignment_deferred' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_deferred.*has not acked this one' .git/crew/events.jsonl
+! grep 'has not announced' .git/crew/events.jsonl
+! grep '^(capture-pane|send-keys|load-buffer|paste-buffer)' tmux.log
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"plan the seam"}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+delivery=pull
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=16
+-- tmux/append-alive-5 --
+{"ts":10000000000001,"crew_id":"c1","kind":"status","from":"role:feat/9-x:reviewer","to":"dispatcher:c1","body":{"state":"working"}}

@@ -155,8 +155,8 @@ func checkRegistryParity(t *testing.T, cases []testCase) {
 		}
 		wantAssertions[fields[0]][fields[1]] = true
 	}
-	if len(cases) != 38 || len(wantCases) != 38 {
-		t.Fatalf("registry has %d cases and manifest has %d; want 38 each", len(cases), len(wantCases))
+	if len(cases) != 33 || len(wantCases) != 33 {
+		t.Fatalf("registry has %d cases and manifest has %d; want 33 each", len(cases), len(wantCases))
 	}
 	seenCases := make(map[string]bool)
 	for _, tc := range cases {
@@ -948,10 +948,5 @@ func manifestCases() []testCase {
 		{"pr-watch-crew-pr-watch-posts-nothing-when-the-park-times-out", ids("pw-crew-timeout-seed-status", "pw-crew-timeout-seed-empty-stdout", "pw-crew-timeout-seed-timeout-stderr", "pw-crew-timeout-status", "pw-crew-timeout-empty-stdout", "pw-crew-timeout-no-bus-row"), prCase("crew-timeout")},
 		{"pr-watch-crew-pr-watch-exits-with-the-child-s-status-and-posts-nothing", ids("pw-crew-child-status", "pw-crew-child-stderr", "pw-crew-child-no-partial-stdout", "pw-crew-child-no-bus-row"), prCase("crew-child-fail")},
 		{"pr-watch-default-clock-a-1s-park-really-waits", ids("pw-default-clock-status", "pw-default-clock-timeout-stderr", "pw-default-clock-elapsed"), prCase("default-clock")},
-		{"role-watch-role-watch-a-permission-dialog-receives-no-keys-until-it-clears-then-the-assignment-lands-once", ids("rw-dialog-clear-no-sends", "rw-dialog-clear-one-send"), roleWatchCase("dialog-clear")},
-		{"role-watch-role-watch-option-select-quota-live-turn-and-unrecognised-claude-frames-defer", ids("rw-defer-frames-captured"), roleWatchCase("defer-frames")},
-		{"role-watch-role-watch-an-idle-claude-input-box-receives-the-assignment", ids("rw-idle-deliver-one-send"), roleWatchCase("idle")},
-		{"role-watch-role-watch-queued-assignments-go-out-one-per-tick-in-order", ids("rw-queue-order-first-send", "rw-queue-order-second-once", "rw-queue-order-ordering"), roleWatchCase("queue")},
-		{"role-watch-role-watch-a-dialog-raised-after-the-text-is-typed-is-never-confirmed", ids("rw-late-dialog-sends-two", "rw-late-dialog-single-enter"), roleWatchCase("late-dialog")},
 	}
 }

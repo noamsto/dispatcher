@@ -69,7 +69,6 @@ tests/dispatch.bats	pi lead	!timing	7820
 tests/dispatch.bats	protocol-dirs record	!timing	10096
 tests/dispatch.bats	prune	!timing	23502
 tests/dispatch.bats	resume	!timing	66883
-tests/dispatch.bats	role-watch	!timing	470578
 tests/dispatch.bats	roles.json	!timing	11418
 tests/dispatch.bats	session	!timing	20612
 tests/dispatch.bats	single-engine fallback	!timing	6794

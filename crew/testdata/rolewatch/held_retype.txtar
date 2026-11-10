@@ -1,0 +1,146 @@
+# #725: a held pi draft (the `↑ 2 more` editor shape) that stays swallowed past
+# the Enter budget is cleared and retyped once: C-u, a second paste, one more
+# Enter. If that submits, nothing escalates; if it stays swallowed the lead and
+# the dispatcher hear once and there is no third paste. A held codex draft has no
+# retype: its budget ends in the escalation alone. With --submit-retries 1 the
+# captures are 1 idle, 2 pasted, 3 retry, 4 budget spent (retype queued), 5
+# the retype's idle check, 6 its paste, 7 verify.
+exec git init -q
+mkdir .git/crew
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# a held pi draft is cleared and retyped once, then submitted
+mkdir tmux/frames
+cp state.1 tmux/state
+cp events.1 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+cp f.pi_held_scroll tmux/frames/2
+cp $FRAMES/rw_pi_live.txt tmux/frames/7
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2 --submit-retries 1
+! stderr .
+grep -count=2 '^load-buffer' tmux.log
+grep -count=2 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 C-u$' tmux.log
+grep -count=3 '^send-keys -t %6 Enter$' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+grep '(?s)paste-buffer.*C-u.*paste-buffer' tmux.log
+
+# a held pi draft that stays swallowed after the retype escalates once
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.2 tmux/state
+cp events.2 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+cp f.pi_held_scroll tmux/frames/2
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2 --submit-retries 1
+! stderr .
+grep -count=2 '^load-buffer' tmux.log
+grep -count=2 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 C-u$' tmux.log
+grep -count=4 '^send-keys -t %6 Enter$' tmux.log
+grep -count=2 'assignment_unsubmitted' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_unsubmitted.*after 1 Enter retries' .git/crew/events.jsonl
+grep '"to":"dispatcher:c1".*assignment_unsubmitted' .git/crew/events.jsonl
+
+# codex held exhaustion still escalates, without a retype
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.3 tmux/state
+cp events.3 .git/crew/events.jsonl
+cp clock.base clock
+cp f.codex_idle tmux/frames/1
+cp f.codex_held tmux/frames/2
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2 --submit-retries 1
+! stderr .
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+grep -count=2 '^send-keys -t %6 Enter$' tmux.log
+grep -count=2 'assignment_unsubmitted' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_unsubmitted.*after 1 Enter retries' .git/crew/events.jsonl
+grep '"to":"dispatcher:c1".*assignment_unsubmitted' .git/crew/events.jsonl
+
+-- clock.base --
+1000
+-- state.1 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=18
+-- events.1 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.pi_held_scroll --
+ pi v1.0.2
+───────────────── ↑ 2 more ──────────────────
+Assignment: go
+──────────────────────────────────────────────
+~/git/dispatcher
+0.0%/0 (auto)                                                unknown
+-- state.2 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=18
+-- events.2 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.3 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+-- events.3 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.codex_idle --
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to
+do
+  /model - choose what model and reasoning
+effort to use
+  /review - review any changes and find issues
+
+
+› Reply with exactly the word pong and nothing
+  else.
+
+
+• pong
+
+  Worked for 4s • 10:57 AM
+
+
+› Ask Codex to do anything
+
+  GPT-5.6-Luna low · /tmp/rw725-p… Vim: Insert
+  ? for shortcuts                      ⚠ 2 · f2
+-- f.codex_held --
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to
+do
+  /model - choose what model and reasoning
+effort to use
+  /review - review any changes and find issues
+
+
+› Reply with exactly the word pong and nothing
+  else.
+
+
+• pong
+
+  Worked for 4s • 10:57 AM
+
+
+› Assignment: go
+
+  GPT-5.6-Luna low · /tmp/rw725-p… Vim: Insert
+  ? for shortcuts                      ⚠ 2 · f2

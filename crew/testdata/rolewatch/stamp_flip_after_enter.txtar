@@ -3,11 +3,8 @@
 # retry Enter, finds it foreign and sends nothing: assignment_orphaned to the
 # sender and the dispatcher, then exit 0 on its own (the pane outlives the run).
 #
-# golden.log is the bash arm's tmux argv log for exactly this fake state.
-# Regenerate it (needs bash, jq and git on PATH):
-#   mkdir -p /tmp/g; ROLEWATCH_GOLDEN_DIR=/tmp/g go test -run TestRoleWatchDifferential .
-# then replace the golden.log section below with /tmp/g/stamp_flip_after_enter.log.
-# TestRoleWatchDifferential also diffs the arm against crew role-watch live.
+# golden.log is the bash arm's tmux argv log for this fake state, frozen when
+# the arm was deleted.
 exec git init -q
 mkdir .git/crew
 cp events.jsonl .git/crew/events.jsonl

@@ -7,15 +7,6 @@ readonly manifest=tests/harness/manifest.tsv
 readonly files=(
   tests/refresh-models.bats
   tests/pr-watch.bats
-  tests/dispatch.bats
-)
-
-# Optional per-file ERE limiting which tests enter the sample (empty = whole
-# file). dispatch.bats is 785 tests; only this role-watch slice is sampled.
-# Quoted key: shfmt parses an unquoted subscript as arithmetic and chokes on
-# the dot in the filename.
-declare -A file_filter=(
-  ["tests/dispatch.bats"]='^role-watch: (a permission dialog receives no keys|option-select, quota|an idle claude input box|queued assignments go out|a dialog raised after the text)'
 )
 
 usage() {
@@ -31,20 +22,8 @@ esac
 (($# <= 1)) || usage
 
 generate() {
-  local filter_spec="" file
-  for file in "${!file_filter[@]}"; do
-    filter_spec+="$file"$'\t'"${file_filter[$file]}"$'\n'
-  done
   printf 'case_id\tsource_file\tsource_line\tfamily\ttest_name\ttags\n'
-  awk -v filter_spec="$filter_spec" '
-    BEGIN {
-      spec_count = split(filter_spec, pairs, "\n")
-      for (i = 1; i <= spec_count; i++) {
-        tab = index(pairs[i], "\t")
-        if (tab > 0) filters[substr(pairs[i], 1, tab - 1)] = substr(pairs[i], tab + 1)
-      }
-    }
-
+  awk '
     function slugify(value,    slug) {
       slug = tolower(value)
       gsub(/[^a-z0-9]+/, "-", slug)
@@ -59,14 +38,10 @@ generate() {
       } else if (FILENAME == "tests/pr-watch.bats") {
         family = "pr-watch"
         sample_tag = "slow"
-      } else if (FILENAME == "tests/dispatch.bats") {
-        family = "role-watch"
-        sample_tag = "slow"
       } else {
         printf "harness-manifest: unknown source file: %s\n", FILENAME > "/dev/stderr"
         exit 1
       }
-      filter = filters[FILENAME]
       file_tags = ""
       test_tags = ""
     }
@@ -96,11 +71,6 @@ generate() {
         exit 1
       }
 
-      if (filter != "" && name !~ filter) {
-        test_tags = ""
-        next
-      }
-
       case_id = family "-" slugify(name)
       tags = sample_tag
       if (file_tags != "") tags = tags "," file_tags
@@ -128,11 +98,7 @@ if ! awk -F '\t' '
 fi
 
 for file in "${files[@]}"; do
-  if [[ -n ${file_filter[$file]:-} ]]; then
-    source_count="$(bats --count --filter "${file_filter[$file]}" "$file")"
-  else
-    source_count="$(bats --count "$file")"
-  fi
+  source_count="$(bats --count "$file")"
   manifest_count="$(awk -F '\t' -v file="$file" 'NR > 1 && $2 == file { count++ } END { print count + 0 }' <<<"$generated")"
   if [[ $source_count != "$manifest_count" ]]; then
     echo "harness-manifest: $file has $source_count Bats cases but $manifest_count manifest rows" >&2

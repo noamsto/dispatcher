@@ -1,0 +1,89 @@
+# A paste taller than the pi editor scrolls it (`↑ N more` / `↓ N more` in the
+# rules): that is text, not a live turn, so the Enter is sent (nix-config#444)
+# and, when swallowed, retried.
+exec git init -q
+mkdir .git/crew
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# long paste, upper indicator only
+mkdir tmux/frames
+cp state.1 tmux/state
+cp events.1 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+cp $FRAMES/rw_pi_scrolled_held.txt tmux/frames/2
+cp $FRAMES/rw_pi_live.txt tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+grep '^3$' tmux/n.capture
+
+# paste scrolled mid-editor, upper and lower indicators
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.2 tmux/state
+cp events.2 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+cp $FRAMES/rw_pi_midscroll_held.txt tmux/frames/2
+cp $FRAMES/rw_pi_live.txt tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+grep '^3$' tmux/n.capture
+
+# swallowed Enter on a scrolled editor is retried
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.3 tmux/state
+cp events.3 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+cp $FRAMES/rw_pi_scrolled_held.txt tmux/frames/2
+cp $FRAMES/rw_pi_live.txt tmux/frames/4
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=2 '^send-keys -t %6 Enter$' tmux.log
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+grep '^4$' tmux/n.capture
+
+-- clock.base --
+1000
+-- state.1 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+-- events.1 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.2 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+-- events.2 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.3 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+-- events.3 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}

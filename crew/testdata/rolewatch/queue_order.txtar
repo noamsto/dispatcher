@@ -1,0 +1,66 @@
+# Queued assignments go out one per delivery, in order: the second is pasted
+# only after the first was typed, confirmed and entered, and each gets its own
+# Enter.
+exec git init -q
+mkdir .git/crew
+cp events.jsonl .git/crew/events.jsonl
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+cmp tmux/loads want.loads
+grep -count=2 '^paste-buffer' tmux.log
+grep -count=2 '^send-keys -t %6 Enter$' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+grep '(?s)paste-buffer.*send-keys -t %6 Enter.*paste-buffer.*send-keys -t %6 Enter' tmux.log
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"two"}
+-- clock --
+1000
+-- want.loads --
+1 Assignment: go
+4 Assignment: two
+-- tmux/state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+-- tmux/frames/1 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/2 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯ Assignment: go
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/3 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/4 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/5 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯ Assignment: two
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/6 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents

@@ -16,6 +16,10 @@ stderr '^dispatch: --role-watch: --interval must be a non-negative number, got f
 stderr '^dispatch: --role-watch: --defer-notice must be a non-negative integer, got 1.5$'
 ! exec crew role-watch reviewer --pane 6 --branch feat/9-x
 stderr '^dispatch: --role-watch: --pane must be a pane id \(%N\), got 6$'
+! exec crew role-watch reviewer --pane '@1.{bottom-right}' --branch feat/9-x --interval 1
+stderr '^dispatch: --role-watch: --pane must be a pane id \(%N\), got @1\.\{bottom-right\}$'
+! exec crew role-watch reviewer --pane %6 --engine '' --branch feat/9-x --interval 1
+stderr '^dispatch: --role-watch: --engine needs a value$'
 ! exec crew role-watch lead --pane %6 --branch feat/9-x
 stderr '^dispatch: --role-watch: role .lead. is never watched$'
 ! exec crew role-watch reviewer --bogus
@@ -32,6 +36,13 @@ cp state.role tmux/state
 ! exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
 stderr '^dispatch: --role-watch: pane %6''s @crew_role \(planner\) does not match --role reviewer$'
 grep -count=1 '^display-message -p -t %6 #\{@crew_role\}\|#\{window_id\}\|#\{@crew_delivery\}$' tmux.log
+! grep '^(set-option|send-keys|load-buffer|paste-buffer|capture-pane|show-options)' tmux.log
+
+# F22: the pane is the lead's.
+rm tmux.log
+cp state.lead tmux/state
+! exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+stderr '^dispatch: --role-watch: pane %6''s @crew_role \(lead\) does not match --role reviewer$'
 ! grep '^(set-option|send-keys|load-buffer|paste-buffer|capture-pane|show-options)' tmux.log
 
 # F22: the window carries another branch.
@@ -64,6 +75,11 @@ branch=feat/9-x
 crew=c1
 -- state.role --
 role=planner
+window=@1
+branch=feat/9-x
+crew=c1
+-- state.lead --
+role=lead
 window=@1
 branch=feat/9-x
 crew=c1
