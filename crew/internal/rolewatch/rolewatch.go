@@ -84,7 +84,7 @@ func Run(ctx context.Context, req Request, o Options) int {
 		return 0
 	}
 	if r != nil {
-		fmt.Fprintln(o.Stderr, r.line)
+		_, _ = fmt.Fprintln(o.Stderr, r.line)
 		return r.code
 	}
 	return w.loop()

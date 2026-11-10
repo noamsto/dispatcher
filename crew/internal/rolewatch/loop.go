@@ -307,7 +307,7 @@ func (w *watcher) verify() bool {
 		case !w.escalated:
 			w.escalate(detailStillInBox(w.submitRetries))
 		}
-	default:
+	case unknown:
 		// A pane squeezed to a sliver renders no known frame: restore its width
 		// and re-sample before counting the tick against the assignment.
 		if w.reguardWidth() {

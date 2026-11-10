@@ -72,21 +72,21 @@ func fakeTmuxRun(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	line := reAssignBuffer.ReplaceAllString(strings.Join(args, " "), "rw-assign-N")
 	f, err := os.OpenFile(os.Getenv("FAKE_TMUX_LOG"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		fmt.Fprintln(stderr, "fake tmux:", err)
+		_, _ = fmt.Fprintln(stderr, "fake tmux:", err)
 		return 2
 	}
-	fmt.Fprintln(f, line)
-	f.Close()
+	_, _ = fmt.Fprintln(f, line)
+	_ = f.Close()
 
 	ft := &fakeTmuxState{dir: dir, kv: map[string]string{}}
 	ft.load()
 	out, ok := ft.answer(args, stdin)
 	if !ok {
-		fmt.Fprintf(stderr, "fake tmux: unsupported argv: %s\n", line)
+		_, _ = fmt.Fprintf(stderr, "fake tmux: unsupported argv: %s\n", line)
 		return 1
 	}
 	if out != "" {
-		fmt.Fprintln(stdout, out)
+		_, _ = fmt.Fprintln(stdout, out)
 	}
 	return 0
 }
@@ -132,7 +132,7 @@ func (s *fakeTmuxState) event(ev string) int {
 	if rows, err := os.ReadFile(filepath.Join(s.dir, fmt.Sprintf("append-%s-%d", ev, n))); err == nil {
 		if f, err := os.OpenFile(".git/crew/events.jsonl", os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
 			_, _ = f.Write(rows)
-			f.Close()
+			_ = f.Close()
 		}
 	}
 	return n

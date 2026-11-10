@@ -30,7 +30,7 @@ func (w *watcher) reguardWidth() bool {
 	before := w.tmux("display-message", "-p", "-t", w.win, "#{window_layout}")
 	w.guardRoleWidth()
 	after := w.tmux("display-message", "-p", "-t", w.win, "#{window_layout}")
-	fmt.Fprintf(w.o.Stderr, "role-watch: pane %s was %s cols (min %s) mid-run — re-guarded window %s (attempt %d/%d): layout %s -> %s\n",
+	_, _ = fmt.Fprintf(w.o.Stderr, "role-watch: pane %s was %s cols (min %s) mid-run — re-guarded window %s (attempt %d/%d): layout %s -> %s\n",
 		w.pane, width, minCols, w.win, w.reguardTries, reguardMax, before, after)
 	return true
 }
@@ -58,7 +58,7 @@ func (w *watcher) guardRoleWidth() {
 		}
 		if atoi(width) < atoi(minCols) {
 			layout := w.tmux("display-message", "-p", "-t", w.win, "#{window_layout}")
-			fmt.Fprintf(w.o.Stderr, "dispatch: role pane %s is %s cols (min %s) after refit — window_layout=%s; applying main-vertical fallback\n",
+			_, _ = fmt.Fprintf(w.o.Stderr, "dispatch: role pane %s is %s cols (min %s) after refit — window_layout=%s; applying main-vertical fallback\n",
 				pane, width, minCols, layout)
 			w.layoutGrid()
 			return
