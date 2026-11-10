@@ -136,6 +136,29 @@ func TestCheckIsTheArmInItsOrder(t *testing.T) {
 		{name: "quiet overflows", req: Request{Crew: "c1", Quiet: "99999999999999999999"},
 			msg: errQuiet, code: exitUsage},
 		{name: "quiet negative", req: Request{Crew: "c1", Quiet: "-1"}, msg: errQuiet, code: exitUsage},
+		{name: "legend defaults to counts", req: Request{Crew: "c1"},
+			check: func(t *testing.T, c call) {
+				if c.legend != legendCounts {
+					t.Errorf("legend = %q, want counts", c.legend)
+				}
+			}},
+		{name: "legend full", req: Request{Crew: "c1", Legend: "full"},
+			check: func(t *testing.T, c call) {
+				if c.legend != legendFull {
+					t.Errorf("legend = %q, want full", c.legend)
+				}
+			}},
+		{name: "legend none", req: Request{Crew: "c1", Legend: "none"},
+			check: func(t *testing.T, c call) {
+				if c.legend != legendNone {
+					t.Errorf("legend = %q, want none", c.legend)
+				}
+			}},
+		{name: "legend unknown", req: Request{Crew: "c1", Legend: "all"}, msg: errLegend, code: exitUsage},
+		{name: "legend is case sensitive", req: Request{Crew: "c1", Legend: "Full"}, msg: errLegend, code: exitUsage},
+		// The legend follows the quiet window and precedes the crew checks.
+		{name: "bad quiet beats bad legend", req: Request{Crew: "c1", Quiet: "-1", Legend: "all"}, msg: errQuiet, code: exitUsage},
+		{name: "bad legend beats no crew", req: Request{Legend: "all"}, msg: errLegend, code: exitUsage},
 		{name: "no crew", req: Request{Interval: "3"}, msg: errCrewRequired, code: exitUsage},
 		{name: "once and detach", req: Request{Crew: "c1", Once: true, Detach: true}, msg: errOnceDetach, code: exitUsage},
 		// The crew id check is the arm's last, after once/detach.

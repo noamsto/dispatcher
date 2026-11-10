@@ -880,7 +880,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 	if sub == "roster-render" {
 		rr := parsed.typed.RosterRender
 		req := rosterrender.Request{
-			Crew: str(rr.Crew), Pane: str(rr.Pane), Interval: str(rr.Interval), Quiet: str(rr.Quiet),
+			Crew: str(rr.Crew), Pane: str(rr.Pane), Interval: str(rr.Interval), Quiet: str(rr.Quiet), Legend: str(rr.Legend),
 			NoOpen: rr.NoOpen, Once: rr.Once, Detach: rr.Detach,
 			Map: rr.Map, Px: str(rr.Px), Select: str(rr.Select), SelectRepo: str(rr.SelectRepo), Out: str(rr.Out),
 		}

@@ -39,9 +39,11 @@ const (
 	canvasPad = 24.0
 	legendH   = 74.0
 
-	// legendRowH is the height of the marker row the legend gains when any
-	// marker or wedge is drawn.
-	legendRowH = 20.0
+	// legendRowH is the height of the marker row the full legend gains when any
+	// marker or wedge is drawn. The counts legend is one such row on top of the
+	// padding the full legend's height already holds.
+	legendRowH    = 20.0
+	legendCountsH = legendH - 2*legendRowH
 
 	// planetPenwidth is every node's ring width; a blocked planet's is heavier.
 	// The map's hit radius includes half of it.
@@ -183,7 +185,7 @@ func stmt(b *strings.Builder, head string, attrs ...string) {
 	b.WriteString(";\n")
 }
 
-func renderDOT(sc scene, lg legend) string { return buildDOT(sc, &lg, "", "") }
+func renderDOT(sc scene, lg legend, mode legendMode) string { return buildDOT(sc, &lg, mode, "", "") }
 
 // labelWidth bounds the drawn width of a plaintext label node.
 func labelWidth(text string) float64 {
@@ -249,8 +251,13 @@ func markerRow(lg legend) bool {
 }
 
 // legendHeight is what the legend adds under the canvas.
-func legendHeight(lg legend) float64 {
-	if markerRow(lg) {
+func legendHeight(lg legend, mode legendMode) float64 {
+	switch {
+	case mode == legendNone:
+		return 0
+	case mode == legendCounts:
+		return legendCountsH
+	case markerRow(lg):
 		return legendH + 2*legendRowH
 	}
 	return legendH + legendRowH
@@ -285,8 +292,9 @@ func stripText(lg legend) string {
 // A nil legend is the map: no graph label, so the corners are the canvas and
 // the layout's coordinates map onto it by a constant offset, and a ring around
 // the planet sel names, when there is one. A selRepo narrows it to that repo's
-// wedge; empty rings the branch in every repo.
-func buildDOT(sc scene, lg *legend, sel, selRepo string) string {
+// wedge; empty rings the branch in every repo. Otherwise mode picks how much of
+// the legend is drawn, and the corners pre-pay exactly that.
+func buildDOT(sc scene, lg *legend, mode legendMode, sel, selRepo string) string {
 	var b strings.Builder
 	b.WriteString("digraph roster {\n")
 	b.WriteString("  layout=neato; splines=false; outputorder=edgesfirst; pad=0.2; labelloc=b;\n")
@@ -300,7 +308,7 @@ func buildDOT(sc scene, lg *legend, sel, selRepo string) string {
 	if lg == nil {
 		halfX, halfY = mapHalf(sc)
 	} else {
-		halfX, halfY = half+legendHeight(*lg)/2, half
+		halfX, halfY = half+legendHeight(*lg, mode)/2, half
 	}
 	for i, c := range [4][2]float64{{-halfX, halfY}, {halfX, halfY}, {-halfX, -halfY}, {halfX, -halfY}} {
 		stmt(&b, "c"+strconv.Itoa(i+1), `label=""`, "style=invis", "shape=point", "width=0", pos(c[0], c[1]))
@@ -397,8 +405,8 @@ func buildDOT(sc scene, lg *legend, sel, selRepo string) string {
 		d := p.size + 2*selectGap/72
 		stmt(&b, id, `label=""`, "style=solid", num("width", d), num("height", d), pos(p.x, p.y), str("color", colSun))
 	}
-	if lg != nil {
-		b.WriteString("  label=<" + legendHTML(*lg) + ">;\n")
+	if lg != nil && mode != legendNone {
+		b.WriteString("  label=<" + legendHTML(*lg, mode) + ">;\n")
 	}
 	b.WriteString("}\n")
 	return b.String()
@@ -462,8 +470,9 @@ func planetAttrs(p placed, pulse bool) []string {
 }
 
 // legendHTML is the graph label: the state counts, each key a dot in the
-// state's own colour, then the fixed keys. It holds fixed text and integers only.
-func legendHTML(lg legend) string {
+// state's own colour, then in full mode the fixed keys, which counts mode leaves
+// to the legend file. It holds fixed text and integers only.
+func legendHTML(lg legend, mode legendMode) string {
 	key := func(col, text string) string { return `<font color="` + col + `">●</font> ` + text }
 	count := func(name string, n int) string { return name + " " + strconv.Itoa(n) }
 	keys := []string{
@@ -478,6 +487,14 @@ func legendHTML(lg legend) string {
 	if lg.holds > 0 {
 		keys = append(keys, key(colHolds, count("holds", lg.holds)))
 	}
+	const gap = "&nbsp;&nbsp;&nbsp;&nbsp;"
+	var b strings.Builder
+	b.WriteString(`<table border="0" cellborder="0" cellspacing="0" cellpadding="4">` + "\n")
+	b.WriteString("    <tr><td>" + strings.Join(keys, gap) + "</td></tr>\n")
+	if mode == legendCounts {
+		b.WriteString("  </table>")
+		return b.String()
+	}
 	shapes := []string{
 		"size = tier",
 		`<font color="` + colEdge + `">●</font> small dot = role`,
@@ -487,10 +504,6 @@ func legendHTML(lg legend) string {
 		shapes = append(shapes, `<font color="`+colHolds+`">●</font> dashed outer dot = queued hold`)
 	}
 	stacked := `<font color="` + colPROpen + `">→</font> dashed arrow = stacked on`
-	const gap = "&nbsp;&nbsp;&nbsp;&nbsp;"
-	var b strings.Builder
-	b.WriteString(`<table border="0" cellborder="0" cellspacing="0" cellpadding="4">` + "\n")
-	b.WriteString("    <tr><td>" + strings.Join(keys, gap) + "</td></tr>\n")
 	b.WriteString("    <tr><td>" + strings.Join(shapes, gap) + "</td></tr>\n")
 	b.WriteString("    <tr><td>" + stacked + "</td></tr>\n")
 	if markerRow(lg) {

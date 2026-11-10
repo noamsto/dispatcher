@@ -354,7 +354,7 @@ func TestDetachRecordsThePaneAndLeavesADaemonOnTheLock(t *testing.T) {
 	if len(l.spawns) != 1 {
 		t.Fatalf("%d children, want 1", len(l.spawns))
 	}
-	want := strings.Join([]string{self, "roster-render", "--crew", "c1", "--interval", "2", "--quiet", "1800"}, " ")
+	want := strings.Join([]string{self, "roster-render", "--crew", "c1", "--interval", "2", "--quiet", "1800", "--legend", "counts"}, " ")
 	if got := strings.Join(l.spawns[0], " "); got != want {
 		t.Errorf("spawned %q, want %q", got, want)
 	}

@@ -128,7 +128,7 @@ func wedgeRoster() []repoWorker {
 func emitRepos(ws []repoWorker) (string, scene, legend) {
 	ps, lg := repoPlanets(ws)
 	_, sc := arrange(newSlotState(), ps)
-	return renderDOT(sc, lg), sc, lg
+	return renderDOT(sc, lg, legendFull), sc, lg
 }
 
 type dotCase struct {
@@ -161,7 +161,7 @@ func emit(m map[string]any) (string, scene, legend) {
 	ps, lg := buildPlanets(m, dotNow)
 	_, sc := arrange(newSlotState(), ps)
 	placeHolds(&sc, buildHolds(m))
-	return renderDOT(sc, lg), sc, lg
+	return renderDOT(sc, lg, legendFull), sc, lg
 }
 
 func TestDotGoldens(t *testing.T) {
@@ -1145,18 +1145,18 @@ func TestAnimatedSetsSkipStalePlanets(t *testing.T) {
 }
 
 func TestDotMarkerLegend(t *testing.T) {
-	rows := func(lg legend) int { return strings.Count(legendHTML(lg), "<tr>") }
+	rows := func(lg legend) int { return strings.Count(legendHTML(lg, legendFull), "<tr>") }
 	base := legend{working: 3, blocked: 1, prOpen: 2, done: 1, holds: 1, repos: 1}
 	if got := rows(base); got != 4 {
 		t.Errorf("a legend without markers has %d rows, want 4", got)
 	}
-	if legendHeight(base) != legendH+legendRowH || legendHeight(legend{}) != legendH+legendRowH {
-		t.Errorf("legendHeight = %v, want %v", legendHeight(base), legendH+legendRowH)
+	if legendHeight(base, legendFull) != legendH+legendRowH || legendHeight(legend{}, legendFull) != legendH+legendRowH {
+		t.Errorf("legendHeight = %v, want %v", legendHeight(base, legendFull), legendH+legendRowH)
 	}
 
 	extra := func(lg legend) string {
 		t.Helper()
-		_, row, ok := strings.Cut(legendHTML(lg), "stacked on</td></tr>\n    <tr><td>")
+		_, row, ok := strings.Cut(legendHTML(lg, legendFull), "stacked on</td></tr>\n    <tr><td>")
 		if !ok {
 			t.Fatalf("no marker row in %+v", lg)
 		}
@@ -1194,8 +1194,8 @@ func TestDotMarkerLegend(t *testing.T) {
 					t.Errorf("row names %q: %s", n, row)
 				}
 			}
-			if legendHeight(tc.lg) != legendH+2*legendRowH {
-				t.Errorf("legendHeight = %v, want %v", legendHeight(tc.lg), legendH+2*legendRowH)
+			if legendHeight(tc.lg, legendFull) != legendH+2*legendRowH {
+				t.Errorf("legendHeight = %v, want %v", legendHeight(tc.lg, legendFull), legendH+2*legendRowH)
 			}
 		})
 	}
@@ -1208,11 +1208,11 @@ func TestDotMarkerLegend(t *testing.T) {
 // height, so the picture stays square with the legend's extra row under it.
 func TestDotCanvasPaysTheMarkerRow(t *testing.T) {
 	out, sc, lg := emitRepos(wedgeRoster())
-	if legendHeight(lg) <= legendH+legendRowH {
+	if legendHeight(lg, legendFull) <= legendH+legendRowH {
 		t.Fatal("the wedges roster has no marker row")
 	}
 	x, _ := posOf(t, nodeLine(t, out, "c2"))
-	if want := sc.extent + canvasPad + legendHeight(lg)/2; math.Abs(x-want) > 0.01 {
+	if want := sc.extent + canvasPad + legendHeight(lg, legendFull)/2; math.Abs(x-want) > 0.01 {
 		t.Errorf("canvas half width = %v, want %v", x, want)
 	}
 }
@@ -1312,7 +1312,7 @@ func TestRenderedWedges(t *testing.T) {
 
 	// The map has no legend, so its viewBox is the corners plus the graph pad.
 	_, sc, _ := emitRepos(wedgeRoster())
-	svg := neatoSVG(t, neato, buildDOT(sc, nil, "", ""))
+	svg := neatoSVG(t, neato, buildDOT(sc, nil, legendNone, "", ""))
 	vbW, vbH, ok := viewBoxSize(svg)
 	if !ok {
 		t.Fatal("svg has no viewBox")
@@ -1323,5 +1323,68 @@ func TestRenderedWedges(t *testing.T) {
 	if math.Abs(padX-wantPad) > 0.6 || math.Abs(padY-wantPad) > 0.6 {
 		t.Errorf("viewBox %vx%v around corners %vx%v leaves pads %v, %v, want %v: something is drawn outside the corners",
 			vbW, vbH, 2*halfX, 2*halfY, padX, padY, wantPad)
+	}
+}
+
+// TestDotCountsLegendIsOneRow: counts mode keeps only the state counts, and the
+// canvas pays for exactly what each mode draws, so the picture stays square.
+func TestDotCountsLegendIsOneRow(t *testing.T) {
+	budget := 6
+	lg := legend{working: 3, blocked: 1, prOpen: 2, done: 1, failed: 1, holds: 1, repos: 3, waiting: 1, ci: 2, stale: 1,
+		weight: 4, budget: &budget, engines: []engineReading{{name: "claude"}}}
+	html := legendHTML(lg, legendCounts)
+	if got := strings.Count(html, "<tr>"); got != 1 {
+		t.Errorf("the counts legend has %d rows, want 1:\n%s", got, html)
+	}
+	for _, want := range []string{"working 3", "blocked 1", "pr open 2", "done 1", "failed 1", "holds 1",
+		`<font color="` + colWorking + `">●</font> working 3`, `<font color="` + colHolds + `">●</font> holds 1`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("the counts legend lacks %q:\n%s", want, html)
+		}
+	}
+	for _, key := range []string{"size = tier", "small dot", "hexagon", "stacked on", "queued hold", "wedge", "waiting",
+		"ci ", "no runner", "dim =", "crew weight", "fleet budget"} {
+		if strings.Contains(html, key) {
+			t.Errorf("the counts legend carries the key %q:\n%s", key, html)
+		}
+	}
+	if got := legendHeight(lg, legendCounts); got != legendCountsH || got >= legendHeight(legend{}, legendFull) {
+		t.Errorf("counts height = %v, want %v, under the full legend's", got, legendCountsH)
+	}
+	if got := legendHeight(lg, legendNone); got != 0 {
+		t.Errorf("no legend still pays %v", got)
+	}
+
+	_, sc := arrange(newSlotState(), []planet{wp("a", classWorking)})
+	for _, mode := range []legendMode{legendFull, legendCounts, legendNone} {
+		out := renderDOT(sc, lg, mode)
+		if want := mode != legendNone; strings.Contains(out, "label=<") != want {
+			t.Errorf("%s: graph label drawn = %v, want %v", mode, !want, want)
+		}
+		if mode == legendCounts && strings.Count(out, "<tr>") != 1 {
+			t.Errorf("the counts diagram has more than one legend row:\n%s", out)
+		}
+		x, y := posOf(t, nodeLine(t, out, "c2"))
+		if wantX, wantY := sc.extent+canvasPad+legendHeight(lg, mode)/2, sc.extent+canvasPad; math.Abs(x-wantX) > 0.01 || math.Abs(y-wantY) > 0.01 {
+			t.Errorf("%s: corner at %v,%v, want %v,%v", mode, x, y, wantX, wantY)
+		}
+	}
+}
+
+// TestRenderedLegendModesStaySquare: with the real neato, the legend a mode draws
+// fits the height the canvas pre-paid for it, so nothing is clipped and the
+// picture is square in every mode.
+func TestRenderedLegendModesStaySquare(t *testing.T) {
+	neato := neatoPath(t)
+	_, sc, lg := emitRepos(wedgeRoster())
+	for _, mode := range []legendMode{legendFull, legendCounts, legendNone} {
+		svg := neatoSVG(t, neato, renderDOT(sc, lg, mode))
+		w, h, ok := viewBoxSize(svg)
+		if !ok {
+			t.Fatalf("%s: svg has no viewBox", mode)
+		}
+		if math.Abs(w-h) > 0.05*math.Max(w, h) {
+			t.Errorf("%s: viewBox %vx%v is not square", mode, w, h)
+		}
 	}
 }

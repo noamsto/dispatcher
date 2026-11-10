@@ -260,8 +260,13 @@ func TestThePublishedFileIsTheSVGAndTheRecordsAreWritten(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 {
-		t.Errorf("the carousel directory holds %d files, want the svg alone", len(entries))
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	slices.Sort(names)
+	if want := slices.Sorted(slices.Values([]string{filepath.Base(l.diagramPath()), filepath.Base(l.legendPath())})); !slices.Equal(names, want) {
+		t.Errorf("the carousel directory holds %q, want the svg and its key alone: %q", names, want)
 	}
 	var s slotState
 	data, err := os.ReadFile(filepath.Join(l.cdir(), fileSlots))
@@ -625,7 +630,7 @@ func TestAFailingGraphvizKeepsTheOldPictureAndTheLiveCount(t *testing.T) {
 	l.graphvizErr = errors.New("neato: exit status 1: syntax error in line 3")
 	l.appendBus(t, statusEvent("worker:feat/1-a#s1", 1791361600000, "blocked", "", "", ""))
 	runs := l.graphvizCalls()
-	n, err := pass(t.Context(), l.opts, l.paths, l.cdir(), l.crew, true, nil)
+	n, err := pass(t.Context(), l.opts, l.paths, l.cdir(), l.crew, true, legendCounts, nil)
 	if err != nil {
 		t.Fatalf("a Graphviz failure is not a pass failure: %v", err)
 	}

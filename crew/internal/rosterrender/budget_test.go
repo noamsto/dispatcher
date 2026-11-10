@@ -186,7 +186,7 @@ func TestPassDrawsTheFleetBudgetStrip(t *testing.T) {
 	if err := os.MkdirAll(cdir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pass(t.Context(), l.opts, l.paths, cdir, l.crew, true, nil); err != nil {
+	if _, err := pass(t.Context(), l.opts, l.paths, cdir, l.crew, true, legendFull, nil); err != nil {
 		t.Fatal(err)
 	}
 	dot, err := os.ReadFile(filepath.Join(cdir, fileDot))

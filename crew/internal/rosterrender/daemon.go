@@ -77,7 +77,7 @@ func (o Options) daemon(ctx context.Context, paths bus.Paths, cdir string, c cal
 		if newSig != sig || now-lastBuild >= rebuildBackstop {
 			// A failed pass keeps the last live count rather than reading as
 			// drained: one malformed line must not retire the renderer.
-			got, err := pass(ctx, o, paths, cdir, c.crew, c.noOpen, roles)
+			got, err := pass(ctx, o, paths, cdir, c.crew, c.noOpen, c.legend, roles)
 			if err == nil {
 				live = got
 			} else {

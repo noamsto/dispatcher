@@ -13,6 +13,7 @@ import (
 const (
 	errInterval     = "crew: --interval must be a positive integer number of seconds"
 	errQuiet        = "crew: --quiet must be a non-negative integer number of seconds"
+	errLegend       = "crew: --legend must be full, counts or none"
 	errCrewRequired = "crew: roster-render: --crew is required"
 	errOnceDetach   = "crew: roster-render: --once and --detach are mutually exclusive"
 	errCrewID       = "crew: invalid crew id — expected only letters, digits, '.', '_' and '-'"
@@ -36,6 +37,20 @@ const (
 	defaultQuiet    = 1800
 )
 
+// legendMode is how much of the legend the diagram draws. The value is the
+// flag's own spelling, which is also what the daemon is handed.
+type legendMode string
+
+const (
+	// legendFull draws every key and the budget strip under the diagram.
+	legendFull legendMode = "full"
+	// legendCounts draws the state counts alone and keeps the full key in a
+	// file beside the diagram.
+	legendCounts legendMode = "counts"
+	// legendNone draws no legend.
+	legendNone legendMode = "none"
+)
+
 // call is one parsed invocation. intervalText and quietText stay the caller's
 // bytes as well as their values: they are what `--detach` and the build hop hand
 // the daemon, exactly as the arm passed "$rr_interval" and "$rr_quiet".
@@ -45,6 +60,7 @@ type call struct {
 	quietText    string
 	interval     int64
 	quiet        int64
+	legend       legendMode
 	pane         string
 	noOpen, once bool
 	detach       bool
@@ -59,16 +75,16 @@ type call struct {
 // Request is `crew roster-render`'s flags as the caller typed them. An empty
 // string is a flag never passed: a given-empty one is refused before it gets here.
 type Request struct {
-	Crew, Pane, Interval, Quiet string
-	NoOpen, Once, Detach        bool
+	Crew, Pane, Interval, Quiet, Legend string
+	NoOpen, Once, Detach                bool
 	// Map is the one-shot map render: Px is WxH, Out the PNG's path and Select
 	// the branch to ring, narrowed to the repo wedge SelectRepo when given.
 	Map                         bool
 	Px, Select, SelectRepo, Out string
 }
 
-// check is the arm's five refusals that follow its flag loop, in that order: a
-// bad interval beats a missing crew. msg is the stderr line and code its status
+// check is the arm's refusals that follow its flag loop, in that order: a
+// bad interval beats a missing crew, and a bad legend follows the quiet window. msg is the stderr line and code its status
 // when the arguments themselves fail.
 func check(r Request) (call, string, int) {
 	if r.Map {
@@ -98,6 +114,10 @@ func check(r Request) (call, string, int) {
 	if quiet, ok = positive(quietText); !ok {
 		return c, errQuiet, exitUsage
 	}
+	legend := legendMode(cmp.Or(r.Legend, string(legendCounts)))
+	if legend != legendFull && legend != legendCounts && legend != legendNone {
+		return c, errLegend, exitUsage
+	}
 	if c.crew == "" {
 		return c, errCrewRequired, exitUsage
 	}
@@ -109,7 +129,7 @@ func check(r Request) (call, string, int) {
 		return c, errCrewID, exitUsage
 	}
 
-	c.interval, c.quiet = interval, quiet
+	c.interval, c.quiet, c.legend = interval, quiet, legend
 	c.intervalText, c.quietText = strconv.FormatInt(interval, 10), strconv.FormatInt(quiet, 10)
 	return c, "", exitOK
 }
@@ -122,6 +142,7 @@ func checkMap(r Request) (call, string, int) {
 	}{
 		{"--once", r.Once}, {"--detach", r.Detach}, {"--pane", r.Pane != ""},
 		{"--no-open", r.NoOpen}, {"--interval", r.Interval != ""}, {"--quiet", r.Quiet != ""},
+		{"--legend", r.Legend != ""},
 	} {
 		if f.set {
 			return c, fmt.Sprintf(errMapConflict, f.name), exitUsage

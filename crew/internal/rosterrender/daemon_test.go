@@ -199,6 +199,9 @@ func (l *loop) diagramPath() string {
 	return target(l.paths.Common, l.crew, l.opts.RosterDir, l.opts.Clock.Now)
 }
 
+// legendPath is the full key's file beside the diagram, whether or not it exists.
+func (l *loop) legendPath() string { return legendTarget(l.diagramPath()) }
+
 // published is $CREW_ROSTER_DIR's file for this crew, read back as written: the
 // svg the Graphviz fake drew, which holds the dot text, finished.
 func (l *loop) published() string {
@@ -309,7 +312,7 @@ func (l *loop) runCtx(ctx context.Context, quiet string) int {
 	if err := os.MkdirAll(cdir, 0o755); err != nil {
 		l.t.Fatal(err)
 	}
-	daemon := []string{"--crew", "c1", "--interval", c.intervalText, "--quiet", c.quietText}
+	daemon := []string{"--crew", "c1", "--interval", c.intervalText, "--quiet", c.quietText, "--legend", string(c.legend)}
 	return l.opts.daemon(ctx, l.paths, cdir, c, daemon)
 }
 
@@ -424,7 +427,7 @@ func TestTheBuildHopCarriesTheFlagsTheCrewWasGiven(t *testing.T) {
 	l.opts.Probes.InstalledCrew = func(string) string { return mustReal(t, newer) }
 
 	// A live crew, so the loop is in no hurry to leave and hops on every pass.
-	if code, stderr := l.start(Request{Quiet: "5", NoOpen: true}); code != exitOK || !l.hitCeiling() {
+	if code, stderr := l.start(Request{Quiet: "5", NoOpen: true, Legend: "full"}); code != exitOK || !l.hitCeiling() {
 		t.Fatalf("exit=%d live=%v stderr=%s", code, l.hitCeiling(), stderr)
 	}
 	l.mu.Lock()
@@ -432,7 +435,7 @@ func TestTheBuildHopCarriesTheFlagsTheCrewWasGiven(t *testing.T) {
 	if len(l.hops) == 0 {
 		t.Fatal("a newer installed entry never made the daemon re-exec")
 	}
-	want := mustReal(t, newer) + " roster-render --crew c1 --interval 2 --quiet 5 --no-open"
+	want := mustReal(t, newer) + " roster-render --crew c1 --interval 2 --quiet 5 --legend full --no-open"
 	if got := strings.Join(l.hops[0].argv, " "); got != want {
 		t.Errorf("the build it exec'd ran %q, want %q", got, want)
 	}
@@ -744,7 +747,7 @@ func TestPassWritesOnlyWhenTheDiagramChanges(t *testing.T) {
 	file := func() string {
 		return target(l.paths.Common, "c1", l.opts.RosterDir, l.opts.Clock.Now)
 	}
-	if _, err := pass(context.Background(), l.opts, l.paths, cdir, "c1", true, nil); err != nil {
+	if _, err := pass(context.Background(), l.opts, l.paths, cdir, "c1", true, legendCounts, nil); err != nil {
 		t.Fatal(err)
 	}
 	first, err := os.ReadFile(file())
@@ -755,7 +758,7 @@ func TestPassWritesOnlyWhenTheDiagramChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pass(context.Background(), l.opts, l.paths, cdir, "c1", true, nil); err != nil {
+	if _, err := pass(context.Background(), l.opts, l.paths, cdir, "c1", true, legendCounts, nil); err != nil {
 		t.Fatal(err)
 	}
 	again, err := os.Stat(file())
