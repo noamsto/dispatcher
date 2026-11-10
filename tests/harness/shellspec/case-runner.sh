@@ -51,22 +51,7 @@ check_ge() {
   [[ $actual =~ ^[0-9]+$ && $actual -ge $expected ]] || fail "$id: expected >= $expected, got '$actual'"
 }
 
-check_lt() {
-  local id=$1 actual=$2 bound=$3
-  record "$id"
-  [[ $actual =~ ^[0-9]+$ && $bound =~ ^[0-9]+$ && $actual -lt $bound ]] ||
-    fail "$id: expected $actual < $bound"
-}
-
 # Bats assertions that assertions.tsv does not map. Checked, not recorded.
-expect_absent() {
-  local detail=$1
-  shift
-  if "$@"; then
-    fail "$detail"
-  fi
-}
-
 expect_present() {
   local detail=$1
   shift

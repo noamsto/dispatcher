@@ -346,7 +346,7 @@ Each phase is a separate PR. Tiers are proposed. The CI column uses the labels b
 - **K1** `nix flake check` (`.github/workflows/ci.yml:171`; includes `model-map-doc`, `flake.nix:388`)
 - **K2** `nix develop -c shellcheck adapters/core/*.sh adapters/core/reviewers/*.sh scripts/*.sh` (`.github/workflows/ci.yml:22`)
 - **K3** `nix develop -c sh -c 'cd crew && go vet ./... && golangci-lint run ./...'` (`.github/workflows/ci.yml:24`)
-- **K4** `nix develop -c sh -c 'cd crew && CREW_DRIFT_REQUIRED=1 go test ./... && CREW_DRIFT_REQUIRED=1 go test -count=1 -v -run "TestDriftAgainstBash|TestRowsMatchBash|TestGoldenOracle|TestPoolsAreGolden|TestEngineCommandsMatchLocalModels|TestBurnTableOracle|TestSweepCostIsWeightTimesWallClock|TestShReal|TestDashFixtureMatches" ./internal/frame ./internal/identity ./internal/roster ./internal/stall ./internal/stall/probe ./internal/rate ./internal/invisible'` (`.github/workflows/ci.yml:31`)
+- **K4** `nix develop -c sh -c 'cd crew && CREW_DRIFT_REQUIRED=1 go test ./... && CREW_DRIFT_REQUIRED=1 go test -count=1 -v -run "TestGoldenOracle|TestPoolsAreGolden|TestEngineCommandsMatchLocalModels|TestBurnTableOracle|TestSweepCostIsWeightTimesWallClock|TestShReal|TestDashFixtureMatches" ./internal/frame ./internal/identity ./internal/roster ./internal/stall/probe ./internal/rate ./internal/invisible'` (`.github/workflows/ci.yml:31`)
 - **K5** `nix develop -c ./scripts/gen-adapters.sh`, then `git diff --exit-code` (`.github/workflows/ci.yml:33-35`)
 - **K6** `nix develop -c bash scripts/bats-shard.sh --check` (`.github/workflows/ci.yml:40`)
 - **K7** `nix develop -c bash scripts/harness-manifest.sh --check` and `nix develop -c bash scripts/harness-inventory.sh --check` (`.github/workflows/ci.yml:47-49`)

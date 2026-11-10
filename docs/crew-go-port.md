@@ -259,8 +259,7 @@ output contract below), with each edit justified.
   is dispatch.sh's `--role-watch` one, the only bash copy that ships; the
   predicates with no bash copy (`_is_quota_prompt`, `_is_quota_session_limit`,
   `_pane_idle_reason`) are frozen in `testdata/golden-oracle.tsv`, and
-  `_is_bg_wait`, which shipped nowhere else either, keeps its pre-port body in
-  `testdata/is_bg_wait.bash` as the oracle.
+  `_is_bg_wait`, which shipped nowhere else either, is frozen there too.
 
 - `crew/internal/stall`: the `stall-watch` arm of #832. Go parses the arm's
   argv in its order (the five `crew: stall-watch…` lines and the
@@ -1052,7 +1051,7 @@ instead of compared, because there is nothing left to compare against.
 | `_bus_append`                                                                         | dispatch.sh, dispatch-notify.sh, dispatch-resume.sh (three standalone builds) | adapters.bats byte-compares the three, dispatch.sh first                                                                        |
 | `_is_engine_cmd`                                                                      | local-models.sh (the lib dispatch.sh sources), dispatch-notify.sh             | adapters.bats byte-compares the pair; `TestEngineCommandsMatchLocalModels` parses the case pattern into `roster.EngineCommands` |
 | `_pid_alive`, `_file_mtime_s`, `_ps_elapsed_s`, `_pid_recycled`, `_recorded_pid_live` | dispatch.sh, dispatch-resume.sh                                               | adapters.bats byte-compares all five                                                                                            |
-| the `--role-watch` frame predicates (`re_option` … `_pi_idle_box`, 20 of them)        | dispatch.sh — the only bash copy that ships                                   | `TestDriftAgainstBash` extracts the block and compares Go against it                                                            |
+| the `--role-watch` frame predicates (`re_option` … `_pi_idle_box`, 20 of them)        | nothing: the bash copy is gone, Go is the only implementation                 | `TestGoldenOracle` against `testdata/golden-oracle.tsv`                                                                         |
 | `_pane_idle_reason`, `_is_quota_prompt`, `_is_quota_session_limit`                    | nothing: no bash script carries them                                          | `TestGoldenOracle` against `testdata/golden-oracle.tsv`                                                                         |
 | `_names`, `_colors`, `_tmuxc`                                                         | nothing                                                                       | `TestPoolsAreGolden` against the frozen 32-entry lists                                                                          |
 | `_await_state`, `_await_marks`, `_await_record`                                       | nothing: every reader and writer is Go                                        | `marks.TestPath` / `TestPathMatchesShell` (real `tr`/`cksum`), `TestRecord` / `TestRecordMatchesJq`                             |

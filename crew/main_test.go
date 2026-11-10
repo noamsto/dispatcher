@@ -1881,6 +1881,7 @@ var preLocateRefusalRows = []struct {
 	{"role-watch unknown flag", []string{"role-watch", "reviewer", "--bogus"}, "dispatch: --role-watch: unexpected argument '--bogus'", 1},
 	{"role-watch extra positional", []string{"role-watch", "reviewer", "extra"}, "dispatch: --role-watch: unexpected argument 'extra'", 1},
 	{"role-watch trailing interval", []string{"role-watch", "reviewer", "--interval"}, "dispatch: --role-watch: --interval needs a value", 1},
+	{"role-watch empty engine", []string{"role-watch", "reviewer", "--pane", "%6", "--engine", ""}, "dispatch: --role-watch: --engine needs a value", 1},
 	{"role-watch trailing branch", []string{"role-watch", "reviewer", "--branch"}, "dispatch: --role-watch: --branch needs a value", 1},
 	{"fleet unknown flag", []string{"fleet", "--bogus"}, fleetUsage, 1},
 	{"fleet extra positional", []string{"fleet", "extra"}, fleetUsage, 1},
