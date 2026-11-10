@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -69,7 +70,8 @@ func TestACountsPassKeepsTheFullKeyBesideTheDiagram(t *testing.T) {
 }
 
 // TestFullAndNoneLegendsWriteNoKeyFile: only counts mode moves the key out of the
-// picture, and the other two leave a file already there alone.
+// picture; the other two write none and remove a regular key file an earlier run
+// left, but never follow a symlink at that path.
 func TestFullAndNoneLegendsWriteNoKeyFile(t *testing.T) {
 	for _, mode := range []string{"full", "none"} {
 		t.Run(mode, func(t *testing.T) {
@@ -84,15 +86,33 @@ func TestFullAndNoneLegendsWriteNoKeyFile(t *testing.T) {
 			if has := strings.Contains(l.dot(), "label=<"); has != (mode == "full") {
 				t.Errorf("--legend %s: graph label present = %v", mode, has)
 			}
-			if err := os.WriteFile(l.legendPath(), []byte("keep"), 0o644); err != nil {
+			if err := os.WriteFile(l.legendPath(), []byte("stale"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			l.appendBus(t, statusEvent("worker:feat/1-a#s1", 1791361600000, "blocked", "", "", ""))
 			if code, stderr := l.once(Request{Legend: mode}); code != exitOK {
 				t.Fatalf("code = %d, stderr %q", code, stderr)
 			}
-			if got, _ := os.ReadFile(l.legendPath()); string(got) != "keep" {
-				t.Errorf("--legend %s touched an existing key: %q", mode, got)
+			if _, err := os.Lstat(l.legendPath()); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("--legend %s left a stale key: %v", mode, err)
+			}
+
+			elsewhere := filepath.Join(t.TempDir(), "elsewhere.svg")
+			if err := os.WriteFile(elsewhere, []byte("keep"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(elsewhere, l.legendPath()); err != nil {
+				t.Fatal(err)
+			}
+			l.appendBus(t, statusEvent("worker:feat/1-a#s1", 1791361600001, "working", "", "", ""))
+			if code, stderr := l.once(Request{Legend: mode}); code != exitOK {
+				t.Fatalf("code = %d, stderr %q", code, stderr)
+			}
+			if st, err := os.Lstat(l.legendPath()); err != nil || st.Mode()&os.ModeSymlink == 0 {
+				t.Errorf("--legend %s removed a symlinked key: %v", mode, err)
+			}
+			if got, _ := os.ReadFile(elsewhere); string(got) != "keep" {
+				t.Errorf("--legend %s touched the symlink's target: %q", mode, got)
 			}
 		})
 	}

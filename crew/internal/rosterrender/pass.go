@@ -2,6 +2,7 @@ package rosterrender
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -205,9 +206,12 @@ func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, no
 // putLegend keeps the full key beside the diagram in counts mode, the only mode
 // that leaves it out of the picture. It writes only a changed key, because the
 // carousel watches the directory and a rewrite of identical bytes looks like news.
-// A refused put has already said so and never stops the pass.
+// Any other mode removes a key an earlier run of the same crew left behind, which
+// would otherwise sit frozen in the watched directory; only a regular file goes.
+// A refused put or remove has already said so and never stops the pass.
 func putLegend(o Options, diagram string, lg legend, mode legendMode) {
 	if mode != legendCounts {
+		dropLegend(o, legendTarget(diagram))
 		return
 	}
 	path, svg := legendTarget(diagram), legendSVG(lg)
@@ -215,6 +219,23 @@ func putLegend(o Options, diagram string, lg legend, mode legendMode) {
 		return
 	}
 	_ = put(path, svg, o.Stderr)
+}
+
+func dropLegend(o Options, path string) {
+	st, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		say(o.Stderr, "crew: roster-render: %v\n", err)
+		return
+	}
+	if !st.Mode().IsRegular() {
+		return
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		say(o.Stderr, "crew: roster-render: %v\n", err)
+	}
 }
 
 // busSize is the loop's `rr_size=0; [ ! -f "$log" ] || rr_size=$(wc -c <"$log")`:
