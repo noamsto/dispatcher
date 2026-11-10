@@ -10603,13 +10603,9 @@ ROWS
 }
 
 @test "grid: role panes spawn the engine-agnostic bus watcher" {
-  run grep -F -- '--role-watch' "$DISPATCH"
+  run grep -F -- 'nohup crew role-watch "$1"' "$DISPATCH"
   [ "$status" -eq 0 ]
   run grep -F -- 'watch_role' "$DISPATCH"
-  [ "$status" -eq 0 ]
-  run grep -F -- 'paste-buffer -p' "$DISPATCH"
-  [ "$status" -eq 0 ]
-  run grep -F -- 'load-buffer' "$DISPATCH"
   [ "$status" -eq 0 ]
   # The mechanism is the tmux watcher, not an engine extension.
   run grep -c 'crew-bus.ts' "$DISPATCH"

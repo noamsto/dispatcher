@@ -375,6 +375,9 @@ func runWatcher(t *testing.T, ar *txtar.Archive, bin, root string, prefix, args 
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("%v: %v\n%s", cmdline, err, stderr.String())
 	}
+	if _, err := os.Stat(filepath.Join(work, ".git/crew/role-watch-shim.log")); prefix != nil && err == nil {
+		t.Fatal("the bash arm ran through the shim: DISPATCH_ROLE_WATCH_BASH_ARM no longer selects it")
+	}
 	log, _ := os.ReadFile(filepath.Join(work, "tmux.log"))
 	return string(log), roleNotices(t, filepath.Join(work, ".git/crew/events.jsonl"))
 }
