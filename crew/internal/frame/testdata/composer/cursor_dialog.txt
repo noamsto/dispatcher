@@ -1,0 +1,24 @@
+
+  Cursor Agent
+  v2026.09.26-dd393fe
+  Tip: Use /debug to instrument and debug complex problems.
+
+
+  Before taking any action, ask me exactly one yes-or-no question using the question UI.
+
+
+  I'll ask one yes-or-no question before doing anything else.
+
+ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │ Clarifying Questions                                                                                               │
+ │                                                                                                                    │
+ │ Question 1 of 1                                                                                                    │
+ │                                                                                                                    │
+ │ 1. Should I proceed?                                                                                               │
+ │                                                                                                                    │
+ │   › [ ] Yes                                                                                                        │
+ │     [ ] No                                                                                                         │
+ │     [ ] Other: (type to answer)                                                                                    │
+ │                                                                                                                    │
+ │ ↑/↓ option · ←/→ question · Space select · Enter next/submit · Esc to skip                                         │
+ └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

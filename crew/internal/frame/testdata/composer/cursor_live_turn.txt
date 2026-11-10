@@ -1,0 +1,21 @@
+
+
+  Cursor Agent
+  v2026.09.26-dd393fe
+  Tip: Use /debug to instrument and debug complex problems.
+
+
+  Reply with exactly: CAPTURE_READY
+
+
+
+ ⠘⠤ Thinking  11 tokens
+    Tip: Use /debug to instrument and debug complex problems.
+
+
+  → Add a follow-up                                                                                     ctrl+c to stop
+
+
+  Grok 4.7 256K High                                                                       Run Everything -- INSERT --
+  ~/Data/git/noamsto/dispatcher/.git/crew/artifacts/feat/488-role-watch-capture-codex-and-cursor-idle/captures/cursor/s
+  cratch-repo · main
