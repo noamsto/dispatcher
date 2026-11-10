@@ -620,7 +620,7 @@ mirror_dispatch() {
   }
   [ "$(local_dispatch_rows | wc -l)" -eq 1 ]
   local_dispatch_rows | jq -e --arg s "$session" '.session == $s and .host == "mini" and .remote == true'
-  grep -qxF 'mini crew-c1 --into main --window @crew_id=c1' "$OG_LOG"
+  grep -qxF 'mini crew-c1 --into main' "$OG_LOG"
 
   # A second run is a no-op: still one row.
   DISPATCH_HOST_RECOVER_TRIES=2 DISPATCH_HOST_RECOVER_SLEEP=0 \
@@ -702,5 +702,5 @@ mirror_dispatch() {
     echo "$stderr" >&2
     false
   }
-  grep -qxF 'mini crew-c1 --into main --window @crew_id=c1' "$OG_LOG"
+  grep -qxF 'mini crew-c1 --into main' "$OG_LOG"
 }
