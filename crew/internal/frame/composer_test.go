@@ -10,7 +10,7 @@ import (
 
 func composerFixture(t *testing.T, name string) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("testdata", "composer", name+".txt"))
+	b, err := os.ReadFile(filepath.Join("testdata", "frames", "rw_"+name+".txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestCodexComposer(t *testing.T) {
 		{"expected holds a newline", assigned, "Assignment: x\ny", false},
 		{"live turn", composerFixture(t, "codex_live_turn"), "Ask Codex to do anything", false},
 		{"esc to interrupt alone vetoes", empty + "\nesc to interrupt", "Ask Codex to do anything", false},
-		{"dialog", composerFixture(t, "codex_dialog"), "Ask Codex to do anything", false},
+		{"dialog", composerFixture(t, "codex_folder_trust_dialog"), "Ask Codex to do anything", false},
 		{"unsent draft", unsent, "Ask Codex to do anything", false},
 		{"two footers", empty + "\n" + footer + "\n" + status, "Ask Codex to do anything", false},
 		{"footer-like line not terminating", empty + "\n  Dialog overlay: Enter to confirm", "Ask Codex to do anything", false},
@@ -75,8 +75,8 @@ func TestCodexIdleBox(t *testing.T) {
 		{"unsent draft", composerFixture(t, "codex_idle_unsent"), false},
 		{"assignment", strings.Replace(empty, "Ask Codex to do anything", "Assignment: x", 1), false},
 		{"live turn", composerFixture(t, "codex_live_turn"), false},
-		{"dialog", composerFixture(t, "codex_dialog"), false},
-		{"boot frame", composerFixture(t, "codex_dialog"), false},
+		{"dialog", composerFixture(t, "codex_folder_trust_dialog"), false},
+		{"boot frame", composerFixture(t, "codex_boot_update"), false},
 		{"working marker", strings.Replace(empty, "Tip: Use /title", "• Working (2s)\nTip: Use /title", 1), false},
 	}
 	for _, tc := range tests {
@@ -109,7 +109,7 @@ func TestCursorComposer(t *testing.T) {
 		{"wrapped composer mismatch", strings.Replace(wrapped, "intentionally ", "different ", 1), "Assignment: " + wrappedHead + wrappedTail, false},
 		{"expected holds a newline", assigned, "Assignment: x\ny", false},
 		{"live turn", composerFixture(t, "cursor_live_turn"), "Add a follow-up", false},
-		{"dialog", composerFixture(t, "cursor_dialog"), "Plan, search, build anything", false},
+		{"dialog", composerFixture(t, "cursor_ask_dialog"), "Plan, search, build anything", false},
 		{"two footers", empty + "\n" + footer, "Plan, search, build anything", false},
 		{"missing version row", strings.Replace(empty, "  v2026.09.26-dd393fe\n", "", 1), "Plan, search, build anything", false},
 		{"unknown status row", empty + "\n  something unexpected here", "Plan, search, build anything", false},
@@ -142,7 +142,7 @@ func TestCursorIdleBox(t *testing.T) {
 		{"unsent draft", composerFixture(t, "cursor_idle_unsent"), false},
 		{"assignment", strings.Replace(empty, "Plan, search, build anything", "Assignment: x", 1), false},
 		{"live turn", composerFixture(t, "cursor_live_turn"), false},
-		{"dialog", composerFixture(t, "cursor_dialog"), false},
+		{"dialog", composerFixture(t, "cursor_ask_dialog"), false},
 		{"boot frame", "\n  Cursor Agent\n  v2026.09.26-dd393fe", false},
 	}
 	for _, tc := range tests {

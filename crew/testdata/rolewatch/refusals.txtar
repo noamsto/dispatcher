@@ -1,4 +1,4 @@
-# Every startup refusal exits 1 with its one stderr line. The grammar ones
+# Every startup refusal exits 1 (128 for git failures) with its one stderr line. The grammar ones
 # refuse before the first tmux call; the two F22 stamp checks read the pane's
 # stamps and write nothing.
 exec git init -q
@@ -41,6 +41,21 @@ cp state.branch tmux/state
 stderr '^dispatch: --role-watch: window @1''s @crew_branch \(feat/other\) does not match --branch feat/9-x$'
 ! grep '^(set-option|send-keys|load-buffer|paste-buffer|capture-pane)' tmux.log
 
+# Outside a git repo the bus cannot be located: exit 128 before any state write.
+rm tmux.log
+cp state.ok tmux/state
+mkdir nogit
+cd nogit
+env GIT_CEILING_DIRECTORIES=$WORK
+! exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+stderr '^dispatch: --role-watch: no crew bus: not in a git repository$'
+! grep '^(set-option|send-keys|load-buffer|paste-buffer|capture-pane)' ../tmux.log
+
+-- state.ok --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
 -- state.role --
 role=planner
 window=@1

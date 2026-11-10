@@ -451,10 +451,7 @@ func stallRequest(p crewArgs) stall.Request {
 
 // runRoleWatch is the typed role-watch call.
 func runRoleWatch(ctx context.Context, e env, cwd string, c roleWatchCmd, stderr io.Writer) int {
-	paths, err := bus.Locate(ctx, cwd)
-	if err != nil {
-		paths = bus.Paths{}
-	}
+	paths, locateErr := bus.Locate(ctx, cwd)
 	return rolewatch.Run(ctx, rolewatch.Request{
 		Role: c.Role, Pane: c.Pane, Branch: str(c.Branch), Engine: c.Engine,
 		Interval: c.Interval, DeferNotice: c.DeferNotice, SubmitRetries: c.SubmitRetries,
@@ -462,14 +459,12 @@ func runRoleWatch(ctx context.Context, e env, cwd string, c roleWatchCmd, stderr
 		Tmux:   tmux.Exec{},
 		Clock:  rolewatch.NewClock(os.Getenv),
 		Stderr: stderr,
-		CurrentBranch: func() string {
+		CurrentBranch: func() (string, error) {
 			out, err := git.Exec{}.Run(ctx, cwd, "branch", "--show-current")
-			if err != nil {
-				return ""
-			}
-			return strings.TrimSpace(out)
+			return strings.TrimSpace(out), err
 		},
-		Log: paths.Log,
+		Log:    paths.Log,
+		LogErr: locateErr,
 		Post: func(ctx context.Context, crew, from, to, body string) {
 			status.RunMsg(ctx, status.MsgRequest{From: from, To: to, Body: body}, paths, io.Discard, status.Options{
 				Dir:       cwd,
@@ -674,8 +669,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 		}, stdout, stderr)
 	}
 
-	// role-watch refuses its own argv with dispatch's lines and runs without a
-	// bus when it cannot find one: an empty Log never reads.
+	// role-watch refuses its own argv, and a missing bus or branch, with
+	// dispatch's lines and exit codes.
 	if sub == "role-watch" {
 		if parsed.refusal != nil {
 			return refuse(stderr, parsed.refusal)

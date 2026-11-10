@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -45,6 +46,7 @@ type watcher struct {
 	escalated, retyped, verdictSeen, awaiting, unsent bool
 	deferredSince                                     int64
 	deferredTold, roleReady, roleBusy                 bool
+	logSize                                           int64 // the bus size at the last read; -1 before one
 }
 
 // tmux keeps stdout even on failure, as `$(tmux … 2>/dev/null || true)` does.
@@ -125,6 +127,12 @@ func (w *watcher) loop() int {
 // intake processes, in log order, the rows newer than since that are msgs to or
 // from this role or its own statuses, then moves since to the newest of them.
 func (w *watcher) intake() {
+	// The bus is append-only, so an unchanged size means no new rows.
+	fi, err := os.Stat(w.o.Log)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() == w.logSize {
+		return
+	}
+	w.logSize = fi.Size()
 	evs, _ := bus.ReadEventsTolerant(w.o.Log)
 	next := w.since
 	for _, e := range evs {
@@ -277,7 +285,7 @@ func (w *watcher) verify() bool {
 		switch {
 		case w.submitTries < w.submitRetries:
 			if !w.stamped() {
-				w.orphaned()
+				w.orphanedUnlessDone()
 				return false
 			}
 			w.tmux("send-keys", "-t", w.pane, "Enter")
@@ -312,7 +320,7 @@ func (w *watcher) verify() bool {
 // deliver types the head assignment into a positively idle pane, after F23.
 func (w *watcher) deliver() bool {
 	if !w.stamped() {
-		w.orphaned()
+		w.orphanedUnlessDone()
 		return false
 	}
 	plain, colored := w.capture()
@@ -383,6 +391,14 @@ func (w *watcher) escalate(detail string) {
 }
 
 // orphaned tells whoever still waits on undelivered work before the exit.
+// orphanedUnlessDone: a cancelled ctx makes every tmux read empty, so the stamp
+// check fails without the pane having changed.
+func (w *watcher) orphanedUnlessDone() {
+	if w.ctx.Err() == nil {
+		w.orphaned()
+	}
+}
+
 func (w *watcher) orphaned() {
 	if len(w.pending) == 0 && w.inflight == "" {
 		return

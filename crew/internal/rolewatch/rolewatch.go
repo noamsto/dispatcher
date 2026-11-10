@@ -6,8 +6,9 @@
 // rules; this port keeps its state machine, its tmux argv and its per-tick call
 // order, because the dispatch bats stub matches argv and counts calls.
 //
-// Refusal lines keep the `dispatch: --role-watch` prefix on purpose:
-// `dispatch --role-watch` execs this subcommand and the bats match those lines.
+// Refusal lines keep the `dispatch: --role-watch` prefix on purpose: S7 will
+// exec this subcommand behind `dispatch --role-watch` (until then bash runs
+// role-watch) and the bats match those lines.
 //
 // Bus location: the bus is still discovered from the watcher's cwd, resolved
 // once at startup by the caller (Options.Log). dispatch launches the watcher in
@@ -45,8 +46,9 @@ type Options struct {
 	Tmux          tmux.InputClient
 	Clock         clock.Clock
 	Stderr        io.Writer
-	CurrentBranch func() string // the --branch default
-	Log           string        // the bus file; empty never reads
+	CurrentBranch func() (string, error) // the --branch default
+	Log           string                 // the bus file; empty never reads
+	LogErr        error                  // why the bus could not be located; refuses at startup
 	// Post writes one msg row; a failed post is ignored, as `crew msg … || true` was.
 	Post   func(ctx context.Context, crew, from, to, body string)
 	CrewID func() string // the crew when the window carries no @crew_id
@@ -66,44 +68,55 @@ var (
 	rePaneID  = regexp.MustCompile(`^%[0-9]+$`)
 )
 
+// refusal is a startup refusal's stderr line and exit code.
+type refusal struct {
+	line string
+	code int
+}
+
+func refuse(line string) *refusal { return &refusal{line, 1} }
+
 // Run watches req.Pane until it is gone or marked exited (0), or refuses to
-// start (1). A done ctx ends it with 0 at any point.
+// start (the refusal's code). A done ctx ends it with 0 at any point.
 func Run(ctx context.Context, req Request, o Options) int {
-	w, refusal := start(ctx, req, o)
+	w, r := start(ctx, req, o)
 	if ctx.Err() != nil {
 		return 0
 	}
-	if refusal != "" {
-		fmt.Fprintln(o.Stderr, refusal)
-		return 1
+	if r != nil {
+		fmt.Fprintln(o.Stderr, r.line)
+		return r.code
 	}
 	return w.loop()
 }
 
 // start validates in the arm's order and reads the pane's stamps (F22); it
 // writes nothing to tmux before every check has passed.
-func start(ctx context.Context, req Request, o Options) (*watcher, string) {
+func start(ctx context.Context, req Request, o Options) (*watcher, *refusal) {
 	switch {
 	case req.Role == "":
-		return nil, "dispatch: --role-watch needs a role name"
+		return nil, refuse("dispatch: --role-watch needs a role name")
 	case req.Pane == "":
-		return nil, "dispatch: --role-watch needs --pane <id>"
+		return nil, refuse("dispatch: --role-watch needs --pane <id>")
 	case !reUint.MatchString(req.SubmitRetries):
-		return nil, "dispatch: --role-watch: --submit-retries must be a non-negative integer, got " + req.SubmitRetries
+		return nil, refuse("dispatch: --role-watch: --submit-retries must be a non-negative integer, got " + req.SubmitRetries)
 	case !reDecimal.MatchString(req.Interval):
-		return nil, "dispatch: --role-watch: --interval must be a non-negative number, got " + req.Interval
+		return nil, refuse("dispatch: --role-watch: --interval must be a non-negative number, got " + req.Interval)
 	case !reUint.MatchString(req.DeferNotice):
-		return nil, "dispatch: --role-watch: --defer-notice must be a non-negative integer, got " + req.DeferNotice
+		return nil, refuse("dispatch: --role-watch: --defer-notice must be a non-negative integer, got " + req.DeferNotice)
 	}
 	branch := req.Branch
 	if branch == "" {
-		branch = o.CurrentBranch()
+		var err error
+		if branch, err = o.CurrentBranch(); err != nil {
+			return nil, &refusal{"dispatch: --role-watch: cannot read the current branch: " + err.Error(), 128}
+		}
 	}
 	if !rePaneID.MatchString(req.Pane) {
-		return nil, "dispatch: --role-watch: --pane must be a pane id (%N), got " + req.Pane
+		return nil, refuse("dispatch: --role-watch: --pane must be a pane id (%N), got " + req.Pane)
 	}
 	if req.Role == "lead" {
-		return nil, "dispatch: --role-watch: role 'lead' is never watched"
+		return nil, refuse("dispatch: --role-watch: role 'lead' is never watched")
 	}
 	w := &watcher{
 		ctx: ctx, o: o,
@@ -120,19 +133,23 @@ func start(ctx context.Context, req Request, o Options) (*watcher, string) {
 	wRole, win := stamp[0], stamp[1]
 	w.win, w.delivery = win, stamp[2]
 	if wRole != w.role {
-		return nil, fmt.Sprintf("dispatch: --role-watch: pane %s's @crew_role (%s) does not match --role %s", w.pane, wRole, w.role)
+		return nil, refuse(fmt.Sprintf("dispatch: --role-watch: pane %s's @crew_role (%s) does not match --role %s", w.pane, wRole, w.role))
 	}
 	if b := w.tmux("show-options", "-wqv", "-t", win, "@crew_branch"); b != branch {
-		return nil, fmt.Sprintf("dispatch: --role-watch: window %s's @crew_branch (%s) does not match --branch %s", win, b, branch)
+		return nil, refuse(fmt.Sprintf("dispatch: --role-watch: window %s's @crew_branch (%s) does not match --branch %s", win, b, branch))
 	}
 	w.wCrew = w.tmux("show-options", "-wqv", "-t", win, "@crew_id")
 	w.crew = w.wCrew
 	if w.crew == "" {
 		w.crew = o.CrewID()
 	}
+	if o.LogErr != nil {
+		return nil, &refusal{"dispatch: --role-watch: no crew bus: not in a git repository", 128}
+	}
+	w.logSize = -1
 	w.since = o.Clock.RealMS()
 	w.setState("idle")
-	return w, ""
+	return w, nil
 }
 
 // fields is `IFS='|' read -r a b … <<<"$s"`: the first line split on `|`, the

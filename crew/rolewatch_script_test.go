@@ -20,6 +20,7 @@ import (
 	"github.com/rogpeppe/go-internal/testscript"
 	"github.com/rogpeppe/go-internal/txtar"
 
+	"github.com/noamsto/dispatcher/crew/internal/drift"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 )
 
@@ -239,11 +240,11 @@ func TestRoleWatchDifferential(t *testing.T) {
 	arm := filepath.Join(root, "adapters", "core", "dispatch.sh")
 	for _, tool := range []string{"bash", "jq", "git"} {
 		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s is not on PATH", tool)
+			drift.Missing(t, tool, err)
 		}
 	}
 	if _, err := os.Stat(arm); err != nil {
-		t.Skipf("%s is not in this tree: %v", arm, err)
+		drift.Missing(t, arm, err)
 	}
 	self, err := os.Executable()
 	if err != nil {

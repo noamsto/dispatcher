@@ -1,6 +1,7 @@
 package rolewatch
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"os"
@@ -151,22 +152,31 @@ func TestStartupRefusals(t *testing.T) {
 		edit  func(*Request)
 		reads map[string]string
 		want  string
+		code  int // 0 is 1
+		opts  func(*Options)
 	}{
-		{"no role", func(r *Request) { r.Role = "" }, nil, "dispatch: --role-watch needs a role name"},
-		{"no pane", func(r *Request) { r.Pane = "" }, nil, "dispatch: --role-watch needs --pane <id>"},
+		{"no role", func(r *Request) { r.Role = "" }, nil, "dispatch: --role-watch needs a role name", 0, nil},
+		{"no pane", func(r *Request) { r.Pane = "" }, nil, "dispatch: --role-watch needs --pane <id>", 0, nil},
 		{"submit retries", func(r *Request) { r.SubmitRetries = "-1" }, nil,
-			"dispatch: --role-watch: --submit-retries must be a non-negative integer, got -1"},
+			"dispatch: --role-watch: --submit-retries must be a non-negative integer, got -1", 0, nil},
 		{"interval", func(r *Request) { r.Interval = "1s" }, nil,
-			"dispatch: --role-watch: --interval must be a non-negative number, got 1s"},
+			"dispatch: --role-watch: --interval must be a non-negative number, got 1s", 0, nil},
 		{"defer notice", func(r *Request) { r.DeferNotice = "0.5" }, nil,
-			"dispatch: --role-watch: --defer-notice must be a non-negative integer, got 0.5"},
+			"dispatch: --role-watch: --defer-notice must be a non-negative integer, got 0.5", 0, nil},
 		{"pane id", func(r *Request) { r.Pane = "6" }, nil,
-			"dispatch: --role-watch: --pane must be a pane id (%N), got 6"},
-		{"lead", func(r *Request) { r.Role = "lead" }, nil, "dispatch: --role-watch: role 'lead' is never watched"},
+			"dispatch: --role-watch: --pane must be a pane id (%N), got 6", 0, nil},
+		{"lead", func(r *Request) { r.Role = "lead" }, nil, "dispatch: --role-watch: role 'lead' is never watched", 0, nil},
 		{"F22 role", nil, map[string]string{readStartStamp: "plan-critic|@3|"},
-			"dispatch: --role-watch: pane %6's @crew_role (plan-critic) does not match --role reviewer"},
+			"dispatch: --role-watch: pane %6's @crew_role (plan-critic) does not match --role reviewer", 0, nil},
 		{"F22 branch", nil, map[string]string{readBranch: "feat/8-other"},
-			"dispatch: --role-watch: window @3's @crew_branch (feat/8-other) does not match --branch feat/9-x"},
+			"dispatch: --role-watch: window @3's @crew_branch (feat/8-other) does not match --branch feat/9-x", 0, nil},
+		{name: "git branch fails", edit: func(r *Request) { r.Branch = "" },
+			want: "dispatch: --role-watch: cannot read the current branch: git: not a repository", code: 128,
+			opts: func(o *Options) {
+				o.CurrentBranch = func() (string, error) { return "", errors.New("git: not a repository") }
+			}},
+		{name: "no bus", want: "dispatch: --role-watch: no crew bus: not in a git repository", code: 128,
+			opts: func(o *Options) { o.LogErr = errors.New("not a repo") }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -180,12 +190,17 @@ func TestStartupRefusals(t *testing.T) {
 			}
 			tm := &fakeTmux{reads: reads, paneIDs: 1}
 			var stderr strings.Builder
-			code := Run(context.Background(), req, Options{
+			opts := Options{
 				Tmux: tm, Stderr: &stderr, CrewID: func() string { return "" },
-				CurrentBranch: func() string { return "feat/9-x" },
-			})
-			if code != 1 || stderr.String() != tt.want+"\n" {
-				t.Fatalf("exit %d, stderr %q; want 1, %q", code, stderr.String(), tt.want)
+				CurrentBranch: func() (string, error) { return "feat/9-x", nil },
+			}
+			if tt.opts != nil {
+				tt.opts(&opts)
+			}
+			wantCode := cmp.Or(tt.code, 1)
+			code := Run(context.Background(), req, opts)
+			if code != wantCode || stderr.String() != tt.want+"\n" {
+				t.Fatalf("exit %d, stderr %q; want %d, %q", code, stderr.String(), wantCode, tt.want)
 			}
 			if i := slices.IndexFunc(tm.calls, func(c string) bool { return strings.HasPrefix(c, "set-option") }); i >= 0 {
 				t.Fatalf("refusal wrote tmux: %v", tm.calls)

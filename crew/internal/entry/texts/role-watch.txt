@@ -4,7 +4,8 @@ usage: crew role-watch <role> --pane <id> [--branch B] [--engine E]
 Per-role-pane supervisor: reads the crew bus, admits only the role's lead or
 dispatcher, queues their assignments and types each into the role pane only when
 a capture shows an idle input box, then verifies the submit. Ends when the pane
-is gone or marked exited.
+is gone, marked exited, or no longer stamped with this role, branch and crew
+(queued work is reported as orphaned).
 
   <role>            Role the pane serves (never lead)
   --pane            tmux pane id to type into, %N (required)
