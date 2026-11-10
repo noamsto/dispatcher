@@ -190,3 +190,28 @@ func TestFooterComposerEqual(t *testing.T) {
 		})
 	}
 }
+
+func TestLiveTurn(t *testing.T) {
+	codexIdle := composerFixture(t, "codex_idle_empty")
+	cursorThink := "  ⬢ Thinking 1200 tokens"
+	tests := []struct {
+		name string
+		got  func(string) bool
+		text string
+		want bool
+	}{
+		{"codex working row", CodexLiveTurn, "  • Working (3s)\n" + codexIdle, true},
+		{"codex interrupt hint", CodexLiveTurn, codexIdle + "\nesc to interrupt", true},
+		{"codex idle", CodexLiveTurn, codexIdle, false},
+		{"cursor thinking row", CursorLiveTurn, cursorThink, true},
+		{"cursor stop hint", CursorLiveTurn, "ctrl+c to stop", true},
+		{"cursor idle", CursorLiveTurn, "  Plan, search, build anything", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.got(tc.text); got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

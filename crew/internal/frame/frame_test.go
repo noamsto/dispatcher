@@ -726,3 +726,34 @@ func TestPiBoxOccupied(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudeDraft(t *testing.T) {
+	tests := []struct{ name, row, want string }{
+		{"prompt, NBSP, text, trailing space", "  ❯ text   ", "text"},
+		{"prompt with spaces", "❯   text", "text"},
+		{"bare prompt", "❯", ""},
+		{"no prompt keeps text", "text  ", "text"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ClaudeDraft(tc.row); got != tc.want {
+				t.Errorf("ClaudeDraft(%q) = %q, want %q", tc.row, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTrimSpace(t *testing.T) {
+	tests := []struct{ name, in, want string }{
+		{"ASCII", " \t x y \n", "x y"},
+		{"ideographic space", "　x　", "x"},
+		{"NBSP is not space", " x ", " x "},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := TrimSpace(tc.in); got != tc.want {
+				t.Errorf("TrimSpace(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

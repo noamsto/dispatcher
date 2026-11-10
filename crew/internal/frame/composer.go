@@ -102,7 +102,13 @@ func CodexComposer(text, composer string) bool {
 	if !FooterComposerEqual(text, "› ", reCodexFooter, 1, composer, reCodexStatus) {
 		return false
 	}
-	return !strings.Contains(text, "esc to interrupt") && !anyLine(text, reCodexWorking)
+	return !CodexLiveTurn(text)
+}
+
+// CodexLiveTurn reports Codex's own live-turn markers: the interrupt hint or a
+// working row.
+func CodexLiveTurn(text string) bool {
+	return strings.Contains(text, "esc to interrupt") || anyLine(text, reCodexWorking)
 }
 
 func CodexIdleBox(text string) bool {
@@ -145,7 +151,13 @@ func CursorComposer(text, composer string) bool {
 	if n < 1 || !path {
 		return false
 	}
-	return !strings.Contains(text, "ctrl+c to stop") && !anyLine(text, reCursorThink)
+	return !CursorLiveTurn(text)
+}
+
+// CursorLiveTurn reports Cursor's own live-turn markers: the stop hint or a
+// thinking-token row.
+func CursorLiveTurn(text string) bool {
+	return strings.Contains(text, "ctrl+c to stop") || anyLine(text, reCursorThink)
 }
 
 func CursorIdleBox(text string) bool {
