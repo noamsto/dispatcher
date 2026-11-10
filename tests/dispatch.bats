@@ -4323,6 +4323,23 @@ EOF
   [[ "$stderr" != *"--recover"* ]]
 }
 
+@test "the lead pace refusal is exact on the controller and the remote side, and names the escape only locally" {
+  stub_launch_bins
+  _host_crew_stub
+  budget_json 75 "$(date +%s)"
+  local text='dispatch: claude 7d is at 75% — the premium rung (opus) is refused; use the standard rung (sonnet) instead, '
+  local tail='or pass --ignore-budget (the human'"'"'s spend decision, also disarms the 95% stop). See dispatch-orchestration.md "Tier map".'
+  run --separate-stderr run_dispatch deep opus --agent claude --host mini --effort high --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"$text$tail" ]]
+  DISPATCH_TMUX_SESSION=crew-c1 DISPATCH_EMIT_ROW=1 run --separate-stderr run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"$text$tail" ]]
+  run --separate-stderr run_dispatch deep opus --agent claude --effort high --crew-id c1 42 "t"
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"${text}set DISPATCH_IGNORE_RUNG=opus to override just this refusal, $tail" ]]
+}
+
 @test "dispatch --host runs the claude pace gate on the lead and a claude role, and honours --ignore-budget" {
   stub_launch_bins
   _host_crew_stub
@@ -5964,7 +5981,7 @@ ROWS
   [[ "$output" == *"sonnet at high"* ]]
 }
 
-@test "pace refusals under --host offer no DISPATCH_IGNORE_RUNG escape" {
+@test "pace refusals name DISPATCH_IGNORE_RUNG on the local side only, text exact on every side of the wire" {
   load_dispatch_fns _settings_load _pace_downgrade _pace_burn_weight pace_rule_target
   _settings_load
   # Read by the eval'd pace_rule_target, not by this function body.
@@ -5973,45 +5990,31 @@ ROWS
   # shellcheck disable=SC2034
   ignore_budget=
   budget_json_at claude 77 345600
-  local host
-  for host in "" mini; do
+  local head="dispatch: claude 7d is at 77% and 34 points ahead of pace"
+  local tail='or pass --ignore-budget (the human'"'"'s spend decision, also disarms the 95% stop). See dispatch-orchestration.md "Tier map".'
+  local side escape_model escape_effort
+  for side in local controller remote; do
     # shellcheck disable=SC2034
-    remote_host="$host"
+    wire_side="$side"
+    escape_model="" escape_effort=""
+    if [ "$side" = local ]; then
+      escape_model="set DISPATCH_IGNORE_RUNG=opus to override just this refusal, "
+      escape_effort="set DISPATCH_IGNORE_RUNG=xhigh to override just this refusal, "
+    fi
     run pace_rule_target claude opus high
     [ "$status" -eq 1 ]
-    [[ "$output" == *"use the standard rung (sonnet) instead"*"--ignore-budget"* ]]
+    [ "$output" = "$head — the premium rung (opus) is refused; use the standard rung (sonnet) instead, $escape_model$tail" ]
     run pace_rule_target claude sonnet xhigh
     [ "$status" -eq 1 ]
-    [[ "$output" == *"use high instead"*"--ignore-budget"* ]]
-    if [ -n "$host" ]; then
-      [[ "$output" != *DISPATCH_IGNORE_RUNG* ]]
-    else
-      [[ "$output" == *"DISPATCH_IGNORE_RUNG=xhigh"* ]]
-    fi
+    [ "$output" = "$head — the premium effort (xhigh) is refused; use high instead, $escape_effort$tail" ]
   done
-  remote_host=mini
-  run pace_rule_target claude opus high
-  [[ "$output" != *DISPATCH_IGNORE_RUNG* ]]
 }
 
-@test "pace refusals in a --host remote launch offer no DISPATCH_IGNORE_RUNG escape" {
-  load_dispatch_fns _settings_load _pace_downgrade _pace_burn_weight pace_rule_target
-  _settings_load
-  # shellcheck disable=SC2034
-  budget_file="${XDG_DATA_HOME:-$HOME/.local/share}/crew/engine-budget.json"
-  # shellcheck disable=SC2034
-  ignore_budget=
-  # shellcheck disable=SC2034
-  remote_host=
-  budget_json_at claude 77 345600
-  DISPATCH_TMUX_SESSION=crew-x run pace_rule_target claude opus high
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"use the standard rung (sonnet) instead"* ]]
-  [[ "$output" != *DISPATCH_IGNORE_RUNG* ]]
-  DISPATCH_TMUX_SESSION=crew-x run pace_rule_target claude sonnet xhigh
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"use high instead"* ]]
-  [[ "$output" != *DISPATCH_IGNORE_RUNG* ]]
+@test "the wire side is remote only when a --host launch delivered DISPATCH_TMUX_SESSION" {
+  load_dispatch_fns _wire_side
+  [ "$(_wire_side)" = local ]
+  [ "$(DISPATCH_TMUX_SESSION= _wire_side)" = local ]
+  [ "$(DISPATCH_TMUX_SESSION=crew-x _wire_side)" = remote ]
 }
 
 @test "pace gate effort escape is exact and null reset still refuses" {

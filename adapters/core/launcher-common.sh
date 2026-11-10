@@ -172,6 +172,19 @@ _pane_client() {
   fi
 }
 
+# _wire_side — which side of a --host dispatch this process is on, read once
+# from the env it started with: `remote` when a --host launch delivered
+# DISPATCH_TMUX_SESSION, else `local`. The controller side (--host given) is not
+# in the env, so dispatch.sh sets `controller` after parsing. Callers branch on
+# the value, never on DISPATCH_TMUX_SESSION itself.
+_wire_side() {
+  if [ -n "${DISPATCH_TMUX_SESSION:-}" ]; then
+    printf 'remote\n'
+  else
+    printf 'local\n'
+  fi
+}
+
 _remote_session_ok() {
   [[ $1 =~ ^[A-Za-z0-9_][A-Za-z0-9_-]*$ ]]
 }
@@ -206,10 +219,13 @@ _remote_worker_session() {
 # _remote_window <ssh> <crew_id> <session> — mirror the remote worker window
 # (selected by its @crew_id stamp) of <session> into this tmux session, else say
 # how to attach. og-remote-open is idempotent, so every dispatch and resume runs
-# it. Never fails: the remote worker exists either way.
+# it. Never fails: the remote worker exists either way. A plain crew-<id>
+# session holds only this crew's windows and an older build mirrored it whole,
+# so it is mirrored whole again: a filtered mirror there would be a second one.
 _remote_window() {
   local into bin reason=""
-  local -a launcher=()
+  local -a launcher=() selector=(--window "@crew_id=$2")
+  [ "$3" != "crew-$2" ] || selector=()
   if [ -z "${TMUX_PANE:-}" ]; then
     reason="not inside tmux"
   else
@@ -230,7 +246,7 @@ _remote_window() {
     into="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)"
     if [ -z "$into" ]; then
       reason="no tmux session for $TMUX_PANE"
-    elif "${launcher[@]}" "$1" "$3" --into "$into" --window "@crew_id=$2" >&2; then
+    elif "${launcher[@]}" "$1" "$3" --into "$into" ${selector[@]+"${selector[@]}"} >&2; then
       return 0
     else
       reason="${launcher[*]} failed"

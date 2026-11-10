@@ -2953,7 +2953,7 @@ EOF
   STUB_WHERE='iris — crew-c1:2.0 "feat-7" (lead pane)   jump: ! tmux switch-client -t %9' \
     TMUX_PANE=%3 run run_resume iris
   [ "$status" -eq 0 ]
-  grep -Eq '^og-remote-open me@mini crew-c1 --into .* --window @crew_id=c1$' "$STUB_LOG"
+  grep -Eq '^og-remote-open me@mini crew-c1 --into [^ ]+$' "$STUB_LOG"
 }
 
 @test "target: a where reply with an unsafe session falls back to the local name" {

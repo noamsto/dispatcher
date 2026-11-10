@@ -87,6 +87,10 @@ fi
 # shellcheck source=/dev/null
 . "$launcher_common_lib"
 
+# Which side of a --host dispatch this process is on (a --host launch delivered
+# DISPATCH_TMUX_SESSION), derived once through the shared library as dispatch.sh does.
+wire_side="$(_wire_side)"
+
 # Baked values the shared helpers read, kept in this file because
 # launcher-common.sh carries no build-time token: the settings and model
 # resolvers (each env-overridable at call time) and the protocol revision this build
@@ -324,7 +328,7 @@ done
 # Remote mode: a dispatcher on another host asked for this worker's window in
 # the named session, possibly shared with windows that are not this crew's. The
 # value becomes a tmux target, so its shape is fixed.
-if [ -n "${DISPATCH_TMUX_SESSION:-}" ] && ! _remote_session_ok "$DISPATCH_TMUX_SESSION"; then
+if [ "$wire_side" = remote ] && ! _remote_session_ok "$DISPATCH_TMUX_SESSION"; then
   echo "dispatch resume: DISPATCH_TMUX_SESSION must match ^[A-Za-z0-9_][A-Za-z0-9_-]*\$ (got '$DISPATCH_TMUX_SESSION')" >&2
   exit 1
 fi
@@ -917,7 +921,7 @@ if [ -z "$pane" ]; then
   sanitized="${branch//\//-}"
   client_width=""
   client_height=""
-  if [ -n "${DISPATCH_TMUX_SESSION:-}" ]; then
+  if [ "$wire_side" = remote ]; then
     # Remote mode, as in dispatch: the named session, created with the
     # window when absent; no client to size from.
     win_args=(-c "$wt_path" -n "$sanitized" -P -F '#{window_id} #{pane_id}')
@@ -1238,7 +1242,7 @@ if [ -n "$dispatcher_live" ] && [ "$rr_pane" != "$dispatcher_pane_new" ]; then
   rr_pane=""
 fi
 # A remote-mode worker's roster diagram belongs to its dispatcher's host.
-[ -n "${DISPATCH_TMUX_SESSION:-}" ] || _ensure_roster_render "$crew_id" "$rr_pane"
+[ "$wire_side" = remote ] || _ensure_roster_render "$crew_id" "$rr_pane"
 
 # Resume re-stamps @crew_branch on whatever window it lands in, so only a window
 # that was already this worker's (stamped for the branch, or restored with its

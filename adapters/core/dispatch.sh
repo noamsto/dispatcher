@@ -186,9 +186,8 @@ refuse_claude_sonnet_cap() {
 
 # pace_rule_target <agent> <model> <effort> [lead] [<@class>] — refuse one premium launch target
 # when its fresh pace window (7d, or pi's/cursor's month) is materially ahead of pace.
-# The DISPATCH_IGNORE_RUNG escape is omitted on --host, which refuses that
-# variable: on the local side remote_host is set, and on the remote side the
-# launch carries DISPATCH_TMUX_SESSION instead.
+# The DISPATCH_IGNORE_RUNG escape is omitted on either side of --host, which
+# refuses that variable (wire_side is controller or remote).
 # A `lead` target with pace_escalation set skips only the model-rung refusal;
 # effort refusals and budget_stop stay armed.
 # The refusal names the target's class and the downgrade as class plus resolved
@@ -288,7 +287,7 @@ pace_rule_target() {
         model_downgrade_label="$model_downgrade at $effort_downgrade"
       fi
       escape=""
-      [ -n "${remote_host:-}" ] || [ -n "${DISPATCH_TMUX_SESSION:-}" ] || escape="set DISPATCH_IGNORE_RUNG=$target_model to override just this refusal, "
+      [ "$wire_side" != local ] || escape="set DISPATCH_IGNORE_RUNG=$target_model to override just this refusal, "
       echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the $target_class rung ($model_rung_label) is refused; use the $down_class rung ($model_downgrade_label) instead, ${escape}or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
       exit 1
     fi
@@ -298,7 +297,7 @@ pace_rule_target() {
       echo "dispatch: effort refusal skipped (DISPATCH_IGNORE_RUNG) — '$target_effort' on --agent $target_agent at $win ${used_pct}%${pace_notice}" >&2
     else
       escape=""
-      [ -n "${remote_host:-}" ] || [ -n "${DISPATCH_TMUX_SESSION:-}" ] || escape="set DISPATCH_IGNORE_RUNG=$target_effort to override just this refusal, "
+      [ "$wire_side" != local ] || escape="set DISPATCH_IGNORE_RUNG=$target_effort to override just this refusal, "
       echo "dispatch: $target_agent $win is at ${used_pct}%${pace_clause} — the premium effort ($target_effort) is refused; use $effort_downgrade instead, ${escape}or pass --ignore-budget (the human's spend decision, also disarms the 95% stop). See dispatch-orchestration.md \"Tier map\"." >&2
       exit 1
     fi
@@ -1016,6 +1015,13 @@ fi
 # shellcheck source=/dev/null
 . "$launcher_common_lib"
 
+# Which side of a --host dispatch this process is on, derived once from the env
+# it started with and before any mode arm: --spawn-role and --models reach the
+# sites below ahead of argument parsing, under set -u. Values: local, remote (a
+# --host launch delivered DISPATCH_TMUX_SESSION) and, once parsing sees --host,
+# controller. No exported variable: a peer's env still means what it did.
+wire_side="$(_wire_side)"
+
 # Baked values the shared helpers read, kept in this file because
 # launcher-common.sh carries no build-time token: the settings and model
 # resolvers (each env-overridable at call time) and the protocol revision this build
@@ -1530,7 +1536,7 @@ iso_epoch_def='def iso_epoch:
 # entry as unknown.
 _anthropic_credits() {
   local out
-  if [ -n "${DISPATCH_TMUX_SESSION:-}" ]; then
+  if [ "$wire_side" = remote ]; then
     printf 'host\t%s\n' "this is a dispatch --host launch, which never admits it: a host's engine-budget.json counts only that host's pi spend, so hosts sharing one grant could overspend it together (dispatch from the host that holds the grant, without --host)"
     return
   fi
@@ -3805,6 +3811,7 @@ _dispatch_remote() {
 # model or effort, so the printed hint works as written.
 if [ "${1:-}" = --host ] && [ "${3:-}" = --recover ]; then
   remote_host="${2:-}"
+  wire_side=controller
   session="${4:-}"
   crew_id_flag=""
   case "$#:${5:-}" in
@@ -4139,6 +4146,7 @@ while [ $# -gt 0 ]; do
     ;;
   esac
 done
+[ -z "$remote_host" ] || wire_side=controller
 
 if [ -n "$task_profile" ]; then
   _settings_load
@@ -4270,7 +4278,7 @@ crew_id="${crew_id_flag:-${CREW_ID:-}}"
 # Remote mode: a dispatcher on another host asked for this worker's window in
 # the named session, possibly shared with windows that are not this crew's. The
 # value becomes a tmux target, so its shape is fixed.
-if [ -n "${DISPATCH_TMUX_SESSION:-}" ] && ! _remote_session_ok "$DISPATCH_TMUX_SESSION"; then
+if [ "$wire_side" = remote ] && ! _remote_session_ok "$DISPATCH_TMUX_SESSION"; then
   echo "dispatch: DISPATCH_TMUX_SESSION must match ^[A-Za-z0-9_][A-Za-z0-9_-]*\$ (got '$DISPATCH_TMUX_SESSION')" >&2
   exit 1
 fi
@@ -4564,7 +4572,7 @@ fi
 # DISPATCH_TMUX_SESSION with DISPATCH_EMIT_ROW=1 is the --host launch's own env,
 # delivered only through crew remote-exec's allowlist; DISPATCH_TMUX_SESSION
 # alone stays local-only.
-if [ -n "$chrome" ] && [ -n "${DISPATCH_TMUX_SESSION:-}" ] && [ "${DISPATCH_EMIT_ROW:-}" != 1 ]; then
+if [ -n "$chrome" ] && [ "$wire_side" = remote ] && [ "${DISPATCH_EMIT_ROW:-}" != 1 ]; then
   echo "dispatch: --chrome is local to this machine — the browser lives here, not on a remote host" >&2
   exit 1
 fi
@@ -5865,7 +5873,7 @@ _resolve_lane_profile
 # A remote-mode worker's dispatcher pane is on another tmux server: stamped
 # empty, so dispatch-notify skips its ping.
 task_dispatcher_pane="${TMUX_PANE:-}"
-[ -z "${DISPATCH_TMUX_SESSION:-}" ] || task_dispatcher_pane=""
+[ "$wire_side" != remote ] || task_dispatcher_pane=""
 # Set only when the owning dispatcher runs on another machine.
 task_dispatcher_host="${DISPATCH_ORIGIN_HOST:-}"
 [ "$task_dispatcher_host" != "$(_short_host)" ] || task_dispatcher_host=""
@@ -5978,8 +5986,7 @@ fi
 client_width=""
 client_height=""
 # Outside tmux (e.g. `ssh host dispatch`) a bare new-window lands in whichever
-# session was used last, so use the crew's own session. A local variable, not
-# DISPATCH_TMUX_SESSION, which other checks read as "this is a --host launch".
+# session was used last, so use the crew's own session.
 target_session="${DISPATCH_TMUX_SESSION:-}"
 if [ -z "$target_session" ] && [ -z "${TMUX:-}" ] && [ -z "${TMUX_PANE:-}" ]; then
   target_session="crew-$crew_id"
@@ -6345,4 +6352,4 @@ if _recorded_pid_live "$rr_pid" "$crew_dir/crews/$crew_id/pid" &&
   rr_pane=""
 fi
 # A remote-mode worker's roster diagram belongs to its dispatcher's host.
-[ -n "${DISPATCH_TMUX_SESSION:-}" ] || _ensure_roster_render "$crew_id" "$rr_pane"
+[ "$wire_side" = remote ] || _ensure_roster_render "$crew_id" "$rr_pane"
