@@ -244,10 +244,15 @@ func TestReattachNeverTakesForce(t *testing.T) {
 
 // A crew id that is not a valid id never reaches the filesystem: ".." would
 // land the pid file in the bus dir, and a leading dash is a flag to other tools.
+// The crew dir exists for both, so only the id check stands between them and a
+// write.
 func TestReattachSkipsUnsafeIDs(t *testing.T) {
 	for _, id := range []string{"..", "-x"} {
 		t.Run(id, func(t *testing.T) {
 			p := testPaths(t)
+			if err := os.MkdirAll(p.CrewDir(id), 0o755); err != nil {
+				t.Fatal(err)
+			}
 			got := run(t, reattachWorld(), p, reattachReq(id))
 			if got.code != 0 || got.stdout != "" || got.stderr != "" {
 				t.Errorf("code = %d, stdout = %q, stderr = %q; want a silent 0", got.code, got.stdout, got.stderr)
