@@ -1,0 +1,75 @@
+# A pane that is not at an idle input box (a permission dialog, a live turn)
+# gets no keys. Once it shows the idle box the assignment lands exactly once:
+# the first load-buffer follows the idle capture, never an earlier one.
+exec git init -q
+mkdir .git/crew
+mkdir tmux/frames
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# A permission dialog for three captures, then the idle box.
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_permission.txt tmux/frames/1
+cp $FRAMES/rw_permission.txt tmux/frames/2
+cp $FRAMES/rw_permission.txt tmux/frames/3
+cp $FRAMES/rw_idle.txt tmux/frames/4
+cp $FRAMES/rw_claude_held.txt tmux/frames/5
+cp $FRAMES/rw_idle.txt tmux/frames/6
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+cmp tmux/loads want.loads
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+
+# A live turn for three captures, then the idle box.
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_live.txt tmux/frames/1
+cp $FRAMES/rw_live.txt tmux/frames/2
+cp $FRAMES/rw_live.txt tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+cmp tmux/loads want.loads
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+
+# A spinner-like transcript line above an idle box does not wedge delivery.
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp frame.spinner_above tmux/frames/1
+cp $FRAMES/rw_claude_held.txt tmux/frames/2
+cp $FRAMES/rw_idle.txt tmux/frames/3
+rm tmux/frames/4 tmux/frames/5 tmux/frames/6
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- clock --
+1000
+-- want.loads --
+4 Assignment: go
+-- frame.spinner_above --
+Summary… of the findings
+transcript row 1
+transcript row 2
+transcript row 3
+transcript row 4
+transcript row 5
+transcript row 6
+transcript row 7
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12

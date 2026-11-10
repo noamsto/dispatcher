@@ -1,0 +1,280 @@
+# What the pane shows after a swallowed Enter decides the next step: a held
+# assignment (pi vim normal rule, collapsed-paste marker of the assignment's
+# length) gets a bare Enter retry; a live-turn sign (claude spinner above an
+# empty box, a pi-vim working row) is submitted; a human draft, a collapsed-paste
+# marker of another length, a usage limit or a frame no recogniser matches is
+# never re-Entered and escalates to assignment_unsubmitted after the unknown
+# budget; a dialog neither dequeues nor escalates. Frame 1 is the idle box, 2 the
+# pasted text, 3 the frame after the Enter.
+exec git init -q
+mkdir .git/crew
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# pi: an unrecognised frame is neither confirmed nor re-Entered, then escalates
+mkdir tmux/frames
+cp state.1 tmux/state
+cp events.1 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+cp $FRAMES/rw_pi_held.txt tmux/frames/2
+cp f.unrec tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2 --submit-retries 2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep -count=2 'assignment_unsubmitted' .git/crew/events.jsonl
+grep -count=2 'could not confirm the submit: the pane matches no recognised frame' .git/crew/events.jsonl
+
+# claude: a foreign draft in the box never gets a retry Enter
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.2 tmux/state
+cp events.2 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_idle.txt tmux/frames/1
+cp $FRAMES/rw_claude_held.txt tmux/frames/2
+cp $FRAMES/rw_claude_draft.txt tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 --submit-retries 2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep -count=2 'assignment_unsubmitted' .git/crew/events.jsonl
+
+# claude: a draft that is only a substring of the assignment gets no retry Enter
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.3 tmux/state
+cp events.3 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_idle.txt tmux/frames/1
+cp $FRAMES/rw_claude_held.txt tmux/frames/2
+cp $FRAMES/rw_claude_substring_draft.txt tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 --submit-retries 2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep -count=2 'assignment_unsubmitted' .git/crew/events.jsonl
+
+# pi: a collapsed-paste marker with another length is unknown
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.4 tmux/state
+cp events.4 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+cp $FRAMES/rw_pi_held.txt tmux/frames/2
+cp $FRAMES/rw_pi_paste_marker_wrong.txt tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2 --submit-retries 2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep -count=2 'assignment_unsubmitted' .git/crew/events.jsonl
+grep -count=2 'could not confirm the submit: the pane matches no recognised frame' .git/crew/events.jsonl
+
+# cursor: a usage-limit frame gets no retry Enter
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.5 tmux/state
+cp events.5 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_cursor_idle_empty.txt tmux/frames/1
+cp $FRAMES/rw_cursor_after_assignment.txt tmux/frames/2
+cp $FRAMES/rw_cursor_monthly_limit.txt tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2 --submit-retries 2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep -count=2 'assignment_unsubmitted' .git/crew/events.jsonl
+grep -count=2 'could not confirm the submit: the pane matches no recognised frame' .git/crew/events.jsonl
+
+# pi: a collapsed-paste marker with the assignment's length is held and retried
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.6 tmux/state
+cp events.6 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+cp $FRAMES/rw_pi_held.txt tmux/frames/2
+cp $FRAMES/rw_pi_paste_marker.txt tmux/frames/3
+cp $FRAMES/rw_pi_live.txt tmux/frames/4
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2 --submit-retries 2
+! stderr .
+grep -count=2 '^send-keys -t %6 Enter$' tmux.log
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+
+# pi: text held under a vim normal-mode rule is retried with a bare Enter, never re-pasted
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.7 tmux/state
+cp events.7 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+cp $FRAMES/rw_pi_held.txt tmux/frames/2
+cp $FRAMES/rw_pi_normal_held.txt tmux/frames/3
+cp $FRAMES/rw_pi_live.txt tmux/frames/4
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2 --submit-retries 2
+! stderr .
+grep -count=2 '^send-keys -t %6 Enter$' tmux.log
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+
+# claude: a spinner row above an empty box is a live turn: dequeued, no alarm
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.8 tmux/state
+cp events.8 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_idle.txt tmux/frames/1
+cp $FRAMES/rw_claude_held.txt tmux/frames/2
+cp $FRAMES/rw_claude_spinner_empty.txt tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 --submit-retries 2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+! grep 'could not confirm' .git/crew/events.jsonl
+
+# pi: a vim-mode pane that started a turn is confirmed via its working row
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.9 tmux/state
+cp events.9 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle_vim.txt tmux/frames/1
+cp $FRAMES/rw_pi_held.txt tmux/frames/2
+cp $FRAMES/rw_pi_vim_live.txt tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+! grep 'could not confirm' .git/crew/events.jsonl
+grep '^3$' tmux/n.capture
+
+# claude: a dialog raised in place of the turn never gets a retry Enter; the next assignment waits
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.10 tmux/state
+cp events.10 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_idle.txt tmux/frames/1
+cp $FRAMES/rw_claude_held.txt tmux/frames/2
+cp $FRAMES/rw_permission.txt tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+! grep 'Assignment: two' tmux/loads
+! grep 'two' tmux/buffer
+
+-- clock.base --
+1000
+-- state.1 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+width=80
+-- events.1 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.unrec --
+ something unrecognised
+-- state.2 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+width=80
+-- events.2 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.3 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+width=80
+-- events.3 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.4 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+width=80
+-- events.4 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.5 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+width=80
+-- events.5 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.6 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+-- events.6 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.7 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+-- events.7 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.8 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+width=80
+-- events.8 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.9 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+width=80
+-- events.9 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.10 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+-- events.10 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"two"}

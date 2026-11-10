@@ -1,0 +1,113 @@
+# W1 sender gating, the delivering side: the lead worker (a different session
+# included) and the crew's dispatcher are delivered once; with no @crew_id on
+# the window the dispatcher cannot be known, so its msg is dropped silently (no
+# role_watch_drop post) while the lead still delivers. A drop post coming back
+# off the bus is not a verdict and does not idle a working role. The dropping
+# side is sender_drop.txtar.
+exec git init -q
+mkdir .git/crew
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# a different-session lead delivers once
+mkdir tmux/frames
+cp state.1 tmux/state
+cp events.1 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_idle.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep 'role_watch_drop' .git/crew/events.jsonl
+
+# the lead's dispatcher delivers once
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.2 tmux/state
+cp events.2 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_idle.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep 'role_watch_drop' .git/crew/events.jsonl
+
+# no @crew_id: the dispatcher's msg is dropped without a post, the lead delivers
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.3 tmux/state
+cp events.3 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_idle.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep '^1 Assignment: go$' tmux/loads
+! grep 'Assignment: d' tmux/loads
+! grep 'role_watch_drop' .git/crew/events.jsonl
+! grep 'from":"role:' .git/crew/events.jsonl
+
+# a drop post returning from the dispatcher does not idle a working role
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.4 tmux/state
+cp events.4 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_idle.txt tmux/frames/1
+cp ap.4.enter-1 tmux/append-enter-1
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep -count=1 '^set-option -p -t %6 @crew_state working$' tmux.log
+! grep '(?s)@crew_state working.*@crew_state idle' tmux.log
+
+-- clock.base --
+1000
+-- state.1 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+-- events.1 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s9-9","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.2 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+-- events.2 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.3 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+crew=
+-- events.3 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"role:feat/9-x:reviewer","body":"d"}
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.4 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+-- events.4 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- ap.4.enter-1 --
+{"ts":10000000000005,"crew_id":"c1","kind":"msg","from":"role:feat/9-x:reviewer","to":"dispatcher:c1","body":"{\"event\":\"role_watch_drop\"}"}

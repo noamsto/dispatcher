@@ -1,26 +1,19 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rogpeppe/go-internal/testscript"
-	"github.com/rogpeppe/go-internal/txtar"
 
-	"github.com/noamsto/dispatcher/crew/internal/drift"
 	"github.com/noamsto/dispatcher/crew/internal/proc"
 )
 
@@ -40,6 +33,7 @@ func TestRoleWatchScripts(t *testing.T) {
 		Setup: func(e *testscript.Env) error {
 			e.Setenv("FAKE_TMUX_DIR", filepath.Join(e.WorkDir, "tmux"))
 			e.Setenv("FAKE_TMUX_LOG", filepath.Join(e.WorkDir, "tmux.log"))
+			e.Setenv("FRAMES", filepath.Join(pkgDir, "internal", "frame", "testdata", "frames"))
 			return nil
 		},
 	})
@@ -50,6 +44,8 @@ func TestRoleWatchScripts(t *testing.T) {
 //
 //	state              key=value lines: role window delivery exited branch crew
 //	                   width zoomed layout min_cols pane lifetime
+//	                   load_buffer_fail paste_buffer_fail (non-empty: that
+//	                   command exits 1; an after-<ev>-<n> file clears it)
 //	frames/<n>         the nth capture-pane; the last one repeats
 //	after-<ev>-<n>     key=value lines merged into state once the nth <ev> has
 //	                   answered; ev is alive (a #{pane_id} read), capture or
@@ -58,6 +54,10 @@ func TestRoleWatchScripts(t *testing.T) {
 //	                   directory) once the nth <ev> has answered
 //	n.<ev>             the event counters
 //	buffer             stdin of the last load-buffer
+//	loads              one line per load-buffer: the captures answered so far, a
+//	                   space, then its stdin
+//
+// $FRAMES is the shared classifier fixture directory, for `cp $FRAMES/<f> tmux/frames/<n>`.
 //
 // After `lifetime` #{pane_id} reads (default 100) the pane is gone, which ends
 // a watcher. Anything the watchers do not issue exits 1.
@@ -191,9 +191,21 @@ func (s *fakeTmuxState) answer(args []string, stdin io.Reader) (string, bool) {
 		if len(args) != 4 || args[1] != "-b" || args[3] != "-" {
 			return "", false
 		}
+		if s.get("load_buffer_fail", "") != "" {
+			return "", false
+		}
 		data, _ := io.ReadAll(stdin)
+		n, _ := os.ReadFile(filepath.Join(s.dir, "n.capture"))
+		f, err := os.OpenFile(filepath.Join(s.dir, "loads"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return "", false
+		}
+		_, _ = fmt.Fprintf(f, "%s %s\n", strings.TrimSpace(string(n)), data)
+		_ = f.Close()
 		return "", os.WriteFile(filepath.Join(s.dir, "buffer"), data, 0o644) == nil
-	case "paste-buffer", "delete-buffer", "set-window-option", "select-layout":
+	case "paste-buffer":
+		return "", len(args) > 1 && s.get("paste_buffer_fail", "") == ""
+	case "delete-buffer", "set-window-option", "select-layout":
 		return "", len(args) > 1
 	case "list-panes":
 		switch {
@@ -229,181 +241,4 @@ func (s *fakeTmuxState) display(format string) (string, bool) {
 		return s.get("layout", ""), true
 	}
 	return "", false
-}
-
-// differentialCases are the scripts whose argv log is the bash arm's: the
-// differential test runs the arm and `crew role-watch` against each script's
-// fake state, and the script's golden.log is the arm's log.
-var differentialCases = []struct {
-	name    string
-	notices int // role-posted msg rows each run must leave
-}{
-	{"deliver_idle_claude", 0}, {"held_resend", 2}, {"stamp_flip_after_enter", 2},
-	{"pi_retype", 2}, {"reguard_width", 2}, {"reguard_zoomed", 2}, {"unknown_escalation", 2},
-}
-
-// TestRoleWatchDifferential runs the dispatch.sh --role-watch arm and the Go
-// watcher against identical fake state and compares their tmux argv and the
-// notices they post. ROLEWATCH_GOLDEN_DIR=<dir> also writes the arm's argv log
-// to <dir>/<case>.log, to be pasted as the script's golden.log.
-func TestRoleWatchDifferential(t *testing.T) {
-	root := filepath.Join(pkgDir, "..")
-	arm := filepath.Join(root, "adapters", "core", "dispatch.sh")
-	for _, tool := range []string{"bash", "jq", "git"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			drift.Missing(t, tool, err)
-		}
-	}
-	if _, err := os.Stat(arm); err != nil {
-		drift.Missing(t, arm, err)
-	}
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin := t.TempDir()
-	for _, name := range []string{"crew", "tmux"} {
-		if err := os.Symlink(self, filepath.Join(bin, name)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, c := range differentialCases {
-		name := c.name
-		t.Run(name, func(t *testing.T) {
-			ar, err := txtar.ParseFile(filepath.Join(pkgDir, "testdata", "rolewatch", name+".txtar"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			args := watcherArgs(t, string(ar.Comment))
-			goLog, goNotices := runWatcher(t, ar, bin, root, nil, args)
-			bashLog, bashNotices := runWatcher(t, ar, bin, root, []string{"bash", arm, "--role-watch"}, args)
-			if dir := os.Getenv("ROLEWATCH_GOLDEN_DIR"); dir != "" {
-				if err := os.WriteFile(filepath.Join(dir, name+".log"), []byte(bashLog), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if goLog != bashLog {
-				t.Errorf("tmux argv differs\n--- bash arm\n%s--- crew role-watch\n%s", bashLog, goLog)
-			}
-			if len(bashNotices) != c.notices {
-				t.Errorf("the arm posted %d notices, want %d: %v", len(bashNotices), c.notices, bashNotices)
-			}
-			if !reflect.DeepEqual(goNotices, bashNotices) {
-				t.Errorf("notices differ\n--- bash arm\n%v\n--- crew role-watch\n%v", bashNotices, goNotices)
-			}
-		})
-	}
-}
-
-// watcherArgs is the `exec crew role-watch …` line of a script's comment, so
-// the script and the differential run one command line.
-func watcherArgs(t *testing.T, comment string) []string {
-	t.Helper()
-	for _, l := range strings.Split(comment, "\n") {
-		if rest, ok := strings.CutPrefix(l, "exec crew role-watch "); ok {
-			return strings.Fields(rest)
-		}
-	}
-	t.Fatal("no `exec crew role-watch` line in the script")
-	return nil
-}
-
-type notice struct {
-	From, To string
-	Body     any
-}
-
-// runWatcher lays the archive out in a fresh repo and runs one watcher in it:
-// `crew role-watch args` when prefix is nil, else prefix+args (the bash arm).
-// It returns the tmux log and the role-posted msg rows.
-func runWatcher(t *testing.T, ar *txtar.Archive, bin, root string, prefix, args []string) (string, []notice) {
-	t.Helper()
-	work := t.TempDir()
-	for _, f := range ar.Files {
-		if f.Name == "golden.log" {
-			continue
-		}
-		path := filepath.Join(work, f.Name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, f.Data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	runIn := func(name string, a ...string) {
-		cmd := exec.Command(name, a...)
-		cmd.Dir = work
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%s %v: %v\n%s", name, a, err, out)
-		}
-	}
-	runIn("git", "init", "-q")
-	runIn("mkdir", ".git/crew")
-	runIn("cp", "events.jsonl", ".git/crew/events.jsonl")
-
-	cmdline := append([]string{"crew", "role-watch"}, args...)
-	if prefix != nil {
-		cmdline = append(slices.Clone(prefix), args...)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, cmdline[0], cmdline[1:]...)
-	cmd.Dir = work
-	cmd.Env = []string{
-		"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
-		"HOME=" + work,
-		"XDG_CONFIG_HOME=" + filepath.Join(work, "xdg-config"),
-		"XDG_CACHE_HOME=" + filepath.Join(work, "xdg-cache"),
-		"FAKE_TMUX_DIR=" + filepath.Join(work, "tmux"),
-		"FAKE_TMUX_LOG=" + filepath.Join(work, "tmux.log"),
-		"DISPATCH_ROLE_WATCH_CLOCK=" + filepath.Join(work, "clock"),
-		"GRANT_CHECK_LIB=" + filepath.Join(root, "adapters/core/grant-check.sh"),
-		"LAUNCHER_COMMON_LIB=" + filepath.Join(root, "adapters/core/launcher-common.sh"),
-		"WORKTREE_GIT_LIB=" + filepath.Join(root, "adapters/core/worktree-git.sh"),
-		"LOCAL_MODELS_LIB=" + filepath.Join(root, "adapters/core/local-models.sh"),
-		"BUDGET_GATE_LIB=" + filepath.Join(root, "adapters/core/budget-gate.sh"),
-		"OPENROUTER_KEY_LIB=" + filepath.Join(root, "adapters/core/openrouter-key.sh"),
-		"MODEL_RESOLVE_BIN=" + filepath.Join(root, "adapters/core/model-resolve.sh"),
-		"DISPATCH_CONFIG_BIN=" + filepath.Join(root, "adapters/core/dispatch-config.sh"),
-	}
-	if prefix != nil {
-		cmd.Env = append(cmd.Env, "DISPATCH_ROLE_WATCH_BASH_ARM=1")
-	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("%v: %v\n%s", cmdline, err, stderr.String())
-	}
-	if _, err := os.Stat(filepath.Join(work, ".git/crew/role-watch-shim.log")); prefix != nil && err == nil {
-		t.Fatal("the bash arm ran through the shim: DISPATCH_ROLE_WATCH_BASH_ARM no longer selects it")
-	}
-	log, _ := os.ReadFile(filepath.Join(work, "tmux.log"))
-	return string(log), roleNotices(t, filepath.Join(work, ".git/crew/events.jsonl"))
-}
-
-// roleNotices are the msg rows the watcher posted, with the body parsed as
-// JSON when it is, so a key-order or spacing difference is not a difference.
-func roleNotices(t *testing.T, path string) []notice {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out []notice
-	for _, l := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		var row struct {
-			Kind, From, To string
-			Body           string
-		}
-		if json.Unmarshal([]byte(l), &row) != nil || row.Kind != "msg" || !strings.HasPrefix(row.From, "role:") {
-			continue
-		}
-		n := notice{From: row.From, To: row.To}
-		if json.Unmarshal([]byte(row.Body), &n.Body) != nil {
-			n.Body = row.Body
-		}
-		out = append(out, n)
-	}
-	return out
 }

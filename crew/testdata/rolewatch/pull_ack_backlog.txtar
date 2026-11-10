@@ -1,0 +1,62 @@
+# A pull ack clears every backlog entry older than it, whoever sent it (a
+# dispatcher's row as well as the lead worker's), and the pane then counts as
+# working: however long it runs, nothing is deferred. An assignment posted while
+# the role works is held (no deferral); once its verdict has cleared the queue,
+# one posted after it is deferred once, to the lead worker.
+exec git init -q
+mkdir .git/crew
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# backlog before the ack
+cp events-backlog.jsonl .git/crew/events.jsonl
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2 --defer-notice 1
+! stderr .
+grep -count=1 '^set-option -p -t %6 @crew_state working$' tmux.log
+! grep 'assignment_deferred' .git/crew/events.jsonl
+
+# held while working, deferred after the verdict
+rm tmux.log tmux/n.alive tmux/n.enter
+cp events-ack.jsonl .git/crew/events.jsonl
+cp state-long tmux/state
+cp held-row tmux/append-alive-4
+cp verdict-and-assign tmux/append-alive-12
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2 --defer-notice 1
+! stderr .
+grep -count=1 'assignment_deferred' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_deferred.*\\"delivery\\":\\"pull\\"' .git/crew/events.jsonl
+! grep '"to":"dispatcher:c1".*assignment_deferred' .git/crew/events.jsonl
+grep '(?s)\\"verdict\\":\\"accept\\".*assignment_deferred' .git/crew/events.jsonl
+! grep '^(capture-pane|send-keys|load-buffer|paste-buffer)' tmux.log
+
+-- events-backlog.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"role:feat/9-x:reviewer","body":"plan the seam"}
+{"ts":10000000000000,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"plan the seam"}
+{"ts":10000000000001,"crew_id":"c1","kind":"status","from":"role:feat/9-x:reviewer","to":"dispatcher:c1","body":{"state":"working"}}
+{"ts":10000000000002,"crew_id":"c1","kind":"status","from":"role:feat/9-x:reviewer","to":"dispatcher:c1","body":{"state":"working","detail":"assignment: plan"}}
+-- events-ack.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"plan the seam"}
+{"ts":10000000000001,"crew_id":"c1","kind":"status","from":"role:feat/9-x:reviewer","to":"dispatcher:c1","body":{"state":"working"}}
+{"ts":10000000000002,"crew_id":"c1","kind":"status","from":"role:feat/9-x:reviewer","to":"dispatcher:c1","body":{"state":"working","detail":"assignment: plan"}}
+-- held-row --
+{"ts":10000000000010,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"plan the seam"}
+-- verdict-and-assign --
+{"ts":10000000000020,"crew_id":"c1","kind":"msg","from":"role:feat/9-x:reviewer","to":"worker:feat/9-x#s1-1","body":"{\"verdict\":\"accept\"}"}
+{"ts":10000000000050,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"plan the seam"}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+delivery=pull
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- state-long --
+role=reviewer
+window=@1
+delivery=pull
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=24

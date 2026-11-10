@@ -1,0 +1,154 @@
+# Codex and cursor confirm the typed text only when the composer shows exactly
+# the watcher's assignment, wrapped rows included. A historical row, a decoy
+# footer, a dialog overlay or a different wrapped composer is pasted but never
+# gets the Enter.
+exec git init -q
+mkdir .git/crew
+mkdir tmux/frames
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# codex: rw_codex_idle_empty.txt -> rw_codex_after_wrapped_assignment.txt (enter)
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.wrapped .git/crew/events.jsonl
+cp $FRAMES/rw_codex_idle_empty.txt tmux/frames/1
+cp $FRAMES/rw_codex_after_wrapped_assignment.txt tmux/frames/2
+cp $FRAMES/rw_codex_idle_empty.txt tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+
+# cursor: rw_cursor_idle_empty.txt -> rw_cursor_after_wrapped_assignment.txt (enter)
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.wrapped .git/crew/events.jsonl
+cp $FRAMES/rw_cursor_idle_empty.txt tmux/frames/1
+cp $FRAMES/rw_cursor_after_wrapped_assignment.txt tmux/frames/2
+cp $FRAMES/rw_cursor_idle_empty.txt tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+
+# codex: rw_codex_idle_empty.txt -> rw_codex_historical_assignment_empty.txt (none)
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.go .git/crew/events.jsonl
+cp $FRAMES/rw_codex_idle_empty.txt tmux/frames/1
+cp $FRAMES/rw_codex_historical_assignment_empty.txt tmux/frames/2
+rm tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep '^paste-buffer' tmux.log
+! grep '^send-keys -t %6 Enter$' tmux.log
+
+# codex: rw_codex_idle_empty.txt -> rw_codex_historical_assignment_arbitrary.txt (none)
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.go .git/crew/events.jsonl
+cp $FRAMES/rw_codex_idle_empty.txt tmux/frames/1
+cp $FRAMES/rw_codex_historical_assignment_arbitrary.txt tmux/frames/2
+rm tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep '^paste-buffer' tmux.log
+! grep '^send-keys -t %6 Enter$' tmux.log
+
+# cursor: rw_cursor_idle_empty.txt -> rw_cursor_historical_assignment_empty.txt (none)
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.go .git/crew/events.jsonl
+cp $FRAMES/rw_cursor_idle_empty.txt tmux/frames/1
+cp $FRAMES/rw_cursor_historical_assignment_empty.txt tmux/frames/2
+rm tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '^paste-buffer' tmux.log
+! grep '^send-keys -t %6 Enter$' tmux.log
+
+# cursor: rw_cursor_idle_empty.txt -> rw_cursor_historical_assignment_arbitrary.txt (none)
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.go .git/crew/events.jsonl
+cp $FRAMES/rw_cursor_idle_empty.txt tmux/frames/1
+cp $FRAMES/rw_cursor_historical_assignment_arbitrary.txt tmux/frames/2
+rm tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '^paste-buffer' tmux.log
+! grep '^send-keys -t %6 Enter$' tmux.log
+
+# codex: rw_codex_idle_empty.txt -> rw_codex_after_decoy_footer_assignment.txt (none)
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.go .git/crew/events.jsonl
+cp $FRAMES/rw_codex_idle_empty.txt tmux/frames/1
+cp $FRAMES/rw_codex_after_decoy_footer_assignment.txt tmux/frames/2
+rm tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep '^paste-buffer' tmux.log
+! grep '^send-keys -t %6 Enter$' tmux.log
+
+# cursor: rw_cursor_idle_empty.txt -> rw_cursor_after_decoy_footer_assignment.txt (none)
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.go .git/crew/events.jsonl
+cp $FRAMES/rw_cursor_idle_empty.txt tmux/frames/1
+cp $FRAMES/rw_cursor_after_decoy_footer_assignment.txt tmux/frames/2
+rm tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '^paste-buffer' tmux.log
+! grep '^send-keys -t %6 Enter$' tmux.log
+
+# codex: rw_codex_idle_empty.txt -> rw_codex_after_assignment_dialog_overlay.txt (none)
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.go .git/crew/events.jsonl
+cp $FRAMES/rw_codex_idle_empty.txt tmux/frames/1
+cp $FRAMES/rw_codex_after_assignment_dialog_overlay.txt tmux/frames/2
+rm tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep '^paste-buffer' tmux.log
+! grep '^send-keys -t %6 Enter$' tmux.log
+
+# cursor: rw_cursor_idle_empty.txt -> rw_cursor_after_assignment_dialog_overlay.txt (none)
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.go .git/crew/events.jsonl
+cp $FRAMES/rw_cursor_idle_empty.txt tmux/frames/1
+cp $FRAMES/rw_cursor_after_assignment_dialog_overlay.txt tmux/frames/2
+rm tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '^paste-buffer' tmux.log
+! grep '^send-keys -t %6 Enter$' tmux.log
+
+# codex: rw_codex_idle_empty.txt -> rw_codex_after_mismatched_wrapped_assignment.txt (none)
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.wrapped .git/crew/events.jsonl
+cp $FRAMES/rw_codex_idle_empty.txt tmux/frames/1
+cp $FRAMES/rw_codex_after_mismatched_wrapped_assignment.txt tmux/frames/2
+rm tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine codex --branch feat/9-x --interval 0.2
+! stderr .
+grep '^paste-buffer' tmux.log
+! grep '^send-keys -t %6 Enter$' tmux.log
+
+# cursor: rw_cursor_idle_empty.txt -> rw_cursor_after_mismatched_wrapped_assignment.txt (none)
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/buffer tmux/loads
+cp events.wrapped .git/crew/events.jsonl
+cp $FRAMES/rw_cursor_idle_empty.txt tmux/frames/1
+cp $FRAMES/rw_cursor_after_mismatched_wrapped_assignment.txt tmux/frames/2
+rm tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2
+! stderr .
+grep '^paste-buffer' tmux.log
+! grep '^send-keys -t %6 Enter$' tmux.log
+
+-- events.go --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- events.wrapped --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"{\"role\":\"reviewer\",\"question\":\"Check the intentionally long assignment that wraps across terminal rows without an editor newline\"}"}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=6

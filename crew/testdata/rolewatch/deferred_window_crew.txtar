@@ -1,0 +1,44 @@
+# A deferral posts under the window's crew (@crew_id c1), not the caller's
+# CREW_ID (c9): the watcher a fresh dispatch spawns from the main checkout has no
+# WORKER_TASK.md to read the crew from (#849). It is a deferral, not a rejection.
+exec git init -q
+mkdir .git/crew
+cp events.jsonl .git/crew/events.jsonl
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+env CREW_ID=c9
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 --defer-notice 1
+! stderr .
+grep -count=1 'assignment_deferred' .git/crew/events.jsonl
+grep '"crew_id":"c1","from":"role:feat/9-x:reviewer","to":"worker:feat/9-x#s1-1","kind":"msg".*assignment_deferred' .git/crew/events.jsonl
+grep 'the pane is not at an idle input box' .git/crew/events.jsonl
+! grep '"crew_id":"c9"' .git/crew/events.jsonl
+! grep 'assignment_rejected' .git/crew/events.jsonl
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=6
+-- tmux/frames/1 --
+● Waiting on the shell reviewer.
+
+──────────────────────────────────────────────────────────────────────────────────
+ Bash command · from the shell-reviewer agent
+
+   bats --filter grant tests/dispatch-resume.bats 2>&1 | tail -30
+
+ │ Auto mode classifier requires confirmation for this command.
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: bats *
+   3. No
+
+ Esc to cancel · Tab to amend

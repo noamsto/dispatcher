@@ -1,0 +1,55 @@
+# A pull role's verdict clears what it answered even without an ack (an
+# announced role: assignment older than the verdict, nothing is deferred), while
+# an assignment newer than the verdict is still deferred, naming the missing
+# ack. The deferral goes to the lead worker, not to the dispatcher that posted
+# last.
+exec git init -q
+mkdir .git/crew
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# verdict without an ack clears the older assignment
+cp events-answered.jsonl .git/crew/events.jsonl
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2 --defer-notice 1
+! stderr .
+! grep 'assignment_deferred' .git/crew/events.jsonl
+! grep '@crew_state working' tmux.log
+
+# an assignment newer than the verdict is deferred once
+rm tmux.log tmux/n.alive
+cp events-newer.jsonl .git/crew/events.jsonl
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2 --defer-notice 1
+! stderr .
+grep -count=1 'assignment_deferred' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_deferred.*has not acked this one' .git/crew/events.jsonl
+
+# the lead worker hears, not the dispatcher that posted last
+rm tmux.log tmux/n.alive
+cp events-dispatcher-last.jsonl .git/crew/events.jsonl
+exec crew role-watch reviewer --pane %6 --engine cursor --branch feat/9-x --interval 0.2 --defer-notice 1
+! stderr .
+grep -count=1 'assignment_deferred' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_deferred' .git/crew/events.jsonl
+! grep '"to":"dispatcher:c1".*assignment_deferred' .git/crew/events.jsonl
+
+-- events-answered.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"status","from":"role:feat/9-x:reviewer","to":"dispatcher:c1","body":{"state":"working"}}
+{"ts":10000000000001,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"plan the seam"}
+{"ts":10000000000010,"crew_id":"c1","kind":"msg","from":"role:feat/9-x:reviewer","to":"worker:feat/9-x#s1-1","body":"{\"verdict\":\"accept\"}"}
+-- events-newer.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"status","from":"role:feat/9-x:reviewer","to":"dispatcher:c1","body":{"state":"working"}}
+{"ts":10000000000000,"crew_id":"c1","kind":"msg","from":"role:feat/9-x:reviewer","to":"worker:feat/9-x#s1-1","body":"{\"verdict\":\"accept\"}"}
+{"ts":10000000000050,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"plan the seam"}
+-- events-dispatcher-last.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"plan the seam"}
+{"ts":10000000000000,"crew_id":"c1","kind":"msg","from":"dispatcher:c1","to":"role:feat/9-x:reviewer","body":"plan the seam"}
+{"ts":10000000000001,"crew_id":"c1","kind":"status","from":"role:feat/9-x:reviewer","to":"dispatcher:c1","body":{"state":"working"}}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+delivery=pull
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12

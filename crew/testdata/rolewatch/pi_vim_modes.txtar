@@ -1,0 +1,227 @@
+# pi-vim draws its mode in the lower rule (` INSERT`, ` NORMAL 3dw_`, …): every
+# label and a pending-command tail is still an idle box and is typed into. A
+# working indicator on its own row above the editor is a live turn: no keys.
+exec git init -q
+mkdir .git/crew
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# pi vim INSERT is typed into
+mkdir tmux/frames
+cp state.1 tmux/state
+cp events.1 .git/crew/events.jsonl
+cp clock.base clock
+cp f.vim__INSERT tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+
+# pi vim NORMAL is typed into
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.2 tmux/state
+cp events.2 .git/crew/events.jsonl
+cp clock.base clock
+cp f.vim__NORMAL tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+
+# pi vim NORMAL 3dw_ is typed into
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.3 tmux/state
+cp events.3 .git/crew/events.jsonl
+cp clock.base clock
+cp f.vim__NORMAL_3dw_ tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+
+# pi vim EX w_ is typed into
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.4 tmux/state
+cp events.4 .git/crew/events.jsonl
+cp clock.base clock
+cp f.vim__EX_w_ tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+
+# pi vim VISUAL is typed into
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.5 tmux/state
+cp events.5 .git/crew/events.jsonl
+cp clock.base clock
+cp f.vim__VISUAL tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+
+# pi vim V-LINE is typed into
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.6 tmux/state
+cp events.6 .git/crew/events.jsonl
+cp clock.base clock
+cp f.vim__V_LINE tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+
+# a pi-vim working row above the editor is a live turn and is not typed into
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.7 tmux/state
+cp events.7 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_vim_live.txt tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep '(?s)capture-pane.*capture-pane.*capture-pane' tmux.log
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+
+-- clock.base --
+1000
+-- state.1 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.1 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.vim__INSERT --
+ pi v0.99.1
+──────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────── INSERT
+~/git/dispatcher
+0.0%/0 (auto)                                                unknown
+LSP Inactive
+-- state.2 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.2 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.vim__NORMAL --
+ pi v0.99.1
+──────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────── NORMAL
+~/git/dispatcher
+0.0%/0 (auto)                                                unknown
+LSP Inactive
+-- state.3 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.3 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.vim__NORMAL_3dw_ --
+ pi v0.99.1
+──────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────── NORMAL 3dw_
+~/git/dispatcher
+0.0%/0 (auto)                                                unknown
+LSP Inactive
+-- state.4 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.4 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.vim__EX_w_ --
+ pi v0.99.1
+──────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────── EX w_
+~/git/dispatcher
+0.0%/0 (auto)                                                unknown
+LSP Inactive
+-- state.5 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.5 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.vim__VISUAL --
+ pi v0.99.1
+──────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────── VISUAL
+~/git/dispatcher
+0.0%/0 (auto)                                                unknown
+LSP Inactive
+-- state.6 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.6 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.vim__V_LINE --
+ pi v0.99.1
+──────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────── V-LINE
+~/git/dispatcher
+0.0%/0 (auto)                                                unknown
+LSP Inactive
+-- state.7 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- events.7 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}

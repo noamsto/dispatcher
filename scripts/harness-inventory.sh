@@ -153,8 +153,8 @@ expected_rows() {
         }
       }
     ' "$manifest" \
-    tests/refresh-models.bats tests/pr-watch.bats tests/dispatch.bats \
-    tests/refresh-models.bats tests/pr-watch.bats tests/dispatch.bats |
+    tests/refresh-models.bats tests/pr-watch.bats \
+    tests/refresh-models.bats tests/pr-watch.bats |
     LC_ALL=C sort -t $'\t' -k1,1 -k2,2 -k3,3n
 }
 

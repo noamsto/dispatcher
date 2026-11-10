@@ -1,0 +1,76 @@
+# DISPATCH_ROLE_WATCH_CLOCK is a virtual clock: with --interval 30 and
+# --defer-notice 30 the deferral is still reported, without waiting a wall
+# second (the run would take minutes if sleep were real), and the clock file
+# advanced by the slept seconds. Without a deferral (a far-ahead clock and an
+# idle pane that takes the assignment at once) no assignment_deferred is ever
+# emitted.
+exec git init -q
+mkdir .git/crew
+mkdir tmux/frames
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# a deferral under a 30s interval
+cp events.jsonl .git/crew/events.jsonl
+cp permission tmux/frames/1
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 30 --defer-notice 30
+! stderr .
+grep -count=1 'assignment_deferred' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_deferred' .git/crew/events.jsonl
+! grep '^(send-keys|load-buffer|paste-buffer)' tmux.log
+! grep '\A1000$' clock
+grep '\A1[0-9]{3}$' clock
+
+# a clock far ahead, an idle pane: delivered, never deferred
+rm tmux.log tmux/loads tmux/n.alive tmux/n.capture tmux/n.enter
+cp events.jsonl .git/crew/events.jsonl
+cp clock-ahead clock
+cp idle tmux/frames/1
+cp held tmux/frames/2
+cp idle tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 --defer-notice 1
+! stderr .
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep 'assignment_deferred' .git/crew/events.jsonl
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- clock --
+1000
+-- clock-ahead --
+4000000000
+-- tmux/state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=6
+-- permission --
+● Waiting on the shell reviewer.
+
+──────────────────────────────────────────────────────────────────────────────────
+ Bash command · from the shell-reviewer agent
+
+   bats --filter grant tests/dispatch-resume.bats 2>&1 | tail -30
+
+ │ Auto mode classifier requires confirmation for this command.
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: bats *
+   3. No
+
+ Esc to cancel · Tab to amend
+-- idle --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- held --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯ Assignment: go
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents

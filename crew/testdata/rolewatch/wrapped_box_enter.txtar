@@ -1,0 +1,79 @@
+# Text that wraps or fills the input box after the paste still earns its Enter,
+# for claude and for pi: the confirming capture shows the assignment's first
+# line plus a continuation line, and the Enter goes out exactly once.
+exec git init -q
+mkdir .git/crew
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# claude
+cp events.jsonl .git/crew/events.jsonl
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+grep '(?s)paste-buffer.*capture-pane.*send-keys -t %6 Enter' tmux.log
+
+# pi
+rm tmux.log tmux/loads tmux/n.alive tmux/n.capture tmux/n.enter
+cp events.jsonl .git/crew/events.jsonl
+cp frames-pi/1 tmux/frames/1
+cp frames-pi/2 tmux/frames/2
+cp frames-pi/3 tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+grep '(?s)paste-buffer.*capture-pane.*send-keys -t %6 Enter' tmux.log
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=6
+-- tmux/frames/1 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/2 --
+  ⎿  Done (14 tool uses · 58.2k tokens · 1m 9s)
+────────────────── reef ─
+❯ Assignment: {"role":"reviewer","roster":"/abs/path/to/roster.json","question":"Review this diff. 1. first"}
+  continuation of the wrapped assignment text 2. second
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · ← for agents
+-- tmux/frames/3 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- frames-pi/1 --
+ pi v0.87.1
+──────────────────────────────
+
+──────────────────────────────
+~/git/dispatcher
+0.0%/0 (auto)      unknown
+-- frames-pi/2 --
+ pi v0.87.1
+──────────────────────────────
+Assignment: {"role":"reviewer","question":"Review this diff. 1. first"}
+continuation 2. second
+──────────────────────────────
+~/git/dispatcher
+0.0%/0 (auto)      unknown
+-- frames-pi/3 --
+ pi v0.87.1
+──────────────────────────────
+
+──────────────────────────────
+~/git/dispatcher
+0.0%/0 (auto)      unknown

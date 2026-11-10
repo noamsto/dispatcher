@@ -1,0 +1,11 @@
+# A pull role receives its assignment from `crew await role:<branch>:<role>`:
+# the queued msg row's body comes back on stdout.
+exec git init -q
+mkdir .git/crew
+cp events.jsonl .git/crew/events.jsonl
+env CREW_ID=c1
+exec crew await role:feat/9-x:reviewer --timeout 0
+stdout 'plan the seam'
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"plan the seam"}

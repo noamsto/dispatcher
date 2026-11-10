@@ -1,0 +1,96 @@
+# A role pane squeezed to a sliver mid-run renders no recognisable frame. The
+# watcher restores its width via the main-vertical fallback and re-samples; at
+# most 3 times per assignment, and never on a pane that is wide enough.
+exec git init -q
+mkdir .git/crew
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# a 1-cell pane is re-guarded once and the next frame is recognised
+mkdir tmux/frames
+cp state.1 tmux/state
+cp events.1 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_idle.txt tmux/frames/1
+cp $FRAMES/rw_claude_held.txt tmux/frames/2
+cp $FRAMES/rw_unknown.txt tmux/frames/3
+cp $FRAMES/rw_live.txt tmux/frames/4
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+stderr -count=1 'role-watch: pane %6 was 1 cols \(min 20\) mid-run — re-guarded window @1 \(attempt 1/3\)'
+! stderr 'attempt 2/3'
+grep -count=1 '^select-layout -t @1 main-vertical$' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+grep '^4$' tmux/n.capture
+
+# a window too narrow to fit is re-guarded 3 times, then reports unsubmitted
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.2 tmux/state
+cp events.2 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_idle.txt tmux/frames/1
+cp $FRAMES/rw_claude_held.txt tmux/frames/2
+cp $FRAMES/rw_unknown.txt tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+stderr -count=3 're-guarded window @1'
+stderr -count=1 'attempt 3/3'
+! stderr 'attempt 4/3'
+grep -count=3 '^select-layout -t @1 main-vertical$' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep -count=2 'assignment_unsubmitted' .git/crew/events.jsonl
+grep -count=2 'assignment_unsubmitted.*the pane matches no recognised frame' .git/crew/events.jsonl
+
+# an unrecognised frame on a wide pane is never re-guarded
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.3 tmux/state
+cp events.3 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_idle.txt tmux/frames/1
+cp $FRAMES/rw_claude_held.txt tmux/frames/2
+cp $FRAMES/rw_unknown.txt tmux/frames/3
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+! grep '^(select-layout|set-window-option)' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep -count=2 'assignment_unsubmitted' .git/crew/events.jsonl
+
+-- clock.base --
+1000
+-- state.1 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+layout=L0
+width=1
+-- events.1 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.2 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=24
+layout=L0
+width=1
+-- events.2 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.3 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+layout=L0
+width=90
+-- events.3 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}

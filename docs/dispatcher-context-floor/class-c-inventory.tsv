@@ -79,7 +79,7 @@ U5.2	design-doc	harness job: never launder a claude worker's action; three-part 
 U5.3	design-doc	out of scope: calls that name their effect, own-grid effects, dispatcher-resolved values	Out of scope: anything only reachable through a
 U5.4	design-doc	harness rule: anchor, don't discover	anchor, don't
 U5.5	design-doc	--spawn-role/--reap-roles/--role-exited act only on an ancestor pane	`--reap-roles` and `--role-exited` act	adapters/core/dispatch.sh	tests/dispatch.bats::grid: --role-exited refuses a --pane that is not this process's pane
-U5.6	one-liner	--role-watch types only the lead's or stamped dispatcher's msgs and reports others as role_watch_drop	A `role_watch_drop` naming	adapters/core/dispatch.sh	tests/dispatch.bats::role-watch: sender: foreign senders are dropped with a report and no delivery
+U5.6	one-liner	--role-watch types only the lead's or stamped dispatcher's msgs and reports others as role_watch_drop	A `role_watch_drop` naming	crew/internal/rolewatch/notices.go:role_watch_drop	crew/rolewatch_script_test.go::TestRoleWatchScripts
 U5.7	kept	a role_watch_drop from another branch is a cross-grid write attempt: surface it; else resend from the right id	surface it to the human
 U5.8	design-doc	a grid stamped before @crew_id admits only its lead until resumed	a grid window stamped before `@crew_id` existed
 U5.9	one-liner	dispatch resume refuses a worktree whose crew dir, branch or git dir differs from its record	a worktree whose `.git` no longer matches its	adapters/core/dispatch-resume.sh	tests/dispatch-resume.bats::refuses when the gitlink points at a worker-built admin dir (crew dir mismatch, #518)

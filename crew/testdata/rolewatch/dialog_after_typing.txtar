@@ -1,0 +1,54 @@
+# A dialog raised after the text is typed is never confirmed: the Enter would
+# answer the dialog. The typed text is cleared (C-u) and pasted again once the
+# idle box is back, and only the second paste is confirmed and gets the Enter.
+exec git init -q
+mkdir .git/crew
+cp events.jsonl .git/crew/events.jsonl
+cp $FRAMES/rw_permission.txt tmux/frames/2
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=2 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 C-u$' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep '(?s)paste-buffer.*send-keys -t %6 C-u.*paste-buffer.*send-keys -t %6 Enter' tmux.log
+cmp tmux/loads want.loads
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- clock --
+1000
+-- want.loads --
+1 Assignment: go
+3 Assignment: go
+-- tmux/state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=8
+-- tmux/frames/1 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/3 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/4 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯ Assignment: go
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/5 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents

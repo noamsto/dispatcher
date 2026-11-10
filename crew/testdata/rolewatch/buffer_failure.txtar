@@ -1,0 +1,72 @@
+# A load-buffer or paste-buffer failure never confirms delivery: no Enter goes
+# out until the command works again, then the next tick delivers and submits.
+# A failed paste also reclaims its buffer (delete-buffer), since -d never ran.
+exec git init -q
+mkdir .git/crew
+mkdir tmux/frames
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# load-buffer fails on the first tick, works from the second capture on
+cp events.jsonl .git/crew/events.jsonl
+cp state-load tmux/state
+cp after-clear tmux/after-capture-2
+cp idle tmux/frames/1
+cp idle tmux/frames/2
+cp held tmux/frames/3
+cp idle tmux/frames/4
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=2 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep '(?s)send-keys -t %6 Enter.*load-buffer' tmux.log
+grep '(?s)load-buffer.*load-buffer.*paste-buffer.*send-keys -t %6 Enter' tmux.log
+
+# paste-buffer fails on the first tick, works from the second capture on
+rm tmux.log tmux/n.alive tmux/n.capture tmux/n.enter tmux/loads
+cp events.jsonl .git/crew/events.jsonl
+cp state-paste tmux/state
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=2 '^load-buffer' tmux.log
+grep -count=2 '^paste-buffer' tmux.log
+grep -count=1 '^delete-buffer' tmux.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep '(?s)send-keys -t %6 Enter.*paste-buffer' tmux.log
+grep '(?s)paste-buffer.*delete-buffer.*load-buffer.*paste-buffer.*send-keys -t %6 Enter' tmux.log
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- clock --
+1000
+-- state-load --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=10
+load_buffer_fail=1
+-- state-paste --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=10
+paste_buffer_fail=1
+-- after-clear --
+load_buffer_fail=
+paste_buffer_fail=
+-- idle --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- held --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯ Assignment: go
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents

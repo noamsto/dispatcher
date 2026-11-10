@@ -1,0 +1,103 @@
+# A role's verdict that lands while the submit is still unconfirmed makes the
+# role idle once the submit resolves (startup idle + that one); the exclusion
+# keys on the event field of the body's own JSON, so a verdict that merely
+# quotes assignment_unsubmitted counts (#648), while the watcher's own
+# assignment_unsubmitted post does not. The post lands after the first Enter
+# (append-enter-1); capture 3 is a frame nothing recognises, capture 4 a live
+# turn.
+exec git init -q
+mkdir .git/crew
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# a verdict that lands while the submit is unconfirmed idles the role once it is
+mkdir tmux/frames
+cp state.1 tmux/state
+cp events.1 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+cp $FRAMES/rw_pi_held.txt tmux/frames/2
+cp f.unrec tmux/frames/3
+cp $FRAMES/rw_pi_live.txt tmux/frames/4
+cp ap.1.enter-1 tmux/append-enter-1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep '^4$' tmux/n.capture
+grep '(?s)@crew_state working.*@crew_state idle' tmux.log
+grep -count=2 '^set-option -p -t %6 @crew_state idle$' tmux.log
+
+# a verdict quoting assignment_unsubmitted idles the role
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.2 tmux/state
+cp events.2 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+cp $FRAMES/rw_pi_held.txt tmux/frames/2
+cp f.unrec tmux/frames/3
+cp $FRAMES/rw_pi_live.txt tmux/frames/4
+cp ap.2.enter-1 tmux/append-enter-1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep '^4$' tmux/n.capture
+grep '(?s)@crew_state working.*@crew_state idle' tmux.log
+grep -count=2 '^set-option -p -t %6 @crew_state idle$' tmux.log
+
+# the watcher's own assignment_unsubmitted post is not a verdict
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.3 tmux/state
+cp events.3 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+cp $FRAMES/rw_pi_held.txt tmux/frames/2
+cp f.unrec tmux/frames/3
+cp $FRAMES/rw_pi_live.txt tmux/frames/4
+cp ap.3.enter-1 tmux/append-enter-1
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+grep '^4$' tmux/n.capture
+grep -count=1 '^set-option -p -t %6 @crew_state idle$' tmux.log
+! grep '(?s)@crew_state working.*@crew_state idle' tmux.log
+
+-- clock.base --
+1000
+-- state.1 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+-- events.1 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- f.unrec --
+ something unrecognised
+-- ap.1.enter-1 --
+{"ts":10000000000005,"crew_id":"c1","kind":"msg","from":"role:feat/9-x:reviewer","to":"worker:feat/9-x#s1-1","body":"{\"verdict\":\"accept\"}"}
+-- state.2 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+-- events.2 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- ap.2.enter-1 --
+{"ts":10000000000005,"crew_id":"c1","kind":"msg","from":"role:feat/9-x:reviewer","to":"worker:feat/9-x#s1-1","body":"{\"verdict\":\"revise\",\"finding\":\"quotes assignment_unsubmitted\"}"}
+-- state.3 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=14
+-- events.3 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- ap.3.enter-1 --
+{"ts":10000000000005,"crew_id":"c1","kind":"msg","from":"role:feat/9-x:reviewer","to":"worker:feat/9-x#s1-1","body":"{\"role\":\"reviewer\",\"event\":\"assignment_unsubmitted\"}"}

@@ -1,0 +1,82 @@
+# Enter retries: several swallowed Enters are retried (default budget 3) until
+# the turn starts; past the budget pi is retyped once (C-u + re-paste), and
+# when that stays swallowed too the escalation goes to the lead and the
+# dispatcher exactly once, with the text left in the box and the queue held
+# until the lead submits it by hand.
+exec git init -q
+mkdir .git/crew
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+
+# several swallowed Enters are retried until the turn starts
+mkdir tmux/frames
+cp state.1 tmux/state
+cp events.1 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+cp $FRAMES/rw_pi_held.txt tmux/frames/2
+cp $FRAMES/rw_pi_live.txt tmux/frames/6
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=4 '^send-keys -t %6 Enter$' tmux.log
+grep -count=1 '^load-buffer' tmux.log
+grep -count=1 '^paste-buffer' tmux.log
+! grep '^send-keys -t %6 C-u' tmux.log
+! grep 'assignment_unsubmitted' .git/crew/events.jsonl
+grep '^6$' tmux/n.capture
+
+# an assignment still unsubmitted after the retry budget escalates and is not dequeued
+rm tmux.log
+rm tmux
+mkdir tmux/frames
+cp state.2 tmux/state
+cp events.2 .git/crew/events.jsonl
+cp clock.base clock
+cp $FRAMES/rw_pi_idle.txt tmux/frames/1
+cp $FRAMES/rw_pi_held.txt tmux/frames/2
+cp $FRAMES/rw_pi_idle.txt tmux/frames/13
+cp f.two_held tmux/frames/15
+cp $FRAMES/rw_pi_idle.txt tmux/frames/16
+exec crew role-watch reviewer --pane %6 --engine pi --branch feat/9-x --interval 0.2 --submit-retries 2
+! stderr .
+grep -count=7 '^send-keys -t %6 Enter$' tmux.log
+grep -count=2 'assignment_unsubmitted' .git/crew/events.jsonl
+grep -count=2 'assignment_unsubmitted.*after 2 Enter retries' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*assignment_unsubmitted' .git/crew/events.jsonl
+grep '"to":"dispatcher:c1".*assignment_unsubmitted' .git/crew/events.jsonl
+grep -count=2 'assignment_unsubmitted.*\\"pane\\":\\"%6\\"' .git/crew/events.jsonl
+grep -count=2 '\\"role\\":\\"reviewer\\".*assignment_unsubmitted' .git/crew/events.jsonl
+grep -count=1 '^send-keys -t %6 C-u$' tmux.log
+cmp tmux/loads want.loads
+
+-- clock.base --
+1000
+-- state.1 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=24
+-- events.1 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- state.2 --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=40
+-- events.2 --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"two"}
+-- f.two_held --
+ pi v0.87.1
+──────────────────────────────
+Assignment: two
+──────────────────────────────
+~/git/dispatcher
+0.0%/0 (auto)      unknown
+-- want.loads --
+1 Assignment: go
+6 Assignment: go
+14 Assignment: two
