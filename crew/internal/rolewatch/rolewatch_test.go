@@ -21,11 +21,15 @@ type fakeTmux struct {
 	captures []string
 	calls    []string
 	inputs   []string
+	onRead   func(line string) bool // true answers empty, as a cancelled exec would
 }
 
 func (f *fakeTmux) Run(_ context.Context, args ...string) (string, error) {
 	line := strings.Join(args, " ")
 	f.calls = append(f.calls, line)
+	if f.onRead != nil && f.onRead(line) {
+		return "", nil
+	}
 	switch {
 	case line == "display-message -p -t %6 #{pane_id}":
 		if f.paneIDs == 0 {
@@ -261,5 +265,47 @@ func TestDeliverIdleClaude(t *testing.T) {
 	}
 	if len(posts) != 0 {
 		t.Fatalf("unexpected posts %q", posts)
+	}
+}
+
+func TestDeliverCancelledDuringStampSkipsOrphanNotice(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "events.jsonl")
+	row := `{"kind":"msg","ts":9999999999999,"from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}` + "\n"
+	if err := os.WriteFile(log, []byte(row), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tm := &fakeTmux{
+		reads:    stampedPane(),
+		paneIDs:  5,
+		captures: []string{frameFile(t, "rw_idle.txt")},
+		onRead: func(line string) bool {
+			if line != readStamp {
+				return false
+			}
+			cancel()
+			return true
+		},
+	}
+	posts := 0
+	code := Run(ctx,
+		Request{Role: "reviewer", Pane: "%6", Branch: "feat/9-x", Engine: "claude", Interval: "0.2", DeferNotice: "60", SubmitRetries: "3"},
+		Options{
+			Tmux:   tm,
+			Clock:  NewClock(func(string) string { return filepath.Join(dir, "clock") }),
+			Stderr: os.Stderr,
+			Log:    log,
+			Post:   func(context.Context, string, string, string, string) { posts++ },
+			CrewID: func() string { return "" },
+			PID:    42,
+			Rand:   func() int { return 7 },
+		})
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if posts != 0 {
+		t.Fatalf("posted %d orphan notices after cancel", posts)
 	}
 }

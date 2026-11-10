@@ -6,9 +6,9 @@
 // rules; this port keeps its state machine, its tmux argv and its per-tick call
 // order, because the dispatch bats stub matches argv and counts calls.
 //
-// Refusal lines keep the `dispatch: --role-watch` prefix on purpose: S7 will
-// exec this subcommand behind `dispatch --role-watch` (until then bash runs
-// role-watch) and the bats match those lines.
+// Refusal lines keep the `dispatch: --role-watch` prefix on purpose: dispatch
+// is meant to exec this subcommand behind `dispatch --role-watch`, and the
+// dispatch bats match those lines; until then bash runs role-watch.
 //
 // Bus location: the bus is still discovered from the watcher's cwd, resolved
 // once at startup by the caller (Options.Log). dispatch launches the watcher in

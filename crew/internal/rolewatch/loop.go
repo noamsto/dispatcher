@@ -3,6 +3,7 @@ package rolewatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -132,8 +133,12 @@ func (w *watcher) intake() {
 	if err != nil || !fi.Mode().IsRegular() || fi.Size() == w.logSize {
 		return
 	}
+	evs, err := bus.ReadEventsTolerant(w.o.Log)
+	var oe *bus.OpenError
+	if errors.As(err, &oe) {
+		return
+	}
 	w.logSize = fi.Size()
-	evs, _ := bus.ReadEventsTolerant(w.o.Log)
 	next := w.since
 	for _, e := range evs {
 		obj, _ := e.Doc.(map[string]any)
@@ -390,15 +395,16 @@ func (w *watcher) escalate(detail string) {
 	w.notify(unsubmittedNotice(w.role, w.pane, w.engine, detail), w.inflightFrom, w.leadWorker, w.dispatcher())
 }
 
-// orphaned tells whoever still waits on undelivered work before the exit.
-// orphanedUnlessDone: a cancelled ctx makes every tmux read empty, so the stamp
-// check fails without the pane having changed.
+// orphanedUnlessDone skips the notice when ctx is done: a cancelled ctx makes
+// every tmux read empty, so the stamp check fails without the pane having
+// changed.
 func (w *watcher) orphanedUnlessDone() {
 	if w.ctx.Err() == nil {
 		w.orphaned()
 	}
 }
 
+// orphaned tells whoever still waits on undelivered work before the exit.
 func (w *watcher) orphaned() {
 	if len(w.pending) == 0 && w.inflight == "" {
 		return

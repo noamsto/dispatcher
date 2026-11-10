@@ -51,6 +51,12 @@ env GIT_CEILING_DIRECTORIES=$WORK
 stderr '^dispatch: --role-watch: no crew bus: not in a git repository$'
 ! grep '^(set-option|send-keys|load-buffer|paste-buffer|capture-pane)' ../tmux.log
 
+# Without --branch the git failure is one line: git's own stderr, trimmed.
+! exec crew role-watch reviewer --pane %6 --engine claude --interval 0.2
+stderr '^dispatch: --role-watch: cannot read the current branch: fatal: not a git repository'
+stderr -count=1 '^.+$'
+! stderr '\n\n'
+
 -- state.ok --
 role=reviewer
 window=@1

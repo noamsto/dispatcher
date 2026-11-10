@@ -461,6 +461,10 @@ func runRoleWatch(ctx context.Context, e env, cwd string, c roleWatchCmd, stderr
 		Stderr: stderr,
 		CurrentBranch: func() (string, error) {
 			out, err := git.Exec{}.Run(ctx, cwd, "branch", "--show-current")
+			var ee *git.ExitError
+			if errors.As(err, &ee) {
+				err = errors.New(strings.TrimSpace(ee.Stderr))
+			}
 			return strings.TrimSpace(out), err
 		},
 		Log:    paths.Log,
