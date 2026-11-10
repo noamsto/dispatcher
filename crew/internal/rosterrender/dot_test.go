@@ -1567,14 +1567,18 @@ func TestRenderedSpokesLieBeneathAndEndAtThePlanet(t *testing.T) {
 	}
 }
 
-// TestFinishSVGHalosEveryText: each text, the planets' and the legend's alike,
-// is outlined in the background colour behind its fill, once.
-func TestFinishSVGHalosEveryText(t *testing.T) {
-	in := `<svg viewBox="0 0 10 10"><text x="1" y="2" fill="#fff">a</text><text xml:space="preserve" x="3">b</text>` +
-		`<text x="4" stroke="` + colBG + `" paint-order="stroke">c</text></svg>`
+// TestFinishSVGHalosFreeText: a text outside a node shape (the legend, a host,
+// anchor or wedge label) is outlined in the background colour behind its fill,
+// once; a text inside a planet, badge or moon is left plain.
+func TestFinishSVGHalosFreeText(t *testing.T) {
+	in := `<svg viewBox="0 0 10 10"><text x="1" y="2" fill="#fff">a</text>` +
+		`<g id="node1" class="node"><title>h1</title><text xml:space="preserve" x="3">b</text></g>` +
+		`<g id="node2" class="node"><title>p1</title><text x="5">p</text></g>` +
+		`<g id="node3" class="node"><title>p1c</title><text x="6">!</text></g>` +
+		`<g id="node4" class="node"><title>w1</title><text x="4" stroke="` + colBG + `" paint-order="stroke">c</text></g></svg>`
 	got := string(finishSVG([]byte(in), nil))
 	halo := ` stroke="` + colBG + `" stroke-width="3" stroke-linejoin="round" paint-order="stroke"`
-	for _, want := range []string{`<text x="1" y="2" fill="#fff"` + halo + `>a</text>`, `<text xml:space="preserve" x="3"` + halo + `>b</text>`} {
+	for _, want := range []string{`<text x="1" y="2" fill="#fff"` + halo + `>a</text>`, `<text xml:space="preserve" x="3"` + halo + `>b</text>`, `<text x="5">p</text>`, `<text x="6">!</text>`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("no %s in\n%s", want, got)
 		}
@@ -1585,18 +1589,33 @@ func TestFinishSVGHalosEveryText(t *testing.T) {
 
 	neato := neatoPath(t)
 	dot, sc, _ := emitRepos(wedgeRoster())
-	texts := 0
-	parseSVG(t, finishSVG(neatoSVG(t, neato, dot), sc.wedges)).walk(func(n svgNode) {
-		if n.XMLName.Local != "text" {
-			return
+	haloed, plain := 0, 0
+	var walk func(n svgNode, inShape bool)
+	walk = func(n svgNode, inShape bool) {
+		if strings.HasPrefix(n.attr("id"), "node") {
+			inShape = !freeLabelRe.MatchString(n.title())
 		}
-		texts++
-		if n.attr("stroke") != colBG || n.attr("stroke-width") != "3" || n.attr("stroke-linejoin") != "round" || n.attr("paint-order") != "stroke" {
-			t.Errorf("text %q has no halo: %+v", n.Text, n.Attrs)
+		if n.XMLName.Local == "text" {
+			has := n.attr("stroke") == colBG && n.attr("stroke-width") == "3" && n.attr("stroke-linejoin") == "round" && n.attr("paint-order") == "stroke"
+			switch {
+			case inShape && has:
+				t.Errorf("text %q inside a node shape has a halo", n.Text)
+			case !inShape && !has:
+				t.Errorf("free text %q has no halo: %+v", n.Text, n.Attrs)
+			}
+			if has {
+				haloed++
+			} else {
+				plain++
+			}
 		}
-	})
-	if texts == 0 {
-		t.Error("the rendered svg has no text")
+		for _, c := range n.Nodes {
+			walk(c, inShape)
+		}
+	}
+	walk(parseSVG(t, finishSVG(neatoSVG(t, neato, dot), sc.wedges)), false)
+	if haloed == 0 || plain == 0 {
+		t.Errorf("%d haloed and %d plain texts, want both", haloed, plain)
 	}
 }
 

@@ -113,7 +113,7 @@ var svgRootRe = regexp.MustCompile(`<svg\b[^>]*?\sviewBox="([-0-9.]+)\s+([-0-9.]
 // and moves with the zoom, so a rect over the viewBox, in absolute user units
 // because aeye zooms by rewriting the viewBox, goes in first. Every text gets a
 // background-coloured halo, so a line that still passes behind a label does not
-// cut its letters, and the repo wedges' fills go in under everything Graphviz
+// cut its letters (not the text inside a node shape), and the repo wedges' fills go in under everything Graphviz
 // drew. Text without a root viewBox is not an svg this knows, and comes back
 // unchanged.
 func finishSVG(svg []byte, wedges []wedge) []byte {
@@ -126,18 +126,49 @@ func finishSVG(svg []byte, wedges []wedge) []byte {
 	out := slices.Concat(svg[:m[1]], []byte(rect), svg[m[1]:])
 	out = bytes.ReplaceAll(out, []byte("aeye&#45;"), []byte("aeye-"))
 	out = bytes.ReplaceAll(out, []byte(`font-family="`+diagramFont+`"`), []byte(`font-family="'`+diagramFont+`'"`))
-	out = textTagRe.ReplaceAllFunc(out, func(tag []byte) []byte {
+	out = haloFreeText(out)
+	return injectWedgeFills(out, wedges)
+}
+
+// haloFreeText outlines every text that is not drawn inside a node shape: the
+// legend, and the plaintext host, anchor and wedge labels. A node group whose
+// title is not one of those holds its text inside a planet, badge or moon, where
+// an outline would only emboss it.
+func haloFreeText(svg []byte) []byte {
+	var out []byte
+	rest := svg
+	for {
+		loc := nodeGroupRe.FindIndex(rest)
+		if loc == nil {
+			break
+		}
+		out = append(out, haloTexts(rest[:loc[0]])...)
+		group := rest[loc[0]:loc[1]]
+		if m := nodeTitleRe.FindSubmatch(group); m != nil && freeLabelRe.Match(m[1]) {
+			group = haloTexts(group)
+		}
+		out = append(out, group...)
+		rest = rest[loc[1]:]
+	}
+	return append(out, haloTexts(rest)...)
+}
+
+func haloTexts(svg []byte) []byte {
+	return textTagRe.ReplaceAllFunc(svg, func(tag []byte) []byte {
 		if bytes.Contains(tag, []byte("paint-order=")) {
 			return tag
 		}
 		return slices.Concat(tag[:len(tag)-1], []byte(haloAttrs), tag[len(tag)-1:])
 	})
-	return injectWedgeFills(out, wedges)
 }
 
 var (
 	textTagRe = regexp.MustCompile(`<text\b[^>]*>`)
-	haloAttrs = fmt.Sprintf(` stroke="%s" stroke-width="%g" stroke-linejoin="round" paint-order="stroke"`, colBG, haloWidth)
+	// nodeGroupRe is a node's group, which holds no nested group.
+	nodeGroupRe = regexp.MustCompile(`(?s)<g id="node\d+"[^>]*>.*?</g>`)
+	nodeTitleRe = regexp.MustCompile(`<title>([^<]*)</title>`)
+	freeLabelRe = regexp.MustCompile(`^[haw]\d+$`)
+	haloAttrs   = fmt.Sprintf(` stroke="%s" stroke-width="%g" stroke-linejoin="round" paint-order="stroke"`, colBG, haloWidth)
 
 	// sunRe finds the dispatcher's centre, which is layout (0, 0): Graphviz
 	// moves the pinned layout by an offset it does not state, and y runs down.
