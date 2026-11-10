@@ -24,8 +24,8 @@ g() {
   guard b || return 1
 }
 EOF
-  cat >"$REPO/tests/inner.bats" <<'EOF'
-@test "f refuses" {
+  printf '%s\n' '@test "f refuses" {' >"$REPO/tests/inner.bats"
+  cat >>"$REPO/tests/inner.bats" <<'EOF'
   source "$BATS_TEST_DIRNAME/../lib.sh"
   run f
   [ "$status" -eq 1 ]
