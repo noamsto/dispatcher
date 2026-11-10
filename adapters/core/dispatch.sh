@@ -96,7 +96,7 @@ Internal (called by workers and the harness, not by hand)
   --spawn-role ROLE       Start one lazy grid role pane in the worker's window
   --reap-roles            Kill every role pane in the caller's window
   --role-exited ROLE      Report a role engine that died before its verdict
-  --role-watch ROLE       Type assignments into a role pane; spawned per role
+  --role-watch ROLE       Type assignments into a role pane; execs crew role-watch
 
 Examples
   dispatch standard sonnet --effort high --agent claude 42 "fix the roster age column"
@@ -1960,7 +1960,7 @@ launch_role() {
 # The subshell orphans it at once: a lazy --spawn-role runs in the lead's pane,
 # and `crew msg` anchors a sender still inside that pane's tree as the lead.
 watch_role() {
-  (CREW_ID="$4" nohup "$0" --role-watch "$1" --pane "$2" --engine "$3" --branch "$branch" >/dev/null 2>&1 &)
+  (CREW_ID="$4" nohup crew role-watch "$1" --pane "$2" --engine "$3" --branch "$branch" >/dev/null 2>&1 &)
 }
 
 # watch_role_prompts <role> <pane> <agent> <crew> — every role pane gets a
@@ -2021,6 +2021,19 @@ watch_role_prompts() {
 # pane's role and window branch and crew stamps and exits on a mismatch: a watcher can
 # outlive a tmux server kill, and the pane id be reused by another pane.
 if [ "${1:-}" = "--role-watch" ]; then
+  # The bash arm below runs only when crew's differential test sets
+  # DISPATCH_ROLE_WATCH_BASH_ARM to compare it with `crew role-watch`. Each shim
+  # call leaves one line in the repo's crew dir, so the owner can see when
+  # nothing still starts a watcher this way and the shim can go.
+  if [ -z "${DISPATCH_ROLE_WATCH_BASH_ARM:-}" ]; then
+    shift
+    if _rw_gcd="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" && [ -d "$_rw_gcd/crew" ]; then
+      _rw_caller="$(ps -o args= -p "$PPID" 2>/dev/null)" || _rw_caller=""
+      printf '%s pid=%s ppid=%s caller=%s cwd=%s args=%s\n' "$(date -u +%FT%TZ)" "$$" "$PPID" \
+        "${_rw_caller:-gone}" "$PWD" "$*" >>"$_rw_gcd/crew/role-watch-shim.log" 2>/dev/null || true
+    fi
+    exec crew role-watch "$@"
+  fi
   role="${2:-}"
   [ -n "$role" ] || {
     echo "dispatch: --role-watch needs a role name" >&2
@@ -3035,7 +3048,7 @@ if [ "${1:-}" = "--spawn-role" ]; then
       ;;
     esac
   done
-  # The role's nohup'd --role-watch and stall-watch inherit this env and locate
+  # The role's nohup'd crew role-watch and stall-watch inherit this env and locate
   # the bus through git discovery; a worker-set GIT_* would steer them wrong.
   # ${!GIT_@}, not compgen: a non-interactive bash build has no compgen.
   for _v in "${!GIT_@}"; do unset "$_v"; done

@@ -189,6 +189,7 @@ const rwCrewStub = `#!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;
+role-watch) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
 `

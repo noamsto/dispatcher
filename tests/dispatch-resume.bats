@@ -18,6 +18,7 @@ setup() {
 printf '%s\n' "$*" >>"$STUB_LOG"
 if [ "$1" = pi-agent-dir ]; then exec "$CREW_REAL" pi-agent-dir; fi
 if [ "$1" = resolve-target ]; then exec "$CREW_REAL" "$@"; fi
+[ "$1" != role-watch ] || printf 'CREW_ID=%s\n' "$CREW_ID" >>"$STUB_LOG"
 if [ "$1" = where ]; then
   [ -z "${STUB_WHERE_LIVE:-}" ] || { echo "iris — main:3.1 (lead pane)   jump: ! tmux switch-client -t %9"; exit 0; }
   exit 1
@@ -37,7 +38,6 @@ EOF
   cat >"$STUB_DIR/dispatch" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG"
-[ "$1" != --role-watch ] || printf 'CREW_ID=%s\n' "$CREW_ID" >>"$STUB_LOG"
 [ -z "${DISPATCH_CHROME_SELF:-}" ] || printf 'DISPATCH_CHROME_SELF=%s\n' "$DISPATCH_CHROME_SELF" >>"$STUB_LOG"
 [ -z "${DISPATCH_CLASS_SIGIL:-}" ] || printf 'DISPATCH_CLASS_SIGIL=%s\n' "$DISPATCH_CLASS_SIGIL" >>"$STUB_LOG"
 [ -n "${DISPATCH_PRECHECK:-}" ] || exit 0
@@ -3250,13 +3250,13 @@ setup_grid() {
   run run_resume
   [ "$status" -eq 0 ]
   grep -q 'send-keys -t %8' "$STUB_LOG"
-  wait_for_log '^--role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing$'
-  wait_for_log '^--role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing$'
+  wait_for_log '^role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing$'
+  wait_for_log '^role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing$'
   wait_for_log '^CREW_ID=c1$'
   wait_for_log 'stall-watch role:feat/7-a-thing:reviewer --pane %9 --engine claude'
   wait_for_log 'stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi'
   grep -qF 'set-option -p -t %10 @crew_delivery typed' "$STUB_LOG"
-  run ! grep -q -e '--role-watch lead' -e 'stall-watch role:feat/7-a-thing:lead' "$STUB_LOG"
+  run ! grep -q -e '^role-watch lead' -e 'stall-watch role:feat/7-a-thing:lead' "$STUB_LOG"
   run ! grep -q -e split-window -e kill-pane "$STUB_LOG"
 }
 
@@ -3271,9 +3271,27 @@ crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  wait_for_log '^--role-watch spec-critic --pane %11 '
+  wait_for_log '^role-watch spec-critic --pane %11 '
   wait_for_log 'stall-watch role:feat/7-a-thing:spec-critic --pane %11'
-  run ! grep -q -e '--role-watch reviewer' -e '--role-watch plan-critic' "$STUB_LOG"
+  run ! grep -q -e '^role-watch reviewer' -e '^role-watch plan-critic' "$STUB_LOG"
+  run ! grep -q -e 'stall-watch role:feat/7-a-thing:reviewer' -e 'stall-watch role:feat/7-a-thing:plan-critic' "$STUB_LOG"
+  run ! grep -q -e split-window -e kill-pane "$STUB_LOG"
+}
+
+@test "resume leaves live crew role-watch watchers alone and arms only the unwatched pane" {
+  setup_grid
+  local u=$'\x1f'
+  STUB_PANES_W+=$'\n'"%11${u}spec-critic${u}${u}claude${u}$WT"
+  export STUB_PS="/nix/store/abc-crew/bin/crew role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing
+crew stall-watch role:feat/7-a-thing:reviewer --pane %9 --engine claude
+crew role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing
+crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
+  cd "$WT"
+  run run_resume
+  [ "$status" -eq 0 ]
+  wait_for_log '^role-watch spec-critic --pane %11 '
+  wait_for_log 'stall-watch role:feat/7-a-thing:spec-critic --pane %11'
+  run ! grep -q -e '^role-watch reviewer' -e '^role-watch plan-critic' "$STUB_LOG"
   run ! grep -q -e 'stall-watch role:feat/7-a-thing:reviewer' -e 'stall-watch role:feat/7-a-thing:plan-critic' "$STUB_LOG"
   run ! grep -q -e split-window -e kill-pane "$STUB_LOG"
 }
@@ -3289,9 +3307,9 @@ crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
   [ "$status" -eq 0 ]
   grep -qF 'set-option -p -t %9 @crew_exited 1' "$STUB_LOG"
   grep -qF 'set-option -p -t %9 @crew_state exited' "$STUB_LOG"
-  wait_for_log '^--role-watch spec-critic --pane %11 '
+  wait_for_log '^role-watch spec-critic --pane %11 '
   run ! grep -qF 'set-option -p -t %9 @crew_delivery' "$STUB_LOG"
-  run ! grep -q -e '--role-watch reviewer' "$STUB_LOG"
+  run ! grep -q -e '^role-watch reviewer' "$STUB_LOG"
 }
 
 @test "placement never picks a role pane listed before the lead (#730)" {
@@ -3328,8 +3346,8 @@ $STUB_PANES_A"
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  wait_for_log '^--role-watch spec-critic --pane %11 '
-  run ! grep -q -e '--role-watch reviewer' -e '--role-watch ghost' -e '--role-watch plan-critic' "$STUB_LOG"
+  wait_for_log '^role-watch spec-critic --pane %11 '
+  run ! grep -q -e '^role-watch reviewer' -e '^role-watch ghost' -e '^role-watch plan-critic' "$STUB_LOG"
   run ! grep -q -e 'stall-watch role:feat/7-a-thing:ghost' -e 'stall-watch role:feat/7-a-thing:plan-critic' "$STUB_LOG"
 }
 
@@ -3342,9 +3360,9 @@ $STUB_PANES_A"
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  wait_for_log '^--role-watch spec-critic --pane %11 '
+  wait_for_log '^role-watch spec-critic --pane %11 '
   run ! grep -qF 'set-option -p -t %12 @crew_delivery' "$STUB_LOG"
-  run ! grep -q -e '--role-watch reviewer --pane %12' "$STUB_LOG"
+  run ! grep -q -e '^role-watch reviewer --pane %12' "$STUB_LOG"
 }
 
 @test "resume re-arms a window whose panes carry the branch stamp (#730)" {
@@ -3356,8 +3374,8 @@ $STUB_PANES_A"
   cd "$WT"
   run run_resume
   [ "$status" -eq 0 ]
-  wait_for_log '^--role-watch reviewer --pane %9 '
-  wait_for_log '^--role-watch plan-critic --pane %10 '
+  wait_for_log '^role-watch reviewer --pane %9 '
+  wait_for_log '^role-watch plan-critic --pane %10 '
 }
 
 @test "resume does not arm role panes in a window stamped for another branch (#730)" {
@@ -3371,7 +3389,7 @@ $STUB_PANES_A"
   [ "$status" -eq 0 ]
   wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
   run ! grep -qF 'set-option -p -t %9 @crew_delivery' "$STUB_LOG"
-  run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
+  run ! grep -q -e '^role-watch' -e 'stall-watch role:' "$STUB_LOG"
 }
 
 @test "resume --ignore-budget gives the claude role --no-budget and pi no role stall-watch (#730)" {
@@ -3380,7 +3398,7 @@ $STUB_PANES_A"
   run run_resume --ignore-budget
   [ "$status" -eq 0 ]
   wait_for_log 'stall-watch role:feat/7-a-thing:reviewer --pane %9 --engine claude --no-budget$'
-  wait_for_log '^--role-watch plan-critic --pane %10 '
+  wait_for_log '^role-watch plan-critic --pane %10 '
   sleep 0.3
   run ! grep -q 'stall-watch role:feat/7-a-thing:plan-critic' "$STUB_LOG"
 }
@@ -3395,7 +3413,7 @@ $STUB_PANES_A"
   [ "$status" -eq 0 ]
   wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
   run ! grep -qF 'set-option -p -t %9 @crew_delivery' "$STUB_LOG"
-  run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
+  run ! grep -q -e '^role-watch' -e 'stall-watch role:' "$STUB_LOG"
 }
 
 @test "a failing ps snapshot arms no role panes (#730)" {
@@ -3407,7 +3425,7 @@ $STUB_PANES_A"
   [[ "$output" == *"ps failed — not re-arming role panes"* ]]
   wait_for_log 'stall-watch worker:feat/7-a-thing#s[0-9]+-[0-9]+ --pane %8 --engine claude'
   sleep 0.3
-  run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
+  run ! grep -q -e '^role-watch' -e 'stall-watch role:' "$STUB_LOG"
 }
 
 # setup_grid with the lead's engine already live, as tmux-og relaunches it.
@@ -3423,11 +3441,11 @@ _grid_live_lead() {
   run run_resume --rearm-roles
   [ "$status" -eq 0 ]
   [[ "$output" == *"re-armed 2 role pane(s) in window @4"* ]]
-  wait_for_log '^--role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing$'
-  wait_for_log '^--role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing$'
+  wait_for_log '^role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing$'
+  wait_for_log '^role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing$'
   wait_for_log '^CREW_ID=c1$'
-  [ "$(grep -c -e '--role-watch reviewer --pane %9 ' "$STUB_LOG")" -eq 1 ]
-  [ "$(grep -c -e '--role-watch plan-critic --pane %10 ' "$STUB_LOG")" -eq 1 ]
+  [ "$(grep -c -e '^role-watch reviewer --pane %9 ' "$STUB_LOG")" -eq 1 ]
+  [ "$(grep -c -e '^role-watch plan-critic --pane %10 ' "$STUB_LOG")" -eq 1 ]
   grep -qF 'set-window-option -t @4 @crew_branch feat/7-a-thing' "$STUB_LOG"
   run ! grep -q 'send-keys -t %8' "$STUB_LOG"
   run ! grep -q 'kind":"resume"' "$TEST_REPO/.git/crew/events.jsonl"
@@ -3443,7 +3461,7 @@ crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
   run run_resume --rearm-roles
   [ "$status" -eq 0 ]
   sleep 0.3
-  run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
+  run ! grep -q -e '^role-watch' -e 'stall-watch role:' "$STUB_LOG"
 }
 
 @test "resume without --rearm-roles still refuses a live lead and names the flag (#730)" {
@@ -3453,7 +3471,7 @@ crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
   [ "$status" -eq 1 ]
   [[ "$output" == *"already alive there"* ]]
   [[ "$output" == *"--rearm-roles"* ]]
-  run ! grep -q -e '--role-watch' "$STUB_LOG"
+  run ! grep -q -e '^role-watch' "$STUB_LOG"
 }
 
 @test "resume --rearm-roles is exclusive with the launch flags and an extra prompt (#730)" {
@@ -3465,7 +3483,7 @@ crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
     [ "$status" -eq 1 ]
     [[ "$output" == *"usage:"* ]]
   done
-  run ! grep -q -e '--role-watch' "$STUB_LOG"
+  run ! grep -q -e '^role-watch' "$STUB_LOG"
 }
 
 @test "resume --rearm-roles refuses when no window of this worker is there (#730)" {
@@ -3477,7 +3495,7 @@ crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
   run run_resume --rearm-roles
   [ "$status" -eq 1 ]
   [[ "$output" == *"no window of this worker to re-arm"* ]]
-  run ! grep -q -e '--role-watch' "$STUB_LOG"
+  run ! grep -q -e '^role-watch' "$STUB_LOG"
 }
 
 # A restored own window: every pane carries the branch stamp, and the bus knows
@@ -3498,7 +3516,7 @@ _target_restored_fixture() {
   run run_resume '#7' --print
   [ "$status" -eq 0 ]
   sleep 0.3
-  run ! grep -q -e '--role-watch' "$STUB_LOG"
+  run ! grep -q -e '^role-watch' "$STUB_LOG"
 }
 
 @test "target: a restored own window whose lead runs an engine is still alive (#730)" {
@@ -3514,7 +3532,7 @@ _target_restored_fixture() {
   STUB_PANES_A="${STUB_PANES_A/\%8$'\x1f'$WT$'\x1f'fish/%8$'\x1f'$WT$'\x1f'claude}"
   run run_resume '#7' --rearm-roles
   [ "$status" -eq 0 ]
-  wait_for_log '^--role-watch reviewer --pane %9 '
+  wait_for_log '^role-watch reviewer --pane %9 '
 }
 
 @test "target: a window stamped with the branch at another path is still alive (#730)" {
@@ -3674,7 +3692,7 @@ EOF2
   [ "$status" -eq 0 ]
   [[ "$output" == *"dispatch resume: not re-arming role panes — $art/feat is a symlink or not a directory"* ]]
   run ! grep -qF 'set-option -p -t %9 @crew_delivery' "$STUB_LOG"
-  run ! grep -q -e '--role-watch' -e 'stall-watch role:' "$STUB_LOG"
+  run ! grep -q -e '^role-watch' -e 'stall-watch role:' "$STUB_LOG"
 }
 
 @test "trust pin: F18 resume --chrome from a worker is refused by dispatch's own precheck before any launch" {

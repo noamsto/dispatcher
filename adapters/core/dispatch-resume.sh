@@ -677,11 +677,12 @@ _rearm_role_panes() {
     rearmed=$((rearmed + 1))
     watched="" stalled=""
     while IFS= read -r line; do
-      _args_have "$line" "--role-watch $role" "--pane $p" "--branch $branch" && watched=1
+      { _args_have "$line" "--role-watch $role" "--pane $p" "--branch $branch" ||
+        _args_have "$line" "role-watch $role" "--pane $p" "--branch $branch"; } && watched=1
       _args_have "$line" "stall-watch role:$branch:$role" "--pane $p" && stalled=1
     done <<<"$snapshot"
     # Mirrors the launch rule of adapters/core/dispatch.sh watch_role / watch_role_prompts.
-    [ -n "$watched" ] || (CREW_ID="$crew_id" nohup dispatch --role-watch "$role" --pane "$p" --engine "$r_agent" --branch "$branch" >/dev/null 2>&1 &)
+    [ -n "$watched" ] || (CREW_ID="$crew_id" nohup crew role-watch "$role" --pane "$p" --engine "$r_agent" --branch "$branch" >/dev/null 2>&1 &)
     [ -z "$stalled" ] || continue
     [ "$r_agent" = claude ] || [ -z "$ignore_budget" ] || continue
     flags=()

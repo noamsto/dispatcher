@@ -28,6 +28,7 @@ printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
 fleet) exec "$CREW_REAL" "$@" ;;
+role-watch) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
 EOF
@@ -6970,19 +6971,20 @@ _roster_live_dispatcher() {
 # sender still in that pane's process tree as the lead, so the watcher must
 # never be a child of its caller.
 @test "watch_role: the role watcher is orphaned, never a child of its caller (#908)" {
-  stub="$BATS_TEST_TMPDIR/rolewatch-stub"
+  mkdir "$BATS_TEST_TMPDIR/rwbin"
   out="$BATS_TEST_TMPDIR/rolewatch-ppid"
-  printf '#!/usr/bin/env bash\nprintf "%%s" "$PPID" >"%s.tmp" && mv "%s.tmp" "%s"\n' "$out" "$out" "$out" >"$stub"
-  chmod +x "$stub"
-  run bash -c '
+  printf '#!/usr/bin/env bash\nprintf "%%s" "$PPID" >"%s.tmp" && mv "%s.tmp" "%s"\nprintf "%%s|%%s" "$CREW_ID" "$*" >"%s.args"\n' "$out" "$out" "$out" "$out" >"$BATS_TEST_TMPDIR/rwbin/crew"
+  chmod +x "$BATS_TEST_TMPDIR/rwbin/crew"
+  PATH="$BATS_TEST_TMPDIR/rwbin:$PATH" run bash -c '
     eval "$(sed -n "/^watch_role() {/,/^}/p" "$1")"
     branch=feat/x
     watch_role r %1 claude c1
     echo "$$"
-    for _ in $(seq 50); do [ -e "$2" ] && break; sleep 0.1; done' "$stub" "$DISPATCH" "$out"
+    for _ in $(seq 50); do [ -e "$2.args" ] && break; sleep 0.1; done' _ "$DISPATCH" "$out"
   [ "$status" -eq 0 ]
   [ -s "$out" ]
   [ "$(cat "$out")" != "$output" ]
+  [ "$(cat "$out.args")" = "c1|role-watch r --pane %1 --engine claude --branch feat/x" ]
 }
 
 @test "watch_role_prompts: the role stall-watch is orphaned, never a child of its caller (#908)" {
@@ -10601,17 +10603,29 @@ ROWS
 }
 
 @test "grid: role panes spawn the engine-agnostic bus watcher" {
-  run grep -F -- '--role-watch' "$DISPATCH"
+  run grep -F -- 'nohup crew role-watch "$1"' "$DISPATCH"
   [ "$status" -eq 0 ]
   run grep -F -- 'watch_role' "$DISPATCH"
-  [ "$status" -eq 0 ]
-  run grep -F -- 'paste-buffer -p' "$DISPATCH"
-  [ "$status" -eq 0 ]
-  run grep -F -- 'load-buffer' "$DISPATCH"
   [ "$status" -eq 0 ]
   # The mechanism is the tmux watcher, not an engine extension.
   run grep -c 'crew-bus.ts' "$DISPATCH"
   [ "$output" = "0" ]
+}
+
+@test "grid: dispatch --role-watch execs crew role-watch with the same arguments and logs its caller" {
+  mkdir "$BATS_TEST_TMPDIR/shimbin" "$TEST_REPO/.git/crew"
+  printf '#!/usr/bin/env bash\nprintf "%%s" "$$" >"%s/stub.pid"\nprintf "%%s" "$*" >"%s/stub.args"\n' "$BATS_TEST_TMPDIR" "$BATS_TEST_TMPDIR" >"$BATS_TEST_TMPDIR/shimbin/crew"
+  chmod +x "$BATS_TEST_TMPDIR/shimbin/crew"
+  PATH="$BATS_TEST_TMPDIR/shimbin:$PATH" bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 &
+  pid=$!
+  wait "$pid"
+  [ "$(cat "$BATS_TEST_TMPDIR/stub.args")" = "role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2" ]
+  [ "$(cat "$BATS_TEST_TMPDIR/stub.pid")" = "$pid" ]
+  log="$TEST_REPO/.git/crew/role-watch-shim.log"
+  [ "$(wc -l <"$log")" -eq 1 ]
+  [[ "$(cat "$log")" == *"args=reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2"* ]]
+  [[ "$(cat "$log")" == *"pid=$pid "* ]]
+  [[ "$(cat "$log")" == *" caller="* ]]
 }
 
 @test "grid: --role-watch needs a role name and a pane" {
@@ -12894,11 +12908,33 @@ EOF
   chmod +x "$STUB_DIR/tmux"
 }
 
+# _rw_render_bus — the watcher posts its notices straight into the bus; render
+# each new complete role-authored msg row into $STUB_LOG as `msg <from> <to>
+# <body>`, the line the role-watch cases grep for. Idempotent: a counter file
+# remembers how many bus lines are already rendered.
+_rw_render_bus() {
+  local bus first seen_first seen total
+  bus="$(git rev-parse --path-format=absolute --git-common-dir)/crew/events.jsonl"
+  [ -f "$bus" ] || return 0
+  # A test that recreates the bus starts counting from zero; the first row's
+  # checksum (its ts differs per bus) tells the two apart.
+  first=$(head -n1 "$bus" | cksum)
+  seen=0
+  read -r seen_first seen 2>/dev/null <"$STUB_DIR/bus-rendered" || true
+  [ "${seen_first:-}" = "${first% *}" ] || seen=0
+  total=$(wc -l <"$bus")
+  [ "$total" -gt "$seen" ] || return 0
+  sed -n "$((seen + 1)),${total}p" "$bus" |
+    jq -r 'select(.kind == "msg" and (.from | startswith("role:"))) | "msg \(.from) \(.to) \(.body)"' >>"$STUB_LOG"
+  printf '%s %s\n' "${first% *}" "$total" >"$STUB_DIR/bus-rendered"
+}
+
 _rw_poll() { # <shell-cmd, true when ready>
   local n
   # Ceiling for watcher startup on a loaded runner. A ready condition
   # returns on the first check.
   for n in $(seq 1 200); do
+    _rw_render_bus
     eval "$1" && return 0
     sleep 0.05
   done
@@ -12968,6 +13004,7 @@ _rw_start() {
 _rw_stop() {
   touch "$STUB_DIR/stop"
   wait "$RW_PID" 2>/dev/null || true
+  _rw_render_bus
 }
 
 # _rw_post <from> — append one msg to events.jsonl addressed to role:feat/9-x:reviewer.
@@ -12980,6 +13017,7 @@ _rw_post() {
 
 _rw_count() {
   local n
+  _rw_render_bus
   n=$(grep -cE "$1" "$STUB_LOG" 2>/dev/null || true)
   printf '%s\n' "${n:-0}"
 }
@@ -13231,18 +13269,22 @@ EOF
   done
 }
 
-@test "role-watch: unknown and empty engines never receive keys" {
+@test "role-watch: an unknown engine never receives keys and an empty one is refused" {
   _spawn_role_fixture
-  for eng in mystery ""; do
-    : >"$STUB_LOG"
-    rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
-    _rw_stub rw_frame_pi_idle
-    _rw_start "$eng"
-    _rw_wait_captures 2
-    _rw_stop
-    [ "$(_rw_captures)" -ge 2 ] || { echo "$eng: never captured"; return 1; }
-    run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
-  done
+  : >"$STUB_LOG"
+  rm -f "$STUB_DIR/stop" "$common/crew/events.jsonl" 2>/dev/null || true
+  _rw_stub rw_frame_pi_idle
+  _rw_start mystery
+  _rw_wait_captures 2
+  _rw_stop
+  [ "$(_rw_captures)" -ge 2 ] || { echo "mystery: never captured"; return 1; }
+  run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
+
+  : >"$STUB_LOG"
+  run timeout 10 bash -euo pipefail "$DISPATCH" --role-watch reviewer --pane %6 --engine "" --branch feat/9-x --interval 1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dispatch: --role-watch: --engine needs a value"* ]]
+  run ! grep -qE '^(send-keys|load-buffer|paste-buffer)' "$STUB_LOG"
 }
 
 @test "role-watch: codex and cursor confirm only the watcher-injected assignment shape" {
@@ -13490,6 +13532,7 @@ _rw_expect_exit() {
   _rw_poll "! kill -0 $RW_PID 2>/dev/null" || exited=1
   kill "$RW_PID" 2>/dev/null || true
   wait "$RW_PID" 2>/dev/null || true
+  _rw_render_bus
   [ "$exited" -eq 0 ]
 }
 
@@ -13585,6 +13628,7 @@ EOF
 printf '%s\n' "$*" >>"$STUB_LOG"
 case "$1" in
 msg) shift; exec "$CREW_REAL" msg "$@" ;;
+role-watch) exec "$CREW_REAL" "$@" ;;
 esac
 exit 0
 EOF
@@ -13659,8 +13703,10 @@ EOF
   mkdir -p "$common/crew"
   jq -nc '{ts: (now*1000|floor), crew_id: "c1", kind: "msg", from: "worker:feat/9-x#s1-1", to: "role:feat/9-x:reviewer", body: "go"}' >>"$common/crew/events.jsonl"
   sleep 0.4
+  _rw_render_bus
   run ! grep -q 'assignment_deferred' "$STUB_LOG"
   for n in $(seq 1 60); do
+    _rw_render_bus
     grep -q 'assignment_deferred' "$STUB_LOG" && break
     sleep 0.1
   done

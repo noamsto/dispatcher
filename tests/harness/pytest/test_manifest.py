@@ -585,6 +585,7 @@ class RoleWatch:
             "printf '%s\\n' \"$*\" >>\"$STUB_LOG\"\n"
             'case "$1" in\n'
             'pi-agent-dir) exec bash -euo pipefail "$CREW_REAL" pi-agent-dir ;;\n'
+            'role-watch) exec "$CREW_REAL" "$@" ;;\n'
             "esac\nexit 0\n",
         )
         protocol = h.repo / "protocols"
