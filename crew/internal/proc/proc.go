@@ -207,13 +207,23 @@ var shells = map[string]bool{"bash": true, "sh": true, "zsh": true, "fish": true
 // crew. A pid ps cannot name, a parent of 0 or 1, or 32 steps ends the walk,
 // and the direct parent is the answer it falls back to.
 func OwnerPID(t Table, ppid int) int {
-	for depth, pid := 0, ppid; depth < 32 && pid > 1; depth++ {
+	if p, _, ok := FirstNonShell(t, ppid); ok {
+		return p
+	}
+	return ppid
+}
+
+// FirstNonShell is the owner walk without its fallback: callers that must know
+// it found a real owner, not $PPID, get ok=false instead. The name is shellName's
+// form because darwin's `ps -o comm=` prints a full path.
+func FirstNonShell(t Table, pid int) (int, string, bool) {
+	for depth := 0; depth < 32 && pid > 1; depth++ {
 		comm, ok := t.Comm(pid)
 		if !ok {
 			break
 		}
 		if name := shellName(comm); !shells[name] {
-			return pid
+			return pid, name, true
 		}
 		next, ok := t.Parent(pid)
 		if !ok {
@@ -221,7 +231,7 @@ func OwnerPID(t Table, ppid int) int {
 		}
 		pid = next
 	}
-	return ppid
+	return 0, "", false
 }
 
 // shellName is the arm's `${c##*/}` and `${c#-}`: ps prints the leading path for
