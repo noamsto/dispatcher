@@ -131,7 +131,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, o Options) int {
 
 	// What the daemon, and every later build hop, is started with: the arm's
 	// `rr_daemon_args`, --crew first.
-	daemon := []string{"--crew", c.crew, "--interval", c.intervalText, "--quiet", c.quietText}
+	daemon := []string{"--crew", c.crew, "--interval", c.intervalText, "--quiet", c.quietText, "--legend", string(c.legend)}
 	if c.noOpen {
 		daemon = append(daemon, "--no-open")
 	}
@@ -150,7 +150,7 @@ func Run(ctx context.Context, req Request, paths bus.Paths, o Options) int {
 	case c.once:
 		// `_rr_pass` with no role argument lists them itself.
 		roles := roleRows(o.rolePanes(ctx), paths.Dir, c.crew)
-		if _, err := pass(ctx, o, paths, cdir, c.crew, c.noOpen, roles); err != nil {
+		if _, err := pass(ctx, o, paths, cdir, c.crew, c.noOpen, c.legend, roles); err != nil {
 			say(o.Stderr, "crew: roster-render: %v\n", err)
 			return exitFailure
 		}
@@ -189,11 +189,11 @@ func runMap(ctx context.Context, c call, paths bus.Paths, o Options) int {
 	if err != nil {
 		return fail(err)
 	}
-	svg, err := o.Probes.Graphviz(ctx, []byte(buildDOT(fr.sc, nil, c.selectBranch, c.selectRepo)))
+	svg, err := o.Probes.Graphviz(ctx, []byte(buildDOT(fr.sc, nil, legendNone, c.selectBranch, c.selectRepo)))
 	if err != nil {
 		return fail(err)
 	}
-	svg = finishSVG(svg)
+	svg = finishSVG(svg, fr.sc.wedges)
 	vbW, vbH, ok := viewBoxSize(svg)
 	if !ok {
 		return fail(errors.New("neato: the svg has no viewBox"))

@@ -217,6 +217,7 @@ type rosterRenderCmd struct {
 	Pane       *string `name:"pane"`
 	Interval   *string `name:"interval"`
 	Quiet      *string `name:"quiet"`
+	Legend     *string `name:"legend"`
 	NoOpen     bool    `name:"no-open"`
 	Once       bool    `name:"once"`
 	Detach     bool    `name:"detach"`
@@ -1121,7 +1122,7 @@ func validate(sub string, r *root) *refusal {
 			name string
 			v    *string
 		}{
-			{"--crew", c.Crew}, {"--pane", c.Pane}, {"--interval", c.Interval}, {"--quiet", c.Quiet},
+			{"--crew", c.Crew}, {"--pane", c.Pane}, {"--interval", c.Interval}, {"--quiet", c.Quiet}, {"--legend", c.Legend},
 			{"--px", c.Px}, {"--select", c.Select}, {"--select-repo", c.SelectRepo}, {"--out", c.Out},
 		} {
 			if given(f.v) {

@@ -171,7 +171,7 @@ func TestDotReviewRoundBadge(t *testing.T) {
 	ps := []planet{wp("a", classWorking), wp("b", classWorking)}
 	ps[1].rounds = 3
 	_, sc := arrange(newSlotState(), ps)
-	out := renderDOT(sc, legend{})
+	out := renderDOT(sc, legend{}, legendFull)
 	ids := idOf(sc)
 	if strings.Contains(out, "  "+ids["a"]+"r [") {
 		t.Errorf("a planet with no rounds drew a badge:\n%s", out)
@@ -209,7 +209,7 @@ func TestHitRadiusCoversTheRoundBadge(t *testing.T) {
 func TestDotHoldNodesAndAnchorEdges(t *testing.T) {
 	_, sc := arrange(newSlotState(), []planet{wp("a", classWorking)})
 	placeHolds(&sc, []queuedHold{quotaHold(0, "claude", "7d"), {id: "f", label: "fleet"}})
-	out := renderDOT(sc, legend{holds: 2})
+	out := renderDOT(sc, legend{holds: 2}, legendFull)
 	for _, id := range []string{"q1", "q2"} {
 		line := nodeLine(t, out, id)
 		for _, want := range []string{"width=0.5", `style="filled,dashed"`, `color="` + colHolds + `55"`, `fontcolor="` + colDim + `"`} {
@@ -237,7 +237,7 @@ func TestDotHoldNodesAndAnchorEdges(t *testing.T) {
 
 func TestDotWithoutHoldsDrawsNoHoldNodes(t *testing.T) {
 	_, sc := arrange(newSlotState(), []planet{wp("a", classWorking)})
-	out := renderDOT(sc, legend{})
+	out := renderDOT(sc, legend{}, legendFull)
 	if strings.Contains(out, "  q1") || strings.Contains(out, "  a1") {
 		t.Errorf("hold nodes without holds:\n%s", out)
 	}
@@ -248,11 +248,11 @@ func TestLegendStrip(t *testing.T) {
 	known := legend{weight: 4, budget: &budget, engines: []engineReading{
 		{name: "claude", window: "7d", pct: &pct}, {name: "codex"}, {name: "pi", window: "5h", pct: &zero},
 	}}
-	html := legendHTML(known)
+	html := legendHTML(known, legendFull)
 	if want := "crew weight 4 · fleet budget 6 · claude 7d 23% · codex ? · pi 5h 0%"; !strings.Contains(html, want) {
 		t.Errorf("strip lacks %q:\n%s", want, html)
 	}
-	unknown := legendHTML(legend{engines: []engineReading{{name: "claude"}}})
+	unknown := legendHTML(legend{engines: []engineReading{{name: "claude"}}}, legendFull)
 	if want := "crew weight 0 · fleet budget ? · claude ?"; !strings.Contains(unknown, want) {
 		t.Errorf("strip lacks %q:\n%s", want, unknown)
 	}
@@ -263,20 +263,20 @@ func TestLegendStrip(t *testing.T) {
 	if strings.Contains(unknown, "claude 0") || strings.Contains(unknown, "budget 0") {
 		t.Errorf("an unknown reading drew as zero:\n%s", unknown)
 	}
-	hostile := legendHTML(legend{engines: []engineReading{{name: `<b>x"`, window: "7d", pct: &pct}}})
+	hostile := legendHTML(legend{engines: []engineReading{{name: `<b>x"`, window: "7d", pct: &pct}}}, legendFull)
 	if strings.Contains(hostile, "<b>") {
 		t.Errorf("engine name reached the label as markup:\n%s", hostile)
 	}
-	if legendHeight(legend{}) != legendH+legendRowH {
-		t.Errorf("legendHeight = %v, want the strip row always counted", legendHeight(legend{}))
+	if legendHeight(legend{}, legendFull) != legendH+legendRowH {
+		t.Errorf("legendHeight = %v, want the strip row always counted", legendHeight(legend{}, legendFull))
 	}
 }
 
 func TestLegendHoldKey(t *testing.T) {
-	if strings.Contains(legendHTML(legend{}), "queued hold") {
+	if strings.Contains(legendHTML(legend{}, legendFull), "queued hold") {
 		t.Error("the hold key shows without holds")
 	}
-	if !strings.Contains(legendHTML(legend{holds: 1}), "dashed outer dot = queued hold") {
+	if !strings.Contains(legendHTML(legend{holds: 1}, legendFull), "dashed outer dot = queued hold") {
 		t.Error("the hold key is missing with a hold")
 	}
 }

@@ -128,7 +128,7 @@ func wedgeRoster() []repoWorker {
 func emitRepos(ws []repoWorker) (string, scene, legend) {
 	ps, lg := repoPlanets(ws)
 	_, sc := arrange(newSlotState(), ps)
-	return renderDOT(sc, lg), sc, lg
+	return renderDOT(sc, lg, legendFull), sc, lg
 }
 
 type dotCase struct {
@@ -161,7 +161,7 @@ func emit(m map[string]any) (string, scene, legend) {
 	ps, lg := buildPlanets(m, dotNow)
 	_, sc := arrange(newSlotState(), ps)
 	placeHolds(&sc, buildHolds(m))
-	return renderDOT(sc, lg), sc, lg
+	return renderDOT(sc, lg, legendFull), sc, lg
 }
 
 func TestDotGoldens(t *testing.T) {
@@ -641,7 +641,7 @@ func TestFinishSVG(t *testing.T) {
 <text font-family="Source Sans 3" font-size="12.00">b</text>
 </svg>
 `
-	got := string(finishSVG([]byte(in)))
+	got := string(finishSVG([]byte(in), nil))
 	if !strings.Contains(got, `class="edge aeye-flow"`) || strings.Contains(got, "aeye&#45;") {
 		t.Errorf("the class hook is not plain text:\n%s", got)
 	}
@@ -661,7 +661,7 @@ func TestFinishSVG(t *testing.T) {
 	}
 
 	t.Run("a viewBox origin is echoed", func(t *testing.T) {
-		got := string(finishSVG([]byte(`<svg viewBox="-10.50 20 300 400.25"><g/></svg>`)))
+		got := string(finishSVG([]byte(`<svg viewBox="-10.50 20 300 400.25"><g/></svg>`), nil))
 		if want := `<svg viewBox="-10.50 20 300 400.25"><rect x="-10.50" y="20" width="300" height="400.25" fill="#1e1e2e"/><g/></svg>`; got != want {
 			t.Errorf("got %s\nwant %s", got, want)
 		}
@@ -672,7 +672,7 @@ func TestFinishSVG(t *testing.T) {
 		"empty document": "",
 	} {
 		t.Run(name+" is returned as it came", func(t *testing.T) {
-			if got := string(finishSVG([]byte(in))); got != in {
+			if got := string(finishSVG([]byte(in), nil)); got != in {
 				t.Errorf("got %q, want %q", got, in)
 			}
 		})
@@ -713,7 +713,7 @@ func TestRenderedSVGClasses(t *testing.T) {
 		hooks += len(want[class])
 	}
 
-	svg := finishSVG(neatoSVG(t, neato, dot))
+	svg := finishSVG(neatoSVG(t, neato, dot), sc.wedges)
 	root := parseSVG(t, svg)
 	got := map[string][]string{}
 	var flows []svgNode
@@ -803,25 +803,33 @@ func TestRenderedSVGText(t *testing.T) {
 	if fonts == "" {
 		t.Skip("AEYE_D2_FONT_DIR not set")
 	}
-	dot, err := os.ReadFile(filepath.Join("testdata", "16-workers.dot"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	in := filepath.Join(dir, "16.svg")
-	if err := os.WriteFile(in, finishSVG(neatoSVG(t, neato, string(dot))), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// The carousel's resvg: one font directory, no system fonts, no generic families.
-	cmd := exec.Command(resvg, "--skip-system-fonts", "--use-fonts-dir", fonts, "--font-family", diagramFont,
-		"--serif-family", diagramFont, "--sans-serif-family", diagramFont, in, filepath.Join(dir, "16.png"))
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("resvg: %v\n%s", err, stderr.String())
-	}
-	if s := strings.TrimSpace(stderr.String()); s != "" {
-		t.Errorf("resvg warned on the finished svg:\n%s", s)
+	_, wedged, _ := emitRepos(wedgeRoster())
+	for _, c := range []struct {
+		golden string
+		wedges []wedge
+	}{{"16-workers", nil}, {"wedges", wedged.wedges}} {
+		t.Run(c.golden, func(t *testing.T) {
+			dot, err := os.ReadFile(filepath.Join("testdata", c.golden+".dot"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			in := filepath.Join(dir, c.golden+".svg")
+			if err := os.WriteFile(in, finishSVG(neatoSVG(t, neato, string(dot)), c.wedges), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			// The carousel's resvg: one font directory, no system fonts, no generic families.
+			cmd := exec.Command(resvg, "--skip-system-fonts", "--use-fonts-dir", fonts, "--font-family", diagramFont,
+				"--serif-family", diagramFont, "--sans-serif-family", diagramFont, in, filepath.Join(dir, c.golden+".png"))
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("resvg: %v\n%s", err, stderr.String())
+			}
+			if s := strings.TrimSpace(stderr.String()); s != "" {
+				t.Errorf("resvg warned on the finished svg:\n%s", s)
+			}
+		})
 	}
 }
 
@@ -927,10 +935,13 @@ func TestDotWedges(t *testing.T) {
 			}
 		}
 		edge := nodeLine(t, out, id+"s0 -> "+id+"s1")
-		for _, want := range []string{id + "s0 -> " + id + "s1", "style=dashed", `color="` + colDim + `"`, "penwidth=1"} {
+		for _, want := range []string{id + "s0 -> " + id + "s1", `color="` + colDim + staleAlpha + `"`, "penwidth=0.75"} {
 			if !strings.Contains(edge, want) {
 				t.Errorf("spoke edge lacks %s: %s", want, edge)
 			}
+		}
+		if strings.Contains(edge, "dashed") {
+			t.Errorf("a wedge divider is dashed: %s", edge)
 		}
 
 		points := len(regexp.MustCompile(`(?m)^  `+id+`a\d+ \[`).FindAllString(out, -1))
@@ -960,8 +971,9 @@ func TestDotWedges(t *testing.T) {
 			}
 		}
 		for line := range strings.SplitSeq(out, "\n") {
-			if strings.Contains(line, id+"a") && strings.Contains(line, "->") && (strings.Contains(line, "dashed") || !strings.Contains(line, `color="`+colDim+`"`)) {
-				t.Errorf("rim edge is not a dim solid line: %s", line)
+			if strings.Contains(line, id+"a") && strings.Contains(line, "->") &&
+				(strings.Contains(line, "dashed") || !strings.Contains(line, `color="`+colDim+staleAlpha+`"`) || !strings.Contains(line, "penwidth=0.75")) {
+				t.Errorf("rim edge is not a thin, dim, solid line: %s", line)
 			}
 		}
 
@@ -1145,18 +1157,18 @@ func TestAnimatedSetsSkipStalePlanets(t *testing.T) {
 }
 
 func TestDotMarkerLegend(t *testing.T) {
-	rows := func(lg legend) int { return strings.Count(legendHTML(lg), "<tr>") }
+	rows := func(lg legend) int { return strings.Count(legendHTML(lg, legendFull), "<tr>") }
 	base := legend{working: 3, blocked: 1, prOpen: 2, done: 1, holds: 1, repos: 1}
 	if got := rows(base); got != 4 {
 		t.Errorf("a legend without markers has %d rows, want 4", got)
 	}
-	if legendHeight(base) != legendH+legendRowH || legendHeight(legend{}) != legendH+legendRowH {
-		t.Errorf("legendHeight = %v, want %v", legendHeight(base), legendH+legendRowH)
+	if legendHeight(base, legendFull) != legendH+legendRowH || legendHeight(legend{}, legendFull) != legendH+legendRowH {
+		t.Errorf("legendHeight = %v, want %v", legendHeight(base, legendFull), legendH+legendRowH)
 	}
 
 	extra := func(lg legend) string {
 		t.Helper()
-		_, row, ok := strings.Cut(legendHTML(lg), "stacked on</td></tr>\n    <tr><td>")
+		_, row, ok := strings.Cut(legendHTML(lg, legendFull), "stacked on</td></tr>\n    <tr><td>")
 		if !ok {
 			t.Fatalf("no marker row in %+v", lg)
 		}
@@ -1194,8 +1206,8 @@ func TestDotMarkerLegend(t *testing.T) {
 					t.Errorf("row names %q: %s", n, row)
 				}
 			}
-			if legendHeight(tc.lg) != legendH+2*legendRowH {
-				t.Errorf("legendHeight = %v, want %v", legendHeight(tc.lg), legendH+2*legendRowH)
+			if legendHeight(tc.lg, legendFull) != legendH+2*legendRowH {
+				t.Errorf("legendHeight = %v, want %v", legendHeight(tc.lg, legendFull), legendH+2*legendRowH)
 			}
 		})
 	}
@@ -1208,11 +1220,11 @@ func TestDotMarkerLegend(t *testing.T) {
 // height, so the picture stays square with the legend's extra row under it.
 func TestDotCanvasPaysTheMarkerRow(t *testing.T) {
 	out, sc, lg := emitRepos(wedgeRoster())
-	if legendHeight(lg) <= legendH+legendRowH {
+	if legendHeight(lg, legendFull) <= legendH+legendRowH {
 		t.Fatal("the wedges roster has no marker row")
 	}
 	x, _ := posOf(t, nodeLine(t, out, "c2"))
-	if want := sc.extent + canvasPad + legendHeight(lg)/2; math.Abs(x-want) > 0.01 {
+	if want := sc.extent + canvasPad + legendHeight(lg, legendFull)/2; math.Abs(x-want) > 0.01 {
 		t.Errorf("canvas half width = %v, want %v", x, want)
 	}
 }
@@ -1312,7 +1324,7 @@ func TestRenderedWedges(t *testing.T) {
 
 	// The map has no legend, so its viewBox is the corners plus the graph pad.
 	_, sc, _ := emitRepos(wedgeRoster())
-	svg := neatoSVG(t, neato, buildDOT(sc, nil, "", ""))
+	svg := neatoSVG(t, neato, buildDOT(sc, nil, legendNone, "", ""))
 	vbW, vbH, ok := viewBoxSize(svg)
 	if !ok {
 		t.Fatal("svg has no viewBox")
@@ -1323,5 +1335,472 @@ func TestRenderedWedges(t *testing.T) {
 	if math.Abs(padX-wantPad) > 0.6 || math.Abs(padY-wantPad) > 0.6 {
 		t.Errorf("viewBox %vx%v around corners %vx%v leaves pads %v, %v, want %v: something is drawn outside the corners",
 			vbW, vbH, 2*halfX, 2*halfY, padX, padY, wantPad)
+	}
+}
+
+// TestDotCountsLegendIsOneRow: counts mode keeps only the state counts, and the
+// canvas pays for exactly what each mode draws, so the picture stays square.
+func TestDotCountsLegendIsOneRow(t *testing.T) {
+	budget := 6
+	lg := legend{working: 3, blocked: 1, prOpen: 2, done: 1, failed: 1, holds: 1, repos: 3, waiting: 1, ci: 2, stale: 1,
+		weight: 4, budget: &budget, engines: []engineReading{{name: "claude"}}}
+	html := legendHTML(lg, legendCounts)
+	if got := strings.Count(html, "<tr>"); got != 1 {
+		t.Errorf("the counts legend has %d rows, want 1:\n%s", got, html)
+	}
+	for _, want := range []string{"working 3", "blocked 1", "pr open 2", "done 1", "failed 1", "holds 1",
+		`<font color="` + colWorking + `">●</font> working 3`, `<font color="` + colHolds + `">●</font> holds 1`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("the counts legend lacks %q:\n%s", want, html)
+		}
+	}
+	for _, key := range []string{"size = tier", "small dot", "hexagon", "stacked on", "queued hold", "wedge", "waiting",
+		"ci ", "no runner", "dim =", "crew weight", "fleet budget"} {
+		if strings.Contains(html, key) {
+			t.Errorf("the counts legend carries the key %q:\n%s", key, html)
+		}
+	}
+	if got := legendHeight(lg, legendCounts); got != legendCountsH || got >= legendHeight(legend{}, legendFull) {
+		t.Errorf("counts height = %v, want %v, under the full legend's", got, legendCountsH)
+	}
+	if got := legendHeight(lg, legendNone); got != 0 {
+		t.Errorf("no legend still pays %v", got)
+	}
+
+	_, sc := arrange(newSlotState(), []planet{wp("a", classWorking)})
+	for _, mode := range []legendMode{legendFull, legendCounts, legendNone} {
+		out := renderDOT(sc, lg, mode)
+		if want := mode != legendNone; strings.Contains(out, "label=<") != want {
+			t.Errorf("%s: graph label drawn = %v, want %v", mode, !want, want)
+		}
+		if mode == legendCounts && strings.Count(out, "<tr>") != 1 {
+			t.Errorf("the counts diagram has more than one legend row:\n%s", out)
+		}
+		x, y := posOf(t, nodeLine(t, out, "c2"))
+		if wantX, wantY := sc.extent+canvasPad+legendHeight(lg, mode)/2, sc.extent+canvasPad; math.Abs(x-wantX) > 0.01 || math.Abs(y-wantY) > 0.01 {
+			t.Errorf("%s: corner at %v,%v, want %v,%v", mode, x, y, wantX, wantY)
+		}
+	}
+}
+
+// TestRenderedLegendModesStaySquare: with the real neato, the legend a mode draws
+// fits the height the canvas pre-paid for it, so nothing is clipped and the
+// picture is square in every mode.
+func TestRenderedLegendModesStaySquare(t *testing.T) {
+	neato := neatoPath(t)
+	_, sc, lg := emitRepos(wedgeRoster())
+	for _, mode := range []legendMode{legendFull, legendCounts, legendNone} {
+		svg := neatoSVG(t, neato, renderDOT(sc, lg, mode))
+		w, h, ok := viewBoxSize(svg)
+		if !ok {
+			t.Fatalf("%s: svg has no viewBox", mode)
+		}
+		if math.Abs(w-h) > 0.05*math.Max(w, h) {
+			t.Errorf("%s: viewBox %vx%v is not square", mode, w, h)
+		}
+	}
+}
+
+// graphGroup is the svg's graph group, whose children are everything Graphviz
+// drew in front of the background rect.
+func graphGroup(t *testing.T, root svgNode) svgNode {
+	t.Helper()
+	for _, n := range root.Nodes {
+		if n.XMLName.Local == "g" && n.attr("class") == "graph" {
+			return n
+		}
+	}
+	t.Fatal("svg has no graph group")
+	return svgNode{}
+}
+
+// svgSun is the dispatcher's centre in the graph group's coordinates, where
+// layout (x, y) lands at (cx+x, cy-y).
+func svgSun(t *testing.T, root svgNode) (cx, cy float64) {
+	t.Helper()
+	found := false
+	root.walk(func(n svgNode) {
+		if n.XMLName.Local != "g" || n.title() != "dispatcher" {
+			return
+		}
+		e, _ := n.child("ellipse")
+		cx, _ = strconv.ParseFloat(e.attr("cx"), 64)
+		cy, _ = strconv.ParseFloat(e.attr("cy"), 64)
+		found = true
+	})
+	if !found {
+		t.Fatal("svg has no dispatcher")
+	}
+	return cx, cy
+}
+
+// spokeGroups maps a planet's node id to the group of its dispatcher spoke.
+func spokeGroups(root svgNode) map[string]svgNode {
+	spokes := map[string]svgNode{}
+	root.walk(func(n svgNode) {
+		if id, ok := strings.CutPrefix(n.title(), "dispatcher->"); ok && n.XMLName.Local == "g" {
+			spokes[id] = n
+		}
+	})
+	return spokes
+}
+
+// TestFlowSpokesRestDashed: the viewer rasterizes the un-animated svg while it
+// pans, so the working planets' spokes carry the dash themselves, and a spoke
+// that is not animated stays solid.
+func TestFlowSpokesRestDashed(t *testing.T) {
+	out, sc, _ := emit(dotModel(sixteenWorkers(), 0))
+	ids := idOf(sc)
+	working := map[string]bool{}
+	for _, p := range sc.planets {
+		working[ids[p.branch]] = p.class == classWorking
+	}
+	flows := 0
+	for line := range strings.SplitSeq(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 || f[0] != "dispatcher" || f[1] != "->" {
+			continue
+		}
+		flow := strings.Contains(line, `class="aeye-flow"`)
+		if flow {
+			flows++
+		}
+		if dashed := strings.Contains(line, "style=dashed"); dashed != flow {
+			t.Errorf("spoke dashed = %v, animated = %v: %s", dashed, flow, line)
+		}
+		if flow != working[f[2]] {
+			t.Errorf("spoke of %s animated = %v, working = %v", f[2], flow, working[f[2]])
+		}
+	}
+	if flows == 0 {
+		t.Fatal("no spoke flows, so the check above proves nothing")
+	}
+
+	neato := neatoPath(t)
+	root := parseSVG(t, finishSVG(neatoSVG(t, neato, out), sc.wedges))
+	dashed, solid := 0, 0
+	for id, g := range spokeGroups(root) {
+		path, ok := g.child("path")
+		if !ok {
+			t.Fatalf("spoke %s has no path", id)
+		}
+		hasDash := path.attr("stroke-dasharray") != ""
+		if flow := strings.Contains(g.attr("class"), "aeye-flow"); hasDash != flow {
+			t.Errorf("spoke %s: stroke-dasharray = %q, animated = %v", id, path.attr("stroke-dasharray"), flow)
+		}
+		if hasDash {
+			dashed++
+		} else {
+			solid++
+		}
+	}
+	if dashed != flows || solid == 0 {
+		t.Errorf("%d dashed and %d solid spokes in the svg, want %d dashed and some solid", dashed, solid, flows)
+	}
+}
+
+// TestRenderedSpokesLieBeneathAndEndAtThePlanet: with the real neato, every
+// edge is emitted before every node, so no spoke draws over a planet or a label,
+// and each spoke stops where its planet's ring ends.
+func TestRenderedSpokesLieBeneathAndEndAtThePlanet(t *testing.T) {
+	neato := neatoPath(t)
+	rosterOf := map[string]func() (string, scene){
+		"one repo": func() (string, scene) { out, sc, _ := emit(dotModel(sixteenWorkers(), 2)); return out, sc },
+		"wedges":   func() (string, scene) { out, sc, _ := emitRepos(wedgeRoster()); return out, sc },
+		"the map": func() (string, scene) {
+			_, sc, _ := emitRepos(wedgeRoster())
+			return buildDOT(sc, nil, legendNone, "", ""), sc
+		},
+	}
+	for name, build := range rosterOf {
+		t.Run(name, func(t *testing.T) {
+			dot, sc := build()
+			root := parseSVG(t, finishSVG(neatoSVG(t, neato, dot), sc.wedges))
+			lastEdge, firstNode := -1, -1
+			for i, n := range graphGroup(t, root).Nodes {
+				switch {
+				case n.XMLName.Local != "g":
+				case n.attr("class") == "edge":
+					lastEdge = i
+				case n.attr("class") == "node" && firstNode < 0:
+					firstNode = i
+				}
+			}
+			if lastEdge < 0 || firstNode < 0 || lastEdge > firstNode {
+				t.Errorf("the last edge is child %d and the first node child %d of the graph group", lastEdge, firstNode)
+			}
+
+			cx, cy := svgSun(t, root)
+			spokes := spokeGroups(root)
+			ids := keyIDs(sc)
+			for _, p := range sc.planets {
+				g, ok := spokes[ids[p.key()]]
+				if !ok {
+					t.Errorf("no spoke to %s", p.branch)
+					continue
+				}
+				path, _ := g.child("path")
+				nums := pathNumRe.FindAllString(path.attr("d"), -1)
+				if len(nums) < 4 {
+					t.Errorf("spoke to %s has path %q", p.branch, path.attr("d"))
+					continue
+				}
+				ex, _ := strconv.ParseFloat(nums[len(nums)-2], 64)
+				ey, _ := strconv.ParseFloat(nums[len(nums)-1], 64)
+				got := math.Hypot(ex-(cx+p.x), ey-(cy-p.y))
+				pr, pen := p.size*72/2, planetPenwidth
+				if !p.failed && p.class == classBlocked {
+					pen = blockedPenwidth
+				}
+				// The ring is drawn over the spoke's end, so the end may lie anywhere
+				// in the ring's stroke. A hexagon is as tall as the planet is wide, so
+				// its outline runs from half that out to its corners.
+				low, want := pr, pr+pen/2
+				if p.host != "" {
+					low, want = pr-pen/2, math.Hypot(pr, pr/2)+pen/2
+				}
+				if got < low-1 || got > want+1 {
+					t.Errorf("spoke to %s ends %.1f from the planet's centre, want %.1f to %.1f (its rim)", p.branch, got, low, want)
+				}
+			}
+		})
+	}
+}
+
+// TestFinishSVGHalosFreeText: a text outside a node shape (the legend, a host,
+// anchor or wedge label) is outlined in the background colour behind its fill,
+// once; a text inside a planet, badge or moon is left plain.
+func TestFinishSVGHalosFreeText(t *testing.T) {
+	in := `<svg viewBox="0 0 10 10"><text x="1" y="2" fill="#fff">a</text>` +
+		`<g id="node1" class="node"><title>h1</title><text xml:space="preserve" x="3">b</text></g>` +
+		`<g id="node2" class="node"><title>p1</title><text x="5">p</text></g>` +
+		`<g id="node3" class="node"><title>p1c</title><text x="6">!</text></g>` +
+		`<g id="node5" class="node"><title>w2</title><text x="7">d</text></g>` +
+		`<g id="node6" class="node"><title>a1</title><text x="8">e</text></g>` +
+		`<g id="node4" class="node"><title>w1</title><text x="4" stroke="` + colBG + `" paint-order="stroke">c</text></g></svg>`
+	got := string(finishSVG([]byte(in), nil))
+	halo := ` stroke="` + colBG + `" stroke-width="3" stroke-linejoin="round" paint-order="stroke"`
+	for _, want := range []string{`<text x="1" y="2" fill="#fff"` + halo + `>a</text>`, `<text xml:space="preserve" x="3"` + halo + `>b</text>`, `<text x="5">p</text>`, `<text x="6">!</text>`,
+		`<text x="7"` + halo + `>d</text>`, `<text x="8"` + halo + `>e</text>`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no %s in\n%s", want, got)
+		}
+	}
+	if n := strings.Count(got, "paint-order="); n != 5 {
+		t.Errorf("%d paint-order attributes, want 5 (an outlined text is left as it is):\n%s", n, got)
+	}
+
+	neato := neatoPath(t)
+	dot, sc, _ := emitRepos(wedgeRoster())
+	haloed, plain := 0, 0
+	seen := map[string]bool{}
+	var walk func(n svgNode, inShape bool)
+	walk = func(n svgNode, inShape bool) {
+		if strings.HasPrefix(n.attr("id"), "node") {
+			inShape = !freeLabelRe.MatchString(n.title())
+		}
+		if n.XMLName.Local == "text" {
+			has := n.attr("stroke") == colBG && n.attr("stroke-width") == "3" && n.attr("stroke-linejoin") == "round" && n.attr("paint-order") == "stroke"
+			switch {
+			case inShape && has:
+				t.Errorf("text %q inside a node shape has a halo", n.Text)
+			case !inShape && !has:
+				t.Errorf("free text %q has no halo: %+v", n.Text, n.Attrs)
+			}
+			if has {
+				haloed++
+			} else {
+				plain++
+			}
+			// Known texts, so the check does not share freeLabelRe with the code.
+			switch n.Text {
+			case "alpha", "beta", "mbp":
+				if !has {
+					t.Errorf("label %q has no halo", n.Text)
+				}
+				seen[n.Text] = true
+			case "sky", "olive", "!":
+				if has {
+					t.Errorf("node text %q has a halo", n.Text)
+				}
+				seen[n.Text] = true
+			}
+		}
+		for _, c := range n.Nodes {
+			walk(c, inShape)
+		}
+	}
+	walk(parseSVG(t, finishSVG(neatoSVG(t, neato, dot), sc.wedges)), false)
+	if haloed == 0 || plain == 0 {
+		t.Errorf("%d haloed and %d plain texts, want both", haloed, plain)
+	}
+	for _, want := range []string{"alpha", "beta", "mbp", "sky", "olive", "!"} {
+		if !seen[want] {
+			t.Errorf("no text %q in the rendered svg", want)
+		}
+	}
+}
+
+// wedgeFills are the graph group's direct <path> children before its first edge
+// or node: where injectWedgeFills puts the fills.
+func wedgeFills(t *testing.T, root svgNode) []svgNode {
+	t.Helper()
+	var fills []svgNode
+	for _, n := range graphGroup(t, root).Nodes {
+		if n.XMLName.Local == "g" && (n.attr("class") == "edge" || n.attr("class") == "node") {
+			break
+		}
+		if n.XMLName.Local == "path" {
+			fills = append(fills, n)
+		}
+	}
+	return fills
+}
+
+func TestRenderedWedgeFills(t *testing.T) {
+	neato := neatoPath(t)
+	_, sc, lg := emitRepos(wedgeRoster())
+	for name, dot := range map[string]string{
+		"full legend":  renderDOT(sc, lg, legendFull),
+		"counts":       renderDOT(sc, lg, legendCounts),
+		"no legend":    renderDOT(sc, lg, legendNone),
+		"the map's":    buildDOT(sc, nil, legendNone, "", ""),
+		"selected one": buildDOT(sc, nil, legendNone, "feat/1-shared", ""),
+	} {
+		t.Run(name, func(t *testing.T) {
+			svg := finishSVG(neatoSVG(t, neato, dot), sc.wedges)
+			root := parseSVG(t, svg)
+			fills := wedgeFills(t, root)
+			if len(fills) != len(sc.wedges) {
+				t.Fatalf("%d fills before the first edge or node, want one per wedge (%d)", len(fills), len(sc.wedges))
+			}
+			cx, cy := svgSun(t, root)
+			hues := map[string]bool{}
+			for i, f := range fills {
+				w := sc.wedges[i]
+				op, _ := strconv.ParseFloat(f.attr("fill-opacity"), 64)
+				if op < 0.08 || op > 0.12 || f.attr("stroke") != "none" || f.attr("fill") != wedgeHues[i%len(wedgeHues)] {
+					t.Errorf("fill %d is %+v, want a %s wash of 0.08-0.12 opacity with no stroke", i, f.Attrs, wedgeHues[i%len(wedgeHues)])
+				}
+				hues[f.attr("fill")] = true
+
+				// M centre L arc-start A rim,rim 0 large sweep arc-end Z
+				nums := pathNumRe.FindAllString(f.attr("d"), -1)
+				if len(nums) != 11 {
+					t.Fatalf("fill %d path %q", i, f.attr("d"))
+				}
+				v := make([]float64, len(nums))
+				for k, s := range nums {
+					v[k], _ = strconv.ParseFloat(s, 64)
+				}
+				if math.Abs(v[0]-cx) > 0.01 || math.Abs(v[1]-cy) > 0.01 {
+					t.Errorf("fill %d starts at %v,%v, want the dispatcher %v,%v", i, v[0], v[1], cx, cy)
+				}
+				for _, end := range []struct{ x, y, deg float64 }{{v[2], v[3], w.start}, {v[9], v[10], w.start + w.span}} {
+					if r := math.Hypot(end.x-cx, end.y-cy); math.Abs(r-w.rim) > 0.02 {
+						t.Errorf("fill %d reaches %v from the dispatcher, want the rim %v", i, r, w.rim)
+					}
+					if d := math.Mod(degrees(end.x-cx, cy-end.y)-end.deg+540, 360) - 180; math.Abs(d) > 0.05 {
+						t.Errorf("fill %d has an edge %v degrees off its wedge's", i, d)
+					}
+				}
+				if large := w.span > 180; (v[7] == 1) != large || v[8] != 1 {
+					t.Errorf("fill %d arc flags %v %v for a span of %v", i, v[7], v[8], w.span)
+				}
+			}
+			if len(sc.wedges) <= len(wedgeHues) && len(hues) != len(sc.wedges) {
+				t.Errorf("%d wedges share %d hues", len(sc.wedges), len(hues))
+			}
+
+			// Each planet sits inside its repo's drawn sector, so the fill is in the planets' coordinates.
+			planets := map[string]svgNode{}
+			root.walk(func(n svgNode) {
+				if n.XMLName.Local == "g" && n.attr("class") == "node" {
+					planets[n.title()] = n
+				}
+			})
+			ids := keyIDs(sc)
+			for _, p := range sc.planets {
+				e, ok := planets[ids[p.key()]].child("ellipse")
+				if !ok {
+					e, _ = planets[ids[p.key()]].child("polygon")
+				}
+				if e.XMLName.Local != "ellipse" {
+					continue
+				}
+				x, _ := strconv.ParseFloat(e.attr("cx"), 64)
+				y, _ := strconv.ParseFloat(e.attr("cy"), 64)
+				at := degrees(x-cx, cy-y)
+				for _, w := range sc.wedges {
+					if w.repo == p.repo && (at < w.start || at > w.start+w.span) {
+						t.Errorf("planet %s of %s is drawn at %v degrees, outside its wedge [%v, %v]", p.branch, w.label, at, w.start, w.start+w.span)
+					}
+				}
+			}
+		})
+	}
+
+	t.Run("a single repo has none", func(t *testing.T) {
+		dot, one, _ := emit(dotModel(eightWorkers(), 0))
+		root := parseSVG(t, finishSVG(neatoSVG(t, neato, dot), one.wedges))
+		if fills := wedgeFills(t, root); len(fills) != 0 {
+			t.Errorf("%d wedge fills for a single repo", len(fills))
+		}
+		if n := strings.Count(string(finishSVG(neatoSVG(t, neato, dot), one.wedges)), "fill-opacity"); n != 0 {
+			t.Errorf("%d fill-opacity attributes in a single-repo svg", n)
+		}
+	})
+}
+
+func TestInjectWedgeFillsLeavesForeignSVGAlone(t *testing.T) {
+	w := []wedge{{start: 0, span: 90, rim: 100}}
+	for name, in := range map[string]string{
+		"no wedges":     `<svg viewBox="0 0 1 1"><g id="graph0"><g id="node1"><title>dispatcher</title><ellipse cx="1" cy="-1"/></g></g></svg>`,
+		"no dispatcher": `<svg viewBox="0 0 1 1"><g id="graph0"><g id="node1"><title>p1</title><ellipse cx="1" cy="-1"/></g></g></svg>`,
+		"no shapes":     `<svg viewBox="0 0 1 1"><g id="graph0"><title>dispatcher</title></g></svg>`,
+	} {
+		wedges := w
+		if name == "no wedges" {
+			wedges = nil
+		}
+		if got := string(injectWedgeFills([]byte(in), wedges)); got != in {
+			t.Errorf("%s: changed to %s", name, got)
+		}
+	}
+}
+
+// TestWedgeLabelBoxClearsTheRim: whatever the bisector's angle, the whole box of
+// a wedge's name, not only its centre, stands wedgeLabelGap outside the arc.
+func TestWedgeLabelBoxClearsTheRim(t *testing.T) {
+	const rim = 320.0
+	clearance := func(rim, deg float64, label string) float64 {
+		x, y := polar(wedgeLabelRadius(rim, deg, label), deg)
+		hw, hh := labelWidth(label)/2, wedgeLabelHalfH
+		// The distance from the dispatcher to the nearest point of the box.
+		return math.Hypot(max(x-hw, min(0, x+hw)), max(y-hh, min(0, y+hh))) - rim
+	}
+	for _, label := range []string{"a", "alpha", strings.Repeat("r", 24)} {
+		for _, deg := range []float64{0, 20, 45, 70, 90, 110, 135, 160, 180, 225, 270, 300, 340} {
+			if got := clearance(rim, deg, label); got < wedgeLabelGap-1e-6 {
+				t.Errorf("%q at %v degrees clears the rim by %v, want %v", label, deg, got, float64(wedgeLabelGap))
+			}
+		}
+	}
+	// Wide labels at 3 and 9 o'clock stand off by their width, not by one fixed gap.
+	long := strings.Repeat("r", 24)
+	if side, top := wedgeLabelRadius(rim, 90, long), wedgeLabelRadius(rim, 0, long); side-top < labelWidth(long)/2-wedgeLabelHalfH-1e-6 {
+		t.Errorf("a wide name stands %v out at 3 o'clock and %v at 12", side, top)
+	}
+
+	ps := append(repoUniform("a", 6), repoUniform("b", 3)...)
+	ps = append(ps, repoUniform(strings.Repeat("c", 24), 5)...)
+	_, sc := arrange(newSlotState(), ps)
+	for _, w := range sc.wedges {
+		if got := clearance(w.rim, w.start+w.span/2, w.label); got < wedgeLabelGap-1e-6 {
+			t.Errorf("wedge %q: its box clears the rim by %v, want %v", w.label, got, float64(wedgeLabelGap))
+		}
+		if !near(math.Hypot(w.x, w.y), wedgeLabelRadius(w.rim, w.start+w.span/2, w.label)) {
+			t.Errorf("wedge %q is not where wedgeLabelRadius puts it", w.label)
+		}
 	}
 }

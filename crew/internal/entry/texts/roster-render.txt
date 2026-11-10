@@ -1,5 +1,5 @@
 usage: crew roster-render --crew ID [--pane %N] [--no-open] [--once | --detach]
-                          [--interval S] [--quiet S]
+                          [--interval S] [--quiet S] [--legend full|counts|none]
        crew roster-render --map --crew ID --px WxH --out FILE [--select BRANCH]
                                  [--select-repo LABEL]
 
@@ -16,6 +16,15 @@ it to the aeye carousel beside the recorded dispatcher pane.
   --quiet      Exit after S seconds with no working/blocked/dispatched worker
                and no outstanding hold (default 1800; 0 exits as soon as the
                crew drains)
+  --legend     How much legend the diagram draws (default counts):
+                 full    every key and the budget strip under the diagram
+                 counts  one row of state counts; the full key goes to
+                         <stem>.legend.svg in the roster file's directory,
+                         written only when its content changes
+                 none    no legend
+               <stem> is the roster file's name without .svg, so a viewer
+               finds the key from the roster file's name. full and none write
+               no legend file and remove a stale one an earlier run left
   --map        Draw once to a PNG without the legend and print the planets'
                places as one JSON line; reads the bus, writes nothing else,
                and refuses every flag above but --crew

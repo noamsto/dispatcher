@@ -531,7 +531,7 @@ func TestMapNeverAsksGitHubAndDrawsTheCachedState(t *testing.T) {
 	if got := ciOf(t, fr, l.paths.Common, "feat/ci-1").ci; got != "pass" {
 		t.Fatalf("cached ci = %q, want pass", got)
 	}
-	if len(dots) != 1 || dots[0] != buildDOT(fr.sc, nil, "", "") {
+	if len(dots) != 1 || dots[0] != buildDOT(fr.sc, nil, legendNone, "", "") {
 		t.Errorf("--map did not draw the cached frame:\n%s", dots)
 	}
 }
@@ -545,12 +545,12 @@ func TestLiveCountSumsOverTheJoinedRepos(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := pass(t.Context(), l.opts, l.paths, cdir, l.crew, true, nil)
+	got, err := pass(t.Context(), l.opts, l.paths, cdir, l.crew, true, legendCounts, nil)
 	if err != nil || got != 0 {
 		t.Fatalf("local alone: live = %d, %v, want 0", got, err)
 	}
 	l.opts.Discover = (&discoverStub{found: okRepos(alpha)}).discover
-	got, err = pass(t.Context(), l.opts, l.paths, cdir, l.crew, true, nil)
+	got, err = pass(t.Context(), l.opts, l.paths, cdir, l.crew, true, legendCounts, nil)
 	if err != nil || got != 1 {
 		t.Errorf("with the second repo: live = %d, %v, want 1", got, err)
 	}
@@ -913,7 +913,7 @@ func TestSelectRepoRingsOnlyThatWedgesPlanet(t *testing.T) {
 		repo string
 		want int
 	}{{"", 2}, {"alpha", 1}, {"001", 1}, {"nowhere", 0}} {
-		out := buildDOT(sc, nil, "feat/1-a", tc.repo)
+		out := buildDOT(sc, nil, legendNone, "feat/1-a", tc.repo)
 		if n := strings.Count(out, "sel"); n != tc.want {
 			t.Errorf("select-repo %q: %d rings, want %d", tc.repo, n, tc.want)
 		}

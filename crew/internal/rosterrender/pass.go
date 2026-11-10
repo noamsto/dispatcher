@@ -2,6 +2,7 @@ package rosterrender
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -156,13 +157,13 @@ func (o Options) sourcePlanets(ctx context.Context, src source, crew string, now
 // a failed run is logged, leaves the old picture and still returns the count,
 // because an error here would freeze the daemon's quiet window. A refused `put`
 // likewise stops the publish and still returns the count.
-func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, noOpen bool, roleRows []string) (int64, error) {
+func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, noOpen bool, mode legendMode, roleRows []string) (int64, error) {
 	fr, err := buildFrame(ctx, o, paths, cdir, crew, roleRows, true)
 	if err != nil {
 		return 0, err
 	}
 	live := fr.live
-	dot := renderDOT(fr.sc, fr.lg)
+	dot := renderDOT(fr.sc, fr.lg, mode)
 
 	t := target(paths.Common, crew, o.RosterDir, o.Clock.Now)
 	pane := record(cdir, filePane)
@@ -174,6 +175,8 @@ func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, no
 	// write — which refuses it.
 	prev, _ := os.ReadFile(filepath.Join(cdir, fileDot))
 	if st, err := os.Lstat(t); err == nil && st.Mode().IsRegular() && string(prev) == dot {
+		// The key's budget strip moves without the diagram's DOT, so it is checked here too.
+		putLegend(o, t, fr.lg, mode)
 		// Unchanged: publish only for a pane nobody has been published to yet.
 		if pane != "" && pane != record(cdir, filePublished) {
 			publish(ctx, o.Probes, cdir, t, pane, noOpen)
@@ -188,15 +191,51 @@ func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, no
 	if err := os.MkdirAll(filepath.Dir(t), 0o755); err != nil {
 		return live, nil
 	}
-	if put(t, string(finishSVG(svg)), o.Stderr) != nil ||
+	if put(t, string(finishSVG(svg, fr.sc.wedges)), o.Stderr) != nil ||
 		put(filepath.Join(cdir, fileDot), dot, o.Stderr) != nil ||
 		saveSlots(filepath.Join(cdir, fileSlots), fr.slots, o.Stderr) != nil {
 		return live, nil
 	}
+	putLegend(o, t, fr.lg, mode)
 	if pane != "" {
 		publish(ctx, o.Probes, cdir, t, pane, noOpen)
 	}
 	return live, nil
+}
+
+// putLegend keeps the full key beside the diagram in counts mode, the only mode
+// that leaves it out of the picture. It writes only a changed key, because the
+// carousel watches the directory and a rewrite of identical bytes looks like news.
+// Any other mode removes a key an earlier run of the same crew left behind, which
+// would otherwise sit frozen in the watched directory; only a regular file goes.
+// A refused put or remove has already said so and never stops the pass.
+func putLegend(o Options, diagram string, lg legend, mode legendMode) {
+	if mode != legendCounts {
+		dropLegend(o, legendTarget(diagram))
+		return
+	}
+	path, svg := legendTarget(diagram), legendSVG(lg)
+	if prev, err := os.ReadFile(path); err == nil && string(prev) == svg {
+		return
+	}
+	_ = put(path, svg, o.Stderr)
+}
+
+func dropLegend(o Options, path string) {
+	st, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		say(o.Stderr, "crew: roster-render: %v\n", err)
+		return
+	}
+	if !st.Mode().IsRegular() {
+		return
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		say(o.Stderr, "crew: roster-render: %v\n", err)
+	}
 }
 
 // busSize is the loop's `rr_size=0; [ ! -f "$log" ] || rr_size=$(wc -c <"$log")`:

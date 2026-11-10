@@ -28,9 +28,11 @@ const (
 	hostLabelHalf = 20.0
 
 	// With two or more repos each gets a wedge: its outer arc sits wedgeRimGap
-	// past the wedge's outermost ring and its name wedgeLabelGap past the arc.
-	wedgeRimGap   = 55.0
-	wedgeLabelGap = 18.0
+	// past the wedge's outermost ring and its name's box stands wedgeLabelGap
+	// clear of the arc; wedgeLabelHalfH is half the name's drawn height.
+	wedgeRimGap     = 55.0
+	wedgeLabelGap   = 10.0
+	wedgeLabelHalfH = 8.0
 
 	minExtent = minRadius + 40
 
@@ -495,11 +497,12 @@ func arrangeWedges(prev slotState, ps []planet) (slotState, scene) {
 		}
 
 		w.rim = outer + wedgeRimGap
-		w.x, w.y = polar(w.rim+wedgeLabelGap, start+span/2)
-		sc.extent = max(sc.extent, w.rim+wedgeLabelGap+hostLabelHalf)
+		labelR := wedgeLabelRadius(w.rim, start+span/2, w.label)
+		w.x, w.y = polar(labelR, start+span/2)
+		sc.extent = max(sc.extent, labelR+hostLabelHalf)
 		sc.wedges = append(sc.wedges, w)
 
-		hostR := w.rim + wedgeLabelGap + 2*hostLabelHalf + 6
+		hostR := labelR + 2*hostLabelHalf + 6
 		for _, h := range hostOrder {
 			x, y := polar(hostR, hosts[h].direction())
 			sc.hosts = append(sc.hosts, hostLabel{host: h, x: x, y: y})
@@ -508,6 +511,14 @@ func arrangeWedges(prev slotState, ps []planet) (slotState, scene) {
 		start += span
 	}
 	return next, sc
+}
+
+// wedgeLabelRadius is how far along the wedge's bisector (deg) the centre of its
+// name goes: past the rim by the name's half extent in that direction, so the
+// whole box, not just its centre, stands wedgeLabelGap clear of the arc.
+func wedgeLabelRadius(rim, deg float64, label string) float64 {
+	ux, uy := polar(1, deg)
+	return rim + wedgeLabelGap + math.Abs(ux)*labelWidth(label)/2 + math.Abs(uy)*wedgeLabelHalfH
 }
 
 // wedgeOrder is the repos in wedge order: those already in the persisted
