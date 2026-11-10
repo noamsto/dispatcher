@@ -243,60 +243,63 @@ follower() {
   return 1
 }
 
-# mutate_group_peers <index> <tree>: rewrites the other sites of a grouped ID in
-# <tree>, so the leader's own site goes in on top of them.
-mutate_group_peers() {
-  local j f ln line
-  [ -n "${grouped[${r_id[$1]}]:-}" ] || return 0
-  for j in "${!r_id[@]}"; do
-    [ "$j" != "$1" ] && [ "${r_id[$j]}" = "${r_id[$1]}" ] || continue
-    f="$2/${r_file[$j]}"
-    ln="$(site_line "$f" "${r_pat[$j]}" "${r_nth[$j]}")"
-    [ -n "$ln" ] || return 1
-    line="$(sed -n "${ln}p" "$f")"
-    NEW="${line%%"${r_pat[$j]}"*}${r_repl[$j]}${line#*"${r_pat[$j]}"}" awk -v ln="$ln" 'NR == ln { print ENVIRON["NEW"]; next } { print }' "$f" >"$f.mut"
-    mv "$f.mut" "$f"
-  done
-}
-
-# mutate_one <index>: writes <work>/mut-<index>/res = "<verdict> <detail>".
-mutate_one() {
-  local i=$1 d="$work/mut-$1" ln line pre post rc=0
-  mkdir -p "$d"
-  copy_tree "$d/t"
-  mutate_group_peers "$i" "$d/t" || {
-    echo "unusable a grouped site of ${r_id[$i]} was not found" >"$d/res"
-    return
-  }
-  local target="$d/t/${r_file[$i]}"
-  ln="$(site_line "$target" "${r_pat[$i]}" "${r_nth[$i]}")"
-  if [ -z "$ln" ]; then
-    echo "unusable site not found: nth ${r_nth[$i]} line containing '${r_pat[$i]}' in ${r_file[$i]}" >"$d/res"
-    return
-  fi
+# apply_site <index> <line> <tree>: rewrites line <line> of the row's file in
+# <tree>. A no-op or an unparsable result prints the reason and fails.
+apply_site() {
+  local i=$1 ln=$2 target="$3/${r_file[$1]}" line
   line="$(sed -n "${ln}p" "$target")"
-  pre="${line%%"${r_pat[$i]}"*}"
-  post="${line#*"${r_pat[$i]}"}"
-  NEW="$pre${r_repl[$i]}$post" awk -v ln="$ln" 'NR == ln { print ENVIRON["NEW"]; next } { print }' "$target" >"$target.mut"
+  if [[ $line != *"${r_pat[$i]}"* ]]; then
+    echo "unusable ${r_file[$i]}:$ln no longer contains '${r_pat[$i]}' after an earlier site's edit"
+    return 1
+  fi
+  NEW="${line%%"${r_pat[$i]}"*}${r_repl[$i]}${line#*"${r_pat[$i]}"}" awk -v ln="$ln" 'NR == ln { print ENVIRON["NEW"]; next } { print }' "$target" >"$target.mut"
   if cmp -s "$target" "$target.mut"; then
-    echo "unusable replacement changes nothing at ${r_file[$i]}:$ln" >"$d/res"
-    return
+    rm -f "$target.mut"
+    echo "unusable replacement changes nothing at ${r_file[$i]}:$ln"
+    return 1
   fi
   if [[ ${r_file[$i]} == *.go ]]; then
     cat "$target.mut" >"$target"
     rm -f "$target.mut"
-    if ! (gofmt -e "$target" >/dev/null && cd "$d/t/crew" && go build ./...) 2>"$d/syntax"; then
-      echo "unusable mutated ${r_file[$i]}:$ln fails to compile: $(head -n1 "$d/syntax")" >"$d/res"
-      return
+    if ! (gofmt -e "$target" >/dev/null && cd "$3/crew" && go build ./...) 2>"$3.syntax"; then
+      echo "unusable mutated ${r_file[$i]}:$ln fails to compile: $(head -n1 "$3.syntax")"
+      return 1
     fi
   else
-    if ! bash -n "$target.mut" 2>"$d/syntax"; then
-      echo "unusable mutated ${r_file[$i]}:$ln fails bash -n: $(head -n1 "$d/syntax")" >"$d/res"
-      return
+    if ! bash -n "$target.mut" 2>"$3.syntax"; then
+      rm -f "$target.mut"
+      echo "unusable mutated ${r_file[$i]}:$ln fails bash -n: $(head -n1 "$3.syntax")"
+      return 1
     fi
     cat "$target.mut" >"$target"
     rm -f "$target.mut"
   fi
+}
+
+# mutate_one <index>: writes <work>/mut-<index>/res = "<verdict> <detail>".
+# Every site of a grouped ID resolves its line in the untouched copy first, so
+# an earlier edit cannot shift a later site's nth match.
+mutate_one() {
+  local i=$1 d="$work/mut-$1" j ln msg rc=0
+  local -a sites=() lines=()
+  mkdir -p "$d"
+  copy_tree "$d/t"
+  for j in "${!r_id[@]}"; do
+    [ "$j" = "$i" ] || { [ -n "${grouped[${r_id[$i]}]:-}" ] && [ "${r_id[$j]}" = "${r_id[$i]}" ]; } || continue
+    ln="$(site_line "$d/t/${r_file[$j]}" "${r_pat[$j]}" "${r_nth[$j]}" 2>/dev/null)" || ln=
+    if [ -z "$ln" ]; then
+      echo "unusable site not found: nth ${r_nth[$j]} line containing '${r_pat[$j]}' in ${r_file[$j]}" >"$d/res"
+      return
+    fi
+    sites+=("$j") lines+=("$ln")
+  done
+  for j in "${!sites[@]}"; do
+    msg="$(apply_site "${sites[$j]}" "${lines[$j]}" "$d/t")" || {
+      echo "$msg" >"$d/res"
+      return
+    }
+  done
+  ln="${lines[0]}" # the leader is the group's first row, so its site is first
   run_test "$d/t" "${r_tfile[$i]}" "${r_filter[$i]}" "$d/out" || rc=$?
   if [ "$rc" -eq 0 ]; then
     echo "green ${r_file[$i]}:$ln stayed green: the guard is not pinned by ${r_tfile[$i]} --filter '${r_filter[$i]}'" >"$d/res"
