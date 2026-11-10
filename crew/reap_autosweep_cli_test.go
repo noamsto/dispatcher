@@ -11,16 +11,20 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rogpeppe/go-internal/testscript"
 )
 
 // TestMain lets reap's detached ratings sweep run: the async path execs
 // os.Executable() with `reap-autosweep`, which under `go test` is this binary.
+// It also serves the role-watch scripts, which see this binary as `crew` and
+// as the fake `tmux` on their PATH.
 func TestMain(m *testing.M) {
 	pkgDir, _ = os.Getwd()
 	if len(os.Args) > 1 && os.Args[1] == "reap-autosweep" {
 		os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, env{getwd: os.Getwd}))
 	}
-	os.Exit(m.Run())
+	testscript.Main(m, map[string]func(){"crew": crewMain, "tmux": fakeTmux})
 }
 
 // pkgDir is the package directory, captured before any test changes cwd

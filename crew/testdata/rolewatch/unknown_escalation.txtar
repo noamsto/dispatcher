@@ -1,0 +1,300 @@
+# After the Enter the pane matches no known frame but is wide enough (no
+# re-guard): the 5th unknown tick sends one assignment_unsubmitted naming the
+# unrecognised frame to the sender and the dispatcher, and never another Enter.
+#
+# golden.log is the bash arm's tmux argv log for exactly this fake state.
+# Regenerate it (needs bash, jq and git on PATH):
+#   mkdir -p /tmp/g; ROLEWATCH_GOLDEN_DIR=/tmp/g go test -run TestRoleWatchDifferential .
+# then replace the golden.log section below with /tmp/g/unknown_escalation.log.
+# TestRoleWatchDifferential also diffs the arm against crew role-watch live.
+exec git init -q
+mkdir .git/crew
+cp events.jsonl .git/crew/events.jsonl
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+cmp tmux.log golden.log
+grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+! grep '^(set-window-option|select-layout)' tmux.log
+grep -count=2 'assignment_unsubmitted' .git/crew/events.jsonl
+grep '"to":"worker:feat/9-x#s1-1".*could not confirm the submit: the pane matches no recognised frame' .git/crew/events.jsonl
+grep '"to":"dispatcher:c1".*could not confirm the submit: the pane matches no recognised frame' .git/crew/events.jsonl
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=40
+width=80
+-- tmux/frames/1 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/2 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯ Assignment: go
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/3 --
+a pane that renders no known frame
+-- golden.log --
+display-message -p -t %6 #{@crew_role}|#{window_id}|#{@crew_delivery}
+show-options -wqv -t @1 @crew_branch
+show-options -wqv -t @1 @crew_id
+display-message -p -t %6 #{@crew_exited}
+set-option -p -t %6 @crew_state idle
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+display-message -p -t %6 #{@crew_exited}
+set-option -p -t %6 @crew_state working
+display-message -p -t %6 #{@crew_exited}
+display-message -p -t %6 #{@crew_role}|#{window_id}
+show-options -wqv -t @1 @crew_branch
+show-options -wqv -t @1 @crew_id
+capture-pane -e -p -t %6
+load-buffer -b rw-assign-N -
+paste-buffer -p -d -r -b rw-assign-N -t %6
+capture-pane -e -p -t %6
+send-keys -t %6 Enter
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+list-panes -a -F #{pane_pid}#{@crew_branch}#{@crew_role}#{@crew_id}#{window_id}#{pane_id}
+list-panes -a -F #{pane_pid}#{@crew_branch}#{@crew_role}#{@crew_id}#{window_id}#{pane_id}
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}
+display-message -p -t %6 #{@crew_exited}
+capture-pane -e -p -t %6
+display-message -p -t @1 #{window_zoomed_flag}
+display-message -p -t %6 #{pane_width}
+show-options -w -v -q -t @1 @grid_refit_min_role_cols
+display-message -p -t %6 #{pane_id}

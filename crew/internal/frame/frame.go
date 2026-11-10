@@ -322,6 +322,17 @@ func ClaudeIdleBox(plain, colored string, own bool) bool {
 	return ok && strings.Contains(coloredRow, ghostMarker)
 }
 
+// ClaudeDraft is the bash `sed -E 's/^[[:space:]]*❯([[:space:]]|\xc2\xa0)*//; s/[[:space:]]+$//'`
+// over a prompt-box row: the typed text with the prompt marker and trailing space removed.
+func ClaudeDraft(row string) string {
+	return strings.TrimRightFunc(reDraft.ReplaceAllLiteralString(row, ""), isPosixSpace)
+}
+
+// TrimSpace is the bash `sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'` under glibc's space class.
+func TrimSpace(s string) string {
+	return strings.TrimFunc(s, isPosixSpace)
+}
+
 // ClaudeUnsentInput reports a draft typed into claude's prompt box and not yet
 // sent. The dim prompt-suggestion ghost text is not one, and with no colored
 // capture a suggestion cannot be told from a draft, so that reads as none.

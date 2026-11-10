@@ -1,0 +1,43 @@
+# A verdict that lands while the Enter is still being verified sets verdict_seen:
+# the submitted transition then goes idle itself, straight after the capture that
+# saw the idle frame, rather than on a later intake tick.
+exec git init -q
+mkdir .git/crew
+cp events.jsonl .git/crew/events.jsonl
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+grep -count=2 '^set-option -p -t %6 @crew_state idle$' tmux.log
+grep -count=1 'capture-pane -e -p -t %6\ndisplay-message -p -t %6 #\{@crew_exited\}\nset-option -p -t %6 @crew_state idle' tmux.log
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=12
+-- tmux/frames/1 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/2 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯ Assignment: go
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/frames/3 --
+✻ Churned for 36s · done 11:20 AM · 1 shell still running
+──────────────────
+❯
+──────────────────
+  -- INSERT -- ⏵⏵ auto mode on · 1 shell · ← for agents
+-- tmux/append-enter-1 --
+{"ts":10000000000005,"crew_id":"c1","kind":"msg","from":"role:feat/9-x:reviewer","to":"worker:feat/9-x#s1-1","body":"{\"verdict\":\"ok\"}"}

@@ -435,6 +435,21 @@ func TestRunStallWatchUsage(t *testing.T) {
 	}
 }
 
+// role-watch runs with no repo and refuses a missing --pane value with
+// dispatch's own line, never kong's text.
+func TestRunRoleWatchTrailingPane(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GIT_CEILING_DIRECTORIES", dir)
+	e := env{getwd: func() (string, error) { return dir, nil }}
+	for _, args := range [][]string{{"role-watch", "reviewer", "--pane"}, {"role-watch", "reviewer"}} {
+		var stdout, stderr bytes.Buffer
+		code := run(context.Background(), args, &stdout, &stderr, e)
+		if code != exitFailure || stdout.Len() != 0 || stderr.String() != "dispatch: --role-watch needs --pane <id>\n" {
+			t.Errorf("%v: code %d stdout %q stderr %q", args, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
 // The arm has two halves: the msgs it prints, and the delivered-marks file it
 // leaves for `crew await` and the in-process `internal/unread` scan to read.
 // Both are wired through bus.Paths, so the marks land under the repo's crew dir next to the bus.
@@ -1370,12 +1385,12 @@ func TestAdmittedSubcommands(t *testing.T) {
 		"git-baseline", "occupants", "reap", "reap-autosweep", "stack", "help",
 		"id", "new", "engine-cmd", "dash", "pi-agent-dir", "relay",
 		"remote-run", "remote-exec", "dispatch-row", "spec-lint",
-		"merge", "followups", "peer-sync", "peer-claims", "decide", "decisions", "class", "overseer", "completion", // added after that revision
+		"merge", "followups", "peer-sync", "peer-claims", "decide", "decisions", "class", "overseer", "completion", "role-watch", // added after that revision
 	}
 	for _, name := range []string{"engine-cmd", "id", "new", "occupants",
 		"where", "identity", "resolve-target", "crews", "register", "deregister", "log", "sessions", "inbox",
 		"roster", "report", "retro", "rate", "fleet", "stack", "roster-render", "pi-agent-dir",
-		"status", "msg", "reply", "hold", "nudge", "await", "watch", "relay", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "merge", "pr-watch", "stall-watch", "help",
+		"status", "msg", "reply", "hold", "nudge", "await", "watch", "relay", "stream", "git-guard", "git-baseline", "reap", "reap-autosweep", "adopt", "merge", "pr-watch", "role-watch", "stall-watch", "help",
 		"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class", "overseer", "completion"} {
 		if !typedSubcommands[name] {
 			t.Errorf("%s types no argv", name)
@@ -1863,6 +1878,10 @@ var preLocateRefusalRows = []struct {
 	msg  string
 	code int
 }{
+	{"role-watch unknown flag", []string{"role-watch", "reviewer", "--bogus"}, "dispatch: --role-watch: unexpected argument '--bogus'", 1},
+	{"role-watch extra positional", []string{"role-watch", "reviewer", "extra"}, "dispatch: --role-watch: unexpected argument 'extra'", 1},
+	{"role-watch trailing interval", []string{"role-watch", "reviewer", "--interval"}, "dispatch: --role-watch: --interval needs a value", 1},
+	{"role-watch trailing branch", []string{"role-watch", "reviewer", "--branch"}, "dispatch: --role-watch: --branch needs a value", 1},
 	{"fleet unknown flag", []string{"fleet", "--bogus"}, fleetUsage, 1},
 	{"fleet extra positional", []string{"fleet", "extra"}, fleetUsage, 1},
 	{"fleet crew missing value", []string{"fleet", "--crew"}, fleetUsage, 1},
@@ -2339,6 +2358,12 @@ func TestParseSpellingsAreIdentical(t *testing.T) {
 		{"stall-watch --budget-refresh", []string{"stall-watch", "feat/x", "--budget-refresh", "13"}, []string{"stall-watch", "feat/x", "--budget-refresh=13"}, false},
 		{"stall-watch bools", []string{"stall-watch", "feat/x", "--no-budget", "--no-nudge"}, []string{"stall-watch", "feat/x", "--no-budget=true", "--no-nudge=true"}, false},
 		{"stall-watch --engine trailing", []string{"stall-watch", "feat/x", "--pane", "%1", "--engine"}, []string{"stall-watch", "feat/x", "--pane", "%1", "--engine="}, false},
+		{"role-watch --pane", []string{"role-watch", "reviewer", "--pane", "%1"}, []string{"role-watch", "reviewer", "--pane=%1"}, false},
+		{"role-watch --branch", []string{"role-watch", "reviewer", "--branch", "feat/x"}, []string{"role-watch", "reviewer", "--branch=feat/x"}, false},
+		{"role-watch --engine", []string{"role-watch", "reviewer", "--engine", "codex"}, []string{"role-watch", "reviewer", "--engine=codex"}, false},
+		{"role-watch --interval", []string{"role-watch", "reviewer", "--interval", "1"}, []string{"role-watch", "reviewer", "--interval=1"}, false},
+		{"role-watch --defer-notice", []string{"role-watch", "reviewer", "--defer-notice", "5"}, []string{"role-watch", "reviewer", "--defer-notice=5"}, false},
+		{"role-watch --submit-retries", []string{"role-watch", "reviewer", "--submit-retries", "2"}, []string{"role-watch", "reviewer", "--submit-retries=2"}, false},
 		{"reap --idle empty", []string{"reap", "--idle", ""}, []string{"reap", "--idle="}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

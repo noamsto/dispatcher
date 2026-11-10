@@ -110,7 +110,7 @@
             pname = "crew-go";
             version = "0.1.0";
             src = ./crew;
-            vendorHash = "sha256-56E2cjtgQ49ypGTEE6Fo51fVMvAKQyHlSZYPnBzRmog=";
+            vendorHash = "sha256-dF2223KjiGRYntbeDRMMDSWdwW/gkEfAZFFCJroAusk=";
             # stall-watch sources the two libs dispatch.sh shares, under the
             # pinned bash (the interpreter writeShellApplication gives crew);
             # `crew class` and the rate sweep run model-resolve under it too.

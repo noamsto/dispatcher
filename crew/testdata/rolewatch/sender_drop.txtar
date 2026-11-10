@@ -1,0 +1,34 @@
+# W1: five senders that are not this branch's lead worker or this crew's
+# dispatcher are dropped. Each drop is reported to dispatcher:c1; nothing is
+# queued, so the pane is never captured or typed into.
+exec git init -q
+mkdir .git/crew
+cp events.jsonl .git/crew/events.jsonl
+env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
+exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
+! stderr .
+! grep '^(capture-pane|send-keys|load-buffer|paste-buffer)' tmux.log
+! exists tmux/buffer
+grep -count=5 'role_watch_drop' .git/crew/events.jsonl
+grep 'dropped msg from worker:feat/8-other#s1-1\\"' .git/crew/events.jsonl
+grep 'dropped msg from role:feat/8-other:reviewer\\"' .git/crew/events.jsonl
+grep 'dropped msg from dispatcher:c2\\"' .git/crew/events.jsonl
+grep 'dropped msg from role:feat/9-x:plan-critic\\"' .git/crew/events.jsonl
+grep 'dropped msg from worker:feat/9-x#y#s1-1\\"' .git/crew/events.jsonl
+grep -count=5 '"to":"dispatcher:c1".*role_watch_drop' .git/crew/events.jsonl
+
+-- events.jsonl --
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/8-other#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"role:feat/8-other:reviewer","to":"role:feat/9-x:reviewer","body":"go"}
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"dispatcher:c2","to":"role:feat/9-x:reviewer","body":"go"}
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"role:feat/9-x:plan-critic","to":"role:feat/9-x:reviewer","body":"go"}
+{"ts":9999999999999,"crew_id":"c1","kind":"msg","from":"worker:feat/9-x#y#s1-1","to":"role:feat/9-x:reviewer","body":"go"}
+-- clock --
+1000
+-- tmux/state --
+role=reviewer
+window=@1
+branch=feat/9-x
+crew=c1
+exited=0
+lifetime=4
