@@ -270,8 +270,8 @@ func TestReattachSkipsUnsafeIDs(t *testing.T) {
 	}
 }
 
-// A missing id or pid is a usage error, not a silent success: only `dispatch`
-// calls this with both, and a hand-run `crew adopt --reattach c1` did nothing.
+// A missing id or pid is a usage error, not a silent success: silence is for
+// `dispatch`, which always passes both.
 func TestReattachNeedsIDAndPID(t *testing.T) {
 	for _, req := range []Request{
 		{ID: "c-re", Reattach: true},
