@@ -1575,21 +1575,25 @@ func TestFinishSVGHalosFreeText(t *testing.T) {
 		`<g id="node1" class="node"><title>h1</title><text xml:space="preserve" x="3">b</text></g>` +
 		`<g id="node2" class="node"><title>p1</title><text x="5">p</text></g>` +
 		`<g id="node3" class="node"><title>p1c</title><text x="6">!</text></g>` +
+		`<g id="node5" class="node"><title>w2</title><text x="7">d</text></g>` +
+		`<g id="node6" class="node"><title>a1</title><text x="8">e</text></g>` +
 		`<g id="node4" class="node"><title>w1</title><text x="4" stroke="` + colBG + `" paint-order="stroke">c</text></g></svg>`
 	got := string(finishSVG([]byte(in), nil))
 	halo := ` stroke="` + colBG + `" stroke-width="3" stroke-linejoin="round" paint-order="stroke"`
-	for _, want := range []string{`<text x="1" y="2" fill="#fff"` + halo + `>a</text>`, `<text xml:space="preserve" x="3"` + halo + `>b</text>`, `<text x="5">p</text>`, `<text x="6">!</text>`} {
+	for _, want := range []string{`<text x="1" y="2" fill="#fff"` + halo + `>a</text>`, `<text xml:space="preserve" x="3"` + halo + `>b</text>`, `<text x="5">p</text>`, `<text x="6">!</text>`,
+		`<text x="7"` + halo + `>d</text>`, `<text x="8"` + halo + `>e</text>`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("no %s in\n%s", want, got)
 		}
 	}
-	if n := strings.Count(got, "paint-order="); n != 3 {
-		t.Errorf("%d paint-order attributes, want 3 (an outlined text is left as it is):\n%s", n, got)
+	if n := strings.Count(got, "paint-order="); n != 5 {
+		t.Errorf("%d paint-order attributes, want 5 (an outlined text is left as it is):\n%s", n, got)
 	}
 
 	neato := neatoPath(t)
 	dot, sc, _ := emitRepos(wedgeRoster())
 	haloed, plain := 0, 0
+	seen := map[string]bool{}
 	var walk func(n svgNode, inShape bool)
 	walk = func(n svgNode, inShape bool) {
 		if strings.HasPrefix(n.attr("id"), "node") {
@@ -1608,6 +1612,19 @@ func TestFinishSVGHalosFreeText(t *testing.T) {
 			} else {
 				plain++
 			}
+			// Known texts, so the check does not share freeLabelRe with the code.
+			switch n.Text {
+			case "alpha", "beta", "mbp":
+				if !has {
+					t.Errorf("label %q has no halo", n.Text)
+				}
+				seen[n.Text] = true
+			case "sky", "olive", "!":
+				if has {
+					t.Errorf("node text %q has a halo", n.Text)
+				}
+				seen[n.Text] = true
+			}
 		}
 		for _, c := range n.Nodes {
 			walk(c, inShape)
@@ -1616,6 +1633,11 @@ func TestFinishSVGHalosFreeText(t *testing.T) {
 	walk(parseSVG(t, finishSVG(neatoSVG(t, neato, dot), sc.wedges)), false)
 	if haloed == 0 || plain == 0 {
 		t.Errorf("%d haloed and %d plain texts, want both", haloed, plain)
+	}
+	for _, want := range []string{"alpha", "beta", "mbp", "sky", "olive", "!"} {
+		if !seen[want] {
+			t.Errorf("no text %q in the rendered svg", want)
+		}
 	}
 }
 

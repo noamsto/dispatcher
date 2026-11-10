@@ -111,9 +111,10 @@ var svgRootRe = regexp.MustCompile(`<svg\b[^>]*?\sviewBox="([-0-9.]+)\s+([-0-9.]
 // hook detection does not see; resvg cannot parse an unquoted multi-word
 // font-family; and Graphviz's background polygon stops short of the viewBox edge
 // and moves with the zoom, so a rect over the viewBox, in absolute user units
-// because aeye zooms by rewriting the viewBox, goes in first. Every text gets a
+// because aeye zooms by rewriting the viewBox, goes in first. Each text outside
+// a node shape (the legend, host, anchor and wedge labels) gets a
 // background-coloured halo, so a line that still passes behind a label does not
-// cut its letters (not the text inside a node shape), and the repo wedges' fills go in under everything Graphviz
+// cut its letters, and the repo wedges' fills go in under everything Graphviz
 // drew. Text without a root viewBox is not an svg this knows, and comes back
 // unchanged.
 func finishSVG(svg []byte, wedges []wedge) []byte {
