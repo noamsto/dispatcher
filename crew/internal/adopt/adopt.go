@@ -105,6 +105,10 @@ func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Wr
 		say(stderr, "%s\n", usage)
 		return exitFailure
 	}
+	if req.Reattach && (req.ID == "" || req.PID == "") {
+		say(stderr, "%s\n", usage)
+		return exitFailure
+	}
 	if req.Reattach {
 		return reattach(ctx, req, paths, stderr, o)
 	}

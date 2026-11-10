@@ -59,7 +59,6 @@ func TestReattachSkips(t *testing.T) {
 		{name: "window id for a pane", env: map[string]string{"TMUX_PANE": "@5"}},
 		{name: "non-digit pane", env: map[string]string{"TMUX_PANE": "%x"}},
 		{name: "bare percent", env: map[string]string{"TMUX_PANE": "%"}},
-		{name: "empty start pid", pid: ptr("")},
 		{name: "zero start pid", pid: ptr("0")},
 		{name: "non-digit start pid", pid: ptr("abc")},
 		{name: "first non-shell is no engine", comm: map[int]string{400: "houston"}},
@@ -240,6 +239,52 @@ func TestReattachNeverTakesForce(t *testing.T) {
 	}
 	if _, ok := fileText(t, p.Dir+"/pidfile.log"); ok {
 		t.Error("pidfile.log written")
+	}
+}
+
+// A crew id that is not a valid id never reaches the filesystem: ".." would
+// land the pid file in the bus dir, and a leading dash is a flag to other tools.
+func TestReattachSkipsUnsafeIDs(t *testing.T) {
+	for _, id := range []string{"..", "-x"} {
+		t.Run(id, func(t *testing.T) {
+			p := testPaths(t)
+			got := run(t, reattachWorld(), p, reattachReq(id))
+			if got.code != 0 || got.stdout != "" || got.stderr != "" {
+				t.Errorf("code = %d, stdout = %q, stderr = %q; want a silent 0", got.code, got.stdout, got.stderr)
+			}
+			for _, path := range []string{
+				p.CrewDir(id) + "/pid", p.CrewDir(id) + "/pane",
+				p.Dir + "/pid", p.Dir + "/pane", p.Dir + "/crews/../pid",
+				p.Dir + "/pidfile.log",
+			} {
+				if text, ok := fileText(t, path); ok {
+					t.Errorf("%s written: %q", path, text)
+				}
+			}
+		})
+	}
+}
+
+// A missing id or pid is a usage error, not a silent success: only `dispatch`
+// calls this with both, and a hand-run `crew adopt --reattach c1` did nothing.
+func TestReattachNeedsIDAndPID(t *testing.T) {
+	for _, req := range []Request{
+		{ID: "c-re", Reattach: true},
+		{PID: "500", Reattach: true},
+		{Reattach: true},
+	} {
+		p := testPaths(t)
+		mkCrewDir(t, p)
+		got := run(t, reattachWorld(), p, req)
+		if got.code != 1 || got.stdout != "" || got.stderr != usage+"\n" {
+			t.Errorf("%+v: code = %d, stdout = %q, stderr = %q; want 1 and the usage", req, got.code, got.stdout, got.stderr)
+		}
+		if _, ok := fileText(t, p.CrewDir("c-re")+"/pid"); ok {
+			t.Errorf("%+v: pid file written", req)
+		}
+		if _, ok := fileText(t, p.Dir+"/pidfile.log"); ok {
+			t.Errorf("%+v: pidfile.log written", req)
+		}
 	}
 }
 

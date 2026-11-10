@@ -7008,7 +7008,7 @@ EOF
   printf '%%3\n' >"$TEST_REPO/.git/crew/crews/c1/pane"
   TMUX_PANE=%5 DISPATCH_PROFILE=personal run "$BATS_TEST_TMPDIR/engine/claude" standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
-  grep -q 'adopt --reattach c1 ' "$STUB_LOG"
+  grep -q 'adopt --reattach -- c1 ' "$STUB_LOG"
   [ "$(cat "$TEST_REPO/.git/crew/crews/c1/pid")" = "$live_pid" ]
   [ "$(cat "$TEST_REPO/.git/crew/crews/c1/pane")" = "%3" ]
   run ! grep -qs ' reattach ' "$TEST_REPO/.git/crew/pidfile.log"
@@ -7018,7 +7018,7 @@ EOF
   _reattach_fixture
   CREW_WORKER_ID=worker:x TMUX_PANE=%5 DISPATCH_PROFILE=personal run "$BATS_TEST_TMPDIR/engine/claude" standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
-  grep -q 'adopt --reattach c1 ' "$STUB_LOG"
+  grep -q 'adopt --reattach -- c1 ' "$STUB_LOG"
   [ ! -e "$TEST_REPO/.git/crew/crews/c1/pid" ]
   [ ! -e "$TEST_REPO/.git/crew/crews/c1/pane" ]
   run ! grep -qs ' reattach ' "$TEST_REPO/.git/crew/pidfile.log"
@@ -7028,7 +7028,7 @@ EOF
   _reattach_fixture
   DISPATCH_PROFILE=personal run "$BATS_TEST_TMPDIR/engine/claude" standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
-  grep -q 'adopt --reattach c1 ' "$STUB_LOG"
+  grep -q 'adopt --reattach -- c1 ' "$STUB_LOG"
   [ ! -e "$TEST_REPO/.git/crew/crews/c1/pid" ]
   [ ! -e "$TEST_REPO/.git/crew/crews/c1/pane" ]
   run ! grep -qs ' reattach ' "$TEST_REPO/.git/crew/pidfile.log"

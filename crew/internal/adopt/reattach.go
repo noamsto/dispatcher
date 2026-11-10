@@ -19,10 +19,10 @@ import (
 // reattach is `crew adopt --reattach <id> <pid>`: it re-registers a crew whose
 // dispatcher registration was lost — a launcher that exited and deregistered
 // while its engine kept dispatching — and only for a caller that is plausibly
-// that dispatcher. `dispatch` runs it on every call, so it is silent and exits
-// 0 unless it writes.
+// that dispatcher. `dispatch` runs it on every call, so once id and pid are
+// present it is silent and exits 0 unless it writes.
 func reattach(ctx context.Context, req Request, paths bus.Paths, stderr io.Writer, o Options) int {
-	if req.ID == "" || !bus.ValidCrewID(req.ID) {
+	if !bus.ValidCrewID(req.ID) {
 		return 0
 	}
 	if !ascii.IsDigits(req.PID) {

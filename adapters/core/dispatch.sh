@@ -4276,8 +4276,9 @@ crew_id="${crew_id_flag:-${CREW_ID:-}}"
 }
 # A dispatcher session can outlive its launcher's deregister (a plain engine
 # resumed in the same pane); re-register it when no live dispatcher holds the
-# crew. crew adopt --reattach owns every guard and is silent unless it writes.
-[ "$wire_side" = remote ] || [ -n "${DISPATCH_PRECHECK:-}" ] || crew adopt --reattach "$crew_id" "$PPID" >/dev/null || true
+# crew. crew adopt --reattach owns the caller-identity guards and is silent
+# unless it writes; the remote half and DISPATCH_PRECHECK's dry run skip it.
+[ "$wire_side" = remote ] || [ -n "${DISPATCH_PRECHECK:-}" ] || crew adopt --reattach -- "$crew_id" "$PPID" >/dev/null || true
 
 # Remote mode: a dispatcher on another host asked for this worker's window in
 # the named session, possibly shared with windows that are not this crew's. The

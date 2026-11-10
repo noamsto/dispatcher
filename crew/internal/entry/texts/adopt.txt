@@ -11,10 +11,12 @@ Re-attach to an on-disk crew after a restart lost CREW_ID.
 Adopting a crew whose recorded dispatcher pid is dead also releases the
 `dispatched` label from the GitHub issues that crew claimed but never finished.
 
---reattach re-registers the crew to the first non-shell ancestor of [pid] when
+--reattach requires both <id> and [pid]; a missing one is a usage error. It
+re-registers the crew to the first non-shell process at or above [pid] when
 that process is an engine (claude, codex, cursor-agent, node, pi) running in
 $TMUX_PANE, and no live dispatcher pid is recorded. It never runs from a worker
 or role pane, never takes --force, never releases claims, and is silent unless
-it writes; dispatch runs it on every dispatch, passing its own $PPID.
+it writes. dispatch runs it on every local dispatch (not on the remote side or
+under DISPATCH_PRECHECK), passing its own $PPID.
 
   crew adopt <crew-id>
