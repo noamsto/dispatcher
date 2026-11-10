@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,9 +21,9 @@ const dispatchScript = "../../../adapters/core/dispatch.sh"
 var engines = []string{"claude", "codex", "pi", "cursor"}
 
 // goldenKeys are the predicates whose bash is gone: no shipped script carries
-// them, so Go is the only implementation and their expectations are frozen in
-// testdata/golden-oracle.tsv (#821). Every other key still has a live bash copy
-// in dispatch.sh's --role-watch block, which TestDriftAgainstBash compares.
+// them, so Go is the only implementation. Every other key still has a live bash
+// copy in dispatch.sh's --role-watch block, which TestDriftAgainstBash and
+// TestRowsMatchBash compare. TestGoldenOracle freezes all keys, goldenKeys or not.
 var goldenKeys = map[string]bool{
 	"quota_prompt":            true,
 	"quota_session_limit":     true,
@@ -603,11 +604,13 @@ func TestRowsMatchBash(t *testing.T) {
 	}
 }
 
-// TestGoldenOracle checks the six predicates that ship in no bash script against
-// the values the crew.sh oracle produced before it was deleted (#821). Each row
-// of the file is `<input>\t<key>\t<value>`: an input is a frame under
-// testdata/frames, or `row:<name>` for a hand-written rows() case. The keys here
-// are exactly goldenKeys, so the file cannot quietly stop covering one.
+// TestGoldenOracle freezes every predicate result in testdata/golden-oracle.tsv.
+// Each row is `<input>\t<key>\t<value>`: an input is a frame under
+// testdata/frames, or `row:<name>` for a hand-written rows() case. A frame row
+// names an engine-dependent key as `<key>@<engine>` and evaluates every other
+// key as claude; a row: input carries its own engine and names the bare key.
+// The key set is everything results() produces, so a new predicate, frame or
+// rows() case cannot ship without its golden rows.
 func TestGoldenOracle(t *testing.T) {
 	src, err := os.ReadFile("testdata/golden-oracle.tsv")
 	if err != nil {
@@ -616,6 +619,18 @@ func TestGoldenOracle(t *testing.T) {
 	paths := map[string]string{}
 	for _, p := range corpus(t) {
 		paths[filepath.Base(p)] = p
+	}
+	allKeys := map[string]bool{}
+	var frameKeys []string
+	for _, g := range results("claude", "", "") {
+		allKeys[g.key] = true
+		if !engineKeys[g.key] {
+			frameKeys = append(frameKeys, g.key)
+			continue
+		}
+		for _, e := range engines {
+			frameKeys = append(frameKeys, g.key+"@"+e)
+		}
 	}
 	cases := map[string]row{}
 	for _, c := range rows() {
@@ -626,7 +641,7 @@ func TestGoldenOracle(t *testing.T) {
 	}
 
 	seen := map[string]int{}
-	covered := map[string]bool{}
+	covered := map[string]map[string]bool{}
 	for _, l := range strings.Split(strings.TrimSuffix(string(src), "\n"), "\n") {
 		input, rest, ok := strings.Cut(l, "\t")
 		if !ok {
@@ -636,30 +651,33 @@ func TestGoldenOracle(t *testing.T) {
 		if !ok {
 			t.Fatalf("malformed golden row %q", l)
 		}
-		if !goldenKeys[key] {
-			t.Errorf("golden row %s names %q, which is not a golden key", input, key)
-			continue
-		}
-		var engine, text, colored string
+		engine, base := "claude", key
+		var text, colored string
 		if name, isRow := strings.CutPrefix(input, "row:"); isRow {
 			c, ok := cases[name]
 			if !ok {
 				t.Fatalf("golden row names no rows() case: %q", name)
 			}
 			engine, text, colored = c.engine, c.text, c.colored
-			covered[name] = true
 		} else {
 			p, ok := paths[input]
 			if !ok {
 				t.Fatalf("golden row names no frame: %q", input)
 			}
-			engine = "claude"
-			text, colored = readFrame(t, p), coloredFor(t, p, readFrame(t, p))
+			if b, e, isEngine := strings.Cut(key, "@"); isEngine {
+				base, engine = b, e
+			}
+			text = readFrame(t, p)
+			colored = coloredFor(t, p, text)
+		}
+		if !allKeys[base] || (base != key && (!engineKeys[base] || !slices.Contains(engines, engine))) {
+			t.Errorf("golden row %s names %q, which results() does not produce", input, key)
+			continue
 		}
 		if colored == "" {
 			colored = text
 		}
-		got, ok := lookup(results(engine, text, colored), key)
+		got, ok := lookup(results(engine, text, colored), base)
 		if !ok {
 			t.Fatalf("%s / %s: results() has no such key", input, key)
 		}
@@ -667,14 +685,25 @@ func TestGoldenOracle(t *testing.T) {
 			t.Errorf("%s / %s: Go %q, golden %q", input, key, got, want)
 		}
 		seen[key]++
+		if covered[input] == nil {
+			covered[input] = map[string]bool{}
+		}
+		covered[input][key] = true
 	}
-	for key := range goldenKeys {
+	for _, key := range frameKeys {
 		if seen[key] == 0 {
 			t.Errorf("golden file covers no %s case", key)
 		}
 	}
+	for name := range paths {
+		for _, key := range frameKeys {
+			if !covered[name][key] {
+				t.Errorf("frame %s has no golden row for %s", name, key)
+			}
+		}
+	}
 	for name, c := range cases {
-		if goldenKeys[c.key] && !covered[name] {
+		if !covered["row:"+name][c.key] {
 			t.Errorf("rows() case %q (%s) has no golden row", name, c.key)
 		}
 	}
