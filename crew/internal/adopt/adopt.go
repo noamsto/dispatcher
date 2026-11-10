@@ -40,7 +40,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/tmux"
 )
 
-const usage = "crew: adopt [--force] <id> [pid]"
+const usage = "crew: adopt [--force | --reattach] <id> [pid]"
 
 const exitFailure = 1
 
@@ -89,15 +89,29 @@ type claim struct {
 	branches []string
 }
 
-// Request is the parsed argv of `crew adopt [--force] <id> [pid]`.
+// Request is the parsed argv of `crew adopt [--force | --reattach] <id> [pid]`.
 type Request struct {
-	ID    string
-	PID   string
-	Force bool
+	ID       string
+	PID      string
+	Force    bool
+	Reattach bool
 }
 
 func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
+
+	if req.Reattach && req.Force {
+		say(stderr, "crew: adopt: --reattach never takes --force\n")
+		say(stderr, "%s\n", usage)
+		return exitFailure
+	}
+	if req.Reattach && (req.ID == "" || req.PID == "") {
+		say(stderr, "%s\n", usage)
+		return exitFailure
+	}
+	if req.Reattach {
+		return reattach(ctx, req, paths, stderr, o)
+	}
 
 	id := req.ID
 	if id == "" {

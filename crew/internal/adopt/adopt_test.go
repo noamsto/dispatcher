@@ -183,8 +183,8 @@ func TestUsageAndInvalidIDs(t *testing.T) {
 		req  Request
 		want string
 	}{
-		{"no id", Request{}, "crew: adopt [--force] <id> [pid]"},
-		{"empty id", Request{}, "crew: adopt [--force] <id> [pid]"},
+		{"no id", Request{}, "crew: adopt [--force | --reattach] <id> [pid]"},
+		{"empty id", Request{}, "crew: adopt [--force | --reattach] <id> [pid]"},
 		{"path escape", Request{ID: "../../etc"}, "crew: invalid crew id"},
 		{"leading dash", Request{ID: "-x"}, "crew: invalid crew id"},
 		{"dot", Request{ID: "."}, "crew: invalid crew id"},

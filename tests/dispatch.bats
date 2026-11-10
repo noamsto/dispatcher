@@ -1161,6 +1161,7 @@ split-window) printf '%s\n' '%6' ;;
 display-message)
   case "${*: -1}" in
   '#{pane_pid}') printf '%s\n' "$STUB_PANE_PID" ;;
+  $'#{pane_pid}\t#{@crew_branch}') printf '%s\t%s\n' "$STUB_PANE_PID" "${STUB_CREW_BRANCH:-}" ;;
   esac
   ;;
 esac
@@ -6957,6 +6958,81 @@ _roster_live_dispatcher() {
   TMUX_PANE=%3 DISPATCH_PROFILE=personal run run_dispatch standard sonnet --effort medium --crew-id c1 42 "Do a thing"
   [ "$status" -eq 0 ]
   wait_for_log 'roster-render --crew c1 --pane %3 --detach$'
+}
+
+# _reattach_fixture — a crew c1 with no registration, and a fake `claude`
+# engine whose process runs dispatch as its child (comm must stay `claude`, so
+# an absolute shebang and no exec).
+_reattach_fixture() {
+  stub_launch_bins
+  _grid_tmux_stub
+  cat >"$STUB_DIR/crew" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG"
+case "$1" in
+identity) printf '%s\n' '{"name":"iris","color":"blue","tmux":"colour33"}' ;;
+pi-agent-dir) exec "$CREW_REAL" pi-agent-dir ;;
+fleet) exec "$CREW_REAL" "$@" ;;
+hold) exec "$CREW_REAL" "$@" ;;
+adopt) exec "$CREW_REAL" "$@" ;;
+esac
+exit 0
+EOF
+  chmod +x "$STUB_DIR/crew"
+  mkdir -p "$TEST_REPO/.git/crew/crews/c1" "$BATS_TEST_TMPDIR/engine"
+  export DISPATCH
+  {
+    printf '#!%s\n' "$(command -v bash)"
+    printf '%s\n' 'printf "%s\n" "$$" >"$BATS_TEST_TMPDIR/engine.pid"' \
+      'bash -euo pipefail "$DISPATCH" "$@"' \
+      'exit $?'
+  } >"$BATS_TEST_TMPDIR/engine/claude"
+  chmod +x "$BATS_TEST_TMPDIR/engine/claude"
+}
+
+@test "reattach: dispatch from an engine in a tmux pane re-registers a crew with no pid or pane" {
+  _reattach_fixture
+  TMUX_PANE=%5 DISPATCH_PROFILE=personal run "$BATS_TEST_TMPDIR/engine/claude" standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$TEST_REPO/.git/crew/crews/c1/pid")" = "$(cat "$BATS_TEST_TMPDIR/engine.pid")" ]
+  [ "$(cat "$TEST_REPO/.git/crew/crews/c1/pane")" = "%5" ]
+  grep -E " reattach ok crew=c1 old=- new=$(cat "$BATS_TEST_TMPDIR/engine.pid") " "$TEST_REPO/.git/crew/pidfile.log"
+  [[ $output == *"re-registered crew c1"* ]]
+  wait_for_log 'roster-render --crew c1 --pane %5 --detach$'
+}
+
+@test "reattach: a crew whose recorded pid is alive and not the caller's ancestor is left alone" {
+  _reattach_fixture
+  sleep 300 &
+  live_pid=$!
+  printf '%s\n' "$live_pid" >"$TEST_REPO/.git/crew/crews/c1/pid"
+  printf '%%3\n' >"$TEST_REPO/.git/crew/crews/c1/pane"
+  TMUX_PANE=%5 DISPATCH_PROFILE=personal run "$BATS_TEST_TMPDIR/engine/claude" standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -q 'adopt --reattach -- c1 ' "$STUB_LOG"
+  [ "$(cat "$TEST_REPO/.git/crew/crews/c1/pid")" = "$live_pid" ]
+  [ "$(cat "$TEST_REPO/.git/crew/crews/c1/pane")" = "%3" ]
+  run ! grep -qs ' reattach ' "$TEST_REPO/.git/crew/pidfile.log"
+}
+
+@test "reattach: a worker caller writes no registration" {
+  _reattach_fixture
+  CREW_WORKER_ID=worker:x TMUX_PANE=%5 DISPATCH_PROFILE=personal run "$BATS_TEST_TMPDIR/engine/claude" standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -q 'adopt --reattach -- c1 ' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.git/crew/crews/c1/pid" ]
+  [ ! -e "$TEST_REPO/.git/crew/crews/c1/pane" ]
+  run ! grep -qs ' reattach ' "$TEST_REPO/.git/crew/pidfile.log"
+}
+
+@test "reattach: no TMUX_PANE writes no registration" {
+  _reattach_fixture
+  DISPATCH_PROFILE=personal run "$BATS_TEST_TMPDIR/engine/claude" standard sonnet --effort medium --crew-id c1 42 "Do a thing"
+  [ "$status" -eq 0 ]
+  grep -q 'adopt --reattach -- c1 ' "$STUB_LOG"
+  [ ! -e "$TEST_REPO/.git/crew/crews/c1/pid" ]
+  [ ! -e "$TEST_REPO/.git/crew/crews/c1/pane" ]
+  run ! grep -qs ' reattach ' "$TEST_REPO/.git/crew/pidfile.log"
 }
 
 @test "roster-render: DISPATCH_ROSTER_AUTO_OPEN=0 adds --no-open" {

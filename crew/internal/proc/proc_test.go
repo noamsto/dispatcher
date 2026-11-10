@@ -91,6 +91,55 @@ func TestOwnerPIDWalkIsBounded(t *testing.T) {
 	}
 }
 
+func TestFirstNonShell(t *testing.T) {
+	const start = 4241
+	cases := []struct {
+		name     string
+		parent   map[int]int
+		comm     map[int]string
+		wantPID  int
+		wantName string
+		wantOK   bool
+	}{
+		{
+			name:     "shells are climbed past to the owner",
+			parent:   map[int]int{start: 4240, 4240: 4239},
+			comm:     map[int]string{start: "bash", 4240: "fish", 4239: "claude"},
+			wantPID:  4239,
+			wantName: "claude",
+			wantOK:   true,
+		},
+		{
+			name:     "path-qualified comms are normalised",
+			parent:   map[int]int{start: 4240},
+			comm:     map[int]string{start: "-/bin/bash", 4240: "/nix/store/x/bin/.claude-wrapped"},
+			wantPID:  4240,
+			wantName: ".claude-wrapped",
+			wantOK:   true,
+		},
+		{
+			name:   "only shells up to init finds no owner",
+			parent: map[int]int{start: 4240, 4240: 1},
+			comm:   map[int]string{start: "bash", 4240: "fish"},
+		},
+		{
+			name:   "an unknown comm finds no owner",
+			parent: map[int]int{},
+			comm:   map[int]string{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := walkTable{parent: func(pid int) (int, bool) { n, ok := tc.parent[pid]; return n, ok },
+				comm: func(pid int) (string, bool) { c, ok := tc.comm[pid]; return c, ok }}
+			pid, name, ok := FirstNonShell(p, start)
+			if pid != tc.wantPID || name != tc.wantName || ok != tc.wantOK {
+				t.Errorf("FirstNonShell(%d) = (%d, %q, %v), want (%d, %q, %v)", start, pid, name, ok, tc.wantPID, tc.wantName, tc.wantOK)
+			}
+		})
+	}
+}
+
 // shellName is the arm's `${c##*/}` then `${c#-}`, in that order: the path goes
 // first, so a login shell spelled with its path still reads as one.
 func TestShellName(t *testing.T) {

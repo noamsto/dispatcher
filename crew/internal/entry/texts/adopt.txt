@@ -1,13 +1,22 @@
-usage: crew adopt [--force] <id> [pid]
+usage: crew adopt [--force | --reattach] <id> [pid]
 
 Re-attach to an on-disk crew after a restart lost CREW_ID.
 
-  --force  Adopt even though another pid is recorded as its dispatcher
-  <id>     Crew id, from `crew crews`
-  [pid]    Dispatcher pid to record; defaults to the nearest non-shell ancestor
+  --force     Adopt even though another pid is recorded as its dispatcher
+  --reattach  Re-register only if no live dispatcher holds the crew (see below)
+  <id>        Crew id, from `crew crews`
+  [pid]       Dispatcher pid to record; defaults to the nearest non-shell ancestor
 
 --force is stripped from anywhere in the args, so it can never land as the pid.
 Adopting a crew whose recorded dispatcher pid is dead also releases the
 `dispatched` label from the GitHub issues that crew claimed but never finished.
+
+--reattach requires both <id> and [pid]; a missing one is a usage error. It
+re-registers the crew to the first non-shell process at or above [pid] when
+that process is an engine (claude, codex, cursor-agent, node, pi) running in
+$TMUX_PANE, and no live dispatcher pid is recorded. It never runs from a worker
+or role pane, never takes --force, never releases claims, and is silent unless
+it writes. dispatch runs it on every local dispatch (not on the remote side or
+under DISPATCH_PRECHECK), passing its own $PPID.
 
   crew adopt <crew-id>
