@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"slices"
 	"strconv"
@@ -52,6 +53,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/repos"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 	"github.com/noamsto/dispatcher/crew/internal/retro"
+	"github.com/noamsto/dispatcher/crew/internal/rolewatch"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 	"github.com/noamsto/dispatcher/crew/internal/rosterrender"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
@@ -158,7 +160,7 @@ var subcommands = []string{
 	"adopt", "await", "dash", "git-baseline", "merge",
 	"git-guard", "help", "hold", "msg", "nudge",
 	"pr-watch", "reap", "reap-autosweep",
-	"relay", "reply", "stall-watch", "status", "stream", "watch",
+	"relay", "reply", "role-watch", "stall-watch", "status", "stream", "watch",
 	"remote-run", "remote-exec", "dispatch-row", "peer-sync", "peer-claims", "decide", "decisions", "spec-lint", "followups", "class", "overseer", "completion",
 }
 
@@ -173,7 +175,7 @@ var typedSubcommands = map[string]bool{
 	"status": true, "msg": true, "reply": true, "hold": true,
 	"nudge": true, "await": true, "watch": true, "relay": true, "stream": true,
 	"git-guard": true, "git-baseline": true, "reap": true, "reap-autosweep": true,
-	"adopt": true, "merge": true, "pr-watch": true, "stall-watch": true, "help": true,
+	"adopt": true, "merge": true, "pr-watch": true, "role-watch": true, "stall-watch": true, "help": true,
 	"remote-run": true, "remote-exec": true, "dispatch-row": true, "peer-sync": true, "peer-claims": true, "decide": true, "decisions": true, "spec-lint": true,
 	"followups": true, "class": true, "overseer": true, "completion": true,
 }
@@ -259,6 +261,7 @@ type root struct {
 	PRWatch prWatchCmd `cmd:"" name:"pr-watch" help:"Park on a PR and post its change event to the bus."`
 
 	StallWatch stallWatchCmd `cmd:"" name:"stall-watch" help:"The per-worker liveness watchdog."`
+	RoleWatch  roleWatchCmd  `cmd:"" name:"role-watch" help:"Type lead assignments into a role pane."`
 
 	Reap          reapCmd `cmd:"" name:"reap" help:"Reclaim the windows and worktrees of landed workers."`
 	ReapAutosweep argvCmd `cmd:"" name:"reap-autosweep" help:"The detached ratings sweep reap starts."`
@@ -444,6 +447,43 @@ func stallRequest(p crewArgs) stall.Request {
 		Launch: c.Launch, Unread: c.Unread, RunawayHits: c.RunawayHits, RunawayTokens: c.RunawayTokens,
 		NoBudget: c.NoBudget, NoNudge: c.NoNudge,
 	}
+}
+
+// runRoleWatch is the typed role-watch call.
+func runRoleWatch(ctx context.Context, e env, cwd string, c roleWatchCmd, stderr io.Writer) int {
+	paths, err := bus.Locate(ctx, cwd)
+	if err != nil {
+		paths = bus.Paths{}
+	}
+	return rolewatch.Run(ctx, rolewatch.Request{
+		Role: c.Role, Pane: c.Pane, Branch: str(c.Branch), Engine: c.Engine,
+		Interval: c.Interval, DeferNotice: c.DeferNotice, SubmitRetries: c.SubmitRetries,
+	}, rolewatch.Options{
+		Tmux:   tmux.Exec{},
+		Clock:  rolewatch.NewClock(os.Getenv),
+		Stderr: stderr,
+		CurrentBranch: func() string {
+			out, err := git.Exec{}.Run(ctx, cwd, "branch", "--show-current")
+			if err != nil {
+				return ""
+			}
+			return strings.TrimSpace(out)
+		},
+		Log: paths.Log,
+		Post: func(ctx context.Context, crew, from, to, body string) {
+			status.RunMsg(ctx, status.MsgRequest{From: from, To: to, Body: body}, paths, io.Discard, status.Options{
+				Dir:       cwd,
+				CrewID:    func() string { return crew },
+				Clock:     clock.FromEnv(),
+				Sender:    senderProbes(e.proc),
+				Tmux:      tmux.Exec{},
+				PeerHosts: e.peerHosts,
+			})
+		},
+		CrewID: func() string { return bus.CrewIDEnvFirst(ctx, cwd) },
+		PID:    os.Getpid(),
+		Rand:   func() int { return rand.IntN(32768) },
+	})
 }
 
 // env is everything run reads from the process, so tests can supply their own.
@@ -632,6 +672,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, e env) in
 			IsTTY: func() bool { return bus.IsTerminal(0) },
 			In:    os.Stdin,
 		}, stdout, stderr)
+	}
+
+	// role-watch refuses its own argv with dispatch's lines and runs without a
+	// bus when it cannot find one: an empty Log never reads.
+	if sub == "role-watch" {
+		if parsed.refusal != nil {
+			return refuse(stderr, parsed.refusal)
+		}
+		return runRoleWatch(ctx, e, cwd, parsed.typed.RoleWatch, stderr)
 	}
 
 	paths, err := bus.Locate(ctx, cwd)

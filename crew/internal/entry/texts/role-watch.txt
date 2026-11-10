@@ -1,0 +1,18 @@
+usage: crew role-watch <role> --pane <id> [--branch B] [--engine E]
+                       [--interval S] [--defer-notice S] [--submit-retries N]
+
+Per-role-pane supervisor: reads the crew bus, admits only the role's lead or
+dispatcher, queues their assignments and types each into the role pane only when
+a capture shows an idle input box, then verifies the submit. Ends when the pane
+is gone or marked exited.
+
+  <role>            Role the pane serves (never lead)
+  --pane            tmux pane id to type into, %N (required)
+  --branch          Branch the role works on (default: the current branch)
+  --engine          Engine family (claude|codex|cursor|pi) whose composer is read
+                    (default claude)
+  --interval        Poll interval (default 2)
+  --defer-notice    Seconds a held assignment waits before the lead is told (default 60)
+  --submit-retries  Extra submit attempts before an assignment is reported (default 3)
+
+  crew role-watch reviewer --pane %N --branch feat/x

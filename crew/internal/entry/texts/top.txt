@@ -18,6 +18,7 @@ Watching:
   relay           Follow this bus lock-free and print watch batches (remote hosts)
   stream          Long-lived watch that pushes batches to a streaming lane
   stall-watch     Per-pane liveness watchdog, spawned per worker
+  role-watch      Type lead assignments into a role pane when it is idle
   pr-watch        Park until a PR changes, then post the event
   nudge           Type a wake-up line into an idle lead's input box
 

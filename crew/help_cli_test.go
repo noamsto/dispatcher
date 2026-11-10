@@ -142,6 +142,19 @@ func TestEverySubcommandAnswersHelpOutsideARepo(t *testing.T) {
 	}
 }
 
+func TestRoleWatchHelpNamesItsFlags(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	e := env{getwd: func() (string, error) { return t.TempDir(), nil }}
+	if code := run(context.Background(), []string{"role-watch", "--help"}, &stdout, &stderr, e); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	for _, want := range []string{"usage: crew role-watch <role> --pane <id>", "--defer-notice", "--submit-retries"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("role-watch --help lacks %q: %q", want, stdout.String())
+		}
+	}
+}
+
 // TestFleetStreamScreenIsTheFleetScreen is `fleet stream: --help and -h print the
 // fleet help, outside any git repo`. The lane is fleet's second mode, so the
 // screen that answers it is the fleet one, and that screen is the only place its

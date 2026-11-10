@@ -438,6 +438,16 @@ type followupsCmd struct {
 	PR      string  `arg:"" optional:"" name:"pr"`
 }
 
+type roleWatchCmd struct {
+	Role          string  `arg:"" optional:"" name:"role"`
+	Pane          string  `name:"pane"`
+	Branch        *string `name:"branch"`
+	Engine        string  `name:"engine" default:"claude"`
+	Interval      string  `name:"interval" default:"2"`
+	DeferNotice   string  `name:"defer-notice" default:"60"`
+	SubmitRetries string  `name:"submit-retries" default:"3"`
+}
+
 type stallWatchCmd struct {
 	Target        string  `arg:"" optional:"" name:"target"`
 	Pane          *string `name:"pane"`
@@ -744,6 +754,11 @@ var wordings = map[string]wording{
 		extra:       func(w string) string { return fmt.Sprintf("crew: stall-watch: unknown arg '%s'", w) },
 		code:        exitFailure,
 	},
+	"role-watch": {
+		unknownFlag: func(f string) string { return fmt.Sprintf("dispatch: --role-watch: unexpected argument '%s'", f) },
+		extra:       func(w string) string { return fmt.Sprintf("dispatch: --role-watch: unexpected argument '%s'", w) },
+		code:        exitFailure,
+	},
 	"git-baseline": {all: gitBaselineUsage, code: exitFailure},
 	"git-guard":    {all: gitguard.GuardUsage, code: exitUsage},
 	"reap": {
@@ -814,6 +829,19 @@ func validSinceMS(s string) bool {
 func validate(sub string, r *root) *refusal {
 	fail := func(msg string) *refusal { return &refusal{msg, exitFailure} }
 	switch sub {
+	case "role-watch":
+		c := r.RoleWatch
+		for _, f := range []struct{ name, val string }{
+			{"--engine", c.Engine}, {"--interval", c.Interval},
+			{"--defer-notice", c.DeferNotice}, {"--submit-retries", c.SubmitRetries},
+		} {
+			if f.val == "" {
+				return fail("dispatch: --role-watch: " + f.name + " needs a value")
+			}
+		}
+		if given(c.Branch) {
+			return fail("dispatch: --role-watch: --branch needs a value")
+		}
 	case "where":
 		c := r.Where
 		if given(c.Crew) {
