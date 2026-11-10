@@ -4274,6 +4274,10 @@ crew_id="${crew_id_flag:-${CREW_ID:-}}"
   echo 'dispatch: no crew id — run '\''crew crews'\'' to find this repo'\''s crews and '\''crew adopt <id>'\'' to re-attach, or '\''crew new'\'' to start one; then pass --crew-id <id> or export CREW_ID' >&2
   exit 1
 }
+# A dispatcher session can outlive its launcher's deregister (a plain engine
+# resumed in the same pane); re-register it when no live dispatcher holds the
+# crew. crew adopt --reattach owns every guard and is silent unless it writes.
+[ "$wire_side" = remote ] || [ -n "${DISPATCH_PRECHECK:-}" ] || crew adopt --reattach "$crew_id" "$PPID" >/dev/null || true
 
 # Remote mode: a dispatcher on another host asked for this worker's window in
 # the named session, possibly shared with windows that are not this crew's. The
