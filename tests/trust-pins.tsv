@@ -92,3 +92,8 @@ F18	adapters/core/dispatch-resume.sh	precheck+=(--chrome)	1	true	tests/dispatch-
 F28	adapters/core/launcher-common.sh	_add_dir_ok "$line"	1	printf '%s' "$line"	tests/dispatch-resume.bats	^claude resume drops an invalid recorded grant with a warning	dropping invalid grant
 F29	adapters/core/dispatch-resume.sh	_require_safe "branch name" "$branch" "$_branch_re"	1	true	tests/dispatch-resume.bats	^resume refuses a branch name carrying a command substitution	refusing to launch: branch name
 D5a	adapters/core/dispatch-resume.sh	if [ -L "$anchor" ] || [ ! -f "$anchor" ]; then	1	if false; then	tests/dispatch-resume.bats	^refuses when the anchor file is a symlink	_assert_refused_before_discovery
+W1	crew/internal/rolewatch/loop.go	SenderAllowed(from, w.branch, w.wCrew)	1	true	crew/rolewatch_script_test.go	^TestRoleWatchScripts$/^sender_drop$	unexpected match for `^(capture-pane|send-keys|load-buffer|paste-buffer)` found in tmux.log: capture-pane
+F22	crew/internal/rolewatch/rolewatch.go	if wRole != w.role {	1	if false {	crew/rolewatch_script_test.go	^TestRoleWatchScripts$/^refusals$	unexpected command success
+F22	crew/internal/rolewatch/rolewatch.go	; b != branch {	1	; false {	crew/rolewatch_script_test.go	^TestRoleWatchScripts$/^refusals$	unexpected command success
+F23	crew/internal/rolewatch/loop.go	if !w.stamped() {	2	if false {	crew/rolewatch_script_test.go	^TestRoleWatchScripts$/^restamp_no_paste$	unexpected match for `^(capture-pane|send-keys|load-buffer|paste-buffer)` found in tmux.log: capture-pane
+F24	crew/internal/rolewatch/loop.go	if !w.stamped() {	1	if false {	crew/rolewatch_script_test.go	^TestRoleWatchScripts$/^stamp_flip_after_enter$	matches for `^send-keys -t %6 Enter$`, want 1

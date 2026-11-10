@@ -14,8 +14,8 @@ cp events.jsonl .git/crew/events.jsonl
 env DISPATCH_ROLE_WATCH_CLOCK=$WORK/clock
 exec crew role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2
 ! stderr .
-cmp tmux.log golden.log
 grep -count=1 '^send-keys -t %6 Enter$' tmux.log
+cmp tmux.log golden.log
 grep -count=1 '^paste-buffer' tmux.log
 grep -count=2 'assignment_orphaned' .git/crew/events.jsonl
 grep '"to":"worker:feat/9-x#s1-1".*assignment_orphaned' .git/crew/events.jsonl
