@@ -193,7 +193,7 @@ func runMap(ctx context.Context, c call, paths bus.Paths, o Options) int {
 	if err != nil {
 		return fail(err)
 	}
-	svg = finishSVG(svg)
+	svg = finishSVG(svg, fr.sc.wedges)
 	vbW, vbH, ok := viewBoxSize(svg)
 	if !ok {
 		return fail(errors.New("neato: the svg has no viewBox"))

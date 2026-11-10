@@ -75,6 +75,13 @@ const (
 	arcStep    = 10.0
 	arcInset   = 1.5
 
+	// A wedge's divider and rim are hairlines; its fill is a wash of one palette
+	// hue at wedgeFillOpacity, and every text gets a haloWidth outline in the
+	// background colour so a line behind it never cuts the letters.
+	dividerPenwidth  = 0.75
+	wedgeFillOpacity = 0.1
+	haloWidth        = 3.0
+
 	staleAlpha = "55"
 
 	// A host label is a plaintext node that grows with its text, so the map
@@ -104,9 +111,12 @@ var svgRootRe = regexp.MustCompile(`<svg\b[^>]*?\sviewBox="([-0-9.]+)\s+([-0-9.]
 // hook detection does not see; resvg cannot parse an unquoted multi-word
 // font-family; and Graphviz's background polygon stops short of the viewBox edge
 // and moves with the zoom, so a rect over the viewBox, in absolute user units
-// because aeye zooms by rewriting the viewBox, goes in first. Text without a root
-// viewBox is not an svg this knows, and comes back unchanged.
-func finishSVG(svg []byte) []byte {
+// because aeye zooms by rewriting the viewBox, goes in first. Every text gets a
+// background-coloured halo, so a line that still passes behind a label does not
+// cut its letters, and the repo wedges' fills go in under everything Graphviz
+// drew. Text without a root viewBox is not an svg this knows, and comes back
+// unchanged.
+func finishSVG(svg []byte, wedges []wedge) []byte {
 	m := svgRootRe.FindSubmatchIndex(svg)
 	if m == nil {
 		return svg
@@ -115,7 +125,61 @@ func finishSVG(svg []byte) []byte {
 	rect := fmt.Sprintf(`<rect x="%s" y="%s" width="%s" height="%s" fill="%s"/>`, num(1), num(2), num(3), num(4), colBG)
 	out := slices.Concat(svg[:m[1]], []byte(rect), svg[m[1]:])
 	out = bytes.ReplaceAll(out, []byte("aeye&#45;"), []byte("aeye-"))
-	return bytes.ReplaceAll(out, []byte(`font-family="`+diagramFont+`"`), []byte(`font-family="'`+diagramFont+`'"`))
+	out = bytes.ReplaceAll(out, []byte(`font-family="`+diagramFont+`"`), []byte(`font-family="'`+diagramFont+`'"`))
+	out = textTagRe.ReplaceAllFunc(out, func(tag []byte) []byte {
+		if bytes.Contains(tag, []byte("paint-order=")) {
+			return tag
+		}
+		return slices.Concat(tag[:len(tag)-1], []byte(haloAttrs), tag[len(tag)-1:])
+	})
+	return injectWedgeFills(out, wedges)
+}
+
+var (
+	textTagRe = regexp.MustCompile(`<text\b[^>]*>`)
+	haloAttrs = fmt.Sprintf(` stroke="%s" stroke-width="%g" stroke-linejoin="round" paint-order="stroke"`, colBG, haloWidth)
+
+	// sunRe finds the dispatcher's centre, which is layout (0, 0): Graphviz
+	// moves the pinned layout by an offset it does not state, and y runs down.
+	sunRe = regexp.MustCompile(`<title>dispatcher</title>\s*<ellipse[^>]*?\scx="([-0-9.]+)"\s+cy="([-0-9.]+)"`)
+	// firstShapeRe is the first edge or node group, which the fills go in front of.
+	firstShapeRe = regexp.MustCompile(`<g id="(?:edge|node)\d+"`)
+)
+
+// wedgeHues are the palette colours the repo wedges' fills cycle over.
+var wedgeHues = [...]string{colWorking, colPROpen, colWaiting, colSun}
+
+// injectWedgeFills draws each wedge as a faint pie slice from the dispatcher to
+// its rim, in front of the background and behind every edge, node and label.
+// Graphviz cannot fill a sector. An svg without a dispatcher or without any edge
+// or node comes back unchanged.
+func injectWedgeFills(svg []byte, wedges []wedge) []byte {
+	sun, at := sunRe.FindSubmatch(svg), firstShapeRe.FindIndex(svg)
+	if len(wedges) == 0 || sun == nil || at == nil {
+		return svg
+	}
+	cx, _ := strconv.ParseFloat(string(sun[1]), 64)
+	cy, _ := strconv.ParseFloat(string(sun[2]), 64)
+	var fills strings.Builder
+	for i, wd := range wedges {
+		fills.WriteString(wedgeFill(cx, cy, wd, wedgeHues[i%len(wedgeHues)]))
+	}
+	return slices.Concat(svg[:at[0]], []byte(fills.String()), svg[at[0]:])
+}
+
+// wedgeFill is the pie-slice path of wd around the svg point (cx, cy); the arc
+// runs clockwise on screen.
+func wedgeFill(cx, cy float64, wd wedge, col string) string {
+	at := func(deg float64) string {
+		x, y := polar(wd.rim, deg)
+		return fmt.Sprintf("%.2f,%.2f", cx+x, cy-y)
+	}
+	large := 0
+	if wd.span > 180 {
+		large = 1
+	}
+	return fmt.Sprintf(`<path d="M%.2f,%.2f L%s A%.2f,%.2f 0 %d 1 %s Z" fill="%s" fill-opacity="%g" stroke="none"/>`+"\n",
+		cx, cy, at(wd.start), wd.rim, wd.rim, large, at(wd.start+wd.span), col, wedgeFillOpacity)
 }
 
 // maxAnimated caps each animated class. Motion should mark what is live and
@@ -346,7 +410,7 @@ func buildDOT(sc scene, lg *legend, mode legendMode, sel, selRepo string) string
 	for _, p := range planets {
 		attrs := []string(nil)
 		if flow[p.key()] {
-			attrs = append(attrs, str("class", "aeye-flow"))
+			attrs = append(attrs, str("class", "aeye-flow"), "style=dashed")
 		}
 		stmt(&b, "dispatcher -> "+ids[p.key()], attrs...)
 	}
@@ -422,7 +486,8 @@ func wedgeDOT(b *strings.Builder, w string, wd wedge) {
 	}
 	point(w+"s0", spokeInner, wd.start)
 	point(w+"s1", wd.rim, wd.start)
-	stmt(b, w+"s0 -> "+w+"s1", str("color", colDim), "style=dashed", "penwidth=1")
+	hairline := []string{str("color", colDim+staleAlpha), num("penwidth", dividerPenwidth)}
+	stmt(b, w+"s0 -> "+w+"s1", hairline...)
 
 	lo, arc := wd.start+arcInset, wd.span-2*arcInset
 	steps := max(1, int(math.Ceil(arc/arcStep)))
@@ -430,7 +495,7 @@ func wedgeDOT(b *strings.Builder, w string, wd wedge) {
 		id := w + "a" + strconv.Itoa(i)
 		point(id, wd.rim, lo+arc*float64(i)/float64(steps))
 		if i > 0 {
-			stmt(b, w+"a"+strconv.Itoa(i-1)+" -> "+id, str("color", colDim), "penwidth=1")
+			stmt(b, w+"a"+strconv.Itoa(i-1)+" -> "+id, hairline...)
 		}
 	}
 	stmt(b, w, str("label", wd.label), "shape=plaintext", "style=solid", "fixedsize=false",

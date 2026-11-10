@@ -9,7 +9,7 @@ digraph roster {
   c4 [label="" style=invis shape=point width=0 pos="268.00,-221.00!"];
   dispatcher [label="dispatcher" width=1 height=1 pos="0.00,0.00!" color="#f9e2af" fillcolor="#45475a"];
   p1 [label="lime\n1" width=0.75 height=0.75 pos="0.00,150.00!" color="#a6e3a1"];
-  dispatcher -> p1 [class="aeye-flow"];
+  dispatcher -> p1 [class="aeye-flow" style=dashed];
   p1m1 [label="" width=0.16 height=0.16 pos="0.00,191.00!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
   p1 -> p1m1 [color="#45475a"];
   label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="4">

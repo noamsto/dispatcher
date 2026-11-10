@@ -110,7 +110,7 @@ func renderScene(t *testing.T, sc scene, w, h int, sel string) mapRender {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svg = finishSVG(svg)
+	svg = finishSVG(svg, sc.wedges)
 	vbW, vbH, ok := viewBoxSize(svg)
 	if !ok {
 		t.Fatal("the svg has no viewBox")
