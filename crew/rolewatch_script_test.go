@@ -54,6 +54,8 @@ func TestRoleWatchScripts(t *testing.T) {
 //	after-<ev>-<n>     key=value lines merged into state once the nth <ev> has
 //	                   answered; ev is alive (a #{pane_id} read), capture or
 //	                   enter (send-keys -t <pane> Enter)
+//	append-<ev>-<n>    rows appended to .git/crew/events.jsonl (in the working
+//	                   directory) once the nth <ev> has answered
 //	n.<ev>             the event counters
 //	buffer             stdin of the last load-buffer
 //
@@ -126,6 +128,12 @@ func (s *fakeTmuxState) event(ev string) int {
 			fmt.Fprintf(&b, "%s=%s\n", k, s.kv[k])
 		}
 		_ = os.WriteFile(filepath.Join(s.dir, "state"), []byte(b.String()), 0o644)
+	}
+	if rows, err := os.ReadFile(filepath.Join(s.dir, fmt.Sprintf("append-%s-%d", ev, n))); err == nil {
+		if f, err := os.OpenFile(".git/crew/events.jsonl", os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+			_, _ = f.Write(rows)
+			f.Close()
+		}
 	}
 	return n
 }
@@ -229,7 +237,10 @@ func (s *fakeTmuxState) display(format string) (string, bool) {
 var differentialCases = []struct {
 	name    string
 	notices int // role-posted msg rows each run must leave
-}{{"deliver_idle_claude", 0}, {"held_resend", 2}, {"stamp_flip_after_enter", 2}}
+}{
+	{"deliver_idle_claude", 0}, {"held_resend", 2}, {"stamp_flip_after_enter", 2},
+	{"pi_retype", 2}, {"reguard_width", 2}, {"reguard_zoomed", 2}, {"unknown_escalation", 2},
+}
 
 // TestRoleWatchDifferential runs the dispatch.sh --role-watch arm and the Go
 // watcher against identical fake state and compares their tmux argv and the
