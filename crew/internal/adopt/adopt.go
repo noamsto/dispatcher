@@ -91,13 +91,23 @@ type claim struct {
 
 // Request is the parsed argv of `crew adopt [--force] <id> [pid]`.
 type Request struct {
-	ID    string
-	PID   string
-	Force bool
+	ID       string
+	PID      string
+	Force    bool
+	Reattach bool
 }
 
 func Run(ctx context.Context, req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 	o = o.withDefaults()
+
+	if req.Reattach && req.Force {
+		say(stderr, "crew: adopt: --reattach never takes --force\n")
+		say(stderr, "%s\n", usage)
+		return exitFailure
+	}
+	if req.Reattach {
+		return reattach(ctx, req, paths, stderr, o)
+	}
 
 	id := req.ID
 	if id == "" {
