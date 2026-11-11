@@ -315,6 +315,24 @@ func TestEnqueueExpandsASpilledBodyFromTheWatchersOwnCrew(t *testing.T) {
 	}
 }
 
+// A window with no @crew_id stamp leaves wCrew empty; the watcher's crew is then
+// the checkout's, where the sender wrote the spill.
+func TestEnqueueExpandsWithTheFallbackCrewWhenTheWindowHasNoStamp(t *testing.T) {
+	dir := t.TempDir()
+	full := strings.Repeat("the whole assignment ", 400)
+	rel, err := spill.Write(bus.Paths{Dir: dir}.CrewDir("c1"), 1, full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var posts []string
+	w := spilledWatcher(dir, &posts)
+	w.wCrew = ""
+	w.enqueue(map[string]any{"from": spillFrom, "to": w.roleID, "body": "head", "body_file": rel}, 5)
+	if len(w.pending) != 1 || w.pending[0].body != full || len(posts) != 0 {
+		t.Fatalf("pending = %+v, posts = %q, want the whole body and no notice", w.pending, posts)
+	}
+}
+
 func TestEnqueueDeliversHeadAndNoteWhenExpansionFailsAndTellsTheLead(t *testing.T) {
 	dir := t.TempDir()
 	var posts []string
