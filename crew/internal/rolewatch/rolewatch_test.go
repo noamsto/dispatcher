@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/spill"
 )
 
 // fakeTmux answers reads from a table, keeps a pane alive for paneIDs
@@ -269,6 +272,78 @@ func TestDeliverIdleClaude(t *testing.T) {
 	}
 	if len(posts) != 0 {
 		t.Fatalf("unexpected posts %q", posts)
+	}
+}
+
+// spilledWatcher is a typed-delivery watcher on crew c1 whose bus lives in dir,
+// with the posts it makes collected as "to body".
+func spilledWatcher(dir string, posts *[]string) *watcher {
+	return &watcher{
+		ctx:  context.Background(),
+		role: "reviewer", pane: "%6", branch: "feat/9-x", wCrew: "c1", crew: "c1",
+		roleID: "role:feat/9-x:reviewer", delivery: "typed",
+		o: Options{
+			Tmux: &fakeTmux{reads: stampedPane()},
+			Log:  filepath.Join(dir, "events.jsonl"),
+			Post: func(_ context.Context, _, _, to, body string) { *posts = append(*posts, to+" "+body) },
+		},
+	}
+}
+
+const spillFrom = "worker:feat/9-x#s1-1"
+
+func TestEnqueueExpandsASpilledBodyFromTheWatchersOwnCrew(t *testing.T) {
+	dir := t.TempDir()
+	paths := bus.Paths{Dir: dir}
+	full := strings.Repeat("the whole assignment ", 400)
+	// The row names another crew; reading that crew's directory would be a leak.
+	rel, err := spill.Write(paths.CrewDir("c1"), 1, full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := spill.Write(paths.CrewDir("other"), 1, "someone else's body"); err != nil {
+		t.Fatal(err)
+	}
+	var posts []string
+	w := spilledWatcher(dir, &posts)
+	w.enqueue(map[string]any{"from": spillFrom, "to": w.roleID, "crew_id": "other", "body": "head", "body_file": rel}, 5)
+	if len(w.pending) != 1 || w.pending[0].body != full {
+		t.Fatalf("pending = %+v, want the %d-byte body from crew c1", w.pending, len(full))
+	}
+	if len(posts) != 0 {
+		t.Fatalf("unexpected posts %q", posts)
+	}
+}
+
+// A window with no @crew_id stamp leaves wCrew empty; the watcher's crew is then
+// the checkout's, where the sender wrote the spill.
+func TestEnqueueExpandsWithTheFallbackCrewWhenTheWindowHasNoStamp(t *testing.T) {
+	dir := t.TempDir()
+	full := strings.Repeat("the whole assignment ", 400)
+	rel, err := spill.Write(bus.Paths{Dir: dir}.CrewDir("c1"), 1, full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var posts []string
+	w := spilledWatcher(dir, &posts)
+	w.wCrew = ""
+	w.enqueue(map[string]any{"from": spillFrom, "to": w.roleID, "body": "head", "body_file": rel}, 5)
+	if len(w.pending) != 1 || w.pending[0].body != full || len(posts) != 0 {
+		t.Fatalf("pending = %+v, posts = %q, want the whole body and no notice", w.pending, posts)
+	}
+}
+
+func TestEnqueueDeliversHeadAndNoteWhenExpansionFailsAndTellsTheLead(t *testing.T) {
+	dir := t.TempDir()
+	var posts []string
+	w := spilledWatcher(dir, &posts)
+	w.enqueue(map[string]any{"from": spillFrom, "to": w.roleID, "crew_id": "c1", "body": "head", "body_file": "msg-bodies/gone.txt"}, 5)
+	if len(w.pending) != 1 || !strings.HasPrefix(w.pending[0].body, "head [full body unavailable") ||
+		!strings.Contains(w.pending[0].body, "body is the head only]") || !AssignmentSafe(w.pending[0].body) {
+		t.Fatalf("pending = %+v, want the head plus a typeable body_note", w.pending)
+	}
+	if len(posts) != 1 || !strings.HasPrefix(posts[0], spillFrom+` {"role":"reviewer","event":"assignment_truncated"`) {
+		t.Fatalf("posts = %q, want one assignment_truncated notice to the lead", posts)
 	}
 }
 

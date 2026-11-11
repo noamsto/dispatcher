@@ -2,6 +2,7 @@ package watch
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
+	"github.com/noamsto/dispatcher/crew/internal/spill"
 )
 
 var errStop = errors.New("stop the poll")
@@ -153,5 +156,69 @@ func TestRelayBatchCarriesPlaybook(t *testing.T) {
 	}
 	if !strings.Contains(got, `"playbook":"dispatcher:watchdog"`) {
 		t.Errorf("relay = %s, want the watchdog playbook", got)
+	}
+}
+
+// A fold of many spilled msgs must not outgrow the line its reader scans, or
+// the reader stops with ErrTooLong and the cursor never moves: past the budget
+// the rows keep their head and gain a body_note.
+func TestRelayBoundsTheSpilledBodiesItExpands(t *testing.T) {
+	t.Run("ascii", func(t *testing.T) { relayBound(t, strings.Repeat("x", 200<<10)) })
+	// The output encoder makes each of these 2-byte soft hyphens visible as
+	// `\u{00AD}`, 9 bytes once JSON-escaped: 4.5x the stored body.
+	t.Run("hidden code points", func(t *testing.T) { relayBound(t, strings.Repeat(string(rune(0xad)), 128<<10)) })
+}
+
+func relayBound(t *testing.T, body string) {
+	t.Helper()
+	p := fixture(t)
+	const n = 80 // 80 × 200 KiB is 16 MiB: the old unbounded expansion filled maxRelayLine
+	const first = int64(1785951264000)
+	shown, _ := invisible.Value(body).(string)
+	var rows []string
+	for i := range int64(n) {
+		rel, err := spill.Write(p.CrewDir("c1"), first+i, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, `{"ts":`+itoa(first+i)+`,"crew_id":"c1","from":"worker:feat/x#s1-1","to":"dispatcher:c1","kind":"msg","body":"head","body_file":`+quote(rel)+"}")
+	}
+	writeLog(t, p, rows...)
+
+	got, code, _ := relayRun(t, p, RelayRequest{Since: since("0")})
+	if code != 1 {
+		t.Fatalf("code = %d", code)
+	}
+	line := strings.TrimSuffix(got, "\n")
+	if len(line) >= bus.RelayLineMax || strings.Contains(line, "\n") {
+		t.Fatalf("relay wrote %d bytes, want one line under %d", len(line), bus.RelayLineMax)
+	}
+	var batch struct {
+		Cursor int64 `json:"cursor"`
+		Events []struct {
+			Body     string `json:"body"`
+			BodyNote string `json:"body_note"`
+			BodyFile string `json:"body_file"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal([]byte(line), &batch); err != nil {
+		t.Fatal(err)
+	}
+	if batch.Cursor != first+n-1 || len(batch.Events) != n {
+		t.Fatalf("cursor %d with %d events, want the whole batch", batch.Cursor, len(batch.Events))
+	}
+	expanded, capped := 0, 0
+	for _, e := range batch.Events {
+		switch {
+		case e.Body == shown && e.BodyNote == "":
+			expanded++
+		case e.Body == "head" && strings.Contains(e.BodyNote, "budget") && e.BodyFile != "":
+			capped++
+		default:
+			t.Fatalf("event neither expanded nor capped: body %.10q note %q", e.Body, e.BodyNote)
+		}
+	}
+	if expanded == 0 || capped == 0 || expanded+capped != n {
+		t.Fatalf("%d expanded, %d capped of %d", expanded, capped, n)
 	}
 }

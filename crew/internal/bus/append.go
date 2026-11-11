@@ -19,6 +19,11 @@ import (
 // encoded line, not on the text inside it.
 const LineMax = 4096
 
+// RelayLineMax caps one `crew relay` line, a whole folded batch: the stream
+// that reads it stops at this size, and a relay that wrote a longer line would
+// stall with its cursor unmoved.
+const RelayLineMax = 16 << 20
+
 // elided is `_ELIDED` — a leading space, a three-byte ellipsis, and the marker
 // that says a leaf was cut rather than a record lost.
 const elided = " …[elided]"

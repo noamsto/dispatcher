@@ -46,6 +46,32 @@ func TestReadRefusesHostileFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 		},
+		// os.Root follows a link that stays inside the crew dir.
+		"in-root symlink": func(crewDir string) {
+			mkdir(t, filepath.Join(crewDir, Dir))
+			if err := os.WriteFile(filepath.Join(crewDir, "pid"), []byte("1234"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("../pid", filepath.Join(crewDir, Dir, "secret")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		// The in-root link makes any file of the crew dir look like a spill.
+		"msg-bodies linked to the crew dir": func(crewDir string) {
+			if err := os.WriteFile(filepath.Join(crewDir, "secret"), []byte("pid"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(".", filepath.Join(crewDir, Dir)); err != nil {
+				t.Fatal(err)
+			}
+		},
+		// os.Root cannot see a hard link, and the target can be anywhere on the filesystem.
+		"hard link": func(crewDir string) {
+			mkdir(t, filepath.Join(crewDir, Dir))
+			if err := os.Link(filepath.Join(outside, "secret"), filepath.Join(crewDir, Dir, "secret")); err != nil {
+				t.Fatal(err)
+			}
+		},
 		"fifo": func(crewDir string) {
 			mkdir(t, filepath.Join(crewDir, Dir))
 			if err := syscall.Mkfifo(filepath.Join(crewDir, Dir, "secret"), 0o600); err != nil {
