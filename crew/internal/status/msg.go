@@ -63,9 +63,7 @@ func RunMsg(ctx context.Context, req MsgRequest, paths bus.Paths, stderr io.Writ
 	build := func(b string) string { return msgLine(ts, crew, from, to, b) }
 	// An overseer may read the bus from another host, where the file is not.
 	if len(build(body)) > bus.LineMax && bus.ValidCrewID(crew) && !strings.HasPrefix(to, "overseer:") {
-		// A cut verdict reaches the lead as half a sentence, so the whole body
-		// goes to a file and the row keeps a head. A spill that fails falls back
-		// to the elision rather than losing the message.
+		// The row keeps a head; a failed spill falls back to the elision.
 		if rel, err := spill.Write(paths.CrewDir(crew), ts, body); err != nil {
 			say(stderr, "crew: msg: cannot spill the long body (%v); it is elided on the bus line\n", err)
 		} else {
