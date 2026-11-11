@@ -157,7 +157,7 @@ func TestExpandEventsStopsAtTheBatchBudget(t *testing.T) {
 func TestExpandEventsBudgetCountsHiddenCodePointEscaping(t *testing.T) {
 	paths := bus.Paths{Dir: t.TempDir()}
 	crewDir := paths.CrewDir("c1")
-	body := strings.Repeat("­", MaxBody/2) // soft hyphen: 2 bytes stored
+	body := strings.Repeat(string(rune(0xad)), MaxBody/2) // soft hyphen: 2 bytes stored
 	events := make([]any, 40)
 	for i := range events {
 		rel, err := Write(crewDir, int64(i), body)
