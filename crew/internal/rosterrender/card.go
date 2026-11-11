@@ -18,7 +18,13 @@ const (
 
 	cardInner = cardW*72 - 2*cardPadX // text width in points
 	cardRows  = 5
-	ellipsis  = "…"
+
+	// cardTableH is the label table's height in points: five rows of Source Sans
+	// 3 at cardFont with cardCellPad (measured at 88.7 by neato), rounded up. The
+	// table is pinned to cardInner by cardTableH so its left edge, where the text
+	// starts, does not depend on how Graphviz measures the text.
+	cardTableH = 89.0
+	ellipsis   = "…"
 )
 
 // cardPen is the border weight of a tier; an unknown tier draws as standard.
@@ -40,22 +46,35 @@ type cardText struct {
 	state string
 }
 
-// runeEm is a conservative rune width in em for Source Sans 3: Graphviz
-// measures with a wider fallback font, so the real text is never wider.
+// asciiAdvance is the advance of each printable ASCII rune from space, in 1/44
+// em. They are Graphviz's own measurements of Source Sans 3 at 11pt (a plaintext
+// node of 20 repeats per rune through `neato -Tplain`), which round each advance
+// up to a whole 0.75pt; the backslash, which Graphviz reads as an escape, is
+// set to a wide guess.
+var asciiAdvance = [...]uint8{
+	12, 12, 18, 27, 24, 36, 33, 9, 12, 12, 24, 24, 12, 15, 12, 15, // space to /
+	24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 12, 12, 24, 24, 24, 18, // 0 to ?
+	39, 27, 30, 27, 33, 24, 24, 33, 33, 15, 12, 27, 24, 39, 33, 33, // @ to O
+	27, 33, 27, 24, 24, 33, 27, 42, 27, 24, 24, 15, 24, 15, 24, 21, // P to _
+	12, 24, 27, 21, 27, 24, 15, 27, 27, 12, 12, 24, 12, 42, 27, 27, // ` to o
+	27, 27, 18, 21, 15, 27, 21, 36, 24, 21, 21, 18, 24, 18, 24, // p to ~
+}
+
+const (
+	// runeMargin pads every advance, for a font that renders a little wider.
+	runeMargin = 1.03
+
+	// wideEm is the width assumed for a rune outside ASCII.
+	wideEm = 1.0
+)
+
+// runeEm is a conservative rune width in em for Source Sans 3, so the text
+// drawn never runs wider than the estimate whatever Graphviz measures.
 func runeEm(r rune) float64 {
-	switch {
-	case strings.ContainsRune("ijlI.,:;'|!()[] ", r):
-		return 0.28
-	case r == 'm' || r == 'w':
-		return 0.8
-	case r == 'M' || r == 'W':
-		return 0.9
-	case r >= 'A' && r <= 'Z':
-		return 0.62
-	case r > unicode.MaxASCII:
-		return 0.7
+	if r < ' ' || r > '~' {
+		return wideEm
 	}
-	return 0.52
+	return float64(asciiAdvance[r-' ']) / 44 * runeMargin
 }
 
 // textWidth estimates the rendered width of s in points at cardFont.
@@ -159,7 +178,8 @@ func orQ(s string) string {
 	return s
 }
 
-// htmlText escapes s for a Graphviz HTML label.
+// htmlText escapes s for a Graphviz HTML label, whose text still expands
+// backslash escapes such as \N and \G.
 func htmlText(s string) string {
-	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;").Replace(s)
+	return strings.NewReplacer(`\`, `\\`, "&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;").Replace(s)
 }

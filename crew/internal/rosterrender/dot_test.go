@@ -533,10 +533,10 @@ func TestDotCardCarriesItsText(t *testing.T) {
 	for _, want := range []string{
 		`<td align="left">lime · #1&#160;&#160;<font color="` + colWorking + `">working</font></td>`,
 		`<td align="left">Port the</td>`,
-		`<td align="left">Supercalifragilisticexpialidociou…</td>`,
+		`<td align="left">Supercalifragilisticexpialidoci…</td>`,
 		`<td align="left"><font color="` + colLegend + `">deep·claude·opus</font></td>`,
 		`<td align="left"><font color="` + colDim + `">waiting for the plan critic's…</font></td>`,
-		`width="` + strconv.FormatFloat(cardInner, 'f', 1, 64) + `"`,
+		`fixedsize="true" width="` + strconv.FormatFloat(cardInner, 'f', 1, 64) + `" height="` + strconv.FormatFloat(cardTableH, 'f', 1, 64) + `"`,
 	} {
 		if !strings.Contains(long, want) {
 			t.Errorf("long card lacks %s:\n%s", want, long)
@@ -692,6 +692,12 @@ func neatoPath(t *testing.T) string {
 	return p
 }
 
+// diagramFontResolves reports whether Graphviz gets the diagram font; the fallback overflows the fixed label table, so only the warning check needs it.
+func diagramFontResolves() bool {
+	out, err := exec.Command("fc-match", "-f", "%{family}", "Source Sans 3").Output()
+	return err == nil && strings.Contains(string(out), "Source Sans 3")
+}
+
 func neatoSVG(t *testing.T, neato, dot string) []byte {
 	t.Helper()
 	cmd := exec.Command(neato, "-n", "-Tsvg")
@@ -702,6 +708,47 @@ func neatoSVG(t *testing.T, neato, dot string) []byte {
 		t.Fatalf("neato: %v\n%s", err, stderr.String())
 	}
 	return stdout.Bytes()
+}
+
+var cardTextXRe = regexp.MustCompile(`(?s)<title>p\d+</title>\s*<path[^>]* d="M(-?[0-9.]+),[^"]*"[^>]*/>\s*<text[^>]* x="(-?[0-9.]+)"`)
+
+// TestCardTextStartsAtTheSamePlaceOnEveryCard renders every fixture with the
+// real neato: it must not warn that a label is too small, and the text must
+// start the same distance from each card's outline, whatever Graphviz measures.
+func TestCardTextStartsAtTheSamePlaceOnEveryCard(t *testing.T) {
+	neato := neatoPath(t)
+	checkWarnings := diagramFontResolves()
+	want, seen := 0.0, false
+	for _, c := range dotCases {
+		dot, _, _ := c.emit()
+		cmd := exec.Command(neato, "-n", "-Tsvg")
+		cmd.Stdin = strings.NewReader(dot)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%s: neato: %v\n%s", c.name, err, stderr.String())
+		}
+		if checkWarnings {
+			for _, line := range strings.Split(stderr.String(), "\n") {
+				if strings.Contains(line, "Warning") {
+					t.Errorf("%s: neato warned: %s", c.name, line)
+				}
+			}
+		}
+		for _, m := range cardTextXRe.FindAllSubmatch(stdout.Bytes(), -1) {
+			edge, _ := strconv.ParseFloat(string(m[1]), 64)
+			x, _ := strconv.ParseFloat(string(m[2]), 64)
+			if !seen {
+				want, seen = x-edge, true
+			}
+			if math.Abs(x-edge-want) > 0.02 {
+				t.Errorf("%s: text starts %.2f from the outline, want %.2f", c.name, x-edge, want)
+			}
+		}
+	}
+	if !seen {
+		t.Fatal("no card text found in the svg")
+	}
 }
 
 var viewBoxRe = regexp.MustCompile(`viewBox="([-0-9. ]+)"`)

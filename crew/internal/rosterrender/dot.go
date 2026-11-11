@@ -93,8 +93,10 @@ const (
 
 // diagramFont is aeye's default render font (AEYE_D2_FONT). The native svg
 // names it in every text element and aeye's resvg draws it from its font
-// directory, which holds nothing else. Node sizes are fixed, so a host without
-// this font only measures the legend and the host labels with a fallback one.
+// directory, which holds nothing else. Node sizes are fixed and a card's label
+// table is pinned, so its text is drawn from the table's left edge whatever
+// Graphviz measures; a host without this font only moves a card's state word on
+// row 1, and measures the legend and the host labels with a fallback one.
 const diagramFont = "Source Sans 3"
 
 // dotq quotes s as a DOT string.
@@ -606,8 +608,8 @@ func planetAttrs(p placed, pulse bool) []string {
 }
 
 // cardLabel is the card's Graphviz HTML label: five left-aligned rows in a one
-// column table at least as wide as the text area, so the text sits at the same
-// height on every card.
+// column table pinned to the text area, so the text sits at the same place on
+// every card.
 func cardLabel(p placed, stateCol string, dim bool) string {
 	c := cardTextOf(p.planet)
 	paint := func(s, col string) string {
@@ -630,8 +632,8 @@ func cardLabel(p placed, stateCol string, dim bool) string {
 	head := paint(c.rows[0], "") + "&#160;&#160;" + `<font color="` + stateCol + `">` + htmlText(c.state) + "</font>"
 	rows := []string{head, paint(c.rows[1], ""), paint(c.rows[2], ""), paint(c.rows[3], colLegend), paint(c.rows[4], colDim)}
 	var b strings.Builder
-	fmt.Fprintf(&b, `<table border="0" cellborder="0" cellspacing="0" cellpadding="%d" width="%s">`,
-		cardCellPad, strconv.FormatFloat(cardInner, 'f', 1, 64))
+	fmt.Fprintf(&b, `<table border="0" cellborder="0" cellspacing="0" cellpadding="%d" fixedsize="true" width="%s" height="%s">`,
+		cardCellPad, strconv.FormatFloat(cardInner, 'f', 1, 64), strconv.FormatFloat(cardTableH, 'f', 1, 64))
 	for _, r := range rows {
 		b.WriteString(`<tr><td align="left">` + r + "</td></tr>")
 	}

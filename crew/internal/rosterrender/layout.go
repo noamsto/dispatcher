@@ -29,6 +29,12 @@ const (
 	moonStep   = 14.0
 	moonRadius = 6.0
 
+	// cornerBadgeHalfW and cornerBadgeHalfH bound the badges centred on a card's
+	// corners: the round chip is the widest, the host hexagon with its pen the
+	// tallest.
+	cornerBadgeHalfW = roundBadgeW * 72 / 2
+	cornerBadgeHalfH = hostBadgeSize*72/2 + hostBadgePen/2
+
 	hostLabelGap  = 55.0
 	hostLabelHalf = 20.0
 
@@ -326,18 +332,34 @@ func (sc *scene) place(p planet, ring int, r, angle float64) {
 	pl.x, pl.y = polar(r, angle)
 	sc.extent = max(sc.extent, r+cardReach)
 
-	hw, hh := cardHalf(cardPen(p.tier))
-	ux, uy := polar(1, angle)
-	edge := min(hw/math.Abs(ux), hh/math.Abs(uy))
 	pl.moons = make([]moon, len(p.moons))
 	for m, mn := range p.moons {
-		along := (float64(m) - float64(len(pl.moons)-1)/2) * moonStep
-		mn.x = pl.x + ux*(edge+moonGap) + uy*along
-		mn.y = pl.y + uy*(edge+moonGap) - ux*along
+		dx, dy := moonOffset(cardPen(p.tier), angle, m, len(p.moons))
+		mn.x, mn.y = pl.x+dx, pl.y+dy
 		pl.moons[m] = mn
 		sc.extent = max(sc.extent, math.Hypot(mn.x, mn.y)+moonRadius)
 	}
 	sc.planets = append(sc.planets, pl)
+}
+
+// moonOffset is where moon m of n sits from its card's centre: moonGap off the
+// side the outward ray leaves through, spread along that side clockwise, and
+// kept clear of the corner badges, which are reserved whether drawn or not so a
+// moon never moves when a badge appears.
+func moonOffset(pen, angle float64, m, n int) (dx, dy float64) {
+	hw, hh := cardHalf(pen)
+	cw, ch := cardW*72/2, cardH*72/2
+	ux, uy := polar(1, angle)
+	rel := (float64(m) - float64(n-1)/2) * moonStep
+	half := float64(n-1) / 2 * moonStep
+	if hh*math.Abs(ux) <= hw*math.Abs(uy) {
+		lim := max(cw-cornerBadgeHalfW-moonRadius-half, 0)
+		c := math.Max(-lim, math.Min(lim, ux*hh/math.Abs(uy)))
+		return c + math.Copysign(rel, uy), math.Copysign(hh+moonGap, uy)
+	}
+	lim := max(ch-cornerBadgeHalfH-moonRadius-half, 0)
+	c := math.Max(-lim, math.Min(lim, uy*hw/math.Abs(ux)))
+	return math.Copysign(hw+moonGap, ux), c - math.Copysign(rel, ux)
 }
 
 // hostRun sums the unit vectors of one host's planets, so its label can sit in

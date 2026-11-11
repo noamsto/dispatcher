@@ -297,6 +297,59 @@ func TestLayoutMoonsOutwardAndExtent(t *testing.T) {
 	}
 }
 
+// rectGap is the distance from (x, y) to the rectangle of half extents hw, hh
+// centred on the origin, zero inside it.
+func rectGap(x, y, hw, hh float64) float64 {
+	return math.Hypot(max(math.Abs(x)-hw, 0), max(math.Abs(y)-hh, 0))
+}
+
+func TestMoonsClearTheirCardAndBadges(t *testing.T) {
+	cw, ch := cardW*72/2, cardH*72/2
+	badges := func(p planet) [][4]float64 { // centre x, y, half w, half h
+		var bs [][4]float64
+		if _, pen, ok := ciBadge(p.ci); ok {
+			bs = append(bs, [4]float64{cw, ch, ciBadgeRadius + pen/2, ciBadgeRadius + pen/2})
+		}
+		if p.rounds > 0 {
+			bs = append(bs, [4]float64{cw, -ch, roundBadgeW * 72 / 2, roundBadgeH * 72 / 2})
+		}
+		if p.host != "" {
+			h := hostBadgeSize*72/2 + hostBadgePen/2
+			bs = append(bs, [4]float64{-cw, ch, h, h})
+		}
+		return bs
+	}
+	for _, tier := range []string{"trivial", "standard", "deep", ""} {
+		for _, badged := range []bool{false, true} {
+			for n := 1; n <= 3; n++ {
+				p := wp("a", classWorking)
+				p.tier = tier
+				p.moons = make([]moon, n)
+				if badged {
+					p.host, p.ci, p.rounds = "mbp", "fail", 2
+				}
+				hw, hh := cardHalf(cardPen(tier))
+				for deg := 0; deg < 360; deg++ {
+					var sc scene
+					sc.place(p, 0, 300, float64(deg))
+					pl := sc.planets[0]
+					for i, m := range pl.moons {
+						x, y := m.x-pl.x, m.y-pl.y
+						if got := rectGap(x, y, hw, hh); got < moonGap-moonRadius-1e-9 {
+							t.Fatalf("tier %q n=%d angle %d: moon %d is %.2f from the card", tier, n, deg, i, got)
+						}
+						for _, b := range badges(p) {
+							if got := rectGap(x-b[0], y-b[1], b[2], b[3]); got < moonRadius {
+								t.Fatalf("tier %q n=%d angle %d: moon %d is %.2f from a badge", tier, n, deg, i, got)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestLayoutCapacityDropsExtraPlanetsButNeverDisplacesDrawnOnes(t *testing.T) {
 	ps := uniform(maxPlanets + 1)
 	ps[0].branch = "zzz" // sorts last, so it is the one that does not fit

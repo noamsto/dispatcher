@@ -1,6 +1,7 @@
 package rosterrender
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -99,7 +100,12 @@ func TestCardTextFits(t *testing.T) {
 				t.Errorf("row 5 = %q", c.rows[4])
 			}
 		}},
-		{"long head leaves room for the state", func(r map[string]any) { r["state"] = "blocked" }, func(t *testing.T, c cardText) {
+		{"long head leaves room for the state", func(r map[string]any) {
+			r["state"], r["name"] = "blocked", strings.Repeat("W", 24)
+		}, func(t *testing.T, c cardText) {
+			if !strings.HasSuffix(c.rows[0], "…") {
+				t.Errorf("head = %q, want a cut one", c.rows[0])
+			}
 			if got := textWidth(c.rows[0]) + textWidth("  "+c.state); got > cardInner {
 				t.Errorf("head+state width %.1f > %.1f", got, cardInner)
 			}
@@ -154,6 +160,30 @@ func TestSanitizeText(t *testing.T) {
 func TestHTMLText(t *testing.T) {
 	if got, want := htmlText(`<a&"b">`), "&lt;a&amp;&quot;b&quot;&gt;"; got != want {
 		t.Errorf("htmlText = %q, want %q", got, want)
+	}
+}
+
+func TestHTMLTextBackslashStaysLiteral(t *testing.T) {
+	tests := []struct{ in, escaped string }{
+		{`\N`, `\\N`},
+		{`\G`, `\\G`},
+		{`C:\Notes`, `C:\\Notes`},
+		{`\\`, `\\\\`},
+	}
+	for _, tt := range tests {
+		if got := htmlText(tt.in); got != tt.escaped {
+			t.Errorf("htmlText(%q) = %q, want %q", tt.in, got, tt.escaped)
+		}
+	}
+
+	neato := neatoPath(t)
+	textRe := regexp.MustCompile(`<text[^>]*>(.*?)</text>`)
+	for _, tt := range tests {
+		dot := `graph graphname { n [pos="0,0!" shape=box label=<<table><tr><td>` + htmlText(tt.in) + `</td></tr></table>>]; }`
+		m := textRe.FindSubmatch(neatoSVG(t, neato, dot))
+		if m == nil || string(m[1]) != tt.in {
+			t.Errorf("neato drew %q for %q", m, tt.in)
+		}
 	}
 }
 
