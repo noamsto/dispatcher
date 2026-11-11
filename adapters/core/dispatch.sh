@@ -256,8 +256,10 @@ pace_rule_target() {
   win="${rung_pct%%|*}" rung_pct="${rung_pct#*|}"
   used_pct="$rung_pct" pace_notice="" pace_clause=""
   if [[ $rung_pct == *"|"* ]]; then
-    used_pct="${rung_pct%%|*}"; ahead="${rung_pct#*|}"
-    pace_notice=" ($ahead ahead of pace)"; pace_clause=" and $ahead points ahead of pace"
+    used_pct="${rung_pct%%|*}"
+    ahead="${rung_pct#*|}"
+    pace_notice=" ($ahead ahead of pace)"
+    pace_clause=" and $ahead points ahead of pace"
   fi
   if [ -n "$model_rung" ]; then
     if [ "${DISPATCH_IGNORE_RUNG:-}" = "$target_model" ]; then
@@ -916,7 +918,10 @@ _claim_check_extra() {
 _home_relative_path() {
   local path="$1"
   # An empty HOME would make "$HOME"/* match every absolute path.
-  [ -n "$HOME" ] || { printf '%s' "$path"; return; }
+  [ -n "$HOME" ] || {
+    printf '%s' "$path"
+    return
+  }
   case "$path" in
   "$HOME") printf '~' ;;
   "$HOME"/*) printf '~%s' "${path#"$HOME"}" ;;
@@ -942,7 +947,8 @@ _post_dispatch_comment() {
   [ -n "$issue" ] && resume_target="'#$issue'"
   wt_display="$(_home_relative_path "$wt_path")"
   local body
-  body="$(cat <<EOF
+  body="$(
+    cat <<EOF
 🚀 **$name** $verb — $engine · $model · $tier
 
 ${prefix}| | |
@@ -957,7 +963,7 @@ ${prefix}| | |
 
 <!-- dispatched -->
 EOF
-)"
+  )"
   gh issue comment "$issue" --body "$body" >/dev/null 2>&1 || {
     echo "dispatch: could not post dispatch-context comment on issue #$issue (non-fatal)" >&2
   }
@@ -1912,7 +1918,7 @@ _record_worktree_anchor() {
 # role_delivery <agent> — how a role's assignments reach its pane. Cursor has no
 # idle frame verified across its models, so its roles pull assignments with
 # `crew await` instead of being typed into.
-role_delivery() { case "$1" in cursor) echo pull ;; *) echo typed ;; esac; }
+role_delivery() { case "$1" in cursor) echo pull ;; *) echo typed ;; esac }
 
 # launch_role <pane> <worktree> <role> <agent> <model> <effort> — launch the role's engine
 # with GRID_PROTOCOL as its system prompt (appended where supported, first prompt
@@ -2016,11 +2022,27 @@ if [ "${1:-}" = "--spawn-role" ]; then
   ignore_map=""
   while [ $# -gt 0 ]; do
     case "$1" in
-    --agent) spawn_agent="${2:-}"; shift 2 ;;
-    --model) spawn_model="${2:-}"; shift 2 ;;
-    --effort) spawn_effort="${2:-}"; spawn_effort_explicit=1; shift 2 ;;
-    --ignore-budget) ignore_budget=1; shift ;;
-    --ignore-map) ignore_map=1; shift ;;
+    --agent)
+      spawn_agent="${2:-}"
+      shift 2
+      ;;
+    --model)
+      spawn_model="${2:-}"
+      shift 2
+      ;;
+    --effort)
+      spawn_effort="${2:-}"
+      spawn_effort_explicit=1
+      shift 2
+      ;;
+    --ignore-budget)
+      ignore_budget=1
+      shift
+      ;;
+    --ignore-map)
+      ignore_map=1
+      shift
+      ;;
     *)
       echo "dispatch: --spawn-role: unexpected argument '$1'" >&2
       exit 1
@@ -2123,7 +2145,10 @@ if [ "${1:-}" = "--spawn-role" ]; then
   spawn_model="${spawn_model:-$saved_model}"
   case "$spawn_agent" in
   claude | codex | cursor | pi) ;;
-  *) echo "dispatch: --spawn-role '$role' has invalid agent '$spawn_agent'" >&2; exit 1 ;;
+  *)
+    echo "dispatch: --spawn-role '$role' has invalid agent '$spawn_agent'" >&2
+    exit 1
+    ;;
   esac
   valid_role_model "$spawn_agent" "$spawn_model" || {
     echo "dispatch: invalid model '$spawn_model' for role '$role'" >&2
@@ -2240,9 +2265,18 @@ if [ "${1:-}" = "--role-exited" ]; then
   exited_since=0
   while [ $# -gt 0 ]; do
     case "$1" in
-    --branch) exited_branch="${2:-}"; shift 2 ;;
-    --pane) exited_pane="${2:-}"; shift 2 ;;
-    --since) exited_since="${2:-0}"; shift 2 ;;
+    --branch)
+      exited_branch="${2:-}"
+      shift 2
+      ;;
+    --pane)
+      exited_pane="${2:-}"
+      shift 2
+      ;;
+    --since)
+      exited_since="${2:-0}"
+      shift 2
+      ;;
     *)
       echo "dispatch: --role-exited: unexpected argument '$1'" >&2
       exit 1
@@ -3356,105 +3390,105 @@ fi
 # Unanchored at the front on purpose: `gpt-5.5-extra-high` is a real cursor id
 # and matches on its trailing `-high`.
 model_gate() {
-re_effort_tail='-(none|low|medium|high|xhigh|max)(-fast)?$'
-if [ "${DISPATCH_SKIP_MODEL_CHECK:-}" = "$model" ]; then
-  echo "dispatch: model check skipped (DISPATCH_SKIP_MODEL_CHECK) — '$model' on --agent $agent is unverified" >&2
-else
-  case "$agent" in
-  claude)
-    re_claude_id='^claude-[a-z0-9]+(-[a-z0-9]+)*$'
-    if [[ $model =~ $re_claude_id ]] && [[ $model =~ $re_effort_tail ]]; then
-      echo "dispatch: model '$model' is an effort-suffixed cursor id — on --agent claude pass the bare id and set intensity with --effort. Did you mean --agent cursor? See dispatch-orchestration.md \"Model gate\"." >&2
-      exit 1
-    fi
-    if [[ ! $model =~ ^(opus|sonnet|haiku|fable)$ ]] && [[ ! $model =~ $re_claude_id ]]; then
-      echo "dispatch: model '$model' does not match --agent claude — claude takes an alias (opus, sonnet, haiku, fable) or a full claude-* id (e.g. claude-fable-5-1). Did you mean --agent cursor? See dispatch-orchestration.md \"Model gate\"." >&2
-      exit 1
-    fi
-    ;;
-  codex)
-    if [[ ! $model =~ ^gpt-[0-9]+\.[0-9]+-[a-z0-9]+$ ]] && [[ ! $model =~ ^gpt-5\.[45]$ ]]; then
-      if [[ $model =~ ^gpt-[0-9]+\.[0-9]+$ ]]; then
-        gen="${model#gpt-}"
-        echo "dispatch: model '$model' is not a codex slug — the $gen family ships only as variants (gpt-$gen-sol, gpt-$gen-terra, gpt-$gen-luna); there is no bare $model. See dispatch-orchestration.md \"Model gate\"." >&2
+  re_effort_tail='-(none|low|medium|high|xhigh|max)(-fast)?$'
+  if [ "${DISPATCH_SKIP_MODEL_CHECK:-}" = "$model" ]; then
+    echo "dispatch: model check skipped (DISPATCH_SKIP_MODEL_CHECK) — '$model' on --agent $agent is unverified" >&2
+  else
+    case "$agent" in
+    claude)
+      re_claude_id='^claude-[a-z0-9]+(-[a-z0-9]+)*$'
+      if [[ $model =~ $re_claude_id ]] && [[ $model =~ $re_effort_tail ]]; then
+        echo "dispatch: model '$model' is an effort-suffixed cursor id — on --agent claude pass the bare id and set intensity with --effort. Did you mean --agent cursor? See dispatch-orchestration.md \"Model gate\"." >&2
         exit 1
       fi
-      echo "dispatch: model '$model' does not match --agent codex — codex takes gpt-* variant slugs (e.g. gpt-5.6-sol). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
-      exit 1
-    fi
-    # The cache tightens the grammar and is never a prerequisite for it: probe
-    # usability separately so the membership test's non-zero can only mean "not
-    # on this account". Conflated, a rotated or half-written cache would block
-    # every codex dispatch behind a file nobody edits by hand. The `?|strings`
-    # projection is what makes that hold for a file that parses but whose
-    # entries are not `{slug: string}` — a bare `.slug` there is a jq error, and
-    # under `set -e` that kills dispatch even for a valid slug.
-    codex_cache="$HOME/.codex/models_cache.json"
-    if jq -e '[.models[]?|.slug?|strings]|length > 0' "$codex_cache" >/dev/null 2>&1 &&
-      ! jq -e --arg m "$model" '[.models[]?|.slug?|strings]|index($m)' "$codex_cache" >/dev/null; then
-      # Filtered to what the grammar accepts — the raw list advertises
-      # codex-auto-review, an internal review model the gate rejects anyway.
-      # Controls are stripped because this lands on a terminal, where an escape
-      # sequence in a slug would be interpreted rather than shown.
-      known="$(jq -r '[.models[]?|.slug?|strings|gsub("[[:cntrl:]]";"")|select(startswith("gpt-"))]|join(", ")' "$codex_cache")"
-      echo "dispatch: model '$model' is not in this account's codex model list (~/.codex/models_cache.json: $known). If it is genuinely new, set DISPATCH_SKIP_MODEL_CHECK=$model and update the model map. See dispatch-orchestration.md \"Model gate\"." >&2
-      exit 1
-    fi
-    ;;
-  cursor)
-    # Cursor fronts other vendors, so id shape is always checked but
-    # membership is only knowable offline, best-effort, via a refreshed
-    # cache — and only for a subset of cursor's id space (see below).
-    # BASH_REMATCH is clobbered by the next [[ =~ ]], so both groups are
-    # captured on the spot.
-    re_cursor='^([a-z0-9][a-z0-9.-]*)(\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\])?$'
-    cursor_base=""
-    cursor_params=""
-    if [[ $model =~ $re_cursor ]]; then
-      cursor_base="${BASH_REMATCH[1]}"
-      cursor_params="${BASH_REMATCH[2]}"
-    fi
-    if [ -z "$cursor_base" ] || [[ $cursor_base =~ ^(opus|sonnet|haiku|fable)$ ]]; then
-      echo "dispatch: model '$model' does not match --agent cursor — cursor needs a full model id (e.g. kimi-k3-high, grok-4.7-medium, composer-2.5, claude-opus-5-high). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
-      exit 1
-    fi
-    # cursor has no --effort knob, so its claude-*/gpt-* ids carry the rung in
-    # the id itself; a bracket block exempts only by naming effort= there.
-    if [[ $cursor_base =~ ^(claude|gpt)- ]] && [[ ! $cursor_base =~ $re_effort_tail ]] && [[ ! $cursor_params =~ (\[|,)effort= ]]; then
-      echo "dispatch: model '$model' is not a cursor id — cursor's claude-*/gpt-* ids carry an effort suffix (gpt-5.6-sol-high, gpt-5.6-sol-high-fast) because cursor has no --effort knob. Live list: cursor-agent --list-models. See dispatch-orchestration.md \"Model gate\"." >&2
-      exit 1
-    fi
-    # Existence check against a refresh-models.sh cache (same `?|strings`
-    # idiom as codex's cache check above). Only for non-bracketed ids: a
-    # bracketed cell like claude-opus-5[effort=high] resolves its real slug
-    # from the bracket's effort= param, and cursor's live catalog only lists
-    # the effort-suffixed forms (claude-opus-5-high, not bare claude-opus-5)
-    # — so cursor_base there isn't itself an invocable id. A non-bracketed
-    # id is checked verbatim, since cursor_base then equals the whole
-    # $model, exactly what the live catalog lists.
-    if [ -z "$cursor_params" ]; then
-      cursor_cache="${XDG_DATA_HOME:-$HOME/.local/share}/crew/cursor-models-cache.json"
-      # 24h, not the budget gate's 2h: a model catalog moves at the cadence
-      # of new releases (days-to-weeks), not quota's hour-to-hour churn — a
-      # 2h bound would leave this degraded almost all the time between
-      # manual refresh-models runs.
-      if jq -e --argjson now "$(date +%s)" '($now - .fetched_epoch) < 86400 and ([.models[]?|.slug?|strings]|length > 0)' "$cursor_cache" >/dev/null 2>&1 &&
-        ! jq -e --arg m "$cursor_base" '[.models[]?|.slug?|strings]|index($m)' "$cursor_cache" >/dev/null; then
-        known="$(jq -r '[.models[]?|.slug?|strings|gsub("[[:cntrl:]]";"")]|join(", ")' "$cursor_cache")"
-        echo "dispatch: model '$model' is not in this account's cursor model list ($cursor_cache: $known). If it is genuinely new, run refresh-models to update the cache, or set DISPATCH_SKIP_MODEL_CHECK=$model. See dispatch-orchestration.md \"Model gate\"." >&2
+      if [[ ! $model =~ ^(opus|sonnet|haiku|fable)$ ]] && [[ ! $model =~ $re_claude_id ]]; then
+        echo "dispatch: model '$model' does not match --agent claude — claude takes an alias (opus, sonnet, haiku, fable) or a full claude-* id (e.g. claude-fable-5-1). Did you mean --agent cursor? See dispatch-orchestration.md \"Model gate\"." >&2
         exit 1
       fi
-    fi
-    ;;
-  pi)
-    # Local ids may be mixed case; dispatch-config already checked their shape.
-    if [ -z "$local_entry" ] && [[ ! $model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]]; then
-      echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. openrouter/deepseek/deepseek-v4.1-flash). See dispatch-orchestration.md \"Model gate\"." >&2
-      exit 1
-    fi
-    ;;
-  esac
-fi
+      ;;
+    codex)
+      if [[ ! $model =~ ^gpt-[0-9]+\.[0-9]+-[a-z0-9]+$ ]] && [[ ! $model =~ ^gpt-5\.[45]$ ]]; then
+        if [[ $model =~ ^gpt-[0-9]+\.[0-9]+$ ]]; then
+          gen="${model#gpt-}"
+          echo "dispatch: model '$model' is not a codex slug — the $gen family ships only as variants (gpt-$gen-sol, gpt-$gen-terra, gpt-$gen-luna); there is no bare $model. See dispatch-orchestration.md \"Model gate\"." >&2
+          exit 1
+        fi
+        echo "dispatch: model '$model' does not match --agent codex — codex takes gpt-* variant slugs (e.g. gpt-5.6-sol). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
+        exit 1
+      fi
+      # The cache tightens the grammar and is never a prerequisite for it: probe
+      # usability separately so the membership test's non-zero can only mean "not
+      # on this account". Conflated, a rotated or half-written cache would block
+      # every codex dispatch behind a file nobody edits by hand. The `?|strings`
+      # projection is what makes that hold for a file that parses but whose
+      # entries are not `{slug: string}` — a bare `.slug` there is a jq error, and
+      # under `set -e` that kills dispatch even for a valid slug.
+      codex_cache="$HOME/.codex/models_cache.json"
+      if jq -e '[.models[]?|.slug?|strings]|length > 0' "$codex_cache" >/dev/null 2>&1 &&
+        ! jq -e --arg m "$model" '[.models[]?|.slug?|strings]|index($m)' "$codex_cache" >/dev/null; then
+        # Filtered to what the grammar accepts — the raw list advertises
+        # codex-auto-review, an internal review model the gate rejects anyway.
+        # Controls are stripped because this lands on a terminal, where an escape
+        # sequence in a slug would be interpreted rather than shown.
+        known="$(jq -r '[.models[]?|.slug?|strings|gsub("[[:cntrl:]]";"")|select(startswith("gpt-"))]|join(", ")' "$codex_cache")"
+        echo "dispatch: model '$model' is not in this account's codex model list (~/.codex/models_cache.json: $known). If it is genuinely new, set DISPATCH_SKIP_MODEL_CHECK=$model and update the model map. See dispatch-orchestration.md \"Model gate\"." >&2
+        exit 1
+      fi
+      ;;
+    cursor)
+      # Cursor fronts other vendors, so id shape is always checked but
+      # membership is only knowable offline, best-effort, via a refreshed
+      # cache — and only for a subset of cursor's id space (see below).
+      # BASH_REMATCH is clobbered by the next [[ =~ ]], so both groups are
+      # captured on the spot.
+      re_cursor='^([a-z0-9][a-z0-9.-]*)(\[[a-z]+=[a-z0-9.-]+(,[a-z]+=[a-z0-9.-]+)*\])?$'
+      cursor_base=""
+      cursor_params=""
+      if [[ $model =~ $re_cursor ]]; then
+        cursor_base="${BASH_REMATCH[1]}"
+        cursor_params="${BASH_REMATCH[2]}"
+      fi
+      if [ -z "$cursor_base" ] || [[ $cursor_base =~ ^(opus|sonnet|haiku|fable)$ ]]; then
+        echo "dispatch: model '$model' does not match --agent cursor — cursor needs a full model id (e.g. kimi-k3-high, grok-4.7-medium, composer-2.5, claude-opus-5-high). Did you mean --agent claude? See dispatch-orchestration.md \"Model gate\"." >&2
+        exit 1
+      fi
+      # cursor has no --effort knob, so its claude-*/gpt-* ids carry the rung in
+      # the id itself; a bracket block exempts only by naming effort= there.
+      if [[ $cursor_base =~ ^(claude|gpt)- ]] && [[ ! $cursor_base =~ $re_effort_tail ]] && [[ ! $cursor_params =~ (\[|,)effort= ]]; then
+        echo "dispatch: model '$model' is not a cursor id — cursor's claude-*/gpt-* ids carry an effort suffix (gpt-5.6-sol-high, gpt-5.6-sol-high-fast) because cursor has no --effort knob. Live list: cursor-agent --list-models. See dispatch-orchestration.md \"Model gate\"." >&2
+        exit 1
+      fi
+      # Existence check against a refresh-models.sh cache (same `?|strings`
+      # idiom as codex's cache check above). Only for non-bracketed ids: a
+      # bracketed cell like claude-opus-5[effort=high] resolves its real slug
+      # from the bracket's effort= param, and cursor's live catalog only lists
+      # the effort-suffixed forms (claude-opus-5-high, not bare claude-opus-5)
+      # — so cursor_base there isn't itself an invocable id. A non-bracketed
+      # id is checked verbatim, since cursor_base then equals the whole
+      # $model, exactly what the live catalog lists.
+      if [ -z "$cursor_params" ]; then
+        cursor_cache="${XDG_DATA_HOME:-$HOME/.local/share}/crew/cursor-models-cache.json"
+        # 24h, not the budget gate's 2h: a model catalog moves at the cadence
+        # of new releases (days-to-weeks), not quota's hour-to-hour churn — a
+        # 2h bound would leave this degraded almost all the time between
+        # manual refresh-models runs.
+        if jq -e --argjson now "$(date +%s)" '($now - .fetched_epoch) < 86400 and ([.models[]?|.slug?|strings]|length > 0)' "$cursor_cache" >/dev/null 2>&1 &&
+          ! jq -e --arg m "$cursor_base" '[.models[]?|.slug?|strings]|index($m)' "$cursor_cache" >/dev/null; then
+          known="$(jq -r '[.models[]?|.slug?|strings|gsub("[[:cntrl:]]";"")]|join(", ")' "$cursor_cache")"
+          echo "dispatch: model '$model' is not in this account's cursor model list ($cursor_cache: $known). If it is genuinely new, run refresh-models to update the cache, or set DISPATCH_SKIP_MODEL_CHECK=$model. See dispatch-orchestration.md \"Model gate\"." >&2
+          exit 1
+        fi
+      fi
+      ;;
+    pi)
+      # Local ids may be mixed case; dispatch-config already checked their shape.
+      if [ -z "$local_entry" ] && [[ ! $model =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]]; then
+        echo "dispatch: model '$model' does not match --agent pi — pi takes a provider-qualified model id (e.g. openrouter/deepseek/deepseek-v4.1-flash). See dispatch-orchestration.md \"Model gate\"." >&2
+        exit 1
+      fi
+      ;;
+    esac
+  fi
 }
 
 model_gate
@@ -3720,7 +3754,10 @@ if [ -n "$grid_roles" ]; then
 fi
 roles_stamp=""
 if [ "${#role_names[@]}" -gt 0 ]; then
-  roles_stamp="$(IFS=,; printf '%s' "${role_names[*]}")"
+  roles_stamp="$(
+    IFS=,
+    printf '%s' "${role_names[*]}"
+  )"
 fi
 if [ -n "$grid_lazy" ] && [ -z "$roles_stamp" ]; then
   echo "dispatch: --lazy needs --grid or --roles" >&2
@@ -3770,7 +3807,10 @@ for id in "${local_ids[@]}"; do
 done
 [ -z "$chrome" ] || chrome_gate
 
-mapfile -t required_protocol_files < <({ printf '%s\n' WORKER_PROTOCOL.md EVIDENCE_REVIEW.md; _worker_protocol_files "$agent"; } | awk '!seen[$0]++')
+mapfile -t required_protocol_files < <({
+  printf '%s\n' WORKER_PROTOCOL.md EVIDENCE_REVIEW.md
+  _worker_protocol_files "$agent"
+} | awk '!seen[$0]++')
 [ -n "$roles_stamp" ] && required_protocol_files+=(GRID_PROTOCOL.md)
 _require_protocol_files "$PROTOCOL_DIR" dispatch "${required_protocol_files[@]}"
 _check_protocol_rev "$PROTOCOL_DIR" dispatch
@@ -3813,7 +3853,7 @@ if [ "${#owner_auth}" -gt 2000 ]; then
   exit 1
 fi
 if grep -q '^## ' <<<"$owner_auth"; then
-  echo "dispatch: --owner-auth text may not contain a line starting with \"## \"" >&2
+  echo 'dispatch: --owner-auth text may not contain a line starting with "## "' >&2
   exit 1
 fi
 if [ -n "${DISPATCH_SPEC:-}" ] && [ -f "${DISPATCH_SPEC:-}" ] && grep -qiE '^#+[[:space:]]*owner[[:space:]]+authori[sz]ation' "$DISPATCH_SPEC"; then
@@ -4566,8 +4606,8 @@ if [ "$agent" = claude ]; then
         existing='{}'
       fi
       if printf '%s' "$existing" | jq --arg path "$wt_path" \
-        '.projects[$path].hasTrustDialogAccepted = true' >"$trust_tmp" \
-        && mv "$trust_tmp" "$claude_json"; then
+        '.projects[$path].hasTrustDialogAccepted = true' >"$trust_tmp" &&
+        mv "$trust_tmp" "$claude_json"; then
         trusted=0
       else
         rm -f "$trust_tmp"

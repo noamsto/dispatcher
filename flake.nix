@@ -341,15 +341,12 @@
           # rewritten right now — the exclude is what keeps a future upstream
           # edit from being silently reformatted on its way in.
           # dispatcher.sh is NOT excluded: that one is ours, ported from fish.
-          # dispatch-resume.sh stays excluded until docs/dispatch-redesign.md S9
-          # lifts it. dispatch.sh and dispatch-notify.sh are excluded for the same
-          # reason: shfmt would re-indent the block crew/internal/frame extracts
-          # and sources (its anchors are 2-space-indented lines), and rewrite the
-          # _bus_append copy tests/adapters.bats byte-compares.
+          # dispatch-notify.sh is excluded too: it carries the _bus_append and
+          # _is_engine_cmd copies tests/adapters.bats byte-compares against the
+          # shared libs, so a formatter pass must not touch one copy without
+          # the other.
           settings.global.excludes = [
-            "adapters/core/dispatch.sh"
             "adapters/core/dispatch-notify.sh"
-            "adapters/core/dispatch-resume.sh"
             "adapters/claude-code/plugin/scripts/*"
             "adapters/codex/plugin/scripts/*"
           ];
