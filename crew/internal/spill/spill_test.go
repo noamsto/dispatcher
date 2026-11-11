@@ -1,6 +1,7 @@
 package spill
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
 func TestWriteThenReadRoundTrips(t *testing.T) {
@@ -54,6 +57,14 @@ func TestReadRefusesHostileFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := os.Symlink("../pid", filepath.Join(crewDir, Dir, "secret")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"symlinked directory inside the crew dir": func(crewDir string) {
+			if err := os.WriteFile(filepath.Join(crewDir, "secret"), []byte("1234"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(".", filepath.Join(crewDir, Dir)); err != nil {
 				t.Fatal(err)
 			}
 		},
@@ -138,6 +149,32 @@ func TestExpandEventsStopsAtTheBatchBudget(t *testing.T) {
 	}
 	if want := BatchBudget / encodedLen(body); expanded != want {
 		t.Errorf("%d rows expanded, want %d", expanded, want)
+	}
+}
+
+// The budget counts what the read paths write: a hidden code point is rewritten
+// as text that JSON escapes again, several times its stored size.
+func TestExpandEventsBudgetCountsHiddenCodePointEscaping(t *testing.T) {
+	paths := bus.Paths{Dir: t.TempDir()}
+	crewDir := paths.CrewDir("c1")
+	body := strings.Repeat("­", MaxBody/2) // soft hyphen: 2 bytes stored
+	events := make([]any, 40)
+	for i := range events {
+		rel, err := Write(crewDir, int64(i), body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		events[i] = map[string]any{"kind": "msg", "body": "head", Field: rel}
+	}
+	batch := map[string]any{"events": events}
+	ExpandEvents(batch, paths, "c1")
+
+	var line bytes.Buffer
+	if err := jsonval.Encode(&line, invisible.Value(batch), false); err != nil {
+		t.Fatal(err)
+	}
+	if limit := BatchBudget + 40*512; line.Len() > limit {
+		t.Errorf("batch line is %d bytes, want at most %d", line.Len(), limit)
 	}
 }
 

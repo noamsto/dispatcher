@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +28,8 @@ import (
 	"syscall"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
 const (
@@ -148,7 +149,7 @@ func expand(row map[string]any, paths bus.Paths, crew string, budget *int) {
 	if budget != nil {
 		size := encodedLen(full)
 		if size > *budget {
-			row[NoteField] = "full body not expanded: this batch is over its size budget; read it with crew inbox; body is the head only"
+			row[NoteField] = "full body not expanded: this batch is over its size budget; read it with crew inbox on the host that owns this crew; body is the head only"
 			return
 		}
 		*budget -= size
@@ -157,12 +158,11 @@ func expand(row map[string]any, paths bus.Paths, crew string, budget *int) {
 	delete(row, Field)
 }
 
-// encodedLen is the length of s as a JSON string.
+// encodedLen is the length of s as the read paths write it: invisible.Value
+// rewrites a hidden code point as text that JSON then escapes again.
 func encodedLen(s string) int {
 	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(s)
+	_ = jsonval.Encode(&b, invisible.Value(s), false)
 	return b.Len()
 }
 
@@ -187,6 +187,9 @@ func read(crewDir, rel string) (string, error) {
 	// os.Root follows a symlink that stays inside the crew dir, even under
 	// O_NOFOLLOW, so the name itself is checked first and the open descriptor
 	// must be that same file.
+	if dir, err := root.Lstat(Dir); err == nil && !dir.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", Dir)
+	}
 	named, err := root.Lstat(rel)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("body_file %q is missing", rel)
