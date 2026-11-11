@@ -12,6 +12,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/peer"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
+	"github.com/noamsto/dispatcher/crew/internal/spill"
 )
 
 // MsgRequest is `crew msg <from> <to> <body>`.
@@ -59,7 +60,22 @@ func RunMsg(ctx context.Context, req MsgRequest, paths bus.Paths, stderr io.Writ
 		return exitFailure
 	}
 
-	return post("msg", paths, stderr, func(b string) string { return msgLine(ts, crew, from, to, b) }, body)
+	build := func(b string) string { return msgLine(ts, crew, from, to, b) }
+	// An overseer may read the bus from another host, where the file is not.
+	if len(build(body)) > bus.LineMax && bus.ValidCrewID(crew) && !strings.HasPrefix(to, "overseer:") {
+		// The row keeps a head; a failed spill falls back to the elision.
+		if rel, err := spill.Write(paths.CrewDir(crew), ts, body); err != nil {
+			say(stderr, "crew: msg: cannot spill the long body (%v); it is elided on the bus line\n", err)
+		} else {
+			build = func(b string) string { return spillLine(ts, crew, from, to, b, rel) }
+		}
+	}
+	return post("msg", paths, stderr, build, body)
+}
+
+// spillLine is a msg row whose body_file names the full body.
+func spillLine(ts int64, crew, from, to, head, bodyFile string) string {
+	return encodeLine(row[string]{TS: ts, CrewID: crew, From: from, To: to, Kind: bus.KindMsg, Body: head, BodyFile: bodyFile})
 }
 
 // msgLine is a msg row as written.

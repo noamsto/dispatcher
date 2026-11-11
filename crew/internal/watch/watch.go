@@ -45,6 +45,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/lock"
 	"github.com/noamsto/dispatcher/crew/internal/playbook"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
+	"github.com/noamsto/dispatcher/crew/internal/spill"
 )
 
 //go:embed watch.jq
@@ -172,6 +173,7 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 			return 1
 		}
 		if folded, ok := fold(paths.Log, c); ok {
+			spill.ExpandEvents(folded, paths, c.crew)
 			playbook.Annotate(folded)
 			out := jsonval.Clamp(folded).(map[string]any)
 			if err := jsonval.Encode(stdout, invisible.Value(out), false); err != nil {

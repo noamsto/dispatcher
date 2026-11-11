@@ -23,6 +23,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
+	"github.com/noamsto/dispatcher/crew/internal/spill"
 )
 
 // exitType is jq's status for a bus it could not parse, and for a row it could
@@ -124,6 +125,7 @@ func Run(q Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int {
 		}
 	}
 	for _, v := range printed {
+		spill.Expand(v, paths, crew)
 		_ = jsonval.Encode(stdout, invisible.Value(v), false)
 	}
 	// A session that has read its inbox has been handed these msgs, so a later
