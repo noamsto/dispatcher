@@ -692,10 +692,12 @@ func neatoPath(t *testing.T) string {
 	return p
 }
 
-// diagramFontResolves reports whether Graphviz resolves the diagram font to
-// Source Sans 3 itself; another face can overflow the fixed label table, so only
-// the warning check needs it.
-func diagramFontResolves(neato string) bool {
+// neatoMeasuresABoundedFont reports whether Graphviz measures the diagram font
+// with one of the two faces the card width table is calibrated against: Source
+// Sans 3, or Noto Sans, which Pango picks when Source Sans 3 is missing. The
+// trailing "3" in the family name is read as a size, so Pango never resolves to
+// Source Sans 3 by name and the match is on the face it actually loads.
+func neatoMeasuresABoundedFont(neato string) bool {
 	cmd := exec.Command(neato, "-n", "-v", "-Tsvg")
 	cmd.Stdin = strings.NewReader(`digraph g { a [pos="0,0!" fontname="` + diagramFont + `" label="x"]; }`)
 	var stderr bytes.Buffer
@@ -704,7 +706,7 @@ func diagramFontResolves(neato string) bool {
 		return false
 	}
 	for _, line := range strings.Split(stderr.String(), "\n") {
-		if _, after, ok := strings.Cut(line, "resolved to:"); ok && strings.Contains(after, diagramFont) {
+		if _, after, ok := strings.Cut(line, "resolved to:"); ok && (strings.Contains(after, "Noto Sans") || strings.Contains(after, diagramFont)) {
 			return true
 		}
 	}
@@ -726,11 +728,14 @@ func neatoSVG(t *testing.T, neato, dot string) []byte {
 var cardTextXRe = regexp.MustCompile(`(?s)<title>p\d+</title>\s*<path[^>]* d="M(-?[0-9.]+),[^"]*"[^>]*/>\s*<text[^>]* x="(-?[0-9.]+)"`)
 
 // TestCardTextStartsAtTheSamePlaceOnEveryCard renders every fixture with the
-// real neato: it must not warn that a label is too small, and the text must
-// start the same distance from each card's outline, whatever Graphviz measures.
+// real neato: the text must start the same distance from each card's outline,
+// whatever Graphviz measures. The table is calibrated against Source Sans 3 and
+// Noto Sans, so when neato measures with one of them it must not warn that a
+// label is too small; with any other fallback (e.g. the nix sandbox) the table
+// overflows by design and only the position check applies.
 func TestCardTextStartsAtTheSamePlaceOnEveryCard(t *testing.T) {
 	neato := neatoPath(t)
-	checkWarnings := diagramFontResolves(neato)
+	checkWarnings := neatoMeasuresABoundedFont(neato)
 	want, seen := 0.0, false
 	for _, c := range dotCases {
 		dot, _, _ := c.emit()

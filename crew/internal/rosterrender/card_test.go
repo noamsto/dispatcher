@@ -204,6 +204,13 @@ func TestTruncWidthCountsWideSourceSansGlyphs(t *testing.T) {
 	if got := textWidth("`"); got < 0.542*cardFont {
 		t.Errorf("backtick width %.2f is narrower than Source Sans 3 draws it", got)
 	}
+	// truncWidth measures with textWidth, so a narrowed table would still pass
+	// the truncation check below; the per-glyph floor is what catches it.
+	for r, adv := range map[rune]int{'`': 542, 'J': 480, '\'': 249, '(': 303, ')': 303, '!': 289, '%': 824, '"': 426, '/': 350, '?': 425, '_': 500} {
+		if got := runeEm(r); got < float64(adv)/1000 {
+			t.Errorf("%q width %.3f em is narrower than Source Sans 3's advance %.3f", r, got, float64(adv)/1000)
+		}
+	}
 	row := strings.Repeat("`JJJ` `fix` `JSON` ", 6)
 	got := truncWidth(row, cardInner)
 	if !strings.HasSuffix(got, "…") || textWidth(got) > cardInner {
