@@ -692,10 +692,23 @@ func neatoPath(t *testing.T) string {
 	return p
 }
 
-// diagramFontResolves reports whether Graphviz gets the diagram font; the fallback overflows the fixed label table, so only the warning check needs it.
-func diagramFontResolves() bool {
-	out, err := exec.Command("fc-match", "-f", "%{family}", "Source Sans 3").Output()
-	return err == nil && strings.Contains(string(out), "Source Sans 3")
+// diagramFontResolves reports whether Graphviz resolves the diagram font to
+// Source Sans 3 itself; another face can overflow the fixed label table, so only
+// the warning check needs it.
+func diagramFontResolves(neato string) bool {
+	cmd := exec.Command(neato, "-n", "-v", "-Tsvg")
+	cmd.Stdin = strings.NewReader(`digraph g { a [pos="0,0!" fontname="` + diagramFont + `" label="x"]; }`)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if cmd.Run() != nil {
+		return false
+	}
+	for _, line := range strings.Split(stderr.String(), "\n") {
+		if _, after, ok := strings.Cut(line, "resolved to:"); ok && strings.Contains(after, diagramFont) {
+			return true
+		}
+	}
+	return false
 }
 
 func neatoSVG(t *testing.T, neato, dot string) []byte {
@@ -717,7 +730,7 @@ var cardTextXRe = regexp.MustCompile(`(?s)<title>p\d+</title>\s*<path[^>]* d="M(
 // start the same distance from each card's outline, whatever Graphviz measures.
 func TestCardTextStartsAtTheSamePlaceOnEveryCard(t *testing.T) {
 	neato := neatoPath(t)
-	checkWarnings := diagramFontResolves()
+	checkWarnings := diagramFontResolves(neato)
 	want, seen := 0.0, false
 	for _, c := range dotCases {
 		dot, _, _ := c.emit()

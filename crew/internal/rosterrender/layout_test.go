@@ -343,6 +343,12 @@ func TestMoonsClearTheirCardAndBadges(t *testing.T) {
 								t.Fatalf("tier %q n=%d angle %d: moon %d is %.2f from a badge", tier, n, deg, i, got)
 							}
 						}
+						for i := 1; i < len(pl.moons); i++ {
+							a, b := pl.moons[i-1], pl.moons[i]
+							if got := math.Hypot(b.x-a.x, b.y-a.y); math.Abs(got-moonStep) > 1e-9 {
+								t.Fatalf("tier %q n=%d angle %d: moons %d and %d are %.4f apart, want %v", tier, n, deg, i-1, i, got, moonStep)
+							}
+						}
 					}
 				}
 			}

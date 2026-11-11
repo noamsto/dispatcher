@@ -121,7 +121,7 @@ digraph roster {
   w3 [label="gamma" shape=plaintext style=solid fixedsize=false fontcolor="#a6adc8" pos="-425.98,425.98!"];
   p1m1 [label="" width=0.16 height=0.16 pos="266.91,97.19!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
   p1 -> p1m1 [color="#45475a"];
-  p3m1 [label="" width=0.16 height=0.16 pos="272.61,411.52!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
+  p3m1 [label="" width=0.16 height=0.16 pos="258.61,411.52!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
   p3 -> p3m1 [color="#45475a"];
   p3m2 [label="" width=0.16 height=0.16 pos="272.61,411.52!" fillcolor="#585b70" penwidth=0];
   p3 -> p3m2 [color="#45475a"];

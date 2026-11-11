@@ -23,7 +23,7 @@ digraph roster {
   dispatcher -> p5 [class="aeye-flow"];
   dispatcher -> p6;
   dispatcher -> p7 [class="aeye-flow"];
-  p1m1 [label="" width=0.16 height=0.16 pos="277.55,229.76!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
+  p1m1 [label="" width=0.16 height=0.16 pos="263.55,229.76!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
   p1 -> p1m1 [color="#45475a"];
   p1m2 [label="" width=0.16 height=0.16 pos="277.55,229.76!" fillcolor="#585b70" penwidth=0];
   p1 -> p1m2 [color="#45475a"];

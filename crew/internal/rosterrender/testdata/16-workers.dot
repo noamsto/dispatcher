@@ -39,13 +39,13 @@ digraph roster {
   dispatcher -> p12 [class="aeye-flow"];
   dispatcher -> p13 [class="aeye-flow"];
   dispatcher -> p14;
-  p1m1 [label="" width=0.16 height=0.16 pos="486.60,396.47!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
+  p1m1 [label="" width=0.16 height=0.16 pos="472.60,396.47!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
   p1 -> p1m1 [color="#45475a"];
   p1m2 [label="" width=0.16 height=0.16 pos="486.60,396.47!" fillcolor="#585b70" penwidth=0];
   p1 -> p1m2 [color="#45475a"];
   p2m1 [label="" width=0.16 height=0.16 pos="0.00,597.06!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
   p2 -> p2m1 [color="#45475a"];
-  p9m1 [label="" width=0.16 height=0.16 pos="471.66,-395.72!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
+  p9m1 [label="" width=0.16 height=0.16 pos="485.66,-395.72!" fillcolor="#a6e3a1" penwidth=0 class="aeye-glow"];
   p9 -> p9m1 [color="#45475a"];
   p9m2 [label="" width=0.16 height=0.16 pos="471.66,-395.72!" fillcolor="#585b70" penwidth=0];
   p9 -> p9m2 [color="#45475a"];

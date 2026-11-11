@@ -355,11 +355,11 @@ func moonOffset(pen, angle float64, m, n int) (dx, dy float64) {
 	if hh*math.Abs(ux) <= hw*math.Abs(uy) {
 		lim := max(cw-cornerBadgeHalfW-moonRadius-half, 0)
 		c := math.Max(-lim, math.Min(lim, ux*hh/math.Abs(uy)))
-		return c + math.Copysign(rel, uy), math.Copysign(hh+moonGap, uy)
+		return c + rel*math.Copysign(1, uy), math.Copysign(hh+moonGap, uy)
 	}
 	lim := max(ch-cornerBadgeHalfH-moonRadius-half, 0)
 	c := math.Max(-lim, math.Min(lim, uy*hw/math.Abs(ux)))
-	return math.Copysign(hw+moonGap, ux), c - math.Copysign(rel, ux)
+	return math.Copysign(hw+moonGap, ux), c - rel*math.Copysign(1, ux)
 }
 
 // hostRun sums the unit vectors of one host's planets, so its label can sit in

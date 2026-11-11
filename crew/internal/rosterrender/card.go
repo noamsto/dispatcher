@@ -19,10 +19,11 @@ const (
 	cardInner = cardW*72 - 2*cardPadX // text width in points
 	cardRows  = 5
 
-	// cardTableH is the label table's height in points: five rows of Source Sans
-	// 3 at cardFont with cardCellPad (measured at 88.7 by neato), rounded up. The
-	// table is pinned to cardInner by cardTableH so its left edge, where the text
-	// starts, does not depend on how Graphviz measures the text.
+	// cardTableH is the label table's height in points: five rows at cardFont
+	// with cardCellPad (measured at 88.7 by neato, in the font fontconfig and
+	// pango resolve, Noto Sans here), rounded up. The table is pinned to
+	// cardInner by cardTableH so its left edge, where the text starts, does not
+	// depend on how Graphviz measures the text.
 	cardTableH = 89.0
 	ellipsis   = "…"
 )
@@ -47,16 +48,18 @@ type cardText struct {
 }
 
 // asciiAdvance is the advance of each printable ASCII rune from space, in 1/44
-// em. They are Graphviz's own measurements of Source Sans 3 at 11pt (a plaintext
-// node of 20 repeats per rune through `neato -Tplain`), which round each advance
-// up to a whole 0.75pt; the backslash, which Graphviz reads as an escape, is
+// em: the per-rune maximum of Graphviz's own measurement (what fontconfig and
+// pango resolve "Source Sans 3" to, Noto Sans here; a plaintext node of 20
+// repeats per rune through `neato -Tplain`, each advance rounded up to a whole
+// 0.75pt) and the hmtx advance of SourceSans3-Regular, the face resvg draws,
+// rounded up to 1/44 em. The backslash, which Graphviz reads as an escape, is
 // set to a wide guess.
 var asciiAdvance = [...]uint8{
-	12, 12, 18, 27, 24, 36, 33, 9, 12, 12, 24, 24, 12, 15, 12, 15, // space to /
-	24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 12, 12, 24, 24, 24, 18, // 0 to ?
-	39, 27, 30, 27, 33, 24, 24, 33, 33, 15, 12, 27, 24, 39, 33, 33, // @ to O
-	27, 33, 27, 24, 24, 33, 27, 42, 27, 24, 24, 15, 24, 15, 24, 21, // P to _
-	12, 24, 27, 21, 27, 24, 15, 27, 27, 12, 12, 24, 12, 42, 27, 27, // ` to o
+	12, 13, 19, 27, 24, 37, 33, 11, 14, 14, 24, 24, 12, 15, 12, 16, // space to /
+	24, 24, 24, 24, 24, 24, 24, 24, 24, 24, 12, 12, 24, 24, 24, 19, // 0 to ?
+	39, 27, 30, 27, 33, 24, 24, 33, 33, 15, 22, 27, 24, 39, 33, 33, // @ to O
+	27, 33, 27, 24, 24, 33, 27, 42, 27, 24, 24, 15, 24, 15, 24, 22, // P to _
+	24, 24, 27, 21, 27, 24, 15, 27, 27, 12, 12, 24, 12, 42, 27, 27, // ` to o
 	27, 27, 18, 21, 15, 27, 21, 36, 24, 21, 21, 18, 24, 18, 24, // p to ~
 }
 
@@ -68,8 +71,8 @@ const (
 	wideEm = 1.0
 )
 
-// runeEm is a conservative rune width in em for Source Sans 3, so the text
-// drawn never runs wider than the estimate whatever Graphviz measures.
+// runeEm is a conservative rune width in em, bounding both what Graphviz
+// measures and what resvg draws in Source Sans 3.
 func runeEm(r rune) float64 {
 	if r < ' ' || r > '~' {
 		return wideEm

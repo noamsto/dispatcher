@@ -200,6 +200,17 @@ func TestTruncWidth(t *testing.T) {
 	}
 }
 
+func TestTruncWidthCountsWideSourceSansGlyphs(t *testing.T) {
+	if got := textWidth("`"); got < 0.542*cardFont {
+		t.Errorf("backtick width %.2f is narrower than Source Sans 3 draws it", got)
+	}
+	row := strings.Repeat("`JJJ` `fix` `JSON` ", 6)
+	got := truncWidth(row, cardInner)
+	if !strings.HasSuffix(got, "…") || textWidth(got) > cardInner {
+		t.Errorf("truncWidth = %q (%.1f > %.1f)", got, textWidth(got), cardInner)
+	}
+}
+
 func TestCardPen(t *testing.T) {
 	tests := map[string]float64{"deep": 4.5, "standard": 3, "trivial": 1.75, "": 3, "x": 3}
 	for tier, want := range tests {

@@ -93,10 +93,13 @@ const (
 
 // diagramFont is aeye's default render font (AEYE_D2_FONT). The native svg
 // names it in every text element and aeye's resvg draws it from its font
-// directory, which holds nothing else. Node sizes are fixed and a card's label
-// table is pinned, so its text is drawn from the table's left edge whatever
-// Graphviz measures; a host without this font only moves a card's state word on
-// row 1, and measures the legend and the host labels with a fallback one.
+// directory, which holds nothing else. Graphviz measures with whatever
+// fontconfig and pango resolve the name to (Noto Sans on some hosts). Node sizes
+// are fixed and a card's label table is pinned, so a card's text is drawn from
+// the table's left edge whatever Graphviz measures, and the width table in
+// card.go bounds what resvg draws in Source Sans 3. A host that resolves another
+// font only moves a card's state word on row 1, and measures the legend and the
+// host labels with it.
 const diagramFont = "Source Sans 3"
 
 // dotq quotes s as a DOT string.
