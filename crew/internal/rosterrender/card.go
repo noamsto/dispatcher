@@ -20,10 +20,9 @@ const (
 	cardRows  = 5
 
 	// cardTableH is the label table's height in points: five rows at cardFont
-	// with cardCellPad (measured at 88.7 by neato, in the font fontconfig and
-	// pango resolve, Noto Sans here), rounded up. The table is pinned to
-	// cardInner by cardTableH so its left edge, where the text starts, does not
-	// depend on how Graphviz measures the text.
+	// with cardCellPad, measured at 88.7 by neato with Noto Sans, rounded up.
+	// The table is pinned to cardInner by cardTableH so its left edge, where the
+	// text starts, does not depend on how Graphviz measures the text.
 	cardTableH = 89.0
 	ellipsis   = "…"
 )
@@ -39,9 +38,8 @@ func cardPen(tier string) float64 {
 	return planetPenwidth
 }
 
-// cardText is the plain text of a card. rows[0] is the head, to which state
-// is appended after a gap in the state colour; rows[1:] are the title, tier
-// line and detail. Nothing is escaped.
+// cardText is the unescaped text of a card. rows[0] is the head, to which state
+// is appended after a gap in the state colour.
 type cardText struct {
 	rows  [cardRows]string
 	state string

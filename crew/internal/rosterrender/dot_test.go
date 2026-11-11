@@ -486,8 +486,6 @@ func nodeLine(t *testing.T, out, id string) string {
 	return ""
 }
 
-// TestDotCardsNeverOverlap: every card, border included, stands clear of every
-// other card and of the dispatcher, in the layouts that crowd them most.
 func TestDotCardsNeverOverlap(t *testing.T) {
 	const gap = 4.0
 	for _, c := range dotCases {
@@ -495,7 +493,6 @@ func TestDotCardsNeverOverlap(t *testing.T) {
 			_, sc, _ := c.emit()
 			for i, p := range sc.planets {
 				hw, hh := cardHalf(cardPen(p.tier))
-				// The distance from the dispatcher to the nearest point of the card.
 				near := math.Hypot(max(math.Abs(p.x)-hw, 0), max(math.Abs(p.y)-hh, 0))
 				if near < sunSize*72/2+planetPenwidth {
 					t.Errorf("%s overlaps the dispatcher: %.1f away", p.branch, near)
@@ -511,9 +508,6 @@ func TestDotCardsNeverOverlap(t *testing.T) {
 	}
 }
 
-// TestDotCardCarriesItsText: a card's label has the title wrapped over two rows,
-// the tier, engine and model, and the detail, each cut to the card's width and
-// escaped for the HTML label.
 func TestDotCardCarriesItsText(t *testing.T) {
 	ws := []dotWorker{
 		{branch: "feat/1-long", name: "lime", tier: "deep", state: "working", age: 5},

@@ -355,7 +355,6 @@ func TestHostileTextCannotBreakOutOfTheDot(t *testing.T) {
 	if !strings.Contains(out, `label="mbpevillabelx"`) {
 		t.Errorf("the hostile host is not reduced to its safe characters:\n%s", out)
 	}
-	// Free text is shown, as printable runes escaped for the HTML label.
 	for _, want := range []string{"T&quot;itle", "go ${x}end"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the card lacks the sanitized text %q:\n%s", want, out)

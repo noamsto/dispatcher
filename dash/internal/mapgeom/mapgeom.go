@@ -143,9 +143,6 @@ func (p Placement) PxH() int { return max(minPx, p.Rows*p.CellH) }
 // planet by its circle. When shapes overlap in the cell, the planet whose
 // centre is nearest the cell rect wins; a cell that contains a centre always
 // picks that planet.
-//
-// Cards, remote ones included, are tested by their rectangle; geometry from
-// older renderers without HW and HH is tested by its circle.
 func Hit(g Geometry, p Placement, cellX, cellY int) int {
 	if cellX < 0 || cellY < 0 || cellX >= p.Cols || cellY >= p.Rows {
 		return -1
