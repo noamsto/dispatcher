@@ -7,8 +7,9 @@
 //
 // body_file is worker-writable data, and so is the crew tree it names a file
 // in, so both sides go through an os.Root on the crew dir: a symlink that
-// leaves the dir is refused, and the final component is opened O_NOFOLLOW and
-// O_NONBLOCK and checked for a regular file on the open descriptor. The
+// leaves the dir is refused (one that stays inside it is followed), and the
+// file is opened O_NONBLOCK and checked for a regular file on the open
+// descriptor. A hard link to a file elsewhere is not detected. The
 // directory lives in the crew dir, which `crew deregister` removes as a unit,
 // so the files need no collection of their own.
 package spill
