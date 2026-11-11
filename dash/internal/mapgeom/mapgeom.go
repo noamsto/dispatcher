@@ -28,8 +28,7 @@ const (
 )
 
 // Planet is one drawn worker. CX, CY and R are in PNG pixels with the origin
-// at the image's top-left. For a remote-host hexagon R is the circumscribed
-// radius.
+// at the image's top-left.
 type Planet struct {
 	Branch string `json:"branch"`
 	Name   string `json:"name"`
@@ -41,6 +40,11 @@ type Planet struct {
 	CX   float64 `json:"cx"`
 	CY   float64 `json:"cy"`
 	R    float64 `json:"r"`
+	// HW and HH are the half width and half height of a card-shaped worker.
+	// Both are set or both are zero; older renderers send neither, and R still
+	// bounds the card so it stays a valid circle for them.
+	HW float64 `json:"hw,omitempty"`
+	HH float64 `json:"hh,omitempty"`
 }
 
 // PlanetKey identifies a planet: a branch alone is ambiguous across repos.
@@ -86,6 +90,9 @@ func Parse(data []byte) (Geometry, error) {
 		if !finite(p.CX, p.CY, p.R) || p.R <= 0 {
 			return Geometry{}, fmt.Errorf("map geometry: planet %q has a bad circle", p.Branch)
 		}
+		if !finite(p.HW, p.HH) || p.HW < 0 || p.HH < 0 || (p.HW > 0) != (p.HH > 0) {
+			return Geometry{}, fmt.Errorf("map geometry: planet %q has a bad card", p.Branch)
+		}
 		if p.CX < 0 || p.CX > float64(g.W) || p.CY < 0 || p.CY > float64(g.H) {
 			return Geometry{}, fmt.Errorf("map geometry: planet %q is outside the image", p.Branch)
 		}
@@ -130,14 +137,15 @@ func (p Placement) PxW() int { return max(minPx, p.Cols*p.CellW) }
 // PxH is the image height to request from the renderer (--px).
 func (p Placement) PxH() int { return max(minPx, p.Rows*p.CellH) }
 
-// Hit returns the index of the planet whose circle intersects the cell at
-// (cellX, cellY), counted from the image block's top-left, or -1 for gaps,
-// margins and cells outside the block. When circles overlap in the cell, the
-// planet whose centre is nearest the cell rect wins; a cell that contains a
-// centre always picks that planet.
+// Hit returns the index of the planet whose shape the cell at (cellX, cellY)
+// touches, counted from the image block's top-left, or -1 for gaps, margins
+// and cells outside the block. A card is tested by its rectangle and any other
+// planet by its circle. When shapes overlap in the cell, the planet whose
+// centre is nearest the cell rect wins; a cell that contains a centre always
+// picks that planet.
 //
-// Remote-host planets are hexagons but are tested by their circumscribed
-// circle, so a click just outside a hexagon's flat edge still selects it.
+// Cards, remote ones included, are tested by their rectangle; geometry from
+// older renderers without HW and HH is tested by its circle.
 func Hit(g Geometry, p Placement, cellX, cellY int) int {
 	if cellX < 0 || cellY < 0 || cellX >= p.Cols || cellY >= p.Rows {
 		return -1
@@ -157,12 +165,21 @@ func Hit(g Geometry, p Placement, cellX, cellY int) int {
 		dx := pl.CX - clamp(pl.CX, x0, x1)
 		dy := pl.CY - clamp(pl.CY, y0, y1)
 		d := math.Hypot(dx, dy)
-		if d > pl.R || d >= bestD {
+		if d >= bestD || !pl.touches(x0, x1, y0, y1, d) {
 			continue
 		}
 		best, bestD = i, d
 	}
 	return best
+}
+
+// touches reports whether the cell rect [x0,x1]x[y0,y1] reaches the planet's
+// shape; d is the distance from the planet's centre to that rect.
+func (p Planet) touches(x0, x1, y0, y1, d float64) bool {
+	if p.HW > 0 && p.HH > 0 {
+		return x1 >= p.CX-p.HW && x0 <= p.CX+p.HW && y1 >= p.CY-p.HH && y0 <= p.CY+p.HH
+	}
+	return d <= p.R
 }
 
 func clamp(v, lo, hi float64) float64 { return min(max(v, lo), hi) }

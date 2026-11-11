@@ -37,36 +37,35 @@ const (
 	// corners; legendH is the height the legend adds under the canvas, which the
 	// corners pre-pay in width so the picture comes out square.
 	canvasPad = 24.0
-	legendH   = 74.0
+	legendH   = 94.0
 
 	// legendRowH is the height of the marker row the full legend gains when any
 	// marker or wedge is drawn. The counts legend is one such row on top of the
 	// padding the full legend's height already holds.
 	legendRowH    = 20.0
-	legendCountsH = legendH - 2*legendRowH
+	legendCountsH = legendH - 3*legendRowH
 
-	// planetPenwidth is every node's ring width; a blocked planet's is heavier.
-	// The map's hit radius includes half of it.
-	planetPenwidth  = 3.0
-	blockedPenwidth = 5.0
+	// planetPenwidth is the standard tier's border width and a hold's ring;
+	// cardPen picks a card's. The map's hit rectangle includes half of it.
+	planetPenwidth = 3.0
 
-	// selectGap is how far the selection ring stands off a planet's edge.
+	// selectGap is how far the selection ring stands off a card's edge.
 	selectGap = 9.0
 
-	// A waiting planet gets a dotted ring waitGap off its edge; a CI badge sits
-	// at the upper right, its centre ciBadgeStandoff outside the planet's edge so
-	// it overlaps the rim without covering the codename. The map's hit radius
-	// covers both.
-	waitGap         = 6.0
-	waitPenwidth    = 2.5
-	ciBadgeSize     = 0.2
-	ciBadgeRadius   = ciBadgeSize * 72 / 2
-	ciBadgeStandoff = ciBadgeRadius / 2
+	// A waiting card gets a dotted ring waitGap off its edge. The CI badge is
+	// centred on the card's upper right corner, the review-round chip on its lower
+	// right and the remote host's hexagon on its upper left, so each overlaps the
+	// border without covering the text. The map's hit rectangle covers them all.
+	waitGap       = 6.0
+	waitPenwidth  = 2.5
+	ciBadgeSize   = 0.2
+	ciBadgeRadius = ciBadgeSize * 72 / 2
 
-	// A review-round badge sits at the lower right, standing off like the CI one.
-	roundBadgeW        = 0.3
-	roundBadgeH        = 0.2
-	roundBadgeStandoff = ciBadgeStandoff
+	roundBadgeW = 0.3
+	roundBadgeH = 0.2
+
+	hostBadgeSize = 0.22
+	hostBadgePen  = 1.5
 
 	// Wedge boundary spokes start spokeInner from the dispatcher; the rim arc is
 	// a polyline of points at most arcStep degrees apart, inset arcInset from the
@@ -127,8 +126,32 @@ func finishSVG(svg []byte, wedges []wedge) []byte {
 	out := slices.Concat(svg[:m[1]], []byte(rect), svg[m[1]:])
 	out = bytes.ReplaceAll(out, []byte("aeye&#45;"), []byte("aeye-"))
 	out = bytes.ReplaceAll(out, []byte(`font-family="`+diagramFont+`"`), []byte(`font-family="'`+diagramFont+`'"`))
+	out = dotFlowSpokes(out)
 	out = haloFreeText(out)
 	return injectWedgeFills(out, wedges)
+}
+
+// flowDash is the dash a flow spoke rests in: a near-zero dash with round caps
+// draws dots, one every animFlowGap of aeye's flow animation. Graphviz's dashed
+// style cannot express it.
+const flowDash = ` stroke-dasharray="0.01 12" stroke-linecap="round"`
+
+var (
+	flowEdgeRe = regexp.MustCompile(`(?s)<g id="edge\d+" class="[^"]*\baeye-flow\b[^"]*">.*?</g>`)
+	dashAttrRe = regexp.MustCompile(`\sstroke-dasharray="[^"]*"`)
+	pathTagRe  = regexp.MustCompile(`<path\b[^>]*?(/?>)`)
+)
+
+// dotFlowSpokes gives the path of every flow spoke its resting dash. The viewer
+// rasterizes the un-animated svg while it pans.
+func dotFlowSpokes(svg []byte) []byte {
+	return flowEdgeRe.ReplaceAllFunc(svg, func(group []byte) []byte {
+		return pathTagRe.ReplaceAllFunc(group, func(tag []byte) []byte {
+			tag = dashAttrRe.ReplaceAll(tag, nil)
+			end := len(tag) - len(pathTagRe.FindSubmatch(tag)[1])
+			return slices.Concat(tag[:end], []byte(flowDash), tag[end:])
+		})
+	})
 }
 
 // haloFreeText outlines every text that is not drawn inside a node shape: the
@@ -305,25 +328,31 @@ func mapHalf(sc scene) (halfX, halfY float64) {
 	return halfX, halfY
 }
 
-// hitRadius is the distance from a planet's centre to the farthest thing drawn
-// for it: its ring, the waiting ring and the CI badge.
-func hitRadius(p placed) float64 {
-	pr := p.size * 72 / 2
-	pen := planetPenwidth
-	if !p.failed && p.class == classBlocked {
-		pen = blockedPenwidth
-	}
-	r := pr + pen/2
+// cardHalf is the half extents in points of a card with the given border, which
+// counts for half its width.
+func cardHalf(pen float64) (hw, hh float64) {
+	return cardW*72/2 + pen/2, cardH*72/2 + pen/2
+}
+
+// hitRect is the half extents from a planet's centre of everything drawn for
+// it: its card, the waiting ring and the corner badges.
+func hitRect(p placed) (hw, hh float64) {
+	cw, ch := cardW*72/2, cardH*72/2
+	hw, hh = cardHalf(cardPen(p.tier))
+	grow := func(w, h float64) { hw, hh = max(hw, w), max(hh, h) }
 	if p.waiting {
-		r = max(r, pr+waitGap+waitPenwidth/2)
+		grow(cw+waitGap+waitPenwidth/2, ch+waitGap+waitPenwidth/2)
 	}
 	if _, badgePen, ok := ciBadge(p.ci); ok {
-		r = max(r, pr+ciBadgeStandoff+ciBadgeRadius+badgePen/2)
+		grow(cw+ciBadgeRadius+badgePen/2, ch+ciBadgeRadius+badgePen/2)
 	}
 	if p.rounds > 0 {
-		r = max(r, pr+roundBadgeStandoff+math.Hypot(roundBadgeW*72/2, roundBadgeH*72/2))
+		grow(cw+roundBadgeW*72/2, ch+roundBadgeH*72/2)
 	}
-	return r
+	if p.host != "" {
+		grow(cw+hostBadgeSize*72/2+hostBadgePen/2, ch+hostBadgeSize*72/2+hostBadgePen/2)
+	}
+	return hw, hh
 }
 
 // ciBadge is the attributes a CI state draws its badge with, and its pen width,
@@ -422,27 +451,31 @@ func buildDOT(sc scene, lg *legend, mode legendMode, sel, selRepo string) string
 	}
 	flow, pulse, glow := animatedSets(planets)
 	for _, p := range planets {
-		stmt(&b, ids[p.key()], planetAttrs(p, pulse[p.key()])...)
+		id := ids[p.key()]
+		cw, ch := cardW*72/2, cardH*72/2
+		stmt(&b, id, planetAttrs(p, pulse[p.key()])...)
 		if p.waiting {
-			d := p.size + 2*waitGap/72
-			stmt(&b, ids[p.key()]+"w", `label=""`, "style=dotted", num("width", d), num("height", d), pos(p.x, p.y),
+			stmt(&b, id+"w", `label=""`, "shape=box", str("style", "rounded,dotted"),
+				num("width", cardW+2*waitGap/72), num("height", cardH+2*waitGap/72), pos(p.x, p.y),
 				str("color", colWaiting), num("penwidth", waitPenwidth))
 		}
 		if attrs, _, ok := ciBadge(p.ci); ok {
-			dx, dy := polar(p.size*72/2+ciBadgeStandoff, 45)
-			stmt(&b, ids[p.key()]+"c", append([]string{num("width", ciBadgeSize), num("height", ciBadgeSize), pos(p.x+dx, p.y+dy)}, attrs...)...)
+			stmt(&b, id+"c", append([]string{num("width", ciBadgeSize), num("height", ciBadgeSize), pos(p.x+cw, p.y+ch)}, attrs...)...)
 		}
 		if p.rounds > 0 {
-			dx, dy := polar(p.size*72/2+roundBadgeStandoff, 135)
-			stmt(&b, ids[p.key()]+"r", str("label", "r"+strconv.Itoa(p.rounds)), "shape=box", str("style", "rounded,filled"),
-				num("width", roundBadgeW), num("height", roundBadgeH), "fontsize=9", pos(p.x+dx, p.y+dy),
+			stmt(&b, id+"r", str("label", "r"+strconv.Itoa(p.rounds)), "shape=box", str("style", "rounded,filled"),
+				num("width", roundBadgeW), num("height", roundBadgeH), "fontsize=9", pos(p.x+cw, p.y-ch),
 				str("fillcolor", colWaiting), str("fontcolor", colBG), "penwidth=0")
+		}
+		if p.host != "" {
+			stmt(&b, id+"h", `label=""`, "shape=hexagon", num("width", hostBadgeSize), num("height", hostBadgeSize),
+				pos(p.x-cw, p.y+ch), str("color", colLegend), str("fillcolor", colFill), num("penwidth", hostBadgePen))
 		}
 	}
 	for _, p := range planets {
 		attrs := []string(nil)
 		if flow[p.key()] {
-			attrs = append(attrs, str("class", "aeye-flow"), "style=dashed")
+			attrs = append(attrs, str("class", "aeye-flow"))
 		}
 		stmt(&b, "dispatcher -> "+ids[p.key()], attrs...)
 	}
@@ -498,8 +531,8 @@ func buildDOT(sc scene, lg *legend, mode legendMode, sel, selRepo string) string
 		if rings > 1 {
 			id += strconv.Itoa(rings)
 		}
-		d := p.size + 2*selectGap/72
-		stmt(&b, id, `label=""`, "style=solid", num("width", d), num("height", d), pos(p.x, p.y), str("color", colSun))
+		stmt(&b, id, `label=""`, "shape=box", str("style", "rounded"), num("width", cardW+2*selectGap/72),
+			num("height", cardH+2*selectGap/72), pos(p.x, p.y), str("color", colSun))
 	}
 	if lg != nil && mode != legendNone {
 		b.WriteString("  label=<" + legendHTML(*lg, mode) + ">;\n")
@@ -534,36 +567,76 @@ func wedgeDOT(b *strings.Builder, w string, wd wedge) {
 		str("fontcolor", colLegend), pos(wd.x, wd.y))
 }
 
+// planetAttrs draws a worker as a rounded card: the border colour is the state's
+// and its weight the tier's. A failed, done or stale card is dim all through.
 func planetAttrs(p placed, pulse bool) []string {
-	attrs := []string{str("label", p.label), num("width", p.size), num("height", p.size), pos(p.x, p.y)}
-	if p.host != "" {
-		attrs = append(attrs, "shape=hexagon")
-	}
-	ring := func(col string) string {
-		if p.stale {
-			return str("color", col+staleAlpha)
-		}
-		return str("color", col)
-	}
+	border, fill, stateCol := colWorking, colFill, colWorking
+	dim, dashed := p.stale, p.stale
+	var class string
 	switch {
 	case p.failed:
-		attrs = append(attrs, str("color", colFailed), str("style", "filled,dashed"), str("fillcolor", colBG), str("fontcolor", colDim))
+		border, fill, dim, dashed = colFailed, colBG, true, true
 	case p.class == classBlocked:
-		attrs = append(attrs, ring(colBlocked), num("penwidth", blockedPenwidth))
+		border, stateCol = colBlocked, colBlocked
 		if pulse {
-			attrs = append(attrs, str("class", "aeye-pulse"))
+			class = "aeye-pulse"
 		}
 	case p.class == classPROpen:
-		attrs = append(attrs, ring(colPROpen))
+		border, stateCol = colPROpen, colPROpen
 	case p.class == classDone:
-		attrs = append(attrs, str("color", colDone), str("fillcolor", colBG), str("fontcolor", colDim))
-	default:
-		attrs = append(attrs, ring(colWorking))
+		border, fill, dim = colDone, colBG, true
 	}
 	if p.stale {
-		attrs = append(attrs, str("style", "filled,dashed"), str("fontcolor", colDim))
+		border += staleAlpha
+	}
+	style := "rounded,filled"
+	if dashed {
+		style += ",dashed"
+	}
+	attrs := []string{"label=<" + cardLabel(p, stateCol, dim) + ">", "shape=box", num("width", cardW), num("height", cardH),
+		"fontsize=11", pos(p.x, p.y), str("style", style), str("color", border), str("fillcolor", fill),
+		num("penwidth", cardPen(p.tier))}
+	if dim {
+		attrs = append(attrs, str("fontcolor", colDim))
+	}
+	if class != "" {
+		attrs = append(attrs, str("class", class))
 	}
 	return attrs
+}
+
+// cardLabel is the card's Graphviz HTML label: five left-aligned rows in a one
+// column table at least as wide as the text area, so the text sits at the same
+// height on every card.
+func cardLabel(p placed, stateCol string, dim bool) string {
+	c := cardTextOf(p.planet)
+	paint := func(s, col string) string {
+		if s == "" {
+			s = "&#160;"
+		} else {
+			s = htmlText(s)
+		}
+		if dim {
+			col = colDim
+		}
+		if col == "" {
+			return s
+		}
+		return `<font color="` + col + `">` + s + "</font>"
+	}
+	if dim {
+		stateCol = colDim
+	}
+	head := paint(c.rows[0], "") + "&#160;&#160;" + `<font color="` + stateCol + `">` + htmlText(c.state) + "</font>"
+	rows := []string{head, paint(c.rows[1], ""), paint(c.rows[2], ""), paint(c.rows[3], colLegend), paint(c.rows[4], colDim)}
+	var b strings.Builder
+	fmt.Fprintf(&b, `<table border="0" cellborder="0" cellspacing="0" cellpadding="%d" width="%s">`,
+		cardCellPad, strconv.FormatFloat(cardInner, 'f', 1, 64))
+	for _, r := range rows {
+		b.WriteString(`<tr><td align="left">` + r + "</td></tr>")
+	}
+	b.WriteString("</table>")
+	return b.String()
 }
 
 // legendHTML is the graph label: the state counts, each key a dot in the
@@ -593,14 +666,15 @@ func legendHTML(lg legend, mode legendMode) string {
 		return b.String()
 	}
 	shapes := []string{
-		"size = tier",
 		`<font color="` + colEdge + `">●</font> small dot = role`,
 		"hexagon = remote host",
 	}
 	if lg.holds > 0 {
 		shapes = append(shapes, `<font color="`+colHolds+`">●</font> dashed outer dot = queued hold`)
 	}
+	borders := "border colour = state&nbsp;&nbsp;&nbsp;&nbsp;border weight = tier"
 	stacked := `<font color="` + colPROpen + `">→</font> dashed arrow = stacked on`
+	b.WriteString("    <tr><td>" + borders + "</td></tr>\n")
 	b.WriteString("    <tr><td>" + strings.Join(shapes, gap) + "</td></tr>\n")
 	b.WriteString("    <tr><td>" + stacked + "</td></tr>\n")
 	if markerRow(lg) {

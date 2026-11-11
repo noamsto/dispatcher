@@ -35,39 +35,42 @@ func onlyPlanet(t *testing.T, rows ...map[string]any) planet {
 	return ps[0]
 }
 
-func TestPlanetLabelIsNameAndIssue(t *testing.T) {
+func TestPlanetCardHeadIsNameAndIssue(t *testing.T) {
 	for branch, want := range map[string]string{
-		"feat/1451-roster": "lime\n1451",
-		"fix/x-12-y":       "lime\n12",
-		"1451-bare":        "lime\n1451",
+		"feat/1451-roster": "lime · #1451",
+		"fix/x-12-y":       "lime · #12",
+		"1451-bare":        "lime · #1451",
 		"feat/no-number":   "lime",
 		"main":             "lime",
 	} {
-		if got := onlyPlanet(t, planetRow(branch, "working")).label; got != want {
-			t.Errorf("%s label = %q, want %q", branch, got, want)
+		if got := head(onlyPlanet(t, planetRow(branch, "working"))); got != want {
+			t.Errorf("%s head = %q, want %q", branch, got, want)
 		}
 	}
 	row := planetRow("feat/7-x", "working")
 	row["name"] = ""
-	if got := onlyPlanet(t, row).label; got != "?\n7" {
-		t.Errorf("empty name label = %q, want %q", got, "?\n7")
+	if got := head(onlyPlanet(t, row)); got != "? · #7" {
+		t.Errorf("empty name head = %q, want %q", got, "? · #7")
 	}
 }
 
-func TestPlanetTierSizes(t *testing.T) {
+// head is the first text row of p's card, without the state.
+func head(p planet) string { return cardTextOf(p).rows[0] }
+
+func TestPlanetTierPens(t *testing.T) {
 	for tier, want := range map[string]float64{
-		"deep": 0.9, "standard": 0.75, "trivial": 0.6, "": 0.75, "huge": 0.75,
+		"deep": 4.5, "standard": 3, "trivial": 1.75, "": 3, "huge": 3,
 	} {
 		row := planetRow("feat/1-a", "working")
 		row["tier"] = tier
-		if got := onlyPlanet(t, row).size; got != want {
-			t.Errorf("tier %q size = %v, want %v", tier, got, want)
+		if got := cardPen(onlyPlanet(t, row).tier); got != want {
+			t.Errorf("tier %q pen = %v, want %v", tier, got, want)
 		}
 	}
 	row := planetRow("feat/1-a", "working")
 	delete(row, "tier")
-	if got := onlyPlanet(t, row).size; got != 0.75 {
-		t.Errorf("missing tier size = %v, want 0.75", got)
+	if got := cardPen(onlyPlanet(t, row).tier); got != 3 {
+		t.Errorf("missing tier pen = %v, want 3", got)
 	}
 }
 
@@ -84,8 +87,8 @@ func TestPlanetHostileTextIsReduced(t *testing.T) {
 	if !safeText.MatchString(p.host) {
 		t.Errorf("host = %q is not reduced", p.host)
 	}
-	if strings.ContainsAny(p.label, "\"\\$`;<>") || strings.Count(p.label, "\n") != 1 {
-		t.Errorf("label = %q leaks hostile text", p.label)
+	if strings.ContainsAny(head(p), "\"\\$`;<>") {
+		t.Errorf("head = %q leaks hostile text", head(p))
 	}
 	if n := utf8.RuneCountInString(p.name); n > 24 {
 		t.Errorf("name is %d runes, want <= 24", n)
@@ -103,21 +106,21 @@ func TestPlanetHostileTextIsReduced(t *testing.T) {
 
 func TestPlanetCodenameDropsFoldSuffix(t *testing.T) {
 	for _, tc := range []struct{ name, branch, label string }{
-		{"orchid·1450", "feat/1450-x", "orchid\n1450"},
-		{"fern", "feat/111-x", "fern\n111"},
-		{"blush·1278", "feat/no-digits", "blush\n1278"},
-		{"sky·ABC-12", "feat/no-digits", "sky\nABC-12"},
+		{"orchid·1450", "feat/1450-x", "orchid · #1450"},
+		{"fern", "feat/111-x", "fern · #111"},
+		{"blush·1278", "feat/no-digits", "blush · #1278"},
+		{"sky·ABC-12", "feat/no-digits", "sky · ABC-12"},
 		{"sky·feat/odd", "feat/no-digits", "sky"},
 		{"sky·", "feat/no-digits", "sky"},
-		{"·1450", "feat/1450-x", "?\n1450"},
+		{"·1450", "feat/1450-x", "? · #1450"},
 		{"a\"b$·c;d·9", "feat/no-digits", "ab"},
-		{"lime·7·8", "feat/5-x", "lime\n5"},
+		{"lime·7·8", "feat/5-x", "lime · #5"},
 	} {
 		row := planetRow(tc.branch, "working")
 		row["name"] = tc.name
 		p := onlyPlanet(t, row)
-		if p.label != tc.label {
-			t.Errorf("name %q branch %q: label = %q, want %q", tc.name, tc.branch, p.label, tc.label)
+		if head(p) != tc.label {
+			t.Errorf("name %q branch %q: head = %q, want %q", tc.name, tc.branch, head(p), tc.label)
 		}
 		if strings.Contains(p.name, "·") {
 			t.Errorf("name %q kept the suffix: %q", tc.name, p.name)

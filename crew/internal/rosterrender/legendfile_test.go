@@ -27,12 +27,12 @@ func TestACountsPassKeepsTheFullKeyBesideTheDiagram(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no key beside the diagram: %v", err)
 	}
-	for _, want := range []string{"hexagon = remote host", "dashed arrow = stacked on", "size = tier", "fleet budget 7", "queued hold"} {
+	for _, want := range []string{"hexagon on the corner = remote host", "dashed arrow = stacked on", "border colour = state", "border weight = tier", "fleet budget 7", "queued hold"} {
 		if !strings.Contains(string(key), want) {
 			t.Errorf("the key lacks %q:\n%s", want, key)
 		}
 	}
-	if strings.Contains(l.dot(), "hexagon = remote host") || strings.Contains(l.dot(), "fleet budget") {
+	if strings.Contains(l.dot(), "hexagon on the corner = remote host") || strings.Contains(l.dot(), "fleet budget") {
 		t.Errorf("the key text is still in the diagram's legend:\n%s", l.dot())
 	}
 
@@ -83,7 +83,7 @@ func TestFullAndNoneLegendsWriteNoKeyFile(t *testing.T) {
 			if _, err := os.Stat(l.legendPath()); !errors.Is(err, os.ErrNotExist) {
 				t.Errorf("--legend %s wrote a key file: %v", mode, err)
 			}
-			if has := strings.Contains(l.dot(), "label=<"); has != (mode == "full") {
+			if has := strings.Contains(l.dot(), "\n  label=<"); has != (mode == "full") {
 				t.Errorf("--legend %s: graph label present = %v", mode, has)
 			}
 			if err := os.WriteFile(l.legendPath(), []byte("stale"), 0o644); err != nil {

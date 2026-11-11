@@ -321,7 +321,7 @@ func TestReapedRowIsDoneInTheLegend(t *testing.T) {
 	if lg.done != 1 || !strings.Contains(text, "done 1") {
 		t.Errorf("legend does not count reaped as done: %+v\n%s", lg, text)
 	}
-	if !strings.Contains(text, `label="n\n7"`) {
+	if !strings.Contains(text, "n · #7") {
 		t.Errorf("a fresh reaped row is not drawn:\n%s", text)
 	}
 }

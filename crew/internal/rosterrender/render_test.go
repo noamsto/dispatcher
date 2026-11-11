@@ -215,8 +215,8 @@ func TestOnceDrawsTheFixtureBus(t *testing.T) {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
 	out := l.published()
-	for id, label := range map[string]string{"p1": `sage\n1`, "p2": `atlas\n2`, "p3": `nova\n3`, "p4": `ember\n4`} {
-		if line := nodeLine(t, out, id); !strings.Contains(line, `label="`+label+`"`) {
+	for id, label := range map[string]string{"p1": "sage · #1", "p2": "atlas · #2", "p3": "nova · #3", "p4": "ember · #4"} {
+		if line := nodeLine(t, out, id); !strings.Contains(line, label) {
 			t.Errorf("%s is not %s: %s", id, label, line)
 		}
 	}
@@ -346,23 +346,29 @@ func TestHostileTextCannotBreakOutOfTheDot(t *testing.T) {
 	}
 	// The fold swaps a codename the pool grammar rejects for a pool one; clean
 	// guards what survives (planets_test).
-	if line := nodeLine(t, out, "p1"); !regexp.MustCompile(`label="[a-z][a-z0-9-]*\\n1"`).MatchString(line) {
+	if line := nodeLine(t, out, "p1"); !regexp.MustCompile(`<td align="left">[a-z][a-z0-9-]* · #1&#160;`).MatchString(line) {
 		t.Errorf("the hostile codename was drawn as is: %s", line)
 	}
-	if line := nodeLine(t, out, "p3"); !strings.Contains(line, "shape=hexagon") {
-		t.Errorf("the remote worker is not a hexagon: %s", line)
+	if line := nodeLine(t, out, "p3h"); !strings.Contains(line, "shape=hexagon") {
+		t.Errorf("the remote worker has no hexagon badge: %s", line)
 	}
 	if !strings.Contains(out, `label="mbpevillabelx"`) {
 		t.Errorf("the hostile host is not reduced to its safe characters:\n%s", out)
 	}
-	for _, banned := range []string{"red;", "fill: blue", ";x", "<b>", "$", "h\"1", `\y`, "Itle"} {
+	// Free text is shown, as printable runes escaped for the HTML label.
+	for _, want := range []string{"T&quot;itle", "go ${x}end"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the card lacks the sanitized text %q:\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{"red;", "fill: blue", ";x", "<b>", "h\"1", `\y`, "T\"itle"} {
 		if strings.Contains(out, banned) {
 			t.Errorf("%q reached the diagram:\n%s", banned, out)
 		}
 	}
 	// Only generated ids start a statement, every quote closes on its own line, and
 	// the only control byte in the file is the newline between statements.
-	id := regexp.MustCompile(`^(p\d+(m\d+|[wcr])?|h\d+|q\d+|a\d+|c\d+|dispatcher|node|edge)$`)
+	id := regexp.MustCompile(`^(p\d+(m\d+|[wcrh])?|h\d+|q\d+|a\d+|c\d+|dispatcher|node|edge)$`)
 	stmt := regexp.MustCompile(`^  (\S+)(?: -> (\S+))? \[`)
 	for _, line := range strings.Split(l.dot(), "\n") {
 		if !balanced(line) {
@@ -413,7 +419,7 @@ func TestStaleFinishedAndReapedRowsAreNotDrawn(t *testing.T) {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
 	out := l.published()
-	for _, want := range []string{`sage\n1`, `iris\n5`, "working 2", "blocked 0", "done 0"} {
+	for _, want := range []string{"sage · #1", "iris · #5", "working 2", "blocked 0", "done 0"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q in\n%s", want, out)
 		}
@@ -449,7 +455,7 @@ func TestAFinishedBranchIsDrawnUntilItsWorktreeIsReaped(t *testing.T) {
 	if code, stderr := l.once(Request{}); code != exitOK {
 		t.Fatalf("code = %d, stderr %q", code, stderr)
 	}
-	if out := l.published(); !strings.Contains(out, `sage\n1`) {
+	if out := l.published(); !strings.Contains(out, "sage · #1") {
 		t.Errorf("a finished branch with its worktree was not drawn:\n%s", out)
 	}
 
@@ -513,8 +519,8 @@ func TestUnchangedBusWritesNothingAndSkipsGraphviz(t *testing.T) {
 		stamps[i] = rewind(t, f)
 	}
 
-	// A detail is not on the picture: the bus changed, the dot did not.
-	l.appendBus(t, statusEvent("worker:feat/1-a#s1", 1791361500000, "working", "execute: lint", "", ""))
+	// A repeated status is not on the picture: the bus changed, the dot did not.
+	l.appendBus(t, statusEvent("worker:feat/1-a#s1", 1791361500000, "working", "plan-critic r2", "", ""))
 	for range 2 {
 		if code, stderr := l.once(Request{}); code != exitOK {
 			t.Fatalf("code = %d, stderr %q", code, stderr)
@@ -698,7 +704,7 @@ func TestDiagramFileIsNamedForItsRepoAndCrew(t *testing.T) {
 			if !want.MatchString(name) {
 				t.Errorf("%q is not a crew diagram name: want %s", name, want)
 			}
-			if got := l.published(); !strings.Contains(got, `sage\n1`) {
+			if got := l.published(); !strings.Contains(got, "sage · #1") {
 				t.Errorf("%s holds no worker:\n%s", name, got)
 			}
 			names = append(names, name)

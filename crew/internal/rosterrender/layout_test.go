@@ -11,7 +11,7 @@ import (
 )
 
 func wp(branch, class string) planet {
-	return planet{branch: branch, class: class, size: 0.75}
+	return planet{branch: branch, class: class}
 }
 
 func remoteWP(branch, class, host string) planet {
@@ -251,7 +251,7 @@ func TestLayoutRadiusGrowsWithCountAndSpacingHolds(t *testing.T) {
 	}
 	for i, p := range big.planets {
 		q := big.planets[(i+1)%len(big.planets)]
-		if d := math.Hypot(p.x-q.x, p.y-q.y); d < p.size*72 {
+		if d := math.Hypot(p.x-q.x, p.y-q.y); d < 2*cardReach {
 			t.Errorf("planets %d and %d overlap: %v apart", i, (i+1)%len(big.planets), d)
 		}
 	}
@@ -266,13 +266,13 @@ func TestLayoutFitsTheCanvas(t *testing.T) {
 			outer := 0.0
 			var side [4]bool // right, left, top, bottom: planets on an axis count for both neighbours
 			for _, p := range sc.planets {
-				outer = max(outer, math.Hypot(p.x, p.y)+p.size*72/2)
+				outer = max(outer, math.Hypot(p.x, p.y)+cardReach)
 				side[0] = side[0] || p.x > -1e-6
 				side[1] = side[1] || p.x < 1e-6
 				side[2] = side[2] || p.y > -1e-6
 				side[3] = side[3] || p.y < 1e-6
 			}
-			if sc.extent < outer || sc.extent-outer > 60 {
+			if sc.extent < outer-1e-6 || sc.extent-outer > 60 {
 				t.Errorf("extent %v around content radius %v", sc.extent, outer)
 			}
 			if n >= 4 && slices.Contains(side[:], false) {
@@ -580,17 +580,23 @@ func TestWedgesAWedgeOfManyPlanetsUsesOuterRings(t *testing.T) {
 	if len(counts) < 2 {
 		t.Fatalf("40 planets on %d rings", len(counts))
 	}
-	for ring, n := range counts {
-		r := minRadius + float64(ring)*ringStep
-		if limit := max(1, int(r*w.span*math.Pi/180/arcPerPlanet)); n > limit {
-			t.Errorf("ring %d holds %d, cap %d", ring, n, limit)
-		}
-		if ring < len(counts)-1 && n < max(1, int(r*w.span*math.Pi/180/arcPerPlanet)) {
+	last := 0
+	for ring := range counts {
+		last = max(last, ring)
+	}
+	for ring := 0; ring <= last; ring++ {
+		fit := int((minRadius + float64(ring)*ringStep) * w.span * math.Pi / 180 / arcPerPlanet)
+		switch n := counts[ring]; {
+		case fit == 0 && n != 0:
+			t.Errorf("ring %d holds %d though no card fits it", ring, n)
+		case n > fit:
+			t.Errorf("ring %d holds %d, cap %d", ring, n, fit)
+		case ring < last && n < fit:
 			t.Errorf("ring %d holds %d but a further ring is in use", ring, n)
 		}
 	}
-	if !near(w.rim, outer+wedgeRimGap) {
-		t.Errorf("rim %v, want %v", w.rim, outer+wedgeRimGap)
+	if !near(w.rim, outer+cardReach+wedgeRimGap) {
+		t.Errorf("rim %v, want %v", w.rim, outer+cardReach+wedgeRimGap)
 	}
 }
 
@@ -663,7 +669,7 @@ func TestWedgesExtentHoldsEverything(t *testing.T) {
 		}
 	}
 	for _, p := range sc.planets {
-		check(p.branch, math.Hypot(p.x, p.y)+p.size*72/2)
+		check(p.branch, math.Hypot(p.x, p.y)+cardReach)
 		for _, m := range p.moons {
 			check("a moon", math.Hypot(m.x, m.y)+moonRadius)
 		}
