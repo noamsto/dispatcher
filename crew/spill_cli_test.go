@@ -163,3 +163,39 @@ func TestAwaitDegradesWhenTheBodyFileIsMissing(t *testing.T) {
 		t.Errorf("body is %d bytes, want the head", len(body))
 	}
 }
+
+// The dispatcher's park batch carries whole msg rows, so crew watch expands them
+// too.
+func TestWatchDeliversASpilledBodyWhole(t *testing.T) {
+	repo, _ := unanchoredBus(t)
+	body := spilledBody()
+	if _, _, code := runCrew(t, repo, "msg", "worker:feat/x#s1-1", "dispatcher:c1", body); code != 0 {
+		t.Fatalf("msg: code %d", code)
+	}
+	out, stderr, code := runCrew(t, repo, "watch", "--since", "0", "--timeout", "1", "--interval", "1")
+	if code != 0 {
+		t.Fatalf("watch: code %d, stderr %q", code, stderr)
+	}
+	var batch struct {
+		Events []map[string]any `json:"events"`
+	}
+	if err := json.Unmarshal([]byte(out), &batch); err != nil || len(batch.Events) != 1 {
+		t.Fatalf("watch output = %q (%v), want one event", out, err)
+	}
+	if batch.Events[0]["body"] != body {
+		t.Errorf("watch body is %d bytes, want the original %d", len(batch.Events[0]["body"].(string)), len(body))
+	}
+}
+
+// An overseer may read the bus from another host, where the file is not, so a
+// msg to it keeps the elision.
+func TestMsgToAnOverseerStillElides(t *testing.T) {
+	repo, logPath := unanchoredBus(t)
+	if _, _, code := runCrew(t, repo, "msg", "dispatcher:c1", "overseer:mbp", spilledBody()); code != 0 {
+		t.Fatalf("msg: code %d", code)
+	}
+	lines := busLines(t, logPath)
+	if len(lines) != 1 || strings.Contains(lines[0], "body_file") || !strings.Contains(lines[0], "[elided]") {
+		t.Fatalf("rows = %q, want one elided row with no body_file", lines)
+	}
+}

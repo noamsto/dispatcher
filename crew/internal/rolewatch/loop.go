@@ -8,12 +8,14 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/jsonval"
+	"github.com/noamsto/dispatcher/crew/internal/spill"
 )
 
 const (
@@ -212,6 +214,11 @@ func (w *watcher) enqueue(obj map[string]any, ts int64) {
 	if !SenderAllowed(from, w.branch, w.wCrew) {
 		w.notify(dropNotice(w.role, w.pane, from, w.roleID), w.dispatcher())
 		return
+	}
+	if w.delivery != "pull" {
+		// A typed role has no await to read the spilled file back, so the paste
+		// carries the whole assignment.
+		spill.Expand(obj, bus.Paths{Dir: filepath.Dir(w.o.Log)}, rawText(obj["crew_id"]))
 	}
 	body := rawText(obj["body"])
 	if body == "" {
