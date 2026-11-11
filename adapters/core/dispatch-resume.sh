@@ -527,7 +527,10 @@ _resolve_dir PI_DIR DISPATCHER_PI_DIR "@piDir@" "dispatch resume"
 model_catalog="${XDG_DATA_HOME:-$HOME/.local/share}/crew/model-catalog.json"
 # shellcheck disable=SC2034
 model_class_state="${XDG_DATA_HOME:-$HOME/.local/share}/crew/model-class-state.json"
-mapfile -t required_protocol_files < <({ printf '%s\n' WORKER_PROTOCOL.md EVIDENCE_REVIEW.md; _worker_protocol_files "$agent"; } | awk '!seen[$0]++')
+mapfile -t required_protocol_files < <({
+  printf '%s\n' WORKER_PROTOCOL.md EVIDENCE_REVIEW.md
+  _worker_protocol_files "$agent"
+} | awk '!seen[$0]++')
 _require_protocol_files "$PROTOCOL_DIR" "dispatch resume" "${required_protocol_files[@]}"
 _check_protocol_rev "$PROTOCOL_DIR" "dispatch resume"
 _settings_load
