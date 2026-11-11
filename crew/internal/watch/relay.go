@@ -16,6 +16,12 @@ import (
 
 const defaultHeartbeat = "30"
 
+// relayExpandBudget caps the encoded bytes of spilled bodies one relay line
+// swaps in. The line must stay under bus.RelayLineMax once the heads, the
+// other rows and the escaping the output encoder adds (a code point it makes
+// visible grows ~2.7x) are counted, so only a quarter of it is spent.
+const relayExpandBudget = bus.RelayLineMax / 4
+
 // RelayRequest is the typed `crew relay` call. Since nil starts from 0; every
 // other "" is the default (watch's states and interval, a 30 second heartbeat,
 // the checkout's crew).
@@ -60,7 +66,7 @@ func Relay(req RelayRequest, paths bus.Paths, stdout, stderr io.Writer, o Option
 	for {
 		var line bytes.Buffer
 		if folded, ok := fold(paths.Log, c); ok {
-			spill.ExpandEvents(folded, paths, c.crew)
+			spill.ExpandEventsWithin(folded, paths, c.crew, relayExpandBudget)
 			playbook.Annotate(folded)
 			out := jsonval.Clamp(folded).(map[string]any)
 			if err := jsonval.Encode(&line, invisible.Value(out), false); err != nil {

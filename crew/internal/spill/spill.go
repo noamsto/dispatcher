@@ -6,21 +6,24 @@
 // swap the full body back in.
 //
 // body_file is worker-writable data, and so is the crew tree it names a file
-// in, so both sides go through an os.Root on the crew dir: a symlink that
-// leaves the dir is refused (one that stays inside it is followed), and the
-// file is opened O_NONBLOCK and checked for a regular file on the open
-// descriptor. A hard link to a file elsewhere is not detected. The
-// directory lives in the crew dir, which `crew deregister` removes as a unit,
-// so the files need no collection of their own.
+// in, so both sides go through an os.Root on the crew dir, which refuses a
+// symlink that leaves the dir. The root follows one that stays inside it and
+// cannot see a hard link, so the reader also Lstats the file, requires a
+// regular file with a link count of 1, opens it O_NONBLOCK and checks that the
+// open descriptor is the file it Lstatted. The directory lives in the crew
+// dir, which `crew deregister` removes as a unit, so the files need no
+// collection of their own.
 package spill
 
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -44,7 +47,8 @@ const (
 )
 
 // openCrewRoot opens crewDir as a root, refusing a crew dir that is itself a
-// symlink.
+// symlink or that was swapped for another directory between the check and the
+// open.
 func openCrewRoot(crewDir string) (*os.Root, error) {
 	if crewDir == "" {
 		return nil, errors.New("no crew directory")
@@ -56,7 +60,16 @@ func openCrewRoot(crewDir string) (*os.Root, error) {
 	if !st.IsDir() {
 		return nil, fmt.Errorf("%s is not a directory", crewDir)
 	}
-	return os.OpenRoot(crewDir)
+	root, err := os.OpenRoot(crewDir)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := root.Stat(".")
+	if err != nil || !os.SameFile(st, opened) {
+		_ = root.Close()
+		return nil, fmt.Errorf("%s changed while it was opened", crewDir)
+	}
+	return root, nil
 }
 
 // Write stores body under crewDir and returns the path relative to it.
@@ -95,9 +108,19 @@ func Write(crewDir string, ts int64, body string) (string, error) {
 // body that cannot be read back keeps its head and gains a body_note naming why;
 // it never fails. A row with no body_file is left alone.
 func Expand(row map[string]any, paths bus.Paths, crew string) {
+	expand(row, paths, crew, math.MaxInt)
+}
+
+// expand is Expand under a byte budget: a body whose encoded size exceeds left
+// stays a head with a body_note. It returns the budget remaining.
+func expand(row map[string]any, paths bus.Paths, crew string, left int) int {
 	named, ok := row[Field]
 	if !ok {
-		return
+		return left
+	}
+	if left <= 0 {
+		row[NoteField] = "full body unavailable (batch over the relay size budget); body is the head only"
+		return left
 	}
 	rel, _ := named.(string)
 	crewDir := ""
@@ -107,20 +130,36 @@ func Expand(row map[string]any, paths bus.Paths, crew string) {
 	full, err := read(crewDir, rel)
 	if err != nil {
 		row[NoteField] = fmt.Sprintf("full body unavailable (%v); body is the head only", err)
-		return
+		return left
+	}
+	// The encoded size is what a relay line carries; it overcounts the HTML
+	// escapes jsonval leaves alone, which only makes the budget conservative.
+	enc, _ := json.Marshal(full)
+	if len(enc) > left {
+		row[NoteField] = "full body unavailable (batch over the relay size budget); body is the head only"
+		return left
 	}
 	row["body"] = full
 	delete(row, Field)
+	return left - len(enc)
 }
 
 // ExpandEvents expands every msg row of a `crew watch` batch ({cursor, events})
 // the way Expand does one row. The batch is the dispatcher's whole view of its
 // workers' messages, and a relay folds it on the host that owns the files.
 func ExpandEvents(batch map[string]any, paths bus.Paths, crew string) {
+	ExpandEventsWithin(batch, paths, crew, math.MaxInt)
+}
+
+// ExpandEventsWithin is ExpandEvents with a cap on the encoded bytes of all
+// bodies it swaps in: once it is spent the remaining spilled msgs keep their
+// head and gain a body_note. A relay line is one JSON object that its reader
+// scans under a size limit, and each body can be MaxBody.
+func ExpandEventsWithin(batch map[string]any, paths bus.Paths, crew string, budget int) {
 	events, _ := batch["events"].([]any)
 	for _, e := range events {
 		if row, ok := e.(map[string]any); ok && row["kind"] == "msg" {
-			Expand(row, paths, crew)
+			budget = expand(row, paths, crew, budget)
 		}
 	}
 }
@@ -135,17 +174,27 @@ func read(crewDir, rel string) (string, error) {
 		return "", errors.New("no readable crew directory")
 	}
 	defer func() { _ = root.Close() }()
-	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	lst, err := root.Lstat(rel)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("body_file %q is missing", rel)
 	}
 	if err != nil {
 		return "", fmt.Errorf("body_file %q is unreadable", rel)
 	}
+	if !lst.Mode().IsRegular() {
+		return "", fmt.Errorf("body_file %q is not a regular file", rel)
+	}
+	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return "", fmt.Errorf("body_file %q is unreadable", rel)
+	}
 	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
-	if err != nil || !st.Mode().IsRegular() {
+	if err != nil || !st.Mode().IsRegular() || !os.SameFile(lst, st) {
 		return "", fmt.Errorf("body_file %q is not a regular file", rel)
+	}
+	if sys, ok := st.Sys().(*syscall.Stat_t); !ok || uint64(sys.Nlink) != 1 {
+		return "", fmt.Errorf("body_file %q is hard-linked", rel)
 	}
 	data, err := io.ReadAll(io.LimitReader(f, MaxBody+1))
 	if err != nil {

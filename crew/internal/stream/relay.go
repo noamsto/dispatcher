@@ -38,7 +38,7 @@ const (
 	// relayDrain bounds the wait for a killed relay's pipes: a descendant that
 	// left the process group could otherwise hold them open forever.
 	relayDrain   = time.Second
-	maxRelayLine = 16 << 20
+	maxRelayLine = bus.RelayLineMax
 )
 
 // relayTiming is the relays' clock, in Options so a test can shrink it. Zero

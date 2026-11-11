@@ -49,6 +49,13 @@ type (
 		Engine string `json:"engine"`
 		Detail string `json:"detail"`
 	}
+	truncatedBody struct {
+		Role   string `json:"role"`
+		Event  string `json:"event"`
+		Pane   string `json:"pane"`
+		From   string `json:"from"`
+		Detail string `json:"detail"`
+	}
 	orphanedBody struct {
 		Role   string `json:"role"`
 		Event  string `json:"event"`
@@ -74,6 +81,11 @@ func deferredNotice(role, pane, engine, delivery, detail string) string {
 
 func unsubmittedNotice(role, pane, engine, detail string) string {
 	return encodeNotice(engineBody{role, "assignment_unsubmitted", pane, engine, unsubmittedPrefix + detail + unsubmittedSuffix})
+}
+
+func truncatedNotice(role, pane, from, note string) string {
+	return encodeNotice(truncatedBody{role, "assignment_truncated", pane, from,
+		"assignment from " + from + " delivered as its head only, so the role is working from a cut assignment: " + note + "; re-send it shorter or as a file the role can read"})
 }
 
 func orphanedNotice(role, pane, branch string) string {
