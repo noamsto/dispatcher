@@ -341,9 +341,10 @@
           # rewritten right now — the exclude is what keeps a future upstream
           # edit from being silently reformatted on its way in.
           # dispatcher.sh is NOT excluded: that one is ours, ported from fish.
-          # dispatch-notify.sh is excluded too: shfmt would rewrite the
-          # _bus_append and _is_engine_cmd copies tests/adapters.bats
-          # byte-compares against the shared libs.
+          # dispatch-notify.sh is excluded too: it carries the _bus_append and
+          # _is_engine_cmd copies tests/adapters.bats byte-compares against the
+          # shared libs, so a formatter pass must not touch one copy without
+          # the other.
           settings.global.excludes = [
             "adapters/core/dispatch-notify.sh"
             "adapters/claude-code/plugin/scripts/*"
