@@ -222,7 +222,6 @@ func (w *watcher) enqueue(obj map[string]any, ts int64) {
 		// it likes, and the body file is read from that crew's directory.
 		spill.Expand(obj, bus.Paths{Dir: filepath.Dir(w.o.Log)}, w.crew)
 		if note := rawText(obj[spill.NoteField]); note != "" {
-			// A silently cut assignment is worse than a visibly cut one.
 			obj["body"] = rawText(obj["body"]) + " [" + note + "]"
 			w.notify(truncatedNotice(w.role, w.pane, from, note), from)
 		}
