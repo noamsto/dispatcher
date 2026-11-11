@@ -16,9 +16,9 @@
 package spill
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +30,8 @@ import (
 	"syscall"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
+	"github.com/noamsto/dispatcher/crew/internal/jsonval"
 )
 
 const (
@@ -132,16 +134,17 @@ func expand(row map[string]any, paths bus.Paths, crew string, left int) int {
 		row[NoteField] = fmt.Sprintf("full body unavailable (%v); body is the head only", err)
 		return left
 	}
-	// The encoded size is what a relay line carries; it overcounts the HTML
-	// escapes jsonval leaves alone, which only makes the budget conservative.
-	enc, _ := json.Marshal(full)
-	if len(enc) > left {
+	// Charged as the relay encodes it: the output encoder makes hidden code
+	// points visible first (a 2-byte soft hyphen becomes `\u{00AD}`, 9 bytes once
+	// JSON-escaped), so the stored size is no measure.
+	var enc bytes.Buffer
+	if err := jsonval.Encode(&enc, invisible.Value(full), false); err != nil || enc.Len() > left {
 		row[NoteField] = "full body unavailable (batch over the relay size budget); body is the head only"
 		return left
 	}
 	row["body"] = full
 	delete(row, Field)
-	return left - len(enc)
+	return left - enc.Len()
 }
 
 // ExpandEvents expands every msg row of a `crew watch` batch ({cursor, events})
@@ -174,7 +177,26 @@ func read(crewDir, rel string) (string, error) {
 		return "", errors.New("no readable crew directory")
 	}
 	defer func() { _ = root.Close() }()
-	lst, err := root.Lstat(rel)
+	// The root follows a symlink that stays inside the crew dir, so
+	// `msg-bodies -> .` would make any file there a body: read through a root
+	// opened on the real directory instead.
+	dlst, err := root.Lstat(Dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("body_file %q is missing", rel)
+	}
+	if err != nil || !dlst.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", Dir)
+	}
+	dir, err := root.OpenRoot(Dir)
+	if err != nil {
+		return "", fmt.Errorf("%s is unreadable", Dir)
+	}
+	defer func() { _ = dir.Close() }()
+	if opened, err := dir.Stat("."); err != nil || !os.SameFile(dlst, opened) {
+		return "", fmt.Errorf("%s changed while it was opened", Dir)
+	}
+	name := filepath.Base(rel)
+	lst, err := dir.Lstat(name)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("body_file %q is missing", rel)
 	}
@@ -184,7 +206,7 @@ func read(crewDir, rel string) (string, error) {
 	if !lst.Mode().IsRegular() {
 		return "", fmt.Errorf("body_file %q is not a regular file", rel)
 	}
-	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := dir.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return "", fmt.Errorf("body_file %q is unreadable", rel)
 	}

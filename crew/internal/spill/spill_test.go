@@ -56,6 +56,15 @@ func TestReadRefusesHostileFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 		},
+		// The in-root link makes any file of the crew dir look like a spill.
+		"msg-bodies linked to the crew dir": func(crewDir string) {
+			if err := os.WriteFile(filepath.Join(crewDir, "secret"), []byte("pid"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(".", filepath.Join(crewDir, Dir)); err != nil {
+				t.Fatal(err)
+			}
+		},
 		// os.Root cannot see a hard link, and the target can be anywhere on the filesystem.
 		"hard link": func(crewDir string) {
 			mkdir(t, filepath.Join(crewDir, Dir))

@@ -17,9 +17,9 @@ import (
 const defaultHeartbeat = "30"
 
 // relayExpandBudget caps the encoded bytes of spilled bodies one relay line
-// swaps in. The line must stay under bus.RelayLineMax once the heads, the
-// other rows and the escaping the output encoder adds (a code point it makes
-// visible grows ~2.7x) are counted, so only a quarter of it is spent.
+// swaps in, each charged at its encoded size (spill.expand). The line must stay
+// under bus.RelayLineMax once the heads and the other rows are counted, so only
+// a quarter of it is spent.
 const relayExpandBudget = bus.RelayLineMax / 4
 
 // RelayRequest is the typed `crew relay` call. Since nil starts from 0; every

@@ -14,6 +14,7 @@ import (
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
 	"github.com/noamsto/dispatcher/crew/internal/clock"
+	"github.com/noamsto/dispatcher/crew/internal/invisible"
 	"github.com/noamsto/dispatcher/crew/internal/spill"
 )
 
@@ -162,10 +163,18 @@ func TestRelayBatchCarriesPlaybook(t *testing.T) {
 // the reader stops with ErrTooLong and the cursor never moves: past the budget
 // the rows keep their head and gain a body_note.
 func TestRelayBoundsTheSpilledBodiesItExpands(t *testing.T) {
+	t.Run("ascii", func(t *testing.T) { relayBound(t, strings.Repeat("x", 200<<10)) })
+	// The output encoder makes each of these 2-byte soft hyphens visible as
+	// `\u{00AD}`, 9 bytes once JSON-escaped: 4.5x the stored body.
+	t.Run("hidden code points", func(t *testing.T) { relayBound(t, strings.Repeat(string(rune(0xad)), 128<<10)) })
+}
+
+func relayBound(t *testing.T, body string) {
+	t.Helper()
 	p := fixture(t)
 	const n = 80 // 80 × 200 KiB is 16 MiB: the old unbounded expansion filled maxRelayLine
 	const first = int64(1785951264000)
-	body := strings.Repeat("x", 200<<10)
+	shown, _ := invisible.Value(body).(string)
 	var rows []string
 	for i := range int64(n) {
 		rel, err := spill.Write(p.CrewDir("c1"), first+i, body)
@@ -201,7 +210,7 @@ func TestRelayBoundsTheSpilledBodiesItExpands(t *testing.T) {
 	expanded, capped := 0, 0
 	for _, e := range batch.Events {
 		switch {
-		case e.Body == body && e.BodyNote == "":
+		case e.Body == shown && e.BodyNote == "":
 			expanded++
 		case e.Body == "head" && strings.Contains(e.BodyNote, "budget") && e.BodyFile != "":
 			capped++
