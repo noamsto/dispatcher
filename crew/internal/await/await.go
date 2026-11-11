@@ -24,6 +24,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
 	"github.com/noamsto/dispatcher/crew/internal/marks"
 	"github.com/noamsto/dispatcher/crew/internal/sender"
+	"github.com/noamsto/dispatcher/crew/internal/spill"
 )
 
 //go:embed await.jq
@@ -101,6 +102,9 @@ func Run(req Request, paths bus.Paths, stdout, stderr io.Writer, o Options) int 
 			enc := json.NewEncoder(stdout)
 			enc.SetEscapeHTML(false)
 			for _, r := range rows {
+				if m, ok := r.(map[string]any); ok {
+					spill.Expand(m, paths, crew)
+				}
 				_ = enc.Encode(invisible.Value(r))
 			}
 			// Flush before recording: a mark raised for rows nobody received

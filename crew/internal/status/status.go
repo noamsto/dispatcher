@@ -131,6 +131,8 @@ type row[B any] struct {
 	To     string   `json:"to"`
 	Kind   bus.Kind `json:"kind"`
 	Body   B        `json:"body"`
+	// BodyFile names the spilled full body of a msg too long for one line.
+	BodyFile string `json:"body_file,omitempty"`
 }
 
 type statusBody struct {
