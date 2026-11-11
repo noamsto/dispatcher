@@ -6,6 +6,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/noamsto/dispatcher/crew/internal/bus"
 )
 
 func TestWriteThenReadRoundTrips(t *testing.T) {
@@ -46,6 +48,21 @@ func TestReadRefusesHostileFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 		},
+		"symlink to another file in the crew dir": func(crewDir string) {
+			mkdir(t, filepath.Join(crewDir, Dir))
+			if err := os.WriteFile(filepath.Join(crewDir, "pid"), []byte("1234"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("../pid", filepath.Join(crewDir, Dir, "secret")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"hard link to a file elsewhere": func(crewDir string) {
+			mkdir(t, filepath.Join(crewDir, Dir))
+			if err := os.Link(filepath.Join(outside, "secret"), filepath.Join(crewDir, Dir, "secret")); err != nil {
+				t.Skipf("cannot hard link across these temp dirs: %v", err)
+			}
+		},
 		"fifo": func(crewDir string) {
 			mkdir(t, filepath.Join(crewDir, Dir))
 			if err := syscall.Mkfifo(filepath.Join(crewDir, Dir, "secret"), 0o600); err != nil {
@@ -83,6 +100,44 @@ func TestReadRefusesASymlinkedCrewDir(t *testing.T) {
 	}
 	if _, err := read(link, Dir+"/x"); err == nil {
 		t.Fatal("read through a symlinked crew dir succeeded")
+	}
+}
+
+// A batch is one relay line, so rows past the budget keep their head and file
+// and say how to read the rest; rows within it are expanded.
+func TestExpandEventsStopsAtTheBatchBudget(t *testing.T) {
+	root := t.TempDir()
+	paths := bus.Paths{Dir: root}
+	crewDir := paths.CrewDir("c1")
+	body := strings.Repeat("x", MaxBody)
+	const rows = 20 // 5 MiB of bodies against the 4 MiB budget
+	events := make([]any, rows)
+	for i := range events {
+		rel, err := Write(crewDir, int64(i), body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		events[i] = map[string]any{"kind": "msg", "body": "head", Field: rel}
+	}
+	batch := map[string]any{"events": events}
+	ExpandEvents(batch, paths, "c1")
+
+	expanded := 0
+	for i, e := range events {
+		row := e.(map[string]any)
+		if row["body"] == body {
+			expanded++
+			if _, kept := row[Field]; kept || row[NoteField] != nil {
+				t.Errorf("row %d expanded but kept %v", i, row)
+			}
+			continue
+		}
+		if row["body"] != "head" || row[Field] == nil || row[NoteField] == nil {
+			t.Errorf("row %d = %v, want the head, body_file and a note", i, row)
+		}
+	}
+	if want := BatchBudget / encodedLen(body); expanded != want {
+		t.Errorf("%d rows expanded, want %d", expanded, want)
 	}
 }
 

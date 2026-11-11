@@ -81,6 +81,10 @@ func orphanedNotice(role, pane, branch string) string {
 		"watcher exited: pane " + pane + " is no longer stamped as " + role + " on " + branch + "; re-send after re-arming (dispatch resume --rearm-roles)"})
 }
 
+func bodyUnavailableNotice(role, pane, engine, detail string) string {
+	return encodeNotice(engineBody{role, "assignment_body_unavailable", pane, engine, detail})
+}
+
 func rejectedNotice(role, pane, engine string) string {
 	return encodeNotice(engineBody{role, "assignment_rejected", pane, engine, detailRejected})
 }

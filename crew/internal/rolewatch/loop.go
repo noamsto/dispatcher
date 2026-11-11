@@ -218,7 +218,11 @@ func (w *watcher) enqueue(obj map[string]any, ts int64) {
 	if w.delivery != "pull" {
 		// A typed role has no await to read the spilled file back, so the paste
 		// carries the whole assignment.
-		spill.Expand(obj, bus.Paths{Dir: filepath.Dir(w.o.Log)}, rawText(obj["crew_id"]))
+		spill.Expand(obj, bus.Paths{Dir: filepath.Dir(w.o.Log)}, w.wCrew)
+		if note, _ := obj[spill.NoteField].(string); note != "" {
+			w.notify(bodyUnavailableNotice(w.role, w.pane, w.engine, note), from, w.dispatcher())
+			obj["body"] = rawText(obj["body"]) + " [role-watch: " + note + "]"
+		}
 	}
 	body := rawText(obj["body"])
 	if body == "" {

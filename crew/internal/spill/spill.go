@@ -7,16 +7,18 @@
 //
 // body_file is worker-writable data, and so is the crew tree it names a file
 // in, so both sides go through an os.Root on the crew dir: a symlink that
-// leaves the dir is refused (one that stays inside it is followed), and the
-// file is opened O_NONBLOCK and checked for a regular file on the open
-// descriptor. A hard link to a file elsewhere is not detected. The
+// leaves the dir is refused, the name must be a regular file (not a link, even
+// one that stays inside the dir) with a single hard link, and the descriptor
+// opened O_NONBLOCK must be that same file. The
 // directory lives in the crew dir, which `crew deregister` removes as a unit,
 // so the files need no collection of their own.
 package spill
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -56,7 +58,16 @@ func openCrewRoot(crewDir string) (*os.Root, error) {
 	if !st.IsDir() {
 		return nil, fmt.Errorf("%s is not a directory", crewDir)
 	}
-	return os.OpenRoot(crewDir)
+	root, err := os.OpenRoot(crewDir)
+	if err != nil {
+		return nil, err
+	}
+	// The dir can be swapped for a link between the Lstat and the open.
+	if rst, err := root.Stat("."); err != nil || !os.SameFile(st, rst) {
+		_ = root.Close()
+		return nil, errors.New("the crew directory changed while opening it")
+	}
+	return root, nil
 }
 
 // Write stores body under crewDir and returns the path relative to it.
@@ -91,10 +102,35 @@ func Write(crewDir string, ts int64, body string) (string, error) {
 	return rel, f.Close()
 }
 
+// BatchBudget caps the encoded bytes ExpandEvents adds to one batch. A batch
+// is one line on a relay, whose reader stops at 16 MiB, and JSON-escaping can
+// grow a body several-fold.
+const BatchBudget = 4 << 20
+
 // Expand replaces row's body with the spilled full body and drops body_file. A
 // body that cannot be read back keeps its head and gains a body_note naming why;
 // it never fails. A row with no body_file is left alone.
 func Expand(row map[string]any, paths bus.Paths, crew string) {
+	expand(row, paths, crew, nil)
+}
+
+// ExpandEvents expands every msg row of a `crew watch` batch ({cursor, events})
+// the way Expand does one row, until BatchBudget encoded bytes have been added;
+// later rows keep their head and body_file, and a body_note says to read them
+// with crew inbox. The batch is the dispatcher's whole view of its workers'
+// messages, and a relay folds it on the host that owns the files.
+func ExpandEvents(batch map[string]any, paths bus.Paths, crew string) {
+	events, _ := batch["events"].([]any)
+	budget := BatchBudget
+	for _, e := range events {
+		if row, ok := e.(map[string]any); ok && row["kind"] == "msg" {
+			expand(row, paths, crew, &budget)
+		}
+	}
+}
+
+// expand is Expand; a non-nil budget is the encoded bytes still allowed.
+func expand(row map[string]any, paths bus.Paths, crew string, budget *int) {
 	named, ok := row[Field]
 	if !ok {
 		return
@@ -109,20 +145,33 @@ func Expand(row map[string]any, paths bus.Paths, crew string) {
 		row[NoteField] = fmt.Sprintf("full body unavailable (%v); body is the head only", err)
 		return
 	}
+	if budget != nil {
+		size := encodedLen(full)
+		if size > *budget {
+			row[NoteField] = "full body not expanded: this batch is over its size budget; read it with crew inbox; body is the head only"
+			return
+		}
+		*budget -= size
+	}
 	row["body"] = full
 	delete(row, Field)
 }
 
-// ExpandEvents expands every msg row of a `crew watch` batch ({cursor, events})
-// the way Expand does one row. The batch is the dispatcher's whole view of its
-// workers' messages, and a relay folds it on the host that owns the files.
-func ExpandEvents(batch map[string]any, paths bus.Paths, crew string) {
-	events, _ := batch["events"].([]any)
-	for _, e := range events {
-		if row, ok := e.(map[string]any); ok && row["kind"] == "msg" {
-			Expand(row, paths, crew)
-		}
+// encodedLen is the length of s as a JSON string.
+func encodedLen(s string) int {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s)
+	return b.Len()
+}
+
+// linkCount is how many names the file has.
+func linkCount(st fs.FileInfo) uint64 {
+	if s, ok := st.Sys().(*syscall.Stat_t); ok {
+		return uint64(s.Nlink)
 	}
+	return 1
 }
 
 // read loads rel from crewDir's msg-bodies directory.
@@ -135,17 +184,32 @@ func read(crewDir, rel string) (string, error) {
 		return "", errors.New("no readable crew directory")
 	}
 	defer func() { _ = root.Close() }()
-	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	// os.Root follows a symlink that stays inside the crew dir, even under
+	// O_NOFOLLOW, so the name itself is checked first and the open descriptor
+	// must be that same file.
+	named, err := root.Lstat(rel)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("body_file %q is missing", rel)
 	}
 	if err != nil {
 		return "", fmt.Errorf("body_file %q is unreadable", rel)
 	}
+	if !named.Mode().IsRegular() {
+		return "", fmt.Errorf("body_file %q is not a regular file", rel)
+	}
+	f, err := root.OpenFile(rel, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", fmt.Errorf("body_file %q is unreadable", rel)
+	}
 	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
-	if err != nil || !st.Mode().IsRegular() {
+	if err != nil || !st.Mode().IsRegular() || !os.SameFile(named, st) {
 		return "", fmt.Errorf("body_file %q is not a regular file", rel)
+	}
+	// os.Root cannot see a hard link to a file elsewhere; a file the writer
+	// created has exactly one name.
+	if linkCount(st) != 1 {
+		return "", fmt.Errorf("body_file %q is a hard link", rel)
 	}
 	data, err := io.ReadAll(io.LimitReader(f, MaxBody+1))
 	if err != nil {
