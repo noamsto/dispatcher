@@ -25,7 +25,7 @@ func quotaHolds(n int) []queuedHold {
 func planetReach(sc scene) float64 {
 	reach := 0.0
 	for _, p := range sc.planets {
-		reach = max(reach, math.Hypot(p.x, p.y)+p.size*72/2)
+		reach = max(reach, math.Hypot(p.x, p.y)+cardReach)
 		for _, m := range p.moons {
 			reach = max(reach, math.Hypot(m.x, m.y)+moonRadius)
 		}
@@ -193,16 +193,15 @@ func TestDotReviewRoundBadge(t *testing.T) {
 	}
 }
 
-func TestHitRadiusCoversTheRoundBadge(t *testing.T) {
-	const pr = standardSize * 72 / 2
-	p := placed{planet: planet{size: standardSize, class: classWorking, rounds: 2}}
-	want := pr + roundBadgeStandoff + math.Hypot(0.3*72/2, 0.2*72/2)
-	if got := hitRadius(p); math.Abs(got-want) > 1e-9 {
-		t.Errorf("hitRadius = %v, want %v", got, want)
+func TestHitRectCoversTheRoundBadge(t *testing.T) {
+	p := placed{planet: planet{class: classWorking, rounds: 2}}
+	wantW, wantH := cardW*72/2+roundBadgeW*72/2, cardH*72/2+roundBadgeH*72/2
+	if hw, hh := hitRect(p); math.Abs(hw-wantW) > 1e-9 || math.Abs(hh-wantH) > 1e-9 {
+		t.Errorf("hitRect = %v x %v, want %v x %v", hw, hh, wantW, wantH)
 	}
 	p.rounds = 0
-	if got := hitRadius(p); got != pr+planetPenwidth/2 {
-		t.Errorf("hitRadius without rounds = %v", got)
+	if hw, hh := hitRect(p); hw != cardW*72/2+planetPenwidth/2 || hh != cardH*72/2+planetPenwidth/2 {
+		t.Errorf("hitRect without rounds = %v x %v", hw, hh)
 	}
 }
 

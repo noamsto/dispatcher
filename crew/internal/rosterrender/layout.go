@@ -12,17 +12,28 @@ import (
 // Geometry. Planets sit evenly around the dispatcher, clockwise from 12
 // o'clock, in a persisted sequence; coordinates are points with y up. A ring
 // holds at most ringCap planets, and a roster past that spreads over more rings,
-// each evenly spaced too. A ring's radius grows with its count so the planets
+// each evenly spaced too. A ring's radius grows with its count so the cards
 // keep arcPerPlanet of room, and never drops below minRadius.
+//
+// Every card is one size, so these follow from its reach, the distance from its
+// centre to a corner at the heaviest pen (about 108): arcPerPlanet is twice that
+// and a gap, minRadius clears the dispatcher at 3 and 9 o'clock, and ringStep
+// adds the reach of a moon.
 const (
 	ringCap      = 16
-	arcPerPlanet = 100.0
-	minRadius    = 150.0
-	ringStep     = 90.0
+	arcPerPlanet = 240.0
+	minRadius    = 170.0
+	ringStep     = 250.0
 
 	moonGap    = 14.0
 	moonStep   = 14.0
 	moonRadius = 6.0
+
+	// cornerBadgeHalfW and cornerBadgeHalfH bound the badges centred on a card's
+	// corners: the round chip is the widest, the host hexagon with its pen the
+	// tallest.
+	cornerBadgeHalfW = roundBadgeW * 72 / 2
+	cornerBadgeHalfH = hostBadgeSize*72/2 + hostBadgePen/2
 
 	hostLabelGap  = 55.0
 	hostLabelHalf = 20.0
@@ -30,7 +41,7 @@ const (
 	// With two or more repos each gets a wedge: its outer arc sits wedgeRimGap
 	// past the wedge's outermost ring and its name's box stands wedgeLabelGap
 	// clear of the arc; wedgeLabelHalfH is half the name's drawn height.
-	wedgeRimGap     = 55.0
+	wedgeRimGap     = 40.0
 	wedgeLabelGap   = 10.0
 	wedgeLabelHalfH = 8.0
 
@@ -307,24 +318,48 @@ type holdAnchor struct {
 	x, y float64
 }
 
-// place puts p on ring at radius r and angle, with its moons pushed outward, and
-// grows the extent over both.
+// cardReach is the distance from a card's centre to its corner at the heaviest
+// pen, which the rings and the extent are measured by.
+var cardReach = func() float64 {
+	hw, hh := cardHalf(cardPen("deep"))
+	return math.Hypot(hw, hh)
+}()
+
+// place puts p on ring at radius r and angle, with its moons pushed outward from
+// the card's edge, and grows the extent over both.
 func (sc *scene) place(p planet, ring int, r, angle float64) {
 	pl := placed{planet: p, ring: ring, angle: angle}
 	pl.x, pl.y = polar(r, angle)
-	pr := pl.size * 72 / 2
-	sc.extent = max(sc.extent, r+pr)
+	sc.extent = max(sc.extent, r+cardReach)
 
 	pl.moons = make([]moon, len(p.moons))
 	for m, mn := range p.moons {
-		along := (float64(m) - float64(len(pl.moons)-1)/2) * moonStep
-		ux, uy := polar(1, angle)
-		mn.x = pl.x + ux*(pr+moonGap) + uy*along
-		mn.y = pl.y + uy*(pr+moonGap) - ux*along
+		dx, dy := moonOffset(cardPen(p.tier), angle, m, len(p.moons))
+		mn.x, mn.y = pl.x+dx, pl.y+dy
 		pl.moons[m] = mn
 		sc.extent = max(sc.extent, math.Hypot(mn.x, mn.y)+moonRadius)
 	}
 	sc.planets = append(sc.planets, pl)
+}
+
+// moonOffset is where moon m of n sits from its card's centre: moonGap off the
+// side the outward ray leaves through, spread along that side clockwise, and
+// kept clear of the corner badges, which are reserved whether drawn or not so a
+// moon never moves when a badge appears.
+func moonOffset(pen, angle float64, m, n int) (dx, dy float64) {
+	hw, hh := cardHalf(pen)
+	cw, ch := cardW*72/2, cardH*72/2
+	ux, uy := polar(1, angle)
+	rel := (float64(m) - float64(n-1)/2) * moonStep
+	half := float64(n-1) / 2 * moonStep
+	if hh*math.Abs(ux) <= hw*math.Abs(uy) {
+		lim := max(cw-cornerBadgeHalfW-moonRadius-half, 0)
+		c := math.Max(-lim, math.Min(lim, ux*hh/math.Abs(uy)))
+		return c + rel*math.Copysign(1, uy), math.Copysign(hh+moonGap, uy)
+	}
+	lim := max(ch-cornerBadgeHalfH-moonRadius-half, 0)
+	c := math.Max(-lim, math.Min(lim, uy*hw/math.Abs(ux)))
+	return math.Copysign(hw+moonGap, ux), c - rel*math.Copysign(1, ux)
 }
 
 // hostRun sums the unit vectors of one host's planets, so its label can sit in
@@ -416,7 +451,7 @@ func arrangeRings(prev slotState, ps []planet) (slotState, scene) {
 	}
 
 	for _, h := range hostOrder {
-		r := outer + hostLabelGap
+		r := outer + cardReach + hostLabelGap
 		x, y := polar(r, runs[h].direction())
 		sc.hosts = append(sc.hosts, hostLabel{host: h, x: x, y: y})
 		sc.extent = max(sc.extent, r+hostLabelHalf)
@@ -436,7 +471,9 @@ type wedgeSector struct {
 // by label), and lays its planets out inside it. A sector's span follows its
 // planet count, with a floor of two so a lone worker's wedge still has room.
 // Planets fill the shared ring radii from the inside out, each ring spread
-// evenly across the sector's arc.
+// evenly across the sector's arc; a ring too short for one card in the sector
+// is skipped, so a narrow wedge's cards move outward rather than into the
+// neighbour.
 //
 // maxPlanets bounds the total: repos are filled in wedge order, so a new
 // planet in an earlier repo can leave a later repo's last planets undrawn.
@@ -476,7 +513,10 @@ func arrangeWedges(prev slotState, ps []planet) (slotState, scene) {
 		outer, k := 0.0, 0
 		for ring := 0; k < len(s.seq); ring++ {
 			r := minRadius + float64(ring)*ringStep
-			fit := max(1, int(r*span*math.Pi/180/arcPerPlanet))
+			fit := int(r * span * math.Pi / 180 / arcPerPlanet)
+			if fit == 0 {
+				continue
+			}
 			m := min(fit, len(s.seq)-k)
 			outer = r
 			for j := range m {
@@ -496,7 +536,7 @@ func arrangeWedges(prev slotState, ps []planet) (slotState, scene) {
 			}
 		}
 
-		w.rim = outer + wedgeRimGap
+		w.rim = outer + cardReach + wedgeRimGap
 		labelR := wedgeLabelRadius(w.rim, start+span/2, w.label)
 		w.x, w.y = polar(labelR, start+span/2)
 		sc.extent = max(sc.extent, labelR+hostLabelHalf)

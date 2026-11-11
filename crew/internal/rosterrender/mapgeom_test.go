@@ -61,12 +61,18 @@ func svgCentres(t *testing.T, svg []byte, sc scene) map[string][2]float64 {
 				cy, _ := strconv.ParseFloat(e.attr("cy"), 64)
 				byID[n.title()] = [2]float64{cx, cy}
 			}
+			// A card is a rounded box, which Graphviz draws as a path.
+			var nums []string
 			if p, ok := n.child("polygon"); ok {
+				nums = pathNumRe.FindAllString(p.attr("points"), -1)
+			} else if p, ok := n.child("path"); ok {
+				nums = pathNumRe.FindAllString(p.attr("d"), -1)
+			}
+			if len(nums) >= 2 {
 				x0, y0, x1, y1 := math.Inf(1), math.Inf(1), math.Inf(-1), math.Inf(-1)
-				for pair := range strings.FieldsSeq(p.attr("points")) {
-					xs, ys, _ := strings.Cut(pair, ",")
-					x, _ := strconv.ParseFloat(xs, 64)
-					y, _ := strconv.ParseFloat(ys, 64)
+				for i := 0; i+1 < len(nums); i += 2 {
+					x, _ := strconv.ParseFloat(nums[i], 64)
+					y, _ := strconv.ParseFloat(nums[i+1], 64)
 					x0, x1, y0, y1 = min(x0, x), max(x1, x), min(y0, y), max(y1, y)
 				}
 				byID[n.title()] = [2]float64{(x0 + x1) / 2, (y0 + y1) / 2}
@@ -159,18 +165,28 @@ func checkRings(t *testing.T, r mapRender) {
 	bg := [3]int{0x1e, 0x1e, 0x2e}
 	for i, p := range r.planets {
 		pl := r.sc.planets[i]
-		if pl.failed || pl.host != "" {
+		if pl.failed {
 			continue
 		}
-		for _, dx := range []float64{-(p.R - 0.75), p.R - 0.75} {
-			cr, cg, cb, a := r.img.At(int(math.Round(p.Cx+dx)), int(math.Round(p.Cy))).RGBA()
-			got := [3]int{int(cr >> 8), int(cg >> 8), int(cb >> 8)}
-			dist := 0
-			for k := range got {
-				dist += int(math.Abs(float64(got[k] - bg[k])))
+		// The side borders at mid height: the card's own half width, which the
+		// hit rectangle is at least as wide as.
+		hw, _ := hitRect(pl)
+		edge := cardW * 72 / 2 * p.HW / hw
+		for _, dx := range []float64{-edge, edge} {
+			// A light tier's border is under a pixel wide, so the best of the
+			// pixels around the line is the one to judge.
+			best := 0
+			for near := -1; near <= 1; near++ {
+				cr, cg, cb, _ := r.img.At(int(math.Round(p.Cx+dx))+near, int(math.Round(p.Cy))).RGBA()
+				got := [3]int{int(cr >> 8), int(cg >> 8), int(cb >> 8)}
+				dist := 0
+				for k := range got {
+					dist += int(math.Abs(float64(got[k] - bg[k])))
+				}
+				best = max(best, dist)
 			}
-			if a>>8 != 255 || dist < 60 {
-				t.Errorf("%s: pixel %.1f px from the centre is %v (alpha %d), want the ring", p.Branch, math.Abs(dx), got, a>>8)
+			if best < 60 {
+				t.Errorf("%s: no border pixel %.1f px from the centre", p.Branch, math.Abs(dx))
 			}
 		}
 	}
@@ -240,29 +256,31 @@ func TestMapHalfHoldsAHostLabel(t *testing.T) {
 	}
 }
 
-func TestHitRadius(t *testing.T) {
-	const pr = standardSize * 72 / 2
+func TestHitRect(t *testing.T) {
+	const cw, ch = cardW * 72 / 2, cardH * 72 / 2
 	for _, tc := range []struct {
-		name string
-		mod  func(*placed)
-		want float64
+		name   string
+		mod    func(*placed)
+		hw, hh float64
 	}{
-		{"plain", func(*placed) {}, pr + planetPenwidth/2},
-		{"blocked", func(p *placed) { p.class = classBlocked }, pr + blockedPenwidth/2},
-		{"failed", func(p *placed) { p.class, p.failed = classDone, true }, pr + planetPenwidth/2},
-		{"waiting", func(p *placed) { p.class, p.waiting = classBlocked, true }, pr + waitGap + waitPenwidth/2},
-		{"ci pass", func(p *placed) { p.ci = "pass" }, pr + ciBadgeStandoff + ciBadgeRadius},
-		{"ci pending", func(p *placed) { p.ci = "pending" }, pr + ciBadgeStandoff + ciBadgeRadius + 1},
-		{"ci fail", func(p *placed) { p.ci = "fail" }, pr + ciBadgeStandoff + ciBadgeRadius},
-		{"ci none", func(p *placed) { p.ci = "none" }, pr + ciBadgeStandoff + ciBadgeRadius + 0.5},
-		{"unknown ci", func(p *placed) { p.ci = "bogus" }, pr + planetPenwidth/2},
-		{"waiting and ci pending", func(p *placed) { p.waiting, p.ci = true, "pending" }, pr + ciBadgeStandoff + ciBadgeRadius + 1},
+		{"plain", func(*placed) {}, cw + planetPenwidth/2, ch + planetPenwidth/2},
+		{"deep", func(p *placed) { p.tier = "deep" }, cw + 4.5/2, ch + 4.5/2},
+		{"trivial", func(p *placed) { p.tier = "trivial" }, cw + 1.75/2, ch + 1.75/2},
+		{"blocked is no heavier", func(p *placed) { p.class = classBlocked }, cw + planetPenwidth/2, ch + planetPenwidth/2},
+		{"waiting", func(p *placed) { p.class, p.waiting = classBlocked, true }, cw + waitGap + waitPenwidth/2, ch + waitGap + waitPenwidth/2},
+		{"ci pass", func(p *placed) { p.ci = "pass" }, cw + ciBadgeRadius, ch + ciBadgeRadius},
+		{"ci pending", func(p *placed) { p.ci = "pending" }, cw + ciBadgeRadius + 1, ch + ciBadgeRadius + 1},
+		{"ci none", func(p *placed) { p.ci = "none" }, cw + ciBadgeRadius + 0.5, ch + ciBadgeRadius + 0.5},
+		{"unknown ci", func(p *placed) { p.ci = "bogus" }, cw + planetPenwidth/2, ch + planetPenwidth/2},
+		{"round chip", func(p *placed) { p.rounds = 2 }, cw + roundBadgeW*72/2, ch + roundBadgeH*72/2},
+		{"remote host", func(p *placed) { p.host = "mbp" }, cw + hostBadgeSize*72/2 + hostBadgePen/2, ch + hostBadgeSize*72/2 + hostBadgePen/2},
+		{"waiting and ci pending", func(p *placed) { p.waiting, p.ci = true, "pending" }, cw + ciBadgeRadius + 1, ch + ciBadgeRadius + 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := placed{planet: planet{size: standardSize, class: classWorking}}
+			p := placed{planet: planet{tier: "standard", class: classWorking}}
 			tc.mod(&p)
-			if got := hitRadius(p); math.Abs(got-tc.want) > 1e-9 {
-				t.Errorf("hitRadius = %v, want %v", got, tc.want)
+			if hw, hh := hitRect(p); math.Abs(hw-tc.hw) > 1e-9 || math.Abs(hh-tc.hh) > 1e-9 {
+				t.Errorf("hitRect = %v x %v, want %v x %v", hw, hh, tc.hw, tc.hh)
 			}
 		})
 	}
@@ -279,27 +297,30 @@ func TestMapGeometryRadiusCoversTheMarkers(t *testing.T) {
 	var rings, badges, plain int
 	for i, got := range mapGeometry(sc, halfX, halfY, vbW, vbH, 800, 800) {
 		p := sc.planets[i]
-		pr := p.size * 72 / 2
-		pen := planetPenwidth
-		if !p.failed && p.class == classBlocked {
-			pen = blockedPenwidth
-		}
-		floor := (pr + pen/2) * s
+		hw, hh := cardHalf(cardPen(p.tier))
+		cw, ch := cardW*72/2, cardH*72/2
 		if p.waiting {
 			rings++
-			floor = max(floor, (pr+waitGap+waitPenwidth/2)*s)
+			hw, hh = max(hw, cw+waitGap+waitPenwidth/2), max(hh, ch+waitGap+waitPenwidth/2)
 		}
 		if _, badgePen, ok := ciBadge(p.ci); ok {
 			badges++
-			floor = max(floor, (pr+ciBadgeStandoff+ciBadgeRadius+badgePen/2)*s)
+			hw, hh = max(hw, cw+ciBadgeRadius+badgePen/2), max(hh, ch+ciBadgeRadius+badgePen/2)
 		}
-		if got.R < floor-0.01 {
-			t.Errorf("%s: r = %v, short of the outer edge of what is drawn, %v", p.branch, got.R, floor)
+		if p.host != "" {
+			hw, hh = max(hw, cw+hostBadgeSize*72/2), max(hh, ch+hostBadgeSize*72/2)
 		}
-		if !p.waiting && p.ci == "" {
+		if got.HW < hw*s-0.01 || got.HH < hh*s-0.01 {
+			t.Errorf("%s: hit rect %v x %v, short of the outer edge of what is drawn, %v x %v", p.branch, got.HW, got.HH, hw*s, hh*s)
+		}
+		if want := round2(math.Hypot(got.HW, got.HH)); math.Abs(got.R-want) > 0.02 {
+			t.Errorf("%s: r = %v, want the rectangle's circumscribed circle %v", p.branch, got.R, want)
+		}
+		if !p.waiting && p.ci == "" && p.host == "" {
 			plain++
-			if want := round2((pr + pen/2) * s); got.R != want {
-				t.Errorf("%s: a plain planet's r = %v, want %v", p.branch, got.R, want)
+			whw, whh := cardHalf(cardPen(p.tier))
+			if got.HW != round2(whw*s) || got.HH != round2(whh*s) {
+				t.Errorf("%s: a plain card's hit rect = %v x %v, want %v x %v", p.branch, got.HW, got.HH, round2(whw*s), round2(whh*s))
 			}
 		}
 	}
@@ -388,13 +409,12 @@ func TestMapGeometryScalesWithTheBox(t *testing.T) {
 		if math.Abs(big[i].Cx-2*small[i].Cx) > 0.02 || math.Abs(big[i].R-2*small[i].R) > 0.02 {
 			t.Errorf("%s: %+v at 400 and %+v at 800", small[i].Branch, small[i], big[i])
 		}
-		pl := sc.planets[i]
-		pen := planetPenwidth
-		if !pl.failed && pl.class == classBlocked {
-			pen = blockedPenwidth
-		}
-		if want := (pl.size*72/2 + pen/2) * 400 / vb; math.Abs(small[i].R-want) > 0.01 {
+		hw, hh := hitRect(sc.planets[i])
+		if want := math.Hypot(hw, hh) * 400 / vb; math.Abs(small[i].R-want) > 0.01 {
 			t.Errorf("%s: r = %v, want %v", small[i].Branch, small[i].R, want)
+		}
+		if want := hw * 400 / vb; math.Abs(small[i].HW-want) > 0.01 {
+			t.Errorf("%s: hw = %v, want %v", small[i].Branch, small[i].HW, want)
 		}
 	}
 }
@@ -414,10 +434,10 @@ func TestSelectionRingOnlyForAKnownBranch(t *testing.T) {
 	if len(ring) != 1 {
 		t.Fatalf("%d ring nodes, want 1:\n%s", len(ring), got)
 	}
-	d := known.size + 18.0/72
 	for _, want := range []string{
-		"style=solid", `color="` + colSun + `"`, `label=""`,
-		"width=" + strconv.FormatFloat(d, 'g', -1, 64), "pos=" + dotq(pt(known.x)+","+pt(known.y)+"!"),
+		"shape=box", `style="rounded"`, `color="` + colSun + `"`, `label=""`,
+		"width=" + strconv.FormatFloat(cardW+2*selectGap/72, 'g', -1, 64),
+		"height=" + strconv.FormatFloat(cardH+2*selectGap/72, 'g', -1, 64), "pos=" + dotq(pt(known.x)+","+pt(known.y)+"!"),
 	} {
 		if !strings.Contains(ring[0], want) {
 			t.Errorf("ring %q lacks %s", ring[0], want)
@@ -444,10 +464,10 @@ func TestSelectionRingOnlyForAKnownBranch(t *testing.T) {
 func TestMapDOTHasNoLegend(t *testing.T) {
 	ps, lg := buildPlanets(dotModel(sixteenWorkers(), 2), dotNow)
 	_, sc := arrange(newSlotState(), ps)
-	if out := buildDOT(sc, nil, legendNone, "", ""); strings.Contains(out, "label=<") || !strings.HasSuffix(out, "}\n") {
+	if out := buildDOT(sc, nil, legendNone, "", ""); strings.Contains(out, "\n  label=<") || !strings.HasSuffix(out, "}\n") {
 		t.Errorf("the map carries a graph label:\n%s", out)
 	}
-	if out := buildDOT(sc, &lg, legendFull, "", ""); out != renderDOT(sc, lg, legendFull) || !strings.Contains(out, "label=<") {
+	if out := buildDOT(sc, &lg, legendFull, "", ""); out != renderDOT(sc, lg, legendFull) || !strings.Contains(out, "\n  label=<") {
 		t.Error("a legend render is no longer renderDOT's")
 	}
 }
@@ -462,12 +482,17 @@ func TestSelectionRingRendersAroundThePlanet(t *testing.T) {
 			p = c
 		}
 	}
-	// The ring stands selectGap out from the planet's ring, 9pt scaled.
+	// The ring stands selectGap out from the card's side edge, scaled; its
+	// stroke is a pixel or two wide, so look at the pixels around its centre line.
 	s := min(800/r.vbW, 800/r.vbH)
-	dist := p.R + (selectGap-0.5)*s
-	cr, cg, cb, _ := r.img.At(int(math.Round(p.Cx+dist)), int(math.Round(p.Cy))).RGBA()
-	if got := [3]int{int(cr >> 8), int(cg >> 8), int(cb >> 8)}; got != [3]int{0xf9, 0xe2, 0xaf} {
-		t.Errorf("pixel on the ring is %v, want %s", got, colSun)
+	x := p.Cx + (cardW*72/2+selectGap)*s
+	found := false
+	for _, dx := range []int{-1, 0, 1} {
+		cr, cg, cb, _ := r.img.At(int(math.Round(x))+dx, int(math.Round(p.Cy))).RGBA()
+		found = found || [3]int{int(cr >> 8), int(cg >> 8), int(cb >> 8)} == [3]int{0xf9, 0xe2, 0xaf}
+	}
+	if !found {
+		t.Errorf("no pixel of %s on the ring's side near x=%.1f", colSun, x)
 	}
 }
 
@@ -541,7 +566,7 @@ func TestMapOutputShapeAndSlotOrder(t *testing.T) {
 			keys = append(keys, k)
 		}
 		slices.Sort(keys)
-		if !slices.Equal(keys, []string{"branch", "cx", "cy", "name", "r"}) {
+		if !slices.Equal(keys, []string{"branch", "cx", "cy", "hh", "hw", "name", "r"}) {
 			t.Errorf("planet keys = %v", keys)
 		}
 	}

@@ -19,11 +19,12 @@ const (
 	keySymX  = keyMargin + 20
 	keyTextX = keySymX + 28
 
-	// keyScale draws the tier circles at half their size in the diagram, which
-	// keeps the key short and the three sizes in their true ratio.
-	keyScale   = 0.5
 	keyTierGap = 40.0
 	keyRing    = 11.0
+
+	keyCardW = 26.0
+	keyCardH = 14.0
+	keyCardR = 4.0
 )
 
 // keyRow is one line of the key: a symbol drawn around its centre, then text.
@@ -53,6 +54,13 @@ func keyCircle(cx, cy, r float64, fill, stroke string, pen float64, extra string
 		svgNum(cx), svgNum(cy), svgNum(r), fill, stroke, svgNum(pen), extra)
 }
 
+// keyCard is a small card symbol: a rounded rect centred on (cx, cy).
+func keyCard(cx, cy float64, fill, stroke string, pen float64, extra string) string {
+	return fmt.Sprintf(`<rect x="%s" y="%s" width="%s" height="%s" rx="%s" fill="%s" stroke="%s" stroke-width="%s"%s/>`,
+		svgNum(cx-keyCardW/2), svgNum(cy-keyCardH/2), svgNum(keyCardW), svgNum(keyCardH), svgNum(keyCardR),
+		fill, stroke, svgNum(pen), extra)
+}
+
 // fadedRing is the dashed, translucent stroke the diagram draws for the dim of a
 // stale worker and for a queued hold.
 const fadedRing = ` stroke-dasharray="4 3" stroke-opacity="0.33"`
@@ -69,18 +77,21 @@ func legendSVG(lg legend) string {
 			return keyCircle(cx, cy, ciBadgeRadius, fill, stroke, pen, extra)
 		}
 	}
+	card := func(ring, fill string, pen float64, extra string) func(cx, cy float64) string {
+		return func(cx, cy float64) string { return keyCard(cx, cy, fill, ring, pen, extra) }
+	}
 	rows := []keyRow{
-		{sym: state(colWorking, colFill, planetPenwidth, ""), text: "working"},
-		{sym: state(colBlocked, colFill, blockedPenwidth, ""), text: "blocked"},
-		{sym: state(colPROpen, colFill, planetPenwidth, ""), text: "pr open"},
-		{sym: state(colDone, colBG, planetPenwidth, ""), text: "done"},
-		{sym: state(colFailed, colBG, planetPenwidth, ` stroke-dasharray="4 3"`), text: "failed"},
-		{h: keyTierH, text: "size = tier: deep, standard, trivial", textX: keySymX + 100, sym: func(cx, cy float64) string {
+		{sym: card(colLegend, colFill, planetPenwidth, ""), text: "border colour = state"},
+		{sym: card(colWorking, colFill, planetPenwidth, ""), text: "working"},
+		{sym: card(colBlocked, colFill, planetPenwidth, ""), text: "blocked"},
+		{sym: card(colPROpen, colFill, planetPenwidth, ""), text: "pr open"},
+		{sym: card(colDone, colBG, planetPenwidth, ""), text: "done"},
+		{sym: card(colFailed, colBG, planetPenwidth, ` stroke-dasharray="4 3"`), text: "failed"},
+		{h: keyTierH, text: "border weight = tier: deep, standard, trivial", textX: keySymX + 110, sym: func(cx, cy float64) string {
 			var b strings.Builder
 			x := cx
 			for _, tier := range []string{"deep", "standard", "trivial"} {
-				r := tierSize[tier] * 72 / 2 * keyScale
-				b.WriteString(keyCircle(x, cy, r, colFill, colLegend, planetPenwidth, ""))
+				b.WriteString(keyCard(x, cy, colFill, colLegend, cardPen(tier), ""))
 				x += keyTierGap
 			}
 			return b.String()
@@ -88,15 +99,17 @@ func legendSVG(lg legend) string {
 		{text: "small dot = role", sym: func(cx, cy float64) string {
 			return keyCircle(cx, cy, moonSize*72/2, colEdge, colEdge, 0, "")
 		}},
-		{text: "hexagon = remote host", sym: func(cx, cy float64) string {
-			const dx, dy = keyRing, keyRing * 0.866
+		{text: "hexagon on the corner = remote host", sym: func(cx, cy float64) string {
+			const dx, dy = 6.0, 6.0 * 0.866
+			hx, hy := cx-keyCardW/2, cy-keyCardH/2
 			pts := [][2]float64{{-dx, 0}, {-dx / 2, -dy}, {dx / 2, -dy}, {dx, 0}, {dx / 2, dy}, {-dx / 2, dy}}
 			var p []string
 			for _, v := range pts {
-				p = append(p, svgNum(cx+v[0])+","+svgNum(cy+v[1]))
+				p = append(p, svgNum(hx+v[0])+","+svgNum(hy+v[1]))
 			}
-			return `<polygon points="` + strings.Join(p, " ") + `" fill="` + colFill + `" stroke="` + colLegend +
-				`" stroke-width="` + svgNum(planetPenwidth) + `"/>`
+			return keyCard(cx, cy, colFill, colLegend, planetPenwidth, "") +
+				`<polygon points="` + strings.Join(p, " ") + `" fill="` + colFill + `" stroke="` + colLegend +
+				`" stroke-width="` + svgNum(hostBadgePen) + `"/>`
 		}},
 		{text: "dashed arrow = stacked on", sym: func(cx, cy float64) string {
 			return fmt.Sprintf(`<line x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="2" stroke-dasharray="5 3"/>`+
@@ -116,7 +129,7 @@ func legendSVG(lg legend) string {
 	}
 	if lg.waiting > 0 {
 		rows = append(rows, keyRow{text: "waiting on you", sym: func(cx, cy float64) string {
-			return keyCircle(cx, cy, keyRing, colFill, colWaiting, waitPenwidth, ` stroke-dasharray="1 4" stroke-linecap="round"`)
+			return keyCard(cx, cy, colFill, colWaiting, waitPenwidth, ` stroke-dasharray="1 4" stroke-linecap="round"`)
 		}})
 	}
 	if lg.ci > 0 {
@@ -132,7 +145,7 @@ func legendSVG(lg legend) string {
 	}
 	if lg.stale > 0 {
 		rows = append(rows, keyRow{text: "dim = no status " + strconv.Itoa(int(staleStatus.Minutes())) + "m+",
-			sym: state(colWorking, colFill, planetPenwidth, fadedRing)})
+			sym: card(colWorking, colFill, planetPenwidth, fadedRing)})
 	}
 
 	var body strings.Builder

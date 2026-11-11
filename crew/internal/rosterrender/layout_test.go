@@ -11,7 +11,7 @@ import (
 )
 
 func wp(branch, class string) planet {
-	return planet{branch: branch, class: class, size: 0.75}
+	return planet{branch: branch, class: class}
 }
 
 func remoteWP(branch, class, host string) planet {
@@ -251,7 +251,7 @@ func TestLayoutRadiusGrowsWithCountAndSpacingHolds(t *testing.T) {
 	}
 	for i, p := range big.planets {
 		q := big.planets[(i+1)%len(big.planets)]
-		if d := math.Hypot(p.x-q.x, p.y-q.y); d < p.size*72 {
+		if d := math.Hypot(p.x-q.x, p.y-q.y); d < 2*cardReach {
 			t.Errorf("planets %d and %d overlap: %v apart", i, (i+1)%len(big.planets), d)
 		}
 	}
@@ -266,13 +266,13 @@ func TestLayoutFitsTheCanvas(t *testing.T) {
 			outer := 0.0
 			var side [4]bool // right, left, top, bottom: planets on an axis count for both neighbours
 			for _, p := range sc.planets {
-				outer = max(outer, math.Hypot(p.x, p.y)+p.size*72/2)
+				outer = max(outer, math.Hypot(p.x, p.y)+cardReach)
 				side[0] = side[0] || p.x > -1e-6
 				side[1] = side[1] || p.x < 1e-6
 				side[2] = side[2] || p.y > -1e-6
 				side[3] = side[3] || p.y < 1e-6
 			}
-			if sc.extent < outer || sc.extent-outer > 60 {
+			if sc.extent < outer-1e-6 || sc.extent-outer > 60 {
 				t.Errorf("extent %v around content radius %v", sc.extent, outer)
 			}
 			if n >= 4 && slices.Contains(side[:], false) {
@@ -293,6 +293,65 @@ func TestLayoutMoonsOutwardAndExtent(t *testing.T) {
 		}
 		if sc.extent < math.Hypot(m.x, m.y) {
 			t.Errorf("extent %v inside moon %v", sc.extent, math.Hypot(m.x, m.y))
+		}
+	}
+}
+
+// rectGap is the distance from (x, y) to the rectangle of half extents hw, hh
+// centred on the origin, zero inside it.
+func rectGap(x, y, hw, hh float64) float64 {
+	return math.Hypot(max(math.Abs(x)-hw, 0), max(math.Abs(y)-hh, 0))
+}
+
+func TestMoonsClearTheirCardAndBadges(t *testing.T) {
+	cw, ch := cardW*72/2, cardH*72/2
+	badges := func(p planet) [][4]float64 { // centre x, y, half w, half h
+		var bs [][4]float64
+		if _, pen, ok := ciBadge(p.ci); ok {
+			bs = append(bs, [4]float64{cw, ch, ciBadgeRadius + pen/2, ciBadgeRadius + pen/2})
+		}
+		if p.rounds > 0 {
+			bs = append(bs, [4]float64{cw, -ch, roundBadgeW * 72 / 2, roundBadgeH * 72 / 2})
+		}
+		if p.host != "" {
+			h := hostBadgeSize*72/2 + hostBadgePen/2
+			bs = append(bs, [4]float64{-cw, ch, h, h})
+		}
+		return bs
+	}
+	for _, tier := range []string{"trivial", "standard", "deep", ""} {
+		for _, badged := range []bool{false, true} {
+			for n := 1; n <= 3; n++ {
+				p := wp("a", classWorking)
+				p.tier = tier
+				p.moons = make([]moon, n)
+				if badged {
+					p.host, p.ci, p.rounds = "mbp", "fail", 2
+				}
+				hw, hh := cardHalf(cardPen(tier))
+				for deg := 0; deg < 360; deg++ {
+					var sc scene
+					sc.place(p, 0, 300, float64(deg))
+					pl := sc.planets[0]
+					for i, m := range pl.moons {
+						x, y := m.x-pl.x, m.y-pl.y
+						if got := rectGap(x, y, hw, hh); got < moonGap-moonRadius-1e-9 {
+							t.Fatalf("tier %q n=%d angle %d: moon %d is %.2f from the card", tier, n, deg, i, got)
+						}
+						for _, b := range badges(p) {
+							if got := rectGap(x-b[0], y-b[1], b[2], b[3]); got < moonRadius {
+								t.Fatalf("tier %q n=%d angle %d: moon %d is %.2f from a badge", tier, n, deg, i, got)
+							}
+						}
+						for i := 1; i < len(pl.moons); i++ {
+							a, b := pl.moons[i-1], pl.moons[i]
+							if got := math.Hypot(b.x-a.x, b.y-a.y); math.Abs(got-moonStep) > 1e-9 {
+								t.Fatalf("tier %q n=%d angle %d: moons %d and %d are %.4f apart, want %v", tier, n, deg, i-1, i, got, moonStep)
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 }
@@ -580,17 +639,23 @@ func TestWedgesAWedgeOfManyPlanetsUsesOuterRings(t *testing.T) {
 	if len(counts) < 2 {
 		t.Fatalf("40 planets on %d rings", len(counts))
 	}
-	for ring, n := range counts {
-		r := minRadius + float64(ring)*ringStep
-		if limit := max(1, int(r*w.span*math.Pi/180/arcPerPlanet)); n > limit {
-			t.Errorf("ring %d holds %d, cap %d", ring, n, limit)
-		}
-		if ring < len(counts)-1 && n < max(1, int(r*w.span*math.Pi/180/arcPerPlanet)) {
+	last := 0
+	for ring := range counts {
+		last = max(last, ring)
+	}
+	for ring := 0; ring <= last; ring++ {
+		fit := int((minRadius + float64(ring)*ringStep) * w.span * math.Pi / 180 / arcPerPlanet)
+		switch n := counts[ring]; {
+		case fit == 0 && n != 0:
+			t.Errorf("ring %d holds %d though no card fits it", ring, n)
+		case n > fit:
+			t.Errorf("ring %d holds %d, cap %d", ring, n, fit)
+		case ring < last && n < fit:
 			t.Errorf("ring %d holds %d but a further ring is in use", ring, n)
 		}
 	}
-	if !near(w.rim, outer+wedgeRimGap) {
-		t.Errorf("rim %v, want %v", w.rim, outer+wedgeRimGap)
+	if !near(w.rim, outer+cardReach+wedgeRimGap) {
+		t.Errorf("rim %v, want %v", w.rim, outer+cardReach+wedgeRimGap)
 	}
 }
 
@@ -663,7 +728,7 @@ func TestWedgesExtentHoldsEverything(t *testing.T) {
 		}
 	}
 	for _, p := range sc.planets {
-		check(p.branch, math.Hypot(p.x, p.y)+p.size*72/2)
+		check(p.branch, math.Hypot(p.x, p.y)+cardReach)
 		for _, m := range p.moons {
 			check("a moon", math.Hypot(m.x, m.y)+moonRadius)
 		}

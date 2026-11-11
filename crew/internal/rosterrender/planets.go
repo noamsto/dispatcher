@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // The four sector classes a planet's ring colour comes from. failed and exited
@@ -29,13 +30,11 @@ const staleStatus = 45 * time.Minute
 // maxText bounds every bus- or tmux-sourced string that reaches the diagram.
 const maxText = 24
 
+// maxFreeText bounds the free-text title and detail before they are wrapped.
+const maxFreeText = 200
+
 // classRank is a class's place in the ring, clockwise from 12 o'clock.
 var classRank = map[string]int{classBlocked: 0, classWorking: 1, classPROpen: 2, classDone: 3}
-
-// tierSize is a planet's diameter in inches; an unknown tier draws as standard.
-var tierSize = map[string]float64{"deep": 0.9, "standard": 0.75, "trivial": 0.6}
-
-const standardSize = 0.75
 
 var issueRe = regexp.MustCompile(`[0-9]+`)
 
@@ -50,19 +49,22 @@ type moon struct {
 	x, y    float64
 }
 
-// planet is one drawn worker. Every free-text field has been through clean.
+// planet is one drawn worker. Every field has been through clean or
+// sanitizeText.
 type planet struct {
 	branch string
 	name   string
 	issue  string
-	label  string // name, then "\n" and the issue when the branch has one
 	tier   string
+	title  string // free text: sanitizeText, not clean
+	engine string
+	model  string // short alias
+	detail string // free text: sanitizeText, not clean
 	state  string
 	class  string
 	failed bool
 	host   string
 	base   string
-	size   float64
 	ts     float64 // the row's last-activity ms
 	moons  []moon
 
@@ -141,6 +143,10 @@ func buildPlanets(m map[string]any, now float64) ([]planet, legend) {
 		name, _ := row["name"].(string)
 		tier, _ := row["tier"].(string)
 		base, _ := row["base"].(string)
+		title, _ := row["title"].(string)
+		engine, _ := row["engine"].(string)
+		model, _ := row["model"].(string)
+		detail, _ := row["detail"].(string)
 		codename, suffix, _ := strings.Cut(name, "·")
 		issue := issueOf(branch)
 		if issue == "" && foldIDRe.MatchString(suffix) {
@@ -151,22 +157,18 @@ func buildPlanets(m map[string]any, now float64) ([]planet, legend) {
 			name:   clean(codename),
 			issue:  clean(issue),
 			tier:   tier,
+			title:  sanitizeText(title),
+			engine: clean(engine),
+			model:  clean(modelAlias(model)),
+			detail: sanitizeText(detail),
 			state:  state,
 			class:  class,
 			failed: failed,
 			base:   base,
-			size:   standardSize,
 			ts:     ts,
 		}
 		if p.name == "" {
 			p.name = "?"
-		}
-		if s, ok := tierSize[tier]; ok {
-			p.size = s
-		}
-		p.label = p.name
-		if p.issue != "" {
-			p.label += "\n" + p.issue
 		}
 		if host, _ := row["host"].(string); host != "" {
 			if p.host = clean(host); p.host == "" {
@@ -320,6 +322,50 @@ func clean(s string) string {
 			b.WriteRune(r)
 			n++
 		}
+	}
+	return b.String()
+}
+
+// modelAlias shortens a model id to its family word (opus, sonnet, haiku,
+// fable) or, failing that, to the part after the last slash.
+func modelAlias(s string) string {
+	if i := strings.LastIndex(s, "/"); i >= 0 {
+		s = s[i+1:]
+	}
+	lower := strings.ToLower(s)
+	for _, f := range []string{"opus", "sonnet", "haiku", "fable"} {
+		if strings.Contains(lower, f) {
+			return f
+		}
+	}
+	return s
+}
+
+// sanitizeText reduces bus-sourced free text to printable runes with single
+// spaces, cut to maxFreeText runes. DOT and HTML syntax stays in place:
+// htmlText escapes it at emission.
+func sanitizeText(s string) string {
+	var b strings.Builder
+	n := 0
+	space := false
+	for _, r := range s {
+		if n == maxFreeText {
+			break
+		}
+		if unicode.IsSpace(r) {
+			space = b.Len() > 0
+			continue
+		}
+		if !unicode.IsPrint(r) {
+			continue
+		}
+		if space {
+			b.WriteByte(' ')
+			n++
+			space = false
+		}
+		b.WriteRune(r)
+		n++
 	}
 	return b.String()
 }

@@ -5,9 +5,9 @@ import (
 	"strconv"
 )
 
-// mapPlanet is one planet of the map in pixels of the rendered PNG, y down. r is
-// the outer edge of its ring, so a remote host's hexagon is covered by its
-// circumscribed circle, a few pixels more than its drawn area.
+// mapPlanet is one planet of the map in pixels of the rendered PNG, y down. hw and
+// hh are the half extents of its hit rectangle; r is the circle around it, for
+// readers that predate the rectangle.
 type mapPlanet struct {
 	Branch string `json:"branch"`
 	Name   string `json:"name"`
@@ -17,6 +17,8 @@ type mapPlanet struct {
 	Home bool    `json:"home,omitempty"`
 	Cx   float64 `json:"cx"`
 	Cy   float64 `json:"cy"`
+	HW   float64 `json:"hw"`
+	HH   float64 `json:"hh"`
 	R    float64 `json:"r"`
 }
 
@@ -43,6 +45,7 @@ func mapGeometry(sc scene, halfX, halfY, vbW, vbH float64, pngW, pngH int) []map
 		if len(sc.wedges) == 0 {
 			repo, home = "", false
 		}
+		hw, hh := hitRect(p)
 		out = append(out, mapPlanet{
 			Branch: p.branch,
 			Name:   p.name,
@@ -50,7 +53,9 @@ func mapGeometry(sc scene, halfX, halfY, vbW, vbH float64, pngW, pngH int) []map
 			Home:   home,
 			Cx:     round2(ox + (padX+halfX+p.x)*s),
 			Cy:     round2(oy + (padY+halfY-p.y)*s),
-			R:      round2(hitRadius(p) * s),
+			HW:     round2(hw * s),
+			HH:     round2(hh * s),
+			R:      round2(math.Hypot(hw, hh) * s),
 		})
 	}
 	return out

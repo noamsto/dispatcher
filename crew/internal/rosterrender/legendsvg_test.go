@@ -27,7 +27,7 @@ func TestLegendSVGHoldsTheFullKey(t *testing.T) {
 	svg := legendSVG(lg)
 	for _, want := range []string{
 		"working", "blocked", "pr open", "done", "failed",
-		"size = tier", "small dot = role", "hexagon = remote host", "dashed arrow = stacked on",
+		"border colour = state", "border weight = tier", "small dot = role", "hexagon on the corner = remote host", "dashed arrow = stacked on",
 		"dashed outer dot = queued hold", "wedge = repo", "waiting on you",
 		"ci pass", "ci running", "ci fail", "no runner", "dim = no status 45m+",
 		stripText(lg),
@@ -43,6 +43,19 @@ func TestLegendSVGHoldsTheFullKey(t *testing.T) {
 	}
 }
 
+func TestLegendSVGDrawsTheTierRowAsThreeCardPens(t *testing.T) {
+	svg := legendSVG(legend{})
+	for _, tier := range []string{"deep", "standard", "trivial"} {
+		pen := `stroke="` + colLegend + `" stroke-width="` + svgNum(cardPen(tier)) + `"/>`
+		if !strings.Contains(svg, pen) {
+			t.Errorf("no card drawn with the %s pen %q", tier, pen)
+		}
+	}
+	if n := strings.Count(svg, `rx="`+svgNum(keyCardR)+`"`); n < 3+5 {
+		t.Errorf("%d rounded rects, want at least the three tiers and the five states", n)
+	}
+}
+
 // TestLegendSVGKeysFollowTheDiagram: the marker keys appear only for what the
 // diagram can draw, as in the full graph legend, and the strip follows the bus.
 func TestLegendSVGKeysFollowTheDiagram(t *testing.T) {
@@ -52,7 +65,7 @@ func TestLegendSVGKeysFollowTheDiagram(t *testing.T) {
 			t.Errorf("the key carries %q for a diagram that cannot draw it", absent)
 		}
 	}
-	for _, want := range []string{"hexagon = remote host", "dashed arrow = stacked on", "size = tier", "small dot = role"} {
+	for _, want := range []string{"hexagon on the corner = remote host", "dashed arrow = stacked on", "border weight = tier", "small dot = role"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("the key lacks %q", want)
 		}

@@ -28,11 +28,31 @@ type dotWorker struct {
 	roles                                 [][2]string // role, state
 }
 
+// cardSamples are the title, engine, model and detail a hand-built row gets,
+// picked by its branch so the output does not depend on row order.
+var cardSamples = [][4]string{
+	{"Render the roster as rounded task cards with a title and a status line", "claude", "claude-opus-4-1", "running the targeted go tests for the card text"},
+	{"Fix the flaky retry in the sync watcher", "pi", "deepseek/deepseek-v4.1-flash", "reading crew/internal/rosterrender/layout.go"},
+	{"Port the Supercalifragilisticexpialidocious importer to Go and cover its edge cases with table tests", "claude", "claude-sonnet-4-5", "waiting for the plan critic's verdict on the second revision"},
+	{"Bump deps", "codex", "gpt-5", "pushed the branch"},
+	{"Quote the \"state\" & <tier> words in the legend", "claude", "claude-haiku-4-5", "editing dot.go"},
+}
+
+func cardSample(branch string) [4]string {
+	var n uint
+	for _, r := range branch {
+		n = n*31 + uint(r)
+	}
+	return cardSamples[n%uint(len(cardSamples))]
+}
+
 func dotModel(ws []dotWorker, holds int) map[string]any {
 	m := emptyModel()
 	for _, w := range ws {
+		s := cardSample(w.branch)
 		row := map[string]any{
 			"branch": w.branch, "name": w.name, "tier": w.tier, "state": w.state,
+			"title": s[0], "engine": s[1], "model": s[2], "detail": s[3],
 			"ts": (dotNow - w.age) * 1000,
 		}
 		if w.base != "" {
@@ -125,6 +145,22 @@ func wedgeRoster() []repoWorker {
 	}
 }
 
+// wedge3Roster is three repos of 3, 3 and 2 workers, narrow enough for a ring to
+// skip a wedge: a stacked pair, a remote worker, CI badges, a waiting worker and
+// role moons.
+func wedge3Roster() []repoWorker {
+	return []repoWorker{
+		{dotWorker: dotWorker{branch: "feat/11-api", name: "sky", tier: "deep", state: "blocked", age: 60, roles: roleOne}, repo: "alpha", waiting: true},
+		{dotWorker: dotWorker{branch: "feat/12-docs", name: "rose", tier: "trivial", state: "pr_open", age: 90}, repo: "alpha", ci: "pass"},
+		{dotWorker: dotWorker{branch: "feat/13-cli", name: "opal", tier: "standard", state: "working", age: 20, base: "feat/11-api", roles: roleBoth}, repo: "alpha"},
+		{dotWorker: dotWorker{branch: "feat/21-ui", name: "lime", tier: "standard", state: "working", age: 30, roles: roleOne}, repo: "beta"},
+		{dotWorker: dotWorker{branch: "feat/22-db", name: "coral", tier: "standard", state: "pr_open", age: 90}, repo: "beta", ci: "fail"},
+		{dotWorker: dotWorker{branch: "feat/23-remote", name: "olive", tier: "deep", state: "working", age: 10, host: "mbp"}, repo: "beta", ci: "pending"},
+		{dotWorker: dotWorker{branch: "feat/31-ops", name: "mint", tier: "trivial", state: "working", age: 15}, repo: "gamma", ci: "none"},
+		{dotWorker: dotWorker{branch: "feat/32-old", name: "dune", tier: "standard", state: "working", age: 3600}, repo: "gamma"},
+	}
+}
+
 func emitRepos(ws []repoWorker) (string, scene, legend) {
 	ps, lg := repoPlanets(ws)
 	_, sc := arrange(newSlotState(), ps)
@@ -155,6 +191,7 @@ var dotCases = []dotCase{
 	{"8-workers", eightWorkers(), 0, nil},
 	{"16-workers", sixteenWorkers(), 2, nil},
 	{"wedges", nil, 0, wedgeRoster()},
+	{"wedges3", nil, 0, wedge3Roster()},
 }
 
 func emit(m map[string]any) (string, scene, legend) {
@@ -195,11 +232,11 @@ func TestDotEveryRenderIsLabelledAndFitted(t *testing.T) {
 	for _, c := range dotCases {
 		t.Run(c.name, func(t *testing.T) {
 			out, sc, _ := c.emit()
-			if !strings.Contains(out, "working ") || !strings.Contains(out, "size = tier") {
+			if !strings.Contains(out, "working ") || !strings.Contains(out, "border weight = tier") {
 				t.Errorf("no legend in\n%s", out)
 			}
 			for _, p := range sc.planets {
-				if p.name == "" || !strings.Contains(out, "label="+dotq(p.label)) {
+				if p.name == "" || !strings.Contains(out, htmlText(cardTextOf(p.planet).rows[0])) {
 					t.Errorf("planet %s is unlabelled", p.branch)
 				}
 			}
@@ -405,11 +442,20 @@ func TestDotShapesAndStacks(t *testing.T) {
 	hexes := 0
 	for _, p := range sc.planets {
 		line := nodeLine(t, out, ids[p.branch])
-		if got := strings.Contains(line, "shape=hexagon"); got != (p.host != "") {
-			t.Errorf("%s hexagon = %v, host %q", p.branch, got, p.host)
+		if !strings.Contains(line, "shape=box") || !strings.Contains(line, `rounded,filled`) || strings.Contains(line, "shape=hexagon") {
+			t.Errorf("%s is not a rounded card: %s", p.branch, line)
 		}
-		if p.host != "" {
+		badge := regexp.MustCompile(`(?m)^  ` + ids[p.branch] + `h \[`).MatchString(out)
+		if badge != (p.host != "") {
+			t.Errorf("%s hexagon badge = %v, host %q", p.branch, badge, p.host)
+		}
+		if badge {
 			hexes++
+			x, y := posOf(t, nodeLine(t, out, ids[p.branch]+"h"))
+			if !strings.Contains(nodeLine(t, out, ids[p.branch]+"h"), "shape=hexagon") ||
+				math.Abs(x-(p.x-cardW*72/2)) > 0.011 || math.Abs(y-(p.y+cardH*72/2)) > 0.011 {
+				t.Errorf("%s host badge at (%v, %v), want the card's upper left corner", p.branch, x, y)
+			}
 		}
 	}
 	if hexes != 3 {
@@ -440,6 +486,76 @@ func nodeLine(t *testing.T, out, id string) string {
 	return ""
 }
 
+func TestDotCardsNeverOverlap(t *testing.T) {
+	const gap = 4.0
+	for _, c := range dotCases {
+		t.Run(c.name, func(t *testing.T) {
+			_, sc, _ := c.emit()
+			for i, p := range sc.planets {
+				hw, hh := cardHalf(cardPen(p.tier))
+				near := math.Hypot(max(math.Abs(p.x)-hw, 0), max(math.Abs(p.y)-hh, 0))
+				if near < sunSize*72/2+planetPenwidth {
+					t.Errorf("%s overlaps the dispatcher: %.1f away", p.branch, near)
+				}
+				for _, q := range sc.planets[i+1:] {
+					qw, qh := cardHalf(cardPen(q.tier))
+					if math.Abs(p.x-q.x) < hw+qw+gap && math.Abs(p.y-q.y) < hh+qh+gap {
+						t.Errorf("%s (%.0f, %.0f) and %s (%.0f, %.0f) overlap", p.branch, p.x, p.y, q.branch, q.x, q.y)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDotCardCarriesItsText(t *testing.T) {
+	ws := []dotWorker{
+		{branch: "feat/1-long", name: "lime", tier: "deep", state: "working", age: 5},
+		{branch: "feat/3-quote", name: "sky", tier: "standard", state: "pr_open", age: 5},
+	}
+	m := dotModel(ws, 0)
+	rows := m["rows"].([]any)
+	rows[0].(map[string]any)["title"] = "Port the Supercalifragilisticexpialidocious importer to Go and cover its edge cases with table tests"
+	rows[0].(map[string]any)["engine"], rows[0].(map[string]any)["model"] = "claude", "claude-opus-4-1"
+	rows[0].(map[string]any)["detail"] = "waiting for the plan critic's verdict on the second revision of the plan"
+	rows[1].(map[string]any)["title"] = `Quote the "state" & <tier> words`
+	rows[1].(map[string]any)["detail"] = ""
+	out, sc, _ := emit(m)
+	ids := keyIDs(sc)
+
+	long := nodeLine(t, out, ids[placedBy(t, sc, "", "feat/1-long").key()])
+	for _, want := range []string{
+		`<td align="left">lime · #1&#160;&#160;<font color="` + colWorking + `">working</font></td>`,
+		`<td align="left">Port the</td>`,
+		`<td align="left">Supercalifragilisticexpialidoci…</td>`,
+		`<td align="left"><font color="` + colLegend + `">deep·claude·opus</font></td>`,
+		`<td align="left"><font color="` + colDim + `">waiting for the plan critic's…</font></td>`,
+		`fixedsize="true" width="` + strconv.FormatFloat(cardInner, 'f', 1, 64) + `" height="` + strconv.FormatFloat(cardTableH, 'f', 1, 64) + `"`,
+	} {
+		if !strings.Contains(long, want) {
+			t.Errorf("long card lacks %s:\n%s", want, long)
+		}
+	}
+	if n := strings.Count(long, "<tr>"); n != cardRows {
+		t.Errorf("%d rows, want %d", n, cardRows)
+	}
+
+	quote := nodeLine(t, out, ids[placedBy(t, sc, "", "feat/3-quote").key()])
+	for _, want := range []string{
+		`<td align="left">Quote the &quot;state&quot; &amp; &lt;tier&gt;</td>`,
+		`<td align="left">words</td>`,
+		`<td align="left"><font color="` + colDim + `">&#160;</font></td>`,
+		`<font color="` + colPROpen + `">pr open</font>`,
+	} {
+		if !strings.Contains(quote, want) {
+			t.Errorf("quoted card lacks %s:\n%s", want, quote)
+		}
+	}
+	if strings.Contains(quote, `"state"`) || strings.Contains(quote, "<tier>") {
+		t.Errorf("title text reached the label unescaped:\n%s", quote)
+	}
+}
+
 func TestDotUsesAeyesFont(t *testing.T) {
 	out, _, _ := emit(dotModel(eightWorkers(), 0))
 	if strings.Contains(out, "sans-serif") || strings.Count(out, `fontname="Source Sans 3"`) != 2 {
@@ -449,14 +565,14 @@ func TestDotUsesAeyesFont(t *testing.T) {
 
 func TestDotLegend(t *testing.T) {
 	out, _, _ := emit(dotModel(sixteenWorkers(), 2))
-	_, label, ok := strings.Cut(out, "label=<")
+	_, label, ok := strings.Cut(out, "\n  label=<")
 	if !ok {
 		t.Fatal("no HTML legend label")
 	}
 	for _, want := range []string{
 		`<font color="#a6e3a1">●</font>`, `<font color="#f38ba8">●</font>`, `<font color="#89b4fa">●</font>`,
 		`<font color="#45475a">`, `<font color="#7f4a5a">`, "working 8", "blocked 2", "pr open 2", "done 3", "failed 1", "holds 2",
-		"size = tier", "small dot = role", "stacked on", "hexagon = remote host", "→",
+		"border weight = tier", "small dot = role", "stacked on", "hexagon = remote host", "→",
 	} {
 		if !strings.Contains(label, want) {
 			t.Errorf("legend lacks %q", want)
@@ -530,7 +646,7 @@ func TestDotHostileTextCannotBreakOut(t *testing.T) {
 			t.Errorf("output carries %q", bad)
 		}
 	}
-	_, legendHTML, _ := strings.Cut(out, "label=<")
+	_, legendHTML, _ := strings.Cut(out, "\n  label=<")
 	if strings.Contains(legendHTML, "ZQ") || strings.Count(legendHTML, "<table") != 1 || strings.Count(legendHTML, "</table>") != 1 {
 		t.Errorf("legend is not the fixed table: %s", legendHTML)
 	}
@@ -545,7 +661,7 @@ func TestDotIDsDoNotDeriveFromUserText(t *testing.T) {
 	plain, _, _ := emit(dotModel(eightWorkers(), 0))
 	multi, _, _ := emitRepos(wedges)
 	stmt := regexp.MustCompile(`^  (\S+)(?: -> (\S+))? \[`)
-	id := regexp.MustCompile(`^(p\d+([mwc]\d*)?|h\d+|c\d+|w\d+(s[01]|a\d+)?|sel\d*|dispatcher|node|edge)$`)
+	id := regexp.MustCompile(`^(p\d+([mwc]\d*|[hr])?|h\d+|c\d+|w\d+(s[01]|a\d+)?|sel\d*|dispatcher|node|edge)$`)
 	for _, out := range []string{plain, multi} {
 		for _, line := range strings.Split(out, "\n") {
 			m := stmt.FindStringSubmatch(line)
@@ -570,6 +686,27 @@ func neatoPath(t *testing.T) string {
 	return p
 }
 
+// neatoMeasuresABoundedFont reports whether Graphviz measures the diagram font
+// with one of the two faces the card width table is calibrated against: Source
+// Sans 3, or Noto Sans, which Pango picks when Source Sans 3 is missing. The
+// trailing "3" in the family name is read as a size, so Pango never resolves to
+// Source Sans 3 by name and the match is on the face it actually loads.
+func neatoMeasuresABoundedFont(neato string) bool {
+	cmd := exec.Command(neato, "-n", "-v", "-Tsvg")
+	cmd.Stdin = strings.NewReader(`digraph g { a [pos="0,0!" fontname="` + diagramFont + `" label="x"]; }`)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if cmd.Run() != nil {
+		return false
+	}
+	for _, line := range strings.Split(stderr.String(), "\n") {
+		if _, after, ok := strings.Cut(line, "resolved to:"); ok && (strings.Contains(after, "Noto Sans") || strings.Contains(after, diagramFont)) {
+			return true
+		}
+	}
+	return false
+}
+
 func neatoSVG(t *testing.T, neato, dot string) []byte {
 	t.Helper()
 	cmd := exec.Command(neato, "-n", "-Tsvg")
@@ -580,6 +717,50 @@ func neatoSVG(t *testing.T, neato, dot string) []byte {
 		t.Fatalf("neato: %v\n%s", err, stderr.String())
 	}
 	return stdout.Bytes()
+}
+
+var cardTextXRe = regexp.MustCompile(`(?s)<title>p\d+</title>\s*<path[^>]* d="M(-?[0-9.]+),[^"]*"[^>]*/>\s*<text[^>]* x="(-?[0-9.]+)"`)
+
+// TestCardTextStartsAtTheSamePlaceOnEveryCard renders every fixture with the
+// real neato: the text must start the same distance from each card's outline,
+// whatever Graphviz measures. The table is calibrated against Source Sans 3 and
+// Noto Sans, so when neato measures with one of them it must not warn that a
+// label is too small; with any other fallback (e.g. the nix sandbox) the table
+// overflows by design and only the position check applies.
+func TestCardTextStartsAtTheSamePlaceOnEveryCard(t *testing.T) {
+	neato := neatoPath(t)
+	checkWarnings := neatoMeasuresABoundedFont(neato)
+	want, seen := 0.0, false
+	for _, c := range dotCases {
+		dot, _, _ := c.emit()
+		cmd := exec.Command(neato, "-n", "-Tsvg")
+		cmd.Stdin = strings.NewReader(dot)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%s: neato: %v\n%s", c.name, err, stderr.String())
+		}
+		if checkWarnings {
+			for _, line := range strings.Split(stderr.String(), "\n") {
+				if strings.Contains(line, "Warning") {
+					t.Errorf("%s: neato warned: %s", c.name, line)
+				}
+			}
+		}
+		for _, m := range cardTextXRe.FindAllSubmatch(stdout.Bytes(), -1) {
+			edge, _ := strconv.ParseFloat(string(m[1]), 64)
+			x, _ := strconv.ParseFloat(string(m[2]), 64)
+			if !seen {
+				want, seen = x-edge, true
+			}
+			if math.Abs(x-edge-want) > 0.02 {
+				t.Errorf("%s: text starts %.2f from the outline, want %.2f", c.name, x-edge, want)
+			}
+		}
+	}
+	if !seen {
+		t.Fatal("no card text found in the svg")
+	}
 }
 
 var viewBoxRe = regexp.MustCompile(`viewBox="([-0-9. ]+)"`)
@@ -629,6 +810,27 @@ func parseSVG(t *testing.T, svg []byte) svgNode {
 		t.Fatalf("svg does not parse: %v", err)
 	}
 	return root
+}
+
+func TestFinishSVGDotsOnlyFlowSpokes(t *testing.T) {
+	const in = `<svg viewBox="0 0 10 10">
+<g id="edge1" class="edge aeye&#45;flow">
+<title>dispatcher&#45;&gt;p1</title>
+<path fill="none" stroke="#585b70" stroke-width="1.5" stroke-dasharray="5,2" d="M1,1C2,2 3,3 4,4"/>
+</g>
+<g id="edge2" class="edge">
+<title>dispatcher&#45;&gt;p2</title>
+<path fill="none" stroke="#585b70" stroke-width="1.5" d="M1,1C2,2 3,3 4,4"/>
+</g>
+</svg>`
+	got := string(finishSVG([]byte(in), nil))
+	flow := `<path fill="none" stroke="#585b70" stroke-width="1.5" d="M1,1C2,2 3,3 4,4" stroke-dasharray="0.01 12" stroke-linecap="round"/>`
+	if !strings.Contains(got, flow) || strings.Contains(got, "5,2") {
+		t.Errorf("the flow spoke's path was not dotted:\n%s", got)
+	}
+	if n := strings.Count(got, "stroke-dasharray"); n != 1 {
+		t.Errorf("%d dasharrays, want only the flow spoke's:\n%s", n, got)
+	}
 }
 
 func TestFinishSVG(t *testing.T) {
@@ -1001,12 +1203,12 @@ func TestDotSameBranchInTwoRepos(t *testing.T) {
 	}
 	for _, p := range []placed{a, b} {
 		line := nodeLine(t, out, ids[p.key()])
-		if !strings.Contains(line, "label="+dotq(p.label)) {
+		if !strings.Contains(line, htmlText(cardTextOf(p.planet).rows[0])) {
 			t.Errorf("%s of %s has the wrong node: %s", p.branch, p.repoLabel, line)
 		}
 	}
-	if a.label == b.label {
-		t.Fatalf("both planets are labelled %q, so the check above proves nothing", a.label)
+	if a.name == b.name {
+		t.Fatalf("both planets are named %q, so the check above proves nothing", a.name)
 	}
 
 	stack := placedBy(t, sc, "beta", "feat/7-stack")
@@ -1039,8 +1241,8 @@ func TestDotWaitingRing(t *testing.T) {
 	}
 	p := placedBy(t, sc, "alpha", "feat/1-shared")
 	line := nodeLine(t, out, ids[p.key()]+"w")
-	d := strconv.FormatFloat(p.size+2*waitGap/72, 'g', -1, 64)
-	for _, w := range []string{`label=""`, "style=dotted", `color="` + colWaiting + `"`, "penwidth=2.5", "width=" + d, "height=" + d,
+	wd, ht := strconv.FormatFloat(cardW+2*waitGap/72, 'g', -1, 64), strconv.FormatFloat(cardH+2*waitGap/72, 'g', -1, 64)
+	for _, w := range []string{`label=""`, "shape=box", `style="rounded,dotted"`, `color="` + colWaiting + `"`, "penwidth=2.5", "width=" + wd, "height=" + ht,
 		"pos=" + dotq(pt(p.x)+","+pt(p.y)+"!")} {
 		if !strings.Contains(line, w) {
 			t.Errorf("ring lacks %s: %s", w, line)
@@ -1075,9 +1277,9 @@ func TestDotCIBadge(t *testing.T) {
 				}
 			}
 			x, y := posOf(t, line)
-			dx, dy := polar(p.size*72/2+ciBadgeStandoff, 45)
-			if math.Abs(x-(p.x+dx)) > 0.011 || math.Abs(y-(p.y+dy)) > 0.011 || dx <= 0 || dy <= 0 {
-				t.Errorf("badge at (%v, %v), want the planet's upper right (%v, %v)", x, y, p.x+dx, p.y+dy)
+			dx, dy := cardW*72/2, cardH*72/2
+			if math.Abs(x-(p.x+dx)) > 0.011 || math.Abs(y-(p.y+dy)) > 0.011 {
+				t.Errorf("badge at (%v, %v), want the card's upper right corner (%v, %v)", x, y, p.x+dx, p.y+dy)
 			}
 			if strings.Index(out, "  "+ids[p.key()]+"c [") < strings.Index(out, "  "+ids[p.key()]+" [") {
 				t.Error("the badge is declared before its planet")
@@ -1104,7 +1306,7 @@ func TestDotStalePlanet(t *testing.T) {
 		t.Fatal("the roster's old working planet is not stale")
 	}
 	line := nodeLine(t, out, ids[old.key()])
-	for _, want := range []string{`color="` + colWorking + staleAlpha + `"`, `style="filled,dashed"`, `fontcolor="` + colDim + `"`} {
+	for _, want := range []string{`color="` + colWorking + staleAlpha + `"`, `style="rounded,filled,dashed"`, `fontcolor="` + colDim + `"`} {
 		if !strings.Contains(line, want) {
 			t.Errorf("stale planet lacks %s: %s", want, line)
 		}
@@ -1159,8 +1361,8 @@ func TestAnimatedSetsSkipStalePlanets(t *testing.T) {
 func TestDotMarkerLegend(t *testing.T) {
 	rows := func(lg legend) int { return strings.Count(legendHTML(lg, legendFull), "<tr>") }
 	base := legend{working: 3, blocked: 1, prOpen: 2, done: 1, holds: 1, repos: 1}
-	if got := rows(base); got != 4 {
-		t.Errorf("a legend without markers has %d rows, want 4", got)
+	if got := rows(base); got != 5 {
+		t.Errorf("a legend without markers has %d rows, want 5", got)
 	}
 	if legendHeight(base, legendFull) != legendH+legendRowH || legendHeight(legend{}, legendFull) != legendH+legendRowH {
 		t.Errorf("legendHeight = %v, want %v", legendHeight(base, legendFull), legendH+legendRowH)
@@ -1192,8 +1394,8 @@ func TestDotMarkerLegend(t *testing.T) {
 		{"all", legend{repos: 3, waiting: 1, ci: 2, stale: 1}, []string{"wedge = repo" + gap + `<font color="` + colWaiting, "ci pass", "no runner" + gap + "dim = no status"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := rows(tc.lg); got != 5 {
-				t.Errorf("%d rows, want 5", got)
+			if got := rows(tc.lg); got != 6 {
+				t.Errorf("%d rows, want 6", got)
 			}
 			row := extra(tc.lg)
 			for _, w := range tc.want {
@@ -1298,7 +1500,7 @@ func TestDotHostileRepoLabelCannotBreakOut(t *testing.T) {
 	if !strings.Contains(out, "label="+dotq(hostileRepo)) {
 		t.Errorf("the wedge label is not the quoted repo name in\n%s", out)
 	}
-	_, legend, _ := strings.Cut(out, "label=<")
+	_, legend, _ := strings.Cut(out, "\n  label=<")
 	if strings.Contains(legend, "ZQ") || strings.Count(legend, "<table") != 1 || strings.Count(legend, "</table>") != 1 {
 		t.Errorf("legend is not the fixed table: %s", legend)
 	}
@@ -1354,7 +1556,7 @@ func TestDotCountsLegendIsOneRow(t *testing.T) {
 			t.Errorf("the counts legend lacks %q:\n%s", want, html)
 		}
 	}
-	for _, key := range []string{"size = tier", "small dot", "hexagon", "stacked on", "queued hold", "wedge", "waiting",
+	for _, key := range []string{"border weight = tier", "small dot", "hexagon", "stacked on", "queued hold", "wedge", "waiting",
 		"ci ", "no runner", "dim =", "crew weight", "fleet budget"} {
 		if strings.Contains(html, key) {
 			t.Errorf("the counts legend carries the key %q:\n%s", key, html)
@@ -1370,10 +1572,10 @@ func TestDotCountsLegendIsOneRow(t *testing.T) {
 	_, sc := arrange(newSlotState(), []planet{wp("a", classWorking)})
 	for _, mode := range []legendMode{legendFull, legendCounts, legendNone} {
 		out := renderDOT(sc, lg, mode)
-		if want := mode != legendNone; strings.Contains(out, "label=<") != want {
+		if want := mode != legendNone; strings.Contains(out, "\n  label=<") != want {
 			t.Errorf("%s: graph label drawn = %v, want %v", mode, !want, want)
 		}
-		if mode == legendCounts && strings.Count(out, "<tr>") != 1 {
+		if mode == legendCounts && strings.Count(strings.SplitN(out, "\n  label=<", 2)[1], "<tr>") != 1 {
 			t.Errorf("the counts diagram has more than one legend row:\n%s", out)
 		}
 		x, y := posOf(t, nodeLine(t, out, "c2"))
@@ -1446,8 +1648,8 @@ func spokeGroups(root svgNode) map[string]svgNode {
 }
 
 // TestFlowSpokesRestDashed: the viewer rasterizes the un-animated svg while it
-// pans, so the working planets' spokes carry the dash themselves, and a spoke
-// that is not animated stays solid.
+// pans, so the working planets' spokes carry a dotted dash (0.01 12 with round
+// caps) themselves, and a spoke that is not animated stays solid.
 func TestFlowSpokesRestDashed(t *testing.T) {
 	out, sc, _ := emit(dotModel(sixteenWorkers(), 0))
 	ids := idOf(sc)
@@ -1465,8 +1667,8 @@ func TestFlowSpokesRestDashed(t *testing.T) {
 		if flow {
 			flows++
 		}
-		if dashed := strings.Contains(line, "style=dashed"); dashed != flow {
-			t.Errorf("spoke dashed = %v, animated = %v: %s", dashed, flow, line)
+		if strings.Contains(line, "style=") {
+			t.Errorf("a spoke carries a Graphviz style, which finishSVG's dash replaces: %s", line)
 		}
 		if flow != working[f[2]] {
 			t.Errorf("spoke of %s animated = %v, working = %v", f[2], flow, working[f[2]])
@@ -1484,9 +1686,13 @@ func TestFlowSpokesRestDashed(t *testing.T) {
 		if !ok {
 			t.Fatalf("spoke %s has no path", id)
 		}
-		hasDash := path.attr("stroke-dasharray") != ""
-		if flow := strings.Contains(g.attr("class"), "aeye-flow"); hasDash != flow {
-			t.Errorf("spoke %s: stroke-dasharray = %q, animated = %v", id, path.attr("stroke-dasharray"), flow)
+		flow := strings.Contains(g.attr("class"), "aeye-flow")
+		hasDash := path.attr("stroke-dasharray") == "0.01 12" && path.attr("stroke-linecap") == "round"
+		if hasDash != flow {
+			t.Errorf("spoke %s: dasharray %q, linecap %q, animated = %v", id, path.attr("stroke-dasharray"), path.attr("stroke-linecap"), flow)
+		}
+		if !flow && (path.attr("stroke-dasharray") != "" || path.attr("stroke-linecap") != "") {
+			t.Errorf("spoke %s is not animated but is dashed or capped", id)
 		}
 		if hasDash {
 			dashed++
@@ -1547,20 +1753,15 @@ func TestRenderedSpokesLieBeneathAndEndAtThePlanet(t *testing.T) {
 				}
 				ex, _ := strconv.ParseFloat(nums[len(nums)-2], 64)
 				ey, _ := strconv.ParseFloat(nums[len(nums)-1], 64)
-				got := math.Hypot(ex-(cx+p.x), ey-(cy-p.y))
-				pr, pen := p.size*72/2, planetPenwidth
-				if !p.failed && p.class == classBlocked {
-					pen = blockedPenwidth
-				}
-				// The ring is drawn over the spoke's end, so the end may lie anywhere
-				// in the ring's stroke. A hexagon is as tall as the planet is wide, so
-				// its outline runs from half that out to its corners.
-				low, want := pr, pr+pen/2
-				if p.host != "" {
-					low, want = pr-pen/2, math.Hypot(pr, pr/2)+pen/2
-				}
-				if got < low-1 || got > want+1 {
-					t.Errorf("spoke to %s ends %.1f from the planet's centre, want %.1f to %.1f (its rim)", p.branch, got, low, want)
+				dx, dy := math.Abs(ex-(cx+p.x)), math.Abs(ey-(cy-p.y))
+				hw, hh := cardW*72/2, cardH*72/2
+				pen := cardPen(p.tier)
+				// The border is drawn over the spoke's end, so the end may lie
+				// anywhere in the border's stroke.
+				inside := dx <= hw+pen/2+1 && dy <= hh+pen/2+1
+				onEdge := dx >= hw-pen/2-1 || dy >= hh-pen/2-1
+				if !inside || !onEdge {
+					t.Errorf("spoke to %s ends (%.1f, %.1f) from the card's centre, want its border (half extents %.1f x %.1f)", p.branch, dx, dy, hw, hh)
 				}
 			}
 		})
@@ -1575,12 +1776,13 @@ func TestFinishSVGHalosFreeText(t *testing.T) {
 		`<g id="node1" class="node"><title>h1</title><text xml:space="preserve" x="3">b</text></g>` +
 		`<g id="node2" class="node"><title>p1</title><text x="5">p</text></g>` +
 		`<g id="node3" class="node"><title>p1c</title><text x="6">!</text></g>` +
+		`<g id="node7" class="node"><title>p1h</title><text x="9">h</text></g>` +
 		`<g id="node5" class="node"><title>w2</title><text x="7">d</text></g>` +
 		`<g id="node6" class="node"><title>a1</title><text x="8">e</text></g>` +
 		`<g id="node4" class="node"><title>w1</title><text x="4" stroke="` + colBG + `" paint-order="stroke">c</text></g></svg>`
 	got := string(finishSVG([]byte(in), nil))
 	halo := ` stroke="` + colBG + `" stroke-width="3" stroke-linejoin="round" paint-order="stroke"`
-	for _, want := range []string{`<text x="1" y="2" fill="#fff"` + halo + `>a</text>`, `<text xml:space="preserve" x="3"` + halo + `>b</text>`, `<text x="5">p</text>`, `<text x="6">!</text>`,
+	for _, want := range []string{`<text x="1" y="2" fill="#fff"` + halo + `>a</text>`, `<text xml:space="preserve" x="3"` + halo + `>b</text>`, `<text x="5">p</text>`, `<text x="6">!</text>`, `<text x="9">h</text>`,
 		`<text x="7"` + halo + `>d</text>`, `<text x="8"` + halo + `>e</text>`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("no %s in\n%s", want, got)
@@ -1613,17 +1815,17 @@ func TestFinishSVGHalosFreeText(t *testing.T) {
 				plain++
 			}
 			// Known texts, so the check does not share freeLabelRe with the code.
-			switch n.Text {
+			switch strings.TrimSpace(n.Text) {
 			case "alpha", "beta", "mbp":
 				if !has {
 					t.Errorf("label %q has no halo", n.Text)
 				}
-				seen[n.Text] = true
-			case "sky", "olive", "!":
+				seen[strings.TrimSpace(n.Text)] = true
+			case "sky · #1", "olive · #8", "!":
 				if has {
 					t.Errorf("node text %q has a halo", n.Text)
 				}
-				seen[n.Text] = true
+				seen[strings.TrimSpace(n.Text)] = true
 			}
 		}
 		for _, c := range n.Nodes {
@@ -1634,7 +1836,7 @@ func TestFinishSVGHalosFreeText(t *testing.T) {
 	if haloed == 0 || plain == 0 {
 		t.Errorf("%d haloed and %d plain texts, want both", haloed, plain)
 	}
-	for _, want := range []string{"alpha", "beta", "mbp", "sky", "olive", "!"} {
+	for _, want := range []string{"alpha", "beta", "mbp", "sky · #1", "olive · #8", "!"} {
 		if !seen[want] {
 			t.Errorf("no text %q in the rendered svg", want)
 		}

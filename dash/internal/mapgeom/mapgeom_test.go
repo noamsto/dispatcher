@@ -128,6 +128,72 @@ func TestHitHexagonUsesCircumscribedCircle(t *testing.T) {
 	}
 }
 
+func TestHitWithoutCardUsesCircle(t *testing.T) {
+	g := Geometry{V: Version, W: 100, H: 100, Planets: []Planet{{Branch: "a", CX: 50, CY: 50, R: 10}}}
+	p := Placement{Cols: 50, Rows: 50, CellW: 2, CellH: 2}
+	for _, c := range []struct{ x, y, want int }{
+		{28, 25, 0},  // x 56..58, 6 from the centre
+		{31, 25, -1}, // x 62..64, 12 from the centre
+	} {
+		if got := Hit(g, p, c.x, c.y); got != c.want {
+			t.Errorf("cell (%d,%d): Hit = %d, want %d", c.x, c.y, got, c.want)
+		}
+	}
+}
+
+func TestHitCardUsesRectangle(t *testing.T) {
+	// A card centred at (50,50) with half sizes 20x10 spans x 30..70 and
+	// y 40..60; its circumscribed radius is sqrt(500).
+	g := Geometry{V: Version, W: 100, H: 100, Planets: []Planet{
+		{Branch: "c", CX: 50, CY: 50, R: math.Hypot(20, 10), HW: 20, HH: 10},
+	}}
+	p := Placement{Cols: 50, Rows: 50, CellW: 2, CellH: 2}
+	// Cell x 66..68, y 58..60 is inside the rectangle but 17.9 from the
+	// centre, so it is outside the circle of radius HH.
+	if got := Hit(g, p, 33, 29); got != 0 {
+		t.Errorf("corner cell (33,29): Hit = %d, want 0", got)
+	}
+	// Cell x 72..74 is 2 px right of the card but only 22 from the centre,
+	// inside the circumscribed circle, so only the rectangle test rejects it.
+	if got := Hit(g, p, 36, 25); got != -1 {
+		t.Errorf("cell just right of card (36,25): Hit = %d, want -1", got)
+	}
+}
+
+func TestHitOverlappingCardsNearestWins(t *testing.T) {
+	// Cards a and b overlap on x 38..42; each cell is nearer one centre.
+	g := Geometry{V: Version, W: 100, H: 40, Planets: []Planet{
+		{Branch: "a", CX: 30, CY: 20, R: math.Hypot(12, 8), HW: 12, HH: 8},
+		{Branch: "b", CX: 50, CY: 20, R: math.Hypot(12, 8), HW: 12, HH: 8},
+	}}
+	p := Placement{Cols: 50, Rows: 20, CellW: 2, CellH: 2}
+	for _, c := range []struct{ cellX, want int }{
+		{19, 0}, // x 38..40: 8 from a's centre, 10 from b's
+		{20, 1}, // x 40..42: 10 from a's centre, 8 from b's
+	} {
+		if got := Hit(g, p, c.cellX, 10); got != c.want {
+			t.Errorf("cellX %d: Hit = %d, want %d", c.cellX, got, c.want)
+		}
+	}
+}
+
+func TestParseCard(t *testing.T) {
+	m := goodJSON()
+	card := planetsOf(m)[0].(map[string]any)
+	card["hw"], card["hh"] = 20, 10
+	data, _ := json.Marshal(m)
+	g, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := g.Planets[0]; p.HW != 20 || p.HH != 10 {
+		t.Errorf("card = %v x %v, want 20 x 10", p.HW, p.HH)
+	}
+	if p := g.Planets[1]; p.HW != 0 || p.HH != 0 {
+		t.Errorf("circle planet = %v x %v, want no card", p.HW, p.HH)
+	}
+}
+
 func TestHitRescalesToRenderedImage(t *testing.T) {
 	// A 4x1 block of 10x10 cells is 40x10 px, below the renderer's 64 px
 	// minimum, so the PNG comes back 64x16 and is stretched over the block.
@@ -272,6 +338,11 @@ func TestParseRejects(t *testing.T) {
 		{"centre above image", func(m map[string]any) { planetsOf(m)[0] = planet("a", 10, -0.5, 5) }, "outside"},
 		{"centre below image", func(m map[string]any) { planetsOf(m)[0] = planet("a", 10, 601, 5) }, "outside"},
 		{"too many planets", func(m map[string]any) { m["planets"] = many }, "max"},
+		{"card width without height", func(m map[string]any) { planetsOf(m)[0].(map[string]any)["hw"] = 5 }, "bad card"},
+		{"card height without width", func(m map[string]any) { planetsOf(m)[0].(map[string]any)["hh"] = 5 }, "bad card"},
+		{"negative card half sizes", func(m map[string]any) {
+			planetsOf(m)[0].(map[string]any)["hw"], planetsOf(m)[0].(map[string]any)["hh"] = -5, -5
+		}, "bad card"},
 	} {
 		m := goodJSON()
 		c.mutate(m)

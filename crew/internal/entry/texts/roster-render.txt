@@ -25,14 +25,14 @@ it to the aeye carousel beside the recorded dispatcher pane.
                <stem> is the roster file's name without .svg, so a viewer
                finds the key from the roster file's name. full and none write
                no legend file and remove a stale one an earlier run left
-  --map        Draw once to a PNG without the legend and print the planets'
+  --map        Draw once to a PNG without the legend and print the cards'
                places as one JSON line; reads the bus, writes nothing else,
                and refuses every flag above but --crew
   --px         The PNG's size, WxH, each side 64 to 4096
   --out        The PNG's path
-  --select     Ring the planet of this branch
+  --select     Ring the card of this branch
   --select-repo
-               Ring only the planet of that repo's wedge (the label the map
+               Ring only the card of that repo's wedge (the label the map
                reports as repo); without it a branch is ringed in every repo
 
 Usage errors exit 64, like `stream`; --once and --detach together are one.
