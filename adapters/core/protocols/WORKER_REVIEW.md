@@ -40,7 +40,7 @@ Fast deterministic gate green → before `/deslop` + push, get an independent re
 
   - Language reviewer: one per matched roster entry, with the single risk promotion from EVIDENCE_REVIEW.md when triggered. Plan phase skipped (plan of record) → have it add an approach-sanity check against the task doc: right fix, not merely faithful.
   - Targeted test-runner: a subagent runs the acceptance-criteria / behavior-specific tests, reports pass/fail.
-  - diverse-engine reviewer (deep tier, any implementer): read-only one-shot to a different-family engine, read `WORKER_PLAN` "Cross-engine one-shots" before running it (picks, runs and gates it; its prompt carries the never-read-secrets line; read-only flags only; never cursor `--force`); fresh-context rules below apply. A should, not a blocker: unavailable → drop it, review same-engine, never stall the gate. Only it is exempt: language reviewer and test-runner still run; no reviewer at all → the unavailable-gate path.
+  - diverse-engine reviewer (deep tier, any implementer): read-only one-shot to a different-model-family engine, read `WORKER_PLAN` "Cross-engine one-shots" before running it (picks, runs and gates it; its prompt carries the never-read-secrets line; read-only flags only; never cursor `--force`); fresh-context rules below apply. A should, not a blocker: unavailable → drop it, review same-engine, never stall the gate. Only it is exempt: language reviewer and test-runner still run; no reviewer at all → the unavailable-gate path.
 <!-- only:claude -->
     A claude lead may instead use the `codex-diverse` subagent (reuse/adapt `pr-reviewers` `codex-reviewer`; `mcp__codex__*` tools drive the read-only `codex` MCP server).
 <!-- /only -->
