@@ -1,0 +1,40 @@
+  Live │   Board │   Budget │   Runs │ ▸ Settings │   Map
+layers: default <BASE>
+        user    <USER> (present)
+        locked  <LOCKED>
+› fleetBudget                         unset                                                                      default
+  profile                             work                                                                     🔒 locked
+  freshSeams                          unset                                                                      default
+  dispatcherChrome                    unset                                                                      default
+  rosterDiagram.autoOpen              unset                                                                      default
+  overseer.autoRelaunch               unset                                                                      default
+  openrouter.monthlyUsd               20                                                                         default
+  orchestratorDefaults.claude.effort  high                                                                       default
+  orchestratorDefaults.codex.effort   high                                                                       default
+  orchestratorDefaults.pi.effort      high                                                                       default
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+j/k move • space change • +/- adjust • x reset • e edit file • v view all • 1-6 views …  refreshed 14:13:20

@@ -22,15 +22,16 @@ import (
 // doesn't own. EventsPathErr explains an empty EventsPath in the Live
 // view's status note.
 type Deps struct {
-	Ctx           context.Context // passed to every loader; main cancels it on return
-	Load          Loaders
-	Runner        data.Runner
-	Crew          []string // resolved crew argv prefix (data.Config.Crew)
-	InTmux        bool
-	EventsPath    string
-	EventsPathErr error
-	Now           int64 // collection clock (data.Config.Now) stamped into the snapshot
-	Map           MapDeps
+	Ctx            context.Context // passed to every loader; main cancels it on return
+	Load           Loaders
+	Runner         data.Runner
+	Crew           []string // resolved crew argv prefix (data.Config.Crew)
+	InTmux         bool
+	EventsPath     string
+	EventsPathErr  error
+	Now            int64 // collection clock (data.Config.Now) stamped into the snapshot
+	Map            MapDeps
+	DispatchConfig string // dispatch-config binary the Settings tab writes through
 }
 
 // Run starts the interactive dashboard. It resolves the roster's live bus

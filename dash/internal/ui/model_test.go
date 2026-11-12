@@ -16,6 +16,16 @@ func newTestModel(t *testing.T) Model {
 	return testModel(loadSnapshot(t))
 }
 
+func TestStatusLineStripsControlSequences(t *testing.T) {
+	m := sized(newTestModel(t), 80, 24)
+	nm, _ := m.Update(actionMsg{text: "dispatch-config: " + injectedErr, err: true})
+	out := nm.(Model).View()
+	requireNoControl(t, out)
+	if !strings.Contains(out, "dispatch-config: boom") {
+		t.Fatalf("status text missing from view:\n%s", out)
+	}
+}
+
 func TestViewEmptyBeforeWindowSize(t *testing.T) {
 	m := newTestModel(t)
 	if got := m.View(); got != "" {
@@ -162,13 +172,13 @@ func TestQuitQuits(t *testing.T) {
 	}
 }
 
-func TestFilterModeSwallowsGlobalKeys(t *testing.T) {
+func TestNumberInputSwallowsGlobalKeys(t *testing.T) {
 	m := sized(newTestModel(t), 80, 24)
-	m.active = 4 // settings
-	nm, _ := m.Update(keyRune('/'))
+	m.active = settingsTab                             // settings
+	nm, _ := m.Update(keyType(tea.KeyEnter)) // cursor on fleetBudget opens the number input
 	m = nm.(Model)
-	if !m.views[4].Capturing() {
-		t.Fatalf("/ did not enter capturing mode")
+	if !m.views[settingsTab].Capturing() {
+		t.Fatalf("enter did not open the number input")
 	}
 
 	nm, cmd := m.Update(keyRune('q'))
@@ -181,14 +191,14 @@ func TestFilterModeSwallowsGlobalKeys(t *testing.T) {
 
 	nm, _ = m.Update(keyRune('2'))
 	m = nm.(Model)
-	if m.active != 4 {
+	if m.active != settingsTab {
 		t.Fatalf("digit switched tab while capturing: active = %d", m.active)
 	}
 
 	// esc leaves capturing mode again, and q now quits as normal.
 	nm, _ = m.Update(keyType(tea.KeyEsc))
 	m = nm.(Model)
-	if m.views[4].Capturing() {
+	if m.views[settingsTab].Capturing() {
 		t.Fatalf("esc did not leave capturing mode")
 	}
 }

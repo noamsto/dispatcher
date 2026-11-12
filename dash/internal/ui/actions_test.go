@@ -568,19 +568,19 @@ func TestReplyLongPromptKeepsTailVisibleOnNarrowWidth(t *testing.T) {
 	}
 }
 
-func TestFooterShowsFilterKeysWhileSettingsFilterOpen(t *testing.T) {
+func TestFooterShowsInputKeysWhileSettingsNumberInputOpen(t *testing.T) {
 	asciiProfile(t)
 	m := sized(testModel(loadFullSnapshot(t)), 80, 24)
-	m.active = 4
-	m = send(m, keyRune('/'))
+	m.active = settingsTab
+	m = send(m, keyType(tea.KeyEnter))
 	foot := footerOf(m)
-	for _, want := range []string{"enter apply", "esc clear"} {
+	for _, want := range []string{"enter apply", "esc cancel"} {
 		if !strings.Contains(foot, want) {
 			t.Errorf("footer lacks %q: %q", want, foot)
 		}
 	}
-	if strings.Contains(foot, "expand/collapse") {
-		t.Errorf("footer lists tree keys while the filter captures keys: %q", foot)
+	if strings.Contains(foot, "edit file") {
+		t.Errorf("footer lists knob keys while the input captures keys: %q", foot)
 	}
 }
 

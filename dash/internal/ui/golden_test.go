@@ -45,8 +45,13 @@ func checkGolden(t *testing.T, name, got string, w, h int) {
 // returns, rendered on the given tab.
 func goldenSizes(t *testing.T, prefix string, build func() Model, active int) {
 	t.Helper()
+	goldenSizesAt(t, prefix, build, active, [][2]int{{80, 24}, {160, 40}})
+}
+
+func goldenSizesAt(t *testing.T, prefix string, build func() Model, active int, sizes [][2]int) {
+	t.Helper()
 	asciiProfile(t)
-	for _, sz := range [][2]int{{80, 24}, {160, 40}} {
+	for _, sz := range sizes {
 		w, h := sz[0], sz[1]
 		m := sized(build(), w, h)
 		m.active = active
@@ -110,5 +115,5 @@ func TestGoldenRunsDetail80x24(t *testing.T) {
 }
 
 func TestGoldenSettings(t *testing.T) {
-	goldenSizes(t, "settings", func() Model { return newTestModel(t) }, goldenTabSettings)
+	goldenSizesAt(t, "settings", func() Model { return newTestModel(t) }, goldenTabSettings, [][2]int{{80, 24}, {120, 40}})
 }
