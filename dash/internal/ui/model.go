@@ -4,6 +4,7 @@ package ui
 
 import (
 	"context"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -17,7 +18,7 @@ import (
 )
 
 // view is the interface every tab's sub-model satisfies. Capturing is true
-// while a textinput owns keystrokes (the settings filter) — the root does
+// while a textinput owns keystrokes (the settings number input) — the root does
 // not intercept global keys (q, digits, tab, r, ?) while it is true.
 type view interface {
 	Update(tea.Msg) (view, tea.Cmd)
@@ -43,6 +44,9 @@ var tabTitles = []string{"Live", "Budget", "Runs", "Settings", "Map"}
 
 // mapTab is the Map view's index in Model.views.
 const mapTab = 4
+
+// settingsTab is the Settings view's index in Model.views.
+const settingsTab = 3
 
 // snapshotMsg carries the root model's current Snapshot and per-source
 // loaded flags to every view's Update, not just the active one, so a tab
@@ -119,7 +123,10 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 		lv,
 		newBudgetView(m.snap, m.loaded()),
 		newRunsView(m.snap, m.loaded()),
-		newSettingsView(m.snap, m.loaded()),
+		newSettingsView(m.snap, m.loaded(), settingsDeps{
+			ctx: ctx, runner: deps.Runner, bin: deps.DispatchConfig,
+			getenv: os.Getenv, exec: tea.ExecProcess,
+		}),
 		newMapView(m.snap, deps.Map, acts),
 	}
 	return m
@@ -258,10 +265,19 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		m.views[0] = nv
 		return m, cmd
 
+	case requestSettingsMsg:
+		return m, m.request(srcSettings)
+
 	case mapRenderedMsg:
 		// A render lands whichever tab is active, like the roster messages.
 		nv, cmd := m.views[mapTab].Update(msg)
 		m.views[mapTab] = nv
+		return m, cmd
+
+	case settingsWriteMsg, editorDoneMsg, effectiveReadyMsg:
+		// Write and editor results land whichever tab is active.
+		nv, cmd := m.views[settingsTab].Update(msg)
+		m.views[settingsTab] = nv
 		return m, cmd
 
 	case tea.MouseMsg:
@@ -359,7 +375,7 @@ func (m Model) statusLines() []string {
 	if m.status == "" {
 		return nil
 	}
-	line := truncateLine(m.status, m.width)
+	line := truncateLine(cleanText(m.status), m.width)
 	if m.statusErr {
 		line = warnStyle.Render(line)
 	}
