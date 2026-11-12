@@ -174,7 +174,7 @@ func TestQuitQuits(t *testing.T) {
 
 func TestNumberInputSwallowsGlobalKeys(t *testing.T) {
 	m := sized(newTestModel(t), 80, 24)
-	m.active = settingsTab                             // settings
+	m.active = settingsTab                   // settings
 	nm, _ := m.Update(keyType(tea.KeyEnter)) // cursor on fleetBudget opens the number input
 	m = nm.(Model)
 	if !m.views[settingsTab].Capturing() {
