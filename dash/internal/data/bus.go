@@ -35,7 +35,7 @@ func RecentEvents(path, branch string, n int) ([]Event, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	exact := "worker:" + branch
 	prefix := "worker:" + branch + "#"

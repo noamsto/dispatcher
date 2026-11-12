@@ -36,7 +36,7 @@ func (d MapDeps) deleteImages(inTmux bool) {
 		return
 	}
 	for _, id := range []int{d.IDBase + 1, d.IDBase + 2} {
-		io.WriteString(d.TTY, kitty.Delete(id, inTmux))
+		_, _ = io.WriteString(d.TTY, kitty.Delete(id, inTmux))
 	}
 }
 
@@ -425,8 +425,8 @@ func (v *mapView) accept(msg mapRenderedMsg) tea.Cmd {
 		id++
 	}
 	inTmux := v.acts.inTmux
-	io.WriteString(v.deps.TTY, kitty.Delete(id, inTmux))
-	io.WriteString(v.deps.TTY, kitty.Store(id, v.deps.OutPath, msg.place.Cols, msg.place.Rows, inTmux))
+	_, _ = io.WriteString(v.deps.TTY, kitty.Delete(id, inTmux))
+	_, _ = io.WriteString(v.deps.TTY, kitty.Store(id, v.deps.OutPath, msg.place.Cols, msg.place.Rows, inTmux))
 	v.geom, v.place, v.curID, v.stored, v.err = msg.geom, msg.place, id, true, ""
 
 	// The selection may have left the crew since the render started; the next
@@ -454,7 +454,7 @@ func (v *mapView) drop() {
 		return
 	}
 	for _, id := range []int{v.deps.IDBase + 1, v.deps.IDBase + 2} {
-		io.WriteString(v.deps.TTY, kitty.Delete(id, v.acts.inTmux))
+		_, _ = io.WriteString(v.deps.TTY, kitty.Delete(id, v.acts.inTmux))
 	}
 	v.stored, v.curID, v.geom = false, 0, mapgeom.Geometry{}
 }

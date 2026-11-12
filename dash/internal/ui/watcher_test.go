@@ -8,15 +8,20 @@ import (
 	"time"
 )
 
+func writeFile(t *testing.T, path, data string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFsnotifyWatcherFiresOnWrite(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
-	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeFile(t, path, "{}\n")
 
 	w := newBusWatcher(path, nil)
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	go func() {
 		time.Sleep(50 * time.Millisecond)
@@ -24,8 +29,8 @@ func TestFsnotifyWatcherFiresOnWrite(t *testing.T) {
 		if err != nil {
 			return
 		}
-		f.WriteString("{}\n")
-		f.Close()
+		_, _ = f.WriteString("{}\n")
+		_ = f.Close()
 	}()
 
 	select {
@@ -38,13 +43,13 @@ func TestFsnotifyWatcherFiresOnWrite(t *testing.T) {
 func TestFsnotifyWatcherIgnoresOtherFiles(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
-	os.WriteFile(path, []byte("{}\n"), 0o644)
+	writeFile(t, path, "{}\n")
 	other := filepath.Join(dir, "unrelated.txt")
 
 	w := newBusWatcher(path, nil)
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
-	os.WriteFile(other, []byte("hi"), 0o644)
+	writeFile(t, other, "hi")
 
 	select {
 	case <-w.Events():
@@ -56,11 +61,11 @@ func TestFsnotifyWatcherIgnoresOtherFiles(t *testing.T) {
 func TestPollWatcherFallbackOnFailingCtor(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
-	os.WriteFile(path, []byte("{}\n"), 0o644)
+	writeFile(t, path, "{}\n")
 
 	failing := func(string) (busWatcher, error) { return nil, errors.New("no fsnotify here") }
 	w := newBusWatcher(path, failing)
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 	if _, ok := w.(*pollWatcher); !ok {
 		t.Fatalf("newBusWatcher with a failing ctor = %T, want *pollWatcher", w)
 	}
@@ -69,16 +74,16 @@ func TestPollWatcherFallbackOnFailingCtor(t *testing.T) {
 func TestPollWatcherFiresOnSizeChange(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
-	os.WriteFile(path, []byte("{}\n"), 0o644)
+	writeFile(t, path, "{}\n")
 
 	w := newPollWatcher(path, 20*time.Millisecond)
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	go func() {
 		time.Sleep(30 * time.Millisecond)
 		f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
-		f.WriteString("{}\n")
-		f.Close()
+		_, _ = f.WriteString("{}\n")
+		_ = f.Close()
 	}()
 
 	select {
@@ -95,7 +100,7 @@ func TestPollWatcherFiresOnSizeChange(t *testing.T) {
 func TestWatcherCloseUnblocksReaderAndExits(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
-	os.WriteFile(path, []byte("{}\n"), 0o644)
+	writeFile(t, path, "{}\n")
 
 	w := newBusWatcher(path, nil)
 

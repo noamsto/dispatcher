@@ -20,8 +20,8 @@ jobs:
           name: dispatcher
       - name: shellcheck
         run: nix develop -c shellcheck adapters/core/*.sh adapters/core/reviewers/*.sh scripts/*.sh
-      - name: go vet + golangci-lint (crew)
-        run: nix develop -c sh -c 'cd crew && go vet ./... && golangci-lint run ./...'
+      - name: go vet + golangci-lint (crew, dash)
+        run: nix develop -c sh -c 'cd crew && go vet ./... && golangci-lint run ./... && cd ../dash && go vet ./... && golangci-lint run ./...'
       # The crew Go tests that compare the port against adapters/core/ skip when
       # the bash file they read is absent, so they need the checked-out repo:
       # CREW_DRIFT_REQUIRED=1 turns each skip into a failure. The second command

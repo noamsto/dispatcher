@@ -271,7 +271,7 @@ func TestRunsRowTagInjectionIsCleaned(t *testing.T) {
 	defer lipgloss.SetColorProfile(orig)
 
 	snap := loadFullSnapshot(t)
-	snap.Runs.Retro.Rows[0].Notes[0].Tag = "tag\x1b]0;x\x07‮"
+	snap.Runs.Retro.Rows[0].Notes[0].Tag = "tag\x1b]0;x\x07\u202e"
 	v := newRunsView(snap, allLoaded)
 	out := v.View(80, 24)
 	if strings.ContainsRune(out, 0x1b) {
@@ -295,8 +295,8 @@ func TestRunsNoteSeamInjectionIsCleaned(t *testing.T) {
 	snap := loadFullSnapshot(t)
 	for i := range snap.Runs.Retro.Rows {
 		for j := range snap.Runs.Retro.Rows[i].Notes {
-			snap.Runs.Retro.Rows[i].Notes[j].Seam = "\x1b]0;pwned\x07seam‮"
-			snap.Runs.Retro.Rows[i].Notes[j].Tag = "tag\x1b[31m‮"
+			snap.Runs.Retro.Rows[i].Notes[j].Seam = "\x1b]0;pwned\x07seam\u202e"
+			snap.Runs.Retro.Rows[i].Notes[j].Tag = "tag\x1b[31m\u202e"
 		}
 	}
 	v := newRunsView(snap, allLoaded)
@@ -313,7 +313,7 @@ func TestRunsNoteSeamInjectionIsCleaned(t *testing.T) {
 	}
 }
 
-const injectedErr = "boom\x1b]0;pwned\x07\x1b[31m‮"
+const injectedErr = "boom\x1b]0;pwned\x07\x1b[31m\u202e"
 
 func requireNoControl(t *testing.T, out string) {
 	t.Helper()
@@ -358,7 +358,7 @@ func TestRunsBranchInjectionIsCleaned(t *testing.T) {
 
 	snap := loadFullSnapshot(t)
 	for i := range snap.Runs.Retro.Rows {
-		snap.Runs.Retro.Rows[i].Branch = "feat/inj\x1b]0;pwned\x07\x1b[31m‮"
+		snap.Runs.Retro.Rows[i].Branch = "feat/inj\x1b]0;pwned\x07\x1b[31m\u202e"
 	}
 	v := newRunsView(snap, allLoaded)
 	out := v.View(120, 24)

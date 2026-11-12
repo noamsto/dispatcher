@@ -174,7 +174,7 @@ func TestLiveRowsSkipWorkersErrorCrew(t *testing.T) {
 func TestLiveStateInjectionIsCleaned(t *testing.T) {
 	asciiProfile(t)
 	snap := loadFullSnapshot(t)
-	snap.Roster.Crews[0].Workers[0]["state"] = "\x1b]0;pwned\x07working‮"
+	snap.Roster.Crews[0].Workers[0]["state"] = "\x1b]0;pwned\x07working\u202e"
 	out := newLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t)).View(80, 24)
 	if strings.ContainsRune(out, 0x1b) {
 		t.Errorf("rendered table contains a raw ESC from an injected state:\n%q", out)
@@ -189,7 +189,7 @@ func TestLiveStateInjectionIsCleaned(t *testing.T) {
 func TestLivePRURLInjectionIsCleaned(t *testing.T) {
 	asciiProfile(t)
 	snap := loadFullSnapshot(t)
-	snap.Roster.Crews[0].Workers[0]["pr_url"] = "\x1b[2Jhttps://pr‮"
+	snap.Roster.Crews[0].Workers[0]["pr_url"] = "\x1b[2Jhttps://pr\u202e"
 	v := newLiveView(snap, allLoaded, liveDeps{}, fixedLiveNow(t))
 	for _, sel := range []liveView{v, press(v, keyRune('j'))} {
 		out := sel.View(80, 24)
@@ -216,7 +216,7 @@ func TestLiveEventKindInjectionIsCleaned(t *testing.T) {
 		t.Fatalf("fixture has no events for the selected worker")
 	}
 	for i := range msg.events {
-		msg.events[i]["kind"] = "status\x1b[31m‮"
+		msg.events[i]["kind"] = "status\x1b[31m\u202e"
 	}
 	nv, _ = v.Update(msg)
 	v = nv.(liveView)

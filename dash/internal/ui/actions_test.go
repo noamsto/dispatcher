@@ -286,7 +286,7 @@ func TestActionsUseResolvedCrewPrefix(t *testing.T) {
 	}}
 	m := selectName(t, actionModel(t, loadFullSnapshot(t), fake, true, "bash", "-euo", "pipefail", "/x/crew"), "sage")
 	m = send(m, keyRune('n'))
-	m = send(m, keyRune('y'))
+	send(m, keyRune('y'))
 	wantCalls(t, fake, []string{"bash", "-euo", "pipefail", "/x/crew", "nudge", "--crew", "c1", "--", "sage"})
 }
 

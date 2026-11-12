@@ -64,7 +64,7 @@ func Run(deps Deps) error {
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	deps.Map.deleteImages(deps.InTmux)
 	if watcher != nil {
-		watcher.Close()
+		_ = watcher.Close()
 	}
 	return err
 }

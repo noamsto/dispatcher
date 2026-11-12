@@ -109,15 +109,15 @@ func resolveMap(runner data.Runner) (ui.MapDeps, func()) {
 		return out, err
 	}
 	if ok, why := kitty.Capable(os.Getenv, run); !ok {
-		tty.Close()
+		_ = tty.Close()
 		return notCapable(why), func() {}
 	}
 	png, err := os.CreateTemp("", "crew-dash-map-*.png")
 	if err != nil {
-		tty.Close()
+		_ = tty.Close()
 		return notCapable("cannot create the map image file: " + err.Error()), func() {}
 	}
-	png.Close()
+	_ = png.Close()
 
 	cellW, cellH := kitty.FallbackCellW, kitty.FallbackCellH
 	if query, err := os.OpenFile("/dev/tty", os.O_RDWR, 0); err == nil {
@@ -131,8 +131,8 @@ func resolveMap(runner data.Runner) (ui.MapDeps, func()) {
 			OutPath: png.Name(),
 			IDBase:  kitty.ID(host, os.Getenv("TMUX_PANE")),
 		}, func() {
-			tty.Close()
-			os.Remove(png.Name())
+			_ = tty.Close()
+			_ = os.Remove(png.Name())
 		}
 }
 
