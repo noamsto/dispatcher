@@ -48,7 +48,7 @@ func newFsnotifyWatcher(path string) (busWatcher, error) {
 	}
 	dir := filepath.Dir(path)
 	if err := w.Add(dir); err != nil {
-		w.Close()
+		_ = w.Close()
 		return nil, err
 	}
 	fw := &fsnotifyWatcher{w: w, events: make(chan struct{}, 1), done: make(chan struct{})}

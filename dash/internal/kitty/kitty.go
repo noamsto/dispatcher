@@ -112,12 +112,12 @@ func ParseCellPx(reply string) (w, h int, ok bool) {
 // ownership of tty and closes it: closing is what unblocks the reader
 // goroutine after a timeout, so pass a handle opened for this query alone.
 func QueryCellPx(tty *os.File) (w, h int) {
-	defer tty.Close()
+	defer func() { _ = tty.Close() }()
 	old, err := term.MakeRaw(int(tty.Fd()))
 	if err != nil {
 		return FallbackCellW, FallbackCellH
 	}
-	defer term.Restore(int(tty.Fd()), old)
+	defer func() { _ = term.Restore(int(tty.Fd()), old) }()
 
 	if _, err := tty.WriteString("\x1b[16t"); err != nil {
 		return FallbackCellW, FallbackCellH

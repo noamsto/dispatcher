@@ -172,7 +172,7 @@ func TestRosterPRURLInjectionIsCleaned(t *testing.T) {
 	snap.Roster.Crews = []data.RosterCrew{{
 		ID: "c1",
 		Workers: []map[string]any{
-			{"name": "w1", "branch": "feat/x", "state": "working", "tier": "deep", "engine": "claude", "model": "opus", "age_s": float64(5), "pr_url": "\x1b[2Jhttps://pr‮"},
+			{"name": "w1", "branch": "feat/x", "state": "working", "tier": "deep", "engine": "claude", "model": "opus", "age_s": float64(5), "pr_url": "\x1b[2Jhttps://pr\u202e"},
 		},
 	}}
 	got := Render(snap, false)
@@ -196,7 +196,7 @@ func TestTagsLineInjectionIsCleaned(t *testing.T) {
 		T0:   1,
 		Notes: []data.Note{
 			{Tag: "session_summary", Detail: "did stuff"},
-			{Tag: "tag\x1b]0;x\x07‮", Detail: "detail"},
+			{Tag: "tag\x1b]0;x\x07\u202e", Detail: "detail"},
 		},
 	}}}
 	got := Render(snap, false)
@@ -231,7 +231,7 @@ func TestRunsPaneRatingsWrongShapeIsUnavailable(t *testing.T) {
 }
 
 func TestUnavailableLinesInjectionAreCleaned(t *testing.T) {
-	inj := "boom\x1b]0;pwned\x07\x1b[31m‮"
+	inj := "boom\x1b]0;pwned\x07\x1b[31m\u202e"
 	snap := loadSnapshot(t)
 	snap.Settings.Error = &inj
 	snap.Budget.Error = &inj
@@ -252,7 +252,7 @@ func TestUnavailableLinesInjectionAreCleaned(t *testing.T) {
 }
 
 func TestRawFieldsInjectionAreCleaned(t *testing.T) {
-	inj := "boom\x1b]0;pwned\x07\x1b[31m‮"
+	inj := "boom\x1b]0;pwned\x07\x1b[31m\u202e"
 	snap := loadSnapshot(t)
 	snap.Settings.Warnings = []string{inj}
 	snap.Settings.Layers.Base = inj
