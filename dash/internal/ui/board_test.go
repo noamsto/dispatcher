@@ -103,8 +103,10 @@ func TestBoardHidesEmptyColumns(t *testing.T) {
 	if !strings.Contains(out, "working (1)") || strings.Contains(out, "blocked") {
 		t.Errorf("empty columns not hidden:\n%s", out)
 	}
-	if strings.Contains(out, "alpha") && strings.Count(out, "alpha") > 1 {
-		t.Errorf("repo header drawn for a single repo:\n%s", out)
+	for l := range strings.SplitSeq(out, "\n") {
+		if strings.TrimSpace(l) == "alpha" {
+			t.Errorf("repo header drawn for a single repo:\n%s", out)
+		}
 	}
 }
 
@@ -180,7 +182,7 @@ func TestBoardNavigation(t *testing.T) {
 		press('j')
 		seen = append(seen, name())
 	}
-	if got := strings.Join(seen, ","); got != "amber,basil,coral,slate,onyx,pearl" && got != "basil,amber,coral,slate,onyx,pearl" {
+	if got := strings.Join(seen, ","); got != "basil,amber,coral,slate,onyx,pearl" {
 		t.Errorf("j walk = %s", got)
 	}
 	press('j')
@@ -247,13 +249,57 @@ func TestBoardRemoteHostShowsOnRow3(t *testing.T) {
 	asciiProfile(t)
 	rows := cardRows(fieldsOf(map[string]any{
 		"branch": "feat/1-a", "name": "a", "state": "working", "tier": "standard",
-		"engine": "claude", "model": "claude-sonnet-5-5", "host": "mini-with-a-long-name",
+		"engine": "claude", "model": "claude-sonnet-5-5", "host": "mini-host",
 	}), lipgloss.NewStyle())
-	if !strings.Contains(rows[3], "@mini-with-a-long-name") {
+	if !strings.Contains(rows[3], "@mini-host") {
 		t.Errorf("row 3 = %q lacks the host", rows[3])
 	}
 	if lipgloss.Width(rows[3]) != boardContent {
 		t.Errorf("row 3 is %d cells, want %d", lipgloss.Width(rows[3]), boardContent)
+	}
+}
+
+func TestBoardFailedCrewIsNotAnEmptyBoard(t *testing.T) {
+	asciiProfile(t)
+	snap := boardSnapshot()
+	boom := "boom"
+	snap.Roster.Crews[1].WorkersError = &boom
+	m := sized(testModel(snap), 120, 40)
+	m.active = goldenTabBoard
+	if out := m.View(); !strings.Contains(out, "crew beta: workers unavailable: boom") || !strings.Contains(out, "basil") {
+		t.Errorf("failed crew not reported beside the loaded one:\n%s", out)
+	}
+	snap.Roster.Crews = snap.Roster.Crews[1:]
+	m = sized(testModel(snap), 120, 40)
+	m.active = goldenTabBoard
+	if out := m.View(); !strings.Contains(out, "workers unavailable: boom") || strings.Contains(out, "no workers") {
+		t.Errorf("sole failed crew shown as no workers:\n%s", out)
+	}
+}
+
+func TestBoardMapOpensOnBoardSelection(t *testing.T) {
+	m := boardModel(t, 200, 40)
+	nm, _ := m.Update(keyRune('j')) // basil -> amber (crew beta)
+	m = nm.(Model)
+	if w, _ := m.handoffSelection().(data.Worker); w.Name != "amber" {
+		t.Errorf("handoff = %+v, want the board's selected worker", m.handoffSelection())
+	}
+}
+
+func TestBoardCardCutsLongStateHostAndFirstWord(t *testing.T) {
+	asciiProfile(t)
+	card := renderCard(map[string]any{
+		"branch": "feat/1-a", "name": "a", "state": "waiting_for_dispatcher_answer_now",
+		"title": strings.Repeat("x", 40) + " second words", "host": "strata.tail1234.ts.net",
+		"engine": "claude", "model": "opus", "tier": "deep",
+	}, false)
+	for i, l := range card {
+		if got := lipgloss.Width(l); got != boardCardW {
+			t.Errorf("line %d is %d cells, want %d: %q", i, got, boardCardW, l)
+		}
+	}
+	if !strings.Contains(card[3], "second words") {
+		t.Errorf("words after an over-wide first word lost: %q", card[3])
 	}
 }
 

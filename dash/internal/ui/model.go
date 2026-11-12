@@ -195,6 +195,17 @@ func (m *Model) syncMapBox() tea.Cmd {
 	return cmd
 }
 
+// handoffSelection is what a view being entered opens on: the worker the tab
+// being left has selected (Live or Board), else Live's selection.
+func (m Model) handoffSelection() data.Selection {
+	if sel := m.views[m.active].Selection(); sel != nil {
+		if _, ok := sel.(data.Worker); ok {
+			return sel
+		}
+	}
+	return m.views[0].Selection()
+}
+
 // switchTab makes tab i active, running the leaving and entering views'
 // hooks.
 func (m *Model) switchTab(i int) tea.Cmd {
@@ -207,10 +218,11 @@ func (m *Model) switchTab(i int) tea.Cmd {
 		m.views[m.active] = nv
 		cmds = append(cmds, cmd)
 	}
+	first := m.handoffSelection()
 	m.active = i
 	cmds = append(cmds, m.syncMapBox())
 	if h, ok := m.views[i].(tabHooks); ok {
-		nv, cmd := h.enter(m.views[0].Selection())
+		nv, cmd := h.enter(first)
 		m.views[i] = nv
 		cmds = append(cmds, cmd)
 	}

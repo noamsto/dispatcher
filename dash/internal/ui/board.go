@@ -180,8 +180,8 @@ func wrapWords(s string, w int) (line, rest string) {
 		n++
 	}
 	if n == 0 && len(words) > 0 {
-		// A first word wider than the card: its tail is the rest.
-		return truncateLine(words[0], w), ""
+		// A first word wider than the card is cut; the words after it go on.
+		return truncateLine(words[0], w), strings.Join(words[1:], " ")
 	}
 	return line, strings.Join(words[n:], " ")
 }
@@ -190,15 +190,16 @@ func wrapWords(s string, w int) (line, rest string) {
 func cardRows(c cardFields, stateSt lipgloss.Style) []string {
 	pad := func(s string) string { return padRight(truncateLine(s, boardContent), boardContent) }
 
-	stateW := lipgloss.Width(c.state)
+	state := truncateLine(c.state, boardContent/2)
+	stateW := lipgloss.Width(state)
 	headW := max0(boardContent - stateW - 1)
-	head := padRight(truncateLine(c.head, headW), boardContent-stateW) + stateSt.Render(c.state)
+	head := padRight(truncateLine(c.head, headW), boardContent-stateW) + stateSt.Render(state)
 
 	t1, rest := wrapWords(c.title, boardContent)
 
 	meta := tierMarker(c.tier) + " " + c.meta
 	if c.host != "" {
-		suffix := " @" + c.host
+		suffix := truncateLine(" @"+c.host, boardContent/2)
 		room := max0(boardContent - lipgloss.Width(suffix))
 		meta = truncateLine(meta, room) + suffix
 	}
@@ -245,6 +246,7 @@ type boardView struct {
 	now    func() time.Time
 
 	items  []boardItem // display order: group, repo, then age
+	failed []string    // crews whose worker list did not load
 	cursor int
 	selKey string // rowKey of the selected card; it follows the worker across reloads
 }
@@ -264,8 +266,10 @@ func (v *boardView) load(snap data.Snapshot, loaded [numSources]bool) {
 
 func (v *boardView) setRoster(r data.RosterSection) {
 	var items []boardItem
+	v.failed = nil
 	for _, c := range r.Crews {
 		if c.WorkersError != nil {
+			v.failed = append(v.failed, "crew "+cleanText(c.ID)+": workers unavailable: "+cleanText(*c.WorkersError))
 			continue
 		}
 		for _, w := range c.Workers {
@@ -468,8 +472,19 @@ func (v boardView) View(w, h int) string {
 		return loadingLine(srcRoster, w)
 	case v.snap.Roster.Error != nil:
 		return truncateLine("roster unavailable: "+cleanText(*v.snap.Roster.Error), w)
-	case len(v.items) == 0:
+	}
+
+	// Crews whose workers did not load are chrome above the columns, as on
+	// Live, so a failed crew never reads as an empty one.
+	var top []string
+	for _, f := range v.failed {
+		top = append(top, truncateLine(warnStyle.Render(f), w))
+	}
+	switch {
+	case len(v.items) == 0 && len(top) == 0:
 		return truncateLine("no workers", w)
+	case len(v.items) == 0:
+		return strings.Join(top, "\n")
 	case w < boardCardW:
 		return truncateLine("terminal too narrow for the board", w)
 	}
@@ -504,13 +519,14 @@ func (v boardView) View(w, h int) string {
 		}
 	}
 
-	room := max0(h - 1)
+	room := max0(h - 1 - len(top))
 	if len(body) > room {
 		off := clamp(selEnd-room, 0, selStart)
 		body = body[off:min(len(body), off+room)]
 	}
-	body = append(body, truncateLine(v.prompt(v.infoLine()), w))
-	return strings.Join(body, "\n")
+	out := append(top, body...)
+	out = append(out, truncateLine(v.prompt(v.infoLine()), w))
+	return strings.Join(out, "\n")
 }
 
 // joinColumns sets blocks side by side, padding the shorter ones.
