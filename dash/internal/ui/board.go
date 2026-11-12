@@ -480,6 +480,11 @@ func (v boardView) View(w, h int) string {
 	for _, f := range v.failed {
 		top = append(top, truncateLine(warnStyle.Render(f), w))
 	}
+	// Keep the info/prompt line and a card line on screen.
+	if limit := max(h-2, 1); len(top) > limit {
+		more := truncateLine(warnStyle.Render("+"+strconv.Itoa(len(top)-limit+1)+" more crews: workers unavailable"), w)
+		top = append(top[:limit-1], more)
+	}
 	switch {
 	case len(v.items) == 0 && len(top) == 0:
 		return truncateLine("no workers", w)

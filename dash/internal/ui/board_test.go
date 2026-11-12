@@ -277,6 +277,22 @@ func TestBoardFailedCrewIsNotAnEmptyBoard(t *testing.T) {
 	}
 }
 
+func TestBoardManyFailedCrewsKeepPrompt(t *testing.T) {
+	asciiProfile(t)
+	snap := boardSnapshot()
+	boom := "boom"
+	for i := range 6 {
+		snap.Roster.Crews = append(snap.Roster.Crews, data.RosterCrew{ID: fmt.Sprintf("bad%d", i), WorkersError: &boom})
+	}
+	m := sized(testModel(snap), 120, 8)
+	m.active = goldenTabBoard
+	out := m.views[1].View(120, 6)
+	lines := strings.Split(out, "\n")
+	if len(lines) > 6 || !strings.Contains(lines[len(lines)-1], "·") || !strings.Contains(out, "more crews") {
+		t.Errorf("info line or overflow note missing:\n%s", out)
+	}
+}
+
 func TestBoardMapOpensOnBoardSelection(t *testing.T) {
 	m := boardModel(t, 200, 40)
 	nm, _ := m.Update(keyRune('j')) // basil -> amber (crew beta)
