@@ -493,7 +493,10 @@ func (v settingsView) writeCmd(name string, path []string, val json.RawMessage, 
 		return settingsWriteMsg{text: name + ": " + fmt.Sprintf(format, a...), err: true}
 	}
 	return func() tea.Msg {
-		file := resolveUserPath(file)
+		file, err := resolveUserPath(file)
+		if err != nil {
+			return fail("%v", err)
+		}
 		prev, existed, err := readUserFile(file)
 		if err != nil {
 			return fail("%v", err)

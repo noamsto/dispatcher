@@ -441,6 +441,57 @@ func TestSettingsSymlinkedUserFileSurvivesWrite(t *testing.T) {
 			t.Fatalf("created target must be removed again: %v", err)
 		}
 	})
+
+	// chain links h.file -> mid (relative) -> a missing final target.
+	chain := func(h *knobHarness) (mid, target string) {
+		dir := t.TempDir()
+		target = filepath.Join(dir, "dotfiles.json")
+		mid = filepath.Join(dir, "mid")
+		if err := os.Symlink("dotfiles.json", mid); err != nil {
+			t.Fatal(err)
+		}
+		link(h, mid)
+		return mid, target
+	}
+
+	t.Run("dangling two-hop chain", func(t *testing.T) {
+		h := newKnobHarness(t, "", nil).at(rowFreshSeams)
+		mid, target := chain(h)
+		h.press(keyRune(' '))
+		isLink(h.file)
+		isLink(mid)
+		if got := targetDoc(target); !strings.Contains(got, `"freshSeams": true`) {
+			t.Fatalf("target = %q", got)
+		}
+	})
+
+	t.Run("rejected write on dangling two-hop chain", func(t *testing.T) {
+		h := newKnobHarness(t, "", nil).at(rowFreshSeams)
+		h.runner.Responses["dispatch-config"] = data.FakeResponse{Stderr: []byte("bad"), Err: data.FakeExitError{Code: 2}}
+		mid, target := chain(h)
+		h.press(keyRune(' '))
+		isLink(h.file)
+		isLink(mid)
+		if _, err := os.Stat(target); !os.IsNotExist(err) {
+			t.Fatalf("created target must be removed again: %v", err)
+		}
+	})
+
+	t.Run("symlink loop", func(t *testing.T) {
+		h := newKnobHarness(t, "", nil).at(rowFreshSeams)
+		dir := t.TempDir()
+		a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+		if err := os.Symlink(b, a); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(a, b); err != nil {
+			t.Fatal(err)
+		}
+		link(h, a)
+		if st := statusOf(t, h.press(keyRune(' '))); !st.err || !strings.Contains(st.text, "symbolic links") {
+			t.Fatalf("status = %+v, want a symlink-loop error", st)
+		}
+	})
 }
 
 func TestSettingsRejectedWriteRestoresFile(t *testing.T) {

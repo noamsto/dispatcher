@@ -121,18 +121,25 @@ func renderDoc(root *jsonObject) ([]byte, error) {
 // resolveUserPath follows a symlinked user file (home-manager links it into
 // dotfiles), including a dangling link, so writes land on the target and
 // never replace the link itself.
-func resolveUserPath(path string) string {
+func resolveUserPath(path string) (string, error) {
 	if real, err := filepath.EvalSymlinks(path); err == nil {
-		return real
+		return real, nil
 	}
-	target, err := os.Readlink(path)
-	if err != nil {
-		return path
+	// A dangling chain (home-manager links through the Nix store) needs every
+	// hop followed, or the write would land on a read-only intermediate link.
+	const maxHops = 40
+	cur := path
+	for range maxHops {
+		target, err := os.Readlink(cur)
+		if err != nil {
+			return cur, nil
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(cur), target)
+		}
+		cur = target
 	}
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(filepath.Dir(path), target)
-	}
-	return target
+	return "", fmt.Errorf("too many levels of symbolic links: %s", path)
 }
 
 // readUserFile returns the file's bytes; a missing file is (nil, false, nil).
