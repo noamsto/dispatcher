@@ -571,7 +571,7 @@ func TestReplyLongPromptKeepsTailVisibleOnNarrowWidth(t *testing.T) {
 func TestFooterShowsFilterKeysWhileSettingsFilterOpen(t *testing.T) {
 	asciiProfile(t)
 	m := sized(testModel(loadFullSnapshot(t)), 80, 24)
-	m.active = 3
+	m.active = 4
 	m = send(m, keyRune('/'))
 	foot := footerOf(m)
 	for _, want := range []string{"enter apply", "esc clear"} {

@@ -25,7 +25,7 @@ func TestViewEmptyBeforeWindowSize(t *testing.T) {
 
 func TestTabSwitchingByDigits(t *testing.T) {
 	m := sized(newTestModel(t), 80, 24)
-	for want, digit := range []rune{'1', '2', '3', '4', '5'} {
+	for want, digit := range []rune{'1', '2', '3', '4', '5', '6'} {
 		nm, _ := m.Update(keyRune(digit))
 		m = nm.(Model)
 		if m.active != want {
@@ -164,10 +164,10 @@ func TestQuitQuits(t *testing.T) {
 
 func TestFilterModeSwallowsGlobalKeys(t *testing.T) {
 	m := sized(newTestModel(t), 80, 24)
-	m.active = 3 // settings
+	m.active = 4 // settings
 	nm, _ := m.Update(keyRune('/'))
 	m = nm.(Model)
-	if !m.views[3].Capturing() {
+	if !m.views[4].Capturing() {
 		t.Fatalf("/ did not enter capturing mode")
 	}
 
@@ -181,14 +181,14 @@ func TestFilterModeSwallowsGlobalKeys(t *testing.T) {
 
 	nm, _ = m.Update(keyRune('2'))
 	m = nm.(Model)
-	if m.active != 3 {
+	if m.active != 4 {
 		t.Fatalf("digit switched tab while capturing: active = %d", m.active)
 	}
 
 	// esc leaves capturing mode again, and q now quits as normal.
 	nm, _ = m.Update(keyType(tea.KeyEsc))
 	m = nm.(Model)
-	if m.views[3].Capturing() {
+	if m.views[4].Capturing() {
 		t.Fatalf("esc did not leave capturing mode")
 	}
 }

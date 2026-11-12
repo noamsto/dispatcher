@@ -39,10 +39,10 @@ type tabHooks interface {
 	leave() (view, tea.Cmd)
 }
 
-var tabTitles = []string{"Live", "Budget", "Runs", "Settings", "Map"}
+var tabTitles = []string{"Live", "Board", "Budget", "Runs", "Settings", "Map"}
 
 // mapTab is the Map view's index in Model.views.
-const mapTab = 4
+const mapTab = 5
 
 // snapshotMsg carries the root model's current Snapshot and per-source
 // loaded flags to every view's Update, not just the active one, so a tab
@@ -79,7 +79,7 @@ type Model struct {
 	statusAt  time.Time
 
 	active int
-	views  [5]view
+	views  [6]view
 
 	help help.Model
 	keys KeyMap
@@ -115,8 +115,9 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 	lv := newLiveView(m.snap, m.loaded(), live, now)
 	acts := actionDeps{ctx: ctx, runner: deps.Runner, crew: deps.Crew, inTmux: deps.InTmux}
 	lv.acts = acts
-	m.views = [5]view{
+	m.views = [6]view{
 		lv,
+		newBoardView(m.snap, m.loaded(), now, acts),
 		newBudgetView(m.snap, m.loaded()),
 		newRunsView(m.snap, m.loaded()),
 		newSettingsView(m.snap, m.loaded()),
@@ -221,9 +222,15 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
-		nv, cmd := m.views[0].Update(msg)
-		m.views[0] = nv
-		return m, cmd
+		// The Live and Board views keep the width for their reply prompt
+		// and key handling.
+		var cmds []tea.Cmd
+		for _, i := range []int{0, 1} {
+			nv, cmd := m.views[i].Update(msg)
+			m.views[i] = nv
+			cmds = append(cmds, cmd)
+		}
+		return m, tea.Batch(cmds...)
 
 	case sourceMsg:
 		msg.apply(&m.snap)

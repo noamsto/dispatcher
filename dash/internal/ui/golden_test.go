@@ -16,6 +16,7 @@ var update = flag.Bool("update", false, "update golden files")
 // Tab indexes in the root model's view order.
 const (
 	goldenTabLive = iota
+	goldenTabBoard
 	goldenTabBudget
 	goldenTabRuns
 	goldenTabSettings

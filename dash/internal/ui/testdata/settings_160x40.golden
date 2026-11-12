@@ -1,4 +1,4 @@
-  Live │   Budget │   Runs │ ▸ Settings │   Map
+  Live │   Board │   Budget │   Runs │ ▸ Settings │   Map
 layers: default <BASE>
         user    <USER> (present)
         locked  <LOCKED>
@@ -37,4 +37,4 @@ layers: default <BASE>
 
 
 
-j/k move • enter expand/collapse • / filter • 1-5 views • tab next view • r refresh • ? help • q quit  refreshed 14:13:20
+j/k move • enter expand/collapse • / filter • 1-6 views • tab next view • r refresh • ? help • q quit  refreshed 14:13:20
