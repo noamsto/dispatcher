@@ -2,23 +2,23 @@
 layers: default <BASE>
         user    <USER> (present)
         locked  <LOCKED>
-› engines: ["claude","pi"]                                                  user
-  profile: "work"                                                      🔒 locked
-  burnClasses: [{"match":"*opus*","byEffort":{"low":{"class":"standard"… default
-  ▾ orchestratorDefaults                                                        
-    ▾ claude                                                                    
-      model: "opus"                                                      default
-      effort: "high"                                                     default
-    ▾ codex                                                                     
-      model: "gpt-5.6-sol"                                               default
-      effort: "high"                                                     default
-    ▾ cursor                                                                    
-      model: "kimi-k3-high"                                              default
-    ▾ pi                                                                        
-      model: "openrouter/deepseek/deepseek-v4.1-flash"                   default
-      effort: "high"                                                     default
-  ▾ modelMap                                                                    
-    ▾ claude                                                                    
-      ▾ deep                                                                    
-        default: "opus"                                                  default
-j/k move • enter expand/collapse • / filter • 1-5 views …  refreshed 14:13:20
+› fleetBudget                         unset                              default
+  profile                             work                             🔒 locked
+  freshSeams                          unset                              default
+  dispatcherChrome                    unset                              default
+  rosterDiagram.autoOpen              unset                              default
+  overseer.autoRelaunch               unset                              default
+  openrouter.monthlyUsd               20                                 default
+  orchestratorDefaults.claude.effort  high                               default
+  orchestratorDefaults.codex.effort   high                               default
+  orchestratorDefaults.pi.effort      high                               default
+
+
+
+
+
+
+
+
+
+j/k move • space change • +/- adjust • x reset • e edit fil…  refreshed 14:13:20

@@ -162,13 +162,13 @@ func TestQuitQuits(t *testing.T) {
 	}
 }
 
-func TestFilterModeSwallowsGlobalKeys(t *testing.T) {
+func TestNumberInputSwallowsGlobalKeys(t *testing.T) {
 	m := sized(newTestModel(t), 80, 24)
-	m.active = 3 // settings
-	nm, _ := m.Update(keyRune('/'))
+	m.active = 3                             // settings
+	nm, _ := m.Update(keyType(tea.KeyEnter)) // cursor on fleetBudget opens the number input
 	m = nm.(Model)
 	if !m.views[3].Capturing() {
-		t.Fatalf("/ did not enter capturing mode")
+		t.Fatalf("enter did not open the number input")
 	}
 
 	nm, cmd := m.Update(keyRune('q'))

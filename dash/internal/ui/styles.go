@@ -17,7 +17,6 @@ var (
 
 	cursorStyle = lipgloss.NewStyle().Bold(true)
 
-	branchStyle = lipgloss.NewStyle()
 	leafStyle   = lipgloss.NewStyle()
 	headerStyle = lipgloss.NewStyle().Bold(true)
 	warnStyle   = lipgloss.NewStyle().Faint(true)

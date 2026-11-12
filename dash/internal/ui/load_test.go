@@ -244,31 +244,13 @@ func TestRunsPlaceholdersAreIndependent(t *testing.T) {
 	}
 }
 
-func TestSettingsTreeKeepsCollapseWhenOtherSourceLands(t *testing.T) {
+func TestSettingsCursorSurvivesOtherSourceLanding(t *testing.T) {
 	snap := loadSnapshot(t)
-	m := switchTab(t, sized(testModel(snap), 120, 40), "4")
-	flat := m.views[3].(settingsView).flat
-	branch := -1
-	for i, n := range flat {
-		if !n.isLeaf {
-			branch = i
-			break
-		}
-	}
-	if branch < 0 {
-		t.Fatalf("fixture has no settings branch to collapse")
-	}
-	var nm tea.Model = m
-	for range branch {
-		nm, _ = nm.Update(keyRune('j'))
-	}
-	nm, _ = nm.Update(keyRune(' '))
-	collapsed := len(nm.(Model).views[3].(settingsView).flat)
-	if collapsed >= len(flat) {
-		t.Fatalf("space did not collapse a branch")
-	}
+	var nm tea.Model = switchTab(t, sized(testModel(snap), 120, 40), "4")
+	nm, _ = nm.Update(keyRune('j'))
+	nm, _ = nm.Update(keyRune('j'))
 	nm, _ = nm.Update(sourceMsg{srcRoster, func(s *data.Snapshot) { s.Roster = snap.Roster }})
-	if got := len(nm.(Model).views[3].(settingsView).flat); got != collapsed {
-		t.Fatalf("an unrelated source landing changed the settings tree: %d visible nodes, want %d", got, collapsed)
+	if got := nm.(Model).views[settingsTab].(settingsView).cursor; got != 2 {
+		t.Fatalf("an unrelated source landing moved the settings cursor: %d, want 2", got)
 	}
 }

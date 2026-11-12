@@ -75,13 +75,14 @@ func run() int {
 				Ratings:  func(ctx context.Context) data.RunsSection { return data.CollectRatings(ctx, runner, cfg) },
 				Roster:   func(ctx context.Context) data.RosterSection { return data.CollectRoster(ctx, runner, cfg) },
 			},
-			Runner:        runner,
-			Crew:          cfg.Crew,
-			InTmux:        os.Getenv("TMUX") != "",
-			EventsPath:    eventsPath,
-			EventsPathErr: eventsErr,
-			Now:           cfg.Now,
-			Map:           mapDeps,
+			Runner:         runner,
+			Crew:           cfg.Crew,
+			InTmux:         os.Getenv("TMUX") != "",
+			EventsPath:     eventsPath,
+			EventsPathErr:  eventsErr,
+			Now:            cfg.Now,
+			Map:            mapDeps,
+			DispatchConfig: cfg.DispatchConfigBin,
 		}
 		if err := ui.Run(deps); err != nil {
 			fmt.Fprintln(os.Stderr, "crew dash: "+err.Error())
