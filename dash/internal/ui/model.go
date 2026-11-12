@@ -40,13 +40,13 @@ type tabHooks interface {
 	leave() (view, tea.Cmd)
 }
 
-var tabTitles = []string{"Live", "Budget", "Runs", "Settings", "Map"}
+var tabTitles = []string{"Live", "Board", "Budget", "Runs", "Settings", "Map"}
 
 // mapTab is the Map view's index in Model.views.
-const mapTab = 4
+const mapTab = 5
 
 // settingsTab is the Settings view's index in Model.views.
-const settingsTab = 3
+const settingsTab = 4
 
 // snapshotMsg carries the root model's current Snapshot and per-source
 // loaded flags to every view's Update, not just the active one, so a tab
@@ -83,7 +83,7 @@ type Model struct {
 	statusAt  time.Time
 
 	active int
-	views  [5]view
+	views  [6]view
 
 	help help.Model
 	keys KeyMap
@@ -119,8 +119,9 @@ func NewModel(deps Deps, now func() time.Time, live liveDeps) Model {
 	lv := newLiveView(m.snap, m.loaded(), live, now)
 	acts := actionDeps{ctx: ctx, runner: deps.Runner, crew: deps.Crew, inTmux: deps.InTmux}
 	lv.acts = acts
-	m.views = [5]view{
+	m.views = [6]view{
 		lv,
+		newBoardView(m.snap, m.loaded(), now, acts),
 		newBudgetView(m.snap, m.loaded()),
 		newRunsView(m.snap, m.loaded()),
 		newSettingsView(m.snap, m.loaded(), settingsDeps{
@@ -201,6 +202,17 @@ func (m *Model) syncMapBox() tea.Cmd {
 	return cmd
 }
 
+// handoffSelection is what a view being entered opens on: the worker the tab
+// being left has selected (Live or Board), else Live's selection.
+func (m Model) handoffSelection() data.Selection {
+	if sel := m.views[m.active].Selection(); sel != nil {
+		if _, ok := sel.(data.Worker); ok {
+			return sel
+		}
+	}
+	return m.views[0].Selection()
+}
+
 // switchTab makes tab i active, running the leaving and entering views'
 // hooks.
 func (m *Model) switchTab(i int) tea.Cmd {
@@ -213,10 +225,11 @@ func (m *Model) switchTab(i int) tea.Cmd {
 		m.views[m.active] = nv
 		cmds = append(cmds, cmd)
 	}
+	first := m.handoffSelection()
 	m.active = i
 	cmds = append(cmds, m.syncMapBox())
 	if h, ok := m.views[i].(tabHooks); ok {
-		nv, cmd := h.enter(m.views[0].Selection())
+		nv, cmd := h.enter(first)
 		m.views[i] = nv
 		cmds = append(cmds, cmd)
 	}
@@ -228,9 +241,15 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
-		nv, cmd := m.views[0].Update(msg)
-		m.views[0] = nv
-		return m, cmd
+		// The Live and Board views keep the width for their reply prompt
+		// and key handling.
+		var cmds []tea.Cmd
+		for _, i := range []int{0, 1} {
+			nv, cmd := m.views[i].Update(msg)
+			m.views[i] = nv
+			cmds = append(cmds, cmd)
+		}
+		return m, tea.Batch(cmds...)
 
 	case sourceMsg:
 		msg.apply(&m.snap)

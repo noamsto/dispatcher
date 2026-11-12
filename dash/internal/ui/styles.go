@@ -82,3 +82,12 @@ func gaugeColor(usedPct float64) string {
 		return gaugeNormalColor
 	}
 }
+
+// State colours of the Board's cards, the same hues the SVG roster uses.
+var (
+	stateWorkingColor = lipgloss.Color("#a6e3a1")
+	stateBlockedColor = lipgloss.Color("#f38ba8")
+	statePROpenColor  = lipgloss.Color("#89b4fa")
+	stateDoneColor    = lipgloss.Color("#6c7086")
+	stateFailedColor  = lipgloss.Color("#d36a82")
+)

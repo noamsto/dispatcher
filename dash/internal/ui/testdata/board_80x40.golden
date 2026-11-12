@@ -1,0 +1,40 @@
+  Live │ ▸ Board │   Budget │   Runs │   Settings │   Map
+working (2)                 
+alpha                       
+╔══════════════════════════╗
+║ basil · #101     working ║
+║ Add a board tab          ║
+║                          ║
+║ ◇ standard·claude·sonnet ║
+║ writing tests            ║
+╚══════════════════════════╝
+beta                        
+╭──────────────────────────╮
+│ amber · #201     working │
+│ Port crew nudge          │
+│                          │
+│ ◆ deep·claude·gpt-5      │
+│ reading code             │
+╰──────────────────────────╯
+
+blocked (1)                 
+alpha                       
+╭──────────────────────────╮
+│ coral · #102     blocked │
+│ Rework the dispatcher    │
+│ roster so every worker … │
+│ ◆ deep·claude·opus @mini │
+│ waiting on the dispatch… │
+╰──────────────────────────╯
+
+pr_open (1)                 
+alpha                       
+╭──────────────────────────╮
+│ slate · #103     pr open │
+│ Fix the ledger           │
+│                          │
+│ · trivial·claude·haiku   │
+│ PR open                  │
+╰──────────────────────────╯
+alpha · feat/101-basil
+hjkl move • t jump • o open PR • m reply • n nudge …  refreshed 14:13:20

@@ -226,3 +226,22 @@ func TestCardPen(t *testing.T) {
 		}
 	}
 }
+
+// TestCardFieldsMatchDashBoard pins the card text of a fixture that
+// dash/internal/ui/board_test.go (TestBoardCardFieldsMatchSVGCard) asserts for
+// the `crew dash` Board card: the two modules cannot share code, so keep the
+// fixture and the expected strings in step.
+func TestCardFieldsMatchDashBoard(t *testing.T) {
+	p := cardOf(t, func(r map[string]any) {
+		r["branch"], r["name"], r["state"] = "feat/12-x", "lime", "pr_open"
+		r["title"], r["tier"], r["engine"] = "fix the bug", "deep", "claude"
+		r["model"], r["detail"] = "claude-opus-5-5", "running tests"
+	})
+	want := cardText{
+		rows:  [cardRows]string{"lime · #12", "fix the bug", "", "deep·claude·opus", "running tests"},
+		state: "pr open",
+	}
+	if c := cardTextOf(p); c != want {
+		t.Errorf("card = %+v, want %+v", c, want)
+	}
+}

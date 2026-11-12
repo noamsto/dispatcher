@@ -571,7 +571,7 @@ func TestReplyLongPromptKeepsTailVisibleOnNarrowWidth(t *testing.T) {
 func TestFooterShowsInputKeysWhileSettingsNumberInputOpen(t *testing.T) {
 	asciiProfile(t)
 	m := sized(testModel(loadFullSnapshot(t)), 80, 24)
-	m.active = 3
+	m.active = settingsTab
 	m = send(m, keyType(tea.KeyEnter))
 	foot := footerOf(m)
 	for _, want := range []string{"enter apply", "esc cancel"} {

@@ -1,0 +1,40 @@
+  Live │ ▸ Board │   Budget │   Runs │   Settings │   Map
+working (2)                  blocked (1)                  pr_open (1)                  done/failed (2)             
+alpha                        alpha                        alpha                        beta                        
+╔══════════════════════════╗ ╭──────────────────────────╮ ╭──────────────────────────╮ ╭──────────────────────────╮
+║ basil · #101     working ║ │ coral · #102     blocked │ │ slate · #103     pr open │ │ onyx · #202         done │
+║ Add a board tab          ║ │ Rework the dispatcher    │ │ Fix the ledger           │ │ Docs sweep               │
+║                          ║ │ roster so every worker … │ │                          │ │                          │
+║ ◇ standard·claude·sonnet ║ │ ◆ deep·claude·opus @mini │ │ · trivial·claude·haiku   │ │ · trivial·claude·haiku   │
+║ writing tests            ║ │ waiting on the dispatch… │ │ PR open                  │ │ done                     │
+╚══════════════════════════╝ ╰──────────────────────────╯ ╰──────────────────────────╯ ╰──────────────────────────╯
+beta                                                                                   ╭──────────────────────────╮
+╭──────────────────────────╮                                                           │ pearl · #203      failed │
+│ amber · #201     working │                                                           │ Gate flake               │
+│ Port crew nudge          │                                                           │                          │
+│                          │                                                           │ ◇ standard·claude·sonnet │
+│ ◆ deep·claude·gpt-5      │                                                           │ gate failed              │
+│ reading code             │                                                           ╰──────────────────────────╯
+╰──────────────────────────╯                                                                                       
+alpha · feat/101-basil
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+hjkl move • t jump • o open PR • m reply • n nudge • 1-6 views • tab next view • r refresh • ? help • q quit  refreshed 14:13:20

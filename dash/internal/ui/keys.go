@@ -11,6 +11,7 @@ type KeyMap struct {
 	Tab3    key.Binding
 	Tab4    key.Binding
 	Tab5    key.Binding
+	Tab6    key.Binding
 	Next    key.Binding
 	Prev    key.Binding
 	Refresh key.Binding
@@ -20,11 +21,12 @@ type KeyMap struct {
 
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
-		Tab1:    key.NewBinding(key.WithKeys("1"), key.WithHelp("1-5", "views")),
+		Tab1:    key.NewBinding(key.WithKeys("1"), key.WithHelp("1-6", "views")),
 		Tab2:    key.NewBinding(key.WithKeys("2")),
 		Tab3:    key.NewBinding(key.WithKeys("3")),
 		Tab4:    key.NewBinding(key.WithKeys("4")),
 		Tab5:    key.NewBinding(key.WithKeys("5")),
+		Tab6:    key.NewBinding(key.WithKeys("6")),
 		Next:    key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next view")),
 		Prev:    key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev view")),
 		Refresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
@@ -57,17 +59,8 @@ func (k KeyMap) fullHelp(ownsTab bool) [][]key.Binding {
 
 // tabIndex maps a KeyMsg's string to a 0-based view index, or -1.
 func tabIndex(s string) int {
-	switch s {
-	case "1":
-		return 0
-	case "2":
-		return 1
-	case "3":
-		return 2
-	case "4":
-		return 3
-	case "5":
-		return 4
+	if len(s) == 1 && s[0] >= '1' && s[0] <= '0'+byte(len(tabTitles)) {
+		return int(s[0] - '1')
 	}
 	return -1
 }

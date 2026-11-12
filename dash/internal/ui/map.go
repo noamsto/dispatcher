@@ -100,8 +100,8 @@ func (v mapView) capable() (bool, string) {
 // the selection instead of switching views.
 func (v mapView) ownsTab() bool { return v.stored && len(v.geom.Planets) > 0 }
 
-// enter shows the tab. The first time, it opens on the crew of the Live
-// cursor's worker.
+// enter shows the tab. The first time, it opens on the crew of the worker
+// selected on the tab being left (Live's cursor otherwise).
 func (v mapView) enter(live data.Selection) (view, tea.Cmd) {
 	v.active, v.err, v.paint = true, "", true
 	if ok, _ := v.capable(); !ok {

@@ -75,9 +75,10 @@ func TestFirstViewBeforeAnySourceReturns(t *testing.T) {
 
 	for tab, want := range map[string][]string{
 		"1": {"loading budget…", "loading roster…"},
-		"2": {"loading budget…"},
-		"3": {"loading ratings…", "loading retro…"},
-		"4": {"loading settings…"},
+		"2": {"loading roster…"},
+		"3": {"loading budget…"},
+		"4": {"loading ratings…", "loading retro…"},
+		"5": {"loading settings…"},
 	} {
 		frame := switchTab(t, m, tab).View()
 		for _, w := range want {
@@ -235,7 +236,7 @@ func TestRunsPlaceholdersAreIndependent(t *testing.T) {
 	nm, _ := m.Update(sourceMsg{srcRatings, func(s *data.Snapshot) {
 		s.Runs.Ratings, s.Runs.RatingsGroups, s.Runs.RatingsError = snap.Runs.Ratings, snap.Runs.RatingsGroups, snap.Runs.RatingsError
 	}})
-	frame := switchTab(t, nm.(Model), "3").View()
+	frame := switchTab(t, nm.(Model), "4").View()
 	if !strings.Contains(frame, "loading retro…") {
 		t.Errorf("retro pane lacks its placeholder:\n%s", frame)
 	}
@@ -246,7 +247,7 @@ func TestRunsPlaceholdersAreIndependent(t *testing.T) {
 
 func TestSettingsCursorSurvivesOtherSourceLanding(t *testing.T) {
 	snap := loadSnapshot(t)
-	var nm tea.Model = switchTab(t, sized(testModel(snap), 120, 40), "4")
+	var nm tea.Model = switchTab(t, sized(testModel(snap), 120, 40), "5")
 	nm, _ = nm.Update(keyRune('j'))
 	nm, _ = nm.Update(keyRune('j'))
 	nm, _ = nm.Update(sourceMsg{srcRoster, func(s *data.Snapshot) { s.Roster = snap.Roster }})
