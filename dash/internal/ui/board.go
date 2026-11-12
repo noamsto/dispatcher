@@ -24,7 +24,6 @@ const (
 	boardContent = boardCardW - 2 - 2*boardPadX
 )
 
-// Board column groups, in display order.
 const (
 	grpWorking = iota
 	grpBlocked
@@ -229,7 +228,6 @@ func renderCard(w map[string]any, selected bool) []string {
 
 func strFieldOr(w map[string]any, k string) string { s, _ := strField(w, k); return s }
 
-// boardItem is one worker card.
 type boardItem struct {
 	crewID string
 	repo   string
@@ -316,7 +314,6 @@ func (v *boardView) moveTo(i int) {
 	}
 }
 
-// column is the items of one non-empty group.
 type column struct {
 	group int
 	idx   []int // indexes into items
@@ -534,7 +531,6 @@ func (v boardView) View(w, h int) string {
 	return strings.Join(out, "\n")
 }
 
-// joinColumns sets blocks side by side, padding the shorter ones.
 func joinColumns(blocks [][]string) []string {
 	n := 0
 	for _, b := range blocks {
