@@ -341,6 +341,108 @@ func TestSettingsWriteInFlightRefuses(t *testing.T) {
 	}
 }
 
+func TestSettingsEditWhileWriteInFlightRefuses(t *testing.T) {
+	h := newKnobHarness(t, "", nil).at(rowFreshSeams)
+	h.v.busy = true
+	st := statusOf(t, h.press(keyRune('e')))
+	if !st.err || st.text != "a settings write is in flight" {
+		t.Fatalf("status = %+v", st)
+	}
+	if len(h.execd) != 0 {
+		t.Fatalf("editor launched during a write")
+	}
+}
+
+func TestSettingsUnavailableRefusesEdits(t *testing.T) {
+	msg := "dispatch-config failed"
+	h := newKnobHarness(t, "", func(s *data.Snapshot) { s.Settings.Error = &msg }).at(rowFreshSeams)
+	for _, k := range []rune{'+', '-', ' ', 'x'} {
+		st := statusOf(t, h.press(keyRune(k)))
+		if !st.err || st.text != "settings unavailable — e opens the file" {
+			t.Fatalf("%q: status = %+v", k, st)
+		}
+	}
+	if _, err := os.Stat(h.file); !os.IsNotExist(err) {
+		t.Fatalf("a refused edit wrote the user file: %v", err)
+	}
+	h.press(keyRune('e'))
+	if len(h.execd) != 1 {
+		t.Fatalf("e must still open the editor, exec called %d times", len(h.execd))
+	}
+}
+
+func TestSettingsCycleEnumFromDefault(t *testing.T) {
+	h := newKnobHarness(t, "", func(s *data.Snapshot) {
+		s.Settings.Rows[1].Value, s.Settings.Rows[1].Origin, s.Settings.Rows[1].Editable = nil, "base", true
+	}).at(rowProfile)
+	h.press(keyRune(' '))
+	if got := h.fileDoc()["profile"]; got != "work" {
+		t.Fatalf("profile = %v, want work (unset means personal)", got)
+	}
+}
+
+func TestSettingsSymlinkedUserFileSurvivesWrite(t *testing.T) {
+	link := func(h *knobHarness, target string) {
+		if err := os.MkdirAll(filepath.Dir(h.file), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, h.file); err != nil {
+			t.Fatal(err)
+		}
+	}
+	isLink := func(path string) {
+		t.Helper()
+		if st, err := os.Lstat(path); err != nil || st.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("%s is no longer a symlink: %v %v", path, st, err)
+		}
+	}
+	targetDoc := func(target string) string {
+		t.Helper()
+		b, err := os.ReadFile(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+
+	t.Run("existing target", func(t *testing.T) {
+		h := newKnobHarness(t, "", nil).at(rowFreshSeams)
+		target := filepath.Join(t.TempDir(), "dotfiles.json")
+		if err := os.WriteFile(target, []byte(`{"a":1}`+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		link(h, target)
+		h.press(keyRune(' '))
+		isLink(h.file)
+		if got := targetDoc(target); !strings.Contains(got, `"freshSeams": true`) || !strings.Contains(got, `"a"`) {
+			t.Fatalf("target = %q", got)
+		}
+	})
+
+	t.Run("dangling target", func(t *testing.T) {
+		h := newKnobHarness(t, "", nil).at(rowFreshSeams)
+		target := filepath.Join(t.TempDir(), "dotfiles.json")
+		link(h, target)
+		h.press(keyRune(' '))
+		isLink(h.file)
+		if got := targetDoc(target); !strings.Contains(got, `"freshSeams": true`) {
+			t.Fatalf("target = %q", got)
+		}
+	})
+
+	t.Run("rejected write on dangling target", func(t *testing.T) {
+		h := newKnobHarness(t, "", nil).at(rowFreshSeams)
+		h.runner.Responses["dispatch-config"] = data.FakeResponse{Stderr: []byte("bad"), Err: data.FakeExitError{Code: 2}}
+		target := filepath.Join(t.TempDir(), "dotfiles.json")
+		link(h, target)
+		h.press(keyRune(' '))
+		isLink(h.file)
+		if _, err := os.Stat(target); !os.IsNotExist(err) {
+			t.Fatalf("created target must be removed again: %v", err)
+		}
+	})
+}
+
 func TestSettingsRejectedWriteRestoresFile(t *testing.T) {
 	fail := data.FakeResponse{Stderr: []byte("bad value\nmore"), Err: data.FakeExitError{Code: 2}}
 
@@ -465,8 +567,8 @@ func TestSettingsViewEffectiveIsReadOnlyTempCopy(t *testing.T) {
 	if err != nil || string(b) != `{"merged":true}` {
 		t.Fatalf("temp copy = %q, %v", b, err)
 	}
-	if st, _ := os.Stat(tmp); st.Mode().Perm() != 0o444 {
-		t.Fatalf("temp mode = %v, want 0444", st.Mode().Perm())
+	if st, _ := os.Stat(tmp); st.Mode().Perm() != 0o400 {
+		t.Fatalf("temp mode = %v, want 0400", st.Mode().Perm())
 	}
 	h.press(editorDoneMsg{effective: true, tmp: tmp})
 	if _, err := os.Stat(tmp); !os.IsNotExist(err) {

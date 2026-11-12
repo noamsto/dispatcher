@@ -16,6 +16,16 @@ func newTestModel(t *testing.T) Model {
 	return testModel(loadSnapshot(t))
 }
 
+func TestStatusLineStripsControlSequences(t *testing.T) {
+	m := sized(newTestModel(t), 80, 24)
+	nm, _ := m.Update(actionMsg{text: "dispatch-config: " + injectedErr, err: true})
+	out := nm.(Model).View()
+	requireNoControl(t, out)
+	if !strings.Contains(out, "dispatch-config: boom") {
+		t.Fatalf("status text missing from view:\n%s", out)
+	}
+}
+
 func TestViewEmptyBeforeWindowSize(t *testing.T) {
 	m := newTestModel(t)
 	if got := m.View(); got != "" {

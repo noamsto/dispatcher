@@ -54,6 +54,7 @@ type knob struct {
 	kind    knobKind
 	min     float64
 	choices []string
+	def     string // enum value dispatch assumes when unset
 }
 
 func kpath(s ...string) []string { return s }
@@ -63,7 +64,7 @@ var efforts = []string{"low", "medium", "high", "xhigh", "max"}
 // quickKnobs is the whole Settings tab; adding a knob is one line.
 var quickKnobs = []knob{
 	{path: kpath("fleetBudget"), kind: knobInt, min: 1},
-	{path: kpath("profile"), kind: knobEnum, choices: []string{"personal", "work"}},
+	{path: kpath("profile"), kind: knobEnum, choices: []string{"personal", "work"}, def: "personal"},
 	{path: kpath("freshSeams"), kind: knobBool},
 	{path: kpath("dispatcherChrome"), kind: knobBool},
 	{path: kpath("rosterDiagram", "autoOpen"), kind: knobBool},
@@ -319,6 +320,17 @@ func (v *settingsView) patch(path []string, value json.RawMessage) {
 
 func (v settingsView) handleKey(msg tea.KeyMsg) (view, tea.Cmd) {
 	last := len(v.rows) - 1
+	if !v.loaded || v.err != nil {
+		switch msg.String() {
+		case "e":
+			return v.editFile()
+		case "v":
+			return v.viewEffective()
+		case " ", "space", "enter", "+", "=", "-", "x":
+			return v, statusCmd("settings unavailable — e opens the file", true)
+		}
+		return v, nil
+	}
 	switch msg.String() {
 	case "j", "down":
 		v.cursor = clamp(v.cursor+1, 0, last)
@@ -400,6 +412,9 @@ func (v settingsView) change() (view, tea.Cmd) {
 	case knobEnum:
 		var cur string
 		_ = json.Unmarshal(r.row.Value, &cur)
+		if isNull(r.row.Value) {
+			cur = r.knob.def
+		}
 		next := r.knob.choices[0]
 		if i := slices.Index(r.knob.choices, cur); i >= 0 {
 			next = r.knob.choices[(i+1)%len(r.knob.choices)]
@@ -478,6 +493,7 @@ func (v settingsView) writeCmd(name string, path []string, val json.RawMessage, 
 		return settingsWriteMsg{text: name + ": " + fmt.Sprintf(format, a...), err: true}
 	}
 	return func() tea.Msg {
+		file := resolveUserPath(file)
 		prev, existed, err := readUserFile(file)
 		if err != nil {
 			return fail("%v", err)
@@ -590,6 +606,9 @@ func (v settingsView) editFile() (view, tea.Cmd) {
 	if file == "" {
 		return v, statusCmd("user settings path unknown", true)
 	}
+	if v.busy {
+		return v, statusCmd("a settings write is in flight", true)
+	}
 	if err := ensureUserFile(file); err != nil {
 		return v, statusCmd("settings: "+err.Error(), true)
 	}
@@ -646,7 +665,7 @@ func (v settingsView) viewEffective() (view, tea.Cmd) {
 		}
 		_, werr := f.Write(stdout)
 		cerr := f.Close()
-		if err := errors.Join(werr, cerr, os.Chmod(f.Name(), 0o444)); err != nil {
+		if err := errors.Join(werr, cerr, os.Chmod(f.Name(), 0o400)); err != nil {
 			_ = os.Remove(f.Name())
 			return actionMsg{text: "settings: " + err.Error(), err: true}
 		}

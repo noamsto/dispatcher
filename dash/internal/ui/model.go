@@ -375,7 +375,7 @@ func (m Model) statusLines() []string {
 	if m.status == "" {
 		return nil
 	}
-	line := truncateLine(m.status, m.width)
+	line := truncateLine(cleanText(m.status), m.width)
 	if m.statusErr {
 		line = warnStyle.Render(line)
 	}

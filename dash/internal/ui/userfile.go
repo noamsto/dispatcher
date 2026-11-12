@@ -118,6 +118,23 @@ func renderDoc(root *jsonObject) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// resolveUserPath follows a symlinked user file (home-manager links it into
+// dotfiles), including a dangling link, so writes land on the target and
+// never replace the link itself.
+func resolveUserPath(path string) string {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real
+	}
+	target, err := os.Readlink(path)
+	if err != nil {
+		return path
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(path), target)
+	}
+	return target
+}
+
 // readUserFile returns the file's bytes; a missing file is (nil, false, nil).
 func readUserFile(path string) (b []byte, existed bool, err error) {
 	b, err = os.ReadFile(path)
