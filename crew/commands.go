@@ -19,6 +19,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/merge"
 	"github.com/noamsto/dispatcher/crew/internal/nudge"
 	"github.com/noamsto/dispatcher/crew/internal/overseer"
+	"github.com/noamsto/dispatcher/crew/internal/queue"
 	"github.com/noamsto/dispatcher/crew/internal/rate"
 	"github.com/noamsto/dispatcher/crew/internal/resolve"
 	"github.com/noamsto/dispatcher/crew/internal/retro"
@@ -292,6 +293,30 @@ type holdCmd struct {
 	Due     holdDueCmd     `cmd:"" name:"due"`
 	Park    holdParkCmd    `cmd:"" name:"park"`
 	Release holdReleaseCmd `cmd:"" name:"release"`
+}
+
+type queueAddCmd struct {
+	Ref    *string  `name:"ref"`
+	Branch *string  `name:"branch"`
+	Crew   *string  `name:"crew"`
+	After  []string `name:"after" sep:"none"`
+	Title  []string `arg:"" optional:"" passthrough:"partial" name:"title"`
+}
+
+type queueListCmd struct {
+	JSON bool    `name:"json"`
+	Crew *string `name:"crew"`
+}
+
+type queueDropCmd struct {
+	Crew *string `name:"crew"`
+	ID   string  `arg:"" optional:"" name:"id"`
+}
+
+type queueCmd struct {
+	Add  queueAddCmd  `cmd:"" name:"add"`
+	List queueListCmd `cmd:"" name:"list"`
+	Drop queueDropCmd `cmd:"" name:"drop"`
 }
 
 type nudgeCmd struct {
@@ -632,6 +657,18 @@ var wordings = map[string]wording{
 	"hold due":     {all: hold.DueUsage, code: exitFailure},
 	"hold park":    {all: hold.ParkUsage, code: exitFailure},
 	"hold release": {all: hold.ReleaseUsage, code: exitFailure},
+	"queue":        {all: queue.Usage, code: exitFailure},
+	"queue add": {
+		unknownFlag: func(f string) string {
+			return fmt.Sprintf("crew: queue add: unknown arg '%s' (usage: %s)", f, strings.TrimPrefix(queue.AddUsage, "crew: "))
+		},
+		extra: func(w string) string {
+			return fmt.Sprintf("crew: queue add: unknown arg '%s' (usage: %s)", w, strings.TrimPrefix(queue.AddUsage, "crew: "))
+		},
+		code: exitFailure,
+	},
+	"queue list": {all: queue.ListUsage, code: exitFailure},
+	"queue drop": {all: queue.DropUsage, code: exitFailure},
 	"nudge": {
 		unknownFlag: func(f string) string {
 			return fmt.Sprintf("crew: nudge: unknown flag '%s' (usage: %s)", f, nudge.Usage)
@@ -789,6 +826,10 @@ func kongRefusal(sub string, err error) *refusal {
 	// A trailing --root binds no value, unlike the *string flags, which bind "".
 	if sub == "rate" && strings.HasPrefix(text, "--root: missing value") {
 		return &refusal{rateRootUsage, exitFailure}
+	}
+	// A trailing --after binds no value either: it is a slice, not a *string.
+	if sub == "queue add" && strings.HasPrefix(text, "--after: missing value") {
+		return &refusal{"crew: --after needs a value", exitFailure}
 	}
 	if w.all != "" {
 		return &refusal{w.all, w.code}
@@ -1025,6 +1066,33 @@ func validate(sub string, r *root) *refusal {
 		}
 		if due := r.Hold.Due; sub == "hold due" && due.WithParked && !due.JSON {
 			return fail(hold.DueUsage)
+		}
+	case "queue add":
+		c := r.Queue.Add
+		for _, f := range []struct {
+			name string
+			v    *string
+		}{{"--ref", c.Ref}, {"--branch", c.Branch}, {"--crew", c.Crew}} {
+			if given(f.v) {
+				return fail(fmt.Sprintf("crew: %s needs a value", f.name))
+			}
+		}
+		if slices.Contains(c.After, "") {
+			return fail("crew: --after needs a value")
+		}
+		if len(c.Title) > 0 && c.Title[0] == "--" {
+			return fail("crew: queue add: unknown arg '--'")
+		}
+	case "queue list", "queue drop":
+		crew := r.Queue.List.Crew
+		if sub == "queue drop" {
+			if r.Queue.Drop.ID == "" {
+				return fail(queue.DropUsage)
+			}
+			crew = r.Queue.Drop.Crew
+		}
+		if given(crew) {
+			return fail("crew: --crew needs a value")
 		}
 	case "rate":
 		if !r.Rate.Advise && len(r.Rate.Args) > 0 {

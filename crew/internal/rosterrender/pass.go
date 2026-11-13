@@ -26,11 +26,12 @@ func (o Options) passProbes(ctx context.Context, common string, windows func() m
 }
 
 type frame struct {
-	slots slotState
-	sc    scene
-	lg    legend
-	live  int64
-	holds []queuedHold
+	slots  slotState
+	sc     scene
+	lg     legend
+	live   int64
+	holds  []queuedHold
+	queued []queuedTask
 }
 
 // add sums the worker counts of another repo's legend.
@@ -41,6 +42,7 @@ func (l *legend) add(o legend) {
 	l.done += o.done
 	l.failed += o.failed
 	l.holds += o.holds
+	l.queued += o.queued
 }
 
 // buildFrame reads every repo bus the crew has rows on into a frame without
@@ -56,11 +58,12 @@ func buildFrame(ctx context.Context, o Options, paths bus.Paths, cdir, crew stri
 	panes := sync.OnceValue(func() string { return o.rolePanes(ctx) })
 
 	var (
-		ps    []planet
-		lg    legend
-		live  int64
-		wants []ciWant
-		holds []queuedHold
+		ps     []planet
+		lg     legend
+		live   int64
+		wants  []ciWant
+		holds  []queuedHold
+		queued []queuedTask
 	)
 	for i, src := range o.sources(ctx, paths, crew) {
 		roles := localRoles
@@ -98,6 +101,7 @@ func buildFrame(ctx context.Context, o Options, paths bus.Paths, cdir, crew stri
 		lg.add(res.lg)
 		live += res.live
 		holds = append(holds, res.holds...)
+		queued = append(queued, res.queued...)
 	}
 	at := o.Clock.Now()
 	applyCI(ps, refreshCI(ctx, o.Gh, cdir, wants, at, o.Stderr), at)
@@ -112,8 +116,8 @@ func buildFrame(ctx context.Context, o Options, paths bus.Paths, cdir, crew stri
 		lg.budget = o.disc.fleetBudget(ctx, at, o.Budget)
 	}
 	slots, sc := arrange(loadSlots(filepath.Join(cdir, fileSlots)), ps)
-	placeHolds(&sc, holds)
-	return frame{slots: slots, sc: sc, lg: lg, live: live, holds: holds}, nil
+	placeHolds(&sc, holds, queued)
+	return frame{slots: slots, sc: sc, lg: lg, live: live, holds: holds, queued: queued}, nil
 }
 
 // engineReadings is the legend's quota windows: the cache's when a file is
@@ -145,7 +149,11 @@ func (o Options) sourcePlanets(ctx context.Context, src source, crew string, now
 	for i := range ps {
 		ps[i].repo, ps[i].repoLabel = src.paths.Common, src.wedge
 	}
-	return sourceResult{planets: ps, lg: lg, live: live, holds: buildHolds(m)}, nil
+	queued := buildQueued(m)
+	for i := range queued {
+		queued[i].repo = src.paths.Common
+	}
+	return sourceResult{planets: ps, lg: lg, live: live, holds: buildHolds(m), queued: queued}, nil
 }
 
 // pass is `_rr_pass <crew> <cdir> <no_open> [role_rows]`: one render. Draw the

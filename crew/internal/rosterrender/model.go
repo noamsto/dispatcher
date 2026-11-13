@@ -17,6 +17,7 @@ import (
 	"github.com/noamsto/dispatcher/crew/internal/hold"
 	"github.com/noamsto/dispatcher/crew/internal/identity"
 	"github.com/noamsto/dispatcher/crew/internal/jqrun"
+	"github.com/noamsto/dispatcher/crew/internal/queue"
 	"github.com/noamsto/dispatcher/crew/internal/remote"
 	"github.com/noamsto/dispatcher/crew/internal/roster"
 )
@@ -42,10 +43,30 @@ var roleRe = regexp.MustCompile(`\A[A-Za-z0-9._-]{1,32}\z`)
 // it names something other than a worker engine.
 var engines = []string{"claude", "codex", "cursor", "pi"}
 
-// emptyModel is the arm's `{"rows":[],"holds":[],"roles":[]}`: what a repo with
-// no bus yet renders as, with no jq run at all.
+// emptyModel is the arm's `{"rows":[],"holds":[],"roles":[]}` plus an empty
+// queue: what a repo with no bus yet renders as, with no jq run at all.
 func emptyModel() map[string]any {
-	return map[string]any{"rows": []any{}, "holds": []any{}, "roles": []any{}, "rounds": map[string]any{}}
+	return map[string]any{"rows": []any{}, "holds": []any{}, "queued": []any{}, "roles": []any{}, "rounds": map[string]any{}}
+}
+
+// queueDocs is the queue's entries in the shape a JSON-decoded model has, so a
+// live model and a test model read the same way.
+func queueDocs(entries []queue.Entry) []any {
+	out := make([]any, 0, len(entries))
+	for _, e := range entries {
+		after := make([]any, len(e.After))
+		for i, a := range e.After {
+			after[i] = a
+		}
+		task := map[string]any{"title": e.Task.Title}
+		for k, v := range map[string]*string{"ref": e.Task.Ref, "branch": e.Task.Branch} {
+			if v != nil {
+				task[k] = *v
+			}
+		}
+		out = append(out, map[string]any{"id": e.ID, "task": task, "after": after})
+	}
+	return out
 }
 
 // model is `_rr_model`: the renderer's whole input, {rows, holds, roles}. Every
@@ -102,6 +123,7 @@ func model(ctx context.Context, paths bus.Paths, crew string, nowSec float64, ro
 	if !ok {
 		return nil, fmt.Errorf("roster-render: model is %T, not an object", out)
 	}
+	m["queued"] = queueDocs(queue.Outstanding(events, crew))
 	// A remote worker's status rows never reach this bus, so it only ever has its
 	// synthesized `dispatched` row; the host is the one thing that tells it apart.
 	hosts := map[string]string{}

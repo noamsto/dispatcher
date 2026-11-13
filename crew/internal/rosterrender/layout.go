@@ -303,12 +303,19 @@ type scene struct {
 	wedges  []wedge
 	extent  float64
 	holds   []placedHold
+	queued  []placedTask
 	anchors []holdAnchor
 }
 
 // placedHold is a queued hold drawn as a faint planet on the outer orbit.
 type placedHold struct {
 	queuedHold
+	x, y float64
+}
+
+// placedTask is a queued task drawn as a dotted planet on the hold orbit.
+type placedTask struct {
+	queuedTask
 	x, y float64
 }
 
@@ -596,12 +603,14 @@ func repoSlots(prev slotState, repo string) slotState {
 	return out
 }
 
-// placeHolds draws up to maxHolds holds evenly spaced clockwise from 12 o'clock
-// on an orbit clear of every planet, moon and label, and grows the extent over
-// them and their anchors.
-func placeHolds(sc *scene, holds []queuedHold) {
+// placeHolds draws holds, then queued tasks, up to maxHolds in all (holds keep
+// priority), evenly spaced clockwise from 12 o'clock on an orbit clear of every
+// planet, moon and label, and grows the extent over them and the holds' anchors.
+func placeHolds(sc *scene, holds []queuedHold, tasks []queuedTask) {
 	holds = holds[:min(len(holds), maxHolds)]
-	if len(holds) == 0 {
+	tasks = tasks[:min(len(tasks), maxHolds-len(holds))]
+	total := len(holds) + len(tasks)
+	if total == 0 {
 		return
 	}
 	base := sc.extent
@@ -616,7 +625,7 @@ func placeHolds(sc *scene, holds []queuedHold) {
 	runs := map[string]*hostRun{}
 	var order []string
 	for i, h := range holds {
-		angle := float64(i) * 360 / float64(len(holds))
+		angle := float64(i) * 360 / float64(total)
 		x, y := polar(orbit, angle)
 		sc.holds = append(sc.holds, placedHold{queuedHold: h, x: x, y: y})
 		sc.extent = max(sc.extent, orbit+holdRadius)
@@ -629,6 +638,11 @@ func placeHolds(sc *scene, holds []queuedHold) {
 			order = append(order, text)
 		}
 		runs[text].add(angle)
+	}
+	for i, t := range tasks {
+		x, y := polar(orbit, float64(len(holds)+i)*360/float64(total))
+		sc.queued = append(sc.queued, placedTask{queuedTask: t, x: x, y: y})
+		sc.extent = max(sc.extent, orbit+holdRadius)
 	}
 	for _, text := range order {
 		deg := runs[text].direction()

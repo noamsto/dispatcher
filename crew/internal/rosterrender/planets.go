@@ -84,6 +84,14 @@ type queuedHold struct {
 	id, label, engine, window string
 }
 
+// queuedTask is one outstanding queue entry: a task filed but not dispatched.
+// after holds the raw branch or number targets it waits on; they are only
+// compared with planets, never written into the diagram.
+type queuedTask struct {
+	id, label, repo string
+	after           []string
+}
+
 // engineReading is one engine's most-used quota window; a nil pct is unknown,
 // never zero.
 type engineReading struct {
@@ -95,11 +103,11 @@ type engineReading struct {
 // outstanding holds, which have no planet. waiting, stale, ci and repos count
 // drawn planets only.
 type legend struct {
-	working, blocked, prOpen, done, failed, holds int
-	waiting, stale, ci, repos                     int
-	weight                                        int  // tier weight of this crew's live rows
-	budget                                        *int // fleet budget; nil is unknown
-	engines                                       []engineReading
+	working, blocked, prOpen, done, failed, holds, queued int
+	waiting, stale, ci, repos                             int
+	weight                                                int  // tier weight of this crew's live rows
+	budget                                                *int // fleet budget; nil is unknown
+	engines                                               []engineReading
 }
 
 // buildPlanets reads the jq model into typed planets and legend counts. now is
@@ -112,6 +120,8 @@ func buildPlanets(m map[string]any, now float64) ([]planet, legend) {
 	rounds, _ := m["rounds"].(map[string]any)
 	holds, _ := m["holds"].([]any)
 	lg.holds = len(holds)
+	queued, _ := m["queued"].([]any)
+	lg.queued = len(queued)
 
 	rows, _ := m["rows"].([]any)
 	var out []planet
@@ -214,6 +224,39 @@ func buildHolds(m map[string]any) []queuedHold {
 			engine, _ := wait["engine"].(string)
 			window, _ := wait["window"].(string)
 			q.engine, q.window = clean(engine), clean(window)
+		}
+		out = append(out, q)
+	}
+	return out
+}
+
+// maxAfter caps the targets one queued task draws edges for.
+const maxAfter = 4
+
+// buildQueued reads the model's queued tasks. The label is the branch's issue,
+// else the ref, else "queued"; titles are never drawn.
+func buildQueued(m map[string]any) []queuedTask {
+	list, _ := m["queued"].([]any)
+	var out []queuedTask
+	for _, e := range list {
+		row, _ := e.(map[string]any)
+		task, _ := row["task"].(map[string]any)
+		id, _ := row["id"].(string)
+		branch, _ := task["branch"].(string)
+		ref, _ := task["ref"].(string)
+		q := queuedTask{id: clean(id), label: clean(issueOf(branch))}
+		if q.label == "" {
+			q.label = clean(ref)
+		}
+		if q.label == "" {
+			q.label = "queued"
+		}
+		after, _ := row["after"].([]any)
+		for _, a := range after {
+			s, _ := a.(string)
+			if s = strings.TrimSpace(s); s != "" && len(q.after) < maxAfter {
+				q.after = append(q.after, s)
+			}
 		}
 		out = append(out, q)
 	}

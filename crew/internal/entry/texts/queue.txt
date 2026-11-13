@@ -1,0 +1,29 @@
+usage: crew queue add [--crew ID] [--ref R] [--branch B] [--after T]... <title...>
+       crew queue list [--crew ID] [--json]
+       crew queue drop <id> [--crew ID]
+
+Record a task you have filed but not yet dispatched, so the roster draws it on
+the outer orbit. Do not queue a held task (its hold already draws it); drop the
+entry when you hold a queued one. A dispatch on the same branch, or one closing
+the issue or Linear id that --ref names (through its branch or --also-closes),
+clears it. Add of a task already queued prints the existing id and appends
+nothing. Add of a task already dispatched on this bus is refused with a note
+on stderr (exit 0): a failed attempt is re-dispatched directly, not queued.
+Rows are written as dispatcher:<crew>, so a worker or role session is refused.
+
+  --ref     What you would pass to dispatch: #N, N, a Linear id (ENG-N) or a
+            branch (--ref or --branch is required)
+  --branch  The worktree branch, when already known
+  --after   What the task waits on: a branch, a Linear id, or #N / N for an
+            issue or PR; repeatable, one value per flag
+  --crew    Crew id; defaults to this repo's crew
+  --json    list: an array of entries, oldest first, instead of the table
+  <title>   One-line task title (add)
+  <id>      The id add printed (drop)
+
+list prints id, ref, branch, after (comma-joined) and title, tab-separated;
+`-` marks an empty field.
+
+  crew queue add --ref '#1504' --after feat/1500-x "Draw queued tasks"
+  crew queue list
+  crew queue drop 1790000000000-4242
