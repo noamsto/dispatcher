@@ -106,7 +106,7 @@ func TestCardTextFits(t *testing.T) {
 			if !strings.HasSuffix(c.rows[0], "…") {
 				t.Errorf("head = %q, want a cut one", c.rows[0])
 			}
-			if got := textWidth(c.rows[0]) + textWidth("  "+c.state); got > cardInner {
+			if got := textWidth(c.rows[0]) + textWidth("  "+c.state) + 2*cardCellPad; got > cardInner {
 				t.Errorf("head+state width %.1f > %.1f", got, cardInner)
 			}
 		}},
