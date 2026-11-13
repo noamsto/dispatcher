@@ -96,7 +96,6 @@ Internal (called by workers and the harness, not by hand)
   --spawn-role ROLE       Start one lazy grid role pane in the worker's window
   --reap-roles            Kill every role pane in the caller's window
   --role-exited ROLE      Report a role engine that died before its verdict
-  --role-watch ROLE       Type assignments into a role pane; execs crew role-watch
 
 Examples
   dispatch standard sonnet --effort high --agent claude 42 "fix the roster age column"
@@ -1982,19 +1981,6 @@ watch_role_prompts() {
   [ -n "${ignore_budget:-}" ] && flags+=(--no-budget)
   (CREW_ID="$4" nohup crew stall-watch "role:$branch:$1" --pane "$2" --engine "$3" "${flags[@]}" >/dev/null 2>&1 &)
 }
-
-# `dispatch --role-watch <args>` execs `crew role-watch <args>`. It stays until
-# no in-flight worker starts a watcher this way; each call leaves one line in
-# the repo's crew dir (role-watch-shim.log) so the owner can see when it can go.
-if [ "${1:-}" = "--role-watch" ]; then
-  shift
-  if _rw_gcd="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" && [ -d "$_rw_gcd/crew" ]; then
-    _rw_caller="$(ps -o args= -p "$PPID" 2>/dev/null)" || _rw_caller=""
-    printf '%s pid=%s ppid=%s caller=%s cwd=%s args=%s\n' "$(date -u +%FT%TZ)" "$$" "$PPID" \
-      "${_rw_caller:-gone}" "$PWD" "$*" >>"$_rw_gcd/crew/role-watch-shim.log" 2>/dev/null || true
-  fi
-  exec crew role-watch "$@"
-fi
 
 # git_env — prefix every engine launch with a non-interactive git editor.
 # Workers inherit the user's interactive $EDITOR (nvim); any git command that

@@ -680,8 +680,7 @@ _rearm_role_panes() {
     rearmed=$((rearmed + 1))
     watched="" stalled=""
     while IFS= read -r line; do
-      { _args_have "$line" "--role-watch $role" "--pane $p" "--branch $branch" ||
-        _args_have "$line" "role-watch $role" "--pane $p" "--branch $branch"; } && watched=1
+      _args_have "$line" "role-watch $role" "--pane $p" "--branch $branch" && watched=1
       _args_have "$line" "stall-watch role:$branch:$role" "--pane $p" && stalled=1
     done <<<"$snapshot"
     # Mirrors the launch rule of adapters/core/dispatch.sh watch_role / watch_role_prompts.
@@ -742,7 +741,7 @@ if [ -n "$rearm_roles" ]; then
     exit 1
   fi
   # Same stamps as the full path: tmux-remux does not restore @crew_branch, and
-  # --role-watch refuses a window whose stamp mismatches.
+  # crew role-watch refuses a window whose stamp mismatches.
   tmux set-window-option -t "$win" @crew_dir "$crew_dir"
   tmux set-window-option -t "$win" @crew_branch "$branch"
   tmux set-window-option -t "$win" @crew_id "$crew_id"

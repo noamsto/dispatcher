@@ -3260,13 +3260,13 @@ setup_grid() {
   run ! grep -q -e split-window -e kill-pane "$STUB_LOG"
 }
 
-@test "resume leaves live role watchers alone and arms only the unwatched pane (#730)" {
+@test "resume leaves live bare-argv crew role-watch watchers alone and arms only the unwatched pane (#730)" {
   setup_grid
   local u=$'\x1f'
   STUB_PANES_W+=$'\n'"%11${u}spec-critic${u}${u}claude${u}$WT"
-  export STUB_PS="dispatch --role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing
+  export STUB_PS="crew role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing
 crew stall-watch role:feat/7-a-thing:reviewer --pane %9 --engine claude
-dispatch --role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing
+crew role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing
 crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
   cd "$WT"
   run run_resume
@@ -3453,9 +3453,9 @@ _grid_live_lead() {
 
 @test "resume --rearm-roles starts no duplicate watcher (#730)" {
   _grid_live_lead
-  export STUB_PS="dispatch --role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing
+  export STUB_PS="crew role-watch reviewer --pane %9 --engine claude --branch feat/7-a-thing
 crew stall-watch role:feat/7-a-thing:reviewer --pane %9 --engine claude
-dispatch --role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing
+crew role-watch plan-critic --pane %10 --engine pi --branch feat/7-a-thing
 crew stall-watch role:feat/7-a-thing:plan-critic --pane %10 --engine pi"
   cd "$WT"
   run run_resume --rearm-roles
