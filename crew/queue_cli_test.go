@@ -197,6 +197,7 @@ func TestQueueGrammarRefusals(t *testing.T) {
 		{"unknown action", []string{"queue", "bogus"}, "crew: queue add|list|drop"},
 		{"no action", []string{"queue"}, "crew: queue add|list|drop"},
 		{"drop without id", []string{"queue", "drop"}, "crew: queue drop <id> [--crew ID]"},
+		{"add unknown flag", []string{"queue", "add", "--bogus", "x"}, "crew: queue add: unknown arg '--bogus' (usage: queue add [--crew ID]"},
 	} {
 		_, errOut, code := q.run(c.args...)
 		if code != 1 || !strings.Contains(errOut, c.want) {

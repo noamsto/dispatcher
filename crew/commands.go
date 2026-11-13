@@ -660,10 +660,10 @@ var wordings = map[string]wording{
 	"queue":        {all: queue.Usage, code: exitFailure},
 	"queue add": {
 		unknownFlag: func(f string) string {
-			return fmt.Sprintf("crew: queue add: unknown arg '%s' (usage: %s)", f, queue.AddUsage)
+			return fmt.Sprintf("crew: queue add: unknown arg '%s' (usage: %s)", f, strings.TrimPrefix(queue.AddUsage, "crew: "))
 		},
 		extra: func(w string) string {
-			return fmt.Sprintf("crew: queue add: unknown arg '%s' (usage: %s)", w, queue.AddUsage)
+			return fmt.Sprintf("crew: queue add: unknown arg '%s' (usage: %s)", w, strings.TrimPrefix(queue.AddUsage, "crew: "))
 		},
 		code: exitFailure,
 	},
