@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/noamsto/dispatcher/crew/internal/bus"
@@ -195,10 +196,21 @@ func pass(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, no
 		saveSlots(filepath.Join(cdir, fileSlots), fr.slots, o.Stderr) != nil {
 		return live, nil
 	}
+	dropLegacyLegend(t)
 	if pane != "" {
 		publish(ctx, o.Probes, cdir, t, pane, noOpen)
 	}
 	return live, nil
+}
+
+// dropLegacyLegend removes the `.legend.svg` key an earlier build left beside the
+// diagram: the carousel watches that directory, so it would sit there frozen with
+// the counts it last drew. Only a regular file goes.
+func dropLegacyLegend(diagram string) {
+	path := strings.TrimSuffix(diagram, ".svg") + ".legend.svg"
+	if st, err := os.Lstat(path); err == nil && st.Mode().IsRegular() {
+		_ = os.Remove(path)
+	}
 }
 
 // viewer is the size of the carousel pane beside the recorded dispatcher pane;

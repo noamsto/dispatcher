@@ -385,3 +385,25 @@ func rewind(t *testing.T, path string) string {
 	}
 	return stampOf(t, path)
 }
+
+// TestAnEarlierBuildsLegendFileIsRemovedOnTheNextDraw: the key a legend-drawing
+// build left beside the diagram would otherwise stay frozen in the carousel's
+// watched directory.
+func TestAnEarlierBuildsLegendFileIsRemovedOnTheNextDraw(t *testing.T) {
+	l := newLoop(t)
+	l.seedBus(t)
+	legacy := strings.TrimSuffix(l.diagramPath(), ".svg") + ".legend.svg"
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("<svg/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, stderr := l.once(Request{}); code != exitOK {
+		t.Fatalf("code = %d, stderr %q", code, stderr)
+	}
+	if _, err := os.Lstat(legacy); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the old legend file is still there: %v", err)
+	}
+}
