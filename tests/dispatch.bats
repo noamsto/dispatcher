@@ -436,7 +436,7 @@ _dispatch_help_flags() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"Internal (called by workers and the harness"* ]]
   local mode
-  for mode in --spawn-role --reap-roles --role-exited --role-watch; do
+  for mode in --spawn-role --reap-roles --role-exited; do
     grep -Fq -- "$mode" <<<"$output" || { echo "help missing: $mode"; return 1; }
   done
   grep -Fq 'dispatch standard sonnet --effort high' <<<"$output"
@@ -10682,22 +10682,6 @@ ROWS
   # The mechanism is the tmux watcher, not an engine extension.
   run grep -c 'crew-bus.ts' "$DISPATCH"
   [ "$output" = "0" ]
-}
-
-@test "grid: dispatch --role-watch execs crew role-watch with the same arguments and logs its caller" {
-  mkdir "$BATS_TEST_TMPDIR/shimbin" "$TEST_REPO/.git/crew"
-  printf '#!/usr/bin/env bash\nprintf "%%s" "$$" >"%s/stub.pid"\nprintf "%%s" "$*" >"%s/stub.args"\n' "$BATS_TEST_TMPDIR" "$BATS_TEST_TMPDIR" >"$BATS_TEST_TMPDIR/shimbin/crew"
-  chmod +x "$BATS_TEST_TMPDIR/shimbin/crew"
-  PATH="$BATS_TEST_TMPDIR/shimbin:$PATH" bash "$DISPATCH" --role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2 &
-  pid=$!
-  wait "$pid"
-  [ "$(cat "$BATS_TEST_TMPDIR/stub.args")" = "role-watch reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2" ]
-  [ "$(cat "$BATS_TEST_TMPDIR/stub.pid")" = "$pid" ]
-  log="$TEST_REPO/.git/crew/role-watch-shim.log"
-  [ "$(wc -l <"$log")" -eq 1 ]
-  [[ "$(cat "$log")" == *"args=reviewer --pane %6 --engine claude --branch feat/9-x --interval 0.2"* ]]
-  [[ "$(cat "$log")" == *"pid=$pid "* ]]
-  [[ "$(cat "$log")" == *" caller="* ]]
 }
 
 @test "grid: --lazy needs a role topology" {
