@@ -117,7 +117,7 @@ func TestModelWithoutABusIsTheArmsEmptyOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := decodeOne(t, `{"rows":[],"holds":[],"roles":[],"rounds":{}}`); !reflect.DeepEqual(m, want) {
+	if want := decodeOne(t, `{"rows":[],"holds":[],"queued":[],"roles":[],"rounds":{}}`); !reflect.DeepEqual(m, want) {
 		t.Errorf("model = %s", compact(m))
 	}
 }
@@ -141,6 +141,7 @@ func TestLiveCountIsTheModelNotItsPrintedForm(t *testing.T) {
 		{`{"rows":[],"holds":[],"roles":[]}`, 0},
 		{`{"rows":[{"state":"working"},{"state":"done"},{"state":"blocked"},{"state":"dispatched"}],"holds":[],"roles":[]}`, 3},
 		{`{"rows":[],"holds":[{},{}],"roles":[]}`, 2},
+		{`{"rows":[],"holds":[],"queued":[{},{}],"roles":[]}`, 2},
 	} {
 		got, err := liveCount(decodeOne(t, tc.model))
 		if err != nil {
@@ -408,5 +409,23 @@ func TestTargetUsesTheRenderersZone(t *testing.T) {
 	utc := target("/w/repo/.git", "1791360000-x", "/r", func() time.Time { return epoch })
 	if !strings.Contains(utc, "-10-07-0800-") {
 		t.Errorf("UTC stamp = %s", utc)
+	}
+}
+
+func TestModelCarriesQueuedTasks(t *testing.T) {
+	body := `{\"id\":\"q1\",\"task\":{\"ref\":\"#40\",\"branch\":null,\"title\":\"later\"},\"after\":[\"feat/12-x\"]}`
+	p, _ := modelFixture(t,
+		`{"ts":1791360000000,"crew_id":"c1","from":"dispatcher:c1","to":"queue:c1","kind":"msg","body":"`+body+`"}`)
+	m, err := model(t.Context(), p, "c1", 1791360300, nil, emptyRoster, emptyLive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, _ := m["queued"].([]any)
+	if len(q) != 1 {
+		t.Fatalf("queued = %s", compact(m["queued"]))
+	}
+	got := buildQueued(decodeOne(t, compact(m)))
+	if len(got) != 1 || got[0].id != "q1" || got[0].label != "40" || !reflect.DeepEqual(got[0].after, []string{"feat/12-x"}) {
+		t.Errorf("buildQueued = %+v", got)
 	}
 }

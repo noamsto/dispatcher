@@ -35,6 +35,7 @@ type sourceResult struct {
 	lg      legend
 	live    int64
 	holds   []queuedHold
+	queued  []queuedTask
 }
 
 // clone is a copy no later in-place change to the planets or their moons can
@@ -42,6 +43,10 @@ type sourceResult struct {
 func (r sourceResult) clone() sourceResult {
 	r.planets = slices.Clone(r.planets)
 	r.holds = slices.Clone(r.holds)
+	r.queued = slices.Clone(r.queued)
+	for i := range r.queued {
+		r.queued[i].after = slices.Clone(r.queued[i].after)
+	}
 	for i := range r.planets {
 		r.planets[i].moons = slices.Clone(r.planets[i].moons)
 	}

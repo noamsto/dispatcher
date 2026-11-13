@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/noamsto/dispatcher/crew/internal/ascii"
 )
 
 // The palette (catppuccin mocha): ring colour is the worker's state.
@@ -523,6 +525,14 @@ func buildDOT(sc scene, lg *legend, mode legendMode, sel, selRepo string) string
 			stmt(&b, id+" -> "+a, "style=dashed", str("color", colHolds+staleAlpha), "penwidth=1")
 		}
 	}
+	for i, t := range sc.queued {
+		id := "u" + strconv.Itoa(i+1)
+		stmt(&b, id, str("label", t.label), num("width", holdSize), num("height", holdSize), "fontsize=10", pos(t.x, t.y),
+			str("style", "dotted"), str("color", colDim+staleAlpha), str("fontcolor", colDim))
+		for _, target := range waitTargets(planets, ids, t) {
+			stmt(&b, id+" -> "+target, "style=dotted", str("color", colDim+staleAlpha), "arrowhead=normal", "arrowsize=0.5", "penwidth=1")
+		}
+	}
 	rings := 0
 	for _, p := range sc.planets {
 		if p.branch != sel || (selRepo != "" && p.repoLabel != selRepo) {
@@ -641,6 +651,37 @@ func cardLabel(p placed, stateCol string, dim bool) string {
 	return b.String()
 }
 
+// waitTargets is the node id of each distinct drawn planet of the task's own
+// repo that one of its after targets names: a branch, or a number that is the
+// planet's issue or the number its PR url ends in. Numbers repeat across repos,
+// so another repo's planet never matches.
+func waitTargets(planets []placed, ids map[planetKey]string, t placedTask) []string {
+	var out []string
+	for _, p := range planets {
+		if p.repo != t.repo {
+			continue
+		}
+		pr := prNumber(p.prURL)
+		for _, a := range t.after {
+			n := strings.TrimPrefix(a, "#")
+			if a == p.branch || (ascii.IsDigits(n) && (n == p.issue || n == pr)) {
+				out = append(out, ids[p.key()])
+				break
+			}
+		}
+	}
+	return out
+}
+
+// prNumber is the digits a pull request url ends in, or "".
+func prNumber(url string) string {
+	_, n, ok := strings.Cut(url, "/pull/")
+	if !ok || !ascii.IsDigits(n) {
+		return ""
+	}
+	return n
+}
+
 // legendHTML is the graph label: the state counts, each key a dot in the
 // state's own colour, then in full mode the fixed keys, which counts mode leaves
 // to the legend file. It holds fixed text and integers only.
@@ -659,6 +700,9 @@ func legendHTML(lg legend, mode legendMode) string {
 	if lg.holds > 0 {
 		keys = append(keys, key(colHolds, count("holds", lg.holds)))
 	}
+	if lg.queued > 0 {
+		keys = append(keys, key(colDim, count("queued", lg.queued)))
+	}
 	const gap = "&nbsp;&nbsp;&nbsp;&nbsp;"
 	var b strings.Builder
 	b.WriteString(`<table border="0" cellborder="0" cellspacing="0" cellpadding="4">` + "\n")
@@ -673,6 +717,9 @@ func legendHTML(lg legend, mode legendMode) string {
 	}
 	if lg.holds > 0 {
 		shapes = append(shapes, `<font color="`+colHolds+`">●</font> dashed outer dot = queued hold`)
+	}
+	if lg.queued > 0 {
+		shapes = append(shapes, `<font color="`+colDim+`">●</font> dotted outer dot = queued task`)
 	}
 	borders := "border colour = state&nbsp;&nbsp;&nbsp;&nbsp;border weight = tier"
 	stacked := `<font color="` + colPROpen + `">→</font> dashed arrow = stacked on`

@@ -121,6 +121,9 @@ func legendSVG(lg legend) string {
 	if lg.holds > 0 {
 		rows = append(rows, keyRow{text: "dashed outer dot = queued hold", sym: state(colHolds, colFill, planetPenwidth, fadedRing)})
 	}
+	if lg.queued > 0 {
+		rows = append(rows, keyRow{text: "dotted outer dot = queued task", sym: state(colDim, colFill, planetPenwidth, ` stroke-dasharray="1 3" stroke-linecap="round" stroke-opacity="0.5"`)})
+	}
 	if lg.repos > 1 {
 		rows = append(rows, keyRow{text: "wedge = repo", sym: func(cx, cy float64) string {
 			return fmt.Sprintf(`<path d="M %s %s L %s %s A 22 22 0 0 1 %s %s Z" fill="none" stroke="%s" stroke-width="1.5"/>`,

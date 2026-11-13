@@ -65,7 +65,7 @@ func TestPlaceHoldsWithoutHoldsLeavesTheSceneAlone(t *testing.T) {
 	for name, sc := range map[string]scene{"hosts": hostScene(), "wedges": wedgeScene()} {
 		t.Run(name, func(t *testing.T) {
 			before := sc
-			placeHolds(&sc, nil)
+			placeHolds(&sc, nil, nil)
 			if !reflect.DeepEqual(before, sc) || sc.holds != nil || sc.anchors != nil {
 				t.Errorf("an empty hold list changed the scene")
 			}
@@ -80,7 +80,7 @@ func TestHoldsSitOnAnOrbitClearOfEveryLabel(t *testing.T) {
 				t.Fatal("no host labels")
 			}
 			preExtent := sc.extent
-			placeHolds(&sc, quotaHolds(6))
+			placeHolds(&sc, quotaHolds(6), nil)
 			if len(sc.holds) != 6 {
 				t.Fatalf("%d holds placed, want 6", len(sc.holds))
 			}
@@ -120,7 +120,7 @@ func TestHoldsSitOnAnOrbitClearOfEveryLabel(t *testing.T) {
 
 func TestHoldsAreCappedAtSixteen(t *testing.T) {
 	sc := hostScene()
-	placeHolds(&sc, quotaHolds(20))
+	placeHolds(&sc, quotaHolds(20), nil)
 	if len(sc.holds) != maxHolds {
 		t.Fatalf("%d holds drawn, want %d", len(sc.holds), maxHolds)
 	}
@@ -135,7 +135,7 @@ func TestHoldAnchorsAreSharedPerEngineWindow(t *testing.T) {
 		quotaHold(0, "claude", "7d"), quotaHold(1, "codex", "5h"), quotaHold(2, "claude", "7d"),
 		{id: "f", label: "fleet"}, quotaHold(4, "claude", "7d"), {id: "half", label: "x", engine: "claude"},
 	}
-	placeHolds(&sc, holds)
+	placeHolds(&sc, holds, nil)
 	if len(sc.anchors) != 2 {
 		t.Fatalf("anchors = %+v, want claude and codex once each", sc.anchors)
 	}
@@ -158,7 +158,7 @@ func TestHoldAnchorsAreSharedPerEngineWindow(t *testing.T) {
 
 func TestHoldAnchorFacesTheMeanDirectionOfItsHolds(t *testing.T) {
 	sc := hostScene()
-	placeHolds(&sc, []queuedHold{quotaHold(0, "codex", "5h"), quotaHold(1, "claude", "7d"), quotaHold(2, "claude", "7d"), {id: "f", label: "f"}})
+	placeHolds(&sc, []queuedHold{quotaHold(0, "codex", "5h"), quotaHold(1, "claude", "7d"), quotaHold(2, "claude", "7d"), {id: "f", label: "f"}}, nil)
 	// 4 slots at 0, 90, 180, 270: claude holds at 90 and 180 average to 135.
 	for _, a := range sc.anchors {
 		if a.text == "claude · 7d" && math.Abs(compass(a.x, a.y)-135) > 1e-6 {
@@ -207,7 +207,7 @@ func TestHitRectCoversTheRoundBadge(t *testing.T) {
 
 func TestDotHoldNodesAndAnchorEdges(t *testing.T) {
 	_, sc := arrange(newSlotState(), []planet{wp("a", classWorking)})
-	placeHolds(&sc, []queuedHold{quotaHold(0, "claude", "7d"), {id: "f", label: "fleet"}})
+	placeHolds(&sc, []queuedHold{quotaHold(0, "claude", "7d"), {id: "f", label: "fleet"}}, nil)
 	out := renderDOT(sc, legend{holds: 2}, legendFull)
 	for _, id := range []string{"q1", "q2"} {
 		line := nodeLine(t, out, id)
@@ -297,7 +297,7 @@ func holdScene(t *testing.T) scene {
 		quotaHold(0, "claude-opus-long-engine", "seven_day_opus"), quotaHold(1, "codex-long-engine-name", "five_hour_window"),
 		quotaHold(2, "cursor-long-engine-name", "monthly_window_x"), quotaHold(3, "claude-opus-long-engine", "seven_day_opus"),
 		{id: "f", label: "fleet"}, quotaHold(5, "pi", "5h"),
-	})
+	}, nil)
 	return sc
 }
 
@@ -327,5 +327,172 @@ func TestMapListsExactlyThePlanetsWithHoldsPresent(t *testing.T) {
 		if p.Branch != sc.planets[i].branch {
 			t.Errorf("planet %d is %s, want %s", i, p.Branch, sc.planets[i].branch)
 		}
+	}
+}
+
+func queuedModel(t *testing.T, queued string) map[string]any {
+	t.Helper()
+	return decodeOne(t, `{"rows":[],"holds":[],"roles":[],"queued":`+queued+`}`)
+}
+
+func tasks(n int) []queuedTask {
+	var ts []queuedTask
+	for i := range n {
+		ts = append(ts, queuedTask{id: "u" + strconv.Itoa(i), label: strconv.Itoa(200 + i)})
+	}
+	return ts
+}
+
+func TestBuildQueued(t *testing.T) {
+	m := queuedModel(t, `[
+		{"id":"a","task":{"ref":null,"branch":"feat/12-x","title":"Secret Title"},"after":["feat/12-x"," #7 ",""]},
+		{"id":"b","task":{"ref":"#40","branch":null,"title":"t"},"after":[]},
+		{"id":"c","task":{"ref":null,"branch":null,"title":"t"},"after":[]},
+		{"id":"d","task":{"ref":"a\"];x","branch":null,"title":"t"},"after":[]}]`)
+	got := buildQueued(m)
+	if len(got) != 4 {
+		t.Fatalf("got %+v", got)
+	}
+	for i, want := range []string{"12", "40", "queued", "ax"} {
+		if got[i].label != want {
+			t.Errorf("task %d label %q, want %q", i, got[i].label, want)
+		}
+	}
+	if want := []string{"feat/12-x", "#7"}; !reflect.DeepEqual(got[0].after, want) {
+		t.Errorf("after = %q, want %q", got[0].after, want)
+	}
+	if strings.Contains(fmt.Sprint(got), "Secret Title") {
+		t.Errorf("a title reached the result: %+v", got)
+	}
+	_, lg := buildPlanets(m, dotNow)
+	if lg.queued != 4 {
+		t.Errorf("lg.queued = %d, want 4", lg.queued)
+	}
+}
+
+func TestDotQueuedHostileTextStaysOut(t *testing.T) {
+	m := queuedModel(t, `[{"id":"a","task":{"ref":"a\"];evil","branch":null,"title":"t"},"after":["x\"]; evil -> y [","<b>"]}]`)
+	ts := buildQueued(m)
+	ts[0].repo = "r1"
+	_, sc := arrange(newSlotState(), []planet{wp("a", classWorking)})
+	placeHolds(&sc, nil, ts)
+	out := renderDOT(sc, legend{queued: 1}, legendFull)
+	if strings.Contains(out, "<b>") || strings.Contains(out, "evil -> y") || strings.Contains(out, "x\"];") {
+		t.Errorf("hostile text reached the DOT:\n%s", out)
+	}
+	if !strings.Contains(out, `label="aevil"`) {
+		t.Errorf("cleaned label missing:\n%s", out)
+	}
+}
+
+func TestQueuedShareTheHoldOrbit(t *testing.T) {
+	sc := hostScene()
+	placeHolds(&sc, quotaHolds(2), tasks(2))
+	if len(sc.holds) != 2 || len(sc.queued) != 2 {
+		t.Fatalf("%d holds, %d tasks placed", len(sc.holds), len(sc.queued))
+	}
+	if len(sc.anchors) != 1 {
+		t.Errorf("anchors = %+v, want the holds' one", sc.anchors)
+	}
+	var pts [][2]float64
+	for _, h := range sc.holds {
+		pts = append(pts, [2]float64{h.x, h.y})
+	}
+	for _, q := range sc.queued {
+		pts = append(pts, [2]float64{q.x, q.y})
+	}
+	orbit := math.Hypot(pts[0][0], pts[0][1])
+	if orbit+holdRadius > sc.extent+1e-6 {
+		t.Errorf("extent %v does not cover the orbit", sc.extent)
+	}
+	for i, p := range pts {
+		if r := math.Hypot(p[0], p[1]); math.Abs(r-orbit) > 1e-6 {
+			t.Errorf("point %d at radius %v, orbit %v", i, r, orbit)
+		}
+		want := float64(i) * 90
+		if got := compass(p[0], p[1]); math.Abs(got-want) > 1e-6 && !(i == 0 && got > 359.9999) {
+			t.Errorf("point %d at %v degrees, want %v", i, got, want)
+		}
+	}
+
+	capped := hostScene()
+	placeHolds(&capped, quotaHolds(16), tasks(3))
+	if len(capped.holds) != 16 || len(capped.queued) != 0 {
+		t.Errorf("%d holds and %d tasks, want 16 and 0", len(capped.holds), len(capped.queued))
+	}
+
+	none := hostScene()
+	before := none
+	placeHolds(&none, nil, nil)
+	if !reflect.DeepEqual(before, none) {
+		t.Error("no holds and no tasks changed the scene")
+	}
+}
+
+func TestDotQueuedNodeAndWaitEdge(t *testing.T) {
+	mk := func(branch, repo, issue, pr string) planet {
+		p := wp(branch, classWorking)
+		p.repo, p.issue, p.prURL = repo, issue, pr
+		return p
+	}
+	render := func(ps []planet, after ...string) (string, map[planetKey]string) {
+		_, sc := arrange(newSlotState(), ps)
+		placeHolds(&sc, nil, []queuedTask{{id: "t", label: "9", repo: "r1", after: after}})
+		return renderDOT(sc, legend{queued: 1}, legendFull), keyIDs(sc)
+	}
+	r1 := mk("feat/12-x", "r1", "12", "https://github.com/o/r/pull/31")
+	out, ids := render([]planet{r1}, "12")
+	id := ids[planetKey{r1.repo, r1.branch}]
+	node := nodeLine(t, out, "u1")
+	for _, want := range []string{"width=0.5", `style="dotted"`, `color="` + colDim + staleAlpha + `"`} {
+		if !strings.Contains(node, want) {
+			t.Errorf("node lacks %s: %s", want, node)
+		}
+	}
+	if !strings.Contains(out, "  u1 -> "+id+" [") || !strings.Contains(out, "style=dotted") {
+		t.Errorf("no wait edge to %s:\n%s", id, out)
+	}
+	for _, target := range []string{"feat/12-x", "#12", "31", "#31"} {
+		if out, _ := render([]planet{r1}, target); !strings.Contains(out, "  u1 -> "+id+" [") {
+			t.Errorf("target %q drew no edge", target)
+		}
+	}
+	if out, _ := render([]planet{r1}, "99", "feat/none"); strings.Contains(out, "u1 ->") {
+		t.Errorf("an absent target drew an edge:\n%s", out)
+	}
+	other := mk("feat/12-x", "r2", "12", "")
+	if out, _ := render([]planet{other}, "12", "feat/12-x"); strings.Contains(out, "u1 ->") {
+		t.Errorf("a planet of another repo matched:\n%s", out)
+	}
+	if out, _ := render([]planet{r1}, "12", "feat/12-x", "31"); strings.Count(out, "u1 ->") != 1 {
+		t.Errorf("want one edge per planet:\n%s", out)
+	}
+}
+
+func TestLegendQueuedKey(t *testing.T) {
+	if html := legendHTML(legend{queued: 2}, legendCounts); !strings.Contains(html, "queued 2") {
+		t.Errorf("counts legend lacks the queued count:\n%s", html)
+	}
+	if html := legendHTML(legend{queued: 2}, legendFull); !strings.Contains(html, "dotted outer dot = queued task") {
+		t.Errorf("full legend lacks the queued shape key:\n%s", html)
+	}
+	for _, mode := range []legendMode{legendCounts, legendFull} {
+		if html := legendHTML(legend{}, mode); strings.Contains(html, "queued") {
+			t.Errorf("queued key without tasks:\n%s", html)
+		}
+	}
+	if !strings.Contains(legendSVG(legend{queued: 1}), "dotted outer dot = queued task") {
+		t.Error("legend svg lacks the queued key")
+	}
+	if strings.Contains(legendSVG(legend{}), "queued task") {
+		t.Error("legend svg has the queued key without tasks")
+	}
+}
+
+func TestLegendAddSumsQueued(t *testing.T) {
+	l := legend{queued: 1}
+	l.add(legend{queued: 2})
+	if l.queued != 3 {
+		t.Errorf("queued = %d, want 3", l.queued)
 	}
 }
