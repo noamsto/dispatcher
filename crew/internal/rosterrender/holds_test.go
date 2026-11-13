@@ -42,15 +42,14 @@ func TestBudgetStrip(t *testing.T) {
 	known := legend{weight: 4, budget: &budget, engines: []engineReading{
 		{name: "claude", window: "7d", pct: &pct}, {name: "codex"}, {name: "pi", window: "5h", pct: &zero},
 	}}
-	if got, want := stripText(known), "crew weight 4 · fleet budget 6 · claude 7d 23% · codex ? · pi 5h 0%"; got != want {
+	if got, want := stripText(known), "claude 7d 23% · pi 5h 0% · crew 4/6"; got != want {
 		t.Errorf("strip = %q, want %q", got, want)
 	}
-	unknown := stripText(legend{engines: []engineReading{{name: "claude"}}})
-	if want := "crew weight 0 · fleet budget ? · claude ?"; unknown != want {
-		t.Errorf("strip = %q, want %q", unknown, want)
+	if got := stripText(legend{weight: 3, engines: []engineReading{{name: "claude"}}}); got != "" {
+		t.Errorf("no readings and no budget drew %q", got)
 	}
 	off := 0
-	if got := stripText(legend{budget: &off}); !strings.Contains(got, "fleet budget off") {
+	if got := stripText(legend{budget: &off}); got != "" {
 		t.Errorf("a zero budget is checks disabled, got %q", got)
 	}
 	if got := stripText(legend{engines: []engineReading{{name: `<b>x"`, window: "7d", pct: &pct}}}); strings.ContainsAny(got, `<>"`) {

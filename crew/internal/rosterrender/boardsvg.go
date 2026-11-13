@@ -23,6 +23,8 @@ const (
 	cornerEm   = 0.6
 	ciEm       = 0.35
 	hexEm      = 0.42
+	gapEm      = 0.5  // between the head and the state word
+	minHeadEm  = 0.45 // the smallest the head row shrinks to before the state gives way
 
 	// The waiting ring and the selection ring stand off the card's edge; both
 	// stay inside half of cardGap so neighbouring cards' rings never touch.
@@ -174,6 +176,7 @@ func writeColumnHeader(s *strings.Builder, r rect, col column) {
 type cardRow struct {
 	text, fill string
 	prio       int
+	size       float64 // 0 is the card's font
 }
 
 func writeCard(s *strings.Builder, id string, c boardCard, g cardGeom, selected bool) {
@@ -230,9 +233,14 @@ func writeCard(s *strings.Builder, id string, c boardCard, g cardGeom, selected 
 	if footer {
 		foot = footEm * f
 	}
-	fit := int((g.h - 2*padYEm*f - foot) / (rowEm * f))
+	// The epsilon keeps a card sized exactly for its rows from losing one.
+	fit := int((g.h-2*padYEm*f-foot)/(rowEm*f) + 1e-6)
 	for i, r := range cardLines(c, rowW, f, fit-1) {
-		svgText(s, left, top+float64(i+1)*rowEm*f+baselineEm*f, f, r.fill, "", "", r.text)
+		size := f
+		if r.size > 0 {
+			size = r.size
+		}
+		svgText(s, left, top+float64(i+1)*rowEm*f+baselineEm*f, size, r.fill, "", "", r.text)
 	}
 	if footer {
 		writeFooter(s, c, f, left, right, g.y+g.h-padYEm*f-foot)
@@ -281,13 +289,24 @@ func writeHead(s *strings.Builder, c boardCard, f, left, right, top float64) {
 	if c.stale || c.class == classDone {
 		stateCol = colDim
 	}
-	state := truncAt(stateWord(c.state), 0.5*(right-left), f)
-	svgText(s, right, top+baselineEm*f, f, stateCol, "end", "", state)
-	room := right - textWidthAt(state, f) - 0.5*f - x
-	if room <= textWidthAt(ellipsis, f) {
-		return
+	// The identity line is never cut: the head and state shrink together to
+	// fit the row, then the state gives way, and the head alone shrinks last.
+	head, state := headOf(c), stateWord(c.state)
+	avail := right - x
+	hf := f
+	if need := textWidthAt(head, f) + gapEm*f + textWidthAt(state, f); need > avail {
+		hf = max(0.99*f*avail/need, minHeadEm*f)
 	}
-	svgText(s, x, top+baselineEm*f, f, colText, "", "600", truncAt(headOf(c), room, f))
+	if textWidthAt(head, hf) > avail {
+		hf = hf * avail / textWidthAt(head, hf)
+	}
+	room := avail - textWidthAt(head, hf) - gapEm*hf
+	if room > textWidthAt(state, hf) {
+		svgText(s, right, top+baselineEm*f, hf, stateCol, "end", "", state)
+	} else if room > textWidthAt(ellipsis, hf) {
+		svgText(s, right, top+baselineEm*f, hf, stateCol, "end", "", truncAt(state, room, hf))
+	}
+	svgText(s, x, top+baselineEm*f, hf, colText, "", "600", head)
 }
 
 func headOf(c boardCard) string {
@@ -311,13 +330,13 @@ func cardLines(c boardCard, w, f float64, n int) []cardRow {
 		if c.engine != "" || c.window != "" {
 			text = orQ(c.engine) + " · " + orQ(c.window)
 		}
-		rows = []cardRow{{truncAt(text, w, f), colLegend, 1}}
+		rows = []cardRow{{truncAt(text, w, f), colLegend, 1, 0}}
 	case kindTask:
 		text := "filed"
 		if c.on != "" {
 			text = c.on
 		}
-		rows = []cardRow{{truncAt(text, w, f), colLegend, 1}}
+		rows = []cardRow{{truncAt(text, w, f), colLegend, 1, 0}}
 	case kindPlanet:
 		line, rest := wrapAt(c.title, w, f)
 		second := truncAt(strings.TrimSpace(rest), w, f)
@@ -329,11 +348,14 @@ func cardLines(c boardCard, w, f float64, n int) []cardRow {
 		if c.on != "" {
 			detailPrio, metaPrio = 2, 3
 		}
+		// The tier row shrinks to fit whole rather than cut.
+		meta := metaText(c.planet)
+		metaSize := min(f, f*w/textWidthAt(meta, f))
 		rows = []cardRow{
-			{line, colText, 1},
-			{second, colText, 4},
-			{truncAt(metaText(c.planet), w, f), colLegend, metaPrio},
-			{truncAt(detail, w, f), colDim, detailPrio},
+			{line, colText, 1, 0},
+			{second, colText, 4, 0},
+			{meta, colLegend, metaPrio, metaSize},
+			{truncAt(detail, w, f), colDim, detailPrio, 0},
 		}
 	}
 	rows = slices.DeleteFunc(rows, func(r cardRow) bool { return r.text == "" })

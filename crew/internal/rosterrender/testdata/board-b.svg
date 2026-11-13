@@ -2,93 +2,94 @@
 <rect x="0" y="0" width="1600" height="1000" fill="#1e1e2e"/>
 <rect x="0" y="0" width="1600" height="56" fill="#313244"/>
 <text x="16" y="35.84" font-size="22.4" fill="#cdd6f4" font-weight="600">crew 1792528057-3929 · +3 done earlier</text>
-<text x="1584" y="35.84" font-size="22.4" fill="#a6adc8" text-anchor="end">crew weight 4 · fleet budget ?</text>
+<text x="1584" y="35.84" font-size="22.4" fill="#a6adc8" text-anchor="end">claude 7d 88% · pi 5h 21%</text>
 <circle cx="23.76" cy="90" r="5.76" fill="#fab387"/>
 <text x="37.52" y="96.3" font-size="18" fill="#cdd6f4" font-weight="600">QUEUED 2</text>
 <g id="card-0-0-0">
-<rect x="16" y="108" width="778" height="254.67" rx="21.22" fill="#313244" stroke="#fab387" stroke-width="3" stroke-dasharray="21.22 14.15"/>
-<text x="765.7" y="154.69" font-size="35.37" fill="#fab387" text-anchor="end">hold</text>
-<text x="44.3" y="154.69" font-size="35.37" fill="#cdd6f4" font-weight="600">#1600</text>
-<text x="44.3" y="197.13" font-size="35.37" fill="#a6adc8">claude · 5h</text>
+<rect x="16" y="108" width="778" height="143.38" rx="26.88" fill="#313244" stroke="#fab387" stroke-width="3" stroke-dasharray="26.88 17.92"/>
+<text x="758.16" y="167.14" font-size="44.81" fill="#fab387" text-anchor="end">hold</text>
+<text x="51.84" y="167.14" font-size="44.81" fill="#cdd6f4" font-weight="600">#1600</text>
+<text x="51.84" y="220.91" font-size="44.81" fill="#a6adc8">claude · 5h</text>
 </g>
 <g id="card-0-0-1">
-<rect x="806" y="108" width="778" height="254.67" rx="21.22" fill="#313244" stroke="#fab387" stroke-width="3" stroke-dasharray="0.01 17.69" stroke-linecap="round"/>
-<text x="1555.7" y="154.69" font-size="35.37" fill="#fab387" text-anchor="end">queued</text>
-<text x="834.3" y="154.69" font-size="35.37" fill="#cdd6f4" font-weight="600">#1610</text>
-<text x="834.3" y="197.13" font-size="35.37" fill="#a6adc8">after #1601</text>
+<rect x="806" y="108" width="778" height="143.38" rx="26.88" fill="#313244" stroke="#fab387" stroke-width="3" stroke-dasharray="0.01 22.4" stroke-linecap="round"/>
+<text x="1548.16" y="167.14" font-size="44.81" fill="#fab387" text-anchor="end">queued</text>
+<text x="841.84" y="167.14" font-size="44.81" fill="#cdd6f4" font-weight="600">#1610</text>
+<text x="841.84" y="220.91" font-size="44.81" fill="#a6adc8">after #1601</text>
 </g>
-<circle cx="23.76" cy="400.67" r="5.76" fill="#a6e3a1"/>
-<text x="37.52" y="406.97" font-size="18" fill="#cdd6f4" font-weight="600">WORKING 2</text>
+<circle cx="23.76" cy="289.38" r="5.76" fill="#a6e3a1"/>
+<text x="37.52" y="295.68" font-size="18" fill="#cdd6f4" font-weight="600">WORKING 2</text>
 <g id="card-0-1-0">
-<rect x="16" y="418.67" width="510.67" height="254.67" rx="21.22" fill="#313244" stroke="#a6e3a1" stroke-width="6"/>
-<path class="aeye-flow" d="M37.22,418.67 H505.44" fill="none" stroke="#a6e3a1" stroke-width="9.6" stroke-dasharray="0.01 12" stroke-linecap="round"/>
-<text x="498.37" y="465.36" font-size="35.37" fill="#a6e3a1" text-anchor="end">working</text>
-<text x="44.3" y="465.36" font-size="35.37" fill="#cdd6f4" font-weight="600">ash · #1580</text>
-<text x="44.3" y="507.8" font-size="35.37" fill="#cdd6f4">Roster diagram: state…</text>
-<text x="44.3" y="550.24" font-size="35.37" fill="#a6adc8">standard·claude·opus</text>
-<text x="44.3" y="592.69" font-size="35.37" fill="#6c7086">editing boardsvg.go</text>
-<rect x="452.81" y="623.81" width="45.57" height="31.83" rx="15.92" fill="#313244" stroke="#585b70" stroke-width="1"/>
-<text x="475.59" y="648.4" font-size="24.76" fill="#a6adc8" text-anchor="middle">r2</text>
-<rect x="44.3" y="623.81" width="123.81" height="31.83" rx="15.92" fill="#a6e3a1" class="aeye-glow"/>
-<text x="106.2" y="648.4" font-size="24.76" fill="#1e1e2e" text-anchor="middle">reviewer</text>
-<rect x="178.72" y="623.81" width="139.46" height="31.83" rx="15.92" fill="#585b70"/>
-<text x="248.45" y="648.4" font-size="24.76" fill="#1e1e2e" text-anchor="middle">plan-critic</text>
+<rect x="16" y="307.38" width="510.67" height="310.31" rx="23.57" fill="#313244" stroke="#a6e3a1" stroke-width="6"/>
+<path class="aeye-flow" d="M39.57,307.38 H503.1" fill="none" stroke="#a6e3a1" stroke-width="9.6" stroke-dasharray="0.01 12" stroke-linecap="round"/>
+<text x="495.24" y="359.23" font-size="39.28" fill="#a6e3a1" text-anchor="end">working</text>
+<text x="47.42" y="359.23" font-size="39.28" fill="#cdd6f4" font-weight="600">ash · #1580</text>
+<text x="47.42" y="406.36" font-size="39.28" fill="#cdd6f4">Roster diagram: state</text>
+<text x="47.42" y="453.5" font-size="39.28" fill="#cdd6f4">board that fills the…</text>
+<text x="47.42" y="500.63" font-size="37.85" fill="#a6adc8">standard·claude·opus</text>
+<text x="47.42" y="547.77" font-size="39.28" fill="#6c7086">editing boardsvg.go</text>
+<rect x="444.64" y="562.7" width="50.6" height="35.35" rx="17.68" fill="#313244" stroke="#585b70" stroke-width="1"/>
+<text x="469.94" y="590" font-size="27.5" fill="#a6adc8" text-anchor="middle">r2</text>
+<rect x="47.42" y="562.7" width="137.5" height="35.35" rx="17.68" fill="#a6e3a1" class="aeye-glow"/>
+<text x="116.17" y="590" font-size="27.5" fill="#1e1e2e" text-anchor="middle">reviewer</text>
+<rect x="196.7" y="562.7" width="154.87" height="35.35" rx="17.68" fill="#585b70"/>
+<text x="274.14" y="590" font-size="27.5" fill="#1e1e2e" text-anchor="middle">plan-critic</text>
 </g>
 <g id="card-0-1-1" opacity="0.55">
-<rect x="538.67" y="418.67" width="510.67" height="254.67" rx="21.22" fill="#313244" stroke="#a6e3a1" stroke-width="6" stroke-dasharray="21.22 14.15"/>
-<text x="1021.04" y="465.36" font-size="35.37" fill="#6c7086" text-anchor="end">working</text>
-<text x="566.96" y="465.36" font-size="35.37" fill="#cdd6f4" font-weight="600">cinder · #1581</text>
-<text x="566.96" y="507.8" font-size="35.37" fill="#cdd6f4">Roster diagram: state</text>
-<text x="566.96" y="550.24" font-size="35.37" fill="#cdd6f4">board that fills the pane</text>
-<text x="566.96" y="592.69" font-size="35.37" fill="#a6adc8">standard·claude·opus</text>
-<text x="566.96" y="635.13" font-size="35.37" fill="#6c7086">editing boardsvg.go</text>
+<rect x="538.67" y="307.38" width="510.67" height="310.31" rx="23.57" fill="#313244" stroke="#a6e3a1" stroke-width="6" stroke-dasharray="23.57 15.71"/>
+<text x="1017.91" y="359.23" font-size="37.06" fill="#6c7086" text-anchor="end">working</text>
+<text x="570.09" y="359.23" font-size="37.06" fill="#cdd6f4" font-weight="600">cinder · #1581</text>
+<text x="570.09" y="406.36" font-size="39.28" fill="#cdd6f4">Roster diagram: state</text>
+<text x="570.09" y="453.5" font-size="39.28" fill="#cdd6f4">board that fills the…</text>
+<text x="570.09" y="500.63" font-size="37.85" fill="#a6adc8">standard·claude·opus</text>
+<text x="570.09" y="547.77" font-size="39.28" fill="#6c7086">editing boardsvg.go</text>
 </g>
-<circle cx="1081.09" cy="400.67" r="5.76" fill="#f38ba8"/>
-<text x="1094.85" y="406.97" font-size="18" fill="#cdd6f4" font-weight="600">BLOCKED 1</text>
+<circle cx="1081.09" cy="289.38" r="5.76" fill="#f38ba8"/>
+<text x="1094.85" y="295.68" font-size="18" fill="#cdd6f4" font-weight="600">BLOCKED 1</text>
 <g id="card-0-2-0">
-<rect x="1073.33" y="418.67" width="510.67" height="254.67" rx="21.22" fill="#313244" stroke="#f38ba8" stroke-width="6" class="aeye-pulse"/>
-<rect x="1070.33" y="415.67" width="516.67" height="260.67" rx="24.22" fill="none" stroke="#cba6f7" stroke-width="1.5" stroke-dasharray="1.5 3"/>
-<polygon points="1131.34,454.04 1123.91,466.9 1109.06,466.9 1101.63,454.04 1109.06,441.17 1123.91,441.17" fill="#313244" stroke="#a6adc8" stroke-width="1.5"/>
-<text x="1140.18" y="462.7" font-size="24.76" fill="#a6adc8">strata</text>
-<text x="1555.7" y="465.36" font-size="35.37" fill="#f38ba8" text-anchor="end">blocked</text>
-<text x="1222.14" y="465.36" font-size="35.37" fill="#cdd6f4" font-weight="600">flint ·…</text>
-<text x="1101.63" y="507.8" font-size="35.37" fill="#cdd6f4">Roster diagram: state</text>
-<text x="1101.63" y="550.24" font-size="35.37" fill="#cdd6f4">board that fills the pane</text>
-<text x="1101.63" y="592.69" font-size="35.37" fill="#a6adc8">standard·claude·opus</text>
-<text x="1101.63" y="635.13" font-size="35.37" fill="#6c7086">permission: git push</text>
+<rect x="1073.33" y="307.38" width="510.67" height="310.31" rx="23.57" fill="#313244" stroke="#f38ba8" stroke-width="6" class="aeye-pulse"/>
+<rect x="1070.33" y="304.38" width="516.67" height="316.31" rx="26.57" fill="none" stroke="#cba6f7" stroke-width="1.5" stroke-dasharray="1.5 3"/>
+<polygon points="1137.75,346.66 1129.5,360.94 1113.01,360.94 1104.76,346.66 1113.01,332.37 1129.5,332.37" fill="#313244" stroke="#a6adc8" stroke-width="1.5"/>
+<text x="1147.57" y="356.28" font-size="27.5" fill="#a6adc8">strata</text>
+<text x="1552.58" y="359.23" font-size="29.24" fill="#f38ba8" text-anchor="end">blocked</text>
+<text x="1238.59" y="359.23" font-size="29.24" fill="#cdd6f4" font-weight="600">flint · #1582</text>
+<text x="1104.76" y="406.36" font-size="39.28" fill="#cdd6f4">Roster diagram: state</text>
+<text x="1104.76" y="453.5" font-size="39.28" fill="#cdd6f4">board that fills the…</text>
+<text x="1104.76" y="500.63" font-size="37.85" fill="#a6adc8">standard·claude·opus</text>
+<text x="1104.76" y="547.77" font-size="39.28" fill="#6c7086">permission: git push</text>
 </g>
-<circle cx="23.76" cy="711.33" r="5.76" fill="#89b4fa"/>
-<text x="37.52" y="717.63" font-size="18" fill="#cdd6f4" font-weight="600">PR OPEN 2</text>
+<circle cx="23.76" cy="655.69" r="5.76" fill="#89b4fa"/>
+<text x="37.52" y="661.99" font-size="18" fill="#cdd6f4" font-weight="600">PR OPEN 2</text>
 <g id="card-0-3-0">
-<rect x="16" y="729.33" width="510.67" height="254.67" rx="21.22" fill="#313244" stroke="#89b4fa" stroke-width="6"/>
-<rect x="10" y="723.33" width="522.67" height="266.67" rx="27.22" fill="none" stroke="#f9e2af" stroke-width="1.5"/>
-<circle cx="485.99" cy="764.7" r="12.38" fill="#a6e3a1"/>
-<text x="461.23" y="776.02" font-size="35.37" fill="#89b4fa" text-anchor="end">pr open</text>
-<text x="44.3" y="776.02" font-size="35.37" fill="#cdd6f4" font-weight="600">slate · #1590</text>
-<text x="44.3" y="818.47" font-size="35.37" fill="#cdd6f4">Roster diagram: state</text>
-<text x="44.3" y="860.91" font-size="35.37" fill="#cdd6f4">board that fills the pane</text>
-<text x="44.3" y="903.36" font-size="35.37" fill="#a6adc8">standard·claude·opus</text>
-<text x="44.3" y="945.8" font-size="35.37" fill="#6c7086">editing boardsvg.go</text>
+<rect x="16" y="673.69" width="510.67" height="310.31" rx="25.53" fill="#313244" stroke="#89b4fa" stroke-width="6"/>
+<rect x="10" y="667.69" width="522.67" height="322.31" rx="31.53" fill="none" stroke="#f9e2af" stroke-width="1.5"/>
+<circle cx="477.73" cy="716.24" r="14.89" fill="#a6e3a1"/>
+<text x="447.94" y="729.86" font-size="35.87" fill="#89b4fa" text-anchor="end">pr open</text>
+<text x="50.04" y="729.86" font-size="35.87" fill="#cdd6f4" font-weight="600">slate · #1590</text>
+<text x="50.04" y="780.93" font-size="42.56" fill="#cdd6f4">Roster diagram: state</text>
+<text x="50.04" y="832" font-size="42.56" fill="#cdd6f4">board that fills the…</text>
+<text x="50.04" y="883.06" font-size="37.41" fill="#a6adc8">standard·claude·opus</text>
+<text x="50.04" y="934.13" font-size="42.56" fill="#6c7086">editing boardsvg.go</text>
 </g>
 <g id="card-0-3-1">
-<rect x="538.67" y="729.33" width="510.67" height="254.67" rx="21.22" fill="#313244" stroke="#89b4fa" stroke-width="6"/>
-<circle cx="1008.66" cy="764.7" r="12.38" fill="#1e1e2e" stroke="#f9e2af" stroke-width="4.24"/>
-<text x="983.9" y="776.02" font-size="35.37" fill="#89b4fa" text-anchor="end">pr open</text>
-<text x="566.96" y="776.02" font-size="35.37" fill="#cdd6f4" font-weight="600">quartz ·…</text>
-<text x="566.96" y="818.47" font-size="35.37" fill="#cdd6f4">Roster diagram: state</text>
-<text x="566.96" y="860.91" font-size="35.37" fill="#cdd6f4">board that fills the pane</text>
-<text x="566.96" y="903.36" font-size="35.37" fill="#a6adc8">standard·claude·opus</text>
-<text x="566.96" y="945.8" font-size="35.37" fill="#6c7086">on #1601 · editing…</text>
+<rect x="538.67" y="673.69" width="510.67" height="310.31" rx="25.53" fill="#313244" stroke="#89b4fa" stroke-width="6"/>
+<circle cx="1000.39" cy="716.24" r="14.89" fill="#1e1e2e" stroke="#f9e2af" stroke-width="5.11"/>
+<text x="970.61" y="729.86" font-size="33.32" fill="#89b4fa" text-anchor="end">pr open</text>
+<text x="572.71" y="729.86" font-size="33.32" fill="#cdd6f4" font-weight="600">quartz · #1591</text>
+<text x="572.71" y="780.93" font-size="42.56" fill="#cdd6f4">Roster diagram: state</text>
+<text x="572.71" y="832" font-size="42.56" fill="#cdd6f4">board that fills the…</text>
+<text x="572.71" y="883.06" font-size="37.41" fill="#a6adc8">standard·claude·opus</text>
+<text x="572.71" y="934.13" font-size="42.56" fill="#6c7086">on #1601 · editing…</text>
 </g>
-<circle cx="1081.09" cy="711.33" r="5.76" fill="#45475a"/>
-<text x="1094.85" y="717.63" font-size="18" fill="#cdd6f4" font-weight="600">DONE 1</text>
+<circle cx="1081.09" cy="655.69" r="5.76" fill="#45475a"/>
+<text x="1094.85" y="661.99" font-size="18" fill="#cdd6f4" font-weight="600">DONE 1</text>
 <g id="card-0-4-0" opacity="0.55">
-<rect x="1073.33" y="729.33" width="510.67" height="254.67" rx="21.22" fill="#313244" stroke="#45475a" stroke-width="6" stroke-dasharray="21.22 14.15"/>
-<text x="1555.7" y="776.02" font-size="35.37" fill="#6c7086" text-anchor="end">done</text>
-<text x="1101.63" y="776.02" font-size="35.37" fill="#cdd6f4" font-weight="600">basalt · #1570</text>
-<text x="1101.63" y="818.47" font-size="35.37" fill="#cdd6f4">Roster diagram: state</text>
-<text x="1101.63" y="860.91" font-size="35.37" fill="#cdd6f4">board that fills the pane</text>
-<text x="1101.63" y="903.36" font-size="35.37" fill="#a6adc8">standard·claude·opus</text>
-<text x="1101.63" y="945.8" font-size="35.37" fill="#6c7086">editing boardsvg.go</text>
+<rect x="1073.33" y="673.69" width="510.67" height="310.31" rx="25.53" fill="#313244" stroke="#45475a" stroke-width="6" stroke-dasharray="25.53 17.02"/>
+<text x="1549.96" y="729.86" font-size="42.56" fill="#6c7086" text-anchor="end">done</text>
+<text x="1107.38" y="729.86" font-size="42.56" fill="#cdd6f4" font-weight="600">basalt · #1570</text>
+<text x="1107.38" y="780.93" font-size="42.56" fill="#cdd6f4">Roster diagram: state</text>
+<text x="1107.38" y="832" font-size="42.56" fill="#cdd6f4">board that fills the…</text>
+<text x="1107.38" y="883.06" font-size="37.41" fill="#a6adc8">standard·claude·opus</text>
+<text x="1107.38" y="934.13" font-size="42.56" fill="#6c7086">editing boardsvg.go</text>
 </g>
 </svg>

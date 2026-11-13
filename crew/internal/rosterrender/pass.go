@@ -112,8 +112,8 @@ func buildFrame(ctx context.Context, o Options, paths bus.Paths, cdir, crew stri
 			lg.weight += tierWeight(p.tier)
 		}
 	}
+	lg.engines = o.engineReadings(now)
 	if withBudget {
-		lg.engines = o.engineReadings(now)
 		lg.budget = o.disc.fleetBudget(ctx, at, o.Budget)
 	}
 	b, slots := buildBoard(ps, holds, queued, loadSlots(filepath.Join(cdir, fileSlots)), lg)

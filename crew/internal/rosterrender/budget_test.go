@@ -192,7 +192,7 @@ func TestPassDrawsTheFleetBudgetStrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(svg), "fleet budget 7") {
+	if !strings.Contains(string(svg), "crew 7/7") {
 		t.Errorf("published svg has no budget strip:\n%s", svg)
 	}
 }

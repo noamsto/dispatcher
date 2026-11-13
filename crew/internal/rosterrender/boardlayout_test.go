@@ -117,7 +117,7 @@ func TestBoardLayoutReadingOrder(t *testing.T) {
 			}
 		case c.card != p.card+1:
 			t.Errorf("card step %+v -> %+v", p, c)
-		case c.x == p.x && c.y <= p.y, c.x != p.x && (c.x <= p.x || c.y >= p.y):
+		case c.x == p.x && c.y <= p.y, c.x != p.x && (c.x <= p.x || c.y > p.y):
 			t.Errorf("stack step %+v -> %+v", p.rect, c.rect)
 		}
 	}
@@ -129,9 +129,6 @@ func TestBoardLayoutLoneCardFillsTheWidth(t *testing.T) {
 		c := g.cards()[0]
 		if c.w < 0.8*g.W {
 			t.Errorf("aspect %g: card width %g < 80%% of %g", aspect, c.w, g.W)
-		}
-		if c.h > maxCardFrac*g.H+eps {
-			t.Errorf("aspect %g: card height %g past %g of %g", aspect, c.h, maxCardFrac, g.H)
 		}
 	}
 }
@@ -191,7 +188,7 @@ func TestBoardLayoutGrowsOnlyPastTheZoomThreshold(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			g := layoutBoard(tc.b, tc.aspect)
 			h0 := math.Round(boardW / tc.aspect)
-			c := g.cards()[0]
+			c := workerCard(tc.b, g)
 			switch {
 			case tc.grows && (g.H <= h0 || math.Abs(c.h-minScale*baseCardH) > eps):
 				t.Errorf("H %g (pane %g), card height %g: want growth at the minimum scale", g.H, h0, c.h)
@@ -219,8 +216,8 @@ func TestBoardLayoutAspectAndFont(t *testing.T) {
 			t.Errorf("aspect %g: header %g below %g", tc.aspect, g.hdr.h, hdrMin)
 		}
 		for _, c := range g.cards() {
-			if want := min(max(c.h/fontPerH, minFont), maxFont); c.font != want {
-				t.Errorf("aspect %g: font %g for height %g, want %g", tc.aspect, c.font, c.h, want)
+			if c.font < minFont || c.font > maxFont {
+				t.Errorf("aspect %g: font %g outside %g..%g", tc.aspect, c.font, minFont, maxFont)
 			}
 		}
 	}
@@ -238,4 +235,54 @@ func TestBoardLayoutLaneLabelOnlyWhenNamed(t *testing.T) {
 			t.Errorf("lane %d label band %+v", i, l.label)
 		}
 	}
+}
+
+// TestBoardLayoutSingleCardFillsTheCanvas: with one card, the card spans the
+// canvas below the header both ways.
+func TestBoardLayoutSingleCardFillsTheCanvas(t *testing.T) {
+	for _, aspect := range []float64{1.0, 1.5, 1.6, 2.0} {
+		g := layoutBoard(spread(1, 1), aspect)
+		c := g.cards()[0]
+		if body := g.H - g.hdr.h; c.h < 0.85*body {
+			t.Errorf("aspect %g: card %g tall in a %g body", aspect, c.h, body)
+		}
+		if c.w < 0.85*g.W {
+			t.Errorf("aspect %g: card %g wide in a %g canvas", aspect, c.w, g.W)
+		}
+	}
+}
+
+func TestBoardLayoutBandHeightFollowsContent(t *testing.T) {
+	b := board{lanes: []lane{{cols: []column{
+		{class: classQueued, cards: []boardCard{
+			{planet: planet{branch: "q1"}, kind: kindTask}, {planet: planet{branch: "q2"}, kind: kindHold},
+		}, n: 2},
+		{class: classWorking, cards: []boardCard{
+			{planet: planet{branch: "w1", title: "A title long enough to need a second line", detail: "doing things"}},
+			{planet: planet{branch: "w2", title: "Another title long enough to wrap", detail: "more"}},
+		}, n: 2},
+	}}}}
+	for _, aspect := range []float64{1.0, 1.6, 2.4} {
+		g := layoutBoard(b, aspect)
+		queued, working := g.lanes[0].cols[0].cards[0], g.lanes[0].cols[1].cards[0]
+		if queued.y >= working.y {
+			t.Fatalf("aspect %g: queued band is not above the working band", aspect)
+		}
+		if queued.h >= working.h {
+			t.Errorf("aspect %g: one-line queued card %g tall, not shorter than a worker card %g", aspect, queued.h, working.h)
+		}
+	}
+}
+
+// workerCard is the first card outside the queued column, whose cards are
+// shorter than a worker's.
+func workerCard(b board, g boardGeom) cardGeom {
+	for li, l := range b.lanes {
+		for ci, c := range l.cols {
+			if c.class != classQueued {
+				return g.lanes[li].cols[ci].cards[0]
+			}
+		}
+	}
+	return g.cards()[0]
 }

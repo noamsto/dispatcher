@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -75,7 +76,10 @@ func boardFixtures() []boardFixture {
 }
 
 func (f boardFixture) render(aspect float64) (string, board, boardGeom) {
-	lg := legend{done: 3, failed: 1, weight: 4}
+	pct1, pct2 := 88.0, 21.0
+	lg := legend{done: 3, failed: 1, weight: 4, engines: []engineReading{
+		{name: "claude", window: "7d", pct: &pct1}, {name: "codex"}, {name: "pi", window: "5h", pct: &pct2},
+	}}
 	b, _ := buildBoard(f.ps, f.holds, f.queued, newSlotState(), lg)
 	g := layoutBoard(b, aspect)
 	return renderBoardSVG(b, g, headerInfo{crew: "crew 1792528057-3929", strip: stripText(lg)}, f.sel), b, g
@@ -348,5 +352,46 @@ func TestBoardSVGRendersWithResvg(t *testing.T) {
 				t.Errorf("png is %v", b)
 			}
 		})
+	}
+}
+
+// TestBoardSVGIdentityAndTierLinesWhole: at the card widths fixture b produces,
+// every card's `codename · #issue` and tier·engine·model text is drawn whole.
+func TestBoardSVGIdentityAndTierLinesWhole(t *testing.T) {
+	f := boardFixtures()[1]
+	for i := range f.ps {
+		f.ps[i].issue = "1234"
+		f.ps[i].model = "claude-sonnet-5-5"
+	}
+	for _, aspect := range []float64{0.8, 1.2, 1.5, 1.6, 2.4} {
+		svg, b, g := f.render(aspect)
+		root := decodeSVG(t, svg)
+		var texts []string
+		root.walk(func(n xnode) {
+			if n.XMLName.Local == "text" {
+				texts = append(texts, n.Text)
+			}
+		})
+		for _, l := range b.lanes {
+			for _, col := range l.cols {
+				for _, c := range col.cards {
+					if c.kind != kindPlanet {
+						continue
+					}
+					for _, want := range []string{headOf(c), metaText(c.planet)} {
+						if !slices.Contains(texts, want) {
+							t.Errorf("aspect %g (canvas %g wide): %q is not drawn whole", aspect, g.W, want)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestBoardSVGHeaderCarriesTheBudgetStrip(t *testing.T) {
+	svg, _, _ := boardFixtures()[1].render(1.6)
+	if !strings.Contains(svg, ">claude 7d 88% · pi 5h 21% · crew 4/6</text>") && !strings.Contains(svg, ">claude 7d 88% · pi 5h 21%</text>") {
+		t.Errorf("the header lacks the budget strip:\n%s", svg[:600])
 	}
 }

@@ -1,6 +1,9 @@
 package rosterrender
 
-import "math"
+import (
+	"math"
+	"unicode/utf8"
+)
 
 // Board geometry, in user units with y down. The canvas is boardW wide and as
 // tall as the pane's aspect makes it; it grows taller only when the cards would
@@ -21,6 +24,9 @@ const (
 
 	baseCardW = 320.0
 	baseCardH = 160.0
+	// baseQueuedH is the base height of a hold or task card: a head row and one
+	// line, so the queued band stays short beside the workers' bands.
+	baseQueuedH = 72.0
 
 	// minScale is the zoom threshold: a 160×80 card still sets its text at
 	// minFont, readable at the viewer's default zoom. About twelve cards fit at
@@ -28,16 +34,14 @@ const (
 	minScale = 0.5
 	maxScale = 6.0
 
-	// maxCardFrac caps a card's height against the canvas and maxCardTall
-	// against its own width, so a stretched card stays card-shaped instead of
-	// filling a tall pane or turning into a pillar.
-	maxCardFrac = 0.6
-	maxCardTall = 0.9
+	// maxCardTall caps a card's height against its own width, so a stretched
+	// card does not turn into a pillar on a tall pane.
+	maxCardTall = 1.1
 
-	// fontPerH is a card's height over its font size: five text rows with
-	// leading and padding.
-	fontPerH         = 7.2
-	minFont, maxFont = 11.0, 48.0
+	// maxFontPerW caps a card's font against its width, so text stays
+	// proportionate in a card stretched far wider than it is tall.
+	maxFontPerW      = 12.0
+	minFont, maxFont = 11.0, 88.0
 )
 
 type rect struct{ x, y, w, h float64 }
@@ -85,6 +89,51 @@ func (l lane) labelH() float64 {
 	return laneLabelH
 }
 
+// cardH is the base height of the cards cols hold: a shelf of queued cards
+// needs less than one of workers.
+func cardH(cols []column) float64 {
+	for _, c := range cols {
+		if c.class != classQueued {
+			return baseCardH
+		}
+	}
+	return baseQueuedH
+}
+
+// fontFactor is the card height over the font size the cards of cols need: the
+// rows of the card with the most text, with leading and padding. Text is sized
+// so those rows fill the card.
+func fontFactor(cols []column) float64 {
+	need := 0.0
+	for _, c := range cols {
+		for _, cd := range c.cards {
+			need = max(need, cardRowsEm(cd))
+		}
+	}
+	return need
+}
+
+// cardRowsEm is the height in em of the text rows a card can show: the head,
+// the title (a second line when it is long), the tier row, and the detail row
+// when there is one, plus the footer of role chips.
+func cardRowsEm(c boardCard) float64 {
+	rows := 2.0
+	if c.kind == kindPlanet {
+		rows = 3
+		if utf8.RuneCountInString(c.title) > 24 {
+			rows++
+		}
+		if c.detail != "" || c.on != "" {
+			rows++
+		}
+	}
+	em := rows*rowEm + 2*padYEm
+	if c.kind == kindPlanet && (len(c.moons) > 0 || c.rounds > 0) {
+		em += footEm
+	}
+	return em
+}
+
 // tallest is the most cards any one of cols holds.
 func tallest(cols []column) int {
 	n := 0
@@ -124,16 +173,18 @@ type shelf struct {
 // every column on one shelf; a tall one stacks them. ok is false when no
 // split fits.
 func laneFit(l lane, s, availW float64) (best []shelf, h float64, ok bool) {
-	cw, ch := baseCardW*s, baseCardH*s
+	cw := baseCardW * s
 	n := len(l.cols)
 	for mask := range 1 << (n - 1) {
 		var split []shelf
 		total, fits := l.labelH(), true
 		for from, to := 0, 1; to <= n && fits; to++ {
-			if to < n && mask&(1<<(to-1)) == 0 {
+			// The queued column is its own band, whose cards are shorter.
+			if to < n && mask&(1<<(to-1)) == 0 && l.cols[to-1].class != classQueued && l.cols[to].class != classQueued {
 				continue
 			}
 			cols := l.cols[from:to]
+			ch := cardH(cols) * s
 			sh := shelf{from: from, to: to}
 			for r := 1; r <= tallest(cols); r++ {
 				if shelfWidth(cols, r, cw) <= availW {
@@ -194,7 +245,7 @@ func layoutBoard(b board, aspect float64) boardGeom {
 		_, _, total, ok := boardFit(b, s, availW)
 		return ok && total <= availH
 	}
-	s := min(maxScale, maxCardFrac*h0/baseCardH)
+	s := maxScale
 	switch {
 	case fits(s):
 	case !fits(minScale):
@@ -230,7 +281,7 @@ func layoutBoard(b board, aspect float64) boardGeom {
 		}
 		for _, sh := range shelves[li] {
 			h := sh.need + (laneH-fixed-shelvesNeed)*sh.need/shelvesNeed
-			placeShelf(&lg, li, l.cols[sh.from:sh.to], sh, s, h, top, h0)
+			placeShelf(&lg, li, l.cols[sh.from:sh.to], sh, s, h, top)
 			top += h + shelfGap
 		}
 		g.lanes = append(g.lanes, lg)
@@ -242,9 +293,9 @@ func layoutBoard(b board, aspect float64) boardGeom {
 // placeShelf lays one shelf's columns into lg: the most rows its height holds,
 // the width shared out per sub-column, and the cards stretched down the rows.
 // A card held back by its shape caps leaves its stack centred in the shelf.
-func placeShelf(lg *laneGeom, li int, cols []column, sh shelf, s, h, top, h0 float64) {
+func placeShelf(lg *laneGeom, li int, cols []column, sh shelf, s, h, top float64) {
 	availW := boardW - 2*boardPad
-	cw, ch := baseCardW*s, baseCardH*s
+	cw, ch := baseCardW*s, cardH(cols)*s
 	innerH := h - colHeadH
 	// The epsilon keeps a shelf sized exactly for its rows from losing one.
 	rows := int(math.Floor((innerH+cardGap)/(ch+cardGap) + 1e-9))
@@ -255,8 +306,8 @@ func placeShelf(lg *laneGeom, li int, cols []column, sh shelf, s, h, top, h0 flo
 		subs += ceilDiv(len(c.cards), rows)
 	}
 	wide := cw + (availW-shelfWidth(cols, rows, cw))/float64(subs)
-	tall := min((innerH-float64(rows-1)*cardGap)/float64(rows), maxCardFrac*h0, maxCardTall*wide)
-	font := min(max(tall/fontPerH, minFont), maxFont)
+	tall := min((innerH-float64(rows-1)*cardGap)/float64(rows), maxCardTall*wide)
+	font := min(max(min(tall/fontFactor(cols), wide/maxFontPerW), minFont), maxFont)
 	top += (h - colHeadH - stackH(rows, tall)) / 2
 
 	x := boardPad

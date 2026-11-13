@@ -189,7 +189,7 @@ func runMap(ctx context.Context, c call, paths bus.Paths, o Options) int {
 		return fail(err)
 	}
 	g := layoutBoard(fr.b, float64(c.pxW)/float64(c.pxH))
-	svg := renderBoardSVG(fr.b, g, headerInfo{crew: c.crew}, selection{branch: c.selectBranch, repo: c.selectRepo})
+	svg := renderBoardSVG(fr.b, g, headerInfo{crew: c.crew, strip: stripText(fr.b.counts)}, selection{branch: c.selectBranch, repo: c.selectRepo})
 	png, err := o.Probes.Resvg(ctx, []byte(svg), c.pxW, c.pxH)
 	if err != nil {
 		return fail(err)

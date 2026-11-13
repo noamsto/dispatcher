@@ -2,6 +2,7 @@ package rosterrender
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -49,24 +50,18 @@ type planetKey struct {
 	repo, branch string
 }
 
-// stripText is the budget strip: this crew's live weight against the fleet
-// budget, then each engine's most-used quota window. Unknown is `?`, never 0.
+// stripText is the header's budget strip: each engine's most-used quota window
+// that has a reading, then this crew's live weight against the fleet budget when
+// the budget is set. Unknown readings are left out, never drawn as 0.
 func stripText(lg legend) string {
-	budget := "?"
-	switch {
-	case lg.budget == nil:
-	case *lg.budget == 0:
-		budget = "off"
-	default:
-		budget = strconv.Itoa(*lg.budget)
-	}
-	parts := []string{"crew weight " + strconv.Itoa(lg.weight) + " · fleet budget " + budget}
+	var parts []string
 	for _, e := range lg.engines {
-		if e.pct == nil {
-			parts = append(parts, clean(e.name)+" ?")
-			continue
+		if e.pct != nil {
+			parts = append(parts, strings.Join(slices.DeleteFunc([]string{clean(e.name), clean(e.window), strconv.FormatFloat(*e.pct, 'f', 0, 64) + "%"}, func(p string) bool { return p == "" }), " "))
 		}
-		parts = append(parts, clean(e.name)+" "+clean(e.window)+" "+strconv.FormatFloat(*e.pct, 'f', 0, 64)+"%")
+	}
+	if lg.budget != nil && *lg.budget > 0 {
+		parts = append(parts, "crew "+strconv.Itoa(lg.weight)+"/"+strconv.Itoa(*lg.budget))
 	}
 	return strings.Join(parts, " · ")
 }

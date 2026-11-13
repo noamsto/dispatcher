@@ -2,16 +2,17 @@
 <rect x="0" y="0" width="1600" height="1000" fill="#1e1e2e"/>
 <rect x="0" y="0" width="1600" height="56" fill="#313244"/>
 <text x="16" y="35.84" font-size="22.4" fill="#cdd6f4" font-weight="600">crew 1792528057-3929 · +4 done earlier</text>
-<text x="1584" y="35.84" font-size="22.4" fill="#a6adc8" text-anchor="end">crew weight 4 · fleet budget ?</text>
-<circle cx="23.76" cy="228" r="5.76" fill="#a6e3a1"/>
-<text x="37.52" y="234.3" font-size="18" fill="#cdd6f4" font-weight="600">WORKING 1</text>
+<text x="1584" y="35.84" font-size="22.4" fill="#a6adc8" text-anchor="end">claude 7d 88% · pi 5h 21%</text>
+<circle cx="23.76" cy="90" r="5.76" fill="#a6e3a1"/>
+<text x="37.52" y="96.3" font-size="18" fill="#cdd6f4" font-weight="600">WORKING 1</text>
 <g id="card-0-0-0">
-<rect x="16" y="246" width="1568" height="600" rx="28.8" fill="#313244" stroke="#a6e3a1" stroke-width="6"/>
-<path class="aeye-flow" d="M44.8,246 H1555.2" fill="none" stroke="#a6e3a1" stroke-width="9.6" stroke-dasharray="0.01 12" stroke-linecap="round"/>
-<text x="1545.6" y="309.36" font-size="48" fill="#a6e3a1" text-anchor="end">working</text>
-<text x="54.4" y="309.36" font-size="48" fill="#cdd6f4" font-weight="600">ember · #1558</text>
-<text x="54.4" y="366.96" font-size="48" fill="#cdd6f4">Roster diagram: state board that fills the pane</text>
-<text x="54.4" y="424.56" font-size="48" fill="#a6adc8">standard·claude·opus</text>
-<text x="54.4" y="482.16" font-size="48" fill="#6c7086">editing boardsvg.go</text>
+<rect x="16" y="108" width="1568" height="876" rx="52.8" fill="#313244" stroke="#a6e3a1" stroke-width="6"/>
+<path class="aeye-flow" d="M68.8,108 H1531.2" fill="none" stroke="#a6e3a1" stroke-width="9.6" stroke-dasharray="0.01 12" stroke-linecap="round"/>
+<text x="1513.6" y="224.16" font-size="88" fill="#a6e3a1" text-anchor="end">working</text>
+<text x="86.4" y="224.16" font-size="88" fill="#cdd6f4" font-weight="600">ember · #1558</text>
+<text x="86.4" y="329.76" font-size="88" fill="#cdd6f4">Roster diagram: state board that</text>
+<text x="86.4" y="435.36" font-size="88" fill="#cdd6f4">fills the pane</text>
+<text x="86.4" y="540.96" font-size="88" fill="#a6adc8">standard·claude·opus</text>
+<text x="86.4" y="646.56" font-size="88" fill="#6c7086">editing boardsvg.go</text>
 </g>
 </svg>
