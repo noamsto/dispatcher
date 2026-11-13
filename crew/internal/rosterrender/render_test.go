@@ -346,7 +346,7 @@ func TestHostileTextCannotBreakOutOfTheDot(t *testing.T) {
 	}
 	// The fold swaps a codename the pool grammar rejects for a pool one; clean
 	// guards what survives (planets_test).
-	if line := nodeLine(t, out, "p1"); !regexp.MustCompile(`<td align="left">[a-z][a-z0-9-]* · #1&#160;`).MatchString(line) {
+	if line := nodeLine(t, out, "p1"); !regexp.MustCompile(`align="left">[a-z][a-z0-9-]* · #1</td>`).MatchString(line) {
 		t.Errorf("the hostile codename was drawn as is: %s", line)
 	}
 	if line := nodeLine(t, out, "p3h"); !strings.Contains(line, "shape=hexagon") {

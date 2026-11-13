@@ -609,7 +609,8 @@ func planetAttrs(p placed, pulse bool) []string {
 
 // cardLabel is the card's Graphviz HTML label: five left-aligned rows in a one
 // column table pinned to the text area, so the text sits at the same place on
-// every card.
+// every card. Row 1 nests a fixed-width head cell so the state word does not
+// move with the head's rendered width.
 func cardLabel(p placed, stateCol string, dim bool) string {
 	c := cardTextOf(p.planet)
 	paint := func(s, col string) string {
@@ -629,7 +630,9 @@ func cardLabel(p placed, stateCol string, dim bool) string {
 	if dim {
 		stateCol = colDim
 	}
-	head := paint(c.rows[0], "") + "&#160;&#160;" + `<font color="` + stateCol + `">` + htmlText(c.state) + "</font>"
+	head := `<table border="0" cellborder="0" cellspacing="0" cellpadding="0"><tr>` +
+		`<td fixedsize="true" width="` + strconv.Itoa(int(headWidth(c.state))) + `" height="` + strconv.Itoa(cardRowH) + `" align="left">` + paint(c.rows[0], "") + `</td>` +
+		`<td align="left"><font color="` + stateCol + `">&#160;&#160;` + htmlText(c.state) + "</font></td></tr></table>"
 	rows := []string{head, paint(c.rows[1], ""), paint(c.rows[2], ""), paint(c.rows[3], colLegend), paint(c.rows[4], colDim)}
 	var b strings.Builder
 	fmt.Fprintf(&b, `<table border="0" cellborder="0" cellspacing="0" cellpadding="%d" fixedsize="true" width="%s" height="%s">`,

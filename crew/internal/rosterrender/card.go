@@ -1,6 +1,7 @@
 package rosterrender
 
 import (
+	"math"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -25,6 +26,11 @@ const (
 	// text starts, does not depend on how Graphviz measures the text.
 	cardTableH = 89.0
 	ellipsis   = "…"
+
+	// cardRowH is a row's content height in points, an integer because Graphviz
+	// reads HTML WIDTH and HEIGHT as integers: neato measured 88.7 for five rows,
+	// 88.7/5 - 2*cardCellPad is about 15.74, and 18+4*17.74 = 88.96 fits cardTableH.
+	cardRowH = 16
 )
 
 // cardPen is the border weight of a tier; an unknown tier draws as standard.
@@ -111,6 +117,12 @@ func truncWidth(s string, w float64) string {
 	return strings.TrimRight(cut, " ") + ellipsis
 }
 
+// headWidth is the width of row 1's head cell: what the state word and the
+// cell padding leave of cardInner, whole points, never less than the ellipsis.
+func headWidth(state string) float64 {
+	return max(math.Floor(cardInner-2*cardCellPad-textWidth("  "+state)), math.Ceil(textWidth(ellipsis)))
+}
+
 // fitPrefix is the longest prefix of s within w points, never empty.
 func fitPrefix(s string, w float64) string {
 	rs := []rune(s)
@@ -160,8 +172,7 @@ func cardTextOf(p planet) cardText {
 		}
 		head += p.issue
 	}
-	gap := textWidth("  ") + textWidth(c.state)
-	c.rows[0] = truncWidth(head, cardInner-gap)
+	c.rows[0] = truncWidth(head, headWidth(c.state))
 
 	line, rest := wrapLine(p.title, cardInner)
 	c.rows[1] = line

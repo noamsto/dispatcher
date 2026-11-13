@@ -525,7 +525,7 @@ func TestDotCardCarriesItsText(t *testing.T) {
 
 	long := nodeLine(t, out, ids[placedBy(t, sc, "", "feat/1-long").key()])
 	for _, want := range []string{
-		`<td align="left">lime · #1&#160;&#160;<font color="` + colWorking + `">working</font></td>`,
+		`align="left">lime · #1</td><td align="left"><font color="` + colWorking + `">&#160;&#160;working</font></td>`,
 		`<td align="left">Port the</td>`,
 		`<td align="left">Supercalifragilisticexpialidoci…</td>`,
 		`<td align="left"><font color="` + colLegend + `">deep·claude·opus</font></td>`,
@@ -536,8 +536,8 @@ func TestDotCardCarriesItsText(t *testing.T) {
 			t.Errorf("long card lacks %s:\n%s", want, long)
 		}
 	}
-	if n := strings.Count(long, "<tr>"); n != cardRows {
-		t.Errorf("%d rows, want %d", n, cardRows)
+	if n := strings.Count(long, `<tr><td align="left">`); n != cardRows {
+		t.Errorf("%d outer rows, want %d", n, cardRows)
 	}
 
 	quote := nodeLine(t, out, ids[placedBy(t, sc, "", "feat/3-quote").key()])
@@ -545,7 +545,7 @@ func TestDotCardCarriesItsText(t *testing.T) {
 		`<td align="left">Quote the &quot;state&quot; &amp; &lt;tier&gt;</td>`,
 		`<td align="left">words</td>`,
 		`<td align="left"><font color="` + colDim + `">&#160;</font></td>`,
-		`<font color="` + colPROpen + `">pr open</font>`,
+		`<font color="` + colPROpen + `">&#160;&#160;pr open</font>`,
 	} {
 		if !strings.Contains(quote, want) {
 			t.Errorf("quoted card lacks %s:\n%s", want, quote)
@@ -2004,5 +2004,52 @@ func TestWedgeLabelBoxClearsTheRim(t *testing.T) {
 		if !near(math.Hypot(w.x, w.y), wedgeLabelRadius(w.rim, w.start+w.span/2, w.label)) {
 			t.Errorf("wedge %q is not where wedgeLabelRadius puts it", w.label)
 		}
+	}
+}
+
+func TestDotCardPinsStatePosition(t *testing.T) {
+	long := strings.Repeat("W", 24)
+	tests := []struct {
+		name, state, nick string
+		dim, real         bool
+	}{
+		{"working", "working", "lime", false, true},
+		{"blocked", "blocked", "lime", false, true},
+		{"pr open", "pr_open", "lime", false, true},
+		{"done", "done", "lime", true, true},
+		{"reaped", "reaped", "lime", true, true},
+		{"failed", "failed", "lime", true, true},
+		{"exited", "exited", "lime", true, true},
+		{"dispatched", "dispatched", "lime", false, true},
+		{"full budget head", "dispatched", long, false, true},
+		{"full budget head, short state", "done", long, false, true},
+		{"dimmed card", "working", "lime", true, true},
+		{"hostile state", long, long, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := cardOf(t, func(r map[string]any) { r["state"], r["name"] = tt.state, tt.nick })
+			c := cardTextOf(p)
+			w := int(headWidth(c.state))
+			label := cardLabel(placed{planet: p}, colWorking, tt.dim)
+			want := `<td fixedsize="true" width="` + strconv.Itoa(w) + `" height="` + strconv.Itoa(cardRowH) + `" align="left">`
+			if !strings.Contains(label, want) {
+				t.Errorf("row 1 lacks %s:\n%s", want, label)
+			}
+			if n := strings.Count(label, "</td></tr>"); n != cardRows+1 {
+				t.Errorf("%d closed rows, want %d (five outer plus the inner head row)", n, cardRows+1)
+			}
+			if strings.Count(label, `<tr><td align="left">`) != cardRows {
+				t.Errorf("want %d outer rows:\n%s", cardRows, label)
+			}
+			if clamped := float64(w) == math.Ceil(textWidth(ellipsis)); !clamped && textWidth(c.rows[0]) > float64(w) {
+				t.Errorf("head width %.1f > cell %d", textWidth(c.rows[0]), w)
+			}
+			if tt.real {
+				if got := float64(w) + textWidth("  "+c.state) + 2*cardCellPad; got > cardInner {
+					t.Errorf("head cell + state + padding = %.1f > %.1f", got, cardInner)
+				}
+			}
+		})
 	}
 }
