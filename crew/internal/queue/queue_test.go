@@ -103,6 +103,10 @@ func TestOutstanding(t *testing.T) {
 			addRowText(10, d, "a", "#12", ""),
 		}, []string{"a"}},
 		{"branch-shaped ref", []string{addRowText(10, d, "a", "feat/9-z", ""), dispatchRowText(11, crew, "feat/9-z", "")}, []string{}},
+		{"linear ref cleared by its branch", []string{addRowText(10, d, "a", "ENG-12", ""), dispatchRowText(11, crew, "eng-12-fix-it", "")}, []string{}},
+		{"linear ref cleared by also_closes", []string{addRowText(10, d, "a", "ENG-12", ""), dispatchRowText(11, crew, "feat/3-x", `["ENG-12"]`)}, []string{}},
+		{"linear ref not cleared by a longer id", []string{addRowText(10, d, "a", "ENG-12", ""), dispatchRowText(11, crew, "eng-120-x", "")}, []string{"a"}},
+		{"issue is anchored", []string{addRowText(10, d, "a", "#4", ""), dispatchRowText(11, crew, "feat/grok-4-7-cursor-ladder", "")}, []string{"a"}},
 		{"oldest add first", []string{addRowText(10, d, "a", "#1", ""), addRowText(11, d, "b", "#2", ""), addRowText(12, d, "c", "#3", "")}, []string{"a", "b", "c"}},
 		{"other crew's sink", []string{strings.Replace(addRowText(10, d, "a", "#1", ""), "queue:c1", "queue:c2", 1)}, []string{}},
 	}
@@ -144,6 +148,15 @@ func TestSameTask(t *testing.T) {
 		{"branch refs verbatim", e("feat/5-x", ""), e("feat/5-x", ""), true},
 		{"different branch refs", e("feat/5-x", ""), e("feat/5-y", ""), false},
 		{"empty branches never equal", e("", ""), e("", ""), false},
+		{"branch ref equals branch", e("feat/12-x", ""), e("", "feat/12-x"), true},
+		{"numeric ref equals branch ref", e("#12", ""), e("feat/12-x", ""), true},
+		{"different branch issues", e("", "feat/12-x"), e("", "feat/13-x"), false},
+		{"linear refs case-insensitive", e("ENG-5", ""), e("eng-5", ""), true},
+		{"linear ref equals linear branch", e("ENG-5", ""), e("", "eng-5-slug"), true},
+		{"lower linear ref equals linear branch", e("eng-5", ""), e("", "eng-5-slug"), true},
+		{"linear ids differ", e("ENG-5", ""), e("ENG-50", ""), false},
+		{"linear ref vs longer branch id", e("ENG-5", ""), e("", "eng-50-slug"), false},
+		{"grok is not issue 4", e("#4", ""), e("", "feat/grok-4-7-x"), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -229,6 +242,20 @@ func TestRunAddRefusesAnAlreadyDispatchedTask(t *testing.T) {
 	}
 	if n := len(r.lines(t)); n != 1 {
 		t.Errorf("log has %d lines, want the dispatch row only", n)
+	}
+}
+
+func TestRunAddDoesNotRefuseOnAnUnanchoredDigitRun(t *testing.T) {
+	r := newRig(t)
+	if err := os.MkdirAll(r.paths.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.paths.Log, []byte(dispatchRowText(1, crew, "feat/grok-4-7-x", "")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, errb, code := r.run(Options{}, addReq("#4", "", "real four"))
+	if code != 0 || strings.TrimSpace(out) == "" || errb != "" {
+		t.Errorf("code %d, out %q, err %q", code, out, errb)
 	}
 }
 

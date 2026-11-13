@@ -5,5 +5,4 @@
 [ .[0] | (
 ([.rows[] | select(.state == "working" or .state == "blocked" or .state == "dispatched")] | length)
                                     + (.holds | length)
-                                    + ((.queued // []) | length)
 ) ]

@@ -141,7 +141,7 @@ func TestLiveCountIsTheModelNotItsPrintedForm(t *testing.T) {
 		{`{"rows":[],"holds":[],"roles":[]}`, 0},
 		{`{"rows":[{"state":"working"},{"state":"done"},{"state":"blocked"},{"state":"dispatched"}],"holds":[],"roles":[]}`, 3},
 		{`{"rows":[],"holds":[{},{}],"roles":[]}`, 2},
-		{`{"rows":[],"holds":[],"queued":[{},{}],"roles":[]}`, 2},
+		{`{"rows":[],"holds":[],"queued":[{},{}],"roles":[]}`, 0},
 	} {
 		got, err := liveCount(decodeOne(t, tc.model))
 		if err != nil {

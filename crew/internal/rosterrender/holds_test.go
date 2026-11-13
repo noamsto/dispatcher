@@ -460,6 +460,20 @@ func TestDotQueuedNodeAndWaitEdge(t *testing.T) {
 	if out, _ := render([]planet{r1}, "99", "feat/none"); strings.Contains(out, "u1 ->") {
 		t.Errorf("an absent target drew an edge:\n%s", out)
 	}
+	linear := mk("eng-12-fix-it", "r1", "", "")
+	lid := keyIDs(func() scene { _, sc := arrange(newSlotState(), []planet{linear}); return sc }())[planetKey{linear.repo, linear.branch}]
+	for _, target := range []string{"ENG-12", "eng-12", "eng-12-fix-it"} {
+		if out, _ := render([]planet{linear}, target); !strings.Contains(out, "  u1 -> "+lid+" [") {
+			t.Errorf("linear target %q drew no edge", target)
+		}
+	}
+	if out, _ := render([]planet{linear}, "ENG-1", "ENG-120"); strings.Contains(out, "u1 ->") {
+		t.Errorf("a longer or shorter linear id matched:\n%s", out)
+	}
+	grok := mk("feat/grok-4-7-x", "r1", "4", "")
+	if out, _ := render([]planet{grok}, "#4"); strings.Contains(out, "u1 ->") {
+		t.Errorf("#4 drew an edge to a grok-4-7 planet:\n%s", out)
+	}
 	other := mk("feat/12-x", "r2", "12", "")
 	if out, _ := render([]planet{other}, "12", "feat/12-x"); strings.Contains(out, "u1 ->") {
 		t.Errorf("a planet of another repo matched:\n%s", out)

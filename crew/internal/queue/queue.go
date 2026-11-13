@@ -36,8 +36,10 @@ const (
 )
 
 var (
-	digitsRe = regexp.MustCompile(`^[0-9]+$`)
-	runRe    = regexp.MustCompile(`[0-9]+`)
+	digitsRe       = regexp.MustCompile(`^[0-9]+$`)
+	linearRe       = regexp.MustCompile(`^[A-Za-z]+-[0-9]+$`)
+	issueRe        = regexp.MustCompile(`^([0-9]+)(?:-|$)`)
+	linearPrefixRe = regexp.MustCompile(`^([A-Za-z]+-[0-9]+)(?:-|$)`)
 )
 
 // Options is everything Run reads beyond the bus: how to resolve the crew the
@@ -194,8 +196,8 @@ func number(v any) (int64, bool) {
 	return int64(f), err == nil
 }
 
-// alsoCloses is a dispatch row's also_closes as digit strings: items may be
-// numbers or digit strings.
+// alsoCloses is a dispatch row's also_closes as ids: numbers, digit strings and
+// Linear-shaped strings; anything else is dropped.
 func alsoCloses(v any) []string {
 	items, _ := v.([]any)
 	var out []string
@@ -204,7 +206,7 @@ func alsoCloses(v any) []string {
 		case json.Number:
 			out = append(out, x.String())
 		case string:
-			if digitsRe.MatchString(x) {
+			if digitsRe.MatchString(x) || linearRe.MatchString(x) {
 				out = append(out, x)
 			}
 		}
@@ -212,19 +214,77 @@ func alsoCloses(v any) []string {
 	return out
 }
 
-// issueOf is the first digit run after the `type/` prefix of a branch, the rule
-// rosterrender draws issue labels with.
-func issueOf(branch string) string {
+// keys is what identifies a task: the branch it is or will be on, its issue
+// number and its lowercased Linear id. Empty means unknown. named marks an id
+// the task's ref gave, as opposed to one read off its branch.
+type keys struct {
+	branch, issue, linear string
+	named                 bool
+}
+
+// anchoredIssue is the leading digit run of the segment after a branch's first
+// `/`, when `-` or the end follows it.
+func anchoredIssue(branch string) string {
 	if _, rest, ok := strings.Cut(branch, "/"); ok {
 		branch = rest
 	}
-	return runRe.FindString(branch)
+	m := issueRe.FindStringSubmatch(branch)
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
-// refNumber is the issue number of a `#N` or `N` ref.
-func refNumber(ref string) (string, bool) {
-	n := strings.TrimPrefix(ref, "#")
-	return n, digitsRe.MatchString(n)
+// branchLinear is the lowercased `<letters>-<digits>` prefix of a slashless
+// branch, the shape `dispatch ENG-N` names its branches.
+func branchLinear(branch string) string {
+	if strings.Contains(branch, "/") {
+		return ""
+	}
+	m := linearPrefixRe.FindStringSubmatch(branch)
+	if m == nil {
+		return ""
+	}
+	return strings.ToLower(m[1])
+}
+
+func branchKeys(branch string) keys {
+	return keys{branch: branch, issue: anchoredIssue(branch), linear: branchLinear(branch)}
+}
+
+func taskKeys(e Entry) keys {
+	branch, ref := deref(e.Task.Branch), deref(e.Task.Ref)
+	var k keys
+	switch n := strings.TrimPrefix(ref, "#"); {
+	case digitsRe.MatchString(n):
+		k.issue, k.named = n, true
+	case linearRe.MatchString(ref):
+		k.linear, k.named = strings.ToLower(ref), true
+	case branch == "":
+		branch = ref
+	}
+	b := branchKeys(branch)
+	k.branch = b.branch
+	if k.issue == "" {
+		k.issue = b.issue
+	}
+	if k.linear == "" {
+		k.linear = b.linear
+	}
+	return k
+}
+
+// matches reports a shared branch, or a shared issue or Linear id. Two tasks on
+// different explicit branches share an id only when one of them named it, so
+// `feat/5-x` and `feat/5-y` stay distinct tasks.
+func (a keys) matches(b keys) bool {
+	if a.branch != "" && a.branch == b.branch {
+		return true
+	}
+	if a.branch != "" && b.branch != "" && !a.named && !b.named {
+		return false
+	}
+	return a.issue != "" && a.issue == b.issue || a.linear != "" && a.linear == b.linear
 }
 
 func deref(s *string) string {
@@ -235,39 +295,18 @@ func deref(s *string) string {
 }
 
 func dispatchClears(e Entry, d dispatch) bool {
-	branch, ref := deref(e.Task.Branch), deref(e.Task.Ref)
-	if branch != "" && branch == d.branch {
+	k := taskKeys(e)
+	if k.matches(branchKeys(d.branch)) {
 		return true
 	}
-	if n, ok := refNumber(ref); ok {
-		return issueOf(d.branch) == n || slices.Contains(d.closes, n)
-	}
-	return ref != "" && ref == d.branch
+	return slices.ContainsFunc(d.closes, func(c string) bool {
+		return k.issue != "" && c == k.issue || k.linear != "" && strings.EqualFold(c, k.linear)
+	})
 }
 
-// sameTask reports whether two entries name one task: equal non-empty
-// branches, equal refs (`#N` ≡ `N`, a branch ref verbatim), or a numeric ref
-// equal to the other side's branch issue.
-func sameTask(a, b Entry) bool {
-	ab, bb := deref(a.Task.Branch), deref(b.Task.Branch)
-	ar, br := deref(a.Task.Ref), deref(b.Task.Ref)
-	if ab != "" && ab == bb {
-		return true
-	}
-	an, aNum := refNumber(ar)
-	bn, bNum := refNumber(br)
-	switch {
-	case aNum && bNum && an == bn:
-		return true
-	case !aNum && !bNum && ar != "" && ar == br:
-		return true
-	case aNum && bb != "" && issueOf(bb) == an:
-		return true
-	case bNum && ab != "" && issueOf(ab) == bn:
-		return true
-	}
-	return false
-}
+// sameTask reports whether two entries name one task: a shared branch, issue
+// number or Linear id once each is normalized by taskKeys.
+func sameTask(a, b Entry) bool { return taskKeys(a).matches(taskKeys(b)) }
 
 // sanitize replaces control characters with a space so a TSV column and the
 // terminal stay intact.

@@ -652,25 +652,54 @@ func cardLabel(p placed, stateCol string, dim bool) string {
 }
 
 // waitTargets is the node id of each distinct drawn planet of the task's own
-// repo that one of its after targets names: a branch, or a number that is the
-// planet's issue or the number its PR url ends in. Numbers repeat across repos,
-// so another repo's planet never matches.
+// repo that one of its after targets names: a branch, a number that is the
+// anchored issue of the planet's branch or the number its PR url ends in, or a
+// Linear id the branch is named for. Numbers repeat across repos, so another
+// repo's planet never matches.
 func waitTargets(planets []placed, ids map[planetKey]string, t placedTask) []string {
 	var out []string
 	for _, p := range planets {
 		if p.repo != t.repo {
 			continue
 		}
-		pr := prNumber(p.prURL)
+		pr, issue := prNumber(p.prURL), branchIssue(p.branch)
 		for _, a := range t.after {
 			n := strings.TrimPrefix(a, "#")
-			if a == p.branch || (ascii.IsDigits(n) && (n == p.issue || n == pr)) {
+			if a == p.branch || (ascii.IsDigits(n) && (n == issue || n == pr)) || linearTarget(a, p.branch) {
 				out = append(out, ids[p.key()])
 				break
 			}
 		}
 	}
 	return out
+}
+
+var (
+	issuePrefixRe = regexp.MustCompile(`^([0-9]+)(?:-|$)`)
+	linearIDRe    = regexp.MustCompile(`^[A-Za-z]+-[0-9]+$`)
+)
+
+// branchIssue is the leading digit run of the segment after a branch's first
+// `/`, when `-` or the end follows it: `feat/12-x` is 12, `feat/grok-4-7-x` none.
+func branchIssue(branch string) string {
+	if _, rest, ok := strings.Cut(branch, "/"); ok {
+		branch = rest
+	}
+	m := issuePrefixRe.FindStringSubmatch(branch)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
+// linearTarget reports whether a is a Linear id and branch is the one
+// `dispatch <id>` names: the lowercased id, or that and `-<slug>`.
+func linearTarget(a, branch string) bool {
+	if !linearIDRe.MatchString(a) {
+		return false
+	}
+	id, b := strings.ToLower(a), strings.ToLower(branch)
+	return b == id || strings.HasPrefix(b, id+"-")
 }
 
 // prNumber is the digits a pull request url ends in, or "".

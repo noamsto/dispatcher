@@ -659,9 +659,13 @@ var wordings = map[string]wording{
 	"hold release": {all: hold.ReleaseUsage, code: exitFailure},
 	"queue":        {all: queue.Usage, code: exitFailure},
 	"queue add": {
-		unknownFlag: func(f string) string { return fmt.Sprintf("crew: queue add: unknown arg '%s'", f) },
-		extra:       func(w string) string { return fmt.Sprintf("crew: queue add: unknown arg '%s'", w) },
-		code:        exitFailure,
+		unknownFlag: func(f string) string {
+			return fmt.Sprintf("crew: queue add: unknown arg '%s' (usage: %s)", f, queue.AddUsage)
+		},
+		extra: func(w string) string {
+			return fmt.Sprintf("crew: queue add: unknown arg '%s' (usage: %s)", w, queue.AddUsage)
+		},
+		code: exitFailure,
 	},
 	"queue list": {all: queue.ListUsage, code: exitFailure},
 	"queue drop": {all: queue.DropUsage, code: exitFailure},
