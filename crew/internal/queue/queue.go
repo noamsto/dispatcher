@@ -122,7 +122,6 @@ type dispatch struct {
 	closes []string
 }
 
-// stamped is an add row's entry with the row's ts.
 type stamped struct {
 	ts int64
 	Entry

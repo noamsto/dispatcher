@@ -43,8 +43,8 @@ var roleRe = regexp.MustCompile(`\A[A-Za-z0-9._-]{1,32}\z`)
 // it names something other than a worker engine.
 var engines = []string{"claude", "codex", "cursor", "pi"}
 
-// emptyModel is the arm's `{"rows":[],"holds":[],"queued":[],"roles":[]}`: what a repo with
-// no bus yet renders as, with no jq run at all.
+// emptyModel is the arm's `{"rows":[],"holds":[],"roles":[]}` plus an empty
+// queue: what a repo with no bus yet renders as, with no jq run at all.
 func emptyModel() map[string]any {
 	return map[string]any{"rows": []any{}, "holds": []any{}, "queued": []any{}, "roles": []any{}, "rounds": map[string]any{}}
 }
