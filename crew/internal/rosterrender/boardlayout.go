@@ -113,6 +113,24 @@ func fontFactor(cols []column) float64 {
 	return need
 }
 
+// fitFont is the largest font at which the identity row and the tier row of
+// every worker card in cols fit a card wide wide whole, so those lines are not
+// the smallest text on the card.
+func fitFont(cols []column, wide float64) float64 {
+	em := 1.0
+	for _, c := range cols {
+		for _, cd := range c.cards {
+			if cd.kind != kindPlanet {
+				continue
+			}
+			em = max(em,
+				textWidthAt(headOf(cd), 1)+gapEm+textWidthAt(stateWord(cd.state), 1),
+				textWidthAt(metaText(cd.planet), 1))
+		}
+	}
+	return wide / (em + 2*padXEm)
+}
+
 // cardRowsEm is the height in em of the text rows a card can show: the head,
 // the title (a second line when it is long), the tier row, and the detail row
 // when there is one, plus the footer of role chips.
@@ -307,7 +325,7 @@ func placeShelf(lg *laneGeom, li int, cols []column, sh shelf, s, h, top float64
 	}
 	wide := cw + (availW-shelfWidth(cols, rows, cw))/float64(subs)
 	tall := min((innerH-float64(rows-1)*cardGap)/float64(rows), maxCardTall*wide)
-	font := min(max(min(tall/fontFactor(cols), wide/maxFontPerW), minFont), maxFont)
+	font := min(max(min(tall/fontFactor(cols), wide/maxFontPerW, fitFont(cols, wide)), minFont), maxFont)
 	top += (h - colHeadH - stackH(rows, tall)) / 2
 
 	x := boardPad

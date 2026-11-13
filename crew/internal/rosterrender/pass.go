@@ -47,9 +47,9 @@ func (l *legend) add(o legend) {
 // error means nothing was drawn. A repo joined besides the local one that cannot
 // be read keeps its last good result when the discovery record has one, and is
 // skipped otherwise, with a note either way; the local one's failure fails the
-// frame. The budget strip's engine readings and fleet budget are resolved only
-// when withBudget is set: the map draws none, and runs as a fresh process per
-// selection.
+// frame. The budget strip's engine readings are always resolved; the fleet
+// budget only when withBudget is set (the map, a fresh process per selection,
+// skips it).
 func buildFrame(ctx context.Context, o Options, paths bus.Paths, cdir, crew string, localRoles []string, withBudget bool) (frame, error) {
 	now := float64(o.wallSec())
 	windows := sync.OnceValue(func() map[string]bool { return roster.Windows(ctx, o.Probes.Tmux) })

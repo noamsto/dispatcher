@@ -367,11 +367,22 @@ func TestBoardSVGIdentityAndTierLinesWhole(t *testing.T) {
 		svg, b, g := f.render(aspect)
 		root := decodeSVG(t, svg)
 		var texts []string
-		root.walk(func(n xnode) {
-			if n.XMLName.Local == "text" {
+		for _, grp := range cardGroups(root) {
+			box := grp.Nodes[0]
+			grp.walk(func(n xnode) {
+				if n.XMLName.Local != "text" {
+					return
+				}
 				texts = append(texts, n.Text)
-			}
-		})
+				x, w := n.num(t, "x"), textWidthAt(n.Text, n.num(t, "font-size"))
+				if n.attr("text-anchor") == "end" {
+					x -= w
+				}
+				if x < box.num(t, "x")-0.5 || x+w > box.num(t, "x")+box.num(t, "width")+0.5 {
+					t.Errorf("aspect %g: %q runs past its card", aspect, n.Text)
+				}
+			})
+		}
 		for _, l := range b.lanes {
 			for _, col := range l.cols {
 				for _, c := range col.cards {
@@ -391,7 +402,7 @@ func TestBoardSVGIdentityAndTierLinesWhole(t *testing.T) {
 
 func TestBoardSVGHeaderCarriesTheBudgetStrip(t *testing.T) {
 	svg, _, _ := boardFixtures()[1].render(1.6)
-	if !strings.Contains(svg, ">claude 7d 88% · pi 5h 21% · crew 4/6</text>") && !strings.Contains(svg, ">claude 7d 88% · pi 5h 21%</text>") {
+	if !strings.Contains(svg, ">claude 7d 88% · pi 5h 21%</text>") {
 		t.Errorf("the header lacks the budget strip:\n%s", svg[:600])
 	}
 }

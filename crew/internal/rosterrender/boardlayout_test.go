@@ -208,7 +208,8 @@ func TestBoardLayoutAspectAndFont(t *testing.T) {
 		{0.1, math.Round(boardW / minAspect)},
 	}
 	for _, tc := range cases {
-		g := layoutBoard(spread(6, 1), tc.aspect)
+		b := spread(6, 1)
+		g := layoutBoard(b, tc.aspect)
 		if g.W != boardW || g.H != tc.wantH {
 			t.Errorf("aspect %g: canvas %gx%g, want %gx%g", tc.aspect, g.W, g.H, boardW, tc.wantH)
 		}
@@ -216,8 +217,9 @@ func TestBoardLayoutAspectAndFont(t *testing.T) {
 			t.Errorf("aspect %g: header %g below %g", tc.aspect, g.hdr.h, hdrMin)
 		}
 		for _, c := range g.cards() {
-			if c.font < minFont || c.font > maxFont {
-				t.Errorf("aspect %g: font %g outside %g..%g", tc.aspect, c.font, minFont, maxFont)
+			col := b.lanes[c.lane].cols[c.col]
+			if want := min(max(min(c.h/fontFactor([]column{col}), c.w/maxFontPerW, fitFont([]column{col}, c.w)), minFont), maxFont); c.font != want {
+				t.Errorf("aspect %g: font %g, want %g", tc.aspect, c.font, want)
 			}
 		}
 	}
@@ -240,8 +242,9 @@ func TestBoardLayoutLaneLabelOnlyWhenNamed(t *testing.T) {
 // TestBoardLayoutSingleCardFillsTheCanvas: with one card, the card spans the
 // canvas below the header both ways.
 func TestBoardLayoutSingleCardFillsTheCanvas(t *testing.T) {
-	for _, aspect := range []float64{1.0, 1.5, 1.6, 2.0} {
-		g := layoutBoard(spread(1, 1), aspect)
+	b := board{lanes: []lane{{cols: []column{{class: classWorking, n: 1, cards: []boardCard{{planet: planet{branch: "w", title: "t"}}}}}}}}
+	for _, aspect := range []float64{1.0, 1.5, 1.6, 2.0, 2.4} {
+		g := layoutBoard(b, aspect)
 		c := g.cards()[0]
 		if body := g.H - g.hdr.h; c.h < 0.85*body {
 			t.Errorf("aspect %g: card %g tall in a %g body", aspect, c.h, body)
